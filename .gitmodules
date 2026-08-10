@@ -1,0 +1,3 @@
+[submodule "backend/vendor/pi_agent_rust"]
+	path = backend/vendor/pi_agent_rust
+	url = https://github.com/Dicklesworthstone/pi_agent_rust.git

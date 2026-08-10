@@ -1,0 +1,17 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/bm-core",
+    "crates/bm-server",
+    "vendor/pi_agent_rust",
+]
+
+[workspace.dependencies]
+pi = { package = "pi_agent_rust", path = "vendor/pi_agent_rust", default-features = false }
+
+[profile.dev]
+# pi_agent_rust 依赖较重，适当放宽优化等级换取编译速度与运行效率的平衡
+opt-level = 1
+
+[profile.release]
+lto = "thin"

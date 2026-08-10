@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BoenMind</title>
+    <script>
+      // Tauri 桌面环境：内嵌后端由桌面进程拉起，固定监听 127.0.0.1:17321。
+      // 前端 ApiClient 会优先读取该全局注入值；网页版（Vite 代理）不受影响。
+      if (window.__TAURI_INTERNALS__) {
+        window.__BOENMIND_API__ = "http://127.0.0.1:17321";
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
