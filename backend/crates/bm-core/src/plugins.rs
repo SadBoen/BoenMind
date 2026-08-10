@@ -85,6 +85,18 @@ fn describe_plugin(path: &Path, fallback: &str) -> String {
         }
     }
     if let Ok(text) = fs::read_to_string(path) {
+        // 优先提取代码中的 description 字段（如 pi.registerTool({ description: "..." })）
+        if let Some(captures) = text
+            .lines()
+            .find_map(|line| {
+                let line = line.trim();
+                line.strip_prefix("description:")
+                    .map(|rest| rest.trim().trim_matches(['"', ',', '`']))
+                    .filter(|desc| !desc.is_empty() && desc.len() < 120)
+            })
+        {
+            return captures.to_string();
+        }
         for line in text.lines().take(8) {
             let line = line.trim().trim_start_matches(['*', '/', ' ', '\t']);
             if line.starts_with("Shows") || line.starts_with("Registers") || line.starts_with("注册") {
