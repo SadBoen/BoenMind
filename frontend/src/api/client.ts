@@ -164,8 +164,14 @@ export const api = {
    * 流式对话。返回一个可取消的响应对象：
    *  - `onEvent` 收到每个 ChatStreamEvent
    *  - `close()` 中断连接
+   *  - `model`/`thinking` 可选，对当前会话即时切换（不改变会话记录）
    */
-  chat: (sessionId: string, message: string, onEvent: (ev: ChatStreamEvent) => void) => {
+  chat: (
+    sessionId: string,
+    message: string,
+    onEvent: (ev: ChatStreamEvent) => void,
+    opts?: { model?: string; thinking?: string },
+  ) => {
     const controller = new AbortController();
     const done = new Promise<void>((resolve) => {
       (async () => {
@@ -173,7 +179,12 @@ export const api = {
           const res = await fetch(`${API_BASE}/api/chat`, {
             method: "POST",
             headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-            body: JSON.stringify({ session_id: sessionId, message }),
+            body: JSON.stringify({
+              session_id: sessionId,
+              message,
+              model: opts?.model,
+              thinking: opts?.thinking,
+            }),
             signal: controller.signal,
           });
           if (!res.ok || !res.body) {

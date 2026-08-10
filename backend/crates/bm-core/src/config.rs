@@ -249,10 +249,19 @@ pub fn sync_pi_models_json(config: &AppConfig) -> Result<(), std::io::Error> {
             }
         }
         // 注册模型列表（仅注册本提供商声明的模型，避免污染内置目录）
+        // 自定义 OpenAI 兼容路由标记 reasoning: true，使 pi 的思考控制
+        // （DeepSeek / MiniMax 方言）对该提供商生效
+        let reasoning = p.kind.is_openai_compatible_route();
         let models: Vec<Value> = p
             .models
             .iter()
-            .map(|m| json!({ "id": m }))
+            .map(|m| {
+                let mut entry = json!({ "id": m });
+                if reasoning {
+                    entry["reasoning"] = json!(true);
+                }
+                entry
+            })
             .collect();
         if !models.is_empty() {
             entry.insert("models".to_string(), Value::Array(models));

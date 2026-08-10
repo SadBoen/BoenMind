@@ -50,15 +50,18 @@ pub enum AgentStreamEvent {
 /// 创建 agent 会话句柄。
 ///
 /// `provider`/`model` 来自会话或全局配置；`extension_paths` 为启用的插件路径
-/// （pi QuickJS 运行时加载 TypeScript 扩展）。
+/// （pi QuickJS 运行时加载 TypeScript 扩展）；`thinking` 为思考强度（如 "off"/"low"）。
 pub async fn create_session_handle(
     provider: &ProviderConfig,
     model: &str,
     working_dir: &Path,
     extension_paths: Vec<std::path::PathBuf>,
+    thinking: Option<&str>,
 ) -> Result<AgentSessionHandle, pi::sdk::Error> {
     // 注意：调用前需确保 PI_CODING_AGENT_DIR 已设置、models.json 已同步，
     // 见 bm-server 的启动流程（sync_pi_models_json + set_var）
+    let thinking_level = thinking
+        .and_then(|t| t.parse::<pi::model::ThinkingLevel>().ok());
     let options = SessionOptions {
         provider: Some(provider.kind.pi_name(&provider.id)),
         model: Some(model.to_string()),
@@ -68,6 +71,7 @@ pub async fn create_session_handle(
         no_session: true,
         system_prompt: Some(SYSTEM_PROMPT.to_string()),
         include_cwd_in_prompt: false,
+        thinking: thinking_level,
         extension_paths,
         // 插件政策：默认（Prompt 模式，自动允许 read/write/http/events/session，拒绝 exec/env）
         extension_policy: None,

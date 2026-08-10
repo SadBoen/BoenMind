@@ -37,7 +37,12 @@ interface AppStore {
   messages: Message[];
   streaming: boolean;
   streamingText: string;
-  sendMessage: (text: string) => Promise<void>;
+  /** 当前会话选择的模型（providerId::modelId）与思考强度 */
+  selectedModel: string | null;
+  selectedThinking: string;
+  setSelectedModel: (value: string | null) => void;
+  setSelectedThinking: (value: string | null) => void;
+  sendMessage: (text: string, opts?: { model?: string; thinking?: string }) => Promise<void>;
   stopStreaming: () => void;
 
   // 文件区
@@ -149,7 +154,11 @@ export const useAppStore = create<AppStore>((set, get) => {
     messages: [],
     streaming: false,
     streamingText: "",
-    sendMessage: async (text) => {
+    selectedModel: null,
+    selectedThinking: "off",
+    setSelectedModel: (value) => set({ selectedModel: value }),
+    setSelectedThinking: (value) => set({ selectedThinking: value ?? "off" }),
+    sendMessage: async (text, opts) => {
       const { activeSessionId } = get();
       let sessionId = activeSessionId;
       if (!sessionId) {
@@ -206,7 +215,10 @@ export const useAppStore = create<AppStore>((set, get) => {
         }
       };
 
-      const controller = api.chat(sessionId, text, handleEvent);
+      const controller = api.chat(sessionId, text, handleEvent, {
+        model: opts?.model ?? undefined,
+        thinking: opts?.thinking ?? undefined,
+      });
       streamController = controller;
       await controller.done;
       streamController = null;

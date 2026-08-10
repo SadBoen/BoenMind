@@ -1,54 +1,38 @@
 /**
- * 聊天窗口：标题栏（模型选择）、消息列表、输入区。
+ * 聊天窗口：标题栏（停止按钮）、消息列表（平滑滚动 + 淡入动画）、输入区。
+ * 模型与思考强度选择已移至输入框内部下边缘（见 ChatInput）。
  */
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { Square, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/app-store";
 import { MessageItem } from "./MessageItem";
 import { ChatInput } from "./ChatInput";
-
-/** 当前可用的模型选项：各提供商默认模型 -> 全部模型 */
-function useModelOptions() {
-  const config = useAppStore((s) => s.config);
-  return useMemo(() => {
-    if (!config) return [];
-    return config.providers.flatMap((p) =>
-      p.models.map((m) => ({
-        value: `${p.id}::${m}`,
-        label: m,
-        provider: p.name,
-      })),
-    );
-  }, [config]);
-}
 
 export function ChatWindow() {
   const messages = useAppStore((s) => s.messages);
   const streaming = useAppStore((s) => s.streaming);
   const streamingText = useAppStore((s) => s.streamingText);
   const stopStreaming = useAppStore((s) => s.stopStreaming);
-  const config = useAppStore((s) => s.config);
   const activeSessionId = useAppStore((s) => s.activeSessionId);
 
-  const modelOptions = useModelOptions();
   const scrollRef = useRef<HTMLDivElement>(null);
+  // 避免流式增量导致的抖动：仅在用户未手动上翻时跟随
+  const stickToBottom = useRef(true);
 
-  // 新消息或流式输出时自动滚动到底部
+  // 新消息或流式输出时平滑滚动到底部（流式中快速跟随，新消息平滑动画）
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (!el || !stickToBottom.current) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: streaming ? "auto" : "smooth" });
   }, [messages, streamingText, streaming]);
 
-  const currentModel = useAppStore((s) => s.health?.version) ? (config?.default_model ?? "") : "";
+  const onScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+  };
 
   return (
     <div className="flex h-full min-w-0 flex-col bg-background">
@@ -70,27 +54,15 @@ export function ChatWindow() {
               停止
             </Button>
           )}
-          <Select value={currentModel || undefined}>
-            <SelectTrigger className="h-7 w-44 text-xs">
-              <SelectValue placeholder="选择模型" />
-            </SelectTrigger>
-            <SelectContent>
-              {modelOptions.map((opt) => (
-                <SelectItem key={opt.value} value={opt.value} className="text-xs">
-                  <span className="flex items-center gap-1.5">
-                    <Sparkles size={12} className="shrink-0 text-muted-foreground" />
-                    {opt.label}
-                    <span className="text-muted-foreground">· {opt.provider}</span>
-                  </span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
         </div>
       </header>
 
-      {/* 消息列表 */}
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
+      {/* 消息列表：隐藏滚动条 + 内容平滑增长 */}
+      <div
+        ref={scrollRef}
+        onScroll={onScroll}
+        className="min-h-0 flex-1 overflow-y-auto scrollbar-none"
+      >
         {messages.length === 0 && !streaming ? (
           <EmptyState />
         ) : (
@@ -99,7 +71,7 @@ export function ChatWindow() {
               <MessageItem key={m.id} message={m} />
             ))}
             {streaming && (
-              <div className="flex gap-3">
+              <div className="msg-enter flex gap-3">
                 <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
                   <Sparkles size={14} />
                 </div>
@@ -129,7 +101,7 @@ export function ChatWindow() {
         )}
       </div>
 
-      {/* 输入区 */}
+      {/* 输入区（模型/思考选择在框内下边缘） */}
       <ChatInput />
     </div>
   );

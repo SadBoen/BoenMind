@@ -238,10 +238,16 @@ impl OpenAIProvider {
             || self.provider.eq_ignore_ascii_case("deepseek");
         let base_is_deepseek = self.base_url.to_ascii_lowercase().contains("deepseek.com");
         if provider_is_deepseek || base_is_deepseek {
-            Some(ReasoningStyle::DeepSeek)
-        } else {
-            None
+            return Some(ReasoningStyle::DeepSeek);
         }
+        // MiniMax 方言：provider 名 minimax 或端点含 minimaxi.com / minimax.chat
+        let provider_is_minimax = self.provider.eq_ignore_ascii_case("minimax");
+        let base = self.base_url.to_ascii_lowercase();
+        let base_is_minimax = base.contains("minimaxi.com") || base.contains("minimax.chat");
+        if provider_is_minimax || base_is_minimax {
+            return Some(ReasoningStyle::MiniMax);
+        }
+        None
     }
 
     fn is_sap_ai_core(&self) -> bool {
@@ -304,15 +310,40 @@ impl OpenAIProvider {
         // when the first-class `max` level was added; gh #139).
         let (thinking, reasoning_effort) = match self.reasoning_style() {
             Some(ReasoningStyle::DeepSeek) => match options.thinking_level.unwrap_or_default() {
-                ThinkingLevel::Off => (Some(OpenAIThinking { kind: "disabled" }), None),
-                ThinkingLevel::High => (Some(OpenAIThinking { kind: "enabled" }), Some("high")),
-                ThinkingLevel::XHigh | ThinkingLevel::Max => {
-                    (Some(OpenAIThinking { kind: "enabled" }), Some("max"))
+                ThinkingLevel::Off => {
+                    (Some(OpenAIThinking { kind: "disabled", budget_tokens: None }), None)
                 }
-                ThinkingLevel::Minimal | ThinkingLevel::Low | ThinkingLevel::Medium => {
-                    (Some(OpenAIThinking { kind: "enabled" }), None)
-                }
+                ThinkingLevel::High => (
+                    Some(OpenAIThinking { kind: "enabled", budget_tokens: None }),
+                    Some("high"),
+                ),
+                ThinkingLevel::XHigh | ThinkingLevel::Max => (
+                    Some(OpenAIThinking { kind: "enabled", budget_tokens: None }),
+                    Some("max"),
+                ),
+                ThinkingLevel::Minimal | ThinkingLevel::Low | ThinkingLevel::Medium => (
+                    Some(OpenAIThinking { kind: "enabled", budget_tokens: None }),
+                    None,
+                ),
             },
+            // MiniMax：budget_tokens 控制推理深度；off 显式禁用思考。
+            // MiniMax 文档允许的 thinking.type 为 adaptive / disabled。
+            Some(ReasoningStyle::MiniMax) => {
+                let level = options.thinking_level.unwrap_or_default();
+                match level {
+                    ThinkingLevel::Off => (
+                        Some(OpenAIThinking { kind: "disabled", budget_tokens: None }),
+                        None,
+                    ),
+                    _ => (
+                        Some(OpenAIThinking {
+                            kind: "adaptive",
+                            budget_tokens: Some(level.default_budget()),
+                        }),
+                        None,
+                    ),
+                }
+            }
             None => (None, None),
         };
 
@@ -1287,11 +1318,14 @@ struct OpenAIStreamOptions {
 
 /// DeepSeek's `thinking` request object on the chat-completions transport.
 /// `{"type": "enabled"}` turns on thinking mode; `{"type": "disabled"}` forces
-/// the non-thinking path. Serialized only for DeepSeek (see `ReasoningStyle`).
+/// the non-thinking path. Serialized only for reasoning dialects
+/// (DeepSeek / MiniMax, see `ReasoningStyle`).
 #[derive(Debug, Serialize)]
 struct OpenAIThinking {
     #[serde(rename = "type")]
     kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    budget_tokens: Option<u32>,
 }
 
 /// Request-side reasoning dialect for OpenAI-compatible providers that take
@@ -1305,6 +1339,10 @@ enum ReasoningStyle {
     /// DeepSeek: `thinking: {type: enabled|disabled}` + `reasoning_effort`
     /// (`high`|`max`). Mirrors the legacy `@earendil-works/pi-ai` `thinkingFormat`.
     DeepSeek,
+    /// MiniMax（国内 api.minimaxi.com / minimax.chat）：`thinking: {type:
+    /// enabled|disabled, budget_tokens: N}`。budget_tokens 控制推理深度，
+    /// 由 ThinkingLevel 的默认预算映射（见 `ThinkingLevel::default_budget`）。
+    MiniMax,
 }
 
 #[derive(Debug, Serialize)]

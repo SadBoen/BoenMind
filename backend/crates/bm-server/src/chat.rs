@@ -30,10 +30,15 @@ use tokio_stream::{StreamExt, wrappers::ReceiverStream};
 use crate::{AppState, api_error};
 
 /// 聊天请求：会话必须已存在（前端先创建会话再发消息）。
+/// `model`/`thinking` 可选，用于在当前会话即时切换模型与思考强度。
 #[derive(Deserialize)]
 pub struct ChatRequest {
     pub session_id: String,
     pub message: String,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub thinking: Option<String>,
 }
 
 pub async fn chat(
@@ -65,7 +70,7 @@ pub async fn chat(
     }
 
     // 获取或创建 agent 会话句柄（Arc<Mutex<..>> 保证同一会话串行且 map 锁不长期占用）
-    let handle = match get_or_create_agent(&state, &session).await {
+    let handle = match get_or_create_agent(&state, &session, req.model.as_deref(), req.thinking.as_deref()).await {
         Ok(h) => h,
         Err((status, msg)) => return api_error(status, msg).into_response(),
     };
@@ -86,17 +91,13 @@ pub async fn chat(
 }
 
 /// 获取会话的 agent 句柄；不存在则按会话记录的提供商/模型创建。
+/// `model`/`thinking` 有值时对已存在的会话即时生效（set_model / set_thinking_level）。
 async fn get_or_create_agent(
     state: &AppState,
     session: &bm_core::db::Session,
+    model_override: Option<&str>,
+    thinking_override: Option<&str>,
 ) -> Result<Arc<Mutex<pi::sdk::AgentSessionHandle>>, (StatusCode, String)> {
-    {
-        let agents = state.agents.lock().await;
-        if let Some(entry) = agents.get(&session.id) {
-            return Ok(entry.handle.clone());
-        }
-    }
-
     // 解析提供商与模型
     let (provider, model) = {
         let config = state.config.read().await;
@@ -108,7 +109,7 @@ async fn get_or_create_agent(
                     "未配置任何模型提供商，请先在设置中配置".to_string(),
                 )
             })?;
-        let model = bm_core::config::resolve_model(&provider, session.model.as_deref())
+        let model = bm_core::config::resolve_model(&provider, model_override.or(session.model.as_deref()))
             .ok_or_else(|| {
                 (
                     StatusCode::BAD_REQUEST,
@@ -117,6 +118,27 @@ async fn get_or_create_agent(
             })?;
         (provider, model)
     };
+
+    // 会话句柄已存在：即时切换模型 / 思考强度
+    if let Some(entry) = state.agents.lock().await.get(&session.id) {
+        let mut handle = entry.handle.lock().await;
+        if let Some(pid) = model_override {
+            let provider_name = provider.kind.pi_name(&provider.id);
+            handle
+                .set_model(&provider_name, pid)
+                .await
+                .map_err(|err| (StatusCode::BAD_GATEWAY, format!("切换模型失败: {err}")))?;
+        }
+        if let Some(level) = thinking_override {
+            if let Ok(level) = level.parse::<pi::model::ThinkingLevel>() {
+                handle
+                    .set_thinking_level(level)
+                    .await
+                    .map_err(|err| (StatusCode::BAD_GATEWAY, format!("切换思考强度失败: {err}")))?;
+            }
+        }
+        return Ok(entry.handle.clone());
+    }
 
     let working_dir = {
         let config = state.config.read().await;
@@ -128,7 +150,7 @@ async fn get_or_create_agent(
         bm_core::plugins::enabled_extension_paths(&config)
     };
 
-    let handle = create_session_handle(&provider, &model, &working_dir, extension_paths)
+    let handle = create_session_handle(&provider, &model, &working_dir, extension_paths, thinking_override)
         .await
         .map_err(|err| (StatusCode::BAD_GATEWAY, format!("创建 agent 会话失败: {err}")))?;
 
