@@ -81,7 +81,7 @@ export function ChatWindow() {
           ) : (
             <div className="mx-auto flex max-w-3xl flex-col gap-5 px-4 py-6">
               {messages.map((m, i) => (
-                <div key={m.id} data-mid={i} data-preview={previewFor(m)}>
+                <div key={m.id} data-mid={i} data-role={m.role} data-preview={previewFor(m)}>
                   <MessageItem message={m} />
                 </div>
               ))}

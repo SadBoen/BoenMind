@@ -1,8 +1,8 @@
 /**
- * 分段滚动指示条（参照 ZCode 消息区）：右侧 overlay 细竖条，
- * 每条消息一个横条 —— 位置随消息、长度随内容量（长度不一）、
- * 视口底部（最新可见）消息亮色；hover 横条变长并弹出消息内容预览，
- * 点击平滑滚动到对应消息。
+ * 消息指示条（参照 ZCode 消息区，置于右侧）：右侧一条细竖轨 + 多根小横条，
+ * 只跟踪用户（人类）的输入 —— 一句输入一根小横条，位置对应消息在内容中的位置、
+ * 长度随内容量；滚动时跟随，最新可见的一根亮色、其余暗色；hover 横条变长
+ * 并弹出该条输入的内容预览，点击平滑滚动到对应消息。
  */
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { cn } from "@/lib/utils";
@@ -45,10 +45,13 @@ export function ScrollIndicators({
     };
   }, [containerRef]);
 
+  // 只统计用户消息：一条输入一根横条
   const items = useMemo<IndicatorItem[]>(() => {
     const el = containerRef.current;
     if (!el) return [];
-    const nodes = Array.from(el.querySelectorAll<HTMLElement>("[data-mid]"));
+    const nodes = Array.from(
+      el.querySelectorAll<HTMLElement>("[data-mid][data-role='user']"),
+    );
     if (nodes.length === 0) return [];
     const total = el.scrollHeight;
     if (total <= el.clientHeight) return [];
@@ -78,40 +81,38 @@ export function ScrollIndicators({
   return (
     <div
       ref={railRef}
-      className="group/rail absolute bottom-2 right-1 top-2 z-20 w-2.5 rounded-full transition-colors hover:bg-accent/40"
+      className="group/rail absolute bottom-2 right-1 top-2 z-20 w-3 rounded-full"
       onMouseLeave={() => setHoverIdx(null)}
     >
+      {/* 细竖轨：默认几乎隐形，hover 时微微亮起 */}
+      <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 rounded-full bg-foreground/10 transition-colors group-hover/rail:bg-foreground/20" />
+
       {items.map((item) => (
         <button
           key={item.idx}
           type="button"
+          aria-label="跳转到该条消息"
           onMouseEnter={() => setHoverIdx(item.idx)}
           onClick={() => {
             const el = containerRef.current;
             if (!el) return;
             el.scrollTo({ top: Math.max(0, item.el.offsetTop - 8), behavior: "smooth" });
           }}
-          className="absolute left-0 block w-full rounded-full transition-all duration-150"
-          style={{
-            top: `${item.top}%`,
-            height: `${item.height}%`,
-          }}
+          className="absolute left-1/2 -translate-x-1/2 -translate-y-1/2"
+          style={{ top: `${item.top}%` }}
         >
           <span
             className={cn(
-              "mx-auto block rounded-full transition-all duration-150",
-              // 默认暗色细条；最新（视口底部）消息亮色；hover 时变亮加长
+              "block h-1.5 rounded-full transition-all duration-150",
+              // 默认短横条：最新可见亮色，其余暗色；hover 时加长加亮
               item.active ? "bg-primary" : "bg-foreground/20",
-              hoverIdx === item.idx ? "w-full bg-primary/90" : "w-[70%]",
+              hoverIdx === item.idx ? "w-6 bg-primary/90" : "w-2.5",
             )}
-            style={{ height: "100%" }}
           />
         </button>
       ))}
 
-      {/* 悬停预览：横条左侧的浮动文本区。
-          fixed 定位以脱离 10px 宽的 rail（否则 shrink-to-fit 被压成窄条），
-          坐标按 rail 的视口位置实时计算 */}
+      {/* 悬停预览：fixed 定位以脱离窄 rail（否则 shrink-to-fit 被压成窄条） */}
       {hovered &&
         (() => {
           const rect = railRef.current?.getBoundingClientRect();
