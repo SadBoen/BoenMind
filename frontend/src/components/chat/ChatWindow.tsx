@@ -6,9 +6,20 @@ import { useEffect, useRef } from "react";
 import { Square, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import type { Message } from "@/api/client";
 import { useAppStore } from "@/stores/app-store";
 import { MessageItem } from "./MessageItem";
 import { ChatInput } from "./ChatInput";
+import { ScrollIndicators } from "./ScrollIndicators";
+
+/** 消息预览文本（指示条悬停用）：剥离 think 块、压缩空白 */
+function previewFor(message: Message): string {
+  const text = message.content
+    .replace(/<think>[\s\S]*?<\/think>/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text.length > 60 ? `${text.slice(0, 60)}…` : text || "（图片或空消息）";
+}
 
 export function ChatWindow() {
   const messages = useAppStore((s) => s.messages);
@@ -57,48 +68,54 @@ export function ChatWindow() {
         </div>
       </header>
 
-      {/* 消息列表：隐藏滚动条 + 内容平滑增长 */}
-      <div
-        ref={scrollRef}
-        onScroll={onScroll}
-        className="min-h-0 flex-1 overflow-y-auto scrollbar-none"
-      >
-        {messages.length === 0 && !streaming ? (
-          <EmptyState />
-        ) : (
-          <div className="mx-auto flex max-w-3xl flex-col gap-5 px-4 py-6">
-            {messages.map((m) => (
-              <MessageItem key={m.id} message={m} />
-            ))}
-            {streaming && (
-              <div className="msg-enter flex gap-3">
-                <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
-                  <Sparkles size={14} />
+      {/* 消息列表：隐藏滚动条 + 内容平滑增长；指示条放在滚动容器外做固定 overlay，
+          否则 absolute 定位会随内容滚动，滚到底部时 rail 被带出视口 */}
+      <div className="relative min-h-0 flex-1">
+        <div
+          ref={scrollRef}
+          onScroll={onScroll}
+          className="h-full overflow-y-auto scrollbar-none"
+        >
+          {messages.length === 0 && !streaming ? (
+            <EmptyState />
+          ) : (
+            <div className="mx-auto flex max-w-3xl flex-col gap-5 px-4 py-6">
+              {messages.map((m, i) => (
+                <div key={m.id} data-mid={i} data-preview={previewFor(m)}>
+                  <MessageItem message={m} />
                 </div>
-                <div className={cn("min-w-0 flex-1", !streamingText && "opacity-60")}>
-                  {streamingText ? (
-                    <MessageItem
-                      message={{
-                        id: -1,
-                        session_id: "",
-                        role: "assistant",
-                        content: streamingText,
-                        created_at: 0,
-                      }}
-                      streaming
-                    />
-                  ) : (
-                    <div className="flex items-center gap-1.5 py-2">
-                      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/50" />
-                      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:120ms]" />
-                      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:240ms]" />
-                    </div>
-                  )}
+              ))}
+              {streaming && (
+                <div className="msg-enter flex gap-3">
+                  <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+                    <Sparkles size={14} />
+                  </div>
+                  <div className={cn("min-w-0 flex-1", !streamingText && "opacity-60")}>
+                    {streamingText ? (
+                      <MessageItem
+                        message={{
+                          id: -1,
+                          session_id: "",
+                          role: "assistant",
+                          content: streamingText,
+                          created_at: 0,
+                        }}
+                        streaming
+                      />
+                    ) : (
+                      <div className="flex items-center gap-1.5 py-2">
+                        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/50" />
+                        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:120ms]" />
+                        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:240ms]" />
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            )}
-          </div>
-        )}
+              )}
+            </div>
+          )}
+        </div>
+        <ScrollIndicators containerRef={scrollRef} />
       </div>
 
       {/* 输入区（模型/思考选择在框内下边缘） */}
