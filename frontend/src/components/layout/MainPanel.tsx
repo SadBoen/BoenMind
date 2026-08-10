@@ -7,6 +7,7 @@ import { AppearanceSettings } from "@/components/settings/AppearanceSettings";
 import { ProviderSettings } from "@/components/settings/ProviderSettings";
 import { WorkspaceSettings } from "@/components/settings/WorkspaceSettings";
 import { PluginsSettings } from "@/components/settings/PluginsSettings";
+import { AboutSettings } from "@/components/settings/AboutSettings";
 
 export function MainPanel() {
   const activeNav = useAppStore((s) => s.activeNav);
@@ -21,6 +22,7 @@ export function MainPanel() {
           {settingsTab === "providers" && <ProviderSettings />}
           {settingsTab === "workspace" && <WorkspaceSettings />}
           {settingsTab === "plugins" && <PluginsSettings />}
+          {settingsTab === "about" && <AboutSettings />}
         </div>
       </div>
     );

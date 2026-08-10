@@ -1,7 +1,7 @@
 /**
  * 设置二级菜单：外观 / 模型提供商 / 工作文件夹。
  */
-import { FolderOpen, MonitorCog, Palette, Puzzle } from "lucide-react";
+import { FolderOpen, Info, MonitorCog, Palette, Puzzle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppStore, type SettingsTab } from "@/stores/app-store";
 
@@ -10,6 +10,7 @@ const MENU_ITEMS: { key: SettingsTab; label: string; icon: React.ReactNode; desc
   { key: "providers", label: "模型提供商", icon: <MonitorCog size={16} />, desc: "模型与 API 配置" },
   { key: "workspace", label: "工作文件夹", icon: <FolderOpen size={16} />, desc: "默认文件浏览目录" },
   { key: "plugins", label: "插件", icon: <Puzzle size={16} />, desc: "扩展与工具" },
+  { key: "about", label: "关于", icon: <Info size={16} />, desc: "版本与更新" },
 ];
 
 export function SettingsMenu() {

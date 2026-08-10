@@ -52,13 +52,18 @@ cd frontend && pnpm tauri build --debug --no-bundle
 ## 使用
 
 1. **配置模型提供商**：点击左下角「设置」→「模型提供商」→「添加提供商」。
-   支持 OpenAI 兼容端点（含 DeepSeek/OpenRouter 等）、Anthropic、Gemini、Ollama、llama.cpp。
-   本地服务（Ollama/llama.cpp）需填写端点；云提供商可留空使用官方端点。
+   支持预设：MiniMax（国内）、DeepSeek、OpenRouter、OpenAI 兼容、Anthropic、Gemini、Ollama、llama.cpp、
+   自定义 OpenAI 兼容。多提供商可同时配置（各自独立端点与密钥，互不覆盖）；本地服务需填端点。
 2. **对话**：会话列表「新建对话」→ 输入消息（Enter 发送，Shift+Enter 换行）。
    模型可在聊天标题栏右侧切换。
-3. **文件浏览**：右侧文件区展示工作文件夹（默认 `~/BoenMind`，可在设置修改）。
+3. **插件**：「设置」→「插件」。内置示例（hello / bookmark）已预装；启用后插件注册的
+   工具与命令对 AI 助手立即生效（基于 pi 扩展机制，QuickJS 直接加载 TypeScript，无需编译）。
+   社区无原生依赖的插件可复制到 `~/.boenmind/extensions/` 后安装。
+4. **文件浏览**：右侧文件区展示工作文件夹（默认 `~/BoenMind`，可在设置修改）。
    点击文件进入预览（Markdown / 代码 / 图片 / PDF）；右上角可最大化，占据自身+主区。
-4. **布局**：分栏可拖动（有上下限），底部状态栏显示后端连接、当前模型、工作目录。
+5. **自动更新**：「设置」→「关于」→「检查更新」。桌面版通过 GitHub Releases 分发，
+   后台下载完成后提示重启（macOS 可后台下载，重启生效）。
+6. **布局**：分栏可拖动（有上下限），底部状态栏显示后端连接、当前模型、工作目录。
 
 ## 架构要点
 
@@ -66,11 +71,20 @@ cd frontend && pnpm tauri build --debug --no-bundle
   桌面版由 Tauri 注入 `window.__BOENMIND_API__` 指向内嵌后端（固定 127.0.0.1:17321）。
 - **pi agent 集成**：`bm-core::agent` 封装 pi 的 SDK（`create_agent_session` + `prompt` 事件流），
   会话句柄按聊天会话缓存在服务端；`PI_CODING_AGENT_DIR` 指向 `~/.boenmind/pi`，
-  提供商端点/模型通过自动生成的 `models.json` 注册，与用户自己的 `~/.pi` 配置互不干扰。
+  提供商端点/模型/密钥通过自动生成的 `models.json` 注册（密钥以 `file:` 引用存于
+  `~/.boenmind/pi/keys/`，不落盘 JSON），与用户自己的 `~/.pi` 配置互不干扰。
+  自定义 OpenAI 兼容提供商（MiniMax/DeepSeek/OpenRouter 等）以独立 provider 名 + `openai-completions`
+  路由注册，多个端点可共存。
+- **插件**：`bm-core::plugins` 管理 `~/.boenmind/extensions/` 下的 TypeScript 扩展
+  （pi QuickJS 运行时加载，无需转 Rust）；启用列表在 config.toml，会话创建时经
+  `SessionOptions.extension_paths` 加载。
 - **SSE 流式协议**：`POST /api/chat` 返回 `text/event-stream`，事件类型：
   `textDelta` / `thinkingDelta` / `toolCallStart` / `toolCallDelta` / `turnEnd` / `done` / `error`。
+- **自动更新**：Tauri updater + GitHub Releases（`latest.json`），签名密钥存于
+  `~/.boenmind/tauri-update.key`（私钥与密码需妥善保管，丢失则无法发布更新）。
 - **vendored 修补**：pi_agent_rust 在 macOS 上有两处类型不匹配（rustix `st_dev`/`st_mode`），
-  已在 `backend/vendor/pi_agent_rust/src/tools.rs` 修补（上游提交未合入前）。
+  已在 `backend/vendor/pi_agent_rust/src/tools.rs` 修补；上游 Google OAuth 公开凭据与测试假 key
+  因 GitHub push protection 拦截已替换为占位符（BoenMind 走 API key 认证，不受影响）。
 
 ## 已知限制（v0.1）
 

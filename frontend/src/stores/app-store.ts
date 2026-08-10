@@ -5,7 +5,7 @@ import { create } from "zustand";
 import { api, type AppConfig, type ChatStreamEvent, type FileEntry, type HealthInfo, type Message, type Session } from "@/api/client";
 
 export type NavKey = "chat" | "gallery" | "knowledge" | "settings";
-export type SettingsTab = "appearance" | "providers" | "workspace" | "plugins";
+export type SettingsTab = "appearance" | "providers" | "workspace" | "plugins" | "about";
 
 interface AppStore {
   // 导航
