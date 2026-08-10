@@ -123,7 +123,12 @@ async fn get_or_create_agent(
         config.working_dir.clone()
     };
 
-    let handle = create_session_handle(&provider, &model, &working_dir)
+    let extension_paths = {
+        let config = state.config.read().await;
+        bm_core::plugins::enabled_extension_paths(&config)
+    };
+
+    let handle = create_session_handle(&provider, &model, &working_dir, extension_paths)
         .await
         .map_err(|err| (StatusCode::BAD_GATEWAY, format!("创建 agent 会话失败: {err}")))?;
 

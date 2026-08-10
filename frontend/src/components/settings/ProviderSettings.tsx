@@ -28,18 +28,29 @@ import type { ProviderConfig, ProviderKind } from "@/api/client";
 
 const KINDS: { value: ProviderKind; label: string }[] = [
   { value: "openai", label: "OpenAI 兼容" },
+  { value: "minimax", label: "MiniMax（国内）" },
+  { value: "deepseek", label: "DeepSeek" },
+  { value: "openrouter", label: "OpenRouter" },
   { value: "anthropic", label: "Anthropic" },
   { value: "gemini", label: "Google Gemini" },
   { value: "ollama", label: "Ollama（本地）" },
   { value: "llamacpp", label: "llama.cpp（本地）" },
+  { value: "custom", label: "自定义 OpenAI 兼容" },
 ];
 
 const KIND_PRESETS: Record<ProviderKind, { base_url?: string; models?: string[] }> = {
   openai: { base_url: "", models: ["gpt-4o", "gpt-4o-mini"] },
+  minimax: {
+    base_url: "https://api.minimaxi.com/v1",
+    models: ["MiniMax-M3", "MiniMax-M2.5", "MiniMax-M1", "MiniMax-Text-01"],
+  },
+  deepseek: { base_url: "https://api.deepseek.com/v1", models: ["deepseek-chat", "deepseek-reasoner"] },
+  openrouter: { base_url: "https://openrouter.ai/api/v1", models: [] },
   anthropic: { base_url: "", models: ["claude-sonnet-4-5", "claude-haiku-4-5"] },
   gemini: { base_url: "", models: ["gemini-2.5-pro", "gemini-2.5-flash"] },
   ollama: { base_url: "http://127.0.0.1:11434/v1", models: ["qwen3:8b", "llama3.1:8b"] },
   llamacpp: { base_url: "http://127.0.0.1:8080/v1", models: [] },
+  custom: { base_url: "", models: [] },
 };
 
 function emptyProvider(): ProviderConfig {

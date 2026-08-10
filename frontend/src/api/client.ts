@@ -5,7 +5,16 @@
  * 桌面版由 Tauri 壳内嵌启动后端并注入后端地址（VITE_API_BASE / window.__BOENMIND_API__）。
  */
 
-export type ProviderKind = "openai" | "anthropic" | "gemini" | "ollama" | "llamacpp";
+export type ProviderKind =
+  | "openai"
+  | "anthropic"
+  | "gemini"
+  | "ollama"
+  | "llamacpp"
+  | "minimax"
+  | "deepseek"
+  | "openrouter"
+  | "custom";
 
 export interface ProviderConfig {
   id: string;
@@ -56,6 +65,15 @@ export interface HealthInfo {
   workingDir: string;
   providers: number;
   theme: string;
+}
+
+export interface PluginInfo {
+  id: string;
+  name: string;
+  description: string;
+  kind: string;
+  enabled: boolean;
+  builtin: boolean;
 }
 
 /** 聊天流式事件（对应后端 AgentStreamEvent 的 JSON 序列化） */
@@ -115,6 +133,18 @@ export const api = {
     }),
   deleteSession: (id: string) =>
     request<{ ok: boolean }>(`/api/sessions/${id}`, { method: "DELETE" }),
+
+  listPlugins: () => request<PluginInfo[]>("/api/plugins"),
+  setPlugin: (id: string, enabled: boolean) =>
+    request<{ ok: boolean }>(`/api/plugins/${id}`, {
+      method: "POST",
+      body: JSON.stringify({ enabled }),
+    }),
+  installPlugin: (path: string) =>
+    request<PluginInfo>("/api/plugins/install", {
+      method: "POST",
+      body: JSON.stringify({ path }),
+    }),
 
   listWorkspace: (dir = "") =>
     request<{ dir: string; entries: FileEntry[] }>(

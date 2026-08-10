@@ -6,6 +6,7 @@ import { ChatWindow } from "@/components/chat/ChatWindow";
 import { AppearanceSettings } from "@/components/settings/AppearanceSettings";
 import { ProviderSettings } from "@/components/settings/ProviderSettings";
 import { WorkspaceSettings } from "@/components/settings/WorkspaceSettings";
+import { PluginsSettings } from "@/components/settings/PluginsSettings";
 
 export function MainPanel() {
   const activeNav = useAppStore((s) => s.activeNav);
@@ -19,6 +20,7 @@ export function MainPanel() {
           {settingsTab === "appearance" && <AppearanceSettings />}
           {settingsTab === "providers" && <ProviderSettings />}
           {settingsTab === "workspace" && <WorkspaceSettings />}
+          {settingsTab === "plugins" && <PluginsSettings />}
         </div>
       </div>
     );

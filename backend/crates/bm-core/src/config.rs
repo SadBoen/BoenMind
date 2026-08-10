@@ -30,6 +30,9 @@ pub struct AppConfig {
     pub working_dir: PathBuf,
     #[serde(default = "default_theme")]
     pub theme: String,
+    /// 启用的插件（~/.boenmind/extensions 下的扩展 id）
+    #[serde(default)]
+    pub enabled_plugins: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -142,6 +145,7 @@ impl Default for AppConfig {
             default_model: None,
             working_dir: default_working_dir(),
             theme: default_theme(),
+            enabled_plugins: Vec::new(),
         }
     }
 }
@@ -203,7 +207,12 @@ pub fn resolve_model(provider: &ProviderConfig, model: Option<&str>) -> Option<S
         .or_else(|| provider.models.first().cloned())
 }
 
-/// 将 BoenMind 配置同步为 pi agent 的 models.json（baseUrl 覆盖 + 自定义模型注册）。
+/// 将 BoenMind 配置同步为 pi agent 的 models.json。
+///
+/// - 内置提供商（openai/anthropic/gemini/ollama/llamacpp）：注册 baseUrl 覆盖 + 模型
+/// - 自定义 OpenAI 兼容提供商（minimax/deepseek/openrouter/custom-*）：
+///   以独立 provider 名注册，`api: "openai-completions"` 路由 + 独立 baseUrl，
+///   多个 OpenAI 兼容端点可共存互不覆盖
 ///
 /// pi agent 通过 `PI_CODING_AGENT_DIR` 环境变量定位其全局目录，我们指向
 /// `~/.boenmind/pi`，与用户自己的 `~/.pi` 配置互不干扰。
@@ -214,28 +223,45 @@ pub fn sync_pi_models_json(config: &AppConfig) -> Result<(), std::io::Error> {
     fs::create_dir_all(&dir)?;
 
     let mut providers = Map::new();
+    let keys_dir = dir.join("keys");
     for p in &config.providers {
+        let name = p.kind.pi_name(&p.id);
+        let mut entry = Map::new();
         if let Some(base) = &p.base_url {
-            providers.insert(
-                p.kind.pi_name().to_string(),
-                json!({ "baseUrl": base }),
-            );
+            entry.insert("baseUrl".to_string(), json!(base));
         }
-    }
-
-    // 自定义模型注册到 pi 的模型目录，避免"未知模型"校验失败
-    let mut models: Vec<Value> = Vec::new();
-    for p in &config.providers {
-        for m in &p.models {
-            if !models.iter().any(|v| v["id"] == Value::String(m.clone())) {
-                models.push(json!({ "id": m }));
+        if p.kind.is_openai_compatible_route() {
+            // 自定义 OpenAI 兼容路由：必须显式指定 API 类型
+            entry.insert("api".to_string(), json!("openai-completions"));
+        }
+        // API key 通过 file: 引用写入独立文件（pi 官方支持模式，避免凭据落在 models.json）
+        if let Some(key) = &p.api_key {
+            if !key.is_empty() {
+                fs::create_dir_all(&keys_dir)?;
+                let key_file = keys_dir.join(format!("{name}.key"));
+                fs::write(&key_file, key)?;
+                entry.insert(
+                    "apiKey".to_string(),
+                    json!(format!("file:{}", key_file.display())),
+                );
+                // 自定义 provider 无内置 auth metadata，必须显式声明才会携带 Authorization 头
+                entry.insert("authHeader".to_string(), json!(true));
             }
         }
+        // 注册模型列表（仅注册本提供商声明的模型，避免污染内置目录）
+        let models: Vec<Value> = p
+            .models
+            .iter()
+            .map(|m| json!({ "id": m }))
+            .collect();
+        if !models.is_empty() {
+            entry.insert("models".to_string(), Value::Array(models));
+        }
+        providers.insert(name, Value::Object(entry));
     }
 
     let doc = json!({
         "providers": Value::Object(providers),
-        "models": Value::Array(models),
     });
 
     fs::write(dir.join("models.json"), serde_json::to_string_pretty(&doc)?)
@@ -247,8 +273,10 @@ mod tests {
 
     #[test]
     fn provider_kind_pi_name() {
-        assert_eq!(ProviderKind::Openai.pi_name(), "openai");
-        assert_eq!(ProviderKind::Ollama.pi_name(), "ollama");
+        assert_eq!(ProviderKind::Openai.pi_name("p1"), "openai");
+        assert_eq!(ProviderKind::Ollama.pi_name("p1"), "ollama");
+        assert_eq!(ProviderKind::Minimax.pi_name("p1"), "minimax");
+        assert_eq!(ProviderKind::Custom.pi_name("p-abc"), "custom-p-abc");
     }
 
     #[test]

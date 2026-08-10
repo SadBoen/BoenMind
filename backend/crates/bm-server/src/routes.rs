@@ -174,6 +174,49 @@ pub async fn delete_session(
 }
 
 // ---------------------------------------------------------------------------
+// 插件
+// ---------------------------------------------------------------------------
+
+pub async fn list_plugins(State(state): crate::SharedState) -> ApiResult<Json<Vec<bm_core::plugins::PluginInfo>>> {
+    let config = state.config.read().await;
+    bm_core::plugins::list_plugins(&config)
+        .map(Json)
+        .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))
+}
+
+#[derive(Deserialize)]
+pub struct SetPluginRequest {
+    pub enabled: bool,
+}
+
+pub async fn set_plugin(
+    State(state): crate::SharedState,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(req): Json<SetPluginRequest>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let mut config = state.config.write().await;
+    bm_core::plugins::set_plugin_enabled(&mut config, &id, req.enabled)
+        .map_err(|err| api_error(StatusCode::BAD_REQUEST, err))?;
+    // 插件启停影响 agent 会话创建，需同步 models.json 之外的配置（无需重启）
+    drop(config);
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+pub struct InstallPluginRequest {
+    pub path: String,
+}
+
+pub async fn install_plugin(
+    Json(req): Json<InstallPluginRequest>,
+) -> ApiResult<Json<bm_core::plugins::PluginInfo>> {
+    let info = bm_core::plugins::install_plugin(std::path::Path::new(&req.path))
+        .map_err(|err| api_error(StatusCode::BAD_REQUEST, err))?;
+    // 安装后默认禁用，由用户在 UI 启用
+    Ok(Json(info))
+}
+
+// ---------------------------------------------------------------------------
 // 工作文件夹
 // ---------------------------------------------------------------------------
 

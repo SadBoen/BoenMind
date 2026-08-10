@@ -56,6 +56,9 @@ fn router(state: AppState) -> Router {
         .route("/api/config", get(routes::get_config).put(routes::put_config))
         .route("/api/sessions", get(routes::list_sessions).post(routes::create_session))
         .route("/api/sessions/{id}", get(routes::get_session).patch(routes::rename_session).delete(routes::delete_session))
+        .route("/api/plugins", get(routes::list_plugins))
+        .route("/api/plugins/install", post(routes::install_plugin))
+        .route("/api/plugins/{id}", post(routes::set_plugin))
         .route("/api/chat", post(chat::chat))
         .route("/api/workspace/list", get(routes::list_workspace))
         .route("/api/workspace/file", get(routes::read_workspace_file))
@@ -80,6 +83,11 @@ pub fn init() -> Result<(AppConfig, Db), Box<dyn std::error::Error>> {
 
     // 3. 同步 models.json（provider baseUrl 覆盖 + 自定义模型注册）
     bm_core::config::sync_pi_models_json(&config)?;
+
+    // 3.5 预装内置示例插件（hello / bookmark）
+    if let Err(err) = bm_core::plugins::ensure_builtin_plugins() {
+        eprintln!("[bm-server] 预装示例插件失败: {err}");
+    }
 
     // 4. 数据库
     let db = Db::open()?;
