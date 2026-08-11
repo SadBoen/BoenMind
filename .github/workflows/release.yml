@@ -263,8 +263,9 @@ jobs:
           docker buildx build -f packaging/linux/Dockerfile.ci \
             --platform linux/arm64 --build-arg BM_BINARY=bm-server-aarch64 \
             -t "${IMG}-arm64" --push .
-          docker manifest create "$IMG" --amend "${IMG}-amd64" --amend "${IMG}-arm64"
-          docker manifest push "$IMG"
+          # buildx 推送的 tag 是 manifest list（含 provenance attestation），
+          # docker manifest create 不接受，用 buildx imagetools 合并多架构索引
+          docker buildx imagetools create -t "$IMG" "${IMG}-amd64" "${IMG}-arm64"
 
   # ============================================================
   # 聚合发布：创建 GitHub Release 并上传全部产物（仅正式 tag）
