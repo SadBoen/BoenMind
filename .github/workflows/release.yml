@@ -89,20 +89,25 @@ jobs:
             cp src-tauri/target/$TRIPLE/release/bundle/dmg/*.dmg "../dist-mac/"
           done
 
-          # 合并两个架构的 latest.json（tauri 每架构生成一份，只含自己）
+          # 合并两个架构的 latest.json：签名直接读 .sig 文件（tauri 生成的
+          # latest.json 位置随版本变动，而 .sig 路径稳定且内容即 signature 字段）
           python3 - "$VER" "$TAG" <<'PY'
-          import glob, json, sys
+          import datetime, json, sys
           ver, tag = sys.argv[1], sys.argv[2]
           base = f"https://github.com/SadBoen/BoenMind/releases/download/{tag}"
-          merged = {"version": ver, "notes": f"BoenMind v{ver}", "pub_date": "", "platforms": {}}
-          for path in glob.glob("src-tauri/target/*/release/bundle/*/latest.json"):
-              arch = "aarch64" if "aarch64" in path else "x86_64"
-              with open(path) as f:
-                  one = json.load(f)
-              merged["pub_date"] = one.get("pub_date", "")
+          merged = {
+              "version": ver,
+              "notes": f"BoenMind v{ver}",
+              "pub_date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "platforms": {},
+          }
+          for arch, triple in [("aarch64", "aarch64-apple-darwin"), ("x86_64", "x86_64-apple-darwin")]:
+              sig_path = f"src-tauri/target/{triple}/release/bundle/macos/BoenMind.app.tar.gz.sig"
+              with open(sig_path) as f:
+                  signature = f.read().strip()
               merged["platforms"][f"darwin-{arch}"] = {
                   "url": f"{base}/BoenMind_{ver}_{arch}.app.tar.gz",
-                  "signature": one["platforms"][f"darwin-{arch}"]["signature"],
+                  "signature": signature,
               }
           with open("../dist-mac/latest.json", "w") as f:
               json.dump(merged, f, ensure_ascii=False)
