@@ -82,11 +82,11 @@ jobs:
 
           for ARCH in aarch64 x86_64; do
             TRIPLE="$([ "$ARCH" = aarch64 ] && echo aarch64-apple-darwin || echo x86_64-apple-darwin)"
-            BUNDLE="src-tauri/target/$TRIPLE/release/bundle"
-            # .app.tar.gz（自动更新目标）+ dmg + 签名
-            tar czf "../dist-mac/BoenMind_${VER}_${ARCH}.app.tar.gz" -C "$BUNDLE/app" BoenMind.app
-            cp "$BUNDLE"/dmg/*.dmg "../dist-mac/"
-            find src-tauri/target/$TRIPLE/release -name "*.sig" -exec cp {} ../dist-mac/ \;
+            MACOS_DIR="src-tauri/target/$TRIPLE/release/bundle/macos"
+            # tauri 已生成 app.tar.gz（自动更新目标）+ .sig，重命名带架构避免冲突
+            mv "$MACOS_DIR/BoenMind.app.tar.gz" "../dist-mac/BoenMind_${VER}_${ARCH}.app.tar.gz"
+            mv "$MACOS_DIR/BoenMind.app.tar.gz.sig" "../dist-mac/BoenMind_${VER}_${ARCH}.app.tar.gz.sig"
+            cp src-tauri/target/$TRIPLE/release/bundle/dmg/*.dmg "../dist-mac/"
           done
 
           # 合并两个架构的 latest.json（tauri 每架构生成一份，只含自己）
@@ -95,7 +95,7 @@ jobs:
           ver, tag = sys.argv[1], sys.argv[2]
           base = f"https://github.com/SadBoen/BoenMind/releases/download/{tag}"
           merged = {"version": ver, "notes": f"BoenMind v{ver}", "pub_date": "", "platforms": {}}
-          for path in glob.glob("src-tauri/target/*/release/bundle/latest.json"):
+          for path in glob.glob("src-tauri/target/*/release/bundle/*/latest.json"):
               arch = "aarch64" if "aarch64" in path else "x86_64"
               with open(path) as f:
                   one = json.load(f)
