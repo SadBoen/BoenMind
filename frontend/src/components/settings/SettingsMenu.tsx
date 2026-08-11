@@ -1,19 +1,22 @@
 /**
  * 设置二级菜单：外观 / 模型提供商 / 工作文件夹。
  */
-import { FolderOpen, Info, MonitorCog, Palette, Puzzle } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { FolderOpen, Info, MonitorCog, Palette, Puzzle, Wand2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppStore, type SettingsTab } from "@/stores/app-store";
 
-const MENU_ITEMS: { key: SettingsTab; label: string; icon: React.ReactNode; desc: string }[] = [
-  { key: "appearance", label: "外观", icon: <Palette size={16} />, desc: "主题与显示" },
-  { key: "providers", label: "模型提供商", icon: <MonitorCog size={16} />, desc: "模型与 API 配置" },
-  { key: "workspace", label: "工作文件夹", icon: <FolderOpen size={16} />, desc: "默认文件浏览目录" },
-  { key: "plugins", label: "插件", icon: <Puzzle size={16} />, desc: "扩展与工具" },
-  { key: "about", label: "关于", icon: <Info size={16} />, desc: "版本与更新" },
+const MENU_ITEMS: { key: SettingsTab; labelKey: string; icon: React.ReactNode; descKey: string }[] = [
+  { key: "appearance", labelKey: "settings.menu.appearance", icon: <Palette size={16} />, descKey: "settings.menu.appearanceDesc" },
+  { key: "providers", labelKey: "settings.menu.providers", icon: <MonitorCog size={16} />, descKey: "settings.menu.providersDesc" },
+  { key: "workspace", labelKey: "settings.menu.workspace", icon: <FolderOpen size={16} />, descKey: "settings.menu.workspaceDesc" },
+  { key: "plugins", labelKey: "settings.menu.plugins", icon: <Puzzle size={16} />, descKey: "settings.menu.pluginsDesc" },
+  { key: "skills", labelKey: "settings.menu.skills", icon: <Wand2 size={16} />, descKey: "settings.menu.skillsDesc" },
+  { key: "about", labelKey: "settings.menu.about", icon: <Info size={16} />, descKey: "settings.menu.aboutDesc" },
 ];
 
 export function SettingsMenu() {
+  const { t } = useTranslation();
   const settingsTab = useAppStore((s) => s.settingsTab);
   const setSettingsTab = useAppStore((s) => s.setSettingsTab);
 
@@ -33,8 +36,8 @@ export function SettingsMenu() {
         >
           {item.icon}
           <div className="min-w-0">
-            <p className="font-medium leading-tight">{item.label}</p>
-            <p className="text-[10px] text-muted-foreground">{item.desc}</p>
+            <p className="font-medium leading-tight">{t(item.labelKey)}</p>
+            <p className="text-[10px] text-muted-foreground">{t(item.descKey)}</p>
           </div>
         </button>
       ))}

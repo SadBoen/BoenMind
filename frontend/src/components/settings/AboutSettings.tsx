@@ -3,6 +3,7 @@
  * 升级走 Tauri updater（仅桌面版可用）：检测 GitHub Release → 后台下载 → 提示重启。
  */
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { CheckCircle2, Download, RefreshCw, Rocket, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -22,6 +23,7 @@ type UpdateState =
   | { status: "error"; message: string };
 
 export function AboutSettings() {
+  const { t } = useTranslation();
   const health = useAppStore((s) => s.health);
   const [state, setState] = useState<UpdateState>({ status: "idle" });
 
@@ -32,7 +34,7 @@ export function AboutSettings() {
 
   const checkForUpdates = async () => {
     if (!isDesktop) {
-      toast.info("网页版无需更新，请使用桌面版体验自动升级");
+      toast.info(t("settings.about.webNoUpdate"));
       return;
     }
     setState({ status: "checking" });
@@ -41,7 +43,7 @@ export function AboutSettings() {
       const update = await check();
       if (!update) {
         setState({ status: "none" });
-        toast.success("已是最新版本");
+        toast.success(t("settings.about.latest"));
         return;
       }
       setState({ status: "available", version: update.version, notes: update.body ?? undefined });
@@ -57,7 +59,7 @@ export function AboutSettings() {
       const { relaunch } = await import("@tauri-apps/plugin-process");
       const update = await check();
       if (!update || update.version !== version) {
-        setState({ status: "error", message: "更新状态已变化，请重新检查" });
+        setState({ status: "error", message: t("settings.about.stateChanged") });
         return;
       }
       let downloaded = 0;
@@ -68,10 +70,10 @@ export function AboutSettings() {
         }
       });
       setState({ status: "installed", version });
-      toast("更新已安装，重启后生效", {
-        description: "点击「立即重启」完成升级",
+      toast(t("settings.about.installedToast"), {
+        description: t("settings.about.installedToastDesc"),
         action: {
-          label: "立即重启",
+          label: t("settings.about.relaunchNow"),
           onClick: () => void relaunch(),
         },
         duration: 60000,
@@ -86,35 +88,35 @@ export function AboutSettings() {
       const { relaunch } = await import("@tauri-apps/plugin-process");
       await relaunch();
     } catch (err) {
-      toast.error(`重启失败: ${String(err)}`);
+      toast.error(t("settings.about.relaunchFailed", { error: String(err) }));
     }
   };
 
   return (
     <section className="space-y-5">
       <div>
-        <h2 className="text-lg font-semibold">关于</h2>
-        <p className="text-sm text-muted-foreground">版本信息与自动更新</p>
+        <h2 className="text-lg font-semibold">{t("settings.about.title")}</h2>
+        <p className="text-sm text-muted-foreground">{t("settings.about.desc")}</p>
       </div>
 
       <div className="space-y-3 rounded-xl border p-4">
         <div className="flex items-center justify-between">
           <div>
             <h3 className="font-semibold">BoenMind</h3>
-            <p className="text-xs text-muted-foreground">
-              个人知识管理 · LLM-WIKI + 个人 Agent
-            </p>
+            <p className="text-xs text-muted-foreground">{t("settings.about.tagline")}</p>
           </div>
           <Badge variant="secondary">v{APP_VERSION}</Badge>
         </div>
         <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-muted-foreground">
-          <span>后端：v{health?.version ?? "-"}</span>
-          <span>{health ? `${health.providers} 个提供商` : "后端未连接"}</span>
-          <span>{isDesktop ? "桌面版（Tauri）" : "网页版"}</span>
+          <span>{t("settings.about.backendV", { version: health?.version ?? "-" })}</span>
+          <span>
+            {health
+              ? t("settings.about.providersCount", { count: health.providers })
+              : t("settings.about.backendOffline")}
+          </span>
+          <span>{isDesktop ? t("settings.about.desktop") : t("settings.about.web")}</span>
         </div>
-        <p className="text-xs text-muted-foreground">
-          自动更新通过 GitHub Releases 分发，macOS 上后台下载、重启后生效。
-        </p>
+        <p className="text-xs text-muted-foreground">{t("settings.about.updateViaReleases")}</p>
       </div>
 
       {/* 更新状态区 */}
@@ -122,21 +124,21 @@ export function AboutSettings() {
         {state.status === "idle" && (
           <Button onClick={() => void checkForUpdates()}>
             <RefreshCw size={15} className="mr-1" />
-            检查更新
+            {t("settings.about.checkUpdate")}
           </Button>
         )}
         {state.status === "checking" && (
           <Button disabled>
             <RefreshCw size={15} className="mr-1 animate-spin" />
-            检查中…
+            {t("settings.about.checking")}
           </Button>
         )}
         {state.status === "none" && (
           <div className="flex items-center gap-2 text-sm text-emerald-600">
             <CheckCircle2 size={16} />
-            已是最新版本 v{APP_VERSION}
+            {t("settings.about.latestVersion", { version: APP_VERSION })}
             <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => void checkForUpdates()}>
-              重新检查
+              {t("settings.about.recheck")}
             </Button>
           </div>
         )}
@@ -144,7 +146,7 @@ export function AboutSettings() {
           <div className="rounded-xl border p-4">
             <div className="flex items-center gap-2">
               <Rocket size={16} className="text-primary" />
-              <h4 className="font-semibold">发现新版本 v{state.version}</h4>
+              <h4 className="font-semibold">{t("settings.about.available", { version: state.version })}</h4>
             </div>
             {state.notes && (
               <p className="mt-2 whitespace-pre-wrap rounded-lg bg-muted/50 p-3 text-xs text-muted-foreground">
@@ -154,10 +156,10 @@ export function AboutSettings() {
             <div className="mt-3 flex gap-2">
               <Button size="sm" onClick={() => void downloadAndInstall(state.version)}>
                 <Download size={14} className="mr-1" />
-                下载并安装
+                {t("settings.about.downloadInstall")}
               </Button>
               <Button size="sm" variant="outline" onClick={() => setState({ status: "idle" })}>
-                稍后
+                {t("settings.about.later")}
               </Button>
             </div>
           </div>
@@ -166,20 +168,22 @@ export function AboutSettings() {
           <div className="space-y-2 rounded-xl border p-4">
             <p className="flex items-center gap-2 text-sm">
               <Download size={15} className="animate-pulse text-primary" />
-              正在后台下载更新… 已下载 {(state.percent / 1024 / 1024).toFixed(1)} MB
+              {t("settings.about.downloading", {
+                mb: (state.percent / 1024 / 1024).toFixed(1),
+              })}
             </p>
             <Progress value={100} className="animate-pulse" />
-            <p className="text-xs text-muted-foreground">下载完成后会提示重启，不影响当前使用</p>
+            <p className="text-xs text-muted-foreground">{t("settings.about.downloadHint")}</p>
           </div>
         )}
         {state.status === "installed" && (
           <div className="flex items-center gap-2 rounded-xl border border-emerald-600/30 bg-emerald-500/5 p-4 text-sm">
             <CheckCircle2 size={16} className="text-emerald-600" />
             <span className="flex-1">
-              v{state.version} 已安装，重启后生效
+              {t("settings.about.installed", { version: state.version })}
             </span>
             <Button size="sm" onClick={() => void relaunchNow()}>
-              立即重启
+              {t("settings.about.relaunchNow")}
             </Button>
           </div>
         )}
@@ -188,7 +192,7 @@ export function AboutSettings() {
             <XCircle size={16} />
             <span className="flex-1 break-all">{state.message}</span>
             <Button size="sm" variant="outline" onClick={() => setState({ status: "idle" })}>
-              关闭
+              {t("common.close")}
             </Button>
           </div>
         )}

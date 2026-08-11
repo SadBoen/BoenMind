@@ -29,6 +29,10 @@ use tokio_stream::{StreamExt, wrappers::ReceiverStream};
 
 use crate::{AppState, api_error};
 
+/// 各语言下的默认新会话标题（前端创建会话时按界面语言传入，
+/// 首条消息前识别为"未命名"，自动用消息开头命名）。
+const DEFAULT_TITLES: [&str; 4] = ["新对话", "New chat", "新しいチャット", "새 채팅"];
+
 /// 聊天请求：会话必须已存在（前端先创建会话再发消息）。
 /// `model`/`thinking` 可选，用于在当前会话即时切换模型与思考强度。
 #[derive(Deserialize)]
@@ -58,8 +62,8 @@ pub async fn chat(
         }
     };
 
-    // 首次消息时自动用消息开头命名会话
-    if session.title == "新对话" {
+    // 首次消息时自动用消息开头命名会话（各语言默认标题均视为未命名）
+    if DEFAULT_TITLES.contains(&session.title.as_str()) {
         let title: String = message.chars().take(24).collect();
         let _ = state.db.rename_session(&session.id, &title);
     }
@@ -150,9 +154,22 @@ async fn get_or_create_agent(
         bm_core::plugins::enabled_extension_paths(&config)
     };
 
-    let handle = create_session_handle(&provider, &model, &working_dir, extension_paths, thinking_override)
-        .await
-        .map_err(|err| (StatusCode::BAD_GATEWAY, format!("创建 agent 会话失败: {err}")))?;
+    // 启用的 skill 注入文本（pi CLI 同款 available_skills 格式）
+    let skills_prompt = {
+        let config = state.config.read().await;
+        bm_core::skills::enabled_skills_prompt(&config)
+    };
+
+    let handle = create_session_handle(
+        &provider,
+        &model,
+        &working_dir,
+        extension_paths,
+        &skills_prompt,
+        thinking_override,
+    )
+    .await
+    .map_err(|err| (StatusCode::BAD_GATEWAY, format!("创建 agent 会话失败: {err}")))?;
 
     let mut agents = state.agents.lock().await;
     let entry = agents

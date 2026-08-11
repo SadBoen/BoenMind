@@ -6,6 +6,8 @@ pub mod agent;
 pub mod config;
 pub mod db;
 pub mod plugins;
+pub mod providers;
+pub mod skills;
 pub mod workspace;
 
 pub use config::{AppConfig, ProviderConfig, ProviderKind};

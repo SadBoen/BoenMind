@@ -5,6 +5,7 @@
  * hover 横条变长并弹出该条输入的内容预览，点击平滑滚动到对应消息。
  */
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 
 export function ScrollIndicators({
@@ -12,6 +13,7 @@ export function ScrollIndicators({
 }: {
   containerRef: RefObject<HTMLDivElement | null>;
 }) {
+  const { t } = useTranslation();
   const [tick, setTick] = useState(0);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const railRef = useRef<HTMLDivElement>(null);
@@ -66,7 +68,7 @@ export function ScrollIndicators({
           <button
             key={item.idx}
             type="button"
-            aria-label="跳转到该条消息"
+            aria-label={t("chat.scroll.jumpToMessage")}
             onMouseEnter={() => setHoverIdx(item.idx)}
             onClick={() => {
               const el = containerRef.current;
@@ -99,7 +101,7 @@ export function ScrollIndicators({
               style={{ top: y, right: window.innerWidth - rect.left + 14 }}
             >
               <p className="line-clamp-3 whitespace-pre-wrap break-words leading-relaxed opacity-90">
-                {hovered.preview || "（无内容）"}
+                {hovered.preview || t("chat.scroll.emptyPreview")}
               </p>
             </div>
           );

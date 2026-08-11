@@ -2,6 +2,7 @@
  * 文件预览：Markdown / 纯文本 / 代码 / 图片 / PDF。
  */
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { ArrowLeft, FileQuestion, Loader2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -20,6 +21,7 @@ type PreviewData = {
 };
 
 export function FilePreview({ file }: { file: FileEntry }) {
+  const { t } = useTranslation();
   const openFile = useAppStore((s) => s.openFile);
   const [data, setData] = useState<PreviewData | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -45,7 +47,7 @@ export function FilePreview({ file }: { file: FileEntry }) {
           variant="ghost"
           size="icon"
           className="h-7 w-7"
-          title="返回列表"
+          title={t("files.preview.backToList")}
           onClick={() => openFile(null)}
         >
           <ArrowLeft size={14} />
@@ -100,7 +102,7 @@ export function FilePreview({ file }: { file: FileEntry }) {
           ) : (
             <div className="flex flex-col items-center gap-2 py-10 text-muted-foreground">
               <FileQuestion size={28} />
-              <p className="text-xs">暂不支持预览该文件类型（{data.mime}）</p>
+              <p className="text-xs">{t("files.preview.unsupported", { mime: data.mime })}</p>
             </div>
           )}
         </div>

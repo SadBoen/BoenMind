@@ -1,6 +1,7 @@
 /**
  * 最左侧 48px 竖排导航栏：对话（激活）、图库/知识库（占位）、底部设置。
  */
+import { useTranslation } from "react-i18next";
 import { BookOpenText, Images, MessageSquare, Settings } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -46,6 +47,7 @@ function NavButton({
 }
 
 export function NavBar() {
+  const { t } = useTranslation();
   const activeNav = useAppStore((s) => s.activeNav);
   const setNav = useAppStore((s) => s.setNav);
 
@@ -57,17 +59,17 @@ export function NavBar() {
       <div className="flex flex-1 flex-col items-center gap-2">
         <NavButton
           icon={<MessageSquare size={20} />}
-          label="对话"
+          label={t("nav.chat")}
           active={activeNav === "chat"}
           onClick={() => setNav("chat")}
         />
-        <NavButton icon={<Images size={20} />} label="图库（即将推出）" disabled />
-        <NavButton icon={<BookOpenText size={20} />} label="知识库（即将推出）" disabled />
+        <NavButton icon={<Images size={20} />} label={t("nav.gallerySoon")} disabled />
+        <NavButton icon={<BookOpenText size={20} />} label={t("nav.knowledgeSoon")} disabled />
       </div>
       <div className="flex flex-col items-center gap-2">
         <NavButton
           icon={<Settings size={20} />}
-          label="设置"
+          label={t("nav.settings")}
           active={activeNav === "settings"}
           onClick={() => setNav("settings")}
         />

@@ -3,6 +3,7 @@
  * 位于最右侧，可与主面板共享区域（最大化时占自身+主区）。
  */
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   ChevronLeft,
   File,
@@ -23,6 +24,7 @@ import { useAppStore } from "@/stores/app-store";
 import { FilePreview } from "./FilePreview";
 
 export function FilePanel() {
+  const { t } = useTranslation();
   const workspaceDir = useAppStore((s) => s.workspaceDir);
   const entries = useAppStore((s) => s.entries);
   const loadingFiles = useAppStore((s) => s.loadingFiles);
@@ -41,7 +43,7 @@ export function FilePanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [health?.workingDir]);
 
-  const dirName = workspaceDir === "" ? "工作文件夹" : workspaceDir.split("/").pop();
+  const dirName = workspaceDir === "" ? t("files.workspace") : workspaceDir.split("/").pop();
 
   const filtered = entries.filter((e) => e.name.toLowerCase().includes(query.trim().toLowerCase()));
 
@@ -54,7 +56,7 @@ export function FilePanel() {
             variant="ghost"
             size="icon"
             className="h-7 w-7"
-            title="上一级"
+            title={t("files.parent")}
             onClick={() => void navigateDir(workspaceDir.split("/").slice(0, -1).join("/"))}
           >
             <ChevronLeft size={15} />
@@ -67,7 +69,7 @@ export function FilePanel() {
           variant="ghost"
           size="icon"
           className="h-7 w-7"
-          title="刷新"
+          title={t("common.refresh")}
           onClick={() => void navigateDir(workspaceDir)}
         >
           <RefreshCw size={14} className={cn(loadingFiles && "animate-spin")} />
@@ -76,7 +78,7 @@ export function FilePanel() {
           variant="ghost"
           size="icon"
           className="h-7 w-7"
-          title={fileMaximized ? "还原" : "最大化"}
+          title={fileMaximized ? t("files.restore") : t("files.maximize")}
           onClick={toggleFileMaximized}
         >
           {fileMaximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
@@ -94,7 +96,7 @@ export function FilePanel() {
               <Input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="筛选文件…"
+                placeholder={t("files.filter")}
                 className="h-7 pl-7 text-xs"
               />
             </div>
@@ -103,7 +105,7 @@ export function FilePanel() {
             <div className="px-2 pb-3">
               {filtered.length === 0 && (
                 <p className="py-8 text-center text-xs text-muted-foreground">
-                  {loadingFiles ? "加载中…" : "此文件夹为空"}
+                  {loadingFiles ? t("common.loading") : t("files.empty")}
                 </p>
               )}
               {filtered.map((entry) => (

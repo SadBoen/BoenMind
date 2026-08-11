@@ -5,6 +5,8 @@
  * 桌面版由 Tauri 壳内嵌启动后端并注入后端地址（VITE_API_BASE / window.__BOENMIND_API__）。
  */
 
+import i18n from "@/i18n";
+
 export type ProviderKind =
   | "openai"
   | "anthropic"
@@ -14,6 +16,21 @@ export type ProviderKind =
   | "minimax"
   | "deepseek"
   | "openrouter"
+  | "moonshot"
+  | "zhipu"
+  | "qwen"
+  | "xai"
+  | "zai"
+  | "groq"
+  | "mistral"
+  | "together"
+  | "cerebras"
+  | "fireworks"
+  | "huggingface"
+  | "nvidia"
+  | "xiaomi"
+  | "antling"
+  | "baseten"
   | "custom";
 
 export interface ProviderConfig {
@@ -32,6 +49,7 @@ export interface AppConfig {
   default_model?: string;
   working_dir: string;
   theme: string;
+  lang: string;
 }
 
 export interface Session {
@@ -65,6 +83,7 @@ export interface HealthInfo {
   workingDir: string;
   providers: number;
   theme: string;
+  lang: string;
 }
 
 export interface PluginInfo {
@@ -74,6 +93,27 @@ export interface PluginInfo {
   kind: string;
   enabled: boolean;
   builtin: boolean;
+}
+
+export interface SkillInfo {
+  id: string;
+  name: string;
+  description: string;
+  owner?: string;
+  repo?: string;
+  /** registry（skills.sh）/ local */
+  source: string;
+  enabled: boolean;
+}
+
+/** skills.sh 随机抽取的候选（尚未安装） */
+export interface SkillCandidate {
+  skill_id: string;
+  name: string;
+  description: string;
+  owner: string;
+  repo: string;
+  url: string;
 }
 
 /** 聊天流式事件（对应后端 AgentStreamEvent 的 JSON 序列化） */
@@ -121,6 +161,25 @@ export const api = {
   saveConfig: (config: AppConfig) =>
     request<{ ok: boolean }>("/api/config", { method: "PUT", body: JSON.stringify(config) }),
 
+  /** 向提供商接口拉取模型列表（表单临时填写的端点/key，不落盘） */
+  listProviderModels: (body: { kind: ProviderKind; base_url?: string; api_key?: string }) =>
+    request<{ models: string[] }>("/api/providers/list-models", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  /** 测试提供商连接；message 为空仅测连通，非空发送真实对话 */
+  testProvider: (body: {
+    kind: ProviderKind;
+    base_url?: string;
+    api_key?: string;
+    model?: string;
+    message?: string;
+  }) =>
+    request<{ ok: boolean; detail: string }>("/api/providers/test", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
   listSessions: () => request<Session[]>("/api/sessions"),
   createSession: (body?: { provider_id?: string; model?: string; title?: string }) =>
     request<Session>("/api/sessions", { method: "POST", body: JSON.stringify(body ?? {}) }),
@@ -145,6 +204,22 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ path }),
     }),
+
+  listSkills: () => request<SkillInfo[]>("/api/skills"),
+  setSkill: (id: string, enabled: boolean) =>
+    request<{ ok: boolean }>(`/api/skills/${id}`, {
+      method: "POST",
+      body: JSON.stringify({ enabled }),
+    }),
+  uninstallSkill: (id: string) =>
+    request<{ ok: boolean }>(`/api/skills/${id}`, { method: "DELETE" }),
+  installSkill: (body: { owner: string; repo: string; skill_id: string } | { path: string }) =>
+    request<SkillInfo>("/api/skills/install", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  randomSkills: (count = 5) =>
+    request<SkillCandidate[]>(`/api/skills/registry/random?count=${count}`),
 
   listWorkspace: (dir = "") =>
     request<{ dir: string; entries: FileEntry[] }>(
@@ -189,7 +264,7 @@ export const api = {
           });
           if (!res.ok || !res.body) {
             const body = await res.json().catch(() => null);
-            throw new Error(body?.error ?? `请求失败: ${res.status}`);
+            throw new Error(body?.error ?? i18n.t("api.requestFailed", { status: res.status }));
           }
           const reader = res.body.getReader();
           const decoder = new TextDecoder();

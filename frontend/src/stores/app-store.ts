@@ -3,9 +3,10 @@
  */
 import { create } from "zustand";
 import { api, type AppConfig, type ChatStreamEvent, type FileEntry, type HealthInfo, type Message, type Session } from "@/api/client";
+import i18n, { applyLang, isLang } from "@/i18n";
 
 export type NavKey = "chat" | "gallery" | "knowledge" | "settings";
-export type SettingsTab = "appearance" | "providers" | "workspace" | "plugins" | "about";
+export type SettingsTab = "appearance" | "providers" | "workspace" | "plugins" | "skills" | "about";
 
 interface AppStore {
   // 导航
@@ -83,7 +84,8 @@ export const useAppStore = create<AppStore>((set, get) => {
           prev.status !== health.status ||
           prev.workingDir !== health.workingDir ||
           prev.providers !== health.providers ||
-          prev.theme !== health.theme;
+          prev.theme !== health.theme ||
+          prev.lang !== health.lang;
         if (changed) set({ health, online: true });
       } catch {
         if (get().online) set({ online: false });
@@ -95,6 +97,10 @@ export const useAppStore = create<AppStore>((set, get) => {
       try {
         const config = await api.getConfig();
         set({ config });
+        // 语言以后端 config.toml 为准（桌面/网页一致），与 localStorage 不同时校正
+        if (isLang(config.lang) && config.lang !== i18n.language) {
+          applyLang(config.lang);
+        }
       } catch {
         /* 后端未就绪时保持现状 */
       }
@@ -132,6 +138,8 @@ export const useAppStore = create<AppStore>((set, get) => {
       const session = await api.createSession({
         provider_id: config?.default_provider,
         model: config?.default_model,
+        // 默认标题跟随界面语言；后端将其视为"未命名"，首条消息后自动命名
+        title: i18n.t("chat.newSession"),
       });
       await get().loadSessions();
       await get().selectSession(session.id);

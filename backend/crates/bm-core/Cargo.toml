@@ -1,6 +1,6 @@
 [package]
 name = "bm-core"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "BoenMind domain layer: config, sessions, workspace files, agent wrapper"
 
@@ -13,3 +13,8 @@ dirs = "6"
 thiserror = "2"
 tokio = { version = "1", features = ["sync"] }
 rusqlite = { version = "0.39", features = ["bundled"] }
+# skills 安装/浏览：HTTP 抓取 + tarball 解压 + 随机抽取
+ureq = { version = "3", features = ["json", "gzip"] }
+flate2 = "1"
+tar = "0.4"
+rand = "0.8"

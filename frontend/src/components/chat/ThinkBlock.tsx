@@ -3,6 +3,7 @@
  * 流式输出期间未闭合的 think 块保持展开（展示思考过程进行中）。
  */
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Brain, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -48,6 +49,7 @@ export function hasThinkBlock(text: string): boolean {
 }
 
 export function ThinkBlock({ content, open }: { content: string; open?: boolean }) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(open ?? false);
   // 流式未闭合块默认展开
   const isExpanded = expanded;
@@ -60,7 +62,7 @@ export function ThinkBlock({ content, open }: { content: string; open?: boolean 
         className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
       >
         <Brain size={13} className="shrink-0" />
-        <span className="font-medium">思考过程</span>
+        <span className="font-medium">{t("chat.think.process")}</span>
         {!isExpanded && content.length > 0 && (
           <span className="ml-1 truncate text-[10px] opacity-60">{content.slice(0, 40)}…</span>
         )}

@@ -2,6 +2,7 @@
  * 会话列表：新建、搜索、切换、重命名、删除。
  */
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { MoreHorizontal, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,18 +12,11 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { cn } from "@/lib/utils";
+import { cn, formatTime } from "@/lib/utils";
 import { useAppStore } from "@/stores/app-store";
 
-function formatTime(ts: number): string {
-  const d = new Date(ts * 1000);
-  const now = new Date();
-  const sameDay = d.toDateString() === now.toDateString();
-  if (sameDay) return d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
-  return d.toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" });
-}
-
 export function SessionList() {
+  const { t, i18n } = useTranslation();
   const sessions = useAppStore((s) => s.sessions);
   const activeSessionId = useAppStore((s) => s.activeSessionId);
   const selectSession = useAppStore((s) => s.selectSession);
@@ -59,10 +53,10 @@ export function SessionList() {
           size="sm"
           className="flex-1 gap-1"
           onClick={() => void createSession()}
-          title="新建对话"
+          title={t("sessionList.newChat")}
         >
           <Plus size={14} />
-          新建对话
+          {t("sessionList.newChat")}
         </Button>
       </div>
       <div className="px-3 pb-2">
@@ -71,7 +65,7 @@ export function SessionList() {
           <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="搜索会话…"
+            placeholder={t("sessionList.search")}
             className="h-8 pl-8 text-xs"
           />
         </div>
@@ -80,7 +74,7 @@ export function SessionList() {
       <div className="flex-1 space-y-0.5 overflow-y-auto px-2 pb-2">
         {filtered.length === 0 && (
           <p className="px-2 py-6 text-center text-xs text-muted-foreground">
-            {sessions.length === 0 ? "暂无对话，点击「新建对话」开始" : "没有匹配的会话"}
+            {sessions.length === 0 ? t("sessionList.emptyStart") : t("sessionList.emptyMatch")}
           </p>
         )}
         {filtered.map((session) => (
@@ -115,7 +109,7 @@ export function SessionList() {
                 <div className="min-w-0 flex-1">
                   <p className="truncate font-medium">{session.title}</p>
                   <p className="text-[10px] text-muted-foreground">
-                    {formatTime(session.updated_at)}
+                    {formatTime(session.updated_at, i18n.language)}
                   </p>
                 </div>
                 <DropdownMenu>
@@ -128,14 +122,14 @@ export function SessionList() {
                   <DropdownMenuContent align="end" className="w-32">
                     <DropdownMenuItem onClick={() => startRename(session.id, session.title)}>
                       <Pencil size={14} className="mr-2" />
-                      重命名
+                      {t("sessionList.rename")}
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       variant="destructive"
                       onClick={() => void removeSession(session.id)}
                     >
                       <Trash2 size={14} className="mr-2" />
-                      删除
+                      {t("sessionList.delete")}
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>

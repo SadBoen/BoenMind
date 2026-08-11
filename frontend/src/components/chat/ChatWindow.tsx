@@ -3,6 +3,7 @@
  * 模型与思考强度选择已移至输入框内部下边缘（见 ChatInput）。
  */
 import { useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { Square, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -13,15 +14,16 @@ import { ChatInput } from "./ChatInput";
 import { ScrollIndicators } from "./ScrollIndicators";
 
 /** 消息预览文本（指示条悬停用）：剥离 think 块、压缩空白 */
-function previewFor(message: Message): string {
+function previewFor(message: Message, emptyLabel: string): string {
   const text = message.content
     .replace(/<think>[\s\S]*?<\/think>/g, "")
     .replace(/\s+/g, " ")
     .trim();
-  return text.length > 60 ? `${text.slice(0, 60)}…` : text || "（图片或空消息）";
+  return text.length > 60 ? `${text.slice(0, 60)}…` : text || emptyLabel;
 }
 
 export function ChatWindow() {
+  const { t } = useTranslation();
   const messages = useAppStore((s) => s.messages);
   const streaming = useAppStore((s) => s.streaming);
   const streamingText = useAppStore((s) => s.streamingText);
@@ -54,17 +56,17 @@ export function ChatWindow() {
         <div className="flex min-w-0 items-center gap-2 text-sm font-medium">
           {activeSessionId ? (
             <span className="truncate">
-              {messages[0]?.role === "user" ? messages[0].content.slice(0, 24) : "新对话"}
+              {messages[0]?.role === "user" ? messages[0].content.slice(0, 24) : t("chat.newSession")}
             </span>
           ) : (
-            <span className="text-muted-foreground">选择或新建一个对话</span>
+            <span className="text-muted-foreground">{t("chat.selectOrCreate")}</span>
           )}
         </div>
         <div className="flex items-center gap-2">
           {streaming && (
             <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={stopStreaming}>
               <Square size={12} className="fill-current" />
-              停止
+              {t("chat.stop")}
             </Button>
           )}
         </div>
@@ -83,7 +85,7 @@ export function ChatWindow() {
           ) : (
             <div className="mx-auto flex max-w-3xl flex-col gap-5 px-4 py-6">
               {messages.map((m, i) => (
-                <div key={m.id} data-mid={i} data-role={m.role} data-preview={previewFor(m)}>
+                <div key={m.id} data-mid={i} data-role={m.role} data-preview={previewFor(m, t("chat.previewEmpty"))}>
                   <MessageItem message={m} />
                 </div>
               ))}
@@ -127,15 +129,16 @@ export function ChatWindow() {
 }
 
 function EmptyState() {
+  const { t } = useTranslation();
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
       <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary">
         <Sparkles size={28} />
       </div>
       <div>
-        <h3 className="text-base font-semibold">BoenMind 对话</h3>
+        <h3 className="text-base font-semibold">{t("chat.emptyTitle")}</h3>
         <p className="mt-1 max-w-xs text-sm text-muted-foreground">
-          问我任何问题，或让我帮你处理工作文件夹中的任务。
+          {t("chat.emptyHint")}
         </p>
       </div>
     </div>

@@ -30,9 +30,15 @@ pub struct AppConfig {
     pub working_dir: PathBuf,
     #[serde(default = "default_theme")]
     pub theme: String,
+    /// 界面语言（zh / en / ja / ko）
+    #[serde(default = "default_lang")]
+    pub lang: String,
     /// 启用的插件（~/.boenmind/extensions 下的扩展 id）
     #[serde(default)]
     pub enabled_plugins: Vec<String>,
+    /// 启用的 skill（~/.boenmind/skills 下的 skill id，启用时同步到 pi 目录）
+    #[serde(default)]
+    pub enabled_skills: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,6 +72,28 @@ pub enum ProviderKind {
     Minimax,
     Deepseek,
     Openrouter,
+    /// Kimi（Moonshot，api.moonshot.cn）
+    Moonshot,
+    /// 智谱 GLM（open.bigmodel.cn）
+    Zhipu,
+    /// 阿里云百炼 Qwen（dashscope 兼容模式）
+    Qwen,
+    /// xAI Grok
+    Xai,
+    /// Z.AI 国际版（api.z.ai）
+    Zai,
+    Groq,
+    Mistral,
+    Together,
+    Cerebras,
+    Fireworks,
+    Huggingface,
+    Nvidia,
+    /// 小米 MiMo
+    Xiaomi,
+    /// 蚂蚁 AntLing
+    Antling,
+    Baseten,
     /// 任意 OpenAI 兼容服务（自定义端点）
     Custom,
 }
@@ -73,7 +101,9 @@ pub enum ProviderKind {
 impl ProviderKind {
     /// pi agent 注册表中的提供商名。
     ///
-    /// minimax / deepseek / openrouter / custom 不在 pi 的内置 provider 列表中，
+    /// 大部分新提供商与 pi 内置注册表同名（groq/mistral/xai/…），models.json
+    /// 中同名条目按覆盖写入（baseUrl + openai-completions 路由）；
+    /// minimax / deepseek / openrouter 等不在 pi 的常用内置列表中，
     /// 但 pi 的 models.json 支持自定义 provider（`api: "openai-completions"` 路由），
     /// 见 sync_pi_models_json。custom 类使用稳定前缀 + 提供商 id 保证唯一。
     pub fn pi_name(&self, provider_id: &str) -> String {
@@ -86,6 +116,21 @@ impl ProviderKind {
             ProviderKind::Minimax => "minimax".to_string(),
             ProviderKind::Deepseek => "deepseek".to_string(),
             ProviderKind::Openrouter => "openrouter".to_string(),
+            ProviderKind::Moonshot => "moonshotai".to_string(),
+            ProviderKind::Zhipu => "zhipu".to_string(),
+            ProviderKind::Qwen => "qwen".to_string(),
+            ProviderKind::Xai => "xai".to_string(),
+            ProviderKind::Zai => "zai".to_string(),
+            ProviderKind::Groq => "groq".to_string(),
+            ProviderKind::Mistral => "mistral".to_string(),
+            ProviderKind::Together => "together".to_string(),
+            ProviderKind::Cerebras => "cerebras".to_string(),
+            ProviderKind::Fireworks => "fireworks".to_string(),
+            ProviderKind::Huggingface => "huggingface".to_string(),
+            ProviderKind::Nvidia => "nvidia".to_string(),
+            ProviderKind::Xiaomi => "xiaomi".to_string(),
+            ProviderKind::Antling => "ant-ling".to_string(),
+            ProviderKind::Baseten => "baseten".to_string(),
             ProviderKind::Custom => format!("custom-{}", provider_id),
         }
     }
@@ -94,7 +139,25 @@ impl ProviderKind {
     pub fn is_openai_compatible_route(&self) -> bool {
         matches!(
             self,
-            ProviderKind::Minimax | ProviderKind::Deepseek | ProviderKind::Openrouter | ProviderKind::Custom
+            ProviderKind::Minimax
+                | ProviderKind::Deepseek
+                | ProviderKind::Openrouter
+                | ProviderKind::Moonshot
+                | ProviderKind::Zhipu
+                | ProviderKind::Qwen
+                | ProviderKind::Xai
+                | ProviderKind::Zai
+                | ProviderKind::Groq
+                | ProviderKind::Mistral
+                | ProviderKind::Together
+                | ProviderKind::Cerebras
+                | ProviderKind::Fireworks
+                | ProviderKind::Huggingface
+                | ProviderKind::Nvidia
+                | ProviderKind::Xiaomi
+                | ProviderKind::Antling
+                | ProviderKind::Baseten
+                | ProviderKind::Custom
         )
     }
 
@@ -108,6 +171,21 @@ impl ProviderKind {
             ProviderKind::Minimax => "MiniMax",
             ProviderKind::Deepseek => "DeepSeek",
             ProviderKind::Openrouter => "OpenRouter",
+            ProviderKind::Moonshot => "Kimi (Moonshot)",
+            ProviderKind::Zhipu => "智谱 GLM",
+            ProviderKind::Qwen => "阿里云百炼 Qwen",
+            ProviderKind::Xai => "xAI Grok",
+            ProviderKind::Zai => "Z.AI",
+            ProviderKind::Groq => "Groq",
+            ProviderKind::Mistral => "Mistral",
+            ProviderKind::Together => "Together AI",
+            ProviderKind::Cerebras => "Cerebras",
+            ProviderKind::Fireworks => "Fireworks",
+            ProviderKind::Huggingface => "Hugging Face",
+            ProviderKind::Nvidia => "NVIDIA NIM",
+            ProviderKind::Xiaomi => "小米 MiMo",
+            ProviderKind::Antling => "蚂蚁 AntLing",
+            ProviderKind::Baseten => "Baseten",
             ProviderKind::Custom => "自定义 OpenAI 兼容",
         }
     }
@@ -115,6 +193,10 @@ impl ProviderKind {
 
 fn default_theme() -> String {
     "system".to_string()
+}
+
+fn default_lang() -> String {
+    "zh".to_string()
 }
 
 fn default_working_dir() -> PathBuf {
@@ -145,7 +227,9 @@ impl Default for AppConfig {
             default_model: None,
             working_dir: default_working_dir(),
             theme: default_theme(),
+            lang: default_lang(),
             enabled_plugins: Vec::new(),
+            enabled_skills: Vec::new(),
         }
     }
 }
@@ -210,7 +294,7 @@ pub fn resolve_model(provider: &ProviderConfig, model: Option<&str>) -> Option<S
 /// 将 BoenMind 配置同步为 pi agent 的 models.json。
 ///
 /// - 内置提供商（openai/anthropic/gemini/ollama/llamacpp）：注册 baseUrl 覆盖 + 模型
-/// - 自定义 OpenAI 兼容提供商（minimax/deepseek/openrouter/custom-*）：
+/// - 自定义 OpenAI 兼容提供商（minimax/deepseek/openrouter/moonshot/…）：
 ///   以独立 provider 名注册，`api: "openai-completions"` 路由 + 独立 baseUrl，
 ///   多个 OpenAI 兼容端点可共存互不覆盖
 ///
@@ -286,6 +370,14 @@ mod tests {
         assert_eq!(ProviderKind::Ollama.pi_name("p1"), "ollama");
         assert_eq!(ProviderKind::Minimax.pi_name("p1"), "minimax");
         assert_eq!(ProviderKind::Custom.pi_name("p-abc"), "custom-p-abc");
+        // 迁移自 pi 注册表的映射
+        assert_eq!(ProviderKind::Moonshot.pi_name("p1"), "moonshotai");
+        assert_eq!(ProviderKind::Antling.pi_name("p1"), "ant-ling");
+        assert_eq!(ProviderKind::Zhipu.pi_name("p1"), "zhipu");
+        assert_eq!(ProviderKind::Groq.pi_name("p1"), "groq");
+        assert!(ProviderKind::Groq.is_openai_compatible_route());
+        assert!(ProviderKind::Xai.is_openai_compatible_route());
+        assert!(!ProviderKind::Anthropic.is_openai_compatible_route());
     }
 
     #[test]
@@ -315,6 +407,9 @@ mod tests {
             default_model: None,
             working_dir: default_working_dir(),
             theme: "system".into(),
+            lang: "zh".into(),
+            enabled_plugins: vec![],
+            enabled_skills: vec![],
         };
         assert_eq!(resolve_provider(&config, Some("missing")).unwrap().id, "b");
         assert_eq!(resolve_model(&config.providers[1], None).unwrap(), "qwen");

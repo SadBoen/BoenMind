@@ -50,26 +50,35 @@ pub enum AgentStreamEvent {
 /// 创建 agent 会话句柄。
 ///
 /// `provider`/`model` 来自会话或全局配置；`extension_paths` 为启用的插件路径
-/// （pi QuickJS 运行时加载 TypeScript 扩展）；`thinking` 为思考强度（如 "off"/"low"）。
+/// （pi QuickJS 运行时加载 TypeScript 扩展）；`skills_prompt` 为启用的 skill
+/// 注入文本（available_skills 块，空串不注入）；`thinking` 为思考强度（如 "off"/"low"）。
 pub async fn create_session_handle(
     provider: &ProviderConfig,
     model: &str,
     working_dir: &Path,
     extension_paths: Vec<std::path::PathBuf>,
+    skills_prompt: &str,
     thinking: Option<&str>,
 ) -> Result<AgentSessionHandle, pi::sdk::Error> {
     // 注意：调用前需确保 PI_CODING_AGENT_DIR 已设置、models.json 已同步，
     // 见 bm-server 的启动流程（sync_pi_models_json + set_var）
     let thinking_level = thinking
         .and_then(|t| t.parse::<pi::model::ThinkingLevel>().ok());
+    let system_prompt = if skills_prompt.is_empty() {
+        SYSTEM_PROMPT.to_string()
+    } else {
+        format!("{SYSTEM_PROMPT}{skills_prompt}")
+    };
     let options = SessionOptions {
         provider: Some(provider.kind.pi_name(&provider.id)),
         model: Some(model.to_string()),
         api_key: provider.api_key.clone(),
         working_directory: Some(working_dir.to_path_buf()),
-        enabled_tools: Some(Vec::new()),
+        // 内置工具全开：skill 需要 read/write/bash 等才能真正加载与执行；
+        // 纯对话时代（无工具）无法使用 skill 文件与脚本
+        enabled_tools: Some(pi::sdk::BUILTIN_TOOL_NAMES.iter().map(|n| n.to_string()).collect()),
         no_session: true,
-        system_prompt: Some(SYSTEM_PROMPT.to_string()),
+        system_prompt: Some(system_prompt),
         include_cwd_in_prompt: false,
         thinking: thinking_level,
         extension_paths,

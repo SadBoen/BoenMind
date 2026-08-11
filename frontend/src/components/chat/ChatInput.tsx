@@ -3,6 +3,7 @@
  * Enter 发送 / Shift+Enter 换行。参照 ZCode 输入框设计。
  */
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { ArrowUp, Brain, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -15,16 +16,8 @@ import {
 } from "@/components/ui/select";
 import { useAppStore } from "@/stores/app-store";
 
-/** 思考强度选项（对应 pi ThinkingLevel） */
-const THINKING_OPTIONS = [
-  { value: "off", label: "不思考" },
-  { value: "minimal", label: "极低" },
-  { value: "low", label: "低" },
-  { value: "medium", label: "中" },
-  { value: "high", label: "高" },
-  { value: "xhigh", label: "极高" },
-  { value: "max", label: "最大" },
-];
+/** 思考强度选项（对应 pi ThinkingLevel，label 用 chat.thinking.<value> 翻译） */
+const THINKING_VALUES = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 /** 当前可用的模型选项：各提供商的模型（providerId::modelId） */
 function useModelOptions() {
@@ -42,6 +35,7 @@ function useModelOptions() {
 }
 
 export function ChatInput() {
+  const { t } = useTranslation();
   const streaming = useAppStore((s) => s.streaming);
   const sendMessage = useAppStore((s) => s.sendMessage);
   const selectedModel = useAppStore((s) => s.selectedModel);
@@ -94,7 +88,7 @@ export function ChatInput() {
                 void submit();
               }
             }}
-            placeholder="输入消息，Enter 发送，Shift+Enter 换行"
+            placeholder={t("chat.input.placeholder")}
             rows={1}
             className="max-h-40 min-h-[2.25rem] resize-none border-0 bg-transparent p-3 pb-1 text-sm shadow-none focus-visible:ring-0"
             disabled={streaming}
@@ -105,13 +99,13 @@ export function ChatInput() {
               {/* 模型选择 */}
               <Select value={modelValue ?? undefined} onValueChange={setSelectedModel}>
                 <SelectTrigger className="h-6 max-w-40 gap-1 border-transparent bg-transparent px-1.5 text-xs text-muted-foreground shadow-none hover:bg-accent hover:text-foreground data-[state=open]:bg-accent">
-                  <SelectValue placeholder="选择模型" />
+                  <SelectValue placeholder={t("chat.input.selectModel")} />
                   <Sparkles size={12} className="shrink-0 text-muted-foreground" />
                 </SelectTrigger>
                 <SelectContent align="start">
                   {modelOptions.length === 0 && (
                     <p className="px-2 py-1.5 text-xs text-muted-foreground">
-                      未配置提供商，请到设置中添加
+                      {t("chat.input.noProviders")}
                     </p>
                   )}
                   {modelOptions.map((opt) => (
@@ -129,9 +123,9 @@ export function ChatInput() {
                   <Brain size={12} className="shrink-0 text-muted-foreground" />
                 </SelectTrigger>
                 <SelectContent align="start">
-                  {THINKING_OPTIONS.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value} className="text-xs">
-                      {opt.label}
+                  {THINKING_VALUES.map((value) => (
+                    <SelectItem key={value} value={value} className="text-xs">
+                      {t(`chat.thinking.${value}`)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -140,14 +134,16 @@ export function ChatInput() {
 
             <div className="flex items-center gap-2">
               <span className="hidden text-[10px] text-muted-foreground sm:inline">
-                {text.length > 0 ? `${text.length} 字` : "Enter 发送"}
+                {text.length > 0
+                  ? t("chat.input.charCount", { count: text.length })
+                  : t("chat.input.enterToSend")}
               </span>
               <Button
                 size="icon"
                 className="h-7 w-7 rounded-lg"
                 onClick={() => void submit()}
                 disabled={!canSend}
-                title="发送"
+                title={t("chat.input.send")}
               >
                 <ArrowUp size={15} />
               </Button>
@@ -155,7 +151,7 @@ export function ChatInput() {
           </div>
         </div>
         <p className="mt-1.5 text-center text-[10px] text-muted-foreground">
-          内容由 AI 生成，请核实重要信息
+          {t("chat.input.aiDisclaimer")}
         </p>
       </div>
     </div>
