@@ -147,10 +147,13 @@ jobs:
 
       - name: 打包便携版 zip
         shell: pwsh
+        working-directory: frontend
         run: |
           $VER = (Get-Content src-tauri/tauri.conf.json | ConvertFrom-Json).version
           New-Item -ItemType Directory -Force -Path ..\dist-win | Out-Null
-          Compress-Archive -Path src-tauri\target\release\BoenMind.exe -DestinationPath "..\dist-win\BoenMind_${VER}_x64_portable.zip" -CompressionLevel Optimal
+          # 二进制名来自 Cargo package name（app.exe），对外重命名为 BoenMind.exe
+          Copy-Item src-tauri\target\release\app.exe ..\dist-win\BoenMind.exe
+          Compress-Archive -Path ..\dist-win\BoenMind.exe -DestinationPath "..\dist-win\BoenMind_${VER}_x64_portable.zip" -CompressionLevel Optimal
 
       - uses: actions/upload-artifact@v4
         with:
