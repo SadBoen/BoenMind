@@ -1,5 +1,5 @@
 /**
- * 消息渲染：用户气泡 + 助手 Markdown（含代码高亮 + <think> 折叠块）。
+ * 消息渲染：用户气泡 + 助手 Markdown（含代码高亮 + <think> 折叠块 + 工具调用块）。
  */
 import { memo, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
@@ -9,13 +9,17 @@ import { Bot, User } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Message } from "@/api/client";
 import { ThinkBlock, hasThinkBlock, parseThinkBlocks } from "./ThinkBlock";
+import { ToolCallBlock, type ToolCallView } from "./ToolCallBlock";
 
 export const MessageItem = memo(function MessageItem({
   message,
   streaming,
+  streamingToolCalls,
 }: {
   message: Message;
   streaming?: boolean;
+  /** 流式中的工具调用（仅临时 assistant 消息传入，running 状态展示） */
+  streamingToolCalls?: ToolCallView[];
 }) {
   const isUser = message.role === "user";
 
@@ -24,6 +28,17 @@ export const MessageItem = memo(function MessageItem({
     if (isUser) return null;
     return hasThinkBlock(message.content) ? parseThinkBlocks(message.content) : null;
   }, [isUser, message.content]);
+
+  // 工具调用块：历史消息的固化记录在前，流式中的（running）在后
+  const toolCalls = useMemo<ToolCallView[]>(() => {
+    if (isUser) return [];
+    const saved = (message.tool_calls ?? []).map((c) => ({
+      tool_name: c.tool_name,
+      args: c.args,
+      is_error: c.is_error,
+    }));
+    return [...saved, ...(streamingToolCalls ?? [])];
+  }, [isUser, message.tool_calls, streamingToolCalls]);
 
   if (isUser) {
     return (
@@ -44,6 +59,13 @@ export const MessageItem = memo(function MessageItem({
         <Bot size={14} />
       </div>
       <div className="min-w-0 flex-1">
+        {toolCalls.length > 0 && (
+          <div className="mb-2 flex flex-col gap-1.5">
+            {toolCalls.map((c, i) => (
+              <ToolCallBlock key={i} call={c} />
+            ))}
+          </div>
+        )}
         <div className={cn("prose prose-sm dark:prose-invert max-w-none break-words", streaming && "animate-pulse")}>
           {segments ? (
             <SegmentedMarkdown segments={segments} />

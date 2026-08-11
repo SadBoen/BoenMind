@@ -27,6 +27,7 @@ export function ChatWindow() {
   const messages = useAppStore((s) => s.messages);
   const streaming = useAppStore((s) => s.streaming);
   const streamingText = useAppStore((s) => s.streamingText);
+  const streamingToolCalls = useAppStore((s) => s.streamingToolCalls);
   const stopStreaming = useAppStore((s) => s.stopStreaming);
   const activeSessionId = useAppStore((s) => s.activeSessionId);
 
@@ -39,7 +40,7 @@ export function ChatWindow() {
     const el = scrollRef.current;
     if (!el || !stickToBottom.current) return;
     el.scrollTo({ top: el.scrollHeight, behavior: streaming ? "auto" : "smooth" });
-  }, [messages, streamingText, streaming]);
+  }, [messages, streamingText, streamingToolCalls, streaming]);
 
   const onScroll = () => {
     const el = scrollRef.current;
@@ -94,8 +95,13 @@ export function ChatWindow() {
                   <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
                     <Sparkles size={14} />
                   </div>
-                  <div className={cn("min-w-0 flex-1", !streamingText && "opacity-60")}>
-                    {streamingText ? (
+                  <div
+                    className={cn(
+                      "min-w-0 flex-1",
+                      !streamingText && streamingToolCalls.length === 0 && "opacity-60",
+                    )}
+                  >
+                    {streamingText || streamingToolCalls.length > 0 ? (
                       <MessageItem
                         message={{
                           id: -1,
@@ -105,6 +111,13 @@ export function ChatWindow() {
                           created_at: 0,
                         }}
                         streaming
+                        streamingToolCalls={streamingToolCalls.map((c) => ({
+                          tool_name: c.name,
+                          args: c.args,
+                          is_error: c.isError,
+                          // 收到 ToolCallEnd 前保持"执行中"中性色
+                          running: !c.done,
+                        }))}
                       />
                     ) : (
                       <div className="flex items-center gap-1.5 py-2">

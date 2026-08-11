@@ -67,6 +67,16 @@ export interface Message {
   role: "user" | "assistant";
   content: string;
   created_at: number;
+  /** 该助手消息关联的工具调用（后端持久化，回放展示） */
+  tool_calls?: ToolCall[];
+}
+
+/** 一次工具调用记录（对应后端 db::ToolCall） */
+export interface ToolCall {
+  seq: number;
+  tool_name: string;
+  args: unknown;
+  is_error: boolean;
 }
 
 export interface FileEntry {
@@ -120,8 +130,9 @@ export interface SkillCandidate {
 export type ChatStreamEvent =
   | { type: "textDelta"; delta: string }
   | { type: "thinkingDelta"; delta: string }
-  | { type: "toolCallStart"; name: string }
+  | { type: "toolCallStart"; id: string; name: string; args: unknown }
   | { type: "toolCallDelta"; delta: string }
+  | { type: "toolCallEnd"; id: string; name: string; isError: boolean }
   | { type: "turnEnd" }
   | { type: "done" }
   | { type: "error"; message: string };

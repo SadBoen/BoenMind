@@ -35,10 +35,12 @@ pub enum AgentStreamEvent {
     TextDelta { delta: String },
     /// 思考过程增量
     ThinkingDelta { delta: String },
-    /// 工具调用开始
-    ToolCallStart { name: String },
+    /// 工具调用开始（携带完整参数 JSON，来自 pi ToolExecutionStart）
+    ToolCallStart { id: String, name: String, args: serde_json::Value },
     /// 工具调用参数增量
     ToolCallDelta { delta: String },
+    /// 工具调用结束（is_error 决定前端展示颜色）
+    ToolCallEnd { id: String, name: String, is_error: bool },
     /// 一次对话回合结束（含错误时由 error 携带）
     TurnEnd,
     /// 整个 prompt 处理结束
@@ -91,8 +93,6 @@ pub async fn create_session_handle(
 
 /// 将 pi 的 AgentEvent 映射为 BoenMind 事件（可能产出 0..n 个）。
 pub fn map_agent_event(event: AgentEvent) -> Vec<AgentStreamEvent> {
-    use pi::sdk::ContentBlock;
-
     match event {
         AgentEvent::MessageUpdate {
             assistant_message_event,
@@ -107,18 +107,8 @@ pub fn map_agent_event(event: AgentEvent) -> Vec<AgentStreamEvent> {
             AssistantMessageEvent::ToolCallDelta { delta, .. } => {
                 vec![AgentStreamEvent::ToolCallDelta { delta }]
             }
-            AssistantMessageEvent::ToolCallStart { partial, .. } => {
-                let name = partial
-                    .content
-                    .iter()
-                    .find_map(|block| match block {
-                        ContentBlock::ToolCall(tool_call) => Some(tool_call.name.clone()),
-                        _ => None,
-                    })
-                    .unwrap_or_else(|| "tool".to_string());
-                vec![AgentStreamEvent::ToolCallStart { name }]
-            }
-            AssistantMessageEvent::TextEnd { .. }
+            AssistantMessageEvent::ToolCallStart { .. }
+            | AssistantMessageEvent::TextEnd { .. }
             | AssistantMessageEvent::ThinkingEnd { .. }
             | AssistantMessageEvent::ToolCallEnd { .. }
             | AssistantMessageEvent::Start { .. }
@@ -130,6 +120,27 @@ pub fn map_agent_event(event: AgentEvent) -> Vec<AgentStreamEvent> {
                 Vec::new()
             }
         },
+        // 工具真实执行开始/结束（pi SDK 权威事件，携带完整参数与执行状态）
+        AgentEvent::ToolExecutionStart {
+            tool_call_id,
+            tool_name,
+            args,
+            ..
+        } => vec![AgentStreamEvent::ToolCallStart {
+            id: tool_call_id,
+            name: tool_name,
+            args,
+        }],
+        AgentEvent::ToolExecutionEnd {
+            tool_call_id,
+            tool_name,
+            is_error,
+            ..
+        } => vec![AgentStreamEvent::ToolCallEnd {
+            id: tool_call_id,
+            name: tool_name,
+            is_error,
+        }],
         AgentEvent::TurnEnd { .. } => vec![AgentStreamEvent::TurnEnd],
         AgentEvent::AgentEnd { error, .. } => {
             if let Some(err) = error {

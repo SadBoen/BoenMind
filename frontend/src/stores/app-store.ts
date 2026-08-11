@@ -2,11 +2,21 @@
  * 全局状态：导航、会话、聊天流、文件区、后端健康状态。
  */
 import { create } from "zustand";
-import { api, type AppConfig, type ChatStreamEvent, type FileEntry, type HealthInfo, type Message, type Session } from "@/api/client";
+import { api, type AppConfig, type ChatStreamEvent, type FileEntry, type HealthInfo, type Message, type Session, type ToolCall } from "@/api/client";
 import i18n, { applyLang, isLang } from "@/i18n";
 
 export type NavKey = "chat" | "gallery" | "knowledge" | "settings";
 export type SettingsTab = "appearance" | "providers" | "workspace" | "plugins" | "skills" | "about";
+
+/** 流式中的工具调用（isError 未定前为执行中状态） */
+export interface StreamingToolCall {
+  id: string;
+  name: string;
+  args: unknown;
+  isError: boolean;
+  /** 已收到 ToolCallEnd（执行结束，颜色取 isError；未结束时保持中性灰） */
+  done: boolean;
+}
 
 interface AppStore {
   // 导航
@@ -38,6 +48,8 @@ interface AppStore {
   messages: Message[];
   streaming: boolean;
   streamingText: string;
+  /** 流式期间正在执行的工具调用（结束即固化进 assistant 消息的 tool_calls） */
+  streamingToolCalls: StreamingToolCall[];
   /** 当前会话选择的模型（providerId::modelId）与思考强度 */
   selectedModel: string | null;
   selectedThinking: string;
@@ -162,6 +174,7 @@ export const useAppStore = create<AppStore>((set, get) => {
     messages: [],
     streaming: false,
     streamingText: "",
+    streamingToolCalls: [],
     selectedModel: null,
     selectedThinking: "off",
     setSelectedModel: (value) => set({ selectedModel: value }),
@@ -182,7 +195,7 @@ export const useAppStore = create<AppStore>((set, get) => {
         content: text,
         created_at: Math.floor(Date.now() / 1000),
       };
-      set((s) => ({ messages: [...s.messages, userMsg], streaming: true, streamingText: "" }));
+      set((s) => ({ messages: [...s.messages, userMsg], streaming: true, streamingText: "", streamingToolCalls: [] }));
 
       const handleEvent = (ev: ChatStreamEvent) => {
         const s = get();
@@ -190,20 +203,43 @@ export const useAppStore = create<AppStore>((set, get) => {
           case "textDelta":
             set({ streamingText: s.streamingText + ev.delta });
             break;
+          case "toolCallStart":
+            set({
+              streamingToolCalls: [
+                ...s.streamingToolCalls,
+                { id: ev.id, name: ev.name, args: ev.args, isError: false, done: false },
+              ],
+            });
+            break;
+          case "toolCallEnd":
+            set({
+              streamingToolCalls: s.streamingToolCalls.map((c) =>
+                c.id === ev.id ? { ...c, isError: ev.isError, done: true } : c,
+              ),
+            });
+            break;
           case "done": {
             const finalText = s.streamingText;
+            // 流式工具调用固化为消息结构（seq 按顺序编号）
+            const toolCalls: ToolCall[] = s.streamingToolCalls.map((c, i) => ({
+              seq: i,
+              tool_name: c.name,
+              args: c.args,
+              is_error: c.isError,
+            }));
             const assistantMsg: Message = {
               id: Date.now(),
               session_id: sessionId!,
               role: "assistant",
               content: finalText,
               created_at: Math.floor(Date.now() / 1000),
+              tool_calls: toolCalls,
             };
-            set({ streaming: false, streamingText: "", messages: [...s.messages, assistantMsg] });
+            set({ streaming: false, streamingText: "", streamingToolCalls: [], messages: [...s.messages, assistantMsg] });
             break;
           }
           case "error":
-            set({ streaming: false });
+            set({ streaming: false, streamingToolCalls: [] });
             // 错误信息以用户可见的形式追加
             set((st) => ({
               messages: [
@@ -232,13 +268,13 @@ export const useAppStore = create<AppStore>((set, get) => {
       streamController = null;
       if (get().streaming) {
         // 异常结束（无 done 事件）时清理状态
-        set({ streaming: false });
+        set({ streaming: false, streamingToolCalls: [] });
       }
       await get().loadSessions();
     },
     stopStreaming: () => {
       streamController?.close();
-      set({ streaming: false });
+      set({ streaming: false, streamingToolCalls: [] });
     },
 
     workspaceDir: "",

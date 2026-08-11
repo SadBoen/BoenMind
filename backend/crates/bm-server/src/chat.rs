@@ -11,6 +11,7 @@
 //!
 //! 用户消息与最终助手消息均持久化到 SQLite。
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{
@@ -180,7 +181,7 @@ async fn get_or_create_agent(
     Ok(entry.handle.clone())
 }
 
-/// 运行 prompt，将事件转发到通道；结束后把助手消息写入数据库。
+/// 运行 prompt，将事件转发到通道；结束后把助手消息（含工具调用）写入数据库。
 async fn run_prompt_and_persist(
     state: AppState,
     session_id: String,
@@ -193,6 +194,13 @@ async fn run_prompt_and_persist(
 
     let accumulated = Arc::new(std::sync::Mutex::new(String::new()));
     let acc = accumulated.clone();
+    // 工具调用收集：执行中的按 id 挂起，ToolCallEnd 后移入完成列表入库
+    let pending_tools: Arc<std::sync::Mutex<HashMap<String, (String, serde_json::Value)>>> =
+        Arc::new(std::sync::Mutex::new(HashMap::new()));
+    let done_tools: Arc<std::sync::Mutex<Vec<(String, serde_json::Value, bool)>>> =
+        Arc::new(std::sync::Mutex::new(Vec::new()));
+    let pending_tools_cb = pending_tools.clone();
+    let done_tools_cb = done_tools.clone();
     let tx_cb = tx.clone();
     // AgentEnd 携带 error 时已通过事件流发出错误，避免与 result Err 重复上报
     let error_sent = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -200,12 +208,27 @@ async fn run_prompt_and_persist(
 
     let result = handle
         .prompt(message, move |ev: pi::sdk::AgentEvent| {
-            for mapped in map_agent_event(ev) {
-                if let AgentStreamEvent::TextDelta { delta } = &mapped {
-                    acc.lock().unwrap().push_str(delta);
-                }
-                if let AgentStreamEvent::Error { .. } = &mapped {
-                    error_sent_cb.store(true, std::sync::atomic::Ordering::Relaxed);
+            let mapped = map_agent_event(ev);
+            for mapped in mapped {
+                match &mapped {
+                    AgentStreamEvent::ToolCallStart { id, name, args } => {
+                        pending_tools_cb
+                            .lock()
+                            .unwrap()
+                            .insert(id.clone(), (name.clone(), args.clone()));
+                    }
+                    AgentStreamEvent::ToolCallEnd { id, is_error, .. } => {
+                        if let Some((name, args)) = pending_tools_cb.lock().unwrap().remove(id) {
+                            done_tools_cb.lock().unwrap().push((name, args, *is_error));
+                        }
+                    }
+                    AgentStreamEvent::TextDelta { delta } => {
+                        acc.lock().unwrap().push_str(delta);
+                    }
+                    AgentStreamEvent::Error { .. } => {
+                        error_sent_cb.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    _ => {}
                 }
                 // 注意：此处运行在 tokio 运行时线程上，不能用 blocking_send；
                 // try_send 失败（通道满或客户端断开）时直接跳过该事件
@@ -216,10 +239,15 @@ async fn run_prompt_and_persist(
         })
         .await;
 
-    // 无论成功与否，先把已生成的文本入库
+    // 无论成功与否，先把已生成的文本与工具调用入库
     let final_text = accumulated.lock().unwrap().clone();
+    let done_tools = done_tools.lock().unwrap().clone();
     if !final_text.trim().is_empty() {
-        let _ = state.db.add_message(&session_id, "assistant", &final_text);
+        if let Ok(assistant_msg) = state.db.add_message(&session_id, "assistant", &final_text) {
+            if !done_tools.is_empty() {
+                let _ = state.db.add_tool_calls(assistant_msg.id, &done_tools);
+            }
+        }
         let _ = state.db.touch_session(&session_id);
     }
     if result.is_err() && !error_sent.load(std::sync::atomic::Ordering::Relaxed) {

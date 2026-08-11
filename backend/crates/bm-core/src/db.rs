@@ -20,6 +20,15 @@ pub struct Session {
     pub updated_at: i64,
 }
 
+/// 一次工具调用（挂在 assistant 消息下，按 seq 排序回放）。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ToolCall {
+    pub seq: i64,
+    pub tool_name: String,
+    pub args: serde_json::Value,
+    pub is_error: bool,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Message {
     pub id: i64,
@@ -27,6 +36,8 @@ pub struct Message {
     pub role: String,
     pub content: String,
     pub created_at: i64,
+    /// 该消息关联的工具调用（仅 assistant 消息有）
+    pub tool_calls: Vec<ToolCall>,
 }
 
 pub struct Db {
@@ -71,6 +82,15 @@ impl Db {
                 created_at INTEGER NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, id);
+            CREATE TABLE IF NOT EXISTS tool_calls (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+                seq        INTEGER NOT NULL,
+                tool_name  TEXT NOT NULL,
+                args       TEXT NOT NULL,
+                is_error   INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_tool_calls_message ON tool_calls(message_id, seq);
             "#,
         )?;
         Ok(Self {
@@ -172,24 +192,69 @@ impl Db {
             role: role.to_string(),
             content: content.to_string(),
             created_at: ts,
+            tool_calls: Vec::new(),
         })
     }
 
-    pub fn list_messages(&self, session_id: &str) -> Result<Vec<Message>, rusqlite::Error> {
+    /// 给指定消息追加工具调用记录（seq 从 0 起按序编号）。
+    pub fn add_tool_calls(
+        &self,
+        message_id: i64,
+        calls: &[(String, serde_json::Value, bool)],
+    ) -> Result<(), rusqlite::Error> {
+        let conn = self.conn.lock().unwrap();
+        for (seq, (name, args, is_error)) in calls.iter().enumerate() {
+            conn.execute(
+                "INSERT INTO tool_calls (message_id, seq, tool_name, args, is_error) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![message_id, seq as i64, name, args.to_string(), *is_error as i64],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// 读取某条消息的工具调用（按 seq 排序）。
+    pub fn list_tool_calls(&self, message_id: i64) -> Result<Vec<ToolCall>, rusqlite::Error> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, session_id, role, content, created_at
-             FROM messages WHERE session_id = ?1 ORDER BY id",
+            "SELECT seq, tool_name, args, is_error FROM tool_calls WHERE message_id = ?1 ORDER BY seq",
         )?;
-        let rows = stmt.query_map(params![session_id], |row| {
-            Ok(Message {
-                id: row.get(0)?,
-                session_id: row.get(1)?,
-                role: row.get(2)?,
-                content: row.get(3)?,
-                created_at: row.get(4)?,
+        let rows = stmt.query_map(params![message_id], |row| {
+            let args: String = row.get(2)?;
+            Ok(ToolCall {
+                seq: row.get(0)?,
+                tool_name: row.get(1)?,
+                args: serde_json::from_str(&args).unwrap_or(serde_json::Value::Null),
+                is_error: row.get::<_, i64>(3)? != 0,
             })
         })?;
         rows.collect()
+    }
+
+    pub fn list_messages(&self, session_id: &str) -> Result<Vec<Message>, rusqlite::Error> {
+        // 先查询消息（作用域结束即释放连接锁），再逐条读工具调用，避免重入死锁
+        let messages: Vec<Message> = {
+            let conn = self.conn.lock().unwrap();
+            let mut stmt = conn.prepare(
+                "SELECT id, session_id, role, content, created_at
+                 FROM messages WHERE session_id = ?1 ORDER BY id",
+            )?;
+            let rows = stmt.query_map(params![session_id], |row| {
+                Ok(Message {
+                    id: row.get(0)?,
+                    session_id: row.get(1)?,
+                    role: row.get(2)?,
+                    content: row.get(3)?,
+                    created_at: row.get(4)?,
+                    tool_calls: Vec::new(),
+                })
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        // 消息量小，逐条查询工具调用即可
+        let mut messages = messages;
+        for msg in &mut messages {
+            msg.tool_calls = self.list_tool_calls(msg.id)?;
+        }
+        Ok(messages)
     }
 }
