@@ -90,9 +90,12 @@ fn artifact_file_identity(metadata: &fs::Metadata) -> ArtifactFileIdentity {
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt as _;
+        // BoenMind 补丁：volume_serial_number()/file_index() 是 unstable API
+        // （windows_by_handle，#63010），stable 工具链无法编译；改用稳定 API
+        // （创建时间 ^ 文件大小）近似作为文件指纹，仅用于检测打开期间文件被替换。
         ArtifactFileIdentity::Windows {
-            volume_serial_number: metadata.volume_serial_number(),
-            file_index: metadata.file_index(),
+            volume_serial_number: None,
+            file_index: Some(metadata.creation_time() ^ metadata.file_size()),
             creation_time: metadata.creation_time(),
         }
     }
