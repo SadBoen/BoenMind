@@ -45,8 +45,10 @@ export function ChatWindow() {
     stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
   };
 
+  // overflow-hidden：防止 rail 横条 hover 变长时横向溢出到外层容器
+  // （overflow-y:auto）触发滚动条，把整个窗口挤矮 15px 导致输入框跳动
   return (
-    <div className="flex h-full min-w-0 flex-col bg-background">
+    <div className="flex h-full min-w-0 flex-col overflow-hidden bg-background">
       {/* 标题栏 */}
       <header className="flex h-11 shrink-0 items-center justify-between border-b px-3">
         <div className="flex min-w-0 items-center gap-2 text-sm font-medium">
