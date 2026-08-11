@@ -193,7 +193,9 @@ jobs:
         run: cargo build --release -p bm-server --features embed
 
       - name: 构建 aarch64 服务器版（cargo-zigbuild 交叉编译）
-        uses: taiki-e/install-action@cargo-zigbuild
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild,zig
       - name: 交叉编译 aarch64
         working-directory: backend
         run: cargo zigbuild --release -p bm-server --features embed --target aarch64-unknown-linux-gnu
