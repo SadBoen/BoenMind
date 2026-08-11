@@ -93,6 +93,7 @@ fn artifact_file_identity(metadata: &fs::Metadata) -> ArtifactFileIdentity {
         // BoenMind 补丁：volume_serial_number()/file_index() 是 unstable API
         // （windows_by_handle，#63010），stable 工具链无法编译；改用稳定 API
         // （创建时间 ^ 文件大小）近似作为文件指纹，仅用于检测打开期间文件被替换。
+        // 上游 issue：https://github.com/Dicklesworthstone/pi_agent_rust/issues/159
         ArtifactFileIdentity::Windows {
             volume_serial_number: None,
             file_index: Some(metadata.creation_time() ^ metadata.file_size()),
