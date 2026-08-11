@@ -1,0 +1,18 @@
+# syntax=docker/dockerfile:1
+# BoenMind 服务器版镜像（CI 专用）：注入 zigbuild 预构建二进制。
+# 编译在 CI 原生完成（x86_64 / aarch64 各自原生交叉），此处只做运行时组装，
+# 避免 QEMU 模拟编译 pi_agent_rust 的耗时。用法见 .github/workflows/release.yml。
+#
+# 本地手动构建（单架构、全量编译）请用仓库根目录的 Dockerfile。
+
+FROM debian:bookworm-slim
+ARG BM_BINARY=bm-server-x86_64
+RUN useradd --system --home-dir /var/lib/boenmind --shell /usr/sbin/nologin boenmind \
+    && mkdir -p /var/lib/boenmind && chown -R boenmind:boenmind /var/lib/boenmind
+COPY .ci-bins/${BM_BINARY} /usr/local/bin/bm-server
+ENV BOENMIND_HOME=/var/lib/boenmind \
+    BOENMIND_BIND=0.0.0.0
+VOLUME ["/var/lib/boenmind"]
+EXPOSE 17321
+USER boenmind
+ENTRYPOINT ["bm-server"]

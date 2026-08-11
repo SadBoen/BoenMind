@@ -1,0 +1,9 @@
+.git
+backend/target
+frontend/node_modules
+frontend/dist
+frontend/src-tauri/target
+frontend/src-tauri/gen
+gui-test-screenshots
+.zcode
+.DS_Store

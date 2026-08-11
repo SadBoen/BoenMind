@@ -5,6 +5,7 @@
 
 pub mod chat;
 pub mod routes;
+pub mod static_files;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -51,7 +52,7 @@ fn router(state: AppState) -> Router {
         .allow_methods([Method::GET, Method::POST, Method::PUT, Method::PATCH, Method::DELETE])
         .allow_headers(Any);
 
-    Router::new()
+    let router = Router::new()
         .route("/api/health", get(routes::health))
         .route("/api/config", get(routes::get_config).put(routes::put_config))
         .route("/api/sessions", get(routes::list_sessions).post(routes::create_session))
@@ -69,7 +70,13 @@ fn router(state: AppState) -> Router {
         .route("/api/workspace/list", get(routes::list_workspace))
         .route("/api/workspace/file", get(routes::read_workspace_file))
         .with_state(state)
-        .layer(cors)
+        .layer(cors);
+
+    // 服务器版（--features embed）：未命中的 GET 交给内嵌前端（SPA fallback）
+    #[cfg(feature = "embed")]
+    let router = router.fallback(static_files::handle_static);
+
+    router
 }
 
 /// 初始化 BoenMind 环境（配置、工作文件夹、pi agent 目录、数据库）并返回服务状态。
@@ -110,10 +117,22 @@ pub async fn serve(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("pi agent 目录: {}", bm_core::config::pi_agent_dir().display());
 
     let state = AppState::new(config, db);
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
-    tracing::info!("BoenMind 后端已启动: http://127.0.0.1:{port} (v{VERSION})");
+    let listener = tokio::net::TcpListener::bind(bind_addr(port)).await?;
+    let local = listener.local_addr()?;
+    tracing::info!("BoenMind 后端已启动: http://{local} (v{VERSION})");
     axum::serve(listener, router(state)).await?;
     Ok(())
+}
+
+/// 监听地址：默认 `127.0.0.1`（桌面壳内嵌时只本机访问）；
+/// 服务器部署通过 `BOENMIND_BIND` 覆盖，例如 `0.0.0.0:17321`。
+pub fn bind_addr(port: u16) -> std::net::SocketAddr {
+    let host = std::env::var("BOENMIND_BIND")
+        .unwrap_or_else(|_| "127.0.0.1".to_string());
+    let ip: std::net::IpAddr = host
+        .parse()
+        .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+    std::net::SocketAddr::new(ip, port)
 }
 
 /// 统一的 API 错误响应。

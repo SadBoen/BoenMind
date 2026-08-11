@@ -1,0 +1,14 @@
+# BoenMind 服务器版（Docker Compose 一键启动）
+# 用法：docker compose up -d   →  http://服务器IP:17321
+services:
+  boenmind:
+    image: ghcr.io/sadboen/boenmind:v0.1.1
+    container_name: boenmind
+    restart: unless-stopped
+    ports:
+      - "17321:17321"
+    volumes:
+      - boenmind-data:/var/lib/boenmind
+
+volumes:
+  boenmind-data:

@@ -1,0 +1,26 @@
+# BoenMind 服务器版 systemd 服务
+# 安装路径：/etc/systemd/system/boenmind.service
+# 数据目录：/var/lib/boenmind（.boenmind 与 BoenMind 工作文件夹都在其下）
+[Unit]
+Description=BoenMind knowledge management server
+After=network.target
+
+[Service]
+Type=simple
+# 专用低权限用户，由 install.sh 创建
+User=boenmind
+Group=boenmind
+# 数据目录：BOENMIND_HOME 覆盖默认的 ~（见 bm-core::config::home_base）
+Environment=BOENMIND_HOME=/var/lib/boenmind
+# 监听所有网卡，局域网内浏览器直接访问 http://服务器IP:17321
+Environment=BOENMIND_BIND=0.0.0.0
+ExecStart=/usr/local/bin/bm-server
+Restart=always
+RestartSec=3
+# 安全加固（systemd 默认即可，这里显式收紧文件系统访问）
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

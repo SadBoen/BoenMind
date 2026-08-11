@@ -94,6 +94,75 @@ cd frontend && pnpm tauri build --debug --no-bundle
 - 图片 / PDF 预览为内嵌展示，大文件未做分页优化。
 - 工具调用（干活代理）与 RAG 知识库（来源引用）为下一期规划。
 
+## 服务器部署（Linux）
+
+服务器版是单文件二进制：前端页面已内嵌（`--features embed`），无需 Node / nginx。
+数据（配置、数据库、插件、pi 密钥）存放于 `/var/lib/boenmind`
+（可用 `BOENMIND_HOME` 环境变量覆盖）。
+
+### 方式一：systemd 一键安装
+
+```bash
+tar xzf boenmind-server_0.1.1_linux-x86_64.tar.gz   # 或 linux-aarch64
+cd boenmind-server_0.1.1_linux-x86_64
+sudo bash install.sh
+```
+
+脚本创建专用用户 `boenmind`、安装 systemd 服务并开机自启，之后浏览器访问
+`http://服务器IP:17321`。管理命令：`systemctl status/restart boenmind`。
+
+### 方式二：Docker
+
+```bash
+docker run -d --name boenmind --restart unless-stopped \
+  -p 17321:17321 \
+  -v boenmind-data:/var/lib/boenmind \
+  ghcr.io/sadboen/boenmind:v0.1.1
+```
+
+或使用仓库根目录的 `docker-compose.yml`（`docker compose up -d`）。
+
+### 服务器版环境变量
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `BOENMIND_PORT` | `17321` | 端口 |
+| `BOENMIND_BIND` | `127.0.0.1` | 监听地址，服务器部署设为 `0.0.0.0` |
+| `BOENMIND_HOME` | `~` | 数据目录基础（`.boenmind` 与工作文件夹都在其下） |
+
+> ⚠️ 安全：当前版本**无登录认证**，配置中的 API 密钥对能访问该端口的任何人可见。
+> 请仅在可信内网使用，或通过反向代理（nginx / caddy）加访问密码 / HTTPS 后对外。
+
+## 发布（GitHub Actions 自动构建）
+
+打 tag 即发布：`git tag v0.1.1 && git push origin v0.1.1`，
+`.github/workflows/release.yml` 自动构建并上传全部产物（draft Release，确认后发布）：
+
+| 平台 | 产物 |
+|---|---|
+| macOS ARM / Intel | `BoenMind_0.1.1_{aarch64,x86_64}.dmg`、`.app.tar.gz`（含自动更新签名 latest.json + .sig） |
+| Windows 便携版（免安装） | `BoenMind_0.1.1_x64_portable.zip`（依赖系统 WebView2） |
+| Linux 服务器版 | `boenmind-server_0.1.1_linux-{x86_64,aarch64}.tar.gz` |
+| Docker 多架构镜像 | `ghcr.io/sadboen/boenmind:v0.1.1` |
+
+**一次性准备（发布前必须完成）**：仓库 Settings → Secrets and variables → Actions，添加：
+
+- `TAURI_SIGNING_PRIVATE_KEY`：`base64 ~/.boenmind/tauri-update.key` 的输出（自动更新签名，macOS 构建必需）
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`：签名私钥密码
+
+没有这两个 Secret 时 macOS job 会构建失败（`createUpdaterArtifacts` 需要签名）。
+
+**试跑**：Actions 页手动 Run workflow（workflow_dispatch）可构建全部平台产物但
+不创建 Release、不推 Docker 镜像。
+
+**已知发布限制**：
+
+- macOS 未签名 / 未 notarize（无 Apple 开发者证书）：首次打开需右键 → 打开。
+- Windows 便携版无法应用内自动更新（updater 需要 MSI/NSIS 安装器），请留意 Release 页新版本。
+- 若更新了 tauri.conf.json 的 `version`，请同步 bump：`frontend/package.json`、
+  `backend/crates/bm-core/Cargo.toml`、`backend/crates/bm-server/Cargo.toml`、
+  `docker-compose.yml`（镜像 tag）。
+
 ## 许可
 
 本项目基于 MIT 许可（vendored pi_agent_rust 保留其 MIT+OpenAI/Anthropic Rider 原许可文件）。

@@ -199,16 +199,20 @@ fn default_lang() -> String {
     "zh".to_string()
 }
 
+/// 数据基础目录：默认用户主目录；服务器部署用 `BOENMIND_HOME` 覆盖
+/// （systemd / Docker 可指向 /var/lib/boenmind 等专用目录）。
+fn home_base() -> PathBuf {
+    std::env::var_os("BOENMIND_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")))
+}
+
 fn default_working_dir() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(DEFAULT_WORKSPACE_DIR)
+    home_base().join(DEFAULT_WORKSPACE_DIR)
 }
 
 pub fn app_dir() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(APP_DIR)
+    home_base().join(APP_DIR)
 }
 
 pub fn config_path() -> PathBuf {

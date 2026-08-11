@@ -1,0 +1,306 @@
+# BoenMind 发布流程：打 tag v* 自动构建四类产物并创建 GitHub Release
+#   - macOS ARM / Intel（dmg + app.tar.gz + 自动更新签名）
+#   - Windows 便携版（zip，免安装）
+#   - Linux 服务器版（单文件二进制 tar.gz，x86_64 + aarch64）
+#   - Docker 多架构镜像（ghcr.io/sadboen/boenmind）
+# 也可 workflow_dispatch 手动触发试跑（不创建 Release、不推 Docker）。
+#
+# 前置条件（一次性）：仓库 Secrets 添加
+#   TAURI_SIGNING_PRIVATE_KEY        = base64 ~/.boenmind/tauri-update.key
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+# 没有这两个 Secret 时 macOS job 会失败（createUpdaterArtifacts 需要签名）。
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  NODE_VERSION: "24"
+  PNPM_VERSION: "11"
+
+jobs:
+  # ============================================================
+  # macOS：同一 runner 上交叉编译 ARM + Intel（Tauri 官方支持）
+  # ============================================================
+  macos:
+    name: macOS (ARM + Intel)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: 安装前端依赖
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: 构建 Apple Silicon 版 (aarch64)
+        working-directory: frontend
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # 无 Apple 开发者证书：ad-hoc 签名（未 notarize，首次打开需右键）
+          TAURI_SIGNING_IDENTITY: "-"
+        run: pnpm tauri build --target aarch64-apple-darwin --bundles app,dmg
+
+      - name: 构建 Intel 版 (x86_64)
+        working-directory: frontend
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_SIGNING_IDENTITY: "-"
+        run: pnpm tauri build --target x86_64-apple-darwin --bundles app,dmg
+
+      - name: 收集产物并合并自动更新清单 (latest.json)
+        working-directory: frontend
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euxo pipefail
+          mkdir -p ../dist-mac
+          VER="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          # 试跑（workflow_dispatch）时 ref_name 是分支名，退回 v$VER
+          if [[ "${RELEASE_TAG:-}" =~ ^v[0-9] ]]; then TAG="$RELEASE_TAG"; else TAG="v$VER"; fi
+
+          for ARCH in aarch64 x86_64; do
+            TRIPLE="$([ "$ARCH" = aarch64 ] && echo aarch64-apple-darwin || echo x86_64-apple-darwin)"
+            BUNDLE="src-tauri/target/$TRIPLE/release/bundle"
+            # .app.tar.gz（自动更新目标）+ dmg + 签名
+            tar czf "../dist-mac/BoenMind_${VER}_${ARCH}.app.tar.gz" -C "$BUNDLE/app" BoenMind.app
+            cp "$BUNDLE"/dmg/*.dmg "../dist-mac/"
+            find src-tauri/target/$TRIPLE/release -name "*.sig" -exec cp {} ../dist-mac/ \;
+          done
+
+          # 合并两个架构的 latest.json（tauri 每架构生成一份，只含自己）
+          python3 - "$VER" "$TAG" <<'PY'
+          import glob, json, sys
+          ver, tag = sys.argv[1], sys.argv[2]
+          base = f"https://github.com/SadBoen/BoenMind/releases/download/{tag}"
+          merged = {"version": ver, "notes": f"BoenMind v{ver}", "pub_date": "", "platforms": {}}
+          for path in glob.glob("src-tauri/target/*/release/bundle/latest.json"):
+              arch = "aarch64" if "aarch64" in path else "x86_64"
+              with open(path) as f:
+                  one = json.load(f)
+              merged["pub_date"] = one.get("pub_date", "")
+              merged["platforms"][f"darwin-{arch}"] = {
+                  "url": f"{base}/BoenMind_{ver}_{arch}.app.tar.gz",
+                  "signature": one["platforms"][f"darwin-{arch}"]["signature"],
+              }
+          with open("../dist-mac/latest.json", "w") as f:
+              json.dump(merged, f, ensure_ascii=False)
+          PY
+          ls -la ../dist-mac/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-artifacts
+          path: dist-mac/*
+          if-no-files-found: error
+
+  # ============================================================
+  # Windows：便携版（免安装，zip 打包 exe）
+  # 说明：便携版无法使用 Tauri 应用内自动更新（需要 MSI/NSIS 安装器），
+  # 新版本需手动下载替换。
+  # ============================================================
+  windows:
+    name: Windows 便携版
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: 安装前端依赖
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: 构建（不打包安装器，仅产出 exe）
+        working-directory: frontend
+        run: pnpm tauri build --no-bundle
+
+      - name: 打包便携版 zip
+        shell: pwsh
+        run: |
+          $VER = (Get-Content src-tauri/tauri.conf.json | ConvertFrom-Json).version
+          New-Item -ItemType Directory -Force -Path ..\dist-win | Out-Null
+          Compress-Archive -Path src-tauri\target\release\BoenMind.exe -DestinationPath "..\dist-win\BoenMind_${VER}_x64_portable.zip" -CompressionLevel Optimal
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-artifacts
+          path: dist-win/*
+          if-no-files-found: error
+
+  # ============================================================
+  # Linux 服务器版：bm-server（内嵌前端，--features embed）
+  # ============================================================
+  linux-server:
+    name: Linux 服务器版
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+
+      - name: 构建前端（内嵌进二进制的 dist）
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile && pnpm build
+
+      - name: 构建 x86_64 服务器版
+        working-directory: backend
+        run: cargo build --release -p bm-server --features embed
+
+      - name: 构建 aarch64 服务器版（cargo-zigbuild 交叉编译）
+        uses: taiki-e/install-action@cargo-zigbuild
+      - name: 交叉编译 aarch64
+        working-directory: backend
+        run: cargo zigbuild --release -p bm-server --features embed --target aarch64-unknown-linux-gnu
+
+      - name: 打包 tar.gz（二进制 + 安装脚本 + systemd unit + 说明）
+        run: |
+          set -euxo pipefail
+          VER="$(node -p "require('./frontend/src-tauri/tauri.conf.json').version")"
+          mkdir -p dist-linux
+          # x86_64 为原生构建（target/release），aarch64 为 zigbuild 交叉构建
+          for ARCH in x86_64 aarch64; do
+            BIN="backend/target/release/bm-server"
+            [ "$ARCH" = aarch64 ] && BIN="backend/target/aarch64-unknown-linux-gnu/release/bm-server"
+            STAGE="boenmind-server_${VER}_linux-${ARCH}"
+            mkdir -p "$STAGE"
+            cp "$BIN" "$STAGE/bm-server"
+            cp packaging/linux/install.sh "$STAGE/install.sh"
+            cp packaging/linux/boenmind.service "$STAGE/boenmind.service"
+            cp packaging/linux/README.md "$STAGE/README.md"
+            sed -i "s/__VERSION__/${VER}/" "$STAGE/install.sh"
+            chmod +x "$STAGE/install.sh"
+            tar czf "dist-linux/$STAGE.tar.gz" "$STAGE"
+            rm -rf "$STAGE"
+          done
+          ls -la dist-linux/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-artifacts
+          path: dist-linux/*
+          if-no-files-found: error
+
+      # Docker 多架构镜像（仅正式 tag 推送；试跑跳过）。
+      # 注入 zigbuild 预构建二进制，避免 QEMU 模拟编译 pi_agent_rust。
+      - name: 准备 Docker 构建上下文
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          mkdir -p .ci-bins
+          cp backend/target/release/bm-server .ci-bins/bm-server-x86_64
+          cp backend/target/aarch64-unknown-linux-gnu/release/bm-server .ci-bins/bm-server-aarch64
+
+      - name: 登录 ghcr.io
+        if: startsWith(github.ref, 'refs/tags/')
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: 推送多架构镜像
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -euxo pipefail
+          VER="$(node -p "require('./frontend/src-tauri/tauri.conf.json').version")"
+          IMG="ghcr.io/sadboen/boenmind:v${VER}"
+          docker buildx create --use
+          docker buildx build -f packaging/linux/Dockerfile.ci \
+            --platform linux/amd64 --build-arg BM_BINARY=bm-server-x86_64 \
+            -t "${IMG}-amd64" --push .
+          docker buildx build -f packaging/linux/Dockerfile.ci \
+            --platform linux/arm64 --build-arg BM_BINARY=bm-server-aarch64 \
+            -t "${IMG}-arm64" --push .
+          docker manifest create "$IMG" --amend "${IMG}-amd64" --amend "${IMG}-arm64"
+          docker manifest push "$IMG"
+
+  # ============================================================
+  # 聚合发布：创建 GitHub Release 并上传全部产物（仅正式 tag）
+  # ============================================================
+  release:
+    name: 创建 GitHub Release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [macos, windows, linux-server]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: 产物清单
+        run: ls -la release-assets/
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          draft: true
+          fail_on_unmatched_files: true
+          files: release-assets/*
+          body: |
+            ## BoenMind ${{ github.ref_name }}
+
+            个人知识管理软件：LLM-WIKI 路线 + 个人 Agent。
+
+            ### 下载
+
+            **macOS（Apple Silicon / Intel）**
+            - `BoenMind_*.dmg` 安装镜像；或 `BoenMind_*.app.tar.gz` 解压即用
+            - 未签名（无 Apple 开发者证书）：首次打开请在「系统设置 → 隐私与安全性」中允许，或对应用右键 → 打开
+            - 应用内「设置 → 关于 → 检查更新」可自动升级（macOS）
+
+            **Windows（便携版，免安装）**
+            - `BoenMind_*_x64_portable.zip` 解压运行 `BoenMind.exe`
+            - 依赖系统 WebView2（Win10/11 自带；老版本 Win10 需自行安装 WebView2 Runtime）
+            - 便携版不支持应用内自动更新，请留意本页新版本
+
+            **Linux 服务器版（x86_64 / aarch64）**
+            - `boenmind-server_*_linux-*.tar.gz`：单文件二进制（前端已内嵌）
+            - 安装：`sudo bash install.sh`（自动创建 systemd 服务并启动）
+            - Docker：`docker run -d -p 17321:17321 -v boenmind-data:/var/lib/boenmind ghcr.io/sadboen/boenmind:${{ github.ref_name }}`
+            - 详细说明见包内 README.md；无登录认证，请仅在可信内网使用
+
+            ### 安全提示
+            服务器版为 HTTP 明文且无登录认证，配置中的 API 密钥对能访问该端口的任何人可见，
+            请仅在可信内网使用，或通过反向代理加访问密码 / HTTPS 后对外。
