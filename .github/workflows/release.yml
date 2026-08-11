@@ -89,8 +89,8 @@ jobs:
             cp src-tauri/target/$TRIPLE/release/bundle/dmg/*.dmg "../dist-mac/"
           done
 
-          # 合并两个架构的 latest.json：签名直接读 .sig 文件（tauri 生成的
-          # latest.json 位置随版本变动，而 .sig 路径稳定且内容即 signature 字段）
+          # 合并两个架构的 latest.json：签名直接读已 mv 到 dist-mac 的 .sig 文件
+          # （tauri 生成的 latest.json 位置随版本变动，而 .sig 路径稳定且内容即 signature 字段）
           python3 - "$VER" "$TAG" <<'PY'
           import datetime, json, sys
           ver, tag = sys.argv[1], sys.argv[2]
@@ -101,8 +101,8 @@ jobs:
               "pub_date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
               "platforms": {},
           }
-          for arch, triple in [("aarch64", "aarch64-apple-darwin"), ("x86_64", "x86_64-apple-darwin")]:
-              sig_path = f"src-tauri/target/{triple}/release/bundle/macos/BoenMind.app.tar.gz.sig"
+          for arch in ("aarch64", "x86_64"):
+              sig_path = f"../dist-mac/BoenMind_{ver}_{arch}.app.tar.gz.sig"
               with open(sig_path) as f:
                   signature = f.read().strip()
               merged["platforms"][f"darwin-{arch}"] = {
