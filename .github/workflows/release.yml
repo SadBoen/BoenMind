@@ -299,6 +299,8 @@ jobs:
           set -euxo pipefail
           VER="$(node -p "require('./frontend/src-tauri/tauri.conf.json').version")"
           mkdir -p dist-linux
+          # signer 经 pnpm --dir frontend 执行（cwd=frontend），文件路径用绝对路径
+          DIST_DIR="$(pwd)/dist-linux"
           # x86_64 为原生构建（target/release），aarch64 为 zigbuild 交叉构建
           for ARCH in x86_64 aarch64; do
             BIN="backend/target/release/bm-server"
@@ -311,19 +313,19 @@ jobs:
             cp packaging/linux/README.md "$STAGE/README.md"
             sed -i "s/__VERSION__/${VER}/" "$STAGE/install.sh"
             chmod +x "$STAGE/install.sh"
-            tar czf "dist-linux/$STAGE.tar.gz" "$STAGE"
+            tar czf "$DIST_DIR/$STAGE.tar.gz" "$STAGE"
             rm -rf "$STAGE"
             # 热升级 runtime 资产：独立 bm-server 二进制（embed，含前端）+ 签名
-            cp "$BIN" "dist-linux/boenmind-runtime-${VER}-linux-${ARCH}"
+            cp "$BIN" "$DIST_DIR/boenmind-runtime-${VER}-linux-${ARCH}"
             # 签名密钥兼容两种格式：先按 base64 解一层试签；失败则按原样文本重试
             if ! SIGN_KEY="$(echo "$TAURI_SIGNING_PRIVATE_KEY" | base64 -d 2>/dev/null || true)" || [ -z "$SIGN_KEY" ] \
               || ! pnpm --dir frontend exec tauri signer sign --private-key "$SIGN_KEY" \
                    --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" \
-                   "dist-linux/boenmind-runtime-${VER}-linux-${ARCH}" 2>/dev/null; then
+                   "$DIST_DIR/boenmind-runtime-${VER}-linux-${ARCH}" 2>/dev/null; then
               pnpm --dir frontend exec tauri signer sign \
                 --private-key "$TAURI_SIGNING_PRIVATE_KEY" \
                 --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" \
-                "dist-linux/boenmind-runtime-${VER}-linux-${ARCH}"
+                "$DIST_DIR/boenmind-runtime-${VER}-linux-${ARCH}"
             fi
           done
           ls -la dist-linux/
