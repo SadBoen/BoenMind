@@ -12,7 +12,9 @@ toml = "0.8"
 dirs = "6"
 thiserror = "2"
 tokio = { version = "1", features = ["sync"] }
-rusqlite = { version = "0.39", features = ["bundled"] }
+# SQLite 兼容存储：Turso（limbo，Rust 重写，原生向量 + tantivy FTS）。
+# 裁剪默认的 fts（tantivy）特性以减小构建体积，后续做全文搜索时再开启。
+turso = { version = "0.7.2", default-features = false, features = ["mimalloc"] }
 # skills 安装/浏览：HTTP 抓取 + tarball 解压 + 随机抽取
 ureq = { version = "3", features = ["json", "gzip"] }
 flate2 = "1"

@@ -100,6 +100,7 @@ pub async fn create_session(
     let session = state
         .db
         .create_session(&id, req.provider_id.as_deref(), req.model.as_deref())
+        .await
         .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
     let mut session = session;
     if let Some(title) = req.title {
@@ -107,6 +108,7 @@ pub async fn create_session(
             state
                 .db
                 .rename_session(&session.id, title.trim())
+                .await
                 .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
             session.title = title.trim().to_string();
         }
@@ -118,6 +120,7 @@ pub async fn list_sessions(State(state): crate::SharedState) -> ApiResult<Json<V
     state
         .db
         .list_sessions()
+        .await
         .map(Json)
         .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))
 }
@@ -129,11 +132,13 @@ pub async fn get_session(
     let session = state
         .db
         .get_session(&id)
+        .await
         .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?
         .ok_or_else(|| api_error(StatusCode::NOT_FOUND, format!("会话不存在: {id}")))?;
     let messages = state
         .db
         .list_messages(&id)
+        .await
         .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
     Ok(Json(serde_json::json!({
         "session": session,
@@ -158,6 +163,7 @@ pub async fn rename_session(
     state
         .db
         .rename_session(&id, &title)
+        .await
         .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
@@ -169,6 +175,7 @@ pub async fn delete_session(
     let rows = state
         .db
         .delete_session(&id)
+        .await
         .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
     if rows == 0 {
         return Err(api_error(StatusCode::NOT_FOUND, format!("会话不存在: {id}")));

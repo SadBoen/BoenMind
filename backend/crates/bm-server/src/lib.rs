@@ -84,7 +84,7 @@ fn router(state: AppState) -> Router {
 /// 初始化 BoenMind 环境（配置、工作文件夹、pi agent 目录、数据库）并返回服务状态。
 ///
 /// 供独立二进制与 Tauri 壳共用，保证两端行为一致。
-pub fn init() -> Result<(AppConfig, Db), Box<dyn std::error::Error>> {
+pub async fn init() -> Result<(AppConfig, Db), Box<dyn std::error::Error>> {
     // 1. 配置与工作文件夹
     let config = bm_core::config::load();
     if let Err(err) = bm_core::config::ensure_working_dir(&config) {
@@ -105,7 +105,7 @@ pub fn init() -> Result<(AppConfig, Db), Box<dyn std::error::Error>> {
     }
 
     // 4. 数据库
-    let db = Db::open()?;
+    let db = Db::open().await?;
     Ok((config, db))
 }
 
@@ -114,7 +114,7 @@ pub fn init() -> Result<(AppConfig, Db), Box<dyn std::error::Error>> {
 /// 注意：本函数不初始化全局日志（避免与宿主进程的日志系统冲突，
 /// 例如 Tauri 的 log 插件）。调用方自行初始化 tracing_subscriber。
 pub async fn serve(port: u16) -> Result<(), Box<dyn std::error::Error>> {
-    let (config, db) = init()?;
+    let (config, db) = init().await?;
     tracing::info!("工作文件夹: {}", config.working_dir.display());
     tracing::info!("pi agent 目录: {}", bm_core::config::pi_agent_dir().display());
 

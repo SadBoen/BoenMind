@@ -55,7 +55,7 @@ pub async fn chat(
         return api_error(StatusCode::BAD_REQUEST, "消息不能为空").into_response();
     }
 
-    let session = match state.db.get_session(&req.session_id) {
+    let session = match state.db.get_session(&req.session_id).await {
         Ok(Some(s)) => s,
         Ok(None) => return api_error(StatusCode::NOT_FOUND, "会话不存在").into_response(),
         Err(err) => {
@@ -66,11 +66,11 @@ pub async fn chat(
     // 首次消息时自动用消息开头命名会话（各语言默认标题均视为未命名）
     if DEFAULT_TITLES.contains(&session.title.as_str()) {
         let title: String = message.chars().take(24).collect();
-        let _ = state.db.rename_session(&session.id, &title);
+        let _ = state.db.rename_session(&session.id, &title).await;
     }
 
     // 持久化用户消息
-    if let Err(err) = state.db.add_message(&session.id, "user", &message) {
+    if let Err(err) = state.db.add_message(&session.id, "user", &message).await {
         return api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
     }
 
@@ -284,12 +284,12 @@ async fn run_prompt_and_persist(
     let final_text = accumulated.lock().unwrap().clone();
     let done_tools = done_tools.lock().unwrap().clone();
     if !final_text.trim().is_empty() {
-        if let Ok(assistant_msg) = state.db.add_message(&session_id, "assistant", &final_text) {
+        if let Ok(assistant_msg) = state.db.add_message(&session_id, "assistant", &final_text).await {
             if !done_tools.is_empty() {
-                let _ = state.db.add_tool_calls(assistant_msg.id, &done_tools);
+                let _ = state.db.add_tool_calls(assistant_msg.id, &done_tools).await;
             }
         }
-        let _ = state.db.touch_session(&session_id);
+        let _ = state.db.touch_session(&session_id).await;
     }
     if result.is_err() && !error_sent.load(std::sync::atomic::Ordering::Relaxed) {
         let _ = tx
