@@ -97,8 +97,8 @@ pub fn init() -> Result<(AppConfig, Db), Box<dyn std::error::Error>> {
     // 3. 同步 models.json（provider baseUrl 覆盖 + 自定义模型注册）
     bm_core::config::sync_pi_models_json(&config)?;
 
-    // 3.5 预装内置示例插件（hello / bookmark）
-    if let Err(err) = bm_core::plugins::ensure_builtin_plugins() {
+    // 3.5 预装内置插件（hello / bookmark / ctx-compactor；用户已卸载的不再恢复）
+    if let Err(err) = bm_core::plugins::ensure_builtin_plugins(&config) {
         eprintln!("[bm-server] 预装示例插件失败: {err}");
     }
 

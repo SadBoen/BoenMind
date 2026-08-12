@@ -31,7 +31,7 @@ pub struct PluginInfo {
     /// 扩展类型：单文件（single）或清单目录（manifest）
     pub kind: String,
     pub enabled: bool,
-    /// 内置示例（不可删除，随 vendored 仓库提供）
+    /// 内置插件（随仓库/上游提供；卸载后写入 removed_builtin_plugins，不再自动恢复）
     pub builtin: bool,
 }
 
@@ -187,11 +187,9 @@ pub fn enabled_extension_paths(config: &AppConfig) -> Vec<PathBuf> {
         .collect()
 }
 
-/// 卸载插件：删除文件/目录并从启用列表移除。内置示例不可卸载。
+/// 卸载插件：删除文件/目录并从启用列表移除。
+/// 内置插件同样可卸载；卸载后写入 removed_builtin_plugins，启动预装时不再恢复。
 pub fn uninstall_plugin(config: &mut AppConfig, id: &str) -> Result<(), String> {
-    if BUILTIN_PLUGINS.iter().any(|(bid, _)| *bid == id) {
-        return Err(format!("内置插件 {id} 不可卸载"));
-    }
     let dir = plugins_dir();
     let file = dir.join(format!("{id}.ts"));
     let dir_plugin = dir.join(id);
@@ -203,15 +201,25 @@ pub fn uninstall_plugin(config: &mut AppConfig, id: &str) -> Result<(), String> 
         return Err(format!("插件 {id} 不存在"));
     }
     config.enabled_plugins.retain(|p| p != id);
+    // 内置插件记录到"已卸载"列表，避免下次启动被 ensure_builtin_plugins 重新预装
+    if BUILTIN_PLUGINS.iter().any(|(bid, _)| *bid == id)
+        && !config.removed_builtin_plugins.iter().any(|p| p == id)
+    {
+        config.removed_builtin_plugins.push(id.to_string());
+    }
     crate::config::save(config).map_err(|e| e.to_string())?;
     Ok(())
 }
 
-/// 首次启动时预装内置示例插件。
-pub fn ensure_builtin_plugins() -> Result<(), std::io::Error> {
+/// 首次启动时预装内置插件；用户已卸载的（removed_builtin_plugins）跳过。
+pub fn ensure_builtin_plugins(config: &AppConfig) -> Result<(), std::io::Error> {
     let dir = plugins_dir();
     fs::create_dir_all(&dir)?;
     for (id, _desc) in BUILTIN_PLUGINS {
+        // 软件自由：用户卸载的内置插件尊重其选择，不自动"复活"
+        if config.removed_builtin_plugins.iter().any(|p| p == id) {
+            continue;
+        }
         if let Some(src) = vendored_example_path(id) {
             let dest = dir.join(format!("{id}.ts"));
             if dest.exists() {

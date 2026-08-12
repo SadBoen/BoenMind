@@ -38,6 +38,9 @@ pub struct AppConfig {
     /// 启用的插件（~/.boenmind/extensions 下的扩展 id）
     #[serde(default)]
     pub enabled_plugins: Vec<String>,
+    /// 已卸载的内置插件（启动预装时跳过：卸载即彻底删除，不再自动恢复）
+    #[serde(default)]
+    pub removed_builtin_plugins: Vec<String>,
     /// 启用的 skill（~/.boenmind/skills 下的 skill id，启用时同步到 pi 目录）
     #[serde(default)]
     pub enabled_skills: Vec<String>,
@@ -238,6 +241,7 @@ impl Default for AppConfig {
             theme: default_theme(),
             lang: default_lang(),
             enabled_plugins: Vec::new(),
+            removed_builtin_plugins: Vec::new(),
             enabled_skills: Vec::new(),
             compaction: CompactionConfig::default(),
         }
@@ -426,6 +430,7 @@ mod tests {
             theme: "system".into(),
             lang: "zh".into(),
             enabled_plugins: vec![],
+            removed_builtin_plugins: vec![],
             enabled_skills: vec![],
             compaction: CompactionConfig::default(),
         };

@@ -64,6 +64,13 @@ export function PluginsSettings() {
   };
 
   const uninstall = async (plugin: PluginInfo) => {
+    // 内置插件卸载后不再自动恢复，需二次确认
+    if (
+      plugin.builtin &&
+      !window.confirm(t("settings.plugins.uninstallBuiltinConfirm", { name: plugin.name }))
+    ) {
+      return;
+    }
     try {
       await api.uninstallPlugin(plugin.id);
       toast.success(t("settings.plugins.uninstalled", { name: plugin.name }));
@@ -127,17 +134,15 @@ export function PluginsSettings() {
               </div>
               <div className="flex items-center gap-2">
                 <Switch checked={plugin.enabled} onCheckedChange={() => void toggle(plugin)} />
-                {!plugin.builtin && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="text-muted-foreground hover:text-destructive"
-                    title={t("settings.plugins.uninstall")}
-                    onClick={() => void uninstall(plugin)}
-                  >
-                    <Trash2 size={15} />
-                  </Button>
-                )}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="text-muted-foreground hover:text-destructive"
+                  title={t("settings.plugins.uninstall")}
+                  onClick={() => void uninstall(plugin)}
+                >
+                  <Trash2 size={15} />
+                </Button>
               </div>
             </div>
           ))}
