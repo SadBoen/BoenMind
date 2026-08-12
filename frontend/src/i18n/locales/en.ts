@@ -4,6 +4,11 @@
 import type { Translation } from "./zh";
 
 export const en: Translation = {
+  auth: {
+    title: "Access token required",
+    desc: "This server requires a BOENMIND_TOKEN access token. Enter it to continue.",
+    placeholder: "Access token",
+  },
   common: {
     save: "Save",
     saving: "Saving…",

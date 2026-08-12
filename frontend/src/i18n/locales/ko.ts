@@ -4,6 +4,11 @@
 import type { Translation } from "./zh";
 
 export const ko: Translation = {
+  auth: {
+    title: "액세스 토큰 필요",
+    desc: "이 서버는 BOENMIND_TOKEN 액세스 토큰이 필요합니다. 입력하여 계속하세요.",
+    placeholder: "액세스 토큰",
+  },
   common: {
     save: "저장",
     saving: "저장 중…",

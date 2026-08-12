@@ -127,9 +127,10 @@ docker run -d --name boenmind --restart unless-stopped \
 | `BOENMIND_PORT` | `17321` | 端口 |
 | `BOENMIND_BIND` | `127.0.0.1` | 监听地址，服务器部署设为 `0.0.0.0` |
 | `BOENMIND_HOME` | `~` | 数据目录基础（`.boenmind` 与工作文件夹都在其下） |
+| `BOENMIND_TOKEN` | 无 | 访问令牌：设置后所有 `/api` 请求需带 `Authorization: Bearer <token>`，前端首次访问会弹出令牌输入框；桌面版无需设置 |
 
-> ⚠️ 安全：当前版本**无登录认证**，配置中的 API 密钥对能访问该端口的任何人可见。
-> 请仅在可信内网使用，或通过反向代理（nginx / caddy）加访问密码 / HTTPS 后对外。
+> ⚠️ 安全：默认**无登录认证**，配置中的 API 密钥对能访问该端口的任何人可见。
+> 公网/不可信内网部署请务必设置 `BOENMIND_TOKEN`，或通过反向代理（nginx / caddy）加访问密码 / HTTPS。
 
 ## 发布（GitHub Actions 自动构建）
 

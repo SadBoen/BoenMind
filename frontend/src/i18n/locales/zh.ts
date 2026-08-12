@@ -3,6 +3,11 @@
  * key 按组件命名空间组织：common / api / nav / chat / sessionList / files / settings。
  */
 export const zh = {
+  auth: {
+    title: "需要访问令牌",
+    desc: "该服务器设置了 BOENMIND_TOKEN 访问令牌，请输入后继续使用。",
+    placeholder: "访问令牌",
+  },
   common: {
     save: "保存",
     saving: "保存中…",

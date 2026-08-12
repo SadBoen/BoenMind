@@ -161,8 +161,9 @@ async fn get_or_create_agent(
         (provider, model)
     };
 
-    // 会话句柄已存在：即时切换模型 / 思考强度
-    if let Some(entry) = state.agents.lock().await.get(&session.id) {
+    // 会话句柄已存在：即时切换模型 / 思考强度，并刷新空闲计时
+    if let Some(entry) = state.agents.lock().await.get_mut(&session.id) {
+        entry.last_used = std::time::Instant::now();
         let mut handle = entry.handle.lock().await;
         if let Some(pid) = model_override {
             let provider_name = provider.kind.pi_name(&provider.id);
@@ -225,7 +226,9 @@ async fn get_or_create_agent(
         .entry(session.id.clone())
         .or_insert_with(|| crate::AgentSessionEntry {
             handle: Arc::new(Mutex::new(handle)),
+            last_used: std::time::Instant::now(),
         });
+    entry.last_used = std::time::Instant::now();
     Ok(entry.handle.clone())
 }
 

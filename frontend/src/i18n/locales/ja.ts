@@ -4,6 +4,11 @@
 import type { Translation } from "./zh";
 
 export const ja: Translation = {
+  auth: {
+    title: "アクセストークンが必要です",
+    desc: "このサーバーには BOENMIND_TOKEN アクセストークンが必要です。入力して続行してください。",
+    placeholder: "アクセストークン",
+  },
   common: {
     save: "保存",
     saving: "保存中…",

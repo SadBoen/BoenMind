@@ -197,19 +197,59 @@ const API_BASE: string = (() => {
   return "";
 })();
 
+// ── 访问令牌（服务器部署 BOENMIND_TOKEN 守卫）──
+// 令牌持久化在 localStorage；未设置时行为与桌面版一致（不带 Authorization 头）。
+let authToken: string = (() => {
+  try {
+    return localStorage.getItem("boenmind.token") ?? "";
+  } catch {
+    return "";
+  }
+})();
+const TOKEN_KEY = "boenmind.token";
+
+/** 设置/清除访问令牌（保存到 localStorage，立即对后续请求生效） */
+export function setAuthToken(token: string) {
+  authToken = token.trim();
+  try {
+    if (authToken) localStorage.setItem(TOKEN_KEY, authToken);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** 401（unauthorized）回调：前端据此弹出令牌输入框 */
+let unauthorizedHandler: (() => void) | null = null;
+export function onUnauthorized(handler: (() => void) | null) {
+  unauthorizedHandler = handler;
+}
+
+function notifyUnauthorized() {
+  unauthorizedHandler?.();
+}
+
+function authHeaders(): Record<string, string> {
+  return authToken ? { Authorization: `Bearer ${authToken}` } : {};
+}
+
+/** 统一错误解析：401 unauthorized 触发令牌回调，其余透传服务端 error 详情 */
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders(), ...init?.headers },
     ...init,
   });
   if (!res.ok) {
     let detail = res.statusText;
+    let unauthorized = false;
     try {
       const body = await res.json();
       detail = body.error ?? detail;
+      unauthorized = res.status === 401 && body.error === "unauthorized";
     } catch {
       /* ignore */
     }
+    if (unauthorized) notifyUnauthorized();
     throw new Error(detail);
   }
   return res.json() as Promise<T>;
@@ -354,7 +394,11 @@ export const api = {
         try {
           const res = await fetch(`${API_BASE}/api/chat`, {
             method: "POST",
-            headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "text/event-stream",
+              ...authHeaders(),
+            },
             body: JSON.stringify({
               session_id: sessionId,
               message,
@@ -365,6 +409,7 @@ export const api = {
           });
           if (!res.ok || !res.body) {
             const body = await res.json().catch(() => null);
+            if (res.status === 401 && body?.error === "unauthorized") notifyUnauthorized();
             throw new Error(body?.error ?? i18n.t("api.requestFailed", { status: res.status }));
           }
           const reader = res.body.getReader();
