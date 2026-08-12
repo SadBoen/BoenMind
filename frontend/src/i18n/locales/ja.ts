@@ -67,6 +67,7 @@ export const ja: Translation = {
     emptyMatch: "一致するチャットがありません",
     rename: "名前を変更",
     delete: "削除",
+    deleteFailed: "削除に失敗: {{error}}",
   },
   files: {
     workspace: "ワークスペース",

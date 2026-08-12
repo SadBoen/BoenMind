@@ -67,6 +67,7 @@ export const ko: Translation = {
     emptyMatch: "일치하는 대화가 없습니다",
     rename: "이름 바꾸기",
     delete: "삭제",
+    deleteFailed: "삭제 실패: {{error}}",
   },
   files: {
     workspace: "작업 폴더",

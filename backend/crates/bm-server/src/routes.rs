@@ -166,10 +166,13 @@ pub async fn delete_session(
     State(state): crate::SharedState,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    state
+    let rows = state
         .db
         .delete_session(&id)
         .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    if rows == 0 {
+        return Err(api_error(StatusCode::NOT_FOUND, format!("会话不存在: {id}")));
+    }
     // 清理对应的 agent 会话句柄
     state.agents.lock().await.remove(&id);
     Ok(Json(serde_json::json!({ "ok": true })))

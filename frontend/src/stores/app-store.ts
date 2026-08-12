@@ -4,6 +4,7 @@
 import { create } from "zustand";
 import { api, type AppConfig, type ChatStreamEvent, type FileEntry, type HealthInfo, type Message, type Session, type ToolCall } from "@/api/client";
 import i18n, { applyLang, isLang } from "@/i18n";
+import { toast } from "sonner";
 
 export type NavKey = "chat" | "gallery" | "knowledge" | "settings";
 export type SettingsTab = "appearance" | "providers" | "workspace" | "plugins" | "skills" | "about";
@@ -164,11 +165,15 @@ export const useAppStore = create<AppStore>((set, get) => {
       });
     },
     removeSession: async (id) => {
-      await api.deleteSession(id);
-      if (get().activeSessionId === id) {
-        set({ activeSessionId: null, messages: [] });
+      try {
+        await api.deleteSession(id);
+        if (get().activeSessionId === id) {
+          set({ activeSessionId: null, messages: [] });
+        }
+        await get().loadSessions();
+      } catch (err) {
+        toast.error(i18n.t("sessionList.deleteFailed", { error: String(err) }));
       }
-      await get().loadSessions();
     },
 
     messages: [],

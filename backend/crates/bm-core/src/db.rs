@@ -171,12 +171,11 @@ impl Db {
         Ok(())
     }
 
-    pub fn delete_session(&self, id: &str) -> Result<(), rusqlite::Error> {
+    pub fn delete_session(&self, id: &str) -> Result<usize, rusqlite::Error> {
         self.conn
             .lock()
             .unwrap()
-            .execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
-        Ok(())
+            .execute("DELETE FROM sessions WHERE id = ?1", params![id])
     }
 
     pub fn add_message(&self, session_id: &str, role: &str, content: &str) -> Result<Message, rusqlite::Error> {

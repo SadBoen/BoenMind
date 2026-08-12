@@ -67,6 +67,7 @@ export const zh = {
     emptyMatch: "没有匹配的会话",
     rename: "重命名",
     delete: "删除",
+    deleteFailed: "删除失败: {{error}}",
   },
   files: {
     workspace: "工作文件夹",

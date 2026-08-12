@@ -67,6 +67,7 @@ export const en: Translation = {
     emptyMatch: "No matching chats",
     rename: "Rename",
     delete: "Delete",
+    deleteFailed: "Delete failed: {{error}}",
   },
   files: {
     workspace: "Workspace",
