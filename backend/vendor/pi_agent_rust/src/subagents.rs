@@ -206,7 +206,15 @@ impl Tool for SubagentTool {
         let mode = request.mode_name()?;
         let results = self.run_request(request, update).await?;
         let is_error = results.iter().any(|result| result.is_error);
-        let content = render_results(&results);
+        // BoenMind 补丁（P9）：上游 ToolOutput.details 只进会话消息，发模型的请求只带
+        // content 文本（providers/openai.rs 序列化丢弃 details），模型看不到
+        // details.results 结构化字段。这里把摘要版 JSON 拼进文本，让队长代理能
+        // 像读函数返回值一样直接取用（见 backend/vendor/UPSTREAM_PATCHES.md P9）。
+        let content = format!(
+            "{}\n\n<subagent-structured-result>\n{}\n</subagent-structured-result>",
+            render_results(&results),
+            structured_result_block(&results)
+        );
         Ok(ToolOutput {
             content: vec![ContentBlock::Text(TextContent::new(content))],
             details: Some(json!({
@@ -882,6 +890,50 @@ fn render_results(results: &[SubagentResult]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n\n")
+}
+
+// BoenMind 补丁（P9）：把子代理结果转成模型可直接读取的紧凑 JSON 块。
+// output/stderr 截断到 2000 字符，整体块上限 16KB，避免大输出进模型上下文。
+fn structured_result_block(results: &[SubagentResult]) -> String {
+    const FIELD_LIMIT: usize = 2000;
+    const BLOCK_LIMIT: usize = 16 * 1024;
+
+    let compact: Vec<serde_json::Value> = results
+        .iter()
+        .map(|result| {
+            serde_json::json!({
+                "agent": result.agent,
+                "description": result.description,
+                "step": result.step,
+                "source": result.source,
+                "model": result.model,
+                "reasoning": result.reasoning,
+                "tools": result.tools,
+                "status": result.status,
+                "exitCode": result.exit_code,
+                "output": truncate_owned(&result.output, FIELD_LIMIT),
+                "stderr": truncate_owned(&result.stderr, FIELD_LIMIT),
+                "error": result.error,
+            })
+        })
+        .collect();
+
+    let mut json = serde_json::to_string(&compact).unwrap_or_else(|_| "[]".to_string());
+    if json.len() > BLOCK_LIMIT {
+        json.truncate(BLOCK_LIMIT);
+        json.push('…');
+    }
+    json
+}
+
+fn truncate_owned(text: &str, limit: usize) -> String {
+    if text.len() <= limit {
+        text.to_string()
+    } else {
+        let mut cut = text[..limit].to_string();
+        cut.push('…');
+        cut
+    }
 }
 
 fn emit_progress(update: Option<&UpdateCallback>, result: &SubagentResult) {

@@ -27,7 +27,11 @@ pub const SYSTEM_PROMPT: &str = r#"你是 BoenMind，一个专注工作与知识
 - 回答简洁、准确、结构化；不确定时明确说明。
 - 中文回答，除非用户使用其他语言。
 - 涉及用户文件时，只访问工作文件夹范围内的内容。
-- 不要修改工作文件夹内 .boenmind 目录下的任何文件（该目录是系统配置与索引数据，误改会破坏功能）。"#;
+- 不要修改工作文件夹内 .boenmind 目录下的任何文件（该目录是系统配置与索引数据，误改会破坏功能）。
+
+派工（subagent 工具）：
+- 派任务时在 task 里写明期望的输出格式（如"最终输出必须是一个 JSON 对象，含字段 summary/findings"），队员会按约定交付。
+- 工具结果末尾的 <subagent-structured-result> 块是每个队员的结构化字段（agent/status/exitCode/output/error 等），取用结果以该块为准，不要依赖正文摘要转述。"#;
 
 /// 从 agent 事件流转出的、面向前端 SSE 的扁平事件。
 #[derive(Debug, Clone, serde::Serialize)]

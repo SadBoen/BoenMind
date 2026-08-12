@@ -69,6 +69,15 @@ Team（团队）                     # 办公 / 炒股 / 养生 …
 - **数据传递**：共享工作区文件（专家有 read/write/bash 工具）+ 队长中转（把上下文写进任务文本、把结果带回）。
 - **数据隔离**：子代理天然隔离（互不可见、默认无 subagent 工具防递归委派）；"保密任务"通过私有目录/权限实现。
 
+### 3.5 结构化返回（阶段 1.5，已落地）
+
+派工结果的"函数调用化"：上游 subagent 工具的结构化字段（`details.results`：agent/status/exitCode/output/error/model/tools）原本只进会话消息，发模型的请求只带正文文本——队长读到的只是 markdown 渲染。已通过 vendor 补丁（UPSTREAM_PATCHES.md P9 + 上游 issue #163）在工具结果正文末尾追加 `<subagent-structured-result>` 紧凑 JSON 块（output/stderr 截断 2000 字符、总块 16KB），队长代理可像读函数返回值一样直接取用结构化字段。
+
+配套约定：
+- 队长派工时在 task 里声明期望输出格式（JSON 契约）；
+- 子代理角色定义（`agents/*.md`）预置输出契约：未指定格式时按 `{"summary","findings","done","open"}` JSON 交付（config.rs DEFAULT_AGENT_DEFINITION）；
+- 主 agent 系统提示词已注入上述用法说明（bm-core agent.rs SYSTEM_PROMPT）。
+
 ### 3.4 协作演进（阶段 3+，可选）
 
 - 代理间**直接对话/协商**（hermes 聊天室语义）：需要 BoenMind 自建"协作通道"——消息队列文件（专家轮询）或插件消息总线（hostcall 桥），队长按任务动态开放/关闭通道。
