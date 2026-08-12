@@ -97,6 +97,47 @@ pub async fn create_session_handle(
     create_agent_session(options).await
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pi::sdk::AgentEvent;
+
+    fn end_with(error: Option<&str>) -> AgentEvent {
+        AgentEvent::AgentEnd {
+            session_id: std::sync::Arc::from("s"),
+            messages: Vec::new(),
+            error: error.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn abort_maps_to_done() {
+        // 用户点停止：pi 以 error: Some("Aborted") 收尾，前端须收到 Done
+        // 才能固化已生成的部分文本（回归测试：曾错误映射为 Error 导致
+        // UI 丢弃流式内容，而 DB 已入库，刷新后文本"复活"）
+        assert!(matches!(
+            map_agent_event(end_with(Some("Aborted")))[0],
+            AgentStreamEvent::Done
+        ));
+    }
+
+    #[test]
+    fn real_error_maps_to_error() {
+        assert!(matches!(
+            map_agent_event(end_with(Some("upstream 502")))[0],
+            AgentStreamEvent::Error { .. }
+        ));
+    }
+
+    #[test]
+    fn normal_end_maps_to_done() {
+        assert!(matches!(
+            map_agent_event(end_with(None))[0],
+            AgentStreamEvent::Done
+        ));
+    }
+}
+
 /// 将 pi 的 AgentEvent 映射为 BoenMind 事件（可能产出 0..n 个）。
 pub fn map_agent_event(event: AgentEvent) -> Vec<AgentStreamEvent> {
     match event {
@@ -146,13 +187,13 @@ pub fn map_agent_event(event: AgentEvent) -> Vec<AgentStreamEvent> {
             is_error,
         }],
         AgentEvent::TurnEnd { .. } => vec![AgentStreamEvent::TurnEnd],
-        AgentEvent::AgentEnd { error, .. } => {
-            if let Some(err) = error {
-                vec![AgentStreamEvent::Error { message: err }]
-            } else {
-                vec![AgentStreamEvent::Done]
-            }
-        }
+        AgentEvent::AgentEnd { error, .. } => match error {
+            // pi 取消路径（用户点停止 / AbortSignal）以 `error: Some("Aborted")`
+            // 收尾：取消不是错误，前端应收到 Done 来固化已生成的部分文本
+            Some(err) if err == "Aborted" => vec![AgentStreamEvent::Done],
+            Some(err) => vec![AgentStreamEvent::Error { message: err }],
+            None => vec![AgentStreamEvent::Done],
+        },
         AgentEvent::AgentStart { .. }
         | AgentEvent::TurnStart { .. }
         | AgentEvent::MessageStart { .. } => Vec::new(),

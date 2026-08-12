@@ -258,7 +258,9 @@ pub fn load() -> AppConfig {
         Ok(text) => match toml::from_str::<AppConfig>(&text) {
             Ok(config) => config,
             Err(err) => {
-                eprintln!("[bm-core] 配置解析失败 ({err})，使用默认配置");
+                eprintln!("[bm-core] 配置解析失败 ({err})，使用默认配置（原文件备份为 {CONFIG_FILE}.bak）");
+                // 损坏的配置先备份再覆盖：曾出现用户手写/损坏配置被默认值静默抹掉
+                let _ = fs::copy(&path, path.with_extension("toml.bak"));
                 let config = AppConfig::default();
                 let _ = save(&config);
                 config
@@ -272,6 +274,20 @@ pub fn load() -> AppConfig {
     }
 }
 
+/// 写入文件并收紧权限：config.toml 与 pi keys 含明文 API key，
+/// Unix 下仅属主可读写（与 plugin_settings 的密钥文件同标准）。
+#[cfg(unix)]
+fn write_private(path: &std::path::Path, content: &[u8]) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::write(path, content)?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+}
+
+#[cfg(not(unix))]
+fn write_private(path: &std::path::Path, content: &[u8]) -> std::io::Result<()> {
+    fs::write(path, content)
+}
+
 /// 保存配置并确保目录存在。
 pub fn save(config: &AppConfig) -> Result<(), std::io::Error> {
     let path = config_path();
@@ -279,7 +295,7 @@ pub fn save(config: &AppConfig) -> Result<(), std::io::Error> {
         fs::create_dir_all(dir)?;
     }
     let text = toml::to_string_pretty(config).map_err(std::io::Error::other)?;
-    fs::write(path, text)
+    write_private(&path, text.as_bytes())
 }
 
 /// 确保工作文件夹存在。
@@ -340,7 +356,7 @@ pub fn sync_pi_models_json(config: &AppConfig) -> Result<(), std::io::Error> {
             if !key.is_empty() {
                 fs::create_dir_all(&keys_dir)?;
                 let key_file = keys_dir.join(format!("{name}.key"));
-                fs::write(&key_file, key)?;
+                write_private(&key_file, key.as_bytes())?;
                 entry.insert(
                     "apiKey".to_string(),
                     json!(format!("file:{}", key_file.display())),
@@ -482,6 +498,60 @@ mod tests {
         assert_eq!(models[0]["contextWindow"], 200_000);
         // 未配置窗口的模型不写字段
         assert!(models[1].get("contextWindow").is_none());
+        match original {
+            Some(v) => unsafe { std::env::set_var("BOENMIND_HOME", v) },
+            None => unsafe { std::env::remove_var("BOENMIND_HOME") },
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn save_writes_private_permissions() {
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let original = std::env::var_os("BOENMIND_HOME");
+        let dir = std::env::temp_dir().join(format!("bm-config-save-{}", std::process::id()));
+        unsafe { std::env::set_var("BOENMIND_HOME", &dir) };
+        let config = AppConfig {
+            providers: vec![ProviderConfig {
+                id: "k".into(),
+                name: "K".into(),
+                kind: ProviderKind::Openai,
+                base_url: None,
+                api_key: Some("sk-secret".into()),
+                models: vec![],
+                default_model: None,
+            }],
+            ..AppConfig::default()
+        };
+        save(&config).unwrap();
+        // config.toml 含明文 API key：Unix 下权限必须为 0600
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(config_path()).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+        match original {
+            Some(v) => unsafe { std::env::set_var("BOENMIND_HOME", v) },
+            None => unsafe { std::env::remove_var("BOENMIND_HOME") },
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn load_backs_up_corrupt_config() {
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let original = std::env::var_os("BOENMIND_HOME");
+        let dir = std::env::temp_dir().join(format!("bm-config-load-{}", std::process::id()));
+        unsafe { std::env::set_var("BOENMIND_HOME", &dir) };
+        let path = config_path();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "this is not [valid toml").unwrap();
+        let config = load();
+        assert!(config.providers.is_empty()); // 解析失败回默认
+        // 备份保留原损坏内容，未被默认配置覆盖
+        let bak = fs::read_to_string(path.with_extension("toml.bak")).unwrap();
+        assert_eq!(bak, "this is not [valid toml");
         match original {
             Some(v) => unsafe { std::env::set_var("BOENMIND_HOME", v) },
             None => unsafe { std::env::remove_var("BOENMIND_HOME") },

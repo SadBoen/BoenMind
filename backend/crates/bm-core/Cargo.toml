@@ -17,6 +17,8 @@ tokio = { version = "1", features = ["sync"] }
 turso = { version = "0.7.2", default-features = false, features = ["mimalloc"] }
 # skills 安装/浏览：HTTP 抓取 + tarball 解压 + 随机抽取
 ureq = { version = "3", features = ["json", "gzip"] }
+# 提供商端点校验（SSRF 防护：解析 URL 并检查网络目标）
+url = "2"
 flate2 = "1"
 tar = "0.4"
 rand = "0.8"

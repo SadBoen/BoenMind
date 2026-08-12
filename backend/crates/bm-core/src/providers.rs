@@ -71,6 +71,42 @@ fn resolve_base_url(kind: &str, base_url: &str) -> Result<String, String> {
         .ok_or_else(|| "该类型必须填写 API 端点（custom 需填写 OpenAI 兼容地址）".to_string())
 }
 
+/// SSRF 防护：校验端点必须是指向公网的合法 http(s) URL。
+/// ollama / llamacpp 是本地模型服务（官方端点即 127.0.0.1），豁免本校验。
+fn validate_base_url(kind: &str, url: &str) -> Result<(), String> {
+    if matches!(kind, "ollama" | "llamacpp") {
+        return Ok(());
+    }
+    let parsed = url::Url::parse(url).map_err(|_| "API 端点必须是完整的 http(s):// URL".to_string())?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err("API 端点只支持 http/https".to_string());
+    }
+    let Some(host) = parsed.host_str() else {
+        return Err("API 端点缺少主机名".to_string());
+    };
+    // IPv6 字面量的 host_str 带方括号（"[::1]"），去掉再判断
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    // localhost 是保留域名（只解析到回环），与 IP 字面量同等拦截；
+    // 其它域名不做 DNS 解析校验（解析结果取决于发起请求的机器）
+    if host.eq_ignore_ascii_case("localhost") {
+        return Err("API 端点不允许指向本机（localhost）".to_string());
+    }
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        let blocked = match ip {
+            std::net::IpAddr::V4(v4) => {
+                v4.is_loopback() || v4.is_private() || v4.is_link_local() || v4.is_unspecified()
+            }
+            std::net::IpAddr::V6(v6) => {
+                v6.is_loopback() || v6.is_unique_local() || v6.is_unicast_link_local() || v6.is_unspecified()
+            }
+        };
+        if blocked {
+            return Err(format!("API 端点不允许指向私网/本机地址（{ip}）"));
+        }
+    }
+    Ok(())
+}
+
 /// 发送请求并读取响应体（限 64KB），返回 (状态码, body)。
 /// 接收尚未发起的请求结果（GET 用 `call()`、POST 用 `send_json(...)`），
 /// 统一处理传输层错误并把 4xx/5xx 的 body 透传给调用方展示。
@@ -171,6 +207,7 @@ fn parse_model_ids(body: &str) -> Vec<String> {
 /// 拉取模型列表。`base_url` 为空时使用官方端点；API key 为空时（ollama 等）不带头。
 pub fn list_provider_models(kind: &str, base_url: &str, api_key: &str) -> Result<Vec<String>, String> {
     let base = resolve_base_url(kind, base_url)?;
+    validate_base_url(kind, &base)?;
     let key = api_key.trim();
 
     let url = if is_gemini(kind) {
@@ -218,6 +255,7 @@ pub fn test_provider_connection(
     message: &str,
 ) -> Result<String, String> {
     let base = resolve_base_url(kind, base_url)?;
+    validate_base_url(kind, &base)?;
     let key = api_key.trim();
     let text = message.trim();
 
@@ -371,6 +409,47 @@ mod tests {
             "https://api.deepseek.com/v1"
         );
         assert!(resolve_base_url("custom", "").is_err());
+    }
+
+    #[test]
+    fn validate_base_url_allows_public_endpoints() {
+        for ok in [
+            "https://api.openai.com/v1",
+            "https://api.deepseek.com/v1/",
+            "http://example.com:8000/v1",
+        ] {
+            validate_base_url("custom", ok).unwrap_or_else(|e| panic!("应放行 {ok}: {e}"));
+        }
+    }
+
+    #[test]
+    fn validate_base_url_rejects_private_targets() {
+        for bad in [
+            "http://127.0.0.1:9000/v1",
+            "http://localhost:11434/v1",
+            "http://192.168.1.10:8000/v1",
+            "http://10.0.0.1/v1",
+            "http://172.16.0.1/v1",
+            "http://169.254.169.254/latest/meta-data/",
+            "http://[::1]:8080/v1",
+            "file:///etc/passwd",
+            "ftp://example.com/v1",
+            "not a url",
+        ] {
+            assert!(
+                validate_base_url("custom", bad).is_err(),
+                "应拒绝 {bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_base_url_exempts_local_servers() {
+        // ollama / llamacpp 官方端点就是本机地址，必须放行
+        assert!(validate_base_url("ollama", "http://127.0.0.1:11434/v1").is_ok());
+        assert!(validate_base_url("llamacpp", "http://127.0.0.1:8080/v1").is_ok());
+        // 但任意 kind 也能显式指向私网：ollama 常部署在局域网主机，属合法场景
+        assert!(validate_base_url("ollama", "http://192.168.1.5:11434/v1").is_ok());
     }
 
     #[test]

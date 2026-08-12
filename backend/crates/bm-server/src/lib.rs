@@ -19,7 +19,7 @@ use axum::{
 };
 use bm_core::{AppConfig, Db};
 use tokio::sync::{Mutex, RwLock};
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
 pub const DEFAULT_PORT: u16 = 17321;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -59,8 +59,10 @@ impl AppState {
 }
 
 fn router(state: AppState) -> Router {
+    // CORS：仅放行本机/桌面壳来源，防止任意网页跨源读取本地 API（明文密钥、
+    // 聊天记录）。无 Origin 头的请求（同源、curl 等非浏览器客户端）不经此判断。
     let cors = CorsLayer::new()
-        .allow_origin(Any)
+        .allow_origin(AllowOrigin::predicate(|origin, _| cors_origin_allowed(origin)))
         .allow_methods([Method::GET, Method::POST, Method::PUT, Method::PATCH, Method::DELETE])
         .allow_headers(Any);
 
@@ -96,6 +98,73 @@ fn router(state: AppState) -> Router {
     let router = router.fallback(static_files::handle_static);
 
     router
+}
+
+/// 跨源 Origin 白名单：仅本机来源（浏览器本机页面 / Tauri 桌面壳 webview）。
+///
+/// - `http(s)://localhost:*`、`http(s)://127.0.0.1:*`、`http(s)://[::1]:*`：本地开发与桌面内嵌
+/// - `tauri://localhost`、`http(s)://tauri.localhost:*`：Tauri 2 webview（macOS/Linux 与 Windows）
+/// - 其余 Origin 一律拒绝：浏览器跨源响应不带 `Access-Control-Allow-Origin` 头，
+///   恶意网页读不到本地 API 响应（DNS rebinding / 同源场景由 BOENMIND_TOKEN 兜底）
+fn cors_origin_allowed(origin: &axum::http::HeaderValue) -> bool {
+    let Ok(origin) = origin.to_str() else {
+        return false;
+    };
+    if origin == "tauri://localhost" {
+        return true;
+    }
+    let Some(rest) = origin
+        .strip_prefix("http://")
+        .or_else(|| origin.strip_prefix("https://"))
+    else {
+        return false;
+    };
+    // host 提取：IPv6 字面量形如 `[::1]:5173`，需取到 `]` 为止
+    let host = if let Some(end) = rest.find(']') {
+        &rest[..=end]
+    } else {
+        rest.split(':').next().unwrap_or("")
+    };
+    matches!(host, "localhost" | "127.0.0.1" | "[::1]" | "tauri.localhost")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::HeaderValue;
+
+    #[test]
+    fn allows_local_sources() {
+        for ok in [
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "http://[::1]:17321",
+            "http://localhost:17321",
+            "tauri://localhost",
+            "http://tauri.localhost",
+        ] {
+            assert!(
+                cors_origin_allowed(&HeaderValue::from_str(ok).unwrap()),
+                "应放行: {ok}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_remote_origins() {
+        for bad in [
+            "http://evil.example.com",
+            "https://evil.example.com:17321",
+            "http://192.168.1.10:17321",
+            "file:///tmp/x.html",
+            "null",
+        ] {
+            assert!(
+                !cors_origin_allowed(&HeaderValue::from_str(bad).unwrap()),
+                "应拒绝: {bad}"
+            );
+        }
+    }
 }
 
 /// 可选的访问令牌守卫：`BOENMIND_TOKEN` 环境变量设置后，所有 /api 请求必须带
@@ -161,6 +230,12 @@ pub async fn serve(port: u16) -> Result<(), Box<dyn std::error::Error>> {
     spawn_agent_sweeper(state.agents.clone());
     let listener = tokio::net::TcpListener::bind(bind_addr(port)).await?;
     let local = listener.local_addr()?;
+    let has_token = std::env::var("BOENMIND_TOKEN").is_ok_and(|t| !t.trim().is_empty());
+    if !local.ip().is_loopback() && !has_token {
+        tracing::warn!(
+            "监听 {local} 且未设置 BOENMIND_TOKEN：API 密钥与聊天记录对网络内任何人可见，请设置 BOENMIND_TOKEN 或经反向代理加访问控制"
+        );
+    }
     tracing::info!("BoenMind 后端已启动: http://{local} (v{VERSION})");
     axum::serve(listener, router(state)).await?;
     Ok(())

@@ -55,17 +55,38 @@ export default function App() {
     return () => clearInterval(timer);
   }, [refreshHealth, loadConfig, loadSessions]);
 
-  // 布局持久化：恢复上次分栏位置
-  useEffect(() => {
+  // 布局持久化：应用上次保存的分栏比例。
+  // 文件区最大化会以 key 重挂载 Group（panel 集合变化），此时需重新应用，
+  // 且要过滤掉当前形态不存在的 panel（最大化形态无 main），否则 setLayout
+  // 因 panel 数量不匹配抛错
+  const applySavedLayout = useCallback(() => {
     const saved = localStorage.getItem(LAYOUT_KEY);
-    if (saved && groupRef.current) {
+    const ref = groupRef.current;
+    if (!saved || !ref) return;
+    let savedLayout: Record<string, number>;
+    try {
+      savedLayout = JSON.parse(saved);
+    } catch {
+      return;
+    }
+    const filtered: Record<string, number> = {};
+    for (const id of Object.keys(ref.getLayout())) {
+      const v = savedLayout[id];
+      if (v !== undefined) filtered[id] = v;
+    }
+    if (Object.keys(filtered).length > 0) {
       try {
-        groupRef.current.setLayout(JSON.parse(saved));
+        ref.setLayout(filtered);
       } catch {
         /* ignore */
       }
     }
-  }, []);
+  }, [groupRef]);
+
+  // 启动时 + 文件区最大化切换（Group 重挂载）后恢复布局
+  useEffect(() => {
+    applySavedLayout();
+  }, [fileMaximized, applySavedLayout]);
 
   const onLayoutChanged = useCallback((layout: Record<string, number>) => {
     // 主区折叠时（最大化中）不覆盖保存的布局
