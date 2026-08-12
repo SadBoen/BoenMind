@@ -20,7 +20,7 @@ export function WorkspaceSettings() {
   // config 异步加载/保存完成后同步到输入框（初始 useState 只取一次会拿到空串）
   useEffect(() => {
     if (config) setPath(config.working_dir);
-  }, [config?.working_dir]);
+  }, [config]);
 
   if (!config) {
     return <p className="text-sm text-muted-foreground">{t("settings.workspace.loadingConfig")}</p>;
