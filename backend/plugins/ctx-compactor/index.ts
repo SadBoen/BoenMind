@@ -481,6 +481,14 @@ export default function (pi: ExtensionAPI) {
 		// 错误输出 / 短输出不修剪（错误信息通常关键且短）
 		if (event.isError || text.length <= config.trimThreshold) return undefined;
 
+		// skill 指令文件不修剪：SKILL.md 与 skill 目录（pi/skills/）内容是模型的工作指令，
+		// 修剪成摘要会让模型看不到完整工作流（2026-08-12 实测：读 skill 空转 40+ 次工具调用）。
+		// 上限 64KB：防第三方大 skill（内嵌脚本/数据）撑爆上下文。
+		const inputRaw = JSON.stringify(event.input ?? {});
+		const isSkillRead =
+			inputRaw.includes("/pi/skills/") || inputRaw.includes("SKILL.md");
+		if (isSkillRead && text.length <= 64 * 1024) return undefined;
+
 		const cwd = typeof ctx?.cwd === "string" ? ctx.cwd : "";
 		if (!cwd) return undefined;
 		if (!configLoaded) config = loadConfig(cwd);
