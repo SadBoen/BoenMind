@@ -209,11 +209,12 @@ impl Tool for SubagentTool {
         // BoenMind 补丁（P9）：上游 ToolOutput.details 只进会话消息，发模型的请求只带
         // content 文本（providers/openai.rs 序列化丢弃 details），模型看不到
         // details.results 结构化字段。这里把摘要版 JSON 拼进文本，让队长代理能
-        // 像读函数返回值一样直接取用（见 backend/vendor/UPSTREAM_PATCHES.md P9）。
+        // 像读函数返回值一样直接取用；块放正文开头（模型先读结构化字段，且大输出
+        // 修剪保留原文头部时不会砍掉它）（见 backend/vendor/UPSTREAM_PATCHES.md P9）。
         let content = format!(
-            "{}\n\n<subagent-structured-result>\n{}\n</subagent-structured-result>",
+            "<subagent-structured-result>\n{}\n</subagent-structured-result>\n\n{}",
+            structured_result_block(&results),
             render_results(&results),
-            structured_result_block(&results)
         );
         Ok(ToolOutput {
             content: vec![ContentBlock::Text(TextContent::new(content))],

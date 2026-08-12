@@ -38,8 +38,10 @@ const DEFAULTS = {
 	indexDirName: ".boenmind/ctx-index",
 };
 
-/** 不修剪的工具（避免循环修剪 + 模型检索路径保持直通 + 搜索结果需模型直接消费） */
-const SELF_TOOLS = new Set(["ctx_execute", "ctx_search", "web_search", "web_fetch"]);
+/** 不修剪的工具（避免循环修剪 + 模型检索路径保持直通 + 搜索结果需模型直接消费。
+ *  subagent：子代理结果自带 256KB 上限与结构化块截断（UPSTREAM_PATCHES.md P9），
+ *  视为"函数返回值"需模型完整读取，修剪会砍掉块尾的 status/exitCode 字段） */
+const SELF_TOOLS = new Set(["ctx_execute", "ctx_search", "web_search", "web_fetch", "subagent"]);
 
 /** 常见 API key / 秘密格式（落库前替换，防泄漏进索引） */
 const SECRET_PATTERNS = [
