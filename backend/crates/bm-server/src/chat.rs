@@ -350,7 +350,6 @@ async fn run_prompt_and_persist(
                     AgentStreamEvent::Done | AgentStreamEvent::Error { .. } => {
                         done_sent_cb.store(true, std::sync::atomic::Ordering::Relaxed);
                     }
-                    AgentStreamEvent::TurnEnd => {}
                 }
                 // 入缓冲由转发 task 异步发送（背压见上方说明）；客户端断开后
                 // 通道已关闭，停止入队（转发 task 退出，watcher 会 abort prompt）

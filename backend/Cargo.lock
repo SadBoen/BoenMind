@@ -866,7 +866,6 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "bm-core",
- "futures-core",
  "mime_guess",
  "pi_agent_rust",
  "rust-embed",
@@ -877,7 +876,6 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
- "ureq",
  "uuid",
 ]
 

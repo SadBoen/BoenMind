@@ -183,7 +183,6 @@ export type ChatStreamEvent =
   | { type: "textDelta"; delta: string }
   | { type: "toolCallStart"; id: string; name: string; args: unknown }
   | { type: "toolCallEnd"; id: string; name: string; isError: boolean }
-  | { type: "turnEnd" }
   | { type: "done" }
   | { type: "error"; message: string };
 

@@ -38,8 +38,6 @@ pub enum AgentStreamEvent {
     ToolCallStart { id: String, name: String, args: serde_json::Value },
     /// 工具调用结束（is_error 决定前端展示颜色）
     ToolCallEnd { id: String, name: String, is_error: bool },
-    /// 一次对话回合结束（含错误时由 error 携带）
-    TurnEnd,
     /// 整个 prompt 处理结束（含取消；前端据此固化流式内容）
     Done,
     /// 出错
@@ -186,7 +184,7 @@ pub fn map_agent_event(event: AgentEvent) -> Vec<AgentStreamEvent> {
             name: tool_name,
             is_error,
         }],
-        AgentEvent::TurnEnd { .. } => vec![AgentStreamEvent::TurnEnd],
+        AgentEvent::TurnEnd { .. } => Vec::new(),
         AgentEvent::AgentEnd { error, .. } => match error {
             // pi 取消路径（用户点停止 / AbortSignal）以 `error: Some("Aborted")`
             // 收尾：取消不是错误，前端应收到 Done 来固化已生成的部分文本

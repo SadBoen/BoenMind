@@ -168,35 +168,6 @@ impl ProviderKind {
                 | ProviderKind::Custom
         )
     }
-
-    pub fn display_name(&self) -> &'static str {
-        match self {
-            ProviderKind::Openai => "OpenAI 兼容",
-            ProviderKind::Anthropic => "Anthropic",
-            ProviderKind::Gemini => "Google Gemini",
-            ProviderKind::Ollama => "Ollama",
-            ProviderKind::Llamacpp => "llama.cpp",
-            ProviderKind::Minimax => "MiniMax",
-            ProviderKind::Deepseek => "DeepSeek",
-            ProviderKind::Openrouter => "OpenRouter",
-            ProviderKind::Moonshot => "Kimi (Moonshot)",
-            ProviderKind::Zhipu => "智谱 GLM",
-            ProviderKind::Qwen => "阿里云百炼 Qwen",
-            ProviderKind::Xai => "xAI Grok",
-            ProviderKind::Zai => "Z.AI",
-            ProviderKind::Groq => "Groq",
-            ProviderKind::Mistral => "Mistral",
-            ProviderKind::Together => "Together AI",
-            ProviderKind::Cerebras => "Cerebras",
-            ProviderKind::Fireworks => "Fireworks",
-            ProviderKind::Huggingface => "Hugging Face",
-            ProviderKind::Nvidia => "NVIDIA NIM",
-            ProviderKind::Xiaomi => "小米 MiMo",
-            ProviderKind::Antling => "蚂蚁 AntLing",
-            ProviderKind::Baseten => "Baseten",
-            ProviderKind::Custom => "自定义 OpenAI 兼容",
-        }
-    }
 }
 
 fn default_theme() -> String {

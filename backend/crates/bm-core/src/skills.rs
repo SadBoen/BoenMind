@@ -279,11 +279,6 @@ pub fn install_skill_from_github(owner: &str, repo: &str, skill_id: &str) -> Res
     };
     let skill_dir = find_skill_dir(&root, skill_id)
         .ok_or_else(|| format!("仓库 {owner}/{repo} 中未找到 skill 目录 {skill_id}（无 SKILL.md）"))?;
-    let rel = skill_dir
-        .strip_prefix(&root)
-        .unwrap_or(Path::new(""))
-        .to_string_lossy()
-        .replace('\\', "/");
 
     // 3. 复制到管理目录
     let dest = skills_dir().join(skill_id);
@@ -294,7 +289,7 @@ pub fn install_skill_from_github(owner: &str, repo: &str, skill_id: &str) -> Res
     let result = (|| -> Result<(), String> {
         fs::create_dir_all(skills_dir()).map_err(|e| e.to_string())?;
         copy_dir_excluding(&skill_dir, &dest, &[]).map_err(|e| e.to_string())?;
-        write_meta(&dest, owner, repo, skill_id, &rel, "registry")
+        write_meta(&dest, owner, repo, skill_id, "registry")
     })();
     let _ = fs::remove_dir_all(&tmp);
     result?;
@@ -336,14 +331,14 @@ pub fn install_skill_from_path(source: &Path) -> Result<SkillInfo, String> {
         if !dest.join("SKILL.md").is_file() {
             fs::copy(source.join(format!("{id}.md")), dest.join("SKILL.md")).map_err(|e| e.to_string())?;
         }
-        write_meta(&dest, "", "", &id, "", "local")
+        write_meta(&dest, "", "", &id, "local")
     } else {
         if !id.ends_with(".md") && !source.extension().is_some_and(|e| e == "md") {
             let _ = fs::remove_dir_all(&dest);
             return Err("仅支持 .md 文件或含 SKILL.md 的目录".to_string());
         }
         fs::copy(source, dest.join("SKILL.md")).map_err(|e| e.to_string())?;
-        write_meta(&dest, "", "", &id, "", "local")
+        write_meta(&dest, "", "", &id, "local")
     }
     .map_err(|e| e.to_string())?;
 
@@ -432,9 +427,6 @@ struct SkillMeta {
     pub repo: String,
     #[serde(default)]
     pub skill_id: String,
-    /// 仓库内相对路径（调试用）
-    #[serde(default)]
-    pub rel: String,
     /// registry / local
     #[serde(default)]
     pub source: String,
@@ -444,12 +436,11 @@ fn meta_path(dir: &Path) -> PathBuf {
     dir.join(".bm-meta.json")
 }
 
-fn write_meta(dir: &Path, owner: &str, repo: &str, skill_id: &str, rel: &str, source: &str) -> Result<(), String> {
+fn write_meta(dir: &Path, owner: &str, repo: &str, skill_id: &str, source: &str) -> Result<(), String> {
     let meta = SkillMeta {
         owner: owner.to_string(),
         repo: repo.to_string(),
         skill_id: skill_id.to_string(),
-        rel: rel.to_string(),
         source: source.to_string(),
     };
     let text = serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?;
