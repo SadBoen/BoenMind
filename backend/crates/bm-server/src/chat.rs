@@ -215,8 +215,8 @@ async fn get_or_create_agent(
         return Ok(arc);
     }
 
-    // 新建句柄所需的配置字段一次读锁取齐（避免 4 次串行读锁）
-    let (working_dir, extension_paths, skills_prompt, compaction) = {
+    // 新建句柄所需的配置字段一次读锁取齐（避免多次串行读锁）
+    let (working_dir, extension_paths, skills_prompt, compaction, extension_policy, extension_allow_dangerous) = {
         let config = state.config.read().await;
         (
             config.working_dir.clone(),
@@ -227,6 +227,8 @@ async fn get_or_create_agent(
                 &provider.kind.pi_name(&provider.id),
                 &model,
             ),
+            config.extension_policy.clone(),
+            config.extension_allow_dangerous.unwrap_or(false),
         )
     };
 
@@ -238,6 +240,8 @@ async fn get_or_create_agent(
         &skills_prompt,
         thinking_override,
         compaction,
+        extension_policy,
+        extension_allow_dangerous,
     )
     .await
     .map_err(|err| (StatusCode::BAD_GATEWAY, format!("创建 agent 会话失败: {err}")))?;

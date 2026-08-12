@@ -47,6 +47,13 @@ pub struct AppConfig {
     /// 上下文压缩配置（按模型水线/尾部保护，见 compaction 模块）
     #[serde(default)]
     pub compaction: CompactionConfig,
+    /// 插件权限档位（extension_policy）："safe"（默认，关键能力询问）/ "balanced" /
+    /// "permissive"（全自动放行）。None = 上游默认档位
+    #[serde(default)]
+    pub extension_policy: Option<String>,
+    /// YOLO 开关：放行危险能力（exec / env）。与 permissive 组合 = 全自动放行
+    #[serde(default)]
+    pub extension_allow_dangerous: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -296,6 +303,8 @@ impl Default for AppConfig {
             removed_builtin_plugins: Vec::new(),
             enabled_skills: Vec::new(),
             compaction: CompactionConfig::default(),
+            extension_policy: None,
+            extension_allow_dangerous: None,
         }
     }
 }
@@ -518,6 +527,8 @@ mod tests {
             removed_builtin_plugins: vec![],
             enabled_skills: vec![],
             compaction: CompactionConfig::default(),
+            extension_policy: None,
+            extension_allow_dangerous: None,
         };
         assert_eq!(resolve_provider(&config, Some("missing")).unwrap().id, "b");
         assert_eq!(resolve_model(&config.providers[1], None).unwrap(), "qwen");

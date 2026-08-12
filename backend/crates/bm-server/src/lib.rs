@@ -76,6 +76,7 @@ fn router(state: AppState) -> Router {
         .route("/api/sessions/{id}", get(routes::sessions::get_session).patch(routes::sessions::rename_session).delete(routes::sessions::delete_session))
         .route("/api/plugins", get(routes::plugins::list_plugins))
         .route("/api/plugins/install", post(routes::plugins::install_plugin))
+        .route("/api/plugins/install-source", post(routes::plugins::install_plugin_from_source))
         .route("/api/plugins/{id}", post(routes::plugins::set_plugin).delete(routes::plugins::uninstall_plugin))
         .route("/api/plugins/{id}/settings", get(routes::plugins::get_plugin_settings).put(routes::plugins::put_plugin_settings))
         .route("/api/plugins/{id}/test-source", post(routes::plugins::test_plugin_source))
@@ -228,6 +229,9 @@ pub async fn init() -> Result<(AppConfig, Db), Box<dyn std::error::Error>> {
     // 注意：edition 2024 中 set_var 为 unsafe
     let pi_dir = bm_core::config::pi_agent_dir();
     unsafe { std::env::set_var("PI_CODING_AGENT_DIR", &pi_dir) };
+
+    // 2.25 开启 pi 会话热路径性能计数器（原子计数，零 UI 暴露；排障时读内部快照）
+    unsafe { std::env::set_var("PI_PERF_TELEMETRY", "1") };
 
     // 3. 同步 models.json（provider baseUrl 覆盖 + 自定义模型注册）
     bm_core::config::sync_pi_models_json(&config)?;

@@ -61,6 +61,28 @@ pub async fn install_plugin(
     Ok(Json(info))
 }
 
+#[derive(Deserialize)]
+pub struct InstallSourceRequest {
+    /// 包源：npm:包名 / git:host/owner/repo[@ref] / 本地路径
+    pub source: String,
+}
+
+/// POST /api/plugins/install-source — 按包源安装插件（复用上游包管理器，
+/// 装到全局后把包内扩展资源复制进插件根目录）。npm 安装耗时较长，放阻塞线程执行。
+pub async fn install_plugin_from_source(
+    Json(req): Json<InstallSourceRequest>,
+) -> ApiResult<Json<Vec<bm_core::plugins::PluginInfo>>> {
+    let source = req.source;
+    let infos = tokio::task::spawn_blocking(move || {
+        bm_core::plugins::install_plugin_from_source(&source)
+    })
+    .await
+    .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("安装任务失败: {err}")))?
+    .map_err(api_error_from)?;
+    // 安装后默认禁用，由用户在 UI 启用
+    Ok(Json(infos))
+}
+
 /// 查找插件信息（manifest 的 schema/quota/testSources 均已解析）。
 /// 插件不存在 → Ok(None)。
 async fn plugin_info(

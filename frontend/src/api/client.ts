@@ -50,6 +50,10 @@ export interface AppConfig {
   working_dir: string;
   theme: string;
   lang: string;
+  /** 插件权限档位（safe / balanced / permissive） */
+  extension_policy?: string;
+  /** YOLO 开关：放行 exec/env 等危险能力 */
+  extension_allow_dangerous?: boolean;
 }
 
 export interface Session {
@@ -325,6 +329,12 @@ export const api = {
     request<PluginInfo>("/api/plugins/install", {
       method: "POST",
       body: JSON.stringify({ path }),
+    }),
+  /** 按包源安装插件（npm:包名 / git:host/owner/repo / 本地路径）；一个包可含多个扩展 */
+  installPluginFromSource: (source: string) =>
+    request<PluginInfo[]>("/api/plugins/install-source", {
+      method: "POST",
+      body: JSON.stringify({ source }),
     }),
   uninstallPlugin: (id: string) =>
     request<{ ok: boolean }>(`/api/plugins/${id}`, { method: "DELETE" }),

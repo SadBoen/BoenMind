@@ -7,7 +7,9 @@ members = [
 ]
 
 [workspace.dependencies]
-pi = { package = "pi_agent_rust", path = "vendor/pi_agent_rust", default-features = false }
+# wasm-host：开启 QuickJS 内 WebAssembly polyfill（wasmtime），插件 JS 可用 WASM 模块。
+# 若产物体积/编译时间超预算，可移除该 feature（见 docs 讨论记录）。
+pi = { package = "pi_agent_rust", path = "vendor/pi_agent_rust", default-features = false, features = ["wasm-host"] }
 
 [profile.dev]
 # pi_agent_rust 依赖较重，适当放宽优化等级换取编译速度与运行效率的平衡

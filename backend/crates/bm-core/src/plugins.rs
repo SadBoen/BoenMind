@@ -199,6 +199,98 @@ pub fn install_plugin(source: &Path) -> Result<PluginInfo, AppError> {
     })
 }
 
+/// 按包源安装插件（`npm:包名` / `git:host/owner/repo` / 本地路径），复用上游包管理器。
+///
+/// 流程：上游 PackageManager 装到全局（npm -g / git 全局目录）→ 定位包目录 →
+/// 找出包内扩展资源（`extensions/` 子目录或包根即扩展）→ 复制进插件根目录。
+/// 一个包可含多个扩展，返回新装入的全部插件（安装后默认禁用，由 UI 启用）。
+/// npm 安装可能耗时较长，调用方应放阻塞线程执行。
+pub fn install_plugin_from_source(source: &str) -> Result<Vec<PluginInfo>, AppError> {
+    use pi::package_manager::{PackageManager, PackageScope};
+
+    let source = source.trim().to_string();
+    if source.is_empty() {
+        return Err(AppError::invalid("插件源不能为空"));
+    }
+    let cwd = std::env::current_dir()
+        .map_err(|e| AppError::internal(format!("获取当前目录失败: {e}")))?;
+    let pm = PackageManager::new(cwd);
+    pm.install_blocking(&source, PackageScope::User)
+        .map_err(|e| AppError::internal(format!("包安装失败: {e}")))?;
+    let Some(pkg_root) = pm
+        .installed_path_blocking(&source, PackageScope::User)
+        .map_err(|e| AppError::internal(format!("定位包目录失败: {e}")))?
+    else {
+        return Err(AppError::internal("安装成功但无法定位包目录"));
+    };
+    let entries = package_extension_entries(&pkg_root)
+        .map_err(|e| AppError::internal(format!("读取包内扩展失败: {e}")))?;
+    if entries.is_empty() {
+        return Err(AppError::invalid(format!("包 {source} 内没有扩展资源")));
+    }
+    let dir = plugins_dir();
+    fs::create_dir_all(&dir)?;
+    let mut installed = Vec::new();
+    for entry in entries {
+        let name = entry
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| AppError::invalid("包内扩展名无效"))?
+            .to_string();
+        let dest = dir.join(&name);
+        if dest.exists() {
+            return Err(AppError::invalid(format!("插件 {name} 已存在（可先卸载再重装）")));
+        }
+        if entry.is_dir() {
+            copy_dir_excluding(&entry, &dest, &[])?;
+        } else {
+            fs::copy(&entry, &dest)?;
+        }
+        let id = name.strip_suffix(".ts").unwrap_or(&name).to_string();
+        installed.push(PluginInfo {
+            id,
+            name: name.clone(),
+            description: describe_plugin(&dest, &name),
+            kind: if dest.is_dir() { "manifest" } else { "single" }.to_string(),
+            enabled: false,
+            builtin: false,
+            settings_schema: manifest_settings_schema(&dest),
+            quota: manifest_quota(&dest),
+            test_sources: manifest_test_sources(&dest),
+        });
+    }
+    Ok(installed)
+}
+
+/// 包内扩展条目的探查：优先 `extensions/` 子目录（上游包的默认布局），
+/// 否则接受"包根即扩展"（根有 extension.json 的目录型或根下的 .ts 单文件）。
+fn package_extension_entries(pkg_root: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
+    let mut out = Vec::new();
+    let ext_dir = pkg_root.join("extensions");
+    if ext_dir.is_dir() {
+        for entry in fs::read_dir(&ext_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            let is_extension = (path.is_dir() && path.join("extension.json").is_file())
+                || (path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("ts"));
+            if is_extension {
+                out.push(path);
+            }
+        }
+        return Ok(out);
+    }
+    if pkg_root.join("extension.json").is_file() {
+        out.push(pkg_root.to_path_buf());
+    } else if let Some(ts) = fs::read_dir(pkg_root)?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .find(|p| p.is_file() && p.extension().and_then(|e| e.to_str()) == Some("ts"))
+    {
+        out.push(ts);
+    }
+    Ok(out)
+}
+
 /// 启用/禁用插件（写入 config.enabled_plugins 并持久化）。
 pub fn set_plugin_enabled(
     config: &mut AppConfig,
@@ -361,6 +453,87 @@ mod tests {
     #[test]
     fn plugins_dir_under_app_dir() {
         assert!(plugins_dir().ends_with(".boenmind/extensions"));
+    }
+
+    /// 包内扩展探查：extensions/ 子目录布局（上游 npm 包默认布局）优先，
+    /// 目录型与单文件 .ts 均被识别，无关文件（README 等）被忽略。
+    #[test]
+    fn package_extension_entries_finds_extensions_dir() {
+        let _guard = crate::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dir = std::env::temp_dir().join(format!("bm-pkg-ext-{}", std::process::id()));
+        let pkg = dir.join("pkg");
+        let ext = pkg.join("extensions");
+        fs::create_dir_all(&ext).unwrap();
+        fs::write(ext.join("alpha.ts"), "export default function (pi) {}").unwrap();
+        let manifest_dir = ext.join("beta");
+        fs::create_dir_all(&manifest_dir).unwrap();
+        fs::write(manifest_dir.join("extension.json"), "{}").unwrap();
+        fs::write(ext.join("README.md"), "not an extension").unwrap();
+        fs::write(pkg.join("package.json"), "{}").unwrap();
+
+        let entries = package_extension_entries(&pkg).unwrap();
+        let mut names: Vec<String> = entries
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(names, vec!["alpha.ts", "beta"]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 包根即扩展：根含 extension.json 的目录型包整个作为扩展。
+    #[test]
+    fn package_extension_entries_root_as_extension() {
+        let _guard = crate::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dir = std::env::temp_dir().join(format!("bm-pkg-root-{}", std::process::id()));
+        let pkg = dir.join("my-plugin");
+        fs::create_dir_all(&pkg).unwrap();
+        fs::write(pkg.join("extension.json"), "{}").unwrap();
+        fs::write(pkg.join("index.ts"), "export default function (pi) {}").unwrap();
+
+        let entries = package_extension_entries(&pkg).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0], pkg);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 本地目录源安装：包根即扩展时，整个目录拷入插件根目录并可被 list 识别。
+    #[test]
+    fn install_plugin_from_local_source_copies_dir() {
+        let _guard = crate::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let original = std::env::var_os("BOENMIND_HOME");
+        let home = std::env::temp_dir().join(format!("bm-install-{}", std::process::id()));
+        unsafe { std::env::set_var("BOENMIND_HOME", &home) };
+        let pkg = std::env::temp_dir().join(format!("bm-pkg-src-{}", std::process::id()));
+        fs::create_dir_all(&pkg).unwrap();
+        fs::write(
+            pkg.join("extension.json"),
+            r#"{"name": "demo", "description": "demo plugin"}"#,
+        )
+        .unwrap();
+        fs::write(pkg.join("index.ts"), "export default function (pi) {}").unwrap();
+
+        let result = install_plugin_from_source(pkg.to_str().unwrap());
+        let expected_id = pkg.file_name().unwrap().to_string_lossy().into_owned();
+        let infos = result.expect("本地目录源安装应成功");
+        assert_eq!(infos.len(), 1);
+        assert_eq!(infos[0].id, expected_id);
+        assert!(plugins_dir().join(&expected_id).join("extension.json").is_file());
+        // 二次安装同名插件应报"已存在"
+        assert!(install_plugin_from_source(pkg.to_str().unwrap()).is_err());
+
+        let _ = std::fs::remove_dir_all(&home);
+        let _ = std::fs::remove_dir_all(&pkg);
+        match original {
+            Some(v) => unsafe { std::env::set_var("BOENMIND_HOME", v) },
+            None => unsafe { std::env::remove_var("BOENMIND_HOME") },
+        }
     }
 
     /// embed 构建的关键路径：内嵌资源能写出目录型插件（服务器版预装依赖此路径）。

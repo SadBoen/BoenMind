@@ -49,7 +49,10 @@ pub enum AgentStreamEvent {
 /// `provider`/`model` 来自会话或全局配置；`extension_paths` 为启用的插件路径
 /// （pi QuickJS 运行时加载 TypeScript 扩展）；`skills_prompt` 为启用的 skill
 /// 注入文本（available_skills 块，空串不注入）；`thinking` 为思考强度（如 "off"/"low"）；
-/// `compaction` 为按模型解析的压缩设置（水线/尾部保护），`None` 时走 pi 现有全局行为。
+/// `compaction` 为按模型解析的压缩设置（水线/尾部保护），`None` 时走 pi 现有全局行为；
+/// `extension_policy` 为插件权限档位（safe/balanced/permissive，None = 上游默认）；
+/// `extension_allow_dangerous` 为 YOLO 开关（放行 exec/env，经环境变量告知上游）。
+#[allow(clippy::too_many_arguments)]
 pub async fn create_session_handle(
     provider: &ProviderConfig,
     model: &str,
@@ -58,9 +61,20 @@ pub async fn create_session_handle(
     skills_prompt: &str,
     thinking: Option<&str>,
     compaction: Option<crate::compaction::ResolvedCompaction>,
+    extension_policy: Option<String>,
+    extension_allow_dangerous: bool,
 ) -> Result<AgentSessionHandle, pi::sdk::Error> {
     // 注意：调用前需确保 PI_CODING_AGENT_DIR 已设置、models.json 已同步，
     // 见 bm-server 的启动流程（sync_pi_models_json + set_var）
+    // YOLO 开关经环境变量告知上游（上游解析只认 "1"/"true" 为真；
+    // 显式写 "0" 而非移除，防止上次 YOLO 会话残留的 "1" 放行危险能力）
+    // 注意：edition 2024 中 set_var 为 unsafe
+    unsafe {
+        std::env::set_var(
+            "PI_EXTENSION_ALLOW_DANGEROUS",
+            if extension_allow_dangerous { "1" } else { "0" },
+        );
+    }
     let thinking_level = thinking
         .and_then(|t| t.parse::<pi::model::ThinkingLevel>().ok());
     let system_prompt = if skills_prompt.is_empty() {
@@ -90,8 +104,9 @@ pub async fn create_session_handle(
         include_cwd_in_prompt: false,
         thinking: thinking_level,
         extension_paths,
-        // 插件政策：默认（Prompt 模式，自动允许 read/write/http/events/session，拒绝 exec/env）
-        extension_policy: None,
+        // 插件权限档位（safe/balanced/permissive；None = 上游默认）。YOLO 的
+        // exec/env 放行走 PI_EXTENSION_ALLOW_DANGEROUS 环境变量（见下方同步）
+        extension_policy,
         // BoenMind 补丁对接：按模型压缩覆盖（水线/尾部/窗口），None 走 pi 默认
         compaction_settings: compaction.map(|c| pi::compaction::ResolvedCompactionSettings {
             enabled: c.enabled,
