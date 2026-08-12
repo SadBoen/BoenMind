@@ -261,6 +261,12 @@ pub fn uninstall_plugin(config: &mut AppConfig, id: &str) -> Result<(), String> 
 }
 
 /// 首次启动时预装内置插件；用户已卸载的（removed_builtin_plugins）跳过。
+///
+/// 两种构建形态：
+/// - 普通构建：从仓库路径复制（vendored 示例 + backend/plugins/）
+/// - embed 构建（服务器版）：目录型插件从二进制内嵌资源写出（部署机没有仓库路径，
+///   此前静默失败导致服务器用户实际无插件）；单文件示例（hello/bookmark）为演示
+///   用途且默认未启用，embed 构建不预装
 pub fn ensure_builtin_plugins(config: &AppConfig) -> Result<(), std::io::Error> {
     let dir = plugins_dir();
     fs::create_dir_all(&dir)?;
@@ -269,26 +275,66 @@ pub fn ensure_builtin_plugins(config: &AppConfig) -> Result<(), std::io::Error> 
         if config.removed_builtin_plugins.iter().any(|p| p == id) {
             continue;
         }
-        if let Some(src) = vendored_example_path(id) {
-            let dest = dir.join(format!("{id}.ts"));
-            if dest.exists() {
-                continue;
-            }
-            fs::copy(&src, &dest)?;
+        #[cfg(feature = "embed-plugins")]
+        {
+            let _ = embed_repo_plugin(id, &dir)?;
+            continue;
         }
-        // 仓库内自带插件（目录型，如 ctx-compactor）
-        if let Some(src) = repo_plugin_dir(id) {
-            let dest = dir.join(id);
-            if dest.exists() {
-                continue;
+        #[cfg(not(feature = "embed-plugins"))]
+        {
+            if let Some(src) = vendored_example_path(id) {
+                let dest = dir.join(format!("{id}.ts"));
+                if dest.exists() {
+                    continue;
+                }
+                fs::copy(&src, &dest)?;
             }
-            copy_dir_excluding(&src, &dest, &[])?;
+            // 仓库内自带插件（目录型，如 ctx-compactor）
+            if let Some(src) = repo_plugin_dir(id) {
+                let dest = dir.join(id);
+                if dest.exists() {
+                    continue;
+                }
+                copy_dir_excluding(&src, &dest, &[])?;
+            }
         }
     }
     Ok(())
 }
 
-/// vendored pi_agent_rust 仓库内官方示例扩展的路径。
+/// embed 构建：把 backend/plugins/<id>/ 从二进制内嵌资源写出到 extensions/<id>/。
+/// 返回是否找到该目录型插件（未找到 = 单文件示例，embed 构建不预装）。
+#[cfg(feature = "embed-plugins")]
+fn embed_repo_plugin(id: &str, dest_dir: &std::path::Path) -> Result<bool, std::io::Error> {
+    let prefix = format!("{id}/");
+    let mut found = false;
+    for file in EmbeddedPlugins::iter() {
+        let rel = file.as_ref();
+        let Some(inner) = rel.strip_prefix(&prefix) else {
+            continue;
+        };
+        found = true;
+        let dest = dest_dir.join(id).join(inner);
+        if dest.exists() {
+            continue;
+        }
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let data = EmbeddedPlugins::get(&file)
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "内嵌插件文件缺失"))?;
+        fs::write(&dest, data.data.as_ref())?;
+    }
+    Ok(found)
+}
+
+#[cfg(feature = "embed-plugins")]
+#[derive(rust_embed::Embed)]
+#[folder = "../../plugins"]
+struct EmbeddedPlugins;
+
+/// vendored pi_agent_rust 仓库内官方示例扩展的路径（仅普通构建使用）。
+#[cfg(not(feature = "embed-plugins"))]
 fn vendored_example_path(id: &str) -> Option<PathBuf> {
     let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let p = base
@@ -297,7 +343,8 @@ fn vendored_example_path(id: &str) -> Option<PathBuf> {
     p.is_file().then_some(p)
 }
 
-/// BoenMind 仓库自带插件目录（backend/plugins/<id>/，含 extension.json）。
+/// BoenMind 仓库自带插件目录（backend/plugins/<id>/，含 extension.json；仅普通构建使用）。
+#[cfg(not(feature = "embed-plugins"))]
 fn repo_plugin_dir(id: &str) -> Option<PathBuf> {
     let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let p = base.join("../../plugins").join(id);
@@ -311,5 +358,30 @@ mod tests {
     #[test]
     fn plugins_dir_under_app_dir() {
         assert!(plugins_dir().ends_with(".boenmind/extensions"));
+    }
+
+    /// embed 构建的关键路径：内嵌资源能写出目录型插件（服务器版预装依赖此路径）。
+    /// 用 `cargo test -p bm-core --features embed-plugins` 运行。
+    #[cfg(feature = "embed-plugins")]
+    #[test]
+    fn embed_plugin_writes_dir_plugins() {
+        let _guard = crate::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let original = std::env::var_os("BOENMIND_HOME");
+        let dir = std::env::temp_dir().join(format!("bm-embed-{}", std::process::id()));
+        unsafe { std::env::set_var("BOENMIND_HOME", &dir) };
+        let dir_plugins = plugins_dir();
+        assert!(embed_repo_plugin("ctx-compactor", &dir_plugins).unwrap());
+        assert!(dir_plugins.join("ctx-compactor/index.ts").is_file());
+        assert!(dir_plugins.join("ctx-compactor/extension.json").is_file());
+        assert!(embed_repo_plugin("web-search", &dir_plugins).unwrap());
+        // 单文件示例（hello/bookmark）未内嵌：返回 false，embed 构建不预装
+        assert!(!embed_repo_plugin("hello", &dir_plugins).unwrap());
+        match original {
+            Some(v) => unsafe { std::env::set_var("BOENMIND_HOME", v) },
+            None => unsafe { std::env::remove_var("BOENMIND_HOME") },
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -5,9 +5,9 @@ edition = "2024"
 description = "BoenMind backend API server (axum + SSE)"
 
 [features]
-# 服务器版：把前端构建产物（frontend/dist）内嵌进二进制，自包含单文件部署。
-# 桌面壳（Tauri）构建不启用此 feature，行为与之前完全一致。
-embed = ["dep:rust-embed"]
+# 服务器版：把前端构建产物（frontend/dist）与内置插件（backend/plugins）
+# 内嵌进二进制，自包含单文件部署。桌面壳（Tauri）构建不启用此 feature。
+embed = ["dep:rust-embed", "bm-core/embed-plugins"]
 
 [[bin]]
 name = "bm-server"

@@ -4,6 +4,11 @@ version = "0.1.1"
 edition = "2024"
 description = "BoenMind domain layer: config, sessions, workspace files, agent wrapper"
 
+[features]
+# 服务器版（embed）预装内置插件：把 backend/plugins 内嵌进二进制，
+# 部署机没有仓库路径时仍能写出官方插件（见 plugins.rs）
+embed-plugins = ["dep:rust-embed"]
+
 [dependencies]
 pi = { workspace = true }
 serde = { version = "1", features = ["derive"] }
@@ -22,6 +27,8 @@ url = "2"
 flate2 = "1"
 tar = "0.4"
 rand = "0.8"
+# embed-plugins feature：内置插件目录内嵌（服务器版预装）
+rust-embed = { version = "8", optional = true }
 
 [dev-dependencies]
 # db.rs 单测需要 tokio runtime（正常依赖只开 sync）

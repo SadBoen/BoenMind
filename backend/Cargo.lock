@@ -848,6 +848,7 @@ dependencies = [
  "flate2",
  "pi_agent_rust",
  "rand 0.8.7",
+ "rust-embed",
  "serde",
  "serde_json",
  "tar",
