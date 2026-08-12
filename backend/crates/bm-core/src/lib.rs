@@ -6,6 +6,7 @@ pub mod agent;
 pub mod compaction;
 pub mod config;
 pub mod db;
+mod http_util;
 pub mod plugin_settings;
 pub mod plugin_test;
 pub mod plugins;

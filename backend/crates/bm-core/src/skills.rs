@@ -14,10 +14,11 @@ use serde::Serialize;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use crate::config::{AppConfig, pi_agent_dir};
+use crate::http_util::{copy_dir_excluding, http_agent};
 
 /// 管理目录名（位于 ~/.boenmind 下）
 pub const SKILLS_DIR: &str = "skills";
@@ -140,20 +141,8 @@ fn describe_skill_dir(dir: &Path, fallback: &str) -> (String, String) {
 }
 
 // ---------------------------------------------------------------------------
-// HTTP（同步，调用方应放 spawn_blocking）
+// HTTP（同步，调用方应放 spawn_blocking；agent 见 http_util）
 // ---------------------------------------------------------------------------
-
-fn http_agent() -> &'static ureq::Agent {
-    static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
-    AGENT.get_or_init(|| {
-        ureq::Agent::new_with_config(
-            ureq::Agent::config_builder()
-                .timeout_connect(Some(Duration::from_secs(10)))
-                .timeout_per_call(Some(Duration::from_secs(20)))
-                .build(),
-        )
-    })
-}
 
 /// GitHub raw 内容（默认分支 HEAD）；404 等错误返回 None。
 fn fetch_github_raw(owner: &str, repo: &str, path: &str) -> Option<String> {
@@ -304,7 +293,7 @@ pub fn install_skill_from_github(owner: &str, repo: &str, skill_id: &str) -> Res
     }
     let result = (|| -> Result<(), String> {
         fs::create_dir_all(skills_dir()).map_err(|e| e.to_string())?;
-        copy_dir(&skill_dir, &dest).map_err(|e| e.to_string())?;
+        copy_dir_excluding(&skill_dir, &dest, &[]).map_err(|e| e.to_string())?;
         write_meta(&dest, owner, repo, skill_id, &rel, "registry")
     })();
     let _ = fs::remove_dir_all(&tmp);
@@ -342,7 +331,7 @@ pub fn install_skill_from_path(source: &Path) -> Result<SkillInfo, String> {
             let _ = fs::remove_dir_all(&dest);
             return Err("目录中未找到 SKILL.md".to_string());
         }
-        copy_dir(source, &dest).map_err(|e| e.to_string())?;
+        copy_dir_excluding(source, &dest, &[]).map_err(|e| e.to_string())?;
         // 目录布局与 skills.sh 不同时补一层 SKILL.md
         if !dest.join("SKILL.md").is_file() {
             fs::copy(source.join(format!("{id}.md")), dest.join("SKILL.md")).map_err(|e| e.to_string())?;
@@ -646,30 +635,6 @@ fn escape_xml(input: &str) -> String {
 // ---------------------------------------------------------------------------
 // 工具
 // ---------------------------------------------------------------------------
-
-fn copy_dir(src: &Path, dest: &Path) -> std::io::Result<()> {
-    copy_dir_excluding(src, dest, &[])
-}
-
-/// 复制目录树，可排除指定文件名（如 .bm-meta.json）。
-fn copy_dir_excluding(src: &Path, dest: &Path, exclude: &[&str]) -> std::io::Result<()> {
-    fs::create_dir_all(dest)?;
-    for entry in fs::read_dir(src)? {
-        let entry = entry?;
-        let name = entry.file_name();
-        if exclude.contains(&name.to_string_lossy().as_ref()) {
-            continue;
-        }
-        let from = entry.path();
-        let to = dest.join(name);
-        if from.is_dir() {
-            copy_dir_excluding(&from, &to, exclude)?;
-        } else {
-            fs::copy(&from, &to)?;
-        }
-    }
-    Ok(())
-}
 
 #[cfg(test)]
 mod tests {

@@ -7,6 +7,8 @@
 use serde_json::Value;
 use std::time::{Duration, Instant};
 
+use crate::http_util::http_agent_global;
+
 /// 单源探测结果。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct SourceTestResult {
@@ -19,11 +21,8 @@ pub struct SourceTestResult {
 /// settings 为插件设置的明文扁平值（含 apiKey）。
 pub fn test_source(source: &str, settings: &Value) -> SourceTestResult {
     let started = Instant::now();
-    let agent = ureq::Agent::new_with_config(
-        ureq::Agent::config_builder()
-            .timeout_global(Some(Duration::from_secs(10)))
-            .build(),
-    );
+    // 整次探测（含读体）限 10s，避免测试按钮长时间无响应
+    let agent = http_agent_global(Duration::from_secs(10));
 
     // 构造探测请求；返回 (method, url, headers, body_json)
     let req = match source {
@@ -118,11 +117,9 @@ pub fn test_source(source: &str, settings: &Value) -> SourceTestResult {
     let latency_ms = started.elapsed().as_millis() as u64;
     match result {
         Ok(resp) => {
+            // 统一 agent 配置 4xx/5xx 不作错误返回，这里显式判定
             let status = resp.status().as_u16();
             SourceTestResult { ok: status < 300, latency_ms, detail: format!("HTTP {status}") }
-        }
-        Err(ureq::Error::StatusCode(status)) => {
-            SourceTestResult { ok: false, latency_ms, detail: format!("HTTP {status}") }
         }
         Err(err) => {
             let detail = if err.to_string().to_lowercase().contains("timed out") {

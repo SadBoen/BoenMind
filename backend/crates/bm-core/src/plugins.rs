@@ -9,6 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::config::{AppConfig, app_dir};
+use crate::http_util::copy_dir_excluding;
 
 /// 插件根目录名（位于 ~/.boenmind 下）
 pub const PLUGINS_DIR: &str = "extensions";
@@ -153,7 +154,7 @@ pub fn install_plugin(source: &Path) -> Result<PluginInfo, String> {
         return Err(format!("插件 {name} 已存在"));
     }
     if source.is_dir() {
-        copy_dir(source, &dest).map_err(|e| e.to_string())?;
+        copy_dir_excluding(source, &dest, &[]).map_err(|e| e.to_string())?;
     } else {
         fs::copy(source, &dest).map_err(|e| e.to_string())?;
     }
@@ -253,7 +254,7 @@ pub fn ensure_builtin_plugins(config: &AppConfig) -> Result<(), std::io::Error> 
             if dest.exists() {
                 continue;
             }
-            copy_dir(&src, &dest)?;
+            copy_dir_excluding(&src, &dest, &[])?;
         }
     }
     Ok(())
@@ -273,21 +274,6 @@ fn repo_plugin_dir(id: &str) -> Option<PathBuf> {
     let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let p = base.join("../../plugins").join(id);
     (p.join("extension.json").is_file()).then_some(p)
-}
-
-fn copy_dir(src: &Path, dest: &Path) -> std::io::Result<()> {
-    fs::create_dir_all(dest)?;
-    for entry in fs::read_dir(src)? {
-        let entry = entry?;
-        let from = entry.path();
-        let to = dest.join(entry.file_name());
-        if from.is_dir() {
-            copy_dir(&from, &to)?;
-        } else {
-            fs::copy(&from, &to)?;
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]

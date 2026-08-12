@@ -9,9 +9,10 @@
 //! - Gemini：GET /v1beta/models、POST /v1beta/models/{model}:generateContent
 
 use std::io::Read;
-use std::time::Duration;
 
 use serde_json::{Value, json};
+
+use crate::http_util::http_agent;
 
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 const MAX_TEST_TOKENS: u64 = 128;
@@ -68,20 +69,6 @@ fn resolve_base_url(kind: &str, base_url: &str) -> Result<String, String> {
     official_base_url(kind)
         .map(str::to_string)
         .ok_or_else(|| "该类型必须填写 API 端点（custom 需填写 OpenAI 兼容地址）".to_string())
-}
-
-fn http_agent() -> &'static ureq::Agent {
-    static AGENT: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
-    AGENT.get_or_init(|| {
-        ureq::Agent::new_with_config(
-            ureq::Agent::config_builder()
-                .timeout_connect(Some(Duration::from_secs(10)))
-                .timeout_per_call(Some(Duration::from_secs(20)))
-                // 4xx/5xx 也作为正常响应返回，便于把服务商错误详情透传给用户
-                .http_status_as_error(false)
-                .build(),
-        )
-    })
 }
 
 /// 发送请求并读取响应体（限 64KB），返回 (状态码, body)。
