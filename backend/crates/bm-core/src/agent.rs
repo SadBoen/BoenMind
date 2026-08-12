@@ -58,6 +58,9 @@ pub enum AgentStreamEvent {
         /// 面向用户的询问文案（title: message 或 method 驱动的描述）
         message: String,
     },
+    /// 任务心跳进度（每 5s 由 bm-server 心跳 task 推送；进行中任务的状态条展示）。
+    /// 仅活跃 prompt 期间出现，不作为消息落库。
+    TaskProgress { progress: String },
     /// 整个 prompt 处理结束（含取消；前端据此固化流式内容）
     Done,
     /// 出错

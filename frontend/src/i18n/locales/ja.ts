@@ -37,6 +37,12 @@ export const ja: Translation = {
     newSession: "新しいチャット",
     selectOrCreate: "チャットを選択または新規作成",
     stop: "停止",
+    taskRunning: "タスクは実行中です…",
+    taskStatus: {
+      completed: "タスク完了",
+      failed: "タスク失敗",
+      cancelled: "タスク中止",
+    },
     emptyTitle: "BoenMind チャット",
     emptyHint: "何でも質問してください。ワークスペースのタスクを代行することもできます。",
     previewEmpty: "（画像または空メッセージ）",

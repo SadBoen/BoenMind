@@ -13,6 +13,7 @@ import { MessageItem } from "./MessageItem";
 import { ChatInput } from "./ChatInput";
 import { ScrollIndicators } from "./ScrollIndicators";
 import { PermissionDialog } from "./PermissionDialog";
+import { TaskStatusBar } from "./TaskStatusBar";
 import { parseThinkBlocks } from "./ThinkBlock";
 
 /** 消息预览文本（指示条悬停用）：剥离 think 块（含流式未闭合的）、压缩空白 */
@@ -86,6 +87,9 @@ export function ChatWindow() {
           )}
         </div>
       </header>
+
+      {/* 任务状态条：活跃心跳 + 最近任务终态/断线续跑恢复 */}
+      <TaskStatusBar />
 
       {/* 消息列表：隐藏滚动条 + 内容平滑增长；指示条放在滚动容器外做固定 overlay，
           否则 absolute 定位会随内容滚动，滚到底部时 rail 被带出视口 */}

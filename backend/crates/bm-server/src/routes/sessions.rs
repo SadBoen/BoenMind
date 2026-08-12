@@ -69,6 +69,20 @@ pub async fn get_session(
     })))
 }
 
+/// 会话的任务记录（断线续跑 + 心跳进度；时间倒序，最新一条在前）。
+/// 前端打开会话时据此恢复任务状态条展示。
+pub async fn list_session_tasks(
+    State(state): crate::SharedState,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> ApiResult<Json<Vec<bm_core::db::Task>>> {
+    let tasks = state
+        .db
+        .list_tasks(&id)
+        .await
+        .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    Ok(Json(tasks))
+}
+
 #[derive(Deserialize)]
 pub struct RenameSessionRequest {
     pub title: String,

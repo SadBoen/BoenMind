@@ -130,22 +130,20 @@ pub async fn chat(
 
     let state_clone = state.clone();
     let session_id = session.id.clone();
+    let task_id = uuid::Uuid::new_v4().to_string();
+    // 任务实体：一次 prompt 回合一条（断线续跑 + 心跳进度的持久化载体）
+    if let Err(err) = state.db.create_task(&task_id, &session_id).await {
+        tracing::warn!(event = "bm.task_create_failed", error = %err, session = %session_id);
+    }
     tokio::spawn(async move {
-        // 客户端断开检测：通道接收端被丢弃时自动取消 prompt（关窗/切会话不白烧 token）
-        let watcher_abort = abort_handle.clone();
-        let tx_watch = tx.clone();
-        tokio::spawn(async move {
-            tx_watch.closed().await;
-            watcher_abort.abort();
-        });
-        // prompt 总超时：上游挂起时 abort（与用户停止同路径收尾）。
+        // prompt 总超时：上游挂起时 abort（与用户停止同路径收尾，任务标记 cancelled）。
         // prompt 正常结束后该任务残留至超时点再退出，此时 abort 已无监听者，无副作用。
         let timeout_abort = abort_handle.clone();
         tokio::spawn(async move {
             tokio::time::sleep(PROMPT_TIMEOUT).await;
             timeout_abort.abort();
         });
-        run_prompt_and_persist(state_clone.clone(), session_id.clone(), handle, abort_signal, message, tx.clone()).await;
+        run_prompt_and_persist(state_clone.clone(), session_id.clone(), task_id, handle, abort_signal, message, tx.clone()).await;
         // 移除本 prompt 的活跃事件通道（同会话新 prompt 已注册新通道时不动）
         let mut streams = state_clone.session_streams.lock().await;
         if let Some(tx2) = streams.get(&session_id)
@@ -331,9 +329,11 @@ async fn get_or_create_agent(
 }
 
 /// 运行 prompt，将事件转发到通道；结束后把助手消息（含工具调用）写入数据库。
+/// `task_id` 为本次 prompt 回合的任务实体（心跳进度 + 终态落库，见 db::Task）。
 async fn run_prompt_and_persist(
     state: AppState,
     session_id: String,
+    task_id: String,
     handle: Arc<Mutex<pi::sdk::AgentSessionHandle>>,
     abort_signal: pi::sdk::AbortSignal,
     message: String,
@@ -385,7 +385,36 @@ async fn run_prompt_and_persist(
     // 本次 prompt 的 token 用量统计（取自 assistant 消息的 usage；工具结果消息为 0）
     let usage_total = Arc::new(std::sync::Mutex::new(0u64));
     let usage_total_cb = usage_total.clone();
+    // 任务心跳进度（最近活动摘要：工具名 / 回复尾部），由心跳 task 定时落库 + 推 SSE
+    let progress: Arc<std::sync::Mutex<String>> = Arc::new(std::sync::Mutex::new(String::new()));
+    let progress_cb = progress.clone();
     let started_at = std::time::Instant::now();
+
+    // 心跳：每 5s 把内存进度刷库并推送 taskProgress SSE（前端据此显示任务状态条）
+    let beat_stop = Arc::new(tokio::sync::Notify::new());
+    let beat_stop_h = beat_stop.clone();
+    let db_beat = state.db.clone();
+    let task_beat = task_id.clone();
+    let progress_beat = progress.clone();
+    let tx_beat = tx.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+        interval.tick().await; // 跳过首次立即触发
+        loop {
+            tokio::select! {
+                _ = beat_stop_h.notified() => break,
+                _ = interval.tick() => {}
+            }
+            let p = progress_beat.lock().unwrap().clone();
+            if p.is_empty() {
+                continue;
+            }
+            let _ = db_beat.update_task_progress(&task_beat, &p).await;
+            if !tx_beat.is_closed() {
+                let _ = tx_beat.send(AgentStreamEvent::TaskProgress { progress: p }).await;
+            }
+        }
+    });
 
     let result = handle
         .prompt_with_abort(message, abort_signal, move |ev: pi::sdk::AgentEvent| {
@@ -415,6 +444,9 @@ async fn run_prompt_and_persist(
                             .lock()
                             .unwrap()
                             .insert(id.clone(), (name.clone(), args.clone()));
+                        // 任务心跳：最近活动摘要（工具名 + 关键短参）
+                        let summary = tool_summary(name, args);
+                        *progress_cb.lock().unwrap() = summary;
                     }
                     AgentStreamEvent::ToolCallEnd { id, is_error, .. } => {
                         if let Some((name, args)) = pending_tools_cb.lock().unwrap().remove(id) {
@@ -423,9 +455,24 @@ async fn run_prompt_and_persist(
                     }
                     AgentStreamEvent::TextDelta { delta } => {
                         acc.lock().unwrap().push_str(delta);
+                        // 心跳：回复尾部（保留最近 80 字符）
+                        let tail: String = delta
+                            .trim_end()
+                            .chars()
+                            .rev()
+                            .take(80)
+                            .collect::<Vec<_>>()
+                            .into_iter()
+                            .rev()
+                            .collect();
+                        if !tail.is_empty() {
+                            *progress_cb.lock().unwrap() = format!("回复中：…{tail}");
+                        }
                     }
                     // 权限询问事件：不参与文本/工具聚合，直接透传前端弹窗
                     AgentStreamEvent::PermissionRequest { .. } => {}
+                    // 心跳事件：前端消费（不经此 switch 再分发）
+                    AgentStreamEvent::TaskProgress { .. } => {}
                     AgentStreamEvent::Done | AgentStreamEvent::Error { .. } => {
                         done_sent_cb.store(true, std::sync::atomic::Ordering::Relaxed);
                     }
@@ -500,6 +547,42 @@ async fn run_prompt_and_persist(
             AgentStreamEvent::Done
         };
         let _ = tx.send(terminal).await;
+    }
+
+    // 任务终态落库（completed / cancelled / failed）；停掉心跳 task
+    let (task_status, task_error) = match &result {
+        Ok(_) => ("completed", None),
+        Err(e) if matches!(e, pi::sdk::Error::Aborted) => {
+            ("cancelled", Some("已取消".to_string()))
+        }
+        Err(e) => ("failed", Some(e.to_string())),
+    };
+    if let Err(err) = state
+        .db
+        .finish_task(&task_id, task_status, task_error.as_deref())
+        .await
+    {
+        tracing::warn!(event = "bm.task_finish_failed", error = %err, task = %task_id);
+    }
+    beat_stop.notify_one();
+}
+
+/// 工具调用的心跳摘要（工具名 + 关键短参，避免长参数刷屏）。
+fn tool_summary(name: &str, args: &serde_json::Value) -> String {
+    const KEY_FIELDS: &[&str] = &["task", "query", "url", "path", "command", "message"];
+    let mut picked = None;
+    for key in KEY_FIELDS {
+        if let Some(v) = args.get(key).and_then(serde_json::Value::as_str)
+            && !v.is_empty()
+        {
+            let v: String = v.chars().take(60).collect();
+            picked = Some(v);
+            break;
+        }
+    }
+    match picked {
+        Some(v) => format!("正在执行工具 {name}：{v}"),
+        None => format!("正在执行工具 {name}"),
     }
 }
 

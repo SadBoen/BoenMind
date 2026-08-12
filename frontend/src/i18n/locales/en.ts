@@ -37,6 +37,12 @@ export const en: Translation = {
     newSession: "New chat",
     selectOrCreate: "Select or start a new chat",
     stop: "Stop",
+    taskRunning: "Task still running…",
+    taskStatus: {
+      completed: "Task completed",
+      failed: "Task failed",
+      cancelled: "Task cancelled",
+    },
     emptyTitle: "BoenMind Chat",
     emptyHint: "Ask me anything, or let me work on tasks in your workspace folder.",
     previewEmpty: "(image or empty message)",

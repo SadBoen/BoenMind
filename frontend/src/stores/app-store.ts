@@ -2,7 +2,7 @@
  * 全局状态：导航、会话、聊天流、文件区、后端健康状态。
  */
 import { create } from "zustand";
-import { api, type AppConfig, type ChatStreamEvent, type FileEntry, type HealthInfo, type Message, type Session, type ToolCall } from "@/api/client";
+import { api, type AppConfig, type ChatStreamEvent, type FileEntry, type HealthInfo, type Message, type Session, type Task, type ToolCall } from "@/api/client";
 import i18n, { applyLang, isLang } from "@/i18n";
 import { toast } from "sonner";
 
@@ -67,6 +67,10 @@ interface AppStore {
   streamingText: string;
   /** 流式期间正在执行的工具调用（结束即固化进 assistant 消息的 tool_calls） */
   streamingToolCalls: StreamingToolCall[];
+  /** 活跃任务心跳进度（SSE taskProgress 事件；null = 无进行中任务） */
+  taskProgress: string | null;
+  /** 最近一次任务记录（打开会话/流结束后刷新；断线续跑恢复展示用） */
+  lastTask: Task | null;
   /** 当前会话选择的模型（providerId::modelId）与思考强度 */
   selectedModel: string | null;
   selectedThinking: string;
@@ -136,6 +140,15 @@ export const useAppStore = create<AppStore>((set, get) => {
         },
       ],
     });
+    refreshLastTask(sessionId);
+  };
+
+  /** 任务终态刷新：流结束后拉取最近任务记录（清心跳、展示终态/进度） */
+  const refreshLastTask = (sessionId: string) => {
+    void api
+      .listSessionTasks(sessionId)
+      .then((tasks) => set({ lastTask: tasks[0] ?? null, taskProgress: null }))
+      .catch(() => set({ taskProgress: null }));
   };
 
   return {
@@ -262,6 +275,13 @@ export const useAppStore = create<AppStore>((set, get) => {
       } catch {
         /* ignore */
       }
+      // 断线续跑恢复：拉取最近任务（含心跳进度/终态，见任务状态条）
+      try {
+        const tasks = await api.listSessionTasks(id);
+        set({ lastTask: tasks[0] ?? null });
+      } catch {
+        /* ignore */
+      }
     },
     createSession: async () => {
       const { config } = get();
@@ -297,6 +317,8 @@ export const useAppStore = create<AppStore>((set, get) => {
     streaming: false,
     streamingText: "",
     streamingToolCalls: [],
+    taskProgress: null,
+    lastTask: null,
     selectedModel: localStorage.getItem("boenmind.selectedModel"),
     selectedThinking: "off",
     setSelectedModel: (value) => {
@@ -356,6 +378,10 @@ export const useAppStore = create<AppStore>((set, get) => {
               },
             });
             break;
+          case "taskProgress":
+            // 任务心跳：进行中任务的状态条展示（断线重连后从 listSessionTasks 恢复）
+            set({ taskProgress: ev.progress });
+            break;
           case "done": {
             // 后端确认结束（正常完成或停止后的部分文本）：固化流式内容
             finalizeStream(sessionId!);
@@ -363,6 +389,7 @@ export const useAppStore = create<AppStore>((set, get) => {
           }
           case "error":
             set({ streaming: false, streamingText: "", streamingToolCalls: [] });
+            refreshLastTask(sessionId!);
             // 错误信息以用户可见的形式追加
             set((st) => ({
               messages: [

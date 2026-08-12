@@ -37,6 +37,12 @@ export const ko: Translation = {
     newSession: "새 채팅",
     selectOrCreate: "대화를 선택하거나 새로 시작하세요",
     stop: "중지",
+    taskRunning: "작업이 아직 실행 중입니다…",
+    taskStatus: {
+      completed: "작업 완료",
+      failed: "작업 실패",
+      cancelled: "작업 취소됨",
+    },
     emptyTitle: "BoenMind 대화",
     emptyHint: "무엇이든 물어보세요. 작업 폴더의 작업을 대신 처리해 드릴 수도 있습니다.",
     previewEmpty: "(이미지 또는 빈 메시지)",

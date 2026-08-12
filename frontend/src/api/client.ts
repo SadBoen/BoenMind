@@ -200,6 +200,20 @@ export interface SkillCandidate {
   url: string;
 }
 
+/** 一次 prompt 回合的任务记录（断线续跑 + 心跳进度） */
+export interface Task {
+  id: string;
+  session_id: string;
+  /** running | completed | failed | cancelled */
+  status: string;
+  /** 心跳进度文本（最近活动摘要） */
+  progress: string;
+  started_at: number;
+  updated_at: number;
+  finished_at: number | null;
+  error: string | null;
+}
+
 /** 聊天流式事件（对应后端 AgentStreamEvent 的 JSON 序列化） */
 export type ChatStreamEvent =
   | { type: "textDelta"; delta: string }
@@ -212,6 +226,7 @@ export type ChatStreamEvent =
       capability: string;
       message: string;
     }
+  | { type: "taskProgress"; progress: string }
   | { type: "done" }
   | { type: "error"; message: string };
 
@@ -429,6 +444,9 @@ export const api = {
     request<{ ok: boolean }>(`/api/refinement-suggestions/${id}/rollback`, {
       method: "POST",
     }),
+
+  listSessionTasks: (sessionId: string) =>
+    request<Task[]>(`/api/sessions/${sessionId}/tasks`),
 
   listWorkspace: (dir = "") =>
     request<{ dir: string; entries: FileEntry[] }>(

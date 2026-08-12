@@ -37,6 +37,12 @@ export const zh = {
     newSession: "新对话",
     selectOrCreate: "选择或新建一个对话",
     stop: "停止",
+    taskRunning: "任务仍在进行中…",
+    taskStatus: {
+      completed: "任务已完成",
+      failed: "任务失败",
+      cancelled: "任务已取消",
+    },
     emptyTitle: "BoenMind 对话",
     emptyHint: "问我任何问题，或让我帮你处理工作文件夹中的任务。",
     previewEmpty: "（图片或空消息）",
