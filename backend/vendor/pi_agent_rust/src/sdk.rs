@@ -339,6 +339,13 @@ pub struct SessionOptions {
     // for this session (waterline / tail budget / context window). `None`
     // (the default) keeps the existing behavior untouched.
     pub compaction_settings: Option<ResolvedCompactionSettings>,
+
+    // BoenMind 补丁: extension UI handler (capability prompts etc.).
+    // When `Some`, extension UI requests (permission confirmations, dialogs)
+    // are forwarded to this handler and its response is returned to the
+    // extension. `None` (the default) keeps the SDK behavior: no UI sender
+    // is configured, so prompting extensions fail closed (denied).
+    pub ui_handler: Option<Arc<dyn crate::extension_dispatcher::ExtensionUiHandler + Send + Sync>>,
 }
 
 impl Default for SessionOptions {
@@ -366,6 +373,7 @@ impl Default for SessionOptions {
             on_tool_end: None,
             on_stream_event: None,
             compaction_settings: None,
+            ui_handler: None,
         }
     }
 }
@@ -1820,6 +1828,36 @@ pub async fn create_agent_session(options: SessionOptions) -> Result<AgentSessio
                 None,
             )
             .await?;
+
+        // BoenMind 补丁: 将调用方提供的 UI handler 接到扩展管理器的询问通道。
+        // 上游 SDK 默认不配置 ui_sender，扩展能力询问（capability prompt 等）
+        // 一律 fail-closed 拒绝；注入后权限确认可转发给宿主应用（如聊天前端弹窗）。
+        if let Some(ui_handler) = options.ui_handler.clone()
+            && let Some(extension_manager) = agent_session
+                .extensions
+                .as_ref()
+                .map(crate::extensions::ExtensionRegion::manager)
+        {
+            let (extension_ui_tx, mut extension_ui_rx) =
+                asupersync::channel::mpsc::channel::<crate::extensions::ExtensionUiRequest>(16);
+            extension_manager.set_ui_sender(extension_ui_tx);
+            let manager_ui = extension_manager.clone();
+            tokio::spawn(async move {
+                let cx = crate::agent_cx::AgentCx::for_request();
+                while let Ok(request) = extension_ui_rx.recv(&cx).await {
+                    let response = match ui_handler.request_ui(request.clone()).await {
+                        Ok(Some(response)) => response,
+                        // 无响应或错误 → fail-closed 取消（与 SDK 默认行为一致）
+                        _ => crate::extensions::ExtensionUiResponse {
+                            id: request.id.clone(),
+                            value: None,
+                            cancelled: true,
+                        },
+                    };
+                    let _ = manager_ui.respond_ui(response);
+                }
+            });
+        }
     }
 
     agent_session.set_model_registry(model_registry.clone());

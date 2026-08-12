@@ -69,6 +69,21 @@ export const zh = {
       toolsOnly: "工具执行",
       process: "思考过程",
     },
+    permission: {
+      title: "插件权限请求",
+      unknownExtension: "未知插件",
+      hint: "选择会被记住，插件版本更新后会重新询问；不选择将在超时后自动拒绝。",
+      allowOnce: "允许",
+      denyOnce: "拒绝",
+      allowAlways: "总是允许",
+      modeTitle: "插件权限模式（决定插件访问能力时是否询问）",
+      mode: {
+        default: "默认",
+        safe: "安全",
+        balanced: "宽松",
+        yolo: "YOLO",
+      },
+    },
   },
   sessionList: {
     newChat: "新建对话",

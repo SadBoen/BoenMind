@@ -12,6 +12,7 @@ import { useAppStore } from "@/stores/app-store";
 import { MessageItem } from "./MessageItem";
 import { ChatInput } from "./ChatInput";
 import { ScrollIndicators } from "./ScrollIndicators";
+import { PermissionDialog } from "./PermissionDialog";
 import { parseThinkBlocks } from "./ThinkBlock";
 
 /** 消息预览文本（指示条悬停用）：剥离 think 块（含流式未闭合的）、压缩空白 */
@@ -145,6 +146,8 @@ export function ChatWindow() {
 
       {/* 输入区（模型/思考选择在框内下边缘） */}
       <ChatInput />
+      {/* 插件权限询问弹窗（SSE permissionRequest 事件触发） */}
+      <PermissionDialog />
     </div>
   );
 }

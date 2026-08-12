@@ -4,6 +4,7 @@
 //! - 桌面壳内嵌：Tauri 启动时在独立线程调用 [`serve`]
 
 pub mod chat;
+pub mod permission;
 pub mod routes;
 pub mod static_files;
 pub mod subagent_child;
@@ -48,6 +49,21 @@ pub struct AppState {
     /// prompt_id 用于清理时身份匹配：同会话连续两个 prompt 时，先结束的
     /// 只能删除自己的条目，不能把后一个的取消句柄误删（见 chat.rs）。
     pub aborts: Arc<Mutex<HashMap<String, (u64, pi::sdk::AbortHandle)>>>,
+    /// 活跃 prompt 的 SSE 事件通道（key = session_id）。权限询问桥据此把
+    /// 询问事件推给前端；prompt 结束时移除。
+    pub session_streams: Arc<Mutex<HashMap<String, tokio::sync::mpsc::Sender<bm_core::agent::AgentStreamEvent>>>>,
+    /// 挂起的权限询问（key = 上游询问请求 id）：等待前端决策（允许/拒绝/总是允许）。
+    pub permission_pending: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<PermissionDecision>>>>,
+}
+
+/// 前端对一次权限询问的决策。
+#[derive(Debug, Clone)]
+pub struct PermissionDecision {
+    pub allow: bool,
+    /// 总是允许/总是拒绝。上游会把任何决策持久化到
+    /// extension-permissions.json（跨会话生效），"总是"只是用户的显式表达，
+    /// 后端不再自建白名单存储——上游缓存即权威。
+    pub always: bool,
 }
 
 impl AppState {
@@ -57,6 +73,8 @@ impl AppState {
             db: Arc::new(db),
             agents: Arc::new(Mutex::new(HashMap::new())),
             aborts: Arc::new(Mutex::new(HashMap::new())),
+            session_streams: Arc::new(Mutex::new(HashMap::new())),
+            permission_pending: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -86,6 +104,7 @@ fn router(state: AppState) -> Router {
         .route("/api/skills/{id}", post(routes::skills::set_skill).delete(routes::skills::uninstall_skill))
         .route("/api/chat", post(chat::chat))
         .route("/api/chat/stop", post(chat::stop_chat))
+        .route("/api/chat/permission-response", post(chat::respond_permission))
         .route("/api/providers/presets", get(routes::providers::presets))
         .route("/api/providers/list-models", post(routes::providers::list_provider_models))
         .route("/api/thinking-levels", get(routes::providers::thinking_levels))

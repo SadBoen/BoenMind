@@ -187,6 +187,13 @@ export type ChatStreamEvent =
   | { type: "textDelta"; delta: string }
   | { type: "toolCallStart"; id: string; name: string; args: unknown }
   | { type: "toolCallEnd"; id: string; name: string; isError: boolean }
+  | {
+      type: "permissionRequest";
+      id: string;
+      extensionId?: string;
+      capability: string;
+      message: string;
+    }
   | { type: "done" }
   | { type: "error"; message: string };
 
@@ -481,5 +488,11 @@ export const api = {
     request<{ ok: boolean }>("/api/chat/stop", {
       method: "POST",
       body: JSON.stringify({ session_id: sessionId }),
+    }),
+  /** 插件权限询问决策回传（允许一次/拒绝/总是允许-拒绝） */
+  respondPermission: (requestId: string, allow: boolean, always: boolean) =>
+    request<{ ok: boolean }>("/api/chat/permission-response", {
+      method: "POST",
+      body: JSON.stringify({ request_id: requestId, allow, always }),
     }),
 };

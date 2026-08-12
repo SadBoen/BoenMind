@@ -5,7 +5,7 @@
  */
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ArrowUp, Brain, Languages, Mic, Paperclip } from "lucide-react";
+import { ArrowUp, Brain, Languages, Mic, Paperclip, ShieldCheck } from "lucide-react";
 import { api } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -94,7 +94,15 @@ export function ChatInput() {
   const setSelectedModel = useAppStore((s) => s.setSelectedModel);
   const selectedThinking = useAppStore((s) => s.selectedThinking);
   const setSelectedThinking = useAppStore((s) => s.setSelectedThinking);
+  const permissionMode = useAppStore((s) => s.permissionMode);
+  const setPermissionMode = useAppStore((s) => s.setPermissionMode);
+  const loadPermissionMode = useAppStore((s) => s.loadPermissionMode);
   const config = useAppStore((s) => s.config);
+
+  // 挂载时读取插件权限模式（工具条展示用；设置页修改后刷新页面同步）
+  useEffect(() => {
+    void loadPermissionMode();
+  }, [loadPermissionMode]);
 
   const modelGroups = useModelGroups();
   const [text, setText] = useState("");
@@ -231,6 +239,31 @@ export function ChatInput() {
                   {thinkingLevels.map((value) => (
                     <SelectItem key={value} value={value} className="text-xs">
                       {t(`chat.thinking.${value}`)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              {/* 插件权限模式（安全/宽松/YOLO）：决定插件访问能力时是否需要询问。
+                  模式变更即时保存到后端配置，新会话生效；YOLO 全自动放行（含危险能力） */}
+              <Select
+                value={permissionMode}
+                onValueChange={(v) => {
+                  if (v) void setPermissionMode(v);
+                }}
+                itemToStringLabel={(v) => t(`chat.permission.mode.${v}`)}
+              >
+                <SelectTrigger
+                  className="h-6 gap-1 border-transparent bg-transparent px-1.5 text-xs text-muted-foreground shadow-none hover:bg-accent hover:text-foreground data-[state=open]:bg-accent"
+                  title={t("chat.permission.modeTitle")}
+                >
+                  <ShieldCheck size={12} className="shrink-0 text-muted-foreground" />
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent align="start">
+                  {(["default", "safe", "balanced", "yolo"] as const).map((value) => (
+                    <SelectItem key={value} value={value} className="text-xs">
+                      {t(`chat.permission.mode.${value}`)}
                     </SelectItem>
                   ))}
                 </SelectContent>

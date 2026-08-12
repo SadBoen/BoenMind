@@ -33,7 +33,30 @@ use serde::Deserialize;
 use tokio::sync::{Mutex, mpsc};
 use tokio_stream::{StreamExt, wrappers::ReceiverStream};
 
-use crate::{AppState, api_error};
+use crate::{AppState, PermissionDecision, api_error};
+
+/// 权限询问事件推送：经会话当前活跃 prompt 的 SSE 通道发给前端。
+/// prompt 结束后通道已移除 → 事件丢失（询问仍会超时 fail-closed，无泄漏）。
+pub async fn send_permission_request(
+    state: &AppState,
+    session_id: &str,
+    request_id: &str,
+    extension_id: &str,
+    capability: &str,
+    message: &str,
+) {
+    let tx = state.session_streams.lock().await.get(session_id).cloned();
+    if let Some(tx) = tx {
+        let _ = tx
+            .send(AgentStreamEvent::PermissionRequest {
+                id: request_id.to_string(),
+                extension_id: Some(extension_id.to_string()),
+                capability: capability.to_string(),
+                message: message.to_string(),
+            })
+            .await;
+    }
+}
 
 /// 各语言下的默认新会话标题（前端创建会话时按界面语言传入，
 /// 首条消息前识别为"未命名"，自动用消息开头命名）。
@@ -101,6 +124,8 @@ pub async fn chat(
 
     // 事件通道 → SSE（512 容量；消费端即 HTTP 响应流）
     let (tx, rx) = mpsc::channel::<AgentStreamEvent>(512);
+    // 注册会话的活跃事件通道：权限询问桥据此把询问事件推给前端
+    state.session_streams.lock().await.insert(session.id.clone(), tx.clone());
     let stream = ReceiverStream::new(rx).map(|ev| Ok::<_, std::convert::Infallible>(to_sse_event(&ev)));
 
     let state_clone = state.clone();
@@ -120,9 +145,16 @@ pub async fn chat(
             tokio::time::sleep(PROMPT_TIMEOUT).await;
             timeout_abort.abort();
         });
-        run_prompt_and_persist(state_clone, session_id.clone(), handle, abort_signal, message, tx).await;
+        run_prompt_and_persist(state_clone.clone(), session_id.clone(), handle, abort_signal, message, tx.clone()).await;
+        // 移除本 prompt 的活跃事件通道（同会话新 prompt 已注册新通道时不动）
+        let mut streams = state_clone.session_streams.lock().await;
+        if let Some(tx2) = streams.get(&session_id)
+            && tx2.same_channel(&tx)
+        {
+            streams.remove(&session_id);
+        }
         // 清理自己的 abort 条目：同会话已有新 prompt（prompt_id 已更新）时不动
-        let mut aborts = state.aborts.lock().await;
+        let mut aborts = state_clone.aborts.lock().await;
         if let Some((pid, _)) = aborts.get(&session_id)
             && *pid == prompt_id
         {
@@ -149,6 +181,37 @@ pub async fn stop_chat(
     if let Some((_, abort)) = state.aborts.lock().await.remove(&req.session_id) {
         abort.abort();
         tracing::info!(event = "bm.chat_stopped", session = %req.session_id);
+    }
+    axum::Json(serde_json::json!({ "ok": true })).into_response()
+}
+
+/// 前端对插件权限询问的决策回传（允许一次 / 拒绝 / 总是允许-拒绝）。
+/// 无挂起询问时幂等返回 ok（可能已超时）。
+#[derive(Deserialize)]
+pub struct PermissionResponseRequest {
+    pub request_id: String,
+    #[serde(default)]
+    pub allow: bool,
+    /// 总是允许/总是拒绝：写入白名单，下次不再询问
+    #[serde(default)]
+    pub always: bool,
+}
+
+pub async fn respond_permission(
+    State(state): State<AppState>,
+    Json(req): Json<PermissionResponseRequest>,
+) -> Response {
+    if let Some(tx) = state.permission_pending.lock().await.remove(&req.request_id) {
+        let _ = tx.send(PermissionDecision {
+            allow: req.allow,
+            always: req.always,
+        });
+        tracing::info!(
+            event = "bm.permission_responded",
+            request = %req.request_id,
+            allow = req.allow,
+            always = req.always,
+        );
     }
     axum::Json(serde_json::json!({ "ok": true })).into_response()
 }
@@ -232,6 +295,13 @@ async fn get_or_create_agent(
         )
     };
 
+    // 插件权限询问桥：能力确认转发给前端聊天界面（每个会话一个实例）
+    let ui_handler: Option<Arc<dyn pi::extension_dispatcher::ExtensionUiHandler + Send + Sync>> =
+        Some(Arc::new(crate::permission::PermissionBridge {
+            state: state.clone(),
+            session_id: session.id.clone(),
+        }));
+
     let handle = create_session_handle(
         &provider,
         &model,
@@ -242,6 +312,7 @@ async fn get_or_create_agent(
         compaction,
         extension_policy,
         extension_allow_dangerous,
+        ui_handler,
     )
     .await
     .map_err(|err| (StatusCode::BAD_GATEWAY, format!("创建 agent 会话失败: {err}")))?;
@@ -351,6 +422,8 @@ async fn run_prompt_and_persist(
                     AgentStreamEvent::TextDelta { delta } => {
                         acc.lock().unwrap().push_str(delta);
                     }
+                    // 权限询问事件：不参与文本/工具聚合，直接透传前端弹窗
+                    AgentStreamEvent::PermissionRequest { .. } => {}
                     AgentStreamEvent::Done | AgentStreamEvent::Error { .. } => {
                         done_sent_cb.store(true, std::sync::atomic::Ordering::Relaxed);
                     }

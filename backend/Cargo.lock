@@ -864,6 +864,7 @@ dependencies = [
 name = "bm-server"
 version = "0.1.1"
 dependencies = [
+ "async-trait",
  "axum",
  "base64 0.22.1",
  "bm-core",
@@ -5262,6 +5263,7 @@ dependencies = [
  "textwrap",
  "thiserror 2.0.20",
  "tikv-jemallocator",
+ "tokio",
  "toml 1.1.4+spec-1.1.0",
  "tracing",
  "tracing-subscriber",

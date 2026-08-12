@@ -75,6 +75,25 @@ interface AppStore {
   sendMessage: (text: string, opts?: { model?: string; thinking?: string }) => Promise<void>;
   stopStreaming: () => void;
 
+  // 插件权限
+  /** 挂起的权限询问（SSE permissionRequest 事件触发弹窗；null = 无） */
+  pendingPermission: {
+    id: string;
+    extensionId?: string;
+    capability: string;
+    message: string;
+  } | null;
+  /** 当前插件权限模式（default / safe / balanced / yolo） */
+  permissionMode: string;
+  /** 回传权限决策（allow + always；决策记忆在上游，见 permission.rs 注释） */
+  respondPermission: (allow: boolean, always: boolean) => Promise<void>;
+  /** 询问超时（60s）自动关闭弹窗（后端已 fail-closed） */
+  dismissPermission: () => void;
+  /** 读取权限模式（聊天工具条与设置页共用） */
+  loadPermissionMode: () => Promise<void>;
+  /** 切换权限模式（yolo = permissive + allowDangerous） */
+  setPermissionMode: (mode: string) => Promise<void>;
+
   // 文件区
   workspaceDir: string;
   entries: FileEntry[];
@@ -127,6 +146,49 @@ export const useAppStore = create<AppStore>((set, get) => {
       if (nav === "settings") set({ previewFile: null });
     },
     setSettingsTab: (tab) => set({ settingsTab: tab }),
+
+    pendingPermission: null,
+    permissionMode: "default",
+    respondPermission: async (allow, always) => {
+      const pending = get().pendingPermission;
+      if (!pending) return;
+      try {
+        await api.respondPermission(pending.id, allow, always);
+      } finally {
+        set({ pendingPermission: null });
+      }
+    },
+    // 询问超时（60s）自动关闭弹窗；后端已 fail-closed 拒绝，前端无需上报
+    dismissPermission: () => set({ pendingPermission: null }),
+    loadPermissionMode: async () => {
+      try {
+        const cfg = await api.getConfig();
+        const policy = cfg.extension_policy;
+        const mode =
+          policy === "permissive" && cfg.extension_allow_dangerous
+            ? "yolo"
+            : policy === "safe" || policy === "balanced"
+              ? policy
+              : "default";
+        set({ permissionMode: mode });
+      } catch {
+        // 读取失败保持默认展示
+      }
+    },
+    setPermissionMode: async (mode) => {
+      const prev = get().permissionMode;
+      set({ permissionMode: mode });
+      try {
+        const cfg = await api.getConfig();
+        cfg.extension_policy =
+          mode === "yolo" ? "permissive" : mode === "default" ? undefined : mode;
+        cfg.extension_allow_dangerous = mode === "yolo";
+        await api.saveConfig(cfg);
+      } catch (err) {
+        set({ permissionMode: prev });
+        throw err;
+      }
+    },
 
     health: null,
     online: false,
@@ -281,6 +343,17 @@ export const useAppStore = create<AppStore>((set, get) => {
               streamingToolCalls: s.streamingToolCalls.map((c) =>
                 c.id === ev.id ? { ...c, isError: ev.isError, done: true } : c,
               ),
+            });
+            break;
+          case "permissionRequest":
+            // 同一时间只展示一个询问：新请求覆盖旧的（旧的会超时 fail-closed）
+            set({
+              pendingPermission: {
+                id: ev.id,
+                extensionId: ev.extensionId,
+                capability: ev.capability,
+                message: ev.message,
+              },
             });
             break;
           case "done": {

@@ -6,6 +6,7 @@
 //! - 事件映射为纯函数，便于单元测试
 
 use std::path::Path;
+use std::sync::Arc;
 
 use pi::model::AssistantMessageEvent;
 use pi::sdk::{
@@ -38,6 +39,17 @@ pub enum AgentStreamEvent {
     ToolCallStart { id: String, name: String, args: serde_json::Value },
     /// 工具调用结束（is_error 决定前端展示颜色）
     ToolCallEnd { id: String, name: String, is_error: bool },
+    /// 插件权限询问：插件请求某能力（exec/env/网络等），前端需弹窗让用户选择。
+    /// 前端通过 POST /api/chat/permission-response 回传决策；无响应超时后后端 fail-closed 拒绝。
+    PermissionRequest {
+        /// 询问请求 id（回传时原样带回）
+        id: String,
+        extension_id: Option<String>,
+        /// 能力名（exec / env / 其它 hostcall 能力）
+        capability: String,
+        /// 面向用户的询问文案（title: message 或 method 驱动的描述）
+        message: String,
+    },
     /// 整个 prompt 处理结束（含取消；前端据此固化流式内容）
     Done,
     /// 出错
@@ -51,7 +63,8 @@ pub enum AgentStreamEvent {
 /// 注入文本（available_skills 块，空串不注入）；`thinking` 为思考强度（如 "off"/"low"）；
 /// `compaction` 为按模型解析的压缩设置（水线/尾部保护），`None` 时走 pi 现有全局行为；
 /// `extension_policy` 为插件权限档位（safe/balanced/permissive，None = 上游默认）；
-/// `extension_allow_dangerous` 为 YOLO 开关（放行 exec/env，经环境变量告知上游）。
+/// `extension_allow_dangerous` 为 YOLO 开关（放行 exec/env，经环境变量告知上游）；
+/// `ui_handler` 为插件权限询问出口（能力确认转发给宿主应用，None = 上游 fail-closed 拒绝）。
 #[allow(clippy::too_many_arguments)]
 pub async fn create_session_handle(
     provider: &ProviderConfig,
@@ -63,6 +76,7 @@ pub async fn create_session_handle(
     compaction: Option<crate::compaction::ResolvedCompaction>,
     extension_policy: Option<String>,
     extension_allow_dangerous: bool,
+    ui_handler: Option<Arc<dyn pi::extension_dispatcher::ExtensionUiHandler + Send + Sync>>,
 ) -> Result<AgentSessionHandle, pi::sdk::Error> {
     // 注意：调用前需确保 PI_CODING_AGENT_DIR 已设置、models.json 已同步，
     // 见 bm-server 的启动流程（sync_pi_models_json + set_var）
@@ -107,6 +121,8 @@ pub async fn create_session_handle(
         // 插件权限档位（safe/balanced/permissive；None = 上游默认）。YOLO 的
         // exec/env 放行走 PI_EXTENSION_ALLOW_DANGEROUS 环境变量（见下方同步）
         extension_policy,
+        // BoenMind 补丁: 插件权限询问出口（上游 SessionOptions.ui_handler 透传）
+        ui_handler,
         // BoenMind 补丁对接：按模型压缩覆盖（水线/尾部/窗口），None 走 pi 默认
         compaction_settings: compaction.map(|c| pi::compaction::ResolvedCompactionSettings {
             enabled: c.enabled,

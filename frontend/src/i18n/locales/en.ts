@@ -69,6 +69,21 @@ export const en: Translation = {
       toolsOnly: "Tool execution",
       process: "Thinking process",
     },
+    permission: {
+      title: "Plugin permission request",
+      unknownExtension: "Unknown plugin",
+      hint: "Your choice will be remembered; you'll be asked again after the plugin updates. No choice = auto-deny after timeout.",
+      allowOnce: "Allow",
+      denyOnce: "Deny",
+      allowAlways: "Always allow",
+      modeTitle: "Plugin permission mode (asks before plugins access capabilities)",
+      mode: {
+        default: "Default",
+        safe: "Safe",
+        balanced: "Balanced",
+        yolo: "YOLO",
+      },
+    },
   },
   sessionList: {
     newChat: "New chat",

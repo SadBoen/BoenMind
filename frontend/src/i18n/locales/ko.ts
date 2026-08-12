@@ -69,6 +69,21 @@ export const ko: Translation = {
       toolsOnly: "도구 실행",
       process: "생각 과정",
     },
+    permission: {
+      title: "플러그인 권한 요청",
+      unknownExtension: "알 수 없는 플러그인",
+      hint: "선택은 기억되며, 플러그인 업데이트 후 다시 물어봅니다. 선택하지 않으면 시간 초과 후 자동으로 거부됩니다.",
+      allowOnce: "허용",
+      denyOnce: "거부",
+      allowAlways: "항상 허용",
+      modeTitle: "플러그인 권한 모드 (플러그인이 기능에 접근할 때 물어볼지 여부)",
+      mode: {
+        default: "기본값",
+        safe: "안전",
+        balanced: "균형",
+        yolo: "YOLO",
+      },
+    },
   },
   sessionList: {
     newChat: "새 채팅",

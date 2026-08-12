@@ -69,6 +69,21 @@ export const ja: Translation = {
       toolsOnly: "ツール実行",
       process: "思考プロセス",
     },
+    permission: {
+      title: "プラグイン権限リクエスト",
+      unknownExtension: "不明なプラグイン",
+      hint: "選択は記憶され、プラグイン更新後に再度確認されます。選択しない場合、タイムアウト後に自動的に拒否されます。",
+      allowOnce: "許可",
+      denyOnce: "拒否",
+      allowAlways: "常に許可",
+      modeTitle: "プラグイン権限モード（プラグインが権限にアクセスする際に確認するか）",
+      mode: {
+        default: "デフォルト",
+        safe: "セーフ",
+        balanced: "バランス",
+        yolo: "YOLO",
+      },
+    },
   },
   sessionList: {
     newChat: "新しいチャット",
