@@ -15,7 +15,6 @@ export const en: Translation = {
     cancel: "Cancel",
     loading: "Loading…",
     refresh: "Refresh",
-    back: "Back",
     close: "Close",
     comingSoon: "Coming soon",
   },
@@ -248,10 +247,8 @@ export const en: Translation = {
       quotaTitle: "Usage",
       quotaExhausted: "exhausted",
       groupInstance: "#{{n}}",
-      groupRemove: "Remove",
       groupAdd: "Add",
       test: "Test",
-      testing: "Testing…",
       tip: "Tip: plugins are loaded when a new chat session is created; enabling/disabling affects new chats. Community plugins (pi.dev/packages) without native dependencies can be copied to <code>~/.boenmind/extensions/</code> and installed after refresh.",
     },
     skills: {

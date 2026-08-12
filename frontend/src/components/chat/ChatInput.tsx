@@ -54,14 +54,16 @@ function useModelGroups(): ModelGroup[] {
 }
 
 /**
- * 当前模型的思考档位：按模型 id 缓存后端返回结果，
- * 未加载/失败时回退默认四档（不闪烁、可离线）。
+ * 当前模型的思考档位：模块级缓存（同一模型的档位请求全局只发一次，
+ * 后端结果按模型固定，跨组件实例共享）；未加载/失败时回退默认四档。
  */
+const thinkingLevelsCache = new Map<string, readonly string[]>();
+
 function useThinkingLevels(modelValue: string | null): readonly string[] {
-  const [cache, setCache] = useState<Record<string, string[]>>({});
+  const [, setVersion] = useState(0);
   useEffect(() => {
     if (!modelValue) return;
-    if (cache[modelValue]) return;
+    if (thinkingLevelsCache.has(modelValue)) return;
     const [provider, model] = modelValue.split("::");
     if (!provider || !model) return;
     let cancelled = false;
@@ -69,7 +71,8 @@ function useThinkingLevels(modelValue: string | null): readonly string[] {
       .thinkingLevels(provider, model)
       .then(({ levels }) => {
         if (!cancelled && levels.length > 0) {
-          setCache((prev) => ({ ...prev, [modelValue]: levels }));
+          thinkingLevelsCache.set(modelValue, levels);
+          setVersion((v) => v + 1); // 通知本组件读取新缓存
         }
       })
       .catch(() => {
@@ -78,8 +81,9 @@ function useThinkingLevels(modelValue: string | null): readonly string[] {
     return () => {
       cancelled = true;
     };
-  }, [modelValue, cache]);
-  return cache[modelValue ?? ""] ?? DEFAULT_THINKING_VALUES;
+    // 缓存为模块级、setVersion 稳定：effect 仅在模型切换时触发，无空跑
+  }, [modelValue]);
+  return thinkingLevelsCache.get(modelValue ?? "") ?? DEFAULT_THINKING_VALUES;
 }
 
 export function ChatInput() {

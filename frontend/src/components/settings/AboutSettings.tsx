@@ -172,7 +172,8 @@ export function AboutSettings() {
                 mb: (state.percent / 1024 / 1024).toFixed(1),
               })}
             </p>
-            <Progress value={100} className="animate-pulse" />
+            {/* 无 total 可用：value=null 为不确定动画而非假装百分比（字节数不是比例） */}
+            <Progress value={null} className="animate-pulse" />
             <p className="text-xs text-muted-foreground">{t("settings.about.downloadHint")}</p>
           </div>
         )}

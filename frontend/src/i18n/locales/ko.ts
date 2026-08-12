@@ -15,7 +15,6 @@ export const ko: Translation = {
     cancel: "취소",
     loading: "불러오는 중…",
     refresh: "새로고침",
-    back: "뒤로",
     close: "닫기",
     comingSoon: "출시 예정",
   },
@@ -248,10 +247,8 @@ export const ko: Translation = {
       quotaTitle: "사용량",
       quotaExhausted: "소진됨",
       groupInstance: "{{n}}번",
-      groupRemove: "삭제",
       groupAdd: "추가",
       test: "테스트",
-      testing: "테스트 중…",
       tip: "팁: 플러그인은 새 대화 세션을 만들 때 로드되며, 활성화/비활성화는 새 대화부터 적용됩니다. 네이티브 의존성이 없는 커뮤니티 플러그인(pi.dev/packages)은 <code>~/.boenmind/extensions/</code>에 복사한 뒤 새로고침 후 설치할 수 있습니다.",
     },
     skills: {

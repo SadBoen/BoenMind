@@ -11,7 +11,7 @@ export type { NavKey, SettingsTab } from "@/lib/navigation";
 import type { NavKey, SettingsTab } from "@/lib/navigation";
 
 /** 流式中的工具调用（isError 未定前为执行中状态） */
-export interface StreamingToolCall {
+interface StreamingToolCall {
   id: string;
   name: string;
   args: unknown;

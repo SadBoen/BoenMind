@@ -51,6 +51,8 @@ export interface ProviderPreset {
   icon: IconComponent | null;
   /** true = Color 图标自带品牌色；false = Mono 图标 currentColor 跟随主题 */
   hasColor: boolean;
+  /** 表单是否强制要求 API key；缺省 true（本地模型服务 ollama/llamacpp 为 false） */
+  needsKey?: boolean;
 }
 
 /** 表内声明顺序即表单 kind 下拉的展示顺序（按推荐分组排列） */
@@ -79,8 +81,8 @@ export const PROVIDER_PRESETS: Record<ProviderKind, ProviderPreset> = {
   antling: { base_url: "https://api.ant-ling.com/v1", models: ["Ling-2.6-1T", "Ling-2.6-flash", "Ring-2.6-1T"], group: "more", icon: AntGroupColorIcon, hasColor: true },
   baseten: { base_url: "https://inference.baseten.co/v1", models: ["deepseek-ai/DeepSeek-V4-Flash-0731", "moonshotai/Kimi-K2.7-Code"], group: "more", icon: BasetenIcon, hasColor: false },
   // ── 本地与兼容 ──
-  ollama: { base_url: "http://127.0.0.1:11434/v1", models: ["qwen3:8b", "llama3.1:8b"], group: "local", icon: OllamaIcon, hasColor: false },
-  llamacpp: { base_url: "http://127.0.0.1:8080/v1", models: [], group: "local", icon: null, hasColor: false },
+  ollama: { base_url: "http://127.0.0.1:11434/v1", models: ["qwen3:8b", "llama3.1:8b"], group: "local", icon: OllamaIcon, hasColor: false, needsKey: false },
+  llamacpp: { base_url: "http://127.0.0.1:8080/v1", models: [], group: "local", icon: null, hasColor: false, needsKey: false },
   custom: { base_url: "", models: [], group: "local", icon: null, hasColor: false },
 };
 
@@ -96,7 +98,5 @@ export const KIND_GROUPS: { group: ProviderGroup; kinds: ProviderKind[] }[] = (
 }));
 
 /** 端点 + 默认模型预设（兼容旧引用名） */
-export const KIND_PRESETS = PROVIDER_PRESETS as unknown as Record<
-  ProviderKind,
-  { base_url: string; models: string[] }
->;
+export const KIND_PRESETS: Record<ProviderKind, { base_url: string; models: string[]; needsKey?: boolean }> =
+  PROVIDER_PRESETS;

@@ -29,7 +29,7 @@ export function intlLocale(lang: string): string {
   return map[lang] ?? "zh-CN";
 }
 
-export const LANG_STORAGE_KEY = "boenmind.lang";
+const LANG_STORAGE_KEY = "boenmind.lang";
 
 export function isLang(v: unknown): v is Lang {
   return typeof v === "string" && (LANGS as readonly string[]).includes(v);

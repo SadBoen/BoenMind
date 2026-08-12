@@ -235,8 +235,9 @@ function authHeaders(): Record<string, string> {
 /** 统一错误解析：401 unauthorized 触发令牌回调，其余透传服务端 error 详情 */
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...authHeaders(), ...init?.headers },
     ...init,
+    // headers 在 init 之后显式合并：init 里若带 headers 会被按调用方意图覆盖
+    headers: { "Content-Type": "application/json", ...authHeaders(), ...init?.headers },
   });
   if (!res.ok) {
     let detail = res.statusText;
@@ -424,8 +425,13 @@ export const api = {
               const raw = buffer.slice(0, sep);
               buffer = buffer.slice(sep + 2);
               for (const line of raw.split("\n")) {
-                if (line.startsWith("data: ")) {
-                  onEvent(JSON.parse(line.slice(6)) as ChatStreamEvent);
+                // 宽容解析：`data:` 后可选空格（服务端格式微变不致断流）
+                if (line.startsWith("data:")) {
+                  try {
+                    onEvent(JSON.parse(line.slice(5).trim()) as ChatStreamEvent);
+                  } catch {
+                    /* 跳过无法解析的 data 行 */
+                  }
                 }
               }
             }

@@ -402,7 +402,8 @@ function ProviderFormDialog({
       toast.error(t("settings.providers.nameRequired"));
       return;
     }
-    const needsKey = form.kind !== "ollama" && form.kind !== "llamacpp";
+    // 免 key 名单由预设表声明（新增本地型提供商无需改这里）
+    const needsKey = KIND_PRESETS[form.kind].needsKey ?? true;
     if (needsKey && !form.api_key?.trim()) {
       toast.error(t("settings.providers.keyRequired"));
       return;

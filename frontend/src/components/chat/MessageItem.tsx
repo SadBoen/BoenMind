@@ -75,7 +75,8 @@ export const MessageItem = memo(function MessageItem({
             defaultOpen={processOpen}
           >
             {toolCalls.map((c, i) => (
-              <ToolCallBlock key={i} call={c} />
+              // 名称+序号做 key：流式固化后索引位移不会把展开状态错挂到别的调用上
+              <ToolCallBlock key={`${c.tool_name}-${i}`} call={c} />
             ))}
           </ProcessBlock>
         )}

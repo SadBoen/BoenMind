@@ -15,7 +15,6 @@ export const ja: Translation = {
     cancel: "キャンセル",
     loading: "読み込み中…",
     refresh: "更新",
-    back: "戻る",
     close: "閉じる",
     comingSoon: "近日公開",
   },
@@ -248,10 +247,8 @@ export const ja: Translation = {
       quotaTitle: "使用量",
       quotaExhausted: "枯渇",
       groupInstance: "{{n}} 番",
-      groupRemove: "削除",
       groupAdd: "追加",
       test: "テスト",
-      testing: "テスト中…",
       tip: "ヒント：プラグインは新しいチャットセッション作成時に読み込まれます。有効化/無効化は新しいチャットに反映されます。ネイティブ依存のないコミュニティプラグイン（pi.dev/packages）は <code>~/.boenmind/extensions/</code> にコピーして更新後にインストールできます。",
     },
     skills: {

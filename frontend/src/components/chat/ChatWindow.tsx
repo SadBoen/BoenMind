@@ -2,7 +2,7 @@
  * 聊天窗口：标题栏（停止按钮）、消息列表（平滑滚动 + 淡入动画）、输入区。
  * 模型与思考强度选择已移至输入框内部下边缘（见 ChatInput）。
  */
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { Square, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -33,6 +33,16 @@ export function ChatWindow() {
   const streamingToolCalls = useAppStore((s) => s.streamingToolCalls);
   const stopStreaming = useAppStore((s) => s.stopStreaming);
   const activeSessionId = useAppStore((s) => s.activeSessionId);
+
+  // 预览文本按消息 id 缓存：流式期间 streamingText 每增量都重渲染本组件，
+  // 不能对全部历史消息逐条跑正则（messages 引用在流式时不变化，memo 不重算）
+  const previews = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const m of messages) {
+      map.set(m.id, previewFor(m, t("chat.previewEmpty")));
+    }
+    return map;
+  }, [messages, t]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   // 避免流式增量导致的抖动：仅在用户未手动上翻时跟随
@@ -89,7 +99,7 @@ export function ChatWindow() {
           ) : (
             <div className="flex flex-col gap-5 px-6 py-6">
               {messages.map((m, i) => (
-                <div key={m.id} data-mid={i} data-role={m.role} data-preview={previewFor(m, t("chat.previewEmpty"))}>
+                <div key={m.id} data-mid={i} data-role={m.role} data-preview={previews.get(m.id)}>
                   <MessageItem message={m} />
                 </div>
               ))}

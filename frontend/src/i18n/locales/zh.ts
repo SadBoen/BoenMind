@@ -14,7 +14,6 @@ export const zh = {
     cancel: "取消",
     loading: "加载中…",
     refresh: "刷新",
-    back: "返回",
     close: "关闭",
     comingSoon: "即将推出",
   },
@@ -248,10 +247,8 @@ export const zh = {
       quotaTitle: "用量",
       quotaExhausted: "已耗尽",
       groupInstance: "{{n}} 号",
-      groupRemove: "删除",
       groupAdd: "添加",
       test: "测试",
-      testing: "测试中…",
       tip: "提示：插件在创建新对话会话时加载；启用/禁用后新对话生效。社区插件（pi.dev/packages）中无原生依赖的扩展可直接复制到 <code>~/.boenmind/extensions/</code> 后刷新安装。",
     },
     skills: {
