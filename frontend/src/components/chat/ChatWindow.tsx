@@ -12,11 +12,14 @@ import { useAppStore } from "@/stores/app-store";
 import { MessageItem } from "./MessageItem";
 import { ChatInput } from "./ChatInput";
 import { ScrollIndicators } from "./ScrollIndicators";
+import { parseThinkBlocks } from "./ThinkBlock";
 
-/** 消息预览文本（指示条悬停用）：剥离 think 块、压缩空白 */
+/** 消息预览文本（指示条悬停用）：剥离 think 块（含流式未闭合的）、压缩空白 */
 function previewFor(message: Message, emptyLabel: string): string {
-  const text = message.content
-    .replace(/<think>[\s\S]*?<\/think>/g, "")
+  const text = parseThinkBlocks(message.content)
+    .filter((s) => s.type === "text")
+    .map((s) => s.content)
+    .join(" ")
     .replace(/\s+/g, " ")
     .trim();
   return text.length > 60 ? `${text.slice(0, 60)}…` : text || emptyLabel;
@@ -57,7 +60,7 @@ export function ChatWindow() {
         <div className="flex min-w-0 items-center gap-2 text-sm font-medium">
           {activeSessionId ? (
             <span className="truncate">
-              {messages[0]?.role === "user" ? messages[0].content.slice(0, 24) : t("chat.newSession")}
+              {messages[0]?.role === "user" ? previewFor(messages[0], t("chat.newSession")) : t("chat.newSession")}
             </span>
           ) : (
             <span className="text-muted-foreground">{t("chat.selectOrCreate")}</span>

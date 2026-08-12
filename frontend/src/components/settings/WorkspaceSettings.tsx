@@ -1,7 +1,7 @@
 /**
  * 工作文件夹设置：指定 BoenMind 文件浏览区的根目录。
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation, Trans } from "react-i18next";
 import { FolderOpen, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,12 @@ export function WorkspaceSettings() {
   const config = useAppStore((s) => s.config);
   const saveConfig = useAppStore((s) => s.saveConfig);
   const navigateDir = useAppStore((s) => s.navigateDir);
-  const [path, setPath] = useState(config?.working_dir ?? "");
+  const [path, setPath] = useState("");
+
+  // config 异步加载/保存完成后同步到输入框（初始 useState 只取一次会拿到空串）
+  useEffect(() => {
+    if (config) setPath(config.working_dir);
+  }, [config?.working_dir]);
 
   if (!config) {
     return <p className="text-sm text-muted-foreground">{t("settings.workspace.loadingConfig")}</p>;

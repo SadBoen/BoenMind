@@ -18,21 +18,29 @@ export function ScrollIndicators({
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const railRef = useRef<HTMLDivElement>(null);
 
-  // 消息变化 / 尺寸变化时刷新（新输入到达、会话切换等）
+  // 消息 DOM 变化（新增/移除/预览属性更新）时刷新。注意不监听 scroll：
+  // 横条的位置相对容器内容（offsetTop），滚动不影响条目集合，每帧重扫是浪费；
+  // 用 MutationObserver 只在 DOM 真正变化时重算，O(n) 扫描只发生在新消息到达时
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     let raf = 0;
-    const update = () => {
+    const schedule = () => {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => setTick((t) => t + 1));
     };
-    el.addEventListener("scroll", update, { passive: true });
-    const ro = new ResizeObserver(update);
+    const mo = new MutationObserver(schedule);
+    mo.observe(el, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["data-preview"],
+    });
+    const ro = new ResizeObserver(schedule);
     ro.observe(el);
-    update();
+    schedule();
     return () => {
-      el.removeEventListener("scroll", update);
+      mo.disconnect();
       ro.disconnect();
       cancelAnimationFrame(raf);
     };

@@ -2,7 +2,7 @@
  * 文件浏览区：工作文件夹列表 + 文件预览 + 最大化。
  * 位于最右侧，可与主面板共享区域（最大化时占自身+主区）。
  */
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   ChevronLeft,
@@ -33,19 +33,21 @@ export function FilePanel() {
   const navigateDir = useAppStore((s) => s.navigateDir);
   const openFile = useAppStore((s) => s.openFile);
   const toggleFileMaximized = useAppStore((s) => s.toggleFileMaximized);
-  const health = useAppStore((s) => s.health);
 
   const [query, setQuery] = useState("");
 
-  // 首次挂载时加载工作文件夹
+  // 挂载时加载工作文件夹根目录（zustand action 引用稳定，仅执行一次）；
+  // 工作目录变更由 WorkspaceSettings 保存后主动 navigateDir("") 刷新
   useEffect(() => {
     void navigateDir("");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [health?.workingDir]);
+  }, [navigateDir]);
 
   const dirName = workspaceDir === "" ? t("files.workspace") : workspaceDir.split("/").pop();
 
-  const filtered = entries.filter((e) => e.name.toLowerCase().includes(query.trim().toLowerCase()));
+  const filtered = useMemo(
+    () => entries.filter((e) => e.name.toLowerCase().includes(query.trim().toLowerCase())),
+    [entries, query],
+  );
 
   return (
     <div className="flex h-full min-w-0 flex-col bg-background">
