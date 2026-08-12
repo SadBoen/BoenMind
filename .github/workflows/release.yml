@@ -230,15 +230,20 @@ jobs:
           Compress-Archive -Path ..\dist-win\BoenMind.exe -DestinationPath "..\dist-win\BoenMind_${VER}_x64_portable.zip" -CompressionLevel Optimal
           # 热升级 runtime 资产：独立 bm-server.exe（非 embed）+ 签名
           Copy-Item ..\backend\target\release\bm-server.exe "..\dist-win\boenmind-runtime-${VER}-x86_64-pc-windows-msvc.exe"
-          # 签名密钥兼容两种格式：先按 base64 解一层试签；失败则按原样文本重试
+          # 签名密钥兼容两种格式：先按 base64 解一层写文件；失败则原样写文件。
+          # 统一用 --private-key-path（PowerShell 把多行字符串拆参数，不能传 --private-key）
           $signed = $false
           try {
-            $signingKey = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:TAURI_SIGNING_PRIVATE_KEY))
-            pnpm exec tauri signer sign --private-key $signingKey --password $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD "..\dist-win\boenmind-runtime-${VER}-x86_64-pc-windows-msvc.exe"
+            $key = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:TAURI_SIGNING_PRIVATE_KEY.Trim()))
+            $keyFile = Join-Path $env:RUNNER_TEMP "boenmind-signing.key"
+            [IO.File]::WriteAllText($keyFile, $key)
+            pnpm exec tauri signer sign --private-key-path $keyFile --password $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD "..\dist-win\boenmind-runtime-${VER}-x86_64-pc-windows-msvc.exe"
             $signed = $true
           } catch {}
           if (-not $signed) {
-            pnpm exec tauri signer sign --private-key $env:TAURI_SIGNING_PRIVATE_KEY --password $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD "..\dist-win\boenmind-runtime-${VER}-x86_64-pc-windows-msvc.exe"
+            $keyFile = Join-Path $env:RUNNER_TEMP "boenmind-signing-raw.key"
+            [IO.File]::WriteAllText($keyFile, $env:TAURI_SIGNING_PRIVATE_KEY)
+            pnpm exec tauri signer sign --private-key-path $keyFile --password $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD "..\dist-win\boenmind-runtime-${VER}-x86_64-pc-windows-msvc.exe"
           }
 
       - uses: actions/upload-artifact@v4
