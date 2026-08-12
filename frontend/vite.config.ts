@@ -21,4 +21,22 @@ export default defineConfig({
       },
     },
   },
+  build: {
+    rolldownOptions: {
+      output: {
+        // 大体积依赖拆独立 chunk：品牌图标库（@lobehub/icons 全家桶）与
+        // markdown 渲染链只在相关页面用到，拆出后主 chunk 显著减小、
+        // 浏览器可独立缓存（rolldown codeSplitting）
+        codeSplitting: {
+          groups: [
+            { name: "vendor-icons", test: /node_modules[\\/]@lobehub[\\/]icons/ },
+            {
+              name: "vendor-markdown",
+              test: /node_modules[\\/](react-markdown|remark-gfm|rehype-highlight|remark-parse|unified|hast-|mdast-|micromark)/,
+            },
+          ],
+        },
+      },
+    },
+  },
 });
