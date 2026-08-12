@@ -27,7 +27,6 @@ interface Props<T extends ManagedItem> {
   extraActions?: (item: T) => ReactNode;
   toggle: (item: T) => void;
   uninstall: (item: T) => void;
-  refresh: () => void;
   /** 空列表文案 i18n key */
   emptyKey: string;
   /** 卸载按钮 title i18n key */
