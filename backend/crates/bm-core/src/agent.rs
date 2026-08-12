@@ -74,8 +74,17 @@ pub async fn create_session_handle(
         api_key: provider.api_key.clone(),
         working_directory: Some(working_dir.to_path_buf()),
         // 内置工具全开：skill 需要 read/write/bash 等才能真正加载与执行；
-        // 纯对话时代（无工具）无法使用 skill 文件与脚本
-        enabled_tools: Some(pi::sdk::BUILTIN_TOOL_NAMES.iter().map(|n| n.to_string()).collect()),
+        // 纯对话时代（无工具）无法使用 skill 文件与脚本。
+        // subagent 为 opt-in 工具（上游 sdk.rs 注释），显式追加启用——
+        // 子代理会 spawn 本进程（bm-server）的 --mode json 入口，见 bm-server subagent_child。
+        enabled_tools: Some(
+            pi::sdk::BUILTIN_TOOL_NAMES
+                .iter()
+                .copied()
+                .chain(["subagent"])
+                .map(|n| n.to_string())
+                .collect(),
+        ),
         no_session: true,
         system_prompt: Some(system_prompt),
         include_cwd_in_prompt: false,
@@ -90,6 +99,41 @@ pub async fn create_session_handle(
             reserve_tokens: c.reserve_tokens,
             keep_recent_tokens: c.keep_recent_tokens,
         }),
+        ..Default::default()
+    };
+    create_agent_session(options).await
+}
+
+/// 创建子代理（subagent）子进程会话句柄。
+///
+/// 由 bm-server 的 `--mode json` 子代理入口调用（上游 subagent 工具 spawn 本
+/// 二进制时使用），与 [`create_session_handle`] 的差异：
+/// - 系统提示用 pi 默认 + `append_system_prompt`（角色定义正文经 argv 传入），
+///   不注入 BoenMind 主 agent 的 SYSTEM_PROMPT
+/// - 工具集来自角色定义白名单（`--tools` 参数），不是内置全开
+/// - 不加载插件扩展（子代理保持轻量与隔离）
+pub async fn create_child_session_handle(
+    provider: &ProviderConfig,
+    model: &str,
+    working_dir: &Path,
+    tools: Vec<String>,
+    thinking: Option<&str>,
+    append_system_prompt: String,
+) -> Result<AgentSessionHandle, pi::sdk::Error> {
+    let thinking_level = thinking
+        .and_then(|t| t.parse::<pi::model::ThinkingLevel>().ok());
+    let options = SessionOptions {
+        provider: Some(provider.kind.pi_name(&provider.id)),
+        model: Some(model.to_string()),
+        api_key: provider.api_key.clone(),
+        working_directory: Some(working_dir.to_path_buf()),
+        enabled_tools: Some(tools),
+        no_session: true,
+        system_prompt: None,
+        append_system_prompt: Some(append_system_prompt),
+        include_cwd_in_prompt: false,
+        thinking: thinking_level,
+        extension_paths: Vec::new(),
         ..Default::default()
     };
     create_agent_session(options).await

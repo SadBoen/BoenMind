@@ -245,6 +245,41 @@ pub fn pi_agent_dir() -> PathBuf {
     app_dir().join(PI_AGENT_DIR)
 }
 
+/// 预置子代理角色定义（`<pi_agent_dir>/agents/*.md`，上游 subagent 工具的
+/// 角色来源）。仅创建目录与首个 `default.md`，已存在/用户自定义的绝不覆盖。
+pub fn ensure_builtin_agents() -> Result<(), std::io::Error> {
+    use std::io::Write;
+
+    let dir = pi_agent_dir().join("agents");
+    fs::create_dir_all(&dir)?;
+    let default_path = dir.join("default.md");
+    if default_path.exists() {
+        return Ok(());
+    }
+    // frontmatter 字段对齐上游 subagents.rs 解析（name/description/tools/model/reasoning）
+    let mut f = fs::File::create(&default_path)?;
+    f.write_all(DEFAULT_AGENT_DEFINITION.as_bytes())?;
+    Ok(())
+}
+
+/// 默认执行者角色定义（开箱可用；用户可在 agents/ 目录新增/修改角色）。
+const DEFAULT_AGENT_DEFINITION: &str = r#"---
+name: default
+description: 通用执行者：在委派的任务范围内独立工作，完成后汇报结果
+tools: read,bash,edit,write,grep,find,ls,hashline_edit
+---
+你是 BoenMind 的执行者（subagent），由主代理委派完成一项具体任务。
+
+职责：
+1. 聚焦任务本身，不要自行扩大范围；
+2. 必要时使用工具调查或修改工作区文件；
+3. 完成后用简洁的结构化文本汇报：结论、关键依据、已完成事项。
+
+行为准则：
+- 不确定时明确说明，不声称完成未完成的事；
+- 不修改工作区 .boenmind 目录下的任何文件。
+"#;
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {

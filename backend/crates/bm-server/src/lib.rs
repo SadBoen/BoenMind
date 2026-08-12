@@ -6,6 +6,7 @@
 pub mod chat;
 pub mod routes;
 pub mod static_files;
+pub mod subagent_child;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -231,9 +232,20 @@ pub async fn init() -> Result<(AppConfig, Db), Box<dyn std::error::Error>> {
     // 3. 同步 models.json（provider baseUrl 覆盖 + 自定义模型注册）
     bm_core::config::sync_pi_models_json(&config)?;
 
+    // 3.25 预置子代理角色定义（agents/*.md），让 subagent 工具开箱可用
+    if let Err(err) = bm_core::config::ensure_builtin_agents() {
+        eprintln!("[bm-server] 预置子代理角色定义失败: {err}");
+    }
+
     // 3.5 预装内置插件（hello / bookmark / ctx-compactor；用户已卸载的不再恢复）
     if let Err(err) = bm_core::plugins::ensure_builtin_plugins(&config) {
         eprintln!("[bm-server] 预装示例插件失败: {err}");
+    }
+
+    // 3.75 默认提供商注入环境变量：subagent 子进程据此解析 provider
+    //（多会话各自选择 provider 时子代理仍用全局默认——见 docs/expert-team.md 阶段 1）
+    if let Some(default_id) = bm_core::config::resolve_provider(&config, None) {
+        unsafe { std::env::set_var("PI_SUBAGENT_PROVIDER_ID", default_id.id.clone()) };
     }
 
     // 4. 数据库

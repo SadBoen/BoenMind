@@ -1,8 +1,17 @@
 //! BoenMind 后端独立二进制入口。
 //! 完整逻辑见 `bm_server::serve`（与 Tauri 桌面壳共用）。
+//!
+//! 子代理模式：上游 subagent 工具 spawn 本二进制并传 `--mode json --print
+//! --no-session ...` 参数——main 最先判别并转交 `subagent_child::run`，
+//! 不初始化 tracing（stdout 是协议通道）也不启动 HTTP。
 
 #[tokio::main]
 async fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if bm_server::subagent_child::should_enter_child_mode(&args) {
+        std::process::exit(bm_server::subagent_child::run(&args).await);
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
