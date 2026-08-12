@@ -90,6 +90,9 @@ export const zh = {
     loadingDir: "加载中…",
   },
   settings: {
+    common: {
+      install: "安装",
+    },
     menu: {
       appearance: "外观",
       appearanceDesc: "主题与显示",

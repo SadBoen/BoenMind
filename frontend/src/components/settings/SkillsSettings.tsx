@@ -2,16 +2,16 @@
  * Skill 设置：列表 + 启停开关 + 卸载 + skills.sh 随机抽取安装 + 本地安装。
  * Skill = SKILL.md 目录（含脚本），启用后同步到 pi 的 skills 目录，
  * 由 agent 会话自动注入（新对话生效）。
+ * 列表/安装行复用 ManagedItemsList（与插件设置页同构）。
  */
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Dices, Loader2, Plus, RefreshCw, Trash2, Wand2 } from "lucide-react";
+import { Dices, Loader2, Plus, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import { api, type SkillCandidate, type SkillInfo } from "@/api/client";
+import { LocalInstallRow, ManagedItemsList } from "./ManagedItemsList";
 
 const RANDOM_COUNT = 5;
 
@@ -130,11 +130,7 @@ export function SkillsSettings() {
             </p>
           </div>
           <Button variant="outline" size="sm" onClick={() => void fetchRandom()} disabled={fetching}>
-            {fetching ? (
-              <Loader2 size={14} className="animate-spin" />
-            ) : (
-              <Dices size={14} />
-            )}
+            {fetching ? <Loader2 size={14} className="animate-spin" /> : <Dices size={14} />}
             {t("settings.skills.randomButton")}
           </Button>
         </div>
@@ -158,11 +154,7 @@ export function SkillsSettings() {
                   disabled={installingId === c.skill_id}
                   onClick={() => void installCandidate(c)}
                 >
-                  {installingId === c.skill_id ? (
-                    <Loader2 size={13} className="animate-spin" />
-                  ) : (
-                    <Plus size={13} />
-                  )}
+                  {installingId === c.skill_id ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
                   {t("settings.skills.install")}
                 </Button>
               </div>
@@ -171,73 +163,38 @@ export function SkillsSettings() {
         )}
       </div>
 
-      {/* 本地安装 */}
-      <div className="flex gap-2">
-        <div className="relative flex-1">
-          <Plus size={15} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={installPath}
-            onChange={(e) => setInstallPath(e.target.value)}
-            placeholder={t("settings.skills.installPlaceholder")}
-            className="pl-8 font-mono text-xs"
-          />
-        </div>
-        <Button variant="outline" onClick={() => void installLocal()}>
-          {t("settings.skills.install")}
-        </Button>
-        <Button variant="ghost" size="icon" onClick={() => void load()} title={t("common.refresh")}>
-          <RefreshCw size={15} className={loading ? "animate-spin" : ""} />
-        </Button>
-      </div>
+      <LocalInstallRow
+        placeholderKey="settings.skills.installPlaceholder"
+        value={installPath}
+        onChange={setInstallPath}
+        onInstall={() => void installLocal()}
+        onRefresh={() => void load()}
+        refreshing={loading}
+      />
 
-      {/* 已装列表 */}
-      {loading ? (
-        <p className="text-sm text-muted-foreground">{t("common.loading")}</p>
-      ) : skills.length === 0 ? (
-        <div className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">
-          {t("settings.skills.empty")}
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {skills.map((skill) => (
-            <div key={skill.id} className="flex items-center justify-between gap-3 rounded-xl border p-4">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <Wand2 size={15} className="shrink-0 text-muted-foreground" />
-                  <h3 className="font-semibold">{skill.name}</h3>
-                  <Badge variant="secondary" className="text-[10px]">
-                    {skill.source === "registry"
-                      ? t("settings.skills.fromRegistry")
-                      : t("settings.skills.fromLocal")}
-                  </Badge>
-                  {skill.owner && (
-                    <Badge variant="outline" className="text-[10px] font-normal">
-                      {skill.owner}/{skill.repo}
-                    </Badge>
-                  )}
-                </div>
-                <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{skill.description}</p>
-              </div>
-              <div className="flex shrink-0 items-center gap-3">
-                <Switch checked={skill.enabled} onCheckedChange={() => void toggle(skill)} />
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="text-muted-foreground hover:text-destructive"
-                  title={t("settings.skills.uninstall")}
-                  onClick={() => void uninstall(skill)}
-                >
-                  <Trash2 size={15} />
-                </Button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      <ManagedItemsList
+        items={skills}
+        loading={loading}
+        icon={<Wand2 size={15} className="shrink-0 text-muted-foreground" />}
+        badges={(skill) => [
+          <Badge key="source" variant="secondary" className="text-[10px]">
+            {skill.source === "registry" ? t("settings.skills.fromRegistry") : t("settings.skills.fromLocal")}
+          </Badge>,
+          ...(skill.owner
+            ? [
+                <Badge key="repo" variant="outline" className="text-[10px] font-normal">
+                  {skill.owner}/{skill.repo}
+                </Badge>,
+              ]
+            : []),
+        ]}
+        toggle={(skill) => void toggle(skill)}
+        uninstall={(skill) => void uninstall(skill)}
+        emptyKey="settings.skills.empty"
+        uninstallTitleKey="settings.skills.uninstall"
+      />
 
-      <p className="text-xs text-muted-foreground">
-        {t("settings.skills.tip")}
-      </p>
+      <p className="text-xs text-muted-foreground">{t("settings.skills.tip")}</p>
     </section>
   );
 }

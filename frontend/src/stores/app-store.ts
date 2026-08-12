@@ -6,8 +6,9 @@ import { api, type AppConfig, type ChatStreamEvent, type FileEntry, type HealthI
 import i18n, { applyLang, isLang } from "@/i18n";
 import { toast } from "sonner";
 
-export type NavKey = "chat" | "gallery" | "knowledge" | "settings";
-export type SettingsTab = "appearance" | "providers" | "workspace" | "plugins" | "skills" | "about";
+// 导航/设置页类型定义在 lib/navigation.tsx 注册表（单一数据源）
+export type { NavKey, SettingsTab } from "@/lib/navigation";
+import type { NavKey, SettingsTab } from "@/lib/navigation";
 
 /** 流式中的工具调用（isError 未定前为执行中状态） */
 export interface StreamingToolCall {

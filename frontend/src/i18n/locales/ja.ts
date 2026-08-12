@@ -90,6 +90,9 @@ export const ja: Translation = {
     loadingDir: "読み込み中…",
   },
   settings: {
+    common: {
+      install: "インストール",
+    },
     menu: {
       appearance: "外観",
       appearanceDesc: "テーマと表示",

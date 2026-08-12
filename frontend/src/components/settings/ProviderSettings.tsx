@@ -4,7 +4,7 @@
  * - 添加提供商：分组卡片选择器（热门推荐 / 更多 / 本地与兼容），选中即带入预设
  * - 编辑表单：品牌图标随类型联动，切换类型自动填充官方端点与默认模型
  *
- * 预设数据（baseUrl + 默认模型）迁移自 pi 注册表（@earendil-works/pi-ai 0.84）。
+ * 预设数据（端点/默认模型/分组/图标）在 lib/provider-presets.tsx 单一数据源。
  */
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -42,168 +42,9 @@ import { toast } from "sonner";
 import { api } from "@/api/client";
 import { useAppStore } from "@/stores/app-store";
 import type { ProviderConfig, ProviderKind } from "@/api/client";
+import { KIND_GROUPS, KIND_PRESETS, KIND_VALUES } from "@/lib/provider-presets";
 import { ProviderIcon } from "./provider-icons";
 import { ModelListCombobox } from "./ModelListCombobox";
-
-/** 全部提供商类型（label 用 settings.providers.kinds.<value> 翻译，品牌名保留） */
-const KIND_VALUES: ProviderKind[] = [
-  "openai",
-  "anthropic",
-  "gemini",
-  "deepseek",
-  "minimax",
-  "moonshot",
-  "zhipu",
-  "qwen",
-  "openrouter",
-  "xai",
-  "zai",
-  "groq",
-  "mistral",
-  "together",
-  "cerebras",
-  "fireworks",
-  "huggingface",
-  "nvidia",
-  "xiaomi",
-  "antling",
-  "baseten",
-  "ollama",
-  "llamacpp",
-  "custom",
-];
-
-/**
- * 官方端点 + 默认模型预设。
- * 模型名取自 pi 官方模型目录（2026-08，pi-ai 0.84.1），云端留空端点表示使用官方默认。
- */
-const KIND_PRESETS: Record<ProviderKind, { base_url: string; models: string[] }> = {
-  openai: {
-    base_url: "",
-    models: ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "o3-mini"],
-  },
-  anthropic: {
-    base_url: "",
-    models: ["claude-opus-4-5", "claude-sonnet-4-5", "claude-haiku-4-5"],
-  },
-  gemini: {
-    base_url: "",
-    models: [
-      "gemini-2.5-pro",
-      "gemini-2.5-flash",
-      "gemini-2.5-flash-lite",
-      "gemini-3-flash-preview",
-    ],
-  },
-  deepseek: {
-    base_url: "https://api.deepseek.com/v1",
-    models: ["deepseek-v4-flash", "deepseek-v4-pro"],
-  },
-  minimax: {
-    base_url: "https://api.minimaxi.com/v1",
-    models: ["MiniMax-M3", "MiniMax-M2.7", "MiniMax-M2.7-highspeed"],
-  },
-  moonshot: {
-    base_url: "https://api.moonshot.cn/v1",
-    models: ["kimi-k2.7-code", "kimi-k2.6", "kimi-k2-thinking", "kimi-k2.5"],
-  },
-  zhipu: {
-    base_url: "https://open.bigmodel.cn/api/paas/v4",
-    models: ["glm-5.2", "glm-5.1", "glm-4.7", "glm-5.2-highspeed"],
-  },
-  qwen: {
-    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    models: ["qwen3.8-max", "qwen3.7-max", "qwen3.7-plus", "qwen3.6-flash"],
-  },
-  openrouter: {
-    base_url: "https://openrouter.ai/api/v1",
-    models: ["openai/gpt-4o", "anthropic/claude-sonnet-4-5", "deepseek/deepseek-v4-flash"],
-  },
-  xai: { base_url: "https://api.x.ai/v1", models: ["grok-4.5", "grok-4.3"] },
-  zai: {
-    base_url: "https://api.z.ai/api/paas/v4",
-    models: ["glm-5.2", "glm-5-turbo", "glm-4.7"],
-  },
-  groq: {
-    base_url: "https://api.groq.com/openai/v1",
-    models: ["llama-3.3-70b-versatile", "openai/gpt-oss-120b", "qwen/qwen3.6-27b"],
-  },
-  mistral: {
-    base_url: "https://api.mistral.ai/v1",
-    models: ["mistral-large-latest", "mistral-medium-latest", "codestral-latest", "mistral-small-latest"],
-  },
-  together: {
-    base_url: "https://api.together.ai/v1",
-    models: ["Qwen/Qwen3.7-Max", "deepseek-ai/DeepSeek-V4-Pro", "MiniMaxAI/MiniMax-M3"],
-  },
-  cerebras: {
-    base_url: "https://api.cerebras.ai/v1",
-    models: ["zai-glm-4.7", "openai/gpt-oss-120b", "gemma-4-31b"],
-  },
-  fireworks: {
-    base_url: "https://api.fireworks.ai/inference",
-    models: [
-      "accounts/fireworks/models/deepseek-v4-flash",
-      "accounts/fireworks/models/kimi-k2p7-code",
-      "accounts/fireworks/models/gpt-oss-120b",
-    ],
-  },
-  huggingface: {
-    base_url: "https://router.huggingface.co/v1",
-    models: [
-      "Qwen/Qwen3-235B-A22B",
-      "deepseek-ai/DeepSeek-V4-Pro",
-      "MiniMaxAI/MiniMax-M3",
-      "zai-org/GLM-5.2",
-    ],
-  },
-  nvidia: {
-    base_url: "https://integrate.api.nvidia.com/v1",
-    models: ["meta/llama-3.3-70b-instruct", "meta/llama-3.1-8b-instruct", "minimaxai/minimax-m3"],
-  },
-  xiaomi: {
-    base_url: "https://api.xiaomimimo.com/v1",
-    models: ["mimo-v2.5-pro", "mimo-v2.5", "mimo-v2-pro", "mimo-v2-flash"],
-  },
-  antling: {
-    base_url: "https://api.ant-ling.com/v1",
-    models: ["Ling-2.6-1T", "Ling-2.6-flash", "Ring-2.6-1T"],
-  },
-  baseten: {
-    base_url: "https://inference.baseten.co/v1",
-    models: ["deepseek-ai/DeepSeek-V4-Flash-0731", "moonshotai/Kimi-K2.7-Code"],
-  },
-  ollama: { base_url: "http://127.0.0.1:11434/v1", models: ["qwen3:8b", "llama3.1:8b"] },
-  llamacpp: { base_url: "http://127.0.0.1:8080/v1", models: [] },
-  custom: { base_url: "", models: [] },
-};
-
-/** 选择器分组（key 用 settings.providers.picker.<group> 翻译） */
-const KIND_GROUPS: { group: "recommended" | "more" | "local"; kinds: ProviderKind[] }[] = [
-  {
-    group: "recommended",
-    kinds: ["openai", "anthropic", "gemini", "deepseek", "minimax", "moonshot", "zhipu", "qwen"],
-  },
-  {
-    group: "more",
-    kinds: [
-      "openrouter",
-      "xai",
-      "zai",
-      "groq",
-      "mistral",
-      "together",
-      "cerebras",
-      "fireworks",
-      "huggingface",
-      "nvidia",
-      "xiaomi",
-      "antling",
-      "baseten",
-    ],
-  },
-  { group: "local", kinds: ["ollama", "llamacpp", "custom"] },
-];
 
 function emptyProvider(kind: ProviderKind = "openai"): ProviderConfig {
   const preset = KIND_PRESETS[kind];

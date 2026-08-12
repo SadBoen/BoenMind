@@ -1,10 +1,11 @@
 /**
- * 最左侧 48px 竖排导航栏：对话（激活）、图库/知识库（占位）、底部设置。
+ * 最左侧 48px 竖排导航栏：由 lib/navigation.tsx 注册表驱动
+ * （顶部 = 非 bottom 项，底部 = bottom 项；占位项禁用）。
  */
 import { useTranslation } from "react-i18next";
-import { BookOpenText, Images, MessageSquare, Settings } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { NAV, type NavKey } from "@/lib/navigation";
 import { useAppStore } from "@/stores/app-store";
 
 const NAV_WIDTH = 48;
@@ -51,28 +52,37 @@ export function NavBar() {
   const activeNav = useAppStore((s) => s.activeNav);
   const setNav = useAppStore((s) => s.setNav);
 
+  const entries = Object.entries(NAV);
+  const top = entries.filter(([, e]) => !e.bottom);
+  const bottom = entries.filter(([, e]) => e.bottom);
+
   return (
     <nav
       className="flex shrink-0 flex-col items-center border-r bg-muted/30 py-3"
       style={{ width: NAV_WIDTH }}
     >
       <div className="flex flex-1 flex-col items-center gap-2">
-        <NavButton
-          icon={<MessageSquare size={20} />}
-          label={t("nav.chat")}
-          active={activeNav === "chat"}
-          onClick={() => setNav("chat")}
-        />
-        <NavButton icon={<Images size={20} />} label={t("nav.gallerySoon")} disabled />
-        <NavButton icon={<BookOpenText size={20} />} label={t("nav.knowledgeSoon")} disabled />
+        {top.map(([key, entry]) => (
+          <NavButton
+            key={key}
+            icon={entry.icon}
+            label={t(entry.labelKey)}
+            active={activeNav === key}
+            disabled={entry.placeholder}
+            onClick={() => setNav(key as NavKey)}
+          />
+        ))}
       </div>
       <div className="flex flex-col items-center gap-2">
-        <NavButton
-          icon={<Settings size={20} />}
-          label={t("nav.settings")}
-          active={activeNav === "settings"}
-          onClick={() => setNav("settings")}
-        />
+        {bottom.map(([key, entry]) => (
+          <NavButton
+            key={key}
+            icon={entry.icon}
+            label={t(entry.labelKey)}
+            active={activeNav === key}
+            onClick={() => setNav(key as NavKey)}
+          />
+        ))}
       </div>
     </nav>
   );

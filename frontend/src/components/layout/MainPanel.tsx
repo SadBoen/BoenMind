@@ -1,39 +1,22 @@
 /**
- * 主面板：随导航切换内容（聊天窗口 / 设置页）。
+ * 主面板：内容由 lib/navigation.tsx 注册表驱动（聊天窗口 / 设置页 / 占位）。
  */
 import { useTranslation } from "react-i18next";
+import { NAV } from "@/lib/navigation";
 import { useAppStore } from "@/stores/app-store";
-import { ChatWindow } from "@/components/chat/ChatWindow";
-import { AppearanceSettings } from "@/components/settings/AppearanceSettings";
-import { ProviderSettings } from "@/components/settings/ProviderSettings";
-import { WorkspaceSettings } from "@/components/settings/WorkspaceSettings";
-import { PluginsSettings } from "@/components/settings/PluginsSettings";
-import { SkillsSettings } from "@/components/settings/SkillsSettings";
-import { AboutSettings } from "@/components/settings/AboutSettings";
 
 export function MainPanel() {
   const { t } = useTranslation();
   const activeNav = useAppStore((s) => s.activeNav);
-  const settingsTab = useAppStore((s) => s.settingsTab);
 
-  if (activeNav === "chat") return <ChatWindow />;
-  if (activeNav === "settings") {
+  const entry = NAV[activeNav];
+  const Main = entry.main;
+  if (!Main) {
     return (
-      <div className="h-full min-w-0 overflow-y-auto bg-background">
-        <div className="mx-auto max-w-3xl px-6 py-6">
-          {settingsTab === "appearance" && <AppearanceSettings />}
-          {settingsTab === "providers" && <ProviderSettings />}
-          {settingsTab === "workspace" && <WorkspaceSettings />}
-          {settingsTab === "plugins" && <PluginsSettings />}
-          {settingsTab === "skills" && <SkillsSettings />}
-          {settingsTab === "about" && <AboutSettings />}
-        </div>
+      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+        {t("common.comingSoon")}
       </div>
     );
   }
-  return (
-    <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-      {t("common.comingSoon")}
-    </div>
-  );
+  return <Main />;
 }

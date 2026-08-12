@@ -90,6 +90,9 @@ export const ko: Translation = {
     loadingDir: "불러오는 중…",
   },
   settings: {
+    common: {
+      install: "설치",
+    },
     menu: {
       appearance: "외관",
       appearanceDesc: "테마 및 표시",

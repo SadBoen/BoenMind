@@ -1,19 +1,11 @@
 /**
- * 设置二级菜单：外观 / 模型提供商 / 工作文件夹。
+ * 设置二级菜单：条目由 lib/navigation.tsx 的 SETTINGS 注册表驱动
+ * （新增设置页只需在注册表加一行，菜单与主面板自动联动）。
  */
 import { useTranslation } from "react-i18next";
-import { FolderOpen, Info, MonitorCog, Palette, Puzzle, Wand2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useAppStore, type SettingsTab } from "@/stores/app-store";
-
-const MENU_ITEMS: { key: SettingsTab; labelKey: string; icon: React.ReactNode; descKey: string }[] = [
-  { key: "appearance", labelKey: "settings.menu.appearance", icon: <Palette size={16} />, descKey: "settings.menu.appearanceDesc" },
-  { key: "providers", labelKey: "settings.menu.providers", icon: <MonitorCog size={16} />, descKey: "settings.menu.providersDesc" },
-  { key: "workspace", labelKey: "settings.menu.workspace", icon: <FolderOpen size={16} />, descKey: "settings.menu.workspaceDesc" },
-  { key: "plugins", labelKey: "settings.menu.plugins", icon: <Puzzle size={16} />, descKey: "settings.menu.pluginsDesc" },
-  { key: "skills", labelKey: "settings.menu.skills", icon: <Wand2 size={16} />, descKey: "settings.menu.skillsDesc" },
-  { key: "about", labelKey: "settings.menu.about", icon: <Info size={16} />, descKey: "settings.menu.aboutDesc" },
-];
+import { SETTINGS } from "@/lib/navigation";
+import { useAppStore } from "@/stores/app-store";
 
 export function SettingsMenu() {
   const { t } = useTranslation();
@@ -22,14 +14,14 @@ export function SettingsMenu() {
 
   return (
     <div className="flex flex-col gap-0.5 p-2">
-      {MENU_ITEMS.map((item) => (
+      {Object.entries(SETTINGS).map(([key, item]) => (
         <button
-          key={item.key}
+          key={key}
           type="button"
-          onClick={() => setSettingsTab(item.key)}
+          onClick={() => setSettingsTab(key as typeof settingsTab)}
           className={cn(
             "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm transition-colors",
-            settingsTab === item.key
+            settingsTab === key
               ? "bg-accent text-accent-foreground"
               : "hover:bg-accent/50",
           )}

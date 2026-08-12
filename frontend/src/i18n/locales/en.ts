@@ -90,6 +90,9 @@ export const en: Translation = {
     loadingDir: "Loading…",
   },
   settings: {
+    common: {
+      install: "Install",
+    },
     menu: {
       appearance: "Appearance",
       appearanceDesc: "Theme & display",
