@@ -39,6 +39,13 @@ use crate::{AppState, api_error};
 /// 首条消息前识别为"未命名"，自动用消息开头命名）。
 const DEFAULT_TITLES: [&str; 4] = ["新对话", "New chat", "新しいチャット", "새 채팅"];
 
+/// prompt 总超时：上游挂起（连接建立后不返回数据）时不能永久锁死会话。
+/// 超时走 abort 通道，与用户点停止同一条收尾路径（部分文本照常入库）。
+const PROMPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// 全局 prompt 序号：aborts 表中区分同会话的先后 prompt（见 AppState.aborts）。
+static PROMPT_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// 聊天请求：会话必须已存在（前端先创建会话再发消息）。
 /// `model`/`thinking` 可选，用于在当前会话即时切换模型与思考强度。
 #[derive(Deserialize)]
@@ -86,11 +93,13 @@ pub async fn chat(
     };
 
     // 本次 prompt 的取消原语（pi 官方 abort 机制）：注册到会话级表，
-    // POST /api/chat/stop 按 session_id 触发；客户端断开时由 watcher 自动触发
+    // POST /api/chat/stop 按 session_id 触发；客户端断开时由 watcher 自动触发。
+    // 带 prompt_id 身份：同会话连续请求时先结束的只删自己的条目（见清理处）。
     let (abort_handle, abort_signal) = pi::sdk::AgentSessionHandle::new_abort_handle();
-    state.aborts.lock().await.insert(session.id.clone(), abort_handle.clone());
+    let prompt_id = PROMPT_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    state.aborts.lock().await.insert(session.id.clone(), (prompt_id, abort_handle.clone()));
 
-    // 事件通道 → SSE
+    // 事件通道 → SSE（512 容量；消费端即 HTTP 响应流）
     let (tx, rx) = mpsc::channel::<AgentStreamEvent>(512);
     let stream = ReceiverStream::new(rx).map(|ev| Ok::<_, std::convert::Infallible>(to_sse_event(&ev)));
 
@@ -104,9 +113,21 @@ pub async fn chat(
             tx_watch.closed().await;
             watcher_abort.abort();
         });
+        // prompt 总超时：上游挂起时 abort（与用户停止同路径收尾）。
+        // prompt 正常结束后该任务残留至超时点再退出，此时 abort 已无监听者，无副作用。
+        let timeout_abort = abort_handle.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(PROMPT_TIMEOUT).await;
+            timeout_abort.abort();
+        });
         run_prompt_and_persist(state_clone, session_id.clone(), handle, abort_signal, message, tx).await;
-        // prompt 已结束（串行执行保证没有并发 prompt 竞争该条目）
-        state.aborts.lock().await.remove(&session_id);
+        // 清理自己的 abort 条目：同会话已有新 prompt（prompt_id 已更新）时不动
+        let mut aborts = state.aborts.lock().await;
+        if let Some((pid, _)) = aborts.get(&session_id)
+            && *pid == prompt_id
+        {
+            aborts.remove(&session_id);
+        }
     });
 
     Sse::new(stream)
@@ -125,7 +146,7 @@ pub async fn stop_chat(
     State(state): State<AppState>,
     Json(req): Json<StopChatRequest>,
 ) -> Response {
-    if let Some(abort) = state.aborts.lock().await.remove(&req.session_id) {
+    if let Some((_, abort)) = state.aborts.lock().await.remove(&req.session_id) {
         abort.abort();
         tracing::info!(event = "bm.chat_stopped", session = %req.session_id);
     }
@@ -161,51 +182,52 @@ async fn get_or_create_agent(
         (provider, model)
     };
 
-    // 会话句柄已存在：即时切换模型 / 思考强度，并刷新空闲计时
-    if let Some(entry) = state.agents.lock().await.get_mut(&session.id) {
-        entry.last_used = std::time::Instant::now();
-        let mut handle = entry.handle.lock().await;
-        if let Some(pid) = model_override {
-            let provider_name = provider.kind.pi_name(&provider.id);
-            handle
-                .set_model(&provider_name, pid)
-                .await
-                .map_err(|err| (StatusCode::BAD_GATEWAY, format!("切换模型失败: {err}")))?;
+    // 会话句柄已存在：先 clone 出 handle（map 锁立即释放），再切换模型/思考强度。
+    // 注意不能在持 map 锁时 await handle 锁：该会话的 prompt 可能还在跑，
+    // handle 锁会阻塞到 prompt 结束，期间 map 锁被占用会卡住所有其它会话
+    let handle_arc = {
+        let mut agents = state.agents.lock().await;
+        if let Some(entry) = agents.get_mut(&session.id) {
+            entry.last_used = std::time::Instant::now();
+            Some(entry.handle.clone())
+        } else {
+            None
         }
-        if let Some(level) = thinking_override {
-            if let Ok(level) = level.parse::<pi::model::ThinkingLevel>() {
+    };
+    if let Some(arc) = handle_arc {
+        {
+            let mut handle = arc.lock().await;
+            if let Some(pid) = model_override {
+                let provider_name = provider.kind.pi_name(&provider.id);
                 handle
-                    .set_thinking_level(level)
+                    .set_model(&provider_name, pid)
                     .await
-                    .map_err(|err| (StatusCode::BAD_GATEWAY, format!("切换思考强度失败: {err}")))?;
+                    .map_err(|err| (StatusCode::BAD_GATEWAY, format!("切换模型失败: {err}")))?;
+            }
+            if let Some(level) = thinking_override {
+                if let Ok(level) = level.parse::<pi::model::ThinkingLevel>() {
+                    handle
+                        .set_thinking_level(level)
+                        .await
+                        .map_err(|err| (StatusCode::BAD_GATEWAY, format!("切换思考强度失败: {err}")))?;
+                }
             }
         }
-        return Ok(entry.handle.clone());
+        return Ok(arc);
     }
 
-    let working_dir = {
+    // 新建句柄所需的配置字段一次读锁取齐（避免 4 次串行读锁）
+    let (working_dir, extension_paths, skills_prompt, compaction) = {
         let config = state.config.read().await;
-        config.working_dir.clone()
-    };
-
-    let extension_paths = {
-        let config = state.config.read().await;
-        bm_core::plugins::enabled_extension_paths(&config)
-    };
-
-    // 启用的 skill 注入文本（pi CLI 同款 available_skills 格式）
-    let skills_prompt = {
-        let config = state.config.read().await;
-        bm_core::skills::enabled_skills_prompt(&config)
-    };
-
-    // 按模型解析压缩设置（水线/尾部保护/窗口；config.compaction.enabled=false 时为 None）
-    let compaction = {
-        let config = state.config.read().await;
-        bm_core::compaction::resolve_for_model_with_default_path(
-            &config.compaction,
-            &provider.kind.pi_name(&provider.id),
-            &model,
+        (
+            config.working_dir.clone(),
+            bm_core::plugins::enabled_extension_paths(&config),
+            bm_core::skills::enabled_skills_prompt(&config),
+            bm_core::compaction::resolve_for_model_with_default_path(
+                &config.compaction,
+                &provider.kind.pi_name(&provider.id),
+                &model,
+            ),
         )
     };
 
@@ -244,6 +266,30 @@ async fn run_prompt_and_persist(
     // 同一会话的并发 prompt 串行（map 锁已在 get_or_create_agent 后释放）
     let mut handle = handle.lock().await;
 
+    // 事件转发改为「回调同步入缓冲 + 独立 task 异步发送」：
+    // 回调运行在 tokio 线程上不能阻塞等待通道空间，而 try_send 在通道满
+    // （客户端消费慢）时会丢事件导致流静默中断；转发 task 用 send().await
+    // 天然有背压，客户端断开时 send 失败即退出（watcher 负责 abort prompt）。
+    let pending: Arc<std::sync::Mutex<std::collections::VecDeque<AgentStreamEvent>>> =
+        Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
+    let notify = Arc::new(tokio::sync::Notify::new());
+    let tx_fwd = tx.clone();
+    let pending_fwd = pending.clone();
+    let notify_fwd = notify.clone();
+    tokio::spawn(async move {
+        loop {
+            let ev = pending_fwd.lock().unwrap().pop_front();
+            match ev {
+                Some(ev) => {
+                    if tx_fwd.send(ev).await.is_err() {
+                        break; // 客户端断开（接收端已丢弃）
+                    }
+                }
+                None => notify_fwd.notified().await,
+            }
+        }
+    });
+
     let accumulated = Arc::new(std::sync::Mutex::new(String::new()));
     let acc = accumulated.clone();
     // 工具调用收集：执行中的按 id 挂起，ToolCallEnd 后移入完成列表入库
@@ -254,6 +300,8 @@ async fn run_prompt_and_persist(
     let pending_tools_cb = pending_tools.clone();
     let done_tools_cb = done_tools.clone();
     let tx_cb = tx.clone();
+    let pending_cb = pending.clone();
+    let notify_cb = notify.clone();
     // 是否已向客户端发送过终态事件（done/error）——prompt 异常路径（如取消）可能
     // 不发 AgentEnd，结束后兜底补发 done，保证前端总能固化流式内容
     let done_sent = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -306,11 +354,11 @@ async fn run_prompt_and_persist(
                     }
                     AgentStreamEvent::TurnEnd => {}
                 }
-                // 注意：此处运行在 tokio 运行时线程上，不能用 blocking_send；
-                // try_send 失败（通道满或客户端断开）时停止转发（断开场景由
-                // watcher 任务负责 abort，见 chat()）
-                if tx_cb.try_send(mapped).is_err() {
-                    return; // 客户端已断开，停止转发
+                // 入缓冲由转发 task 异步发送（背压见上方说明）；客户端断开后
+                // 通道已关闭，停止入队（转发 task 退出，watcher 会 abort prompt）
+                if !tx_cb.is_closed() {
+                    pending_cb.lock().unwrap().push_back(mapped);
+                    notify_cb.notify_one();
                 }
             }
         })

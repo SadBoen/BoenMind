@@ -43,8 +43,10 @@ pub struct AppState {
     pub config: Arc<RwLock<AppConfig>>,
     pub db: Arc<Db>,
     pub agents: Arc<Mutex<HashMap<String, AgentSessionEntry>>>,
-    /// 进行中 prompt 的取消句柄（key = session_id，见 chat.rs 取消语义）
-    pub aborts: Arc<Mutex<HashMap<String, pi::sdk::AbortHandle>>>,
+    /// 进行中 prompt 的取消句柄（key = session_id，value = (prompt_id, AbortHandle)）。
+    /// prompt_id 用于清理时身份匹配：同会话连续两个 prompt 时，先结束的
+    /// 只能删除自己的条目，不能把后一个的取消句柄误删（见 chat.rs）。
+    pub aborts: Arc<Mutex<HashMap<String, (u64, pi::sdk::AbortHandle)>>>,
 }
 
 impl AppState {
