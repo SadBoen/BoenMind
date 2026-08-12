@@ -84,49 +84,44 @@ export function ChatWindow() {
           {messages.length === 0 && !streaming ? (
             <EmptyState />
           ) : (
-            <div className="mx-auto flex max-w-3xl flex-col gap-5 px-4 py-6">
+            <div className="flex flex-col gap-5 px-6 py-6">
               {messages.map((m, i) => (
                 <div key={m.id} data-mid={i} data-role={m.role} data-preview={previewFor(m, t("chat.previewEmpty"))}>
                   <MessageItem message={m} />
                 </div>
               ))}
               {streaming && (
-                <div className="msg-enter flex gap-3">
-                  <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
-                    <Sparkles size={14} />
-                  </div>
-                  <div
-                    className={cn(
-                      "min-w-0 flex-1",
-                      !streamingText && streamingToolCalls.length === 0 && "opacity-60",
-                    )}
-                  >
-                    {streamingText || streamingToolCalls.length > 0 ? (
-                      <MessageItem
-                        message={{
-                          id: -1,
-                          session_id: "",
-                          role: "assistant",
-                          content: streamingText,
-                          created_at: 0,
-                        }}
-                        streaming
-                        streamingToolCalls={streamingToolCalls.map((c) => ({
-                          tool_name: c.name,
-                          args: c.args,
-                          is_error: c.isError,
-                          // 收到 ToolCallEnd 前保持"执行中"中性色
-                          running: !c.done,
-                        }))}
-                      />
-                    ) : (
-                      <div className="flex items-center gap-1.5 py-2">
-                        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/50" />
-                        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:120ms]" />
-                        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:240ms]" />
-                      </div>
-                    )}
-                  </div>
+                <div
+                  className={cn(
+                    "msg-enter",
+                    !streamingText && streamingToolCalls.length === 0 && "opacity-60",
+                  )}
+                >
+                  {streamingText || streamingToolCalls.length > 0 ? (
+                    <MessageItem
+                      message={{
+                        id: -1,
+                        session_id: "",
+                        role: "assistant",
+                        content: streamingText,
+                        created_at: 0,
+                      }}
+                      streaming
+                      streamingToolCalls={streamingToolCalls.map((c) => ({
+                        tool_name: c.name,
+                        args: c.args,
+                        is_error: c.isError,
+                        // 收到 ToolCallEnd 前保持"执行中"中性色
+                        running: !c.done,
+                      }))}
+                    />
+                  ) : (
+                    <div className="flex items-center gap-1.5 py-2">
+                      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/50" />
+                      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:120ms]" />
+                      <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:240ms]" />
+                    </div>
+                  )}
                 </div>
               )}
             </div>

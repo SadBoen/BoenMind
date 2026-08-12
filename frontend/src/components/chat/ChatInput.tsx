@@ -4,7 +4,7 @@
  */
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ArrowUp, Brain, Sparkles } from "lucide-react";
+import { ArrowUp, Brain } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -14,6 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ProviderIcon } from "@/components/settings/provider-icons";
 import { useAppStore } from "@/stores/app-store";
 
 /** 思考强度选项（对应 pi ThinkingLevel，label 用 chat.thinking.<value> 翻译） */
@@ -29,6 +30,7 @@ function useModelOptions() {
         value: `${p.id}::${m}`,
         label: m,
         provider: p.name,
+        providerId: p.id,
       })),
     );
   }, [config]);
@@ -61,6 +63,8 @@ export function ChatInput() {
   }, [config]);
 
   const modelValue = selectedModel ?? defaultModel;
+  // 当前选中模型的提供商 id（选择器前的小 logo 用）
+  const modelProviderId = modelValue?.split("::")[0] ?? "";
   const canSend = text.trim().length > 0 && !streaming;
 
   const submit = async () => {
@@ -76,7 +80,7 @@ export function ChatInput() {
 
   return (
     <div className="shrink-0 border-t p-3">
-      <div className="mx-auto max-w-3xl">
+      <div className="px-1">
         {/* 输入框（含内部下边缘工具条） */}
         <div className="rounded-xl border bg-background shadow-sm transition-shadow focus-within:shadow-md focus-within:ring-1 focus-within:ring-ring">
           <Textarea
@@ -96,11 +100,11 @@ export function ChatInput() {
           {/* 框内下边缘工具条 */}
           <div className="flex items-center justify-between gap-2 px-2 pb-1.5">
             <div className="flex min-w-0 items-center gap-1.5">
-              {/* 模型选择 */}
+              {/* 模型选择：提供商小 logo 在名称前 */}
               <Select value={modelValue ?? undefined} onValueChange={setSelectedModel}>
-                <SelectTrigger className="h-6 max-w-40 gap-1 border-transparent bg-transparent px-1.5 text-xs text-muted-foreground shadow-none hover:bg-accent hover:text-foreground data-[state=open]:bg-accent">
+                <SelectTrigger className="h-6 max-w-48 gap-1 border-transparent bg-transparent px-1.5 text-xs text-muted-foreground shadow-none hover:bg-accent hover:text-foreground data-[state=open]:bg-accent">
+                  <ProviderIcon kind={modelProviderId} size={12} />
                   <SelectValue placeholder={t("chat.input.selectModel")} />
-                  <Sparkles size={12} className="shrink-0 text-muted-foreground" />
                 </SelectTrigger>
                 <SelectContent align="start">
                   {modelOptions.length === 0 && (
@@ -110,6 +114,7 @@ export function ChatInput() {
                   )}
                   {modelOptions.map((opt) => (
                     <SelectItem key={opt.value} value={opt.value} className="text-xs">
+                      <ProviderIcon kind={opt.providerId} size={12} label={opt.provider} />
                       {opt.label}
                       <span className="ml-1.5 text-[10px] text-muted-foreground">{opt.provider}</span>
                     </SelectItem>
@@ -119,8 +124,8 @@ export function ChatInput() {
               {/* 思考强度选择 */}
               <Select value={selectedThinking} onValueChange={setSelectedThinking}>
                 <SelectTrigger className="h-6 gap-1 border-transparent bg-transparent px-1.5 text-xs text-muted-foreground shadow-none hover:bg-accent hover:text-foreground data-[state=open]:bg-accent">
-                  <SelectValue />
                   <Brain size={12} className="shrink-0 text-muted-foreground" />
+                  <SelectValue />
                 </SelectTrigger>
                 <SelectContent align="start">
                   {THINKING_VALUES.map((value) => (
