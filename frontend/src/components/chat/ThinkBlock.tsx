@@ -45,11 +45,6 @@ export function parseThinkBlocks(text: string): ThinkSegment[] {
   return segments;
 }
 
-/** 判断文本是否包含思考块（供流式消息决定是否按折叠渲染） */
-export function hasThinkBlock(text: string): boolean {
-  return text.includes("<think>");
-}
-
 /** 折叠块内容区（思考段 + 工具块） */
 export function ProcessBlock({
   thinks,
@@ -126,9 +121,4 @@ export function ProcessBlock({
       )}
     </div>
   );
-}
-
-/** 兼容旧用法：单个思考块（纯思考、无工具时） */
-export function ThinkBlock({ content, open }: { content: string; open?: boolean }) {
-  return <ProcessBlock thinks={[{ content }]} defaultOpen={open} />;
 }

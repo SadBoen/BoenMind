@@ -13,7 +13,7 @@
 | 后端 | Rust（workspace：`bm-core` 领域层 + `bm-server` axum API），基于 [pi_agent_rust](https://github.com/Dicklesworthstone/pi_agent_rust)（vendored，MIT+OpenAI/Anthropic Rider 许可） |
 | 前端 | React 19 + Vite + TypeScript + Tailwind v4 + shadcn/ui（base-nova）+ Zustand + react-resizable-panels |
 | 桌面 | Tauri 2（内嵌启动后端，同一套前端代码） |
-| 存储 | SQLite（`~/.boenmind/boenmind.db`，会话与消息）；配置 `~/.boenmind/config.toml` |
+| 存储 | Turso（limbo，Rust 实现，SQLite 文件格式兼容：`~/.boenmind/boenmind.db`，会话与消息）；配置 `~/.boenmind/config.toml` |
 
 ## 目录结构
 
@@ -22,7 +22,7 @@ BoenMind/
 ├── backend/                  # Rust workspace
 │   ├── crates/bm-core/       # 配置、SQLite、工作文件夹、pi agent 封装
 │   ├── crates/bm-server/     # axum REST + SSE API（独立二进制，也可内嵌）
-│   └── vendor/pi_agent_rust/ # pi agent Rust 版（git submodule，含 macOS 修补）
+│   └── vendor/pi_agent_rust/ # pi agent Rust 版（vendored 全量入仓库，含 macOS 修补）
 ├── frontend/                 # React SPA（网页 / 桌面共用）
 │   └── src-tauri/            # Tauri 2 桌面壳
 └── gui-test-screenshots/     # 浏览器实测截图证据
@@ -33,9 +33,6 @@ BoenMind/
 前置：Rust 1.95+、Node 20+（pnpm）。
 
 ```bash
-# 0. 首次克隆后拉取 submodule
-git submodule update --init
-
 # 1. 启动后端（http://127.0.0.1:17321）
 cd backend && cargo run -p bm-server
 
@@ -56,9 +53,9 @@ cd frontend && pnpm tauri build --debug --no-bundle
    自定义 OpenAI 兼容。多提供商可同时配置（各自独立端点与密钥，互不覆盖）；本地服务需填端点。
 2. **对话**：会话列表「新建对话」→ 输入消息（Enter 发送，Shift+Enter 换行）。
    模型可在聊天标题栏右侧切换。
-3. **插件**：「设置」→「插件」。内置示例（hello / bookmark）已预装；启用后插件注册的
-   工具与命令对 AI 助手立即生效（基于 pi 扩展机制，QuickJS 直接加载 TypeScript，无需编译）。
-   社区无原生依赖的插件可复制到 `~/.boenmind/extensions/` 后安装。
+3. **插件**：「设置」→「插件」。内置插件（hello / bookmark / ctx-compactor / web-search）已预装；
+   启用后插件注册的工具与命令对 AI 助手立即生效（基于 pi 扩展机制，QuickJS 直接加载
+   TypeScript，无需编译）。社区无原生依赖的插件可复制到 `~/.boenmind/extensions/` 后安装。
 4. **文件浏览**：右侧文件区展示工作文件夹（默认 `~/BoenMind`，可在设置修改）。
    点击文件进入预览（Markdown / 代码 / 图片 / PDF）；右上角可最大化，占据自身+主区。
 5. **自动更新**：「设置」→「关于」→「检查更新」。桌面版通过 GitHub Releases 分发，
@@ -79,7 +76,8 @@ cd frontend && pnpm tauri build --debug --no-bundle
   （pi QuickJS 运行时加载，无需转 Rust）；启用列表在 config.toml，会话创建时经
   `SessionOptions.extension_paths` 加载。
 - **SSE 流式协议**：`POST /api/chat` 返回 `text/event-stream`，事件类型：
-  `textDelta` / `thinkingDelta` / `toolCallStart` / `toolCallDelta` / `turnEnd` / `done` / `error`。
+  `textDelta`（思考以 `<think>` 标签随正文下发）/ `toolCallStart` / `toolCallEnd` / `turnEnd` / `done` / `error`；
+  `POST /api/chat/stop` 取消进行中的 prompt（已生成内容照常入库）。
 - **自动更新**：Tauri updater + GitHub Releases（`latest.json`），签名密钥存于
   `~/.boenmind/tauri-update.key`（私钥与密码需妥善保管，丢失则无法发布更新）。
 - **vendored 修补**：pi_agent_rust 在 macOS 上有两处类型不匹配（rustix `st_dev`/`st_mode`），
@@ -89,10 +87,10 @@ cd frontend && pnpm tauri build --debug --no-bundle
 ## 已知限制（v0.1）
 
 - 服务重启后，进行中的 agent 会话句柄丢失，新对话上下文从当前消息开始（历史消息仍在 UI 展示）。
-- 模型在会话创建时确定，切换模型仅影响新会话。
+- 空闲超时（12 小时）后 agent 会话句柄被淘汰，下一轮对话从历史消息重建上下文。
 - 移动端布局尚未适配（桌面优先，文件区在窄屏默认收起）。
 - 图片 / PDF 预览为内嵌展示，大文件未做分页优化。
-- 工具调用（干活代理）与 RAG 知识库（来源引用）为下一期规划。
+- RAG 知识库（来源引用）为下一期规划。
 
 ## 服务器部署（Linux）
 

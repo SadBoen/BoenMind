@@ -1,13 +1,18 @@
-//! 流式对话：POST /api/chat → SSE。
+//! 流式对话：POST /api/chat → SSE；POST /api/chat/stop 取消进行中的 prompt。
 //!
 //! 协议（SSE 事件，data 为 JSON）：
-//! - `{"type":"textDelta","delta":"..."}`      正文增量
-//! - `{"type":"thinkingDelta","delta":"..."}`  思考过程增量
-//! - `{"type":"toolCallStart","name":"..."}`   工具调用开始
-//! - `{"type":"toolCallDelta","delta":"..."}`  工具参数增量
+//! - `{"type":"textDelta","delta":"..."}`      正文增量（思考文本以 <think> 标签随正文下发）
+//! - `{"type":"toolCallStart","name":"..."}`   工具调用开始（携带完整参数）
+//! - `{"type":"toolCallEnd","name":"..."}`     工具调用结束（isError 决定颜色）
 //! - `{"type":"turnEnd"}`                      回合结束
-//! - `{"type":"done"}`                         整个 prompt 结束
+//! - `{"type":"done"}`                         整个 prompt 结束（含取消，前端据此固化内容）
 //! - `{"type":"error","message":"..."}`        出错
+//!
+//! 取消语义：
+//! - 前端点「停止」→ POST /api/chat/stop → 触发 pi AbortSignal → prompt 尽快返回，
+//!   已生成的文本照常入库并下发 done；
+//! - 客户端断开 SSE（关窗/切会话）→ 事件通道关闭 → 自动 abort 后端 prompt，
+//!   避免继续烧 token（部分文本仍入库）。
 //!
 //! 用户消息与最终助手消息均持久化到 SQLite。
 
@@ -80,6 +85,11 @@ pub async fn chat(
         Err((status, msg)) => return api_error(status, msg).into_response(),
     };
 
+    // 本次 prompt 的取消原语（pi 官方 abort 机制）：注册到会话级表，
+    // POST /api/chat/stop 按 session_id 触发；客户端断开时由 watcher 自动触发
+    let (abort_handle, abort_signal) = pi::sdk::AgentSessionHandle::new_abort_handle();
+    state.aborts.lock().await.insert(session.id.clone(), abort_handle.clone());
+
     // 事件通道 → SSE
     let (tx, rx) = mpsc::channel::<AgentStreamEvent>(512);
     let stream = ReceiverStream::new(rx).map(|ev| Ok::<_, std::convert::Infallible>(to_sse_event(&ev)));
@@ -87,12 +97,39 @@ pub async fn chat(
     let state_clone = state.clone();
     let session_id = session.id.clone();
     tokio::spawn(async move {
-        run_prompt_and_persist(state_clone, session_id, handle, message, tx).await;
+        // 客户端断开检测：通道接收端被丢弃时自动取消 prompt（关窗/切会话不白烧 token）
+        let watcher_abort = abort_handle.clone();
+        let tx_watch = tx.clone();
+        tokio::spawn(async move {
+            tx_watch.closed().await;
+            watcher_abort.abort();
+        });
+        run_prompt_and_persist(state_clone, session_id.clone(), handle, abort_signal, message, tx).await;
+        // prompt 已结束（串行执行保证没有并发 prompt 竞争该条目）
+        state.aborts.lock().await.remove(&session_id);
     });
 
     Sse::new(stream)
         .keep_alive(KeepAlive::default().interval(std::time::Duration::from_secs(15)))
         .into_response()
+}
+
+/// 取消进行中的 prompt（幂等：无进行中 prompt 时返回 ok）。
+/// 后端 abort 后 prompt 尽快返回，已生成的部分文本照常入库并下发 done。
+#[derive(Deserialize)]
+pub struct StopChatRequest {
+    pub session_id: String,
+}
+
+pub async fn stop_chat(
+    State(state): State<AppState>,
+    Json(req): Json<StopChatRequest>,
+) -> Response {
+    if let Some(abort) = state.aborts.lock().await.remove(&req.session_id) {
+        abort.abort();
+        tracing::info!(event = "bm.chat_stopped", session = %req.session_id);
+    }
+    axum::Json(serde_json::json!({ "ok": true })).into_response()
 }
 
 /// 获取会话的 agent 句柄；不存在则按会话记录的提供商/模型创建。
@@ -197,6 +234,7 @@ async fn run_prompt_and_persist(
     state: AppState,
     session_id: String,
     handle: Arc<Mutex<pi::sdk::AgentSessionHandle>>,
+    abort_signal: pi::sdk::AbortSignal,
     message: String,
     tx: mpsc::Sender<AgentStreamEvent>,
 ) {
@@ -213,16 +251,17 @@ async fn run_prompt_and_persist(
     let pending_tools_cb = pending_tools.clone();
     let done_tools_cb = done_tools.clone();
     let tx_cb = tx.clone();
-    // AgentEnd 携带 error 时已通过事件流发出错误，避免与 result Err 重复上报
-    let error_sent = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let error_sent_cb = error_sent.clone();
+    // 是否已向客户端发送过终态事件（done/error）——prompt 异常路径（如取消）可能
+    // 不发 AgentEnd，结束后兜底补发 done，保证前端总能固化流式内容
+    let done_sent = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let done_sent_cb = done_sent.clone();
     // 本次 prompt 的 token 用量统计（取自 assistant 消息的 usage；工具结果消息为 0）
     let usage_total = Arc::new(std::sync::Mutex::new(0u64));
     let usage_total_cb = usage_total.clone();
     let started_at = std::time::Instant::now();
 
     let result = handle
-        .prompt(message, move |ev: pi::sdk::AgentEvent| {
+        .prompt_with_abort(message, abort_signal, move |ev: pi::sdk::AgentEvent| {
             // 统计 token 用量（日志观测用）
             if let pi::sdk::AgentEvent::MessageEnd { message: m } = &ev {
                 if let pi::model::Message::Assistant(a) = m {
@@ -259,13 +298,14 @@ async fn run_prompt_and_persist(
                     AgentStreamEvent::TextDelta { delta } => {
                         acc.lock().unwrap().push_str(delta);
                     }
-                    AgentStreamEvent::Error { .. } => {
-                        error_sent_cb.store(true, std::sync::atomic::Ordering::Relaxed);
+                    AgentStreamEvent::Done | AgentStreamEvent::Error { .. } => {
+                        done_sent_cb.store(true, std::sync::atomic::Ordering::Relaxed);
                     }
-                    _ => {}
+                    AgentStreamEvent::TurnEnd => {}
                 }
                 // 注意：此处运行在 tokio 运行时线程上，不能用 blocking_send；
-                // try_send 失败（通道满或客户端断开）时直接跳过该事件
+                // try_send 失败（通道满或客户端断开）时停止转发（断开场景由
+                // watcher 任务负责 abort，见 chat()）
                 if tx_cb.try_send(mapped).is_err() {
                     return; // 客户端已断开，停止转发
                 }
@@ -280,7 +320,7 @@ async fn run_prompt_and_persist(
         result_ok = result.is_ok(),
     );
 
-    // 无论成功与否，先把已生成的文本与工具调用入库
+    // 无论成功/取消/失败，先把已生成的文本与工具调用入库
     let final_text = accumulated.lock().unwrap().clone();
     let done_tools = done_tools.lock().unwrap().clone();
     if !final_text.trim().is_empty() {
@@ -291,12 +331,14 @@ async fn run_prompt_and_persist(
         }
         let _ = state.db.touch_session(&session_id).await;
     }
-    if result.is_err() && !error_sent.load(std::sync::atomic::Ordering::Relaxed) {
-        let _ = tx
-            .send(AgentStreamEvent::Error {
-                message: "agent 执行失败".to_string(),
-            })
-            .await;
+    // 兜底补发终态事件（pi 取消路径不发 AgentEnd；失败且未发 error 时补 error）
+    if !done_sent.load(std::sync::atomic::Ordering::Relaxed) {
+        let terminal = if result.is_err() {
+            AgentStreamEvent::Error { message: "agent 执行失败".to_string() }
+        } else {
+            AgentStreamEvent::Done
+        };
+        let _ = tx.send(terminal).await;
     }
 }
 

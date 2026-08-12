@@ -273,7 +273,8 @@ fn validate_value(field: &SettingField, v: &Value) -> Result<Value, String> {
             if !field.options.iter().any(|o| o == s) {
                 return Err(format!("只能是 {}", field.options.join(" / ")));
             }
-            Ok(Value::String(s.to_string()))        }
+            Ok(Value::String(s.to_string()))
+        }
         SettingFieldType::String => {
             let s = v.as_str().ok_or("应为字符串")?;
             Ok(Value::String(s.to_string()))

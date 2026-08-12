@@ -34,6 +34,8 @@ pub struct AppState {
     pub config: Arc<RwLock<AppConfig>>,
     pub db: Arc<Db>,
     pub agents: Arc<Mutex<HashMap<String, AgentSessionEntry>>>,
+    /// 进行中 prompt 的取消句柄（key = session_id，见 chat.rs 取消语义）
+    pub aborts: Arc<Mutex<HashMap<String, pi::sdk::AbortHandle>>>,
 }
 
 impl AppState {
@@ -42,6 +44,7 @@ impl AppState {
             config: Arc::new(RwLock::new(config)),
             db: Arc::new(db),
             agents: Arc::new(Mutex::new(HashMap::new())),
+            aborts: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -67,6 +70,7 @@ fn router(state: AppState) -> Router {
         .route("/api/skills/registry/random", get(routes::random_skills))
         .route("/api/skills/{id}", post(routes::set_skill).delete(routes::uninstall_skill))
         .route("/api/chat", post(chat::chat))
+        .route("/api/chat/stop", post(chat::stop_chat))
         .route("/api/providers/list-models", post(routes::list_provider_models))
         .route("/api/thinking-levels", get(routes::thinking_levels))
         .route("/api/providers/test", post(routes::test_provider))

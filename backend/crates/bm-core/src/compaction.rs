@@ -267,8 +267,7 @@ mod tests {
         let r = resolve_for_model(&config(0.50), "deepseek", "deepseek-chat", &path).unwrap();
         assert_eq!(r.context_window, 128_000);
         assert_eq!(r.reserve_tokens, 64_000);
-        // 探测不到时兜底 128K（50% 水线同值；用非默认窗口验证更严谨的用例在下面）
-        let _ = r;
+        // 探测不到时兜底 128K（50% 水线同值；用非默认窗口验证更严谨的用例在 override_beats_probe_and_global_defaults）
         std::fs::remove_dir_all(&dir).ok();
     }
 

@@ -17,9 +17,10 @@
  *   `pi.tool("write")`；读有 host 回退，可直接 node:fs；
  * - node:os homedir() 可用（取 $HOME）→ 用户级文件放 ~/.boenmind 下。
  *
- * 配置：用户级 ~/.boenmind/plugin-settings/web-search.json（由设置页写入，
- * 后端 bm-server 持久化；插件启动时读取，与 extension.json 的 settings 声明对齐）。
- * 用量：~/.boenmind/web-search/quota.json（本插件自行读写）。
+ * 配置：插件目录内 settings.json（~/.boenmind/extensions/web-search/settings.json，
+ * 由设置页经后端 bm-server 持久化；插件启动时读取，与 extension.json 的 settings 声明对齐）。
+ * 用量：<cwd>/.boenmind/web-search/quota.json（本插件自行读写；沙箱 pi.tool("write")
+ * 限制在 workspace 内，故按项目记录）。
  * 缓存：<cwd>/.boenmind/web-search-cache.jsonl。
  */
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";

@@ -85,7 +85,7 @@ let config: CtxConfig = { ...DEFAULTS };
 let configLoaded = false;
 
 function loadConfig(cwd: string): CtxConfig {
-			const cfgPath = path.join(cwd, ".boenmind", "ctx-compactor.json");
+	const cfgPath = path.join(cwd, ".boenmind", "ctx-compactor.json");
 	try {
 		const raw = fs.readFileSync(cfgPath, "utf8");
 		const parsed = JSON.parse(raw) as Partial<CtxConfig>;
@@ -108,7 +108,7 @@ function numberOr(value: unknown, fallback: number, min: number): number {
 
 // ─────────────────────────────── 索引（JSONL，按项目分桶） ───────────────────────────────
 function indexDir(cwd: string): string {
-		return path.join(cwd, config.indexDirName);
+	return path.join(cwd, config.indexDirName);
 }
 
 function indexFile(cwd: string): string {
@@ -263,7 +263,7 @@ function tokenize(text: string): string[] {
 
 /** 简易 BM25 风格打分：词频 × 逆文档频率，按长度归一。 */
 function searchIndex(cwd: string, query: string, limit: number): IndexEntry[] {
-			const terms = tokenize(query);
+	const terms = tokenize(query);
 	if (terms.length === 0) return [];
 	// 支持 key 直接检索
 	const keyTerm = query.trim().match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);

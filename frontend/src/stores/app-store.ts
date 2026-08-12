@@ -89,6 +89,35 @@ export const useAppStore = create<AppStore>((set, get) => {
   /** 当前流式对话的取消句柄 */
   let streamController: { close: () => void } | null = null;
 
+  /** 固化流式内容为助手消息（done 事件与停止兜底共用） */
+  const finalizeStream = (sessionId: string) => {
+    const s = get();
+    const finalText = s.streamingText;
+    // 流式工具调用固化为消息结构（seq 按顺序编号）
+    const toolCalls: ToolCall[] = s.streamingToolCalls.map((c, i) => ({
+      seq: i,
+      tool_name: c.name,
+      args: c.args,
+      is_error: c.isError,
+    }));
+    set({
+      streaming: false,
+      streamingText: "",
+      streamingToolCalls: [],
+      messages: [
+        ...s.messages,
+        {
+          id: Date.now(),
+          session_id: sessionId,
+          role: "assistant",
+          content: finalText,
+          created_at: Math.floor(Date.now() / 1000),
+          tool_calls: toolCalls,
+        },
+      ],
+    });
+  };
+
   return {
     activeNav: "chat",
     settingsTab: "appearance",
@@ -254,27 +283,12 @@ export const useAppStore = create<AppStore>((set, get) => {
             });
             break;
           case "done": {
-            const finalText = s.streamingText;
-            // 流式工具调用固化为消息结构（seq 按顺序编号）
-            const toolCalls: ToolCall[] = s.streamingToolCalls.map((c, i) => ({
-              seq: i,
-              tool_name: c.name,
-              args: c.args,
-              is_error: c.isError,
-            }));
-            const assistantMsg: Message = {
-              id: Date.now(),
-              session_id: sessionId!,
-              role: "assistant",
-              content: finalText,
-              created_at: Math.floor(Date.now() / 1000),
-              tool_calls: toolCalls,
-            };
-            set({ streaming: false, streamingText: "", streamingToolCalls: [], messages: [...s.messages, assistantMsg] });
+            // 后端确认结束（正常完成或停止后的部分文本）：固化流式内容
+            finalizeStream(sessionId!);
             break;
           }
           case "error":
-            set({ streaming: false, streamingToolCalls: [] });
+            set({ streaming: false, streamingText: "", streamingToolCalls: [] });
             // 错误信息以用户可见的形式追加
             set((st) => ({
               messages: [
@@ -308,8 +322,23 @@ export const useAppStore = create<AppStore>((set, get) => {
       await get().loadSessions();
     },
     stopStreaming: () => {
-      streamController?.close();
-      set({ streaming: false, streamingToolCalls: [] });
+      const { activeSessionId } = get();
+      const controller = streamController;
+      if (!controller) return;
+      if (activeSessionId) {
+        // 请求后端取消 prompt：不主动断开 SSE，等后端 abort 后下发的 done 事件
+        // 固化已生成的部分内容（与正常完成走同一条 finalize 路径）
+        void api.stopChat(activeSessionId).catch(() => {});
+        // 兜底：后端 8 秒内未收口（网络异常/后端无响应）时本地固化并断开
+        setTimeout(() => {
+          if (get().streaming && streamController === controller) {
+            finalizeStream(activeSessionId);
+          }
+        }, 8000);
+      } else {
+        controller.close();
+        set({ streaming: false, streamingToolCalls: [] });
+      }
     },
 
     workspaceDir: "",

@@ -32,19 +32,15 @@ pub const SYSTEM_PROMPT: &str = r#"你是 BoenMind，一个专注工作与知识
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum AgentStreamEvent {
-    /// 正文增量
+    /// 正文增量（pi 的思考文本也以 `<think>` 标签随正文下发，思考增量事件不单列）
     TextDelta { delta: String },
-    /// 思考过程增量
-    ThinkingDelta { delta: String },
     /// 工具调用开始（携带完整参数 JSON，来自 pi ToolExecutionStart）
     ToolCallStart { id: String, name: String, args: serde_json::Value },
-    /// 工具调用参数增量
-    ToolCallDelta { delta: String },
     /// 工具调用结束（is_error 决定前端展示颜色）
     ToolCallEnd { id: String, name: String, is_error: bool },
     /// 一次对话回合结束（含错误时由 error 携带）
     TurnEnd,
-    /// 整个 prompt 处理结束
+    /// 整个 prompt 处理结束（含取消；前端据此固化流式内容）
     Done,
     /// 出错
     Error { message: String },
@@ -111,16 +107,14 @@ pub fn map_agent_event(event: AgentEvent) -> Vec<AgentStreamEvent> {
             AssistantMessageEvent::TextDelta { delta, .. } => {
                 vec![AgentStreamEvent::TextDelta { delta }]
             }
-            AssistantMessageEvent::ThinkingDelta { delta, .. } => {
-                vec![AgentStreamEvent::ThinkingDelta { delta }]
-            }
-            AssistantMessageEvent::ToolCallDelta { delta, .. } => {
-                vec![AgentStreamEvent::ToolCallDelta { delta }]
-            }
-            AssistantMessageEvent::ToolCallStart { .. }
+            // 思考增量不单列：思考内容随正文 TextDelta 以 <think> 标签下发，
+            // 前端从正文解析（历史回放依赖同一格式）；结构化 thinking 流另行
+            // 消费时再恢复此事件
+            AssistantMessageEvent::ThinkingDelta { .. }
+            | AssistantMessageEvent::ToolCallDelta { .. }
+            | AssistantMessageEvent::ToolCallStart { .. }
             | AssistantMessageEvent::TextEnd { .. }
             | AssistantMessageEvent::ThinkingEnd { .. }
-            | AssistantMessageEvent::ToolCallEnd { .. }
             | AssistantMessageEvent::Start { .. }
             | AssistantMessageEvent::TextStart { .. }
             | AssistantMessageEvent::ThinkingStart { .. } => Vec::new(),

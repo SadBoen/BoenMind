@@ -162,9 +162,7 @@ export interface SkillCandidate {
 /** 聊天流式事件（对应后端 AgentStreamEvent 的 JSON 序列化） */
 export type ChatStreamEvent =
   | { type: "textDelta"; delta: string }
-  | { type: "thinkingDelta"; delta: string }
   | { type: "toolCallStart"; id: string; name: string; args: unknown }
-  | { type: "toolCallDelta"; delta: string }
   | { type: "toolCallEnd"; id: string; name: string; isError: boolean }
   | { type: "turnEnd" }
   | { type: "done" }
@@ -322,7 +320,7 @@ export const api = {
   /**
    * 流式对话。返回一个可取消的响应对象：
    *  - `onEvent` 收到每个 ChatStreamEvent
-   *  - `close()` 中断连接
+   *  - `close()` 中断连接（后端检测到断开会自动取消 prompt）
    *  - `model`/`thinking` 可选，对当前会话即时切换（不改变会话记录）
    */
   chat: (
@@ -380,4 +378,14 @@ export const api = {
     });
     return { done, close: () => controller.abort() };
   },
+
+  /**
+   * 取消进行中的流式对话。后端触发 pi AbortSignal，prompt 尽快返回，
+   * 已生成的部分文本照常入库并下发 done（不中断 SSE 连接，等 done 固化内容）。
+   */
+  stopChat: (sessionId: string) =>
+    request<{ ok: boolean }>("/api/chat/stop", {
+      method: "POST",
+      body: JSON.stringify({ session_id: sessionId }),
+    }),
 };
