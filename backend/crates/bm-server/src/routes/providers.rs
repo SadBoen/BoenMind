@@ -1,9 +1,17 @@
 //! 提供商工具：模型列表拉取 / 连接测试（SSRF 校验在 bm_core）/ 思考档位。
 
 use axum::{Json, extract::{Query, State}, http::StatusCode};
+use bm_core::config::ProviderKind;
 use serde::Deserialize;
 
 use crate::{ApiResult, api_error};
+
+/// 请求体中的 kind 字符串解析为枚举：拼写/大小写错误在此显式 400，
+/// 不会静默落入 custom 语义（旧签名收裸字符串时的问题）。
+fn parse_kind(kind: &str) -> ApiResult<ProviderKind> {
+    kind.parse()
+        .map_err(|err: String| api_error(StatusCode::BAD_REQUEST, err))
+}
 
 // ---------------------------------------------------------------------------
 // 提供商工具（模型列表拉取 / 连接测试）
@@ -22,8 +30,9 @@ pub struct ListModelsRequest {
 pub async fn list_provider_models(
     Json(req): Json<ListModelsRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
+    let kind = parse_kind(&req.kind)?;
     let result = tokio::task::spawn_blocking(move || {
-        bm_core::providers::list_provider_models(&req.kind, &req.base_url, &req.api_key)
+        bm_core::providers::list_provider_models(kind, &req.base_url, &req.api_key)
     })
     .await
     .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
@@ -51,9 +60,10 @@ pub struct TestProviderRequest {
 pub async fn test_provider(
     Json(req): Json<TestProviderRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
+    let kind = parse_kind(&req.kind)?;
     let result = tokio::task::spawn_blocking(move || {
         bm_core::providers::test_provider_connection(
-            &req.kind,
+            kind,
             &req.base_url,
             &req.api_key,
             &req.model,

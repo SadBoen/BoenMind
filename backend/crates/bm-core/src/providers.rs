@@ -12,6 +12,7 @@ use std::io::Read;
 
 use serde_json::{Value, json};
 
+use crate::config::ProviderKind;
 use crate::http_util::http_agent;
 
 const ANTHROPIC_VERSION: &str = "2023-06-01";
@@ -21,47 +22,47 @@ const ERROR_BODY_SNIPPET: usize = 200;
 
 /// 官方端点表（与前端 ProviderSettings 的 KIND_PRESETS base_url 同步维护；
 /// 新增 kind 时两端需一起更新）。
-pub fn official_base_url(kind: &str) -> Option<&'static str> {
+pub fn official_base_url(kind: ProviderKind) -> Option<&'static str> {
     match kind {
-        "openai" => Some("https://api.openai.com/v1"),
-        "anthropic" => Some("https://api.anthropic.com"),
-        "gemini" => Some("https://generativelanguage.googleapis.com"),
-        "deepseek" => Some("https://api.deepseek.com/v1"),
-        "minimax" => Some("https://api.minimaxi.com/v1"),
-        "moonshot" => Some("https://api.moonshot.cn/v1"),
-        "zhipu" => Some("https://open.bigmodel.cn/api/paas/v4"),
-        "qwen" => Some("https://dashscope.aliyuncs.com/compatible-mode/v1"),
-        "openrouter" => Some("https://openrouter.ai/api/v1"),
-        "xai" => Some("https://api.x.ai/v1"),
-        "zai" => Some("https://api.z.ai/api/paas/v4"),
-        "groq" => Some("https://api.groq.com/openai/v1"),
-        "mistral" => Some("https://api.mistral.ai/v1"),
-        "together" => Some("https://api.together.ai/v1"),
-        "cerebras" => Some("https://api.cerebras.ai/v1"),
-        "fireworks" => Some("https://api.fireworks.ai/inference"),
-        "huggingface" => Some("https://router.huggingface.co/v1"),
-        "nvidia" => Some("https://integrate.api.nvidia.com/v1"),
-        "xiaomi" => Some("https://api.xiaomimimo.com/v1"),
-        "antling" => Some("https://api.ant-ling.com/v1"),
-        "baseten" => Some("https://inference.baseten.co/v1"),
-        "ollama" => Some("http://127.0.0.1:11434/v1"),
-        "llamacpp" => Some("http://127.0.0.1:8080/v1"),
-        _ => None, // custom：必须由用户填写端点
+        ProviderKind::Openai => Some("https://api.openai.com/v1"),
+        ProviderKind::Anthropic => Some("https://api.anthropic.com"),
+        ProviderKind::Gemini => Some("https://generativelanguage.googleapis.com"),
+        ProviderKind::Deepseek => Some("https://api.deepseek.com/v1"),
+        ProviderKind::Minimax => Some("https://api.minimaxi.com/v1"),
+        ProviderKind::Moonshot => Some("https://api.moonshot.cn/v1"),
+        ProviderKind::Zhipu => Some("https://open.bigmodel.cn/api/paas/v4"),
+        ProviderKind::Qwen => Some("https://dashscope.aliyuncs.com/compatible-mode/v1"),
+        ProviderKind::Openrouter => Some("https://openrouter.ai/api/v1"),
+        ProviderKind::Xai => Some("https://api.x.ai/v1"),
+        ProviderKind::Zai => Some("https://api.z.ai/api/paas/v4"),
+        ProviderKind::Groq => Some("https://api.groq.com/openai/v1"),
+        ProviderKind::Mistral => Some("https://api.mistral.ai/v1"),
+        ProviderKind::Together => Some("https://api.together.ai/v1"),
+        ProviderKind::Cerebras => Some("https://api.cerebras.ai/v1"),
+        ProviderKind::Fireworks => Some("https://api.fireworks.ai/inference"),
+        ProviderKind::Huggingface => Some("https://router.huggingface.co/v1"),
+        ProviderKind::Nvidia => Some("https://integrate.api.nvidia.com/v1"),
+        ProviderKind::Xiaomi => Some("https://api.xiaomimimo.com/v1"),
+        ProviderKind::Antling => Some("https://api.ant-ling.com/v1"),
+        ProviderKind::Baseten => Some("https://inference.baseten.co/v1"),
+        ProviderKind::Ollama => Some("http://127.0.0.1:11434/v1"),
+        ProviderKind::Llamacpp => Some("http://127.0.0.1:8080/v1"),
+        ProviderKind::Custom => None, // 必须由用户填写端点
     }
 }
 
 /// 是否 Anthropic 方言（x-api-key + anthropic-version 头）
-fn is_anthropic(kind: &str) -> bool {
-    kind == "anthropic"
+fn is_anthropic(kind: ProviderKind) -> bool {
+    kind == ProviderKind::Anthropic
 }
 
 /// 是否 Gemini 方言（v1beta generateContent）
-fn is_gemini(kind: &str) -> bool {
-    kind == "gemini"
+fn is_gemini(kind: ProviderKind) -> bool {
+    kind == ProviderKind::Gemini
 }
 
 /// 解析最终 base URL：用户填写的优先（去尾部斜杠），否则官方端点；custom 必须填写。
-fn resolve_base_url(kind: &str, base_url: &str) -> Result<String, String> {
+fn resolve_base_url(kind: ProviderKind, base_url: &str) -> Result<String, String> {
     let trimmed = base_url.trim().trim_end_matches('/');
     if !trimmed.is_empty() {
         return Ok(trimmed.to_string());
@@ -73,8 +74,8 @@ fn resolve_base_url(kind: &str, base_url: &str) -> Result<String, String> {
 
 /// SSRF 防护：校验端点必须是指向公网的合法 http(s) URL。
 /// ollama / llamacpp 是本地模型服务（官方端点即 127.0.0.1），豁免本校验。
-fn validate_base_url(kind: &str, url: &str) -> Result<(), String> {
-    if matches!(kind, "ollama" | "llamacpp") {
+fn validate_base_url(kind: ProviderKind, url: &str) -> Result<(), String> {
+    if matches!(kind, ProviderKind::Ollama | ProviderKind::Llamacpp) {
         return Ok(());
     }
     let parsed = url::Url::parse(url).map_err(|_| "API 端点必须是完整的 http(s):// URL".to_string())?;
@@ -205,7 +206,7 @@ fn parse_model_ids(body: &str) -> Vec<String> {
 }
 
 /// 拉取模型列表。`base_url` 为空时使用官方端点；API key 为空时（ollama 等）不带头。
-pub fn list_provider_models(kind: &str, base_url: &str, api_key: &str) -> Result<Vec<String>, String> {
+pub fn list_provider_models(kind: ProviderKind, base_url: &str, api_key: &str) -> Result<Vec<String>, String> {
     let base = resolve_base_url(kind, base_url)?;
     validate_base_url(kind, &base)?;
     let key = api_key.trim();
@@ -248,7 +249,7 @@ pub fn list_provider_models(kind: &str, base_url: &str, api_key: &str) -> Result
 /// 测试连接：`message` 为空时仅验证连通（拉取模型列表）；
 /// 非空时发送真实对话请求并返回模型回复（最多 128 token，截断 500 字符）。
 pub fn test_provider_connection(
-    kind: &str,
+    kind: ProviderKind,
     base_url: &str,
     api_key: &str,
     model: &str,
@@ -387,28 +388,31 @@ mod tests {
     #[test]
     fn official_endpoints_cover_all_kinds() {
         for kind in [
-            "openai", "anthropic", "gemini", "ollama", "llamacpp", "minimax", "deepseek",
-            "openrouter", "moonshot", "zhipu", "qwen", "xai", "zai", "groq", "mistral",
-            "together", "cerebras", "fireworks", "huggingface", "nvidia", "xiaomi",
-            "antling", "baseten",
+            ProviderKind::Openai, ProviderKind::Anthropic, ProviderKind::Gemini,
+            ProviderKind::Ollama, ProviderKind::Llamacpp, ProviderKind::Minimax,
+            ProviderKind::Deepseek, ProviderKind::Openrouter, ProviderKind::Moonshot,
+            ProviderKind::Zhipu, ProviderKind::Qwen, ProviderKind::Xai, ProviderKind::Zai,
+            ProviderKind::Groq, ProviderKind::Mistral, ProviderKind::Together,
+            ProviderKind::Cerebras, ProviderKind::Fireworks, ProviderKind::Huggingface,
+            ProviderKind::Nvidia, ProviderKind::Xiaomi, ProviderKind::Antling,
+            ProviderKind::Baseten,
         ] {
-            assert!(official_base_url(kind).is_some(), "kind {kind} 缺官方端点");
+            assert!(official_base_url(kind).is_some(), "kind {kind:?} 缺官方端点");
         }
-        assert!(official_base_url("custom").is_none());
-        assert!(official_base_url("unknown").is_none());
+        assert!(official_base_url(ProviderKind::Custom).is_none());
     }
 
     #[test]
     fn resolve_base_url_prefers_user_value() {
         assert_eq!(
-            resolve_base_url("deepseek", "https://api.deepseek.com/v1/").unwrap(),
+            resolve_base_url(ProviderKind::Deepseek, "https://api.deepseek.com/v1/").unwrap(),
             "https://api.deepseek.com/v1"
         );
         assert_eq!(
-            resolve_base_url("deepseek", "").unwrap(),
+            resolve_base_url(ProviderKind::Deepseek, "").unwrap(),
             "https://api.deepseek.com/v1"
         );
-        assert!(resolve_base_url("custom", "").is_err());
+        assert!(resolve_base_url(ProviderKind::Custom, "").is_err());
     }
 
     #[test]
@@ -418,7 +422,7 @@ mod tests {
             "https://api.deepseek.com/v1/",
             "http://example.com:8000/v1",
         ] {
-            validate_base_url("custom", ok).unwrap_or_else(|e| panic!("应放行 {ok}: {e}"));
+            validate_base_url(ProviderKind::Custom, ok).unwrap_or_else(|e| panic!("应放行 {ok}: {e}"));
         }
     }
 
@@ -437,7 +441,7 @@ mod tests {
             "not a url",
         ] {
             assert!(
-                validate_base_url("custom", bad).is_err(),
+                validate_base_url(ProviderKind::Custom, bad).is_err(),
                 "应拒绝 {bad}"
             );
         }
@@ -446,10 +450,10 @@ mod tests {
     #[test]
     fn validate_base_url_exempts_local_servers() {
         // ollama / llamacpp 官方端点就是本机地址，必须放行
-        assert!(validate_base_url("ollama", "http://127.0.0.1:11434/v1").is_ok());
-        assert!(validate_base_url("llamacpp", "http://127.0.0.1:8080/v1").is_ok());
+        assert!(validate_base_url(ProviderKind::Ollama, "http://127.0.0.1:11434/v1").is_ok());
+        assert!(validate_base_url(ProviderKind::Llamacpp, "http://127.0.0.1:8080/v1").is_ok());
         // 但任意 kind 也能显式指向私网：ollama 常部署在局域网主机，属合法场景
-        assert!(validate_base_url("ollama", "http://192.168.1.5:11434/v1").is_ok());
+        assert!(validate_base_url(ProviderKind::Ollama, "http://192.168.1.5:11434/v1").is_ok());
     }
 
     #[test]

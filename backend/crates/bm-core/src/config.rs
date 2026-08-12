@@ -170,6 +170,20 @@ impl ProviderKind {
     }
 }
 
+/// 字符串 → ProviderKind（serde kebab-case 反序列化驱动，与 config.toml 同一来源）。
+/// 路由层把用户输入的 kind 解析为枚举后，拼写/大小写错误在此处被显式拒绝，
+/// 不会像旧签名（收裸字符串）那样静默落入 custom 语义。
+impl std::str::FromStr for ProviderKind {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        use serde::Deserialize;
+        Self::deserialize(serde::de::value::StringDeserializer::<
+            serde::de::value::Error,
+        >::new(s.to_string()))
+        .map_err(|_| format!("未知提供商类型: {s}"))
+    }
+}
+
 fn default_theme() -> String {
     "system".to_string()
 }
@@ -393,6 +407,19 @@ mod tests {
         assert!(ProviderKind::Groq.is_openai_compatible_route());
         assert!(ProviderKind::Xai.is_openai_compatible_route());
         assert!(!ProviderKind::Anthropic.is_openai_compatible_route());
+    }
+
+    #[test]
+    fn provider_kind_from_str() {
+        use std::str::FromStr;
+        // 合法 kind（与 serde kebab-case 同源）
+        assert_eq!(ProviderKind::from_str("openai"), Ok(ProviderKind::Openai));
+        assert_eq!(ProviderKind::from_str("llamacpp"), Ok(ProviderKind::Llamacpp));
+        assert_eq!(ProviderKind::from_str("custom"), Ok(ProviderKind::Custom));
+        // 拼写/大小写错误显式拒绝（旧签名收裸字符串时静默落入 custom 语义）
+        assert!(ProviderKind::from_str("OPENAI").is_err());
+        assert!(ProviderKind::from_str("open-ai").is_err());
+        assert!(ProviderKind::from_str("ollamaa").is_err());
     }
 
     #[test]
