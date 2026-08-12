@@ -120,6 +120,12 @@ docker run -d --name boenmind --restart unless-stopped \
 
 或使用仓库根目录的 `docker-compose.yml`（`docker compose up -d`）。
 
+本地手动构建镜像（等价于 CI 的多架构产物，本机架构）：
+
+```bash
+docker build -t ghcr.io/sadboen/boenmind:v0.1.1 .
+```
+
 ### 服务器版环境变量
 
 | 变量 | 默认 | 说明 |

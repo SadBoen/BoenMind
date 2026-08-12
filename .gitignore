@@ -12,6 +12,9 @@ frontend/src-tauri/gen/
 # macOS
 .DS_Store
 
+# 日志（compression-regression 脚本在 backend 下生成 server-*.log）
+*.log
+
 # 测试截图（可留可删）
 gui-test-screenshots/
 

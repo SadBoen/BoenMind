@@ -11,7 +11,8 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { useAppStore } from "@/stores/app-store";
 
-const APP_VERSION = "0.1.0";
+/// 应用版本兜底（health 未加载时展示）；加载后以后端版本为准（单源）
+const APP_VERSION = "0.1.1";
 
 type UpdateState =
   | { status: "idle" }
@@ -25,6 +26,8 @@ type UpdateState =
 export function AboutSettings() {
   const { t } = useTranslation();
   const health = useAppStore((s) => s.health);
+  // 应用版本以 health.version（后端）为准，常量仅作启动兜底
+  const appVersion = health?.version ?? APP_VERSION;
   const [state, setState] = useState<UpdateState>({ status: "idle" });
 
   // 桌面环境检测（Tauri 注入的全局）
@@ -105,7 +108,7 @@ export function AboutSettings() {
             <h3 className="font-semibold">BoenMind</h3>
             <p className="text-xs text-muted-foreground">{t("settings.about.tagline")}</p>
           </div>
-          <Badge variant="secondary">v{APP_VERSION}</Badge>
+          <Badge variant="secondary">v{appVersion}</Badge>
         </div>
         <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-muted-foreground">
           <span>{t("settings.about.backendV", { version: health?.version ?? "-" })}</span>
@@ -136,7 +139,7 @@ export function AboutSettings() {
         {state.status === "none" && (
           <div className="flex items-center gap-2 text-sm text-emerald-600">
             <CheckCircle2 size={16} />
-            {t("settings.about.latestVersion", { version: APP_VERSION })}
+            {t("settings.about.latestVersion", { version: appVersion })}
             <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => void checkForUpdates()}>
               {t("settings.about.recheck")}
             </Button>

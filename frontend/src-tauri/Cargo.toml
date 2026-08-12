@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.1.0"
+version = "0.1.1"
 description = "BoenMind 桌面壳：内嵌启动 bm-server 后端，承载 React 前端"
 authors = ["boen"]
 license = "MIT"

@@ -3,7 +3,8 @@
  * 利用 Node 24 原生 TS type-stripping 直接加载 index.ts（__test 导出）：
  * URL 规范化 / 标题相似去重 / markdown 解析 / JSON 解析 / SSRF 防护 / 选源 / 合并排序。
  */
-const SRC = "/Users/boen/.zcode/workspace/BoenMind/backend/plugins/web-search/index.ts";
+// 相对脚本位置解析插件源码（本脚本在 scripts/web-search-verify/，插件在 backend/plugins/web-search/）
+const SRC = new URL("../../backend/plugins/web-search/index.ts", import.meta.url).pathname;
 const { __test } = await import(SRC);
 
 let passed = 0;
