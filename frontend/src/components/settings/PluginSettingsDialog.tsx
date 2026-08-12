@@ -7,28 +7,12 @@
  * 保存后对话框保持打开，可连续调整；「恢复默认」一键回到 schema 默认值。
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { SettingValue } from "./PluginSettingsField";
+import { CollapsibleCard, SettingFieldInput } from "./PluginSettingsField";
 import { useTranslation } from "react-i18next";
-import {
-  ChevronDown,
-  KeyRound,
-  Loader2,
-  PlugZap,
-  Plus,
-  RotateCcw,
-  Trash2,
-  X,
-} from "lucide-react";
+import { Loader2, PlugZap, Plus, RotateCcw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -39,8 +23,6 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { api, type PluginInfo, type QuotaInfo, type SettingField } from "@/api/client";
-
-type SettingValue = string | number | boolean;
 
 /** schema 为空的兜底（模块级常量：避免每次 render 新建引用导致 useMemo 失效） */
 const EMPTY_SCHEMA: SettingField[] = [];
@@ -554,183 +536,4 @@ export function PluginSettingsDialog({ plugin, open, onClose }: Props) {
       </DialogContent>
     </Dialog>
   );
-}
-
-/** 可折叠卡片：标题行（折叠箭头 + 标题 + 右侧操作区）+ 可展开内容 */
-function CollapsibleCard({
-  title,
-  isOpen,
-  onToggle,
-  actions,
-  children,
-}: {
-  title: string;
-  isOpen: boolean;
-  onToggle: () => void;
-  actions?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="rounded-xl border">
-      <div className="flex items-center gap-2 px-3 py-2.5">
-        <button
-          type="button"
-          onClick={onToggle}
-          className="flex min-w-0 flex-1 items-center gap-2 text-left"
-        >
-          <ChevronDown
-            size={14}
-            className={`shrink-0 text-muted-foreground transition-transform ${isOpen ? "" : "-rotate-90"}`}
-          />
-          <span className="truncate text-sm font-semibold">{title}</span>
-        </button>
-        {actions && <div className="flex shrink-0 items-center gap-1.5">{actions}</div>}
-      </div>
-      {isOpen && <div className="border-t px-4 py-3">{children}</div>}
-    </div>
-  );
-}
-
-/** 单个设置项：按类型渲染控件 */
-function SettingFieldInput({
-  field,
-  value,
-  onChange,
-  disabled,
-  cleared,
-  onToggleClear,
-}: {
-  field: SettingField;
-  value: SettingValue | undefined;
-  onChange: (v: SettingValue) => void;
-  disabled?: boolean;
-  /** secret 字段：已标记待清除（保存时删除密钥） */
-  cleared?: boolean;
-  onToggleClear?: () => void;
-}) {
-  const { t } = useTranslation();
-
-  switch (field.type) {
-    case "boolean":
-      return (
-        <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
-          <div className="min-w-0">
-            <p className="text-sm font-medium">{field.label}</p>
-            {field.description && (
-              <p className="text-xs text-muted-foreground">{field.description}</p>
-            )}
-          </div>
-          <Switch checked={Boolean(value)} onCheckedChange={onChange} disabled={disabled} />
-        </div>
-      );
-
-    case "number":
-      return (
-        <div className="space-y-1.5">
-          <Label>{field.label}</Label>
-          <Input
-            type="number"
-            min={field.min}
-            max={field.max}
-            value={String(value ?? field.default ?? "")}
-            onChange={(e) => onChange(e.target.value === "" ? "" : Number(e.target.value))}
-            disabled={disabled}
-          />
-          {field.description && (
-            <p className="text-xs text-muted-foreground">{field.description}</p>
-          )}
-        </div>
-      );
-
-    case "select":
-      return (
-        <div className="space-y-1.5">
-          <Label>{field.label}</Label>
-          <Select
-            value={String(value ?? field.default ?? "")}
-            onValueChange={(v) => {
-              if (v !== null) onChange(v);
-            }}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {(field.options ?? []).map((opt) => (
-                <SelectItem key={opt} value={opt}>
-                  {opt}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {field.description && (
-            <p className="text-xs text-muted-foreground">{field.description}</p>
-          )}
-        </div>
-      );
-
-    case "secret": {
-      const raw = String(value ?? "");
-      // 掩码回显（如 jina****）= 已配置：输入框留空，掩码显示在 placeholder
-      const configured = raw.length > 0 && raw.includes("****");
-      const isCleared = Boolean(cleared);
-      return (
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between gap-2">
-            <Label>
-              {field.label}
-              <KeyRound size={11} className="ml-1 inline text-muted-foreground" />
-            </Label>
-            {configured && !isCleared && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-6 gap-1 px-2 text-xs text-muted-foreground hover:text-destructive"
-                onClick={onToggleClear}
-                disabled={disabled}
-              >
-                <X size={11} />
-                {t("settings.plugins.secretClear")}
-              </Button>
-            )}
-            {isCleared && (
-              <span className="text-xs text-destructive">{t("settings.plugins.secretClearing")}</span>
-            )}
-          </div>
-          <Input
-            type="password"
-            value={configured || isCleared ? "" : raw}
-            onChange={(e) => onChange(e.target.value)}
-            placeholder={
-              configured && !isCleared
-                ? t("settings.plugins.secretConfigured", { mask: raw })
-                : t("settings.plugins.secretPlaceholder")
-            }
-            disabled={disabled}
-            autoComplete="off"
-          />
-          {field.description && (
-            <p className="text-xs text-muted-foreground">{field.description}</p>
-          )}
-        </div>
-      );
-    }
-
-    // string
-    default:
-      return (
-        <div className="space-y-1.5">
-          <Label>{field.label}</Label>
-          <Input
-            type="text"
-            value={String(value ?? field.default ?? "")}
-            onChange={(e) => onChange(e.target.value)}
-            disabled={disabled}
-          />
-          {field.description && (
-            <p className="text-xs text-muted-foreground">{field.description}</p>
-          )}
-        </div>
-      );
-  }
 }
