@@ -13117,6 +13117,17 @@ fn discover_sibling_index_entries(primary: &Path) -> Vec<PathBuf> {
     let Some(cluster_root) = parent_dir.parent() else {
         return Vec::new();
     };
+    // BoenMind 补丁（P10）：与 discover_sibling_extension_entries 的保护保持一致——
+    // 扩展自动发现根（*.extensions 目录）下的多个目录是独立插件，不是同一 bundle 的
+    // 兄弟入口；若多个插件的 entrypoint 都叫 index.ts，bundle 探测会把它们互相认领，
+    // 触发 "Ambiguous JS extension ownership"（见 backend/vendor/UPSTREAM_PATCHES.md P10）。
+    if cluster_root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("extensions"))
+    {
+        return Vec::new();
+    }
 
     let mut candidate_dirs = Vec::new();
     if let Ok(entries) = fs::read_dir(cluster_root) {

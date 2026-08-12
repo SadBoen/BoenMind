@@ -46,6 +46,7 @@ diff -rq /tmp/pi_upstream /path/to/BoenMind/backend/vendor/pi_agent_rust \
 | P8 | `src/tools.rs` | L11224 / L11416 / L11501 | 测试 fixture 中 `sk-redactionfixture*` → `sk_redactionfixture*`（3 处） | 避免 secret 脱敏逻辑把测试 fixture 当真实 key 误扫 | — | `f0aa969` | ✅（2026-08-13 补齐） |
 
 | P9 | `src/subagents.rs` | `execute()` ToolOutput 构建 + 新增 `structured_result_block`/`truncate_owned` | content 文本末尾追加 `<subagent-structured-result>` 紧凑 JSON 块（output/stderr 截断 2000 字符、总块 16KB）；上游 `details` 在 providers/openai.rs 序列化时被丢弃，模型只读 content 文本 | 子代理结构化返回：队长代理像读函数返回值一样直接取用结果 | [#163](https://github.com/Dicklesworthstone/pi_agent_rust/issues/163)（以默认关闭配置项形式建议，预期长期自持） | 本轮 | ✅ |
+| P10 | `src/extensions.rs` | `discover_sibling_index_entries()` | bundle 探测加"cluster_root 名为 extensions 时跳过"保护（与 `discover_sibling_extension_entries` 一致） | 上游缺陷：多个 entrypoint=index.ts 的独立插件共存于扩展根时被 bundle 探测互相认领，触发 "Ambiguous JS extension ownership"（实测 3 插件共存必现） | [#164](https://github.com/Dicklesworthstone/pi_agent_rust/issues/164)（建议按 sibling 函数同样保护合入） | 本轮 | ✅ |
 
 **复现命令**（每个补丁的完整 diff，按 commit 精确取回）：
 
