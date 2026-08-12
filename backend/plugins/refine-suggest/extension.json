@@ -1,0 +1,10 @@
+{
+  "schema": "pi.ext.manifest.v1",
+  "extension_id": "refine-suggest",
+  "name": "Refine Suggest",
+  "version": "0.1.0",
+  "runtime": "js",
+  "entrypoint": "index.ts",
+  "description": "BoenMind 自我改进建议采集：代理完成任务后提交针对 skill 描述/系统提示词的改进建议（提交仅供宿主审批，未审批不生效）",
+  "capabilities": ["tool"]
+}

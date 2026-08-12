@@ -4,6 +4,7 @@
 pub mod config;
 pub mod plugins;
 pub mod providers;
+pub mod refine;
 pub mod sessions;
 pub mod skills;
 pub mod workspace;

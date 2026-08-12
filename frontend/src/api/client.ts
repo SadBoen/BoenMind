@@ -172,6 +172,24 @@ export interface SkillInfo {
   enabled: boolean;
 }
 
+/** 代理提交的改进建议（refine-suggest；审批后生效，skill 类型可回滚） */
+export interface RefinementSuggestion {
+  id: string;
+  session_id: string | null;
+  /** "skill:<id>" 或 "system_prompt" */
+  target: string;
+  /** 目标描述中需修改的原文片段 */
+  quote: string;
+  /** 建议的替换/追加文本 */
+  suggested: string;
+  reason: string;
+  /** pending | approved | rejected */
+  status: string;
+  created_at: number;
+  applied_at: number | null;
+  backup_path: string | null;
+}
+
 /** skills.sh 随机抽取的候选（尚未安装） */
 export interface SkillCandidate {
   skill_id: string;
@@ -393,6 +411,24 @@ export const api = {
     }),
   randomSkills: (count = 5) =>
     request<SkillCandidate[]>(`/api/skills/registry/random?count=${count}`),
+
+  listRefinementSuggestions: (status?: string) =>
+    request<RefinementSuggestion[]>(
+      `/api/refinement-suggestions${status ? `?status=${status}` : ""}`,
+    ),
+  approveRefinementSuggestion: (id: string) =>
+    request<{ ok: boolean; backup: string | null }>(
+      `/api/refinement-suggestions/${id}/approve`,
+      { method: "POST" },
+    ),
+  rejectRefinementSuggestion: (id: string) =>
+    request<{ ok: boolean }>(`/api/refinement-suggestions/${id}/reject`, {
+      method: "POST",
+    }),
+  rollbackRefinementSuggestion: (id: string) =>
+    request<{ ok: boolean }>(`/api/refinement-suggestions/${id}/rollback`, {
+      method: "POST",
+    }),
 
   listWorkspace: (dir = "") =>
     request<{ dir: string; entries: FileEntry[] }>(

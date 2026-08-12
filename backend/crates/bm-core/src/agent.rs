@@ -31,7 +31,11 @@ pub const SYSTEM_PROMPT: &str = r#"你是 BoenMind，一个专注工作与知识
 
 派工（subagent 工具）：
 - 派任务时在 task 里写明期望的输出格式（如"最终输出必须是一个 JSON 对象，含字段 summary/findings"），队员会按约定交付。
-- 工具结果末尾的 <subagent-structured-result> 块是每个队员的结构化字段（agent/status/exitCode/output/error 等），取用结果以该块为准，不要依赖正文摘要转述。"#;
+- 工具结果末尾的 <subagent-structured-result> 块是每个队员的结构化字段（agent/status/exitCode/output/error 等），取用结果以该块为准，不要依赖正文摘要转述。
+
+改进建议（submit_refinement_suggestions 工具）：
+- 任务完成后，若发现某个启用中的 skill 的描述（description）或系统提示词存在误导、不准确或明显可改进之处，调用 submit_refinement_suggestions 提交建议（含原文、建议文本、原因）。
+- 建议仅被记录，用户审批后才生效——不要声称已生效；没有可改进之处时绝不调用，同一问题不要重复提交。"#;
 
 /// 从 agent 事件流转出的、面向前端 SSE 的扁平事件。
 #[derive(Debug, Clone, serde::Serialize)]
@@ -68,7 +72,8 @@ pub enum AgentStreamEvent {
 /// `compaction` 为按模型解析的压缩设置（水线/尾部保护），`None` 时走 pi 现有全局行为；
 /// `extension_policy` 为插件权限档位（safe/balanced/permissive，None = 上游默认）；
 /// `extension_allow_dangerous` 为 YOLO 开关（放行 exec/env，经环境变量告知上游）；
-/// `ui_handler` 为插件权限询问出口（能力确认转发给宿主应用，None = 上游 fail-closed 拒绝）。
+/// `ui_handler` 为插件权限询问出口（能力确认转发给宿主应用，None = 上游 fail-closed 拒绝）；
+/// `custom_prompt` 为审批生效的系统提示词追加段（refine-suggest，空串不注入）。
 #[allow(clippy::too_many_arguments)]
 pub async fn create_session_handle(
     provider: &ProviderConfig,
@@ -81,6 +86,7 @@ pub async fn create_session_handle(
     extension_policy: Option<String>,
     extension_allow_dangerous: bool,
     ui_handler: Option<Arc<dyn pi::extension_dispatcher::ExtensionUiHandler + Send + Sync>>,
+    custom_prompt: &str,
 ) -> Result<AgentSessionHandle, pi::sdk::Error> {
     // 注意：调用前需确保 PI_CODING_AGENT_DIR 已设置、models.json 已同步，
     // 见 bm-server 的启动流程（sync_pi_models_json + set_var）
@@ -95,10 +101,10 @@ pub async fn create_session_handle(
     }
     let thinking_level = thinking
         .and_then(|t| t.parse::<pi::model::ThinkingLevel>().ok());
-    let system_prompt = if skills_prompt.is_empty() {
+    let system_prompt = if skills_prompt.is_empty() && custom_prompt.is_empty() {
         SYSTEM_PROMPT.to_string()
     } else {
-        format!("{SYSTEM_PROMPT}{skills_prompt}")
+        format!("{SYSTEM_PROMPT}{skills_prompt}{custom_prompt}")
     };
     let options = SessionOptions {
         provider: Some(provider.kind.pi_name(&provider.id)),

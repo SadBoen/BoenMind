@@ -54,6 +54,9 @@ pub struct AppConfig {
     /// YOLO 开关：放行危险能力（exec / env）。与 permissive 组合 = 全自动放行
     #[serde(default)]
     pub extension_allow_dangerous: Option<bool>,
+    /// 用户批准的系统提示词追加段（refine-suggest 审批生效；拼接在 SYSTEM_PROMPT 之后）
+    #[serde(default)]
+    pub custom_system_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -304,12 +307,14 @@ impl Default for AppConfig {
             enabled_plugins: vec![
                 "ctx-compactor".to_string(), // 官方压缩插件默认启用（新用户开箱即用，可禁用/卸载）
                 "web-search".to_string(),   // 官方搜索插件默认启用（无 key 时优雅降级，设置页配置后生效）
+                "refine-suggest".to_string(), // 官方自我改进建议插件默认启用（仅记录建议，审批后才生效）
             ],
             removed_builtin_plugins: Vec::new(),
             enabled_skills: Vec::new(),
             compaction: CompactionConfig::default(),
             extension_policy: None,
             extension_allow_dangerous: None,
+            custom_system_prompt: None,
         }
     }
 }
@@ -534,6 +539,7 @@ mod tests {
             compaction: CompactionConfig::default(),
             extension_policy: None,
             extension_allow_dangerous: None,
+            custom_system_prompt: None,
         };
         assert_eq!(resolve_provider(&config, Some("missing")).unwrap().id, "b");
         assert_eq!(resolve_model(&config.providers[1], None).unwrap(), "qwen");

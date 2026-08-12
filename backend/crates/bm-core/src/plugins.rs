@@ -26,6 +26,10 @@ pub const BUILTIN_PLUGINS: &[(&str, &str)] = &[
         "web-search",
         "搜索增强：web_search 多源聚合（免费源用量管理与自动切换）+ web_fetch 网页正文提取",
     ),
+    (
+        "refine-suggest",
+        "自我改进建议采集：任务完成后提交针对 skill 描述/系统提示词的改进建议（提交仅记录，用户审批后才生效）",
+    ),
 ];
 
 #[derive(Debug, Clone, Serialize)]

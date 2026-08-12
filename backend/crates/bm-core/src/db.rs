@@ -44,6 +44,42 @@ pub struct Message {
     pub tool_calls: Vec<ToolCall>,
 }
 
+/// 代理提交的改进建议（refine-suggest 插件 + bm-server 截获入库）。
+/// status: pending（待审批）| approved（已批准生效）| rejected（已拒绝）。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RefinementSuggestion {
+    pub id: String,
+    pub session_id: Option<String>,
+    /// "skill:<id>" 或 "system_prompt"
+    pub target: String,
+    /// 目标描述中需修改的原文片段
+    pub quote: String,
+    /// 建议的替换/追加文本
+    pub suggested: String,
+    pub reason: String,
+    pub status: String,
+    pub created_at: i64,
+    /// 批准生效时间（approve 时写入；用于展示"已生效"）
+    pub applied_at: Option<i64>,
+    /// 批准时产生的备份路径（skill 类型生效；rollback 用）
+    pub backup_path: Option<String>,
+}
+
+/// 一次 prompt 回合的任务记录（断线续跑 + 心跳进度的持久化实体）。
+/// status: running | completed | failed | cancelled。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Task {
+    pub id: String,
+    pub session_id: String,
+    pub status: String,
+    /// 心跳进度文本（最近的工具调用摘要/输出尾部）
+    pub progress: String,
+    pub started_at: i64,
+    pub updated_at: i64,
+    pub finished_at: Option<i64>,
+    pub error: Option<String>,
+}
+
 pub struct Db {
     conn: Mutex<Connection>,
 }
@@ -99,6 +135,30 @@ impl Db {
                 is_error   INTEGER NOT NULL DEFAULT 0
             );
             CREATE INDEX IF NOT EXISTS idx_tool_calls_message ON tool_calls(message_id, seq);
+            CREATE TABLE IF NOT EXISTS refinement_suggestions (
+                id         TEXT PRIMARY KEY,
+                session_id TEXT,
+                target     TEXT NOT NULL,
+                quote      TEXT NOT NULL,
+                suggested  TEXT NOT NULL,
+                reason     TEXT NOT NULL,
+                status     TEXT NOT NULL DEFAULT 'pending',
+                created_at INTEGER NOT NULL,
+                applied_at INTEGER,
+                backup_path TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_refine_status ON refinement_suggestions(status);
+            CREATE TABLE IF NOT EXISTS tasks (
+                id          TEXT PRIMARY KEY,
+                session_id  TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                status      TEXT NOT NULL DEFAULT 'running',
+                progress    TEXT NOT NULL DEFAULT '',
+                started_at  INTEGER NOT NULL,
+                updated_at  INTEGER NOT NULL,
+                finished_at INTEGER,
+                error       TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_tasks_session ON tasks(session_id, started_at DESC);
             "#,
         )
         .await?;
@@ -300,6 +360,195 @@ impl Db {
         }
         Ok(messages)
     }
+
+    // ── 代理改进建议（refine-suggest 插件 + bm-server 截获入库）─────────
+
+    pub async fn insert_refinement_suggestion(
+        &self,
+        id: &str,
+        session_id: Option<&str>,
+        target: &str,
+        quote: &str,
+        suggested: &str,
+        reason: &str,
+    ) -> Result<(), turso::Error> {
+        let ts = now_ts();
+        self.conn.lock().await.execute(
+            "INSERT INTO refinement_suggestions
+             (id, session_id, target, quote, suggested, reason, status, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending', ?7)",
+            (id, session_id, target, quote, suggested, reason, ts),
+        ).await?;
+        Ok(())
+    }
+
+    pub async fn list_refinement_suggestions(
+        &self,
+        status_filter: Option<&str>,
+    ) -> Result<Vec<RefinementSuggestion>, turso::Error> {
+        let conn = self.conn.lock().await;
+        let mut out = Vec::new();
+        if let Some(status) = status_filter {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, session_id, target, quote, suggested, reason, status, created_at, applied_at, backup_path
+                     FROM refinement_suggestions WHERE status = ?1 ORDER BY created_at DESC",
+                )
+                .await?;
+            let mut rows = stmt.query([status]).await?;
+            while let Some(row) = rows.next().await? {
+                out.push(row_to_suggestion(&row)?);
+            }
+        } else {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, session_id, target, quote, suggested, reason, status, created_at, applied_at, backup_path
+                     FROM refinement_suggestions ORDER BY created_at DESC",
+                )
+                .await?;
+            let mut rows = stmt.query(()).await?;
+            while let Some(row) = rows.next().await? {
+                out.push(row_to_suggestion(&row)?);
+            }
+        }
+        Ok(out)
+    }
+
+    /// 更新建议状态（pending → approved/rejected）；approved 时写入 applied_at。
+    pub async fn set_refinement_suggestion_status(
+        &self,
+        id: &str,
+        status: &str,
+    ) -> Result<(), turso::Error> {
+        let ts = now_ts();
+        self.conn.lock().await.execute(
+            "UPDATE refinement_suggestions SET status = ?1,
+             applied_at = CASE WHEN ?1 = 'approved' THEN ?2 ELSE applied_at END
+             WHERE id = ?3",
+            (status, ts, id),
+        ).await?;
+        Ok(())
+    }
+
+    /// 记录批准产生的备份路径（rollback 用）。
+    pub async fn set_refinement_suggestion_backup(
+        &self,
+        id: &str,
+        backup_path: &str,
+    ) -> Result<(), turso::Error> {
+        self.conn.lock().await.execute(
+            "UPDATE refinement_suggestions SET backup_path = ?1 WHERE id = ?2",
+            (backup_path, id),
+        ).await?;
+        Ok(())
+    }
+
+    /// 回滚后重置：状态回到 pending（可重新审批），清空生效信息。
+    pub async fn reset_refinement_suggestion(&self, id: &str) -> Result<(), turso::Error> {
+        self.conn.lock().await.execute(
+            "UPDATE refinement_suggestions
+             SET status = 'pending', applied_at = NULL, backup_path = NULL
+             WHERE id = ?1",
+            (id,),
+        ).await?;
+        Ok(())
+    }
+
+    pub async fn get_refinement_suggestion(
+        &self,
+        id: &str,
+    ) -> Result<Option<RefinementSuggestion>, turso::Error> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, session_id, target, quote, suggested, reason, status, created_at, applied_at, backup_path
+                 FROM refinement_suggestions WHERE id = ?1",
+            )
+            .await?;
+        let mut rows = stmt.query([id]).await?;
+        let Some(row) = rows.next().await? else {
+            return Ok(None);
+        };
+        Ok(Some(row_to_suggestion(&row)?))
+    }
+
+    // ── 任务（断线续跑 + 心跳进度；每 prompt 回合一条）───────────────
+
+    pub async fn create_task(&self, id: &str, session_id: &str) -> Result<(), turso::Error> {
+        let ts = now_ts();
+        self.conn.lock().await.execute(
+            "INSERT INTO tasks (id, session_id, status, progress, started_at, updated_at)
+             VALUES (?1, ?2, 'running', '', ?3, ?3)",
+            (id, session_id, ts),
+        ).await?;
+        Ok(())
+    }
+
+    /// 更新心跳进度（调用方控制频率；此处每次更新 updated_at）。
+    pub async fn update_task_progress(&self, id: &str, progress: &str) -> Result<(), turso::Error> {
+        let ts = now_ts();
+        self.conn.lock().await.execute(
+            "UPDATE tasks SET progress = ?1, updated_at = ?2 WHERE id = ?3",
+            (progress, ts, id),
+        ).await?;
+        Ok(())
+    }
+
+    /// 结束任务（completed / failed / cancelled）。
+    pub async fn finish_task(
+        &self,
+        id: &str,
+        status: &str,
+        error: Option<&str>,
+    ) -> Result<(), turso::Error> {
+        let ts = now_ts();
+        self.conn.lock().await.execute(
+            "UPDATE tasks SET status = ?1, error = ?2, updated_at = ?3, finished_at = ?3
+             WHERE id = ?4",
+            (status, error, ts, id),
+        ).await?;
+        Ok(())
+    }
+
+    pub async fn list_tasks(&self, session_id: &str) -> Result<Vec<Task>, turso::Error> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, session_id, status, progress, started_at, updated_at, finished_at, error
+                 FROM tasks WHERE session_id = ?1 ORDER BY started_at DESC",
+            )
+            .await?;
+        let mut rows = stmt.query([session_id]).await?;
+        let mut tasks = Vec::new();
+        while let Some(row) = rows.next().await? {
+            tasks.push(Task {
+                id: row.get(0)?,
+                session_id: row.get(1)?,
+                status: row.get(2)?,
+                progress: row.get(3)?,
+                started_at: row.get(4)?,
+                updated_at: row.get(5)?,
+                finished_at: row.get(6)?,
+                error: row.get(7)?,
+            });
+        }
+        Ok(tasks)
+    }
+}
+
+fn row_to_suggestion(row: &turso::Row) -> Result<RefinementSuggestion, turso::Error> {
+    Ok(RefinementSuggestion {
+        id: row.get(0)?,
+        session_id: row.get(1)?,
+        target: row.get(2)?,
+        quote: row.get(3)?,
+        suggested: row.get(4)?,
+        reason: row.get(5)?,
+        status: row.get(6)?,
+        created_at: row.get(7)?,
+        applied_at: row.get(8)?,
+        backup_path: row.get(9)?,
+    })
 }
 
 #[cfg(test)]

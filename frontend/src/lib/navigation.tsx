@@ -11,6 +11,7 @@ import {
   FolderOpen,
   Images,
   Info,
+  Lightbulb,
   MessageSquare,
   MonitorCog,
   Palette,
@@ -27,6 +28,7 @@ import { AboutSettings } from "@/components/settings/AboutSettings";
 import { AppearanceSettings } from "@/components/settings/AppearanceSettings";
 import { PluginsSettings } from "@/components/settings/PluginsSettings";
 import { ProviderSettings } from "@/components/settings/ProviderSettings";
+import { RefinementSettings } from "@/components/settings/RefinementSettings";
 import { SkillsSettings } from "@/components/settings/SkillsSettings";
 import { WorkspaceSettings } from "@/components/settings/WorkspaceSettings";
 import { useAppStore } from "@/stores/app-store";
@@ -38,6 +40,7 @@ export type SettingsTab =
   | "workspace"
   | "plugins"
   | "skills"
+  | "refinement"
   | "about";
 
 export interface NavEntry {
@@ -116,6 +119,12 @@ export const SETTINGS: Record<SettingsTab, SettingsEntry> = {
     descKey: "settings.menu.skillsDesc",
     icon: <Wand2 size={16} />,
     component: SkillsSettings,
+  },
+  refinement: {
+    labelKey: "settings.menu.refinement",
+    descKey: "settings.menu.refinementDesc",
+    icon: <Lightbulb size={16} />,
+    component: RefinementSettings,
   },
   about: {
     labelKey: "settings.menu.about",

@@ -279,7 +279,7 @@ async fn get_or_create_agent(
     }
 
     // 新建句柄所需的配置字段一次读锁取齐（避免多次串行读锁）
-    let (working_dir, extension_paths, skills_prompt, compaction, extension_policy, extension_allow_dangerous) = {
+    let (working_dir, extension_paths, skills_prompt, compaction, extension_policy, extension_allow_dangerous, custom_prompt) = {
         let config = state.config.read().await;
         (
             config.working_dir.clone(),
@@ -292,6 +292,7 @@ async fn get_or_create_agent(
             ),
             config.extension_policy.clone(),
             config.extension_allow_dangerous.unwrap_or(false),
+            config.custom_system_prompt.clone().unwrap_or_default(),
         )
     };
 
@@ -313,6 +314,7 @@ async fn get_or_create_agent(
         extension_policy,
         extension_allow_dangerous,
         ui_handler,
+        &custom_prompt,
     )
     .await
     .map_err(|err| (StatusCode::BAD_GATEWAY, format!("创建 agent 会话失败: {err}")))?;
@@ -455,6 +457,41 @@ async fn run_prompt_and_persist(
             }
         let _ = state.db.touch_session(&session_id).await;
     }
+
+    // refine-suggest 截获：代理调用 submit_refinement_suggestions 提交的改进建议
+    // 在此入库（status=pending，用户审批后才生效）。工具调用参数已在 done_tools 中。
+    for (name, args, is_error) in &done_tools {
+        if name != "submit_refinement_suggestions" || *is_error {
+            continue;
+        }
+        let (Some(target), Some(quote), Some(suggested), Some(reason)) = (
+            args.get("target").and_then(serde_json::Value::as_str),
+            args.get("quote").and_then(serde_json::Value::as_str),
+            args.get("suggested").and_then(serde_json::Value::as_str),
+            args.get("reason").and_then(serde_json::Value::as_str),
+        ) else {
+            continue;
+        };
+        let suggestion_id = uuid::Uuid::new_v4().to_string();
+        match state
+            .db
+            .insert_refinement_suggestion(&suggestion_id, Some(&session_id), target, quote, suggested, reason)
+            .await
+        {
+            Ok(()) => tracing::info!(
+                event = "bm.refine_suggestion_recorded",
+                suggestion = %suggestion_id,
+                target = %target,
+                session = %session_id,
+            ),
+            Err(err) => tracing::warn!(
+                event = "bm.refine_suggestion_record_failed",
+                error = %err,
+                session = %session_id,
+            ),
+        }
+    }
+
     // 兜底补发终态事件（pi 取消路径不发 AgentEnd；失败且未发 error 时补 error）
     if !done_sent.load(std::sync::atomic::Ordering::Relaxed) {
         let terminal = if result.is_err() {
