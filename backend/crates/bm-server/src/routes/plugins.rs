@@ -5,7 +5,7 @@ use bm_core::workspace;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::{ApiResult, api_error};
+use crate::{ApiResult, api_error, api_error_from};
 
 // ---------------------------------------------------------------------------
 // 插件
@@ -30,7 +30,7 @@ pub async fn set_plugin(
 ) -> ApiResult<Json<serde_json::Value>> {
     let mut config = state.config.write().await;
     bm_core::plugins::set_plugin_enabled(&mut config, &id, req.enabled)
-        .map_err(|err| api_error(StatusCode::BAD_REQUEST, err))?;
+        .map_err(api_error_from)?;
     // 插件启停影响 agent 会话创建，需同步 models.json 之外的配置（无需重启）
     drop(config);
     Ok(Json(serde_json::json!({ "ok": true })))
@@ -42,7 +42,7 @@ pub async fn uninstall_plugin(
 ) -> ApiResult<Json<serde_json::Value>> {
     let mut config = state.config.write().await;
     bm_core::plugins::uninstall_plugin(&mut config, &id)
-        .map_err(|err| api_error(StatusCode::BAD_REQUEST, err))?;
+        .map_err(api_error_from)?;
     drop(config);
     Ok(Json(serde_json::json!({ "ok": true })))
 }
@@ -56,7 +56,7 @@ pub async fn install_plugin(
     Json(req): Json<InstallPluginRequest>,
 ) -> ApiResult<Json<bm_core::plugins::PluginInfo>> {
     let info = bm_core::plugins::install_plugin(std::path::Path::new(&req.path))
-        .map_err(|err| api_error(StatusCode::BAD_REQUEST, err))?;
+        .map_err(api_error_from)?;
     // 安装后默认禁用，由用户在 UI 启用
     Ok(Json(info))
 }
@@ -242,7 +242,7 @@ pub async fn put_plugin_settings(
         .await?
         .ok_or_else(|| api_error(StatusCode::NOT_FOUND, "插件不存在或无设置页"))?;
     bm_core::plugin_settings::save_settings(&id, &schema, &req.values)
-        .map_err(|err| api_error(StatusCode::BAD_REQUEST, err))?;
+        .map_err(api_error_from)?;
     let settings = bm_core::plugin_settings::read_settings_masked(&id, &schema);
     Ok(Json(serde_json::json!({ "ok": true, "settings": settings })))
 }

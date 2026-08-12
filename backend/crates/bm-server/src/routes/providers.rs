@@ -4,7 +4,7 @@ use axum::{Json, extract::{Query, State}, http::StatusCode};
 use bm_core::config::ProviderKind;
 use serde::Deserialize;
 
-use crate::{ApiResult, api_error};
+use crate::{ApiResult, api_error, api_error_from};
 
 /// 请求体中的 kind 字符串解析为枚举：拼写/大小写错误在此显式 400，
 /// 不会静默落入 custom 语义（旧签名收裸字符串时的问题）。
@@ -48,7 +48,7 @@ pub async fn list_provider_models(
 
     match result {
         Ok(models) => Ok(Json(serde_json::json!({ "models": models }))),
-        Err(msg) => Err(api_error(StatusCode::BAD_GATEWAY, msg)),
+        Err(err) => Err(api_error_from(err)),
     }
 }
 
@@ -84,7 +84,7 @@ pub async fn test_provider(
 
     match result {
         Ok(detail) => Ok(Json(serde_json::json!({ "ok": true, "detail": detail }))),
-        Err(msg) => Err(api_error(StatusCode::BAD_GATEWAY, msg)),
+        Err(err) => Err(api_error_from(err)),
     }
 }
 // ---------------------------------------------------------------------------

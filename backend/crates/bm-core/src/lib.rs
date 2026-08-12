@@ -6,6 +6,7 @@ pub mod agent;
 pub mod compaction;
 pub mod config;
 pub mod db;
+pub mod error;
 mod http_util;
 pub mod plugin_settings;
 pub mod plugin_test;
@@ -17,3 +18,4 @@ pub mod workspace;
 
 pub use config::{AppConfig, ProviderConfig, ProviderKind};
 pub use db::Db;
+pub use error::AppError;

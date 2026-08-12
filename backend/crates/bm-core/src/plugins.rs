@@ -9,6 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::config::{AppConfig, app_dir};
+use crate::error::AppError;
 use crate::http_util::copy_dir_excluding;
 
 /// 插件根目录名（位于 ~/.boenmind 下）
@@ -165,24 +166,24 @@ fn describe_plugin(path: &Path, fallback: &str) -> String {
 }
 
 /// 安装插件：复制源路径（文件或目录）到插件根目录。
-pub fn install_plugin(source: &Path) -> Result<PluginInfo, String> {
+pub fn install_plugin(source: &Path) -> Result<PluginInfo, AppError> {
     let dir = plugins_dir();
-    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    fs::create_dir_all(&dir)?;
     let name = source
         .file_name()
         .and_then(|n| n.to_str())
-        .ok_or_else(|| "无效的插件路径".to_string())?;
+        .ok_or_else(|| AppError::invalid("无效的插件路径"))?;
     if !(name.ends_with(".ts") || source.is_dir()) {
-        return Err("仅支持 .ts 扩展文件或插件目录".to_string());
+        return Err(AppError::invalid("仅支持 .ts 扩展文件或插件目录"));
     }
     let dest = dir.join(name);
     if dest.exists() {
-        return Err(format!("插件 {name} 已存在"));
+        return Err(AppError::invalid(format!("插件 {name} 已存在")));
     }
     if source.is_dir() {
-        copy_dir_excluding(source, &dest, &[]).map_err(|e| e.to_string())?;
+        copy_dir_excluding(source, &dest, &[])?;
     } else {
-        fs::copy(source, &dest).map_err(|e| e.to_string())?;
+        fs::copy(source, &dest)?;
     }
     let id = name.strip_suffix(".ts").unwrap_or(name).to_string();
     Ok(PluginInfo {
@@ -203,7 +204,7 @@ pub fn set_plugin_enabled(
     config: &mut AppConfig,
     id: &str,
     enabled: bool,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     if enabled {
         if !config.enabled_plugins.iter().any(|p| p == id) {
             config.enabled_plugins.push(id.to_string());
@@ -211,7 +212,8 @@ pub fn set_plugin_enabled(
     } else {
         config.enabled_plugins.retain(|p| p != id);
     }
-    crate::config::save(config).map_err(|e| e.to_string())
+    crate::config::save(config)?;
+    Ok(())
 }
 
 /// 当前启用的插件路径列表（供 agent 会话加载）。
@@ -238,16 +240,17 @@ pub fn enabled_extension_paths(config: &AppConfig) -> Vec<PathBuf> {
 
 /// 卸载插件：删除文件/目录并从启用列表移除。
 /// 内置插件同样可卸载；卸载后写入 removed_builtin_plugins，启动预装时不再恢复。
-pub fn uninstall_plugin(config: &mut AppConfig, id: &str) -> Result<(), String> {
+pub fn uninstall_plugin(config: &mut AppConfig, id: &str) -> Result<(), AppError> {
     let dir = plugins_dir();
     let file = dir.join(format!("{id}.ts"));
     let dir_plugin = dir.join(id);
     if file.exists() {
-        fs::remove_file(&file).map_err(|e| format!("删除插件文件失败: {e}"))?;
+        fs::remove_file(&file).map_err(|e| AppError::internal(format!("删除插件文件失败: {e}")))?;
     } else if dir_plugin.exists() {
-        fs::remove_dir_all(&dir_plugin).map_err(|e| format!("删除插件目录失败: {e}"))?;
+        fs::remove_dir_all(&dir_plugin)
+            .map_err(|e| AppError::internal(format!("删除插件目录失败: {e}")))?;
     } else {
-        return Err(format!("插件 {id} 不存在"));
+        return Err(AppError::invalid(format!("插件 {id} 不存在")));
     }
     config.enabled_plugins.retain(|p| p != id);
     // 内置插件记录到"已卸载"列表，避免下次启动被 ensure_builtin_plugins 重新预装
@@ -256,7 +259,7 @@ pub fn uninstall_plugin(config: &mut AppConfig, id: &str) -> Result<(), String> 
     {
         config.removed_builtin_plugins.push(id.to_string());
     }
-    crate::config::save(config).map_err(|e| e.to_string())?;
+    crate::config::save(config)?;
     Ok(())
 }
 

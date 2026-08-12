@@ -168,6 +168,27 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn app_error_maps_to_http_status() {
+        use bm_core::AppError;
+        // 分类 → 状态码集中映射
+        assert_eq!(
+            api_error_from(AppError::Invalid("参数错误".into())).0,
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            api_error_from(AppError::Upstream("网络错误".into())).0,
+            StatusCode::BAD_GATEWAY
+        );
+        assert_eq!(
+            api_error_from(AppError::Internal("IO 错误".into())).0,
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        // 错误消息透传（前端 toast 直接展示）
+        let (_, body) = api_error_from(AppError::Invalid("参数错误".into()));
+        assert_eq!(body.0, serde_json::json!({ "error": "参数错误" }));
+    }
 }
 
 /// 可选的访问令牌守卫：`BOENMIND_TOKEN` 环境变量设置后，所有 /api 请求必须带
@@ -291,6 +312,16 @@ pub fn api_error(status: StatusCode, message: impl Into<String>) -> (StatusCode,
         status,
         axum::Json(serde_json::json!({ "error": message.into() })),
     )
+}
+
+/// 领域层错误 → HTTP 响应：按分类集中映射状态码（不再在路由层手工选）。
+/// Invalid → 400、Upstream → 502、Internal → 500。
+pub fn api_error_from(err: bm_core::AppError) -> (StatusCode, axum::Json<serde_json::Value>) {
+    match err {
+        bm_core::AppError::Invalid(msg) => api_error(StatusCode::BAD_REQUEST, msg),
+        bm_core::AppError::Upstream(msg) => api_error(StatusCode::BAD_GATEWAY, msg),
+        bm_core::AppError::Internal(msg) => api_error(StatusCode::INTERNAL_SERVER_ERROR, msg),
+    }
 }
 
 /// 提取 state 的便捷写法（供 handlers 使用）。

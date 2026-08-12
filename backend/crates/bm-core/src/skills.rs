@@ -18,6 +18,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use crate::config::{AppConfig, pi_agent_dir};
+use crate::error::AppError;
 use crate::http_util::{copy_dir_excluding, http_agent};
 
 /// 管理目录名（位于 ~/.boenmind 下）
@@ -215,29 +216,29 @@ pub fn list_skills(config: &AppConfig) -> Result<Vec<SkillInfo>, std::io::Error>
 // ---------------------------------------------------------------------------
 
 /// 从 skills.sh（GitHub 仓库）安装 skill。
-pub fn install_skill_from_github(owner: &str, repo: &str, skill_id: &str) -> Result<SkillInfo, String> {
+pub fn install_skill_from_github(owner: &str, repo: &str, skill_id: &str) -> Result<SkillInfo, AppError> {
     if !is_valid_skill_id(skill_id) {
-        return Err(format!("非法的 skill id: {skill_id}"));
+        return Err(AppError::invalid(format!("非法的 skill id: {skill_id}")));
     }
     if !is_valid_skill_id(owner) || !is_valid_skill_id(repo) {
-        return Err(format!("非法的仓库名: {owner}/{repo}"));
+        return Err(AppError::invalid(format!("非法的仓库名: {owner}/{repo}")));
     }
 
     // 1. 下载仓库 tarball 到临时目录。
     //    不查 GitHub API（未认证限流 60 req/h），直接试 main → master 两个常用分支
     let tmp = std::env::temp_dir().join(format!("bm-skill-{}-{}", std::process::id(), skill_id));
     let _ = fs::remove_dir_all(&tmp);
-    fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
+    fs::create_dir_all(&tmp)?;
     let archive_path = tmp.join("repo.tar.gz");
     let mut archive_body: Option<Vec<u8>> = None;
     for branch in ["main", "master"] {
         let tar_url = format!("https://codeload.github.com/{owner}/{repo}/tar.gz/{branch}");
-        let download = (|| -> Result<Option<Vec<u8>>, String> {
+        let download = (|| -> Result<Option<Vec<u8>>, AppError> {
             let resp = http_agent()
                 .get(&tar_url)
                 .header("User-Agent", "BoenMind")
                 .call()
-                .map_err(|e| format!("下载仓库失败: {e}"))?;
+                .map_err(|e| AppError::upstream(format!("下载仓库失败: {e}")))?;
             match resp.status().as_u16() {
                 // read_to_vec 默认 10MB 上限，聚合类仓库（如 agentic-awesome-skills）会超限
                 200 => resp
@@ -246,9 +247,9 @@ pub fn install_skill_from_github(owner: &str, repo: &str, skill_id: &str) -> Res
                     .limit(128 * 1024 * 1024)
                     .read_to_vec()
                     .map(Some)
-                    .map_err(|e| format!("读取仓库数据失败: {e}")),
+                    .map_err(|e| AppError::upstream(format!("读取仓库数据失败: {e}"))),
                 404 => Ok(None), // 分支不存在，尝试下一个
-                code => Err(format!("下载仓库失败: HTTP {code}")),
+                code => Err(AppError::upstream(format!("下载仓库失败: HTTP {code}"))),
             }
         })();
         match download {
@@ -263,32 +264,30 @@ pub fn install_skill_from_github(owner: &str, repo: &str, skill_id: &str) -> Res
             }
         }
     }
-    let body = archive_body.ok_or_else(|| format!("仓库 {owner}/{repo} 不存在（main/master 均 404）"))?;
-    if let Err(err) = fs::write(&archive_path, &body) {
-        let _ = fs::remove_dir_all(&tmp);
-        return Err(err.to_string());
-    }
+    let body = archive_body
+        .ok_or_else(|| AppError::upstream(format!("仓库 {owner}/{repo} 不存在（main/master 均 404）")))?;
+    fs::write(&archive_path, &body)?;
 
     // 2. 解压，定位 skill 目录
     let root = match unpack_tarball(&archive_path, &tmp) {
         Ok(r) => r,
         Err(err) => {
             let _ = fs::remove_dir_all(&tmp);
-            return Err(format!("解压仓库失败: {err}"));
+            return Err(AppError::upstream(format!("解压仓库失败: {err}")));
         }
     };
     let skill_dir = find_skill_dir(&root, skill_id)
-        .ok_or_else(|| format!("仓库 {owner}/{repo} 中未找到 skill 目录 {skill_id}（无 SKILL.md）"))?;
+        .ok_or_else(|| AppError::invalid(format!("仓库 {owner}/{repo} 中未找到 skill 目录 {skill_id}（无 SKILL.md）")))?;
 
     // 3. 复制到管理目录
     let dest = skills_dir().join(skill_id);
     if dest.exists() {
         let _ = fs::remove_dir_all(&tmp);
-        return Err(format!("skill {skill_id} 已安装"));
+        return Err(AppError::invalid(format!("skill {skill_id} 已安装")));
     }
-    let result = (|| -> Result<(), String> {
-        fs::create_dir_all(skills_dir()).map_err(|e| e.to_string())?;
-        copy_dir_excluding(&skill_dir, &dest, &[]).map_err(|e| e.to_string())?;
+    let result = (|| -> Result<(), AppError> {
+        fs::create_dir_all(skills_dir())?;
+        copy_dir_excluding(&skill_dir, &dest, &[])?;
         write_meta(&dest, owner, repo, skill_id, "registry")
     })();
     let _ = fs::remove_dir_all(&tmp);
@@ -307,40 +306,39 @@ pub fn install_skill_from_github(owner: &str, repo: &str, skill_id: &str) -> Res
 }
 
 /// 从本地路径安装 skill：含 SKILL.md 的目录或单个 .md 文件。
-pub fn install_skill_from_path(source: &Path) -> Result<SkillInfo, String> {
+pub fn install_skill_from_path(source: &Path) -> Result<SkillInfo, AppError> {
     let id = source
         .file_name()
         .and_then(|n| n.to_str())
-        .ok_or_else(|| "无效的 skill 路径".to_string())?;
+        .ok_or_else(|| AppError::invalid("无效的 skill 路径"))?;
     let id = id.strip_suffix(".md").unwrap_or(id).to_string();
     if !is_valid_skill_id(&id) {
-        return Err(format!("非法的 skill id: {id}"));
+        return Err(AppError::invalid(format!("非法的 skill id: {id}")));
     }
     let dest = skills_dir().join(&id);
     if dest.exists() {
-        return Err(format!("skill {id} 已安装"));
+        return Err(AppError::invalid(format!("skill {id} 已安装")));
     }
-    fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
+    fs::create_dir_all(&dest)?;
     if source.is_dir() {
         if !source.join("SKILL.md").is_file() && !source.join(format!("{id}.md")).is_file() {
             let _ = fs::remove_dir_all(&dest);
-            return Err("目录中未找到 SKILL.md".to_string());
+            return Err(AppError::invalid("目录中未找到 SKILL.md"));
         }
-        copy_dir_excluding(source, &dest, &[]).map_err(|e| e.to_string())?;
+        copy_dir_excluding(source, &dest, &[])?;
         // 目录布局与 skills.sh 不同时补一层 SKILL.md
         if !dest.join("SKILL.md").is_file() {
-            fs::copy(source.join(format!("{id}.md")), dest.join("SKILL.md")).map_err(|e| e.to_string())?;
+            fs::copy(source.join(format!("{id}.md")), dest.join("SKILL.md"))?;
         }
         write_meta(&dest, "", "", &id, "local")
     } else {
         if !id.ends_with(".md") && !source.extension().is_some_and(|e| e == "md") {
             let _ = fs::remove_dir_all(&dest);
-            return Err("仅支持 .md 文件或含 SKILL.md 的目录".to_string());
+            return Err(AppError::invalid("仅支持 .md 文件或含 SKILL.md 的目录"));
         }
-        fs::copy(source, dest.join("SKILL.md")).map_err(|e| e.to_string())?;
+        fs::copy(source, dest.join("SKILL.md"))?;
         write_meta(&dest, "", "", &id, "local")
-    }
-    .map_err(|e| e.to_string())?;
+    }?;
 
     let (name, description) = describe_skill_dir(&dest, &id);
     Ok(SkillInfo {
@@ -356,17 +354,17 @@ pub fn install_skill_from_path(source: &Path) -> Result<SkillInfo, String> {
 
 /// 从 tarball 解压出仓库根目录（安全解压：拒绝绝对路径与 `..`，解压总量限 512MB
 /// 防 zip-bomb——下载限 128MB 的压缩包可膨胀到 GB 级撑满磁盘）。
-fn unpack_tarball(archive_path: &Path, tmp: &Path) -> Result<PathBuf, String> {
+fn unpack_tarball(archive_path: &Path, tmp: &Path) -> Result<PathBuf, AppError> {
     const MAX_UNPACK_BYTES: u64 = 512 * 1024 * 1024;
-    let file = fs::File::open(archive_path).map_err(|e| e.to_string())?;
+    let file = fs::File::open(archive_path)?;
     let gz = flate2::read::GzDecoder::new(file);
     let mut archive = tar::Archive::new(gz);
     let base = tmp.join("repo");
-    let entries = archive.entries().map_err(|e| e.to_string())?;
+    let entries = archive.entries().map_err(|e| AppError::internal(e.to_string()))?;
     let mut total: u64 = 0;
     for entry in entries {
-        let mut entry = entry.map_err(|e| e.to_string())?;
-        let path = entry.path().map_err(|e| e.to_string())?.to_path_buf();
+        let mut entry = entry.map_err(|e| AppError::internal(e.to_string()))?;
+        let path = entry.path().map_err(|e| AppError::internal(e.to_string()))?.to_path_buf();
         // GitHub tarball 首个条目是 pax_global_header（tar 全局头），跳过
         if path.file_name().is_some_and(|n| n == "pax_global_header") {
             continue;
@@ -379,28 +377,28 @@ fn unpack_tarball(archive_path: &Path, tmp: &Path) -> Result<PathBuf, String> {
         let mut target = base.join(top);
         for comp in components {
             let std::path::Component::Normal(name) = comp else {
-                return Err("tarball 含非法路径".to_string());
+                return Err(AppError::invalid("tarball 含非法路径"));
             };
             target.push(name);
         }
         if entry.header().entry_type().is_dir() {
-            fs::create_dir_all(&target).map_err(|e| e.to_string())?;
+            fs::create_dir_all(&target)?;
         } else if entry.header().entry_type().is_file() {
             if let Some(parent) = target.parent() {
-                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                fs::create_dir_all(parent)?;
             }
-            let mut out = fs::File::create(&target).map_err(|e| e.to_string())?;
-            let n = std::io::copy(&mut entry, &mut out).map_err(|e| e.to_string())?;
+            let mut out = fs::File::create(&target)?;
+            let n = std::io::copy(&mut entry, &mut out)?;
             total += n;
             if total > MAX_UNPACK_BYTES {
-                return Err("tarball 解压超限（>512MB）".to_string());
+                return Err(AppError::invalid("tarball 解压超限（>512MB）"));
             }
         }
     }
     // 仓库根 = base 下第一个目录（tarball 根为 {repo}-{branch}/）
-    let mut read = fs::read_dir(&base).map_err(|e| e.to_string())?;
+    let mut read = fs::read_dir(&base)?;
     read.find_map(|e| e.ok().map(|e| e.path()).filter(|p| p.is_dir()))
-        .ok_or_else(|| "仓库内容为空".to_string())
+        .ok_or_else(|| AppError::upstream("仓库内容为空"))
 }
 
 /// 在仓库根下探测 skill 目录：skills/{id}/、{id}/、根。
@@ -436,15 +434,16 @@ fn meta_path(dir: &Path) -> PathBuf {
     dir.join(".bm-meta.json")
 }
 
-fn write_meta(dir: &Path, owner: &str, repo: &str, skill_id: &str, source: &str) -> Result<(), String> {
+fn write_meta(dir: &Path, owner: &str, repo: &str, skill_id: &str, source: &str) -> Result<(), AppError> {
     let meta = SkillMeta {
         owner: owner.to_string(),
         repo: repo.to_string(),
         skill_id: skill_id.to_string(),
         source: source.to_string(),
     };
-    let text = serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?;
-    fs::write(meta_path(dir), text).map_err(|e| e.to_string())
+    let text = serde_json::to_string_pretty(&meta).map_err(|e| AppError::internal(e.to_string()))?;
+    fs::write(meta_path(dir), text)?;
+    Ok(())
 }
 
 fn read_meta(dir: &Path) -> Option<SkillMeta> {
@@ -459,15 +458,15 @@ fn read_meta(dir: &Path) -> Option<SkillMeta> {
 
 /// 启用/禁用 skill：更新 config，并把目录同步到/移出 pi 的 skills 目录
 /// （pi 启动时会话只收集 pi/skills 下的 SKILL.md，目录即开关）。
-pub fn set_skill_enabled(config: &mut AppConfig, id: &str, enabled: bool) -> Result<(), String> {
+pub fn set_skill_enabled(config: &mut AppConfig, id: &str, enabled: bool) -> Result<(), AppError> {
     let src = skills_dir().join(id);
     if !src.join("SKILL.md").is_file() {
-        return Err(format!("skill {id} 未安装"));
+        return Err(AppError::invalid(format!("skill {id} 未安装")));
     }
     let pi_dir = pi_skills_dir().join(id);
     if enabled {
-        fs::create_dir_all(&pi_dir).map_err(|e| e.to_string())?;
-        copy_dir_excluding(&src, &pi_dir, &[".bm-meta.json"]).map_err(|e| e.to_string())?;
+        fs::create_dir_all(&pi_dir)?;
+        copy_dir_excluding(&src, &pi_dir, &[".bm-meta.json"])?;
         if !config.enabled_skills.iter().any(|s| s == id) {
             config.enabled_skills.push(id.to_string());
         }
@@ -475,14 +474,15 @@ pub fn set_skill_enabled(config: &mut AppConfig, id: &str, enabled: bool) -> Res
         let _ = fs::remove_dir_all(&pi_dir);
         config.enabled_skills.retain(|s| s != id);
     }
-    crate::config::save(config).map_err(|e| e.to_string())
+    crate::config::save(config)?;
+    Ok(())
 }
 
 /// 按配置收敛 pi/skills 目录（`put_config` 直接替换 enabled_skills 时调用，
 /// 与 set_skill_enabled 的启停语义保持一致）：
 /// - 启用且已安装的：确保 pi 目录存在（不存在则复制）
 /// - 未启用/已卸载的：移出 pi 目录
-pub fn sync_skills_to_pi(config: &AppConfig) -> Result<(), String> {
+pub fn sync_skills_to_pi(config: &AppConfig) -> Result<(), AppError> {
     // 1. 移除 pi 目录中不在启用列表的 skill（含已卸载残留）
     if let Ok(read) = fs::read_dir(pi_skills_dir()) {
         for entry in read.flatten() {
@@ -502,21 +502,22 @@ pub fn sync_skills_to_pi(config: &AppConfig) -> Result<(), String> {
         if pi_dir.exists() {
             continue;
         }
-        fs::create_dir_all(&pi_dir).map_err(|e| e.to_string())?;
-        copy_dir_excluding(&src, &pi_dir, &[".bm-meta.json"]).map_err(|e| e.to_string())?;
+        fs::create_dir_all(&pi_dir)?;
+        copy_dir_excluding(&src, &pi_dir, &[".bm-meta.json"])?;
     }
     Ok(())
 }
 
 /// 卸载：删除管理目录、pi 目录，并移出启用列表。
-pub fn uninstall_skill(config: &mut AppConfig, id: &str) -> Result<(), String> {
+pub fn uninstall_skill(config: &mut AppConfig, id: &str) -> Result<(), AppError> {
     let dir = skills_dir().join(id);
     if dir.exists() {
-        fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+        fs::remove_dir_all(&dir)?;
     }
     let _ = fs::remove_dir_all(pi_skills_dir().join(id));
     config.enabled_skills.retain(|s| s != id);
-    crate::config::save(config).map_err(|e| e.to_string())
+    crate::config::save(config)?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -524,7 +525,7 @@ pub fn uninstall_skill(config: &mut AppConfig, id: &str) -> Result<(), String> {
 // ---------------------------------------------------------------------------
 
 /// 抓取 sitemap 并解析全部 skill 引用（带内存缓存）。
-fn fetch_all_skill_refs() -> Result<Vec<SkillRef>, String> {
+fn fetch_all_skill_refs() -> Result<Vec<SkillRef>, AppError> {
     static CACHE: Mutex<Option<(Instant, Vec<SkillRef>)>> = Mutex::new(None);
     {
         let cache = CACHE.lock().unwrap();
@@ -539,17 +540,17 @@ fn fetch_all_skill_refs() -> Result<Vec<SkillRef>, String> {
             .get(url)
             .header("User-Agent", "BoenMind")
             .call()
-            .map_err(|e| format!("抓取 skills.sh 目录失败: {e}"))?;
+            .map_err(|e| AppError::upstream(format!("抓取 skills.sh 目录失败: {e}")))?;
         let body = resp
             .into_body()
             .into_with_config()
             .limit(64 * 1024 * 1024) // sitemap 全量目录可能超默认 10MB
             .read_to_string()
-            .map_err(|e| format!("读取目录失败: {e}"))?;
+            .map_err(|e| AppError::upstream(format!("读取目录失败: {e}")))?;
         parse_sitemap_urls(&body, &mut refs);
     }
     if refs.is_empty() {
-        return Err("skills.sh 目录为空（网络或站点问题）".to_string());
+        return Err(AppError::upstream("skills.sh 目录为空（网络或站点问题）"));
     }
     *CACHE.lock().unwrap() = Some((Instant::now(), refs.clone()));
     Ok(refs)
@@ -580,7 +581,7 @@ fn parse_sitemap_urls(xml: &str, out: &mut Vec<SkillRef>) {
 }
 
 /// 从 skills.sh 随机抽取 count 个 skill 候选（抓取名称/描述，失败项剔除）。
-pub fn random_skills(count: usize) -> Result<Vec<SkillCandidate>, String> {
+pub fn random_skills(count: usize) -> Result<Vec<SkillCandidate>, AppError> {
     let all = fetch_all_skill_refs()?;
     let count = count.clamp(1, 20);
     let mut rng = rand::thread_rng();

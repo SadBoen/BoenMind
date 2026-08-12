@@ -26,6 +26,7 @@ use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
 
+use crate::error::AppError;
 use crate::plugins::plugins_dir;
 
 /// manifest settings 数组里一个字段的声明。
@@ -247,10 +248,12 @@ pub fn read_settings_masked(id: &str, schema: &[SettingField]) -> Value {
 /// 保存插件设置：仅保留 schema 声明的 key（Group 按实例展开），逐字段类型校验；
 /// secret 字段提交空/掩码视为"未修改"保留原值，`__clear.<key>: true` 显式清除。
 /// 返回合并后的完整设置。
-pub fn save_settings(id: &str, schema: &[SettingField], values: &Value) -> Result<Value, String> {
+pub fn save_settings(id: &str, schema: &[SettingField], values: &Value) -> Result<Value, AppError> {
     let current = read_settings(id, schema);
     let mut out = serde_json::Map::new();
-    let submitted = values.as_object().ok_or("settings 必须是对象")?;
+    let submitted = values
+        .as_object()
+        .ok_or_else(|| AppError::invalid("settings 必须是对象"))?;
 
     // 显式清除标记：__clear.<key> = true → 该 secret 字段重置为空
     let clears: std::collections::HashSet<String> = submitted
@@ -271,15 +274,17 @@ pub fn save_settings(id: &str, schema: &[SettingField], values: &Value) -> Resul
                     // 密钥字段：提交空字符串或与掩码完全相等 = 未修改，保留原值
                     // （前端只见掩码提示不回传明文；掩码前后追加内容会作为新值校验保存）
                     if f.field_type == SettingFieldType::Secret {
-                        let s = v.as_str().ok_or_else(|| format!("{key}: 应为字符串"))?;
+                        let s = v
+                            .as_str()
+                            .ok_or_else(|| AppError::invalid(format!("{key}: 应为字符串")))?;
                         let cur = current.get(key).and_then(Value::as_str).unwrap_or("");
                         if s.is_empty() || s == mask_secret(cur) {
                             current.get(key).cloned().unwrap_or_default()
                         } else {
-                            validate_value(f, v).map_err(|e| format!("{key}: {e}"))?
+                            validate_value(f, v).map_err(|e| AppError::invalid(format!("{key}: {e}")))?
                         }
                     } else {
-                        validate_value(f, v).map_err(|e| format!("{key}: {e}"))?
+                        validate_value(f, v).map_err(|e| AppError::invalid(format!("{key}: {e}")))?
                     }
                 }
                 None => current.get(key).cloned().unwrap_or_default(),
@@ -289,11 +294,11 @@ pub fn save_settings(id: &str, schema: &[SettingField], values: &Value) -> Resul
     }
     let file = settings_file(id);
     if let Some(parent) = file.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("创建插件设置目录失败: {e}"))?;
+        fs::create_dir_all(parent).map_err(|e| AppError::internal(format!("创建插件设置目录失败: {e}")))?;
     }
     let json = serde_json::to_string_pretty(&Value::Object(out.clone()))
-        .map_err(|e| format!("序列化设置失败: {e}"))?;
-    fs::write(&file, json).map_err(|e| format!("写入设置失败: {e}"))?;
+        .map_err(|e| AppError::internal(format!("序列化设置失败: {e}")))?;
+    fs::write(&file, json).map_err(|e| AppError::internal(format!("写入设置失败: {e}")))?;
     // 密钥明文只留在本地文件：Unix 下收紧权限
     #[cfg(unix)]
     {

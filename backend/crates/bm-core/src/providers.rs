@@ -13,6 +13,7 @@ use std::io::Read;
 use serde_json::{Value, json};
 
 use crate::config::ProviderKind;
+use crate::error::AppError;
 use crate::http_util::http_agent;
 
 const ANTHROPIC_VERSION: &str = "2023-06-01";
@@ -70,35 +71,36 @@ fn is_gemini(kind: ProviderKind) -> bool {
 }
 
 /// 解析最终 base URL：用户填写的优先（去尾部斜杠），否则官方端点；custom 必须填写。
-fn resolve_base_url(kind: ProviderKind, base_url: &str) -> Result<String, String> {
+fn resolve_base_url(kind: ProviderKind, base_url: &str) -> Result<String, AppError> {
     let trimmed = base_url.trim().trim_end_matches('/');
     if !trimmed.is_empty() {
         return Ok(trimmed.to_string());
     }
     official_base_url(kind)
         .map(str::to_string)
-        .ok_or_else(|| "该类型必须填写 API 端点（custom 需填写 OpenAI 兼容地址）".to_string())
+        .ok_or_else(|| AppError::invalid("该类型必须填写 API 端点（custom 需填写 OpenAI 兼容地址）"))
 }
 
 /// SSRF 防护：校验端点必须是指向公网的合法 http(s) URL。
 /// ollama / llamacpp 是本地模型服务（官方端点即 127.0.0.1），豁免本校验。
-fn validate_base_url(kind: ProviderKind, url: &str) -> Result<(), String> {
+fn validate_base_url(kind: ProviderKind, url: &str) -> Result<(), AppError> {
     if matches!(kind, ProviderKind::Ollama | ProviderKind::Llamacpp) {
         return Ok(());
     }
-    let parsed = url::Url::parse(url).map_err(|_| "API 端点必须是完整的 http(s):// URL".to_string())?;
+    let parsed = url::Url::parse(url)
+        .map_err(|_| AppError::invalid("API 端点必须是完整的 http(s):// URL"))?;
     if !matches!(parsed.scheme(), "http" | "https") {
-        return Err("API 端点只支持 http/https".to_string());
+        return Err(AppError::invalid("API 端点只支持 http/https"));
     }
     let Some(host) = parsed.host_str() else {
-        return Err("API 端点缺少主机名".to_string());
+        return Err(AppError::invalid("API 端点缺少主机名"));
     };
     // IPv6 字面量的 host_str 带方括号（"[::1]"），去掉再判断
     let host = host.trim_start_matches('[').trim_end_matches(']');
     // localhost 是保留域名（只解析到回环），与 IP 字面量同等拦截；
     // 其它域名不做 DNS 解析校验（解析结果取决于发起请求的机器）
     if host.eq_ignore_ascii_case("localhost") {
-        return Err("API 端点不允许指向本机（localhost）".to_string());
+        return Err(AppError::invalid("API 端点不允许指向本机（localhost）"));
     }
     if let Ok(ip) = host.parse::<std::net::IpAddr>() {
         let blocked = match ip {
@@ -110,7 +112,7 @@ fn validate_base_url(kind: ProviderKind, url: &str) -> Result<(), String> {
             }
         };
         if blocked {
-            return Err(format!("API 端点不允许指向私网/本机地址（{ip}）"));
+            return Err(AppError::invalid(format!("API 端点不允许指向私网/本机地址（{ip}）")));
         }
     }
     Ok(())
@@ -121,13 +123,13 @@ fn validate_base_url(kind: ProviderKind, url: &str) -> Result<(), String> {
 /// 统一处理传输层错误并把 4xx/5xx 的 body 透传给调用方展示。
 fn collect_response(
     result: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
-) -> Result<(u16, String), String> {
+) -> Result<(u16, String), AppError> {
     let resp = result.map_err(|err| match err {
-        ureq::Error::Io(e) => format!("网络错误: {e}"),
-        ureq::Error::Timeout(t) => format!("请求超时: {t}"),
-        ureq::Error::HostNotFound => "无法解析主机名".to_string(),
-        ureq::Error::BadUri(u) => format!("无效的 URL: {u}"),
-        other => format!("请求失败: {other}"),
+        ureq::Error::Io(e) => AppError::upstream(format!("网络错误: {e}")),
+        ureq::Error::Timeout(t) => AppError::upstream(format!("请求超时: {t}")),
+        ureq::Error::HostNotFound => AppError::upstream("无法解析主机名"),
+        ureq::Error::BadUri(u) => AppError::upstream(format!("无效的 URL: {u}")),
+        other => AppError::upstream(format!("请求失败: {other}")),
     })?;
     let status = resp.status().as_u16();
     let mut body = String::new();
@@ -135,12 +137,12 @@ fn collect_response(
         .into_reader()
         .take(64 * 1024)
         .read_to_string(&mut body)
-        .map_err(|e| format!("读取响应失败: {e}"))?;
+        .map_err(|e| AppError::upstream(format!("读取响应失败: {e}")))?;
     Ok((status, body))
 }
 
 /// 状态码非 2xx 时构造错误信息（含服务商返回的 body 摘要，如 401 无效 key）。
-fn ensure_success(status: u16, body: &str) -> Result<(), String> {
+fn ensure_success(status: u16, body: &str) -> Result<(), AppError> {
     if (200..300).contains(&status) {
         return Ok(());
     }
@@ -150,7 +152,7 @@ fn ensure_success(status: u16, body: &str) -> Result<(), String> {
     } else {
         format!(": {}", snippet)
     };
-    Err(format!("HTTP {status}{detail}"))
+    Err(AppError::upstream(format!("HTTP {status}{detail}")))
 }
 
 /// URL 路径段编码（模型名可能含 `/`，如 together 的 `Qwen/Qwen3.7-Max`）。
@@ -214,7 +216,7 @@ fn parse_model_ids(body: &str) -> Vec<String> {
 }
 
 /// 拉取模型列表。`base_url` 为空时使用官方端点；API key 为空时（ollama 等）不带头。
-pub fn list_provider_models(kind: ProviderKind, base_url: &str, api_key: &str) -> Result<Vec<String>, String> {
+pub fn list_provider_models(kind: ProviderKind, base_url: &str, api_key: &str) -> Result<Vec<String>, AppError> {
     let base = resolve_base_url(kind, base_url)?;
     validate_base_url(kind, &base)?;
     let key = api_key.trim();
@@ -230,14 +232,14 @@ pub fn list_provider_models(kind: ProviderKind, base_url: &str, api_key: &str) -
     let mut req = http_agent().get(&url);
     if is_anthropic(kind) {
         if key.is_empty() {
-            return Err("Anthropic 需要 API Key".to_string());
+            return Err(AppError::invalid("Anthropic 需要 API Key"));
         }
         req = req
             .header("x-api-key", key)
             .header("anthropic-version", ANTHROPIC_VERSION);
     } else if is_gemini(kind) {
         if key.is_empty() {
-            return Err("Gemini 需要 API Key".to_string());
+            return Err(AppError::invalid("Gemini 需要 API Key"));
         }
         req = req.header("Authorization", format!("Bearer {key}"));
     } else if !key.is_empty() {
@@ -249,7 +251,7 @@ pub fn list_provider_models(kind: ProviderKind, base_url: &str, api_key: &str) -
 
     let models = parse_model_ids(&body);
     if models.is_empty() {
-        return Err(format!("模型列表为空（响应格式可能不兼容）: {}", body.chars().take(120).collect::<String>()));
+        return Err(AppError::upstream(format!("模型列表为空（响应格式可能不兼容）: {}", body.chars().take(120).collect::<String>())));
     }
     Ok(models)
 }
@@ -262,7 +264,7 @@ pub fn test_provider_connection(
     api_key: &str,
     model: &str,
     message: &str,
-) -> Result<String, String> {
+) -> Result<String, AppError> {
     let base = resolve_base_url(kind, base_url)?;
     validate_base_url(kind, &base)?;
     let key = api_key.trim();
@@ -275,12 +277,12 @@ pub fn test_provider_connection(
     }
 
     if model.trim().is_empty() {
-        return Err("请先填写模型名称再发送测试消息".to_string());
+        return Err(AppError::invalid("请先填写模型名称再发送测试消息"));
     }
 
     let reply = if is_gemini(kind) {
         if key.is_empty() {
-            return Err("Gemini 需要 API Key".to_string());
+            return Err(AppError::invalid("Gemini 需要 API Key"));
         }
         let url = format!("{base}/v1beta/models/{}:generateContent", encode_path_segment(model.trim()));
         let (status, body) = collect_response(
@@ -293,7 +295,7 @@ pub fn test_provider_connection(
                 })),
         )?;
         ensure_success(status, &body)?;
-        let value: Value = serde_json::from_str(&body).map_err(|e| format!("解析响应失败: {e}"))?;
+        let value: Value = serde_json::from_str(&body).map_err(|e| AppError::upstream(format!("解析响应失败: {e}")))?;
         // candidates[].content.parts[].text
         value
             .get("candidates")
@@ -306,10 +308,10 @@ pub fn test_provider_connection(
             .and_then(|p| p.get("text"))
             .and_then(Value::as_str)
             .map(str::to_string)
-            .ok_or_else(|| format!("响应中没有文本内容: {}", body))
+            .ok_or_else(|| AppError::upstream(format!("响应中没有文本内容: {}", body)))
     } else if is_anthropic(kind) {
         if key.is_empty() {
-            return Err("Anthropic 需要 API Key".to_string());
+            return Err(AppError::invalid("Anthropic 需要 API Key"));
         }
         let (status, body) = collect_response(
             http_agent()
@@ -323,7 +325,7 @@ pub fn test_provider_connection(
                 })),
         )?;
         ensure_success(status, &body)?;
-        let value: Value = serde_json::from_str(&body).map_err(|e| format!("解析响应失败: {e}"))?;
+        let value: Value = serde_json::from_str(&body).map_err(|e| AppError::upstream(format!("解析响应失败: {e}")))?;
         // content: [{type:"text", text:"..."}]
         let texts: Vec<String> = value
             .get("content")
@@ -336,7 +338,7 @@ pub fn test_provider_connection(
             })
             .unwrap_or_default();
         if texts.is_empty() {
-            return Err(format!("响应中没有文本内容: {}", body));
+            return Err(AppError::upstream(format!("响应中没有文本内容: {}", body)));
         }
         Ok(texts.join("\n"))
     } else {
@@ -353,7 +355,7 @@ pub fn test_provider_connection(
             })),
         )?;
         ensure_success(status, &body)?;
-        let value: Value = serde_json::from_str(&body).map_err(|e| format!("解析响应失败: {e}"))?;
+        let value: Value = serde_json::from_str(&body).map_err(|e| AppError::upstream(format!("解析响应失败: {e}")))?;
         // choices[0].message.content（字符串或分段数组）
         let content = value
             .get("choices")
@@ -369,11 +371,11 @@ pub fn test_provider_connection(
                     .filter_map(|p| p.get("text").and_then(Value::as_str).map(str::to_string))
                     .collect();
                 if texts.is_empty() {
-                    return Err(format!("响应中没有文本内容: {}", body));
+                    return Err(AppError::upstream(format!("响应中没有文本内容: {}", body)));
                 }
                 Ok(texts.join("\n"))
             }
-            _ => Err(format!("响应中没有文本内容: {}", body)),
+            _ => Err(AppError::upstream(format!("响应中没有文本内容: {}", body))),
         }
     }?;
 
