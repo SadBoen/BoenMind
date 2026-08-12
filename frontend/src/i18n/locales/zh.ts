@@ -39,6 +39,9 @@ export const zh = {
       charCount: "{{count}} 字",
       enterToSend: "Enter 发送",
       send: "发送",
+      attach: "附件",
+      language: "常用语言",
+      voice: "语音输入",
       aiDisclaimer: "内容由 AI 生成，请核实重要信息",
     },
     thinking: {

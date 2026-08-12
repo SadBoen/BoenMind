@@ -39,6 +39,9 @@ export const ko: Translation = {
       charCount: "{{count}}자",
       enterToSend: "Enter 전송",
       send: "전송",
+      attach: "첨부 파일",
+      language: "언어",
+      voice: "음성 입력",
       aiDisclaimer: "AI가 생성한 내용입니다. 중요한 정보는 확인하세요",
     },
     thinking: {

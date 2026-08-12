@@ -39,6 +39,9 @@ export const ja: Translation = {
       charCount: "{{count}} 文字",
       enterToSend: "Enter で送信",
       send: "送信",
+      attach: "添付ファイル",
+      language: "言語",
+      voice: "音声入力",
       aiDisclaimer: "AI が生成した内容です。重要な情報はご確認ください",
     },
     thinking: {

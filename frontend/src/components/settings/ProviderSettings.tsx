@@ -608,7 +608,11 @@ function ProviderFormDialog({
             </div>
             <div className="space-y-1.5">
               <Label>{t("settings.providers.kindLabel")}</Label>
-              <Select value={form.kind} onValueChange={(v) => changeKind(v as ProviderKind)}>
+              <Select
+                value={form.kind}
+                onValueChange={(v) => changeKind(v as ProviderKind)}
+                itemToStringLabel={(v) => t(`settings.providers.kinds.${v}`)}
+              >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>

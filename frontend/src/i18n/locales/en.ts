@@ -39,6 +39,9 @@ export const en: Translation = {
       charCount: "{{count}} chars",
       enterToSend: "Enter to send",
       send: "Send",
+      attach: "Attachment",
+      language: "Language",
+      voice: "Voice input",
       aiDisclaimer: "AI-generated content, verify important information",
     },
     thinking: {

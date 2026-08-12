@@ -1,16 +1,20 @@
 /**
- * 聊天输入区：自动增高文本域，框内下边缘工具条（模型 ▾ 思考 ▾ + 发送）。
- * Enter 发送 / Shift+Enter 换行。参照 ZCode 输入框设计。
+ * 聊天输入区：自动增高文本域，框内下边缘工具条靠右（模型 ▾ 思考 ▾ + 发送），
+ * 左侧留提示文字。Enter 发送 / Shift+Enter 换行。参照 ZCode 输入框设计。
+ * 附件/常用语言/语音为占位按钮（hermes-webui 参考），功能后续接入。
  */
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ArrowUp, Brain } from "lucide-react";
+import { ArrowUp, Brain, Languages, Mic, Paperclip } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -20,19 +24,25 @@ import { useAppStore } from "@/stores/app-store";
 /** 思考强度选项（对应 pi ThinkingLevel，label 用 chat.thinking.<value> 翻译） */
 const THINKING_VALUES = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
-/** 当前可用的模型选项：各提供商的模型（providerId::modelId） */
-function useModelOptions() {
+interface ModelGroup {
+  id: string;
+  name: string;
+  models: { value: string; label: string }[];
+}
+
+/** 模型选项按提供商分组（providerId::modelId），组间以分割线区分 */
+function useModelGroups(): ModelGroup[] {
   const config = useAppStore((s) => s.config);
   return useMemo(() => {
     if (!config) return [];
-    return config.providers.flatMap((p) =>
-      p.models.map((m) => ({
+    return config.providers.map((p) => ({
+      id: p.id,
+      name: p.name,
+      models: p.models.map((m) => ({
         value: `${p.id}::${m}`,
         label: m,
-        provider: p.name,
-        providerId: p.id,
       })),
-    );
+    }));
   }, [config]);
 }
 
@@ -46,7 +56,7 @@ export function ChatInput() {
   const setSelectedThinking = useAppStore((s) => s.setSelectedThinking);
   const config = useAppStore((s) => s.config);
 
-  const modelOptions = useModelOptions();
+  const modelGroups = useModelGroups();
   const [text, setText] = useState("");
 
   // 默认模型：全局默认 → 第一个提供商的默认模型
@@ -97,32 +107,83 @@ export function ChatInput() {
             className="max-h-40 min-h-[2.25rem] resize-none border-0 bg-transparent p-3 pb-1 text-sm shadow-none focus-visible:ring-0"
             disabled={streaming}
           />
-          {/* 框内下边缘工具条 */}
+          {/* 框内下边缘工具条：提示在左，模型/思考/发送整体靠右 */}
           <div className="flex items-center justify-between gap-2 px-2 pb-1.5">
-            <div className="flex min-w-0 items-center gap-1.5">
+            <span className="hidden shrink-0 text-[10px] text-muted-foreground sm:inline">
+              {text.length > 0
+                ? t("chat.input.charCount", { count: text.length })
+                : t("chat.input.enterToSend")}
+            </span>
+            <div className="flex min-w-0 items-center gap-1">
+              {/* 占位按钮（hermes-webui 参考，功能后续接入） */}
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 rounded-md text-muted-foreground"
+                disabled
+                title={t("chat.input.attach")}
+              >
+                <Paperclip size={13} />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 rounded-md text-muted-foreground"
+                disabled
+                title={t("chat.input.language")}
+              >
+                <Languages size={13} />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 rounded-md text-muted-foreground"
+                disabled
+                title={t("chat.input.voice")}
+              >
+                <Mic size={13} />
+              </Button>
+
               {/* 模型选择：提供商小 logo 在名称前 */}
-              <Select value={modelValue ?? undefined} onValueChange={setSelectedModel}>
-                <SelectTrigger className="h-6 max-w-48 gap-1 border-transparent bg-transparent px-1.5 text-xs text-muted-foreground shadow-none hover:bg-accent hover:text-foreground data-[state=open]:bg-accent">
+              <Select
+                value={modelValue ?? undefined}
+                onValueChange={setSelectedModel}
+                itemToStringLabel={(v) => String(v).split("::")[1] ?? ""}
+              >
+                <SelectTrigger className="h-6 max-w-56 gap-1 border-transparent bg-transparent px-1.5 text-xs text-muted-foreground shadow-none hover:bg-accent hover:text-foreground data-[state=open]:bg-accent">
                   <ProviderIcon kind={modelProviderId} size={12} />
                   <SelectValue placeholder={t("chat.input.selectModel")} />
                 </SelectTrigger>
                 <SelectContent align="start">
-                  {modelOptions.length === 0 && (
+                  {modelGroups.length === 0 && (
                     <p className="px-2 py-1.5 text-xs text-muted-foreground">
                       {t("chat.input.noProviders")}
                     </p>
                   )}
-                  {modelOptions.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value} className="text-xs">
-                      <ProviderIcon kind={opt.providerId} size={12} label={opt.provider} />
-                      {opt.label}
-                      <span className="ml-1.5 text-[10px] text-muted-foreground">{opt.provider}</span>
-                    </SelectItem>
+                  {modelGroups.map((group, gi) => (
+                    <Fragment key={group.id}>
+                      {gi > 0 && <SelectSeparator />}
+                      <SelectGroup>
+                        <SelectLabel className="flex items-center gap-1.5">
+                          <ProviderIcon kind={group.id} size={11} label={group.name} />
+                          {group.name}
+                        </SelectLabel>
+                        {group.models.map((opt) => (
+                          <SelectItem key={opt.value} value={opt.value} label={opt.label} className="text-xs">
+                            {opt.label}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </Fragment>
                   ))}
                 </SelectContent>
               </Select>
               {/* 思考强度选择 */}
-              <Select value={selectedThinking} onValueChange={setSelectedThinking}>
+              <Select
+                value={selectedThinking}
+                onValueChange={setSelectedThinking}
+                itemToStringLabel={(v) => t(`chat.thinking.${v}`)}
+              >
                 <SelectTrigger className="h-6 gap-1 border-transparent bg-transparent px-1.5 text-xs text-muted-foreground shadow-none hover:bg-accent hover:text-foreground data-[state=open]:bg-accent">
                   <Brain size={12} className="shrink-0 text-muted-foreground" />
                   <SelectValue />
@@ -135,17 +196,10 @@ export function ChatInput() {
                   ))}
                 </SelectContent>
               </Select>
-            </div>
 
-            <div className="flex items-center gap-2">
-              <span className="hidden text-[10px] text-muted-foreground sm:inline">
-                {text.length > 0
-                  ? t("chat.input.charCount", { count: text.length })
-                  : t("chat.input.enterToSend")}
-              </span>
               <Button
                 size="icon"
-                className="h-7 w-7 rounded-lg"
+                className="ml-0.5 h-7 w-7 rounded-lg"
                 onClick={() => void submit()}
                 disabled={!canSend}
                 title={t("chat.input.send")}

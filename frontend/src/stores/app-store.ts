@@ -180,9 +180,14 @@ export const useAppStore = create<AppStore>((set, get) => {
     streaming: false,
     streamingText: "",
     streamingToolCalls: [],
-    selectedModel: null,
+    selectedModel: localStorage.getItem("boenmind.selectedModel"),
     selectedThinking: "off",
-    setSelectedModel: (value) => set({ selectedModel: value }),
+    setSelectedModel: (value) => {
+      // 刷新后保留上次选中的模型
+      if (value) localStorage.setItem("boenmind.selectedModel", value);
+      else localStorage.removeItem("boenmind.selectedModel");
+      set({ selectedModel: value });
+    },
     setSelectedThinking: (value) => set({ selectedThinking: value ?? "off" }),
     sendMessage: async (text, opts) => {
       const { activeSessionId } = get();
