@@ -53,9 +53,31 @@ sudo -u boenmind BOENMIND_HOME=/var/lib/boenmind BOENMIND_BIND=0.0.0.0 ./bm-serv
 | `/var/lib/boenmind/.boenmind/extensions/` | 插件 |
 | `/var/lib/boenmind/BoenMind/` | 默认工作文件夹 |
 
+## 升级
+
+### 方式一：应用内热升级（推荐，systemd 部署）
+
+浏览器打开应用 →「设置 → 关于 → 检查更新」→「立即升级」：
+
+1. 后端从 GitHub Releases 下载新版本二进制并**验证 ed25519 签名**（与官方
+   发布同一把密钥，防篡改）；
+2. 原子替换自身（旧版本自动备份到 `/var/lib/boenmind/.boenmind/runtime/`）；
+3. 进程以 `exec` 方式重启为新版本——**PID 不变**，systemd 无感知，服务只
+   中断一两秒，浏览器页面自动恢复。
+
+若升级过程中进程意外退出（断电/崩溃），下次启动会自动完成替换重启
+（`.update-pending` 标记机制）。手动回滚：停服务 → 用
+`/var/lib/boenmind/.boenmind/runtime/bm-server-<旧版本>-<arch>.bak` 覆盖
+`/usr/local/bin/bm-server` → 启动服务。
+
+### 方式二：手动升级
+
+下载新版 tar.gz，重新执行 `sudo bash install.sh`（数据保留）。
+
+> Docker 部署不支持应用内热升级，请用 `docker pull` 更新镜像后重建容器。
+
 ## 安全提示
 
 - 当前版本**无登录认证**：配置中的 API 密钥、工作文件夹文件对任何能访问
   该端口的人都可见。请仅在可信内网使用，或通过反向代理（nginx / caddy）
   加访问密码 / HTTPS 后对外。
-- 升级：下载新版 tar.gz，重新执行 `sudo bash install.sh`（数据保留）。

@@ -148,7 +148,12 @@ docker build -t ghcr.io/sadboen/boenmind:v0.1.1 .
 | macOS ARM / Intel | `BoenMind_0.1.1_{aarch64,x86_64}.dmg`、`.app.tar.gz`（含自动更新签名 latest.json + .sig） |
 | Windows 便携版（免安装） | `BoenMind_0.1.1_x64_portable.zip`（依赖系统 WebView2） |
 | Linux 服务器版 | `boenmind-server_0.1.1_linux-{x86_64,aarch64}.tar.gz` |
+| 热升级运行时（全平台） | `boenmind-runtime-0.1.1-{aarch64-apple-darwin,x86_64-apple-darwin,x86_64-pc-windows-msvc.exe,linux-x86_64,linux-aarch64}` + `.sig`（应用内热升级下载验签用） |
 | Docker 多架构镜像 | `ghcr.io/sadboen/boenmind:v0.1.1` |
+
+**应用内热升级**（不重装、不退出程序）：桌面版与 Linux 服务器版在
+「设置 → 关于」里点「检查更新 → 立即升级」，后端下载新版本并验签后秒级自重启；
+Docker 部署不参与，用 `docker pull` 更新镜像。
 
 **一次性准备（发布前必须完成）**：仓库 Settings → Secrets and variables → Actions，添加：
 
@@ -163,7 +168,7 @@ docker build -t ghcr.io/sadboen/boenmind:v0.1.1 .
 **已知发布限制**：
 
 - macOS 未签名 / 未 notarize（无 Apple 开发者证书）：首次打开需右键 → 打开。
-- Windows 便携版无法应用内自动更新（updater 需要 MSI/NSIS 安装器），请留意 Release 页新版本。
+- 热升级只覆盖运行时（bm-server）；桌面壳（Tauri 外框）更新仍需重新下载安装包。
 - 若更新了 tauri.conf.json 的 `version`，请同步 bump：`frontend/package.json`、
   `backend/crates/bm-core/Cargo.toml`、`backend/crates/bm-server/Cargo.toml`、
   `docker-compose.yml`（镜像 tag）。

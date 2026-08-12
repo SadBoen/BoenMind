@@ -15,6 +15,7 @@ pub mod providers;
 pub mod refine;
 pub mod skills;
 pub mod thinking;
+pub mod updates;
 pub mod workspace;
 
 pub use config::{AppConfig, ProviderConfig, ProviderKind};

@@ -121,12 +121,16 @@ jobs:
         working-directory: frontend
         env:
           RELEASE_TAG: ${{ github.ref_name }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           set -euxo pipefail
           mkdir -p ../dist-mac
           VER="$(node -p "require('./src-tauri/tauri.conf.json').version")"
           # 试跑（workflow_dispatch）时 ref_name 是分支名，退回 v$VER
           if [[ "${RELEASE_TAG:-}" =~ ^v[0-9] ]]; then TAG="$RELEASE_TAG"; else TAG="v$VER"; fi
+          # 签名密钥（secret 为双重 base64；signer CLI 需要单层 base64 = 密钥文件内容）
+          SIGNING_KEY="$(echo "$TAURI_SIGNING_PRIVATE_KEY" | base64 -d)"
 
           for ARCH in aarch64 x86_64; do
             TRIPLE="$([ "$ARCH" = aarch64 ] && echo aarch64-apple-darwin || echo x86_64-apple-darwin)"
@@ -135,6 +139,12 @@ jobs:
             mv "$MACOS_DIR/BoenMind.app.tar.gz" "../dist-mac/BoenMind_${VER}_${ARCH}.app.tar.gz"
             mv "$MACOS_DIR/BoenMind.app.tar.gz.sig" "../dist-mac/BoenMind_${VER}_${ARCH}.app.tar.gz.sig"
             cp src-tauri/target/$TRIPLE/release/bundle/dmg/*.dmg "../dist-mac/"
+            # 热升级 runtime 资产：独立 bm-server 二进制（非 embed，桌面页面由壳提供）+ 签名
+            RUNTIME_BIN="src-tauri/target/$TRIPLE/release/bm-server"
+            cp "$RUNTIME_BIN" "../dist-mac/boenmind-runtime-${VER}-${TRIPLE}"
+            pnpm exec tauri signer sign \
+              --private-key "$SIGNING_KEY" --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" \
+              "../dist-mac/boenmind-runtime-${VER}-${TRIPLE}"
           done
 
           # 合并两个架构的 latest.json：签名直接读已 mv 到 dist-mac 的 .sig 文件
@@ -170,8 +180,8 @@ jobs:
 
   # ============================================================
   # Windows：便携版（免安装，zip 打包 exe）
-  # 说明：便携版无法使用 Tauri 应用内自动更新（需要 MSI/NSIS 安装器），
-  # 新版本需手动下载替换。
+  # 说明：应用内热升级（运行时 bm-server）可用；壳（Tauri 外框）更新
+  # 需手动下载新版便携包替换。
   # ============================================================
   windows:
     name: Windows 便携版
@@ -202,12 +212,20 @@ jobs:
       - name: 打包便携版 zip
         shell: pwsh
         working-directory: frontend
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           $VER = (Get-Content src-tauri/tauri.conf.json | ConvertFrom-Json).version
           New-Item -ItemType Directory -Force -Path ..\dist-win | Out-Null
           # 二进制名来自 Cargo package name（app.exe），对外重命名为 BoenMind.exe
           Copy-Item src-tauri\target\release\app.exe ..\dist-win\BoenMind.exe
           Compress-Archive -Path ..\dist-win\BoenMind.exe -DestinationPath "..\dist-win\BoenMind_${VER}_x64_portable.zip" -CompressionLevel Optimal
+          # 热升级 runtime 资产：独立 bm-server.exe（非 embed）+ 签名
+          Copy-Item src-tauri\target\release\bm-server.exe "..\dist-win\boenmind-runtime-${VER}-x86_64-pc-windows-msvc.exe"
+          # secret 为双重 base64，signer CLI 需要单层 base64（= 密钥文件内容）
+          $signingKey = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:TAURI_SIGNING_PRIVATE_KEY))
+          pnpm exec tauri signer sign --private-key $signingKey --password $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD "..\dist-win\boenmind-runtime-${VER}-x86_64-pc-windows-msvc.exe"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -260,10 +278,15 @@ jobs:
         run: cargo zigbuild --release -p bm-server --features embed --target aarch64-unknown-linux-gnu
 
       - name: 打包 tar.gz（二进制 + 安装脚本 + systemd unit + 说明）
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           set -euxo pipefail
           VER="$(node -p "require('./frontend/src-tauri/tauri.conf.json').version")"
           mkdir -p dist-linux
+          # 签名密钥（secret 为双重 base64；signer CLI 需要单层 base64 = 密钥文件内容）
+          SIGNING_KEY="$(echo "$TAURI_SIGNING_PRIVATE_KEY" | base64 -d)"
           # x86_64 为原生构建（target/release），aarch64 为 zigbuild 交叉构建
           for ARCH in x86_64 aarch64; do
             BIN="backend/target/release/bm-server"
@@ -278,6 +301,11 @@ jobs:
             chmod +x "$STAGE/install.sh"
             tar czf "dist-linux/$STAGE.tar.gz" "$STAGE"
             rm -rf "$STAGE"
+            # 热升级 runtime 资产：独立 bm-server 二进制（embed，含前端）+ 签名
+            cp "$BIN" "dist-linux/boenmind-runtime-${VER}-linux-${ARCH}"
+            pnpm --dir frontend exec tauri signer sign \
+              --private-key "$SIGNING_KEY" --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" \
+              "dist-linux/boenmind-runtime-${VER}-linux-${ARCH}"
           done
           ls -la dist-linux/
 
@@ -345,22 +373,29 @@ jobs:
 
             个人知识管理软件：LLM-WIKI 路线 + 个人 Agent。
 
+            ### 热升级（不重装、不退出程序）
+
+            桌面版与 Linux 服务器版均支持应用内热升级：「设置 → 关于 → 检查更新 → 立即升级」，
+            下载验证后后端秒级自重启，窗口/浏览器不退出。仅当需要更新桌面壳（Tauri 外框）时才需重新下载安装包。
+
             ### 下载
 
             **macOS（Apple Silicon / Intel）**
             - `BoenMind_*.dmg` 安装镜像；或 `BoenMind_*.app.tar.gz` 解压即用
             - 未签名（无 Apple 开发者证书）：首次打开请在「系统设置 → 隐私与安全性」中允许，或对应用右键 → 打开
-            - 应用内「设置 → 关于 → 检查更新」可自动升级（macOS）
+            - 应用内可热升级运行时（`boenmind-runtime-*` 资产由后端验签后落盘）
 
             **Windows（便携版，免安装）**
             - `BoenMind_*_x64_portable.zip` 解压运行 `BoenMind.exe`
             - 依赖系统 WebView2（Win10/11 自带；老版本 Win10 需自行安装 WebView2 Runtime）
-            - 便携版不支持应用内自动更新，请留意本页新版本
+            - 应用内可热升级运行时；壳（外框）更新需手动下载新版便携包
 
             **Linux 服务器版（x86_64 / aarch64）**
             - `boenmind-server_*_linux-*.tar.gz`：单文件二进制（前端已内嵌）
             - 安装：`sudo bash install.sh`（自动创建 systemd 服务并启动）
+            - 应用内热升级：升级时后端原子替换自身并 exec 重启（PID 不变，systemd 无感知）
             - Docker：`docker run -d -p 17321:17321 -v boenmind-data:/var/lib/boenmind ghcr.io/sadboen/boenmind:${{ github.ref_name }}`
+            - Docker 部署不参与应用内热升级，请用 `docker pull` 更新镜像
             - 详细说明见包内 README.md；无登录认证，请仅在可信内网使用
 
             ### 安全提示

@@ -23,6 +23,13 @@ async fn main() {
         .ok()
         .and_then(|p| p.parse().ok())
         .unwrap_or(bm_server::DEFAULT_PORT);
+
+    // 自更新残留：apply 已替换自身但未重启（崩溃/断电）→ 先 exec 完成升级。
+    // 注意放在子代理模式判别之后：subagent 子进程不参与自更新。
+    if let Err(err) = bm_server::consume_pending_update() {
+        eprintln!("[bm-server] {err}");
+    }
+
     if let Err(err) = bm_server::serve(port).await {
         eprintln!("[bm-server] 服务异常退出: {err}");
         std::process::exit(1);

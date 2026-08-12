@@ -534,6 +534,19 @@ impl Db {
         }
         Ok(tasks)
     }
+
+    /// 是否存在运行中的任务（自更新升级前检查：进程重启会丢失内存中的
+    /// agent 任务，有运行中任务时拒绝升级）
+    pub async fn has_running_tasks(&self) -> Result<bool, turso::Error> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn.prepare("SELECT COUNT(*) FROM tasks WHERE status = 'running'").await?;
+        let mut rows = stmt.query(()).await?;
+        let count: i64 = match rows.next().await? {
+            Some(row) => row.get(0)?,
+            None => 0,
+        };
+        Ok(count > 0)
+    }
 }
 
 fn row_to_suggestion(row: &turso::Row) -> Result<RefinementSuggestion, turso::Error> {
@@ -597,6 +610,32 @@ mod tests {
         db.delete_session("s1").await.unwrap();
         assert!(db.list_messages("s1").await.unwrap().is_empty());
         assert!(db.list_sessions().await.unwrap().is_empty());
+
+        match original {
+            Some(v) => unsafe { std::env::set_var("BOENMIND_HOME", v) },
+            None => unsafe { std::env::remove_var("BOENMIND_HOME") },
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn has_running_tasks_detects_active_and_finished() {
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let original = std::env::var_os("BOENMIND_HOME");
+        let dir = std::env::temp_dir().join(format!("bm-db-tasks-{}", std::process::id()));
+        unsafe { std::env::set_var("BOENMIND_HOME", &dir) };
+        let db = Db::open().await.unwrap();
+
+        // 无任务 → false
+        assert!(!db.has_running_tasks().await.unwrap());
+
+        // running 任务 → true（自更新升级前检查：有运行中任务拒绝升级）
+        db.create_task("t1", "s1").await.unwrap();
+        assert!(db.has_running_tasks().await.unwrap());
+
+        // 任务结束后（completed）→ false
+        db.finish_task("t1", "completed", None).await.unwrap();
+        assert!(!db.has_running_tasks().await.unwrap());
 
         match original {
             Some(v) => unsafe { std::env::set_var("BOENMIND_HOME", v) },

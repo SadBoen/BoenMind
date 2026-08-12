@@ -214,6 +214,24 @@ export interface Task {
   error: string | null;
 }
 
+/** 自更新（热升级）检查结果 */
+export interface UpdateCheckInfo {
+  current: string;
+  latest: {
+    version: string;
+    notes: string;
+    asset: { name: string; url: string; size: number; sig_url: string };
+  } | null;
+}
+
+/** 应用更新结果 */
+export interface ApplyUpdateResult {
+  version: string;
+  /** managed（桌面壳子进程：落盘 runtime 目录，由壳重启）| standalone（已替换自身，调 restart 生效） */
+  mode: "managed" | "standalone";
+  path?: string;
+}
+
 /** 聊天流式事件（对应后端 AgentStreamEvent 的 JSON 序列化） */
 export type ChatStreamEvent =
   | { type: "textDelta"; delta: string }
@@ -549,4 +567,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ request_id: requestId, allow, always }),
     }),
+
+  /** 检查更新（用户手动触发；不做任何自动检查） */
+  checkUpdate: () => request<UpdateCheckInfo>("/api/updates/check"),
+
+  /** 下载并应用更新：验签后 managed 落盘 runtime 目录 / standalone 替换自身 */
+  applyUpdate: () => request<ApplyUpdateResult>("/api/updates/apply", { method: "POST" }),
+
+  /** standalone（Linux 部署）重启生效：进程 exec 新版（PID 不变）；managed 由壳重启，勿调 */
+  restartUpdate: () =>
+    request<{ status: string }>("/api/updates/restart", { method: "POST" }),
 };

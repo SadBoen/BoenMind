@@ -114,6 +114,9 @@ fn router(state: AppState) -> Router {
         .route("/api/providers/list-models", post(routes::providers::list_provider_models))
         .route("/api/thinking-levels", get(routes::providers::thinking_levels))
         .route("/api/providers/test", post(routes::providers::test_provider))
+        .route("/api/updates/check", get(routes::updates::check_update))
+        .route("/api/updates/apply", post(routes::updates::apply_update))
+        .route("/api/updates/restart", post(routes::updates::restart_update))
         .route("/api/workspace/list", get(routes::workspace::list_workspace))
         .route("/api/workspace/file", get(routes::workspace::read_workspace_file))
         .with_state(state)
@@ -286,6 +289,23 @@ pub async fn init() -> Result<(AppConfig, Db), Box<dyn std::error::Error>> {
 /// 注意：本函数不初始化全局日志（避免与宿主进程的日志系统冲突，
 /// 例如 Tauri 的 log 插件）。调用方自行初始化 tracing_subscriber。
 pub async fn serve(port: u16) -> Result<(), Box<dyn std::error::Error>> {
+    serve_inner(port, None).await
+}
+
+/// 桌面壳托管版：`serve` + 可优雅关闭（壳在热更新后向 shutdown 发送信号，
+/// axum graceful shutdown 结束后本函数返回，壳随即拉起新版本子进程）。
+/// 仅桌面壳（managed 模式）使用；standalone 的升级走 exec，不需要优雅关闭。
+pub async fn serve_managed(
+    port: u16,
+    shutdown: tokio::sync::watch::Receiver<bool>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    serve_inner(port, Some(shutdown)).await
+}
+
+async fn serve_inner(
+    port: u16,
+    shutdown: Option<tokio::sync::watch::Receiver<bool>>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let (config, db) = init().await?;
     tracing::info!("工作文件夹: {}", config.working_dir.display());
     tracing::info!("pi agent 目录: {}", bm_core::config::pi_agent_dir().display());
@@ -301,7 +321,22 @@ pub async fn serve(port: u16) -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     tracing::info!("BoenMind 后端已启动: http://{local} (v{VERSION})");
-    axum::serve(listener, router(state)).await?;
+
+    let server = axum::serve(listener, router(state));
+    match shutdown {
+        Some(mut rx) => {
+            server
+                .with_graceful_shutdown(async move {
+                    // 壳发来关闭信号（热更新换新版）：等一等正在进行的请求收尾
+                    let _ = rx.changed().await;
+                })
+                .await?;
+            tracing::info!("BoenMind 后端已优雅关闭");
+        }
+        None => {
+            server.await?;
+        }
+    }
     Ok(())
 }
 
@@ -344,6 +379,41 @@ pub fn bind_addr(port: u16) -> std::net::SocketAddr {
         .parse()
         .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
     std::net::SocketAddr::new(ip, port)
+}
+
+/// 以当前二进制替换自身进程（PID 不变，systemd `Restart=always` 无感知）。
+/// exec 成功即不返回；仅 Unix（standalone 部署）可用。
+#[cfg(unix)]
+pub fn exec_self() -> Result<(), std::io::Error> {
+    use std::os::unix::process::CommandExt as _;
+    let exe = std::env::current_exe()?;
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let err = std::process::Command::new(&exe).args(&args).exec();
+    Err(err)
+}
+#[cfg(not(unix))]
+pub fn exec_self() -> Result<(), std::io::Error> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "非 Unix 平台不支持 exec 自重启",
+    ))
+}
+
+/// 启动时检测自更新残留：`.update-pending` 标记存在（apply 已替换自身但
+/// 进程未及重启，如崩溃/断电）→ 删除标记并 exec 自身完成升级。
+/// 仅独立二进制入口（main.rs）调用；桌面壳（managed）由壳管理，不调用。
+pub fn consume_pending_update() -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(unix)]
+    {
+        let marker = bm_core::updates::runtime_dir().join(bm_core::updates::UPDATE_PENDING_FILE);
+        if marker.exists() {
+            // 先删标记：新进程启动后不再重复 exec
+            let _ = std::fs::remove_file(&marker);
+            eprintln!("[bm-server] 检测到待完成的自更新，正在重启为新版本…");
+            exec_self().map_err(|e| format!("自更新 exec 失败: {e}"))?;
+        }
+    }
+    Ok(())
 }
 
 /// 统一的 API 错误响应。

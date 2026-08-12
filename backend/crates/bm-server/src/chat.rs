@@ -552,9 +552,7 @@ async fn run_prompt_and_persist(
     // 任务终态落库（completed / cancelled / failed）；停掉心跳 task
     let (task_status, task_error) = match &result {
         Ok(_) => ("completed", None),
-        Err(e) if matches!(e, pi::sdk::Error::Aborted) => {
-            ("cancelled", Some("已取消".to_string()))
-        }
+        Err(pi::sdk::Error::Aborted) => ("cancelled", Some("已取消".to_string())),
         Err(e) => ("failed", Some(e.to_string())),
     };
     if let Err(err) = state
