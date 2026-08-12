@@ -17,6 +17,15 @@ fn parse_kind(kind: &str) -> ApiResult<ProviderKind> {
 // 提供商工具（模型列表拉取 / 连接测试）
 // ---------------------------------------------------------------------------
 
+/// 官方端点表下发（GET /api/providers/presets）。
+/// 端点数据只在 bm_core::providers::official_base_url 维护一份，
+/// 前端设置页拉取后合并进本地预设（拉取失败用本地值兜底，见 provider-presets.tsx）。
+pub async fn presets() -> ApiResult<Json<serde_json::Value>> {
+    Ok(Json(serde_json::json!({
+        "presets": bm_core::providers::official_base_urls(),
+    })))
+}
+
 /// 拉取模型列表请求体（表单中临时填写的端点与 key，不落盘）。
 #[derive(Deserialize)]
 pub struct ListModelsRequest {

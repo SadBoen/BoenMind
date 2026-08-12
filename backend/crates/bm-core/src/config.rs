@@ -107,6 +107,35 @@ pub enum ProviderKind {
 }
 
 impl ProviderKind {
+    /// 全部枚举变体。新增 kind 时同步更新（遍历生成官方端点表下发前端，
+    /// 测试也依赖它做全覆盖断言）。
+    pub const ALL: [ProviderKind; 24] = [
+        ProviderKind::Openai,
+        ProviderKind::Anthropic,
+        ProviderKind::Gemini,
+        ProviderKind::Ollama,
+        ProviderKind::Llamacpp,
+        ProviderKind::Minimax,
+        ProviderKind::Deepseek,
+        ProviderKind::Openrouter,
+        ProviderKind::Moonshot,
+        ProviderKind::Zhipu,
+        ProviderKind::Qwen,
+        ProviderKind::Xai,
+        ProviderKind::Zai,
+        ProviderKind::Groq,
+        ProviderKind::Mistral,
+        ProviderKind::Together,
+        ProviderKind::Cerebras,
+        ProviderKind::Fireworks,
+        ProviderKind::Huggingface,
+        ProviderKind::Nvidia,
+        ProviderKind::Xiaomi,
+        ProviderKind::Antling,
+        ProviderKind::Baseten,
+        ProviderKind::Custom,
+    ];
+
     /// pi agent 注册表中的提供商名。
     ///
     /// 大部分新提供商与 pi 内置注册表同名（groq/mistral/xai/…），models.json

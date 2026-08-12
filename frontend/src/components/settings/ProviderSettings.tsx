@@ -4,17 +4,18 @@
  * - 添加提供商：分组卡片选择器（热门推荐 / 更多 / 本地与兼容），选中即带入预设
  * - 编辑表单：品牌图标随类型联动，切换类型自动填充官方端点与默认模型
  *
- * 预设数据（端点/默认模型/分组/图标）在 lib/provider-presets.tsx 单一数据源。
+ * 预设数据（端点/默认模型/分组/图标）在 lib/provider-presets.tsx；
+ * 端点由后端 /api/providers/presets 下发合并（新增服务商只需改后端端点表）。
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useAppStore } from "@/stores/app-store";
 import { Plus, Pencil, Trash2, Star, Server, KeyRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import type { ProviderConfig, ProviderKind } from "@/api/client";
-import { KIND_PRESETS } from "@/lib/provider-presets";
+import { api, type ProviderConfig, type ProviderKind } from "@/api/client";
+import { applyApiPresets, KIND_PRESETS } from "@/lib/provider-presets";
 import { ProviderIcon } from "./provider-icons";
 import { ProviderPicker } from "./ProviderPicker";
 import { ProviderFormDialog } from "./ProviderFormDialog";
@@ -40,6 +41,21 @@ export function ProviderSettings() {
   const [editing, setEditing] = useState<ProviderConfig | null>(null);
   const [isNew, setIsNew] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  // 端点表合并后触发重渲染（值直接写入模块级 PROVIDER_PRESETS）
+  const [, setPresetsVersion] = useState(0);
+
+  // 挂载时从后端拉取官方端点表合并进预设（失败静默用本地值兜底）
+  useEffect(() => {
+    let cancelled = false;
+    void api.providerPresets().then((presets) => {
+      if (cancelled) return;
+      applyApiPresets(presets);
+      setPresetsVersion((v) => v + 1);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const persist = async (providers: ProviderConfig[], defaultProvider?: string) => {
     if (!config) return;

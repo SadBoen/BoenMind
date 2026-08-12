@@ -20,8 +20,8 @@ const MAX_TEST_TOKENS: u64 = 128;
 const REPLY_TRUNCATE: usize = 500;
 const ERROR_BODY_SNIPPET: usize = 200;
 
-/// 官方端点表（与前端 ProviderSettings 的 KIND_PRESETS base_url 同步维护；
-/// 新增 kind 时两端需一起更新）。
+/// 官方端点表（单一数据源：新增 kind 只需更新本表 + ProviderKind::ALL，
+/// 前端经 `GET /api/providers/presets` 获取，不再各自维护一份端点）。
 pub fn official_base_url(kind: ProviderKind) -> Option<&'static str> {
     match kind {
         ProviderKind::Openai => Some("https://api.openai.com/v1"),
@@ -54,6 +54,14 @@ pub fn official_base_url(kind: ProviderKind) -> Option<&'static str> {
 /// 是否 Anthropic 方言（x-api-key + anthropic-version 头）
 fn is_anthropic(kind: ProviderKind) -> bool {
     kind == ProviderKind::Anthropic
+}
+
+/// 全量官方端点表（供 `GET /api/providers/presets` 下发前端预填表单）。
+pub fn official_base_urls() -> Vec<(ProviderKind, Option<&'static str>)> {
+    ProviderKind::ALL
+        .iter()
+        .map(|k| (*k, official_base_url(*k)))
+        .collect()
 }
 
 /// 是否 Gemini 方言（v1beta generateContent）
@@ -387,19 +395,25 @@ mod tests {
 
     #[test]
     fn official_endpoints_cover_all_kinds() {
-        for kind in [
-            ProviderKind::Openai, ProviderKind::Anthropic, ProviderKind::Gemini,
-            ProviderKind::Ollama, ProviderKind::Llamacpp, ProviderKind::Minimax,
-            ProviderKind::Deepseek, ProviderKind::Openrouter, ProviderKind::Moonshot,
-            ProviderKind::Zhipu, ProviderKind::Qwen, ProviderKind::Xai, ProviderKind::Zai,
-            ProviderKind::Groq, ProviderKind::Mistral, ProviderKind::Together,
-            ProviderKind::Cerebras, ProviderKind::Fireworks, ProviderKind::Huggingface,
-            ProviderKind::Nvidia, ProviderKind::Xiaomi, ProviderKind::Antling,
-            ProviderKind::Baseten,
-        ] {
-            assert!(official_base_url(kind).is_some(), "kind {kind:?} 缺官方端点");
+        // 遍历 ProviderKind::ALL 而非手写数组：新增 kind 漏加端点会直接报错
+        for kind in ProviderKind::ALL {
+            if kind == ProviderKind::Custom {
+                assert!(
+                    official_base_url(kind).is_none(),
+                    "custom 必须由用户填写端点"
+                );
+            } else {
+                assert!(
+                    official_base_url(kind).is_some(),
+                    "kind {kind:?} 缺官方端点"
+                );
+            }
         }
-        assert!(official_base_url(ProviderKind::Custom).is_none());
+        // 全量表与逐项查询一致
+        assert_eq!(
+            official_base_urls().len(),
+            ProviderKind::ALL.len()
+        );
     }
 
     #[test]

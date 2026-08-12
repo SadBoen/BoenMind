@@ -1,11 +1,13 @@
 /**
- * 模型提供商预设：单一数据源（端点 / 默认模型 / 选择器分组 / 品牌图标）。
+ * 模型提供商预设：展示数据（默认模型 / 选择器分组 / 品牌图标）。
  *
- * 新增提供商 kind 时只需在此表加一行 —— 表单 kind 下拉、分组选择器、端点预设、
- * 品牌图标全部由此派生；`Record<ProviderKind, ...>` 保证漏加任何 kind 会在
- * 编译期报错（ProviderKind union 也在 api/client.ts，两端一起改）。
+ * 新增提供商 kind 时：后端 bm_core::providers::official_base_url + ProviderKind::ALL
+ * 加一行（端点唯一数据源），本表加一行（图标/分组/默认模型），i18n kinds 加翻译。
+ * 端点经 `applyApiPresets` 由后端下发合并，不再在此维护。
+ * `Record<ProviderKind, ...>` 保证漏加任何 kind 会在编译期报错
+ * （ProviderKind union 也在 api/client.ts，两端一起改）。
  *
- * 预设数据（baseUrl + 默认模型）迁移自 pi 注册表（@earendil-works/pi-ai 0.84），
+ * 预设数据（默认模型）迁移自 pi 注册表（@earendil-works/pi-ai 0.84），
  * 云端留空端点表示使用服务商官方默认。
  */
 import type React from "react";
@@ -88,6 +90,19 @@ export const PROVIDER_PRESETS: Record<ProviderKind, ProviderPreset> = {
 
 /** 表单 kind 下拉的展示顺序（表内声明顺序） */
 export const KIND_VALUES = Object.keys(PROVIDER_PRESETS) as ProviderKind[];
+
+/**
+ * 把后端下发的官方端点表合并进预设（端点唯一数据源在后端）。
+ * 拉取失败 / 旧后端（返回 null）时保持本地值兜底，不阻塞 UI。
+ * 调用方在挂载后调用并在完成后触发重渲染。
+ */
+export function applyApiPresets(api: Record<string, string | null> | null) {
+  if (!api) return;
+  for (const kind of KIND_VALUES) {
+    const url = api[kind];
+    if (url) PROVIDER_PRESETS[kind].base_url = url;
+  }
+}
 
 /** 选择器分组（键顺序即展示顺序，由表的 group 字段派生） */
 export const KIND_GROUPS: { group: ProviderGroup; kinds: ProviderKind[] }[] = (

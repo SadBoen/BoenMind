@@ -84,6 +84,7 @@ fn router(state: AppState) -> Router {
         .route("/api/skills/{id}", post(routes::skills::set_skill).delete(routes::skills::uninstall_skill))
         .route("/api/chat", post(chat::chat))
         .route("/api/chat/stop", post(chat::stop_chat))
+        .route("/api/providers/presets", get(routes::providers::presets))
         .route("/api/providers/list-models", post(routes::providers::list_provider_models))
         .route("/api/thinking-levels", get(routes::providers::thinking_levels))
         .route("/api/providers/test", post(routes::providers::test_provider))

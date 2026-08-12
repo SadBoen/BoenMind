@@ -281,6 +281,21 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
+  /**
+   * 官方端点表（服务商端点单一数据源在后端；旧后端/失败时返回 null，
+   * 前端保留本地预设兜底——见 provider-presets.tsx 的 applyApiPresets）。
+   */
+  providerPresets: async (): Promise<Record<string, string | null> | null> => {
+    try {
+      const data = await request<{ presets: [string, string | null][] }>(
+        "/api/providers/presets",
+      );
+      return Object.fromEntries(data.presets);
+    } catch {
+      return null;
+    }
+  },
+
   listSessions: () => request<Session[]>("/api/sessions"),
 
   /** 某模型的可用思考档位（后端按 pi 白名单判定；请求失败前端用默认 4 档兜底） */
