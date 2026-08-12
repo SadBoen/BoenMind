@@ -127,6 +127,21 @@ export interface QuotaInfo {
   callsToday?: number;
 }
 
+/** 插件用量声明（manifest `quota` 段）：文件路径 + 按次计费源清单 */
+export interface QuotaDecl {
+  path: string;
+  countOnTest?: string[];
+}
+
+/** 设置页「测试」按钮的探测模板（manifest `testSources` 段，单个源） */
+export interface TestSourceDecl {
+  method: string;
+  url: string;
+  headers?: Record<string, string>;
+  body?: unknown;
+  label?: string;
+}
+
 export interface PluginInfo {
   id: string;
   name: string;
@@ -136,6 +151,10 @@ export interface PluginInfo {
   builtin: boolean;
   /** 插件设置页 schema（无设置页的插件为 undefined） */
   settingsSchema?: SettingField[];
+  /** 用量声明（manifest quota 段；无用量统计的插件为 undefined） */
+  quota?: QuotaDecl;
+  /** 可测试源模板（manifest testSources 段；无测试按钮的插件为 undefined） */
+  testSources?: Record<string, TestSourceDecl>;
 }
 
 export interface SkillInfo {

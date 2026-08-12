@@ -41,6 +41,12 @@ pub struct PluginInfo {
     /// 插件设置页 schema（manifest 的 settings 声明；None = 无设置页）
     #[serde(skip_serializing_if = "Option::is_none", rename = "settingsSchema")]
     pub settings_schema: Option<Vec<crate::plugin_settings::SettingField>>,
+    /// 用量声明（manifest 的 quota 段；None = 无用量统计）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quota: Option<crate::plugin_settings::QuotaDecl>,
+    /// 设置页测试按钮的探测模板（manifest 的 testSources 段；None = 无测试按钮）
+    #[serde(skip_serializing_if = "Option::is_none", rename = "testSources")]
+    pub test_sources: Option<std::collections::HashMap<String, crate::plugin_settings::TestSourceDecl>>,
 }
 
 /// 插件根目录。
@@ -82,21 +88,42 @@ pub fn list_plugins(config: &AppConfig) -> Result<Vec<PluginInfo>, std::io::Erro
             enabled,
             builtin: BUILTIN_PLUGINS.iter().any(|(bid, _)| *bid == id),
             settings_schema: manifest_settings_schema(&path),
+            quota: manifest_quota(&path),
+            test_sources: manifest_test_sources(&path),
         });
     }
     out.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(out)
 }
 
-/// 解析插件目录 manifest 的 settings schema（单文件插件/无 settings 声明返回 None）。
-fn manifest_settings_schema(path: &Path) -> Option<Vec<crate::plugin_settings::SettingField>> {
+/// 解析插件目录 manifest（extension.json），返回 JSON 值（不存在/损坏返回 None）。
+fn read_manifest(path: &Path) -> Option<serde_json::Value> {
     let manifest = path.join("extension.json");
     if !manifest.is_file() {
         return None;
     }
     let text = fs::read_to_string(&manifest).ok()?;
-    let json = serde_json::from_str::<serde_json::Value>(&text).ok()?;
+    serde_json::from_str::<serde_json::Value>(&text).ok()
+}
+
+/// 解析插件目录 manifest 的 settings schema（单文件插件/无 settings 声明返回 None）。
+fn manifest_settings_schema(path: &Path) -> Option<Vec<crate::plugin_settings::SettingField>> {
+    let json = read_manifest(path)?;
     crate::plugin_settings::parse_settings_schema(&json)
+}
+
+/// 解析插件目录 manifest 的 quota 声明（单文件插件/未声明返回 None）。
+fn manifest_quota(path: &Path) -> Option<crate::plugin_settings::QuotaDecl> {
+    let json = read_manifest(path)?;
+    crate::plugin_settings::parse_quota_decl(&json)
+}
+
+/// 解析插件目录 manifest 的 testSources 声明（单文件插件/未声明返回 None）。
+fn manifest_test_sources(
+    path: &Path,
+) -> Option<std::collections::HashMap<String, crate::plugin_settings::TestSourceDecl>> {
+    let json = read_manifest(path)?;
+    crate::plugin_settings::parse_test_sources(&json)
 }
 
 /// 插件文件/目录是否实际存在。
@@ -167,6 +194,8 @@ pub fn install_plugin(source: &Path) -> Result<PluginInfo, String> {
         enabled: false,
         builtin: false,
         settings_schema: manifest_settings_schema(&dest),
+        quota: manifest_quota(&dest),
+        test_sources: manifest_test_sources(&dest),
     })
 }
 

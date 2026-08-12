@@ -13,6 +13,88 @@
     "tool",
     "session"
   ],
+  "quota": {
+    "path": ".boenmind/web-search/quota.json",
+    "countOnTest": [
+      "tavily",
+      "exa",
+      "serper",
+      "firecrawl"
+    ]
+  },
+  "testSources": {
+    "jina": {
+      "method": "GET",
+      "url": "https://s.jina.ai/?q=test",
+      "label": "Jina",
+      "headers": {
+        "Authorization": "Bearer {sources.jina.apiKey}",
+        "Accept": "text/markdown"
+      }
+    },
+    "tavily": {
+      "method": "POST",
+      "url": "https://api.tavily.com/search",
+      "label": "Tavily",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "api_key": "{sources.tavily.apiKey}",
+        "query": "test",
+        "max_results": 1
+      }
+    },
+    "exa": {
+      "method": "POST",
+      "url": "https://api.exa.ai/search",
+      "label": "Exa",
+      "headers": {
+        "x-api-key": "{sources.exa.apiKey}",
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "query": "test",
+        "numResults": 1
+      }
+    },
+    "serper": {
+      "method": "POST",
+      "url": "https://google.serper.dev/search",
+      "label": "Serper",
+      "headers": {
+        "X-API-KEY": "{sources.serper.apiKey}",
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "q": "test",
+        "num": 1
+      }
+    },
+    "firecrawl": {
+      "method": "POST",
+      "url": "https://api.firecrawl.dev/v2/scrape",
+      "label": "Firecrawl",
+      "headers": {
+        "Authorization": "Bearer {sources.firecrawl.apiKey}",
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "url": "https://example.com",
+        "formats": [
+          "markdown"
+        ]
+      }
+    },
+    "custom*": {
+      "method": "GET",
+      "url": "{customN.url}",
+      "label": "自定义源",
+      "headers": {
+        "{customN.apiKeyHeader}": "{customN.apiKey}"
+      }
+    }
+  },
   "settings": [
     {
       "key": "search.mode",

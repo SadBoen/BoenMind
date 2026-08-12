@@ -51,7 +51,7 @@ interface Props {
   onClose: () => void;
 }
 
-/** 内置源展示名（sources.jina → Jina） */
+/** 内置源展示名（sources.jina → Jina）——manifest testSources.label 优先 */
 const SOURCE_DISPLAY: Record<string, string> = {
   jina: "Jina",
   tavily: "Tavily",
@@ -59,6 +59,19 @@ const SOURCE_DISPLAY: Record<string, string> = {
   serper: "Serper",
   firecrawl: "Firecrawl",
 };
+
+/** 该源是否有测试模板（manifest testSources 精确匹配或 custom* 通配），并给出展示名。
+ *  无模板的源不渲染「测试」按钮——新增源只需在 extension.json 声明，前端零改动。 */
+function testableSource(plugin: PluginInfo, sourceKey: string): { label: string; testable: boolean } {
+  const sources = plugin.testSources;
+  if (!sources) return { label: SOURCE_DISPLAY[sourceKey] ?? sourceKey, testable: false };
+  const exact = sources[sourceKey];
+  if (exact) return { label: exact.label ?? SOURCE_DISPLAY[sourceKey] ?? sourceKey, testable: true };
+  if (sourceKey.startsWith("custom") && sources["custom*"]) {
+    return { label: sources["custom*"].label ?? sourceKey, testable: true };
+  }
+  return { label: SOURCE_DISPLAY[sourceKey] ?? sourceKey, testable: false };
+}
 
 /** 组 = key 去掉最后一段（如 sources.jina.apiKey → sources.jina） */
 function groupOf(key: string): string {
@@ -372,7 +385,7 @@ export function PluginSettingsDialog({ plugin, open, onClose }: Props) {
             {/* ── 供应商卡片（sources.* 每源一张，含启停开关 + 测试按钮） ── */}
             {groups.sources.map(([group, fields]) => {
               const sourceKey = group.slice("sources.".length);
-              const display = SOURCE_DISPLAY[sourceKey] ?? sourceKey;
+              const { label: display, testable } = testableSource(plugin, sourceKey);
               const enabledField = fields.find((f) => f.key.endsWith(".enabled"));
               const isOpen = !collapsed.has(group);
               const enabled = Boolean(enabledField && values[enabledField.key]);
@@ -391,20 +404,22 @@ export function PluginSettingsDialog({ plugin, open, onClose }: Props) {
                           disabled={saving}
                         />
                       )}
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-7 gap-1 px-2 text-xs"
-                        onClick={() => void testSource(sourceKey, display)}
-                        disabled={testing !== null || saving}
-                      >
-                        {testing === sourceKey ? (
-                          <Loader2 size={12} className="animate-spin" />
-                        ) : (
-                          <PlugZap size={12} />
-                        )}
-                        {t("settings.plugins.test")}
-                      </Button>
+                      {testable && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 gap-1 px-2 text-xs"
+                          onClick={() => void testSource(sourceKey, display)}
+                          disabled={testing !== null || saving}
+                        >
+                          {testing === sourceKey ? (
+                            <Loader2 size={12} className="animate-spin" />
+                          ) : (
+                            <PlugZap size={12} />
+                          )}
+                          {t("settings.plugins.test")}
+                        </Button>
+                      )}
                     </>
                   }
                 >
@@ -443,6 +458,7 @@ export function PluginSettingsDialog({ plugin, open, onClose }: Props) {
                     const cardKey = `${prefix}${n}`;
                     const isOpen = !collapsed.has(cardKey);
                     const name = String(values[`${prefix}${n}.name`] ?? "");
+                    const { label: instanceLabel, testable } = testableSource(plugin, cardKey);
                     const enabledField = field.fields?.find((f) => f.key === "enabled");
                     const enabled = Boolean(enabledField && values[`${prefix}${n}.enabled`]);
                     return (
@@ -460,22 +476,24 @@ export function PluginSettingsDialog({ plugin, open, onClose }: Props) {
                                 disabled={saving}
                               />
                             )}
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="h-7 gap-1 px-2 text-xs"
-                              onClick={() =>
-                                void testSource(cardKey, name || t("settings.plugins.groupInstance", { n }))
-                              }
-                              disabled={testing !== null || saving}
-                            >
-                              {testing === cardKey ? (
-                                <Loader2 size={12} className="animate-spin" />
-                              ) : (
-                                <PlugZap size={12} />
-                              )}
-                              {t("settings.plugins.test")}
-                            </Button>
+                            {testable && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-7 gap-1 px-2 text-xs"
+                                onClick={() =>
+                                  void testSource(cardKey, instanceLabel || t("settings.plugins.groupInstance", { n }))
+                                }
+                                disabled={testing !== null || saving}
+                              >
+                                {testing === cardKey ? (
+                                  <Loader2 size={12} className="animate-spin" />
+                                ) : (
+                                  <PlugZap size={12} />
+                                )}
+                                {t("settings.plugins.test")}
+                              </Button>
+                            )}
                             {max > 1 && (
                               <Button
                                 variant="ghost"

@@ -11,6 +11,15 @@
 //!   前端。保存语义：提交空字符串或与掩码完全相等 = "未修改"保留原值；
 //!   显式清除用 `__clear.<key>: true` 标记（旧版"提交空 = 清除"已废弃，
 //!   空框误提交会静默清掉密钥，不安全）。
+//!
+//! 同文件还承载另两个 manifest 声明（同为"设置页注册机制"的一部分）：
+//! - `quota`：用量文件路径（相对工作文件夹）与按次计费源清单，服务端据此
+//!   读取/累加用量（见 bm-server routes），插件自身也写同一文件；
+//! - `testSources`：设置页「测试」按钮的探测请求模板，服务端按模板发轻量
+//!   请求验证连通（模板 `{<settings key>}` 用当前设置值替换），新增搜索源
+//!   无需改服务端代码。
+
+use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -56,6 +65,64 @@ pub struct SettingField {
 
 fn default_group_instances() -> usize {
     2
+}
+
+/// manifest `quota` 声明：用量文件路径 + 按次计费源清单。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuotaDecl {
+    /// 用量文件路径（相对工作文件夹，如 `.boenmind/web-search/quota.json`）
+    pub path: String,
+    /// 测试成功即消耗免费额度的按次计费源（测试按钮会真实扣一次，服务端累加）
+    #[serde(default)]
+    pub count_on_test: Vec<String>,
+}
+
+/// manifest `testSources` 里单个源的探测请求模板。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestSourceDecl {
+    /// GET / POST
+    pub method: String,
+    /// 请求 URL；`{<settings key>}` 会被替换为当前设置值
+    pub url: String,
+    /// 请求头（顺序无关）；值为模板，替换结果为空 = 该依赖未配置
+    #[serde(default)]
+    pub headers: std::collections::BTreeMap<String, String>,
+    /// JSON body（POST 时发送）；值为模板，可整体替换
+    #[serde(default)]
+    pub body: Option<Value>,
+    /// 设置页测试按钮展示名（缺省用源 id）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+/// 从 manifest JSON 解析 `quota` 声明（无该段返回 None）。
+pub fn parse_quota_decl(manifest: &Value) -> Option<QuotaDecl> {
+    let decl = manifest.get("quota")?;
+    serde_json::from_value::<QuotaDecl>(decl.clone())
+        .ok()
+        .filter(|q| !q.path.is_empty())
+}
+
+/// 从 manifest JSON 解析 `testSources` 声明：源 id（含 `custom*` 通配）→ 模板。
+pub fn parse_test_sources(manifest: &Value) -> Option<HashMap<String, TestSourceDecl>> {
+    let map = manifest.get("testSources")?.as_object()?;
+    let decls: HashMap<String, TestSourceDecl> = map
+        .iter()
+        .filter_map(|(id, v)| {
+            let mut decl: TestSourceDecl = serde_json::from_value(v.clone()).ok()?;
+            if decl.method.is_empty() || decl.url.is_empty() {
+                return None;
+            }
+            decl.method = decl.method.to_ascii_uppercase();
+            if decl.label.is_none() {
+                decl.label = Some(id.clone());
+            }
+            Some((id.clone(), decl))
+        })
+        .collect();
+    (!decls.is_empty()).then_some(decls)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -427,6 +494,50 @@ mod tests {
         // 掩码中间追加/前插不算是掩码形式（精确判定在 save 内用全等比较）
         assert!(!is_masked("sk-l****EXTRA"));
         assert!(!is_masked("sk-long-key-123"));
+    }
+
+    #[test]
+    fn parse_quota_and_test_sources() {
+        let manifest = serde_json::json!({
+            "quota": {
+                "path": ".boenmind/web-search/quota.json",
+                "countOnTest": ["tavily", "exa"]
+            },
+            "testSources": {
+                "jina": {
+                    "method": "get",
+                    "url": "https://s.jina.ai/?q=test",
+                    "label": "Jina",
+                    "headers": { "Authorization": "Bearer {sources.jina.apiKey}" }
+                },
+                "custom*": {
+                    "method": "GET",
+                    "url": "{customN.url}",
+                    "headers": { "{customN.apiKeyHeader}": "{customN.apiKey}" }
+                }
+            }
+        });
+        let quota = parse_quota_decl(&manifest).unwrap();
+        assert_eq!(quota.path, ".boenmind/web-search/quota.json");
+        assert_eq!(quota.count_on_test, vec!["tavily", "exa"]);
+        // 缺 quota 段 → None
+        assert!(parse_quota_decl(&serde_json::json!({})).is_none());
+
+        let sources = parse_test_sources(&manifest).unwrap();
+        // 精确源：method 大写归一 + label 缺省补 id
+        assert_eq!(sources["jina"].method, "GET");
+        assert_eq!(sources["jina"].label.as_deref(), Some("Jina"));
+        assert_eq!(
+            sources["jina"].headers["Authorization"],
+            "Bearer {sources.jina.apiKey}"
+        );
+        // 通配源：未声明 label 时补源 id
+        assert_eq!(sources["custom*"].label.as_deref(), Some("custom*"));
+        // 非法模板（缺 url）被剔除
+        let bad = serde_json::json!({ "testSources": { "x": { "method": "GET" } } });
+        assert!(parse_test_sources(&bad).is_none());
+        // 缺 testSources 段 → None
+        assert!(parse_test_sources(&serde_json::json!({})).is_none());
     }
 
     #[test]

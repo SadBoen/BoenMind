@@ -239,40 +239,52 @@ pub async fn install_plugin(
     Ok(Json(info))
 }
 
+/// 查找插件信息（manifest 的 schema/quota/testSources 均已解析）。
+/// 插件不存在 → Ok(None)。
+async fn plugin_info(
+    state: &crate::AppState,
+    id: &str,
+) -> Result<Option<bm_core::plugins::PluginInfo>, (StatusCode, axum::Json<serde_json::Value>)> {
+    let config = state.config.read().await;
+    let plugins = bm_core::plugins::list_plugins(&config)
+        .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    Ok(plugins.into_iter().find(|p| p.id == id))
+}
+
 /// 查找插件的 settings schema（插件不存在或无设置页 → None）。
 async fn plugin_settings_schema(
     state: &crate::AppState,
     id: &str,
 ) -> Result<Option<Vec<bm_core::plugin_settings::SettingField>>, (StatusCode, axum::Json<serde_json::Value>)> {
-    let config = state.config.read().await;
-    let plugins = bm_core::plugins::list_plugins(&config)
-        .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
-    Ok(plugins.iter().find(|p| p.id == id).and_then(|p| p.settings_schema.clone()))
+    Ok(plugin_info(state, id).await?.and_then(|p| p.settings_schema))
 }
 
 /// GET /api/plugins/{id}/settings — 读取插件设置（secret 字段掩码回显）。
-/// 附加字段 `quota`：若插件在工作文件夹下留有用量文件（web-search 的 quota.json），
-/// 一并返回供设置页展示（可选，无文件时为 null）。
+/// 附加字段 `quota`：若插件 manifest 声明了用量文件（如 web-search 的 quota.json），
+/// 一并返回供设置页展示（可选，无声明时为空）。
 pub async fn get_plugin_settings(
     State(state): crate::SharedState,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let schema = plugin_settings_schema(&state, &id)
+    let info = plugin_info(&state, &id)
         .await?
         .ok_or_else(|| api_error(StatusCode::NOT_FOUND, "插件不存在或无设置页"))?;
+    let schema = info
+        .settings_schema
+        .ok_or_else(|| api_error(StatusCode::NOT_FOUND, "插件不存在或无设置页"))?;
     let settings = bm_core::plugin_settings::read_settings_masked(&id, &schema);
-    let quota = read_plugin_quota(&state, &id).await;
+    let quota = read_plugin_quota(&state, info.quota.as_ref()).await;
     Ok(Json(serde_json::json!({ "settings": settings, "quota": quota })))
 }
 
-/// 读取插件在工作文件夹下的用量文件（约定 `<working_dir>/.boenmind/<id>/quota.json`）。
+/// 读取插件用量文件（路径由 manifest `quota.path` 声明，相对工作文件夹）。
 /// 由插件自身写入（沙箱 pi.tool("write") 限制在 workspace 内）；读取失败返回 null。
-async fn read_plugin_quota(state: &crate::AppState, id: &str) -> Option<serde_json::Value> {
+async fn read_plugin_quota(
+    state: &crate::AppState,
+    quota: Option<&bm_core::plugin_settings::QuotaDecl>,
+) -> Option<serde_json::Value> {
     let working_dir = state.config.read().await.working_dir.clone();
-    let file = working_dir
-        .join(".boenmind")
-        .join(id)
-        .join("quota.json");
+    let file = working_dir.join(quota?.path.as_str());
     let text = std::fs::read_to_string(&file).ok()?;
     serde_json::from_str::<serde_json::Value>(&text).ok()
 }
@@ -303,9 +315,13 @@ pub async fn test_plugin_source(
     axum::extract::Path(id): axum::extract::Path<String>,
     Json(req): Json<TestSourceRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let schema = plugin_settings_schema(&state, &id)
+    let info = plugin_info(&state, &id)
         .await?
         .ok_or_else(|| api_error(StatusCode::NOT_FOUND, "插件不存在或无设置页"))?;
+    let schema = info
+        .settings_schema
+        .ok_or_else(|| api_error(StatusCode::NOT_FOUND, "插件不存在或无设置页"))?;
+    let test_sources = info.test_sources.unwrap_or_default();
     // 明文读取（含密钥，仅服务端内部使用，不回传）
     let mut settings = bm_core::plugin_settings::read_settings(&id, &schema);
     // 用表单当前值覆盖（仅 schema 声明的 key；secret 空/掩码 = 保留原值）
@@ -325,12 +341,16 @@ pub async fn test_plugin_source(
     }
     let source = req.source.clone();
     let result = tokio::task::spawn_blocking(move || {
-        bm_core::plugin_test::test_source(&source, &settings)
+        bm_core::plugin_test::test_source(&source, &settings, &test_sources)
     })
     .await
     .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
-    // 测试成功 = 真实消耗 1 次免费额度，计入用量文件（内置按次源；tokens 源不计数）
-    let quota = if result.ok { bump_plugin_quota(&state, &id, &req.source).await } else { None };
+    // 测试成功 = 真实消耗 1 次免费额度，计入用量文件（manifest 声明的按次计费源）
+    let quota = if result.ok {
+        bump_plugin_quota(&state, &req.source, info.quota.as_ref()).await
+    } else {
+        None
+    };
     Ok(Json(serde_json::json!({
         "ok": result.ok,
         "latencyMs": result.latency_ms,
@@ -339,15 +359,19 @@ pub async fn test_plugin_source(
     })))
 }
 
-/// 用量文件里给某源 +1 次调用（仅内置按次计费源；custom 源无统计、tokens 源不计数）。
-/// 返回更新后的完整用量（无文件时返回 None）。
-async fn bump_plugin_quota(state: &crate::AppState, id: &str, source: &str) -> Option<serde_json::Value> {
-    let builtin_calls = matches!(source, "tavily" | "exa" | "serper" | "firecrawl");
-    if !builtin_calls {
+/// 用量文件里给某源 +1 次调用（仅 manifest `quota.countOnTest` 声明的按次计费源；
+/// 其余源无统计）。返回更新后的完整用量（无声明/无文件时返回 None）。
+async fn bump_plugin_quota(
+    state: &crate::AppState,
+    source: &str,
+    quota_decl: Option<&bm_core::plugin_settings::QuotaDecl>,
+) -> Option<serde_json::Value> {
+    let decl = quota_decl?;
+    if !decl.count_on_test.iter().any(|s| s == source) {
         return None;
     }
     let working_dir = state.config.read().await.working_dir.clone();
-    let file = working_dir.join(".boenmind").join(id).join("quota.json");
+    let file = working_dir.join(decl.path.as_str());
     let mut quota: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).ok()?).ok()?;
     let Some(entry) = quota.get_mut(source) else { return None };
     let is_calls = entry.get("unit").and_then(Value::as_str) == Some("calls");
