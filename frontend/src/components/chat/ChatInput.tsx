@@ -20,7 +20,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ProviderIcon } from "@/components/settings/provider-icons";
-import { useAppStore } from "@/stores/app-store";
+import { defaultModelValue, useAppStore } from "@/stores/app-store";
 
 /**
  * 思考强度选项（对应 pi ThinkingLevel，label 用 chat.thinking.<value> 翻译）。
@@ -95,18 +95,8 @@ export function ChatInput() {
   const modelGroups = useModelGroups();
   const [text, setText] = useState("");
 
-  // 默认模型：全局默认 → 第一个提供商的默认模型
-  const defaultModel = useMemo(() => {
-    if (!config) return null;
-    const def = config.default_model;
-    if (def) {
-      const p = config.providers.find((p) => p.default_model === def || p.models.includes(def));
-      if (p) return `${p.id}::${def}`;
-    }
-    const p = config.providers[0];
-    if (p?.models[0]) return `${p.id}::${p.models[0]}`;
-    return null;
-  }, [config]);
+  // 默认模型：全局默认 → 第一个提供商的默认模型（与 app-store 初始化逻辑同源）
+  const defaultModel = useMemo(() => (config ? defaultModelValue(config) : null), [config]);
 
   const modelValue = selectedModel ?? defaultModel;
   // 当前选中模型的提供商 id（选择器前的小 logo 用）
@@ -186,9 +176,12 @@ export function ChatInput() {
                 <Mic size={13} />
               </Button>
 
-              {/* 模型选择：提供商小 logo 在名称前 */}
+              {/* 模型选择：提供商小 logo 在名称前。
+                  value 传 null 而非 undefined：base-ui useControlled 在首渲染
+                  锁定受控性（undefined → 非受控），默认模型是异步加载的，
+                  传 undefined 会导致后续值变化被永久忽略（触发器永远占位符） */}
               <Select
-                value={modelValue ?? undefined}
+                value={modelValue ?? null}
                 onValueChange={setSelectedModel}
                 itemToStringLabel={(v) => String(v).split("::")[1] ?? ""}
               >

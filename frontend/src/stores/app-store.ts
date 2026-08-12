@@ -19,6 +19,21 @@ export interface StreamingToolCall {
   done: boolean;
 }
 
+/**
+ * 配置默认模型（"providerId::modelId"）：全局 default_model → 所属提供商，
+ * 无则取第一个提供商的首个模型；未配置任何提供商时为 null。
+ */
+export function defaultModelValue(config: AppConfig): string | null {
+  const def = config.default_model;
+  if (def) {
+    const p = config.providers.find((p) => p.default_model === def || p.models.includes(def));
+    if (p) return `${p.id}::${def}`;
+  }
+  const p = config.providers[0];
+  if (p?.models[0]) return `${p.id}::${p.models[0]}`;
+  return null;
+}
+
 interface AppStore {
   // 导航
   activeNav: NavKey;
@@ -113,6 +128,16 @@ export const useAppStore = create<AppStore>((set, get) => {
         // 语言以后端 config.toml 为准（桌面/网页一致），与 localStorage 不同时校正
         if (isLang(config.lang) && config.lang !== i18n.language) {
           applyLang(config.lang);
+        }
+        // 模型选择初始化/校正：无持久化选择时展示配置默认模型，
+        // 持久化的选择已失效（提供商/模型被删）时回退默认。
+        // 注意这里不写 localStorage —— 只有用户显式选择才持久化，
+        // 避免 config 默认模型日后变更时被旧的持久化值压住。
+        const [pid, mid] = (get().selectedModel ?? "").split("::");
+        const valid = config.providers.some((p) => p.id === pid && p.models.includes(mid));
+        if (!valid) {
+          const fallback = defaultModelValue(config);
+          if (fallback) set({ selectedModel: fallback });
         }
       } catch {
         /* 后端未就绪时保持现状 */
