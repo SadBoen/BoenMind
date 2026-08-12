@@ -23,11 +23,15 @@ export const en: Translation = {
   },
   nav: {
     chat: "Chat",
+    team: "Expert Team",
     gallery: "Gallery",
     knowledge: "Knowledge",
     settings: "Settings",
     gallerySoon: "Gallery (coming soon)",
     knowledgeSoon: "Knowledge (coming soon)",
+  },
+  team: {
+    docLoadFailed: "Failed to load the feature spec document",
   },
   chat: {
     newSession: "New chat",

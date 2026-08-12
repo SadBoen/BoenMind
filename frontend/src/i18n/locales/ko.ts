@@ -23,11 +23,15 @@ export const ko: Translation = {
   },
   nav: {
     chat: "대화",
+    team: "전문가 팀",
     gallery: "갤러리",
     knowledge: "지식",
     settings: "설정",
     gallerySoon: "갤러리 (출시 예정)",
     knowledgeSoon: "지식 (출시 예정)",
+  },
+  team: {
+    docLoadFailed: "기능 설명 문서를 불러오지 못했습니다",
   },
   chat: {
     newSession: "새 채팅",

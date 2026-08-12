@@ -22,11 +22,15 @@ export const zh = {
   },
   nav: {
     chat: "对话",
+    team: "专家团队",
     gallery: "图库",
     knowledge: "知识库",
     settings: "设置",
     gallerySoon: "图库（即将推出）",
     knowledgeSoon: "知识库（即将推出）",
+  },
+  team: {
+    docLoadFailed: "功能描述文档加载失败",
   },
   chat: {
     /** 新会话默认标题（会随首条消息被自动命名，勿翻译成品牌词） */

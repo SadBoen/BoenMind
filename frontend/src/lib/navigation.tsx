@@ -16,10 +16,12 @@ import {
   Palette,
   Puzzle,
   Settings,
+  Users,
   Wand2,
 } from "lucide-react";
 import { ChatWindow } from "@/components/chat/ChatWindow";
 import { SessionList } from "@/components/chat/SessionList";
+import { ExpertTeamDocs } from "@/components/team/ExpertTeamDocs";
 import { SettingsMenu } from "@/components/settings/SettingsMenu";
 import { AboutSettings } from "@/components/settings/AboutSettings";
 import { AppearanceSettings } from "@/components/settings/AppearanceSettings";
@@ -29,7 +31,7 @@ import { SkillsSettings } from "@/components/settings/SkillsSettings";
 import { WorkspaceSettings } from "@/components/settings/WorkspaceSettings";
 import { useAppStore } from "@/stores/app-store";
 
-export type NavKey = "chat" | "gallery" | "knowledge" | "settings";
+export type NavKey = "chat" | "team" | "gallery" | "knowledge" | "settings";
 export type SettingsTab =
   | "appearance"
   | "providers"
@@ -65,6 +67,12 @@ export const NAV: Record<NavKey, NavEntry> = {
     icon: <MessageSquare size={20} />,
     secondary: SessionList,
     main: ChatWindow,
+  },
+  // 专家团队（阶段 0：功能描述文档；团队编排/协作实现见 docs/expert-team.md）
+  team: {
+    labelKey: "nav.team",
+    icon: <Users size={20} />,
+    main: ExpertTeamDocs,
   },
   gallery: { labelKey: "nav.gallery", icon: <Images size={20} />, placeholder: true },
   knowledge: { labelKey: "nav.knowledge", icon: <BookOpenText size={20} />, placeholder: true },

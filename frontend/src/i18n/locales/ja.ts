@@ -23,11 +23,15 @@ export const ja: Translation = {
   },
   nav: {
     chat: "チャット",
+    team: "専門家チーム",
     gallery: "ギャラリー",
     knowledge: "ナレッジ",
     settings: "設定",
     gallerySoon: "ギャラリー（近日公開）",
     knowledgeSoon: "ナレッジ（近日公開）",
+  },
+  team: {
+    docLoadFailed: "機能説明ドキュメントの読み込みに失敗しました",
   },
   chat: {
     newSession: "新しいチャット",
