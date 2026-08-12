@@ -110,6 +110,12 @@ jobs:
           TAURI_SIGNING_IDENTITY: "-"
         run: pnpm tauri build --target aarch64-apple-darwin --bundles app,dmg
 
+      # tauri build 只产 app 壳；bm-server 是独立 workspace crate，
+      # 二进制需显式构建（热升级 runtime 资产用）
+      - name: 构建 bm-server runtime 二进制
+        working-directory: backend
+        run: cargo build --release -p bm-server --target aarch64-apple-darwin
+
       - name: 收集产物并生成自动更新清单 (latest.json)
         working-directory: frontend
         env:
@@ -122,8 +128,6 @@ jobs:
           VER="$(node -p "require('./src-tauri/tauri.conf.json').version")"
           # 试跑（workflow_dispatch）时 ref_name 是分支名，退回 v$VER
           if [[ "${RELEASE_TAG:-}" =~ ^v[0-9] ]]; then TAG="$RELEASE_TAG"; else TAG="v$VER"; fi
-          # 签名密钥（secret 为双重 base64；signer CLI 需要单层 base64 = 密钥文件内容）
-          SIGNING_KEY="$(echo "$TAURI_SIGNING_PRIVATE_KEY" | base64 -d)"
 
           TRIPLE="aarch64-apple-darwin"
           MACOS_DIR="src-tauri/target/$TRIPLE/release/bundle/macos"
@@ -132,11 +136,18 @@ jobs:
           mv "$MACOS_DIR/BoenMind.app.tar.gz.sig" "../dist-mac/BoenMind_${VER}_aarch64.app.tar.gz.sig"
           cp src-tauri/target/$TRIPLE/release/bundle/dmg/*.dmg "../dist-mac/"
           # 热升级 runtime 资产：独立 bm-server 二进制（非 embed，桌面页面由壳提供）+ 签名
-          RUNTIME_BIN="src-tauri/target/$TRIPLE/release/bm-server"
+          RUNTIME_BIN="../backend/target/$TRIPLE/release/bm-server"
           cp "$RUNTIME_BIN" "../dist-mac/boenmind-runtime-${VER}-${TRIPLE}"
-          pnpm exec tauri signer sign \
-            --private-key "$SIGNING_KEY" --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" \
-            "../dist-mac/boenmind-runtime-${VER}-${TRIPLE}"
+          # 签名密钥兼容两种格式：先按 base64 解一层试签；失败则按原样文本重试
+          if ! SIGN_KEY="$(echo "$TAURI_SIGNING_PRIVATE_KEY" | base64 -d 2>/dev/null || true)" || [ -z "$SIGN_KEY" ] \
+            || ! pnpm exec tauri signer sign --private-key "$SIGN_KEY" \
+                 --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" \
+                 "../dist-mac/boenmind-runtime-${VER}-${TRIPLE}" 2>/dev/null; then
+            pnpm exec tauri signer sign \
+              --private-key "$TAURI_SIGNING_PRIVATE_KEY" \
+              --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" \
+              "../dist-mac/boenmind-runtime-${VER}-${TRIPLE}"
+          fi
 
           # latest.json：签名直接读已 mv 到 dist-mac 的 .sig 文件
           # （tauri 生成的 latest.json 位置随版本变动，而 .sig 路径稳定且内容即 signature 字段）
@@ -200,6 +211,11 @@ jobs:
         working-directory: frontend
         run: pnpm tauri build --no-bundle
 
+      # tauri build 只产 app 壳；bm-server 是独立 workspace crate，需显式构建
+      - name: 构建 bm-server runtime 二进制
+        working-directory: backend
+        run: cargo build --release -p bm-server
+
       - name: 打包便携版 zip
         shell: pwsh
         working-directory: frontend
@@ -213,10 +229,17 @@ jobs:
           Copy-Item src-tauri\target\release\app.exe ..\dist-win\BoenMind.exe
           Compress-Archive -Path ..\dist-win\BoenMind.exe -DestinationPath "..\dist-win\BoenMind_${VER}_x64_portable.zip" -CompressionLevel Optimal
           # 热升级 runtime 资产：独立 bm-server.exe（非 embed）+ 签名
-          Copy-Item src-tauri\target\release\bm-server.exe "..\dist-win\boenmind-runtime-${VER}-x86_64-pc-windows-msvc.exe"
-          # secret 为双重 base64，signer CLI 需要单层 base64（= 密钥文件内容）
-          $signingKey = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:TAURI_SIGNING_PRIVATE_KEY))
-          pnpm exec tauri signer sign --private-key $signingKey --password $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD "..\dist-win\boenmind-runtime-${VER}-x86_64-pc-windows-msvc.exe"
+          Copy-Item ..\backend\target\release\bm-server.exe "..\dist-win\boenmind-runtime-${VER}-x86_64-pc-windows-msvc.exe"
+          # 签名密钥兼容两种格式：先按 base64 解一层试签；失败则按原样文本重试
+          $signed = $false
+          try {
+            $signingKey = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:TAURI_SIGNING_PRIVATE_KEY))
+            pnpm exec tauri signer sign --private-key $signingKey --password $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD "..\dist-win\boenmind-runtime-${VER}-x86_64-pc-windows-msvc.exe"
+            $signed = $true
+          } catch {}
+          if (-not $signed) {
+            pnpm exec tauri signer sign --private-key $env:TAURI_SIGNING_PRIVATE_KEY --password $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD "..\dist-win\boenmind-runtime-${VER}-x86_64-pc-windows-msvc.exe"
+          }
 
       - uses: actions/upload-artifact@v4
         with:
@@ -276,8 +299,6 @@ jobs:
           set -euxo pipefail
           VER="$(node -p "require('./frontend/src-tauri/tauri.conf.json').version")"
           mkdir -p dist-linux
-          # 签名密钥（secret 为双重 base64；signer CLI 需要单层 base64 = 密钥文件内容）
-          SIGNING_KEY="$(echo "$TAURI_SIGNING_PRIVATE_KEY" | base64 -d)"
           # x86_64 为原生构建（target/release），aarch64 为 zigbuild 交叉构建
           for ARCH in x86_64 aarch64; do
             BIN="backend/target/release/bm-server"
@@ -294,9 +315,16 @@ jobs:
             rm -rf "$STAGE"
             # 热升级 runtime 资产：独立 bm-server 二进制（embed，含前端）+ 签名
             cp "$BIN" "dist-linux/boenmind-runtime-${VER}-linux-${ARCH}"
-            pnpm --dir frontend exec tauri signer sign \
-              --private-key "$SIGNING_KEY" --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" \
-              "dist-linux/boenmind-runtime-${VER}-linux-${ARCH}"
+            # 签名密钥兼容两种格式：先按 base64 解一层试签；失败则按原样文本重试
+            if ! SIGN_KEY="$(echo "$TAURI_SIGNING_PRIVATE_KEY" | base64 -d 2>/dev/null || true)" || [ -z "$SIGN_KEY" ] \
+              || ! pnpm --dir frontend exec tauri signer sign --private-key "$SIGN_KEY" \
+                   --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" \
+                   "dist-linux/boenmind-runtime-${VER}-linux-${ARCH}" 2>/dev/null; then
+              pnpm --dir frontend exec tauri signer sign \
+                --private-key "$TAURI_SIGNING_PRIVATE_KEY" \
+                --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" \
+                "dist-linux/boenmind-runtime-${VER}-linux-${ARCH}"
+            fi
           done
           ls -la dist-linux/
 
