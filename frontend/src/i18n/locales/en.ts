@@ -46,12 +46,9 @@ export const en: Translation = {
     },
     thinking: {
       off: "No thinking",
-      minimal: "Minimal",
       low: "Low",
       medium: "Medium",
       high: "High",
-      xhigh: "Very high",
-      max: "Maximum",
     },
     scroll: {
       jumpToMessage: "Jump to this message",
@@ -179,7 +176,6 @@ export const en: Translation = {
         anthropic: "Anthropic Claude",
         gemini: "Google Gemini",
         deepseek: "DeepSeek",
-        minimax: "MiniMax",
         moonshot: "Kimi (Moonshot)",
         zhipu: "Zhipu GLM",
         qwen: "Alibaba Cloud Qwen",

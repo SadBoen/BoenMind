@@ -46,12 +46,9 @@ export const ko: Translation = {
     },
     thinking: {
       off: "생각 안 함",
-      minimal: "최소",
       low: "낮음",
       medium: "중간",
       high: "높음",
-      xhigh: "매우 높음",
-      max: "최대",
     },
     scroll: {
       jumpToMessage: "이 메시지로 이동",
@@ -179,7 +176,6 @@ export const ko: Translation = {
         anthropic: "Anthropic Claude",
         gemini: "Google Gemini",
         deepseek: "DeepSeek",
-        minimax: "MiniMax",
         moonshot: "Kimi (Moonshot)",
         zhipu: "Zhipu GLM",
         qwen: "Alibaba Cloud Qwen",

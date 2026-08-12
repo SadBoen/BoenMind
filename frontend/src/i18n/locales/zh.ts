@@ -46,12 +46,9 @@ export const zh = {
     },
     thinking: {
       off: "不思考",
-      minimal: "极低",
       low: "低",
       medium: "中",
       high: "高",
-      xhigh: "极高",
-      max: "最大",
     },
     scroll: {
       jumpToMessage: "跳转到该条消息",
@@ -179,7 +176,6 @@ export const zh = {
         anthropic: "Anthropic Claude",
         gemini: "Google Gemini",
         deepseek: "DeepSeek",
-        minimax: "MiniMax",
         moonshot: "Kimi（月之暗面）",
         zhipu: "智谱 GLM",
         qwen: "阿里云百炼 Qwen",

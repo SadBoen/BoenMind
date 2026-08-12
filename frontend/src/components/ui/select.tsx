@@ -63,7 +63,10 @@ function SelectContent({
   sideOffset = 4,
   align = "center",
   alignOffset = 0,
-  alignItemWithTrigger = true,
+  // 默认关闭「选中项对齐触发器」：否则触发器贴近视口底部时，
+  // popup 会向触发器上方延伸，出现一半在上、一半在下的骑跨效果；
+  // 关闭后整体向下/向上翻转（flip），与常规下拉行为一致
+  alignItemWithTrigger = false,
   ...props
 }: SelectPrimitive.Popup.Props &
   Pick<

@@ -46,12 +46,9 @@ export const ja: Translation = {
     },
     thinking: {
       off: "思考なし",
-      minimal: "最小限",
       low: "低",
       medium: "中",
       high: "高",
-      xhigh: "非常に高",
-      max: "最大",
     },
     scroll: {
       jumpToMessage: "このメッセージへ移動",
@@ -179,7 +176,6 @@ export const ja: Translation = {
         anthropic: "Anthropic Claude",
         gemini: "Google Gemini",
         deepseek: "DeepSeek",
-        minimax: "MiniMax",
         moonshot: "Kimi（Moonshot）",
         zhipu: "智譜 GLM",
         qwen: "阿里雲百煉 Qwen",

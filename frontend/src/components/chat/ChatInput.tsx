@@ -21,8 +21,13 @@ import {
 import { ProviderIcon } from "@/components/settings/provider-icons";
 import { useAppStore } from "@/stores/app-store";
 
-/** 思考强度选项（对应 pi ThinkingLevel，label 用 chat.thinking.<value> 翻译） */
-const THINKING_VALUES = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+/**
+ * 思考强度选项（对应 pi ThinkingLevel，label 用 chat.thinking.<value> 翻译）。
+ * 只保留主流模型通用的 off/low/medium/high 四档：xhigh/max 是少数新旗舰
+ * （GPT-5.2+/5.6、DeepSeek reasoning、Claude max）专属，多数模型会被 pi
+ * 按模型能力 clamp 降级，UI 不展示。
+ */
+const THINKING_VALUES = ["off", "low", "medium", "high"] as const;
 
 interface ModelGroup {
   id: string;
