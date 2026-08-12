@@ -359,13 +359,16 @@ pub fn install_skill_from_path(source: &Path) -> Result<SkillInfo, String> {
     })
 }
 
-/// 从 tarball 解压出仓库根目录（安全解压：拒绝绝对路径与 `..`）。
+/// 从 tarball 解压出仓库根目录（安全解压：拒绝绝对路径与 `..`，解压总量限 512MB
+/// 防 zip-bomb——下载限 128MB 的压缩包可膨胀到 GB 级撑满磁盘）。
 fn unpack_tarball(archive_path: &Path, tmp: &Path) -> Result<PathBuf, String> {
+    const MAX_UNPACK_BYTES: u64 = 512 * 1024 * 1024;
     let file = fs::File::open(archive_path).map_err(|e| e.to_string())?;
     let gz = flate2::read::GzDecoder::new(file);
     let mut archive = tar::Archive::new(gz);
     let base = tmp.join("repo");
     let entries = archive.entries().map_err(|e| e.to_string())?;
+    let mut total: u64 = 0;
     for entry in entries {
         let mut entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path().map_err(|e| e.to_string())?.to_path_buf();
@@ -392,7 +395,11 @@ fn unpack_tarball(archive_path: &Path, tmp: &Path) -> Result<PathBuf, String> {
                 fs::create_dir_all(parent).map_err(|e| e.to_string())?;
             }
             let mut out = fs::File::create(&target).map_err(|e| e.to_string())?;
-            std::io::copy(&mut entry, &mut out).map_err(|e| e.to_string())?;
+            let n = std::io::copy(&mut entry, &mut out).map_err(|e| e.to_string())?;
+            total += n;
+            if total > MAX_UNPACK_BYTES {
+                return Err("tarball 解压超限（>512MB）".to_string());
+            }
         }
     }
     // 仓库根 = base 下第一个目录（tarball 根为 {repo}-{branch}/）
@@ -478,6 +485,36 @@ pub fn set_skill_enabled(config: &mut AppConfig, id: &str, enabled: bool) -> Res
         config.enabled_skills.retain(|s| s != id);
     }
     crate::config::save(config).map_err(|e| e.to_string())
+}
+
+/// 按配置收敛 pi/skills 目录（`put_config` 直接替换 enabled_skills 时调用，
+/// 与 set_skill_enabled 的启停语义保持一致）：
+/// - 启用且已安装的：确保 pi 目录存在（不存在则复制）
+/// - 未启用/已卸载的：移出 pi 目录
+pub fn sync_skills_to_pi(config: &AppConfig) -> Result<(), String> {
+    // 1. 移除 pi 目录中不在启用列表的 skill（含已卸载残留）
+    if let Ok(read) = fs::read_dir(pi_skills_dir()) {
+        for entry in read.flatten() {
+            let id = entry.file_name().to_string_lossy().to_string();
+            if !config.enabled_skills.iter().any(|s| s == &id) {
+                let _ = fs::remove_dir_all(entry.path());
+            }
+        }
+    }
+    // 2. 启用且已安装的补入 pi 目录（幂等：已存在即跳过）
+    for id in &config.enabled_skills {
+        let src = skills_dir().join(id);
+        if !src.join("SKILL.md").is_file() {
+            continue; // 未安装：配置里的悬空 id 不产生目录
+        }
+        let pi_dir = pi_skills_dir().join(id);
+        if pi_dir.exists() {
+            continue;
+        }
+        fs::create_dir_all(&pi_dir).map_err(|e| e.to_string())?;
+        copy_dir_excluding(&src, &pi_dir, &[".bm-meta.json"]).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 /// 卸载：删除管理目录、pi 目录，并移出启用列表。

@@ -72,6 +72,14 @@ pub async fn put_config(
             format!("pi models.json 同步失败: {err}"),
         ));
     }
+    // 直接替换 enabled_skills 的场景（如前端设置页全量保存）也要同步 pi/skills
+    // 目录，否则注入提示与实际加载源漂移，agent 读不到 skill
+    if let Err(err) = bm_core::skills::sync_skills_to_pi(&config) {
+        return Err(api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("skills 目录同步失败: {err}"),
+        ));
+    }
     let _ = bm_core::config::ensure_working_dir(&config);
     *state.config.write().await = config;
 
@@ -279,12 +287,13 @@ pub async fn get_plugin_settings(
 
 /// 读取插件用量文件（路径由 manifest `quota.path` 声明，相对工作文件夹）。
 /// 由插件自身写入（沙箱 pi.tool("write") 限制在 workspace 内）；读取失败返回 null。
+/// 路径经 safe_join 校验：恶意 manifest 声明的 `..`/绝对路径越界被拒绝。
 async fn read_plugin_quota(
     state: &crate::AppState,
     quota: Option<&bm_core::plugin_settings::QuotaDecl>,
 ) -> Option<serde_json::Value> {
     let working_dir = state.config.read().await.working_dir.clone();
-    let file = working_dir.join(quota?.path.as_str());
+    let file = workspace::safe_join(&working_dir, quota?.path.as_str()).ok()?;
     let text = std::fs::read_to_string(&file).ok()?;
     serde_json::from_str::<serde_json::Value>(&text).ok()
 }
@@ -371,7 +380,7 @@ async fn bump_plugin_quota(
         return None;
     }
     let working_dir = state.config.read().await.working_dir.clone();
-    let file = working_dir.join(decl.path.as_str());
+    let file = workspace::safe_join(&working_dir, decl.path.as_str()).ok()?;
     let mut quota: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).ok()?).ok()?;
     let Some(entry) = quota.get_mut(source) else { return None };
     let is_calls = entry.get("unit").and_then(Value::as_str) == Some("calls");
