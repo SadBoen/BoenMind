@@ -323,16 +323,14 @@ fn validate_value(field: &SettingField, v: &Value) -> Result<Value, String> {
                 return Ok(Value::Number(default.into()));
             }
             let n = v.as_i64().ok_or("应为整数")?;
-            if let Some(min) = field.min {
-                if n < min {
+            if let Some(min) = field.min
+                && n < min {
                     return Err(format!("不能小于 {min}"));
                 }
-            }
-            if let Some(max) = field.max {
-                if n > max {
+            if let Some(max) = field.max
+                && n > max {
                     return Err(format!("不能大于 {max}"));
                 }
-            }
             Ok(Value::Number(n.into()))
         }
         SettingFieldType::Select => {
@@ -377,6 +375,24 @@ mod tests {
     // 与 config::TEST_ENV_LOCK 串行：config 测试会改全局 BOENMIND_HOME，
     // 而本模块的路径（plugins_dir）读该环境变量，并行时会读到跳变路径。
     use crate::config::TEST_ENV_LOCK;
+    use std::path::PathBuf;
+
+    /// 把 BOENMIND_HOME 切到临时目录并返回恢复函数：
+    /// 本模块测试读写插件设置目录，不隔离会污染真实 `~/.boenmind/extensions/`。
+    fn isolate_home() -> (PathBuf, impl FnOnce()) {
+        let original = std::env::var_os("BOENMIND_HOME");
+        let dir = std::env::temp_dir().join(format!(
+            "bm-plugin-settings-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        unsafe { std::env::set_var("BOENMIND_HOME", &dir) };
+        let restore = move || match original {
+            Some(v) => unsafe { std::env::set_var("BOENMIND_HOME", v) },
+            None => unsafe { std::env::remove_var("BOENMIND_HOME") },
+        };
+        (dir, restore)
+    }
 
     fn test_schema() -> Vec<SettingField> {
         serde_json::from_value(serde_json::json!([
@@ -406,17 +422,21 @@ mod tests {
     #[test]
     fn read_merges_defaults() {
         let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let (home, restore) = isolate_home();
         let id = "test-plugin-read"; // 独立 id：与并行测试互不干扰
         let _ = fs::remove_dir_all(plugins_dir().join(id)); // 清理测试产生的插件目录
         let v = read_settings(id, &test_schema());
         assert_eq!(v["search.mode"], "quick");
         assert_eq!(v["search.cacheTtlSeconds"], 600);
         assert_eq!(v["sources.jina.enabled"], true);
+        restore();
+        let _ = fs::remove_dir_all(&home);
     }
 
     #[test]
     fn save_roundtrip_and_masking() {
         let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let (home, restore) = isolate_home();
         let id = "test-plugin-save"; // 独立 id：与并行测试互不干扰
         let schema = test_schema();
         let _ = fs::remove_dir_all(plugins_dir().join(id));
@@ -484,6 +504,8 @@ mod tests {
         assert!(save_settings(id, &schema, &serde_json::json!({"search.cacheTtlSeconds": "abc"})).is_err());
         assert!(save_settings(id, &schema, &serde_json::json!({"search.mode": "ultra"})).is_err());
         let _ = fs::remove_dir_all(plugins_dir().join(id));
+        restore();
+        let _ = fs::remove_dir_all(&home);
     }
 
     #[test]
@@ -543,6 +565,7 @@ mod tests {
     #[test]
     fn group_expands_and_persists() {
         let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let (home, restore) = isolate_home();
         let id = "test-plugin-group"; // 独立 id：与并行测试互不干扰
         let _ = fs::remove_dir_all(plugins_dir().join(id));
         let schema: Vec<SettingField> = serde_json::from_value(serde_json::json!([
@@ -591,5 +614,7 @@ mod tests {
         let again = save_settings(id, &schema, &serde_json::json!({"custom1.apiKey": "sk-c****"})).unwrap();
         assert_eq!(again["custom1.apiKey"], "sk-custom-1");
         let _ = fs::remove_dir_all(plugins_dir().join(id));
+        restore();
+        let _ = fs::remove_dir_all(&home);
     }
 }

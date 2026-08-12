@@ -14,7 +14,8 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]
+    branches: ["main"] # 日常 push 只跑质量门（quality job）
+    tags: ["v*"]       # 打 tag 全量构建发布
   workflow_dispatch: {}
 
 permissions:
@@ -27,11 +28,58 @@ env:
 
 jobs:
   # ============================================================
+  # 质量门：后端测试 + clippy（-D warnings）+ 前端 strict 类型检查 + lint。
+  # 构建前拦截回归（曾出现 0 测试、CI 只验证"能编译"的问题）。
+  # ============================================================
+  quality:
+    name: 质量门 (test + lint)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+
+      - name: 后端测试
+        working-directory: backend
+        run: cargo test -p bm-core -p bm-server
+
+      - name: 后端 clippy（-D warnings）
+        working-directory: backend
+        run: cargo clippy -p bm-core -p bm-server --lib --no-deps -- -D warnings
+
+      - name: 前端依赖
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: 前端类型检查（strict）
+        working-directory: frontend
+        run: pnpm exec tsc -b
+
+      - name: 前端 lint
+        working-directory: frontend
+        run: pnpm lint
+
+  # ============================================================
   # macOS：同一 runner 上交叉编译 ARM + Intel（Tauri 官方支持）
   # ============================================================
   macos:
     name: macOS (ARM + Intel)
     runs-on: macos-14
+    # 日常 push main 只跑质量门；构建/发布仅在打 tag 或手动触发
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
 
@@ -128,6 +176,7 @@ jobs:
   windows:
     name: Windows 便携版
     runs-on: windows-latest
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
 
@@ -172,6 +221,7 @@ jobs:
   linux-server:
     name: Linux 服务器版
     runs-on: ubuntu-24.04
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
 

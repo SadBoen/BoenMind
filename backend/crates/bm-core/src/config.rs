@@ -305,11 +305,10 @@ pub fn ensure_working_dir(config: &AppConfig) -> Result<(), std::io::Error> {
 
 /// 查找提供商；id 不存在时回退到 default_provider。
 pub fn resolve_provider<'a>(config: &'a AppConfig, provider_id: Option<&str>) -> Option<&'a ProviderConfig> {
-    if let Some(id) = provider_id {
-        if let Some(p) = config.providers.iter().find(|p| p.id == id) {
+    if let Some(id) = provider_id
+        && let Some(p) = config.providers.iter().find(|p| p.id == id) {
             return Some(p);
         }
-    }
     if let Some(default_id) = &config.default_provider {
         return config.providers.iter().find(|p| p.id == *default_id);
     }
@@ -352,8 +351,8 @@ pub fn sync_pi_models_json(config: &AppConfig) -> Result<(), std::io::Error> {
             entry.insert("api".to_string(), json!("openai-completions"));
         }
         // API key 通过 file: 引用写入独立文件（pi 官方支持模式，避免凭据落在 models.json）
-        if let Some(key) = &p.api_key {
-            if !key.is_empty() {
+        if let Some(key) = &p.api_key
+            && !key.is_empty() {
                 fs::create_dir_all(&keys_dir)?;
                 let key_file = keys_dir.join(format!("{name}.key"));
                 write_private(&key_file, key.as_bytes())?;
@@ -364,7 +363,6 @@ pub fn sync_pi_models_json(config: &AppConfig) -> Result<(), std::io::Error> {
                 // 自定义 provider 无内置 auth metadata，必须显式声明才会携带 Authorization 头
                 entry.insert("authHeader".to_string(), json!(true));
             }
-        }
         // 注册模型列表（仅注册本提供商声明的模型，避免污染内置目录）
         // 自定义 OpenAI 兼容路由标记 reasoning: true，使 pi 的思考控制
         // （DeepSeek / MiniMax 方言）对该提供商生效

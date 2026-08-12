@@ -22,3 +22,7 @@ url = "2"
 flate2 = "1"
 tar = "0.4"
 rand = "0.8"
+
+[dev-dependencies]
+# db.rs 单测需要 tokio runtime（正常依赖只开 sync）
+tokio = { version = "1", features = ["rt", "macros"] }

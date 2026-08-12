@@ -134,14 +134,13 @@ fn plugin_exists(dir: &Path, id: &str) -> bool {
 /// 从扩展源提取描述（读取文件头部注释或 extension.json 的 description）。
 fn describe_plugin(path: &Path, fallback: &str) -> String {
     let manifest = path.join("extension.json");
-    if manifest.is_file() {
-        if let Ok(text) = fs::read_to_string(&manifest)
+    if manifest.is_file()
+        && let Ok(text) = fs::read_to_string(&manifest)
             && let Ok(json) = serde_json::from_str::<serde_json::Value>(&text)
             && let Some(desc) = json.get("description").and_then(|v| v.as_str())
         {
             return desc.to_string();
         }
-    }
     if let Ok(text) = fs::read_to_string(path) {
         // 优先提取代码中的 description 字段（如 pi.registerTool({ description: "..." })）
         if let Some(captures) = text

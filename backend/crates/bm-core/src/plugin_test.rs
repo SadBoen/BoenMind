@@ -23,13 +23,22 @@ pub struct SourceTestResult {
     pub detail: String,
 }
 
+/// 解析后的探测请求。
+#[derive(Debug, PartialEq)]
+struct ResolvedRequest {
+    method: String,
+    url: String,
+    headers: Vec<(String, String)>,
+    body: Option<Value>,
+}
+
 /// 解析探测请求：模板匹配（精确 → `custom*` 通配）+ 设置值替换。
 /// 返回 Err 表示未配置依赖或模板非法（不发请求）。
 fn resolve_request(
     source: &str,
     settings: &Value,
     test_sources: &HashMap<String, TestSourceDecl>,
-) -> Result<(String, String, Vec<(String, String)>, Option<Value>), String> {
+) -> Result<ResolvedRequest, String> {
     // 精确匹配（jina/tavily/…）或通配（custom1..N → custom*）
     let instance = source
         .strip_prefix("custom")
@@ -76,11 +85,13 @@ fn resolve_request(
         // 头名与头值都可能含模板（自定义源的认证头名是设置值）
         headers.push((substitute(name)?, substitute(value)?));
     }
-    let body = match &decl.body {
-        Some(b) => Some(substitute_value(b, &substitute)),
-        None => None,
-    };
-    Ok((decl.method.clone(), url, headers, body))
+    let body = decl.body.as_ref().map(|b| substitute_value(b, &substitute));
+    Ok(ResolvedRequest {
+        method: decl.method.clone(),
+        url,
+        headers,
+        body,
+    })
 }
 
 /// 探测一个搜索源（source 形如 `jina` / `tavily` / `custom1`）。
@@ -91,26 +102,26 @@ pub fn test_source(
     test_sources: &HashMap<String, TestSourceDecl>,
 ) -> SourceTestResult {
     let started = Instant::now();
-    let (method, url, headers, body) = match resolve_request(source, settings, test_sources) {
+    let req = match resolve_request(source, settings, test_sources) {
         Ok(req) => req,
         Err(detail) => return SourceTestResult { ok: false, latency_ms: 0, detail },
     };
 
     // 整次探测（含读体）限 10s，避免测试按钮长时间无响应
     let agent = http_agent_global(Duration::from_secs(10));
-    let result = if method == "GET" {
-        let mut call = agent.get(&url);
-        for (k, v) in &headers {
+    let result = if req.method == "GET" {
+        let mut call = agent.get(&req.url);
+        for (k, v) in &req.headers {
             call = call.header(k, v);
         }
         call.call()
     } else {
-        let mut call = agent.post(&url);
-        for (k, v) in &headers {
+        let mut call = agent.post(&req.url);
+        for (k, v) in &req.headers {
             call = call.header(k, v);
         }
         // 无 body 时发空对象兜底
-        call.send_json(body.unwrap_or_else(|| serde_json::json!({})))
+        call.send_json(req.body.unwrap_or_else(|| serde_json::json!({})))
     };
 
     let latency_ms = started.elapsed().as_millis() as u64;
@@ -208,8 +219,8 @@ mod tests {
             &decls(),
         )
         .unwrap();
-        assert_eq!(req.1, "https://s.example.com?q=test");
-        assert_eq!(req.2, vec![("X-Key".to_string(), "k-3".to_string())]);
+        assert_eq!(req.url, "https://s.example.com?q=test");
+        assert_eq!(req.headers, vec![("X-Key".to_string(), "k-3".to_string())]);
         // custom4 不受 custom3 的值影响（实例隔离）
         let req4 = resolve_request("custom4", &serde_json::json!({"custom4.url": ""}), &decls());
         assert_eq!(req4, Err("未配置 custom4.url".into()));
@@ -224,7 +235,7 @@ mod tests {
             &decls(),
         )
         .unwrap();
-        assert_eq!(req.1, "https://s.jina.ai/?q=test");
-        assert_eq!(req.2, vec![("Authorization".to_string(), "Bearer sk-1".to_string())]);
+        assert_eq!(req.url, "https://s.jina.ai/?q=test");
+        assert_eq!(req.headers, vec![("Authorization".to_string(), "Bearer sk-1".to_string())]);
     }
 }

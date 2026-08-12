@@ -50,14 +50,13 @@ pub async fn put_config(
             return Err(api_error(StatusCode::BAD_REQUEST, format!("提供商 id 重复: {}", p.id)));
         }
     }
-    if let Some(default_id) = &config.default_provider {
-        if !config.providers.iter().any(|p| &p.id == default_id) {
+    if let Some(default_id) = &config.default_provider
+        && !config.providers.iter().any(|p| &p.id == default_id) {
             return Err(api_error(
                 StatusCode::BAD_REQUEST,
                 format!("默认提供商不存在: {default_id}"),
             ));
         }
-    }
 
     // 持久化 + 同步 pi models.json + 更新内存
     if let Err(err) = bm_core::config::save(&config) {
@@ -111,8 +110,8 @@ pub async fn create_session(
         .await
         .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
     let mut session = session;
-    if let Some(title) = req.title {
-        if !title.trim().is_empty() {
+    if let Some(title) = req.title
+        && !title.trim().is_empty() {
             state
                 .db
                 .rename_session(&session.id, title.trim())
@@ -120,7 +119,6 @@ pub async fn create_session(
                 .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
             session.title = title.trim().to_string();
         }
-    }
     Ok(Json(session))
 }
 
@@ -382,7 +380,7 @@ async fn bump_plugin_quota(
     let working_dir = state.config.read().await.working_dir.clone();
     let file = workspace::safe_join(&working_dir, decl.path.as_str()).ok()?;
     let mut quota: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).ok()?).ok()?;
-    let Some(entry) = quota.get_mut(source) else { return None };
+    let entry = quota.get_mut(source)?;
     let is_calls = entry.get("unit").and_then(Value::as_str) == Some("calls");
     let total = entry.get("total").and_then(Value::as_i64).unwrap_or(0);
     let used = entry.get("used").and_then(Value::as_i64).unwrap_or(0);

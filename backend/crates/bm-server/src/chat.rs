@@ -204,14 +204,13 @@ async fn get_or_create_agent(
                     .await
                     .map_err(|err| (StatusCode::BAD_GATEWAY, format!("切换模型失败: {err}")))?;
             }
-            if let Some(level) = thinking_override {
-                if let Ok(level) = level.parse::<pi::model::ThinkingLevel>() {
+            if let Some(level) = thinking_override
+                && let Ok(level) = level.parse::<pi::model::ThinkingLevel>() {
                     handle
                         .set_thinking_level(level)
                         .await
                         .map_err(|err| (StatusCode::BAD_GATEWAY, format!("切换思考强度失败: {err}")))?;
                 }
-            }
         }
         return Ok(arc);
     }
@@ -314,8 +313,8 @@ async fn run_prompt_and_persist(
     let result = handle
         .prompt_with_abort(message, abort_signal, move |ev: pi::sdk::AgentEvent| {
             // 统计 token 用量（日志观测用）
-            if let pi::sdk::AgentEvent::MessageEnd { message: m } = &ev {
-                if let pi::model::Message::Assistant(a) = m {
+            if let pi::sdk::AgentEvent::MessageEnd { message: m } = &ev
+                && let pi::model::Message::Assistant(a) = m {
                     let u = &a.usage;
                     if u.total_tokens > 0 {
                         let mut total = usage_total_cb.lock().unwrap();
@@ -331,7 +330,6 @@ async fn run_prompt_and_persist(
                         );
                     }
                 }
-            }
             let mapped = map_agent_event(ev);
             for mapped in mapped {
                 match &mapped {
@@ -375,11 +373,10 @@ async fn run_prompt_and_persist(
     let final_text = accumulated.lock().unwrap().clone();
     let done_tools = done_tools.lock().unwrap().clone();
     if !final_text.trim().is_empty() {
-        if let Ok(assistant_msg) = state.db.add_message(&session_id, "assistant", &final_text).await {
-            if !done_tools.is_empty() {
+        if let Ok(assistant_msg) = state.db.add_message(&session_id, "assistant", &final_text).await
+            && !done_tools.is_empty() {
                 let _ = state.db.add_tool_calls(assistant_msg.id, &done_tools).await;
             }
-        }
         let _ = state.db.touch_session(&session_id).await;
     }
     // 兜底补发终态事件（pi 取消路径不发 AgentEnd；失败且未发 error 时补 error）

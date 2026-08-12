@@ -32,7 +32,7 @@ pub async fn handle_static(request: Request) -> Response {
     #[cfg(not(feature = "embed"))]
     {
         let _ = request;
-        return StatusCode::NOT_FOUND.into_response();
+        StatusCode::NOT_FOUND.into_response()
     }
 
     #[cfg(feature = "embed")]

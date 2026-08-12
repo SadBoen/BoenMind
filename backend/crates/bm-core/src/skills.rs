@@ -537,11 +537,10 @@ fn fetch_all_skill_refs() -> Result<Vec<SkillRef>, String> {
     static CACHE: Mutex<Option<(Instant, Vec<SkillRef>)>> = Mutex::new(None);
     {
         let cache = CACHE.lock().unwrap();
-        if let Some((at, refs)) = &*cache {
-            if at.elapsed() < SITEMAP_CACHE_TTL {
+        if let Some((at, refs)) = &*cache
+            && at.elapsed() < SITEMAP_CACHE_TTL {
                 return Ok(refs.clone());
             }
-        }
     }
     let mut refs = Vec::new();
     for url in SITEMAP_URLS {

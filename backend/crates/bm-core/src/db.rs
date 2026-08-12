@@ -193,12 +193,16 @@ impl Db {
     }
 
     pub async fn delete_session(&self, id: &str) -> Result<usize, turso::Error> {
-        let n = self
-            .conn
-            .lock()
-            .await
-            .execute("DELETE FROM sessions WHERE id = ?1", [id])
-            .await?;
+        // 外键默认关闭（turso/limbo 同 SQLite），ON DELETE CASCADE 不生效：
+        // 手动级联删除 tool_calls → messages → sessions，避免孤儿数据
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "DELETE FROM tool_calls WHERE message_id IN (SELECT id FROM messages WHERE session_id = ?1)",
+            [id],
+        )
+        .await?;
+        conn.execute("DELETE FROM messages WHERE session_id = ?1", [id]).await?;
+        let n = conn.execute("DELETE FROM sessions WHERE id = ?1", [id]).await?;
         Ok(n as usize)
     }
 
@@ -295,5 +299,60 @@ impl Db {
             msg.tool_calls = self.list_tool_calls(msg.id).await?;
         }
         Ok(messages)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    // 与 config 测试串行：本测试修改全局 BOENMIND_HOME（数据库路径隔离到临时目录）
+    use crate::config::TEST_ENV_LOCK;
+
+    #[tokio::test]
+    async fn session_message_roundtrip() {
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let original = std::env::var_os("BOENMIND_HOME");
+        let dir = std::env::temp_dir().join(format!("bm-db-{}", std::process::id()));
+        unsafe { std::env::set_var("BOENMIND_HOME", &dir) };
+        let db = Db::open().await.unwrap();
+
+        // 会话 CRUD
+        let s = db.create_session("s1", None, None).await.unwrap();
+        assert_eq!(s.title, "新对话");
+        assert!(db.get_session("s1").await.unwrap().is_some());
+        db.rename_session("s1", "测试标题").await.unwrap();
+        assert_eq!(db.get_session("s1").await.unwrap().unwrap().title, "测试标题");
+        db.touch_session("s1").await.unwrap();
+
+        // 消息 + 工具调用回放
+        db.add_message("s1", "user", "你好").await.unwrap();
+        let a = db.add_message("s1", "assistant", "回答").await.unwrap();
+        db.add_tool_calls(
+            a.id,
+            &[
+                ("web_search".into(), serde_json::json!({"q": "x"}), false),
+                ("bash".into(), serde_json::json!({"cmd": "ls"}), true),
+            ],
+        )
+        .await
+        .unwrap();
+        let msgs = db.list_messages("s1").await.unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].role, "user");
+        assert_eq!(msgs[1].tool_calls.len(), 2);
+        assert_eq!(msgs[1].tool_calls[0].tool_name, "web_search");
+        assert_eq!(msgs[1].tool_calls[0].seq, 0);
+        assert!(msgs[1].tool_calls[1].is_error);
+
+        // 删除会话级联删消息与工具调用
+        db.delete_session("s1").await.unwrap();
+        assert!(db.list_messages("s1").await.unwrap().is_empty());
+        assert!(db.list_sessions().await.unwrap().is_empty());
+
+        match original {
+            Some(v) => unsafe { std::env::set_var("BOENMIND_HOME", v) },
+            None => unsafe { std::env::remove_var("BOENMIND_HOME") },
+        }
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

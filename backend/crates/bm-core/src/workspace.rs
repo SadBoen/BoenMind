@@ -114,3 +114,69 @@ pub fn read_file(root: &Path, rel: &str) -> Result<Vec<u8>, WorkspaceError> {
 pub fn is_text(mime: &str) -> bool {
     mime.starts_with("text/")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 建一个带目录结构的临时根（root/{a/b, target.txt}），返回规范化后的根路径
+    /// （macOS 上 /var → /private/var 为符号链接，canonicalize 保证断言一致）。
+    fn temp_root() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "bm-workspace-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("a/b")).unwrap();
+        fs::write(dir.join("target.txt"), "secret").unwrap();
+        dir.canonicalize().unwrap()
+    }
+
+    #[test]
+    fn safe_join_allows_internal_paths() {
+        let root = temp_root();
+        assert_eq!(safe_join(&root, "a/b").unwrap(), root.join("a/b"));
+        // 前导斜杠与空路径
+        assert_eq!(safe_join(&root, "/a/b").unwrap(), safe_join(&root, "a/b").unwrap());
+        assert_eq!(safe_join(&root, "").unwrap(), root);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn safe_join_rejects_traversal() {
+        let root = temp_root();
+        // `..` 组件
+        assert!(matches!(
+            safe_join(&root, "../x"),
+            Err(WorkspaceError::OutsideRoot(_))
+        ));
+        assert!(matches!(
+            safe_join(&root, "a/../../x"),
+            Err(WorkspaceError::OutsideRoot(_))
+        ));
+        // 绝对路径：前导斜杠被剥离、按相对路径处理，不会指向真实根
+        assert_eq!(safe_join(&root, "/a/b").unwrap(), root.join("a/b"));
+        // 不存在的路径（canonicalize 失败 → Io，同样不会越界）
+        assert!(safe_join(&root, "nope").is_err());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn safe_join_rejects_symlink_escape() {
+        let root = temp_root();
+        #[cfg(unix)]
+        {
+            // 符号链接指向根外：canonicalize 解析后应在 root 之外 → 拒绝
+            let outside = std::env::temp_dir().join("bm-workspace-outside-target");
+            fs::write(&outside, "outside").unwrap();
+            std::os::unix::fs::symlink(&outside, root.join("a/link")).unwrap();
+            assert!(matches!(
+                safe_join(&root, "a/link"),
+                Err(WorkspaceError::OutsideRoot(_))
+            ));
+            fs::remove_file(&outside).ok();
+        }
+        let _ = fs::remove_dir_all(&root);
+    }
+}
