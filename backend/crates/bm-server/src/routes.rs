@@ -203,6 +203,17 @@ pub async fn set_plugin(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
+pub async fn uninstall_plugin(
+    State(state): crate::SharedState,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let mut config = state.config.write().await;
+    bm_core::plugins::uninstall_plugin(&mut config, &id)
+        .map_err(|err| api_error(StatusCode::BAD_REQUEST, err))?;
+    drop(config);
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
 #[derive(Deserialize)]
 pub struct InstallPluginRequest {
     pub path: String,

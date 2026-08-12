@@ -1,0 +1,10 @@
+{
+  "schema": "pi.ext.manifest.v1",
+  "extension_id": "ctx-compactor",
+  "name": "Context Compactor",
+  "version": "0.1.0",
+  "runtime": "js",
+  "entrypoint": "index.ts",
+  "description": "BoenMind 上下文压缩补强：ctx_execute 沙箱执行 + 大工具输出修剪落库 + ctx_search 检索",
+  "capabilities": ["read", "write", "events", "tool", "session"]
+}

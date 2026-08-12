@@ -4,7 +4,7 @@
  */
 import { useEffect, useState } from "react";
 import { useTranslation, Trans } from "react-i18next";
-import { Puzzle, Plus, RefreshCw } from "lucide-react";
+import { Puzzle, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -63,6 +63,16 @@ export function PluginsSettings() {
     }
   };
 
+  const uninstall = async (plugin: PluginInfo) => {
+    try {
+      await api.uninstallPlugin(plugin.id);
+      toast.success(t("settings.plugins.uninstalled", { name: plugin.name }));
+      await load();
+    } catch (err) {
+      toast.error(t("settings.plugins.uninstallFailed", { error: String(err) }));
+    }
+  };
+
   return (
     <section className="space-y-5">
       <div>
@@ -115,7 +125,20 @@ export function PluginsSettings() {
                 </div>
                 <p className="mt-1 truncate text-xs text-muted-foreground">{plugin.description}</p>
               </div>
-              <Switch checked={plugin.enabled} onCheckedChange={() => void toggle(plugin)} />
+              <div className="flex items-center gap-2">
+                <Switch checked={plugin.enabled} onCheckedChange={() => void toggle(plugin)} />
+                {!plugin.builtin && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="text-muted-foreground hover:text-destructive"
+                    title={t("settings.plugins.uninstall")}
+                    onClick={() => void uninstall(plugin)}
+                  >
+                    <Trash2 size={15} />
+                  </Button>
+                )}
+              </div>
             </div>
           ))}
         </div>

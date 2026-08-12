@@ -55,6 +55,8 @@ export const en: Translation = {
       emptyPreview: "(no content)",
     },
     think: {
+      withTools: "· {{count}} tool calls",
+      toolsOnly: "Tool execution",
       process: "Thinking process",
     },
   },
@@ -211,6 +213,9 @@ export const en: Translation = {
       builtin: "Built-in",
       singleFile: "Single file",
       manifestDir: "Manifest dir",
+      uninstalled: "Uninstalled {{name}}",
+      uninstallFailed: "Uninstall failed: {{error}}",
+      uninstall: "Uninstall",
       tip: "Tip: plugins are loaded when a new chat session is created; enabling/disabling affects new chats. Community plugins (pi.dev/packages) without native dependencies can be copied to <code>~/.boenmind/extensions/</code> and installed after refresh.",
     },
     skills: {
@@ -237,6 +242,9 @@ export const en: Translation = {
       empty: "No skills installed yet. Try \"Get random\" to pick from skills.sh, or install a local directory.",
       fromRegistry: "skills.sh",
       fromLocal: "Local",
+      uninstalled: "已卸载 {{name}}",
+      uninstallFailed: "卸载失败: {{error}}",
+      uninstall: "卸载",
       tip: "Tip: enabling a skill syncs it to <code>~/.boenmind/pi/skills/</code>; the assistant reads SKILL.md on demand. Enabling/disabling affects new chat sessions.",
     },
     about: {

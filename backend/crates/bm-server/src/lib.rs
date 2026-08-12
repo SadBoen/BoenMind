@@ -59,7 +59,7 @@ fn router(state: AppState) -> Router {
         .route("/api/sessions/{id}", get(routes::get_session).patch(routes::rename_session).delete(routes::delete_session))
         .route("/api/plugins", get(routes::list_plugins))
         .route("/api/plugins/install", post(routes::install_plugin))
-        .route("/api/plugins/{id}", post(routes::set_plugin))
+        .route("/api/plugins/{id}", post(routes::set_plugin).delete(routes::uninstall_plugin))
         .route("/api/skills", get(routes::list_skills))
         .route("/api/skills/install", post(routes::install_skill))
         .route("/api/skills/registry/random", get(routes::random_skills))

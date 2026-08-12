@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+use crate::compaction::CompactionConfig;
+
 /// 配置与数据目录名（位于用户主目录下）
 pub const APP_DIR: &str = ".boenmind";
 /// 配置文件相对 APP_DIR 的路径
@@ -39,6 +41,9 @@ pub struct AppConfig {
     /// 启用的 skill（~/.boenmind/skills 下的 skill id，启用时同步到 pi 目录）
     #[serde(default)]
     pub enabled_skills: Vec<String>,
+    /// 上下文压缩配置（按模型水线/尾部保护，见 compaction 模块）
+    #[serde(default)]
+    pub compaction: CompactionConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -234,6 +239,7 @@ impl Default for AppConfig {
             lang: default_lang(),
             enabled_plugins: Vec::new(),
             enabled_skills: Vec::new(),
+            compaction: CompactionConfig::default(),
         }
     }
 }
@@ -348,6 +354,13 @@ pub fn sync_pi_models_json(config: &AppConfig) -> Result<(), std::io::Error> {
                 if reasoning {
                     entry["reasoning"] = json!(true);
                 }
+                // 压缩配置中声明了 context_window 时写入 models.json，
+                // 使探测值与模型注册表一致（声明窗口）
+                if let Some(window) =
+                    crate::compaction::override_window_for_model(&config.compaction, &name, m)
+                {
+                    entry["contextWindow"] = json!(window);
+                }
                 entry
             })
             .collect();
@@ -414,9 +427,52 @@ mod tests {
             lang: "zh".into(),
             enabled_plugins: vec![],
             enabled_skills: vec![],
+            compaction: CompactionConfig::default(),
         };
         assert_eq!(resolve_provider(&config, Some("missing")).unwrap().id, "b");
         assert_eq!(resolve_model(&config.providers[1], None).unwrap(), "qwen");
         assert_eq!(resolve_model(&config.providers[1], Some("x")).unwrap(), "x");
+    }
+
+    #[test]
+    fn sync_pi_models_json_writes_compaction_window() {
+        use crate::compaction::CompactionOverride;
+        // 本测试修改全局 BOENMIND_HOME：与其它读取 app_dir 的测试并行会互相污染
+        // （曾经导致真实 ~/.boenmind/config.toml 被默认配置覆盖）。用静态锁串行化。
+        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let original = std::env::var_os("BOENMIND_HOME");
+        let dir = std::env::temp_dir().join(format!("bm-config-sync-{}", std::process::id()));
+        // 注意：edition 2024 中 set_var/remove_var 为 unsafe
+        unsafe { std::env::set_var("BOENMIND_HOME", &dir) };
+        let mut config = AppConfig {
+            providers: vec![ProviderConfig {
+                id: "ds".into(),
+                name: "DeepSeek".into(),
+                kind: ProviderKind::Deepseek,
+                base_url: None,
+                api_key: None,
+                models: vec!["deepseek-chat".into(), "deepseek-reasoner".into()],
+                default_model: None,
+            }],
+            ..AppConfig::default()
+        };
+        config.compaction.overrides.insert(
+            "deepseek/deepseek-chat".to_string(),
+            CompactionOverride { context_window: Some(200_000), ..Default::default() },
+        );
+        sync_pi_models_json(&config).unwrap();
+        let text = std::fs::read_to_string(dir.join(APP_DIR).join("pi").join("models.json")).unwrap();
+        let doc: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let models = &doc["providers"]["deepseek"]["models"];
+        assert_eq!(models[0]["id"], "deepseek-chat");
+        assert_eq!(models[0]["contextWindow"], 200_000);
+        // 未配置窗口的模型不写字段
+        assert!(models[1].get("contextWindow").is_none());
+        match original {
+            Some(v) => unsafe { std::env::set_var("BOENMIND_HOME", v) },
+            None => unsafe { std::env::remove_var("BOENMIND_HOME") },
+        }
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

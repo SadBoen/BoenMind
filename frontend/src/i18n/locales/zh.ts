@@ -55,6 +55,8 @@ export const zh = {
       emptyPreview: "（无内容）",
     },
     think: {
+      withTools: "· {{count}} 次工具调用",
+      toolsOnly: "工具执行",
       process: "思考过程",
     },
   },
@@ -211,6 +213,9 @@ export const zh = {
       builtin: "内置示例",
       singleFile: "单文件",
       manifestDir: "清单目录",
+      uninstalled: "已卸载 {{name}}",
+      uninstallFailed: "卸载失败: {{error}}",
+      uninstall: "卸载",
       tip: "提示：插件在创建新对话会话时加载；启用/禁用后新对话生效。社区插件（pi.dev/packages）中无原生依赖的扩展可直接复制到 <code>~/.boenmind/extensions/</code> 后刷新安装。",
     },
     skills: {
@@ -237,6 +242,9 @@ export const zh = {
       empty: "还没有安装 skill。试试「随机获取」从 skills.sh 抽取，或安装本地目录。",
       fromRegistry: "skills.sh",
       fromLocal: "本地",
+      uninstalled: "已卸载 {{name}}",
+      uninstallFailed: "卸载失败: {{error}}",
+      uninstall: "卸载",
       tip: "提示：skill 启用后同步到 <code>~/.boenmind/pi/skills/</code>，由 AI 助手按需读取 SKILL.md 使用；启用/禁用后新建对话生效。",
     },
     about: {

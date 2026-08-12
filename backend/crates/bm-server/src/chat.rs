@@ -161,6 +161,16 @@ async fn get_or_create_agent(
         bm_core::skills::enabled_skills_prompt(&config)
     };
 
+    // 按模型解析压缩设置（水线/尾部保护/窗口；config.compaction.enabled=false 时为 None）
+    let compaction = {
+        let config = state.config.read().await;
+        bm_core::compaction::resolve_for_model_with_default_path(
+            &config.compaction,
+            &provider.kind.pi_name(&provider.id),
+            &model,
+        )
+    };
+
     let handle = create_session_handle(
         &provider,
         &model,
@@ -168,6 +178,7 @@ async fn get_or_create_agent(
         extension_paths,
         &skills_prompt,
         thinking_override,
+        compaction,
     )
     .await
     .map_err(|err| (StatusCode::BAD_GATEWAY, format!("创建 agent 会话失败: {err}")))?;
@@ -205,9 +216,32 @@ async fn run_prompt_and_persist(
     // AgentEnd 携带 error 时已通过事件流发出错误，避免与 result Err 重复上报
     let error_sent = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let error_sent_cb = error_sent.clone();
+    // 本次 prompt 的 token 用量统计（取自 assistant 消息的 usage；工具结果消息为 0）
+    let usage_total = Arc::new(std::sync::Mutex::new(0u64));
+    let usage_total_cb = usage_total.clone();
+    let started_at = std::time::Instant::now();
 
     let result = handle
         .prompt(message, move |ev: pi::sdk::AgentEvent| {
+            // 统计 token 用量（日志观测用）
+            if let pi::sdk::AgentEvent::MessageEnd { message: m } = &ev {
+                if let pi::model::Message::Assistant(a) = m {
+                    let u = &a.usage;
+                    if u.total_tokens > 0 {
+                        let mut total = usage_total_cb.lock().unwrap();
+                        *total = total.saturating_add(u.total_tokens);
+                        tracing::info!(
+                            event = "bm.prompt_usage",
+                            input = u.input,
+                            output = u.output,
+                            cache_read = u.cache_read,
+                            cache_write = u.cache_write,
+                            total = u.total_tokens,
+                            session_total = *total,
+                        );
+                    }
+                }
+            }
             let mapped = map_agent_event(ev);
             for mapped in mapped {
                 match &mapped {
@@ -238,6 +272,13 @@ async fn run_prompt_and_persist(
             }
         })
         .await;
+
+    tracing::info!(
+        event = "bm.prompt_done",
+        total_tokens = *usage_total.lock().unwrap(),
+        elapsed_ms = started_at.elapsed().as_millis(),
+        result_ok = result.is_ok(),
+    );
 
     // 无论成功与否，先把已生成的文本与工具调用入库
     let final_text = accumulated.lock().unwrap().clone();

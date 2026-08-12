@@ -16,6 +16,10 @@ pub const PLUGINS_DIR: &str = "extensions";
 pub const BUILTIN_PLUGINS: &[(&str, &str)] = &[
     ("hello", "注册演示工具：Hello，展示 LLM 可调用工具"),
     ("bookmark", "注册斜杠命令：/bookmark 为消息添加书签"),
+    (
+        "ctx-compactor",
+        "上下文压缩补强：ctx_execute 沙箱执行 + 大工具输出修剪落库 + ctx_search 检索",
+    ),
 ];
 
 #[derive(Debug, Clone, Serialize)]
@@ -60,17 +64,24 @@ pub fn list_plugins(config: &AppConfig) -> Result<Vec<PluginInfo>, std::io::Erro
         } else {
             continue;
         };
+        // 插件文件/目录已被手动删除（配置残留）时，不显示为已启用
+        let enabled = config.enabled_plugins.contains(&id) && plugin_exists(&dir, &id);
         out.push(PluginInfo {
             id: id.clone(),
             name: id.clone(),
             description: desc,
             kind,
-            enabled: config.enabled_plugins.contains(&id),
+            enabled,
             builtin: BUILTIN_PLUGINS.iter().any(|(bid, _)| *bid == id),
         });
     }
     out.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(out)
+}
+
+/// 插件文件/目录是否实际存在。
+fn plugin_exists(dir: &Path, id: &str) -> bool {
+    dir.join(format!("{id}.ts")).is_file() || dir.join(id).join("extension.json").is_file()
 }
 
 /// 从扩展源提取描述（读取文件头部注释或 extension.json 的 description）。
@@ -159,19 +170,41 @@ pub fn enabled_extension_paths(config: &AppConfig) -> Vec<PathBuf> {
     config
         .enabled_plugins
         .iter()
-        .map(|id| {
+        .filter_map(|id| {
             let dir = plugins_dir();
             let file = dir.join(format!("{id}.ts"));
             let dir_plugin = dir.join(id);
             if file.is_file() {
-                file
+                Some(file)
             } else if dir_plugin.join("extension.json").is_file() {
-                dir_plugin
+                Some(dir_plugin)
             } else {
-                file // 不存在时返回预期路径，由 pi 加载时报错
+                // 插件已被手动删除（配置残留）：静默跳过，避免会话创建失败
+                eprintln!("[bm-core] 插件 {id} 已不存在，忽略（可从配置移除）");
+                None
             }
         })
         .collect()
+}
+
+/// 卸载插件：删除文件/目录并从启用列表移除。内置示例不可卸载。
+pub fn uninstall_plugin(config: &mut AppConfig, id: &str) -> Result<(), String> {
+    if BUILTIN_PLUGINS.iter().any(|(bid, _)| *bid == id) {
+        return Err(format!("内置插件 {id} 不可卸载"));
+    }
+    let dir = plugins_dir();
+    let file = dir.join(format!("{id}.ts"));
+    let dir_plugin = dir.join(id);
+    if file.exists() {
+        fs::remove_file(&file).map_err(|e| format!("删除插件文件失败: {e}"))?;
+    } else if dir_plugin.exists() {
+        fs::remove_dir_all(&dir_plugin).map_err(|e| format!("删除插件目录失败: {e}"))?;
+    } else {
+        return Err(format!("插件 {id} 不存在"));
+    }
+    config.enabled_plugins.retain(|p| p != id);
+    crate::config::save(config).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// 首次启动时预装内置示例插件。
@@ -179,12 +212,20 @@ pub fn ensure_builtin_plugins() -> Result<(), std::io::Error> {
     let dir = plugins_dir();
     fs::create_dir_all(&dir)?;
     for (id, _desc) in BUILTIN_PLUGINS {
-        let dest = dir.join(format!("{id}.ts"));
-        if dest.exists() {
-            continue;
-        }
         if let Some(src) = vendored_example_path(id) {
+            let dest = dir.join(format!("{id}.ts"));
+            if dest.exists() {
+                continue;
+            }
             fs::copy(&src, &dest)?;
+        }
+        // 仓库内自带插件（目录型，如 ctx-compactor）
+        if let Some(src) = repo_plugin_dir(id) {
+            let dest = dir.join(id);
+            if dest.exists() {
+                continue;
+            }
+            copy_dir(&src, &dest)?;
         }
     }
     Ok(())
@@ -197,6 +238,13 @@ fn vendored_example_path(id: &str) -> Option<PathBuf> {
         .join("../../vendor/pi_agent_rust/legacy_pi_mono_code/pi-mono/packages/coding-agent/examples/extensions")
         .join(format!("{id}.ts"));
     p.is_file().then_some(p)
+}
+
+/// BoenMind 仓库自带插件目录（backend/plugins/<id>/，含 extension.json）。
+fn repo_plugin_dir(id: &str) -> Option<PathBuf> {
+    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let p = base.join("../../plugins").join(id);
+    (p.join("extension.json").is_file()).then_some(p)
 }
 
 fn copy_dir(src: &Path, dest: &Path) -> std::io::Result<()> {

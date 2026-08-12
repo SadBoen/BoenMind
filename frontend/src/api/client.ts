@@ -215,6 +215,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ path }),
     }),
+  uninstallPlugin: (id: string) =>
+    request<{ ok: boolean }>(`/api/plugins/${id}`, { method: "DELETE" }),
 
   listSkills: () => request<SkillInfo[]>("/api/skills"),
   setSkill: (id: string, enabled: boolean) =>

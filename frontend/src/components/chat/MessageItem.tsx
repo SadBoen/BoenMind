@@ -1,5 +1,7 @@
 /**
- * 消息渲染：用户气泡 + 助手 Markdown（含代码高亮 + <think> 折叠块 + 工具调用块）。
+ * 消息渲染：用户气泡 + 助手（思考/工具执行过程折叠块 + 正式答复 Markdown）。
+ * 对齐 pi-web 语义：绿条（工具调用）属于"过程"，收纳在思考/执行折叠块内，
+ * 正式答复（纯文本）下方不再显示工具块。
  */
 import { memo, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
@@ -8,7 +10,7 @@ import rehypeHighlight from "rehype-highlight";
 import { Bot, User } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Message } from "@/api/client";
-import { ThinkBlock, hasThinkBlock, parseThinkBlocks } from "./ThinkBlock";
+import { ProcessBlock, parseThinkBlocks } from "./ThinkBlock";
 import { ToolCallBlock, type ToolCallView } from "./ToolCallBlock";
 
 export const MessageItem = memo(function MessageItem({
@@ -23,10 +25,10 @@ export const MessageItem = memo(function MessageItem({
 }) {
   const isUser = message.role === "user";
 
-  // 助手消息：解析 think 块（有思考内容时按分段渲染，否则整条走 markdown）
+  // 助手消息：解析 think 块（思考段 + 纯文本段）
   const segments = useMemo(() => {
     if (isUser) return null;
-    return hasThinkBlock(message.content) ? parseThinkBlocks(message.content) : null;
+    return parseThinkBlocks(message.content);
   }, [isUser, message.content]);
 
   // 工具调用块：历史消息的固化记录在前，流式中的（running）在后
@@ -53,45 +55,40 @@ export const MessageItem = memo(function MessageItem({
     );
   }
 
+  const thinks = segments?.filter((s) => s.type === "think") ?? [];
+  const textParts = segments?.filter((s) => s.type === "text") ?? [];
+  // 流式过程中（未闭合 think 或工具执行中）默认展开过程块
+  const processOpen = streaming && (thinks.some((s) => s.open) || toolCalls.some((c) => c.running));
+  const bodyText = textParts.map((s) => s.content).join("");
+
   return (
     <div className="msg-enter flex gap-3">
       <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
         <Bot size={14} />
       </div>
       <div className="min-w-0 flex-1">
-        {toolCalls.length > 0 && (
-          <div className="mb-2 flex flex-col gap-1.5">
+        {/* 过程区：思考内容 + 工具调用块（绿条归属这里，正式答复不显示） */}
+        {(thinks.length > 0 || toolCalls.length > 0) && (
+          <ProcessBlock
+            thinks={thinks.map((s) => ({ content: s.content }))}
+            toolCount={toolCalls.length > 0 ? toolCalls.length : undefined}
+            defaultOpen={processOpen}
+          >
             {toolCalls.map((c, i) => (
               <ToolCallBlock key={i} call={c} />
             ))}
+          </ProcessBlock>
+        )}
+        {/* 正式答复：纯文本（不含 think） */}
+        {bodyText.trim() !== "" && (
+          <div className={cn("prose prose-sm dark:prose-invert max-w-none break-words", streaming && "animate-pulse")}>
+            <Markdown content={bodyText} />
           </div>
         )}
-        <div className={cn("prose prose-sm dark:prose-invert max-w-none break-words", streaming && "animate-pulse")}>
-          {segments ? (
-            <SegmentedMarkdown segments={segments} />
-          ) : (
-            <Markdown content={message.content} />
-          )}
-        </div>
       </div>
     </div>
   );
 });
-
-/** 分段渲染：text 段走 markdown，think 段走折叠块 */
-function SegmentedMarkdown({ segments }: { segments: ReturnType<typeof parseThinkBlocks> }) {
-  return (
-    <>
-      {segments.map((seg, i) =>
-        seg.type === "think" ? (
-          <ThinkBlock key={i} content={seg.content} open={seg.open} />
-        ) : (
-          <Markdown key={i} content={seg.content} />
-        ),
-      )}
-    </>
-  );
-}
 
 function Markdown({ content }: { content: string }) {
   return (

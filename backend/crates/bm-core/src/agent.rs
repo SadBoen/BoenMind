@@ -25,7 +25,8 @@ pub const SYSTEM_PROMPT: &str = r#"你是 BoenMind，一个专注工作与知识
 行为准则：
 - 回答简洁、准确、结构化；不确定时明确说明。
 - 中文回答，除非用户使用其他语言。
-- 涉及用户文件时，只访问工作文件夹范围内的内容。"#;
+- 涉及用户文件时，只访问工作文件夹范围内的内容。
+- 不要修改工作文件夹内 .boenmind 目录下的任何文件（该目录是系统配置与索引数据，误改会破坏功能）。"#;
 
 /// 从 agent 事件流转出的、面向前端 SSE 的扁平事件。
 #[derive(Debug, Clone, serde::Serialize)]
@@ -53,7 +54,8 @@ pub enum AgentStreamEvent {
 ///
 /// `provider`/`model` 来自会话或全局配置；`extension_paths` 为启用的插件路径
 /// （pi QuickJS 运行时加载 TypeScript 扩展）；`skills_prompt` 为启用的 skill
-/// 注入文本（available_skills 块，空串不注入）；`thinking` 为思考强度（如 "off"/"low"）。
+/// 注入文本（available_skills 块，空串不注入）；`thinking` 为思考强度（如 "off"/"low"）；
+/// `compaction` 为按模型解析的压缩设置（水线/尾部保护），`None` 时走 pi 现有全局行为。
 pub async fn create_session_handle(
     provider: &ProviderConfig,
     model: &str,
@@ -61,6 +63,7 @@ pub async fn create_session_handle(
     extension_paths: Vec<std::path::PathBuf>,
     skills_prompt: &str,
     thinking: Option<&str>,
+    compaction: Option<crate::compaction::ResolvedCompaction>,
 ) -> Result<AgentSessionHandle, pi::sdk::Error> {
     // 注意：调用前需确保 PI_CODING_AGENT_DIR 已设置、models.json 已同步，
     // 见 bm-server 的启动流程（sync_pi_models_json + set_var）
@@ -86,6 +89,13 @@ pub async fn create_session_handle(
         extension_paths,
         // 插件政策：默认（Prompt 模式，自动允许 read/write/http/events/session，拒绝 exec/env）
         extension_policy: None,
+        // BoenMind 补丁对接：按模型压缩覆盖（水线/尾部/窗口），None 走 pi 默认
+        compaction_settings: compaction.map(|c| pi::compaction::ResolvedCompactionSettings {
+            enabled: c.enabled,
+            context_window_tokens: c.context_window,
+            reserve_tokens: c.reserve_tokens,
+            keep_recent_tokens: c.keep_recent_tokens,
+        }),
         ..Default::default()
     };
     create_agent_session(options).await

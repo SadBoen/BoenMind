@@ -55,6 +55,8 @@ export const ja: Translation = {
       emptyPreview: "（内容なし）",
     },
     think: {
+      withTools: "・ツール呼び出し {{count}} 回",
+      toolsOnly: "ツール実行",
       process: "思考プロセス",
     },
   },
@@ -211,6 +213,9 @@ export const ja: Translation = {
       builtin: "組み込みサンプル",
       singleFile: "単一ファイル",
       manifestDir: "マニフェストディレクトリ",
+      uninstalled: "{{name}} をアンインストールしました",
+      uninstallFailed: "アンインストールに失敗: {{error}}",
+      uninstall: "アンインストール",
       tip: "ヒント：プラグインは新しいチャットセッション作成時に読み込まれます。有効化/無効化は新しいチャットに反映されます。ネイティブ依存のないコミュニティプラグイン（pi.dev/packages）は <code>~/.boenmind/extensions/</code> にコピーして更新後にインストールできます。",
     },
     skills: {
@@ -237,6 +242,9 @@ export const ja: Translation = {
       empty: "まだスキルがありません。「ランダム取得」で skills.sh から選ぶか、ローカルディレクトリをインストールしてください。",
       fromRegistry: "skills.sh",
       fromLocal: "ローカル",
+      uninstalled: "已卸载 {{name}}",
+      uninstallFailed: "卸载失败: {{error}}",
+      uninstall: "卸载",
       tip: "ヒント：有効化したスキルは <code>~/.boenmind/pi/skills/</code> に同期され、アシスタントが必要に応じて SKILL.md を読み込みます。有効化/無効化は新しいチャットセッションから反映されます。",
     },
     about: {

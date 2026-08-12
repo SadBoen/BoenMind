@@ -55,6 +55,8 @@ export const ko: Translation = {
       emptyPreview: "(내용 없음)",
     },
     think: {
+      withTools: "· 도구 호출 {{count}}회",
+      toolsOnly: "도구 실행",
       process: "생각 과정",
     },
   },
@@ -211,6 +213,9 @@ export const ko: Translation = {
       builtin: "내장 예제",
       singleFile: "단일 파일",
       manifestDir: "매니페스트 폴더",
+      uninstalled: "{{name}} 제거됨",
+      uninstallFailed: "제거 실패: {{error}}",
+      uninstall: "제거",
       tip: "팁: 플러그인은 새 대화 세션을 만들 때 로드되며, 활성화/비활성화는 새 대화부터 적용됩니다. 네이티브 의존성이 없는 커뮤니티 플러그인(pi.dev/packages)은 <code>~/.boenmind/extensions/</code>에 복사한 뒤 새로고침 후 설치할 수 있습니다.",
     },
     skills: {
@@ -237,6 +242,9 @@ export const ko: Translation = {
       empty: "설치된 스킬이 없습니다. \"랜덤 가져오기\"로 skills.sh에서 고르거나 로컬 디렉터리를 설치하세요.",
       fromRegistry: "skills.sh",
       fromLocal: "로컬",
+      uninstalled: "已卸载 {{name}}",
+      uninstallFailed: "卸载失败: {{error}}",
+      uninstall: "卸载",
       tip: "팁: 활성화된 스킬은 <code>~/.boenmind/pi/skills/</code>에 동기화되며 어시스턴트가 필요에 따라 SKILL.md를 읽습니다. 활성화/비활성화는 새 대화 세션부터 적용됩니다.",
     },
     about: {

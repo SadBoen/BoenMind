@@ -333,6 +333,12 @@ pub struct SessionOptions {
 
     /// Callback for raw provider [`StreamEvent`]s.
     pub on_stream_event: Option<OnStreamEvent>,
+
+    // BoenMind 补丁: per-session compaction settings override.
+    // When `Some`, these fully replace the config-derived compaction settings
+    // for this session (waterline / tail budget / context window). `None`
+    // (the default) keeps the existing behavior untouched.
+    pub compaction_settings: Option<ResolvedCompactionSettings>,
 }
 
 impl Default for SessionOptions {
@@ -359,6 +365,7 @@ impl Default for SessionOptions {
             on_tool_start: None,
             on_tool_end: None,
             on_stream_event: None,
+            compaction_settings: None,
         }
     }
 }
@@ -1774,12 +1781,14 @@ pub async fn create_agent_session(options: SessionOptions) -> Result<AgentSessio
     } else {
         selection.model_entry.model.context_window
     };
-    let compaction_settings = ResolvedCompactionSettings {
+    // BoenMind 补丁: allow per-session compaction overrides (waterline/tail
+    // budget/context window). Falls back to config-derived values when unset.
+    let compaction_settings = options.compaction_settings.unwrap_or_else(|| ResolvedCompactionSettings {
         enabled: config.compaction_enabled(),
         reserve_tokens: config.compaction_reserve_tokens(),
         keep_recent_tokens: config.compaction_keep_recent_tokens(),
         context_window_tokens,
-    };
+    });
 
     let mut agent_session = AgentSession::new(
         Agent::new(provider, tools, agent_config),
