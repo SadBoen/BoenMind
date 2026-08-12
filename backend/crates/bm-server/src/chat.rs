@@ -70,11 +70,13 @@ const PROMPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15 * 
 static PROMPT_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// 聊天请求：会话必须已存在（前端先创建会话再发消息）。
-/// `model`/`thinking` 可选，用于在当前会话即时切换模型与思考强度。
+/// `provider`/`model`/`thinking` 可选，用于在当前会话即时切换提供商/模型与思考强度。
 #[derive(Deserialize)]
 pub struct ChatRequest {
     pub session_id: String,
     pub message: String,
+    #[serde(default)]
+    pub provider: Option<String>,
     #[serde(default)]
     pub model: Option<String>,
     #[serde(default)]
@@ -110,10 +112,26 @@ pub async fn chat(
     }
 
     // 获取或创建 agent 会话句柄（Arc<Mutex<..>> 保证同一会话串行且 map 锁不长期占用）
-    let handle = match get_or_create_agent(&state, &session, req.model.as_deref(), req.thinking.as_deref()).await {
+    let handle = match get_or_create_agent(
+        &state,
+        &session,
+        req.provider.as_deref(),
+        req.model.as_deref(),
+        req.thinking.as_deref(),
+    )
+    .await
+    {
         Ok(h) => h,
         Err((status, msg)) => return api_error(status, msg).into_response(),
     };
+
+    // 请求指定了 provider/model 且与会话记录不同：持久化，后续消息沿用新组合
+    if req.provider.is_some() || req.model.is_some() {
+        let _ = state
+            .db
+            .set_session_model(&session.id, req.provider.as_deref(), req.model.as_deref())
+            .await;
+    }
 
     // 本次 prompt 的取消原语（pi 官方 abort 机制）：注册到会话级表，
     // POST /api/chat/stop 按 session_id 触发；客户端断开时由 watcher 自动触发。
@@ -215,24 +233,29 @@ pub async fn respond_permission(
 }
 
 /// 获取会话的 agent 句柄；不存在则按会话记录的提供商/模型创建。
-/// `model`/`thinking` 有值时对已存在的会话即时生效（set_model / set_thinking_level）。
+/// `provider`/`model`/`thinking` 有值时对已存在的会话即时生效（set_model / set_thinking_level）。
 async fn get_or_create_agent(
     state: &AppState,
     session: &bm_core::db::Session,
+    provider_override: Option<&str>,
     model_override: Option<&str>,
     thinking_override: Option<&str>,
 ) -> Result<Arc<Mutex<pi::sdk::AgentSessionHandle>>, (StatusCode, String)> {
-    // 解析提供商与模型
+    // 解析提供商与模型：请求级 provider/model 优先（跨提供商切换模型时，
+    // 只切 model 会导致 model 不属于会话原提供商 → pi 降级默认路由 → 401）
     let (provider, model) = {
         let config = state.config.read().await;
-        let provider = bm_core::config::resolve_provider(&config, session.provider_id.as_deref())
-            .cloned()
-            .ok_or_else(|| {
-                (
-                    StatusCode::BAD_REQUEST,
-                    "未配置任何模型提供商，请先在设置中配置".to_string(),
-                )
-            })?;
+        let provider = bm_core::config::resolve_provider(
+            &config,
+            provider_override.or(session.provider_id.as_deref()),
+        )
+        .cloned()
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                "未配置任何模型提供商，请先在设置中配置".to_string(),
+            )
+        })?;
         let model = bm_core::config::resolve_model(&provider, model_override.or(session.model.as_deref()))
             .ok_or_else(|| {
                 (

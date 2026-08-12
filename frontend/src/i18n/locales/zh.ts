@@ -211,6 +211,7 @@ export const zh = {
         openai: "OpenAI",
         anthropic: "Anthropic Claude",
         gemini: "Google Gemini",
+        minimax: "MiniMax",
         deepseek: "DeepSeek",
         moonshot: "Kimi（月之暗面）",
         zhipu: "智谱 GLM",

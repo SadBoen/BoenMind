@@ -243,6 +243,23 @@ impl Db {
         Ok(())
     }
 
+    /// 更新会话的提供商与模型（聊天中切换模型时持久化，保证后续消息沿用新组合）
+    pub async fn set_session_model(
+        &self,
+        id: &str,
+        provider_id: Option<&str>,
+        model: Option<&str>,
+    ) -> Result<(), turso::Error> {
+        let ts = now_ts();
+        self.conn.lock().await.execute(
+            "UPDATE sessions SET provider_id = COALESCE(?1, provider_id),
+                                   model = COALESCE(?2, model),
+                                   updated_at = ?3 WHERE id = ?4",
+            (provider_id, model, ts, id),
+        ).await?;
+        Ok(())
+    }
+
     pub async fn touch_session(&self, id: &str) -> Result<(), turso::Error> {
         let ts = now_ts();
         self.conn.lock().await.execute(

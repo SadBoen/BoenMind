@@ -76,7 +76,7 @@ interface AppStore {
   selectedThinking: string;
   setSelectedModel: (value: string | null) => void;
   setSelectedThinking: (value: string | null) => void;
-  sendMessage: (text: string, opts?: { model?: string; thinking?: string }) => Promise<void>;
+  sendMessage: (text: string, opts?: { provider?: string; model?: string; thinking?: string }) => Promise<void>;
   stopStreaming: () => void;
 
   // 插件权限
@@ -410,6 +410,7 @@ export const useAppStore = create<AppStore>((set, get) => {
       };
 
       const controller = api.chat(sessionId, text, handleEvent, {
+        provider: opts?.provider ?? undefined,
         model: opts?.model ?? undefined,
         thinking: opts?.thinking ?? undefined,
       });

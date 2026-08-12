@@ -211,6 +211,7 @@ export const en: Translation = {
         openai: "OpenAI",
         anthropic: "Anthropic Claude",
         gemini: "Google Gemini",
+        minimax: "MiniMax",
         deepseek: "DeepSeek",
         moonshot: "Kimi (Moonshot)",
         zhipu: "Zhipu GLM",

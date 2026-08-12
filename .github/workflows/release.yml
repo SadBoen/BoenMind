@@ -1,5 +1,5 @@
 # BoenMind 发布流程：打 tag v* 自动构建四类产物并创建 GitHub Release
-#   - macOS ARM / Intel（dmg + app.tar.gz + 自动更新签名）
+#   - macOS Apple Silicon（dmg + app.tar.gz + 自动更新签名；v0.1.2 起不发布 Intel 版）
 #   - Windows 便携版（zip，免安装）
 #   - Linux 服务器版（单文件二进制 tar.gz，x86_64 + aarch64）
 #   - Docker 多架构镜像（ghcr.io/sadboen/boenmind）
@@ -73,12 +73,13 @@ jobs:
         run: pnpm lint
 
   # ============================================================
-  # macOS：同一 runner 上交叉编译 ARM + Intel（Tauri 官方支持）
+  # macOS：Apple Silicon（v0.1.2 起取消 Intel 构建——用户明确要求）
   # ============================================================
   macos:
-    name: macOS (ARM + Intel)
+    name: macOS (Apple Silicon)
     runs-on: macos-14
     # 日常 push main 只跑质量门；构建/发布仅在打 tag 或手动触发
+    # 说明：v0.1.2 起不再发布 Intel (x86_64) 版（用户明确要求；Intel Mac 可继续用 v0.1.1）
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
@@ -94,7 +95,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          targets: aarch64-apple-darwin
 
       - name: 安装前端依赖
         working-directory: frontend
@@ -109,15 +110,7 @@ jobs:
           TAURI_SIGNING_IDENTITY: "-"
         run: pnpm tauri build --target aarch64-apple-darwin --bundles app,dmg
 
-      - name: 构建 Intel 版 (x86_64)
-        working-directory: frontend
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          TAURI_SIGNING_IDENTITY: "-"
-        run: pnpm tauri build --target x86_64-apple-darwin --bundles app,dmg
-
-      - name: 收集产物并合并自动更新清单 (latest.json)
+      - name: 收集产物并生成自动更新清单 (latest.json)
         working-directory: frontend
         env:
           RELEASE_TAG: ${{ github.ref_name }}
@@ -132,22 +125,20 @@ jobs:
           # 签名密钥（secret 为双重 base64；signer CLI 需要单层 base64 = 密钥文件内容）
           SIGNING_KEY="$(echo "$TAURI_SIGNING_PRIVATE_KEY" | base64 -d)"
 
-          for ARCH in aarch64 x86_64; do
-            TRIPLE="$([ "$ARCH" = aarch64 ] && echo aarch64-apple-darwin || echo x86_64-apple-darwin)"
-            MACOS_DIR="src-tauri/target/$TRIPLE/release/bundle/macos"
-            # tauri 已生成 app.tar.gz（自动更新目标）+ .sig，重命名带架构避免冲突
-            mv "$MACOS_DIR/BoenMind.app.tar.gz" "../dist-mac/BoenMind_${VER}_${ARCH}.app.tar.gz"
-            mv "$MACOS_DIR/BoenMind.app.tar.gz.sig" "../dist-mac/BoenMind_${VER}_${ARCH}.app.tar.gz.sig"
-            cp src-tauri/target/$TRIPLE/release/bundle/dmg/*.dmg "../dist-mac/"
-            # 热升级 runtime 资产：独立 bm-server 二进制（非 embed，桌面页面由壳提供）+ 签名
-            RUNTIME_BIN="src-tauri/target/$TRIPLE/release/bm-server"
-            cp "$RUNTIME_BIN" "../dist-mac/boenmind-runtime-${VER}-${TRIPLE}"
-            pnpm exec tauri signer sign \
-              --private-key "$SIGNING_KEY" --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" \
-              "../dist-mac/boenmind-runtime-${VER}-${TRIPLE}"
-          done
+          TRIPLE="aarch64-apple-darwin"
+          MACOS_DIR="src-tauri/target/$TRIPLE/release/bundle/macos"
+          # tauri 已生成 app.tar.gz（自动更新目标）+ .sig
+          mv "$MACOS_DIR/BoenMind.app.tar.gz" "../dist-mac/BoenMind_${VER}_aarch64.app.tar.gz"
+          mv "$MACOS_DIR/BoenMind.app.tar.gz.sig" "../dist-mac/BoenMind_${VER}_aarch64.app.tar.gz.sig"
+          cp src-tauri/target/$TRIPLE/release/bundle/dmg/*.dmg "../dist-mac/"
+          # 热升级 runtime 资产：独立 bm-server 二进制（非 embed，桌面页面由壳提供）+ 签名
+          RUNTIME_BIN="src-tauri/target/$TRIPLE/release/bm-server"
+          cp "$RUNTIME_BIN" "../dist-mac/boenmind-runtime-${VER}-${TRIPLE}"
+          pnpm exec tauri signer sign \
+            --private-key "$SIGNING_KEY" --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" \
+            "../dist-mac/boenmind-runtime-${VER}-${TRIPLE}"
 
-          # 合并两个架构的 latest.json：签名直接读已 mv 到 dist-mac 的 .sig 文件
+          # latest.json：签名直接读已 mv 到 dist-mac 的 .sig 文件
           # （tauri 生成的 latest.json 位置随版本变动，而 .sig 路径稳定且内容即 signature 字段）
           python3 - "$VER" "$TAG" <<'PY'
           import datetime, json, sys
@@ -159,7 +150,7 @@ jobs:
               "pub_date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
               "platforms": {},
           }
-          for arch in ("aarch64", "x86_64"):
+          for arch in ("aarch64",):
               sig_path = f"../dist-mac/BoenMind_{ver}_{arch}.app.tar.gz.sig"
               with open(sig_path) as f:
                   signature = f.read().strip()
@@ -380,10 +371,11 @@ jobs:
 
             ### 下载
 
-            **macOS（Apple Silicon / Intel）**
+            **macOS（Apple Silicon）**
             - `BoenMind_*.dmg` 安装镜像；或 `BoenMind_*.app.tar.gz` 解压即用
             - 未签名（无 Apple 开发者证书）：首次打开请在「系统设置 → 隐私与安全性」中允许，或对应用右键 → 打开
             - 应用内可热升级运行时（`boenmind-runtime-*` 资产由后端验签后落盘）
+            - 说明：v0.1.2 起不再发布 Intel 版；Intel Mac 可继续使用 v0.1.1
 
             **Windows（便携版，免安装）**
             - `BoenMind_*_x64_portable.zip` 解压运行 `BoenMind.exe`

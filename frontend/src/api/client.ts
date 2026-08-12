@@ -484,13 +484,13 @@ export const api = {
    * 流式对话。返回一个可取消的响应对象：
    *  - `onEvent` 收到每个 ChatStreamEvent
    *  - `close()` 中断连接（后端检测到断开会自动取消 prompt）
-   *  - `model`/`thinking` 可选，对当前会话即时切换（不改变会话记录）
+   *  - `provider`/`model`/`thinking` 可选，对当前会话即时切换（并持久化到会话记录）
    */
   chat: (
     sessionId: string,
     message: string,
     onEvent: (ev: ChatStreamEvent) => void,
-    opts?: { model?: string; thinking?: string },
+    opts?: { provider?: string; model?: string; thinking?: string },
   ) => {
     const controller = new AbortController();
     const done = new Promise<void>((resolve) => {
@@ -506,6 +506,7 @@ export const api = {
             body: JSON.stringify({
               session_id: sessionId,
               message,
+              provider: opts?.provider,
               model: opts?.model,
               thinking: opts?.thinking,
             }),

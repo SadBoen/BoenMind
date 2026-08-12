@@ -125,8 +125,12 @@ export function ChatInput() {
     if (!canSend) return;
     const value = text.trim();
     setText("");
+    // provider 与 model 一起传：跨提供商切换模型时后端按请求级 provider 解析，
+    // 避免 model 不属于会话原提供商导致路由降级（曾出现 401）
+    const providerId = modelValue?.split("::")[0];
     const modelId = modelValue?.split("::")[1];
     await sendMessage(value, {
+      provider: providerId ?? undefined,
       model: modelId ?? undefined,
       thinking: effectiveThinking,
     });
