@@ -11,6 +11,7 @@ pub mod plugin_test;
 pub mod plugins;
 pub mod providers;
 pub mod skills;
+pub mod thinking;
 pub mod workspace;
 
 pub use config::{AppConfig, ProviderConfig, ProviderKind};

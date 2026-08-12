@@ -49,6 +49,8 @@ export const ja: Translation = {
       low: "低",
       medium: "中",
       high: "高",
+      xhigh: "非常に高",
+      max: "最大",
     },
     scroll: {
       jumpToMessage: "このメッセージへ移動",

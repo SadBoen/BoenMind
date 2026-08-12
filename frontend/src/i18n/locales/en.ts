@@ -49,6 +49,8 @@ export const en: Translation = {
       low: "Low",
       medium: "Medium",
       high: "High",
+      xhigh: "Very high",
+      max: "Maximum",
     },
     scroll: {
       jumpToMessage: "Jump to this message",

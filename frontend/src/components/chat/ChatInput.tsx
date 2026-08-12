@@ -3,9 +3,10 @@
  * 左侧留提示文字。Enter 发送 / Shift+Enter 换行。参照 ZCode 输入框设计。
  * 附件/常用语言/语音为占位按钮（hermes-webui 参考），功能后续接入。
  */
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ArrowUp, Brain, Languages, Mic, Paperclip } from "lucide-react";
+import { api } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -23,11 +24,12 @@ import { useAppStore } from "@/stores/app-store";
 
 /**
  * 思考强度选项（对应 pi ThinkingLevel，label 用 chat.thinking.<value> 翻译）。
- * 只保留主流模型通用的 off/low/medium/high 四档：xhigh/max 是少数新旗舰
- * （GPT-5.2+/5.6、DeepSeek reasoning、Claude max）专属，多数模型会被 pi
- * 按模型能力 clamp 降级，UI 不展示。
+ * 默认四档为主流模型通用档位；具体档位按选中模型从后端动态获取
+ * （/api/thinking-levels，复刻 pi 白名单），获取失败/加载中回退到默认四档。
+ * minimal 不展示（UI 决策）；xhigh/max 仅白名单模型（gpt-5.6 系、
+ * deepseek reasoning、claude opus 4.6+）会从后端返回。
  */
-const THINKING_VALUES = ["off", "low", "medium", "high"] as const;
+const DEFAULT_THINKING_VALUES = ["off", "low", "medium", "high"] as const;
 
 interface ModelGroup {
   id: string;
@@ -49,6 +51,35 @@ function useModelGroups(): ModelGroup[] {
       })),
     }));
   }, [config]);
+}
+
+/**
+ * 当前模型的思考档位：按模型 id 缓存后端返回结果，
+ * 未加载/失败时回退默认四档（不闪烁、可离线）。
+ */
+function useThinkingLevels(modelValue: string | null): readonly string[] {
+  const [cache, setCache] = useState<Record<string, string[]>>({});
+  useEffect(() => {
+    if (!modelValue) return;
+    if (cache[modelValue]) return;
+    const [provider, model] = modelValue.split("::");
+    if (!provider || !model) return;
+    let cancelled = false;
+    api
+      .thinkingLevels(provider, model)
+      .then(({ levels }) => {
+        if (!cancelled && levels.length > 0) {
+          setCache((prev) => ({ ...prev, [modelValue]: levels }));
+        }
+      })
+      .catch(() => {
+        /* 请求失败用默认四档兜底 */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [modelValue, cache]);
+  return cache[modelValue ?? ""] ?? DEFAULT_THINKING_VALUES;
 }
 
 export function ChatInput() {
@@ -81,6 +112,12 @@ export function ChatInput() {
   // 当前选中模型的提供商 id（选择器前的小 logo 用）
   const modelProviderId = modelValue?.split("::")[0] ?? "";
   const canSend = text.trim().length > 0 && !streaming;
+  // 当前模型的可用思考档位；已存档位不在列表时按最高可用档展示/发送
+  // （与 pi 运行时 clamp 降级语义一致）
+  const thinkingLevels = useThinkingLevels(modelValue);
+  const effectiveThinking = thinkingLevels.includes(selectedThinking)
+    ? selectedThinking
+    : thinkingLevels[thinkingLevels.length - 1];
 
   const submit = async () => {
     if (!canSend) return;
@@ -89,7 +126,7 @@ export function ChatInput() {
     const modelId = modelValue?.split("::")[1];
     await sendMessage(value, {
       model: modelId ?? undefined,
-      thinking: selectedThinking,
+      thinking: effectiveThinking,
     });
   };
 
@@ -183,9 +220,9 @@ export function ChatInput() {
                   ))}
                 </SelectContent>
               </Select>
-              {/* 思考强度选择 */}
+              {/* 思考强度选择（档位随选中模型动态变化） */}
               <Select
-                value={selectedThinking}
+                value={effectiveThinking}
                 onValueChange={setSelectedThinking}
                 itemToStringLabel={(v) => t(`chat.thinking.${v}`)}
               >
@@ -194,7 +231,7 @@ export function ChatInput() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent align="start">
-                  {THINKING_VALUES.map((value) => (
+                  {thinkingLevels.map((value) => (
                     <SelectItem key={value} value={value} className="text-xs">
                       {t(`chat.thinking.${value}`)}
                     </SelectItem>

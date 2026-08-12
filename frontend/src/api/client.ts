@@ -225,6 +225,12 @@ export const api = {
     }),
 
   listSessions: () => request<Session[]>("/api/sessions"),
+
+  /** 某模型的可用思考档位（后端按 pi 白名单判定；请求失败前端用默认 4 档兜底） */
+  thinkingLevels: (provider: string, model: string) =>
+    request<{ levels: string[] }>(
+      `/api/thinking-levels?provider=${encodeURIComponent(provider)}&model=${encodeURIComponent(model)}`,
+    ),
   createSession: (body?: { provider_id?: string; model?: string; title?: string }) =>
     request<Session>("/api/sessions", { method: "POST", body: JSON.stringify(body ?? {}) }),
   getSession: (id: string) =>

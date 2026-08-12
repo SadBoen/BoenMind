@@ -49,6 +49,8 @@ export const zh = {
       low: "低",
       medium: "中",
       high: "高",
+      xhigh: "极高",
+      max: "最大",
     },
     scroll: {
       jumpToMessage: "跳转到该条消息",

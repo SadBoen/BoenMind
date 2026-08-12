@@ -49,6 +49,8 @@ export const ko: Translation = {
       low: "낮음",
       medium: "중간",
       high: "높음",
+      xhigh: "매우 높음",
+      max: "최대",
     },
     scroll: {
       jumpToMessage: "이 메시지로 이동",

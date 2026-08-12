@@ -648,3 +648,34 @@ pub async fn read_workspace_file(
         })))
     }
 }
+
+// ---------------------------------------------------------------------------
+// 思考档位
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct ThinkingLevelsParams {
+    /// 提供商 id（config.providers[].id）
+    pub provider: String,
+    pub model: String,
+}
+
+/// 查询某模型的思考档位（GET /api/thinking-levels?provider=&model=）。
+/// 判定逻辑在 bm_core::thinking（复刻 pi 运行时白名单），pi 仍是最终权威。
+pub async fn thinking_levels(
+    State(state): crate::SharedState,
+    Query(params): Query<ThinkingLevelsParams>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let config = state.config.read().await;
+    let provider = config
+        .providers
+        .iter()
+        .find(|p| p.id == params.provider)
+        .ok_or_else(|| api_error(StatusCode::BAD_REQUEST, "provider 不存在"))?;
+    let levels = bm_core::thinking::thinking_levels_for(
+        provider.kind,
+        provider.base_url.as_deref(),
+        &params.model,
+    );
+    Ok(Json(serde_json::json!({ "levels": levels })))
+}
