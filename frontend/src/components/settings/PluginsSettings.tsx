@@ -1,22 +1,24 @@
 /**
- * 插件设置：列表 + 启停开关 + 本地安装。
+ * 插件设置：列表 + 启停开关 + 本地安装 + 设置页（schema 驱动动态表单）。
  * 插件基于 pi 扩展机制（QuickJS 直接加载 TypeScript），无需转 Rust。
  */
 import { useEffect, useState } from "react";
 import { useTranslation, Trans } from "react-i18next";
-import { Puzzle, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Puzzle, Plus, RefreshCw, Settings2, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import { api, type PluginInfo } from "@/api/client";
+import { PluginSettingsDialog } from "./PluginSettingsDialog";
 
 export function PluginsSettings() {
   const { t } = useTranslation();
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [installPath, setInstallPath] = useState("");
+  const [settingsFor, setSettingsFor] = useState<PluginInfo | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -133,6 +135,17 @@ export function PluginsSettings() {
                 <p className="mt-1 truncate text-xs text-muted-foreground">{plugin.description}</p>
               </div>
               <div className="flex items-center gap-2">
+                {plugin.settingsSchema && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="text-muted-foreground"
+                    title={t("settings.plugins.settings")}
+                    onClick={() => setSettingsFor(plugin)}
+                  >
+                    <Settings2 size={15} />
+                  </Button>
+                )}
                 <Switch checked={plugin.enabled} onCheckedChange={() => void toggle(plugin)} />
                 <Button
                   variant="ghost"
@@ -155,6 +168,15 @@ export function PluginsSettings() {
           components={{ code: <code className="rounded bg-muted px-1" /> }}
         />
       </p>
+
+      {/* 插件设置页（schema 驱动动态表单） */}
+      {settingsFor && (
+        <PluginSettingsDialog
+          plugin={settingsFor}
+          open={settingsFor !== null}
+          onClose={() => setSettingsFor(null)}
+        />
+      )}
     </section>
   );
 }

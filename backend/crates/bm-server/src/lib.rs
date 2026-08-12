@@ -60,6 +60,8 @@ fn router(state: AppState) -> Router {
         .route("/api/plugins", get(routes::list_plugins))
         .route("/api/plugins/install", post(routes::install_plugin))
         .route("/api/plugins/{id}", post(routes::set_plugin).delete(routes::uninstall_plugin))
+        .route("/api/plugins/{id}/settings", get(routes::get_plugin_settings).put(routes::put_plugin_settings))
+        .route("/api/plugins/{id}/test-source", post(routes::test_plugin_source))
         .route("/api/skills", get(routes::list_skills))
         .route("/api/skills/install", post(routes::install_skill))
         .route("/api/skills/registry/random", get(routes::random_skills))

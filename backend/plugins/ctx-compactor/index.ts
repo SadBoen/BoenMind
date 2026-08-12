@@ -38,8 +38,8 @@ const DEFAULTS = {
 	indexDirName: ".boenmind/ctx-index",
 };
 
-/** 不修剪的自身工具（避免循环修剪 + 模型检索路径保持直通） */
-const SELF_TOOLS = new Set(["ctx_execute", "ctx_search"]);
+/** 不修剪的工具（避免循环修剪 + 模型检索路径保持直通 + 搜索结果需模型直接消费） */
+const SELF_TOOLS = new Set(["ctx_execute", "ctx_search", "web_search", "web_fetch"]);
 
 /** 常见 API key / 秘密格式（落库前替换，防泄漏进索引） */
 const SECRET_PATTERNS = [

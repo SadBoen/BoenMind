@@ -20,6 +20,10 @@ pub const BUILTIN_PLUGINS: &[(&str, &str)] = &[
         "ctx-compactor",
         "上下文压缩补强：ctx_execute 沙箱执行 + 大工具输出修剪落库 + ctx_search 检索",
     ),
+    (
+        "web-search",
+        "搜索增强：web_search 多源聚合（免费源用量管理与自动切换）+ web_fetch 网页正文提取",
+    ),
 ];
 
 #[derive(Debug, Clone, Serialize)]
@@ -33,6 +37,9 @@ pub struct PluginInfo {
     pub enabled: bool,
     /// 内置插件（随仓库/上游提供；卸载后写入 removed_builtin_plugins，不再自动恢复）
     pub builtin: bool,
+    /// 插件设置页 schema（manifest 的 settings 声明；None = 无设置页）
+    #[serde(skip_serializing_if = "Option::is_none", rename = "settingsSchema")]
+    pub settings_schema: Option<Vec<crate::plugin_settings::SettingField>>,
 }
 
 /// 插件根目录。
@@ -73,10 +80,22 @@ pub fn list_plugins(config: &AppConfig) -> Result<Vec<PluginInfo>, std::io::Erro
             kind,
             enabled,
             builtin: BUILTIN_PLUGINS.iter().any(|(bid, _)| *bid == id),
+            settings_schema: manifest_settings_schema(&path),
         });
     }
     out.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(out)
+}
+
+/// 解析插件目录 manifest 的 settings schema（单文件插件/无 settings 声明返回 None）。
+fn manifest_settings_schema(path: &Path) -> Option<Vec<crate::plugin_settings::SettingField>> {
+    let manifest = path.join("extension.json");
+    if !manifest.is_file() {
+        return None;
+    }
+    let text = fs::read_to_string(&manifest).ok()?;
+    let json = serde_json::from_str::<serde_json::Value>(&text).ok()?;
+    crate::plugin_settings::parse_settings_schema(&json)
 }
 
 /// 插件文件/目录是否实际存在。
@@ -146,6 +165,7 @@ pub fn install_plugin(source: &Path) -> Result<PluginInfo, String> {
         kind: if dest.is_dir() { "manifest" } else { "single" }.to_string(),
         enabled: false,
         builtin: false,
+        settings_schema: manifest_settings_schema(&dest),
     })
 }
 

@@ -6,6 +6,8 @@ pub mod agent;
 pub mod compaction;
 pub mod config;
 pub mod db;
+pub mod plugin_settings;
+pub mod plugin_test;
 pub mod plugins;
 pub mod providers;
 pub mod skills;

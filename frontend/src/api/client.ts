@@ -96,6 +96,37 @@ export interface HealthInfo {
   lang: string;
 }
 
+/** 插件设置页 schema 的字段类型 */
+export type SettingFieldType = "string" | "secret" | "boolean" | "number" | "select" | "group";
+
+/** manifest settings 数组里一个字段的声明（后端 SettingField 的 JSON 序列化） */
+export interface SettingField {
+  key: string;
+  type: SettingFieldType;
+  label: string;
+  description?: string;
+  options?: string[];
+  min?: number;
+  max?: number;
+  default?: string | number | boolean;
+  /** group 类型：子字段模板（key 为相对 key） */
+  fields?: SettingField[];
+  /** group 类型：默认实例数 */
+  instances?: number;
+  /** 组的显示名（组内第一个字段声明），分组卡片标题用 */
+  groupLabel?: string;
+}
+
+/** 插件用量（quota.json 中单个源的统计） */
+export interface QuotaInfo {
+  used: number;
+  total: number;
+  unit: string;
+  reset?: string;
+  exhaustedAt?: number;
+  callsToday?: number;
+}
+
 export interface PluginInfo {
   id: string;
   name: string;
@@ -103,6 +134,8 @@ export interface PluginInfo {
   kind: string;
   enabled: boolean;
   builtin: boolean;
+  /** 插件设置页 schema（无设置页的插件为 undefined） */
+  settingsSchema?: SettingField[];
 }
 
 export interface SkillInfo {
@@ -217,6 +250,38 @@ export const api = {
     }),
   uninstallPlugin: (id: string) =>
     request<{ ok: boolean }>(`/api/plugins/${id}`, { method: "DELETE" }),
+
+  /** 插件设置（secret 字段已掩码回显）；quota 为插件在工作文件夹下的用量（可选） */
+  getPluginSettings: (id: string) =>
+    request<{
+      settings: Record<string, string | number | boolean>;
+      quota?: Record<string, QuotaInfo> | null;
+    }>(`/api/plugins/${id}/settings`),
+  /** 保存插件设置（secret 提交空/掩码 = 保留原值；__clear.<key>=true 清除），返回合并后的掩码版 */
+  putPluginSettings: (id: string, values: Record<string, string | number | boolean>) =>
+    request<{ ok: boolean; settings: Record<string, string | number | boolean> }>(
+      `/api/plugins/${id}/settings`,
+      { method: "PUT", body: JSON.stringify({ values }) },
+    ),
+  /**
+   * 测试插件某个源（jina/tavily/exa/serper/firecrawl/custom1…）的连通性。
+   * values 为表单当前值（未保存的修改一并探测；secret 空/掩码 = 已存原值）。
+   * 测试成功消耗 1 次免费额度，响应附带最新 quota。
+   */
+  testPluginSource: (
+    id: string,
+    source: string,
+    values?: Record<string, string | number | boolean>,
+  ) =>
+    request<{
+      ok: boolean;
+      latencyMs: number;
+      detail: string;
+      quota?: Record<string, QuotaInfo> | null;
+    }>(`/api/plugins/${id}/test-source`, {
+      method: "POST",
+      body: JSON.stringify({ source, values: values ?? {} }),
+    }),
 
   listSkills: () => request<SkillInfo[]>("/api/skills"),
   setSkill: (id: string, enabled: boolean) =>

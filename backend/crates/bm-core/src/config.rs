@@ -240,7 +240,10 @@ impl Default for AppConfig {
             working_dir: default_working_dir(),
             theme: default_theme(),
             lang: default_lang(),
-            enabled_plugins: vec!["ctx-compactor".to_string()], // 官方压缩插件默认启用（新用户开箱即用，可禁用/卸载）
+            enabled_plugins: vec![
+                "ctx-compactor".to_string(), // 官方压缩插件默认启用（新用户开箱即用，可禁用/卸载）
+                "web-search".to_string(),   // 官方搜索插件默认启用（无 key 时优雅降级，设置页配置后生效）
+            ],
             removed_builtin_plugins: Vec::new(),
             enabled_skills: Vec::new(),
             compaction: CompactionConfig::default(),
@@ -381,6 +384,12 @@ pub fn sync_pi_models_json(config: &AppConfig) -> Result<(), std::io::Error> {
     fs::write(dir.join("models.json"), serde_json::to_string_pretty(&doc)?)
 }
 
+/// 测试用共享锁：串行化所有会修改全局 BOENMIND_HOME 的测试（cfg(test) 才存在）。
+/// 并行测试共享进程 env，读 app_dir/plugins_dir 的测试在别的测试改 env 时会读到
+/// 跳变路径；需要读写真实 ~/.boenmind 下文件的测试应持有此锁。
+#[cfg(test)]
+pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -443,9 +452,8 @@ mod tests {
     fn sync_pi_models_json_writes_compaction_window() {
         use crate::compaction::CompactionOverride;
         // 本测试修改全局 BOENMIND_HOME：与其它读取 app_dir 的测试并行会互相污染
-        // （曾经导致真实 ~/.boenmind/config.toml 被默认配置覆盖）。用静态锁串行化。
-        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _guard = ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        // （曾经导致真实 ~/.boenmind/config.toml 被默认配置覆盖）。用共享锁串行化。
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let original = std::env::var_os("BOENMIND_HOME");
         let dir = std::env::temp_dir().join(format!("bm-config-sync-{}", std::process::id()));
         // 注意：edition 2024 中 set_var/remove_var 为 unsafe
