@@ -240,7 +240,7 @@ impl Default for AppConfig {
             working_dir: default_working_dir(),
             theme: default_theme(),
             lang: default_lang(),
-            enabled_plugins: Vec::new(),
+            enabled_plugins: vec!["ctx-compactor".to_string()], // 官方压缩插件默认启用（新用户开箱即用，可禁用/卸载）
             removed_builtin_plugins: Vec::new(),
             enabled_skills: Vec::new(),
             compaction: CompactionConfig::default(),
