@@ -240,7 +240,8 @@ impl OpenAIProvider {
         if provider_is_deepseek || base_is_deepseek {
             return Some(ReasoningStyle::DeepSeek);
         }
-        // MiniMax 方言：provider 名 minimax 或端点含 minimaxi.com / minimax.chat
+        // BoenMind 补丁：MiniMax 方言——provider 名 minimax 或端点含 minimaxi.com / minimax.chat
+        // （见 backend/vendor/UPSTREAM_PATCHES.md P2）
         let provider_is_minimax = self.provider.eq_ignore_ascii_case("minimax");
         let base = self.base_url.to_ascii_lowercase();
         let base_is_minimax = base.contains("minimaxi.com") || base.contains("minimax.chat");
@@ -1320,6 +1321,7 @@ struct OpenAIStreamOptions {
 /// `{"type": "enabled"}` turns on thinking mode; `{"type": "disabled"}` forces
 /// the non-thinking path. Serialized only for reasoning dialects
 /// (DeepSeek / MiniMax, see `ReasoningStyle`).
+// BoenMind 补丁：budget_tokens 字段为 MiniMax 方言新增（见 backend/vendor/UPSTREAM_PATCHES.md P2）
 #[derive(Debug, Serialize)]
 struct OpenAIThinking {
     #[serde(rename = "type")]
@@ -1342,6 +1344,7 @@ enum ReasoningStyle {
     /// MiniMax（国内 api.minimaxi.com / minimax.chat）：`thinking: {type:
     /// enabled|disabled, budget_tokens: N}`。budget_tokens 控制推理深度，
     /// 由 ThinkingLevel 的默认预算映射（见 `ThinkingLevel::default_budget`）。
+    // BoenMind 补丁：MiniMax 变体为 BoenMind 新增（见 backend/vendor/UPSTREAM_PATCHES.md P2）
     MiniMax,
 }
 

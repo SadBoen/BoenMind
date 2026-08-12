@@ -48,6 +48,7 @@ const OPENAI_CODEX_OAUTH_REDIRECT_URI: &str = "http://localhost:1455/auth/callba
 const OPENAI_CODEX_OAUTH_SCOPES: &str = "openid profile email offline_access";
 
 // ── Google Gemini CLI OAuth constants ────────────────────────────
+// BoenMind 补丁：上游作者私有 OAuth 凭据已替换为占位符（见 backend/vendor/UPSTREAM_PATCHES.md P1）
 const GOOGLE_GEMINI_CLI_OAUTH_CLIENT_ID: &str =
     "boenmind-placeholder-gemini-oauth-client-id";
 // ubs:ignore public installed-app OAuth client metadata, not a server-side secret.
@@ -60,6 +61,7 @@ const GOOGLE_GEMINI_CLI_OAUTH_TOKEN_URL: &str = "https://oauth2.googleapis.com/t
 const GOOGLE_GEMINI_CLI_CODE_ASSIST_ENDPOINT: &str = "https://cloudcode-pa.googleapis.com";
 
 // ── Google Antigravity OAuth constants ───────────────────────────
+// BoenMind 补丁：上游作者私有 OAuth 凭据已替换为占位符（见 backend/vendor/UPSTREAM_PATCHES.md P1）
 const GOOGLE_ANTIGRAVITY_OAUTH_CLIENT_ID: &str =
     "boenmind-placeholder-antigravity-oauth-client-id";
 // ubs:ignore public installed-app OAuth client metadata, not a server-side secret.

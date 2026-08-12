@@ -4209,7 +4209,7 @@ where
         };
         let original_permissions = expected_target_identity.map(|(_, _, mode)| {
             use std::os::unix::fs::PermissionsExt as _;
-
+            // BoenMind 补丁：from_mode 需 u32，显式转换（macOS 编译修复，见 backend/vendor/UPSTREAM_PATCHES.md P7）
             std::fs::Permissions::from_mode(u32::from(mode))
         });
 
@@ -4307,6 +4307,7 @@ where
                 let source_file = std::fs::File::from(source_descriptor);
                 let source_metadata = source_file.metadata()?;
                 if !source_metadata.is_file()
+                    // BoenMind 补丁：dev() 为 u64，i128 包装对齐比较（macOS 编译修复，见 backend/vendor/UPSTREAM_PATCHES.md P7）
                     || i128::from(source_metadata.dev()) != i128::from(expected_dev)
                     || source_metadata.ino() != expected_ino
                 {
@@ -11221,6 +11222,7 @@ mod tests {
     fn tool_output_artifact_redacts_sensitive_text_before_persisting()
     -> std::result::Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir().expect("artifact root");
+        // BoenMind 补丁：fixture 用 sk_ 前缀，避免被 secret 脱敏逻辑误扫（见 backend/vendor/UPSTREAM_PATCHES.md P8）
         let leaked_token = "sk_redactionfixture1234567890";
         let leaked_bearer = "ghp_redactionfixture1234567890";
         let full = format!(
@@ -11413,6 +11415,7 @@ mod tests {
 
             let tmp = tempfile::tempdir().expect("workspace");
             let artifact_root = tempfile::tempdir().expect("artifact root");
+            // BoenMind 补丁：fixture 用 sk_ 前缀，避免被 secret 脱敏逻辑误扫（见 backend/vendor/UPSTREAM_PATCHES.md P8）
             let leaked_token = "sk_bashredactionfixture1234567890";
 
             let bash_tool = BashTool::with_artifact_root(tmp.path(), artifact_root.path());
@@ -11498,6 +11501,7 @@ mod tests {
             let outside = tempfile::tempdir().expect("outside");
             let artifact_root = tempfile::tempdir().expect("artifact root");
             let outside_path = outside.path().join("secret.txt");
+            // BoenMind 补丁：fixture 用 sk_ 前缀，避免被 secret 脱敏逻辑误扫（见 backend/vendor/UPSTREAM_PATCHES.md P8）
             std::fs::write(&outside_path, "API_TOKEN=sk_deniedpathfixture1234567890")
                 .expect("outside secret");
 
