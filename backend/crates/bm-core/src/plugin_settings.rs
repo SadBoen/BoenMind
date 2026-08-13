@@ -145,14 +145,15 @@ struct FlatField {
     field: SettingField,
 }
 
-/// 把 schema 展开为扁平叶子列表：Group 字段按实例数（默认 + 已存文件中的实际数）
-/// 展开为 `custom<N>.<subkey>`。
+/// 把 schema 展开为扁平叶子列表：Group 字段按实例数展开为 `custom<N>.<subkey>`。
+/// 实例数 = 已存/提交键中最大的 customN；仅当没有**任何**已存键（首次展开）时
+/// 才用 manifest 默认实例数。删除实例后不会因下限而复生。
 fn expand_schema(schema: &[SettingField], saved: &serde_json::Map<String, Value>) -> Vec<FlatField> {
     let mut out = Vec::new();
     for f in schema {
         if f.field_type == SettingFieldType::Group {
-            // 实际实例数 = max(默认, 文件里已存在的 customN.*)
-            let mut actual = f.instances;
+            // 已有键为空 = 首次展开，用默认实例数铺出初始卡片；否则以实际键为准
+            let mut actual = if saved.is_empty() { f.instances } else { 0 };
             for key in saved.keys() {
                 if let Some(rest) = key.strip_prefix(&f.key.replace('*', ""))
                     && let Some(num) = rest.split('.').next().and_then(|n| n.parse::<usize>().ok())
@@ -618,6 +619,21 @@ mod tests {
         // 掩码提交保留
         let again = save_settings(id, &schema, &serde_json::json!({"custom1.apiKey": "sk-c****"})).unwrap();
         assert_eq!(again["custom1.apiKey"], "sk-custom-1");
+
+        // 删除实例：提交只含 custom1 → 实例数缩回 1，custom2/custom3 不复生
+        // （manifest instances=2 仅对首次展开生效）
+        let shrunk = save_settings(
+            id,
+            &schema,
+            &serde_json::json!({"custom1.enabled": true, "custom1.name": "only"})
+        )
+        .unwrap();
+        assert_eq!(shrunk["custom1.name"], "only");
+        assert!(shrunk.get("custom2.name").is_none());
+        assert!(shrunk.get("custom3.name").is_none());
+        let masked_shrunk = read_settings_masked(id, &schema);
+        assert!(masked_shrunk.get("custom2.name").is_none());
+        assert_eq!(masked_shrunk["custom1.name"], "only");
         let _ = fs::remove_dir_all(plugins_dir().join(id));
         restore();
         let _ = fs::remove_dir_all(&home);

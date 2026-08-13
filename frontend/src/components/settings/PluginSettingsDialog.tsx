@@ -188,10 +188,11 @@ export function PluginSettingsDialog({ plugin, open, onClose }: Props) {
     }
   };
 
-  /** 计算 group 字段当前实例数（从 values 中匹配 customN.* 的最大 N） */
+  /** 计算 group 字段当前实例数（从 values 中匹配 customN.* 的最大 N）。
+   *  无 manifest 默认下限：删除实例后卡片数可真正缩下去，不会原地复活。 */
   const groupInstances = (field: SettingField) => {
     const prefix = field.key.replace("*", "");
-    let max = field.instances ?? 2;
+    let max = 0;
     for (const key of Object.keys(values)) {
       if (!key.startsWith(prefix)) continue;
       const num = Number(key.slice(prefix.length).split(".")[0]);
