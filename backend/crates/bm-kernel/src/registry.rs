@@ -8,6 +8,11 @@ use bm_protocol::{ErrorCode, ProtocolError};
 
 use crate::ServiceKey;
 
+/// trait object 服务的 Any 容器（A2 的 Port 集合都走 `Arc<dyn>`，
+/// 而 `dyn T` 非 Sized 进不了 Any 注册表——PortBox 本身 Sized，
+/// downcast 后取出真身，零 unsafe）。
+pub struct PortBox<T: ?Sized + Send + Sync + 'static>(pub Arc<T>);
+
 #[derive(Default)]
 pub struct Registry {
     services: RwLock<HashMap<ServiceKey, Arc<dyn Any + Send + Sync>>>,
@@ -49,6 +54,27 @@ impl Registry {
         })
     }
 
+    /// 按 key 取 Port（trait object 服务，如 `Arc<dyn EventStorePort>`）。
+    /// 注册时用 `PortBox` 包装；类型不符 → InvalidArgument。
+    pub fn get_port<P: ?Sized + Send + Sync + 'static>(
+        &self,
+        key: ServiceKey,
+    ) -> Result<Arc<P>, ProtocolError> {
+        let m = self.services.read().expect("registry poisoned");
+        let svc = m.get(key).ok_or_else(|| {
+            ProtocolError::new(ErrorCode::NotFound, format!("service key `{key}` not found"))
+        })?;
+        svc.clone()
+            .downcast::<PortBox<P>>()
+            .map(|b| b.0.clone())
+            .map_err(|_| {
+                ProtocolError::new(
+                    ErrorCode::InvalidArgument,
+                    format!("service `{key}` is not a port of the requested trait"),
+                )
+            })
+    }
+
     /// 服务是否已注册（loader 检查 deps 用）。
     pub fn contains(&self, key: &str) -> bool {
         self.services.read().expect("registry poisoned").contains_key(key)
@@ -67,12 +93,32 @@ mod tests {
     #[test]
     fn register_and_get_concrete_type() {
         let r = Registry::new();
-        // 注：trait object（如 Arc<dyn EventStorePort>）无法进 Any 注册表，
-        // 这是设计取舍——trait 服务经 Kernel::event_store 特例取用
         let store = Arc::new(crate::InMemoryEventStore::new());
         r.register("event_store", store.clone()).unwrap();
         let got = r.get::<crate::InMemoryEventStore>("event_store").unwrap();
         assert!(Arc::ptr_eq(&got, &store));
+    }
+
+    #[test]
+    fn port_box_roundtrip_for_trait_objects() {
+        // A2 的 Port 集合形态：Arc<dyn Port> 经 PortBox 进注册表、按 trait 取出
+        let r = Registry::new();
+        let store: Arc<dyn bm_protocol::EventStorePort> = Arc::new(crate::InMemoryEventStore::new());
+        r.register("event_store", Arc::new(PortBox(store.clone())))
+            .unwrap();
+        let got = r
+            .get_port::<dyn bm_protocol::EventStorePort>("event_store")
+            .unwrap();
+        assert!(Arc::ptr_eq(&got, &store));
+        // 缺失 key → NotFound（trait object 无 Debug，用 .err() 而非 unwrap_err）
+        let err = r
+            .get_port::<dyn bm_protocol::EventStorePort>("nope")
+            .err()
+            .expect("must err");
+        assert_eq!(err.code(), ErrorCode::NotFound);
+        // 普通服务按 Port 取 → InvalidArgument（类型不符）
+        let err = r.get::<String>("event_store").unwrap_err();
+        assert_eq!(err.code(), ErrorCode::InvalidArgument);
     }
 
     #[test]

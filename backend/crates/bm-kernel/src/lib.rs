@@ -25,21 +25,21 @@ pub use event_log::{EventLog, InMemoryEventStore, SurfaceIntent};
 pub use loader::{Loader, Manifest};
 pub use plugin::{Disposer, Plugin, ServiceKey};
 pub use projection::{Projection, SurfaceMessage, SurfaceProjection, SurfaceToolCall};
-pub use registry::Registry;
+pub use registry::{PortBox, Registry};
 pub use validation::{EventValidator, ValidationOutcome};
 
 /// 内核实例：四件套组装完毕的运行态。
 ///
-/// 插件副作用（Disposer）在 Kernel drop 时**逆序**执行（卸载 = 撤销
-/// 一切注册）。运行期挂载新插件用 [`Kernel::install_plugin`]。
+/// 插件副作用按插件名分组（[`Kernel::install_plugin`] / [`Kernel::uninstall_plugin`]），
+/// 卸载 = 该插件 Disposer 逆序执行；Kernel drop 时全部插件逆序卸载。
 pub struct Kernel {
     registry: Arc<Registry>,
     bus: Arc<EventBus>,
     event_log: EventLog,
-    /// 事件存储真身（registry 里的 key 只是就绪标记——trait object
-    /// 无法进 Any 注册表，取用走这里）
+    /// 事件存储真身（同时经 PortBox 注册在 registry，插件可 `ctx.port` 取用）
     event_store: Arc<dyn EventStorePort>,
-    plugin_disposers: tokio::sync::Mutex<Vec<Disposer>>,
+    /// 插件副作用分组（安装序，组内逆序撤销）
+    plugin_disposers: std::sync::Mutex<Vec<(String, Vec<Disposer>)>>,
 }
 
 /// 组装入口：先挂服务与插件，再 build。
@@ -68,13 +68,17 @@ impl KernelBuilder {
         self
     }
 
-    /// 预装插件（build 时按顺序安装；deps 未就绪即失败并整体回滚）。
+    /// 预装插件（build 时按依赖拓扑安装，声明顺序无关；deps 永不就绪即失败并整体回滚）。
     pub fn with_plugin(mut self, manifest: Manifest, plugin: Box<dyn Plugin>) -> Self {
         self.plugins.push((manifest, plugin));
         self
     }
 
     /// 组装内核。任一插件安装失败 → 已安装插件的副作用逆序回滚 → Err。
+    ///
+    /// 安装顺序由**依赖表达**（deferred 拓扑）：deps 未就绪的插件挂起，
+    /// 就绪后再装；一轮无进展 = 依赖永远无法满足 → 失败（dsh inject
+    /// 语义的同步版，启动期拓扑排序、运行期 fail-fast）。
     pub fn build(self) -> Result<Kernel, ProtocolError> {
         let store: Arc<dyn EventStorePort> = self
             .store
@@ -83,9 +87,9 @@ impl KernelBuilder {
         let bus = Arc::new(EventBus::new());
 
         // 内核内置服务：事件存储（阶段 0 唯一必需）。
-        // 注册表放就绪标记（deps 检查用）；真身经 Kernel::event_store 取。
+        // PortBox 包装进 Any 注册表——插件按 trait 取用（ctx.port）。
         registry
-            .register("event_store", Arc::new(()) as Arc<dyn std::any::Any + Send + Sync>)
+            .register("event_store", Arc::new(PortBox(store.clone())) as Arc<dyn std::any::Any + Send + Sync>)
             .map_err(|e| {
                 ProtocolError::new(ErrorCode::PluginInstall, format!("register event_store: {e}"))
             })?;
@@ -97,25 +101,55 @@ impl KernelBuilder {
             bus,
             event_log,
             event_store: store,
-            plugin_disposers: tokio::sync::Mutex::new(Vec::new()),
+            plugin_disposers: std::sync::Mutex::new(Vec::new()),
         };
 
-        // 逐插件安装；失败则回滚已安装的（disposers 逆序 drop）
-        let mut installed: Vec<Disposer> = Vec::new();
-        for (manifest, mut plugin) in self.plugins {
-            let mut ctx = Ctx::new(&kernel);
-            match loader.install(&manifest, &mut plugin, &mut ctx) {
-                Ok(mut ds) => installed.append(&mut ds),
-                Err(e) => {
-                    for d in installed.iter_mut().rev() {
-                        d.fire();
+        // 预校验全部插件（name / deps 声明一致性——非就绪性错误即刻失败）
+        for (manifest, plugin) in &self.plugins {
+            loader.validate(manifest, plugin.as_ref())?;
+        }
+
+        // deferred 拓扑：循环取 deps 就绪的插件安装，未就绪的挂起等下一轮
+        let mut pending = self.plugins;
+        let mut groups: Vec<(String, Vec<Disposer>)> = Vec::new();
+        while !pending.is_empty() {
+            let (ready, waiting): (Vec<_>, Vec<_>) = pending
+                .into_iter()
+                .partition(|(m, _)| loader.deps_ready(&m.deps));
+            if ready.is_empty() {
+                rollback(&mut groups);
+                let names: Vec<String> = waiting.into_iter().map(|(m, _)| m.name).collect();
+                return Err(ProtocolError::new(
+                    ErrorCode::PluginInstall,
+                    format!("plugins waiting on unavailable deps: {}", names.join(", ")),
+                ));
+            }
+            for (manifest, mut plugin) in ready {
+                let mut ctx = Ctx::new(&kernel);
+                match loader.install(&manifest, &mut plugin, &mut ctx) {
+                    Ok(ds) => groups.push((manifest.name.clone(), ds)),
+                    Err(e) => {
+                        rollback(&mut groups);
+                        return Err(e);
                     }
-                    return Err(e);
                 }
             }
+            pending = waiting;
         }
-        *kernel.plugin_disposers.try_lock().expect("build: uncontended") = installed;
+        *kernel
+            .plugin_disposers
+            .lock()
+            .expect("build: uncontended") = groups;
         Ok(kernel)
+    }
+}
+
+/// 逆序执行全部已装插件副作用（同插件组内逆序）。
+fn rollback(groups: &mut [(String, Vec<Disposer>)]) {
+    for (_, ds) in groups.iter_mut().rev() {
+        for d in ds.iter_mut().rev() {
+            d.fire();
+        }
     }
 }
 
@@ -151,41 +185,70 @@ impl Kernel {
         self.registry.get(key)
     }
 
-    /// 事件存储端口真身（trait object 不进 Any 注册表，从这里取）。
+    /// 按 key 取 Port（trait object 服务，如 `Arc<dyn EventStorePort>`）。
+    pub fn port<P: ?Sized + Send + Sync + 'static>(&self, key: ServiceKey) -> Result<Arc<P>, ProtocolError> {
+        self.registry.get_port(key)
+    }
+
+    /// 事件存储端口真身（registry 里也有 PortBox 副本，此处为内核内部捷径）。
     pub fn event_store(&self) -> Arc<dyn EventStorePort> {
         self.event_store.clone()
     }
 
-    /// 运行期挂载新插件（deps 就绪才启动；失败无副作用）。
+    /// 运行期挂载新插件（deps 就绪才启动，fail-fast；失败无副作用）。
     pub fn install_plugin(&self, manifest: Manifest, plugin: Box<dyn Plugin>) -> Result<(), ProtocolError> {
         let loader = Loader::new(self.registry.clone());
         let mut ctx = Ctx::new(self);
         let mut plugin = plugin;
         let ds = loader.install(&manifest, &mut plugin, &mut ctx)?;
-        self.plugin_disposers.try_lock().expect("install_plugin").extend(ds);
+        self.plugin_disposers
+            .lock()
+            .expect("plugin_disposers poisoned")
+            .push((manifest.name.clone(), ds));
+        Ok(())
+    }
+
+    /// 卸载指定插件：其 Disposer 逆序执行（撤销它注册的一切）。
+    /// 未安装 → NotFound。
+    pub fn uninstall_plugin(&self, name: &str) -> Result<(), ProtocolError> {
+        let mut groups = self.plugin_disposers.lock().expect("plugin_disposers poisoned");
+        let idx = groups
+            .iter()
+            .position(|(n, _)| n == name)
+            .ok_or_else(|| {
+                ProtocolError::new(
+                    ErrorCode::NotFound,
+                    format!("plugin `{name}` not installed"),
+                )
+            })?;
+        let (_, mut ds) = groups.remove(idx);
+        for d in ds.iter_mut().rev() {
+            d.fire();
+        }
         Ok(())
     }
 }
 
 impl Drop for Kernel {
     fn drop(&mut self) {
-        // 卸载 = 逆序执行全部插件副作用（撤销注册/退订）
-        let mut ds = std::mem::take(&mut *self.plugin_disposers.get_mut());
-        for d in ds.iter_mut().rev() {
-            d.fire();
-        }
+        // 卸载 = 逆序执行全部插件副作用（后装先卸、组内逆序）
+        let mut groups = std::mem::take(
+            &mut *self.plugin_disposers.lock().expect("plugin_disposers poisoned"),
+        );
+        rollback(&mut groups);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bm_protocol::{CoreEvent, EventKind, SessionId};
+    use bm_protocol::{CoreEvent, ErrorCode, EventKind, ProtocolError, SessionId};
 
     #[tokio::test]
     async fn kernel_build_with_default_store() {
         let kernel = KernelBuilder::new().build().unwrap();
-        assert!(kernel.service::<()>("event_store").is_ok());
+        // 事件存储以 PortBox 注册，按 trait 取用（A2 Port 集合形态）
+        assert!(kernel.port::<dyn EventStorePort>("event_store").is_ok());
         // 事件存储真身可用（默认内存实现，可写可读）
         let sid = SessionId::new("sess_build");
         let bid = bm_protocol::BranchId::new("main");
@@ -225,5 +288,38 @@ mod tests {
         let evs = log.replay(&sid, &bm_protocol::BranchId::new("main")).await.unwrap();
         assert_eq!(evs.len(), 1);
         assert_eq!(evs[0].seq.as_u64(), 1);
+    }
+
+    #[tokio::test]
+    async fn uninstall_plugin_reverts_its_registrations() {
+        // per-plugin disposer 分组：卸载单个插件 = 撤销它注册的一切
+        struct Provider;
+        impl Plugin for Provider {
+            fn name(&self) -> &'static str {
+                "u.provider"
+            }
+            fn apply(&mut self, ctx: &mut Ctx<'_>) -> Result<Vec<Disposer>, ProtocolError> {
+                let d = ctx.register_service("u.svc", Arc::new(11i32))?;
+                Ok(vec![d])
+            }
+        }
+        let kernel = KernelBuilder::new()
+            .with_plugin(
+                Manifest {
+                    name: "u.provider".into(),
+                    version: "0.1.0".into(),
+                    deps: vec![],
+                    description: None,
+                },
+                Box::new(Provider),
+            )
+            .build()
+            .unwrap();
+        assert!(kernel.service::<i32>("u.svc").is_ok());
+        kernel.uninstall_plugin("u.provider").unwrap();
+        assert!(kernel.service::<i32>("u.svc").is_err());
+        // 未安装的插件 → NotFound
+        let err = kernel.uninstall_plugin("u.ghost").unwrap_err();
+        assert_eq!(err.code(), ErrorCode::NotFound);
     }
 }

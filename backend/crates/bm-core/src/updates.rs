@@ -365,7 +365,6 @@ pub fn download_and_verify(asset: &ReleaseAsset) -> Result<PathBuf, AppError> {
 
 /// gzip 解压（下载的 `.gz` 验签通过后解压出最终二进制；Windows 的 `.exe` 后缀保留）。
 fn decompress_gzip(src: &Path, dst: &Path) -> Result<(), AppError> {
-    use std::io::Read;
     let file = fs::File::open(src).map_err(|e| AppError::internal(format!("打开压缩包失败: {e}")))?;
     let mut decoder = flate2::read::GzDecoder::new(file);
     let mut out = fs::File::create(dst).map_err(|e| AppError::internal(format!("创建目标文件失败: {e}")))?;

@@ -31,8 +31,8 @@ use axum::{
 use bm_core::agent::{AgentStreamEvent, create_session_handle, map_agent_event};
 use bm_kernel::SurfaceIntent;
 use bm_protocol::{
-    AssistantMsg, BranchId, CallId, CoreEvent, EventKind, SessionId, TokenUsage, ToolResultMsg,
-    TurnEndReason, UserMsg, UserMsgSource,
+    AssistantMsg, BranchId, CallId, CoreEvent, EventKind, SeqNo, SessionId, TokenUsage,
+    ToolResultMsg, TurnEndReason, UserMsg, UserMsgSource,
 };
 use serde::Deserialize;
 use tokio::sync::{Mutex, mpsc};
@@ -386,19 +386,15 @@ async fn run_prompt_and_persist(
     let mut handle = handle.lock().await;
 
     // —— 阶段 0 双写：回合开始（事件日志；失败不阻断主链路）——
-    // 回合号 = 已有 TurnStart 计数 + 1（事件日志自洽，不依赖现有表）
+    // 回合号 = 已落日志 TurnStart 计数 + 1（count 查询，不做全量重放）
     let dual = state.dual_writer.clone();
     let mut turn: u32 = 1;
     let log_sid = SessionId::new(&session_id);
     let log_bid = BranchId::new("main");
     if let Some(w) = &dual {
-        match w.event_log().replay(&log_sid, &log_bid).await {
-            Ok(evs) => {
-                turn = evs
-                    .iter()
-                    .filter(|e| matches!(&e.kind, EventKind::Core(CoreEvent::TurnStart { .. })))
-                    .count() as u32
-                    + 1;
+        match w.event_log().count(&log_sid, &log_bid, Some("turn/start")).await {
+            Ok(n) => {
+                turn = n as u32 + 1;
             }
             Err(err) => tracing::warn!(event = "bm.dual_write_turn_failed", error = %err),
         }
@@ -603,7 +599,7 @@ async fn run_prompt_and_persist(
     // —— 阶段 0 双写：工具调用/助手消息/回合结束（batch；失败不阻断主链路）——
     if let Some(w) = &dual {
         let tools = log_tools.lock().unwrap().clone();
-        let mut events: Vec<(EventKind, SurfaceIntent, bool, Option<Vec<u64>>)> = Vec::new();
+        let mut events: Vec<(EventKind, SurfaceIntent, bool, Option<Vec<SeqNo>>)> = Vec::new();
         for (step, (call_id, name, args, is_error)) in tools.iter().enumerate() {
             events.push((
                 EventKind::Core(CoreEvent::ToolCall {

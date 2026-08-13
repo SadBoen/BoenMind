@@ -26,6 +26,14 @@ impl<'k> Ctx<'k> {
         self.kernel.service(key)
     }
 
+    /// 按 key 取 Port（trait object 服务，如 `Arc<dyn EventStorePort>`）。
+    pub fn port<P: ?Sized + Send + Sync + 'static>(
+        &self,
+        key: ServiceKey,
+    ) -> Result<Arc<P>, ProtocolError> {
+        self.kernel.port(key)
+    }
+
     /// 事件存储端口真身。
     pub fn event_store(&self) -> Arc<dyn bm_protocol::EventStorePort> {
         self.kernel.event_store()

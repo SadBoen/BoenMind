@@ -234,8 +234,14 @@ pub fn core_type_name(ev: &CoreEvent) -> &'static str {
 // 会话事件信封（日志落盘形态）
 // ---------------------------------------------------------------------------
 
+/// 会话事件格式版本（dsh SESSION_FORMAT_VERSION 语义）：
+/// 信封结构演进时递增；**写者决定 bump**（"能解析 ≠ 语义正确"）。
+/// 读者发现 version != 当前值 → 拒绝重建（FormatVersionMismatch）。
+pub const SESSION_FORMAT_VERSION: u32 = 1;
+
 /// 事件日志的落盘形态：信封 + kind（flatten 展开）。
 ///
+/// - `version`：信封格式版本（缺省 0 = 版本化之前的旧数据，读者据此拒绝）
 /// - `seq`：分支内单调连续，由存储层分配（append 原子性保证）
 /// - `time`：epoch ms
 /// - `ignorable`：未认识可跳过；缺省=false（必需，不认识须拒绝重建）
@@ -243,6 +249,8 @@ pub fn core_type_name(ev: &CoreEvent) -> &'static str {
 /// - `source_seqs`：引用链（压缩遮蔽 / chunk→message 归并依据）
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionEvent {
+    #[serde(default)]
+    pub version: u32,
     pub seq: SeqNo,
     pub session_id: SessionId,
     pub branch_id: BranchId,
@@ -252,7 +260,7 @@ pub struct SessionEvent {
     #[serde(default)]
     pub ignorable: bool,
     pub surface_op: Option<SurfaceOp>,
-    pub source_seqs: Option<Vec<u64>>,
+    pub source_seqs: Option<Vec<SeqNo>>,
 }
 
 #[cfg(test)]
@@ -261,6 +269,7 @@ mod tests {
 
     fn sess(seq: u64) -> SessionEvent {
         SessionEvent {
+            version: SESSION_FORMAT_VERSION,
             seq: SeqNo::new(seq),
             session_id: SessionId::new("sess_abc"),
             branch_id: BranchId::new("main"),
@@ -280,6 +289,17 @@ mod tests {
         // 字节级一致（默认 serde_json 映射排序稳定）
         assert_eq!(serde_json::to_string(&back).unwrap(), json);
         assert_eq!(back, ev);
+    }
+
+    #[test]
+    fn old_data_without_version_parses_as_zero() {
+        // 版本化之前落盘的旧数据没有 version 字段 → 解析为 0，
+        // 由读者按 version != 当前值拒绝（写者决定 bump 语义）
+        let json = r#"{"seq":1,"session_id":"sess_abc","branch_id":"main","time":1,
+                       "kind":"core","type":"turn/start","turn":1,"ignorable":false}"#;
+        let ev: SessionEvent = serde_json::from_str(json).unwrap();
+        assert_eq!(ev.version, 0);
+        assert_ne!(ev.version, SESSION_FORMAT_VERSION);
     }
 
     #[test]

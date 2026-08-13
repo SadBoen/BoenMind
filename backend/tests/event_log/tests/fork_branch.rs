@@ -51,7 +51,7 @@ async fn branch_heads_track_parent() {
     let heads = log.branch_heads(&sid).await.unwrap();
     assert_eq!(heads.len(), 2);
     let br_head = heads.iter().find(|h| h.branch_id == br).unwrap();
-    assert_eq!(br_head.parent_branch.as_deref(), Some("main"));
+    assert_eq!(br_head.parent_branch.as_ref().map(|b| b.as_str()), Some("main"));
     assert_eq!(br_head.head_seq.as_u64(), 0); // 空分支 head 0
 }
 
@@ -81,7 +81,7 @@ async fn turso_fork_persists_and_reopens() {
         let heads = log.branch_heads(&sid).await.unwrap();
         assert_eq!(heads.len(), 2);
         let br_head = heads.iter().find(|h| h.branch_id == br).unwrap();
-        assert_eq!(br_head.parent_branch.as_deref(), Some("main"));
+        assert_eq!(br_head.parent_branch.as_ref().map(|b| b.as_str()), Some("main"));
         let br_evs = log.replay(&sid, &br).await.unwrap();
         assert_eq!(br_evs.len(), 1);
         assert_eq!(br_evs[0].seq.as_u64(), 1);

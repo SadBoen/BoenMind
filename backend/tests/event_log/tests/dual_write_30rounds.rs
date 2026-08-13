@@ -9,8 +9,8 @@ use std::sync::Arc;
 
 use bm_kernel::{EventLog, InMemoryEventStore, SurfaceIntent};
 use bm_protocol::{
-    AssistantMsg, BranchId, CallId, CoreEvent, EventKind, SessionId, TokenUsage, ToolResultMsg,
-    TurnEndReason, UserMsg, UserMsgSource,
+    AssistantMsg, BranchId, CallId, CoreEvent, EventKind, SeqNo, SessionId, TokenUsage,
+    ToolResultMsg, TurnEndReason, UserMsg, UserMsgSource,
 };
 use bm_storage_turso::dual_write::DualWriter;
 
@@ -42,7 +42,7 @@ async fn thirty_rounds_dual_write_replay_identical() {
         )
         .await;
         // 回合收尾（chat.rs：工具/助手消息/回合结束 batch）
-        let events: Vec<(EventKind, SurfaceIntent, bool, Option<Vec<u64>>)> = vec![
+        let events: Vec<(EventKind, SurfaceIntent, bool, Option<Vec<SeqNo>>)> = vec![
             (
                 EventKind::Core(CoreEvent::ToolCall {
                     turn,

@@ -34,20 +34,15 @@ impl Loader {
         Self { registry }
     }
 
-    /// 安装插件。deps 未就绪 / name 不一致 → Err（无副作用）。
-    pub fn install(
-        &self,
-        manifest: &Manifest,
-        plugin: &mut Box<dyn Plugin>,
-        ctx: &mut Ctx<'_>,
-    ) -> Result<Vec<Disposer>, ProtocolError> {
+    /// 静态校验（name 一致 + `plugin.deps()` ⊆ manifest.deps）。
+    /// 就绪性以外的打包错误在此即刻失败。
+    pub fn validate(&self, manifest: &Manifest, plugin: &dyn Plugin) -> Result<(), ProtocolError> {
         if manifest.name != plugin.name() {
             return Err(ProtocolError::new(
                 ErrorCode::PluginInstall,
                 format!("manifest name `{}` != plugin name `{}`", manifest.name, plugin.name()),
             ));
         }
-        self.check_deps(&manifest.deps)?;
         // deps() 声明与 manifest 不一致时以 manifest 为准（它是分发形态），
         // 但双处声明不一致属于打包错误：
         for key in plugin.deps() {
@@ -58,20 +53,31 @@ impl Loader {
                 ));
             }
         }
-        plugin.apply(ctx)
+        Ok(())
     }
 
-    /// 依赖就绪检查：每个 key 必须已注册（内核内置或先前插件提供）。
-    pub fn check_deps(&self, deps: &[String]) -> Result<(), ProtocolError> {
-        for key in deps {
-            if !self.registry.contains(key.as_str()) {
-                return Err(ProtocolError::new(
-                    ErrorCode::PluginInstall,
-                    format!("plugin dep `{key}` not ready"),
-                ));
-            }
+    /// 依赖就绪检查（每个 key 已注册 = 内核内置或先前插件提供）。
+    pub fn deps_ready(&self, deps: &[String]) -> bool {
+        deps.iter().all(|key| self.registry.contains(key.as_str()))
+    }
+
+    /// 安装插件。name 不一致 / deps 未就绪 → Err（无副作用）。
+    /// 运行期挂载走此路径（fail-fast）；启动期拓扑排序见
+    /// [`crate::KernelBuilder::build`]（deferred：deps 未就绪先等）。
+    pub fn install(
+        &self,
+        manifest: &Manifest,
+        plugin: &mut Box<dyn Plugin>,
+        ctx: &mut Ctx<'_>,
+    ) -> Result<Vec<Disposer>, ProtocolError> {
+        self.validate(manifest, plugin.as_ref())?;
+        if !self.deps_ready(&manifest.deps) {
+            return Err(ProtocolError::new(
+                ErrorCode::PluginInstall,
+                format!("plugin dep of `{}` not ready", plugin.name()),
+            ));
         }
-        Ok(())
+        plugin.apply(ctx)
     }
 }
 
@@ -182,5 +188,76 @@ mod tests {
             .build()
             .unwrap();
         assert!(kernel.service::<i32>("extra.svc").is_ok());
+    }
+
+    #[test]
+    fn deps_express_order_not_manual() {
+        // deferred 拓扑：consumer 声明依赖 provider，但安装顺序反过来——
+        // 启动期拓扑排序后仍能成功（依赖表达，不手工编排）
+        struct Provider;
+        impl Plugin for Provider {
+            fn name(&self) -> &'static str {
+                "t.provider"
+            }
+            fn apply(&mut self, ctx: &mut Ctx<'_>) -> Result<Vec<Disposer>, ProtocolError> {
+                let d = ctx.register_service("t.svc", Arc::new(7i32))?;
+                Ok(vec![d])
+            }
+        }
+        struct Consumer;
+        impl Plugin for Consumer {
+            fn name(&self) -> &'static str {
+                "t.consumer"
+            }
+            fn deps(&self) -> &[ServiceKey] {
+                &["t.svc"]
+            }
+            fn apply(&mut self, ctx: &mut Ctx<'_>) -> Result<Vec<Disposer>, ProtocolError> {
+                let svc = ctx.service::<i32>("t.svc")?;
+                assert_eq!(*svc, 7);
+                Ok(vec![])
+            }
+        }
+        // 注意顺序：consumer 在前（有序安装会失败；拓扑后成功）
+        let kernel = KernelBuilder::new()
+            .with_plugin(manifest("t.consumer", &["t.svc"]), Box::new(Consumer))
+            .with_plugin(manifest("t.provider", &[]), Box::new(Provider))
+            .build()
+            .unwrap();
+        assert!(kernel.service::<i32>("t.svc").is_ok());
+    }
+
+    #[test]
+    fn unresolved_deps_fail_build() {
+        // 依赖永远无法就绪 → 整体失败（已装插件副作用回滚）
+        struct SideEffect;
+        impl Plugin for SideEffect {
+            fn name(&self) -> &'static str {
+                "t.side"
+            }
+            fn apply(&mut self, ctx: &mut Ctx<'_>) -> Result<Vec<Disposer>, ProtocolError> {
+                ctx.register_service("t.side.svc", Arc::new(1i32))?;
+                Ok(vec![])
+            }
+        }
+        struct Ghost;
+        impl Plugin for Ghost {
+            fn name(&self) -> &'static str {
+                "t.ghost"
+            }
+            fn deps(&self) -> &[ServiceKey] {
+                &["ghost.svc"]
+            }
+            fn apply(&mut self, _ctx: &mut Ctx<'_>) -> Result<Vec<Disposer>, ProtocolError> {
+                Ok(vec![])
+            }
+        }
+        let err = KernelBuilder::new()
+            .with_plugin(manifest("t.side", &[]), Box::new(SideEffect))
+            .with_plugin(manifest("t.ghost", &["ghost.svc"]), Box::new(Ghost))
+            .build()
+            .unwrap_err();
+        assert_eq!(err.code(), ErrorCode::PluginInstall);
+        assert!(err.message.contains("unavailable deps"));
     }
 }

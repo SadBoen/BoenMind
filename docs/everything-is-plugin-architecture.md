@@ -906,22 +906,22 @@ M5：自举闭环（用 BoenMind 编程应用完成 BoenMind 的一个完整功�
 | 9 | 🔶 CI 未纳入四新 crate；全量 cargo test 因 vendor 缺 tests/common/mod.rs 编译失败 | release.yml | 质量门 -p 列表 + vendor 修复（P11 登记） |
 | 10 | 🟡 一致性小件：append_batch 跳过 Replace 校验 / join_all 正序 vs 逆序 / parallel 注释与实现序不符 / parent_branch 应 BranchId / install_plugin try_lock panic / proptest 承诺未兑现 / DualWriter 失败路径零覆盖 | 多处 | 随行修 |
 
-### 11.4 拍板点（当前待拍，10 项）
+### 11.4 拍板点（2026-08-14 晚已逐项拍板 ✅）
 
-1. 阶段 1 立项顺序：**agent-loop 移植优先（推荐）** vs pi-compat 优先——理由：日志“完整可信”是审计/Steward/分支 UI/前端投影的共同地基；两者解耦（拆法 A 1-2 周），compat 后置不影响路线；
-2. 真实验收（release 起服务聊几轮查 event_log 表，需用户配合，10 分钟）；
-3. 事件格式版本化：**现在加（推荐）**——数据量小改 schema 最便宜；
-4. fork 语义：**投影折叠父前缀（推荐）** / fork 带种子（dsh seedLength）/ 维持空分支；
-5. 会话删除联动：**联动清 event_log（推荐）** / 保留作回收站——隐私是底线（战略文档 §四·4）；
-6. Port 注册表形状：**PortBox 包装（推荐）** / 每 Port 一个 typed accessor；
-7. Loader 依赖语义：**deferred（等待就绪，推荐）** / 维持有序安装；
-8. 质量门：**CI 纳入四新 crate + vendor 修复（推荐）**——门禁不在 CI = 没门禁；
-9. 全局事件游标（跨会话事件序，Steward 分身交接的观察基线）：**契约层先留口（推荐）** / 不预留；
-10. 前端隔离机制（iframe/WebComponent/联邦）：**维持后拍**（阶段 4），本次不动。
+1. ✅ 阶段 1 立项顺序：**两线并行**——agent-loop 移植 + pi-compat 同时开工（用户拍板"两个并行"；两者解耦，Token 并行可行）；
+2. ⏳ 真实验收（release 起服务聊几轮查 event_log 表，需用户配合，10 分钟）——用户睡觉期间顺延；
+3. ✅ 事件格式版本化：**现在加**（SessionEvent 信封 version 字段 + 拒读不兼容版本）；
+4. ✅ fork 语义：**投影折叠父前缀**（fork 可见分叉点前历史）；
+5. ✅ 会话删除：**保留回收站 + 超期自动清除 + 用户可主动清除**（不即时联动删除；event_log 留作可恢复底账，超期任务自动清，用户手动清入口）；
+6. ✅ Port 注册表形状：**PortBox 包装**；
+7. ✅ Loader 依赖语义：**deferred**（启动期拓扑排序等就绪，运行期 fail-fast）；
+8. ✅ 质量门：**CI 纳入四新 crate**（test + clippy --all-targets）+ vendor 测试缺文件修复（P11 登记）；
+9. ✅ 全局事件游标：**契约层先留口**（GlobalSeq 类型，阶段 5 Steward 观察基线）；
+10. ✅ 前端隔离机制：**后拍**（阶段 4）。
 
-### 11.5 阶段 1 建议范围
+### 11.5 阶段 1 建议范围（已拍板：两线并行）
 
-**主线 agent-loop 移植**（真序事件 / ToolResult.output 落全 / chunk / 压缩事务接线 / Interrupted / subscribe）；**随行小修**（11.3 清单按序）；**质量门补 CI**（拍板点 8）；**pi-compat 后置**（拆法 A 已查证，1-2 周）；前端隔离/分支 UI/Steward 不动。
+**主线 A：agent-loop 移植**（真序事件 / ToolResult.output 落全 / chunk / 压缩事务接线 / Interrupted / subscribe / fork 父前缀折叠投影）；**主线 B：pi-compat**（拆法 A：vendor 6 文件 + ~300 行 host 线程，1-2 周，插件生态当日兼容）；**随行小修**（11.3 清单按序）；**质量门补 CI**（拍板点 8）；前端隔离/分支 UI/Steward 不动。任务分解见交接文档（docs/HANDOFF_KERNEL_PHASE1.md）。
 
 ---
 

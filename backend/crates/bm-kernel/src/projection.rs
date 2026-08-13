@@ -196,6 +196,7 @@ mod tests {
 
     fn env(seq: u64, kind: EventKind) -> SessionEvent {
         SessionEvent {
+            version: bm_protocol::SESSION_FORMAT_VERSION,
             seq: SeqNo::new(seq),
             session_id: SessionId::new("sess_p"),
             branch_id: BranchId::new("main"),

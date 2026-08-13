@@ -19,6 +19,8 @@ pub enum ErrorCode {
     SeqDuplicate,
     /// 未知且必需的事件（ignorable=false）——旧版本拒绝重建新日志
     UnknownRequiredEvent,
+    /// 事件格式版本不兼容（写者决定 bump；读者拒绝重建，走迁移链）
+    FormatVersionMismatch,
     /// 消息面操作违规（如 Replace 区间非法）
     SurfaceViolation,
     /// 存储不可用（打开失败/事务失败）
@@ -71,6 +73,7 @@ impl ProtocolError {
             ErrorCode::SeqGap => "seq_gap",
             ErrorCode::SeqDuplicate => "seq_duplicate",
             ErrorCode::UnknownRequiredEvent => "unknown_required_event",
+            ErrorCode::FormatVersionMismatch => "format_version_mismatch",
             ErrorCode::SurfaceViolation => "surface_violation",
             ErrorCode::StoreUnavailable => "store_unavailable",
             ErrorCode::NotFound => "not_found",

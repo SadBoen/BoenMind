@@ -48,8 +48,9 @@ pub struct TursoEventStore {
 }
 
 impl TursoEventStore {
-    /// 打开（必要时建表）。与 bm-core 同款：新 local DB + 单连接。
-    pub async fn open(path: &str) -> Result<Self, ProtocolError> {        if let Some(dir) = std::path::Path::new(path).parent() {
+    /// 打开（必要时建表 + 自愈分支头）。与 bm-core 同款：新 local DB + 单连接。
+    pub async fn open(path: &str) -> Result<Self, ProtocolError> {
+        if let Some(dir) = std::path::Path::new(path).parent() {
             std::fs::create_dir_all(dir).ok();
         }
         let db = Builder::new_local(path)
@@ -69,9 +70,12 @@ impl TursoEventStore {
         conn.execute_batch(MIGRATE_EVENT_LOG)
             .await
             .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("migrate: {e}")))?;
-        Ok(Self {
+        let store = Self {
             conn: Mutex::new(conn),
-        })
+        };
+        // 启动自愈：head 与 max(seq) 重新对齐（防 append 两步间崩溃留下的落后 head）
+        store.repair_heads().await?;
+        Ok(store)
     }
 
     /// 由已打开的连接构造（bm-server 双写场景可复用同一连接）。
@@ -79,6 +83,23 @@ impl TursoEventStore {
         Self {
             conn: Mutex::new(conn),
         }
+    }
+
+    /// 自愈分支头：head_seq = 各 (session, branch) 的 max(seq)（无事件为 0）；
+    /// 补齐有事件但缺头行的分支。崩溃窗口（INSERT 与 upsert_head 之间）
+    /// 造成的落后 head 由此修复。
+    pub async fn repair_heads(&self) -> Result<(), ProtocolError> {
+        let conn = self.conn.lock().await;
+        conn.execute_batch(
+            "INSERT OR IGNORE INTO branch_heads (session_id, branch_id, parent_branch, head_seq)
+             SELECT session_id, branch_id, NULL, MAX(seq) FROM event_log GROUP BY session_id, branch_id;
+             UPDATE branch_heads SET head_seq = COALESCE(
+               (SELECT MAX(seq) FROM event_log e
+                 WHERE e.session_id = branch_heads.session_id AND e.branch_id = branch_heads.branch_id), 0);",
+        )
+        .await
+        .map(|_| ())
+        .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("repair heads: {e}")))
     }
 
     fn insert_sql() -> &'static str {
@@ -126,27 +147,9 @@ fn row_params(ev: &SessionEvent) -> RowParams<'_> {
     }
 
     /// 行 → 信封。`data` 解析失败 = 未知事件 → 按 ignorable 守卫处置。
-    async fn row_to_event(conn: &Connection, seq: i64, session_id: String, branch_id: String, ignorable: bool)
-        -> Result<Option<SessionEvent>, ProtocolError>
-    {
-        let mut stmt = conn
-            .prepare("SELECT data FROM event_log WHERE session_id = ?1 AND branch_id = ?2 AND seq = ?3")
-            .await
-            .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("read data: {e}")))?;
-        let mut rows = stmt
-            .query((session_id.as_str(), branch_id.as_str(), seq))
-            .await
-            .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("query data: {e}")))?;
-        let Some(row) = rows.next().await.map_err(|e| {
-            ProtocolError::new(ErrorCode::StoreUnavailable, format!("next data: {e}"))
-        })?
-        else {
-            return Ok(None);
-        };
-        let data: String = row
-            .get(0)
-            .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("get data: {e}")))?;
-        match serde_json::from_str::<SessionEvent>(&data) {
+    /// （data 由主查询直接选出，避免逐行 N+1 重查）
+    fn parse_data(seq: i64, data: &str, ignorable: bool) -> Result<Option<SessionEvent>, ProtocolError> {
+        match serde_json::from_str::<SessionEvent>(data) {
             Ok(ev) => Ok(Some(ev)),
             Err(_) => {
                 // 未知事件守卫（D2）：ignorable → 跳过；必需 → 拒绝重建
@@ -186,7 +189,7 @@ impl EventStorePort for TursoEventStore {
             let conn = self.conn.lock().await;
             let sid = ev.session_id.clone();
             let bid = ev.branch_id.clone();
-            // 分支头（锁内读 → 分配 → 插入，原子）
+            // 分支头（锁内读 → 分配 → 事务内插入+更新头，原子）
             let mut stmt = conn
                 .prepare("SELECT head_seq FROM branch_heads WHERE session_id = ?1 AND branch_id = ?2")
                 .await
@@ -206,18 +209,37 @@ impl EventStorePort for TursoEventStore {
             } else {
                 None
             };
+            drop(stmt);
+            drop(rows);
             let next = head.map(|h| h + 1).unwrap_or(1);
-            if head == Some(next) {
-                return Err(ProtocolError::new(ErrorCode::SeqDuplicate, format!("seq {next} already exists")));
-            }
             let mut ev = ev;
             ev.seq = SeqNo::new(next as u64);
             let params = row_params(&ev);
-            conn.execute(Self::insert_sql(), params)
+            // 单条 append 与 batch 同语义：INSERT + 头更新同事务
+            // （两步间崩溃会留落后 head，启动 repair_heads 自愈；
+            // 事务内原子则根本不产生该窗口）
+            conn.execute("BEGIN", ())
                 .await
-                .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("insert: {e}")))?;
-            upsert_head(&conn, sid.as_str(), bid.as_str(), next).await?;
-            Ok(SeqNo::new(next as u64))
+                .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("begin: {e}")))?;
+            let res: Result<(), ProtocolError> = async {
+                conn.execute(Self::insert_sql(), params)
+                    .await
+                    .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("insert: {e}")))?;
+                upsert_head(&conn, sid.as_str(), bid.as_str(), next).await
+            }
+            .await;
+            match res {
+                Ok(()) => {
+                    conn.execute("COMMIT", ())
+                        .await
+                        .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("commit: {e}")))?;
+                    Ok(SeqNo::new(next as u64))
+                }
+                Err(e) => {
+                    let _ = conn.execute("ROLLBACK", ()).await;
+                    Err(e)
+                }
+            }
         })
     }
 
@@ -279,16 +301,16 @@ impl EventStorePort for TursoEventStore {
                     assigned.push(SeqNo::new(next as u64));
                     next += 1;
                 }
-                Ok::<(), ProtocolError>(())
+                let last = next - 1;
+                // 头更新在事务内（与 INSERT 原子，崩溃不留落后 head）
+                upsert_head(&conn, sid.as_str(), bid.as_str(), last).await
             }
             .await;
             match result {
                 Ok(()) => {
-                    let last = next - 1;
                     conn.execute("COMMIT", ())
                         .await
                         .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("commit: {e}")))?;
-                    upsert_head(&conn, sid.as_str(), bid.as_str(), last).await?;
                     Ok(assigned)
                 }
                 Err(e) => {
@@ -304,41 +326,42 @@ impl EventStorePort for TursoEventStore {
             let conn = self.conn.lock().await;
             let sid = q.session_id.to_string();
             let bid = q.branch_id.to_string();
+            // data 列直接随主查询选出（去 N+1：不再逐行重查）
             let sql = match (q.seq_gt, q.seq_lte, q.limit) {
                 (Some(_), Some(_), Some(_)) => {
-                    "SELECT seq, session_id, branch_id, ignorable FROM event_log
+                    "SELECT seq, session_id, branch_id, ignorable, data FROM event_log
                      WHERE session_id = ?1 AND branch_id = ?2 AND seq > ?3 AND seq <= ?4
                      ORDER BY seq LIMIT ?5"
                 }
                 (Some(_), Some(_), None) => {
-                    "SELECT seq, session_id, branch_id, ignorable FROM event_log
+                    "SELECT seq, session_id, branch_id, ignorable, data FROM event_log
                      WHERE session_id = ?1 AND branch_id = ?2 AND seq > ?3 AND seq <= ?4
                      ORDER BY seq"
                 }
                 (Some(_), None, Some(_)) => {
-                    "SELECT seq, session_id, branch_id, ignorable FROM event_log
+                    "SELECT seq, session_id, branch_id, ignorable, data FROM event_log
                      WHERE session_id = ?1 AND branch_id = ?2 AND seq > ?3
                      ORDER BY seq LIMIT ?4"
                 }
                 (Some(_), None, None) => {
-                    "SELECT seq, session_id, branch_id, ignorable FROM event_log
+                    "SELECT seq, session_id, branch_id, ignorable, data FROM event_log
                      WHERE session_id = ?1 AND branch_id = ?2 AND seq > ?3 ORDER BY seq"
                 }
                 (None, Some(_), Some(_)) => {
-                    "SELECT seq, session_id, branch_id, ignorable FROM event_log
+                    "SELECT seq, session_id, branch_id, ignorable, data FROM event_log
                      WHERE session_id = ?1 AND branch_id = ?2 AND seq <= ?3
                      ORDER BY seq LIMIT ?4"
                 }
                 (None, Some(_), None) => {
-                    "SELECT seq, session_id, branch_id, ignorable FROM event_log
+                    "SELECT seq, session_id, branch_id, ignorable, data FROM event_log
                      WHERE session_id = ?1 AND branch_id = ?2 AND seq <= ?3 ORDER BY seq"
                 }
                 (None, None, Some(_)) => {
-                    "SELECT seq, session_id, branch_id, ignorable FROM event_log
+                    "SELECT seq, session_id, branch_id, ignorable, data FROM event_log
                      WHERE session_id = ?1 AND branch_id = ?2 ORDER BY seq LIMIT ?3"
                 }
                 (None, None, None) => {
-                    "SELECT seq, session_id, branch_id, ignorable FROM event_log
+                    "SELECT seq, session_id, branch_id, ignorable, data FROM event_log
                      WHERE session_id = ?1 AND branch_id = ?2 ORDER BY seq"
                 }
             };
@@ -376,18 +399,13 @@ impl EventStorePort for TursoEventStore {
                 let seq: i64 = row
                     .get(0)
                     .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("get seq: {e}")))?;
-                let session_id: String = row
-                    .get(1)
-                    .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("get sid: {e}")))?;
-                let branch_id: String = row
-                    .get(2)
-                    .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("get bid: {e}")))?;
                 let ignorable: i64 = row
                     .get(3)
                     .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("get ignorable: {e}")))?;
-                // 逐行重读 data（小表 + 低频，直接按主键取；保持查询语句简单）
-                let ev = row_to_event(&conn, seq, session_id, branch_id, ignorable != 0).await?;
-                if let Some(ev) = ev {
+                let data: String = row
+                    .get(4)
+                    .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("get data: {e}")))?;
+                if let Some(ev) = parse_data(seq, &data, ignorable != 0)? {
                     out.push(ev);
                 }
             }
@@ -424,6 +442,54 @@ impl EventStorePort for TursoEventStore {
             } else {
                 Ok(None)
             }
+        })
+    }
+
+    fn count(
+        &self,
+        sid: &SessionId,
+        bid: &BranchId,
+        event_type: Option<&str>,
+    ) -> bm_protocol::BoxFuture<'_, Result<u64, ProtocolError>> {
+        let sid = sid.clone();
+        let bid = bid.clone();
+        let event_type = event_type.map(str::to_string);
+        Box::pin(async move {
+            let conn = self.conn.lock().await;
+            let (sql, has_type) = match &event_type {
+                Some(_) => (
+                    "SELECT COUNT(*) FROM event_log
+                     WHERE session_id = ?1 AND branch_id = ?2 AND type = ?3",
+                    true,
+                ),
+                None => (
+                    "SELECT COUNT(*) FROM event_log WHERE session_id = ?1 AND branch_id = ?2",
+                    false,
+                ),
+            };
+            let mut stmt = conn
+                .prepare(sql)
+                .await
+                .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("prepare count: {e}")))?;
+            let mut rows = if has_type {
+                stmt.query((sid.as_str(), bid.as_str(), event_type.as_deref().unwrap_or("")))
+                    .await
+            } else {
+                stmt.query((sid.as_str(), bid.as_str())).await
+            }
+            .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("query count: {e}")))?;
+            let total: i64 = if let Some(row) = rows
+                .next()
+                .await
+                .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("next count: {e}")))?
+            {
+                row.get(0).map_err(|e| {
+                    ProtocolError::new(ErrorCode::StoreUnavailable, format!("get count: {e}"))
+                })?
+            } else {
+                0
+            };
+            Ok(total as u64)
         })
     }
 
@@ -525,7 +591,7 @@ impl EventStorePort for TursoEventStore {
                 out.push(BranchHead {
                     session_id: SessionId::new(session_id),
                     branch_id: BranchId::new(branch_id),
-                    parent_branch,
+                    parent_branch: parent_branch.map(BranchId::new),
                     head_seq: SeqNo::new(head_seq as u64),
                 });
             }

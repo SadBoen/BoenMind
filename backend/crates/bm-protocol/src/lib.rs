@@ -23,9 +23,9 @@ pub use error::{ErrorCode, ProtocolError};
 pub use event::{
     AssistantMsg, CompactionSummaryMsg, CoreEvent, CustomEvent, EpochHeader, EventKind,
     HeaderReason, SessionEvent, StreamChunk, TodoItem, TokenUsage, ToolResultMsg, TurnEndReason,
-    UserMsg, UserMsgSource,
+    UserMsg, UserMsgSource, SESSION_FORMAT_VERSION,
 };
-pub use ids::{BranchId, CallId, SeqNo, SessionId};
+pub use ids::{BranchId, CallId, GlobalSeq, SeqNo, SessionId};
 pub use policy::{Capability, PolicyEvaluation};
 pub use port::{BoxFuture, BranchHead, EventQuery, EventStorePort};
 pub use surface::{SurfaceOp, SurfaceOutcome};

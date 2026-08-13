@@ -49,7 +49,7 @@ pub struct BranchHead {
     pub session_id: SessionId,
     pub branch_id: BranchId,
     /// fork 来源分支（main 为 None）
-    pub parent_branch: Option<String>,
+    pub parent_branch: Option<BranchId>,
     pub head_seq: SeqNo,
 }
 
@@ -73,6 +73,15 @@ pub trait EventStorePort: Send + Sync {
 
     /// 分支当前头 seq（无事件为 None）。
     fn head_seq(&self, sid: &SessionId, bid: &BranchId) -> BoxFuture<'_, Result<Option<SeqNo>, ProtocolError>>;
+
+    /// 按事件类型计数（event_type=None 计全量）。
+    /// turn 计数等场景用，避免全量重放 O(n) 读。
+    fn count(
+        &self,
+        sid: &SessionId,
+        bid: &BranchId,
+        event_type: Option<&str>,
+    ) -> BoxFuture<'_, Result<u64, ProtocolError>>;
 
     /// fork 新分支（记录 parent，超头/重复拒绝）。`new` 由上层生成。
     fn fork_branch(

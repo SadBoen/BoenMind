@@ -28,6 +28,9 @@ diff -rq /tmp/pi_upstream /path/to/BoenMind/backend/vendor/pi_agent_rust \
 ```
 
 > 注：上游独有 `.beads/ .claude/ .github/ tests/` 属上游元数据，vendored 版本刻意不带。
+> 例外（P11）：`tests/common/mod.rs` 以最小桩补回——`src/session_index.rs` 测试模块
+> `#[path = "../tests/common/mod.rs"]` 引用 TestHarness，缺文件导致 workspace 全量
+> `cargo test` 编译失败；桩仅覆盖 session_index 测试用到的 4 个成员。
 > `.cargo/config.toml` 与上游一致（非补丁）。
 
 ---
@@ -47,6 +50,7 @@ diff -rq /tmp/pi_upstream /path/to/BoenMind/backend/vendor/pi_agent_rust \
 
 | P9 | `src/subagents.rs` | `execute()` ToolOutput 构建 + 新增 `structured_result_block`/`truncate_owned` | content 文本末尾追加 `<subagent-structured-result>` 紧凑 JSON 块（output/stderr 截断 2000 字符、总块 16KB）；上游 `details` 在 providers/openai.rs 序列化时被丢弃，模型只读 content 文本 | 子代理结构化返回：队长代理像读函数返回值一样直接取用结果 | [#163](https://github.com/Dicklesworthstone/pi_agent_rust/issues/163)（以默认关闭配置项形式建议，预期长期自持） | 本轮 | ✅ |
 | P10 | `src/extensions.rs` | `discover_sibling_index_entries()` | bundle 探测加"cluster_root 名为 extensions 时跳过"保护（与 `discover_sibling_extension_entries` 一致） | 上游缺陷：多个 entrypoint=index.ts 的独立插件共存于扩展根时被 bundle 探测互相认领，触发 "Ambiguous JS extension ownership"（实测 3 插件共存必现） | [#164](https://github.com/Dicklesworthstone/pi_agent_rust/issues/164)（建议按 sibling 函数同样保护合入） | 本轮 | ✅ |
+| P11 | `tests/common/mod.rs`（**补文件**，非改源码） | 新增最小桩 `TestHarness` | vendored 刻意不带上游 `tests/`，但 `session_index.rs` 测试以 `#[path = "../tests/common/mod.rs"]` 引用 TestHarness → 全量 `cargo test` 编译失败；桩覆盖 `new/temp_path/log(info/info_ctx)/record_artifact` 四成员 | 恢复 workspace 全量 `cargo test` 可编译（CI 质量门仍用 -p 列表） | — | 本轮 | ✅ |
 
 **复现命令**（每个补丁的完整 diff，按 commit 精确取回）：
 

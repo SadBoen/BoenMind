@@ -173,8 +173,8 @@ impl EventBus {
         default()
     }
 
-    /// 并发扇出：匹配的异步处理器 spawn 并行执行，收集结果（Vec 与
-    /// 注册序对应；失败的 task 记 Err 由调用方定夺）。
+    /// 并发扇出：匹配的异步处理器 spawn 并行执行，结果**按注册序**收集
+    /// （失败 task 记 `task_panic` 字符串，附在有序结果之后）。
     pub fn parallel(&self, name: &'static str, ev: EventKind, args: JsonValue) -> impl Future<Output = Vec<JsonValue>> {
         let snapshot: Vec<AsyncHandler> = self
             .inner
@@ -190,18 +190,25 @@ impl EventBus {
             if snapshot.is_empty() {
                 return Vec::new();
             }
+            let n = snapshot.len();
             let mut set = tokio::task::JoinSet::new();
-            for h in snapshot {
+            for (idx, h) in snapshot.into_iter().enumerate() {
                 let ev = ev.clone();
                 let args = args.clone();
-                set.spawn(async move { h.call(ev, args).await });
+                set.spawn(async move { (idx, h.call(ev, args).await) });
             }
-            let mut out = Vec::with_capacity(set.len());
+            // 完成序 ≠ 注册序：按 idx 归位
+            let mut ordered: Vec<Option<JsonValue>> = (0..n).map(|_| None).collect();
+            let mut panics = 0usize;
             while let Some(res) = set.join_next().await {
                 match res {
-                    Ok(v) => out.push(v),
-                    Err(e) => out.push(JsonValue::String(format!("task_panic: {e}"))),
+                    Ok((idx, v)) => ordered[idx] = Some(v),
+                    Err(_) => panics += 1,
                 }
+            }
+            let mut out: Vec<JsonValue> = ordered.into_iter().flatten().collect();
+            if panics > 0 {
+                out.push(JsonValue::String(format!("task_panic: {panics}")));
             }
             out
         }
@@ -315,6 +322,27 @@ mod tests {
         let out = bus.parallel("calc", turn_start(), serde_json::json!({"n": 21})).await;
         assert_eq!(out.len(), 2);
         assert!(out.iter().all(|v| v == &serde_json::json!(42)));
+    }
+
+    #[tokio::test]
+    async fn parallel_results_in_registration_order() {
+        // 完成序 ≠ 注册序：结果必须按注册序归位
+        struct Idx(usize);
+        impl AsyncHandlerTrait for Idx {
+            fn call(&self, _ev: Arc<EventKind>, _args: JsonValue) -> BoxFuture<'static, JsonValue> {
+                let i = self.0;
+                Box::pin(async move { serde_json::json!(i) })
+            }
+        }
+        let bus = EventBus::new();
+        let _d1 = bus.on_async("oid", Arc::new(Idx(1)));
+        let _d2 = bus.on_async("oid", Arc::new(Idx(2)));
+        let _d3 = bus.on_async("oid", Arc::new(Idx(3)));
+        let out = bus.parallel("oid", turn_start(), JsonValue::Null).await;
+        assert_eq!(
+            out,
+            vec![serde_json::json!(1), serde_json::json!(2), serde_json::json!(3)]
+        );
     }
 
     #[tokio::test]

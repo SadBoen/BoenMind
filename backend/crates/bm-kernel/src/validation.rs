@@ -4,7 +4,7 @@
 //! （单写者锁内完成，见 [`crate::InMemoryEventStore`]），校验器负责
 //! 防御性复核与重放流验证。
 
-use bm_protocol::{ErrorCode, ProtocolError, SessionEvent};
+use bm_protocol::{ErrorCode, ProtocolError, SessionEvent, SESSION_FORMAT_VERSION};
 
 /// 校验结果：事件对投影/重建的处置。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,6 +70,21 @@ impl EventValidator {
                 "unknown event with ignorable=false: refusing to rebuild state",
             ))
         }
+    }
+
+    /// 格式版本检查（写者决定 bump）：version != 当前 → 拒绝重建，
+    /// 走迁移链（当前无迁移，报 format_version_mismatch）。
+    pub fn check_version(ev: &SessionEvent) -> Result<(), ProtocolError> {
+        if ev.version != SESSION_FORMAT_VERSION {
+            return Err(ProtocolError::new(
+                ErrorCode::FormatVersionMismatch,
+                format!(
+                    "event format v{} != current v{SESSION_FORMAT_VERSION} (migration required)",
+                    ev.version
+                ),
+            ));
+        }
+        Ok(())
     }
 
     /// 重放流验证：seq 严格递增且无重复（跨事件防御性检查）。
@@ -141,6 +156,7 @@ mod tests {
     fn verify_replay_strictly_increasing_allows_skips() {
         // ignorable 跳过后留空洞是合法的（seq 1, 3）
         let ev = |seq: u64| SessionEvent {
+            version: bm_protocol::SESSION_FORMAT_VERSION,
             seq: bm_protocol::SeqNo::new(seq),
             session_id: bm_protocol::SessionId::new("s"),
             branch_id: bm_protocol::BranchId::new("main"),
@@ -154,6 +170,26 @@ mod tests {
         // 重复/回退拒绝
         assert!(EventValidator::verify_replay(&[ev(2), ev(2)]).is_err());
         assert!(EventValidator::verify_replay(&[ev(3), ev(1)]).is_err());
+    }
+
+    #[test]
+    fn version_mismatch_rejected() {
+        // 当前版本通过；旧格式（version=0）拒绝重建
+        let mut ev = SessionEvent {
+            version: SESSION_FORMAT_VERSION,
+            seq: bm_protocol::SeqNo::new(1),
+            session_id: bm_protocol::SessionId::new("s"),
+            branch_id: bm_protocol::BranchId::new("main"),
+            time: 1,
+            kind: bm_protocol::EventKind::Core(bm_protocol::CoreEvent::TurnStart { turn: 1 }),
+            ignorable: false,
+            surface_op: None,
+            source_seqs: None,
+        };
+        assert!(EventValidator::check_version(&ev).is_ok());
+        ev.version = 0;
+        let err = EventValidator::check_version(&ev).unwrap_err();
+        assert_eq!(err.code(), ErrorCode::FormatVersionMismatch);
     }
 
     #[test]

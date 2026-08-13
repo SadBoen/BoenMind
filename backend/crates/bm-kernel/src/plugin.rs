@@ -28,10 +28,11 @@ impl Disposer {
         }
     }
 
-    /// 合成：多个 disposer 合并为一个（先执行的先撤销）。
+    /// 合成：多个 disposer 合并为一个（撤销按**逆序**执行——
+    /// 与 Kernel 级"后注册先撤销"纪律一致）。
     pub fn join_all(mut ds: Vec<Disposer>) -> Disposer {
         Disposer::new(move || {
-            for d in ds.iter_mut() {
+            for d in ds.iter_mut().rev() {
                 d.fire();
             }
         })
@@ -93,8 +94,8 @@ mod tests {
             ds.push(Disposer::new(move || order2.lock().unwrap().push(i)));
         }
         let joined = Disposer::join_all(ds);
-        // drop 时按 push 顺序执行（join_all 内的迭代序）
+        // 逆序执行（后注册先撤销，与 Kernel 级纪律一致）
         drop(joined);
-        assert_eq!(*order.lock().unwrap(), vec![0, 1, 2]);
+        assert_eq!(*order.lock().unwrap(), vec![2, 1, 0]);
     }
 }

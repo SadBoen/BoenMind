@@ -82,6 +82,24 @@ impl From<u64> for SeqNo {
     }
 }
 
+/// 全局事件游标（跨会话事件序，**预留**）。
+///
+/// seq 只有 (session, branch) 内意义；Steward（阶段 5）要"全量订阅
+/// 事件日志"需要跨会话的统一顺序。当前只定义类型留口，存储层在
+/// 阶段 5 前落全局游标列（可用表级自增/rowid 语义）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct GlobalSeq(pub u64);
+
+impl GlobalSeq {
+    pub fn new(n: u64) -> Self {
+        Self(n)
+    }
+    pub fn as_u64(&self) -> u64 {
+        self.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

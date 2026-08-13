@@ -67,7 +67,7 @@ impl DualWriter {
     pub async fn append_batch(
         &self,
         session_id: SessionId,
-        events: Vec<(EventKind, bm_kernel::SurfaceIntent, bool, Option<Vec<u64>>)>,
+        events: Vec<(EventKind, bm_kernel::SurfaceIntent, bool, Option<Vec<bm_protocol::SeqNo>>)>,
     ) -> Result<Vec<bm_protocol::SeqNo>, ProtocolError> {
         match self
             .log

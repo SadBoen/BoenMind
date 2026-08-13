@@ -64,7 +64,7 @@ impl EventLog {
         kind: EventKind,
         surface: SurfaceIntent,
         ignorable: bool,
-        source_seqs: Option<Vec<u64>>,
+        source_seqs: Option<Vec<bm_protocol::SeqNo>>,
     ) -> Result<SeqNo, ProtocolError> {
         let surface_op = match surface {
             SurfaceIntent::None => None,
@@ -81,6 +81,7 @@ impl EventLog {
             }
         };
         let ev = SessionEvent {
+            version: bm_protocol::SESSION_FORMAT_VERSION,
             seq: SeqNo::new(0), // 占位：存储层分配后覆写
             session_id,
             branch_id,
@@ -94,22 +95,31 @@ impl EventLog {
     }
 
     /// 原子批量追加（seq 连续分配，失败整体不落）。
+    /// Replace 遮蔽区间随批内推进校验（允许遮蔽批内已追加的前序事件）。
     pub async fn append_batch(
         &self,
         session_id: SessionId,
         branch_id: BranchId,
-        events: Vec<(EventKind, SurfaceIntent, bool, Option<Vec<u64>>)>,
+        events: Vec<(EventKind, SurfaceIntent, bool, Option<Vec<bm_protocol::SeqNo>>)>,
     ) -> Result<Vec<SeqNo>, ProtocolError> {
+        let mut max_seen = self
+            .store
+            .head_seq(&session_id, &branch_id)
+            .await?
+            .map(|s| s.as_u64())
+            .unwrap_or(0);
         let mut evs = Vec::with_capacity(events.len());
         for (kind, surface, ignorable, source_seqs) in events {
             let surface_op = match surface {
                 SurfaceIntent::None => None,
                 SurfaceIntent::Append => Some(bm_protocol::SurfaceOp::Append),
                 SurfaceIntent::Replace { start, end } => {
+                    EventValidator::check_replace_interval(start, end, max_seen)?;
                     Some(bm_protocol::SurfaceOp::Replace { start, end })
                 }
             };
             evs.push(SessionEvent {
+                version: bm_protocol::SESSION_FORMAT_VERSION,
                 seq: SeqNo::new(0),
                 session_id: session_id.clone(),
                 branch_id: branch_id.clone(),
@@ -119,11 +129,12 @@ impl EventLog {
                 surface_op,
                 source_seqs,
             });
+            max_seen += 1; // 本事件占一个 seq，批内后续 Replace 可遮蔽到此处
         }
         self.store.append_batch(evs).await
     }
 
-    /// 重放：读取分支全部事件并做防御性 seq 校验。
+    /// 重放：读取分支全部事件并做防御性校验（格式版本 + seq 严格递增）。
     pub async fn replay(
         &self,
         session_id: &SessionId,
@@ -133,8 +144,21 @@ impl EventLog {
             .store
             .read(EventQuery::new(session_id.clone(), branch_id.clone()))
             .await?;
+        for ev in &evs {
+            EventValidator::check_version(ev)?;
+        }
         EventValidator::verify_replay(&evs)?;
         Ok(evs)
+    }
+
+    /// 按事件类型计数（type=None 计全量）。turn 计数等场景用，避免全量重放。
+    pub async fn count(
+        &self,
+        session_id: &SessionId,
+        branch_id: &BranchId,
+        event_type: Option<&str>,
+    ) -> Result<u64, ProtocolError> {
+        self.store.count(session_id, branch_id, event_type).await
     }
     /// 重放并重建消息面（用户/助手/工具排序视图）。
     pub async fn derive_messages(
@@ -161,6 +185,7 @@ impl EventLog {
 
     /// fork 新分支（三维寻址）：`br_<hex>`，parent 记录在分支头。
     /// 新分支为空（seq 从 1 起），replay 读分支自身事件。
+    /// 分支名 = 时间戳 + 进程内原子计数混合（同毫秒多次 fork 也唯一）。
     pub async fn fork(&self, session_id: &SessionId, from: &BranchId) -> Result<BranchId, ProtocolError> {
         // 源分支必须存在（超头拒绝：不存在的分支不能 fork）
         self.store.head_seq(session_id, from).await?.ok_or_else(|| {
@@ -169,9 +194,12 @@ impl EventLog {
                 format!("cannot fork from unknown branch `{from}`"),
             )
         })?;
+        static FORK_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = FORK_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let new = BranchId::new(format!(
-            "br_{:08x}",
-            (now_ms() as u64) & 0xffff_ffff ^ 0x5a17_7b0e
+            "br_{:08x}{:08x}",
+            (now_ms() as u64) & 0xffff_ffff,
+            n & 0xffff_ffff
         ));
         self.store.fork_branch(session_id, from, &new).await?;
         Ok(new)
@@ -193,7 +221,7 @@ struct Inner {
     /// (session_id, branch_id) -> head seq
     heads: HashMap<(String, String), u64>,
     /// 分支头元数据（fork parent）
-    heads_meta: HashMap<(String, String), Option<String>>,
+    heads_meta: HashMap<(String, String), Option<BranchId>>,
 }
 
 /// EventStorePort 内存实现：单写者 Mutex，seq 连续分配（原子）。
@@ -335,10 +363,30 @@ impl EventStorePort for InMemoryEventStore {
                 ));
             }
             inner.heads.insert(key.clone(), 0);
-            inner
-                .heads_meta
-                .insert(key, Some(from.to_string()));
+            inner.heads_meta.insert(key, Some(from.clone()));
             Ok(())
+        })
+    }
+
+    fn count(
+        &self,
+        sid: &SessionId,
+        bid: &BranchId,
+        event_type: Option<&str>,
+    ) -> bm_protocol::BoxFuture<'_, Result<u64, ProtocolError>> {
+        let sid = sid.clone();
+        let bid = bid.clone();
+        let event_type = event_type.map(str::to_string);
+        Box::pin(async move {
+            let inner = self.inner.lock().await;
+            let sid_str = sid.to_string();
+            let bid_str = bid.to_string();
+            Ok(inner
+                .events
+                .iter()
+                .filter(|ev| ev.session_id.to_string() == sid_str && ev.branch_id.to_string() == bid_str)
+                .filter(|ev| event_type.as_deref().is_none_or(|t| ev.kind.name() == t))
+                .count() as u64)
         })
     }
 
@@ -458,7 +506,7 @@ mod tests {
         assert_eq!(main.head_seq.as_u64(), 1);
         assert_eq!(main.parent_branch, None);
         let brh = heads.iter().find(|h| h.branch_id == br).unwrap();
-        assert_eq!(brh.parent_branch.as_deref(), Some("main"));
+        assert_eq!(brh.parent_branch.as_ref().map(|b| b.as_str()), Some("main"));
         assert_eq!(brh.head_seq.as_u64(), 1);
     }
 }

@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use bm_kernel::{EventLog, SurfaceIntent};
-use bm_protocol::{BranchId, CoreEvent, EventKind, SessionId};
+use bm_protocol::{BranchId, CoreEvent, EventKind, EventStorePort, SessionId};
 use bm_storage_turso::{CheckpointState, CheckpointStore, TursoEventStore};
 
 fn temp_db(name: &str) -> String {
@@ -113,5 +113,45 @@ async fn restart_without_clean_marker_recovers() {
     let evs = log.replay(&sid, &bid).await.unwrap();
     assert_eq!(evs.len(), 1);
     assert_eq!(evs[0].seq.as_u64(), 1);
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn stale_branch_head_self_heals_on_open() {
+    // 模拟历史版本崩溃窗口：branch_heads 落后于 event_log 实际 max(seq)
+    // （单条 append 曾是两步非事务），重启 open 的 repair_heads 自愈对齐，
+    // 之后 append 不再撞 UNIQUE
+    let path = temp_db("bm_repair_head");
+    let _ = std::fs::remove_file(&path);
+    let sid = SessionId::new("sess_repair");
+    let bid = BranchId::new("main");
+
+    {
+        let store = Arc::new(TursoEventStore::open(&path).await.unwrap());
+        let log = EventLog::new(store);
+        log.append(sid.clone(), bid.clone(), EventKind::Core(CoreEvent::TurnStart { turn: 1 }), SurfaceIntent::None).await.unwrap();
+        log.append(sid.clone(), bid.clone(), EventKind::Core(CoreEvent::TurnEnd { turn: 1, reason: bm_protocol::TurnEndReason::Completed }), SurfaceIntent::None).await.unwrap();
+        // 人为制造落后 head（独立连接直接改表，模拟旧版崩溃窗口）
+        let db = turso::Builder::new_local(&path).build().await.unwrap();
+        let conn = db.connect().unwrap();
+        conn.execute(
+            "UPDATE branch_heads SET head_seq = 1 WHERE session_id = ?1 AND branch_id = ?2",
+            (sid.as_str(), bid.as_str()),
+        )
+        .await
+        .unwrap();
+    }
+
+    // 重启：repair_heads 把 head 对齐到 max(seq)=2
+    let store = Arc::new(TursoEventStore::open(&path).await.unwrap());
+    let head = store.head_seq(&sid, &bid).await.unwrap().map(|s| s.as_u64());
+    assert_eq!(head, Some(2));
+    // 继续 append 不撞 UNIQUE
+    let log = EventLog::new(store);
+    let seq = log
+        .append(sid.clone(), bid.clone(), EventKind::Core(CoreEvent::TurnStart { turn: 2 }), SurfaceIntent::None)
+        .await
+        .unwrap();
+    assert_eq!(seq.as_u64(), 3);
     let _ = std::fs::remove_file(&path);
 }
