@@ -1,0 +1,11 @@
+[package]
+name = "bm-compat"
+version = "0.1.0"
+edition = "2024"
+description = "pi-compat：vendored QuickJS 引擎作库（pi.dev 插件当日兼容的兼容层，主线 B）"
+# 注意：本 crate 暂未加入 workspace members——拷入 6 文件（45K 行）与
+# shim 适配完成、全量编译过之前不拖累 workspace 构建。集成步骤见
+# README.md（B1-B3 拆解）。依赖清单随拷入进度补齐。
+
+[dependencies]
+# 拷入后按需补齐（serde/serde_json/rquickjs 等，以 pi 上游 Cargo.toml 对应段为准）

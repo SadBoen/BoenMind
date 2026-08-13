@@ -116,3 +116,22 @@ git show 42e29b2   -- backend/legacy/pi_agent_rust/src/sdk.rs backend/legacy/pi_
   - 权限询问补丁（P5/P6）：上游 issue #161（询问语义建议 #162 待上游拍板）
   - 思考方言补丁（P2）：`docs/thinking-levels.md`（思考档位动态出档）
 - 政策记忆：pi 修补政策（改动最小化/打标记/能不改就不改）、上游问题提 issue（补丁临时方案）
+
+---
+
+## bm-compat 同步区（主线 B 拆法 A，2026-08-14 登记）
+
+`backend/crates/bm-compat/` 从本 vendored 引擎拷贝 6 文件作库
+（extensions_js.rs / scheduler.rs / hostcall_queue.rs / hostcall_io_uring_lane.rs /
+embedded_assets.rs / error.rs，共 45K 行），目标 = pi.dev 插件兼容层
+（详见 crates/bm-compat/DEPENDENCIES.md）。
+
+**同步纪律**：
+1. 上游升级（本目录替换新基线）后，对上述 6 文件逐文件 diff，
+   把上游变更同步到 bm-compat/src/；
+2. 本台账 P1-P12 补丁若触及这 6 文件，bm-compat 副本必须同步应用；
+3. bm-compat 侧的 shim 层（extensions/tools/pi_wasm/http_shim/crypto_shim/
+   buffer_shim/provider_metadata 的提取符号）随上游符号变化同步更新；
+4. 每次同步后跑 `cargo check -p bm-compat`（加入 workspace 后为 CI 门禁）。
+
+**当前状态**：骨架 + 依赖图谱就位；6 文件拷入与 shim 适配待下一轮执行。
