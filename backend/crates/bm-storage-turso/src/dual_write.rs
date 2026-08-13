@@ -32,6 +32,11 @@ impl DualWriter {
         &self.log
     }
 
+    /// 底层存储句柄（A5 事件流订阅用）。
+    pub fn event_store(&self) -> std::sync::Arc<dyn bm_protocol::EventStorePort> {
+        self.log.store()
+    }
+
     pub fn ok_count(&self) -> u64 {
         self.ok.load(std::sync::atomic::Ordering::Relaxed)
     }

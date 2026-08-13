@@ -123,4 +123,108 @@ pub async fn delete_session(
 }
 
 // ---------------------------------------------------------------------------
-// 插件
+// A5 事件流（SSE）：前端投影引擎前置
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct EventsQuery {
+    /// 只推 seq > after 的事件（增量续订）；缺省从头（replay-prefix 全量）
+    #[serde(default)]
+    pub after: Option<u64>,
+}
+
+/// GET /api/sessions/{id}/events?after=N —— SSE 事件流。
+///
+/// 先推 `after` 之后的既有事件（replay-prefix），之后实时推新事件（tail，
+/// 250ms 轮询）。客户端断开（receiver drop）→ 发送失败/watchdog 置位 → 订阅退出。
+/// 事件 data = SessionEvent 信封 JSON（kind 已 flatten：{seq,type,session_id,…}）。
+pub async fn events_stream(
+    State(state): crate::SharedState,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    axum::extract::Query(query): axum::extract::Query<EventsQuery>,
+) -> axum::response::Response {
+    use axum::response::{
+        IntoResponse,
+        sse::{Event, KeepAlive, Sse},
+    };
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use tokio_stream::{StreamExt, wrappers::UnboundedReceiverStream};
+
+    match state.db.get_session(&id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return api_error(StatusCode::NOT_FOUND, format!("会话不存在: {id}")).into_response(),
+        Err(err) => {
+            return api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
+        }
+    }
+    let Some(dual) = &state.dual_writer else {
+        return api_error(StatusCode::SERVICE_UNAVAILABLE, "事件日志不可用").into_response();
+    };
+
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<bm_protocol::SessionEvent>();
+    let stop = std::sync::Arc::new(AtomicBool::new(false));
+    // watchdog：receiver drop（客户端断开/流结束）1s 内置位停止开关，
+    // 兜底"断开后无新事件"场景（有新事件时发送失败会立即置位）
+    {
+        let stop = stop.clone();
+        let tx_watch = tx.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                if tx_watch.is_closed() {
+                    stop.store(true, Ordering::Relaxed);
+                    break;
+                }
+            }
+        });
+    }
+    // 订阅任务：持订阅直至停止（subscription drop 即 stop，幂等）
+    {
+        let stop = stop.clone();
+        let store = dual.event_store();
+        let sid = bm_protocol::SessionId::new(&id);
+        let bid = bm_protocol::BranchId::new("main");
+        let after = query.after;
+        let tx_send = tx.clone();
+        let stop_send = stop.clone();
+        let stop_cb = stop_send.clone();
+        let stop_arg = stop_cb.clone();
+        tokio::spawn(async move {
+            let sub = bm_kernel::subscribe_events(
+                store,
+                sid,
+                bid,
+                after,
+                move |ev| {
+                    if stop_cb.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    if tx_send.send(ev).is_err() {
+                        stop_cb.store(true, Ordering::Relaxed);
+                    }
+                },
+                stop_arg,
+            )
+            .await;
+            match sub {
+                Ok(_sub) => {
+                    // 持有订阅直到停止开关置位（watchdog / 发送失败）
+                    while !stop_send.load(Ordering::Relaxed) {
+                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!(event = "bm.events_subscribe_failed", error = %err, session = %id);
+                }
+            }
+        });
+    }
+
+    let stream = UnboundedReceiverStream::new(rx).map(|ev| {
+        let json = serde_json::to_string(&ev).unwrap_or_else(|_| "{}".to_string());
+        Ok::<_, std::convert::Infallible>(Event::default().data(json))
+    });
+    Sse::new(stream)
+        .keep_alive(KeepAlive::default().interval(std::time::Duration::from_secs(15)))
+        .into_response()
+}

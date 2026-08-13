@@ -21,7 +21,7 @@ use bm_protocol::{ErrorCode, EventKind, EventStorePort, ProtocolError};
 
 pub use bus::EventBus;
 pub use ctx::Ctx;
-pub use event_log::{EventLog, InMemoryEventStore, SurfaceIntent};
+pub use event_log::{EventLog, InMemoryEventStore, Subscription, SurfaceIntent, subscribe_events};
 pub use loader::{Loader, Manifest};
 pub use plugin::{Disposer, Plugin, ServiceKey};
 pub use projection::{Projection, SurfaceMessage, SurfaceProjection, SurfaceToolCall};

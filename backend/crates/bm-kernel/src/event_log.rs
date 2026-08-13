@@ -44,6 +44,11 @@ impl EventLog {
         Self { store }
     }
 
+    /// 底层存储句柄（订阅/恢复等需要 Arc<dyn EventStorePort> 的场景）。
+    pub fn store(&self) -> Arc<dyn EventStorePort> {
+        Arc::clone(&self.store)
+    }
+
     /// 追加单条事件（原子；seq 由存储层分配并覆写信封）。
     pub async fn append(
         &self,
@@ -275,6 +280,98 @@ impl EventLog {
     pub async fn branch_heads(&self, session_id: &SessionId) -> Result<Vec<BranchHead>, ProtocolError> {
         self.store.branch_heads(session_id).await
     }
+}
+
+// ---------------------------------------------------------------------------
+// A5 订阅：replay-prefix + tail（SSE 事件流推送的前端投影引擎前置）
+// ---------------------------------------------------------------------------
+
+/// 订阅句柄：`stop()` 停轮询（Drop 同效）；`error()` 取后台 tail 阶段的错误
+/// （replay-prefix 阶段的错误直接由 subscribe_events 返回）。
+pub struct Subscription {
+    stop: Arc<std::sync::atomic::AtomicBool>,
+    error: Arc<Mutex<Option<ProtocolError>>>,
+}
+
+impl Subscription {
+    /// 停止订阅（幂等）。正在推送中的一次回调不受影响，轮询循环在下个节拍退出。
+    pub fn stop(&self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// tail 阶段的后台错误（只读快照；None = 正常）。
+    pub async fn error(&self) -> Option<ProtocolError> {
+        self.error.lock().await.clone()
+    }
+}
+
+impl Drop for Subscription {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+/// A5 事件流订阅：先推送 `after` 之后的既有事件（replay-prefix），随后
+/// 每 250ms 轮询推送新增事件（tail）。
+///
+/// - prefix 阶段在调用方 await 期间同步推送完（有界重放），随后 spawn tail 轮询；
+/// - `on_event` 顺序保证：prefix 全部完成才开始 tail，tail 内按 seq 序；
+/// - `stop` 为外部共享停止开关：回调里发送失败（客户端断开）时置位即可退出；
+/// - 实现说明：阶段 1 用轮询（事件量小、简单可靠）；A6 自研 loop 落位后
+///   换内核事件总线直推（无轮询延迟）。
+pub async fn subscribe_events(
+    store: Arc<dyn EventStorePort>,
+    session_id: SessionId,
+    branch_id: BranchId,
+    after: Option<u64>,
+    on_event: impl Fn(SessionEvent) + Send + 'static,
+    stop: Arc<std::sync::atomic::AtomicBool>,
+) -> Result<Subscription, ProtocolError> {
+    // replay-prefix：after 之后的既有事件（含版本校验，读序即 seq 序）
+    let mut q = EventQuery::new(session_id.clone(), branch_id.clone());
+    q.seq_gt = after;
+    let mut last_seen = after.unwrap_or(0);
+    for ev in store.read(q).await? {
+        EventValidator::check_version(&ev)?;
+        last_seen = ev.seq.as_u64().max(last_seen);
+        on_event(ev);
+    }
+    if stop.load(std::sync::atomic::Ordering::Relaxed) {
+        // prefix 阶段已被外部停止：不进入 tail
+        return Ok(Subscription {
+            stop,
+            error: Arc::new(Mutex::new(None)),
+        });
+    }
+    let error = Arc::new(Mutex::new(None));
+    let error_task = error.clone();
+    let stop_task = stop.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            if stop_task.load(std::sync::atomic::Ordering::Relaxed) {
+                break;
+            }
+            let mut q = EventQuery::new(session_id.clone(), branch_id.clone());
+            q.seq_gt = Some(last_seen);
+            match store.read(q).await {
+                Ok(evs) => {
+                    for ev in evs {
+                        if stop_task.load(std::sync::atomic::Ordering::Relaxed) {
+                            return;
+                        }
+                        last_seen = ev.seq.as_u64().max(last_seen);
+                        on_event(ev);
+                    }
+                }
+                Err(e) => {
+                    *error_task.lock().await = Some(e);
+                    return;
+                }
+            }
+        }
+    });
+    Ok(Subscription { stop, error })
 }
 
 // ---------------------------------------------------------------------------
@@ -660,5 +757,75 @@ mod tests {
         assert_eq!(b_msgs[0].content, "u1");
         assert_eq!(b_msgs[1].content, "a1");
         assert_eq!(b_msgs[2].content, "b1");
+    }
+
+    #[tokio::test]
+    async fn subscribe_replays_prefix_then_tails_new_events() {
+        // A5：replay-prefix（after 之后既有事件）+ tail（后续 append 推送）
+        use std::sync::atomic::AtomicBool;
+        let store: Arc<dyn EventStorePort> = Arc::new(InMemoryEventStore::new());
+        let log = EventLog::new(store.clone());
+        let s = sid();
+        let b = main_branch();
+        log.append(s.clone(), b.clone(), turn(1), SurfaceIntent::None).await.unwrap();
+        log.append(s.clone(), b.clone(), turn(2), SurfaceIntent::None).await.unwrap();
+
+        let got = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let got_cb = got.clone();
+        let stop = Arc::new(AtomicBool::new(false));
+        let sub = subscribe_events(
+            store,
+            s.clone(),
+            b.clone(),
+            Some(1),
+            move |ev| got_cb.lock().unwrap().push(ev.seq.as_u64()),
+            stop.clone(),
+        )
+        .await
+        .unwrap();
+        // prefix：seq 2 已推送；seq 1 被 after=1 过滤
+        assert_eq!(*got.lock().unwrap(), vec![2]);
+
+        // tail：新 append 的 seq 3 轮询后推送
+        log.append(s.clone(), b.clone(), turn(3), SurfaceIntent::None).await.unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        loop {
+            let cur = got.lock().unwrap().clone();
+            if cur.contains(&3) {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "tail 未在 3s 内推送 seq 3");
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        assert_eq!(*got.lock().unwrap(), vec![2, 3], "顺序 = prefix 后 tail，无重复");
+        sub.stop();
+    }
+
+    #[tokio::test]
+    async fn subscribe_after_none_delivers_everything_in_order() {
+        use std::sync::atomic::AtomicBool;
+        let store: Arc<dyn EventStorePort> = Arc::new(InMemoryEventStore::new());
+        let log = EventLog::new(store.clone());
+        let s = sid();
+        let b = main_branch();
+        for i in 1..=5u32 {
+            log.append(s.clone(), b.clone(), turn(i), SurfaceIntent::None).await.unwrap();
+        }
+        let got = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let got_cb = got.clone();
+        let stop = Arc::new(AtomicBool::new(false));
+        let sub = subscribe_events(
+            store,
+            s.clone(),
+            b.clone(),
+            None,
+            move |ev| got_cb.lock().unwrap().push(ev.seq.as_u64()),
+            stop.clone(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(*got.lock().unwrap(), vec![1, 2, 3, 4, 5], "after=None 全量 prefix 按序");
+        assert!(sub.error().await.is_none());
+        sub.stop();
     }
 }

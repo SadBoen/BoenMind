@@ -102,6 +102,7 @@ fn router(state: AppState) -> Router {
         .route("/api/sessions", get(routes::sessions::list_sessions).post(routes::sessions::create_session))
         .route("/api/sessions/{id}", get(routes::sessions::get_session).patch(routes::sessions::rename_session).delete(routes::sessions::delete_session))
         .route("/api/sessions/{id}/tasks", get(routes::sessions::list_session_tasks))
+        .route("/api/sessions/{id}/events", get(routes::sessions::events_stream))
         .route("/api/plugins", get(routes::plugins::list_plugins))
         .route("/api/plugins/install", post(routes::plugins::install_plugin))
         .route("/api/plugins/install-source", post(routes::plugins::install_plugin_from_source))
