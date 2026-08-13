@@ -146,7 +146,7 @@ LoopX 定位"长时运行 AI agent 团队的轻量 loop 工程状态内核"—�
 | L6 | **交接包 / 审查包**（handoff_packet 内容化预算化；review-packet 面向 owner） | 可验证交接 = 交接包 + 证据 | `session.transfer`（§6.6）内容设计参照 |
 | L7 | **dreaming 后台规划**（只建议不执行：todo 提议/证据探针/重构警告，advisory） | 建议走队列，执行仍走配额+把关链 | Steward（§6.7）低风险治理面参照：先出建议、执行必过闸 |
 | L8 | **心跳自动唤醒契约**（quota 前置检查 + DONT_NOTIFY 等行为契约 + cadence 分层） | 定时唤醒不是产品真相，配额决策才是 | Steward 空闲巡检心跳（30min）契约化参照 |
-| L9 | **架构依赖测试**（依赖方向机器强制 + allowlist 记录迁移债） | 新外向边使测试失败；隐藏依赖不算分离 | **铁律 3"吸收不进核心"从人工审计升级为 CI 架构测试**：bm-protocol 零依赖、bm-kernel 不得依赖 bm-server/bm-core，可测试化 |
+| L9 | **架构依赖测试**（依赖方向机器强制 + allowlist 记录迁移债） | 新外向边使测试失败；隐藏依赖不算分离 | **铁律 3"吸收不进核心"从人工审计升级为 CI 架构测试**：bm-protocol 零依赖、bm-kernel 不得依赖 bm-server/bm-core，可测试化 ✅ **已落地（2026-08-14，commit 2cde412）**：三 crate tests/architecture.rs（Cargo.toml 全形态解析 + 源码隐藏引用扫描），负向验证通过、CI 强制 |
 | L10 | **authority sources**（可审查上下文 + 冲突规则，替换隐式模型记忆） | 决策依据留痕可审查 | Steward 治理决策引用权威来源留痕（阶段 5） |
 | L11 | **终身目标不变量**（lifetime goal：可恢复四问 + 一步有界可验证动作） | 目标跨会话存活；每次只走一步、每步可验证；不宣称开放式自主权 | `goal/*` 事件域（预留）的语义锚 |
 | L12 | **前场/后场分离**（frontstage 渠道化投影，backstage ledger 是真相；Chat 不是真相源） | registry/state/history/quota/gates/lease 是后场台账，UI 是投影 | 治理面板/前端 UI 都是投影（§6.3），与"事件日志唯一事实源"同构 |
