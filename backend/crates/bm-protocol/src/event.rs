@@ -88,6 +88,11 @@ pub struct EpochHeader {
     pub provider: Option<String>,
     pub model: Option<String>,
     pub created_at: i64,
+    /// 模型可见输入的审计锚点：system prompt + 工具 schema 的 sha256（hex）。
+    /// 阶段 1（pi 引擎）覆盖 BoenMind 注入面（自定义系统提示词/skills 注入/
+    /// 扩展路径=已注册工具代理）；A6 自研 loop 后覆盖完整输入。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_hash: Option<String>,
 }
 
 /// 活任务清单条目（编程应用核心，TodoWrite 携带）。
@@ -352,8 +357,27 @@ mod tests {
     }
 
     #[test]
-    fn event_kind_serde_roundtrip() {
-        let kinds = [
+    fn epoch_header_prompt_hash_optional_and_defaults() {
+        // 旧数据无 prompt_hash → 解析为 None（A2 后向兼容）
+        let old = r#"{"provider":"openai","model":"gpt-5.6","created_at":1750000000000}"#;
+        let h: EpochHeader = serde_json::from_str(old).unwrap();
+        assert_eq!(h.prompt_hash, None);
+
+        // 新数据带 hash 往返无损
+        let h2 = EpochHeader {
+            provider: Some("openai".into()),
+            model: Some("gpt-5.6".into()),
+            created_at: 1_750_000_000_000,
+            prompt_hash: Some("abc123".into()),
+        };
+        let json = serde_json::to_string(&h2).unwrap();
+        assert!(json.contains("prompt_hash"));
+        let back: EpochHeader = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, h2);
+    }
+
+    #[test]
+    fn event_kind_serde_roundtrip() {        let kinds = [
             EventKind::Core(CoreEvent::TurnEnd { turn: 2, reason: TurnEndReason::Failed }),
             EventKind::Core(CoreEvent::ToolCall {
                 turn: 1,

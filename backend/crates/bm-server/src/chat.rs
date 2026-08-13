@@ -31,8 +31,8 @@ use axum::{
 use bm_core::agent::{AgentStreamEvent, create_session_handle, map_agent_event};
 use bm_kernel::SurfaceIntent;
 use bm_protocol::{
-    AssistantMsg, BranchId, CallId, CoreEvent, EventKind, SeqNo, SessionId, StreamChunk, TokenUsage,
-    ToolResultMsg, TurnEndReason, UserMsg, UserMsgSource,
+    AssistantMsg, BranchId, CallId, CoreEvent, EpochHeader, EventKind, HeaderReason, SeqNo,
+    SessionId, StreamChunk, TokenUsage, ToolResultMsg, TurnEndReason, UserMsg, UserMsgSource,
 };
 use serde::Deserialize;
 use tokio::sync::{Mutex, mpsc};
@@ -131,8 +131,9 @@ pub async fn chat(
         .await;
     }
 
-    // 获取或创建 agent 会话句柄（Arc<Mutex<..>> 保证同一会话串行且 map 锁不长期占用）
-    let handle = match get_or_create_agent(
+    // 获取或创建 agent 会话句柄（Arc<Mutex<..>> 保证同一会话串行且 map 锁不长期占用）。
+    // 返回 (句柄, 解析后的 provider_id, 解析后的 model)——request/header 事件用
+    let (handle, resolved_provider, resolved_model) = match get_or_create_agent(
         &state,
         &session,
         req.provider.as_deref(),
@@ -143,6 +144,23 @@ pub async fn chat(
     {
         Ok(h) => h,
         Err((status, msg)) => return api_error(status, msg).into_response(),
+    };
+
+    // —— A2：request/header 审计锚点 ——
+    // prompt_hash = BoenMind 注入面的 sha256（自定义系统提示词 + skills + 扩展路径
+    // = QuickJS 已注册工具的确定性代理）；reason：请求改参数 = change，否则 initial
+    let header_reason = if req.provider.is_some() || req.model.is_some() {
+        HeaderReason::Change
+    } else {
+        HeaderReason::Initial
+    };
+    let prompt_hash = {
+        let config = state.config.read().await;
+        prompt_hash_of(
+            config.custom_system_prompt.as_deref().unwrap_or(""),
+            &bm_core::skills::enabled_skills_prompt(&config),
+            &bm_core::plugins::enabled_extension_paths(&config),
+        )
     };
 
     // 请求指定了 provider/model 且与会话记录不同：持久化，后续消息沿用新组合
@@ -181,7 +199,22 @@ pub async fn chat(
             tokio::time::sleep(PROMPT_TIMEOUT).await;
             timeout_abort.abort();
         });
-        run_prompt_and_persist(state_clone.clone(), session_id.clone(), task_id, handle, abort_signal, message, tx.clone()).await;
+        run_prompt_and_persist(PromptParams {
+            state: state_clone.clone(),
+            session_id: session_id.clone(),
+            task_id,
+            handle,
+            abort_signal,
+            message,
+            tx: tx.clone(),
+            meta: PromptMeta {
+                provider_id: resolved_provider,
+                model: resolved_model,
+                prompt_hash,
+                reason: header_reason,
+            },
+        })
+        .await;
         // 移除本 prompt 的活跃事件通道（同会话新 prompt 已注册新通道时不动）
         let mut streams = state_clone.session_streams.lock().await;
         if let Some(tx2) = streams.get(&session_id)
@@ -254,13 +287,14 @@ pub async fn respond_permission(
 
 /// 获取会话的 agent 句柄；不存在则按会话记录的提供商/模型创建。
 /// `provider`/`model`/`thinking` 有值时对已存在的会话即时生效（set_model / set_thinking_level）。
+/// 返回 (句柄, 解析后的 provider_id, 解析后的 model)——request/header 事件标识用。
 async fn get_or_create_agent(
     state: &AppState,
     session: &bm_core::db::Session,
     provider_override: Option<&str>,
     model_override: Option<&str>,
     thinking_override: Option<&str>,
-) -> Result<Arc<Mutex<pi::sdk::AgentSessionHandle>>, (StatusCode, String)> {
+) -> Result<(Arc<Mutex<pi::sdk::AgentSessionHandle>>, String, String), (StatusCode, String)> {
     // 解析提供商与模型：请求级 provider/model 优先（跨提供商切换模型时，
     // 只切 model 会导致 model 不属于会话原提供商 → pi 降级默认路由 → 401）
     let (provider, model) = {
@@ -316,7 +350,7 @@ async fn get_or_create_agent(
                         .map_err(|err| (StatusCode::BAD_GATEWAY, format!("切换思考强度失败: {err}")))?;
                 }
         }
-        return Ok(arc);
+        return Ok((arc, provider.id.clone(), model.clone()));
     }
 
     // 新建句柄所需的配置字段一次读锁取齐（避免多次串行读锁）
@@ -368,12 +402,13 @@ async fn get_or_create_agent(
             last_used: std::time::Instant::now(),
         });
     entry.last_used = std::time::Instant::now();
-    Ok(entry.handle.clone())
+    Ok((entry.handle.clone(), provider.id.clone(), model.clone()))
 }
 
 /// 运行 prompt，将事件转发到通道；结束后把助手消息（含工具调用）写入数据库。
 /// `task_id` 为本次 prompt 回合的任务实体（心跳进度 + 终态落库，见 db::Task）。
-async fn run_prompt_and_persist(
+/// `meta` 为 request/header 事件内容（A2：模型调用链标识 + 输入审计锚点）。
+struct PromptParams {
     state: AppState,
     session_id: String,
     task_id: String,
@@ -381,7 +416,20 @@ async fn run_prompt_and_persist(
     abort_signal: pi::sdk::AbortSignal,
     message: String,
     tx: mpsc::Sender<AgentStreamEvent>,
-) {
+    meta: PromptMeta,
+}
+
+async fn run_prompt_and_persist(p: PromptParams) {
+    let PromptParams {
+        state,
+        session_id,
+        task_id,
+        handle,
+        abort_signal,
+        message,
+        tx,
+        meta,
+    } = p;
     // 同一会话的并发 prompt 串行（map 锁已在 get_or_create_agent 后释放）
     let mut handle = handle.lock().await;
 
@@ -398,6 +446,21 @@ async fn run_prompt_and_persist(
             }
             Err(err) => tracing::warn!(event = "bm.dual_write_turn_failed", error = %err),
         }
+        // —— A2：回合请求头（一次模型调用链的标识 + 输入审计锚点）——
+        w.append_best_effort(
+            log_sid.clone(),
+            EventKind::Core(CoreEvent::RequestHeader {
+                header: EpochHeader {
+                    provider: Some(meta.provider_id.clone()),
+                    model: Some(meta.model.clone()),
+                    created_at: now_ms(),
+                    prompt_hash: Some(meta.prompt_hash.clone()),
+                },
+                reason: meta.reason,
+            }),
+            SurfaceIntent::None,
+        )
+        .await;
         w.append_best_effort(
             log_sid.clone(),
             EventKind::Core(CoreEvent::TurnStart { turn }),
@@ -799,6 +862,43 @@ fn tool_summary(name: &str, args: &serde_json::Value) -> String {
     }
 }
 
+/// request/header 事件内容（A2）：一次 prompt 的模型调用链标识。
+struct PromptMeta {
+    provider_id: String,
+    model: String,
+    prompt_hash: String,
+    reason: HeaderReason,
+}
+
+/// epoch ms（request/header 的 created_at）。
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// prompt_hash：模型可见输入的审计锚点（sha256 hex，长度前缀分段防歧义拼接）。
+///
+/// 阶段 1（pi 引擎）覆盖 BoenMind 注入面：自定义系统提示词 + skills 注入 +
+/// 扩展路径（= QuickJS 已注册工具的确定性代理）。pi 内部系统提示词与工具
+/// schema 属于上游，A6 自研 loop 后 hash 覆盖完整模型可见输入。
+fn prompt_hash_of(custom_prompt: &str, skills_prompt: &str, ext_paths: &[std::path::PathBuf]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    let ext = ext_paths
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    for part in [custom_prompt, skills_prompt, ext.as_str()] {
+        h.update((part.len() as u64).to_le_bytes());
+        h.update(part.as_bytes());
+        h.update([0]);
+    }
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
 /// 真序事件日志条目（回调线程提取 → 写线程落盘）。
 /// 与 pi AgentEvent 一一映射，但携带已解析的 (turn, step) 与权威内容——
 /// 回调内所有上下文（回合号/步骤号/步内文本）同步解析完毕，写线程无状态转换。
@@ -1042,5 +1142,27 @@ mod tests {
             }
             other => panic!("应为 tool/result，得到 {other:?}"),
         }
+    }
+
+    #[test]
+    fn prompt_hash_deterministic_and_sensitive() {
+        let p = |x: &str| std::path::PathBuf::from(x);
+        let a = prompt_hash_of("custom", "skills", &[p("/ext/a.ts")]);
+        let b = prompt_hash_of("custom", "skills", &[p("/ext/a.ts")]);
+        assert_eq!(a, b, "同输入同 hash");
+        assert_eq!(a.len(), 64, "sha256 hex");
+
+        // 任一注入面变化 → hash 变化
+        assert_ne!(a, prompt_hash_of("custom2", "skills", &[p("/ext/a.ts")]));
+        assert_ne!(a, prompt_hash_of("custom", "skills2", &[p("/ext/a.ts")]));
+        assert_ne!(a, prompt_hash_of("custom", "skills", &[p("/ext/b.ts")]));
+        assert_ne!(a, prompt_hash_of("custom", "skills", &[p("/ext/a.ts"), p("/ext/b.ts")]));
+
+        // 长度前缀分段：拼接歧义不碰撞
+        assert_ne!(
+            prompt_hash_of("ab", "c", &[]),
+            prompt_hash_of("a", "bc", &[]),
+            "ab+c 与 a+bc 不得同 hash（长度前缀）"
+        );
     }
 }
