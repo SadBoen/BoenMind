@@ -231,10 +231,13 @@ jobs:
           # 热升级 runtime 资产：独立 bm-server.exe（非 embed）+ 签名
           Copy-Item ..\backend\target\release\bm-server.exe "..\dist-win\boenmind-runtime-${VER}-x86_64-pc-windows-msvc.exe"
           # 签名密钥兼容两种格式：先按 base64 解一层写文件；失败则原样写文件。
-          # 统一用 --private-key-path（PowerShell 把多行字符串拆参数，不能传 --private-key）
+          # 统一用 --private-key-path（PowerShell 把多行字符串拆参数，不能传 --private-key；
+          # 且 signer 的 --private-key 会从 env 读取，与 --private-key-path 冲突，先读后移除 env）
+          $secret = $env:TAURI_SIGNING_PRIVATE_KEY
+          Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY -ErrorAction SilentlyContinue
           $signed = $false
           try {
-            $key = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:TAURI_SIGNING_PRIVATE_KEY.Trim()))
+            $key = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($secret.Trim()))
             $keyFile = Join-Path $env:RUNNER_TEMP "boenmind-signing.key"
             [IO.File]::WriteAllText($keyFile, $key)
             pnpm exec tauri signer sign --private-key-path $keyFile --password $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD "..\dist-win\boenmind-runtime-${VER}-x86_64-pc-windows-msvc.exe"
@@ -242,7 +245,7 @@ jobs:
           } catch {}
           if (-not $signed) {
             $keyFile = Join-Path $env:RUNNER_TEMP "boenmind-signing-raw.key"
-            [IO.File]::WriteAllText($keyFile, $env:TAURI_SIGNING_PRIVATE_KEY)
+            [IO.File]::WriteAllText($keyFile, $secret)
             pnpm exec tauri signer sign --private-key-path $keyFile --password $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD "..\dist-win\boenmind-runtime-${VER}-x86_64-pc-windows-msvc.exe"
           }
 
