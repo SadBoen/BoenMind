@@ -127,12 +127,27 @@ impl Projection for SurfaceProjection {
                     });
                 }
                 CoreEvent::AssistantMessage { msg, .. } => {
-                    self.messages.push(SurfaceMessage {
-                        seq: ev.seq.as_u64(),
-                        role: "assistant".into(),
-                        content: msg.content.clone(),
-                        tool_calls: Vec::new(),
-                    });
+                    // 合并规则：最后的 assistant 若是"工具占位"（无内容仅挂
+                    // 工具调用，由 ToolCall 事件创建）→ 填充内容，不新建消息
+                    let merged = self
+                        .messages
+                        .last_mut()
+                        .is_some_and(|last| {
+                            last.role == "assistant"
+                                && last.content.is_empty()
+                                && !last.tool_calls.is_empty()
+                        });
+                    if merged {
+                        let last = self.messages.last_mut().expect("checked above");
+                        last.content = msg.content.clone();
+                    } else {
+                        self.messages.push(SurfaceMessage {
+                            seq: ev.seq.as_u64(),
+                            role: "assistant".into(),
+                            content: msg.content.clone(),
+                            tool_calls: Vec::new(),
+                        });
+                    }
                 }
                 CoreEvent::AssistantChunk { chunk, .. } => {
                     self.append_to_last_assistant(ev.seq.as_u64(), &chunk.text);
