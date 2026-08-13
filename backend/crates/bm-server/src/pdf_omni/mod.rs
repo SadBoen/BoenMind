@@ -49,11 +49,13 @@ impl Engine {
 
 /// LlamaParse 档位（费率 credits/页：fast=1, cost_effective=3, agentic=10, agentic_plus=45）。
 /// fast 不输出 Markdown，勿用。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Tier {
     Fast,
     CostEffective,
+    /// 默认档位：实测质量最优且更快；换档位重跑会 bust 48h 缓存重新计费
+    #[default]
     Agentic,
     AgenticPlus,
 }
@@ -74,13 +76,6 @@ impl Tier {
             Tier::Agentic => "agentic",
             Tier::AgenticPlus => "agentic_plus",
         }
-    }
-}
-
-impl Default for Tier {
-    fn default() -> Self {
-        // 实测质量最优且更快；换档位重跑会 bust 48h 缓存重新计费
-        Tier::Agentic
     }
 }
 
@@ -345,14 +340,14 @@ pub async fn parse_pdf_any(
     // ---- 落盘 --------------------------------------------------------------
     let md = primary.markdown.clone();
     let mut saved_path = None;
-    if !md.is_empty() && !is_url {
-        if let Some(out_dir) = resolve_out_dir(req, workspace_root) {
-            if let Some(stem) = Path::new(&req.file).file_stem().map(|s| s.to_string_lossy().to_string()) {
-                let target = out_dir.join(format!("{stem}.md"));
-                if std::fs::create_dir_all(&out_dir).and_then(|_| std::fs::write(&target, &md)).is_ok() {
-                    saved_path = Some(relative_or_abs(&target, workspace_root));
-                }
-            }
+    if !md.is_empty()
+        && !is_url
+        && let Some(out_dir) = resolve_out_dir(req, workspace_root)
+        && let Some(stem) = Path::new(&req.file).file_stem().map(|s| s.to_string_lossy().to_string())
+    {
+        let target = out_dir.join(format!("{stem}.md"));
+        if std::fs::create_dir_all(&out_dir).and_then(|_| std::fs::write(&target, &md)).is_ok() {
+            saved_path = Some(relative_or_abs(&target, workspace_root));
         }
     }
 

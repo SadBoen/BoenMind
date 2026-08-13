@@ -314,11 +314,11 @@ pub async fn cascade_enhance(
     let mut max_x = 612.0_f64;
     let mut max_y = 792.0_f64;
     for el in content_list {
-        if let Some(bbox) = el["bbox"].as_array() {
-            if bbox.len() >= 4 {
-                max_x = max_x.max(bbox[2].as_f64().unwrap_or(0.0));
-                max_y = max_y.max(bbox[3].as_f64().unwrap_or(0.0));
-            }
+        if let Some(bbox) = el["bbox"].as_array()
+            && bbox.len() >= 4
+        {
+            max_x = max_x.max(bbox[2].as_f64().unwrap_or(0.0));
+            max_y = max_y.max(bbox[3].as_f64().unwrap_or(0.0));
         }
     }
     let page_area = max_x * max_y;
@@ -337,7 +337,7 @@ pub async fn cascade_enhance(
             .as_array()
             .map(|a| a.iter().filter_map(|v| v.as_f64()).collect())
             .unwrap_or_else(|| vec![0.0, 0.0, 100.0, 100.0]);
-        let w = (bbox.get(2).copied().unwrap_or(100.0) - bbox.get(0).copied().unwrap_or(0.0)).max(10.0);
+        let w = (bbox.get(2).copied().unwrap_or(100.0) - bbox.first().copied().unwrap_or(0.0)).max(10.0);
         let h = (bbox.get(3).copied().unwrap_or(100.0) - bbox.get(1).copied().unwrap_or(0.0)).max(10.0);
         let img_path = el["img_path"].as_str().unwrap_or("");
         if (kind == "table" || kind == "image") && !img_path.is_empty() {

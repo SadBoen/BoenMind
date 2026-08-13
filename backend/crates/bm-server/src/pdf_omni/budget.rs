@@ -86,14 +86,14 @@ impl BudgetLedger {
     }
 
     fn save(&self) {
-        if let Some(parent) = self.path.parent() {
-            if std::fs::create_dir_all(parent).is_ok() {
-                let file = BudgetFile {
-                    usage: self.usage.clone(),
-                };
-                if let Ok(text) = serde_json::to_string_pretty(&file) {
-                    let _ = std::fs::write(&self.path, text);
-                }
+        if let Some(parent) = self.path.parent()
+            && std::fs::create_dir_all(parent).is_ok()
+        {
+            let file = BudgetFile {
+                usage: self.usage.clone(),
+            };
+            if let Ok(text) = serde_json::to_string_pretty(&file) {
+                let _ = std::fs::write(&self.path, text);
             }
         }
     }

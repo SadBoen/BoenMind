@@ -207,8 +207,8 @@ pub fn grid_merge_2x2(
             "MediaBox" => vec![
                 Object::Integer(0),
                 Object::Integer(0),
-                Object::Real((w * 2.0) as f32),
-                Object::Real((h * 2.0) as f32),
+                Object::Real(w * 2.0),
+                Object::Real(h * 2.0),
             ],
             "Contents" => content_id,
             "Resources" => resources,
@@ -275,11 +275,11 @@ fn wrap_page_as_xobject(doc: &mut Document, page_id: ObjectId) -> PdfOpsResult<O
             Some(Object::Array(refs)) => {
                 let mut buf = Vec::new();
                 for r in refs {
-                    if let Ok(id) = r.as_reference() {
-                        if let Ok(stream) = doc.get_object(id)?.as_stream() {
-                            buf.extend_from_slice(&stream.content);
-                            buf.push(b'\n');
-                        }
+                    if let Ok(id) = r.as_reference()
+                        && let Ok(stream) = doc.get_object(id)?.as_stream()
+                    {
+                        buf.extend_from_slice(&stream.content);
+                        buf.push(b'\n');
                     }
                 }
                 buf
@@ -328,11 +328,12 @@ pub fn pack_images_a4(img_paths: &[PathBuf], out_dir: &Path) -> PdfOpsResult<Vec
         images.push((img, w, h));
     }
     // 按高度降序（Hermes 版同逻辑，先放大图）
-    images.sort_by(|a, b| b.2.cmp(&a.2));
+    images.sort_by_key(|img| std::cmp::Reverse(img.2));
 
     // 贪心排布：换行/换页
-    let mut pages: Vec<Vec<(&image::DynamicImage, i64, i64, i64, i64)>> = Vec::new();
-    let mut current: Vec<(&image::DynamicImage, i64, i64, i64, i64)> = Vec::new(); // (img, w, h, x, y)
+    type PlacedImage<'a> = (&'a image::DynamicImage, i64, i64, i64, i64);
+    let mut pages: Vec<Vec<PlacedImage>> = Vec::new();
+    let mut current: Vec<PlacedImage> = Vec::new(); // (img, w, h, x, y)
     let mut x = A4_MARGIN;
     let mut y = A4_MARGIN;
     let mut row_h: i64 = 0;

@@ -142,15 +142,15 @@ pub fn refine_content(primary: &mut ParseOutput) -> Result<Option<RefineReport>,
 fn detect_page_artifacts(content_list: &[Value]) -> Vec<String> {
     let mut freq: HashMap<String, usize> = HashMap::new();
     for el in content_list {
-        if el["type"].as_str() == Some("text") {
-            if let Some(t) = el["text"].as_str() {
-                let t = t.trim();
-                if !t.is_empty()
-                    && t.chars().count() <= ARTIFACT_MAX_CHARS
-                    && !t.ends_with(|c: char| SENTENCE_END.contains(c))
-                {
-                    *freq.entry(t.to_string()).or_insert(0) += 1;
-                }
+        if el["type"].as_str() == Some("text")
+            && let Some(t) = el["text"].as_str()
+        {
+            let t = t.trim();
+            if !t.is_empty()
+                && t.chars().count() <= ARTIFACT_MAX_CHARS
+                && !t.ends_with(|c: char| SENTENCE_END.contains(c))
+            {
+                *freq.entry(t.to_string()).or_insert(0) += 1;
             }
         }
     }

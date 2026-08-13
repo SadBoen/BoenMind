@@ -358,14 +358,12 @@ fn read_content_list(tmp: &Path) -> Option<Vec<Value>> {
     let entries = std::fs::read_dir(tmp).ok()?;
     for e in entries.flatten() {
         let name = e.file_name().to_string_lossy().to_string();
-        if name.ends_with("_content_list.json") {
-            if let Ok(text) = std::fs::read_to_string(e.path()) {
-                if let Ok(v) = serde_json::from_str::<Value>(&text) {
-                    if let Some(arr) = v.as_array() {
-                        return Some(arr.clone());
-                    }
-                }
-            }
+        if name.ends_with("_content_list.json")
+            && let Ok(text) = std::fs::read_to_string(e.path())
+            && let Ok(v) = serde_json::from_str::<Value>(&text)
+            && let Some(arr) = v.as_array()
+        {
+            return Some(arr.clone());
         }
     }
     None
