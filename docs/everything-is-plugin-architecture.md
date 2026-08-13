@@ -1,6 +1,6 @@
 # BoenMind 2.0 ——「万物皆插件」架构设计（Agent OS 框架）
 
-> 状态：**v0.10（迭代中）**——v0.9 基线 + 架构师 skill 全量回看（9 点一致性审计，修复 6 处不一致）；核心实现方案见 docs/kernel-implementation-plan.md
+> 状态：**v0.12（迭代中）**——v0.11 = 应用互操作与数据互通（§6.4 尾）；v0.12 = 阶段 0 复核融合（§十一，大哥模型，原独立报告已并入）+ Steward 自身生命周期与记忆（§6.7 尾，用户提点）；核心实现方案见 docs/kernel-implementation-plan.md
 > 日期：2026-08-14
 > 参考系：pi_agent_rust（现引擎，vendored）、DeepSeek Harness（dsh）、ZCode（插件/技能/市场）、Hermes（NousResearch/hermes-agent）、**xu-wiki-desk（用户已有应用插件实证）**、**AI OS 赛道四项目（AIOS/MemGPT/Life Agent OS/kernel.chat，报告 docs/ai-os-landscape.md）**
 > 本文档持续迭代，直到自认完美后交用户拍板。
@@ -682,7 +682,19 @@ Taint 来源：fetched_url / email / user_input / untrusted_file / agent_message
 3. **隐私**：观察一切 → **本地优先**（事件不出本机）、观察范围可配置（哪些 app/域）、可整体关闭；
 4. **过度自治**：自动形成工作流可能产生"工作流垃圾" → 学 Hermes curator 纪律：**只沉淀不删除**（或归档，不自动删），用户可清理；
 5. **成本**（实现期调优，非架构决策——用户定调"节省是目标，不能本末倒置"）：事件聚合 + 分层判断 + 低频率心跳 + 可关闭，细则实现期再议；
-6. **不做的事**：Steward 不直接与用户对话（除非必须问决策——如"发现重复任务，是否固化为工作流？"）、不抢前台的工作（前台会话是唯一与用户交互的入口）。
+6. **不做的事**：Steward 不直接与用户对话（除非必须问决策——如“发现重复任务，是否固化为工作流？”）、不抢前台的工作（前台会话是唯一与用户交互的入口）。
+
+**Steward 自身的生命周期与记忆（v0.12 新增，用户提点）**：
+
+Steward 是常驻 Agent，它自己的上下文会爆炸、记忆会积累——**它不能豁免自己治理的问题**。处理方案 = 三个机制分层，而非三选一（用户原问：“老记忆淡化？还是启动一个分身，旧对话下线，分身对话上位扶正？”——答：都要，各管一层）：
+
+1. **上下文压缩（系统兜底，自动）**：Steward 就是 agent-loop 的一个实例，与前台 agent 共用同一套压缩（replace 事务 + 摘要 + 保留尾，§5.1 / D10）。水线触发、自动执行，Steward 无需决策——这是兜底，保证永不爆炸。
+2. **分身扶正（Steward 自主决策）**：用户提的“旧对话下线、分身上位”= §6.6 会话生命周期工具集的**治理版**：`session.archive`（旧治理会话下线封存）→ `session.resume` / `session.transfer`（分身从记忆投影 + 决策简报上位）。触发时机是**语义边界**（治理主题切换 / 长周期结束 / 身份锚点更新），由 Steward 在决策点（`agent/turn-stopping`）自己判断，系统只兜底不替它决定——**Steward 治理别人用的工具，治理自己时用同一套，零新机制**。分身交接时做一次记忆浓缩（见 3）。
+3. **记忆淡化（记忆插件后台流水线）**：老记忆淡化解决“记忆库膨胀 / 过期”（Hana 传送带 today→week→longterm 分级淡化、Hermes MemoryProvider 的 sync_turn / maintain 管线），与上下文管理正交。分身交接时“浓缩”一次：旧会话完整记忆 fold 进 longterm，新分身只带精炼记忆出发。
+
+**Steward 的记忆系统 = 插件（出厂默认，可换）**：完全复用 §6.1 的 MemoryPlugin trait（on_turn / maintain / project / tool_schemas / on_pre_compress / retrieve），由 preset 指定 `memory.provider`（出厂默认 memory-compactor）。**记忆是事件日志的投影，插件损坏 = 换一个实现，历史不丢**——Steward 不特殊化、不固化进内核（铁律 3）。分身扶正时换新记忆实现也不丢历史。
+
+**分身交接的观察基线**：新分身从全局事件游标（跨会话事件序，见 §十一 拍板点 9）续订阅，不重放旧观察——成本约束与“隐蔽不打断”一起保证。
 
 ### 6.8 编程应用（Coding App）—— 第一优先实现（用户定调，v0.9 新增）
 
@@ -838,12 +850,82 @@ M5：自举闭环（用 BoenMind 编程应用完成 BoenMind 的一个完整功�
 - [x] **Steward 双层架构**（v0.8）：§6.7 幕后主控 Agent（常驻治理会话 + 事件日志观察 + governance.* 工具集 + 隐蔽执行决策留痕）
 - [x] **编程应用第一优先**（v0.9）：§6.8 Coding App（应用插件形态 + 长时工作 + 活任务清单 + 自适应决策链 + 自举里程碑 M1-M5）；7.2 主线 B 调整为编程 > Wiki > 相册；成本风险降级为"实现期调优"
 - [x] **架构师 skill 全量回看**（v0.10）：9 点一致性审计修复 6 处（内核口径 <1.5 万行、铁律 3 编程优先、Mermaid/ASCII 图加编程应用、成本措辞、7.3 自我改进澄清、应用表格）；核心实现方案 docs/kernel-implementation-plan.md（T0-T13 任务清单）
+- [x] **应用互操作与数据互通**（v0.11）：§6.4 尾三种互通机制（能力调用/事件订阅/数据血缘），互通统一发生在事件日志上、全部留痕可审计
+- [x] **阶段 0 复核融合**（v0.12）：大哥模型复核（2026-08-14，173 测试选择性全绿/1 崩溃一致性缺陷/2 性能问题/19 项参考项目逐项验证）并入 §十一，原独立报告 docs/review-2026-08-14.md 删除（文档收敛，用户意见）
+- [x] **Steward 自身生命周期与记忆**（v0.12）：§6.7 尾——上下文爆炸处理 = 压缩（系统兜底）+ 分身扶正（archive/resume 治理版，自主决策）+ 记忆淡化（记忆插件后台流水线）三机制分层；记忆系统=插件（出厂 memory-compactor 可换），复用 §6.1 零新机制
+- [ ] 阶段 0 复核拍板点 10 项（§十一·11.4）：阶段 1 立项顺序/真实验收/事件版本化/fork 语义/删除联动/PortBox/deferred/CI 质量门/全局事件游标/前端隔离
 - [ ] 渐进路线与现有发布节奏的冲突评估（拍板时定）
 - [ ] 沙箱（OS 级）与插件系统的关系（confine 在哪个层生效，阶段 3 细化）
 - [ ] 记忆插件与日志的写回契约（memory/write 事件协议细化）
 - [ ] 平台驱动 ABI 稳定性纪律（驱动接口变更 = 大版本事件的判据）
 
-## 十一、附录
+## 十一、阶段 0 复核记录（2026-08-14，大哥模型）
+
+> 触发：用户点名“新对话用更强模型，再帮我们看看构思、看看参考项目、查漏补缺”。复核产物原为独立报告，按用户意见（“文档不要满天飞”）融合入本文并删除原文件。**复核未改代码。**
+
+### 11.1 结论摘要
+
+1. **构思成立**：三铁律无内在矛盾；事件日志底座（三维寻址 / ignorable 守卫 / replace 遮蔽 / 投影重放）被 Life Agent OS 与 dsh 源码级印证；“事件日志唯一事实源 + 应用插件 + Steward”组合赛道内无同款。
+2. **质量过关**：173 测试选择性全绿（四新 crate 70 + bm-core 68 + bm-server 35）、四新 crate clippy 零警告、契约层零依赖纯净、partial 标注诚实（kernel.chat“宣称与交付脱节”的坑未踩）。
+3. **无推翻性缺陷**：发现 1 个崩溃一致性缺陷（单条 append 非事务）+ 2 个性能问题（N+1 读、O(n²) turn 计数）+ 一批接口形状待定项——均为阶段 1 可低成本修的小件。
+4. **最大诚实性缺口**：阶段 0 双写是“事后重构”（事件顺序/step 收尾拼接、ToolResult.output 空串、chunk 未落、压缩事件未接线）——事件日志当前记录“消息面级事实”而非“执行级事实”，**agent-loop 移植是补全的唯一路径**。
+5. **缺事件格式版本化**：ignorable 守卫只防“旧版本读新事件类型”，不防信封结构演进；dsh 的 SESSION_FORMAT_VERSION + 迁移链（“能解析 ≠ 语义正确”）是空白——数据量还小，现在加成本最低。
+
+### 11.2 参考项目验证（19 项逐项核实）与修正
+
+17 项属实、2 处修正：
+
+| 修正项 | 原表述 | 核实结果 |
+|---|---|---|
+| Life 事件变体数 | “EventKind ~55 变体” | 实为 **87**（event.rs:206-683） |
+| Life 复合安全门 | “policy+capability+budget+sandbox 四层串链” | GateKind 四门实为 **Policy/Budget/ForkLambda/NetworkIsolation**（capability 在 policy 内、sandbox 在工具执行层）——方向不变，表述修正 |
+
+另证实：Life fork 后新分支 seq 从 1 独立编号（与我们同款）；kernel.chat 的 audit 哈希链确未实现（README 自认“uses kbot-finance”）且无 agent loop；dsh 的 agent loop 恰 496 行、chunk 逐块保留有字节一致测试、inject 依赖声明等就绪。
+
+**本次新发现的吸收点（5 条，待按阶段登记）**：
+1. dsh `request/header` 规范化配置快照（provider/model/system/tools）——“模型当时看到了什么”可审计（阶段 1-2 补，可先落 hash）；
+2. dsh `inject` 不唤醒语义（文件变更/AGENTS.md/skill 走注入、落到下一次获准请求）——编程应用“活任务清单”推送路径（agent-loop 移植设计时吸收）；
+3. Hermes background_review 缓存感知回放粒度（同模型回放全量吃 warm prefix cache、换模型只回放 digest）——Steward 成本控制（阶段 5）；
+4. kernel.chat outcomes 内容寻址评估循环（attempt→evaluate→revise 可重放）——编程应用 M1-M5 验收评估可照搬；
+5. Life 的 (session_id, branch_id) 双键缓存分支最新 seq——我们已同款（branch_heads），姿势确认。
+
+### 11.3 代码级发现清单（阶段 1 随行小修）
+
+🔶 = 真实使用会先疼；🟡 = 接口形状/一致性，现在定便宜：
+
+| # | 发现 | 位置 | 修法 |
+|---|---|---|---|
+| 1 | 🔶 单条 append 非事务：INSERT 与 upsert_head 两步间崩溃 → head 落后 → 该分支 UNIQUE 永久卡死；recover() 不修 head | bm-storage-turso/event_log.rs:216-219 | 单条并入事务（或统一走 batch）+ recover 从 max(seq) 重建 head |
+| 2 | 🔶 N+1 读：read 每行重查 data 列 | bm-storage-turso/event_log.rs:129-163 | 主查询直接带 data 列 |
+| 3 | 🔶 O(n²) turn 计数：每 prompt 全量 replay 数 TurnStart | bm-server/chat.rs:395-401 | SQL COUNT / 内存缓存 |
+| 4 | 🟡 fork 空分支（与 Life 同款）但投影不折叠父前缀——“回滚到旧分支”动机差一步 | bm-kernel/event_log.rs:164-178 | 父链折叠投影（拍板点） |
+| 5 | 🟡 TurnEndReason 缺 Interrupted（架构 5.1 承诺的弱化，恢复时无法区分“正常结束”与“turn 中途崩”） | bm-protocol/event.rs:67-71 | 阶段 1 补 + 启动补写未闭合 turn |
+| 6 | 🟡 Any 注册表存不了 trait object，14 个 Port 只特例了 event_store | bm-kernel/registry.rs | PortBox\<T: ?Sized\> 包装（零 unsafe） |
+| 7 | 🟡 Loader 无“等待就绪”（deps 不满足直接失败，顺序=手工编排） | bm-kernel/loader.rs:65-75 | deferred 插件（dsh inject 同款） |
+| 8 | 🟡 plugin 实例 apply 后 drop + 无 per-plugin disposer 分组 → 运行时无法卸载单个插件 | bm-kernel/lib.rs | per-plugin 分组 |
+| 9 | 🔶 CI 未纳入四新 crate；全量 cargo test 因 vendor 缺 tests/common/mod.rs 编译失败 | release.yml | 质量门 -p 列表 + vendor 修复（P11 登记） |
+| 10 | 🟡 一致性小件：append_batch 跳过 Replace 校验 / join_all 正序 vs 逆序 / parallel 注释与实现序不符 / parent_branch 应 BranchId / install_plugin try_lock panic / proptest 承诺未兑现 / DualWriter 失败路径零覆盖 | 多处 | 随行修 |
+
+### 11.4 拍板点（当前待拍，10 项）
+
+1. 阶段 1 立项顺序：**agent-loop 移植优先（推荐）** vs pi-compat 优先——理由：日志“完整可信”是审计/Steward/分支 UI/前端投影的共同地基；两者解耦（拆法 A 1-2 周），compat 后置不影响路线；
+2. 真实验收（release 起服务聊几轮查 event_log 表，需用户配合，10 分钟）；
+3. 事件格式版本化：**现在加（推荐）**——数据量小改 schema 最便宜；
+4. fork 语义：**投影折叠父前缀（推荐）** / fork 带种子（dsh seedLength）/ 维持空分支；
+5. 会话删除联动：**联动清 event_log（推荐）** / 保留作回收站——隐私是底线（战略文档 §四·4）；
+6. Port 注册表形状：**PortBox 包装（推荐）** / 每 Port 一个 typed accessor；
+7. Loader 依赖语义：**deferred（等待就绪，推荐）** / 维持有序安装；
+8. 质量门：**CI 纳入四新 crate + vendor 修复（推荐）**——门禁不在 CI = 没门禁；
+9. 全局事件游标（跨会话事件序，Steward 分身交接的观察基线）：**契约层先留口（推荐）** / 不预留；
+10. 前端隔离机制（iframe/WebComponent/联邦）：**维持后拍**（阶段 4），本次不动。
+
+### 11.5 阶段 1 建议范围
+
+**主线 agent-loop 移植**（真序事件 / ToolResult.output 落全 / chunk / 压缩事务接线 / Interrupted / subscribe）；**随行小修**（11.3 清单按序）；**质量门补 CI**（拍板点 8）；**pi-compat 后置**（拆法 A 已查证，1-2 周）；前端隔离/分支 UI/Steward 不动。
+
+---
+
+## 十二、附录
 
 ### 术语表
 
@@ -882,4 +964,4 @@ M5：自举闭环（用 BoenMind 编程应用完成 BoenMind 的一个完整功�
 - Code Architecture Planner skill（评审方法论）: https://github.com/CarterIrish/code-architecture-skill
 
 ---
-*（v0.10 完：v0.9 基线 + 架构师 skill 全量回看（6 处修复）+ 核心实现方案（docs/kernel-implementation-plan.md，T0-T13）。交用户拍板。）*
+*（v0.12 完：v0.11 应用互操作与数据互通 + v0.12 阶段 0 复核融合（§十一）+ Steward 自身生命周期与记忆（§6.7 尾）。10 项拍板点见 §十一·11.4，交用户拍板。）*
