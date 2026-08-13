@@ -73,11 +73,53 @@ backend/tests/event_log/       集成测试（bm-event-log-tests）
 3. **前端隔离机制（拍板点 2）**：iframe/WebComponent/联邦——阶段 4 才需要，可继续后拍。
 4. **运行期视角**：AppState.dual_writer 已接线；将来把 EventLog 的 head_seq/replay 接到某只读 API（如 /api/sessions/{id}/events）即可在前端看事件流——阶段 1 范围外，先不动。
 
-## 七、新对话续接建议开场
+## 七、大哥模型任务委托（新对话用——用户明确要求"大哥"审构思/看参考项目/查漏补缺）
 
-> 继续 BoenMind 2.0。交接见 docs/HANDOFF_KERNEL_PHASE0.md（阶段 0 完成：T0-T13，84 测试全绿，4 commit 已推送）与 docs/HANDOFF_EVERYTHING_IS_PLUGIN.md（架构四层）。待办：① 真实验收（release 起服务聊几轮查 event_log 表）；② 阶段 1 立项（建议先 agent-loop 移植补 ToolResult.output/压缩事件，再 pi-compat）。
+> 用户原话（2026-08-14 夜）："新对话，我会调用你的大哥模型，能力更强，我希望它再帮我们看看构思，看看参考项目，帮我们查漏补缺！"
 
-## 八、Git 状态
+### 7.1 先读什么（按序，都是已推送/已存在的事实）
 
-- main 最新：`3b9d5b7`，工作区干净，全部已推送（github.com 直连正常）
+1. `docs/HANDOFF_KERNEL_PHASE0.md`（本文件）——阶段 0 完成状态 + 已查证事实 + partial 标注
+2. `docs/boenmind-strategic-review.md`——战略层（命名即愿景/三护城河/时间哲学/五年路径/§七 项目第一性动机）
+3. `docs/everything-is-plugin-architecture.md`——架构 v0.11（三条铁律/概念映射/借鉴清单 D1-D10/P1-P6/Z1-Z6/H1-H12/A1-A12/核心机制/渐进路线 7 阶段）
+4. `docs/kernel-implementation-plan.md`——实现方案（含 §7 实现记录：修正与 partial）
+5. `docs/ai-os-landscape.md` + `docs/deepseek-harness-evaluation.md` + `docs/hanaagent-evaluation.md`——赛道与竞品研读
+6. 阶段 0 实际代码：`backend/crates/bm-protocol`、`bm-kernel`、`bm-storage-turso`（~4000 行，注释即文档）
+
+### 7.2 三件事（输出一份结构化报告）
+
+**① 审构思（查逻辑漏洞）**：
+- 三条铁律（用户空间 OS 寄生/会话即生命周期 Agent 自主决策/渐进式吸收不进核心）之间有没有内在矛盾？
+- 事件日志作为统一底座：ignorable/seq/分支/压缩遮蔽语义是否有未覆盖的边界（多进程写、跨设备同步、会话删除、日志膨胀）？
+- 时间哲学（实现速度∝Token、M5 自举=人力模式切 token 模式）的隐含假设是否站得住？
+- 阶段 1-7 路线图（kernel-implementation-plan + 架构 §渐进路线）优先级是否合理？有没有更早该做的地基？
+
+**② 看参考项目（对照验证，勿重复源码级研读）**：
+- 浅克隆副本（勿当上游库）：`D:/96_CoderWorld/deepseek-harness`、`hermes-agent`、`life-agent-os`、`kernel-agent-os`
+- 重点对照（结论已在 ai-os-landscape/deepseek-harness-evaluation 里）：Life Agent OS 的分支日志/Port 契约/Custom 事件（验证了我们的设计）、kernel.chat 的 acap 降级/taint/配额/审计链（可直接吸收）、dsh 的"一切皆插件连 loop 都是插件"（我们选择 Rust 主权内核 + 插件化外围）
+- 输出：我们已吸收/没吸收的对照表 + 漏掉的值得吸收点
+
+**③ 查漏补缺（对我们没想过的角度提问）**：
+- 代码级：bm-protocol/kernel/storage 有没有明显设计错误或 Rust 反模式（可对照 Life Agent OS 姿势）？
+- 场景级：单用户个人软件的真实使用模式（30 轮长对话/多会话/多设备）下，事件日志方案哪里会先疼？
+- 用户偏好约束：技术解释大白话、先讨论后实施（拍板点列清单再动手）、成本不谈（标注"实现期调优"）、吸收不进核心。
+
+### 7.3 输出格式建议
+
+Markdown 报告（建议放 `docs/review-<日期>.md`），结构：**结论摘要（3-5 条）→ 拍板点清单（每条：问题/选项/推荐/理由）→ 风险清单（严重度）→ 参考项目对照表 → 阶段 1 建议范围**。不要直接改代码——先出报告，用户拍板后再动手（铁律：先讨论后实施）。
+
+### 7.4 已知待办（大哥模型可顺手评估优先级）
+
+- 真实验收：release 起服务聊几轮查 event_log 表（用户可配合）
+- 阶段 1 立项：agent-loop 移植（补 ToolResult.output/压缩事件接入）vs pi-compat（QuickJS 引擎拆出，拆法 A 见 HANDOFF_EVERYTHING_IS_PLUGIN §五）
+- 前端隔离机制（iframe/WebComponent/联邦）——阶段 4 才需要
+- 分支 UI（A1，二期）
+
+## 八、新对话续接建议开场
+
+> 继续 BoenMind 2.0。交接见 docs/HANDOFF_KERNEL_PHASE0.md（阶段 0 完成：T0-T13，84 测试全绿，4 commit 已推送）与 docs/HANDOFF_EVERYTHING_IS_PLUGIN.md（架构四层）。待办：① 真实验收（release 起服务聊几轮查 event_log 表）；② 阶段 1 立项（建议先 agent-loop 移植补 ToolResult.output/压缩事件，再 pi-compat）；③ 用户点名"大哥模型"审构思/看参考项目/查漏补缺（§七任务委托）。
+
+## 九、Git 状态
+
+- main 最新：`8485250`，工作区干净，全部已推送（github.com 直连正常）
 - 记忆：MEMORY.md 有 kernel-phase0-complete 条目（本交接的浓缩版）
