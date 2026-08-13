@@ -1,6 +1,6 @@
 # BoenMind 2.0 ——「万物皆插件」架构设计（Agent OS 框架）
 
-> 状态：**v0.6（迭代中）**——v0.5 基线 + AI OS 赛道吸收（Life Agent OS / kernel.chat 源码级，A1-A12）
+> 状态：**v0.7（迭代中）**——v0.6 基线 + 用户三原则（用户空间 OS / 会话即生命周期 / 渐进式复用）
 > 日期：2026-08-14
 > 参考系：pi_agent_rust（现引擎，vendored）、DeepSeek Harness（dsh）、ZCode（插件/技能/市场）、Hermes（NousResearch/hermes-agent）、**xu-wiki-desk（用户已有应用插件实证）**、**AI OS 赛道四项目（AIOS/MemGPT/Life Agent OS/kernel.chat，报告 docs/ai-os-landscape.md）**
 > 本文档持续迭代，直到自认完美后交用户拍板。
@@ -34,6 +34,12 @@
 | 应用商店 | 插件市场（marketplace + 版本/签名） | Z5、§四·C |
 | 用户态/内核态 | QuickJS 沙箱（插件跑沙箱、宿主不受污染） | P1 |
 | 驱动更新 | 平台驱动的热升级（现有热升级管线） | 现有资产 |
+
+## 〇·二、三条铁律（用户定调，2026-08-14）
+
+1. **Agent OS 是用户空间 OS，永远寄生在宿主 OS 之上**（用户："Agent 对底层的操作仍通过抽象层——也就是现在的操作系统；就算未来脱离，Agent 也应是高层调用，不涉及太底层"）。**Agent OS 不做裸机内核**：平台驱动层（§四·A）内部调的永远是宿主 OS 的 API（CreateProcess/fork/Seatbelt…），不碰硬件。宿主 OS 是现成的 HAL，重造它没有任何意义——"Agent OS"的"OS"指**应用层的运行时抽象**，类比 JVM 之于字节码（但更强：它管理会话生命周期、记忆、权限、应用生态）。渐进开发中"寄生"在 Windows/Linux/macOS 上是刻意选择：步子太大才扯蛋。
+2. **会话即生命周期，边界由 Agent 自主决策**（用户："要不要新开对话、记忆交接应该由 Agent 自己决定，长时任务才能真正搞下去"）。会话不是"一轮对话"，是**持续的事实流**；会话管理（分支/归档/恢复/合并/交接）是 Agent 的工具集，不是外部强加的边界（详见 §六·6 会话生命周期）。
+3. **渐进式，复用优先，吸收不进核心**（用户："第一阶段主线 = 跑通 Agent 对话 + Wiki 软件；能利用现存的东西就不重复造轮子；简单的直接吸收到插件/软件/底层，**不是 Agent 核心**"）。吸收位置纪律：**一切吸收发生在内核之外**（插件层/应用层/驱动层），内核保持最小——"简单的东西"塞进内核 = 隐形核心膨胀，是本架构的第一大忌。
 
 ## 一、什么是"插件"：双形态模型
 
@@ -594,6 +600,34 @@ Taint 来源：fetched_url / email / user_input / untrusted_file / agent_message
 ```
 把 EchoLeak/提示注入从"模型行为问题"变成"**结构性拒绝**"——恶意内容即便被模型接受，也过不了 taint 门。**这是提示注入对抗的最硬一层**，BoenMind 插件生态直接受益。
 
+### 6.6 会话生命周期 = Agent 自主决策（用户铁律 2，v0.7 新增）
+
+**现状的缺陷**（用户指出的）：现在所有 Agent 都是"一轮对话"模型——上下文满了就压缩或新开会话，**边界由系统/用户强加**。用户："要不要新开对话、记忆交接应该由 Agent 自己决定，长时任务才能真正搞下去。"
+
+**调研结论（2026-08-14）**：宣传中的"长时任务"实现全部是**外部机制**，无一例外：
+- 上下文外置（Anthropic 的 Filesystem-State 模式、agent-crystallize/checkpoint-mcp/context-task-planning：把中间结果/进度/下一步写文件或 SQLite）；
+- durable execution（Google Agent Executor 2026-05：事件日志+快照、断线恢复、**轨迹分支**；Temporal/DBOS 系）；
+- 记忆分页（MemGPT：prompt=RAM、存储=disk，Agent 函数调用换页）；
+- resume brief（下次会话靠"已完成/下一步/剩余步骤"简报续跑）；
+- 状态机（Life Agent OS 的 OperatingMode 六态含 Sleep——**最接近**，Agent 自己转态）；
+- 常驻守护（OpenClaw/Hermes：daemon + 心跳 + 跨会话记忆）。
+
+**共同主题**：把状态从上下文窗口外置。**但没有一个把"会话边界的决策权"交给 Agent 本身**——全是外部机制/系统策略。"Agent 自主决定要不要开新会话"是**空白区**，而我们的架构正好能实现：
+
+**实现（三件套）**：
+1. **会话是持续的事实流**（事件日志，§5.1）：没有"本轮对话结束"的硬边界——只有 `turn/end`（一次请求的结束），会话本身活着（类比进程活着，Sleep 不是退出）。
+2. **会话管理 = Agent 工具集**（注册进 ctx.tools 的 `session.*` 工具）：
+   ```
+   session.fork      # 从当前 checkpoint 分支（试另一条路，不丢原路）
+   session.archive   # 封存当前上下文 → 压缩 checkpoint 留档，记忆插件保留链接
+   session.resume    # 恢复归档会话（从事件日志投影重建，无需"重讲一遍"）
+   session.merge     # 合并分支（Life Agent OS 语义：合并后只读）
+   session.transfer  # 交接（把任务状态 + 能力子集交给另一个 agent/会话，kernel.chat handoff 语义）
+   ```
+3. **决策点**：`agent/turn-stopping`（dsh 的 serial 钩子）就是 Agent 的"决策时刻"——**上下文压力信号（压缩水线/预算）作为输入，Agent 自己选择**：继续压缩 / archive 开新 / fork 分支。系统策略只兜底（无决策时自动压缩），不替 Agent 做决定。
+
+**与记忆的关系**：记忆交接 = 事件日志 + 记忆插件投影——archive 的会话被记忆插件索引（file 传送带/向量二期），resume 时从日志重建 + 记忆检索补上下文。"做着做着说上下文要满了"变成"Agent 主动说：我把这条线归档，开个分支继续"。
+
 ## 七、与现状的兼容与渐进路线（v0.2）
 
 ### 7.1 兼容策略
@@ -613,20 +647,34 @@ Taint 来源：fetched_url / email / user_input / untrusted_file / agent_message
 - **不需要** ExtensionManager / extension_dispatcher / 性能通道（amac/rewrite/superinstructions/trace_jit/resource_governor/replay 全可去）。
 - 工作量：**1-2 周**（vs 之前估的"最大不确定项"）——自研核心的最大障碍已排除。
 
-### 7.2 渐进路线（strangler）
+### 7.2 渐进路线（strangler，v0.7 修正：双主线并行）
+
+**用户铁律 3：第一阶段主线 = 跑通 Agent 对话 + Wiki 软件，并行推进，复用优先，吸收不进核心。**
+
+```
+双主线（并行，互不阻塞）：
+┌─ 主线 A：Agent 对话（现有 vendor pi + bm-server 继续跑，渐进换代）
+└─ 主线 B：Wiki 软件（xu-wiki-desk 现有资产，先独立演进，阶段 4 收编为应用插件）
+```
 
 ```
 阶段 0（先行，零风险）：会话事件日志层落 turso（双写过渡：现有表 + 事件流）
-阶段 1：**pi-compat 拆法 A**（vendor 6 文件 + 300 行 host 线程，1-2 周）+ Rust 内核骨架（加载器/注册表/事件总线）+ agent-loop 插件（trait 抽象，QuickJS 引擎已就位，pi.dev 插件当日兼容）
+                        ——同时服务两条主线（对话事件 + Wiki 操作事件都可入日志）
+阶段 1：pi-compat 拆法 A（vendor 6 文件 + 300 行 host 线程，1-2 周）+ Rust 内核骨架（加载器/注册表/事件总线）+ agent-loop 插件（trait 抽象，QuickJS 引擎已就位，pi.dev 插件当日兼容）
 阶段 2：工具把关链 + 权限升级（阶梯审批）；LLM client 只做 OpenAI 兼容 + 现有 providers 配置复用（S7）
-阶段 3：基础设施插件化（网络/存储/RPC）——10057 修复正式化为 network-tokio 插件；沙箱 confine 落地（S6）；**平台驱动层首发（platform-windows + driver-exec/fs/net，S10）**
-阶段 4：应用插件机制（前端 SDK 投影引擎 + iframe 加载）→ Wiki/相册试点（复用 xu-wiki-desk 资产）；**DE 契约正式化（desktop/web 双壳）**
-阶段 5：记忆插件化（compactor 升级 replace 事务 → file → vector）
+阶段 3：基础设施插件化（网络/存储/RPC）——10057 修复正式化为 network-tokio 插件；沙箱 confine 落地（S6）；平台驱动层首发（platform-windows + driver-exec/fs/net，S10）
+阶段 4：应用插件机制（前端 SDK 投影引擎 + iframe 加载）→ Wiki 收编为应用插件（迁移而非重写：xu-wiki 的 22 表 38 API 演进为 Wiki 插件后端包）；相册试点；DE 契约正式化（desktop/web 双壳）
+阶段 5：记忆插件化（compactor 升级 replace 事务 → file → vector）+ 会话生命周期工具集（§6.6：fork/archive/resume/merge/transfer）
 阶段 6：vendor pi 剩余部分（loop/工具集/压缩引擎）退役判定（插件生态迁移完成度）
 阶段 7（愿景）：Agent OS 化——平台驱动补齐 mac/linux、商店 UI 应用插件化、多 DE 并存
 ```
 
 每阶段可独立发布、可回滚，不阻塞 v0.1.x 发布节奏。
+
+**吸收纪律（铁律 3 执行细则）**：
+- 吸收目标位置 = **插件 / 应用 / 驱动三层**，内核与准内核（loop）不吸收；
+- "简单的东西"直接进核心 = 隐形核心膨胀 = 第一大忌（Simplicity Check 每轮审计）；
+- 复用优先序：现有 BoenMind 资产 > 上游 pi 资产 > 四家/赛道借鉴 > 自研；每件"吸收"登记来源（借鉴清单 D/P/Z/H/A 编号）。
 
 ### 7.3 明确不做（范围边界，防止野心溢出）
 
@@ -691,6 +739,7 @@ Taint 来源：fetched_url / email / user_input / untrusted_file / agent_message
 - [x] 前端 SDK 日志投影引擎的协议设计（6.3：快照+增量两阶段、SurfaceOp 同构、selector 订阅）
 - [x] **Agent OS 维度**（v0.5）：概念映射表（〇·一）、平台驱动层（四·A）、前端=DE（四·B）、应用=软件安装（四·C）、补审 S10-S12
 - [x] **AI OS 赛道吸收**（v0.6）：分支日志 A1 / 契约 crate+Port A2 / Custom 事件 A3 / 能力模式串 A4 / acap 降级 A5 / taint A6 / 配额 A7 / 审计哈希链 A8 / 复合门 A9 / 投影重放 A10（赛道报告 docs/ai-os-landscape.md）
+- [x] **用户三原则**（v0.7）：〇·二 三条铁律（用户空间 OS / 会话即生命周期 / 渐进式复用）+ §6.6 会话生命周期（Agent 自主会话管理）+ 7.2 双主线并行与吸收纪律
 - [ ] 渐进路线与现有发布节奏的冲突评估（拍板时定）
 - [ ] 沙箱（OS 级）与插件系统的关系（confine 在哪个层生效，阶段 3 细化）
 - [ ] 记忆插件与日志的写回契约（memory/write 事件协议细化）
@@ -735,4 +784,4 @@ Taint 来源：fetched_url / email / user_input / untrusted_file / agent_message
 - Code Architecture Planner skill（评审方法论）: https://github.com/CarterIrish/code-architecture-skill
 
 ---
-*（v0.6 完：v0.5 基线 + AI OS 赛道吸收（A1-A12）。赛道报告 docs/ai-os-landscape.md。一致性已复查。交用户拍板。）*
+*（v0.7 完：v0.6 基线 + 用户三原则（用户空间 OS / 会话生命周期 Agent 自主决策 / 渐进式复用双主线）。交用户拍板。）*
