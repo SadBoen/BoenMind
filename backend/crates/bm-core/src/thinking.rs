@@ -1,8 +1,8 @@
 //! 思考档位能力判定：复刻 pi 运行时的 per-model 白名单
-//! （vendor/pi_agent_rust/src/models.rs 的 available_thinking_levels /
+//! （legacy/pi_agent_rust/src/models.rs 的 available_thinking_levels /
 //! supports_xhigh / supports_max），供 /api/thinking-levels 出 UI 档位。
 //!
-//! 对齐要点（2026-08-12 读 vendor 源码核对）：
+//! 对齐要点（2026-08-12 读 legacy 源码核对）：
 //! - OpenAI 兼容路由提供商（minimax/deepseek/custom 等）在 sync_pi_models_json
 //!   时对全部模型写入 `reasoning: true`，因此这些模型一律按推理模型出档；
 //!   内置路由（openai/anthropic/gemini/ollama/llamacpp）由 pi 目录判定，

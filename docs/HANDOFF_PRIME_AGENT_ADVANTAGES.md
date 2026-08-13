@@ -36,7 +36,7 @@
 
 ## 二、已完成
 
-### 1. 上游补丁台账（`backend/vendor/UPSTREAM_PATCHES.md`）
+### 1. 上游补丁台账（`backend/legacy/UPSTREAM_PATCHES.md`）
 - 审计结论：对上游全部改动 = **6 文件 8 处**（对比上游基线 `44ddf80` 权威 diff）
 - 含基线信息、逐条复现命令、升级流程（上游合入即删对应补丁）、关联 issue
 - 本次新增两处补丁并补齐 P1/P2/P7/P8 的统一 `BoenMind 补丁` 源码标记
@@ -76,10 +76,10 @@
 
 | 文件 | 说明 |
 |---|---|
-| backend/vendor/UPSTREAM_PATCHES.md | **新**：上游补丁统一台账（唯一权威记录） |
-| backend/vendor/pi_agent_rust/src/subagents.rs | 补丁 P9：结构化块 |
-| backend/vendor/pi_agent_rust/src/extensions.rs | 补丁 P10：bundle 探测保护 |
-| backend/vendor/pi_agent_rust/src/{auth,openai,tools}.rs | P1/P2/P7/P8 补统一标记（纯注释） |
+| backend/legacy/UPSTREAM_PATCHES.md | **新**：上游补丁统一台账（唯一权威记录） |
+| backend/legacy/pi_agent_rust/src/subagents.rs | 补丁 P9：结构化块 |
+| backend/legacy/pi_agent_rust/src/extensions.rs | 补丁 P10：bundle 探测保护 |
+| backend/legacy/pi_agent_rust/src/{auth,openai,tools}.rs | P1/P2/P7/P8 补统一标记（纯注释） |
 | backend/plugins/refine-suggest/ | **新**：建议采集插件（extension.json/index.ts/README） |
 | backend/plugins/ctx-compactor/index.ts | SELF_TOOLS 加 subagent |
 | backend/crates/bm-core/src/refine.rs | **新**：审批生效/回滚逻辑 |

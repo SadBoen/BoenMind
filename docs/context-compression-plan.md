@@ -13,7 +13,7 @@
 
 ## 1. 背景（已查证，勿重复调查）
 
-### 1.1 pi 引擎压缩现状（vendored，`backend/vendor/pi_agent_rust`）
+### 1.1 pi 引擎压缩现状（vendored，`backend/legacy/pi_agent_rust`）
 
 - 摘要压缩已内建：触发条件 `should_compact`（`src/compaction.rs:817`）= 占用 ≥ 窗口 − reserve；
   切点 `find_cut_point`（`src/compaction.rs:998`）从尾部凑 `keep_recent_tokens` 预算、二分选最大

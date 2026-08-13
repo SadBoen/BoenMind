@@ -1,6 +1,6 @@
 //! 子代理（subagent）子进程入口。
 //!
-//! 上游 `subagent` 工具（vendor/pi_agent_rust/src/subagents.rs）会 spawn **当前
+//! 上游 `subagent` 工具（legacy/pi_agent_rust/src/subagents.rs）会 spawn **当前
 //! 可执行文件**（独立部署下即 bm-server 二进制）并传固定参数形状：
 //! `--mode json --print --no-session --tools <csv> [--model M] [--thinking T]
 //! [--skill S] [--append-system-prompt P] Task: <task>`，然后按 stdout 逐行

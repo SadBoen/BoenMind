@@ -1,6 +1,6 @@
 # BoenMind 2.0 ——「万物皆插件」架构设计（Agent OS 框架）
 
-> 状态：**v0.12（迭代中）**——v0.11 = 应用互操作与数据互通（§6.4 尾）；v0.12 = 阶段 0 复核融合（§十一，大哥模型，原独立报告已并入）+ Steward 自身生命周期与记忆（§6.7 尾，用户提点）；核心实现方案见 docs/kernel-implementation-plan.md
+> 状态：**v0.13（迭代中）**——v0.11 = 应用互操作与数据互通（§6.4 尾）；v0.12 = 阶段 0 复核融合（§十一，大哥模型，原独立报告已并入）+ Steward 自身生命周期与记忆（§6.7 尾，用户提点）；v0.13 = **重构决策：legacy 旧代码文件夹（§十三）** + **LoopX 借鉴清单（§3.6，用户点名）**；核心实现方案见 docs/kernel-implementation-plan.md
 > 日期：2026-08-14
 > 参考系：pi_agent_rust（现引擎，vendored）、DeepSeek Harness（dsh）、ZCode（插件/技能/市场）、Hermes（NousResearch/hermes-agent）、**xu-wiki-desk（用户已有应用插件实证）**、**AI OS 赛道四项目（AIOS/MemGPT/Life Agent OS/kernel.chat，报告 docs/ai-os-landscape.md）**
 > 本文档持续迭代，直到自认完美后交用户拍板。
@@ -131,6 +131,29 @@
 | A12 | 主动分页语义（prompt=RAM、存储=disk） | MemGPT/Letta | 6.1：与压缩 replace 事务互补 |
 
 **避免照抄**：Life 的巨型 monorepo 编译期组合（无动态加载）、kernel.chat 的"宣称与交付脱节"（能力矩阵按 shipped/partial 诚实标注）、AIOS 的 Python 性能。
+
+### 3.6 从 LoopX 吸收（2026-08-14 夜，用户点名；huangruiteng/loopx，Python，浅克隆 D:/96_CoderWorld/loopx）
+
+LoopX 定位"长时运行 AI agent 团队的轻量 loop 工程状态内核"——与 BoenMind 同赛道不同分工：**我们是 session runtime（会话/事件/工具/权限），LoopX 是 goal-level 控制投影（目标/认领/配额/审查/交接）**。互补关系见 L14。
+
+| # | 机制 | 说明 | 对 BoenMind 的落地 |
+|---|---|---|---|
+| L1 | **四角色职责模型**（Agent/Provider/Capability/Kernel） | 执行路径 Agent→Capability→Provider→外部系统；控制路径 readback→Capability→typed transition→Kernel。**"观察≠状态转移、Provider 回执≠进度，Capability 验证 + Kernel 提交才算"** | 对齐把关链（阶段 2）：工具体=Provider、把关链+验证=Capability、事件日志=Kernel |
+| L2 | **回合决策词汇表**（LoopXTurnRoute 7 态 + LoopXTurnResultKind 10 态） | repair/replan/user_action/wait/blocked/host_failure/validation_failed/writeback_failed/quota_spend_failed 全是第一公民 | agent-loop 移植时扩 `TurnEndReason`（现有 3 态 + Interrupted 后仍偏少，参照此表 + dsh 六态） |
+| L3 | **配额 should-run**（reject-before-execute + interaction_contract） | 执行前判定 + 交互契约六动词（deliver/wait/ask/replan/repair/stay-quiet） | 对齐 A7 配额（阶段 2）：预检投影 + 交互契约分档 |
+| L4 | **任务认领/租约**（claimed_by 软认领 → 硬租约按需；per-(goal,todo) 竞争粒度；stale-claim fail-closed） | 重复认领/过期更新 = 显式 no-op 或冲突 | **100 小弟并行共享事件日志的协调模式**；活任务清单（todo/write）需认领语义（阶段 4 编程应用） |
+| L5 | **事件溯源状态**（goal state = append-only 事件 + 投影重建） | run log 是证据日志 | 与事件日志底座同构，互相印证（A10） |
+| L6 | **交接包 / 审查包**（handoff_packet 内容化预算化；review-packet 面向 owner） | 可验证交接 = 交接包 + 证据 | `session.transfer`（§6.6）内容设计参照 |
+| L7 | **dreaming 后台规划**（只建议不执行：todo 提议/证据探针/重构警告，advisory） | 建议走队列，执行仍走配额+把关链 | Steward（§6.7）低风险治理面参照：先出建议、执行必过闸 |
+| L8 | **心跳自动唤醒契约**（quota 前置检查 + DONT_NOTIFY 等行为契约 + cadence 分层） | 定时唤醒不是产品真相，配额决策才是 | Steward 空闲巡检心跳（30min）契约化参照 |
+| L9 | **架构依赖测试**（依赖方向机器强制 + allowlist 记录迁移债） | 新外向边使测试失败；隐藏依赖不算分离 | **铁律 3"吸收不进核心"从人工审计升级为 CI 架构测试**：bm-protocol 零依赖、bm-kernel 不得依赖 bm-server/bm-core，可测试化 |
+| L10 | **authority sources**（可审查上下文 + 冲突规则，替换隐式模型记忆） | 决策依据留痕可审查 | Steward 治理决策引用权威来源留痕（阶段 5） |
+| L11 | **终身目标不变量**（lifetime goal：可恢复四问 + 一步有界可验证动作） | 目标跨会话存活；每次只走一步、每步可验证；不宣称开放式自主权 | `goal/*` 事件域（预留）的语义锚 |
+| L12 | **前场/后场分离**（frontstage 渠道化投影，backstage ledger 是真相；Chat 不是真相源） | registry/state/history/quota/gates/lease 是后场台账，UI 是投影 | 治理面板/前端 UI 都是投影（§6.3），与"事件日志唯一事实源"同构 |
+| L13 | **写者正确性先于服务**（重复心跳/配额消耗/过期 todo 更新 = 显式 no-op 或冲突；乐观 revision） | 先修写者并发正确性，再谈 server | 阶段 3 RPC 代理写的前置纪律：幂等键 + 乐观 revision |
+| L14 | **session-runtime control-plane adapter**（对已有 session 运行时的平台，控制面作为"目标层投影"接入而非第二运行时） | 摄入紧凑摘要，产出 goal_state/operator_gate/handoff_packet 等投影 | **我们就是 session runtime**：Steward/目标域作为投影接入，不自造第二运行时 |
+
+**避免照抄**：LoopX 是 Python + CLI 文件态（无动态插件、无 QuickJS、无 UI 应用层），控制面不碰会话执行——它的"适配器对接 Codex/Claude Code"正是我们内核 + 应用插件已经解决的部分。
 
 ### 3.4 从 Hermes 吸收（NousResearch/hermes-agent，Python 26.7 万行）
 
@@ -741,7 +764,7 @@ M5：自举闭环（用 BoenMind 编程应用完成 BoenMind 的一个完整功�
 
 | 现状资产 | 2.0 去向 |
 |---|---|
-| vendored pi_agent_rust | 拆解：**pi-compat 插件** = QuickJS 引擎（`PiJsRuntime`）作库 + 自写 ~300 行 host 线程（拆法 A，已查证可行，见下）——**pi.dev 200+ 插件直接兼容**；loop/工具集/压缩引擎逐步退役 |
+| vendored pi_agent_rust（现 backend/legacy/，§十三） | 拆解：**pi-compat 插件** = QuickJS 引擎（`PiJsRuntime`）作库 + 自写 ~300 行 host 线程（拆法 A，已查证可行，见下）——**pi.dev 200+ 插件直接兼容**；loop/工具集/压缩引擎逐步退役 |
 | 现有 TS 插件（web_search 等） | ExtensionBody 协议保留，直接迁移 |
 | turso 存储 | 变成 `storage-turso` 插件（日志持久化后端之一） |
 | skills（backend/skills/） | 迁移到新格式（SKILL.md + frontmatter，对齐 D7） |
@@ -925,6 +948,21 @@ M5：自举闭环（用 BoenMind 编程应用完成 BoenMind 的一个完整功�
 
 ---
 
+## 十三、重构决策：全新项目 + legacy 旧代码文件夹（v0.13，用户定调）
+
+> 用户原话（2026-08-14 夜）："重构后，可以理解为一个全新的项目，前面的基于 pi-agent-rust 的部分，可以吸收，但不要限制你的发挥，可以把它们的代码移动到一个专门的文件夹中，叫旧代码。吸收一部份就删除一部份，直到完全没用了，就删除掉。"
+
+**已执行**：
+1. `backend/vendor/` → **`backend/legacy/`**（pi_agent_rust + asupersync + UPSTREAM_PATCHES.md 一并迁入）；
+2. legacy **移出 workspace 成员**（仍为 bm-core/bm-server 的 path 依赖，生产仍在跑；其上游 test 目标不再被 workspace 级 `cargo test` 编译——P11 测试桩随之删除、无残留）；
+3. 台账补 **P12**（tokio 改显式版本，legacy 可独立编译）。
+
+**执行方针（吸收一部分删除一部分）**：
+- **心态**：BoenMind 是全新项目；legacy 只是"暂时没消化完的原材料仓库"，不是架构的一部分；
+- **吸收纪律**：每个能力从 legacy 迁出（自研实现或新插件形态）→ 对应 legacy 代码**立刻删除**（复用优先序里的"上游 pi 资产"此后指 legacy）；
+- **不限制发挥**：自研实现不受 pi 形态约束——同样的能力可以按"万物皆插件"形态重做（如 QuickJS 桥=拆法 A 出 legacy、工具集=自研插件）；
+- **终点**：legacy 整体退役 = 阶段 6 退役判定的完成态（loop/工具集/压缩引擎全部吸收完即删空 legacy）。
+
 ## 十二、附录
 
 ### 术语表
@@ -957,11 +995,12 @@ M5：自举闭环（用 BoenMind 编程应用完成 BoenMind 的一个完整功�
 - DeepSeek Harness: https://github.com/deepseek-ai/deepseek-harness （研读报告：docs/deepseek-harness-evaluation.md）
 - Cordis 论文《A Programming Paradigm for Spatiotemporal Composability》: https://github.com/cordiverse/paper
 - NousResearch/hermes-agent: https://github.com/NousResearch/hermes-agent （本地研读副本 D:/96_CoderWorld/hermes-agent）
-- pi_agent_rust（vendored）: https://github.com/Dicklesworthstone/pi_agent_rust
+- pi_agent_rust（legacy）: https://github.com/Dicklesworthstone/pi_agent_rust
+- LoopX（huangruiteng/loopx，借鉴清单 L1-L14）: https://github.com/huangruiteng/loopx （本地研读副本 D:/96_CoderWorld/loopx）
 - ZCode 插件体系（本机实测）：~/.zcode/cli/plugins/、~/.zcode/skills/
 - xu-wiki-desk（应用插件实证）: D:/96_CoderWorld/xu-wiki-desk
 - HanaAgent 研读（记忆传送带/沙箱参照）: docs/hanaagent-evaluation.md
 - Code Architecture Planner skill（评审方法论）: https://github.com/CarterIrish/code-architecture-skill
 
 ---
-*（v0.12 完：v0.11 应用互操作与数据互通 + v0.12 阶段 0 复核融合（§十一）+ Steward 自身生命周期与记忆（§6.7 尾）。10 项拍板点见 §十一·11.4，交用户拍板。）*
+*（v0.13 完：v0.11 应用互操作 + v0.12 阶段 0 复核融合与 Steward 自身生命周期 + v0.13 重构决策（legacy 旧代码文件夹，§十三）与 LoopX 借鉴清单（§3.6，L1-L14）。10 项拍板点已拍（§十一·11.4），阶段 1 两线并行任务分解见 docs/HANDOFF_KERNEL_PHASE1.md。）*

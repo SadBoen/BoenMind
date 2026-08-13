@@ -1,7 +1,7 @@
 # 上游补丁台账（UPSTREAM PATCHES REGISTRY）
 
 本文件是 **BoenMind 对 vendored 上游代码全部改动的唯一权威记录**。
-升级上游（`backend/vendor/pi_agent_rust/`）时，先读本文件，按「升级流程」逐条复现补丁。
+升级上游（`backend/legacy/pi_agent_rust/`）时，先读本文件，按「升级流程」逐条复现补丁。
 
 > 政策依据：改动最小化、统一标记 `BoenMind 补丁`、能不改就不改。
 > 上游问题一律优先提 issue（补丁是临时方案，上游合入后删除对应补丁）。
@@ -23,14 +23,13 @@
 ```bash
 git clone --filter=blob:none --no-checkout https://github.com/Dicklesworthstone/pi_agent_rust /tmp/pi_upstream
 cd /tmp/pi_upstream && git checkout 44ddf80ff1fccbeb08501c1e8eaa69f2b5dd5d92
-diff -rq /tmp/pi_upstream /path/to/BoenMind/backend/vendor/pi_agent_rust \
+diff -rq /tmp/pi_upstream /path/to/BoenMind/backend/legacy/pi_agent_rust \
   | grep -v -E "\.git/|legacy_pi_mono_code|^Files .* are identical$"
 ```
 
 > 注：上游独有 `.beads/ .claude/ .github/ tests/` 属上游元数据，vendored 版本刻意不带。
-> 例外（P11）：`tests/common/mod.rs` 以最小桩补回——`src/session_index.rs` 测试模块
-> `#[path = "../tests/common/mod.rs"]` 引用 TestHarness，缺文件导致 workspace 全量
-> `cargo test` 编译失败；桩仅覆盖 session_index 测试用到的 4 个成员。
+> （曾补过最小桩 P11 解决全量 `cargo test` 编译，2026-08-14 晚重构后 legacy 移出
+> workspace 成员、其 test 目标不再被编译，桩已删除——无补丁残留。）
 > `.cargo/config.toml` 与上游一致（非补丁）。
 
 ---
@@ -50,16 +49,17 @@ diff -rq /tmp/pi_upstream /path/to/BoenMind/backend/vendor/pi_agent_rust \
 
 | P9 | `src/subagents.rs` | `execute()` ToolOutput 构建 + 新增 `structured_result_block`/`truncate_owned` | content 文本末尾追加 `<subagent-structured-result>` 紧凑 JSON 块（output/stderr 截断 2000 字符、总块 16KB）；上游 `details` 在 providers/openai.rs 序列化时被丢弃，模型只读 content 文本 | 子代理结构化返回：队长代理像读函数返回值一样直接取用结果 | [#163](https://github.com/Dicklesworthstone/pi_agent_rust/issues/163)（以默认关闭配置项形式建议，预期长期自持） | 本轮 | ✅ |
 | P10 | `src/extensions.rs` | `discover_sibling_index_entries()` | bundle 探测加"cluster_root 名为 extensions 时跳过"保护（与 `discover_sibling_extension_entries` 一致） | 上游缺陷：多个 entrypoint=index.ts 的独立插件共存于扩展根时被 bundle 探测互相认领，触发 "Ambiguous JS extension ownership"（实测 3 插件共存必现） | [#164](https://github.com/Dicklesworthstone/pi_agent_rust/issues/164)（建议按 sibling 函数同样保护合入） | 本轮 | ✅ |
-| P11 | `tests/common/mod.rs`（**补文件**，非改源码） | 新增最小桩 `TestHarness` | vendored 刻意不带上游 `tests/`，但 `session_index.rs` 测试以 `#[path = "../tests/common/mod.rs"]` 引用 TestHarness → 全量 `cargo test` 编译失败；桩覆盖 `new/temp_path/log(info/info_ctx)/record_artifact` 四成员 | 恢复 workspace 全量 `cargo test` 可编译（CI 质量门仍用 -p 列表） | — | 本轮 | ✅ |
+| P11 | `tests/common/mod.rs`（**补文件**，已删除） | 曾补最小桩 `TestHarness` | vendored 刻意不带上游 `tests/`，`session_index.rs` 测试引用缺文件致全量 `cargo test` 编译失败 | 2026-08-14 晚重构：legacy 移出 workspace 成员，test 目标不再编译，桩删除（无残留） | — | 4b85bb1 引入 / 重构 commit 删除 | ✅ 已撤销 |
+| P12 | `Cargo.toml` | `tokio = { workspace = true }` → `tokio = { version = "1", features = ["full"] }` | legacy 移出 workspace 成员后无法继承 workspace.dependencies | 保持 pi 引擎作 path 依赖可独立编译（P5 后台任务用） | — | 本轮 | ✅ |
 
 **复现命令**（每个补丁的完整 diff，按 commit 精确取回）：
 
 ```bash
-git show f0aa969   -- backend/vendor/pi_agent_rust/src/auth.rs backend/vendor/pi_agent_rust/src/tools.rs   # P1 P7 P8
-git show 04f5191   -- backend/vendor/pi_agent_rust/src/providers/openai.rs                                  # P2
-git show b79a87d 5d003b3 -- backend/vendor/pi_agent_rust/src/session_store_v2.rs                             # P3
-git show e01c498   -- backend/vendor/pi_agent_rust/src/sdk.rs                                                # P4
-git show 42e29b2   -- backend/vendor/pi_agent_rust/src/sdk.rs backend/vendor/pi_agent_rust/Cargo.toml        # P5 P6
+git show f0aa969   -- backend/legacy/pi_agent_rust/src/auth.rs backend/legacy/pi_agent_rust/src/tools.rs   # P1 P7 P8
+git show 04f5191   -- backend/legacy/pi_agent_rust/src/providers/openai.rs                                  # P2
+git show b79a87d 5d003b3 -- backend/legacy/pi_agent_rust/src/session_store_v2.rs                             # P3
+git show e01c498   -- backend/legacy/pi_agent_rust/src/sdk.rs                                                # P4
+git show 42e29b2   -- backend/legacy/pi_agent_rust/src/sdk.rs backend/legacy/pi_agent_rust/Cargo.toml        # P5 P6
 ```
 
 ---
@@ -67,7 +67,7 @@ git show 42e29b2   -- backend/vendor/pi_agent_rust/src/sdk.rs backend/vendor/pi_
 ## asupersync 补丁（vendor 化依赖，非 pi_agent_rust）
 
 > 自 2026-08-14 起，`asupersync`（pi 引擎的底层异步运行时）由 crates.io 依赖改为
-> **vendor 化本地依赖**：`backend/vendor/asupersync/` + workspace `[patch.crates-io]`。
+> **vendor 化本地依赖**：`backend/legacy/asupersync/` + workspace `[patch.crates-io]`。
 > 原因：上游 crates.io 0.3.10 在 Windows 上存在连接误判 bug（见下），需要本地补丁且
 > 补丁必须可复现（cargo 缓存不持久）。asupersync 与 pi_agent_rust 同作者
 > （Dicklesworthstone），修复路径共用。
@@ -99,7 +99,7 @@ git show 42e29b2   -- backend/vendor/pi_agent_rust/src/sdk.rs backend/vendor/pi_
 ## 升级流程（上游出新版本时）
 
 1. **锁定新基线**：上游新 commit 打 tag（如 v0.2.1）。
-2. **全量替换**：用新版本覆盖 `backend/vendor/pi_agent_rust/`（保留本台账，它在 `vendor/` 同级、不被覆盖）。
+2. **全量替换**：用新版本覆盖 `backend/legacy/pi_agent_rust/`（保留本台账，它在 `vendor/` 同级、不被覆盖）。
 3. **核验差异**：跑「权威差异核验命令」，对照上表 6 文件逐一确认。
    - 上游已合入的 issue（#159/#160/#161）→ **删除对应补丁**（P3/P4/P5），代码回到上游实现；
    - 上游未合入的 → 按本表逐条 `git show` 重新应用。

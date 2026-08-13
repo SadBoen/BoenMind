@@ -96,8 +96,8 @@
 
 | 文件 | 改动 |
 |---|---|
-| backend/vendor/pi_agent_rust/src/sdk.rs | 补丁：ui_handler 字段 + 透传 |
-| backend/vendor/pi_agent_rust/Cargo.toml | 补丁：tokio 依赖 |
+| backend/legacy/pi_agent_rust/src/sdk.rs | 补丁：ui_handler 字段 + 透传 |
+| backend/legacy/pi_agent_rust/Cargo.toml | 补丁：tokio 依赖 |
 | backend/Cargo.toml | workspace tokio |
 | backend/crates/bm-core/src/agent.rs | PermissionRequest 事件 + ui_handler 参数 |
 | backend/crates/bm-server/src/permission.rs | **新**：PermissionBridge（查表/写表白名单逻辑已按方案 B 删除） |
