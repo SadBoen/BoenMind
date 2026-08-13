@@ -31,7 +31,7 @@ use axum::{
 use bm_core::agent::{AgentStreamEvent, create_session_handle, map_agent_event};
 use bm_kernel::SurfaceIntent;
 use bm_protocol::{
-    AssistantMsg, BranchId, CallId, CoreEvent, EventKind, SeqNo, SessionId, TokenUsage,
+    AssistantMsg, BranchId, CallId, CoreEvent, EventKind, SeqNo, SessionId, StreamChunk, TokenUsage,
     ToolResultMsg, TurnEndReason, UserMsg, UserMsgSource,
 };
 use serde::Deserialize;
@@ -449,15 +449,18 @@ async fn run_prompt_and_persist(
     // 本次 prompt 的 token 用量统计（取自 assistant 消息的 usage；工具结果消息为 0）
     let usage_total = Arc::new(std::sync::Mutex::new(0u64));
     let usage_total_cb = usage_total.clone();
-    // 分项统计（双写 TokenUsage 用：input/output 各自累计）
-    let usage_in = Arc::new(std::sync::Mutex::new(0u64));
-    let usage_in_cb = usage_in.clone();
-    let usage_out = Arc::new(std::sync::Mutex::new(0u64));
-    let usage_out_cb = usage_out.clone();
-    // 工具调用收集（双写用）：(call_id, name, args 原样 JSON, is_error)
-    let log_tools: Arc<std::sync::Mutex<Vec<(String, String, String, bool)>>> =
-        Arc::new(std::sync::Mutex::new(Vec::new()));
-    let log_tools_cb = log_tools.clone();
+    // —— A1 真序事件日志：回调同步入队 → 写线程攒批 append_batch ——
+    // 回调运行在 tokio 线程不可 await；写线程每次唤醒全量排空（chunk 突发自然攒批，
+    // 一次 append_batch 一个事务）。seq 由存储层分配，事件保持回调真实顺序。
+    let log_queue: Arc<std::sync::Mutex<std::collections::VecDeque<LogItem>>> =
+        Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
+    let log_notify = Arc::new(tokio::sync::Notify::new());
+    let log_done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let log_enabled = dual.is_some();
+    // step 状态（回调线程）：当前 step 号 + 步内流式文本（MessageEnd 时作为权威内容）
+    let step_state: Arc<std::sync::Mutex<(u32, String)>> =
+        Arc::new(std::sync::Mutex::new((0, String::new())));
+    let step_state_cb = step_state.clone();
     // 任务心跳进度（最近活动摘要：工具名 / 回复尾部），由心跳 task 定时落库 + 推 SSE
     let progress: Arc<std::sync::Mutex<String>> = Arc::new(std::sync::Mutex::new(String::new()));
     let progress_cb = progress.clone();
@@ -489,8 +492,120 @@ async fn run_prompt_and_persist(
         }
     });
 
+    // 写线程：排空队列 → append_batch（seq 连续分配，失败不阻断主链路）。
+    // prompt 结束后主线程置 log_done + notify → 排空剩余 → join（保证 TurnEnd 最后一条）。
+    let (writer_q, writer_n, writer_d, writer_dual, writer_sid) = (
+        log_queue.clone(),
+        log_notify.clone(),
+        log_done.clone(),
+        dual.clone(),
+        log_sid.clone(),
+    );
+    let writer_join = tokio::spawn(async move {
+        let Some(w) = writer_dual.as_deref() else {
+            return;
+        };
+        loop {
+            let items: std::collections::VecDeque<LogItem> =
+                std::mem::take(&mut *writer_q.lock().unwrap());
+            if items.is_empty() {
+                if writer_d.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+                writer_n.notified().await;
+                continue;
+            }
+            let events: Vec<(EventKind, SurfaceIntent, bool, Option<Vec<SeqNo>>)> =
+                items.into_iter().map(log_item_to_event).collect();
+            if let Err(err) = w.append_batch(writer_sid.clone(), events).await {
+                tracing::warn!(event = "bm.dual_write_batch_failed", error = %err);
+            }
+        }
+    });
+
+    // 回调内真序入队（log_enabled=false 时直接跳过，不囤积）
+    let (log_q_cb, log_n_cb) = (log_queue.clone(), log_notify.clone());
+    let log_push = move |item: LogItem| {
+        if log_enabled {
+            log_q_cb.lock().unwrap().push_back(item);
+            log_n_cb.notify_one();
+        }
+    };
+
     let result = handle
         .prompt_with_abort(message, abort_signal, move |ev: pi::sdk::AgentEvent| {
+            // —— A1 真序：先提取事件日志条目（借用阶段），再映射 SSE 事件 ——
+            match &ev {
+                pi::sdk::AgentEvent::MessageStart {
+                    message: pi::model::Message::Assistant(_),
+                } => {
+                    let mut st = step_state_cb.lock().unwrap();
+                    st.0 += 1; // 新 step：每次流式响应开始
+                    st.1.clear();
+                    let step = st.0;
+                    drop(st);
+                    log_push(LogItem::StepStart { turn, step });
+                }
+                pi::sdk::AgentEvent::MessageUpdate {
+                    assistant_message_event:
+                        pi::model::AssistantMessageEvent::TextDelta { delta, .. },
+                    ..
+                } => {
+                    let step = {
+                        let mut st = step_state_cb.lock().unwrap();
+                        st.1.push_str(delta);
+                        st.0
+                    };
+                    log_push(LogItem::Chunk { turn, step, text: delta.clone() });
+                }
+                pi::sdk::AgentEvent::MessageEnd {
+                    message: pi::model::Message::Assistant(a),
+                } => {
+                    let (step, content) = {
+                        let mut st = step_state_cb.lock().unwrap();
+                        (st.0, std::mem::take(&mut st.1))
+                    };
+                    // 步内无流式文本（非流式/异常路径）：退回从消息内容提取
+                    let content = if content.is_empty() { assistant_text(a) } else { content };
+                    log_push(LogItem::AssistantMessage {
+                        turn,
+                        step,
+                        content,
+                        usage: Some(TokenUsage {
+                            input_tokens: a.usage.input,
+                            output_tokens: a.usage.output,
+                        }),
+                    });
+                }
+                pi::sdk::AgentEvent::ToolExecutionStart { tool_call_id, tool_name, args } => {
+                    let step = step_state_cb.lock().unwrap().0;
+                    log_push(LogItem::ToolCall {
+                        turn,
+                        step,
+                        call_id: tool_call_id.clone(),
+                        name: tool_name.clone(),
+                        args: serde_json::to_string(args).unwrap_or_default(),
+                    });
+                }
+                pi::sdk::AgentEvent::ToolExecutionEnd { tool_call_id, result, is_error, .. } => {
+                    let step = step_state_cb.lock().unwrap().0;
+                    log_push(LogItem::ToolResult {
+                        turn,
+                        step,
+                        call_id: tool_call_id.clone(),
+                        ok: !*is_error,
+                        output: tool_output_text(result),
+                        meta: result.details.clone(),
+                    });
+                }
+                pi::sdk::AgentEvent::AutoCompactionStart { .. } => {
+                    log_push(LogItem::Compaction { turn, start: true });
+                }
+                pi::sdk::AgentEvent::AutoCompactionEnd { .. } => {
+                    log_push(LogItem::Compaction { turn, start: false });
+                }
+                _ => {}
+            }
             // 统计 token 用量（日志观测用）
                 if let pi::sdk::AgentEvent::MessageEnd { message: m } = &ev
                 && let pi::model::Message::Assistant(a) = m {
@@ -498,12 +613,6 @@ async fn run_prompt_and_persist(
                     if u.total_tokens > 0 {
                         let mut total = usage_total_cb.lock().unwrap();
                         *total = total.saturating_add(u.total_tokens);
-                        let mut in_c = usage_in_cb.lock().unwrap();
-                        *in_c = in_c.saturating_add(u.input);
-                        drop(in_c);
-                        let mut out_c = usage_out_cb.lock().unwrap();
-                        *out_c = out_c.saturating_add(u.output);
-                        drop(out_c);
                         tracing::info!(
                             event = "bm.prompt_usage",
                             input = u.input,
@@ -530,13 +639,8 @@ async fn run_prompt_and_persist(
                     AgentStreamEvent::ToolCallEnd { id, is_error, .. } => {
                         let mut pt = pending_tools_cb.lock().unwrap();
                         if let Some((name, args)) = pt.get(id) {
-                            // 双写收集：call_id + name + args 原样 JSON（先取后删）
-                            log_tools_cb.lock().unwrap().push((
-                                id.clone(),
-                                name.clone(),
-                                args.to_string(),
-                                *is_error,
-                            ));
+                            // 工具调用入库收集（DB messages/tool_calls 用；
+                            // 事件日志已在 ToolExecutionStart/End 实时落盘）
                             done_tools_cb
                                 .lock()
                                 .unwrap()
@@ -596,72 +700,24 @@ async fn run_prompt_and_persist(
         let _ = state.db.touch_session(&session_id).await;
     }
 
-    // —— 阶段 0 双写：工具调用/助手消息/回合结束（batch；失败不阻断主链路）——
+    // —— A1 收尾：写线程排空 + join（保证 TurnEnd 是日志最后一条）——
+    log_done.store(true, std::sync::atomic::Ordering::Relaxed);
+    log_notify.notify_one();
+    let _ = writer_join.await;
+
+    // 回合结束尾事件（reason 由运行结果定：completed/cancelled/failed）
     if let Some(w) = &dual {
-        let tools = log_tools.lock().unwrap().clone();
-        let mut events: Vec<(EventKind, SurfaceIntent, bool, Option<Vec<SeqNo>>)> = Vec::new();
-        for (step, (call_id, name, args, is_error)) in tools.iter().enumerate() {
-            events.push((
-                EventKind::Core(CoreEvent::ToolCall {
-                    turn,
-                    step: step as u32,
-                    call_id: CallId::new(call_id),
-                    name: name.clone(),
-                    args: args.clone(),
-                }),
-                SurfaceIntent::None,
-                false,
-                None,
-            ));
-            events.push((
-                EventKind::Core(CoreEvent::ToolResult {
-                    turn,
-                    step: step as u32,
-                    call_id: CallId::new(call_id),
-                    // 阶段 0 partial：工具输出内容暂不落日志（agent-loop 移植时补）
-                    result: ToolResultMsg {
-                        ok: !*is_error,
-                        output: String::new(),
-                    },
-                    meta: None,
-                }),
-                SurfaceIntent::None,
-                false,
-                None,
-            ));
-        }
-        if !final_text.trim().is_empty() {
-            events.push((
-                EventKind::Core(CoreEvent::AssistantMessage {
-                    turn,
-                    step: tools.len() as u32,
-                    msg: AssistantMsg {
-                        content: final_text.clone(),
-                    },
-                    usage: Some(TokenUsage {
-                        input_tokens: *usage_in.lock().unwrap(),
-                        output_tokens: *usage_out.lock().unwrap(),
-                    }),
-                }),
-                SurfaceIntent::Append,
-                false,
-                None,
-            ));
-        }
         let reason = match &result {
             Ok(_) => TurnEndReason::Completed,
             Err(pi::sdk::Error::Aborted) => TurnEndReason::Cancelled,
             Err(_) => TurnEndReason::Failed,
         };
-        events.push((
+        w.append_best_effort(
+            log_sid,
             EventKind::Core(CoreEvent::TurnEnd { turn, reason }),
             SurfaceIntent::None,
-            false,
-            None,
-        ));
-        if let Err(err) = w.append_batch(log_sid, events).await {
-            tracing::warn!(event = "bm.dual_write_batch_failed", error = %err);
-        }
+        )
+        .await;
     }
 
     // refine-suggest 截获：代理调用 submit_refinement_suggestions 提交的改进建议
@@ -743,8 +799,248 @@ fn tool_summary(name: &str, args: &serde_json::Value) -> String {
     }
 }
 
+/// 真序事件日志条目（回调线程提取 → 写线程落盘）。
+/// 与 pi AgentEvent 一一映射，但携带已解析的 (turn, step) 与权威内容——
+/// 回调内所有上下文（回合号/步骤号/步内文本）同步解析完毕，写线程无状态转换。
+enum LogItem {
+    /// 步骤开始（pi 每次流式响应开始 = 一个 step）
+    StepStart { turn: u32, step: u32 },
+    /// 助手流式块（TextDelta；思考内容已由 pi 并入正文）
+    Chunk { turn: u32, step: u32, text: String },
+    /// 工具调用（ToolExecutionStart）
+    ToolCall { turn: u32, step: u32, call_id: String, name: String, args: String },
+    /// 工具结果（ToolExecutionEnd.result → 输出文本 + details 入 meta）
+    ToolResult { turn: u32, step: u32, call_id: String, ok: bool, output: String, meta: Option<serde_json::Value> },
+    /// 助手完整消息（MessageEnd：权威内容 + 本步 token 用量）
+    AssistantMessage { turn: u32, step: u32, content: String, usage: Option<TokenUsage> },
+    /// pi 自动压缩起止（可审计；摘要区间语义留待 A6 自研压缩引擎）
+    Compaction { turn: u32, start: bool },
+}
+
+/// LogItem → 事件日志 tuple (kind, surface, ignorable, source_seqs)。
+///
+/// source_seqs 暂不落：chunk seq 由存储层在 append 时分配，批内无法预引用；
+/// chunk→message 归并由投影层按 (turn, step) 完成（见 bm-kernel projection.rs）。
+fn log_item_to_event(item: LogItem) -> (EventKind, SurfaceIntent, bool, Option<Vec<SeqNo>>) {
+    let (kind, surface) = match item {
+        LogItem::StepStart { turn, step } => {
+            (EventKind::Core(CoreEvent::StepStart { turn, step }), SurfaceIntent::None)
+        }
+        LogItem::Chunk { turn, step, text } => (
+            EventKind::Core(CoreEvent::AssistantChunk {
+                turn,
+                step,
+                chunk: StreamChunk { text },
+            }),
+            SurfaceIntent::Append,
+        ),
+        LogItem::ToolCall { turn, step, call_id, name, args } => (
+            EventKind::Core(CoreEvent::ToolCall {
+                turn,
+                step,
+                call_id: CallId::new(call_id),
+                name,
+                args,
+            }),
+            SurfaceIntent::None,
+        ),
+        LogItem::ToolResult { turn, step, call_id, ok, output, meta } => (
+            EventKind::Core(CoreEvent::ToolResult {
+                turn,
+                step,
+                call_id: CallId::new(call_id),
+                result: ToolResultMsg { ok, output },
+                meta,
+            }),
+            SurfaceIntent::None,
+        ),
+        LogItem::AssistantMessage { turn, step, content, usage } => (
+            EventKind::Core(CoreEvent::AssistantMessage {
+                turn,
+                step,
+                msg: AssistantMsg { content },
+                usage,
+            }),
+            SurfaceIntent::Append,
+        ),
+        LogItem::Compaction { turn, start: true } => {
+            (EventKind::Core(CoreEvent::CompactionStart { turn }), SurfaceIntent::None)
+        }
+        LogItem::Compaction { turn, start: false } => {
+            (EventKind::Core(CoreEvent::CompactionEnd { turn }), SurfaceIntent::None)
+        }
+    };
+    (kind, surface, false, None)
+}
+
+/// ToolOutput → 字符串：Text 块拼接优先；无文本时退回整包 JSON（保真审计，
+/// 如纯图片输出）。注意不截断——事件日志是审计之家，静默截断违反"模型可见即已记录"。
+fn tool_output_text(output: &pi::sdk::ToolOutput) -> String {
+    let text: Vec<&str> = output
+        .content
+        .iter()
+        .filter_map(|b| match b {
+            pi::model::ContentBlock::Text(t) => Some(t.text.as_str()),
+            _ => None,
+        })
+        .collect();
+    if !text.is_empty() {
+        return text.join("\n");
+    }
+    serde_json::to_string(output).unwrap_or_default()
+}
+
+/// AssistantMessage → 文本（Text 块拼接）。
+/// 正常路径不用它（用步内流式文本，含 pi 已并入正文的思考）；仅非流式/异常兜底。
+fn assistant_text(msg: &pi::model::AssistantMessage) -> String {
+    let parts: Vec<&str> = msg
+        .content
+        .iter()
+        .filter_map(|b| match b {
+            pi::model::ContentBlock::Text(t) => Some(t.text.as_str()),
+            _ => None,
+        })
+        .collect();
+    parts.join("\n")
+}
+
 /// AgentStreamEvent → SSE 事件。
 fn to_sse_event(event: &AgentStreamEvent) -> Event {
     let json = serde_json::to_string(event).unwrap_or_else(|_| "{}".to_string());
     Event::default().data(json)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text_block(s: &str) -> pi::model::ContentBlock {
+        pi::model::ContentBlock::Text(pi::model::TextContent::new(s))
+    }
+
+    #[test]
+    fn tool_output_text_joins_text_blocks() {
+        let out = pi::sdk::ToolOutput {
+            content: vec![text_block("第一段"), text_block("第二段")],
+            details: None,
+            is_error: false,
+        };
+        assert_eq!(tool_output_text(&out), "第一段\n第二段");
+    }
+
+    #[test]
+    fn tool_output_text_falls_back_to_json_when_no_text() {
+        // 无 Text 块（如纯图片输出）→ 整包 JSON 保真
+        let out = pi::sdk::ToolOutput {
+            content: vec![pi::model::ContentBlock::Image(pi::model::ImageContent {
+                data: "AAAA".into(),
+                mime_type: "image/png".into(),
+            })],
+            details: None,
+            is_error: false,
+        };
+        let text = tool_output_text(&out);
+        assert!(text.contains("image/png"), "JSON 兜底应保留原始输出: {text}");
+    }
+
+    #[test]
+    fn assistant_text_extracts_text_blocks_only() {
+        let mut msg = pi::model::AssistantMessage::default();
+        msg.content = vec![text_block("正文"), text_block("续")];
+        assert_eq!(assistant_text(&msg), "正文\n续");
+    }
+
+    #[test]
+    fn log_item_event_type_names() {
+        let cases = [
+            (
+                LogItem::StepStart { turn: 1, step: 1 },
+                "step/start",
+            ),
+            (
+                LogItem::Chunk { turn: 1, step: 1, text: "x".into() },
+                "assistant/chunk",
+            ),
+            (
+                LogItem::ToolCall {
+                    turn: 1,
+                    step: 1,
+                    call_id: "c1".into(),
+                    name: "exec".into(),
+                    args: "{}".into(),
+                },
+                "tool/call",
+            ),
+            (
+                LogItem::ToolResult {
+                    turn: 1,
+                    step: 1,
+                    call_id: "c1".into(),
+                    ok: true,
+                    output: "o".into(),
+                    meta: None,
+                },
+                "tool/result",
+            ),
+            (
+                LogItem::AssistantMessage {
+                    turn: 1,
+                    step: 1,
+                    content: "a".into(),
+                    usage: None,
+                },
+                "assistant/message",
+            ),
+            (LogItem::Compaction { turn: 1, start: true }, "compaction/start"),
+            (LogItem::Compaction { turn: 1, start: false }, "compaction/end"),
+        ];
+        for (item, want) in cases {
+            let (kind, _, _, _) = log_item_to_event(item);
+            assert_eq!(kind.name(), want);
+        }
+    }
+
+    #[test]
+    fn log_item_surface_intents() {
+        // 消息面事件（chunk/assistant message）带 Append；其余 None
+        let append = [
+            LogItem::Chunk { turn: 1, step: 1, text: "x".into() },
+            LogItem::AssistantMessage { turn: 1, step: 1, content: "a".into(), usage: None },
+        ];
+        for item in append {
+            let (_, surface, _, _) = log_item_to_event(item);
+            assert_eq!(surface, SurfaceIntent::Append);
+        }
+        let none = [
+            LogItem::StepStart { turn: 1, step: 1 },
+            LogItem::ToolCall { turn: 1, step: 1, call_id: "c".into(), name: "n".into(), args: "{}".into() },
+            LogItem::ToolResult { turn: 1, step: 1, call_id: "c".into(), ok: true, output: "o".into(), meta: None },
+            LogItem::Compaction { turn: 1, start: true },
+        ];
+        for item in none {
+            let (_, surface, _, _) = log_item_to_event(item);
+            assert_eq!(surface, SurfaceIntent::None);
+        }
+    }
+
+    #[test]
+    fn tool_result_keeps_meta_details() {
+        let (kind, _, _, _) = log_item_to_event(LogItem::ToolResult {
+            turn: 2,
+            step: 3,
+            call_id: "c9".into(),
+            ok: false,
+            output: "boom".into(),
+            meta: Some(serde_json::json!({"code": 1})),
+        });
+        match kind {
+            EventKind::Core(CoreEvent::ToolResult { turn, step, result, meta, .. }) => {
+                assert_eq!((turn, step), (2, 3));
+                assert!(!result.ok);
+                assert_eq!(result.output, "boom");
+                assert_eq!(meta, Some(serde_json::json!({"code": 1})));
+            }
+            other => panic!("应为 tool/result，得到 {other:?}"),
+        }
+    }
 }

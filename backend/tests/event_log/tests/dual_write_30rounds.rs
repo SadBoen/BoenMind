@@ -1,16 +1,17 @@
-//! 阶段 0 验收：模拟 30 轮对话经 DualWriter 双写
-//! （与 bm-server chat.rs 完全相同的调用序列：回合开始 → 用户消息 →
-//! 工具/助手/回合结束 batch），验证：
+//! 阶段 1 验收：模拟 30 轮对话经 DualWriter 双写
+//! （与 bm-server chat.rs A1 真序序列相同：回合开始 → 用户消息 →
+//! 每 step 真序 StepStart/chunk/助手消息/工具调用/工具结果 → 回合结束），验证：
 //! 1. 事件流重放两次字节一致；
-//! 2. 消息面重建正确（30 轮 × user+assistant，assistant 挂工具调用）；
+//! 2. 消息面重建正确（30 轮 × [user + 2×assistant]，chunk 与权威消息归并、不重复；
+//!    assistant 挂工具调用，工具输出内容落日志）；
 //! 3. 双写成败计数与事件数一致。
 
 use std::sync::Arc;
 
 use bm_kernel::{EventLog, InMemoryEventStore, SurfaceIntent};
 use bm_protocol::{
-    AssistantMsg, BranchId, CallId, CoreEvent, EventKind, SeqNo, SessionId, TokenUsage,
-    ToolResultMsg, TurnEndReason, UserMsg, UserMsgSource,
+    AssistantMsg, BranchId, CallId, CoreEvent, EventKind, SeqNo, SessionId, StreamChunk,
+    TokenUsage, ToolResultMsg, TurnEndReason, UserMsg, UserMsgSource,
 };
 use bm_storage_turso::dual_write::DualWriter;
 
@@ -20,6 +21,10 @@ async fn thirty_rounds_dual_write_replay_identical() {
     let w = DualWriter::new(log);
     let sid = SessionId::new("sess_30rounds_dual");
     let bid = BranchId::new("main");
+
+    // 每轮 12 事件：TurnStart + User + (StepStart + 2×Chunk + AssistantMessage
+    // + ToolCall + ToolResult) + (StepStart + Chunk + AssistantMessage) + TurnEnd
+    const EVENTS_PER_ROUND: usize = 12;
 
     for turn in 1..=30u32 {
         // 回合开始（chat.rs：TurnStart，best_effort）
@@ -41,33 +46,32 @@ async fn thirty_rounds_dual_write_replay_identical() {
             SurfaceIntent::Append,
         )
         .await;
-        // 回合收尾（chat.rs：工具/助手消息/回合结束 batch）
+
+        // step 1：真序 chunk 流 → 权威消息 → 工具执行
         let events: Vec<(EventKind, SurfaceIntent, bool, Option<Vec<SeqNo>>)> = vec![
             (
-                EventKind::Core(CoreEvent::ToolCall {
-                    turn,
-                    step: 0,
-                    call_id: CallId::new(format!("call_{turn}")),
-                    name: "web_search".into(),
-                    args: r#"{"q":"rust"}"#.into(),
-                }),
+                EventKind::Core(CoreEvent::StepStart { turn, step: 1 }),
                 SurfaceIntent::None,
                 false,
                 None,
             ),
             (
-                EventKind::Core(CoreEvent::ToolResult {
+                EventKind::Core(CoreEvent::AssistantChunk {
                     turn,
-                    step: 0,
-                    call_id: CallId::new(format!("call_{turn}")),
-                    // 阶段 0 partial：输出内容暂不落日志（chat.rs 同）
-                    result: ToolResultMsg {
-                        ok: true,
-                        output: String::new(),
-                    },
-                    meta: None,
+                    step: 1,
+                    chunk: StreamChunk { text: "草稿".into() },
                 }),
-                SurfaceIntent::None,
+                SurfaceIntent::Append,
+                false,
+                None,
+            ),
+            (
+                EventKind::Core(CoreEvent::AssistantChunk {
+                    turn,
+                    step: 1,
+                    chunk: StreamChunk { text: "部分".into() },
+                }),
+                SurfaceIntent::Append,
                 false,
                 None,
             ),
@@ -81,6 +85,66 @@ async fn thirty_rounds_dual_write_replay_identical() {
                     usage: Some(TokenUsage {
                         input_tokens: 10 + turn as u64,
                         output_tokens: 20 + turn as u64,
+                    }),
+                }),
+                SurfaceIntent::Append,
+                false,
+                None,
+            ),
+            (
+                EventKind::Core(CoreEvent::ToolCall {
+                    turn,
+                    step: 1,
+                    call_id: CallId::new(format!("call_{turn}")),
+                    name: "web_search".into(),
+                    args: r#"{"q":"rust"}"#.into(),
+                }),
+                SurfaceIntent::None,
+                false,
+                None,
+            ),
+            (
+                EventKind::Core(CoreEvent::ToolResult {
+                    turn,
+                    step: 1,
+                    call_id: CallId::new(format!("call_{turn}")),
+                    result: ToolResultMsg {
+                        ok: true,
+                        output: format!("搜索结果 {turn}"),
+                    },
+                    meta: None,
+                }),
+                SurfaceIntent::None,
+                false,
+                None,
+            ),
+            // step 2：无工具的纯文本步
+            (
+                EventKind::Core(CoreEvent::StepStart { turn, step: 2 }),
+                SurfaceIntent::None,
+                false,
+                None,
+            ),
+            (
+                EventKind::Core(CoreEvent::AssistantChunk {
+                    turn,
+                    step: 2,
+                    chunk: StreamChunk { text: "补充".into() },
+                }),
+                SurfaceIntent::Append,
+                false,
+                None,
+            ),
+            (
+                EventKind::Core(CoreEvent::AssistantMessage {
+                    turn,
+                    step: 2,
+                    msg: AssistantMsg {
+                        content: format!("第 {turn} 轮补充"),
+                    },
+                    usage: Some(TokenUsage {
+                        input_tokens: 30 + turn as u64,
+                        output_tokens: 5 + turn as u64,
                     }),
                 }),
                 SurfaceIntent::Append,
@@ -109,20 +173,24 @@ async fn thirty_rounds_dual_write_replay_identical() {
         "30 轮双写事件流重放两次必须字节一致"
     );
 
-    // 2. 消息面：30 轮 × (user + assistant) = 60 条，assistant 挂工具调用
+    // 2. 消息面：30 轮 × (user + 2×assistant) = 90 条；
+    //    chunk 与权威消息同 (turn, step) 归并（不重复），assistant 挂工具调用且输出已落日志
     let msgs = w.event_log().derive_messages(&sid, &bid).await.unwrap();
-    assert_eq!(msgs.len(), 60, "每轮 user + assistant 各一条");
+    assert_eq!(msgs.len(), 90, "每轮 user + 2 个 step 各一条 assistant");
     assert_eq!(msgs[0].role, "user");
     assert_eq!(msgs[0].content, "第 1 轮问题");
     assert_eq!(msgs[1].role, "assistant");
+    assert_eq!(msgs[1].content, "第 1 轮回答", "权威内容覆盖 chunk 草稿");
     assert_eq!(msgs[1].tool_calls.len(), 1, "assistant 消息挂 1 个工具调用");
     assert_eq!(msgs[1].tool_calls[0].call_id, "call_1");
     assert!(msgs[1].tool_calls[0].result.as_ref().unwrap().ok);
-    assert_eq!(msgs[59].content, "第 30 轮回答");
+    assert_eq!(msgs[1].tool_calls[0].result.as_ref().unwrap().output, "搜索结果 1");
+    assert_eq!(msgs[2].content, "第 1 轮补充");
+    assert_eq!(msgs[89].content, "第 30 轮补充");
 
-    // 3. 双写计数 = 事件总数（30 轮 × 6 事件 = 180）
+    // 3. 双写计数 = 事件总数（30 轮 × 12 事件 = 360）
     assert_eq!(w.ok_count(), once.len() as u64);
-    assert_eq!(once.len(), 180);
+    assert_eq!(once.len(), 30 * EVENTS_PER_ROUND);
     assert_eq!(w.failed_count(), 0);
 }
 

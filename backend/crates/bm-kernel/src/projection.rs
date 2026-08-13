@@ -34,6 +34,12 @@ pub struct SurfaceMessage {
     pub role: String,
     pub content: String,
     pub tool_calls: Vec<SurfaceToolCall>,
+    /// 消息所属回合/步骤：chunk→message 归并依据（同 (turn, step) 才合并，
+    /// 防止相邻回合/步骤的流式块串味）。0 = 无归属（如压缩摘要消息）。
+    #[serde(default)]
+    pub turn: u32,
+    #[serde(default)]
+    pub step: u32,
 }
 
 /// 消息面投影：从事件流折叠出用户/助手/工具消息。
@@ -65,9 +71,14 @@ impl SurfaceProjection {
         self.messages.retain(|m| m.seq < start || m.seq > end);
     }
 
-    /// 追加内容到最后一个 assistant 消息（chunk 合并）。
-    fn append_to_last_assistant(&mut self, seq: u64, text: &str) {
-        if let Some(last) = self.messages.last_mut().filter(|m| m.role == "assistant") {
+    /// 追加内容到当前 (turn, step) 的 assistant 消息（chunk 合并）。
+    /// 不同回合/步骤的 chunk 新建消息——防止相邻步的流式块串味。
+    fn append_to_last_assistant(&mut self, seq: u64, turn: u32, step: u32, text: &str) {
+        if let Some(last) = self
+            .messages
+            .last_mut()
+            .filter(|m| m.role == "assistant" && m.turn == turn && m.step == step)
+        {
             last.content.push_str(text);
             return;
         }
@@ -76,10 +87,12 @@ impl SurfaceProjection {
             role: "assistant".into(),
             content: text.to_string(),
             tool_calls: Vec::new(),
+            turn,
+            step,
         });
     }
 
-    fn attach_tool_call(&mut self, seq: u64, call: SurfaceToolCall) {
+    fn attach_tool_call(&mut self, seq: u64, turn: u32, step: u32, call: SurfaceToolCall) {
         if let Some(last) = self.messages.last_mut().filter(|m| m.role == "assistant") {
             last.tool_calls.push(call);
             return;
@@ -90,6 +103,8 @@ impl SurfaceProjection {
             role: "assistant".into(),
             content: String::new(),
             tool_calls: vec![call],
+            turn,
+            step,
         });
     }
 
@@ -124,20 +139,22 @@ impl Projection for SurfaceProjection {
                         role: "user".into(),
                         content: msg.content.clone(),
                         tool_calls: Vec::new(),
+                        turn: 0,
+                        step: 0,
                     });
                 }
-                CoreEvent::AssistantMessage { msg, .. } => {
-                    // 合并规则：最后的 assistant 若是"工具占位"（无内容仅挂
-                    // 工具调用，由 ToolCall 事件创建）→ 填充内容，不新建消息
-                    let merged = self
-                        .messages
-                        .last_mut()
-                        .is_some_and(|last| {
-                            last.role == "assistant"
-                                && last.content.is_empty()
-                                && !last.tool_calls.is_empty()
-                        });
-                    if merged {
+                CoreEvent::AssistantMessage { turn, step, msg, .. } => {
+                    // 真序事件（A1）下每个 step 先有 chunk 后有 message：
+                    // 同 (turn, step) 的 assistant 消息是 chunk 拼的草稿，
+                    // message 是权威内容 → 原地覆写，不新建（防重复）。
+                    // 兼容旧路径：工具占位消息（无内容仅挂工具调用）填充；
+                    // 两者都不是才新建消息。
+                    let merge = self.messages.last_mut().is_some_and(|last| {
+                        last.role == "assistant"
+                            && ((last.turn == *turn && last.step == *step)
+                                || (last.content.is_empty() && !last.tool_calls.is_empty()))
+                    });
+                    if merge {
                         let last = self.messages.last_mut().expect("checked above");
                         last.content = msg.content.clone();
                     } else {
@@ -146,15 +163,19 @@ impl Projection for SurfaceProjection {
                             role: "assistant".into(),
                             content: msg.content.clone(),
                             tool_calls: Vec::new(),
+                            turn: *turn,
+                            step: *step,
                         });
                     }
                 }
-                CoreEvent::AssistantChunk { chunk, .. } => {
-                    self.append_to_last_assistant(ev.seq.as_u64(), &chunk.text);
+                CoreEvent::AssistantChunk { turn, step, chunk, .. } => {
+                    self.append_to_last_assistant(ev.seq.as_u64(), *turn, *step, &chunk.text);
                 }
-                CoreEvent::ToolCall { call_id, name, args, .. } => {
+                CoreEvent::ToolCall { turn, step, call_id, name, args, .. } => {
                     self.attach_tool_call(
                         ev.seq.as_u64(),
+                        *turn,
+                        *step,
                         SurfaceToolCall {
                             call_id: call_id.to_string(),
                             name: name.clone(),
@@ -174,6 +195,8 @@ impl Projection for SurfaceProjection {
                         role: "assistant".into(),
                         content: format!("[已压缩 {}..{}] {}", msg.removed_start, msg.removed_end, msg.summary),
                         tool_calls: Vec::new(),
+                        turn: 0,
+                        step: 0,
                     });
                 }
                 _ => {}
@@ -259,6 +282,106 @@ mod tests {
         let msgs = fold(evs);
         assert_eq!(msgs[1].role, "assistant");
         assert_eq!(msgs[1].content, "你好");
+    }
+
+    #[test]
+    fn chunk_then_message_same_step_merges_no_duplicate() {
+        // A1 真序：chunk 拼草稿 → AssistantMessage 权威覆写（不产生第二条消息）
+        let evs = vec![
+            env(1, EventKind::Core(CoreEvent::UserMessage {
+                msg: bm_protocol::UserMsg { content: "q".into() },
+                source: bm_protocol::UserMsgSource::Human,
+            })),
+            env(2, EventKind::Core(CoreEvent::AssistantChunk {
+                turn: 1,
+                step: 1,
+                chunk: bm_protocol::StreamChunk { text: "草稿".into() },
+            })),
+            env(3, EventKind::Core(CoreEvent::AssistantMessage {
+                turn: 1,
+                step: 1,
+                msg: bm_protocol::AssistantMsg { content: "权威内容".into() },
+                usage: None,
+            })),
+        ];
+        let msgs = fold(evs);
+        assert_eq!(msgs.len(), 2, "chunk+message 不应产生重复消息");
+        assert_eq!(msgs[1].content, "权威内容");
+    }
+
+    #[test]
+    fn cross_step_chunks_do_not_blend() {
+        // 相邻 step 的 chunk 不得串味；无 user 消息间隔也各自成条
+        let evs = vec![
+            env(1, EventKind::Core(CoreEvent::AssistantChunk {
+                turn: 1,
+                step: 1,
+                chunk: bm_protocol::StreamChunk { text: "s1".into() },
+            })),
+            env(2, EventKind::Core(CoreEvent::AssistantMessage {
+                turn: 1,
+                step: 1,
+                msg: bm_protocol::AssistantMsg { content: "S1".into() },
+                usage: None,
+            })),
+            env(3, EventKind::Core(CoreEvent::AssistantChunk {
+                turn: 1,
+                step: 2,
+                chunk: bm_protocol::StreamChunk { text: "s2".into() },
+            })),
+            env(4, EventKind::Core(CoreEvent::AssistantMessage {
+                turn: 1,
+                step: 2,
+                msg: bm_protocol::AssistantMsg { content: "S2".into() },
+                usage: None,
+            })),
+            env(5, EventKind::Core(CoreEvent::AssistantChunk {
+                turn: 2,
+                step: 1,
+                chunk: bm_protocol::StreamChunk { text: "t2".into() },
+            })),
+        ];
+        let msgs = fold(evs);
+        assert_eq!(msgs.len(), 3);
+        assert_eq!(msgs[0].content, "S1");
+        assert_eq!(msgs[1].content, "S2");
+        assert_eq!(msgs[2].content, "t2", "新 turn 的 chunk 不得并入上一步消息");
+    }
+
+    #[test]
+    fn tool_placeholder_filled_by_message_of_same_step() {
+        // 工具占位（无 chunk）→ 同 step 的 AssistantMessage 填充内容
+        let evs = vec![
+            env(1, EventKind::Core(CoreEvent::UserMessage {
+                msg: bm_protocol::UserMsg { content: "run".into() },
+                source: bm_protocol::UserMsgSource::Human,
+            })),
+            env(2, EventKind::Core(CoreEvent::ToolCall {
+                turn: 1,
+                step: 1,
+                call_id: CallId::new("c1"),
+                name: "exec".into(),
+                args: r#"{"cmd":"ls"}"#.into(),
+            })),
+            env(3, EventKind::Core(CoreEvent::ToolResult {
+                turn: 1,
+                step: 1,
+                call_id: CallId::new("c1"),
+                result: ToolResultMsg { ok: true, output: "ok".into() },
+                meta: None,
+            })),
+            env(4, EventKind::Core(CoreEvent::AssistantMessage {
+                turn: 1,
+                step: 1,
+                msg: bm_protocol::AssistantMsg { content: "完成了".into() },
+                usage: None,
+            })),
+        ];
+        let msgs = fold(evs);
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[1].content, "完成了");
+        assert_eq!(msgs[1].tool_calls.len(), 1, "工具挂靠不因填充丢失");
+        assert_eq!(msgs[1].tool_calls[0].result.as_ref().unwrap().output, "ok");
     }
 
     #[test]
