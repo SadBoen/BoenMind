@@ -88,11 +88,13 @@ impl EventValidator {
     }
 
     /// A7 migrate-on-continue：把任意低版本事件逐级迁移到当前版本（骨架）。
+    ///
     /// - version == 当前：原样通过；
     /// - version < 当前：沿 [`bm_protocol::FORMAT_MIGRATIONS`] 逐级 apply；
     ///   缺步骤 → MigrationUnavailable（当前无任何步骤，v0 数据仍拒绝重建，
     ///   与版本化之前语义一致）；
     /// - version > 当前：旧程序读新数据 → FormatVersionMismatch。
+    ///
     /// 只做内存迁移（读时升级），不写回存储——下次 append 自然以当前版本落盘。
     pub fn migrate(ev: SessionEvent) -> Result<SessionEvent, ProtocolError> {
         if ev.version > SESSION_FORMAT_VERSION {
