@@ -152,6 +152,16 @@ LoopX 定位"长时运行 AI agent 团队的轻量 loop 工程状态内核"—�
 | L12 | **前场/后场分离**（frontstage 渠道化投影，backstage ledger 是真相；Chat 不是真相源） | registry/state/history/quota/gates/lease 是后场台账，UI 是投影 | 治理面板/前端 UI 都是投影（§6.3），与"事件日志唯一事实源"同构 |
 | L13 | **写者正确性先于服务**（重复心跳/配额消耗/过期 todo 更新 = 显式 no-op 或冲突；乐观 revision） | 先修写者并发正确性，再谈 server | 阶段 3 RPC 代理写的前置纪律：幂等键 + 乐观 revision |
 | L14 | **session-runtime control-plane adapter**（对已有 session 运行时的平台，控制面作为"目标层投影"接入而非第二运行时） | 摄入紧凑摘要，产出 goal_state/operator_gate/handoff_packet 等投影 | **我们就是 session runtime**：Steward/目标域作为投影接入，不自造第二运行时 |
+| L15 | **类型化 turn 事务收据链**（settlement_identity 幂等键 + validation→durable_writeback→quota_spend→scheduler_apply→ack 有序前缀推进，失败 typed 到具体 phase） | 每个 turn 一个带幂等键的 plan，阶段收据有序推进 | 把关链（阶段 2）的 effect-pipeline 参照：工具结果必须过"验证→落账→记账→调度→回执"有序链 |
+| L16 | **事件 append 的指纹冲突检测 + 投影 source_checksum**（AppendOnlyStateEventStore：锁内重读去重、fingerprint 冲突抛错、append_sequence 追加、投影重建带校验和） | 无 SQLite 的可靠事件库姿势 | 我们 turso 单写者已同款语义（UNIQUE + repair_heads）；source_checksum 可作审计增强（重放完整性校验） |
+| L17 | **O_EXCL sentinel 预留 + "产物存在即跳过"防半成品覆盖**（run 文件 JSON+MD 成对 + index 附加索引） | 比纯锁更稳的多进程写文件协议 | 阶段 3 RPC 代理写 / 多实例时的文件产物命名与预留协议参照 |
+
+**源码级验证校准（2026-08-14 夜，12 项核实：8 属实 / 4 部分属实）**：
+- L1：CapabilityRegistry 与"验证→写回→记账有序收据"真实存在，但 LoopX 没有统一的 Kernel 抽象（四角色是文档模型、代码部分成体系）——不影响吸收，我们的 Kernel=事件日志+注册表本来就成体系；
+- L3：配额 should-run 与 interaction_contract 属实，但**自动唤醒只是 RRULE/scheduler_hint 驱动 + cadence 提示级**（无独立唤醒调度器）；
+- L4/L13：软认领属实，但 LoopX 的乐观 revision 检查**仅 shadow 形式未强制执行**（读文件→改→原子写，无 CAS）——这是 LoopX 自己的债，我们不照抄：幂等去重/文件锁/O_EXCL 已落地（L17），乐观 revision 我们直接按强校验做；
+- L5：LoopX 有**两条独立日志线**（state event log JSONL + rollout 证据日志 JSONL）——我们统一为一条事件日志底座，是相对优势，保持；
+- L7：advisory 语义硬编码属实（proposal_only_until_promoted、不可改状态不可花配额），但形态是 CLI 触发 + operator 决策，非常驻后台队列。
 
 **避免照抄**：LoopX 是 Python + CLI 文件态（无动态插件、无 QuickJS、无 UI 应用层），控制面不碰会话执行——它的"适配器对接 Codex/Claude Code"正是我们内核 + 应用插件已经解决的部分。
 
