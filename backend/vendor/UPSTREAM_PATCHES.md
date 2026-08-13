@@ -60,6 +60,38 @@ git show 42e29b2   -- backend/vendor/pi_agent_rust/src/sdk.rs backend/vendor/pi_
 
 ---
 
+## asupersync 补丁（vendor 化依赖，非 pi_agent_rust）
+
+> 自 2026-08-14 起，`asupersync`（pi 引擎的底层异步运行时）由 crates.io 依赖改为
+> **vendor 化本地依赖**：`backend/vendor/asupersync/` + workspace `[patch.crates-io]`。
+> 原因：上游 crates.io 0.3.10 在 Windows 上存在连接误判 bug（见下），需要本地补丁且
+> 补丁必须可复现（cargo 缓存不持久）。asupersync 与 pi_agent_rust 同作者
+> （Dicklesworthstone），修复路径共用。
+
+### 基线信息
+
+| 项 | 值 |
+|---|---|
+| 上游仓库 | https://github.com/Dicklesworthstone/asupersync |
+| 基线版本 | 0.3.10（crates.io） |
+| vendor 引入 commit | 2026-08-14（本轮） |
+| 上游依赖声明 | pi_agent_rust `Cargo.toml` 声明 `asupersync = "0.3.9"`；上游 `Cargo.lock` 锁 0.3.9（**比本地 0.3.10 更旧，无下文修复**） |
+
+### 补丁清单
+
+| # | 文件 | 位置 | 内容摘要 | 原因 | 上游 issue |
+|---|---|---|---|---|---|
+| A1 | `src/net/tcp/stream.rs` | `wait_for_connect_fallback()`（Windows 分支） | 连接完成检测改用 `WSAPoll` 内核 WRITABLE 事件，替代 `peer_addr()` 轮询 | 部分 Windows 网络栈（实测 Win10 19044 直连阿里云）`getpeername()` 在 TCP connect 真正完成前就返回成功 → 误判"已连接" → 首笔 send 报 WSAENOTCONN(10057) | 待提 |
+| A2 | `src/net/tcp/stream.rs` | `poll_write()`（Windows 分支） | WSAENOTCONN 重试由"纯次数上限"改为"100ms 真实时间窗口"（新增 `first_10057_at` 字段） | A1 误判发生后，原 4096 次忙等重试在连接完成（~40ms）前耗尽预算 → TLS 握手必败；时间窗口保证慢连接有机会完成 | 待提 |
+
+**验证**：修复前约 50% 请求失败（连接目标 IP 快慢决定）；修复后 API 多轮 + 前端 UI 全链路
+0 失败（含最慢连接场景，后端处理耗时 2-3s 正常）。
+
+**升级流程**：上游合入对应修复后，删除 A1/A2 补丁并将 `[patch.crates-io]` 移除、
+恢复 crates.io 依赖（`cargo update -p asupersync`）。
+
+---
+
 ## 升级流程（上游出新版本时）
 
 1. **锁定新基线**：上游新 commit 打 tag（如 v0.2.1）。

@@ -6,6 +6,11 @@ members = [
     "vendor/pi_agent_rust",
 ]
 
+# asupersync vendor 化：pi 引擎的底层异步运行时，本地补丁见
+# backend/vendor/UPSTREAM_PATCHES.md「asupersync」区。
+[patch.crates-io]
+asupersync = { path = "vendor/asupersync" }
+
 [workspace.dependencies]
 # wasm-host：开启 QuickJS 内 WebAssembly polyfill（wasmtime），插件 JS 可用 WASM 模块。
 # 若产物体积/编译时间超预算，可移除该 feature（见 docs 讨论记录）。
