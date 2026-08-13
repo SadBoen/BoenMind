@@ -731,6 +731,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bm-loop"
+version = "0.1.0"
+dependencies = [
+ "bm-protocol",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "bm-protocol"
 version = "0.1.0"
 dependencies = [
