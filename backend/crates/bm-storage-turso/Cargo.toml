@@ -1,0 +1,17 @@
+[package]
+name = "bm-storage-turso"
+version = "0.1.0"
+edition = "2024"
+description = "BoenMind 存储后端：EventStorePort 的 turso 实现 + checkpoint 策略 + 阶段 0 双写过渡"
+
+[dependencies]
+bm-protocol = { workspace = true }
+bm-kernel = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# 与 bm-core 同款裁剪（无 fts，减小构建体积）
+turso = { version = "0.7.2", default-features = false, features = ["mimalloc"] }
+tokio = { version = "1", features = ["sync"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }

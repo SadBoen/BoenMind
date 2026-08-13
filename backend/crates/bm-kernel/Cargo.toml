@@ -1,0 +1,15 @@
+[package]
+name = "bm-kernel"
+version = "0.1.0"
+edition = "2024"
+description = "BoenMind 内核：Ctx/服务注册表/事件总线/插件加载器/事件日志原语"
+
+[dependencies]
+bm-protocol = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# parallel 扇出需要 spawn（rt）；存储原语用 tokio 锁（sync）
+tokio = { version = "1", features = ["rt", "sync"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }

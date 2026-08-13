@@ -880,6 +880,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "bm-event-log-tests"
+version = "0.1.0"
+dependencies = [
+ "bm-kernel",
+ "bm-protocol",
+ "bm-storage-turso",
+ "serde_json",
+ "tokio",
+ "turso",
+]
+
+[[package]]
+name = "bm-kernel"
+version = "0.1.0"
+dependencies = [
+ "bm-protocol",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "bm-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "bm-server"
 version = "0.1.2"
 dependencies = [
@@ -905,6 +935,18 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "zip",
+]
+
+[[package]]
+name = "bm-storage-turso"
+version = "0.1.0"
+dependencies = [
+ "bm-kernel",
+ "bm-protocol",
+ "serde",
+ "serde_json",
+ "tokio",
+ "turso",
 ]
 
 [[package]]

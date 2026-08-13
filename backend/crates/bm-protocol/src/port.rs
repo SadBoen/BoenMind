@@ -1,0 +1,87 @@
+//! Port traits：内核依赖 Port 而非实现（A2）。
+//!
+//! 首版只定义 [`EventStorePort`]（阶段 0 必需）；其余 Port
+//! （ModelProviderPort/FileSystemPort/…）留待对应阶段按 S9
+//! "只注册正在使用的类型"逐个添加——**不建空 trait 占位**
+//! （诚实标注 partial，避免 kernel.chat 的宣称与交付脱节）。
+//!
+//! 签名用 `BoxFuture`（手写）而非 async-trait：保持契约 crate
+//! 零额外依赖。
+
+use std::future::Future;
+use std::pin::Pin;
+
+use crate::error::ProtocolError;
+use crate::event::SessionEvent;
+use crate::ids::{BranchId, SeqNo, SessionId};
+
+/// 手写 async fn 签名（等价 async-trait 展开，零依赖）。
+pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+/// 事件读取查询（按 (session, branch, seq 范围)）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EventQuery {
+    pub session_id: SessionId,
+    pub branch_id: BranchId,
+    /// 只返回 seq > seq_gt 的事件
+    pub seq_gt: Option<u64>,
+    /// 只返回 seq <= seq_lte 的事件
+    pub seq_lte: Option<u64>,
+    /// 返回条数上限（默认不限）
+    pub limit: Option<u64>,
+}
+
+impl EventQuery {
+    pub fn new(session_id: SessionId, branch_id: BranchId) -> Self {
+        Self {
+            session_id,
+            branch_id,
+            seq_gt: None,
+            seq_lte: None,
+            limit: None,
+        }
+    }
+}
+
+/// 分支头（fork/merge 语义，branch_heads 表行）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BranchHead {
+    pub session_id: SessionId,
+    pub branch_id: BranchId,
+    /// fork 来源分支（main 为 None）
+    pub parent_branch: Option<String>,
+    pub head_seq: SeqNo,
+}
+
+/// 事件存储端口。实现：内存（bm-kernel InMemoryEventStore）与
+/// turso（bm-storage-turso）。**单写者约定**：跨进程不直写日志
+/// （走 RPC 代理，首版不承诺多进程写，实现方案 §5-4）。
+///
+/// 能力矩阵（shipped/partial 诚实标注）：
+/// - append / append_batch / read / head_seq：shipped
+/// - subscribe（replay-prefix + tail 事件流）：partial —— 阶段 1
+///   事件流推送时实现，当前可用 read + head_seq 轮询达成同等语义
+pub trait EventStorePort: Send + Sync {
+    /// 原子 append 单条事件，返回分配的 seq（存储层覆写信封 seq）。
+    fn append(&self, ev: SessionEvent) -> BoxFuture<'_, Result<SeqNo, ProtocolError>>;
+
+    /// 原子批量 append（seq 连续分配，失败整体不落）。
+    fn append_batch(&self, evs: Vec<SessionEvent>) -> BoxFuture<'_, Result<Vec<SeqNo>, ProtocolError>>;
+
+    /// 按查询读取事件（seq 升序）。
+    fn read(&self, q: EventQuery) -> BoxFuture<'_, Result<Vec<SessionEvent>, ProtocolError>>;
+
+    /// 分支当前头 seq（无事件为 None）。
+    fn head_seq(&self, sid: &SessionId, bid: &BranchId) -> BoxFuture<'_, Result<Option<SeqNo>, ProtocolError>>;
+
+    /// fork 新分支（记录 parent，超头/重复拒绝）。`new` 由上层生成。
+    fn fork_branch(
+        &self,
+        sid: &SessionId,
+        from: &BranchId,
+        new: &BranchId,
+    ) -> BoxFuture<'_, Result<(), ProtocolError>>;
+
+    /// 列出会话全部分支头。
+    fn branch_heads(&self, sid: &SessionId) -> BoxFuture<'_, Result<Vec<BranchHead>, ProtocolError>>;
+}
