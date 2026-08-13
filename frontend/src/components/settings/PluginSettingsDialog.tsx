@@ -247,7 +247,8 @@ export function PluginSettingsDialog({ plugin, open, onClose }: Props) {
     for (const f of schema) {
       if (f.type === "group") {
         const prefix = f.key.replace("*", "");
-        const max = groupInstances(f);
+        // 恢复默认：至少补回 manifest 默认实例数（删到 0 张时一并重建）
+        const max = Math.max(groupInstances(f), f.instances ?? 2);
         for (let n = 1; n <= max; n++) {
           for (const sub of f.fields ?? []) apply(`${prefix}${n}.${sub.key}`, sub);
         }
@@ -341,28 +342,22 @@ export function PluginSettingsDialog({ plugin, open, onClose }: Props) {
               </div>
             )}
 
-            {/* ── 普通分组（搜索设置等）折叠卡片 ── */}
+            {/* ── 普通分组（搜索设置等）：固定字段，直接平铺不折叠 ── */}
             {groups.ordinary.map(([group, fields]) => (
-              <CollapsibleCard
-                key={group}
-                title={groupTitle(group, fields)}
-                isOpen={!collapsed.has(group)}
-                onToggle={() => toggleCollapsed(group)}
-              >
-                <div className="space-y-3">
-                  {fields.map((field) => (
-                    <SettingFieldInput
-                      key={field.key}
-                      field={field}
-                      value={values[field.key]}
-                      onChange={(v) => setField(field.key, v)}
-                      disabled={saving}
-                      cleared={clears.has(field.key)}
-                      onToggleClear={() => toggleClear(field.key)}
-                    />
-                  ))}
-                </div>
-              </CollapsibleCard>
+              <div key={group} className="space-y-3">
+                <h4 className="text-sm font-semibold">{groupTitle(group, fields)}</h4>
+                {fields.map((field) => (
+                  <SettingFieldInput
+                    key={field.key}
+                    field={field}
+                    value={values[field.key]}
+                    onChange={(v) => setField(field.key, v)}
+                    disabled={saving}
+                    cleared={clears.has(field.key)}
+                    onToggleClear={() => toggleClear(field.key)}
+                  />
+                ))}
+              </div>
             ))}
 
             {/* ── 供应商卡片（sources.* 每源一张，含启停开关 + 测试按钮） ── */}
@@ -477,17 +472,16 @@ export function PluginSettingsDialog({ plugin, open, onClose }: Props) {
                                 {t("settings.plugins.test")}
                               </Button>
                             )}
-                            {max > 1 && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
-                                onClick={() => removeGroupInstance(field, n)}
-                                disabled={saving}
-                              >
-                                <Trash2 size={12} />
-                              </Button>
-                            )}
+                            {/* 任意一张卡都可删除（含最后一张）；删光后靠「添加源」重建 */}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+                              onClick={() => removeGroupInstance(field, n)}
+                              disabled={saving}
+                            >
+                              <Trash2 size={12} />
+                            </Button>
                           </>
                         }
                       >
