@@ -46,6 +46,12 @@ cd frontend && pnpm tauri dev
 cd frontend && pnpm tauri build --debug --no-bundle
 ```
 
+> **构建注意（Windows）**：debug 构建的 `bm-server.exe` 会达到 2GB+（vendored
+> pi_agent_rust 全量 debuginfo），超出 Windows PE 加载器限制，启动报
+> "Exec format error" / "%1 不是有效的 Win32 应用程序"——不是文件损坏。
+> 本机跑服务请用 `cargo build --release -p bm-server`（约 10-20 分钟），
+> 或 `RUSTFLAGS="-C strip=debuginfo" cargo build -p bm-server` 快速验证。
+
 ## 使用
 
 1. **配置模型提供商**：点击左下角「设置」→「模型提供商」→「添加提供商」。

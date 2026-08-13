@@ -4,6 +4,7 @@
 //! - 桌面壳内嵌：Tauri 启动时在独立线程调用 [`serve`]
 
 pub mod chat;
+pub mod pdf_omni;
 pub mod permission;
 pub mod routes;
 pub mod static_files;
@@ -114,6 +115,8 @@ fn router(state: AppState) -> Router {
         .route("/api/providers/list-models", post(routes::providers::list_provider_models))
         .route("/api/thinking-levels", get(routes::providers::thinking_levels))
         .route("/api/providers/test", post(routes::providers::test_provider))
+        .route("/api/plugins/pdf-omni/parse", post(routes::pdf_omni::parse_pdf))
+        .route("/api/plugins/pdf-omni/probe", post(routes::pdf_omni::probe))
         .route("/api/updates/check", get(routes::updates::check_update))
         .route("/api/updates/apply", post(routes::updates::apply_update))
         .route("/api/updates/restart", post(routes::updates::restart_update))
@@ -259,6 +262,10 @@ pub async fn init() -> Result<(AppConfig, Db), Box<dyn std::error::Error>> {
 
     // 2.25 开启 pi 会话热路径性能计数器（原子计数，零 UI 暴露；排障时读内部快照）
     unsafe { std::env::set_var("PI_PERF_TELEMETRY", "1") };
+
+    // 2.5 pdf-omni 插件经 loopback 调宿主解析端点：放行纯 http 的 127.0.0.1
+    // （上游 http connector 对 loopback 的明文 http 需显式 opt-in；只影响本机端点）
+    unsafe { std::env::set_var("PI_HTTP_ALLOW_LOOPBACK", "1") };
 
     // 3. 同步 models.json（provider baseUrl 覆盖 + 自定义模型注册）
     bm_core::config::sync_pi_models_json(&config)?;

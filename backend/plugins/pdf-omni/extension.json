@@ -1,0 +1,57 @@
+{
+ "schema": "pi.ext.manifest.v1",
+ "extension_id": "pdf-omni",
+ "name": "PDF Omni",
+ "version": "1.0.0",
+ "runtime": "js",
+ "entrypoint": "index.ts",
+ "description": "PDF 智能解析（Rust 核心）：MinerU 主（1000页/天优先额度）+ LlamaParse（1万 credits/月，默认 agentic 档）。注册 parse_pdf 工具：版面/表格/公式保真转 Markdown，大文件自动切分（>200页）、交叉验证（verify）、级联增强（cascade）、mineru-refine 式后处理。需要 MinerU + LlamaParse API Key（设置页填写）。",
+ "capabilities": [
+  "http",
+  "tool"
+ ],
+ "testSources": {
+  "mineru": {
+   "method": "GET",
+   "url": "https://mineru.net/api/v4/extract/task/__probe__",
+   "label": "MinerU",
+   "headers": {
+    "Authorization": "Bearer {sources.mineru.apiKey}"
+   }
+  },
+  "llamaparse": {
+   "method": "GET",
+   "url": "https://api.cloud.llamaindex.ai/api/v2/parse/__probe__?expand=markdown",
+   "label": "LlamaParse",
+   "headers": {
+    "Authorization": "Bearer {sources.llamaparse.apiKey}"
+   }
+  }
+ },
+ "settings": [
+  {
+   "key": "sources.mineru.apiKey",
+   "type": "secret",
+   "label": "MinerU API Key",
+   "description": "MinerU Precision API token（mineru.net，1000 页/天优先额度）；本地/URL 解析主引擎",
+   "default": "",
+   "groupLabel": "MinerU"
+  },
+  {
+   "key": "sources.llamaparse.apiKey",
+   "type": "secret",
+   "label": "LlamaParse API Key",
+   "description": "LlamaIndex 免费账号 key（1 万 credits/月）；交叉验证/级联增强引擎。多 key 串行使用：先用完这把（预算 9500 credits）再切第二把",
+   "default": "",
+   "groupLabel": "LlamaParse"
+  },
+  {
+   "key": "sources.llamaparse.apiKey2",
+   "type": "secret",
+   "label": "LlamaParse API Key 2（可选）",
+   "description": "第二个 LlamaIndex 账号 key（如微软账号）；第一把达预算线后自动切换，避免单账号撞 402 触发风控",
+   "default": "",
+   "groupLabel": "LlamaParse"
+  }
+ ]
+}

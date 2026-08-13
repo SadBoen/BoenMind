@@ -26,10 +26,25 @@ tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.6", features = ["cors"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 base64 = "0.22"
 uuid = { version = "1", features = ["v4"] }
 tokio-stream = "0.1.19"
 mime_guess = "2"
+# pdf-omni 插件核心：MinerU/LlamaParse 云端解析编排
+# reqwest — 流式 PUT/multipart 上传与轮询（rustls，无 openssl）
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "stream", "rustls-tls"] }
+# lopdf — 纯 Rust PDF 操作：页数/切分/提取/2×2 拼页（pypdf 的替代）
+lopdf = "0.40"
+# zip — MinerU 结果包解压（flate2 只管 gzip，zip 容器由本 crate 解析）
+zip = { version = "2", default-features = false, features = ["deflate"] }
+# image — 级联桶1：表格截图按原尺寸拼 A4 画布（Pillow 的替代，裁剪默认特性）
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# verify 交叉验证的正则统计（轻量，无 regex 的全部特性）
+fancy-regex = "0.14"
 rust-embed = { version = "8", optional = true }
+
+[dev-dependencies]
+tempfile = "3"

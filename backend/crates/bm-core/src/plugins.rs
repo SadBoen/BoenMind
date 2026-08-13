@@ -30,6 +30,10 @@ pub const BUILTIN_PLUGINS: &[(&str, &str)] = &[
         "refine-suggest",
         "自我改进建议采集：任务完成后提交针对 skill 描述/系统提示词的改进建议（提交仅记录，用户审批后才生效）",
     ),
+    (
+        "pdf-omni",
+        "PDF 智能解析（Rust 核心）：MinerU 主 + LlamaParse 交叉验证/级联增强，版面/表格/公式保真转 Markdown",
+    ),
 ];
 
 #[derive(Debug, Clone, Serialize)]
