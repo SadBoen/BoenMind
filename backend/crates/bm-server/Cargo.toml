@@ -8,6 +8,10 @@ description = "BoenMind backend API server (axum + SSE)"
 # 服务器版：把前端构建产物（frontend/dist）与内置插件（backend/plugins）
 # 内嵌进二进制，自包含单文件部署。桌面壳（Tauri）构建不启用此 feature。
 embed = ["dep:rust-embed", "bm-core/embed-plugins"]
+# 仅内嵌内置插件（backend/plugins），不内嵌前端。桌面版（Windows/macOS 便携包
+# 与热升级 runtime）启用：用户机器上没有仓库路径，普通构建的"从仓库复制"
+# 预装会静默失败（编译机路径在运行时不存在），只能靠二进制内嵌。
+embed-plugins = ["bm-core/embed-plugins"]
 
 [[bin]]
 name = "bm-server"

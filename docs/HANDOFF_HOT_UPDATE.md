@@ -14,6 +14,9 @@
 
 - 服务器版整个应用 = **1 个 bm-server 二进制**（`--features embed` 内嵌前端 dist + 插件）
   → "更新" = 替换这一个文件
+- 桌面版（Windows/macOS）bm-server 用 `--features embed-plugins` 构建：仅内嵌内置插件
+  （backend/plugins 三个目录），不内嵌前端（页面由壳提供）；便携包与热升级 runtime
+  均自带插件，启动时自动写出到 ~/.boenmind/extensions/ 并默认启用
 - 运行模式（`BOENMIND_MANAGED=1`，壳 spawn 子进程时设置）：
   - **standalone**（Linux 裸进程/systemd）：原子替换自身 + `exec` 重启（**PID 不变** → systemd 无感知）
   - **managed**（桌面壳子进程）：新二进制落盘 `~/.boenmind/runtime/bm-server-<ver>-<triple>`

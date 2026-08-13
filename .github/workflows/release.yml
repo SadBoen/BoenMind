@@ -112,9 +112,10 @@ jobs:
 
       # tauri build 只产 app 壳；bm-server 是独立 workspace crate，
       # 二进制需显式构建（热升级 runtime 资产用）
+      # embed-plugins：内置插件内嵌进二进制（用户机器无仓库路径，普通构建预装失效）
       - name: 构建 bm-server runtime 二进制
         working-directory: backend
-        run: cargo build --release -p bm-server --target aarch64-apple-darwin
+        run: cargo build --release -p bm-server --target aarch64-apple-darwin --features embed-plugins
 
       - name: 收集产物并生成自动更新清单 (latest.json)
         working-directory: frontend
@@ -221,9 +222,10 @@ jobs:
         run: pnpm tauri build --no-bundle
 
       # tauri build 只产 app 壳；bm-server 是独立 workspace crate，需显式构建
+      # embed-plugins：内置插件内嵌进二进制（用户机器无仓库路径，普通构建预装失效）
       - name: 构建 bm-server runtime 二进制
         working-directory: backend
-        run: cargo build --release -p bm-server
+        run: cargo build --release -p bm-server --features embed-plugins
 
       - name: 打包便携版 zip
         shell: pwsh
@@ -452,6 +454,7 @@ jobs:
             - `BoenMind_*_x64_portable.zip` 解压运行 `BoenMind.exe`
             - 依赖系统 WebView2（Win10/11 自带；老版本 Win10 需自行安装 WebView2 Runtime）
             - 壳（外框）更新需手动下载新版便携包
+            - 内置插件（ctx-compactor 压缩 / web-search 搜索 / refine-suggest 改进建议）随程序预装，默认启用
 
             **Linux 服务器版（x86_64 / aarch64）**
             - `boenmind-server_*_linux-*.tar.gz`：单文件二进制（前端已内嵌）
