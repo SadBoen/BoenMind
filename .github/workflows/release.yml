@@ -54,7 +54,7 @@ jobs:
 
       - name: 后端测试
         working-directory: backend
-        run: cargo test -p bm-core -p bm-server -p bm-protocol -p bm-kernel -p bm-storage-turso -p bm-event-log-tests
+        run: cargo test -p bm-core -p bm-server -p bm-protocol -p bm-kernel -p bm-storage-turso -p bm-loop -p bm-event-log-tests
 
       - name: 后端 clippy（-D warnings，存量 crate）
         working-directory: backend
@@ -62,7 +62,7 @@ jobs:
 
       - name: 后端 clippy（-D warnings，内核四件套）
         working-directory: backend
-        run: cargo clippy -p bm-protocol -p bm-kernel -p bm-storage-turso -p bm-event-log-tests --all-targets --no-deps -- -D warnings
+        run: cargo clippy -p bm-protocol -p bm-kernel -p bm-storage-turso -p bm-loop -p bm-event-log-tests --all-targets --no-deps -- -D warnings
 
       - name: 前端依赖
         working-directory: frontend
