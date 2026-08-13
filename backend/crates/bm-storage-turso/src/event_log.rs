@@ -718,6 +718,31 @@ impl EventStorePort for TursoEventStore {
             Ok(out)
         })
     }
+
+    fn clear_session(
+        &self,
+        sid: &SessionId,
+    ) -> bm_protocol::BoxFuture<'_, Result<u64, ProtocolError>> {
+        let sid = sid.clone();
+        Box::pin(async move {
+            let conn = self.conn.lock().await;
+            // 事件与分支头同事务清空（回收站 C2：用户主动清除）
+            let removed = conn
+                .execute(
+                    "DELETE FROM event_log WHERE session_id = ?1",
+                    [sid.as_str()],
+                )
+                .await
+                .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("clear events: {e}")))?;
+            conn.execute(
+                "DELETE FROM branch_heads WHERE session_id = ?1",
+                [sid.as_str()],
+            )
+            .await
+            .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("clear heads: {e}")))?;
+            Ok(removed as u64)
+        })
+    }
 }
 
 /// 便捷构造：以 Arc<dyn EventStorePort> 形态打开 turso 存储。

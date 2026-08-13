@@ -376,6 +376,11 @@ export const api = {
     }),
   deleteSession: (id: string) =>
     request<{ ok: boolean }>(`/api/sessions/${id}`, { method: "DELETE" }),
+  // 清空会话事件日志（回收站 C2：用户主动清除；messages 表不动）
+  clearSessionEvents: (id: string) =>
+    request<{ ok: boolean; cleared: number }>(`/api/sessions/${id}/events`, {
+      method: "DELETE",
+    }),
 
   listPlugins: () => request<PluginInfo[]>("/api/plugins"),
   setPlugin: (id: string, enabled: boolean) =>

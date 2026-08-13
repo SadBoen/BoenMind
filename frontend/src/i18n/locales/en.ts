@@ -99,6 +99,9 @@ export const en: Translation = {
     rename: "Rename",
     delete: "Delete",
     deleteFailed: "Delete failed: {{error}}",
+    clearEvents: "Clear event log",
+    clearEventsDone: "Event log cleared",
+    clearEventsFailed: "Clear failed: {{error}}",
   },
   files: {
     workspace: "Workspace",

@@ -99,6 +99,9 @@ export const zh = {
     rename: "重命名",
     delete: "删除",
     deleteFailed: "删除失败: {{error}}",
+    clearEvents: "清空事件日志",
+    clearEventsDone: "事件日志已清空",
+    clearEventsFailed: "清空失败: {{error}}",
   },
   files: {
     workspace: "工作文件夹",

@@ -96,4 +96,8 @@ pub trait EventStorePort: Send + Sync {
 
     /// 列出会话全部分支头。
     fn branch_heads(&self, sid: &SessionId) -> BoxFuture<'_, Result<Vec<BranchHead>, ProtocolError>>;
+
+    /// 清空会话全部事件与分支头（回收站 C2 用户主动清除）。
+    /// 返回删除的事件行数；分支头随之重置（下次 append 从 seq 1 重新起）。
+    fn clear_session(&self, sid: &SessionId) -> BoxFuture<'_, Result<u64, ProtocolError>>;
 }

@@ -144,3 +144,34 @@ async fn turso_derive_messages_folds_fork_prefix() {
     assert_eq!(br_msgs[2].content, "b1", "同 (turn,step) 跨分支不得串味覆盖");
     let _ = std::fs::remove_file(&path);
 }
+
+#[tokio::test]
+async fn turso_clear_session_persists_across_reopen() {
+    // C2：清除后重开——事件与分支头为空，重新 append 从 seq 1 起
+    let path = format!(
+        "{}/bm_clear_turso_{}.db",
+        std::env::temp_dir().display(),
+        std::process::id()
+    );
+    let _ = std::fs::remove_file(&path);
+    let sid = SessionId::new("sess_clear");
+    let main = BranchId::new("main");
+
+    {
+        let store = Arc::new(bm_storage_turso::TursoEventStore::open(&path).await.unwrap());
+        let log = EventLog::new(store);
+        log.append(sid.clone(), main.clone(), turn(1), SurfaceIntent::None).await.unwrap();
+        log.append(sid.clone(), main.clone(), turn(2), SurfaceIntent::None).await.unwrap();
+        let removed = log.clear_session(&sid).await.unwrap();
+        assert_eq!(removed, 2);
+    }
+    {
+        let store = Arc::new(bm_storage_turso::TursoEventStore::open(&path).await.unwrap());
+        let log = EventLog::new(store);
+        assert_eq!(log.replay(&sid, &main).await.unwrap().len(), 0);
+        assert!(log.branch_heads(&sid).await.unwrap().is_empty());
+        let seq = log.append(sid.clone(), main.clone(), turn(1), SurfaceIntent::None).await.unwrap();
+        assert_eq!(seq.as_u64(), 1, "清除后从 seq 1 重新起");
+    }
+    let _ = std::fs::remove_file(&path);
+}

@@ -99,6 +99,9 @@ export const ja: Translation = {
     rename: "名前を変更",
     delete: "削除",
     deleteFailed: "削除に失敗: {{error}}",
+    clearEvents: "イベントログを消去",
+    clearEventsDone: "イベントログを消去しました",
+    clearEventsFailed: "消去に失敗: {{error}}",
   },
   files: {
     workspace: "ワークスペース",

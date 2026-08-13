@@ -280,6 +280,12 @@ impl EventLog {
     pub async fn branch_heads(&self, session_id: &SessionId) -> Result<Vec<BranchHead>, ProtocolError> {
         self.store.branch_heads(session_id).await
     }
+
+    /// 清空会话全部事件与分支头（回收站 C2 用户主动清除）。
+    /// 返回删除的事件行数；下次 append 从 seq 1 重新起。
+    pub async fn clear_session(&self, session_id: &SessionId) -> Result<u64, ProtocolError> {
+        self.store.clear_session(session_id).await
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -584,6 +590,24 @@ impl EventStorePort for InMemoryEventStore {
             Ok(out)
         })
     }
+
+    fn clear_session(
+        &self,
+        sid: &SessionId,
+    ) -> bm_protocol::BoxFuture<'_, Result<u64, ProtocolError>> {
+        let sid = sid.clone();
+        Box::pin(async move {
+            let mut inner = self.inner.lock().await;
+            let sid_str = sid.to_string();
+            let before = inner.events.len();
+            inner.events.retain(|ev| ev.session_id.to_string() != sid_str);
+            let removed = before - inner.events.len();
+            inner.heads.retain(|(s, _), _| s != &sid_str);
+            inner.heads_meta.retain(|(s, _), _| s != &sid_str);
+            inner.heads_fork.retain(|(s, _), _| s != &sid_str);
+            Ok(removed as u64)
+        })
+    }
 }
 
 #[cfg(test)]
@@ -757,6 +781,31 @@ mod tests {
         assert_eq!(b_msgs[0].content, "u1");
         assert_eq!(b_msgs[1].content, "a1");
         assert_eq!(b_msgs[2].content, "b1");
+    }
+
+    #[tokio::test]
+    async fn clear_session_resets_events_and_heads() {
+        // C2：用户主动清除——事件与分支头清空，下次 append 从 seq 1 重新起
+        let log = EventLog::new(Arc::new(InMemoryEventStore::new()));
+        let s = sid();
+        let main = main_branch();
+        for i in 1..=3u32 {
+            log.append(s.clone(), main.clone(), turn(i), SurfaceIntent::None).await.unwrap();
+        }
+        log.fork(&s, &main).await.unwrap();
+        let removed = log.clear_session(&s).await.unwrap();
+        assert_eq!(removed, 3);
+        assert_eq!(log.replay(&s, &main).await.unwrap().len(), 0);
+        assert!(log.branch_heads(&s).await.unwrap().is_empty());
+        // 重新 append：从 seq 1 起
+        let seq = log.append(s.clone(), main.clone(), turn(9), SurfaceIntent::None).await.unwrap();
+        assert_eq!(seq.as_u64(), 1);
+        // 别的会话不受影响
+        let other = SessionId::new("sess_other_clear");
+        log.append(other.clone(), main, turn(1), SurfaceIntent::None).await.unwrap();
+        let removed = log.clear_session(&s).await.unwrap();
+        assert_eq!(removed, 1);
+        assert_eq!(log.replay(&other, &main_branch()).await.unwrap().len(), 1);
     }
 
     #[tokio::test]

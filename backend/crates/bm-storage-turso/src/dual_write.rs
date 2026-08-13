@@ -37,6 +37,15 @@ impl DualWriter {
         self.log.store()
     }
 
+    /// 清空会话事件日志（回收站 C2 用户主动清除）。返回删除的事件行数；
+    /// messages 表不动，事件日志从 seq 1 重新记录。
+    pub async fn clear_session(
+        &self,
+        session_id: SessionId,
+    ) -> Result<u64, ProtocolError> {
+        self.log.clear_session(&session_id).await
+    }
+
     pub fn ok_count(&self) -> u64 {
         self.ok.load(std::sync::atomic::Ordering::Relaxed)
     }

@@ -3,7 +3,7 @@
  */
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { MoreHorizontal, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { MoreHorizontal, Pencil, Plus, Search, Trash2, Eraser } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -23,6 +23,7 @@ export function SessionList() {
   const createSession = useAppStore((s) => s.createSession);
   const renameSession = useAppStore((s) => s.renameSession);
   const removeSession = useAppStore((s) => s.removeSession);
+  const clearSessionEvents = useAppStore((s) => s.clearSessionEvents);
 
   const [query, setQuery] = useState("");
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -123,6 +124,10 @@ export function SessionList() {
                     <DropdownMenuItem onClick={() => startRename(session.id, session.title)}>
                       <Pencil size={14} className="mr-2" />
                       {t("sessionList.rename")}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => void clearSessionEvents(session.id)}>
+                      <Eraser size={14} className="mr-2" />
+                      {t("sessionList.clearEvents")}
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       variant="destructive"

@@ -228,3 +228,26 @@ pub async fn events_stream(
         .keep_alive(KeepAlive::default().interval(std::time::Duration::from_secs(15)))
         .into_response()
 }
+
+/// DELETE /api/sessions/{id}/events —— 清空该会话事件日志（回收站 C2 用户主动清除）。
+/// messages 表不动（会话仍可继续聊，事件日志从 seq 1 重新记录）。
+pub async fn clear_session_events(
+    State(state): crate::SharedState,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> ApiResult<Json<serde_json::Value>> {
+    match state.db.get_session(&id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return Err(api_error(StatusCode::NOT_FOUND, format!("会话不存在: {id}"))),
+        Err(err) => {
+            return Err(api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()));
+        }
+    }
+    let Some(dual) = &state.dual_writer else {
+        return Err(api_error(StatusCode::SERVICE_UNAVAILABLE, "事件日志不可用"));
+    };
+    let cleared = dual
+        .clear_session(bm_protocol::SessionId::new(&id))
+        .await
+        .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    Ok(Json(serde_json::json!({ "ok": true, "cleared": cleared })))
+}

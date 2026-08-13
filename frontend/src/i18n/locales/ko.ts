@@ -99,6 +99,9 @@ export const ko: Translation = {
     rename: "이름 바꾸기",
     delete: "삭제",
     deleteFailed: "삭제 실패: {{error}}",
+    clearEvents: "이벤트 로그 지우기",
+    clearEventsDone: "이벤트 로그를 비웠습니다",
+    clearEventsFailed: "지우기 실패: {{error}}",
   },
   files: {
     workspace: "작업 폴더",

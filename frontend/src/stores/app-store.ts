@@ -60,6 +60,7 @@ interface AppStore {
   createSession: () => Promise<string | null>;
   renameSession: (id: string, title: string) => Promise<void>;
   removeSession: (id: string) => Promise<void>;
+  clearSessionEvents: (id: string) => Promise<void>;
 
   // 聊天
   messages: Message[];
@@ -310,6 +311,15 @@ export const useAppStore = create<AppStore>((set, get) => {
         await get().loadSessions();
       } catch (err) {
         toast.error(i18n.t("sessionList.deleteFailed", { error: String(err) }));
+      }
+    },
+    // 清空会话事件日志（回收站 C2：用户主动清除；会话与消息仍在）
+    clearSessionEvents: async (id) => {
+      try {
+        await api.clearSessionEvents(id);
+        toast.success(i18n.t("sessionList.clearEventsDone"));
+      } catch (err) {
+        toast.error(i18n.t("sessionList.clearEventsFailed", { error: String(err) }));
       }
     },
 
