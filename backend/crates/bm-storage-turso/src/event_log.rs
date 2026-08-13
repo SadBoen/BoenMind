@@ -745,6 +745,34 @@ impl EventStorePort for TursoEventStore {
     }
 }
 
+impl TursoEventStore {
+    /// C1 回收站超期清除：删除「孤儿会话」的超期事件——
+    /// sessions 表已无此行（用户已删会话）且事件 time < before_ms。
+    /// 同库约定：sessions 表为 bm-core 所有，这里只读引用其 id 列。
+    /// 顺带清理事件已空的孤儿分支头。返回删除的事件行数。
+    pub async fn purge_orphaned_events(&self, before_ms: i64) -> Result<u64, ProtocolError> {
+        let conn = self.conn.lock().await;
+        let removed = conn
+            .execute(
+                "DELETE FROM event_log
+                 WHERE time < ?1
+                   AND session_id NOT IN (SELECT id FROM sessions)",
+                [before_ms],
+            )
+            .await
+            .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("purge orphans: {e}")))?;
+        conn.execute(
+            "DELETE FROM branch_heads
+             WHERE session_id NOT IN (SELECT id FROM sessions)
+               AND session_id NOT IN (SELECT DISTINCT session_id FROM event_log)",
+            (),
+        )
+        .await
+        .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("purge orphan heads: {e}")))?;
+        Ok(removed as u64)
+    }
+}
+
 /// 便捷构造：以 Arc<dyn EventStorePort> 形态打开 turso 存储。
 pub async fn open_event_store(path: &str) -> Result<Arc<dyn EventStorePort>, ProtocolError> {
     Ok(Arc::new(TursoEventStore::open(path).await?))

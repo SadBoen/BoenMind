@@ -14,6 +14,8 @@ use bm_protocol::{EventKind, ProtocolError, SessionId};
 /// 双写器：对事件日志的追加 + 成败计数（验证双写运行用）。
 pub struct DualWriter {
     log: EventLog,
+    /// C1 超期清除需要 turso 直连（sessions 表子查询）；内存实现无此维护面
+    turso: Option<std::sync::Arc<crate::TursoEventStore>>,
     ok: std::sync::atomic::AtomicU64,
     failed: std::sync::atomic::AtomicU64,
 }
@@ -22,9 +24,20 @@ impl DualWriter {
     pub fn new(log: EventLog) -> Self {
         Self {
             log,
+            turso: None,
             ok: std::sync::atomic::AtomicU64::new(0),
             failed: std::sync::atomic::AtomicU64::new(0),
         }
+    }
+
+    /// turso 存储形态（bm-server 双写路径）：挂上具体存储以便 C1 超期清除。
+    pub fn with_turso(
+        log: EventLog,
+        turso: std::sync::Arc<crate::TursoEventStore>,
+    ) -> Self {
+        let mut w = Self::new(log);
+        w.turso = Some(turso);
+        w
     }
 
     /// 底层日志句柄（turn 计数 / 重放校验用）。
@@ -44,6 +57,15 @@ impl DualWriter {
         session_id: SessionId,
     ) -> Result<u64, ProtocolError> {
         self.log.clear_session(&session_id).await
+    }
+
+    /// 回收站 C1 超期自动清除：孤儿会话（sessions 表已删）超期事件物理删除。
+    /// 仅 turso 形态支持（内存实现无 sessions 表，恒 Ok(0)）。
+    pub async fn purge_orphaned_events(&self, before_ms: i64) -> Result<u64, ProtocolError> {
+        match &self.turso {
+            Some(s) => s.purge_orphaned_events(before_ms).await,
+            None => Ok(0),
+        }
     }
 
     pub fn ok_count(&self) -> u64 {

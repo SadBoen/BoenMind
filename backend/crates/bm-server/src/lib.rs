@@ -332,7 +332,10 @@ async fn init_dual_writer() -> Result<Arc<bm_storage_turso::dual_write::DualWrit
         .to_string();
     let store = std::sync::Arc::new(bm_storage_turso::TursoEventStore::open(&path).await?);
     let log = bm_kernel::EventLog::new(store.clone());
-    let w = std::sync::Arc::new(bm_storage_turso::dual_write::DualWriter::new(log));
+    let w = std::sync::Arc::new(bm_storage_turso::dual_write::DualWriter::with_turso(
+        log,
+        store.clone(),
+    ));
     // A4 启动恢复：有 TurnStart 无 TurnEnd 的回合显式闭合（dsh 语义）
     match bm_storage_turso::recover_interrupted_turns(store.as_ref(), w.event_log()).await {
         Ok(0) => {}
@@ -364,6 +367,8 @@ async fn serve_inner(
 
     let state = AppState::new(config, db, dual_writer);
     spawn_agent_sweeper(state.agents.clone());
+    // C1 回收站超期清除：孤儿会话（sessions 表已删）事件保留 N 天后物理删除
+    spawn_orphan_purger(state.dual_writer.clone());
     let listener = tokio::net::TcpListener::bind(bind_addr(port)).await?;
     let local = listener.local_addr()?;
     let has_token = std::env::var("BOENMIND_TOKEN").is_ok_and(|t| !t.trim().is_empty());
@@ -390,6 +395,42 @@ async fn serve_inner(
         }
     }
     Ok(())
+}
+
+/// C1 回收站超期清除：孤儿会话（sessions 表已删）的事件保留 N 天后物理删除。
+/// N 默认 90 天（实现期调优），可用环境变量 BM_ORPHAN_PURGE_DAYS 覆盖。
+/// 每天跑一次；删除会话即入"回收站"（事件仍留 event_log），超期才物理删除。
+const ORPHAN_PURGE_DAYS: i64 = 90;
+const ORPHAN_PURGE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+
+fn spawn_orphan_purger(dual: Option<Arc<bm_storage_turso::dual_write::DualWriter>>) {
+    let Some(dual) = dual else {
+        return;
+    };
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(ORPHAN_PURGE_INTERVAL);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            interval.tick().await;
+            let days = std::env::var("BM_ORPHAN_PURGE_DAYS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(ORPHAN_PURGE_DAYS);
+            let before_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64 - days * 86_400_000)
+                .unwrap_or(0);
+            match dual.purge_orphaned_events(before_ms).await {
+                Ok(0) => {}
+                Ok(n) => tracing::info!(
+                    event = "bm.orphan_events_purged",
+                    count = n,
+                    older_than_days = days
+                ),
+                Err(err) => tracing::warn!(event = "bm.orphan_purge_failed", error = %err),
+            }
+        }
+    });
 }
 
 /// 周期性扫描并释放空闲 agent 会话句柄（防止长跑服务内存无界增长）。
