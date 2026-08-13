@@ -1,9 +1,7 @@
 # BoenMind 2.0 核心实现方案 —— 最小内核 + 会话事件日志
 
-> 状态：实现方案 v1.0（对应架构文档 v0.10 的"最初核心概念"：阶段 0 + 阶段 1 内核部分）
-> 日期：2026-08-14
-> 依据：docs/everything-is-plugin-architecture.md（架构 v0.10）、docs/deepseek-harness-evaluation.md（dsh 研读）、docs/ai-os-landscape.md（赛道研读）
-> 形式：Implementation Spec（AI-ready）——文件树 / 接口 / Schema / 任务清单 / 约束
+> 状态：**T0-T13 全部完成**（2026-08-14 夜，commit 255b2ac + ae72750），80 测试全绿 + clippy 零警告。
+> 实现期修正/partial 标注见文末 §7（实现记录）。
 
 ---
 
@@ -237,3 +235,30 @@ CREATE TABLE IF NOT EXISTS branch_heads (
 
 ---
 *（实现方案 v1.0 完。对应架构 v0.10 阶段 0 + 阶段 1 内核部分。待用户拍板后从 T0 开工。）*
+
+---
+
+## 7. 实现记录（2026-08-14 夜，T0-T13 全部落地）
+
+### 7.1 已交付（commit 255b2ac + ae72750）
+
+| 任务 | 落点 | 验证 |
+|---|---|---|
+| T0-T2 | `crates/bm-protocol`（ids/event/surface/policy/error/port，零运行时依赖；BoxFuture 手写签名替代 async-trait） | 13 测试 |
+| T3-T5 | `crates/bm-kernel`：KernelBuilder/Ctx/Registry（重复拒绝）/EventBus（emit/waterfall 短路/parallel/serial）/Loader（manifest+deps 拓扑+Disposer 逆序回滚） | 38 测试 |
+| T6-T8 | EventLog 内存实现（单写者原子 append）+ EventValidator（seq 连续/JSON 无损/ignorable/surface）+ SurfaceProjection（chunk 合并/工具配对/压缩遮蔽/占位填充） | 单测 + 集成 |
+| T9-T10 | `crates/bm-storage-turso`：TursoEventStore（WAL + synchronous=FULL）+ CheckpointStore（interrupted 恢复）+ DualWriter（best-effort + 计数） | 集成测试 |
+| T11 | bm-server chat 双写（AppState.dual_writer: Option<Arc<DualWriter>>；UserMessage→TurnStart→工具/助手/TurnEnd batch） | dual_write_30rounds 验收 |
+| T12 | branch_heads 表 + fork 工具（三维寻址、超头/重复拒绝、持久化） | fork_branch 集成测试 |
+| T13 | 集成测试四件套 + dual_write_30rounds（重放两次字节一致、内存与 turso 消息面一致） | 全绿 |
+
+### 7.2 实现期修正（相对 §3 Schema）
+
+- **seq 不用 AUTOINCREMENT**：全局计数与"分支内 seq 连续"矛盾（跨分支事件打洞），且事务回滚后 AUTOINCREMENT 不回用号码；改为应用层分配（读分支 head → +1 → 显式 INSERT），UNIQUE (session_id, branch_id, seq) 兜底，单写者锁内完成保证原子。
+
+### 7.3 partial 标注（能力矩阵诚实）
+
+- `ToolResult.output` 暂不落日志（chat.rs 双写处 output 为空串）——agent-loop 移植（阶段 1）时补；
+- `EventStorePort::subscribe`（replay-prefix + tail）未实现——阶段 1 事件流推送；当前 read + head_seq 轮询等效；
+- 删除会话时事件日志不联动清理——阶段 1 接 delete 事件流；
+- 阶段 0 双写容错：事件日志写失败仅告警计数，主链路不受影响。

@@ -1,7 +1,17 @@
 # HANDOFF —— 万物皆插件架构（BoenMind 2.0）
 
-> 2026-08-14 交接。**状态：架构设计四层齐备，待用户拍板后从 T0 开工。**
+> 2026-08-14 交接。**状态：用户已拍板开工；阶段 0 最小内核（T0-T13）已于当日夜间完成并推送（2 commit）。**
 > 交接原因：对话上下文将满，新开对话续接。
+
+## 〇、最新进展（2026-08-14 夜：内核落地）
+
+用户睡前授权"就交给你了"，拍板点 1/3 视为已拍板，从 T0 开工。**阶段 0 全部完成**：
+- commit `255b2ac`：最小内核四件套——bm-protocol（契约层，零运行时依赖）/ bm-kernel（Ctx/Registry/EventBus 四分发/Loader/EventLog 内存实现/校验器/消息面投影）/ bm-storage-turso（EventStorePort 落库 + checkpoint + DualWriter）+ 分支 fork（T12 随 T9 完成）；80 测试全绿，clippy 零警告
+- commit `ae72750`：T11 双写——bm-server chat 路由在现有落库同时写事件日志（UserMessage/TurnStart/工具/AssistantMessage/TurnEnd，失败不阻断主链路）；投影合并修正（占位 assistant 填充）；30 轮模拟双写验收测试（重放两次字节一致 + 消息面 60 条）
+- **实现期修正**：Schema 的 AUTOINCREMENT 改为应用层分配 seq（全局计数与"分支内连续"矛盾 + 事务回滚留空洞），UNIQUE(session_id,branch_id,seq) 兜底
+- **partial 标注**：ToolResult.output 暂不落日志（agent-loop 移植时补）；subscribe 事件流（阶段 1）；删除会话时事件日志不联动清理
+
+**下一步（阶段 1）**：agent-loop 移植（bm-core 的 agent.rs 事件 → 事件日志完整化，补 ToolResult output）、pi-compat、分支 UI（二期 A1）。
 
 ## 一、一句话现状
 
