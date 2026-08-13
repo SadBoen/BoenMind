@@ -161,17 +161,83 @@ impl EventLog {
         self.store.count(session_id, branch_id, event_type).await
     }
     /// 重放并重建消息面（用户/助手/工具排序视图）。
+    /// A3：沿 parent_branch 链折叠父前缀（各父链截至 fork 点快照）。
+    /// **逐段折叠**：每个分支段用新投影，段间不归并——chunk→message 归并
+    /// 按 (turn, step) 匹配是分支内语义，跨分支同 (turn, step) 必须隔离
+    /// （否则子分支首条消息会覆盖父前缀末条消息，串味）。
     pub async fn derive_messages(
         &self,
         session_id: &SessionId,
         branch_id: &BranchId,
     ) -> Result<Vec<SurfaceMessage>, ProtocolError> {
-        let evs = self.replay(session_id, branch_id).await?;
-        let mut proj = SurfaceProjection::new();
-        for ev in &evs {
-            proj.on_event(ev)?;
+        let segments = self.visible_segments(session_id, branch_id).await?;
+        let mut out: Vec<SurfaceMessage> = Vec::new();
+        for seg in segments {
+            let mut proj = SurfaceProjection::new();
+            for ev in &seg {
+                EventValidator::check_version(ev)?;
+                proj.on_event(ev)?;
+            }
+            out.extend(proj.into_messages());
         }
-        Ok(proj.into_messages())
+        Ok(out)
+    }
+
+    /// 分支可见事件分段（A3）：`[父链前缀段…, 自身段]`，最旧在前。
+    /// 各段是"fork 时刻快照"（父分支 seq <= forked_at），父分支分叉后
+    /// 新增的事件对子分支不可见；每段内 seq 为分支内连续编号。
+    pub async fn visible_segments(
+        &self,
+        session_id: &SessionId,
+        branch_id: &BranchId,
+    ) -> Result<Vec<Vec<SessionEvent>>, ProtocolError> {
+        self.segment_prefix(session_id, branch_id, None).await
+    }
+
+    /// 递归分段：父链前缀段（截至 upto）→ 自身段（截至 upto；None=全部）。
+    async fn segment_prefix(
+        &self,
+        session_id: &SessionId,
+        branch_id: &BranchId,
+        upto: Option<u64>,
+    ) -> Result<Vec<Vec<SessionEvent>>, ProtocolError> {
+        let heads = self.store.branch_heads(session_id).await?;
+        let head = heads.iter().find(|h| h.branch_id == *branch_id).ok_or_else(|| {
+            ProtocolError::new(
+                bm_protocol::ErrorCode::ForkConflict,
+                format!("unknown branch `{branch_id}`"),
+            )
+        })?;
+        let mut segs = match &head.parent_branch {
+            Some(parent) => {
+                let fork_at = head.forked_at.unwrap_or(0);
+                Box::pin(self.segment_prefix(session_id, parent, Some(fork_at))).await?
+            }
+            None => Vec::new(),
+        };
+        let mut q = EventQuery::new(session_id.clone(), branch_id.clone());
+        q.seq_lte = upto;
+        segs.push(self.store.read(q).await?);
+        Ok(segs)
+    }
+
+    /// 分支可见事件（A3，扁平拼接）：自身事件 + 沿 parent_branch 链折叠的父前缀。
+    /// main（无父）即自身全部事件。逐条版本检查（折叠流跨分支 seq 各自从 1 起，
+    /// 不做整流连续性校验；每段连续性由存储层单写者 + 分支内 append 原子性保证）。
+    pub async fn visible_events(
+        &self,
+        session_id: &SessionId,
+        branch_id: &BranchId,
+    ) -> Result<Vec<SessionEvent>, ProtocolError> {
+        let segments = self.visible_segments(session_id, branch_id).await?;
+        let mut evs = Vec::new();
+        for seg in segments {
+            for ev in &seg {
+                EventValidator::check_version(ev)?;
+            }
+            evs.extend(seg);
+        }
+        Ok(evs)
     }
 
     /// 分支当前头 seq（无事件为 None）。
@@ -222,6 +288,8 @@ struct Inner {
     heads: HashMap<(String, String), u64>,
     /// 分支头元数据（fork parent）
     heads_meta: HashMap<(String, String), Option<BranchId>>,
+    /// 分支头元数据（fork 时父 head 快照；main 无）
+    heads_fork: HashMap<(String, String), u64>,
 }
 
 /// EventStorePort 内存实现：单写者 Mutex，seq 连续分配（原子）。
@@ -242,6 +310,7 @@ impl InMemoryEventStore {
                 events: Vec::new(),
                 heads: HashMap::new(),
                 heads_meta: HashMap::new(),
+                heads_fork: HashMap::new(),
             }),
         }
     }
@@ -362,8 +431,13 @@ impl EventStorePort for InMemoryEventStore {
                     format!("cannot fork from unknown branch `{from}`"),
                 ));
             }
+            // fork 点快照：父分支当前 head（A3 父前缀折叠的分叉点）
+            let fork_at = inner.heads.get(&(sid.to_string(), from.to_string())).copied();
             inner.heads.insert(key.clone(), 0);
-            inner.heads_meta.insert(key, Some(from.clone()));
+            inner.heads_meta.insert(key.clone(), Some(from.clone()));
+            inner
+                .heads_fork
+                .insert(key, fork_at.unwrap_or(0));
             Ok(())
         })
     }
@@ -406,6 +480,7 @@ impl EventStorePort for InMemoryEventStore {
                         branch_id: BranchId::new(b.clone()),
                         parent_branch: inner.heads_meta.get(&(s.clone(), b.clone())).cloned().flatten(),
                         head_seq: SeqNo::new(*head),
+                        forked_at: inner.heads_fork.get(&(s.clone(), b.clone())).copied(),
                     });
                 }
             }
@@ -508,5 +583,82 @@ mod tests {
         let brh = heads.iter().find(|h| h.branch_id == br).unwrap();
         assert_eq!(brh.parent_branch.as_ref().map(|b| b.as_str()), Some("main"));
         assert_eq!(brh.head_seq.as_u64(), 1);
+    }
+
+    #[tokio::test]
+    async fn derive_messages_folds_parent_prefix_at_fork_point() {
+        // A3：fork 分支的消息面 = 父前缀（截至 fork 点快照）+ 自身事件；
+        // 父分支分叉后新增的事件对子分支不可见
+        use bm_protocol::{AssistantMsg, UserMsg, UserMsgSource};
+        let log = EventLog::new(Arc::new(InMemoryEventStore::new()));
+        let s = sid();
+        let main = main_branch();
+        let user = |content: &str| {
+            EventKind::Core(CoreEvent::UserMessage {
+                msg: UserMsg { content: content.into() },
+                source: UserMsgSource::Human,
+            })
+        };
+        let assistant = |content: &str| {
+            EventKind::Core(CoreEvent::AssistantMessage {
+                turn: 1,
+                step: 1,
+                msg: AssistantMsg { content: content.into() },
+                usage: None,
+            })
+        };
+        log.append(s.clone(), main.clone(), user("u1"), SurfaceIntent::Append).await.unwrap();
+        log.append(s.clone(), main.clone(), assistant("a1"), SurfaceIntent::Append).await.unwrap();
+        let br = log.fork(&s, &main).await.unwrap();
+        // 分叉后主分支继续走
+        log.append(s.clone(), main.clone(), user("u2"), SurfaceIntent::Append).await.unwrap();
+        log.append(s.clone(), main.clone(), assistant("a2"), SurfaceIntent::Append).await.unwrap();
+        // 子分支写自己的事件
+        log.append(s.clone(), br.clone(), user("b1"), SurfaceIntent::Append).await.unwrap();
+
+        let main_msgs = log.derive_messages(&s, &main).await.unwrap();
+        assert_eq!(main_msgs.len(), 4, "main 全量");
+
+        let br_msgs = log.derive_messages(&s, &br).await.unwrap();
+        assert_eq!(br_msgs.len(), 3, "子分支 = 父前缀 u1/a1 + 自身 b1，不含 u2/a2");
+        assert_eq!(br_msgs[0].content, "u1");
+        assert_eq!(br_msgs[1].content, "a1");
+        assert_eq!(br_msgs[2].content, "b1");
+    }
+
+    #[tokio::test]
+    async fn grandchild_branch_folds_two_levels() {
+        // A3：孙分支沿 parent_branch 链折叠两级父前缀
+        use bm_protocol::{AssistantMsg, UserMsg, UserMsgSource};
+        let log = EventLog::new(Arc::new(InMemoryEventStore::new()));
+        let s = sid();
+        let main = main_branch();
+        let user = |content: &str| {
+            EventKind::Core(CoreEvent::UserMessage {
+                msg: UserMsg { content: content.into() },
+                source: UserMsgSource::Human,
+            })
+        };
+        let assistant = |content: &str| {
+            EventKind::Core(CoreEvent::AssistantMessage {
+                turn: 1,
+                step: 1,
+                msg: AssistantMsg { content: content.into() },
+                usage: None,
+            })
+        };
+        log.append(s.clone(), main.clone(), user("u1"), SurfaceIntent::Append).await.unwrap();
+        let a = log.fork(&s, &main).await.unwrap();
+        log.append(s.clone(), a.clone(), assistant("a1"), SurfaceIntent::Append).await.unwrap();
+        let b = log.fork(&s, &a).await.unwrap();
+        log.append(s.clone(), b.clone(), assistant("b1"), SurfaceIntent::Append).await.unwrap();
+        // 中间分支分叉后继续走（对孙分支不可见）
+        log.append(s.clone(), a.clone(), assistant("a2"), SurfaceIntent::Append).await.unwrap();
+
+        let b_msgs = log.derive_messages(&s, &b).await.unwrap();
+        assert_eq!(b_msgs.len(), 3, "孙分支 = main[u1] + A[a1] + 自身[b1]");
+        assert_eq!(b_msgs[0].content, "u1");
+        assert_eq!(b_msgs[1].content, "a1");
+        assert_eq!(b_msgs[2].content, "b1");
     }
 }

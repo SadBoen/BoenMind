@@ -51,6 +51,9 @@ pub struct BranchHead {
     /// fork 来源分支（main 为 None）
     pub parent_branch: Option<BranchId>,
     pub head_seq: SeqNo,
+    /// fork 时父分支的 head 快照（A3 父前缀折叠的分叉点；main 为 None）。
+    /// 父分支 seq <= forked_at 的事件对子分支可见，分叉后父分支新增不可见。
+    pub forked_at: Option<u64>,
 }
 
 /// 事件存储端口。实现：内存（bm-kernel InMemoryEventStore）与

@@ -39,8 +39,15 @@ CREATE TABLE IF NOT EXISTS branch_heads (
   branch_id    TEXT NOT NULL,
   parent_branch TEXT,
   head_seq     INTEGER NOT NULL,
+  forked_at    INTEGER,
   PRIMARY KEY (session_id, branch_id)
 );
+"#;
+
+/// A3 增量迁移：老库补 branch_heads.forked_at 列（fork 时父 head 快照）。
+/// sqlite 无 ADD COLUMN IF NOT EXISTS，用 pragma_table_info 探测后补列。
+pub const MIGRATE_FORKED_AT: &str = r#"
+ALTER TABLE branch_heads ADD COLUMN forked_at INTEGER;
 "#;
 
 pub struct TursoEventStore {
@@ -70,6 +77,12 @@ impl TursoEventStore {
         conn.execute_batch(MIGRATE_EVENT_LOG)
             .await
             .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("migrate: {e}")))?;
+        // A3 增量迁移：老库补 branch_heads.forked_at 列
+        if !has_column(&conn, "branch_heads", "forked_at").await? {
+            conn.execute_batch(MIGRATE_FORKED_AT)
+                .await
+                .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("migrate forked_at: {e}")))?;
+        }
         let store = Self {
             conn: Mutex::new(conn),
         };
@@ -159,6 +172,32 @@ impl TursoEventStore {
     }
 }
 
+/// 探测表是否存在某列（A3 增量迁移用；sqlite 无 ADD COLUMN IF NOT EXISTS）。
+async fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool, ProtocolError> {
+    let sql = format!("PRAGMA table_info({table})");
+    let mut stmt = conn
+        .prepare(&sql)
+        .await
+        .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("prepare table_info: {e}")))?;
+    let mut rows = stmt
+        .query(())
+        .await
+        .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("query table_info: {e}")))?;
+    while let Some(row) = rows
+        .next()
+        .await
+        .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("next table_info: {e}")))?
+    {
+        let name: String = row
+            .get(1)
+            .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("get column name: {e}")))?;
+        if name == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// A4 启动恢复：给"有 TurnStart 无 TurnEnd"的回合补写
 /// `TurnEnd { reason: Interrupted }`（dsh 语义——崩溃遗留的回合显式闭合）。
 /// 幂等（已闭合的回合不再命中 unclosed_turns）。返回补写条数。
@@ -185,8 +224,7 @@ pub async fn recover_interrupted_turns(
 }
 
 /// 行参数形态（row_params 返回类型）。
-type RowParams<'a> = (
-    i64,
+type RowParams<'a> = (    i64,
     &'a str,
     &'a str,
     i64,
@@ -600,30 +638,32 @@ impl EventStorePort for TursoEventStore {
                     format!("branch `{new}` already exists"),
                 ));
             }
-            // 源分支必须存在（超头拒绝）
+            // 源分支必须存在（超头拒绝），并取 fork 点快照（A3）
             let mut stmt = conn
-                .prepare("SELECT 1 FROM branch_heads WHERE session_id = ?1 AND branch_id = ?2")
+                .prepare("SELECT head_seq FROM branch_heads WHERE session_id = ?1 AND branch_id = ?2")
                 .await
                 .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("prepare from: {e}")))?;
             let mut rows = stmt
                 .query((sid.as_str(), from.as_str()))
                 .await
                 .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("query from: {e}")))?;
-            if rows
+            let Some(from_row) = rows
                 .next()
                 .await
                 .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("next from: {e}")))?
-                .is_none()
-            {
+            else {
                 return Err(ProtocolError::new(
                     ErrorCode::ForkConflict,
                     format!("cannot fork from unknown branch `{from}`"),
                 ));
-            }
+            };
+            let fork_at: i64 = from_row
+                .get(0)
+                .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("get fork head: {e}")))?;
             conn.execute(
-                "INSERT INTO branch_heads (session_id, branch_id, parent_branch, head_seq)
-                 VALUES (?1, ?2, ?3, 0)",
-                (sid.as_str(), new.as_str(), from.as_str()),
+                "INSERT INTO branch_heads (session_id, branch_id, parent_branch, head_seq, forked_at)
+                 VALUES (?1, ?2, ?3, 0, ?4)",
+                (sid.as_str(), new.as_str(), from.as_str(), fork_at),
             )
             .await
             .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("insert branch: {e}")))?;
@@ -639,7 +679,7 @@ impl EventStorePort for TursoEventStore {
         Box::pin(async move {
             let conn = self.conn.lock().await;
             let mut stmt = conn
-                .prepare("SELECT session_id, branch_id, parent_branch, head_seq FROM branch_heads WHERE session_id = ?1")
+                .prepare("SELECT session_id, branch_id, parent_branch, head_seq, forked_at FROM branch_heads WHERE session_id = ?1")
                 .await
                 .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("prepare heads: {e}")))?;
             let mut rows = stmt
@@ -664,11 +704,15 @@ impl EventStorePort for TursoEventStore {
                 let head_seq: i64 = row
                     .get(3)
                     .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("get: {e}")))?;
+                let forked_at: Option<i64> = row
+                    .get(4)
+                    .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("get: {e}")))?;
                 out.push(BranchHead {
                     session_id: SessionId::new(session_id),
                     branch_id: BranchId::new(branch_id),
                     parent_branch: parent_branch.map(BranchId::new),
                     head_seq: SeqNo::new(head_seq as u64),
+                    forked_at: forked_at.map(|v| v as u64),
                 });
             }
             Ok(out)
