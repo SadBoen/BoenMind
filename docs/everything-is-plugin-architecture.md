@@ -1,8 +1,8 @@
 # BoenMind 2.0 ——「万物皆插件」架构设计（Agent OS 框架）
 
-> 状态：**v0.5（迭代中）**——v0.4 已定稿待拍板，v0.5 新增 Agent OS 维度（平台驱动层 / 前端=桌面环境 / 应用=软件安装）
+> 状态：**v0.6（迭代中）**——v0.5 基线 + AI OS 赛道吸收（Life Agent OS / kernel.chat 源码级，A1-A12）
 > 日期：2026-08-14
-> 参考系：pi_agent_rust（现引擎，vendored）、DeepSeek Harness（dsh）、ZCode（插件/技能/市场）、Hermes（NousResearch/hermes-agent）、**xu-wiki-desk（用户已有应用插件实证）**
+> 参考系：pi_agent_rust（现引擎，vendored）、DeepSeek Harness（dsh）、ZCode（插件/技能/市场）、Hermes（NousResearch/hermes-agent）、**xu-wiki-desk（用户已有应用插件实证）**、**AI OS 赛道四项目（AIOS/MemGPT/Life Agent OS/kernel.chat，报告 docs/ai-os-landscape.md）**
 > 本文档持续迭代，直到自认完美后交用户拍板。
 
 ---
@@ -106,6 +106,25 @@
 | Z4 | MCP 作为一等公民（config 里直接配 server） | 外部生态接入标准 |
 | Z5 | marketplace.json（市场源）+ 插件缓存目录 + i18n（displayName_i18n/examplePrompts） | 商店/多语言的落地格式参照 |
 | Z6 | 用户级/工作区级配置分层 | 与 Z2 同构的配置哲学 |
+
+### 3.5 从 AI OS 赛道吸收（2026-08-14，研读报告：docs/ai-os-landscape.md）
+
+| # | 机制 | 来源 | 落地 |
+|---|---|---|---|
+| A1 | **分支化事件日志** `(session,branch,seq)` 三维寻址 + fork/merge 只读 | Life Agent OS | 5.1：branch_id 字段 + fork/merge 事件（首版落字段，UI 二期） |
+| A2 | **契约 crate 纯粹性**（零运行时依赖）+ **Port trait 契约**（14 个 `Arc<dyn>` 端口） | Life Agent OS | 5.2：`bm-protocol` 纯契约 crate + Port 集合 |
+| A3 | **扩展事件走 Custom 命名空间**（Spec D4：稳定跨层才进一等变体） | Life Agent OS | 5.2：验证我们的"核心域 enum + 插件域注册式"两层分治 |
+| A4 | **能力模式串** `fs:write:/session/**`（glob 而非枚举） | Life Agent OS | 6.5：能力声明改模式串 |
+| A5 | **acap 降级四硬约束**（能力单调递减，规则保证非信任保证） | kernel.chat | 6.5：会话裁剪单调递减 + 类型化错误码 |
+| A6 | **taint 污点追踪**（能力管"能不能"，taint 管"用什么数据做"） | kernel.chat | 6.5：提示注入的结构性拒绝 |
+| A7 | **reject-before-execute 配额**（预检投影 + 原子记账，warn_at 软警） | kernel.chat | 5.4：BudgetTracker |
+| A8 | **审计哈希链**（prev_hash+self_hash，篡改可检测） | kernel.chat | 5.4：审计事件哈希链 |
+| A9 | **复合安全门**（policy+capability+budget+sandbox 四层链） | Life Agent OS | 5.4：GateChain |
+| A10 | **投影折叠重放**为状态恢复 canonical 姿势（确定性测试） | Life Agent OS | 5.1：验证"日志即真相" |
+| A11 | K-LRU 换页 + trie 压缩（记忆分层） | AIOS | 6.1：记忆插件二期（vector）参考 |
+| A12 | 主动分页语义（prompt=RAM、存储=disk） | MemGPT/Letta | 6.1：与压缩 replace 事务互补 |
+
+**避免照抄**：Life 的巨型 monorepo 编译期组合（无动态加载）、kernel.chat 的"宣称与交付脱节"（能力矩阵按 shipped/partial 诚实标注）、AIOS 的 Python 性能。
 
 ### 3.4 从 Hermes 吸收（NousResearch/hermes-agent，Python 26.7 万行）
 
@@ -307,11 +326,15 @@ SessionEvent {
 - **并发写**：单进程内单写者（Mutex 串行 append）；跨进程（如子代理子进程）不走日志直写，走 RPC 代理写（未来 multi-instance 时引入租约）——**首版不承诺多进程并发写**（S9 缩小范围）。
 - **压缩锁**：unmatched `compaction/start` = 压缩中（dsh 语义），恢复时据此完成或回滚事务。
 
-### 5.2 服务注册与事件（Rust 版 Cordis，v0.2 深化）
+**分支化事件日志（v0.6 吸收，Life Agent OS）**：会话日志预留 `(session_id, branch_id, seq)` 三维寻址——fork 产生独立序列、merge 后分支转只读、fork 超头拒绝。**会话分支（"回滚到旧分支"语义）不再是前端功能，而是日志第一公民**。首版只落 `branch_id` 字段与 fork/merge 事件类型，分支 UI 二期（对齐 Hana 的会话分支拍板点）。
+
+### 5.2 服务注册与事件（Rust 版 Cordis，v0.6 深化）
 
 - `Ctx` 结构：`ctx.plugin(...)` 挂插件、`ctx.service(key)` 取服务、`ctx.on/emit/waterfall/parallel/serial`。
 - 依赖声明：`Plugin::deps() -> &[ServiceKey]`，注册表拓扑排序启动，失败回滚整棵子树。
 - 可逆副作用：每个注册返回 `Disposer`（RAII），插件卸载 = 逆序执行全部 disposer。
+- **契约纯粹性（v0.6 吸收，Life Agent OS）**：内核契约 = 独立的零运行时依赖 crate（`bm-protocol`，无 tokio/turso 依赖，纯类型 + trait 定义），所有模块依赖它、模块间不 import 内部实现（桥 crate 单向翻译）。**契约 crate 里只有接口没有实现**——最小内核的"最小"由它锁定。
+- **Port trait 形式化（v0.6 吸收，Life Agent OS）**：服务注册表 = 一组 Port trait（`EventStorePort` / `ModelProviderPort` / `ToolHarnessPort` / `PolicyGatePort` / `ApprovalPort` / `SessionPort` / `MemoryPort` / `NetworkPort` / `StoragePort`…），全部 `Arc<dyn Port>` 可换、各带独立 mock 测试。插件实现 Port，内核依赖 Port 而非实现。
 - **Rust 无 TS 声明合并 → 事件类型的注册式设计**（核心难点，两层分治）：
 
 ```rust
@@ -333,6 +356,7 @@ ctx.waterfall("agent/pre-step", args, |next| async move { /* 决策 */ });
 ```
 
 - **两层分治**：核心域（turn/step/user/assistant/tool/request/compaction/memory）用强类型 enum，插件域用注册式——避免"一个巨型 enum 所有人都要改"，也保留插件自由扩展。
+- **与 Life Agent OS 互相印证**（Spec D4）：跨层稳定事件才进一等枚举变体，层内扩展一律 `Custom{event_type: "命名空间.事件"}`——我们的"插件域注册式"正是同一原则的 Rust 形态。
 - 代价说明：插件域类型安全稍弱（字符串 EventId），换取自由扩展——与 dsh 的 TS 声明合并各有利弊，Rust 侧这是正解。
 
 ### 5.3 agent loop（准内核，默认插件）
@@ -360,7 +384,10 @@ tool/call 落日志 → pre-execute(waterfall) → 单调守卫 → approval(一
 
 - 权限三档升级为"阶梯 + 审批"：`read-only → workspace-write → danger`，升级需 justification + 用户一次性批准（dsh 范式）。
 - **与现有 PermissionBridge 的桥接**：现有弹窗询问（`extension-permissions.json` 权威 + SSE 弹窗 + oneshot 回传）原样保留为 `approval` 服务的**宿主实现**——2.0 把"询问"从插件机制（P5 补丁）升级为"把关链的一环"，询问 UI 本身以后也可以换（桌面弹窗 / 通知栏 / 无头自动策略）。
+- **配额（v0.6 吸收，kernel.chat 的 ulimit-tok）**：会话级 `BudgetTracker`——token/时长/成本/子代理数四维配额，**reject-before-execute 两段式**（执行前预检投影 + 原子记账；硬限拒绝、`warn_at` 比例软警不阻塞）——"失控 agent 突破配额"在结构上不可能。
+- **复合安全门（v0.6 吸收，Life Agent OS 的 GateChain）**：policy + capability + budget + sandbox 四层 filter 串成一条链，任一层拒绝即整链拒绝，失败降级 `Recover → AskHuman`。
 - 沙箱是 `confine(argv, policy)` 包装器（dsh 范式），策略按调用携带，fail-closed（阶段 3 落地，S6）。
+- **审计哈希链（v0.6 吸收，kernel.chat）**：把关链的所有决策（能力检查/审批/拒绝/taint 拦截）落审计事件，审计日志用 `prev_hash + self_hash = sha256(canonicalize(entry))` 哈希链——**篡改可检测（verify 返回破坏点）**。能力声明/权限决策可审计，与应用插件的能力声明哈希（canonicalize 模式）同源。
 
 ### 5.5 组装与配置（bundle + patch，profile 二期）
 
@@ -548,6 +575,25 @@ backend/              # 后端包（路由/服务/工具/事件处理）
 
 这与 HanaAgent 的"隔离执行纪律"（deny_on_prompt + surface:automation）同构，但更细：**权限从"执行纪律"升级为"会话构造"**——应用插件的 Agent 从出生起就被裁剪，而不是靠事后拦截。
 
+**v0.6 升级：能力单调递减（吸收 kernel.chat 的 acap 降级四硬约束）**：
+```
+"接收方永远不可能比发送方多"——由规则而不是信任保证：
+1. 能力种类（subject.kind）不可变——不能通过授权改类型；
+2. 能力范围（scope）只能是子集——逐项检查请求 ∈ 源；
+3. 次数 ≤ 源剩余——即使持有者也超不出源的剩余配额；
+4. 授权链：granted_by = 原持有者，形成可审计的委托链。
+```
+应用到会话裁剪：主会话签发能力子集给应用会话 → 应用会话再下发给子代理时只能再缩小。任何扩大尝试返回类型化错误码（`capability_escalation_denied` 等，对齐 kernel.chat 的 10 个错误码风格）。
+
+**v0.6 升级：taint 污点追踪（吸收 kernel.chat 的 chexec）**——能力管"能不能做"，taint 管"**用什么数据做**"：
+```
+Taint 来源：fetched_url / email / user_input / untrusted_file / agent_message
+规则：外部输入（网页抓取/邮件/用户消息/未信任文件）打污点标签；
+     propagate 向前并集传播；untaint 仅白名单工具（如合规清洗）可清除；
+     blocks 策略表：敏感工具（文件写/网络发/发消息）拒绝携带外部污点的调用。
+```
+把 EchoLeak/提示注入从"模型行为问题"变成"**结构性拒绝**"——恶意内容即便被模型接受，也过不了 taint 门。**这是提示注入对抗的最硬一层**，BoenMind 插件生态直接受益。
+
 ## 七、与现状的兼容与渐进路线（v0.2）
 
 ### 7.1 兼容策略
@@ -644,6 +690,7 @@ backend/              # 后端包（路由/服务/工具/事件处理）
 - [ ] 应用插件前端隔离机制拍板（A iframe / B WebComponent / C 联邦——留给用户）
 - [x] 前端 SDK 日志投影引擎的协议设计（6.3：快照+增量两阶段、SurfaceOp 同构、selector 订阅）
 - [x] **Agent OS 维度**（v0.5）：概念映射表（〇·一）、平台驱动层（四·A）、前端=DE（四·B）、应用=软件安装（四·C）、补审 S10-S12
+- [x] **AI OS 赛道吸收**（v0.6）：分支日志 A1 / 契约 crate+Port A2 / Custom 事件 A3 / 能力模式串 A4 / acap 降级 A5 / taint A6 / 配额 A7 / 审计哈希链 A8 / 复合门 A9 / 投影重放 A10（赛道报告 docs/ai-os-landscape.md）
 - [ ] 渐进路线与现有发布节奏的冲突评估（拍板时定）
 - [ ] 沙箱（OS 级）与插件系统的关系（confine 在哪个层生效，阶段 3 细化）
 - [ ] 记忆插件与日志的写回契约（memory/write 事件协议细化）
@@ -688,4 +735,4 @@ backend/              # 后端包（路由/服务/工具/事件处理）
 - Code Architecture Planner skill（评审方法论）: https://github.com/CarterIrish/code-architecture-skill
 
 ---
-*（v0.5 完：v0.4 基线 + Agent OS 维度——平台驱动层/前端=桌面环境/应用=软件安装。一致性已复查。交用户拍板。）*
+*（v0.6 完：v0.5 基线 + AI OS 赛道吸收（A1-A12）。赛道报告 docs/ai-os-landscape.md。一致性已复查。交用户拍板。）*
