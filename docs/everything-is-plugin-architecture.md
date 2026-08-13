@@ -1,6 +1,6 @@
-# BoenMind 2.0 ——「万物皆插件」架构设计
+# BoenMind 2.0 ——「万物皆插件」架构设计（Agent OS 框架）
 
-> 状态：**v0.4（迭代完毕，待用户拍板）**——四家参考研读齐、pi-compat 已查证、Simplicity Check 已审计
+> 状态：**v0.5（迭代中）**——v0.4 已定稿待拍板，v0.5 新增 Agent OS 维度（平台驱动层 / 前端=桌面环境 / 应用=软件安装）
 > 日期：2026-08-14
 > 参考系：pi_agent_rust（现引擎，vendored）、DeepSeek Harness（dsh）、ZCode（插件/技能/市场）、Hermes（NousResearch/hermes-agent）、**xu-wiki-desk（用户已有应用插件实证）**
 > 本文档持续迭代，直到自认完美后交用户拍板。
@@ -11,7 +11,29 @@
 
 **BoenMind 的内核只做一件事：把插件装起来、让插件互相看见、把一切都记进事件日志。除此之外，什么都不是内核——聊天不是内核，记忆不是内核，网络不是内核，UI 也不是内核。**
 
-> 用户原话（2026-08-14）："我是真的希望一切都是插件，包括记忆系统的！"……"甚至你前几轮的网络问题，与前端的 SDK 和 RPC 通讯之类的，要是都能做成插件就完美了。"……"插件/Skill 是钩在 agent 里面的能力，能不能再搞出个**独立的功能界面**（也是插件），核心依然是 Agent。以后开发不同功能的智能应用，外观上看着不是 Agent，但本质仍然是调用了 Agent。"（Wiki、相册）
+**长远形态：Agent 操作系统（Agent OS）。** 内核 = 操作系统内核；平台适配 = 设备驱动；前端壳 = 桌面环境；应用插件 = 安装的软件；插件市场 = 应用商店。**这个类比不是比喻，是同构**——Agent OS 的每一层都可以（且应该）在今天的架构里找到对应物，所以现在就按 OS 的纪律设计。
+
+> 用户原话（2026-08-14）："长远上，它甚至可以发展成为Agent操作系统！每个独立界面的应用，是不是相当于当前的软件安装？……系统功能的调用也要做成插件，如果真的以后成为操作系统了，那这些系统功能，实际就是不动的驱动……现在linux, windows, macos的不同系统底层，也类似于调用插件了……前端就类似于现在桌面相对于linux的关系。"
+
+## 〇·一、Agent OS 概念映射（贯穿全文的坐标系）
+
+| 传统 OS | Agent OS（BoenMind 2.0） | 本文档章节 |
+|---|---|---|
+| 内核 | 最小内核：加载器/注册表/事件总线/会话日志 | §二、§五 |
+| 系统调用（syscall） | 服务注册表（`ctx.<key>` 服务调用） | §5.2 |
+| **设备驱动** | **平台驱动插件（win/mac/linux 各一个实现）** | **§四·A（新增）** |
+| 硬件抽象层（HAL） | `Platform` trait（路径/进程/fs/系统/沙箱/网络） | §四·A |
+| 进程调度 | agent-loop（会话调度）+ 子代理 | §5.3 |
+| init 系统 | 插件加载器（依赖拓扑 + 可逆副作用） | §5.2 |
+| 内存管理 | 上下文管理（压缩水线/预算） | §5.1、D10 |
+| 文件系统 | `storage-*` + `fs` 服务（经平台驱动） | §四·A |
+| 权限模型（DAC/MAC） | 权限三档 + 把关链 + 能力声明 | §5.4、§6.5 |
+| 系统日志（journald） | 会话事件日志（append-only 可回放） | §5.1 |
+| **桌面环境（GNOME/KDE）** | **前端壳（desktop-tauri / web / cli，多套可并存）** | **§四·B（新增）** |
+| 软件安装 | 应用插件（manifest/安装/卸载/升级/依赖） | §6.4、§四·C |
+| 应用商店 | 插件市场（marketplace + 版本/签名） | Z5、§四·C |
+| 用户态/内核态 | QuickJS 沙箱（插件跑沙箱、宿主不受污染） | P1 |
+| 驱动更新 | 平台驱动的热升级（现有热升级管线） | 现有资产 |
 
 ## 一、什么是"插件"：双形态模型
 
@@ -136,7 +158,7 @@
 
 ```mermaid
 graph TD
-    subgraph Kernel["内核 Kernel（<1 万行）"]
+    subgraph Kernel["内核 Kernel（<1.5 万行）"]
         L["插件加载器 Loader<br/>安装/启用/卸载/可逆副作用"]
         S["服务注册表 Registry<br/>ctx.key / inject 依赖"]
         E["事件总线 Event Bus<br/>emit/waterfall/parallel/serial"]
@@ -146,9 +168,16 @@ graph TD
         LOOP --> E
     end
 
+    subgraph Drivers["平台驱动层（Agent OS 的设备驱动）"]
+        PW["platform-windows<br/>路径/进程/ACL 沙箱/注册表（首发）"]
+        PM["platform-macos<br/>Seatbelt 沙箱（二期）"]
+        PL["platform-linux<br/>Landlock 沙箱（二期）"]
+        DE["driver-exec / fs / net<br/>系统功能=驱动接口"]
+    end
+
     subgraph Infra["基础设施层（宿主级插件）"]
         NET["network-tokio<br/>连接检测策略（10057 正式化）"]
-        RPC["rpc-sse / rpc-ws / rpc-ipc"]
+        RPC["rpc-sse / rpc-ipc"]
         STORAGE["storage-turso / storage-jsonl"]
         AUTH["auth / 凭据"]
         TELE["遥测 / 审计日志"]
@@ -163,28 +192,90 @@ graph TD
         SUB["子代理 provider 注册表"]
     end
 
-    subgraph Apps["应用层（有 UI 的插件）"]
+    subgraph Apps["应用层（有 UI 的插件=软件安装）"]
         CHAT["Chat（默认）"]
         WIKI["Wiki<br/>← xu-wiki-desk 实证"]
         ALBUM["相册（未来）"]
         ANY["任意应用插件"]
     end
 
-    subgraph Front["前端（桌面 Tauri / Web）"]
+    subgraph Front["前端壳（Agent OS 的桌面环境，多套并存）"]
         SDK["@boenmind/client SDK<br/>Transport 插件化 + 日志投影引擎"]
+        DE1["desktop-tauri 壳"]
+        DE2["web 壳"]
         UI1["Chat 页面"] 
         UI2["Wiki 页面"]
         UI3["相册页面"]
     end
 
+    Kernel --> Drivers
+    Drivers --> Infra
     Kernel --> Infra
     Kernel --> Capability
     Capability --> Apps
     Apps --> SDK
-    SDK --> UI1 & UI2 & UI3
+    SDK --> DE1 & DE2
+    DE1 --> UI1 & UI2 & UI3
+    DE2 --> UI1 & UI2 & UI3
     Apps -. "受控子步骤 / 完整任务" .-> LOOP
     Infra -. "RPC 传输" .-> SDK
 ```
+
+### 四·A 平台驱动层（Agent OS 的"设备驱动"，v0.5 新增）
+
+**用户的核心洞见：现在 Linux/Windows/macOS 的底层差异 = 驱动插件；将来 Agent OS 上的系统功能 = 不动的驱动。** 所以平台适配现在就要按驱动模型设计——接口固定，实现随平台换：
+
+```rust
+// 平台抽象 = 硬件抽象层（HAL）。一个平台一个实现，其余插件只面对接口。
+trait Platform: Plugin {
+    fn os(&self) -> OsKind;                            // windows / macos / linux
+    fn path(&self, kind: PathKind) -> PathBuf;         // 路径语义：home/config/data/cache/temp
+    fn process(&self) -> &dyn ProcessDriver;           // spawn / 信号 / 退出码 / 进程树
+    fn fs(&self) -> &dyn FsDriver;                     // 文件操作（权限/锁/符号链接语义差异）
+    fn system(&self) -> &dyn SystemDriver;             // 自启动 / 通知 / 托盘 / 文件关联 / 注册表
+    fn sandbox(&self) -> Option<&dyn SandboxDriver>;   // OS 级沙箱：win ACL / mac Seatbelt / linux Landlock
+    fn net(&self) -> &dyn NetDriver;                   // TLS / 代理 / 连接检测（与 §6.2 协同）
+}
+```
+
+- **系统功能服务（fs/shell/network/process）一律经平台驱动实现**——上层插件只面对统一接口。这就是"驱动"语义：**接口固定、实现随平台换、换平台 = 换驱动**。
+- 现成证据：dsh 的沙箱平台链（bwrap→Landlock→Seatbelt→Windows ACL，按后端分类 + 功能探测 + fail-closed）就是**沙箱驱动**的雏形；Hermes 的 7 种终端后端（local/docker/ssh/modal…）是**执行环境驱动**的雏形；Hana 的 Windows C++ 沙箱 helper 是**平台原生驱动的雏形**。BoenMind 2.0 把它们统一成一套 `Platform` 纪律。
+- 平台驱动清单（首版，S 系列审计后）：
+  | 驱动 | 职责 | win | mac | linux |
+  |---|---|---|---|---|
+  | `platform-windows` | 路径/进程/自启动/通知/ACL 沙箱/注册表 | ✓（首发） | — | — |
+  | `platform-macos` | 路径/进程/自启动/通知/Seatbelt 沙箱 | — | 二期 | — |
+  | `platform-linux` | 路径/进程/自启动/通知/Landlock 沙箱 | — | — | 二期 |
+  | `driver-exec` | 命令执行（进程驱动之上的策略壳） | 现有 exec 政策迁移 | | |
+  | `driver-fs` | 文件系统服务（watch/glob/权限语义） | 现有 fs 工具迁移 | | |
+  | `driver-net` | 网络驱动（§6.2 ConnectPolicy 的平台落地） | 10057 修复正式化 | | |
+- **与热升级的关系**：平台驱动参与现有热升级管线（驱动更新 = 打补丁的正式化），驱动接口变更 = 大版本事件（驱动 ABI 稳定性纪律，同 OS 的 driver ABI）。
+
+### 四·B 前端 = 桌面环境（Agent OS 的"DE"，v0.5 新增）
+
+**用户的核心洞见：前端之于内核 = 桌面环境之于 Linux。** 推论：桌面环境可以有多套（GNOME/KDE 并存），前端壳也应该可以有多套，且都不是内核：
+
+| 前端壳 | 形态 | 状态 |
+|---|---|---|
+| `desktop-tauri` | 桌面壳（现有）——默认 DE | 现有资产，迁入 |
+| `web` | 浏览器 SPA——第二 DE | 现有资产，迁入 |
+| `cli` | 命令行壳 | 可选 |
+| `headless` | 无头模式（dsh headless 参照） | 二期 |
+
+- **DE 的契约**：前端壳 = `@boenmind/client`（Transport + 投影引擎）+ 应用注册器（导航/页面/快捷键/托盘）。内核不关心前端长什么样，只提供 API + 事件流。
+- **多 DE 并存**：同一内核可同时服务 desktop 和 web（RPC 传输不同：local-ipc vs SSE）——这已经是现状（Tauri 壳 + Web 端共存），v0.5 把它正式化为"DE 可插拔"。
+- **DE 与应用的边界**：应用插件的前端包跑在 DE 里（像软件窗口跑在桌面环境里），DE 提供窗口/导航/通知等宿主能力，应用提供内容。
+
+### 四·C 应用 = 软件安装（Agent OS 的"包管理"，v0.5 新增）
+
+**用户的核心洞见：每个独立界面的应用 = 软件安装。** 那么软件安装的纪律全部适用：
+
+- **安装**：应用插件目录（manifest + frontend/ + backend/）→ 安装 = 复制 + 注册 + 启动加载（复用现有插件安装管线 + 热升级）。
+- **卸载** = 逆序 disposer（可逆副作用保证）+ 数据保留询问（软件卸载的"是否保留数据"）。
+- **升级**：版本语义（SemVer）+ 兼容性声明（min-kernel-version，类比 Hana 的 minAppVersion）+ 热升级（现有管线）。
+- **依赖**：应用 A 依赖应用 B 的能力 → 依赖声明 + 版本解析（现有 npm/git 安装器的解析能力扩展）。
+- **市场** = 应用商店：marketplace.json（Z5）+ 签名/验签（现有 74B 验签）+ 商店即"货架"（此前拍板"不做浏览界面"，商店 UI 本身可以是一个应用插件！）。
+- **审计**：安装记录（版本/来源/hash，Hana 的 plugin-installs.json 参照）——软件安装的"已安装程序列表"。
 
 ## 五、核心机制草案（v0.2 要点）
 
@@ -482,10 +573,11 @@ backend/              # 后端包（路由/服务/工具/事件处理）
 阶段 0（先行，零风险）：会话事件日志层落 turso（双写过渡：现有表 + 事件流）
 阶段 1：**pi-compat 拆法 A**（vendor 6 文件 + 300 行 host 线程，1-2 周）+ Rust 内核骨架（加载器/注册表/事件总线）+ agent-loop 插件（trait 抽象，QuickJS 引擎已就位，pi.dev 插件当日兼容）
 阶段 2：工具把关链 + 权限升级（阶梯审批）；LLM client 只做 OpenAI 兼容 + 现有 providers 配置复用（S7）
-阶段 3：基础设施插件化（网络/存储/RPC）——10057 修复正式化为 network-tokio 插件；沙箱 confine 落地（S6）
-阶段 4：应用插件机制（前端 SDK 投影引擎 + iframe 加载）→ Wiki/相册试点（复用 xu-wiki-desk 资产）
+阶段 3：基础设施插件化（网络/存储/RPC）——10057 修复正式化为 network-tokio 插件；沙箱 confine 落地（S6）；**平台驱动层首发（platform-windows + driver-exec/fs/net，S10）**
+阶段 4：应用插件机制（前端 SDK 投影引擎 + iframe 加载）→ Wiki/相册试点（复用 xu-wiki-desk 资产）；**DE 契约正式化（desktop/web 双壳）**
 阶段 5：记忆插件化（compactor 升级 replace 事务 → file → vector）
 阶段 6：vendor pi 剩余部分（loop/工具集/压缩引擎）退役判定（插件生态迁移完成度）
+阶段 7（愿景）：Agent OS 化——平台驱动补齐 mac/linux、商店 UI 应用插件化、多 DE 并存
 ```
 
 每阶段可独立发布、可回滚，不阻塞 v0.1.x 发布节奏。
@@ -519,6 +611,16 @@ backend/              # 后端包（路由/服务/工具/事件处理）
 
 **审计后内核口径修正**：内核（加载器+注册表+事件总线+日志原语）目标 **5-8k 行**，agent-loop 准内核 **2-3k 行**——合计仍 <1.5 万行（vs vendor 35 万行依赖面），但不再宣称"1 万行"这种容易破的牛皮。
 
+**v0.5 补审（Agent OS 维度）**：
+
+| # | 原设计 | 审计结论 | 决定 |
+|---|---|---|---|
+| S10 | 平台驱动层（win/mac/linux 三实现 + HAL trait） | 用户点名要求（"不同系统底层类似于调用插件"），且 dsh/Hermes/Hana 已有雏形——**不算过度**；但首版只做 **platform-windows + driver-exec/fs/net**，mac/linux 二期 | 收范围（驱动清单已锁） |
+| S11 | 多前端壳（desktop/web/cli/headless） | 现有已有 desktop+web 双壳，cli/headless 可选——不新增工程，只把"DE 契约"写清楚 | 保留（零新增成本） |
+| S12 | 应用=软件安装全套语义（依赖解析/商店/卸载数据保留） | 首版复用现有安装管线 + 热升级；**依赖解析/商店 UI 不做**（商店 UI 未来本身是应用插件） | 简化 |
+
+**Agent OS 维度不越界原则**：OS 类比用于**纪律**（驱动 ABI 稳定、卸载逆序、安装记录），不用于**发明新概念**（不做"设备树"、不做"进程间 IPC 框架"——RPC 插件已覆盖）。
+
 ## 九、挑战假设记录（设计决策的论证轨迹）
 
 | 假设 | 论证 | 结论 |
@@ -541,9 +643,11 @@ backend/              # 后端包（路由/服务/工具/事件处理）
 - [x] **pi-compat 可行性**：已查证——拆法 A（6 文件 + 300 行 host 线程，1-2 周）定案，见 §7.1
 - [ ] 应用插件前端隔离机制拍板（A iframe / B WebComponent / C 联邦——留给用户）
 - [x] 前端 SDK 日志投影引擎的协议设计（6.3：快照+增量两阶段、SurfaceOp 同构、selector 订阅）
+- [x] **Agent OS 维度**（v0.5）：概念映射表（〇·一）、平台驱动层（四·A）、前端=DE（四·B）、应用=软件安装（四·C）、补审 S10-S12
 - [ ] 渐进路线与现有发布节奏的冲突评估（拍板时定）
 - [ ] 沙箱（OS 级）与插件系统的关系（confine 在哪个层生效，阶段 3 细化）
 - [ ] 记忆插件与日志的写回契约（memory/write 事件协议细化）
+- [ ] 平台驱动 ABI 稳定性纪律（驱动接口变更 = 大版本事件的判据）
 
 ## 十一、附录
 
@@ -556,6 +660,9 @@ backend/              # 后端包（路由/服务/工具/事件处理）
 | 能力插件 | 钩进 Agent 会话的插件（工具/技能/记忆/策略），无独立 UI |
 | 应用插件（App） | 有独立功能界面的插件，核心仍是 Agent（Wiki/相册/Chat） |
 | 基础设施插件 | 宿主级服务（网络/RPC/存储/认证），替换影响面最大 |
+| **平台驱动（Driver）** | Agent OS 的设备驱动：win/mac/linux 平台差异的封装（Platform trait 实现） |
+| **前端壳（DE）** | Agent OS 的桌面环境：desktop-tauri / web 等多套前端，通过 SDK 连内核 |
+| **Agent OS** | 本架构的长远形态：内核+驱动+DE+应用安装的完整 OS 类比 |
 | 会话事件日志 | append-only 持久事实流，一切状态的唯一事实源 |
 | surface 操作 | 日志条目在消息面上的放置语义：append / replace（压缩遮蔽） |
 | ignorable 守卫 | 未认识事件可安全跳过的标记；缺省 = 必需（不认识须拒绝重建） |
@@ -581,4 +688,4 @@ backend/              # 后端包（路由/服务/工具/事件处理）
 - Code Architecture Planner skill（评审方法论）: https://github.com/CarterIrish/code-architecture-skill
 
 ---
-*（v0.4 完：四家参考 + xu-wiki 实证 + pi-compat 查证 + Simplicity Check + 9 点一致性审计。交用户拍板。）*
+*（v0.5 完：v0.4 基线 + Agent OS 维度——平台驱动层/前端=桌面环境/应用=软件安装。一致性已复查。交用户拍板。）*
