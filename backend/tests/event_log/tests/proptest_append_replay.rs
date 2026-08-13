@@ -61,12 +61,10 @@ proptest! {
             expected_len.insert(main.to_string(), 0);
             expected_next.insert(main.to_string(), 1);
             let mut turn_no: u32 = 0;
-            let mut round: usize = 0;
 
-            for op in ops {
+            for (round, op) in ops.into_iter().enumerate() {
                 // 轮转选分支（确定性伪随机；单一分支概率由 ops 生成器覆盖）
                 let bid = branches[round % branches.len()].clone();
-                round += 1;
                 let key = bid.to_string();
                 match op {
                     Op::Append => {
