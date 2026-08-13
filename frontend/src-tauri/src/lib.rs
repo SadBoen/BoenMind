@@ -44,8 +44,8 @@ fn latest_runtime_binary() -> Option<PathBuf> {
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
         let Some(rest) = name.strip_prefix("boenmind-runtime-") else { continue };
-        // 跳过签名/下载临时文件
-        if rest.contains(".sig") || rest.contains(".download-") || rest.contains(".bak") {
+        // 跳过签名/下载临时/压缩包残留文件
+        if rest.contains(".sig") || rest.contains(".download-") || rest.contains(".bak") || rest.contains(".gz") {
             continue;
         }
         // 版本 = 第一个 `-` 之前的部分（`0.2.0-x86_64-pc-windows-msvc.exe` → `0.2.0`）
@@ -84,6 +84,7 @@ mod tests {
             "boenmind-runtime-0.3.0-x86_64-apple-darwin", // 更高版本（其它平台名）也应选中
             "boenmind-runtime-0.1.1-x86_64-pc-windows-msvc.exe",
             ".download-boenmind-runtime-0.9.0-aarch64-apple-darwin", // 下载临时文件跳过
+            "boenmind-runtime-0.9.9-aarch64-apple-darwin.gz", // 压缩包残留跳过（解压后落盘无 .gz）
         ] {
             std::fs::write(rd.join(name), b"x").unwrap();
         }

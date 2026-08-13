@@ -90,8 +90,9 @@ pub fn current_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
-/// 目标平台资产名（发布命名约定：`boenmind-runtime-<ver>-<triple>[.exe]`）。
-/// 与 release.yml 的产物命名保持同步，改动两侧需一致。
+/// 目标平台资产名（发布命名约定：`boenmind-runtime-<ver>-<triple>[.exe].gz`，
+/// gzip 压缩传输，验签后解压去掉 `.gz` 再落盘）。与 release.yml 的产物命名
+/// 保持同步，改动两侧需一致。
 pub fn target_asset_name(version: &str) -> String {
     let triple = match (std::env::consts::OS, std::env::consts::ARCH) {
         ("linux", "x86_64") => "linux-x86_64",
@@ -100,14 +101,11 @@ pub fn target_asset_name(version: &str) -> String {
         ("macos", "x86_64") => "x86_64-apple-darwin",
         ("windows", "x86_64") => "x86_64-pc-windows-msvc",
         // 未知平台兜底（测试/新平台）
-        (os, arch) => return format!("boenmind-runtime-{version}-{os}-{arch}"),
+        (os, arch) => return format!("boenmind-runtime-{version}-{os}-{arch}.gz"),
     };
     let name = format!("boenmind-runtime-{version}-{triple}");
-    if std::env::consts::OS == "windows" {
-        format!("{name}.exe")
-    } else {
-        name
-    }
+    let name = if std::env::consts::OS == "windows" { format!("{name}.exe") } else { name };
+    format!("{name}.gz")
 }
 
 /// 语义版本比较（容忍 `v` 前缀与 `-` 分隔，如 "v0.2.0" / "0.2.0-beta.1"）。
@@ -128,12 +126,14 @@ pub fn compare_versions(a: &str, b: &str) -> Ordering {
     va.len().cmp(&vb.len())
 }
 
-/// 检查更新（用户手动触发）：查 GitHub Releases 最新版，选当前平台的资产。
-/// GitHub 未认证限流 60 req/h，手动触发频率无压力；不做任何自动检查。
-pub fn check_update() -> Result<UpdateCheck, AppError> {
-    let current = current_version().to_string();
+/// 运行时资产独立 Release 的 tag 前缀（`runtime-v<ver>`，prerelease）：
+/// 主发布页只放人用的安装包，热升级二进制归独立 tag，避免发布页被内部资产淹没。
+const RUNTIME_TAG_PREFIX: &str = "runtime-v";
+
+/// GET 一个 GitHub Releases API 端点并解析 JSON（校验 HTTP 200 + 限体 2MB）。
+fn fetch_release_json(url: &str) -> Result<serde_json::Value, AppError> {
     let resp = http_agent()
-        .get(RELEASES_API)
+        .get(url)
         .header("User-Agent", "BoenMind")
         .call()
         .map_err(|e| AppError::upstream(format!("检查更新失败: {e}")))?;
@@ -147,8 +147,15 @@ pub fn check_update() -> Result<UpdateCheck, AppError> {
         .limit(2 * 1024 * 1024)
         .read_to_vec()
         .map_err(|e| AppError::upstream(format!("读取 GitHub 响应失败: {e}")))?;
-    let json: serde_json::Value =
-        serde_json::from_slice(&body).map_err(|e| AppError::upstream(format!("解析 GitHub 响应失败: {e}")))?;
+    serde_json::from_slice(&body).map_err(|e| AppError::upstream(format!("解析 GitHub 响应失败: {e}")))
+}
+
+/// 检查更新（用户手动触发）：查 GitHub Releases 最新版，选当前平台的资产。
+/// GitHub 未认证限流 60 req/h，手动触发频率无压力；不做任何自动检查。
+pub fn check_update() -> Result<UpdateCheck, AppError> {
+    let current = current_version().to_string();
+    // 1. 最新主发布（人用的安装包）→ 取版本号与发布说明
+    let json = fetch_release_json(RELEASES_API)?;
 
     let version = json
         .get("tag_name")
@@ -164,8 +171,16 @@ pub fn check_update() -> Result<UpdateCheck, AppError> {
         return Ok(UpdateCheck { current, latest: None });
     }
 
+    // 2. 运行时二进制在独立 tag（runtime-v<ver>）发布 → 取该 Release 的资产
+    let runtime_json =
+        fetch_release_json(&format!("https://api.github.com/repos/{UPDATE_REPO}/releases/tags/{RUNTIME_TAG_PREFIX}{version}"))
+            .map_err(|e| {
+                AppError::upstream(format!(
+                    "新版 v{version} 的运行时发布（{RUNTIME_TAG_PREFIX}{version}）不可用：{e}"
+                ))
+            })?;
     let wanted = target_asset_name(&version);
-    let assets = json.get("assets").and_then(|a| a.as_array());
+    let assets = runtime_json.get("assets").and_then(|a| a.as_array());
     let asset = assets
         .and_then(|list| list.iter().find(|a| a.get("name").and_then(|n| n.as_str()) == Some(wanted.as_str())))
         .ok_or_else(|| {
@@ -348,7 +363,23 @@ pub fn download_and_verify(asset: &ReleaseAsset) -> Result<PathBuf, AppError> {
     Ok(tmp)
 }
 
-/// 应用更新：下载 → 验签 → 落盘。
+/// gzip 解压（下载的 `.gz` 验签通过后解压出最终二进制；Windows 的 `.exe` 后缀保留）。
+fn decompress_gzip(src: &Path, dst: &Path) -> Result<(), AppError> {
+    use std::io::Read;
+    let file = fs::File::open(src).map_err(|e| AppError::internal(format!("打开压缩包失败: {e}")))?;
+    let mut decoder = flate2::read::GzDecoder::new(file);
+    let mut out = fs::File::create(dst).map_err(|e| AppError::internal(format!("创建目标文件失败: {e}")))?;
+    std::io::copy(&mut decoder, &mut out).map_err(|e| AppError::internal(format!("解压失败: {e}")))?;
+    // 保持可执行权限（gzip 不保留权限位）
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(dst, fs::Permissions::from_mode(0o755));
+    }
+    Ok(())
+}
+
+/// 应用更新：下载 → 验签 → 解压 → 落盘。
 /// - managed：新文件落盘 runtime 目录（版本号命名不覆盖 → 天然回滚）
 /// - standalone：备份旧版 + 原子替换自身 + 写 pending 标记
 ///   （进程未及重启时，下次启动由 main.rs 检测标记自动 exec 完成升级）
@@ -357,12 +388,13 @@ pub fn apply_update() -> Result<ApplyOutcome, AppError> {
     let latest = check.latest.ok_or_else(|| AppError::invalid("当前已是最新版本"))?;
     let tmp = download_and_verify(&latest.asset)?;
     let version = latest.version.clone();
-    let asset_name = latest.asset.name.clone();
+    // 落盘名 = 去掉 `.gz` 后缀（`boenmind-runtime-<ver>-<triple>[.exe]`，与壳的扫描约定一致）
+    let final_name = latest.asset.name.trim_end_matches(".gz").to_string();
 
     let result = (|| -> Result<ApplyOutcome, AppError> {
         if is_managed() {
-            let dest = runtime_dir().join(&asset_name);
-            fs::rename(&tmp, &dest).map_err(|e| AppError::internal(format!("落盘新版失败: {e}")))?;
+            let dest = runtime_dir().join(&final_name);
+            decompress_gzip(&tmp, &dest)?;
             Ok(ApplyOutcome { version, mode: "managed".into(), path: Some(dest.display().to_string()) })
         } else {
             let exe = std::env::current_exe().map_err(|e| AppError::internal(format!("定位自身程序失败: {e}")))?;
@@ -372,8 +404,10 @@ pub fn apply_update() -> Result<ApplyOutcome, AppError> {
             if !backup.exists() {
                 let _ = fs::copy(&exe, &backup);
             }
-            // 原子替换自身（Linux：运行中 rename 覆盖安全，旧 inode 保持到进程退出）
-            fs::rename(&tmp, &exe).map_err(|e| AppError::internal(format!("替换自身失败: {e}")))?;
+            // 解压到临时名后原子替换自身（Linux：运行中 rename 覆盖安全，旧 inode 保持到进程退出）
+            let staged = exe.with_file_name(format!(".update-{}", final_name));
+            decompress_gzip(&tmp, &staged)?;
+            fs::rename(&staged, &exe).map_err(|e| AppError::internal(format!("替换自身失败: {e}")))?;
             // pending 标记：exec 未执行（崩溃/断电）时，下次启动自动完成升级
             let marker = runtime_dir().join(UPDATE_PENDING_FILE);
             let ts = std::time::SystemTime::now()
@@ -385,9 +419,8 @@ pub fn apply_update() -> Result<ApplyOutcome, AppError> {
             Ok(ApplyOutcome { version, mode: "standalone".into(), path: None })
         }
     })();
-    if result.is_err() {
-        let _ = fs::remove_file(&tmp);
-    }
+    // 无论成败，清理下载的压缩包临时文件
+    let _ = fs::remove_file(&tmp);
     result
 }
 
@@ -515,8 +548,30 @@ mod tests {
         let name = target_asset_name("0.2.0");
         assert!(name.starts_with("boenmind-runtime-0.2.0-"), "命名约定: {name}");
         assert!(name.contains(std::env::consts::ARCH), "应包含架构: {name}");
+        assert!(name.ends_with(".gz"), "资产应 gzip 压缩: {name}");
         #[cfg(windows)]
-        assert!(name.ends_with(".exe"), "Windows 资产应带 .exe: {name}");
+        assert!(name.ends_with(".exe.gz"), "Windows 资产应带 .exe.gz: {name}");
+    }
+
+    #[test]
+    fn gzip_decompress_roundtrip() {
+        use std::io::Write as _;
+        let tmp = std::env::temp_dir().join(format!("bm-gz-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+        let src = tmp.join("payload.gz");
+        let dst = tmp.join("payload");
+        let payload = b"hello runtime payload";
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(payload).unwrap();
+        fs::write(&src, encoder.finish().unwrap()).unwrap();
+        // 解压还原
+        decompress_gzip(&src, &dst).unwrap();
+        assert_eq!(fs::read(&dst).unwrap(), payload);
+        // 非 gzip 内容必须报错（防错误资产静默通过）
+        fs::write(&src, b"not gzip at all").unwrap();
+        assert!(decompress_gzip(&src, &dst).is_err());
+        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[test]
@@ -531,3 +586,4 @@ mod tests {
         assert!(!asset_url_allowed("https://192.168.1.1/x"));
     }
 }
+
