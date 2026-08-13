@@ -33,26 +33,20 @@ interface Props {
   onClose: () => void;
 }
 
-/** 内置源展示名（sources.jina → Jina）——manifest testSources.label 优先 */
-const SOURCE_DISPLAY: Record<string, string> = {
-  jina: "Jina",
-  tavily: "Tavily",
-  exa: "Exa",
-  serper: "Serper",
-  firecrawl: "Firecrawl",
-};
-
-/** 该源是否有测试模板（manifest testSources 精确匹配或 custom* 通配），并给出展示名。
- *  无模板的源不渲染「测试」按钮——新增源只需在 extension.json 声明，前端零改动。 */
+/** 该源是否有测试模板（manifest testSources 精确匹配，或 `x*` 通配键前缀匹配），
+ *  并给出展示名。无模板的源不渲染「测试」按钮——新增源只需在 extension.json 声明，
+ *  前端零改动。 */
 function testableSource(plugin: PluginInfo, sourceKey: string): { label: string; testable: boolean } {
   const sources = plugin.testSources;
-  if (!sources) return { label: SOURCE_DISPLAY[sourceKey] ?? sourceKey, testable: false };
+  if (!sources) return { label: sourceKey, testable: false };
   const exact = sources[sourceKey];
-  if (exact) return { label: exact.label ?? SOURCE_DISPLAY[sourceKey] ?? sourceKey, testable: true };
-  if (sourceKey.startsWith("custom") && sources["custom*"]) {
-    return { label: sources["custom*"].label ?? sourceKey, testable: true };
+  if (exact) return { label: exact.label ?? sourceKey, testable: true };
+  for (const [wild, decl] of Object.entries(sources)) {
+    if (wild.endsWith("*") && sourceKey.startsWith(wild.slice(0, -1))) {
+      return { label: decl.label ?? sourceKey, testable: true };
+    }
   }
-  return { label: SOURCE_DISPLAY[sourceKey] ?? sourceKey, testable: false };
+  return { label: sourceKey, testable: false };
 }
 
 /** 组 = key 去掉最后一段（如 sources.jina.apiKey → sources.jina） */
@@ -61,10 +55,9 @@ function groupOf(key: string): string {
   return idx > 0 ? key.slice(0, idx) : "__root";
 }
 
-/** 组标题：sources.* 用品牌名；普通组用 manifest 声明的 groupLabel；否则原始 key */
+/** 组标题：manifest 声明的 groupLabel（组内任一字段）→ 原始 key */
 function groupTitle(group: string, fields: SettingField[]): string {
-  if (group.startsWith("sources.")) return SOURCE_DISPLAY[group.slice("sources.".length)] ?? group;
-  return fields[0]?.groupLabel || group;
+  return fields.find((f) => f.groupLabel)?.groupLabel || group;
 }
 
 /** 进度条颜色：>80% 红、>50% 琥珀、否则主题色 */
@@ -93,10 +86,10 @@ export function PluginSettingsDialog({ plugin, open, onClose }: Props) {
 
   const schema = plugin.settingsSchema ?? EMPTY_SCHEMA;
 
-  // 普通组（搜索设置等）与供应商组（sources.*）分开渲染，避免重复
+  // 所有非 group 字段按点分前缀分组（组 = 完整 key 去掉最后一段）。
+  // 组是否渲染为「卡片」（折叠 + 启停开关 + 测试按钮）由 manifest 决定：
+  // 组内含 `.enabled` 布尔字段 → 卡片；否则为固定平铺区（如搜索设置）。
   const groups = useMemo(() => {
-    const ordinary: Array<[string, SettingField[]]> = [];
-    const sources: Array<[string, SettingField[]]> = [];
     const map = new Map<string, SettingField[]>();
     for (const field of schema) {
       if (field.type === "group") continue;
@@ -104,11 +97,7 @@ export function PluginSettingsDialog({ plugin, open, onClose }: Props) {
       if (!map.has(g)) map.set(g, []);
       map.get(g)!.push(field);
     }
-    for (const [g, fields] of map.entries()) {
-      if (g.startsWith("sources.")) sources.push([g, fields]);
-      else ordinary.push([g, fields]);
-    }
-    return { ordinary, sources };
+    return [...map.entries()];
   }, [schema]);
 
   // group 类型字段（可增删实例的自定义源等）
@@ -233,6 +222,13 @@ export function PluginSettingsDialog({ plugin, open, onClose }: Props) {
     });
   };
 
+  /** 用量条展示名：`sources.<key>` 组的 manifest 标题；custom: 前缀剥离；否则原始 key */
+  const quotaDisplayName = (key: string): string => {
+    if (key.startsWith("custom:")) return key.slice("custom:".length);
+    const fields = groups.find(([g]) => g === `sources.${key}`)?.[1];
+    return fields ? groupTitle(`sources.${key}`, fields) : key;
+  };
+
   /** 恢复默认：普通字段提交 schema 默认值，secret 字段走清除标记 */
   const resetToDefault = () => {
     const next: Record<string, SettingValue> = {};
@@ -311,9 +307,7 @@ export function PluginSettingsDialog({ plugin, open, onClose }: Props) {
                 </h4>
                 <div className="space-y-2.5">
                   {Object.entries(quota).map(([key, q]) => {
-                    const displayName =
-                      SOURCE_DISPLAY[key] ??
-                      (key.startsWith("custom:") ? key.slice("custom:".length) : key);
+                    const displayName = quotaDisplayName(key);
                     // tokens 源无法精确统计：不显示会误导的 0%，只展示额度声明
                     const isTokens = q.unit === "tokens";
                     const pct = !isTokens && q.total > 0 ? Math.min(100, Math.round((q.used / q.total) * 100)) : 0;
@@ -342,46 +336,49 @@ export function PluginSettingsDialog({ plugin, open, onClose }: Props) {
               </div>
             )}
 
-            {/* ── 普通分组（搜索设置等）：固定字段，直接平铺不折叠 ── */}
-            {groups.ordinary.map(([group, fields]) => (
-              <div key={group} className="space-y-3">
-                <h4 className="text-sm font-semibold">{groupTitle(group, fields)}</h4>
-                {fields.map((field) => (
-                  <SettingFieldInput
-                    key={field.key}
-                    field={field}
-                    value={values[field.key]}
-                    onChange={(v) => setField(field.key, v)}
-                    disabled={saving}
-                    cleared={clears.has(field.key)}
-                    onToggleClear={() => toggleClear(field.key)}
-                  />
-                ))}
-              </div>
-            ))}
-
-            {/* ── 供应商卡片（sources.* 每源一张，含启停开关 + 测试按钮） ── */}
-            {groups.sources.map(([group, fields]) => {
-              const sourceKey = group.slice("sources.".length);
+            {/* ── 分组（按 manifest 展开）：组内含 `.enabled` 布尔字段 → 折叠卡片
+                 （如各搜索源：启停开关 + 测试按钮）；否则固定平铺区（如搜索设置） ── */}
+            {groups.map(([group, fields]) => {
+              const enabledField = fields.find(
+                (f) => f.type === "boolean" && f.key.endsWith(".enabled")
+              );
+              const title = groupTitle(group, fields);
+              if (!enabledField) {
+                return (
+                  <div key={group} className="space-y-3">
+                    <h4 className="text-sm font-semibold">{title}</h4>
+                    {fields.map((field) => (
+                      <SettingFieldInput
+                        key={field.key}
+                        field={field}
+                        value={values[field.key]}
+                        onChange={(v) => setField(field.key, v)}
+                        disabled={saving}
+                        cleared={clears.has(field.key)}
+                        onToggleClear={() => toggleClear(field.key)}
+                      />
+                    ))}
+                  </div>
+                );
+              }
+              // 卡片组：源 id = 组最后一段（sources.jina → jina），
+              // 测试按钮按 testSources 精确/通配匹配
+              const sourceKey = group.slice(group.lastIndexOf(".") + 1);
               const { label: display, testable } = testableSource(plugin, sourceKey);
-              const enabledField = fields.find((f) => f.key.endsWith(".enabled"));
-              const isOpen = !collapsed.has(group);
-              const enabled = Boolean(enabledField && values[enabledField.key]);
+              const enabled = Boolean(values[enabledField.key]);
               return (
                 <CollapsibleCard
                   key={group}
-                  title={display}
-                  isOpen={isOpen}
+                  title={title}
+                  isOpen={!collapsed.has(group)}
                   onToggle={() => toggleCollapsed(group)}
                   actions={
                     <>
-                      {enabledField && (
-                        <Switch
-                          checked={enabled}
-                          onCheckedChange={(v) => setField(enabledField.key, v)}
-                          disabled={saving}
-                        />
-                      )}
+                      <Switch
+                        checked={enabled}
+                        onCheckedChange={(v) => setField(enabledField.key, v)}
+                        disabled={saving}
+                      />
                       {testable && (
                         <Button
                           variant="outline"
@@ -403,7 +400,7 @@ export function PluginSettingsDialog({ plugin, open, onClose }: Props) {
                 >
                   <div className="space-y-3">
                     {fields
-                      .filter((f) => !f.key.endsWith(".enabled"))
+                      .filter((f) => f !== enabledField)
                       .map((field) => (
                         <SettingFieldInput
                           key={field.key}

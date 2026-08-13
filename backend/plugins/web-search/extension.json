@@ -1,263 +1,268 @@
 {
-  "schema": "pi.ext.manifest.v1",
-  "extension_id": "web-search",
-  "name": "Web Search",
-  "version": "0.1.0",
-  "runtime": "js",
-  "entrypoint": "index.ts",
-  "description": "搜索增强：web_search 多源聚合（免费源用量管理与自动切换）+ web_fetch 网页正文提取",
-  "capabilities": [
-    "read",
-    "write",
-    "http",
-    "tool",
-    "session"
-  ],
-  "quota": {
-    "path": ".boenmind/web-search/quota.json",
-    "countOnTest": [
-      "tavily",
-      "exa",
-      "serper",
-      "firecrawl"
-    ]
-  },
-  "testSources": {
-    "jina": {
-      "method": "GET",
-      "url": "https://s.jina.ai/?q=test",
-      "label": "Jina",
-      "headers": {
-        "Authorization": "Bearer {sources.jina.apiKey}",
-        "Accept": "text/markdown"
-      }
-    },
-    "tavily": {
-      "method": "POST",
-      "url": "https://api.tavily.com/search",
-      "label": "Tavily",
-      "headers": {
-        "Content-Type": "application/json"
-      },
-      "body": {
-        "api_key": "{sources.tavily.apiKey}",
-        "query": "test",
-        "max_results": 1
-      }
-    },
-    "exa": {
-      "method": "POST",
-      "url": "https://api.exa.ai/search",
-      "label": "Exa",
-      "headers": {
-        "x-api-key": "{sources.exa.apiKey}",
-        "Content-Type": "application/json"
-      },
-      "body": {
-        "query": "test",
-        "numResults": 1
-      }
-    },
-    "serper": {
-      "method": "POST",
-      "url": "https://google.serper.dev/search",
-      "label": "Serper",
-      "headers": {
-        "X-API-KEY": "{sources.serper.apiKey}",
-        "Content-Type": "application/json"
-      },
-      "body": {
-        "q": "test",
-        "num": 1
-      }
-    },
-    "firecrawl": {
-      "method": "POST",
-      "url": "https://api.firecrawl.dev/v2/scrape",
-      "label": "Firecrawl",
-      "headers": {
-        "Authorization": "Bearer {sources.firecrawl.apiKey}",
-        "Content-Type": "application/json"
-      },
-      "body": {
-        "url": "https://example.com",
-        "formats": [
-          "markdown"
-        ]
-      }
-    },
-    "custom*": {
-      "method": "GET",
-      "url": "{customN.url}",
-      "label": "自定义源",
-      "headers": {
-        "{customN.apiKeyHeader}": "{customN.apiKey}"
-      }
-    }
-  },
-  "settings": [
-    {
-      "key": "search.mode",
-      "type": "select",
-      "label": "默认搜索档位",
-      "groupLabel": "搜索设置",
-      "description": "quick = 仅免费源（Jina/Tavily/Exa/自定义源）；deep = 免费 + 付费源（Serper）",
-      "options": [
-        "quick",
-        "deep"
-      ],
-      "default": "quick"
-    },
-    {
-      "key": "search.cacheTtlSeconds",
-      "type": "number",
-      "label": "结果缓存 TTL（秒）",
-      "description": "相同查询在 TTL 内直接返回缓存，节省搜索配额；0 = 关闭缓存",
-      "min": 0,
-      "max": 86400,
-      "default": 600
-    },
-    {
-      "key": "sources.jina.enabled",
-      "type": "boolean",
-      "label": "启用 Jina",
-      "description": "s.jina.ai 搜索 + r.jina.ai 正文提取；免费 10M tokens（一次性额度）",
-      "default": true
-    },
-    {
-      "key": "sources.jina.apiKey",
-      "type": "secret",
-      "label": "Jina API Key",
-      "description": "在 https://jina.ai 注册后获取；搜索与提取共用同一额度",
-      "default": ""
-    },
-    {
-      "key": "sources.tavily.enabled",
-      "type": "boolean",
-      "label": "启用 Tavily",
-      "description": "AI 搜索 API；免费 1000 次/月（每月重置）",
-      "default": true
-    },
-    {
-      "key": "sources.tavily.apiKey",
-      "type": "secret",
-      "label": "Tavily API Key",
-      "description": "在 https://tavily.com 注册后获取",
-      "default": ""
-    },
-    {
-      "key": "sources.exa.enabled",
-      "type": "boolean",
-      "label": "启用 Exa",
-      "description": "语义搜索（AI 搜索）；免费 1000 次/月（每月重置）",
-      "default": true
-    },
-    {
-      "key": "sources.exa.apiKey",
-      "type": "secret",
-      "label": "Exa API Key",
-      "description": "在 https://exa.ai 注册后获取",
-      "default": ""
-    },
-    {
-      "key": "sources.firecrawl.enabled",
-      "type": "boolean",
-      "label": "启用 Firecrawl（网页提取用）",
-      "description": "网页抓取，web_fetch 优先使用；免费 500 次/月（每月重置）",
-      "default": true
-    },
-    {
-      "key": "sources.firecrawl.apiKey",
-      "type": "secret",
-      "label": "Firecrawl API Key",
-      "description": "在 https://firecrawl.dev 注册后获取",
-      "default": ""
-    },
-    {
-      "key": "custom*",
-      "type": "group",
-      "label": "自定义源",
-      "description": "接入任意 JSON 搜索 API（如自建 SearXNG）；URL 用 {query} 占位。点「添加源」新增一个。",
-      "instances": 2,
-      "fields": [
-        {
-          "key": "enabled",
-          "type": "boolean",
-          "label": "启用",
-          "description": "启用该自定义源",
-          "default": false
-        },
-        {
-          "key": "name",
-          "type": "string",
-          "label": "名称",
-          "description": "展示名（如 mysearx），用于来源标注",
-          "default": ""
-        },
-        {
-          "key": "url",
-          "type": "string",
-          "label": "请求 URL",
-          "description": "GET 请求，{query} 会被替换为编码后的查询词，如 https://searx.example.com/search?q={query}&format=json",
-          "default": ""
-        },
-        {
-          "key": "apiKeyHeader",
-          "type": "string",
-          "label": "认证头名",
-          "description": "需要认证时填请求头名（如 X-API-KEY）；留空则不注入",
-          "default": ""
-        },
-        {
-          "key": "apiKey",
-          "type": "secret",
-          "label": "API Key",
-          "description": "注入到上述请求头的值",
-          "default": ""
-        },
-        {
-          "key": "resultsPath",
-          "type": "string",
-          "label": "结果数组路径",
-          "description": "JSON 点分路径，如 results 或 data.list",
-          "default": "results"
-        },
-        {
-          "key": "titlePath",
-          "type": "string",
-          "label": "标题字段路径",
-          "description": "相对结果元素，如 title",
-          "default": "title"
-        },
-        {
-          "key": "urlPath",
-          "type": "string",
-          "label": "链接字段路径",
-          "description": "相对结果元素，如 url 或 link",
-          "default": "url"
-        },
-        {
-          "key": "descPath",
-          "type": "string",
-          "label": "摘要字段路径",
-          "description": "相对结果元素，如 description 或 content",
-          "default": "description"
-        }
-      ]
-    },
-    {
-      "key": "sources.serper.enabled",
-      "type": "boolean",
-      "label": "启用 Serper（deep 档用）",
-      "description": "Google SERP 实时结果；试用 2500 次一次性，付费配额 6 个月有效",
-      "default": false
-    },
-    {
-      "key": "sources.serper.apiKey",
-      "type": "secret",
-      "label": "Serper API Key",
-      "description": "在 https://serper.dev 注册后获取",
-      "default": ""
-    }
+ "schema": "pi.ext.manifest.v1",
+ "extension_id": "web-search",
+ "name": "Web Search",
+ "version": "0.1.0",
+ "runtime": "js",
+ "entrypoint": "index.ts",
+ "description": "搜索增强：web_search 多源聚合（免费源用量管理与自动切换）+ web_fetch 网页正文提取",
+ "capabilities": [
+  "read",
+  "write",
+  "http",
+  "tool",
+  "session"
+ ],
+ "quota": {
+  "path": ".boenmind/web-search/quota.json",
+  "countOnTest": [
+   "tavily",
+   "exa",
+   "serper",
+   "firecrawl"
   ]
+ },
+ "testSources": {
+  "jina": {
+   "method": "GET",
+   "url": "https://s.jina.ai/?q=test",
+   "label": "Jina",
+   "headers": {
+    "Authorization": "Bearer {sources.jina.apiKey}",
+    "Accept": "text/markdown"
+   }
+  },
+  "tavily": {
+   "method": "POST",
+   "url": "https://api.tavily.com/search",
+   "label": "Tavily",
+   "headers": {
+    "Content-Type": "application/json"
+   },
+   "body": {
+    "api_key": "{sources.tavily.apiKey}",
+    "query": "test",
+    "max_results": 1
+   }
+  },
+  "exa": {
+   "method": "POST",
+   "url": "https://api.exa.ai/search",
+   "label": "Exa",
+   "headers": {
+    "x-api-key": "{sources.exa.apiKey}",
+    "Content-Type": "application/json"
+   },
+   "body": {
+    "query": "test",
+    "numResults": 1
+   }
+  },
+  "serper": {
+   "method": "POST",
+   "url": "https://google.serper.dev/search",
+   "label": "Serper",
+   "headers": {
+    "X-API-KEY": "{sources.serper.apiKey}",
+    "Content-Type": "application/json"
+   },
+   "body": {
+    "q": "test",
+    "num": 1
+   }
+  },
+  "firecrawl": {
+   "method": "POST",
+   "url": "https://api.firecrawl.dev/v2/scrape",
+   "label": "Firecrawl",
+   "headers": {
+    "Authorization": "Bearer {sources.firecrawl.apiKey}",
+    "Content-Type": "application/json"
+   },
+   "body": {
+    "url": "https://example.com",
+    "formats": [
+     "markdown"
+    ]
+   }
+  },
+  "custom*": {
+   "method": "GET",
+   "url": "{customN.url}",
+   "label": "自定义源",
+   "headers": {
+    "{customN.apiKeyHeader}": "{customN.apiKey}"
+   }
+  }
+ },
+ "settings": [
+  {
+   "key": "search.mode",
+   "type": "select",
+   "label": "默认搜索档位",
+   "groupLabel": "搜索设置",
+   "description": "quick = 仅免费源（Jina/Tavily/Exa/自定义源）；deep = 免费 + 付费源（Serper）",
+   "options": [
+    "quick",
+    "deep"
+   ],
+   "default": "quick"
+  },
+  {
+   "key": "search.cacheTtlSeconds",
+   "type": "number",
+   "label": "结果缓存 TTL（秒）",
+   "description": "相同查询在 TTL 内直接返回缓存，节省搜索配额；0 = 关闭缓存",
+   "min": 0,
+   "max": 86400,
+   "default": 600
+  },
+  {
+   "key": "sources.jina.enabled",
+   "type": "boolean",
+   "label": "启用 Jina",
+   "description": "s.jina.ai 搜索 + r.jina.ai 正文提取；免费 10M tokens（一次性额度）",
+   "default": true,
+   "groupLabel": "Jina"
+  },
+  {
+   "key": "sources.jina.apiKey",
+   "type": "secret",
+   "label": "Jina API Key",
+   "description": "在 https://jina.ai 注册后获取；搜索与提取共用同一额度",
+   "default": ""
+  },
+  {
+   "key": "sources.tavily.enabled",
+   "type": "boolean",
+   "label": "启用 Tavily",
+   "description": "AI 搜索 API；免费 1000 次/月（每月重置）",
+   "default": true,
+   "groupLabel": "Tavily"
+  },
+  {
+   "key": "sources.tavily.apiKey",
+   "type": "secret",
+   "label": "Tavily API Key",
+   "description": "在 https://tavily.com 注册后获取",
+   "default": ""
+  },
+  {
+   "key": "sources.exa.enabled",
+   "type": "boolean",
+   "label": "启用 Exa",
+   "description": "语义搜索（AI 搜索）；免费 1000 次/月（每月重置）",
+   "default": true,
+   "groupLabel": "Exa"
+  },
+  {
+   "key": "sources.exa.apiKey",
+   "type": "secret",
+   "label": "Exa API Key",
+   "description": "在 https://exa.ai 注册后获取",
+   "default": ""
+  },
+  {
+   "key": "sources.firecrawl.enabled",
+   "type": "boolean",
+   "label": "启用 Firecrawl（网页提取用）",
+   "description": "网页抓取，web_fetch 优先使用；免费 500 次/月（每月重置）",
+   "default": true,
+   "groupLabel": "Firecrawl"
+  },
+  {
+   "key": "sources.firecrawl.apiKey",
+   "type": "secret",
+   "label": "Firecrawl API Key",
+   "description": "在 https://firecrawl.dev 注册后获取",
+   "default": ""
+  },
+  {
+   "key": "custom*",
+   "type": "group",
+   "label": "自定义源",
+   "description": "接入任意 JSON 搜索 API（如自建 SearXNG）；URL 用 {query} 占位。点「添加源」新增一个。",
+   "instances": 2,
+   "fields": [
+    {
+     "key": "enabled",
+     "type": "boolean",
+     "label": "启用",
+     "description": "启用该自定义源",
+     "default": false
+    },
+    {
+     "key": "name",
+     "type": "string",
+     "label": "名称",
+     "description": "展示名（如 mysearx），用于来源标注",
+     "default": ""
+    },
+    {
+     "key": "url",
+     "type": "string",
+     "label": "请求 URL",
+     "description": "GET 请求，{query} 会被替换为编码后的查询词，如 https://searx.example.com/search?q={query}&format=json",
+     "default": ""
+    },
+    {
+     "key": "apiKeyHeader",
+     "type": "string",
+     "label": "认证头名",
+     "description": "需要认证时填请求头名（如 X-API-KEY）；留空则不注入",
+     "default": ""
+    },
+    {
+     "key": "apiKey",
+     "type": "secret",
+     "label": "API Key",
+     "description": "注入到上述请求头的值",
+     "default": ""
+    },
+    {
+     "key": "resultsPath",
+     "type": "string",
+     "label": "结果数组路径",
+     "description": "JSON 点分路径，如 results 或 data.list",
+     "default": "results"
+    },
+    {
+     "key": "titlePath",
+     "type": "string",
+     "label": "标题字段路径",
+     "description": "相对结果元素，如 title",
+     "default": "title"
+    },
+    {
+     "key": "urlPath",
+     "type": "string",
+     "label": "链接字段路径",
+     "description": "相对结果元素，如 url 或 link",
+     "default": "url"
+    },
+    {
+     "key": "descPath",
+     "type": "string",
+     "label": "摘要字段路径",
+     "description": "相对结果元素，如 description 或 content",
+     "default": "description"
+    }
+   ]
+  },
+  {
+   "key": "sources.serper.enabled",
+   "type": "boolean",
+   "label": "启用 Serper（deep 档用）",
+   "description": "Google SERP 实时结果；试用 2500 次一次性，付费配额 6 个月有效",
+   "default": false,
+   "groupLabel": "Serper"
+  },
+  {
+   "key": "sources.serper.apiKey",
+   "type": "secret",
+   "label": "Serper API Key",
+   "description": "在 https://serper.dev 注册后获取",
+   "default": ""
+  }
+ ]
 }
