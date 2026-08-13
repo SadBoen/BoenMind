@@ -1,8 +1,9 @@
 # 待提交上游 Issue 草稿（asupersync，2026-08-14）
 
 > 提交目标：https://github.com/Dicklesworthstone/asupersync/issues/new
-> 状态：草稿。提交后在本文件头部补 issue 链接，并从台账「待提」更新为 issue 号。
-> 与 `UPSTREAM_PATCHES.md` 的 A1/A2 补丁对应。
+> 状态：✅ 已提交 —— https://github.com/Dicklesworthstone/asupersync/issues/62（2026-08-14）
+> 台账 `UPSTREAM_PATCHES.md` A1/A2 已关联该 issue；上游合入后按台账升级流程删除补丁。
+> 本文件保留作提交存档与复现参考。
 
 ---
 

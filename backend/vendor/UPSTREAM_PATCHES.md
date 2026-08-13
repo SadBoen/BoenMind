@@ -81,8 +81,8 @@ git show 42e29b2   -- backend/vendor/pi_agent_rust/src/sdk.rs backend/vendor/pi_
 
 | # | 文件 | 位置 | 内容摘要 | 原因 | 上游 issue |
 |---|---|---|---|---|---|
-| A1 | `src/net/tcp/stream.rs` | `wait_for_connect_fallback()`（Windows 分支） | 连接完成检测改用 `WSAPoll` 内核 WRITABLE 事件，替代 `peer_addr()` 轮询 | 部分 Windows 网络栈（实测 Win10 19044 直连阿里云）`getpeername()` 在 TCP connect 真正完成前就返回成功 → 误判"已连接" → 首笔 send 报 WSAENOTCONN(10057) | 待提 |
-| A2 | `src/net/tcp/stream.rs` | `poll_write()`（Windows 分支） | WSAENOTCONN 重试由"纯次数上限"改为"100ms 真实时间窗口"（新增 `first_10057_at` 字段） | A1 误判发生后，原 4096 次忙等重试在连接完成（~40ms）前耗尽预算 → TLS 握手必败；时间窗口保证慢连接有机会完成 | 待提 |
+| A1 | `src/net/tcp/stream.rs` | `wait_for_connect_fallback()`（Windows 分支） | 连接完成检测改用 `WSAPoll` 内核 WRITABLE 事件，替代 `peer_addr()` 轮询 | 部分 Windows 网络栈（实测 Win10 19044 直连阿里云）`getpeername()` 在 TCP connect 真正完成前就返回成功 → 误判"已连接" → 首笔 send 报 WSAENOTCONN(10057) | [#62](https://github.com/Dicklesworthstone/asupersync/issues/62) |
+| A2 | `src/net/tcp/stream.rs` | `poll_write()`（Windows 分支） | WSAENOTCONN 重试由"纯次数上限"改为"100ms 真实时间窗口"（新增 `first_10057_at` 字段） | A1 误判发生后，原 4096 次忙等重试在连接完成（~40ms）前耗尽预算 → TLS 握手必败；时间窗口保证慢连接有机会完成 | [#62](https://github.com/Dicklesworthstone/asupersync/issues/62) |
 
 **验证**：修复前约 50% 请求失败（连接目标 IP 快慢决定）；修复后 API 多轮 + 前端 UI 全链路
 0 失败（含最慢连接场景，后端处理耗时 2-3s 正常）。
