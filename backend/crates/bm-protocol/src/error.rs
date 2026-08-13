@@ -21,6 +21,8 @@ pub enum ErrorCode {
     UnknownRequiredEvent,
     /// 事件格式版本不兼容（写者决定 bump；读者拒绝重建，走迁移链）
     FormatVersionMismatch,
+    /// 迁移链缺步骤（低版本数据无迁移路径，A7）
+    MigrationUnavailable,
     /// 消息面操作违规（如 Replace 区间非法）
     SurfaceViolation,
     /// 存储不可用（打开失败/事务失败）
@@ -74,6 +76,7 @@ impl ProtocolError {
             ErrorCode::SeqDuplicate => "seq_duplicate",
             ErrorCode::UnknownRequiredEvent => "unknown_required_event",
             ErrorCode::FormatVersionMismatch => "format_version_mismatch",
+            ErrorCode::MigrationUnavailable => "migration_unavailable",
             ErrorCode::SurfaceViolation => "surface_violation",
             ErrorCode::StoreUnavailable => "store_unavailable",
             ErrorCode::NotFound => "not_found",

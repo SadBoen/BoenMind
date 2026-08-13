@@ -22,8 +22,9 @@ pub mod surface;
 pub use error::{ErrorCode, ProtocolError};
 pub use event::{
     AssistantMsg, CompactionSummaryMsg, CoreEvent, CustomEvent, EpochHeader, EventKind,
-    HeaderReason, SessionEvent, StreamChunk, TodoItem, TokenUsage, ToolResultMsg, TurnEndReason,
-    UserMsg, UserMsgSource, SESSION_FORMAT_VERSION,
+    FormatMigration, HeaderReason, SessionEvent, StreamChunk, TodoItem, TokenUsage,
+    ToolResultMsg, TurnEndReason, UserMsg, UserMsgSource, FORMAT_MIGRATIONS,
+    SESSION_FORMAT_VERSION,
 };
 pub use ids::{BranchId, CallId, GlobalSeq, SeqNo, SessionId};
 pub use policy::{Capability, PolicyEvaluation};

@@ -87,6 +87,43 @@ impl EventValidator {
         Ok(())
     }
 
+    /// A7 migrate-on-continue：把任意低版本事件逐级迁移到当前版本（骨架）。
+    /// - version == 当前：原样通过；
+    /// - version < 当前：沿 [`bm_protocol::FORMAT_MIGRATIONS`] 逐级 apply；
+    ///   缺步骤 → MigrationUnavailable（当前无任何步骤，v0 数据仍拒绝重建，
+    ///   与版本化之前语义一致）；
+    /// - version > 当前：旧程序读新数据 → FormatVersionMismatch。
+    /// 只做内存迁移（读时升级），不写回存储——下次 append 自然以当前版本落盘。
+    pub fn migrate(ev: SessionEvent) -> Result<SessionEvent, ProtocolError> {
+        if ev.version > SESSION_FORMAT_VERSION {
+            return Err(ProtocolError::new(
+                ErrorCode::FormatVersionMismatch,
+                format!(
+                    "event format v{} newer than current v{SESSION_FORMAT_VERSION} (old reader)",
+                    ev.version
+                ),
+            ));
+        }
+        let mut ev = ev;
+        while ev.version < SESSION_FORMAT_VERSION {
+            let from = ev.version;
+            let step = bm_protocol::FORMAT_MIGRATIONS.get(from as usize).ok_or_else(|| {
+                ProtocolError::new(
+                    ErrorCode::MigrationUnavailable,
+                    format!("no migration path for event format v{from} → v{}", from + 1),
+                )
+            })?;
+            ev = step(ev)?;
+            if ev.version <= from {
+                return Err(ProtocolError::new(
+                    ErrorCode::MigrationUnavailable,
+                    format!("migration v{from} did not advance version"),
+                ));
+            }
+        }
+        Ok(ev)
+    }
+
     /// 重放流验证：seq 严格递增且无重复（跨事件防御性检查）。
     ///
     /// 注意：不要求"连续"——未知 ignorable 事件被跳过会产生合法空洞
@@ -189,6 +226,47 @@ mod tests {
         assert!(EventValidator::check_version(&ev).is_ok());
         ev.version = 0;
         let err = EventValidator::check_version(&ev).unwrap_err();
+        assert_eq!(err.code(), ErrorCode::FormatVersionMismatch);
+    }
+
+    #[test]
+    fn migrate_current_version_is_identity() {
+        let ev = SessionEvent {
+            version: SESSION_FORMAT_VERSION,
+            seq: bm_protocol::SeqNo::new(1),
+            session_id: bm_protocol::SessionId::new("s"),
+            branch_id: bm_protocol::BranchId::new("main"),
+            time: 1,
+            kind: bm_protocol::EventKind::Core(bm_protocol::CoreEvent::TurnStart { turn: 1 }),
+            ignorable: false,
+            surface_op: None,
+            source_seqs: None,
+        };
+        let back = EventValidator::migrate(ev.clone()).unwrap();
+        assert_eq!(back, ev, "当前版本事件原样通过（A7 骨架）");
+    }
+
+    #[test]
+    fn migrate_without_path_rejected() {
+        // v0 是版本化之前的旧数据：迁移链无 0→1 步骤 → MigrationUnavailable
+        // （拒绝重建与版本化之前的语义一致；首个真实迁移落地后此测试改走链）
+        let mut ev = SessionEvent {
+            version: 0,
+            seq: bm_protocol::SeqNo::new(1),
+            session_id: bm_protocol::SessionId::new("s"),
+            branch_id: bm_protocol::BranchId::new("main"),
+            time: 1,
+            kind: bm_protocol::EventKind::Core(bm_protocol::CoreEvent::TurnStart { turn: 1 }),
+            ignorable: false,
+            surface_op: None,
+            source_seqs: None,
+        };
+        let err = EventValidator::migrate(ev.clone()).unwrap_err();
+        assert_eq!(err.code(), ErrorCode::MigrationUnavailable);
+
+        // version > 当前：旧程序读新数据 → FormatVersionMismatch
+        ev.version = SESSION_FORMAT_VERSION + 1;
+        let err = EventValidator::migrate(ev).unwrap_err();
         assert_eq!(err.code(), ErrorCode::FormatVersionMismatch);
     }
 

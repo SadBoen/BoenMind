@@ -10,6 +10,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
+use crate::error::ProtocolError;
 use crate::ids::{BranchId, CallId, SeqNo, SessionId};
 use crate::surface::SurfaceOp;
 
@@ -243,8 +244,18 @@ pub fn core_type_name(ev: &CoreEvent) -> &'static str {
 
 /// 会话事件格式版本（dsh SESSION_FORMAT_VERSION 语义）：
 /// 信封结构演进时递增；**写者决定 bump**（"能解析 ≠ 语义正确"）。
-/// 读者发现 version != 当前值 → 拒绝重建（FormatVersionMismatch）。
+/// 读者发现 version != 当前值 → 走迁移链（A7）而非直接拒绝重建。
 pub const SESSION_FORMAT_VERSION: u32 = 1;
+
+/// 事件格式迁移链（A7 骨架）：版本 N 的事件 → N+1 的纯数据变换，
+/// **变换自更新 version 字段**（migrate 校验前进性防死循环）。
+/// 索引 = 源版本（FORMAT_MIGRATIONS[0] 即 v0→v1）。
+/// 写者 bump SESSION_FORMAT_VERSION 时在此登记对应迁移；当前版本号 = 1、
+/// 无 0→1 迁移（v0 是版本化之前的旧数据，拒绝重建是既定语义）。
+pub type FormatMigration = fn(SessionEvent) -> Result<SessionEvent, ProtocolError>;
+
+/// 当前迁移链（空 = 无历史格式演化；首个真实迁移落地时登记）。
+pub const FORMAT_MIGRATIONS: &[FormatMigration] = &[];
 
 /// 事件日志的落盘形态：信封 + kind（flatten 展开）。
 ///

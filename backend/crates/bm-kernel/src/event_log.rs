@@ -139,7 +139,8 @@ impl EventLog {
         self.store.append_batch(evs).await
     }
 
-    /// 重放：读取分支全部事件并做防御性校验（格式版本 + seq 严格递增）。
+    /// 重放：读取分支全部事件并做防御性校验（迁移链升级 + seq 严格递增）。
+    /// A7：低版本事件按迁移链逐级升级（内存迁移，不写回存储）。
     pub async fn replay(
         &self,
         session_id: &SessionId,
@@ -149,11 +150,12 @@ impl EventLog {
             .store
             .read(EventQuery::new(session_id.clone(), branch_id.clone()))
             .await?;
-        for ev in &evs {
-            EventValidator::check_version(ev)?;
+        let mut migrated = Vec::with_capacity(evs.len());
+        for ev in evs {
+            migrated.push(EventValidator::migrate(ev)?);
         }
-        EventValidator::verify_replay(&evs)?;
-        Ok(evs)
+        EventValidator::verify_replay(&migrated)?;
+        Ok(migrated)
     }
 
     /// 按事件类型计数（type=None 计全量）。turn 计数等场景用，避免全量重放。
@@ -179,9 +181,8 @@ impl EventLog {
         let mut out: Vec<SurfaceMessage> = Vec::new();
         for seg in segments {
             let mut proj = SurfaceProjection::new();
-            for ev in &seg {
-                EventValidator::check_version(ev)?;
-                proj.on_event(ev)?;
+            for ev in seg {
+                proj.on_event(&EventValidator::migrate(ev)?)?;
             }
             out.extend(proj.into_messages());
         }
@@ -237,10 +238,9 @@ impl EventLog {
         let segments = self.visible_segments(session_id, branch_id).await?;
         let mut evs = Vec::new();
         for seg in segments {
-            for ev in &seg {
-                EventValidator::check_version(ev)?;
+            for ev in seg {
+                evs.push(EventValidator::migrate(ev)?);
             }
-            evs.extend(seg);
         }
         Ok(evs)
     }
@@ -327,12 +327,12 @@ pub async fn subscribe_events(
     on_event: impl Fn(SessionEvent) + Send + 'static,
     stop: Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<Subscription, ProtocolError> {
-    // replay-prefix：after 之后的既有事件（含版本校验，读序即 seq 序）
+    // replay-prefix：after 之后的既有事件（迁移链升级，读序即 seq 序）
     let mut q = EventQuery::new(session_id.clone(), branch_id.clone());
     q.seq_gt = after;
     let mut last_seen = after.unwrap_or(0);
     for ev in store.read(q).await? {
-        EventValidator::check_version(&ev)?;
+        let ev = EventValidator::migrate(ev)?;
         last_seen = ev.seq.as_u64().max(last_seen);
         on_event(ev);
     }
