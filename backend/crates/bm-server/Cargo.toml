@@ -19,6 +19,10 @@ path = "src/main.rs"
 
 [dependencies]
 bm-core = { path = "../bm-core" }
+# 阶段 0 双写：事件日志（万物皆插件架构最小内核）
+bm-protocol = { workspace = true }
+bm-kernel = { workspace = true }
+bm-storage-turso = { workspace = true }
 pi = { workspace = true }
 axum = "0.8"
 async-trait = "0.1"

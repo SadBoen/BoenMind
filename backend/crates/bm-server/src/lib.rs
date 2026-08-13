@@ -55,6 +55,9 @@ pub struct AppState {
     pub session_streams: Arc<Mutex<HashMap<String, tokio::sync::mpsc::Sender<bm_core::agent::AgentStreamEvent>>>>,
     /// 挂起的权限询问（key = 上游询问请求 id）：等待前端决策（允许/拒绝/总是允许）。
     pub permission_pending: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<PermissionDecision>>>>,
+    /// 阶段 0 事件日志双写器（None = 事件日志不可用，双写静默跳过，
+    /// 主链路不受影响——事件日志是渐进式吸收的新家，不是闸门）。
+    pub dual_writer: Option<Arc<bm_storage_turso::dual_write::DualWriter>>,
 }
 
 /// 前端对一次权限询问的决策。
@@ -68,7 +71,11 @@ pub struct PermissionDecision {
 }
 
 impl AppState {
-    pub fn new(config: AppConfig, db: Db) -> Self {
+    pub fn new(
+        config: AppConfig,
+        db: Db,
+        dual_writer: Option<Arc<bm_storage_turso::dual_write::DualWriter>>,
+    ) -> Self {
         Self {
             config: Arc::new(RwLock::new(config)),
             db: Arc::new(db),
@@ -76,6 +83,7 @@ impl AppState {
             aborts: Arc::new(Mutex::new(HashMap::new())),
             session_streams: Arc::new(Mutex::new(HashMap::new())),
             permission_pending: Arc::new(Mutex::new(HashMap::new())),
+            dual_writer,
         }
     }
 }
@@ -309,6 +317,19 @@ pub async fn serve_managed(
     serve_inner(port, Some(shutdown)).await
 }
 
+/// 阶段 0 双写初始化：打开事件日志存储（与现有 boenmind.db 同文件，
+/// WAL 模式多连接），组装 DualWriter。失败返回错误（调用方决定跳过）。
+async fn init_dual_writer() -> Result<Arc<bm_storage_turso::dual_write::DualWriter>, bm_protocol::ProtocolError> {
+    let path = bm_core::config::app_dir()
+        .join("boenmind.db")
+        .to_str()
+        .unwrap_or("boenmind.db")
+        .to_string();
+    let store = bm_storage_turso::TursoEventStore::open(&path).await?;
+    let log = bm_kernel::EventLog::new(std::sync::Arc::new(store));
+    Ok(std::sync::Arc::new(bm_storage_turso::dual_write::DualWriter::new(log)))
+}
+
 async fn serve_inner(
     port: u16,
     shutdown: Option<tokio::sync::watch::Receiver<bool>>,
@@ -317,7 +338,19 @@ async fn serve_inner(
     tracing::info!("工作文件夹: {}", config.working_dir.display());
     tracing::info!("pi agent 目录: {}", bm_core::config::pi_agent_dir().display());
 
-    let state = AppState::new(config, db);
+    // 阶段 0 双写：事件日志与现有表同库（WAL 多连接），打开失败仅告警不阻断
+    let dual_writer = match init_dual_writer().await {
+        Ok(w) => {
+            tracing::info!("事件日志双写已启用（万物皆插件阶段 0）");
+            Some(w)
+        }
+        Err(err) => {
+            tracing::warn!(event = "bm.dual_write_disabled", error = %err, "事件日志不可用，双写跳过");
+            None
+        }
+    };
+
+    let state = AppState::new(config, db, dual_writer);
     spawn_agent_sweeper(state.agents.clone());
     let listener = tokio::net::TcpListener::bind(bind_addr(port)).await?;
     let local = listener.local_addr()?;

@@ -29,6 +29,11 @@ use axum::{
     },
 };
 use bm_core::agent::{AgentStreamEvent, create_session_handle, map_agent_event};
+use bm_kernel::SurfaceIntent;
+use bm_protocol::{
+    AssistantMsg, BranchId, CallId, CoreEvent, EventKind, SessionId, TokenUsage, ToolResultMsg,
+    TurnEndReason, UserMsg, UserMsgSource,
+};
 use serde::Deserialize;
 use tokio::sync::{Mutex, mpsc};
 use tokio_stream::{StreamExt, wrappers::ReceiverStream};
@@ -109,6 +114,21 @@ pub async fn chat(
     // 持久化用户消息
     if let Err(err) = state.db.add_message(&session.id, "user", &message).await {
         return api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
+    }
+
+    // 阶段 0 双写：用户消息 → 事件日志（失败不阻断主链路）
+    if let Some(w) = &state.dual_writer {
+        w.append_best_effort(
+            SessionId::new(&session.id),
+            EventKind::Core(CoreEvent::UserMessage {
+                msg: UserMsg {
+                    content: message.clone(),
+                },
+                source: UserMsgSource::Human,
+            }),
+            SurfaceIntent::Append,
+        )
+        .await;
     }
 
     // 获取或创建 agent 会话句柄（Arc<Mutex<..>> 保证同一会话串行且 map 锁不长期占用）
@@ -365,6 +385,31 @@ async fn run_prompt_and_persist(
     // 同一会话的并发 prompt 串行（map 锁已在 get_or_create_agent 后释放）
     let mut handle = handle.lock().await;
 
+    // —— 阶段 0 双写：回合开始（事件日志；失败不阻断主链路）——
+    // 回合号 = 已有 TurnStart 计数 + 1（事件日志自洽，不依赖现有表）
+    let dual = state.dual_writer.clone();
+    let mut turn: u32 = 1;
+    let log_sid = SessionId::new(&session_id);
+    let log_bid = BranchId::new("main");
+    if let Some(w) = &dual {
+        match w.event_log().replay(&log_sid, &log_bid).await {
+            Ok(evs) => {
+                turn = evs
+                    .iter()
+                    .filter(|e| matches!(&e.kind, EventKind::Core(CoreEvent::TurnStart { .. })))
+                    .count() as u32
+                    + 1;
+            }
+            Err(err) => tracing::warn!(event = "bm.dual_write_turn_failed", error = %err),
+        }
+        w.append_best_effort(
+            log_sid.clone(),
+            EventKind::Core(CoreEvent::TurnStart { turn }),
+            SurfaceIntent::None,
+        )
+        .await;
+    }
+
     // 事件转发改为「回调同步入缓冲 + 独立 task 异步发送」：
     // 回调运行在 tokio 线程上不能阻塞等待通道空间，而 try_send 在通道满
     // （客户端消费慢）时会丢事件导致流静默中断；转发 task 用 send().await
@@ -408,6 +453,15 @@ async fn run_prompt_and_persist(
     // 本次 prompt 的 token 用量统计（取自 assistant 消息的 usage；工具结果消息为 0）
     let usage_total = Arc::new(std::sync::Mutex::new(0u64));
     let usage_total_cb = usage_total.clone();
+    // 分项统计（双写 TokenUsage 用：input/output 各自累计）
+    let usage_in = Arc::new(std::sync::Mutex::new(0u64));
+    let usage_in_cb = usage_in.clone();
+    let usage_out = Arc::new(std::sync::Mutex::new(0u64));
+    let usage_out_cb = usage_out.clone();
+    // 工具调用收集（双写用）：(call_id, name, args 原样 JSON, is_error)
+    let log_tools: Arc<std::sync::Mutex<Vec<(String, String, String, bool)>>> =
+        Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log_tools_cb = log_tools.clone();
     // 任务心跳进度（最近活动摘要：工具名 / 回复尾部），由心跳 task 定时落库 + 推 SSE
     let progress: Arc<std::sync::Mutex<String>> = Arc::new(std::sync::Mutex::new(String::new()));
     let progress_cb = progress.clone();
@@ -442,12 +496,18 @@ async fn run_prompt_and_persist(
     let result = handle
         .prompt_with_abort(message, abort_signal, move |ev: pi::sdk::AgentEvent| {
             // 统计 token 用量（日志观测用）
-            if let pi::sdk::AgentEvent::MessageEnd { message: m } = &ev
+                if let pi::sdk::AgentEvent::MessageEnd { message: m } = &ev
                 && let pi::model::Message::Assistant(a) = m {
                     let u = &a.usage;
                     if u.total_tokens > 0 {
                         let mut total = usage_total_cb.lock().unwrap();
                         *total = total.saturating_add(u.total_tokens);
+                        let mut in_c = usage_in_cb.lock().unwrap();
+                        *in_c = in_c.saturating_add(u.input);
+                        drop(in_c);
+                        let mut out_c = usage_out_cb.lock().unwrap();
+                        *out_c = out_c.saturating_add(u.output);
+                        drop(out_c);
                         tracing::info!(
                             event = "bm.prompt_usage",
                             input = u.input,
@@ -472,8 +532,20 @@ async fn run_prompt_and_persist(
                         *progress_cb.lock().unwrap() = summary;
                     }
                     AgentStreamEvent::ToolCallEnd { id, is_error, .. } => {
-                        if let Some((name, args)) = pending_tools_cb.lock().unwrap().remove(id) {
-                            done_tools_cb.lock().unwrap().push((name, args, *is_error));
+                        let mut pt = pending_tools_cb.lock().unwrap();
+                        if let Some((name, args)) = pt.get(id) {
+                            // 双写收集：call_id + name + args 原样 JSON（先取后删）
+                            log_tools_cb.lock().unwrap().push((
+                                id.clone(),
+                                name.clone(),
+                                args.to_string(),
+                                *is_error,
+                            ));
+                            done_tools_cb
+                                .lock()
+                                .unwrap()
+                                .push((name.clone(), args.clone(), *is_error));
+                            pt.remove(id);
                         }
                     }
                     AgentStreamEvent::TextDelta { delta } => {
@@ -526,6 +598,74 @@ async fn run_prompt_and_persist(
                 let _ = state.db.add_tool_calls(assistant_msg.id, &done_tools).await;
             }
         let _ = state.db.touch_session(&session_id).await;
+    }
+
+    // —— 阶段 0 双写：工具调用/助手消息/回合结束（batch；失败不阻断主链路）——
+    if let Some(w) = &dual {
+        let tools = log_tools.lock().unwrap().clone();
+        let mut events: Vec<(EventKind, SurfaceIntent, bool, Option<Vec<u64>>)> = Vec::new();
+        for (step, (call_id, name, args, is_error)) in tools.iter().enumerate() {
+            events.push((
+                EventKind::Core(CoreEvent::ToolCall {
+                    turn,
+                    step: step as u32,
+                    call_id: CallId::new(call_id),
+                    name: name.clone(),
+                    args: args.clone(),
+                }),
+                SurfaceIntent::None,
+                false,
+                None,
+            ));
+            events.push((
+                EventKind::Core(CoreEvent::ToolResult {
+                    turn,
+                    step: step as u32,
+                    call_id: CallId::new(call_id),
+                    // 阶段 0 partial：工具输出内容暂不落日志（agent-loop 移植时补）
+                    result: ToolResultMsg {
+                        ok: !*is_error,
+                        output: String::new(),
+                    },
+                    meta: None,
+                }),
+                SurfaceIntent::None,
+                false,
+                None,
+            ));
+        }
+        if !final_text.trim().is_empty() {
+            events.push((
+                EventKind::Core(CoreEvent::AssistantMessage {
+                    turn,
+                    step: tools.len() as u32,
+                    msg: AssistantMsg {
+                        content: final_text.clone(),
+                    },
+                    usage: Some(TokenUsage {
+                        input_tokens: *usage_in.lock().unwrap(),
+                        output_tokens: *usage_out.lock().unwrap(),
+                    }),
+                }),
+                SurfaceIntent::Append,
+                false,
+                None,
+            ));
+        }
+        let reason = match &result {
+            Ok(_) => TurnEndReason::Completed,
+            Err(pi::sdk::Error::Aborted) => TurnEndReason::Cancelled,
+            Err(_) => TurnEndReason::Failed,
+        };
+        events.push((
+            EventKind::Core(CoreEvent::TurnEnd { turn, reason }),
+            SurfaceIntent::None,
+            false,
+            None,
+        ));
+        if let Err(err) = w.append_batch(log_sid, events).await {
+            tracing::warn!(event = "bm.dual_write_batch_failed", error = %err);
+        }
     }
 
     // refine-suggest 截获：代理调用 submit_refinement_suggestions 提交的改进建议

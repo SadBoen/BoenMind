@@ -27,6 +27,11 @@ impl DualWriter {
         }
     }
 
+    /// 底层日志句柄（turn 计数 / 重放校验用）。
+    pub fn event_log(&self) -> &EventLog {
+        &self.log
+    }
+
     pub fn ok_count(&self) -> u64 {
         self.ok.load(std::sync::atomic::Ordering::Relaxed)
     }
@@ -50,6 +55,29 @@ impl DualWriter {
             Ok(seq) => {
                 self.ok.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 Ok(seq)
+            }
+            Err(e) => {
+                self.failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                Err(e)
+            }
+        }
+    }
+
+    /// 原子批量双写（seq 连续分配；失败整体不落并记数）。
+    pub async fn append_batch(
+        &self,
+        session_id: SessionId,
+        events: Vec<(EventKind, bm_kernel::SurfaceIntent, bool, Option<Vec<u64>>)>,
+    ) -> Result<Vec<bm_protocol::SeqNo>, ProtocolError> {
+        match self
+            .log
+            .append_batch(session_id, bm_protocol::BranchId::new("main"), events)
+            .await
+        {
+            Ok(seqs) => {
+                self.ok
+                    .fetch_add(seqs.len() as u64, std::sync::atomic::Ordering::Relaxed);
+                Ok(seqs)
             }
             Err(e) => {
                 self.failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
