@@ -68,6 +68,8 @@ pub enum TurnEndReason {
     Completed,
     Failed,
     Cancelled,
+    /// 进程崩溃/断电遗留的未闭合回合（启动恢复补写，dsh 语义）
+    Interrupted,
 }
 
 /// 请求头原因（一次模型调用的头事件）。
@@ -127,7 +129,7 @@ pub enum CoreEvent {
     /// 回合开始
     #[serde(rename = "turn/start")]
     TurnStart { turn: u32 },
-    /// 回合结束（reason: completed/failed/cancelled）
+    /// 回合结束（reason: completed/failed/cancelled/interrupted）
     #[serde(rename = "turn/end")]
     TurnEnd { turn: u32, reason: TurnEndReason },
     /// 步骤开始（回合内一个模型-工具循环）

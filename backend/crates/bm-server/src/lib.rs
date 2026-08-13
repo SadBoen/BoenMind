@@ -319,15 +319,23 @@ pub async fn serve_managed(
 
 /// 阶段 0 双写初始化：打开事件日志存储（与现有 boenmind.db 同文件，
 /// WAL 模式多连接），组装 DualWriter。失败返回错误（调用方决定跳过）。
+/// A4：启动时补写崩溃遗留的未闭合回合（TurnEnd{reason: Interrupted}）。
 async fn init_dual_writer() -> Result<Arc<bm_storage_turso::dual_write::DualWriter>, bm_protocol::ProtocolError> {
     let path = bm_core::config::app_dir()
         .join("boenmind.db")
         .to_str()
         .unwrap_or("boenmind.db")
         .to_string();
-    let store = bm_storage_turso::TursoEventStore::open(&path).await?;
-    let log = bm_kernel::EventLog::new(std::sync::Arc::new(store));
-    Ok(std::sync::Arc::new(bm_storage_turso::dual_write::DualWriter::new(log)))
+    let store = std::sync::Arc::new(bm_storage_turso::TursoEventStore::open(&path).await?);
+    let log = bm_kernel::EventLog::new(store.clone());
+    let w = std::sync::Arc::new(bm_storage_turso::dual_write::DualWriter::new(log));
+    // A4 启动恢复：有 TurnStart 无 TurnEnd 的回合显式闭合（dsh 语义）
+    match bm_storage_turso::recover_interrupted_turns(store.as_ref(), w.event_log()).await {
+        Ok(0) => {}
+        Ok(n) => tracing::info!(event = "bm.interrupted_turns_recovered", count = n),
+        Err(err) => tracing::warn!(event = "bm.interrupted_turn_recover_failed", error = %err),
+    }
+    Ok(w)
 }
 
 async fn serve_inner(

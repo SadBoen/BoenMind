@@ -15,4 +15,4 @@ pub mod dual_write;
 pub mod event_log;
 
 pub use checkpoint::{CheckpointStore, CheckpointState};
-pub use event_log::TursoEventStore;
+pub use event_log::{TursoEventStore, recover_interrupted_turns};

@@ -102,10 +102,86 @@ impl TursoEventStore {
         .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("repair heads: {e}")))
     }
 
+    /// 未闭合回合查询（A4）：每个 (session, branch) 里，最后一条 turn/start
+    /// 之后没有 turn/end 的回合（崩溃时 TurnEnd 尾事件未落的场景）。
+    /// 返回 (session, branch, turn)——turn 从信封 JSON 顶层解析（kind 已 flatten）。
+    pub async fn unclosed_turns(&self) -> Result<Vec<(SessionId, BranchId, u32)>, ProtocolError> {
+        let conn = self.conn.lock().await;
+        let mut stmt = conn
+            .prepare(
+                "SELECT e.session_id, e.branch_id, e.data FROM event_log e
+                 WHERE e.type = 'turn/start'
+                   AND e.seq = (SELECT MAX(seq) FROM event_log x
+                                WHERE x.session_id = e.session_id
+                                  AND x.branch_id = e.branch_id
+                                  AND x.type = 'turn/start')
+                   AND NOT EXISTS (SELECT 1 FROM event_log y
+                                   WHERE y.session_id = e.session_id
+                                     AND y.branch_id = e.branch_id
+                                     AND y.type = 'turn/end'
+                                     AND y.seq > e.seq)",
+            )
+            .await
+            .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("prepare unclosed: {e}")))?;
+        let mut rows = stmt
+            .query(())
+            .await
+            .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("query unclosed: {e}")))?;
+        let mut out = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("next unclosed: {e}")))?
+        {
+            let sid: String = row
+                .get(0)
+                .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("get sid: {e}")))?;
+            let bid: String = row
+                .get(1)
+                .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("get bid: {e}")))?;
+            let data: String = row
+                .get(2)
+                .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("get data: {e}")))?;
+            match serde_json::from_str::<serde_json::Value>(&data)
+                .ok()
+                .and_then(|v| v.get("turn").and_then(serde_json::Value::as_u64))
+            {
+                Some(t) => out.push((SessionId::new(sid), BranchId::new(bid), t as u32)),
+                None => tracing::warn!(event = "bm.unclosed_turn_parse_failed", session = %sid),
+            }
+        }
+        Ok(out)
+    }
+
     fn insert_sql() -> &'static str {
         "INSERT INTO event_log (seq, session_id, branch_id, time, type, data, ignorable, surface_op, source_seqs)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
     }
+}
+
+/// A4 启动恢复：给"有 TurnStart 无 TurnEnd"的回合补写
+/// `TurnEnd { reason: Interrupted }`（dsh 语义——崩溃遗留的回合显式闭合）。
+/// 幂等（已闭合的回合不再命中 unclosed_turns）。返回补写条数。
+pub async fn recover_interrupted_turns(
+    store: &TursoEventStore,
+    log: &bm_kernel::EventLog,
+) -> Result<u64, ProtocolError> {
+    let unclosed = store.unclosed_turns().await?;
+    let mut n = 0u64;
+    for (sid, bid, turn) in unclosed {
+        log.append(
+            sid,
+            bid,
+            bm_protocol::EventKind::Core(bm_protocol::CoreEvent::TurnEnd {
+                turn,
+                reason: bm_protocol::TurnEndReason::Interrupted,
+            }),
+            bm_kernel::SurfaceIntent::None,
+        )
+        .await?;
+        n += 1;
+    }
+    Ok(n)
 }
 
 /// 行参数形态（row_params 返回类型）。
