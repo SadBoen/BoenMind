@@ -230,24 +230,17 @@ jobs:
           Compress-Archive -Path ..\dist-win\BoenMind.exe -DestinationPath "..\dist-win\BoenMind_${VER}_x64_portable.zip" -CompressionLevel Optimal
           # 热升级 runtime 资产：独立 bm-server.exe（非 embed）+ 签名
           Copy-Item ..\backend\target\release\bm-server.exe "..\dist-win\boenmind-runtime-${VER}-x86_64-pc-windows-msvc.exe"
-          # 签名密钥兼容两种格式：先按 base64 解一层写文件；失败则原样写文件。
-          # 统一用 --private-key-path（PowerShell 把多行字符串拆参数，不能传 --private-key；
-          # 且 signer 的 --private-key 会从 env 读取，与 --private-key-path 冲突，先读后移除 env）
+          # 签名密钥：统一转成单行 base64 后经 --private-key 传入
+          # （Windows 版 signer 的 --private-key-path 强制 base64 解码，对 minisign 文本必失败；
+          #   --private-key 接受 base64 单行；PowerShell 不能传多行字符串参数，故必须单行）
           $secret = $env:TAURI_SIGNING_PRIVATE_KEY
-          Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY -ErrorAction SilentlyContinue
-          $signed = $false
           try {
-            $key = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($secret.Trim()))
-            $keyFile = Join-Path $env:RUNNER_TEMP "boenmind-signing.key"
-            [IO.File]::WriteAllText($keyFile, $key)
-            pnpm exec tauri signer sign --private-key-path $keyFile --password $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD "..\dist-win\boenmind-runtime-${VER}-x86_64-pc-windows-msvc.exe"
-            $signed = $true
-          } catch {}
-          if (-not $signed) {
-            $keyFile = Join-Path $env:RUNNER_TEMP "boenmind-signing-raw.key"
-            [IO.File]::WriteAllText($keyFile, $secret)
-            pnpm exec tauri signer sign --private-key-path $keyFile --password $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD "..\dist-win\boenmind-runtime-${VER}-x86_64-pc-windows-msvc.exe"
+            $null = [Convert]::FromBase64String($secret.Trim())
+            $keyArg = $secret.Trim()   # 已是 base64：原样单行
+          } catch {
+            $keyArg = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($secret))  # 文本：编码成单行 base64
           }
+          pnpm exec tauri signer sign --private-key $keyArg --password $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD "..\dist-win\boenmind-runtime-${VER}-x86_64-pc-windows-msvc.exe"
 
       - uses: actions/upload-artifact@v4
         with:
