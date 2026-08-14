@@ -3,17 +3,14 @@ name = "bm-compat"
 version = "0.1.0"
 edition = "2024"
 description = "pi-compat：vendored QuickJS 引擎作库（pi.dev 插件当日兼容的兼容层，主线 B）"
-# 注意：本 crate 暂未加入 workspace members——B1 拷入 6 文件（45K 行）与 shim
-# 适配完成、cargo check 全绿之前不拖累 workspace 构建。集成步骤见 README.md。
-# 依赖版本与 legacy/pi_agent_rust/Cargo.toml 对齐（B1 查实）。
-
-# 独立于 backend/ workspace 的 standalone 构建（红线：不改 backend/Cargo.toml 的
-# members；此处空 [workspace] 让 cargo 把本 crate 视为自己的 workspace 根）。
-[workspace]
+# B2 完成后本 crate 已入 backend/ workspace members（B1 时曾以独立 [workspace]
+# 表维持 standalone 构建，入 workspace 后该表移除、Cargo.lock 由 workspace 统一）。
 
 [dependencies]
 # Async runtime（legacy 同款；B2 host 线程会用到）
 tokio = { version = "1", features = ["full"] }
+# async trait objects（legacy 同版本；B2 HostServices 端口）
+async-trait = "0.1"
 # error.rs 的 LockError From impl（legacy 同版本同 features）
 asupersync = { version = "0.3.9", default-features = false, features = ["tls-webpki-roots", "test-internals"] }
 # extensions_js.rs:4629 dirs::home_dir()
@@ -61,3 +58,15 @@ default = []
 wasm-host = ["dep:wasmtime"]
 # extensions_js.rs:140 cfg!(feature = "ext-conformance")（legacy 同名 feature）
 ext-conformance = []
+
+# B1 拷入 6 文件（45K 行）与 verbatim shim 的调用面尚未全部接线（B3 加载路径、
+# B4 内核接线完成后自然消解）。红线：拷贝文件逐字节一致、不可为消 lint 改动。
+# 故在 manifest 层放行这三类存量 lint，B3/B4 落地后收紧为 deny/forbid。
+# unsafe_code 对齐 legacy/pi_agent_rust/Cargo.toml 纪律。
+[lints.rust]
+dead_code = "allow"
+unused_imports = "allow"
+unsafe_code = "forbid"
+
+[lints.clippy]
+collapsible_if = "allow"

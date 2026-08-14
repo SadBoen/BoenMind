@@ -28,8 +28,18 @@ BoenMind 自研 loop（A6）落位后，pi 引擎整体退场；本 crate 是过
 - [x] shim 层就位（extensions/tools/provider_metadata/provider 提取 + 
       http_shim/crypto_shim/buffer_shim/hostcall_s3_fifo 整文件照抄）
 - [x] build.rs 精简版（仅 gzip 资产生成）+ 4 资产拷入 + lib.rs/Cargo.toml
-- [ ] B2 host 线程 / B3 加载路径
-- [ ] 本 crate 加入 workspace members + CI 门禁
+- [x] **B2 host 线程**（`src/host.rs`）：`drain_hostcall_requests → policy 裁决
+      + HostcallKind 分发（HostServices 六端口）→ complete_hostcalls_batch →
+      tick → 二轮补收`，结构镜像 legacy `pump_js_runtime_once_for_owner`；
+      `check_capability` 三模式裁决 + `request_approval` fail-closed 询问口（B5）；
+      测试在 `tests/host.rs`（集成测试，7 用例全绿：六 kind 路由 / policy 拒绝 /
+      审批放行 / QuickJS 真链路 eval→pump→complete）
+- [x] **入 workspace members + CI 门禁**：backend/Cargo.toml members 登记；
+      CI 加 test（--test host）与 clippy（--lib --test host -D warnings）两行；
+      B1 存量 lint（死代码/unused import/collapsible_if，均在拷贝/shim 文件）
+      经 manifest [lints] 表放行（红线：拷贝文件逐字节一致，B3/B4 接上后收紧）
+- [ ] B3 加载路径（eval_file + get_registered_tools + ExtensionBody 协议注册）
+- [ ] B4 与内核接线（QuickJS 运行时 = 内核插件；工具注册进 bm-loop ToolRegistry）
 
 ## 上游同步纪律
 
@@ -61,7 +71,6 @@ BoenMind 自研 loop（A6）落位后，pi 引擎整体退场；本 crate 是过
    启用前需拷入 pi_wasm.rs + wasmtime 依赖（已预置 optional dep）。
 3. **shim 与上游同步**：extensions/tools/provider_metadata shim 的行号头注释
    基于当前 vendored 基线；上游变更后按头注释行号重提取。
-4. **B2/B3**：drain_hostcall_requests / eval_file / ExtensionBody 协议注册。
-5. **加入 workspace**：全部编译过 + B2/B3 完成后，在 backend/Cargo.toml 登记
-   members（当前因 backend 有 release 构建在跑而禁止触碰）。
+4. **B3/B4**：eval_file 加载路径 / ExtensionBody 协议注册 / 内核接线（下一步）。
+5. ~~加入 workspace~~（✅ B2 完成时已入 members + CI 门禁，见「当前状态」）。
 

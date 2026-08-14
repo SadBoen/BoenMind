@@ -24,6 +24,8 @@ pub mod crypto_shim;
 pub mod embedded_assets;
 pub mod error;
 pub mod extensions;
+// B2 — host thread (drain → dispatch → complete → tick pump).
+pub mod host;
 pub mod extensions_js;
 pub mod hostcall_io_uring_lane;
 pub mod hostcall_queue;

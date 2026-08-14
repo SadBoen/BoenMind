@@ -707,6 +707,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "bm-compat"
+version = "0.1.0"
+dependencies = [
+ "asupersync",
+ "async-trait",
+ "base64 0.22.1",
+ "crc32c",
+ "crossbeam-queue",
+ "dirs",
+ "flate2",
+ "getrandom 0.4.3",
+ "hmac 0.12.1",
+ "md-5",
+ "pbkdf2",
+ "regex",
+ "ring",
+ "rquickjs",
+ "scrypt",
+ "serde",
+ "serde_json",
+ "sha1 0.10.7",
+ "sha2 0.10.9",
+ "sqlmodel-core",
+ "swc_common",
+ "swc_ecma_ast",
+ "swc_ecma_codegen",
+ "swc_ecma_parser",
+ "swc_ecma_transforms_base",
+ "swc_ecma_transforms_typescript",
+ "sysinfo",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+ "uuid",
+ "wasmtime",
+]
+
+[[package]]
 name = "bm-core"
 version = "0.1.2"
 dependencies = [
