@@ -49,6 +49,29 @@ pub struct LlmToolCall {
 pub struct LlmUsage {
     pub input_tokens: u64,
     pub output_tokens: u64,
+    /// 缓存命中读取（provider 未返回为 0——发送量 = input + cache_read，
+    /// 与 pi 路径 bm.prompt_usage 口径对齐，双开对比用）
+    pub cache_read: u64,
+    /// 新写缓存（provider 未返回为 0）
+    pub cache_write: u64,
+}
+
+/// 从 usage JSON 解析缓存字段（MiniMax 实测：`prompt_tokens_details.cached_tokens`
+/// = 缓存命中读取；对齐 pi SDK openai.rs 同款解析。兼容 OpenAI 标准名，均缺失 = 0）。
+fn parse_cache_tokens(u: &serde_json::Value) -> (u64, u64) {
+    let read = u
+        .get("prompt_tokens_details")
+        .and_then(|d| d.get("cached_tokens"))
+        .and_then(|x| x.as_u64())
+        .or_else(|| u.get("prompt_cache_hit_tokens").and_then(|x| x.as_u64()))
+        .or_else(|| u.get("cache_read_tokens").and_then(|x| x.as_u64()))
+        .unwrap_or(0);
+    let write = u
+        .get("prompt_cache_miss_tokens")
+        .and_then(|x| x.as_u64())
+        .or_else(|| u.get("cache_write_tokens").and_then(|x| x.as_u64()))
+        .unwrap_or(0);
+    (read, write)
 }
 
 /// LLM 错误。
@@ -333,9 +356,12 @@ impl CompletionParser {
         };
         let mut out = Vec::new();
         if let Some(usage) = v.get("usage") {
+            let (cache_read, cache_write) = parse_cache_tokens(usage);
             self.usage = Some(LlmUsage {
                 input_tokens: usage.get("prompt_tokens").and_then(|u| u.as_u64()).unwrap_or(0),
                 output_tokens: usage.get("completion_tokens").and_then(|u| u.as_u64()).unwrap_or(0),
+                cache_read,
+                cache_write,
             });
         }
         let Some(choices) = v.get("choices").and_then(|c| c.as_array()) else {
@@ -445,9 +471,14 @@ fn parse_completion(v: &serde_json::Value) -> Result<Option<LlmEvent>, String> {
                 .collect()
         })
         .unwrap_or_default();
-    let usage = v.get("usage").map(|u| LlmUsage {
-        input_tokens: u.get("prompt_tokens").and_then(|x| x.as_u64()).unwrap_or(0),
-        output_tokens: u.get("completion_tokens").and_then(|x| x.as_u64()).unwrap_or(0),
+    let usage = v.get("usage").map(|u| {
+        let (cache_read, cache_write) = parse_cache_tokens(u);
+        LlmUsage {
+            input_tokens: u.get("prompt_tokens").and_then(|x| x.as_u64()).unwrap_or(0),
+            output_tokens: u.get("completion_tokens").and_then(|x| x.as_u64()).unwrap_or(0),
+            cache_read,
+            cache_write,
+        }
     });
     Ok(Some(LlmEvent::MessageEnd {
         content,
@@ -545,7 +576,7 @@ mod tests {
         let evs = p.finish();
         match evs.last().unwrap() {
             LlmEvent::MessageEnd { usage, .. } => {
-                assert_eq!(usage.unwrap(), LlmUsage { input_tokens: 10, output_tokens: 5 });
+                assert_eq!(usage.unwrap(), LlmUsage { input_tokens: 10, output_tokens: 5, cache_read: 0, cache_write: 0 });
             }
             other => panic!("应为 MessageEnd，得到 {other:?}"),
         }

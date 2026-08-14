@@ -350,6 +350,9 @@ impl<H: LoopHooks, L: Llm, T: ToolExecutor> ReactLoopAgent<H, L, T> {
         let mut tool_calls_executed = 0usize;
         let mut reason_out = TurnEndReason::Completed;
         let mut fail_msg: Option<String> = None;
+        // 上一请求的真实模型可见输入（usage 校准源：粗估 chars/4 对中文
+        // 低估约 2 倍，压缩水线判定以 max(粗估, 真实值) 为准）
+        let mut last_real_input = 0u64;
 
         loop {
             // 取消：回合中途用户停止
@@ -380,7 +383,7 @@ impl<H: LoopHooks, L: Llm, T: ToolExecutor> ReactLoopAgent<H, L, T> {
             payload = self.build_payload(&msgs);
 
             // 硬触发：单步输入超窗 → 压缩 → 重建；仍超窗即失败
-            if self.check_overflow(&msgs) {
+            if self.check_overflow(&msgs, last_real_input) {
                 tracing::warn!(event = "bm.loop_overflow", turn, step, "单步输入超窗，硬触发压缩");
                 self.compact_or_die(turn, cancel).await?;
                 msgs = self
@@ -389,7 +392,7 @@ impl<H: LoopHooks, L: Llm, T: ToolExecutor> ReactLoopAgent<H, L, T> {
                     .await
                     .map_err(|e| RunError::new(format!("投影失败: {e}")))?;
                 payload = self.build_payload(&msgs);
-                if self.check_overflow(&msgs) {
+                if self.check_overflow(&msgs, last_real_input) {
                     reason_out = TurnEndReason::Failed;
                     fail_msg = Some("压缩后输入仍超窗口".into());
                     break;
@@ -498,11 +501,28 @@ impl<H: LoopHooks, L: Llm, T: ToolExecutor> ReactLoopAgent<H, L, T> {
                 break;
             }
 
-            // 步内 usage 累计
+            // 步内 usage 累计 + 观测日志（对齐 pi 路径 bm.prompt_usage 口径，
+            // 双开对比 analyze.mjs 同源解析；不打 payload 正文）
             if let Some(u) = step_usage {
-                let total = usage_total.get_or_insert(LlmUsage { input_tokens: 0, output_tokens: 0 });
+                let total = usage_total.get_or_insert(LlmUsage {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cache_read: 0,
+                    cache_write: 0,
+                });
                 total.input_tokens += u.input_tokens;
                 total.output_tokens += u.output_tokens;
+                // 真实模型可见输入校准源（input_tokens = prompt 全量，含缓存命中）
+                last_real_input = u.input_tokens;
+                tracing::info!(
+                    event = "bm.prompt_usage",
+                    input = u.input_tokens,
+                    output = u.output_tokens,
+                    cache_read = u.cache_read,
+                    cache_write = u.cache_write,
+                    total = u.input_tokens + u.output_tokens,
+                    session_total = total.input_tokens + total.output_tokens,
+                );
             }
             if !content.is_empty() {
                 final_text = content.clone();
@@ -588,7 +608,7 @@ impl<H: LoopHooks, L: Llm, T: ToolExecutor> ReactLoopAgent<H, L, T> {
                 .derive_messages(&sid, &bid)
                 .await
                 .map_err(|e| RunError::new(format!("投影失败: {e}")))?;
-            let est = self.estimate_context(&msgs);
+            let est = self.estimate_context(&msgs).max(last_real_input);
             // 软触发（步边界）：压缩插件判定（None = 关闭压缩，永不动作）
             if self.config.compactor.as_ref().is_some_and(|c| c.should_compact(est, self.config.context_window as u64)) {
                 tracing::info!(event = "bm.loop_compact_soft", turn, step, est_tokens = est);
@@ -647,6 +667,9 @@ impl<H: LoopHooks, L: Llm, T: ToolExecutor> ReactLoopAgent<H, L, T> {
             "model": self.config.model,
             "messages": messages,
             "tools": self.tools.openai_tools_json(),
+            // OpenAI 兼容 API 流式默认不回 usage（MiniMax 实测全帧 usage:null），
+            // 显式 include_usage 才能拿到 token 统计（双开对比观测依赖）
+            "stream_options": {"include_usage": true},
         })
     }
 
@@ -664,8 +687,9 @@ impl<H: LoopHooks, L: Llm, T: ToolExecutor> ReactLoopAgent<H, L, T> {
     }
 
     /// 硬触发判定：单步输入本身超窗（模型客观窗口，与压缩插件无关）。
-    fn check_overflow(&self, msgs: &[bm_kernel::SurfaceMessage]) -> bool {
-        self.estimate_context(msgs) >= self.config.context_window as u64
+    /// `last_real_input` = 上一请求真实模型可见输入（usage 校准，粗估低估兜底）。
+    fn check_overflow(&self, msgs: &[bm_kernel::SurfaceMessage], last_real_input: u64) -> bool {
+        self.estimate_context(msgs).max(last_real_input) >= self.config.context_window as u64
     }
 
     /// 压缩事务；返回 Err = 日志失败（回合失败）。
