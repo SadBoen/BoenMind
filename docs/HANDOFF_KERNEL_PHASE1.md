@@ -24,6 +24,12 @@
 
 ## 〇、本次会话 commit 索引（main 已推送，工作区干净）
 
+### CI 提速轮（质量门三件套，2026-08-14 用户要求）
+
+| commit | 内容 |
+|---|---|
+| `9d43884` | **ci(quality)：质量门提速三件套**——① concurrency cancel-in-progress（同 ref 连续 push 只跑最新一轮，消灭多轮排队）② changes 前置 job（dorny/paths-filter v3，纯 docs 提交跳过 Rust 3 job；tag/手动触发强制全跑）③ sccache（mozilla/sccache-action v0.0.11，GHA backend 2G）对象级编译缓存。**根因实证**（查 CI 日志）：rust-cache 命中仅 ~879MB，pi 依赖树 debug 产物 10GB+，每轮仍重编大部分依赖 → quality-test 20min（clippy 两 job --no-deps 只要 2-3min）；预期 test 20min → 5-8min |
+
 ### pi 废除第②步（subagent 子进程换 bm-loop，2026-08-14）
 
 | commit | 内容 |
