@@ -12,12 +12,6 @@ members = [
     "crates/bm-memory",
     "tests/event_log",
 ]
-# 旧代码（legacy）：pi_agent_rust + asupersync 已移出 workspace 成员——
-# 仍是 bm-core/bm-server 的 path 依赖（生产仍在跑），但其 test 目标不再
-# 被 workspace 级 `cargo test` 编译（上游 tests/ 目录 vendored 时刻意不带，
-# 引用缺失 fixture 的测试目标随之不再阻塞全量测试）。重构方针见
-# docs/everything-is-plugin-architecture.md §十三：吸收一部分删除一部分。
-exclude = ["legacy/pi_agent_rust"]
 
 # asupersync vendor 化：pi 引擎的底层异步运行时，本地补丁见
 # backend/legacy/UPSTREAM_PATCHES.md「asupersync」区。
@@ -29,14 +23,9 @@ asupersync = { path = "legacy/asupersync" }
 bm-protocol = { path = "crates/bm-protocol" }
 bm-kernel = { path = "crates/bm-kernel" }
 bm-storage-turso = { path = "crates/bm-storage-turso" }
-# wasm-host：开启 QuickJS 内 WebAssembly polyfill（wasmtime），插件 JS 可用 WASM 模块。
-# 若产物体积/编译时间超预算，可移除该 feature（见 docs 讨论记录）。
-pi = { package = "pi_agent_rust", path = "legacy/pi_agent_rust", default-features = false, features = ["wasm-host"] }
-# legacy 补丁（SessionOptions.ui_handler 透传）复用 bm-server 同款 tokio
 tokio = { version = "1", features = ["full"] }
 
 [profile.dev]
-# pi_agent_rust 依赖较重，适当放宽优化等级换取编译速度与运行效率的平衡
 opt-level = 1
 
 [profile.release]

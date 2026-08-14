@@ -10,7 +10,6 @@ pub mod chat;
 pub mod compat_engine;
 pub mod governance;
 pub mod pdf_omni;
-pub mod permission;
 // B6 — 插件权限决策记忆（extension-permissions.json，格式兼容 pi 上游）
 pub mod permission_store;
 pub mod routes;
@@ -294,21 +293,6 @@ pub async fn init() -> Result<(AppConfig, Db), Box<dyn std::error::Error>> {
         eprintln!("[bm-server] 工作文件夹创建失败: {err}");
     }
 
-    // 2. pi agent 全局目录指向我们自己的目录，与用户 ~/.pi 互不干扰
-    // 注意：edition 2024 中 set_var 为 unsafe
-    let pi_dir = bm_core::config::pi_agent_dir();
-    unsafe { std::env::set_var("PI_CODING_AGENT_DIR", &pi_dir) };
-
-    // 2.25 开启 pi 会话热路径性能计数器（原子计数，零 UI 暴露；排障时读内部快照）
-    unsafe { std::env::set_var("PI_PERF_TELEMETRY", "1") };
-
-    // 2.5 pdf-omni 插件经 loopback 调宿主解析端点：放行纯 http 的 127.0.0.1
-    // （上游 http connector 对 loopback 的明文 http 需显式 opt-in；只影响本机端点）
-    unsafe { std::env::set_var("PI_HTTP_ALLOW_LOOPBACK", "1") };
-
-    // 3. 同步 models.json（provider baseUrl 覆盖 + 自定义模型注册）
-    bm_core::config::sync_pi_models_json(&config)?;
-
     // 3.25 预置子代理角色定义（agents/*.md），让 subagent 工具开箱可用
     if let Err(err) = bm_core::config::ensure_builtin_agents() {
         eprintln!("[bm-server] 预置子代理角色定义失败: {err}");
@@ -379,7 +363,6 @@ async fn serve_inner(
     let (config, db) = init().await?;
     let db = Arc::new(db);
     tracing::info!("工作文件夹: {}", config.working_dir.display());
-    tracing::info!("pi agent 目录: {}", bm_core::config::pi_agent_dir().display());
 
     // 阶段 0 双写：事件日志与现有表同库（WAL 多连接），打开失败仅告警不阻断
     let dual_writer = match init_dual_writer().await {

@@ -38,12 +38,6 @@ pub async fn put_config(
             format!("配置保存失败: {err}"),
         ));
     }
-    if let Err(err) = bm_core::config::sync_pi_models_json(&config) {
-        return Err(api_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("pi models.json 同步失败: {err}"),
-        ));
-    }
     // 直接替换 enabled_skills 的场景（如前端设置页全量保存）也要同步 pi/skills
     // 目录，否则注入提示与实际加载源漂移，agent 读不到 skill
     if let Err(err) = bm_core::skills::sync_skills_to_pi(&config) {

@@ -207,29 +207,23 @@ pub fn install_plugin(source: &Path) -> Result<PluginInfo, AppError> {
     })
 }
 
-/// 按包源安装插件（`npm:包名` / `git:host/owner/repo` / 本地路径），复用上游包管理器。
+/// 按包源安装插件（`npm:包名` / `git:host/owner/repo[@ref]` / 本地路径）。
 ///
-/// 流程：上游 PackageManager 装到全局（npm -g / git 全局目录）→ 定位包目录 →
-/// 找出包内扩展资源（`extensions/` 子目录或包根即扩展）→ 复制进插件根目录。
-/// 一个包可含多个扩展，返回新装入的全部插件（安装后默认禁用，由 UI 启用）。
-/// npm 安装可能耗时较长，调用方应放阻塞线程执行。
+/// 流程（自研实现，2026-08-15 pi 废除后替代上游 PackageManager）：
+/// 源解析 → 装到源缓存目录（npm install --prefix / git clone --depth 1）→
+/// 定位包目录 → 找出包内扩展资源（`extensions/` 子目录或包根即扩展）→
+/// 复制进插件根目录。一个包可含多个扩展，返回新装入的全部插件
+/// （安装后默认禁用，由 UI 启用）。npm 安装可能耗时较长，调用方应放
+/// 阻塞线程执行。
 pub fn install_plugin_from_source(source: &str) -> Result<Vec<PluginInfo>, AppError> {
-    use pi::package_manager::{PackageManager, PackageScope};
-
     let source = source.trim().to_string();
     if source.is_empty() {
         return Err(AppError::invalid("插件源不能为空"));
     }
-    let cwd = std::env::current_dir()
-        .map_err(|e| AppError::internal(format!("获取当前目录失败: {e}")))?;
-    let pm = PackageManager::new(cwd);
-    pm.install_blocking(&source, PackageScope::User)
-        .map_err(|e| AppError::internal(format!("包安装失败: {e}")))?;
-    let Some(pkg_root) = pm
-        .installed_path_blocking(&source, PackageScope::User)
-        .map_err(|e| AppError::internal(format!("定位包目录失败: {e}")))?
-    else {
-        return Err(AppError::internal("安装成功但无法定位包目录"));
+    let pkg_root = match source.split_once(':') {
+        Some(("npm", spec)) if !spec.trim().is_empty() => install_npm_source(spec)?,
+        Some(("git", spec)) if !spec.trim().is_empty() => install_git_source(spec)?,
+        _ => PathBuf::from(&source), // 本地路径（存在性由扩展探查兜底）
     };
     let entries = package_extension_entries(&pkg_root)
         .map_err(|e| AppError::internal(format!("读取包内扩展失败: {e}")))?;
@@ -268,6 +262,99 @@ pub fn install_plugin_from_source(source: &str) -> Result<Vec<PluginInfo>, AppEr
         });
     }
     Ok(installed)
+}
+
+/// 包源缓存目录（npm/git 源的落地处；隔离在 app_dir 下便于清理与重装）。
+fn package_sources_dir() -> PathBuf {
+    app_dir().join("plugin-sources")
+}
+
+/// npm 源：`npm install --prefix <缓存目录> <spec>` → 定位 `node_modules/<name>`。
+/// spec 形如 `pkg@1.2.3` 或 `@scope/pkg@1.2.3`——包名取第一个 `@` 之前的
+/// 段（scope 包名 = `@scope/pkg`，版本号在第二个 `@` 后）。
+fn install_npm_source(spec: &str) -> Result<PathBuf, AppError> {
+    let root = package_sources_dir();
+    fs::create_dir_all(&root)?;
+    let mut cmd = std::process::Command::new("npm");
+    cmd.arg("install")
+        .arg("--prefix")
+        .arg(&root)
+        .arg("--")
+        .arg(spec);
+    run_package_command(cmd, "npm 安装失败")?;
+    let name = npm_package_name(spec);
+    let installed = root.join("node_modules").join(name);
+    if !installed.is_dir() {
+        return Err(AppError::internal(format!(
+            "npm 安装完成但无法定位包目录: {}",
+            installed.display()
+        )));
+    }
+    Ok(installed)
+}
+
+/// 从 npm spec 提取包名（`@scope/pkg@1.0.0` → `@scope/pkg`；`pkg@1.0.0` → `pkg`）。
+fn npm_package_name(spec: &str) -> String {
+    let s = spec.trim();
+    if let Some(rest) = s.strip_prefix('@') {
+        let mut parts = rest.splitn(2, '/');
+        let scope = parts.next().unwrap_or("");
+        let pkg = parts
+            .next()
+            .unwrap_or("")
+            .split('@')
+            .next()
+            .unwrap_or("");
+        format!("@{scope}/{pkg}")
+    } else {
+        s.split('@').next().unwrap_or(s).to_string()
+    }
+}
+
+/// git 源：`git:host/owner/repo[@ref]` → `git clone --depth 1 [--branch ref]`
+/// 到缓存目录（URL = https://<host>/<owner>/<repo>；重装先清缓存目录）。
+fn install_git_source(spec: &str) -> Result<PathBuf, AppError> {
+    let (repo, reference) = match spec.rsplit_once('@') {
+        Some((r, refname)) if !refname.contains('/') => (r, Some(refname)),
+        _ => (spec, None),
+    };
+    let url = format!("https://{repo}");
+    let dir_name = repo.replace(['/', '.'], "__");
+    let dest = package_sources_dir().join(dir_name);
+    if dest.exists() {
+        fs::remove_dir_all(&dest).map_err(|e| AppError::internal(format!("清理旧缓存失败: {e}")))?;
+    }
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut cmd = std::process::Command::new("git");
+    cmd.arg("clone").arg("--depth").arg("1");
+    if let Some(r) = reference {
+        cmd.arg("--branch").arg(r);
+    }
+    cmd.arg(&url).arg(&dest);
+    run_package_command(cmd, "git clone 失败")?;
+    Ok(dest)
+}
+
+/// 运行包管理命令（npm/git），失败带 stderr 摘要。
+fn run_package_command(mut cmd: std::process::Command, what: &str) -> Result<(), AppError> {
+    let out = cmd
+        .output()
+        .map_err(|e| AppError::internal(format!("{what}: {e}")))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let tail: String = stderr
+            .chars()
+            .rev()
+            .take(300)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect();
+        return Err(AppError::internal(format!("{what}: {tail}")));
+    }
+    Ok(())
 }
 
 /// 包内扩展条目的探查：优先 `extensions/` 子目录（上游包的默认布局），

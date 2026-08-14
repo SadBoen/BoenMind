@@ -31,7 +31,6 @@ bm-compat = { path = "../bm-compat" }
 bm-compactor = { path = "../bm-compactor" }
 # 记忆插件（§6.1 最小实现）：StreamHooks 组合，on_request 注入 facts.md
 bm-memory = { path = "../bm-memory" }
-pi = { workspace = true }
 axum = "0.8"
 async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }

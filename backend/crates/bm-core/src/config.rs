@@ -397,80 +397,7 @@ pub fn resolve_model(provider: &ProviderConfig, model: Option<&str>) -> Option<S
         .or_else(|| provider.models.first().cloned())
 }
 
-/// 将 BoenMind 配置同步为 pi agent 的 models.json。
-///
-/// - 内置提供商（openai/anthropic/gemini/ollama/llamacpp）：注册 baseUrl 覆盖 + 模型
-/// - 自定义 OpenAI 兼容提供商（minimax/deepseek/openrouter/moonshot/…）：
-///   以独立 provider 名注册，`api: "openai-completions"` 路由 + 独立 baseUrl，
-///   多个 OpenAI 兼容端点可共存互不覆盖
-///
-/// pi agent 通过 `PI_CODING_AGENT_DIR` 环境变量定位其全局目录，我们指向
-/// `~/.boenmind/pi`，与用户自己的 `~/.pi` 配置互不干扰。
-pub fn sync_pi_models_json(config: &AppConfig) -> Result<(), std::io::Error> {
-    use serde_json::{Map, Value, json};
 
-    let dir = pi_agent_dir();
-    fs::create_dir_all(&dir)?;
-
-    let mut providers = Map::new();
-    let keys_dir = dir.join("keys");
-    for p in &config.providers {
-        let name = p.kind.pi_name(&p.id);
-        let mut entry = Map::new();
-        if let Some(base) = &p.base_url {
-            entry.insert("baseUrl".to_string(), json!(base));
-        }
-        if p.kind.is_openai_compatible_route() {
-            // 自定义 OpenAI 兼容路由：必须显式指定 API 类型
-            entry.insert("api".to_string(), json!("openai-completions"));
-        }
-        // API key 通过 file: 引用写入独立文件（pi 官方支持模式，避免凭据落在 models.json）
-        if let Some(key) = &p.api_key
-            && !key.is_empty() {
-                fs::create_dir_all(&keys_dir)?;
-                let key_file = keys_dir.join(format!("{name}.key"));
-                write_private(&key_file, key.as_bytes())?;
-                entry.insert(
-                    "apiKey".to_string(),
-                    json!(format!("file:{}", key_file.display())),
-                );
-                // 自定义 provider 无内置 auth metadata，必须显式声明才会携带 Authorization 头
-                entry.insert("authHeader".to_string(), json!(true));
-            }
-        // 注册模型列表（仅注册本提供商声明的模型，避免污染内置目录）
-        // 自定义 OpenAI 兼容路由标记 reasoning: true，使 pi 的思考控制
-        // （DeepSeek / MiniMax 方言）对该提供商生效
-        let reasoning = p.kind.is_openai_compatible_route();
-        let models: Vec<Value> = p
-            .models
-            .iter()
-            .map(|m| {
-                let mut entry = json!({ "id": m });
-                if reasoning {
-                    entry["reasoning"] = json!(true);
-                }
-                // 压缩配置中声明了 context_window 时写入 models.json，
-                // 使探测值与模型注册表一致（声明窗口）
-                if let Some(window) =
-                    crate::compaction::override_window_for_model(&config.compaction, &name, m)
-                {
-                    entry["contextWindow"] = json!(window);
-                }
-                entry
-            })
-            .collect();
-        if !models.is_empty() {
-            entry.insert("models".to_string(), Value::Array(models));
-        }
-        providers.insert(name, Value::Object(entry));
-    }
-
-    let doc = json!({
-        "providers": Value::Object(providers),
-    });
-
-    fs::write(dir.join("models.json"), serde_json::to_string_pretty(&doc)?)
-}
 
 /// 测试用共享锁：串行化所有会修改全局 BOENMIND_HOME 的测试（cfg(test) 才存在）。
 /// 并行测试共享进程 env，读 app_dir/plugins_dir 的测试在别的测试改 env 时会读到
@@ -551,47 +478,6 @@ mod tests {
         assert_eq!(resolve_provider(&config, Some("missing")).unwrap().id, "b");
         assert_eq!(resolve_model(&config.providers[1], None).unwrap(), "qwen");
         assert_eq!(resolve_model(&config.providers[1], Some("x")).unwrap(), "x");
-    }
-
-    #[test]
-    fn sync_pi_models_json_writes_compaction_window() {
-        use crate::compaction::CompactionOverride;
-        // 本测试修改全局 BOENMIND_HOME：与其它读取 app_dir 的测试并行会互相污染
-        // （曾经导致真实 ~/.boenmind/config.toml 被默认配置覆盖）。用共享锁串行化。
-        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let original = std::env::var_os("BOENMIND_HOME");
-        let dir = std::env::temp_dir().join(format!("bm-config-sync-{}", std::process::id()));
-        // 注意：edition 2024 中 set_var/remove_var 为 unsafe
-        unsafe { std::env::set_var("BOENMIND_HOME", &dir) };
-        let mut config = AppConfig {
-            providers: vec![ProviderConfig {
-                id: "ds".into(),
-                name: "DeepSeek".into(),
-                kind: ProviderKind::Deepseek,
-                base_url: None,
-                api_key: None,
-                models: vec!["deepseek-chat".into(), "deepseek-reasoner".into()],
-                default_model: None,
-            }],
-            ..AppConfig::default()
-        };
-        config.compaction.overrides.insert(
-            "deepseek/deepseek-chat".to_string(),
-            CompactionOverride { context_window: Some(200_000), ..Default::default() },
-        );
-        sync_pi_models_json(&config).unwrap();
-        let text = std::fs::read_to_string(dir.join(APP_DIR).join("pi").join("models.json")).unwrap();
-        let doc: serde_json::Value = serde_json::from_str(&text).unwrap();
-        let models = &doc["providers"]["deepseek"]["models"];
-        assert_eq!(models[0]["id"], "deepseek-chat");
-        assert_eq!(models[0]["contextWindow"], 200_000);
-        // 未配置窗口的模型不写字段
-        assert!(models[1].get("contextWindow").is_none());
-        match original {
-            Some(v) => unsafe { std::env::set_var("BOENMIND_HOME", v) },
-            None => unsafe { std::env::remove_var("BOENMIND_HOME") },
-        }
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
