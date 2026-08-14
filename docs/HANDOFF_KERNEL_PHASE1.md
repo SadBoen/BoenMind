@@ -24,6 +24,11 @@
 | `087c51d` | **proptest 承诺兑现**：任意操作序列的 append/replay 一致性属性测试（60 用例） |
 | `8306e81` | **A6 骨架**：bm-loop crate（ToolRegistry/五扩展点/inbox 双队列）入 workspace+CI |
 | `e80582c` | proptest 计数器 clippy 修（enumerate） |
+| `951ea48` | 交接文档更新（§〇·五 查证/决策录 + 九·二 完成度表） |
+| `d210cf6` | **CI 修复 ①**：rust-cache 钉 v2.9.1（Node 20 EOL → GitHub 强制 Node 24，v2 浮动标签旧版在 rust-cache 步静默死亡 = 今日全红根因） |
+| `373cd64` | **CI 修复 ②**：质量门 job 加 `CARGO_PROFILE_DEV_DEBUG=0` + `CARGO_INCREMENTAL=0`（test+clippy 双编译撑爆 14GB 盘） |
+| `1deddcb` | 补 bm-loop 入 Cargo.lock + proptest 回归种子入仓（[Fork] 最小失败用例） |
+| — | **CI 质量门已全绿**（26min 冷启动 → 15min 热缓存）；**用户拍板：CI 拆并行 job 下次再做** |
 
 ## 〇·五、本轮查证与实现期决策（新对话勿重复调研）
 
@@ -36,6 +41,7 @@
 7. **clippy 现状**：本地 1.97 新 lint（get_first 等）——pdf_omni 存量已清；新代码需过两档门禁。
 8. **proptest 在 async 块内用 assert_eq! 不用 prop_assert_eq!**（宏返回类型冲突）；1.11.0 本地已缓存。
 9. **bm-compat 拷入依赖面**（DEPENDENCIES.md 详表）：6 文件 45K 行；scheduler/queue/lane 几乎自包含；extensions_js 仅依赖 8 个 crate 内模块（extensions 40 次引用最多）；5 符号 = ExtensionPolicyMode/ExtensionPolicy/PolicyProfile（extensions.rs）+ HostcallKind/PiJsRuntime（extensions_js.rs 自带）。
+10. **CI 两个根因已修**（今日存量故障，修复已推送）：rust-cache 必须 ≥v2.9.1（Node 20 EOL，GitHub 2026-06 起强制 Node 24）；质量门 job 已加 `CARGO_PROFILE_DEV_DEBUG=0`+`CARGO_INCREMENTAL=0`（test+clippy 双编译共盘会爆 14GB）。改动钉在 .github/workflows/release.yml。
 
 ## 一、一句话现状
 
@@ -113,11 +119,12 @@
 
 ## 八、待验证 / 待拍板
 
-1. **真实验收**（用户睡醒后）：release 起 bm-server → 日志"事件日志双写已启用" → 聊几轮 → `sqlite3 ~/.boenmind/boenmind.db "SELECT seq, session_id, type FROM event_log ORDER BY seq"`。
-2. **A1 的 chunk 落盘策略**：逐 chunk append vs 攒批（token 级回放保真 vs 写放大）——实现期权衡，先攒批。
-3. **超期清除天数**（C1 的 N）——实现期调优。
+1. **真实验收**（用户配合）：release 起 bm-server → 日志"事件日志双写已启用" → 聊几轮 → `sqlite3 ~/.boenmind/boenmind.db "SELECT seq, session_id, type FROM event_log ORDER BY seq"`。**本轮代码已就绪，未验收。**
+2. **A1 的 chunk 落盘策略**：逐 chunk append vs 攒批（token 级回放保真 vs 写放大）——已实现"写线程全量排空攒批"（每批一个事务），实测写放大待真实验收观察。
+3. **超期清除天数**（C1 的 N）——默认 90 天，`BM_ORPHAN_PURGE_DAYS` 环境变量可调，实现期调优。
 4. **自研 loop 替换切换开关**：A6 完成后 pi loop 与新 loop 并行双开对比（同压缩 A/B 方法论），拍板切换时机。
-5. **proptest 承诺**（实现方案 §6 写了没做）：要不要补——低优先，顺手下轮补。
+5. **proptest 承诺**：已兑现（60 用例属性测试，见 §九·二）。
+6. **CI 拆并行 job**（用户拍板"下次"）：质量门 test/clippy×2/前端拆 4 个并发 job，预计 15min → 6-9min；方案细节本对话已给出（并行 job / 大核 runner / sccache 三选项）。
 
 ## 十、本轮后半段新决策（2026-08-14 夜，用户两条指令）
 
@@ -156,5 +163,7 @@
 | C2 用户主动清除 | ✅ | DELETE /api/sessions/{id}/events + 前端菜单 |
 | B1 拷入 6 文件 | 🦴 前置 | 骨架+依赖图谱+台账纪律；拷入待执行 |
 | B2/B3/B4/B5/B6 | ⏳ | 依赖 B1 拷入 |
-| proptest 承诺 | ✅ | 60 用例属性测试（InMemory） |
-| CI 门禁 | ✅ | 全量 25 套件全绿 + 双档 clippy 清零 |
+| proptest 承诺 | ✅ | 60 用例属性测试（InMemory）+ 回归种子入仓 |
+| CI 门禁 | ✅ | 全量 25 套件全绿 + 双档 clippy 清零 + **GitHub CI 质量门绿灯**（另修存量 rust-cache/磁盘两故障，见 commit 索引） |
+| 真实验收 | ⏳ | release 起服务查 event_log 表——用户配合（§八·1） |
+| CI 拆并行 job | 📋 下次 | 用户拍板：test/clippy×2/前端拆 4 并发 job（方案细节见 §八·6） |
