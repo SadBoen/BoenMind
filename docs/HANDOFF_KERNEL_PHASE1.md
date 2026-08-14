@@ -1,10 +1,10 @@
 # HANDOFF —— 阶段 1 开工交接（两线并行）
 
-> **当前状态（2026-08-14 收口，CI 全绿）**：主线 A（A1-A7）+ 主线 B（B1-B5）**全部落地**。
+> **当前状态（2026-08-14 收口，CI 全绿）**：主线 A（A1-A7）+ 主线 B（B1-B6）**全部落地**。
 > - A 线：执行级事件日志（A1-A5）+ 自研 loop（A6 主体 + 接线：`BM_LOOP_ENGINE=bm` 开关/流式/工具/取消）+ A7 迁移骨架
-> - B 线：B1 拷入 + B2 host 线程 + B3 加载路径 + B4 工具执行方向 + B5 权限桥（http 真实现）
-> - 真实验收：bm 引擎 4 项（切片①）+ hello 工具全链路（B4）+ **web_search×2/web_fetch×1 真实搜索全成功**（B5）
-> - **剩：B6 收口**（① 补 exec/execute_tool/session/ui/events 端口——内置工具集让 ctx-compactor/web-scraping 可用 + 决策记忆 + 心跳 TaskProgress + thinking 档位映射；② 三插件 bm 引擎全链路；③ pi/bm 30 轮 A/B 双开对比后拍切换）。开工前先 git pull。
+> - B 线：B1 拷入 + B2 host 线程 + B3 加载路径 + B4 工具执行方向 + B5 权限桥（http 真实现）+ **B6 收口（内置工具集端口/决策记忆/插件事件推送/切片②顺手件）**
+> - 真实验收：bm 引擎 4 项（切片①）+ hello 工具全链路（B4）+ web_search×2/web_fetch×1（B5）+ **B6 三插件全链路（10 轮真实会话：startup 懒发 / web_search×50+/web_fetch 真实搜索 / 插件 pi.tool('write') 落盘 / 内置 read 模型可调 / ctx-compactor 修剪落库 / 心跳 / event_log 435 事件真序闭环）**
+> - **剩：30 轮 pi/bm 双开对比后拍切换**（同压缩 A/B 方法论）。开工前先 git pull。
 >
 > **轮次历史**（细节见 §〇 commit 索引；查实/坑全量见 §〇·五）：
 >
@@ -16,8 +16,16 @@
 > | 白天轮续接 | A6 接线 切片① | 4d227d0, ee4dc5c | pi 双写偶发 `database is locked`（1d4f3c9 已加 busy_timeout=5000，>5s 争用残留观察）；BOENMIND_HOME 布局 = `$HOME/.boenmind/`；硬杀进程 wal 锁自行恢复 |
 > | 公司远程轮 | 架构 v0.16 寄生关系定调 + B4 工具方向 | cd2e4e0, 548b6a2, cb92d59 | MiniMax 工具服从性飘忽（非栈问题）；payload 全文不打日志；bm 路径 SSE 事件面须与 pi 对齐；CompatEngine 专用线程（HostThread 含 Rc 非 Send） |
 > | 公司远程轮续 | B5 权限桥 | a365789, cb1ae10 | ExtensionPolicy::default=Prompt 且 http 在 default_caps（默认放行）、exec/env 在 deny_caps；决策记忆（extension-permissions.json 同款）留 B6 |
+> | B6 收口轮 | 内置工具集端口 + 决策记忆 + 插件事件推送 + 切片② | f81594b, 8b6b725 | 桥调用约定实证（首个 secret 实参不绑定 JS 形参）；tool_result 事件 content 须对齐 legacy ContentBlock 数组；内置工具须进模型可见面（pi BUILTIN_TOOL_NAMES 全开同款）；SELF_TOOLS 跳过 web_search 是插件设计非 bug；目录型插件须 extension.json；debug exe 2GB 坑（CARGO_PROFILE_DEV_DEBUG=0）
 
 ## 〇、本次会话 commit 索引（main 已推送，工作区干净）
+
+### B6 收口轮（内置工具集端口 + 决策记忆 + 插件事件 + 切片②）
+
+| commit | 内容 |
+|---|---|
+| `f81594b` | **B6 第一批**：bm-compat events.rs（dispatch_extension_event 桥：`__pi_dispatch_extension_event`→task 泵，+2 集成测试+CI 门禁）；bm-server builtin_tools.rs（read/write/edit/grep/find/ls/bash 自研忠实子集，参数/返回形状对齐 pi ToolOutput，递归防护=只查内置表）+ permission_store.rs（extension-permissions.json 决策记忆，格式兼容 legacy permissions.rs，无 fs4/chrono）；compat_engine.rs 六端口换真实现（execute_tool→内置集 / exec→{stdout,stderr,code,killed} / session→会话 DB 子集 / ui→confirm=false / events→active tools）+ 决策记忆命中直返+always 回写 + DispatchEvent 命令；bm_engine.rs startup 每会话懒发 + tool_call/tool_result fire-and-forget + thinking 档映射（七档折叠 reasoning_effort）+ 心跳 TaskProgress（与 pi 同构）；AppState.db 改 Arc<Db> |
+| `8b6b725` | **B6 真实验收修复**：内置工具进模型可见面（BuiltinTools::definitions → ToolRegistry，对齐 pi BUILTIN_TOOL_NAMES 全开；QuickJsToolExecutor 按名分派内置/插件）；tool_result 事件 content 形状对齐 legacy ContentBlock 数组（content_blocks 修复 + 单测）；观测日志 bm.plugin_event_done（事件名/结果摘要/ctx_cwd，不打 payload）；events.rs 补 handler 内 hostcall 泵测试。**真实验收全链路通过**（10 轮会话：startup/web_search×50+/web_fetch/pi.tool write 落盘/内置 read/ctx-compactor 修剪落库/心跳/event_log 435 事件闭环；验收会话与 probe 插件已清理） |
 
 ### 公司远程轮（B4 工具执行方向）
 
@@ -85,6 +93,11 @@
 8. **proptest 在 async 块内用 assert_eq! 不用 prop_assert_eq!**（宏返回类型冲突）；1.11.0 本地已缓存。
 9. **bm-compat 拷入依赖面**（DEPENDENCIES.md 详表）：6 文件 45K 行；scheduler/queue/lane 几乎自包含；extensions_js 仅依赖 8 个 crate 内模块（extensions 40 次引用最多）；5 符号 = ExtensionPolicyMode/ExtensionPolicy/PolicyProfile（extensions.rs）+ HostcallKind/PiJsRuntime（extensions_js.rs 自带）。
 10. **CI 两个根因已修**（今日存量故障，修复已推送）：rust-cache 必须 ≥v2.9.1（Node 20 EOL，GitHub 2026-06 起强制 Node 24）；质量门 job 已加 `CARGO_PROFILE_DEV_DEBUG=0`+`CARGO_INCREMENTAL=0`（test+clippy 双编译共盘会爆 14GB）。改动钉在 .github/workflows/release.yml。
+11. **桥调用约定（B6 实证）**：Rust `Function::call((secret, a, b, ...))` 多实参时**首个 secret 元素不绑定 JS 形参**（两次对照实验 + events 集成测试钉死；rquickjs 0.11 机制未深究，行为已实证）。bm-compat 所有桥调用保持此约定（events.rs 与 execute.rs/load.rs 一致）。
+12. **tool_result 插件事件形状**：content 必须是 ContentBlock 数组（`[{type:"text",text}]`），与 legacy ToolResult 事件对齐——传整包 meta 会让 ctx-compactor 的 extractText 拿到空文本静默跳过（验收踩坑，content_blocks 修复）。
+13. **内置工具须进模型可见面**：仅实现 execute_tool 端口不够——模型看不到 read/write 的 schema 就不会调（pi 路径 BUILTIN_TOOL_NAMES 全开同款）。BuiltinTools::definitions → ToolRegistry，executor 按名分派。
+14. **SELF_TOOLS 跳过 web_search 是设计**：ctx-compactor 故意不修剪 web_search/web_fetch/subagent（函数返回值需模型完整读取，见插件注释）——排查"事件到了但没落库"先看插件自身的过滤逻辑。
+15. **B6 验收操作坑**：目录型插件须 extension.json 清单（enabled_extension_paths 靠它识别）；Windows curl 中文 JSON 会报 invalid unicode（用英文消息）；改插件源须同步 `~/.boenmind/extensions/` 副本；本地跑 bm-server 测试用 `CARGO_PROFILE_DEV_DEBUG=0`（debug exe 2GB 坑）。
 
 ## 一、一句话现状
 
@@ -187,11 +200,11 @@
 
 ## 九、下一轮续接建议开场
 
-> 继续 BoenMind 阶段 1。交接见 docs/HANDOFF_KERNEL_PHASE1.md。**公司远程轮已落地（B4 工具方向 548b6a2+cb92d59 + B5 权限桥 a365789）**：execute_tool 桥 + CompatEngine + QuickJsToolExecutor + SSE 工具事件 + BridgeServices（询问链 + http 真实现）；真实验收通过（hello 全链路 + web_search×2/web_fetch×1 真实搜索）。多会话并行已收拢，开工前仍先 git pull。
+> 继续 BoenMind 阶段 1。交接见 docs/HANDOFF_KERNEL_PHASE1.md。**B6 已收口（f81594b+8b6b725）**：内置工具集端口（execute_tool/exec/session/ui/events 真实现，read/write/edit/grep/find/ls/bash 模型可见）+ 决策记忆（extension-permissions.json，格式兼容 legacy）+ 插件事件推送（startup 每会话懒发 + tool_call/tool_result，形状对齐 legacy）+ 切片②（thinking 档位→reasoning_effort + 心跳 TaskProgress）；真实验收 10 轮全链路通过（web_search×50+/web_fetch/插件 write 落盘/内置 read/ctx-compactor 修剪落库/event_log 435 事件闭环）。开工前仍先 git pull。
 >
-> **下一轮动手顺序（B6 收口）**：① **内置工具集端口**（BridgeServices 的 exec/execute_tool/session/ui/events 换真实现：file 读写/grep/bash 等，让 ctx-compactor/web-scraping 全链路可用；execute_tool 端口=插件内 pi.tool 调宿主工具的递归执行——注意递归死锁防护）+ **决策记忆**（permission_pending 回传写 extension-permissions.json 同款持久化，对齐 pi 语义）；② **切片② 顺手件**：thinking 档位映射（当前 bm 路径忽略 thinking，日志有 `bm.loop_thinking_ignored` 提示）+ 心跳 TaskProgress（任务状态条；busy_timeout 已修，心跳与 chunk 批写并发仍留观察）；③ **三插件 bm 引擎全链路验收**（web_search/web_fetch/ctx-compactor）+ **30 轮 pi/bm 双开对比**（同压缩 A/B 方法论）后拍切换。
+> **下一轮动作（B6 尾声）**：**30 轮 pi/bm 双开对比**（同压缩 A/B 方法论：同 prompt 集分别跑 pi 与 bm 引擎，比累计发送量/峰值上下文/耗时/答案质量）→ 结果拍切换（BM_LOOP_ENGINE 默认值反转 + 前端开关决策）。可选顺手件：session/ui/events 端口的 op 面补全（get_messages 投影进插件 ctx）、subagent 工具、CI 拆并行 job（方案在 §八·6）。
 >
-> **注意坑**（详见 §〇·五 + 本轮新查实）：Disposer 纪律、turso 绑定形态、fork 超头拒绝、跨分支投影逐段折叠、standalone 起服务 `--features embed`、loop 读回写入前屏障冲刷；**B2/B3 坑**：HostServices 用 `#[async_trait]`；bm-compat 测试走 `--test host --test load --test execute`；插件入口须 default-export init；`__pi_load_extension` resolve 布尔 true；**A6 接线坑**：LoopHooks 钩子全是同步方法（内部锁用 std Mutex 不可 tokio Mutex）、session_streams 已统一 unbounded（新增使用者勿再造 bounded）、BM_LOOP_ENGINE 读 env 每次请求判（双开对比期足够）；**B4 坑**：CompatEngine 专用线程（HostThread 含 Rc 非 Send，命令通道 oneshot 回结果）、bm 路径 SSE 事件面须与 pi 对齐（TextDelta/ToolCallStart/ToolCallEnd/Done）、payload 全文不打日志（含用户消息，观测只留 tools 计数）。
+> **注意坑**（详见 §〇·五 11-15 + 既有全量）：桥调用首参 secret 不绑定形参、tool_result 事件 content 用 ContentBlock 数组、内置工具 schema 要注册进 ToolRegistry、SELF_TOOLS 跳过搜索类工具是设计、目录型插件须 extension.json、Disposer 纪律、turso 绑定形态、fork 超头拒绝、standalone 起服务 `--features embed`、bm-compat 测试走 `--test host --test load --test execute --test events`、CompatEngine 专用线程（命令通道 oneshot 回结果）、payload 全文不打日志。
 
 ## 九·三、A6 接线设计（2026-08-14 夜轮定稿 → 白天轮切片①落地）
 
@@ -226,7 +239,7 @@
 | B3 加载路径 | ✅（夜轮续接） | bm-compat/src/load.rs：JsExtensionLoadSpec（verbatim 提取）+ load_extension（root 注册→__pi_load_extension→__pi_task_start→await_js_task 复用 HostThread 泵）+ PROTOCOL_VERSION；tests/load.rs 4 用例全绿（真 TS 插件加载注册工具/坏入口不挂起）；282d629 |
 | B4 工具执行方向 | ✅（公司远程轮） | bm-compat execute.rs（__pi_execute_tool→task→泵循环，2 用例）+ bm-server CompatEngine（专用线程/命令通道/工具快照/UnwiredServices）+ QuickJsToolExecutor；**真实验收通过**（hello 插件工具全链路：SSE 工具事件 + 日志 tool/call↔result + 多步循环）；548b6a2 + cb92d59 |
 | B5 权限桥 | ✅（公司远程轮） | BridgeServices（request_approval 询问链接 PermissionBridge 同款机制 + http 端口 reqwest 真实现 + current_session 路由）；**真实验收通过**（web_search×2 + web_fetch×1 真实搜索全成功）；a365789 |
-| B6 | ⏳ | 内置工具集端口补齐（exec/execute_tool/session/ui/events）+ 决策记忆 + 心跳 + thinking 映射 → 三插件全链路 → 30 轮双开对比后拍切换 |
+| B6 | ✅ 主体（f81594b+8b6b725）；剩双开对比 | 内置工具集端口（execute_tool/exec/session/ui/events 真实现）+ 决策记忆 + 插件事件（startup/tool_call/tool_result）+ 切片②（thinking 映射/心跳）**全部落地，三插件全链路真实验收通过**；**剩：30 轮 pi/bm 双开对比后拍切换** |
 | proptest 承诺 | ✅ | 60 用例属性测试（InMemory）+ 回归种子入仓 |
 | CI 门禁 | ✅ | 全量 25 套件全绿 + 双档 clippy 清零 + **GitHub CI 质量门绿灯**（另修存量 rust-cache/磁盘两故障，见 commit 索引） |
 | 真实验收 | ✅ | 浏览器实测两轮（无工具 + web_search/web_fetch 双工具链），event_log 197 事件真序闭环（§八·1） |
