@@ -110,9 +110,8 @@ pub fn parse_child_args(args: &[String]) -> Result<ChildArgs, String> {
 
 /// 运行子代理子进程；返回进程退出码（0 成功 / 1 agent 失败 / 2 环境错误）。
 ///
-/// pi 废除第②步：子进程不再加载 pi SDK（无 PI_CODING_AGENT_DIR /
-/// models.json 同步），改由 bm-loop + InMemory 事件日志 + 内置工具集 +
-/// OpenAiClient 直连跑一轮隔离回合；stdout 协议事件形状与 pi 逐字段对齐。
+/// pi 废除第②步：子进程不再加载 pi SDK，改由 bm-loop + InMemory 事件日志 +
+/// 内置工具集 + OpenAiClient 直连跑一轮隔离回合；stdout 协议事件形状与 pi 逐字段对齐。
 pub async fn run(args: &[String]) -> i32 {
     let child = match parse_child_args(args) {
         Ok(c) => c,
@@ -122,7 +121,7 @@ pub async fn run(args: &[String]) -> i32 {
         }
     };
 
-    // 轻量初始化：只读配置（bm 引擎不需要 pi agent 目录/models.json）
+    // 轻量初始化：只读配置（bm 引擎不需要 pi agent 目录）
     let config = bm_core::config::load();
 
     // provider 解析优先级：

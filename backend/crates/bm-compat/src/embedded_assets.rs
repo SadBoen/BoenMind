@@ -257,11 +257,6 @@ impl EmbeddedText {
 
 include!(concat!(env!("OUT_DIR"), "/embedded-text-metadata.rs"));
 
-static LEGACY_MODELS_GENERATED_TS: EmbeddedText = EmbeddedText::new(
-    "legacy models.generated.ts",
-    include_bytes!(concat!(env!("OUT_DIR"), "/legacy-models-generated.ts.gz")),
-    LEGACY_MODELS_GENERATED_TS_RAW_LEN,
-);
 static PROVIDER_UPSTREAM_MODEL_IDS_JSON: EmbeddedText = EmbeddedText::new(
     "provider upstream model IDs",
     include_bytes!(concat!(
@@ -284,14 +279,6 @@ static CHANGELOG: EmbeddedText = EmbeddedText::new(
     CHANGELOG_RAW_LEN,
 );
 static CHANGELOG_DECODED: OnceLock<String> = OnceLock::new();
-
-pub fn legacy_models_generated_ts() -> String {
-    LEGACY_MODELS_GENERATED_TS.decode()
-}
-
-pub const fn legacy_models_generated_ts_crc32c() -> u32 {
-    LEGACY_MODELS_GENERATED_TS_CRC32C
-}
 
 pub fn provider_upstream_model_ids_json() -> String {
     PROVIDER_UPSTREAM_MODEL_IDS_JSON.decode()
@@ -416,16 +403,6 @@ mod tests {
 
     #[test]
     fn compressed_resources_restore_exact_source_bytes() {
-        assert_eq!(
-            super::legacy_models_generated_ts().as_bytes(),
-            include_bytes!("../legacy_pi_mono_code/pi-mono/packages/ai/src/models.generated.ts")
-        );
-        assert_eq!(
-            super::legacy_models_generated_ts_crc32c(),
-            crc32c::crc32c(include_bytes!(
-                "../legacy_pi_mono_code/pi-mono/packages/ai/src/models.generated.ts"
-            ))
-        );
         assert_eq!(
             super::provider_upstream_model_ids_json().as_bytes(),
             include_bytes!("../docs/provider-upstream-model-ids-snapshot.json")

@@ -1,4 +1,4 @@
-//! 配置：读取 / 全量保存（含校验与 pi models.json / skills 目录同步）。
+//! 配置：读取 / 全量保存（含校验与 skills 目录同步）。
 
 use axum::{Json, extract::State, http::StatusCode};
 use bm_core::AppConfig;
@@ -31,7 +31,7 @@ pub async fn put_config(
             ));
         }
 
-    // 持久化 + 同步 pi models.json + 更新内存
+    // 持久化 + 同步 skills 目录 + 更新内存
     if let Err(err) = bm_core::config::save(&config) {
         return Err(api_error(
             StatusCode::INTERNAL_SERVER_ERROR,

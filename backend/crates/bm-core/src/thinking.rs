@@ -3,8 +3,8 @@
 //! supports_xhigh / supports_max），供 /api/thinking-levels 出 UI 档位。
 //!
 //! 对齐要点（2026-08-12 读 legacy 源码核对）：
-//! - OpenAI 兼容路由提供商（minimax/deepseek/custom 等）在 sync_pi_models_json
-//!   时对全部模型写入 `reasoning: true`，因此这些模型一律按推理模型出档；
+//! - OpenAI 兼容路由提供商（minimax/deepseek/custom 等）按推理模型出档
+//!   （对应 pi 时代 models.json 同步标记 `reasoning: true` 的行为）；
 //!   内置路由（openai/anthropic/gemini/ollama/llamacpp）由 pi 目录判定，
 //!   这里用 ID 白名单近似（白名单外默认推理，pi 运行时 clamp 兜底）。
 //! - xhigh/max 白名单与 vendor 逐条一致（含 deepseek provider/base_url 判定、
@@ -112,8 +112,7 @@ pub fn thinking_levels_for(
     base_url: Option<&str>,
     model: &str,
 ) -> Vec<&'static str> {
-    // OpenAI 兼容路由：models.json 同步时对该类提供商全部标记 reasoning: true，
-    // pi 运行时会按推理模型处理（含 deepseek-chat 等非推理 ID）
+    // OpenAI 兼容路由：该类提供商一律按推理模型处理（含 deepseek-chat 等非推理 ID）
     let reasoning = if kind.is_openai_compatible_route() {
         true
     } else {
@@ -157,7 +156,7 @@ mod tests {
             levels(kind, None, "deepseek-reasoner"),
             vec!["off", "low", "medium", "high", "xhigh", "max"]
         );
-        // 同样受 models.json reasoning:true 影响，deepseek-chat 也按推理出 6 档
+        // deepseek-chat 也按推理出 6 档（OpenAI 兼容路由同款处理）
         assert_eq!(
             levels(kind, None, "deepseek-chat"),
             vec!["off", "low", "medium", "high", "xhigh", "max"]

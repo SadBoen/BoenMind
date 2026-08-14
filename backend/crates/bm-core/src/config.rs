@@ -17,7 +17,7 @@ pub const APP_DIR: &str = ".boenmind";
 pub const CONFIG_FILE: &str = "config.toml";
 /// 默认工作文件夹名（位于用户主目录下）
 pub const DEFAULT_WORKSPACE_DIR: &str = "BoenMind";
-/// pi agent 的全局目录（models.json 所在），由 PI_CODING_AGENT_DIR 环境变量指定
+/// pi agent 的全局目录（`~/.boenmind/pi`，agents 角色 + skills 兼容目录）
 pub const PI_AGENT_DIR: &str = "pi";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -151,13 +151,11 @@ impl ProviderKind {
         ProviderKind::Custom,
     ];
 
-    /// pi agent 注册表中的提供商名。
+    /// pi agent 注册表中的提供商名（模型路由名称兼容层）。
     ///
-    /// 大部分新提供商与 pi 内置注册表同名（groq/mistral/xai/…），models.json
-    /// 中同名条目按覆盖写入（baseUrl + openai-completions 路由）；
-    /// minimax / deepseek / openrouter 等不在 pi 的常用内置列表中，
-    /// 但 pi 的 models.json 支持自定义 provider（`api: "openai-completions"` 路由），
-    /// 见 sync_pi_models_json。custom 类使用稳定前缀 + 提供商 id 保证唯一。
+    /// 大部分新提供商与 pi 内置注册表同名（groq/mistral/xai/…），
+    /// 名称映射保持稳定供子代理/插件按名解析；custom 类使用稳定前缀 +
+    /// 提供商 id 保证唯一。pi 已废除，此映射仅为既有数据兼容而保留。
     pub fn pi_name(&self, provider_id: &str) -> String {
         match self {
             ProviderKind::Openai => "openai".to_string(),
@@ -187,7 +185,7 @@ impl ProviderKind {
         }
     }
 
-    /// 是否走 OpenAI 兼容自定义路由（models.json 中需显式 `api: "openai-completions"`）
+    /// 是否走 OpenAI 兼容自定义路由（openai-completions 形状，非原生 API）
     pub fn is_openai_compatible_route(&self) -> bool {
         matches!(
             self,

@@ -109,3 +109,11 @@ embedded_assets.rs / error.rs，共 45K 行），目标 = pi.dev 插件兼容层
 
 **当前状态**：6 文件拷入与 shim 适配已完成（B1-B6 全落地）；bm-compat 现存唯一
 vendored 关联 = asupersync（其 A1/A2 补丁如触及 bm-compat 代码须同步应用）。
+
+### bm-compat 本地删减（2026-08-15 登记，非上游补丁）
+
+| 项 | 文件 | 内容 | 理由 |
+|---|---|---|---|
+| L1 | `legacy_pi_mono_code/`（目录） | pi-mono models.generated.ts 整目录删除 | 嵌入后零运行时消费者（全仓 grep 无调用点，仅 CRC 自测）；随 pi 废除收尾 |
+| L2 | `build.rs` | EMBEDDED_TEXT_ASSETS 删 legacy 条目（4→3），头注释更新 | 同 L1 |
+| L3 | `src/embedded_assets.rs` | 删 `legacy_models_generated_ts`/`legacy_models_generated_ts_crc32c` 访问器 + LEGACY_MODELS_GENERATED_TS static + 测试断言段 | 同 L1；embedded_assets.rs 自本项起不再逐字节等于上游（上游已删无从对比，仅存档） |

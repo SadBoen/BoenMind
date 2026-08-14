@@ -972,6 +972,10 @@ pub fn spawn_steward_scheduler(state: AppState, store: Arc<crate::steward::Stewa
 
 /// OS 层主动汇报通道（三件套 ②）：事件 → 立即投喂一个 Inject 回合，
 /// 可顺带登记下次唤醒（夹区间）。HTTP handler 见 lib.rs 路由。
+///
+/// 锚点推进与 dispatch_steward_round 一致：inject 同样是完成的回合，
+/// 不推 last_wake_at 会让前端"上次回合"误显静默、调度器 since 从 0 起算
+/// （2026-08-15 真实验收实证，见 HANDOFF §〇·五 38）。
 pub async fn steward_inject(
     state: AppState,
     store: Arc<crate::steward::StewardStore>,
@@ -982,7 +986,10 @@ pub async fn steward_inject(
         return Err("管家未启用（BM_STEWARD_SESSION 未设置）".to_string());
     };
     store.register_wake(wake_after_seconds).await?;
-    run_steward_turn(&state, &session_id, message, UserMsgSource::Inject).await
+    let now = crate::steward::now_ms();
+    let result = run_steward_turn(&state, &session_id, message, UserMsgSource::Inject).await;
+    store.note_round_done(now).await;
+    result
 }
 
 #[cfg(test)]

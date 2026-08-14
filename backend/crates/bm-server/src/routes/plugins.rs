@@ -31,7 +31,7 @@ pub async fn set_plugin(
     let mut config = state.config.write().await;
     bm_core::plugins::set_plugin_enabled(&mut config, &id, req.enabled)
         .map_err(api_error_from)?;
-    // 插件启停影响 agent 会话创建，需同步 models.json 之外的配置（无需重启）
+    // 插件启停影响 agent 会话创建（无需重启）
     drop(config);
     Ok(Json(serde_json::json!({ "ok": true })))
 }

@@ -2,9 +2,11 @@
 //
 // Minimal version of pi_agent_rust@44ddf80/build.rs: only the gzip asset
 // generation for src/embedded_assets.rs (`include!(OUT_DIR/embedded-text-metadata.rs)`
-// + the four `.gz` resources) is retained. The vergen_gix git-metadata block
+// + the three `.gz` resources) is retained. The vergen_gix git-metadata block
 // and the benchmark build fingerprint are intentionally dropped — bm-compat
 // does not consume PI_BUILD_* or vergen env vars.
+// 2026-08-15 删 legacy models.generated.ts 资产（嵌入后零运行时消费者，见
+// HANDOFF §〇·五 39）——原四个资源减为三个。
 
 use flate2::{Compression, GzBuilder};
 use std::fmt::Write as _;
@@ -17,13 +19,7 @@ struct EmbeddedTextAsset {
     checksum_prefix: Option<&'static str>,
 }
 
-const EMBEDDED_TEXT_ASSETS: [EmbeddedTextAsset; 4] = [
-    EmbeddedTextAsset {
-        source: "legacy_pi_mono_code/pi-mono/packages/ai/src/models.generated.ts",
-        output_name: "legacy-models-generated.ts.gz",
-        metadata_prefix: "LEGACY_MODELS_GENERATED_TS",
-        checksum_prefix: Some("LEGACY_MODELS_GENERATED_TS"),
-    },
+const EMBEDDED_TEXT_ASSETS: [EmbeddedTextAsset; 3] = [
     EmbeddedTextAsset {
         source: "docs/provider-upstream-model-ids-snapshot.json",
         output_name: "provider-upstream-model-ids.json.gz",
