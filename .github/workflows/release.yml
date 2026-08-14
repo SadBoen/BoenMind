@@ -83,6 +83,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          # 自托管 runner 无云预装工具链：显式装 clippy（云 runner 自带）
+          components: clippy
 
       # 钉 v2.9.1：浮动 v2 会解析到基于 Node 20 运行时的新版（Node 20 已 EOL，runner 侧报错）
       - uses: Swatinem/rust-cache@v2.9.1
@@ -117,6 +120,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          # 自托管 runner 无云预装工具链：显式装 clippy（云 runner 自带）
+          components: clippy
 
       # 钉 v2.9.1：浮动 v2 会解析到基于 Node 20 运行时的新版（Node 20 已 EOL，runner 侧报错）
       - uses: Swatinem/rust-cache@v2.9.1
@@ -141,6 +147,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          # 自托管 runner 无云预装工具链：显式装 clippy（云 runner 自带）
+          components: clippy
 
       # 钉 v2.9.1：浮动 v2 会解析到基于 Node 20 运行时的新版（Node 20 已 EOL，runner 侧报错）
       - uses: Swatinem/rust-cache@v2.9.1
