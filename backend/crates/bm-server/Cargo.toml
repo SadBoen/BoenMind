@@ -23,6 +23,8 @@ bm-core = { path = "../bm-core" }
 bm-protocol = { workspace = true }
 bm-kernel = { workspace = true }
 bm-storage-turso = { workspace = true }
+# A6 接线：自研 ReactLoopAgent（BM_LOOP_ENGINE=bm 时替代 pi loop）
+bm-loop = { path = "../bm-loop" }
 pi = { workspace = true }
 axum = "0.8"
 async-trait = "0.1"

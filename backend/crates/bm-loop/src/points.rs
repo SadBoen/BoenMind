@@ -50,6 +50,11 @@ pub trait LoopHooks: Send + Sync {
     /// 步骤开始前（每步一次；可注入/改写下一步意图）。
     fn on_pre_step(&mut self, _ctx: &StepCtx) {}
 
+    /// 流式正文增量（SSE 前端通道挂点，A6 接线件）：每个 TextDelta 一次，
+    /// 与事件日志落盘同源同序（loop 先入日志队列再调本钩子，投影侧无竞态）。
+    /// 集成方（bm-server）在此转发 AgentStreamEvent::TextDelta 给前端。
+    fn on_stream_chunk(&mut self, _ctx: &StepCtx, _text: &str) {}
+
     /// 构造模型请求前（可改写 payload：追加系统段/工具过滤）。
     fn on_request(&mut self, _ctx: &RequestCtx, _payload: &mut serde_json::Value) {}
 

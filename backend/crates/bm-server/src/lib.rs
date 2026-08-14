@@ -3,6 +3,7 @@
 //! - 独立二进制：`cargo run -p bm-server`
 //! - 桌面壳内嵌：Tauri 启动时在独立线程调用 [`serve`]
 
+pub mod bm_engine;
 pub mod chat;
 pub mod pdf_omni;
 pub mod permission;
@@ -41,6 +42,10 @@ pub const AGENT_IDLE_TTL: std::time::Duration = std::time::Duration::from_secs(1
 /// 空闲扫描周期
 const AGENT_SWEEP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
+/// bm 引擎取消条目：(prompt_id, watch::Sender<bool>)——身份匹配纪律与
+/// pi 的 aborts 相同（先结束的只删自己的条目，见 bm_engine.rs）。
+pub type BmAbortEntry = (u64, tokio::sync::watch::Sender<bool>);
+
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<RwLock<AppConfig>>,
@@ -52,12 +57,21 @@ pub struct AppState {
     pub aborts: Arc<Mutex<HashMap<String, (u64, pi::sdk::AbortHandle)>>>,
     /// 活跃 prompt 的 SSE 事件通道（key = session_id）。权限询问桥据此把
     /// 询问事件推给前端；prompt 结束时移除。
-    pub session_streams: Arc<Mutex<HashMap<String, tokio::sync::mpsc::Sender<bm_core::agent::AgentStreamEvent>>>>,
+    /// unbounded：pi 路径的背压由回调缓冲队列承担（见 chat.rs），
+    /// bm 路径的 hooks 是同步回调（try_send 只关心通道是否关闭）。
+    pub session_streams: Arc<Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<bm_core::agent::AgentStreamEvent>>>>,
     /// 挂起的权限询问（key = 上游询问请求 id）：等待前端决策（允许/拒绝/总是允许）。
     pub permission_pending: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<PermissionDecision>>>>,
     /// 阶段 0 事件日志双写器（None = 事件日志不可用，双写静默跳过，
     /// 主链路不受影响——事件日志是渐进式吸收的新家，不是闸门）。
     pub dual_writer: Option<Arc<bm_storage_turso::dual_write::DualWriter>>,
+    /// bm 引擎（BM_LOOP_ENGINE=bm）进行中 prompt 的取消通道
+    /// （key = session_id，value = (prompt_id, watch::Sender<bool>)）。
+    pub bm_aborts: Arc<Mutex<HashMap<String, BmAbortEntry>>>,
+    /// bm 引擎会话级 agent（key = session_id）。agent 只是「日志 + 配置 +
+    /// 客户端」的壳——状态全在事件日志，换 provider/model 或空闲淘汰时
+    /// 弃置重建零损失（见 bm_engine.rs）。
+    pub loop_agents: Arc<Mutex<HashMap<String, bm_engine::LoopSessionEntry>>>,
 }
 
 /// 前端对一次权限询问的决策。
@@ -84,6 +98,8 @@ impl AppState {
             session_streams: Arc::new(Mutex::new(HashMap::new())),
             permission_pending: Arc::new(Mutex::new(HashMap::new())),
             dual_writer,
+            bm_aborts: Arc::new(Mutex::new(HashMap::new())),
+            loop_agents: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -366,7 +382,7 @@ async fn serve_inner(
     };
 
     let state = AppState::new(config, db, dual_writer);
-    spawn_agent_sweeper(state.agents.clone());
+    spawn_agent_sweeper(state.agents.clone(), state.loop_agents.clone());
     // C1 回收站超期清除：孤儿会话（sessions 表已删）事件保留 N 天后物理删除
     spawn_orphan_purger(state.dual_writer.clone());
     let listener = tokio::net::TcpListener::bind(bind_addr(port)).await?;
@@ -434,7 +450,11 @@ fn spawn_orphan_purger(dual: Option<Arc<bm_storage_turso::dual_write::DualWriter
 }
 
 /// 周期性扫描并释放空闲 agent 会话句柄（防止长跑服务内存无界增长）。
-fn spawn_agent_sweeper(agents: Arc<Mutex<HashMap<String, AgentSessionEntry>>>) {
+/// pi 句柄与 bm 引擎 agent 同节奏淘汰；bm agent 状态全在事件日志，弃置零损失。
+fn spawn_agent_sweeper(
+    agents: Arc<Mutex<HashMap<String, AgentSessionEntry>>>,
+    loop_agents: Arc<Mutex<HashMap<String, bm_engine::LoopSessionEntry>>>,
+) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(AGENT_SWEEP_INTERVAL);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -457,6 +477,25 @@ fn spawn_agent_sweeper(agents: Arc<Mutex<HashMap<String, AgentSessionEntry>>>) {
                 {
                     map.remove(&id);
                     tracing::info!(event = "bm.agent_evicted", session = %id);
+                }
+            }
+            // bm 引擎 agent 同理（agent 锁 = 会话 prompt 串行锁，锁不住才可淘汰）
+            let bm_candidates: Vec<String> = {
+                let map = loop_agents.lock().await;
+                map.iter()
+                    .filter(|(_, e)| e.last_used.elapsed() > AGENT_IDLE_TTL)
+                    .filter(|(_, e)| e.agent.try_lock().is_ok())
+                    .map(|(id, _)| id.clone())
+                    .collect()
+            };
+            for id in bm_candidates {
+                let mut map = loop_agents.lock().await;
+                if let Some(e) = map.get(&id)
+                    && e.last_used.elapsed() > AGENT_IDLE_TTL
+                    && e.agent.try_lock().is_ok()
+                {
+                    map.remove(&id);
+                    tracing::info!(event = "bm.loop_agent_evicted", session = %id);
                 }
             }
         }

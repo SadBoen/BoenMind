@@ -112,6 +112,9 @@ impl LoopHooks for RecorderHooks {
             .unwrap()
             .push(format!("pre-step:{}/{}", ctx.turn, ctx.step));
     }
+    fn on_stream_chunk(&mut self, _ctx: &StepCtx, text: &str) {
+        self.events.lock().unwrap().push(format!("stream:{text}"));
+    }
     fn on_request_error(&mut self, _ctx: &RequestCtx, _err: &str) -> bool {
         self.events.lock().unwrap().push("request-error".into());
         self.retry
@@ -296,16 +299,19 @@ async fn tool_loop_executes_and_records_hooks() {
         "真序事件链：模型消息（含工具意图）先行，工具执行随后（自研 loop 语义）"
     );
 
-    // hooks 调用点（步 1 有工具调用 → 收尾判定询问 on_turn_stopping，默认 false 继续）
+    // hooks 调用点（步 1 有工具调用 → 收尾判定询问 on_turn_stopping，默认 false 继续；
+    // 流式块先于工具执行，两步入 stream 钩子各一次——SSE 前端通道同源同序）
     let hook_evs = spy.events.lock().unwrap().clone();
     assert_eq!(
         hook_evs,
         vec![
             "pre-step:1/1",
+            "stream:让我查一下",
             "tool-pre:web_search",
             "tool-post:web_search:true",
             "turn-stopping",
             "pre-step:1/2",
+            "stream:查到了：Rust 很火",
         ]
     );
 

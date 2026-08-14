@@ -36,7 +36,7 @@ use bm_protocol::{
 };
 use serde::Deserialize;
 use tokio::sync::{Mutex, mpsc};
-use tokio_stream::{StreamExt, wrappers::ReceiverStream};
+use tokio_stream::{StreamExt, wrappers::UnboundedReceiverStream};
 
 use crate::{AppState, PermissionDecision, api_error};
 
@@ -52,14 +52,12 @@ pub async fn send_permission_request(
 ) {
     let tx = state.session_streams.lock().await.get(session_id).cloned();
     if let Some(tx) = tx {
-        let _ = tx
-            .send(AgentStreamEvent::PermissionRequest {
-                id: request_id.to_string(),
-                extension_id: Some(extension_id.to_string()),
-                capability: capability.to_string(),
-                message: message.to_string(),
-            })
-            .await;
+        let _ = tx.send(AgentStreamEvent::PermissionRequest {
+            id: request_id.to_string(),
+            extension_id: Some(extension_id.to_string()),
+            capability: capability.to_string(),
+            message: message.to_string(),
+        });
     }
 }
 
@@ -69,10 +67,15 @@ const DEFAULT_TITLES: [&str; 4] = ["新对话", "New chat", "新しいチャッ�
 
 /// prompt 总超时：上游挂起（连接建立后不返回数据）时不能永久锁死会话。
 /// 超时走 abort 通道，与用户点停止同一条收尾路径（部分文本照常入库）。
-const PROMPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+pub(crate) const PROMPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15 * 60);
 
 /// 全局 prompt 序号：aborts 表中区分同会话的先后 prompt（见 AppState.aborts）。
 static PROMPT_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// 取下一个 prompt 序号（pi 与 bm 引擎共用同一序号空间，身份匹配用）。
+pub(crate) fn next_prompt_id() -> u64 {
+    PROMPT_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
 
 /// 聊天请求：会话必须已存在（前端先创建会话再发消息）。
 /// `provider`/`model`/`thinking` 可选，用于在当前会话即时切换提供商/模型与思考强度。
@@ -114,6 +117,14 @@ pub async fn chat(
     // 持久化用户消息
     if let Err(err) = state.db.add_message(&session.id, "user", &message).await {
         return api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
+    }
+
+    // —— A6 接线：bm 引擎分支（BM_LOOP_ENGINE=bm 走自研 loop，切片 ① 空工具跑通）——
+    // 开关只影响新 prompt 的执行引擎；事件日志是两条路径的共同事实源
+    //（bm 路径下 loop 拥有日志全生命周期，本函数此后不再落日志）。
+    let loop_engine = std::env::var("BM_LOOP_ENGINE").unwrap_or_default();
+    if crate::bm_engine::loop_engine_is_bm(&loop_engine) {
+        return crate::bm_engine::chat_bm(state, session, message, req.provider, req.model, req.thinking).await;
     }
 
     // 阶段 0 双写：用户消息 → 事件日志（失败不阻断主链路）
@@ -175,14 +186,15 @@ pub async fn chat(
     // POST /api/chat/stop 按 session_id 触发；客户端断开时由 watcher 自动触发。
     // 带 prompt_id 身份：同会话连续请求时先结束的只删自己的条目（见清理处）。
     let (abort_handle, abort_signal) = pi::sdk::AgentSessionHandle::new_abort_handle();
-    let prompt_id = PROMPT_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let prompt_id = next_prompt_id();
     state.aborts.lock().await.insert(session.id.clone(), (prompt_id, abort_handle.clone()));
 
-    // 事件通道 → SSE（512 容量；消费端即 HTTP 响应流）
-    let (tx, rx) = mpsc::channel::<AgentStreamEvent>(512);
+    // 事件通道 → SSE（unbounded：背压由回调缓冲队列承担，见转发 task）
+    let (tx, rx) = mpsc::unbounded_channel::<AgentStreamEvent>();
     // 注册会话的活跃事件通道：权限询问桥据此把询问事件推给前端
     state.session_streams.lock().await.insert(session.id.clone(), tx.clone());
-    let stream = ReceiverStream::new(rx).map(|ev| Ok::<_, std::convert::Infallible>(to_sse_event(&ev)));
+    let stream = UnboundedReceiverStream::new(rx)
+        .map(|ev| Ok::<_, std::convert::Infallible>(to_sse_event(&ev)));
 
     let state_clone = state.clone();
     let session_id = session.id.clone();
@@ -247,8 +259,18 @@ pub async fn stop_chat(
     State(state): State<AppState>,
     Json(req): Json<StopChatRequest>,
 ) -> Response {
+    // pi 引擎 abort 与 bm 引擎 watch 取消通道都试一遍（幂等：
+    // 任一命中即生效；同会话只会有一个引擎在跑）
+    let mut stopped = false;
     if let Some((_, abort)) = state.aborts.lock().await.remove(&req.session_id) {
         abort.abort();
+        stopped = true;
+    }
+    if let Some((_, cancel)) = state.bm_aborts.lock().await.remove(&req.session_id) {
+        let _ = cancel.send(true);
+        stopped = true;
+    }
+    if stopped {
         tracing::info!(event = "bm.chat_stopped", session = %req.session_id);
     }
     axum::Json(serde_json::json!({ "ok": true })).into_response()
@@ -415,7 +437,7 @@ struct PromptParams {
     handle: Arc<Mutex<pi::sdk::AgentSessionHandle>>,
     abort_signal: pi::sdk::AbortSignal,
     message: String,
-    tx: mpsc::Sender<AgentStreamEvent>,
+    tx: mpsc::UnboundedSender<AgentStreamEvent>,
     meta: PromptMeta,
 }
 
@@ -470,9 +492,8 @@ async fn run_prompt_and_persist(p: PromptParams) {
     }
 
     // 事件转发改为「回调同步入缓冲 + 独立 task 异步发送」：
-    // 回调运行在 tokio 线程上不能阻塞等待通道空间，而 try_send 在通道满
-    // （客户端消费慢）时会丢事件导致流静默中断；转发 task 用 send().await
-    // 天然有背压，客户端断开时 send 失败即退出（watcher 负责 abort prompt）。
+    // 回调运行在 tokio 线程上不能 await；转发 task 从缓冲取事件发送，
+    // 客户端断开时 send 失败即退出（watcher 负责 abort prompt）。
     let pending: Arc<std::sync::Mutex<std::collections::VecDeque<AgentStreamEvent>>> =
         Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
     let notify = Arc::new(tokio::sync::Notify::new());
@@ -484,7 +505,7 @@ async fn run_prompt_and_persist(p: PromptParams) {
             let ev = pending_fwd.lock().unwrap().pop_front();
             match ev {
                 Some(ev) => {
-                    if tx_fwd.send(ev).await.is_err() {
+                    if tx_fwd.send(ev).is_err() {
                         break; // 客户端断开（接收端已丢弃）
                     }
                 }
@@ -550,7 +571,7 @@ async fn run_prompt_and_persist(p: PromptParams) {
             }
             let _ = db_beat.update_task_progress(&task_beat, &p).await;
             if !tx_beat.is_closed() {
-                let _ = tx_beat.send(AgentStreamEvent::TaskProgress { progress: p }).await;
+                let _ = tx_beat.send(AgentStreamEvent::TaskProgress { progress: p });
             }
         }
     });
@@ -824,7 +845,7 @@ async fn run_prompt_and_persist(p: PromptParams) {
         } else {
             AgentStreamEvent::Done
         };
-        let _ = tx.send(terminal).await;
+        let _ = tx.send(terminal);
     }
 
     // 任务终态落库（completed / cancelled / failed）；停掉心跳 task
@@ -1005,7 +1026,7 @@ fn assistant_text(msg: &pi::model::AssistantMessage) -> String {
 }
 
 /// AgentStreamEvent → SSE 事件。
-fn to_sse_event(event: &AgentStreamEvent) -> Event {
+pub(crate) fn to_sse_event(event: &AgentStreamEvent) -> Event {
     let json = serde_json::to_string(event).unwrap_or_else(|_| "{}".to_string());
     Event::default().data(json)
 }

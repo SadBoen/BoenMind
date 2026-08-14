@@ -420,10 +420,12 @@ impl<H: LoopHooks, L: Llm, T: ToolExecutor> ReactLoopAgent<H, L, T> {
                                             EventKind::Core(CoreEvent::AssistantChunk {
                                                 turn,
                                                 step,
-                                                chunk: StreamChunk { text },
+                                                chunk: StreamChunk { text: text.clone() },
                                             }),
                                             SurfaceIntent::Append,
                                         );
+                                        // SSE 前端流式通道（与日志同源同序）
+                                        self.hooks.on_stream_chunk(&StepCtx { turn, step }, &text);
                                     }
                                     LlmEvent::ToolCallStart { id, name } => {
                                         step_tool_calls.push((id, name, String::new()));

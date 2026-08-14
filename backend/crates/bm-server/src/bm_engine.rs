@@ -1,0 +1,556 @@
+//! A6 接线（HANDOFF_KERNEL_PHASE1.md §九·三）：`BM_LOOP_ENGINE=bm` 时 chat 走
+//! 自研 bm-loop，与 pi 引擎并行双开。
+//!
+//! 本轮切片 ①（§九·三.9）：开关 + 空工具跑通——无工具会话的完整链路：
+//! provider 桥接 → OpenAiClient 流式 → 事件日志真序 → SSE 前端形状零改动。
+//! 后续切片：② B4 工具接线（ExecuteTool 方向）；③ B5 权限桥；④ B6 全链路 + 双开对比。
+//!
+//! 与 pi 路径的分工（§九·三.6）：bm 路径下 **loop 拥有事件日志全生命周期**
+//! （UserMessage/RequestHeader/TurnStart/Step*/TurnEnd 全由 loop 落），
+//! 本模块不再重复落日志；SQLite 的 messages 表仍照常写（前端历史从 DB 读）。
+
+use std::sync::Arc;
+
+use axum::{
+    http::StatusCode,
+    response::{IntoResponse, Response, sse::{KeepAlive, Sse}},
+};
+use bm_core::agent::AgentStreamEvent;
+use bm_loop::engine::{LoopConfig, ReactLoopAgent, ToolCallRequest, ToolExecutor, ToolOutcome, TurnRequest};
+use bm_loop::llm::{LlmConfig, OpenAiClient};
+use bm_loop::points::{LoopHooks, StepCtx};
+use bm_protocol::{BranchId, HeaderReason, SessionId, TurnEndReason, UserMsgSource};
+use tokio::sync::{Mutex, mpsc, watch};
+use tokio_stream::StreamExt;
+use tokio_stream::wrappers::UnboundedReceiverStream;
+
+use crate::AppState;
+
+/// bm 引擎的 agent 具体类型（H = StreamHooks / L = OpenAiClient / T = NoopExecutor）。
+pub type BmLoopAgent = ReactLoopAgent<StreamHooks, OpenAiClient, NoopExecutor>;
+
+/// 会话级 bm-loop agent 条目（对齐 pi 的 AgentSessionEntry）。
+/// agent 本体只是「日志 + 配置 + 客户端」的壳——事件日志是唯一状态源，
+/// 换 provider/model 或空闲淘汰时弃置重建零损失。
+pub struct LoopSessionEntry {
+    pub agent: Arc<Mutex<BmLoopAgent>>,
+    pub provider_id: String,
+    pub model: String,
+    pub last_used: std::time::Instant,
+}
+
+/// BM_LOOP_ENGINE 开关判定："bm" = 自研 loop；其余/未设 = pi（默认）。
+/// 独立纯函数以便单测（edition 2024 的 env 写读在测试并发下有竞态）。
+pub fn loop_engine_is_bm(value: &str) -> bool {
+    value == "bm"
+}
+
+// ============================================================================
+// 流式通道 hooks：loop → 前端 SSE（on_stream_chunk 钩子的集成方实现）
+// ============================================================================
+
+/// 流式通道 hooks：`on_stream_chunk` 转发 TextDelta 给当前 prompt 的 SSE 通道；
+/// 通道已关闭（客户端断开）→ 触发取消，避免继续烧 token。
+///
+/// 挂点说明：hooks 存活于 agent（会话级），当前 prompt 的通道在 run_turn
+/// 前后 attach/detach——同一会话 prompt 天然串行（agent 锁），无并发覆盖。
+/// 内部用 std Mutex：LoopHooks 钩子都是同步方法（回调线程不可 await），
+/// 且临界区仅克隆句柄，无阻塞风险。
+#[derive(Default)]
+pub struct StreamHooks {
+    tx: std::sync::Mutex<Option<mpsc::UnboundedSender<AgentStreamEvent>>>,
+    cancel: std::sync::Mutex<Option<watch::Sender<bool>>>,
+}
+
+impl StreamHooks {
+    /// 挂接当前 prompt 的 SSE 通道与取消通道（run_turn 前调用）。
+    fn attach(&self, tx: mpsc::UnboundedSender<AgentStreamEvent>, cancel: watch::Sender<bool>) {
+        *self.tx.lock().unwrap() = Some(tx);
+        *self.cancel.lock().unwrap() = Some(cancel);
+    }
+
+    /// 摘除（run_turn 返回后调用，防旧 prompt 结束后残留通道）。
+    fn detach(&self) {
+        *self.tx.lock().unwrap() = None;
+        *self.cancel.lock().unwrap() = None;
+    }
+
+    /// 发送事件到当前 prompt 通道；通道已关闭返回 false（unbounded 无满队列）。
+    fn try_send(&self, ev: AgentStreamEvent) -> bool {
+        let Some(tx) = self.tx.lock().unwrap().clone() else {
+            return false;
+        };
+        if tx.is_closed() {
+            return false;
+        }
+        tx.send(ev).is_ok()
+    }
+
+    /// 触发取消（客户端断开 → 停止按钮同路径收尾）。
+    fn trigger_cancel(&self) {
+        if let Some(tx) = self.cancel.lock().unwrap().clone() {
+            let _ = tx.send(true);
+        }
+    }
+}
+
+impl LoopHooks for StreamHooks {
+    fn on_stream_chunk(&mut self, _ctx: &StepCtx, text: &str) {
+        if !self.try_send(AgentStreamEvent::TextDelta { delta: text.to_string() }) {
+            self.trigger_cancel();
+        }
+    }
+}
+
+// ============================================================================
+// 空工具执行器（切片 ① 防呆兜底；B4 换真执行器）
+// ============================================================================
+
+/// 空工具执行器：ToolRegistry 为空时模型不会发起工具调用，本实现仅兜底——
+/// 工具执行方向是 B4 的活（bm-compat ExecuteTool 桥，§九·三.9 切片 ②）。
+#[derive(Debug, Default)]
+pub struct NoopExecutor;
+
+impl ToolExecutor for NoopExecutor {
+    async fn execute(&self, req: ToolCallRequest) -> ToolOutcome {
+        tracing::warn!(event = "bm.loop_tool_unwired", tool = %req.name, "bm-loop 工具执行未接线（B4 待接）");
+        ToolOutcome {
+            ok: false,
+            output: format!("工具 {} 尚未接线（bm 引擎工具方向 B4 未完成）", req.name),
+            meta: None,
+        }
+    }
+}
+
+// ============================================================================
+// provider 桥接（bm-core 配置 → bm-loop 的 LlmConfig）
+// ============================================================================
+
+/// provider 配置 → LlmConfig（bm-core 不依赖 bm-loop，桥接在 bm-server 做）。
+/// base_url：用户填写优先，否则官方端点；custom 必须填写（配置写入时已校验）。
+fn resolve_llm_config(
+    provider: &bm_core::config::ProviderConfig,
+    model: &str,
+) -> Result<LlmConfig, (StatusCode, String)> {
+    let base_url = provider
+        .base_url
+        .as_deref()
+        .map(|s| s.trim().trim_end_matches('/').to_string())
+        .filter(|s| !s.is_empty())
+        .or_else(|| bm_core::providers::official_base_url(provider.kind).map(str::to_string))
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!("提供商 {} 未配置 API 端点", provider.name),
+            )
+        })?;
+    Ok(LlmConfig {
+        base_url,
+        api_key: provider.api_key.clone().unwrap_or_default(),
+        model: model.to_string(),
+        provider: Some(provider.id.clone()),
+    })
+}
+
+/// 组装 bm-loop agent（不依赖会话锁；调用方负责落 map）。
+fn build_loop_agent(
+    system_prompt: &str,
+    dual: Option<&Arc<bm_storage_turso::dual_write::DualWriter>>,
+    session_id: &str,
+    provider: &bm_core::config::ProviderConfig,
+    model: &str,
+) -> Result<BmLoopAgent, (StatusCode, String)> {
+    let Some(dual) = dual else {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "事件日志不可用，bm 引擎无法启动".to_string(),
+        ));
+    };
+    let llm = OpenAiClient::new(resolve_llm_config(provider, model)?);
+    Ok(ReactLoopAgent::new(
+        StreamHooks::default(),
+        bm_loop::ToolRegistry::new(),
+        bm_kernel::EventLog::new(dual.event_log().store()),
+        SessionId::new(session_id),
+        BranchId::new("main"),
+        LoopConfig {
+            system_prompt: system_prompt.to_string(),
+            provider: Some(provider.id.clone()),
+            model: model.to_string(),
+            max_steps: 64,
+            compaction: Default::default(),
+        },
+        llm,
+        NoopExecutor,
+    ))
+}
+
+/// 取会话的 bm-loop agent；不存在或 provider/model 不一致 → 重建
+/// （状态都在日志，重建零损失——"EventLog 唯一状态源"相对 pi 句柄的优势）。
+async fn get_or_create_loop_agent(
+    state: &AppState,
+    session_id: &str,
+    provider: &bm_core::config::ProviderConfig,
+    model: &str,
+) -> Result<Arc<Mutex<BmLoopAgent>>, (StatusCode, String)> {
+    // 既有条目：参数一致直接复用（map 锁立即释放）
+    if let Some(agent) = {
+        let mut map = state.loop_agents.lock().await;
+        let existing = map.get_mut(session_id);
+        if let Some(e) = existing
+            && e.provider_id == provider.id
+            && e.model == model
+        {
+            e.last_used = std::time::Instant::now();
+            Some(e.agent.clone())
+        } else {
+            None
+        }
+    } {
+        return Ok(agent);
+    }
+
+    // 系统提示拼接（与 pi 路径同构：SYSTEM_PROMPT + skills + custom）
+    let system_prompt = {
+        let config = state.config.read().await;
+        let skills = bm_core::skills::enabled_skills_prompt(&config);
+        let custom = config.custom_system_prompt.clone().unwrap_or_default();
+        if skills.is_empty() && custom.is_empty() {
+            bm_core::agent::SYSTEM_PROMPT.to_string()
+        } else {
+            format!("{}{}{}", bm_core::agent::SYSTEM_PROMPT, skills, custom)
+        }
+    };
+
+    // 构建（不持 map 锁；并发的同会话请求各自构建，最后写入者生效——
+    // agent 无状态，旧实例弃置无副作用）
+    let agent = build_loop_agent(
+        &system_prompt,
+        state.dual_writer.as_ref(),
+        session_id,
+        provider,
+        model,
+    )?;
+    let arc = Arc::new(Mutex::new(agent));
+    let mut map = state.loop_agents.lock().await;
+    let entry = map.entry(session_id.to_string()).or_insert_with(|| LoopSessionEntry {
+        agent: arc.clone(),
+        provider_id: provider.id.clone(),
+        model: model.to_string(),
+        last_used: std::time::Instant::now(),
+    });
+    // 既有条目参数不一致（前一个请求建了别的 provider/model）→ 以本次为准替换
+    if entry.provider_id != provider.id || entry.model != model {
+        *entry = LoopSessionEntry {
+            agent: arc.clone(),
+            provider_id: provider.id.clone(),
+            model: model.to_string(),
+            last_used: std::time::Instant::now(),
+        };
+    }
+    entry.last_used = std::time::Instant::now();
+    Ok(arc)
+}
+
+// ============================================================================
+// chat 入口（bm 引擎分支）
+// ============================================================================
+
+/// BM_LOOP_ENGINE=bm 的 chat 入口（切片 ①：无工具会话跑通）。
+/// 与 pi 路径共享：会话校验 / 命名 / add_message（user 消息入 DB 由 chat.rs 完成）；
+/// 不同：事件日志完全由 loop 拥有，本函数不再落任何事件。
+pub async fn chat_bm(
+    state: AppState,
+    session: bm_core::db::Session,
+    message: String,
+    provider_override: Option<String>,
+    model_override: Option<String>,
+    thinking_override: Option<String>,
+) -> Response {
+    // 解析提供商与模型（与 pi 路径同规则：请求级 > 会话级 > 默认）
+    let provider = {
+        let config = state.config.read().await;
+        match bm_core::config::resolve_provider(
+            &config,
+            provider_override.as_deref().or(session.provider_id.as_deref()),
+        )
+        .cloned()
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                "未配置任何模型提供商，请先在设置中配置".to_string(),
+            )
+        }) {
+            Ok(p) => p,
+            Err((status, msg)) => return crate::api_error(status, msg).into_response(),
+        }
+    };
+    let model = {
+        match bm_core::config::resolve_model(
+            &provider,
+            model_override.as_deref().or(session.model.as_deref()),
+        )
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!("提供商 {} 未配置模型", provider.name),
+            )
+        }) {
+            Ok(m) => m,
+            Err((status, msg)) => return crate::api_error(status, msg).into_response(),
+        }
+    };
+
+    // thinking 档位：切片 ① 未接映射（OpenAiClient 不注入推理参数），后续切片补齐
+    if let Some(level) = thinking_override.as_deref() {
+        tracing::info!(
+            event = "bm.loop_thinking_ignored",
+            level,
+            "bm 引擎切片 ① 未接 thinking 档位映射，按端点默认推理参数"
+        );
+    }
+
+    // 请求改参数 → header reason = change（与 pi 路径一致）
+    let reason = if provider_override.is_some() || model_override.is_some() {
+        HeaderReason::Change
+    } else {
+        HeaderReason::Initial
+    };
+
+    // 持久化新 provider/model 组合（后续消息沿用）
+    if provider_override.is_some() || model_override.is_some() {
+        let _ = state
+            .db
+            .set_session_model(&session.id, provider_override.as_deref(), model_override.as_deref())
+            .await;
+    }
+
+    // 取消原语：watch 通道（run_turn 的 cancel 参数）。带 prompt_id 身份，
+    // 清理时只删自己的条目（与 pi 路径同纪律）
+    let (cancel_tx, cancel_rx) = watch::channel(false);
+    let prompt_id = crate::chat::next_prompt_id();
+    state
+        .bm_aborts
+        .lock()
+        .await
+        .insert(session.id.clone(), (prompt_id, cancel_tx.clone()));
+
+    // SSE 通道（unbounded：chunk 量受模型输出速率约束；hooks 只关心是否关闭）
+    let (tx, rx) = mpsc::unbounded_channel::<AgentStreamEvent>();
+    state.session_streams.lock().await.insert(session.id.clone(), tx.clone());
+    let stream = UnboundedReceiverStream::new(rx)
+        .map(|ev| Ok::<_, std::convert::Infallible>(crate::chat::to_sse_event(&ev)));
+
+    let task_id = uuid::Uuid::new_v4().to_string();
+    if let Err(err) = state.db.create_task(&task_id, &session.id).await {
+        tracing::warn!(event = "bm.task_create_failed", error = %err, session = %session.id);
+    }
+
+    let state_run = state.clone();
+    let session_id = session.id.clone();
+    tokio::spawn(async move {
+        // 总超时：与 pi 路径同 15min，超时走取消通道（部分文本照常入库）
+        let cancel_timeout = cancel_tx.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(crate::chat::PROMPT_TIMEOUT).await;
+            let _ = cancel_timeout.send(true);
+        });
+
+        run_bm_prompt(BmPromptParams {
+            state: state_run.clone(), // 清理段还要用 state_run
+            session_id: session_id.clone(), // 清理段还要用 session_id
+            task_id,
+            message,
+            provider,
+            model,
+            reason,
+            cancel_tx,
+            cancel_rx,
+            tx: tx.clone(), // 清理段还要用 tx 做 same_channel 身份比对
+        })
+        .await;
+
+        // 清理：身份匹配纪律与 pi 路径一致（新 prompt 已注册新通道/条目时不动）
+        let mut streams = state_run.session_streams.lock().await;
+        if let Some(tx2) = streams.get(&session_id)
+            && tx2.same_channel(&tx)
+        {
+            streams.remove(&session_id);
+        }
+        let mut aborts = state_run.bm_aborts.lock().await;
+        if let Some((pid, _)) = aborts.get(&session_id)
+            && *pid == prompt_id
+        {
+            aborts.remove(&session_id);
+        }
+    });
+
+    Sse::new(stream)
+        .keep_alive(KeepAlive::default().interval(std::time::Duration::from_secs(15)))
+        .into_response()
+}
+
+/// 一个 bm 引擎 prompt 回合的参数（对齐 pi 路径 PromptParams；所有权入参，
+/// run_bm_prompt 是每个 prompt 一次的长任务，克隆成本可忽略）。
+struct BmPromptParams {
+    state: AppState,
+    session_id: String,
+    task_id: String,
+    message: String,
+    provider: bm_core::config::ProviderConfig,
+    model: String,
+    reason: HeaderReason,
+    cancel_tx: watch::Sender<bool>,
+    cancel_rx: watch::Receiver<bool>,
+    tx: mpsc::UnboundedSender<AgentStreamEvent>,
+}
+
+/// 运行一个 bm 引擎 prompt 回合：agent 锁串行 → run_turn → 持久化 + 终态事件。
+async fn run_bm_prompt(p: BmPromptParams) {
+    let BmPromptParams {
+        state,
+        session_id,
+        task_id,
+        message,
+        provider,
+        model,
+        reason,
+        cancel_tx,
+        mut cancel_rx,
+        tx,
+    } = p;
+
+    let agent = match get_or_create_loop_agent(&state, &session_id, &provider, &model).await {
+        Ok(a) => a,
+        Err((_status, msg)) => {
+            let _ = tx.send(AgentStreamEvent::Error { message: msg.clone() });
+            let _ = state.db.finish_task(&task_id, "failed", Some(&msg)).await;
+            return;
+        }
+    };
+
+    // 会话串行：agent 锁（同会话并发 prompt 排队，与 pi 路径 handle 锁同纪律）
+    let mut agent = agent.lock().await;
+    agent.hooks().attach(tx.clone(), cancel_tx);
+
+    let outcome = agent
+        .run_turn(
+            TurnRequest {
+                content: message,
+                source: UserMsgSource::Human,
+            },
+            reason,
+            &mut cancel_rx,
+        )
+        .await;
+    agent.hooks().detach();
+    // 释放 agent 锁（drop 前退出作用域约定；显式 drop 防 detach 后继续持锁）
+    drop(agent);
+
+    // 收尾：与 pi 路径同语义——无论成功/取消/失败，已生成文本照常入库
+    let (task_status, task_error, terminal) = match &outcome {
+        Ok(o) => {
+            if !o.final_text.trim().is_empty() {
+                let _ = state.db.add_message(&session_id, "assistant", &o.final_text).await;
+                let _ = state.db.touch_session(&session_id).await;
+            }
+            tracing::info!(
+                event = "bm.prompt_done",
+                turn = o.turn,
+                steps = o.steps,
+                reason = ?o.reason,
+                session = %session_id,
+            );
+            match o.reason {
+                TurnEndReason::Completed => ("completed", None, AgentStreamEvent::Done),
+                TurnEndReason::Cancelled => ("cancelled", Some("已取消".to_string()), AgentStreamEvent::Done),
+                other => (
+                    "failed",
+                    Some(format!("回合失败: {other:?}")),
+                    AgentStreamEvent::Error { message: "agent 执行失败".to_string() },
+                ),
+            }
+        }
+        Err(e) => (
+            "failed",
+            Some(e.to_string()),
+            AgentStreamEvent::Error { message: e.to_string() },
+        ),
+    };
+    if !tx.is_closed() {
+        let _ = tx.send(terminal);
+    }
+    if let Err(err) = state.db.finish_task(&task_id, task_status, task_error.as_deref()).await {
+        tracing::warn!(event = "bm.task_finish_failed", error = %err, task = %task_id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn engine_switch_only_bm() {
+        assert!(loop_engine_is_bm("bm"));
+        assert!(!loop_engine_is_bm("pi"));
+        assert!(!loop_engine_is_bm(""));
+        assert!(!loop_engine_is_bm("BM"));
+    }
+
+    #[test]
+    fn llm_config_prefers_user_base_url() {
+        use bm_core::config::{ProviderConfig, ProviderKind};
+        let p = ProviderConfig {
+            id: "custom-1".into(),
+            name: "Custom".into(),
+            kind: ProviderKind::Deepseek,
+            base_url: Some("https://my.deepseek.example/v1/".into()),
+            api_key: Some("sk-test".into()),
+            models: vec!["deepseek-chat".into()],
+            default_model: Some("deepseek-chat".into()),
+        };
+        let cfg = resolve_llm_config(&p, "deepseek-chat").unwrap();
+        assert_eq!(cfg.base_url, "https://my.deepseek.example/v1", "用户端点优先且去尾斜杠");
+        assert_eq!(cfg.api_key, "sk-test");
+        assert_eq!(cfg.provider.as_deref(), Some("custom-1"));
+
+        // 官方端点回退
+        let p2 = ProviderConfig { base_url: None, ..p };
+        let cfg2 = resolve_llm_config(&p2, "deepseek-chat").unwrap();
+        assert!(cfg2.base_url.contains("api.deepseek.com"));
+
+        // custom 无端点 → 拒绝
+        let p3 = ProviderConfig {
+            id: "c".into(),
+            kind: ProviderKind::Custom,
+            base_url: None,
+            ..p2
+        };
+        let err = resolve_llm_config(&p3, "m").unwrap_err();
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn stream_hooks_forwards_and_detects_disconnect() {
+        let hooks = StreamHooks::default();
+        let (tx, mut rx) = mpsc::unbounded_channel::<AgentStreamEvent>();
+        let (cancel_tx, cancel_rx) = watch::channel(false);
+        hooks.attach(tx, cancel_tx);
+
+        // 通道存活：转发 TextDelta
+        let mut h = hooks;
+        h.on_stream_chunk(&StepCtx { turn: 1, step: 1 }, "你好");
+        match rx.recv().await {
+            Some(AgentStreamEvent::TextDelta { delta }) => assert_eq!(delta, "你好"),
+            other => panic!("应收到 TextDelta，得到 {other:?}"),
+        }
+
+        // 通道关闭（客户端断开）：触发取消
+        drop(rx);
+        h.on_stream_chunk(&StepCtx { turn: 1, step: 1 }, "断开");
+        assert!(*cancel_rx.borrow(), "断开后应置取消");
+
+        h.detach();
+        h.on_stream_chunk(&StepCtx { turn: 1, step: 1 }, "已摘除");
+    }
+}
