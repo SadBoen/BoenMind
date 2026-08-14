@@ -23,7 +23,7 @@ use axum::{
 use bm_core::agent::AgentStreamEvent;
 use bm_loop::engine::{LoopConfig, ReactLoopAgent, TurnRequest};
 use bm_loop::llm::{LlmConfig, OpenAiClient};
-use bm_loop::points::{LoopHooks, StepCtx, ToolCtx, ToolGate};
+use bm_loop::points::{LoopHooks, RequestCtx, StepCtx, ToolCtx, ToolGate};
 use bm_protocol::{BranchId, HeaderReason, SessionId, TurnEndReason, UserMsgSource};
 use tokio::sync::{Mutex, mpsc, watch};
 use tokio_stream::StreamExt;
@@ -86,15 +86,27 @@ pub struct StreamHooks {
     tx: std::sync::Mutex<Option<mpsc::UnboundedSender<AgentStreamEvent>>>,
     cancel: std::sync::Mutex<Option<watch::Sender<bool>>>,
     progress: Arc<std::sync::Mutex<String>>,
+    /// 记忆插件（§6.1 最小实现，v0.17 双向奔赴）：on_request 注入 facts；
+    /// Arc 共享——外部（未来 governance.memorize 调用点）可 remember。
+    memory: Option<Arc<std::sync::Mutex<bm_memory::MemoryFilePlugin>>>,
 }
 
 impl StreamHooks {
-    pub fn new(progress: Arc<std::sync::Mutex<String>>) -> Self {
+    pub fn new(
+        progress: Arc<std::sync::Mutex<String>>,
+        memory: Option<Arc<std::sync::Mutex<bm_memory::MemoryFilePlugin>>>,
+    ) -> Self {
         Self {
             tx: std::sync::Mutex::new(None),
             cancel: std::sync::Mutex::new(None),
             progress,
+            memory,
         }
+    }
+
+    /// 记忆插件句柄（外部 remember 入口；无记忆插件时为 None）。
+    pub fn memory(&self) -> Option<Arc<std::sync::Mutex<bm_memory::MemoryFilePlugin>>> {
+        self.memory.clone()
     }
 
     /// 挂接当前 prompt 的 SSE 通道与取消通道（run_turn 前调用）。
@@ -136,6 +148,15 @@ impl StreamHooks {
 }
 
 impl LoopHooks for StreamHooks {
+    fn on_request(&mut self, _ctx: &RequestCtx, payload: &mut serde_json::Value) {
+        // 记忆插件注入（§6.1 最小实现）：facts 作为追加 system 段进模型请求
+        if let Some(memory) = &self.memory
+            && let Ok(mut m) = memory.lock()
+        {
+            m.on_request(_ctx, payload);
+        }
+    }
+
     fn on_stream_chunk(&mut self, _ctx: &StepCtx, text: &str) {
         self.set_progress(text);
         if !self.try_send(AgentStreamEvent::TextDelta { delta: text.to_string() }) {
@@ -209,8 +230,14 @@ fn build_loop_agent(
             }
         }
     }
+    // 记忆插件（§6.1 最小实现）：facts.md 每会话 open 加载（跨会话记忆 =
+    // 文件本身；多会话并发写靠单行 append 容忍，全局单例留 Steward 轮）
+    let memory = Arc::new(std::sync::Mutex::new(bm_memory::MemoryFilePlugin::open(
+        bm_core::config::app_dir().join("memory").join("facts.md"),
+        20,
+    )));
     Ok(ReactLoopAgent::new(
-        StreamHooks::new(progress),
+        StreamHooks::new(progress, Some(memory)),
         tools,
         bm_kernel::EventLog::new(dual.event_log().store()),
         SessionId::new(session_id),
@@ -698,7 +725,7 @@ mod tests {
 
     #[tokio::test]
     async fn stream_hooks_forwards_and_detects_disconnect() {
-        let hooks = StreamHooks::new(Arc::new(std::sync::Mutex::new(String::new())));
+        let hooks = StreamHooks::new(Arc::new(std::sync::Mutex::new(String::new())), None);
         let (tx, mut rx) = mpsc::unbounded_channel::<AgentStreamEvent>();
         let (cancel_tx, cancel_rx) = watch::channel(false);
         hooks.attach(tx, cancel_tx);

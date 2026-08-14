@@ -1,0 +1,11 @@
+[package]
+name = "bm-memory"
+version = "0.1.0"
+edition = "2024"
+description = "记忆插件（最小实现，§6.1 memory-file 雏形）：facts.md 文件传送带——注入/去重/跨会话，验证核心挂点 on_request（v0.17 双向奔赴）"
+
+[dependencies]
+# 插件依赖核心（方向：protocol ← kernel ← loop ← 插件），不反向。
+bm-loop = { path = "../bm-loop" }
+serde_json = "1"
+tracing = "0.1"

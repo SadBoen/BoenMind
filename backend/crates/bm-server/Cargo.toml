@@ -29,6 +29,8 @@ bm-loop = { path = "../bm-loop" }
 bm-compat = { path = "../bm-compat" }
 # 压缩插件（默认实现，D10）：组装层挂进 LoopConfig.compactor（v0.17 越界修正）
 bm-compactor = { path = "../bm-compactor" }
+# 记忆插件（§6.1 最小实现）：StreamHooks 组合，on_request 注入 facts.md
+bm-memory = { path = "../bm-memory" }
 pi = { workspace = true }
 axum = "0.8"
 async-trait = "0.1"

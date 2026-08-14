@@ -815,6 +815,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bm-memory"
+version = "0.1.0"
+dependencies = [
+ "bm-loop",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
 name = "bm-protocol"
 version = "0.1.0"
 dependencies = [
@@ -834,6 +843,7 @@ dependencies = [
  "bm-core",
  "bm-kernel",
  "bm-loop",
+ "bm-memory",
  "bm-protocol",
  "bm-storage-turso",
  "fancy-regex 0.14.0",

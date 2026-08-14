@@ -411,6 +411,10 @@ async fn serve_inner(
         session_streams.clone(),
         permission_pending.clone(),
         db.clone(),
+        // 投影面数据源（getmessagesurface）：与 chat 路径共用同一事件日志
+        dual_writer
+            .as_ref()
+            .map(|d| bm_kernel::EventLog::new(d.event_log().store())),
     )
     .await;
 

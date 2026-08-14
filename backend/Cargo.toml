@@ -9,6 +9,7 @@ members = [
     "crates/bm-loop",
     "crates/bm-compat",
     "crates/bm-compactor",
+    "crates/bm-memory",
     "tests/event_log",
 ]
 # 旧代码（legacy）：pi_agent_rust + asupersync 已移出 workspace 成员——

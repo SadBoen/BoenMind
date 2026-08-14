@@ -98,6 +98,9 @@ pub struct BridgeServices {
     pub permission_store: std::sync::Mutex<PermissionStore>,
     /// B6：会话端口的数据面（get_state/get_messages/set_name…）。
     pub db: Arc<bm_core::Db>,
+    /// 事件日志（投影面数据源：getmessagesurface = 模型可见历史，含压缩
+    /// 遮蔽；None = 双写未启用时该 op 降级到 messages 表）。
+    pub event_log: Option<bm_kernel::EventLog>,
     /// B6：events 端口的 active tools 记忆（None = 全量）。
     pub active_tools: Mutex<Option<Vec<String>>>,
 }
@@ -379,6 +382,48 @@ impl HostServices for BridgeServices {
                     )
                 })
                 .map_err(|e| e.to_string()),
+            // 投影面（模型可见历史，含压缩遮蔽）——事件日志 derive_messages；
+            // 双写未启用时降级 messages 表（与 getmessages 同源）
+            "getmessagesurface" => match self.event_log.as_ref() {
+                None => self
+                    .db
+                    .list_messages(&session_id)
+                    .await
+                    .map(|msgs| {
+                        serde_json::Value::Array(
+                            msgs.into_iter()
+                                .map(|m| {
+                                    serde_json::json!({
+                                        "id": m.id,
+                                        "role": m.role,
+                                        "content": m.content,
+                                    })
+                                })
+                                .collect(),
+                        )
+                    })
+                    .map_err(|e| e.to_string()),
+                Some(log) => {
+                    let sid = bm_protocol::SessionId::new(session_id.clone());
+                    let bid = bm_protocol::BranchId::new("main");
+                    log.derive_messages(&sid, &bid)
+                        .await
+                        .map(|msgs| {
+                            serde_json::Value::Array(
+                                msgs.into_iter()
+                                    .map(|m| {
+                                        serde_json::json!({
+                                            "seq": m.seq,
+                                            "role": m.role,
+                                            "content": m.content,
+                                        })
+                                    })
+                                    .collect(),
+                            )
+                        })
+                        .map_err(|e| e.to_string())
+                }
+            },
             "getmodel" => {
                 let session = self.db.get_session(&session_id).await;
                 match session {
@@ -500,13 +545,15 @@ impl CompatEngine {
     /// [`crate::compat_engine::init_compat`] 在加载完成后填入）。
     /// `session_streams`/`permission_pending` 是 AppState 的同名组件
     /// （本引擎建于 AppState 之前，只拿组件不拿整态）；`db`/`working_dir`
-    /// 是 B6 会话端口与内置工具集的数据面。
+    /// 是 B6 会话端口与内置工具集的数据面；`event_log` = 投影面数据源
+    /// （getmessagesurface，None 降级 messages 表）。
     pub async fn spawn(
         session_streams: Arc<TokioMutex<HashMap<String, mpsc::UnboundedSender<AgentStreamEvent>>>>,
         permission_pending: Arc<TokioMutex<HashMap<String, oneshot::Sender<PermissionDecision>>>>,
         db: Arc<bm_core::Db>,
         working_dir: PathBuf,
         permission_store: PermissionStore,
+        event_log: Option<bm_kernel::EventLog>,
     ) -> Result<Self, String> {
         let (tx, mut rx) = mpsc::unbounded_channel::<CompatCmd>();
         let (boot_tx, boot_rx) = oneshot::channel::<Result<(), String>>();
@@ -518,6 +565,7 @@ impl CompatEngine {
             builtin: BuiltinTools::new(working_dir),
             permission_store: std::sync::Mutex::new(permission_store),
             db,
+            event_log,
             active_tools: Mutex::new(None),
         });
         let handle = std::thread::Builder::new()
@@ -717,6 +765,7 @@ pub async fn init_compat(
     session_streams: Arc<TokioMutex<HashMap<String, mpsc::UnboundedSender<AgentStreamEvent>>>>,
     permission_pending: Arc<TokioMutex<HashMap<String, oneshot::Sender<PermissionDecision>>>>,
     db: Arc<bm_core::Db>,
+    event_log: Option<bm_kernel::EventLog>,
 ) -> Option<Arc<CompatEngine>> {
     let permission_store = {
         let path = bm_core::config::app_dir().join("extension-permissions.json");
@@ -745,6 +794,7 @@ pub async fn init_compat(
         db,
         config.working_dir.clone(),
         permission_store,
+        event_log,
     )
     .await
     {
@@ -983,6 +1033,7 @@ mod tests {
                 PermissionStore::open(&store_path).expect("store"),
             ),
             db: test_db().await,
+            event_log: None,
             active_tools: Mutex::new(None),
         }
     }
