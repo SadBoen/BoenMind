@@ -16,6 +16,9 @@ pub mod permission_store;
 pub mod routes;
 pub mod static_files;
 pub mod subagent_child;
+// 专家团队在 bm 引擎的落地：subagent 父侧工具（发现角色 → spawn 子进程 → 摄取
+// stdout JSON 事件流；子进程协议 = subagent_child）
+pub mod subagent_tool;
 
 use std::collections::HashMap;
 use std::sync::Arc;

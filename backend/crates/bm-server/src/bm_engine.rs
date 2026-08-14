@@ -51,20 +51,21 @@ pub struct LoopSessionEntry {
     pub last_used: std::time::Instant,
 }
 
-/// BM_LOOP_ENGINE 开关判定："bm" = 自研 loop；其余/未设 = pi（默认）。
+/// BM_LOOP_ENGINE 开关判定："bm" = 自研 loop；其余/未设 = 默认（bm）。
 /// 独立纯函数以便单测（edition 2024 的 env 写读在测试并发下有竞态）。
 pub fn loop_engine_is_bm(value: &str) -> bool {
     value == "bm"
 }
 
-/// 引擎选择（优先级）：env `BM_LOOP_ENGINE`（双开对比调试通道）> settings
-/// `loop_engine`（前端开关持久化）> 默认 "pi"。空串视为未设置。
-/// **切换拍板后默认值在此反转**（"pi" → "bm"），一处即可。
+/// 引擎选择（优先级）：env `BM_LOOP_ENGINE`（双开对比/回退 pi 的调试通道）
+/// 高于 settings `loop_engine`（前端开关持久化），再回落默认 **"bm"（自研，
+/// 已切换）**。空串视为未设置。想跑 pi：env `BM_LOOP_ENGINE=pi` 或前端开关
+/// 选"上游引擎"。
 pub fn resolve_loop_engine(env_value: Option<&str>, settings_value: Option<&str>) -> String {
     env_value
         .and_then(non_empty)
         .or_else(|| settings_value.and_then(non_empty))
-        .unwrap_or("pi")
+        .unwrap_or("bm")
         .to_string()
 }
 
@@ -238,6 +239,11 @@ fn build_loop_agent(
         if let Err(err) = tools.register(tool.clone()) {
             tracing::warn!(event = "bm.tool_register_failed", tool = %tool.name, error = %err.message);
         }
+    }
+    // 专家团队：subagent 父侧工具（pi 路径同款参数面；子进程协议不变）
+    let subagent_def = crate::subagent_tool::tool_def();
+    if let Err(err) = tools.register(subagent_def.clone()) {
+        tracing::warn!(event = "bm.tool_register_failed", tool = %subagent_def.name, error = %err.message);
     }
     if let Some(compat) = compat {
         for tool in &compat.tools {
@@ -701,15 +707,15 @@ mod tests {
 
     #[test]
     fn loop_engine_precedence_env_over_settings_over_default() {
-        // env 优先（双开对比通道），settings 其次（前端开关），都无 → 默认 pi
+        // env 优先（双开对比/回退通道），settings 其次（前端开关），都无 → 默认 bm
         assert_eq!(resolve_loop_engine(Some("bm"), Some("pi")), "bm");
         assert_eq!(resolve_loop_engine(Some("pi"), Some("bm")), "pi");
         assert_eq!(resolve_loop_engine(None, Some("bm")), "bm");
         assert_eq!(resolve_loop_engine(None, Some("pi")), "pi");
-        assert_eq!(resolve_loop_engine(None, None), "pi");
+        assert_eq!(resolve_loop_engine(None, None), "bm", "默认已切换到自研引擎");
         // 空串视为未设置
-        assert_eq!(resolve_loop_engine(Some(""), Some("bm")), "bm");
-        assert_eq!(resolve_loop_engine(Some("  "), None), "pi");
+        assert_eq!(resolve_loop_engine(Some(""), Some("pi")), "pi");
+        assert_eq!(resolve_loop_engine(Some("  "), None), "bm");
         assert_eq!(resolve_loop_engine(Some(" bm "), None), "bm", "首尾空白容忍");
     }
 

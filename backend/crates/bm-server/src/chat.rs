@@ -123,8 +123,8 @@ pub async fn chat(
         return api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
     }
 
-    // —— A6 接线：bm 引擎分支（引擎选择：env 双开通道 > settings 前端开关 >
-    // 默认 pi，切换拍板后在 bm_engine::resolve_loop_engine 反转默认值）——
+    // —— A6 接线：bm 引擎分支（引擎选择：env 双开/回退通道 > settings 前端
+    // 开关 > 默认 bm——自研引擎已切换为默认，pi 保留为可回退选项）——
     // 开关只影响新 prompt 的执行引擎；事件日志是两条路径的共同事实源
     //（bm 路径下 loop 拥有日志全生命周期，本函数此后不再落日志）。
     let loop_engine = crate::bm_engine::resolve_loop_engine(

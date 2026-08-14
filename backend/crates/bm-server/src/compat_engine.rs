@@ -892,15 +892,19 @@ impl ToolExecutor for QuickJsToolExecutor {
             }
         }
 
-        // 分派：内置工具名 → BuiltinTools（闭合表，递归防护与 execute_tool
-        // 端口一致）；其余 → QuickJS 插件引擎。
-        let outcome = if crate::builtin_tools::BuiltinTools::NAMES.contains(&req.name.as_str()) {
-            let builtin = BuiltinTools::new(
-                self.engine
-                    .as_ref()
-                    .map(|e| e.working_dir.clone())
-                    .unwrap_or_default(),
-            );
+        // 分派：subagent（专家团队，父侧自研）→ 内置工具名 → BuiltinTools
+        // （闭合表，递归防护与 execute_tool 端口一致）；其余 → QuickJS 插件引擎。
+        let working_dir = self
+            .engine
+            .as_ref()
+            .map(|e| e.working_dir.clone())
+            .unwrap_or_default();
+        let outcome = if req.name == "subagent" {
+            // 父侧 subagent 工具：发现角色 → spawn 子进程 → 摄取事件流
+            // （子进程协议 = subagent_child；取消经 kill_on_drop 传播）
+            crate::subagent_tool::run(req.args.clone(), &working_dir).await
+        } else if crate::builtin_tools::BuiltinTools::NAMES.contains(&req.name.as_str()) {
+            let builtin = BuiltinTools::new(working_dir);
             match builtin.execute(&req.name, req.args.clone()).await {
                 Ok(value) => ToolOutcome {
                     ok: true,
