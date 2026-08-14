@@ -1134,7 +1134,7 @@ M5：自举闭环（用 BoenMind 编程应用完成 BoenMind 的一个完整功�
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | ① 默认切换 | 默认引擎反转 **bm**（自研 ReactLoopAgent）；pi 保留 env `BM_LOOP_ENGINE=pi`/前端开关为回退通道；**subagent 父侧移植进 bm**（专家团队不丢）；观察真实使用 1-2 个版本 | ✅ 已执行（d4bc5c9 + bc3b299） |
-| ② 吸收删除 | **subagent 子进程换 bm-loop**（InMemory 事件日志 + BuiltinTools + OpenAiClient 直连，协议形状逐字段对齐，父侧零改动；create_child_session_handle 死代码删除）✅ 已执行（4997e8b）；**chat.rs pi 分支删除**——回退通道观察期未满，留用户拍板 | 前半 ✅ / 后半 ⏳ 待拍板 |
+| ② 吸收删除 | **subagent 子进程换 bm-loop**（InMemory 事件日志 + BuiltinTools + OpenAiClient 直连，协议形状逐字段对齐，父侧零改动；create_child_session_handle 死代码删除）✅ 已执行（4997e8b）；**chat.rs pi 分支删除**（dfb52f7：pi 退出生产路径——chat.rs 1197→180 行直调 chat_bm，AppState 删 agents/aborts，前端 engine 设置页删）✅ 已执行（2026-08-15 用户拍板） | ✅ 全部执行 |
 | ③ 删空 legacy | pi 目录（models.json/skills 同步）替换为自有设施，legacy 删空（§十三终点 = 阶段 6 完成态） | 待办 |
 
 **不在废除范围**：QuickJS 插件运行时——它是 **bm-compat**（自有拷贝，转接器插件），200+ 插件生态靠它，属长期资产。

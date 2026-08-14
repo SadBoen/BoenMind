@@ -1,7 +1,7 @@
 # HANDOFF —— 阶段 1 开工交接（两线并行）
 
 > **当前状态（2026-08-15 凌晨收口：Steward 续接轮 + 窗口预算修复 + 双开复跑 + sccache 三轮实证回退）**：主线 A + 主线 B **全部落地**；**Steward 续接轮（本会话 b799dc3）**：静默窗口 watchdog（无进展 120s 取消）+ 管家低成本模型（env 可配）+ boot 汇报 + 前端管家状态页（i18n×4）；**窗口预算修复（18a15e9，双开复跑实证新坑 §〇·五 33）**：5MB 硬顶只防 413，窗口感知裁剪防 context window 400（128K 窗口单条工具结果 ≤64KB）；**双开复跑（0.5 水线+修复，30 轮×2 组，产物 artifacts/dual-compare-v2/）**：bm ∑发送 923.8K / 峰值 128.6K / 19.9min / 记忆 5/5 vs pi 1419.5K / 76.7K / 20.1min / 记忆 5/5——**同口径 bm 省 35%**；vs 上轮 bm 0.8 水线（2263K/205.7K/39.5min）**−59% / 耗时 −50%**；**记忆冒烟 v2 通过**（facts.md→bm 引擎注入全链路 + remember that 落盘）；**sccache 三轮实证回退（§〇·五 34）**：0 请求 20min → 显式接管 42min（命中率 27.9%，GHA 2G 上限+并行踩踏+网络往返净亏）→ 已回退 rust-cache-only 20min 基线（db21251）；concurrency/paths-filter 保留有效（文档轮 34s）。
-> - 阶段化废除 pi 的剩余：② chat.rs pi 分支删除（**回退通道观察期未满，留用户拍板**——阶段①承诺 pi 保留 1-2 个版本观察）③ pi 目录（models.json/skills）替换自有设施后 legacy 删空（§十三终点）
+> - 阶段化废除 pi：② **chat.rs pi 分支已删除（dfb52f7，2026-08-15 用户拍板——观察期满，pi 退出生产路径）** ③ pi 目录（models.json/skills）替换自有设施后 legacy 删空（§十三终点；Cargo pi 依赖暂留——PackageManager/models.json 生态兼容物待专项收尾）
 > - A 线：执行级事件日志（A1-A5）+ 自研 loop（A6 主体 + 接线：流式/工具/取消）+ A7 迁移骨架
 > - B 线：B1 拷入 + B2 host 线程 + B3 加载路径 + B4 工具执行方向 + B5 权限桥（http 真实现）+ B6 收口（内置工具集端口/决策记忆/插件事件推送/切片②顺手件）
 > - **v0.17 压缩策略插件化拆解**：bm-loop 只留 Compactor 接口 + 事务协议，bm-compactor 新插件 crate（参数插件自治，可换可关）
