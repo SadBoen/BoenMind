@@ -102,8 +102,10 @@ pub fn mock_services() -> Arc<MockServices> {
 }
 
 /// Boot a fresh runtime + host thread on the current-thread executor.
-pub async fn test_thread(
-    services: Arc<MockServices>,
+/// Generic over the service impl so test files can inject their own mocks
+/// (e.g. session.rs 的 SessionMockServices) alongside the shared MockServices.
+pub async fn test_thread<S: HostServices + 'static>(
+    services: Arc<S>,
     policy: ExtensionPolicy,
 ) -> HostThread<WallClock> {
     let runtime = std::rc::Rc::new(
