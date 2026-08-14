@@ -5,6 +5,7 @@
 
 pub mod bm_engine;
 pub mod chat;
+pub mod compat_engine;
 pub mod pdf_omni;
 pub mod permission;
 pub mod routes;
@@ -72,6 +73,9 @@ pub struct AppState {
     /// 客户端」的壳——状态全在事件日志，换 provider/model 或空闲淘汰时
     /// 弃置重建零损失（见 bm_engine.rs）。
     pub loop_agents: Arc<Mutex<HashMap<String, bm_engine::LoopSessionEntry>>>,
+    /// B4 工具方向：QuickJS 插件引擎宿主（None = 启动失败，bm 引擎退化为
+    /// 无工具模式）。工具快照在启动加载后固化（compat_engine.rs）。
+    pub compat: Option<Arc<compat_engine::CompatEngine>>,
 }
 
 /// 前端对一次权限询问的决策。
@@ -89,6 +93,7 @@ impl AppState {
         config: AppConfig,
         db: Db,
         dual_writer: Option<Arc<bm_storage_turso::dual_write::DualWriter>>,
+        compat: Option<Arc<compat_engine::CompatEngine>>,
     ) -> Self {
         Self {
             config: Arc::new(RwLock::new(config)),
@@ -100,6 +105,7 @@ impl AppState {
             dual_writer,
             bm_aborts: Arc::new(Mutex::new(HashMap::new())),
             loop_agents: Arc::new(Mutex::new(HashMap::new())),
+            compat,
         }
     }
 }
@@ -381,7 +387,11 @@ async fn serve_inner(
         }
     };
 
-    let state = AppState::new(config, db, dual_writer);
+    // B4 工具方向：QuickJS 插件引擎（bm 引擎的工具执行侧）。启动失败不阻断——
+    // bm 引擎退化为无工具模式（pi 路径不受影响，其引擎在 legacy 内）。
+    let compat = compat_engine::init_compat(&config).await;
+
+    let state = AppState::new(config, db, dual_writer, compat);
     spawn_agent_sweeper(state.agents.clone(), state.loop_agents.clone());
     // C1 回收站超期清除：孤儿会话（sessions 表已删）事件保留 N 天后物理删除
     spawn_orphan_purger(state.dual_writer.clone());

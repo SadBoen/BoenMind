@@ -24,6 +24,8 @@ pub mod crypto_shim;
 pub mod embedded_assets;
 pub mod error;
 pub mod extensions;
+// B4 — tool execution path (`__pi_execute_tool` bridge + task pump).
+pub mod execute;
 // B2 — host thread (drain → dispatch → complete → tick pump).
 pub mod host;
 // B3 — loading path (entry eval + ExtensionBody task loop).

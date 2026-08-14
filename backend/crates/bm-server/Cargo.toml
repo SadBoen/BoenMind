@@ -25,6 +25,8 @@ bm-kernel = { workspace = true }
 bm-storage-turso = { workspace = true }
 # A6 接线：自研 ReactLoopAgent（BM_LOOP_ENGINE=bm 时替代 pi loop）
 bm-loop = { path = "../bm-loop" }
+# B4 工具方向：vendored QuickJS 引擎（bm 引擎的插件工具执行侧）
+bm-compat = { path = "../bm-compat" }
 pi = { workspace = true }
 axum = "0.8"
 async-trait = "0.1"

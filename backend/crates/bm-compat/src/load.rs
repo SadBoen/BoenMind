@@ -114,7 +114,9 @@ impl JsExtensionLoadSpec {
     }
 }
 
-fn next_task_id(prefix: &str) -> String {
+/// 与 legacy `next_runtime_task_id` 同空间的 JS 任务 id 计数器
+/// （load/execute/事件分发共享；id 只是任务表键，前缀区分来源）。
+pub(crate) fn next_task_id(prefix: &str) -> String {
     static NEXT_TASK_ID: AtomicU64 = AtomicU64::new(1);
     let id = NEXT_TASK_ID.fetch_add(1, Ordering::Relaxed);
     format!("{prefix}-{id}")

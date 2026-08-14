@@ -1,9 +1,12 @@
 //! A6 接线（HANDOFF_KERNEL_PHASE1.md §九·三）：`BM_LOOP_ENGINE=bm` 时 chat 走
 //! 自研 bm-loop，与 pi 引擎并行双开。
 //!
-//! 本轮切片 ①（§九·三.9）：开关 + 空工具跑通——无工具会话的完整链路：
-//! provider 桥接 → OpenAiClient 流式 → 事件日志真序 → SSE 前端形状零改动。
-//! 后续切片：② B4 工具接线（ExecuteTool 方向）；③ B5 权限桥；④ B6 全链路 + 双开对比。
+//! 切片①（已落地）：开关 + 空工具跑通——provider 桥接 → OpenAiClient 流式 →
+//! 事件日志真序 → SSE 前端形状零改动。
+//! 切片②（B4，本轮）：工具方向——ToolRegistry 从 CompatEngine 工具快照汇合，
+//! QuickJsToolExecutor 经 `__pi_execute_tool` 桥执行插件工具。
+//! 后续切片：③ B5 权限桥（request_approval 接 PermissionBridge + 宿主六端口
+//! 真实现）；④ B6 全链路 + 30 轮双开对比。
 //!
 //! 与 pi 路径的分工（§九·三.6）：bm 路径下 **loop 拥有事件日志全生命周期**
 //! （UserMessage/RequestHeader/TurnStart/Step*/TurnEnd 全由 loop 落），
@@ -16,7 +19,7 @@ use axum::{
     response::{IntoResponse, Response, sse::{KeepAlive, Sse}},
 };
 use bm_core::agent::AgentStreamEvent;
-use bm_loop::engine::{LoopConfig, ReactLoopAgent, ToolCallRequest, ToolExecutor, ToolOutcome, TurnRequest};
+use bm_loop::engine::{LoopConfig, ReactLoopAgent, TurnRequest};
 use bm_loop::llm::{LlmConfig, OpenAiClient};
 use bm_loop::points::{LoopHooks, StepCtx};
 use bm_protocol::{BranchId, HeaderReason, SessionId, TurnEndReason, UserMsgSource};
@@ -24,10 +27,13 @@ use tokio::sync::{Mutex, mpsc, watch};
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
+use crate::compat_engine::{CompatEngine, QuickJsToolExecutor};
 use crate::AppState;
 
-/// bm 引擎的 agent 具体类型（H = StreamHooks / L = OpenAiClient / T = NoopExecutor）。
-pub type BmLoopAgent = ReactLoopAgent<StreamHooks, OpenAiClient, NoopExecutor>;
+/// bm 引擎的 agent 具体类型（H = StreamHooks / L = OpenAiClient /
+/// T = QuickJsToolExecutor——B4 起工具执行经 QuickJS 桥；引擎未启用时
+/// executor 兜底报错）。
+pub type BmLoopAgent = ReactLoopAgent<StreamHooks, OpenAiClient, QuickJsToolExecutor>;
 
 /// 会话级 bm-loop agent 条目（对齐 pi 的 AgentSessionEntry）。
 /// agent 本体只是「日志 + 配置 + 客户端」的壳——事件日志是唯一状态源，
@@ -103,29 +109,54 @@ impl LoopHooks for StreamHooks {
 }
 
 // ============================================================================
-// 空工具执行器（切片 ① 防呆兜底；B4 换真执行器）
+// 工具执行侧（B4）：ToolRegistry 汇合 + QuickJS 执行器（见 compat_engine.rs）
 // ============================================================================
 
-/// 空工具执行器：ToolRegistry 为空时模型不会发起工具调用，本实现仅兜底——
-/// 工具执行方向是 B4 的活（bm-compat ExecuteTool 桥，§九·三.9 切片 ②）。
-#[derive(Debug, Default)]
-pub struct NoopExecutor;
-
-impl ToolExecutor for NoopExecutor {
-    async fn execute(&self, req: ToolCallRequest) -> ToolOutcome {
-        tracing::warn!(event = "bm.loop_tool_unwired", tool = %req.name, "bm-loop 工具执行未接线（B4 待接）");
-        ToolOutcome {
-            ok: false,
-            output: format!("工具 {} 尚未接线（bm 引擎工具方向 B4 未完成）", req.name),
-            meta: None,
+/// 组装 bm-loop agent（不依赖会话锁；调用方负责落 map）。
+/// B4：工具从 CompatEngine 快照汇合进 ToolRegistry，执行侧 QuickJsToolExecutor。
+fn build_loop_agent(
+    system_prompt: &str,
+    dual: Option<&Arc<bm_storage_turso::dual_write::DualWriter>>,
+    compat: Option<&Arc<CompatEngine>>,
+    session_id: &str,
+    provider: &bm_core::config::ProviderConfig,
+    model: &str,
+) -> Result<BmLoopAgent, (StatusCode, String)> {
+    let Some(dual) = dual else {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "事件日志不可用，bm 引擎无法启动".to_string(),
+        ));
+    };
+    let llm = OpenAiClient::new(resolve_llm_config(provider, model)?);
+    let mut tools = bm_loop::ToolRegistry::new();
+    if let Some(compat) = compat {
+        for tool in &compat.tools {
+            // 快照在启动加载后固化；重名拒绝是防呆（工具名是 call_id 关联键）
+            if let Err(err) = tools.register(tool.clone()) {
+                tracing::warn!(event = "bm.tool_register_failed", tool = %tool.name, error = %err.message);
+            }
         }
     }
+    Ok(ReactLoopAgent::new(
+        StreamHooks::default(),
+        tools,
+        bm_kernel::EventLog::new(dual.event_log().store()),
+        SessionId::new(session_id),
+        BranchId::new("main"),
+        LoopConfig {
+            system_prompt: system_prompt.to_string(),
+            provider: Some(provider.id.clone()),
+            model: model.to_string(),
+            max_steps: 64,
+            compaction: Default::default(),
+        },
+        llm,
+        QuickJsToolExecutor::new(compat.cloned()),
+    ))
 }
 
-// ============================================================================
-// provider 桥接（bm-core 配置 → bm-loop 的 LlmConfig）
-// ============================================================================
-
+/// provider 配置 → LlmConfig（bm-core 不依赖 bm-loop，桥接在 bm-server 做）。
 /// provider 配置 → LlmConfig（bm-core 不依赖 bm-loop，桥接在 bm-server 做）。
 /// base_url：用户填写优先，否则官方端点；custom 必须填写（配置写入时已校验）。
 fn resolve_llm_config(
@@ -150,39 +181,6 @@ fn resolve_llm_config(
         model: model.to_string(),
         provider: Some(provider.id.clone()),
     })
-}
-
-/// 组装 bm-loop agent（不依赖会话锁；调用方负责落 map）。
-fn build_loop_agent(
-    system_prompt: &str,
-    dual: Option<&Arc<bm_storage_turso::dual_write::DualWriter>>,
-    session_id: &str,
-    provider: &bm_core::config::ProviderConfig,
-    model: &str,
-) -> Result<BmLoopAgent, (StatusCode, String)> {
-    let Some(dual) = dual else {
-        return Err((
-            StatusCode::SERVICE_UNAVAILABLE,
-            "事件日志不可用，bm 引擎无法启动".to_string(),
-        ));
-    };
-    let llm = OpenAiClient::new(resolve_llm_config(provider, model)?);
-    Ok(ReactLoopAgent::new(
-        StreamHooks::default(),
-        bm_loop::ToolRegistry::new(),
-        bm_kernel::EventLog::new(dual.event_log().store()),
-        SessionId::new(session_id),
-        BranchId::new("main"),
-        LoopConfig {
-            system_prompt: system_prompt.to_string(),
-            provider: Some(provider.id.clone()),
-            model: model.to_string(),
-            max_steps: 64,
-            compaction: Default::default(),
-        },
-        llm,
-        NoopExecutor,
-    ))
 }
 
 /// 取会话的 bm-loop agent；不存在或 provider/model 不一致 → 重建
@@ -227,6 +225,7 @@ async fn get_or_create_loop_agent(
     let agent = build_loop_agent(
         &system_prompt,
         state.dual_writer.as_ref(),
+        state.compat.as_ref(),
         session_id,
         provider,
         model,

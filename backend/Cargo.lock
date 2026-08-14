@@ -821,6 +821,7 @@ dependencies = [
  "async-trait",
  "axum",
  "base64 0.22.1",
+ "bm-compat",
  "bm-core",
  "bm-kernel",
  "bm-loop",
