@@ -7,11 +7,11 @@ description = "pi-compat：vendored QuickJS 引擎作库（pi.dev 插件当日�
 # 表维持 standalone 构建，入 workspace 后该表移除、Cargo.lock 由 workspace 统一）。
 
 [dependencies]
-# Async runtime（legacy 同款；B2 host 线程会用到）
+# Async runtime（pi_agent_rust 同款；B2 host 线程会用到）
 tokio = { version = "1", features = ["full"] }
-# async trait objects（legacy 同版本；B2 HostServices 端口）
+# async trait objects（pi_agent_rust 同版本；B2 HostServices 端口）
 async-trait = "0.1"
-# error.rs 的 LockError From impl（legacy 同版本同 features）
+# error.rs 的 LockError From impl（pi_agent_rust 同版本同 features）
 asupersync = { version = "0.3.9", default-features = false, features = ["tls-webpki-roots", "test-internals"] }
 # extensions_js.rs:4629 dirs::home_dir()
 dirs = "6"
@@ -56,13 +56,13 @@ flate2 = "1.1.9"
 [features]
 default = []
 wasm-host = ["dep:wasmtime"]
-# extensions_js.rs:140 cfg!(feature = "ext-conformance")（legacy 同名 feature）
+# extensions_js.rs:140 cfg!(feature = "ext-conformance")（pi_agent_rust 同名 feature）
 ext-conformance = []
 
 # B1 拷入 6 文件（45K 行）与 verbatim shim 的调用面尚未全部接线（B3 加载路径、
 # B4 内核接线完成后自然消解）。红线：拷贝文件逐字节一致、不可为消 lint 改动。
 # 故在 manifest 层放行这三类存量 lint，B3/B4 落地后收紧为 deny/forbid。
-# unsafe_code 对齐 legacy/pi_agent_rust/Cargo.toml 纪律。
+# unsafe_code 对齐 pi_agent_rust@44ddf80/Cargo.toml 纪律。
 [lints.rust]
 dead_code = "allow"
 unused_imports = "allow"

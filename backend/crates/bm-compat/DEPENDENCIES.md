@@ -1,6 +1,6 @@
 # bm-compat 依赖图谱（B1 前置分析，2026-08-14）
 
-来源：`legacy/pi_agent_rust/src/`（vendored 基线 44ddf80 + 台账补丁）。
+来源：`pi_agent_rust@44ddf80/src/`（vendored 基线 44ddf80 + 台账补丁）。
 
 ## 六文件规模
 
@@ -46,5 +46,5 @@
 
 ## 上游同步纪律
 
-见 `backend/legacy/UPSTREAM_PATCHES.md`「bm-compat 同步」区。要点：
+见 `backend/vendor/UPSTREAM_PATCHES.md`「bm-compat 同步」区。要点：
 上游升级 → 6 文件逐文件 diff → 同步到本 crate → 补丁（P 编号）两边一致。

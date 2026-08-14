@@ -7,7 +7,7 @@ BoenMind 自研 loop（A6）落位后，pi 引擎整体退场；本 crate 是过
 
 - **B1 拷入 6 文件 + 5 符号**：`extensions_js.rs / scheduler.rs / hostcall_queue.rs /
   hostcall_io_uring_lane.rs / embedded_assets.rs / error.rs`（共 45K 行，
-  legacy/pi_agent_rust/src/）+ `ExtensionPolicy` 等 5 符号（见 DEPENDENCIES.md §5 符号）。
+  pi_agent_rust@44ddf80/src/）+ `ExtensionPolicy` 等 5 符号（见 DEPENDENCIES.md §5 符号）。
 - **B2 host 线程 ~300 行**：`drain_hostcall_requests → HostcallKind 分发 →
   complete_hostcalls_batch → tick`。
 - **B3 加载路径**：`eval_file` + `get_registered_tools` + ExtensionBody 协议注册。
@@ -30,7 +30,7 @@ BoenMind 自研 loop（A6）落位后，pi 引擎整体退场；本 crate 是过
 - [x] build.rs 精简版（仅 gzip 资产生成）+ 4 资产拷入 + lib.rs/Cargo.toml
 - [x] **B2 host 线程**（`src/host.rs`）：`drain_hostcall_requests → policy 裁决
       + HostcallKind 分发（HostServices 六端口）→ complete_hostcalls_batch →
-      tick → 二轮补收`，结构镜像 legacy `pump_js_runtime_once_for_owner`；
+      tick → 二轮补收`，结构镜像 pi_agent_rust `pump_js_runtime_once_for_owner`；
       `check_capability` 三模式裁决 + `request_approval` fail-closed 询问口（B5）；
       测试在 `tests/host.rs`（集成测试，7 用例全绿：六 kind 路由 / policy 拒绝 /
       审批放行 / QuickJS 真链路 eval→pump→complete）
@@ -39,7 +39,7 @@ BoenMind 自研 loop（A6）落位后，pi 引擎整体退场；本 crate 是过
       B1 存量 lint（死代码/unused import/collapsible_if，均在拷贝/shim 文件）
       经 manifest [lints] 表放行（红线：拷贝文件逐字节一致，B3/B4 接上后收紧）
 - [x] **B3 加载路径**（`src/load.rs`）：`JsExtensionLoadSpec::from_entry_path`
-      （verbatim 提取自 legacy extensions.rs:10195-10276，from_manifest 留 B4）+
+      （verbatim 提取自 pi_agent_rust extensions.rs:10195-10276，from_manifest 留 B4）+
       `load_extension`（root 注册 → `__pi_load_extension` 引导 → `__pi_task_start`
       包装 → `await_js_task` 泵循环复用 B2 HostThread::pump_once → 任务 resolved
       `true`；工具注册表经 `get_registered_tools` 读回）；集成测试 4 用例全绿
@@ -48,29 +48,29 @@ BoenMind 自研 loop（A6）落位后，pi 引擎整体退场；本 crate 是过
 
 ## 上游同步纪律
 
-本 crate 的 6 文件与 legacy/pi_agent_rust 同源。上游升级（vendor 更新）时：
+本 crate 的 6 文件与 pi_agent_rust@44ddf80 同源。上游升级（vendor 更新）时：
 1. 对 6 文件逐文件 diff，把上游变更同步到本 crate；
 2. 本地补丁（P 编号）在两者保持一致；
-3. 台账更新 backend/legacy/UPSTREAM_PATCHES.md「bm-compat 同步」区。
+3. 台账更新 backend/vendor/UPSTREAM_PATCHES.md「bm-compat 同步」区。
 
-### B1 偏离 / 补丁登记（与 legacy 逐字节 diff 的例外）
+### B1 偏离 / 补丁登记（与 pi_agent_rust 逐字节 diff 的例外）
 
 | 项 | 处理 | 说明 |
 |---|---|---|
 | 6 拷贝文件 | **零偏离**，diff 逐字节一致 | extensions_js/scheduler/hostcall_queue/hostcall_io_uring_lane/embedded_assets/error |
 | 整文件 shim | **零偏离**，diff 逐字节一致 | http_shim/crypto_shim/buffer_shim/hostcall_s3_fifo |
-| extensions.rs shim | 提取（新文件，非整文件拷贝） | 从 legacy extensions.rs 按行段 verbatim 提取：193-298（类型）、901-906+910-1054（exec mediation 调用面）、1364-1472（canonicalize）、1539-1625（hash）、1685-1699（envelope）、1941-2081（PolicyProfile/Override/Mode/Policy）、2384-2447（QuotaConfig）；exec_mediation.rs 整文件以 `mod exec_mediation { … }` 内联，其 `use super::{…}` 与 `pub(super)` 原样保留 |
+| extensions.rs shim | 提取（新文件，非整文件拷贝） | 从 pi_agent_rust extensions.rs 按行段 verbatim 提取：193-298（类型）、901-906+910-1054（exec mediation 调用面）、1364-1472（canonicalize）、1539-1625（hash）、1685-1699（envelope）、1941-2081（PolicyProfile/Override/Mode/Policy）、2384-2447（QuotaConfig）；exec_mediation.rs 整文件以 `mod exec_mediation { … }` 内联，其 `use super::{…}` 与 `pub(super)` 原样保留 |
 | tools.rs shim | 提取（新文件） | 9720-9798 + 9800-9927 行段 verbatim（kill_process_group_tree 传递闭包 + SIGPIPE trampoline + isolate） |
 | provider_metadata.rs shim | 提取（新文件） | 1-1666 行段 verbatim（类型 + 全量 PROVIDER_METADATA 表 + 两个访问器）；上游 `use crate::provider::InputType;` 经本地 `src/provider.rs` shim 解析（InputType 枚举自 provider.rs:194-202 verbatim 提取） |
 | build.rs | 精简 | 只保留 gzip 资产生成；vergen-gix 与 benchmark fingerprint 删除 |
 | Cargo.toml | standalone | 本 crate 位于 backend/ 子树内，cargo 默认会向上找 backend/Cargo.toml workspace；为避免动 backend/Cargo.toml 的 members/exclude，本 manifest 内加了空的 `[workspace]` 表使自己成为独立 workspace 根（target/ 与 Cargo.lock 均落在 crates/bm-compat/ 下） |
-| embedded_assets.rs 421-445 | **不改** | `include_bytes!("../…")` 相对路径全在 `#[cfg(test)]`（312 行起）内，默认 cargo check 不编译；4 个源资产已按 legacy 相对路径拷入 crate 根，未来开 `--tests` 时路径可直接解析 |
+| embedded_assets.rs 421-445 | **不改** | `include_bytes!("../…")` 相对路径全在 `#[cfg(test)]`（312 行起）内，默认 cargo check 不编译；4 个源资产已按 pi_agent_rust 相对路径拷入 crate 根，未来开 `--tests` 时路径可直接解析 |
 
 ## 待办（TODO）
 
 1. **测试目标未编译**：验收只跑默认 `cargo check`（无 `--tests`）。拷贝文件内大量
    `mod tests` 是后续议题；其中 embedded_assets.rs 测试用 `crc32c` 需要补
-   dev-dependency，且引用 `../docs/evidence/…` 等 legacy 外资产。
+   dev-dependency，且引用 `../docs/evidence/…` 等 pi_agent_rust 外资产。
 2. **wasm-host feature**：extensions_js.rs 对 `crate::pi_wasm` 的引用全部在
    `#[cfg(feature = "wasm-host")]` 内，lib.rs 以同名 cfg 声明 `mod pi_wasm`。
    启用前需拷入 pi_wasm.rs + wasmtime 依赖（已预置 optional dep）。

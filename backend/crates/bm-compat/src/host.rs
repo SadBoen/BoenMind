@@ -1,14 +1,14 @@
 //! B2 — host thread (the host-side pump for the vendored QuickJS engine).
 //!
-//! Structure mirrors legacy `pump_js_runtime_once_for_owner`
-//! (legacy/pi_agent_rust/src/extensions.rs:14839): drain → policy check +
+//! Structure mirrors pi_agent_rust `pump_js_runtime_once_for_owner`
+//! (pi_agent_rust@44ddf80/src/extensions.rs:14839): drain → policy check +
 //! dispatch → `complete_hostcalls_batch` → tick → second drain (catches
 //! fire-and-forget hostcalls scheduled during the tick/microtask phase).
 //!
 //! Execution behaviour for each [`HostcallKind`] is provided by the
 //! [`HostServices`] ports (wired to the kernel in B4, approval bridge in B5);
 //! this module only owns the skeleton: policy decision, routing, completion
-//! delivery. `HostcallKind::Log` is handled inline, same as legacy.
+//! delivery. `HostcallKind::Log` is handled inline, same as pi_agent_rust.
 
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -30,7 +30,7 @@ pub enum PolicyDecision {
     Deny { reason: &'static str },
 }
 
-/// Simplified counterpart of legacy `PolicySnapshot::lookup`: permissive
+/// Simplified counterpart of pi_agent_rust `PolicySnapshot::lookup`: permissive
 /// allows everything, strict denies everything, prompt consults the global
 /// tables merged with the per-extension override (deny wins over allow).
 pub fn check_capability(
@@ -245,7 +245,7 @@ impl<C: SchedulerClock + 'static> HostThread<C> {
         }
     }
 
-    /// One host-side pump cycle (legacy `pump_js_runtime_once_for_owner`):
+    /// One host-side pump cycle (pi_agent_rust `pump_js_runtime_once_for_owner`):
     /// drain queued hostcalls, dispatch + complete, advance the event loop,
     /// then catch fire-and-forget hostcalls scheduled during the tick.
     ///

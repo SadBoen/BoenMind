@@ -1,7 +1,7 @@
 //! B6 — 插件权限决策记忆：`extension-permissions.json` 持久化
 //! （"总是允许"/"总是拒绝"跨会话生效）。
 //!
-//! 语义吸收自 legacy pi_agent_rust/src/permissions.rs（B6 决策记忆的参照
+//! 语义吸收自 pi_agent_rust@44ddf80/src/permissions.rs（B6 决策记忆的参照
 //! 实现），**文件格式与其完全兼容**——pi 引擎路径与 bm 引擎路径读写的
 //! 是同一个 schema（`{version, decisions: {extension_id: [{capability,
 //! allow, decided_at, expires_at?, version_range?}]}}`），双开对比期两路径

@@ -2,11 +2,11 @@
 //!
 //! Hosts only the `InputType` enum required by the extracted
 //! `provider_metadata` shim. Extracted verbatim from
-//! `legacy/pi_agent_rust/src/provider.rs:194-202`.
+//! `pi_agent_rust@44ddf80/src/provider.rs:194-202`.
 
 use serde::{Deserialize, Serialize};
 
-// extracted from legacy/pi_agent_rust/src/provider.rs:194-202
+// extracted from pi_agent_rust@44ddf80/src/provider.rs:194-202
 /// Input types supported by a model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

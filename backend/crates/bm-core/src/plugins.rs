@@ -14,7 +14,7 @@ use crate::http_util::copy_dir_excluding;
 
 /// 插件根目录名（位于 ~/.boenmind 下）
 pub const PLUGINS_DIR: &str = "extensions";
-/// 内置示例插件清单（来自 vendored pi_agent_rust 官方示例，均为类型级依赖，QuickJS 可直接加载）
+/// 内置示例插件清单（hello/bookmark 为仓库自带单文件示例；目录型插件自带扩展清单）
 pub const BUILTIN_PLUGINS: &[(&str, &str)] = &[
     ("hello", "注册演示工具：Hello，展示 LLM 可调用工具"),
     ("bookmark", "注册斜杠命令：/bookmark 为消息添加书签"),
@@ -453,7 +453,7 @@ pub fn uninstall_plugin(config: &mut AppConfig, id: &str) -> Result<(), AppError
 /// 首次启动时预装内置插件；用户已卸载的（removed_builtin_plugins）跳过。
 ///
 /// 两种构建形态：
-/// - 普通构建：从仓库路径复制（vendored 示例 + backend/plugins/）
+/// - 普通构建：从仓库路径复制（backend/plugins/ 单文件示例 + 目录型插件）
 /// - embed 构建（服务器版）：目录型插件从二进制内嵌资源写出（部署机没有仓库路径，
 ///   此前静默失败导致服务器用户实际无插件）；单文件示例（hello/bookmark）为演示
 ///   用途且默认未启用，embed 构建不预装
@@ -523,13 +523,11 @@ fn embed_repo_plugin(id: &str, dest_dir: &std::path::Path) -> Result<bool, std::
 #[folder = "../../plugins"]
 struct EmbeddedPlugins;
 
-/// vendored pi_agent_rust 仓库内官方示例扩展的路径（仅普通构建使用）。
+/// 仓库自带单文件示例插件（backend/plugins/<id>.ts）的路径（仅普通构建使用）。
 #[cfg(not(feature = "embed-plugins"))]
 fn vendored_example_path(id: &str) -> Option<PathBuf> {
     let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let p = base
-        .join("../../vendor/pi_agent_rust/legacy_pi_mono_code/pi-mono/packages/coding-agent/examples/extensions")
-        .join(format!("{id}.ts"));
+    let p = base.join("../../plugins").join(format!("{id}.ts"));
     p.is_file().then_some(p)
 }
 

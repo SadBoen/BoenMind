@@ -13,10 +13,10 @@ members = [
     "tests/event_log",
 ]
 
-# asupersync vendor 化：pi 引擎的底层异步运行时，本地补丁见
-# backend/legacy/UPSTREAM_PATCHES.md「asupersync」区。
+# asupersync vendor 化：pi 引擎的底层异步运行时（唯一存活 vendored 依赖），本地补丁见
+# backend/vendor/UPSTREAM_PATCHES.md「asupersync」区。
 [patch.crates-io]
-asupersync = { path = "legacy/asupersync" }
+asupersync = { path = "vendor/asupersync" }
 
 # BoenMind 2.0 内核三件套（万物皆插件架构阶段 0，见 docs/kernel-implementation-plan.md）
 [workspace.dependencies]

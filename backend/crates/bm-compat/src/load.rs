@@ -1,7 +1,7 @@
 //! B3 — loading path: evaluate a plugin entry file and read back the
 //! registered tool surface.
 //!
-//! Mirrors legacy `load_one_extension` (legacy/pi_agent_rust/src/extensions.rs:13588)
+//! Mirrors pi_agent_rust `load_one_extension` (pi_agent_rust@44ddf80/src/extensions.rs:13588)
 //! and `await_js_task` (19112), simplified for the single-runtime host thread
 //! model: register read roots → `__pi_load_extension` bootstrap wrapped in a
 //! JS task → pump loop (reusing B2 [`HostThread::pump_once`]) until the task
@@ -17,12 +17,12 @@ use crate::extensions_js::{json_to_js, js_to_json};
 use crate::host::HostThread;
 use crate::scheduler::Clock as SchedulerClock;
 
-/// Extension protocol version stamped into load specs (legacy
+/// Extension protocol version stamped into load specs (pi_agent_rust
 /// `extensions.rs:1701 pub const PROTOCOL_VERSION: &str = "1.0"`).
 pub const PROTOCOL_VERSION: &str = "1.0";
 
 /// Load specification for one extension entry.
-// extracted from legacy/pi_agent_rust/src/extensions.rs:10195-10276
+// extracted from pi_agent_rust@44ddf80/src/extensions.rs:10195-10276
 // (JsExtensionLoadSpec + from_entry_path；from_manifest 留 B4 安装路径，
 // 届时由内核插件清单直接构造字段)
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -114,7 +114,7 @@ impl JsExtensionLoadSpec {
     }
 }
 
-/// 与 legacy `next_runtime_task_id` 同空间的 JS 任务 id 计数器
+/// 与 pi_agent_rust `next_runtime_task_id` 同空间的 JS 任务 id 计数器
 /// （load/execute/事件分发共享；id 只是任务表键，前缀区分来源）。
 pub(crate) fn next_task_id(prefix: &str) -> String {
     static NEXT_TASK_ID: AtomicU64 = AtomicU64::new(1);
@@ -251,7 +251,7 @@ pub async fn load_extension<C: SchedulerClock + 'static>(
     let runtime = thread.runtime();
 
     // Register the extension's root directory so `readFileSync` can access
-    // bundled assets within the extension's own directory tree (legacy
+    // bundled assets within the extension's own directory tree (pi_agent_rust
     // collect_extension_roots_from_paths, single-entry form).
     if let Some(root) = spec.entry_path.parent() {
         runtime.add_extension_root_with_id(root.to_path_buf(), Some(spec.extension_id.as_str()));

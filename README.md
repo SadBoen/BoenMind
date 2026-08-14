@@ -10,7 +10,7 @@
 
 | 层 | 技术 |
 |---|---|
-| 后端 | Rust（workspace：`bm-core` 领域层 + `bm-server` axum API），基于 [pi_agent_rust](https://github.com/Dicklesworthstone/pi_agent_rust)（vendored，MIT+OpenAI/Anthropic Rider 许可） |
+| 后端 | Rust（workspace：`bm-core` 领域层 + `bm-server` axum API），执行引擎为自研 bm-loop（pi 引擎已废除，插件兼容层 bm-compat 保留上游 QuickJS 加载能力） |
 | 前端 | React 19 + Vite + TypeScript + Tailwind v4 + shadcn/ui（base-nova）+ Zustand + react-resizable-panels |
 | 桌面 | Tauri 2（内嵌启动后端，同一套前端代码） |
 | 存储 | Turso（limbo，Rust 实现，SQLite 文件格式兼容：`~/.boenmind/boenmind.db`，会话与消息）；配置 `~/.boenmind/config.toml` |
@@ -20,9 +20,12 @@
 ```
 BoenMind/
 ├── backend/                  # Rust workspace
-│   ├── crates/bm-core/       # 配置、SQLite、工作文件夹、pi agent 封装
+│   ├── crates/bm-core/       # 配置、SQLite、工作文件夹、引擎封装
 │   ├── crates/bm-server/     # axum REST + SSE API（独立二进制，也可内嵌）
-│   └── vendor/pi_agent_rust/ # pi agent Rust 版（vendored 全量入仓库，含 macOS 修补）
+│   ├── crates/bm-loop/       # 自研 agent 执行引擎（事件日志驱动，压缩可审计）
+│   ├── crates/bm-compat/     # 插件兼容层（QuickJS 引擎，加载 TS 插件）
+│   ├── plugins/              # 内置插件（单文件示例 + 目录型清单插件）
+│   └── vendor/               # vendored 第三方依赖（asupersync + 补丁台账）
 ├── frontend/                 # React SPA（网页 / 桌面共用）
 │   └── src-tauri/            # Tauri 2 桌面壳
 └── gui-test-screenshots/     # 浏览器实测截图证据
@@ -46,8 +49,8 @@ cd frontend && pnpm tauri dev
 cd frontend && pnpm tauri build --debug --no-bundle
 ```
 
-> **构建注意（Windows）**：debug 构建的 `bm-server.exe` 会达到 2GB+（vendored
-> pi_agent_rust 全量 debuginfo），超出 Windows PE 加载器限制，启动报
+> **构建注意（Windows）**：debug 构建的 `bm-server.exe` 会达到 2GB+（debug
+> 产物全量 debuginfo），超出 Windows PE 加载器限制，启动报
 > "Exec format error" / "%1 不是有效的 Win32 应用程序"——不是文件损坏。
 > 本机跑服务请用 `cargo build --release -p bm-server`（约 10-20 分钟），
 > 或 `RUSTFLAGS="-C strip=debuginfo" cargo build -p bm-server` 快速验证。
@@ -86,9 +89,9 @@ cd frontend && pnpm tauri build --debug --no-bundle
   `POST /api/chat/stop` 取消进行中的 prompt（已生成内容照常入库）。
 - **自动更新**：Tauri updater + GitHub Releases（`latest.json`），签名密钥存于
   `~/.boenmind/tauri-update.key`（私钥与密码需妥善保管，丢失则无法发布更新）。
-- **vendored 修补**：pi_agent_rust 在 macOS 上有两处类型不匹配（rustix `st_dev`/`st_mode`），
-  已在 `backend/vendor/pi_agent_rust/src/tools.rs` 修补；上游 Google OAuth 公开凭据与测试假 key
-  因 GitHub push protection 拦截已替换为占位符（BoenMind 走 API key 认证，不受影响）。
+- **vendored 修补**：唯一存活 vendored 依赖 = `backend/vendor/asupersync/`（Windows
+  10057 连接误判修复，见 `backend/vendor/UPSTREAM_PATCHES.md`）；pi_agent_rust 已于
+  2026-08-15 随引擎废除整体删除（补丁归档在台账）。
 
 ## 已知限制（v0.1）
 
@@ -181,4 +184,4 @@ Docker 部署不参与，用 `docker pull` 更新镜像。
 
 ## 许可
 
-本项目基于 MIT 许可（vendored pi_agent_rust 保留其 MIT+OpenAI/Anthropic Rider 原许可文件）。
+本项目基于 MIT 许可（vendored asupersync 保留其 MIT 原许可文件）。

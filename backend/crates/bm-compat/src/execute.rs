@@ -1,8 +1,8 @@
 //! B4 — tool execution path: invoke a registered extension tool through the
 //! `__pi_execute_tool` bridge and pump until it resolves.
 //!
-//! Mirrors legacy `execute_extension_tool_sharded`
-//! (legacy/pi_agent_rust/src/extensions.rs:14353), single-runtime form:
+//! Mirrors pi_agent_rust `execute_extension_tool_sharded`
+//! (pi_agent_rust@44ddf80/src/extensions.rs:14353), single-runtime form:
 //! the runtime is owned by the host thread so there is no shard routing —
 //! `__pi_execute_tool` → `__pi_task_start` wraps the promise in a JS task,
 //! then the B3 [`await_js_task`] pump loop drives hostcalls + the event loop

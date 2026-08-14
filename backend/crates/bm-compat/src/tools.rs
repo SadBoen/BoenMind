@@ -1,6 +1,6 @@
 //! `tools` module shim for bm-compat (B1).
 //!
-//! Verbatim extraction from `legacy/pi_agent_rust/src/tools.rs`: process-group
+//! Verbatim extraction from `pi_agent_rust@44ddf80/src/tools.rs`: process-group
 //! kill/isolation helpers and the SIGPIPE trampoline used by the vendored
 //! `extensions_js.rs`. Real upstream semantics preserved (sysinfo-based
 //! process-tree kill); no behavioral stubs.
@@ -89,7 +89,7 @@ fn collect_process_tree(
         }
     }
 }
-// extracted from legacy/pi_agent_rust/src/tools.rs:9720-9798
+// extracted from pi_agent_rust@44ddf80/src/tools.rs:9720-9798
 // (kill_process_group_tree, kill_process_tree_with, collect_process_tree;
 //  terminate_process_group_tree kept as part of the contiguous range)
 /// Build a child command whose Unix process image starts with SIGPIPE restored
@@ -220,7 +220,7 @@ pub(crate) fn isolate_command_process_group(command: &mut Command) {
     }
 }
 
-// extracted from legacy/pi_agent_rust/src/tools.rs:9800-9927
+// extracted from pi_agent_rust@44ddf80/src/tools.rs:9800-9927
 // (SIGPIPE_TRAMPOLINE_EXEC_FAILURE_PREFIX, command_with_default_sigpipe,
 //  command_with_default_sigpipe_in_dir, command_with_default_sigpipe_for_cwd,
 //  resolve_executable_for_shell_trampoline, isolate_command_process_group)

@@ -1,7 +1,7 @@
 //! `extensions` module shim for bm-compat (B1).
 //!
-//! Minimal verbatim extraction from `legacy/pi_agent_rust/src/extensions.rs`
-//! and `legacy/pi_agent_rust/src/extensions/exec_mediation.rs`, providing
+//! Minimal verbatim extraction from `pi_agent_rust@44ddf80/src/extensions.rs`
+//! and `pi_agent_rust@44ddf80/src/extensions/exec_mediation.rs`, providing
 //! exactly the symbols referenced by the vendored `extensions_js.rs` /
 //! `error.rs`. Each code block is a byte-identical line-range extract (see the
 //! per-block "extracted from" headers); the only additions are the imports
@@ -128,7 +128,7 @@ pub struct SecretBrokerPolicy {
     pub redaction_placeholder: String,
 }
 // ---------------------------------------------------------------------------
-// extracted from legacy/pi_agent_rust/src/extensions/exec_mediation.rs
+// extracted from pi_agent_rust@44ddf80/src/extensions/exec_mediation.rs
 // (whole file, inlined as `mod exec_mediation` so the upstream
 // `use super::{...}` and `pub(super)` code needs no edits)
 // ---------------------------------------------------------------------------
@@ -589,7 +589,7 @@ use exec_mediation::{
     classify_process_termination, classify_recursive_delete, classify_reverse_shell,
     classify_system_shutdown, normalize_command_for_classification,
 };
-// extracted from legacy/pi_agent_rust/src/extensions.rs:901-906
+// extracted from pi_agent_rust@44ddf80/src/extensions.rs:901-906
 // (upstream import of the inlined exec_mediation functions)
 ///
 /// Returns all matching classifications. A command may match multiple
@@ -736,7 +736,7 @@ pub fn evaluate_exec_mediation(
         ExecMediationResult::Allow
     }
 }
-// extracted from legacy/pi_agent_rust/src/extensions.rs:1364-1472
+// extracted from pi_agent_rust@44ddf80/src/extensions.rs:1364-1472
 // (safe_canonicalize, normalize_dot_segments, strip_unc_prefix)
 /// Canonicalize a path, stripping the `\\?\` verbatim prefix on Windows.
 ///
@@ -847,7 +847,7 @@ pub fn strip_unc_prefix(path: PathBuf) -> PathBuf {
     }
     path
 }
-// extracted from legacy/pi_agent_rust/src/extensions.rs:1539-1625
+// extracted from pi_agent_rust@44ddf80/src/extensions.rs:1539-1625
 // (hash_canonical_json, hash_canonical_json_depth, hash_json_escaped_str,
 //  sha256_to_hex, hostcall_params_hash)
 /// Feed canonical JSON with sorted object keys directly into a SHA-256 hasher,
@@ -937,7 +937,7 @@ pub(crate) fn hostcall_params_hash(method: &str, params: &Value) -> String {
     });
     sha256_to_hex(hasher.finalize().as_slice())
 }
-// extracted from legacy/pi_agent_rust/src/extensions.rs:1685-1699
+// extracted from pi_agent_rust@44ddf80/src/extensions.rs:1685-1699
 // (hash_hostcall_envelope)
 /// Hash the canonical `{"method": ..., "<payload_key>": ...}` envelope using
 /// the exact byte layout expected by historical hostcall hash artifacts.
@@ -954,7 +954,7 @@ fn hash_hostcall_envelope(
     payload_writer(hasher);
     hasher.update(b"}");
 }
-// extracted from legacy/pi_agent_rust/src/extensions.rs:1941-1992
+// extracted from pi_agent_rust@44ddf80/src/extensions.rs:1941-1992
 // (PolicyProfile + to_policy)
 // ---------------------------------------------------------------------------
 // Policy profile presets
@@ -1009,7 +1009,7 @@ impl PolicyProfile {
         }
     }
 }
-// extracted from legacy/pi_agent_rust/src/extensions.rs:1994-2021
+// extracted from pi_agent_rust@44ddf80/src/extensions.rs:1994-2021
 // (ExtensionOverride)
 
 // ---------------------------------------------------------------------------
@@ -1039,7 +1039,7 @@ pub struct ExtensionOverride {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quota: Option<ExtensionQuotaConfig>,
 }
-// extracted from legacy/pi_agent_rust/src/extensions.rs:2022-2033
+// extracted from pi_agent_rust@44ddf80/src/extensions.rs:2022-2033
 // (ExtensionPolicyMode)
 
 // ---------------------------------------------------------------------------
@@ -1053,7 +1053,7 @@ pub enum ExtensionPolicyMode {
     Prompt,
     Permissive,
 }
-// extracted from legacy/pi_agent_rust/src/extensions.rs:2043-2081
+// extracted from pi_agent_rust@44ddf80/src/extensions.rs:2043-2081
 // (ExtensionPolicy + Default impl)
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1095,7 +1095,7 @@ impl Default for ExtensionPolicy {
         }
     }
 }
-// extracted from legacy/pi_agent_rust/src/extensions.rs:2384-2447
+// extracted from pi_agent_rust@44ddf80/src/extensions.rs:2384-2447
 // (ExtensionQuotaConfig + Default + for_mode)
 // Per-extension resource quota engine (SEC-4.1 / bd-b1d7o)
 // ---------------------------------------------------------------------------

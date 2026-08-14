@@ -490,7 +490,7 @@ jobs:
           if-no-files-found: error
 
       # Docker 多架构镜像（仅正式 tag 推送；试跑跳过）。
-      # 注入 zigbuild 预构建二进制，避免 QEMU 模拟编译 pi_agent_rust。
+      # 注入 zigbuild 预构建二进制，避免 QEMU 模拟编译（大依赖树交叉编译慢）。
       - name: 准备 Docker 构建上下文
         if: startsWith(github.ref, 'refs/tags/')
         run: |

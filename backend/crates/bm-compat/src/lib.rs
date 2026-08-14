@@ -1,16 +1,16 @@
 //! bm-compat — vendored QuickJS extension engine as a library (BoenMind
 //! main line B, task B1 copy-in).
 //!
-//! Module layout mirrors `legacy/pi_agent_rust/src` so the vendored files keep
+//! Module layout mirrors `pi_agent_rust@44ddf80/src` so the vendored files keep
 //! their upstream `crate::xxx::` paths untouched and stay diff-comparable with
-//! the legacy source:
+//! the pi_agent_rust source:
 //!
-//! - Byte-identical vendored copies (diff-verified against legacy):
+//! - Byte-identical vendored copies (diff-verified against pi_agent_rust):
 //!   `extensions_js`, `scheduler`, `hostcall_queue`, `hostcall_io_uring_lane`,
 //!   `embedded_assets`, `error`.
-//! - Byte-identical whole-file shims (diff-verified against legacy):
+//! - Byte-identical whole-file shims (diff-verified against pi_agent_rust):
 //!   `http_shim`, `crypto_shim`, `buffer_shim`, `hostcall_s3_fifo`.
-//! - Extracted shims (verbatim line ranges from legacy, see per-block
+//! - Extracted shims (verbatim line ranges from pi_agent_rust, see per-block
 //!   "extracted from" headers): `extensions`, `tools`, `provider_metadata`,
 //!   `provider`.
 //!

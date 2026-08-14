@@ -1,6 +1,6 @@
 //! `provider_metadata` module shim for bm-compat (B1).
 //!
-//! Verbatim extraction from `legacy/pi_agent_rust/src/provider_metadata.rs:1-1666`:
+//! Verbatim extraction from `pi_agent_rust@44ddf80/src/provider_metadata.rs:1-1666`:
 //! metadata structs, the full `PROVIDER_METADATA` table and the lookup plus the
 //! `canonical_provider_id` / `provider_auth_env_keys` accessors referenced by
 //! the vendored `error.rs` (error-hint copy only — not on the security path).

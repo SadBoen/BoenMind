@@ -1,6 +1,6 @@
 // bm-compat build.rs (B1)
 //
-// Minimal version of legacy/pi_agent_rust/build.rs: only the gzip asset
+// Minimal version of pi_agent_rust@44ddf80/build.rs: only the gzip asset
 // generation for src/embedded_assets.rs (`include!(OUT_DIR/embedded-text-metadata.rs)`
 // + the four `.gz` resources) is retained. The vergen_gix git-metadata block
 // and the benchmark build fingerprint are intentionally dropped — bm-compat

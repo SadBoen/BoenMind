@@ -1,5 +1,5 @@
 //! 思考档位能力判定：复刻 pi 运行时的 per-model 白名单
-//! （legacy/pi_agent_rust/src/models.rs 的 available_thinking_levels /
+//! （pi_agent_rust@44ddf80/src/models.rs 的 available_thinking_levels /
 //! supports_xhigh / supports_max），供 /api/thinking-levels 出 UI 档位。
 //!
 //! 对齐要点（2026-08-12 读 legacy 源码核对）：

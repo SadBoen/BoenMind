@@ -2,8 +2,8 @@
 //! (`pi.on("tool_result", ...)` / `pi.on("startup", ...)`) through the
 //! `__pi_dispatch_extension_event` bridge and pump until handlers settle.
 //!
-//! Mirrors legacy `dispatch_extension_event_phase_sharded`
-//! (legacy/pi_agent_rust/src/extensions.rs:13867), single-runtime form:
+//! Mirrors pi_agent_rust `dispatch_extension_event_phase_sharded`
+//! (pi_agent_rust@44ddf80/src/extensions.rs:13867), single-runtime form:
 //! the event dispatch promise is wrapped in a JS task (`__pi_task_start`),
 //! then the B3 [`await_js_task`] pump loop drives hostcalls + the event
 //! loop until the handlers resolve, reject or time out.
@@ -32,7 +32,7 @@ use crate::scheduler::Clock as SchedulerClock;
 /// `event_name` (all phases: direct `pi.on` hooks + event-bus hooks).
 ///
 /// `event_payload` is delivered as the handler's first argument (its `type`
-/// field, when present, is preserved verbatim — mirroring the legacy tagged
+/// field, when present, is preserved verbatim — mirroring the pi_agent_rust tagged
 /// serialization); `ctx_payload` feeds the JS `__pi_make_extension_ctx`
 /// (`{ cwd, hasUI, sessionEntries, … }` — see extensions_js.rs). Handlers
 /// without session context pass `serde_json::json!({})`; the bridge
