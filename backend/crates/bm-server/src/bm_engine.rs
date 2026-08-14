@@ -21,7 +21,7 @@ use axum::{
 use bm_core::agent::AgentStreamEvent;
 use bm_loop::engine::{LoopConfig, ReactLoopAgent, TurnRequest};
 use bm_loop::llm::{LlmConfig, OpenAiClient};
-use bm_loop::points::{LoopHooks, StepCtx};
+use bm_loop::points::{LoopHooks, StepCtx, ToolCtx, ToolGate};
 use bm_protocol::{BranchId, HeaderReason, SessionId, TurnEndReason, UserMsgSource};
 use tokio::sync::{Mutex, mpsc, watch};
 use tokio_stream::StreamExt;
@@ -103,6 +103,29 @@ impl StreamHooks {
 impl LoopHooks for StreamHooks {
     fn on_stream_chunk(&mut self, _ctx: &StepCtx, text: &str) {
         if !self.try_send(AgentStreamEvent::TextDelta { delta: text.to_string() }) {
+            self.trigger_cancel();
+        }
+    }
+
+    fn on_tool_pre(&mut self, ctx: &ToolCtx) -> ToolGate {
+        // B4：工具调用开始事件（前端工具卡片）；权限裁决是 B5（此处恒 Allow——
+        // 执行前拦截由 loop 的 ToolGate 语义承载，权限桥接上后在此返回 Deny）
+        if !self.try_send(AgentStreamEvent::ToolCallStart {
+            id: ctx.call_id.clone(),
+            name: ctx.name.clone(),
+            args: ctx.args.clone(),
+        }) {
+            self.trigger_cancel();
+        }
+        ToolGate::Allow
+    }
+
+    fn on_tool_post(&mut self, ctx: &ToolCtx, ok: bool) {
+        if !self.try_send(AgentStreamEvent::ToolCallEnd {
+            id: ctx.call_id.clone(),
+            name: ctx.name.clone(),
+            is_error: !ok,
+        }) {
             self.trigger_cancel();
         }
     }
@@ -542,6 +565,31 @@ mod tests {
         match rx.recv().await {
             Some(AgentStreamEvent::TextDelta { delta }) => assert_eq!(delta, "你好"),
             other => panic!("应收到 TextDelta，得到 {other:?}"),
+        }
+
+        // B4：工具调用起止事件（前端工具卡片），起 Allow 止 is_error
+        let tool_ctx = ToolCtx {
+            turn: 1,
+            step: 1,
+            call_id: "c1".into(),
+            name: "hello".into(),
+            args: serde_json::json!({ "name": "Boen" }),
+        };
+        assert_eq!(h.on_tool_pre(&tool_ctx), ToolGate::Allow);
+        match rx.recv().await {
+            Some(AgentStreamEvent::ToolCallStart { id, name, args }) => {
+                assert_eq!((id.as_str(), name.as_str()), ("c1", "hello"));
+                assert_eq!(args, serde_json::json!({ "name": "Boen" }));
+            }
+            other => panic!("应收到 ToolCallStart，得到 {other:?}"),
+        }
+        h.on_tool_post(&tool_ctx, false);
+        match rx.recv().await {
+            Some(AgentStreamEvent::ToolCallEnd { id, is_error, .. }) => {
+                assert_eq!(id, "c1");
+                assert!(is_error, "执行失败应标记 is_error");
+            }
+            other => panic!("应收到 ToolCallEnd，得到 {other:?}"),
         }
 
         // 通道关闭（客户端断开）：触发取消

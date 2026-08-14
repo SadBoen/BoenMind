@@ -140,6 +140,13 @@ impl Llm for OpenAiClient {
             if obj.get("model").is_none() {
                 obj.insert("model".into(), serde_json::Value::String(cfg.model.clone()));
             }
+            // 排障观测：请求面的 tools 数量（工具未上 payload 是"模型不调工具"的头号嫌疑）。
+            // 注意：不打 payload 全文——含用户消息，日志是审计之家但不该存敏感正文。
+            tracing::debug!(
+                event = "bm.loop_request",
+                model = %cfg.model,
+                tools = obj.get("tools").and_then(|t| t.as_array()).map_or(0, |a| a.len()),
+            );
 
             let url = format!("{}/chat/completions", cfg.base_url.trim_end_matches('/'));
             let resp = match http
