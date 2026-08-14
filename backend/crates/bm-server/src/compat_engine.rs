@@ -759,7 +759,7 @@ fn to_loop_tool(def: &ExtensionToolDef) -> bm_loop::model::ToolDef {
 /// 失败不阻断服务（bm 引擎退化为无工具模式，QuickJsToolExecutor 兜底报错）。
 /// B6：`db`/`working_dir` 接入（session 端口/内置工具集），决策记忆在
 /// `~/.boenmind/extension-permissions.json`（app_dir 下，与 pi 上游的
-/// 同名文件并置——上游在 pi_agent_dir 下，两文件独立但格式兼容）。
+/// 同名文件并置——上游在 agents 目录下，两文件独立但格式兼容）。
 pub async fn init_compat(
     config: &bm_core::AppConfig,
     session_streams: Arc<TokioMutex<HashMap<String, mpsc::UnboundedSender<AgentStreamEvent>>>>,

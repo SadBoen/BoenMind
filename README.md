@@ -185,3 +185,12 @@ Docker 部署不参与，用 `docker pull` 更新镜像。
 ## 许可
 
 本项目基于 MIT 许可（vendored asupersync 保留其 MIT 原许可文件）。
+
+## 质量门（pre-push 本地检查）
+
+GitHub 私有仓库 Actions 无免费额度，质量门改为推送前本地执行（测试 + clippy 全绿才放行）：
+
+```bash
+git config core.hooksPath hooks   # 启用一次即可（仓库已带 hooks/pre-push）
+git push --no-verify              # 紧急推送逃生门
+```

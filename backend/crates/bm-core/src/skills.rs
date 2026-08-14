@@ -2,7 +2,7 @@
 //!
 //! 目录约定：
 //! - 管理目录 `~/.boenmind/skills/<id>/`：安装的 skill 源（统一含 SKILL.md）
-//! - pi 目录 `~/.boenmind/pi/skills/<id>/`：启用时同步，pi agent 启动时
+//! - 兼容目录 `~/.boenmind/agents/skills/<id>/`：启用时同步，子代理启动时
 //!   自动收集其中的 SKILL.md 并注入会话（无需改 agent 创建逻辑）
 //!
 //! 数据源：skills.sh 无公开 JSON API，其 sitemap XML 列出全部 skill 地址
@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use crate::config::{AppConfig, pi_agent_dir};
+use crate::config::{AppConfig, agents_dir};
 use crate::error::AppError;
 use crate::http_util::{copy_dir_excluding, http_agent};
 
@@ -81,9 +81,10 @@ pub fn skills_dir() -> PathBuf {
     crate::config::app_dir().join(SKILLS_DIR)
 }
 
-/// pi agent 的 skills 目录：~/.boenmind/pi/skills（pi 启动时自动收集）
-pub fn pi_skills_dir() -> PathBuf {
-    pi_agent_dir().join(SKILLS_DIR)
+/// 兼容层 skills 目录：~/.boenmind/agents/skills（pi 生态兼容副本，
+/// 与主 skills 目录并置，见 sync_skills_to_pi）
+pub fn agent_skills_dir() -> PathBuf {
+    agents_dir().join(SKILLS_DIR)
 }
 
 /// skill id 合法性：仅允许字母数字、中划线、下划线、点（作为目录名安全子集）。
@@ -456,35 +457,35 @@ fn read_meta(dir: &Path) -> Option<SkillMeta> {
 // 启停 / 卸载
 // ---------------------------------------------------------------------------
 
-/// 启用/禁用 skill：更新 config，并把目录同步到/移出 pi 的 skills 目录
-/// （pi 启动时会话只收集 pi/skills 下的 SKILL.md，目录即开关）。
+/// 启用/禁用 skill：更新 config，并把目录同步到/移出兼容 skills 目录
+/// （子代理会话只收集 agents/skills 下的 SKILL.md，目录即开关）。
 pub fn set_skill_enabled(config: &mut AppConfig, id: &str, enabled: bool) -> Result<(), AppError> {
     let src = skills_dir().join(id);
     if !src.join("SKILL.md").is_file() {
         return Err(AppError::invalid(format!("skill {id} 未安装")));
     }
-    let pi_dir = pi_skills_dir().join(id);
+    let dest_dir = agent_skills_dir().join(id);
     if enabled {
-        fs::create_dir_all(&pi_dir)?;
-        copy_dir_excluding(&src, &pi_dir, &[".bm-meta.json"])?;
+        fs::create_dir_all(&dest_dir)?;
+        copy_dir_excluding(&src, &dest_dir, &[".bm-meta.json"])?;
         if !config.enabled_skills.iter().any(|s| s == id) {
             config.enabled_skills.push(id.to_string());
         }
     } else {
-        let _ = fs::remove_dir_all(&pi_dir);
+        let _ = fs::remove_dir_all(&dest_dir);
         config.enabled_skills.retain(|s| s != id);
     }
     crate::config::save(config)?;
     Ok(())
 }
 
-/// 按配置收敛 pi/skills 目录（`put_config` 直接替换 enabled_skills 时调用，
+/// 按配置收敛兼容 skills 目录（`put_config` 直接替换 enabled_skills 时调用，
 /// 与 set_skill_enabled 的启停语义保持一致）：
-/// - 启用且已安装的：确保 pi 目录存在（不存在则复制）
-/// - 未启用/已卸载的：移出 pi 目录
+/// - 启用且已安装的：确保兼容目录存在（不存在则复制）
+/// - 未启用/已卸载的：移出兼容目录
 pub fn sync_skills_to_pi(config: &AppConfig) -> Result<(), AppError> {
-    // 1. 移除 pi 目录中不在启用列表的 skill（含已卸载残留）
-    if let Ok(read) = fs::read_dir(pi_skills_dir()) {
+    // 1. 移除兼容目录中不在启用列表的 skill（含已卸载残留）
+    if let Ok(read) = fs::read_dir(agent_skills_dir()) {
         for entry in read.flatten() {
             let id = entry.file_name().to_string_lossy().to_string();
             if !config.enabled_skills.iter().any(|s| s == &id) {
@@ -492,29 +493,29 @@ pub fn sync_skills_to_pi(config: &AppConfig) -> Result<(), AppError> {
             }
         }
     }
-    // 2. 启用且已安装的补入 pi 目录（幂等：已存在即跳过）
+    // 2. 启用且已安装的补入兼容目录（幂等：已存在即跳过）
     for id in &config.enabled_skills {
         let src = skills_dir().join(id);
         if !src.join("SKILL.md").is_file() {
             continue; // 未安装：配置里的悬空 id 不产生目录
         }
-        let pi_dir = pi_skills_dir().join(id);
-        if pi_dir.exists() {
+        let dest_dir = agent_skills_dir().join(id);
+        if dest_dir.exists() {
             continue;
         }
-        fs::create_dir_all(&pi_dir)?;
-        copy_dir_excluding(&src, &pi_dir, &[".bm-meta.json"])?;
+        fs::create_dir_all(&dest_dir)?;
+        copy_dir_excluding(&src, &dest_dir, &[".bm-meta.json"])?;
     }
     Ok(())
 }
 
-/// 卸载：删除管理目录、pi 目录，并移出启用列表。
+/// 卸载：删除管理目录、兼容目录，并移出启用列表。
 pub fn uninstall_skill(config: &mut AppConfig, id: &str) -> Result<(), AppError> {
     let dir = skills_dir().join(id);
     if dir.exists() {
         fs::remove_dir_all(&dir)?;
     }
-    let _ = fs::remove_dir_all(pi_skills_dir().join(id));
+    let _ = fs::remove_dir_all(agent_skills_dir().join(id));
     config.enabled_skills.retain(|s| s != id);
     crate::config::save(config)?;
     Ok(())
@@ -616,7 +617,7 @@ pub fn random_skills(count: usize) -> Result<Vec<SkillCandidate>, AppError> {
 
 /// 生成启用的 skill 的注入文本（追加到 system prompt）。
 /// 格式与 pi CLI 的 `format_skills_for_prompt` 一致，location 指向
-/// pi/skills 下的 SKILL.md（agent 可用 read 工具加载全文与脚本）。
+/// agents/skills 下的 SKILL.md（agent 可用 read 工具加载全文与脚本）。
 pub fn enabled_skills_prompt(config: &AppConfig) -> String {
     let Ok(infos) = list_skills(config) else {
         return String::new();
@@ -634,7 +635,7 @@ pub fn enabled_skills_prompt(config: &AppConfig) -> String {
         "<available_skills>".to_string(),
     ];
     for skill in enabled {
-        let location = pi_skills_dir().join(&skill.id).join("SKILL.md");
+        let location = agent_skills_dir().join(&skill.id).join("SKILL.md");
         lines.push("  <skill>".to_string());
         lines.push(format!("    <name>{}</name>", escape_xml(&skill.name)));
         lines.push(format!(
@@ -671,7 +672,7 @@ mod tests {
     #[test]
     fn skills_dir_under_app_dir() {
         assert!(skills_dir().ends_with(".boenmind/skills"));
-        assert!(pi_skills_dir().ends_with(".boenmind/pi/skills"));
+        assert!(agent_skills_dir().ends_with(".boenmind/agents/skills"));
     }
 
     #[test]

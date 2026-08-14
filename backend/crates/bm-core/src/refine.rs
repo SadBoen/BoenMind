@@ -120,7 +120,7 @@ fn sync_pi_if_enabled(config: &AppConfig, skill_id: &str) -> Result<(), AppError
         return Ok(());
     }
     let src = crate::skills::skills_dir().join(skill_id).join("SKILL.md");
-    let dest = crate::skills::pi_skills_dir().join(skill_id).join("SKILL.md");
+    let dest = crate::skills::agent_skills_dir().join(skill_id).join("SKILL.md");
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| AppError::internal(format!("创建 pi skill 目录失败: {e}")))?;

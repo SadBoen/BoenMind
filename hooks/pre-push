@@ -1,0 +1,35 @@
+#!/bin/sh
+# BoenMind pre-push 质量门（2026-08-15 用户拍板，方案 A）
+#
+# 背景：GitHub 私有仓库 Actions 无免费额度（账户 billing 未处理），CI 全瘫。
+# 质量门改为推送前本地执行：测试 + clippy 全绿才允许 git push。
+# 逃生门：git push --no-verify（标准 git 机制，紧急推送可用）。
+#
+# 覆盖范围与 CI 质量门对齐（本地增量编译，Windows 主战场反而更贴生产环境）：
+#   - bm-server + bm-core 全量测试
+#   - bm-compat 5 集成套件（lib cfg(test) 缺上游 dev-deps，须 --test 方式）
+#   - clippy 存量两档（--no-deps：只查本 crate，依赖警告不误报）
+#
+# 用法：仓库根 git config core.hooksPath hooks 后自动生效。
+# 注意：不经过管道（管道会吞退出码——§〇·五 38④ 教训），set -e 直接中断。
+
+set -e
+ROOT="$(git rev-parse --show-toplevel)"
+echo "[pre-push] BoenMind 质量门开始（测试 + clippy，全绿才推送）..."
+
+cd "$ROOT/backend"
+
+# debug 产物防 2GB 坑（Windows PE 加载器限制）
+export CARGO_PROFILE_DEV_DEBUG=0
+
+echo "[pre-push] ① bm-server + bm-core 测试..."
+cargo test -p bm-server -p bm-core -q
+
+echo "[pre-push] ② bm-compat 5 集成套件..."
+cargo test -p bm-compat --test host --test load --test execute --test events --test session -q
+
+echo "[pre-push] ③ clippy 存量两档（--no-deps -D warnings）..."
+cargo clippy -p bm-core --lib --no-deps -q -- -D warnings
+cargo clippy -p bm-server --lib --no-deps -q -- -D warnings
+
+echo "[pre-push] ✅ 质量门全绿，放行推送"

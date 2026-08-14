@@ -17,8 +17,8 @@ pub const APP_DIR: &str = ".boenmind";
 pub const CONFIG_FILE: &str = "config.toml";
 /// 默认工作文件夹名（位于用户主目录下）
 pub const DEFAULT_WORKSPACE_DIR: &str = "BoenMind";
-/// pi agent 的全局目录（`~/.boenmind/pi`，agents 角色 + skills 兼容目录）
-pub const PI_AGENT_DIR: &str = "pi";
+/// 子代理/兼容目录（`~/.boenmind/agents`，子代理角色 + 兼容 skills）
+pub const AGENTS_DIR: &str = "agents";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -254,16 +254,29 @@ pub fn config_path() -> PathBuf {
     app_dir().join(CONFIG_FILE)
 }
 
-pub fn pi_agent_dir() -> PathBuf {
-    app_dir().join(PI_AGENT_DIR)
+pub fn agents_dir() -> PathBuf {
+    app_dir().join(AGENTS_DIR)
 }
 
-/// 预置子代理角色定义（`<pi_agent_dir>/agents/*.md`，上游 subagent 工具的
+/// 一次性迁移：pi 引擎时代命名 `~/.boenmind/pi` → `~/.boenmind/agents`
+/// （2026-08-15 用户拍板脱钩 pi 语义）。旧目录存在且新目录不存在时整体
+/// rename（用户自定义角色/技能随之搬迁）；已迁移/新安装无操作。
+pub fn migrate_legacy_agent_dir() -> std::io::Result<()> {
+    let old = app_dir().join("pi");
+    let new = agents_dir();
+    if old.exists() && !new.exists() {
+        fs::rename(&old, &new)?;
+    }
+    Ok(())
+}
+
+/// 预置子代理角色定义（`<agents_dir>/agents/*.md`，上游 subagent 工具的
 /// 角色来源）。仅创建目录与首个 `default.md`，已存在/用户自定义的绝不覆盖。
 pub fn ensure_builtin_agents() -> Result<(), std::io::Error> {
     use std::io::Write;
 
-    let dir = pi_agent_dir().join("agents");
+    migrate_legacy_agent_dir()?;
+    let dir = agents_dir().join("agents");
     fs::create_dir_all(&dir)?;
     let default_path = dir.join("default.md");
     if default_path.exists() {

@@ -82,7 +82,7 @@ pub async fn run(input: Value, working_dir: &Path) -> ToolOutcome {
         Ok(m) => m,
         Err(e) => return err_outcome(e),
     };
-    let agents = match discover_agents(&bm_core::config::pi_agent_dir(), working_dir, request.scope) {
+    let agents = match discover_agents(&bm_core::config::agents_dir(), working_dir, request.scope) {
         Ok(a) => Arc::new(a),
         Err(e) => return err_outcome(e),
     };
@@ -439,7 +439,7 @@ async fn run_one(
         .unwrap_or_else(|| PathBuf::from("<current executable unavailable>"));
     result.binary = binary.clone();
 
-    let global_dir = bm_core::config::pi_agent_dir();
+    let global_dir = bm_core::config::agents_dir();
     let mut command = Command::new(&binary);
     command
         .args(&args)
