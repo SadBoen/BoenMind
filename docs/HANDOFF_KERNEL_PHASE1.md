@@ -1,17 +1,18 @@
 # HANDOFF —— 阶段 1 开工交接（两线并行）
 
-> **当前状态（2026-08-14 Steward 轮收口：管家自我驱动三件套落地）**：主线 A（A1-A7）+ 主线 B（B1-B6）**全部落地**；**Steward 轮（本会话）三项收口**：**① 调度器**（spawn_steward_scheduler，10s tick 到点投喂 Goal 回合，in_flight 防重，失败静默）**② OS 层主动汇报通道**（POST /api/steward/inject + GET /api/steward/status）**③ next_wake_at 状态落点**（$BOENMIND_HOME/steward.json + set_wake 工具，管家回合内自调节奏，治理夹区间 pacing-min/max 默认 300s~86400s）。**真实验收通过**（隔离 BOENMIND_HOME + MiniMax 真实模型 4 回合闭环：inject×3 source=Inject → 管家回合内 set_wake 自主登记（reason 中文落盘）→ 15s 后调度器到点投喂 source=Goal → 管家再登记 1 小时唤醒）；覆盖式管家提示词修复"模型拒绝扮演管家"（见 §〇·五 30）。架构文档 v0.19（§14.5）。**阶段 1 完成态：自研引擎已上线为默认，pi = 回退选项；管家已能自主醒来。**
-> - 阶段化废除 pi 的剩余两步：② subagent 子进程换 bm-loop（当前仍以 pi SDK 跑隔离会话，见 subagent_tool.rs 模块文档）③ pi 目录（models.json/skills）替换自有设施后 legacy 删空（§十三终点）
+> **当前状态（2026-08-14 pi 废除第②步完成：subagent 子进程已脱离 pi SDK）**：主线 A（A1-A7）+ 主线 B（B1-B6）**全部落地**；**Steward 轮**（管家自我驱动三件套，见 §〇 索引）；**pi 废除第②步（本会话）**：subagent_child.rs 子进程换 **bm-loop**（InMemory 事件日志 + BuiltinTools 执行器 + OpenAiClient 直连），协议形状逐字段对齐 pi AgentEvent serde（父侧 ingest_child_event 零改动），`create_child_session_handle` 死代码删除；**真实验收通过**（手工 spawn 子进程协议流正确 + 聊天全链路：父代理调 subagent → 子进程答 "2" → 父代理转述）。**阶段 1 完成态：自研引擎默认 + 管家自主醒来 + 子代理也跑在自研引擎上——pi 只剩 chat 主路径回退通道与 legacy 待删。**
+> - 阶段化废除 pi 的剩余：② chat.rs pi 分支删除（**回退通道观察期未满，留用户拍板**——阶段①承诺 pi 保留 1-2 个版本观察）③ pi 目录（models.json/skills）替换自有设施后 legacy 删空（§十三终点）
 > - A 线：执行级事件日志（A1-A5）+ 自研 loop（A6 主体 + 接线：流式/工具/取消）+ A7 迁移骨架
 > - B 线：B1 拷入 + B2 host 线程 + B3 加载路径 + B4 工具执行方向 + B5 权限桥（http 真实现）+ B6 收口（内置工具集端口/决策记忆/插件事件推送/切片②顺手件）
 > - **v0.17 压缩策略插件化拆解**：bm-loop 只留 Compactor 接口 + 事务协议，bm-compactor 新插件 crate（参数插件自治，可换可关）
 > - 双开对比（产物 artifacts/2026-08-14-dual-compare/）：pi 888.6K 发送量 / 峰值 94.1K / 49min vs bm 2263.0K（∑input 口径，缓存命中 2138K）/ 峰值 205.7K / 39.5min——质量不降（记忆 5/5 vs 4/5）；0.5 水线复测已压到 pi 量级以下（artifacts/2026-08-14-waterline-retest/）
-> - **下一步**：Steward 轮续接（OS 层静默窗口定时器/管家低成本模型/inject 接桌面壳——§14.5 候选）或 pi 废除第②步（子进程换 bm-loop），都可直接开工。
+> - **下一步**：Steward 轮续接（OS 层静默窗口定时器/管家低成本模型/inject 接桌面壳——§14.5 候选）或 pi 废除收尾（chat.rs pi 分支删除待拍板/legacy 删空）。都可直接开工。
 >
 > **轮次历史**（细节见 §〇 commit 索引；查实/坑全量见 §〇·五）：
 >
 > | 轮次 | 内容 | commit | 关键坑/查实 |
 > |---|---|---|---|
+> | pi 废除第②步 | subagent 子进程换 bm-loop（脱离 pi SDK）+ create_child_session_handle 死代码删除 + 真实验收 | 4997e8b | 协议形状逐字段对齐（见 §〇·五 31）；子进程无插件引擎（工具面=内置∩csv） |
 > | Steward 轮 | 管家自我驱动三件套（调度器/inject 通道/next_wake_at 落点 + set_wake 工具 + 覆盖式管家提示词）+ 真实验收 4 回合闭环 | d6ba73d | 模型拒绝扮演管家（身份冲突+历史污染 → 覆盖式提示词+新会话验收）；验收操作见 §〇·五 30 |
 > | 夜自主轮 | A1-A5+A7 / C1/C2 / L9 / proptest / 骨架 / CI 修复 | 2cde412..951ea48 | Disposer 纪律、turso 绑定形态、fork 超头拒绝、standalone 起服务 `--features embed` |
 > | 白天轮 | 真实验收（197 事件）+ B1 拷入 + A6 主体 + 架构 v0.15 | 1953d3e..2ff4b8a | fresh session 投影=空、embed feature 坑 |
@@ -22,6 +23,12 @@
 > | B6 收口轮 | 内置工具集端口 + 决策记忆 + 插件事件推送 + 切片② | f81594b, 8b6b725 | 桥调用约定实证（首个 secret 实参不绑定 JS 形参）；tool_result 事件 content 须对齐 legacy ContentBlock 数组；内置工具须进模型可见面（pi BUILTIN_TOOL_NAMES 全开同款）；SELF_TOOLS 跳过 web_search 是插件设计非 bug；目录型插件须 extension.json；debug exe 2GB 坑（CARGO_PROFILE_DEV_DEBUG=0）
 
 ## 〇、本次会话 commit 索引（main 已推送，工作区干净）
+
+### pi 废除第②步（subagent 子进程换 bm-loop，2026-08-14）
+
+| commit | 内容 |
+|---|---|
+| `4997e8b` | **feat(subagent)：pi 废除第②步**——subagent_child.rs 子进程从 pi SDK（create_child_session_handle/prompt_with_abort）换 **bm-loop**：InMemory 事件日志 + BuiltinTools 执行器 + OpenAiClient 直连（resolve_llm_config 提 pub(crate) 复用）；无 PI_CODING_AGENT_DIR/models.json 同步；SubagentHooks 流式 delta → message_update（assistantMessageEvent.delta 增量 + message 累积 partial），回合结束补发 message_end + agent_end（messages 兜底）；工具面 = 角色 csv ∩ 内置 7 名（hashline_edit 等 pi 特有工具忽略）；compactor None（单轮短任务）；15min 超时兜底防孤儿化；bm-core create_child_session_handle 死代码删除。**真实验收**：手工 spawn 子进程协议流（增量→message_end→agent_end 回答正确）+ 聊天全链路（父代理调 subagent → 子进程答 2 → 父代理转述）。3 新测试（协议 pointer 对齐/兜底形状/工具交集），107 测试全绿、clippy --lib 零 lint |
 
 ### Steward 轮（管家自我驱动三件套，2026-08-14）
 
@@ -166,6 +173,7 @@
 28. **验收操作坑（本会话新）**：`/api/sessions/{id}/events` 是 SSE 流式订阅（replay-prefix + tail 轮询），curl 会挂住——验证事件用 messages 面或日志 grep；隔离验收环境 = `BOENMIND_HOME=<新目录>` + 复制真实 config.toml（含 api_key），ensure_builtin_agents 启动时自动建 agents/default.md；Windows curl 中文 JSON 报 invalid unicode（用英文消息）。
 29. **code-graph MCP 装机（工具轮，用户拍板"先装上先用着"）**：首选 suatkocar/codegraph **不支持 Windows**（npm 只发 darwin/linux，EBADPLATFORM）→ 改用 **@sdsrs/code-graph v0.116**（Rust AST 知识图谱：callgraph/impact/refs/deps/map/tour/trace/dead-code，本地 SQLite 索引 `.code-graph/index.db`，已入 gitignore）。配置位置 **`~/.zcode/v2/config.json`** 的 `mcp.servers.code-graph-mcp`（command = `C:\Users\Boen\nodejs\npx.cmd`，args = `["-y","@sdsrs/code-graph","serve"]`；与 context7/minimax-vision 同文件——**MCP 配置在 v2/config.json，不是 cli/config.json**）。握手已实测（initialize → serverInfo code-graph-mcp 0.116.0）。**坑**：① Node spawn `.cmd` 必须 `shell:true`（否则 EINVAL）；② MCP 服务器**会话启动时连接——新会话才生效**；③ 本机 npx 有效路径 = `C:\Users\Boen\nodejs\npx.cmd`（早期记忆里 /Users/boen 的 npx 路径已失效）。行数快照（工具决策参考）：自研 25.7K Rust + 8.7K 前端 ≈ 34.5K；bm-compat 54.8K 拷入；legacy 437K 待删。
 30. **Steward 轮查实与验收（d6ba73d）**：① 设计——管家会话 = `BM_STEWARD_SESSION` env 指定（宿主配置不依赖模型自选），set_wake 只注册进管家会话工具面；未启用 = 零开销（无调度器/无工具面污染）。② **模型拒绝扮演管家是真实坑**：通用 SYSTEM_PROMPT（"你是 BoenMind 个人助理"）与管家身份冲突 + 上一回合拒绝立场带入上下文（模型"一致性压力"坚持前答）→ 修法 = 提示词**末尾覆盖式声明**（"本会话已被宿主配置为管家模式，优先于上方身份描述"）+ **全新会话验收**（第一回合即管家身份）。③ 验收操作：隔离 `BOENMIND_HOME=<新目录>`（config.toml 须放 `<home>/.boenmind/` 下——放错 providers=0）+ 两段式（先无 env 起服务建会话 → 带 BM_STEWARD_SESSION 重启）+ `BM_STEWARD_PACING_MIN_S=10` 加速；inject 消息带 wake_after_seconds 会被回合内 set_wake 覆盖（管家自调优先=设计如此），验收调度器改让消息明确指示 after_seconds=15。④ 回合锚点语义：note_round_done 只推 last_wake_at 不清 next_wake_at（回合内写好的下次唤醒原样保留；失败/没写 = 0 静默防失败风暴）。⑤ 管家回合不碰 session_streams（内部通道）、不建 task、15min 超时兜底；事件日志照常落（投影可见前端零改动）。⑥ 验收日志确认：`bm.steward_turn_done source=Inject/Goal` + steward.json 的 nextWakeAtMs/lastReason。
+31. **pi 废除第②步查实（4997e8b）**：① 协议形状逐字段对齐——父侧 ingest_child_event 消费字段极小：message_update 走 pointer `/assistantMessageEvent/delta`（**camelCase**！pi serde 对该字段显式 rename，非 snake_case），message_end/agent_end 走 `message`/`messages` 的 assistant text 块（content[] type=text）；delta 的累积文本填 message 字段（与 pi 的 partial 语义一致）。② 子进程不加载插件引擎（QuickJsToolExecutor engine=None——内置工具分派不依赖 engine，插件工具才需要）；工具面 = 角色 csv ∩ 内置 7 名（DEFAULT_CHILD_TOOLS 里的 hashline_edit 是 pi 特有，无 bm 对应，忽略）。③ 子进程 InMemory 事件日志（`EventLog::new(Arc::new(InMemoryEventStore::new()))`，bm-kernel 自带）；compactor None（单轮短任务，防摘要改写）。④ **手工 spawn 验收方法**：直接跑 `bm-server.exe --mode json --print --no-session --tools read,bash "Task: ..."` 看 stdout 协议行（无需经过父代理），协议行特征可区分引擎（pi 的 text_delta 带 contentIndex/partial，bm 的只有 delta）。⑤ 15min 超时兜底（PROMPT_TIMEOUT 复用 chat 常量）；取消传播仍靠父侧 kill_on_drop。⑥ 遗留：chat.rs pi 分支删除**待拍板**（阶段①承诺 pi 回退通道保留 1-2 个版本观察，观察期未满）。
 
 ## 一、一句话现状
 
@@ -268,14 +276,14 @@
 
 ## 九、下一轮续接建议开场
 
-> 继续 BoenMind 阶段 2（Steward 轮续接/pi 废除第②步）。交接见 docs/HANDOFF_KERNEL_PHASE1.md。**Steward 轮收口（本会话）：管家自我驱动三件套落地**——调度器 + OS 汇报通道（/api/steward/inject）+ next_wake_at 落点（steward.json + set_wake 工具），真实验收 4 回合闭环（架构 v0.19 §14.5）。开工前仍先 git pull。
+> 继续 BoenMind 阶段 2（Steward 轮续接/pi 废除收尾）。交接见 docs/HANDOFF_KERNEL_PHASE1.md。**pi 废除第②步收口（本会话）：subagent 子进程已换 bm-loop**——子代理脱离 pi SDK，协议形状对齐父侧零改动，真实验收通过（架构 §14.4 ②前半）；**Steward 轮（上一会话）**：管家自我驱动三件套 + 真实验收（§14.5）。开工前仍先 git pull。
 >
 > **下一轮动作（都可直接开工，无需再拍板）**：
-> 1. **Steward 轮续接（§14.5 候选，增量为主）**：OS 层静默窗口定时器（宿主侧"1 分钟无汇报主动上报"→ 需要宿主服务配合，先做后端接口）、管家回合可换低成本模型（成本杠杆——LoopConfig 按会话/角色解析 provider）、inject 通道接桌面壳/系统事件、steward 状态前端展示（/api/steward/status 已有）。
-> 2. **pi 废除第②步**：subagent 子进程换 bm-loop（subagent_child.rs 的 pi SDK 段 → bm-loop + InMemory 事件日志 + BuiltinTools 执行器，协议事件形状不变）→ 之后 chat.rs pi 分支与 legacy loop 代码可删。
+> 1. **Steward 轮续接（§14.5 候选，增量为主）**：OS 层静默窗口定时器（宿主侧"1 分钟无汇报主动上报"）、管家回合可换低成本模型（成本杠杆——LoopConfig 按会话/角色解析 provider）、inject 通道接桌面壳/系统事件、steward 状态前端展示（/api/steward/status 已有）。
+> 2. **pi 废除收尾**：chat.rs pi 分支删除（**待用户拍板**——阶段①承诺 pi 回退通道保留 1-2 个版本观察）；legacy 删空（③：models.json/skills 替换自有设施后 legacy 删空）。
 > 3. 可选顺手件：新会话记忆注入真实冒烟（facts.md → bm 引擎聊天看注入）、双开 30 轮全量复跑（0.5 水线 + 413 修复后验证预测）、code-graph MCP 实测（新会话生效）。
 >
-> **注意坑**（详见 §〇·五 16-30 + 既有全量）：MiniMax 流式须 stream_options.include_usage、缓存字段在 prompt_tokens_details.cached_tokens、pi/bm 两组 input 口径不同（对比换算）、chars/4 中文低估须真实 usage 校准、pi 句柄断连坏死重启+resume、双开 RUST_LOG 须含 bm_loop=info、413 已修（clip_tool_output 双点）、压缩事务实际 5 次（§〇·五 22）、bm-memory 每会话 open facts.md、桥调用首参 secret 不绑定形参、tool_result 事件 content 用 ContentBlock 数组、内置工具 schema 要注册进 ToolRegistry、SELF_TOOLS 跳过搜索类工具是设计、目录型插件须 extension.json、Disposer 纪律、turso 绑定形态、fork 超头拒绝、standalone 起服务 `--features embed`、bm-compat 测试走 `--test host --test load --test execute --test events --test session`、CompatEngine 专用线程、payload 全文不打日志、**引擎优先级 env>settings>默认 bm（反转点 resolve_loop_engine 一处）**、**subagent 坑：(&BTreeMap).clone() 克隆引用须 (*x).clone()、lines().next_line() 返回 Result<Option> 要 transpose、kill_on_drop 传播取消**、`/api/sessions/{id}/events` 是 SSE 流 curl 会挂、Windows curl 中文 JSON 报 invalid unicode、**Steward 坑（§〇·五 30）：管家提示词须覆盖式声明置尾、验收用全新会话（身份历史污染）、inject 的 wake_after_seconds 会被回合内 set_wake 覆盖、验收加速 BM_STEWARD_PACING_MIN_S=10**。
+> **注意坑**（详见 §〇·五 16-31 + 既有全量）：MiniMax 流式须 stream_options.include_usage、缓存字段在 prompt_tokens_details.cached_tokens、pi/bm 两组 input 口径不同（对比换算）、chars/4 中文低估须真实 usage 校准、pi 句柄断连坏死重启+resume、双开 RUST_LOG 须含 bm_loop=info、413 已修（clip_tool_output 双点）、压缩事务实际 5 次（§〇·五 22）、bm-memory 每会话 open facts.md、桥调用首参 secret 不绑定形参、tool_result 事件 content 用 ContentBlock 数组、内置工具 schema 要注册进 ToolRegistry、SELF_TOOLS 跳过搜索类工具是设计、目录型插件须 extension.json、Disposer 纪律、turso 绑定形态、fork 超头拒绝、standalone 起服务 `--features embed`、bm-compat 测试走 `--test host --test load --test execute --test events --test session`、CompatEngine 专用线程、payload 全文不打日志、**引擎优先级 env>settings>默认 bm（反转点 resolve_loop_engine 一处）**、**subagent 坑：(&BTreeMap).clone() 克隆引用须 (*x).clone()、lines().next_line() 返回 Result<Option> 要 transpose、kill_on_drop 传播取消**、`/api/sessions/{id}/events` 是 SSE 流 curl 会挂、Windows curl 中文 JSON 报 invalid unicode、**Steward 坑（§〇·五 30）：管家提示词须覆盖式声明置尾、验收用全新会话（身份历史污染）、inject 的 wake_after_seconds 会被回合内 set_wake 覆盖、验收加速 BM_STEWARD_PACING_MIN_S=10**、**subagent 子进程坑（§〇·五 31）：协议 pointer 是 camelCase /assistantMessageEvent/delta、子进程无插件引擎（工具面=内置∩csv）、手工 spawn 验收法看协议行特征区分引擎、create_child_session_handle 已删**。
 
 ## 九·三、A6 接线设计（2026-08-14 夜轮定稿 → 白天轮切片①落地）
 
