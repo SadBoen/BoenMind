@@ -1,12 +1,25 @@
 # HANDOFF —— 阶段 1 开工交接（两线并行）
 
-> **2026-08-14 夜自主运行轮完成**（用户睡觉，ZCode 自主推进 4 小时）：主线 A 除 A6 主体外全部落地（A1-A5+A7），回收站 C1/C2 完成，L9 架构依赖测试落地，proptest 承诺兑现，B1 前置（骨架+依赖图谱）就位，A6 骨架 crate（bm-loop）建立。**全部 25 测试套件全绿 + 两档 clippy 门禁清零 + CI 恢复绿灯。**
-> 下一轮：真实验收（用户配合）→ B1 拷入执行 → A6 主体（最优先顺序见 §九·二）。
+> **2026-08-14 白天轮完成（真实验收 + B1 + A6 主体）**：① 真实验收**浏览器实测通过**（两轮聊天含 web_search/web_fetch 双工具链，event_log 197 事件真序闭环、turn/tool 全配对、branch_heads 同步）；② **B1 拷入执行完毕**（6 文件 45K 行逐字节一致 + shim 零行为 stub，standalone check 零错误，未入 workspace members）；③ **A6 主体落地**（bm-loop：llm.rs OpenAI 兼容流式 client + engine.rs run 循环含屏障冲刷 + compact.rs 双触发压缩引擎 + L9 守卫，25 测试全绿 + clippy 清零）。**顺手修两个真 bug**：全新会话投影报 unknown branch（内核读路径改空历史语义）+ standalone 起服务无前端（embed feature 坑）。**架构 v0.15**：中间抽象层定位 + 分发形态纪律（用户定调）。
+> 下一轮：**B2 host 线程开工**（B1 已就绪）→ **A6 接线**（bm-server 开关 + ToolExecutor 接 pi 插件工具）→ pi/新 loop 并行双开对比。CI 拆并行 job 用户拍板"下次"。
+
+> 2026-08-14 夜自主运行轮完成（用户睡觉，ZCode 自主推进 4 小时）：主线 A 除 A6 主体外全部落地（A1-A5+A7），回收站 C1/C2 完成，L9 架构依赖测试落地，proptest 承诺兑现，B1 前置（骨架+依赖图谱）就位，A6 骨架 crate（bm-loop）建立。**全部 25 测试套件全绿 + 两档 clippy 门禁清零 + CI 恢复绿灯。**
 
 > 2026-08-14 夜交接（最终版，已推送）。**状态：10 拍板点已全部拍板；阶段 1 前置小修全部落地（181 测试全绿）；重构决策已执行（legacy 旧代码文件夹）；LoopX 研读吸收完成（L1-L17）；两大主线任务分解完毕，下一轮直接开工。**
 > 交接原因：用户开新对话续接。
 
 ## 〇、本次会话 commit 索引（main 已推送，工作区干净）
+
+### 白天轮（真实验收 + B1 + A6 主体 + 架构 v0.15）
+
+| commit | 内容 |
+|---|---|
+| `2ff4b8a` | **B1 拷入执行**：6 文件 45K 行逐字节一致拷入 bm-compat + shim（extensions 1.2K 行符号提取零 stub / tools 进程隔离四符号 / provider_metadata 全量表 / http/crypto/buffer/s3_fifo 整文件）+ 精简 build.rs + 4 源资产 + wasm-host 留口；standalone check 零错误；.gitignore 排除 standalone target/lock |
+| `fb21d0c` | **A6 主体**：bm-loop run 循环（UserMessage→header+prompt_hash→步循环→流→工具→软触发→TurnEnd）+ OpenAI 兼容流式 client + 压缩双触发引擎 + ToolGate 拒绝语义 + EventFlusher 屏障冲刷；**内核修**：fresh session 投影 = 空而非 unknown branch；bm-protocol 根导出 core_type_name；L9 守卫 tests/architecture.rs |
+| `db1ea7d` | **真实验收通过**：event_log 197 事件两回合真序闭环（浏览器实测）；实测观察 chunk 写放大 ≈ 每 chunk 一批事务（优化留 A6 切换后）；§八·1 补 embed feature 坑 |
+| `1953d3e` | **架构 v0.15**：铁律 1 扩写（中间抽象层三层图式 + 分发形态纪律：便携版/Docker = 初级阶段产物）；§7.2 分发形态定位段；交接完成度表收口（下一轮 = B2 + A6 接线） |
+
+### 夜轮（A1-A5+A7 / C1+C2 / L9 / proptest / 骨架 / CI 修复）
 
 | commit | 内容 |
 |---|---|
@@ -144,9 +157,11 @@
 
 ## 九、下一轮续接建议开场
 
-> 继续 BoenMind 阶段 1。交接见 docs/HANDOFF_KERNEL_PHASE1.md。**本轮已落地**（commit 2cde412..e80582c）：主线 A 除 A6 主体外全完成（A1 真序事件+投影归并/A2 request-header+prompt_hash/A3 fork 折叠/A4 Interrupted 补写/A5 订阅+SSE/A7 迁移链骨架）、回收站 C1+C2、L9 架构依赖测试、proptest、B1 前置（bm-compat 骨架+依赖图谱）、A6 骨架（bm-loop crate）。25 测试套件全绿 + 双档 clippy 清零。
+> 继续 BoenMind 阶段 1。交接见 docs/HANDOFF_KERNEL_PHASE1.md。**白天轮已落地**（commit 2ff4b8a..1953d3e）：① 真实验收**浏览器实测通过**（event_log 197 事件真序闭环）；② B1 拷入执行完毕（6 文件 45K 行 + shim，standalone check 零错误，未入 workspace）；③ A6 主体落地（bm-loop 25 测试全绿 + clippy 清零 + L9 守卫）；顺手修 fresh-session 投影 bug + embed 坑；架构 v0.15（中间抽象层 + 分发形态纪律）。
 >
-> **下一轮动手顺序**：① 真实验收（用户配合：release 起服务聊几轮查 event_log 表）；② B1 拷入执行（照 crates/bm-compat/DEPENDENCIES.md 的拷入策略 + shim 最小提取，约 45K 行机械工作）；③ A6 主体（bm-loop 已有骨架：run 循环/LLM client/压缩双触发，B4 的工具注册接口 = ToolRegistry 已定稿）。注意 Disposer 纪律、turso 绑定形态、fork 超头拒绝（main 须先有事件）、跨分支投影逐段折叠四坑（详见 §〇·五）。
+> **下一轮动手顺序**：① **B2 host 线程**（~300 行：`drain_hostcall_requests → HostcallKind 分发 → complete_hostcalls_batch → tick`，落点 bm-compat，B1 的 shim 已就位；完成后 bm-compat 入 workspace members + CI 门禁）；② **B3 加载路径**（eval_file + get_registered_tools + ExtensionBody 协议注册）；③ **A6 接线**（bm-server 开关：pi loop 与新 loop 双开；ToolExecutor 先接 pi 插件工具分发——B4 的注册表汇合点 = ToolRegistry 已定稿）；④ 并行双开对比（同压缩 A/B 方法论）后拍切换时机。CI 拆并行 job 待办仍在（§八·6）。
+>
+> **注意四坑**（详见 §〇·五）：Disposer 纪律、turso 绑定形态（Option 长度不混用）、fork 超头拒绝（main 须先有事件）、跨分支投影逐段折叠；**新增两坑**：standalone 起服务必须 `--features embed`（§八·1）、loop 读回自己写入前必须屏障冲刷（bm-loop EventFlusher::flush 模式，bm-server 接线时沿用）。
 
 ## 九·二、本轮完成度表
 
