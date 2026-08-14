@@ -21,9 +21,13 @@ BoenMind 自研 loop（A6）落位后，pi 引擎整体退场；本 crate 是过
 
 - [x] 依赖图谱分析完成（DEPENDENCIES.md：6 文件 → 仅 8 个 crate 内模块，
       其中 scheduler/queue/lane 几乎自包含）
-- [ ] 6 文件实际拷入（45K 行机械工作 + shim 适配，下一轮）
-- [ ] 5 符号提取（ExtensionPolicyMode/ExtensionPolicy 在 extensions.rs 巨文件中，
-      需抽最小类型层）
+- [x] 6 文件实际拷入（45,122 行逐字节一致，diff 验证通过）
+- [x] 5 符号提取（ExtensionPolicyMode/ExtensionPolicy/PolicyProfile 自
+      extensions.rs 提取最小类型层，连同 serde 形状与传递闭包；HostcallKind/
+      PiJsRuntime 随 extensions_js.rs 自带）
+- [x] shim 层就位（extensions/tools/provider_metadata/provider 提取 + 
+      http_shim/crypto_shim/buffer_shim/hostcall_s3_fifo 整文件照抄）
+- [x] build.rs 精简版（仅 gzip 资产生成）+ 4 资产拷入 + lib.rs/Cargo.toml
 - [ ] B2 host 线程 / B3 加载路径
 - [ ] 本 crate 加入 workspace members + CI 门禁
 
@@ -33,3 +37,31 @@ BoenMind 自研 loop（A6）落位后，pi 引擎整体退场；本 crate 是过
 1. 对 6 文件逐文件 diff，把上游变更同步到本 crate；
 2. 本地补丁（P 编号）在两者保持一致；
 3. 台账更新 backend/legacy/UPSTREAM_PATCHES.md「bm-compat 同步」区。
+
+### B1 偏离 / 补丁登记（与 legacy 逐字节 diff 的例外）
+
+| 项 | 处理 | 说明 |
+|---|---|---|
+| 6 拷贝文件 | **零偏离**，diff 逐字节一致 | extensions_js/scheduler/hostcall_queue/hostcall_io_uring_lane/embedded_assets/error |
+| 整文件 shim | **零偏离**，diff 逐字节一致 | http_shim/crypto_shim/buffer_shim/hostcall_s3_fifo |
+| extensions.rs shim | 提取（新文件，非整文件拷贝） | 从 legacy extensions.rs 按行段 verbatim 提取：193-298（类型）、901-906+910-1054（exec mediation 调用面）、1364-1472（canonicalize）、1539-1625（hash）、1685-1699（envelope）、1941-2081（PolicyProfile/Override/Mode/Policy）、2384-2447（QuotaConfig）；exec_mediation.rs 整文件以 `mod exec_mediation { … }` 内联，其 `use super::{…}` 与 `pub(super)` 原样保留 |
+| tools.rs shim | 提取（新文件） | 9720-9798 + 9800-9927 行段 verbatim（kill_process_group_tree 传递闭包 + SIGPIPE trampoline + isolate） |
+| provider_metadata.rs shim | 提取（新文件） | 1-1666 行段 verbatim（类型 + 全量 PROVIDER_METADATA 表 + 两个访问器）；上游 `use crate::provider::InputType;` 经本地 `src/provider.rs` shim 解析（InputType 枚举自 provider.rs:194-202 verbatim 提取） |
+| build.rs | 精简 | 只保留 gzip 资产生成；vergen-gix 与 benchmark fingerprint 删除 |
+| Cargo.toml | standalone | 本 crate 位于 backend/ 子树内，cargo 默认会向上找 backend/Cargo.toml workspace；为避免动 backend/Cargo.toml 的 members/exclude，本 manifest 内加了空的 `[workspace]` 表使自己成为独立 workspace 根（target/ 与 Cargo.lock 均落在 crates/bm-compat/ 下） |
+| embedded_assets.rs 421-445 | **不改** | `include_bytes!("../…")` 相对路径全在 `#[cfg(test)]`（312 行起）内，默认 cargo check 不编译；4 个源资产已按 legacy 相对路径拷入 crate 根，未来开 `--tests` 时路径可直接解析 |
+
+## 待办（TODO）
+
+1. **测试目标未编译**：验收只跑默认 `cargo check`（无 `--tests`）。拷贝文件内大量
+   `mod tests` 是后续议题；其中 embedded_assets.rs 测试用 `crc32c` 需要补
+   dev-dependency，且引用 `../docs/evidence/…` 等 legacy 外资产。
+2. **wasm-host feature**：extensions_js.rs 对 `crate::pi_wasm` 的引用全部在
+   `#[cfg(feature = "wasm-host")]` 内，lib.rs 以同名 cfg 声明 `mod pi_wasm`。
+   启用前需拷入 pi_wasm.rs + wasmtime 依赖（已预置 optional dep）。
+3. **shim 与上游同步**：extensions/tools/provider_metadata shim 的行号头注释
+   基于当前 vendored 基线；上游变更后按头注释行号重提取。
+4. **B2/B3**：drain_hostcall_requests / eval_file / ExtensionBody 协议注册。
+5. **加入 workspace**：全部编译过 + B2/B3 完成后，在 backend/Cargo.toml 登记
+   members（当前因 backend 有 release 构建在跑而禁止触碰）。
+

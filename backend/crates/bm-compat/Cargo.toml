@@ -3,9 +3,61 @@ name = "bm-compat"
 version = "0.1.0"
 edition = "2024"
 description = "pi-compat：vendored QuickJS 引擎作库（pi.dev 插件当日兼容的兼容层，主线 B）"
-# 注意：本 crate 暂未加入 workspace members——拷入 6 文件（45K 行）与
-# shim 适配完成、全量编译过之前不拖累 workspace 构建。集成步骤见
-# README.md（B1-B3 拆解）。依赖清单随拷入进度补齐。
+# 注意：本 crate 暂未加入 workspace members——B1 拷入 6 文件（45K 行）与 shim
+# 适配完成、cargo check 全绿之前不拖累 workspace 构建。集成步骤见 README.md。
+# 依赖版本与 legacy/pi_agent_rust/Cargo.toml 对齐（B1 查实）。
+
+# 独立于 backend/ workspace 的 standalone 构建（红线：不改 backend/Cargo.toml 的
+# members；此处空 [workspace] 让 cargo 把本 crate 视为自己的 workspace 根）。
+[workspace]
 
 [dependencies]
-# 拷入后按需补齐（serde/serde_json/rquickjs 等，以 pi 上游 Cargo.toml 对应段为准）
+# Async runtime（legacy 同款；B2 host 线程会用到）
+tokio = { version = "1", features = ["full"] }
+# error.rs 的 LockError From impl（legacy 同版本同 features）
+asupersync = { version = "0.3.9", default-features = false, features = ["tls-webpki-roots", "test-internals"] }
+# extensions_js.rs:4629 dirs::home_dir()
+dirs = "6"
+# Serialization
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = { version = "1", features = ["raw_value"] }
+# QuickJS 引擎 + swc TS 剥离（extensions_js.rs 核心路径）
+rquickjs = { version = "0.11", features = ["futures", "loader"] }
+swc_common = "18.0.1"
+swc_ecma_codegen = "23.0.0"
+swc_ecma_ast = "20.0.1"
+swc_ecma_parser = "34.0.0"
+swc_ecma_transforms_base = "37.0.0"
+swc_ecma_transforms_typescript = "41.0.0"
+# Utilities
+base64 = "0.22"
+flate2 = "1.1.9"
+sha2 = "0.10"
+sha1 = "0.10"
+md-5 = "0.10"
+hmac = "0.12"
+pbkdf2 = { version = "0.12.2", features = ["hmac"] }
+scrypt = { version = "0.11.0", default-features = false }
+getrandom = "0.4.1"
+regex = "1.12.3"
+ring = "0.17.14"
+uuid = { version = "1.21.0", features = ["v4"] }
+crossbeam-queue = "0.3"
+thiserror = "2"
+sysinfo = "0.39.6"
+# 日志（scheduler/extensions_js/hostcall_queue/crypto_shim 均用 tracing::）
+tracing = "0.1"
+# error.rs Sqlite variant 依赖
+sqlmodel-core = "0.2.2"
+# wasm-host（默认关；pi_wasm.rs 拷入后启用）
+wasmtime = { version = "47.0.3", features = ["component-model"], optional = true }
+
+[build-dependencies]
+crc32c = "0.6.8"
+flate2 = "1.1.9"
+
+[features]
+default = []
+wasm-host = ["dep:wasmtime"]
+# extensions_js.rs:140 cfg!(feature = "ext-conformance")（legacy 同名 feature）
+ext-conformance = []
