@@ -119,7 +119,7 @@
 
 ## 八、待验证 / 待拍板
 
-1. **真实验收**（用户配合）：release 起 bm-server → 日志"事件日志双写已启用" → 聊几轮 → `sqlite3 ~/.boenmind/boenmind.db "SELECT seq, session_id, type FROM event_log ORDER BY seq"`。**本轮代码已就绪，未验收。**
+1. **真实验收**（用户配合）：release 起 bm-server → 日志"事件日志双写已启用" → 聊几轮 → `sqlite3 ~/.boenmind/boenmind.db "SELECT seq, session_id, type FROM event_log ORDER BY seq"`。**⚠️ standalone 起服务必须带前端内嵌 feature**（桌面壳自己 serve 前端不用带）：`cargo build --release -p bm-server --features embed`，否则 `/` 404 空页面（2026-08-14 验收实测踩坑）。
 2. **A1 的 chunk 落盘策略**：逐 chunk append vs 攒批（token 级回放保真 vs 写放大）——已实现"写线程全量排空攒批"（每批一个事务），实测写放大待真实验收观察。
 3. **超期清除天数**（C1 的 N）——默认 90 天，`BM_ORPHAN_PURGE_DAYS` 环境变量可调，实现期调优。
 4. **自研 loop 替换切换开关**：A6 完成后 pi loop 与新 loop 并行双开对比（同压缩 A/B 方法论），拍板切换时机。
