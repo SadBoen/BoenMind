@@ -1,12 +1,12 @@
 # HANDOFF —— 阶段 1 开工交接（两线并行）
 
-> **当前状态（2026-08-14 收口，CI 全绿；双开对比完成）**：主线 A（A1-A7）+ 主线 B（B1-B6）**全部落地**；**30 轮 pi/bm 双开对比完成**——bm 引擎 30 轮一次跑完无中断、4 次压缩事务、记忆题 5/5 全对（pi 基线 4/5：r29 因 index.md 未建非记忆丢失；r17 超时重启续跑一次）。**切换时机待用户拍板**。
+> **当前状态（2026-08-14 夜轮收口，CI 全绿）**：主线 A（A1-A7）+ 主线 B（B1-B6）**全部落地**；30 轮 pi/bm 双开对比完成（bm 记忆 5/5 vs pi 4/5）；**顺手件轮四项全部落地**——governance.memorize 雏形（remember 入口接通）/ CI 质量门拆 4 并行 job（含 bm-compactor/bm-memory 补门禁）/ 水线 0.8→0.5 + 10 轮真实复测（发送量 −53.5%、峰值 −40%，压到 pi 量级以下）/ session 端口 getmessagesurface 集成测试。**拍切换数据就绪，待用户拍板**（默认值反转 + 前端开关）。
 > - A 线：执行级事件日志（A1-A5）+ 自研 loop（A6 主体 + 接线：`BM_LOOP_ENGINE=bm` 开关/流式/工具/取消）+ A7 迁移骨架
 > - B 线：B1 拷入 + B2 host 线程 + B3 加载路径 + B4 工具执行方向 + B5 权限桥（http 真实现）+ **B6 收口（内置工具集端口/决策记忆/插件事件推送/切片②顺手件）**
 > - **v0.17 压缩策略插件化拆解**：bm-loop 只留 Compactor 接口 + 事务协议，bm-compactor 新插件 crate（参数插件自治，可换可关）
 > - 双开对比（产物 artifacts/2026-08-14-dual-compare/）：pi 888.6K 发送量 / 峰值 94.1K / 49min vs bm 2263.0K（∑input 口径，缓存命中 2138K）/ 峰值 205.7K / 39.5min——**bm 发送量高 2.5× 主因水线 0.8 vs pi 0.5（插件参数，可调）+ 压缩后尾巴更长**；质量不降（记忆 5/5 vs 4/5）
 > - 真实验收：bm 引擎 4 项（切片①）+ hello 工具全链路（B4）+ web_search×2/web_fetch×1（B5）+ **B6 三插件全链路（10 轮真实会话）+ 双开对比 60 轮**
-> - **剩：切换拍板**（BM_LOOP_ENGINE 默认值反转 + 前端开关；建议同步把 bm-compactor 水线调 0.5 复测）。开工前先 git pull。
+> - **剩：切换拍板**（BM_LOOP_ENGINE 默认值反转 + 前端开关——水线已调 0.5 且 10 轮复测通过：发送量 287.3K vs 0.8 组 617.8K 同口径 −53.5%、压缩后轮末 3.6K vs 144.9K，详见 artifacts/2026-08-14-waterline-retest/SUMMARY.md）+ 413 会话污染修复（§〇·五 21，切换前待办）。开工前先 git pull。
 >
 > **轮次历史**（细节见 §〇 commit 索引；查实/坑全量见 §〇·五）：
 >
@@ -21,6 +21,18 @@
 > | B6 收口轮 | 内置工具集端口 + 决策记忆 + 插件事件推送 + 切片② | f81594b, 8b6b725 | 桥调用约定实证（首个 secret 实参不绑定 JS 形参）；tool_result 事件 content 须对齐 legacy ContentBlock 数组；内置工具须进模型可见面（pi BUILTIN_TOOL_NAMES 全开同款）；SELF_TOOLS 跳过 web_search 是插件设计非 bug；目录型插件须 extension.json；debug exe 2GB 坑（CARGO_PROFILE_DEV_DEBUG=0）
 
 ## 〇、本次会话 commit 索引（main 已推送，工作区干净）
+
+### 并行顺手件轮（governance.memorize + CI 拆并行 + 水线 0.5 复测 + session 集成测试）
+
+| commit | 内容 |
+|---|---|
+| `e6e09c2` | **feat(compactor)**：默认软水线 0.8→0.5 对齐 pi（双开对比 2263K≈pi 888.6K 的 2.5×、峰值 205.7K vs 94.1K 主因水线差）；对比脚本 run-compare.mjs 加 `--rounds N`（会话标题动态轮数）。**10 轮真实复测**：发送量 617.8K→287.3K（−53.5%）、峰值 202.9K→121.3K（−40%）、首次压缩触发 est 107.1K→65.3K、压后轮末 3.6K vs 144.9K——已压到 pi 量级以下，支持切换前定稿 0.5（SUMMARY 见 artifacts/2026-08-14-waterline-retest/） |
+| `86dc798` | **test(compat)**：session 端口 getmessagesurface 集成测试（tests/session.rs 4 用例：pi.session 全链路 op/payload 原样透传 + 宿主返回深度回读 + 错误双路径；tests/common test_thread 泛化任意 HostServices）。查实：pi.session 无白名单、自定义 op 全链路透传，无需 src 改动 |
+| `cf6cd33` | **feat(memory)**：governance.memorize 雏形（§九 第 2 条）——remember 入口接通：用户消息命中「记住/remember」→ 提取事实（200 字符上限）→ 记忆插件 remember 落盘；调用点 = run_bm_prompt 挂 attach 前（已持 agent 锁零竞态）；日志只记字符数不落事实全文。governance.rs 10 用例 + 注入链路测试（facts.md → StreamHooks.on_request → system 段；空记忆不注入）。bm-memory lib 已有 5 用例无需补 |
+| `6ab80d6` | **ci(quality)**：质量门拆 4 并行 job（quality-test/clippy×2/前端，§八·6 拍板方案）；**补 bm-compactor/bm-memory 门禁**（两 crate 此前从未进 CI test/clippy，含 architecture.rs 架构红线）+ bm-compat 补 --test session |
+| `05ccf2e` | fix(loop)：engine_tests 补 LlmUsage cache_read/cache_write 字段（72c6645 结构体扩展的测试侧补齐，上轮漏提交） |
+
+**复测数字（10 轮同口径，SUMMARY.md 详表）**：bm 0.8 组 ∑input 617.8K / 峰值 202.9K(r8) / 首次压缩 r9@est107.1K / 压后 144.9K；bm 0.5 组 287.3K / 121.3K(r9) / r10@est65.3K / 压后 3.6K。0.5 组 12 轮目标第 11 轮起撞 413（会话污染，见 §〇·五 21），10 轮数据有效连续。
 
 ### 双开对比轮（pi/bm 30 轮 + v0.17 压缩拆解）
 
@@ -115,6 +127,10 @@
 18. **chars/4 粗估对中文低估约 2×**：压缩水线判定必须用 max(粗估, 上一请求真实 usage input)——否则中文手册场景水线形同虚设（实测上下文涨到 217K 零触发）。修法：engine.rs `last_real_input` 校准。
 19. **pi 会话句柄断连后坏死**：SSE 断连后 pi 引擎未清理句柄，后续 prompt 1 秒即 false（total_tokens=0）——重启服务 + run-compare `--resume` 可续（重启后 MiniMax 缓存口径变化，报告注明）。
 20. **双开对比操作**：两引擎同 prompt 集（rounds.mjs 30 轮）、独立工作区（COMPARE_WORKDIR）、RUST_LOG 须含 `bm_loop=info`（bm 引擎 usage 日志在 bm_loop::engine 不在 bm_server）；分析用 analyze.mjs（pi 组）+ 口径换算（bm 组发送量=∑input）。
+21. **MiniMax 413 会话污染（水线复测新坑）**：MiniMax 请求体上限 128MB——某工具返回 ~207MB 内容（约 96s 慢调用，疑 web 抓取；payload 不打日志无法定位具体工具）落进 event_log 后，该会话每次重建历史都超限、永久 413（重试/重启服务均无效，投影从 event_log 重建）。**切换前待办**：① bm-loop 对超限工具结果裁剪后再入历史；② 复测脚本对 tool_result 超限截断。本坑与水位参数无关（模型工具行为方差）。
+22. **压缩事务计数更正**：交接此前写 bm"4 次压缩事务"，日志实为 5 次（`bm.loop_compacted`：turn 9/12/16/21/30，可能少计 turn 30）；0.5 水线下触发点前移（65K）且压得更狠（压后轮末 3.6K），长程频次会更高。
+23. **governance.memorize 雏形规则**（cf6cd33）：触发词「记住」/「remember」（英文大小写不敏感、只取第一处）；提取触发词后文本、去前导分隔符、200 字符硬截断；负向指令/多事实/纠错/LLM 提炼都留 Steward 轮。事件 bm.memory_remembered 只记字符数（用户内容不打日志纪律）。
+24. **CI 4 并行 job 拆法**（6ab80d6）：quality-test / quality-clippy（存量 bm-core/bm-server --lib，编译最重单独成 job）/ quality-clippy-kernel（内核四件套+bm-compactor/bm-memory --all-targets + bm-compat）/ quality-frontend；全无 needs 依赖；Rust job 均带 CARGO_PROFILE_DEV_DEBUG=0 + CARGO_INCREMENTAL=0；rust-cache 钉 v2.9.1（Node 20 EOL 坑）。
 
 ## 一、一句话现状
 
@@ -197,7 +213,7 @@
 3. **超期清除天数**（C1 的 N）——默认 90 天，`BM_ORPHAN_PURGE_DAYS` 环境变量可调，实现期调优。
 4. **自研 loop 替换切换开关**：A6 主体已落地（bm-loop：run 循环/LLM client/压缩双触发，25 测试全绿）——下一步 = bm-server 接线（开关 + ToolExecutor 先接 pi 插件工具）+ pi loop 与新 loop 并行双开对比（同压缩 A/B 方法论），拍板切换时机。
 5. **proptest 承诺**：已兑现（60 用例属性测试，见 §九·二）。
-6. **CI 拆并行 job**（用户拍板"下次"）：质量门 test/clippy×2/前端拆 4 个并发 job，预计 15min → 6-9min；方案细节本对话已给出（并行 job / 大核 runner / sccache 三选项）。
+6. **CI 拆并行 job**（✅ 已落地 6ab80d6，2026-08-14 夜轮）：质量门 test/clippy×2/前端拆 4 个并发 job（拍板方案；sccache/大核 runner 两选项未采用，保留后续调优空间）。
 7. **前后端分离三点（✅ 2026-08-14 用户定调入架构 v0.15）**：分离原则贯穿设计（[[separation-principle-throughout]]）；用户定调"便携版/Docker 都只是初级阶段的产物"→ 分发形态 ≠ 设计脊梁。收敛结论：① 静态目录服务（`BOENMIND_STATIC_DIR`）登记为**阶段 4 前端隔离的前置小件**（后端永不内嵌前端为默认形态）；② `embed` feature 保留为便携版/Docker 的**打包选项**并标注"打包层非设计层"（Cargo.toml 注释已含，补 README 标注即可）；③ 阶段 4 大动作范围不变。**动作时点：阶段 4 前置小件，不阻塞本阶段。**
 
 ## 十、本轮后半段新决策（2026-08-14 夜，用户两条指令）
@@ -217,14 +233,14 @@
 
 ## 九、下一轮续接建议开场
 
-> 继续 BoenMind 阶段 1。交接见 docs/HANDOFF_KERNEL_PHASE1.md。**B6 收口 + 30 轮双开对比完成 + 两个功能推进（本会话）**：双开对比 bm 引擎 30 轮一次跑完（4 压缩事务、记忆 5/5、无中断；pi 基线 r17 续跑、记忆 4/5）；三修复已落地（72c6645）；v0.17 压缩拆解落地（bm-compactor）+ 记忆插件 bm-memory + session `getmessagesurface`。开工前仍先 git pull。
+> 继续 BoenMind 阶段 1。交接见 docs/HANDOFF_KERNEL_PHASE1.md。**并行顺手件轮四项全部落地 + 拍切换数据就绪（本会话）**：governance.memorize 雏形（remember 入口）/ CI 质量门拆 4 并行 job（含 bm-compactor/bm-memory 补门禁）/ 水线 0.8→0.5 + 10 轮真实复测（发送量 −53.5%、峰值 −40%，压到 pi 量级以下）/ session getmessagesurface 集成测试。开工前仍先 git pull。
 >
 > **下一轮动作**：
-> 1. **拍切换**——用户拍板 BM_LOOP_ENGINE 默认值反转与前端开关（效率参数：bm-compactor 水线 0.8→0.5 对齐 pi 复测 token 曲线，改一行不碰核心）；
-> 2. **记忆插件收尾**——bm-memory 已接线注入侧，`remember` 入口未接调用点：下轮接 governance.memorize 雏形（简单规则：用户消息含"记住"指令 → StreamHooks::memory().remember）或留给 Steward；顺手补"新会话注入生效"的真实冒烟（facts.md 写一条 → bm 引擎聊天看注入）；
-> 3. 可选顺手件：session 端口 getmessagesurface 的集成测试（插件侧 pi.session('getmessagesurface') 全链路）、subagent 工具、CI 拆并行 job（方案 §八·6）。
+> 1. **拍切换（数据已就绪）**——用户拍板 BM_LOOP_ENGINE 默认值反转与前端开关。复测结论支持水线定稿 0.5（发送量压到 pi 量级以下、峰值 −40%、压后轮末 3.6K vs 144.9K）；切换 = chat.rs 默认值反转 + 前端开关接线（引擎选择走配置持久化 settings.json 同款，而非每次读 env）。
+> 2. **413 会话污染修复（切换前待办，§〇·五 21）**：bm-loop 对超限工具结果裁剪（如 >5MB 截断留头尾）后再入历史/落日志——否则长会话迟早撞 MiniMax 128MB 请求体上限，双开对比与真实使用都会再踩。
+> 3. 可选顺手件：新会话记忆注入真实冒烟（facts.md 写一条 → bm 引擎聊天看注入；unit 级已测，缺真模型链路）、subagent 工具、复测脚本 tool_result 上限（§〇·五 21②）。
 >
-> **注意坑**（详见 §〇·五 16-20 + 既有全量）：MiniMax 流式须 stream_options.include_usage、缓存字段在 prompt_tokens_details.cached_tokens、pi/bm 两组 input 口径不同（对比换算）、chars/4 中文低估须真实 usage 校准、pi 句柄断连坏死重启+resume、双开 RUST_LOG 须含 bm_loop=info、bm-memory 每会话 open facts.md（多会话并发写靠单行 append 容忍，全局单例留 Steward 轮）、桥调用首参 secret 不绑定形参、tool_result 事件 content 用 ContentBlock 数组、内置工具 schema 要注册进 ToolRegistry、SELF_TOOLS 跳过搜索类工具是设计、目录型插件须 extension.json、Disposer 纪律、turso 绑定形态、fork 超头拒绝、standalone 起服务 `--features embed`、bm-compat 测试走 `--test host --test load --test execute --test events`、CompatEngine 专用线程（命令通道 oneshot 回结果）、payload 全文不打日志。
+> **注意坑**（详见 §〇·五 16-24 + 既有全量）：MiniMax 流式须 stream_options.include_usage、缓存字段在 prompt_tokens_details.cached_tokens、pi/bm 两组 input 口径不同（对比换算）、chars/4 中文低估须真实 usage 校准、pi 句柄断连坏死重启+resume、双开 RUST_LOG 须含 bm_loop=info、**MiniMax 请求体 128MB 上限（超限工具结果永久污染会话，§〇·五 21）**、压缩事务实际 5 次（§〇·五 22）、bm-memory 每会话 open facts.md（多会话并发写靠单行 append 容忍，全局单例留 Steward 轮）、桥调用首参 secret 不绑定形参、tool_result 事件 content 用 ContentBlock 数组、内置工具 schema 要注册进 ToolRegistry、SELF_TOOLS 跳过搜索类工具是设计、目录型插件须 extension.json、Disposer 纪律、turso 绑定形态、fork 超头拒绝、standalone 起服务 `--features embed`、bm-compat 测试走 `--test host --test load --test execute --test events --test session`、CompatEngine 专用线程（命令通道 oneshot 回结果）、payload 全文不打日志。
 
 ## 九·三、A6 接线设计（2026-08-14 夜轮定稿 → 白天轮切片①落地）
 
@@ -264,4 +280,7 @@
 | CI 门禁 | ✅ | 全量 25 套件全绿 + 双档 clippy 清零 + **GitHub CI 质量门绿灯**（另修存量 rust-cache/磁盘两故障，见 commit 索引） |
 | 真实验收 | ✅ | 浏览器实测两轮（无工具 + web_search/web_fetch 双工具链），event_log 197 事件真序闭环（§八·1） |
 | 前端分离三拍板点 | ✅ 定调入架构 v0.15 | 分离原则贯穿设计；便携版/Docker = 分发形态非设计脊梁；静态目录服务 = 阶段 4 前置小件（§八·7） |
-| CI 拆并行 job | 📋 下次 | 用户拍板：test/clippy×2/前端拆 4 并发 job（方案细节见 §八·6） |
+| CI 拆并行 job | ✅ 落地（6ab80d6） | 4 并行 job（test/clippy×2/前端）+ bm-compactor/bm-memory 补门禁 + --test session；§八·6 方案 |
+| governance.memorize 雏形 | ✅ 落地（cf6cd33） | remember 入口接通（记住指令 → facts.md）+ 注入链路测试；终态留 Steward 轮 |
+| 水线 0.8→0.5 + 复测 | ✅ 落地（e6e09c2） | 10 轮真实复测：发送量 −53.5%、峰值 −40%、压后轮末 3.6K；数据支撑拍切换 |
+| session 集成测试 | ✅ 落地（86dc798） | tests/session.rs 4 用例（pi.session 全链路）；查实无白名单透传 |
