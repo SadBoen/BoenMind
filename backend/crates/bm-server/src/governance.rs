@@ -10,8 +10,11 @@
 //! 替换，不动核心。
 //!
 //! 触发词与截断策略（雏形规则）：
-//! - 触发词：「记住」或「remember」（英文不分大小写，如 Remember/REMEMBER）；
-//!   只取消息中**第一处**触发词，其后的文本即事实候选；
+//! - 触发词：「记住」或「remember that」（英文不分大小写）。**英文触发词
+//!   必须是 "remember that"**：裸 "remember" 是英语常用词（"Do you
+//!   remember..."），任意位置命中会把问句后半截误当事实写入（真实踩坑：
+//!   记忆冒烟时 "Do you remember any facts?" 被记成事实）；"remember that"
+//!   是明确的陈述句引导。只取消息中**第一处**触发词，其后的文本即事实候选；
 //! - 清洗：去掉事实候选前导的空白与分隔符（中英冒号/逗号/句号/感叹号/
 //!   问号/分号/引号/连字符等）；
 //! - 截断：事实长度上限 [`MAX_FACT_CHARS`] = 200 字符（按 Unicode 字符计，
@@ -37,7 +40,7 @@ pub fn extract_remember_fact(message: &str) -> Option<String> {
     // 改为逐字符边界比较前缀（触发词为固定字节串，前缀字节相等即命中）。
     let mut hit: Option<(usize, usize)> = None;
     'scan: for (i, _) in message.char_indices() {
-        for kw in ["记住", "remember"] {
+        for kw in ["记住", "remember that"] {
             let tail = &message[i..];
             if tail.len() >= kw.len()
                 && tail.as_bytes()[..kw.len()].eq_ignore_ascii_case(kw.as_bytes())
@@ -142,17 +145,38 @@ mod tests {
     #[test]
     fn extracts_after_english_trigger_case_insensitive() {
         assert_eq!(
-            extract_remember_fact("remember the user prefers tea"),
+            extract_remember_fact("remember that the user prefers tea"),
             Some("the user prefers tea".to_string())
         );
         assert_eq!(
-            extract_remember_fact("Remember: dark mode"),
+            extract_remember_fact("Remember THAT: dark mode"),
             Some("dark mode".to_string()),
-            "英文大小写不敏感"
+            "英文大小写不敏感（Remember THAT）"
         );
         assert_eq!(
-            extract_remember_fact("REMEMBER, use tabs"),
+            extract_remember_fact("REMEMBER THAT, use tabs"),
             Some("use tabs".to_string())
+        );
+    }
+
+    /// 回归：裸 "remember" 是英语常用词，问句（"Do you remember..."）不得误触发
+    /// —— 英文触发词必须带 that（记忆冒烟真实踩坑）。
+    #[test]
+    fn bare_english_remember_does_not_trigger() {
+        assert_eq!(
+            extract_remember_fact("Do you remember any personal facts about the user?"),
+            None,
+            "问句中的裸 remember 不得把后半截当事实"
+        );
+        assert_eq!(
+            extract_remember_fact("I remember you like coffee"),
+            None,
+            "陈述句中的裸 remember 也不触发"
+        );
+        assert_eq!(
+            extract_remember_fact("Remember to buy milk"),
+            None,
+            "remember to（待办语义）不触发"
         );
     }
 
@@ -191,7 +215,7 @@ mod tests {
             "前导冒号/逗号/空白/引号都去掉"
         );
         assert_eq!(
-            extract_remember_fact("remember, ,apple"),
+            extract_remember_fact("remember that, ,apple"),
             Some("apple".to_string())
         );
     }
