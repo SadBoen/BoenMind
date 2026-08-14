@@ -29,6 +29,8 @@
 | `6cbe56d` | **v0.17 压缩策略插件化拆解**：bm-loop 只留 Compactor 策略接口 + 三事件事务协议 + 硬触发兜底（无插件 = 优雅失败不崩不丢历史）；bm-compactor 新 crate（DefaultCompactor：水线 0.8/保留 10%+4000 下限/中部<512 不压/摘要 prompt，参数插件自治）；bm-server 组装层挂默认插件；插件架构方向守卫（禁依赖上层）+ 优雅失败回归测试 |
 | `31d4bc9` | docs(arch): v0.17 自我进化定调——§6.9 三定调（效果评估/参数进化插件自治 + 进化=版本化替换待拍）+ 双向奔赴与框架定位（删核心自足性：骨架/手脚分工，跑不跑不是重点）+ compact.rs 越界修正拆法 |
 | `72c6645` | **双开对比暴露三修复**：stream_options.include_usage（MiniMax 流式默认 usage:null，token 统计全零）+ cached_tokens 解析（prompt_tokens_details，对齐 pi SDK 口径）+ 压缩水线真实 usage 校准（chars/4 粗估对中文低估约 2×，实测 217K 零触发） |
+| `03495e0` | **两个功能推进**：① 记忆插件 bm-memory（facts.md 文件传送带：remember 去重落盘 / open 跨会话加载 / on_request 注入 system 段——§6.1 memory-file 雏形，核心挂点 on_request 第一个真实使用者）；② session 端口补 `getmessagesurface` op（event_log 投影面 = 模型可见历史含压缩遮蔽，双写未启用降级 messages 表）；bm-server 接线（StreamHooks 组合记忆插件 Arc 共享 + init_compat 传投影数据源） |
+| `297a4ca` | chore(loop): compact 8 参数 clippy 告警清零 |
 
 ### B6 收口轮（内置工具集端口 + 决策记忆 + 插件事件 + 切片②）
 
@@ -215,11 +217,14 @@
 
 ## 九、下一轮续接建议开场
 
-> 继续 BoenMind 阶段 1。交接见 docs/HANDOFF_KERNEL_PHASE1.md。**B6 已收口 + 30 轮双开对比完成（本会话）**：bm 引擎 30 轮一次跑完（4 压缩事务、记忆 5/5 全对、无中断；pi 基线 r17 超时续跑、记忆 4/5）；对比暴露三修复已落地（72c6645：include_usage/cached_tokens/水线真实 usage 校准）；v0.17 压缩插件化拆解已落地（bm-compactor 可换可关）。开工前仍先 git pull。
+> 继续 BoenMind 阶段 1。交接见 docs/HANDOFF_KERNEL_PHASE1.md。**B6 收口 + 30 轮双开对比完成 + 两个功能推进（本会话）**：双开对比 bm 引擎 30 轮一次跑完（4 压缩事务、记忆 5/5、无中断；pi 基线 r17 续跑、记忆 4/5）；三修复已落地（72c6645）；v0.17 压缩拆解落地（bm-compactor）+ 记忆插件 bm-memory + session `getmessagesurface`。开工前仍先 git pull。
 >
-> **下一轮动作（双开对比后）**：**拍切换**——用户拍板 BM_LOOP_ENGINE 默认值反转与前端开关；建议同步把 bm-compactor 默认水线 0.8→0.5（对齐 pi 配置）复测一轮 token 曲线（插件参数自治，改一行不碰核心）。可选顺手件：session/ui/events 端口 op 面补全（get_messages 投影进插件 ctx）、subagent 工具、CI 拆并行 job（方案在 §八·6）。
+> **下一轮动作**：
+> 1. **拍切换**——用户拍板 BM_LOOP_ENGINE 默认值反转与前端开关（效率参数：bm-compactor 水线 0.8→0.5 对齐 pi 复测 token 曲线，改一行不碰核心）；
+> 2. **记忆插件收尾**——bm-memory 已接线注入侧，`remember` 入口未接调用点：下轮接 governance.memorize 雏形（简单规则：用户消息含"记住"指令 → StreamHooks::memory().remember）或留给 Steward；顺手补"新会话注入生效"的真实冒烟（facts.md 写一条 → bm 引擎聊天看注入）；
+> 3. 可选顺手件：session 端口 getmessagesurface 的集成测试（插件侧 pi.session('getmessagesurface') 全链路）、subagent 工具、CI 拆并行 job（方案 §八·6）。
 >
-> **注意坑**（详见 §〇·五 16-20 + 既有全量）：MiniMax 流式须 stream_options.include_usage、缓存字段在 prompt_tokens_details.cached_tokens、pi/bm 两组 input 口径不同（对比换算）、chars/4 中文低估须真实 usage 校准、pi 句柄断连坏死重启+resume、双开 RUST_LOG 须含 bm_loop=info、桥调用首参 secret 不绑定形参、tool_result 事件 content 用 ContentBlock 数组、内置工具 schema 要注册进 ToolRegistry、SELF_TOOLS 跳过搜索类工具是设计、目录型插件须 extension.json、Disposer 纪律、turso 绑定形态、fork 超头拒绝、standalone 起服务 `--features embed`、bm-compat 测试走 `--test host --test load --test execute --test events`、CompatEngine 专用线程（命令通道 oneshot 回结果）、payload 全文不打日志。
+> **注意坑**（详见 §〇·五 16-20 + 既有全量）：MiniMax 流式须 stream_options.include_usage、缓存字段在 prompt_tokens_details.cached_tokens、pi/bm 两组 input 口径不同（对比换算）、chars/4 中文低估须真实 usage 校准、pi 句柄断连坏死重启+resume、双开 RUST_LOG 须含 bm_loop=info、bm-memory 每会话 open facts.md（多会话并发写靠单行 append 容忍，全局单例留 Steward 轮）、桥调用首参 secret 不绑定形参、tool_result 事件 content 用 ContentBlock 数组、内置工具 schema 要注册进 ToolRegistry、SELF_TOOLS 跳过搜索类工具是设计、目录型插件须 extension.json、Disposer 纪律、turso 绑定形态、fork 超头拒绝、standalone 起服务 `--features embed`、bm-compat 测试走 `--test host --test load --test execute --test events`、CompatEngine 专用线程（命令通道 oneshot 回结果）、payload 全文不打日志。
 
 ## 九·三、A6 接线设计（2026-08-14 夜轮定稿 → 白天轮切片①落地）
 
