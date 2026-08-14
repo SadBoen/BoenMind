@@ -148,7 +148,7 @@ fn script_text(text: &str) -> Vec<Result<LlmEvent, LlmError>> {
         Ok(LlmEvent::MessageEnd {
             content: text.to_string(),
             tool_calls: Vec::new(),
-            usage: Some(LlmUsage { input_tokens: 10, output_tokens: 5 }),
+            usage: Some(LlmUsage { input_tokens: 10, output_tokens: 5, cache_read: 0, cache_write: 0 }),
         }),
     ]
 }
@@ -166,7 +166,7 @@ fn script_tool() -> Vec<Result<LlmEvent, LlmError>> {
                 name: "web_search".into(),
                 arguments: "{\"q\":\"rust\"}".into(),
             }],
-            usage: Some(LlmUsage { input_tokens: 20, output_tokens: 8 }),
+            usage: Some(LlmUsage { input_tokens: 20, output_tokens: 8, cache_read: 0, cache_write: 0 }),
         }),
     ]
 }
