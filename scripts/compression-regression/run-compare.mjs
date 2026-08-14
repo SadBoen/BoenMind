@@ -106,6 +106,13 @@ async function chatOnce(round, message) {
   }
   if (errorMsg) throw new Error(`SSE error: ${errorMsg}`);
   if (!finished) throw new Error(`未收到 done（可能超时/断连），round=${round}`);
+  // 回复记录上限（§〇·五 21②）：超限工具结果若被模型回显进回复，
+  // 截断留头尾再落 jsonl——记录只服务 analyze 轮次对齐与记忆检验，
+  // 完整回复无价值，防 207MB 级回显撑爆 out 记录
+  const REPLY_CAP = 200_000;
+  if (reply.length > REPLY_CAP) {
+    reply = `${reply.slice(0, REPLY_CAP)}\n[…回复过长已截断：原始 ${reply.length} 字符…]\n${reply.slice(-REPLY_CAP)}`;
+  }
   return { reply, toolCalls, elapsedMs: Date.now() - started };
 }
 

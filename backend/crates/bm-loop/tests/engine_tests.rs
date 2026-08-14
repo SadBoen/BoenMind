@@ -10,7 +10,7 @@ use std::sync::Mutex;
 use bm_kernel::{EventLog, InMemoryEventStore, SurfaceIntent, SurfaceToolCall};
 use bm_loop::engine::{
     LoopConfig, ReactLoopAgent, RunError, StepRequest, ToolCallRequest, ToolExecutor, ToolOutcome,
-    TurnOutcome, TurnRequest, projection_to_openai_messages,
+    TurnOutcome, TurnRequest, MAX_TOOL_RESULT_BYTES, clip_tool_output, projection_to_openai_messages,
 };
 use bm_loop::llm::{Llm, LlmError, LlmEvent, LlmRequest, LlmToolCall, LlmUsage};
 use bm_loop::points::{LoopHooks, RequestCtx, StepCtx, StopCtx, ToolCtx, ToolGate};
@@ -651,3 +651,148 @@ fn projection_to_openai_roles_and_tool_messages() {
 /// 从未出错的 run_turn 结果（编译期签名兜底：错误路径错误也走同一类型）。
 #[allow(dead_code)]
 fn _assert_send(_: &Result<TurnOutcome, RunError>) {}
+
+// ============================================================================
+// 超限工具结果裁剪（§〇·五 21：MiniMax 请求体 128MB 上限 → 会话永久 413）
+// ============================================================================
+
+/// 构造 > 上限的多字节测试串（"界ab" = 5 字节，头尾切点都落字符中间）。
+fn huge_output() -> String {
+    "界ab".repeat(1_100_000) // 5.5MB
+}
+
+#[test]
+fn clip_tool_output_keeps_small_results_untouched() {
+    let (clipped, meta) = clip_tool_output("正常结果");
+    assert_eq!(clipped, "正常结果");
+    assert!(meta.is_none(), "未超限不带审计 meta");
+    // 恰好等于上限不截断
+    let exact = "a".repeat(MAX_TOOL_RESULT_BYTES);
+    let (clipped, meta) = clip_tool_output(&exact);
+    assert_eq!(clipped, exact);
+    assert!(meta.is_none());
+}
+
+#[test]
+fn clip_tool_output_truncates_oversized_keeping_head_tail() {
+    let big = huge_output();
+    let (clipped, meta) = clip_tool_output(&big);
+    let budget = MAX_TOOL_RESULT_BYTES - 1024; // 与实现同款预算（占位说明预留）
+    let head_keep = budget * 6 / 10;
+    let tail_keep = budget * 4 / 10;
+
+    // 切点落在字符中间：head 收缩到边界、tail 扩张到边界（不劈 UTF-8）
+    assert!(!head_keep.is_multiple_of("界ab".len()), "测试前提：head 切点落字符中间");
+    let head_end = head_keep - (head_keep % "界ab".len());
+    let tail_start = (big.len() - tail_keep).div_ceil("界ab".len()) * "界ab".len();
+
+    assert!(clipped.starts_with(&big[..head_end]), "保留原头部");
+    assert!(clipped.ends_with(&big[tail_start..]), "保留原尾部");
+    assert!(clipped.contains("已截断"), "中段占位说明");
+    assert!(clipped.contains("原始 5500000 字节"), "占位注明原始字节数");
+    assert!(clipped.len() <= MAX_TOOL_RESULT_BYTES, "裁剪结果不超上限（幂等前提）");
+
+    let meta = meta.expect("超限应带审计 meta");
+    assert_eq!(meta["truncated"], true);
+    assert_eq!(meta["original_bytes"], 5_500_000);
+}
+
+#[test]
+fn clip_tool_output_is_idempotent() {
+    let (clipped, meta) = clip_tool_output(&huge_output());
+    assert!(meta.is_some());
+    // 已裁剪内容再裁剪 = 无变化（投影读路径对历史重复裁剪安全）
+    let (again, meta2) = clip_tool_output(&clipped);
+    assert_eq!(again, clipped);
+    assert!(meta2.is_none(), "裁剪后已低于上限");
+}
+
+/// 工具返回超限结果 → 写入路径裁剪：日志 ToolResult 只存头尾 + meta，
+/// 投影（模型可见历史）同步受限——会话不会再被超限结果污染（§〇·五 21）。
+#[tokio::test]
+async fn oversized_tool_result_is_clipped_before_logging() {
+    /// 固定返回超限输出的执行器
+    struct HugeExecutor;
+    impl ToolExecutor for HugeExecutor {
+        async fn execute(&self, _req: ToolCallRequest) -> ToolOutcome {
+            ToolOutcome { ok: true, output: huge_output(), meta: None }
+        }
+    }
+
+    let (mut a, store) = make_agent(
+        (),
+        ScriptLlm::new(vec![script_tool(), script_text("结果很大，我摘要点说")]),
+        HugeExecutor,
+    );
+    let (_tx, mut rx) = cancel_channel();
+    let out = a
+        .run_turn(
+            TurnRequest { content: "查".into(), source: UserMsgSource::Human },
+            HeaderReason::Initial,
+            &mut rx,
+        )
+        .await
+        .unwrap();
+    assert_eq!(out.reason, TurnEndReason::Completed);
+
+    // 日志里的 ToolResult 已裁剪 + meta 记原始字节
+    let log = EventLog::new(store.clone());
+    let evs = log.replay(&SessionId::new(SID), &BranchId::new("main")).await.unwrap();
+    let tool_result = evs
+        .iter()
+        .find_map(|e| match &e.kind {
+            EventKind::Core(CoreEvent::ToolResult { result, meta, .. }) => Some((result, meta)),
+            _ => None,
+        })
+        .expect("应有 tool/result 事件");
+    let (result, meta) = tool_result;
+    assert!(result.ok);
+    assert!(result.output.len() < huge_output().len(), "日志只存裁剪后内容");
+    assert!(result.output.contains("已截断"));
+    let meta = meta.as_ref().expect("超限应带审计 meta");
+    assert_eq!(meta["truncated"], true);
+    assert_eq!(meta["original_bytes"], 5_500_000);
+
+    // 投影（模型可见历史）同样受限
+    let msgs = log.derive_messages(&SessionId::new(SID), &BranchId::new("main")).await.unwrap();
+    let visible = msgs
+        .iter()
+        .flat_map(|m| m.tool_calls.iter())
+        .find_map(|tc| tc.result.as_ref())
+        .expect("投影应有工具结果");
+    assert!(visible.output.contains("已截断"));
+}
+
+#[test]
+fn projection_clips_polluted_history() {
+    // 读路径自愈：历史被旧版污染（日志存有超限原文，如 pi 路径写入）时，
+    // 模型请求的 role=tool 内容仍被裁剪——永久 413 的会话重建历史不再超限
+    let msgs = vec![
+        bm_kernel::SurfaceMessage {
+            seq: 1,
+            role: "user".into(),
+            content: "查一下".into(),
+            tool_calls: Vec::new(),
+            turn: 0,
+            step: 0,
+        },
+        bm_kernel::SurfaceMessage {
+            seq: 2,
+            role: "assistant".into(),
+            content: "让我查".into(),
+            tool_calls: vec![SurfaceToolCall {
+                call_id: "c1".into(),
+                name: "web_search".into(),
+                args: "{\"q\":\"x\"}".into(),
+                result: Some(ToolResultMsg { ok: true, output: huge_output() }),
+            }],
+            turn: 1,
+            step: 1,
+        },
+    ];
+    let out = projection_to_openai_messages(&msgs);
+    assert_eq!(out[2]["role"], "tool");
+    let content = out[2]["content"].as_str().unwrap();
+    assert!(content.contains("已截断"), "污染历史的工具结果在请求面被裁剪");
+    assert!(content.len() < huge_output().len());
+}

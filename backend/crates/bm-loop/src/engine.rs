@@ -584,13 +584,16 @@ impl<H: LoopHooks, L: Llm, T: ToolExecutor> ReactLoopAgent<H, L, T> {
                     break;
                 }
                 tool_calls_executed += 1;
+                // 超限工具结果裁剪后再落日志（§〇·五 21）：>5MB 截断留头尾，
+                // meta 记原始字节——否则超限结果入 event_log 后会话永久 413
+                let (output, tool_meta) = clip_tool_output(&output);
                 flusher.push(
                     EventKind::Core(CoreEvent::ToolResult {
                         turn,
                         step,
                         call_id: CallId::new(call_id.clone()),
                         result: ToolResultMsg { ok, output },
-                        meta: None,
+                        meta: tool_meta,
                     }),
                     SurfaceIntent::None,
                 );
@@ -823,6 +826,63 @@ impl EventFlusher {
 }
 
 // ============================================================================
+// 超限工具结果裁剪（§〇·五 21：MiniMax 请求体 128MB 上限）
+// ============================================================================
+
+/// 单条工具结果字节上限。防线背景：某工具一次返回 ~207MB（实测撞 413）
+/// 落进 event_log 后，该会话每次重建历史都超限、永久 413（§〇·五 21）。
+/// 超限即截断留头尾：模型窗口（128K ≈ 500K 字符）本就装不下超限结果，
+/// 头尾已足让模型判定结果性质；中段以占位说明替代。
+pub const MAX_TOOL_RESULT_BYTES: usize = 5 * 1024 * 1024;
+
+/// 工具结果裁剪（写入点与投影点共用）：> [`MAX_TOOL_RESULT_BYTES`] 截断
+/// 留头 60% / 尾 40%（UTF-8 字符边界安全），中段替换为截断说明。
+/// 返回 (裁剪后文本, 审计 meta)；未超限返回 (原样, None)。
+pub fn clip_tool_output(output: &str) -> (String, Option<serde_json::Value>) {
+    if output.len() <= MAX_TOOL_RESULT_BYTES {
+        return (output.to_string(), None);
+    }
+    let original = output.len();
+    // 预算 = 上限 − 1024（占位说明自身 ~160 字节，留足余量）——
+    // 裁剪结果恒 ≤ 上限，重复裁剪幂等（读路径对历史重复裁剪安全）
+    let budget = MAX_TOOL_RESULT_BYTES - 1024;
+    let head_keep = budget * 6 / 10;
+    let tail_keep = budget * 4 / 10;
+    let head_end = floor_char_boundary(output, head_keep);
+    let tail_start = ceil_char_boundary(output, original - tail_keep);
+    let clipped = format!(
+        "{}\n\n[…工具结果过大已截断：原始 {original} 字节，此处保留前 {head_keep} / 后 {tail_keep} 字节…]\n\n{}",
+        &output[..head_end],
+        &output[tail_start..],
+    );
+    (
+        clipped,
+        Some(serde_json::json!({
+            "truncated": true,
+            "original_bytes": original,
+        })),
+    )
+}
+
+/// 不超过 `max` 的最大 char 边界索引（截断不得劈开 UTF-8 字符）。
+fn floor_char_boundary(s: &str, max: usize) -> usize {
+    let mut i = max.min(s.len());
+    while !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+/// 不小于 `min` 的最小 char 边界索引。
+fn ceil_char_boundary(s: &str, min: usize) -> usize {
+    let mut i = min;
+    while !s.is_char_boundary(i) {
+        i += 1;
+    }
+    i
+}
+
+// ============================================================================
 // 投影 → OpenAI messages（含工具调用/结果的工具角色展开）
 // ============================================================================
 
@@ -863,13 +923,15 @@ pub fn projection_to_openai_messages(msgs: &[bm_kernel::SurfaceMessage]) -> Vec<
                     );
                 }
                 out.push(serde_json::Value::Object(entry));
-                // 工具结果消息（role=tool 紧随 assistant）
+                // 工具结果消息（role=tool 紧随 assistant）；读路径同样裁剪——
+                // 历史被旧版污染（日志存有超限原文）或 pi 路径写进原始结果
+                // 时自愈，模型请求永不携带超限内容（§〇·五 21）
                 for tc in closed {
                     let result = tc.result.as_ref().expect("filtered closed");
                     out.push(serde_json::json!({
                         "role": "tool",
                         "tool_call_id": tc.call_id,
-                        "content": result.output,
+                        "content": clip_tool_output(&result.output).0,
                     }));
                 }
             }
