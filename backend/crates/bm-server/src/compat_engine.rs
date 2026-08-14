@@ -850,13 +850,20 @@ pub async fn init_compat(
 pub struct QuickJsToolExecutor {
     engine: Option<Arc<CompatEngine>>,
     session_id: String,
+    /// 管家状态（set_wake 工具执行侧；Steward 轮 v0.19）。
+    steward: Option<Arc<crate::steward::StewardStore>>,
 }
 
 impl QuickJsToolExecutor {
-    pub fn new(engine: Option<Arc<CompatEngine>>, session_id: impl Into<String>) -> Self {
+    pub fn new(
+        engine: Option<Arc<CompatEngine>>,
+        session_id: impl Into<String>,
+        steward: Option<Arc<crate::steward::StewardStore>>,
+    ) -> Self {
         Self {
             engine,
             session_id: session_id.into(),
+            steward,
         }
     }
 
@@ -903,6 +910,24 @@ impl ToolExecutor for QuickJsToolExecutor {
             // 父侧 subagent 工具：发现角色 → spawn 子进程 → 摄取事件流
             // （子进程协议 = subagent_child；取消经 kill_on_drop 传播）
             crate::subagent_tool::run(req.args.clone(), &working_dir).await
+        } else if req.name == "set_wake" {
+            // 管家自调节奏（Steward 轮）：写 next_wake_at（治理层夹区间）。
+            // 只注册进管家会话工具面；store 缺失时模型面也不会有此工具（双保险）。
+            match &self.steward {
+                Some(store) => match crate::steward::execute_set_wake(store, &self.session_id, &req.args).await {
+                    Ok(value) => ToolOutcome {
+                        ok: true,
+                        output: tool_result_text(&value),
+                        meta: Some(value),
+                    },
+                    Err(err) => ToolOutcome { ok: false, output: err, meta: None },
+                },
+                None => ToolOutcome {
+                    ok: false,
+                    output: "管家未启用（set_wake 不可用）".to_string(),
+                    meta: None,
+                },
+            }
         } else if crate::builtin_tools::BuiltinTools::NAMES.contains(&req.name.as_str()) {
             let builtin = BuiltinTools::new(working_dir);
             match builtin.execute(&req.name, req.args.clone()).await {

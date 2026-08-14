@@ -15,6 +15,7 @@ pub mod permission;
 pub mod permission_store;
 pub mod routes;
 pub mod static_files;
+pub mod steward;
 pub mod subagent_child;
 // 专家团队在 bm 引擎的落地：subagent 父侧工具（发现角色 → spawn 子进程 → 摄取
 // stdout JSON 事件流；子进程协议 = subagent_child）
@@ -84,6 +85,9 @@ pub struct AppState {
     /// B4 工具方向：QuickJS 插件引擎宿主（None = 启动失败，bm 引擎退化为
     /// 无工具模式）。工具快照在启动加载后固化（compat_engine.rs）。
     pub compat: Option<Arc<compat_engine::CompatEngine>>,
+    /// 管家（Steward 轮）：next_wake_at 状态 + 调度器共享句柄
+    /// （None = 未启用管家，BM_STEWARD_SESSION 未设置）。
+    pub steward: Option<Arc<steward::StewardStore>>,
 }
 
 /// 前端对一次权限询问的决策。
@@ -106,6 +110,7 @@ impl AppState {
             Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<bm_core::agent::AgentStreamEvent>>>,
         >,
         permission_pending: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<PermissionDecision>>>>,
+        steward: Option<Arc<steward::StewardStore>>,
     ) -> Self {
         Self {
             config: Arc::new(RwLock::new(config)),
@@ -118,6 +123,7 @@ impl AppState {
             bm_aborts: Arc::new(Mutex::new(HashMap::new())),
             loop_agents: Arc::new(Mutex::new(HashMap::new())),
             compat,
+            steward,
         }
     }
 }
@@ -153,6 +159,9 @@ fn router(state: AppState) -> Router {
         .route("/api/chat", post(chat::chat))
         .route("/api/chat/stop", post(chat::stop_chat))
         .route("/api/chat/permission-response", post(chat::respond_permission))
+        // Steward 轮（v0.19）：OS 层主动汇报通道 + 管家状态查询
+        .route("/api/steward/inject", post(routes::steward::inject))
+        .route("/api/steward/status", get(routes::steward::status))
         .route("/api/refinement-suggestions", get(routes::refine::list_refinement_suggestions))
         .route("/api/refinement-suggestions/{id}/approve", post(routes::refine::approve_suggestion))
         .route("/api/refinement-suggestions/{id}/reject", post(routes::refine::reject_suggestion))
@@ -422,6 +431,20 @@ async fn serve_inner(
     )
     .await;
 
+    // Steward 轮（v0.19）：管家状态（next_wake_at 落点 = steward.json）。
+    // BM_STEWARD_SESSION env 指定管家会话才启用；未启用 = None（调度器
+    // 不启动、set_wake 不进任何工具面——可选项零开销）
+    let steward = {
+        let store = steward::StewardStore::load(bm_core::config::app_dir());
+        match store.session_id().await {
+            Some(sid) => {
+                tracing::info!(event = "bm.steward_configured", session = %sid);
+                Some(Arc::new(store))
+            }
+            None => None,
+        }
+    };
+
     let state = AppState::new(
         config,
         db,
@@ -429,10 +452,22 @@ async fn serve_inner(
         compat,
         session_streams,
         permission_pending,
+        steward,
     );
     spawn_agent_sweeper(state.agents.clone(), state.loop_agents.clone());
     // C1 回收站超期清除：孤儿会话（sessions 表已删）事件保留 N 天后物理删除
     spawn_orphan_purger(state.dual_writer.clone());
+    // Steward 轮（v0.19）：管家定时唤醒调度器（到点投喂 Goal 回合；
+    // store 已创建说明启用了管家；None 时调度器无事可做）
+    if let Some(store) = &state.steward {
+        let session_id = store.session_id().await;
+        tracing::info!(
+            event = "bm.steward_enabled",
+            session = ?session_id,
+            "管家已启用（BM_STEWARD_SESSION）"
+        );
+        bm_engine::spawn_steward_scheduler(state.clone(), store.clone());
+    }
     let listener = tokio::net::TcpListener::bind(bind_addr(port)).await?;
     let local = listener.local_addr()?;
     let has_token = std::env::var("BOENMIND_TOKEN").is_ok_and(|t| !t.trim().is_empty());

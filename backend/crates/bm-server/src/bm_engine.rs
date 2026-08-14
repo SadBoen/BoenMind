@@ -219,6 +219,8 @@ fn build_loop_agent(
     system_prompt: &str,
     dual: Option<&Arc<bm_storage_turso::dual_write::DualWriter>>,
     compat: Option<&Arc<CompatEngine>>,
+    steward: Option<&Arc<crate::steward::StewardStore>>,
+    is_steward_session: bool,
     session_id: &str,
     provider: &bm_core::config::ProviderConfig,
     model: &str,
@@ -244,6 +246,14 @@ fn build_loop_agent(
     let subagent_def = crate::subagent_tool::tool_def();
     if let Err(err) = tools.register(subagent_def.clone()) {
         tracing::warn!(event = "bm.tool_register_failed", tool = %subagent_def.name, error = %err.message);
+    }
+    // 管家（Steward 轮）：set_wake 只进管家会话的工具面——普通会话工具面
+    // 零污染，管家身份由 BM_STEWARD_SESSION 宿主配置（不依赖模型自选）
+    if is_steward_session {
+        let wake_def = crate::steward::set_wake_def();
+        if let Err(err) = tools.register(wake_def.clone()) {
+            tracing::warn!(event = "bm.tool_register_failed", tool = %wake_def.name, error = %err.message);
+        }
     }
     if let Some(compat) = compat {
         for tool in &compat.tools {
@@ -276,7 +286,7 @@ fn build_loop_agent(
             compactor: Some(std::sync::Arc::new(bm_compactor::DefaultCompactor::default())),
         },
         llm,
-        QuickJsToolExecutor::new(compat.cloned(), session_id),
+        QuickJsToolExecutor::new(compat.cloned(), session_id, steward.cloned()),
     ))
 }
 
@@ -338,24 +348,36 @@ async fn get_or_create_loop_agent(
         return Ok(agent);
     }
 
-    // 系统提示拼接（与 pi 路径同构：SYSTEM_PROMPT + skills + custom）
+    // 管家身份判定：BM_STEWARD_SESSION 指定的会话才注册 set_wake 工具
+    // 并追加管家提示词（身份/静默协议引导）
+    let is_steward_session = match &state.steward {
+        Some(store) => store.session_id().await.as_deref() == Some(session_id),
+        None => false,
+    };
+
+    // 系统提示拼接（与 pi 路径同构：SYSTEM_PROMPT + skills + custom；
+    // 管家会话再追管家职责段——Steward 轮）
     let system_prompt = {
         let config = state.config.read().await;
         let skills = bm_core::skills::enabled_skills_prompt(&config);
         let custom = config.custom_system_prompt.clone().unwrap_or_default();
-        if skills.is_empty() && custom.is_empty() {
+        let base = if skills.is_empty() && custom.is_empty() {
             bm_core::agent::SYSTEM_PROMPT.to_string()
         } else {
             format!("{}{}{}", bm_core::agent::SYSTEM_PROMPT, skills, custom)
+        };
+        if is_steward_session {
+            format!("{base}{}", crate::steward::STEWARD_SYSTEM_PROMPT)
+        } else {
+            base
         }
     };
-
-    // 构建（不持 map 锁；并发的同会话请求各自构建，最后写入者生效——
-    // agent 无状态，旧实例弃置无副作用）
     let agent = build_loop_agent(
         &system_prompt,
         state.dual_writer.as_ref(),
         state.compat.as_ref(),
+        state.steward.as_ref(),
+        is_steward_session,
         session_id,
         provider,
         model,
@@ -691,6 +713,162 @@ async fn run_bm_prompt(p: BmPromptParams) {
     if let Err(err) = state.db.finish_task(&task_id, task_status, task_error.as_deref()).await {
         tracing::warn!(event = "bm.task_finish_failed", error = %err, task = %task_id);
     }
+}
+
+// ============================================================================
+// 管家（Steward）—— 自我驱动三件套（架构 §14.1/§14.2，v0.19）
+// ============================================================================
+//
+// 投喂侧组件：与 chat 路径共用同一套 loop agent（回合源三分法），区别只在
+// 回合来源（Goal = 调度器定时到期 / Inject = OS 层汇报）与是否接前端 SSE
+// （管家回合无人监听，attach 用内部通道；事件日志照常落，会话投影可见）。
+
+/// 运行一个管家回合（调度器到点 / inject 汇报共用）。
+///
+/// - 会话/provider/model 解析与 chat 路径同规则（请求级 > 会话级 > 默认）；
+/// - 回合源 = Goal（定时唤醒）或 Inject（OS 汇报）；
+/// - 不走 session_streams（无前端监听）、不建 task 记录（无进度条消费）；
+/// - 15min 超时兜底（与 chat 同纪律，防模型挂死阻塞会话锁）；
+/// - 结果落库 assistant 消息 + touch_session（与 chat 收尾同语义）。
+pub async fn run_steward_turn(
+    state: &AppState,
+    session_id: &str,
+    message: String,
+    source: UserMsgSource,
+) -> Result<(), String> {
+    // 会话必须存在（被删则不投喂；调度器侧已查，inject 侧兜底）
+    let Some(session) = state
+        .db
+        .get_session(session_id)
+        .await
+        .map_err(|e| format!("读取管家会话失败: {e}"))?
+    else {
+        return Err(format!("管家会话不存在: {session_id}"));
+    };
+    let provider = {
+        let config = state.config.read().await;
+        let Some(p) = bm_core::config::resolve_provider(&config, session.provider_id.as_deref())
+        else {
+            return Err("未配置任何模型提供商".to_string());
+        };
+        p.clone()
+    };
+    let model = {
+        match bm_core::config::resolve_model(&provider, session.model.as_deref()) {
+            Some(m) => m,
+            None => return Err(format!("提供商 {} 未配置模型", provider.name)),
+        }
+    };
+    let progress: Arc<std::sync::Mutex<String>> = Arc::new(std::sync::Mutex::new(String::new()));
+    let agent = get_or_create_loop_agent(state, session_id, &provider, &model, "off", progress)
+        .await
+        .map_err(|(_, msg)| msg)?;
+
+    // attach 内部通道：无人消费的 unbounded（hooks.try_send 只关心关闭）；
+    // 取消 watch：15min 超时兜底
+    let (tx, _rx) = mpsc::unbounded_channel::<AgentStreamEvent>();
+    let (cancel_tx, mut cancel_rx) = watch::channel(false);
+    let timeout_tx = cancel_tx.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(crate::chat::PROMPT_TIMEOUT).await;
+        let _ = timeout_tx.send(true);
+    });
+
+    let mut agent = agent.lock().await;
+    agent.hooks().attach(tx, cancel_tx);
+    let outcome = agent
+        .run_turn(
+            TurnRequest {
+                content: message,
+                source: source.clone(),
+            },
+            HeaderReason::Initial,
+            &mut cancel_rx,
+        )
+        .await;
+    agent.hooks().detach();
+    drop(agent);
+
+    match &outcome {
+        Ok(o) => {
+            if !o.final_text.trim().is_empty() {
+                let _ = state.db.add_message(session_id, "assistant", &o.final_text).await;
+                let _ = state.db.touch_session(session_id).await;
+            }
+            tracing::info!(
+                event = "bm.steward_turn_done",
+                source = ?source,
+                turn = o.turn,
+                steps = o.steps,
+                reason = ?o.reason,
+                chars = o.final_text.chars().count(),
+                session = %session_id,
+            );
+            Ok(())
+        }
+        Err(err) => Err(format!("管家回合失败: {err}")),
+    }
+}
+
+/// 调度器（三件套 ①）：每 10s 检查管家唤醒登记，到点投喂 Goal 回合。
+///
+/// 治理（OpenClaw next_check 吸收）：管家回合内用 set_wake 提议下次唤醒，
+/// 治理层夹 [pacing-min, pacing-max]；回合失败不重试（next_wake_at 保持
+/// 0 = 静默），防止失败风暴烧 token。in_flight 防重叠投喂。
+pub fn spawn_steward_scheduler(state: AppState, store: Arc<crate::steward::StewardStore>) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
+        interval.tick().await; // 跳过首次立即触发
+        loop {
+            interval.tick().await;
+            let now = crate::steward::now_ms();
+            if store.in_flight().await || !store.should_wake(now).await {
+                continue;
+            }
+            let Some(session_id) = store.session_id().await else {
+                continue;
+            };
+            // 会话已删：清掉唤醒登记（不再追投）并复位锚点
+            let Ok(Some(_)) = state.db.get_session(&session_id).await else {
+                tracing::warn!(event = "bm.steward_session_gone", session = %session_id);
+                store.note_round_done(now).await;
+                continue;
+            };
+            store.set_in_flight(true).await;
+            let reason = store.last_reason().await.unwrap_or_default();
+            let since_s = (now.saturating_sub(
+                store.snapshot().await.last_wake_at_ms,
+            )) / 1000;
+            let message = format!(
+                "你是管家。这是你的定时唤醒回合：距离上次回合 {since_s} 秒，上次登记原因：{reason}。\
+                 请观察当前状态；如有需要采取的行动请执行；回合结束时调用 set_wake \
+                 登记下次唤醒时间（无事请登记较长间隔保持静默）。"
+            );
+            if let Err(err) =
+                run_steward_turn(&state, &session_id, message, UserMsgSource::Goal).await
+            {
+                tracing::warn!(event = "bm.steward_turn_failed", error = %err, session = %session_id);
+            }
+            store.set_in_flight(false).await;
+            // 锚点推进；next_wake_at 保持管家回合内写好的值（失败/没写 = 0 静默）
+            store.note_round_done(now).await;
+        }
+    });
+}
+
+/// OS 层主动汇报通道（三件套 ②）：事件 → 立即投喂一个 Inject 回合，
+/// 可顺带登记下次唤醒（夹区间）。HTTP handler 见 lib.rs 路由。
+pub async fn steward_inject(
+    state: AppState,
+    store: Arc<crate::steward::StewardStore>,
+    message: String,
+    wake_after_seconds: Option<i64>,
+) -> Result<(), String> {
+    let Some(session_id) = store.session_id().await else {
+        return Err("管家未启用（BM_STEWARD_SESSION 未设置）".to_string());
+    };
+    store.register_wake(wake_after_seconds).await?;
+    run_steward_turn(&state, &session_id, message, UserMsgSource::Inject).await
 }
 
 #[cfg(test)]
