@@ -22,6 +22,12 @@
 
 ## 〇、本次会话 commit 索引（main 已推送，工作区干净）
 
+### 工具轮（code-graph MCP 装机，2026-08-14 晚间）
+
+| commit | 内容 |
+|---|---|
+| `7e040d4` | **chore**：`.code-graph/` 入 gitignore（@sdsrs/code-graph 首次运行自动生成的本地索引目录）。**工具装机（ZCode 侧，非仓库代码）**：`~/.zcode/v2/config.json` 新增 `mcp.servers.code-graph-mcp`（npx -y @sdsrs/code-graph serve）——查证录 29 |
+
 ### 里程碑轮（subagent 接入 + 默认反转 bm + 验收，2026-08-14）
 
 | commit | 内容 |
@@ -151,6 +157,7 @@
 26. **subagent 父侧移植查证（d4bc5c9）**：协议——父 spawn 当前 exe `--mode json --print --no-session --tools <csv> [--model/--thinking/--append-system-prompt] Task: <task>` + env PI_CODING_AGENT_DIR/PI_SUBAGENT_PARENT_PID/PI_SUBAGENT_DEPTH；子 stdout 逐行 JSON（message_update 增量/message_end 权威/agent_end messages 兜底），stderr 不参与协议。**坑①**：`(&BTreeMap).clone()` 克隆的是**引用**（`Clone for &T` 返回 &T）→ Arc 包成 `Arc<&BTreeMap>` 生命周期逃逸 E0521，须 `(*agents).clone()`；**坑②**：tokio `lines().next_line()` 返回 `io::Result<Option<String>>`，select 分支要 transpose。取消传播 = `kill_on_drop(true)`（上游 AgentCx checkpoint 的等价物）；进度回调省略（ToolExecutor 无此口）。**子进程当前仍以 pi SDK 跑隔离会话**（subagent_child.rs 未动）——废除 pi 第②步换 bm-loop。
 27. **OpenClaw 六条吸收（80ef79f，架构 §14.2）**：heartbeat 与 cron 分离为两原语 / next_check 自调节奏 + pacing-min/max 治理夹区间 / HEARTBEAT_OK 静默 / observe→decide→dispatch→verify 状态机 / 24×7 成本杠杆 / 事件驱动统一队列（与 inbox 双队列同构）。来源 openclaw/openclaw #110950、PR #110978、OpenHarness。
 28. **验收操作坑（本会话新）**：`/api/sessions/{id}/events` 是 SSE 流式订阅（replay-prefix + tail 轮询），curl 会挂住——验证事件用 messages 面或日志 grep；隔离验收环境 = `BOENMIND_HOME=<新目录>` + 复制真实 config.toml（含 api_key），ensure_builtin_agents 启动时自动建 agents/default.md；Windows curl 中文 JSON 报 invalid unicode（用英文消息）。
+29. **code-graph MCP 装机（工具轮，用户拍板"先装上先用着"）**：首选 suatkocar/codegraph **不支持 Windows**（npm 只发 darwin/linux，EBADPLATFORM）→ 改用 **@sdsrs/code-graph v0.116**（Rust AST 知识图谱：callgraph/impact/refs/deps/map/tour/trace/dead-code，本地 SQLite 索引 `.code-graph/index.db`，已入 gitignore）。配置位置 **`~/.zcode/v2/config.json`** 的 `mcp.servers.code-graph-mcp`（command = `C:\Users\Boen\nodejs\npx.cmd`，args = `["-y","@sdsrs/code-graph","serve"]`；与 context7/minimax-vision 同文件——**MCP 配置在 v2/config.json，不是 cli/config.json**）。握手已实测（initialize → serverInfo code-graph-mcp 0.116.0）。**坑**：① Node spawn `.cmd` 必须 `shell:true`（否则 EINVAL）；② MCP 服务器**会话启动时连接——新会话才生效**；③ 本机 npx 有效路径 = `C:\Users\Boen\nodejs\npx.cmd`（早期记忆里 /Users/boen 的 npx 路径已失效）。行数快照（工具决策参考）：自研 25.7K Rust + 8.7K 前端 ≈ 34.5K；bm-compat 54.8K 拷入；legacy 437K 待删。
 
 ## 一、一句话现状
 
@@ -253,12 +260,12 @@
 
 ## 九、下一轮续接建议开场
 
-> 继续 BoenMind 阶段 2（Steward 轮/pi 废除第②步）。交接见 docs/HANDOFF_KERNEL_PHASE1.md。**里程碑轮收口（本会话）：自研引擎已上线为默认**——subagent 接入 + 默认反转 bm + 验收三连通过 + 架构 v0.18。开工前仍先 git pull。
+> 继续 BoenMind 阶段 2（Steward 轮/pi 废除第②步）。交接见 docs/HANDOFF_KERNEL_PHASE1.md。**里程碑轮收口（本会话）：自研引擎已上线为默认**——subagent 接入 + 默认反转 bm + 验收三连通过 + 架构 v0.18；**工具轮收口**：code-graph MCP 已装给 ZCode（新会话生效）。开工前仍先 git pull。
 >
 > **下一轮动作（两个方向都可直接开工，无需再拍板）**：
 > 1. **pi 废除第②步**：subagent 子进程换 bm-loop（subagent_child.rs 的 pi SDK 段 → bm-loop + InMemory 事件日志 + BuiltinTools 执行器，协议事件形状不变）→ 之后 chat.rs pi 分支与 legacy loop 代码可删。
 > 2. **Steward 轮（§14.1/§14.2）**：调度器（定时回合注入 + 静默窗口）+ OS 层主动汇报通道 + next_wake_at 落点——三件套全是增量；节奏 = 管家记忆非代码常量，治理层兜频率下限（pacing-min/max 吸收）。
-> 3. 可选顺手件：新会话记忆注入真实冒烟（facts.md → bm 引擎聊天看注入）、双开 30 轮全量复跑（0.5 水线 + 413 修复后验证预测）。
+> 3. 可选顺手件：新会话记忆注入真实冒烟（facts.md → bm 引擎聊天看注入）、双开 30 轮全量复跑（0.5 水线 + 413 修复后验证预测）、**新会话用 code-graph MCP 工具探索代码库**（装机后首次实测）。
 >
 > **注意坑**（详见 §〇·五 16-28 + 既有全量）：MiniMax 流式须 stream_options.include_usage、缓存字段在 prompt_tokens_details.cached_tokens、pi/bm 两组 input 口径不同（对比换算）、chars/4 中文低估须真实 usage 校准、pi 句柄断连坏死重启+resume、双开 RUST_LOG 须含 bm_loop=info、413 已修（clip_tool_output 双点）、压缩事务实际 5 次（§〇·五 22）、bm-memory 每会话 open facts.md、桥调用首参 secret 不绑定形参、tool_result 事件 content 用 ContentBlock 数组、内置工具 schema 要注册进 ToolRegistry、SELF_TOOLS 跳过搜索类工具是设计、目录型插件须 extension.json、Disposer 纪律、turso 绑定形态、fork 超头拒绝、standalone 起服务 `--features embed`、bm-compat 测试走 `--test host --test load --test execute --test events --test session`、CompatEngine 专用线程、payload 全文不打日志、**引擎优先级 env>settings>默认 bm（反转点 resolve_loop_engine 一处）**、**subagent 坑：(&BTreeMap).clone() 克隆引用须 (*x).clone()、lines().next_line() 返回 Result<Option> 要 transpose、kill_on_drop 传播取消**、`/api/sessions/{id}/events` 是 SSE 流 curl 会挂、Windows curl 中文 JSON 报 invalid unicode。
 
