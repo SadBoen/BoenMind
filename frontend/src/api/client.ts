@@ -54,6 +54,8 @@ export interface AppConfig {
   extension_policy?: string;
   /** YOLO 开关：放行 exec/env 等危险能力 */
   extension_allow_dangerous?: boolean;
+  /** 执行引擎："bm" 自研 ReactLoopAgent / "pi" 上游 SDK；未设 = 跟随默认 */
+  loop_engine?: string;
 }
 
 export interface Session {

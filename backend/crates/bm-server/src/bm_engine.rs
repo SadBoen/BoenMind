@@ -57,6 +57,23 @@ pub fn loop_engine_is_bm(value: &str) -> bool {
     value == "bm"
 }
 
+/// 引擎选择（优先级）：env `BM_LOOP_ENGINE`（双开对比调试通道）> settings
+/// `loop_engine`（前端开关持久化）> 默认 "pi"。空串视为未设置。
+/// **切换拍板后默认值在此反转**（"pi" → "bm"），一处即可。
+pub fn resolve_loop_engine(env_value: Option<&str>, settings_value: Option<&str>) -> String {
+    env_value
+        .and_then(non_empty)
+        .or_else(|| settings_value.and_then(non_empty))
+        .unwrap_or("pi")
+        .to_string()
+}
+
+/// 空串/空白视为未设置（env 为空时穿透到 settings，而不是顶掉它）。
+fn non_empty(v: &str) -> Option<&str> {
+    let v = v.trim();
+    (!v.is_empty()).then_some(v)
+}
+
 /// thinking 档名 → OpenAI 兼容 `reasoning_effort`（切片②：七档折叠三档）。
 /// off→不注入（端点默认）；minimal/low→low；medium→medium；high/xhigh/max→high。
 pub fn reasoning_effort_for(level: &str) -> Option<&'static str> {
@@ -680,6 +697,20 @@ mod tests {
         assert!(!loop_engine_is_bm("pi"));
         assert!(!loop_engine_is_bm(""));
         assert!(!loop_engine_is_bm("BM"));
+    }
+
+    #[test]
+    fn loop_engine_precedence_env_over_settings_over_default() {
+        // env 优先（双开对比通道），settings 其次（前端开关），都无 → 默认 pi
+        assert_eq!(resolve_loop_engine(Some("bm"), Some("pi")), "bm");
+        assert_eq!(resolve_loop_engine(Some("pi"), Some("bm")), "pi");
+        assert_eq!(resolve_loop_engine(None, Some("bm")), "bm");
+        assert_eq!(resolve_loop_engine(None, Some("pi")), "pi");
+        assert_eq!(resolve_loop_engine(None, None), "pi");
+        // 空串视为未设置
+        assert_eq!(resolve_loop_engine(Some(""), Some("bm")), "bm");
+        assert_eq!(resolve_loop_engine(Some("  "), None), "pi");
+        assert_eq!(resolve_loop_engine(Some(" bm "), None), "bm", "首尾空白容忍");
     }
 
     #[test]
