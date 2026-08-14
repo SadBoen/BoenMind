@@ -1,24 +1,21 @@
 # HANDOFF —— 阶段 1 开工交接（两线并行）
 
-> **2026-08-14 公司远程轮续接（B5 权限桥）**：**BridgeServices 替换 UnwiredServices**（compat_engine.rs）：① `request_approval` 接 PermissionBridge 同款询问链——permission_pending 注册 → `send_permission_request` SSE 推 PermissionRequest → 60s 等决策 → 超时 fail-closed（决策记忆留 B6 前补丁：pi 路径由上游写 extension-permissions.json，bm 路径暂每次询问）；② **http 端口 reqwest 真实现**（镜像 legacy HttpConnector 简化形：除 GET 外一律 POST、响应 {status, headers, body/body_bytes}）——web_search 网络能力就位；③ **current_session 路由**：CompatCmd::Execute 带 session_id，命令循环串行内 set/clear（thread-local 语义），询问路由到发起会话的 SSE 通道；exec/session/ui/events/execute_tool 端口仍 unwired（B6 前补齐内置工具集）；AppState 组件共享重构（session_streams/permission_pending 先建于 serve_inner，CompatEngine 建于 AppState 之前只拿组件）。**真实验收通过**（release+embed + 隔离 home + 真实 web-search 插件含真 key，MiniMax-M3）：**web_search×2 + web_fetch×1 三次真实工具调用全成功**（is_error:false，http hostcall 真发真回）→ 事件日志 3×tool/call↔3×tool/result + turn 闭环 → 模型多轮迭代汇总。查实：ExtensionPolicy::default = Prompt 模式且 http 在 default_caps（默认放行不弹窗）；exec/env 在 deny_caps。commit a365789，main 已推送。
-> 下一轮：**B6 全链路验收 + 30 轮双开对比**：① 补 exec/execute_tool/session/ui/events 端口（内置工具集：file 读写/grep/bash——web-scraping/ctx-compactor 依赖）+ 决策记忆（permission_pending 回传写 extension-permissions.json 同款）+ 心跳 TaskProgress + thinking 档位映射；② 现有三插件（web_search/web_fetch/ctx-compactor）在 bm 引擎全链路；③ pi/bm 30 轮 A/B 对比（同压缩方法论）后拍切换。
-
-> **2026-08-14 公司远程轮续接完成（B4 工具执行方向）**：**bm-compat 加 execute_tool 桥**（execute.rs：镜像 legacy execute_extension_tool_sharded 单 runtime 版——`__pi_execute_tool`(bridge_secret,name,call_id,input,ctx)→`__pi_task_start` 挂任务→复用 B3 await_js_task 泵循环；tests/execute.rs 2 用例真 TS 插件执行回读全绿；CI test/clippy 加 --test execute）；**bm-server 加 CompatEngine**（compat_engine.rs：HostThread 含 Rc 非 Send→专用线程+命令通道（Load/Execute/Tools 三命令 oneshot 回结果，天然串行）；UnwiredServices 六端口 B4 全"unwired"、request_approval fail-closed（B5 接）；启动加载启用插件→ExtensionToolDef→bm-loop ToolDef 快照；QuickJsToolExecutor 替换 NoopExecutor（compat None 时兜底）；AppState.compat + serve_inner init_compat）。**真实验收通过**（release+embed + 隔离 home + 真实 hello 插件，MiniMax-M2.5 真实调用）：工具全链路闭环——SSE toolCallStart/toolCallEnd + 事件日志 tool/call↔tool/result（两回合）+ 多步循环（step1 工具→step2 汇总→completed）。commit 548b6a2 + cb92d59，main 已推送。
-> 本轮查实/坑：① MiniMax M3/M2.5 对工具指令的服从性飘忽（M3 两次拒调、M2.5 一次拒调一次调）——**不是我们栈的问题**（直连官方 API 对照实验 + payload 比对确认：schema 干净、tools=1 上 payload）；**payload 全文不打日志**（含用户消息，观测只留 tools 计数）；② 验收方法论教训：bm 路径 SSE 事件面必须与 pi 对齐（TextDelta/ToolCallStart/ToolCallEnd/Done），当初"工具没调"是缺工具 SSE 事件的误判——已补（StreamHooks 实现 on_tool_pre/post，零新钩子）；③ CompatEngine Drop = 通道 sender 落下→命令循环退出→join（专用线程收尾）。
-> 下一轮：**B5 权限桥**（HostServices::request_approval 接现有 PermissionBridge + UnwiredServices 六端口换真实现——网络 hostcall 让 web_search 全链路）+ 切片② 顺手件（thinking 档位映射 + 心跳 TaskProgress——注意与 chunk 批写同库的锁竞争）→ B6 全链路 + 30 轮双开对比。
-
-> **2026-08-14 白天轮续接完成（A6 接线 切片①）**：**BM_LOOP_ENGINE=bm 开关落地**——新模块 bm-server/src/bm_engine.rs（StreamHooks 流式通道/NoopExecutor 空工具兜底/provider→LlmConfig 桥接（用户端点优先+官方回退，去尾斜杠）/会话级 agent map（换 provider/model 即重建，日志是唯一状态源）/watch 取消通道 + 停止按钮 + 15min 超时）；bm-loop 加 `LoopHooks::on_stream_chunk` 钩子（TextDelta 处调用，与日志同源同序，RecorderHooks 断言更新）；chat.rs 双路径分流（会话校验/命名/add_message 共享前缀，bm 路径下 loop 拥有事件日志全生命周期，SSE 前端形状零改动；session_streams 统一 unbounded）。**真实验收通过**（release+embed + 独立 BOENMIND_HOME，MiniMax-M3 真实流式）：① turn 1 九事件完整闭环（user/message→request/header+prompt_hash→turn/start→step/start→3×assistant/chunk→assistant/message→turn/end completed）；② 多回合投影重建正确（turn 2 模型准确回忆上一条问题）；③ 停止按钮 → turn/end cancelled；④ 客户端断开自动取消（curl head 截断触发 StreamHooks 关闭检测）。pi 路径回归通过（15 事件闭环、真实流式正常）。commit 4d227d0 + ee4dc5c（Cargo.lock），main 已推送。
-> 观察坑入账：**pi 路径双写偶发 `database is locked`**（5s 心跳任务进度写 与 chunk 批并发写同库；bm 路径零锁错误——切片①无心跳并发写）——**已修一半（commit 1d4f3c9）**：bm-core db / bm-storage event_log / checkpoint 三处连接加 `busy_timeout=5000`（SQLite 内部等待替代立即报错）；残留：>5s 争用仍会丢 batch（写线程重试队列）+ 心跳/chunk 合并写通道，留双开对比期深查。验收环境注意：BOENMIND_HOME 布局 = `$HOME/.boenmind/config.toml`；硬杀进程后残留 wal 锁会自行恢复。
-> 下一轮：**B4 工具方向**（bm-compat ExecuteTool 桥 → ToolExecutor 真实现 → ToolRegistry 汇合）→ B5 权限桥 → B6 全链路 + 30 轮双开对比；切片② 顺手补 thinking 档位映射（当前 bm 路径忽略 thinking，日志有提示）。
-
-> 2026-08-14 夜轮续接完成（B2 + B3）：① **B2 host 线程**落地（bm-compat/src/host.rs ~300 行：drain→policy 裁决+六端口分发→complete 攒批→tick→二轮补收，镜像 legacy pump_js_runtime_once_for_owner；HostServices 六端口 + request_approval fail-closed 询问口预埋 B5；check_capability 三模式裁决）；② **bm-compat 入 workspace + CI 门禁**（members 登记、test/clippy 两行、B1 存量 lint 经 manifest [lints] 表放行——红线拷贝文件逐字节一致；unsafe_code forbid 对齐 legacy；全量回归 237 测试全绿）；③ **B3 加载路径**（load.rs：JsExtensionLoadSpec verbatim 提取 + load_extension 桥接 + await_js_task 泵循环复用 HostThread；**真 TS 插件加载全链路实测**：swc 转译→init(pi)→registerTool→get_registered_tools 读回，4 用例全绿）。commit 3366cab（B2）+ 282d629（B3），main 已推送。
-> 查实两协议：__pi_load_extension resolve `true`（布尔成功标志，注册面走 get_registered_tools）；插件入口须 default-export init 函数（loader 自带 export shape 五级归一化回退）。
-> 下一轮：**A6 接线**（开关 + bm-loop 路径 + SSE 流式通道 + 空工具 ToolExecutor，见 §九·三 设计）→ B4（bm-compat 工具执行方向）→ 双开对比。
-
-> 2026-08-14 夜自主运行轮完成（用户睡觉，ZCode 自主推进 4 小时）：主线 A 除 A6 主体外全部落地（A1-A5+A7），回收站 C1/C2 完成，L9 架构依赖测试落地，proptest 承诺兑现，B1 前置（骨架+依赖图谱）就位，A6 骨架 crate（bm-loop）建立。**全部 25 测试套件全绿 + 两档 clippy 门禁清零 + CI 恢复绿灯。**
-
-> 2026-08-14 夜交接（最终版，已推送）。**状态：10 拍板点已全部拍板；阶段 1 前置小修全部落地（181 测试全绿）；重构决策已执行（legacy 旧代码文件夹）；LoopX 研读吸收完成（L1-L17）；两大主线任务分解完毕，下一轮直接开工。**
-> 交接原因：用户开新对话续接。
+> **当前状态（2026-08-14 收口，CI 全绿）**：主线 A（A1-A7）+ 主线 B（B1-B5）**全部落地**。
+> - A 线：执行级事件日志（A1-A5）+ 自研 loop（A6 主体 + 接线：`BM_LOOP_ENGINE=bm` 开关/流式/工具/取消）+ A7 迁移骨架
+> - B 线：B1 拷入 + B2 host 线程 + B3 加载路径 + B4 工具执行方向 + B5 权限桥（http 真实现）
+> - 真实验收：bm 引擎 4 项（切片①）+ hello 工具全链路（B4）+ **web_search×2/web_fetch×1 真实搜索全成功**（B5）
+> - **剩：B6 收口**（① 补 exec/execute_tool/session/ui/events 端口——内置工具集让 ctx-compactor/web-scraping 可用 + 决策记忆 + 心跳 TaskProgress + thinking 档位映射；② 三插件 bm 引擎全链路；③ pi/bm 30 轮 A/B 双开对比后拍切换）。开工前先 git pull。
+>
+> **轮次历史**（细节见 §〇 commit 索引；查实/坑全量见 §〇·五）：
+>
+> | 轮次 | 内容 | commit | 关键坑/查实 |
+> |---|---|---|---|
+> | 夜自主轮 | A1-A5+A7 / C1/C2 / L9 / proptest / 骨架 / CI 修复 | 2cde412..951ea48 | Disposer 纪律、turso 绑定形态、fork 超头拒绝、standalone 起服务 `--features embed` |
+> | 白天轮 | 真实验收（197 事件）+ B1 拷入 + A6 主体 + 架构 v0.15 | 1953d3e..2ff4b8a | fresh session 投影=空、embed feature 坑 |
+> | 夜轮续接 | B2 host 线程 + B3 加载路径 + bm-compat 入 workspace | 3366cab, 282d629 | HostServices 用 `#[async_trait]`；测试走 `--test host/load/execute`；插件入口 default-export init；`__pi_load_extension` resolve 布尔 true |
+> | 白天轮续接 | A6 接线 切片① | 4d227d0, ee4dc5c | pi 双写偶发 `database is locked`（1d4f3c9 已加 busy_timeout=5000，>5s 争用残留观察）；BOENMIND_HOME 布局 = `$HOME/.boenmind/`；硬杀进程 wal 锁自行恢复 |
+> | 公司远程轮 | 架构 v0.16 寄生关系定调 + B4 工具方向 | cd2e4e0, 548b6a2, cb92d59 | MiniMax 工具服从性飘忽（非栈问题）；payload 全文不打日志；bm 路径 SSE 事件面须与 pi 对齐；CompatEngine 专用线程（HostThread 含 Rc 非 Send） |
+> | 公司远程轮续 | B5 权限桥 | a365789, cb1ae10 | ExtensionPolicy::default=Prompt 且 http 在 default_caps（默认放行）、exec/env 在 deny_caps；决策记忆（extension-permissions.json 同款）留 B6 |
 
 ## 〇、本次会话 commit 索引（main 已推送，工作区干净）
 
@@ -186,13 +183,13 @@
 
 浅克隆 D:/96_CoderWorld/loopx（huangruiteng/loopx，Python，长时 agent 团队的状态内核）。吸收清单 L1-L14 已入架构文档 §3.6，**要点**：四角色职责模型（观察≠转移、回执≠进度——把关链参照）/ 回合决策词汇表（TurnEndReason 扩展参照）/ 配额 should-run + 交互契约 / **任务认领租约**（100 小弟并行协调模式）/ **架构依赖测试**（铁律 3 从人工审计升级 CI 机器强制——建议尽早落地）/ 交接包与审查包 / dreaming 只建议不执行（Steward 参照）/ 前场后场分离。**定位关系**：我们是 session runtime，LoopX 是 goal-level 控制投影——Steward/目标域按投影接入，不自造第二运行时（L14）。
 
-**下一轮顺手可做**：bm-protocol 零依赖 + bm-kernel 不依赖 bm-server/bm-core 的**架构依赖测试**（L9，成本极低、锁死铁律 3）。
+**顺手件（✅ 已落地 2cde412）**：bm-protocol 零依赖 + bm-kernel 不依赖 bm-server/bm-core 的**架构依赖测试**（L9，CI 强制）。
 
 ## 九、下一轮续接建议开场
 
-> 继续 BoenMind 阶段 1。交接见 docs/HANDOFF_KERNEL_PHASE1.md。**公司远程轮已落地（B4 工具方向，commit 548b6a2 + cb92d59）**：execute_tool 桥 + CompatEngine + QuickJsToolExecutor + SSE 工具事件；真实验收通过（hello 工具全链路闭环）。注意本仓库可能有多会话并行推进（busy_timeout 修复来自另一会话）——开工前先 git pull。
+> 继续 BoenMind 阶段 1。交接见 docs/HANDOFF_KERNEL_PHASE1.md。**公司远程轮已落地（B4 工具方向 548b6a2+cb92d59 + B5 权限桥 a365789）**：execute_tool 桥 + CompatEngine + QuickJsToolExecutor + SSE 工具事件 + BridgeServices（询问链 + http 真实现）；真实验收通过（hello 全链路 + web_search×2/web_fetch×1 真实搜索）。多会话并行已收拢，开工前仍先 git pull。
 >
-> **下一轮动手顺序**：① **B5 权限桥**（bm-server 的 UnwiredServices 换真实现：request_approval 接现有 PermissionBridge——HostServices 是 async trait 端口，桥接层在 bm-server 侧把询问转发给 `send_permission_request`/`permission_pending` 通道；六端口逐一接：http（reqwest+SSRF 防护复用 bm-core providers 校验思路）让 web_search 全链路可跑、execute_tool 端口接内置工具集）；② **切片② 顺手件**：thinking 档位映射（当前 bm 路径忽略 thinking，日志有 `bm.loop_thinking_ignored` 提示）+ 心跳 TaskProgress（任务状态条；busy_timeout 已修，注意心跳与 chunk 批写并发仍留观察）；③ **B6 全链路验收 + 30 轮双开对比**（同压缩 A/B 方法论，现有 TS 插件 web_search/web_fetch/ctx-compactor 全链路）后拍切换。
+> **下一轮动手顺序（B6 收口）**：① **内置工具集端口**（BridgeServices 的 exec/execute_tool/session/ui/events 换真实现：file 读写/grep/bash 等，让 ctx-compactor/web-scraping 全链路可用；execute_tool 端口=插件内 pi.tool 调宿主工具的递归执行——注意递归死锁防护）+ **决策记忆**（permission_pending 回传写 extension-permissions.json 同款持久化，对齐 pi 语义）；② **切片② 顺手件**：thinking 档位映射（当前 bm 路径忽略 thinking，日志有 `bm.loop_thinking_ignored` 提示）+ 心跳 TaskProgress（任务状态条；busy_timeout 已修，心跳与 chunk 批写并发仍留观察）；③ **三插件 bm 引擎全链路验收**（web_search/web_fetch/ctx-compactor）+ **30 轮 pi/bm 双开对比**（同压缩 A/B 方法论）后拍切换。
 >
 > **注意坑**（详见 §〇·五 + 本轮新查实）：Disposer 纪律、turso 绑定形态、fork 超头拒绝、跨分支投影逐段折叠、standalone 起服务 `--features embed`、loop 读回写入前屏障冲刷；**B2/B3 坑**：HostServices 用 `#[async_trait]`；bm-compat 测试走 `--test host --test load --test execute`；插件入口须 default-export init；`__pi_load_extension` resolve 布尔 true；**A6 接线坑**：LoopHooks 钩子全是同步方法（内部锁用 std Mutex 不可 tokio Mutex）、session_streams 已统一 unbounded（新增使用者勿再造 bounded）、BM_LOOP_ENGINE 读 env 每次请求判（双开对比期足够）；**B4 坑**：CompatEngine 专用线程（HostThread 含 Rc 非 Send，命令通道 oneshot 回结果）、bm 路径 SSE 事件面须与 pi 对齐（TextDelta/ToolCallStart/ToolCallEnd/Done）、payload 全文不打日志（含用户消息，观测只留 tools 计数）。
 
@@ -220,7 +217,7 @@
 | A3 fork 父前缀折叠 | ✅ | forked_at 列 + visible_segments 逐段折叠 |
 | A4 Interrupted 启动补写 | ✅ | recover_interrupted_turns（幂等） |
 | A5 subscribe + SSE | ✅ | bm-kernel subscribe_events + /api/sessions/{id}/events |
-| A6 ReactLoopAgent | ✅ 主体 + ✅ 接线（切片①） | bm-loop（run 循环/流式 client/压缩双触发/on_stream_chunk 钩子）+ bm-server bm_engine.rs（开关/流式通道/provider 桥接/会话 map/取消）；**真实验收通过**（4 项见 §〇 白天轮）；**B4 工具方向 + B5 权限桥 + 双开对比 = 下一轮** |
+| A6 ReactLoopAgent | ✅ 主体 + ✅ 接线（切片①） | bm-loop（run 循环/流式 client/压缩双触发/on_stream_chunk 钩子）+ bm-server bm_engine.rs（开关/流式通道/provider 桥接/会话 map/取消）；**真实验收通过**（4 项见 §〇 白天轮）；**双开对比 = 下一轮（B6）** |
 | A7 迁移链骨架 | ✅ | FORMAT_MIGRATIONS + migrate 读路径全接 |
 | C1 超期自动清除 | ✅ | purge_orphaned_events + 每日后台任务（90 天，env 可调） |
 | C2 用户主动清除 | ✅ | DELETE /api/sessions/{id}/events + 前端菜单 |
