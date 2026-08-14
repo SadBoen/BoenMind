@@ -584,9 +584,15 @@ impl<H: LoopHooks, L: Llm, T: ToolExecutor> ReactLoopAgent<H, L, T> {
                     break;
                 }
                 tool_calls_executed += 1;
-                // 超限工具结果裁剪后再落日志（§〇·五 21）：>5MB 截断留头尾，
-                // meta 记原始字节——否则超限结果入 event_log 后会话永久 413
-                let (output, tool_meta) = clip_tool_output(&output);
+                // 超限工具结果裁剪后再落日志（§〇·五 21 + 33）：>5MB 截断留头尾
+                // （防 128MB 请求体 413），窗口预算层更早截断（防 context window
+                // exceeds limit 400——几 MB 工具结果折算几十万 token，单步请求
+                // 即可爆 128K 窗口）；meta 记原始字节——否则超限结果入 event_log
+                // 后会话永久 413/400
+                let (output, tool_meta) = clip_tool_output_with_budget(
+                    &output,
+                    window_tool_budget_bytes(self.config.context_window),
+                );
                 flusher.push(
                     EventKind::Core(CoreEvent::ToolResult {
                         turn,
@@ -665,7 +671,10 @@ impl<H: LoopHooks, L: Llm, T: ToolExecutor> ReactLoopAgent<H, L, T> {
                 "content": self.config.system_prompt,
             }));
         }
-        messages.extend(projection_to_openai_messages(msgs));
+        messages.extend(projection_to_openai_messages(
+            msgs,
+            window_tool_budget_bytes(self.config.context_window),
+        ));
         serde_json::json!({
             "model": self.config.model,
             "messages": messages,
@@ -829,23 +838,36 @@ impl EventFlusher {
 // 超限工具结果裁剪（§〇·五 21：MiniMax 请求体 128MB 上限）
 // ============================================================================
 
-/// 单条工具结果字节上限。防线背景：某工具一次返回 ~207MB（实测撞 413）
-/// 落进 event_log 后，该会话每次重建历史都超限、永久 413（§〇·五 21）。
-/// 超限即截断留头尾：模型窗口（128K ≈ 500K 字符）本就装不下超限结果，
-/// 头尾已足让模型判定结果性质；中段以占位说明替代。
+/// 单条工具结果字节上限（413 防线）。背景：某工具一次返回 ~207MB（实测撞
+/// 413）落进 event_log 后，该会话每次重建历史都超限、永久 413（§〇·五 21）。
+/// 超限即截断留头尾：模型窗口本就装不下超限结果，头尾已足让模型判定结果
+/// 性质；中段以占位说明替代。
 pub const MAX_TOOL_RESULT_BYTES: usize = 5 * 1024 * 1024;
 
-/// 工具结果裁剪（写入点与投影点共用）：> [`MAX_TOOL_RESULT_BYTES`] 截断
-/// 留头 60% / 尾 40%（UTF-8 字符边界安全），中段替换为截断说明。
-/// 返回 (裁剪后文本, 审计 meta)；未超限返回 (原样, None)。
-pub fn clip_tool_output(output: &str) -> (String, Option<serde_json::Value>) {
-    if output.len() <= MAX_TOOL_RESULT_BYTES {
+/// 工具结果窗口预算（字节）：`context_window / 2`。窗口感知的预算层
+/// （§〇·五 33）——5MB 硬顶只防 128MB 请求体 413，几 MB 的工具结果折算
+/// 几十万 token，单步请求即可爆 MiniMax 上下文窗口（context window
+/// exceeds limit 400）；预算 = 窗口一半的字节数，折算 token 约窗口
+/// 1/8~1/6（中文 3 字节/字 ≈ 1 token、英文 1 字节 ≈ 1/4 token，保守双
+/// 倍安全），任何模型窗口下单条工具结果都不会撑爆本步请求。
+pub fn window_tool_budget_bytes(context_window: u32) -> usize {
+    (context_window / 2) as usize
+}
+
+/// 工具结果裁剪（写入点与投影点共用）：超 `budget_bytes` 截断留头 60% /
+/// 尾 40%（UTF-8 字符边界安全），中段替换为截断说明。返回 (裁剪后文本,
+/// 审计 meta)；未超限返回 (原样, None)。
+pub fn clip_tool_output_with_budget(
+    output: &str,
+    budget_bytes: usize,
+) -> (String, Option<serde_json::Value>) {
+    if output.len() <= budget_bytes {
         return (output.to_string(), None);
     }
     let original = output.len();
     // 预算 = 上限 − 1024（占位说明自身 ~160 字节，留足余量）——
     // 裁剪结果恒 ≤ 上限，重复裁剪幂等（读路径对历史重复裁剪安全）
-    let budget = MAX_TOOL_RESULT_BYTES - 1024;
+    let budget = budget_bytes.saturating_sub(1024);
     let head_keep = budget * 6 / 10;
     let tail_keep = budget * 4 / 10;
     let head_end = floor_char_boundary(output, head_keep);
@@ -862,6 +884,13 @@ pub fn clip_tool_output(output: &str) -> (String, Option<serde_json::Value>) {
             "original_bytes": original,
         })),
     )
+}
+
+/// 工具结果裁剪（413 硬顶版）：语义同 [`clip_tool_output_with_budget`]，
+/// 阈值 = [`MAX_TOOL_RESULT_BYTES`]。旧调用点（投影自愈等无窗口上下文处）
+/// 保持；有窗口上下文的调用点应优先用窗口预算版。
+pub fn clip_tool_output(output: &str) -> (String, Option<serde_json::Value>) {
+    clip_tool_output_with_budget(output, MAX_TOOL_RESULT_BYTES)
 }
 
 /// 不超过 `max` 的最大 char 边界索引（截断不得劈开 UTF-8 字符）。
@@ -889,7 +918,13 @@ fn ceil_char_boundary(s: &str, min: usize) -> usize {
 /// 投影消息 → OpenAI 兼容 messages。assistant 的工具调用（已闭合）随后
 /// 展开为 role=tool 结果消息；未闭合调用（无 result）不进入 payload
 /// （正常流程不存在——loop 每步必执行工具后才有新投影）。
-pub fn projection_to_openai_messages(msgs: &[bm_kernel::SurfaceMessage]) -> Vec<serde_json::Value> {
+/// `tool_budget_bytes`：工具结果读路径裁剪预算（窗口感知，调用方传
+/// `window_tool_budget_bytes(context_window)`）——旧版污染历史/pi 路径
+/// 原始写入自愈，模型请求永不携带超限内容（§〇·五 21/33）。
+pub fn projection_to_openai_messages(
+    msgs: &[bm_kernel::SurfaceMessage],
+    tool_budget_bytes: usize,
+) -> Vec<serde_json::Value> {
     let mut out = Vec::new();
     for m in msgs {
         match m.role.as_str() {
@@ -925,13 +960,13 @@ pub fn projection_to_openai_messages(msgs: &[bm_kernel::SurfaceMessage]) -> Vec<
                 out.push(serde_json::Value::Object(entry));
                 // 工具结果消息（role=tool 紧随 assistant）；读路径同样裁剪——
                 // 历史被旧版污染（日志存有超限原文）或 pi 路径写进原始结果
-                // 时自愈，模型请求永不携带超限内容（§〇·五 21）
+                // 时自愈，模型请求永不携带超限内容（§〇·五 21/33）
                 for tc in closed {
                     let result = tc.result.as_ref().expect("filtered closed");
                     out.push(serde_json::json!({
                         "role": "tool",
                         "tool_call_id": tc.call_id,
-                        "content": clip_tool_output(&result.output).0,
+                        "content": clip_tool_output_with_budget(&result.output, tool_budget_bytes).0,
                     }));
                 }
             }

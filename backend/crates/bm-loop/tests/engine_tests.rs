@@ -10,7 +10,8 @@ use std::sync::Mutex;
 use bm_kernel::{EventLog, InMemoryEventStore, SurfaceIntent, SurfaceToolCall};
 use bm_loop::engine::{
     LoopConfig, ReactLoopAgent, RunError, StepRequest, ToolCallRequest, ToolExecutor, ToolOutcome,
-    TurnOutcome, TurnRequest, MAX_TOOL_RESULT_BYTES, clip_tool_output, projection_to_openai_messages,
+    TurnOutcome, TurnRequest, MAX_TOOL_RESULT_BYTES, clip_tool_output,
+    clip_tool_output_with_budget, projection_to_openai_messages, window_tool_budget_bytes,
 };
 use bm_loop::llm::{Llm, LlmError, LlmEvent, LlmRequest, LlmToolCall, LlmUsage};
 use bm_loop::points::{LoopHooks, RequestCtx, StepCtx, StopCtx, ToolCtx, ToolGate};
@@ -637,7 +638,7 @@ fn projection_to_openai_roles_and_tool_messages() {
             step: 1,
         },
     ];
-    let out = projection_to_openai_messages(&msgs);
+    let out = projection_to_openai_messages(&msgs, 64_000);
     assert_eq!(out.len(), 3, "user + assistant + 1 条 tool 结果");
     assert_eq!(out[0]["role"], "user");
     assert_eq!(out[1]["role"], "assistant");
@@ -707,6 +708,33 @@ fn clip_tool_output_is_idempotent() {
     assert!(meta2.is_none(), "裁剪后已低于上限");
 }
 
+/// 窗口预算层（§〇·五 33）：5MB 硬顶只防 413 请求体，中量工具结果
+/// （<5MB）仍可爆 MiniMax 上下文窗口——预算 = 窗口/2 字节。
+#[test]
+fn window_budget_clips_medium_outputs() {
+    // 128K 窗口 → 64KB 预算
+    assert_eq!(window_tool_budget_bytes(128_000), 64_000);
+    // 300KB 输出 < 5MB 硬顶，但超窗口预算 → 截断
+    let medium = "x".repeat(300 * 1024);
+    let (clipped, meta) = clip_tool_output_with_budget(&medium, window_tool_budget_bytes(128_000));
+    assert!(meta.is_some(), "超窗口预算应截断");
+    assert_eq!(meta.as_ref().unwrap()["original_bytes"], 300 * 1024);
+    assert!(clipped.len() <= 64_000, "裁剪结果不超预算");
+    assert!(clipped.starts_with(&medium[..37_700]), "保留原头部（60% 预算）");
+    // 幂等：再裁不变
+    let (again, meta2) = clip_tool_output_with_budget(&clipped, window_tool_budget_bytes(128_000));
+    assert_eq!(again, clipped);
+    assert!(meta2.is_none());
+    // 小输出（< 预算）不动
+    let (small, meta3) = clip_tool_output_with_budget("小结果", window_tool_budget_bytes(128_000));
+    assert_eq!(small, "小结果");
+    assert!(meta3.is_none());
+    // 5MB 硬顶版仍生效（旧语义不变）
+    let (five, meta4) = clip_tool_output(&medium);
+    assert_eq!(five, medium, "300KB < 5MB 硬顶不截断");
+    assert!(meta4.is_none());
+}
+
 /// 工具返回超限结果 → 写入路径裁剪：日志 ToolResult 只存头尾 + meta，
 /// 投影（模型可见历史）同步受限——会话不会再被超限结果污染（§〇·五 21）。
 #[tokio::test]
@@ -763,6 +791,50 @@ async fn oversized_tool_result_is_clipped_before_logging() {
     assert!(visible.output.contains("已截断"));
 }
 
+/// 中量工具结果（<5MB 但超窗口预算）→ 写入路径同样裁剪（§〇·五 33）：
+/// 5MB 硬顶只防 413 请求体，窗口预算防单步请求爆上下文窗口。
+#[tokio::test]
+async fn medium_tool_result_clipped_by_window_budget() {
+    struct MediumExecutor;
+    impl ToolExecutor for MediumExecutor {
+        async fn execute(&self, _req: ToolCallRequest) -> ToolOutcome {
+            ToolOutcome { ok: true, output: "y".repeat(300 * 1024), meta: None }
+        }
+    }
+
+    let (mut a, store) = make_agent(
+        (),
+        ScriptLlm::new(vec![script_tool(), script_text("收到了")]),
+        MediumExecutor,
+    );
+    let (_tx, mut rx) = cancel_channel();
+    let out = a
+        .run_turn(
+            TurnRequest { content: "查".into(), source: UserMsgSource::Human },
+            HeaderReason::Initial,
+            &mut rx,
+        )
+        .await
+        .unwrap();
+    assert_eq!(out.reason, TurnEndReason::Completed);
+
+    // 日志 ToolResult 已按窗口预算裁剪（300KB > 64KB），meta 记原始字节
+    let log = EventLog::new(store.clone());
+    let evs = log.replay(&SessionId::new(SID), &BranchId::new("main")).await.unwrap();
+    let tool_result = evs
+        .iter()
+        .find_map(|e| match &e.kind {
+            EventKind::Core(CoreEvent::ToolResult { result, meta, .. }) => Some((result, meta)),
+            _ => None,
+        })
+        .expect("应有 tool/result 事件");
+    let (result, meta) = tool_result;
+    assert!(result.output.len() <= window_tool_budget_bytes(128_000), "日志按窗口预算裁剪");
+    assert!(result.output.contains("已截断"));
+    let meta = meta.as_ref().expect("超预算应带审计 meta");
+    assert_eq!(meta["original_bytes"], 300 * 1024);
+}
+
 #[test]
 fn projection_clips_polluted_history() {
     // 读路径自愈：历史被旧版污染（日志存有超限原文，如 pi 路径写入）时，
@@ -790,7 +862,7 @@ fn projection_clips_polluted_history() {
             step: 1,
         },
     ];
-    let out = projection_to_openai_messages(&msgs);
+    let out = projection_to_openai_messages(&msgs, 64_000);
     assert_eq!(out[2]["role"], "tool");
     let content = out[2]["content"].as_str().unwrap();
     assert!(content.contains("已截断"), "污染历史的工具结果在请求面被裁剪");
