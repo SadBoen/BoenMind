@@ -1,12 +1,12 @@
 # HANDOFF —— 阶段 1 开工交接（两线并行）
 
-> **当前状态（2026-08-14 白天轮收口）**：主线 A（A1-A7）+ 主线 B（B1-B6）**全部落地**；30 轮 pi/bm 双开对比完成（bm 记忆 5/5 vs pi 4/5）；顺手件轮四项全部落地（governance.memorize / CI 4 并行 job / 水线 0.5 复测 / session 集成测试）。**白天轮新增两项收口**：**413 会话污染修复**（超限工具结果双点裁剪：写入时 >5MB 截断留头尾 + 投影时同款裁剪自愈旧污染，e0e1224）——切换前待办清零；**切换机制接线**（bc3b299）——settings.loop_engine 持久化 + env>settings>默认 pi 优先级 + 前端「执行引擎」设置页三态选择（跟随默认/自研 bm/上游 pi，i18n×4）。**默认值未反转，剩用户一句话**：拍板后改 `resolve_loop_engine` 的 `"pi"` → `"bm"` 一处即可（前端开关已就位，无需再动）。
-> - A 线：执行级事件日志（A1-A5）+ 自研 loop（A6 主体 + 接线：`BM_LOOP_ENGINE=bm` 开关/流式/工具/取消）+ A7 迁移骨架
-> - B 线：B1 拷入 + B2 host 线程 + B3 加载路径 + B4 工具执行方向 + B5 权限桥（http 真实现）+ **B6 收口（内置工具集端口/决策记忆/插件事件推送/切片②顺手件）**
+> **当前状态（2026-08-14 里程碑收口：自研底座已切换）**：主线 A（A1-A7）+ 主线 B（B1-B6）**全部落地**；30 轮 pi/bm 双开对比完成（bm 记忆 5/5 vs pi 4/5）；顺手件轮四项落地（memorize / CI 4 job / 水线 0.5 / session 测试）。**里程碑轮（本会话）三项收口**：**① subagent 父侧移植进 bm 引擎**（subagent_tool.rs，专家团队缺口补齐，9 测试）；**② 默认引擎反转 bm**（resolve_loop_engine 默认 pi→bm，pi 保留 env/前端开关回退通道）；**③ 真实验收三连通过**（release+embed 起服务、无 env 默认即 bm：基础流式 / ls 工具 / subagent 全链路——子进程回答 "2" 父代理正确转述，日志 5× bm.prompt_usage 证实 bm 引擎）；架构文档 v0.18 吸收用户讨论（§十四：管家自我驱动回合源三分法 + next_wake_at 自调节奏 + OpenClaw 六条 + APP 分层调用纪律 + pi 废除三阶段）。**阶段 1 完成态：自研引擎已上线为默认，pi = 回退选项。**
+> - 阶段化废除 pi 的剩余两步：② subagent 子进程换 bm-loop（当前仍以 pi SDK 跑隔离会话，见 subagent_tool.rs 模块文档）③ pi 目录（models.json/skills）替换自有设施后 legacy 删空（§十三终点）
+> - A 线：执行级事件日志（A1-A5）+ 自研 loop（A6 主体 + 接线：流式/工具/取消）+ A7 迁移骨架
+> - B 线：B1 拷入 + B2 host 线程 + B3 加载路径 + B4 工具执行方向 + B5 权限桥（http 真实现）+ B6 收口（内置工具集端口/决策记忆/插件事件推送/切片②顺手件）
 > - **v0.17 压缩策略插件化拆解**：bm-loop 只留 Compactor 接口 + 事务协议，bm-compactor 新插件 crate（参数插件自治，可换可关）
-> - 双开对比（产物 artifacts/2026-08-14-dual-compare/）：pi 888.6K 发送量 / 峰值 94.1K / 49min vs bm 2263.0K（∑input 口径，缓存命中 2138K）/ 峰值 205.7K / 39.5min——**bm 发送量高 2.5× 主因水线 0.8 vs pi 0.5（插件参数，可调）+ 压缩后尾巴更长**；质量不降（记忆 5/5 vs 4/5）
-> - 真实验收：bm 引擎 4 项（切片①）+ hello 工具全链路（B4）+ web_search×2/web_fetch×1（B5）+ **B6 三插件全链路（10 轮真实会话）+ 双开对比 60 轮**
-> - **剩：切换拍板（默认值反转一处）**——切换机制已全部就位（前端开关/持久化/优先级），水线已定稿 0.5 且 10 轮复测通过，413 修复已落地。用户说"切换"= 一行改动 + 重启生效。
+> - 双开对比（产物 artifacts/2026-08-14-dual-compare/）：pi 888.6K 发送量 / 峰值 94.1K / 49min vs bm 2263.0K（∑input 口径，缓存命中 2138K）/ 峰值 205.7K / 39.5min——质量不降（记忆 5/5 vs 4/5）；0.5 水线复测已压到 pi 量级以下（artifacts/2026-08-14-waterline-retest/）
+> - **下一步**：Steward 轮（调度器 + next_wake_at，§14.1/§14.2）或 pi 废除第②步（子进程换 bm-loop），两者都可直接开工。
 >
 > **轮次历史**（细节见 §〇 commit 索引；查实/坑全量见 §〇·五）：
 >
@@ -21,6 +21,15 @@
 > | B6 收口轮 | 内置工具集端口 + 决策记忆 + 插件事件推送 + 切片② | f81594b, 8b6b725 | 桥调用约定实证（首个 secret 实参不绑定 JS 形参）；tool_result 事件 content 须对齐 legacy ContentBlock 数组；内置工具须进模型可见面（pi BUILTIN_TOOL_NAMES 全开同款）；SELF_TOOLS 跳过 web_search 是插件设计非 bug；目录型插件须 extension.json；debug exe 2GB 坑（CARGO_PROFILE_DEV_DEBUG=0）
 
 ## 〇、本次会话 commit 索引（main 已推送，工作区干净）
+
+### 里程碑轮（subagent 接入 + 默认反转 bm + 验收，2026-08-14）
+
+| commit | 内容 |
+|---|---|
+| `d4bc5c9` | **feat(engine)：切换自研底座**：① subagent_tool.rs（pi 父侧 subagents.rs 忠实移植：角色发现 frontmatter/三模式请求校验/spawn 子进程/stdout JSON 事件流摄取/结构化结果块 P9 同款；tokio 化——JoinSet+Semaphore 并发、kill_on_drop 取消传播、无 futures 依赖；9 单测）接线 bm_engine 注册 ToolDef + QuickJsToolExecutor 分派；② resolve_loop_engine 默认 pi→bm（自研默认，pi 回退通道）+ 前端 i18n×4 文案同步。**子进程（subagent_child）仍以 pi SDK 跑隔离会话——废除 pi 第②步再换 bm-loop** |
+| `80ef79f` | **docs(arch)：v0.18 用户讨论吸收**：§十四 管家自我驱动（回合源三分法 Human/Inject/Goal 协议已预留 + 调度器/next_wake_at 自调节奏=记忆非常量 + 静默协议）+ OpenClaw 外部思路六条（heartbeat/cron 分离、next_check pacing-min/max、HEARTBEAT_OK、observe→decide→dispatch→verify、成本杠杆、统一事件队列）+ APP 分层调用纪律（确定性操作直调宿主端口不走 Agent）+ pi 废除三阶段（①已执行）+ 迭代清单补两件 |
+
+**验收三连（release+embed、隔离 BOENMIND_HOME 复制 config.toml、无 BM_LOOP_ENGINE env）**：① 基础流式（textDelta+done）② ls 工具（toolCallStart/End is_error:false）③ subagent 全链路（父代理调用 subagent 工具 → 子进程 pi SDK 隔离会话回答 "2" → 父代理转述正确）。日志 5× `bm.prompt_usage`（3 回合 5 步）证实默认即 bm 引擎。
 
 ### 白天轮（413 修复 + 切换机制接线，2026-08-14）
 
@@ -138,7 +147,10 @@
 22. **压缩事务计数更正**：交接此前写 bm"4 次压缩事务"，日志实为 5 次（`bm.loop_compacted`：turn 9/12/16/21/30，可能少计 turn 30）；0.5 水线下触发点前移（65K）且压得更狠（压后轮末 3.6K），长程频次会更高。
 23. **governance.memorize 雏形规则**（cf6cd33）：触发词「记住」/「remember」（英文大小写不敏感、只取第一处）；提取触发词后文本、去前导分隔符、200 字符硬截断；负向指令/多事实/纠错/LLM 提炼都留 Steward 轮。事件 bm.memory_remembered 只记字符数（用户内容不打日志纪律）。
 24. **CI 4 并行 job 拆法**（6ab80d6）：quality-test / quality-clippy（存量 bm-core/bm-server --lib，编译最重单独成 job）/ quality-clippy-kernel（内核四件套+bm-compactor/bm-memory --all-targets + bm-compat）/ quality-frontend；全无 needs 依赖；Rust job 均带 CARGO_PROFILE_DEV_DEBUG=0 + CARGO_INCREMENTAL=0；rust-cache 钉 v2.9.1（Node 20 EOL 坑）。
-25. **切换机制接线（bc3b299，查证录补）**：引擎选择优先级 = env `BM_LOOP_ENGINE`（双开对比调试通道）> settings `loop_engine`（前端开关持久化）> 默认 `"pi"`；**反转点收敛在 `bm_engine::resolve_loop_engine` 一处**（拍板后改默认值即完成切换）。坑：`Option::or` 对 Some("") 不穿透——env 设了空串会顶掉 settings 值，须 and_then 逐层 trim+过滤（测试抓出）。前端开关三态（None=跟随默认 / "bm" / "pi"）：null 保存为 undefined（JSON 序列化丢弃字段，后端 serde default 回落 None）。
+25. **切换机制接线（bc3b299，查证录补）**：引擎选择优先级 = env `BM_LOOP_ENGINE`（双开对比调试通道）> settings `loop_engine`（前端开关持久化）> 默认；**反转点收敛在 `bm_engine::resolve_loop_engine` 一处**（d4bc5c9 已反转为 "bm"）。坑：`Option::or` 对 Some("") 不穿透——env 设了空串会顶掉 settings 值，须 and_then 逐层 trim+过滤（测试抓出）。前端开关三态（None=跟随默认 / "bm" / "pi"）：null 保存为 undefined（JSON 序列化丢弃字段，后端 serde default 回落 None）。
+26. **subagent 父侧移植查证（d4bc5c9）**：协议——父 spawn 当前 exe `--mode json --print --no-session --tools <csv> [--model/--thinking/--append-system-prompt] Task: <task>` + env PI_CODING_AGENT_DIR/PI_SUBAGENT_PARENT_PID/PI_SUBAGENT_DEPTH；子 stdout 逐行 JSON（message_update 增量/message_end 权威/agent_end messages 兜底），stderr 不参与协议。**坑①**：`(&BTreeMap).clone()` 克隆的是**引用**（`Clone for &T` 返回 &T）→ Arc 包成 `Arc<&BTreeMap>` 生命周期逃逸 E0521，须 `(*agents).clone()`；**坑②**：tokio `lines().next_line()` 返回 `io::Result<Option<String>>`，select 分支要 transpose。取消传播 = `kill_on_drop(true)`（上游 AgentCx checkpoint 的等价物）；进度回调省略（ToolExecutor 无此口）。**子进程当前仍以 pi SDK 跑隔离会话**（subagent_child.rs 未动）——废除 pi 第②步换 bm-loop。
+27. **OpenClaw 六条吸收（80ef79f，架构 §14.2）**：heartbeat 与 cron 分离为两原语 / next_check 自调节奏 + pacing-min/max 治理夹区间 / HEARTBEAT_OK 静默 / observe→decide→dispatch→verify 状态机 / 24×7 成本杠杆 / 事件驱动统一队列（与 inbox 双队列同构）。来源 openclaw/openclaw #110950、PR #110978、OpenHarness。
+28. **验收操作坑（本会话新）**：`/api/sessions/{id}/events` 是 SSE 流式订阅（replay-prefix + tail 轮询），curl 会挂住——验证事件用 messages 面或日志 grep；隔离验收环境 = `BOENMIND_HOME=<新目录>` + 复制真实 config.toml（含 api_key），ensure_builtin_agents 启动时自动建 agents/default.md；Windows curl 中文 JSON 报 invalid unicode（用英文消息）。
 
 ## 一、一句话现状
 
@@ -241,13 +253,14 @@
 
 ## 九、下一轮续接建议开场
 
-> 继续 BoenMind 阶段 1。交接见 docs/HANDOFF_KERNEL_PHASE1.md。**白天轮两项收口（本会话）**：413 会话污染修复（双点裁剪，切换前待办清零）+ 切换机制接线（settings.loop_engine + 前端三态开关 + env>settings>默认优先级）。开工前仍先 git pull。
+> 继续 BoenMind 阶段 2（Steward 轮/pi 废除第②步）。交接见 docs/HANDOFF_KERNEL_PHASE1.md。**里程碑轮收口（本会话）：自研引擎已上线为默认**——subagent 接入 + 默认反转 bm + 验收三连通过 + 架构 v0.18。开工前仍先 git pull。
 >
-> **下一轮动作**：
-> 1. **拍切换（机制已就绪，剩一句话）**——用户拍板后把 `bm_engine::resolve_loop_engine` 的默认 `"pi"` 改为 `"bm"`（一处），前端开关与持久化已就位。复测结论支持水线定稿 0.5（发送量压到 pi 量级以下、峰值 −40%、压后轮末 3.6K vs 144.9K），413 修复已落地——切换前待办全部清零。
-> 2. 可选顺手件：新会话记忆注入真实冒烟（facts.md 写一条 → bm 引擎聊天看注入；unit 级已测，缺真模型链路）、subagent 工具（B 线之外新方向，需先讨论）、双开对比复跑（0.5 水线 + 413 修复后 30 轮全量，验证发送量预测与不再污染）。
+> **下一轮动作（两个方向都可直接开工，无需再拍板）**：
+> 1. **pi 废除第②步**：subagent 子进程换 bm-loop（subagent_child.rs 的 pi SDK 段 → bm-loop + InMemory 事件日志 + BuiltinTools 执行器，协议事件形状不变）→ 之后 chat.rs pi 分支与 legacy loop 代码可删。
+> 2. **Steward 轮（§14.1/§14.2）**：调度器（定时回合注入 + 静默窗口）+ OS 层主动汇报通道 + next_wake_at 落点——三件套全是增量；节奏 = 管家记忆非代码常量，治理层兜频率下限（pacing-min/max 吸收）。
+> 3. 可选顺手件：新会话记忆注入真实冒烟（facts.md → bm 引擎聊天看注入）、双开 30 轮全量复跑（0.5 水线 + 413 修复后验证预测）。
 >
-> **注意坑**（详见 §〇·五 16-25 + 既有全量）：MiniMax 流式须 stream_options.include_usage、缓存字段在 prompt_tokens_details.cached_tokens、pi/bm 两组 input 口径不同（对比换算）、chars/4 中文低估须真实 usage 校准、pi 句柄断连坏死重启+resume、双开 RUST_LOG 须含 bm_loop=info、**413 已修（clip_tool_output 双点，>5MB 留头尾；超限不再污染会话）**、压缩事务实际 5 次（§〇·五 22）、bm-memory 每会话 open facts.md（多会话并发写靠单行 append 容忍，全局单例留 Steward 轮）、桥调用首参 secret 不绑定形参、tool_result 事件 content 用 ContentBlock 数组、内置工具 schema 要注册进 ToolRegistry、SELF_TOOLS 跳过搜索类工具是设计、目录型插件须 extension.json、Disposer 纪律、turso 绑定形态、fork 超头拒绝、standalone 起服务 `--features embed`、bm-compat 测试走 `--test host --test load --test execute --test events --test session`、CompatEngine 专用线程（命令通道 oneshot 回结果）、payload 全文不打日志、**引擎优先级 env>settings>默认（反转点 resolve_loop_engine 一处；env 空串穿透坑已修）**。
+> **注意坑**（详见 §〇·五 16-28 + 既有全量）：MiniMax 流式须 stream_options.include_usage、缓存字段在 prompt_tokens_details.cached_tokens、pi/bm 两组 input 口径不同（对比换算）、chars/4 中文低估须真实 usage 校准、pi 句柄断连坏死重启+resume、双开 RUST_LOG 须含 bm_loop=info、413 已修（clip_tool_output 双点）、压缩事务实际 5 次（§〇·五 22）、bm-memory 每会话 open facts.md、桥调用首参 secret 不绑定形参、tool_result 事件 content 用 ContentBlock 数组、内置工具 schema 要注册进 ToolRegistry、SELF_TOOLS 跳过搜索类工具是设计、目录型插件须 extension.json、Disposer 纪律、turso 绑定形态、fork 超头拒绝、standalone 起服务 `--features embed`、bm-compat 测试走 `--test host --test load --test execute --test events --test session`、CompatEngine 专用线程、payload 全文不打日志、**引擎优先级 env>settings>默认 bm（反转点 resolve_loop_engine 一处）**、**subagent 坑：(&BTreeMap).clone() 克隆引用须 (*x).clone()、lines().next_line() 返回 Result<Option> 要 transpose、kill_on_drop 传播取消**、`/api/sessions/{id}/events` 是 SSE 流 curl 会挂、Windows curl 中文 JSON 报 invalid unicode。
 
 ## 九·三、A6 接线设计（2026-08-14 夜轮定稿 → 白天轮切片①落地）
 
@@ -292,4 +305,8 @@
 | 水线 0.8→0.5 + 复测 | ✅ 落地（e6e09c2） | 10 轮真实复测：发送量 −53.5%、峰值 −40%、压后轮末 3.6K；数据支撑拍切换 |
 | session 集成测试 | ✅ 落地（86dc798） | tests/session.rs 4 用例（pi.session 全链路）；查实无白名单透传 |
 | 413 会话污染修复 | ✅ 落地（e0e1224） | clip_tool_output 双点（写入裁剪 + 投影自愈）+ 复测脚本 reply 截断；5 测试全绿——**切换前待办清零** |
-| 切换机制接线 | ✅ 落地（bc3b299） | settings.loop_engine 持久化 + env>settings>默认优先级（反转点一处）+ 前端三态选择器 + i18n×4——**默认值反转待用户拍板** |
+| 切换机制接线 | ✅ 落地（bc3b299） | settings.loop_engine 持久化 + env>settings>默认优先级（反转点一处）+ 前端三态选择器 + i18n×4 |
+| subagent 接入 bm 引擎 | ✅ 落地（d4bc5c9） | subagent_tool.rs 父侧忠实移植（三模式/角色发现/事件摄取/结构化块）+ 接线 + 9 测试；子进程换 bm-loop 留废除第②步 |
+| 默认引擎反转 bm | ✅ 落地（d4bc5c9） | resolve_loop_engine 默认 pi→bm；pi = env/前端开关回退通道；**阶段 1 完成态达成** |
+| 真实验收三连 | ✅ 通过（本会话） | release+embed 无 env 默认即 bm：基础流式 / ls 工具 / subagent 全链路（子进程答 "2" 父代转述正确） |
+| 架构 v0.18 | ✅ 落地（80ef79f） | §十四 管家自我驱动 + OpenClaw 六条 + APP 分层调用 + pi 废除三阶段；迭代清单补两件 |
