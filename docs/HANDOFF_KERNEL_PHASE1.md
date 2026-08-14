@@ -1,5 +1,9 @@
 # HANDOFF —— 阶段 1 开工交接（两线并行）
 
+> **2026-08-14 公司远程轮续接完成（B4 工具执行方向）**：**bm-compat 加 execute_tool 桥**（execute.rs：镜像 legacy execute_extension_tool_sharded 单 runtime 版——`__pi_execute_tool`(bridge_secret,name,call_id,input,ctx)→`__pi_task_start` 挂任务→复用 B3 await_js_task 泵循环；tests/execute.rs 2 用例真 TS 插件执行回读全绿；CI test/clippy 加 --test execute）；**bm-server 加 CompatEngine**（compat_engine.rs：HostThread 含 Rc 非 Send→专用线程+命令通道（Load/Execute/Tools 三命令 oneshot 回结果，天然串行）；UnwiredServices 六端口 B4 全"unwired"、request_approval fail-closed（B5 接）；启动加载启用插件→ExtensionToolDef→bm-loop ToolDef 快照；QuickJsToolExecutor 替换 NoopExecutor（compat None 时兜底）；AppState.compat + serve_inner init_compat）。**真实验收通过**（release+embed + 隔离 home + 真实 hello 插件，MiniMax-M2.5 真实调用）：工具全链路闭环——SSE toolCallStart/toolCallEnd + 事件日志 tool/call↔tool/result（两回合）+ 多步循环（step1 工具→step2 汇总→completed）。commit 548b6a2 + cb92d59，main 已推送。
+> 本轮查实/坑：① MiniMax M3/M2.5 对工具指令的服从性飘忽（M3 两次拒调、M2.5 一次拒调一次调）——**不是我们栈的问题**（直连官方 API 对照实验 + payload 比对确认：schema 干净、tools=1 上 payload）；**payload 全文不打日志**（含用户消息，观测只留 tools 计数）；② 验收方法论教训：bm 路径 SSE 事件面必须与 pi 对齐（TextDelta/ToolCallStart/ToolCallEnd/Done），当初"工具没调"是缺工具 SSE 事件的误判——已补（StreamHooks 实现 on_tool_pre/post，零新钩子）；③ CompatEngine Drop = 通道 sender 落下→命令循环退出→join（专用线程收尾）。
+> 下一轮：**B5 权限桥**（HostServices::request_approval 接现有 PermissionBridge + UnwiredServices 六端口换真实现——网络 hostcall 让 web_search 全链路）+ 切片② 顺手件（thinking 档位映射 + 心跳 TaskProgress——注意与 chunk 批写同库的锁竞争）→ B6 全链路 + 30 轮双开对比。
+
 > **2026-08-14 白天轮续接完成（A6 接线 切片①）**：**BM_LOOP_ENGINE=bm 开关落地**——新模块 bm-server/src/bm_engine.rs（StreamHooks 流式通道/NoopExecutor 空工具兜底/provider→LlmConfig 桥接（用户端点优先+官方回退，去尾斜杠）/会话级 agent map（换 provider/model 即重建，日志是唯一状态源）/watch 取消通道 + 停止按钮 + 15min 超时）；bm-loop 加 `LoopHooks::on_stream_chunk` 钩子（TextDelta 处调用，与日志同源同序，RecorderHooks 断言更新）；chat.rs 双路径分流（会话校验/命名/add_message 共享前缀，bm 路径下 loop 拥有事件日志全生命周期，SSE 前端形状零改动；session_streams 统一 unbounded）。**真实验收通过**（release+embed + 独立 BOENMIND_HOME，MiniMax-M3 真实流式）：① turn 1 九事件完整闭环（user/message→request/header+prompt_hash→turn/start→step/start→3×assistant/chunk→assistant/message→turn/end completed）；② 多回合投影重建正确（turn 2 模型准确回忆上一条问题）；③ 停止按钮 → turn/end cancelled；④ 客户端断开自动取消（curl head 截断触发 StreamHooks 关闭检测）。pi 路径回归通过（15 事件闭环、真实流式正常）。commit 4d227d0 + ee4dc5c（Cargo.lock），main 已推送。
 > 观察坑入账：**pi 路径双写偶发 `database is locked`**（5s 心跳任务进度写 与 chunk 批并发写同库；bm 路径零锁错误——切片①无心跳并发写）——**已修一半（commit 1d4f3c9）**：bm-core db / bm-storage event_log / checkpoint 三处连接加 `busy_timeout=5000`（SQLite 内部等待替代立即报错）；残留：>5s 争用仍会丢 batch（写线程重试队列）+ 心跳/chunk 合并写通道，留双开对比期深查。验收环境注意：BOENMIND_HOME 布局 = `$HOME/.boenmind/config.toml`；硬杀进程后残留 wal 锁会自行恢复。
 > 下一轮：**B4 工具方向**（bm-compat ExecuteTool 桥 → ToolExecutor 真实现 → ToolRegistry 汇合）→ B5 权限桥 → B6 全链路 + 30 轮双开对比；切片② 顺手补 thinking 档位映射（当前 bm 路径忽略 thinking，日志有提示）。
@@ -14,6 +18,13 @@
 > 交接原因：用户开新对话续接。
 
 ## 〇、本次会话 commit 索引（main 已推送，工作区干净）
+
+### 公司远程轮（B4 工具执行方向）
+
+| commit | 内容 |
+|---|---|
+| `548b6a2` | **B4 落地**：bm-compat execute.rs（execute_tool 桥：__pi_execute_tool→__pi_task_start→await_js_task 泵循环，镜像 legacy 单 runtime 版）+ tests/execute.rs 2 用例 + load::next_task_id pub(crate) + CI test/clippy 加 --test execute；bm-server compat_engine.rs（CompatEngine 专用线程+命令通道+UnwiredServices 六端口+工具快照 + QuickJsToolExecutor）+ AppState.compat + serve_inner init_compat + bm_engine ToolRegistry 汇合（NoopExecutor 退役） |
+| `cb92d59` | bm 路径 SSE 工具事件：StreamHooks 实现 on_tool_pre/post 发 ToolCallStart/End（前端工具卡片零改动）；llm.rs 请求观测只留 tools 计数（payload 含用户消息不打日志） |
 
 ### 白天轮续接（A6 接线 切片①：开关 + 空工具跑通）
 
@@ -176,11 +187,11 @@
 
 ## 九、下一轮续接建议开场
 
-> 继续 BoenMind 阶段 1。交接见 docs/HANDOFF_KERNEL_PHASE1.md。**白天轮续接已落地（A6 接线 切片①，commit 4d227d0 + ee4dc5c）**：BM_LOOP_ENGINE=bm 开关 + bm_engine.rs（StreamHooks/NoopExecutor/provider 桥接/会话 map/取消）+ on_stream_chunk 钩子；真实验收 4 项通过（9 事件闭环/多回合投影/停止按钮/断开自动取消），pi 路径回归通过。
+> 继续 BoenMind 阶段 1。交接见 docs/HANDOFF_KERNEL_PHASE1.md。**公司远程轮已落地（B4 工具方向，commit 548b6a2 + cb92d59）**：execute_tool 桥 + CompatEngine + QuickJsToolExecutor + SSE 工具事件；真实验收通过（hello 工具全链路闭环）。注意本仓库可能有多会话并行推进（busy_timeout 修复来自另一会话）——开工前先 git pull。
 >
-> **下一轮动手顺序**：① **B4 工具方向**（bm-compat 接 ExecuteTool：插件 execute 回调经 `__pi_execute_tool` 桥执行 → 换掉 bm_engine.rs 的 NoopExecutor → ToolRegistry 从 get_registered_tools 汇合；查证点：legacy JsRuntimeCommand::ExecuteTool 语义与 bm-compat 单 runtime 的映射）；② **切片② 顺手件**：thinking 档位映射（当前 bm 路径忽略 thinking，日志有 `bm.loop_thinking_ignored` 提示）+ 心跳 TaskProgress（任务状态条；注意与 chunk 批写同库的锁竞争观察）；③ **B5 权限桥**（HostServices::request_approval 接现有 PermissionBridge）；④ **B6 全链路验收 + 30 轮双开对比**（同压缩 A/B 方法论）后拍切换。
+> **下一轮动手顺序**：① **B5 权限桥**（bm-server 的 UnwiredServices 换真实现：request_approval 接现有 PermissionBridge——HostServices 是 async trait 端口，桥接层在 bm-server 侧把询问转发给 `send_permission_request`/`permission_pending` 通道；六端口逐一接：http（reqwest+SSRF 防护复用 bm-core providers 校验思路）让 web_search 全链路可跑、execute_tool 端口接内置工具集）；② **切片② 顺手件**：thinking 档位映射（当前 bm 路径忽略 thinking，日志有 `bm.loop_thinking_ignored` 提示）+ 心跳 TaskProgress（任务状态条；busy_timeout 已修，注意心跳与 chunk 批写并发仍留观察）；③ **B6 全链路验收 + 30 轮双开对比**（同压缩 A/B 方法论，现有 TS 插件 web_search/web_fetch/ctx-compactor 全链路）后拍切换。
 >
-> **注意坑**（详见 §〇·五 + 本轮新查实）：Disposer 纪律、turso 绑定形态、fork 超头拒绝、跨分支投影逐段折叠、standalone 起服务 `--features embed`、loop 读回写入前屏障冲刷；**B2/B3 坑**：HostServices 用 `#[async_trait]`；bm-compat 测试走 `--test host --test load`；插件入口须 default-export init；`__pi_load_extension` resolve 布尔 true；**A6 接线坑**：LoopHooks 钩子全是同步方法（内部锁用 std Mutex 不可 tokio Mutex）、session_streams 已统一 unbounded（新增使用者勿再造 bounded）、BM_LOOP_ENGINE 读 env 每次请求判（双开对比期足够）、pi 路径双写偶发 database is locked（观察项待双开期深查）。
+> **注意坑**（详见 §〇·五 + 本轮新查实）：Disposer 纪律、turso 绑定形态、fork 超头拒绝、跨分支投影逐段折叠、standalone 起服务 `--features embed`、loop 读回写入前屏障冲刷；**B2/B3 坑**：HostServices 用 `#[async_trait]`；bm-compat 测试走 `--test host --test load --test execute`；插件入口须 default-export init；`__pi_load_extension` resolve 布尔 true；**A6 接线坑**：LoopHooks 钩子全是同步方法（内部锁用 std Mutex 不可 tokio Mutex）、session_streams 已统一 unbounded（新增使用者勿再造 bounded）、BM_LOOP_ENGINE 读 env 每次请求判（双开对比期足够）；**B4 坑**：CompatEngine 专用线程（HostThread 含 Rc 非 Send，命令通道 oneshot 回结果）、bm 路径 SSE 事件面须与 pi 对齐（TextDelta/ToolCallStart/ToolCallEnd/Done）、payload 全文不打日志（含用户消息，观测只留 tools 计数）。
 
 ## 九·三、A6 接线设计（2026-08-14 夜轮定稿 → 白天轮切片①落地）
 
@@ -213,7 +224,8 @@
 | B1 拷入 6 文件 | ✅ | 6 文件 45K 行逐字节一致 + shim（零行为 stub）+ 精简 build.rs；standalone check 零错误；B2 完成时已入 workspace members |
 | B2 host 线程 | ✅（夜轮续接） | bm-compat/src/host.rs：drain→policy 裁决+六端口分发→complete 攒批→tick 泵循环（镜像 legacy pump_js_runtime_once_for_owner）+ check_capability 三模式 + request_approval 询问口；tests/host.rs 7 用例全绿（含 QuickJS 真链路）；入 workspace + CI 门禁（3366cab） |
 | B3 加载路径 | ✅（夜轮续接） | bm-compat/src/load.rs：JsExtensionLoadSpec（verbatim 提取）+ load_extension（root 注册→__pi_load_extension→__pi_task_start→await_js_task 复用 HostThread 泵）+ PROTOCOL_VERSION；tests/load.rs 4 用例全绿（真 TS 插件加载注册工具/坏入口不挂起）；282d629 |
-| B4/B5/B6 | ⏳ | B4 工具执行方向（ExecuteTool 桥）+ B5 权限桥（request_approval 接 PermissionBridge）+ B6 全链路验收，A6 接线后按序 |
+| B4 工具执行方向 | ✅（公司远程轮） | bm-compat execute.rs（__pi_execute_tool→task→泵循环，2 用例）+ bm-server CompatEngine（专用线程/命令通道/工具快照/UnwiredServices）+ QuickJsToolExecutor；**真实验收通过**（hello 插件工具全链路：SSE 工具事件 + 日志 tool/call↔result + 多步循环）；548b6a2 + cb92d59 |
+| B5/B6 | ⏳ | B5 权限桥（request_approval 接 PermissionBridge + 六端口真实现——网络 hostcall 让 web_search 全链路）+ B6 全链路验收 + 30 轮双开对比 |
 | proptest 承诺 | ✅ | 60 用例属性测试（InMemory）+ 回归种子入仓 |
 | CI 门禁 | ✅ | 全量 25 套件全绿 + 双档 clippy 清零 + **GitHub CI 质量门绿灯**（另修存量 rust-cache/磁盘两故障，见 commit 索引） |
 | 真实验收 | ✅ | 浏览器实测两轮（无工具 + web_search/web_fetch 双工具链），event_log 197 事件真序闭环（§八·1） |
