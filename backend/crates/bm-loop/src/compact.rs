@@ -1,17 +1,17 @@
-//! 自研压缩引擎（A6 主体第二件）：双触发 + 摘要事务。
+//! 压缩事务协议（核心件）+ 压缩策略接口（插件面）。
 //!
-//! 双触发（handoff §四 A6）：
-//! - **软触发**：步边界检查，上下文占用 ≥ 窗口 × [`CompactionPolicy::watermark`]
-//!   （默认 0.8，比 pi 引擎的 0.5 更激进——30 轮 A/B 对比方法论验收后再定稿）；
-//! - **硬触发**：单步输入本身 ≥ 窗口（请求发出前检查，压缩后仍超窗即回合失败）。
+//! **骨架/手脚分工（v0.17 用户定调）**：本模块只承载"事务协议"——三事件
+//! 落盘（CompactionStart → CompactionSummary{Replace 遮蔽} → CompactionEnd）
+//! 与 fail-safe（摘要失败不遮蔽，宁可超窗失败回合也不静默丢历史）。策略
+//! （水线/尾部保留/摘要 prompt/要不要压）是压缩插件的自治面：
+//! [`Compactor`] 契约，bm-compactor 为默认实现（D10），可换实现、可关闭。
+//! **无压缩插件 = 优雅失败**：软触发永不动作，硬触发（输入超窗）直接失败
+//! 回合——不崩、不静默丢历史；框架的重点不是裸跑，是装上插件后跑得好。
 //!
-//! 事务（[`compact`]）：选可压缩区间（尾部按 keep_recent 保留）→ 调 LLM 摘要
-//! （无工具、同模型）→ 一次 append_batch 落 `CompactionStart → CompactionSummary
-//! {removed 区间 + 摘要, surface_op = Replace} → CompactionEnd`。投影层对
-//! Replace 遮蔽旧消息、摘要以 assistant 消息入消息面（bm-kernel projection）。
-//!
-//! **fail-safe**：摘要失败不遮蔽（宁可超窗由硬触发失败回合，也不静默丢历史）——
-//! 压缩是优化不是正确性依赖，模型可见历史只增不减才满足"模型可见即已记录"。
+//! 事务（[`compact`]）：选可压缩区间（尾部按策略保留预算保留）→ 摘要
+//! （prompt 由策略构造，无工具、同模型）→ 一次 append_batch 落三事件。
+//! 投影层对 Replace 遮蔽旧消息、摘要以 assistant 消息入消息面
+//! （bm-kernel projection）。
 
 use bm_kernel::{EventLog, SurfaceIntent};
 use bm_protocol::{
@@ -20,107 +20,44 @@ use bm_protocol::{
 
 use crate::llm::{Llm, LlmError, LlmEvent, LlmRequest};
 
-/// 压缩策略（构造值由集成方从 bm-core compaction 配置换算注入）。
-#[derive(Debug, Clone, PartialEq)]
-pub struct CompactionPolicy {
-    /// 总开关；false = 双触发全部不动作
-    pub enabled: bool,
-    /// 模型上下文窗口（token）
-    pub context_window: u32,
-    /// 软水线（0.0 ~ 1.0，占用窗口比例）
-    pub watermark: f64,
-    /// 尾部保留比例（占窗口比例）
-    pub keep_recent_ratio: f64,
-    /// 尾部保留 token 下限
-    pub keep_recent_floor: u32,
+/// 压缩策略（插件面契约）：loop 步边界只问两件事——"压不压"与"怎么压"。
+/// 事务落盘由 loop 执行（协议是核心的）。None（关闭插件）= 软触发永不动作。
+/// Debug：LoopConfig 派生需要（实现侧一并 derive 即可）。
+pub trait Compactor: Send + Sync + std::fmt::Debug {
+    /// 软触发判定：占用是否达到该策略的水线（阈值插件自治；
+    /// `context_window` 是模型客观属性，由 loop 传入）。
+    fn should_compact(&self, total_tokens: u64, context_window: u64) -> bool;
+    /// 尾部保留预算（token）：从后往前累积保留，其余为可压缩中部。
+    fn keep_recent_tokens(&self, context_window: u64) -> u64;
+    /// 中部不足多少 token 不值得压。
+    fn min_middle_tokens(&self) -> u64;
+    /// 摘要请求构造（摘要 prompt 插件自治）。
+    fn summarize_request(&self, model: &str, dialogue: &str) -> LlmRequest;
 }
 
-impl Default for CompactionPolicy {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            context_window: 128_000,
-            watermark: 0.8,
-            keep_recent_ratio: 0.10,
-            keep_recent_floor: 4_000,
-        }
-    }
+/// 文本 token 粗估：chars/4（中英混合近似；有 usage 时 run 循环以
+/// usage 累计加权修正，见 engine.rs）。
+pub fn estimate_tokens(text: &str) -> u64 {
+    (text.chars().count() as u64).div_ceil(4)
 }
 
-/// 触发判定结果。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CompactionTrigger {
-    /// 不触发
-    None,
-    /// 软触发：占用过水线，可压缩后继续
-    Soft,
-    /// 硬触发：单步输入超窗口，压缩后仍超窗则回合失败
-    Overflow,
-}
-
-impl CompactionPolicy {
-    /// 文本 token 粗估：chars/4（中英混合近似；有 usage 时 run 循环以
-    /// usage 累计加权修正，见 engine.rs）。
-    pub fn estimate_tokens(text: &str) -> u64 {
-        (text.chars().count() as u64).div_ceil(4)
-    }
-
-    /// 双触发判定。
-    pub fn check(&self, total_tokens: u64) -> CompactionTrigger {
-        if !self.enabled {
-            return CompactionTrigger::None;
-        }
-        let window = self.context_window as u64;
-        if total_tokens >= window {
-            return CompactionTrigger::Overflow;
-        }
-        let soft = (window as f64 * self.watermark) as u64;
-        if total_tokens >= soft.max(1) {
-            return CompactionTrigger::Soft;
-        }
-        CompactionTrigger::None
-    }
-
-    /// 尾部保留预算（token）：max(窗口 × ratio, floor)。
-    fn keep_recent_tokens(&self) -> u64 {
-        let ratio = (self.context_window as f64 * self.keep_recent_ratio) as u64;
-        ratio.max(self.keep_recent_floor as u64)
-    }
-}
-
-/// 压缩摘要的 LLM 请求（prompt 注入到 payload.messages 末尾）。
-fn summary_payload(model: &str, dialogue: &str) -> LlmRequest {
-    let prompt = format!(
-        "请总结以下对话历史（保留用户意图、关键事实、已完成的工具操作与结论；\
-         用与原文相同的语言，控制在 300 字内）：\n\n{dialogue}"
-    );
-    LlmRequest {
-        payload: serde_json::json!({
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.3,
-        }),
-    }
-}
-
-/// 压缩引擎：投影 → 选区间 → 摘要 → 三事件事务。
+/// 压缩事务：投影 → 选区间（保留预算来自策略）→ 摘要（prompt 来自策略）
+/// → 三事件事务。
 ///
 /// 返回 Ok(true) = 已压缩；Ok(false) = 无需压缩（中部不足）或摘要失败
 /// （fail-safe，已 warn）。Err 仅来自日志读写本身（调用方按日志失败处理）。
-pub async fn compact<L: Llm>(
+pub async fn compact<L: Llm, C: Compactor + ?Sized>(
     log: &EventLog,
     llm: &L,
     sid: &SessionId,
     bid: &BranchId,
     turn: u32,
     model: &str,
-    policy: &CompactionPolicy,
+    context_window: u64,
+    policy: &C,
 ) -> Result<bool, ProtocolError> {
-    if !policy.enabled {
-        return Ok(false);
-    }
     let msgs = log.derive_messages(sid, bid).await?;
-    let keep = policy.keep_recent_tokens();
+    let keep = policy.keep_recent_tokens(context_window);
 
     // 尾部保留：从后往前累积到 keep 预算，其余为可压缩中部
     let mut tail_start = msgs.len();
@@ -130,15 +67,15 @@ pub async fn compact<L: Llm>(
             tail_start = i + 1;
             break;
         }
-        acc += CompactionPolicy::estimate_tokens(&m.content);
+        acc += estimate_tokens(&m.content);
     }
     let middle = &msgs[..tail_start];
     // 中部不足两条（或内容过少）不值得压缩
     let middle_tokens: u64 = middle
         .iter()
-        .map(|m| CompactionPolicy::estimate_tokens(&m.content))
+        .map(|m| estimate_tokens(&m.content))
         .sum();
-    if middle.len() < 2 || middle_tokens < 512 {
+    if middle.len() < 2 || middle_tokens < policy.min_middle_tokens() {
         return Ok(false);
     }
 
@@ -155,7 +92,7 @@ pub async fn compact<L: Llm>(
         .map(|m| format!("[{}] {}", m.role, m.content))
         .collect::<Vec<_>>()
         .join("\n");
-    let summary = match summarize(llm, summary_payload(model, &dialogue)).await {
+    let summary = match summarize(llm, policy.summarize_request(model, &dialogue)).await {
         Ok(s) if !s.trim().is_empty() => s,
         Ok(_) | Err(_) => {
             tracing::warn!(
@@ -243,28 +180,35 @@ mod tests {
     use tokio_stream::wrappers::UnboundedReceiverStream;
 
     #[test]
-    fn trigger_thresholds() {
-        let p = CompactionPolicy {
-            enabled: true,
-            context_window: 100,
-            watermark: 0.8,
-            keep_recent_ratio: 0.1,
-            keep_recent_floor: 10,
-        };
-        assert_eq!(p.check(0), CompactionTrigger::None);
-        assert_eq!(p.check(79), CompactionTrigger::None);
-        assert_eq!(p.check(80), CompactionTrigger::Soft, "80/100 = 0.8 水线");
-        assert_eq!(p.check(100), CompactionTrigger::Overflow, "满窗硬触发");
-        let off = CompactionPolicy { enabled: false, ..p };
-        assert_eq!(off.check(1000), CompactionTrigger::None);
+    fn estimate_tokens_chars_over_four() {
+        assert_eq!(estimate_tokens(""), 0);
+        assert_eq!(estimate_tokens("abcd"), 1);
+        assert_eq!(estimate_tokens("abcde"), 2);
+        assert_eq!(estimate_tokens("你好世界"), 1, "中文 4 字 ≈ 1 token 粗估");
     }
 
-    #[test]
-    fn estimate_tokens_chars_over_four() {
-        assert_eq!(CompactionPolicy::estimate_tokens(""), 0);
-        assert_eq!(CompactionPolicy::estimate_tokens("abcd"), 1);
-        assert_eq!(CompactionPolicy::estimate_tokens("abcde"), 2);
-        assert_eq!(CompactionPolicy::estimate_tokens("你好世界"), 1, "中文 4 字 ≈ 1 token 粗估");
+    /// 内联测试策略（不依赖任何插件 crate——核心自足性：loop 的压缩
+    /// 事务协议测试用内联实现即可跑）。
+    #[derive(Debug)]
+    struct TestPolicy;
+    impl Compactor for TestPolicy {
+        fn should_compact(&self, _total: u64, _window: u64) -> bool {
+            true
+        }
+        fn keep_recent_tokens(&self, _window: u64) -> u64 {
+            10
+        }
+        fn min_middle_tokens(&self) -> u64 {
+            0
+        }
+        fn summarize_request(&self, model: &str, dialogue: &str) -> LlmRequest {
+            LlmRequest {
+                payload: serde_json::json!({
+                    "model": model,
+                    "messages": [{"role": "user", "content": format!("请总结：{dialogue}")}],
+                }),
+            }
+        }
     }
 
     #[tokio::test]
@@ -302,14 +246,8 @@ mod tests {
                 .unwrap();
         }
 
-        // 极小策略：尾部保留 ~2 条短消息（floor 10 token）→ 中部 = 前 4 条长消息
-        let policy = CompactionPolicy {
-            enabled: true,
-            context_window: 1000,
-            watermark: 0.8,
-            keep_recent_ratio: 0.0,
-            keep_recent_floor: 10,
-        };
+        // 测试策略：尾部保留 10 token（~2 条短消息）→ 中部 = 前 4 条长消息
+        let policy = TestPolicy;
         // 摘要 LLM：直接吐一条文本
         struct FixedLlm;
         impl Llm for FixedLlm {
@@ -330,7 +268,7 @@ mod tests {
             }
         }
 
-        let done = compact(&log, &FixedLlm, &sid, &bid, 1, "test-model", &policy)
+        let done = compact(&log, &FixedLlm, &sid, &bid, 1, "test-model", 1000, &policy)
             .await
             .unwrap();
         assert!(done, "应执行压缩");

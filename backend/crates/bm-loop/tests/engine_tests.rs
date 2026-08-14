@@ -447,15 +447,31 @@ async fn soft_compaction_triggers_after_step() {
     }
 
     // 窗口 1500 token、水线 0.8 → 历史 1209 + 新消息 ≈ 1212 落入 [1200, 1500) 软触发
-    // （步开始前不超窗，不走硬触发）
+    // （步开始前不超窗，不走硬触发）。策略 = 内联实现（loop 不依赖插件 crate）
+    #[derive(Debug)]
+    struct SoftPolicy;
+    impl bm_loop::Compactor for SoftPolicy {
+        fn should_compact(&self, total: u64, window: u64) -> bool {
+            total >= (window as f64 * 0.8) as u64
+        }
+        fn keep_recent_tokens(&self, _window: u64) -> u64 {
+            10
+        }
+        fn min_middle_tokens(&self) -> u64 {
+            0
+        }
+        fn summarize_request(&self, model: &str, dialogue: &str) -> bm_loop::llm::LlmRequest {
+            bm_loop::llm::LlmRequest {
+                payload: serde_json::json!({
+                    "model": model,
+                    "messages": [{"role": "user", "content": format!("请总结：{dialogue}")}],
+                }),
+            }
+        }
+    }
     let cfg = LoopConfig {
-        compaction: bm_loop::compact::CompactionPolicy {
-            enabled: true,
-            context_window: 1500,
-            watermark: 0.8,
-            keep_recent_ratio: 0.1,
-            keep_recent_floor: 10,
-        },
+        context_window: 1500,
+        compactor: Some(std::sync::Arc::new(SoftPolicy)),
         ..LoopConfig::default()
     };
     let mut a = ReactLoopAgent::new(
@@ -491,6 +507,70 @@ async fn soft_compaction_triggers_after_step() {
     let log2 = EventLog::new(store.clone());
     let msgs = log2.derive_messages(&SessionId::new(SID), &BranchId::new("main")).await.unwrap();
     assert!(msgs.iter().any(|m| m.content.contains("摘要")));
+}
+
+#[tokio::test]
+async fn no_compactor_plugin_overflows_fail_turn_without_losing_history() {
+    // 缺插件优雅失败（v0.17 框架定位：核心=骨架、插件=手脚——跑不跑不是
+    // 重点，但不崩、不静默丢历史）：无压缩插件 + 输入超窗 → 回合失败
+    let store = Arc::new(InMemoryEventStore::new());
+    let log = EventLog::new(store.clone());
+    let long = "超长历史".repeat(200); // ≈ 800 字 ≈ 200 token ×2
+    for is_user in [true, false] {
+        let kind = if is_user {
+            EventKind::Core(CoreEvent::UserMessage {
+                msg: UserMsg { content: long.clone() },
+                source: UserMsgSource::Human,
+            })
+        } else {
+            EventKind::Core(CoreEvent::AssistantMessage {
+                turn: 0,
+                step: 1,
+                msg: AssistantMsg { content: long.clone() },
+                usage: None,
+            })
+        };
+        log.append(SessionId::new(SID), BranchId::new("main"), kind, SurfaceIntent::Append)
+            .await
+            .unwrap();
+    }
+
+    let mut a = ReactLoopAgent::new(
+        (),
+        bm_loop::ToolRegistry::new(),
+        EventLog::new(store.clone()),
+        SessionId::new(SID),
+        BranchId::new("main"),
+        LoopConfig {
+            context_window: 100, // 预置历史 400+ token 已超窗
+            ..LoopConfig::default() // compactor: None（默认裸跑）
+        },
+        ScriptLlm::new(vec![script_text("收到")]),
+        MockExecutor::default(),
+    );
+    let (_tx, mut rx) = cancel_channel();
+    let out = a
+        .run_turn(
+            TurnRequest { content: "继续".into(), source: UserMsgSource::Human },
+            HeaderReason::Initial,
+            &mut rx,
+        )
+        .await
+        .unwrap();
+    assert_eq!(out.reason, TurnEndReason::Failed, "超窗且无压缩插件应失败回合");
+
+    // 不丢历史：预置 2 条 + 本轮 user 消息仍在日志（无任何遮蔽/删除）
+    let evs = log.replay(&SessionId::new(SID), &BranchId::new("main")).await.unwrap();
+    let kept = evs
+        .iter()
+        .filter(|e| matches!(&e.kind, EventKind::Core(CoreEvent::UserMessage { .. })))
+        .count()
+        + evs
+            .iter()
+            .filter(|e| matches!(&e.kind, EventKind::Core(CoreEvent::AssistantMessage { .. })))
+            .count();
+    assert_eq!(kept, 3, "预置 2 条 + 本轮 user 消息全部保留: {evs:?}");
+    assert_eq!(last_turn_end(store.clone()).await, TurnEndReason::Failed);
 }
 
 #[tokio::test]

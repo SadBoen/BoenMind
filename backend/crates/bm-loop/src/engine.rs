@@ -9,13 +9,13 @@
 //!   └─ for step in 1..=max_steps:
 //!        ├─ StepStart
 //!        ├─ 投影（EventLog::derive_messages）→ OpenAI messages payload
-//!        ├─ 硬触发检查（单步输入超窗 → 压缩 → 仍超窗即回合失败）
+//!        ├─ 硬触发检查（单步输入超窗 → 有压缩插件则压缩 → 仍超窗即回合失败）
 //!        ├─ on_pre_step / on_request（扩展点可改写 payload）
 //!        ├─ LLM 流式：chunk 经 EventFlusher 真序落日志（攒批 append_batch）
 //!        ├─ AssistantMessage（权威内容 + 步内 usage）
 //!        ├─ 工具调用 → ToolCall → on_tool_pre（可 Deny）→ 执行（cancel 可打断）
 //!        │   → ToolResult → on_tool_post；无工具调用 = 回合收尾
-//!        ├─ 软触发检查（步边界，0.8 水线）→ 压缩事务
+//!        ├─ 软触发检查（步边界，压缩插件判定；无插件不动作）
 //!        └─ on_turn_stopping（附加收尾条件）
 //!   └─ TurnEnd（completed/cancelled/failed）
 //! ```
@@ -38,7 +38,7 @@ use bm_protocol::{
 };
 use tokio::sync::{Notify, mpsc, watch};
 
-use crate::compact::{CompactionPolicy, CompactionTrigger, compact};
+use crate::compact::{compact, estimate_tokens, Compactor};
 use crate::llm::{Llm, LlmError, LlmEvent, LlmRequest, LlmUsage};
 use crate::model::ToolRegistry;
 use crate::points::{LoopHooks, RequestCtx, StepCtx, StopCtx, ToolCtx, ToolGate};
@@ -87,10 +87,13 @@ pub struct LoopConfig {
     pub provider: Option<String>,
     /// 模型名
     pub model: String,
+    /// 模型上下文窗口（token，客观属性——硬触发兜底的判定基准，与插件无关）
+    pub context_window: u32,
     /// 单回合步数上限（防呆；超出记 Failed——配额到点不是正常完成）
     pub max_steps: u32,
-    /// 压缩双触发策略
-    pub compaction: CompactionPolicy,
+    /// 压缩策略插件；None = 关闭压缩（软触发不动作、超窗即失败回合——
+    /// 缺插件优雅失败：不崩、不静默丢历史）
+    pub compactor: Option<Arc<dyn Compactor>>,
 }
 
 impl Default for LoopConfig {
@@ -99,8 +102,10 @@ impl Default for LoopConfig {
             system_prompt: String::new(),
             provider: None,
             model: "default-model".into(),
+            context_window: 128_000,
             max_steps: 64,
-            compaction: CompactionPolicy::default(),
+            // 默认裸跑（loop 库不依赖任何插件 crate；组装层挂压缩插件）
+            compactor: None,
         }
     }
 }
@@ -584,7 +589,8 @@ impl<H: LoopHooks, L: Llm, T: ToolExecutor> ReactLoopAgent<H, L, T> {
                 .await
                 .map_err(|e| RunError::new(format!("投影失败: {e}")))?;
             let est = self.estimate_context(&msgs);
-            if self.config.compaction.check(est) == CompactionTrigger::Soft {
+            // 软触发（步边界）：压缩插件判定（None = 关闭压缩，永不动作）
+            if self.config.compactor.as_ref().is_some_and(|c| c.should_compact(est, self.config.context_window as u64)) {
                 tracing::info!(event = "bm.loop_compact_soft", turn, step, est_tokens = est);
                 self.compact_or_die(turn, cancel).await?;
             }
@@ -646,31 +652,36 @@ impl<H: LoopHooks, L: Llm, T: ToolExecutor> ReactLoopAgent<H, L, T> {
 
     /// 上下文粗估（token）：系统提示 + 工具 schema + 投影消息。
     fn estimate_context(&self, msgs: &[bm_kernel::SurfaceMessage]) -> u64 {
-        let mut est = CompactionPolicy::estimate_tokens(&self.config.system_prompt);
-        est += CompactionPolicy::estimate_tokens(
+        let mut est = estimate_tokens(&self.config.system_prompt);
+        est += estimate_tokens(
             &serde_json::to_string(&self.tools.openai_tools_json()).unwrap_or_default(),
         );
         est += msgs
             .iter()
-            .map(|m| CompactionPolicy::estimate_tokens(&m.content))
+            .map(|m| estimate_tokens(&m.content))
             .sum::<u64>();
         est
     }
 
-    /// 硬触发判定：单步输入本身超窗。
+    /// 硬触发判定：单步输入本身超窗（模型客观窗口，与压缩插件无关）。
     fn check_overflow(&self, msgs: &[bm_kernel::SurfaceMessage]) -> bool {
-        matches!(self.config.compaction.check(self.estimate_context(msgs)), CompactionTrigger::Overflow)
+        self.estimate_context(msgs) >= self.config.context_window as u64
     }
 
     /// 压缩事务；返回 Err = 日志失败（回合失败）。
+    /// 无压缩插件：直接返回——硬触发链随后判定超窗失败回合（缺插件
+    /// 优雅失败：不崩、不静默丢历史；框架重点不是裸跑，v0.17 定调）。
     async fn compact_or_die(&mut self, turn: u32, cancel: &mut watch::Receiver<bool>) -> Result<(), RunError> {
+        let Some(policy) = self.config.compactor.clone() else {
+            return Ok(());
+        };
         let sid = self.session_id.clone();
         let bid = self.branch_id.clone();
-        let policy = self.config.compaction.clone();
         let model = self.config.model.clone();
+        let window = self.config.context_window as u64;
         tokio::select! {
             _ = cancel.changed() => Ok(()), // 取消优先：压缩可推迟
-            r = compact(&self.log, &self.llm, &sid, &bid, turn, &model, &policy) => {
+            r = compact(&self.log, &self.llm, &sid, &bid, turn, &model, window, policy.as_ref()) => {
                 r.map(|_| ()).map_err(|e| RunError::new(format!("压缩事务失败: {e}")))
             }
         }

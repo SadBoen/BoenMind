@@ -707,6 +707,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "bm-compactor"
+version = "0.1.0"
+dependencies = [
+ "bm-loop",
+ "serde_json",
+]
+
+[[package]]
 name = "bm-compat"
 version = "0.1.0"
 dependencies = [
@@ -821,6 +829,7 @@ dependencies = [
  "async-trait",
  "axum",
  "base64 0.22.1",
+ "bm-compactor",
  "bm-compat",
  "bm-core",
  "bm-kernel",

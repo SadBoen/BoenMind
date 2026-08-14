@@ -27,6 +27,8 @@ bm-storage-turso = { workspace = true }
 bm-loop = { path = "../bm-loop" }
 # B4 工具方向：vendored QuickJS 引擎（bm 引擎的插件工具执行侧）
 bm-compat = { path = "../bm-compat" }
+# 压缩插件（默认实现，D10）：组装层挂进 LoopConfig.compactor（v0.17 越界修正）
+bm-compactor = { path = "../bm-compactor" }
 pi = { workspace = true }
 axum = "0.8"
 async-trait = "0.1"

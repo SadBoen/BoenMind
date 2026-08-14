@@ -11,8 +11,10 @@
 //!   request-error / tools pre+post / turn-stopping；
 //! - **LLM client**（[`llm`]）：OpenAI 兼容流式，提供商配置由集成方从
 //!   bm-core 解析注入（本 crate 不依赖 bm-core，铁律 3 见 tests/architecture.rs）；
-//! - **压缩双触发**（[`compact`]）：0.8 水线软触发 + overflow 硬触发，
-//!   摘要落 CompactionStart/Summary/End 事务（fail-safe：摘要失败不遮蔽）。
+//! - **压缩**（[`compact`]）：事务协议在 loop（三事件 + replace 遮蔽 +
+//!   fail-safe 摘要失败不遮蔽）；策略在插件（[`compact::Compactor`] 契约，
+//!   bm-compactor 为默认实现，可换可关）。关插件 = 软触发不动作、超窗
+//!   失败回合——优雅失败（框架重点不是裸跑，v0.17 用户定调）。
 //!
 //! 验收：替换 pi loop 跑通同一套 30 轮 A/B 压缩对比（方法论已有）；
 //! 替换开关时机由用户拍板（拍板点 4，先并行双开对比）。
@@ -26,6 +28,7 @@ pub mod llm;
 pub mod model;
 pub mod points;
 
+pub use compact::{estimate_tokens, Compactor};
 pub use engine::{ReactLoopAgent, StepRequest, TurnRequest};
 pub use model::{ToolDef, ToolRegistry};
 pub use points::{LoopHooks, RequestCtx, StepCtx, StopCtx, ToolCtx, ToolGate};

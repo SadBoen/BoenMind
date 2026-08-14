@@ -219,8 +219,11 @@ fn build_loop_agent(
             system_prompt: system_prompt.to_string(),
             provider: Some(provider.id.clone()),
             model: model.to_string(),
+            // 模型窗口（客观属性）：暂取默认 128K——后续从模型注册表换算
+            context_window: 128_000,
             max_steps: 64,
-            compaction: Default::default(),
+            // 挂默认压缩插件（可换可关；None = 裸跑，核心自足性 v0.17）
+            compactor: Some(std::sync::Arc::new(bm_compactor::DefaultCompactor::default())),
         },
         llm,
         QuickJsToolExecutor::new(compat.cloned(), session_id),

@@ -1,0 +1,10 @@
+[package]
+name = "bm-compactor"
+version = "0.1.0"
+edition = "2024"
+description = "压缩插件（默认实现，D10）：双触发水线/尾部保留/摘要 prompt——实现 bm-loop::Compactor 的策略面，可换可关（v0.17 从 bm-loop 越界处拆出）"
+
+[dependencies]
+# 插件依赖核心（方向：protocol ← kernel ← loop ← 插件），不反向。
+bm-loop = { path = "../bm-loop" }
+serde_json = "1"
