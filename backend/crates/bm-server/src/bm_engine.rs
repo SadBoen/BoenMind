@@ -51,30 +51,6 @@ pub struct LoopSessionEntry {
     pub last_used: std::time::Instant,
 }
 
-/// BM_LOOP_ENGINE 开关判定："bm" = 自研 loop；其余/未设 = 默认（bm）。
-/// 独立纯函数以便单测（edition 2024 的 env 写读在测试并发下有竞态）。
-pub fn loop_engine_is_bm(value: &str) -> bool {
-    value == "bm"
-}
-
-/// 引擎选择（优先级）：env `BM_LOOP_ENGINE`（双开对比/回退 pi 的调试通道）
-/// 高于 settings `loop_engine`（前端开关持久化），再回落默认 **"bm"（自研，
-/// 已切换）**。空串视为未设置。想跑 pi：env `BM_LOOP_ENGINE=pi` 或前端开关
-/// 选"上游引擎"。
-pub fn resolve_loop_engine(env_value: Option<&str>, settings_value: Option<&str>) -> String {
-    env_value
-        .and_then(non_empty)
-        .or_else(|| settings_value.and_then(non_empty))
-        .unwrap_or("bm")
-        .to_string()
-}
-
-/// 空串/空白视为未设置（env 为空时穿透到 settings，而不是顶掉它）。
-fn non_empty(v: &str) -> Option<&str> {
-    let v = v.trim();
-    (!v.is_empty()).then_some(v)
-}
-
 /// thinking 档名 → OpenAI 兼容 `reasoning_effort`（切片②：七档折叠三档）。
 /// off→不注入（端点默认）；minimal/low→low；medium→medium；high/xhigh/max→high。
 pub fn reasoning_effort_for(level: &str) -> Option<&'static str> {
@@ -1012,28 +988,6 @@ pub async fn steward_inject(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn engine_switch_only_bm() {
-        assert!(loop_engine_is_bm("bm"));
-        assert!(!loop_engine_is_bm("pi"));
-        assert!(!loop_engine_is_bm(""));
-        assert!(!loop_engine_is_bm("BM"));
-    }
-
-    #[test]
-    fn loop_engine_precedence_env_over_settings_over_default() {
-        // env 优先（双开对比/回退通道），settings 其次（前端开关），都无 → 默认 bm
-        assert_eq!(resolve_loop_engine(Some("bm"), Some("pi")), "bm");
-        assert_eq!(resolve_loop_engine(Some("pi"), Some("bm")), "pi");
-        assert_eq!(resolve_loop_engine(None, Some("bm")), "bm");
-        assert_eq!(resolve_loop_engine(None, Some("pi")), "pi");
-        assert_eq!(resolve_loop_engine(None, None), "bm", "默认已切换到自研引擎");
-        // 空串视为未设置
-        assert_eq!(resolve_loop_engine(Some(""), Some("pi")), "pi");
-        assert_eq!(resolve_loop_engine(Some("  "), None), "bm");
-        assert_eq!(resolve_loop_engine(Some(" bm "), None), "bm", "首尾空白容忍");
-    }
 
     #[test]
     fn llm_config_prefers_user_base_url() {

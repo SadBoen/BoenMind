@@ -38,44 +38,30 @@ use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 pub const DEFAULT_PORT: u16 = 17321;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// 单个聊天会话对应的 pi agent 会话句柄。
-/// `Arc<Mutex<..>>`：同一会话的 prompt 串行执行，map 锁不长期占用。
-pub struct AgentSessionEntry {
-    pub handle: Arc<tokio::sync::Mutex<pi::sdk::AgentSessionHandle>>,
-    /// 最近一次使用时间（chat 请求时刷新），空闲淘汰用
-    pub last_used: std::time::Instant,
-}
+/// bm 引擎取消条目：(prompt_id, watch::Sender<bool>)——身份匹配纪律：
+/// 先结束的只删自己的条目（见 bm_engine.rs）。
+pub type BmAbortEntry = (u64, tokio::sync::watch::Sender<bool>);
 
-/// agent 会话句柄空闲淘汰阈值：超过该时长无对话且无进行中 prompt 即释放
-/// （句柄持有完整会话上下文，长期运行的服务不释放会无界增长内存）。
+/// bm 引擎 agent 空闲淘汰阈值（loop_agents 表；agent 状态全在事件日志，
+/// 弃置重建零损失）。
 pub const AGENT_IDLE_TTL: std::time::Duration = std::time::Duration::from_secs(12 * 60 * 60);
 /// 空闲扫描周期
 const AGENT_SWEEP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
-
-/// bm 引擎取消条目：(prompt_id, watch::Sender<bool>)——身份匹配纪律与
-/// pi 的 aborts 相同（先结束的只删自己的条目，见 bm_engine.rs）。
-pub type BmAbortEntry = (u64, tokio::sync::watch::Sender<bool>);
 
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<RwLock<AppConfig>>,
     pub db: Arc<Db>,
-    pub agents: Arc<Mutex<HashMap<String, AgentSessionEntry>>>,
-    /// 进行中 prompt 的取消句柄（key = session_id，value = (prompt_id, AbortHandle)）。
-    /// prompt_id 用于清理时身份匹配：同会话连续两个 prompt 时，先结束的
-    /// 只能删除自己的条目，不能把后一个的取消句柄误删（见 chat.rs）。
-    pub aborts: Arc<Mutex<HashMap<String, (u64, pi::sdk::AbortHandle)>>>,
     /// 活跃 prompt 的 SSE 事件通道（key = session_id）。权限询问桥据此把
     /// 询问事件推给前端；prompt 结束时移除。
-    /// unbounded：pi 路径的背压由回调缓冲队列承担（见 chat.rs），
-    /// bm 路径的 hooks 是同步回调（try_send 只关心通道是否关闭）。
+    /// unbounded：bm 路径的 hooks 是同步回调（try_send 只关心通道是否关闭）。
     pub session_streams: Arc<Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<bm_core::agent::AgentStreamEvent>>>>,
     /// 挂起的权限询问（key = 上游询问请求 id）：等待前端决策（允许/拒绝/总是允许）。
     pub permission_pending: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<PermissionDecision>>>>,
     /// 阶段 0 事件日志双写器（None = 事件日志不可用，双写静默跳过，
     /// 主链路不受影响——事件日志是渐进式吸收的新家，不是闸门）。
     pub dual_writer: Option<Arc<bm_storage_turso::dual_write::DualWriter>>,
-    /// bm 引擎（BM_LOOP_ENGINE=bm）进行中 prompt 的取消通道
+    /// bm 引擎进行中 prompt 的取消通道
     /// （key = session_id，value = (prompt_id, watch::Sender<bool>)）。
     pub bm_aborts: Arc<Mutex<HashMap<String, BmAbortEntry>>>,
     /// bm 引擎会话级 agent（key = session_id）。agent 只是「日志 + 配置 +
@@ -115,8 +101,6 @@ impl AppState {
         Self {
             config: Arc::new(RwLock::new(config)),
             db,
-            agents: Arc::new(Mutex::new(HashMap::new())),
-            aborts: Arc::new(Mutex::new(HashMap::new())),
             session_streams,
             permission_pending,
             dual_writer,
@@ -454,7 +438,7 @@ async fn serve_inner(
         permission_pending,
         steward,
     );
-    spawn_agent_sweeper(state.agents.clone(), state.loop_agents.clone());
+    spawn_agent_sweeper(state.loop_agents.clone());
     // C1 回收站超期清除：孤儿会话（sessions 表已删）事件保留 N 天后物理删除
     spawn_orphan_purger(state.dual_writer.clone());
     // Steward 轮（v0.19）：管家定时唤醒调度器（到点投喂 Goal 回合；
@@ -552,37 +536,16 @@ fn spawn_orphan_purger(dual: Option<Arc<bm_storage_turso::dual_write::DualWriter
     });
 }
 
-/// 周期性扫描并释放空闲 agent 会话句柄（防止长跑服务内存无界增长）。
-/// pi 句柄与 bm 引擎 agent 同节奏淘汰；bm agent 状态全在事件日志，弃置零损失。
-fn spawn_agent_sweeper(
-    agents: Arc<Mutex<HashMap<String, AgentSessionEntry>>>,
-    loop_agents: Arc<Mutex<HashMap<String, bm_engine::LoopSessionEntry>>>,
-) {
+/// 周期性扫描并释放空闲 bm 引擎 agent 会话句柄（防止长跑服务内存无界增长）。
+/// agent 状态全在事件日志，弃置重建零损失。
+fn spawn_agent_sweeper(loop_agents: Arc<Mutex<HashMap<String, bm_engine::LoopSessionEntry>>>) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(AGENT_SWEEP_INTERVAL);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             interval.tick().await;
             // 第一遍收集候选（不持锁太久）；二次确认时避免与并发 chat 竞争误删
-            let candidates: Vec<String> = {
-                let map = agents.lock().await;
-                map.iter()
-                    .filter(|(_, e)| e.last_used.elapsed() > AGENT_IDLE_TTL)
-                    .filter(|(_, e)| e.handle.try_lock().is_ok()) // 有进行中 prompt 的跳过
-                    .map(|(id, _)| id.clone())
-                    .collect()
-            };
-            for id in candidates {
-                let mut map = agents.lock().await;
-                if let Some(e) = map.get(&id)
-                    && e.last_used.elapsed() > AGENT_IDLE_TTL
-                    && e.handle.try_lock().is_ok()
-                {
-                    map.remove(&id);
-                    tracing::info!(event = "bm.agent_evicted", session = %id);
-                }
-            }
-            // bm 引擎 agent 同理（agent 锁 = 会话 prompt 串行锁，锁不住才可淘汰）
+            // agent 锁 = 会话 prompt 串行锁，锁不住才可淘汰
             let bm_candidates: Vec<String> = {
                 let map = loop_agents.lock().await;
                 map.iter()

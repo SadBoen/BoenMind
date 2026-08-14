@@ -7,9 +7,8 @@
  */
 import type { ComponentType, ReactNode } from "react";
 import {
-  Activity,
-  BookOpenText,
-  Cpu,
+Activity,
+BookOpenText,
   FolderOpen,
   Images,
   Info,
@@ -28,7 +27,6 @@ import { ExpertTeamDocs } from "@/components/team/ExpertTeamDocs";
 import { SettingsMenu } from "@/components/settings/SettingsMenu";
 import { AboutSettings } from "@/components/settings/AboutSettings";
 import { AppearanceSettings } from "@/components/settings/AppearanceSettings";
-import { EngineSettings } from "@/components/settings/EngineSettings";
 import { PluginsSettings } from "@/components/settings/PluginsSettings";
 import { ProviderSettings } from "@/components/settings/ProviderSettings";
 import { RefinementSettings } from "@/components/settings/RefinementSettings";
@@ -41,7 +39,6 @@ export type NavKey = "chat" | "team" | "gallery" | "knowledge" | "settings";
 export type SettingsTab =
   | "appearance"
   | "providers"
-  | "engine"
   | "steward"
   | "workspace"
   | "plugins"
@@ -107,12 +104,6 @@ export const SETTINGS: Record<SettingsTab, SettingsEntry> = {
     descKey: "settings.menu.providersDesc",
     icon: <MonitorCog size={16} />,
     component: ProviderSettings,
-  },
-  engine: {
-    labelKey: "settings.menu.engine",
-    descKey: "settings.menu.engineDesc",
-    icon: <Cpu size={16} />,
-    component: EngineSettings,
   },
   steward: {
     labelKey: "settings.menu.steward",

@@ -1,20 +1,7 @@
-//! pi agent 封装：将会话选项映射到 BoenMind 的提供商配置，并把 agent
-//! 事件流转换为面向 SSE 的扁平事件流。
+//! Agent 公共类型：系统提示词 + 面向前端 SSE 的扁平事件流形状。
 //!
-//! 设计约束：
-//! - 不在本模块持有长生命周期的会话句柄（句柄由调用方持有，便于跨请求复用）
-//! - 事件映射为纯函数，便于单元测试
-
-use std::path::Path;
-use std::sync::Arc;
-
-use pi::model::AssistantMessageEvent;
-use pi::sdk::{
-    AgentEvent, AgentSessionHandle, SessionOptions,
-    create_agent_session,
-};
-
-use crate::config::ProviderConfig;
+//! pi 引擎封装（create_session_handle / map_agent_event）已于 2026-08-15
+//! pi 废除轮删除——执行引擎 = 自研 bm-loop，事件由 bm_engine 直接产出。
 
 /// BoenMind 系统提示词：个人知识管理助手定位。
 pub const SYSTEM_PROMPT: &str = r#"你是 BoenMind，一个专注工作与知识的个人助理。
@@ -41,9 +28,9 @@ pub const SYSTEM_PROMPT: &str = r#"你是 BoenMind，一个专注工作与知识
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum AgentStreamEvent {
-    /// 正文增量（pi 的思考文本也以 `<think>` 标签随正文下发，思考增量事件不单列）
+    /// 正文增量（思考文本以 `<think>` 标签随正文下发，思考增量事件不单列）
     TextDelta { delta: String },
-    /// 工具调用开始（携带完整参数 JSON，来自 pi ToolExecutionStart）
+    /// 工具调用开始（携带完整参数 JSON）
     ToolCallStart { id: String, name: String, args: serde_json::Value },
     /// 工具调用结束（is_error 决定前端展示颜色）
     ToolCallEnd { id: String, name: String, is_error: bool },
@@ -65,192 +52,4 @@ pub enum AgentStreamEvent {
     Done,
     /// 出错
     Error { message: String },
-}
-
-/// 创建 agent 会话句柄。
-///
-/// `provider`/`model` 来自会话或全局配置；`extension_paths` 为启用的插件路径
-/// （pi QuickJS 运行时加载 TypeScript 扩展）；`skills_prompt` 为启用的 skill
-/// 注入文本（available_skills 块，空串不注入）；`thinking` 为思考强度（如 "off"/"low"）；
-/// `compaction` 为按模型解析的压缩设置（水线/尾部保护），`None` 时走 pi 现有全局行为；
-/// `extension_policy` 为插件权限档位（safe/balanced/permissive，None = 上游默认）；
-/// `extension_allow_dangerous` 为 YOLO 开关（放行 exec/env，经环境变量告知上游）；
-/// `ui_handler` 为插件权限询问出口（能力确认转发给宿主应用，None = 上游 fail-closed 拒绝）；
-/// `custom_prompt` 为审批生效的系统提示词追加段（refine-suggest，空串不注入）。
-#[allow(clippy::too_many_arguments)]
-pub async fn create_session_handle(
-    provider: &ProviderConfig,
-    model: &str,
-    working_dir: &Path,
-    extension_paths: Vec<std::path::PathBuf>,
-    skills_prompt: &str,
-    thinking: Option<&str>,
-    compaction: Option<crate::compaction::ResolvedCompaction>,
-    extension_policy: Option<String>,
-    extension_allow_dangerous: bool,
-    ui_handler: Option<Arc<dyn pi::extension_dispatcher::ExtensionUiHandler + Send + Sync>>,
-    custom_prompt: &str,
-) -> Result<AgentSessionHandle, pi::sdk::Error> {
-    // 注意：调用前需确保 PI_CODING_AGENT_DIR 已设置、models.json 已同步，
-    // 见 bm-server 的启动流程（sync_pi_models_json + set_var）
-    // YOLO 开关经环境变量告知上游（上游解析只认 "1"/"true" 为真；
-    // 显式写 "0" 而非移除，防止上次 YOLO 会话残留的 "1" 放行危险能力）
-    // 注意：edition 2024 中 set_var 为 unsafe
-    unsafe {
-        std::env::set_var(
-            "PI_EXTENSION_ALLOW_DANGEROUS",
-            if extension_allow_dangerous { "1" } else { "0" },
-        );
-    }
-    let thinking_level = thinking
-        .and_then(|t| t.parse::<pi::model::ThinkingLevel>().ok());
-    let system_prompt = if skills_prompt.is_empty() && custom_prompt.is_empty() {
-        SYSTEM_PROMPT.to_string()
-    } else {
-        format!("{SYSTEM_PROMPT}{skills_prompt}{custom_prompt}")
-    };
-    let options = SessionOptions {
-        provider: Some(provider.kind.pi_name(&provider.id)),
-        model: Some(model.to_string()),
-        api_key: provider.api_key.clone(),
-        working_directory: Some(working_dir.to_path_buf()),
-        // 内置工具全开：skill 需要 read/write/bash 等才能真正加载与执行；
-        // 纯对话时代（无工具）无法使用 skill 文件与脚本。
-        // subagent 为 opt-in 工具（上游 sdk.rs 注释），显式追加启用——
-        // 子代理会 spawn 本进程（bm-server）的 --mode json 入口，见 bm-server subagent_child。
-        enabled_tools: Some(
-            pi::sdk::BUILTIN_TOOL_NAMES
-                .iter()
-                .copied()
-                .chain(["subagent"])
-                .map(|n| n.to_string())
-                .collect(),
-        ),
-        no_session: true,
-        system_prompt: Some(system_prompt),
-        include_cwd_in_prompt: false,
-        thinking: thinking_level,
-        extension_paths,
-        // 插件权限档位（safe/balanced/permissive；None = 上游默认）。YOLO 的
-        // exec/env 放行走 PI_EXTENSION_ALLOW_DANGEROUS 环境变量（见下方同步）
-        extension_policy,
-        // BoenMind 补丁: 插件权限询问出口（上游 SessionOptions.ui_handler 透传）
-        ui_handler,
-        // BoenMind 补丁对接：按模型压缩覆盖（水线/尾部/窗口），None 走 pi 默认
-        compaction_settings: compaction.map(|c| pi::compaction::ResolvedCompactionSettings {
-            enabled: c.enabled,
-            context_window_tokens: c.context_window,
-            reserve_tokens: c.reserve_tokens,
-            keep_recent_tokens: c.keep_recent_tokens,
-        }),
-        ..Default::default()
-    };
-    create_agent_session(options).await
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use pi::sdk::AgentEvent;
-
-    fn end_with(error: Option<&str>) -> AgentEvent {
-        AgentEvent::AgentEnd {
-            session_id: std::sync::Arc::from("s"),
-            messages: Vec::new(),
-            error: error.map(str::to_string),
-        }
-    }
-
-    #[test]
-    fn abort_maps_to_done() {
-        // 用户点停止：pi 以 error: Some("Aborted") 收尾，前端须收到 Done
-        // 才能固化已生成的部分文本（回归测试：曾错误映射为 Error 导致
-        // UI 丢弃流式内容，而 DB 已入库，刷新后文本"复活"）
-        assert!(matches!(
-            map_agent_event(end_with(Some("Aborted")))[0],
-            AgentStreamEvent::Done
-        ));
-    }
-
-    #[test]
-    fn real_error_maps_to_error() {
-        assert!(matches!(
-            map_agent_event(end_with(Some("upstream 502")))[0],
-            AgentStreamEvent::Error { .. }
-        ));
-    }
-
-    #[test]
-    fn normal_end_maps_to_done() {
-        assert!(matches!(
-            map_agent_event(end_with(None))[0],
-            AgentStreamEvent::Done
-        ));
-    }
-}
-
-/// 将 pi 的 AgentEvent 映射为 BoenMind 事件（可能产出 0..n 个）。
-pub fn map_agent_event(event: AgentEvent) -> Vec<AgentStreamEvent> {
-    match event {
-        AgentEvent::MessageUpdate {
-            assistant_message_event,
-            ..
-        } => match assistant_message_event {
-            AssistantMessageEvent::TextDelta { delta, .. } => {
-                vec![AgentStreamEvent::TextDelta { delta }]
-            }
-            // 思考增量不单列：思考内容随正文 TextDelta 以 <think> 标签下发，
-            // 前端从正文解析（历史回放依赖同一格式）；结构化 thinking 流另行
-            // 消费时再恢复此事件
-            AssistantMessageEvent::ThinkingDelta { .. }
-            | AssistantMessageEvent::ToolCallDelta { .. }
-            | AssistantMessageEvent::ToolCallStart { .. }
-            | AssistantMessageEvent::TextEnd { .. }
-            | AssistantMessageEvent::ThinkingEnd { .. }
-            | AssistantMessageEvent::Start { .. }
-            | AssistantMessageEvent::TextStart { .. }
-            | AssistantMessageEvent::ThinkingStart { .. } => Vec::new(),
-            other => {
-                // 兜底：后续 pi 版本可能新增事件变体，直接忽略
-                let _ = other;
-                Vec::new()
-            }
-        },
-        // 工具真实执行开始/结束（pi SDK 权威事件，携带完整参数与执行状态）
-        AgentEvent::ToolExecutionStart {
-            tool_call_id,
-            tool_name,
-            args,
-            ..
-        } => vec![AgentStreamEvent::ToolCallStart {
-            id: tool_call_id,
-            name: tool_name,
-            args,
-        }],
-        AgentEvent::ToolExecutionEnd {
-            tool_call_id,
-            tool_name,
-            is_error,
-            ..
-        } => vec![AgentStreamEvent::ToolCallEnd {
-            id: tool_call_id,
-            name: tool_name,
-            is_error,
-        }],
-        AgentEvent::TurnEnd { .. } => Vec::new(),
-        AgentEvent::AgentEnd { error, .. } => match error {
-            // pi 取消路径（用户点停止 / AbortSignal）以 `error: Some("Aborted")`
-            // 收尾：取消不是错误，前端应收到 Done 来固化已生成的部分文本
-            Some(err) if err == "Aborted" => vec![AgentStreamEvent::Done],
-            Some(err) => vec![AgentStreamEvent::Error { message: err }],
-            None => vec![AgentStreamEvent::Done],
-        },
-        AgentEvent::AgentStart { .. }
-        | AgentEvent::TurnStart { .. }
-        | AgentEvent::MessageStart { .. } => Vec::new(),
-        other => {
-            let _ = other;
-            Vec::new()
-        }
-    }
 }

@@ -117,8 +117,8 @@ pub async fn delete_session(
     if rows == 0 {
         return Err(api_error(StatusCode::NOT_FOUND, format!("会话不存在: {id}")));
     }
-    // 清理对应的 agent 会话句柄
-    state.agents.lock().await.remove(&id);
+    // 清理对应的 bm 引擎 agent 会话句柄（状态全在事件日志，弃置零损失）
+    state.loop_agents.lock().await.remove(&id);
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
