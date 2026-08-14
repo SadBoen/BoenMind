@@ -1,6 +1,7 @@
 // 对比测试驱动：创建会话 → 按固定序列逐轮 POST /api/chat → 消费 SSE → 收集回复。
-// 用法：node run-compare.mjs --group A|B|C [--base http://127.0.0.1:17322] [--resume]
+// 用法：node run-compare.mjs --group A|B|C [--base http://127.0.0.1:17322] [--rounds N] [--resume]
 //       环境变量 OUT_DIR 覆盖输出目录（默认 out/）
+//       --rounds N：只跑 ROUNDS 前 N 条（默认 30）；会话标题含实际轮数（避免与历史同名会话混淆）
 // 输出：{OUT_DIR}/{group}.jsonl（每轮一行 JSON：round/user/reply/toolCalls/elapsedMs/ts）
 // 会话 id 打印到 stdout，供日志关联。
 //
@@ -15,14 +16,22 @@ import { ROUNDS } from "./rounds.mjs";
 const args = process.argv.slice(2);
 const group = args.includes("--group") ? args[args.indexOf("--group") + 1] : null;
 const base = args.includes("--base") ? args[args.indexOf("--base") + 1] : "http://127.0.0.1:17322";
+const roundsArg = args.includes("--rounds") ? Number(args[args.indexOf("--rounds") + 1]) : 30;
 const resume = args.includes("--resume");
 const OUT_DIR = process.env.OUT_DIR ?? "out";
 const ROUND_TIMEOUT_MS = 15 * 60 * 1000;
 
 if (!group) {
-  console.error("用法: node run-compare.mjs --group A|B|C [--base URL] [--resume]");
+  console.error("用法: node run-compare.mjs --group A|B|C [--base URL] [--rounds N] [--resume]");
   process.exit(1);
 }
+if (!Number.isInteger(roundsArg) || roundsArg < 1 || roundsArg > ROUNDS.length) {
+  console.error(`--rounds 须为 1..${ROUNDS.length} 的整数，收到: ${roundsArg}`);
+  process.exit(1);
+}
+// 取 ROUNDS 前 N 条；会话标题带实际轮数（如"对比-B-12轮"），与历史 30 轮会话区分
+const ROUND_LIST = ROUNDS.slice(0, roundsArg);
+const sessionTitle = `对比-${group}-${roundsArg}轮`;
 mkdirSync(OUT_DIR, { recursive: true });
 const outFile = `${OUT_DIR}/${group}.jsonl`;
 
@@ -42,7 +51,7 @@ if (done.size === 0) {
   const res = await fetch(`${base}/api/sessions`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ title: `对比-${group}-30轮` }),
+    body: JSON.stringify({ title: sessionTitle }),
   });
   if (!res.ok) throw new Error(`创建会话失败: ${res.status} ${await res.text()}`);
   sessionId = (await res.json()).id;
@@ -51,7 +60,7 @@ if (done.size === 0) {
   // resume：从会话列表里找同名会话（取最新的）
   const res = await fetch(`${base}/api/sessions`);
   const sessions = await res.json();
-  const mine = sessions.filter((s) => s.title === `对比-${group}-30轮`).sort((a, b) => b.created_at - a.created_at);
+  const mine = sessions.filter((s) => s.title === sessionTitle).sort((a, b) => b.created_at - a.created_at);
   if (mine.length === 0) throw new Error("resume 但找不到会话");
   sessionId = mine[0].id;
   console.log(`[resume session] ${sessionId}`);
@@ -100,9 +109,9 @@ async function chatOnce(round, message) {
   return { reply, toolCalls, elapsedMs: Date.now() - started };
 }
 
-for (let round = 1; round <= ROUNDS.length; round++) {
+for (let round = 1; round <= ROUND_LIST.length; round++) {
   if (done.has(round)) continue;
-  const message = ROUNDS[round - 1];
+  const message = ROUND_LIST[round - 1];
   let record = null;
   let attempts = 0;
   while (attempts < 3) {
@@ -129,7 +138,7 @@ for (let round = 1; round <= ROUNDS.length; round++) {
   }
   done.set(round, record);
   writeFileSync(outFile, [...done.values()].sort((a, b) => a.round - b.round).map((r) => JSON.stringify(r)).join("\n") + "\n");
-  console.log(`[round ${round}/30] done. reply=${record.reply.length}ch toolCalls=${record.toolCalls} elapsed=${(record.elapsedMs / 1000).toFixed(0)}s`);
+  console.log(`[round ${round}/${ROUND_LIST.length}] done. reply=${record.reply.length}ch toolCalls=${record.toolCalls} elapsed=${(record.elapsedMs / 1000).toFixed(0)}s`);
   await new Promise((r) => setTimeout(r, 2000)); // 轮间 2s 缓冲
 }
 

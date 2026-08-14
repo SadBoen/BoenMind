@@ -1,4 +1,5 @@
 //! 压缩插件（默认实现，D10）：双触发 + 摘要事务。
+//! 默认软水线 0.5，对齐 pi 引擎（2026-08-14 双开对比后收敛，见 DefaultCompactor）。
 //!
 //! 实现 [`bm_loop::Compactor`] 的**策略面**——水线/尾部保留/摘要 prompt 全部
 //! 插件自治（可换实现、可关闭；关闭后核心 loop 以硬触发兜底：超窗失败
@@ -16,7 +17,9 @@ use bm_loop::llm::LlmRequest;
 use bm_loop::Compactor;
 
 /// 默认压缩策略（原 bm-loop 内建策略迁出）：
-/// 软水线 0.8（比 pi 引擎的 0.5 更激进——30 轮 A/B 对比方法论验收后再定稿）、
+/// 软水线 0.5（对齐 pi 引擎——30 轮 pi/bm 双开对比实测：水线 0.8 时 bm 发送量
+/// 2263.0K ≈ pi 基线 888.6K 的 2.5×、峰值上下文 205.7K vs 94.1K，
+/// 主因水线差；收敛 0.5 后复测 token 曲线再拍切换）、
 /// 尾部保留 10% / 下限 4000 token、中部不足 512 token 不压。
 ///
 /// 全部参数公开可变：**参数进化 = 插件自治**（v0.17 定调 2）——调水线/换
@@ -36,7 +39,7 @@ pub struct DefaultCompactor {
 impl Default for DefaultCompactor {
     fn default() -> Self {
         Self {
-            watermark: 0.8,
+            watermark: 0.5,
             keep_recent_ratio: 0.10,
             keep_recent_floor: 4_000,
             min_middle_tokens: 512,
@@ -82,15 +85,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn soft_threshold_at_watermark() {
+    fn soft_threshold_at_default_watermark() {
+        let p = DefaultCompactor::default();
+        assert_eq!(p.watermark, 0.5, "默认水线 0.5，对齐 pi");
+        assert!(!p.should_compact(0, 100));
+        assert!(!p.should_compact(49, 100));
+        assert!(p.should_compact(50, 100), "50/100 = 0.5 水线");
+        assert!(p.should_compact(100, 100));
+    }
+
+    #[test]
+    fn soft_threshold_at_explicit_watermark() {
+        // 显式非默认水线（0.8 旧口径）依旧生效——参数公开可变，插件自治。
         let p = DefaultCompactor {
             watermark: 0.8,
             ..Default::default()
         };
-        assert!(!p.should_compact(0, 100));
         assert!(!p.should_compact(79, 100));
-        assert!(p.should_compact(80, 100), "80/100 = 0.8 水线");
-        assert!(p.should_compact(100, 100));
+        assert!(p.should_compact(80, 100), "80/100 = 0.8 显式水线");
     }
 
     #[test]
