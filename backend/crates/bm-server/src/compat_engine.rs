@@ -1,16 +1,25 @@
-//! B4 工具方向——CompatEngine：bm-compat QuickJS 引擎的 bm-server 侧宿主。
+//! B4/B5/B6 — CompatEngine：bm-compat QuickJS 引擎的 bm-server 侧宿主。
 //!
 //! `HostThread` 内部持 `Rc<PiJsRuntime>`（非 Send）——与 legacy 同款模型：
 //! runtime 独占专用线程，外界经命令通道通信（legacy `JsRuntimeCommand` 的
 //! 单 runtime 简化版）。命令在通道内天然串行：加载/执行/读回互不交错。
 //!
-//! B4 范围：工具执行方向（`__pi_execute_tool` 桥）。B5 权限桥：宿主服务
-//! 端口换 [`BridgeServices`]——`request_approval` 接 PermissionBridge 同款
-//! 询问链（SSE 弹窗 → oneshot 等决策 → 超时 fail-closed），`http` 端口
-//! reqwest 真实现（web_search 全链路的网络能力）。其余端口（exec/session/
-//! ui/events/内置工具集）留 B6 前补齐，B5 仍返 "unwired"。
+//! 范围演进：
+//! - B4：工具执行方向（`__pi_execute_tool` 桥）。
+//! - B5：权限桥——`request_approval` 接 PermissionBridge 同款询问链
+//!   （SSE 弹窗 → oneshot 等决策 → 超时 fail-closed），`http` 端口 reqwest
+//!   真实现。
+//! - B6：宿主端口补齐——`execute_tool`（内置工具集 read/write/edit/grep/
+//!   find/ls/bash，递归防护 = 只查内置表不查插件注册表）、`exec`（镜像
+//!   legacy 非流式 `{stdout,stderr,code,killed}`）、`session`（会话 DB 的
+//!   最小诚实子集）、`ui`（无扩展 UI 通道 → confirm 返回 false/custom
+//!   closed，其余 not_configured）、`events`（active tools 记忆）；决策记忆
+//!   （extension-permissions.json 持久化，询问前命中直返、always 决策回写）；
+//!   宿主→插件事件推送（`__pi_dispatch_extension_event` 桥，startup/
+//!   tool_call/tool_result 的宿主侧通道）。
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -25,6 +34,8 @@ use bm_core::agent::AgentStreamEvent;
 use bm_loop::engine::{ToolCallRequest, ToolExecutor, ToolOutcome};
 use tokio::sync::{Mutex as TokioMutex, mpsc, oneshot};
 
+use crate::builtin_tools::BuiltinTools;
+use crate::permission_store::PermissionStore;
 use crate::PermissionDecision;
 
 /// 插件工具执行超时（对齐 legacy 默认：agent.rs 的 JS_EXTENSION_TOOL_TIMEOUT_MS）。
@@ -35,6 +46,12 @@ const HOSTCALL_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// 权限询问等待上限：用户无响应时按拒绝处理（fail-closed，对齐 pi 路径）。
 const PERMISSION_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// exec hostcall 默认超时（legacy 非流式 exec 无默认上限；bm 路径保守 60s）。
+const EXEC_TIMEOUT_MS: u64 = 60_000;
+
+/// 事件分发（__pi_dispatch_extension_event）超时：handler 链跑完或放弃。
+const EVENT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// 命令通道（专用线程内执行，oneshot 回结果）。
 enum CompatCmd {
@@ -54,9 +71,17 @@ enum CompatCmd {
     Tools {
         reply: oneshot::Sender<CompatResult<Vec<ExtensionToolDef>>>,
     },
+    /// B6：宿主→插件事件（pi.on handler 链），返回 handler 链最后非
+    /// undefined 值（无 handler → Null）。
+    DispatchEvent {
+        name: String,
+        payload: serde_json::Value,
+        ctx: serde_json::Value,
+        reply: oneshot::Sender<CompatResult<serde_json::Value>>,
+    },
 }
 
-/// B5 权限桥的宿主服务实现。
+/// B5/B6 权限桥的宿主服务实现。
 ///
 /// `current_session` 是专用线程内的"执行期上下文"：命令循环串行，execute
 /// 期间 hostcall 同步发生——set/clear 即 thread-local 语义，把询问路由到
@@ -66,6 +91,15 @@ pub struct BridgeServices {
     pub permission_pending:
         Arc<TokioMutex<HashMap<String, oneshot::Sender<PermissionDecision>>>>,
     pub current_session: Mutex<Option<String>>,
+    /// B6：内置工具集（cwd = 工作文件夹）。
+    pub builtin: BuiltinTools,
+    /// B6：决策记忆（extension-permissions.json）。std Mutex：record 含
+    /// 文件 IO，专用线程内临界区短、无 await 跨锁。
+    pub permission_store: std::sync::Mutex<PermissionStore>,
+    /// B6：会话端口的数据面（get_state/get_messages/set_name…）。
+    pub db: Arc<bm_core::Db>,
+    /// B6：events 端口的 active tools 记忆（None = 全量）。
+    pub active_tools: Mutex<Option<Vec<String>>>,
 }
 
 impl BridgeServices {
@@ -73,10 +107,31 @@ impl BridgeServices {
         *self.current_session.lock().unwrap() = session_id;
     }
 
+    fn current_session_id(&self) -> Option<String> {
+        self.current_session.lock().unwrap().clone()
+    }
+
     /// 与 pi 路径 PermissionBridge 同款的询问链：
-    /// 注册 pending → SSE 推 PermissionRequest → 等决策 → 超时 fail-closed。
+    /// 决策记忆命中 → 直返；否则注册 pending → SSE 推 PermissionRequest →
+    /// 等决策（超时 fail-closed）→ always 决策回写记忆。
     async fn request_permission(&self, capability: &str, extension_id: Option<&str>) -> bool {
-        let Some(session_id) = self.current_session.lock().unwrap().clone() else {
+        // 1. 决策记忆：命中（allow/deny）直接返回，不再打扰用户
+        if let Some(id) = extension_id {
+            let store = self.permission_store.lock().unwrap();
+            if let Some(allow) = store.lookup(id, capability) {
+                tracing::debug!(
+                    event = "bm.permission_memory_hit",
+                    extension = id,
+                    capability,
+                    allow,
+                    "决策记忆命中，跳过询问",
+                );
+                return allow;
+            }
+        }
+
+        // 2. 无记忆 → 询问链
+        let Some(session_id) = self.current_session_id() else {
             // 无会话上下文（加载期 hostcall）→ fail-closed
             return false;
         };
@@ -105,27 +160,80 @@ impl BridgeServices {
             .and_then(|r| r.ok());
         self.permission_pending.lock().await.remove(&request_id);
 
-        // 决策记忆：pi 路径由上游写 extension-permissions.json；bm 路径 B5
-        // 先不持久化（每次询问），记忆化是 B6 前的补丁
-        decision.is_some_and(|d| d.allow)
+        let Some(decision) = decision else {
+            return false;
+        };
+
+        // 3. "总是"决策 → 回写记忆（对齐 pi 上游：问一次记一次；once 不记）
+        if decision.always {
+            let mut store = self.permission_store.lock().unwrap();
+            if let Err(err) = store.record(extension_id, capability, decision.allow) {
+                tracing::warn!(
+                    event = "bm.permission_memory_write_failed",
+                    extension = extension_id,
+                    capability,
+                    error = %err,
+                );
+            }
+        }
+        decision.allow
+    }
+
+    /// 宿主事件推送的 ctx payload（会话工作目录 + 空会话投影）。
+    /// sessionEntries 投影留给后续切片（需要 db 消息 → JS ctx 桥接）。
+    fn event_ctx(&self) -> serde_json::Value {
+        serde_json::json!({
+            "cwd": self.builtin.cwd().display().to_string(),
+            "hasUI": false,
+        })
     }
 }
 
 #[async_trait::async_trait]
 impl HostServices for BridgeServices {
-    async fn execute_tool(&self, call_id: &str, name: &str, _input: serde_json::Value) -> HostcallOutcome {
-        let _ = call_id;
-        HostcallOutcome::Error {
-            code: "unwired".to_string(),
-            message: format!("宿主工具 {name} 未接线（内置工具集 B6 前补齐）"),
+    /// `pi.tool(name, input)` → 内置工具集（B6）。
+    /// 递归防护：只查内置表，未知名字即报错——插件工具互调在 JS 侧
+    /// （import）完成，宿主桥不代查，天然无「插件→宿主→同引擎」递归环。
+    async fn execute_tool(&self, _call_id: &str, name: &str, input: serde_json::Value) -> HostcallOutcome {
+        match self.builtin.execute(name, input).await {
+            Ok(value) => HostcallOutcome::Success(value),
+            Err(err) => HostcallOutcome::Error {
+                code: err.code.to_string(),
+                message: err.message,
+            },
         }
     }
 
-    async fn exec(&self, call_id: &str, cmd: &str, _payload: serde_json::Value) -> HostcallOutcome {
-        let _ = (call_id, cmd);
-        HostcallOutcome::Error {
-            code: "unwired".to_string(),
-            message: "exec 未接线（内置工具集 B6 前补齐）".to_string(),
+    /// `pi.exec(cmd, {args?, options?})` → 进程执行（B6，镜像 legacy 非流式）。
+    /// stream=true 暂不支持（三插件不用流式）；返回形状与 legacy 一致。
+    async fn exec(&self, _call_id: &str, cmd: &str, payload: serde_json::Value) -> HostcallOutcome {
+        let args = payload
+            .get("args")
+            .and_then(serde_json::Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .map(|v| v.as_str().map_or_else(|| v.to_string(), ToString::to_string))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let options = payload.get("options").cloned().unwrap_or(serde_json::json!({}));
+        let cwd = options
+            .get("cwd")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
+        let timeout_ms = options
+            .get("timeout")
+            .and_then(serde_json::Value::as_u64)
+            .filter(|t| *t > 0)
+            .unwrap_or(EXEC_TIMEOUT_MS);
+
+        match self.builtin.exec_cmd(cmd, &args, cwd.as_deref(), timeout_ms).await {
+            Ok(value) => HostcallOutcome::Success(value),
+            Err(err) => HostcallOutcome::Error {
+                code: err.code.to_string(),
+                message: err.message,
+            },
         }
     }
 
@@ -211,43 +319,165 @@ impl HostServices for BridgeServices {
         HostcallOutcome::Success(serde_json::Value::Object(output))
     }
 
-    async fn session(&self, call_id: &str, op: &str, _payload: serde_json::Value) -> HostcallOutcome {
-        let _ = (call_id, op);
-        HostcallOutcome::Error {
-            code: "unwired".to_string(),
-            message: "会话 hostcall 未接线（B6 前补齐）".to_string(),
+    /// `pi.session(op, args)` → 会话数据面（B6 最小诚实子集）。
+    /// 无执行期会话（加载期调用）→ denied。
+    async fn session(&self, _call_id: &str, op: &str, payload: serde_json::Value) -> HostcallOutcome {
+        let Some(session_id) = self.current_session_id() else {
+            return HostcallOutcome::Error {
+                code: "denied".to_string(),
+                message: "session hostcall 无会话上下文".to_string(),
+            };
+        };
+        let op = fold_op(op);
+        let result = match op.as_str() {
+            "getstate" => {
+                let session = self.db.get_session(&session_id).await;
+                match session {
+                    Ok(Some(s)) => Ok(serde_json::json!({
+                        "sessionId": s.id,
+                        "sessionName": s.title,
+                        "model": s.model,
+                        "provider": s.provider_id,
+                    })),
+                    Ok(None) => Err("no session".to_string()),
+                    Err(e) => Err(e.to_string()),
+                }
+            }
+            "getname" => {
+                let session = self.db.get_session(&session_id).await;
+                match session {
+                    Ok(Some(s)) => Ok(serde_json::Value::String(s.title)),
+                    Ok(None) => Err("no session".to_string()),
+                    Err(e) => Err(e.to_string()),
+                }
+            }
+            "setname" => {
+                let name = payload.get("name").and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                self.db
+                    .rename_session(&session_id, &name)
+                    .await
+                    .map(|()| serde_json::Value::Null)
+                    .map_err(|e| e.to_string())
+            }
+            "getmessages" => self
+                .db
+                .list_messages(&session_id)
+                .await
+                .map(|msgs| {
+                    serde_json::Value::Array(
+                        msgs.into_iter()
+                            .map(|m| {
+                                serde_json::json!({
+                                    "id": m.id,
+                                    "role": m.role,
+                                    "content": m.content,
+                                })
+                            })
+                            .collect(),
+                    )
+                })
+                .map_err(|e| e.to_string()),
+            "getmodel" => {
+                let session = self.db.get_session(&session_id).await;
+                match session {
+                    Ok(Some(s)) => Ok(serde_json::json!({
+                        "provider": s.provider_id,
+                        "modelId": s.model,
+                    })),
+                    Ok(None) => Err("no session".to_string()),
+                    Err(e) => Err(e.to_string()),
+                }
+            }
+            "setmodel" => {
+                let provider = payload.get("provider").and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                let model_id = payload.get("modelId").and_then(serde_json::Value::as_str)
+                    .or_else(|| payload.get("model_id").and_then(serde_json::Value::as_str))
+                    .unwrap_or_default()
+                    .to_string();
+                if provider.is_empty() || model_id.is_empty() {
+                    return HostcallOutcome::Error {
+                        code: "invalid_request".to_string(),
+                        message: "setModel: provider and modelId are required".to_string(),
+                    };
+                }
+                self.db
+                    .set_session_model(&session_id, Some(&provider), Some(&model_id))
+                    .await
+                    .map(|()| serde_json::Value::Bool(true))
+                    .map_err(|e| e.to_string())
+            }
+            _ => Err(format!("Unknown session op: {op}")),
+        };
+        match result {
+            Ok(value) => HostcallOutcome::Success(value),
+            Err(message) => HostcallOutcome::Error {
+                code: "invalid_request".to_string(),
+                message,
+            },
         }
     }
 
+    /// `pi.ui(op, args)` → bm 路径无扩展 UI 通道（前端扩展面板是 pi 桌面的
+    /// 能力）。诚实返回：confirm → false（取消语义）、custom → closed，
+    /// 其余 not_configured——不让插件把无响应当成功。
     async fn ui(
         &self,
-        call_id: &str,
+        _call_id: &str,
         op: &str,
         _payload: serde_json::Value,
         _extension_id: Option<&str>,
     ) -> HostcallOutcome {
-        let _ = (call_id, op);
-        HostcallOutcome::Error {
-            code: "unwired".to_string(),
-            message: "UI hostcall 未接线（B6 前补齐）".to_string(),
+        match op.trim() {
+            "confirm" => HostcallOutcome::Success(serde_json::Value::Bool(false)),
+            "custom" => HostcallOutcome::Success(serde_json::json!({ "closed": true })),
+            other => HostcallOutcome::Error {
+                code: "not_configured".to_string(),
+                message: format!("UI hostcall 未配置宿主通道：{other}"),
+            },
         }
     }
 
+    /// `pi.events(op, args)` → active tools 记忆 + 会话数据面（B6 子集）。
     async fn events(
         &self,
-        call_id: &str,
+        _call_id: &str,
         op: &str,
-        _payload: serde_json::Value,
+        payload: serde_json::Value,
         _extension_id: Option<&str>,
     ) -> HostcallOutcome {
-        let _ = (call_id, op);
-        HostcallOutcome::Error {
-            code: "unwired".to_string(),
-            message: "事件 hostcall 未接线（B6 前补齐）".to_string(),
+        match fold_op(op).as_str() {
+            "getactivetools" => {
+                let active = self.active_tools.lock().unwrap().clone();
+                HostcallOutcome::Success(serde_json::json!({ "tools": active }))
+            }
+            "setactivetools" => {
+                let tools = payload
+                    .get("tools")
+                    .and_then(serde_json::Value::as_array)
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(serde_json::Value::as_str)
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                *self.active_tools.lock().unwrap() = Some(tools);
+                HostcallOutcome::Success(serde_json::Value::Null)
+            }
+            other => HostcallOutcome::Error {
+                code: "invalid_request".to_string(),
+                message: format!("Unknown events op: {other}"),
+            },
         }
     }
 
-    /// 权限询问：`prompt` 裁决走询问链（PermissionBridge 同款）；fail-closed。
+    /// 权限询问：决策记忆命中直返；否则 `prompt` 裁决走询问链
+    /// （PermissionBridge 同款）；fail-closed。
     async fn request_approval(&self, capability: &str, extension_id: Option<&str>) -> bool {
         self.request_permission(capability, extension_id).await
     }
@@ -259,23 +489,36 @@ pub struct CompatEngine {
     join: Option<std::thread::JoinHandle<()>>,
     /// 启动加载后的工具快照（bm-loop ToolDef 形态；B4 无运行时安装，快照即全集）
     pub tools: Vec<bm_loop::model::ToolDef>,
+    /// B6：已注册工具名快照（events getActiveTools 的数据面；加载完成后填入）。
+    pub tool_names: Vec<String>,
+    /// B6：工作目录（插件事件 ctx 的 cwd 数据面）。
+    pub working_dir: PathBuf,
 }
 
 impl CompatEngine {
     /// 起专用线程 + 引导 runtime。返回引擎句柄（工具快照由
     /// [`crate::compat_engine::init_compat`] 在加载完成后填入）。
     /// `session_streams`/`permission_pending` 是 AppState 的同名组件
-    /// （本引擎建于 AppState 之前，只拿组件不拿整态）。
+    /// （本引擎建于 AppState 之前，只拿组件不拿整态）；`db`/`working_dir`
+    /// 是 B6 会话端口与内置工具集的数据面。
     pub async fn spawn(
         session_streams: Arc<TokioMutex<HashMap<String, mpsc::UnboundedSender<AgentStreamEvent>>>>,
         permission_pending: Arc<TokioMutex<HashMap<String, oneshot::Sender<PermissionDecision>>>>,
+        db: Arc<bm_core::Db>,
+        working_dir: PathBuf,
+        permission_store: PermissionStore,
     ) -> Result<Self, String> {
         let (tx, mut rx) = mpsc::unbounded_channel::<CompatCmd>();
         let (boot_tx, boot_rx) = oneshot::channel::<Result<(), String>>();
+        let engine_working_dir = working_dir.clone();
         let services = Arc::new(BridgeServices {
             session_streams,
             permission_pending,
             current_session: Mutex::new(None),
+            builtin: BuiltinTools::new(working_dir),
+            permission_store: std::sync::Mutex::new(permission_store),
+            db,
+            active_tools: Mutex::new(None),
         });
         let handle = std::thread::Builder::new()
             .name("bm-compat".to_string())
@@ -316,7 +559,7 @@ impl CompatEngine {
                                     &name,
                                     &call_id,
                                     input,
-                                    serde_json::json!({}),
+                                    services.event_ctx(),
                                     Duration::from_millis(timeout_ms),
                                 )
                                 .await;
@@ -325,6 +568,17 @@ impl CompatEngine {
                             }
                             CompatCmd::Tools { reply } => {
                                 let res = thread.runtime().get_registered_tools().await;
+                                let _ = reply.send(res);
+                            }
+                            CompatCmd::DispatchEvent { name, payload, ctx, reply } => {
+                                let res = bm_compat::events::dispatch_extension_event(
+                                    &thread,
+                                    &name,
+                                    payload,
+                                    ctx,
+                                    EVENT_TIMEOUT,
+                                )
+                                .await;
                                 let _ = reply.send(res);
                             }
                         }
@@ -338,6 +592,8 @@ impl CompatEngine {
             tx,
             join: Some(handle),
             tools: Vec::new(),
+            tool_names: Vec::new(),
+            working_dir: engine_working_dir,
         })
     }
 
@@ -388,6 +644,28 @@ impl CompatEngine {
             .map_err(|_| "compat 引擎已停止".to_string())?
             .map_err(|err| err.to_string())
     }
+
+    /// B6：宿主→插件事件（startup/tool_call/tool_result…）。返回 handler
+    /// 链最后非 undefined 值（无 handler → Null）。
+    pub async fn dispatch_event(
+        &self,
+        name: &str,
+        payload: serde_json::Value,
+        ctx: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(CompatCmd::DispatchEvent {
+                name: name.to_string(),
+                payload,
+                ctx,
+                reply,
+            })
+            .map_err(|_| "compat 引擎已停止".to_string())?;
+        rx.await
+            .map_err(|_| "compat 引擎已停止".to_string())?
+            .map_err(|err| err.to_string())
+    }
 }
 
 impl Drop for CompatEngine {
@@ -411,12 +689,45 @@ fn to_loop_tool(def: &ExtensionToolDef) -> bm_loop::model::ToolDef {
 
 /// 启动 CompatEngine：引导 → 加载启用插件 → 读回工具快照。
 /// 失败不阻断服务（bm 引擎退化为无工具模式，QuickJsToolExecutor 兜底报错）。
+/// B6：`db`/`working_dir` 接入（session 端口/内置工具集），决策记忆在
+/// `~/.boenmind/extension-permissions.json`（app_dir 下，与 pi 上游的
+/// 同名文件并置——上游在 pi_agent_dir 下，两文件独立但格式兼容）。
 pub async fn init_compat(
     config: &bm_core::AppConfig,
     session_streams: Arc<TokioMutex<HashMap<String, mpsc::UnboundedSender<AgentStreamEvent>>>>,
     permission_pending: Arc<TokioMutex<HashMap<String, oneshot::Sender<PermissionDecision>>>>,
+    db: Arc<bm_core::Db>,
 ) -> Option<Arc<CompatEngine>> {
-    let mut engine = match CompatEngine::spawn(session_streams, permission_pending).await {
+    let permission_store = {
+        let path = bm_core::config::app_dir().join("extension-permissions.json");
+        match PermissionStore::open(&path) {
+            Ok(store) => store,
+            Err(err) => {
+                // 决策记忆打不开 → 每次询问（fail-open 到询问链，不阻断引擎）
+                tracing::warn!(event = "bm.permission_store_open_failed", path = %path.display(), error = %err);
+                PermissionStore::open(&tempfile::tempdir()
+                    .map(|d| d.keep())
+                    .unwrap_or_else(|_| std::env::temp_dir())
+                    .join("extension-permissions.json"))
+                .unwrap_or_else(|_| {
+                    PermissionStore::open(&std::env::temp_dir().join(format!(
+                        "boenmind-permissions-{}.json",
+                        uuid::Uuid::new_v4()
+                    )))
+                    .expect("临时决策记忆不可用")
+                })
+            }
+        }
+    };
+    let mut engine = match CompatEngine::spawn(
+        session_streams,
+        permission_pending,
+        db,
+        config.working_dir.clone(),
+        permission_store,
+    )
+    .await
+    {
         Ok(e) => e,
         Err(err) => {
             tracing::warn!(event = "bm.compat_boot_failed", error = %err, "bm 引擎插件工具不可用");
@@ -448,6 +759,7 @@ pub async fn init_compat(
     match engine.read_tools().await {
         Ok(tools) => {
             engine.tools = tools.iter().map(to_loop_tool).collect();
+            engine.tool_names = tools.iter().map(|t| t.name.clone()).collect();
             tracing::info!(
                 event = "bm.compat_ready",
                 plugins = loaded,
@@ -461,8 +773,9 @@ pub async fn init_compat(
     Some(Arc::new(engine))
 }
 
-/// bm-loop `ToolExecutor` 的 QuickJS 实现（B4/B5）：`execute` →
-/// `__pi_execute_tool` 桥。compat 未启用（None）时兜底报错。
+/// bm-loop `ToolExecutor` 的 QuickJS 实现（B4/B5/B6）：`execute` →
+/// `__pi_execute_tool` 桥；执行前后推 `tool_call`/`tool_result` 插件事件
+/// （fire-and-forget——ctx-compactor 的修剪/落库挂在 tool_result 上）。
 /// 每会话一个实例（携带 session_id，权限询问路由用）。
 pub struct QuickJsToolExecutor {
     engine: Option<Arc<CompatEngine>>,
@@ -476,6 +789,20 @@ impl QuickJsToolExecutor {
             session_id: session_id.into(),
         }
     }
+
+    /// 插件事件 ctx：cwd（JS `__pi_make_extension_ctx` 的输入）。
+    /// sessionEntries 投影留后续切片；B6 先给 cwd。
+    fn event_ctx(&self) -> serde_json::Value {
+        let cwd = self
+            .engine
+            .as_ref()
+            .map(|e| e.working_dir.display().to_string())
+            .unwrap_or_default();
+        serde_json::json!({
+            "cwd": cwd,
+            "hasUI": false,
+        })
+    }
 }
 
 impl ToolExecutor for QuickJsToolExecutor {
@@ -487,22 +814,55 @@ impl ToolExecutor for QuickJsToolExecutor {
                 meta: None,
             };
         };
-        match engine
-            .execute(&req.name, &req.call_id, req.args, TOOL_TIMEOUT_MS, &self.session_id)
+
+        // tool_call 事件（fire-and-forget；handler 可 block——B6 先不消费返回值）
+        let ctx = self.event_ctx();
+        let payload = serde_json::json!({
+            "type": "tool_call",
+            "toolName": req.name,
+            "toolCallId": req.call_id,
+            "input": req.args,
+        });
+        if let Err(err) = engine.dispatch_event("tool_call", payload, ctx.clone()).await {
+            tracing::debug!(event = "bm.plugin_event_failed", name = "tool_call", error = %err);
+        }
+
+        let outcome = match engine
+            .execute(&req.name, &req.call_id, req.args.clone(), TOOL_TIMEOUT_MS, &self.session_id)
             .await
         {
             Ok(value) => ToolOutcome {
                 ok: true,
                 output: tool_result_text(&value),
-                meta: Some(value),
+                meta: Some(value.clone()),
             },
             Err(err) => ToolOutcome {
                 ok: false,
-                output: err,
+                output: err.clone(),
                 meta: None,
             },
+        };
+
+        // tool_result 事件（ctx-compactor 的修剪 hook 在此；value = 完整返回包）
+        let payload = serde_json::json!({
+            "type": "tool_result",
+            "toolName": req.name,
+            "toolCallId": req.call_id,
+            "input": req.args,
+            "content": outcome.meta.clone().unwrap_or_else(|| serde_json::json!({ "error": outcome.output.clone() })),
+            "isError": !outcome.ok,
+        });
+        if let Err(err) = engine.dispatch_event("tool_result", payload, ctx).await {
+            tracing::debug!(event = "bm.plugin_event_failed", name = "tool_result", error = %err);
         }
+        outcome
     }
+}
+
+/// op 名折叠比较（get_state/getState/getstate 同义——对齐 legacy 的
+/// folded-alnum token 语义的简化版）。
+fn fold_op(op: &str) -> String {
+    op.to_ascii_lowercase().replace(['_', '-'], "")
 }
 
 /// 插件返回值 → 输出文本：`content[].text` 拼接优先；无文本退回整包 JSON
@@ -527,17 +887,44 @@ fn tool_result_text(value: &serde_json::Value) -> String {
 mod tests {
     use super::*;
 
-    fn bridge() -> BridgeServices {
+    /// 测试库环境锁：BOENMIND_HOME 是进程级 env，并发测试互斥设置。
+    static DB_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// 临时目录内的测试 Db（不触碰用户真实数据目录）。
+    async fn test_db() -> Arc<bm_core::Db> {
+        let _guard = DB_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let dir = std::env::temp_dir().join(format!("bm-compat-db-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let original = std::env::var_os("BOENMIND_HOME");
+        unsafe { std::env::set_var("BOENMIND_HOME", &dir) };
+        let db = bm_core::Db::open().await.expect("test db open");
+        match original {
+            Some(v) => unsafe { std::env::set_var("BOENMIND_HOME", v) },
+            None => unsafe { std::env::remove_var("BOENMIND_HOME") },
+        }
+        Arc::new(db)
+    }
+
+    async fn bridge() -> BridgeServices {
+        // keep()：builtin 的 cwd 要跨调用存活（exec 在 bridge 返回后 spawn）
+        let temp_dir = tempfile::tempdir().unwrap().keep();
+        let store_path = temp_dir.join("extension-permissions.json");
         BridgeServices {
             session_streams: Arc::new(TokioMutex::new(HashMap::new())),
             permission_pending: Arc::new(TokioMutex::new(HashMap::new())),
             current_session: Mutex::new(None),
+            builtin: BuiltinTools::new(temp_dir.clone()),
+            permission_store: std::sync::Mutex::new(
+                PermissionStore::open(&store_path).expect("store"),
+            ),
+            db: test_db().await,
+            active_tools: Mutex::new(None),
         }
     }
 
     #[tokio::test]
     async fn approval_fails_closed_without_session() {
-        let services = bridge();
+        let services = bridge().await;
         // 无执行期会话上下文（加载期/异常路径）→ 拒绝且不挂起
         let allowed = services.request_approval("http", Some("web-search")).await;
         assert!(!allowed);
@@ -545,11 +932,128 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn approval_memory_hit_skips_prompt() {
+        let services = bridge().await;
+        services
+            .permission_store
+            .lock()
+            .unwrap()
+            .record("web-search", "http", true)
+            .unwrap();
+        // 决策记忆命中：无会话上下文也放行（不走询问链）
+        assert!(services.request_approval("http", Some("web-search")).await);
+        assert!(services.permission_pending.lock().await.is_empty());
+        // 未记忆的能力仍 fail-closed
+        assert!(!services.request_approval("exec", Some("web-search")).await);
+    }
+
+    #[tokio::test]
     async fn http_requires_url() {
-        let services = bridge();
+        let services = bridge().await;
         match services.http("c1", serde_json::json!({})).await {
             HostcallOutcome::Error { code, .. } => assert_eq!(code, "invalid_request"),
             other => panic!("应返回 invalid_request，得到 {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_tool_routes_to_builtins() {
+        let services = bridge().await;
+        // 内置 write → 成功形状（content[].text）
+        match services
+            .execute_tool(
+                "c1",
+                "write",
+                serde_json::json!({ "path": "out/note.txt", "content": "hi" }),
+            )
+            .await
+        {
+            HostcallOutcome::Success(v) => {
+                assert!(v["content"][0]["text"].as_str().unwrap().contains("Successfully wrote"));
+            }
+            other => panic!("write 应成功，得到 {other:?}"),
+        }
+        // 未知工具 → 报错（递归防护：不查插件注册表）
+        match services.execute_tool("c2", "hello", serde_json::json!({})).await {
+            HostcallOutcome::Error { code, message } => {
+                assert_eq!(code, "invalid_request");
+                assert!(message.contains("Unknown tool"), "{message}");
+            }
+            other => panic!("未知工具应报错，得到 {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn exec_runs_process_and_captures() {
+        let services = bridge().await;
+        #[cfg(windows)]
+        let (cmd, args) = ("cmd", vec!["/C".to_string(), "echo exec-ok".to_string()]);
+        #[cfg(not(windows))]
+        let (cmd, args) = ("/bin/sh", vec!["-c".to_string(), "echo exec-ok".to_string()]);
+        match services
+            .exec("c1", cmd, serde_json::json!({ "args": args }))
+            .await
+        {
+            HostcallOutcome::Success(v) => {
+                assert_eq!(v["code"], 0, "{v}");
+                assert!(v["stdout"].as_str().unwrap().contains("exec-ok"), "{v}");
+            }
+            other => panic!("exec 应成功，得到 {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn session_requires_active_session() {
+        let services = bridge().await;
+        // 无会话上下文 → denied
+        match services.session("c1", "get_state", serde_json::json!({})).await {
+            HostcallOutcome::Error { code, .. } => assert_eq!(code, "denied"),
+            other => panic!("应 denied，得到 {other:?}"),
+        }
+        // 未知 op（有会话上下文时走 op 分发）→ invalid_request
+        services.set_session(Some("s1".to_string()));
+        match services.session("c2", "no_such_op", serde_json::json!({})).await {
+            HostcallOutcome::Error { code, message } => {
+                assert_eq!(code, "invalid_request");
+                assert!(message.contains("Unknown session op"), "{message}");
+            }
+            other => panic!("应 invalid_request，得到 {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn ui_returns_honest_unconfigured() {
+        let services = bridge().await;
+        match services.ui("c1", "confirm", serde_json::json!({}), None).await {
+            HostcallOutcome::Success(v) => assert_eq!(v, serde_json::Value::Bool(false)),
+            other => panic!("confirm 应返回 false，得到 {other:?}"),
+        }
+        match services.ui("c2", "toast", serde_json::json!({}), None).await {
+            HostcallOutcome::Error { code, .. } => assert_eq!(code, "not_configured"),
+            other => panic!("toast 应 not_configured，得到 {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn events_active_tools_memory() {
+        let services = bridge().await;
+        match services.events("c1", "get_active_tools", serde_json::json!({}), None).await {
+            HostcallOutcome::Success(v) => assert_eq!(v["tools"], serde_json::Value::Null),
+            other => panic!("应返回 null 工具表，得到 {other:?}"),
+        }
+        services
+            .events(
+                "c2",
+                "set_active_tools",
+                serde_json::json!({ "tools": ["read", "write"] }),
+                None,
+            )
+            .await;
+        match services.events("c3", "get_active_tools", serde_json::json!({}), None).await {
+            HostcallOutcome::Success(v) => {
+                assert_eq!(v["tools"], serde_json::json!(["read", "write"]))
+            }
+            other => panic!("应返回记忆的工具表，得到 {other:?}"),
         }
     }
 

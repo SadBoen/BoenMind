@@ -30,6 +30,8 @@ pub mod execute;
 pub mod host;
 // B3 — loading path (entry eval + ExtensionBody task loop).
 pub mod load;
+// B6 — event dispatch path (`__pi_dispatch_extension_event` bridge + task pump).
+pub mod events;
 pub mod extensions_js;
 pub mod hostcall_io_uring_lane;
 pub mod hostcall_queue;

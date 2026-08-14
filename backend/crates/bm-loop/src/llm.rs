@@ -101,6 +101,10 @@ pub struct LlmConfig {
     pub model: String,
     /// 提供商标识（request/header 审计用，纯透传）
     pub provider: Option<String>,
+    /// 推理档位（thinking 档映射后的 OpenAI 兼容 `reasoning_effort`：
+    /// low/medium/high）。None = 不注入（端点默认）。兼容端点忽略未知字段；
+    /// 本字段只做透传不自行判定端点支持度。
+    pub reasoning_effort: Option<String>,
 }
 
 /// OpenAI 兼容流式 client。
@@ -139,6 +143,12 @@ impl Llm for OpenAiClient {
             obj.insert("stream".into(), serde_json::Value::Bool(true));
             if obj.get("model").is_none() {
                 obj.insert("model".into(), serde_json::Value::String(cfg.model.clone()));
+            }
+            // thinking 档映射：reasoning_effort 注入（兼容端点忽略未知字段）
+            if let Some(effort) = &cfg.reasoning_effort
+                && obj.get("reasoning_effort").is_none()
+            {
+                obj.insert("reasoning_effort".into(), serde_json::Value::String(effort.clone()));
             }
             // 排障观测：请求面的 tools 数量（工具未上 payload 是"模型不调工具"的头号嫌疑）。
             // 注意：不打 payload 全文——含用户消息，日志是审计之家但不该存敏感正文。

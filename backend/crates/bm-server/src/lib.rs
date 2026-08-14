@@ -4,10 +4,14 @@
 //! - 桌面壳内嵌：Tauri 启动时在独立线程调用 [`serve`]
 
 pub mod bm_engine;
+// B6 — 内置工具集（bm 引擎 pi.tool 宿主执行侧：read/write/edit/grep/find/ls/bash）
+pub mod builtin_tools;
 pub mod chat;
 pub mod compat_engine;
 pub mod pdf_omni;
 pub mod permission;
+// B6 — 插件权限决策记忆（extension-permissions.json，格式兼容 pi 上游）
+pub mod permission_store;
 pub mod routes;
 pub mod static_files;
 pub mod subagent_child;
@@ -91,7 +95,7 @@ pub struct PermissionDecision {
 impl AppState {
     pub fn new(
         config: AppConfig,
-        db: Db,
+        db: Arc<Db>,
         dual_writer: Option<Arc<bm_storage_turso::dual_write::DualWriter>>,
         compat: Option<Arc<compat_engine::CompatEngine>>,
         session_streams: Arc<
@@ -101,7 +105,7 @@ impl AppState {
     ) -> Self {
         Self {
             config: Arc::new(RwLock::new(config)),
-            db: Arc::new(db),
+            db,
             agents: Arc::new(Mutex::new(HashMap::new())),
             aborts: Arc::new(Mutex::new(HashMap::new())),
             session_streams,
@@ -376,6 +380,7 @@ async fn serve_inner(
     shutdown: Option<tokio::sync::watch::Receiver<bool>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (config, db) = init().await?;
+    let db = Arc::new(db);
     tracing::info!("工作文件夹: {}", config.working_dir.display());
     tracing::info!("pi agent 目录: {}", bm_core::config::pi_agent_dir().display());
 
@@ -401,9 +406,13 @@ async fn serve_inner(
     let permission_pending: Arc<
         Mutex<HashMap<String, tokio::sync::oneshot::Sender<PermissionDecision>>>,
     > = Arc::new(Mutex::new(HashMap::new()));
-    let compat =
-        compat_engine::init_compat(&config, session_streams.clone(), permission_pending.clone())
-            .await;
+    let compat = compat_engine::init_compat(
+        &config,
+        session_streams.clone(),
+        permission_pending.clone(),
+        db.clone(),
+    )
+    .await;
 
     let state = AppState::new(
         config,

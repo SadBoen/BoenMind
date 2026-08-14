@@ -63,11 +63,11 @@ jobs:
         run: cargo test -p bm-core -p bm-server -p bm-protocol -p bm-kernel -p bm-storage-turso -p bm-loop -p bm-event-log-tests
 
       # bm-compat 单独一行：其 lib test 目标包含 vendored 6 文件的 upstream
-      # mod tests（B1 遗留 TODO，见 crates/bm-compat/README.md），故只跑 B2/B3/B4
-      # 的集成测试目标（--test 参数不能与其他 -p 混用）。
-      - name: 后端测试（bm-compat host/load/execute 集成）
+      # mod tests（B1 遗留 TODO，见 crates/bm-compat/README.md），故只跑
+      # B2/B3/B4/B6 事件分发的集成测试目标（--test 参数不能与其他 -p 混用）。
+      - name: 后端测试（bm-compat host/load/execute/events 集成）
         working-directory: backend
-        run: cargo test -p bm-compat --test host --test load --test execute
+        run: cargo test -p bm-compat --test host --test load --test execute --test events
 
       - name: 后端 clippy（-D warnings，存量 crate）
         working-directory: backend
@@ -77,11 +77,11 @@ jobs:
         working-directory: backend
         run: cargo clippy -p bm-protocol -p bm-kernel -p bm-storage-turso -p bm-loop -p bm-event-log-tests --all-targets --no-deps -- -D warnings
 
-      # bm-compat：lib + B2/B3/B4 集成测试。B1 拷入文件的存量 lint 已在 manifest
-      # [lints] 表放行（红线：拷贝文件逐字节一致），新代码仍受 -D warnings。
+      # bm-compat：lib + B2/B3/B4/B6 事件分发集成测试。B1 拷入文件的存量 lint 已在
+      # manifest [lints] 表放行（红线：拷贝文件逐字节一致），新代码仍受 -D warnings。
       - name: 后端 clippy（-D warnings，bm-compat）
         working-directory: backend
-        run: cargo clippy -p bm-compat --lib --test host --test load --test execute --no-deps -- -D warnings
+        run: cargo clippy -p bm-compat --lib --test host --test load --test execute --test events --no-deps -- -D warnings
 
       - name: 前端依赖
         working-directory: frontend

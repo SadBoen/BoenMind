@@ -3,10 +3,12 @@
 //!
 //! 切片①（已落地）：开关 + 空工具跑通——provider 桥接 → OpenAiClient 流式 →
 //! 事件日志真序 → SSE 前端形状零改动。
-//! 切片②（B4，本轮）：工具方向——ToolRegistry 从 CompatEngine 工具快照汇合，
+//! 切片②（B4）：工具方向——ToolRegistry 从 CompatEngine 工具快照汇合，
 //! QuickJsToolExecutor 经 `__pi_execute_tool` 桥执行插件工具。
-//! 后续切片：③ B5 权限桥（request_approval 接 PermissionBridge + 宿主六端口
-//! 真实现）；④ B6 全链路 + 30 轮双开对比。
+//! B5：权限桥（compat_engine.rs）。
+//! B6（本轮）：插件事件（startup 懒发 / tool_call / tool_result 经
+//! QuickJsToolExecutor 推送）+ 切片②顺手件（thinking 档位映射 → reasoning_
+//! effort + 心跳 TaskProgress 与 pi 路径同构）。
 //!
 //! 与 pi 路径的分工（§九·三.6）：bm 路径下 **loop 拥有事件日志全生命周期**
 //! （UserMessage/RequestHeader/TurnStart/Step*/TurnEnd 全由 loop 落），
@@ -42,6 +44,10 @@ pub struct LoopSessionEntry {
     pub agent: Arc<Mutex<BmLoopAgent>>,
     pub provider_id: String,
     pub model: String,
+    /// thinking 档位（与 pi 路径一致：改变即重建 agent）
+    pub thinking: String,
+    /// startup 插件事件是否已发（每会话一次；ctx-compactor 借此加载项目配置）
+    pub startup_sent: bool,
     pub last_used: std::time::Instant,
 }
 
@@ -51,24 +57,46 @@ pub fn loop_engine_is_bm(value: &str) -> bool {
     value == "bm"
 }
 
+/// thinking 档名 → OpenAI 兼容 `reasoning_effort`（切片②：七档折叠三档）。
+/// off→不注入（端点默认）；minimal/low→low；medium→medium；high/xhigh/max→high。
+pub fn reasoning_effort_for(level: &str) -> Option<&'static str> {
+    match level.trim().to_lowercase().as_str() {
+        "off" | "none" | "0" => None,
+        "minimal" | "min" | "low" | "1" => Some("low"),
+        "medium" | "med" | "2" => Some("medium"),
+        "high" | "3" | "xhigh" | "4" | "max" | "5" => Some("high"),
+        _ => None,
+    }
+}
+
 // ============================================================================
 // 流式通道 hooks：loop → 前端 SSE（on_stream_chunk 钩子的集成方实现）
 // ============================================================================
 
 /// 流式通道 hooks：`on_stream_chunk` 转发 TextDelta 给当前 prompt 的 SSE 通道；
-/// 通道已关闭（客户端断开）→ 触发取消，避免继续烧 token。
+/// 通道已关闭（客户端断开）→ 触发取消，避免继续烧 token。同时维护心跳
+/// 进度（最近活动摘要：工具名 / 回复尾部 80 字符，chat_bm 的心跳 task 定时
+/// 消费推 SSE + 落库）。
 ///
 /// 挂点说明：hooks 存活于 agent（会话级），当前 prompt 的通道在 run_turn
 /// 前后 attach/detach——同一会话 prompt 天然串行（agent 锁），无并发覆盖。
 /// 内部用 std Mutex：LoopHooks 钩子都是同步方法（回调线程不可 await），
 /// 且临界区仅克隆句柄，无阻塞风险。
-#[derive(Default)]
 pub struct StreamHooks {
     tx: std::sync::Mutex<Option<mpsc::UnboundedSender<AgentStreamEvent>>>,
     cancel: std::sync::Mutex<Option<watch::Sender<bool>>>,
+    progress: Arc<std::sync::Mutex<String>>,
 }
 
 impl StreamHooks {
+    pub fn new(progress: Arc<std::sync::Mutex<String>>) -> Self {
+        Self {
+            tx: std::sync::Mutex::new(None),
+            cancel: std::sync::Mutex::new(None),
+            progress,
+        }
+    }
+
     /// 挂接当前 prompt 的 SSE 通道与取消通道（run_turn 前调用）。
     fn attach(&self, tx: mpsc::UnboundedSender<AgentStreamEvent>, cancel: watch::Sender<bool>) {
         *self.tx.lock().unwrap() = Some(tx);
@@ -98,10 +126,18 @@ impl StreamHooks {
             let _ = tx.send(true);
         }
     }
+
+    /// 心跳进度更新（回复尾部 80 字符；覆盖旧摘要——进度只表达"最近在干什么"）。
+    fn set_progress(&self, text: &str) {
+        let mut progress = self.progress.lock().unwrap();
+        let tail: String = text.chars().rev().take(80).collect();
+        *progress = tail.chars().rev().collect();
+    }
 }
 
 impl LoopHooks for StreamHooks {
     fn on_stream_chunk(&mut self, _ctx: &StepCtx, text: &str) {
+        self.set_progress(text);
         if !self.try_send(AgentStreamEvent::TextDelta { delta: text.to_string() }) {
             self.trigger_cancel();
         }
@@ -110,6 +146,7 @@ impl LoopHooks for StreamHooks {
     fn on_tool_pre(&mut self, ctx: &ToolCtx) -> ToolGate {
         // B4：工具调用开始事件（前端工具卡片）；权限裁决是 B5（此处恒 Allow——
         // 执行前拦截由 loop 的 ToolGate 语义承载，权限桥接上后在此返回 Deny）
+        *self.progress.lock().unwrap() = format!("工具: {}", ctx.name);
         if !self.try_send(AgentStreamEvent::ToolCallStart {
             id: ctx.call_id.clone(),
             name: ctx.name.clone(),
@@ -137,6 +174,8 @@ impl LoopHooks for StreamHooks {
 
 /// 组装 bm-loop agent（不依赖会话锁；调用方负责落 map）。
 /// B4：工具从 CompatEngine 快照汇合进 ToolRegistry，执行侧 QuickJsToolExecutor。
+/// 切片②：`thinking` 档位 → reasoning_effort 注入；`progress` 供心跳 task 消费。
+#[allow(clippy::too_many_arguments)]
 fn build_loop_agent(
     system_prompt: &str,
     dual: Option<&Arc<bm_storage_turso::dual_write::DualWriter>>,
@@ -144,6 +183,8 @@ fn build_loop_agent(
     session_id: &str,
     provider: &bm_core::config::ProviderConfig,
     model: &str,
+    thinking: Option<&str>,
+    progress: Arc<std::sync::Mutex<String>>,
 ) -> Result<BmLoopAgent, (StatusCode, String)> {
     let Some(dual) = dual else {
         return Err((
@@ -151,7 +192,7 @@ fn build_loop_agent(
             "事件日志不可用，bm 引擎无法启动".to_string(),
         ));
     };
-    let llm = OpenAiClient::new(resolve_llm_config(provider, model)?);
+    let llm = OpenAiClient::new(resolve_llm_config(provider, model, thinking)?);
     let mut tools = bm_loop::ToolRegistry::new();
     if let Some(compat) = compat {
         for tool in &compat.tools {
@@ -162,7 +203,7 @@ fn build_loop_agent(
         }
     }
     Ok(ReactLoopAgent::new(
-        StreamHooks::default(),
+        StreamHooks::new(progress),
         tools,
         bm_kernel::EventLog::new(dual.event_log().store()),
         SessionId::new(session_id),
@@ -180,11 +221,12 @@ fn build_loop_agent(
 }
 
 /// provider 配置 → LlmConfig（bm-core 不依赖 bm-loop，桥接在 bm-server 做）。
-/// provider 配置 → LlmConfig（bm-core 不依赖 bm-loop，桥接在 bm-server 做）。
 /// base_url：用户填写优先，否则官方端点；custom 必须填写（配置写入时已校验）。
+/// thinking 档位 → reasoning_effort（切片②；None = 端点默认推理参数）。
 fn resolve_llm_config(
     provider: &bm_core::config::ProviderConfig,
     model: &str,
+    thinking: Option<&str>,
 ) -> Result<LlmConfig, (StatusCode, String)> {
     let base_url = provider
         .base_url
@@ -203,16 +245,20 @@ fn resolve_llm_config(
         api_key: provider.api_key.clone().unwrap_or_default(),
         model: model.to_string(),
         provider: Some(provider.id.clone()),
+        reasoning_effort: thinking.and_then(reasoning_effort_for).map(str::to_string),
     })
 }
 
-/// 取会话的 bm-loop agent；不存在或 provider/model 不一致 → 重建
+/// 取会话的 bm-loop agent；不存在或 provider/model/thinking 不一致 → 重建
 /// （状态都在日志，重建零损失——"EventLog 唯一状态源"相对 pi 句柄的优势）。
+#[allow(clippy::too_many_arguments)]
 async fn get_or_create_loop_agent(
     state: &AppState,
     session_id: &str,
     provider: &bm_core::config::ProviderConfig,
     model: &str,
+    thinking: &str,
+    progress: Arc<std::sync::Mutex<String>>,
 ) -> Result<Arc<Mutex<BmLoopAgent>>, (StatusCode, String)> {
     // 既有条目：参数一致直接复用（map 锁立即释放）
     if let Some(agent) = {
@@ -221,6 +267,7 @@ async fn get_or_create_loop_agent(
         if let Some(e) = existing
             && e.provider_id == provider.id
             && e.model == model
+            && e.thinking == thinking
         {
             e.last_used = std::time::Instant::now();
             Some(e.agent.clone())
@@ -252,6 +299,8 @@ async fn get_or_create_loop_agent(
         session_id,
         provider,
         model,
+        Some(thinking),
+        progress,
     )?;
     let arc = Arc::new(Mutex::new(agent));
     let mut map = state.loop_agents.lock().await;
@@ -259,14 +308,18 @@ async fn get_or_create_loop_agent(
         agent: arc.clone(),
         provider_id: provider.id.clone(),
         model: model.to_string(),
+        thinking: thinking.to_string(),
+        startup_sent: false,
         last_used: std::time::Instant::now(),
     });
     // 既有条目参数不一致（前一个请求建了别的 provider/model）→ 以本次为准替换
-    if entry.provider_id != provider.id || entry.model != model {
+    if entry.provider_id != provider.id || entry.model != model || entry.thinking != thinking {
         *entry = LoopSessionEntry {
             agent: arc.clone(),
             provider_id: provider.id.clone(),
             model: model.to_string(),
+            thinking: thinking.to_string(),
+            startup_sent: false,
             last_used: std::time::Instant::now(),
         };
     }
@@ -323,14 +376,9 @@ pub async fn chat_bm(
         }
     };
 
-    // thinking 档位：切片 ① 未接映射（OpenAiClient 不注入推理参数），后续切片补齐
-    if let Some(level) = thinking_override.as_deref() {
-        tracing::info!(
-            event = "bm.loop_thinking_ignored",
-            level,
-            "bm 引擎切片 ① 未接 thinking 档位映射，按端点默认推理参数"
-        );
-    }
+    // thinking 档位：切片② 已接映射（reasoning_effort 注入请求体；
+    // 默认 off = 端点默认推理参数）
+    let thinking = thinking_override.unwrap_or_else(|| "off".to_string());
 
     // 请求改参数 → header reason = change（与 pi 路径一致）
     let reason = if provider_override.is_some() || model_override.is_some() {
@@ -368,6 +416,10 @@ pub async fn chat_bm(
         tracing::warn!(event = "bm.task_create_failed", error = %err, session = %session.id);
     }
 
+    // 心跳进度（最近活动摘要：工具名 / 回复尾部，StreamHooks 更新）
+    let progress: Arc<std::sync::Mutex<String>> =
+        Arc::new(std::sync::Mutex::new(String::new()));
+
     let state_run = state.clone();
     let session_id = session.id.clone();
     tokio::spawn(async move {
@@ -378,6 +430,35 @@ pub async fn chat_bm(
             let _ = cancel_timeout.send(true);
         });
 
+        // 心跳：每 5s 把内存进度刷库并推送 taskProgress SSE（切片②，
+        // 与 pi 路径 chat.rs 同构——前端任务状态条零改动）
+        let beat_stop = Arc::new(tokio::sync::Notify::new());
+        {
+            let beat_stop = beat_stop.clone();
+            let db_beat = state_run.db.clone();
+            let task_beat = task_id.clone();
+            let progress_beat = progress.clone();
+            let tx_beat = tx.clone();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+                interval.tick().await; // 跳过首次立即触发
+                loop {
+                    tokio::select! {
+                        _ = beat_stop.notified() => break,
+                        _ = interval.tick() => {}
+                    }
+                    let p = progress_beat.lock().unwrap().clone();
+                    if p.is_empty() {
+                        continue;
+                    }
+                    let _ = db_beat.update_task_progress(&task_beat, &p).await;
+                    if !tx_beat.is_closed() {
+                        let _ = tx_beat.send(AgentStreamEvent::TaskProgress { progress: p });
+                    }
+                }
+            });
+        }
+
         run_bm_prompt(BmPromptParams {
             state: state_run.clone(), // 清理段还要用 state_run
             session_id: session_id.clone(), // 清理段还要用 session_id
@@ -385,12 +466,15 @@ pub async fn chat_bm(
             message,
             provider,
             model,
+            thinking,
             reason,
+            progress,
             cancel_tx,
             cancel_rx,
             tx: tx.clone(), // 清理段还要用 tx 做 same_channel 身份比对
         })
         .await;
+        beat_stop.notify_waiters(); // 停心跳
 
         // 清理：身份匹配纪律与 pi 路径一致（新 prompt 已注册新通道/条目时不动）
         let mut streams = state_run.session_streams.lock().await;
@@ -421,7 +505,9 @@ struct BmPromptParams {
     message: String,
     provider: bm_core::config::ProviderConfig,
     model: String,
+    thinking: String,
     reason: HeaderReason,
+    progress: Arc<std::sync::Mutex<String>>,
     cancel_tx: watch::Sender<bool>,
     cancel_rx: watch::Receiver<bool>,
     tx: mpsc::UnboundedSender<AgentStreamEvent>,
@@ -436,13 +522,15 @@ async fn run_bm_prompt(p: BmPromptParams) {
         message,
         provider,
         model,
+        thinking,
         reason,
+        progress,
         cancel_tx,
         mut cancel_rx,
         tx,
     } = p;
 
-    let agent = match get_or_create_loop_agent(&state, &session_id, &provider, &model).await {
+    let agent = match get_or_create_loop_agent(&state, &session_id, &provider, &model, &thinking, progress).await {
         Ok(a) => a,
         Err((_status, msg)) => {
             let _ = tx.send(AgentStreamEvent::Error { message: msg.clone() });
@@ -450,6 +538,37 @@ async fn run_bm_prompt(p: BmPromptParams) {
             return;
         }
     };
+
+    // startup 插件事件懒发（每会话一次；ctx-compactor 借此加载项目配置）。
+    // 挂点在 agent 就绪后、首条消息运行前；与 prompt 串行、最多 EVENT_TIMEOUT。
+    if let Some(compat) = state.compat.clone() {
+        let should_send = {
+            let mut map = state.loop_agents.lock().await;
+            match map.get_mut(&session_id) {
+                Some(entry) if !entry.startup_sent => {
+                    entry.startup_sent = true;
+                    true
+                }
+                _ => false,
+            }
+        };
+        if should_send {
+            let cwd = {
+                let config = state.config.read().await;
+                config.working_dir.display().to_string()
+            };
+            if let Err(err) = compat
+                .dispatch_event(
+                    "startup",
+                    serde_json::json!({ "type": "startup", "version": "1.0.0" }),
+                    serde_json::json!({ "cwd": cwd, "hasUI": false }),
+                )
+                .await
+            {
+                tracing::debug!(event = "bm.plugin_event_failed", name = "startup", error = %err);
+            }
+        }
+    }
 
     // 会话串行：agent 锁（同会话并发 prompt 排队，与 pi 路径 handle 锁同纪律）
     let mut agent = agent.lock().await;
@@ -531,15 +650,17 @@ mod tests {
             models: vec!["deepseek-chat".into()],
             default_model: Some("deepseek-chat".into()),
         };
-        let cfg = resolve_llm_config(&p, "deepseek-chat").unwrap();
+        let cfg = resolve_llm_config(&p, "deepseek-chat", None).unwrap();
         assert_eq!(cfg.base_url, "https://my.deepseek.example/v1", "用户端点优先且去尾斜杠");
         assert_eq!(cfg.api_key, "sk-test");
         assert_eq!(cfg.provider.as_deref(), Some("custom-1"));
+        assert!(cfg.reasoning_effort.is_none(), "off/None 不注入推理参数");
 
         // 官方端点回退
         let p2 = ProviderConfig { base_url: None, ..p };
-        let cfg2 = resolve_llm_config(&p2, "deepseek-chat").unwrap();
+        let cfg2 = resolve_llm_config(&p2, "deepseek-chat", Some("high")).unwrap();
         assert!(cfg2.base_url.contains("api.deepseek.com"));
+        assert_eq!(cfg2.reasoning_effort.as_deref(), Some("high"), "high 档映射 high");
 
         // custom 无端点 → 拒绝
         let p3 = ProviderConfig {
@@ -548,13 +669,26 @@ mod tests {
             base_url: None,
             ..p2
         };
-        let err = resolve_llm_config(&p3, "m").unwrap_err();
+        let err = resolve_llm_config(&p3, "m", None).unwrap_err();
         assert_eq!(err.0, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn thinking_maps_to_reasoning_effort() {
+        assert_eq!(reasoning_effort_for("off"), None);
+        assert_eq!(reasoning_effort_for("none"), None);
+        assert_eq!(reasoning_effort_for("minimal"), Some("low"));
+        assert_eq!(reasoning_effort_for("low"), Some("low"));
+        assert_eq!(reasoning_effort_for("medium"), Some("medium"));
+        assert_eq!(reasoning_effort_for("high"), Some("high"));
+        assert_eq!(reasoning_effort_for("xhigh"), Some("high"));
+        assert_eq!(reasoning_effort_for("max"), Some("high"));
+        assert_eq!(reasoning_effort_for(""), None);
     }
 
     #[tokio::test]
     async fn stream_hooks_forwards_and_detects_disconnect() {
-        let hooks = StreamHooks::default();
+        let hooks = StreamHooks::new(Arc::new(std::sync::Mutex::new(String::new())));
         let (tx, mut rx) = mpsc::unbounded_channel::<AgentStreamEvent>();
         let (cancel_tx, cancel_rx) = watch::channel(false);
         hooks.attach(tx, cancel_tx);

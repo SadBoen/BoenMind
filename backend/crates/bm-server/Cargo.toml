@@ -54,7 +54,8 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 # verify 交叉验证的正则统计（轻量，无 regex 的全部特性）
 fancy-regex = "0.14"
+# 内置工具集（B6）：write/edit 原子落盘（tempfile rename，对齐 pi 语义）
+tempfile = "3"
 rust-embed = { version = "8", optional = true }
 
 [dev-dependencies]
-tempfile = "3"
