@@ -25,3 +25,7 @@ gui-test-screenshots/
 backend/crates/bm-compat/target/
 backend/crates/bm-compat/Cargo.lock
 .code-graph/
+
+# 双开对比/回归运行产物（artifacts/ 与 compression-regression/out/）
+artifacts/
+scripts/compression-regression/out/
