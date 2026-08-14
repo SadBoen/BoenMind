@@ -18,6 +18,12 @@ on:
     tags: ["v*"]       # 打 tag 全量构建发布
   workflow_dispatch: {}
 
+# 同一 ref 连续 push 时取消旧轮（质量门只看最新提交；避免多轮排队全跑浪费）。
+# tag ref 与 main 的 group 不同，不影响发布构建。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
   packages: write
@@ -28,14 +34,42 @@ env:
 
 jobs:
   # ============================================================
+  # 改动检测：按路径决定质量门哪些 job 需要跑（纯 docs 提交跳过
+  # Rust 编译，省 20 分钟空转）。workflow_dispatch / tag 时无 base
+  # diff，paths-filter 保守按"全改动"处理 → 质量门全跑。
+  # ============================================================
+  changes:
+    name: 改动检测
+    runs-on: ubuntu-24.04
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+              - '.github/**'
+            frontend:
+              - 'frontend/**'
+              - '.github/**'
+
+  # ============================================================
   # 质量门：后端测试 / 后端 clippy（-D warnings）/ 前端 strict 类型检查 + lint。
   # 拆 4 个并行 job（无 needs 依赖）：push main 全跑，任一红即拦；
   # 打 tag / 手动触发时与构建链并行，不阻塞发布构建。
   # 构建前拦截回归（曾出现 0 测试、CI 只验证"能编译"的问题）。
+  # 纯 docs 提交时 Rust job 经 changes 检测跳过。
   # ============================================================
   # ---------- quality-test：后端测试 ----------
   quality-test:
     name: 质量门 - 后端测试
+    needs: [changes]
+    if: needs.changes.outputs.backend == 'true' || github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     # 磁盘治理：pi 引擎依赖树极重（swc/tree-sitter 等 500+），曾报
     # No space left on device。质量门不需要调试符号：dev profile 关 debuginfo
@@ -52,6 +86,15 @@ jobs:
       - uses: Swatinem/rust-cache@v2.9.1
         with:
           workspaces: backend
+
+      # sccache：对象级编译缓存（按编译单元），覆盖 rust-cache 整目录快照
+      # 覆盖不到的依赖（实测 rust-cache 命中仅 ~879MB，依赖树 debug 产物
+      # 10GB+，每轮仍重编大部分依赖 → test 20min）。GHA backend 经
+      # actions/cache 存取，跨 job 共享。
+      - name: sccache（对象级编译缓存）
+        uses: mozilla/sccache-action@v0.0.11
+        env:
+          SCCACHE_GHA_CACHE_SIZE: "2G"
 
       # bm-compactor / bm-memory 为 2026-08 补进：两 crate 有 lib 测试 +
       # tests/architecture.rs（架构红线），此前 CI 从未覆盖；`cargo test -p`
@@ -70,6 +113,8 @@ jobs:
   # ---------- quality-clippy：存量 crate（编译最重的一档，单独成 job） ----------
   quality-clippy:
     name: 质量门 - 后端 clippy（存量）
+    needs: [changes]
+    if: needs.changes.outputs.backend == 'true' || github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     # 同 quality-test 的磁盘治理：clippy 也整树编译一遍，同样关 debuginfo + 增量缓存。
     env:
@@ -84,6 +129,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2.9.1
         with:
           workspaces: backend
+
+      - name: sccache（对象级编译缓存）
+        uses: mozilla/sccache-action@v0.0.11
+        env:
+          SCCACHE_GHA_CACHE_SIZE: "2G"
 
       - name: clippy（-D warnings，存量 crate）
         working-directory: backend
@@ -92,6 +142,8 @@ jobs:
   # ---------- quality-clippy-kernel：内核四件套 + bm-compat ----------
   quality-clippy-kernel:
     name: 质量门 - 后端 clippy（内核 + bm-compat）
+    needs: [changes]
+    if: needs.changes.outputs.backend == 'true' || github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     # 同 quality-test 的磁盘治理：clippy 也整树编译一遍，同样关 debuginfo + 增量缓存。
     env:
@@ -106,6 +158,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2.9.1
         with:
           workspaces: backend
+
+      - name: sccache（对象级编译缓存）
+        uses: mozilla/sccache-action@v0.0.11
+        env:
+          SCCACHE_GHA_CACHE_SIZE: "2G"
 
       # 内核四件套 --all-targets 全开；bm-compactor / bm-memory 2026-08 补进，
       # 此前 CI 从未 lint（--all-targets 连带 tests/architecture.rs 架构红线）。
@@ -122,6 +179,8 @@ jobs:
   # ---------- quality-frontend：前端 strict 类型检查 + lint ----------
   quality-frontend:
     name: 质量门 - 前端 (strict 类型检查 + lint)
+    needs: [changes]
+    if: needs.changes.outputs.frontend == 'true' || github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
