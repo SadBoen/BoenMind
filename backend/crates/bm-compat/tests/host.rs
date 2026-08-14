@@ -5,13 +5,16 @@
 //! `cargo test --lib` would drag them in. Integration tests compile only the
 //! lib plus this file. Run with: `cargo test --test host`.
 
-use std::rc::Rc;
+mod common;
+
 use std::sync::{Arc, Mutex};
 
 use bm_compat::extensions::{ExtensionOverride, ExtensionPolicy, ExtensionPolicyMode};
-use bm_compat::extensions_js::{HostcallKind, HostcallRequest, PiJsRuntime};
-use bm_compat::host::{check_capability, HostServices, HostThread, PolicyDecision};
-use bm_compat::scheduler::{HostcallOutcome, WallClock};
+use bm_compat::extensions_js::{HostcallKind, HostcallRequest};
+use bm_compat::host::{check_capability, HostThread, PolicyDecision};
+use bm_compat::scheduler::HostcallOutcome;
+
+use common::{mock_services, MockServices};
 
 fn policy(mode: ExtensionPolicyMode) -> ExtensionPolicy {
     ExtensionPolicy {
@@ -97,109 +100,11 @@ fn request(kind: HostcallKind) -> HostcallRequest {
     }
 }
 
-/// Mock services: records each routed call, returns a canned outcome.
-struct MockServices {
-    calls: Mutex<Vec<String>>,
-    approve: bool,
-}
-
-#[async_trait::async_trait]
-impl HostServices for MockServices {
-    async fn execute_tool(
-        &self,
-        call_id: &str,
-        name: &str,
-        _input: serde_json::Value,
-    ) -> HostcallOutcome {
-        self.calls
-            .lock()
-            .unwrap()
-            .push(format!("tool:{call_id}:{name}"));
-        HostcallOutcome::Success(serde_json::json!({ "ok": true }))
-    }
-
-    async fn exec(
-        &self,
-        call_id: &str,
-        cmd: &str,
-        _payload: serde_json::Value,
-    ) -> HostcallOutcome {
-        self.calls
-            .lock()
-            .unwrap()
-            .push(format!("exec:{call_id}:{cmd}"));
-        HostcallOutcome::Success(serde_json::json!({ "ok": true }))
-    }
-
-    async fn http(&self, call_id: &str, _payload: serde_json::Value) -> HostcallOutcome {
-        self.calls
-            .lock()
-            .unwrap()
-            .push(format!("http:{call_id}"));
-        HostcallOutcome::Success(serde_json::json!({ "ok": true }))
-    }
-
-    async fn session(
-        &self,
-        call_id: &str,
-        op: &str,
-        _payload: serde_json::Value,
-    ) -> HostcallOutcome {
-        self.calls
-            .lock()
-            .unwrap()
-            .push(format!("session:{call_id}:{op}"));
-        HostcallOutcome::Success(serde_json::json!({ "ok": true }))
-    }
-
-    async fn ui(
-        &self,
-        call_id: &str,
-        op: &str,
-        _payload: serde_json::Value,
-        _extension_id: Option<&str>,
-    ) -> HostcallOutcome {
-        self.calls
-            .lock()
-            .unwrap()
-            .push(format!("ui:{call_id}:{op}"));
-        HostcallOutcome::Success(serde_json::json!({ "ok": true }))
-    }
-
-    async fn events(
-        &self,
-        call_id: &str,
-        op: &str,
-        _payload: serde_json::Value,
-        _extension_id: Option<&str>,
-    ) -> HostcallOutcome {
-        self.calls
-            .lock()
-            .unwrap()
-            .push(format!("events:{call_id}:{op}"));
-        HostcallOutcome::Success(serde_json::json!({ "ok": true }))
-    }
-
-    async fn request_approval(&self, _capability: &str, _extension_id: Option<&str>) -> bool {
-        self.approve
-    }
-}
-
-async fn test_thread(
-    services: Arc<MockServices>,
-    policy: ExtensionPolicy,
-) -> HostThread<WallClock> {
-    let runtime = Rc::new(PiJsRuntime::new().await.expect("runtime boot"));
-    HostThread::new(runtime, services, policy)
-}
-
 #[tokio::test(flavor = "current_thread")]
 async fn dispatch_one_routes_all_kinds() {
-    let services = Arc::new(MockServices {
-        calls: Mutex::new(Vec::new()),
-        approve: false,
-    });
-    let thread = test_thread(services.clone(), policy(ExtensionPolicyMode::Permissive)).await;
+    let services = mock_services();
+    let thread =
+        common::test_thread(services.clone(), policy(ExtensionPolicyMode::Permissive)).await;
 
     let kinds = vec![
         HostcallKind::Tool {
@@ -239,12 +144,9 @@ async fn dispatch_one_routes_all_kinds() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn dispatch_one_policy_denies() {
-    let services = Arc::new(MockServices {
-        calls: Mutex::new(Vec::new()),
-        approve: false,
-    });
+    let services = mock_services();
     // Prompt policy: exec is in deny_caps → hard deny, no routing.
-    let thread = test_thread(services.clone(), policy(ExtensionPolicyMode::Prompt)).await;
+    let thread = common::test_thread(services.clone(), policy(ExtensionPolicyMode::Prompt)).await;
     let outcome = thread
         .dispatch_one(&request(HostcallKind::Exec {
             cmd: "rm -rf /".to_string(),
@@ -268,7 +170,7 @@ async fn dispatch_one_prompt_approval_grants() {
     });
     // Prompt policy: "ui" is not pre-authorized → approval channel
     // grants it (B5 PermissionBridge path).
-    let thread = test_thread(services.clone(), policy(ExtensionPolicyMode::Prompt)).await;
+    let thread = common::test_thread(services.clone(), policy(ExtensionPolicyMode::Prompt)).await;
     let outcome = thread
         .dispatch_one(&request(HostcallKind::Ui {
             op: "confirm".to_string(),
@@ -280,11 +182,8 @@ async fn dispatch_one_prompt_approval_grants() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn pump_once_delivers_log_hostcall_end_to_end() {
-    let services = Arc::new(MockServices {
-        calls: Mutex::new(Vec::new()),
-        approve: false,
-    });
-    let thread = test_thread(services, policy(ExtensionPolicyMode::Permissive)).await;
+    let thread =
+        common::test_thread(mock_services(), policy(ExtensionPolicyMode::Permissive)).await;
     // Fire-and-forget JS hostcall: enqueues HostcallKind::Log.
     thread
         .runtime()
@@ -299,11 +198,9 @@ async fn pump_once_delivers_log_hostcall_end_to_end() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn pump_once_routes_tool_hostcall_to_services() {
-    let services = Arc::new(MockServices {
-        calls: Mutex::new(Vec::new()),
-        approve: false,
-    });
-    let thread = test_thread(services.clone(), policy(ExtensionPolicyMode::Permissive)).await;
+    let services = mock_services();
+    let thread =
+        common::test_thread(services.clone(), policy(ExtensionPolicyMode::Permissive)).await;
     thread
         .runtime()
         .eval("pi.tool('web_search', { query: 'x' }); 7")

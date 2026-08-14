@@ -38,7 +38,12 @@ BoenMind 自研 loop（A6）落位后，pi 引擎整体退场；本 crate 是过
       CI 加 test（--test host）与 clippy（--lib --test host -D warnings）两行；
       B1 存量 lint（死代码/unused import/collapsible_if，均在拷贝/shim 文件）
       经 manifest [lints] 表放行（红线：拷贝文件逐字节一致，B3/B4 接上后收紧）
-- [ ] B3 加载路径（eval_file + get_registered_tools + ExtensionBody 协议注册）
+- [x] **B3 加载路径**（`src/load.rs`）：`JsExtensionLoadSpec::from_entry_path`
+      （verbatim 提取自 legacy extensions.rs:10195-10276，from_manifest 留 B4）+
+      `load_extension`（root 注册 → `__pi_load_extension` 引导 → `__pi_task_start`
+      包装 → `await_js_task` 泵循环复用 B2 HostThread::pump_once → 任务 resolved
+      `true`；工具注册表经 `get_registered_tools` 读回）；集成测试 4 用例全绿
+      （spec 派生/缺失拒绝/**真 TS 插件加载注册工具**/坏入口报错不挂起）
 - [ ] B4 与内核接线（QuickJS 运行时 = 内核插件；工具注册进 bm-loop ToolRegistry）
 
 ## 上游同步纪律

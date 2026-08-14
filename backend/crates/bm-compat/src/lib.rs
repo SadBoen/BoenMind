@@ -26,6 +26,8 @@ pub mod error;
 pub mod extensions;
 // B2 — host thread (drain → dispatch → complete → tick pump).
 pub mod host;
+// B3 — loading path (entry eval + ExtensionBody task loop).
+pub mod load;
 pub mod extensions_js;
 pub mod hostcall_io_uring_lane;
 pub mod hostcall_queue;
