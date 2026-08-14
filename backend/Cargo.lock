@@ -823,6 +823,7 @@ dependencies = [
  "base64 0.22.1",
  "bm-core",
  "bm-kernel",
+ "bm-loop",
  "bm-protocol",
  "bm-storage-turso",
  "fancy-regex 0.14.0",
