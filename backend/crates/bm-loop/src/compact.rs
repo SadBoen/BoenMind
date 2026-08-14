@@ -46,6 +46,7 @@ pub fn estimate_tokens(text: &str) -> u64 {
 ///
 /// 返回 Ok(true) = 已压缩；Ok(false) = 无需压缩（中部不足）或摘要失败
 /// （fail-safe，已 warn）。Err 仅来自日志读写本身（调用方按日志失败处理）。
+#[allow(clippy::too_many_arguments)] // 参数全是事务协议语义（log/llm/定位/模型/窗口/策略），分组反而啰嗦
 pub async fn compact<L: Llm, C: Compactor + ?Sized>(
     log: &EventLog,
     llm: &L,
