@@ -1,10 +1,12 @@
 # HANDOFF —— 阶段 1 开工交接（两线并行）
 
-> **当前状态（2026-08-14 收口，CI 全绿）**：主线 A（A1-A7）+ 主线 B（B1-B6）**全部落地**。
+> **当前状态（2026-08-14 收口，CI 全绿；双开对比完成）**：主线 A（A1-A7）+ 主线 B（B1-B6）**全部落地**；**30 轮 pi/bm 双开对比完成**——bm 引擎 30 轮一次跑完无中断、4 次压缩事务、记忆题 5/5 全对（pi 基线 4/5：r29 因 index.md 未建非记忆丢失；r17 超时重启续跑一次）。**切换时机待用户拍板**。
 > - A 线：执行级事件日志（A1-A5）+ 自研 loop（A6 主体 + 接线：`BM_LOOP_ENGINE=bm` 开关/流式/工具/取消）+ A7 迁移骨架
 > - B 线：B1 拷入 + B2 host 线程 + B3 加载路径 + B4 工具执行方向 + B5 权限桥（http 真实现）+ **B6 收口（内置工具集端口/决策记忆/插件事件推送/切片②顺手件）**
-> - 真实验收：bm 引擎 4 项（切片①）+ hello 工具全链路（B4）+ web_search×2/web_fetch×1（B5）+ **B6 三插件全链路（10 轮真实会话：startup 懒发 / web_search×50+/web_fetch 真实搜索 / 插件 pi.tool('write') 落盘 / 内置 read 模型可调 / ctx-compactor 修剪落库 / 心跳 / event_log 435 事件真序闭环）**
-> - **剩：30 轮 pi/bm 双开对比后拍切换**（同压缩 A/B 方法论）。开工前先 git pull。
+> - **v0.17 压缩策略插件化拆解**：bm-loop 只留 Compactor 接口 + 事务协议，bm-compactor 新插件 crate（参数插件自治，可换可关）
+> - 双开对比（产物 artifacts/2026-08-14-dual-compare/）：pi 888.6K 发送量 / 峰值 94.1K / 49min vs bm 2263.0K（∑input 口径，缓存命中 2138K）/ 峰值 205.7K / 39.5min——**bm 发送量高 2.5× 主因水线 0.8 vs pi 0.5（插件参数，可调）+ 压缩后尾巴更长**；质量不降（记忆 5/5 vs 4/5）
+> - 真实验收：bm 引擎 4 项（切片①）+ hello 工具全链路（B4）+ web_search×2/web_fetch×1（B5）+ **B6 三插件全链路（10 轮真实会话）+ 双开对比 60 轮**
+> - **剩：切换拍板**（BM_LOOP_ENGINE 默认值反转 + 前端开关；建议同步把 bm-compactor 水线调 0.5 复测）。开工前先 git pull。
 >
 > **轮次历史**（细节见 §〇 commit 索引；查实/坑全量见 §〇·五）：
 >
@@ -19,6 +21,14 @@
 > | B6 收口轮 | 内置工具集端口 + 决策记忆 + 插件事件推送 + 切片② | f81594b, 8b6b725 | 桥调用约定实证（首个 secret 实参不绑定 JS 形参）；tool_result 事件 content 须对齐 legacy ContentBlock 数组；内置工具须进模型可见面（pi BUILTIN_TOOL_NAMES 全开同款）；SELF_TOOLS 跳过 web_search 是插件设计非 bug；目录型插件须 extension.json；debug exe 2GB 坑（CARGO_PROFILE_DEV_DEBUG=0）
 
 ## 〇、本次会话 commit 索引（main 已推送，工作区干净）
+
+### 双开对比轮（pi/bm 30 轮 + v0.17 压缩拆解）
+
+| commit | 内容 |
+|---|---|
+| `6cbe56d` | **v0.17 压缩策略插件化拆解**：bm-loop 只留 Compactor 策略接口 + 三事件事务协议 + 硬触发兜底（无插件 = 优雅失败不崩不丢历史）；bm-compactor 新 crate（DefaultCompactor：水线 0.8/保留 10%+4000 下限/中部<512 不压/摘要 prompt，参数插件自治）；bm-server 组装层挂默认插件；插件架构方向守卫（禁依赖上层）+ 优雅失败回归测试 |
+| `31d4bc9` | docs(arch): v0.17 自我进化定调——§6.9 三定调（效果评估/参数进化插件自治 + 进化=版本化替换待拍）+ 双向奔赴与框架定位（删核心自足性：骨架/手脚分工，跑不跑不是重点）+ compact.rs 越界修正拆法 |
+| `72c6645` | **双开对比暴露三修复**：stream_options.include_usage（MiniMax 流式默认 usage:null，token 统计全零）+ cached_tokens 解析（prompt_tokens_details，对齐 pi SDK 口径）+ 压缩水线真实 usage 校准（chars/4 粗估对中文低估约 2×，实测 217K 零触发） |
 
 ### B6 收口轮（内置工具集端口 + 决策记忆 + 插件事件 + 切片②）
 
@@ -98,6 +108,11 @@
 13. **内置工具须进模型可见面**：仅实现 execute_tool 端口不够——模型看不到 read/write 的 schema 就不会调（pi 路径 BUILTIN_TOOL_NAMES 全开同款）。BuiltinTools::definitions → ToolRegistry，executor 按名分派。
 14. **SELF_TOOLS 跳过 web_search 是设计**：ctx-compactor 故意不修剪 web_search/web_fetch/subagent（函数返回值需模型完整读取，见插件注释）——排查"事件到了但没落库"先看插件自身的过滤逻辑。
 15. **B6 验收操作坑**：目录型插件须 extension.json 清单（enabled_extension_paths 靠它识别）；Windows curl 中文 JSON 会报 invalid unicode（用英文消息）；改插件源须同步 `~/.boenmind/extensions/` 副本；本地跑 bm-server 测试用 `CARGO_PROFILE_DEV_DEBUG=0`（debug exe 2GB 坑）。
+16. **MiniMax 流式默认 usage:null**：OpenAI 兼容 API 流式必须显式 `stream_options.include_usage=true` 才回 usage（pi SDK 已带，自研 client 初版没带 → token 统计全零、压缩校准无源）。修法在 bm-loop engine.rs build_payload。
+17. **MiniMax 缓存字段**：命中在 `usage.prompt_tokens_details.cached_tokens`（对齐 pi SDK openai.rs 解析）；`prompt_tokens` 是全量（含命中）。**口径差异**：pi 的 input=未命中部分（cache_read=命中，发送量=input+cache_read）；bm 的 input=全量（cache_read=命中子集，发送量=∑input）——对比分析时不可直接相加。
+18. **chars/4 粗估对中文低估约 2×**：压缩水线判定必须用 max(粗估, 上一请求真实 usage input)——否则中文手册场景水线形同虚设（实测上下文涨到 217K 零触发）。修法：engine.rs `last_real_input` 校准。
+19. **pi 会话句柄断连后坏死**：SSE 断连后 pi 引擎未清理句柄，后续 prompt 1 秒即 false（total_tokens=0）——重启服务 + run-compare `--resume` 可续（重启后 MiniMax 缓存口径变化，报告注明）。
+20. **双开对比操作**：两引擎同 prompt 集（rounds.mjs 30 轮）、独立工作区（COMPARE_WORKDIR）、RUST_LOG 须含 `bm_loop=info`（bm 引擎 usage 日志在 bm_loop::engine 不在 bm_server）；分析用 analyze.mjs（pi 组）+ 口径换算（bm 组发送量=∑input）。
 
 ## 一、一句话现状
 
@@ -200,11 +215,11 @@
 
 ## 九、下一轮续接建议开场
 
-> 继续 BoenMind 阶段 1。交接见 docs/HANDOFF_KERNEL_PHASE1.md。**B6 已收口（f81594b+8b6b725）**：内置工具集端口（execute_tool/exec/session/ui/events 真实现，read/write/edit/grep/find/ls/bash 模型可见）+ 决策记忆（extension-permissions.json，格式兼容 legacy）+ 插件事件推送（startup 每会话懒发 + tool_call/tool_result，形状对齐 legacy）+ 切片②（thinking 档位→reasoning_effort + 心跳 TaskProgress）；真实验收 10 轮全链路通过（web_search×50+/web_fetch/插件 write 落盘/内置 read/ctx-compactor 修剪落库/event_log 435 事件闭环）。开工前仍先 git pull。
+> 继续 BoenMind 阶段 1。交接见 docs/HANDOFF_KERNEL_PHASE1.md。**B6 已收口 + 30 轮双开对比完成（本会话）**：bm 引擎 30 轮一次跑完（4 压缩事务、记忆 5/5 全对、无中断；pi 基线 r17 超时续跑、记忆 4/5）；对比暴露三修复已落地（72c6645：include_usage/cached_tokens/水线真实 usage 校准）；v0.17 压缩插件化拆解已落地（bm-compactor 可换可关）。开工前仍先 git pull。
 >
-> **下一轮动作（B6 尾声）**：**30 轮 pi/bm 双开对比**（同压缩 A/B 方法论：同 prompt 集分别跑 pi 与 bm 引擎，比累计发送量/峰值上下文/耗时/答案质量）→ 结果拍切换（BM_LOOP_ENGINE 默认值反转 + 前端开关决策）。可选顺手件：session/ui/events 端口的 op 面补全（get_messages 投影进插件 ctx）、subagent 工具、CI 拆并行 job（方案在 §八·6）。
+> **下一轮动作（双开对比后）**：**拍切换**——用户拍板 BM_LOOP_ENGINE 默认值反转与前端开关；建议同步把 bm-compactor 默认水线 0.8→0.5（对齐 pi 配置）复测一轮 token 曲线（插件参数自治，改一行不碰核心）。可选顺手件：session/ui/events 端口 op 面补全（get_messages 投影进插件 ctx）、subagent 工具、CI 拆并行 job（方案在 §八·6）。
 >
-> **注意坑**（详见 §〇·五 11-15 + 既有全量）：桥调用首参 secret 不绑定形参、tool_result 事件 content 用 ContentBlock 数组、内置工具 schema 要注册进 ToolRegistry、SELF_TOOLS 跳过搜索类工具是设计、目录型插件须 extension.json、Disposer 纪律、turso 绑定形态、fork 超头拒绝、standalone 起服务 `--features embed`、bm-compat 测试走 `--test host --test load --test execute --test events`、CompatEngine 专用线程（命令通道 oneshot 回结果）、payload 全文不打日志。
+> **注意坑**（详见 §〇·五 16-20 + 既有全量）：MiniMax 流式须 stream_options.include_usage、缓存字段在 prompt_tokens_details.cached_tokens、pi/bm 两组 input 口径不同（对比换算）、chars/4 中文低估须真实 usage 校准、pi 句柄断连坏死重启+resume、双开 RUST_LOG 须含 bm_loop=info、桥调用首参 secret 不绑定形参、tool_result 事件 content 用 ContentBlock 数组、内置工具 schema 要注册进 ToolRegistry、SELF_TOOLS 跳过搜索类工具是设计、目录型插件须 extension.json、Disposer 纪律、turso 绑定形态、fork 超头拒绝、standalone 起服务 `--features embed`、bm-compat 测试走 `--test host --test load --test execute --test events`、CompatEngine 专用线程（命令通道 oneshot 回结果）、payload 全文不打日志。
 
 ## 九·三、A6 接线设计（2026-08-14 夜轮定稿 → 白天轮切片①落地）
 
@@ -239,7 +254,7 @@
 | B3 加载路径 | ✅（夜轮续接） | bm-compat/src/load.rs：JsExtensionLoadSpec（verbatim 提取）+ load_extension（root 注册→__pi_load_extension→__pi_task_start→await_js_task 复用 HostThread 泵）+ PROTOCOL_VERSION；tests/load.rs 4 用例全绿（真 TS 插件加载注册工具/坏入口不挂起）；282d629 |
 | B4 工具执行方向 | ✅（公司远程轮） | bm-compat execute.rs（__pi_execute_tool→task→泵循环，2 用例）+ bm-server CompatEngine（专用线程/命令通道/工具快照/UnwiredServices）+ QuickJsToolExecutor；**真实验收通过**（hello 插件工具全链路：SSE 工具事件 + 日志 tool/call↔result + 多步循环）；548b6a2 + cb92d59 |
 | B5 权限桥 | ✅（公司远程轮） | BridgeServices（request_approval 询问链接 PermissionBridge 同款机制 + http 端口 reqwest 真实现 + current_session 路由）；**真实验收通过**（web_search×2 + web_fetch×1 真实搜索全成功）；a365789 |
-| B6 | ✅ 主体（f81594b+8b6b725）；剩双开对比 | 内置工具集端口（execute_tool/exec/session/ui/events 真实现）+ 决策记忆 + 插件事件（startup/tool_call/tool_result）+ 切片②（thinking 映射/心跳）**全部落地，三插件全链路真实验收通过**；**剩：30 轮 pi/bm 双开对比后拍切换** |
+| B6 | ✅ 全部落地 + ✅ 双开对比完成 | 内置工具集端口（execute_tool/exec/session/ui/events 真实现）+ 决策记忆 + 插件事件（startup/tool_call/tool_result）+ 切片②（thinking 映射/心跳）+ **30 轮双开对比**（bm：30 轮无中断/4 压缩事务/记忆 5/5；发送量 2263K vs pi 888.6K，主因水线 0.8 vs 0.5 可调）——**切换时机待用户拍板** |
 | proptest 承诺 | ✅ | 60 用例属性测试（InMemory）+ 回归种子入仓 |
 | CI 门禁 | ✅ | 全量 25 套件全绿 + 双档 clippy 清零 + **GitHub CI 质量门绿灯**（另修存量 rust-cache/磁盘两故障，见 commit 索引） |
 | 真实验收 | ✅ | 浏览器实测两轮（无工具 + web_search/web_fetch 双工具链），event_log 197 事件真序闭环（§八·1） |
