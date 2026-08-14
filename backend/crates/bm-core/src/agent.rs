@@ -148,41 +148,6 @@ pub async fn create_session_handle(
     create_agent_session(options).await
 }
 
-/// 创建子代理（subagent）子进程会话句柄。
-///
-/// 由 bm-server 的 `--mode json` 子代理入口调用（上游 subagent 工具 spawn 本
-/// 二进制时使用），与 [`create_session_handle`] 的差异：
-/// - 系统提示用 pi 默认 + `append_system_prompt`（角色定义正文经 argv 传入），
-///   不注入 BoenMind 主 agent 的 SYSTEM_PROMPT
-/// - 工具集来自角色定义白名单（`--tools` 参数），不是内置全开
-/// - 不加载插件扩展（子代理保持轻量与隔离）
-pub async fn create_child_session_handle(
-    provider: &ProviderConfig,
-    model: &str,
-    working_dir: &Path,
-    tools: Vec<String>,
-    thinking: Option<&str>,
-    append_system_prompt: String,
-) -> Result<AgentSessionHandle, pi::sdk::Error> {
-    let thinking_level = thinking
-        .and_then(|t| t.parse::<pi::model::ThinkingLevel>().ok());
-    let options = SessionOptions {
-        provider: Some(provider.kind.pi_name(&provider.id)),
-        model: Some(model.to_string()),
-        api_key: provider.api_key.clone(),
-        working_directory: Some(working_dir.to_path_buf()),
-        enabled_tools: Some(tools),
-        no_session: true,
-        system_prompt: None,
-        append_system_prompt: Some(append_system_prompt),
-        include_cwd_in_prompt: false,
-        thinking: thinking_level,
-        extension_paths: Vec::new(),
-        ..Default::default()
-    };
-    create_agent_session(options).await
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

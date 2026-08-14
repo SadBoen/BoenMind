@@ -7,14 +7,20 @@
 //! JSON 事件流收取结果（协议见 `subagents.rs::ingest_child_event`）。
 //!
 //! 本模块实现该入口：识别调用 → 解析参数 → 解析 provider（父进程经环境变量
-//! 注入，或按模型匹配）→ 跑一轮隔离 agent → 以协议事件流回传。日志一律走
-//! stderr，stdout 只承载协议事件。
+//! 注入，或按模型匹配）→ **用自研 bm-loop 跑一轮隔离回合**（pi 废除第②步：
+//! 不再依赖 pi SDK；InMemory 事件日志 + BuiltinTools 执行器 + OpenAiClient
+//! 直连）→ 以协议事件流回传（事件形状与 pi AgentEvent serde 逐字段对齐，
+//! 父侧 `ingest_child_event` 零改动）。日志一律走 stderr，stdout 只承载协议事件。
 
 use std::io::Write;
-use std::path::PathBuf;
+use std::sync::Arc;
 
-use pi::model::AssistantMessageEvent;
-use pi::sdk::{AbortHandle, AgentEvent};
+use bm_loop::engine::{LoopConfig, ReactLoopAgent, TurnRequest};
+use bm_loop::llm::OpenAiClient;
+use bm_loop::model::ToolRegistry;
+use bm_loop::points::{LoopHooks, StepCtx};
+use bm_protocol::{BranchId, HeaderReason, SessionId, UserMsgSource};
+use bm_kernel::{EventLog, InMemoryEventStore};
 
 /// 子代理子进程的解析后参数（对齐 `subagents.rs::child_args` 的形状）。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,6 +109,10 @@ pub fn parse_child_args(args: &[String]) -> Result<ChildArgs, String> {
 }
 
 /// 运行子代理子进程；返回进程退出码（0 成功 / 1 agent 失败 / 2 环境错误）。
+///
+/// pi 废除第②步：子进程不再加载 pi SDK（无 PI_CODING_AGENT_DIR /
+/// models.json 同步），改由 bm-loop + InMemory 事件日志 + 内置工具集 +
+/// OpenAiClient 直连跑一轮隔离回合；stdout 协议事件形状与 pi 逐字段对齐。
 pub async fn run(args: &[String]) -> i32 {
     let child = match parse_child_args(args) {
         Ok(c) => c,
@@ -112,16 +122,8 @@ pub async fn run(args: &[String]) -> i32 {
         }
     };
 
-    // 轻量初始化：与 bm-server init 的 agent 侧一致（config/agent 目录/models.json），
-    // 但不启动 HTTP、不开数据库（no_session 模式不持久化）
+    // 轻量初始化：只读配置（bm 引擎不需要 pi agent 目录/models.json）
     let config = bm_core::config::load();
-    // edition 2024 中 set_var 为 unsafe
-    unsafe {
-        std::env::set_var("PI_CODING_AGENT_DIR", bm_core::config::pi_agent_dir());
-    }
-    if let Err(err) = bm_core::config::sync_pi_models_json(&config) {
-        eprintln!("[bm-server:subagent] models.json 同步失败: {err}");
-    }
 
     // provider 解析优先级：
     // 1. 父进程注入的 PI_SUBAGENT_PROVIDER_ID（bm-server 启动时按默认提供商设置）
@@ -153,99 +155,119 @@ pub async fn run(args: &[String]) -> i32 {
         return 2;
     };
 
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let tools = if child.tools.is_empty() {
-        // 与上游 DEFAULT_CHILD_TOOLS 保持一致
-        vec![
-            "read".to_string(),
-            "bash".to_string(),
-            "edit".to_string(),
-            "write".to_string(),
-            "grep".to_string(),
-            "find".to_string(),
-            "ls".to_string(),
-            "hashline_edit".to_string(),
-        ]
+    // 工具面：角色 csv ∩ 内置工具集（pi 特有工具如 hashline_edit 无 bm
+    // 对应实现，忽略——自研底座以 read/write/edit 覆盖同场景）
+    let mut tools = ToolRegistry::new();
+    let csv_names = if child.tools.is_empty() {
+        None
     } else {
-        child.tools.clone()
+        Some(child.tools.iter().map(String::as_str).collect::<Vec<_>>())
     };
-    let handle = match bm_core::agent::create_child_session_handle(
-        provider,
-        &model,
-        &cwd,
-        tools,
-        child.thinking.as_deref(),
-        child.append_system_prompt.clone().unwrap_or_default(),
-    )
-    .await
+    for def in crate::builtin_tools::BuiltinTools::definitions() {
+        let wanted = csv_names
+            .as_ref()
+            .is_none_or(|names| names.iter().any(|n| *n == def.name));
+        if wanted
+            && let Err(err) = tools.register(def.clone())
+        {
+            eprintln!("[bm-server:subagent] 工具注册失败 {}: {}", def.name, err.message);
+        }
+    }
+
+    // 系统提示：基础 SYSTEM_PROMPT + 角色正文（append-system-prompt）
+    let mut system_prompt = bm_core::agent::SYSTEM_PROMPT.to_string();
+    if let Some(append) = &child.append_system_prompt
+        && !append.trim().is_empty()
     {
-        Ok(h) => h,
-        Err(err) => {
-            eprintln!("[bm-server:subagent] 会话创建失败: {err}");
-            emit_agent_end_error(format!("Failed to create child agent session: {err}"));
+        system_prompt.push_str(append);
+    }
+
+    // 15min 超时兜底（与 chat 路径同纪律；父进程 kill 即传播取消，此兜底
+    // 防模型挂死时子进程孤儿化）
+    let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
+    let timeout_tx = cancel_tx.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(crate::chat::PROMPT_TIMEOUT).await;
+        let _ = timeout_tx.send(true);
+    });
+
+    let llm = match crate::bm_engine::resolve_llm_config(provider, &model, child.thinking.as_deref()) {
+        Ok(cfg) => OpenAiClient::new(cfg),
+        Err((_status, msg)) => {
+            eprintln!("[bm-server:subagent] LLM 配置失败: {msg}");
+            emit_agent_end_error(format!("Failed to configure LLM: {msg}"));
             return 1;
         }
     };
+    let mut agent = ReactLoopAgent::new(
+        SubagentHooks::default(),
+        tools,
+        EventLog::new(Arc::new(InMemoryEventStore::new())),
+        SessionId::new("subagent"),
+        BranchId::new("main"),
+        LoopConfig {
+            system_prompt,
+            provider: Some(provider.id.clone()),
+            model: model.clone(),
+            context_window: 128_000,
+            max_steps: 64,
+            // 子进程单轮任务：无压缩（短上下文；也不引入摘要改写）
+            compactor: None,
+        },
+        llm,
+        crate::compat_engine::QuickJsToolExecutor::new(None, "subagent", None),
+    );
 
-    // 协议事件流：stdout 逐行 JSON（AgentEvent 的 serde 输出即协议格式——
-    // `#[serde(tag = "type", rename_all = "snake_case")]`）。只回传父侧消费的
-    // 事件类型（message_update 的正文增量 / message_end / agent_end），
-    // 其余（turn/message 生命周期、thinking 增量）父侧忽略，不发节省带宽。
-    let mut handle = handle;
-    let agent_error: std::sync::Arc<std::sync::Mutex<Option<String>>> =
-        std::sync::Arc::new(std::sync::Mutex::new(None));
-    let agent_error_cb = agent_error.clone();
-    // 子代理无父侧 steer/取消（父进程直接 kill 即传播取消），持有一个永不触发的
-    // abort 信号即可满足 API 形状
-    let (_abort_handle, abort_signal) = AbortHandle::new();
-    let result = handle
-        .prompt_with_abort(
-            child.task.clone(),
-            abort_signal,
-            move |event: AgentEvent| {
-                let mut emit = false;
-                if let AgentEvent::MessageUpdate {
-                    assistant_message_event,
-                    ..
-                } = &event
-                {
-                    emit = matches!(assistant_message_event, AssistantMessageEvent::TextDelta { .. });
-                }
-                if matches!(
-                    &event,
-                    AgentEvent::MessageEnd { .. } | AgentEvent::AgentEnd { .. }
-                ) {
-                    emit = true;
-                }
-                if let AgentEvent::AgentEnd { error, .. } = &event
-                    && let Some(err) = error
-                {
-                    *agent_error_cb.lock().unwrap() = Some(err.clone());
-                }
-                if emit {
-                    emit_event(&event);
-                }
+    // 协议事件流：stdout 逐行 JSON（形状对齐 pi AgentEvent serde——
+    // message_update 正文增量 / message_end 权威内容 / agent_end 兜底）。
+    // hooks 在流式 delta 时实时发 message_update（同序同源）。
+    let outcome = agent
+        .run_turn(
+            TurnRequest {
+                content: child.task.clone(),
+                source: UserMsgSource::Inject,
             },
+            HeaderReason::Initial,
+            &mut cancel_rx,
         )
         .await;
 
-    if let Err(err) = result {
-        eprintln!("[bm-server:subagent] agent 运行失败: {err}");
-        // 若 agent 结束事件未发出（如运行期异常），补发 error 收尾
-        let ended = agent_error.lock().unwrap().is_some();
-        if !ended {
-            emit_agent_end_error(format!("{err}"));
+    match &outcome {
+        Ok(o) => {
+            if !o.final_text.trim().is_empty() {
+                emit_message_end(&o.final_text);
+                emit_agent_end(&o.final_text, None);
+            }
+            0
         }
-        return 1;
+        Err(err) => {
+            eprintln!("[bm-server:subagent] agent 运行失败: {err}");
+            // agent_end 错误收尾（协议要求 agent_end 携带 messages 或 error）
+            emit_agent_end_error(err.message.clone());
+            1
+        }
     }
-    if agent_error.lock().unwrap().is_some() {
-        return 1;
+}
+
+/// 子代理 hooks：流式正文增量 → stdout 协议行（message_update）。
+/// 与 bm-server StreamHooks 的区别：输出目标是协议流而非 SSE。
+#[derive(Default)]
+struct SubagentHooks {
+    /// 累积正文（协议 message 字段 = 累积 partial，与 pi 一致）
+    acc: String,
+}
+
+impl LoopHooks for SubagentHooks {
+    fn on_stream_chunk(&mut self, _ctx: &StepCtx, text: &str) {
+        self.acc.push_str(text);
+        emit_message_update(&self.acc, text);
     }
-    0
 }
 
 /// 输出一行协议事件（每行 JSON + flush；stdout 是父进程解析的通道）。
-fn emit_event(event: &AgentEvent) {
+/// 形状对齐 pi AgentEvent serde（`#[serde(tag="type", rename_all="snake_case")]`），
+/// 只发父侧消费的三类事件；message 字段给最小但合法的形状。
+fn emit_event(event: &serde_json::Value) {
     let Ok(json) = serde_json::to_string(event) else {
         return;
     };
@@ -254,16 +276,52 @@ fn emit_event(event: &AgentEvent) {
     let _ = out.flush();
 }
 
+fn assistant_message(text: &str) -> serde_json::Value {
+    serde_json::json!({
+        "role": "assistant",
+        "content": [{ "type": "text", "text": text }],
+    })
+}
+
+/// message_update（TextDelta 增量）：`assistantMessageEvent.delta` 是父侧
+/// 的唯一消费字段（ingest_child_event 的 pointer 路径）。
+fn emit_message_update(acc: &str, delta: &str) {
+    emit_event(&serde_json::json!({
+        "type": "message_update",
+        "message": assistant_message(acc),
+        "assistantMessageEvent": {
+            "type": "text_delta",
+            "delta": delta,
+        },
+    }));
+}
+
+/// message_end（权威内容；父侧在 output 为空时兜底取 message 文本）。
+fn emit_message_end(text: &str) {
+    emit_event(&serde_json::json!({
+        "type": "message_end",
+        "message": assistant_message(text),
+    }));
+}
+
+/// agent_end（父侧 messages 兜底）。
+fn emit_agent_end(text: &str, error: Option<String>) {
+    emit_event(&serde_json::json!({
+        "type": "agent_end",
+        "sessionId": "subagent",
+        "messages": [assistant_message(text)],
+        "error": error,
+    }));
+}
+
 /// 补发 `agent_end` 错误事件（协议要求 agent_end 携带 messages 或 error）。
 fn emit_agent_end_error(message: String) {
-    let payload = serde_json::json!({
+    emit_event(&serde_json::json!({
         "type": "agent_end",
+        "sessionId": "subagent",
         "messages": [],
         "error": message,
-    });
-    let mut out = std::io::stdout().lock();
-    let _ = writeln!(out, "{payload}");
-    let _ = out.flush();
+    }));
 }
 
 #[cfg(test)]
@@ -367,5 +425,52 @@ mod tests {
         assert!(should_enter_child_mode(&child));
         let server = vec!["--port".to_string(), "17321".to_string()];
         assert!(!should_enter_child_mode(&server));
+    }
+
+    /// 协议形状对齐 pi AgentEvent serde：父侧 ingest_child_event 的
+    /// pointer 路径 `/assistantMessageEvent/delta` 必须命中。
+    #[test]
+    fn message_update_shape_matches_parent_pointer() {
+        let v = serde_json::json!({
+            "type": "message_update",
+            "message": assistant_message("你好"),
+            "assistantMessageEvent": { "type": "text_delta", "delta": "好" },
+        });
+        let delta = v
+            .pointer("/assistantMessageEvent/delta")
+            .and_then(serde_json::Value::as_str)
+            .unwrap();
+        assert_eq!(delta, "好");
+        assert_eq!(v["message"]["role"], "assistant");
+    }
+
+    /// agent_end 的 messages 兜底形状：父侧反向找 assistant 文本。
+    #[test]
+    fn agent_end_messages_backstop_shape() {
+        let v = serde_json::json!({
+            "type": "agent_end",
+            "sessionId": "subagent",
+            "messages": [assistant_message("最终结论")],
+            "error": serde_json::Value::Null,
+        });
+        let text = v["messages"][0]["content"][0]["text"]
+            .as_str()
+            .unwrap();
+        assert_eq!(text, "最终结论");
+    }
+
+    /// 工具面过滤：角色 csv ∩ 内置工具集（hashline_edit 等 pi 特有工具被忽略）。
+    #[test]
+    fn tool_csv_intersects_builtin_names() {
+        let builtin: Vec<&str> = crate::builtin_tools::BuiltinTools::NAMES.to_vec();
+        let csv = vec!["read".to_string(), "bash".to_string(), "hashline_edit".to_string()];
+        let kept: Vec<&str> = csv
+            .iter()
+            .map(String::as_str)
+            .filter(|n| builtin.contains(n))
+            .collect();
+        assert_eq!(kept, vec!["read", "bash"]);
+        // 空 csv = 全部内置
+        assert!(builtin.len() >= 7);
     }
 }

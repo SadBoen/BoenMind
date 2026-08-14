@@ -290,10 +290,11 @@ fn build_loop_agent(
     ))
 }
 
-/// provider 配置 → LlmConfig（bm-core 不依赖 bm-loop，桥接在 bm-server 做）。
+/// provider 配置 → LlmConfig（bm-core 不依赖 bm-loop，桥接在 bm-server 做；
+/// 子代理子进程（subagent_child）复用同一解析）。
 /// base_url：用户填写优先，否则官方端点；custom 必须填写（配置写入时已校验）。
 /// thinking 档位 → reasoning_effort（切片②；None = 端点默认推理参数）。
-fn resolve_llm_config(
+pub(crate) fn resolve_llm_config(
     provider: &bm_core::config::ProviderConfig,
     model: &str,
     thinking: Option<&str>,
