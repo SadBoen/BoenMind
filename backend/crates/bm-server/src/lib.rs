@@ -8,6 +8,7 @@ pub mod bm_engine;
 pub mod builtin_tools;
 pub mod chat;
 pub mod compat_engine;
+pub mod governance;
 pub mod pdf_omni;
 pub mod permission;
 // B6 — 插件权限决策记忆（extension-permissions.json，格式兼容 pi 上游）

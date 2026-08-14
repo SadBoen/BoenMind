@@ -609,6 +609,13 @@ async fn run_bm_prompt(p: BmPromptParams) {
 
     // 会话串行：agent 锁（同会话并发 prompt 排队，与 pi 路径 handle 锁同纪律）
     let mut agent = agent.lock().await;
+    // governance.memorize 雏形（HANDOFF_KERNEL_PHASE1.md §九 第 2 条）：
+    // 用户消息命中「记住」指令 → 记忆插件 remember。在 attach 之前执行
+    // （已持 agent 锁，取 hooks 内存句柄零竞态）；命中与否由 memorize 内部
+    // 打日志（只记字符数，不落事实全文——用户内容不打日志纪律）。
+    if let Some(memory) = agent.hooks().memory() {
+        crate::governance::memorize(&memory, &message);
+    }
     agent.hooks().attach(tx.clone(), cancel_tx);
 
     let outcome = agent
