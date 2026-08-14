@@ -108,6 +108,8 @@ impl Db {
         let conn = db.connect()?;
         // 返回值的 pragma（journal_mode）需用 pragma_update 而非 execute
         conn.pragma_update("journal_mode", "WAL").await?;
+        // 多实例共享同一 db 文件时写锁争用内部等待（2026-08-14 真实验收实测）
+        conn.pragma_update("busy_timeout", 5000).await?;
         conn.execute_batch(
             r#"
             CREATE TABLE IF NOT EXISTS sessions (

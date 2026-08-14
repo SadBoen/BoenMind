@@ -74,6 +74,12 @@ impl TursoEventStore {
         conn.pragma_update("synchronous", "FULL")
             .await
             .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("synchronous: {e}")))?;
+        // 多实例共享同一 db 文件时（桌面壳 + standalone 同时跑，2026-08-14
+        // 真实验收实测）：写锁争用由 SQLite 内部等待，避免 append 直接
+        // "database is locked" 丢事件（审计链断裂）。
+        conn.pragma_update("busy_timeout", 5000)
+            .await
+            .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("busy_timeout: {e}")))?;
         conn.execute_batch(MIGRATE_EVENT_LOG)
             .await
             .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("migrate: {e}")))?;

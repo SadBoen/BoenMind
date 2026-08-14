@@ -51,6 +51,10 @@ impl CheckpointStore {
         conn.pragma_update("synchronous", "FULL")
             .await
             .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("synchronous: {e}")))?;
+        // 与 event_log 同库不同连接：写锁争用内部等待（多实例共享 db 场景）
+        conn.pragma_update("busy_timeout", 5000)
+            .await
+            .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("busy_timeout: {e}")))?;
         conn.execute_batch(MIGRATE_CHECKPOINT)
             .await
             .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("migrate checkpoint: {e}")))?;
