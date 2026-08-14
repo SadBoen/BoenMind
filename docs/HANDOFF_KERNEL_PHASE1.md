@@ -1,7 +1,8 @@
 # HANDOFF —— 阶段 1 开工交接（两线并行）
 
-> **2026-08-14 白天轮完成（真实验收 + B1 + A6 主体）**：① 真实验收**浏览器实测通过**（两轮聊天含 web_search/web_fetch 双工具链，event_log 197 事件真序闭环、turn/tool 全配对、branch_heads 同步）；② **B1 拷入执行完毕**（6 文件 45K 行逐字节一致 + shim 零行为 stub，standalone check 零错误，未入 workspace members）；③ **A6 主体落地**（bm-loop：llm.rs OpenAI 兼容流式 client + engine.rs run 循环含屏障冲刷 + compact.rs 双触发压缩引擎 + L9 守卫，25 测试全绿 + clippy 清零）。**顺手修两个真 bug**：全新会话投影报 unknown branch（内核读路径改空历史语义）+ standalone 起服务无前端（embed feature 坑）。**架构 v0.15**：中间抽象层定位 + 分发形态纪律（用户定调）。
-> 下一轮：**B2 host 线程开工**（B1 已就绪）→ **A6 接线**（bm-server 开关 + ToolExecutor 接 pi 插件工具）→ pi/新 loop 并行双开对比。CI 拆并行 job 用户拍板"下次"。
+> **2026-08-14 夜轮续接完成（B2 + B3）**：① **B2 host 线程**落地（bm-compat/src/host.rs ~300 行：drain→policy 裁决+六端口分发→complete 攒批→tick→二轮补收，镜像 legacy pump_js_runtime_once_for_owner；HostServices 六端口 + request_approval fail-closed 询问口预埋 B5；check_capability 三模式裁决）；② **bm-compat 入 workspace + CI 门禁**（members 登记、test/clippy 两行、B1 存量 lint 经 manifest [lints] 表放行——红线拷贝文件逐字节一致；unsafe_code forbid 对齐 legacy；全量回归 237 测试全绿）；③ **B3 加载路径**（load.rs：JsExtensionLoadSpec verbatim 提取 + load_extension 桥接 + await_js_task 泵循环复用 HostThread；**真 TS 插件加载全链路实测**：swc 转译→init(pi)→registerTool→get_registered_tools 读回，4 用例全绿）。commit 3366cab（B2）+ 282d629（B3），main 已推送。
+> 查实两协议：__pi_load_extension resolve `true`（布尔成功标志，注册面走 get_registered_tools）；插件入口须 default-export init 函数（loader 自带 export shape 五级归一化回退）。
+> 下一轮：**A6 接线**（开关 + bm-loop 路径 + SSE 流式通道 + 空工具 ToolExecutor，见 §九·三 设计）→ B4（bm-compat 工具执行方向）→ 双开对比。
 
 > 2026-08-14 夜自主运行轮完成（用户睡觉，ZCode 自主推进 4 小时）：主线 A 除 A6 主体外全部落地（A1-A5+A7），回收站 C1/C2 完成，L9 架构依赖测试落地，proptest 承诺兑现，B1 前置（骨架+依赖图谱）就位，A6 骨架 crate（bm-loop）建立。**全部 25 测试套件全绿 + 两档 clippy 门禁清零 + CI 恢复绿灯。**
 
@@ -9,6 +10,13 @@
 > 交接原因：用户开新对话续接。
 
 ## 〇、本次会话 commit 索引（main 已推送，工作区干净）
+
+### 夜轮续接（B2 host 线程 + B3 加载路径 + bm-compat 入 workspace）
+
+| commit | 内容 |
+|---|---|
+| `3366cab` | **B2 host 线程**：host.rs（drain→policy 裁决+六端口分发→complete_hostcalls_batch→tick→二轮补收；HostServices 六端口 async_trait + request_approval fail-closed；check_capability 三模式+per-extension 覆盖）+ tests/host.rs 7 用例（六 kind 路由/政策拒绝/审批放行/QuickJS 真链路 eval→pump→complete）；**bm-compat 入 workspace members** + CI 门禁两行（--test host / clippy -D warnings）+ manifest [lints] 表放行 B1 存量（红线逐字节）+ unsafe_code forbid；全量回归 237 绿 |
+| `282d629` | **B3 加载路径**：load.rs（JsExtensionLoadSpec verbatim 提取 10195-10276 + load_extension：root 注册→__pi_load_extension→__pi_task_start→await_js_task 泵循环复用 HostThread::pump_once + take_js_task_state 三态）+ tests/load.rs 4 用例（spec 派生/缺失拒绝/**真 TS 插件加载注册工具**/坏入口 rejected 不挂起）+ tests/common 抽共享 MockServices；CI 两行补 --test load；查实：插件入口须 default-export init、load 桥 resolve 布尔 true |
 
 ### 白天轮（真实验收 + B1 + A6 主体 + 架构 v0.15）
 
@@ -157,11 +165,25 @@
 
 ## 九、下一轮续接建议开场
 
-> 继续 BoenMind 阶段 1。交接见 docs/HANDOFF_KERNEL_PHASE1.md。**白天轮已落地**（commit 2ff4b8a..1953d3e）：① 真实验收**浏览器实测通过**（event_log 197 事件真序闭环）；② B1 拷入执行完毕（6 文件 45K 行 + shim，standalone check 零错误，未入 workspace）；③ A6 主体落地（bm-loop 25 测试全绿 + clippy 清零 + L9 守卫）；顺手修 fresh-session 投影 bug + embed 坑；架构 v0.15（中间抽象层 + 分发形态纪律）。
+> 继续 BoenMind 阶段 1。交接见 docs/HANDOFF_KERNEL_PHASE1.md。**夜轮续接已落地**（commit 3366cab + 282d629）：① B2 host 线程（host.rs：drain→policy 裁决+六端口分发→complete 攒批→tick 泵循环，7 用例含 QuickJS 真链路全绿）；② bm-compat 入 workspace + CI 门禁（manifest [lints] 放行 B1 存量，红线逐字节；全量回归 237 绿）；③ B3 加载路径（load.rs：spec + load_extension + await_js_task，真 TS 插件加载注册工具 4 用例全绿）。
 >
-> **下一轮动手顺序**：① **B2 host 线程**（~300 行：`drain_hostcall_requests → HostcallKind 分发 → complete_hostcalls_batch → tick`，落点 bm-compat，B1 的 shim 已就位；完成后 bm-compat 入 workspace members + CI 门禁）；② **B3 加载路径**（eval_file + get_registered_tools + ExtensionBody 协议注册）；③ **A6 接线**（bm-server 开关：pi loop 与新 loop 双开；ToolExecutor 先接 pi 插件工具分发——B4 的注册表汇合点 = ToolRegistry 已定稿）；④ 并行双开对比（同压缩 A/B 方法论）后拍切换时机。CI 拆并行 job 待办仍在（§八·6）。
+> **下一轮动手顺序**：① **A6 接线**（见 §九·三 设计：BM_LOOP_ENGINE 开关 + bm-server 依赖 bm-loop + engine 加 SSE 流式通道 + OpenAiClient 桥接 bm-core provider 配置 + 空工具 ToolExecutor stub；验收 = `BM_LOOP_ENGINE=bm` release 起服务聊天跑通，与 pi 引擎并行双开对比无工具会话）；② **B4 工具方向**（bm-compat 接 ExecuteTool：插件 execute 回调经 `__pi_execute_tool` 桥执行 → ToolExecutor 实现 → ToolRegistry 汇合；查证点：legacy JsRuntimeCommand::ExecuteTool 语义与 bm-compat 单 runtime 的映射）；③ **B5 权限询问桥接**（HostServices::request_approval 接现有 PermissionBridge）；④ B6 全链路验收 + 30 轮 A/B 双开对比后拍切换。CI 拆并行 job 待办仍在（§八·6）。
 >
-> **注意四坑**（详见 §〇·五）：Disposer 纪律、turso 绑定形态（Option 长度不混用）、fork 超头拒绝（main 须先有事件）、跨分支投影逐段折叠；**新增两坑**：standalone 起服务必须 `--features embed`（§八·1）、loop 读回自己写入前必须屏障冲刷（bm-loop EventFlusher::flush 模式，bm-server 接线时沿用）。
+> **注意坑**（详见 §〇·五 + 本轮新查实）：Disposer 纪律、turso 绑定形态、fork 超头拒绝、跨分支投影逐段折叠、standalone 起服务 `--features embed`、loop 读回写入前屏障冲刷；**B2/B3 新坑**：HostServices 用 `#[async_trait]`（async fn in trait 不能 object-safe）；bm-compat 测试必须走 `--test host --test load` 集成目标（lib 的 mod tests 是 B1 遗留，proptest 缺失会炸）；插件入口必须 default-export init 函数；`__pi_load_extension` resolve 布尔 true。
+
+## 九·三、A6 接线设计（2026-08-14 夜轮定稿，下一轮开工）
+
+> 目标：`BM_LOOP_ENGINE=bm` 时 chat 走自研 bm-loop，与 pi 引擎并行双开（无工具会话先行，工具方向 B4）。
+
+1. **开关**：环境变量 `BM_LOOP_ENGINE`（`pi` 默认 / `bm` 自研）。AppState 无需加字段——chat handler 读 env 分支即可（双开对比期无需 UI 开关；拍板切换后默认值反转）。
+2. **bm-server 依赖 bm-loop**：Cargo.toml 加 path 依赖（bm-loop 不依赖 bm-core，铁律 3 保持）。
+3. **engine SSE 流式通道**（bm-loop 改动，前置件）：`run_turn` 现在内部消费 LlmEvent（TextDelta 落日志），无对外输出。加 `stream_tx: &mpsc::UnboundedSender<LlmEvent>` 参数（或 LoopHooks 加 `on_stream_chunk` 钩子——**倾向后者**：钩子形态插件可挂，参数形态每调用方传一遍）。TextDelta 处调用。
+4. **OpenAiClient 桥接**：bm-core 的 provider 配置（base_url/api_key/thinking 档位）→ `llm::LlmConfig`。参照 bm-core 现有 provider 解析（resolve_provider / models.json 同步逻辑）；thinking 档位映射复用 thinking-tiers 白名单逻辑。
+5. **会话状态**：每 session 一个 ReactLoopAgent（对齐 AgentSessionEntry 模式，加 `loop_agents: Arc<Mutex<HashMap<String, ...>>>`）；**恢复语义** = EventLog 是唯一状态源，进程重启后新建 agent 从日志恢复（turn_count 以日志 TurnStart 计数为准，begin_turn_at 已就位）。
+6. **双写衔接**：bm 路径下 loop 直接写 event_log（不再走 chat.rs 的"收尾拼 batch"——A1 的 LogItem 队列是 pi 路径专用）。SSE 前端事件流沿用现有 AgentStreamEvent 形状（前端零改动）。
+7. **取消**：现有 aborts map 的 watch 通道接入 run_turn 的 cancel 参数。
+8. **验收**：release（`--features embed`）起服务 → `BM_LOOP_ENGINE=bm` → 聊天流式正常 + event_log 投影正确 + 停止按钮可用；然后 pi/双开 A/B 对比（同 30 轮压缩方法论）。
+9. **切片**：① 开关+空工具跑通（本轮）；② B4 工具接线（ExecuteTool 方向，下一块）；③ B5 权限桥；④ B6 全链路 + 双开对比。
 
 ## 九·二、本轮完成度表
 
@@ -177,8 +199,10 @@
 | A7 迁移链骨架 | ✅ | FORMAT_MIGRATIONS + migrate 读路径全接 |
 | C1 超期自动清除 | ✅ | purge_orphaned_events + 每日后台任务（90 天，env 可调） |
 | C2 用户主动清除 | ✅ | DELETE /api/sessions/{id}/events + 前端菜单 |
-| B1 拷入 6 文件 | ✅ | 6 文件 45K 行逐字节一致 + shim（零行为 stub）+ 精简 build.rs；standalone check 零错误；未入 workspace members（下一轮 B2 时接入） |
-| B2/B3/B4/B5/B6 | ⏳ | B1 已就绪，下一轮按序开工 |
+| B1 拷入 6 文件 | ✅ | 6 文件 45K 行逐字节一致 + shim（零行为 stub）+ 精简 build.rs；standalone check 零错误；B2 完成时已入 workspace members |
+| B2 host 线程 | ✅（夜轮续接） | bm-compat/src/host.rs：drain→policy 裁决+六端口分发→complete 攒批→tick 泵循环（镜像 legacy pump_js_runtime_once_for_owner）+ check_capability 三模式 + request_approval 询问口；tests/host.rs 7 用例全绿（含 QuickJS 真链路）；入 workspace + CI 门禁（3366cab） |
+| B3 加载路径 | ✅（夜轮续接） | bm-compat/src/load.rs：JsExtensionLoadSpec（verbatim 提取）+ load_extension（root 注册→__pi_load_extension→__pi_task_start→await_js_task 复用 HostThread 泵）+ PROTOCOL_VERSION；tests/load.rs 4 用例全绿（真 TS 插件加载注册工具/坏入口不挂起）；282d629 |
+| B4/B5/B6 | ⏳ | B4 工具执行方向（ExecuteTool 桥）+ B5 权限桥（request_approval 接 PermissionBridge）+ B6 全链路验收，A6 接线后按序 |
 | proptest 承诺 | ✅ | 60 用例属性测试（InMemory）+ 回归种子入仓 |
 | CI 门禁 | ✅ | 全量 25 套件全绿 + 双档 clippy 清零 + **GitHub CI 质量门绿灯**（另修存量 rust-cache/磁盘两故障，见 commit 索引） |
 | 真实验收 | ✅ | 浏览器实测两轮（无工具 + web_search/web_fetch 双工具链），event_log 197 事件真序闭环（§八·1） |
