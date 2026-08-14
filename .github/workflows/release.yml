@@ -77,12 +77,6 @@ jobs:
     env:
       CARGO_PROFILE_DEV_DEBUG: "0"
       CARGO_INCREMENTAL: "0"
-      # sccache 不自动接管 cargo（README 要求显式声明）：
-      # RUSTC_WRAPPER = 让 cargo 的 rustc 调用走 sccache 拦截；
-      # SCCACHE_GHA_ENABLED = GHA cache backend（跨 job/run 共享）。
-      # 缺任一 = sccache stats 0 请求（2026-08-15 实证，见交接 §〇·五 34）
-      RUSTC_WRAPPER: "sccache"
-      SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@v4
 
@@ -92,15 +86,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2.9.1
         with:
           workspaces: backend
-
-      # sccache：对象级编译缓存（按编译单元），覆盖 rust-cache 整目录快照
-      # 覆盖不到的依赖（实测 rust-cache 命中仅 ~879MB，依赖树 debug 产物
-      # 10GB+，每轮仍重编大部分依赖 → test 20min）。GHA backend 经
-      # actions/cache 存取，跨 job 共享。
-      - name: sccache（对象级编译缓存）
-        uses: mozilla/sccache-action@v0.0.11
-        env:
-          SCCACHE_GHA_CACHE_SIZE: "2G"
 
       # bm-compactor / bm-memory 为 2026-08 补进：两 crate 有 lib 测试 +
       # tests/architecture.rs（架构红线），此前 CI 从未覆盖；`cargo test -p`
@@ -126,12 +111,6 @@ jobs:
     env:
       CARGO_PROFILE_DEV_DEBUG: "0"
       CARGO_INCREMENTAL: "0"
-      # sccache 不自动接管 cargo（README 要求显式声明）：
-      # RUSTC_WRAPPER = 让 cargo 的 rustc 调用走 sccache 拦截；
-      # SCCACHE_GHA_ENABLED = GHA cache backend（跨 job/run 共享）。
-      # 缺任一 = sccache stats 0 请求（2026-08-15 实证，见交接 §〇·五 34）
-      RUSTC_WRAPPER: "sccache"
-      SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@v4
 
@@ -141,11 +120,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2.9.1
         with:
           workspaces: backend
-
-      - name: sccache（对象级编译缓存）
-        uses: mozilla/sccache-action@v0.0.11
-        env:
-          SCCACHE_GHA_CACHE_SIZE: "2G"
 
       - name: clippy（-D warnings，存量 crate）
         working-directory: backend
@@ -161,12 +135,6 @@ jobs:
     env:
       CARGO_PROFILE_DEV_DEBUG: "0"
       CARGO_INCREMENTAL: "0"
-      # sccache 不自动接管 cargo（README 要求显式声明）：
-      # RUSTC_WRAPPER = 让 cargo 的 rustc 调用走 sccache 拦截；
-      # SCCACHE_GHA_ENABLED = GHA cache backend（跨 job/run 共享）。
-      # 缺任一 = sccache stats 0 请求（2026-08-15 实证，见交接 §〇·五 34）
-      RUSTC_WRAPPER: "sccache"
-      SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@v4
 
@@ -176,11 +144,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2.9.1
         with:
           workspaces: backend
-
-      - name: sccache（对象级编译缓存）
-        uses: mozilla/sccache-action@v0.0.11
-        env:
-          SCCACHE_GHA_CACHE_SIZE: "2G"
 
       # 内核四件套 --all-targets 全开；bm-compactor / bm-memory 2026-08 补进，
       # 此前 CI 从未 lint（--all-targets 连带 tests/architecture.rs 架构红线）。
