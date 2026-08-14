@@ -119,12 +119,13 @@
 
 ## 八、待验证 / 待拍板
 
-1. **真实验收**（用户配合）：release 起 bm-server → 日志"事件日志双写已启用" → 聊几轮 → `sqlite3 ~/.boenmind/boenmind.db "SELECT seq, session_id, type FROM event_log ORDER BY seq"`。**⚠️ standalone 起服务必须带前端内嵌 feature**（桌面壳自己 serve 前端不用带）：`cargo build --release -p bm-server --features embed`，否则 `/` 404 空页面（2026-08-14 验收实测踩坑）。
-2. **A1 的 chunk 落盘策略**：逐 chunk append vs 攒批（token 级回放保真 vs 写放大）——已实现"写线程全量排空攒批"（每批一个事务），实测写放大待真实验收观察。
+1. **真实验收**（✅ 2026-08-14 浏览器实测通过）：event_log 197 事件、两回合真序闭环（无工具 + web_search/web_fetch 双工具链，turn/start↔end、tool/call↔result 全配对，branch_heads 同步）；实测观察：chunk 写放大 ≈ 每 chunk 一批事务（notify 即排空，流式均匀到达攒批有限）——优化留 A6 切换后。**⚠️ standalone 起服务必须带前端内嵌 feature**（桌面壳自己 serve 前端不用带）：`cargo build --release -p bm-server --features embed`，否则 `/` 404 空页面。
+2. **A1 的 chunk 落盘策略**：逐 chunk append vs 攒批（token 级回放保真 vs 写放大）——已实现"写线程全量排空攒批"（每批一个事务），写放大优化留 A6 切换后统一做。
 3. **超期清除天数**（C1 的 N）——默认 90 天，`BM_ORPHAN_PURGE_DAYS` 环境变量可调，实现期调优。
-4. **自研 loop 替换切换开关**：A6 完成后 pi loop 与新 loop 并行双开对比（同压缩 A/B 方法论），拍板切换时机。
+4. **自研 loop 替换切换开关**：A6 主体已落地（bm-loop：run 循环/LLM client/压缩双触发，25 测试全绿）——下一步 = bm-server 接线（开关 + ToolExecutor 先接 pi 插件工具）+ pi loop 与新 loop 并行双开对比（同压缩 A/B 方法论），拍板切换时机。
 5. **proptest 承诺**：已兑现（60 用例属性测试，见 §九·二）。
 6. **CI 拆并行 job**（用户拍板"下次"）：质量门 test/clippy×2/前端拆 4 个并发 job，预计 15min → 6-9min；方案细节本对话已给出（并行 job / 大核 runner / sccache 三选项）。
+7. **前后端分离三点（✅ 2026-08-14 用户定调入架构 v0.15）**：分离原则贯穿设计（[[separation-principle-throughout]]）；用户定调"便携版/Docker 都只是初级阶段的产物"→ 分发形态 ≠ 设计脊梁。收敛结论：① 静态目录服务（`BOENMIND_STATIC_DIR`）登记为**阶段 4 前端隔离的前置小件**（后端永不内嵌前端为默认形态）；② `embed` feature 保留为便携版/Docker 的**打包选项**并标注"打包层非设计层"（Cargo.toml 注释已含，补 README 标注即可）；③ 阶段 4 大动作范围不变。**动作时点：阶段 4 前置小件，不阻塞本阶段。**
 
 ## 十、本轮后半段新决策（2026-08-14 夜，用户两条指令）
 
@@ -157,13 +158,14 @@
 | A3 fork 父前缀折叠 | ✅ | forked_at 列 + visible_segments 逐段折叠 |
 | A4 Interrupted 启动补写 | ✅ | recover_interrupted_turns（幂等） |
 | A5 subscribe + SSE | ✅ | bm-kernel subscribe_events + /api/sessions/{id}/events |
-| A6 ReactLoopAgent | 🦴 骨架 | bm-loop crate（ToolRegistry/五扩展点/双队列）；run 循环=主体 |
+| A6 ReactLoopAgent | ✅ 主体落地 | bm-loop：llm.rs 流式 client + engine.rs run 循环（屏障冲刷）+ compact.rs 双触发 + L9 守卫；25 测试全绿 + clippy 清零；**bm-server 接线（开关+ToolExecutor）+ 并行双开对比 = 下一轮** |
 | A7 迁移链骨架 | ✅ | FORMAT_MIGRATIONS + migrate 读路径全接 |
 | C1 超期自动清除 | ✅ | purge_orphaned_events + 每日后台任务（90 天，env 可调） |
 | C2 用户主动清除 | ✅ | DELETE /api/sessions/{id}/events + 前端菜单 |
-| B1 拷入 6 文件 | 🦴 前置 | 骨架+依赖图谱+台账纪律；拷入待执行 |
-| B2/B3/B4/B5/B6 | ⏳ | 依赖 B1 拷入 |
+| B1 拷入 6 文件 | ✅ | 6 文件 45K 行逐字节一致 + shim（零行为 stub）+ 精简 build.rs；standalone check 零错误；未入 workspace members（下一轮 B2 时接入） |
+| B2/B3/B4/B5/B6 | ⏳ | B1 已就绪，下一轮按序开工 |
 | proptest 承诺 | ✅ | 60 用例属性测试（InMemory）+ 回归种子入仓 |
 | CI 门禁 | ✅ | 全量 25 套件全绿 + 双档 clippy 清零 + **GitHub CI 质量门绿灯**（另修存量 rust-cache/磁盘两故障，见 commit 索引） |
-| 真实验收 | ⏳ | release 起服务查 event_log 表——用户配合（§八·1） |
+| 真实验收 | ✅ | 浏览器实测两轮（无工具 + web_search/web_fetch 双工具链），event_log 197 事件真序闭环（§八·1） |
+| 前端分离三拍板点 | ✅ 定调入架构 v0.15 | 分离原则贯穿设计；便携版/Docker = 分发形态非设计脊梁；静态目录服务 = 阶段 4 前置小件（§八·7） |
 | CI 拆并行 job | 📋 下次 | 用户拍板：test/clippy×2/前端拆 4 并发 job（方案细节见 §八·6） |
