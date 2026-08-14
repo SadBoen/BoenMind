@@ -85,6 +85,24 @@ export interface ToolCall {
   is_error: boolean;
 }
 
+/** 管家（Steward）状态（后端 /api/steward/status；未启用 = { enabled: false }） */
+export interface StewardStatus {
+  enabled: boolean;
+  /** 管家会话 id（BM_STEWARD_SESSION 指定） */
+  sessionId?: string;
+  /** 下次唤醒时刻（ms；0 = 静默） */
+  nextWakeAtMs?: number;
+  /** 上次回合完成时刻（ms） */
+  lastWakeAtMs?: number;
+  /** 上次登记的唤醒原因 */
+  lastReason?: string;
+  /** 调度回合进行中 */
+  inFlight?: boolean;
+  /** 治理夹区间（秒） */
+  pacingMinS?: number;
+  pacingMaxS?: number;
+}
+
 export interface FileEntry {
   name: string;
   path: string;
@@ -585,4 +603,17 @@ export const api = {
   /** standalone（Linux 部署）重启生效：进程 exec 新版（PID 不变）；managed 由壳重启，勿调 */
   restartUpdate: () =>
     request<{ status: string }>("/api/updates/restart", { method: "POST" }),
+
+  /** 管家（Steward）状态（未启用 = { enabled: false }） */
+  stewardStatus: () => request<StewardStatus>("/api/steward/status"),
+
+  /** 管家汇报注入：message 事件内容，wake_after_seconds 可选（登记节奏） */
+  stewardInject: (message: string, wakeAfterSeconds?: number) =>
+    request<{ status: string }>("/api/steward/inject", {
+      method: "POST",
+      body: JSON.stringify({
+        message,
+        ...(wakeAfterSeconds != null ? { wake_after_seconds: wakeAfterSeconds } : {}),
+      }),
+    }),
 };

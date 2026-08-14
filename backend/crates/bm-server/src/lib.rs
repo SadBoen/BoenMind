@@ -467,6 +467,26 @@ async fn serve_inner(
             "管家已启用（BM_STEWARD_SESSION）"
         );
         bm_engine::spawn_steward_scheduler(state.clone(), store.clone());
+        // v0.20：系统启动汇报（BM_STEWARD_BOOT_REPORT=1 开启）——宿主重启后
+        // 内存态丢失，管家需要知道（fire-and-forget：失败仅日志，不阻断启动；
+        // 默认关：每次重启烧一次 token 需显式开关）
+        if std::env::var("BM_STEWARD_BOOT_REPORT").is_ok_and(|v| v.trim() == "1") {
+            tracing::info!(event = "bm.steward_boot_report", "系统启动汇报已投喂");
+            let state_boot = state.clone();
+            let store_boot = store.clone();
+            tokio::spawn(async move {
+                bm_engine::dispatch_steward_round(
+                    &state_boot,
+                    &store_boot,
+                    "系统启动汇报：BoenMind 宿主服务已启动，内存态已重置。\
+                     请确认当前状态，如有需要处理的事项请执行，回合结束时调用 \
+                     set_wake 登记下次唤醒时间。"
+                        .to_string(),
+                    bm_protocol::UserMsgSource::Inject,
+                )
+                .await;
+            });
+        }
     }
     let listener = tokio::net::TcpListener::bind(bind_addr(port)).await?;
     let local = listener.local_addr()?;

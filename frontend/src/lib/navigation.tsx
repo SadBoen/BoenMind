@@ -7,6 +7,7 @@
  */
 import type { ComponentType, ReactNode } from "react";
 import {
+  Activity,
   BookOpenText,
   Cpu,
   FolderOpen,
@@ -32,6 +33,7 @@ import { PluginsSettings } from "@/components/settings/PluginsSettings";
 import { ProviderSettings } from "@/components/settings/ProviderSettings";
 import { RefinementSettings } from "@/components/settings/RefinementSettings";
 import { SkillsSettings } from "@/components/settings/SkillsSettings";
+import { StewardSettings } from "@/components/settings/StewardSettings";
 import { WorkspaceSettings } from "@/components/settings/WorkspaceSettings";
 import { useAppStore } from "@/stores/app-store";
 
@@ -40,6 +42,7 @@ export type SettingsTab =
   | "appearance"
   | "providers"
   | "engine"
+  | "steward"
   | "workspace"
   | "plugins"
   | "skills"
@@ -110,6 +113,12 @@ export const SETTINGS: Record<SettingsTab, SettingsEntry> = {
     descKey: "settings.menu.engineDesc",
     icon: <Cpu size={16} />,
     component: EngineSettings,
+  },
+  steward: {
+    labelKey: "settings.menu.steward",
+    descKey: "settings.menu.stewardDesc",
+    icon: <Activity size={16} />,
+    component: StewardSettings,
   },
   workspace: {
     labelKey: "settings.menu.workspace",

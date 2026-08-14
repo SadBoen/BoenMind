@@ -87,6 +87,69 @@ pub fn reasoning_effort_for(level: &str) -> Option<&'static str> {
     }
 }
 
+/// 管家回合静默窗口默认值（秒）：回合进行中超过窗口无任何事件（文本/工具）
+/// → 宿主侧取消 + 告警（架构 §14.1"1 分钟无汇报主动上报"）。
+pub const DEFAULT_SILENCE_WINDOW_S: i64 = 120;
+
+/// 静默窗口秒数解析（纯函数——env 读在调用点，测试并发下 env 写读有竞态）：
+/// `0` = 禁用 watchdog；正数 = 窗口秒数；负数/非法/缺失 = None（回落默认）。
+pub fn parse_silence_window(value: Option<&str>) -> Option<i64> {
+    value
+        .and_then(|v| v.trim().parse::<i64>().ok())
+        .filter(|v| *v >= 0)
+}
+
+/// 管家回合 LLM 解析（成本杠杆，架构 §14.2）：env `BM_STEWARD_PROVIDER` /
+/// `BM_STEWARD_MODEL` 显式指定时优先（24×7 心跳是主要烧钱点，可用低成本
+/// 模型跑），否则回落会话级规则（与 chat 路径同）。env 配错（提供商不存在 /
+/// 模型不在列表）→ warn + 回落，不让管家停摆。独立纯函数以便单测。
+pub fn resolve_steward_llm(
+    config: &bm_core::config::AppConfig,
+    session_provider: Option<&str>,
+    session_model: Option<&str>,
+    env_provider: Option<&str>,
+    env_model: Option<&str>,
+) -> Result<(bm_core::config::ProviderConfig, String), String> {
+    let env_provider = env_provider.map(str::trim).filter(|s| !s.is_empty());
+    let env_model = env_model.map(str::trim).filter(|s| !s.is_empty());
+    let provider = match env_provider {
+        Some(id) => match bm_core::config::resolve_provider(config, Some(id)) {
+            Some(p) => p.clone(),
+            None => {
+                tracing::warn!(
+                    event = "bm.steward_provider_missing",
+                    provider = %id,
+                    "env 指定的管家提供商不存在，回落会话级"
+                );
+                bm_core::config::resolve_provider(config, session_provider)
+                    .cloned()
+                    .ok_or_else(|| "未配置任何模型提供商".to_string())?
+            }
+        },
+        None => bm_core::config::resolve_provider(config, session_provider)
+            .cloned()
+            .ok_or_else(|| "未配置任何模型提供商".to_string())?,
+    };
+    let model = match env_model {
+        Some(m) if provider.models.is_empty() || provider.models.iter().any(|x| x == m) => {
+            m.to_string()
+        }
+        Some(m) => {
+            tracing::warn!(
+                event = "bm.steward_model_missing",
+                model = %m,
+                provider = %provider.id,
+                "env 指定的管家模型不在提供商列表，回落会话级"
+            );
+            bm_core::config::resolve_model(&provider, session_model)
+                .ok_or_else(|| format!("提供商 {} 未配置模型", provider.name))?
+        }
+        None => bm_core::config::resolve_model(&provider, session_model)
+            .ok_or_else(|| format!("提供商 {} 未配置模型", provider.name))?,
+    };
+    Ok((provider, model))
+}
+
 // ============================================================================
 // 流式通道 hooks：loop → 前端 SSE（on_stream_chunk 钩子的集成方实现）
 // ============================================================================
@@ -746,19 +809,19 @@ pub async fn run_steward_turn(
     else {
         return Err(format!("管家会话不存在: {session_id}"));
     };
-    let provider = {
+    // 成本杠杆（v0.20）：env BM_STEWARD_PROVIDER/BM_STEWARD_MODEL 指定时
+    // 管家回合用低成本模型（24×7 心跳主要烧钱点，§14.2）；配错回落会话级
+    let (provider, model) = {
         let config = state.config.read().await;
-        let Some(p) = bm_core::config::resolve_provider(&config, session.provider_id.as_deref())
-        else {
-            return Err("未配置任何模型提供商".to_string());
-        };
-        p.clone()
-    };
-    let model = {
-        match bm_core::config::resolve_model(&provider, session.model.as_deref()) {
-            Some(m) => m,
-            None => return Err(format!("提供商 {} 未配置模型", provider.name)),
-        }
+        let env_provider = std::env::var("BM_STEWARD_PROVIDER").ok();
+        let env_model = std::env::var("BM_STEWARD_MODEL").ok();
+        resolve_steward_llm(
+            &config,
+            session.provider_id.as_deref(),
+            session.model.as_deref(),
+            env_provider.as_deref(),
+            env_model.as_deref(),
+        )?
     };
     let progress: Arc<std::sync::Mutex<String>> = Arc::new(std::sync::Mutex::new(String::new()));
     let agent = get_or_create_loop_agent(state, session_id, &provider, &model, "off", progress)
@@ -775,6 +838,56 @@ pub async fn run_steward_turn(
         let _ = timeout_tx.send(true);
     });
 
+    // 静默窗口 watchdog（v0.20，架构 §14.1"1 分钟无汇报主动上报"落地）：
+    // 回合进行中若超过窗口无任何新事件（head_seq 不变 = 无文本/工具活动，
+    // 模型可能挂死/网络卡死），宿主侧主动取消 + 告警——15min 总超时是兜底，
+    // 静默窗口提前掐断无进展回合防烧 token。窗口 env `BM_STEWARD_SILENCE_
+    // WINDOW_S` 可调（秒；0 = 禁用）；事件日志是唯一活动源（progress 是
+    // 会话级共享内存，可能属于 chat 路径创建的 agent，不可作管家活动依据）。
+    let silence_window = std::env::var("BM_STEWARD_SILENCE_WINDOW_S")
+        .ok()
+        .and_then(|v| parse_silence_window(Some(&v)))
+        .unwrap_or(DEFAULT_SILENCE_WINDOW_S);
+    let watchdog = if silence_window > 0 {
+        let cancel_watch = cancel_tx.clone();
+        let store_watch = state.dual_writer.as_ref().map(|d| d.event_log().store());
+        let sid_watch = SessionId::new(session_id);
+        let bid_watch = BranchId::new("main");
+        let session_watch = session_id.to_string();
+        Some(tokio::spawn(async move {
+            let Some(store) = store_watch else {
+                return;
+            };
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+            interval.tick().await; // 跳过首次立即触发
+            let mut last = store.head_seq(&sid_watch, &bid_watch).await.ok().flatten();
+            let mut silent_since = std::time::Instant::now();
+            loop {
+                interval.tick().await;
+                let cur = store.head_seq(&sid_watch, &bid_watch).await.ok().flatten();
+                if cur != last {
+                    last = cur;
+                    silent_since = std::time::Instant::now();
+                    continue;
+                }
+                if silent_since.elapsed()
+                    >= std::time::Duration::from_secs(silence_window as u64)
+                {
+                    tracing::warn!(
+                        event = "bm.steward_silence_timeout",
+                        window_s = silence_window,
+                        session = %session_watch,
+                        "静默窗口超时（回合内无任何事件），宿主主动取消"
+                    );
+                    let _ = cancel_watch.send(true);
+                    return;
+                }
+            }
+        }))
+    } else {
+        None
+    };
+
     let mut agent = agent.lock().await;
     agent.hooks().attach(tx, cancel_tx);
     let outcome = agent
@@ -789,6 +902,9 @@ pub async fn run_steward_turn(
         .await;
     agent.hooks().detach();
     drop(agent);
+    if let Some(w) = watchdog {
+        w.abort(); // 回合结束即停（否则会继续 tick 直到窗口超时）
+    }
 
     match &outcome {
         Ok(o) => {
@@ -811,6 +927,35 @@ pub async fn run_steward_turn(
     }
 }
 
+/// 投喂一个管家回合的公共封装（调度器 / boot 汇报共用）：in_flight 防重叠 +
+/// 回合执行 + 锚点推进（note_round_done 只推 last_wake_at，不清 next_wake_at
+/// ——管家回合内 set_wake 写好的下次唤醒原样保留；失败/没写 = 0 静默，
+/// 不触发失败重试风暴）。调用方必须已确认管家启用且会话存在。
+pub async fn dispatch_steward_round(
+    state: &AppState,
+    store: &crate::steward::StewardStore,
+    message: String,
+    source: UserMsgSource,
+) {
+    if store.in_flight().await {
+        return;
+    }
+    let Some(session_id) = store.session_id().await else {
+        return;
+    };
+    store.set_in_flight(true).await;
+    let now = crate::steward::now_ms();
+    if let Err(err) = run_steward_turn(state, &session_id, message, source).await {
+        tracing::warn!(
+            event = "bm.steward_turn_failed",
+            error = %err,
+            session = %session_id
+        );
+    }
+    store.set_in_flight(false).await;
+    store.note_round_done(now).await;
+}
+
 /// 调度器（三件套 ①）：每 10s 检查管家唤醒登记，到点投喂 Goal 回合。
 ///
 /// 治理（OpenClaw next_check 吸收）：管家回合内用 set_wake 提议下次唤醒，
@@ -823,7 +968,7 @@ pub fn spawn_steward_scheduler(state: AppState, store: Arc<crate::steward::Stewa
         loop {
             interval.tick().await;
             let now = crate::steward::now_ms();
-            if store.in_flight().await || !store.should_wake(now).await {
+            if !store.should_wake(now).await {
                 continue;
             }
             let Some(session_id) = store.session_id().await else {
@@ -835,7 +980,6 @@ pub fn spawn_steward_scheduler(state: AppState, store: Arc<crate::steward::Stewa
                 store.note_round_done(now).await;
                 continue;
             };
-            store.set_in_flight(true).await;
             let reason = store.last_reason().await.unwrap_or_default();
             let since_s = (now.saturating_sub(
                 store.snapshot().await.last_wake_at_ms,
@@ -845,14 +989,7 @@ pub fn spawn_steward_scheduler(state: AppState, store: Arc<crate::steward::Stewa
                  请观察当前状态；如有需要采取的行动请执行；回合结束时调用 set_wake \
                  登记下次唤醒时间（无事请登记较长间隔保持静默）。"
             );
-            if let Err(err) =
-                run_steward_turn(&state, &session_id, message, UserMsgSource::Goal).await
-            {
-                tracing::warn!(event = "bm.steward_turn_failed", error = %err, session = %session_id);
-            }
-            store.set_in_flight(false).await;
-            // 锚点推进；next_wake_at 保持管家回合内写好的值（失败/没写 = 0 静默）
-            store.note_round_done(now).await;
+            dispatch_steward_round(&state, &store, message, UserMsgSource::Goal).await;
         }
     });
 }
@@ -944,6 +1081,108 @@ mod tests {
         assert_eq!(reasoning_effort_for("xhigh"), Some("high"));
         assert_eq!(reasoning_effort_for("max"), Some("high"));
         assert_eq!(reasoning_effort_for(""), None);
+    }
+
+    #[test]
+    fn silence_window_parsing() {
+        // 合法正数 → 启用；0 → 禁用；负数/非法/缺失 → None（回落默认）
+        assert_eq!(parse_silence_window(Some("60")), Some(60));
+        assert_eq!(parse_silence_window(Some(" 120 ")), Some(120), "容忍空白");
+        assert_eq!(parse_silence_window(Some("0")), Some(0), "0 = 禁用");
+        assert_eq!(parse_silence_window(Some("-5")), None);
+        assert_eq!(parse_silence_window(Some("abc")), None);
+        assert_eq!(parse_silence_window(Some("")), None);
+        assert_eq!(parse_silence_window(None), None);
+    }
+
+    fn test_config() -> bm_core::config::AppConfig {
+        use bm_core::config::{AppConfig, ProviderConfig, ProviderKind};
+        let mut config = AppConfig::default();
+        config.providers = vec![
+            ProviderConfig {
+                id: "minimax".into(),
+                name: "MiniMax".into(),
+                kind: ProviderKind::Minimax,
+                base_url: None,
+                api_key: Some("sk-test".into()),
+                models: vec!["MiniMax-M3".into(), "MiniMax-Text-01".into()],
+                default_model: Some("MiniMax-M3".into()),
+            },
+            ProviderConfig {
+                id: "deepseek".into(),
+                name: "DeepSeek".into(),
+                kind: ProviderKind::Deepseek,
+                base_url: None,
+                api_key: Some("sk-test2".into()),
+                models: vec!["deepseek-chat".into()],
+                default_model: Some("deepseek-chat".into()),
+            },
+        ];
+        config.default_provider = Some("minimax".into());
+        config
+    }
+
+    #[test]
+    fn steward_llm_falls_back_to_session_rules() {
+        let config = test_config();
+        // 无 env：会话级 provider（deepseek）+ 会话级 model
+        let (p, m) = resolve_steward_llm(&config, Some("deepseek"), Some("deepseek-chat"), None, None)
+            .unwrap();
+        assert_eq!(p.id, "deepseek");
+        assert_eq!(m, "deepseek-chat");
+        // 会话无 model → 提供商默认模型
+        let (p, m) = resolve_steward_llm(&config, Some("minimax"), None, None, None).unwrap();
+        assert_eq!(p.id, "minimax");
+        assert_eq!(m, "MiniMax-M3");
+        // 会话无 provider → 默认提供商
+        let (p, _) = resolve_steward_llm(&config, None, None, None, None).unwrap();
+        assert_eq!(p.id, "minimax");
+    }
+
+    #[test]
+    fn steward_llm_env_overrides_provider_and_model() {
+        let config = test_config();
+        // env provider + env model 同时接管（低成本模型跑 24×7 心跳）
+        let (p, m) = resolve_steward_llm(
+            &config,
+            Some("minimax"),
+            Some("MiniMax-M3"),
+            Some("deepseek"),
+            Some("deepseek-chat"),
+        )
+        .unwrap();
+        assert_eq!(p.id, "deepseek", "env 提供商优先于会话级");
+        assert_eq!(m, "deepseek-chat");
+        // 只给 env model（在提供商列表内 → 直接用）
+        let (p, m) =
+            resolve_steward_llm(&config, Some("minimax"), None, None, Some("MiniMax-Text-01"))
+                .unwrap();
+        assert_eq!(p.id, "minimax");
+        assert_eq!(m, "MiniMax-Text-01");
+        // env model 但提供商 models 为空（模型列表未知）→ 信任 env
+        let mut empty_models = test_config();
+        empty_models.providers[0].models = vec![];
+        let (_, m) =
+            resolve_steward_llm(&empty_models, Some("minimax"), None, None, Some("mini-any"))
+                .unwrap();
+        assert_eq!(m, "mini-any");
+    }
+
+    #[test]
+    fn steward_llm_bad_env_falls_back() {
+        let config = test_config();
+        // env 提供商不存在 → 回落会话级
+        let (p, _) = resolve_steward_llm(&config, Some("minimax"), None, Some("nope"), None).unwrap();
+        assert_eq!(p.id, "minimax");
+        // env 模型不在提供商列表 → 回落会话级解析
+        let (_, m) = resolve_steward_llm(&config, Some("minimax"), None, None, Some("no-such-model"))
+            .unwrap();
+        assert_eq!(m, "MiniMax-M3");
+        // 无任何提供商 → 报错
+        let mut empty = test_config();
+        empty.providers = vec![];
+        let err = resolve_steward_llm(&empty, None, None, None, None).unwrap_err();
+        assert!(err.contains("未配置任何模型提供商"), "{err}");
     }
 
     #[tokio::test]
