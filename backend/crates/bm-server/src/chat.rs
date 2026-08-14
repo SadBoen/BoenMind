@@ -42,15 +42,19 @@ use crate::{AppState, PermissionDecision, api_error};
 
 /// 权限询问事件推送：经会话当前活跃 prompt 的 SSE 通道发给前端。
 /// prompt 结束后通道已移除 → 事件丢失（询问仍会超时 fail-closed，无泄漏）。
+/// 入参是 AppState 的 session_streams 组件（pi 权限桥与 bm 引擎桥共用；
+/// bm 引擎的 CompatEngine 建于 AppState 之前，只能拿组件）。
 pub async fn send_permission_request(
-    state: &AppState,
+    session_streams: &tokio::sync::Mutex<
+        HashMap<String, tokio::sync::mpsc::UnboundedSender<AgentStreamEvent>>,
+    >,
     session_id: &str,
     request_id: &str,
     extension_id: &str,
     capability: &str,
     message: &str,
 ) {
-    let tx = state.session_streams.lock().await.get(session_id).cloned();
+    let tx = session_streams.lock().await.get(session_id).cloned();
     if let Some(tx) = tx {
         let _ = tx.send(AgentStreamEvent::PermissionRequest {
             id: request_id.to_string(),

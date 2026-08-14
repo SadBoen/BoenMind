@@ -72,7 +72,7 @@ impl ExtensionUiHandler for PermissionBridge {
             .unwrap_or(&capability)
             .to_string();
         send_permission_request(
-            &self.state,
+            &self.state.session_streams,
             &self.session_id,
             &request.id,
             &extension_id,

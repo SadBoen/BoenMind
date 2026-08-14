@@ -94,14 +94,18 @@ impl AppState {
         db: Db,
         dual_writer: Option<Arc<bm_storage_turso::dual_write::DualWriter>>,
         compat: Option<Arc<compat_engine::CompatEngine>>,
+        session_streams: Arc<
+            Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<bm_core::agent::AgentStreamEvent>>>,
+        >,
+        permission_pending: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<PermissionDecision>>>>,
     ) -> Self {
         Self {
             config: Arc::new(RwLock::new(config)),
             db: Arc::new(db),
             agents: Arc::new(Mutex::new(HashMap::new())),
             aborts: Arc::new(Mutex::new(HashMap::new())),
-            session_streams: Arc::new(Mutex::new(HashMap::new())),
-            permission_pending: Arc::new(Mutex::new(HashMap::new())),
+            session_streams,
+            permission_pending,
             dual_writer,
             bm_aborts: Arc::new(Mutex::new(HashMap::new())),
             loop_agents: Arc::new(Mutex::new(HashMap::new())),
@@ -387,11 +391,28 @@ async fn serve_inner(
         }
     };
 
-    // B4 工具方向：QuickJS 插件引擎（bm 引擎的工具执行侧）。启动失败不阻断——
+    // B4/B5 工具方向：QuickJS 插件引擎（bm 引擎的工具执行侧）。启动失败不阻断——
     // bm 引擎退化为无工具模式（pi 路径不受影响，其引擎在 legacy 内）。
-    let compat = compat_engine::init_compat(&config).await;
+    // session_streams/permission_pending 先建（CompatEngine 建于 AppState 之前，
+    // 只拿这两个组件做权限询问路由），再共享给 AppState。
+    let session_streams: Arc<
+        Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<bm_core::agent::AgentStreamEvent>>>,
+    > = Arc::new(Mutex::new(HashMap::new()));
+    let permission_pending: Arc<
+        Mutex<HashMap<String, tokio::sync::oneshot::Sender<PermissionDecision>>>,
+    > = Arc::new(Mutex::new(HashMap::new()));
+    let compat =
+        compat_engine::init_compat(&config, session_streams.clone(), permission_pending.clone())
+            .await;
 
-    let state = AppState::new(config, db, dual_writer, compat);
+    let state = AppState::new(
+        config,
+        db,
+        dual_writer,
+        compat,
+        session_streams,
+        permission_pending,
+    );
     spawn_agent_sweeper(state.agents.clone(), state.loop_agents.clone());
     // C1 回收站超期清除：孤儿会话（sessions 表已删）事件保留 N 天后物理删除
     spawn_orphan_purger(state.dual_writer.clone());

@@ -175,7 +175,7 @@ fn build_loop_agent(
             compaction: Default::default(),
         },
         llm,
-        QuickJsToolExecutor::new(compat.cloned()),
+        QuickJsToolExecutor::new(compat.cloned(), session_id),
     ))
 }
 
