@@ -24,3 +24,4 @@ gui-test-screenshots/
 # bm-compat standalone 构建产物（未入 workspace 前的独立 target/lock）
 backend/crates/bm-compat/target/
 backend/crates/bm-compat/Cargo.lock
+.code-graph/
