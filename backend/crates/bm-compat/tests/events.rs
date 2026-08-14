@@ -12,7 +12,7 @@ use bm_compat::events::dispatch_extension_event;
 use bm_compat::extensions::PolicyProfile;
 use bm_compat::load::{load_extension, JsExtensionLoadSpec};
 
-use common::mock_services;
+use common::{mock_services, test_thread};
 
 /// Plugin subscribing to `startup` / `tool_result` and recording what it sees.
 const EVENT_PLUGIN: &str = r#"
@@ -151,4 +151,75 @@ async fn dispatch_empty_event_name_rejects() {
     );
 
     std::fs::remove_dir_all(entry.parent().unwrap()).ok();
+}
+
+/// B6 补充：handler 内发起 hostcall（pi.tool）的泵循环——ctx-compactor 的
+/// tool_result 修剪正是「事件 handler 里 read/write 落库」的组合场景。
+#[tokio::test(flavor = "current_thread")]
+async fn event_handler_hostcall_pumps() {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("bm-compat-evhc-{nanos}"));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    std::fs::write(
+        dir.join("package.json"),
+        r#"{ "name": "evhc-plugin", "version": "1.0.0" }"#,
+    )
+    .expect("pkg");
+    std::fs::write(
+        dir.join("index.ts"),
+        r#"
+export default function init(pi) {
+  globalThis.__hc_log = [];
+  pi.on("tool_result", async (event, ctx) => {
+    globalThis.__hc_log.push("handler-enter");
+    const r = await pi.tool("write", { path: "hc-probe.txt", content: "probe-" + String(event.toolName) });
+    globalThis.__hc_log.push("write-return:" + JSON.stringify(r));
+    return { done: true };
+  });
+  pi.registerTool({
+    name: "read_log",
+    description: "read log",
+    parameters: { type: "object" },
+    execute: async () => ({ log: globalThis.__hc_log.join(",") }),
+  });
+}
+"#,
+    )
+    .expect("index.ts");
+    let spec = JsExtensionLoadSpec::from_entry_path(dir.join("index.ts")).expect("spec");
+
+    let thread = test_thread(mock_services(), PolicyProfile::Permissive.to_policy()).await;
+    load_extension(&thread, &spec).await.expect("load");
+
+    let out = dispatch_extension_event(
+        &thread,
+        "tool_result",
+        serde_json::json!({ "type": "tool_result", "toolName": "web_search", "content": [{ "type": "text", "text": "x".repeat(300) }], "isError": false }),
+        serde_json::json!({ "cwd": dir.display().to_string() }),
+        Duration::from_secs(20),
+    )
+    .await
+    .expect("dispatch");
+    assert_eq!(out["done"], true, "handler 返回值应回读: {out}");
+
+    // handler 内 pi.tool hostcall 应经泵循环分发（MockServices 记录调用）
+    let log = bm_compat::execute::execute_tool(
+        &thread,
+        "read_log",
+        "call-1",
+        serde_json::json!({}),
+        serde_json::json!({}),
+        Duration::from_secs(10),
+    )
+    .await
+    .expect("read_log");
+    assert_eq!(
+        log["log"],
+        "handler-enter,write-return:{\"ok\":true}",
+        "handler 应进入且 hostcall 返回: {log}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
 }

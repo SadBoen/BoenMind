@@ -194,6 +194,13 @@ fn build_loop_agent(
     };
     let llm = OpenAiClient::new(resolve_llm_config(provider, model, thinking)?);
     let mut tools = bm_loop::ToolRegistry::new();
+    // B6：内置工具集 schema 进模型可见面（对齐 pi BUILTIN_TOOL_NAMES 全开），
+    // 执行侧 QuickJsToolExecutor 按名分派到 BuiltinTools
+    for tool in crate::builtin_tools::BuiltinTools::definitions() {
+        if let Err(err) = tools.register(tool.clone()) {
+            tracing::warn!(event = "bm.tool_register_failed", tool = %tool.name, error = %err.message);
+        }
+    }
     if let Some(compat) = compat {
         for tool in &compat.tools {
             // 快照在启动加载后固化；重名拒绝是防呆（工具名是 call_id 关联键）

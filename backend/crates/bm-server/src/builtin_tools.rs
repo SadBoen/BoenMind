@@ -73,6 +73,106 @@ impl BuiltinTools {
         &self.cwd
     }
 
+    /// 内置工具名（模型侧可见 + 插件 pi.tool 可调）。
+    pub const NAMES: [&'static str; 7] =
+        ["read", "write", "edit", "grep", "find", "ls", "bash"];
+
+    /// 内置工具的模型侧 schema（bm-loop ToolDef 形态；对齐 pi
+    /// BUILTIN_TOOL_NAMES 全开语义——模型可直接调 read/write/bash）。
+    pub fn definitions() -> Vec<bm_loop::model::ToolDef> {
+        vec![
+            bm_loop::model::ToolDef::new(
+                "read",
+                "Read a file's text content (relative or absolute path; offset/limit in bytes).",
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "Path to the file" },
+                        "offset": { "type": "integer", "description": "Byte offset to start from" },
+                        "limit": { "type": "integer", "description": "Max bytes to read" },
+                    },
+                    "required": ["path"],
+                }),
+            ),
+            bm_loop::model::ToolDef::new(
+                "write",
+                "Write content to a file. Creates the file and parent directories; overwrites if it exists.",
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "Path to the file" },
+                        "content": { "type": "string", "description": "Content to write" },
+                    },
+                    "required": ["path", "content"],
+                }),
+            ),
+            bm_loop::model::ToolDef::new(
+                "edit",
+                "Replace all occurrences of old_text with new_text in a file (literal match).",
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string" },
+                        "old_text": { "type": "string" },
+                        "new_text": { "type": "string" },
+                    },
+                    "required": ["path", "old_text", "new_text"],
+                }),
+            ),
+            bm_loop::model::ToolDef::new(
+                "grep",
+                "Recursively search files for a literal substring (ignore_case optional).",
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "pattern": { "type": "string" },
+                        "path": { "type": "string", "description": "Root directory (default: working dir)" },
+                        "ignore_case": { "type": "boolean" },
+                        "limit": { "type": "integer" },
+                    },
+                    "required": ["pattern"],
+                }),
+            ),
+            bm_loop::model::ToolDef::new(
+                "find",
+                "Recursively find files whose name contains the pattern.",
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "pattern": { "type": "string" },
+                        "path": { "type": "string" },
+                        "limit": { "type": "integer" },
+                    },
+                    "required": ["pattern"],
+                }),
+            ),
+            bm_loop::model::ToolDef::new(
+                "ls",
+                "List a directory's entries (directories marked with trailing '/').",
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string" },
+                        "limit": { "type": "integer" },
+                    },
+                }),
+            ),
+            bm_loop::model::ToolDef::new(
+                "bash",
+                "Run a shell command (Windows: cmd /C; others: /bin/sh -c). Returns {stdout, stderr, code, killed}.",
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "command": { "type": "string" },
+                        "cwd": { "type": "string" },
+                        "timeout": { "type": "integer", "description": "Timeout in ms (default 60000)" },
+                    },
+                    "required": ["command"],
+                }),
+            ),
+        ]
+    }
+
     /// 执行内置工具。名字不在内置表 → `unknown tool`（递归防护见模块注释）。
     pub async fn execute(&self, name: &str, input: serde_json::Value) -> ToolResult {
         match name.trim() {

@@ -571,6 +571,11 @@ impl CompatEngine {
                                 let _ = reply.send(res);
                             }
                             CompatCmd::DispatchEvent { name, payload, ctx, reply } => {
+                                let ctx_cwd = ctx
+                                    .get("cwd")
+                                    .and_then(serde_json::Value::as_str)
+                                    .map(str::to_string)
+                                    .unwrap_or_else(|| "<none>".to_string());
                                 let res = bm_compat::events::dispatch_extension_event(
                                     &thread,
                                     &name,
@@ -579,6 +584,21 @@ impl CompatEngine {
                                     EVENT_TIMEOUT,
                                 )
                                 .await;
+                                // 观测：事件名 + 结果摘要（不打 payload——含工具输出正文）
+                                let summary = match &res {
+                                    Ok(v) if v.is_null() => "null".to_string(),
+                                    Ok(v) => v.get("trimmed").map_or_else(
+                                        || "value".to_string(),
+                                        |_| "trimmed".to_string(),
+                                    ),
+                                    Err(e) => format!("error: {e}"),
+                                };
+                                tracing::info!(
+                                    event = "bm.plugin_event_done",
+                                    name = %name,
+                                    result = %summary,
+                                    ctx_cwd = %ctx_cwd,
+                                );
                                 let _ = reply.send(res);
                             }
                         }
@@ -807,55 +827,100 @@ impl QuickJsToolExecutor {
 
 impl ToolExecutor for QuickJsToolExecutor {
     async fn execute(&self, req: ToolCallRequest) -> ToolOutcome {
-        let Some(engine) = &self.engine else {
-            return ToolOutcome {
-                ok: false,
-                output: "插件引擎未启用（bm-compat 启动失败或已禁用）".to_string(),
-                meta: None,
-            };
-        };
-
-        // tool_call 事件（fire-and-forget；handler 可 block——B6 先不消费返回值）
+        // tool_call 事件（fire-and-forget；handler 可 block——B6 先不消费返回值）。
+        // 内置与插件工具两个路径都发（插件钩子按 toolName 自行过滤）。
         let ctx = self.event_ctx();
-        let payload = serde_json::json!({
-            "type": "tool_call",
-            "toolName": req.name,
-            "toolCallId": req.call_id,
-            "input": req.args,
-        });
-        if let Err(err) = engine.dispatch_event("tool_call", payload, ctx.clone()).await {
-            tracing::debug!(event = "bm.plugin_event_failed", name = "tool_call", error = %err);
+        if let Some(engine) = &self.engine {
+            let payload = serde_json::json!({
+                "type": "tool_call",
+                "toolName": req.name,
+                "toolCallId": req.call_id,
+                "input": req.args,
+            });
+            if let Err(err) = engine.dispatch_event("tool_call", payload, ctx.clone()).await {
+                tracing::debug!(event = "bm.plugin_event_failed", name = "tool_call", error = %err);
+            }
         }
 
-        let outcome = match engine
-            .execute(&req.name, &req.call_id, req.args.clone(), TOOL_TIMEOUT_MS, &self.session_id)
-            .await
-        {
-            Ok(value) => ToolOutcome {
-                ok: true,
-                output: tool_result_text(&value),
-                meta: Some(value.clone()),
-            },
-            Err(err) => ToolOutcome {
-                ok: false,
-                output: err.clone(),
-                meta: None,
-            },
+        // 分派：内置工具名 → BuiltinTools（闭合表，递归防护与 execute_tool
+        // 端口一致）；其余 → QuickJS 插件引擎。
+        let outcome = if crate::builtin_tools::BuiltinTools::NAMES.contains(&req.name.as_str()) {
+            let builtin = BuiltinTools::new(
+                self.engine
+                    .as_ref()
+                    .map(|e| e.working_dir.clone())
+                    .unwrap_or_default(),
+            );
+            match builtin.execute(&req.name, req.args.clone()).await {
+                Ok(value) => ToolOutcome {
+                    ok: true,
+                    output: tool_result_text(&value),
+                    meta: Some(value),
+                },
+                Err(err) => ToolOutcome {
+                    ok: false,
+                    output: err.to_string(),
+                    meta: None,
+                },
+            }
+        } else {
+            let Some(engine) = &self.engine else {
+                return ToolOutcome {
+                    ok: false,
+                    output: "插件引擎未启用（bm-compat 启动失败或已禁用）".to_string(),
+                    meta: None,
+                };
+            };
+            match engine
+                .execute(&req.name, &req.call_id, req.args.clone(), TOOL_TIMEOUT_MS, &self.session_id)
+                .await
+            {
+                Ok(value) => ToolOutcome {
+                    ok: true,
+                    output: tool_result_text(&value),
+                    meta: Some(value.clone()),
+                },
+                Err(err) => ToolOutcome {
+                    ok: false,
+                    output: err.clone(),
+                    meta: None,
+                },
+            }
         };
 
-        // tool_result 事件（ctx-compactor 的修剪 hook 在此；value = 完整返回包）
-        let payload = serde_json::json!({
-            "type": "tool_result",
-            "toolName": req.name,
-            "toolCallId": req.call_id,
-            "input": req.args,
-            "content": outcome.meta.clone().unwrap_or_else(|| serde_json::json!({ "error": outcome.output.clone() })),
-            "isError": !outcome.ok,
-        });
-        if let Err(err) = engine.dispatch_event("tool_result", payload, ctx).await {
-            tracing::debug!(event = "bm.plugin_event_failed", name = "tool_result", error = %err);
+        // tool_result 事件（ctx-compactor 的修剪 hook 在此）。
+        // payload 形状对齐 legacy ToolResult 事件：content = ContentBlock
+        // 数组（插件返回包的 content 字段优先，无则文本块兜底）——插件钩子
+        // （extractText）按此形状消费。
+        if let Some(engine) = &self.engine {
+            let payload = serde_json::json!({
+                "type": "tool_result",
+                "toolName": req.name,
+                "toolCallId": req.call_id,
+                "input": req.args,
+                "content": content_blocks(&outcome),
+                "details": outcome.meta.as_ref().and_then(|m| m.get("details")).cloned(),
+                "isError": !outcome.ok,
+            });
+            if let Err(err) = engine.dispatch_event("tool_result", payload, ctx).await {
+                tracing::debug!(event = "bm.plugin_event_failed", name = "tool_result", error = %err);
+            }
         }
         outcome
+    }
+}
+
+/// 工具结果 → legacy `ToolResult` 事件同款 content 块数组（ctx-compactor
+/// 的 `extractText` 消费此形状；无 content 数组时文本块兜底保真）。
+fn content_blocks(outcome: &ToolOutcome) -> serde_json::Value {
+    match outcome
+        .meta
+        .as_ref()
+        .and_then(|m| m.get("content"))
+        .and_then(serde_json::Value::as_array)
+    {
+        Some(blocks) if !blocks.is_empty() => serde_json::Value::Array(blocks.clone()),
+        _ => serde_json::json!([{ "type": "text", "text": outcome.output }]),
     }
 }
 
@@ -1075,6 +1140,27 @@ mod tests {
         let v = serde_json::json!({ "content": [{ "type": "image", "data": "AAAA" }] });
         let text = tool_result_text(&v);
         assert!(text.contains("image"), "JSON 兜底应保留原始输出: {text}");
+    }
+
+    #[test]
+    fn content_blocks_prefers_plugin_blocks() {
+        // 插件返回包带 content 数组 → 原样透传（ctx-compactor extractText 消费）
+        let ok = ToolOutcome {
+            ok: true,
+            output: "你好".into(),
+            meta: Some(serde_json::json!({
+                "content": [{ "type": "text", "text": "你好" }],
+                "details": { "x": 1 },
+            })),
+        };
+        assert_eq!(content_blocks(&ok), serde_json::json!([{ "type": "text", "text": "你好" }]));
+        // 无 meta（错误）→ 文本块兜底保真
+        let err = ToolOutcome {
+            ok: false,
+            output: "boom".into(),
+            meta: None,
+        };
+        assert_eq!(content_blocks(&err), serde_json::json!([{ "type": "text", "text": "boom" }]));
     }
 
     #[test]
