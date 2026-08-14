@@ -1,12 +1,12 @@
 # HANDOFF —— 阶段 1 开工交接（两线并行）
 
-> **当前状态（2026-08-14 夜轮收口，CI 全绿）**：主线 A（A1-A7）+ 主线 B（B1-B6）**全部落地**；30 轮 pi/bm 双开对比完成（bm 记忆 5/5 vs pi 4/5）；**顺手件轮四项全部落地**——governance.memorize 雏形（remember 入口接通）/ CI 质量门拆 4 并行 job（含 bm-compactor/bm-memory 补门禁）/ 水线 0.8→0.5 + 10 轮真实复测（发送量 −53.5%、峰值 −40%，压到 pi 量级以下）/ session 端口 getmessagesurface 集成测试。**拍切换数据就绪，待用户拍板**（默认值反转 + 前端开关）。
+> **当前状态（2026-08-14 白天轮收口）**：主线 A（A1-A7）+ 主线 B（B1-B6）**全部落地**；30 轮 pi/bm 双开对比完成（bm 记忆 5/5 vs pi 4/5）；顺手件轮四项全部落地（governance.memorize / CI 4 并行 job / 水线 0.5 复测 / session 集成测试）。**白天轮新增两项收口**：**413 会话污染修复**（超限工具结果双点裁剪：写入时 >5MB 截断留头尾 + 投影时同款裁剪自愈旧污染，e0e1224）——切换前待办清零；**切换机制接线**（bc3b299）——settings.loop_engine 持久化 + env>settings>默认 pi 优先级 + 前端「执行引擎」设置页三态选择（跟随默认/自研 bm/上游 pi，i18n×4）。**默认值未反转，剩用户一句话**：拍板后改 `resolve_loop_engine` 的 `"pi"` → `"bm"` 一处即可（前端开关已就位，无需再动）。
 > - A 线：执行级事件日志（A1-A5）+ 自研 loop（A6 主体 + 接线：`BM_LOOP_ENGINE=bm` 开关/流式/工具/取消）+ A7 迁移骨架
 > - B 线：B1 拷入 + B2 host 线程 + B3 加载路径 + B4 工具执行方向 + B5 权限桥（http 真实现）+ **B6 收口（内置工具集端口/决策记忆/插件事件推送/切片②顺手件）**
 > - **v0.17 压缩策略插件化拆解**：bm-loop 只留 Compactor 接口 + 事务协议，bm-compactor 新插件 crate（参数插件自治，可换可关）
 > - 双开对比（产物 artifacts/2026-08-14-dual-compare/）：pi 888.6K 发送量 / 峰值 94.1K / 49min vs bm 2263.0K（∑input 口径，缓存命中 2138K）/ 峰值 205.7K / 39.5min——**bm 发送量高 2.5× 主因水线 0.8 vs pi 0.5（插件参数，可调）+ 压缩后尾巴更长**；质量不降（记忆 5/5 vs 4/5）
 > - 真实验收：bm 引擎 4 项（切片①）+ hello 工具全链路（B4）+ web_search×2/web_fetch×1（B5）+ **B6 三插件全链路（10 轮真实会话）+ 双开对比 60 轮**
-> - **剩：切换拍板**（BM_LOOP_ENGINE 默认值反转 + 前端开关——水线已调 0.5 且 10 轮复测通过：发送量 287.3K vs 0.8 组 617.8K 同口径 −53.5%、压缩后轮末 3.6K vs 144.9K，详见 artifacts/2026-08-14-waterline-retest/SUMMARY.md）+ 413 会话污染修复（§〇·五 21，切换前待办）。开工前先 git pull。
+> - **剩：切换拍板（默认值反转一处）**——切换机制已全部就位（前端开关/持久化/优先级），水线已定稿 0.5 且 10 轮复测通过，413 修复已落地。用户说"切换"= 一行改动 + 重启生效。
 >
 > **轮次历史**（细节见 §〇 commit 索引；查实/坑全量见 §〇·五）：
 >
@@ -21,6 +21,13 @@
 > | B6 收口轮 | 内置工具集端口 + 决策记忆 + 插件事件推送 + 切片② | f81594b, 8b6b725 | 桥调用约定实证（首个 secret 实参不绑定 JS 形参）；tool_result 事件 content 须对齐 legacy ContentBlock 数组；内置工具须进模型可见面（pi BUILTIN_TOOL_NAMES 全开同款）；SELF_TOOLS 跳过 web_search 是插件设计非 bug；目录型插件须 extension.json；debug exe 2GB 坑（CARGO_PROFILE_DEV_DEBUG=0）
 
 ## 〇、本次会话 commit 索引（main 已推送，工作区干净）
+
+### 白天轮（413 修复 + 切换机制接线，2026-08-14）
+
+| commit | 内容 |
+|---|---|
+| `e0e1224` | **fix(loop)：413 会话污染修复（§〇·五 21，切换前待办清零）**：`clip_tool_output` 双点防线——写入时 >5MB 截断留头 60%/尾 40%（预算=上限−1024 保证裁剪结果≤上限、重复裁剪幂等，UTF-8 char 边界安全，meta 记 truncated/original_bytes）+ 投影时同款裁剪（旧版污染日志/pi 路径原始写入自愈，模型请求永不携带超限内容）；run-compare.mjs 回复记录 200K 截断（§〇·五 21②——查实：SSE 工具事件不带 content，脚本唯一内容通道是 textDelta 回显，防回显撑爆 out）；5 新测试（边界/幂等/写入链/投影自愈/超限集成）全绿，clippy 清零 |
+| `bc3b299` | **feat(engine)：切换机制接线（§九·1 的机制部分，默认值未反转）**：AppConfig.loop_engine 持久化字段（settings 同款）+ `resolve_loop_engine` 优先级 env(双开通道)>settings(前端开关)>默认 pi（**反转点收敛此一处**，拍板后改 "pi"→"bm" 即切换）+ chat.rs 调用点接入 + 前端「执行引擎」设置页（三态：跟随默认/自研 bm/上游 pi，AppearanceSettings 卡片同款 + i18n×4 + 导航注册表 engine tab）+ 7 断言优先级测试（**测试抓出 env 空串不穿透 settings 的洞**，修成 and_then 逐层过滤）。后端 68+85 测试全绿、clippy 双档清零、前端 tsc+vite+oxlint 0 错误（2 warning 为 navigation 注册表存量） |
 
 ### 并行顺手件轮（governance.memorize + CI 拆并行 + 水线 0.5 复测 + session 集成测试）
 
@@ -127,10 +134,11 @@
 18. **chars/4 粗估对中文低估约 2×**：压缩水线判定必须用 max(粗估, 上一请求真实 usage input)——否则中文手册场景水线形同虚设（实测上下文涨到 217K 零触发）。修法：engine.rs `last_real_input` 校准。
 19. **pi 会话句柄断连后坏死**：SSE 断连后 pi 引擎未清理句柄，后续 prompt 1 秒即 false（total_tokens=0）——重启服务 + run-compare `--resume` 可续（重启后 MiniMax 缓存口径变化，报告注明）。
 20. **双开对比操作**：两引擎同 prompt 集（rounds.mjs 30 轮）、独立工作区（COMPARE_WORKDIR）、RUST_LOG 须含 `bm_loop=info`（bm 引擎 usage 日志在 bm_loop::engine 不在 bm_server）；分析用 analyze.mjs（pi 组）+ 口径换算（bm 组发送量=∑input）。
-21. **MiniMax 413 会话污染（水线复测新坑）**：MiniMax 请求体上限 128MB——某工具返回 ~207MB 内容（约 96s 慢调用，疑 web 抓取；payload 不打日志无法定位具体工具）落进 event_log 后，该会话每次重建历史都超限、永久 413（重试/重启服务均无效，投影从 event_log 重建）。**切换前待办**：① bm-loop 对超限工具结果裁剪后再入历史；② 复测脚本对 tool_result 超限截断。本坑与水位参数无关（模型工具行为方差）。
+21. **MiniMax 413 会话污染（✅ 已修复 e0e1224）**：MiniMax 请求体上限 128MB——某工具返回 ~207MB 内容（约 96s 慢调用，疑 web 抓取；payload 不打日志无法定位具体工具）落进 event_log 后，该会话每次重建历史都超限、永久 413（重试/重启服务均无效，投影从 event_log 重建）。修复=bm-loop `clip_tool_output` 双点（写入裁剪防新污染 + 投影裁剪自愈旧污染/pi 路径原始写入），>5MB 截断留头 60%/尾 40%、预算=上限−1024（幂等）、meta 记原始字节；复测脚本 reply 记录 200K 截断（查实：SSE 工具事件无 content，脚本唯一内容通道是 textDelta）。本坑与水位参数无关（模型工具行为方差）。
 22. **压缩事务计数更正**：交接此前写 bm"4 次压缩事务"，日志实为 5 次（`bm.loop_compacted`：turn 9/12/16/21/30，可能少计 turn 30）；0.5 水线下触发点前移（65K）且压得更狠（压后轮末 3.6K），长程频次会更高。
 23. **governance.memorize 雏形规则**（cf6cd33）：触发词「记住」/「remember」（英文大小写不敏感、只取第一处）；提取触发词后文本、去前导分隔符、200 字符硬截断；负向指令/多事实/纠错/LLM 提炼都留 Steward 轮。事件 bm.memory_remembered 只记字符数（用户内容不打日志纪律）。
 24. **CI 4 并行 job 拆法**（6ab80d6）：quality-test / quality-clippy（存量 bm-core/bm-server --lib，编译最重单独成 job）/ quality-clippy-kernel（内核四件套+bm-compactor/bm-memory --all-targets + bm-compat）/ quality-frontend；全无 needs 依赖；Rust job 均带 CARGO_PROFILE_DEV_DEBUG=0 + CARGO_INCREMENTAL=0；rust-cache 钉 v2.9.1（Node 20 EOL 坑）。
+25. **切换机制接线（bc3b299，查证录补）**：引擎选择优先级 = env `BM_LOOP_ENGINE`（双开对比调试通道）> settings `loop_engine`（前端开关持久化）> 默认 `"pi"`；**反转点收敛在 `bm_engine::resolve_loop_engine` 一处**（拍板后改默认值即完成切换）。坑：`Option::or` 对 Some("") 不穿透——env 设了空串会顶掉 settings 值，须 and_then 逐层 trim+过滤（测试抓出）。前端开关三态（None=跟随默认 / "bm" / "pi"）：null 保存为 undefined（JSON 序列化丢弃字段，后端 serde default 回落 None）。
 
 ## 一、一句话现状
 
@@ -233,14 +241,13 @@
 
 ## 九、下一轮续接建议开场
 
-> 继续 BoenMind 阶段 1。交接见 docs/HANDOFF_KERNEL_PHASE1.md。**并行顺手件轮四项全部落地 + 拍切换数据就绪（本会话）**：governance.memorize 雏形（remember 入口）/ CI 质量门拆 4 并行 job（含 bm-compactor/bm-memory 补门禁）/ 水线 0.8→0.5 + 10 轮真实复测（发送量 −53.5%、峰值 −40%，压到 pi 量级以下）/ session getmessagesurface 集成测试。开工前仍先 git pull。
+> 继续 BoenMind 阶段 1。交接见 docs/HANDOFF_KERNEL_PHASE1.md。**白天轮两项收口（本会话）**：413 会话污染修复（双点裁剪，切换前待办清零）+ 切换机制接线（settings.loop_engine + 前端三态开关 + env>settings>默认优先级）。开工前仍先 git pull。
 >
 > **下一轮动作**：
-> 1. **拍切换（数据已就绪）**——用户拍板 BM_LOOP_ENGINE 默认值反转与前端开关。复测结论支持水线定稿 0.5（发送量压到 pi 量级以下、峰值 −40%、压后轮末 3.6K vs 144.9K）；切换 = chat.rs 默认值反转 + 前端开关接线（引擎选择走配置持久化 settings.json 同款，而非每次读 env）。
-> 2. **413 会话污染修复（切换前待办，§〇·五 21）**：bm-loop 对超限工具结果裁剪（如 >5MB 截断留头尾）后再入历史/落日志——否则长会话迟早撞 MiniMax 128MB 请求体上限，双开对比与真实使用都会再踩。
-> 3. 可选顺手件：新会话记忆注入真实冒烟（facts.md 写一条 → bm 引擎聊天看注入；unit 级已测，缺真模型链路）、subagent 工具、复测脚本 tool_result 上限（§〇·五 21②）。
+> 1. **拍切换（机制已就绪，剩一句话）**——用户拍板后把 `bm_engine::resolve_loop_engine` 的默认 `"pi"` 改为 `"bm"`（一处），前端开关与持久化已就位。复测结论支持水线定稿 0.5（发送量压到 pi 量级以下、峰值 −40%、压后轮末 3.6K vs 144.9K），413 修复已落地——切换前待办全部清零。
+> 2. 可选顺手件：新会话记忆注入真实冒烟（facts.md 写一条 → bm 引擎聊天看注入；unit 级已测，缺真模型链路）、subagent 工具（B 线之外新方向，需先讨论）、双开对比复跑（0.5 水线 + 413 修复后 30 轮全量，验证发送量预测与不再污染）。
 >
-> **注意坑**（详见 §〇·五 16-24 + 既有全量）：MiniMax 流式须 stream_options.include_usage、缓存字段在 prompt_tokens_details.cached_tokens、pi/bm 两组 input 口径不同（对比换算）、chars/4 中文低估须真实 usage 校准、pi 句柄断连坏死重启+resume、双开 RUST_LOG 须含 bm_loop=info、**MiniMax 请求体 128MB 上限（超限工具结果永久污染会话，§〇·五 21）**、压缩事务实际 5 次（§〇·五 22）、bm-memory 每会话 open facts.md（多会话并发写靠单行 append 容忍，全局单例留 Steward 轮）、桥调用首参 secret 不绑定形参、tool_result 事件 content 用 ContentBlock 数组、内置工具 schema 要注册进 ToolRegistry、SELF_TOOLS 跳过搜索类工具是设计、目录型插件须 extension.json、Disposer 纪律、turso 绑定形态、fork 超头拒绝、standalone 起服务 `--features embed`、bm-compat 测试走 `--test host --test load --test execute --test events --test session`、CompatEngine 专用线程（命令通道 oneshot 回结果）、payload 全文不打日志。
+> **注意坑**（详见 §〇·五 16-25 + 既有全量）：MiniMax 流式须 stream_options.include_usage、缓存字段在 prompt_tokens_details.cached_tokens、pi/bm 两组 input 口径不同（对比换算）、chars/4 中文低估须真实 usage 校准、pi 句柄断连坏死重启+resume、双开 RUST_LOG 须含 bm_loop=info、**413 已修（clip_tool_output 双点，>5MB 留头尾；超限不再污染会话）**、压缩事务实际 5 次（§〇·五 22）、bm-memory 每会话 open facts.md（多会话并发写靠单行 append 容忍，全局单例留 Steward 轮）、桥调用首参 secret 不绑定形参、tool_result 事件 content 用 ContentBlock 数组、内置工具 schema 要注册进 ToolRegistry、SELF_TOOLS 跳过搜索类工具是设计、目录型插件须 extension.json、Disposer 纪律、turso 绑定形态、fork 超头拒绝、standalone 起服务 `--features embed`、bm-compat 测试走 `--test host --test load --test execute --test events --test session`、CompatEngine 专用线程（命令通道 oneshot 回结果）、payload 全文不打日志、**引擎优先级 env>settings>默认（反转点 resolve_loop_engine 一处；env 空串穿透坑已修）**。
 
 ## 九·三、A6 接线设计（2026-08-14 夜轮定稿 → 白天轮切片①落地）
 
@@ -284,3 +291,5 @@
 | governance.memorize 雏形 | ✅ 落地（cf6cd33） | remember 入口接通（记住指令 → facts.md）+ 注入链路测试；终态留 Steward 轮 |
 | 水线 0.8→0.5 + 复测 | ✅ 落地（e6e09c2） | 10 轮真实复测：发送量 −53.5%、峰值 −40%、压后轮末 3.6K；数据支撑拍切换 |
 | session 集成测试 | ✅ 落地（86dc798） | tests/session.rs 4 用例（pi.session 全链路）；查实无白名单透传 |
+| 413 会话污染修复 | ✅ 落地（e0e1224） | clip_tool_output 双点（写入裁剪 + 投影自愈）+ 复测脚本 reply 截断；5 测试全绿——**切换前待办清零** |
+| 切换机制接线 | ✅ 落地（bc3b299） | settings.loop_engine 持久化 + env>settings>默认优先级（反转点一处）+ 前端三态选择器 + i18n×4——**默认值反转待用户拍板** |
