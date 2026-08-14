@@ -14,7 +14,7 @@ name: Release
 
 on:
   push:
-    branches: ["main"] # 日常 push 只跑质量门（quality job）
+    branches: ["main"] # 日常 push 只跑质量门（4 并行 job）
     tags: ["v*"]       # 打 tag 全量构建发布
   workflow_dispatch: {}
 
@@ -28,18 +28,101 @@ env:
 
 jobs:
   # ============================================================
-  # 质量门：后端测试 + clippy（-D warnings）+ 前端 strict 类型检查 + lint。
+  # 质量门：后端测试 / 后端 clippy（-D warnings）/ 前端 strict 类型检查 + lint。
+  # 拆 4 个并行 job（无 needs 依赖）：push main 全跑，任一红即拦；
+  # 打 tag / 手动触发时与构建链并行，不阻塞发布构建。
   # 构建前拦截回归（曾出现 0 测试、CI 只验证"能编译"的问题）。
   # ============================================================
-  quality:
-    name: 质量门 (test + lint)
+  # ---------- quality-test：后端测试 ----------
+  quality-test:
+    name: 质量门 - 后端测试
     runs-on: ubuntu-24.04
-    # 磁盘治理：pi 引擎依赖树极重（swc/tree-sitter 等 500+），test 与 clippy
-    # 两遍编译共享 target 会撑爆 runner 磁盘（曾报 No space left on device）。
-    # 质量门不需要调试符号：dev profile 关 debuginfo + 关增量缓存，体积降 ~60%。
+    # 磁盘治理：pi 引擎依赖树极重（swc/tree-sitter 等 500+），曾报
+    # No space left on device。质量门不需要调试符号：dev profile 关 debuginfo
+    # + 关增量缓存，体积降 ~60%。
     env:
       CARGO_PROFILE_DEV_DEBUG: "0"
       CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # 钉 v2.9.1：浮动 v2 会解析到基于 Node 20 运行时的新版（Node 20 已 EOL，runner 侧报错）
+      - uses: Swatinem/rust-cache@v2.9.1
+        with:
+          workspaces: backend
+
+      # bm-compactor / bm-memory 为 2026-08 补进：两 crate 有 lib 测试 +
+      # tests/architecture.rs（架构红线），此前 CI 从未覆盖；`cargo test -p`
+      # 默认连带 integration tests 一起跑，架构测试随本行覆盖。
+      - name: 后端测试
+        working-directory: backend
+        run: cargo test -p bm-core -p bm-server -p bm-protocol -p bm-kernel -p bm-storage-turso -p bm-loop -p bm-event-log-tests -p bm-compactor -p bm-memory
+
+      # bm-compat 单独一行：其 lib test 目标包含 vendored 6 文件的 upstream
+      # mod tests（B1 遗留 TODO，见 crates/bm-compat/README.md），故只跑
+      # B2/B3/B4/B6 事件分发的集成测试目标（--test 参数不能与其他 -p 混用）。
+      - name: 后端测试（bm-compat host/load/execute/events 集成）
+        working-directory: backend
+        run: cargo test -p bm-compat --test host --test load --test execute --test events --test session
+
+  # ---------- quality-clippy：存量 crate（编译最重的一档，单独成 job） ----------
+  quality-clippy:
+    name: 质量门 - 后端 clippy（存量）
+    runs-on: ubuntu-24.04
+    # 同 quality-test 的磁盘治理：clippy 也整树编译一遍，同样关 debuginfo + 增量缓存。
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # 钉 v2.9.1：浮动 v2 会解析到基于 Node 20 运行时的新版（Node 20 已 EOL，runner 侧报错）
+      - uses: Swatinem/rust-cache@v2.9.1
+        with:
+          workspaces: backend
+
+      - name: clippy（-D warnings，存量 crate）
+        working-directory: backend
+        run: cargo clippy -p bm-core -p bm-server --lib --no-deps -- -D warnings
+
+  # ---------- quality-clippy-kernel：内核四件套 + bm-compat ----------
+  quality-clippy-kernel:
+    name: 质量门 - 后端 clippy（内核 + bm-compat）
+    runs-on: ubuntu-24.04
+    # 同 quality-test 的磁盘治理：clippy 也整树编译一遍，同样关 debuginfo + 增量缓存。
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # 钉 v2.9.1：浮动 v2 会解析到基于 Node 20 运行时的新版（Node 20 已 EOL，runner 侧报错）
+      - uses: Swatinem/rust-cache@v2.9.1
+        with:
+          workspaces: backend
+
+      # 内核四件套 --all-targets 全开；bm-compactor / bm-memory 2026-08 补进，
+      # 此前 CI 从未 lint（--all-targets 连带 tests/architecture.rs 架构红线）。
+      - name: clippy（-D warnings，内核四件套）
+        working-directory: backend
+        run: cargo clippy -p bm-protocol -p bm-kernel -p bm-storage-turso -p bm-loop -p bm-event-log-tests -p bm-compactor -p bm-memory --all-targets --no-deps -- -D warnings
+
+      # bm-compat：lib + B2/B3/B4/B6 事件分发集成测试。B1 拷入文件的存量 lint 已在
+      # manifest [lints] 表放行（红线：拷贝文件逐字节一致），新代码仍受 -D warnings。
+      - name: clippy（-D warnings，bm-compat）
+        working-directory: backend
+        run: cargo clippy -p bm-compat --lib --test host --test load --test execute --test events --test session --no-deps -- -D warnings
+
+  # ---------- quality-frontend：前端 strict 类型检查 + lint ----------
+  quality-frontend:
+    name: 质量门 - 前端 (strict 类型检查 + lint)
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -51,37 +134,6 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2.9.1
-        with:
-          workspaces: backend
-
-      - name: 后端测试
-        working-directory: backend
-        run: cargo test -p bm-core -p bm-server -p bm-protocol -p bm-kernel -p bm-storage-turso -p bm-loop -p bm-event-log-tests
-
-      # bm-compat 单独一行：其 lib test 目标包含 vendored 6 文件的 upstream
-      # mod tests（B1 遗留 TODO，见 crates/bm-compat/README.md），故只跑
-      # B2/B3/B4/B6 事件分发的集成测试目标（--test 参数不能与其他 -p 混用）。
-      - name: 后端测试（bm-compat host/load/execute/events 集成）
-        working-directory: backend
-        run: cargo test -p bm-compat --test host --test load --test execute --test events
-
-      - name: 后端 clippy（-D warnings，存量 crate）
-        working-directory: backend
-        run: cargo clippy -p bm-core -p bm-server --lib --no-deps -- -D warnings
-
-      - name: 后端 clippy（-D warnings，内核四件套）
-        working-directory: backend
-        run: cargo clippy -p bm-protocol -p bm-kernel -p bm-storage-turso -p bm-loop -p bm-event-log-tests --all-targets --no-deps -- -D warnings
-
-      # bm-compat：lib + B2/B3/B4/B6 事件分发集成测试。B1 拷入文件的存量 lint 已在
-      # manifest [lints] 表放行（红线：拷贝文件逐字节一致），新代码仍受 -D warnings。
-      - name: 后端 clippy（-D warnings，bm-compat）
-        working-directory: backend
-        run: cargo clippy -p bm-compat --lib --test host --test load --test execute --test events --no-deps -- -D warnings
 
       - name: 前端依赖
         working-directory: frontend
