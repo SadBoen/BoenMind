@@ -2,9 +2,18 @@
 name = "bm-loop"
 version = "0.1.0"
 edition = "2024"
-description = "自研 ReactLoopAgent（主线 A6）：turn/step 双层循环 + 五扩展点 + 工具注册表（骨架）"
+description = "自研 ReactLoopAgent（主线 A6）：turn/step 双层循环 + 五扩展点 + 工具注册表 + OpenAI 兼容流式 client + 压缩双触发"
 
 [dependencies]
 bm-protocol = { workspace = true }
+bm-kernel = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1.19"
+# reqwest 流式（rustls，无 openssl）——OpenAI 兼容端点 SSE 消费
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+# SSE 流构造（stream! 宏）：OpenAiClient 返回的统一流形态
+async-stream = "0.3"
+sha2 = "0.10"
+tracing = "0.1"

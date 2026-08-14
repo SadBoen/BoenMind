@@ -29,6 +29,15 @@ pub struct ToolCtx {
     pub args: serde_json::Value,
 }
 
+/// 工具执行闸门（on_tool_pre 返回）：允许 / 拒绝（拒绝原因进工具结果，
+/// 模型可见——"模型可见即已记录"）。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum ToolGate {
+    #[default]
+    Allow,
+    Deny(String),
+}
+
 /// 回合停止判定上下文（turn-stopping）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StopCtx {
@@ -49,8 +58,11 @@ pub trait LoopHooks: Send + Sync {
         false
     }
 
-    /// 工具执行前（权限/预算挂点：拒绝即不执行）。
-    fn on_tool_pre(&mut self, _ctx: &ToolCtx) {}
+    /// 工具执行前（权限/预算挂点）：返回 [`ToolGate::Deny`] 即不执行——
+    /// loop 把拒绝原因作为工具结果落日志（模型可见）。
+    fn on_tool_pre(&mut self, _ctx: &ToolCtx) -> ToolGate {
+        ToolGate::Allow
+    }
 
     /// 工具执行后（输出审计/记忆写入挂点）。
     fn on_tool_post(&mut self, _ctx: &ToolCtx, _ok: bool) {}

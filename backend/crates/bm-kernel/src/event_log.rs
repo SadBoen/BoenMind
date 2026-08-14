@@ -208,12 +208,11 @@ impl EventLog {
         upto: Option<u64>,
     ) -> Result<Vec<Vec<SessionEvent>>, ProtocolError> {
         let heads = self.store.branch_heads(session_id).await?;
-        let head = heads.iter().find(|h| h.branch_id == *branch_id).ok_or_else(|| {
-            ProtocolError::new(
-                bm_protocol::ErrorCode::ForkConflict,
-                format!("unknown branch `{branch_id}`"),
-            )
-        })?;
+        let Some(head) = heads.iter().find(|h| h.branch_id == *branch_id) else {
+            // 无头行 = 该分支从未写入（新会话首次投影 / 回收站清除后）：
+            // 读路径按空历史处理（投影零消息）；fork 等写路径自有严格校验
+            return Ok(Vec::new());
+        };
         let mut segs = match &head.parent_branch {
             Some(parent) => {
                 let fork_at = head.forked_at.unwrap_or(0);
@@ -675,6 +674,18 @@ mod tests {
         let log = EventLog::new(Arc::new(InMemoryEventStore::new()));
         let err = log.fork(&sid(), &BranchId::new("br_nope")).await.unwrap_err();
         assert_eq!(err.code(), ErrorCode::ForkConflict);
+    }
+
+    #[tokio::test]
+    async fn derive_messages_on_fresh_session_is_empty_not_error() {
+        // 全新会话（main 无头行）的读路径按空历史处理：投影零消息，
+        // 不报 unknown branch（A6 自研 loop 首步投影依赖此语义；
+        // fork 等写路径保留严格校验）
+        let log = EventLog::new(Arc::new(InMemoryEventStore::new()));
+        let msgs = log.derive_messages(&sid(), &main_branch()).await.unwrap();
+        assert!(msgs.is_empty());
+        let vis = log.visible_events(&sid(), &main_branch()).await.unwrap();
+        assert!(vis.is_empty());
     }
 
     #[tokio::test]

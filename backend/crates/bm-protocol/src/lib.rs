@@ -23,7 +23,7 @@ pub use error::{ErrorCode, ProtocolError};
 pub use event::{
     AssistantMsg, CompactionSummaryMsg, CoreEvent, CustomEvent, EpochHeader, EventKind,
     FormatMigration, HeaderReason, SessionEvent, StreamChunk, TodoItem, TokenUsage,
-    ToolResultMsg, TurnEndReason, UserMsg, UserMsgSource, FORMAT_MIGRATIONS,
+    ToolResultMsg, TurnEndReason, UserMsg, UserMsgSource, core_type_name, FORMAT_MIGRATIONS,
     SESSION_FORMAT_VERSION,
 };
 pub use ids::{BranchId, CallId, GlobalSeq, SeqNo, SessionId};
