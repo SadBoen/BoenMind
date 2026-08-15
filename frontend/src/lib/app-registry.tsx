@@ -144,7 +144,12 @@ function CodingPlaceholder() {
 
 /** 单页应用的滚动容器（PluginsSettings/StewardSettings 原依赖三栏壳面板的滚动，此处由壳补齐） */
 function ScrollPage({ children }: { children: ReactNode }) {
-  return <div className="h-full min-w-0 overflow-y-auto bg-background">{children}</div>;
+  // p-6 与 SettingsPage 内容边距一致（窗口化后内容贴边框会显得间距不对）
+  return (
+    <div className="h-full min-w-0 overflow-y-auto bg-background p-6">
+      <div className="mx-auto max-w-3xl">{children}</div>
+    </div>
+  );
 }
 
 function PluginsAppView() {

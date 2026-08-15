@@ -88,6 +88,12 @@
 - **Dock 悬停放大** scale-110→125 + 上浮 6px。
 - **视觉 MCP 打通**：本会话工具列表无 minimax 工具（配置已就绪但未加载），改为直调 MiniMax M3 API（config.json 的 key/base_url）识图验证——两次截图复核均通过，以后可复用此工作流。
 
+**四次迭代（用户看实物再反馈，同日）**：
+- **窗口切换穿透修复**：AppWindow 外层测量容器（absolute inset-0）拦截鼠标，导致点击下层窗口露出的边缘无效——容器 `pointer-events-none` + Rnd `pointer-events-auto` 穿透（与 daedalOS RndWindow 的 pointerEvents 处理同机制）。实测：点最下层窗口边缘 → z 序置顶 + 菜单栏聚焦名同步。
+- **底部白条融合**：壁纸原只铺桌面区（Dock/状态栏区域露 body 白底）→ 壁纸移到 Desktop 根容器全屏覆盖；Dock/状态栏改深色玻璃（bg-black/25 白字）与星空壁纸融合（M3 复核无白条）。
+- **插件/管家窗口内容边距**：ScrollPage 加 p-6 + max-w-3xl 居中（与 SettingsPage 视觉一致；DOM 实测 25px 留白）。
+- **Dock 磁吸（参考项目机制移植）**：参照评估表教科书级项目 PuruVJ/macos-web 的 DockItem（鼠标横向距离分段插值放大：最近 2x/相邻 1.414x/1.1x + spring 平滑）→ React 版：Dock 容器 onMouseMove 记录鼠标 X，各图标按"中心到鼠标距离"线性衰减放大（半径 88px，最大 1.4x），宽度参与 flex 布局 → 中心放大时两侧图标平滑推开（经典 macOS 磁吸）。注：dawidolko Sonoma 已删库（gh 搜不到，8⭐ playground 本就只作选型参照）；窗口机制与 daedalOS（useFocusable z 序栈 + RndWindow）对比确认同构。磁吸动效 IAB 无法自动化验证（无 hover/mousemove 合成），需真实浏览器确认。
+
 实测结果（vite dev + 真后端 17321）：
 - ✅ 启动画面（2s 自动进桌面 + 点击跳过）→ 空桌面 → 开始菜单 5 应用卡 + 脚注（版本/模型/工作目录，StatusBar 信息迁入）
 - ✅ 聊天全链路：新建会话 → 发消息 → 流式回复（含思考过程折叠）
