@@ -169,7 +169,24 @@ async fn summarize<L: Llm>(llm: &L, req: LlmRequest) -> Result<String, LlmError>
             _ => {}
         }
     }
-    Ok(text)
+    Ok(strip_think_blocks(&text))
+}
+
+/// 剥离模型思维段（长程实测 P1：MiniMax 等思考模型把 `<think>…</think>`
+/// 推理前缀放进 content，摘要原样落盘后主循环会把"总结指令"误当任务继续
+/// 总结，中断长任务）。摘要内容里的 think 段是给推理用的噪音，不是事实。
+fn strip_think_blocks(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find("<think>") {
+        out.push_str(&rest[..start]);
+        match rest[start..].find("</think>") {
+            Some(end) => rest = &rest[start + end + "</think>".len()..],
+            None => return out, // 未闭合：丢弃余下（整段都是思维残留）
+        }
+    }
+    out.push_str(rest);
+    out.trim().to_string()
 }
 
 #[cfg(test)]
@@ -186,6 +203,33 @@ mod tests {
         assert_eq!(estimate_tokens("abcd"), 1);
         assert_eq!(estimate_tokens("abcde"), 2);
         assert_eq!(estimate_tokens("你好世界"), 1, "中文 4 字 ≈ 1 token 粗估");
+    }
+
+    #[test]
+    fn strip_think_blocks_removes_reasoning_preamble() {
+        // 长程实测 P1 形态：摘要以 <think> 推理前缀开头（模型复述总结指令）
+        let polluted = "<think>The user is asking me to summarize the conversation history in Chinese (same language as the original), keeping it under 300 characters.</think>\n\n## 对话历史总结\n用户要构建游戏";
+        assert_eq!(
+            strip_think_blocks(polluted),
+            "## 对话历史总结\n用户要构建游戏"
+        );
+    }
+
+    #[test]
+    fn strip_think_blocks_keeps_clean_text_and_mid_think() {
+        assert_eq!(strip_think_blocks("干净的摘要内容"), "干净的摘要内容");
+        // 中部 think（模型中途推理）同样剥离，前后事实保留
+        assert_eq!(
+            strip_think_blocks("前半<think>内部推理</think>后半"),
+            "前半后半"
+        );
+    }
+
+    #[test]
+    fn strip_think_blocks_unclosed_drops_rest() {
+        // 未闭合 think：丢弃余下（整段思维残留，不落盘）
+        assert_eq!(strip_think_blocks("事实<think>没有闭合的推理"), "事实");
+        assert_eq!(strip_think_blocks("<think>纯推理无内容"), "");
     }
 
     /// 内联测试策略（不依赖任何插件 crate——核心自足性：loop 的压缩
