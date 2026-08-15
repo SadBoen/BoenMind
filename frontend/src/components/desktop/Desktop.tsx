@@ -9,6 +9,7 @@ import { useAppStore } from "@/stores/app-store";
 import { AppWindow } from "./AppWindow";
 import { MenuBar } from "./MenuBar";
 import { Dock } from "./Dock";
+import { StatusBar } from "./StatusBar";
 import { StartMenu } from "./StartMenu";
 
 export function Desktop() {
@@ -44,6 +45,9 @@ export function Desktop() {
       </div>
 
       <Dock />
+
+      {/* 底部状态栏：版本/模型/工作目录/后端状态 */}
+      <StatusBar />
 
       {startOpen && <StartMenu onClose={() => setStartOpen(false)} />}
     </div>

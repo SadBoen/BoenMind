@@ -25,19 +25,24 @@ export function AppWindow({
   const containerRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
   const [size, setSize] = useState(entry.defaultSize);
+  // 层叠偏移基准：记住挂载时的 z 序（聚焦置顶会改 zIndex，但窗口位置不该跳回）
+  const cascade = useRef(zIndex).current;
 
-  // 挂载时按容器尺寸居中，并钳制尺寸（小窗口/矮屏幕下不溢出到任务栏）
+  // 挂载时按容器尺寸居中并钳制尺寸（小窗口/矮屏幕下不溢出到任务栏）；
+  // 后开的窗口按打开顺序错开偏移，避免完全覆盖（点击露出的边缘即可聚焦置顶）
   useLayoutEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     const w = Math.min(entry.defaultSize.width, Math.max(320, el.clientWidth - 16));
     const h = Math.min(entry.defaultSize.height, Math.max(320, el.clientHeight - 16));
+    // 层叠偏移 48px：后开的窗口错开足够距离，下层窗口标题栏可见、点击即聚焦
+    const offset = (cascade % 7) * 48;
     setSize({ width: w, height: h });
     setPos({
-      x: Math.max(8, Math.round((el.clientWidth - w) / 2)),
-      y: Math.max(8, Math.round((el.clientHeight - h) / 2)),
+      x: Math.max(8, Math.round((el.clientWidth - w) / 2) + offset),
+      y: Math.max(8, Math.round((el.clientHeight - h) / 2) + Math.round(offset * 0.6)),
     });
-  }, [entry.defaultSize]);
+  }, [entry.defaultSize, cascade]);
 
   // 位置未就绪前不渲染，避免初始闪现左上角
   if (!pos) return <div ref={containerRef} className="absolute inset-0" />;

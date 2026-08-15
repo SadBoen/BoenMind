@@ -34,7 +34,7 @@ export function Dock() {
             >
               <span
                 className={cn(
-                  "flex h-10 w-10 items-center justify-center rounded-xl text-white shadow-md transition-all group-hover:-translate-y-0.5 group-hover:scale-110",
+                  "flex h-10 w-10 items-center justify-center rounded-xl text-white shadow-md transition-all duration-150 group-hover:-translate-y-1.5 group-hover:scale-125",
                   active && "ring-2 ring-white/50",
                 )}
                 style={{ background: app.gradient }}
