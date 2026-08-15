@@ -1,8 +1,8 @@
 # BoenMind 2.0 ——「万物皆插件」架构设计（Agent OS 框架）
 
-> 状态：**v0.23（迭代中）**——v0.22 = 对话宿主化与场景作用域拍板（§四·B 补充，已实施）+ 内核主权评估（§15.4，不换 dsh 内核）；**v0.23 = 应用布局系统拍板（§四·B 补充 2，用户"VS Code workbench 模型"）**：可停靠视图容器（dockview 8.1 上游吸收 T5）/对话视图单实例绑定场景/其他视图可多开/默认布局+右键重置/设置保持现状——决策已拍，实施排交接
-> 日期：2026-08-14
-> 参考系：pi_agent_rust（已切换为回退引擎，vendored）、DeepSeek Harness（dsh）、ZCode（插件/技能/市场）、Hermes（NousResearch/hermes-agent）、**xu-wiki-desk（用户已有应用插件实证）**、**AI OS 赛道四项目（AIOS/MemGPT/Life Agent OS/kernel.chat，吸收见 §3.5）**、**OpenClaw（心跳/自调节奏，§14.2）**
+> 状态：**v0.24（2026-08-16 文档整理轮）**——v0.22 = 对话宿主化与场景作用域（§四·B 补充，已实施）；v0.23 = 应用布局系统（§四·B 补充 2，已实施：dockview 8.1 + DockLayout 宿主，2026-08-15）；**当前实施状态速览**：内核（bm-protocol/bm-kernel/bm-loop）建成且服务面 13 面注册接线完毕（2026-08-16，§7.2 状态）；Steward 三件套落地（§14.5）；桌面壳方向修正（经典三栏为主 + 桌面壳并存，§四·B）；编程应用 M1 验收通过、M2 进行中（§6.8 里程碑）
+> 日期：2026-08-14 起持续迭代（2026-08-16 整理）
+> 参考系：pi_agent_rust（2026-08-15 已整体删除，插件生态由 bm-compat 承接）、DeepSeek Harness（dsh）、ZCode（插件/技能/市场）、Hermes（NousResearch/hermes-agent）、**xu-wiki-desk（用户已有应用插件实证）**、**AI OS 赛道四项目（AIOS/MemGPT/Life Agent OS/kernel.chat，吸收见 §3.5）**、**OpenClaw（心跳/自调节奏，§14.2）**
 > 本文档持续迭代，直到自认完美后交用户拍板。
 
 ---
@@ -99,7 +99,7 @@
 | pi | agent loop + 插件引擎 + 工具集（一切内置） | ~35 万行（我们对它的依赖面） |
 | dsh | Cordis：服务容器 + 类型化事件 + 可逆副作用 | 5690 行 vendor |
 | ZCode | 客户端本体 + 插件/技能/MCP 体系 | —— |
-| **BoenMind 2.0** | 插件加载器 + 服务注册表 + 事件总线 + **会话事件日志原语** | **目标 < 1.5 万行**（含准内核 loop） |
+| **BoenMind 2.0** | 插件加载器 + 服务注册表 + 事件总线 + **会话事件日志原语** | **实测 6060 行**（2026-08-15 回头看：协议 908 + 内核 2975 + loop 2177，远低于预算） |
 
 内核四件套，缺一不可：
 
@@ -129,6 +129,8 @@
 | D9 | 会话日志级压缩事务（compaction/start→summary→replace→end） | 压缩状态本身可审计可恢复 | 事件协议 |
 | D10 | 双触发压缩（0.8 水线 + overflow 硬触发重试）+ 摘要吃 KV-cache + 不切 tool 配对 | 比现有 50% 水线更完整 | 压缩插件默认实现 |
 
+**落地状态（2026-08-16）**：D2（事件日志/分支寻址/fork 事件）、D3/D9（压缩 replace 事务 + 三事件协议）、D10（压缩插件默认实现 → bm-compactor）✅ 已落地；D4（把关链五事件）部分落地（PermissionBridge 询问链已就位，阶梯审批/配额待阶段 2 深化）；D1/D5/D6 是内核形态本身（加载器/服务注册表/scope 隔离已建成，§15.1）；D7/D8（skill catalog / PromptSection 注册表）待接线。
+
 ### 3.2 从 pi 吸收（资产与生态）
 
 | # | 机制 | 说明 |
@@ -151,7 +153,7 @@
 | Z5 | marketplace.json（市场源）+ 插件缓存目录 + i18n（displayName_i18n/examplePrompts） | 商店/多语言的落地格式参照 |
 | Z6 | 用户级/工作区级配置分层 | 与 Z2 同构的配置哲学 |
 
-### 3.5 从 AI OS 赛道吸收（2026-08-14，研读报告已随文档清理删除，结论见本节）
+### 3.5 从 AI OS 赛道吸收（2026-08-14，研读结论见本节；决策轨迹存记忆 ai-os-landscape——AIOS/MemGPT/Life Agent OS/kernel.chat 四项目源码级研读，"Agent 自主会话边界"是赛道空白区）
 
 | # | 机制 | 来源 | 落地 |
 |---|---|---|---|
@@ -363,6 +365,8 @@ trait Platform: Plugin {
 - **DE 的契约**：前端壳 = `@boenmind/client`（Transport + 投影引擎）+ 应用注册器（导航/页面/快捷键/托盘）。内核不关心前端长什么样，只提供 API + 事件流。
 - **多 DE 并存**：同一内核可同时服务 desktop 和 web（RPC 传输不同：local-ipc vs SSE）——这已经是现状（Tauri 壳 + Web 端共存），v0.5 把它正式化为"DE 可插拔"。
 - **DE 与应用的边界**：应用插件的前端包跑在 DE 里（像软件窗口跑在桌面环境里），DE 提供窗口/导航/通知等宿主能力，应用提供内容。
+
+> **方向修正（2026-08-15 晚，用户自省）**：桌面壳（OS 形态：菜单栏/Dock 磁吸/窗口层叠/星空壁纸）已上线并经八轮迭代验证可行，但用户判断"直接 OS 界面不合适"——**恢复经典三栏软件界面为主（默认），桌面壳保留为可切换形态**（外观页形态切换，viewMode 持久化，双 DE 并存）。这恰好实证了本节"多 DE 并存"原则（DE 切换 ≠ 前端包插件化，后者属 §四·C 远期项）；插件/SKILL 分目录（系统增强 vs 功能）UI 分 tab（manifest category 字段）随此轮落地。这条歧路（OS 形态桌面为默认）的完整论证与回撤记录见 docs/archive/HANDOFF_DESKTOP_SHELL.md（调研素材 docs/research/2026-08-15/desktop-shell-landscape.md）。
 
 ### 四·B 补充：对话宿主化与场景作用域（v0.22，用户拍板）
 
@@ -842,14 +846,16 @@ backend/               # 确定性引擎：会话管理 + 工具路由 + todo �
 - **ZCode/Claude Code 类**：会话有界（task 结束就断）、todo 静态（生成后基本不演化）、无幕后治理。我们的编程应用 = **本地版 Devin 的形态**（Devin/Manus 是云端长时 + 任务自适应，我们做本地 + 可审计 + 记忆不丢 + 全事件日志）；
 - 差异点清单：① 24h 常驻本地（不是云端）；② 任务清单演化全留痕（Devin 不可审计）；③ 会话分支（试错不丢原路）；④ Steward 幕后治理（记忆/技能/工作流沉淀）；⑤ 与 Wiki/相册等其他应用共用同一内核与记忆（编程学到的东西，其他应用也用得上）。
 
-**自举里程碑**（编程应用自身的验收标准）：
+**自举里程碑**（编程应用自身的验收标准，状态截至 2026-08-16）：
 ```
-M1：能完成一次"单任务编程"（如：修一个 bug，含读代码→改→测→提交）
-M2：任务清单动态演化（10 个任务的清单，中途插入/删除/重排，全程日志可查）
-M3：长时工作（一个 8h+ 任务跨多次空闲/重启，resume 无信息丢失）
-M4：Steward 介入（卡住时自动换策略/问用户，重复模式固化为工作流）
-M5：自举闭环（用 BoenMind 编程应用完成 BoenMind 的一个完整功能开发）
+M1：能完成一次"单任务编程"（修一个 bug：读代码→改→测→提交）——✅ 已验收（2026-08-15，8254bd7：运行时自修真实 bug 全链路 + 独立复核 33 测试全绿；验收报告 docs/archive/ACCEPTANCE_M1_2026-08-15.md）
+M2：任务清单动态演化（10 个任务的清单，中途插入/删除/重排，全程日志可查）——⏳ 进行中（todo 工具 + 事件投影闭环/分支图 DAG/项目切换/终端面板已落地；剩余 skill 场景注入）
+M3：长时工作（一个 8h+ 任务跨多次空闲/重启，resume 无信息丢失）——⬜ 未开始（迁移门槛，随 M2 收尾后启动）
+M4：Steward 介入（卡住时自动换策略/问用户，重复模式固化为工作流）——⬜ 未开始（依赖 §6.7 治理面扩展）
+M5：自举闭环（用 BoenMind 编程应用完成 BoenMind 的一个完整功能开发）——⬜ 未开始
 ```
+
+> **实现形态注（2026-08-16）**：编程应用当前以**宿主组件形态**先行（DockLayout 视图注册 + ChatPane 场景绑定 + 项目切换），未走"应用插件"封装（app-manifest/独立前端包）——应用插件机制（§6.4/§四·C）落地时收编。编程壳默认布局已按 §四·B 补充 2 迁移（dockview），用户拍板编辑器不再深化（读取/保存保留）。
 
 ### 6.9 自我进化定调（v0.17 新增，用户思考与纠正）
 
@@ -857,22 +863,22 @@ M5：自举闭环（用 BoenMind 编程应用完成 BoenMind 的一个完整功�
 
 **进化对象全景**——"Agent 可变的东西"逐项对应插件面，**没有任何一项需要核心新增能力**：
 
-| 进化对象 | 机制 | 状态 |
+| 进化对象 | 机制 | 状态（2026-08-16 更新） |
 |---|---|---|
 | 模型 | provider 注册表 | 已有（外部问题，对架构就是换插件） |
-| 提示词/人格 | PromptSection 注册表（D8：-100 身份 / 0 人格 / 100-199 工具） | 设计定 / 待落地 |
-| 记忆 | MemoryPlugin（§6.1，用户点名） | 设计定 / 待落地 |
+| 提示词/人格 | PromptSection 注册表（D8：-100 身份 / 0 人格 / 100-199 工具） | ✅ 角色插件已落地（2026-08-16：出厂 role 插件，宿主注入挂点 bm-server/roles.rs）；D8 注册表形态待接线 |
+| 记忆 | MemoryPlugin（§6.1，用户点名） | 部分落地（出厂 coding-memory 插件按项目分桶；MemoryPlugin 六方法契约随阶段 5） |
 | 工具/能力 | 插件市场 | 已有 |
 | 技能 | skills 注入 + `governance.skill` 沉淀 | 注入已有 / 沉淀待 Steward |
 | 工作流 | `governance.workflow` | 待 Steward |
-| 会话生命周期 | §6.6 fork/archive/resume 工具集 | 待阶段 5 |
-| 参数（水线/配额/路由） | **插件自己的配置** | 插件自治 |
+| 会话生命周期 | §6.6 fork/archive/resume 工具集 | fork/branch 事件已落地（2026-08-15）；工具集待阶段 5 |
+| 参数（水线/配额/路由） | **插件自己的配置** | 插件自治（压缩水线已由 bm-compactor 自管） |
 
 **三条定调**：
 
 1. **效果评估 = 插件自治（用户定调）**：进化效果好不好，由插件自己评估——挂点已在（事件日志订阅 + 自定义事件域 + LoopHooks），workflow 插件订阅自己的事件域算成功率、自己决定保留或回滚。**核心不做"验收闭环"**（曾列为核心空白是方向搞反——核心不缺东西，评估逻辑是插件的事）。
 2. **参数进化 = 插件自治（用户定调）**：压缩水线等参数属于插件自己的配置——ctx-compactor 已写过、D10 已规划"压缩插件默认实现"，插件自管参数、可自进化。**核心不设"水线"概念。**
-3. **进化 = 版本化替换（待拍板）**：自主进化永远"安装/替换"而非"原地修改"——换下来的留在事件日志可回滚（审计哈希链 + 可逆副作用保证）。Agent 自我进化与用户手动拔插 = 同一套机制，区别只在发起者（Steward 提议 / 用户安装），坏的进化 = 卸载。
+3. **进化 = 版本化替换（✅ 已拍板，2026-08-16）**：自主进化永远"安装/替换"而非"原地修改"——换下来的留在事件日志可回滚（审计哈希链 + 可逆副作用保证）。Agent 自我进化与用户手动拔插 = 同一套机制，区别只在发起者（Steward 提议 / 用户安装），坏的进化 = 卸载。用户拍板"所有功能剥离开、原子化，方便以后能换的，全部由管家自己决定"——**版本化替换机制是核心要给的能力，替换决策权 = 管家**（落地载体 = 服务面铺开，每面可换实现，管家经工具/事件决策替换）。
 
 **现状检查（2026-08-14 代码盘点）**：
 - **提示词**：唯一角色提示词 = 硬编码常量 `bm-core/src/agent.rs:20`，pi 路径（`agent.rs:107`）与 bm 路径（`bm_engine.rs:280`）各复制一遍拼接（`SYSTEM_PROMPT + skills + custom`）；子代理角色正文走 argv 传入，无角色库。插件契约（`bm-kernel/src/plugin.rs`）无 prompt 能力，`LoopHooks::on_request` 挂点已留待接线。D8 落地 = 每角色一组 PromptSection 预设组装（管家/专家非特权角色）。
@@ -897,12 +903,14 @@ M5：自举闭环（用 BoenMind 编程应用完成 BoenMind 的一个完整功�
 
 | 现状资产 | 2.0 去向 |
 |---|---|
-| vendored pi_agent_rust（现 backend/legacy/，§十三） | 拆解：**pi-compat 插件** = QuickJS 引擎（`PiJsRuntime`）作库 + 自写 ~300 行 host 线程（拆法 A，已查证可行，见下）——**pi.dev 200+ 插件直接兼容**；loop/工具集/压缩引擎逐步退役 |
+| vendored pi_agent_rust（§十三） | **✅ 已删空（2026-08-15，§十三终点）**——QuickJS 引擎由 **bm-compat**（自有拷贝，转接器插件）承接，pi.dev 200+ 插件生态继续兼容；loop/工具集/压缩引擎已由自研替换 |
 | 现有 TS 插件（web_search 等） | ExtensionBody 协议保留，直接迁移 |
 | turso 存储 | 变成 `storage-turso` 插件（日志持久化后端之一） |
 | skills（backend/skills/） | 迁移到新格式（SKILL.md + frontmatter，对齐 D7） |
 | 前端（React + pi-web 风格） | Chat 应用插件保留，SDK 换成 `@boenmind/client` |
 | 热升级/桌面壳/验签 | 保留为基础设施插件 |
+
+**进展注（2026-08-16）**：TS 插件（web_search 等 6 个出厂插件）已迁移为目录型插件随包发布；turso 存储 / skills / 前端 SDK 维持现状，随阶段 3-4 渐进——"2.0 去向"中未标 ✅ 的行均未动。
 
 **pi-compat 拆法 A（已源码级查证，2026-08-14）**：
 - 可行性：**部分可拆，路径清晰**。`PiJsRuntime`（extensions_js.rs:16629，QuickJS 宿主 + swc 编译 + Scheduler 事件循环 + hostcall 队列）与 agent loop **无直接类型耦合**（trait 对象 + 独立线程 + 消息通道解耦）；`ExtensionManager::new()` 零参数零 session 依赖；引擎回调外部世界只有三条路（工具/会话/UI），全部经接口。
@@ -923,15 +931,14 @@ M5：自举闭环（用 BoenMind 编程应用完成 BoenMind 的一个完整功�
 ```
 
 ```
-阶段 0（先行，零风险）：会话事件日志层落 turso（双写过渡：现有表 + 事件流）
-                        ——同时服务两条主线（对话事件 + 应用事件都可入日志）
-阶段 1：pi-compat 拆法 A（vendor 6 文件 + 300 行 host 线程，1-2 周）+ Rust 内核骨架（加载器/注册表/事件总线）+ agent-loop 插件（trait 抽象，QuickJS 引擎已就位，pi.dev 插件当日兼容）
-阶段 2：工具把关链 + 权限升级（阶梯审批）；LLM client 只做 OpenAI 兼容 + 现有 providers 配置复用（S7）
-阶段 3：基础设施插件化（网络/存储/RPC）——10057 修复正式化为 network-tokio 插件；沙箱 confine 落地（S6）；平台驱动层首发（platform-windows + driver-exec/fs/net，S10）
-阶段 4：应用插件机制（前端 SDK 投影引擎 + iframe 加载）→ **编程应用收编为应用插件**（第一优先）；Wiki 收编（迁移而非重写：xu-wiki 的 22 表 38 API 演进为 Wiki 插件后端包）；相册试点；DE 契约正式化（desktop/web 双壳）
-阶段 5：记忆插件化（compactor 升级 replace 事务 → file → vector）+ 会话生命周期工具集（§6.6：fork/archive/resume/merge/transfer）+ Steward 治理层（§6.7）
-阶段 6：vendor pi 剩余部分（loop/工具集/压缩引擎）退役判定（插件生态迁移完成度）
-阶段 7（愿景）：Agent OS 化——平台驱动补齐 mac/linux、商店 UI 应用插件化、多 DE 并存
+阶段 0：会话事件日志层落 turso（双写过渡：现有表 + 事件流）——✅ 已完成（阶段 0，T0-T13）
+阶段 1：Rust 内核骨架（加载器/注册表/事件总线）+ agent-loop 插件 + bm-compat 兼容层——✅ 已完成（阶段 1，A1-A7/B1-B6）
+阶段 2：工具把关链 + 权限升级（阶梯审批）；LLM client 只做 OpenAI 兼容 + 现有 providers 配置复用（S7）——🟡 部分（权限询问链/压缩已就位；把关链五事件、配额预算、审计哈希链待深化）
+阶段 3：基础设施插件化（网络/存储/RPC）+ 沙箱 confine（S6）+ 平台驱动层首发（platform-windows + driver-exec/fs/net，S10）——🟡 部分（内核接线已完成 = 服务面 13 面注册，2026-08-16；网络策略/存储/沙箱/平台驱动未做）
+阶段 4：应用插件机制（前端 SDK 投影引擎 + iframe 加载）→ 编程应用收编为应用插件（第一优先）；Wiki 收编；相册试点；DE 契约正式化——🟡 部分（编程应用以宿主组件形态先行，M2 进行中；应用插件机制/投影引擎未做；DE 双壳已并存）
+阶段 5：记忆插件化（compactor → file → vector）+ 会话生命周期工具集（§6.6）+ Steward 治理层（§6.7）——🟡 部分（Steward 三件套 ✅ 已落地 v0.19/v0.20；压缩即记忆已落地；会话生命周期工具集/记忆插件契约待做）
+阶段 6：vendor pi 退役判定——✅ 已完成（2026-08-15：legacy 删空，§十三终点；bm-compat 作为长期资产保留）
+阶段 7（愿景）：Agent OS 化——平台驱动补齐 mac/linux、商店 UI 应用插件化、多 DE 并存——⬜ 未开始
 ```
 
 每阶段可独立发布、可回滚，不阻塞 v0.1.x 发布节奏。
@@ -1015,10 +1022,11 @@ M5：自举闭环（用 BoenMind 编程应用完成 BoenMind 的一个完整功�
 - [x] **Steward 自身生命周期与记忆**（v0.12）：§6.7 尾——上下文爆炸处理 = 压缩（系统兜底）+ 分身扶正（archive/resume 治理版，自主决策）+ 记忆淡化（记忆插件后台流水线）三机制分层；记忆系统=插件（出厂 memory-compactor 可换），复用 §6.1 零新机制
 - [x] **生态接入转接器原则**（v0.14）：§〇·三 转接器原则（核心格式自研思路照学 / 生态接入=转接器插件内核零改动 / MCP+SKILL=通用协议层）；pi-compat = 第一个实例；新生态一律按转接器成本评估
 - [x] **中间抽象层定位 + 分发形态纪律**（v0.15，用户定调）：铁律 1 扩写——三层图式（Agent ↔ BoenMind 运行时抽象层 ↔ 宿主 OS=现成 HAL ↔ 硬件），分阶段演进不一步到位；便携版/Docker = 初级阶段产物（分发形态 ≠ 设计脊梁），分发层选择不改变设计层分离原则，embed 类打包选项须标注"打包层非设计层"
-- [ ] 阶段 0 复核拍板点 10 项（§十一·11.4）：阶段 1 立项顺序/真实验收/事件版本化/fork 语义/删除联动/PortBox/deferred/CI 质量门/全局事件游标/前端隔离
-- [ ] 渐进路线与现有发布节奏的冲突评估（拍板时定）
+- [x] 阶段 0 复核拍板点 10 项（§十一·11.4）——2026-08-14 晚已逐项拍板 ✅（前端隔离拍"后拍"）
+- [x] 渐进路线与现有发布节奏的冲突评估——已由发布管线实践解决（v0.1.1-v0.1.3 已发，阶段 0-1 不阻塞发布节奏）
 - [ ] 沙箱（OS 级）与插件系统的关系（confine 在哪个层生效，阶段 3 细化）
-- [ ] 记忆插件与日志的写回契约（memory/write 事件协议细化）
+- [ ] 记忆插件与日志的写回契约（memory/write 事件协议细化）——生产者已接线（2026-08-15），消费者随阶段 5 MemoryPlugin
+- [ ] **事件域扩展机制**（§15.4 判"该学"项）：manifest 声明事件 schema 的类型安全外挂（CoreEvent 锁死变体外、插件事件域无 schema 逃生门）
 - [x] **compact.rs 压缩策略拆出**（v0.17 自查实锤，§6.9）：✅ 已落地（6cbe56d：bm-loop 留 Compactor 接口 + 三事件事务协议 + 硬触发兜底；bm-compactor 新 crate = D10 默认实现；水线 0.5 已收敛）。✅ 参数双轨已打通（2026-08-15：bm-core `CompactionConfig::effective()` 换算 + 组装层注入；enabled=false = 不挂压缩插件）
 - [ ] 平台驱动 ABI 稳定性纪律（驱动接口变更 = 大版本事件的判据）
 - [x] **Steward 调度器 + next_wake_at 自调节奏**（v0.18，§14.1）：✅ 已落地（v0.19/v0.20，§14.5：定时回合注入/静默窗口/OS 汇报通道/前端状态页全链路真实验收）
@@ -1077,7 +1085,7 @@ M5：自举闭环（用 BoenMind 编程应用完成 BoenMind 的一个完整功�
 ### 11.4 拍板点（2026-08-14 晚已逐项拍板 ✅）
 
 1. ✅ 阶段 1 立项顺序：**两线并行**——agent-loop 移植 + pi-compat 同时开工（用户拍板"两个并行"；两者解耦，Token 并行可行）；
-2. ⏳ 真实验收（release 起服务聊几轮查 event_log 表，需用户配合，10 分钟）——用户睡觉期间顺延；
+2. ✅ 真实验收——已完成（v0.19 轮，2026-08-14 夜隔离 home 真实验收通过，§14.5）；
 3. ✅ 事件格式版本化：**现在加**（SessionEvent 信封 version 字段 + 拒读不兼容版本）；
 4. ✅ fork 语义：**投影折叠父前缀**（fork 可见分叉点前历史）；
 5. ✅ 会话删除：**保留回收站 + 超期自动清除 + 用户可主动清除**（不即时联动删除；event_log 留作可恢复底账，超期任务自动清，用户手动清入口）；
@@ -1157,13 +1165,13 @@ M5：自举闭环（用 BoenMind 编程应用完成 BoenMind 的一个完整功�
 - **模拟人类工作 = Agent 执行**：APP 把需要判断的动作注册成工具（能力声明 → 模型可见面），管家派的专家在会话里调用；APP 反向请 Agent 走 `agent.assist` / `session.spawn`（§6.4/§6.6 已有）。
 - 一句话：**APP 的手脚直接打抽象层端口，脑子才是 Agent 的活**。判定标准：动作是否需要"判断/权衡/临场决策"——需要就是工具（Agent 调用），不需要就是端口（直调）。
 
-### 14.4 引擎切换与 pi 废除三阶段（第一、二阶段前半已执行）
+### 14.4 引擎切换与 pi 废除三阶段（✅ 三阶段全部执行，2026-08-15 夜收尾）
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | ① 默认切换 | 默认引擎反转 **bm**（自研 ReactLoopAgent）；pi 保留 env `BM_LOOP_ENGINE=pi`/前端开关为回退通道；**subagent 父侧移植进 bm**（专家团队不丢）；观察真实使用 1-2 个版本 | ✅ 已执行（d4bc5c9 + bc3b299） |
 | ② 吸收删除 | **subagent 子进程换 bm-loop**（InMemory 事件日志 + BuiltinTools + OpenAiClient 直连，协议形状逐字段对齐，父侧零改动；create_child_session_handle 死代码删除）✅ 已执行（4997e8b）；**chat.rs pi 分支删除**（dfb52f7：pi 退出生产路径——chat.rs 1197→180 行直调 chat_bm，AppState 删 agents/aborts，前端 engine 设置页删）✅ 已执行（2026-08-15 用户拍板） | ✅ 全部执行 |
-| ③ 删空 legacy | pi 目录（models.json/skills 同步）替换为自有设施，legacy 删空（§十三终点 = 阶段 6 完成态） | 待办 |
+| ③ 删空 legacy | pi 目录（models.json/skills 同步）替换为自有设施，legacy 删空（§十三终点 = 阶段 6 完成态） | ✅ 已执行（2026-08-15 夜：legacy 删空，§十三终点；asupersync 迁 backend/vendor） |
 
 **不在废除范围**：QuickJS 插件运行时——它是 **bm-compat**（自有拷贝，转接器插件），200+ 插件生态靠它，属长期资产。
 
@@ -1188,7 +1196,7 @@ M5：自举闭环（用 BoenMind 编程应用完成 BoenMind 的一个完整功�
 
 ## 十五、架构回头看与生态吸收登记（v0.21，2026-08-15）
 
-> 触发：用户"再来一次回头看（主要是架构）+ 全网对标调研（Agent 底座前 10 / 同类插件前 10，边分析边写笔记，出报告前再验证）"。产物：docs/REVIEW_ARCHITECTURE_2026-08-15.md（回头看）、docs/REVIEW_LANDSCAPE_2026-08-15.md（对标报告）、docs/research/2026-08-15/（三份调研笔记，~100KB，逐条核实口径）。本节目录性登记，全文见报告。
+> 触发：用户"再来一次回头看（主要是架构）+ 全网对标调研（Agent 底座前 10 / 同类插件前 10，边分析边写笔记，出报告前再验证）"。产物：docs/REVIEW_ARCHITECTURE_2026-08-15.md（回头看，已归档 docs/archive/）、docs/REVIEW_LANDSCAPE_2026-08-15.md（对标报告）、docs/research/2026-08-15/（四份调研笔记 ~100KB：agent-foundations / memory-systems / plugin-landscape / desktop-shell-landscape，逐条核实口径，保留）。本节目录性登记，全文见报告。
 
 ### 15.1 回头看结论（三行）
 
@@ -1220,7 +1228,7 @@ M5：自举闭环（用 BoenMind 编程应用完成 BoenMind 的一个完整功�
 
 ### 15.4 内核主权评估：不换 dsh 内核（v0.22，用户开题"换上 dsh 内核的 Rust 版会不会更好"）
 
-**决策：保持自研内核（bm-protocol / bm-kernel / bm-loop），不换不跟随 dsh 内核；持续吸收其机制（既有转接器原则）；生态靠兼容层 + 商店 + 贡献面，不靠换内核。**
+**决策：保持自研内核（bm-protocol / bm-kernel / bm-loop），不换不跟随 dsh 内核；持续吸收其机制（既有转接器原则）；生态靠兼容层 + 商店 + 贡献面，不靠换内核。**（这条歧路的完整论证 = 双倍维护 / 权威分界 / 挂载点三类 / 演进路径，见下；dsh 生态与前端机制对照见 docs/REVIEW_LANDSCAPE_2026-08-15.md，内核现状与接线问题见 docs/archive/REVIEW_ARCHITECTURE_2026-08-15.md）
 
 评估要点（2026-08-15 用户讨论吸收，三轮）：
 
@@ -1254,7 +1262,7 @@ M5：自举闭环（用 BoenMind 编程应用完成 BoenMind 的一个完整功�
 | scope | 按 agent 划分的注册/事件路由边界（标签式，链式继承） |
 | isolate realm | 预设服务的隔离域（realm-private symbol），会话间互不可见 |
 | bundle/patch | 分发单元（npm 包/目录）+ 按 id 覆写配置的补丁层 |
-| pi-compat | 兼容层：vendored pi QuickJS 引擎作库，pi.dev 插件直接兼容 |
+| bm-compat | 插件兼容层（转接器第一个实例）：QuickJS 引擎（自 pi 吸收为自有拷贝，2026-08-15 pi 整体删除后承接），加载 TS 插件、兼容 pi.dev 生态 |
 | 转接器（Adapter） | 接入外部生态的插件/软件（分发层转清单、运行时差异由宿主运行时能力承接），内核零改动——生态接入的唯一通道（§〇·三） |
 | 受控子步骤 | 应用插件调 Agent 的同步小调用（一次 chat 语义判断） |
 | 完整任务 | 应用插件起隔离 Agent 会话的异步多轮执行 |
@@ -1263,15 +1271,17 @@ M5：自举闭环（用 BoenMind 编程应用完成 BoenMind 的一个完整功�
 
 ### 参考
 
-- DeepSeek Harness: https://github.com/deepseek-ai/deepseek-harness （dsh 论断已吸收入 §6.4，研读报告已随文档清理删除）
+- DeepSeek Harness: https://github.com/deepseek-ai/deepseek-harness （dsh 论断已吸收入 §6.4；生态对照见 docs/REVIEW_LANDSCAPE_2026-08-15.md）
 - Cordis 论文《A Programming Paradigm for Spatiotemporal Composability》: https://github.com/cordiverse/paper
 - NousResearch/hermes-agent: https://github.com/NousResearch/hermes-agent （本地研读副本 D:/96_CoderWorld/hermes-agent）
-- pi_agent_rust（legacy）: https://github.com/Dicklesworthstone/pi_agent_rust
+- pi_agent_rust（2026-08-15 已从仓库删除）：https://github.com/Dicklesworthstone/pi_agent_rust
 - LoopX（huangruiteng/loopx，借鉴清单 L1-L14）: https://github.com/huangruiteng/loopx （本地研读副本 D:/96_CoderWorld/loopx）
+- AI OS 赛道（AIOS/MemGPT/Life Agent OS/kernel.chat）：研读结论 §3.5
 - ZCode 插件体系（本机实测）：~/.zcode/cli/plugins/、~/.zcode/skills/
 - xu-wiki-desk（应用插件实证）: D:/96_CoderWorld/xu-wiki-desk
-- HanaAgent 研读（记忆传送带/沙箱参照，报告已随文档清理删除，结论见记忆）
+- HanaAgent 研读（记忆传送带/沙箱参照，报告已删，结论见记忆 hanaagent-evaluation）
 - Code Architecture Planner skill（评审方法论）: https://github.com/CarterIrish/code-architecture-skill
+- 2026-08-15 对标调研笔记（架构方向调研，保留）：docs/research/2026-08-15/（agent-foundations / memory-systems / plugin-landscape / desktop-shell-landscape）
 
 ---
-*（v0.19 完：v0.11 应用互操作 + v0.12 阶段 0 复核融合与 Steward 自身生命周期 + v0.13 重构决策（legacy 旧代码文件夹，§十三）与 LoopX 借鉴清单（§3.6，L1-L14）+ v0.14 生态接入转接器原则（§〇·三）+ v0.15 中间抽象层定位与分发形态纪律（铁律 1 扩写）+ v0.16 寄生关系核心定调（§6.4/6.7/6.8）+ v0.17 自我进化定调（§6.9：效果评估/参数进化插件自治 + compact.rs 越界修正拆法）+ v0.18 管家自我驱动与 APP 分层调用与引擎切换三阶段（§十四）+ v0.19 管家自我驱动三件套落地（§14.5）+ v0.20 Steward 续接轮（静默窗口/低成本模型/boot 汇报/前端状态页/窗口预算裁剪，§14.5 续接）。10 项拍板点已拍（§十一·11.4），阶段 1 两线并行任务分解见 docs/HANDOFF_KERNEL_PHASE1.md。）*
+*（v0.19 完：v0.11 应用互操作 + v0.12 阶段 0 复核融合与 Steward 自身生命周期 + v0.13 重构决策（legacy 旧代码文件夹，§十三）与 LoopX 借鉴清单（§3.6，L1-L14）+ v0.14 生态接入转接器原则（§〇·三）+ v0.15 中间抽象层定位与分发形态纪律（铁律 1 扩写）+ v0.16 寄生关系核心定调（§6.4/6.7/6.8）+ v0.17 自我进化定调（§6.9：效果评估/参数进化插件自治 + compact.rs 越界修正拆法）+ v0.18 管家自我驱动与 APP 分层调用与引擎切换三阶段（§十四）+ v0.19 管家自我驱动三件套落地（§14.5）+ v0.20 Steward 续接轮（静默窗口/低成本模型/boot 汇报/前端状态页/窗口预算裁剪，§14.5 续接）+ v0.21 架构回头看与生态吸收登记（§十五）+ v0.22 对话宿主化与场景作用域（§四·B 补充）+ v0.23 应用布局系统（§四·B 补充 2）+ v0.24 文档整理轮（2026-08-16：实施状态标注、里程碑重编、歧路注记、docs 归档）。10 项拍板点已拍（§十一·11.4），阶段 1 两线并行任务分解见 docs/HANDOFF_KERNEL_PHASE1.md。）*

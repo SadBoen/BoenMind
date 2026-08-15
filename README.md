@@ -20,12 +20,16 @@
 ```
 BoenMind/
 ├── backend/                  # Rust workspace
+│   ├── crates/bm-protocol/   # 纯契约 crate（零运行时依赖：事件枚举 + Port trait）
+│   ├── crates/bm-kernel/     # 最小内核（加载器/服务注册表/事件总线/事件日志）
+│   ├── crates/bm-loop/       # 自研 agent 执行引擎（事件日志驱动，压缩可审计）
+│   ├── crates/bm-compactor/  # 压缩策略默认实现（插件自治参数）
+│   ├── crates/bm-storage-turso/ # 存储后端（turso，事件日志持久化）
 │   ├── crates/bm-core/       # 配置、SQLite、工作文件夹、引擎封装
 │   ├── crates/bm-server/     # axum REST + SSE API（独立二进制，也可内嵌）
-│   ├── crates/bm-loop/       # 自研 agent 执行引擎（事件日志驱动，压缩可审计）
 │   ├── crates/bm-compat/     # 插件兼容层（QuickJS 引擎，加载 TS 插件）
-│   ├── plugins/              # 内置插件（单文件示例 + 目录型清单插件）
-│   └── vendor/               # vendored 第三方依赖（asupersync + 补丁台账）
+│   ├── plugins/              # 内置插件（role/coding-memory/ctx-compactor 等）
+│   └── vendor/               # vendored 第三方依赖（asupersync + 补丁/吸收台账）
 ├── frontend/                 # React SPA（网页 / 桌面共用）
 │   └── src-tauri/            # Tauri 2 桌面壳
 └── gui-test-screenshots/     # 浏览器实测截图证据

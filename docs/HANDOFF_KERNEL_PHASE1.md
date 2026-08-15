@@ -1,11 +1,13 @@
 # HANDOFF —— 阶段 1 交接（精简版）
 
-> 每轮必读此文件（约 4KB）。历史全量/查证细节 → docs/HANDOFF_KERNEL_PHASE1_ARCHIVE.md（按标题检索）。
+> 每轮必读此文件（约 4KB）。历史全量/查证细节 → docs/archive/HANDOFF_KERNEL_PHASE1_ARCHIVE.md（按标题检索）。
 > 本文件只保留：当前状态 / 轮次脉络 / 下一步 / 注意坑 / 待拍板。开工前先 `git pull`。
 
-## 当前状态（2026-08-15）
+## 当前状态（2026-08-16 更新）
 
 **阶段 1 完成态**：主线 A（执行级事件日志 + 自研 bm-loop 引擎）+ 主线 B（pi-compat 插件兼容层）全部落地；默认引擎已反转 bm；Steward 三件套（调度器/inject 通道/前端状态页）真实验收通过；legacy 删空（§十三终点）。BoenMind = 可聊天/调工具/派子代理/有管家/有记忆的完整运行时。
+
+**内核接线完成（2026-08-16 凌晨，服务面铺开轮）**：13 个服务面全部注册为 kernel 服务（memory/settings/stats/llm/credentials/skill/tools/notify/scheduler/session/gate + 已有 event_store/compactor），LoopHooks 扩到 10 挂点——架构回头看"内核未接线"问题闭环；http 面判 YAGNI（随首个插件 HTTP 路由需求）；图纸与裁决见 docs/archive/SERVICE_FACES_2026-08-15.md。
 
 **编程应用 M1 已验收通过（8254bd7，2026-08-15）**：BoenMind 用自身运行时（bm-loop + MiniMax-M3 + 内置工具，纯 API 驱动）在自身仓库完成真实 bug 修复全链路（prompt_hash 注入面缺口：定位→修复→回归测试→git 提交），独立复核 33 测试全绿 + clippy 零告警。**验收暴露 6 个真实问题**（报告 docs/ACCEPTANCE_M1_2026-08-15.md §四）——**①-⑤ 已全部修复**（1f064db：max_steps 64→128 + grep/find 接入 ignore crate 带 timeout + read/工具提示段；3d3bf2b：ctx-compactor 索引落 $BOENMIND_HOME + bm-compat dev-deps 补齐；⑥ 压缩水线持续收敛）。
 
@@ -91,6 +93,7 @@
 
 | 轮次 | 要点 |
 |---|---|
+| 服务面铺开轮 | 13 服务面全部注册（六批 d6e95cf→3f5bde9）+ LoopHooks 扩 10 挂点 + http 面 YAGNI；图纸 docs/archive/SERVICE_FACES_2026-08-15.md |
 | 聊天单元一体化轮 | 会话列表收进聊天单元（ChatPane 内嵌可折叠列表）；状态栏三槽位（prefix=列表开关/right=token+X）同行；chat 布局 v6 去独立列表面板 |
 | 布局 v5 + 状态栏轮 | 编程壳去编辑器（任务清单主区）；状态栏升级（dockview rightHeaderActions + token 用量 API/悬浮明细/流后刷新）；GitBar 精简去提交时间线 |
 | 布局与聊天单元轮 | 默认布局 v4 重定义（chat 三栏含文件树 / coding 对话独立右列）+ 聊天单元会话入口（三横悬浮窗，SessionList scene 化）；状态栏统一评估待拍板 |
@@ -119,7 +122,6 @@
 3. **项目切换（编程壳功能规划②）~~执行中~~ → 已完成（2026-08-15，见上）**；下一件：**codegraph 转官方插件**（@sdsrs/code-graph 0.116，scopes=["coding"]，正好验证场景工具面按 app 组装）→ 浏览器仿真 B 方案（可视化 web 工具链）；随后 skill 场景注入
 4. **界面层插件化落地设计（§四·C，用户已拍板学 dsh）**：出方案文档待拍板——前端包 manifest 字段（client.js/依赖声明）、同域 bundle 加载器（参考 dsh __ModuleLoader__.load）、slot 注册体系（ui-slots 思路；**注：dock 布局是 ui-slots 超集，落地时协同**）、壳依赖表（客户端插件不自带 React）；拍板后实施（独立主线，可与 M2 并行）
 5. **Steward 采集器挂任务计划程序**（README 有 schtasks 命令，填真实管家会话 ID）——待用户点头（机器级定时唤醒）
-6. **pi 路径清理收尾**：chat.rs pi 分支删除（bm 默认已反转，残留代码面）——待拍板
 
 ## 注意坑（浓缩操作要点，完整背景见归档 §〇·五）
 
@@ -163,14 +165,12 @@
 5. 商店"货架"方案（自维护清单 vs 对接 pi.dev）——悬置，随插件生态壮大再定
 6. GitHub Billing 处理（用户操作；不处理则 CI 永久本地化，macOS 构建链发版时另想办法）
 7. 远期（有触发时机，不急）：前端隔离机制（阶段 4）、沙箱层级（阶段 3）、平台驱动 ABI 纪律
-8. **pi 路径清理收尾**：chat.rs pi 分支删除（bm 默认已反转，残留兼容面）——待拍板
+8. ~~**pi 路径清理收尾**~~ → **已执行（2026-08-15 用户拍板）**：chat.rs pi 分支删除（dfb52f7，pi 退出生产路径，AppState 删 agents/aborts）
 9. ~~**对话宿主化 + 插件作用域**~~ → **已完成（2026-08-15，拍板 9 执行落地）**：① ChatPane 宿主组件（full/panel 形态）落地 + 编程壳右栏 Tab（任务/对话）落地；② 会话 `app` 场景字段（一软件一会话，事件日志天然按会话隔离）+ 引擎按 `session.app` 组装工具面（内置手脚 + 系统增强插件全局生效，场景工具登记点就位）落地；③ 插件 manifest `scopes` 声明生效软件（§四·C 落地时）+ 前端槽位注册（宿主定义 chat-pane/settings/toolbar 槽位，应用声明注入）——学 dsh ui-slots 思路按本架构落，**未做**；④ skill 场景注入随 M2 深化做，**未做**；⑤ 插件分类标签（系统增强/功能）= 作用域前身（system=全局、app=场景级）
 
 ## 关联文档
 
-- 架构：docs/everything-is-plugin-architecture.md（v0.22，三铁律/§6.8 编程应用/§14 管家/§15 回头看登记 + §15.4 内核主权评估 + §四·B 补充 对话宿主化与场景作用域）
-- 架构回头看：docs/REVIEW_ARCHITECTURE_2026-08-15.md
+- 架构：docs/everything-is-plugin-architecture.md（v0.24，三铁律/§6.8 编程应用/§14 管家/§15 回头看登记 + §15.4 内核主权评估 + §四·B 补充 对话宿主化与场景作用域 + §四·B 补充 2 应用布局系统；实施状态已标注）
+- 文档地图：docs/README.md（全部文档角色 + 决策轨迹速查）
 - 对标调研：docs/REVIEW_LANDSCAPE_2026-08-15.md（笔记：docs/research/2026-08-15/）
-- 代码回看：docs/REVIEW_CODE_2026-08-15.md
-- 编程立项：docs/REVIEW_BEFORE_CODING_APP.md
-- 历史全量：docs/HANDOFF_KERNEL_PHASE1_ARCHIVE.md
+- 归档（已完成/已解决）：docs/archive/（架构回头看 / 代码回看 / 长程测试 / 服务面图纸 / M1 验收 / 编程立项 / 阶段 0 计划 / 桌面壳 / 阶段 1 历史全量）
