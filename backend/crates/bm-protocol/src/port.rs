@@ -286,3 +286,17 @@ pub trait SessionPort: Send + Sync {
     /// 会话消息列表（Message JSON 数组视图）。
     fn messages(&self, id: &str) -> BoxFuture<'_, Result<serde_json::Value, ProtocolError>>;
 }
+
+/// 权限面（SERVICE_FACES 图纸 #14）：权限询问决策回传（前端落点）。
+///
+/// 实现：permission_pending 询问表（GatePortImpl，运行期注册）。
+/// 消费方：POST /api/chat/permission-response（chat.rs）。
+pub trait GatePort: Send + Sync {
+    /// 回应挂起的权限询问（允许/拒绝/总是允许）；未知询问 id → NotFound。
+    fn respond(
+        &self,
+        request_id: &str,
+        allow: bool,
+        always: bool,
+    ) -> BoxFuture<'_, Result<(), ProtocolError>>;
+}

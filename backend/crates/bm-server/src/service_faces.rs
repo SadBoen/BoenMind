@@ -382,11 +382,42 @@ impl bm_protocol::SessionPort for SessionPortImpl {
     }
 }
 
+/// 权限面实现：permission_pending 询问表（回传决策 → 唤醒等待中的上游）。
+pub struct GatePortImpl {
+    pub pending: Arc<
+        tokio::sync::Mutex<
+            HashMap<String, tokio::sync::oneshot::Sender<crate::PermissionDecision>>,
+        >,
+    >,
+}
+
+impl bm_protocol::GatePort for GatePortImpl {
+    fn respond(
+        &self,
+        request_id: &str,
+        allow: bool,
+        always: bool,
+    ) -> BoxFuture<'_, Result<(), ProtocolError>> {
+        let pending = self.pending.clone();
+        let rid = request_id.to_string();
+        Box::pin(async move {
+            let Some(tx) = pending.lock().await.remove(&rid) else {
+                return Err(ProtocolError::new(
+                    ErrorCode::NotFound,
+                    format!("权限询问不存在: {rid}"),
+                ));
+            };
+            let _ = tx.send(crate::PermissionDecision { allow, always });
+            Ok(())
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use bm_core::config::{AppConfig, ProviderConfig, ProviderKind};
-    use bm_protocol::{CredentialsPort, LlmPort, NotifyPort, ToolsPort};
+    use bm_protocol::{CredentialsPort, GatePort, LlmPort, NotifyPort, ToolsPort};
 
     fn test_config() -> Arc<RwLock<AppConfig>> {
         let mut cfg = AppConfig::default();
@@ -458,5 +489,22 @@ mod tests {
         // 通道不存在 → false；非法事件 → false
         assert!(!port.push("nope", serde_json::json!({"type": "textDelta", "delta": "x"})));
         assert!(!port.push("s1", serde_json::json!({"type": "unknownEvent"})));
+    }
+
+    #[tokio::test]
+    async fn gate_port_responds_to_pending_request() {
+        let (tx, mut rx) = tokio::sync::oneshot::channel::<crate::PermissionDecision>();
+        let pending: Arc<
+            tokio::sync::Mutex<HashMap<String, tokio::sync::oneshot::Sender<crate::PermissionDecision>>>,
+        > = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
+        pending.try_lock().unwrap().insert("r1".into(), tx);
+        let port = GatePortImpl { pending };
+        // 未知询问 id → NotFound
+        let err = port.respond("nope", true, false).await.unwrap_err();
+        assert_eq!(err.code(), ErrorCode::NotFound);
+        // 已知 id → 决策送达
+        port.respond("r1", true, true).await.unwrap();
+        let decision = rx.try_recv().unwrap();
+        assert!(decision.allow && decision.always);
     }
 }

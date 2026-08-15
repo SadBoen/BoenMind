@@ -521,6 +521,12 @@ async fn serve_inner(
                 streams: session_streams.clone(),
             });
         let _ = kernel.ctx().register_port("notify", notify_port);
+        // 权限面（SERVICE_FACES #14）：询问表就绪后运行期注册
+        let gate_port: Arc<dyn bm_protocol::GatePort> =
+            Arc::new(service_faces::GatePortImpl {
+                pending: permission_pending.clone(),
+            });
+        let _ = kernel.ctx().register_port("gate", gate_port);
     }
 
     // Steward 轮（v0.19）：管家状态（next_wake_at 落点 = steward.json）。

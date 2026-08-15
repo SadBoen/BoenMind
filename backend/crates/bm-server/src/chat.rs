@@ -158,6 +158,25 @@ pub async fn respond_permission(
     State(state): State<AppState>,
     Json(req): Json<PermissionResponseRequest>,
 ) -> Response {
+    // 权限面（SERVICE_FACES #14）：kernel 可用时经服务；退化直调询问表
+    if let Some(kernel) = &state.kernel
+        && let Ok(port) = kernel.port::<dyn bm_protocol::GatePort>("gate")
+    {
+        match port.respond(&req.request_id, req.allow, req.always).await {
+            Ok(()) => {
+                tracing::info!(
+                    event = "bm.permission_responded",
+                    request = %req.request_id,
+                    allow = req.allow,
+                    always = req.always,
+                );
+            }
+            Err(e) => {
+                tracing::warn!(event = "bm.permission_respond_failed", request = %req.request_id, error = %e);
+            }
+        }
+        return axum::Json(serde_json::json!({ "ok": true })).into_response();
+    }
     if let Some(tx) = state.permission_pending.lock().await.remove(&req.request_id) {
         let _ = tx.send(crate::PermissionDecision {
             allow: req.allow,
