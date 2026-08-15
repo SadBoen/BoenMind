@@ -25,6 +25,83 @@ use serde::{Deserialize, Serialize};
 pub const DEFAULT_PACING_MIN_S: i64 = 300;
 pub const DEFAULT_PACING_MAX_S: i64 = 86_400;
 
+/// 管家回合静默窗口默认值（秒）：回合进行中超过窗口无任何事件（文本/工具）
+/// → 宿主侧取消 + 告警（架构 §14.1"1 分钟无汇报主动上报"）。
+pub const DEFAULT_SILENCE_WINDOW_S: i64 = 120;
+
+/// 静默窗口秒数解析（纯函数——env 读在 StewardConfig::from_env，测试并发下
+/// env 写读有竞态）：`0` = 禁用 watchdog；正数 = 窗口秒数；负数/非法 = None
+/// （回落默认）。
+pub fn parse_silence_window(value: Option<&str>) -> Option<i64> {
+    value
+        .and_then(|v| v.trim().parse::<i64>().ok())
+        .filter(|v| *v >= 0)
+}
+
+/// 管家全部环境变量的**唯一**集中读取点（顺手项 2026-08-15：原散落
+/// steward.rs / bm_engine.rs / lib.rs 三处重复 `std::env::var`，此处收拢为
+/// 启动期读一次的结构）。其余模块一律从 `AppState.steward_cfg` 取值，
+/// 不允许再直接读 `BM_STEWARD_*`。
+#[derive(Debug, Clone)]
+pub struct StewardConfig {
+    /// 管家会话 id（BM_STEWARD_SESSION 指定；None = 未启用管家）。
+    pub session: Option<String>,
+    /// 治理夹区间（秒；默认 5 分钟 ~ 24 小时）。
+    pub pacing_min_s: i64,
+    pub pacing_max_s: i64,
+    /// 成本杠杆（BM_STEWARD_PROVIDER / BM_STEWARD_MODEL）：管家回合用
+    /// 低成本模型（24×7 心跳是主要烧钱点，§14.2）；None = 回落会话级配置。
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    /// 静默窗口（秒；0 = 禁用 watchdog）。
+    pub silence_window_s: i64,
+    /// 宿主重启后投喂启动汇报（BM_STEWARD_BOOT_REPORT=1 开启，默认关）。
+    pub boot_report: bool,
+}
+
+impl Default for StewardConfig {
+    fn default() -> Self {
+        Self {
+            session: None,
+            pacing_min_s: DEFAULT_PACING_MIN_S,
+            pacing_max_s: DEFAULT_PACING_MAX_S,
+            provider: None,
+            model: None,
+            silence_window_s: DEFAULT_SILENCE_WINDOW_S,
+            boot_report: false,
+        }
+    }
+}
+
+impl StewardConfig {
+    pub fn from_env() -> Self {
+        let env_opt = |name: &str| {
+            std::env::var(name).ok().map(|v| v.trim().to_string()).filter(|s| !s.is_empty())
+        };
+        let env_i64 = |name: &str, default: i64| {
+            std::env::var(name)
+                .ok()
+                .and_then(|v| v.trim().parse::<i64>().ok())
+                .unwrap_or(default)
+        };
+        let pacing_min_s = env_i64("BM_STEWARD_PACING_MIN_S", DEFAULT_PACING_MIN_S).max(10);
+        let pacing_max_s = env_i64("BM_STEWARD_PACING_MAX_S", DEFAULT_PACING_MAX_S).max(pacing_min_s);
+        Self {
+            session: env_opt("BM_STEWARD_SESSION")
+                .and_then(|s| s.split_whitespace().next().map(str::to_string)),
+            pacing_min_s,
+            pacing_max_s,
+            provider: env_opt("BM_STEWARD_PROVIDER"),
+            model: env_opt("BM_STEWARD_MODEL"),
+            silence_window_s: std::env::var("BM_STEWARD_SILENCE_WINDOW_S")
+                .ok()
+                .and_then(|v| parse_silence_window(Some(&v)))
+                .unwrap_or(DEFAULT_SILENCE_WINDOW_S),
+            boot_report: std::env::var("BM_STEWARD_BOOT_REPORT").is_ok_and(|v| v.trim() == "1"),
+        }
+    }
+}
+
 /// 管家身份提示词（追加在通用 SYSTEM_PROMPT 之后；只进管家会话）。
 /// 覆盖式声明置尾（模型对靠近末尾的指令更敏感）：本会话已被宿主配置为
 /// 管家，上方 BoenMind 身份描述不适用；引导模型理解 Goal/Inject 回合是
@@ -74,9 +151,9 @@ pub struct StewardStore {
 
 impl StewardStore {
     /// 从 `$BOENMIND_HOME/steward.json` 加载（缺失/损坏 → 默认空状态 + warn，
-    /// 不阻断启动——管家是可选项）。pacing 从 env 读，仅治理参数可调。
-    /// `BM_STEWARD_SESSION` 环境变量可强制指定管家会话（宿主配置；空 = 未启用）。
-    pub fn load(app_dir: impl Into<PathBuf>) -> Self {
+    /// 不阻断启动——管家是可选项）。会话与治理参数来自 `StewardConfig`
+    /// （env 已在启动期集中读取一次，见 [`StewardConfig::from_env`]）。
+    pub fn load(app_dir: impl Into<PathBuf>, cfg: &StewardConfig) -> Self {
         let path = app_dir.into().join("steward.json");
         let mut state = match std::fs::read_to_string(&path) {
             Ok(text) => match serde_json::from_str::<StewardState>(&text) {
@@ -88,23 +165,13 @@ impl StewardStore {
             },
             Err(_) => StewardState::default(),
         };
-        if let Ok(sid) = std::env::var("BM_STEWARD_SESSION")
-            && let Some(sid) = sid.split_whitespace().next().filter(|s| !s.is_empty())
-        {
-            state.session_id = Some(sid.to_string());
+        if let Some(sid) = &cfg.session {
+            state.session_id = Some(sid.clone());
         }
-        let env_i64 = |name: &str, default: i64| {
-            std::env::var(name)
-                .ok()
-                .and_then(|v| v.trim().parse::<i64>().ok())
-                .unwrap_or(default)
-        };
-        let min = env_i64("BM_STEWARD_PACING_MIN_S", DEFAULT_PACING_MIN_S).max(10);
-        let max = env_i64("BM_STEWARD_PACING_MAX_S", DEFAULT_PACING_MAX_S).max(min);
         Self {
             path,
             state: tokio::sync::Mutex::new(state),
-            pacing: (min, max),
+            pacing: (cfg.pacing_min_s, cfg.pacing_max_s),
         }
     }
 
@@ -382,7 +449,7 @@ mod tests {
             store.set_wake("s1", 600, Some("记住我")).await.unwrap();
         }
         // 重新加载（文件为真源）
-        let store = StewardStore::load(&dir);
+        let store = StewardStore::load(&dir, &StewardConfig::default());
         assert_eq!(store.session_id().await.as_deref(), Some("s1"));
         let snap = store.snapshot().await;
         assert!(snap.next_wake_at_ms > 0);
@@ -395,7 +462,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("steward-test-{}", uuid_like()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("steward.json"), "{not json").unwrap();
-        let store = StewardStore::load(&dir);
+        let store = StewardStore::load(&dir, &StewardConfig::default());
         assert_eq!(store.session_id().await, None);
         std::fs::remove_dir_all(&dir).ok();
     }

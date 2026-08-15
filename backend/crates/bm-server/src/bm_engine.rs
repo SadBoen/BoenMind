@@ -65,9 +65,10 @@ pub fn reasoning_effort_for(level: &str) -> Option<&'static str> {
     }
 }
 
-/// 管家回合静默窗口默认值（秒）：回合进行中超过窗口无任何事件（文本/工具）
-/// → 宿主侧取消 + 告警（架构 §14.1"1 分钟无汇报主动上报"）。
-pub const DEFAULT_SILENCE_WINDOW_S: i64 = 120;
+/// 管家回合静默窗口默认值（秒）与解析：集中定义在 steward.rs
+/// （StewardConfig::from_env 是 `BM_STEWARD_*` 唯一读取点），此处 re-export
+/// 供本模块与测试引用。
+pub use crate::steward::{DEFAULT_SILENCE_WINDOW_S, parse_silence_window};
 
 /// Windows 平台段（M1 验收问题 4）：bash 工具实际跑在 cmd /C 下，模型若按
 /// Git Bash 习惯（/d/... 路径、pwd）会在 cmd 下反复失败浪费步数——把平台
@@ -77,13 +78,7 @@ const PLATFORM_HINT: &str = "\n\n运行环境提示（Windows）：\n- bash 工�
 #[cfg(not(windows))]
 const PLATFORM_HINT: &str = "";
 
-/// 静默窗口秒数解析（纯函数——env 读在调用点，测试并发下 env 写读有竞态）：
-/// `0` = 禁用 watchdog；正数 = 窗口秒数；负数/非法/缺失 = None（回落默认）。
-pub fn parse_silence_window(value: Option<&str>) -> Option<i64> {
-    value
-        .and_then(|v| v.trim().parse::<i64>().ok())
-        .filter(|v| *v >= 0)
-}
+// 静默窗口解析见上方 re-export（steward.rs 为 `BM_STEWARD_*` 唯一读取点）。
 
 /// 管家回合 LLM 解析（成本杠杆，架构 §14.2）：env `BM_STEWARD_PROVIDER` /
 /// `BM_STEWARD_MODEL` 显式指定时优先（24×7 心跳是主要烧钱点，可用低成本
@@ -585,7 +580,7 @@ pub async fn chat_bm(
     tokio::spawn(async move {
         // 总超时：与 pi 路径同 15min，超时走取消通道（部分文本照常入库）
         let cancel_timeout = cancel_tx.clone();
-        tokio::spawn(async move {
+        let timeout_task = tokio::spawn(async move {
             tokio::time::sleep(crate::chat::PROMPT_TIMEOUT).await;
             let _ = cancel_timeout.send(true);
         });
@@ -649,6 +644,7 @@ pub async fn chat_bm(
         {
             aborts.remove(&session_id);
         }
+        timeout_task.abort(); // 15min 兜底任务随 prompt 结束即停，不驻留
     });
 
     Sse::new(stream)
@@ -861,18 +857,16 @@ pub async fn run_steward_turn(
     else {
         return Err(format!("管家会话不存在: {session_id}"));
     };
-    // 成本杠杆（v0.20）：env BM_STEWARD_PROVIDER/BM_STEWARD_MODEL 指定时
-    // 管家回合用低成本模型（24×7 心跳主要烧钱点，§14.2）；配错回落会话级
+    // 成本杠杆（v0.20）：StewardConfig（BM_STEWARD_PROVIDER/BM_STEWARD_MODEL）
+    // 指定时管家回合用低成本模型（24×7 心跳主要烧钱点，§14.2）；配错回落会话级
     let (provider, model) = {
         let config = state.config.read().await;
-        let env_provider = std::env::var("BM_STEWARD_PROVIDER").ok();
-        let env_model = std::env::var("BM_STEWARD_MODEL").ok();
         resolve_steward_llm(
             &config,
             session.provider_id.as_deref(),
             session.model.as_deref(),
-            env_provider.as_deref(),
-            env_model.as_deref(),
+            state.steward_cfg.provider.as_deref(),
+            state.steward_cfg.model.as_deref(),
         )?
     };
     let progress: Arc<std::sync::Mutex<String>> = Arc::new(std::sync::Mutex::new(String::new()));
@@ -887,7 +881,7 @@ pub async fn run_steward_turn(
     let (tx, _rx) = mpsc::unbounded_channel::<AgentStreamEvent>();
     let (cancel_tx, mut cancel_rx) = watch::channel(false);
     let timeout_tx = cancel_tx.clone();
-    tokio::spawn(async move {
+    let timeout_task = tokio::spawn(async move {
         tokio::time::sleep(crate::chat::PROMPT_TIMEOUT).await;
         let _ = timeout_tx.send(true);
     });
@@ -895,13 +889,11 @@ pub async fn run_steward_turn(
     // 静默窗口 watchdog（v0.20，架构 §14.1"1 分钟无汇报主动上报"落地）：
     // 回合进行中若超过窗口无任何新事件（head_seq 不变 = 无文本/工具活动，
     // 模型可能挂死/网络卡死），宿主侧主动取消 + 告警——15min 总超时是兜底，
-    // 静默窗口提前掐断无进展回合防烧 token。窗口 env `BM_STEWARD_SILENCE_
-    // WINDOW_S` 可调（秒；0 = 禁用）；事件日志是唯一活动源（progress 是
-    // 会话级共享内存，可能属于 chat 路径创建的 agent，不可作管家活动依据）。
-    let silence_window = std::env::var("BM_STEWARD_SILENCE_WINDOW_S")
-        .ok()
-        .and_then(|v| parse_silence_window(Some(&v)))
-        .unwrap_or(DEFAULT_SILENCE_WINDOW_S);
+    // 静默窗口提前掐断无进展回合防烧 token。窗口秒数来自 StewardConfig
+    // （BM_STEWARD_SILENCE_WINDOW_S，0 = 禁用）；事件日志是唯一活动源
+    // （progress 是会话级共享内存，可能属于 chat 路径创建的 agent，不可作
+    // 管家活动依据）。
+    let silence_window = state.steward_cfg.silence_window_s;
     let watchdog = if silence_window > 0 {
         let cancel_watch = cancel_tx.clone();
         let store_watch = state.dual_writer.as_ref().map(|d| d.event_log().store());
@@ -959,6 +951,7 @@ pub async fn run_steward_turn(
     if let Some(w) = watchdog {
         w.abort(); // 回合结束即停（否则会继续 tick 直到窗口超时）
     }
+    timeout_task.abort(); // 15min 兜底任务随回合结束即停，不驻留
 
     match &outcome {
         Ok(o) => {

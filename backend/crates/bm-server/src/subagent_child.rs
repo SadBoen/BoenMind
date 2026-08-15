@@ -185,7 +185,7 @@ pub async fn run(args: &[String]) -> i32 {
     // 防模型挂死时子进程孤儿化）
     let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
     let timeout_tx = cancel_tx.clone();
-    tokio::spawn(async move {
+    let timeout_task = tokio::spawn(async move {
         tokio::time::sleep(crate::chat::PROMPT_TIMEOUT).await;
         let _ = timeout_tx.send(true);
     });
@@ -231,6 +231,7 @@ pub async fn run(args: &[String]) -> i32 {
         )
         .await;
 
+    timeout_task.abort(); // 回合结束即停，15min 兜底任务不驻留
     match &outcome {
         Ok(o) => {
             if !o.final_text.trim().is_empty() {

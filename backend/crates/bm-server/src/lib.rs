@@ -77,6 +77,9 @@ pub struct AppState {
     /// 管家（Steward 轮）：next_wake_at 状态 + 调度器共享句柄
     /// （None = 未启用管家，BM_STEWARD_SESSION 未设置）。
     pub steward: Option<Arc<steward::StewardStore>>,
+    /// 管家配置（env 集中读取一次，见 steward::StewardConfig；任何模块
+    /// 需要管家参数一律从这里取，不再直接读 `BM_STEWARD_*`）。
+    pub steward_cfg: steward::StewardConfig,
 }
 
 /// 前端对一次权限询问的决策。
@@ -104,6 +107,7 @@ impl AppState {
         >,
         permission_pending: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<PermissionDecision>>>>,
         steward: Option<Arc<steward::StewardStore>>,
+        steward_cfg: steward::StewardConfig,
     ) -> Self {
         Self {
             config: Arc::new(RwLock::new(config)),
@@ -116,6 +120,7 @@ impl AppState {
             loop_agents: Arc::new(Mutex::new(HashMap::new())),
             compat,
             steward,
+            steward_cfg,
         }
     }
 }
@@ -432,8 +437,9 @@ async fn serve_inner(
     // Steward 轮（v0.19）：管家状态（next_wake_at 落点 = steward.json）。
     // BM_STEWARD_SESSION env 指定管家会话才启用；未启用 = None（调度器
     // 不启动、set_wake 不进任何工具面——可选项零开销）
+    let steward_cfg = steward::StewardConfig::from_env();
     let steward = {
-        let store = steward::StewardStore::load(bm_core::config::app_dir());
+        let store = steward::StewardStore::load(bm_core::config::app_dir(), &steward_cfg);
         match store.session_id().await {
             Some(sid) => {
                 tracing::info!(event = "bm.steward_configured", session = %sid);
@@ -452,6 +458,7 @@ async fn serve_inner(
         session_streams,
         permission_pending,
         steward,
+        steward_cfg,
     );
     spawn_agent_sweeper(state.loop_agents.clone());
     // C1 回收站超期清除：孤儿会话（sessions 表已删）事件保留 N 天后物理删除
@@ -466,10 +473,10 @@ async fn serve_inner(
             "管家已启用（BM_STEWARD_SESSION）"
         );
         bm_engine::spawn_steward_scheduler(state.clone(), store.clone());
-        // v0.20：系统启动汇报（BM_STEWARD_BOOT_REPORT=1 开启）——宿主重启后
+        // v0.20：系统启动汇报（steward_cfg.boot_report 开启）——宿主重启后
         // 内存态丢失，管家需要知道（fire-and-forget：失败仅日志，不阻断启动；
         // 默认关：每次重启烧一次 token 需显式开关）
-        if std::env::var("BM_STEWARD_BOOT_REPORT").is_ok_and(|v| v.trim() == "1") {
+        if state.steward_cfg.boot_report {
             tracing::info!(event = "bm.steward_boot_report", "系统启动汇报已投喂");
             let state_boot = state.clone();
             let store_boot = store.clone();
