@@ -403,7 +403,7 @@ SessionEvent {
 **checkpoint 与并发（v0.3 补充）**：
 - **持久化策略**：事件流 append 即写日志表（turso 单写者 tokio Mutex，现有基础），**checkpoint 仿 dsh 的 checkpoint-policy**——每请求边界（request/header 落盘点）做一次 fsync 级持久化，轮次不等待 flush（`whenIdle()` 时消费者自行 flush）；崩溃恢复：未闭合的 turn 由加载器打 `interrupted` 标记（dsh 的 TurnEndReason 语义）。
 - **并发写**：单进程内单写者（Mutex 串行 append）；跨进程（如子代理子进程）不走日志直写，走 RPC 代理写（未来 multi-instance 时引入租约）——**首版不承诺多进程并发写**（S9 缩小范围）。
-- **压缩锁**：unmatched `compaction/start` = 压缩中（dsh 语义），恢复时据此完成或回滚事务。
+- **压缩锁（预留语义，2026-08-15 标注未实现）**：dsh 语义是 unmatched `compaction/start` = 压缩中、恢复时据此完成或回滚事务。当前不实现的原因（如实标注）：单写者（会话串行锁）下无并发压缩者；回放幂等（有 summary 的 Replace 重放无害、无 summary 的悬空 start 无表面效果）——实际无影响。多实例 / RPC 代理写（阶段 3）引入第二写者时，随 L13"写者正确性先于服务"补实现。
 
 **分支化事件日志（v0.6 吸收，Life Agent OS）**：会话日志预留 `(session_id, branch_id, seq)` 三维寻址——fork 产生独立序列、merge 后分支转只读、fork 超头拒绝。**会话分支（"回滚到旧分支"语义）不再是前端功能，而是日志第一公民**。`branch_id` 字段与 fork 事件类型已落地（2026-08-15：`EventLog::fork` 以 `branch/fork` 标记为子分支首事件，记录 fork 点来源）；merge 事件随 session.* merge 工具落地时补（先用后注册）。分支 UI 二期（对齐 Hana 的会话分支拍板点）。
 
