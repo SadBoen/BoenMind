@@ -101,30 +101,33 @@ export interface DockPanelSpec {
 
 /** 应用默认布局（每应用一份；新应用有可停靠视图时在此声明） */
 export const DEFAULT_LAYOUTS: Partial<Record<AppId, { panels: DockPanelSpec[] }>> = {
-  // 编程壳（v5 重排，2026-08-15 用户拍板"不需要编辑器，一行代码都不用看"）：
-  // 中=任务清单主区 / 左=文件树 / 右=对话独立列 / 底部=终端|分支图叠放。
-  // 编辑器视图仍在注册表（可多开，用户随时可加回——功能单元模式）。
+  // 编程壳（v8 重排，2026-08-15 用户"对话放中间，左=项目和文件列表，右=todo"）：
+  // 中=对话主区 / 左=文件列表（含项目切换器+git 状态）/ 右=任务清单 /
+  // 底部=终端|分支图叠放。编辑器视图仍在注册表（可多开，用户随时可加回）。
   coding: {
     panels: [
-      { id: "todo-panel", view: "todo-panel" },
-      {
-        id: "file-panel",
-        view: "file-panel",
-        params: { coding: true },
-        position: { reference: "todo-panel", direction: "left" },
-        initialWidth: 240,
-      },
       {
         id: "chat-pane",
         view: "chat-pane",
         params: { variant: "panel", app: "coding" },
-        position: { reference: "todo-panel", direction: "right" },
-        initialWidth: 320,
+      },
+      {
+        id: "file-panel",
+        view: "file-panel",
+        params: { coding: true },
+        position: { reference: "chat-pane", direction: "left" },
+        initialWidth: 240,
+      },
+      {
+        id: "todo-panel",
+        view: "todo-panel",
+        position: { reference: "chat-pane", direction: "right" },
+        initialWidth: 300,
       },
       {
         id: "terminal",
         view: "terminal",
-        position: { reference: "todo-panel", direction: "below" },
+        position: { reference: "chat-pane", direction: "below" },
         initialHeight: 200,
       },
       {

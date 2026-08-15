@@ -42,13 +42,13 @@ interface DockLayoutProps {
 }
 
 /**
- * 布局快照 key（每应用一份）。v7：file-panel 面板参数化（coding 模式：
- * 项目切换器 + git 状态并入文件树单元，顶部横条退役）——旧快照里
- * file-panel 无 coding 参数，版本化后重建默认布局。代价是用户自定义
- * 布局随版本重置一次；插件默认布局声明（§四·C）落地时再设计精细迁移
- * （快照指纹对比），当前阶段默认布局即用户所见，bump 可接受。
+ * 布局快照 key（每应用一份）。v8：coding 默认布局重排（2026-08-15 用户
+ * "对话放中间，左=项目和文件列表，右=todo"）——旧快照是 v7 布局，版本化
+ * 后重建默认布局。代价是用户自定义布局随版本重置一次；插件默认布局声明
+ * （§四·C）落地时再设计精细迁移（快照指纹对比），当前阶段默认布局即用户
+ * 所见，bump 可接受。
  */
-const layoutKey = (appId: AppId) => `boenmind.dock.v7.${appId}`;
+const layoutKey = (appId: AppId) => `boenmind.dock.v8.${appId}`;
 
 /**
  * 布局重置注册表：DockLayout 实例挂载时登记，壳层（导航右键菜单/标题栏）
