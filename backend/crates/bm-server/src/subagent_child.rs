@@ -190,7 +190,12 @@ pub async fn run(args: &[String]) -> i32 {
         let _ = timeout_tx.send(true);
     });
 
-    let llm = match crate::bm_engine::resolve_llm_config(provider, &model, child.thinking.as_deref()) {
+    let llm = match crate::bm_engine::resolve_llm_config(
+        provider,
+        &provider.descriptor(),
+        &model,
+        child.thinking.as_deref(),
+    ) {
         Ok(cfg) => OpenAiClient::new(cfg),
         Err((_status, msg)) => {
             eprintln!("[bm-server:subagent] LLM 配置失败: {msg}");

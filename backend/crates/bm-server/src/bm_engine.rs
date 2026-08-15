@@ -315,7 +315,12 @@ fn build_loop_agent(
                 return Err((StatusCode::BAD_REQUEST, e.to_string()));
             }
         },
-        Err(_) => OpenAiClient::new(resolve_llm_config(provider, model, thinking)?),
+        Err(_) => OpenAiClient::new(resolve_llm_config(
+            provider,
+            &provider.descriptor(),
+            model,
+            thinking,
+        )?),
     };
     let mut tools = bm_loop::ToolRegistry::new();
     // B6：内置工具集 schema 进模型可见面（对齐 pi BUILTIN_TOOL_NAMES 全开），
@@ -456,10 +461,12 @@ fn build_loop_agent(
 
 /// provider 配置 → LlmConfig（bm-core 不依赖 bm-loop，桥接在 bm-server 做；
 /// 子代理子进程（subagent_child）复用同一解析）。
-/// base_url：用户填写优先，否则官方端点；custom 必须填写（配置写入时已校验）。
+/// base_url：用户填写优先，否则官方端点（来自厂商描述 desc——ProviderPort
+/// 注册表数据源，方案 A）；custom 必须填写（配置写入时已校验）。
 /// thinking 档位 → reasoning_effort（切片②；None = 端点默认推理参数）。
 pub(crate) fn resolve_llm_config(
     provider: &bm_core::config::ProviderConfig,
+    desc: &bm_core::providers::ProviderDescriptor,
     model: &str,
     thinking: Option<&str>,
 ) -> Result<LlmConfig, (StatusCode, String)> {
@@ -468,7 +475,7 @@ pub(crate) fn resolve_llm_config(
         .as_deref()
         .map(|s| s.trim().trim_end_matches('/').to_string())
         .filter(|s| !s.is_empty())
-        .or_else(|| bm_core::providers::official_base_url(provider.kind).map(str::to_string))
+        .or_else(|| desc.official_base_url.map(str::to_string))
         .ok_or_else(|| {
             (
                 StatusCode::BAD_REQUEST,
@@ -1252,20 +1259,21 @@ mod tests {
             id: "custom-1".into(),
             name: "Custom".into(),
             kind: ProviderKind::Deepseek,
+            shape: None,
             base_url: Some("https://my.deepseek.example/v1/".into()),
             api_key: Some("sk-test".into()),
             models: vec!["deepseek-chat".into()],
             default_model: Some("deepseek-chat".into()),
         };
-        let cfg = resolve_llm_config(&p, "deepseek-chat", None).unwrap();
+        let cfg = resolve_llm_config(&p, &p.descriptor(), "deepseek-chat", None).unwrap();
         assert_eq!(cfg.base_url, "https://my.deepseek.example/v1", "用户端点优先且去尾斜杠");
         assert_eq!(cfg.api_key, "sk-test");
         assert_eq!(cfg.provider.as_deref(), Some("custom-1"));
         assert!(cfg.reasoning_effort.is_none(), "off/None 不注入推理参数");
 
-        // 官方端点回退
+        // 官方端点回退（经厂商描述取）
         let p2 = ProviderConfig { base_url: None, ..p };
-        let cfg2 = resolve_llm_config(&p2, "deepseek-chat", Some("high")).unwrap();
+        let cfg2 = resolve_llm_config(&p2, &p2.descriptor(), "deepseek-chat", Some("high")).unwrap();
         assert!(cfg2.base_url.contains("api.deepseek.com"));
         assert_eq!(cfg2.reasoning_effort.as_deref(), Some("high"), "high 档映射 high");
 
@@ -1276,7 +1284,7 @@ mod tests {
             base_url: None,
             ..p2
         };
-        let err = resolve_llm_config(&p3, "m", None).unwrap_err();
+        let err = resolve_llm_config(&p3, &p3.descriptor(), "m", None).unwrap_err();
         assert_eq!(err.0, StatusCode::BAD_REQUEST);
     }
 
@@ -1313,6 +1321,7 @@ mod tests {
                 id: "minimax".into(),
                 name: "MiniMax".into(),
                 kind: ProviderKind::Minimax,
+                shape: None,
                 base_url: None,
                 api_key: Some("sk-test".into()),
                 models: vec!["MiniMax-M3".into(), "MiniMax-Text-01".into()],
@@ -1322,6 +1331,7 @@ mod tests {
                 id: "deepseek".into(),
                 name: "DeepSeek".into(),
                 kind: ProviderKind::Deepseek,
+                shape: None,
                 base_url: None,
                 api_key: Some("sk-test2".into()),
                 models: vec!["deepseek-chat".into()],

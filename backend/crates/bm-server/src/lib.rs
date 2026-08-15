@@ -513,6 +513,13 @@ async fn serve_inner(
         // 服务面铺开第二批：llm（客户端配置解析）/credentials（密钥读取）
         // ——LlmPort 消费方 = build_loop_agent（kernel 不可用退化直调）
         let shared_config = Arc::new(std::sync::RwLock::new(config.clone()));
+        // 厂商面（SERVICE_FACES #15，LLM provider 插件化方案 A）：厂商注册表
+        // （内置 minimax/deepseek/custom 出厂注册；官方端点/形状单源 bm-core）。
+        // LlmPort 解析经它取端点/协议形状——LlmPortImpl 与 kernel 注册共享
+        // 同一实例（ProviderPortImpl 持同一 shared_config）。
+        let provider_port = Arc::new(service_faces::ProviderPortImpl {
+            config: shared_config.clone(),
+        });
         // 记忆服务面：全局单例（facts.md 同一文件；会话注入实例在
         // EngineBuilder 另开——append 容忍并发写，见 bm_engine.rs 注释）
         let memory: Arc<std::sync::Mutex<bm_memory::MemoryFilePlugin>> =
@@ -539,9 +546,14 @@ async fn serve_inner(
                         as Arc<dyn bm_protocol::StatsPort>,
                 )
                 .with_port(
+                    "provider",
+                    provider_port.clone() as Arc<dyn bm_protocol::ProviderPort>,
+                )
+                .with_port(
                     "llm",
                     Arc::new(service_faces::LlmPortImpl {
                         config: shared_config.clone(),
+                        provider_port: provider_port.clone(),
                     }) as Arc<dyn bm_protocol::LlmPort>,
                 )
                 .with_port(

@@ -123,11 +123,75 @@ pub fn save_settings(
     }
 }
 
+/// 厂商面实现：AppConfig.providers → ProviderDescriptor（bm-core 类型边界
+/// 在实现内；协议层只见 JSON——零依赖纪律）。官方端点/协议形状单源
+/// bm-core providers 表（ProviderConfig::descriptor），LlmPort 解析经此面。
+pub struct ProviderPortImpl {
+    pub config: Arc<RwLock<bm_core::config::AppConfig>>,
+}
+
+impl ProviderPortImpl {
+    /// 按配置 id 查厂商描述（LlmPort 内部消费入口；同一注册表数据源）。
+    pub fn descriptor(
+        &self,
+        provider_id: &str,
+    ) -> Option<bm_core::providers::ProviderDescriptor> {
+        let config = self.config.read().expect("config poisoned");
+        config
+            .providers
+            .iter()
+            .find(|p| p.id == provider_id)
+            .map(|p| p.descriptor())
+    }
+}
+
+impl bm_protocol::ProviderPort for ProviderPortImpl {
+    fn providers(&self) -> Value {
+        let config = self.config.read().expect("config poisoned");
+        let list: Vec<Value> = config
+            .providers
+            .iter()
+            .map(|p| {
+                let d = p.descriptor();
+                serde_json::json!({
+                    "stableId": d.stable_id,
+                    "name": d.name,
+                    "officialBaseUrl": d.official_base_url,
+                    "shape": d.shape,
+                    "models": p.models,
+                })
+            })
+            .collect();
+        Value::Array(list)
+    }
+
+    fn provider(&self, stable_id: &str) -> Option<Value> {
+        let config = self.config.read().expect("config poisoned");
+        config
+            .providers
+            .iter()
+            .find(|p| p.descriptor().stable_id == stable_id)
+            .map(|p| {
+                let d = p.descriptor();
+                serde_json::json!({
+                    "stableId": d.stable_id,
+                    "name": d.name,
+                    "officialBaseUrl": d.official_base_url,
+                    "shape": d.shape,
+                    "models": p.models,
+                })
+            })
+    }
+}
+
 /// LLM 能力面实现：bm-core providers 配置 → LlmConfig JSON 视图。
 /// 桥接 resolve_llm_config（消费方 bm_engine.build_loop_agent 经服务取，
 /// 服务不可用退化直调——渐进替换不是闸门）。
+/// 官方端点/协议形状经 ProviderPort（厂商面）取，不再直读硬编码表
+/// ——LLM provider 插件化方案 A（2026-08-16 拍板）。
 pub struct LlmPortImpl {
     pub config: Arc<RwLock<bm_core::config::AppConfig>>,
+    pub provider_port: Arc<ProviderPortImpl>,
 }
 
 impl bm_protocol::LlmPort for LlmPortImpl {
@@ -137,18 +201,27 @@ impl bm_protocol::LlmPort for LlmPortImpl {
         model: &str,
         thinking: Option<&str>,
     ) -> Result<Value, ProtocolError> {
-        let config = self.config.read().expect("config poisoned");
-        let provider = config
-            .providers
-            .iter()
-            .find(|p| p.id == provider_id)
-            .ok_or_else(|| {
-                ProtocolError::new(
-                    ErrorCode::NotFound,
-                    format!("provider `{provider_id}` not found"),
-                )
-            })?;
-        let cfg = crate::bm_engine::resolve_llm_config(provider, model, thinking)
+        let provider = {
+            let config = self.config.read().expect("config poisoned");
+            config
+                .providers
+                .iter()
+                .find(|p| p.id == provider_id)
+                .cloned()
+        }
+        .ok_or_else(|| {
+            ProtocolError::new(
+                ErrorCode::NotFound,
+                format!("provider `{provider_id}` not found"),
+            )
+        })?;
+        let desc = self.provider_port.descriptor(provider_id).ok_or_else(|| {
+            ProtocolError::new(
+                ErrorCode::NotFound,
+                format!("provider `{provider_id}` not found"),
+            )
+        })?;
+        let cfg = crate::bm_engine::resolve_llm_config(&provider, &desc, model, thinking)
             .map_err(|(_, msg)| ProtocolError::new(ErrorCode::InvalidArgument, msg))?;
         serde_json::to_value(cfg)
             .map_err(|e| ProtocolError::new(ErrorCode::InvalidArgument, e.to_string()))
@@ -425,6 +498,7 @@ mod tests {
             id: "test-provider".into(),
             name: "测试".into(),
             kind: ProviderKind::Deepseek,
+            shape: None,
             base_url: Some("https://example.com/v1".into()),
             api_key: Some("sk-test".into()),
             models: vec!["m1".into()],
@@ -435,7 +509,9 @@ mod tests {
 
     #[test]
     fn llm_port_resolves_config_json() {
-        let port = LlmPortImpl { config: test_config() };
+        let config = test_config();
+        let provider_port = Arc::new(ProviderPortImpl { config: config.clone() });
+        let port = LlmPortImpl { config, provider_port };
         let cfg = port.resolve_config("test-provider", "m1", None).unwrap();
         assert_eq!(cfg["base_url"], "https://example.com/v1");
         assert_eq!(cfg["api_key"], "sk-test");
@@ -446,6 +522,26 @@ mod tests {
         // 提供商清单 JSON 视图
         let list = port.providers();
         assert_eq!(list[0]["id"], "test-provider");
+    }
+
+    #[test]
+    fn provider_port_lists_and_queries_by_stable_id() {
+        use bm_protocol::ProviderPort;
+        let port = ProviderPortImpl { config: test_config() };
+        // 全量 JSON 视图：stableId 取代 pi_name（内置 deepseek → "deepseek"）
+        let list = port.providers();
+        let first = &list[0];
+        assert_eq!(first["stableId"], "deepseek");
+        assert_eq!(first["name"], "测试");
+        assert_eq!(first["officialBaseUrl"], "https://api.deepseek.com/v1");
+        assert_eq!(first["shape"], "openai-compatible");
+        assert_eq!(first["models"][0], "m1");
+        // 按 stable_id 查询；未知 → None
+        assert!(port.provider("deepseek").is_some());
+        assert!(port.provider("nope").is_none());
+        // 官方端点单源：descriptor 与 JSON 视图一致（LlmPort 解析同源）
+        let desc = port.descriptor("test-provider").unwrap();
+        assert_eq!(desc.official_base_url, Some("https://api.deepseek.com/v1"));
     }
 
     #[test]

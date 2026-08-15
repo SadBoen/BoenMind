@@ -5,12 +5,13 @@
 > 状态：`消费中`（有生产消费者）/ `待接线`（有接线方，时机未到）/ `建议清理`（真死代码）。
 > 依据：docs/review-tools-2026-08-16/EXTENSION_POINTS_ASSESSMENT.md
 
-## 服务面（13 面）
+## 服务面（14 面）
 
 | 面 | 消费者 | 状态 |
 |---|---|---|
 | memory | 会话侧全局单例（bm_engine build_loop_agent，P2-2 闭环） | 消费中 |
 | llm | bm_engine 经 port 解析 LlmConfig | 消费中 |
+| provider | LlmPortImpl 经此取官方端点/协议形状（方案 A，2026-08-16）；/api/providers/presets 同源 bm-core 表 | 消费中 |
 | skill | routes/skills.rs | 消费中 |
 | session | routes/sessions.rs | 消费中 |
 | stats | routes/sessions.rs（usage） | 消费中 |
@@ -51,4 +52,4 @@
 | SessionEndSeed 契约变体 | 会话终结事件化（回收站事件化时补写者） | 待接线 |
 | HeaderReason::Resume | M3 断点续跑 | 待接线 |
 | fork 分支机制 | M3 session.* 分支工具（文档 §5.1 已标注） | 待接线 |
-| pi_name 24 路映射 | 已并入 LLM provider 插件化（方案 A，2026-08-16 拍板）→ 改名 stable_id 进 ProviderPort 协议；见 docs/PLAN_LLM_PROVIDER_PLUGIN.md | 执行中 |
+| pi_name 24 路映射 | 已并入 LLM provider 插件化（方案 A）：删除；stable_id 进 ProviderPort 协议（bm-protocol/port.rs + bm-core ProviderConfig::descriptor，2026-08-16 落地） | 已完成 |

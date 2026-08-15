@@ -197,6 +197,23 @@ pub trait CredentialsPort: Send + Sync {
     fn api_key(&self, provider_id: &str) -> Option<String>;
 }
 
+/// 厂商面（SERVICE_FACES 图纸 #15，LLM provider 插件化方案 A）：厂商插件
+/// 注册表查询。内置厂商 = 出厂注册（minimax/deepseek/custom，官方端点/
+/// 协议形状单源 bm-core providers 表——/api/providers/presets 与 ProviderPort
+/// 同源）；第三方厂商经 Custom（用户填端点 + 形状）或未来插件注册接入。
+///
+/// 实现：bm-server 对 AppConfig.providers 的适配（ProviderPortImpl）。
+/// 消费方：LlmPort 解析（LlmPortImpl 经此面取官方端点/协议形状）。
+/// 契约层 JSON 边界（bm-protocol 零依赖纪律——不引用 bm-core/loop 类型）。
+pub trait ProviderPort: Send + Sync {
+    /// 全部已注册厂商（JSON 数组视图：stableId/name/officialBaseUrl/shape/models）。
+    fn providers(&self) -> serde_json::Value;
+
+    /// 按稳定标识查厂商描述（None = 未注册）。stable_id = 内置厂商名
+    /// （minimax/deepseek）或 custom-{id}（自定义类，取代 pi_name）。
+    fn provider(&self, stable_id: &str) -> Option<serde_json::Value>;
+}
+
 /// 技能面（SERVICE_FACES 图纸 #11）：skill 目录 CRUD。
 ///
 /// 实现：bm-server 包 bm-core skills 模块（SkillPortImpl，config 读写锁）。

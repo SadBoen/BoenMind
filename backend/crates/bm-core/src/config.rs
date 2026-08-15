@@ -66,6 +66,10 @@ pub struct ProviderConfig {
     /// 展示名称
     pub name: String,
     pub kind: ProviderKind,
+    /// 协议形状（仅 custom/未知厂商生效；None = OpenAI 兼容）。
+    /// 内置厂商形状固定（minimax/deepseek = OpenAI 兼容），见 [`ProviderConfig::shape`]。
+    #[serde(default)]
+    pub shape: Option<ProviderShape>,
     /// API 端点；云提供商留空使用官方端点，本地/兼容端点必填
     #[serde(default)]
     pub base_url: Option<String>,
@@ -77,147 +81,75 @@ pub struct ProviderConfig {
     pub default_model: Option<String>,
 }
 
+impl ProviderConfig {
+    /// 协议形状：内置厂商固定（minimax/deepseek = OpenAI 兼容），
+    /// custom/未知厂商读配置字段（默认 OpenAI 兼容）。
+    pub fn shape(&self) -> ProviderShape {
+        match self.kind {
+            ProviderKind::Minimax | ProviderKind::Deepseek => ProviderShape::OpenaiCompatible,
+            ProviderKind::Custom | ProviderKind::Unknown => self.shape.unwrap_or_default(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ProviderKind {
-    /// OpenAI 官方端点（或兼容端点覆盖）
-    Openai,
-    Anthropic,
-    Gemini,
-    Ollama,
-    Llamacpp,
     /// MiniMax 国内版（OpenAI 兼容，api.minimaxi.com）
     Minimax,
+    /// DeepSeek（api.deepseek.com/v1）
     Deepseek,
-    Openrouter,
-    /// Kimi（Moonshot，api.moonshot.cn）
-    Moonshot,
-    /// 智谱 GLM（open.bigmodel.cn）
-    Zhipu,
-    /// 阿里云百炼 Qwen（dashscope 兼容模式）
-    Qwen,
-    /// xAI Grok
-    Xai,
-    /// Z.AI 国际版（api.z.ai）
-    Zai,
-    Groq,
-    Mistral,
-    Together,
-    Cerebras,
-    Fireworks,
-    Huggingface,
-    Nvidia,
-    /// 小米 MiMo
-    Xiaomi,
-    /// 蚂蚁 AntLing
-    Antling,
-    Baseten,
-    /// 任意 OpenAI 兼容服务（自定义端点）
+    /// 任意 OpenAI/Anthropic/Gemini 兼容服务（用户填端点 + 协议形状；
+    /// 厂商插件化的核心价值，必须端到端可用）
     Custom,
+    /// 未知 kind：config.toml 里残留的已下线内置厂商（groq/mistral/…）。
+    /// 按 custom 语义处理（不炸启动；端点/形状由用户配置决定）——内置
+    /// 厂商已精简，需要时以插件/Custom 接回（方案 A，2026-08-16 拍板）。
+    #[serde(other)]
+    Unknown,
+}
+
+/// 厂商 API 协议形状（方言）。内置厂商固定（minimax/deepseek = OpenAI
+/// 兼容）；custom 厂商由用户选择。插件协议里"协议形状"即此字段。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProviderShape {
+    /// OpenAI 兼容（/models、/chat/completions；绝大多数厂商）
+    #[default]
+    OpenaiCompatible,
+    /// Anthropic 方言（x-api-key + anthropic-version 头，/v1/messages）
+    Anthropic,
+    /// Gemini 方言（v1beta generateContent）
+    Gemini,
+}
+
+impl ProviderShape {
+    pub fn is_openai_compatible(&self) -> bool {
+        matches!(self, Self::OpenaiCompatible)
+    }
 }
 
 impl ProviderKind {
-    /// 全部枚举变体。新增 kind 时同步更新（遍历生成官方端点表下发前端，
-    /// 测试也依赖它做全覆盖断言）。
-    pub const ALL: [ProviderKind; 24] = [
-        ProviderKind::Openai,
-        ProviderKind::Anthropic,
-        ProviderKind::Gemini,
-        ProviderKind::Ollama,
-        ProviderKind::Llamacpp,
-        ProviderKind::Minimax,
-        ProviderKind::Deepseek,
-        ProviderKind::Openrouter,
-        ProviderKind::Moonshot,
-        ProviderKind::Zhipu,
-        ProviderKind::Qwen,
-        ProviderKind::Xai,
-        ProviderKind::Zai,
-        ProviderKind::Groq,
-        ProviderKind::Mistral,
-        ProviderKind::Together,
-        ProviderKind::Cerebras,
-        ProviderKind::Fireworks,
-        ProviderKind::Huggingface,
-        ProviderKind::Nvidia,
-        ProviderKind::Xiaomi,
-        ProviderKind::Antling,
-        ProviderKind::Baseten,
-        ProviderKind::Custom,
-    ];
-
-    /// pi agent 注册表中的提供商名（模型路由名称兼容层）。
-    ///
-    /// 大部分新提供商与 pi 内置注册表同名（groq/mistral/xai/…），
-    /// 名称映射保持稳定供子代理/插件按名解析；custom 类使用稳定前缀 +
-    /// 提供商 id 保证唯一。pi 已废除，此映射仅为既有数据兼容而保留。
-    pub fn pi_name(&self, provider_id: &str) -> String {
-        match self {
-            ProviderKind::Openai => "openai".to_string(),
-            ProviderKind::Anthropic => "anthropic".to_string(),
-            ProviderKind::Gemini => "gemini".to_string(),
-            ProviderKind::Ollama => "ollama".to_string(),
-            ProviderKind::Llamacpp => "llamacpp".to_string(),
-            ProviderKind::Minimax => "minimax".to_string(),
-            ProviderKind::Deepseek => "deepseek".to_string(),
-            ProviderKind::Openrouter => "openrouter".to_string(),
-            ProviderKind::Moonshot => "moonshotai".to_string(),
-            ProviderKind::Zhipu => "zhipu".to_string(),
-            ProviderKind::Qwen => "qwen".to_string(),
-            ProviderKind::Xai => "xai".to_string(),
-            ProviderKind::Zai => "zai".to_string(),
-            ProviderKind::Groq => "groq".to_string(),
-            ProviderKind::Mistral => "mistral".to_string(),
-            ProviderKind::Together => "together".to_string(),
-            ProviderKind::Cerebras => "cerebras".to_string(),
-            ProviderKind::Fireworks => "fireworks".to_string(),
-            ProviderKind::Huggingface => "huggingface".to_string(),
-            ProviderKind::Nvidia => "nvidia".to_string(),
-            ProviderKind::Xiaomi => "xiaomi".to_string(),
-            ProviderKind::Antling => "ant-ling".to_string(),
-            ProviderKind::Baseten => "baseten".to_string(),
-            ProviderKind::Custom => format!("custom-{}", provider_id),
-        }
-    }
-
-    /// 是否走 OpenAI 兼容自定义路由（openai-completions 形状，非原生 API）
-    pub fn is_openai_compatible_route(&self) -> bool {
-        matches!(
-            self,
-            ProviderKind::Minimax
-                | ProviderKind::Deepseek
-                | ProviderKind::Openrouter
-                | ProviderKind::Moonshot
-                | ProviderKind::Zhipu
-                | ProviderKind::Qwen
-                | ProviderKind::Xai
-                | ProviderKind::Zai
-                | ProviderKind::Groq
-                | ProviderKind::Mistral
-                | ProviderKind::Together
-                | ProviderKind::Cerebras
-                | ProviderKind::Fireworks
-                | ProviderKind::Huggingface
-                | ProviderKind::Nvidia
-                | ProviderKind::Xiaomi
-                | ProviderKind::Antling
-                | ProviderKind::Baseten
-                | ProviderKind::Custom
-        )
-    }
+    /// 全部内置变体。新增 kind 时同步更新（遍历生成官方端点表下发前端，
+    /// 测试也依赖它做全覆盖断言）。Unknown 不进 ALL（无官方端点、不参与
+    /// 前端预设下发，只作为旧配置兼容落点）。
+    pub const ALL: [ProviderKind; 3] = [ProviderKind::Minimax, ProviderKind::Deepseek, ProviderKind::Custom];
 }
 
-/// 字符串 → ProviderKind（serde kebab-case 反序列化驱动，与 config.toml 同一来源）。
-/// 路由层把用户输入的 kind 解析为枚举后，拼写/大小写错误在此处被显式拒绝，
-/// 不会像旧签名（收裸字符串）那样静默落入 custom 语义。
+/// 字符串 → ProviderKind（手写 match，与 serde kebab-case 反序列化同一来源）。
+/// 路由层把用户输入的 kind 解析为枚举后，拼写/大小写错误在此处被显式拒绝
+/// （不会静默落入 custom 语义）——与 config.toml 反序列化不同：配置文件里
+/// 残留的已下线 kind 走 `#[serde(other)]` 落到 [`ProviderKind::Unknown`]
+/// 按自定义处理（兼容旧配置），而 API 手填拼错是用户错误，显式报 400。
 impl std::str::FromStr for ProviderKind {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        use serde::Deserialize;
-        Self::deserialize(serde::de::value::StringDeserializer::<
-            serde::de::value::Error,
-        >::new(s.to_string()))
-        .map_err(|_| format!("未知提供商类型: {s}"))
+        match s {
+            "minimax" => Ok(ProviderKind::Minimax),
+            "deepseek" => Ok(ProviderKind::Deepseek),
+            "custom" => Ok(ProviderKind::Custom),
+            _ => Err(format!("未知提供商类型: {s}")),
+        }
     }
 }
 
@@ -415,32 +347,78 @@ mod tests {
     use super::*;
 
     #[test]
-    fn provider_kind_pi_name() {
-        assert_eq!(ProviderKind::Openai.pi_name("p1"), "openai");
-        assert_eq!(ProviderKind::Ollama.pi_name("p1"), "ollama");
-        assert_eq!(ProviderKind::Minimax.pi_name("p1"), "minimax");
-        assert_eq!(ProviderKind::Custom.pi_name("p-abc"), "custom-p-abc");
-        // 迁移自 pi 注册表的映射
-        assert_eq!(ProviderKind::Moonshot.pi_name("p1"), "moonshotai");
-        assert_eq!(ProviderKind::Antling.pi_name("p1"), "ant-ling");
-        assert_eq!(ProviderKind::Zhipu.pi_name("p1"), "zhipu");
-        assert_eq!(ProviderKind::Groq.pi_name("p1"), "groq");
-        assert!(ProviderKind::Groq.is_openai_compatible_route());
-        assert!(ProviderKind::Xai.is_openai_compatible_route());
-        assert!(!ProviderKind::Anthropic.is_openai_compatible_route());
-    }
-
-    #[test]
     fn provider_kind_from_str() {
         use std::str::FromStr;
         // 合法 kind（与 serde kebab-case 同源）
-        assert_eq!(ProviderKind::from_str("openai"), Ok(ProviderKind::Openai));
-        assert_eq!(ProviderKind::from_str("llamacpp"), Ok(ProviderKind::Llamacpp));
+        assert_eq!(ProviderKind::from_str("minimax"), Ok(ProviderKind::Minimax));
+        assert_eq!(ProviderKind::from_str("deepseek"), Ok(ProviderKind::Deepseek));
         assert_eq!(ProviderKind::from_str("custom"), Ok(ProviderKind::Custom));
-        // 拼写/大小写错误显式拒绝（旧签名收裸字符串时静默落入 custom 语义）
+        // 已下线的旧 kind（groq/mistral/…）在 API 入口显式拒绝——不静默
+        // 落入 custom 语义（手填拼错是错误；config 残留走 serde(other)）
+        assert!(ProviderKind::from_str("groq").is_err());
         assert!(ProviderKind::from_str("OPENAI").is_err());
-        assert!(ProviderKind::from_str("open-ai").is_err());
-        assert!(ProviderKind::from_str("ollamaa").is_err());
+        assert!(ProviderKind::from_str("minimaxx").is_err());
+    }
+
+    #[test]
+    fn provider_kind_config_compat_unknown_kind() {
+        // config.toml 残留已下线 kind 不炸启动：serde(other) → Unknown
+        let cfg: AppConfig = toml::from_str(
+            r#"
+            [[providers]]
+            id = "old-groq"
+            name = "Groq"
+            kind = "groq"
+            base_url = "https://api.groq.com/openai/v1"
+            api_key = "sk-x"
+            models = ["llama-3.3"]
+            "#,
+        )
+        .unwrap();
+        let p = &cfg.providers[0];
+        assert_eq!(p.kind, ProviderKind::Unknown);
+        // 形状默认 OpenAI 兼容（旧配置行为不变）；custom/unknown 可显式覆盖
+        assert!(p.shape().is_openai_compatible());
+    }
+
+    #[test]
+    fn provider_shape_fixed_for_builtin_overridable_for_custom() {
+        let builtin = ProviderConfig {
+            id: "minimax".into(),
+            name: "MiniMax".into(),
+            kind: ProviderKind::Minimax,
+            // 内置厂商忽略 shape 字段（协议形状固定 OpenAI 兼容）
+            shape: Some(ProviderShape::Gemini),
+            base_url: None,
+            api_key: None,
+            models: vec![],
+            default_model: None,
+        };
+        assert!(builtin.shape().is_openai_compatible());
+
+        let custom = ProviderConfig {
+            id: "my".into(),
+            name: "My".into(),
+            kind: ProviderKind::Custom,
+            shape: Some(ProviderShape::Anthropic),
+            base_url: None,
+            api_key: None,
+            models: vec![],
+            default_model: None,
+        };
+        assert_eq!(custom.shape(), ProviderShape::Anthropic);
+
+        let custom_default = ProviderConfig {
+            id: "my2".into(),
+            name: "My2".into(),
+            kind: ProviderKind::Custom,
+            shape: None,
+            base_url: None,
+            api_key: None,
+            models: vec![],
+            default_model: None,
+        };
+        assert!(custom_default.shape().is_openai_compatible());
     }
 
     #[test]
@@ -450,7 +428,8 @@ mod tests {
                 ProviderConfig {
                     id: "a".into(),
                     name: "A".into(),
-                    kind: ProviderKind::Openai,
+                    kind: ProviderKind::Minimax,
+                    shape: None,
                     base_url: None,
                     api_key: None,
                     models: vec!["m1".into()],
@@ -459,7 +438,8 @@ mod tests {
                 ProviderConfig {
                     id: "b".into(),
                     name: "B".into(),
-                    kind: ProviderKind::Ollama,
+                    kind: ProviderKind::Custom,
+                    shape: None,
                     base_url: Some("http://127.0.0.1:11434/v1".into()),
                     api_key: None,
                     models: vec!["qwen".into()],
@@ -494,7 +474,8 @@ mod tests {
             providers: vec![ProviderConfig {
                 id: "k".into(),
                 name: "K".into(),
-                kind: ProviderKind::Openai,
+                kind: ProviderKind::Minimax,
+                shape: None,
                 base_url: None,
                 api_key: Some("sk-secret".into()),
                 models: vec![],

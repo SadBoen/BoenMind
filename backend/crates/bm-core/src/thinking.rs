@@ -15,10 +15,12 @@
 //! 不支持的档在请求构造时折叠（Max→XHigh→High、非推理→Off），这里的判定
 //! 只负责 UI 出什么档。
 
-use crate::config::ProviderKind;
+use crate::config::{ProviderKind, ProviderShape};
 
 /// 已知不支持推理的模型 ID（内置路由白名单外的模型默认按推理处理，
 /// 避免新旗舰模型被误伤；误判时 pi 运行时 clamp 兜底）。
+/// 厂商精简后该白名单只服务于 Anthropic/Gemini 方言（custom 按形状接入）；
+/// OpenAI 兼容形状一律按推理出档（见 thinking_levels_for）。
 fn is_known_non_reasoning(model: &str) -> bool {
     let m = model.to_ascii_lowercase();
     m == "deepseek-chat"
@@ -80,7 +82,12 @@ fn is_anthropic_max(model: &str) -> bool {
 }
 
 /// 该模型是否支持 xhigh 思考档（vendor supports_xhigh 白名单）。
-fn supports_xhigh(kind: ProviderKind, base_url: Option<&str>, model: &str) -> bool {
+fn supports_xhigh(
+    shape: ProviderShape,
+    kind: ProviderKind,
+    base_url: Option<&str>,
+    model: &str,
+) -> bool {
     matches!(
         model,
         "gpt-5.1-codex-max"
@@ -95,26 +102,32 @@ fn supports_xhigh(kind: ProviderKind, base_url: Option<&str>, model: &str) -> bo
             | "gpt-5.3-codex"
             | "gpt-5.3-codex-spark"
     ) || is_deepseek_reasoning(kind, base_url)
-        || (kind == ProviderKind::Anthropic && is_anthropic_xhigh(model))
+        || (shape == ProviderShape::Anthropic && is_anthropic_xhigh(model))
 }
 
 /// 该模型是否支持 max 思考档（vendor supports_max 白名单）。
-fn supports_max(kind: ProviderKind, base_url: Option<&str>, model: &str) -> bool {
+fn supports_max(
+    shape: ProviderShape,
+    kind: ProviderKind,
+    base_url: Option<&str>,
+    model: &str,
+) -> bool {
     matches!(model, "gpt-5.6" | "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna")
         || is_deepseek_reasoning(kind, base_url)
-        || (kind == ProviderKind::Anthropic && is_anthropic_max(model))
+        || (shape == ProviderShape::Anthropic && is_anthropic_max(model))
 }
 
 /// 返回某模型在 UI 上应展示的思考档位（对应 pi ThinkingLevel 的字符串序列化，
 /// 顺序即档位强度升序）。非推理模型只有 `off`；推理模型为
 /// off/low/medium/high，白名单模型追加 xhigh / max。
 pub fn thinking_levels_for(
+    shape: ProviderShape,
     kind: ProviderKind,
     base_url: Option<&str>,
     model: &str,
 ) -> Vec<&'static str> {
-    // OpenAI 兼容路由：该类提供商一律按推理模型处理（含 deepseek-chat 等非推理 ID）
-    let reasoning = if kind.is_openai_compatible_route() {
+    // OpenAI 兼容形状：一律按推理模型处理（含 deepseek-chat 等非推理 ID）
+    let reasoning = if shape.is_openai_compatible() {
         true
     } else {
         !is_known_non_reasoning(model)
@@ -123,10 +136,10 @@ pub fn thinking_levels_for(
         return vec!["off"];
     }
     let mut levels = vec!["off", "low", "medium", "high"];
-    if supports_xhigh(kind, base_url, model) {
+    if supports_xhigh(shape, kind, base_url, model) {
         levels.push("xhigh");
     }
-    if supports_max(kind, base_url, model) {
+    if supports_max(shape, kind, base_url, model) {
         levels.push("max");
     }
     levels
@@ -136,106 +149,102 @@ pub fn thinking_levels_for(
 mod tests {
     use super::*;
 
-    fn levels(kind: ProviderKind, url: Option<&str>, model: &str) -> Vec<&'static str> {
-        thinking_levels_for(kind, url, model)
+    fn levels(
+        shape: ProviderShape,
+        kind: ProviderKind,
+        url: Option<&str>,
+        model: &str,
+    ) -> Vec<&'static str> {
+        thinking_levels_for(shape, kind, url, model)
     }
 
     #[test]
-    fn minimax_all_models_reasoning() {
-        // OpenAI 兼容路由：全部按推理出 4 档（M1 也不受 ID 白名单影响）
+    fn openai_compatible_shape_all_reasoning() {
+        // OpenAI 兼容形状：全部按推理出 4 档（M1 也不受 ID 白名单影响）
+        let shape = ProviderShape::OpenaiCompatible;
         let kind = ProviderKind::Minimax;
-        assert_eq!(levels(kind, None, "MiniMax-M3"), vec!["off", "low", "medium", "high"]);
-        assert_eq!(levels(kind, None, "MiniMax-M2.5-highspeed"), vec!["off", "low", "medium", "high"]);
-        assert_eq!(levels(kind, None, "MiniMax-M1"), vec!["off", "low", "medium", "high"]);
-    }
-
-    #[test]
-    fn deepseek_provider_gets_xhigh_max() {
-        // kind=deepseek：deepseek-reasoner 出 6 档（vendor：provider 判定不看模型 ID）
+        assert_eq!(levels(shape, kind, None, "MiniMax-M3"), vec!["off", "low", "medium", "high"]);
+        assert_eq!(levels(shape, kind, None, "MiniMax-M1"), vec!["off", "low", "medium", "high"]);
+        // kind=deepseek：deepseek-chat 也按推理出 6 档（OpenAI 兼容同款处理）
         let kind = ProviderKind::Deepseek;
         assert_eq!(
-            levels(kind, None, "deepseek-reasoner"),
+            levels(shape, kind, None, "deepseek-chat"),
             vec!["off", "low", "medium", "high", "xhigh", "max"]
         );
-        // deepseek-chat 也按推理出 6 档（OpenAI 兼容路由同款处理）
         assert_eq!(
-            levels(kind, None, "deepseek-chat"),
+            levels(shape, kind, None, "deepseek-reasoner"),
             vec!["off", "low", "medium", "high", "xhigh", "max"]
         );
     }
 
     #[test]
-    fn deepseek_com_base_url_also_counts() {
+    fn deepseek_base_url_also_counts() {
         // vendor：base_url 含 deepseek.com 即按 deepseek 推理模型处理
+        let shape = ProviderShape::OpenaiCompatible;
         let kind = ProviderKind::Custom;
         assert_eq!(
-            levels(kind, Some("https://api.deepseek.com/v1"), "x-reasoner"),
+            levels(shape, kind, Some("https://api.deepseek.com/v1"), "x-reasoner"),
             vec!["off", "low", "medium", "high", "xhigh", "max"]
         );
         // 自定义端点非 deepseek：仅 4 档
         assert_eq!(
-            levels(kind, Some("https://api.example.com/v1"), "x-reasoner"),
+            levels(shape, kind, Some("https://api.example.com/v1"), "x-reasoner"),
             vec!["off", "low", "medium", "high"]
         );
     }
 
     #[test]
-    fn openai_builtin_route_uses_id_heuristics() {
-        let kind = ProviderKind::Openai;
-        // 非推理老模型：只有 off
-        assert_eq!(levels(kind, None, "gpt-4o"), vec!["off"]);
-        assert_eq!(levels(kind, None, "gpt-4.1-mini"), vec!["off"]);
-        // 推理模型：4 档起步
-        assert_eq!(levels(kind, None, "gpt-5"), vec!["off", "low", "medium", "high"]);
-        // xhigh 白名单（gpt-5.2/5.5 等）
-        assert_eq!(
-            levels(kind, None, "gpt-5.2"),
-            vec!["off", "low", "medium", "high", "xhigh"]
-        );
-        // max 白名单（gpt-5.6 系）
-        assert_eq!(
-            levels(kind, None, "gpt-5.6"),
-            vec!["off", "low", "medium", "high", "xhigh", "max"]
-        );
-        assert_eq!(
-            levels(kind, None, "gpt-5.6-sol"),
-            vec!["off", "low", "medium", "high", "xhigh", "max"]
-        );
-    }
-
-    #[test]
-    fn anthropic_families() {
-        let kind = ProviderKind::Anthropic;
+    fn anthropic_shape_uses_id_heuristics() {
+        let shape = ProviderShape::Anthropic;
+        let kind = ProviderKind::Custom;
         // claude-3 系非推理：只有 off
-        assert_eq!(levels(kind, None, "claude-3-5-sonnet-20241022"), vec!["off"]);
+        assert_eq!(levels(shape, kind, None, "claude-3-5-sonnet-20241022"), vec!["off"]);
         // claude-sonnet-4.5：推理 4 档（无 xhigh）
         assert_eq!(
-            levels(kind, None, "claude-sonnet-4-5-20250929"),
+            levels(shape, kind, None, "claude-sonnet-4-5-20250929"),
             vec!["off", "low", "medium", "high"]
         );
         // claude-opus-4-6：max 有、xhigh 无（vendor 专门注释的家族）
         assert_eq!(
-            levels(kind, None, "claude-opus-4-6-20250805"),
+            levels(shape, kind, None, "claude-opus-4-6-20250805"),
             vec!["off", "low", "medium", "high", "max"]
         );
         // claude-opus-4-7：xhigh + max
         assert_eq!(
-            levels(kind, None, "claude-opus-4-7-20250901"),
+            levels(shape, kind, None, "claude-opus-4-7-20250901"),
             vec!["off", "low", "medium", "high", "xhigh", "max"]
         );
         // claude-opus-5：xhigh + max
         assert_eq!(
-            levels(kind, None, "claude-opus-5-20260101"),
+            levels(shape, kind, None, "claude-opus-5-20260101"),
             vec!["off", "low", "medium", "high", "xhigh", "max"]
+        );
+    }
+
+    #[test]
+    fn gemini_shape_uses_id_heuristics() {
+        let shape = ProviderShape::Gemini;
+        let kind = ProviderKind::Custom;
+        // gemini-1.5 系非推理：只有 off
+        assert_eq!(levels(shape, kind, None, "gemini-1.5-pro"), vec!["off"]);
+        // gemini-2.5：推理 4 档（未知模型默认推理）
+        assert_eq!(
+            levels(shape, kind, None, "gemini-2.5-pro"),
+            vec!["off", "low", "medium", "high"]
         );
     }
 
     #[test]
     fn unknown_models_default_to_reasoning() {
-        // 内置路由白名单外默认推理（新旗舰不被误伤），pi clamp 兜底
-        let kind = ProviderKind::Ollama;
-        assert_eq!(levels(kind, None, "llama3.1"), vec!["off", "low", "medium", "high"]);
-        let kind = ProviderKind::Openai;
-        assert_eq!(levels(kind, None, "o4-mini"), vec!["off", "low", "medium", "high"]);
+        // 白名单外默认推理（新旗舰不被误伤），pi clamp 兜底
+        let kind = ProviderKind::Custom;
+        assert_eq!(
+            levels(ProviderShape::Anthropic, kind, None, "o4-mini"),
+            vec!["off", "low", "medium", "high"]
+        );
+        assert_eq!(
+            levels(ProviderShape::Gemini, kind, None, "gemini-3-pro"),
+            vec!["off", "low", "medium", "high"]
+        );
     }
 }
