@@ -118,8 +118,26 @@ export const en: Translation = {
   statusbar: {
     noModel: "No model selected",
     backendOffline: "Backend offline",
+    backendOnline: "Backend connected",
     backendV: "Backend v{{version}}",
     loadingDir: "Loading…",
+  },
+  desktop: {
+    bootSkip: "Click to skip boot",
+    startMenu: "Start menu",
+    emptyHint: "Open an app from the start menu",
+    windowClose: "Close {{app}}",
+    codingComingSoon: "Coding app under construction",
+    app: {
+      chat: "Chat",
+      chatDesc: "Chat with AI",
+      coding: "Coding",
+      codingDesc: "Code workspace (coming soon)",
+      settings: "Settings",
+      plugins: "Plugins",
+      steward: "Steward",
+      toolDesc: "System tools",
+    },
   },
   settings: {
     common: {

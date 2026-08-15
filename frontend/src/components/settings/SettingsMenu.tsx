@@ -1,10 +1,10 @@
 /**
- * 设置二级菜单：条目由 lib/navigation.tsx 的 SETTINGS 注册表驱动
+ * 设置二级菜单：条目由 lib/app-registry.tsx 的 SETTINGS 注册表驱动
  * （新增设置页只需在注册表加一行，菜单与主面板自动联动）。
  */
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
-import { SETTINGS } from "@/lib/navigation";
+import { SETTINGS } from "@/lib/app-registry";
 import { useAppStore } from "@/stores/app-store";
 
 export function SettingsMenu() {

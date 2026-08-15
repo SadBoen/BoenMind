@@ -118,8 +118,26 @@ export const ko: Translation = {
   statusbar: {
     noModel: "모델 미선택",
     backendOffline: "백엔드 연결 안 됨",
+    backendOnline: "백엔드 연결됨",
     backendV: "백엔드 v{{version}}",
     loadingDir: "불러오는 중…",
+  },
+  desktop: {
+    bootSkip: "클릭하여 건너뛰기",
+    startMenu: "시작 메뉴",
+    emptyHint: "시작 메뉴에서 앱 열기",
+    windowClose: "{{app}} 닫기",
+    codingComingSoon: "코딩 앱 준비 중입니다",
+    app: {
+      chat: "대화",
+      chatDesc: "AI와 대화",
+      coding: "코딩",
+      codingDesc: "코드 워크스페이스 (준비 중)",
+      settings: "설정",
+      plugins: "플러그인",
+      steward: "스튜어드",
+      toolDesc: "시스템 도구",
+    },
   },
   settings: {
     common: {

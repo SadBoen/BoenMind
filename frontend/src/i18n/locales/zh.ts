@@ -118,8 +118,26 @@ export const zh = {
   statusbar: {
     noModel: "未选择模型",
     backendOffline: "后端未连接",
+    backendOnline: "后端已连接",
     backendV: "后端 v{{version}}",
     loadingDir: "加载中…",
+  },
+  desktop: {
+    bootSkip: "点击跳过启动",
+    startMenu: "开始菜单",
+    emptyHint: "从开始菜单打开应用",
+    windowClose: "关闭 {{app}}",
+    codingComingSoon: "编程应用建设中，敬请期待",
+    app: {
+      chat: "对话",
+      chatDesc: "与 AI 对话",
+      coding: "编程",
+      codingDesc: "代码工作台（建设中）",
+      settings: "设置",
+      plugins: "插件",
+      steward: "管家",
+      toolDesc: "系统工具",
+    },
   },
   settings: {
     common: {

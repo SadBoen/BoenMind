@@ -118,8 +118,26 @@ export const ja: Translation = {
   statusbar: {
     noModel: "モデル未選択",
     backendOffline: "バックエンド未接続",
+    backendOnline: "バックエンド接続済み",
     backendV: "バックエンド v{{version}}",
     loadingDir: "読み込み中…",
+  },
+  desktop: {
+    bootSkip: "クリックでスキップ",
+    startMenu: "スタートメニュー",
+    emptyHint: "スタートメニューからアプリを開く",
+    windowClose: "{{app}} を閉じる",
+    codingComingSoon: "コーディングアプリは準備中です",
+    app: {
+      chat: "チャット",
+      chatDesc: "AI と会話",
+      coding: "コーディング",
+      codingDesc: "コードワークスペース（準備中）",
+      settings: "設定",
+      plugins: "プラグイン",
+      steward: "スチュワード",
+      toolDesc: "システムツール",
+    },
   },
   settings: {
     common: {

@@ -9,6 +9,8 @@
 
 **编程应用 M1 已验收通过（8254bd7，本日）**：BoenMind 用自身运行时（bm-loop + MiniMax-M3 + 内置工具，纯 API 驱动）在自身仓库完成真实 bug 修复全链路（prompt_hash 注入面缺口：定位→修复→回归测试→git 提交），独立复核 33 测试全绿 + clippy 零告警。**验收暴露 6 个真实问题**（报告 docs/ACCEPTANCE_M1_2026-08-15.md §四）：① 单回合 64 步预算不够真实任务（回合 1 被砍断需人工续接）② grep/find 无 ignore+无超时（全库 grep 卡 4 分钟）③ read 无行区间参数（步数燃烧主因）④ bash cmd /C 路径引号习惯冲突 ⑤ ctx-compactor 索引写服务进程 cwd ⑥ 模型路径幻觉——①②③ 随 M2 修（工具面是独立壳基座）。**下一步 = M2 独立壳应用起步**（用户拍板：独立壳而非现有前端加卡片）。
 
+**桌面壳（DE）已上线（本会话）**：前端改造为模拟 OS 桌面（启动画面→空桌面→开始菜单 5 应用→任务栏→居中可拖拽窗口，聊天/设置/插件/管家零改动嵌入，后端零改动）；旧三栏壳直接删除（git 历史兜底，用户拍板"重写更好"）；浏览器实测全通过（含聊天全链路/明暗/4 语言），拖拽待真实浏览器人工确认（IAB 合成事件限制）。详情 docs/HANDOFF_DESKTOP_SHELL.md §九。
+
 **最近四轮回溯**：
 - 修复轮（同日，用户定调"回头看查出问题先修"）：三真缺口修两件（declare_event! 宏 / branch/fork 事件）、压缩参数双轨打通（bm-core effective()）、memory/write 生产者接线、**内核第一根接线**（bm-compactor 经 KernelBuilder 装配进生产，bm 引擎从 kernel 取事件日志+压缩服务）——测试全绿 + clippy 零 lint
 - 回头看+对标轮（本轮）：架构回头看（内核未接线三轨实锤/文档漂移修正）+ 全网对标三调研（底座前 10/记忆/插件同类，笔记 docs/research/2026-08-15/ 约 100KB 全部标注核实口径）→ 报告 docs/REVIEW_ARCHITECTURE_2026-08-15.md + docs/REVIEW_LANDSCAPE_2026-08-15.md；架构文档 v0.21

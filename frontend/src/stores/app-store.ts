@@ -6,9 +6,9 @@ import { api, type AppConfig, type ChatStreamEvent, type FileEntry, type HealthI
 import i18n, { applyLang, isLang } from "@/i18n";
 import { toast } from "sonner";
 
-// 导航/设置页类型定义在 lib/navigation.tsx 注册表（单一数据源）
-export type { NavKey, SettingsTab } from "@/lib/navigation";
-import type { NavKey, SettingsTab } from "@/lib/navigation";
+// 导航/设置页类型定义在 lib/app-registry.tsx 注册表（单一数据源）
+export type { SettingsTab, AppId } from "@/lib/app-registry";
+import type { SettingsTab, AppId } from "@/lib/app-registry";
 
 /** 流式中的工具调用（isError 未定前为执行中状态） */
 interface StreamingToolCall {
@@ -36,10 +36,15 @@ export function defaultModelValue(config: AppConfig): string | null {
 }
 
 interface AppStore {
-  // 导航
-  activeNav: NavKey;
+  // 桌面窗口（应用打开顺序即 z 序；单例：重复打开=聚焦+置顶）
+  openApps: AppId[];
+  focusedApp: AppId | null;
+  openApp: (id: AppId) => void;
+  closeApp: (id: AppId) => void;
+  focusApp: (id: AppId) => void;
+
+  // 设置页（设置应用内部）
   settingsTab: SettingsTab;
-  setNav: (nav: NavKey) => void;
   setSettingsTab: (tab: SettingsTab) => void;
 
   // 后端健康
@@ -153,12 +158,32 @@ export const useAppStore = create<AppStore>((set, get) => {
   };
 
   return {
-    activeNav: "chat",
-    settingsTab: "appearance",
-    setNav: (nav) => {
-      set({ activeNav: nav });
-      if (nav === "settings") set({ previewFile: null });
+    openApps: [],
+    focusedApp: null,
+    openApp: (id) => {
+      const s = get();
+      if (s.openApps.includes(id)) {
+        // 单例：已打开则置顶聚焦
+        set({ openApps: [...s.openApps.filter((a) => a !== id), id], focusedApp: id });
+        return;
+      }
+      set({ openApps: [...s.openApps, id], focusedApp: id });
     },
+    closeApp: (id) => {
+      const s = get();
+      const rest = s.openApps.filter((a) => a !== id);
+      set({
+        openApps: rest,
+        focusedApp: s.focusedApp === id ? (rest[rest.length - 1] ?? null) : s.focusedApp,
+      });
+    },
+    focusApp: (id) => {
+      const s = get();
+      if (s.focusedApp === id) return;
+      set({ focusedApp: id, openApps: [...s.openApps.filter((a) => a !== id), id] });
+    },
+
+    settingsTab: "appearance",
     setSettingsTab: (tab) => set({ settingsTab: tab }),
 
     pendingPermission: null,

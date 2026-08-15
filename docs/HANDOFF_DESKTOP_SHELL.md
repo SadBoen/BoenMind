@@ -71,6 +71,24 @@
 
 编程应用真实壳（文件树/编辑器/分支图）、todo 面板、窗口层叠/最小化/多实例、插件前端包 manifest 字段+动态加载（iframe/WebComponent 待拍）、/api/apps 端点、M1 报告 §四①②③ 后端修复（max_steps 128/grep·find ignore+timeout/read offset+limit）——全留后续轮。
 
+## 九、完成状态（2026-08-15，本会话）
+
+**桌面壳已上线（代码全部落地 + 浏览器实测通过 + build/lint 绿）**。与批准方案的偏差仅一处：
+
+- **旧三栏壳不归档、直接删**（用户拍板"重新写会不会更好"→ 评估后采纳）：NavBar/SecondaryPanel/MainPanel/StatusBar/FilePanel/FilePreview/navigation.tsx 全部 git rm（git 历史兜底，二阶段编程应用要 FilePanel 从历史 checkout 即可）。
+
+实测结果（vite dev + 真后端 17321）：
+- ✅ 启动画面（2s 自动进桌面 + 点击跳过）→ 空桌面 → 开始菜单 5 应用卡 + 脚注（版本/模型/工作目录，StatusBar 信息迁入）
+- ✅ 聊天全链路：新建会话 → 发消息 → 流式回复（含思考过程折叠）
+- ✅ 设置/插件/管家/编程应用打开；设置应用内菜单导航正常（外观/管家页切换实测）
+- ✅ 任务栏：运行应用按钮 + 点击聚焦置顶（z 序按打开顺序）；红点关闭窗口
+- ✅ 明暗主题切换（.dark class 实测）、英文切换实测（ja/ko 键同构由类型系统保证）
+- ⚠️ 拖拽未能在 IAB 中自动化验证（CUA/Playwright 合成事件对 React 拖拽失效，环境限制，见记忆 iab-browser-testing-limitations）；代码与 react-rnd 标准用法一致（dragHandleClassName 标题栏），需真实浏览器人工确认一次
+
+顺手修的真 bug：窗口默认尺寸超过窗口层高度（聊天 700px > 层 672px）会溢出到任务栏——AppWindow 挂载时按容器钳制尺寸（min(default, 容器-16)）。
+
+遗留（不在本期范围）：窗口层叠/最小化/多实例、黄绿圆点接线、react-rnd 尺寸调整（enableResizing 关着）、编程应用真实壳。
+
 ## 八、关联文档
 
 - 批准方案全文：本文件 §五（原 ExitPlanMode 方案 v2，用户已批准）

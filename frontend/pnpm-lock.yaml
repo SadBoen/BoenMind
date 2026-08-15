@@ -59,6 +59,9 @@ importers:
       react-resizable-panels:
         specifier: ^4.12.2
         version: 4.12.2(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      react-rnd:
+        specifier: ^10.5.3
+        version: 10.5.3(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       rehype-highlight:
         specifier: ^7.0.2
         version: 7.0.2
