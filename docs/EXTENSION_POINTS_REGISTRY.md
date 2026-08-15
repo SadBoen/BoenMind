@@ -51,4 +51,4 @@
 | SessionEndSeed 契约变体 | 会话终结事件化（回收站事件化时补写者） | 待接线 |
 | HeaderReason::Resume | M3 断点续跑 | 待接线 |
 | fork 分支机制 | M3 session.* 分支工具（文档 §5.1 已标注） | 待接线 |
-| pi_name 24 路映射 | 无——并入 LLM provider 插件化设计（2026-08-16 定调） | 待拍板 |
+| pi_name 24 路映射 | 已并入 LLM provider 插件化（方案 A，2026-08-16 拍板）→ 改名 stable_id 进 ProviderPort 协议；见 docs/PLAN_LLM_PROVIDER_PLUGIN.md | 执行中 |
