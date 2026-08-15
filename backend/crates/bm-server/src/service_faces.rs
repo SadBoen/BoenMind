@@ -321,7 +321,7 @@ impl bm_protocol::SessionPort for SessionPortImpl {
         let db = self.db.clone();
         Box::pin(async move {
             let sessions = db.list_sessions().await.map_err(store_err)?;
-            serde_json::to_value(sessions).map_err(|e| store_err(e))
+            serde_json::to_value(sessions).map_err(store_err)
         })
     }
 
@@ -344,7 +344,7 @@ impl bm_protocol::SessionPort for SessionPortImpl {
                 .create_session(&id, provider_id.as_deref(), model.as_deref(), &app)
                 .await
                 .map_err(store_err)?;
-            serde_json::to_value(session).map_err(|e| store_err(e))
+            serde_json::to_value(session).map_err(store_err)
         })
     }
 
@@ -354,7 +354,7 @@ impl bm_protocol::SessionPort for SessionPortImpl {
         Box::pin(async move {
             let session = db.get_session(&id).await.map_err(store_err)?;
             match session {
-                Some(s) => serde_json::to_value(s).map(Some).map_err(|e| store_err(e)),
+                Some(s) => serde_json::to_value(s).map(Some).map_err(store_err),
                 None => Ok(None),
             }
         })
@@ -377,7 +377,7 @@ impl bm_protocol::SessionPort for SessionPortImpl {
         let id = id.to_string();
         Box::pin(async move {
             let msgs = db.list_messages(&id).await.map_err(store_err)?;
-            serde_json::to_value(msgs).map_err(|e| store_err(e))
+            serde_json::to_value(msgs).map_err(store_err)
         })
     }
 }
