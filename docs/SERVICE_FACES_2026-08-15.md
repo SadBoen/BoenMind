@@ -29,7 +29,25 @@
 
 > 17 个里：2 个已注册（event_store/compactor）、2 个预留政策口（sandbox/subprocess）、其余 13 个 = "把现有实现包成服务面"（非空占位）。
 
-## 二、LoopHooks 扩面（bm-loop/src/points.rs，现状 6 个方法）
+## 一·补充：实施状态（2026-08-16 六批全部落地）
+
+**13 个服务面全部注册完毕**（commit 链 d6e95cf → 9dbe9fd → e15952c → ff03160 → a4a7542 → 3f5bde9）：
+
+| 批次 | 服务面 | 消费方（经 kernel.port） |
+|---|---|---|
+| 已有 | event_store / compactor | 事件日志 / bm-compactor |
+| 第一批 | memory / settings / stats | 设置路由×2、用量路由 |
+| 第二批 | llm / credentials | 聊天主链路 build_loop_agent |
+| 第三批 | skill / tools | skills 路由×3（list/set/uninstall） |
+| 第四批 | notify / scheduler | （运行期注册；notify 测试闭环） |
+| 第五批 | session | sessions 路由×3（create/list/get） |
+| 第六批 | gate | chat respond_permission |
+
+基建：`KernelBuilder.with_service/with_port`（预注册）+ `Ctx::register_port`（运行期注册，tools/notify/scheduler/gate 用）；LoopHooks 扩到 10 挂点（on_turn_end 已接线）。测试：bm-server 121 / bm-kernel 60 全绿。
+
+**http 面判 YAGNI（图纸修订）**：无现有实现可包（路由硬编码非可替换能力）、无消费方；统一分发器（fallback 分派）成本高收益零——随"首个插件 HTTP 路由需求"落地（接线判据：第一个第二实现出现时）。sandbox/subprocess 两个政策口随股票插件计算路径立项。
+
+## 二、LoopHooks 扩面（bm-loop/src/points.rs，现状 10 个方法）
 
 现有：`on_request` / `on_request_error` / `on_tool_pre` / `on_tool_post` / `on_turn_stopping` / `on_stream_chunk`。
 
