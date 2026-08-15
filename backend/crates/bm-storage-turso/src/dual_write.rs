@@ -7,6 +7,15 @@
 //! 容错策略（阶段 0）：事件日志写失败**不阻断**主链路——记数后
 //! 由上层决定告警；主链路数据始终是权威。事件日志是渐进式吸收的
 //! 新家，不是闸门。
+//!
+//! 真相源（审查 P1-2，2026-08-16 如实标注）：**当前真相源 = messages
+//! 表**（前端历史与 REST 读取源）；event_log 为 sidecar（todo 投影等
+//! 已闭环，消息面未闭环）。崩溃窗口（毫秒级）无对账任务：窗口①
+//! （add_message 后、UserMessage 落日志前）日志缺用户消息；窗口②
+//! （TurnEnd 落盘后、add_message 前）db 缺助手文本。双写范围**冻结**
+//! 至 M3（断点续跑迁移门槛）统一收口——不在过渡期引入双向对账
+//! （内容/时间匹配误判风险大于毫秒级窗口收益）；日志侧未闭合回合
+//! 已由 recover_interrupted_turns 补写（A4）。
 
 use bm_kernel::EventLog;
 use bm_protocol::{EventKind, ProtocolError, SessionId};

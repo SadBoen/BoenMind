@@ -427,6 +427,8 @@ SessionEvent {
 
 **三大不变量**：① 模型可见即已记录；② 新模型可见输入必须新增事件类型；③ 压缩/记忆/一切投影都可从日志重放复现。
 
+> **真相源标注（2026-08-16 审查 P1-2）**：执行态当前真相源 = **SQLite messages 表**（前端历史与 REST 读取源），事件日志为 **sidecar**（todo 投影等已闭环，消息面未闭环——双写过渡态）。崩溃窗口（毫秒级）无对账任务：窗口①（add_message 后、UserMessage 落日志前）日志缺用户消息；窗口②（TurnEnd 落盘后、add_message 前）db 缺助手文本。双写范围**冻结**至 M3（断点续跑迁移门槛）统一收口——过渡期不引入双向对账（内容/时间匹配误判风险大于毫秒级窗口收益）；日志侧未闭合回合由 `recover_interrupted_turns` 补写（A4）。"唯一事实源"是目标态承诺，当前态以本节标注为准。
+
 **checkpoint 与并发（v0.3 补充）**：
 - **持久化策略**：事件流 append 即写日志表（turso 单写者 tokio Mutex，现有基础），**checkpoint 仿 dsh 的 checkpoint-policy**——每请求边界（request/header 落盘点）做一次 fsync 级持久化，轮次不等待 flush（`whenIdle()` 时消费者自行 flush）；崩溃恢复：未闭合的 turn 由加载器打 `interrupted` 标记（dsh 的 TurnEndReason 语义）。
 - **并发写**：单进程内单写者（Mutex 串行 append）；跨进程（如子代理子进程）不走日志直写，走 RPC 代理写（未来 multi-instance 时引入租约）——**首版不承诺多进程并发写**（S9 缩小范围）。
