@@ -31,9 +31,17 @@
 
 **前端布局架构拍板轮（2026-08-15 用户开题"典型的软件界面"）**：
 - **应用布局系统已拍板（架构 §四·B 补充 2，v0.23）**：软件界面 = VS Code workbench 模型——应用内容区 = 可停靠视图容器（dock layout）：停靠左/右/中上/中下 + 悬浮叠加、Tab 叠放切换、关闭/最大化、分界线拖拽、导航右键重置布局、每应用默认布局、设置界面不动
-- **布局库定案（上游吸收 T5）**：dockview 8.1（@dockview/core + @dockview/react，MIT，2026 调研最优）——封装宿主组件 DockLayout + 视图注册表 VIEWS，不散用上游 API
+- **布局库定案（上游吸收 T5）**：dockview 8.1（@dockview/core + @dockview/react）——封装宿主组件 DockLayout + 视图注册表 VIEWS，不散用上游 API
 - **视图实例语义（用户拍板）**：对话视图**单实例且绑定应用场景**（编程里的对话是编程专家，焦点在编程不会跑到 WIKI——复用 session.app 机制）；终端/文件树/任务列表/编辑器**可多开**；专家团队模式（多模型并行）属模型层语义另行拍板
 - 实施 = 编程壳迁移（左文件树/中编辑器/右下任务|对话|终端叠放）→ 聊天应用 → 新应用默认布局声明
+
+**应用布局系统已实施落地（布局拍板轮执行，2026-08-15）**：
+- **依赖**：dockview-react 8.1.0（**注意 8.x 包名变了**：单包 `dockview-react`（React 绑定）+ 内部 `dockview`/`dockview-core`，7.x 的 @dockview/core+@dockview/react 已废弃）
+- **宿主组件 `components/layout/DockLayout.tsx`**：实例化/每应用布局快照持久化（localStorage `boenmind.dock.<app>`，onDidLayoutChange 防抖落盘 + 卸载前兜底）/重置注册表（resetDockLayout 供壳层调用）/主题（resolvedTheme → dockview-theme-{light,dark} class，CSS 变量桥接 Tailwind 令牌明暗自动跟随）
+- **视图注册表 `lib/dock-views.tsx`**：VIEWS（session-list/chat-pane/file-panel/editor/todo-panel/terminal = 宿主共享公共组件零改动嵌入，面板 params 表达形态与场景）+ DEFAULT_LAYOUTS（每应用默认布局声明——**新应用有可停靠视图在此声明一行即可**）；chat-pane 视图挂载即 ensureAppSession(params.app)（一软件一会话）
+- **迁移**：编程壳（GitBar + DockLayout：左文件/中编辑器/右下任务|对话|终端叠放，对话=panel 形态 coding 场景）；聊天应用（左会话列表/中对话）；设置界面保持现状不动
+- **导航右键「重置布局」**（只对有布局声明的应用 chat/coding 显示）；顺手修复：导航按钮 active 态不再标 aria-disabled（浏览器对 disabled 元素不派发 contextmenu，active 时右键会失效）
+- 浏览器实测全通过：两应用默认布局 / 面板关闭 / 布局持久化（新标签页恢复关闭状态）/ 右键菜单重置（任务面板恢复）/ 明暗主题联动；拖拽停靠/分界线 = dockview 原生能力（IAB 合成拖拽不可行，真实鼠标验证）
 
 **最近四轮回溯**：
 - 修复轮（同日，用户定调"回头看查出问题先修"）：三真缺口修两件（declare_event! 宏 / branch/fork 事件）、压缩参数双轨打通（bm-core effective()）、memory/write 生产者接线、**内核第一根接线**（bm-compactor 经 KernelBuilder 装配进生产，bm 引擎从 kernel 取事件日志+压缩服务）——测试全绿 + clippy 零 lint
@@ -48,6 +56,7 @@
 
 | 轮次 | 要点 |
 |---|---|
+| 布局实施轮 | 应用布局系统实施（dockview-react 8.1，T5）：DockLayout 宿主 + VIEWS/DEFAULT_LAYOUTS + 编程壳/聊天应用迁移 + 持久化/导航右键重置/主题桥接；浏览器实测全通过 |
 | 布局架构拍板轮 | 应用布局系统拍板（§四·B 补充 2 v0.23，VS Code workbench 模型）：dockview 8.1 定案（T5）/对话单实例绑定场景/其他视图多开/默认布局+右键重置；实施排下一步动作 1 |
 | 编程壳规划轮 | 吸收原则定调（网上最优解→官方插件→台账 UPSTREAM_TRACKING.md）+ TerminalPane 一期（xterm.js+portable-pty，ConPTY 应答坑，07618ce）；剩余项目切换/codegraph/浏览器仿真 |
 | 对话宿主化轮 | 拍板 9 执行：ChatPane 宿主组件（full/panel）+ 会话 app 场景字段（迁移/API/引擎透传）+ 编程壳右栏 Tab + activateApp/ensureAppSession；隔离 home 全链路实测通过 |
@@ -65,7 +74,7 @@
 
 ## 下一步动作（按建议顺序，都可直接开工）
 
-1. **应用布局系统实施（已拍板 2026-08-15，架构 §四·B 补充 2 v0.23）**：① 引入 dockview 8.1（上游吸收 T5）封装宿主组件 `DockLayout` + 视图注册表 VIEWS（chat-pane/terminal/file-panel/todo-panel/editor/session-list…）；② 编程壳迁移（默认布局：左=文件树/中=编辑器/右下=任务|对话|终端叠放 Tab；对话视图单实例绑定 coding 场景）；③ 布局持久化（每应用 localStorage 快照）+ 导航右键重置；④ 聊天应用迁移（左=会话列表/中=ChatPane）；⑤ 新应用默认布局声明（manifest 动态注册随 §四·C）；⑥ 设置界面保持现状
+1. ~~**应用布局系统实施（已拍板 2026-08-15，架构 §四·B 补充 2 v0.23）**~~ → **已完成（2026-08-15）**：dockview-react 8.1（T5）+ DockLayout 宿主 + VIEWS/DEFAULT_LAYOUTS + 编程壳/聊天应用迁移 + 布局持久化/导航右键重置/主题桥接，浏览器实测全通过。新应用有可停靠视图时在 DEFAULT_LAYOUTS 声明一行即可；manifest 动态注册随 §四·C
 2. **M2 深化（主线）**：分支图 DAG 可视化（git 拓扑：merge/分叉）+ 编辑器增强（diff 视图/未保存守卫/目录新建）+ 长会话性能（todo 读取的 EventQuery 类型过滤，替代全量 replay）+ **skill 场景注入**（对话宿主化③）
 3. **项目切换（编程壳功能规划②，执行顺序已拍）**：store `currentProject`（当前项目根上下文）+ 文件树/终端/编辑器联动（终端已支持 cwd 参数）+ 项目列表/新建（前端项目集合，后端 workspace 路径参数化）；随后 codegraph 转官方插件（@sdsrs/code-graph 0.116，scopes=["coding"]，正好验证场景工具面按 app 组装）→ 浏览器仿真 B 方案（可视化 web 工具链）
 4. **界面层插件化落地设计（§四·C，用户已拍板学 dsh）**：出方案文档待拍板——前端包 manifest 字段（client.js/依赖声明）、同域 bundle 加载器（参考 dsh __ModuleLoader__.load）、slot 注册体系（ui-slots 思路；**注：dock 布局是 ui-slots 超集，落地时协同**）、壳依赖表（客户端插件不自带 React）；拍板后实施（独立主线，可与 M2 并行）

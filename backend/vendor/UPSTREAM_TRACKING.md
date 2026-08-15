@@ -51,15 +51,22 @@
 - **跟踪**：web-scraping 插件链成熟后评估真浏览器
 
 ### T5 应用布局系统：dockview（前端 dock layout）
-- **上游**：https://github.com/mathuo/dockview（npm `@dockview/core` + `@dockview/react`）
+- **上游**：https://github.com/mathuo/dockview（npm `dockview-react` —— 8.x 起 React 绑定独立包，
+  内部依赖 `dockview`（re-export）+ `dockview-core`（核心引擎）；**注意 7.x 时代的
+  `@dockview/core`/`@dockview/react` 包名在 8.x 已废弃**，勿按旧文档安装）
 - **基线**：8.1.0（2026-08-15 调研确认）
 - **许可**：MIT
 - **地位**：2026 调研最优 React dock 布局库——功能全（停靠/悬浮/弹出窗口/Tab 叠放/最大化/
   分界线拖拽/布局序列化/主题）、最活跃、零依赖核心 + 多框架绑定；候选对比：flexlayout-react
   （React-only 老牌但功能弱）、rc-dock（维护停滞）
-- **落地**：架构 §四·B 补充 2（v0.23 用户拍板"VS Code workbench 模型"）；封装为宿主组件
-  `DockLayout` + 视图注册表 VIEWS，不直接散用上游 API；对话视图单实例绑定场景、其他视图多开
-- **跟踪**：版本升级注意 API 变动（dockview 迭代快，封装层隔离）
+- **落地**（已实施，2026-08-15）：架构 §四·B 补充 2（v0.23 用户拍板"VS Code workbench 模型"）；
+  宿主组件 `frontend/src/components/layout/DockLayout.tsx`（实例化/每应用布局快照持久化
+  localStorage `boenmind.dock.<app>`/重置注册表）+ 视图注册表 `lib/dock-views.tsx`
+  （VIEWS 公共组件零改动嵌入 + DEFAULT_LAYOUTS 每应用默认布局声明），不直接散用上游 API；
+  编程壳（左文件/中编辑器/右下任务|对话|终端叠放）与聊天应用（左会话列表/中对话）已迁移；
+  导航右键「重置布局」；主题走 dockview CSS 变量桥接 Tailwind 令牌（明暗自动跟随）
+- **跟踪**：版本升级注意 API 变动（dockview 迭代快，封装层隔离；8.x 用 `api.addPanel`/
+  `onDidLayoutChange`/`toJSON`，与 7.x `saveLayout` 命名不同）
 
 ---
 
@@ -69,3 +76,4 @@
 |---|---|---|
 | 2026-08-15 | T1-T4 | 建台账：用户定调"网上有的就用网上的，转官方插件 + 台账"；三功能选型定案 |
 | 2026-08-15 | T5 | 应用布局系统选型：dockview 8.1 定案（用户拍板 VS Code workbench 模型，§四·B 补充 2 v0.23） |
+| 2026-08-15 | T5 | 落地完成：dockview-react 8.1.0 安装（8.x 包名注意）+ DockLayout/VIEWS/DEFAULT_LAYOUTS + 编程壳/聊天应用迁移 + 持久化/右键重置/主题桥接，浏览器实测全通过 |

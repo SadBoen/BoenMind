@@ -41,6 +41,9 @@ importers:
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
+      dockview-react:
+        specifier: ^8.1.0
+        version: 8.1.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       i18next:
         specifier: ^26.3.6
         version: 26.3.6(typescript@6.0.3)
@@ -1984,6 +1987,18 @@ packages:
   diff@9.0.0:
     resolution: {integrity: sha512-svtcdpS8CgJyqAjEQIXdb3OjhFVVYjzGAPO8WGCmRbrml64SPw/jJD4GoE98aR7r25A0XcgrK3F02yw9R/vhQw==}
     engines: {node: '>=0.3.1'}
+
+  dockview-core@8.1.0:
+    resolution: {integrity: sha512-Vx8TAbsnMmc3IGQPvoXVZeJJsuk/yZGx75oCMUApROZ0FIWeFV+9ohlvzlmwTEmZR7M+VNCcC8HQt1ufzjjGnw==}
+
+  dockview-react@8.1.0:
+    resolution: {integrity: sha512-02rzaHObla2oalsoNcgVxUvwGHf4wNezsOwLF8lCeDwQNIw/Q4PSCVFAZxK3e3e561KVuMvSFW3s/LD6cc1W7g==}
+    peerDependencies:
+      react: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
+      react-dom: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
+
+  dockview@8.1.0:
+    resolution: {integrity: sha512-jZzxrpwKsEbULHoUvWDBSwNYzoO3LTL5h4tU1St7AZ0O0a+exR+mb7R92K+KdBw9CI1vaWgAH1VKLJf/RE6BNw==}
 
   dot-prop@6.0.1:
     resolution: {integrity: sha512-tE7ztYzXHIeyvc7N+hR3oi7FIbf/NIjVP9hmAt3yMXzrQ072/fpjGLx2GxNxGxUl5V73MEqYzioOMoVhGMJ5cA==}
@@ -6052,6 +6067,18 @@ snapshots:
   diff@8.0.4: {}
 
   diff@9.0.0: {}
+
+  dockview-core@8.1.0: {}
+
+  dockview-react@8.1.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
+    dependencies:
+      dockview: 8.1.0
+      react: 19.2.8
+      react-dom: 19.2.8(react@19.2.8)
+
+  dockview@8.1.0:
+    dependencies:
+      dockview-core: 8.1.0
 
   dot-prop@6.0.1:
     dependencies:

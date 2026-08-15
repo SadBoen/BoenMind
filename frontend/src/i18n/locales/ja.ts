@@ -121,11 +121,6 @@ export const ja: Translation = {
     exited: "プロセスが終了しました",
     createFailed: "端末の作成に失敗しました",  },
 coding: {
-    tabs: {
-      tasks: "タスク",
-      chat: "チャット",
-      terminal: "端末",
-    },
     editor: {
       empty: "左側からファイルを選択",
       save: "保存",
@@ -181,6 +176,17 @@ coding: {
       steward: "スチュワード",
       toolDesc: "システムツール",
     },
+  },
+  dock: {
+    view: {
+      sessionList: "セッション",
+      chat: "チャット",
+      files: "ファイル",
+      editor: "エディタ",
+      tasks: "タスク",
+      terminal: "ターミナル",
+    },
+    resetLayout: "レイアウトをリセット",
   },
   settings: {
     common: {

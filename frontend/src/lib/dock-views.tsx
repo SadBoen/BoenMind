@@ -1,0 +1,130 @@
+/**
+ * 应用布局系统的视图注册表（架构 §四·B 补充 2，v0.23 —— VS Code workbench 模型）。
+ *
+ * 视图 = 可停靠/悬浮/叠放/关闭/最大化的可复用面板，全部登记在本表：
+ * 对话/会话列表/终端/文件树/任务列表/编辑器，都是宿主共享的公共组件
+ * （ChatPane/TerminalPane 等）零改动嵌入，dockview 面板只做壳层包裹。
+ * 新公共组件挂载视图时在此登记一行即可。
+ *
+ * 视图实例语义（用户拍板）：对话视图单实例且绑定应用场景（复用 session.app
+ * 机制——编程里的对话是编程专家，不会跑到 WIKI）；终端/文件树/任务列表/
+ * 编辑器可多开（dockview 原生支持同一视图多面板，这里不做单例限制）。
+ */
+import { useEffect } from "react";
+import type { IDockviewPanelProps } from "dockview-react";
+import { ChatPane } from "@/components/chat/ChatPane";
+import { SessionList } from "@/components/chat/SessionList";
+import { FilePanel } from "@/components/files/FilePanel";
+import { Editor } from "@/components/coding/Editor";
+import { TodoPanel } from "@/components/coding/TodoPanel";
+import { TerminalPane } from "@/components/terminal/TerminalPane";
+import { useAppStore } from "@/stores/app-store";
+import type { AppId } from "./app-registry";
+
+/** 视图 id（同时是 dockview 面板的 component 名与默认布局的引用 key） */
+export type ViewId =
+  | "session-list"
+  | "chat-pane"
+  | "file-panel"
+  | "editor"
+  | "todo-panel"
+  | "terminal";
+
+export interface DockViewEntry {
+  /** i18n key：视图显示名（Tab 标题） */
+  titleKey: string;
+  /** 面板组件（可读 params；视图组件零改动，dockview 面板 props 在此消化） */
+  component: (props: IDockviewPanelProps) => React.ReactNode;
+}
+
+/** 视图注册表（表内顺序即注册顺序，无布局语义） */
+export const VIEWS: Record<ViewId, DockViewEntry> = {
+  "session-list": { titleKey: "dock.view.sessionList", component: () => <SessionList /> },
+  // 对话视图是宿主能力：形态与场景由面板 params 决定（chat 应用=full/chat，
+  // 编程壳=panel/coding）。面板挂载即绑定场景会话（一软件一会话，聚焦会话
+  // 永远属于当前场景——chat 场景幂等，coding 场景无会话则懒创建）。
+  "chat-pane": {
+    titleKey: "dock.view.chat",
+    component: ChatPaneView,
+  },
+  "file-panel": { titleKey: "dock.view.files", component: () => <FilePanel /> },
+  editor: { titleKey: "dock.view.editor", component: () => <Editor /> },
+  "todo-panel": { titleKey: "dock.view.tasks", component: () => <TodoPanel /> },
+  terminal: { titleKey: "dock.view.terminal", component: () => <TerminalPane /> },
+};
+
+function ChatPaneView({ params }: IDockviewPanelProps) {
+  const app = (params?.app as AppId) ?? "chat";
+  const ensureAppSession = useAppStore((s) => s.ensureAppSession);
+  useEffect(() => {
+    void ensureAppSession(app);
+  }, [app, ensureAppSession]);
+  return <ChatPane variant={params?.variant === "panel" ? "panel" : "full"} />;
+}
+
+/** 默认布局里一块面板的摆放声明 */
+export interface DockPanelSpec {
+  /** 面板唯一 id（同一应用布局内不可重复；可多开视图用不同 id 重复声明 view） */
+  id: string;
+  view: ViewId;
+  /** 面板参数（透传给视图组件；序列化布局时随快照保存） */
+  params?: Record<string, unknown>;
+  /**
+   * 摆放位置：第一块省略（居中占满）；其余须给 reference + direction。
+   * direction 取值（dockview 语义）：left/right/above/below = 以 reference 面板为
+   * 参照在对应方向开新组；within = 并入 reference 所在组叠 Tab。
+   */
+  position?: { reference: string; direction: "left" | "right" | "above" | "below" | "within" };
+  initialWidth?: number;
+  initialHeight?: number;
+}
+
+/** 应用默认布局（每应用一份；新应用有可停靠视图时在此声明） */
+export const DEFAULT_LAYOUTS: Partial<Record<AppId, { panels: DockPanelSpec[] }>> = {
+  // 编程壳：左=文件树 / 中=编辑器 / 右下=任务|对话|终端叠放 Tab（对话=panel 形态）
+  coding: {
+    panels: [
+      { id: "editor", view: "editor" },
+      {
+        id: "file-panel",
+        view: "file-panel",
+        position: { reference: "editor", direction: "left" },
+        initialWidth: 224,
+      },
+      {
+        id: "todo-panel",
+        view: "todo-panel",
+        position: { reference: "editor", direction: "below" },
+        initialHeight: 220,
+      },
+      {
+        id: "chat-pane",
+        view: "chat-pane",
+        params: { variant: "panel", app: "coding" },
+        position: { reference: "todo-panel", direction: "within" },
+      },
+      {
+        id: "terminal",
+        view: "terminal",
+        position: { reference: "todo-panel", direction: "within" },
+      },
+    ],
+  },
+  // 聊天应用：左=会话列表 / 中=对话
+  chat: {
+    panels: [
+      { id: "chat-pane", view: "chat-pane", params: { app: "chat" } },
+      {
+        id: "session-list",
+        view: "session-list",
+        position: { reference: "chat-pane", direction: "left" },
+        initialWidth: 256,
+      },
+    ],
+  },
+};
+
+/** 应用是否声明了可停靠布局（无声明则应用内容区按原样渲染） */
+export function hasDockLayout(appId: AppId): boolean {
+  return appId in DEFAULT_LAYOUTS;
+}

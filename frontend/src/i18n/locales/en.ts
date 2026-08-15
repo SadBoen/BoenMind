@@ -121,11 +121,6 @@ export const en: Translation = {
     exited: "process exited",
     createFailed: "Failed to create terminal",  },
 coding: {
-    tabs: {
-      tasks: "Tasks",
-      chat: "Chat",
-      terminal: "Terminal",
-    },
     editor: {
       empty: "Select a file from the left",
       save: "Save",
@@ -181,6 +176,17 @@ coding: {
       steward: "Steward",
       toolDesc: "System tools",
     },
+  },
+  dock: {
+    view: {
+      sessionList: "Sessions",
+      chat: "Chat",
+      files: "Files",
+      editor: "Editor",
+      tasks: "Tasks",
+      terminal: "Terminal",
+    },
+    resetLayout: "Reset Layout",
   },
   settings: {
     common: {

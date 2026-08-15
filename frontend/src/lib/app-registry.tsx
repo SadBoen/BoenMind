@@ -22,9 +22,8 @@ import {
   Settings,
   Wand2,
 } from "lucide-react";
-import { ChatWindow } from "@/components/chat/ChatWindow";
-import { SessionList } from "@/components/chat/SessionList";
 import { CodingApp } from "@/components/coding/CodingApp";
+import { DockLayout } from "@/components/layout/DockLayout";
 import { SettingsMenu } from "@/components/settings/SettingsMenu";
 import { AboutSettings } from "@/components/settings/AboutSettings";
 import { AppearanceSettings } from "@/components/settings/AppearanceSettings";
@@ -110,18 +109,14 @@ export const APPS: Record<AppId, AppEntry> = {
 export const APP_LIST: AppEntry[] = Object.values(APPS);
 
 /**
- * 聊天应用 = 会话列表 + 聊天窗口双栏（原三栏壳的 secondary|main 组合）。
- * 内部布局与滚动语义由两个子组件自带，壳层只提供容器高度。
+ * 聊天应用 = 可停靠视图容器（v0.23 布局系统）：默认布局 = 左会话列表/中对话
+ * （DEFAULT_LAYOUTS.chat 声明），用户可拖拽/叠放/关闭视图，布局自动持久化，
+ * 导航右键「重置布局」恢复默认。
  */
 function ChatAppView() {
   return (
-    <div className="flex h-full min-h-0">
-      <div className="w-64 shrink-0 border-r bg-background/60">
-        <SessionList />
-      </div>
-      <div className="min-w-0 flex-1">
-        <ChatWindow />
-      </div>
+    <div className="h-full min-w-0 bg-background">
+      <DockLayout appId="chat" />
     </div>
   );
 }

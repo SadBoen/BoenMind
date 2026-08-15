@@ -10,11 +10,18 @@
  * + 底部状态栏（复用桌面壳 StatusBar，浅色变体）。
  * 与桌面壳共享同一 store（会话/消息/配置），后端零改动。
  *
- * 默认界面 = 本壳（用户拍板：软件形式优先）；桌面模式从导航条底部入口进入。
+ * 默认界面 = 本壳（用户拍板：软件形式优先）；桌面模式从设置→外观形态切换进。
+ *
+ * 应用内容区 = DockLayout 可停靠视图容器（v0.23）：导航图标右键菜单提供
+ * 「重置布局」（只对有默认布局声明的应用显示，恢复该应用布局快照为默认）。
  */
+import { useEffect, useState } from "react";
+import type { AppId } from "@/lib/app-registry";
 import { useTranslation } from "react-i18next";
-import { Settings } from "lucide-react";
-import { APPS, type AppId } from "@/lib/app-registry";
+import { LayoutPanelLeft, Settings } from "lucide-react";
+import { APPS } from "@/lib/app-registry";
+import { hasDockLayout } from "@/lib/dock-views";
+import { resetDockLayout } from "@/components/layout/DockLayout";
 import { useAppStore } from "@/stores/app-store";
 import { StatusBar } from "@/components/desktop/StatusBar";
 import { cn } from "@/lib/utils";
@@ -24,12 +31,20 @@ const NAV_APPS: AppId[] = ["chat", "coding", "wiki"];
 /** 占位应用（未立项）：导航置灰点不了（wiki 现状） */
 const PLACEHOLDER_APPS: AppId[] = ["wiki"];
 
+/** 导航图标右键菜单（当前仅「重置布局」一项） */
+interface NavContextMenu {
+  x: number;
+  y: number;
+  appId: AppId;
+}
+
 export function ClassicShell() {
   const { t } = useTranslation();
   const activeNav = useAppStore((s) => s.activeNav);
   const setActiveNav = useAppStore((s) => s.setActiveNav);
   const activateApp = useAppStore((s) => s.activateApp);
   const Page = APPS[activeNav].component;
+  const [ctxMenu, setCtxMenu] = useState<NavContextMenu | null>(null);
 
   // 切到有会话场景的应用（chat/coding）：把聚焦会话切到该场景最近使用的会话
   // （一软件一会话，架构 §四·B 补充；无该场景会话时保持现状，由应用内引导创建）
@@ -37,6 +52,23 @@ export function ClassicShell() {
     setActiveNav(id);
     if (id === "chat" || id === "coding") void activateApp(id);
   };
+
+  // 右键菜单关闭：点击任意处 / Esc / 滚动
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const close = () => setCtxMenu(null);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    window.addEventListener("mousedown", close);
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("wheel", close, { passive: true });
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("wheel", close);
+    };
+  }, [ctxMenu]);
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background text-foreground">
@@ -56,9 +88,17 @@ export function ClassicShell() {
                 type="button"
                 title={placeholder ? `${t(app.nameKey)}（${t("common.comingSoon")}）` : t(app.nameKey)}
                 aria-label={t(app.nameKey)}
-                aria-disabled={placeholder || active || undefined}
+                aria-disabled={placeholder || undefined}
                 disabled={placeholder}
                 onClick={() => switchTo(id)}
+                onContextMenu={
+                  hasDockLayout(id)
+                    ? (e) => {
+                        e.preventDefault();
+                        setCtxMenu({ x: e.clientX, y: e.clientY, appId: id });
+                      }
+                    : undefined
+                }
                 className={cn(
                   "flex h-9 w-9 items-center justify-center rounded-lg transition-colors",
                   active
@@ -79,7 +119,6 @@ export function ClassicShell() {
               type="button"
               aria-label={t(APPS.settings.nameKey)}
               title={t(APPS.settings.nameKey)}
-              aria-disabled={activeNav === "settings" || undefined}
               onClick={() => switchTo("settings")}
               className={cn(
                 "flex h-9 w-9 items-center justify-center rounded-lg transition-colors",
@@ -100,6 +139,32 @@ export function ClassicShell() {
       </div>
 
       <StatusBar variant="classic" />
+
+      {/* 导航右键菜单：重置该应用的可停靠布局 */}
+      {ctxMenu && (
+        <div
+          role="menu"
+          className="fixed z-[70] min-w-44 rounded-lg border border-border bg-popover p-1 shadow-lg"
+          style={{ left: ctxMenu.x, top: ctxMenu.y }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <div className="px-2.5 py-1.5 text-xs font-medium text-muted-foreground">
+            {t(APPS[ctxMenu.appId].nameKey)}
+          </div>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              resetDockLayout(ctxMenu.appId);
+              setCtxMenu(null);
+            }}
+            className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-sm text-foreground hover:bg-accent"
+          >
+            <LayoutPanelLeft size={14} className="text-muted-foreground" />
+            {t("dock.resetLayout")}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

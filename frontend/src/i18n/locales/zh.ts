@@ -121,11 +121,6 @@ export const zh = {
     exited: "进程已退出",
     createFailed: "终端创建失败",  },
 coding: {
-    tabs: {
-      tasks: "任务",
-      chat: "对话",
-      terminal: "终端",
-    },
     editor: {
       empty: "从左侧选择文件",
       save: "保存",
@@ -181,6 +176,17 @@ coding: {
       steward: "管家",
       toolDesc: "系统工具",
     },
+  },
+  dock: {
+    view: {
+      sessionList: "会话列表",
+      chat: "对话",
+      files: "文件",
+      editor: "编辑器",
+      tasks: "任务",
+      terminal: "终端",
+    },
+    resetLayout: "重置布局",
   },
   settings: {
     common: {

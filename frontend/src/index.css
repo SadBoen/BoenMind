@@ -2,6 +2,7 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
+@import "dockview-react/dist/styles/dockview.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -226,4 +227,29 @@
     radial-gradient(ellipse 70% 70% at 25% 30%, rgb(94 214 255 / 45%), transparent 70%),
     radial-gradient(ellipse 70% 70% at 75% 35%, rgb(168 85 247 / 50%), transparent 70%),
     linear-gradient(160deg, #1e1245 0%, #1e3a6e 100%);
+}
+
+/* ============ 可停靠视图容器（dockview）主题：桥接 Tailwind 令牌 ============
+ * DockLayout 按 resolvedTheme 挂 .dockview-theme-{light,dark}；这里把两个主题类
+ * 的变量全部指向 oklch 令牌，明暗两套自动跟随 .dark，无需各自调色。
+ * 激活 tab = 面板底色 + 前景色（VS Code 语义），非激活 = 透明 + 弱化文字。 */
+.dockview-theme-light,
+.dockview-theme-dark {
+  --dv-group-view-background-color: var(--background);
+  --dv-tabs-and-actions-container-background-color: var(--muted);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--background);
+  --dv-activegroup-visiblepanel-tab-color: var(--foreground);
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--muted);
+  --dv-activegroup-hiddenpanel-tab-color: var(--foreground);
+  --dv-inactivegroup-visiblepanel-tab-background-color: transparent;
+  --dv-inactivegroup-visiblepanel-tab-color: var(--muted-foreground);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: transparent;
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--muted-foreground);
+  --dv-separator-border: var(--border);
+  --dv-tab-divider-color: var(--border);
+  --dv-border-radius: 6px;
+  --dv-drag-over-background-color: var(--accent);
+  --dv-drag-over-border-color: var(--ring);
+  --dv-paneview-active-outline-color: var(--ring);
+  --dv-icon-hover-background-color: var(--accent);
 }

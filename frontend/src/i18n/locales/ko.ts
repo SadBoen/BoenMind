@@ -121,11 +121,6 @@ export const ko: Translation = {
     exited: "프로세스 종료됨",
     createFailed: "터미널 생성 실패",  },
 coding: {
-    tabs: {
-      tasks: "작업",
-      chat: "대화",
-      terminal: "터미널",
-    },
     editor: {
       empty: "왼쪽에서 파일을 선택하세요",
       save: "저장",
@@ -181,6 +176,17 @@ coding: {
       steward: "스튜어드",
       toolDesc: "시스템 도구",
     },
+  },
+  dock: {
+    view: {
+      sessionList: "대화 목록",
+      chat: "대화",
+      files: "파일",
+      editor: "편집기",
+      tasks: "작업",
+      terminal: "터미널",
+    },
+    resetLayout: "레이아웃 재설정",
   },
   settings: {
     common: {
