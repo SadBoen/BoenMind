@@ -128,16 +128,12 @@ export const DEFAULT_LAYOUTS: Partial<Record<AppId, { panels: DockPanelSpec[] }>
       },
     ],
   },
-  // 聊天应用（v4 重排）：左=会话列表 / 中=对话 / 右=工作目录文件列表（随手翻文件）
+  // 聊天应用（v6 重排，2026-08-15 用户"SESSION 在聊天单元内部"）：会话列表不再是
+  // 独立 dock 面板——收进 chat-pane 单元（内嵌列表，状态栏三横按钮控制显隐，
+  // 默认展开）；右=工作目录文件列表（随手翻文件）
   chat: {
     panels: [
       { id: "chat-pane", view: "chat-pane", params: { app: "chat" } },
-      {
-        id: "session-list",
-        view: "session-list",
-        position: { reference: "chat-pane", direction: "left" },
-        initialWidth: 256,
-      },
       {
         id: "file-panel",
         view: "file-panel",

@@ -29,6 +29,11 @@
 - **TerminalPane 一期已落地（07618ce，上游吸收 T1/T2）**：后端 /api/terminal（portable-pty 会话，创建/输入/resize/SSE/关闭；broadcast 多订阅 + 读线程自清理；**ConPTY ESC[6n 光标查询应答**——不答则 cmd 输出阻塞，实测坑）；前端 TerminalPane 宿主组件（xterm 6 + fit；编程壳右栏第三个 Tab，终端 Tab 加宽 30rem）；dir 命令全链路实测通过
 - **剩余**（执行顺序已拍）：项目切换（currentProject 上下文 + 文件树/终端联动）→ codegraph 转官方插件（scopes=["coding"]）→ 浏览器仿真 B 方案（可视化 web 工具链）
 
+**聊天单元一体化轮（2026-08-15 用户纠正设计理解）**：
+- **用户澄清**："SESSION 和聊天不是一个单元的两个界面，而是在一个单元里面"——聊天单元 = 列表 + 聊天框 + 上下文显示，列表显隐由顶部状态栏控制
+- **落地**：ChatPane 内嵌可折叠会话列表（flex 侧栏 256px，SessionList 复用按场景过滤）；状态栏 **prefix 槽位** = 三横开关（SessionsToggle，与 token/X 同一行——dockview 三槽位：prefix=列表开关 / right=token 状态+关闭）；store `chatSessionsOpen` 按场景记忆显隐（chat 默认展开、coding 默认折叠）；布局 v6：chat 应用去掉独立 session-list 面板（列表收进聊天单元；session-list 视图保留注册表可加回）；ChatPane 内容区旧三横/悬浮窗移除
+- 浏览器实测：聊天单元=列表+聊天一体 ✓ / 三横-token-X 同行 ✓ / toggle 收起恢复 ✓ / 编程对话默认折叠+展开见 coding 会话 ✓
+
 **布局 v5 + 状态栏轮（2026-08-15 用户三点）**：
 - **编程壳去编辑器（用户"一行代码都不用看"）**：布局 v5——中=任务清单主区 / 左=文件树 / 右=对话独立列 / 底部=终端|分支图叠放；编辑器视图仍在注册表（功能单元模式，随时可加回）；key v4→v5
 - **状态栏升级（用户拍板开搞）**：dockview 8.1 `rightHeaderActionsComponent`（三个 header action 槽位之一）——面板标题栏右侧统一状态区 StatusBarActions（按组内活跃面板渲染状态项；当前=对话面板 TokenUsage）；token 数据源=后端新 API `GET /api/sessions/{id}/usage`（事件日志 assistant/message 事件 usage 聚合：input/output/messages）；前端图标+总量（Coins + 缩写），点击悬浮窗看明细（**宽度不足转悬浮窗**，用户拍板）；流结束（finalizeStream）usageVersion+1 → 自动重拉；浏览器实测真实消息 3.6K（输入 3512/输出 44）全链路通过
@@ -80,6 +85,7 @@
 
 | 轮次 | 要点 |
 |---|---|
+| 聊天单元一体化轮 | 会话列表收进聊天单元（ChatPane 内嵌可折叠列表）；状态栏三槽位（prefix=列表开关/right=token+X）同行；chat 布局 v6 去独立列表面板 |
 | 布局 v5 + 状态栏轮 | 编程壳去编辑器（任务清单主区）；状态栏升级（dockview rightHeaderActions + token 用量 API/悬浮明细/流后刷新）；GitBar 精简去提交时间线 |
 | 布局与聊天单元轮 | 默认布局 v4 重定义（chat 三栏含文件树 / coding 对话独立右列）+ 聊天单元会话入口（三横悬浮窗，SessionList scene 化）；状态栏统一评估待拍板 |
 | 项目切换轮 | 前端项目集合 + workspace root 参数化 + 全视图联动（文件树/分支/GitBar/终端 cwd）+ 新建校验/删除回退；用户拍板编辑器不再深化 |

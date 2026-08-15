@@ -11,9 +11,10 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { Coins, Loader2 } from "lucide-react";
+import { Coins, Loader2, Menu } from "lucide-react";
 import type { IDockviewHeaderActionsProps } from "dockview-react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { api } from "@/api/client";
 import { useAppStore } from "@/stores/app-store";
 
@@ -113,4 +114,33 @@ function TokenUsageButton() {
 export function StatusBarActions({ activePanel }: IDockviewHeaderActionsProps) {
   if (activePanel?.view.contentComponent !== "chat-pane") return null;
   return <TokenUsageButton />;
+}
+
+/**
+ * 状态栏最左槽位（prefix）：聊天单元内嵌会话列表的显隐开关。
+ * 用户拍板"列表在聊天单元内部，由顶部状态栏控制"（2026-08-15）——
+ * 三横按钮与 token 状态、关闭按钮同一行（状态栏统一承载）。
+ * 仅对话面板组显示；按场景（chat/coding）记忆显隐，聊天应用默认展开。
+ */
+export function SessionsToggle({ activePanel }: IDockviewHeaderActionsProps) {
+  const { t } = useTranslation();
+  const params = (activePanel?.params ?? {}) as { app?: string };
+  const scene = params.app ?? "chat";
+  const open = useAppStore((s) => s.chatSessionsOpen[scene] ?? scene === "chat");
+  const toggle = useAppStore((s) => s.toggleChatSessions);
+  if (activePanel?.view.contentComponent !== "chat-pane") return null;
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      className={cn(
+        "h-6 w-6 px-0 text-muted-foreground",
+        open && "bg-accent text-foreground",
+      )}
+      title={t("chat.sessions")}
+      onClick={() => toggle(scene)}
+    >
+      <Menu size={14} />
+    </Button>
+  );
 }

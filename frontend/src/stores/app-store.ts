@@ -141,6 +141,13 @@ interface AppStore {
   lastTask: Task | null;
   /** 状态栏 token 用量刷新信号：流结束（done/停止）时 +1，TokenUsage 订阅重拉 */
   usageVersion: number;
+  /**
+   * 聊天单元内嵌会话列表显隐（按场景：chat/coding…；默认 chat 展开、其余折叠）。
+   * 用户拍板"列表在聊天单元内部，由顶部状态栏控制显隐"（2026-08-15）——
+   * 状态栏 prefix 槽位的三横按钮 toggle 本标志，ChatPane 订阅渲染内嵌列表。
+   */
+  chatSessionsOpen: Record<string, boolean>;
+  toggleChatSessions: (app: string) => void;
   /** 当前会话选择的模型（providerId::modelId）与思考强度 */
   selectedModel: string | null;
   selectedThinking: string;
@@ -567,6 +574,13 @@ export const useAppStore = create<AppStore>((set, get) => {
     taskProgress: null,
     lastTask: null,
     usageVersion: 0,
+    // 聊天单元内嵌列表默认态：聊天应用展开（会话列表是聊天单元的一部分），
+    // 编程等场景折叠（右列空间有限，随时经状态栏三横展开）
+    chatSessionsOpen: { chat: true },
+    toggleChatSessions: (app) =>
+      set((s) => ({
+        chatSessionsOpen: { ...s.chatSessionsOpen, [app]: !(s.chatSessionsOpen[app] ?? false) },
+      })),
     selectedModel: localStorage.getItem("boenmind.selectedModel"),
     selectedThinking: "off",
     setSelectedModel: (value) => {
