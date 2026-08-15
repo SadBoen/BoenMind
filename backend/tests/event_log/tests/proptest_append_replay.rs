@@ -7,7 +7,7 @@
 //! 4. clear 后分支从 seq 1 重新起。
 //!
 //! 用 InMemoryEventStore（事件流语义与 turso 实现同构；turso 路径的
-//! 原子性由 checkpoint/ignorable/fork 集成测试覆盖）。
+//! 原子性由 ignorable/fork 集成测试覆盖）。
 
 use std::sync::Arc;
 
@@ -96,7 +96,7 @@ proptest! {
                     }
                     Op::Fork => {
                         // 设计约束（超头拒绝）：源分支须有头行——main 须先有
-                        // 事件；fork 出来的空分支已有头行（head 0）可直接再 fork。
+                        // 事件；fork 出来的分支已有头行可直接再 fork。
                         // 模型遵守该约束：不满足则跳过本 op。
                         let can_fork = expected_len[&key] > 0 || key != main.to_string();
                         if !can_fork {
@@ -104,8 +104,9 @@ proptest! {
                         }
                         let new = log.fork(&sid, &bid).await.unwrap();
                         branches.push(new.clone());
-                        expected_next.insert(new.to_string(), 1);
-                        expected_len.insert(new.to_string(), 0);
+                        // fork 即落 branch/fork 标记（A3，占 seq 1）
+                        expected_next.insert(new.to_string(), 2);
+                        expected_len.insert(new.to_string(), 1);
                     }
                     Op::Clear => {
                         let removed = log.clear_session(&sid).await.unwrap();

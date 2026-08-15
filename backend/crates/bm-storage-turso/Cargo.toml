@@ -2,7 +2,7 @@
 name = "bm-storage-turso"
 version = "0.1.0"
 edition = "2024"
-description = "BoenMind 存储后端：EventStorePort 的 turso 实现 + checkpoint 策略 + 阶段 0 双写过渡"
+description = "BoenMind 存储后端：EventStorePort 的 turso 实现 + 阶段 0 双写过渡"
 
 [dependencies]
 bm-protocol = { workspace = true }

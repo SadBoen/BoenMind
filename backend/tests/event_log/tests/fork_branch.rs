@@ -22,11 +22,12 @@ async fn fork_creates_independent_branch() {
     let br = log.fork(&sid, &main).await.unwrap();
     assert!(br.as_str().starts_with("br_"));
 
-    // 新分支从 seq 1 起独立计数
+    // 新分支独立计数：首事件 = branch/fork 标记（seq 1），自身从 seq 2 起
     log.append(sid.clone(), br.clone(), turn(3), SurfaceIntent::None).await.unwrap();
     let br_evs = log.replay(&sid, &br).await.unwrap();
-    assert_eq!(br_evs.len(), 1);
-    assert_eq!(br_evs[0].seq.as_u64(), 1);
+    assert_eq!(br_evs.len(), 2);
+    assert!(matches!(br_evs[0].kind, EventKind::Core(CoreEvent::BranchFork { .. })));
+    assert_eq!(br_evs[1].seq.as_u64(), 2);
 
     // main 分支不受影响（head 仍是 2）
     let main_head = log.head_seq(&sid, &main).await.unwrap().unwrap();
@@ -53,7 +54,7 @@ async fn branch_heads_track_parent() {
     assert_eq!(heads.len(), 2);
     let br_head = heads.iter().find(|h| h.branch_id == br).unwrap();
     assert_eq!(br_head.parent_branch.as_ref().map(|b| b.as_str()), Some("main"));
-    assert_eq!(br_head.head_seq.as_u64(), 0); // 空分支 head 0
+    assert_eq!(br_head.head_seq.as_u64(), 1, "首事件 = branch/fork 标记（A3）");
     assert_eq!(br_head.forked_at, Some(2), "fork 点快照 = 父 head（A3）");
 }
 
@@ -86,8 +87,8 @@ async fn turso_fork_persists_and_reopens() {
         assert_eq!(br_head.parent_branch.as_ref().map(|b| b.as_str()), Some("main"));
         assert_eq!(br_head.forked_at, Some(1), "fork 点快照持久化（A3）");
         let br_evs = log.replay(&sid, &br).await.unwrap();
-        assert_eq!(br_evs.len(), 1);
-        assert_eq!(br_evs[0].seq.as_u64(), 1);
+        assert_eq!(br_evs.len(), 2, "branch/fork 标记 + 自身 1 条");
+        assert_eq!(br_evs[1].seq.as_u64(), 2);
     }
     let _ = std::fs::remove_file(&path);
 }

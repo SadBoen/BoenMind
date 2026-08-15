@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc d2ec19084478eae922a4e9989684ec5cebd8af3ab357be7dec9d492da49857af # shrinks to ops = [Fork]
+cc 3abc2dced02bf96ef7237005126fddd599c5648a972915b2dd8645a20a1e8b8d # shrinks to ops = [Append, Fork]
