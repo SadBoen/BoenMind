@@ -13,20 +13,21 @@
  * 默认界面 = 本壳（用户拍板：软件形式优先）；桌面模式从导航条底部入口进入。
  */
 import { useTranslation } from "react-i18next";
-import { Monitor, Settings } from "lucide-react";
+import { Settings } from "lucide-react";
 import { APPS, type AppId } from "@/lib/app-registry";
 import { useAppStore } from "@/stores/app-store";
 import { StatusBar } from "@/components/desktop/StatusBar";
 import { cn } from "@/lib/utils";
 
-/** 软件导航顺序（顶部区）：对话 + 编程（M2 独立壳已接线）；新软件在此登记 */
-const NAV_APPS: AppId[] = ["chat", "coding"];
+/** 软件导航顺序（顶部区）：对话 + 编程 + wiki（占位）；新软件在此登记 */
+const NAV_APPS: AppId[] = ["chat", "coding", "wiki"];
+/** 占位应用（未立项）：导航置灰点不了（wiki 现状） */
+const PLACEHOLDER_APPS: AppId[] = ["wiki"];
 
 export function ClassicShell() {
   const { t } = useTranslation();
   const activeNav = useAppStore((s) => s.activeNav);
   const setActiveNav = useAppStore((s) => s.setActiveNav);
-  const setViewMode = useAppStore((s) => s.setViewMode);
   const Page = APPS[activeNav].component;
 
   return (
@@ -40,19 +41,22 @@ export function ClassicShell() {
           {NAV_APPS.map((id) => {
             const app = APPS[id];
             const active = activeNav === id;
+            const placeholder = PLACEHOLDER_APPS.includes(id);
             return (
               <button
                 key={id}
                 type="button"
-                title={t(app.nameKey)}
+                title={placeholder ? `${t(app.nameKey)}（${t("common.comingSoon")}）` : t(app.nameKey)}
                 aria-label={t(app.nameKey)}
-                aria-disabled={active || undefined}
+                aria-disabled={placeholder || active || undefined}
+                disabled={placeholder}
                 onClick={() => setActiveNav(id)}
                 className={cn(
                   "flex h-9 w-9 items-center justify-center rounded-lg transition-colors",
                   active
                     ? "bg-primary/10 text-primary"
                     : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                  placeholder && "cursor-not-allowed opacity-40 hover:bg-transparent hover:text-muted-foreground",
                 )}
               >
                 {app.icon}
@@ -60,7 +64,8 @@ export function ClassicShell() {
             );
           })}
 
-          {/* 底部独立区：设置入口（系统级，非软件）+ 桌面模式 */}
+          {/* 底部独立区：设置入口（系统级，非软件）；桌面模式入口已并入
+              设置→外观（形态切换卡片），导航条不再放 */}
           <div className="mt-auto flex flex-col items-center gap-1 border-t border-border pt-2">
             <button
               type="button"
@@ -76,15 +81,6 @@ export function ClassicShell() {
               )}
             >
               <Settings size={17} />
-            </button>
-            <button
-              type="button"
-              aria-label={t("desktop.switchDesktop")}
-              title={t("desktop.switchDesktop")}
-              onClick={() => setViewMode("desktop")}
-              className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            >
-              <Monitor size={17} />
             </button>
           </div>
         </nav>

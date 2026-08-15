@@ -165,6 +165,8 @@ export const ko: Translation = {
       chatDesc: "AI와 대화",
       coding: "코딩",
       codingDesc: "코드 워크스페이스 (준비 중)",
+      wiki: "Wiki",
+      wikiDesc: "Wiki 지식 베이스 (준비 중)",
       settings: "설정",
       plugins: "플러그인",
       steward: "스튜어드",

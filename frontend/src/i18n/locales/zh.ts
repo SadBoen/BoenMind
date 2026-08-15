@@ -165,6 +165,8 @@ export const zh = {
       chatDesc: "与 AI 对话",
       coding: "编程",
       codingDesc: "代码工作台（建设中）",
+      wiki: "Wiki",
+      wikiDesc: "Wiki 知识库（建设中）",
       settings: "设置",
       plugins: "插件",
       steward: "管家",

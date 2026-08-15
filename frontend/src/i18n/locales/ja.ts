@@ -165,6 +165,8 @@ export const ja: Translation = {
       chatDesc: "AI と会話",
       coding: "コーディング",
       codingDesc: "コードワークスペース（準備中）",
+      wiki: "Wiki",
+      wikiDesc: "Wiki ナレッジベース（準備中）",
       settings: "設定",
       plugins: "プラグイン",
       steward: "スチュワード",

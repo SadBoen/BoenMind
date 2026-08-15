@@ -8,8 +8,10 @@
  * 设置页注册表（SETTINGS）随导航表退役迁入本文件，由设置应用内部使用。
  */
 import type { ComponentType, ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Activity,
+  BookOpen,
   Code2,
   Info,
   Lightbulb,
@@ -35,7 +37,7 @@ import { WorkspaceSettings } from "@/components/settings/WorkspaceSettings";
 import { useAppStore } from "@/stores/app-store";
 import { FolderOpen } from "lucide-react";
 
-export type AppId = "chat" | "coding" | "settings" | "plugins" | "steward";
+export type AppId = "chat" | "coding" | "wiki" | "settings" | "plugins" | "steward";
 
 export interface AppEntry {
   id: AppId;
@@ -69,6 +71,15 @@ export const APPS: Record<AppId, AppEntry> = {
     // M2：独立壳（文件树/编辑器/分支图 + 活任务清单）
     component: CodingApp,
     defaultSize: { width: 1080, height: 700 },
+  },
+  wiki: {
+    id: "wiki",
+    nameKey: "desktop.app.wiki",
+    icon: <BookOpen size={18} />,
+    gradient: "linear-gradient(135deg, #fbbf24, #f472b6)",
+    // 占位：WIKI 未立项，导航/开始菜单置灰点不了（编程 M2 前的同款语义）
+    component: WikiPlaceholder,
+    defaultSize: { width: 760, height: 560 },
   },
   settings: {
     id: "settings",
@@ -128,6 +139,17 @@ function SettingsAppView() {
       <div className="min-w-0 flex-1">
         <SettingsPage />
       </div>
+    </div>
+  );
+}
+
+/** WIKI 占位（未立项）：导航/开始菜单置灰点不了，点开也只显示建设中 */
+function WikiPlaceholder() {
+  const { t } = useTranslation();
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-3 bg-background text-muted-foreground">
+      <BookOpen size={40} strokeWidth={1.5} />
+      <p className="text-sm">{t("desktop.app.wikiDesc")}</p>
     </div>
   );
 }

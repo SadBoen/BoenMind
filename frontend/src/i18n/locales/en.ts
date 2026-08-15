@@ -165,6 +165,8 @@ export const en: Translation = {
       chatDesc: "Chat with AI",
       coding: "Coding",
       codingDesc: "Code workspace (coming soon)",
+      wiki: "Wiki",
+      wikiDesc: "Wiki knowledge base (coming soon)",
       settings: "Settings",
       plugins: "Plugins",
       steward: "Steward",
