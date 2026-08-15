@@ -104,11 +104,11 @@
 - ✅ 任务栏：运行应用按钮 + 点击聚焦置顶（z 序按打开顺序）；红点关闭窗口
 - ✅ 明暗主题切换（.dark class 实测）、英文切换实测（ja/ko 键同构由类型系统保证）
 - ✅ 二次迭代布局实测：MenuBar 顶部（开始按钮 y=4）/Dock 底部居中（x=528=1280/2 正中）/开始菜单顶部下拉（y=57）/窗口钳制在 MenuBar 与 Dock 之间（y=44-648 不重叠）/壁纸明暗各 15 层
-- ⚠️ 拖拽未能在 IAB 中自动化验证（CUA/Playwright 合成事件对 React 拖拽失效，环境限制，见记忆 iab-browser-testing-limitations）；代码与 react-rnd 标准用法一致（dragHandleClassName 标题栏），需真实浏览器人工确认一次
+- ✅ 拖拽由用户真实鼠标实测确认可用（react-rnd 标题栏拖拽正常；IAB 合成事件无法自动化验证属环境限制，见记忆 iab-browser-testing-limitations）
 
 顺手修的真 bug：窗口默认尺寸超过窗口层高度（聊天 700px > 层 672px）会溢出到任务栏——AppWindow 挂载时按容器钳制尺寸（min(default, 容器-16)）。
 
-遗留（不在本期范围）：窗口层叠/最小化/多实例、黄绿圆点接线、react-rnd 尺寸调整（enableResizing 关着）、编程应用真实壳。
+遗留（不在本期范围）：窗口最小化/多实例/黄绿圆点接线、react-rnd 尺寸调整（enableResizing 关着）、编程应用真实壳、（层叠偏移已完成：新窗口按打开序错开 48px，点击可见边缘即聚焦）。
 
 ## 八、关联文档
 
