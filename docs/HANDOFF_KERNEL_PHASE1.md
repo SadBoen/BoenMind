@@ -11,7 +11,12 @@
 
 **M2 编程应用独立壳已起步（0fb2acb，本日）**：独立壳 = 文件树/编辑器/分支图 + 活任务清单（用户痛点"任务清单生成后不会实时插入/删除"闭环：模型调 todo 工具 → todo/write 全量快照落事件日志 → 前端事件流投影实时刷新）。后端：todo 工具（bm-server todo_tool.rs）+ GET/POST /api/sessions/{id}/todos（共用 apply_todo_op）+ POST /api/workspace/file + GET /api/workspace/git-info；bm-loop 删 step_queue（A6 修订）+ 步数预算提示（剩 6 步注入收敛指令）；is_text 补 application/json。前端：CodingApp 三栏（FilePanel 从 2cb65fa^ 恢复 + Editor 可编辑保存 + TodoPanel 事件流投影）+ GitBar（分支/提交时间线）+ subscribeEvents（fetch 流式带 Bearer）；ClassicShell 编程导航接线；桌面壳经注册表同步生效。**浏览器实测全链路通过**（模型真实建 3 任务 high 优先级实时投影 + 回合步数显示；编辑器保存/还原；桌面壳同链路）。**M2 下一件 = 分支图深化（DAG）+ 编辑器增强（diff/未保存守卫）+ 长会话性能（EventQuery 类型过滤）**。
 
-**前端壳（DE）完成态（2026-08-15 八次迭代收官）**：**双 DE 并存**——经典软件界面（默认，左侧导航=软件导航 chat/coding 占位、底部=设置+桌面模式；外观页形态切换+形态专属设置：软件=字体大小/桌面=壁纸模板）+ 桌面壳（OS 形态入口，窗口控制接线全落地：最小化/最大化还原/resize）；插件分类标签（manifest category + 插件页 tab）；**界面层插件化已拍板要做，学 DeepSeek Harness**（机制调研完成：ui-slots 槽位 + 同域 bundle 动态注册，非 iframe/WebComponent——§四·C 落地设计待拍板）。全脉络见 docs/HANDOFF_DESKTOP_SHELL.md §九/§十。
+**前端壳（DE）完成态（2026-08-15 八次迭代收官 + 当日导航收口）**：**双 DE 并存**——经典软件界面（默认，左侧导航=软件导航 chat/coding/wiki 占位置灰、底部=仅设置入口——a8397f8 移除桌面模式按钮，外观页形态切换接管；外观页形态切换+形态专属设置：软件=字体大小/桌面=壁纸模板）+ 桌面壳（OS 形态入口，窗口控制接线全落地：最小化/最大化还原/resize）；插件分类标签（manifest category + 插件页 tab）；**界面层插件化已拍板要做，学 DeepSeek Harness 思路**（机制调研完成：ui-slots 槽位 + 同域 bundle 动态注册——§四·C 落地设计待拍板，实现按本架构落不抄代码）。全脉络见 docs/HANDOFF_DESKTOP_SHELL.md §九/§十。
+
+**架构讨论轮（本日，用户开题两场）**：
+- **内核主权评估（三轮讨论定调）**：用户开题"换上 dsh 内核的 Rust 版会不会更好？以后它的生态是我们羡慕的"→ 定调**不换不跟随 dsh 内核**（Rust 移植=双倍维护/权威分界原则/挂载点三类：故意不放 loop+权限审批、架构简化掉 provider、该学前端槽位+事件域扩展机制/演进路径：策略插件化→存储 port→协议 version+迁移/生态=平台协议非内核，兼容层+商店+贡献面）——已入架构 §15.4
+- **对话宿主化 + 场景作用域拍板**（用户"每个带 LLM 的软件都有对话框，不该每软件重写"）：对话界面=宿主能力（ChatPane 共享组件/形态变体/编程壳右栏 Tab）；会话 `app` 场景字段（一软件一会话）；工具面按 `session.app` 组装（内置手脚+系统增强全局、场景工具按场景）；skill 场景注入随 M2 深化；manifest `scopes`+槽位随 §四·C——已入架构 §四·B 补充 + 待拍板 9
+- 架构文档 v0.22（状态行同步）
 
 **最近四轮回溯**：
 - 修复轮（同日，用户定调"回头看查出问题先修"）：三真缺口修两件（declare_event! 宏 / branch/fork 事件）、压缩参数双轨打通（bm-core effective()）、memory/write 生产者接线、**内核第一根接线**（bm-compactor 经 KernelBuilder 装配进生产，bm 引擎从 kernel 取事件日志+压缩服务）——测试全绿 + clippy 零 lint
@@ -26,6 +31,7 @@
 
 | 轮次 | 要点 |
 |---|---|
+| 架构讨论轮 | 内核主权评估定调（不换 dsh，§15.4）+ 对话宿主化拍板（§四·B 补充）+ 导航收口（底部仅设置+wiki 占位，a8397f8）；架构 v0.22 |
 | M2 编程壳 | 独立壳起步（0fb2acb）：todo 工具+事件投影闭环 / 编辑器+写文件 / 分支图起步 / step_queue 删除（A6 修订）+步数预算提示；浏览器实测模型真实调工具全链路 |
 | M1 验收 | 运行时自修真实 bug 全链路通过（8254bd7）+ 6 问题登记（本轮，报告 ACCEPTANCE_M1） |
 | 回头看+对标 | 架构回头看两报告 + 三调研笔记 + 架构 v0.21 |
@@ -92,7 +98,7 @@
 
 ## 关联文档
 
-- 架构：docs/everything-is-plugin-architecture.md（v0.21，三铁律/§6.8 编程应用/§14 管家/§15 回头看登记）
+- 架构：docs/everything-is-plugin-architecture.md（v0.22，三铁律/§6.8 编程应用/§14 管家/§15 回头看登记 + §15.4 内核主权评估 + §四·B 补充 对话宿主化与场景作用域）
 - 架构回头看：docs/REVIEW_ARCHITECTURE_2026-08-15.md
 - 对标调研：docs/REVIEW_LANDSCAPE_2026-08-15.md（笔记：docs/research/2026-08-15/）
 - 代码回看：docs/REVIEW_CODE_2026-08-15.md
