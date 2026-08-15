@@ -37,7 +37,13 @@ interface DockLayoutProps {
   appId: AppId;
 }
 
-const layoutKey = (appId: AppId) => `boenmind.dock.${appId}`;
+/**
+ * 布局快照 key（每应用一份）。v2：DEFAULT_LAYOUTS 演进（新增 git-graph 视图）
+ * 时 bump 版本——旧快照不包含新默认视图，版本化后重建默认布局。代价是
+ * 用户自定义布局随版本重置一次；插件默认布局声明（§四·C）落地时再设计
+ * 精细迁移（快照指纹对比），当前阶段默认布局即用户所见，bump 可接受。
+ */
+const layoutKey = (appId: AppId) => `boenmind.dock.v3.${appId}`;
 
 /**
  * 布局重置注册表：DockLayout 实例挂载时登记，壳层（导航右键菜单/标题栏）
@@ -106,7 +112,6 @@ export const DockLayout = forwardRef<DockLayoutHandle, DockLayoutProps>(function
     },
     [appId, t],
   );
-
   const resetLayout = useCallback(() => {
     const api = apiRef.current;
     if (!api) return;

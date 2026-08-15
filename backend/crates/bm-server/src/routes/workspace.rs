@@ -115,7 +115,8 @@ pub async fn write_workspace_file(
 }
 
 /// Git 仓库状态（M2 分支图数据源）：工作目录是 git 仓库时返回当前分支、
-/// 最近提交与工作区变更；不是仓库 → `{ "repo": false }`（优雅降级）。
+/// 最近提交（含 parents 拓扑边）、本地分支指针与工作区变更；
+/// 不是仓库 → `{ "repo": false }`（优雅降级）。
 pub async fn git_info(
     State(state): crate::SharedState,
 ) -> ApiResult<Json<serde_json::Value>> {
@@ -125,7 +126,7 @@ pub async fn git_info(
     Ok(Json(git_info_inner(&root)))
 }
 
-/// git 探测实现（纯函数便于单测）：三条只读命令，各自失败独立降级。
+/// git 探测实现（纯函数便于单测）：四条只读命令，各自失败独立降级。
 fn git_info_inner(root: &std::path::Path) -> serde_json::Value {
     use std::process::Command;
     let run = |args: &[&str]| {
@@ -142,15 +143,24 @@ fn git_info_inner(root: &std::path::Path) -> serde_json::Value {
         }
         _ => return serde_json::json!({ "repo": false }),
     };
-    let commits = run(&["log", "--oneline", "-8", "--pretty=format:%h|%s"])
+    // 提交拓扑（DAG）：%p = 父提交短 hash（空格分隔；merge 多个）。--branches
+    // 覆盖全部本地分支（不拉远程），按拓扑序输出（新 → 旧）。
+    let commits = run(&["log", "--branches", "-15", "--pretty=format:%h|%s|%p"])
         .map(|out| {
             if out.status.success() {
                 String::from_utf8_lossy(&out.stdout)
                     .lines()
                     .filter_map(|l| {
-                        l.split_once('|').map(|(hash, subject)| {
-                            serde_json::json!({ "hash": hash, "subject": subject })
-                        })
+                        let mut parts = l.splitn(3, '|');
+                        let hash = parts.next()?.to_string();
+                        let subject = parts.next().unwrap_or("").to_string();
+                        let parents = parts
+                            .next()
+                            .unwrap_or("")
+                            .split_whitespace()
+                            .map(str::to_string)
+                            .collect::<Vec<_>>();
+                        Some(serde_json::json!({ "hash": hash, "subject": subject, "parents": parents }))
                     })
                     .collect::<Vec<_>>()
             } else {
@@ -158,6 +168,27 @@ fn git_info_inner(root: &std::path::Path) -> serde_json::Value {
             }
         })
         .unwrap_or_default();
+    // 本地分支指针（tip 提交短 hash；分支图标签的锚点）
+    let branches = run(&[
+        "for-each-ref",
+        "refs/heads",
+        "--format=%(refname:short)|%(objectname:short)",
+    ])
+    .map(|out| {
+        if out.status.success() {
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .filter_map(|l| {
+                    l.split_once('|').map(|(name, tip)| {
+                        serde_json::json!({ "name": name, "tip": tip })
+                    })
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        }
+    })
+    .unwrap_or_default();
     let status = run(&["status", "--porcelain"])
         .map(|out| {
             if out.status.success() {
@@ -170,7 +201,13 @@ fn git_info_inner(root: &std::path::Path) -> serde_json::Value {
             }
         })
         .unwrap_or_default();
-    serde_json::json!({ "repo": true, "branch": branch, "commits": commits, "status": status })
+    serde_json::json!({
+        "repo": true,
+        "branch": branch,
+        "commits": commits,
+        "branches": branches,
+        "status": status,
+    })
 }
 
 #[cfg(test)]

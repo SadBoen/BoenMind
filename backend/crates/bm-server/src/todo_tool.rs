@@ -10,7 +10,7 @@
 //! - REST 面：`POST /api/sessions/{id}/todos`（前端任务面板手动操作）。
 
 use bm_kernel::EventLog;
-use bm_protocol::{BranchId, CoreEvent, EventKind, SessionId, TodoItem};
+use bm_protocol::{BranchId, CoreEvent, EventKind, EventQuery, SessionId, TodoItem};
 
 /// 任务状态白名单（协议注释约定 pending | in_progress | completed）。
 const STATUSES: &[&str] = &["pending", "in_progress", "completed"];
@@ -56,12 +56,13 @@ pub fn todo_def() -> bm_loop::model::ToolDef {
 }
 
 /// 读事件日志最后一条 TodoWrite（会话当前清单；无 → 空清单）。
-/// 全量 replay 过滤：起步可接受（会话级规模），长会话按类型倒查留 M3。
+/// M2 深化：类型过滤查询（EventQuery.event_type），存储层只返回 todo/write
+/// 事件——长会话不再全量 replay（消息/工具事件被 SQL 层过滤掉）。
 async fn load_todos(log: &EventLog, session_id: &str) -> Result<Vec<TodoItem>, String> {
     let sid = SessionId::new(session_id);
     let bid = BranchId::new("main");
     let evs = log
-        .replay(&sid, &bid)
+        .read_where(EventQuery::of_type(sid, bid, "todo/write"))
         .await
         .map_err(|e| format!("读取事件日志失败: {e}"))?;
     let mut todos: Vec<TodoItem> = Vec::new();
@@ -276,5 +277,29 @@ mod tests {
         // 缺 action → 错误
         let err = execute_todo(&log, "s1", &serde_json::json!({})).await.unwrap_err();
         assert!(err.contains("action"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn load_ignores_non_todo_events() {
+        let log = test_log();
+        apply_todo_op(&log, "s1", "add", None, Some("任务甲"), None, None)
+            .await
+            .unwrap();
+        // 长会话混入大量非 todo 事件（turn 标记）：类型过滤读取不受影响
+        for t in 1..=5u32 {
+            log.append(
+                SessionId::new("s1"),
+                BranchId::new("main"),
+                EventKind::Core(CoreEvent::TurnStart { turn: t }),
+                SurfaceIntent::None,
+            )
+            .await
+            .unwrap();
+        }
+        let todos = apply_todo_op(&log, "s1", "list", None, None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(todos.len(), 1);
+        assert_eq!(todos[0].content, "任务甲");
     }
 }

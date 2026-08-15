@@ -248,7 +248,14 @@ export interface TodoItem {
 export interface GitInfo {
   repo: boolean;
   branch?: string;
-  commits?: { hash: string; subject: string }[];
+  commits?: {
+    hash: string;
+    subject: string;
+    /** 父提交短 hash（merge 提交有多个）——DAG 拓扑边 */
+    parents: string[];
+  }[];
+  /** 本地分支：名称 → tip 提交短 hash（分支图标签） */
+  branches?: { name: string; tip: string }[];
   /** git status --porcelain 原始行 */
   status?: string[];
 }

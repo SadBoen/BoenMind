@@ -18,7 +18,7 @@ use crate::ids::{BranchId, SeqNo, SessionId};
 /// 手写 async fn 签名（等价 async-trait 展开，零依赖）。
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
-/// 事件读取查询（按 (session, branch, seq 范围)）。
+/// 事件读取查询（按 (session, branch, seq 范围 / 事件类型)）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EventQuery {
     pub session_id: SessionId,
@@ -27,6 +27,9 @@ pub struct EventQuery {
     pub seq_gt: Option<u64>,
     /// 只返回 seq <= seq_lte 的事件
     pub seq_lte: Option<u64>,
+    /// 只返回该事件类型的事件（type 列 = [`EventKind::name`]，如 "todo/write"；
+    /// None = 不过滤）。长会话投影（活任务清单等）用它替代全量重放。
+    pub event_type: Option<String>,
     /// 返回条数上限（默认不限）
     pub limit: Option<u64>,
 }
@@ -38,8 +41,16 @@ impl EventQuery {
             branch_id,
             seq_gt: None,
             seq_lte: None,
+            event_type: None,
             limit: None,
         }
+    }
+
+    /// 只读某类事件的便捷构造（如 `EventQuery::of_type(sid, bid, "todo/write")`）。
+    pub fn of_type(session_id: SessionId, branch_id: BranchId, event_type: &str) -> Self {
+        let mut q = Self::new(session_id, branch_id);
+        q.event_type = Some(event_type.to_string());
+        q
     }
 }
 

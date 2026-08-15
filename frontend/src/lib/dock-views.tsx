@@ -16,6 +16,7 @@ import { ChatPane } from "@/components/chat/ChatPane";
 import { SessionList } from "@/components/chat/SessionList";
 import { FilePanel } from "@/components/files/FilePanel";
 import { Editor } from "@/components/coding/Editor";
+import { GitGraph } from "@/components/coding/GitGraph";
 import { TodoPanel } from "@/components/coding/TodoPanel";
 import { TerminalPane } from "@/components/terminal/TerminalPane";
 import { useAppStore } from "@/stores/app-store";
@@ -28,7 +29,8 @@ export type ViewId =
   | "file-panel"
   | "editor"
   | "todo-panel"
-  | "terminal";
+  | "terminal"
+  | "git-graph";
 
 export interface DockViewEntry {
   /** i18n key：视图显示名（Tab 标题） */
@@ -51,8 +53,11 @@ export const VIEWS: Record<ViewId, DockViewEntry> = {
   editor: { titleKey: "dock.view.editor", component: () => <Editor /> },
   "todo-panel": { titleKey: "dock.view.tasks", component: () => <TodoPanel /> },
   terminal: { titleKey: "dock.view.terminal", component: () => <TerminalPane /> },
+  "git-graph": { titleKey: "dock.view.gitGraph", component: () => <GitGraph /> },
 };
 
+// oxlint-disable-next-line react/only-export-components —— 注册表文件：常量 + 包装组件
+// 是注册表的本质（ChatPaneView 是面板参数→组件的适配器，不属于组件文件）
 function ChatPaneView({ params }: IDockviewPanelProps) {
   const app = (params?.app as AppId) ?? "chat";
   const ensureAppSession = useAppStore((s) => s.ensureAppSession);
@@ -106,6 +111,11 @@ export const DEFAULT_LAYOUTS: Partial<Record<AppId, { panels: DockPanelSpec[] }>
       {
         id: "terminal",
         view: "terminal",
+        position: { reference: "todo-panel", direction: "within" },
+      },
+      {
+        id: "git-graph",
+        view: "git-graph",
         position: { reference: "todo-panel", direction: "within" },
       },
     ],

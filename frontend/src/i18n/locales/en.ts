@@ -185,6 +185,7 @@ coding: {
       editor: "Editor",
       tasks: "Tasks",
       terminal: "Terminal",
+      gitGraph: "Branch Graph",
     },
     resetLayout: "Reset Layout",
   },

@@ -185,6 +185,7 @@ coding: {
       editor: "编辑器",
       tasks: "任务",
       terminal: "终端",
+      gitGraph: "分支图",
     },
     resetLayout: "重置布局",
   },

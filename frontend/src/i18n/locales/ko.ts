@@ -185,6 +185,7 @@ coding: {
       editor: "편집기",
       tasks: "작업",
       terminal: "터미널",
+      gitGraph: "브랜치 그래프",
     },
     resetLayout: "레이아웃 재설정",
   },

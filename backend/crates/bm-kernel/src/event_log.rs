@@ -158,6 +158,17 @@ impl EventLog {
         Ok(migrated)
     }
 
+    /// 按查询读取事件（类型/seq 范围过滤；migrate 升级但跳过重放校验——
+    /// 过滤后 seq 不连续，verify_replay 不适用）。长会话投影（活任务清单
+    /// 等只关心某类事件）用它替代全量 replay。
+    pub async fn read_where(
+        &self,
+        q: EventQuery,
+    ) -> Result<Vec<SessionEvent>, ProtocolError> {
+        let evs = self.store.read(q).await?;
+        evs.into_iter().map(EventValidator::migrate).collect()
+    }
+
     /// 按事件类型计数（type=None 计全量）。turn 计数等场景用，避免全量重放。
     pub async fn count(
         &self,
@@ -493,6 +504,7 @@ impl EventStorePort for InMemoryEventStore {
                 .filter(|ev| ev.session_id.to_string() == sid && ev.branch_id.to_string() == bid)
                 .filter(|ev| q.seq_gt.is_none_or(|lo| ev.seq.as_u64() > lo))
                 .filter(|ev| q.seq_lte.is_none_or(|hi| ev.seq.as_u64() <= hi))
+                .filter(|ev| q.event_type.as_ref().is_none_or(|ty| ev.kind.name() == *ty))
                 .cloned()
                 .collect();
             if let Some(limit) = q.limit {
@@ -676,6 +688,34 @@ mod tests {
         assert_eq!(evs.len(), 2);
         assert_eq!(evs[0].seq.as_u64(), 1);
         assert_eq!(evs[1].seq.as_u64(), 2);
+    }
+
+    #[tokio::test]
+    async fn read_where_filters_by_event_type() {
+        let log = EventLog::new(Arc::new(InMemoryEventStore::new()));
+        log.append(sid(), main_branch(), turn(1), SurfaceIntent::None).await.unwrap();
+        log.append(
+            sid(),
+            main_branch(),
+            EventKind::Core(CoreEvent::TodoWrite { todos: vec![] }),
+            SurfaceIntent::None,
+        )
+        .await
+        .unwrap();
+        log.append(sid(), main_branch(), turn(2), SurfaceIntent::None).await.unwrap();
+        // 类型过滤：只回 todo/write（长会话投影路径，替代全量 replay）
+        let only = log
+            .read_where(EventQuery::of_type(sid(), main_branch(), "todo/write"))
+            .await
+            .unwrap();
+        assert_eq!(only.len(), 1);
+        assert_eq!(only[0].kind.name(), "todo/write");
+        // 不过滤 = 全量
+        let all = log
+            .read_where(EventQuery::new(sid(), main_branch()))
+            .await
+            .unwrap();
+        assert_eq!(all.len(), 3);
     }
 
     #[tokio::test]

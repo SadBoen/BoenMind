@@ -446,69 +446,42 @@ impl EventStorePort for TursoEventStore {
             let conn = self.conn.lock().await;
             let sid = q.session_id.to_string();
             let bid = q.branch_id.to_string();
-            // data 列直接随主查询选出（去 N+1：不再逐行重查）
-            let sql = match (q.seq_gt, q.seq_lte, q.limit) {
-                (Some(_), Some(_), Some(_)) => {
-                    "SELECT seq, session_id, branch_id, ignorable, data FROM event_log
-                     WHERE session_id = ?1 AND branch_id = ?2 AND seq > ?3 AND seq <= ?4
-                     ORDER BY seq LIMIT ?5"
-                }
-                (Some(_), Some(_), None) => {
-                    "SELECT seq, session_id, branch_id, ignorable, data FROM event_log
-                     WHERE session_id = ?1 AND branch_id = ?2 AND seq > ?3 AND seq <= ?4
-                     ORDER BY seq"
-                }
-                (Some(_), None, Some(_)) => {
-                    "SELECT seq, session_id, branch_id, ignorable, data FROM event_log
-                     WHERE session_id = ?1 AND branch_id = ?2 AND seq > ?3
-                     ORDER BY seq LIMIT ?4"
-                }
-                (Some(_), None, None) => {
-                    "SELECT seq, session_id, branch_id, ignorable, data FROM event_log
-                     WHERE session_id = ?1 AND branch_id = ?2 AND seq > ?3 ORDER BY seq"
-                }
-                (None, Some(_), Some(_)) => {
-                    "SELECT seq, session_id, branch_id, ignorable, data FROM event_log
-                     WHERE session_id = ?1 AND branch_id = ?2 AND seq <= ?3
-                     ORDER BY seq LIMIT ?4"
-                }
-                (None, Some(_), None) => {
-                    "SELECT seq, session_id, branch_id, ignorable, data FROM event_log
-                     WHERE session_id = ?1 AND branch_id = ?2 AND seq <= ?3 ORDER BY seq"
-                }
-                (None, None, Some(_)) => {
-                    "SELECT seq, session_id, branch_id, ignorable, data FROM event_log
-                     WHERE session_id = ?1 AND branch_id = ?2 ORDER BY seq LIMIT ?3"
-                }
-                (None, None, None) => {
-                    "SELECT seq, session_id, branch_id, ignorable, data FROM event_log
-                     WHERE session_id = ?1 AND branch_id = ?2 ORDER BY seq"
-                }
-            };
+            // 动态 WHERE（seq 范围/事件类型按需拼接；type 列过滤让长会话
+            // 投影只读某类事件，替代全量重放）。参数一律占位符绑定，防注入。
+            let mut sql = String::from(
+                "SELECT seq, session_id, branch_id, ignorable, data FROM event_log
+                 WHERE session_id = ?1 AND branch_id = ?2",
+            );
+            let mut params: Vec<turso::Value> =
+                vec![turso::Value::Text(sid.clone()), turso::Value::Text(bid.clone())];
+            let mut ph = 2;
+            if let Some(lo) = q.seq_gt {
+                ph += 1;
+                sql.push_str(&format!(" AND seq > ?{ph}"));
+                params.push(turso::Value::Integer(lo as i64));
+            }
+            if let Some(hi) = q.seq_lte {
+                ph += 1;
+                sql.push_str(&format!(" AND seq <= ?{ph}"));
+                params.push(turso::Value::Integer(hi as i64));
+            }
+            if let Some(ty) = &q.event_type {
+                ph += 1;
+                sql.push_str(&format!(" AND type = ?{ph}"));
+                params.push(turso::Value::Text(ty.clone()));
+            }
+            sql.push_str(if q.limit.is_some() { " ORDER BY seq LIMIT ?" } else { " ORDER BY seq" });
+            if let Some(lim) = q.limit {
+                params.push(turso::Value::Integer(lim as i64));
+            }
             let mut stmt = conn
-                .prepare(sql)
+                .prepare(&sql)
                 .await
                 .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("prepare read: {e}")))?;
-            // turso 参数绑定不支持混用 Option 长度，按 sql 形态选择具体绑定
-            let mut rows = match (q.seq_gt, q.seq_lte, q.limit) {
-                (Some(lo), Some(hi), Some(lim)) => {
-                    stmt.query((sid.as_str(), bid.as_str(), lo as i64, hi as i64, lim as i64)).await
-                }
-                (Some(lo), Some(hi), None) => {
-                    stmt.query((sid.as_str(), bid.as_str(), lo as i64, hi as i64)).await
-                }
-                (Some(lo), None, Some(lim)) => {
-                    stmt.query((sid.as_str(), bid.as_str(), lo as i64, lim as i64)).await
-                }
-                (Some(lo), None, None) => stmt.query((sid.as_str(), bid.as_str(), lo as i64)).await,
-                (None, Some(hi), Some(lim)) => {
-                    stmt.query((sid.as_str(), bid.as_str(), hi as i64, lim as i64)).await
-                }
-                (None, Some(hi), None) => stmt.query((sid.as_str(), bid.as_str(), hi as i64)).await,
-                (None, None, Some(lim)) => stmt.query((sid.as_str(), bid.as_str(), lim as i64)).await,
-                (None, None, None) => stmt.query((sid.as_str(), bid.as_str())).await,
-            }
-            .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("query read: {e}")))?;
+            let mut rows = stmt
+                .query(turso::params_from_iter(params))
+                .await
+                .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("query read: {e}")))?;
 
             let mut out = Vec::new();
             while let Some(row) = rows
@@ -799,4 +772,53 @@ impl TursoEventStore {
 /// 便捷构造：以 Arc<dyn EventStorePort> 形态打开 turso 存储。
 pub async fn open_event_store(path: &str) -> Result<Arc<dyn EventStorePort>, ProtocolError> {
     Ok(Arc::new(TursoEventStore::open(path).await?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bm_kernel::{EventLog, SurfaceIntent};
+    use bm_protocol::{CoreEvent, EventKind};
+
+    fn turn(t: u32) -> EventKind {
+        EventKind::Core(CoreEvent::TurnStart { turn: t })
+    }
+
+    fn todo_write() -> EventKind {
+        EventKind::Core(CoreEvent::TodoWrite { todos: vec![] })
+    }
+
+    #[tokio::test]
+    async fn read_filters_by_event_type() {
+        let store = TursoEventStore::open(":memory:").await.unwrap();
+        let log = EventLog::new(Arc::new(store));
+        let sid = SessionId::new("s1");
+        let bid = BranchId::new("main");
+        // 混合事件流：turn 标记与 todo 快照交错（长会话真实形态）
+        log.append_batch(
+            sid.clone(),
+            bid.clone(),
+            vec![
+                (turn(1), SurfaceIntent::None, false, None),
+                (todo_write(), SurfaceIntent::None, false, None),
+                (turn(2), SurfaceIntent::None, false, None),
+                (todo_write(), SurfaceIntent::None, false, None),
+            ],
+        )
+        .await
+        .unwrap();
+        // 类型过滤：只回 todo/write（SQL 层过滤，不读全量）
+        let only = log
+            .read_where(EventQuery::of_type(sid.clone(), bid.clone(), "todo/write"))
+            .await
+            .unwrap();
+        assert_eq!(only.len(), 2);
+        assert!(only.iter().all(|e| e.kind.name() == "todo/write"));
+        // 不过滤 = 全量（seq 升序）
+        let all = log
+            .read_where(EventQuery::new(sid, bid))
+            .await
+            .unwrap();
+        assert_eq!(all.len(), 4);
+    }
 }

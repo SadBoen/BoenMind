@@ -185,6 +185,7 @@ coding: {
       editor: "エディタ",
       tasks: "タスク",
       terminal: "ターミナル",
+      gitGraph: "ブランチグラフ",
     },
     resetLayout: "レイアウトをリセット",
   },
