@@ -54,6 +54,8 @@
 - MiniMax 流式须 `stream_options.include_usage`（默认 usage:null）；缓存字段在 `prompt_tokens_details.cached_tokens`
 - pi/bm 对比口径：bm input=全量、pi input=未命中（勿双重计数）
 - chars/4 粗估对中文低估 ~2×（水线判定用 max(粗估, 真实 usage)）；413/400 已修（工具结果 5MB 硬顶 + 窗口/2 预算双点）
+- 压缩参数来源 = `[compaction]` 配置经 `CompactionConfig::effective(provider, model)` 换算（overrides 优先；enabled=false = 不挂压缩插件裸跑）；bm-compactor 经内核 KernelBuilder 注册为 "compactor" 服务，引擎从 kernel 取
+- fork 后子分支 **seq 1 = branch/fork 标记**（首事件非空）——写会话生命周期工具（session.*，M3 起）时注意：fork 不再产生空分支
 
 **插件/工具**
 - 桥调用首参 secret 不绑定 JS 形参；tool_result 事件 content 用 ContentBlock 数组（`[{type:"text",text}]`）
