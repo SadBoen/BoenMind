@@ -1,5 +1,6 @@
 # BoenMind 插件生态横向调研（2026-08-15）
 
+> 注（2026-08-15 文档清理）：文中引用的 docs/deepseek-harness-evaluation.md、docs/HANDOFF_EVERYTHING_IS_PLUGIN.md、docs/context-compression-plan.md 等源文件已从工作区删除，原始内容在 git 历史可查。
 > 调研子代理产出。只写本文件，不动仓库其他文件，未运行构建。
 > 方法：先读自有插件源码（`backend/plugins/`），再对每个插件类别找全网同类前列项目对比，重点源码级核实 deepseek-harness（dsh）的前端插件机制。
 > 来源 URL 随段给出；关键论断做二次验证并标注 **已核实 / 未核实**。

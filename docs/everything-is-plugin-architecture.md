@@ -2,7 +2,7 @@
 
 > 状态：**v0.19（迭代中）**——v0.11 = 应用互操作与数据互通（§6.4 尾）；v0.12 = 阶段 0 复核融合（§十一，大哥模型，原独立报告已并入）+ Steward 自身生命周期与记忆（§6.7 尾，用户提点）；v0.13 = **重构决策：legacy 旧代码文件夹（§十三）** + **LoopX 借鉴清单（§3.6，用户点名）**；v0.14 = **生态接入转接器原则（§〇·三，用户定调）**；v0.15 = **中间抽象层定位 + 分发形态纪律（铁律 1 扩写，用户定调：便携版/Docker = 初级阶段产物）**；v0.16 = **寄生关系核心定调（用户）**：BoenMind = 所有寄生软件的背后管理者，软件不自建 Agent 核心、全由管家派专家服务，专家可递归派工（§6.4 桥接段重写 + §6.7 Steward 派工面 + §6.8 定位修正）；v0.17 = **自我进化定调（用户）**：效果评估与参数进化皆插件自治、核心只给挂点（§6.9）+ compact.rs 压缩策略越界修正（拆法入档，时机待拍板）；v0.18 = **管家自我驱动 + APP 分层调用 + 引擎切换三阶段（§十四，用户讨论吸收）**：回合源三分法/调度器/next_wake_at 自调节奏（含 OpenClaw 外部思路吸收）、确定性操作直调宿主端口不走 Agent、自研引擎默认化与 pi 废除阶段路径（第一步已执行）；v0.19 = **管家自我驱动三件套落地（§14.5，真实验收通过）**：调度器/OS 汇报通道/next_wake_at 落点，set_wake 工具自调节奏，覆盖式管家提示词；v0.20 = **Steward 续接轮（§14.5 续接，2026-08-15 夜自主轮）**：静默窗口 watchdog + 管家低成本模型（env 可配）+ boot 汇报 + 前端管家状态页 + **工具结果窗口预算裁剪**（双开复跑实证：<5MB 结果仍可爆模型窗口 400，预算 = context_window/2 字节）；核心实现方案见 docs/kernel-implementation-plan.md
 > 日期：2026-08-14
-> 参考系：pi_agent_rust（已切换为回退引擎，vendored）、DeepSeek Harness（dsh）、ZCode（插件/技能/市场）、Hermes（NousResearch/hermes-agent）、**xu-wiki-desk（用户已有应用插件实证）**、**AI OS 赛道四项目（AIOS/MemGPT/Life Agent OS/kernel.chat，报告 docs/ai-os-landscape.md）**、**OpenClaw（心跳/自调节奏，§14.2）**
+> 参考系：pi_agent_rust（已切换为回退引擎，vendored）、DeepSeek Harness（dsh）、ZCode（插件/技能/市场）、Hermes（NousResearch/hermes-agent）、**xu-wiki-desk（用户已有应用插件实证）**、**AI OS 赛道四项目（AIOS/MemGPT/Life Agent OS/kernel.chat，吸收见 §3.5）**、**OpenClaw（心跳/自调节奏，§14.2）**
 > 本文档持续迭代，直到自认完美后交用户拍板。
 
 ---
@@ -151,7 +151,7 @@
 | Z5 | marketplace.json（市场源）+ 插件缓存目录 + i18n（displayName_i18n/examplePrompts） | 商店/多语言的落地格式参照 |
 | Z6 | 用户级/工作区级配置分层 | 与 Z2 同构的配置哲学 |
 
-### 3.5 从 AI OS 赛道吸收（2026-08-14，研读报告：docs/ai-os-landscape.md）
+### 3.5 从 AI OS 赛道吸收（2026-08-14，研读报告已随文档清理删除，结论见本节）
 
 | # | 机制 | 来源 | 落地 |
 |---|---|---|---|
@@ -982,7 +982,7 @@ M5：自举闭环（用 BoenMind 编程应用完成 BoenMind 的一个完整功�
 - [ ] 应用插件前端隔离机制拍板（A iframe / B WebComponent / C 联邦——留给用户）
 - [x] 前端 SDK 日志投影引擎的协议设计（6.3：快照+增量两阶段、SurfaceOp 同构、selector 订阅）
 - [x] **Agent OS 维度**（v0.5）：概念映射表（〇·一）、平台驱动层（四·A）、前端=DE（四·B）、应用=软件安装（四·C）、补审 S10-S12
-- [x] **AI OS 赛道吸收**（v0.6）：分支日志 A1 / 契约 crate+Port A2 / Custom 事件 A3 / 能力模式串 A4 / acap 降级 A5 / taint A6 / 配额 A7 / 审计哈希链 A8 / 复合门 A9 / 投影重放 A10（赛道报告 docs/ai-os-landscape.md）
+- [x] **AI OS 赛道吸收**（v0.6）：分支日志 A1 / 契约 crate+Port A2 / Custom 事件 A3 / 能力模式串 A4 / acap 降级 A5 / taint A6 / 配额 A7 / 审计哈希链 A8 / 复合门 A9 / 投影重放 A10（研读报告已随文档清理删除，吸收明细见 §3.5 表）
 - [x] **用户三原则**（v0.7）：〇·二 三条铁律（用户空间 OS / 会话即生命周期 / 渐进式复用）+ §6.6 会话生命周期（Agent 自主会话管理）+ 7.2 双主线并行与吸收纪律
 - [x] **Steward 双层架构**（v0.8）：§6.7 幕后主控 Agent（常驻治理会话 + 事件日志观察 + governance.* 工具集 + 隐蔽执行决策留痕）
 - [x] **编程应用第一优先**（v0.9）：§6.8 Coding App（应用插件形态 + 长时工作 + 活任务清单 + 自适应决策链 + 自举里程碑 M1-M5）；7.2 主线 B 调整为编程 > Wiki > 相册；成本风险降级为"实现期调优"
@@ -1225,14 +1225,14 @@ M5：自举闭环（用 BoenMind 编程应用完成 BoenMind 的一个完整功�
 
 ### 参考
 
-- DeepSeek Harness: https://github.com/deepseek-ai/deepseek-harness （研读报告：docs/deepseek-harness-evaluation.md）
+- DeepSeek Harness: https://github.com/deepseek-ai/deepseek-harness （dsh 论断已吸收入 §6.4，研读报告已随文档清理删除）
 - Cordis 论文《A Programming Paradigm for Spatiotemporal Composability》: https://github.com/cordiverse/paper
 - NousResearch/hermes-agent: https://github.com/NousResearch/hermes-agent （本地研读副本 D:/96_CoderWorld/hermes-agent）
 - pi_agent_rust（legacy）: https://github.com/Dicklesworthstone/pi_agent_rust
 - LoopX（huangruiteng/loopx，借鉴清单 L1-L14）: https://github.com/huangruiteng/loopx （本地研读副本 D:/96_CoderWorld/loopx）
 - ZCode 插件体系（本机实测）：~/.zcode/cli/plugins/、~/.zcode/skills/
 - xu-wiki-desk（应用插件实证）: D:/96_CoderWorld/xu-wiki-desk
-- HanaAgent 研读（记忆传送带/沙箱参照）: docs/hanaagent-evaluation.md
+- HanaAgent 研读（记忆传送带/沙箱参照，报告已随文档清理删除，结论见记忆）
 - Code Architecture Planner skill（评审方法论）: https://github.com/CarterIrish/code-architecture-skill
 
 ---

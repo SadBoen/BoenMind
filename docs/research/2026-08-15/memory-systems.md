@@ -1,5 +1,6 @@
 # Agent 记忆系统全景调研（2026-08-15）
 
+> 注（2026-08-15 文档清理）：文中引用的 docs/deepseek-harness-evaluation.md、docs/HANDOFF_EVERYTHING_IS_PLUGIN.md、docs/context-compression-plan.md 等源文件已从工作区删除，原始内容在 git 历史可查。
 > 调研性质：BoenMind 记忆设计的外部对标调研笔记。只写本文件，未动仓库其他文件。
 > 数据核实方式：星数/语言/活跃度 = **GitHub API（gh，已认证）实测于 2026-08-15**；机制细节 = 各仓库 README 直读；论文 = arXiv API 复核；少量机制来自 WebSearch 摘要（已标注"二手来源"）。
 > 坐标系：BoenMind 记忆设计 = 事件日志的投影服务（MemoryPlugin trait 六方法：on_turn/maintain/project/tool_schemas/on_pre_compress/retrieve，仅一个活跃插件，`memory.provider` 切换；首版 memory-compactor + memory-file 传送带 facts.md/today.md/longterm.md，二期 memory-vector）。详见 docs/everything-is-plugin-architecture.md §6.1、§6.7 尾。
