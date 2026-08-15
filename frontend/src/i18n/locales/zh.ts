@@ -117,10 +117,14 @@ export const zh = {
       unsupported: "暂不支持预览该文件类型（{{mime}}）",
     },
   },
-  coding: {
+    terminal: {
+    exited: "进程已退出",
+    createFailed: "终端创建失败",  },
+coding: {
     tabs: {
       tasks: "任务",
       chat: "对话",
+      terminal: "终端",
     },
     editor: {
       empty: "从左侧选择文件",

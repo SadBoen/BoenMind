@@ -441,6 +441,22 @@ export const api = {
       method: "DELETE",
     }),
 
+  // ── 终端（TerminalPane 一期：pty 会话，输入 base64，输出 SSE）──
+  createTerminal: (body?: { cwd?: string; cols?: number; rows?: number }) =>
+    request<{ id: string }>("/api/terminal", { method: "POST", body: JSON.stringify(body ?? {}) }),
+  terminalInput: (id: string, data: Uint8Array) =>
+    request<{ ok: boolean }>(`/api/terminal/${id}/input`, {
+      method: "POST",
+      body: JSON.stringify({ data: btoa(String.fromCharCode(...data)) }),
+    }),
+  terminalResize: (id: string, cols: number, rows: number) =>
+    request<{ ok: boolean }>(`/api/terminal/${id}/resize`, {
+      method: "POST",
+      body: JSON.stringify({ cols, rows }),
+    }),
+  closeTerminal: (id: string) =>
+    request<{ ok: boolean }>(`/api/terminal/${id}`, { method: "DELETE" }),
+
   listPlugins: () => request<PluginInfo[]>("/api/plugins"),
   setPlugin: (id: string, enabled: boolean) =>
     request<{ ok: boolean }>(`/api/plugins/${id}`, {
@@ -693,6 +709,50 @@ export const api = {
         }
       } catch {
         /* 取消（abort）静默；网络中断由 keep-alive 重连语义交给上层 */
+      }
+    })();
+    return () => controller.abort();
+  },
+  /**
+   * 终端输出流订阅（TerminalPane 一期）：SSE `{type:"output",data:<base64>}` /
+   * `{type:"exit",code}`。返回 close() 取消订阅。
+   */
+  subscribeTerminal: (
+    id: string,
+    onEvent: (ev: { type: "output" | "exit"; data?: string; code?: number }) => void,
+  ) => {
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/terminal/${id}/stream`, {
+          headers: { Accept: "text/event-stream", ...authHeaders() },
+          signal: controller.signal,
+        });
+        if (!res.ok || !res.body) return;
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (true) {
+          const { done: streamDone, value } = await reader.read();
+          if (streamDone) break;
+          buffer += decoder.decode(value, { stream: true });
+          let sep: number;
+          while ((sep = buffer.indexOf("\n\n")) !== -1) {
+            const raw = buffer.slice(0, sep);
+            buffer = buffer.slice(sep + 2);
+            for (const line of raw.split("\n")) {
+              if (line.startsWith("data:")) {
+                try {
+                  onEvent(JSON.parse(line.slice(5).trim()));
+                } catch {
+                  /* 跳过无法解析的 data 行 */
+                }
+              }
+            }
+          }
+        }
+      } catch {
+        /* abort 静默 */
       }
     })();
     return () => controller.abort();

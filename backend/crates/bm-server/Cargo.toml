@@ -43,8 +43,11 @@ tracing-subscriber = "0.3"
 base64 = "0.22"
 # request/header 的 prompt_hash 审计锚点（A2）
 sha2 = "0.10"
+# 终端面板（TerminalPane 一期，上游吸收 T2）：跨平台 pty（Windows ConPTY），
+# blocking API 用读线程包裹——见 backend/vendor/UPSTREAM_TRACKING.md T2
+portable-pty = "0.9"
 uuid = { version = "1", features = ["v4"] }
-tokio-stream = "0.1.19"
+tokio-stream = { version = "0.1.19", features = ["sync"] }
 mime_guess = "2"
 # pdf-omni 插件核心：MinerU/LlamaParse 云端解析编排
 # reqwest — 流式 PUT/multipart 上传与轮询（rustls，无 openssl）

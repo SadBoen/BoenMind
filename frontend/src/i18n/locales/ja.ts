@@ -117,10 +117,14 @@ export const ja: Translation = {
       unsupported: "このファイル形式のプレビューは未対応です（{{mime}}）",
     },
   },
-  coding: {
+    terminal: {
+    exited: "プロセスが終了しました",
+    createFailed: "端末の作成に失敗しました",  },
+coding: {
     tabs: {
       tasks: "タスク",
       chat: "チャット",
+      terminal: "端末",
     },
     editor: {
       empty: "左側からファイルを選択",

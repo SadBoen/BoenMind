@@ -16,6 +16,8 @@ pub mod routes;
 pub mod static_files;
 pub mod steward;
 pub mod subagent_child;
+// TerminalPane 一期 — 终端会话（portable-pty 包装，上游吸收 T2）
+pub mod terminal;
 // M2 — 活任务清单工具与 REST 面（todo/write 事件快照是唯一事实源）
 pub mod todo_tool;
 // 专家团队在 bm 引擎的落地：subagent 父侧工具（发现角色 → spawn 子进程 → 摄取
@@ -30,7 +32,7 @@ use axum::{
     extract::State,
     http::{Method, StatusCode},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use bm_core::{AppConfig, Db};
 use tokio::sync::{Mutex, RwLock};
@@ -82,6 +84,8 @@ pub struct AppState {
     /// 管家配置（env 集中读取一次，见 steward::StewardConfig；任何模块
     /// 需要管家参数一律从这里取，不再直接读 `BM_STEWARD_*`）。
     pub steward_cfg: steward::StewardConfig,
+    /// 终端会话注册表（TerminalPane 一期；内存态，重启即清）
+    pub terminal: Arc<terminal::TerminalStore>,
 }
 
 /// 前端对一次权限询问的决策。
@@ -123,6 +127,7 @@ impl AppState {
             compat,
             steward,
             steward_cfg,
+            terminal: Arc::new(terminal::TerminalStore::new()),
         }
     }
 }
@@ -178,6 +183,12 @@ fn router(state: AppState) -> Router {
         .route("/api/workspace/list", get(routes::workspace::list_workspace))
         .route("/api/workspace/git-info", get(routes::workspace::git_info))
         .route("/api/workspace/file", get(routes::workspace::read_workspace_file).post(routes::workspace::write_workspace_file))
+        // TerminalPane 一期：终端会话（创建/输入/调尺寸/输出流/关闭）
+        .route("/api/terminal", post(routes::terminal::create_terminal))
+        .route("/api/terminal/{id}", delete(routes::terminal::close_terminal))
+        .route("/api/terminal/{id}/input", post(routes::terminal::terminal_input))
+        .route("/api/terminal/{id}/resize", post(routes::terminal::terminal_resize))
+        .route("/api/terminal/{id}/stream", get(routes::terminal::terminal_stream))
         .with_state(state)
         // 注意层顺序：CORS 最外层（跨域预检 OPTIONS 不能被鉴权挡住），
         // 鉴权在 CORS 之内、路由之外

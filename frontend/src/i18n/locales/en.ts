@@ -117,10 +117,14 @@ export const en: Translation = {
       unsupported: "Preview not supported for this file type ({{mime}})",
     },
   },
-  coding: {
+    terminal: {
+    exited: "process exited",
+    createFailed: "Failed to create terminal",  },
+coding: {
     tabs: {
       tasks: "Tasks",
       chat: "Chat",
+      terminal: "Terminal",
     },
     editor: {
       empty: "Select a file from the left",

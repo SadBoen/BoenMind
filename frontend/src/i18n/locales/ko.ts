@@ -117,10 +117,14 @@ export const ko: Translation = {
       unsupported: "이 파일 형식은 미리보기를 지원하지 않습니다 ({{mime}})",
     },
   },
-  coding: {
+    terminal: {
+    exited: "프로세스 종료됨",
+    createFailed: "터미널 생성 실패",  },
+coding: {
     tabs: {
       tasks: "작업",
       chat: "대화",
+      terminal: "터미널",
     },
     editor: {
       empty: "왼쪽에서 파일을 선택하세요",

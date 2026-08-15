@@ -4,7 +4,7 @@
  * │ GitBar：分支 + 最近提交节点 + 变更摘要    │
  * ├────────┬─────────────────┬────────────┤
  * │ 文件树   │ 编辑器            │ 右栏 Tab：   │
- * │        │                 │ 任务 | 对话    │
+ * │        │                 │ 任务 | 对话 | 终端 │
  * └────────┴─────────────────┴────────────┘
  * 后端零新增编排概念：文件走 /api/workspace（读/写），清单走事件日志
  * todo/write 投影（REST + 事件流双通道），git 走 /api/workspace/git-info。
@@ -12,11 +12,13 @@
  *
  * 右栏对话 Tab = 宿主共享 ChatPane（panel 形态，架构 §四·B 补充）：对话是
  * 宿主能力非应用能力，编程壳只需嵌入并绑定 coding 场景会话（一软件一会话，
- * 无则懒创建）。桌面壳多窗口共存时与聊天窗口共享聚焦会话（多实例拍板项）。
+ * 无则懒创建）。终端 Tab = 宿主共享 TerminalPane（公共功能页组件化第一批，
+ * 上游吸收 xterm.js + portable-pty）。桌面壳多窗口共存时与聊天窗口共享
+ * 聚焦会话（多实例拍板项）。
  */
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { GitBranch, MessageSquare, RefreshCw, ListTodo } from "lucide-react";
+import { GitBranch, MessageSquare, RefreshCw, ListTodo, SquareTerminal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { api, type GitInfo } from "@/api/client";
@@ -25,9 +27,10 @@ import { FilePanel } from "@/components/files/FilePanel";
 import { Editor } from "./Editor";
 import { TodoPanel } from "./TodoPanel";
 import { ChatPane } from "@/components/chat/ChatPane";
+import { TerminalPane } from "@/components/terminal/TerminalPane";
 
-/** 右栏 Tab：任务（活任务清单投影）| 对话（宿主 ChatPane，绑定 coding 会话） */
-type RightTab = "tasks" | "chat";
+/** 右栏 Tab：任务（活任务清单投影）| 对话（宿主 ChatPane）| 终端（宿主 TerminalPane） */
+type RightTab = "tasks" | "chat" | "terminal";
 
 export function CodingApp() {
   const { t } = useTranslation();
@@ -112,8 +115,13 @@ export function CodingApp() {
         <div className="min-w-0 flex-1 border-r">
           <Editor />
         </div>
-        <div className={cn("flex shrink-0 flex-col", rightTab === "chat" ? "w-[26rem]" : "w-64")}>
-          {/* Tab 头：任务 | 对话（对话 = 宿主 ChatPane panel 形态） */}
+        <div
+          className={cn(
+            "flex shrink-0 flex-col",
+            rightTab === "chat" ? "w-[26rem]" : rightTab === "terminal" ? "w-[30rem]" : "w-64",
+          )}
+        >
+          {/* Tab 头：任务 | 对话 | 终端（对话/终端 = 宿主共享组件） */}
           <div className="flex h-9 shrink-0 items-center gap-1 border-b px-2">
             <TabButton active={rightTab === "tasks"} onClick={() => setRightTab("tasks")} icon={<ListTodo size={13} />}>
               {t("coding.tabs.tasks")}
@@ -121,8 +129,17 @@ export function CodingApp() {
             <TabButton active={rightTab === "chat"} onClick={openChatTab} icon={<MessageSquare size={13} />}>
               {t("coding.tabs.chat")}
             </TabButton>
+            <TabButton active={rightTab === "terminal"} onClick={() => setRightTab("terminal")} icon={<SquareTerminal size={13} />}>
+              {t("coding.tabs.terminal")}
+            </TabButton>
           </div>
-          {rightTab === "tasks" ? <TodoPanel /> : <ChatPane variant="panel" />}
+          {rightTab === "tasks" ? (
+            <TodoPanel />
+          ) : rightTab === "chat" ? (
+            <ChatPane variant="panel" />
+          ) : (
+            <TerminalPane />
+          )}
         </div>
       </div>
     </div>
