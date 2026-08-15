@@ -48,6 +48,13 @@ export function Desktop() {
       <StatusBar />
 
       {startOpen && <StartMenu onClose={() => setStartOpen(false)} />}
+
+      {/*
+        系统弹窗宿主层（借鉴 macos-web SystemUI 的层级纪律）：
+        所有 Dialog（权限询问/插件设置/令牌门）统一 portal 到此固定顶层，
+        避免散落 body 导致与窗口层/Dock 层级打架。容器穿透，弹窗自身接收指针。
+      */}
+      <div id="system-ui" className="pointer-events-none fixed inset-0 z-[60]" />
     </div>
   );
 }

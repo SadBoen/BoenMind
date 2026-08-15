@@ -94,6 +94,9 @@
 - **插件/管家窗口内容边距**：ScrollPage 加 p-6 + max-w-3xl 居中（与 SettingsPage 视觉一致；DOM 实测 25px 留白）。
 - **Dock 磁吸（参考项目机制移植）**：参照评估表教科书级项目 PuruVJ/macos-web 的 DockItem（鼠标横向距离分段插值放大：最近 2x/相邻 1.414x/1.1x + spring 平滑）→ React 版：Dock 容器 onMouseMove 记录鼠标 X，各图标按"中心到鼠标距离"线性衰减放大（半径 88px，最大 1.4x），宽度参与 flex 布局 → 中心放大时两侧图标平滑推开（经典 macOS 磁吸）。注：dawidolko Sonoma 已删库（gh 搜不到，8⭐ playground 本就只作选型参照）；窗口机制与 daedalOS（useFocusable z 序栈 + RndWindow）对比确认同构。磁吸动效 IAB 无法自动化验证（无 hover/mousemove 合成），需真实浏览器确认。
 
+**五次迭代（用户批准吸收 macos-web SystemUI 层，同日）**：
+- **#system-ui 弹窗宿主层**（借鉴 macos-web SystemUI/SystemDialog 层级纪律）：Desktop 渲染 `#system-ui`（pointer-events-none fixed inset-0 z-[60] 最高层），ui/dialog.tsx 的 DialogPortal 统一挂载（`container = #system-ui ?? body`），overlay/popup 显式 pointer-events-auto 恢复接收指针。效果：PermissionDialog/PluginSettingsDialog/ProviderFormDialog/TokenGate 全部自动归位最高层，不再散落 body 与窗口/Dock 层级打架。DOM 实测 dialog-content 父链 = #system-ui → Desktop 根；视觉 M3 复核弹窗居中遮罩压暗层级正常。焦点陷阱 base-ui modal Dialog 内建（Tab 循环在弹窗内），无需自写（macos-web trap-focus 机制已内建等价物）。
+
 实测结果（vite dev + 真后端 17321）：
 - ✅ 启动画面（2s 自动进桌面 + 点击跳过）→ 空桌面 → 开始菜单 5 应用卡 + 脚注（版本/模型/工作目录，StatusBar 信息迁入）
 - ✅ 聊天全链路：新建会话 → 发消息 → 流式回复（含思考过程折叠）
