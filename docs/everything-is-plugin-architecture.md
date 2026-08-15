@@ -633,7 +633,7 @@ backend/              # 后端包（路由/服务/工具/事件处理）
   - B. Web Component + 受控渲染——交互好，隔离靠约定（注：ZCode 插件无页面贡献点，其 manifest 仅 commands/skills/hooks/mcpServers/userConfig——B 方案无现成参照，需自研）
   - C. 微前端模块联邦——灵活，复杂度高
 
-> **定位声明**："应用插件"（独立 UI + Agent 核心）是四家都未完全做到的层——dsh 仅有聊天节点注册（ConversationNodeDefinition）的萌芽，ZCode/Hermes/pi 插件均不贡献 UI 页面。**这是 BoenMind 2.0 的原创创新点**，xu-wiki-desk 是第一个实证。
+> **定位声明（v0.21 修正，2026-08-15 源码级核实）**：ZCode/pi/Hermes 插件不贡献 UI 页面（成立，本机核实 ZCode plugin.json 仅 commands/skills/hooks/mcpServers/userConfig）；但 dsh 的**前端插件化是完整机制**而非萌芽——整个 Web UI = 约 30 个 ui-* 插件包组装，贡献面覆盖页面 tab/侧栏/工具条/聊天节点/设置卡片/后端路由（SlotMap 声明合并 + ConversationNodeDefinition 事件→视图节点投影，社区已有整站替代 UI 与前后端一体插件）。**BoenMind 的原创点因此改写为"受权限治理的应用插件"**——dsh 没有的四样：① 应用级 manifest 权限（dsh 插件是宿主内全权 npm 包，无沙箱，QuickJS 真沙箱是我们的硬优势）；② "应用"第一公民 + app 间事件血缘互通；③ 管家派专家/寄生关系；④ 插件 UI 隔离加载（dsh 客户端插件直跑主 React 运行时，崩溃波及全 UI）。详见 docs/REVIEW_LANDSCAPE_2026-08-15.md §五。xu-wiki-desk 仍是第一个实证。
 - **后端**：应用插件注册自己的路由（`/api/app/<id>/...`）+ 工具 + 事件监听。**与 Agent 的桥**：`agent.spawn_app_session(app_id, prompt)` → 隔离会话（自己的 scope/记忆/工具集，见 D5）。
 - **Wiki 示例**：Wiki = 应用插件。笔记存储是它的服务，AI 整理 = 调 Agent 隔离会话，页面 = 前端包，搜索结果 = 事件投影 + FTS。相册同理（图片理解调 Agent + 视觉模型）。
 - **应用之间**：应用插件可以调其他应用的**能力**（通过工具注册表），不能直接碰别的应用的内部存储（通过服务隔离）。
@@ -855,7 +855,7 @@ M5：自举闭环（用 BoenMind 编程应用完成 BoenMind 的一个完整功�
 - **提示词**：唯一角色提示词 = 硬编码常量 `bm-core/src/agent.rs:20`，pi 路径（`agent.rs:107`）与 bm 路径（`bm_engine.rs:280`）各复制一遍拼接（`SYSTEM_PROMPT + skills + custom`）；子代理角色正文走 argv 传入，无角色库。插件契约（`bm-kernel/src/plugin.rs`）无 prompt 能力，`LoopHooks::on_request` 挂点已留待接线。D8 落地 = 每角色一组 PromptSection 预设组装（管家/专家非特权角色）。
 - **记忆**：零实现——仅 `memory/write` 事件类型（bm-protocol，无人发出/消费）与 `on_tool_post` 挂点注释。§6.1 为既定规划（阶段 5）。
 
-**compact.rs 越界修正（本轮自查实锤）**：`bm-loop/src/compact.rs`（357 行）把 `CompactionPolicy`（水线/尾部保留/双触发）+ 摘要 prompt 写死在准内核 loop——违反铁律 3，与定调 2 冲突。**拆法**：loop 只留压缩事务协议（`compaction/start→summary→end` 三事件落盘 + replace 遮蔽 + fail-safe"摘要失败不丢历史"——日志语义是核心的）；策略判定（什么时候压/水线多少/怎么摘要）挪出成压缩插件（ctx-compactor 升级 = D10 默认实现），经挂点进 loop（步边界问它"压不压"）。**拍板点：现在拆 vs B6 双开对比验收后拆**（倾向后者，避免边拆边验两条线纠缠）。
+**compact.rs 越界修正（自查实锤 → 已拆 ✅ 6cbe56d，2026-08-14）**：`bm-loop/src/compact.rs`（357 行）曾把 `CompactionPolicy`（水线/尾部保留/双触发）+ 摘要 prompt 写死在准内核 loop——违反铁律 3，与定调 2 冲突。**已拆**：loop 只留压缩事务协议（`compaction/start→summary→end` 三事件落盘 + replace 遮蔽 + fail-safe"摘要失败不丢历史"——日志语义是核心的）+ Compactor 策略接口 + 硬触发兜底（无插件=优雅失败不崩不丢历史）；策略判定（水线/摘要）迁入新 crate **bm-compactor**（DefaultCompactor，参数全部公开字段=插件自治），bm-server 组装层挂默认实现；插件方向守卫（tests/architecture.rs）+ 优雅失败回归测试配套。TS 侧 ctx-compactor 保持"工具修剪+检索"职责。已知尾账：组装层暂用 `DefaultCompactor::default()`，未从 bm-core 配置换算注入（双水线并存），随编程应用 M1 后打通或如实标注。
 
 **双向奔赴 + 框架定位（v0.17 补，用户定调）**：
 
@@ -996,10 +996,13 @@ M5：自举闭环（用 BoenMind 编程应用完成 BoenMind 的一个完整功�
 - [ ] 渐进路线与现有发布节奏的冲突评估（拍板时定）
 - [ ] 沙箱（OS 级）与插件系统的关系（confine 在哪个层生效，阶段 3 细化）
 - [ ] 记忆插件与日志的写回契约（memory/write 事件协议细化）
-- [ ] **compact.rs 压缩策略拆出**（v0.17 自查实锤，§6.9）：CompactionPolicy/摘要 prompt 出 bm-loop 进压缩插件，loop 只留三事件事务协议；ctx-compactor 升级 = D10 默认实现；时机拍板（B6 双开验收后拆，倾向）
+- [x] **compact.rs 压缩策略拆出**（v0.17 自查实锤，§6.9）：✅ 已落地（6cbe56d：bm-loop 留 Compactor 接口 + 三事件事务协议 + 硬触发兜底；bm-compactor 新 crate = D10 默认实现；水线 0.5 已收敛）。尾账：组装层 default() 未从配置换算注入（双水线）
 - [ ] 平台驱动 ABI 稳定性纪律（驱动接口变更 = 大版本事件的判据）
-- [ ] **Steward 调度器 + next_wake_at 自调节奏**（v0.18，§14.1）：定时回合注入/静默窗口/OS 层主动汇报通道三件套，Steward 轮实现；节奏 = 管家记忆非代码常量，治理层兜频率下限（§14.2 六条吸收）
+- [x] **Steward 调度器 + next_wake_at 自调节奏**（v0.18，§14.1）：✅ 已落地（v0.19/v0.20，§14.5：定时回合注入/静默窗口/OS 汇报通道/前端状态页全链路真实验收）
 - [ ] **APP 确定性宿主端口**（v0.18，§14.3）：audio/media 等直调端口按需新增（不经过 LLM），与工具调用并列的第二种 APP 手脚
+- [x] **内核接线面登记**（v0.21，2026-08-15 架构回头看）：Registry/loader/Plugin trait/事件总线在生产路径零接线（仅事件日志层被使用）——"万物皆插件"现实=QuickJS 轨+loop 契约轨+组装层内置三轨。**接线判据（YAGNI）="第一个第二实现出现时"**：记忆插件化（阶段 5）/网络策略换实现（10057 类）/平台驱动（mac 端口）。详见 docs/REVIEW_ARCHITECTURE_2026-08-15.md
+- [x] **§6.4 dsh 论断修正**（v0.21，2026-08-15 调研源码级核实）："dsh 仅有聊天节点萌芽"不成立——其前端插件化是完整机制；原创点改写为"受权限治理的应用插件"。见 §6.4 与 docs/REVIEW_LANDSCAPE_2026-08-15.md
+- [x] **生态吸收登记**（v0.21，2026-08-15 全网对标调研）：底座/记忆/插件三调研笔记 docs/research/2026-08-15/ + 报告 docs/REVIEW_LANDSCAPE_2026-08-15.md；高优先吸收见 §十五·15.2
 
 ## 十一、阶段 0 复核记录（2026-08-14，大哥模型）
 
@@ -1159,6 +1162,38 @@ M5：自举闭环（用 BoenMind 编程应用完成 BoenMind 的一个完整功�
 - 管家回合不接前端 SSE（内部通道）、不建 task 记录、15min 超时兜底；事件日志照常落（会话投影可见，前端零改动）。
 
 **续接轮（v0.20，2026-08-15，b799dc3 + 18a15e9）**：① **静默窗口定时器**（§14.1"1 分钟无汇报主动上报"落地）——回合进行中超 `BM_STEWARD_SILENCE_WINDOW_S`（默认 120s，0=禁用）无任何新事件（事件日志 head_seq 不变，防模型挂死烧 token）→ 宿主主动取消 + 告警；15min 总超时是兜底，静默窗口提前掐断。② **管家低成本模型**（成本杠杆）——env `BM_STEWARD_PROVIDER`/`BM_STEWARD_MODEL` 指定时优先，配错 warn+回落会话级（不让管家停摆）。③ **boot 汇报**——`BM_STEWARD_BOOT_REPORT=1` 宿主启动投喂 Inject 回合（默认关）；dispatch_steward_round 公共封装（in_flight 防重+锚点推进）供调度器/boot 共用。④ **前端管家状态页**——设置页 steward tab（状态卡片 5s 轮询 + 手动汇报入口，i18n×4）。⑤ **窗口预算裁剪**（双开复跑实证：工具结果 <5MB 仍可爆模型窗口 400）——单条工具结果预算 = context_window/2 字节，写入/投影双点裁剪，5MB 硬顶保留防 413。
+
+## 十五、架构回头看与生态吸收登记（v0.21，2026-08-15）
+
+> 触发：用户"再来一次回头看（主要是架构）+ 全网对标调研（Agent 底座前 10 / 同类插件前 10，边分析边写笔记，出报告前再验证）"。产物：docs/REVIEW_ARCHITECTURE_2026-08-15.md（回头看）、docs/REVIEW_LANDSCAPE_2026-08-15.md（对标报告）、docs/research/2026-08-15/（三份调研笔记，~100KB，逐条核实口径）。本节目录性登记，全文见报告。
+
+### 15.1 回头看结论（三行）
+
+1. **骨架与代码同构、无推翻性偏差**：内核行数 6060（协议 908 + 内核 2975 + loop 2177，远低于 1.5 万预算）、依赖方向守卫机器化、bm-protocol 零运行时依赖、事件信封全要素（version/ignorable/surface_op/source_seqs/branch_id）、压缩拆分落地——全部达标。
+2. **内核已建成但未接线（本轮最大发现）**：生产路径只用 bm-kernel 的事件日志/投影/订阅；Registry/loader/Plugin trait/事件总线有实现有测试但零生产装配。"万物皆插件"现实 = 三轨：QuickJS pi 生态轨（6 个 TS 插件）+ loop 契约轨（Compactor/LoopHooks 可换实现）+ 组装层编译内置（7 内置工具/Steward/subagent/pdf_omni 核/refine/skills/updates/前端）。接线判据见 §十。
+3. **真缺口三件**（承诺首版应落未落）：插件域注册式事件机制（§5.2 两层分治第二层）、GlobalSeq 全局事件游标、fork/merge 事件类型（存储层 fork 已落）。均不阻塞编程应用 M1。
+
+### 15.2 生态吸收登记（2026-08-15 调研高优先项，完整 21+16 条见报告 §六）
+
+| 吸收 | 来自 | 落点/时机 |
+|---|---|---|
+| 前端 slot 树 + 事件→视图节点投影机制（single/list/chain/keyed、声明合并、卸载级联） | dsh（源码核实） | §6.3/§6.4 阶段 4 设计参照；隔离层仍用 iframe/WC 方案（dsh 无隔离） |
+| memory/write 契约字段：op(add/invalidate/forget)+source_event_ids+confidence+validity+supersedes；记忆只存指针不存原文 | agentmemory + Graphiti + MemPalace | 阶段 5 记忆插件实现时（§6.1） |
+| 记忆插件改订阅事件总线（12 钩子全集）而非轮询 | agentmemory | 阶段 5（MemoryPlugin 实现写法） |
+| 分身交接浓缩晶体字段（decision/evidence/open-loop/test/next-action/memory-candidate） | agent-crystallize | §6.6 transfer 简报 + 交接事件 |
+| 淡化三机制（halflife 衰减 + TTL/重要度驱逐 + 矛盾检测） | mnemosyne + agentmemory | 阶段 5 maintain 流水线 |
+| 把关链自动裁决层（默认批准已标记低危命令、高危才弹窗、审计照记） | Hermes v0.19 smart approvals | 阶段 2 把关链设计时 |
+| 带基准的技能沉淀（git diff 计分、n=4、护栏对照） | ponytail | Steward governance.skill 流程 + 技能插件 |
+| 商店路线：先 curated list 后市场 + 上架健康检查 + 读入 .claude-plugin 格式 | awesome-dsh-plugin + MCP 质量教训 | §四·C 商店时 |
+
+**未核实项（挂用户）**：ACKEN（双查无果，请用户提供来源）、Bifrost/FastMEM/checkpoint-mcp/doobidoo（仓库已删或 404）、TencentDB 论文不存在（arXiv 查无）。清单见报告 §八。
+
+### 15.3 对既定计划的修正
+
+- §6.4 定位声明已改写（"UI 即插件"不再独有，原创点="受权限治理的应用插件"）；
+- 记忆首版设计补契约字段与事件订阅写法（§6.1 实现时按调研笔记执行）；
+- 压缩参数双轨（bm-compactor default() vs bm-core 配置）——M1 后打通或如实标注；
+- 用户点名的 12 参考项目逐项核实结果入报告 §二（多数与核心/插件相关，WoLiu/ACKEN 等价值≈0 的也已记录，供用户判断）。
 
 ## 十二、附录
 

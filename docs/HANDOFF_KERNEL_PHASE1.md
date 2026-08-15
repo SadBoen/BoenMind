@@ -7,7 +7,8 @@
 
 **阶段 1 完成态**：主线 A（执行级事件日志 + 自研 bm-loop 引擎）+ 主线 B（pi-compat 插件兼容层）全部落地；默认引擎已反转 bm；Steward 三件套（调度器/inject 通道/前端状态页）真实验收通过；legacy 删空（§十三终点）。BoenMind = 可聊天/调工具/派子代理/有管家/有记忆的完整运行时。
 
-**最近三轮回溯**：
+**最近四轮回溯**：
+- 回头看+对标轮（本轮）：架构回头看（内核未接线三轨实锤/文档漂移修正）+ 全网对标三调研（底座前 10/记忆/插件同类，笔记 docs/research/2026-08-15/ 约 100KB 全部标注核实口径）→ 报告 docs/REVIEW_ARCHITECTURE_2026-08-15.md + docs/REVIEW_LANDSCAPE_2026-08-15.md；架构文档 v0.21（§6.4 dsh 论断修正/§十勾选/§十五吸收登记）
 - 代码回看轮（5c6451b）：三子代理并行审查全代码 → P0×3 修复（会话串行锁/压缩后 usage 重置/投影守卫）+ P1 一批（死代码/失败风暴/flusher 泄漏等）；报告 docs/REVIEW_CODE_2026-08-15.md；未修项（inbox 未接线/prompt_hash 契约/env 集中化）挂编程应用 M2
 - 拍板轮（fa5019b）：pre-push 本地质量门（hooks/pre-push，GitHub 私有仓库无 Actions 免费额度）；pi 目录改名 `~/.boenmind/pi` → `~/.boenmind/agents`（启动自动迁移，真实验收过）；回头看立项材料 docs/REVIEW_BEFORE_CODING_APP.md（7 拍板点待拍）
 - Steward 验收轮（059c9e6）：采集器全链路真实验收 + inject 锚点缺陷修复（note_round_done 推进 last_wake_at）
@@ -18,6 +19,7 @@
 
 | 轮次 | 要点 |
 |---|---|
+| 回头看+对标 | 架构回头看两报告 + 三调研笔记 + 架构 v0.21（本轮） |
 | 代码回看 | P0×3 + P1 修复（5c6451b） |
 | 拍板轮 | 质量门方案 A / pi 改名 agents / 编程立项材料（fa5019b） |
 | Steward 验收 | 采集器全链路 + 锚点修复（059c9e6） |
@@ -28,10 +30,11 @@
 
 ## 下一步动作（都可直接开工）
 
-1. **编程应用 M1**（用户已拍板方向，等 7 拍板点确认后开工）：M1 = 现有能力编排 + 真实验收（读→改→测→提交），几乎零新增代码；M2 活任务清单（todo/write 事件协议 + 任务面板）是主要增量；迁移门槛 M3（8h+ 断点续跑）
+1. **编程应用 M1**（用户已拍板方向，等 7 拍板点确认后开工）：M1 = 现有能力编排 + 真实验收（读→改→测→提交），几乎零新增代码；M2 活任务清单（todo/write 事件协议已现成于 bm-protocol + 任务面板）是主要增量；迁移门槛 M3（8h+ 断点续跑）
 2. **Steward 收尾**：采集器挂任务计划程序（README 有 schtasks 命令，填真实管家会话 ID）
 3. **代码回看未修项**（挂 M2）：inbox 双队列接线或删除、prompt_hash 每步重算、BM_STEWARD_* env 集中化、15min 超时任务驻留
-4. 可选顺手件：code-graph MCP 工具面实测（新会话生效）
+4. **架构回头看尾账**（本轮）：压缩参数双轨打通或头注如实标注（M1 后顺手）；插件域注册式事件/GlobalSeq/fork 事件类型三缺口登记（不阻塞）
+5. 可选顺手件：code-graph MCP 工具面实测（新会话生效）
 
 ## 注意坑（浓缩操作要点，完整背景见归档 §〇·五）
 
@@ -67,13 +70,16 @@
 ## 待拍板
 
 1. **编程应用 7 拍板点**（docs/REVIEW_BEFORE_CODING_APP.md）：M1 开工范围 / M2 面板形态 / 迁移门槛 M3 / 三平台 T 后置 / CI 长期形态 / pi 死数据清理 / 记忆写回契约——我的建议已在文档（M1 零新增直接验收、迁移门槛 M3、三平台后置）
-2. `PI_SUBAGENT_*` 环境变量命名残留（自研协议通道仍用 pi 前缀）——改名待拍板
-3. GitHub Billing 处理（用户操作；不处理则 CI 永久本地化，macOS 构建链发版时另想办法）
-4. 远期（有触发时机，不急）：前端隔离机制（阶段 4）、沙箱层级（阶段 3）、平台驱动 ABI 纪律
+2. **对标吸收清单拍板**（docs/REVIEW_LANDSCAPE_2026-08-15.md §六）：高优先 9 条（dsh slot 机制/memory 契约字段/事件订阅/晶体模板/淡化三机制/pdf 基准/ponytail 技能/商店路线/.claude-plugin 兼容）执行时机——多数按阶段落地（记忆→阶段 5、slot→阶段 4、商店→§四·C），建议无需单独立项，随阶段吸收即可；另有 ACKEN 项目请用户提供来源后复核
+3. `PI_SUBAGENT_*` 环境变量命名残留（自研协议通道仍用 pi 前缀）——改名待拍板
+4. GitHub Billing 处理（用户操作；不处理则 CI 永久本地化，macOS 构建链发版时另想办法）
+5. 远期（有触发时机，不急）：前端隔离机制（阶段 4）、沙箱层级（阶段 3）、平台驱动 ABI 纪律
 
 ## 关联文档
 
-- 架构：docs/everything-is-plugin-architecture.md（v0.20，三铁律/§6.8 编程应用/§14 管家）
+- 架构：docs/everything-is-plugin-architecture.md（v0.21，三铁律/§6.8 编程应用/§14 管家/§15 回头看登记）
+- 架构回头看：docs/REVIEW_ARCHITECTURE_2026-08-15.md
+- 对标调研：docs/REVIEW_LANDSCAPE_2026-08-15.md（笔记：docs/research/2026-08-15/）
 - 代码回看：docs/REVIEW_CODE_2026-08-15.md
 - 编程立项：docs/REVIEW_BEFORE_CODING_APP.md
 - 历史全量：docs/HANDOFF_KERNEL_PHASE1_ARCHIVE.md

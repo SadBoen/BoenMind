@@ -1,5 +1,7 @@
 # DeepSeek Harness（dsh）全面研读与对标评估
 
+> **2026-08-15 数字滚动注**：本文为 2026-08-14 时点数据（3.3 万★/约 300 社区插件）；8-15 实测已至 95.8K★/awesome 清单 365+ 插件/topic 2,487 仓，且"前端就是插件"经源码级复核为完整机制（本文 §4.10 未展开）——更新见 docs/REVIEW_LANDSCAPE_2026-08-15.md §五 与 docs/research/2026-08-15/plugin-landscape.md §③。
+
 > 状态：调研完成（2026-08-14）。对标报告，不含实现。结论与拍板点见文末。
 > 上游：https://github.com/deepseek-ai/deepseek-harness （MIT，v0.1.0-rc.5 开发者预览，2026-08-13 发布，几天内 3.3 万+ star、约 300 社区插件）
 > 研读基线：浅克隆 `--depth 1`，77MB，7412 文件。本地副本：`D:/96_CoderWorld/deepseek-harness`
