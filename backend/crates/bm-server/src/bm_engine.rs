@@ -692,12 +692,8 @@ pub async fn chat_bm(
     let state_run = state.clone();
     let session_id = session.id.clone();
     tokio::spawn(async move {
-        // 总超时：与 pi 路径同 15min，超时走取消通道（部分文本照常入库）
-        let cancel_timeout = cancel_tx.clone();
-        let timeout_task = tokio::spawn(async move {
-            tokio::time::sleep(crate::chat::PROMPT_TIMEOUT).await;
-            let _ = cancel_timeout.send(true);
-        });
+        // 总超时：与 pi 路径同 15min，超时走取消通道（部分文本照常入库）——
+        // 兜底任务统一在 run_agent_turn 内创建/回收（审查 P2-1）
 
         // 心跳：每 5s 把内存进度刷库并推送 taskProgress SSE（切片②，
         // 与 pi 路径 chat.rs 同构——前端任务状态条零改动）
@@ -759,7 +755,6 @@ pub async fn chat_bm(
         {
             aborts.remove(&session_id);
         }
-        timeout_task.abort(); // 15min 兜底任务随 prompt 结束即停，不驻留
     });
 
     Sse::new(stream)
@@ -817,6 +812,89 @@ async fn append_memory_write_event(state: &AppState, session_id: &str, fact: &st
     }
 }
 
+/// 统一回合执行骨架（审查 P2-1）：chat 与 steward 两处 ~150 行平行
+/// 编排（取锁/超时/attach/run/detach/收尾）抽成单一实现——第三个回合源
+/// （目标驱动 Goal）接入时只需调它，不再复制第三份。
+///
+/// 契约：
+/// - **调用方必须已持会话串行锁**（同会话回合严格串行是事件日志唯一
+///   状态源的要求；本函数内只取 agent 锁，锁序一致 serial → agent）；
+/// - 15min 总超时兜底（防模型挂死阻塞会话锁，与 pi 路径同纪律）；
+/// - 收尾统一：成功文本非空即落库 assistant 消息 + touch_session；
+/// - 差异参数化：`memoize_message`（chat 特有「记住」提取；steward 传
+///   None）、调用方各自处理 startup/task/静默 watchdog/terminal 事件。
+#[allow(clippy::too_many_arguments)]
+async fn run_agent_turn(
+    state: &AppState,
+    session_id: &str,
+    agent: &tokio::sync::Mutex<BmLoopAgent>,
+    tx: mpsc::UnboundedSender<AgentStreamEvent>,
+    cancel_tx: watch::Sender<bool>,
+    mut cancel_rx: watch::Receiver<bool>,
+    request: TurnRequest,
+    reason: HeaderReason,
+    memoize_message: Option<&str>,
+) -> TurnResult {
+    // 超时兜底任务：随回合结束即停，不驻留
+    let timeout_tx = cancel_tx.clone();
+    let timeout_task = tokio::spawn(async move {
+        tokio::time::sleep(crate::chat::PROMPT_TIMEOUT).await;
+        let _ = timeout_tx.send(true);
+    });
+
+    let mut agent = agent.lock().await;
+    // governance.memorize 雏形（HANDOFF_KERNEL_PHASE1.md §九 第 2 条，
+    // chat 特有）：用户消息命中「记住」指令 → 记忆插件 remember +
+    // memory/write 事件落日志（写回契约：日志是唯一事实源，记忆文件是
+    // 投影，重放可重建）。命中与否由 memorize 内部打日志（只记字符数，
+    // 不落事实全文——用户内容不打日志纪律）。
+    if let Some(message) = memoize_message
+        && let Some(memory) = agent.hooks().memory()
+        && let Some(fact) = crate::governance::memorize(&memory, message)
+    {
+        append_memory_write_event(state, session_id, &fact).await;
+    }
+    agent.hooks().attach(tx, cancel_tx);
+    let outcome = agent.run_turn(request, reason, &mut cancel_rx).await;
+    agent.hooks().detach();
+    // 释放 agent 锁（drop 前退出作用域约定；显式 drop 防 detach 后继续持锁）
+    drop(agent);
+    timeout_task.abort();
+
+    match outcome {
+        Ok(o) => {
+            // 收尾：与 pi 路径同语义——无论成功/取消/失败，已生成文本照常入库
+            if !o.final_text.trim().is_empty() {
+                let _ = state.db.add_message(session_id, "assistant", &o.final_text).await;
+                let _ = state.db.touch_session(session_id).await;
+            }
+            TurnResult {
+                final_text: o.final_text,
+                turn: o.turn,
+                steps: o.steps,
+                reason: o.reason,
+                error: None,
+            }
+        }
+        Err(e) => TurnResult {
+            final_text: String::new(),
+            turn: 0,
+            steps: 0,
+            reason: bm_protocol::TurnEndReason::Interrupted,
+            error: Some(e.to_string()),
+        },
+    }
+}
+
+/// 回合结果（run_agent_turn 的返回值；调用方据此做 task 收尾/告警日志）。
+struct TurnResult {
+    final_text: String,
+    turn: u32,
+    steps: u32,
+    reason: bm_protocol::TurnEndReason,
+    error: Option<String>,
+}
+
 /// 运行一个 bm 引擎 prompt 回合：agent 锁串行 → run_turn → 持久化 + 终态事件。
 async fn run_bm_prompt(p: BmPromptParams) {
     let BmPromptParams {
@@ -831,7 +909,7 @@ async fn run_bm_prompt(p: BmPromptParams) {
         reason,
         progress,
         cancel_tx,
-        mut cancel_rx,
+        cancel_rx,
         tx,
     } = p;
 
@@ -844,7 +922,7 @@ async fn run_bm_prompt(p: BmPromptParams) {
         }
     };
     // 会话串行：先取串行锁（同会话任何回合排队——chat/steward/重建互斥，
-    // 事件日志唯一状态源），再取 agent 锁
+    // 事件日志唯一状态源），再取 agent 锁（run_agent_turn 内）
     let _serial = serial.lock().await;
 
     // startup 插件事件懒发（每会话一次；ctx-compactor 借此加载项目配置）。
@@ -878,64 +956,46 @@ async fn run_bm_prompt(p: BmPromptParams) {
         }
     }
 
-    // 会话串行：agent 锁（同会话并发 prompt 排队，与 pi 路径 handle 锁同纪律）
-    let mut agent = agent.lock().await;
-    // governance.memorize 雏形（HANDOFF_KERNEL_PHASE1.md §九 第 2 条）：
-    // 用户消息命中「记住」指令 → 记忆插件 remember + memory/write 事件落
-    // 日志（写回契约：日志是唯一事实源，记忆文件是投影，重放可重建）。
-    // 在 attach 之前执行（已持 agent 锁，取 hooks 内存句柄零竞态）；
-    // 命中与否由 memorize 内部打日志（只记字符数，不落事实全文——
-    // 用户内容不打日志纪律；事件日志本身是事实流，user/message 同源）。
-    if let Some(memory) = agent.hooks().memory()
-        && let Some(fact) = crate::governance::memorize(&memory, &message)
-    {
-        append_memory_write_event(&state, &session_id, &fact).await;
-    }
-    agent.hooks().attach(tx.clone(), cancel_tx);
-
-    let outcome = agent
-        .run_turn(
-            TurnRequest {
-                content: message,
-                source: UserMsgSource::Human,
-            },
-            reason,
-            &mut cancel_rx,
-        )
-        .await;
-    agent.hooks().detach();
-    // 释放 agent 锁（drop 前退出作用域约定；显式 drop 防 detach 后继续持锁）
-    drop(agent);
+    let result = run_agent_turn(
+        &state,
+        &session_id,
+        agent.as_ref(),
+        tx.clone(),
+        cancel_tx,
+        cancel_rx,
+        TurnRequest {
+            content: message.clone(),
+            source: UserMsgSource::Human,
+        },
+        reason,
+        Some(&message),
+    )
+    .await;
 
     // 收尾：与 pi 路径同语义——无论成功/取消/失败，已生成文本照常入库
-    let (task_status, task_error, terminal) = match &outcome {
-        Ok(o) => {
-            if !o.final_text.trim().is_empty() {
-                let _ = state.db.add_message(&session_id, "assistant", &o.final_text).await;
-                let _ = state.db.touch_session(&session_id).await;
-            }
-            tracing::info!(
-                event = "bm.prompt_done",
-                turn = o.turn,
-                steps = o.steps,
-                reason = ?o.reason,
-                session = %session_id,
-            );
-            match o.reason {
-                TurnEndReason::Completed => ("completed", None, AgentStreamEvent::Done),
-                TurnEndReason::Cancelled => ("cancelled", Some("已取消".to_string()), AgentStreamEvent::Done),
-                other => (
-                    "failed",
-                    Some(format!("回合失败: {other:?}")),
-                    AgentStreamEvent::Error { message: "agent 执行失败".to_string() },
-                ),
-            }
-        }
-        Err(e) => (
+    //（落库已在 run_agent_turn 内完成）；这里只做 task 状态与 terminal 事件
+    tracing::info!(
+        event = "bm.prompt_done",
+        turn = result.turn,
+        steps = result.steps,
+        reason = ?result.reason,
+        session = %session_id,
+    );
+    let (task_status, task_error, terminal) = match result.error {
+        Some(err) => (
             "failed",
-            Some(e.to_string()),
-            AgentStreamEvent::Error { message: e.to_string() },
+            Some(err.clone()),
+            AgentStreamEvent::Error { message: err },
         ),
+        None => match result.reason {
+            TurnEndReason::Completed => ("completed", None, AgentStreamEvent::Done),
+            TurnEndReason::Cancelled => ("cancelled", Some("已取消".to_string()), AgentStreamEvent::Done),
+            other => (
+                "failed",
+                Some(format!("回合失败: {other:?}")),
+                AgentStreamEvent::Error { message: "agent 执行失败".to_string() },
+            ),
+        },
     };
     if !tx.is_closed() {
         let _ = tx.send(terminal);
@@ -995,14 +1055,9 @@ pub async fn run_steward_turn(
     let _serial = serial.lock().await;
 
     // attach 内部通道：无人消费的 unbounded（hooks.try_send 只关心关闭）；
-    // 取消 watch：15min 超时兜底
+    // 取消 watch：15min 超时兜底（run_agent_turn 内）+ 静默窗口提前掐断
     let (tx, _rx) = mpsc::unbounded_channel::<AgentStreamEvent>();
-    let (cancel_tx, mut cancel_rx) = watch::channel(false);
-    let timeout_tx = cancel_tx.clone();
-    let timeout_task = tokio::spawn(async move {
-        tokio::time::sleep(crate::chat::PROMPT_TIMEOUT).await;
-        let _ = timeout_tx.send(true);
-    });
+    let (cancel_tx, cancel_rx) = watch::channel(false);
 
     // 静默窗口 watchdog（v0.20，架构 §14.1"1 分钟无汇报主动上报"落地）：
     // 回合进行中若超过窗口无任何新事件（head_seq 不变 = 无文本/工具活动，
@@ -1052,43 +1107,41 @@ pub async fn run_steward_turn(
         None
     };
 
-    let mut agent = agent.lock().await;
-    agent.hooks().attach(tx, cancel_tx);
-    let outcome = agent
-        .run_turn(
-            TurnRequest {
-                content: message,
-                source: source.clone(),
-            },
-            HeaderReason::Initial,
-            &mut cancel_rx,
-        )
-        .await;
-    agent.hooks().detach();
-    drop(agent);
+    // 统一回合执行（审查 P2-1）：steward 与 chat 共用 run_agent_turn——
+    // 回合源 = Goal/Inject（无「记住」提取、不懒发 startup 插件事件）
+    let result = run_agent_turn(
+        state,
+        session_id,
+        agent.as_ref(),
+        tx,
+        cancel_tx,
+        cancel_rx,
+        TurnRequest {
+            content: message,
+            source: source.clone(),
+        },
+        HeaderReason::Initial,
+        None,
+    )
+    .await;
     if let Some(w) = watchdog {
         w.abort(); // 回合结束即停（否则会继续 tick 直到窗口超时）
     }
-    timeout_task.abort(); // 15min 兜底任务随回合结束即停，不驻留
 
-    match &outcome {
-        Ok(o) => {
-            if !o.final_text.trim().is_empty() {
-                let _ = state.db.add_message(session_id, "assistant", &o.final_text).await;
-                let _ = state.db.touch_session(session_id).await;
-            }
+    match result.error {
+        Some(err) => Err(format!("管家回合失败: {err}")),
+        None => {
             tracing::info!(
                 event = "bm.steward_turn_done",
                 source = ?source,
-                turn = o.turn,
-                steps = o.steps,
-                reason = ?o.reason,
-                chars = o.final_text.chars().count(),
+                turn = result.turn,
+                steps = result.steps,
+                reason = ?result.reason,
+                chars = result.final_text.chars().count(),
                 session = %session_id,
             );
             Ok(())
         }
-        Err(err) => Err(format!("管家回合失败: {err}")),
     }
 }
 
