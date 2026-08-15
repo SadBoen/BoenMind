@@ -154,8 +154,10 @@ pub struct StreamHooks {
     cancel: std::sync::Mutex<Option<watch::Sender<bool>>>,
     progress: Arc<std::sync::Mutex<String>>,
     /// 记忆插件（§6.1 最小实现，v0.17 双向奔赴）：on_request 注入 facts；
-    /// Arc 共享——外部（未来 governance.memorize 调用点）可 remember。
-    memory: Option<Arc<std::sync::Mutex<bm_memory::MemoryFilePlugin>>>,
+    /// 经 kernel `memory` 服务面取全局单例（审查 P2-2——此前全局注册零
+    /// 消费者 + 每会话各开实例双写同一 facts.md，双实例互不感知）。
+    /// 兜底（服务缺失）时回落本地实例，功能不丢。
+    memory: Option<Arc<dyn bm_protocol::MemoryPort>>,
     /// 角色注入器（角色定义插件的宿主挂点，roles.rs）：on_request 追加
     /// 当前激活角色到 system 段。无内部状态，直接持有。
     role: Option<crate::roles::RoleInjector>,
@@ -164,7 +166,7 @@ pub struct StreamHooks {
 impl StreamHooks {
     pub fn new(
         progress: Arc<std::sync::Mutex<String>>,
-        memory: Option<Arc<std::sync::Mutex<bm_memory::MemoryFilePlugin>>>,
+        memory: Option<Arc<dyn bm_protocol::MemoryPort>>,
         role: Option<crate::roles::RoleInjector>,
     ) -> Self {
         Self {
@@ -177,7 +179,7 @@ impl StreamHooks {
     }
 
     /// 记忆插件句柄（外部 remember 入口；无记忆插件时为 None）。
-    pub fn memory(&self) -> Option<Arc<std::sync::Mutex<bm_memory::MemoryFilePlugin>>> {
+    pub fn memory(&self) -> Option<Arc<dyn bm_protocol::MemoryPort>> {
         self.memory.clone()
     }
 
@@ -222,10 +224,9 @@ impl StreamHooks {
 impl LoopHooks for StreamHooks {
     fn on_request(&mut self, _ctx: &RequestCtx, payload: &mut serde_json::Value) {
         // 记忆插件注入（§6.1 最小实现）：facts 作为追加 system 段进模型请求
-        if let Some(memory) = &self.memory
-            && let Ok(mut m) = memory.lock()
-        {
-            m.on_request(_ctx, payload);
+        //（经 memory 服务面——全局单例，审查 P2-2）
+        if let Some(memory) = &self.memory {
+            memory.inject_into_payload(payload);
         }
         // 角色注入（角色定义插件宿主挂点）：当前激活角色 prompt 追加 system 段
         if let Some(role) = &self.role {
@@ -361,18 +362,33 @@ fn build_loop_agent(
             }
         }
     }
-    // 记忆插件（§6.1 最小实现）：facts.md 每会话 open 加载（跨会话记忆 =
-    // 文件本身；多会话并发写靠单行 append 容忍，全局单例留 Steward 轮）
-    let memory = Arc::new(std::sync::Mutex::new(bm_memory::MemoryFilePlugin::open(
-        bm_core::config::app_dir().join("memory").join("facts.md"),
-        20,
-    )));
+    // 记忆插件（§6.1 最小实现）：经 kernel `memory` 服务面取全局单例
+    // （审查 P2-2——此前全局注册零消费者 + 每会话各开实例，双实例互不
+    // 感知）；服务缺失时回落本地实例，记忆功能不丢
+    let memory: Option<Arc<dyn bm_protocol::MemoryPort>> = match kernel
+        .port::<dyn bm_protocol::MemoryPort>("memory")
+    {
+        Ok(port) => Some(port),
+        Err(err) => {
+            tracing::warn!(
+                event = "bm.memory_service_missing",
+                error = %err,
+                "memory 服务不可用，回落每会话本地实例",
+            );
+            Some(Arc::new(bm_memory::MemoryPortAdapter(Arc::new(
+                std::sync::Mutex::new(bm_memory::MemoryFilePlugin::open(
+                    bm_core::config::app_dir().join("memory").join("facts.md"),
+                    20,
+                )),
+            ))))
+        }
+    };
     // 角色注入（角色定义插件宿主挂点）：宿主只读 roles.json，插件侧管理
     let role = crate::roles::RoleInjector::new(
         bm_core::config::app_dir().join(crate::roles::ROLES_FILE),
     );
     Ok(ReactLoopAgent::new(
-        StreamHooks::new(progress, Some(memory), Some(role)),
+        StreamHooks::new(progress, memory, Some(role)),
         tools,
         bm_kernel::EventLog::new(kernel.event_store()),
         SessionId::new(session_id),

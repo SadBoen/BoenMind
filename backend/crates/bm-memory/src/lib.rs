@@ -130,23 +130,25 @@ pub struct MemoryPortAdapter(pub Arc<std::sync::Mutex<MemoryFilePlugin>>);
 
 impl bm_protocol::MemoryPort for MemoryPortAdapter {
     fn remember(&self, fact: String) {
-        self.0.lock().expect("memory lock poisoned").remember(fact);
+        // fail-safe（记忆是增强不是正确性依赖）：锁中毒跳过，不 panic
+        if let Ok(mut m) = self.0.lock() {
+            m.remember(fact);
+        } else {
+            tracing::warn!(event = "bm.memory_lock_failed", "记忆锁中毒，本次跳过");
+        }
     }
 
     fn facts(&self) -> Vec<String> {
-        self.0
-            .lock()
-            .expect("memory lock poisoned")
-            .facts()
-            .map(String::from)
-            .collect()
+        match self.0.lock() {
+            Ok(m) => m.facts().map(String::from).collect(),
+            Err(_) => Vec::new(),
+        }
     }
 
     fn inject_into_payload(&self, payload: &mut serde_json::Value) {
-        self.0
-            .lock()
-            .expect("memory lock poisoned")
-            .inject_payload(payload);
+        if let Ok(m) = self.0.lock() {
+            m.inject_payload(payload);
+        }
     }
 }
 

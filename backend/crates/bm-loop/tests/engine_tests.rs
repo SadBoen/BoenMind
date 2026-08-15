@@ -518,6 +518,9 @@ async fn soft_compaction_triggers_after_step() {
                 }),
             }
         }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
     }
     let cfg = LoopConfig {
         context_window: 1500,

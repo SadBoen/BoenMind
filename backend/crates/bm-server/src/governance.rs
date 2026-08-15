@@ -22,9 +22,7 @@
 //!   （对齐 MemoryFilePlugin 的 max_facts 注入上限），雏形不做语义分段；
 //! - 结果为空（无触发词 / 触发词后无内容）→ 不写入。
 
-use std::sync::{Arc, Mutex};
-
-use bm_memory::MemoryFilePlugin;
+use std::sync::Arc;
 
 /// 事实长度上限：200 字符（Unicode 字符计，中文按 1 计）。
 /// 约合 facts.md 一条中长事实；超出硬截断取前 200 字符（见文件头注释，
@@ -90,16 +88,10 @@ pub fn extract_remember_fact(message: &str) -> Option<String> {
 /// 返回写入的事实原文（未命中/锁失败返回 None）——调用方据此落
 /// `memory/write` 事件（写回契约：日志是唯一事实源，记忆文件是投影）。
 /// 事实全文不进 tracing 日志——只记字符数（用户内容不打日志纪律）。
-pub fn memorize(memory: &Arc<Mutex<MemoryFilePlugin>>, message: &str) -> Option<String> {
+pub fn memorize(memory: &Arc<dyn bm_protocol::MemoryPort>, message: &str) -> Option<String> {
     let fact = extract_remember_fact(message)?;
     let chars = fact.chars().count();
-    let Ok(mut m) = memory.lock() else {
-        // 锁中毒（持有者 panic 过）：记忆是增强不是正确性依赖（fail-safe
-        // 对齐压缩），只告警不阻断主链路
-        tracing::warn!(event = "bm.memory_lock_failed", chars = chars);
-        return None;
-    };
-    m.remember(fact.clone());
+    memory.remember(fact.clone());
     tracing::info!(event = "bm.memory_remembered", chars = chars);
     Some(fact)
 }
@@ -109,6 +101,9 @@ mod tests {
     use super::*;
     use crate::bm_engine::StreamHooks;
     use bm_loop::points::{LoopHooks, RequestCtx};
+    use bm_memory::{MemoryFilePlugin, MemoryPortAdapter};
+    use bm_protocol::MemoryPort;
+    use std::sync::Mutex;
 
     /// 唯一临时目录（进程 id + uuid）：测试并行跑互不踩文件。
     fn unique_temp_dir() -> std::path::PathBuf {
@@ -237,9 +232,11 @@ mod tests {
             path.clone(),
             20,
         )));
+        // 服务面形态（审查 P2-2）：会话侧经 MemoryPort trait 取用
+        let port: Arc<dyn MemoryPort> = Arc::new(MemoryPortAdapter(memory.clone()));
 
         let fact = "用户喜欢茶";
-        let written = memorize(&memory, &format!("记住：{fact}")).unwrap();
+        let written = memorize(&port, &format!("记住：{fact}")).unwrap();
         assert_eq!(written, fact, "返回写入的事实原文（供 memory/write 事件）");
         {
             let m = memory.lock().unwrap();
@@ -253,7 +250,7 @@ mod tests {
         );
 
         // 无触发词：不写入
-        assert!(memorize(&memory, "今天天气如何").is_none(), "无触发词不写");
+        assert!(memorize(&port, "今天天气如何").is_none(), "无触发词不写");
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -265,8 +262,11 @@ mod tests {
         std::fs::write(&path, "事实A：用户喜欢深色模式\n").unwrap();
 
         let memory = Arc::new(std::sync::Mutex::new(MemoryFilePlugin::open(path, 20)));
-        let mut hooks =
-            StreamHooks::new(Arc::new(std::sync::Mutex::new(String::new())), Some(memory), None);
+        let mut hooks = StreamHooks::new(
+            Arc::new(std::sync::Mutex::new(String::new())),
+            Some(Arc::new(MemoryPortAdapter(memory)) as Arc<dyn MemoryPort>),
+            None,
+        );
 
         let mut payload = serde_json::json!({
             "messages": [
@@ -294,8 +294,11 @@ mod tests {
         std::fs::write(&path, "").unwrap();
 
         let memory = Arc::new(std::sync::Mutex::new(MemoryFilePlugin::open(path, 20)));
-        let mut hooks =
-            StreamHooks::new(Arc::new(std::sync::Mutex::new(String::new())), Some(memory), None);
+        let mut hooks = StreamHooks::new(
+            Arc::new(std::sync::Mutex::new(String::new())),
+            Some(Arc::new(MemoryPortAdapter(memory)) as Arc<dyn MemoryPort>),
+            None,
+        );
 
         let mut payload = serde_json::json!({
             "messages": [
