@@ -7,7 +7,9 @@
 
 **阶段 1 完成态**：主线 A（执行级事件日志 + 自研 bm-loop 引擎）+ 主线 B（pi-compat 插件兼容层）全部落地；默认引擎已反转 bm；Steward 三件套（调度器/inject 通道/前端状态页）真实验收通过；legacy 删空（§十三终点）。BoenMind = 可聊天/调工具/派子代理/有管家/有记忆的完整运行时。
 
-**编程应用 M1 已验收通过（8254bd7，本日）**：BoenMind 用自身运行时（bm-loop + MiniMax-M3 + 内置工具，纯 API 驱动）在自身仓库完成真实 bug 修复全链路（prompt_hash 注入面缺口：定位→修复→回归测试→git 提交），独立复核 33 测试全绿 + clippy 零告警。**验收暴露 6 个真实问题**（报告 docs/ACCEPTANCE_M1_2026-08-15.md §四）——**①-⑤ 已全部修复**（1f064db：max_steps 64→128 + grep/find 接入 ignore crate 带 timeout + read/工具提示段；3d3bf2b：ctx-compactor 索引落 $BOENMIND_HOME + bm-compat dev-deps 补齐；⑥ 压缩水线持续收敛）。**下一步 = M2 独立壳应用起步**（用户拍板：独立壳而非现有前端加卡片；工具面基座已就绪）。
+**编程应用 M1 已验收通过（8254bd7，2026-08-15）**：BoenMind 用自身运行时（bm-loop + MiniMax-M3 + 内置工具，纯 API 驱动）在自身仓库完成真实 bug 修复全链路（prompt_hash 注入面缺口：定位→修复→回归测试→git 提交），独立复核 33 测试全绿 + clippy 零告警。**验收暴露 6 个真实问题**（报告 docs/ACCEPTANCE_M1_2026-08-15.md §四）——**①-⑤ 已全部修复**（1f064db：max_steps 64→128 + grep/find 接入 ignore crate 带 timeout + read/工具提示段；3d3bf2b：ctx-compactor 索引落 $BOENMIND_HOME + bm-compat dev-deps 补齐；⑥ 压缩水线持续收敛）。
+
+**M2 编程应用独立壳已起步（0fb2acb，本日）**：独立壳 = 文件树/编辑器/分支图 + 活任务清单（用户痛点"任务清单生成后不会实时插入/删除"闭环：模型调 todo 工具 → todo/write 全量快照落事件日志 → 前端事件流投影实时刷新）。后端：todo 工具（bm-server todo_tool.rs）+ GET/POST /api/sessions/{id}/todos（共用 apply_todo_op）+ POST /api/workspace/file + GET /api/workspace/git-info；bm-loop 删 step_queue（A6 修订）+ 步数预算提示（剩 6 步注入收敛指令）；is_text 补 application/json。前端：CodingApp 三栏（FilePanel 从 2cb65fa^ 恢复 + Editor 可编辑保存 + TodoPanel 事件流投影）+ GitBar（分支/提交时间线）+ subscribeEvents（fetch 流式带 Bearer）；ClassicShell 编程导航接线；桌面壳经注册表同步生效。**浏览器实测全链路通过**（模型真实建 3 任务 high 优先级实时投影 + 回合步数显示；编辑器保存/还原；桌面壳同链路）。**M2 下一件 = 分支图深化（DAG）+ 编辑器增强（diff/未保存守卫）+ 长会话性能（EventQuery 类型过滤）**。
 
 **前端壳（DE）完成态（2026-08-15 八次迭代收官）**：**双 DE 并存**——经典软件界面（默认，左侧导航=软件导航 chat/coding 占位、底部=设置+桌面模式；外观页形态切换+形态专属设置：软件=字体大小/桌面=壁纸模板）+ 桌面壳（OS 形态入口，窗口控制接线全落地：最小化/最大化还原/resize）；插件分类标签（manifest category + 插件页 tab）；**界面层插件化已拍板要做，学 DeepSeek Harness**（机制调研完成：ui-slots 槽位 + 同域 bundle 动态注册，非 iframe/WebComponent——§四·C 落地设计待拍板）。全脉络见 docs/HANDOFF_DESKTOP_SHELL.md §九/§十。
 
@@ -24,6 +26,7 @@
 
 | 轮次 | 要点 |
 |---|---|
+| M2 编程壳 | 独立壳起步（0fb2acb）：todo 工具+事件投影闭环 / 编辑器+写文件 / 分支图起步 / step_queue 删除（A6 修订）+步数预算提示；浏览器实测模型真实调工具全链路 |
 | M1 验收 | 运行时自修真实 bug 全链路通过（8254bd7）+ 6 问题登记（本轮，报告 ACCEPTANCE_M1） |
 | 回头看+对标 | 架构回头看两报告 + 三调研笔记 + 架构 v0.21 |
 | 代码回看 | P0×3 + P1 修复（5c6451b） |
@@ -36,10 +39,10 @@
 
 ## 下一步动作（按建议顺序，都可直接开工）
 
-1. **顺手项清账（低风险快件）**：BM_STEWARD_* env 集中化（StewardConfig，REVIEW_CODE 遗留"M1 后做"）+ 15min 超时 sleep 任务驻留清理（3 处）
-2. **M2 编程应用独立壳起步（主线，用户第一优先）**：独立壳 = 文件树/编辑器/分支图 + 活任务清单（todo 事件投影，顺带决定 inbox 双队列接线或删除）；M1 §四①-⑤ 工具面修复已完成，M2 前置基座就绪；M2 面板顺带做（max_steps 上限提示/续接）
-3. **界面层插件化落地设计（§四·C，用户已拍板学 dsh）**：出方案文档待拍板——前端包 manifest 字段（client.js/依赖声明）、同域 bundle 加载器（参考 dsh __ModuleLoader__.load）、slot 注册体系（ui-slots 思路）、壳依赖表（客户端插件不自带 React）；拍板后实施（独立主线，可与 M2 并行）
-4. **Steward 采集器挂任务计划程序**（README 有 schtasks 命令，填真实管家会话 ID）——待用户点头（机器级定时唤醒）
+1. **M2 深化（主线）**：分支图 DAG 可视化（git 拓扑：merge/分叉）+ 编辑器增强（diff 视图/未保存守卫/目录新建）+ 长会话性能（todo 读取的 EventQuery 类型过滤，替代全量 replay）
+2. **界面层插件化落地设计（§四·C，用户已拍板学 dsh）**：出方案文档待拍板——前端包 manifest 字段（client.js/依赖声明）、同域 bundle 加载器（参考 dsh __ModuleLoader__.load）、slot 注册体系（ui-slots 思路）、壳依赖表（客户端插件不自带 React）；拍板后实施（独立主线，可与 M2 并行）
+3. **Steward 采集器挂任务计划程序**（README 有 schtasks 命令，填真实管家会话 ID）——待用户点头（机器级定时唤醒）
+4. **pi 路径清理收尾**：chat.rs pi 分支删除（bm 默认已反转，残留代码面）——待拍板
 
 ## 注意坑（浓缩操作要点，完整背景见归档 §〇·五）
 
@@ -76,13 +79,14 @@
 
 ## 待拍板
 
-1. ~~**编程应用 7 拍板点**~~ → **已拍板（2026-08-15 用户拍定）**：① M1 零新增直接验收；② **M2 独立壳应用起步**（注意：与文档原建议"现有前端加卡片"不同，用户选了独立壳）；③ 迁移门槛 **M3**；④ 三平台 T **后置**；⑤-⑦ 按文档建议执行（CI 方案 A 长期用 / pi 死数据随专项清 / 记忆写回契约 M1 后做）——M1 已过，M2 开工前
+1. ~~**编程应用 7 拍板点**~~ → **已拍板（2026-08-15 用户拍定）**：① M1 零新增直接验收；② **M2 独立壳应用起步**（注意：与文档原建议"现有前端加卡片"不同，用户选了独立壳）；③ 迁移门槛 **M3**；④ 三平台 T **后置**；⑤-⑦ 按文档建议执行（CI 方案 A 长期用 / pi 死数据随专项清 / 记忆写回契约 M1 后做）——M1 已过，M2 已起步
 2. **界面层插件化机制拍板（§四·C，用户已拍板"要插件化，学 deepseek"）**：dsh 调研结论 = 同域 bundle 动态注册（__ModuleLoader__）+ ui-slots 槽位 + 客户端插件不自带 React（壳依赖表）——落地设计文档待出，拍板点：同域 bundle vs iframe 隔离；slot 粒度；前端包 manifest 字段
 3. **对标吸收清单拍板**（docs/REVIEW_LANDSCAPE_2026-08-15.md §六）：高优先 9 条（dsh slot 机制/memory 契约字段/事件订阅/晶体模板/淡化三机制/pdf 基准/ponytail 技能/商店路线/.claude-plugin 兼容）执行时机——多数按阶段落地（记忆→阶段 5、slot→阶段 4、商店→§四·C），建议无需单独立项，随阶段吸收即可；另有 ACKEN 项目请用户提供来源后复核
 4. `PI_SUBAGENT_*` 环境变量命名残留（自研协议通道仍用 pi 前缀）——改名待拍板
 5. 商店"货架"方案（自维护清单 vs 对接 pi.dev）——悬置，随插件生态壮大再定
 6. GitHub Billing 处理（用户操作；不处理则 CI 永久本地化，macOS 构建链发版时另想办法）
 7. 远期（有触发时机，不急）：前端隔离机制（阶段 4）、沙箱层级（阶段 3）、平台驱动 ABI 纪律
+8. **pi 路径清理收尾**：chat.rs pi 分支删除（bm 默认已反转，残留兼容面）——待拍板
 
 ## 关联文档
 
