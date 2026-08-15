@@ -38,6 +38,7 @@ export const zh = {
     newSession: "新对话",
     selectOrCreate: "选择或新建一个对话",
     panelTitle: "对话",
+    sessions: "对话列表（新建/切换）",
     stop: "停止",
     taskRunning: "任务仍在进行中…",
     taskStatus: {

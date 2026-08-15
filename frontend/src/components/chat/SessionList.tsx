@@ -1,7 +1,8 @@
 /**
  * 会话列表：新建、搜索、切换、重命名、删除。
- * 场景作用域（架构 §四·B 补充）：本组件服务聊天应用，只显示 chat 场景会话
- * （编程等软件会话在自己应用内，一软件一会话，不混入聊天列表）。
+ * 场景作用域（架构 §四·B 补充）：默认服务聊天应用（只显示 chat 场景会话，
+ * 编程等软件会话在自己应用内，一软件一会话，不混入聊天列表）；
+ * 编程壳等经 `scene` 传自身场景（面板形态聊天单元的会话入口悬浮窗复用）。
  */
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -17,10 +18,10 @@ import {
 import { cn, formatTime } from "@/lib/utils";
 import { useAppStore } from "@/stores/app-store";
 
-/** 本组件服务的场景（聊天应用）；会话列表只显示该场景的会话 */
-const SCENE = "chat";
+/** 默认场景 = 聊天应用；调用方（编程壳会话入口）传自身场景 */
+const DEFAULT_SCENE = "chat";
 
-export function SessionList() {
+export function SessionList({ scene = DEFAULT_SCENE }: { scene?: string }) {
   const { t, i18n } = useTranslation();
   const sessions = useAppStore((s) => s.sessions);
   const activeSessionId = useAppStore((s) => s.activeSessionId);
@@ -34,7 +35,7 @@ export function SessionList() {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
 
-  const sceneSessions = useMemo(() => sessions.filter((s) => s.app === SCENE), [sessions]);
+  const sceneSessions = useMemo(() => sessions.filter((s) => s.app === scene), [sessions, scene]);
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return sceneSessions;
@@ -59,7 +60,7 @@ export function SessionList() {
         <Button
           size="sm"
           className="flex-1 gap-1"
-          onClick={() => void createSession(SCENE)}
+          onClick={() => void createSession(scene)}
           title={t("sessionList.newChat")}
         >
           <Plus size={14} />

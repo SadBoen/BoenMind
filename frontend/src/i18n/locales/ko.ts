@@ -38,6 +38,7 @@ export const ko: Translation = {
     newSession: "새 채팅",
     selectOrCreate: "대화를 선택하거나 새로 시작하세요",
     panelTitle: "대화",
+    sessions: "대화 목록 (새로 만들기/전환)",
     stop: "중지",
     taskRunning: "작업이 아직 실행 중입니다…",
     taskStatus: {

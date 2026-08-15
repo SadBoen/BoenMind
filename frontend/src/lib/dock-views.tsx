@@ -64,7 +64,7 @@ function ChatPaneView({ params }: IDockviewPanelProps) {
   useEffect(() => {
     void ensureAppSession(app);
   }, [app, ensureAppSession]);
-  return <ChatPane variant={params?.variant === "panel" ? "panel" : "full"} />;
+  return <ChatPane variant={params?.variant === "panel" ? "panel" : "full"} scene={app} />;
 }
 
 /**
@@ -96,7 +96,8 @@ export interface DockPanelSpec {
 
 /** 应用默认布局（每应用一份；新应用有可停靠视图时在此声明） */
 export const DEFAULT_LAYOUTS: Partial<Record<AppId, { panels: DockPanelSpec[] }>> = {
-  // 编程壳：左=文件树 / 中=编辑器 / 右下=任务|对话|终端叠放 Tab（对话=panel 形态）
+  // 编程壳（v4 重排，2026-08-15）：左=文件树 / 中=编辑器 + 底部任务|终端|分支图叠放 /
+  // 右=对话独立列（panel 形态——AI 干活的主入口，不再和终端挤 Tab）
   coding: {
     panels: [
       { id: "editor", view: "editor" },
@@ -104,19 +105,20 @@ export const DEFAULT_LAYOUTS: Partial<Record<AppId, { panels: DockPanelSpec[] }>
         id: "file-panel",
         view: "file-panel",
         position: { reference: "editor", direction: "left" },
-        initialWidth: 224,
-      },
-      {
-        id: "todo-panel",
-        view: "todo-panel",
-        position: { reference: "editor", direction: "below" },
-        initialHeight: 220,
+        initialWidth: 240,
       },
       {
         id: "chat-pane",
         view: "chat-pane",
         params: { variant: "panel", app: "coding" },
-        position: { reference: "todo-panel", direction: "within" },
+        position: { reference: "editor", direction: "right" },
+        initialWidth: 320,
+      },
+      {
+        id: "todo-panel",
+        view: "todo-panel",
+        position: { reference: "editor", direction: "below" },
+        initialHeight: 200,
       },
       {
         id: "terminal",
@@ -130,7 +132,7 @@ export const DEFAULT_LAYOUTS: Partial<Record<AppId, { panels: DockPanelSpec[] }>
       },
     ],
   },
-  // 聊天应用：左=会话列表 / 中=对话
+  // 聊天应用（v4 重排）：左=会话列表 / 中=对话 / 右=工作目录文件列表（随手翻文件）
   chat: {
     panels: [
       { id: "chat-pane", view: "chat-pane", params: { app: "chat" } },
@@ -139,6 +141,12 @@ export const DEFAULT_LAYOUTS: Partial<Record<AppId, { panels: DockPanelSpec[] }>
         view: "session-list",
         position: { reference: "chat-pane", direction: "left" },
         initialWidth: 256,
+      },
+      {
+        id: "file-panel",
+        view: "file-panel",
+        position: { reference: "chat-pane", direction: "right" },
+        initialWidth: 240,
       },
     ],
   },

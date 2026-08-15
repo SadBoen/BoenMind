@@ -29,6 +29,12 @@
 - **TerminalPane 一期已落地（07618ce，上游吸收 T1/T2）**：后端 /api/terminal（portable-pty 会话，创建/输入/resize/SSE/关闭；broadcast 多订阅 + 读线程自清理；**ConPTY ESC[6n 光标查询应答**——不答则 cmd 输出阻塞，实测坑）；前端 TerminalPane 宿主组件（xterm 6 + fit；编程壳右栏第三个 Tab，终端 Tab 加宽 30rem）；dir 命令全链路实测通过
 - **剩余**（执行顺序已拍）：项目切换（currentProject 上下文 + 文件树/终端联动）→ codegraph 转官方插件（scopes=["coding"]）→ 浏览器仿真 B 方案（可视化 web 工具链）
 
+**布局与聊天单元轮（2026-08-15 用户开题三点，两项落地）**：
+- **默认布局重定义（用户"你好好定义一下"）**：chat = 左会话列表/中对话/**右文件树**（工作目录随手翻文件）；coding = 左文件树/中编辑器+底部任务|终端|分支图叠放/**右对话独立列**（AI 干活主入口不再和终端挤 Tab）；布局 key v3→v4（用户自定义布局随版本重置一次，已知代价）
+- **会话入口（用户"聊天单元一定要带 SESSION"）**：界面充足 = dock 会话列表面板（chat 应用已有）；界面不充足 = 聊天单元顶部三横按钮（panel 形态）→ portal 悬浮窗（SessionList 复用，`scene` prop 化——编程壳按 coding 场景过滤 + 新建对话）；token 用量/缓存命中状态栏 = 待接数据源，并入状态栏专项
+- **状态栏统一（用户问题 2）评估**：dockview 8.1 原生支持 `headerComponent` 自定义面板标题栏——把 X 关闭行统一成状态栏可行，改动集中在 DockLayout 视图注册层（统一 header 组件），视图组件零改动；**待拍板**（影响全部面板观感，建议单独专项）
+- 验证：tsc/lint/build 全绿；浏览器实测（经典界面）聊天三栏布局/编程四区布局/三横悬浮窗（coding 场景过滤 + 新建对话）/full 形态无三横全通过；**坑：IAB reload 后输入通道全失效（已知环境限制）——测试须新开 tab；导航右键重置布局在应用未挂载时静默忽略（先在应用内右键）**
+
 **项目切换轮（2026-08-15，编程壳功能规划②执行）**：
 - **项目模型**：前端项目集合（localStorage `boenmind.projects`/`boenmind.currentProject` 持久化，模式同 appSessionIds）+ 后端 workspace 路径参数化——`/api/workspace` 四端点（list/read/write/git-info）加 `root` 参数（缺省 = 配置工作目录兜底，设置页 working_dir 语义不变；`resolve_root` 空串视为缺省）
 - **UI**：CodingApp 头部 ProjectSwitcher 下拉（切换/新建/删除；新建 = 名称+绝对路径，提交前 `listWorkspace` 探测可访问性，失败 toast 不落库；首个项目自动设为当前，后续新建不抢焦点；删除当前项目自动回退列表首个）
@@ -68,6 +74,7 @@
 
 | 轮次 | 要点 |
 |---|---|
+| 布局与聊天单元轮 | 默认布局 v4 重定义（chat 三栏含文件树 / coding 对话独立右列）+ 聊天单元会话入口（三横悬浮窗，SessionList scene 化）；状态栏统一评估待拍板 |
 | 项目切换轮 | 前端项目集合 + workspace root 参数化 + 全视图联动（文件树/分支/GitBar/终端 cwd）+ 新建校验/删除回退；用户拍板编辑器不再深化 |
 | M2 深化轮 | 分支图 DAG（git-info 拓扑数据 + GitGraph 视图 + lane 算法）+ EventQuery 类型过滤（长会话 todo 读取不再全量 replay）；布局 key 版本化 v3 |
 | 布局实施轮 | 应用布局系统实施（dockview-react 8.1，T5）：DockLayout 宿主 + VIEWS/DEFAULT_LAYOUTS + 编程壳/聊天应用迁移 + 持久化/导航右键重置/主题桥接；浏览器实测全通过 |

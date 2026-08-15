@@ -38,6 +38,7 @@ export const en: Translation = {
     newSession: "New chat",
     selectOrCreate: "Select or start a new chat",
     panelTitle: "Chat",
+    sessions: "Conversations (new / switch)",
     stop: "Stop",
     taskRunning: "Task still running…",
     taskStatus: {

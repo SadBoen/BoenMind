@@ -43,7 +43,7 @@ interface DockLayoutProps {
  * 用户自定义布局随版本重置一次；插件默认布局声明（§四·C）落地时再设计
  * 精细迁移（快照指纹对比），当前阶段默认布局即用户所见，bump 可接受。
  */
-const layoutKey = (appId: AppId) => `boenmind.dock.v3.${appId}`;
+const layoutKey = (appId: AppId) => `boenmind.dock.v4.${appId}`;
 
 /**
  * 布局重置注册表：DockLayout 实例挂载时登记，壳层（导航右键菜单/标题栏）

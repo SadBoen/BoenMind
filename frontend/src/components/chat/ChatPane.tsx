@@ -7,9 +7,10 @@
  * 会话上下文 = store 的 activeSessionId（全局聚焦会话）：宿主切换应用时
  * 由 activateApp/ensureAppSession 把聚焦会话切到该场景，本组件零感知。
  */
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { Square, Sparkles } from "lucide-react";
+import { Menu, Square, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { Message } from "@/api/client";
@@ -18,12 +19,15 @@ import { MessageItem } from "./MessageItem";
 import { ChatInput } from "./ChatInput";
 import { ScrollIndicators } from "./ScrollIndicators";
 import { PermissionDialog } from "./PermissionDialog";
+import { SessionList } from "./SessionList";
 import { TaskStatusBar } from "./TaskStatusBar";
 import { parseThinkBlocks } from "./ThinkBlock";
 
 export interface ChatPaneProps {
   /** 形态变体：full = 全窗（聊天应用默认）；panel = 侧栏/Tab（紧凑标题栏 + 紧凑输入区） */
   variant?: "full" | "panel";
+  /** 场景（一软件一会话）：会话入口悬浮窗的会话列表按此场景过滤；默认 chat */
+  scene?: string;
 }
 
 /** 消息预览文本（指示条悬停用）：剥离 think 块（含流式未闭合的）、压缩空白 */
@@ -37,7 +41,7 @@ function previewFor(message: Message, emptyLabel: string): string {
   return text.length > 60 ? `${text.slice(0, 60)}…` : text || emptyLabel;
 }
 
-export function ChatPane({ variant = "full" }: ChatPaneProps) {
+export function ChatPane({ variant = "full", scene = "chat" }: ChatPaneProps) {
   const { t } = useTranslation();
   const panel = variant === "panel";
   const messages = useAppStore((s) => s.messages);
@@ -46,6 +50,16 @@ export function ChatPane({ variant = "full" }: ChatPaneProps) {
   const streamingToolCalls = useAppStore((s) => s.streamingToolCalls);
   const stopStreaming = useAppStore((s) => s.stopStreaming);
   const activeSessionId = useAppStore((s) => s.activeSessionId);
+
+  // 会话入口悬浮窗（panel 形态：无 dock 会话列表面板时点三横按钮呼出）
+  const [sessionsOpen, setSessionsOpen] = useState(false);
+  const [menuAnchor, setMenuAnchor] = useState<{ x: number; y: number } | null>(null);
+
+  const openSessions = (e: React.MouseEvent) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    setMenuAnchor({ x: r.left, y: r.bottom });
+    setSessionsOpen(true);
+  };
 
   // 预览文本按消息 id 缓存：流式期间 streamingText 每增量都重渲染本组件，
   // 不能对全部历史消息逐条跑正则（messages 引用在流式时不变化，memo 不重算）
@@ -78,7 +92,7 @@ export function ChatPane({ variant = "full" }: ChatPaneProps) {
   // （overflow-y:auto）触发滚动条，把整个窗口挤矮 15px 导致输入框跳动
   return (
     <div className="flex h-full min-w-0 flex-col overflow-hidden bg-background">
-      {/* 标题栏：full = 会话标题/引导提示；panel = 仅会话标题（紧凑） */}
+      {/* 标题栏：full = 会话标题/引导提示；panel = 会话入口 + 会话标题（紧凑） */}
       <header
         className={cn(
           "flex shrink-0 items-center justify-between border-b px-3",
@@ -86,6 +100,17 @@ export function ChatPane({ variant = "full" }: ChatPaneProps) {
         )}
       >
         <div className="flex min-w-0 items-center gap-2 text-sm font-medium">
+          {panel && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 shrink-0"
+              title={t("chat.sessions")}
+              onClick={openSessions}
+            >
+              <Menu size={14} />
+            </Button>
+          )}
           {activeSessionId ? (
             <span className="truncate">
               {messages[0]?.role === "user" ? previewFor(messages[0], t("chat.newSession")) : t("chat.newSession")}
@@ -170,6 +195,28 @@ export function ChatPane({ variant = "full" }: ChatPaneProps) {
       <ChatInput compact={panel} />
       {/* 插件权限询问弹窗（SSE permissionRequest 事件触发） */}
       <PermissionDialog />
+
+      {/* 会话入口悬浮窗（panel 形态：三横按钮呼出；portal 到 body 防面板裁剪） */}
+      {panel && sessionsOpen && menuAnchor && (
+        createPortal(
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setSessionsOpen(false)} />
+            <div
+              className="fixed z-50 w-80 overflow-hidden rounded-lg border bg-popover shadow-md"
+              style={{
+                left: menuAnchor.x,
+                top: menuAnchor.y + 6,
+                maxHeight: "min(26rem, calc(100vh - 6rem))",
+              }}
+            >
+              <div className="h-[24rem]">
+                <SessionList scene={scene} />
+              </div>
+            </div>
+          </>,
+          document.body,
+        )
+      )}
     </div>
   );
 }

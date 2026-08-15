@@ -38,6 +38,7 @@ export const ja: Translation = {
     newSession: "新しいチャット",
     selectOrCreate: "チャットを選択または新規作成",
     panelTitle: "チャット",
+    sessions: "会話リスト（新規/切り替え）",
     stop: "停止",
     taskRunning: "タスクは実行中です…",
     taskStatus: {
