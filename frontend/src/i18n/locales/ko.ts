@@ -125,6 +125,7 @@ export const ko: Translation = {
   desktop: {
     bootSkip: "클릭하여 건너뛰기",
     startMenu: "시작 메뉴",
+    dock: "Dock",
     emptyHint: "시작 메뉴에서 앱 열기",
     windowClose: "{{app}} 닫기",
     codingComingSoon: "코딩 앱 준비 중입니다",

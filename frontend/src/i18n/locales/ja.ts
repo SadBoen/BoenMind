@@ -125,6 +125,7 @@ export const ja: Translation = {
   desktop: {
     bootSkip: "クリックでスキップ",
     startMenu: "スタートメニュー",
+    dock: "Dock",
     emptyHint: "スタートメニューからアプリを開く",
     windowClose: "{{app}} を閉じる",
     codingComingSoon: "コーディングアプリは準備中です",

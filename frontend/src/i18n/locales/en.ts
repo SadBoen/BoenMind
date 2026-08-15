@@ -125,6 +125,7 @@ export const en: Translation = {
   desktop: {
     bootSkip: "Click to skip boot",
     startMenu: "Start menu",
+    dock: "Dock",
     emptyHint: "Open an app from the start menu",
     windowClose: "Close {{app}}",
     codingComingSoon: "Coding app under construction",

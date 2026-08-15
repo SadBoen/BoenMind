@@ -151,3 +151,43 @@
 .scrollbar-none::-webkit-scrollbar {
   display: none;
 }
+
+/**
+ * 桌面星空壁纸：多层径向渐变星星 + 紫蓝渐变（明暗两套）。
+ * 星星用 1px 白色圆点散布在渐变上层；暗色加深渐变保证与菜单栏/Dock 的对比度。
+ */
+.desktop-wallpaper {
+  background-color: #3b2a86;
+  background-image:
+    radial-gradient(1.5px 1.5px at 12% 22%, rgb(255 255 255 / 80%) 50%, transparent 51%),
+    radial-gradient(1px 1px at 28% 64%, rgb(255 255 255 / 70%) 50%, transparent 51%),
+    radial-gradient(2px 2px at 41% 18%, rgb(255 255 255 / 85%) 50%, transparent 51%),
+    radial-gradient(1px 1px at 55% 45%, rgb(255 255 255 / 60%) 50%, transparent 51%),
+    radial-gradient(1.5px 1.5px at 68% 75%, rgb(255 255 255 / 75%) 50%, transparent 51%),
+    radial-gradient(1px 1px at 76% 28%, rgb(255 255 255 / 65%) 50%, transparent 51%),
+    radial-gradient(2px 2px at 87% 58%, rgb(255 255 255 / 80%) 50%, transparent 51%),
+    radial-gradient(1px 1px at 93% 15%, rgb(255 255 255 / 70%) 50%, transparent 51%),
+    radial-gradient(1.5px 1.5px at 18% 85%, rgb(255 255 255 / 55%) 50%, transparent 51%),
+    radial-gradient(1px 1px at 62% 90%, rgb(255 255 255 / 60%) 50%, transparent 51%),
+    radial-gradient(ellipse 90% 70% at 50% 110%, rgb(129 94 255 / 45%), transparent 65%),
+    radial-gradient(ellipse 70% 60% at 85% -10%, rgb(56 148 255 / 40%), transparent 65%),
+    linear-gradient(160deg, #2b1a5e 0%, #452f8f 40%, #274a9e 75%, #0d1b3e 100%);
+}
+
+.dark .desktop-wallpaper {
+  background-color: #12092e;
+  background-image:
+    radial-gradient(1.5px 1.5px at 12% 22%, rgb(255 255 255 / 90%) 50%, transparent 51%),
+    radial-gradient(1px 1px at 28% 64%, rgb(255 255 255 / 80%) 50%, transparent 51%),
+    radial-gradient(2px 2px at 41% 18%, rgb(255 255 255 / 95%) 50%, transparent 51%),
+    radial-gradient(1px 1px at 55% 45%, rgb(255 255 255 / 70%) 50%, transparent 51%),
+    radial-gradient(1.5px 1.5px at 68% 75%, rgb(255 255 255 / 85%) 50%, transparent 51%),
+    radial-gradient(1px 1px at 76% 28%, rgb(255 255 255 / 75%) 50%, transparent 51%),
+    radial-gradient(2px 2px at 87% 58%, rgb(255 255 255 / 90%) 50%, transparent 51%),
+    radial-gradient(1px 1px at 93% 15%, rgb(255 255 255 / 80%) 50%, transparent 51%),
+    radial-gradient(1.5px 1.5px at 18% 85%, rgb(255 255 255 / 65%) 50%, transparent 51%),
+    radial-gradient(1px 1px at 62% 90%, rgb(255 255 255 / 70%) 50%, transparent 51%),
+    radial-gradient(ellipse 90% 70% at 50% 110%, rgb(124 89 255 / 55%), transparent 65%),
+    radial-gradient(ellipse 70% 60% at 85% -10%, rgb(46 130 255 / 50%), transparent 65%),
+    linear-gradient(160deg, #1b0f3d 0%, #2f1d63 40%, #1b3568 75%, #0a0f26 100%);
+}

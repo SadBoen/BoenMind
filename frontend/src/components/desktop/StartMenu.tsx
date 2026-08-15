@@ -1,6 +1,6 @@
 /**
- * 开始菜单：左下玻璃面板——彩色渐变应用卡网格（Cosmos 风）
- * + 底部脚注（版本/后端状态/工作文件夹，原 StatusBar 信息迁入处）。
+ * 开始菜单：从顶部菜单栏开始按钮正下方下拉的玻璃面板——彩色渐变应用卡网格
+ * （Cosmos 风）+ 底部脚注（版本/后端状态/工作文件夹，原 StatusBar 信息迁入处）。
  * 自绘层（不用 Base UI Dialog）：点外/Esc 关闭，避免 portal 脱离桌面层级。
  */
 import { useEffect } from "react";
@@ -32,7 +32,7 @@ export function StartMenu({ onClose }: { onClose: () => void }) {
     <>
       {/* 点外关闭：全屏透明层（低于菜单） */}
       <div className="fixed inset-0 z-40" onPointerDown={onClose} aria-hidden />
-      <div className="absolute bottom-14 left-2 z-50 flex w-105 max-w-[calc(100vw-1rem)] flex-col gap-4 rounded-2xl border border-white/20 bg-white/70 p-5 shadow-2xl backdrop-blur-2xl dark:bg-black/60">
+      <div className="absolute left-2 top-9 z-50 flex w-105 max-w-[calc(100vw-1rem)] flex-col gap-4 rounded-2xl border border-white/20 bg-white/70 p-5 shadow-2xl backdrop-blur-2xl dark:bg-black/60">
         {/* 应用卡网格 */}
         <div className="grid grid-cols-2 gap-3">
           {APP_LIST.map((app) => (

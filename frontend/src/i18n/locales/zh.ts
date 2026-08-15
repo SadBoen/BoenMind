@@ -125,6 +125,7 @@ export const zh = {
   desktop: {
     bootSkip: "点击跳过启动",
     startMenu: "开始菜单",
+    dock: "程序坞",
     emptyHint: "从开始菜单打开应用",
     windowClose: "关闭 {{app}}",
     codingComingSoon: "编程应用建设中，敬请期待",
