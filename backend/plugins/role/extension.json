@@ -1,0 +1,16 @@
+{
+  "schema": "pi.ext.manifest.v1",
+  "extension_id": "role",
+  "name": "Role Definition",
+  "version": "0.1.0",
+  "runtime": "js",
+  "entrypoint": "index.ts",
+  "description": "BoenMind 角色定义：role 工具创建/切换助手角色（人格与职责设定），宿主注入当前角色到系统提示",
+  "capabilities": [
+    "read",
+    "write",
+    "events",
+    "session"
+  ],
+  "category": "system"
+}

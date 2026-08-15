@@ -399,7 +399,7 @@ coding: {
           yolo: "YOLO",
         },
       },
-      empty: "No plugins yet. Built-in plugins (hello / bookmark / ctx-compactor) are installed automatically on first launch.",
+      empty: "No plugins yet. Built-in plugins are installed automatically on first launch.",
       builtin: "Built-in",
       singleFile: "Single file",
       manifestDir: "Manifest dir",

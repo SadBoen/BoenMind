@@ -399,7 +399,7 @@ coding: {
           yolo: "YOLO",
         },
       },
-      empty: "아직 플러그인이 없습니다. 내장 플러그인 (hello / bookmark / ctx-compactor)은 첫 실행 시 자동 설치됩니다.",
+      empty: "아직 플러그인이 없습니다. 내장 플러그인은 첫 실행 시 자동 설치됩니다.",
       builtin: "내장",
       singleFile: "단일 파일",
       manifestDir: "매니페스트 폴더",

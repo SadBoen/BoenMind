@@ -398,7 +398,7 @@ coding: {
           yolo: "YOLO",
         },
       },
-      empty: "还没有插件。内置插件（hello / bookmark / ctx-compactor）会在首次启动时自动安装。",
+      empty: "还没有插件。内置插件会在首次启动时自动安装。",
       builtin: "内置",
       singleFile: "单文件",
       manifestDir: "清单目录",

@@ -266,7 +266,7 @@ mod tests {
 
         let memory = Arc::new(std::sync::Mutex::new(MemoryFilePlugin::open(path, 20)));
         let mut hooks =
-            StreamHooks::new(Arc::new(std::sync::Mutex::new(String::new())), Some(memory));
+            StreamHooks::new(Arc::new(std::sync::Mutex::new(String::new())), Some(memory), None);
 
         let mut payload = serde_json::json!({
             "messages": [
@@ -295,7 +295,7 @@ mod tests {
 
         let memory = Arc::new(std::sync::Mutex::new(MemoryFilePlugin::open(path, 20)));
         let mut hooks =
-            StreamHooks::new(Arc::new(std::sync::Mutex::new(String::new())), Some(memory));
+            StreamHooks::new(Arc::new(std::sync::Mutex::new(String::new())), Some(memory), None);
 
         let mut payload = serde_json::json!({
             "messages": [

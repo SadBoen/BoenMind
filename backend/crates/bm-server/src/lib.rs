@@ -12,6 +12,7 @@ pub mod governance;
 pub mod pdf_omni;
 // B6 — 插件权限决策记忆（extension-permissions.json，格式兼容 pi 上游）
 pub mod permission_store;
+pub mod roles;
 pub mod routes;
 pub mod static_files;
 pub mod steward;
@@ -328,7 +329,7 @@ pub async fn init() -> Result<(AppConfig, Db), Box<dyn std::error::Error>> {
         eprintln!("[bm-server] 预置子代理角色定义失败: {err}");
     }
 
-    // 3.5 预装内置插件（hello / bookmark / ctx-compactor；用户已卸载的不再恢复）
+    // 3.5 预装内置插件（role / coding-memory / ctx-compactor 等；用户已卸载的不再恢复）
     if let Err(err) = bm_core::plugins::ensure_builtin_plugins(&config) {
         eprintln!("[bm-server] 预装示例插件失败: {err}");
     }

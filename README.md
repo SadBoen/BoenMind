@@ -62,7 +62,7 @@ cd frontend && pnpm tauri build --debug --no-bundle
    自定义 OpenAI 兼容。多提供商可同时配置（各自独立端点与密钥，互不覆盖）；本地服务需填端点。
 2. **对话**：会话列表「新建对话」→ 输入消息（Enter 发送，Shift+Enter 换行）。
    模型可在聊天标题栏右侧切换。
-3. **插件**：「设置」→「插件」。内置插件（hello / bookmark / ctx-compactor / web-search）已预装；
+3. **插件**：「设置」→「插件」。内置插件（role 角色定义 / coding-memory 编程记忆 / ctx-compactor / web-search / refine-suggest / pdf-omni）已预装；
    启用后插件注册的工具与命令对 AI 助手立即生效（基于 pi 扩展机制，QuickJS 直接加载
    TypeScript，无需编译）。社区无原生依赖的插件可复制到 `~/.boenmind/extensions/` 后安装。
 4. **文件浏览**：右侧文件区展示工作文件夹（默认 `~/BoenMind`，可在设置修改）。

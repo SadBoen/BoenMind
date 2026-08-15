@@ -1,0 +1,16 @@
+{
+  "schema": "pi.ext.manifest.v1",
+  "extension_id": "coding-memory",
+  "name": "Coding Memory",
+  "version": "0.1.0",
+  "runtime": "js",
+  "entrypoint": "index.ts",
+  "description": "BoenMind 编程记忆（编程 APP 专用）：coding_remember/coding_recall/coding_forget 按项目存取记忆，不污染全局长期记忆",
+  "capabilities": [
+    "read",
+    "write",
+    "events",
+    "session"
+  ],
+  "category": "system"
+}

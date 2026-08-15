@@ -151,18 +151,23 @@ pub struct StreamHooks {
     /// 记忆插件（§6.1 最小实现，v0.17 双向奔赴）：on_request 注入 facts；
     /// Arc 共享——外部（未来 governance.memorize 调用点）可 remember。
     memory: Option<Arc<std::sync::Mutex<bm_memory::MemoryFilePlugin>>>,
+    /// 角色注入器（角色定义插件的宿主挂点，roles.rs）：on_request 追加
+    /// 当前激活角色到 system 段。无内部状态，直接持有。
+    role: Option<crate::roles::RoleInjector>,
 }
 
 impl StreamHooks {
     pub fn new(
         progress: Arc<std::sync::Mutex<String>>,
         memory: Option<Arc<std::sync::Mutex<bm_memory::MemoryFilePlugin>>>,
+        role: Option<crate::roles::RoleInjector>,
     ) -> Self {
         Self {
             tx: std::sync::Mutex::new(None),
             cancel: std::sync::Mutex::new(None),
             progress,
             memory,
+            role,
         }
     }
 
@@ -216,6 +221,10 @@ impl LoopHooks for StreamHooks {
             && let Ok(mut m) = memory.lock()
         {
             m.on_request(_ctx, payload);
+        }
+        // 角色注入（角色定义插件宿主挂点）：当前激活角色 prompt 追加 system 段
+        if let Some(role) = &self.role {
+            role.inject(payload);
         }
     }
 
@@ -333,8 +342,12 @@ fn build_loop_agent(
         bm_core::config::app_dir().join("memory").join("facts.md"),
         20,
     )));
+    // 角色注入（角色定义插件宿主挂点）：宿主只读 roles.json，插件侧管理
+    let role = crate::roles::RoleInjector::new(
+        bm_core::config::app_dir().join(crate::roles::ROLES_FILE),
+    );
     Ok(ReactLoopAgent::new(
-        StreamHooks::new(progress, Some(memory)),
+        StreamHooks::new(progress, Some(memory), Some(role)),
         tools,
         bm_kernel::EventLog::new(kernel.event_store()),
         SessionId::new(session_id),
@@ -1258,7 +1271,7 @@ mod tests {
 
     #[tokio::test]
     async fn stream_hooks_forwards_and_detects_disconnect() {
-        let hooks = StreamHooks::new(Arc::new(std::sync::Mutex::new(String::new())), None);
+        let hooks = StreamHooks::new(Arc::new(std::sync::Mutex::new(String::new())), None, None);
         let (tx, mut rx) = mpsc::unbounded_channel::<AgentStreamEvent>();
         let (cancel_tx, cancel_rx) = watch::channel(false);
         hooks.attach(tx, cancel_tx);

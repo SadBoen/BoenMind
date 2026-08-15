@@ -3,6 +3,8 @@
 //! 插件 = `~/.boenmind/extensions/` 下的单文件 `.ts` 扩展或含 `extension.json` 的目录。
 //! 启用列表记录在 config.toml 的 `enabled_plugins`；agent 会话通过
 //! `SessionOptions.extension_paths` 加载启用插件。
+//! 出厂内置插件（[`BUILTIN_PLUGINS`]）全部为目录型插件，首次启动预装
+//! （用户卸载后写入 removed_builtin_plugins，不再恢复）。
 
 use serde::Serialize;
 use std::fs;
@@ -14,10 +16,16 @@ use crate::http_util::copy_dir_excluding;
 
 /// 插件根目录名（位于 ~/.boenmind 下）
 pub const PLUGINS_DIR: &str = "extensions";
-/// 内置示例插件清单（hello/bookmark 为仓库自带单文件示例；目录型插件自带扩展清单）
+/// 出厂内置插件清单（全部为仓库自带目录型插件，自带 extension.json）
 pub const BUILTIN_PLUGINS: &[(&str, &str)] = &[
-    ("hello", "注册演示工具：Hello，展示 LLM 可调用工具"),
-    ("bookmark", "注册斜杠命令：/bookmark 为消息添加书签"),
+    (
+        "role",
+        "角色定义：role 工具创建/切换助手角色（人格与职责设定），宿主注入当前角色到系统提示",
+    ),
+    (
+        "coding-memory",
+        "编程记忆（编程 APP 专用）：coding_remember/coding_recall/coding_forget 按项目存取记忆，不污染全局长期记忆",
+    ),
     (
         "ctx-compactor",
         "上下文压缩补强：ctx_execute 沙箱执行 + 大工具输出修剪落库 + ctx_search 检索",
@@ -471,10 +479,9 @@ pub fn uninstall_plugin(config: &mut AppConfig, id: &str) -> Result<(), AppError
 /// 首次启动时预装内置插件；用户已卸载的（removed_builtin_plugins）跳过。
 ///
 /// 两种构建形态：
-/// - 普通构建：从仓库路径复制（backend/plugins/ 单文件示例 + 目录型插件）
+/// - 普通构建：从仓库路径复制（backend/plugins/<id>/ 目录型插件）
 /// - embed 构建（服务器版）：目录型插件从二进制内嵌资源写出（部署机没有仓库路径，
-///   此前静默失败导致服务器用户实际无插件）；单文件示例（hello/bookmark）为演示
-///   用途且默认未启用，embed 构建不预装
+///   此前静默失败导致服务器用户实际无插件）
 pub fn ensure_builtin_plugins(config: &AppConfig) -> Result<(), std::io::Error> {
     let dir = plugins_dir();
     fs::create_dir_all(&dir)?;
@@ -490,14 +497,7 @@ pub fn ensure_builtin_plugins(config: &AppConfig) -> Result<(), std::io::Error> 
         }
         #[cfg(not(feature = "embed-plugins"))]
         {
-            if let Some(src) = vendored_example_path(id) {
-                let dest = dir.join(format!("{id}.ts"));
-                if dest.exists() {
-                    continue;
-                }
-                fs::copy(&src, &dest)?;
-            }
-            // 仓库内自带插件（目录型，如 ctx-compactor）
+            // 仓库内自带插件（目录型，含 extension.json）
             if let Some(src) = repo_plugin_dir(id) {
                 let dest = dir.join(id);
                 if dest.exists() {
@@ -511,7 +511,7 @@ pub fn ensure_builtin_plugins(config: &AppConfig) -> Result<(), std::io::Error> 
 }
 
 /// embed 构建：把 backend/plugins/<id>/ 从二进制内嵌资源写出到 extensions/<id>/。
-/// 返回是否找到该目录型插件（未找到 = 单文件示例，embed 构建不预装）。
+/// 返回是否找到该目录型插件（未找到 = 非仓库内置，embed 构建不预装）。
 #[cfg(feature = "embed-plugins")]
 fn embed_repo_plugin(id: &str, dest_dir: &std::path::Path) -> Result<bool, std::io::Error> {
     let prefix = format!("{id}/");
@@ -541,15 +541,7 @@ fn embed_repo_plugin(id: &str, dest_dir: &std::path::Path) -> Result<bool, std::
 #[folder = "../../plugins"]
 struct EmbeddedPlugins;
 
-/// 仓库自带单文件示例插件（backend/plugins/<id>.ts）的路径（仅普通构建使用）。
-#[cfg(not(feature = "embed-plugins"))]
-fn vendored_example_path(id: &str) -> Option<PathBuf> {
-    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let p = base.join("../../plugins").join(format!("{id}.ts"));
-    p.is_file().then_some(p)
-}
-
-/// BoenMind 仓库自带插件目录（backend/plugins/<id>/，含 extension.json；仅普通构建使用）。
+/// 仓库自带插件目录（backend/plugins/<id>/，含 extension.json；仅普通构建使用）。
 #[cfg(not(feature = "embed-plugins"))]
 fn repo_plugin_dir(id: &str) -> Option<PathBuf> {
     let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -663,8 +655,10 @@ mod tests {
         assert!(dir_plugins.join("ctx-compactor/index.ts").is_file());
         assert!(dir_plugins.join("ctx-compactor/extension.json").is_file());
         assert!(embed_repo_plugin("web-search", &dir_plugins).unwrap());
-        // 单文件示例（hello/bookmark）未内嵌：返回 false，embed 构建不预装
-        assert!(!embed_repo_plugin("hello", &dir_plugins).unwrap());
+        // 出厂插件（role/coding-memory）全部为目录型，均内嵌可预装
+        assert!(embed_repo_plugin("role", &dir_plugins).unwrap());
+        assert!(dir_plugins.join("role/extension.json").is_file());
+        assert!(embed_repo_plugin("coding-memory", &dir_plugins).unwrap());
         match original {
             Some(v) => unsafe { std::env::set_var("BOENMIND_HOME", v) },
             None => unsafe { std::env::remove_var("BOENMIND_HOME") },

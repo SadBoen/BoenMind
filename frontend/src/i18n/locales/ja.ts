@@ -399,7 +399,7 @@ coding: {
           yolo: "YOLO",
         },
       },
-      empty: "プラグインはまだありません。組み込みプラグイン（hello / bookmark / ctx-compactor）は初回起動時に自動インストールされます。",
+      empty: "プラグインはまだありません。組み込みプラグインは初回起動時に自動インストールされます。",
       builtin: "組み込み",
       singleFile: "単一ファイル",
       manifestDir: "マニフェストディレクトリ",
