@@ -43,6 +43,11 @@ export interface Project {
 
 const PROJECTS_KEY = "boenmind.projects";
 const CURRENT_PROJECT_KEY = "boenmind.currentProject";
+/** 现场恢复（P4，2026-08-15 长程测试）：刷新/重启后回到原应用与会话 */
+const ACTIVE_NAV_KEY = "boenmind.activeNav";
+const ACTIVE_SESSION_KEY = "boenmind.activeSessionId";
+
+const APP_IDS: AppId[] = ["chat", "coding", "wiki", "settings", "plugins", "steward"];
 
 function loadProjects(): Project[] {
   try {
@@ -261,8 +266,11 @@ export const useAppStore = create<AppStore>((set, get) => {
       localStorage.setItem("boenmind.viewMode", mode);
       set({ viewMode: mode });
     },
-    activeNav: "chat",
-    setActiveNav: (id) => set({ activeNav: id }),
+    activeNav: (APP_IDS.find((a) => a === localStorage.getItem(ACTIVE_NAV_KEY)) ?? "chat") as AppId,
+    setActiveNav: (id) => {
+      localStorage.setItem(ACTIVE_NAV_KEY, id);
+      set({ activeNav: id });
+    },
     // 桌面壁纸模板（外观设置里的桌面形态专属设置；localStorage 持久化）
     wallpaper: (() => {
       const saved = localStorage.getItem("boenmind.wallpaper");
@@ -423,12 +431,33 @@ export const useAppStore = create<AppStore>((set, get) => {
     },
 
     sessions: [],
-    activeSessionId: null,
+    activeSessionId: localStorage.getItem(ACTIVE_SESSION_KEY),
     appSessionIds: JSON.parse(localStorage.getItem("boenmind.appSessionIds") ?? "{}") as Record<string, string>,
     loadSessions: async () => {
       try {
         const sessions = await api.listSessions();
         set({ sessions });
+        // 现场恢复校验：持久化的 activeSessionId 已不存在（被删/数据目录
+        // 切换）→ 放弃聚焦，避免打开会话报"会话不存在"；或所属应用与
+        // 恢复的导航不一致（跨应用错配，如 coding 视图挂 chat 会话）→
+        // 回退到该应用记住的会话（appSessionIds 按应用持久化，更可靠）
+        const restored = get().activeSessionId;
+        if (restored) {
+          const s = sessions.find((x) => x.id === restored);
+          if (!s) {
+            localStorage.removeItem(ACTIVE_SESSION_KEY);
+            set({ activeSessionId: null, messages: [] });
+          } else if (s.app !== get().activeNav) {
+            const fallback = get().appSessionIds[get().activeNav] ?? null;
+            if (fallback) {
+              localStorage.setItem(ACTIVE_SESSION_KEY, fallback);
+              set({ activeSessionId: fallback, messages: [] });
+            } else {
+              localStorage.removeItem(ACTIVE_SESSION_KEY);
+              set({ activeSessionId: null, messages: [] });
+            }
+          }
+        }
         // 场景记录清理：引用已不存在的会话（被删/数据目录切换）时移除，
         // 避免恢复现场时 selectSession 到失效 id（后端报"会话不存在"）
         const appSessionIds = { ...get().appSessionIds };
@@ -457,6 +486,12 @@ export const useAppStore = create<AppStore>((set, get) => {
       // 停止进行中的流
       streamController?.close();
       set({ streaming: false, streamingText: "", activeSessionId: id, messages: [], previewFile: null });
+      // 现场恢复：聚焦会话持久化（刷新/重启后回到同一会话）
+      if (id) {
+        localStorage.setItem(ACTIVE_SESSION_KEY, id);
+      } else {
+        localStorage.removeItem(ACTIVE_SESSION_KEY);
+      }
       if (!id) return;
       // 记录该会话所属场景（loadSessions 后 sessions 含 app 字段）
       const scene = get().sessions.find((s) => s.id === id)?.app;
@@ -513,6 +548,7 @@ export const useAppStore = create<AppStore>((set, get) => {
         // 无该场景会话：清掉聚焦会话（聚焦会话永远属于当前聚焦应用，
         // 编程壳任务清单等投影组件才不会订阅到别的场景的会话）
         streamController?.close();
+        localStorage.removeItem(ACTIVE_SESSION_KEY);
         set({
           streaming: false,
           streamingText: "",
@@ -543,6 +579,7 @@ export const useAppStore = create<AppStore>((set, get) => {
       try {
         await api.deleteSession(id);
         if (get().activeSessionId === id) {
+          localStorage.removeItem(ACTIVE_SESSION_KEY);
           set({ activeSessionId: null, messages: [] });
         }
         // 清理场景记录（该场景无会话时 activateApp 保持 null，不残留死引用）

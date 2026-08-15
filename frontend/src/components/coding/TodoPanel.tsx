@@ -7,7 +7,7 @@
  * - 回合步数投影（M2 面板：step/start 事件计数，max_steps 预算由引擎
  *   侧"步数预算提示"负责收敛，前端只展示进度）。
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2, ListTodo, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -30,6 +30,8 @@ export function TodoPanel() {
   const [draft, setDraft] = useState("");
   const [connected, setConnected] = useState(false);
   const [steps, setSteps] = useState(0);
+  // 首个活动项引用（自动滚动：清单长起来后不拉滚动条也能看到当前工作）
+  const firstActiveRef = useRef<HTMLDivElement | null>(null);
 
   // 事件流订阅：todo/write 投影 + step/start 计数（同一通道）
   useEffect(() => {
@@ -48,6 +50,18 @@ export function TodoPanel() {
       setConnected(false);
     };
   }, [activeSessionId, setTodosFromEvent]);
+
+  // 首个未完成任务索引（自动滚动目标 + ref 挂载点）
+  const firstActiveIdx = todos.findIndex((t) => t.status !== "completed");
+
+  // 自动滚动到首个未完成任务（"清单动起来"）：清单更新后若活动项不在
+  // 视口内，就近滚入——完成项堆在顶部时无需手动拉滚动条。block:"nearest"
+  // 只在元素不可见时滚动，用户主动翻历史时不被抢视口。
+  useEffect(() => {
+    if (firstActiveIdx >= 0 && firstActiveRef.current) {
+      firstActiveRef.current.scrollIntoView({ block: "nearest" });
+    }
+  }, [todos, firstActiveIdx]);
 
   const addTodo = async () => {
     const content = draft.trim();
@@ -110,6 +124,7 @@ export function TodoPanel() {
           {todos.map((item, i) => (
             <div
               key={`${i}-${item.content}`}
+              ref={i === firstActiveIdx ? firstActiveRef : undefined}
               className="group flex items-start gap-2 rounded-md px-2 py-1.5 hover:bg-accent/50"
             >
               <button

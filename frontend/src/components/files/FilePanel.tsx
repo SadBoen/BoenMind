@@ -7,7 +7,7 @@
  * （2026-08-15 用户"选择项目不该占一整行"）+ git 状态（分支/变更摘要），
  * 顶部横条退役；聊天应用的工作目录面板不带 coding 标记，保持纯目录浏览。
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   ChevronLeft,
@@ -38,6 +38,8 @@ export function FilePanel({ coding = false }: { coding?: boolean }) {
   const projectId = useAppStore((s) => s.currentProjectId);
   // git 状态（编程壳专属，项目切换/刷新时自动加载）
   const projectRoot = useAppStore((s) => s.currentProject?.root);
+  // 活跃会话（自动刷新订阅用：agent 写文件后文件树实时跟上）
+  const activeSessionId = useAppStore((s) => s.activeSessionId);
 
   const [query, setQuery] = useState("");
   const [git, setGit] = useState<GitInfo | null>(null);
@@ -60,17 +62,50 @@ export function FilePanel({ coding = false }: { coding?: boolean }) {
     loadGit();
   }, [loadGit]);
 
+  const refresh = useCallback(() => {
+    void navigateDir(workspaceDir);
+    loadGit();
+  }, [workspaceDir, navigateDir, loadGit]);
+
+  // 自动刷新（长程测试发现）：活跃会话事件驱动——agent 每次工具结果后
+  // 防抖刷新（600ms 合并突发写文件），回合结束立即刷新；手动刷新按钮保留。
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!activeSessionId) return;
+    const schedule = (immediate: boolean) => {
+      if (immediate) {
+        if (refreshTimer.current) {
+          clearTimeout(refreshTimer.current);
+          refreshTimer.current = null;
+        }
+        refresh();
+        return;
+      }
+      if (refreshTimer.current) clearTimeout(refreshTimer.current);
+      refreshTimer.current = setTimeout(() => {
+        refreshTimer.current = null;
+        refresh();
+      }, 600);
+    };
+    const close = api.subscribeEvents(activeSessionId, (ev) => {
+      if (ev.type === "tool/result") schedule(false);
+      else if (ev.type === "turn/end") schedule(true);
+    });
+    return () => {
+      close();
+      if (refreshTimer.current) {
+        clearTimeout(refreshTimer.current);
+        refreshTimer.current = null;
+      }
+    };
+  }, [activeSessionId, refresh]);
+
   const dirName = workspaceDir === "" ? t("files.workspace") : workspaceDir.split("/").pop();
 
   const filtered = useMemo(
     () => entries.filter((e) => e.name.toLowerCase().includes(query.trim().toLowerCase())),
     [entries, query],
   );
-
-  const refresh = () => {
-    void navigateDir(workspaceDir);
-    loadGit();
-  };
 
   return (
     <div className="flex h-full min-w-0 flex-col bg-background">

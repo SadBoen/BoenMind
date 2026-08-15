@@ -34,10 +34,27 @@ export function GitGraph() {
     load();
   }, [load]);
 
+  // 空态也提供刷新按钮（长程测试发现：git-info 首次加载失败/项目切换
+  // 瞬态后停在"不是 git 仓库"空态无法自愈，只能切项目或重载页面）
+  const refreshBtn = (
+    <Button
+      variant="ghost"
+      size="icon"
+      className="absolute right-2 top-2 z-10 h-7 w-7"
+      title={t("common.refresh")}
+      onClick={load}
+    >
+      <RefreshCw size={13} />
+    </Button>
+  );
+
   if (!git?.repo) {
     return (
-      <div className="flex h-full items-center justify-center bg-background text-sm text-muted-foreground">
-        {t("coding.git.noRepo")}
+      <div className="relative h-full overflow-auto bg-background">
+        {refreshBtn}
+        <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+          {t("coding.git.noRepo")}
+        </div>
       </div>
     );
   }
@@ -53,15 +70,7 @@ export function GitGraph() {
 
   return (
     <div className="relative h-full overflow-auto bg-background">
-      <Button
-        variant="ghost"
-        size="icon"
-        className="absolute right-2 top-2 z-10 h-7 w-7"
-        title={t("common.refresh")}
-        onClick={load}
-      >
-        <RefreshCw size={13} />
-      </Button>
+      {refreshBtn}
       <svg width={width} height={height} className="text-muted-foreground">
         {/* 泳道背景线 */}
         {Array.from({ length: laneCount }, (_, l) => (
