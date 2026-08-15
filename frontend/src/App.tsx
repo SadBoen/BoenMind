@@ -8,6 +8,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Desktop } from "@/components/desktop/Desktop";
 import { ClassicShell } from "@/components/classic/ClassicShell";
 import { BootScreen } from "@/components/desktop/BootScreen";
+import { applyFontScale, fontScale } from "@/lib/appearance";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -32,6 +33,8 @@ export default function App() {
 
   // 启动加载：健康状态（轮询）+ 配置 + 会话列表
   useEffect(() => {
+    // 全局字体档位（软件形态外观设置；rem 布局随根字号缩放）
+    applyFontScale(fontScale());
     void refreshHealth();
     void loadConfig();
     void loadSessions();

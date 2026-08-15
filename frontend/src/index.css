@@ -191,3 +191,39 @@
     radial-gradient(ellipse 70% 60% at 85% -10%, rgb(46 130 255 / 50%), transparent 65%),
     linear-gradient(160deg, #1b0f3d 0%, #2f1d63 40%, #1b3568 75%, #0a0f26 100%);
 }
+
+/**
+ * 极光渐变壁纸（桌面形态第二模板）：无星空点，纯紫蓝渐变光带。
+ * 与星空壁纸同底色域，明暗两套；作为 .desktop-wallpaper 的修饰类叠加。
+ */
+.desktop-wallpaper.desktop-wallpaper-aurora {
+  background-color: #2b1a5e;
+  background-image:
+    radial-gradient(ellipse 60% 45% at 25% 20%, rgb(94 214 255 / 35%), transparent 65%),
+    radial-gradient(ellipse 55% 40% at 80% 30%, rgb(168 85 247 / 40%), transparent 65%),
+    radial-gradient(ellipse 90% 55% at 50% 100%, rgb(255 105 180 / 22%), transparent 70%),
+    linear-gradient(160deg, #1e1245 0%, #3b2a86 40%, #1e3a6e 75%, #0d1b3e 100%);
+}
+
+.dark .desktop-wallpaper.desktop-wallpaper-aurora {
+  background-color: #12092e;
+  background-image:
+    radial-gradient(ellipse 60% 45% at 25% 20%, rgb(72 196 255 / 32%), transparent 65%),
+    radial-gradient(ellipse 55% 40% at 80% 30%, rgb(148 70 240 / 42%), transparent 65%),
+    radial-gradient(ellipse 90% 55% at 50% 100%, rgb(236 90 165 / 25%), transparent 70%),
+    linear-gradient(160deg, #130b2a 0%, #2a1c5e 40%, #152a50 75%, #0a0f26 100%);
+}
+
+/* 壁纸模板预览缩略（外观设置卡片） */
+.desktop-wallpaper-preview-starry {
+  background-image:
+    radial-gradient(1px 1px at 30% 30%, rgb(255 255 255 / 90%) 50%, transparent 51%),
+    radial-gradient(1px 1px at 70% 60%, rgb(255 255 255 / 70%) 50%, transparent 51%),
+    linear-gradient(160deg, #2b1a5e 0%, #274a9e 100%);
+}
+.desktop-wallpaper-preview-aurora {
+  background-image:
+    radial-gradient(ellipse 70% 70% at 25% 30%, rgb(94 214 255 / 45%), transparent 70%),
+    radial-gradient(ellipse 70% 70% at 75% 35%, rgb(168 85 247 / 50%), transparent 70%),
+    linear-gradient(160deg, #1e1245 0%, #1e3a6e 100%);
+}

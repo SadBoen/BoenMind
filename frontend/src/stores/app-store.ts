@@ -9,6 +9,7 @@ import { toast } from "sonner";
 // 导航/设置页类型定义在 lib/app-registry.tsx 注册表（单一数据源）
 export type { SettingsTab, AppId } from "@/lib/app-registry";
 import type { SettingsTab, AppId } from "@/lib/app-registry";
+import type { Wallpaper } from "@/lib/appearance";
 
 /** 流式中的工具调用（isError 未定前为执行中状态） */
 interface StreamingToolCall {
@@ -43,6 +44,9 @@ interface AppStore {
   /** 经典界面的当前导航（与桌面壳 openApps 并存互不干扰） */
   activeNav: AppId;
   setActiveNav: (id: AppId) => void;
+  /** 桌面形态壁纸模板（外观设置里切换；响应式状态） */
+  wallpaper: Wallpaper;
+  setWallpaper: (w: Wallpaper) => void;
 
   // 桌面窗口（应用打开顺序即 z 序；单例：重复打开=聚焦+置顶）
   openApps: AppId[];
@@ -178,6 +182,15 @@ export const useAppStore = create<AppStore>((set, get) => {
     },
     activeNav: "chat",
     setActiveNav: (id) => set({ activeNav: id }),
+    // 桌面壁纸模板（外观设置里的桌面形态专属设置；localStorage 持久化）
+    wallpaper: (() => {
+      const saved = localStorage.getItem("boenmind.wallpaper");
+      return saved === "aurora" ? "aurora" : "starry";
+    })(),
+    setWallpaper: (w) => {
+      localStorage.setItem("boenmind.wallpaper", w);
+      set({ wallpaper: w });
+    },
 
     openApps: [],
     focusedApp: null,

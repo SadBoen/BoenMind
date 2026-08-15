@@ -11,17 +11,25 @@ import { MenuBar } from "./MenuBar";
 import { Dock } from "./Dock";
 import { StatusBar } from "./StatusBar";
 import { StartMenu } from "./StartMenu";
+import { cn } from "@/lib/utils";
 
 export function Desktop() {
   const { t } = useTranslation();
   const openApps = useAppStore((s) => s.openApps);
   const minimized = useAppStore((s) => s.minimized);
   const closeApp = useAppStore((s) => s.closeApp);
+  const wallpaper = useAppStore((s) => s.wallpaper);
   const [startOpen, setStartOpen] = useState(false);
 
   return (
-    // 壁纸在根容器：覆盖整屏（含 Dock/状态栏区域），避免底部露出 body 白底
-    <div className="desktop-wallpaper relative flex h-screen w-screen select-none flex-col overflow-hidden">
+    // 壁纸在根容器：覆盖整屏（含 Dock/状态栏区域），避免底部露出 body 白底；
+    // 模板 = 外观设置里的桌面形态选择（星空默认 / 极光渐变）
+    <div
+      className={cn(
+        "desktop-wallpaper relative flex h-screen w-screen select-none flex-col overflow-hidden",
+        wallpaper === "aurora" && "desktop-wallpaper-aurora",
+      )}
+    >
       <MenuBar startOpen={startOpen} onToggleStart={() => setStartOpen((v) => !v)} />
 
       {/* 桌面区：窗口层（Dock 不占窗口层空间，bounds 自然限制在 Dock 之上） */}
