@@ -135,6 +135,17 @@
 
 遗留（不在本期范围）：界面层插件化落地（dsh 机制吸收，§四·C 拍板）、多实例（单例为拍板项）、编程应用真实壳（M2）、WIKI 插件（未立项）。
 
+## 十、下一轮任务（2026-08-15 收官时点）
+
+桌面壳线已收官（八次迭代，双 DE + 导航语义 + 外观形态设置全落地）。下一轮按建议顺序：
+
+1. **顺手项清账**（低风险）：BM_STEWARD_* env 集中化（StewardConfig，REVIEW_CODE 遗留"M1 后做"）+ 15min 超时 sleep 任务驻留清理（3 处）
+2. **M2 编程应用独立壳起步**（主线，用户"编程为软件实现第一选择"）：独立壳 = 文件树/编辑器/分支图 + 活任务清单（todo 事件投影，顺带决定 inbox 双队列接线或删除）；M1 §四①-⑤ 工具面修复已完成（max_steps 128 / grep·find ignore+timeout / read offset+limit / 提示段 / ctx-compactor 索引落数据目录）；M2 面板顺带做（max_steps 上限提示/续接）；FilePanel 可从 git 历史 checkout（2cb65fa 前）
+3. **界面层插件化落地设计**（§四·C，用户已拍板学 dsh）：出方案文档待拍板——前端包 manifest 字段（client.js/依赖声明）、同域 bundle 加载器（dsh __ModuleLoader__.load 参考）、slot 注册体系（ui-slots 思路）、壳依赖表（客户端插件不自带 React）；拍板后实施
+4. **Steward 采集器挂任务计划程序**——待用户点头（机器级定时唤醒）
+
+关联：主交接 docs/HANDOFF_KERNEL_PHASE1.md（下一步动作/待拍板已同步）。
+
 ## 八、关联文档
 
 - 批准方案全文：本文件 §五（原 ExitPlanMode 方案 v2，用户已批准）
