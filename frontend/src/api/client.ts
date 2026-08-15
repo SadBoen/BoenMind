@@ -171,6 +171,8 @@ export interface PluginInfo {
   kind: string;
   enabled: boolean;
   builtin: boolean;
+  /** 分类标签（manifest category 声明）："system" = 系统增强；"app" = 功能插件。旧后端无此字段 */
+  category?: "system" | "app";
   /** 插件设置页 schema（无设置页的插件为 undefined） */
   settingsSchema?: SettingField[];
   /** 用量声明（manifest quota 段；无用量统计的插件为 undefined） */

@@ -130,6 +130,9 @@ export const ko: Translation = {
     windowClose: "{{app}} 닫기",
     windowMinimize: "{{app}} 최소화",
     windowMaximize: "{{app}} 최대화/복원",
+    classicNav: "앱 내비게이션",
+    switchClassic: "클래식 UI로 전환",
+    switchDesktop: "데스크톱 모드",
     codingComingSoon: "코딩 앱 준비 중입니다",
     app: {
       chat: "대화",
@@ -280,6 +283,12 @@ export const ko: Translation = {
       },
     },
     plugins: {
+      category: {
+        label: "플러그인 분류",
+        all: "전체",
+        system: "시스템 강화",
+        app: "기능 플러그인",
+      },
       loadFailed: "플러그인 목록을 불러오지 못했습니다: {{error}}",
       toggledOn: "{{name}} 활성화됨",
       toggledOff: "{{name}} 비활성화됨",

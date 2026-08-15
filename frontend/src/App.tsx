@@ -1,10 +1,12 @@
 /**
- * 桌面壳主入口：启动画面 → 空桌面。
- * 应用（聊天/设置/插件/管家/编程占位）由桌面开始菜单打开，内容组件零改动嵌入。
- * 启动加载（健康轮询/配置/会话）与 TokenGate 原样保留。
+ * 双 DE 壳入口：启动画面 → 经典软件界面（默认）或桌面壳。
+ * 界面模式由用户选择持久化（boenmind.viewMode），两壳共享同一 store、
+ * 同一批应用内容组件（APPS 注册表），后端零改动——架构 §四·B
+ * "前端壳多套并存"的实作验证。
  */
 import { useCallback, useEffect, useState } from "react";
 import { Desktop } from "@/components/desktop/Desktop";
+import { ClassicShell } from "@/components/classic/ClassicShell";
 import { BootScreen } from "@/components/desktop/BootScreen";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,6 +25,7 @@ import { useAppStore } from "@/stores/app-store";
 
 export default function App() {
   const [booted, setBooted] = useState(false);
+  const viewMode = useAppStore((s) => s.viewMode);
   const refreshHealth = useAppStore((s) => s.refreshHealth);
   const loadConfig = useAppStore((s) => s.loadConfig);
   const loadSessions = useAppStore((s) => s.loadSessions);
@@ -36,12 +39,12 @@ export default function App() {
     return () => clearInterval(timer);
   }, [refreshHealth, loadConfig, loadSessions]);
 
-  // 启动画面结束才渲染桌面
+  // 启动画面结束才渲染界面壳（经典软件界面默认；桌面模式为 OS 形态入口）
   const finishBoot = useCallback(() => setBooted(true), []);
 
   return (
     <div className="h-screen w-screen overflow-hidden bg-background text-foreground">
-      {booted ? <Desktop /> : <BootScreen onFinish={finishBoot} />}
+      {booted ? (viewMode === "desktop" ? <Desktop /> : <ClassicShell />) : <BootScreen onFinish={finishBoot} />}
       <TokenGate />
     </div>
   );

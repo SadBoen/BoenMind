@@ -130,6 +130,9 @@ export const zh = {
     windowClose: "关闭 {{app}}",
     windowMinimize: "最小化 {{app}}",
     windowMaximize: "最大化/还原 {{app}}",
+    classicNav: "应用导航",
+    switchClassic: "切换经典软件界面",
+    switchDesktop: "桌面模式",
     codingComingSoon: "编程应用建设中，敬请期待",
     app: {
       chat: "对话",
@@ -280,6 +283,12 @@ export const zh = {
       },
     },
     plugins: {
+      category: {
+        label: "插件分类",
+        all: "全部",
+        system: "系统增强",
+        app: "功能插件",
+      },
       loadFailed: "加载插件列表失败: {{error}}",
       toggledOn: "已启用 {{name}}",
       toggledOff: "已禁用 {{name}}",

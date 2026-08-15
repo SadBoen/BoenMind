@@ -130,6 +130,9 @@ export const ja: Translation = {
     windowClose: "{{app}} を閉じる",
     windowMinimize: "{{app}} を最小化",
     windowMaximize: "{{app}} を最大化/元に戻す",
+    classicNav: "アプリナビゲーション",
+    switchClassic: "クラシックUIに切り替え",
+    switchDesktop: "デスクトップモード",
     codingComingSoon: "コーディングアプリは準備中です",
     app: {
       chat: "チャット",
@@ -280,6 +283,12 @@ export const ja: Translation = {
       },
     },
     plugins: {
+      category: {
+        label: "プラグイン分類",
+        all: "すべて",
+        system: "システム強化",
+        app: "機能プラグイン",
+      },
       loadFailed: "プラグイン一覧の読み込みに失敗しました: {{error}}",
       toggledOn: "{{name}} を有効にしました",
       toggledOff: "{{name}} を無効にしました",

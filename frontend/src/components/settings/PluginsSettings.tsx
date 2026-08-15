@@ -6,7 +6,7 @@
  */
 import { useEffect, useState } from "react";
 import { useTranslation, Trans } from "react-i18next";
-import { Puzzle, Settings2, ShieldCheck } from "lucide-react";
+import { LayoutGrid, Puzzle, Settings2, ShieldCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -14,9 +14,14 @@ import { api, type PluginInfo } from "@/api/client";
 import { LocalInstallRow, ManagedItemsList } from "./ManagedItemsList";
 import { PluginSettingsDialog } from "./PluginSettingsDialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { cn } from "@/lib/utils";
 
 /** 权限模式 → 配置值：default（不设置，走上游默认）/ safe / balanced / yolo（permissive + 危险放行） */
 const PERMISSION_MODES = ["default", "safe", "balanced", "yolo"] as const;
+
+/** 分类筛选：all = 全部 / system = 系统增强 / app = 功能插件（manifest category 标签） */
+type CategoryFilter = "all" | "system" | "app";
+const CATEGORY_FILTERS: CategoryFilter[] = ["all", "system", "app"];
 
 export function PluginsSettings() {
   const { t } = useTranslation();
@@ -25,6 +30,7 @@ export function PluginsSettings() {
   const [installPath, setInstallPath] = useState("");
   const [settingsFor, setSettingsFor] = useState<PluginInfo | null>(null);
   const [permissionMode, setPermissionMode] = useState<string>("default");
+  const [category, setCategory] = useState<CategoryFilter>("all");
 
   const load = async () => {
     setLoading(true);
@@ -136,6 +142,37 @@ export function PluginsSettings() {
         <p className="text-sm text-muted-foreground">{t("settings.plugins.desc")}</p>
       </div>
 
+      {/* 分类标签：全部 / 系统增强 / 功能插件（manifest category 声明驱动） */}
+      <div
+        role="tablist"
+        aria-label={t("settings.plugins.category.label")}
+        className="flex w-fit items-center gap-1 rounded-lg bg-muted/60 p-1"
+      >
+        {CATEGORY_FILTERS.map((c) => {
+          const count =
+            c === "all" ? plugins.length : plugins.filter((p) => (p.category ?? "system") === c).length;
+          return (
+            <button
+              key={c}
+              type="button"
+              role="tab"
+              aria-selected={category === c}
+              onClick={() => setCategory(c)}
+              className={cn(
+                "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                category === c
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {c === "all" && <LayoutGrid size={12} />}
+              {t(`settings.plugins.category.${c}`)}
+              <span className="text-[10px] tabular-nums text-muted-foreground/70">{count}</span>
+            </button>
+          );
+        })}
+      </div>
+
       {/* 插件权限模式：安全（询问关键能力）/ 宽松 / YOLO（全自动放行，含危险能力） */}
       <div className="flex items-center justify-between gap-3 rounded-xl border p-4">
         <div className="flex min-w-0 items-center gap-2">
@@ -173,7 +210,7 @@ export function PluginsSettings() {
       />
 
       <ManagedItemsList
-        items={plugins}
+        items={category === "all" ? plugins : plugins.filter((p) => (p.category ?? "system") === category)}
         loading={loading}
         icon={<Puzzle size={15} className="shrink-0 text-muted-foreground" />}
         badges={(plugin) => [

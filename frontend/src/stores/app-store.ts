@@ -36,6 +36,14 @@ export function defaultModelValue(config: AppConfig): string | null {
 }
 
 interface AppStore {
+  // ── 双 DE（架构 §四·B：多套前端壳并存，切换验证）──
+  // classic = 经典软件界面（左侧导航条+主面板）；desktop = 桌面壳
+  viewMode: "classic" | "desktop";
+  setViewMode: (mode: "classic" | "desktop") => void;
+  /** 经典界面的当前导航（与桌面壳 openApps 并存互不干扰） */
+  activeNav: AppId;
+  setActiveNav: (id: AppId) => void;
+
   // 桌面窗口（应用打开顺序即 z 序；单例：重复打开=聚焦+置顶）
   openApps: AppId[];
   focusedApp: AppId | null;
@@ -162,6 +170,15 @@ export const useAppStore = create<AppStore>((set, get) => {
   };
 
   return {
+    // 默认经典软件界面（用户拍板）；选择持久化，桌面模式为 OS 形态入口
+    viewMode: (localStorage.getItem("boenmind.viewMode") as "desktop" | null) ?? "classic",
+    setViewMode: (mode) => {
+      localStorage.setItem("boenmind.viewMode", mode);
+      set({ viewMode: mode });
+    },
+    activeNav: "chat",
+    setActiveNav: (id) => set({ activeNav: id }),
+
     openApps: [],
     focusedApp: null,
     minimized: [],

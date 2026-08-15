@@ -130,6 +130,9 @@ export const en: Translation = {
     windowClose: "Close {{app}}",
     windowMinimize: "Minimize {{app}}",
     windowMaximize: "Maximize/Restore {{app}}",
+    classicNav: "App navigation",
+    switchClassic: "Switch to classic UI",
+    switchDesktop: "Desktop mode",
     codingComingSoon: "Coding app under construction",
     app: {
       chat: "Chat",
@@ -280,6 +283,12 @@ export const en: Translation = {
       },
     },
     plugins: {
+      category: {
+        label: "Plugin categories",
+        all: "All",
+        system: "System",
+        app: "Apps",
+      },
       loadFailed: "Failed to load plugin list: {{error}}",
       toggledOn: "Enabled {{name}}",
       toggledOff: "Disabled {{name}}",

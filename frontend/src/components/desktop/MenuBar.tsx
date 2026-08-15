@@ -1,10 +1,11 @@
 /**
  * 顶部菜单栏（macOS menu bar 风格）：左侧 = 开始按钮（小星星）+ 聚焦应用名；
  * 右侧 = 后端状态点 + 时钟。毛玻璃深色底，任何壁纸下对比度都足够。
+ * 开始按钮旁 = 切换回经典软件界面（双 DE 并存入口）。
  */
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Sparkles } from "lucide-react";
+import { PanelLeft, Sparkles } from "lucide-react";
 import { APPS } from "@/lib/app-registry";
 import { useAppStore } from "@/stores/app-store";
 import { cn } from "@/lib/utils";
@@ -19,6 +20,7 @@ export function MenuBar({
   const { t } = useTranslation();
   const focusedApp = useAppStore((s) => s.focusedApp);
   const online = useAppStore((s) => s.online);
+  const setViewMode = useAppStore((s) => s.setViewMode);
   const [now, setNow] = useState(() => new Date());
 
   // 时钟：每 30s 刷新
@@ -43,6 +45,17 @@ export function MenuBar({
         )}
       >
         <Sparkles size={15} className="text-indigo-500 dark:text-indigo-300" />
+      </button>
+
+      {/* 切换回经典软件界面（双 DE 并存入口） */}
+      <button
+        type="button"
+        aria-label={t("desktop.switchClassic")}
+        title={t("desktop.switchClassic")}
+        onClick={() => setViewMode("classic")}
+        className="flex h-7 w-7 items-center justify-center rounded-lg text-foreground/60 transition-colors hover:bg-black/5 hover:text-foreground dark:hover:bg-white/10"
+      >
+        <PanelLeft size={14} />
       </button>
 
       {/* 聚焦应用名（macOS 菜单栏惯例） */}
