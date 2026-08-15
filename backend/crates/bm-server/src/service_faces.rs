@@ -5,7 +5,7 @@
 //! bm-compactor 同轨）；消费方经 `kernel.port` 取用（routes/plugins.rs、
 //! routes/sessions.rs 已改为取服务）——"服务面 = 承诺 API，实现面可换"。
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use bm_core::plugin_settings::SettingField;
 use bm_protocol::{
@@ -119,5 +119,101 @@ pub fn save_settings(
             .map_err(|e| bm_core::AppError::Invalid(e.to_string()))
     } else {
         bm_core::plugin_settings::save_settings(plugin_id, schema, values)
+    }
+}
+
+/// LLM 能力面实现：bm-core providers 配置 → LlmConfig JSON 视图。
+/// 桥接 resolve_llm_config（消费方 bm_engine.build_loop_agent 经服务取，
+/// 服务不可用退化直调——渐进替换不是闸门）。
+pub struct LlmPortImpl {
+    pub config: Arc<RwLock<bm_core::config::AppConfig>>,
+}
+
+impl bm_protocol::LlmPort for LlmPortImpl {
+    fn resolve_config(
+        &self,
+        provider_id: &str,
+        model: &str,
+        thinking: Option<&str>,
+    ) -> Result<Value, ProtocolError> {
+        let config = self.config.read().expect("config poisoned");
+        let provider = config
+            .providers
+            .iter()
+            .find(|p| p.id == provider_id)
+            .ok_or_else(|| {
+                ProtocolError::new(
+                    ErrorCode::NotFound,
+                    format!("provider `{provider_id}` not found"),
+                )
+            })?;
+        let cfg = crate::bm_engine::resolve_llm_config(provider, model, thinking)
+            .map_err(|(_, msg)| ProtocolError::new(ErrorCode::InvalidArgument, msg))?;
+        serde_json::to_value(cfg)
+            .map_err(|e| ProtocolError::new(ErrorCode::InvalidArgument, e.to_string()))
+    }
+
+    fn providers(&self) -> Value {
+        let config = self.config.read().expect("config poisoned");
+        serde_json::to_value(&config.providers).unwrap_or(Value::Null)
+    }
+}
+
+/// 凭证面实现：providers 配置的 api_key 读取（明文，仅宿主内部）。
+pub struct CredentialsPortImpl {
+    pub config: Arc<RwLock<bm_core::config::AppConfig>>,
+}
+
+impl bm_protocol::CredentialsPort for CredentialsPortImpl {
+    fn api_key(&self, provider_id: &str) -> Option<String> {
+        let config = self.config.read().expect("config poisoned");
+        config
+            .providers
+            .iter()
+            .find(|p| p.id == provider_id)
+            .and_then(|p| p.api_key.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bm_core::config::{AppConfig, ProviderConfig, ProviderKind};
+    use bm_protocol::{CredentialsPort, LlmPort};
+
+    fn test_config() -> Arc<RwLock<AppConfig>> {
+        let mut cfg = AppConfig::default();
+        cfg.providers.push(ProviderConfig {
+            id: "test-provider".into(),
+            name: "测试".into(),
+            kind: ProviderKind::Deepseek,
+            base_url: Some("https://example.com/v1".into()),
+            api_key: Some("sk-test".into()),
+            models: vec!["m1".into()],
+            default_model: None,
+        });
+        Arc::new(RwLock::new(cfg))
+    }
+
+    #[test]
+    fn llm_port_resolves_config_json() {
+        let port = LlmPortImpl { config: test_config() };
+        let cfg = port.resolve_config("test-provider", "m1", None).unwrap();
+        assert_eq!(cfg["base_url"], "https://example.com/v1");
+        assert_eq!(cfg["api_key"], "sk-test");
+        assert_eq!(cfg["model"], "m1");
+        // 未知提供商 → NotFound
+        let err = port.resolve_config("nope", "m1", None).unwrap_err();
+        assert_eq!(err.code(), ErrorCode::NotFound);
+        // 提供商清单 JSON 视图
+        let list = port.providers();
+        assert_eq!(list[0]["id"], "test-provider");
+    }
+
+    #[test]
+    fn credentials_port_reads_api_key() {
+        let port = CredentialsPortImpl { config: test_config() };
+        assert_eq!(port.api_key("test-provider").as_deref(), Some("sk-test"));
+        assert_eq!(port.api_key("nope"), None);
     }
 }

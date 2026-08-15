@@ -168,3 +168,31 @@ pub trait StatsPort: Send + Sync {
         session_id: &SessionId,
     ) -> BoxFuture<'_, Result<SessionUsage, ProtocolError>>;
 }
+
+/// LLM 能力面（SERVICE_FACES 图纸 #4）：客户端配置解析 + 提供商清单。
+///
+/// 契约层不依赖 bm-loop 的 [`LlmConfig`]（类型在 loop 层），边界走 JSON——
+/// 实现侧 serde 往返（bm-server resolve_llm_config 桥接语义保留在实现内）。
+pub trait LlmPort: Send + Sync {
+    /// 解析 provider+model 的客户端配置（base_url/api_key/model/
+    /// reasoning_effort 的 JSON 视图）；未知提供商/未配置端点 → Err。
+    fn resolve_config(
+        &self,
+        provider_id: &str,
+        model: &str,
+        thinking: Option<&str>,
+    ) -> Result<serde_json::Value, ProtocolError>;
+
+    /// 可用提供商清单（JSON 数组视图：id/name/kind/models/defaultModel）。
+    fn providers(&self) -> serde_json::Value;
+}
+
+/// 凭证面（SERVICE_FACES 图纸 #7）：提供商密钥读取（明文，仅服务端内部）。
+///
+/// 实现：bm-server 读 AppConfig.providers（CredentialsPortImpl）。
+/// 插件不得经此面取密钥——插件凭证走 settings 面（掩码语义），
+/// 本面只服务宿主内部（LlmPort 解析、Steward 等）。
+pub trait CredentialsPort: Send + Sync {
+    /// 提供商 API 密钥；未知提供商/未配置 → None。
+    fn api_key(&self, provider_id: &str) -> Option<String>;
+}

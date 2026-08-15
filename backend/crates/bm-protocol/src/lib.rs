@@ -29,7 +29,7 @@ pub use event::{
 pub use ids::{BranchId, CallId, GlobalSeq, SeqNo, SessionId};
 pub use policy::{Capability, PolicyEvaluation};
 pub use port::{
-    BoxFuture, BranchHead, EventQuery, EventStorePort, MemoryPort, SessionUsage, SettingsPort,
-    StatsPort,
+    BoxFuture, BranchHead, CredentialsPort, EventQuery, EventStorePort, LlmPort, MemoryPort,
+    SessionUsage, SettingsPort, StatsPort,
 };
 pub use surface::{SurfaceOp, SurfaceOutcome};

@@ -290,7 +290,26 @@ fn build_loop_agent(
             "事件日志不可用，bm 引擎无法启动".to_string(),
         ));
     };
-    let llm = OpenAiClient::new(resolve_llm_config(provider, model, thinking)?);
+    // LLM 能力面（SERVICE_FACES #4）：优先经 kernel llm 服务解析客户端配置
+    // （JSON 边界往返）；服务不可用退化直调 resolve_llm_config——渐进替换
+    let llm = match kernel.port::<dyn bm_protocol::LlmPort>("llm") {
+        Ok(port) => match port.resolve_config(&provider.id, model, thinking) {
+            Ok(cfg) => {
+                let llm_cfg = serde_json::from_value::<bm_loop::llm::LlmConfig>(cfg)
+                    .map_err(|e| {
+                        (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            format!("llm 服务配置解析失败: {e}"),
+                        )
+                    })?;
+                OpenAiClient::new(llm_cfg)
+            }
+            Err(e) => {
+                return Err((StatusCode::BAD_REQUEST, e.to_string()));
+            }
+        },
+        Err(_) => OpenAiClient::new(resolve_llm_config(provider, model, thinking)?),
+    };
     let mut tools = bm_loop::ToolRegistry::new();
     // B6：内置工具集 schema 进模型可见面（对齐 pi BUILTIN_TOOL_NAMES 全开），
     // 执行侧 QuickJsToolExecutor 按名分派到 BuiltinTools

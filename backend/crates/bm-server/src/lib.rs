@@ -417,6 +417,9 @@ async fn serve_inner(
     // 装配失败 = 编程错误（预装插件 bug），fail-fast 于启动。
     let kernel = dual_writer.as_ref().map(|d| {
         let store = d.event_log().store();
+        // 服务面铺开第二批：llm（客户端配置解析）/credentials（密钥读取）
+        // ——LlmPort 消费方 = build_loop_agent（kernel 不可用退化直调）
+        let shared_config = Arc::new(std::sync::RwLock::new(config.clone()));
         // 记忆服务面：全局单例（facts.md 同一文件；会话注入实例在
         // EngineBuilder 另开——append 容忍并发写，见 bm_engine.rs 注释）
         let memory: Arc<std::sync::Mutex<bm_memory::MemoryFilePlugin>> =
@@ -441,6 +444,18 @@ async fn serve_inner(
                     "stats",
                     Arc::new(service_faces::StatsPortImpl { store })
                         as Arc<dyn bm_protocol::StatsPort>,
+                )
+                .with_port(
+                    "llm",
+                    Arc::new(service_faces::LlmPortImpl {
+                        config: shared_config.clone(),
+                    }) as Arc<dyn bm_protocol::LlmPort>,
+                )
+                .with_port(
+                    "credentials",
+                    Arc::new(service_faces::CredentialsPortImpl {
+                        config: shared_config,
+                    }) as Arc<dyn bm_protocol::CredentialsPort>,
                 )
                 .with_plugin(
                     bm_kernel::Manifest {

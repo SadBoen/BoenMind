@@ -116,7 +116,9 @@ pub trait Llm: Send + Sync {
 // ============================================================================
 
 /// 提供商端点配置（由集成方从 bm-core providers 配置解析注入）。
-#[derive(Debug, Clone)]
+/// Serialize/Deserialize：服务面铺开（SERVICE_FACES #4）——LlmPort
+/// 边界走 JSON，消费方反序列化还原。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmConfig {
     /// 如 `https://api.deepseek.com/v1`（不含尾部斜杠；chat/completions 由 client 拼接）
     pub base_url: String,
