@@ -4,6 +4,21 @@
 > 独立报告：`docs/review-tools-2026-08-16/TOOL_A_code-architecture.md`（29 条）、`TOOL_B_codebase-reviewer.md`（26 条）、`TOOL_C_ln24-architecture-auditor.md`（14 条）。
 > 审查范围：backend/crates（9 crate）+ backend/plugins（6 插件）+ backend/tests/event_log + frontend/src；排除 vendor/target/node_modules/docs。
 
+## 修复状态（2026-08-16 修复轮，commit 78bd853→3d4ac96）
+
+| 项 | 状态 |
+|---|---|
+| P0-1 event_log 测试断裂 | ✅ 已修（checkpoint 残留测试移除+fork 断言同步；套件 19 测试复活，含 4 个沉睡断言） |
+| P0-2 内置工具权限门（B+C High） | ✅ 已修（bash/subagent 经决策记忆+SSE 询问链 fail-closed；permissive 直放） |
+| P0-3 本地 API CSRF | ✅ 已修（状态变更请求 Origin/Referer 本机校验；root 任意路径面随 CSRF 一起封堵） |
+| P1-2 双写收口 | ✅ 冻结标注（§5.1 + dual_write.rs 如实标注，收口随 M3——双向对账误判风险>毫秒窗口收益） |
+| P1-3 权限档位死配置 | ✅ 已修（extension_policy → ExtensionPolicy 映射 + 内置门同源档位） |
+| P2-1 回合编排重复 | ✅ 已修（run_agent_turn 统一 chat/steward ~150 行平行编排） |
+| P2-2 记忆双实例 | ✅ 已修（会话经 memory 服务面取全局单例——服务面首个真实闭环） |
+| P2-3 压缩可换契约 | ✅ 已修（Arc\<dyn Compactor\> 经 port 机制注册取用，第二实现生效不再静默回落） |
+| P2-4 context_window 死配置 | ✅ 已修（override 窗口注入 LoopConfig，未配置回落 128K） |
+| 扩展点删除类建议 | ⛔ 按用户定调不执行（万物皆插件理念；软件未写完）——**合理性评估见 `review-tools-2026-08-16/EXTENSION_POINTS_ASSESSMENT.md`**：13 面 9 消费 4 待接线、总线/宏/队列/fork 全部待接线有方、唯一建议清理项 = pi_name 24 路映射（真死代码待拍板） |
+
 ## 〇、一句话结论
 
 三工具一致认为：**骨架质量上乘（依赖方向机器守卫/事件日志事务/压缩协议/权限 fail-closed 都是真功夫），核心问题集中在"先建后接的抽象前置"与"双写过渡未收口"两个结构主题；另有一条已实证的测试断裂（事件日志验证根基）和一处双工具判 High 的权限链执行态失效**——架构/精简/复用维度最该动手的是"砍无消费者扩展点 + 抽统一回合运行器"。
