@@ -44,7 +44,7 @@ export function ProjectSwitcher() {
         <Button
           variant="outline"
           size="sm"
-          className="h-7 max-w-52 gap-1.5 text-xs"
+          className="h-7 w-full gap-1.5 text-xs"
           title={t("coding.project.select")}
           onClick={() => setOpen((o) => !o)}
         >
@@ -59,7 +59,7 @@ export function ProjectSwitcher() {
           <>
             {/* 点击外部关闭（fixed 全屏层，位于面板下方） */}
             <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-            <div className="absolute left-0 top-full z-50 mt-1 w-80 rounded-lg border bg-popover p-1.5 shadow-md">
+            <div className="absolute left-0 top-full z-50 mt-1 w-full rounded-lg border bg-popover p-1.5 shadow-md">
               {projects.length === 0 && (
                 <p className="px-2 py-4 text-center text-xs text-muted-foreground">
                   {t("coding.project.empty")}

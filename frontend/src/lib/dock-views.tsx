@@ -49,7 +49,12 @@ export const VIEWS: Record<ViewId, DockViewEntry> = {
     titleKey: "dock.view.chat",
     component: ChatPaneView,
   },
-  "file-panel": { titleKey: "dock.view.files", component: () => <FilePanel /> },
+  // file-panel：编程壳的面板带 coding 标记（头部显示项目切换器 + git 状态）；
+  // 聊天应用的工作目录面板不带（保持纯目录浏览）。
+  "file-panel": {
+    titleKey: "dock.view.files",
+    component: (props) => <FilePanel coding={props.params?.coding === true} />,
+  },
   editor: { titleKey: "dock.view.editor", component: () => <Editor /> },
   "todo-panel": { titleKey: "dock.view.tasks", component: () => <TodoPanel /> },
   terminal: { titleKey: "dock.view.terminal", component: ProjectTerminal },
@@ -105,6 +110,7 @@ export const DEFAULT_LAYOUTS: Partial<Record<AppId, { panels: DockPanelSpec[] }>
       {
         id: "file-panel",
         view: "file-panel",
+        params: { coding: true },
         position: { reference: "todo-panel", direction: "left" },
         initialWidth: 240,
       },

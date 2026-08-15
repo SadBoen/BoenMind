@@ -208,6 +208,8 @@ coding: {
       gitGraph: "ブランチグラフ",
     },
     resetLayout: "レイアウトをリセット",
+    addView: "パネルを追加",
+    emptyHint: "パネルが閉じられました — クリックで再表示",
   },
   settings: {
     common: {

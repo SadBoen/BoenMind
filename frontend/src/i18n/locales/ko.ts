@@ -208,6 +208,8 @@ coding: {
       gitGraph: "브랜치 그래프",
     },
     resetLayout: "레이아웃 재설정",
+    addView: "패널 추가",
+    emptyHint: "패널이 닫혔습니다 — 클릭하여 다시 열기",
   },
   settings: {
     common: {

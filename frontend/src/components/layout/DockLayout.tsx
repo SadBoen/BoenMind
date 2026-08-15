@@ -13,18 +13,21 @@
  * 机制）；终端/文件树/任务列表/编辑器可多开（dockview 原生支持，注册表
  * 不做单例限制）；专家团队模式（多模型并行）属模型层语义另行拍板。
  */
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import type { FunctionComponent } from "react";
 import { useTranslation } from "react-i18next";
 import { useTheme } from "next-themes";
+import { Plus } from "lucide-react";
 import {
   DockviewReact,
   type DockviewApi,
   type DockviewReadyEvent,
   type IDockviewPanelProps,
+  type IWatermarkPanelProps,
   type SerializedDockview,
 } from "dockview-react";
 import { DEFAULT_LAYOUTS, VIEWS, type ViewId } from "@/lib/dock-views";
+import { filterOpenable, layoutReopenItems, openPanel, registerApiApp, unregisterApiApp } from "@/lib/dock-open";
 import type { AppId } from "@/lib/app-registry";
 import { cn } from "@/lib/utils";
 import { SessionsToggle, StatusBarActions } from "./StatusBarActions";
@@ -39,12 +42,13 @@ interface DockLayoutProps {
 }
 
 /**
- * 布局快照 key（每应用一份）。v2：DEFAULT_LAYOUTS 演进（新增 git-graph 视图）
- * 时 bump 版本——旧快照不包含新默认视图，版本化后重建默认布局。代价是
- * 用户自定义布局随版本重置一次；插件默认布局声明（§四·C）落地时再设计
- * 精细迁移（快照指纹对比），当前阶段默认布局即用户所见，bump 可接受。
+ * 布局快照 key（每应用一份）。v7：file-panel 面板参数化（coding 模式：
+ * 项目切换器 + git 状态并入文件树单元，顶部横条退役）——旧快照里
+ * file-panel 无 coding 参数，版本化后重建默认布局。代价是用户自定义
+ * 布局随版本重置一次；插件默认布局声明（§四·C）落地时再设计精细迁移
+ * （快照指纹对比），当前阶段默认布局即用户所见，bump 可接受。
  */
-const layoutKey = (appId: AppId) => `boenmind.dock.v6.${appId}`;
+const layoutKey = (appId: AppId) => `boenmind.dock.v7.${appId}`;
 
 /**
  * 布局重置注册表：DockLayout 实例挂载时登记，壳层（导航右键菜单/标题栏）
@@ -129,10 +133,60 @@ export const DockLayout = forwardRef<DockLayoutHandle, DockLayoutProps>(function
   // 挂载登记（导航右键「重置布局」入口），卸载注销
   useEffect(() => registerDockLayout(appId, { resetLayout }), [appId, resetLayout]);
 
+  /**
+   * 可重开视图清单：默认布局里的视图（重开回到默认位置与参数）+ 编辑器
+   * （可多开视图，不在默认布局——"用户随时可加回"的功能单元模式）。
+   */
+  const reopenItems = useMemo(
+    () => layoutReopenItems(appId, (v) => t(VIEWS[v].titleKey)),
+    [appId, t],
+  );
+
+  /**
+   * 空组 watermark：布局内已无面板时，中央显示「添加面板」按钮组
+   * （用户"关闭后除了重置没有二次打开方法"的补口，2026-08-15）。
+   * 日常"关一个面板"的入口 = 面板标题栏 "+" 菜单（StatusBarActions）——
+   * dockview 8.1 关闭组内最后一个面板会移除空组，watermark 只覆盖全关场景。
+   */
+  const Watermark = useMemo(() => {
+    function EmptyGroupWatermark({ containerApi, group }: IWatermarkPanelProps) {
+      const [, setTick] = useState(0);
+      useEffect(() => {
+        const disposable = containerApi.onDidLayoutChange(() => setTick((x) => x + 1));
+        return () => disposable.dispose();
+      }, [containerApi]);
+      // 对话视图单实例（绑定场景）：已打开则不重复提供；其余视图可多开，常显
+      const items = filterOpenable(reopenItems, containerApi);
+      return (
+        <div className="flex h-full w-full items-center justify-center">
+          <div className="flex max-w-md flex-col items-center gap-3 p-4">
+            <p className="text-xs text-muted-foreground">{t("dock.emptyHint")}</p>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              {items.map((item) => (
+                <button
+                  key={item.view}
+                  type="button"
+                  onClick={() => openPanel(containerApi, group?.id, item)}
+                  className="flex items-center gap-1.5 rounded-md border bg-background px-2.5 py-1.5 text-xs transition-colors hover:bg-accent"
+                >
+                  <Plus size={13} />
+                  {item.title}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return EmptyGroupWatermark;
+  }, [reopenItems, t]);
+
   const onReady = useCallback(
     (event: DockviewReadyEvent) => {
       const api = event.api;
       apiRef.current = api;
+      // header action 组件（标题栏"+"菜单）经此反查所属应用
+      registerApiApp(api, appId);
       // 布局结构/尺寸变化（聚合事件：停靠/悬浮/叠放/分界线拖拽/最大化…）→ 防抖落盘
       const save = debounce(saveLayout, 500);
       api.onDidLayoutChange(() => save());
@@ -154,6 +208,14 @@ export const DockLayout = forwardRef<DockLayoutHandle, DockLayoutProps>(function
     [appId, buildDefaultLayout, saveLayout],
   );
 
+  // 卸载前注销 api→appId 映射（api 随组件销毁；cleanup 读 ref 拿最新值）
+  useEffect(
+    () => () => {
+      if (apiRef.current) unregisterApiApp(apiRef.current);
+    },
+    [],
+  );
+
   // 卸载前最后落一次盘（分界线拖拽后的比例在 unload 时留住）
   useEffect(() => () => saveLayout(), [saveLayout]);
 
@@ -171,6 +233,7 @@ export const DockLayout = forwardRef<DockLayoutHandle, DockLayoutProps>(function
       )}
       components={components}
       onReady={onReady}
+      watermarkComponent={Watermark}
       rightHeaderActionsComponent={StatusBarActions}
       prefixHeaderActionsComponent={SessionsToggle}
     />

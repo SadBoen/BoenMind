@@ -208,6 +208,8 @@ coding: {
       gitGraph: "Branch Graph",
     },
     resetLayout: "Reset Layout",
+    addView: "Add Panel",
+    emptyHint: "Panels closed — click to reopen",
   },
   settings: {
     common: {

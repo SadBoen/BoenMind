@@ -207,6 +207,8 @@ coding: {
       gitGraph: "分支图",
     },
     resetLayout: "重置布局",
+    addView: "添加面板",
+    emptyHint: "面板已关闭——点击重新打开",
   },
   settings: {
     common: {

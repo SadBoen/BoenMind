@@ -2,86 +2,29 @@
  * 编程应用独立壳（M2 起，用户拍板"编程为软件实现第一优先"）。
  *
  * ┌───────────────────────────────────────┐
- * │ GitBar：分支 + 最近提交节点 + 变更摘要    │
- * ├───────────────────────────────────────┤
  * │ DockLayout（可停靠视图容器，v0.23）：    │
- * │ 默认布局 = 左文件树 / 中编辑器 /          │
- * │ 右下 任务|对话|终端 叠放 Tab              │
+ * │ 默认布局 = 左文件树 / 中任务清单 /        │
+ * │ 右对话 / 底部分支图|终端 叠放 Tab        │
  * └───────────────────────────────────────┘
  * 后端零新增编排概念：文件走 /api/workspace（读/写），清单走事件日志
  * todo/write 投影（REST + 事件流双通道），git 走 /api/workspace/git-info。
  * 分支图 = 起步形态（提交节点时间线）；完整 DAG 图留 M2 深化轮。
  *
+ * 顶部项目横条已于 2026-08-15 退役（用户"选择项目占一整行不合理"）：
+ * 项目切换器 + git 状态（分支/变更摘要）并入文件树单元（FilePanel
+ * coding 模式）；本壳只负责内容区布局，不再持有任何业务状态。
+ *
  * 视图 = 宿主共享公共组件（FilePanel/Editor/TodoPanel/ChatPane/TerminalPane
  * 全部在 lib/dock-views.tsx 登记，零改动嵌入）：对话视图单实例且绑定 coding
  * 场景（一软件一会话，面板挂载即 ensureAppSession），终端 = xterm.js +
- * portable-pty 上游吸收。布局快照持久化 + 导航右键重置由 DockLayout 承担。
+ * portable-pty 上游吸收。布局快照持久化 + 导航右键重置 + 空组重开由
+ * DockLayout 承担。
  */
-import { useCallback, useEffect, useState } from "react";
-import { useTranslation } from "react-i18next";
-import { GitBranch, RefreshCw } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { api, type GitInfo } from "@/api/client";
 import { DockLayout } from "@/components/layout/DockLayout";
-import { ProjectSwitcher } from "@/components/coding/ProjectSwitcher";
-import { useAppStore } from "@/stores/app-store";
 
 export function CodingApp() {
-  const { t } = useTranslation();
-  const [git, setGit] = useState<GitInfo | null>(null);
-  // 项目根（项目切换：GitBar/分支图跟随当前项目；无项目 = 配置工作目录兜底）
-  const projectRoot = useAppStore((s) => s.currentProject?.root);
-
-  const loadGit = useCallback(() => {
-    api
-      .gitInfo(projectRoot)
-      .then(setGit)
-      .catch(() => setGit(null));
-  }, [projectRoot]);
-
-  useEffect(() => {
-    loadGit();
-  }, [loadGit]);
-
   return (
     <div className="flex h-full min-w-0 flex-col bg-background">
-      {/* 项目条（GitBar 精简版，2026-08-15 用户"一行代码都不用看"）：项目切换 + 当前分支 + 变更摘要；
-          提交历史看分支图面板（DAG），不再横排 commit 标题 */}
-      <div className="flex h-10 shrink-0 items-center gap-3 border-b px-3">
-        {/* 项目切换器（当前项目下拉：切换/新建/删除；文件树等视图经 store 联动） */}
-        <ProjectSwitcher />
-        {git?.repo ? (
-          <>
-            <GitBranch size={14} className="text-muted-foreground" />
-            <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
-              {git.branch}
-            </span>
-            {/* 变更摘要 */}
-            {(git.status ?? []).length > 0 && (
-              <span
-                className="ml-auto shrink-0 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-600 dark:text-amber-400"
-                title={(git.status ?? []).join("\n")}
-              >
-                {t("coding.git.changes", { count: (git.status ?? []).length })}
-              </span>
-            )}
-          </>
-        ) : (
-          <span className="text-xs text-muted-foreground">{t("coding.git.noRepo")}</span>
-        )}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="ml-auto h-7 w-7 shrink-0"
-          title={t("common.refresh")}
-          onClick={loadGit}
-        >
-          <RefreshCw size={13} />
-        </Button>
-      </div>
-
-      {/* 可停靠视图容器：默认布局（左文件树/中编辑器/右下任务|对话|终端）声明在
-          lib/dock-views.tsx 的 DEFAULT_LAYOUTS，用户改动布局自动持久化 */}
       <div className="min-h-0 flex-1">
         <DockLayout appId="coding" />
       </div>

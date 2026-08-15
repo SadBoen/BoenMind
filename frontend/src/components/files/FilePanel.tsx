@@ -2,8 +2,12 @@
  * 文件浏览区（M2 编程壳左栏）：工作文件夹列表 + 搜索。
  * 打开文件 = 设置 previewFile，由宿主（编程壳编辑器）消费——本组件
  * 只负责列表，预览/编辑职责上移（三栏固定布局，最大化语义不再需要）。
+ *
+ * coding 模式（编程壳面板，面板 params coding:true）：头部合并项目切换器
+ * （2026-08-15 用户"选择项目不该占一整行"）+ git 状态（分支/变更摘要），
+ * 顶部横条退役；聊天应用的工作目录面板不带 coding 标记，保持纯目录浏览。
  */
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   ChevronLeft,
@@ -11,6 +15,7 @@ import {
   FileImage,
   FileText,
   Folder,
+  GitBranch,
   RefreshCw,
   Search,
 } from "lucide-react";
@@ -18,10 +23,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn, formatBytes } from "@/lib/utils";
-import type { FileEntry } from "@/api/client";
+import { api, type FileEntry, type GitInfo } from "@/api/client";
+import { ProjectSwitcher } from "@/components/coding/ProjectSwitcher";
 import { useAppStore } from "@/stores/app-store";
 
-export function FilePanel() {
+export function FilePanel({ coding = false }: { coding?: boolean }) {
   const { t } = useTranslation();
   const workspaceDir = useAppStore((s) => s.workspaceDir);
   const entries = useAppStore((s) => s.entries);
@@ -30,14 +36,29 @@ export function FilePanel() {
   const openFile = useAppStore((s) => s.openFile);
   // 当前项目 id（项目切换：文件树回新项目根重新加载；无项目 = 配置工作目录）
   const projectId = useAppStore((s) => s.currentProjectId);
+  // git 状态（编程壳专属，项目切换/刷新时自动加载）
+  const projectRoot = useAppStore((s) => s.currentProject?.root);
 
   const [query, setQuery] = useState("");
+  const [git, setGit] = useState<GitInfo | null>(null);
+
+  const loadGit = useCallback(() => {
+    if (!coding) return;
+    api
+      .gitInfo(projectRoot)
+      .then(setGit)
+      .catch(() => setGit(null));
+  }, [coding, projectRoot]);
 
   // 挂载时加载工作文件夹根目录（zustand action 引用稳定，仅执行一次）；
   // 项目切换 → 重新加载新项目根；工作目录变更由 WorkspaceSettings 保存后主动 navigateDir("") 刷新
   useEffect(() => {
     void navigateDir("");
   }, [navigateDir, projectId]);
+
+  useEffect(() => {
+    loadGit();
+  }, [loadGit]);
 
   const dirName = workspaceDir === "" ? t("files.workspace") : workspaceDir.split("/").pop();
 
@@ -46,10 +67,22 @@ export function FilePanel() {
     [entries, query],
   );
 
+  const refresh = () => {
+    void navigateDir(workspaceDir);
+    loadGit();
+  };
+
   return (
     <div className="flex h-full min-w-0 flex-col bg-background">
-      {/* 头部 */}
-      <div className="flex h-11 shrink-0 items-center gap-1 border-b px-2">
+      {/* 编程壳模式：行 1 = 项目切换器（顶部横条退役后并入本单元） */}
+      {coding && (
+        <div className="shrink-0 border-b px-2 py-1.5">
+          <ProjectSwitcher />
+        </div>
+      )}
+
+      {/* 行 2：目录导航 + git 状态（分支/变更摘要）+ 刷新 */}
+      <div className="flex h-9 shrink-0 items-center gap-1 border-b px-2">
         {workspaceDir !== "" ? (
           <Button
             variant="ghost"
@@ -64,13 +97,24 @@ export function FilePanel() {
         <span className="min-w-0 flex-1 truncate px-1 text-sm font-medium" title={workspaceDir}>
           {dirName}
         </span>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7"
-          title={t("common.refresh")}
-          onClick={() => void navigateDir(workspaceDir)}
-        >
+        {git?.repo && (
+          <span
+            className="inline-flex shrink-0 items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary"
+            title={git.branch}
+          >
+            <GitBranch size={10} />
+            {git.branch}
+          </span>
+        )}
+        {git?.repo && (git.status ?? []).length > 0 && (
+          <span
+            className="shrink-0 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-600 dark:text-amber-400"
+            title={(git.status ?? []).join("\n")}
+          >
+            {t("coding.git.changes", { count: (git.status ?? []).length })}
+          </span>
+        )}
+        <Button variant="ghost" size="icon" className="h-7 w-7" title={t("common.refresh")} onClick={refresh}>
           <RefreshCw size={14} className={cn(loadingFiles && "animate-spin")} />
         </Button>
       </div>
