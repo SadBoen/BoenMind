@@ -128,6 +128,8 @@ export const ko: Translation = {
     dock: "Dock",
     emptyHint: "시작 메뉴에서 앱 열기",
     windowClose: "{{app}} 닫기",
+    windowMinimize: "{{app}} 최소화",
+    windowMaximize: "{{app}} 최대화/복원",
     codingComingSoon: "코딩 앱 준비 중입니다",
     app: {
       chat: "대화",

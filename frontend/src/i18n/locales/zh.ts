@@ -128,6 +128,8 @@ export const zh = {
     dock: "程序坞",
     emptyHint: "从开始菜单打开应用",
     windowClose: "关闭 {{app}}",
+    windowMinimize: "最小化 {{app}}",
+    windowMaximize: "最大化/还原 {{app}}",
     codingComingSoon: "编程应用建设中，敬请期待",
     app: {
       chat: "对话",

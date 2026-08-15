@@ -15,6 +15,7 @@ import { StartMenu } from "./StartMenu";
 export function Desktop() {
   const { t } = useTranslation();
   const openApps = useAppStore((s) => s.openApps);
+  const minimized = useAppStore((s) => s.minimized);
   const closeApp = useAppStore((s) => s.closeApp);
   const [startOpen, setStartOpen] = useState(false);
 
@@ -34,11 +35,11 @@ export function Desktop() {
           </div>
         )}
 
-        {/* 窗口层：react-rnd 的 bounds 容器 */}
+        {/* 窗口层：react-rnd 的 bounds 容器（最小化的窗口不渲染，Dock 图标恢复） */}
         <div className="absolute inset-0 z-20">
-          {openApps.map((id, index) => (
-            <AppWindow key={id} id={id} zIndex={index} onClose={closeApp} />
-          ))}
+          {openApps.map((id, index) =>
+            minimized.includes(id) ? null : <AppWindow key={id} id={id} zIndex={index} onClose={closeApp} />,
+          )}
         </div>
       </div>
 

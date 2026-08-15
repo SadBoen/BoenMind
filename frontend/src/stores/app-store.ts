@@ -39,9 +39,13 @@ interface AppStore {
   // 桌面窗口（应用打开顺序即 z 序；单例：重复打开=聚焦+置顶）
   openApps: AppId[];
   focusedApp: AppId | null;
+  /** 最小化的窗口（保留在 openApps 维持 z 序与 Dock 指示点，渲染时跳过） */
+  minimized: AppId[];
   openApp: (id: AppId) => void;
   closeApp: (id: AppId) => void;
   focusApp: (id: AppId) => void;
+  minimizeApp: (id: AppId) => void;
+  restoreApp: (id: AppId) => void;
 
   // 设置页（设置应用内部）
   settingsTab: SettingsTab;
@@ -160,11 +164,21 @@ export const useAppStore = create<AppStore>((set, get) => {
   return {
     openApps: [],
     focusedApp: null,
+    minimized: [],
     openApp: (id) => {
       const s = get();
       if (s.openApps.includes(id)) {
-        // 单例：已打开则置顶聚焦
-        set({ openApps: [...s.openApps.filter((a) => a !== id), id], focusedApp: id });
+        if (s.minimized.includes(id)) {
+          // 已打开但最小化：恢复（移出最小化 + 置顶聚焦）
+          set({
+            minimized: s.minimized.filter((a) => a !== id),
+            focusedApp: id,
+            openApps: [...s.openApps.filter((a) => a !== id), id],
+          });
+        } else {
+          // 单例：已打开则置顶聚焦
+          set({ openApps: [...s.openApps.filter((a) => a !== id), id], focusedApp: id });
+        }
         return;
       }
       set({ openApps: [...s.openApps, id], focusedApp: id });
@@ -174,6 +188,7 @@ export const useAppStore = create<AppStore>((set, get) => {
       const rest = s.openApps.filter((a) => a !== id);
       set({
         openApps: rest,
+        minimized: s.minimized.filter((a) => a !== id),
         focusedApp: s.focusedApp === id ? (rest[rest.length - 1] ?? null) : s.focusedApp,
       });
     },
@@ -181,6 +196,22 @@ export const useAppStore = create<AppStore>((set, get) => {
       const s = get();
       if (s.focusedApp === id) return;
       set({ focusedApp: id, openApps: [...s.openApps.filter((a) => a !== id), id] });
+    },
+    minimizeApp: (id) => {
+      const s = get();
+      if (s.minimized.includes(id)) return;
+      set({ minimized: [...s.minimized, id] });
+      // 聚焦转移给 z 序上一个可见窗口（macOS 语义）；没有则空桌面
+      const next = [...s.openApps].reverse().find((a) => a !== id && !s.minimized.includes(a));
+      set({ focusedApp: next ?? null });
+    },
+    restoreApp: (id) => {
+      const s = get();
+      set({
+        minimized: s.minimized.filter((a) => a !== id),
+        focusedApp: id,
+        openApps: [...s.openApps.filter((a) => a !== id), id],
+      });
     },
 
     settingsTab: "appearance",

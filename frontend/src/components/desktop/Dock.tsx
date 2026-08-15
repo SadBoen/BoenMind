@@ -24,8 +24,10 @@ export function Dock() {
   const { t } = useTranslation();
   const openApps = useAppStore((s) => s.openApps);
   const focusedApp = useAppStore((s) => s.focusedApp);
+  const minimized = useAppStore((s) => s.minimized);
   const openApp = useAppStore((s) => s.openApp);
   const focusApp = useAppStore((s) => s.focusApp);
+  const restoreApp = useAppStore((s) => s.restoreApp);
   const [mouseX, setMouseX] = useState<number | null>(null);
   const btnRefs = useRef<(HTMLButtonElement | null)[]>([]);
 
@@ -53,6 +55,7 @@ export function Dock() {
         {APP_LIST.map((app, index) => {
           const open = openApps.includes(app.id);
           const active = focusedApp === app.id;
+          const isMinimized = open && minimized.includes(app.id);
           const scale = scaleFor(index);
           return (
             <button
@@ -62,13 +65,24 @@ export function Dock() {
               }}
               type="button"
               aria-label={t(app.nameKey)}
-              onClick={() => (open ? focusApp(app.id) : openApp(app.id))}
+              onClick={() => {
+                if (!open) {
+                  openApp(app.id);
+                } else if (isMinimized) {
+                  // 最小化的窗口：Dock 点击恢复
+                  restoreApp(app.id);
+                } else {
+                  focusApp(app.id);
+                }
+              }}
               className="group flex flex-col items-center"
             >
               <span
                 className={cn(
                   "flex items-center justify-center rounded-xl text-white shadow-md",
                   active && "ring-2 ring-white/50",
+                  // 最小化窗口的图标变暗（macOS 语义：最小化窗口在 Dock 中呈"收起"态）
+                  isMinimized && "opacity-50 saturate-50",
                 )}
                 style={{
                   width: BASE * scale,
@@ -79,11 +93,12 @@ export function Dock() {
               >
                 {app.icon}
               </span>
-              {/* 运行指示点 */}
+              {/* 运行指示点：最小化的窗口显示空心（仍存活但未在桌面） */}
               <span
                 className={cn(
                   "mt-1 h-1 w-1 rounded-full bg-white/80 transition-opacity",
                   open ? "opacity-100" : "opacity-0",
+                  isMinimized && "h-1.5 w-1.5 border border-white/60 bg-transparent",
                 )}
               />
             </button>

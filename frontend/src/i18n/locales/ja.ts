@@ -128,6 +128,8 @@ export const ja: Translation = {
     dock: "Dock",
     emptyHint: "スタートメニューからアプリを開く",
     windowClose: "{{app}} を閉じる",
+    windowMinimize: "{{app}} を最小化",
+    windowMaximize: "{{app}} を最大化/元に戻す",
     codingComingSoon: "コーディングアプリは準備中です",
     app: {
       chat: "チャット",

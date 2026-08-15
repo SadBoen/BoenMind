@@ -128,6 +128,8 @@ export const en: Translation = {
     dock: "Dock",
     emptyHint: "Open an app from the start menu",
     windowClose: "Close {{app}}",
+    windowMinimize: "Minimize {{app}}",
+    windowMaximize: "Maximize/Restore {{app}}",
     codingComingSoon: "Coding app under construction",
     app: {
       chat: "Chat",
