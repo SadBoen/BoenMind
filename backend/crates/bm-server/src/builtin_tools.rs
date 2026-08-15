@@ -23,6 +23,9 @@ const READ_TOOL_MAX_BYTES: u64 = 100 * 1024 * 1024;
 const WRITE_TOOL_MAX_BYTES: usize = 100 * 1024 * 1024;
 /// bash 默认超时（ms）。
 const DEFAULT_BASH_TIMEOUT_MS: u64 = 60_000;
+/// grep/find 默认超时（ms）：遍历尊重 .gitignore 后正常搜索亚秒级，
+/// 60s 兜底防极端目录树挂死回合（M1 验收问题 2）。
+const DEFAULT_GREP_TIMEOUT_MS: u64 = 60_000;
 /// find/ls 默认结果数上限。
 const DEFAULT_LIST_LIMIT: usize = 100;
 
@@ -45,6 +48,9 @@ impl ToolError {
     }
     fn io(message: impl Into<String>) -> Self {
         Self { code: "io", message: message.into() }
+    }
+    fn timeout(message: impl Into<String>) -> Self {
+        Self { code: "timeout", message: message.into() }
     }
 }
 
@@ -121,7 +127,7 @@ impl BuiltinTools {
             ),
             bm_loop::model::ToolDef::new(
                 "grep",
-                "Recursively search files for a literal substring (ignore_case optional).",
+                "Recursively search files for a literal substring (ignore_case optional; respects .gitignore/.ignore and skips hidden files).",
                 serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -129,19 +135,21 @@ impl BuiltinTools {
                         "path": { "type": "string", "description": "Root directory (default: working dir)" },
                         "ignore_case": { "type": "boolean" },
                         "limit": { "type": "integer" },
+                        "timeout": { "type": "integer", "description": "Timeout in ms (default 60000)" },
                     },
                     "required": ["pattern"],
                 }),
             ),
             bm_loop::model::ToolDef::new(
                 "find",
-                "Recursively find files whose name contains the pattern.",
+                "Recursively find files whose name contains the pattern (respects .gitignore/.ignore and skips hidden files).",
                 serde_json::json!({
                     "type": "object",
                     "properties": {
                         "pattern": { "type": "string" },
                         "path": { "type": "string" },
                         "limit": { "type": "integer" },
+                        "timeout": { "type": "integer", "description": "Timeout in ms (default 60000)" },
                     },
                     "required": ["pattern"],
                 }),
@@ -179,8 +187,8 @@ impl BuiltinTools {
             "read" => self.read(&input),
             "write" => self.write(&input),
             "edit" => self.edit(&input),
-            "grep" => self.grep(&input),
-            "find" => self.find(&input),
+            "grep" => self.grep(&input).await,
+            "find" => self.find(&input).await,
             "ls" => self.ls(&input),
             "bash" => self.bash(&input).await,
             other => Err(ToolError::invalid(format!("Unknown tool: {other}"))),
@@ -279,10 +287,13 @@ impl BuiltinTools {
         Ok(text_output(format!("Successfully replaced {replaced} occurrence(s) in {path}")))
     }
 
-    /// `{pattern(必填), path?, literal?, ignore_case?, limit?}` → 递归搜索。
-    /// 简化：literal 恒按字面子串匹配（fancy-regex 留给未来的正则档），
+    /// `{pattern(必填), path?, ignore_case?, limit?, timeout?}` → 递归搜索。
+    /// 遍历尊重 .gitignore/.ignore 并跳过隐藏文件（ignore crate，ripgrep 库族）
+    /// ——M1 验收问题 2：纯 std 递归把 target/ 等被忽略目录全趟一遍，单次卡 ~4 分钟。
+    /// 同步遍历放阻塞线程池 + timeout 兜底：超时立即返回错误（残留遍历跑完即弃，
+    /// 不再挂死回合）。literal 恒按字面子串匹配（fancy-regex 留给未来的正则档），
     /// 输出行格式 `rel/path:line:text`，命中上限默认 100。
-    fn grep(&self, input: &serde_json::Value) -> ToolResult {
+    async fn grep(&self, input: &serde_json::Value) -> ToolResult {
         let pattern = input.get("pattern").and_then(serde_json::Value::as_str)
             .ok_or_else(|| ToolError::invalid("grep: pattern is required"))?;
         let root = match input.get("path").and_then(serde_json::Value::as_str) {
@@ -294,33 +305,25 @@ impl BuiltinTools {
         let limit = input.get("limit").and_then(serde_json::Value::as_u64)
             .map(|l| l as usize)
             .unwrap_or(DEFAULT_LIST_LIMIT);
+        let timeout_ms = input.get("timeout").and_then(serde_json::Value::as_u64)
+            .filter(|t| *t > 0)
+            .unwrap_or(DEFAULT_GREP_TIMEOUT_MS);
 
-        let haystack = if ignore_case { pattern.to_lowercase() } else { pattern.to_string() };
-        let mut out = String::new();
-        let mut hits = 0usize;
-        for entry in walk_files(&root).map_err(ToolError::io)? {
-            if hits >= limit {
-                break;
-            }
-            let Ok(text) = std::fs::read_to_string(&entry) else { continue };
-            for (idx, line) in text.lines().enumerate() {
-                let candidate = if ignore_case { line.to_lowercase() } else { line.to_string() };
-                if candidate.contains(&haystack) {
-                    let rel = entry.strip_prefix(&root).unwrap_or(&entry);
-                    out.push_str(&format!("{}:{}:{}\n", rel_slashes(rel), idx + 1, line));
-                    hits += 1;
-                    if hits >= limit {
-                        break;
-                    }
-                }
-            }
+        let (root, pattern) = (root.clone(), pattern.to_string());
+        let task = tokio::task::spawn_blocking(move || grep_walk(&pattern, &root, ignore_case, limit));
+        match tokio::time::timeout(Duration::from_millis(timeout_ms), task).await {
+            Ok(Ok(out)) => Ok(text_output(out)),
+            Ok(Err(e)) => Err(ToolError::io(format!("grep task failed: {e}"))),
+            Err(_) => Err(ToolError::timeout(format!(
+                "grep timed out after {timeout_ms}ms (narrow path or raise timeout)"
+            ))),
         }
-        Ok(text_output(if out.is_empty() { String::new() } else { out }))
     }
 
-    /// `{pattern(必填), path?, limit?}` → 递归找文件名包含 pattern 的条目。
+    /// `{pattern(必填), path?, limit?, timeout?}` → 递归找文件名包含 pattern 的条目。
+    /// 遍历同样尊重 .gitignore 且有超时兜底（同 grep，M1 验收问题 2）。
     /// 简化：子串匹配（legacy 支持 glob）；输出每行一个相对路径。
-    fn find(&self, input: &serde_json::Value) -> ToolResult {
+    async fn find(&self, input: &serde_json::Value) -> ToolResult {
         let pattern = input.get("pattern").and_then(serde_json::Value::as_str)
             .ok_or_else(|| ToolError::invalid("find: pattern is required"))?;
         let root = match input.get("path").and_then(serde_json::Value::as_str) {
@@ -330,22 +333,19 @@ impl BuiltinTools {
         let limit = input.get("limit").and_then(serde_json::Value::as_u64)
             .map(|l| l as usize)
             .unwrap_or(DEFAULT_LIST_LIMIT);
+        let timeout_ms = input.get("timeout").and_then(serde_json::Value::as_u64)
+            .filter(|t| *t > 0)
+            .unwrap_or(DEFAULT_GREP_TIMEOUT_MS);
 
-        let mut out = String::new();
-        let mut hits = 0usize;
-        for entry in walk_files(&root).map_err(ToolError::io)? {
-            let name = entry.file_name().and_then(|n| n.to_str()).unwrap_or_default();
-            if !name.contains(pattern) {
-                continue;
-            }
-            let rel = entry.strip_prefix(&root).unwrap_or(&entry);
-            out.push_str(&format!("{}\n", rel_slashes(rel)));
-            hits += 1;
-            if hits >= limit {
-                break;
-            }
+        let (root, pattern) = (root.clone(), pattern.to_string());
+        let task = tokio::task::spawn_blocking(move || find_walk(&pattern, &root, limit));
+        match tokio::time::timeout(Duration::from_millis(timeout_ms), task).await {
+            Ok(Ok(out)) => Ok(text_output(out)),
+            Ok(Err(e)) => Err(ToolError::io(format!("find task failed: {e}"))),
+            Err(_) => Err(ToolError::timeout(format!(
+                "find timed out after {timeout_ms}ms (narrow path or raise timeout)"
+            ))),
         }
-        Ok(text_output(out))
     }
 
     /// `{path?, limit?}` → 列目录（目录后缀 `/`）。
@@ -516,23 +516,66 @@ fn rel_slashes(path: &Path) -> String {
     path.display().to_string().replace('\\', "/")
 }
 
-/// 递归遍历文件（跳过目录遍历错误，深度优先）。
-fn walk_files(root: &Path) -> Result<Vec<PathBuf>, String> {
+/// 递归遍历文件（忽略遍历错误，深度优先）：尊重 .gitignore/.ignore、
+/// 跳过隐藏文件、不跟随符号链接（ignore crate WalkBuilder 默认行为，与
+/// ripgrep 一致）——M1 验收问题 2 修复：纯 std 递归会把 target/ 等被忽略
+/// 目录全趟一遍（单次卡 ~4 分钟），ignore 过滤后正常仓库搜索亚秒级。
+fn walk_files(root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let Ok(ft) = entry.file_type() else { continue };
-            if ft.is_dir() {
-                stack.push(path);
-            } else if ft.is_file() {
-                out.push(path);
+    for entry in ignore::WalkBuilder::new(root).build() {
+        let Ok(entry) = entry else { continue };
+        // 不跟随符号链接：file_type() 对 symlink 为 None，与旧实现一致跳过
+        if entry.file_type().is_some_and(|t| t.is_file()) {
+            out.push(entry.into_path());
+        }
+    }
+    out
+}
+
+/// grep 同步搜索体（spawn_blocking 内执行，见 BuiltinTools::grep）。
+/// 输出行格式 `rel/path:line:text`，命中上限 limit。
+fn grep_walk(pattern: &str, root: &Path, ignore_case: bool, limit: usize) -> String {
+    let haystack = if ignore_case { pattern.to_lowercase() } else { pattern.to_string() };
+    let mut out = String::new();
+    let mut hits = 0usize;
+    for entry in walk_files(root) {
+        if hits >= limit {
+            break;
+        }
+        let Ok(text) = std::fs::read_to_string(&entry) else { continue };
+        for (idx, line) in text.lines().enumerate() {
+            let candidate = if ignore_case { line.to_lowercase() } else { line.to_string() };
+            if candidate.contains(&haystack) {
+                let rel = entry.strip_prefix(root).unwrap_or(&entry);
+                out.push_str(&format!("{}:{}:{}\n", rel_slashes(rel), idx + 1, line));
+                hits += 1;
+                if hits >= limit {
+                    break;
+                }
             }
         }
     }
-    Ok(out)
+    out
+}
+
+/// find 同步搜索体（spawn_blocking 内执行，见 BuiltinTools::find）。
+/// 输出每行一个相对路径，上限 limit。
+fn find_walk(pattern: &str, root: &Path, limit: usize) -> String {
+    let mut out = String::new();
+    let mut hits = 0usize;
+    for entry in walk_files(root) {
+        if hits >= limit {
+            break;
+        }
+        let name = entry.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+        if !name.contains(pattern) {
+            continue;
+        }
+        let rel = entry.strip_prefix(root).unwrap_or(&entry);
+        out.push_str(&format!("{}\n", rel_slashes(rel)));
+        hits += 1;
+    }
+    out
 }
 
 /// 临时文件 + rename 原子落盘（同目录 rename 保证原子性）。
@@ -596,30 +639,59 @@ mod tests {
         assert_eq!(std::fs::read_to_string(dir.path().join("f.txt")).unwrap(), "b b");
     }
 
-    #[test]
-    fn grep_finds_lines_with_path_prefix() {
+    #[tokio::test]
+    async fn grep_finds_lines_with_path_prefix() {
         let dir = tempfile::tempdir().unwrap();
         let t = tools(dir.path());
         std::fs::create_dir_all(dir.path().join("sub")).unwrap();
         std::fs::write(dir.path().join("sub/x.txt"), "hello\nworld\nhello again").unwrap();
-        let out = t.grep(&serde_json::json!({ "pattern": "hello" })).unwrap();
+        let out = t.grep(&serde_json::json!({ "pattern": "hello" })).await.unwrap();
         let text = out["content"][0]["text"].as_str().unwrap();
         assert!(text.contains("sub/x.txt:1:hello"), "{text}");
         assert!(text.contains("sub/x.txt:3:hello again"), "{text}");
         // 大小写不敏感
-        let out2 = t.grep(&serde_json::json!({ "pattern": "WORLD", "ignore_case": true })).unwrap();
+        let out2 = t.grep(&serde_json::json!({ "pattern": "WORLD", "ignore_case": true })).await.unwrap();
         assert!(out2["content"][0]["text"].as_str().unwrap().contains(":2:world"));
     }
 
-    #[test]
-    fn find_and_ls_scope_to_root() {
+    #[tokio::test]
+    async fn grep_respects_gitignore() {
+        let dir = tempfile::tempdir().unwrap();
+        let t = tools(dir.path());
+        // ignore crate 语义对齐 ripgrep：.gitignore 只在 git 仓库内生效
+        // （仓库外仅 .ignore 生效）；空 .git 目录即标记为仓库
+        std::fs::create_dir_all(dir.path().join(".git")).unwrap();
+        std::fs::write(dir.path().join(".gitignore"), "ignored/\n").unwrap();
+        std::fs::create_dir_all(dir.path().join("ignored")).unwrap();
+        std::fs::write(dir.path().join("ignored/secret.txt"), "needle").unwrap();
+        std::fs::write(dir.path().join("visible.txt"), "needle").unwrap();
+        let out = t.grep(&serde_json::json!({ "pattern": "needle" })).await.unwrap();
+        let text = out["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("visible.txt"), "{text}");
+        assert!(!text.contains("secret.txt"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn grep_times_out_gracefully() {
+        let dir = tempfile::tempdir().unwrap();
+        let t = tools(dir.path());
+        // 预放 2000 个文件：grep 需逐个 read_to_string，1ms 超时必然触发
+        for i in 0..2000 {
+            std::fs::write(dir.path().join(format!("f{i}.txt")), "x").unwrap();
+        }
+        let err = t.grep(&serde_json::json!({ "pattern": "needle", "timeout": 1 })).await.unwrap_err();
+        assert_eq!(err.code, "timeout", "{err}");
+    }
+
+    #[tokio::test]
+    async fn find_and_ls_scope_to_root() {
         let dir = tempfile::tempdir().unwrap();
         let t = tools(dir.path());
         std::fs::create_dir_all(dir.path().join("sub/deep")).unwrap();
         std::fs::write(dir.path().join("sub/deep/needle.ts"), "x").unwrap();
         std::fs::write(dir.path().join("other.txt"), "x").unwrap();
 
-        let out = t.find(&serde_json::json!({ "pattern": "needle" })).unwrap();
+        let out = t.find(&serde_json::json!({ "pattern": "needle" })).await.unwrap();
         let text = out["content"][0]["text"].as_str().unwrap();
         assert!(text.contains("needle.ts"), "{text}");
         assert!(!text.contains("other.txt"), "{text}");

@@ -59,6 +59,9 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 fancy-regex = "0.14"
 # 内置工具集（B6）：write/edit 原子落盘（tempfile rename，对齐 pi 语义）
 tempfile = "3"
+# 内置工具集（B6）：grep/find 递归遍历尊重 .gitignore/.ignore（ripgrep 库族，
+# M1 验收问题 2——纯 std 递归会趟 target/ 数万文件卡 ~4 分钟）
+ignore = "0.4"
 rust-embed = { version = "8", optional = true }
 
 [dev-dependencies]

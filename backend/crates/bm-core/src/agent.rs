@@ -22,7 +22,11 @@ pub const SYSTEM_PROMPT: &str = r#"你是 BoenMind，一个专注工作与知识
 
 改进建议（submit_refinement_suggestions 工具）：
 - 任务完成后，若发现某个启用中的 skill 的描述（description）或系统提示词存在误导、不准确或明显可改进之处，调用 submit_refinement_suggestions 提交建议（含原文、建议文本、原因）。
-- 建议仅被记录，用户审批后才生效——不要声称已生效；没有可改进之处时绝不调用，同一问题不要重复提交。"#;
+- 建议仅被记录，用户审批后才生效——不要声称已生效；没有可改进之处时绝不调用，同一问题不要重复提交。
+
+工具使用提示：
+- read 支持 offset/limit（字节区间）：需要看文件特定行段时直接传参数，不要用 shell 命令绕（M1 验收教训：行区间靠 powershell/findstr 技巧是步数燃烧主因）。
+- grep/find 默认尊重 .gitignore 与 .ignore 并跳过隐藏文件（不会遍历 target/ 等被忽略目录）；大范围搜索可传 timeout（毫秒）限制单次时长。"#;
 
 /// 从 agent 事件流转出的、面向前端 SSE 的扁平事件。
 #[derive(Debug, Clone, serde::Serialize)]

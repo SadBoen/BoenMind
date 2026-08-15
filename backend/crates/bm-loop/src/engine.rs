@@ -104,7 +104,7 @@ impl Default for LoopConfig {
             provider: None,
             model: "default-model".into(),
             context_window: 128_000,
-            max_steps: 64,
+            max_steps: 128,
             // 默认裸跑（loop 库不依赖任何插件 crate；组装层挂压缩插件）
             compactor: None,
         }

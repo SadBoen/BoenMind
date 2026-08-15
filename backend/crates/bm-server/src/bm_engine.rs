@@ -69,6 +69,14 @@ pub fn reasoning_effort_for(level: &str) -> Option<&'static str> {
 /// → 宿主侧取消 + 告警（架构 §14.1"1 分钟无汇报主动上报"）。
 pub const DEFAULT_SILENCE_WINDOW_S: i64 = 120;
 
+/// Windows 平台段（M1 验收问题 4）：bash 工具实际跑在 cmd /C 下，模型若按
+/// Git Bash 习惯（/d/... 路径、pwd）会在 cmd 下反复失败浪费步数——把平台
+/// 差异写进系统提示，一次生效。
+#[cfg(windows)]
+const PLATFORM_HINT: &str = "\n\n运行环境提示（Windows）：\n- bash 工具运行在 cmd（/C）下，不是 Git Bash：路径用相对路径或 Windows 绝对路径（如 C:\\repo\\file.rs），不要用 /d/... 前缀；cmd 没有 pwd 命令，查看当前目录用不带参数的 cd。";
+#[cfg(not(windows))]
+const PLATFORM_HINT: &str = "";
+
 /// 静默窗口秒数解析（纯函数——env 读在调用点，测试并发下 env 写读有竞态）：
 /// `0` = 禁用 watchdog；正数 = 窗口秒数；负数/非法/缺失 = None（回落默认）。
 pub fn parse_silence_window(value: Option<&str>) -> Option<i64> {
@@ -325,7 +333,7 @@ fn build_loop_agent(
             model: model.to_string(),
             // 模型窗口（客观属性）：暂取默认 128K——后续从模型注册表换算
             context_window: 128_000,
-            max_steps: 64,
+            max_steps: 128,
             // 挂压缩插件（可换可关；None = 裸跑，核心自足性 v0.17）——
             // 策略源 = kernel registry 里的 bm-compactor 服务（v0.21 接线），
             // 参数由组装层从 [compaction] 配置换算注入（EffectiveCompaction；
@@ -429,9 +437,9 @@ async fn get_or_create_loop_agent(
             format!("{}{}{}", bm_core::agent::SYSTEM_PROMPT, skills, custom)
         };
         let system_prompt = if is_steward_session {
-            format!("{base}{}", crate::steward::STEWARD_SYSTEM_PROMPT)
+            format!("{base}{}{}", PLATFORM_HINT, crate::steward::STEWARD_SYSTEM_PROMPT)
         } else {
-            base
+            format!("{base}{}", PLATFORM_HINT)
         };
         (system_prompt, config.compaction.effective(&provider.id, model))
     };
