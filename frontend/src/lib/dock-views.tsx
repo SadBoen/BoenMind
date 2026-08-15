@@ -52,7 +52,7 @@ export const VIEWS: Record<ViewId, DockViewEntry> = {
   "file-panel": { titleKey: "dock.view.files", component: () => <FilePanel /> },
   editor: { titleKey: "dock.view.editor", component: () => <Editor /> },
   "todo-panel": { titleKey: "dock.view.tasks", component: () => <TodoPanel /> },
-  terminal: { titleKey: "dock.view.terminal", component: () => <TerminalPane /> },
+  terminal: { titleKey: "dock.view.terminal", component: ProjectTerminal },
   "git-graph": { titleKey: "dock.view.gitGraph", component: () => <GitGraph /> },
 };
 
@@ -65,6 +65,16 @@ function ChatPaneView({ params }: IDockviewPanelProps) {
     void ensureAppSession(app);
   }, [app, ensureAppSession]);
   return <ChatPane variant={params?.variant === "panel" ? "panel" : "full"} />;
+}
+
+/**
+ * 终端视图（编程壳）：启动目录 = 当前项目根（无项目 = 后端配置工作目录兜底）。
+ * 终端是长会话（切换项目不迁移已开终端——与真实 IDE 语义一致：会话属于
+ * 打开时所在的目录；要新项目终端就新开/重开面板，视图支持多开）。
+ */
+function ProjectTerminal() {
+  const projectRoot = useAppStore((s) => s.currentProject?.root);
+  return <TerminalPane cwd={projectRoot ?? undefined} />;
 }
 
 /** 默认布局里一块面板的摆放声明 */

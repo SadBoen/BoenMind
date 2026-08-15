@@ -144,6 +144,20 @@ coding: {
       changes: "{{count}} changes",
       noRepo: "Working directory is not a git repository",
     },
+    project: {
+      select: "Select project",
+      empty: "No projects yet — create one to start",
+      new: "New project",
+      newDesc:
+        "A project is a root directory. Enter a name and an absolute path; the file tree, terminal and branch graph follow the current project.",
+      delete: "Delete project",
+      name: "Project name",
+      namePlaceholder: "Display name (empty = use path name)",
+      root: "Root directory",
+      rootPlaceholder: "e.g. D:\\projects\\my-app",
+      create: "Create",
+      pathInvalid: "Path unavailable: {{msg}}",
+    },
   },
   statusbar: {
     noModel: "No model selected",

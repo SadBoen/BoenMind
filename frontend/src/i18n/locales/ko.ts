@@ -144,6 +144,20 @@ coding: {
       changes: "변경 {{count}}건",
       noRepo: "작업 디렉터리는 git 저장소가 아닙니다",
     },
+    project: {
+      select: "프로젝트 선택",
+      empty: "프로젝트가 없습니다 — 새로 만들어 시작하세요",
+      new: "새 프로젝트",
+      newDesc:
+        "프로젝트는 루트 디렉터리입니다. 이름과 절대 경로를 입력하세요. 파일 트리·터미널·브랜치 그래프가 현재 프로젝트를 따릅니다.",
+      delete: "프로젝트 삭제",
+      name: "프로젝트 이름",
+      namePlaceholder: "표시 이름(비우면 경로 이름)",
+      root: "루트 디렉터리",
+      rootPlaceholder: "예: D:\\projects\\my-app",
+      create: "만들기",
+      pathInvalid: "경로를 사용할 수 없음: {{msg}}",
+    },
   },
   statusbar: {
     noModel: "모델 미선택",

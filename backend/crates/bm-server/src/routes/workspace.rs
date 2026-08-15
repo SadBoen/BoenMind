@@ -10,10 +10,22 @@ use crate::{ApiResult, api_error};
 // 工作文件夹
 // ---------------------------------------------------------------------------
 
+/// 解析项目根：请求显式 root（项目切换，编程壳传当前项目根）优先，
+/// 缺省 = 全局配置工作目录（设置页 working_dir 兜底，旧行为不变）。
+fn resolve_root(default: &std::path::Path, root: Option<&str>) -> std::path::PathBuf {
+    match root {
+        Some(r) if !r.trim().is_empty() => std::path::PathBuf::from(r),
+        _ => default.to_path_buf(),
+    }
+}
+
 #[derive(Deserialize)]
 pub struct ListWorkspaceParams {
     #[serde(default)]
     pub dir: String,
+    /// 项目根（绝对路径）；缺省 = 配置工作目录
+    #[serde(default)]
+    pub root: Option<String>,
 }
 
 pub async fn list_workspace(
@@ -21,7 +33,7 @@ pub async fn list_workspace(
     Query(params): Query<ListWorkspaceParams>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let config = state.config.read().await;
-    let root = config.working_dir.clone();
+    let root = resolve_root(&config.working_dir, params.root.as_deref());
     drop(config);
     match workspace::list_dir(&root, &params.dir) {
         Ok(entries) => Ok(Json(serde_json::json!({
@@ -38,6 +50,9 @@ pub async fn list_workspace(
 #[derive(Deserialize)]
 pub struct ReadFileParams {
     pub path: String,
+    /// 项目根（绝对路径）；缺省 = 配置工作目录
+    #[serde(default)]
+    pub root: Option<String>,
 }
 
 /// 读取工作文件夹内文件。文本文件返回 UTF-8 内容，二进制（图片/PDF）返回 base64。
@@ -46,7 +61,7 @@ pub async fn read_workspace_file(
     Query(params): Query<ReadFileParams>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let config = state.config.read().await;
-    let root = config.working_dir.clone();
+    let root = resolve_root(&config.working_dir, params.root.as_deref());
     drop(config);
 
     let bytes = match workspace::read_file(&root, &params.path) {
@@ -99,6 +114,9 @@ pub struct WriteFileParams {
     pub path: String,
     /// 文本内容（整体覆盖）
     pub content: String,
+    /// 项目根（绝对路径）；缺省 = 配置工作目录
+    #[serde(default)]
+    pub root: Option<String>,
 }
 
 /// 写文本文件（M2 编辑器保存；父目录须存在，越界校验同读路径）。
@@ -107,11 +125,18 @@ pub async fn write_workspace_file(
     Json(params): Json<WriteFileParams>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let config = state.config.read().await;
-    let root = config.working_dir.clone();
+    let root = resolve_root(&config.working_dir, params.root.as_deref());
     drop(config);
     workspace::write_file(&root, &params.path, &params.content)
         .map_err(|err| crate::api_error_bad_request(err.to_string()))?;
     Ok(Json(serde_json::json!({ "ok": true, "path": params.path })))
+}
+
+#[derive(Deserialize)]
+pub struct GitInfoParams {
+    /// 项目根（绝对路径）；缺省 = 配置工作目录
+    #[serde(default)]
+    pub root: Option<String>,
 }
 
 /// Git 仓库状态（M2 分支图数据源）：工作目录是 git 仓库时返回当前分支、
@@ -119,9 +144,10 @@ pub async fn write_workspace_file(
 /// 不是仓库 → `{ "repo": false }`（优雅降级）。
 pub async fn git_info(
     State(state): crate::SharedState,
+    Query(params): Query<GitInfoParams>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let config = state.config.read().await;
-    let root = config.working_dir.clone();
+    let root = resolve_root(&config.working_dir, params.root.as_deref());
     drop(config);
     Ok(Json(git_info_inner(&root)))
 }
@@ -219,5 +245,17 @@ mod tests {
         // 工作目录不是 git 仓库 → repo:false（不 panic）
         let v = git_info_inner(std::path::Path::new("C:\\"));
         assert_eq!(v["repo"], false);
+    }
+
+    #[test]
+    fn resolve_root_prefers_explicit_root() {
+        let default = std::path::Path::new("D:\\default");
+        assert_eq!(
+            resolve_root(default, Some("D:\\projects\\my-app")),
+            std::path::PathBuf::from("D:\\projects\\my-app")
+        );
+        assert_eq!(resolve_root(default, None), default.to_path_buf());
+        // 空串 = 未提供 → 兜底默认
+        assert_eq!(resolve_root(default, Some("  ")), default.to_path_buf());
     }
 }

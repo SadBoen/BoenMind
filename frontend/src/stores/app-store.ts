@@ -31,6 +31,35 @@ interface StreamingToolCall {
 }
 
 /**
+ * 编程应用项目（项目切换，2026-08-15）：根目录 + 显示名。
+ * 前端项目集合 + 后端 workspace 路径参数化（root 缺省 = 配置工作目录兜底）。
+ * localStorage 持久化（模式同 appSessionIds：手动读写，不走 zustand persist）。
+ */
+export interface Project {
+  id: string;
+  name: string;
+  root: string;
+}
+
+const PROJECTS_KEY = "boenmind.projects";
+const CURRENT_PROJECT_KEY = "boenmind.currentProject";
+
+function loadProjects(): Project[] {
+  try {
+    const raw = localStorage.getItem(PROJECTS_KEY);
+    const arr = raw ? (JSON.parse(raw) as Project[]) : [];
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
+}
+
+function loadCurrentProjectId(projects: Project[]): string | null {
+  const id = localStorage.getItem(CURRENT_PROJECT_KEY);
+  return id && projects.some((p) => p.id === id) ? id : null;
+}
+
+/**
  * 配置默认模型（"providerId::modelId"）：全局 default_model → 所属提供商，
  * 无则取第一个提供商的首个模型；未配置任何提供商时为 null。
  */
@@ -137,6 +166,17 @@ interface AppStore {
   /** 切换权限模式（yolo = permissive + allowDangerous） */
   setPermissionMode: (mode: string) => Promise<void>;
 
+  // 编程项目（项目切换：前端项目集合 + 后端 workspace root 参数化）
+  projects: Project[];
+  /** 当前项目 id（null = 未选项目，workspace 走配置工作目录兜底） */
+  currentProjectId: string | null;
+  /** 当前项目对象（派生；null = 配置工作目录兜底） */
+  currentProject: Project | null;
+  addProject: (name: string, root: string) => void;
+  removeProject: (id: string) => void;
+  /** 切换项目：文件树/预览状态清空回新项目根；GitBar/分支图经 currentProjectId 订阅刷新 */
+  selectProject: (id: string) => void;
+
   // 文件区
   workspaceDir: string;
   entries: FileEntry[];
@@ -160,6 +200,10 @@ interface AppStore {
 export const useAppStore = create<AppStore>((set, get) => {
   /** 当前流式对话的取消句柄 */
   let streamController: { close: () => void } | null = null;
+
+  /** 编程项目初始态（localStorage 恢复一次） */
+  const initialProjects = loadProjects();
+  const initialCurrentProjectId = loadCurrentProjectId(initialProjects);
 
   /** 固化流式内容为助手消息（done 事件与停止兜底共用） */
   const finalizeStream = (sessionId: string) => {
@@ -642,6 +686,52 @@ export const useAppStore = create<AppStore>((set, get) => {
       }
     },
 
+    projects: initialProjects,
+    currentProjectId: initialCurrentProjectId,
+    currentProject: initialProjects.find((p) => p.id === initialCurrentProjectId) ?? null,
+    addProject: (name, root) => {
+      const project: Project = { id: crypto.randomUUID(), name: name.trim() || root, root: root.trim() };
+      set((s) => {
+        const projects = [...s.projects, project];
+        localStorage.setItem(PROJECTS_KEY, JSON.stringify(projects));
+        // 首个项目自动设为当前（后续新建不抢焦点）
+        const currentProjectId = s.currentProjectId ?? project.id;
+        localStorage.setItem(CURRENT_PROJECT_KEY, currentProjectId);
+        return { projects, currentProjectId, currentProject: projects.find((p) => p.id === currentProjectId) ?? null };
+      });
+    },
+    removeProject: (id) => {
+      set((s) => {
+        const projects = s.projects.filter((p) => p.id !== id);
+        localStorage.setItem(PROJECTS_KEY, JSON.stringify(projects));
+        // 删除的是当前项目 → 回退到列表首个（无则 null = 配置工作目录兜底）
+        const currentProjectId = s.currentProjectId === id ? (projects[0]?.id ?? null) : s.currentProjectId;
+        localStorage.setItem(CURRENT_PROJECT_KEY, currentProjectId ?? "");
+        return {
+          projects,
+          currentProjectId,
+          currentProject: projects.find((p) => p.id === currentProjectId) ?? null,
+          workspaceDir: "",
+          entries: [],
+          previewFile: null,
+        };
+      });
+    },
+    selectProject: (id) => {
+      set((s) => {
+        if (!s.projects.some((p) => p.id === id) || s.currentProjectId === id) return s;
+        localStorage.setItem(CURRENT_PROJECT_KEY, id);
+        // 文件树回新项目根、清空预览（编辑器内容属于旧项目，不跨项目保留）
+        return {
+          currentProjectId: id,
+          currentProject: s.projects.find((p) => p.id === id) ?? null,
+          workspaceDir: "",
+          entries: [],
+          previewFile: null,
+        };
+      });
+    },
+
     workspaceDir: "",
     entries: [],
     loadingFiles: false,
@@ -650,7 +740,8 @@ export const useAppStore = create<AppStore>((set, get) => {
     navigateDir: async (dir) => {
       set({ loadingFiles: true, workspaceDir: dir, previewFile: null });
       try {
-        const { entries } = await api.listWorkspace(dir);
+        const root = get().currentProject?.root;
+        const { entries } = await api.listWorkspace(dir, root);
         set({ entries, loadingFiles: false });
       } catch {
         set({ entries: [], loadingFiles: false });
@@ -660,9 +751,10 @@ export const useAppStore = create<AppStore>((set, get) => {
     toggleFileMaximized: () => set((s) => ({ fileMaximized: !s.fileMaximized })),
     refreshFiles: async () => {
       const dir = get().workspaceDir;
+      const root = get().currentProject?.root;
       set({ loadingFiles: true });
       try {
-        const { entries } = await api.listWorkspace(dir);
+        const { entries } = await api.listWorkspace(dir, root);
         set({ entries, loadingFiles: false });
       } catch {
         set({ loadingFiles: false });

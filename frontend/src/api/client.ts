@@ -565,20 +565,21 @@ export const api = {
       body: JSON.stringify(op),
     }),
 
-  /** 写文本文件（M2 编辑器保存；整体覆盖，父目录须存在） */
-  writeFile: (path: string, content: string) =>
+  /** 写文本文件（M2 编辑器保存；整体覆盖，父目录须存在）；root=项目根（缺省=配置工作目录） */
+  writeFile: (path: string, content: string, root?: string) =>
     request<{ ok: boolean; path: string }>("/api/workspace/file", {
       method: "POST",
-      body: JSON.stringify({ path, content }),
+      body: JSON.stringify({ path, content, ...(root ? { root } : {}) }),
     }),
-  /** Git 仓库状态（M2 分支图数据源；非仓库 → repo:false） */
-  gitInfo: () => request<GitInfo>("/api/workspace/git-info"),
+  /** Git 仓库状态（M2 分支图数据源；非仓库 → repo:false）；root=项目根（缺省=配置工作目录） */
+  gitInfo: (root?: string) =>
+    request<GitInfo>(`/api/workspace/git-info${root ? `?root=${encodeURIComponent(root)}` : ""}`),
 
-  listWorkspace: (dir = "") =>
+  listWorkspace: (dir = "", root?: string) =>
     request<{ dir: string; entries: FileEntry[] }>(
-      `/api/workspace/list?dir=${encodeURIComponent(dir)}`,
+      `/api/workspace/list?dir=${encodeURIComponent(dir)}${root ? `&root=${encodeURIComponent(root)}` : ""}`,
     ),
-  readFile: (path: string) =>
+  readFile: (path: string, root?: string) =>
     request<{
       name: string;
       path: string;
@@ -586,7 +587,7 @@ export const api = {
       kind: "text" | "binary";
       content: string;
       size: number;
-    }>(`/api/workspace/file?path=${encodeURIComponent(path)}`),
+    }>(`/api/workspace/file?path=${encodeURIComponent(path)}${root ? `&root=${encodeURIComponent(root)}` : ""}`),
 
   /**
    * 流式对话。返回一个可取消的响应对象：

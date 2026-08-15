@@ -26,6 +26,8 @@ export function Editor() {
   const { t } = useTranslation();
   const previewFile = useAppStore((s) => s.previewFile);
   const refreshFiles = useAppStore((s) => s.refreshFiles);
+  // 项目根（项目切换：文件属于当前项目；无项目 = 后端配置工作目录兜底）
+  const projectRoot = useAppStore((s) => s.currentProject?.root);
   const [data, setData] = useState<EditorData | null>(null);
   const [value, setValue] = useState("");
   const [saving, setSaving] = useState(false);
@@ -39,7 +41,7 @@ export function Editor() {
     setError(null);
     if (!previewFile) return;
     api
-      .readFile(previewFile.path)
+      .readFile(previewFile.path, projectRoot)
       .then((d) => {
         if (loadingRef.current !== id) return;
         setData(d as EditorData);
@@ -48,7 +50,7 @@ export function Editor() {
       .catch((err) => {
         if (loadingRef.current === id) setError(String(err));
       });
-  }, [previewFile]);
+  }, [previewFile, projectRoot]);
 
   if (!previewFile) {
     return (
@@ -80,7 +82,7 @@ export function Editor() {
     if (!previewFile || data.kind !== "text") return;
     setSaving(true);
     try {
-      await api.writeFile(previewFile.path, value);
+      await api.writeFile(previewFile.path, value, projectRoot);
       setData((d) => (d ? { ...d, content: value, size: value.length } : d));
       toast.success(t("coding.editor.saved"));
       // 保存后刷新文件树（大小/时间变化；不动当前打开的编辑器）

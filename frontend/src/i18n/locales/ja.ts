@@ -144,6 +144,20 @@ coding: {
       changes: "変更 {{count}} 件",
       noRepo: "作業ディレクトリは git リポジトリではありません",
     },
+    project: {
+      select: "プロジェクトを選択",
+      empty: "プロジェクトがありません——新規作成して開始",
+      new: "新規プロジェクト",
+      newDesc:
+        "プロジェクトとはルートディレクトリです。名前と絶対パスを入力してください。ファイルツリー・端末・ブランチ図は現在のプロジェクトに追従します。",
+      delete: "プロジェクトを削除",
+      name: "プロジェクト名",
+      namePlaceholder: "表示名（空欄 = パス名）",
+      root: "ルートディレクトリ",
+      rootPlaceholder: "例: D:\\projects\\my-app",
+      create: "作成",
+      pathInvalid: "パスを利用できません: {{msg}}",
+    },
   },
   statusbar: {
     noModel: "モデル未選択",

@@ -23,17 +23,21 @@ import { GitBranch, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api, type GitInfo } from "@/api/client";
 import { DockLayout } from "@/components/layout/DockLayout";
+import { ProjectSwitcher } from "@/components/coding/ProjectSwitcher";
+import { useAppStore } from "@/stores/app-store";
 
 export function CodingApp() {
   const { t } = useTranslation();
   const [git, setGit] = useState<GitInfo | null>(null);
+  // 项目根（项目切换：GitBar/分支图跟随当前项目；无项目 = 配置工作目录兜底）
+  const projectRoot = useAppStore((s) => s.currentProject?.root);
 
   const loadGit = useCallback(() => {
     api
-      .gitInfo()
+      .gitInfo(projectRoot)
       .then(setGit)
       .catch(() => setGit(null));
-  }, []);
+  }, [projectRoot]);
 
   useEffect(() => {
     loadGit();
@@ -43,6 +47,8 @@ export function CodingApp() {
     <div className="flex h-full min-w-0 flex-col bg-background">
       {/* 分支图条（起步：分支 + 提交时间线 + 变更摘要） */}
       <div className="flex h-10 shrink-0 items-center gap-3 border-b px-3">
+        {/* 项目切换器（当前项目下拉：切换/新建/删除；文件树等视图经 store 联动） */}
+        <ProjectSwitcher />
         <GitBranch size={14} className="text-muted-foreground" />
         {git?.repo ? (
           <>

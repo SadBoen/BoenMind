@@ -29,8 +29,15 @@
 - **TerminalPane 一期已落地（07618ce，上游吸收 T1/T2）**：后端 /api/terminal（portable-pty 会话，创建/输入/resize/SSE/关闭；broadcast 多订阅 + 读线程自清理；**ConPTY ESC[6n 光标查询应答**——不答则 cmd 输出阻塞，实测坑）；前端 TerminalPane 宿主组件（xterm 6 + fit；编程壳右栏第三个 Tab，终端 Tab 加宽 30rem）；dir 命令全链路实测通过
 - **剩余**（执行顺序已拍）：项目切换（currentProject 上下文 + 文件树/终端联动）→ codegraph 转官方插件（scopes=["coding"]）→ 浏览器仿真 B 方案（可视化 web 工具链）
 
-**M2 深化轮（2026-08-15，两项落地）**：
-- **分支图 DAG 可视化**：后端 /api/workspace/git-info 输出拓扑数据（commits 含 parents 边——`git log --branches --pretty=format:%h|%s|%p`，本地分支指针——`for-each-ref refs/heads`）；前端新视图 git-graph（lib/git-lanes.ts 纯函数泳道分配——旧→新遍历、主链同列、merge/分叉跨列曲线、lane 释放复用；SVG 渲染：节点圆点/merge 空心/分支标签锚 tip/当前分支高亮）+ VIEWS/DEFAULT_LAYOUTS 注册（编程壳右下第 4 个叠放 Tab）；**布局快照 key 版本化 v3**（DEFAULT_LAYOUTS 演进时 bump——默认布局新增视图能浮现；代价=用户自定义布局随版本重置，§四·C 插件默认布局落地时做快照指纹精细迁移）；浏览器实测（临时切工作目录到仓库）：6 tab 布局 + fetch 15 提交 + DAG SVG 渲染（15 节点/分支标签）；lane 算法 merge 拓扑 node 自检通过
+**项目切换轮（2026-08-15，编程壳功能规划②执行）**：
+- **项目模型**：前端项目集合（localStorage `boenmind.projects`/`boenmind.currentProject` 持久化，模式同 appSessionIds）+ 后端 workspace 路径参数化——`/api/workspace` 四端点（list/read/write/git-info）加 `root` 参数（缺省 = 配置工作目录兜底，设置页 working_dir 语义不变；`resolve_root` 空串视为缺省）
+- **UI**：CodingApp 头部 ProjectSwitcher 下拉（切换/新建/删除；新建 = 名称+绝对路径，提交前 `listWorkspace` 探测可访问性，失败 toast 不落库；首个项目自动设为当前，后续新建不抢焦点；删除当前项目自动回退列表首个）
+- **联动**：文件树/编辑器（previewFile 切换即清空）/GitBar/分支图全部带 `currentProject.root`；终端视图（dock-views 注册）以项目根为 cwd；**修复 FilePanel 不跟随切换 bug**（只在挂载时 navigateDir——补订阅 currentProjectId）
+- **用户拍板：编辑器不再深化**（"我又不会写代码"）——M2 深化剩余的编辑器增强（diff/未保存守卫/目录新建）取消，编辑器的读取/保存保留现状
+- 验证：后端 113 测试全绿 + clippy；前端 tsc/lint/build 全绿；浏览器实测 T1-T6/P1/P2 全通过（无项目空态/新建+自动当前+全联动/多项目/切换联动含非 git 降级/终端 cwd=项目根提示符/刷新持久化/删除回退/无效路径 toast）；截图证据在会话 artifacts（模型无图像输入，视觉验证受限说明）
+- 已知行为：项目变化（删除回退）时 dockview 终端面板可能重建，终端跟随新项目根——符合预期
+
+**M2 深化轮（2026-08-15，两项落地）**：- **分支图 DAG 可视化**：后端 /api/workspace/git-info 输出拓扑数据（commits 含 parents 边——`git log --branches --pretty=format:%h|%s|%p`，本地分支指针——`for-each-ref refs/heads`）；前端新视图 git-graph（lib/git-lanes.ts 纯函数泳道分配——旧→新遍历、主链同列、merge/分叉跨列曲线、lane 释放复用；SVG 渲染：节点圆点/merge 空心/分支标签锚 tip/当前分支高亮）+ VIEWS/DEFAULT_LAYOUTS 注册（编程壳右下第 4 个叠放 Tab）；**布局快照 key 版本化 v3**（DEFAULT_LAYOUTS 演进时 bump——默认布局新增视图能浮现；代价=用户自定义布局随版本重置，§四·C 插件默认布局落地时做快照指纹精细迁移）；浏览器实测（临时切工作目录到仓库）：6 tab 布局 + fetch 15 提交 + DAG SVG 渲染（15 节点/分支标签）；lane 算法 merge 拓扑 node 自检通过
 - **EventQuery 类型过滤（长会话性能）**：EventQuery 加 `event_type` 字段（+ `EventQuery::of_type` 便捷构造）；turso read 重构为动态 SQL（params_from_iter，type 列过滤替代全量 replay）+ kernel 内存实现过滤 + EventLog 新方法 `read_where`（migrate 不 verify——过滤后 seq 不连续）；todo_tool.load_todos 改用 of_type("todo/write")；三处测试（turso SQL 层/kernel 内存层/todo 混合事件语义）全绿
 - 验证：后端 4 crate 测试全绿 + clippy 零新增警告；前端 tsc/lint/build 全绿
 
@@ -61,6 +68,7 @@
 
 | 轮次 | 要点 |
 |---|---|
+| 项目切换轮 | 前端项目集合 + workspace root 参数化 + 全视图联动（文件树/分支/GitBar/终端 cwd）+ 新建校验/删除回退；用户拍板编辑器不再深化 |
 | M2 深化轮 | 分支图 DAG（git-info 拓扑数据 + GitGraph 视图 + lane 算法）+ EventQuery 类型过滤（长会话 todo 读取不再全量 replay）；布局 key 版本化 v3 |
 | 布局实施轮 | 应用布局系统实施（dockview-react 8.1，T5）：DockLayout 宿主 + VIEWS/DEFAULT_LAYOUTS + 编程壳/聊天应用迁移 + 持久化/导航右键重置/主题桥接；浏览器实测全通过 |
 | 布局架构拍板轮 | 应用布局系统拍板（§四·B 补充 2 v0.23，VS Code workbench 模型）：dockview 8.1 定案（T5）/对话单实例绑定场景/其他视图多开/默认布局+右键重置；实施排下一步动作 1 |
@@ -81,8 +89,8 @@
 ## 下一步动作（按建议顺序，都可直接开工）
 
 1. ~~**应用布局系统实施（已拍板 2026-08-15，架构 §四·B 补充 2 v0.23）**~~ → **已完成（2026-08-15）**：dockview-react 8.1（T5）+ DockLayout 宿主 + VIEWS/DEFAULT_LAYOUTS + 编程壳/聊天应用迁移 + 布局持久化/导航右键重置/主题桥接，浏览器实测全通过。新应用有可停靠视图时在 DEFAULT_LAYOUTS 声明一行即可；manifest 动态注册随 §四·C
-2. **M2 深化（主线）**：~~分支图 DAG / 长会话性能（EventQuery 类型过滤）~~ **已完成（2026-08-15）**；剩余：**编辑器增强**（diff 视图/未保存守卫/目录新建）+ **skill 场景注入**（对话宿主化③）
-3. **项目切换（编程壳功能规划②，执行顺序已拍）**：store `currentProject`（当前项目根上下文）+ 文件树/终端/编辑器联动（终端已支持 cwd 参数）+ 项目列表/新建（前端项目集合，后端 workspace 路径参数化）；随后 codegraph 转官方插件（@sdsrs/code-graph 0.116，scopes=["coding"]，正好验证场景工具面按 app 组装）→ 浏览器仿真 B 方案（可视化 web 工具链）
+2. **M2 深化（主线）**：分支图 DAG / EventQuery 类型过滤 **已完成（2026-08-15）**；~~编辑器增强（diff 视图/未保存守卫/目录新建）~~ **已取消（用户拍板"不需要编辑器"）**；剩余：**skill 场景注入**（对话宿主化③）
+3. **项目切换（编程壳功能规划②）~~执行中~~ → 已完成（2026-08-15，见上）**；下一件：**codegraph 转官方插件**（@sdsrs/code-graph 0.116，scopes=["coding"]，正好验证场景工具面按 app 组装）→ 浏览器仿真 B 方案（可视化 web 工具链）；随后 skill 场景注入
 4. **界面层插件化落地设计（§四·C，用户已拍板学 dsh）**：出方案文档待拍板——前端包 manifest 字段（client.js/依赖声明）、同域 bundle 加载器（参考 dsh __ModuleLoader__.load）、slot 注册体系（ui-slots 思路；**注：dock 布局是 ui-slots 超集，落地时协同**）、壳依赖表（客户端插件不自带 React）；拍板后实施（独立主线，可与 M2 并行）
 5. **Steward 采集器挂任务计划程序**（README 有 schtasks 命令，填真实管家会话 ID）——待用户点头（机器级定时唤醒）
 6. **pi 路径清理收尾**：chat.rs pi 分支删除（bm 默认已反转，残留代码面）——待拍板

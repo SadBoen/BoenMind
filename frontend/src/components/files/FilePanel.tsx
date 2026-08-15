@@ -28,14 +28,16 @@ export function FilePanel() {
   const loadingFiles = useAppStore((s) => s.loadingFiles);
   const navigateDir = useAppStore((s) => s.navigateDir);
   const openFile = useAppStore((s) => s.openFile);
+  // 当前项目 id（项目切换：文件树回新项目根重新加载；无项目 = 配置工作目录）
+  const projectId = useAppStore((s) => s.currentProjectId);
 
   const [query, setQuery] = useState("");
 
   // 挂载时加载工作文件夹根目录（zustand action 引用稳定，仅执行一次）；
-  // 工作目录变更由 WorkspaceSettings 保存后主动 navigateDir("") 刷新
+  // 项目切换 → 重新加载新项目根；工作目录变更由 WorkspaceSettings 保存后主动 navigateDir("") 刷新
   useEffect(() => {
     void navigateDir("");
-  }, [navigateDir]);
+  }, [navigateDir, projectId]);
 
   const dirName = workspaceDir === "" ? t("files.workspace") : workspaceDir.split("/").pop();
 

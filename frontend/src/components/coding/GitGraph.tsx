@@ -12,6 +12,7 @@ import { RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api, type GitInfo } from "@/api/client";
 import { computeLanes } from "@/lib/git-lanes";
+import { useAppStore } from "@/stores/app-store";
 
 const ROW_H = 26;
 const LANE_W = 18;
@@ -21,12 +22,14 @@ const NODE_R = 4;
 export function GitGraph() {
   const { t } = useTranslation();
   const [git, setGit] = useState<GitInfo | null>(null);
+  // 项目根（项目切换：分支图跟随当前项目）
+  const projectRoot = useAppStore((s) => s.currentProject?.root);
   const load = useCallback(() => {
     api
-      .gitInfo()
+      .gitInfo(projectRoot)
       .then(setGit)
       .catch(() => setGit(null));
-  }, []);
+  }, [projectRoot]);
   useEffect(() => {
     load();
   }, [load]);
