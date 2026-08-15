@@ -119,7 +119,7 @@
 **七次迭代（用户拍板，同日）——双 DE 并存：经典软件界面回归（默认）+ 桌面模式**：
 - 用户拍板四点：① 默认软件形式界面（经典三栏壳回归）② 界面层插件化要做，学 DeepSeek Harness ③ 插件分类不拆目录，用标签（category）+ UI 分 tab ④ 编程应用仍是软件实现第一优先（导航图标占位点不了）
 - **ClassicShell（新组件，components/classic/）**：原三栏壳形态回归——左侧 48px 导航条（应用图标 = APPS 注册表驱动，聊天/设置/插件/管家 + 底部「桌面模式」入口）+ 主面板（渲染 APPS[activeNav].component，内容组件零改动）+ 底部状态栏（StatusBar 加 variant="classic" 浅色变体）。**编程图标 disabled 置灰**（用户拍板"点不了"，M2 接线）
-- **默认界面 = 经典**（viewMode: "classic" | "desktop"，localStorage boenmind.viewMode 持久化）；桌面模式从导航条底部入口进；桌面 MenuBar 开始按钮旁加「切换经典软件界面」（PanelLeft 图标）。两壳共享同一 store（activeNav 与 openApps 并存），后端零改动——**架构 §四·B「前端壳多套并存」实作验证**
+- **默认界面 = 经典**（viewMode: "classic" | "desktop"，localStorage boenmind.viewMode 持久化）；桌面模式从设置→外观形态切换进（a8397f8 起导航条底部只留设置入口）；桌面 MenuBar 开始按钮旁加「切换经典软件界面」（PanelLeft 图标）。两壳共享同一 store（activeNav 与 openApps 并存），后端零改动——**架构 §四·B「前端壳多套并存」实作验证**
 - **插件分类标签**：PluginInfo 加 category（manifest category 声明，单文件/未声明默认 system）；现有插件打标 ctx-compactor/web-search/refine-suggest=system、pdf-omni=app；插件页加 tab（全部/系统增强/功能插件，计数+过滤）；旧后端无字段时缺省 system 兼容。不拆目录（用户拍板）
 - **DeepSeek Harness 调研结论**（用户"deepseek 已经做到了，可以学习"实锤）：dsh（deepseek-ai/deepseek-harness，2026-08-13 发布 MIT）前端界面插件化 = **ui-slots 槽位组合（Slot & Injection Kernel：ctx.slots/renderSlot/inject）+ 同域 bundle 动态注册（/plugins/<id>/client.js CJS factory → window.__ModuleLoader__.load）+ 客户端插件不得自带 React（从壳 platform module table 取依赖）+ CSS 内联 + RPC 桥**——不是 iframe/WebComponent；为 §四·C 待拍板的"iframe/WebComponent/动态加载"提供了第三种答案（同域 bundle：无隔离但依赖共享简单）
 - 浏览器实测：默认进经典（导航条+聊天全界面+状态栏）→ 插件页 tab 过滤 → 桌面模式 → 切回经典 → 刷新持久化（两种模式都验）
@@ -127,7 +127,7 @@
 
 **八次迭代（用户复查导航语义，同日）——导航条修正 + 外观形态设置**：
 - 用户澄清：左侧导航条是**软件导航**（如 wiki、编程），不是给设置项导航的；设置入口放导航条**最底部**（原 NavBar bottom 分区语义），插件/管家/模型提供商等收进设置应用二级菜单（原 SettingsMenu 已有）
-- ClassicShell 导航改为：顶部 NAV_APPS = [chat, coding(占位 disabled)]；底部独立区 = 设置（齿轮）+ 桌面模式。主面板仍渲染 APPS[activeNav]
+- ClassicShell 导航改为：顶部 NAV_APPS = [chat, coding, wiki(占位 disabled)]；底部独立区 = 仅设置（齿轮）——a8397f8 移除桌面模式按钮（外观页形态切换接管）。主面板仍渲染 APPS[activeNav]
 - **外观设置页改造**（用户：形态切换开关放设置→外观里；各形态显示各自专属设置）：顶部界面形态卡片（软件形态/桌面形态，点击即切换 viewMode）；**软件形态区 = 字体大小**（小/标准/大 → html 根字号 14/16/18px 全局缩放，localStorage boenmind.fontScale）；**桌面形态区 = 桌面模板壁纸**（星空/极光渐变，.desktop-wallpaper-aurora CSS 变体 + 外观卡预览缩略图，localStorage boenmind.wallpaper）；主题/语言为通用区（两形态共用）
 - 壁纸状态入 zustand store（响应式即时生效）；工具函数独立 lib/appearance.ts（Fast refresh 纪律）
 - 坑：壁纸若只写 localStorage 不重渲染（Desktop 不订阅）——必须走 store
