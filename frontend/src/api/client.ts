@@ -553,6 +553,12 @@ export const api = {
   listSessionTasks: (sessionId: string) =>
     request<Task[]>(`/api/sessions/${sessionId}/tasks`),
 
+  /** 会话 token 用量（状态栏数据源：事件日志 assistant/message 事件 usage 聚合） */
+  getSessionUsage: (sessionId: string) =>
+    request<{ input_tokens: number; output_tokens: number; messages: number }>(
+      `/api/sessions/${sessionId}/usage`,
+    ),
+
   // ── 活任务清单（M2：todo/write 事件快照的 REST 面；事件流订阅见 subscribeEvents）──
   listTodos: (sessionId: string) =>
     request<{ todos: TodoItem[] }>(`/api/sessions/${sessionId}/todos`),

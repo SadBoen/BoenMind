@@ -165,6 +165,11 @@ coding: {
     backendOnline: "后端已连接",
     backendV: "后端 v{{version}}",
     loadingDir: "加载中…",
+    tokenUsage: "Token 用量",
+    inputTokens: "输入",
+    outputTokens: "输出",
+    totalTokens: "合计",
+    messages: "消息数",
   },
   desktop: {
     bootSkip: "点击跳过启动",

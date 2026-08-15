@@ -166,6 +166,11 @@ coding: {
     backendOnline: "Backend connected",
     backendV: "Backend v{{version}}",
     loadingDir: "Loading…",
+    tokenUsage: "Token usage",
+    inputTokens: "Input",
+    outputTokens: "Output",
+    totalTokens: "Total",
+    messages: "Messages",
   },
   desktop: {
     bootSkip: "Click to skip boot",

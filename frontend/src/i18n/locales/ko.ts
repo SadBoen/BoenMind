@@ -166,6 +166,11 @@ coding: {
     backendOnline: "백엔드 연결됨",
     backendV: "백엔드 v{{version}}",
     loadingDir: "불러오는 중…",
+    tokenUsage: "토큰 사용량",
+    inputTokens: "입력",
+    outputTokens: "출력",
+    totalTokens: "합계",
+    messages: "메시지 수",
   },
   desktop: {
     bootSkip: "클릭하여 건너뛰기",

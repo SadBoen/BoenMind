@@ -45,34 +45,17 @@ export function CodingApp() {
 
   return (
     <div className="flex h-full min-w-0 flex-col bg-background">
-      {/* 分支图条（起步：分支 + 提交时间线 + 变更摘要） */}
+      {/* 项目条（GitBar 精简版，2026-08-15 用户"一行代码都不用看"）：项目切换 + 当前分支 + 变更摘要；
+          提交历史看分支图面板（DAG），不再横排 commit 标题 */}
       <div className="flex h-10 shrink-0 items-center gap-3 border-b px-3">
         {/* 项目切换器（当前项目下拉：切换/新建/删除；文件树等视图经 store 联动） */}
         <ProjectSwitcher />
-        <GitBranch size={14} className="text-muted-foreground" />
         {git?.repo ? (
           <>
+            <GitBranch size={14} className="text-muted-foreground" />
             <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
               {git.branch}
             </span>
-            {/* 提交节点时间线（新 → 旧；横向） */}
-            <div className="flex min-w-0 items-center gap-1 overflow-hidden" title={t("coding.git.commits")}>
-              {(git.commits ?? []).map((c, i) => (
-                <span key={c.hash} className="flex shrink-0 items-center gap-1">
-                  {i > 0 && <span className="h-px w-3 bg-muted-foreground/30" />}
-                  <span
-                    className="flex items-center gap-1 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
-                    title={`${c.hash} ${c.subject}`}
-                  >
-                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                    <span className="max-w-28 truncate">{c.subject}</span>
-                  </span>
-                </span>
-              ))}
-              {(git.commits ?? []).length === 0 && (
-                <span className="text-xs text-muted-foreground">{t("coding.git.noCommits")}</span>
-              )}
-            </div>
             {/* 变更摘要 */}
             {(git.status ?? []).length > 0 && (
               <span

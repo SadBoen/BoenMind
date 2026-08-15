@@ -146,6 +146,7 @@ fn router(state: AppState) -> Router {
         .route("/api/sessions", get(routes::sessions::list_sessions).post(routes::sessions::create_session))
         .route("/api/sessions/{id}", get(routes::sessions::get_session).patch(routes::sessions::rename_session).delete(routes::sessions::delete_session))
         .route("/api/sessions/{id}/tasks", get(routes::sessions::list_session_tasks))
+        .route("/api/sessions/{id}/usage", get(routes::sessions::get_session_usage))
         .route("/api/sessions/{id}/todos", get(routes::todos::get_todos).post(routes::todos::post_todos))
         .route(
             "/api/sessions/{id}/events",

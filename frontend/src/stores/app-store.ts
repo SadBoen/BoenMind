@@ -139,6 +139,8 @@ interface AppStore {
   taskProgress: string | null;
   /** 最近一次任务记录（打开会话/流结束后刷新；断线续跑恢复展示用） */
   lastTask: Task | null;
+  /** 状态栏 token 用量刷新信号：流结束（done/停止）时 +1，TokenUsage 订阅重拉 */
+  usageVersion: number;
   /** 当前会话选择的模型（providerId::modelId）与思考强度 */
   selectedModel: string | null;
   selectedThinking: string;
@@ -220,6 +222,8 @@ export const useAppStore = create<AppStore>((set, get) => {
       streaming: false,
       streamingText: "",
       streamingToolCalls: [],
+      // 状态栏 token 用量刷新信号（流结束即 +1，TokenUsage 订阅重新拉取）
+      usageVersion: s.usageVersion + 1,
       messages: [
         ...s.messages,
         {
@@ -562,6 +566,7 @@ export const useAppStore = create<AppStore>((set, get) => {
     streamingToolCalls: [],
     taskProgress: null,
     lastTask: null,
+    usageVersion: 0,
     selectedModel: localStorage.getItem("boenmind.selectedModel"),
     selectedThinking: "off",
     setSelectedModel: (value) => {

@@ -29,6 +29,12 @@
 - **TerminalPane 一期已落地（07618ce，上游吸收 T1/T2）**：后端 /api/terminal（portable-pty 会话，创建/输入/resize/SSE/关闭；broadcast 多订阅 + 读线程自清理；**ConPTY ESC[6n 光标查询应答**——不答则 cmd 输出阻塞，实测坑）；前端 TerminalPane 宿主组件（xterm 6 + fit；编程壳右栏第三个 Tab，终端 Tab 加宽 30rem）；dir 命令全链路实测通过
 - **剩余**（执行顺序已拍）：项目切换（currentProject 上下文 + 文件树/终端联动）→ codegraph 转官方插件（scopes=["coding"]）→ 浏览器仿真 B 方案（可视化 web 工具链）
 
+**布局 v5 + 状态栏轮（2026-08-15 用户三点）**：
+- **编程壳去编辑器（用户"一行代码都不用看"）**：布局 v5——中=任务清单主区 / 左=文件树 / 右=对话独立列 / 底部=终端|分支图叠放；编辑器视图仍在注册表（功能单元模式，随时可加回）；key v4→v5
+- **状态栏升级（用户拍板开搞）**：dockview 8.1 `rightHeaderActionsComponent`（三个 header action 槽位之一）——面板标题栏右侧统一状态区 StatusBarActions（按组内活跃面板渲染状态项；当前=对话面板 TokenUsage）；token 数据源=后端新 API `GET /api/sessions/{id}/usage`（事件日志 assistant/message 事件 usage 聚合：input/output/messages）；前端图标+总量（Coins + 缩写），点击悬浮窗看明细（**宽度不足转悬浮窗**，用户拍板）；流结束（finalizeStream）usageVersion+1 → 自动重拉；浏览器实测真实消息 3.6K（输入 3512/输出 44）全链路通过
+- **GitBar 精简（用户"github 横条没懂"）**：移除顶部横排提交时间线（commit 标题对不看代码的用户无意义），保留项目切换器+当前分支+变更数+刷新；提交历史看分支图 DAG 面板
+- 坑记录：dockview header 区域元素 IAB 合成点击失效（须 dom_cua，同 Dock 磁吸坑）；TokenUsage 悬浮窗 backdrop 与 ChatPane 会话入口同款（z-40）
+
 **布局与聊天单元轮（2026-08-15 用户开题三点，两项落地）**：
 - **默认布局重定义（用户"你好好定义一下"）**：chat = 左会话列表/中对话/**右文件树**（工作目录随手翻文件）；coding = 左文件树/中编辑器+底部任务|终端|分支图叠放/**右对话独立列**（AI 干活主入口不再和终端挤 Tab）；布局 key v3→v4（用户自定义布局随版本重置一次，已知代价）
 - **会话入口（用户"聊天单元一定要带 SESSION"）**：界面充足 = dock 会话列表面板（chat 应用已有）；界面不充足 = 聊天单元顶部三横按钮（panel 形态）→ portal 悬浮窗（SessionList 复用，`scene` prop 化——编程壳按 coding 场景过滤 + 新建对话）；token 用量/缓存命中状态栏 = 待接数据源，并入状态栏专项
@@ -74,6 +80,7 @@
 
 | 轮次 | 要点 |
 |---|---|
+| 布局 v5 + 状态栏轮 | 编程壳去编辑器（任务清单主区）；状态栏升级（dockview rightHeaderActions + token 用量 API/悬浮明细/流后刷新）；GitBar 精简去提交时间线 |
 | 布局与聊天单元轮 | 默认布局 v4 重定义（chat 三栏含文件树 / coding 对话独立右列）+ 聊天单元会话入口（三横悬浮窗，SessionList scene 化）；状态栏统一评估待拍板 |
 | 项目切换轮 | 前端项目集合 + workspace root 参数化 + 全视图联动（文件树/分支/GitBar/终端 cwd）+ 新建校验/删除回退；用户拍板编辑器不再深化 |
 | M2 深化轮 | 分支图 DAG（git-info 拓扑数据 + GitGraph 视图 + lane 算法）+ EventQuery 类型过滤（长会话 todo 读取不再全量 replay）；布局 key 版本化 v3 |

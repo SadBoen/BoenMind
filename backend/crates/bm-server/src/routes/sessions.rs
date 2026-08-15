@@ -254,3 +254,39 @@ pub async fn clear_session_events(
         .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
     Ok(Json(serde_json::json!({ "ok": true, "cleared": cleared })))
 }
+
+/// 会话 token 用量统计（状态栏数据源，2026-08-15）：聚合事件日志
+/// assistant/message 事件的 usage（input/output tokens）。
+/// 事件日志不可用（kernel 未装配）→ 全零（前端显示为空态，不报错）。
+pub async fn get_session_usage(
+    State(state): crate::SharedState,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> ApiResult<Json<serde_json::Value>> {
+    use bm_protocol::{BranchId, CoreEvent, EventKind, EventQuery, SessionId};
+    let Some(kernel) = &state.kernel else {
+        return Ok(Json(serde_json::json!({
+            "input_tokens": 0, "output_tokens": 0, "messages": 0,
+        })));
+    };
+    let q = EventQuery::of_type(SessionId::new(&id), BranchId::new("main"), "assistant/message");
+    let evs = kernel
+        .event_log()
+        .read_where(q)
+        .await
+        .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    let mut input_tokens = 0u64;
+    let mut output_tokens = 0u64;
+    let mut messages = 0u64;
+    for ev in &evs {
+        if let EventKind::Core(CoreEvent::AssistantMessage { usage: Some(u), .. }) = &ev.kind {
+            input_tokens += u.input_tokens;
+            output_tokens += u.output_tokens;
+            messages += 1;
+        }
+    }
+    Ok(Json(serde_json::json!({
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "messages": messages,
+    })))
+}
