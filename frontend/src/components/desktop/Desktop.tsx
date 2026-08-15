@@ -19,14 +19,12 @@ export function Desktop() {
   const [startOpen, setStartOpen] = useState(false);
 
   return (
-    <div className="relative flex h-screen w-screen select-none flex-col overflow-hidden">
+    // 壁纸在根容器：覆盖整屏（含 Dock/状态栏区域），避免底部露出 body 白底
+    <div className="desktop-wallpaper relative flex h-screen w-screen select-none flex-col overflow-hidden">
       <MenuBar startOpen={startOpen} onToggleStart={() => setStartOpen((v) => !v)} />
 
-      {/* 桌面区：壁纸 + 窗口层（Dock 不占窗口层空间，bounds 自然限制在 Dock 之上） */}
+      {/* 桌面区：窗口层（Dock 不占窗口层空间，bounds 自然限制在 Dock 之上） */}
       <div className="relative min-h-0 flex-1">
-        {/* 星空壁纸：多层径向渐变星星 + 紫蓝渐变（明暗两套，见 index.css） */}
-        <div className="desktop-wallpaper absolute inset-0" aria-hidden />
-
         {/* 空桌面提示 */}
         {openApps.length === 0 && (
           <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">

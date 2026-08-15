@@ -20,7 +20,7 @@ export function Dock() {
       aria-label={t("desktop.dock")}
       className="z-30 flex h-16 shrink-0 items-end justify-center pb-1.5"
     >
-      <div className="flex items-end gap-1.5 rounded-2xl border border-white/20 bg-white/50 px-2 pb-1.5 pt-2 shadow-lg backdrop-blur-2xl dark:bg-black/50">
+      <div className="flex items-end gap-1.5 rounded-2xl border border-white/15 bg-black/25 px-2 pb-1.5 pt-2 shadow-lg backdrop-blur-2xl">
         {APP_LIST.map((app) => {
           const open = openApps.includes(app.id);
           const active = focusedApp === app.id;
@@ -44,7 +44,7 @@ export function Dock() {
               {/* 运行指示点 */}
               <span
                 className={cn(
-                  "mt-1 h-1 w-1 rounded-full bg-foreground/60 transition-opacity",
+                  "mt-1 h-1 w-1 rounded-full bg-white/80 transition-opacity",
                   open ? "opacity-100" : "opacity-0",
                 )}
               />

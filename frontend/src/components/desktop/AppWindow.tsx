@@ -45,10 +45,12 @@ export function AppWindow({
   }, [entry.defaultSize, cascade]);
 
   // 位置未就绪前不渲染，避免初始闪现左上角
-  if (!pos) return <div ref={containerRef} className="absolute inset-0" />;
+  if (!pos) return <div ref={containerRef} className="pointer-events-none absolute inset-0" />;
 
   return (
-    <div ref={containerRef} className="absolute inset-0">
+    // 容器铺满窗口区仅用于测量居中；pointer-events-none 穿透，
+    // 让点击落到窗口本体（含被遮挡窗口露出的边缘，点击即聚焦置顶）
+    <div ref={containerRef} className="pointer-events-none absolute inset-0">
       <Rnd
         size={size}
         position={pos}
@@ -57,7 +59,7 @@ export function AppWindow({
         enableResizing={false}
         dragHandleClassName="app-window-titlebar"
         className="rounded-2xl"
-        style={{ zIndex }}
+        style={{ zIndex, pointerEvents: "auto" }}
         // 点击窗口任意处（含内容区）即聚焦置顶
         onMouseDownCapture={() => focusApp(id)}
       >

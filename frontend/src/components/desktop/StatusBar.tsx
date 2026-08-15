@@ -1,5 +1,6 @@
 /**
  * 底部状态栏：Dock 下方细信息条——后端状态点+版本 | 模型 | 工作文件夹。
+ * 深色玻璃与星空壁纸融合（壁纸恒为深紫蓝，浅色玻璃在深底上会成刺眼白条）。
  * （原三栏壳 StatusBar 的信息落点；时钟留在顶部菜单栏）
  */
 import { useTranslation } from "react-i18next";
@@ -16,10 +17,10 @@ export function StatusBar() {
   const model = config?.default_model ?? t("statusbar.noModel");
 
   return (
-    <footer className="flex h-7 shrink-0 items-center gap-4 border-t border-black/10 bg-white/40 px-3 text-[11px] text-foreground/70 backdrop-blur-xl dark:border-white/10 dark:bg-black/30">
+    <footer className="flex h-7 shrink-0 items-center gap-4 border-t border-white/10 bg-black/25 px-3 text-[11px] text-white/80 backdrop-blur-xl">
       <span className="flex items-center gap-1.5">
         {online ? (
-          <Wifi size={12} className="text-emerald-500" />
+          <Wifi size={12} className="text-emerald-400" />
         ) : (
           <WifiOff size={12} className="text-red-400" />
         )}
