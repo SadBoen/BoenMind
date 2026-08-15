@@ -42,12 +42,21 @@ export default function App() {
     return () => clearInterval(timer);
   }, [refreshHealth, loadConfig, loadSessions]);
 
-  // 启动画面结束才渲染界面壳（经典软件界面默认；桌面模式为 OS 形态入口）
+  // 启动画面（仅桌面形态）：OS 开机体验的一部分；软件形态直接进界面，
+  // 不等待 2s 启动动画（用户反馈"软件形态刷新不该看 macOS 开机"）
   const finishBoot = useCallback(() => setBooted(true), []);
 
   return (
     <div className="h-screen w-screen overflow-hidden bg-background text-foreground">
-      {booted ? (viewMode === "desktop" ? <Desktop /> : <ClassicShell />) : <BootScreen onFinish={finishBoot} />}
+      {viewMode === "desktop" ? (
+        booted ? (
+          <Desktop />
+        ) : (
+          <BootScreen onFinish={finishBoot} />
+        )
+      ) : (
+        <ClassicShell />
+      )}
       <TokenGate />
     </div>
   );
