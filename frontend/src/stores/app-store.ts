@@ -374,6 +374,20 @@ export const useAppStore = create<AppStore>((set, get) => {
       try {
         const sessions = await api.listSessions();
         set({ sessions });
+        // 场景记录清理：引用已不存在的会话（被删/数据目录切换）时移除，
+        // 避免恢复现场时 selectSession 到失效 id（后端报"会话不存在"）
+        const appSessionIds = { ...get().appSessionIds };
+        let dirty = false;
+        for (const [app, sid] of Object.entries(appSessionIds)) {
+          if (!sessions.some((s) => s.id === sid)) {
+            delete appSessionIds[app];
+            dirty = true;
+          }
+        }
+        if (dirty) {
+          localStorage.setItem("boenmind.appSessionIds", JSON.stringify(appSessionIds));
+          set({ appSessionIds });
+        }
       } catch {
         /* ignore */
       }
@@ -396,7 +410,21 @@ export const useAppStore = create<AppStore>((set, get) => {
         const { messages } = await api.getSession(id);
         set({ messages });
       } catch {
-        /* ignore */
+        // 会话已不存在（被删/数据目录切换）：放弃聚焦并清理场景记录，
+        // 避免残留失效 id（下次恢复现场仍指向它）
+        const appSessionIds = { ...get().appSessionIds };
+        let dirty = false;
+        for (const [app, sid] of Object.entries(appSessionIds)) {
+          if (sid === id) {
+            delete appSessionIds[app];
+            dirty = true;
+          }
+        }
+        if (dirty) {
+          localStorage.setItem("boenmind.appSessionIds", JSON.stringify(appSessionIds));
+          set({ appSessionIds });
+        }
+        set({ activeSessionId: null, messages: [] });
       }
       // 断线续跑恢复：拉取最近任务（含心跳进度/终态，见任务状态条）
       try {
