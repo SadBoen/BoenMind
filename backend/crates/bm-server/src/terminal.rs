@@ -59,6 +59,12 @@ fn default_shell() -> String {
     }
 }
 
+impl Default for TerminalStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TerminalStore {
     pub fn new() -> Self {
         Self {
@@ -130,11 +136,11 @@ impl TerminalStore {
                             // ConPTY 启动时发 ESC[6n（光标位置查询），宿主必须应答
                             // ESC[row;colR 否则 cmd 输出被阻塞（Windows Terminal/VS Code
                             // 同款处理；Unix shell 也发此查询，应答同样无害）
-                            if buf[..n].windows(4).any(|w| w == b"\x1b[6n") {
-                                if let Ok(mut w) = writer_ref.lock() {
-                                    let _ = w.write_all(b"\x1b[1;1R");
-                                    let _ = w.flush();
-                                }
+                            if buf[..n].windows(4).any(|w| w == b"\x1b[6n")
+                                && let Ok(mut w) = writer_ref.lock()
+                            {
+                                let _ = w.write_all(b"\x1b[1;1R");
+                                let _ = w.flush();
                             }
                             let data = base64::Engine::encode(
                                 &base64::engine::general_purpose::STANDARD,
