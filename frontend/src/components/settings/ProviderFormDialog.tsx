@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { api } from "@/api/client";
-import type { ProviderConfig, ProviderKind } from "@/api/client";
+import type { ProviderConfig, ProviderKind, ProviderShape } from "@/api/client";
 import { KIND_PRESETS, KIND_VALUES } from "@/lib/provider-presets";
 import { ProviderIcon } from "./provider-icons";
 import { ModelListCombobox } from "./ModelListCombobox";
@@ -53,6 +53,7 @@ export function ProviderFormDialog({
     try {
       const { models } = await api.listProviderModels({
         kind: form.kind,
+        shape: form.shape,
         base_url: form.base_url ?? "",
         api_key: form.api_key ?? "",
       });
@@ -77,6 +78,7 @@ export function ProviderFormDialog({
     try {
       const res = await api.testProvider({
         kind: form.kind,
+        shape: form.shape,
         base_url: form.base_url ?? "",
         api_key: form.api_key ?? "",
         model: form.default_model ?? form.models[0] ?? "",
@@ -95,6 +97,8 @@ export function ProviderFormDialog({
     setForm((f) => ({
       ...f,
       kind,
+      // 切换类型时重置协议形状（内置厂商固定 OpenAI 兼容；custom 重新选择）
+      shape: undefined,
       base_url: preset.base_url ?? "",
       models: preset.models ?? [],
       // 切换类型时默认模型跟随新预设，避免残留旧模型名
@@ -174,6 +178,35 @@ export function ProviderFormDialog({
               </Select>
             </div>
           </div>
+
+          {/* 协议形状（仅自定义厂商）：OpenAI 兼容 / Anthropic 方言 / Gemini 方言。
+              内置厂商形状固定（minimax/deepseek = OpenAI 兼容），不显示 */}
+          {form.kind === "custom" && (
+            <div className="space-y-1.5">
+              <Label>
+                {t("settings.providers.shapeLabel")}
+                <span className="ml-1 text-xs font-normal text-muted-foreground">
+                  {t("settings.providers.shapeHint")}
+                </span>
+              </Label>
+              <Select
+                value={form.shape ?? "openai-compatible"}
+                onValueChange={(v) => setForm({ ...form, shape: v as ProviderShape })}
+                itemToStringLabel={(v) => t(`settings.providers.shapes.${v}`)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(["openai-compatible", "anthropic", "gemini"] as ProviderShape[]).map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {t(`settings.providers.shapes.${s}`)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
 
           <div className="space-y-1.5">
             <Label>

@@ -7,36 +7,19 @@
 
 import i18n from "@/i18n";
 
-export type ProviderKind =
-  | "openai"
-  | "anthropic"
-  | "gemini"
-  | "ollama"
-  | "llamacpp"
-  | "minimax"
-  | "deepseek"
-  | "openrouter"
-  | "moonshot"
-  | "zhipu"
-  | "qwen"
-  | "xai"
-  | "zai"
-  | "groq"
-  | "mistral"
-  | "together"
-  | "cerebras"
-  | "fireworks"
-  | "huggingface"
-  | "nvidia"
-  | "xiaomi"
-  | "antling"
-  | "baseten"
-  | "custom";
+/** 内置厂商 kind（后端 ProviderKind 枚举同源；厂商插件化方案 A 精简为 3 家，
+ * 其余厂商需要时经 custom 或插件接入） */
+export type ProviderKind = "minimax" | "deepseek" | "custom";
+
+/** 厂商协议形状（方言；custom 有效，后端 ProviderShape 枚举同源） */
+export type ProviderShape = "openai-compatible" | "anthropic" | "gemini";
 
 export interface ProviderConfig {
   id: string;
   name: string;
   kind: ProviderKind;
+  /** 协议形状（仅 custom 有效；缺省 openai-compatible） */
+  shape?: ProviderShape;
   base_url?: string;
   api_key?: string;
   models: string[];
@@ -391,7 +374,12 @@ export const api = {
     request<{ ok: boolean }>("/api/config", { method: "PUT", body: JSON.stringify(config) }),
 
   /** 向提供商接口拉取模型列表（表单临时填写的端点/key，不落盘） */
-  listProviderModels: (body: { kind: ProviderKind; base_url?: string; api_key?: string }) =>
+  listProviderModels: (body: {
+    kind: ProviderKind;
+    shape?: ProviderShape;
+    base_url?: string;
+    api_key?: string;
+  }) =>
     request<{ models: string[] }>("/api/providers/list-models", {
       method: "POST",
       body: JSON.stringify(body),
@@ -399,6 +387,7 @@ export const api = {
   /** 测试提供商连接；message 为空仅测连通，非空发送真实对话 */
   testProvider: (body: {
     kind: ProviderKind;
+    shape?: ProviderShape;
     base_url?: string;
     api_key?: string;
     model?: string;

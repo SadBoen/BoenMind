@@ -20,7 +20,7 @@ import { ProviderIcon } from "./provider-icons";
 import { ProviderPicker } from "./ProviderPicker";
 import { ProviderFormDialog } from "./ProviderFormDialog";
 
-function emptyProvider(kind: ProviderKind = "openai"): ProviderConfig {
+function emptyProvider(kind: ProviderKind = "minimax"): ProviderConfig {
   const preset = KIND_PRESETS[kind];
   return {
     id: `p-${Date.now().toString(36)}`,
