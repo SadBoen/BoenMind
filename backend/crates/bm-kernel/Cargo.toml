@@ -10,6 +10,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # parallel 扇出需要 spawn（rt）；存储原语用 tokio 锁（sync）
 tokio = { version = "1", features = ["rt", "sync", "time"] }
+# 事件总线 panic 观测（bus.rs；通用日志设施，不违背依赖方向守卫）
+tracing = "0.1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt"] }

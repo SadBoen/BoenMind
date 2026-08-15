@@ -8,7 +8,7 @@ use axum::{
 };
 use serde::Deserialize;
 
-use crate::AppState;
+use crate::{AppState, api_error};
 
 /// OS 层汇报请求：`message` 事件内容；`wake_after_seconds` 可选，
 /// 汇报同时登记下次唤醒（治理层夹 [pacing-min, pacing-max]）。
@@ -26,22 +26,18 @@ pub async fn inject(
 ) -> Response {
     let message = req.message.trim().to_string();
     if message.is_empty() {
-        return (
-            StatusCode::BAD_REQUEST,
-            "message 不能为空".to_string(),
-        )
-            .into_response();
+        return api_error(StatusCode::BAD_REQUEST, "message 不能为空").into_response();
     }
     let Some(store) = state.steward.clone() else {
-        return (
+        return api_error(
             StatusCode::BAD_REQUEST,
-            "管家未启用（BM_STEWARD_SESSION 未设置）".to_string(),
+            "管家未启用（BM_STEWARD_SESSION 未设置）",
         )
-            .into_response();
+        .into_response();
     };
     match crate::bm_engine::steward_inject(state, store, message, req.wake_after_seconds).await {
         Ok(()) => Json(serde_json::json!({ "status": "ok" })).into_response(),
-        Err(err) => (StatusCode::BAD_GATEWAY, err).into_response(),
+        Err(err) => api_error(StatusCode::BAD_GATEWAY, err).into_response(),
     }
 }
 

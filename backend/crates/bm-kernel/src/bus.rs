@@ -203,12 +203,17 @@ impl EventBus {
             while let Some(res) = set.join_next().await {
                 match res {
                     Ok((idx, v)) => ordered[idx] = Some(v),
-                    Err(_) => panics += 1,
+                    Err(err) => {
+                        // panic 载荷随 JoinError 丢失：记日志，不把哨兵塞进结果数组
+                        // （调用方无法区分"真结果"与哨兵，回看 P1）
+                        panics += 1;
+                        tracing::error!(event = "bm.bus_handler_panic", name, panic = %err, "事件处理器 panic");
+                    }
                 }
             }
-            let mut out: Vec<JsonValue> = ordered.into_iter().flatten().collect();
+            let out: Vec<JsonValue> = ordered.into_iter().flatten().collect();
             if panics > 0 {
-                out.push(JsonValue::String(format!("task_panic: {panics}")));
+                tracing::warn!(event = "bm.bus_parallel_panics", name, count = panics);
             }
             out
         }

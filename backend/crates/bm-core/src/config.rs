@@ -57,11 +57,6 @@ pub struct AppConfig {
     /// 用户批准的系统提示词追加段（refine-suggest 审批生效；拼接在 SYSTEM_PROMPT 之后）
     #[serde(default)]
     pub custom_system_prompt: Option<String>,
-    /// 对话执行引擎（前端开关持久化）："bm" = 自研 ReactLoopAgent（事件日志
-    /// 原生/压缩可审计）；"pi" = 上游 pi SDK 引擎。None = 跟随默认（当前 pi，
-    /// 切换拍板后反转）。BM_LOOP_ENGINE 环境变量优先（双开对比调试通道）。
-    #[serde(default)]
-    pub loop_engine: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -331,7 +326,6 @@ impl Default for AppConfig {
             extension_policy: None,
             extension_allow_dangerous: None,
             custom_system_prompt: None,
-            loop_engine: None,
         }
     }
 }
@@ -484,7 +478,6 @@ mod tests {
             extension_policy: None,
             extension_allow_dangerous: None,
             custom_system_prompt: None,
-            loop_engine: None,
         };
         assert_eq!(resolve_provider(&config, Some("missing")).unwrap().id, "b");
         assert_eq!(resolve_model(&config.providers[1], None).unwrap(), "qwen");

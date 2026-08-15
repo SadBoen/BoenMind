@@ -184,6 +184,15 @@ impl StewardStore {
         Ok(())
     }
 
+    /// 回合失败回退：清掉唤醒登记（失败不重试 = 0 静默，防失败风暴）。
+    /// 调度器到点投喂的 Goal 回合失败时 next_wake_at 仍是到点值，不清会
+    /// 每 10s 重投失败回合（回看 P1：注释承诺"失败=0"但实现未做）。
+    pub async fn clear_next_wake(&self) {
+        let mut state = self.state.lock().await;
+        state.next_wake_at_ms = 0;
+        let _ = self.persist(&state);
+    }
+
     /// 调度器到期判断：`now >= next_wake_at` 且已登记。
     pub async fn should_wake(&self, now_ms: i64) -> bool {
         let state = self.state.lock().await;
@@ -412,6 +421,21 @@ mod tests {
         let store = test_store(&dir);
         let err = store.register_wake(Some(600)).await.unwrap_err();
         assert!(err.contains("未启用"), "{err}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn clear_next_wake_resets_to_silent() {
+        let dir = std::env::temp_dir().join(format!("steward-test-{}", uuid_like()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = test_store(&dir);
+        store.set_wake("s1", 600, None).await.unwrap();
+        assert!(store.snapshot().await.next_wake_at_ms > 0);
+        // 回合失败回退：唤醒归零（静默，防失败风暴）
+        store.clear_next_wake().await;
+        let snap = store.snapshot().await;
+        assert_eq!(snap.next_wake_at_ms, 0);
+        assert!(!store.should_wake(now_ms() + 1_000_000).await);
         std::fs::remove_dir_all(&dir).ok();
     }
 

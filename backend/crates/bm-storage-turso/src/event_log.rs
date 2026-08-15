@@ -732,20 +732,37 @@ impl EventStorePort for TursoEventStore {
         let sid = sid.clone();
         Box::pin(async move {
             let conn = self.conn.lock().await;
-            // 事件与分支头同事务清空（回收站 C2：用户主动清除）
+            // 事件与分支头同一事务清空（回收站 C2：用户主动清除）——两条
+            // DELETE 各自 autocommit 会留孤儿头窗口（回看 P1）
+            conn.execute("BEGIN", ()).await.map_err(|e| {
+                ProtocolError::new(ErrorCode::StoreUnavailable, format!("clear begin: {e}"))
+            })?;
             let removed = conn
                 .execute(
                     "DELETE FROM event_log WHERE session_id = ?1",
                     [sid.as_str()],
                 )
                 .await
-                .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("clear events: {e}")))?;
+                .map_err(|e| {
+                    let _ = conn.execute("ROLLBACK", ());
+                    ProtocolError::new(ErrorCode::StoreUnavailable, format!("clear events: {e}"))
+                })?;
             conn.execute(
                 "DELETE FROM branch_heads WHERE session_id = ?1",
                 [sid.as_str()],
             )
             .await
-            .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, format!("clear heads: {e}")))?;
+            .map_err(|e| {
+                let _ = conn.execute("ROLLBACK", ());
+                ProtocolError::new(ErrorCode::StoreUnavailable, format!("clear heads: {e}"))
+            })?;
+            if let Err(e) = conn.execute("COMMIT", ()).await {
+                let _ = conn.execute("ROLLBACK", ()).await;
+                return Err(ProtocolError::new(
+                    ErrorCode::StoreUnavailable,
+                    format!("clear commit: {e}"),
+                ));
+            }
             Ok(removed as u64)
         })
     }

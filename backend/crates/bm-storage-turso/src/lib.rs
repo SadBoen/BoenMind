@@ -1,7 +1,6 @@
 //! BoenMind 存储后端（bm-storage-turso）。
 //!
 //! - [`event_log`]：EventStorePort 的 turso 实现（单写者 Mutex）；
-//! - [`checkpoint`]：请求边界 fsync + 崩溃 interrupted 恢复；
 //! - [`dual_write`]：阶段 0 双写过渡（bm-server chat 路由在现有落库
 //!   的同时 append 事件流）。
 //!
@@ -10,9 +9,7 @@
 //! 空洞），改为应用层分配：读分支 head → head+1 → INSERT，唯一约束
 //! (session_id, branch_id, seq) 兜底。
 
-pub mod checkpoint;
 pub mod dual_write;
 pub mod event_log;
 
-pub use checkpoint::{CheckpointStore, CheckpointState};
 pub use event_log::{TursoEventStore, recover_interrupted_turns};

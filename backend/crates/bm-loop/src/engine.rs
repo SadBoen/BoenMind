@@ -386,6 +386,9 @@ impl<H: LoopHooks, L: Llm, T: ToolExecutor> ReactLoopAgent<H, L, T> {
             if self.check_overflow(&msgs, last_real_input) {
                 tracing::warn!(event = "bm.loop_overflow", turn, step, "单步输入超窗，硬触发压缩");
                 self.compact_or_die(turn, cancel).await?;
+                // 压缩后投影已重建：旧真实 usage 是压缩前的事实，保留会让
+                // max(粗估, 旧值) 恒超窗 → 压缩成功也必判失败回合（回看实证）
+                last_real_input = 0;
                 msgs = self
                     .log
                     .derive_messages(&sid, &bid)
@@ -436,7 +439,12 @@ impl<H: LoopHooks, L: Llm, T: ToolExecutor> ReactLoopAgent<H, L, T> {
                                         self.hooks.on_stream_chunk(&StepCtx { turn, step }, &text);
                                     }
                                     LlmEvent::ToolCallStart { id, name } => {
-                                        step_tool_calls.push((id, name, String::new()));
+                                        // 按 id 去重：上游重复发同 call 的 name 帧时
+                                        // 不产生重复条目（否则同工具被执行两次，
+                                        // 回看 P1；与 MessageEnd 去重同纪律）
+                                        if !step_tool_calls.iter().any(|(cid, _, _)| *cid == id) {
+                                            step_tool_calls.push((id, name, String::new()));
+                                        }
                                     }
                                     LlmEvent::ToolCallArgs { id, args_delta } => {
                                         if let Some(entry) = step_tool_calls.iter_mut().find(|(cid, _, _)| *cid == id) {
@@ -831,6 +839,16 @@ impl EventFlusher {
             Some(e) => Err(e),
             None => Ok(()),
         }
+    }
+}
+
+impl Drop for EventFlusher {
+    /// 错误路径兜底（回合内 `?` 提前返回跳过 finish）：置 done + 唤醒，
+    /// 写线程在下一次循环退出——否则任务在 notify_waiters 永久挂起，
+    /// 持有 store 的 Arc 泄漏（回看 P1）。
+    fn drop(&mut self) {
+        self.done.store(true, Ordering::Relaxed);
+        self.notify.notify_one();
     }
 }
 

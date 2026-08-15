@@ -93,11 +93,17 @@ impl SurfaceProjection {
     }
 
     fn attach_tool_call(&mut self, seq: u64, turn: u32, step: u32, call: SurfaceToolCall) {
-        if let Some(last) = self.messages.last_mut().filter(|m| m.role == "assistant") {
+        // 严格按 (turn, step) 挂靠：上一步的 assistant 消息不得接收本步工具
+        // （回看 P0：跨步守卫缺失会让工具挂到错误的消息上）
+        if let Some(last) = self
+            .messages
+            .last_mut()
+            .filter(|m| m.role == "assistant" && m.turn == turn && m.step == step)
+        {
             last.tool_calls.push(call);
             return;
         }
-        // 无助手消息挂靠：先建一个空的（内容由后续 chunk/message 补）
+        // 无同步助手消息挂靠：先建一个空的（内容由后续 chunk/message 补）
         self.messages.push(SurfaceMessage {
             seq,
             role: "assistant".into(),
@@ -147,12 +153,11 @@ impl Projection for SurfaceProjection {
                     // 真序事件（A1）下每个 step 先有 chunk 后有 message：
                     // 同 (turn, step) 的 assistant 消息是 chunk 拼的草稿，
                     // message 是权威内容 → 原地覆写，不新建（防重复）。
-                    // 兼容旧路径：工具占位消息（无内容仅挂工具调用）填充；
-                    // 两者都不是才新建消息。
+                    // 工具占位消息（无 chunk 仅挂工具调用）同 step 时同样填充。
+                    // 只按 (turn, step) 合并——跨步合并会让两步文本/工具塌缩
+                    // 进一条消息、污染模型输入（回看 P0）。
                     let merge = self.messages.last_mut().is_some_and(|last| {
-                        last.role == "assistant"
-                            && ((last.turn == *turn && last.step == *step)
-                                || (last.content.is_empty() && !last.tool_calls.is_empty()))
+                        last.role == "assistant" && last.turn == *turn && last.step == *step
                     });
                     if merge {
                         let last = self.messages.last_mut().expect("checked above");

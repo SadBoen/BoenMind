@@ -1,8 +1,5 @@
-//! A6 接线（HANDOFF_KERNEL_PHASE1.md §九·三）：`BM_LOOP_ENGINE=bm` 时 chat 走
-//! 自研 bm-loop，与 pi 引擎并行双开。
-//!
-//! 切片①（已落地）：开关 + 空工具跑通——provider 桥接 → OpenAiClient 流式 →
-//! 事件日志真序 → SSE 前端形状零改动。
+//! 自研引擎接线（A6，bm-loop）：chat/管家回合的 bm 路径——provider 桥接 →
+//! OpenAiClient 流式 → 事件日志真序 → SSE 前端形状零改动。
 //! 切片②（B4）：工具方向——ToolRegistry 从 CompatEngine 工具快照汇合，
 //! QuickJsToolExecutor 经 `__pi_execute_tool` 桥执行插件工具。
 //! B5：权限桥（compat_engine.rs）。
@@ -42,11 +39,16 @@ pub type BmLoopAgent = ReactLoopAgent<StreamHooks, OpenAiClient, QuickJsToolExec
 /// 换 provider/model 或空闲淘汰时弃置重建零损失。
 pub struct LoopSessionEntry {
     pub agent: Arc<Mutex<BmLoopAgent>>,
+    /// 会话串行锁：同会话任何回合（chat/steward/参数重建）必须先取此锁——
+    /// 事件日志唯一状态源要求回合严格串行，仅靠 agent 锁会在并发重建时失效
+    /// （回看 P0：check-then-build-then-insert 窗口产生双 agent 并行写日志）。
+    pub serial: Arc<tokio::sync::Mutex<()>>,
     pub provider_id: String,
     pub model: String,
     /// thinking 档位（与 pi 路径一致：改变即重建 agent）
     pub thinking: String,
-    /// startup 插件事件是否已发（每会话一次；ctx-compactor 借此加载项目配置）
+    /// startup 插件事件是否已发（每 agent 一次——重建/淘汰后重发，
+    /// ctx-compactor 借此重新加载项目配置）
     pub startup_sent: bool,
     pub last_used: std::time::Instant,
 }
@@ -361,6 +363,8 @@ pub(crate) fn resolve_llm_config(
 
 /// 取会话的 bm-loop agent；不存在或 provider/model/thinking 不一致 → 重建
 /// （状态都在日志，重建零损失——"EventLog 唯一状态源"相对 pi 句柄的优势）。
+/// 返回 (agent, 会话串行锁)：调用方必须先取串行锁再跑回合——并发（chat +
+/// steward、或参数重建窗口）下两个回合并行写同一事件日志会污染投影。
 #[allow(clippy::too_many_arguments)]
 async fn get_or_create_loop_agent(
     state: &AppState,
@@ -369,9 +373,9 @@ async fn get_or_create_loop_agent(
     model: &str,
     thinking: &str,
     progress: Arc<std::sync::Mutex<String>>,
-) -> Result<Arc<Mutex<BmLoopAgent>>, (StatusCode, String)> {
+) -> Result<(Arc<Mutex<BmLoopAgent>>, Arc<tokio::sync::Mutex<()>>), (StatusCode, String)> {
     // 既有条目：参数一致直接复用（map 锁立即释放）
-    if let Some(agent) = {
+    if let Some(entry) = {
         let mut map = state.loop_agents.lock().await;
         let existing = map.get_mut(session_id);
         if let Some(e) = existing
@@ -380,12 +384,12 @@ async fn get_or_create_loop_agent(
             && e.thinking == thinking
         {
             e.last_used = std::time::Instant::now();
-            Some(e.agent.clone())
+            Some((e.agent.clone(), e.serial.clone()))
         } else {
             None
         }
     } {
-        return Ok(agent);
+        return Ok(entry);
     }
 
     // 管家身份判定：BM_STEWARD_SESSION 指定的会话才注册 set_wake 工具
@@ -425,19 +429,24 @@ async fn get_or_create_loop_agent(
         progress,
     )?;
     let arc = Arc::new(Mutex::new(agent));
+    let serial = Arc::new(tokio::sync::Mutex::new(()));
     let mut map = state.loop_agents.lock().await;
     let entry = map.entry(session_id.to_string()).or_insert_with(|| LoopSessionEntry {
         agent: arc.clone(),
+        serial: serial.clone(),
         provider_id: provider.id.clone(),
         model: model.to_string(),
         thinking: thinking.to_string(),
         startup_sent: false,
         last_used: std::time::Instant::now(),
     });
-    // 既有条目参数不一致（前一个请求建了别的 provider/model）→ 以本次为准替换
+    // 既有条目参数不一致（前一个请求建了别的 provider/model）→ 以本次为准替换。
+    // 串行锁保留旧条目持有的那把：并发在飞回合锁的就是它，替换后新回合仍会
+    // 排队等旧回合结束（否则重建窗口两回合并行写同一事件日志）。
     if entry.provider_id != provider.id || entry.model != model || entry.thinking != thinking {
         *entry = LoopSessionEntry {
             agent: arc.clone(),
+            serial: entry.serial.clone(),
             provider_id: provider.id.clone(),
             model: model.to_string(),
             thinking: thinking.to_string(),
@@ -446,7 +455,8 @@ async fn get_or_create_loop_agent(
         };
     }
     entry.last_used = std::time::Instant::now();
-    Ok(arc)
+    // 返回 map 中实际生效的组合（并发者已插入时用它的 agent 与锁）
+    Ok((entry.agent.clone(), entry.serial.clone()))
 }
 
 // ============================================================================
@@ -652,14 +662,17 @@ async fn run_bm_prompt(p: BmPromptParams) {
         tx,
     } = p;
 
-    let agent = match get_or_create_loop_agent(&state, &session_id, &provider, &model, &thinking, progress).await {
-        Ok(a) => a,
+    let (agent, serial) = match get_or_create_loop_agent(&state, &session_id, &provider, &model, &thinking, progress).await {
+        Ok(pair) => pair,
         Err((_status, msg)) => {
             let _ = tx.send(AgentStreamEvent::Error { message: msg.clone() });
             let _ = state.db.finish_task(&task_id, "failed", Some(&msg)).await;
             return;
         }
     };
+    // 会话串行：先取串行锁（同会话任何回合排队——chat/steward/重建互斥，
+    // 事件日志唯一状态源），再取 agent 锁
+    let _serial = serial.lock().await;
 
     // startup 插件事件懒发（每会话一次；ctx-compactor 借此加载项目配置）。
     // 挂点在 agent 就绪后、首条消息运行前；与 prompt 串行、最多 EVENT_TIMEOUT。
@@ -800,9 +813,11 @@ pub async fn run_steward_turn(
         )?
     };
     let progress: Arc<std::sync::Mutex<String>> = Arc::new(std::sync::Mutex::new(String::new()));
-    let agent = get_or_create_loop_agent(state, session_id, &provider, &model, "off", progress)
+    let (agent, serial) = get_or_create_loop_agent(state, session_id, &provider, &model, "off", progress)
         .await
         .map_err(|(_, msg)| msg)?;
+    // 会话串行：chat 回合进行中管家回合必须排队（同一事件日志唯一状态源）
+    let _serial = serial.lock().await;
 
     // attach 内部通道：无人消费的 unbounded（hooks.try_send 只关心关闭）；
     // 取消 watch：15min 超时兜底
@@ -927,6 +942,9 @@ pub async fn dispatch_steward_round(
             error = %err,
             session = %session_id
         );
+        // 失败不重试：清掉到点的唤醒登记（不清会每 10s 重投失败回合，
+        // 回看 P1——注释承诺"失败=0 静默"但此前实现未做）
+        store.clear_next_wake().await;
     }
     store.set_in_flight(false).await;
     store.note_round_done(now).await;
@@ -988,6 +1006,10 @@ pub async fn steward_inject(
     store.register_wake(wake_after_seconds).await?;
     let now = crate::steward::now_ms();
     let result = run_steward_turn(&state, &session_id, message, UserMsgSource::Inject).await;
+    if result.is_err() {
+        // 失败回退本次唤醒登记（失败不重试，防失败风暴，与 dispatch 同语义）
+        store.clear_next_wake().await;
+    }
     store.note_round_done(now).await;
     result
 }

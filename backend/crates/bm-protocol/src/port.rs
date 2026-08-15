@@ -62,8 +62,8 @@ pub struct BranchHead {
 ///
 /// 能力矩阵（shipped/partial 诚实标注）：
 /// - append / append_batch / read / head_seq：shipped
-/// - subscribe（replay-prefix + tail 事件流）：partial —— 阶段 1
-///   事件流推送时实现，当前可用 read + head_seq 轮询达成同等语义
+/// - 事件流订阅：kernel 级 `subscribe_events`（replay-prefix + tail 轮询，
+///   A5 已落地；SSE 路由 /api/sessions/{id}/events 消费）——非本端口方法
 pub trait EventStorePort: Send + Sync {
     /// 原子 append 单条事件，返回分配的 seq（存储层覆写信封 seq）。
     fn append(&self, ev: SessionEvent) -> BoxFuture<'_, Result<SeqNo, ProtocolError>>;

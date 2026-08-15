@@ -1,18 +1,19 @@
-//! 思考档位能力判定：复刻 pi 运行时的 per-model 白名单
-//! （pi_agent_rust@44ddf80/src/models.rs 的 available_thinking_levels /
-//! supports_xhigh / supports_max），供 /api/thinking-levels 出 UI 档位。
+//! 思考档位能力判定：per-model 白名单（对齐 pi 时代
+//! pi_agent_rust@44ddf80/src/models.rs 的 available_thinking_levels /
+//! supports_xhigh / supports_max，规则已自研复刻），供 /api/thinking-levels 出 UI 档位。
 //!
 //! 对齐要点（2026-08-12 读 legacy 源码核对）：
 //! - OpenAI 兼容路由提供商（minimax/deepseek/custom 等）按推理模型出档
 //!   （对应 pi 时代 models.json 同步标记 `reasoning: true` 的行为）；
-//!   内置路由（openai/anthropic/gemini/ollama/llamacpp）由 pi 目录判定，
-//!   这里用 ID 白名单近似（白名单外默认推理，pi 运行时 clamp 兜底）。
-//! - xhigh/max 白名单与 vendor 逐条一致（含 deepseek provider/base_url 判定、
+//!   内置路由（openai/anthropic/gemini/ollama/llamacpp）按 ID 白名单判定
+//!   （白名单外默认推理）。
+//! - xhigh/max 白名单与 legacy 逐条一致（含 deepseek provider/base_url 判定、
 //!   anthropic claude- 前缀 + 档位家族）。
-//! - minimal 档 pi 对推理模型全量暴露，但 UI 决策不展示（与 ChatInput 4 档一致）。
+//! - minimal 档对推理模型全量暴露，但 UI 决策不展示（与 ChatInput 4 档一致）。
 //!
-//! pi 运行时仍是最终权威：不支持的档会被 clamp 逐级降级（Max→XHigh→High、
-//! 非推理→Off），这里的判定只负责 UI 出什么档。
+//! 执行侧权威 = bm-loop 的 reasoning_effort 映射（bm_engine::reasoning_effort_for）：
+//! 不支持的档在请求构造时折叠（Max→XHigh→High、非推理→Off），这里的判定
+//! 只负责 UI 出什么档。
 
 use crate::config::ProviderKind;
 
