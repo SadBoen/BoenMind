@@ -7,6 +7,8 @@
 
 **阶段 1 完成态**：主线 A（执行级事件日志 + 自研 bm-loop 引擎）+ 主线 B（pi-compat 插件兼容层）全部落地；默认引擎已反转 bm；Steward 三件套（调度器/inject 通道/前端状态页）真实验收通过；legacy 删空（§十三终点）。BoenMind = 可聊天/调工具/派子代理/有管家/有记忆的完整运行时。
 
+**LLM 厂商插件化轮（2026-08-16，方案 A 拍板并落地）**：`ProviderKind` 24→3（minimax/deepseek/custom；`#[serde(other)] Unknown` 兼容旧配置）+ **`ProviderPort` 服务面（第 14 面）**——LlmPort 经它取官方端点/协议形状（不再直读硬编码表）+ `stable_id` 取代 pi_name（bm-core `ProviderConfig::descriptor`）+ `ProviderShape`（openai-compatible/anthropic/gemini；custom 表单可选方言，Anthropic/Gemini 厂商经 custom 接入）+ thinking 白名单按形状收敛（SSRF 校验回环放行，ollama 类本地服务经 custom）+ 前端预设 3 家/custom 形状下拉/四语言同步。验收：61+129 测试全绿、旧 config 含 groq/mistral 实测启动不炸（kind=unknown）、custom 端到端实测（真实 key 回复成功）、pre-push 放行。提交 93d542f/6eed10a/165adcb；交接文档 docs/archive/HANDOFF_LLM_PROVIDER_PLUGIN.md。**顺带**：50 个测试遗留会话全部删除（备份 ~/.boenmind/backup-session-clean-20260816/）。
+
 **内核接线完成（2026-08-16 凌晨，服务面铺开轮）**：13 个服务面全部注册为 kernel 服务（memory/settings/stats/llm/credentials/skill/tools/notify/scheduler/session/gate + 已有 event_store/compactor），LoopHooks 扩到 10 挂点——架构回头看"内核未接线"问题闭环；http 面判 YAGNI（随首个插件 HTTP 路由需求）；图纸与裁决见 docs/archive/SERVICE_FACES_2026-08-15.md。
 
 **编程应用 M1 已验收通过（8254bd7，2026-08-15）**：BoenMind 用自身运行时（bm-loop + MiniMax-M3 + 内置工具，纯 API 驱动）在自身仓库完成真实 bug 修复全链路（prompt_hash 注入面缺口：定位→修复→回归测试→git 提交），独立复核 33 测试全绿 + clippy 零告警。**验收暴露 6 个真实问题**（报告 docs/ACCEPTANCE_M1_2026-08-15.md §四）——**①-⑤ 已全部修复**（1f064db：max_steps 64→128 + grep/find 接入 ignore crate 带 timeout + read/工具提示段；3d3bf2b：ctx-compactor 索引落 $BOENMIND_HOME + bm-compat dev-deps 补齐；⑥ 压缩水线持续收敛）。
@@ -93,6 +95,7 @@
 
 | 轮次 | 要点 |
 |---|---|
+| LLM 厂商插件化轮 | 方案 A 落地（93d542f/6eed10a/165adcb）：ProviderKind 3 家 + ProviderPort（14 面）+ stable_id 取代 pi_name + custom 协议形状；旧配置 Unknown 兼容；交接文档归档 HANDOFF_LLM_PROVIDER_PLUGIN.md |
 | 服务面铺开轮 | 13 服务面全部注册（六批 d6e95cf→3f5bde9）+ LoopHooks 扩 10 挂点 + http 面 YAGNI；图纸 docs/archive/SERVICE_FACES_2026-08-15.md |
 | 聊天单元一体化轮 | 会话列表收进聊天单元（ChatPane 内嵌可折叠列表）；状态栏三槽位（prefix=列表开关/right=token+X）同行；chat 布局 v6 去独立列表面板 |
 | 布局 v5 + 状态栏轮 | 编程壳去编辑器（任务清单主区）；状态栏升级（dockview rightHeaderActions + token 用量 API/悬浮明细/流后刷新）；GitBar 精简去提交时间线 |
