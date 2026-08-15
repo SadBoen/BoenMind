@@ -28,11 +28,20 @@ pub async fn set_plugin(
     axum::extract::Path(id): axum::extract::Path<String>,
     Json(req): Json<SetPluginRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let mut config = state.config.write().await;
-    bm_core::plugins::set_plugin_enabled(&mut config, &id, req.enabled)
-        .map_err(api_error_from)?;
-    // 插件启停影响 agent 会话创建（无需重启）
-    drop(config);
+    {
+        let mut config = state.config.write().await;
+        bm_core::plugins::set_plugin_enabled(&mut config, &id, req.enabled)
+            .map_err(api_error_from)?;
+    }
+    // 启用 → 增量加载插件并失效会话 agent（当前对话下一条消息即见新工具）；
+    // 禁用无运行时卸载路径，工具面保留至服务重启（compat_engine.rs reload 注释）
+    if req.enabled {
+        if let Some(compat) = &state.compat {
+            let config = state.config.read().await;
+            compat.reload(&config).await;
+        }
+        crate::bm_engine::invalidate_loop_agents(&state).await;
+    }
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 

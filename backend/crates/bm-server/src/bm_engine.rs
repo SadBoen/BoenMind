@@ -320,8 +320,8 @@ fn build_loop_agent(
         }
     }
     if let Some(compat) = compat {
-        for tool in &compat.tools {
-            // 快照在启动加载后固化；重名拒绝是防呆（工具名是 call_id 关联键）
+        // 快照在启动/插件变更后固化；重名拒绝是防呆（工具名是 call_id 关联键）
+        for tool in compat.tools.lock().unwrap().iter() {
             if let Err(err) = tools.register(tool.clone()) {
                 tracing::warn!(event = "bm.tool_register_failed", tool = %tool.name, error = %err.message);
             }
@@ -505,6 +505,14 @@ async fn get_or_create_loop_agent(
 // ============================================================================
 // chat 入口（bm 引擎分支）
 // ============================================================================
+
+/// 失效全部会话 agent（skills/插件配置变更后调用）：agent 只是「日志 +
+/// 配置 + 客户端」的壳，状态全在事件日志，弃置重建零损失——下一个
+/// prompt 按新配置重建（skill 注入/插件工具面即时生效，用户"当前对话
+/// 就能用"要求，2026-08-15 长程测试 P2）。
+pub async fn invalidate_loop_agents(state: &AppState) {
+    state.loop_agents.lock().await.clear();
+}
 
 /// BM_LOOP_ENGINE=bm 的 chat 入口（切片 ①：无工具会话跑通）。
 /// 与 pi 路径共享：会话校验 / 命名 / add_message（user 消息入 DB 由 chat.rs 完成）；

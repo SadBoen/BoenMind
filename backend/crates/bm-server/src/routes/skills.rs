@@ -26,9 +26,12 @@ pub async fn set_skill(
     axum::extract::Path(id): axum::extract::Path<String>,
     Json(req): Json<SetSkillRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let mut config = state.config.write().await;
-    bm_core::skills::set_skill_enabled(&mut config, &id, req.enabled)
-        .map_err(api_error_from)?;
+    {
+        let mut config = state.config.write().await;
+        bm_core::skills::set_skill_enabled(&mut config, &id, req.enabled).map_err(api_error_from)?;
+    }
+    // 启停改变 skill 注入面：失效会话 agent，当前对话下一条消息即按新配置重建
+    crate::bm_engine::invalidate_loop_agents(&state).await;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -36,9 +39,11 @@ pub async fn uninstall_skill(
     State(state): crate::SharedState,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let mut config = state.config.write().await;
-    bm_core::skills::uninstall_skill(&mut config, &id)
-        .map_err(api_error_from)?;
+    {
+        let mut config = state.config.write().await;
+        bm_core::skills::uninstall_skill(&mut config, &id).map_err(api_error_from)?;
+    }
+    crate::bm_engine::invalidate_loop_agents(&state).await;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -57,7 +62,7 @@ pub struct InstallSkillRequest {
 }
 
 pub async fn install_skill(
-    State(state): crate::SharedState,
+    State(_state): crate::SharedState,
     Json(req): Json<InstallSkillRequest>,
 ) -> ApiResult<Json<bm_core::skills::SkillInfo>> {
     // 网络下载 + 解压为阻塞操作，放到阻塞线程池
@@ -78,7 +83,8 @@ pub async fn install_skill(
     .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
 
     let info = result.map_err(api_error_from)?;
-    let _ = state; // 安装后默认禁用，由用户启用
+    // 安装后默认禁用，由用户启用；启用走 set_skill 失效重建（此处只卸载/安装
+    // 不重建——禁用状态不改变注入面）
     Ok(Json(info))
 }
 

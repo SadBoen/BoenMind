@@ -19,6 +19,7 @@
 //!   tool_call/tool_result 的宿主侧通道）。
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -529,14 +530,19 @@ impl HostServices for BridgeServices {
     }
 }
 
-/// QuickJS 引擎宿主：专用线程 + 命令通道 + 启动加载后的工具快照。
+/// QuickJS 引擎宿主：专用线程 + 命令通道 + 工具快照。
+/// 工具快照启动加载后固化，插件安装/启用后经 [`CompatEngine::reload`]
+/// 增量加载新扩展并刷新快照（2026-08-15 长程测试 P2：当前对话即时生效）；
+/// 禁用/卸载无运行时卸载路径，工具面保留至服务重启（`reload` 只加载不卸载）。
 pub struct CompatEngine {
     tx: mpsc::UnboundedSender<CompatCmd>,
     join: Option<std::thread::JoinHandle<()>>,
-    /// 启动加载后的工具快照（bm-loop ToolDef 形态；B4 无运行时安装，快照即全集）
-    pub tools: Vec<bm_loop::model::ToolDef>,
+    /// 已成功加载的扩展 id（`reload` 据此跳过已加载项；重复加载会重注册工具）。
+    loaded_ids: TokioMutex<HashSet<String>>,
+    /// 工具快照（bm-loop ToolDef 形态；reload 后整体替换，std Mutex 短临界区）
+    pub tools: std::sync::Mutex<Vec<bm_loop::model::ToolDef>>,
     /// B6：已注册工具名快照（events getActiveTools 的数据面；加载完成后填入）。
-    pub tool_names: Vec<String>,
+    pub tool_names: std::sync::Mutex<Vec<String>>,
     /// B6：工作目录（插件事件 ctx 的 cwd 数据面）。
     pub working_dir: PathBuf,
 }
@@ -660,8 +666,9 @@ impl CompatEngine {
         Ok(Self {
             tx,
             join: Some(handle),
-            tools: Vec::new(),
-            tool_names: Vec::new(),
+            loaded_ids: TokioMutex::new(HashSet::new()),
+            tools: std::sync::Mutex::new(Vec::new()),
+            tool_names: std::sync::Mutex::new(Vec::new()),
             working_dir: engine_working_dir,
         })
     }
@@ -674,7 +681,54 @@ impl CompatEngine {
             .map_err(|_| "compat 引擎已停止".to_string())?;
         rx.await
             .map_err(|_| "compat 引擎已停止".to_string())?
-            .map_err(|err| err.to_string())
+            .map_err(|err| err.to_string())    }
+
+    /// 增量加载当前配置里尚未加载的启用插件，并刷新工具快照
+    /// （P2，2026-08-15 长程测试：插件安装/启用后当前对话即时生效——
+    /// 调用方先改配置，再 reload + 失效会话 agent）。禁用/卸载无运行时
+    /// 卸载路径，工具面保留至服务重启。
+    pub async fn reload(&self, config: &bm_core::AppConfig) -> usize {
+        let paths = bm_core::plugins::enabled_extension_paths(config);
+        let mut loaded = 0usize;
+        for path in &paths {
+            let spec = match JsExtensionLoadSpec::from_entry_path(path) {
+                Ok(spec) => spec,
+                Err(err) => {
+                    tracing::warn!(event = "bm.compat_reload_spec_failed", path = %path.display(), error = %err);
+                    continue;
+                }
+            };
+            if self.loaded_ids.lock().await.contains(&spec.extension_id) {
+                continue;
+            }
+            match self.load(&spec).await {
+                Ok(_) => {
+                    self.loaded_ids.lock().await.insert(spec.extension_id.clone());
+                    loaded += 1;
+                    tracing::info!(event = "bm.compat_plugin_loaded", id = %spec.extension_id, reload = true);
+                }
+                Err(err) => {
+                    tracing::warn!(event = "bm.compat_reload_failed", id = %spec.extension_id, error = %err);
+                }
+            }
+        }
+        if loaded > 0 {
+            match self.read_tools().await {
+                Ok(tools) => {
+                    *self.tools.lock().unwrap() = tools.iter().map(to_loop_tool).collect();
+                    *self.tool_names.lock().unwrap() = tools.iter().map(|t| t.name.clone()).collect();
+                    tracing::info!(
+                        event = "bm.compat_reloaded",
+                        loaded,
+                        tools = self.tools.lock().unwrap().len(),
+                    );
+                }
+                Err(err) => {
+                    tracing::warn!(event = "bm.compat_reload_tools_failed", error = %err);
+                }
+            }
+        }
+        loaded
     }
 
     /// 执行一个插件工具（`__pi_execute_tool` 桥）。`session_id` 用于把
@@ -789,7 +843,7 @@ pub async fn init_compat(
             }
         }
     };
-    let mut engine = match CompatEngine::spawn(
+    let engine = match CompatEngine::spawn(
         session_streams,
         permission_pending,
         db,
@@ -818,6 +872,7 @@ pub async fn init_compat(
         };
         match engine.load(&spec).await {
             Ok(_) => {
+                engine.loaded_ids.lock().await.insert(spec.extension_id.clone());
                 loaded += 1;
                 tracing::info!(event = "bm.compat_plugin_loaded", id = %spec.extension_id);
             }
@@ -829,12 +884,12 @@ pub async fn init_compat(
 
     match engine.read_tools().await {
         Ok(tools) => {
-            engine.tools = tools.iter().map(to_loop_tool).collect();
-            engine.tool_names = tools.iter().map(|t| t.name.clone()).collect();
+            *engine.tools.lock().unwrap() = tools.iter().map(to_loop_tool).collect();
+            *engine.tool_names.lock().unwrap() = tools.iter().map(|t| t.name.clone()).collect();
             tracing::info!(
                 event = "bm.compat_ready",
                 plugins = loaded,
-                tools = engine.tools.len(),
+                tools = engine.tools.lock().unwrap().len(),
             );
         }
         Err(err) => {
