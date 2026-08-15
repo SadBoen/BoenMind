@@ -53,6 +53,40 @@ pub struct CompactionOverride {
     pub keep_recent_floor: Option<u32>,
 }
 
+/// 生效的压缩参数（组装层换算注入 bm-compactor 用）。
+/// `effective()` 把 `[compaction]` + overrides 换算成策略插件的构造参数——
+/// 策略实现（bm-compactor）不读配置，参数注入是组装层的活（§6.9 拆法）。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EffectiveCompaction {
+    /// 软水线（0.0 ~ 1.0，占用窗口比例）
+    pub watermark: f64,
+    /// 尾部保留比例（占窗口比例）
+    pub keep_recent_ratio: f64,
+    /// 尾部保留 token 下限
+    pub keep_recent_floor: u32,
+}
+
+impl CompactionConfig {
+    /// 按 provider/model 求生效参数：overrides 优先，否则全局默认。
+    /// `enabled=false` → None（组装层语义：不挂压缩插件 = 裸跑，核心
+    /// 以硬触发兜底——"缺插件优雅失败"）。
+    pub fn effective(&self, provider: &str, model: &str) -> Option<EffectiveCompaction> {
+        if !self.enabled {
+            return None;
+        }
+        let ov = self.overrides.get(&format!("{provider}/{model}"));
+        Some(EffectiveCompaction {
+            watermark: ov.and_then(|o| o.watermark).unwrap_or(self.watermark),
+            keep_recent_ratio: ov
+                .and_then(|o| o.keep_recent_ratio)
+                .unwrap_or(self.keep_recent_ratio),
+            keep_recent_floor: ov
+                .and_then(|o| o.keep_recent_floor)
+                .unwrap_or(self.keep_recent_floor),
+        })
+    }
+}
+
 fn default_enabled() -> bool {
     true
 }
@@ -78,5 +112,48 @@ impl Default for CompactionConfig {
             keep_recent_floor: default_keep_recent_floor(),
             overrides: HashMap::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn effective_uses_global_defaults_without_overrides() {
+        let c = CompactionConfig::default();
+        let e = c.effective("deepseek", "deepseek-chat").unwrap();
+        assert_eq!(e.watermark, DEFAULT_WATERMARK);
+        assert_eq!(e.keep_recent_ratio, DEFAULT_KEEP_RECENT_RATIO);
+        assert_eq!(e.keep_recent_floor, DEFAULT_KEEP_RECENT_FLOOR);
+    }
+
+    #[test]
+    fn effective_applies_model_override() {
+        let mut c = CompactionConfig::default();
+        c.overrides.insert(
+            "mini/m3".to_string(),
+            CompactionOverride {
+                watermark: Some(0.8),
+                keep_recent_ratio: None,
+                keep_recent_floor: Some(8_000),
+                context_window: None,
+            },
+        );
+        let e = c.effective("mini", "m3").unwrap();
+        assert_eq!(e.watermark, 0.8, "override 生效");
+        assert_eq!(e.keep_recent_ratio, DEFAULT_KEEP_RECENT_RATIO, "未覆盖回落全局");
+        assert_eq!(e.keep_recent_floor, 8_000);
+
+        // 其他模型不受影响
+        let other = c.effective("deepseek", "deepseek-chat").unwrap();
+        assert_eq!(other.watermark, DEFAULT_WATERMARK);
+    }
+
+    #[test]
+    fn effective_none_when_disabled() {
+        let mut c = CompactionConfig::default();
+        c.enabled = false;
+        assert!(c.effective("deepseek", "deepseek-chat").is_none());
     }
 }

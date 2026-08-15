@@ -602,7 +602,9 @@ dependencies = [
 name = "bm-compactor"
 version = "0.1.0"
 dependencies = [
+ "bm-kernel",
  "bm-loop",
+ "bm-protocol",
  "serde_json",
 ]
 

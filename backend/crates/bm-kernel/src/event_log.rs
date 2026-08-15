@@ -10,8 +10,8 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use bm_protocol::{
-    BranchHead, BranchId, EventQuery, EventStorePort, EventKind, ProtocolError, SeqNo, SessionEvent,
-    SessionId,
+    BranchHead, BranchId, CoreEvent, EventQuery, EventStorePort, EventKind, ProtocolError, SeqNo,
+    SessionEvent, SessionId,
 };
 use tokio::sync::Mutex;
 
@@ -254,7 +254,9 @@ impl EventLog {
     }
 
     /// fork 新分支（三维寻址）：`br_<hex>`，parent 记录在分支头。
-    /// 新分支为空（seq 从 1 起），replay 读分支自身事件。
+    /// 新分支首事件 = `branch/fork` 标记（seq 1，记录 fork 点来源）——
+    /// 分支起源是日志事实（§5.1 承诺的 fork 事件；merge 事件随
+    /// session.* merge 工具落地时补），replay 读分支自身事件。
     /// 分支名 = 时间戳 + 进程内原子计数混合（同毫秒多次 fork 也唯一）。
     pub async fn fork(&self, session_id: &SessionId, from: &BranchId) -> Result<BranchId, ProtocolError> {
         // 源分支必须存在（超头拒绝：不存在的分支不能 fork）
@@ -272,6 +274,13 @@ impl EventLog {
             n & 0xffff_ffff
         ));
         self.store.fork_branch(session_id, from, &new).await?;
+        self.append(
+            session_id.clone(),
+            new.clone(),
+            EventKind::Core(CoreEvent::BranchFork { from: from.clone() }),
+            SurfaceIntent::None,
+        )
+        .await?;
         Ok(new)
     }
 
@@ -641,8 +650,8 @@ mod tests {
         log.append(sid(), main_branch(), turn(1), SurfaceIntent::None).await.unwrap();
         let br = log.fork(&sid(), &main_branch()).await.unwrap();
         let s1 = log.append(sid(), br.clone(), turn(1), SurfaceIntent::None).await.unwrap();
-        assert_eq!(s1.as_u64(), 1); // 新分支 seq 从 1 起
-        // main 分支不受影响
+        assert_eq!(s1.as_u64(), 2); // 分支内 seq 独立：fork 标记占 1，首事件 2
+        // main 分支不受影响（独立序列空间）
         let s2 = log.append(sid(), main_branch(), turn(2), SurfaceIntent::None).await.unwrap();
         assert_eq!(s2.as_u64(), 2);
     }
@@ -714,7 +723,30 @@ mod tests {
         assert_eq!(main.parent_branch, None);
         let brh = heads.iter().find(|h| h.branch_id == br).unwrap();
         assert_eq!(brh.parent_branch.as_ref().map(|b| b.as_str()), Some("main"));
-        assert_eq!(brh.head_seq.as_u64(), 1);
+        // fork 标记（seq 1）+ 后续事件（seq 2）
+        assert_eq!(brh.head_seq.as_u64(), 2);
+    }
+
+    #[tokio::test]
+    async fn fork_writes_branch_fork_marker_as_first_event() {
+        // §5.1 fork 事件：子分支首事件 = branch/fork（记录来源），
+        // 消息面投影不受影响（SurfaceIntent::None）
+        let log = EventLog::new(Arc::new(InMemoryEventStore::new()));
+        log.append(sid(), main_branch(), turn(1), SurfaceIntent::Append).await.unwrap();
+        let br = log.fork(&sid(), &main_branch()).await.unwrap();
+
+        let evs = log.replay(&sid(), &br).await.unwrap();
+        assert_eq!(evs.len(), 1);
+        assert_eq!(evs[0].seq.as_u64(), 1);
+        match &evs[0].kind {
+            EventKind::Core(CoreEvent::BranchFork { from }) => {
+                assert_eq!(from.as_str(), "main");
+            }
+            other => panic!("子分支首事件应为 branch/fork，实际 {other:?}"),
+        }
+        // 消息面（derive_messages）不含 fork 标记
+        let msgs = log.derive_messages(&sid(), &br).await.unwrap();
+        assert!(msgs.is_empty(), "fork 标记不进消息面");
     }
 
     #[tokio::test]
@@ -805,7 +837,7 @@ mod tests {
         }
         log.fork(&s, &main).await.unwrap();
         let removed = log.clear_session(&s).await.unwrap();
-        assert_eq!(removed, 3);
+        assert_eq!(removed, 4, "3 条 main 事件 + 1 条子分支 fork 标记，全会话清除");
         assert_eq!(log.replay(&s, &main).await.unwrap().len(), 0);
         assert!(log.branch_heads(&s).await.unwrap().is_empty());
         // 重新 append：从 seq 1 起

@@ -8,6 +8,21 @@
 
 **架构骨架与代码基本同构、无推翻性偏差。** 本轮最大发现：**"内核已建成但未接线"**——内核四件套里只有事件日志在生产路径使用，注册表/插件加载器/事件总线（Plugin trait）零生产引用。"万物皆插件"目前的真实形态是**双轨**：QuickJS pi 生态轨（用户看到的 6 个 TS 插件）+ loop 契约轨（Compactor/LoopHooks 可换实现）；组装层仍有大量编译期内置功能（7 内置工具/Steward/subagent/pdf_omni 核等）——**不是所有功能都是插件**（详见 §五）。
 
+**回头看查出即修（同日随行修复）**：用户"查出来不先搞？"定调后，本轮把可修项全部修掉（见 §〇 修复清单）——压缩参数双轨打通、插件域事件宏落地、fork 事件落地、memory/write 写回契约接线、内核第一根接线（bm-compactor 经 Kernel/registry/loader 装配进生产）。修复后"三真缺口"只剩 merge 事件（随 session.* merge 工具落地）与存储层 GlobalSeq 列（阶段 5 前，类型已留口）。
+
+## 〇、同日随行修复清单（回头看即修）
+
+| # | 原发现 | 修复 | 证据 |
+|---|---|---|---|
+| 1 | 压缩参数双轨（bm_engine 用 default()，bm-core 配置无效） | bm-core 补 `CompactionConfig::effective(provider, model)`（overrides 优先 + enabled=false→None）；组装层换算注入 DefaultCompactor；enabled=false = 裸跑兜底 | bm-core/compaction.rs + bm_engine.rs；3 测试 |
+| 2 | 插件域注册式事件"未实现" | **更正 + 落地**：CustomEvent/EventKind::Custom 本来就有（子代理漏查）；缺的 `declare_event!` 宏补上（强类型 + to_custom/from_custom + 类型名/载荷校验） | bm-protocol/event.rs；3 测试 |
+| 3 | GlobalSeq"未找到" | **更正**：类型留口已在（ids.rs，拍板点 9 已履约）；存储层全局游标列按承诺阶段 5 前落，不改 | 报告更正 |
+| 4 | fork 无事件类型 | `CoreEvent::BranchFork{from}`（"branch/fork"）；`EventLog::fork` 以标记为子分支首事件（seq 1）；merge 事件随 session.* merge 工具落地（先用后注册） | bm-protocol + bm-kernel；2 新测试 + 3 测试更新 |
+| 5 | memory/write 空壳（无生产者） | 写回契约接线：`governance::memorize` 返回事实原文 → 回合前 append `memory/write`（key=facts.md）落日志；消费者（日志→文件重建）随 MemoryPlugin 六方法阶段 5 落 | bm-server governance.rs + bm_engine.rs |
+| 6 | 内核 Registry/loader/Plugin 生产零接线 | **第一根接线**：bm-compactor 实现 `bm_kernel::Plugin`（注册 "compactor" 服务），bm-server 启动时 KernelBuilder 装配；bm 引擎从 kernel 取事件日志 + 压缩服务（策略源=registry，参数按会话注入） | bm-compactor（新测试：装配/取用/卸载可逆）+ bm-server lib.rs/bm_engine.rs |
+
+验证：bm-protocol 59 + bm-kernel 56 + bm-core（新增 3）+ bm-compactor（新增 1）+ bm-loop + bm-server 104 全绿；clippy 双档零 lint。
+
 次要问题：文档漂移若干（已落地未勾）、压缩参数双轨未打通、插件域注册式事件/GlobalSeq/fork 事件类型三个"承诺首版应落"的小缺口。
 
 ## 一、达标项（架构承诺已兑现，有代码证据）
@@ -33,11 +48,12 @@
 
 **按计划后置（阶段 2-5，不算欠账）**：工具把关链升级、平台驱动 ABI、前端 SDK/投影引擎/应用插件贡献点（阶段 4）、session.* 工具集（阶段 5）、记忆 MemoryPlugin trait 六方法（阶段 5）——注意 M3 断点续跑会先触及 resume/archive，届时 session.* 从阶段 5 提前单件落地。
 
-**真缺口（架构承诺"首版应落"而未落）**：
+**真缺口（承诺"首版应落"未落）——修复后仅剩**：
 
-1. **插件域注册式事件机制**（§5.2 两层分治的第二层）：declare_event 等价物未实现，app/*、infra/*、goal/*、schedule/* 域无注册通道——目前只有核心域强类型 enum。
-2. **GlobalSeq 全局事件游标**（§11.4 拍板点 9 承诺"契约层先留口"）：未找到；bm-compat scheduler.rs:779 的 global_seq 是 QuickJS 宏任务序号，同名不同物。
-3. **fork/merge 事件类型**（§5.1 承诺"首版落 branch_id 字段与 fork/merge 事件"）：branch_id 三维寻址与存储层 fork_branch（含测试）已落，但事件类型未落——fork 是存储级操作不是日志事实。与上轮代码回看"fork 无事件类型"记录一致，保持待办。
+1. **merge 事件类型**：fork 已落地（branch/fork + 子分支首事件，§〇#4）；merge 随 session.* merge 工具落地时补（先用后注册，§5.1 原则）。
+2. **存储层 GlobalSeq 列**：类型留口已在（§〇#3 更正），按拍板点 9 承诺阶段 5 前落全局游标列。
+
+（原列的插件域注册式事件已落地、GlobalSeq 已更正、fork 事件已落地——见 §〇。）
 
 ## 四、核心落差：内核已建成但未接线（本轮最大发现）
 

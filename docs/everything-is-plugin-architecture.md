@@ -393,7 +393,7 @@ SessionEvent {
 
 事件类型（**首版只注册正在使用的域**，其余按需添加，ignorable 兜底，见 S9）：
 
-**核心域**：`turn/start|end`、`step/start|end`、`user/message`、`assistant/chunk|message`、`tool/call|result`、`request/header`
+**核心域**：`turn/start|end`、`step/start|end`、`user/message`、`assistant/chunk|message`、`tool/call|result`、`request/header`、`branch/fork`（2026-08-15 落地：子分支首事件）
 **压缩域**：`compaction/start|summary|end`（replace 事务）
 **记忆域**：`memory/write`（记忆投影写回日志，防重放漂移）
 **扩展域（插件可注册）**：`app/*`（应用插件）、`infra/*`（基础设施）、`goal/*`、`schedule/*`、`todo/write`——**先用后注册**，注册 = 声明协议版本与 ignorable 语义
@@ -405,7 +405,7 @@ SessionEvent {
 - **并发写**：单进程内单写者（Mutex 串行 append）；跨进程（如子代理子进程）不走日志直写，走 RPC 代理写（未来 multi-instance 时引入租约）——**首版不承诺多进程并发写**（S9 缩小范围）。
 - **压缩锁**：unmatched `compaction/start` = 压缩中（dsh 语义），恢复时据此完成或回滚事务。
 
-**分支化事件日志（v0.6 吸收，Life Agent OS）**：会话日志预留 `(session_id, branch_id, seq)` 三维寻址——fork 产生独立序列、merge 后分支转只读、fork 超头拒绝。**会话分支（"回滚到旧分支"语义）不再是前端功能，而是日志第一公民**。首版只落 `branch_id` 字段与 fork/merge 事件类型，分支 UI 二期（对齐 Hana 的会话分支拍板点）。
+**分支化事件日志（v0.6 吸收，Life Agent OS）**：会话日志预留 `(session_id, branch_id, seq)` 三维寻址——fork 产生独立序列、merge 后分支转只读、fork 超头拒绝。**会话分支（"回滚到旧分支"语义）不再是前端功能，而是日志第一公民**。`branch_id` 字段与 fork 事件类型已落地（2026-08-15：`EventLog::fork` 以 `branch/fork` 标记为子分支首事件，记录 fork 点来源）；merge 事件随 session.* merge 工具落地时补（先用后注册）。分支 UI 二期（对齐 Hana 的会话分支拍板点）。
 
 ### 5.2 服务注册与事件（Rust 版 Cordis，v0.6 深化）
 
@@ -434,7 +434,7 @@ declare_event!(WikiPlugin, WikiIndexed { wiki_id: String, node_count: u32 });
 ctx.waterfall("agent/pre-step", args, |next| async move { /* 决策 */ });
 ```
 
-- **两层分治**：核心域（turn/step/user/assistant/tool/request/compaction/memory）用强类型 enum，插件域用注册式——避免"一个巨型 enum 所有人都要改"，也保留插件自由扩展。
+- **两层分治**：核心域（turn/step/user/assistant/tool/request/compaction/memory/branch）用强类型 enum，插件域用注册式——避免"一个巨型 enum 所有人都要改"，也保留插件自由扩展。**✅ 插件域注册式已落地（2026-08-15）**：bm-protocol 的 `declare_event!` 宏（生成强类型结构 + `to_custom`/`from_custom` + 类型名/载荷校验，测试固化）；内核经 `EventKind::Custom` 透传不解释。
 - **与 Life Agent OS 互相印证**（Spec D4）：跨层稳定事件才进一等枚举变体，层内扩展一律 `Custom{event_type: "命名空间.事件"}`——我们的"插件域注册式"正是同一原则的 Rust 形态。
 - 代价说明：插件域类型安全稍弱（字符串 EventId），换取自由扩展——与 dsh 的 TS 声明合并各有利弊，Rust 侧这是正解。
 
@@ -996,11 +996,11 @@ M5：自举闭环（用 BoenMind 编程应用完成 BoenMind 的一个完整功�
 - [ ] 渐进路线与现有发布节奏的冲突评估（拍板时定）
 - [ ] 沙箱（OS 级）与插件系统的关系（confine 在哪个层生效，阶段 3 细化）
 - [ ] 记忆插件与日志的写回契约（memory/write 事件协议细化）
-- [x] **compact.rs 压缩策略拆出**（v0.17 自查实锤，§6.9）：✅ 已落地（6cbe56d：bm-loop 留 Compactor 接口 + 三事件事务协议 + 硬触发兜底；bm-compactor 新 crate = D10 默认实现；水线 0.5 已收敛）。尾账：组装层 default() 未从配置换算注入（双水线）
+- [x] **compact.rs 压缩策略拆出**（v0.17 自查实锤，§6.9）：✅ 已落地（6cbe56d：bm-loop 留 Compactor 接口 + 三事件事务协议 + 硬触发兜底；bm-compactor 新 crate = D10 默认实现；水线 0.5 已收敛）。✅ 参数双轨已打通（2026-08-15：bm-core `CompactionConfig::effective()` 换算 + 组装层注入；enabled=false = 不挂压缩插件）
 - [ ] 平台驱动 ABI 稳定性纪律（驱动接口变更 = 大版本事件的判据）
 - [x] **Steward 调度器 + next_wake_at 自调节奏**（v0.18，§14.1）：✅ 已落地（v0.19/v0.20，§14.5：定时回合注入/静默窗口/OS 汇报通道/前端状态页全链路真实验收）
 - [ ] **APP 确定性宿主端口**（v0.18，§14.3）：audio/media 等直调端口按需新增（不经过 LLM），与工具调用并列的第二种 APP 手脚
-- [x] **内核接线面登记**（v0.21，2026-08-15 架构回头看）：Registry/loader/Plugin trait/事件总线在生产路径零接线（仅事件日志层被使用）——"万物皆插件"现实=QuickJS 轨+loop 契约轨+组装层内置三轨。**接线判据（YAGNI）="第一个第二实现出现时"**：记忆插件化（阶段 5）/网络策略换实现（10057 类）/平台驱动（mac 端口）。详见 docs/REVIEW_ARCHITECTURE_2026-08-15.md
+- [x] **内核接线面登记**（v0.21，2026-08-15 架构回头看）：Registry/loader/Plugin trait/事件总线在生产路径零接线（仅事件日志层被使用）——"万物皆插件"现实=QuickJS 轨+loop 契约轨+组装层内置三轨。✅ **第一根接线已落**（同日随行修复）：bm-compactor 实现 Plugin（注册 "compactor" 服务），bm-server 启动 KernelBuilder 装配，bm 引擎从 kernel 取事件日志与压缩服务（装配/取用/卸载可逆有测试）。后续接线判据（YAGNI）="第一个第二实现出现时"：记忆插件化（阶段 5）/网络策略换实现（10057 类）/平台驱动（mac 端口）。详见 docs/REVIEW_ARCHITECTURE_2026-08-15.md
 - [x] **§6.4 dsh 论断修正**（v0.21，2026-08-15 调研源码级核实）："dsh 仅有聊天节点萌芽"不成立——其前端插件化是完整机制；原创点改写为"受权限治理的应用插件"。见 §6.4 与 docs/REVIEW_LANDSCAPE_2026-08-15.md
 - [x] **生态吸收登记**（v0.21，2026-08-15 全网对标调研）：底座/记忆/插件三调研笔记 docs/research/2026-08-15/ + 报告 docs/REVIEW_LANDSCAPE_2026-08-15.md；高优先吸收见 §十五·15.2
 
@@ -1171,7 +1171,7 @@ M5：自举闭环（用 BoenMind 编程应用完成 BoenMind 的一个完整功�
 
 1. **骨架与代码同构、无推翻性偏差**：内核行数 6060（协议 908 + 内核 2975 + loop 2177，远低于 1.5 万预算）、依赖方向守卫机器化、bm-protocol 零运行时依赖、事件信封全要素（version/ignorable/surface_op/source_seqs/branch_id）、压缩拆分落地——全部达标。
 2. **内核已建成但未接线（本轮最大发现）**：生产路径只用 bm-kernel 的事件日志/投影/订阅；Registry/loader/Plugin trait/事件总线有实现有测试但零生产装配。"万物皆插件"现实 = 三轨：QuickJS pi 生态轨（6 个 TS 插件）+ loop 契约轨（Compactor/LoopHooks 可换实现）+ 组装层编译内置（7 内置工具/Steward/subagent/pdf_omni 核/refine/skills/updates/前端）。接线判据见 §十。
-3. **真缺口三件**（承诺首版应落未落）：插件域注册式事件机制（§5.2 两层分治第二层）、GlobalSeq 全局事件游标、fork/merge 事件类型（存储层 fork 已落）。均不阻塞编程应用 M1。
+3. **真缺口三件 → 同日已修两件 + 更正一件**：插件域注册式事件（declare_event! 宏已落地）、GlobalSeq（类型留口本已在——报告更正，存储层列按拍板点阶段 5 前落）、fork 事件（branch/fork 已落地；merge 随 session.* merge 工具补）。剩余均不阻塞编程应用 M1。
 
 ### 15.2 生态吸收登记（2026-08-15 调研高优先项，完整 21+16 条见报告 §六）
 
@@ -1192,7 +1192,7 @@ M5：自举闭环（用 BoenMind 编程应用完成 BoenMind 的一个完整功�
 
 - §6.4 定位声明已改写（"UI 即插件"不再独有，原创点="受权限治理的应用插件"）；
 - 记忆首版设计补契约字段与事件订阅写法（§6.1 实现时按调研笔记执行）；
-- 压缩参数双轨（bm-compactor default() vs bm-core 配置）——M1 后打通或如实标注；
+- 压缩参数双轨（bm-compactor default() vs bm-core 配置）——✅ 已打通（同日随行修复）；memory/write 写回契约生产者已接线（记忆事实落事件日志），消费者（日志→文件重建）随 MemoryPlugin 六方法阶段 5 落；
 - 用户点名的 12 参考项目逐项核实结果入报告 §二（多数与核心/插件相关，WoLiu/ACKEN 等价值≈0 的也已记录，供用户判断）。
 
 ## 十二、附录

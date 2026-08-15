@@ -168,6 +168,10 @@ pub enum CoreEvent {
     /// 请求头（initial/resume/change，模型调用链标识）
     #[serde(rename = "request/header")]
     RequestHeader { header: EpochHeader, reason: HeaderReason },
+    /// 分支创建（fork 点事实；子分支首事件 = 该标记，"回滚到旧分支"
+    /// 的审计起点。merge 事件随 session.* merge 工具落地时补——先用后注册）
+    #[serde(rename = "branch/fork")]
+    BranchFork { from: BranchId },
     /// 压缩开始
     #[serde(rename = "compaction/start")]
     CompactionStart { turn: u32 },
@@ -229,6 +233,7 @@ pub fn core_type_name(ev: &CoreEvent) -> &'static str {
         CoreEvent::ToolCall { .. } => "tool/call",
         CoreEvent::ToolResult { .. } => "tool/result",
         CoreEvent::RequestHeader { .. } => "request/header",
+        CoreEvent::BranchFork { .. } => "branch/fork",
         CoreEvent::CompactionStart { .. } => "compaction/start",
         CoreEvent::CompactionSummary { .. } => "compaction/summary",
         CoreEvent::CompactionEnd { .. } => "compaction/end",
@@ -242,6 +247,71 @@ pub fn core_type_name(ev: &CoreEvent) -> &'static str {
 // 会话事件信封（日志落盘形态）
 // ---------------------------------------------------------------------------
 
+/// 插件域事件注册（§5.2 两层分治的第二层）：一次声明生成强类型事件
+/// 结构 + 与 [`CustomEvent`] 的转换器。序列化走 serde_json，与日志 JSON
+/// 语义对齐；事件类型名 = `"<插件>.<事件>"`（如 "WikiPlugin.WikiIndexed"），
+/// 即日志 type 列 / 订阅匹配键。
+///
+/// 用法（对齐架构 §5.2 示例）：
+/// ```ignore
+/// declare_event!(WikiPlugin, WikiIndexed { wiki_id: String, node_count: u32 });
+/// ```
+/// 生成：`struct WikiIndexed { wiki_id, node_count }`（serde 可序列化）、
+/// `WikiIndexed::EVENT_TYPE`、`WikiIndexed::to_custom()`、
+/// `WikiIndexed::from_custom(&CustomEvent) -> Result<Self, ProtocolError>`。
+///
+/// 与核心域的关系：核心域走 [`CoreEvent`] 强类型 enum（性能 + 编译期
+/// 检查），插件域走本宏（灵活 + 前向兼容）——内核透传 Custom 不解释，
+/// 插件自己在订阅侧 `from_custom` 取回强类型。
+#[macro_export]
+macro_rules! declare_event {
+    ($plugin:ident, $name:ident { $($field:ident : $ty:ty),* $(,)? }) => {
+        #[derive(Debug, Clone, PartialEq, ::serde::Serialize, ::serde::Deserialize)]
+        pub struct $name {
+            $(pub $field: $ty),*
+        }
+
+        impl $name {
+            /// 事件类型名（"<插件>.<事件>"，日志 type 列 / 订阅匹配键）。
+            pub const EVENT_TYPE: &'static str = ::std::concat!(
+                ::std::stringify!($plugin), ".", ::std::stringify!($name)
+            );
+
+            /// 打包为内核透传的自定义事件（kind=Custom，落日志形态）。
+            pub fn to_custom(&self) -> $crate::event::CustomEvent {
+                $crate::event::CustomEvent {
+                    event_type: Self::EVENT_TYPE.to_string(),
+                    data: ::serde_json::to_value(self)
+                        .expect("插件事件序列化不可失败（字段均 serde）"),
+                }
+            }
+
+            /// 从自定义事件取回强类型（类型名不匹配 → InvalidArgument；
+            /// 数据形状不匹配 → InvalidArgument——序列化失败即回放漂移）。
+            pub fn from_custom(ev: &$crate::event::CustomEvent) -> Result<Self, $crate::ProtocolError> {
+                if ev.event_type != Self::EVENT_TYPE {
+                    return Err($crate::ProtocolError::new(
+                        $crate::ErrorCode::InvalidArgument,
+                        format!(
+                            "event type `{}` != declared `{}`",
+                            ev.event_type,
+                            Self::EVENT_TYPE
+                        ),
+                    ));
+                }
+                ::serde_json::from_value(ev.data.clone()).map_err(|e| {
+                    $crate::ProtocolError::new(
+                        $crate::ErrorCode::InvalidArgument,
+                        format!("event `{}` payload mismatch: {e}", Self::EVENT_TYPE),
+                    )
+                })
+            }
+        }
+    };
+}
+
+/// 信封结构演进时递增；**写者决定 bump**（"能解析 ≠ 语义正确"）。
+/// 读者发现 version != 当前值 → 走迁移链（A7）而非直接拒绝重建。
 /// 会话事件格式版本（dsh SESSION_FORMAT_VERSION 语义）：
 /// 信封结构演进时递增；**写者决定 bump**（"能解析 ≠ 语义正确"）。
 /// 读者发现 version != 当前值 → 走迁移链（A7）而非直接拒绝重建。
@@ -416,5 +486,42 @@ mod tests {
             let back: EventKind = serde_json::from_str(&json).unwrap();
             assert_eq!(back, k);
         }
+    }
+
+    // 插件域事件宏（§5.2 两层分治第二层）：声明 → 强类型 + Custom 转换。
+    crate::declare_event!(WikiPlugin, WikiIndexed { wiki_id: String, node_count: u32 });
+
+    #[test]
+    fn declare_event_roundtrip_through_custom() {
+        let ev = WikiIndexed {
+            wiki_id: "w-1".into(),
+            node_count: 42,
+        };
+        let custom = ev.to_custom();
+        assert_eq!(custom.event_type, "WikiPlugin.WikiIndexed");
+        assert_eq!(WikiIndexed::EVENT_TYPE, "WikiPlugin.WikiIndexed");
+
+        // 经日志 JSON 语义往返（内核透传不解释，插件侧取回强类型）
+        let back = WikiIndexed::from_custom(&custom).unwrap();
+        assert_eq!(back, ev);
+    }
+
+    #[test]
+    fn declare_event_type_mismatch_is_invalid_argument() {
+        let wrong = CustomEvent {
+            event_type: "OtherPlugin.Other".into(),
+            data: JsonValue::Null,
+        };
+        let err = WikiIndexed::from_custom(&wrong).unwrap_err();
+        assert!(err.to_string().contains("declared"), "类型名不匹配拒绝：{err}");
+    }
+
+    #[test]
+    fn declare_event_payload_mismatch_is_invalid_argument() {
+        let wrong = CustomEvent {
+            event_type: "WikiPlugin.WikiIndexed".into(),
+            data: serde_json::json!({"wiki_id": 1, "wrong": true}),
+        };
+        assert!(WikiIndexed::from_custom(&wrong).is_err(), "载荷形状不匹配拒绝");
     }
 }

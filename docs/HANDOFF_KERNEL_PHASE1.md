@@ -8,7 +8,8 @@
 **阶段 1 完成态**：主线 A（执行级事件日志 + 自研 bm-loop 引擎）+ 主线 B（pi-compat 插件兼容层）全部落地；默认引擎已反转 bm；Steward 三件套（调度器/inject 通道/前端状态页）真实验收通过；legacy 删空（§十三终点）。BoenMind = 可聊天/调工具/派子代理/有管家/有记忆的完整运行时。
 
 **最近四轮回溯**：
-- 回头看+对标轮（本轮）：架构回头看（内核未接线三轨实锤/文档漂移修正）+ 全网对标三调研（底座前 10/记忆/插件同类，笔记 docs/research/2026-08-15/ 约 100KB 全部标注核实口径）→ 报告 docs/REVIEW_ARCHITECTURE_2026-08-15.md + docs/REVIEW_LANDSCAPE_2026-08-15.md；架构文档 v0.21（§6.4 dsh 论断修正/§十勾选/§十五吸收登记）
+- 修复轮（同日，用户定调"回头看查出问题先修"）：三真缺口修两件（declare_event! 宏 / branch/fork 事件）、压缩参数双轨打通（bm-core effective()）、memory/write 生产者接线、**内核第一根接线**（bm-compactor 经 KernelBuilder 装配进生产，bm 引擎从 kernel 取事件日志+压缩服务）——测试全绿 + clippy 零 lint
+- 回头看+对标轮（本轮）：架构回头看（内核未接线三轨实锤/文档漂移修正）+ 全网对标三调研（底座前 10/记忆/插件同类，笔记 docs/research/2026-08-15/ 约 100KB 全部标注核实口径）→ 报告 docs/REVIEW_ARCHITECTURE_2026-08-15.md + docs/REVIEW_LANDSCAPE_2026-08-15.md；架构文档 v0.21
 - 代码回看轮（5c6451b）：三子代理并行审查全代码 → P0×3 修复（会话串行锁/压缩后 usage 重置/投影守卫）+ P1 一批（死代码/失败风暴/flusher 泄漏等）；报告 docs/REVIEW_CODE_2026-08-15.md；未修项（inbox 未接线/prompt_hash 契约/env 集中化）挂编程应用 M2
 - 拍板轮（fa5019b）：pre-push 本地质量门（hooks/pre-push，GitHub 私有仓库无 Actions 免费额度）；pi 目录改名 `~/.boenmind/pi` → `~/.boenmind/agents`（启动自动迁移，真实验收过）；回头看立项材料 docs/REVIEW_BEFORE_CODING_APP.md（7 拍板点待拍）
 - Steward 验收轮（059c9e6）：采集器全链路真实验收 + inject 锚点缺陷修复（note_round_done 推进 last_wake_at）
@@ -33,7 +34,7 @@
 1. **编程应用 M1**（用户已拍板方向，等 7 拍板点确认后开工）：M1 = 现有能力编排 + 真实验收（读→改→测→提交），几乎零新增代码；M2 活任务清单（todo/write 事件协议已现成于 bm-protocol + 任务面板）是主要增量；迁移门槛 M3（8h+ 断点续跑）
 2. **Steward 收尾**：采集器挂任务计划程序（README 有 schtasks 命令，填真实管家会话 ID）
 3. **代码回看未修项**（挂 M2）：inbox 双队列接线或删除、prompt_hash 每步重算、BM_STEWARD_* env 集中化、15min 超时任务驻留
-4. **架构回头看尾账**（本轮）：压缩参数双轨打通或头注如实标注（M1 后顺手）；插件域注册式事件/GlobalSeq/fork 事件类型三缺口登记（不阻塞）
+4. **回头看尾账（已修完大半，剩余两件不阻塞）**：merge 事件随 session.* merge 工具落地时补（fork 事件已落地）；GlobalSeq 存储列阶段 5 前落（类型已留口）；压缩参数双轨/内核接线/memory 生产者均已修
 5. 可选顺手件：code-graph MCP 工具面实测（新会话生效）
 
 ## 注意坑（浓缩操作要点，完整背景见归档 §〇·五）

@@ -60,6 +60,10 @@ pub struct AppState {
     /// 阶段 0 事件日志双写器（None = 事件日志不可用，双写静默跳过，
     /// 主链路不受影响——事件日志是渐进式吸收的新家，不是闸门）。
     pub dual_writer: Option<Arc<bm_storage_turso::dual_write::DualWriter>>,
+    /// 内核（v0.21 接线）：KernelBuilder 装配的加载器/注册表/事件总线 +
+    /// 预装插件（bm-compactor）。None = 事件日志不可用（同 dual_writer）。
+    /// bm 引擎从 kernel 取事件日志与压缩服务——"内核未接线"的第一根接线。
+    pub kernel: Option<Arc<bm_kernel::Kernel>>,
     /// bm 引擎进行中 prompt 的取消通道
     /// （key = session_id，value = (prompt_id, watch::Sender<bool>)）。
     pub bm_aborts: Arc<Mutex<HashMap<String, BmAbortEntry>>>,
@@ -86,10 +90,14 @@ pub struct PermissionDecision {
 }
 
 impl AppState {
+    // 组装层一次性装配点：参数是启动期全部共享组件，8 个有出处
+    // （config/db/双写/内核/兼容引擎/双通道/管家），不分拆更可读
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: AppConfig,
         db: Arc<Db>,
         dual_writer: Option<Arc<bm_storage_turso::dual_write::DualWriter>>,
+        kernel: Option<Arc<bm_kernel::Kernel>>,
         compat: Option<Arc<compat_engine::CompatEngine>>,
         session_streams: Arc<
             Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<bm_core::agent::AgentStreamEvent>>>,
@@ -103,6 +111,7 @@ impl AppState {
             session_streams,
             permission_pending,
             dual_writer,
+            kernel,
             bm_aborts: Arc::new(Mutex::new(HashMap::new())),
             loop_agents: Arc::new(Mutex::new(HashMap::new())),
             compat,
@@ -376,6 +385,28 @@ async fn serve_inner(
         }
     };
 
+    // 内核接线（v0.21）：Registry/loader/Plugin trait 的第一根生产接线——
+    // 压缩策略插件（bm-compactor）经 KernelBuilder 装配进 registry，bm 引擎
+    // 从 kernel 取事件日志与压缩服务（架构回头看"内核未接线"的收尾）。
+    // 装配失败 = 编程错误（预装插件 bug），fail-fast 于启动。
+    let kernel = dual_writer.as_ref().map(|d| {
+        Arc::new(
+            bm_kernel::KernelBuilder::new()
+                .with_event_store(d.event_log().store())
+                .with_plugin(
+                    bm_kernel::Manifest {
+                        name: "bm-compactor".into(),
+                        version: env!("CARGO_PKG_VERSION").into(),
+                        deps: vec![],
+                        description: Some("默认压缩策略（D10）".into()),
+                    },
+                    Box::new(bm_compactor::CompactorPlugin::default()),
+                )
+                .build()
+                .expect("内核装配失败：bm-compactor 预装插件"),
+        )
+    });
+
     // B4/B5 工具方向：QuickJS 插件引擎（bm 引擎的工具执行侧）。启动失败不阻断——
     // bm 引擎退化为无工具模式。
     // session_streams/permission_pending 先建（CompatEngine 建于 AppState 之前，
@@ -416,6 +447,7 @@ async fn serve_inner(
         config,
         db,
         dual_writer,
+        kernel,
         compat,
         session_streams,
         permission_pending,

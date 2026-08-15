@@ -6,5 +6,7 @@ description = "压缩插件（默认实现，D10）：双触发水线/尾部保�
 
 [dependencies]
 # 插件依赖核心（方向：protocol ← kernel ← loop ← 插件），不反向。
+bm-protocol = { path = "../bm-protocol" }
 bm-loop = { path = "../bm-loop" }
+bm-kernel = { path = "../bm-kernel" }
 serde_json = "1"

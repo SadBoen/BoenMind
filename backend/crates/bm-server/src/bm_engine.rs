@@ -21,7 +21,7 @@ use bm_core::agent::AgentStreamEvent;
 use bm_loop::engine::{LoopConfig, ReactLoopAgent, TurnRequest};
 use bm_loop::llm::{LlmConfig, OpenAiClient};
 use bm_loop::points::{LoopHooks, RequestCtx, StepCtx, ToolCtx, ToolGate};
-use bm_protocol::{BranchId, HeaderReason, SessionId, TurnEndReason, UserMsgSource};
+use bm_protocol::{BranchId, CoreEvent, EventKind, HeaderReason, SessionId, TurnEndReason, UserMsgSource};
 use tokio::sync::{Mutex, mpsc, watch};
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -258,7 +258,7 @@ impl LoopHooks for StreamHooks {
 #[allow(clippy::too_many_arguments)]
 fn build_loop_agent(
     system_prompt: &str,
-    dual: Option<&Arc<bm_storage_turso::dual_write::DualWriter>>,
+    kernel: Option<&Arc<bm_kernel::Kernel>>,
     compat: Option<&Arc<CompatEngine>>,
     steward: Option<&Arc<crate::steward::StewardStore>>,
     is_steward_session: bool,
@@ -266,9 +266,12 @@ fn build_loop_agent(
     provider: &bm_core::config::ProviderConfig,
     model: &str,
     thinking: Option<&str>,
+    compaction: Option<bm_core::compaction::EffectiveCompaction>,
     progress: Arc<std::sync::Mutex<String>>,
 ) -> Result<BmLoopAgent, (StatusCode, String)> {
-    let Some(dual) = dual else {
+    // 内核（v0.21 接线）：事件日志与压缩服务都从 kernel 取——事件日志
+    // 不可用时内核也不存在（同一开关）
+    let Some(kernel) = kernel else {
         return Err((
             StatusCode::SERVICE_UNAVAILABLE,
             "事件日志不可用，bm 引擎无法启动".to_string(),
@@ -313,7 +316,7 @@ fn build_loop_agent(
     Ok(ReactLoopAgent::new(
         StreamHooks::new(progress, Some(memory)),
         tools,
-        bm_kernel::EventLog::new(dual.event_log().store()),
+        bm_kernel::EventLog::new(kernel.event_store()),
         SessionId::new(session_id),
         BranchId::new("main"),
         LoopConfig {
@@ -323,8 +326,22 @@ fn build_loop_agent(
             // 模型窗口（客观属性）：暂取默认 128K——后续从模型注册表换算
             context_window: 128_000,
             max_steps: 64,
-            // 挂默认压缩插件（可换可关；None = 裸跑，核心自足性 v0.17）
-            compactor: Some(std::sync::Arc::new(bm_compactor::DefaultCompactor::default())),
+            // 挂压缩插件（可换可关；None = 裸跑，核心自足性 v0.17）——
+            // 策略源 = kernel registry 里的 bm-compactor 服务（v0.21 接线），
+            // 参数由组装层从 [compaction] 配置换算注入（EffectiveCompaction；
+            // enabled=false → None 不挂），策略实现不读配置
+            compactor: compaction.map(|c| {
+                let base = kernel
+                    .service::<bm_compactor::DefaultCompactor>("compactor")
+                    .map(|svc| (*svc).clone())
+                    .unwrap_or_default();
+                std::sync::Arc::new(bm_compactor::DefaultCompactor {
+                    watermark: c.watermark,
+                    keep_recent_ratio: c.keep_recent_ratio,
+                    keep_recent_floor: c.keep_recent_floor as u64,
+                    ..base
+                }) as std::sync::Arc<dyn bm_loop::Compactor>
+            }),
         },
         llm,
         QuickJsToolExecutor::new(compat.cloned(), session_id, steward.cloned()),
@@ -400,8 +417,9 @@ async fn get_or_create_loop_agent(
     };
 
     // 系统提示拼接（与 pi 路径同构：SYSTEM_PROMPT + skills + custom；
-    // 管家会话再追管家职责段——Steward 轮）
-    let system_prompt = {
+    // 管家会话再追管家职责段——Steward 轮）+ 压缩参数换算
+    // （[compaction] 配置 → 策略插件构造参数；enabled=false → None 不挂）
+    let (system_prompt, compaction) = {
         let config = state.config.read().await;
         let skills = bm_core::skills::enabled_skills_prompt(&config);
         let custom = config.custom_system_prompt.clone().unwrap_or_default();
@@ -410,15 +428,16 @@ async fn get_or_create_loop_agent(
         } else {
             format!("{}{}{}", bm_core::agent::SYSTEM_PROMPT, skills, custom)
         };
-        if is_steward_session {
+        let system_prompt = if is_steward_session {
             format!("{base}{}", crate::steward::STEWARD_SYSTEM_PROMPT)
         } else {
             base
-        }
+        };
+        (system_prompt, config.compaction.effective(&provider.id, model))
     };
     let agent = build_loop_agent(
         &system_prompt,
-        state.dual_writer.as_ref(),
+        state.kernel.as_ref(),
         state.compat.as_ref(),
         state.steward.as_ref(),
         is_steward_session,
@@ -426,6 +445,7 @@ async fn get_or_create_loop_agent(
         provider,
         model,
         Some(thinking),
+        compaction,
         progress,
     )?;
     let arc = Arc::new(Mutex::new(agent));
@@ -645,6 +665,37 @@ struct BmPromptParams {
     tx: mpsc::UnboundedSender<AgentStreamEvent>,
 }
 
+/// memory/write 写回契约（§5.1 记忆域）：事实写入记忆插件的同时落事件
+/// 日志——记忆投影写回日志，防重放漂移（日志是唯一事实源，facts.md 是
+/// 投影，损坏可由日志重放重建）。事件在回合开始前 append（审计序：
+/// 先记忆后回合）。失败只 warn——记忆是增强不是正确性依赖（fail-safe）。
+async fn append_memory_write_event(state: &AppState, session_id: &str, fact: &str) {
+    let Some(dual) = state.dual_writer.as_ref() else {
+        return;
+    };
+    let ev = EventKind::Core(CoreEvent::MemoryWrite {
+        key: "facts.md".into(),
+        data: serde_json::json!({ "fact": fact }),
+    });
+    if let Err(err) = dual
+        .event_log()
+        .append(
+            SessionId::new(session_id),
+            BranchId::new("main"),
+            ev,
+            bm_kernel::SurfaceIntent::None,
+        )
+        .await
+    {
+        tracing::warn!(
+            event = "bm.memory_event_failed",
+            error = %err,
+            chars = fact.chars().count(),
+            "memory/write 落日志失败（记忆文件已写，日志缺一条审计事实）"
+        );
+    }
+}
+
 /// 运行一个 bm 引擎 prompt 回合：agent 锁串行 → run_turn → 持久化 + 终态事件。
 async fn run_bm_prompt(p: BmPromptParams) {
     let BmPromptParams {
@@ -708,11 +759,15 @@ async fn run_bm_prompt(p: BmPromptParams) {
     // 会话串行：agent 锁（同会话并发 prompt 排队，与 pi 路径 handle 锁同纪律）
     let mut agent = agent.lock().await;
     // governance.memorize 雏形（HANDOFF_KERNEL_PHASE1.md §九 第 2 条）：
-    // 用户消息命中「记住」指令 → 记忆插件 remember。在 attach 之前执行
-    // （已持 agent 锁，取 hooks 内存句柄零竞态）；命中与否由 memorize 内部
-    // 打日志（只记字符数，不落事实全文——用户内容不打日志纪律）。
-    if let Some(memory) = agent.hooks().memory() {
-        crate::governance::memorize(&memory, &message);
+    // 用户消息命中「记住」指令 → 记忆插件 remember + memory/write 事件落
+    // 日志（写回契约：日志是唯一事实源，记忆文件是投影，重放可重建）。
+    // 在 attach 之前执行（已持 agent 锁，取 hooks 内存句柄零竞态）；
+    // 命中与否由 memorize 内部打日志（只记字符数，不落事实全文——
+    // 用户内容不打日志纪律；事件日志本身是事实流，user/message 同源）。
+    if let Some(memory) = agent.hooks().memory()
+        && let Some(fact) = crate::governance::memorize(&memory, &message)
+    {
+        append_memory_write_event(&state, &session_id, &fact).await;
     }
     agent.hooks().attach(tx.clone(), cancel_tx);
 

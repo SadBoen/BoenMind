@@ -80,6 +80,31 @@ impl Compactor for DefaultCompactor {
     }
 }
 
+/// 内核插件形态（v0.21 内核接线）：bm-compactor 以 [`bm_kernel::Plugin`]
+/// 身份经 Kernel/loader/registry 装配进生产——"内核未接线"的第一根接线。
+/// 注册服务 `"compactor"`（默认策略实例）；组装层（bm-server）按会话从
+/// registry 取用、以 `[compaction]` 配置换算注入参数（见 bm-core
+/// EffectiveCompaction）。
+#[derive(Default)]
+pub struct CompactorPlugin {
+    /// 注册进 registry 的默认策略（组装层取用后按会话参数覆写）
+    pub compactor: DefaultCompactor,
+}
+
+impl bm_kernel::Plugin for CompactorPlugin {
+    fn name(&self) -> &'static str {
+        "bm-compactor"
+    }
+
+    fn apply(
+        &mut self,
+        ctx: &mut bm_kernel::Ctx<'_>,
+    ) -> Result<Vec<bm_kernel::Disposer>, bm_protocol::ProtocolError> {
+        let disposer = ctx.register_service("compactor", std::sync::Arc::new(self.compactor.clone()))?;
+        Ok(vec![disposer])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -122,5 +147,33 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("对话内容"));
+    }
+
+    #[test]
+    fn registers_as_kernel_plugin_service_and_uninstalls() {
+        // v0.21 内核接线：bm-compactor 经 KernelBuilder（loader + registry +
+        // Plugin::apply）装配，服务可取用；卸载 = disposer 逆序撤销注册。
+        let kernel = bm_kernel::KernelBuilder::new()
+            .with_plugin(
+                bm_kernel::Manifest {
+                    name: "bm-compactor".into(),
+                    version: "0.1.0".into(),
+                    deps: vec![],
+                    description: None,
+                },
+                Box::new(CompactorPlugin::default()),
+            )
+            .build()
+            .unwrap();
+        let svc = kernel
+            .service::<DefaultCompactor>("compactor")
+            .expect("compactor 服务经插件注册可查");
+        assert_eq!(svc.watermark, 0.5, "默认策略参数取自注册实例");
+
+        kernel.uninstall_plugin("bm-compactor").unwrap();
+        assert!(
+            kernel.service::<DefaultCompactor>("compactor").is_err(),
+            "卸载 = 撤销注册（可逆副作用）"
+        );
     }
 }

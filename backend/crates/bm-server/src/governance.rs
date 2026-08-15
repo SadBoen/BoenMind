@@ -87,9 +87,10 @@ pub fn extract_remember_fact(message: &str) -> Option<String> {
 
 /// 雏形 memorize：消息命中「记住」指令 → 锁记忆句柄 → [`MemoryFilePlugin::remember`]。
 ///
-/// 返回记住的事实字符数（未命中/锁失败返回 None）。事实全文不进日志——
-/// 只记字符数（用户内容不打日志纪律）。
-pub fn memorize(memory: &Arc<Mutex<MemoryFilePlugin>>, message: &str) -> Option<usize> {
+/// 返回写入的事实原文（未命中/锁失败返回 None）——调用方据此落
+/// `memory/write` 事件（写回契约：日志是唯一事实源，记忆文件是投影）。
+/// 事实全文不进 tracing 日志——只记字符数（用户内容不打日志纪律）。
+pub fn memorize(memory: &Arc<Mutex<MemoryFilePlugin>>, message: &str) -> Option<String> {
     let fact = extract_remember_fact(message)?;
     let chars = fact.chars().count();
     let Ok(mut m) = memory.lock() else {
@@ -98,9 +99,9 @@ pub fn memorize(memory: &Arc<Mutex<MemoryFilePlugin>>, message: &str) -> Option<
         tracing::warn!(event = "bm.memory_lock_failed", chars = chars);
         return None;
     };
-    m.remember(fact);
+    m.remember(fact.clone());
     tracing::info!(event = "bm.memory_remembered", chars = chars);
-    Some(chars)
+    Some(fact)
 }
 
 #[cfg(test)]
@@ -238,8 +239,8 @@ mod tests {
         )));
 
         let fact = "用户喜欢茶";
-        let chars = memorize(&memory, &format!("记住：{fact}")).unwrap();
-        assert_eq!(chars, fact.chars().count(), "返回事实字符数");
+        let written = memorize(&memory, &format!("记住：{fact}")).unwrap();
+        assert_eq!(written, fact, "返回写入的事实原文（供 memory/write 事件）");
         {
             let m = memory.lock().unwrap();
             assert!(m.facts().any(|f| f == fact), "事实已入内存传送带");
