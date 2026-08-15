@@ -452,6 +452,12 @@ async fn serve_inner(
                     }) as Arc<dyn bm_protocol::LlmPort>,
                 )
                 .with_port(
+                    "skill",
+                    Arc::new(service_faces::SkillPortImpl {
+                        config: shared_config.clone(),
+                    }) as Arc<dyn bm_protocol::SkillPort>,
+                )
+                .with_port(
                     "credentials",
                     Arc::new(service_faces::CredentialsPortImpl {
                         config: shared_config,
@@ -492,6 +498,19 @@ async fn serve_inner(
             .map(|d| bm_kernel::EventLog::new(d.event_log().store())),
     )
     .await;
+
+    // 工具面（SERVICE_FACES #5）：compat 快照就绪后运行期注册——
+    // ToolsPort 持有同一 Arc 快照，插件变更 reload 后自动同步
+    if let Some(kernel) = kernel.as_ref() {
+        let tools_port: Arc<dyn bm_protocol::ToolsPort> =
+            Arc::new(service_faces::ToolsPortImpl {
+                tools: compat
+                    .as_ref()
+                    .map(|c| c.tools.clone())
+                    .unwrap_or_else(|| Arc::new(std::sync::Mutex::new(Vec::new()))),
+            });
+        let _ = kernel.ctx().register_port("tools", tools_port);
+    }
 
     // Steward 轮（v0.19）：管家状态（next_wake_at 落点 = steward.json）。
     // BM_STEWARD_SESSION env 指定管家会话才启用；未启用 = None（调度器

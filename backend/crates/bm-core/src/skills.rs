@@ -10,7 +10,7 @@
 //! skill 内容从 GitHub 仓库下载（tarball 解压或 raw 抓取）。
 
 use rand::seq::SliceRandom;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -37,7 +37,7 @@ const SKILL_MD_PROBES: [&str; 3] = [
     "SKILL.md",
 ];
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillInfo {
     /// 本地目录名（也是启用列表中的 id）
     pub id: String,

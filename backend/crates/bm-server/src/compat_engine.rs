@@ -539,8 +539,9 @@ pub struct CompatEngine {
     join: Option<std::thread::JoinHandle<()>>,
     /// 已成功加载的扩展 id（`reload` 据此跳过已加载项；重复加载会重注册工具）。
     loaded_ids: TokioMutex<HashSet<String>>,
-    /// 工具快照（bm-loop ToolDef 形态；reload 后整体替换，std Mutex 短临界区）
-    pub tools: std::sync::Mutex<Vec<bm_loop::model::ToolDef>>,
+    /// 工具快照（bm-loop ToolDef 形态；reload 后整体替换，std Mutex 短临界区）。
+    /// Arc 共享：tools 服务面（ToolsPort）持有同一快照，插件变更后自动同步。
+    pub tools: Arc<std::sync::Mutex<Vec<bm_loop::model::ToolDef>>>,
     /// B6：已注册工具名快照（events getActiveTools 的数据面；加载完成后填入）。
     pub tool_names: std::sync::Mutex<Vec<String>>,
     /// B6：工作目录（插件事件 ctx 的 cwd 数据面）。
@@ -667,7 +668,7 @@ impl CompatEngine {
             tx,
             join: Some(handle),
             loaded_ids: TokioMutex::new(HashSet::new()),
-            tools: std::sync::Mutex::new(Vec::new()),
+            tools: Arc::new(std::sync::Mutex::new(Vec::new())),
             tool_names: std::sync::Mutex::new(Vec::new()),
             working_dir: engine_working_dir,
         })

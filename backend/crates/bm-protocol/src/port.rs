@@ -196,3 +196,36 @@ pub trait CredentialsPort: Send + Sync {
     /// 提供商 API 密钥；未知提供商/未配置 → None。
     fn api_key(&self, provider_id: &str) -> Option<String>;
 }
+
+/// 技能面（SERVICE_FACES 图纸 #11）：skill 目录 CRUD。
+///
+/// 实现：bm-server 包 bm-core skills 模块（SkillPortImpl，config 读写锁）。
+/// 消费方：routes/skills.rs（kernel 可用时经服务，退化直调）。
+pub trait SkillPort: Send + Sync {
+    /// 已安装技能清单（SkillInfo JSON 视图）。
+    fn list(&self) -> Result<serde_json::Value, ProtocolError>;
+
+    /// 从本地路径安装（目录或 .md 文件）。
+    fn install_path(&self, path: &str) -> Result<(), ProtocolError>;
+
+    /// 从 GitHub 安装（owner/repo 内 skill_id）。
+    fn install_github(&self, owner: &str, repo: &str, skill_id: &str) -> Result<(), ProtocolError>;
+
+    /// 启停（改变注入面；调用方负责失效重建会话 agent）。
+    fn set_enabled(&self, id: &str, enabled: bool) -> Result<(), ProtocolError>;
+
+    /// 卸载。
+    fn uninstall(&self, id: &str) -> Result<(), ProtocolError>;
+}
+
+/// 工具面（SERVICE_FACES 图纸 #5）：已装配工具清单查询（JSON 视图）。
+///
+/// 工具注册仍走 ToolRegistry（会话级）；本面 = 宿主工具快照查询
+/// （审计/插件工具面）。实现：compat 引擎快照（运行期注册，见 serve_inner）。
+pub trait ToolsPort: Send + Sync {
+    /// 全部已装配工具（name/description/inputSchema JSON 视图）。
+    fn list(&self) -> Vec<serde_json::Value>;
+
+    /// 工具是否存在。
+    fn has(&self, name: &str) -> bool;
+}

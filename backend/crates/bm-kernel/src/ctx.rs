@@ -9,7 +9,7 @@ use bm_protocol::{EventKind, ProtocolError};
 use serde_json::Value as JsonValue;
 
 use crate::bus::{AsyncHandler, WaterfallOutcome};
-use crate::{Disposer, Kernel, ServiceKey};
+use crate::{Disposer, Kernel, PortBox, ServiceKey};
 
 /// 插件唯一视角：内核的最小可操作面。
 pub struct Ctx<'k> {
@@ -47,6 +47,24 @@ impl<'k> Ctx<'k> {
     ) -> Result<Disposer, ProtocolError> {
         let reg = &self.kernel.registry;
         reg.register(key, svc)?;
+        Ok(Disposer::new({
+            let reg = reg.clone();
+            move || {
+                reg.remove(key);
+            }
+        }))
+    }
+
+    /// 运行期注册 Port（trait object 服务；Disposer 撤销）。
+    /// KernelBuilder::with_port 的运行时版——服务面铺开里依赖后置
+    /// 装配的面（如 tools 快照在 compat 引擎初始化后才就绪）用此注册。
+    pub fn register_port<P: ?Sized + Send + Sync + 'static>(
+        &self,
+        key: ServiceKey,
+        svc: Arc<P>,
+    ) -> Result<Disposer, ProtocolError> {
+        let reg = &self.kernel.registry;
+        reg.register(key, Arc::new(PortBox(svc)) as Arc<dyn std::any::Any + Send + Sync>)?;
         Ok(Disposer::new({
             let reg = reg.clone();
             move || {

@@ -10,6 +10,17 @@ use crate::{ApiResult, api_error, api_error_from};
 // ---------------------------------------------------------------------------
 
 pub async fn list_skills(State(state): crate::SharedState) -> ApiResult<Json<Vec<bm_core::skills::SkillInfo>>> {
+    // 技能面（SERVICE_FACES #11）：kernel 可用时经服务；退化直调
+    if let Some(kernel) = &state.kernel
+        && let Ok(port) = kernel.port::<dyn bm_protocol::SkillPort>("skill")
+    {
+        let list = port
+            .list()
+            .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+        return serde_json::from_value(list)
+            .map(Json)
+            .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()));
+    }
     let config = state.config.read().await;
     bm_core::skills::list_skills(&config)
         .map(Json)
@@ -26,7 +37,12 @@ pub async fn set_skill(
     axum::extract::Path(id): axum::extract::Path<String>,
     Json(req): Json<SetSkillRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
+    if let Some(kernel) = &state.kernel
+        && let Ok(port) = kernel.port::<dyn bm_protocol::SkillPort>("skill")
     {
+        port.set_enabled(&id, req.enabled)
+            .map_err(|err| api_error(StatusCode::NOT_FOUND, err.to_string()))?;
+    } else {
         let mut config = state.config.write().await;
         bm_core::skills::set_skill_enabled(&mut config, &id, req.enabled).map_err(api_error_from)?;
     }
@@ -39,7 +55,12 @@ pub async fn uninstall_skill(
     State(state): crate::SharedState,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
+    if let Some(kernel) = &state.kernel
+        && let Ok(port) = kernel.port::<dyn bm_protocol::SkillPort>("skill")
     {
+        port.uninstall(&id)
+            .map_err(|err| api_error(StatusCode::NOT_FOUND, err.to_string()))?;
+    } else {
         let mut config = state.config.write().await;
         bm_core::skills::uninstall_skill(&mut config, &id).map_err(api_error_from)?;
     }

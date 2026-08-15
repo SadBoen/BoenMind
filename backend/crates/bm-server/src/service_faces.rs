@@ -175,11 +175,81 @@ impl bm_protocol::CredentialsPort for CredentialsPortImpl {
     }
 }
 
+/// 技能面实现：包 bm-core skills 模块（config 读写锁；网络安装是阻塞
+/// 操作——消费方 spawn_blocking 内调用）。
+pub struct SkillPortImpl {
+    pub config: Arc<RwLock<bm_core::config::AppConfig>>,
+}
+
+impl bm_protocol::SkillPort for SkillPortImpl {
+    fn list(&self) -> Result<Value, ProtocolError> {
+        let config = self.config.read().expect("config poisoned");
+        let skills = bm_core::skills::list_skills(&config)
+            .map_err(|e| ProtocolError::new(ErrorCode::StoreUnavailable, e.to_string()))?;
+        serde_json::to_value(skills)
+            .map_err(|e| ProtocolError::new(ErrorCode::InvalidArgument, e.to_string()))
+    }
+
+    fn install_path(&self, path: &str) -> Result<(), ProtocolError> {
+        bm_core::skills::install_skill_from_path(std::path::Path::new(path))
+            .map(|_| ())
+            .map_err(|e| ProtocolError::new(ErrorCode::PluginInstall, e.to_string()))
+    }
+
+    fn install_github(&self, owner: &str, repo: &str, skill_id: &str) -> Result<(), ProtocolError> {
+        bm_core::skills::install_skill_from_github(owner, repo, skill_id)
+            .map(|_| ())
+            .map_err(|e| ProtocolError::new(ErrorCode::PluginInstall, e.to_string()))
+    }
+
+    fn set_enabled(&self, id: &str, enabled: bool) -> Result<(), ProtocolError> {
+        let mut config = self.config.write().expect("config poisoned");
+        bm_core::skills::set_skill_enabled(&mut config, id, enabled)
+            .map_err(|e| ProtocolError::new(ErrorCode::NotFound, e.to_string()))
+    }
+
+    fn uninstall(&self, id: &str) -> Result<(), ProtocolError> {
+        let mut config = self.config.write().expect("config poisoned");
+        bm_core::skills::uninstall_skill(&mut config, id)
+            .map_err(|e| ProtocolError::new(ErrorCode::NotFound, e.to_string()))
+    }
+}
+
+/// 工具面实现：宿主工具快照（compat 引擎装配的工具集；运行期注册）。
+pub struct ToolsPortImpl {
+    pub tools: Arc<std::sync::Mutex<Vec<bm_loop::model::ToolDef>>>,
+}
+
+impl bm_protocol::ToolsPort for ToolsPortImpl {
+    fn list(&self) -> Vec<Value> {
+        self.tools
+            .lock()
+            .expect("tools poisoned")
+            .iter()
+            .map(|t| {
+                serde_json::json!({
+                    "name": t.name,
+                    "description": t.description,
+                    "inputSchema": t.input_schema,
+                })
+            })
+            .collect()
+    }
+
+    fn has(&self, name: &str) -> bool {
+        self.tools
+            .lock()
+            .expect("tools poisoned")
+            .iter()
+            .any(|t| t.name == name)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use bm_core::config::{AppConfig, ProviderConfig, ProviderKind};
-    use bm_protocol::{CredentialsPort, LlmPort};
+    use bm_protocol::{CredentialsPort, LlmPort, ToolsPort};
 
     fn test_config() -> Arc<RwLock<AppConfig>> {
         let mut cfg = AppConfig::default();
@@ -215,5 +285,21 @@ mod tests {
         let port = CredentialsPortImpl { config: test_config() };
         assert_eq!(port.api_key("test-provider").as_deref(), Some("sk-test"));
         assert_eq!(port.api_key("nope"), None);
+    }
+
+    #[test]
+    fn tools_port_lists_snapshot() {
+        let tools = Arc::new(std::sync::Mutex::new(vec![bm_loop::model::ToolDef::new(
+            "search",
+            "搜索",
+            serde_json::json!({"type": "object"}),
+        )]));
+        let port = ToolsPortImpl { tools };
+        assert!(port.has("search"));
+        assert!(!port.has("nope"));
+        let list = port.list();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0]["name"], "search");
+        assert_eq!(list[0]["inputSchema"]["type"], "object");
     }
 }
