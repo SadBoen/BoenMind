@@ -37,6 +37,7 @@ export const zh = {
     /** 新会话默认标题（会随首条消息被自动命名，勿翻译成品牌词） */
     newSession: "新对话",
     selectOrCreate: "选择或新建一个对话",
+    panelTitle: "对话",
     stop: "停止",
     taskRunning: "任务仍在进行中…",
     taskStatus: {
@@ -117,6 +118,10 @@ export const zh = {
     },
   },
   coding: {
+    tabs: {
+      tasks: "任务",
+      chat: "对话",
+    },
     editor: {
       empty: "从左侧选择文件",
       save: "保存",
@@ -125,7 +130,7 @@ export const zh = {
     },
     todos: {
       title: "活任务清单",
-      noSession: "请先在对话中创建或选择会话",
+      noSession: "点击右上角「对话」标签创建编程会话",
       live: "事件流已连接",
       offline: "事件流未连接",
       steps: "本回合已执行 {{count}} 步",

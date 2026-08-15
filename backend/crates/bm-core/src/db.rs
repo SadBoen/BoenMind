@@ -20,6 +20,9 @@ pub struct Session {
     pub title: String,
     pub provider_id: Option<String>,
     pub model: Option<String>,
+    /// 场景（架构 §四·B 补充 v0.22）：chat/coding/wiki…创建时定，一软件一会话；
+    /// 引擎按它组装工具面，前端按它过滤会话列表。
+    pub app: String,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -117,6 +120,7 @@ impl Db {
                 title       TEXT NOT NULL DEFAULT '新对话',
                 provider_id TEXT,
                 model       TEXT,
+                app         TEXT NOT NULL DEFAULT 'chat',
                 created_at  INTEGER NOT NULL,
                 updated_at  INTEGER NOT NULL
             );
@@ -164,6 +168,24 @@ impl Db {
             "#,
         )
         .await?;
+        // v0.22 迁移：旧库 sessions 表无 app 列（CREATE TABLE IF NOT EXISTS 不会改表）——
+        // 补列后旧会话统一归 chat 场景（历史语义），新会话按场景创建。
+        {
+            let mut stmt = conn.prepare("PRAGMA table_info(sessions)").await?;
+            let mut rows = stmt.query(()).await?;
+            let mut has_app = false;
+            while let Some(row) = rows.next().await? {
+                if row.get::<String>(1)? == "app" {
+                    has_app = true;
+                }
+            }
+            if !has_app {
+                conn.execute("ALTER TABLE sessions ADD COLUMN app TEXT NOT NULL DEFAULT 'chat'", ())
+                    .await?;
+            }
+        }
+        conn.pragma_update("journal_mode", "WAL").await?;
+        conn.pragma_update("busy_timeout", 5000).await?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -174,18 +196,20 @@ impl Db {
         id: &str,
         provider_id: Option<&str>,
         model: Option<&str>,
+        app: &str,
     ) -> Result<Session, turso::Error> {
         let ts = now_ts();
         self.conn.lock().await.execute(
-            "INSERT INTO sessions (id, title, provider_id, model, created_at, updated_at)
-             VALUES (?1, '新对话', ?2, ?3, ?4, ?4)",
-            (id, provider_id, model, ts),
+            "INSERT INTO sessions (id, title, provider_id, model, app, created_at, updated_at)
+             VALUES (?1, '新对话', ?2, ?3, ?4, ?5, ?5)",
+            (id, provider_id, model, app, ts),
         ).await?;
         Ok(Session {
             id: id.to_string(),
             title: "新对话".to_string(),
             provider_id: provider_id.map(str::to_string),
             model: model.map(str::to_string),
+            app: app.to_string(),
             created_at: ts,
             updated_at: ts,
         })
@@ -195,7 +219,7 @@ impl Db {
         let conn = self.conn.lock().await;
         let mut stmt = conn
             .prepare(
-                "SELECT id, title, provider_id, model, created_at, updated_at
+                "SELECT id, title, provider_id, model, app, created_at, updated_at
                  FROM sessions ORDER BY updated_at DESC",
             )
             .await?;
@@ -207,8 +231,9 @@ impl Db {
                 title: row.get(1)?,
                 provider_id: row.get(2)?,
                 model: row.get(3)?,
-                created_at: row.get(4)?,
-                updated_at: row.get(5)?,
+                app: row.get(4)?,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
             });
         }
         Ok(sessions)
@@ -218,7 +243,7 @@ impl Db {
         let conn = self.conn.lock().await;
         let mut stmt = conn
             .prepare(
-                "SELECT id, title, provider_id, model, created_at, updated_at
+                "SELECT id, title, provider_id, model, app, created_at, updated_at
                  FROM sessions WHERE id = ?1",
             )
             .await?;
@@ -231,8 +256,9 @@ impl Db {
             title: row.get(1)?,
             provider_id: row.get(2)?,
             model: row.get(3)?,
-            created_at: row.get(4)?,
-            updated_at: row.get(5)?,
+            app: row.get(4)?,
+            created_at: row.get(5)?,
+            updated_at: row.get(6)?,
         }))
     }
 
@@ -598,7 +624,7 @@ mod tests {
         let db = Db::open().await.unwrap();
 
         // 会话 CRUD
-        let s = db.create_session("s1", None, None).await.unwrap();
+        let s = db.create_session("s1", None, None, "chat").await.unwrap();
         assert_eq!(s.title, "新对话");
         assert!(db.get_session("s1").await.unwrap().is_some());
         db.rename_session("s1", "测试标题").await.unwrap();

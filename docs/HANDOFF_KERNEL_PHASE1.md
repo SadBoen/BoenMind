@@ -18,6 +18,12 @@
 - **对话宿主化 + 场景作用域拍板**（用户"每个带 LLM 的软件都有对话框，不该每软件重写"）：对话界面=宿主能力（ChatPane 共享组件/形态变体/编程壳右栏 Tab）；会话 `app` 场景字段（一软件一会话）；工具面按 `session.app` 组装（内置手脚+系统增强全局、场景工具按场景）；skill 场景注入随 M2 深化；manifest `scopes`+槽位随 §四·C——已入架构 §四·B 补充 + 待拍板 9
 - 架构文档 v0.22（状态行同步）
 
+**对话宿主化 + 场景作用域已落地（拍板 9 执行，2026-08-15）**：
+- 后端：`sessions` 表 + `Session` struct 加 `app` 字段（默认 chat；旧库启动自动 ALTER 迁移，旧会话归 chat）；创建 API 接受 `app`；引擎 `build_loop_agent` 透传 `session.app` 并留场景工具登记点（当前无场景工具；todo/subagent 属内置手脚全局）——`chat_bm`/`run_steward_turn` 两入口贯通
+- 前端：ChatWindow 主体抽为宿主共享 `ChatPane`（形态变体 full/panel；panel = 紧凑标题栏 + ChatInput compact 隐藏提示/占位按钮）；编程壳右栏 Tab（任务/对话），对话 Tab 懒创建 coding 会话（ensureAppSession）；`activateApp`（场景最近会话 localStorage 持久化，无则清聚焦——聚焦会话永远属于当前应用）；聊天会话列表按 app 过滤；ClassicShell 切应用自动恢复各场景会话
+- 实测（隔离 home）：旧库迁移/创建 app 会话/引擎工具面构建/聊天列表无 coding 会话/编程壳对话 Tab 显示 coding 会话消息/切回聊天恢复 chat 会话全通过；用户 36 个真实会话升级无损（app=chat）
+- 已知限制：桌面壳多窗口共存时编程对话与聊天窗口共享聚焦会话（多实例拍板项，CodingApp 已注明）
+
 **最近四轮回溯**：
 - 修复轮（同日，用户定调"回头看查出问题先修"）：三真缺口修两件（declare_event! 宏 / branch/fork 事件）、压缩参数双轨打通（bm-core effective()）、memory/write 生产者接线、**内核第一根接线**（bm-compactor 经 KernelBuilder 装配进生产，bm 引擎从 kernel 取事件日志+压缩服务）——测试全绿 + clippy 零 lint
 - 回头看+对标轮（本轮）：架构回头看（内核未接线三轨实锤/文档漂移修正）+ 全网对标三调研（底座前 10/记忆/插件同类，笔记 docs/research/2026-08-15/ 约 100KB 全部标注核实口径）→ 报告 docs/REVIEW_ARCHITECTURE_2026-08-15.md + docs/REVIEW_LANDSCAPE_2026-08-15.md；架构文档 v0.21
@@ -31,6 +37,7 @@
 
 | 轮次 | 要点 |
 |---|---|
+| 对话宿主化轮 | 拍板 9 执行：ChatPane 宿主组件（full/panel）+ 会话 app 场景字段（迁移/API/引擎透传）+ 编程壳右栏 Tab + activateApp/ensureAppSession；隔离 home 全链路实测通过 |
 | 架构讨论轮 | 内核主权评估定调（不换 dsh，§15.4）+ 对话宿主化拍板（§四·B 补充）+ 导航收口（底部仅设置+wiki 占位，a8397f8）；架构 v0.22 |
 | M2 编程壳 | 独立壳起步（0fb2acb）：todo 工具+事件投影闭环 / 编辑器+写文件 / 分支图起步 / step_queue 删除（A6 修订）+步数预算提示；浏览器实测模型真实调工具全链路 |
 | M1 验收 | 运行时自修真实 bug 全链路通过（8254bd7）+ 6 问题登记（本轮，报告 ACCEPTANCE_M1） |
@@ -45,8 +52,8 @@
 
 ## 下一步动作（按建议顺序，都可直接开工）
 
-1. **对话宿主化 + 场景作用域（已拍板 2026-08-15，用户按推荐执行；拍板明细见待拍板 9）**：① ChatWindow 抽宿主共享 ChatPane（形态变体：全窗/侧栏；编程壳右栏 Tab 切任务/对话）；② 会话加 `app` 场景字段，引擎按场景组装工具面（内置手脚全局、场景工具按场景）；③ skill 场景注入随 M2 深化做；④ §四·C 落地时 manifest `scopes` + 前端槽位注册
-2. **M2 深化（主线）**：分支图 DAG 可视化（git 拓扑：merge/分叉）+ 编辑器增强（diff 视图/未保存守卫/目录新建）+ 长会话性能（todo 读取的 EventQuery 类型过滤，替代全量 replay）
+1. ~~**对话宿主化 + 场景作用域**~~ → **已完成（拍板 9 执行，2026-08-15）**：① ChatPane 宿主组件（full/panel 形态）落地，编程壳右栏 Tab（任务/对话）落地；② 会话 `app` 场景字段 + 引擎透传 + 场景工具登记点落地；**剩余**：③ skill 场景注入（随 M2 深化做）；④ §四·C 落地时 manifest `scopes` + 前端槽位注册
+2. **M2 深化（主线）**：分支图 DAG 可视化（git 拓扑：merge/分叉）+ 编辑器增强（diff 视图/未保存守卫/目录新建）+ 长会话性能（todo 读取的 EventQuery 类型过滤，替代全量 replay）+ **skill 场景注入**（对话宿主化③）
 3. **界面层插件化落地设计（§四·C，用户已拍板学 dsh）**：出方案文档待拍板——前端包 manifest 字段（client.js/依赖声明）、同域 bundle 加载器（参考 dsh __ModuleLoader__.load）、slot 注册体系（ui-slots 思路）、壳依赖表（客户端插件不自带 React）；拍板后实施（独立主线，可与 M2 并行）
 4. **Steward 采集器挂任务计划程序**（README 有 schtasks 命令，填真实管家会话 ID）——待用户点头（机器级定时唤醒）
 5. **pi 路径清理收尾**：chat.rs pi 分支删除（bm 默认已反转，残留代码面）——待拍板
@@ -94,7 +101,7 @@
 6. GitHub Billing 处理（用户操作；不处理则 CI 永久本地化，macOS 构建链发版时另想办法）
 7. 远期（有触发时机，不急）：前端隔离机制（阶段 4）、沙箱层级（阶段 3）、平台驱动 ABI 纪律
 8. **pi 路径清理收尾**：chat.rs pi 分支删除（bm 默认已反转，残留兼容面）——待拍板
-9. ~~**对话宿主化 + 插件作用域**~~ → **已拍板（2026-08-15，用户按推荐执行，现在不动、实施排下一步动作 1）**：① 对话界面 = 宿主能力非应用能力，ChatWindow 抽宿主共享 ChatPane（形态变体），**编程壳右栏 Tab（任务/对话）**；② 会话加 `app` 场景字段（一软件一会话，事件日志天然按会话隔离），引擎按 `session.app` 组装工具面——内置手脚（read/write/grep/bash/todo/subagent）+ 系统增强插件全局生效，场景工具按场景；③ 插件 manifest `scopes` 声明生效软件（§四·C 落地时）+ 前端槽位注册（宿主定义 chat-pane/settings/toolbar 槽位，应用声明注入）——学 dsh ui-slots 思路按本架构落；④ skill 场景注入随 M2 深化做；⑤ 插件分类标签（系统增强/功能）= 作用域前身（system=全局、app=场景级）
+9. ~~**对话宿主化 + 插件作用域**~~ → **已完成（2026-08-15，拍板 9 执行落地）**：① ChatPane 宿主组件（full/panel 形态）落地 + 编程壳右栏 Tab（任务/对话）落地；② 会话 `app` 场景字段（一软件一会话，事件日志天然按会话隔离）+ 引擎按 `session.app` 组装工具面（内置手脚 + 系统增强插件全局生效，场景工具登记点就位）落地；③ 插件 manifest `scopes` 声明生效软件（§四·C 落地时）+ 前端槽位注册（宿主定义 chat-pane/settings/toolbar 槽位，应用声明注入）——学 dsh ui-slots 思路按本架构落，**未做**；④ skill 场景注入随 M2 深化做，**未做**；⑤ 插件分类标签（系统增强/功能）= 作用域前身（system=全局、app=场景级）
 
 ## 关联文档
 

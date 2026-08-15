@@ -61,6 +61,8 @@ export interface Session {
   title: string;
   provider_id: string | null;
   model: string | null;
+  /** 场景（架构 §四·B 补充）：chat/coding/…创建时定，前端按它过滤会话列表 */
+  app: string;
   created_at: number;
   updated_at: number;
 }
@@ -422,7 +424,7 @@ export const api = {
     request<{ levels: string[] }>(
       `/api/thinking-levels?provider=${encodeURIComponent(provider)}&model=${encodeURIComponent(model)}`,
     ),
-  createSession: (body?: { provider_id?: string; model?: string; title?: string }) =>
+  createSession: (body?: { provider_id?: string; model?: string; title?: string; app?: string }) =>
     request<Session>("/api/sessions", { method: "POST", body: JSON.stringify(body ?? {}) }),
   getSession: (id: string) =>
     request<{ session: Session; messages: Message[] }>(`/api/sessions/${id}`),

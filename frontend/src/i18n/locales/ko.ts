@@ -37,6 +37,7 @@ export const ko: Translation = {
   chat: {
     newSession: "새 채팅",
     selectOrCreate: "대화를 선택하거나 새로 시작하세요",
+    panelTitle: "대화",
     stop: "중지",
     taskRunning: "작업이 아직 실행 중입니다…",
     taskStatus: {
@@ -117,6 +118,10 @@ export const ko: Translation = {
     },
   },
   coding: {
+    tabs: {
+      tasks: "작업",
+      chat: "대화",
+    },
     editor: {
       empty: "왼쪽에서 파일을 선택하세요",
       save: "저장",
@@ -125,7 +130,7 @@ export const ko: Translation = {
     },
     todos: {
       title: "작업 목록",
-      noSession: "먼저 채팅에서 세션을 만들거나 선택하세요",
+      noSession: "오른쪽 위 '대화' 탭에서 코딩 세션 만들기",
       live: "이벤트 스트림 연결됨",
       offline: "이벤트 스트림 연결 안 됨",
       steps: "이번 턴 {{count}}단계 실행",

@@ -1,5 +1,7 @@
 /**
  * 会话列表：新建、搜索、切换、重命名、删除。
+ * 场景作用域（架构 §四·B 补充）：本组件服务聊天应用，只显示 chat 场景会话
+ * （编程等软件会话在自己应用内，一软件一会话，不混入聊天列表）。
  */
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -15,6 +17,9 @@ import {
 import { cn, formatTime } from "@/lib/utils";
 import { useAppStore } from "@/stores/app-store";
 
+/** 本组件服务的场景（聊天应用）；会话列表只显示该场景的会话 */
+const SCENE = "chat";
+
 export function SessionList() {
   const { t, i18n } = useTranslation();
   const sessions = useAppStore((s) => s.sessions);
@@ -29,11 +34,12 @@ export function SessionList() {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
 
+  const sceneSessions = useMemo(() => sessions.filter((s) => s.app === SCENE), [sessions]);
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return sessions;
-    return sessions.filter((s) => s.title.toLowerCase().includes(q));
-  }, [sessions, query]);
+    if (!q) return sceneSessions;
+    return sceneSessions.filter((s) => s.title.toLowerCase().includes(q));
+  }, [sceneSessions, query]);
 
   const startRename = (id: string, title: string) => {
     setRenaming(id);
@@ -53,7 +59,7 @@ export function SessionList() {
         <Button
           size="sm"
           className="flex-1 gap-1"
-          onClick={() => void createSession()}
+          onClick={() => void createSession(SCENE)}
           title={t("sessionList.newChat")}
         >
           <Plus size={14} />
@@ -75,7 +81,7 @@ export function SessionList() {
       <div className="flex-1 space-y-0.5 overflow-y-auto px-2 pb-2">
         {filtered.length === 0 && (
           <p className="px-2 py-6 text-center text-xs text-muted-foreground">
-            {sessions.length === 0 ? t("sessionList.emptyStart") : t("sessionList.emptyMatch")}
+            {sceneSessions.length === 0 ? t("sessionList.emptyStart") : t("sessionList.emptyMatch")}
           </p>
         )}
         {filtered.map((session) => (

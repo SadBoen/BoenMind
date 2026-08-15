@@ -86,7 +86,7 @@ function useThinkingLevels(modelValue: string | null): readonly string[] {
   return thinkingLevelsCache.get(modelValue ?? "") ?? DEFAULT_THINKING_VALUES;
 }
 
-export function ChatInput() {
+export function ChatInput({ compact = false }: { compact?: boolean }) {
   const { t } = useTranslation();
   const streaming = useAppStore((s) => s.streaming);
   const sendMessage = useAppStore((s) => s.sendMessage);
@@ -155,42 +155,49 @@ export function ChatInput() {
             className="max-h-40 min-h-[2.25rem] resize-none border-0 bg-transparent p-3 pb-1 text-sm shadow-none focus-visible:ring-0"
             disabled={streaming}
           />
-          {/* 框内下边缘工具条：提示在左，模型/思考/发送整体靠右 */}
+          {/* 框内下边缘工具条：提示在左，模型/思考/发送整体靠右。
+              compact（侧栏/面板形态）：窄栏隐藏提示与占位按钮，只留模型/思考/权限/发送 */}
           <div className="flex items-center justify-between gap-2 px-2 pb-1.5">
-            <span className="hidden shrink-0 text-[10px] text-muted-foreground sm:inline">
-              {text.length > 0
-                ? t("chat.input.charCount", { count: text.length })
-                : t("chat.input.enterToSend")}
-            </span>
+            {!compact && (
+              <span className="hidden shrink-0 text-[10px] text-muted-foreground sm:inline">
+                {text.length > 0
+                  ? t("chat.input.charCount", { count: text.length })
+                  : t("chat.input.enterToSend")}
+              </span>
+            )}
             <div className="flex min-w-0 items-center gap-1">
               {/* 占位按钮（hermes-webui 参考，功能后续接入） */}
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-6 w-6 rounded-md text-muted-foreground"
-                disabled
-                title={t("chat.input.attach")}
-              >
-                <Paperclip size={13} />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-6 w-6 rounded-md text-muted-foreground"
-                disabled
-                title={t("chat.input.language")}
-              >
-                <Languages size={13} />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-6 w-6 rounded-md text-muted-foreground"
-                disabled
-                title={t("chat.input.voice")}
-              >
-                <Mic size={13} />
-              </Button>
+              {!compact && (
+                <>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 rounded-md text-muted-foreground"
+                    disabled
+                    title={t("chat.input.attach")}
+                  >
+                    <Paperclip size={13} />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 rounded-md text-muted-foreground"
+                    disabled
+                    title={t("chat.input.language")}
+                  >
+                    <Languages size={13} />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 rounded-md text-muted-foreground"
+                    disabled
+                    title={t("chat.input.voice")}
+                  >
+                    <Mic size={13} />
+                  </Button>
+                </>
+              )}
 
               {/* 模型选择：提供商小 logo 在名称前。
                   value 传 null 而非 undefined：base-ui useControlled 在首渲染

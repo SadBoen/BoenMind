@@ -37,6 +37,7 @@ export const en: Translation = {
   chat: {
     newSession: "New chat",
     selectOrCreate: "Select or start a new chat",
+    panelTitle: "Chat",
     stop: "Stop",
     taskRunning: "Task still running…",
     taskStatus: {
@@ -117,6 +118,10 @@ export const en: Translation = {
     },
   },
   coding: {
+    tabs: {
+      tasks: "Tasks",
+      chat: "Chat",
+    },
     editor: {
       empty: "Select a file from the left",
       save: "Save",
@@ -125,7 +130,7 @@ export const en: Translation = {
     },
     todos: {
       title: "Task List",
-      noSession: "Create or select a session in chat first",
+      noSession: "Open the Chat tab to create a coding session",
       live: "Event stream connected",
       offline: "Event stream disconnected",
       steps: "{{count}} steps this turn",

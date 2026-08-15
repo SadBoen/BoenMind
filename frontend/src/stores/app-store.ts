@@ -85,9 +85,17 @@ interface AppStore {
   // 会话
   sessions: Session[];
   activeSessionId: string | null;
+  /** 各场景最近使用的会话（一软件一会话，架构 §四·B 补充）：应用激活时恢复 */
+  appSessionIds: Record<string, string>;
   loadSessions: () => Promise<void>;
   selectSession: (id: string | null) => Promise<void>;
-  createSession: () => Promise<string | null>;
+  /** 记录某场景最近使用的会话（selectSession 内部调用；持久化跨刷新） */
+  rememberAppSession: (app: string, sessionId: string) => void;
+  createSession: (app?: string) => Promise<string | null>;
+  /** 应用激活：把聚焦会话切到该场景最近使用的会话（无则保持 null，不自动创建） */
+  activateApp: (app: string) => Promise<void>;
+  /** 确保该场景有会话（无则创建）：编程壳对话 Tab 等需要真实会话的入口用 */
+  ensureAppSession: (app: string) => Promise<string | null>;
   renameSession: (id: string, title: string) => Promise<void>;
   removeSession: (id: string) => Promise<void>;
   clearSessionEvents: (id: string) => Promise<void>;
@@ -361,6 +369,7 @@ export const useAppStore = create<AppStore>((set, get) => {
 
     sessions: [],
     activeSessionId: null,
+    appSessionIds: JSON.parse(localStorage.getItem("boenmind.appSessionIds") ?? "{}") as Record<string, string>,
     loadSessions: async () => {
       try {
         const sessions = await api.listSessions();
@@ -369,11 +378,20 @@ export const useAppStore = create<AppStore>((set, get) => {
         /* ignore */
       }
     },
+    /** 记录某场景最近使用的会话（一软件一会话：应用激活时恢复现场） */
+    rememberAppSession: (app: string, sessionId: string) => {
+      const appSessionIds = { ...get().appSessionIds, [app]: sessionId };
+      localStorage.setItem("boenmind.appSessionIds", JSON.stringify(appSessionIds));
+      set({ appSessionIds });
+    },
     selectSession: async (id) => {
       // 停止进行中的流
       streamController?.close();
       set({ streaming: false, streamingText: "", activeSessionId: id, messages: [], previewFile: null });
       if (!id) return;
+      // 记录该会话所属场景（loadSessions 后 sessions 含 app 字段）
+      const scene = get().sessions.find((s) => s.id === id)?.app;
+      if (scene) get().rememberAppSession(scene, id);
       try {
         const { messages } = await api.getSession(id);
         set({ messages });
@@ -388,17 +406,49 @@ export const useAppStore = create<AppStore>((set, get) => {
         /* ignore */
       }
     },
-    createSession: async () => {
+    createSession: async (app = "chat") => {
       const { config } = get();
       const session = await api.createSession({
         provider_id: config?.default_provider,
         model: config?.default_model,
         // 默认标题跟随界面语言；后端将其视为"未命名"，首条消息后自动命名
         title: i18n.t("chat.newSession"),
+        app,
       });
       await get().loadSessions();
       await get().selectSession(session.id);
       return session.id;
+    },
+    activateApp: async (app) => {
+      const { sessions, appSessionIds, activeSessionId } = get();
+      // 聚焦会话已属于该场景 → 不动（编程壳内部 Tab 切换也走这里）
+      if (sessions.find((s) => s.id === activeSessionId)?.app === app) return;
+      const id = appSessionIds[app] ?? sessions.find((s) => s.app === app)?.id;
+      if (id) {
+        await get().selectSession(id);
+      } else {
+        // 无该场景会话：清掉聚焦会话（聚焦会话永远属于当前聚焦应用，
+        // 编程壳任务清单等投影组件才不会订阅到别的场景的会话）
+        streamController?.close();
+        set({
+          streaming: false,
+          streamingText: "",
+          activeSessionId: null,
+          messages: [],
+          previewFile: null,
+          lastTask: null,
+        });
+      }
+    },
+    ensureAppSession: async (app) => {
+      const { sessions, appSessionIds, activeSessionId } = get();
+      if (sessions.find((s) => s.id === activeSessionId)?.app === app) return activeSessionId;
+      const id = appSessionIds[app] ?? sessions.find((s) => s.app === app)?.id;
+      if (id) {
+        await get().selectSession(id);
+        return id;
+      }
+      return get().createSession(app);
     },
     renameSession: async (id, title) => {
       await api.renameSession(id, title);
@@ -412,6 +462,13 @@ export const useAppStore = create<AppStore>((set, get) => {
         if (get().activeSessionId === id) {
           set({ activeSessionId: null, messages: [] });
         }
+        // 清理场景记录（该场景无会话时 activateApp 保持 null，不残留死引用）
+        const appSessionIds = { ...get().appSessionIds };
+        for (const [app, sid] of Object.entries(appSessionIds)) {
+          if (sid === id) delete appSessionIds[app];
+        }
+        localStorage.setItem("boenmind.appSessionIds", JSON.stringify(appSessionIds));
+        set({ appSessionIds });
         await get().loadSessions();
       } catch (err) {
         toast.error(i18n.t("sessionList.deleteFailed", { error: String(err) }));

@@ -265,6 +265,7 @@ fn build_loop_agent(
     compat: Option<&Arc<CompatEngine>>,
     steward: Option<&Arc<crate::steward::StewardStore>>,
     is_steward_session: bool,
+    app: &str,
     session_id: &str,
     provider: &bm_core::config::ProviderConfig,
     model: &str,
@@ -299,6 +300,16 @@ fn build_loop_agent(
     let todo_def = crate::todo_tool::todo_def();
     if let Err(err) = tools.register(todo_def.clone()) {
         tracing::warn!(event = "bm.tool_register_failed", tool = %todo_def.name, error = %err.message);
+    }
+    // 场景工具按 session.app 组装（架构 §四·B 补充 v0.22）：内置手脚与
+    // 系统增强插件全局生效，场景工具只在该场景注册。当前无场景工具
+    // （剪辑渲染/wiki 检索等未立项）——此处为登记点，场景工具落地时
+    // 按 app 分支注册，保证"剪辑插件不在编程生效"由机制保证。
+    match app {
+        "chat" | "coding" => {
+            // 无场景工具（todo/subagent 属内置手脚，已在上面全局注册）
+        }
+        _ => tracing::debug!(event = "bm.unknown_scene", app, session = %session_id),
     }
     // 管家（Steward 轮）：set_wake 只进管家会话的工具面——普通会话工具面
     // 零污染，管家身份由 BM_STEWARD_SESSION 宿主配置（不依赖模型自选）
@@ -396,6 +407,7 @@ pub(crate) fn resolve_llm_config(
 async fn get_or_create_loop_agent(
     state: &AppState,
     session_id: &str,
+    app: &str,
     provider: &bm_core::config::ProviderConfig,
     model: &str,
     thinking: &str,
@@ -451,6 +463,7 @@ async fn get_or_create_loop_agent(
         state.compat.as_ref(),
         state.steward.as_ref(),
         is_steward_session,
+        app,
         session_id,
         provider,
         model,
@@ -624,6 +637,7 @@ pub async fn chat_bm(
         run_bm_prompt(BmPromptParams {
             state: state_run.clone(), // 清理段还要用 state_run
             session_id: session_id.clone(), // 清理段还要用 session_id
+            app: session.app.clone(),
             task_id,
             message,
             provider,
@@ -664,6 +678,8 @@ pub async fn chat_bm(
 struct BmPromptParams {
     state: AppState,
     session_id: String,
+    /// 场景（会话创建时定；引擎按它组装工具面，架构 §四·B 补充）
+    app: String,
     task_id: String,
     message: String,
     provider: bm_core::config::ProviderConfig,
@@ -712,6 +728,7 @@ async fn run_bm_prompt(p: BmPromptParams) {
     let BmPromptParams {
         state,
         session_id,
+        app,
         task_id,
         message,
         provider,
@@ -724,7 +741,7 @@ async fn run_bm_prompt(p: BmPromptParams) {
         tx,
     } = p;
 
-    let (agent, serial) = match get_or_create_loop_agent(&state, &session_id, &provider, &model, &thinking, progress).await {
+    let (agent, serial) = match get_or_create_loop_agent(&state, &session_id, &app, &provider, &model, &thinking, progress).await {
         Ok(pair) => pair,
         Err((_status, msg)) => {
             let _ = tx.send(AgentStreamEvent::Error { message: msg.clone() });
@@ -877,7 +894,7 @@ pub async fn run_steward_turn(
         )?
     };
     let progress: Arc<std::sync::Mutex<String>> = Arc::new(std::sync::Mutex::new(String::new()));
-    let (agent, serial) = get_or_create_loop_agent(state, session_id, &provider, &model, "off", progress)
+    let (agent, serial) = get_or_create_loop_agent(state, session_id, &session.app, &provider, &model, "off", progress)
         .await
         .map_err(|(_, msg)| msg)?;
     // 会话串行：chat 回合进行中管家回合必须排队（同一事件日志唯一状态源）

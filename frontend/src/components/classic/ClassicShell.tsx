@@ -28,7 +28,15 @@ export function ClassicShell() {
   const { t } = useTranslation();
   const activeNav = useAppStore((s) => s.activeNav);
   const setActiveNav = useAppStore((s) => s.setActiveNav);
+  const activateApp = useAppStore((s) => s.activateApp);
   const Page = APPS[activeNav].component;
+
+  // 切到有会话场景的应用（chat/coding）：把聚焦会话切到该场景最近使用的会话
+  // （一软件一会话，架构 §四·B 补充；无该场景会话时保持现状，由应用内引导创建）
+  const switchTo = (id: AppId) => {
+    setActiveNav(id);
+    if (id === "chat" || id === "coding") void activateApp(id);
+  };
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background text-foreground">
@@ -50,7 +58,7 @@ export function ClassicShell() {
                 aria-label={t(app.nameKey)}
                 aria-disabled={placeholder || active || undefined}
                 disabled={placeholder}
-                onClick={() => setActiveNav(id)}
+                onClick={() => switchTo(id)}
                 className={cn(
                   "flex h-9 w-9 items-center justify-center rounded-lg transition-colors",
                   active
@@ -72,7 +80,7 @@ export function ClassicShell() {
               aria-label={t(APPS.settings.nameKey)}
               title={t(APPS.settings.nameKey)}
               aria-disabled={activeNav === "settings" || undefined}
-              onClick={() => setActiveNav("settings")}
+              onClick={() => switchTo("settings")}
               className={cn(
                 "flex h-9 w-9 items-center justify-center rounded-lg transition-colors",
                 activeNav === "settings"

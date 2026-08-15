@@ -37,6 +37,7 @@ export const ja: Translation = {
   chat: {
     newSession: "新しいチャット",
     selectOrCreate: "チャットを選択または新規作成",
+    panelTitle: "チャット",
     stop: "停止",
     taskRunning: "タスクは実行中です…",
     taskStatus: {
@@ -117,6 +118,10 @@ export const ja: Translation = {
     },
   },
   coding: {
+    tabs: {
+      tasks: "タスク",
+      chat: "チャット",
+    },
     editor: {
       empty: "左側からファイルを選択",
       save: "保存",
@@ -125,7 +130,7 @@ export const ja: Translation = {
     },
     todos: {
       title: "タスクリスト",
-      noSession: "先にチャットでセッションを作成・選択してください",
+      noSession: "右上の「チャット」タブでコーディングセッションを作成",
       live: "イベントストリーム接続中",
       offline: "イベントストリーム未接続",
       steps: "このターンで {{count}} ステップ実行",

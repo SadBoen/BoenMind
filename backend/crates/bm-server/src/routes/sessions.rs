@@ -14,6 +14,9 @@ pub struct CreateSessionRequest {
     pub model: Option<String>,
     #[serde(default)]
     pub title: Option<String>,
+    /// 场景（架构 §四·B 补充）：chat/coding/…默认 chat；引擎按场景组装工具面
+    #[serde(default)]
+    pub app: Option<String>,
 }
 
 pub async fn create_session(
@@ -23,7 +26,7 @@ pub async fn create_session(
     let id = Uuid::new_v4().to_string();
     let session = state
         .db
-        .create_session(&id, req.provider_id.as_deref(), req.model.as_deref())
+        .create_session(&id, req.provider_id.as_deref(), req.model.as_deref(), req.app.as_deref().unwrap_or("chat"))
         .await
         .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
     let mut session = session;

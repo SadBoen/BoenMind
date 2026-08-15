@@ -3,25 +3,37 @@
  * ┌───────────────────────────────────────┐
  * │ GitBar：分支 + 最近提交节点 + 变更摘要    │
  * ├────────┬─────────────────┬────────────┤
- * │ 文件树   │ 编辑器            │ 活任务清单   │
+ * │ 文件树   │ 编辑器            │ 右栏 Tab：   │
+ * │        │                 │ 任务 | 对话    │
  * └────────┴─────────────────┴────────────┘
  * 后端零新增编排概念：文件走 /api/workspace（读/写），清单走事件日志
  * todo/write 投影（REST + 事件流双通道），git 走 /api/workspace/git-info。
  * 分支图 = 起步形态（提交节点时间线）；完整 DAG 图留 M2 深化轮。
+ *
+ * 右栏对话 Tab = 宿主共享 ChatPane（panel 形态，架构 §四·B 补充）：对话是
+ * 宿主能力非应用能力，编程壳只需嵌入并绑定 coding 场景会话（一软件一会话，
+ * 无则懒创建）。桌面壳多窗口共存时与聊天窗口共享聚焦会话（多实例拍板项）。
  */
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { GitBranch, RefreshCw } from "lucide-react";
+import { GitBranch, MessageSquare, RefreshCw, ListTodo } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { api, type GitInfo } from "@/api/client";
+import { useAppStore } from "@/stores/app-store";
 import { FilePanel } from "@/components/files/FilePanel";
 import { Editor } from "./Editor";
 import { TodoPanel } from "./TodoPanel";
+import { ChatPane } from "@/components/chat/ChatPane";
+
+/** 右栏 Tab：任务（活任务清单投影）| 对话（宿主 ChatPane，绑定 coding 会话） */
+type RightTab = "tasks" | "chat";
 
 export function CodingApp() {
   const { t } = useTranslation();
   const [git, setGit] = useState<GitInfo | null>(null);
+  const [rightTab, setRightTab] = useState<RightTab>("tasks");
+  const ensureAppSession = useAppStore((s) => s.ensureAppSession);
 
   const loadGit = useCallback(() => {
     api
@@ -33,6 +45,12 @@ export function CodingApp() {
   useEffect(() => {
     loadGit();
   }, [loadGit]);
+
+  // 对话 Tab = 真实会话入口：切过去时确保 coding 场景会话存在（无则懒创建）
+  const openChatTab = () => {
+    setRightTab("chat");
+    void ensureAppSession("coding");
+  };
 
   return (
     <div className="flex h-full min-w-0 flex-col bg-background">
@@ -86,7 +104,7 @@ export function CodingApp() {
         </Button>
       </div>
 
-      {/* 三栏：文件树 | 编辑器 | 活任务清单 */}
+      {/* 三栏：文件树 | 编辑器 | 右栏（任务/对话 Tab） */}
       <div className="flex min-h-0 flex-1">
         <div className={cn("w-56 shrink-0 border-r")}>
           <FilePanel />
@@ -94,10 +112,47 @@ export function CodingApp() {
         <div className="min-w-0 flex-1 border-r">
           <Editor />
         </div>
-        <div className="w-64 shrink-0">
-          <TodoPanel />
+        <div className={cn("flex shrink-0 flex-col", rightTab === "chat" ? "w-[26rem]" : "w-64")}>
+          {/* Tab 头：任务 | 对话（对话 = 宿主 ChatPane panel 形态） */}
+          <div className="flex h-9 shrink-0 items-center gap-1 border-b px-2">
+            <TabButton active={rightTab === "tasks"} onClick={() => setRightTab("tasks")} icon={<ListTodo size={13} />}>
+              {t("coding.tabs.tasks")}
+            </TabButton>
+            <TabButton active={rightTab === "chat"} onClick={openChatTab} icon={<MessageSquare size={13} />}>
+              {t("coding.tabs.chat")}
+            </TabButton>
+          </div>
+          {rightTab === "tasks" ? <TodoPanel /> : <ChatPane variant="panel" />}
         </div>
       </div>
     </div>
+  );
+}
+
+function TabButton({
+  active,
+  onClick,
+  icon,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors",
+        active
+          ? "bg-primary/10 text-primary"
+          : "text-muted-foreground hover:bg-accent hover:text-foreground",
+      )}
+    >
+      {icon}
+      {children}
+    </button>
   );
 }
