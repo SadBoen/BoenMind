@@ -619,10 +619,12 @@ dependencies = [
  "crossbeam-queue",
  "dirs",
  "flate2",
+ "futures",
  "getrandom 0.4.3",
  "hmac 0.12.1",
  "md-5",
  "pbkdf2",
+ "proptest",
  "regex",
  "ring",
  "rquickjs",
@@ -639,6 +641,7 @@ dependencies = [
  "swc_ecma_transforms_base",
  "swc_ecma_transforms_typescript",
  "sysinfo",
+ "tempfile",
  "thiserror 2.0.20",
  "tokio",
  "tracing",
@@ -1847,6 +1850,7 @@ checksum = "a88cf1f829d945f548cf8fec32c61b1f202b6d93b45848602fc02af4b12ad218"
 dependencies = [
  "futures-channel",
  "futures-core",
+ "futures-executor",
  "futures-io",
  "futures-sink",
  "futures-task",
@@ -1868,6 +1872,17 @@ name = "futures-core"
 version = "0.3.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2cd50c473c80f6d7c3670a752354b8e569b1a7cbfdc0419ec88e5edad85e0dc7"
+
+[[package]]
+name = "futures-executor"
+version = "0.3.33"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6754879cc9f2c66f88c6e5c35344bb0bdb0708b0352b1201815667c7eabc7458"
+dependencies = [
+ "futures-core",
+ "futures-task",
+ "futures-util",
+]
 
 [[package]]
 name = "futures-io"
