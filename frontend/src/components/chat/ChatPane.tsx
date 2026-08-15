@@ -7,7 +7,7 @@
  * 会话上下文 = store 的 activeSessionId（全局聚焦会话）：宿主切换应用时
  * 由 activateApp/ensureAppSession 把聚焦会话切到该场景，本组件零感知。
  */
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Square, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -52,6 +52,18 @@ export function ChatPane({ variant = "full", scene = "chat" }: ChatPaneProps) {
   // 内嵌会话列表显隐（状态栏 prefix 三横按钮 toggle；聊天应用默认展开）
   const sessionsOpen = useAppStore((s) => s.chatSessionsOpen[scene] ?? scene === "chat");
 
+  // 单元宽度自适应（用户拍板 2026-08-15）：面板太窄时列表从"左侧内嵌"变
+  // "内部悬浮窗"（overlay 覆盖聊天区左侧，不挤占聊天宽度）；宽时内嵌侧栏。
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setNarrow(el.clientWidth < 560));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   // 预览文本按消息 id 缓存：流式期间 streamingText 每增量都重渲染本组件，
   // 不能对全部历史消息逐条跑正则（messages 引用在流式时不变化，memo 不重算）
   const previews = useMemo(() => {
@@ -82,14 +94,20 @@ export function ChatPane({ variant = "full", scene = "chat" }: ChatPaneProps) {
   // overflow-hidden：防止 rail 横条 hover 变长时横向溢出到外层容器
   // （overflow-y:auto）触发滚动条，把整个窗口挤矮 15px 导致输入框跳动
   return (
-    <div className="flex h-full min-w-0 overflow-hidden bg-background">
-      {/* 内嵌会话列表（用户拍板"列表在聊天单元内部，状态栏控制显隐"）：
-          聊天应用默认展开；编程等场景默认折叠（状态栏三横展开） */}
-      {sessionsOpen && (
-        <div className="w-64 shrink-0 border-r">
-          <SessionList scene={scene} />
-        </div>
-      )}
+    <div ref={containerRef} className="relative flex h-full min-w-0 overflow-hidden bg-background">
+      {/* 会话列表（用户拍板"列表在聊天单元内部，状态栏控制显隐"）：
+          聊天应用默认展开；编程等场景默认折叠（状态栏三横展开）。
+          窄面板 → 内部悬浮窗（overlay 不挤占聊天宽度）；宽面板 → 左侧内嵌侧栏 */}
+      {sessionsOpen &&
+        (narrow ? (
+          <div className="absolute inset-y-0 left-0 z-20 w-64 border-r bg-popover shadow-lg">
+            <SessionList scene={scene} />
+          </div>
+        ) : (
+          <div className="w-64 shrink-0 border-r">
+            <SessionList scene={scene} />
+          </div>
+        ))}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
       {/* 标题栏：full = 会话标题/引导提示；panel = 仅会话标题（紧凑） */}
       <header

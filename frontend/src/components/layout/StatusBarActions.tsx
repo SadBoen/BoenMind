@@ -134,7 +134,7 @@ export function SessionsToggle({ activePanel }: IDockviewHeaderActionsProps) {
       variant="ghost"
       size="sm"
       className={cn(
-        "h-6 w-6 px-0 text-muted-foreground",
+        "h-7 w-9 px-0 text-muted-foreground",
         open && "bg-accent text-foreground",
       )}
       title={t("chat.sessions")}

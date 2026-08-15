@@ -29,6 +29,12 @@
 - **TerminalPane 一期已落地（07618ce，上游吸收 T1/T2）**：后端 /api/terminal（portable-pty 会话，创建/输入/resize/SSE/关闭；broadcast 多订阅 + 读线程自清理；**ConPTY ESC[6n 光标查询应答**——不答则 cmd 输出阻塞，实测坑）；前端 TerminalPane 宿主组件（xterm 6 + fit；编程壳右栏第三个 Tab，终端 Tab 加宽 30rem）；dir 命令全链路实测通过
 - **剩余**（执行顺序已拍）：项目切换（currentProject 上下文 + 文件树/终端联动）→ codegraph 转官方插件（scopes=["coding"]）→ 浏览器仿真 B 方案（可视化 web 工具链）
 
+**聊天单元微调轮（2026-08-15 用户四点）**：
+- 三横按钮加宽 h-6w-6 → h-7w-9（与 token/X 协调）；**独立 session 列表确认删除**（v6 默认布局已无，旧标签页刷新即见）
+- **窄面板自适应**：ChatPane ResizeObserver 检测单元宽度——<560px（如编程壳右列 320px）时会话列表 = 内部悬浮窗（absolute overlay 不挤占聊天宽度）；≥560px（聊天应用）内嵌侧栏；两种形态实测通过
+- **多 tab 叠放时三横位置**：dockview prefix 槽位 = pre-actions 容器在 tabs 容器之前（组级最左）——原生已满足"三横在最左边"，无需改动
+- 坑记录：**dev server 长跑 + 多轮 HMR 会模块混乱**（面板渲染空白，疑似 HMR 状态损坏）——测试前重启 vite（杀旧实例，注意端口被占时新实例起 5174）；用户提议"自编内容区状态栏"备选未采用（dockview 槽位零破坏，官方扩展点）
+
 **聊天单元一体化轮（2026-08-15 用户纠正设计理解）**：
 - **用户澄清**："SESSION 和聊天不是一个单元的两个界面，而是在一个单元里面"——聊天单元 = 列表 + 聊天框 + 上下文显示，列表显隐由顶部状态栏控制
 - **落地**：ChatPane 内嵌可折叠会话列表（flex 侧栏 256px，SessionList 复用按场景过滤）；状态栏 **prefix 槽位** = 三横开关（SessionsToggle，与 token/X 同一行——dockview 三槽位：prefix=列表开关 / right=token 状态+关闭）；store `chatSessionsOpen` 按场景记忆显隐（chat 默认展开、coding 默认折叠）；布局 v6：chat 应用去掉独立 session-list 面板（列表收进聊天单元；session-list 视图保留注册表可加回）；ChatPane 内容区旧三横/悬浮窗移除
