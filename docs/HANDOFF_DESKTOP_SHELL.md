@@ -116,7 +116,16 @@
 - 浏览器实测全链路过：开始菜单开聊天 → 黄点最小化（窗口消失）→ Dock 图标 opacity-50 saturate-50 + 空心指示点 → Dock 点击恢复（聚焦 ring）→ 绿点最大化（1040→1264×576@8,8）→ 绿点还原（回 1040×576@(120,8)）→ 右下角拖拽 resize（1040→1155）。
 - 坑：**Dock 磁吸按钮在 IAB 合成鼠标下点不中**——鼠标移动到按钮中心即触发 onMouseMove 磁吸放大、按钮漂移，mousedown 落点偏出 → click 无效（MenuBar/StartMenu/窗口内按钮无此问题）。真实用户鼠标无碍（用户看着放大后的按钮点击）。IAB 自动化恢复窗口的 workaround：先 cua.move 移开鼠标（清磁吸）再 dom_cua 点击。此限制已记入验证结论。
 
-遗留（不在本期范围）：多实例（单例为拍板项）、编程应用真实壳、Dock 磁吸动效真实浏览器确认（IAB 无法合成 hover/mousemove 验证）。
+**七次迭代（用户拍板，同日）——双 DE 并存：经典软件界面回归（默认）+ 桌面模式**：
+- 用户拍板四点：① 默认软件形式界面（经典三栏壳回归）② 界面层插件化要做，学 DeepSeek Harness ③ 插件分类不拆目录，用标签（category）+ UI 分 tab ④ 编程应用仍是软件实现第一优先（导航图标占位点不了）
+- **ClassicShell（新组件，components/classic/）**：原三栏壳形态回归——左侧 48px 导航条（应用图标 = APPS 注册表驱动，聊天/设置/插件/管家 + 底部「桌面模式」入口）+ 主面板（渲染 APPS[activeNav].component，内容组件零改动）+ 底部状态栏（StatusBar 加 variant="classic" 浅色变体）。**编程图标 disabled 置灰**（用户拍板"点不了"，M2 接线）
+- **默认界面 = 经典**（viewMode: "classic" | "desktop"，localStorage boenmind.viewMode 持久化）；桌面模式从导航条底部入口进；桌面 MenuBar 开始按钮旁加「切换经典软件界面」（PanelLeft 图标）。两壳共享同一 store（activeNav 与 openApps 并存），后端零改动——**架构 §四·B「前端壳多套并存」实作验证**
+- **插件分类标签**：PluginInfo 加 category（manifest category 声明，单文件/未声明默认 system）；现有插件打标 ctx-compactor/web-search/refine-suggest=system、pdf-omni=app；插件页加 tab（全部/系统增强/功能插件，计数+过滤）；旧后端无字段时缺省 system 兼容。不拆目录（用户拍板）
+- **DeepSeek Harness 调研结论**（用户"deepseek 已经做到了，可以学习"实锤）：dsh（deepseek-ai/deepseek-harness，2026-08-13 发布 MIT）前端界面插件化 = **ui-slots 槽位组合（Slot & Injection Kernel：ctx.slots/renderSlot/inject）+ 同域 bundle 动态注册（/plugins/<id>/client.js CJS factory → window.__ModuleLoader__.load）+ 客户端插件不得自带 React（从壳 platform module table 取依赖）+ CSS 内联 + RPC 桥**——不是 iframe/WebComponent；为 §四·C 待拍板的"iframe/WebComponent/动态加载"提供了第三种答案（同域 bundle：无隔离但依赖共享简单）
+- 浏览器实测：默认进经典（导航条+聊天全界面+状态栏）→ 插件页 tab 过滤 → 桌面模式 → 切回经典 → 刷新持久化（两种模式都验）
+- **IAB 新坑：tab.reload() 后合成输入通道失效**（dom_cua/cua/playwright 点击全部无效，新标签页打开正常）——验证流程避开 reload，用新标签页
+
+遗留（不在本期范围）：界面层插件化落地（dsh 机制吸收，§四·C 拍板）、多实例（单例为拍板项）、编程应用真实壳（M2）、WIKI 插件（未立项）。
 
 ## 八、关联文档
 
