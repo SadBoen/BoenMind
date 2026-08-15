@@ -229,3 +229,30 @@ pub trait ToolsPort: Send + Sync {
     /// 工具是否存在。
     fn has(&self, name: &str) -> bool;
 }
+
+/// 调度面（SERVICE_FACES 图纸 #10）：唤醒调度（Steward 轮的可替换策略面）。
+///
+/// 实现：StewardStore（治理夹区间在 store 内部）；set_wake(0) = 清除唤醒。
+/// 消费方：管家 set_wake 工具执行侧、未来唤醒策略插件。
+pub trait SchedulerPort: Send + Sync {
+    /// 登记/更新唤醒（after_seconds 被治理层夹进 [pacing-min, pacing-max]）；
+    /// 非管家会话 → Err。
+    fn set_wake(
+        &self,
+        session_id: &str,
+        after_seconds: i64,
+        reason: Option<&str>,
+    ) -> BoxFuture<'_, Result<(), ProtocolError>>;
+
+    /// 清除唤醒（静默，直到下次 set_wake/inject）。
+    fn clear_wake(&self, session_id: &str) -> BoxFuture<'_, Result<(), ProtocolError>>;
+}
+
+/// 通知面（SERVICE_FACES 图纸 #13）：会话级 SSE 推送（前端通道）。
+///
+/// 实现：AppState.session_streams（运行期注册）；事件 = AgentStreamEvent
+/// 的 JSON 视图（契约层不依赖 bm-core 类型，实现侧 serde 往返）。
+pub trait NotifyPort: Send + Sync {
+    /// 推送事件到会话通道；通道不存在/已关闭（前端断开）→ false。
+    fn push(&self, session_id: &str, event: serde_json::Value) -> bool;
+}

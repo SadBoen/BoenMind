@@ -510,6 +510,12 @@ async fn serve_inner(
                     .unwrap_or_else(|| Arc::new(std::sync::Mutex::new(Vec::new()))),
             });
         let _ = kernel.ctx().register_port("tools", tools_port);
+        // 通知面（SERVICE_FACES #13）：session_streams 就绪后运行期注册
+        let notify_port: Arc<dyn bm_protocol::NotifyPort> =
+            Arc::new(service_faces::NotifyPortImpl {
+                streams: session_streams.clone(),
+            });
+        let _ = kernel.ctx().register_port("notify", notify_port);
     }
 
     // Steward 轮（v0.19）：管家状态（next_wake_at 落点 = steward.json）。
@@ -526,6 +532,15 @@ async fn serve_inner(
             None => None,
         }
     };
+
+    // 调度面（SERVICE_FACES #10）：管家启用时注册（唤醒策略可替换面）
+    if let Some(kernel) = kernel.as_ref()
+        && let Some(store) = steward.as_ref()
+    {
+        let scheduler_port: Arc<dyn bm_protocol::SchedulerPort> =
+            Arc::new(service_faces::SchedulerPortImpl { store: store.clone() });
+        let _ = kernel.ctx().register_port("scheduler", scheduler_port);
+    }
 
     let state = AppState::new(
         config,

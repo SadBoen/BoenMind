@@ -29,7 +29,8 @@ pub const SYSTEM_PROMPT: &str = r#"你是 BoenMind，一个专注工作与知识
 - grep/find 默认尊重 .gitignore 与 .ignore 并跳过隐藏文件（不会遍历 target/ 等被忽略目录）；大范围搜索可传 timeout（毫秒）限制单次时长。"#;
 
 /// 从 agent 事件流转出的、面向前端 SSE 的扁平事件。
-#[derive(Debug, Clone, serde::Serialize)]
+/// Deserialize：通知面（SERVICE_FACES #13）JSON 边界往返。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum AgentStreamEvent {
     /// 正文增量（思考文本以 `<think>` 标签随正文下发，思考增量事件不单列）

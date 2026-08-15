@@ -5,6 +5,7 @@
 //! bm-compactor 同轨）；消费方经 `kernel.port` 取用（routes/plugins.rs、
 //! routes/sessions.rs 已改为取服务）——"服务面 = 承诺 API，实现面可换"。
 
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use bm_core::plugin_settings::SettingField;
@@ -245,11 +246,72 @@ impl bm_protocol::ToolsPort for ToolsPortImpl {
     }
 }
 
+/// 调度面实现：StewardStore（治理夹区间在 store 内部；set_wake(0) = 清除）。
+/// 运行期注册（steward 构建在 kernel 之后）。消费方：管家 set_wake 工具、
+/// 未来唤醒策略插件。
+pub struct SchedulerPortImpl {
+    pub store: Arc<crate::steward::StewardStore>,
+}
+
+impl bm_protocol::SchedulerPort for SchedulerPortImpl {
+    fn set_wake(
+        &self,
+        session_id: &str,
+        after_seconds: i64,
+        reason: Option<&str>,
+    ) -> BoxFuture<'_, Result<(), ProtocolError>> {
+        let store = self.store.clone();
+        let sid = session_id.to_string();
+        let reason = reason.map(String::from);
+        Box::pin(async move {
+            store
+                .set_wake(&sid, after_seconds, reason.as_deref())
+                .await
+                .map_err(|e| ProtocolError::new(ErrorCode::InvalidArgument, e))
+        })
+    }
+
+    fn clear_wake(&self, session_id: &str) -> BoxFuture<'_, Result<(), ProtocolError>> {
+        let store = self.store.clone();
+        let sid = session_id.to_string();
+        Box::pin(async move {
+            store
+                .set_wake(&sid, 0, None)
+                .await
+                .map_err(|e| ProtocolError::new(ErrorCode::InvalidArgument, e))
+        })
+    }
+}
+
+/// 通知面实现：AppState.session_streams（会话 SSE 通道表，tokio Mutex）。
+/// 运行期注册（session_streams 构建在 kernel 之后）。事件 = AgentStreamEvent
+/// JSON 视图（实现侧 serde 往返；非法事件/通道繁忙 = 推送失败）。
+pub struct NotifyPortImpl {
+    pub streams:
+        Arc<tokio::sync::Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<bm_core::agent::AgentStreamEvent>>>>,
+}
+
+impl bm_protocol::NotifyPort for NotifyPortImpl {
+    fn push(&self, session_id: &str, event: Value) -> bool {
+        let Ok(event) = serde_json::from_value::<bm_core::agent::AgentStreamEvent>(event) else {
+            return false;
+        };
+        // 同步方法内短临界区：try_lock（send 非阻塞，持锁即放）
+        let Ok(streams) = self.streams.try_lock() else {
+            return false;
+        };
+        let Some(tx) = streams.get(session_id).cloned() else {
+            return false;
+        };
+        tx.send(event).is_ok()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use bm_core::config::{AppConfig, ProviderConfig, ProviderKind};
-    use bm_protocol::{CredentialsPort, LlmPort, ToolsPort};
+    use bm_protocol::{CredentialsPort, LlmPort, NotifyPort, ToolsPort};
 
     fn test_config() -> Arc<RwLock<AppConfig>> {
         let mut cfg = AppConfig::default();
@@ -301,5 +363,25 @@ mod tests {
         assert_eq!(list.len(), 1);
         assert_eq!(list[0]["name"], "search");
         assert_eq!(list[0]["inputSchema"]["type"], "object");
+    }
+
+    #[test]
+    fn notify_port_pushes_to_session_channel() {
+        use bm_core::agent::AgentStreamEvent;
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<AgentStreamEvent>();
+        let streams: Arc<
+            tokio::sync::Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<AgentStreamEvent>>>,
+        > = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
+        streams.try_lock().unwrap().insert("s1".into(), tx);
+        let port = NotifyPortImpl { streams };
+        // JSON 视图（internally tagged）→ 通道
+        assert!(port.push("s1", serde_json::json!({"type": "textDelta", "delta": "hi"})));
+        match rx.try_recv() {
+            Ok(AgentStreamEvent::TextDelta { delta }) => assert_eq!(delta, "hi"),
+            other => panic!("unexpected: {other:?}"),
+        }
+        // 通道不存在 → false；非法事件 → false
+        assert!(!port.push("nope", serde_json::json!({"type": "textDelta", "delta": "x"})));
+        assert!(!port.push("s1", serde_json::json!({"type": "unknownEvent"})));
     }
 }
