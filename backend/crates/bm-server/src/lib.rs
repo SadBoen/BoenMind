@@ -6,6 +6,8 @@
 pub mod bm_engine;
 // B6 — 内置工具集（bm 引擎 pi.tool 宿主执行侧：read/write/edit/grep/find/ls/bash）
 pub mod builtin_tools;
+// 审查 P0-2 — 内置工具权限门（bash/subagent 经决策记忆+询问链）
+pub mod builtin_gate;
 pub mod chat;
 pub mod compat_engine;
 pub mod governance;
@@ -88,6 +90,9 @@ pub struct AppState {
     pub steward_cfg: steward::StewardConfig,
     /// 终端会话注册表（TerminalPane 一期；内存态，重启即清）
     pub terminal: Arc<terminal::TerminalStore>,
+    /// 内置工具权限门（审查 P0-2）：bash/subagent 经决策记忆+询问链。
+    /// 与插件引擎共享同一 PermissionStore（决策互认）。
+    pub builtin_gate: Option<Arc<builtin_gate::BuiltinGate>>,
 }
 
 /// 前端对一次权限询问的决策。
@@ -116,6 +121,7 @@ impl AppState {
         permission_pending: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<PermissionDecision>>>>,
         steward: Option<Arc<steward::StewardStore>>,
         steward_cfg: steward::StewardConfig,
+        builtin_gate: Option<Arc<builtin_gate::BuiltinGate>>,
     ) -> Self {
         Self {
             config: Arc::new(RwLock::new(config)),
@@ -130,6 +136,7 @@ impl AppState {
             steward,
             steward_cfg,
             terminal: Arc::new(terminal::TerminalStore::new()),
+            builtin_gate,
         }
     }
 }
@@ -492,7 +499,7 @@ async fn serve_inner(
     let permission_pending: Arc<
         Mutex<HashMap<String, tokio::sync::oneshot::Sender<PermissionDecision>>>,
     > = Arc::new(Mutex::new(HashMap::new()));
-    let compat = compat_engine::init_compat(
+    let (compat, permission_store) = compat_engine::init_compat(
         &config,
         session_streams.clone(),
         permission_pending.clone(),
@@ -503,6 +510,16 @@ async fn serve_inner(
             .map(|d| bm_kernel::EventLog::new(d.event_log().store())),
     )
     .await;
+
+    // 内置工具权限门（审查 P0-2）：与插件引擎共享同一决策记忆实例。
+    // 档位 permissive/yolo → 高权限工具直放（全自动档位语义一致）；
+    // 其余（default/safe/balanced）→ bash/subagent 走询问链。
+    let builtin_gate = Arc::new(builtin_gate::BuiltinGate::new(
+        permission_store,
+        session_streams.clone(),
+        permission_pending.clone(),
+        config.extension_policy.as_deref() != Some("permissive"),
+    ));
 
     // 工具面（SERVICE_FACES #5）：compat 快照就绪后运行期注册——
     // ToolsPort 持有同一 Arc 快照，插件变更 reload 后自动同步
@@ -563,6 +580,7 @@ async fn serve_inner(
         permission_pending,
         steward,
         steward_cfg,
+        Some(builtin_gate),
     );
     spawn_agent_sweeper(state.loop_agents.clone());
     // C1 回收站超期清除：孤儿会话（sessions 表已删）事件保留 N 天后物理删除

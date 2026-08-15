@@ -49,6 +49,74 @@ const HOSTCALL_TIMEOUT: Duration = Duration::from_secs(60);
 /// 权限询问等待上限：用户无响应时按拒绝处理（fail-closed，对齐 pi 路径）。
 const PERMISSION_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// 权限询问链（决策记忆 + SSE 询问 + fail-closed）——插件引擎
+/// （BridgeServices）与内置工具权限门（builtin_gate）共用的单一事实源
+/// （审查 P0-2：消除双通道、内置 bash/subagent 同走此门）。
+/// 返回 true = 放行。拒绝语义：无记忆且询问无响应/被拒 → false。
+pub(crate) async fn ask_capability(
+    store: &std::sync::Mutex<PermissionStore>,
+    streams: &Arc<TokioMutex<HashMap<String, mpsc::UnboundedSender<AgentStreamEvent>>>>,
+    pending: &Arc<TokioMutex<HashMap<String, oneshot::Sender<PermissionDecision>>>>,
+    session_id: &str,
+    extension_id: &str,
+    capability: &str,
+    message: &str,
+) -> bool {
+    // 1. 决策记忆：命中（allow/deny）直接返回，不再打扰用户
+    {
+        let store = store.lock().unwrap();
+        if let Some(allow) = store.lookup(extension_id, capability) {
+            tracing::debug!(
+                event = "bm.permission_memory_hit",
+                extension = extension_id,
+                capability,
+                allow,
+                "决策记忆命中，跳过询问",
+            );
+            return allow;
+        }
+    }
+
+    // 2. 无记忆 → 询问链（SSE 推 PermissionRequest → oneshot 等决策）
+    let request_id = uuid::Uuid::new_v4().to_string();
+    let (tx, rx) = oneshot::channel::<PermissionDecision>();
+    pending.lock().await.insert(request_id.clone(), tx);
+
+    crate::chat::send_permission_request(
+        streams,
+        session_id,
+        &request_id,
+        extension_id,
+        capability,
+        message,
+    )
+    .await;
+
+    let decision = tokio::time::timeout(PERMISSION_TIMEOUT, rx)
+        .await
+        .ok()
+        .and_then(|r| r.ok());
+    pending.lock().await.remove(&request_id);
+
+    let Some(decision) = decision else {
+        return false;
+    };
+
+    // 3. "总是"决策 → 回写记忆（对齐 pi 上游：问一次记一次；once 不记）
+    if decision.always {
+        let mut store = store.lock().unwrap();
+        if let Err(err) = store.record(extension_id, capability, decision.allow) {
+            tracing::warn!(
+                event = "bm.permission_memory_write_failed",
+                extension = extension_id,
+                capability,
+                error = %err,
+            );
+        }
+    }
+    decision.allow
+}
+
 /// exec hostcall 默认超时（legacy 非流式 exec 无默认上限；bm 路径保守 60s）。
 const EXEC_TIMEOUT_MS: u64 = 60_000;
 
@@ -96,8 +164,9 @@ pub struct BridgeServices {
     /// B6：内置工具集（cwd = 工作文件夹）。
     pub builtin: BuiltinTools,
     /// B6：决策记忆（extension-permissions.json）。std Mutex：record 含
-    /// 文件 IO，专用线程内临界区短、无 await 跨锁。
-    pub permission_store: std::sync::Mutex<PermissionStore>,
+    /// 文件 IO，专用线程内临界区短、无 await 跨锁。Arc 共享：内置工具
+    /// 权限门（builtin_gate）与插件询问链读写同一实例（审查 P0-2）。
+    pub permission_store: Arc<std::sync::Mutex<PermissionStore>>,
     /// B6：会话端口的数据面（get_state/get_messages/set_name…）。
     pub db: Arc<bm_core::Db>,
     /// 事件日志（投影面数据源：getmessagesurface = 模型可见历史，含压缩
@@ -120,68 +189,33 @@ impl BridgeServices {
     /// 决策记忆命中 → 直返；否则注册 pending → SSE 推 PermissionRequest →
     /// 等决策（超时 fail-closed）→ always 决策回写记忆。
     async fn request_permission(&self, capability: &str, extension_id: Option<&str>) -> bool {
-        // 1. 决策记忆：命中（allow/deny）直接返回，不再打扰用户
-        if let Some(id) = extension_id {
-            let store = self.permission_store.lock().unwrap();
-            if let Some(allow) = store.lookup(id, capability) {
-                tracing::debug!(
-                    event = "bm.permission_memory_hit",
-                    extension = id,
-                    capability,
-                    allow,
-                    "决策记忆命中，跳过询问",
-                );
-                return allow;
-            }
+        // 决策记忆：命中直返（含加载期——无会话也能命中记忆，不打扰）
+        if let Some(id) = extension_id
+            && let Some(allow) = self.permission_store.lock().unwrap().lookup(id, capability)
+        {
+            tracing::debug!(
+                event = "bm.permission_memory_hit",
+                extension = id,
+                capability,
+                allow,
+                "决策记忆命中，跳过询问",
+            );
+            return allow;
         }
-
-        // 2. 无记忆 → 询问链
+        // 无记忆 → 询问链；无会话上下文（加载期 hostcall）→ fail-closed
         let Some(session_id) = self.current_session_id() else {
-            // 无会话上下文（加载期 hostcall）→ fail-closed
             return false;
         };
-        let request_id = uuid::Uuid::new_v4().to_string();
-        let (tx, rx) = oneshot::channel::<PermissionDecision>();
-        self.permission_pending
-            .lock()
-            .await
-            .insert(request_id.clone(), tx);
-
-        let extension_id = extension_id.unwrap_or("unknown");
-        let message = format!("插件请求能力：{capability}");
-        crate::chat::send_permission_request(
+        ask_capability(
+            &self.permission_store,
             &self.session_streams,
+            &self.permission_pending,
             &session_id,
-            &request_id,
-            extension_id,
+            extension_id.unwrap_or("unknown"),
             capability,
-            &message,
+            &format!("插件请求能力：{capability}"),
         )
-        .await;
-
-        let decision = tokio::time::timeout(PERMISSION_TIMEOUT, rx)
-            .await
-            .ok()
-            .and_then(|r| r.ok());
-        self.permission_pending.lock().await.remove(&request_id);
-
-        let Some(decision) = decision else {
-            return false;
-        };
-
-        // 3. "总是"决策 → 回写记忆（对齐 pi 上游：问一次记一次；once 不记）
-        if decision.always {
-            let mut store = self.permission_store.lock().unwrap();
-            if let Err(err) = store.record(extension_id, capability, decision.allow) {
-                tracing::warn!(
-                    event = "bm.permission_memory_write_failed",
-                    extension = extension_id,
-                    capability,
-                    error = %err,
-                );
-            }
-        }
-        decision.allow
+        .await
     }
 
     /// 宿主事件推送的 ctx payload（会话工作目录 + 空会话投影）。
@@ -560,8 +594,9 @@ impl CompatEngine {
         permission_pending: Arc<TokioMutex<HashMap<String, oneshot::Sender<PermissionDecision>>>>,
         db: Arc<bm_core::Db>,
         working_dir: PathBuf,
-        permission_store: PermissionStore,
+        permission_store: Arc<std::sync::Mutex<PermissionStore>>,
         event_log: Option<bm_kernel::EventLog>,
+        extension_policy: ExtensionPolicy,
     ) -> Result<Self, String> {
         let (tx, mut rx) = mpsc::unbounded_channel::<CompatCmd>();
         let (boot_tx, boot_rx) = oneshot::channel::<Result<(), String>>();
@@ -571,7 +606,7 @@ impl CompatEngine {
             permission_pending,
             current_session: Mutex::new(None),
             builtin: BuiltinTools::new(working_dir),
-            permission_store: std::sync::Mutex::new(permission_store),
+            permission_store,
             db,
             event_log,
             active_tools: Mutex::new(None),
@@ -597,7 +632,7 @@ impl CompatEngine {
                     let thread = HostThread::new(
                         std::rc::Rc::new(runtime),
                         services.clone(),
-                        ExtensionPolicy::default(),
+                        extension_policy,
                     );
                     let _ = boot_tx.send(Ok(()));
                     while let Some(cmd) = rx.recv().await {
@@ -822,42 +857,35 @@ pub async fn init_compat(
     permission_pending: Arc<TokioMutex<HashMap<String, oneshot::Sender<PermissionDecision>>>>,
     db: Arc<bm_core::Db>,
     event_log: Option<bm_kernel::EventLog>,
-) -> Option<Arc<CompatEngine>> {
+) -> (Option<Arc<CompatEngine>>, Arc<std::sync::Mutex<PermissionStore>>) {
+    // 决策记忆：主文件损坏/打不开 → 内存态兜底（fail-closed 到询问链；
+    // 不写系统临时目录、不留 tempdir 残留——审查 A-8/BUG-005）
     let permission_store = {
         let path = bm_core::config::app_dir().join("extension-permissions.json");
         match PermissionStore::open(&path) {
             Ok(store) => store,
             Err(err) => {
-                // 决策记忆打不开 → 每次询问（fail-open 到询问链，不阻断引擎）
-                tracing::warn!(event = "bm.permission_store_open_failed", path = %path.display(), error = %err);
-                PermissionStore::open(&tempfile::tempdir()
-                    .map(|d| d.keep())
-                    .unwrap_or_else(|_| std::env::temp_dir())
-                    .join("extension-permissions.json"))
-                .unwrap_or_else(|_| {
-                    PermissionStore::open(&std::env::temp_dir().join(format!(
-                        "boenmind-permissions-{}.json",
-                        uuid::Uuid::new_v4()
-                    )))
-                    .expect("临时决策记忆不可用")
-                })
+                tracing::warn!(event = "bm.permission_store_open_failed", path = %path.display(), error = %err, "决策记忆不可用，本次会话按无记忆询问处理");
+                PermissionStore::ephemeral()
             }
         }
     };
+    let permission_store = Arc::new(std::sync::Mutex::new(permission_store));
     let engine = match CompatEngine::spawn(
         session_streams,
         permission_pending,
         db,
         config.working_dir.clone(),
-        permission_store,
+        permission_store.clone(),
         event_log,
+        extension_policy_from_config(config),
     )
     .await
     {
         Ok(e) => e,
         Err(err) => {
             tracing::warn!(event = "bm.compat_boot_failed", error = %err, "bm 引擎插件工具不可用");
-            return None;
+            return (None, permission_store);
         }
     };
 
@@ -897,7 +925,33 @@ pub async fn init_compat(
             tracing::warn!(event = "bm.compat_tools_failed", error = %err);
         }
     }
-    Some(Arc::new(engine))
+    (Some(Arc::new(engine)), permission_store)
+}
+
+/// 插件权限档位（extension_policy，设置页四档）→ ExtensionPolicy 映射
+/// （审查 P1-3：档位此前是"完整 UI + 零后端消费"的死配置）：
+/// - default/safe/balanced → Prompt 模式（关键能力询问，上游默认）
+/// - permissive → 全自动放行（插件能力不经询问）
+/// - yolo（permissive + allow_dangerous）→ 全放行且放开 exec/env
+fn extension_policy_from_config(config: &bm_core::AppConfig) -> ExtensionPolicy {
+    let mut policy = ExtensionPolicy::default();
+    match config.extension_policy.as_deref() {
+        Some("permissive") => {
+            policy.mode = bm_compat::extensions::ExtensionPolicyMode::Permissive;
+        }
+        Some(other) => {
+            tracing::debug!(
+                event = "bm.extension_policy_mode",
+                mode = other,
+                "非 permissive 档位保持 Prompt（关键能力询问）",
+            );
+        }
+        None => {}
+    }
+    if config.extension_allow_dangerous.unwrap_or(false) {
+        policy.deny_caps.retain(|c| c != "exec" && c != "env");
+    }
+    policy
 }
 
 /// bm-loop `ToolExecutor` 的 QuickJS 实现（B4/B5/B6）：`execute` →
@@ -912,6 +966,9 @@ pub struct QuickJsToolExecutor {
     /// 事件日志（todo 工具执行侧；M2 活任务清单。None = 事件日志不可用，
     /// todo 工具返回错误——子进程无日志，且子进程工具面不含 todo 双保险）。
     event_log: Option<EventLog>,
+    /// 内置工具权限门（审查 P0-2）。None = 不裁决（子进程模式无询问
+    /// 通道；子代理入口已在父侧过门）。
+    gate: Option<Arc<crate::builtin_gate::BuiltinGate>>,
 }
 
 impl QuickJsToolExecutor {
@@ -925,12 +982,19 @@ impl QuickJsToolExecutor {
             session_id: session_id.into(),
             steward,
             event_log: None,
+            gate: None,
         }
     }
 
     /// 挂事件日志（todo 工具用）。bm 引擎父进程路径调用；子进程不挂。
     pub fn with_event_log(mut self, log: EventLog) -> Self {
         self.event_log = Some(log);
+        self
+    }
+
+    /// 挂内置工具权限门。bm 引擎父进程路径调用；子进程不挂（无询问通道）。
+    pub fn with_gate(mut self, gate: Arc<crate::builtin_gate::BuiltinGate>) -> Self {
+        self.gate = Some(gate);
         self
     }
 
@@ -968,6 +1032,17 @@ impl ToolExecutor for QuickJsToolExecutor {
 
         // 分派：subagent（专家团队，父侧自研）→ 内置工具名 → BuiltinTools
         // （闭合表，递归防护与 execute_tool 端口一致）；其余 → QuickJS 插件引擎。
+        // 内置工具权限门（审查 P0-2）：高权限工具（bash/subagent）先裁决——
+        // 决策记忆/询问链；permissive 档位直放。拒绝 = 模型可见失败原因。
+        if let Some(gate) = &self.gate
+            && let Err(reason) = gate.check(&self.session_id, &req.name).await
+        {
+            return ToolOutcome {
+                ok: false,
+                output: reason,
+                meta: None,
+            };
+        }
         let working_dir = self
             .engine
             .as_ref()
@@ -1143,9 +1218,9 @@ mod tests {
             permission_pending: Arc::new(TokioMutex::new(HashMap::new())),
             current_session: Mutex::new(None),
             builtin: BuiltinTools::new(temp_dir.clone()),
-            permission_store: std::sync::Mutex::new(
+            permission_store: Arc::new(std::sync::Mutex::new(
                 PermissionStore::open(&store_path).expect("store"),
-            ),
+            )),
             db: test_db().await,
             event_log: None,
             active_tools: Mutex::new(None),

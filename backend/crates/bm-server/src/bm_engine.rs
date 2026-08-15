@@ -273,6 +273,7 @@ fn build_loop_agent(
     kernel: Option<&Arc<bm_kernel::Kernel>>,
     compat: Option<&Arc<CompatEngine>>,
     steward: Option<&Arc<crate::steward::StewardStore>>,
+    gate: Option<&Arc<crate::builtin_gate::BuiltinGate>>,
     is_steward_session: bool,
     app: &str,
     session_id: &str,
@@ -396,8 +397,14 @@ fn build_loop_agent(
             }),
         },
         llm,
-        QuickJsToolExecutor::new(compat.cloned(), session_id, steward.cloned())
-            .with_event_log(bm_kernel::EventLog::new(kernel.event_store())),
+        {
+            let mut executor = QuickJsToolExecutor::new(compat.cloned(), session_id, steward.cloned())
+                .with_event_log(bm_kernel::EventLog::new(kernel.event_store()));
+            if let Some(gate) = gate {
+                executor = executor.with_gate(gate.clone());
+            }
+            executor
+        },
     ))
 }
 
@@ -494,6 +501,7 @@ async fn get_or_create_loop_agent(
         state.kernel.as_ref(),
         state.compat.as_ref(),
         state.steward.as_ref(),
+        state.builtin_gate.as_ref(),
         is_steward_session,
         app,
         session_id,

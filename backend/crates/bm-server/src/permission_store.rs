@@ -83,6 +83,15 @@ impl PermissionStore {
         })
     }
 
+    /// 内存态存储（不落盘）：决策记忆文件损坏/不可用时 fail-closed 到
+    /// 询问链的兜底——不写系统临时目录、不留 tempdir 残留（审查 A-8）。
+    pub fn ephemeral() -> Self {
+        Self {
+            path: PathBuf::new(),
+            decisions: HashMap::new(),
+        }
+    }
+
     /// 查 (extension_id, capability) 的已记忆决策。`None` = 无记忆（或已过期）→ 询问。
     pub fn lookup(&self, extension_id: &str, capability: &str) -> Option<bool> {
         let dec = self.decisions.get(extension_id)?.get(capability)?;
@@ -120,7 +129,9 @@ impl PermissionStore {
                     version_range: None,
                 },
             );
-        save_decisions(&self.path, &decisions)?;
+        if !self.path.as_os_str().is_empty() {
+            save_decisions(&self.path, &decisions)?;
+        }
         self.decisions = decisions;
         Ok(())
     }
