@@ -50,6 +50,17 @@
 - **备选**（真浏览器引擎，后续评估）：browser-use / Playwright MCP 转官方插件
 - **跟踪**：web-scraping 插件链成熟后评估真浏览器
 
+### T5 应用布局系统：dockview（前端 dock layout）
+- **上游**：https://github.com/mathuo/dockview（npm `@dockview/core` + `@dockview/react`）
+- **基线**：8.1.0（2026-08-15 调研确认）
+- **许可**：MIT
+- **地位**：2026 调研最优 React dock 布局库——功能全（停靠/悬浮/弹出窗口/Tab 叠放/最大化/
+  分界线拖拽/布局序列化/主题）、最活跃、零依赖核心 + 多框架绑定；候选对比：flexlayout-react
+  （React-only 老牌但功能弱）、rc-dock（维护停滞）
+- **落地**：架构 §四·B 补充 2（v0.23 用户拍板"VS Code workbench 模型"）；封装为宿主组件
+  `DockLayout` + 视图注册表 VIEWS，不直接散用上游 API；对话视图单实例绑定场景、其他视图多开
+- **跟踪**：版本升级注意 API 变动（dockview 迭代快，封装层隔离）
+
 ---
 
 ## 更新记录
@@ -57,3 +68,4 @@
 | 日期 | 条目 | 动作 |
 |---|---|---|
 | 2026-08-15 | T1-T4 | 建台账：用户定调"网上有的就用网上的，转官方插件 + 台账"；三功能选型定案 |
+| 2026-08-15 | T5 | 应用布局系统选型：dockview 8.1 定案（用户拍板 VS Code workbench 模型，§四·B 补充 2 v0.23） |
