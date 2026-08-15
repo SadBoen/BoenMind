@@ -126,7 +126,7 @@ mod tests {
 
     #[tokio::test]
     async fn ask_chain_allow_records_always_decision() {
-        let (gate, store) = test_gate(true);
+        let (_, store) = test_gate(true);
         // 响应者：询问注册后回 allow+always（模拟前端 respond_permission）
         let pending: Arc<TokioMutex<HashMap<String, oneshot::Sender<PermissionDecision>>>> =
             Arc::new(TokioMutex::new(HashMap::new()));

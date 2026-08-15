@@ -202,6 +202,7 @@ fn router(state: AppState) -> Router {
         .with_state(state)
         // 注意层顺序：CORS 最外层（跨域预检 OPTIONS 不能被鉴权挡住），
         // 鉴权在 CORS 之内、路由之外
+        .layer(axum::middleware::from_fn(origin_middleware))
         .layer(axum::middleware::from_fn(auth_middleware))
         .layer(cors);
 
@@ -279,6 +280,38 @@ mod tests {
     }
 
     #[test]
+    fn referer_allows_local_sources() {
+        for ok in [
+            "http://localhost:5173/",
+            "http://localhost:5173/settings/plugins",
+            "http://127.0.0.1:17321/",
+            "http://[::1]:17321/settings",
+            "tauri://localhost",
+            "http://tauri.localhost/index.html",
+        ] {
+            assert!(
+                referer_allowed(&HeaderValue::from_str(ok).unwrap()),
+                "应放行: {ok}"
+            );
+        }
+    }
+
+    #[test]
+    fn referer_rejects_remote_sources() {
+        for bad in [
+            "http://evil.example.com/",
+            "https://evil.example.com/pwn",
+            "http://192.168.1.10/",
+            "file:///tmp/x.html",
+        ] {
+            assert!(
+                !referer_allowed(&HeaderValue::from_str(bad).unwrap()),
+                "应拒绝: {bad}"
+            );
+        }
+    }
+
+    #[test]
     fn app_error_maps_to_http_status() {
         use bm_core::AppError;
         // 分类 → 状态码集中映射
@@ -320,6 +353,59 @@ async fn auth_middleware(
         return api_error(StatusCode::UNAUTHORIZED, "unauthorized").into_response();
     }
     next.run(request).await
+}
+
+/// CSRF 防护（审查 P0-3）：状态变更请求（非 GET/HEAD/OPTIONS）校验
+/// Origin/Referer 必须为本机来源。CORS 只挡浏览器"读"跨源响应，
+/// 挡不住跨源"发送"（表单提交/fetch no-cors 仍送达）——恶意网页可
+/// 借此 POST /api/chat 驱动本地 Agent 执行任意命令，或经
+/// /api/workspace/file 读写任意文件。无 Origin/Referer 的请求
+/// （同源/curl/CLI）不受影响。
+async fn origin_middleware(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let method = request.method().clone();
+    if !matches!(method, Method::GET | Method::HEAD | Method::OPTIONS) {
+        let headers = request.headers();
+        let origin_ok = match headers.get(axum::http::header::ORIGIN) {
+            // 浏览器跨站请求必带 Origin；白名单外（恶意网页/DNS rebinding）拒绝
+            Some(o) => cors_origin_allowed(o),
+            // 无 Origin 时退查 Referer（旧式表单场景）
+            None => match headers.get(axum::http::header::REFERER) {
+                Some(r) => referer_allowed(r),
+                None => true,
+            },
+        };
+        if !origin_ok {
+            return api_error(StatusCode::FORBIDDEN, "cross-origin request rejected")
+                .into_response();
+        }
+    }
+    next.run(request).await
+}
+
+/// Referer 本机白名单判定（与 cors_origin_allowed 同源：localhost/127.0.0.1/[::1]/
+/// tauri.localhost）。Referer 含路径，host 提取规则与 CORS 版一致。
+fn referer_allowed(referer: &axum::http::HeaderValue) -> bool {
+    let Ok(referer) = referer.to_str() else {
+        return false;
+    };
+    if referer.starts_with("tauri://") {
+        return true;
+    }
+    let Some(rest) = referer
+        .strip_prefix("http://")
+        .or_else(|| referer.strip_prefix("https://"))
+    else {
+        return false;
+    };
+    let host = if let Some(end) = rest.find(']') {
+        &rest[..=end]
+    } else {
+        rest.split([':', '/']).next().unwrap_or("")
+    };
+    matches!(host, "localhost" | "127.0.0.1" | "[::1]" | "tauri.localhost")
 }
 
 /// 初始化 BoenMind 环境（配置、工作文件夹、pi agent 目录、数据库）并返回服务状态。
