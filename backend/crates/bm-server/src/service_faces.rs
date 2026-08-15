@@ -307,6 +307,81 @@ impl bm_protocol::NotifyPort for NotifyPortImpl {
     }
 }
 
+/// 会话面实现：包 bm-core Db（turso 错误 → StoreUnavailable）。
+pub struct SessionPortImpl {
+    pub db: Arc<bm_core::db::Db>,
+}
+
+fn store_err(e: impl std::fmt::Display) -> ProtocolError {
+    ProtocolError::new(ErrorCode::StoreUnavailable, e.to_string())
+}
+
+impl bm_protocol::SessionPort for SessionPortImpl {
+    fn list(&self) -> BoxFuture<'_, Result<Value, ProtocolError>> {
+        let db = self.db.clone();
+        Box::pin(async move {
+            let sessions = db.list_sessions().await.map_err(store_err)?;
+            serde_json::to_value(sessions).map_err(|e| store_err(e))
+        })
+    }
+
+    fn create(
+        &self,
+        id: &str,
+        provider_id: Option<&str>,
+        model: Option<&str>,
+        app: &str,
+    ) -> BoxFuture<'_, Result<Value, ProtocolError>> {
+        let db = self.db.clone();
+        let (id, provider_id, model, app) = (
+            id.to_string(),
+            provider_id.map(String::from),
+            model.map(String::from),
+            app.to_string(),
+        );
+        Box::pin(async move {
+            let session = db
+                .create_session(&id, provider_id.as_deref(), model.as_deref(), &app)
+                .await
+                .map_err(store_err)?;
+            serde_json::to_value(session).map_err(|e| store_err(e))
+        })
+    }
+
+    fn get(&self, id: &str) -> BoxFuture<'_, Result<Option<Value>, ProtocolError>> {
+        let db = self.db.clone();
+        let id = id.to_string();
+        Box::pin(async move {
+            let session = db.get_session(&id).await.map_err(store_err)?;
+            match session {
+                Some(s) => serde_json::to_value(s).map(Some).map_err(|e| store_err(e)),
+                None => Ok(None),
+            }
+        })
+    }
+
+    fn rename(&self, id: &str, title: &str) -> BoxFuture<'_, Result<(), ProtocolError>> {
+        let db = self.db.clone();
+        let (id, title) = (id.to_string(), title.to_string());
+        Box::pin(async move { db.rename_session(&id, &title).await.map_err(store_err) })
+    }
+
+    fn delete(&self, id: &str) -> BoxFuture<'_, Result<usize, ProtocolError>> {
+        let db = self.db.clone();
+        let id = id.to_string();
+        Box::pin(async move { db.delete_session(&id).await.map_err(store_err) })
+    }
+
+    fn messages(&self, id: &str) -> BoxFuture<'_, Result<Value, ProtocolError>> {
+        let db = self.db.clone();
+        let id = id.to_string();
+        Box::pin(async move {
+            let msgs = db.list_messages(&id).await.map_err(store_err)?;
+            serde_json::to_value(msgs).map_err(|e| store_err(e))
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

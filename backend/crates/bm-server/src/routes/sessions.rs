@@ -1,5 +1,7 @@
 //! 会话 CRUD：创建（含首次命名）、列表、详情（含消息）、重命名、删除。
 
+use std::sync::Arc;
+
 use axum::{Json, extract::State, http::StatusCode};
 use serde::Deserialize;
 use uuid::Uuid;
@@ -19,35 +21,66 @@ pub struct CreateSessionRequest {
     pub app: Option<String>,
 }
 
+/// 会话面取用（SERVICE_FACES #9）：kernel 可用时经服务；None = 退化直调。
+fn session_port(state: &crate::AppState) -> Option<Arc<dyn bm_protocol::SessionPort>> {
+    state
+        .kernel
+        .as_ref()
+        .and_then(|k| k.port::<dyn bm_protocol::SessionPort>("session").ok())
+}
+
 pub async fn create_session(
     State(state): crate::SharedState,
     Json(req): Json<CreateSessionRequest>,
-) -> ApiResult<Json<bm_core::db::Session>> {
+) -> ApiResult<Json<serde_json::Value>> {
     let id = Uuid::new_v4().to_string();
-    let session = state
-        .db
-        .create_session(&id, req.provider_id.as_deref(), req.model.as_deref(), req.app.as_deref().unwrap_or("chat"))
-        .await
-        .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    let session = if let Some(port) = session_port(&state) {
+        port.create(&id, req.provider_id.as_deref(), req.model.as_deref(), req.app.as_deref().unwrap_or("chat"))
+            .await
+            .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?
+    } else {
+        let session = state
+            .db
+            .create_session(&id, req.provider_id.as_deref(), req.model.as_deref(), req.app.as_deref().unwrap_or("chat"))
+            .await
+            .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+        serde_json::to_value(&session)
+            .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?
+    };
     let mut session = session;
     if let Some(title) = req.title
-        && !title.trim().is_empty() {
-            state
-                .db
-                .rename_session(&session.id, title.trim())
+        && !title.trim().is_empty()
+    {
+        if let Some(port) = session_port(&state) {
+            port.rename(&id, title.trim())
                 .await
                 .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
-            session.title = title.trim().to_string();
+        } else {
+            state
+                .db
+                .rename_session(&id, title.trim())
+                .await
+                .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
         }
+        session["title"] = serde_json::json!(title.trim());
+    }
     Ok(Json(session))
 }
 
-pub async fn list_sessions(State(state): crate::SharedState) -> ApiResult<Json<Vec<bm_core::db::Session>>> {
+pub async fn list_sessions(State(state): crate::SharedState) -> ApiResult<Json<serde_json::Value>> {
+    // 会话面（SERVICE_FACES #9）：kernel 可用时经服务；退化直调
+    if let Some(port) = session_port(&state) {
+        let list = port
+            .list()
+            .await
+            .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+        return Ok(Json(list));
+    }
     state
         .db
         .list_sessions()
         .await
-        .map(Json)
+        .map(|list| Json(serde_json::to_value(&list).unwrap_or(serde_json::Value::Null)))
         .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))
 }
 
@@ -55,6 +88,21 @@ pub async fn get_session(
     State(state): crate::SharedState,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
+    if let Some(port) = session_port(&state) {
+        let session = port
+            .get(&id)
+            .await
+            .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?
+            .ok_or_else(|| api_error(StatusCode::NOT_FOUND, format!("会话不存在: {id}")))?;
+        let messages = port
+            .messages(&id)
+            .await
+            .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+        return Ok(Json(serde_json::json!({
+            "session": session,
+            "messages": messages,
+        })));
+    }
     let session = state
         .db
         .get_session(&id)

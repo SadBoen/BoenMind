@@ -458,6 +458,11 @@ async fn serve_inner(
                     }) as Arc<dyn bm_protocol::SkillPort>,
                 )
                 .with_port(
+                    "session",
+                    Arc::new(service_faces::SessionPortImpl { db: db.clone() })
+                        as Arc<dyn bm_protocol::SessionPort>,
+                )
+                .with_port(
                     "credentials",
                     Arc::new(service_faces::CredentialsPortImpl {
                         config: shared_config,

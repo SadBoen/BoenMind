@@ -256,3 +256,33 @@ pub trait NotifyPort: Send + Sync {
     /// 推送事件到会话通道；通道不存在/已关闭（前端断开）→ false。
     fn push(&self, session_id: &str, event: serde_json::Value) -> bool;
 }
+
+/// 会话面（SERVICE_FACES 图纸 #9）：会话存储 CRUD（JSON 视图）。
+///
+/// 实现：bm-server 包 bm-core Db（SessionPortImpl）。消费方：
+/// routes/sessions.rs（kernel 可用时经服务，退化直调）。
+pub trait SessionPort: Send + Sync {
+    /// 会话列表（Session JSON 数组视图）。
+    fn list(&self) -> BoxFuture<'_, Result<serde_json::Value, ProtocolError>>;
+
+    /// 创建会话（返回 Session JSON；id 由调用方生成）。
+    fn create(
+        &self,
+        id: &str,
+        provider_id: Option<&str>,
+        model: Option<&str>,
+        app: &str,
+    ) -> BoxFuture<'_, Result<serde_json::Value, ProtocolError>>;
+
+    /// 会话详情（None = 不存在）。
+    fn get(&self, id: &str) -> BoxFuture<'_, Result<Option<serde_json::Value>, ProtocolError>>;
+
+    /// 重命名。
+    fn rename(&self, id: &str, title: &str) -> BoxFuture<'_, Result<(), ProtocolError>>;
+
+    /// 删除会话（返回删除行数）。
+    fn delete(&self, id: &str) -> BoxFuture<'_, Result<usize, ProtocolError>>;
+
+    /// 会话消息列表（Message JSON 数组视图）。
+    fn messages(&self, id: &str) -> BoxFuture<'_, Result<serde_json::Value, ProtocolError>>;
+}

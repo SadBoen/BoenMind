@@ -30,6 +30,7 @@ pub use ids::{BranchId, CallId, GlobalSeq, SeqNo, SessionId};
 pub use policy::{Capability, PolicyEvaluation};
 pub use port::{
     BoxFuture, BranchHead, CredentialsPort, EventQuery, EventStorePort, LlmPort, MemoryPort,
-    NotifyPort, SchedulerPort, SessionUsage, SettingsPort, SkillPort, StatsPort, ToolsPort,
+    NotifyPort, SchedulerPort, SessionPort, SessionUsage, SettingsPort, SkillPort, StatsPort,
+    ToolsPort,
 };
 pub use surface::{SurfaceOp, SurfaceOutcome};
