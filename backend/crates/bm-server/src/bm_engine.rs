@@ -65,6 +65,11 @@ pub fn reasoning_effort_for(level: &str) -> Option<&'static str> {
     }
 }
 
+/// 模型上下文窗口默认值（token）：`[compaction.overrides]` 未配置时回落
+/// （审查 P2-4：压缩水线/工具裁剪预算的基准；按模型显式配置见
+/// CompactionOverride.context_window）。
+pub const DEFAULT_CONTEXT_WINDOW: u32 = 128_000;
+
 /// 管家回合静默窗口默认值（秒）与解析：集中定义在 steward.rs
 /// （StewardConfig::from_env 是 `BM_STEWARD_*` 唯一读取点），此处 re-export
 /// 供本模块与测试引用。
@@ -376,8 +381,13 @@ fn build_loop_agent(
             system_prompt: system_prompt.to_string(),
             provider: Some(provider.id.clone()),
             model: model.to_string(),
-            // 模型窗口（客观属性）：暂取默认 128K——后续从模型注册表换算
-            context_window: 128_000,
+            // 模型窗口（客观属性）：`[compaction.overrides]` 的
+            // context_window 显式配置优先（审查 P2-4——此前硬编码 128K，
+            // 压缩水线/工具裁剪预算随模型窗口系统性误判）；未配置回落
+            // 默认窗口
+            context_window: compaction
+                .and_then(|c| c.context_window)
+                .unwrap_or(DEFAULT_CONTEXT_WINDOW),
             max_steps: 128,
             // 挂压缩插件（可换可关；None = 裸跑，核心自足性 v0.17）——
             // 策略源 = kernel registry 里的 compactor 服务（v0.21 接线；

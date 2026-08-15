@@ -64,6 +64,11 @@ pub struct EffectiveCompaction {
     pub keep_recent_ratio: f64,
     /// 尾部保留 token 下限
     pub keep_recent_floor: u32,
+    /// 模型上下文窗口（token；`[compaction.overrides]` 显式配置）。
+    /// None = 未配置，组装层用默认窗口（审查 P2-4：此字段此前"序列化
+    /// 在案但从不被读取"——压缩水线/工具裁剪预算全部基于硬编码 128K，
+    /// 换小窗口模型时硬触发可能失灵）。
+    pub context_window: Option<u32>,
 }
 
 impl CompactionConfig {
@@ -83,6 +88,7 @@ impl CompactionConfig {
             keep_recent_floor: ov
                 .and_then(|o| o.keep_recent_floor)
                 .unwrap_or(self.keep_recent_floor),
+            context_window: ov.and_then(|o| o.context_window),
         })
     }
 }
@@ -137,17 +143,23 @@ mod tests {
                 watermark: Some(0.8),
                 keep_recent_ratio: None,
                 keep_recent_floor: Some(8_000),
-                context_window: None,
+                context_window: Some(64_000),
             },
         );
         let e = c.effective("mini", "m3").unwrap();
         assert_eq!(e.watermark, 0.8, "override 生效");
         assert_eq!(e.keep_recent_ratio, DEFAULT_KEEP_RECENT_RATIO, "未覆盖回落全局");
         assert_eq!(e.keep_recent_floor, 8_000);
+        assert_eq!(
+            e.context_window,
+            Some(64_000),
+            "context_window override 生效（审查 P2-4：此前被序列化但从不被读取）"
+        );
 
         // 其他模型不受影响
         let other = c.effective("deepseek", "deepseek-chat").unwrap();
         assert_eq!(other.watermark, DEFAULT_WATERMARK);
+        assert_eq!(other.context_window, None, "未配置模型窗口 = None（组装层用默认）");
     }
 
     #[test]
