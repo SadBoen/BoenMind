@@ -234,6 +234,43 @@ export interface Task {
   error: string | null;
 }
 
+/** 活任务清单条目（M2；todo/write 事件快照，全量语义） */
+export interface TodoItem {
+  content: string;
+  /** pending | in_progress | completed */
+  status: string;
+  priority?: string | null;
+}
+
+/** Git 仓库状态（M2 分支图数据源） */
+export interface GitInfo {
+  repo: boolean;
+  branch?: string;
+  commits?: { hash: string; subject: string }[];
+  /** git status --porcelain 原始行 */
+  status?: string[];
+}
+
+/** 会话事件（/api/sessions/{id}/events 流；kind/type flatten 后携带领域字段） */
+export interface SessionEvent {
+  version: number;
+  seq: number;
+  session_id: string;
+  branch_id: string;
+  time: number;
+  kind: "core" | string;
+  type: string;
+  ignorable?: boolean;
+  surface_op?: string | null;
+  source_seqs?: number[] | null;
+  /** todo/write 事件 */
+  todos?: TodoItem[];
+  /** step/start 等事件 */
+  turn?: number;
+  step?: number;
+  [key: string]: unknown;
+}
+
 /** 自更新（热升级）检查结果 */
 export interface UpdateCheckInfo {
   current: string;
@@ -491,6 +528,27 @@ export const api = {
   listSessionTasks: (sessionId: string) =>
     request<Task[]>(`/api/sessions/${sessionId}/tasks`),
 
+  // ── 活任务清单（M2：todo/write 事件快照的 REST 面；事件流订阅见 subscribeEvents）──
+  listTodos: (sessionId: string) =>
+    request<{ todos: TodoItem[] }>(`/api/sessions/${sessionId}/todos`),
+  applyTodoOp: (
+    sessionId: string,
+    op: { action: "add" | "update" | "remove" | "list"; index?: number; content?: string; status?: string; priority?: string },
+  ) =>
+    request<{ todos: TodoItem[] }>(`/api/sessions/${sessionId}/todos`, {
+      method: "POST",
+      body: JSON.stringify(op),
+    }),
+
+  /** 写文本文件（M2 编辑器保存；整体覆盖，父目录须存在） */
+  writeFile: (path: string, content: string) =>
+    request<{ ok: boolean; path: string }>("/api/workspace/file", {
+      method: "POST",
+      body: JSON.stringify({ path, content }),
+    }),
+  /** Git 仓库状态（M2 分支图数据源；非仓库 → repo:false） */
+  gitInfo: () => request<GitInfo>("/api/workspace/git-info"),
+
   listWorkspace: (dir = "") =>
     request<{ dir: string; entries: FileEntry[] }>(
       `/api/workspace/list?dir=${encodeURIComponent(dir)}`,
@@ -587,6 +645,56 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ session_id: sessionId }),
     }),
+
+  /**
+   * 会话事件流订阅（M2 活任务清单投影）：fetch + 流式读取（可带 Bearer 头，
+   * EventSource 做不到）。after=0 重放全部历史（todo/write 全量快照语义，
+   * 重放即得初始状态，幂等）。返回 close() 取消订阅。
+   */
+  subscribeEvents: (sessionId: string, onEvent: (ev: SessionEvent) => void) => {
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const res = await fetch(
+          `${API_BASE}/api/sessions/${sessionId}/events?after=0`,
+          {
+            headers: { Accept: "text/event-stream", ...authHeaders() },
+            signal: controller.signal,
+          },
+        );
+        if (!res.ok || !res.body) {
+          const body = await res.json().catch(() => null);
+          if (res.status === 401 && body?.error === "unauthorized") notifyUnauthorized();
+          throw new Error(body?.error ?? i18n.t("api.requestFailed", { status: res.status }));
+        }
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (true) {
+          const { done: streamDone, value } = await reader.read();
+          if (streamDone) break;
+          buffer += decoder.decode(value, { stream: true });
+          let sep: number;
+          while ((sep = buffer.indexOf("\n\n")) !== -1) {
+            const raw = buffer.slice(0, sep);
+            buffer = buffer.slice(sep + 2);
+            for (const line of raw.split("\n")) {
+              if (line.startsWith("data:")) {
+                try {
+                  onEvent(JSON.parse(line.slice(5).trim()) as SessionEvent);
+                } catch {
+                  /* 跳过无法解析的 data 行 */
+                }
+              }
+            }
+          }
+        }
+      } catch {
+        /* 取消（abort）静默；网络中断由 keep-alive 重连语义交给上层 */
+      }
+    })();
+    return () => controller.abort();
+  },
   /** 插件权限询问决策回传（允许一次/拒绝/总是允许-拒绝） */
   respondPermission: (requestId: string, allow: boolean, always: boolean) =>
     request<{ ok: boolean }>("/api/chat/permission-response", {

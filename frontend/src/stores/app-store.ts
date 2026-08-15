@@ -2,7 +2,7 @@
  * 全局状态：导航、会话、聊天流、文件区、后端健康状态。
  */
 import { create } from "zustand";
-import { api, type AppConfig, type ChatStreamEvent, type FileEntry, type HealthInfo, type Message, type Session, type Task, type ToolCall } from "@/api/client";
+import { api, type AppConfig, type ChatStreamEvent, type FileEntry, type HealthInfo, type Message, type Session, type Task, type TodoItem, type ToolCall } from "@/api/client";
 import i18n, { applyLang, isLang } from "@/i18n";
 import { toast } from "sonner";
 
@@ -10,6 +10,15 @@ import { toast } from "sonner";
 export type { SettingsTab, AppId } from "@/lib/app-registry";
 import type { SettingsTab, AppId } from "@/lib/app-registry";
 import type { Wallpaper } from "@/lib/appearance";
+
+/** 活任务清单操作（M2；与后端 todo 工具参数对齐，index 1 起） */
+export type TodoOp = {
+  action: "add" | "update" | "remove" | "list";
+  index?: number;
+  content?: string;
+  status?: string;
+  priority?: string;
+};
 
 /** 流式中的工具调用（isError 未定前为执行中状态） */
 interface StreamingToolCall {
@@ -129,6 +138,15 @@ interface AppStore {
   navigateDir: (dir: string) => Promise<void>;
   openFile: (entry: FileEntry | null) => void;
   toggleFileMaximized: () => void;
+  /** 只刷新当前目录列表（不动 previewFile——编辑器保存后刷新用） */
+  refreshFiles: () => Promise<void>;
+
+  // 活任务清单（M2：todo/write 事件投影——事件流是权威，store 只是投影）
+  todos: TodoItem[];
+  /** 事件流投喂（subscribeEvents 的 onEvent 直接调；重放+实时同路） */
+  setTodosFromEvent: (todos: TodoItem[]) => void;
+  /** 手动操作（面板增删改；调 REST 面，服务端落事件快照后返回最新清单） */
+  applyTodoOp: (op: TodoOp) => Promise<void>;
 }
 
 export const useAppStore = create<AppStore>((set, get) => {
@@ -555,5 +573,31 @@ export const useAppStore = create<AppStore>((set, get) => {
     },
     openFile: (entry) => set({ previewFile: entry }),
     toggleFileMaximized: () => set((s) => ({ fileMaximized: !s.fileMaximized })),
+    refreshFiles: async () => {
+      const dir = get().workspaceDir;
+      set({ loadingFiles: true });
+      try {
+        const { entries } = await api.listWorkspace(dir);
+        set({ entries, loadingFiles: false });
+      } catch {
+        set({ loadingFiles: false });
+      }
+    },
+
+    todos: [],
+    setTodosFromEvent: (todos) => set({ todos }),
+    applyTodoOp: async (op) => {
+      const sid = get().activeSessionId;
+      if (!sid) {
+        toast.error(i18n.t("coding.todos.noSession"));
+        return;
+      }
+      try {
+        const { todos } = await api.applyTodoOp(sid, op);
+        set({ todos });
+      } catch (err) {
+        toast.error(String(err));
+      }
+    },
   };
 });

@@ -17,6 +17,7 @@ export const en: Translation = {
     refresh: "Refresh",
     close: "Close",
     comingSoon: "Coming soon",
+    delete: "Delete",
   },
   api: {
     requestFailed: "Request failed: {{status}}",
@@ -113,6 +114,31 @@ export const en: Translation = {
     preview: {
       backToList: "Back to list",
       unsupported: "Preview not supported for this file type ({{mime}})",
+    },
+  },
+  coding: {
+    editor: {
+      empty: "Select a file from the left",
+      save: "Save",
+      saved: "Saved",
+      synced: "In sync with disk",
+    },
+    todos: {
+      title: "Task List",
+      noSession: "Create or select a session in chat first",
+      live: "Event stream connected",
+      offline: "Event stream disconnected",
+      steps: "{{count}} steps this turn",
+      empty: "Empty — ask the model to break down tasks, or add manually",
+      addPlaceholder: "Add task…",
+      add: "Add",
+      cycleStatus: "Cycle status (pending → in progress → completed)",
+    },
+    git: {
+      commits: "Recent commits",
+      noCommits: "No commits yet",
+      changes: "{{count}} changes",
+      noRepo: "Working directory is not a git repository",
     },
   },
   statusbar: {

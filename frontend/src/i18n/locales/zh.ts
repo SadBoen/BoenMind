@@ -16,6 +16,7 @@ export const zh = {
     refresh: "刷新",
     close: "关闭",
     comingSoon: "即将推出",
+    delete: "删除",
   },
   api: {
     requestFailed: "请求失败: {{status}}",
@@ -113,6 +114,31 @@ export const zh = {
     preview: {
       backToList: "返回列表",
       unsupported: "暂不支持预览该文件类型（{{mime}}）",
+    },
+  },
+  coding: {
+    editor: {
+      empty: "从左侧选择文件",
+      save: "保存",
+      saved: "已保存",
+      synced: "已与磁盘同步",
+    },
+    todos: {
+      title: "活任务清单",
+      noSession: "请先在对话中创建或选择会话",
+      live: "事件流已连接",
+      offline: "事件流未连接",
+      steps: "本回合已执行 {{count}} 步",
+      empty: "清单为空——让模型分解任务，或手动添加",
+      addPlaceholder: "添加任务…",
+      add: "添加",
+      cycleStatus: "切换状态（待办 → 进行中 → 完成）",
+    },
+    git: {
+      commits: "最近提交",
+      noCommits: "暂无提交",
+      changes: "{{count}} 处变更",
+      noRepo: "工作目录不是 git 仓库",
     },
   },
   statusbar: {

@@ -110,9 +110,52 @@ pub fn read_file(root: &Path, rel: &str) -> Result<Vec<u8>, WorkspaceError> {
     Ok(fs::read(path)?)
 }
 
+/// 写文本文件到工作文件夹内（M2 编辑器保存用；内容整体覆盖）。
+///
+/// 与 `safe_join` 的差异：目标文件可能尚不存在（新建），canonicalize 对
+/// 不存在的路径会失败——因此对**父目录** canonicalize 校验在根内，文件名
+/// 在其上 join（拒绝 `..` 与空名）。父目录必须存在（不递归建目录，目录
+/// 创建留给文件树操作）。
+pub fn write_file(root: &Path, rel: &str, content: &str) -> Result<(), WorkspaceError> {
+    let rel = rel.trim_start_matches('/');
+    if rel.is_empty() {
+        return Err(WorkspaceError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "路径为空",
+        )));
+    }
+    if rel.split('/').any(|seg| seg == "..") {
+        return Err(WorkspaceError::OutsideRoot(rel.to_string()));
+    }
+    let norm_root = root.canonicalize().map_err(WorkspaceError::Io)?;
+    let (parent, name) = match rel.rfind('/') {
+        Some(i) => (&rel[..i], &rel[i + 1..]),
+        None => ("", rel),
+    };
+    let parent_path = if parent.is_empty() {
+        norm_root.clone()
+    } else {
+        let p = norm_root.join(parent).canonicalize().map_err(WorkspaceError::Io)?;
+        if !p.starts_with(&norm_root) {
+            return Err(WorkspaceError::OutsideRoot(rel.to_string()));
+        }
+        p
+    };
+    if name.is_empty() || name == "." || name == ".." {
+        return Err(WorkspaceError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "非法文件名",
+        )));
+    }
+    fs::write(parent_path.join(name), content.as_bytes())?;
+    Ok(())
+}
+
 /// 是否为可安全按 UTF-8 文本展示的媒体类型。
+/// json 走 application/json（mime_for 特例），实质是文本——编辑/预览按
+/// 文本处理（M2 编辑器实测发现：不认则 package.json 被判 binary 只读）。
 pub fn is_text(mime: &str) -> bool {
-    mime.starts_with("text/")
+    mime.starts_with("text/") || matches!(mime, "application/json" | "application/xml")
 }
 
 #[cfg(test)]

@@ -17,6 +17,7 @@ export const ja: Translation = {
     refresh: "更新",
     close: "閉じる",
     comingSoon: "近日公開",
+    delete: "削除",
   },
   api: {
     requestFailed: "リクエストに失敗しました: {{status}}",
@@ -113,6 +114,31 @@ export const ja: Translation = {
     preview: {
       backToList: "一覧に戻る",
       unsupported: "このファイル形式のプレビューは未対応です（{{mime}}）",
+    },
+  },
+  coding: {
+    editor: {
+      empty: "左側からファイルを選択",
+      save: "保存",
+      saved: "保存しました",
+      synced: "ディスクと同期済み",
+    },
+    todos: {
+      title: "タスクリスト",
+      noSession: "先にチャットでセッションを作成・選択してください",
+      live: "イベントストリーム接続中",
+      offline: "イベントストリーム未接続",
+      steps: "このターンで {{count}} ステップ実行",
+      empty: "空です——モデルにタスク分解を頼むか、手動で追加",
+      addPlaceholder: "タスクを追加…",
+      add: "追加",
+      cycleStatus: "状態を切り替え（未着手 → 進行中 → 完了）",
+    },
+    git: {
+      commits: "最近のコミット",
+      noCommits: "コミットはまだありません",
+      changes: "変更 {{count}} 件",
+      noRepo: "作業ディレクトリは git リポジトリではありません",
     },
   },
   statusbar: {

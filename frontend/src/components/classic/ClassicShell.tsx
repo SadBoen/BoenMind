@@ -19,7 +19,7 @@ import { useAppStore } from "@/stores/app-store";
 import { StatusBar } from "@/components/desktop/StatusBar";
 import { cn } from "@/lib/utils";
 
-/** 软件导航顺序（顶部区）：对话 + 编程（占位）；新软件（wiki 等）在此登记 */
+/** 软件导航顺序（顶部区）：对话 + 编程（M2 独立壳已接线）；新软件在此登记 */
 const NAV_APPS: AppId[] = ["chat", "coding"];
 
 export function ClassicShell() {
@@ -32,7 +32,7 @@ export function ClassicShell() {
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background text-foreground">
       <div className="flex min-h-0 flex-1">
-        {/* 左侧导航条：顶部=软件导航（编程为占位——M2 前"点不了"）；底部=设置 + 桌面模式 */}
+        {/* 左侧导航条：顶部=软件导航（对话/编程）；底部=设置 + 桌面模式 */}
         <nav
           aria-label={t("desktop.classicNav")}
           className="flex w-12 shrink-0 flex-col items-center gap-1 border-r border-border bg-muted/40 py-2"
@@ -40,23 +40,19 @@ export function ClassicShell() {
           {NAV_APPS.map((id) => {
             const app = APPS[id];
             const active = activeNav === id;
-            const isCoding = id === "coding";
             return (
               <button
                 key={id}
                 type="button"
-                title={isCoding ? `${t(app.nameKey)}（${t("desktop.codingComingSoon")}）` : t(app.nameKey)}
+                title={t(app.nameKey)}
                 aria-label={t(app.nameKey)}
-                aria-disabled={isCoding || undefined}
-                // 编程应用占位：功能未实现前不可点（M2 编程应用上线后接线）
-                disabled={isCoding}
+                aria-disabled={active || undefined}
                 onClick={() => setActiveNav(id)}
                 className={cn(
                   "flex h-9 w-9 items-center justify-center rounded-lg transition-colors",
                   active
                     ? "bg-primary/10 text-primary"
                     : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                  isCoding && "cursor-not-allowed opacity-40 hover:bg-transparent hover:text-muted-foreground",
                 )}
               >
                 {app.icon}

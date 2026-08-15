@@ -294,6 +294,12 @@ fn build_loop_agent(
     if let Err(err) = tools.register(subagent_def.clone()) {
         tracing::warn!(event = "bm.tool_register_failed", tool = %subagent_def.name, error = %err.message);
     }
+    // 活任务清单（M2）：todo 工具注册进全部会话工具面（通用能力）；
+    // 执行侧经 executor 挂的事件日志写 todo/write 快照
+    let todo_def = crate::todo_tool::todo_def();
+    if let Err(err) = tools.register(todo_def.clone()) {
+        tracing::warn!(event = "bm.tool_register_failed", tool = %todo_def.name, error = %err.message);
+    }
     // 管家（Steward 轮）：set_wake 只进管家会话的工具面——普通会话工具面
     // 零污染，管家身份由 BM_STEWARD_SESSION 宿主配置（不依赖模型自选）
     if is_steward_session {
@@ -347,7 +353,8 @@ fn build_loop_agent(
             }),
         },
         llm,
-        QuickJsToolExecutor::new(compat.cloned(), session_id, steward.cloned()),
+        QuickJsToolExecutor::new(compat.cloned(), session_id, steward.cloned())
+            .with_event_log(bm_kernel::EventLog::new(kernel.event_store())),
     ))
 }
 

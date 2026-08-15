@@ -8,7 +8,6 @@
  * 设置页注册表（SETTINGS）随导航表退役迁入本文件，由设置应用内部使用。
  */
 import type { ComponentType, ReactNode } from "react";
-import { useTranslation } from "react-i18next";
 import {
   Activity,
   Code2,
@@ -23,6 +22,7 @@ import {
 } from "lucide-react";
 import { ChatWindow } from "@/components/chat/ChatWindow";
 import { SessionList } from "@/components/chat/SessionList";
+import { CodingApp } from "@/components/coding/CodingApp";
 import { SettingsMenu } from "@/components/settings/SettingsMenu";
 import { AboutSettings } from "@/components/settings/AboutSettings";
 import { AppearanceSettings } from "@/components/settings/AppearanceSettings";
@@ -66,8 +66,9 @@ export const APPS: Record<AppId, AppEntry> = {
     nameKey: "desktop.app.coding",
     icon: <Code2 size={18} />,
     gradient: "linear-gradient(135deg, #34d399, #4ea8f0)",
-    component: CodingPlaceholder,
-    defaultSize: { width: 640, height: 480 },
+    // M2：独立壳（文件树/编辑器/分支图 + 活任务清单）
+    component: CodingApp,
+    defaultSize: { width: 1080, height: 700 },
   },
   settings: {
     id: "settings",
@@ -131,16 +132,10 @@ function SettingsAppView() {
   );
 }
 
-/** 编程应用占位（真实壳二阶段） */
-function CodingPlaceholder() {
-  const { t } = useTranslation();
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 bg-background text-muted-foreground">
-      <Code2 size={40} strokeWidth={1.5} />
-      <p className="text-sm">{t("desktop.codingComingSoon")}</p>
-    </div>
-  );
-}
+/**
+ * 编程应用占位已退役（M2 起由 CodingApp 真实壳接管）；删除占位组件与
+ * codingComingSoon 提示文案（ClassicShell disabled 语义一并解除）。
+ */
 
 /** 单页应用的滚动容器（PluginsSettings/StewardSettings 原依赖三栏壳面板的滚动，此处由壳补齐） */
 function ScrollPage({ children }: { children: ReactNode }) {

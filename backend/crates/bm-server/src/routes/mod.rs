@@ -1,4 +1,4 @@
-//! REST 路由（按领域拆分）：config / sessions / plugins / skills / providers / workspace / updates / steward。
+//! REST 路由（按领域拆分）：config / sessions / plugins / skills / providers / workspace / updates / steward / todos。
 //! 共享类型 ApiResult / api_error / SharedState 在 crate 根（lib.rs）。
 
 pub mod config;
@@ -9,6 +9,7 @@ pub mod refine;
 pub mod sessions;
 pub mod skills;
 pub mod steward;
+pub mod todos;
 pub mod updates;
 pub mod workspace;
 

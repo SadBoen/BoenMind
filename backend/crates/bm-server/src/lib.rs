@@ -16,6 +16,8 @@ pub mod routes;
 pub mod static_files;
 pub mod steward;
 pub mod subagent_child;
+// M2 — 活任务清单工具与 REST 面（todo/write 事件快照是唯一事实源）
+pub mod todo_tool;
 // 专家团队在 bm 引擎的落地：subagent 父侧工具（发现角色 → spawn 子进程 → 摄取
 // stdout JSON 事件流；子进程协议 = subagent_child）
 pub mod subagent_tool;
@@ -139,6 +141,7 @@ fn router(state: AppState) -> Router {
         .route("/api/sessions", get(routes::sessions::list_sessions).post(routes::sessions::create_session))
         .route("/api/sessions/{id}", get(routes::sessions::get_session).patch(routes::sessions::rename_session).delete(routes::sessions::delete_session))
         .route("/api/sessions/{id}/tasks", get(routes::sessions::list_session_tasks))
+        .route("/api/sessions/{id}/todos", get(routes::todos::get_todos).post(routes::todos::post_todos))
         .route(
             "/api/sessions/{id}/events",
             get(routes::sessions::events_stream).delete(routes::sessions::clear_session_events),
@@ -173,7 +176,8 @@ fn router(state: AppState) -> Router {
         .route("/api/updates/apply", post(routes::updates::apply_update))
         .route("/api/updates/restart", post(routes::updates::restart_update))
         .route("/api/workspace/list", get(routes::workspace::list_workspace))
-        .route("/api/workspace/file", get(routes::workspace::read_workspace_file))
+        .route("/api/workspace/git-info", get(routes::workspace::git_info))
+        .route("/api/workspace/file", get(routes::workspace::read_workspace_file).post(routes::workspace::write_workspace_file))
         .with_state(state)
         // 注意层顺序：CORS 最外层（跨域预检 OPTIONS 不能被鉴权挡住），
         // 鉴权在 CORS 之内、路由之外
@@ -642,6 +646,19 @@ pub fn api_error(status: StatusCode, message: impl Into<String>) -> (StatusCode,
         status,
         axum::Json(serde_json::json!({ "error": message.into() })),
     )
+}
+
+/// 字符串错误 → 400（领域层校验失败统一走这个）。
+pub fn api_error_bad_request(message: String) -> (StatusCode, axum::Json<serde_json::Value>) {
+    api_error(StatusCode::BAD_REQUEST, message)
+}
+
+/// 事件日志句柄（M2 todo 面；事件日志不可用 = 服务降级，返回 None）。
+pub fn event_log_of(state: &AppState) -> Option<bm_kernel::EventLog> {
+    state
+        .dual_writer
+        .as_ref()
+        .map(|d| bm_kernel::EventLog::new(d.event_log().store()))
 }
 
 /// 领域层错误 → HTTP 响应：按分类集中映射状态码（不再在路由层手工选）。

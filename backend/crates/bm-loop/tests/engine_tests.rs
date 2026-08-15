@@ -9,7 +9,7 @@ use std::sync::Mutex;
 
 use bm_kernel::{EventLog, InMemoryEventStore, SurfaceIntent, SurfaceToolCall};
 use bm_loop::engine::{
-    LoopConfig, ReactLoopAgent, RunError, StepRequest, ToolCallRequest, ToolExecutor, ToolOutcome,
+    LoopConfig, ReactLoopAgent, RunError, ToolCallRequest, ToolExecutor, ToolOutcome,
     TurnOutcome, TurnRequest, MAX_TOOL_RESULT_BYTES, clip_tool_output,
     clip_tool_output_with_budget, projection_to_openai_messages, window_tool_budget_bytes,
 };
@@ -270,9 +270,7 @@ fn inbox_queues_fifo() {
     let (mut a, _) = make_agent((), ScriptLlm::new(vec![]), MockExecutor::default());
     a.enqueue_turn(TurnRequest { content: "t1".into(), source: UserMsgSource::Human });
     a.enqueue_turn(TurnRequest { content: "t2".into(), source: UserMsgSource::Goal });
-    a.enqueue_step(StepRequest { turn: 1 });
     assert_eq!(a.pending_turns(), 2);
-    assert_eq!(a.pending_steps(), 1);
 }
 
 #[tokio::test]

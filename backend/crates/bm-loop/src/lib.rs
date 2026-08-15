@@ -5,7 +5,9 @@
 //!
 //! - **turn/step 双层**：turn = 一次用户/目标输入到回复收尾；step = 一个
 //!   模型-工具循环迭代；
-//! - **inbox 双队列**：next-turn（待处理回合）/ next-step（回合内待执行步骤）；
+//! - **inbox 回合队列**：next-turn（待处理回合；M2 起删 step 级队列——
+//!   回合内步骤由 LLM 工具调用驱动，注入的继续指令无真实消费者，见
+//!   架构 A6 修订）；
 //! - **每步从事件日志投影**（EventLog::derive_messages）构造模型可见历史；
 //! - **五个扩展点**（[`points::LoopHooks`]）：pre-step / request /
 //!   request-error / tools pre+post / turn-stopping；
@@ -29,6 +31,6 @@ pub mod model;
 pub mod points;
 
 pub use compact::{estimate_tokens, Compactor};
-pub use engine::{ReactLoopAgent, StepRequest, TurnRequest};
+pub use engine::{ReactLoopAgent, TurnRequest};
 pub use model::{ToolDef, ToolRegistry};
 pub use points::{LoopHooks, RequestCtx, StepCtx, StopCtx, ToolCtx, ToolGate};

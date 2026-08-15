@@ -452,7 +452,7 @@ trait Agent: Send + Sync {
 }
 ```
 
-默认实现 `ReactLoopAgent`（从 dsh 的 496 行主循环移植）：turn/step 双层边界、inbox 双队列、每步从日志投影、五个扩展点（pre-step / request / request-error / tool pre+post / turn-stopping）。
+默认实现 `ReactLoopAgent`（从 dsh 的 496 行主循环移植）：turn/step 双层边界、inbox 回合队列（next-turn；**M2 修订**：原承诺的 next-step 回合内步骤队列已删——回合内步骤由 LLM 工具调用驱动，注入的"继续指令"无真实消费者，保留即死代码）、每步从日志投影、五个扩展点（pre-step / request / request-error / tool pre+post / turn-stopping）。
 
 ### 5.4 工具把关链（权限的正式化，v0.3 细化）
 
@@ -1100,7 +1100,7 @@ M5：自举闭环（用 BoenMind 编程应用完成 BoenMind 的一个完整功�
 | 回合源 | 用户消息（`UserMsgSource::Human`） | 调度器定时到期 / OS 层事件汇报（`Inject`）/ 目标驱动自主触发（`Goal`） |
 | 节奏控制 | 用户 | 管家自己（下次唤醒时间 = 管家的输出） |
 
-协议与内核**已预留**：`UserMsgSource::{Human, Inject, Goal}` 三态在事件协议里（Goal = "目标驱动的自主触发"），bm-loop 的 inbox 双队列（`enqueue_turn`/`enqueue_step`）支持外部投喂回合——自我驱动**不需要改循环内核**，只需要一个新组件往管家会话队列投喂 Goal 回合。
+协议与内核**已预留**：`UserMsgSource::{Human, Inject, Goal}` 三态在事件协议里（Goal = "目标驱动的自主触发"），bm-loop 的 inbox 回合队列（`enqueue_turn`）支持外部投喂回合——自我驱动**不需要改循环内核**，只需要一个新组件往管家会话队列投喂 Goal 回合。
 
 用户例子的落地形态：
 1. 管家回合收尾时把**"下次唤醒条件"当作普通输出**写进自己的状态：`next_wake_at = now + 2min`，或"收到 OS 汇报即唤醒"；
@@ -1122,7 +1122,7 @@ M5：自举闭环（用 BoenMind 编程应用完成 BoenMind 的一个完整功�
 | **HEARTBEAT_OK 静默模式**：一切正常时心跳压缩为极短确认 | 对齐"期间保持静默"：无事汇报走极简路径，不烧 token |
 | **observe→decide→dispatch→verify 状态机**：心跳不应只是"一次 LLM 回合"，要保证观察→决策→派工→验证闭环 | 管家的 Goal 回合语义 = 闭环而非闲聊；与 §6.7 派工面/回执≠进度对齐 |
 | **成本杠杆**：24×7 心跳是主要烧钱点——更便宜模型/更长间隔/ack 截断 | 频率治理默认收紧：静默期默认长、汇报默认短、管家可用低成本模型 |
-| **事件驱动统一队列**：用户消息/心跳/cron/子代理结果全走同一 lane 系统，同会话串行 | 与 bm-loop inbox 双队列同构：所有回合源汇入同一队列，天然串行 |
+| **事件驱动统一队列**：用户消息/心跳/cron/子代理结果全走同一 lane 系统，同会话串行 | 与 bm-loop inbox 回合队列同构：所有回合源汇入同一队列，天然串行 |
 
 来源：[openclaw/openclaw #110950](https://github.com/openclaw/openclaw/issues/110950)、[#110978 next_check PR](https://github.com/openclaw/openclaw/pull/110978)、[OpenHarness](https://github.com/thu-nmrc/OpenHarness)。
 

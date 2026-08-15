@@ -17,6 +17,7 @@ export const ko: Translation = {
     refresh: "새로고침",
     close: "닫기",
     comingSoon: "출시 예정",
+    delete: "삭제",
   },
   api: {
     requestFailed: "요청 실패: {{status}}",
@@ -113,6 +114,31 @@ export const ko: Translation = {
     preview: {
       backToList: "목록으로 돌아가기",
       unsupported: "이 파일 형식은 미리보기를 지원하지 않습니다 ({{mime}})",
+    },
+  },
+  coding: {
+    editor: {
+      empty: "왼쪽에서 파일을 선택하세요",
+      save: "저장",
+      saved: "저장됨",
+      synced: "디스크와 동기화됨",
+    },
+    todos: {
+      title: "작업 목록",
+      noSession: "먼저 채팅에서 세션을 만들거나 선택하세요",
+      live: "이벤트 스트림 연결됨",
+      offline: "이벤트 스트림 연결 안 됨",
+      steps: "이번 턴 {{count}}단계 실행",
+      empty: "비어 있음 — 모델에게 작업 분해를 요청하거나 직접 추가",
+      addPlaceholder: "작업 추가…",
+      add: "추가",
+      cycleStatus: "상태 전환 (대기 → 진행 중 → 완료)",
+    },
+    git: {
+      commits: "최근 커밋",
+      noCommits: "커밋이 아직 없습니다",
+      changes: "변경 {{count}}건",
+      noRepo: "작업 디렉터리는 git 저장소가 아닙니다",
     },
   },
   statusbar: {

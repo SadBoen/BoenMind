@@ -31,6 +31,7 @@ use bm_compat::host::{HostServices, HostThread};
 use bm_compat::load::{JsExtensionLoadSpec, load_extension};
 use bm_compat::scheduler::HostcallOutcome;
 use bm_core::agent::AgentStreamEvent;
+use bm_kernel::EventLog;
 use bm_loop::engine::{ToolCallRequest, ToolExecutor, ToolOutcome};
 use tokio::sync::{Mutex as TokioMutex, mpsc, oneshot};
 
@@ -852,6 +853,9 @@ pub struct QuickJsToolExecutor {
     session_id: String,
     /// 管家状态（set_wake 工具执行侧；Steward 轮 v0.19）。
     steward: Option<Arc<crate::steward::StewardStore>>,
+    /// 事件日志（todo 工具执行侧；M2 活任务清单。None = 事件日志不可用，
+    /// todo 工具返回错误——子进程无日志，且子进程工具面不含 todo 双保险）。
+    event_log: Option<EventLog>,
 }
 
 impl QuickJsToolExecutor {
@@ -864,7 +868,14 @@ impl QuickJsToolExecutor {
             engine,
             session_id: session_id.into(),
             steward,
+            event_log: None,
         }
+    }
+
+    /// 挂事件日志（todo 工具用）。bm 引擎父进程路径调用；子进程不挂。
+    pub fn with_event_log(mut self, log: EventLog) -> Self {
+        self.event_log = Some(log);
+        self
     }
 
     /// 插件事件 ctx：cwd（JS `__pi_make_extension_ctx` 的输入）。
@@ -925,6 +936,24 @@ impl ToolExecutor for QuickJsToolExecutor {
                 None => ToolOutcome {
                     ok: false,
                     output: "管家未启用（set_wake 不可用）".to_string(),
+                    meta: None,
+                },
+            }
+        } else if req.name == "todo" {
+            // 活任务清单（M2）：读/写事件日志 todo/write 快照（事实源）。
+            // 事件日志不可用或未挂（子进程）→ 明确报错，不让模型空转。
+            match &self.event_log {
+                Some(log) => match crate::todo_tool::execute_todo(log, &self.session_id, &req.args).await {
+                    Ok(value) => ToolOutcome {
+                        ok: true,
+                        output: tool_result_text(&value),
+                        meta: Some(value),
+                    },
+                    Err(err) => ToolOutcome { ok: false, output: err, meta: None },
+                },
+                None => ToolOutcome {
+                    ok: false,
+                    output: "todo 工具不可用（事件日志未挂载）".to_string(),
                     meta: None,
                 },
             }

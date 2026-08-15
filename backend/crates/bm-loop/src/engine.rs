@@ -51,12 +51,6 @@ pub struct TurnRequest {
     pub source: bm_protocol::UserMsgSource,
 }
 
-/// 回合内待执行步骤（目标驱动/继续指令注入）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct StepRequest {
-    pub turn: u32,
-}
-
 /// loop 运行错误（日志失败 / 超窗无法压缩 / 模型调用链不可恢复失败）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunError {
@@ -162,9 +156,10 @@ pub struct ReactLoopAgent<H: LoopHooks, L: Llm, T: ToolExecutor> {
     config: LoopConfig,
     llm: L,
     executor: T,
-    /// inbox 双队列：next-turn（回合级）/ next-step（回合内步骤级）
+    /// inbox 回合队列（next-turn）：全部回合源（用户/目标/注入）汇入同一
+    /// 队列天然串行（架构 A6；M2 起 step 级队列已删——回合内步骤由 LLM
+    /// 工具调用驱动，注入的"继续指令"无真实消费者，保留即死代码）。
     turn_queue: VecDeque<TurnRequest>,
-    step_queue: VecDeque<StepRequest>,
     /// 当前位置（turn, step）；None = 空闲
     current: Option<(u32, u32)>,
     /// 回合计数（进程内镜像；恢复时以日志 TurnStart 计数为准）
@@ -193,7 +188,6 @@ impl<H: LoopHooks, L: Llm, T: ToolExecutor> ReactLoopAgent<H, L, T> {
             llm,
             executor,
             turn_queue: VecDeque::new(),
-            step_queue: VecDeque::new(),
             current: None,
             turn_count: 0,
         }
@@ -204,19 +198,9 @@ impl<H: LoopHooks, L: Llm, T: ToolExecutor> ReactLoopAgent<H, L, T> {
         self.turn_queue.push_back(req);
     }
 
-    /// 入队一个步骤（next-step 队列：回合内注入的继续指令）。
-    pub fn enqueue_step(&mut self, req: StepRequest) {
-        self.step_queue.push_back(req);
-    }
-
     /// 待处理回合数。
     pub fn pending_turns(&self) -> usize {
         self.turn_queue.len()
-    }
-
-    /// 待处理步骤数。
-    pub fn pending_steps(&self) -> usize {
-        self.step_queue.len()
     }
 
     /// 当前位置（(turn, step)，None = 空闲）。
@@ -335,6 +319,9 @@ impl<H: LoopHooks, L: Llm, T: ToolExecutor> ReactLoopAgent<H, L, T> {
         // request/header 在首步 on_request 之后落盘（hash 必须覆盖改写后的
         // 最终模型可见输入——见 A2 升级：记忆注入等插件改写后 hash 不能漂）
         let mut header_emitted = false;
+        // 步数预算提示只注入一次（M1 问题 1 补充：接近上限先提醒收敛，
+        // 避免在 max_steps 处被硬砍）
+        let mut budget_hinted = false;
 
         loop {
             // 取消：回合中途用户停止
@@ -422,6 +409,22 @@ impl<H: LoopHooks, L: Llm, T: ToolExecutor> ReactLoopAgent<H, L, T> {
                     SurfaceIntent::None,
                 );
                 header_emitted = true;
+            }
+
+            // 步数预算提示：剩 6 步时注入一次收敛指令（仅本步输入，不落
+            // 日志——重放不重跑模型，审计锚点仍是上面的 prompt_hash）
+            if !budget_hinted && step + 6 >= self.config.max_steps {
+                budget_hinted = true;
+                if let Some(msgs) = payload.get_mut("messages").and_then(|m| m.as_array_mut()) {
+                    msgs.push(serde_json::json!({
+                        "role": "system",
+                        "content": format!(
+                            "【步数预算提示】本回合已用 {step}/{} 步，预算将尽。\
+                             请立即收敛：完成当前关键动作并输出总结，不要再发起新的探索性工具调用。",
+                            self.config.max_steps
+                        ),
+                    }));
+                }
             }
 
             // —— 模型流（可重试两次；cancel 可打断）——
@@ -660,11 +663,6 @@ impl<H: LoopHooks, L: Llm, T: ToolExecutor> ReactLoopAgent<H, L, T> {
             };
             if stopping {
                 break;
-            }
-            // next-step 队列：本回合注入的继续指令已被本轮工具循环覆盖，
-            // 队内匹配本回合的注入步骤在此消费（防积压）
-            while self.step_queue.front().is_some_and(|s| s.turn == turn) {
-                self.step_queue.pop_front();
             }
         }
 
