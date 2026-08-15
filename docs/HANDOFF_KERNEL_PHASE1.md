@@ -24,6 +24,11 @@
 - 实测（隔离 home）：旧库迁移/创建 app 会话/引擎工具面构建/聊天列表无 coding 会话/编程壳对话 Tab 显示 coding 会话消息/切回聊天恢复 chat 会话全通过；用户 36 个真实会话升级无损（app=chat）
 - 已知限制：桌面壳多窗口共存时编程对话与聊天窗口共享聚焦会话（多实例拍板项，CodingApp 已注明）
 
+**编程壳功能规划轮（2026-08-15 用户开题 + 定调两件）**：
+- **吸收原则升级（用户定调）**："能插件化的、网上已有的 skill/MCP/库就用网上的——找到最优解转成自己的官方插件，做好上游跟踪台账"→ 台账 `backend/vendor/UPSTREAM_TRACKING.md`（区别于补丁台账 UPSTREAM_PATCHES.md；T1 终端 xterm.js / T2 portable-pty 跟踪 xpty async fork / T3 code-graph 0.116 转官方插件 / T4 浏览器 B 方案）
+- **TerminalPane 一期已落地（07618ce，上游吸收 T1/T2）**：后端 /api/terminal（portable-pty 会话，创建/输入/resize/SSE/关闭；broadcast 多订阅 + 读线程自清理；**ConPTY ESC[6n 光标查询应答**——不答则 cmd 输出阻塞，实测坑）；前端 TerminalPane 宿主组件（xterm 6 + fit；编程壳右栏第三个 Tab，终端 Tab 加宽 30rem）；dir 命令全链路实测通过
+- **剩余**（执行顺序已拍）：项目切换（currentProject 上下文 + 文件树/终端联动）→ codegraph 转官方插件（scopes=["coding"]）→ 浏览器仿真 B 方案（可视化 web 工具链）
+
 **最近四轮回溯**：
 - 修复轮（同日，用户定调"回头看查出问题先修"）：三真缺口修两件（declare_event! 宏 / branch/fork 事件）、压缩参数双轨打通（bm-core effective()）、memory/write 生产者接线、**内核第一根接线**（bm-compactor 经 KernelBuilder 装配进生产，bm 引擎从 kernel 取事件日志+压缩服务）——测试全绿 + clippy 零 lint
 - 回头看+对标轮（本轮）：架构回头看（内核未接线三轨实锤/文档漂移修正）+ 全网对标三调研（底座前 10/记忆/插件同类，笔记 docs/research/2026-08-15/ 约 100KB 全部标注核实口径）→ 报告 docs/REVIEW_ARCHITECTURE_2026-08-15.md + docs/REVIEW_LANDSCAPE_2026-08-15.md；架构文档 v0.21
@@ -37,6 +42,7 @@
 
 | 轮次 | 要点 |
 |---|---|
+| 编程壳规划轮 | 吸收原则定调（网上最优解→官方插件→台账 UPSTREAM_TRACKING.md）+ TerminalPane 一期（xterm.js+portable-pty，ConPTY 应答坑，07618ce）；剩余项目切换/codegraph/浏览器仿真 |
 | 对话宿主化轮 | 拍板 9 执行：ChatPane 宿主组件（full/panel）+ 会话 app 场景字段（迁移/API/引擎透传）+ 编程壳右栏 Tab + activateApp/ensureAppSession；隔离 home 全链路实测通过 |
 | 架构讨论轮 | 内核主权评估定调（不换 dsh，§15.4）+ 对话宿主化拍板（§四·B 补充）+ 导航收口（底部仅设置+wiki 占位，a8397f8）；架构 v0.22 |
 | M2 编程壳 | 独立壳起步（0fb2acb）：todo 工具+事件投影闭环 / 编辑器+写文件 / 分支图起步 / step_queue 删除（A6 修订）+步数预算提示；浏览器实测模型真实调工具全链路 |
@@ -54,9 +60,10 @@
 
 1. ~~**对话宿主化 + 场景作用域**~~ → **已完成（拍板 9 执行，2026-08-15）**：① ChatPane 宿主组件（full/panel 形态）落地，编程壳右栏 Tab（任务/对话）落地；② 会话 `app` 场景字段 + 引擎透传 + 场景工具登记点落地；**剩余**：③ skill 场景注入（随 M2 深化做）；④ §四·C 落地时 manifest `scopes` + 前端槽位注册
 2. **M2 深化（主线）**：分支图 DAG 可视化（git 拓扑：merge/分叉）+ 编辑器增强（diff 视图/未保存守卫/目录新建）+ 长会话性能（todo 读取的 EventQuery 类型过滤，替代全量 replay）+ **skill 场景注入**（对话宿主化③）
-3. **界面层插件化落地设计（§四·C，用户已拍板学 dsh）**：出方案文档待拍板——前端包 manifest 字段（client.js/依赖声明）、同域 bundle 加载器（参考 dsh __ModuleLoader__.load）、slot 注册体系（ui-slots 思路）、壳依赖表（客户端插件不自带 React）；拍板后实施（独立主线，可与 M2 并行）
-4. **Steward 采集器挂任务计划程序**（README 有 schtasks 命令，填真实管家会话 ID）——待用户点头（机器级定时唤醒）
-5. **pi 路径清理收尾**：chat.rs pi 分支删除（bm 默认已反转，残留代码面）——待拍板
+3. **项目切换（编程壳功能规划②，执行顺序已拍）**：store `currentProject`（当前项目根上下文）+ 文件树/终端/编辑器联动（终端已支持 cwd 参数）+ 项目列表/新建（前端项目集合，后端 workspace 路径参数化）；随后 codegraph 转官方插件（@sdsrs/code-graph 0.116，scopes=["coding"]，正好验证场景工具面按 app 组装）→ 浏览器仿真 B 方案（可视化 web 工具链）
+4. **界面层插件化落地设计（§四·C，用户已拍板学 dsh）**：出方案文档待拍板——前端包 manifest 字段（client.js/依赖声明）、同域 bundle 加载器（参考 dsh __ModuleLoader__.load）、slot 注册体系（ui-slots 思路）、壳依赖表（客户端插件不自带 React）；拍板后实施（独立主线，可与 M2 并行）
+5. **Steward 采集器挂任务计划程序**（README 有 schtasks 命令，填真实管家会话 ID）——待用户点头（机器级定时唤醒）
+6. **pi 路径清理收尾**：chat.rs pi 分支删除（bm 默认已反转，残留代码面）——待拍板
 
 ## 注意坑（浓缩操作要点，完整背景见归档 §〇·五）
 
