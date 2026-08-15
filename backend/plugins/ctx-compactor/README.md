@@ -23,14 +23,15 @@
   "trimThreshold": 200,
   "placeholderHead": 300,
   "maxIndexBytes": 8388608,
-  "indexDirName": ".boenmind/ctx-index"
+  "indexDirName": ""
 }
 ```
 
 - `trimThreshold`：修剪阈值（字符）。输出超过则修剪。
 - `placeholderHead`：占位符里保留原文前 N 字符作摘要。
 - `maxIndexBytes`：索引文件超过该大小后轮转（`entries-<ts>.jsonl`）。
-- `indexDirName`：索引目录（相对 cwd；按项目天然分桶，新项目干净起点）。
+- `indexDirName`：索引根。空 = 默认（`$BOENMIND_HOME/.boenmind/ctx-index/<项目桶>/`，
+  不写进项目仓库）；绝对路径直接用；相对路径相对 cwd（保留项目内能力）。
 
 ## 设计说明（与计划的差异及原因）
 
@@ -38,8 +39,11 @@
   `tool_execution_*` 事件只在 CLI/rpc 路径派发，SDK 路径（BoenMind 聊天应用）
   收不到；且 `ToolExecutionEnd` 携带的是修剪**后**的内容，原文只有
   `tool_result` 处理器里拿得到。
-- **索引写在项目 cwd 内**（`.boenmind/ctx-index/`）：扩展默认只有 cwd 写权限，
-  无需额外 capability scope；按项目分桶语义天然满足。
+- **索引默认落数据基础目录**（`$BOENMIND_HOME/.boenmind/ctx-index/<项目桶>/`）：
+  M1 验收发现旧默认（写进项目 `.boenmind/`）会在 git 仓库产生未跟踪垃圾；
+  `os.homedir()` 由宿主对齐 `$BOENMIND_HOME`（bm-compat 构建 node:os 模块时
+  优先读该环境变量），服务器部署/测试隔离时索引随之隔离；按项目分桶语义
+  由 cwd 消毒子目录保持。
 - **修剪会写入会话存储**（Phase 0 验证：`tool_result` 修改后的内容进入
   `ToolResultMessage` 持久化）→ 占位符自描述（含摘要 + 检索 key），原文在
   索引可查，历史回放不丢信息。
@@ -50,4 +54,5 @@
   兜底，会被工具 60s 超时终止。
 - 索引为纯文本 JSONL + 扫描检索，适合中规模项目；超大索引建议调大
   `maxIndexBytes` 或清理 `entries-*.jsonl`。
-- 索引目录会出现在项目 git 工作区，建议加入 `.gitignore`（`.boenmind/`）。
+- 旧版本（< 2026-08-15）的索引写在项目 `.boenmind/ctx-index/`，升级后新索引
+  落数据目录；旧索引可自行删除（内容是修剪掉的工具输出，检索价值低）。

@@ -7689,8 +7689,13 @@ fn build_node_os_module() -> String {
         other => other,
     });
     let tmpdir = js_string(&std::env::temp_dir().display().to_string());
+    // BoenMind 数据基础目录优先（对齐 bm-core home_base）：插件把运行时
+    // 数据落在 os.homedir() 时应归 $BOENMIND_HOME（默认=用户主目录），
+    // 服务器部署/测试隔离时 BOENMIND_HOME 覆盖保证插件数据不散落真实主目录
+    // （M1 验收问题 5：ctx-compactor 索引曾写进项目仓库成为未跟踪垃圾）。
     let homedir = js_string(
-        &std::env::var("HOME")
+        &std::env::var("BOENMIND_HOME")
+            .or_else(|_| std::env::var("HOME"))
             .or_else(|_| std::env::var("USERPROFILE"))
             .unwrap_or_else(|_| "/home/unknown".to_string()),
     );

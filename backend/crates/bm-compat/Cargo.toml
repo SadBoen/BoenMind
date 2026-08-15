@@ -59,6 +59,15 @@ wasm-host = ["dep:wasmtime"]
 # extensions_js.rs:140 cfg!(feature = "ext-conformance")（pi_agent_rust 同名 feature）
 ext-conformance = []
 
+[dev-dependencies]
+# B1 拷入时上游 dev-dependencies 丢失（error.rs 的 proptest_error 测试模块、
+# extensions_js.rs 测试用 futures/tempfile、crc32c 构建依赖测试用）——
+# cargo test -p bm-compat 此前一直编译失败；补回使本 crate 测试可跑
+proptest = "1"
+futures = "0.3"
+tempfile = "3"
+crc32c = "0.6.8"
+
 # B1 拷入 6 文件（45K 行）与 verbatim shim 的调用面尚未全部接线（B3 加载路径、
 # B4 内核接线完成后自然消解）。红线：拷贝文件逐字节一致、不可为消 lint 改动。
 # 故在 manifest 层放行这三类存量 lint，B3/B4 落地后收紧为 deny/forbid。

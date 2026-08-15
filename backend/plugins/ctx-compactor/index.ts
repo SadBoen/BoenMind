@@ -16,7 +16,9 @@
  *   "trimThreshold": 200,         // 修剪阈值（字符）；输出超过则修剪
  *   "placeholderHead": 300,       // 占位符保留原文前 N 字符作摘要
  *   "maxIndexBytes": 8388608,     // 索引文件轮转阈值（8MB）
- *   "indexDirName": ".boenmind/ctx-index"  // 索引目录（相对 cwd）
+ *   "indexDirName": ""            // 索引根：空=默认（$BOENMIND_HOME/.boenmind/
+ *                                 //   ctx-index/<项目桶>，不写进项目仓库）；
+ *                                 //   绝对路径直接用；相对路径相对 cwd（旧行为）
  * }
  *
  * 事件说明（Phase 0 验证结论）：
@@ -27,6 +29,7 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as os from "node:os";
 import * as crypto from "node:crypto";
 
 // ─────────────────────────────── 默认配置 ───────────────────────────────
@@ -35,7 +38,8 @@ const DEFAULTS = {
 	trimThreshold: 200,
 	placeholderHead: 300,
 	maxIndexBytes: 8 * 1024 * 1024,
-	indexDirName: ".boenmind/ctx-index",
+	// 空 = 默认索引根（$BOENMIND_HOME/.boenmind/ctx-index/<项目桶>，见 indexRoot）
+	indexDirName: "",
 };
 
 /** 不修剪的工具（避免循环修剪 + 模型检索路径保持直通 + 搜索结果需模型直接消费。
@@ -109,8 +113,27 @@ function numberOr(value: unknown, fallback: number, min: number): number {
 }
 
 // ─────────────────────────────── 索引（JSONL，按项目分桶） ───────────────────────────────
+/**
+ * 索引根目录。默认落数据基础目录（os.homedir() 由宿主对齐 $BOENMIND_HOME，
+ * 见 bm-compat build_node_os_module）——M1 验收问题 5：旧默认 `<cwd>/.boenmind/
+ * ctx-index` 把索引写进项目仓库，成为未跟踪垃圾；项目内只保留配置读取。
+ * 显式配置 indexDirName 时：绝对路径直接用，相对路径相对 cwd（保留项目内能力）。
+ */
+function indexRoot(cwd: string): string {
+	const configured = config.indexDirName;
+	if (configured) {
+		return path.isAbsolute(configured) ? configured : path.join(cwd, configured);
+	}
+	return path.join(os.homedir(), ".boenmind", "ctx-index");
+}
+
+/** 项目桶：完整 cwd 消毒后作子目录（多项目索引互不串写）。 */
+function projectBucket(cwd: string): string {
+	return cwd.replace(/[\\/:*?"<>|]/g, "_");
+}
+
 function indexDir(cwd: string): string {
-	return path.join(cwd, config.indexDirName);
+	return path.join(indexRoot(cwd), projectBucket(cwd));
 }
 
 function indexFile(cwd: string): string {
@@ -405,7 +428,7 @@ export default function (pi: ExtensionAPI) {
 		name: "ctx_search",
 		label: "ctx_search",
 		description:
-			"检索被修剪的工具输出索引（当前项目 .boenmind/ctx-index）。" +
+			"检索被修剪的工具输出索引（数据目录按项目分桶，不落项目仓库）。" +
 			"当工具结果被修剪（占位符含 key）或需要找回历史工具输出细节时使用。" +
 			"可用检索 key（如 \"a1b2...\"）精确定位，或关键词模糊检索。返回命中的摘要与原文长度。",
 		parameters: {
