@@ -6,5 +6,8 @@
   "runtime": "js",
   "entrypoint": "index.ts",
   "description": "BoenMind 自我改进建议采集：代理完成任务后提交针对 skill 描述/系统提示词的改进建议（提交仅供宿主审批，未审批不生效）",
-  "capabilities": ["tool"]
+  "capabilities": [
+    "tool"
+  ],
+  "category": "system"
 }

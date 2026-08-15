@@ -47,6 +47,10 @@ pub struct PluginInfo {
     pub enabled: bool,
     /// 内置插件（随仓库/上游提供；卸载后写入 removed_builtin_plugins，不再自动恢复）
     pub builtin: bool,
+    /// 分类标签（manifest category 声明；缺省 "system" 系统增强）。
+    /// "system" = 系统增强（记忆/压缩/搜索等运行时能力）；"app" = 功能插件
+    /// （PDF/WIKI/编程工具等用户功能）。前端插件页按此分标签页展示。
+    pub category: String,
     /// 插件设置页 schema（manifest 的 settings 声明；None = 无设置页）
     #[serde(skip_serializing_if = "Option::is_none", rename = "settingsSchema")]
     pub settings_schema: Option<Vec<crate::plugin_settings::SettingField>>,
@@ -96,6 +100,7 @@ pub fn list_plugins(config: &AppConfig) -> Result<Vec<PluginInfo>, std::io::Erro
             kind,
             enabled,
             builtin: BUILTIN_PLUGINS.iter().any(|(bid, _)| *bid == id),
+            category: manifest_category(&path),
             settings_schema: manifest_settings_schema(&path),
             quota: manifest_quota(&path),
             test_sources: manifest_test_sources(&path),
@@ -119,6 +124,17 @@ fn read_manifest(path: &Path) -> Option<serde_json::Value> {
 fn manifest_settings_schema(path: &Path) -> Option<Vec<crate::plugin_settings::SettingField>> {
     let json = read_manifest(path)?;
     crate::plugin_settings::parse_settings_schema(&json)
+}
+
+/// 解析插件分类标签（manifest category 声明；单文件插件/未声明默认 "system"）。
+/// "system" = 系统增强（记忆/压缩/搜索等运行时能力）；"app" = 功能插件
+/// （PDF/WIKI/编程工具等用户功能）。
+fn manifest_category(path: &Path) -> String {
+    let Some(json) = read_manifest(path) else { return "system".to_string() };
+    match json.get("category").and_then(serde_json::Value::as_str) {
+        Some("app") => "app".to_string(),
+        _ => "system".to_string(),
+    }
 }
 
 /// 解析插件目录 manifest 的 quota 声明（单文件插件/未声明返回 None）。
@@ -201,6 +217,7 @@ pub fn install_plugin(source: &Path) -> Result<PluginInfo, AppError> {
         kind: if dest.is_dir() { "manifest" } else { "single" }.to_string(),
         enabled: false,
         builtin: false,
+        category: manifest_category(&dest),
         settings_schema: manifest_settings_schema(&dest),
         quota: manifest_quota(&dest),
         test_sources: manifest_test_sources(&dest),
@@ -256,6 +273,7 @@ pub fn install_plugin_from_source(source: &str) -> Result<Vec<PluginInfo>, AppEr
             kind: if dest.is_dir() { "manifest" } else { "single" }.to_string(),
             enabled: false,
             builtin: false,
+            category: manifest_category(&dest),
             settings_schema: manifest_settings_schema(&dest),
             quota: manifest_quota(&dest),
             test_sources: manifest_test_sources(&dest),
@@ -651,6 +669,25 @@ mod tests {
             Some(v) => unsafe { std::env::set_var("BOENMIND_HOME", v) },
             None => unsafe { std::env::remove_var("BOENMIND_HOME") },
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 分类标签解析：manifest category 声明生效，未声明/未知值/无 manifest 回落 "system"。
+    #[test]
+    fn manifest_category_parses_label() {
+        let dir = std::env::temp_dir().join(format!("bm-cat-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // 无 manifest → 默认 system
+        assert_eq!(manifest_category(&dir), "system");
+        // 显式 app
+        std::fs::write(dir.join("extension.json"), r#"{"category":"app"}"#).unwrap();
+        assert_eq!(manifest_category(&dir), "app");
+        // 未声明 → 默认 system
+        std::fs::write(dir.join("extension.json"), r#"{"name":"x"}"#).unwrap();
+        assert_eq!(manifest_category(&dir), "system");
+        // 未知值 → 默认 system
+        std::fs::write(dir.join("extension.json"), r#"{"category":"other"}"#).unwrap();
+        assert_eq!(manifest_category(&dir), "system");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
