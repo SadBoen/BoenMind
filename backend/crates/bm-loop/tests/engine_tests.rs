@@ -143,6 +143,50 @@ impl LoopHooks for RecorderHooks {
     }
 }
 
+/// 改写 payload 的 hooks：在 on_request 中向 system 追加固定文本
+/// （同 bm-memory 的 MemoryFilePlugin::inject_payload 形态——验证
+/// prompt_hash 覆盖改写后的最终模型可见输入）。
+///
+/// 公开字段：
+/// - `marker`：追加进 system 消息的固定文本
+/// - `injected_calls`：被 on_request 调用的次数（用于断言确实改了）
+#[derive(Clone, Default)]
+struct InjectingHooks {
+    marker: String,
+    injected_calls: Arc<AtomicUsize>,
+}
+
+impl InjectingHooks {
+    fn with_marker(marker: impl Into<String>) -> Self {
+        Self {
+            marker: marker.into(),
+            injected_calls: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+}
+
+impl LoopHooks for InjectingHooks {
+    fn on_request(&mut self, _ctx: &RequestCtx, payload: &mut serde_json::Value) {
+        self.injected_calls.fetch_add(1, Ordering::Relaxed);
+        let marker = self.marker.clone();
+        let messages = payload
+            .get_mut("messages")
+            .and_then(|m| m.as_array_mut())
+            .expect("payload.messages 是数组（engine build_payload 保证）");
+        if let Some(system) = messages
+            .iter_mut()
+            .find(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
+        {
+            if let Some(content) = system.get_mut("content").and_then(|c| c.as_str()) {
+                let next = format!("{content}{marker}");
+                *system.get_mut("content").unwrap() = serde_json::json!(next);
+            }
+        } else {
+            messages.insert(0, serde_json::json!({"role": "system", "content": marker}));
+        }
+    }
+}
+
 fn script_text(text: &str) -> Vec<Result<LlmEvent, LlmError>> {
     vec![
         Ok(LlmEvent::TextDelta { text: text.to_string() }),
@@ -254,9 +298,11 @@ async fn turn_without_tools_completes_with_full_event_chain() {
         types,
         vec![
             "user/message",
-            "request/header",
+            // request/header 在首步 on_request 改写 payload 之后落盘
+            // （A2 升级：hash 覆盖最终模型可见输入；记忆注入等改写后语义不变）
             "turn/start",
             "step/start",
+            "request/header",
             "assistant/chunk",
             "assistant/message",
             "turn/end",
@@ -291,10 +337,15 @@ async fn tool_loop_executes_and_records_hooks() {
     assert_eq!(
         types,
         vec![
-            "user/message", "request/header", "turn/start",
-            "step/start", "assistant/chunk", "assistant/message",
+            "user/message",
+            "turn/start",
+            // request/header 仅在首步 on_request 之后落一次（hash 覆盖
+            // 改写后的最终 payload）；step 2 不再追加 header
+            "step/start", "request/header",
+            "assistant/chunk", "assistant/message",
             "tool/call", "tool/result",
-            "step/start", "assistant/chunk", "assistant/message",
+            "step/start",
+            "assistant/chunk", "assistant/message",
             "turn/end",
         ],
         "真序事件链：模型消息（含工具意图）先行，工具执行随后（自研 loop 语义）"
@@ -603,6 +654,95 @@ async fn deny_gate_skips_execution_but_records_result() {
         .tool_calls
         .iter()
         .any(|tc| tc.result.as_ref().is_some_and(|r| !r.ok && r.output == "策略拒绝"))));
+}
+
+/// A2 升级回归：on_request 改写 payload 后，RequestHeader.prompt_hash
+/// 必须覆盖改写后的最终模型可见输入——记忆注入等插件改写后 hash 不能
+/// 漂（修前 bug：hash 在回合开头算、落在改写前）。
+///
+/// 本测试用 InjectingHooks 在 on_request 中向 system 追加固定 marker
+/// （同 bm-memory::MemoryFilePlugin::inject_payload 形态），断言落盘
+/// 的 RequestHeader.prompt_hash = 覆盖 marker 后 payload 的 sha256。
+#[tokio::test]
+async fn prompt_hash_covers_post_injection_payload() {
+    let marker = "[FACTS-INJECTED]";
+    let hooks = InjectingHooks::with_marker(marker);
+    let spy = hooks.clone();
+    let (mut a, store) = make_agent(
+        hooks,
+        ScriptLlm::new(vec![script_text("ok")]),
+        MockExecutor::default(),
+    );
+    let (_tx, mut rx) = cancel_channel();
+    let out = a
+        .run_turn(
+            TurnRequest { content: "hi".into(), source: UserMsgSource::Human },
+            HeaderReason::Initial,
+            &mut rx,
+        )
+        .await
+        .unwrap();
+    assert_eq!(out.reason, TurnEndReason::Completed);
+    assert_eq!(
+        spy.injected_calls.load(Ordering::Relaxed),
+        1,
+        "step 1 的 on_request 应触发一次（hash 在改写后定型才能算上）"
+    );
+
+    // 首步应落 RequestHeader（hash 必须在 on_request 改写后定型）
+    let log = EventLog::new(store.clone());
+    let evs = log.replay(&SessionId::new(SID), &BranchId::new("main")).await.unwrap();
+    let header_hash = evs
+        .iter()
+        .find_map(|e| match &e.kind {
+            EventKind::Core(CoreEvent::RequestHeader { header, .. }) => {
+                Some(header.prompt_hash.clone())
+            }
+            _ => None,
+        })
+        .expect("首步应落 RequestHeader 事件（hash 在改写后定型）")
+        .expect("RequestHeader.prompt_hash 应被记录");
+
+    // post-injection payload：build_payload 在 system_prompt="" 时不加
+    // system 段；InjectingHooks 在 messages[0] 插入 {system, marker}，
+    // messages[1] = user{hi}。tools 空 → "[]"。
+    let expected_payload = serde_json::json!({
+        "model": "default-model",
+        "messages": [
+            {"role": "system", "content": marker},
+            {"role": "user", "content": "hi"},
+        ],
+        "tools": [],
+        "stream_options": {"include_usage": true},
+    });
+    let expected = bm_loop::engine::prompt_hash_of_parts(&[
+        "",                                                     // system_prompt（空）
+        "[]",                                                   // tools 空数组序列化
+        &serde_json::to_string(&expected_payload).unwrap(),
+    ]);
+    assert_eq!(
+        header_hash, expected,
+        "RequestHeader.prompt_hash 应覆盖 on_request 改写后的最终 payload"
+    );
+
+    // 反向断言：未注入的 hash 与落盘值必不同——证明 hash 真随注入变。
+    let baseline_payload = serde_json::json!({
+        "model": "default-model",
+        "messages": [
+            {"role": "user", "content": "hi"},
+        ],
+        "tools": [],
+        "stream_options": {"include_usage": true},
+    });
+    let baseline = bm_loop::engine::prompt_hash_of_parts(&[
+        "",
+        "[]",
+        &serde_json::to_string(&baseline_payload).unwrap(),
+    ]);
+    assert_ne!(
+        header_hash, baseline,
+        "改写后的 hash 与改写前不同——证明 hash 真覆盖了注入"
+    );
 }
 
 #[test]

@@ -4,13 +4,14 @@
 //! ```text
 //! run_turn(req, cancel)
 //!   ├─ UserMessage 落日志（loop 拥有回合全生命周期，集成方不得重复落）
-//!   ├─ RequestHeader（prompt_hash = 完整模型可见输入哈希，A2 升级版）
 //!   ├─ TurnStart
 //!   └─ for step in 1..=max_steps:
 //!        ├─ StepStart
 //!        ├─ 投影（EventLog::derive_messages）→ OpenAI messages payload
 //!        ├─ 硬触发检查（单步输入超窗 → 有压缩插件则压缩 → 仍超窗即回合失败）
-//!        ├─ on_pre_step / on_request（扩展点可改写 payload）
+//!        ├─ on_pre_step / on_request（扩展点可改写 payload——记忆插件注入等）
+//!        ├─ post-injection prompt_hash（覆盖最终模型可见输入；A2 升级版）
+//!        ├─ RequestHeader（首步落盘，hash = 上面这枚；后续步仅 RequestCtx 携带）
 //!        ├─ LLM 流式：chunk 经 EventFlusher 真序落日志（攒批 append_batch）
 //!        ├─ AssistantMessage（权威内容 + 步内 usage）
 //!        ├─ 工具调用 → ToolCall → on_tool_pre（可 Deny）→ 执行（cancel 可打断）
@@ -312,35 +313,13 @@ impl<H: LoopHooks, L: Llm, T: ToolExecutor> ReactLoopAgent<H, L, T> {
             }),
             SurfaceIntent::Append,
         );
-        // 读回自己的写入前必须冲刷（prompt_hash 覆盖用户消息）
+        // 读回自己的写入前必须冲刷
         flusher.flush().await.map_err(|e| RunError::new(format!("事件日志写入失败: {e}")))?;
 
-        // 首步 payload（prompt_hash 需要完整输入；随后每步重建）
-        let mut msgs = self
-            .log
-            .derive_messages(&sid, &bid)
-            .await
-            .map_err(|e| RunError::new(format!("投影失败: {e}")))?;
-        let mut payload = self.build_payload(&msgs);
-        let prompt_hash = prompt_hash_of_parts(&[
-            &self.config.system_prompt,
-            &serde_json::to_string(&self.tools.openai_tools_json()).unwrap_or_default(),
-            &serde_json::to_string(&payload).unwrap_or_default(),
-        ]);
+        // 投影留待步循环首行做（TurnStart 落盘前不读 msgs，此处只声明占
+        // 位，避免步内首轮再次覆盖前产生 dead-assign 警告）。
+        let mut msgs: Vec<bm_kernel::SurfaceMessage>;
 
-        // —— A2 升级：request/header（prompt_hash 覆盖完整模型可见输入）——
-        flusher.push(
-            EventKind::Core(CoreEvent::RequestHeader {
-                header: EpochHeader {
-                    provider: self.config.provider.clone(),
-                    model: Some(self.config.model.clone()),
-                    created_at: now_ms(),
-                    prompt_hash: Some(prompt_hash.clone()),
-                },
-                reason,
-            }),
-            SurfaceIntent::None,
-        );
         flusher.push(EventKind::Core(CoreEvent::TurnStart { turn }), SurfaceIntent::None);
 
         // —— 步循环 ——
@@ -353,6 +332,9 @@ impl<H: LoopHooks, L: Llm, T: ToolExecutor> ReactLoopAgent<H, L, T> {
         // 上一请求的真实模型可见输入（usage 校准源：粗估 chars/4 对中文
         // 低估约 2 倍，压缩水线判定以 max(粗估, 真实值) 为准）
         let mut last_real_input = 0u64;
+        // request/header 在首步 on_request 之后落盘（hash 必须覆盖改写后的
+        // 最终模型可见输入——见 A2 升级：记忆注入等插件改写后 hash 不能漂）
+        let mut header_emitted = false;
 
         loop {
             // 取消：回合中途用户停止
@@ -380,7 +362,7 @@ impl<H: LoopHooks, L: Llm, T: ToolExecutor> ReactLoopAgent<H, L, T> {
                 .derive_messages(&sid, &bid)
                 .await
                 .map_err(|e| RunError::new(format!("投影失败: {e}")))?;
-            payload = self.build_payload(&msgs);
+            let mut payload = self.build_payload(&msgs);
 
             // 硬触发：单步输入超窗 → 压缩 → 重建；仍超窗即失败
             if self.check_overflow(&msgs, last_real_input) {
@@ -403,7 +385,44 @@ impl<H: LoopHooks, L: Llm, T: ToolExecutor> ReactLoopAgent<H, L, T> {
             }
 
             self.hooks
-                .on_request(&RequestCtx { turn, step, prompt_hash: Some(prompt_hash.clone()) }, &mut payload);
+                .on_request(
+                    &RequestCtx {
+                        turn,
+                        step,
+                        // on_request 是改写挂点，本步 hash 此刻未定型；
+                        // 待回调返回 → 按改写后的 payload 重算（见下），
+                        // 并把后值塞给 RequestHeader / on_request_error。
+                        prompt_hash: None,
+                    },
+                    &mut payload,
+                );
+
+            // prompt_hash 在此定型：覆盖最终模型可见输入（系统提示 + 工
+            // 具 schema + on_request 改写后的 payload）。记忆插件等会向
+            // system 追加事实段，必须在改写后算，否则审计锚点漂。
+            let prompt_hash = prompt_hash_of_parts(&[
+                &self.config.system_prompt,
+                &serde_json::to_string(&self.tools.openai_tools_json()).unwrap_or_default(),
+                &serde_json::to_string(&payload).unwrap_or_default(),
+            ]);
+
+            // RequestHeader 在首步落盘（hash = 首步 post-injection 的最终
+            // 输入），其余步骤不再重复该事件——一 per-turn 一枚足以审计
+            if !header_emitted {
+                flusher.push(
+                    EventKind::Core(CoreEvent::RequestHeader {
+                        header: EpochHeader {
+                            provider: self.config.provider.clone(),
+                            model: Some(self.config.model.clone()),
+                            created_at: now_ms(),
+                            prompt_hash: Some(prompt_hash.clone()),
+                        },
+                        reason,
+                    }),
+                    SurfaceIntent::None,
+                );
+                header_emitted = true;
+            }
 
             // —— 模型流（可重试两次；cancel 可打断）——
             let mut content = String::new();
