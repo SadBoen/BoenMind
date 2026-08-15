@@ -33,6 +33,9 @@ pub trait Compactor: Send + Sync + std::fmt::Debug {
     fn min_middle_tokens(&self) -> u64;
     /// 摘要请求构造（摘要 prompt 插件自治）。
     fn summarize_request(&self, model: &str, dialogue: &str) -> LlmRequest;
+    /// 具体类型访问（审查 P2-3）：组装层经 `Arc<dyn Compactor>` 取用时，
+    /// 参数覆写需要下转型到默认实现；实现侧返回 `self` 即可。
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 /// 文本 token 粗估：chars/4（中英混合近似；有 usage 时 run 循环以
@@ -253,6 +256,9 @@ mod tests {
                     "messages": [{"role": "user", "content": format!("请总结：{dialogue}")}],
                 }),
             }
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
         }
     }
 

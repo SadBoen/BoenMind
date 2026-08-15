@@ -380,20 +380,40 @@ fn build_loop_agent(
             context_window: 128_000,
             max_steps: 128,
             // 挂压缩插件（可换可关；None = 裸跑，核心自足性 v0.17）——
-            // 策略源 = kernel registry 里的 bm-compactor 服务（v0.21 接线），
-            // 参数由组装层从 [compaction] 配置换算注入（EffectiveCompaction；
-            // enabled=false → None 不挂），策略实现不读配置
+            // 策略源 = kernel registry 里的 compactor 服务（v0.21 接线；
+            // P2-3 起以 `Arc<dyn Compactor>` 注册——任意 Compactor 实现
+            // 注册即生效，可换契约不再依赖具体类型 downcast）。组装层
+            // 参数覆写（EffectiveCompaction）只对默认实现下转型；第二
+            // 实现保持自身参数 + 明确告警（不再静默回落默认参数）
             compactor: compaction.map(|c| {
-                let base = kernel
-                    .service::<bm_compactor::DefaultCompactor>("compactor")
-                    .map(|svc| (*svc).clone())
-                    .unwrap_or_default();
-                std::sync::Arc::new(bm_compactor::DefaultCompactor {
-                    watermark: c.watermark,
-                    keep_recent_ratio: c.keep_recent_ratio,
-                    keep_recent_floor: c.keep_recent_floor as u64,
-                    ..base
-                }) as std::sync::Arc<dyn bm_loop::Compactor>
+                let compactor: std::sync::Arc<dyn bm_loop::Compactor> = kernel
+                    .port::<dyn bm_loop::Compactor>("compactor")
+                    .unwrap_or_else(|_| {
+                        tracing::warn!(
+                            event = "bm.compactor_service_missing",
+                            "压缩服务未注册，回落默认策略（裸跑语义不变）",
+                        );
+                        std::sync::Arc::new(bm_compactor::DefaultCompactor::default())
+                    });
+                match compactor
+                    .as_any()
+                    .downcast_ref::<bm_compactor::DefaultCompactor>()
+                {
+                    Some(dc) => {
+                        let mut dc = dc.clone();
+                        dc.watermark = c.watermark;
+                        dc.keep_recent_ratio = c.keep_recent_ratio;
+                        dc.keep_recent_floor = c.keep_recent_floor as u64;
+                        std::sync::Arc::new(dc) as std::sync::Arc<dyn bm_loop::Compactor>
+                    }
+                    None => {
+                        tracing::warn!(
+                            event = "bm.compactor_custom_impl",
+                            "压缩服务为自定义实现，组装层 [compaction] 参数不覆写（策略自治）",
+                        );
+                        compactor
+                    }
+                }
             }),
         },
         llm,

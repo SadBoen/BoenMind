@@ -78,6 +78,11 @@ impl Compactor for DefaultCompactor {
             }),
         }
     }
+
+    /// 具体类型访问（审查 P2-3）：组装层参数覆写需下转型。
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 /// 内核插件形态（v0.21 内核接线）：bm-compactor 以 [`bm_kernel::Plugin`]
@@ -100,7 +105,13 @@ impl bm_kernel::Plugin for CompactorPlugin {
         &mut self,
         ctx: &mut bm_kernel::Ctx<'_>,
     ) -> Result<Vec<bm_kernel::Disposer>, bm_protocol::ProtocolError> {
-        let disposer = ctx.register_service("compactor", std::sync::Arc::new(self.compactor.clone()))?;
+        // 以 `Arc<dyn Compactor>` 经 port 机制注册（审查 P2-3）：消费方
+        // 经 trait object 取用，注册任意 Compactor 实现即生效——可换
+        // 契约不再依赖具体类型 downcast（此前第二实现会被静默忽略并
+        // 回落默认参数）。PortBox 容器专为 `Arc<dyn>` 设计，零 unsafe。
+        let svc: std::sync::Arc<dyn bm_loop::Compactor> =
+            std::sync::Arc::new(self.compactor.clone());
+        let disposer = ctx.register_port("compactor", svc)?;
         Ok(vec![disposer])
     }
 }
@@ -166,13 +177,18 @@ mod tests {
             .build()
             .unwrap();
         let svc = kernel
-            .service::<DefaultCompactor>("compactor")
+            .port::<dyn bm_loop::Compactor>("compactor")
             .expect("compactor 服务经插件注册可查");
-        assert_eq!(svc.watermark, 0.5, "默认策略参数取自注册实例");
+        // 可换契约（审查 P2-3）：注册的是 trait object——下转型取参数验证
+        let dc = svc
+            .as_any()
+            .downcast_ref::<DefaultCompactor>()
+            .expect("默认实现可下转型");
+        assert_eq!(dc.watermark, 0.5, "默认策略参数取自注册实例");
 
         kernel.uninstall_plugin("bm-compactor").unwrap();
         assert!(
-            kernel.service::<DefaultCompactor>("compactor").is_err(),
+            kernel.port::<dyn bm_loop::Compactor>("compactor").is_err(),
             "卸载 = 撤销注册（可逆副作用）"
         );
     }
