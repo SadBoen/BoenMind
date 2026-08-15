@@ -15,6 +15,7 @@
 | SERVICE_FACES_2026-08-15.md | 服务面铺开图纸 + 实施状态 | 13 面全部注册完毕（d6e95cf→3f5bde9）；含 http 面 YAGNI 裁决 | ✅ 已完成 |
 | ACCEPTANCE_M1_2026-08-15.md | 编程应用 M1 验收报告 | M1 验收通过（8254bd7）；6 问题中 1-5 已修 | ✅ 已验收 |
 | REVIEW_BEFORE_CODING_APP.md | 编程应用立项材料（7 拍板点） | 7 拍板点全部拍定；**§三 M2 形态建议被用户推翻**（选了独立壳，见活交接待拍板 1）——"方向被推翻"的典型，保留作决策轨迹 | ✅ 已拍板 |
+| HANDOFF_LLM_PROVIDER_PLUGIN.md | LLM 厂商插件化交接（方案 A） | §八验收全过（2026-08-16：93d542f + 6eed10a）；ProviderKind 精简 3 家 + ProviderPort 服务面 + stable_id 取代 pi_name + custom 协议形状 | ✅ 已完成 |
 
 ## 歧路索引（为什么没走某条路，论证在哪）
 
