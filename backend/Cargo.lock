@@ -716,6 +716,7 @@ name = "bm-memory"
 version = "0.1.0"
 dependencies = [
  "bm-loop",
+ "bm-protocol",
  "serde_json",
  "tracing",
 ]

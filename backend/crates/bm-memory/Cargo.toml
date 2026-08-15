@@ -7,5 +7,6 @@ description = "记忆插件（最小实现，§6.1 memory-file 雏形）：facts
 [dependencies]
 # 插件依赖核心（方向：protocol ← kernel ← loop ← 插件），不反向。
 bm-loop = { path = "../bm-loop" }
+bm-protocol = { path = "../bm-protocol" }
 serde_json = "1"
 tracing = "0.1"

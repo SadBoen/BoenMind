@@ -672,6 +672,8 @@ impl<H: LoopHooks, L: Llm, T: ToolExecutor> ReactLoopAgent<H, L, T> {
             SurfaceIntent::None,
         );
         self.end_turn();
+        // on_turn_end：回合收尾挂点（TurnEnd 落日志之后；统计/记忆沉淀）
+        self.hooks.on_turn_end(&StopCtx { turn });
         flusher.finish().await.map_err(|e| RunError::new(format!("事件日志写入失败: {e}")))?;
 
         if let Some(msg) = fail_msg {

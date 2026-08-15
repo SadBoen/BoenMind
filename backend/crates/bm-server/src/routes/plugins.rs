@@ -125,7 +125,7 @@ pub async fn get_plugin_settings(
     let schema = info
         .settings_schema
         .ok_or_else(|| api_error(StatusCode::NOT_FOUND, "插件不存在或无设置页"))?;
-    let settings = bm_core::plugin_settings::read_settings_masked(&id, &schema);
+    let settings = crate::service_faces::read_settings(&state, &id, &schema, true);
     let quota = read_plugin_quota(&state, info.quota.as_ref()).await;
     Ok(Json(serde_json::json!({ "settings": settings, "quota": quota })))
 }
@@ -177,7 +177,7 @@ pub async fn test_plugin_source(
         .ok_or_else(|| api_error(StatusCode::NOT_FOUND, "插件不存在或无设置页"))?;
     let test_sources = info.test_sources.unwrap_or_default();
     // 明文读取（含密钥，仅服务端内部使用，不回传）
-    let mut settings = bm_core::plugin_settings::read_settings(&id, &schema);
+    let mut settings = crate::service_faces::read_settings(&state, &id, &schema, false);
     // 用表单当前值覆盖（仅 schema 声明的 key；secret 空/掩码 = 保留原值）
     if let Some(values) = req.values.as_ref().and_then(|v| v.as_object()) {
         for (k, v) in values {
@@ -272,8 +272,7 @@ pub async fn put_plugin_settings(
     let schema = plugin_settings_schema(&state, &id)
         .await?
         .ok_or_else(|| api_error(StatusCode::NOT_FOUND, "插件不存在或无设置页"))?;
-    bm_core::plugin_settings::save_settings(&id, &schema, &req.values)
-        .map_err(api_error_from)?;
-    let settings = bm_core::plugin_settings::read_settings_masked(&id, &schema);
+    crate::service_faces::save_settings(&state, &id, &schema, &req.values).map_err(api_error_from)?;
+    let settings = crate::service_faces::read_settings(&state, &id, &schema, true);
     Ok(Json(serde_json::json!({ "ok": true, "settings": settings })))
 }

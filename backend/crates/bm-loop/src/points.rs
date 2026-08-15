@@ -46,6 +46,10 @@ pub struct StopCtx {
 
 /// Loop 扩展点。默认实现全部空操作/不拦截——插件化挂点
 /// （记忆插件、Steward 观察、权限询问桥等在此接线）。
+///
+/// 服务面铺开（SERVICE_FACES 图纸 §二）：在 A6 骨架五个扩展点之上，
+/// 补上下列点名挂点（每个 = 一个真实需求，默认空实现零破坏）：
+/// context-build / compact-begin / compact-end / turn-end / provider-select。
 pub trait LoopHooks: Send + Sync {
     /// 步骤开始前（每步一次；可注入/改写下一步意图）。
     fn on_pre_step(&mut self, _ctx: &StepCtx) {}
@@ -76,6 +80,22 @@ pub trait LoopHooks: Send + Sync {
     fn on_turn_stopping(&mut self, _ctx: &StopCtx, _last_assistant_text: &str) -> bool {
         false
     }
+
+    /// 模型请求载荷构造完成、发送前（比 on_request 更早——header/上下文
+    /// 组装之后；提示词插件 D8 在此挂接）。默认不动。
+    fn on_context_build(&mut self, _ctx: &RequestCtx) {}
+
+    /// 压缩开始前（策略已判定要压缩；评估/审计挂点）。
+    fn on_compact_begin(&mut self, _ctx: &RequestCtx) {}
+
+    /// 压缩完成后（压缩摘要已落日志；统计挂点）。
+    fn on_compact_end(&mut self, _ctx: &RequestCtx) {}
+
+    /// 回合结束（TurnEnd 已落日志、end_turn 之后；统计/记忆沉淀挂点）。
+    fn on_turn_end(&mut self, _ctx: &StopCtx) {}
+
+    /// 提供商/模型选定前（路由/成本策略挂点；默认不干预）。
+    fn on_provider_select(&mut self, _provider: &str, _model: &str) {}
 }
 
 /// 空实现（默认 hooks）。

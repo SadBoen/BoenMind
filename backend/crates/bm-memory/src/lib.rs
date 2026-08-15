@@ -17,6 +17,7 @@
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use bm_loop::points::{LoopHooks, RequestCtx};
 
@@ -117,6 +118,35 @@ impl MemoryFilePlugin {
 impl LoopHooks for MemoryFilePlugin {
     fn on_request(&mut self, _ctx: &RequestCtx, payload: &mut serde_json::Value) {
         self.inject_payload(payload);
+    }
+}
+
+/// 服务面适配（SERVICE_FACES 图纸 #3）：newtype 打破孤儿规则——
+/// `MemoryPortAdapter` 内部持共享实例，实现 `MemoryPort`。
+/// 组装层注册 "memory" 服务，插件/宿主经
+/// `ctx.port::<dyn MemoryPort>("memory")` 取用（remember 入口）；
+/// 请求注入仍走 LoopHooks 轨（双轨各自职责不变）。
+pub struct MemoryPortAdapter(pub Arc<std::sync::Mutex<MemoryFilePlugin>>);
+
+impl bm_protocol::MemoryPort for MemoryPortAdapter {
+    fn remember(&self, fact: String) {
+        self.0.lock().expect("memory lock poisoned").remember(fact);
+    }
+
+    fn facts(&self) -> Vec<String> {
+        self.0
+            .lock()
+            .expect("memory lock poisoned")
+            .facts()
+            .map(String::from)
+            .collect()
+    }
+
+    fn inject_into_payload(&self, payload: &mut serde_json::Value) {
+        self.0
+            .lock()
+            .expect("memory lock poisoned")
+            .inject_payload(payload);
     }
 }
 

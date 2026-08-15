@@ -14,6 +14,7 @@ pub mod pdf_omni;
 pub mod permission_store;
 pub mod roles;
 pub mod routes;
+pub mod service_faces;
 pub mod static_files;
 pub mod steward;
 pub mod subagent_child;
@@ -410,11 +411,37 @@ async fn serve_inner(
     // 内核接线（v0.21）：Registry/loader/Plugin trait 的第一根生产接线——
     // 压缩策略插件（bm-compactor）经 KernelBuilder 装配进 registry，bm 引擎
     // 从 kernel 取事件日志与压缩服务（架构回头看"内核未接线"的收尾）。
+    // 服务面铺开（v0.24，SERVICE_FACES 图纸第一批）：memory/settings/stats
+    // 内置能力注册为 kernel 服务——插件 deps() 可依赖、第二实现可替换
+    // （服务面 = 承诺 API，实现面等第二实现）。
     // 装配失败 = 编程错误（预装插件 bug），fail-fast 于启动。
     let kernel = dual_writer.as_ref().map(|d| {
+        let store = d.event_log().store();
+        // 记忆服务面：全局单例（facts.md 同一文件；会话注入实例在
+        // EngineBuilder 另开——append 容忍并发写，见 bm_engine.rs 注释）
+        let memory: Arc<std::sync::Mutex<bm_memory::MemoryFilePlugin>> =
+            Arc::new(std::sync::Mutex::new(bm_memory::MemoryFilePlugin::open(
+                bm_core::config::app_dir().join("memory").join("facts.md"),
+                20,
+            )));
         Arc::new(
             bm_kernel::KernelBuilder::new()
-                .with_event_store(d.event_log().store())
+                .with_event_store(store.clone())
+                .with_port(
+                    "memory",
+                    Arc::new(bm_memory::MemoryPortAdapter(memory))
+                        as Arc<dyn bm_protocol::MemoryPort>,
+                )
+                .with_port(
+                    "settings",
+                    Arc::new(service_faces::SettingsPortImpl)
+                        as Arc<dyn bm_protocol::SettingsPort>,
+                )
+                .with_port(
+                    "stats",
+                    Arc::new(service_faces::StatsPortImpl { store })
+                        as Arc<dyn bm_protocol::StatsPort>,
+                )
                 .with_plugin(
                     bm_kernel::Manifest {
                         name: "bm-compactor".into(),

@@ -45,6 +45,10 @@ pub struct Kernel {
 /// 组装入口：先挂服务与插件，再 build。
 pub struct KernelBuilder {
     store: Option<Arc<dyn EventStorePort>>,
+    /// 预注册服务（key → Any 服务），build 时先于插件安装写入注册表。
+    /// 服务面铺开（docs/SERVICE_FACES_2026-08-15.md）：内置能力经此
+    /// 成为插件可依赖/可替换的服务面，而非组装层私有字段。
+    services: Vec<(ServiceKey, Arc<dyn std::any::Any + Send + Sync>)>,
     plugins: Vec<(Manifest, Box<dyn Plugin>)>,
 }
 
@@ -58,6 +62,7 @@ impl KernelBuilder {
     pub fn new() -> Self {
         Self {
             store: None,
+            services: Vec::new(),
             plugins: Vec::new(),
         }
     }
@@ -65,6 +70,27 @@ impl KernelBuilder {
     /// 指定事件存储 Port（缺省 = 内存实现，测试/无持久化场景）。
     pub fn with_event_store(mut self, store: Arc<dyn EventStorePort>) -> Self {
         self.store = Some(store);
+        self
+    }
+
+    /// 预注册具体类型服务（`ctx.service::<T>("key")` 取用）。
+    pub fn with_service<T: Send + Sync + 'static>(
+        mut self,
+        key: ServiceKey,
+        svc: Arc<T>,
+    ) -> Self {
+        self.services.push((key, svc as Arc<dyn std::any::Any + Send + Sync>));
+        self
+    }
+
+    /// 预注册 Port（trait object 服务，`ctx.port::<dyn P>("key")` 取用）。
+    pub fn with_port<P: ?Sized + Send + Sync + 'static>(
+        mut self,
+        key: ServiceKey,
+        svc: Arc<P>,
+    ) -> Self {
+        self.services
+            .push((key, Arc::new(PortBox(svc)) as Arc<dyn std::any::Any + Send + Sync>));
         self
     }
 
@@ -93,6 +119,14 @@ impl KernelBuilder {
             .map_err(|e| {
                 ProtocolError::new(ErrorCode::PluginInstall, format!("register event_store: {e}"))
             })?;
+
+        // 预注册服务面（with_service/with_port）：先于插件安装写入，
+        // 插件 deps() 拓扑即以此为就绪集合；重复 key → 装配失败。
+        for (key, svc) in self.services {
+            registry.register(key, svc).map_err(|e| {
+                ProtocolError::new(ErrorCode::PluginInstall, format!("register service `{key}`: {e}"))
+            })?;
+        }
 
         let event_log = EventLog::new(store.clone());
         let loader = Loader::new(registry.clone());
@@ -288,6 +322,29 @@ mod tests {
         let evs = log.replay(&sid, &bm_protocol::BranchId::new("main")).await.unwrap();
         assert_eq!(evs.len(), 1);
         assert_eq!(evs[0].seq.as_u64(), 1);
+    }
+
+    #[tokio::test]
+    async fn builder_pre_registers_services_and_ports() {
+        // 服务面铺开：with_service/with_port 预注册的面先于插件安装就绪，
+        // 插件 deps() 可依赖（KernelBuilder 级装配，见 SERVICE_FACES 图纸）。
+        let kernel = KernelBuilder::new()
+            .with_service("str_svc", Arc::new("hello".to_string()))
+            .with_port("dummy_port", Arc::new(InMemoryEventStore::new()) as Arc<dyn EventStorePort>)
+            .build()
+            .unwrap();
+        // 具体类型服务可按 key 取
+        let s = kernel.service::<String>("str_svc").unwrap();
+        assert_eq!(s.as_str(), "hello");
+        // Port 按 trait object 取
+        assert!(kernel.port::<dyn EventStorePort>("dummy_port").is_ok());
+        // 重复 key 预注册 → 装配失败（与 registry 纪律一致）
+        let err = KernelBuilder::new()
+            .with_service("dup", Arc::new(1i32))
+            .with_service("dup", Arc::new(2i32))
+            .build()
+            .unwrap_err();
+        assert_eq!(err.code(), ErrorCode::PluginInstall);
     }
 
     #[tokio::test]

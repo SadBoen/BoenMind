@@ -112,3 +112,59 @@ pub trait EventStorePort: Send + Sync {
     /// 返回删除的事件行数；分支头随之重置（下次 append 从 seq 1 重新起）。
     fn clear_session(&self, sid: &SessionId) -> BoxFuture<'_, Result<u64, ProtocolError>>;
 }
+
+/// 记忆面（服务面铺开第一批，SERVICE_FACES 图纸 #3）。
+///
+/// 实现：bm-memory 对 `Mutex<MemoryFilePlugin>` 的适配（bm-server 组装层
+/// 注册 "memory" 服务）。可替换：未来记忆子系统（向量/淡化）以第二实现
+/// 接管同 key——"服务面 = 承诺 API，实现面等第二实现"的第一批样板。
+pub trait MemoryPort: Send + Sync {
+    /// 记住一条事实（去重；失败静默——记忆是增强不是正确性依赖）。
+    fn remember(&self, fact: String);
+
+    /// 当前事实（最旧在前）。
+    fn facts(&self) -> Vec<String>;
+
+    /// 把记忆注入块追加进模型请求 payload 的 system 段（无则插入首条）。
+    fn inject_into_payload(&self, payload: &mut serde_json::Value);
+}
+
+/// 设置面（插件设置存取 + secret 掩码语义，SERVICE_FACES 图纸 #6）。
+///
+/// `schema` = 插件 manifest settings 声明的 JSON 序列化（`Vec<SettingField>`，
+/// bm-core 定义；契约层用 Value 传递保持零依赖——实现侧反序列化）。
+pub trait SettingsPort: Send + Sync {
+    /// 读设置（明文，仅服务端内部使用）。
+    fn read(&self, plugin_id: &str, schema: &serde_json::Value) -> serde_json::Value;
+
+    /// 读设置（secret 字段掩码回显——前端安全）。
+    fn read_masked(&self, plugin_id: &str, schema: &serde_json::Value) -> serde_json::Value;
+
+    /// 保存设置（类型校验 + 密钥掩码保留），返回掩码版供前端刷新。
+    fn save(
+        &self,
+        plugin_id: &str,
+        schema: &serde_json::Value,
+        values: &serde_json::Value,
+    ) -> Result<serde_json::Value, ProtocolError>;
+}
+
+/// 一次会话的 token 用量统计（assistant/message 事件聚合）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SessionUsage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub messages: u64,
+}
+
+/// 统计面（用量/计数查询，SERVICE_FACES 图纸 #12）。
+///
+/// 实现：bm-server 对事件日志的聚合（StatsPortImpl）。消费方
+/// （/api/sessions/{id}/usage）从 kernel 取服务，不再内联计算。
+pub trait StatsPort: Send + Sync {
+    /// 会话累计用量（读事件日志聚合；无事件 = 全零）。
+    fn session_usage(
+        &self,
+        session_id: &SessionId,
+    ) -> BoxFuture<'_, Result<SessionUsage, ProtocolError>>;
+}
