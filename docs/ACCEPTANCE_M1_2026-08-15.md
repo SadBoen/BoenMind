@@ -40,6 +40,8 @@
 
 ## 四、验收发现（6 个真实问题，按影响排序）
 
+> 更新（2026-08-15 自主轮）：问题 1-5 已修复（commit 1f064db / 3d3bf2b），问题 6 压缩水线持续收敛。
+
 | # | 问题 | 现象 | 建议 |
 |---|---|---|---|
 | 1 | **单回合 64 步预算不足以完成真实任务** | 回合 1 在"修完待测"处被砍断，需人工续接才收尾 | max_steps 提到 128+，或"回合接近上限时引擎自动提示压缩/续接"；M2 面板顺带做 |
@@ -48,6 +50,13 @@
 | 4 | **bash 经 cmd /C 与 Git Bash 习惯冲突** | `/d/...` 路径、`cd "x" && pwd` 在 cmd 下无效，模型为 git status 浪费 ~8 次调用；commit 需 -F 文件技巧才过引号关 | 引擎侧补"Windows 路径规范"系统提示段；长提交信息走 -F 已是可行 workaround |
 | 5 | **ctx-compactor 索引写入服务进程 cwd** | 验收后仓库根出现 .boenmind/ctx-index/（未跟踪垃圾） | 插件数据一律落 BOENMIND_HOME（config.working_dir 之外）；已删残留 |
 | 6 | **模型路径幻觉** | 回合 1 尾部模型一度以为仓库在 C:\Users\Boen\backend（与记忆注入/长上下文漂移有关） | 任务级系统提示锚定工作目录；压缩水线已在收敛此现象 |
+
+**修复情况（1f064db，2026-08-15 自主轮）**：
+- 问题 1：max_steps 64→128（引擎默认 + 组装层两处）
+- 问题 2：walk_files 改 ignore crate WalkBuilder（尊重 .gitignore/.ignore/跳过隐藏/不跟符号链接）；grep/find 改 async，同步遍历放 spawn_blocking + timeout（默认 60s，可传 timeout 参数），超时返回 timeout 错误不挂死回合；测试 +gitignore 尊重（空 .git 目录标记仓库——ignore crate 语义对齐 ripgrep：.gitignore 只在 git 仓库内生效）+ 超时确定性测试
+- 问题 3：read 的 offset/limit 此前已实现（字节级），本轮补模型系统提示"read 支持 offset/limit，别用 shell 绕"
+- 问题 4：Windows 平台段按 cfg(windows) 条件拼进系统提示（cmd /C 语义/路径风格/无 pwd）
+- 问题 5（3d3bf2b）：ctx-compactor 索引默认改落 `$BOENMIND_HOME/.boenmind/ctx-index/<项目桶>/`（bm-compat 的 os.homedir() 优先读 BOENMIND_HOME，与 bm-core home_base 同优先级；cwd 消毒子目录保持按项目分桶；indexDirName 显式配置仍可覆盖）；同步预装副本。顺手补齐 bm-compat 缺失的 dev-deps（B1 拷入时丢失，cargo test -p bm-compat 一直编译失败，补后 614 测试通过；遗留 4 个 doom-overlay conformance 测试缺 fixtures 挂 M2）
 
 ## 五、独立复核（操作者视角）
 

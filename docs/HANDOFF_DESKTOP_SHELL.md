@@ -108,7 +108,15 @@
 
 顺手修的真 bug：窗口默认尺寸超过窗口层高度（聊天 700px > 层 672px）会溢出到任务栏——AppWindow 挂载时按容器钳制尺寸（min(default, 容器-16)）。
 
-遗留（不在本期范围）：窗口最小化/多实例/黄绿圆点接线、react-rnd 尺寸调整（enableResizing 关着）、编程应用真实壳、（层叠偏移已完成：新窗口按打开序错开 48px，点击可见边缘即聚焦）。
+**六次迭代（自主轮，同日）——窗口控制接线（黄绿圆点 + 尺寸调整）**：
+- **黄点最小化**（macOS 语义）：窗口收进 Dock——渲染跳过但保留 openApps z 序；Dock 图标变暗（opacity-50 saturate-50）+ 空心指示点（border 空心）；点击 Dock 恢复 + 置顶聚焦；聚焦转移给 z 序上一个可见窗口（无则空桌面）；开始菜单再开已最小化应用 = 恢复（openApp 兼容分支）。
+- **绿点最大化/还原**：铺满桌面容器（-16px 边距，实测 1264×576 @ 8,8）；还原回最大化前位置尺寸（prevState ref）；**双击标题栏 = 最大化切换**（替代原双击关闭——对齐 macOS zoom 语义）；最大化时禁拖禁 resize + ResizeObserver 跟随容器尺寸。
+- **react-rnd 尺寸调整**：enableResizing 开启（minWidth 320/minHeight 240）+ 右下角斜线角标；onResizeStop 落回受控 size。注意 react-rnd v10 底层是 re-resizable，其 Resizer 手柄 div 默认无 className（查 DOM 找不到手柄属正常，拖拽有效）。
+- i18n ×4：windowMinimize/windowMaximize。
+- 浏览器实测全链路过：开始菜单开聊天 → 黄点最小化（窗口消失）→ Dock 图标 opacity-50 saturate-50 + 空心指示点 → Dock 点击恢复（聚焦 ring）→ 绿点最大化（1040→1264×576@8,8）→ 绿点还原（回 1040×576@(120,8)）→ 右下角拖拽 resize（1040→1155）。
+- 坑：**Dock 磁吸按钮在 IAB 合成鼠标下点不中**——鼠标移动到按钮中心即触发 onMouseMove 磁吸放大、按钮漂移，mousedown 落点偏出 → click 无效（MenuBar/StartMenu/窗口内按钮无此问题）。真实用户鼠标无碍（用户看着放大后的按钮点击）。IAB 自动化恢复窗口的 workaround：先 cua.move 移开鼠标（清磁吸）再 dom_cua 点击。此限制已记入验证结论。
+
+遗留（不在本期范围）：多实例（单例为拍板项）、编程应用真实壳、Dock 磁吸动效真实浏览器确认（IAB 无法合成 hover/mousemove 验证）。
 
 ## 八、关联文档
 
