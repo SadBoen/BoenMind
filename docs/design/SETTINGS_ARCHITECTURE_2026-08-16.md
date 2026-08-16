@@ -1,6 +1,6 @@
 # BoenMind 设置面板架构（2026-08-16 定稿）
 
-> 状态：**设计定稿，实施进行中**。阶段状态见文末表格。
+> 状态：**阶段 1–5 已落地（2026-08-16），阶段 6 可选未做。** 从属于架构宪法 v0.26；与宪法冲突时以本文拍板表（§二）为准。组合根约束：MCP 设置页假定运行时 `connect` 可用——当前空配置启动会丢 `McpClientManager`（审查 C P1，下轮修代码）。
 
 ## 一、需求（用户开题，2026-08-16）
 
@@ -97,7 +97,7 @@
 | SKILL | skill 目录下 `settings.json`（新约定） | SKILL.md 保持官方规范兼容；有 schema 才显示"设置"按钮 |
 | MCP | server 配置已有 `env/headers/tool_timeout_ms` | env 即 KEY 天然载体；McpSettings 编辑表单补全（键值编辑、掩码显示） |
 
-KEY 等敏感值沿用 providers 做法：存 config.toml、表单掩码显示。"设置页"对三类扩展同一套交互语言（列表项 → 齿轮 → 表单）。
+KEY 等敏感值沿用 providers 做法：存 config.toml、表单掩码显示；**落盘权限 / GET 掩码回填 / 运行时单锁 `AppConfig` / 热路径取 key 走 CredentialsPort**（2026-08-17 已收口，禁止再把明文 key 塞进 LlmPort JSON）。"设置页"对三类扩展同一套交互语言（列表项 → 齿轮 → 表单）。
 
 ## 八、作用域模型
 
@@ -144,8 +144,3 @@ APP 独有扩展（scope: chat/coding）→ 只进该 APP 会话工具面
 | 4 | 专家预设页 + 编程三专家预置 + per-app 设置页（[apps] 段 + 双入口） | ✅ 2026-08-16：bm-core experts 模块（agents/*.md 管理面）+ architect/coder/reviewer 预置；专家 API；设置中心两级分组（应用/系统）；ExpertsSettings 页；AppSettings 通用 per-app 页（专家绑定/独有扩展/记忆/工作区）；[apps.<id>] 单源段 |
 | 5 | 普通/资深分级机制 + 高级项收尾 | ✅ 2026-08-16：右上角 标准/资深 开关（localStorage，默认标准）；tab 级 tier（管家页资深）；外观高级组（强调色 5 色板 + 减少动画）；作用域编辑按钮资深才显示 |
 | 6 | 可选：设置搜索、外观配置导入导出、主题插件化 | ⬜ 待续 |
-| 2 | 扩展统一设置模式（SKILL settings.json + MCP env 表单；插件保持） | ⬜ |
-| 3 | 作用域（manifest scopes + 引擎按 session.app 过滤 + 前端徽标/编辑） | ⬜ |
-| 4 | 专家预设页 + 编程三专家预置 + per-app 设置页（[apps] 段 + AppEntry.settingsComponent + 双入口） | ⬜ |
-| 5 | 普通/资深分级机制 + 高级项收尾 | ⬜ |
-| 6 | 可选：设置搜索、外观配置导入导出、主题插件化 | ⬜ |
