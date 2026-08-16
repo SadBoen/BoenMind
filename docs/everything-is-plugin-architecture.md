@@ -150,7 +150,7 @@
 | Z1 | 极简 manifest（`plugin.json`：name/version/description/skills 目录） | 降低插件开发门槛；"目录即声明，manifest 补充" |
 | Z2 | skills 目录发现 + 优先级链（用户级 > 工作区 > 插件级，同层 .zcode 先于 .agents） | 三层覆写语义，用户永远能覆盖插件 |
 | Z3 | hooks（matcher + script，模板变量） | 轻量事件钩子，非插件开发者也能挂脚本 |
-| Z4 | MCP 作为一等公民（config 里直接配 server） | 外部生态接入标准。**当前态（2026-08-16）**：官方 crate `bm-mcp`（dual-era）+ 运行期 kernel port `"mcp"`（非 `bm-protocol` Port）；计划见 `docs/PLAN_MCP_PLUGIN_2026-08-16.md`（4c OAuth 后置）。组合根空配置丢管理器 → 设置页连第一个 server 会 503，见审查 C P1 |
+| Z4 | MCP 作为一等公民（config 里直接配 server） | 外部生态接入标准。**当前态（2026-08-17）**：官方 crate `bm-mcp`（dual-era）+ 运行期 kernel port `"mcp"`（非 `bm-protocol` Port）；组合根始终持有空管理器，设置页可连第一个 server。计划见 `docs/PLAN_MCP_PLUGIN_2026-08-16.md`（4c OAuth 后置） |
 | Z5 | marketplace.json（市场源）+ 插件缓存目录 + i18n（displayName_i18n/examplePrompts） | 商店/多语言的落地格式参照 |
 | Z6 | 用户级/工作区级配置分层 | 与 Z2 同构的配置哲学 |
 

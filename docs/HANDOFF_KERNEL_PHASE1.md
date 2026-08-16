@@ -14,7 +14,7 @@
 | 服务面 | **以登记表为准**：协议 14 + 运行期 mcp。`credentials`/`scheduler` 已消费；tools/notify 已注册、插件 lookup 待接线 |
 | 配置 | 一把 `Arc<RwLock<AppConfig>>`（HTTP/Port/门闩）。禁止再 clone |
 | 设置中心 | 阶段 1–5 已落地（桌面代码退役、scopes、`[apps]`、专家同池、分级）。文：`docs/design/SETTINGS_ARCHITECTURE_2026-08-16.md` |
-| MCP | `bm-mcp` 出厂；4c OAuth 不做。空配置启动丢管理器 → UI 连第一个 server 会 503（审查 C P1，下轮工程） |
+| MCP | `bm-mcp` 出厂；4c OAuth 不做。组合根始终持有空管理器（C P1 已修）；connect/disconnect 后 invalidate 会话 agent |
 | DE | 经典三栏默认；桌面壳**代码已删**，开关 toast。皮肤/特效见架构 §四·B 补充 3 |
 | 聊天 | 插入排队 = DE 输入策略（≠ `enqueue_turn`）；TokenRing = 128K 参考窗 |
 | 冻结 | 双写对账至 M3；挂点不删；不换 dsh |
@@ -149,7 +149,7 @@
 3. **codegraph 转官方插件**（@sdsrs/code-graph 0.116，scopes=["coding"]）→ 浏览器仿真 B 方案
 4. **界面层插件化落地设计（§四·C）**：出方案文档待拍板（学 dsh 槽位；dock 是 ui-slots 超集）
 5. **Steward 采集器挂任务计划程序**——待用户点头
-6. **下轮工程（非本交接已做）**：MCP 组合根始终持有空管理器（C P1）；插件禁用按 enabled 收回工具面（C P2）
+6. ~~**MCP 组合根 / 插件禁用收回**~~ → **已修（2026-08-17）**：空管理器常驻；`tools_for_app` + executor 按 `enabled_plugins` fail-closed；禁用/卸载/MCP 连断均 invalidate
 
 ## 注意坑（浓缩操作要点，完整背景见归档 §〇·五）
 

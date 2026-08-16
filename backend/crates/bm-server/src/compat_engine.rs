@@ -43,6 +43,38 @@ use crate::PermissionDecision;
 /// 插件工具执行超时（对齐 legacy 默认：agent.rs 的 JS_EXTENSION_TOOL_TIMEOUT_MS）。
 pub const TOOL_TIMEOUT_MS: u64 = 60_000;
 
+/// 插件工具是否仍对当前会话可见：必须在启用名单内，且作用域命中 app。
+/// 无归属（内置/历史快照）视为公共，不过 enabled 名单。
+fn plugin_tool_visible(
+    name: &str,
+    owners: &HashMap<String, String>,
+    app: &str,
+    plugin_scopes: &HashMap<String, Vec<String>>,
+    enabled_plugins: &[String],
+) -> bool {
+    match owners.get(name) {
+        Some(id) => {
+            plugin_tool_allowed(name, owners, enabled_plugins)
+                && bm_core::config::scope_matches(
+                    plugin_scopes.get(id).map(Vec::as_slice).unwrap_or(&[]),
+                    app,
+                )
+        }
+        None => true,
+    }
+}
+
+fn plugin_tool_allowed(
+    name: &str,
+    owners: &HashMap<String, String>,
+    enabled_plugins: &[String],
+) -> bool {
+    match owners.get(name) {
+        Some(id) => enabled_plugins.iter().any(|p| p == id),
+        None => true,
+    }
+}
+
 /// 宿主 hostcall（pi.http）默认超时。
 const HOSTCALL_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -602,7 +634,8 @@ pub struct CompatEngine {
     /// Arc 共享：tools 服务面（ToolsPort）持有同一快照，插件变更后自动同步。
     pub tools: Arc<std::sync::Mutex<Vec<bm_loop::model::ToolDef>>>,
     /// 工具归属表（工具名 → 插件 id）：加载循环按"加载前后差集"填充。
-    /// 作用域过滤（tools_for_app）据此把插件工具限定到其生效的 APP。
+    /// 作用域过滤（tools_for_app）据此把插件工具限定到其生效的 APP；
+    /// 启停过滤（enabled_plugins）据此在禁用后立刻从模型面拿掉。
     tool_owners: std::sync::Mutex<HashMap<String, String>>,
     /// B6：已注册工具名快照（events getActiveTools 的数据面；加载完成后填入）。
     pub tool_names: std::sync::Mutex<Vec<String>>,
@@ -776,25 +809,30 @@ impl CompatEngine {
     /// 按会话场景（session.app）过滤插件工具面：工具归属插件的作用域
     /// （config.plugin_scopes 覆盖；空/缺失 = 公共）命中当前 app 才保留。
     /// 无归属记录的工具（历史快照等）按公共处理。
+    /// `enabled_plugins` 再裁一层：禁用/卸载后模型面立刻消失（审查 C P2）；
+    /// QuickJS 运行时仍可能留着已加载脚本，执行期另有 fail-closed。
     pub fn tools_for_app(
         &self,
         app: &str,
         plugin_scopes: &HashMap<String, Vec<String>>,
+        enabled_plugins: &[String],
     ) -> Vec<bm_loop::model::ToolDef> {
         let owners = self.tool_owners.lock().unwrap();
         self.tools
             .lock()
             .unwrap()
             .iter()
-            .filter(|t| match owners.get(&t.name) {
-                Some(id) => bm_core::config::scope_matches(
-                    plugin_scopes.get(id).map(Vec::as_slice).unwrap_or(&[]),
-                    app,
-                ),
-                None => true,
+            .filter(|t| {
+                plugin_tool_visible(&t.name, &owners, app, plugin_scopes, enabled_plugins)
             })
             .cloned()
             .collect()
+    }
+
+    /// 工具名是否属于当前仍启用的插件（无归属 = 非插件工具，放行给内置分派）。
+    pub fn plugin_tool_allowed(&self, name: &str, enabled_plugins: &[String]) -> bool {
+        let owners = self.tool_owners.lock().unwrap();
+        plugin_tool_allowed(name, &owners, enabled_plugins)
     }
 
     /// 增量加载当前配置里尚未加载的启用插件，并刷新工具快照
@@ -1083,6 +1121,8 @@ pub struct QuickJsToolExecutor {
     mcp_gate: Option<Arc<crate::mcp_gate::McpGate>>,
     /// 调度面（审查 2026-08-17 A-6）：set_wake 优先经 SchedulerPort。
     scheduler: Option<Arc<dyn bm_protocol::SchedulerPort>>,
+    /// 当前启用插件 id（审查 C P2）：执行期对已禁用插件工具 fail-closed。
+    enabled_plugins: Vec<String>,
 }
 
 impl QuickJsToolExecutor {
@@ -1100,7 +1140,13 @@ impl QuickJsToolExecutor {
             mcp: None,
             mcp_gate: None,
             scheduler: None,
+            enabled_plugins: Vec::new(),
         }
+    }
+
+    pub fn with_enabled_plugins(mut self, enabled: Vec<String>) -> Self {
+        self.enabled_plugins = enabled;
+        self
     }
 
     /// 挂事件日志（todo 工具用）。bm 引擎父进程路径调用；子进程不挂。
@@ -1177,6 +1223,16 @@ impl ToolExecutor for QuickJsToolExecutor {
                 meta: None,
             };
         }
+        // 禁用/卸载后执行期收回（审查 C P2）：模型若仍拿着旧工具名，拒绝执行。
+        if let Some(engine) = &self.engine
+            && !engine.plugin_tool_allowed(&req.name, &self.enabled_plugins)
+        {
+            return ToolOutcome {
+                ok: false,
+                output: format!("插件已禁用，工具 {} 不可用", req.name),
+                meta: None,
+            };
+        }
         let working_dir = self
             .engine
             .as_ref()
@@ -1249,7 +1305,7 @@ impl ToolExecutor for QuickJsToolExecutor {
                 let Some(mcp) = &self.mcp else {
                     return ToolOutcome {
                         ok: false,
-                        output: "MCP 插件未启用（无 mcp 配置或连接失败）".to_string(),
+                        output: "MCP 管理器未装配".to_string(),
                         meta: None,
                     };
                 };
@@ -1637,5 +1693,57 @@ mod tests {
         assert_eq!(td.name, "hello");
         assert_eq!(td.description, "greet");
         assert_eq!(td.input_schema, serde_json::json!({ "type": "object" }));
+    }
+
+    #[test]
+    fn disabled_plugin_tools_leave_model_surface() {
+        let mut owners = HashMap::new();
+        owners.insert("web_search".into(), "web-search".into());
+        owners.insert("web_fetch".into(), "web-search".into());
+        let scopes = HashMap::new();
+        let enabled = vec!["web-search".into()];
+        assert!(plugin_tool_visible(
+            "web_search",
+            &owners,
+            "chat",
+            &scopes,
+            &enabled
+        ));
+        assert!(plugin_tool_allowed("web_search", &owners, &enabled));
+        let none: Vec<String> = vec![];
+        assert!(!plugin_tool_visible(
+            "web_search",
+            &owners,
+            "chat",
+            &scopes,
+            &none
+        ));
+        assert!(!plugin_tool_allowed("web_search", &owners, &none));
+        // 内置手脚无归属，禁用插件名单不影响
+        assert!(plugin_tool_visible("read", &owners, "chat", &scopes, &none));
+        assert!(plugin_tool_allowed("read", &owners, &none));
+    }
+
+    #[test]
+    fn plugin_scope_still_filters_after_enabled_check() {
+        let mut owners = HashMap::new();
+        owners.insert("code_graph".into(), "code-graph".into());
+        let mut scopes = HashMap::new();
+        scopes.insert("code-graph".into(), vec!["coding".into()]);
+        let enabled = vec!["code-graph".into()];
+        assert!(plugin_tool_visible(
+            "code_graph",
+            &owners,
+            "coding",
+            &scopes,
+            &enabled
+        ));
+        assert!(!plugin_tool_visible(
+            "code_graph",
+            &owners,
+            "chat",
+            &scopes,
+            &enabled
+        ));
     }
 }

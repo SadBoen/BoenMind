@@ -105,9 +105,10 @@ pub struct AppState {
     /// 与插件引擎共享同一 PermissionStore（决策互认）。
     pub builtin_gate: Option<Arc<builtin_gate::BuiltinGate>>,
     /// MCP 官方插件（bm-mcp）：外部 MCP server 服务面（工具枚举/调用）。
-    /// None = 未配置 mcp（config.toml `mcp` 为空）。
+    /// 组合根始终持有管理器（零连接是合法空集）；None 仅表示启动装配失败。
     pub mcp: Option<Arc<dyn bm_mcp::McpService>>,
     /// MCP 工具权限门：mcp__ 工具经决策记忆+询问链（permissive 直放）。
+    /// 与 mcp 服务同寿命——空连接集也挂门，设置页连上第一个 server 即可询问。
     pub mcp_gate: Option<Arc<mcp_gate::McpGate>>,
 }
 
@@ -701,8 +702,10 @@ async fn serve_inner(
     // 多生态读取）→ 连接全部 server（dual-era 协商；单个失败不阻断，
     // 日志 warn 跳过）→ 服务面注册 kernel port "mcp"。工具进模型面在
     // build_loop_agent 注册段（经 AppState.mcp 传递）；权限门在 executor
-    // 侧（McpGate）。连接失败/配置为空 → (None, None)：零 mcp 工具、
-    // 零询问开销。
+    // 侧（McpGate）。
+    // 组合根始终持有管理器（审查 2026-08-17 架构文件轮 C P1）：零
+    // server 是合法空集，设置页可连接第一个 server，禁止按启动数据
+    // 把对象图省略成 None。
     let (mcp_service, mcp_gate) = {
         let manager = Arc::new(bm_mcp::McpClientManager::new());
         // 显式配置（config.toml）最高优先级；自动发现只补漏不覆盖
@@ -787,24 +790,23 @@ async fn serve_inner(
                 Err(err) => tracing::warn!(event = "bm.mcp_ts_unavailable", error = %err),
             }
         }
-        if manager.servers().await.is_empty() {
-            (None, None)
-        } else {
-            let service: Arc<dyn bm_mcp::McpService> = manager;
-            if let Some(kernel) = kernel.as_ref() {
-                kernel
-                    .ctx()
-                    .register_port("mcp", service.clone())
-                    .expect("运行期注册 mcp 面失败");
-            }
-            let gate = Arc::new(mcp_gate::McpGate::new(
-                mcp_permission_store,
-                session_streams.clone(),
-                permission_pending.clone(),
-                shared_config.clone(),
-            ));
-            (Some(service), Some(gate))
+        let service: Arc<dyn bm_mcp::McpService> = manager;
+        if let Some(kernel) = kernel.as_ref() {
+            kernel
+                .ctx()
+                .register_port("mcp", service.clone())
+                .expect("运行期注册 mcp 面失败");
         }
+        let gate = Arc::new(mcp_gate::McpGate::new(
+            mcp_permission_store,
+            session_streams.clone(),
+            permission_pending.clone(),
+            shared_config.clone(),
+        ));
+        if service.servers().is_empty() {
+            tracing::info!(event = "bm.mcp_idle", "MCP 管理器已装配（零连接，设置页可添加）");
+        }
+        (Some(service), Some(gate))
     };
 
     // 工具面（SERVICE_FACES #5）：compat 快照就绪后运行期注册——

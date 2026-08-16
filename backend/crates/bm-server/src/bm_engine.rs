@@ -297,6 +297,7 @@ fn build_loop_agent(
     thinking: Option<&str>,
     compaction: Option<bm_core::compaction::EffectiveCompaction>,
     plugin_scopes: &HashMap<String, Vec<String>>,
+    enabled_plugins: &[String],
     progress: Arc<std::sync::Mutex<String>>,
     // 专家工具子集（2026-08-16 接线）：None = 全部内置工具；
     // Some = 只注册命中子集的内置工具。插件/MCP 工具不受影响
@@ -397,7 +398,7 @@ fn build_loop_agent(
     if let Some(compat) = compat {
         // 作用域过滤（设置架构 §八）：插件工具只进其生效 APP 的会话工具面。
         // 快照在启动/插件变更后固化；重名拒绝是防呆（工具名是 call_id 关联键）
-        for tool in compat.tools_for_app(app, plugin_scopes) {
+        for tool in compat.tools_for_app(app, plugin_scopes, enabled_plugins) {
             let name = tool.name.clone();
             if let Err(err) = tools.register(tool) {
                 tracing::warn!(event = "bm.tool_register_failed", tool = %name, error = %err.message);
@@ -523,6 +524,7 @@ fn build_loop_agent(
                 .port::<dyn bm_protocol::SchedulerPort>("scheduler")
                 .ok();
             executor = executor.with_scheduler(scheduler);
+            executor = executor.with_enabled_plugins(enabled_plugins.to_vec());
             executor
         },
     ))
@@ -604,7 +606,7 @@ async fn get_or_create_loop_agent(
     // （[compaction] 配置 → 策略插件构造参数；enabled=false → None 不挂）
     // 专家接线（2026-08-16）：APP 绑定专家时，专家角色提示词替换基础
     // SYSTEM_PROMPT（正文为空则回落）；skills/custom/平台提示仍追加。
-    let (system_prompt, compaction, plugin_scopes, expert_tools, memory_bucket) = {
+    let (system_prompt, compaction, plugin_scopes, enabled_plugins, expert_tools, memory_bucket) = {
         let config = state.config.read().expect("config poisoned");
         let skills = bm_core::skills::enabled_skills_prompt(&config, app);
         let custom = config.custom_system_prompt.clone().unwrap_or_default();
@@ -645,6 +647,7 @@ async fn get_or_create_loop_agent(
             system_prompt,
             config.compaction.effective(&provider.id, model),
             config.plugin_scopes.clone(),
+            config.enabled_plugins.clone(),
             expert_tools,
             memory_bucket,
         )
@@ -665,6 +668,7 @@ async fn get_or_create_loop_agent(
         Some(thinking),
         compaction,
         &plugin_scopes,
+        &enabled_plugins,
         progress,
         expert_tools.as_deref(),
         memory_bucket,

@@ -26,7 +26,7 @@
 | scheduler | set_wake 优先 SchedulerPort（**仅管家启用时注册**） | 消费中（条件注册） |
 | tools | 已 register_port，快照与 compat 共享；TS 插件 lookup 工具时 | 已注册（插件 lookup 待接线） |
 | notify | 已 register_port（session_streams）；前端事件流/总线直推时 | 已注册（插件 lookup 待接线） |
-| mcp | `Arc<dyn bm_mcp::McpService>`，契约在 **bm-mcp** 不在 bm-protocol；`build_loop_agent` / McpGate。启动时零 server 则整面 None（审查 C P1） | 消费中（有连接时才注册） |
+| mcp | `Arc<dyn bm_mcp::McpService>`，契约在 **bm-mcp** 不在 bm-protocol；`build_loop_agent` / McpGate / 设置页 connect。组合根始终持有空管理器（2026-08-17 C P1 已修） | 消费中 |
 
 ## LoopHooks 挂点（12 个）
 

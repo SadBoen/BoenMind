@@ -59,7 +59,7 @@ pub async fn connect_server(
     let Some(mcp) = &state.mcp else {
         return Err(api_error(
             axum::http::StatusCode::SERVICE_UNAVAILABLE,
-            "MCP 插件未启用（bm-server 未配置 mcp）",
+            "MCP 管理器未装配（启动失败）",
         ));
     };
     // 同名覆盖：先断开（未连接时 disconnect 返回 Err，忽略）
@@ -70,6 +70,7 @@ pub async fn connect_server(
 
     // 持久化：合并进 config.mcp 数组（同名覆盖）后写盘
     persist_servers(&state, config).await?;
+    crate::bm_engine::invalidate_loop_agents(&state).await;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -85,12 +86,13 @@ pub async fn disconnect_server(
     let Some(mcp) = &state.mcp else {
         return Err(api_error(
             axum::http::StatusCode::SERVICE_UNAVAILABLE,
-            "MCP 插件未启用",
+            "MCP 管理器未装配（启动失败）",
         ));
     };
     mcp.disconnect_server(name)
         .await
         .map_err(|err| api_error(axum::http::StatusCode::BAD_REQUEST, err))?;
+    crate::bm_engine::invalidate_loop_agents(&state).await;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 

@@ -33,15 +33,15 @@ pub async fn set_plugin(
         bm_core::plugins::set_plugin_enabled(&mut config, &id, req.enabled)
             .map_err(api_error_from)?;
     }
-    // 启用 → 增量加载插件并失效会话 agent（当前对话下一条消息即见新工具）；
-    // 禁用无运行时卸载路径，工具面保留至服务重启（compat_engine.rs reload 注释）
-    if req.enabled {
-        if let Some(compat) = &state.compat {
-            let config = state.config.read().expect("config poisoned").clone();
-            compat.reload(&config).await;
-        }
-        crate::bm_engine::invalidate_loop_agents(&state).await;
+    // 启用 → 增量加载；禁用/卸载 → 不真卸载 QuickJS，但必须立刻
+    // invalidate，让下一回合按 enabled_plugins 重建工具面（审查 C P2）。
+    if req.enabled
+        && let Some(compat) = &state.compat
+    {
+        let config = state.config.read().expect("config poisoned").clone();
+        compat.reload(&config).await;
     }
+    crate::bm_engine::invalidate_loop_agents(&state).await;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -49,10 +49,12 @@ pub async fn uninstall_plugin(
     State(state): crate::SharedState,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let mut config = state.config.write().expect("config poisoned");
-    bm_core::plugins::uninstall_plugin(&mut config, &id)
-        .map_err(api_error_from)?;
-    drop(config);
+    {
+        let mut config = state.config.write().expect("config poisoned");
+        bm_core::plugins::uninstall_plugin(&mut config, &id)
+            .map_err(api_error_from)?;
+    }
+    crate::bm_engine::invalidate_loop_agents(&state).await;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
