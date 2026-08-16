@@ -12,8 +12,13 @@ User=boenmind
 Group=boenmind
 # 数据目录：BOENMIND_HOME 覆盖默认的 ~（见 bm-core::config::home_base）
 Environment=BOENMIND_HOME=/var/lib/boenmind
-# 监听所有网卡，局域网内浏览器直接访问 http://服务器IP:17321
-Environment=BOENMIND_BIND=0.0.0.0
+Environment=HOME=/var/lib/boenmind
+# 公网只走 nginx 反代，本机回环监听
+Environment=BOENMIND_BIND=127.0.0.1
+# 反代域名：CSRF/CORS 放行同源 Origin（逗号分隔）
+Environment=BOENMIND_PUBLIC_ORIGINS=https://bm.sadinsun.top
+# 可选：BOENMIND_TOKEN 等敏感项放这里（文件不存在则忽略）
+EnvironmentFile=-/etc/boenmind.env
 ExecStart=/usr/local/bin/bm-server
 Restart=always
 RestartSec=3

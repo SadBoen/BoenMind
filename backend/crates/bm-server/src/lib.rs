@@ -264,16 +264,21 @@ fn router(state: AppState) -> Router {
     router
 }
 
-/// 跨源 Origin 白名单：仅本机来源（浏览器本机页面 / Tauri 桌面壳 webview）。
-///
-/// - `http(s)://localhost:*`、`http(s)://127.0.0.1:*`、`http(s)://[::1]:*`：本地开发与桌面内嵌
-/// - `tauri://localhost`、`http(s)://tauri.localhost:*`：Tauri 2 webview（macOS/Linux 与 Windows）
-/// - 其余 Origin 一律拒绝：浏览器跨源响应不带 `Access-Control-Allow-Origin` 头，
-///   恶意网页读不到本地 API 响应（DNS rebinding / 同源场景由 BOENMIND_TOKEN 兜底）
-fn cors_origin_allowed(origin: &axum::http::HeaderValue) -> bool {
-    let Ok(origin) = origin.to_str() else {
-        return false;
-    };
+/// 服务器对外公开源（nginx 反代域名）。逗号分隔完整 Origin，
+/// 例如 `https://bm.sadinsun.top`。未设置则只放行本机来源。
+fn public_origins() -> Vec<String> {
+    std::env::var("BOENMIND_PUBLIC_ORIGINS")
+        .ok()
+        .map(|s| {
+            s.split(',')
+                .map(|x| x.trim().trim_end_matches('/').to_string())
+                .filter(|x| !x.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn origin_is_local(origin: &str) -> bool {
     if origin == "tauri://localhost" {
         return true;
     }
@@ -290,6 +295,25 @@ fn cors_origin_allowed(origin: &axum::http::HeaderValue) -> bool {
         rest.split(':').next().unwrap_or("")
     };
     matches!(host, "localhost" | "127.0.0.1" | "[::1]" | "tauri.localhost")
+}
+
+fn origin_is_public(origin: &str, extras: &[String]) -> bool {
+    let trimmed = origin.trim_end_matches('/');
+    extras.iter().any(|allowed| allowed == trimmed)
+}
+
+/// 跨源 Origin 白名单：本机来源 + 可选公开域名。
+///
+/// - `http(s)://localhost:*`、`http(s)://127.0.0.1:*`、`http(s)://[::1]:*`：本地开发与桌面内嵌
+/// - `tauri://localhost`、`http(s)://tauri.localhost:*`：Tauri 2 webview（macOS/Linux 与 Windows）
+/// - `BOENMIND_PUBLIC_ORIGINS`：服务器版反代域名（同源 SPA + API）
+/// - 其余 Origin 一律拒绝：浏览器跨源响应不带 `Access-Control-Allow-Origin` 头，
+///   恶意网页读不到本地 API 响应（DNS rebinding / 同源场景由 BOENMIND_TOKEN 兜底）
+fn cors_origin_allowed(origin: &axum::http::HeaderValue) -> bool {
+    let Ok(origin) = origin.to_str() else {
+        return false;
+    };
+    origin_is_local(origin) || origin_is_public(origin, &public_origins())
 }
 
 #[cfg(test)]
@@ -331,6 +355,15 @@ mod tests {
     }
 
     #[test]
+    fn public_origin_helpers_match_exact_origin() {
+        let extras = vec!["https://bm.sadinsun.top".to_string()];
+        assert!(origin_is_public("https://bm.sadinsun.top", &extras));
+        assert!(origin_is_public("https://bm.sadinsun.top/", &extras));
+        assert!(!origin_is_public("https://evil.example.com", &extras));
+        assert!(!origin_is_local("https://bm.sadinsun.top"));
+    }
+
+    #[test]
     fn referer_allows_local_sources() {
         for ok in [
             "http://localhost:5173/",
@@ -345,6 +378,15 @@ mod tests {
                 "应放行: {ok}"
             );
         }
+    }
+
+    #[test]
+    fn referer_matches_public_origin_prefix() {
+        let extras = vec!["https://bm.sadinsun.top".to_string()];
+        assert!(extras.iter().any(|origin| {
+            let path = "https://bm.sadinsun.top/settings";
+            path == origin.as_str() || path.starts_with(&format!("{origin}/"))
+        }));
     }
 
     #[test]
@@ -447,14 +489,20 @@ async fn origin_middleware(
     next.run(request).await
 }
 
-/// Referer 本机白名单判定（与 cors_origin_allowed 同源：localhost/127.0.0.1/[::1]/
-/// tauri.localhost）。Referer 含路径，host 提取规则与 CORS 版一致。
+/// Referer 白名单判定（与 cors_origin_allowed 同源：本机 + 公开域名）。
+/// Referer 含路径，本机 host 提取规则与 CORS 版一致；公开源按 Origin 前缀匹配。
 fn referer_allowed(referer: &axum::http::HeaderValue) -> bool {
     let Ok(referer) = referer.to_str() else {
         return false;
     };
     if referer.starts_with("tauri://") {
         return referer.starts_with("tauri://localhost");
+    }
+    if public_origins()
+        .iter()
+        .any(|origin| referer == origin || referer.starts_with(&format!("{origin}/")))
+    {
+        return true;
     }
     let Some(rest) = referer
         .strip_prefix("http://")

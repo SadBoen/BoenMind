@@ -1,0 +1,74 @@
+# 只打 Linux x86_64 服务器包（embed 前端），不跑 macOS/Windows/Docker。
+# 给公网部署用：比整轮 Release 快一截。
+#
+# 触发：Actions 页手动 Run，或推 tag server-build-*
+# 产物：boenmind-server_<ver>_linux-x86_64.tar.gz
+
+name: Linux 服务器包
+
+on:
+  workflow_dispatch: {}
+  push:
+    tags: ["server-build-*"]
+
+concurrency:
+  group: linux-server-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "24"
+  PNPM_VERSION: "11"
+
+jobs:
+  linux-x64:
+    name: Linux x86_64 服务器包
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2.9.1
+        with:
+          workspaces: backend
+
+      - name: 构建前端（内嵌进二进制的 dist）
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile && pnpm build
+
+      - name: 构建 x86_64 服务器版
+        working-directory: backend
+        run: cargo build --release -p bm-server --features embed
+
+      - name: 打包 tar.gz
+        run: |
+          set -euxo pipefail
+          VER="$(node -p "require('./frontend/src-tauri/tauri.conf.json').version")"
+          STAGE="boenmind-server_${VER}_linux-x86_64"
+          mkdir -p "$STAGE" dist-linux
+          cp backend/target/release/bm-server "$STAGE/bm-server"
+          cp packaging/linux/install.sh "$STAGE/install.sh"
+          cp packaging/linux/boenmind.service "$STAGE/boenmind.service"
+          cp packaging/linux/README.md "$STAGE/README.md"
+          sed -i "s/__VERSION__/${VER}/" "$STAGE/install.sh"
+          chmod +x "$STAGE/install.sh" "$STAGE/bm-server"
+          tar czf "dist-linux/${STAGE}.tar.gz" "$STAGE"
+          ls -lh dist-linux/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-server-x86_64
+          path: dist-linux/*.tar.gz
+          if-no-files-found: error

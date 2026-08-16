@@ -144,8 +144,9 @@ docker build -t ghcr.io/sadboen/boenmind:v0.1.1 .
 | 变量 | 默认 | 说明 |
 |---|---|---|
 | `BOENMIND_PORT` | `17321` | 端口 |
-| `BOENMIND_BIND` | `127.0.0.1` | 监听地址，服务器部署设为 `0.0.0.0` |
+| `BOENMIND_BIND` | `127.0.0.1` | 监听地址；经 nginx 反代时保持回环，直连公网才设 `0.0.0.0` |
 | `BOENMIND_HOME` | `~` | 数据目录基础（`.boenmind` 与工作文件夹都在其下） |
+| `BOENMIND_PUBLIC_ORIGINS` | 空 | 公网 CSRF/CORS 白名单，逗号分隔完整 Origin，例如 `https://bm.sadinsun.top` |
 | `BOENMIND_TOKEN` | 无 | 访问令牌：设置后所有 `/api` 请求需带 `Authorization: Bearer <token>`，前端首次访问会弹出令牌输入框；桌面版无需设置 |
 
 > ⚠️ 安全：默认**无登录认证**，配置中的 API 密钥对能访问该端口的任何人可见。
