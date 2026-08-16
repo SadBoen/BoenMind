@@ -101,7 +101,7 @@ export function ChatPane({ variant = "full", scene = "chat" }: ChatPaneProps) {
       {sessionsOpen &&
         (narrow ? (
           // 会话列表宽度：2026-08-16 用户定调（当前基础上 +1/5 = 19.2rem）
-          <div className="absolute inset-y-0 left-0 z-20 w-[19.2rem] border-r bg-popover shadow-lg">
+          <div className="absolute inset-y-0 left-0 z-20 w-[19.2rem] border-r bg-sidebar shadow-lg">
             <SessionList scene={scene} />
           </div>
         ) : (

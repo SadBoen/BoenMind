@@ -36,35 +36,41 @@ export interface FluidParams {
   colC: [number, number, number];
 }
 
-/** 深蓝液面（暗色主题默认） */
-export const FLUID_DARK: FluidParams = {
-  scale: 10,
-  flow: 0.8,
-  swirl: 0.26,
-  swirlIters: 6,
-  speed: 0.16,
-  decay: 0.96,
-  colA: hex("#0e2a5c"),
-  colB: hex("#7fa8e8"),
-  colC: hex("#e3eeff"),
-};
+/** hsl → rgb（0-1） */
+function hslToRgb(hDeg: number, s: number, l: number): [number, number, number] {
+  const h = ((hDeg % 360) + 360) % 360 / 360;
+  if (s === 0) return [l, l, l];
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  const conv = (t: number) => {
+    let tt = t;
+    if (tt < 0) tt += 1;
+    if (tt > 1) tt -= 1;
+    if (tt < 1 / 6) return p + (q - p) * 6 * tt;
+    if (tt < 1 / 2) return q;
+    if (tt < 2 / 3) return p + (q - p) * (2 / 3 - tt) * 6;
+    return p;
+  };
+  return [conv(h + 1 / 3), conv(h), conv(h - 1 / 3)];
+}
 
-/** 蓝灰液面（亮色主题默认，贴近官网观感） */
-export const FLUID_LIGHT: FluidParams = {
-  scale: 10,
-  flow: 0.8,
-  swirl: 0.26,
-  swirlIters: 6,
-  speed: 0.16,
-  decay: 0.96,
-  colA: hex("#8aa3d6"),
-  colB: hex("#ffffff"),
-  colC: hex("#ffffff"),
-};
-
-function hex(value: string): [number, number, number] {
-  const n = parseInt(value.slice(1), 16);
-  return [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((c) => c / 255) as [number, number, number];
+/**
+ * 按色调生成流体观感（波光颜色跟随壁纸预设/皮肤色调）：
+ * 暗色 = 深底 + 中亮同色 + 淡色高光；亮色 = 中底 + 淡同色 + 白高光。
+ * 强度刻意压淡（2026-08-16 用户反馈"太浓"）：混色阈值收窄 + 中亮色降明度。
+ */
+export function fluidFromHue(hue: number, dark: boolean): FluidParams {
+  return {
+    scale: 8,
+    flow: 0.7,
+    swirl: 0.22,
+    swirlIters: 6,
+    speed: 0.16,
+    decay: 0.96,
+    colA: dark ? hslToRgb(hue, 0.58, 0.15) : hslToRgb(hue, 0.38, 0.74),
+    colB: dark ? hslToRgb(hue, 0.5, 0.44) : hslToRgb(hue, 0.3, 0.9),
+    colC: dark ? hslToRgb(hue, 0.25, 0.78) : [1, 1, 1],
+  };
 }
 
 const VERT = `#version 300 es
@@ -141,7 +147,7 @@ void main() {
 
   float ang = vnoise(p + t * .7) * 6.2831853;
   float mag = vnoise(p * 2.1 - t * .6);
-  p += (uFlow + wake * 1.2) * mag * vec2(cos(ang), sin(ang));
+  p += (uFlow + wake * 0.9) * mag * vec2(cos(ang), sin(ang));
   p += wakeDir * wake * .12;
 
   for (int i = 1; i <= 8; i++) {
@@ -153,8 +159,8 @@ void main() {
 
   float m = .5 + .5 * sin(p.x * 3.1) * cos(p.y * 2.7);
   float g = vnoise(p * 1.7 + t * .3);
-  vec3 col = mix(uColA, uColB, smoothstep(.15, .75, m));
-  col = mix(col, uColC, smoothstep(.42, .95, m * g));
+  vec3 col = mix(uColA, uColB, smoothstep(.22, .82, m));
+  col = mix(col, uColC, smoothstep(.52, .98, m * g));
   outColor = vec4(col, 1.);
 }
 `;
@@ -241,6 +247,12 @@ export function attachFluid(
     return { fbo, tex };
   };
 
+  const destroyTarget = (t: { fbo: WebGLFramebuffer; tex: WebGLTexture } | null) => {
+    if (!t) return;
+    gl.deleteFramebuffer(t.fbo);
+    gl.deleteTexture(t.tex);
+  };
+
   let width = 0;
   let height = 0;
   let flowW = 0;
@@ -255,8 +267,13 @@ export function attachFluid(
     height = Math.max(1, Math.round(canvas.clientHeight * dpr));
     canvas.width = width;
     canvas.height = height;
-    flowW = Math.max(1, Math.round(width / 4));
-    flowH = Math.max(1, Math.round(height / 4));
+    const nextW = Math.max(1, Math.round(width / 4));
+    const nextH = Math.max(1, Math.round(height / 4));
+    if (nextW === flowW && nextH === flowH) return;
+    flowW = nextW;
+    flowH = nextH;
+    destroyTarget(targetA);
+    destroyTarget(targetB);
     targetA = makeTarget(flowW, flowH);
     targetB = makeTarget(flowW, flowH);
   };
@@ -357,6 +374,11 @@ export function attachFluid(
       cancelAnimationFrame(raf);
       ro.disconnect();
       window.removeEventListener("pointermove", onMove);
+      destroyTarget(targetA);
+      destroyTarget(targetB);
+      gl.deleteBuffer(quad);
+      gl.deleteProgram(stirProg);
+      gl.deleteProgram(dispProg);
     },
   };
 }

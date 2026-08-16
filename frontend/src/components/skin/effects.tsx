@@ -17,8 +17,8 @@
 import { useEffect, useRef } from "react";
 import { useTheme } from "next-themes";
 import { useAppStore } from "@/stores/app-store";
-import { attachFluid, FLUID_DARK, FLUID_LIGHT } from "@/components/skin/fluid-gl";
-import { cn } from "@/lib/utils";
+import { attachFluid, fluidFromHue, type FluidHandle } from "@/components/skin/fluid-gl";
+import { wallpaperById } from "@/lib/skin";
 
 /** CSS 兜底流光层：柔光斑漂移胀缩（transform/opacity 动画=合成器线程，
  *  rAF 冻结也流动）。平时暂停隐藏，仅 data-frozen / data-fallback 时启用。 */
@@ -48,20 +48,32 @@ const BLOBS = [
   { left: "34%", top: "6%", width: "30vw", height: "24vh", color: "rgba(255,255,255,0.10)", dx: "-6vw", dy: "6vh", dur: "26s" },
 ] as const;
 
-/** 蓝色波纹特效层：WebGL 流体（主）+ CSS 流光兜底 + 冻结看门狗 */
+/** 蓝色波纹特效层：WebGL 流体（主）+ CSS 流光兜底 + 冻结看门狗。
+ *  波光颜色跟随壁纸预设/皮肤色调（青蓝=190 日落=25 极光=155 星云=250，
+ *  自定义时走皮肤 hue 参数）——换壁纸/主题只切 uniform，不重建 GL。 */
 export function EffectWave() {
   const { resolvedTheme } = useTheme();
   const reduceMotion = useAppStore((s) => s.reduceMotion);
+  const skinWallpaper = useAppStore((s) => s.skinWallpaper);
+  const skinHue = useAppStore((s) => s.skinParams.hue);
   const hostRef = useRef<HTMLDivElement>(null);
   const glRef = useRef<HTMLCanvasElement>(null);
+  const handleRef = useRef<FluidHandle | null>(null);
   const dark = resolvedTheme === "dark";
+  /** 当前生效色调：壁纸预设推荐色调 > 皮肤 hue 参数（默认 250 蓝紫） */
+  const hue = wallpaperById(skinWallpaper)?.hue ?? skinHue ?? 250;
 
   useEffect(() => {
     const host = hostRef.current;
     const canvas = glRef.current;
     if (!host || !canvas) return;
 
-    const handle = attachFluid(canvas, dark ? FLUID_DARK : FLUID_LIGHT, reduceMotion);
+    const initialHue =
+      wallpaperById(useAppStore.getState().skinWallpaper)?.hue ??
+      useAppStore.getState().skinParams.hue ??
+      250;
+    const handle = attachFluid(canvas, fluidFromHue(initialHue, dark), reduceMotion);
+    handleRef.current = handle;
     if (!handle) {
       // WebGL 不可用：常驻 CSS 兜底层
       host.dataset.fallback = "1";
@@ -91,25 +103,32 @@ export function EffectWave() {
     return () => {
       window.clearInterval(timer);
       handle.dispose();
+      handleRef.current = null;
     };
-  }, [dark, reduceMotion]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 挂载/静态契约切换才重建 GL；配色变化走下方 setParams
+  }, [reduceMotion]);
+
+  // 配色热更（主题明暗 / 壁纸色调），仅切 uniform
+  useEffect(() => {
+    handleRef.current?.setParams(fluidFromHue(hue, dark));
+  }, [hue, dark]);
 
   return (
     <div ref={hostRef} aria-hidden className="bw-host">
       <style>{FALLBACK_CSS}</style>
-      {/* CSS 流光兜底层（合成器动画；平时隐藏暂停） */}
+      {/* CSS 流光兜底层（合成器动画；平时隐藏暂停；色调跟随） */}
       <div
         className="bw-fallback"
         style={{
           background: dark
-            ? "linear-gradient(180deg, #081a3d, #0d3d85)"
-            : "linear-gradient(180deg, #bcd7f8, #5d97e6)",
+            ? `linear-gradient(180deg, hsl(${hue} 58% 14%), hsl(${hue} 52% 34%))`
+            : `linear-gradient(180deg, hsl(${hue} 45% 80%), hsl(${hue} 50% 62%))`,
         }}
       >
         {BLOBS.map((b, i) => (
           <div
             key={i}
-            className={cn("bw-blob")}
+            className="bw-blob"
             style={
               {
                 left: b.left,

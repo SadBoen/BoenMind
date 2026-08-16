@@ -42,6 +42,12 @@ export default function App() {
     if (config?.theme) setTheme(config.theme);
   }, [config?.theme, setTheme]);
 
+  // 背景特效状态挂根元素（glass 皮肤 CSS 据此封顶面板模糊，波光透出可感）
+  const backgroundEffect = useAppStore((s) => s.backgroundEffect);
+  useEffect(() => {
+    document.documentElement.dataset.bgEffect = backgroundEffect;
+  }, [backgroundEffect]);
+
   // 启动加载：外观恢复 + 首拉（health/配置/会话）；health 轮询走统一节奏（离线降频）
   useEffect(() => {
     // 全局外观：字体档位 + 强调色/减少动画 + 皮肤（挂载恢复）

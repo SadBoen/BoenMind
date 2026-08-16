@@ -1,3 +1,4 @@
+import "@/lib/appearance-deeplink"; // 外观深链：必须最先执行（皮肤/特效状态预置）
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { ThemeProvider } from "next-themes";
