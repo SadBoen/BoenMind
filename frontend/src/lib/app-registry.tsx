@@ -39,7 +39,6 @@ import { SkillsSettings } from "@/components/settings/SkillsSettings";
 import { StewardSettings } from "@/components/settings/StewardSettings";
 import { WorkspaceSettings } from "@/components/settings/WorkspaceSettings";
 import { useAppStore } from "@/stores/app-store";
-import { cn } from "@/lib/utils";
 import { FolderOpen } from "lucide-react";
 
 /** 每软件 APP 的专属设置页（AppSettings 按 appId 渲染） */
@@ -300,36 +299,16 @@ export const SETTINGS: Record<SettingsTab, SettingsEntry> = {
   },
 };
 
-/** 设置主面板：按当前 tab 渲染对应设置页（带滚动容器）+ 右上角分级开关 */
+/** 设置主面板：按当前 tab 渲染对应设置页（带滚动容器）。
+ * 2026-08-16 设计定调：标准/资深切换器移入「关于」页（不易找到、
+ * 开启即锁定），此处不再显示；滚动容器加底部留白，防最后内容
+ * 被状态栏遮挡。 */
 export function SettingsPage() {
-  const { t } = useTranslation();
   const settingsTab = useAppStore((s) => s.settingsTab);
-  const settingsTier = useAppStore((s) => s.settingsTier);
-  const setSettingsTier = useAppStore((s) => s.setSettingsTier);
   const { component: Page } = SETTINGS[settingsTab];
   return (
-    <div className="h-full min-w-0 overflow-y-auto bg-background">
+    <div className="h-full min-w-0 overflow-y-auto bg-background pb-10">
       <div className="mx-auto max-w-3xl px-6 py-6">
-        <div className="mb-4 flex items-center justify-end gap-1.5">
-          <span className="text-xs text-muted-foreground">{t("settings.tier.label")}</span>
-          <div className="flex items-center rounded-lg border p-0.5">
-            {(["basic", "expert"] as const).map((tier) => (
-              <button
-                key={tier}
-                type="button"
-                onClick={() => setSettingsTier(tier)}
-                className={cn(
-                  "rounded-md px-2 py-0.5 text-xs transition-colors",
-                  settingsTier === tier
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {t(`settings.tier.${tier}`)}
-              </button>
-            ))}
-          </div>
-        </div>
         <Page />
       </div>
     </div>

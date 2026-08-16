@@ -162,6 +162,9 @@ pub struct StreamHooks {
     /// 角色注入器（角色定义插件的宿主挂点，roles.rs）：on_request 追加
     /// 当前激活角色到 system 段。无内部状态，直接持有。
     role: Option<crate::roles::RoleInjector>,
+    /// 会话记忆桶（专家接线 2026-08-16）：APP 绑定专家 → 专家同名桶；
+    /// 未绑定 = 默认桶（facts）。注入时按桶取记忆（角色记忆互不污染）。
+    bucket: String,
 }
 
 impl StreamHooks {
@@ -169,6 +172,7 @@ impl StreamHooks {
         progress: Arc<std::sync::Mutex<String>>,
         memory: Option<Arc<dyn bm_protocol::MemoryPort>>,
         role: Option<crate::roles::RoleInjector>,
+        bucket: String,
     ) -> Self {
         Self {
             tx: std::sync::Mutex::new(None),
@@ -176,6 +180,7 @@ impl StreamHooks {
             progress,
             memory,
             role,
+            bucket,
         }
     }
 
@@ -224,10 +229,11 @@ impl StreamHooks {
 
 impl LoopHooks for StreamHooks {
     fn on_request(&mut self, _ctx: &RequestCtx, payload: &mut serde_json::Value) {
-        // 记忆插件注入（§6.1 最小实现）：facts 作为追加 system 段进模型请求
-        //（经 memory 服务面——全局单例，审查 P2-2）
+        // 记忆插件注入（§6.1 最小实现 + 2026-08-16 记忆桶）：facts 作为
+        // 追加 system 段进模型请求（经 memory 服务面——全局单例，审查 P2-2）；
+        // 会话绑定专家时按专家桶注入（角色记忆互不污染）
         if let Some(memory) = &self.memory {
-            memory.inject_into_payload(payload);
+            memory.inject_bucket(&self.bucket, payload);
         }
         // 角色注入（角色定义插件宿主挂点）：当前激活角色 prompt 追加 system 段
         if let Some(role) = &self.role {
@@ -292,6 +298,12 @@ fn build_loop_agent(
     compaction: Option<bm_core::compaction::EffectiveCompaction>,
     plugin_scopes: &HashMap<String, Vec<String>>,
     progress: Arc<std::sync::Mutex<String>>,
+    // 专家工具子集（2026-08-16 接线）：None = 全部内置工具；
+    // Some = 只注册命中子集的内置工具。插件/MCP 工具不受影响
+    // （它们由作用域管理，不与专家工具面双重机制）。
+    expert_tools: Option<&[String]>,
+    // 会话记忆桶（专家接线）：未绑定专家 = 默认桶。
+    memory_bucket: String,
 ) -> Result<BmLoopAgent, (StatusCode, String)> {
     // 内核（v0.21 接线）：事件日志与压缩服务都从 kernel 取——事件日志
     // 不可用时内核也不存在（同一开关）
@@ -328,8 +340,14 @@ fn build_loop_agent(
     };
     let mut tools = bm_loop::ToolRegistry::new();
     // B6：内置工具集 schema 进模型可见面（对齐 pi BUILTIN_TOOL_NAMES 全开），
-    // 执行侧 QuickJsToolExecutor 按名分派到 BuiltinTools
+    // 执行侧 QuickJsToolExecutor 按名分派到 BuiltinTools。
+    // 专家工具子集：命中才注册（read/write/bash 等按专家 tools 过滤）
     for tool in crate::builtin_tools::BuiltinTools::definitions() {
+        if let Some(list) = expert_tools
+            && !list.iter().any(|n| n == &tool.name)
+        {
+            continue;
+        }
         if let Err(err) = tools.register(tool.clone()) {
             tracing::warn!(event = "bm.tool_register_failed", tool = %tool.name, error = %err.message);
         }
@@ -412,8 +430,8 @@ fn build_loop_agent(
                 "memory 服务不可用，回落每会话本地实例",
             );
             Some(Arc::new(bm_memory::MemoryPortAdapter(Arc::new(
-                std::sync::Mutex::new(bm_memory::MemoryFilePlugin::open(
-                    bm_core::config::app_dir().join("memory").join("facts.md"),
+                std::sync::Mutex::new(bm_memory::MemoryFilePlugin::open_dir(
+                    bm_core::config::app_dir().join("memory"),
                     20,
                 )),
             ))))
@@ -424,7 +442,7 @@ fn build_loop_agent(
         bm_core::config::app_dir().join(crate::roles::ROLES_FILE),
     );
     Ok(ReactLoopAgent::new(
-        StreamHooks::new(progress, memory, Some(role)),
+        StreamHooks::new(progress, memory, Some(role), memory_bucket),
         tools,
         bm_kernel::EventLog::new(kernel.event_store()),
         SessionId::new(session_id),
@@ -567,24 +585,51 @@ async fn get_or_create_loop_agent(
     // 系统提示拼接（与 pi 路径同构：SYSTEM_PROMPT + skills + custom；
     // 管家会话再追管家职责段——Steward 轮）+ 压缩参数换算
     // （[compaction] 配置 → 策略插件构造参数；enabled=false → None 不挂）
-    let (system_prompt, compaction, plugin_scopes) = {
+    // 专家接线（2026-08-16）：APP 绑定专家时，专家角色提示词替换基础
+    // SYSTEM_PROMPT（正文为空则回落）；skills/custom/平台提示仍追加。
+    let (system_prompt, compaction, plugin_scopes, expert_tools, memory_bucket) = {
         let config = state.config.read().await;
         let skills = bm_core::skills::enabled_skills_prompt(&config, app);
         let custom = config.custom_system_prompt.clone().unwrap_or_default();
-        let base = if skills.is_empty() && custom.is_empty() {
-            bm_core::agent::SYSTEM_PROMPT.to_string()
-        } else {
-            format!("{}{}{}", bm_core::agent::SYSTEM_PROMPT, skills, custom)
+        // 绑定专家的角色提示词（正文替换基础系统提示）
+        let expert = config
+            .apps
+            .get(app)
+            .and_then(|p| p.expert.as_ref())
+            .and_then(|id| bm_core::experts::read_expert(id).ok());
+        let role_prompt = expert
+            .as_ref()
+            .map(|e| e.system_prompt.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let base = match role_prompt {
+            Some(role) => format!("{role}{skills}{custom}"),
+            None if skills.is_empty() && custom.is_empty() => {
+                bm_core::agent::SYSTEM_PROMPT.to_string()
+            }
+            None => format!("{}{}{}", bm_core::agent::SYSTEM_PROMPT, skills, custom),
         };
         let system_prompt = if is_steward_session {
             format!("{base}{}{}", PLATFORM_HINT, crate::steward::STEWARD_SYSTEM_PROMPT)
         } else {
             format!("{base}{}", PLATFORM_HINT)
         };
+        let expert_tools = expert.as_ref().and_then(|e| e.tools.clone());
+        // 会话记忆桶：绑定专家 → 专家桶（显式 memory 字段优先，否则专家名）；
+        // 未绑定 → 默认桶（facts）
+        let memory_bucket = expert
+            .as_ref()
+            .map(|e| {
+                e.memory
+                    .clone()
+                    .unwrap_or_else(|| e.name.clone())
+            })
+            .unwrap_or_else(|| bm_memory::DEFAULT_BUCKET.to_string());
         (
             system_prompt,
             config.compaction.effective(&provider.id, model),
             config.plugin_scopes.clone(),
+            expert_tools,
+            memory_bucket,
         )
     };
     let agent = build_loop_agent(
@@ -604,6 +649,8 @@ async fn get_or_create_loop_agent(
         compaction,
         &plugin_scopes,
         progress,
+        expert_tools.as_deref(),
+        memory_bucket,
     )?;
     let arc = Arc::new(Mutex::new(agent));
     let serial = Arc::new(tokio::sync::Mutex::new(()));
@@ -659,12 +706,31 @@ pub async fn chat_bm(
     model_override: Option<String>,
     thinking_override: Option<String>,
 ) -> Response {
-    // 解析提供商与模型（与 pi 路径同规则：请求级 > 会话级 > 默认）
+    // 解析提供商与模型（请求级 > 会话级 > 专家绑定 > 默认）。
+    // 专家接线（2026-08-16）：APP 绑定专家且带 model（provider::model）时，
+    // 该 APP 会话默认按专家的提供商/模型跑；用户显式切换（请求/会话级）
+    // 仍优先——专家的模型是默认不是强制。
+    let expert_model: Option<String> = {
+        let config = state.config.read().await;
+        config
+            .apps
+            .get(&session.app)
+            .and_then(|p| p.expert.as_ref())
+            .and_then(|id| bm_core::experts::read_expert(id).ok())
+            .and_then(|e| e.model)
+    };
+    let expert_provider = expert_model
+        .as_deref()
+        .and_then(|m| m.split_once("::"))
+        .map(|(p, _)| p.to_string());
     let provider = {
         let config = state.config.read().await;
         match bm_core::config::resolve_provider(
             &config,
-            provider_override.as_deref().or(session.provider_id.as_deref()),
+            provider_override
+                .as_deref()
+                .or(session.provider_id.as_deref())
+                .or(expert_provider.as_deref()),
         )
         .cloned()
         .ok_or_else(|| {
@@ -677,10 +743,18 @@ pub async fn chat_bm(
             Err((status, msg)) => return crate::api_error(status, msg).into_response(),
         }
     };
+    let expert_model_name = expert_model.as_deref().map(|m| {
+        m.split_once("::")
+            .map(|(_, name)| name.to_string())
+            .unwrap_or_else(|| m.to_string())
+    });
     let model = {
         match bm_core::config::resolve_model(
             &provider,
-            model_override.as_deref().or(session.model.as_deref()),
+            model_override
+                .as_deref()
+                .or(session.model.as_deref())
+                .or(expert_model_name.as_deref()),
         )
         .ok_or_else(|| {
             (
@@ -1448,7 +1522,7 @@ mod tests {
 
     #[tokio::test]
     async fn stream_hooks_forwards_and_detects_disconnect() {
-        let hooks = StreamHooks::new(Arc::new(std::sync::Mutex::new(String::new())), None, None);
+        let hooks = StreamHooks::new(Arc::new(std::sync::Mutex::new(String::new())), None, None, bm_memory::DEFAULT_BUCKET.to_string());
         let (tx, mut rx) = mpsc::unbounded_channel::<AgentStreamEvent>();
         let (cancel_tx, cancel_rx) = watch::channel(false);
         hooks.attach(tx, cancel_tx);

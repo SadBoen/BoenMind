@@ -266,6 +266,7 @@ mod tests {
             Arc::new(std::sync::Mutex::new(String::new())),
             Some(Arc::new(MemoryPortAdapter(memory)) as Arc<dyn MemoryPort>),
             None,
+            bm_memory::DEFAULT_BUCKET.to_string(),
         );
 
         let mut payload = serde_json::json!({
@@ -298,6 +299,7 @@ mod tests {
             Arc::new(std::sync::Mutex::new(String::new())),
             Some(Arc::new(MemoryPortAdapter(memory)) as Arc<dyn MemoryPort>),
             None,
+            bm_memory::DEFAULT_BUCKET.to_string(),
         );
 
         let mut payload = serde_json::json!({

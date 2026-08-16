@@ -127,6 +127,19 @@ pub trait MemoryPort: Send + Sync {
 
     /// 把记忆注入块追加进模型请求 payload 的 system 段（无则插入首条）。
     fn inject_into_payload(&self, payload: &mut serde_json::Value);
+
+    /// 记住一条事实到指定记忆桶（默认实现 = 默认桶，同 remember）。
+    /// 记忆桶（2026-08-16 专家接线）：专家模板自动绑定同名桶，
+    /// 删除专家保留桶（记忆资产），使用记录见 experts 模块 usage.json。
+    fn remember_to(&self, _bucket: &str, fact: String) {
+        self.remember(fact);
+    }
+
+    /// 把指定记忆桶的注入块追加进 payload 的 system 段
+    /// （默认实现 = 默认桶，同 inject_into_payload）。
+    fn inject_bucket(&self, _bucket: &str, payload: &mut serde_json::Value) {
+        self.inject_into_payload(payload);
+    }
 }
 
 /// 设置面（插件设置存取 + secret 掩码语义，SERVICE_FACES 图纸 #6）。

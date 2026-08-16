@@ -249,9 +249,9 @@ pub fn ensure_builtin_agents() -> Result<(), std::io::Error> {
     fs::create_dir_all(&dir)?;
     let builtins: [(&str, &str); 4] = [
         ("default", DEFAULT_AGENT_DEFINITION),
-        ("architect", ARCHITECT_AGENT_DEFINITION),
-        ("coder", CODER_AGENT_DEFINITION),
-        ("reviewer", REVIEWER_AGENT_DEFINITION),
+        ("coding-architect", ARCHITECT_AGENT_DEFINITION),
+        ("coding-coder", CODER_AGENT_DEFINITION),
+        ("coding-reviewer", REVIEWER_AGENT_DEFINITION),
     ];
     for (name, content) in builtins {
         let path = dir.join(format!("{name}.md"));
@@ -290,7 +290,7 @@ tools: read,bash,edit,write,grep,find,ls,hashline_edit
 
 /// 编程专家预置①：架构师（方案与设计，只读 + 写方案文档）
 const ARCHITECT_AGENT_DEFINITION: &str = r#"---
-name: architect
+name: coding-architect
 description: 架构师：需求拆解、方案设计、代码结构决策与技术评审。用于编程 APP 的设计与规划任务
 tools: read,grep,find,ls,write
 ---
@@ -309,7 +309,7 @@ tools: read,grep,find,ls,write
 
 /// 编程专家预置②：码农（按方案实现，全工具面）
 const CODER_AGENT_DEFINITION: &str = r#"---
-name: coder
+name: coding-coder
 description: 码农：按方案实现代码、修 bug（全工具面，写完跑构建/测试验证）
 tools: read,bash,edit,write,grep,find,ls,hashline_edit
 ---
@@ -328,7 +328,7 @@ tools: read,bash,edit,write,grep,find,ls,hashline_edit
 
 /// 编程专家预置③：审查者（质量把关，只读 + 跑测试）
 const REVIEWER_AGENT_DEFINITION: &str = r#"---
-name: reviewer
+name: coding-reviewer
 description: 审查者：代码审查、测试验证与质量报告（只读 + 跑测试/静态检查）
 tools: read,grep,find,ls,bash
 ---

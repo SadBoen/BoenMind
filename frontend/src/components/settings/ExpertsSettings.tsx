@@ -1,20 +1,35 @@
 /**
  * 专家预设页（设置架构 §六）：管家派给 APP 的"工作人格"管理。
  * 专家与 subagent 角色同池（~/.boenmind/agents/*.md）——子代理派工与
- * APP 专家读同一批人。预置（default/architect/coder/reviewer）禁删。
+ * APP 专家读同一批人。预置（coding-* 系列与 default）禁删。
  *
- * 专家 = 角色提示词 + 模型 + 工具子集 + 扩展子集 + 记忆桶。
+ * 2026-08-16 设计定调：
+ * - 专家 = 模板（非实例），同一模板可派多个 Agent（码农一号/二号）；
+ * - 名称统一 APP 前缀（coding-architect…），名称即描述（无 description 字段）；
+ * - 模型下拉选择（按提供商分组，同聊天页）；工具子集复选；
+ * - 记忆桶自动绑定 = 专家名（用户不关心命名），删除专家保留桶；
+ * - 扩展子集并入作用域机制（插件/Skills 列表徽标），表单不再出现。
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2, Pencil, Plus, Trash2, Users } from "lucide-react";
 import { toast } from "sonner";
 import { api, type ExpertDef } from "@/api/client";
+import { useAppStore } from "@/stores/app-store";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -23,7 +38,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { ScopeBadge } from "./ScopePicker";
+
+/** 内置工具面（与后端 BuiltinTools::NAMES 对齐；None = 全部） */
+const BUILTIN_TOOLS = ["read", "write", "edit", "grep", "find", "ls", "bash"] as const;
 
 export function ExpertsSettings() {
   const { t } = useTranslation();
@@ -100,13 +117,11 @@ export function ExpertsSettings() {
                       {expert.model}
                     </Badge>
                   )}
-                  <ScopeBadge scopes={undefined} />
                 </div>
-                <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{expert.description}</p>
                 <p className="mt-0.5 text-[10px] text-muted-foreground">
                   {t("settings.experts.toolsCount", { count: expert.tools?.length ?? 0 })}
-                  {expert.extensions?.length ? ` · ${t("settings.experts.extCount", { count: expert.extensions.length })}` : ""}
-                  {expert.memory ? ` · ${t("settings.experts.memory", { bucket: expert.memory })}` : ""}
+                  {" · "}
+                  {t("settings.experts.bucketAuto", { bucket: expert.memory ?? expert.name })}
                 </p>
               </div>
               <div className="flex shrink-0 items-center gap-1">
@@ -153,16 +168,31 @@ function ExpertEditDialog({
   onSaved: () => void;
 }) {
   const { t } = useTranslation();
+  const config = useAppStore((s) => s.config);
   const [name, setName] = useState(expert?.name ?? "");
-  const [description, setDescription] = useState(expert?.description ?? "");
   const [model, setModel] = useState(expert?.model ?? "");
-  const [tools, setTools] = useState((expert?.tools ?? []).join(","));
-  const [extensions, setExtensions] = useState((expert?.extensions ?? []).join(","));
-  const [memory, setMemory] = useState(expert?.memory ?? "");
+  const [tools, setTools] = useState<Set<string>>(new Set(expert?.tools ?? []));
   const [systemPrompt, setSystemPrompt] = useState(expert?.system_prompt ?? "");
   const [saving, setSaving] = useState(false);
 
-  const csv = (s: string): string[] => s.split(",").map((x) => x.trim()).filter(Boolean);
+  /** 模型选项按提供商分组（providerId::modelId），同聊天页模型选择器 */
+  const modelGroups = useMemo(() => {
+    if (!config) return [];
+    return config.providers.map((p) => ({
+      id: p.id,
+      name: p.name,
+      models: p.models.map((m) => ({ value: `${p.id}::${m}`, label: m })),
+    }));
+  }, [config]);
+
+  const toggleTool = (tool: string, checked: boolean) => {
+    setTools((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(tool);
+      else next.delete(tool);
+      return next;
+    });
+  };
 
   const save = async () => {
     if (!name.trim()) {
@@ -172,12 +202,12 @@ function ExpertEditDialog({
     setSaving(true);
     try {
       await api.putExpert(name.trim(), {
-        description: description.trim(),
-        model: model.trim() || undefined,
+        description: "",
+        model: model || undefined,
         reasoning: expert?.reasoning,
-        tools: csv(tools),
-        extensions: csv(extensions),
-        memory: memory.trim() || undefined,
+        tools: tools.size > 0 ? [...tools] : undefined,
+        extensions: undefined,
+        memory: undefined, // 自动绑定 = 专家名（后端回填）
         system_prompt: systemPrompt,
       });
       toast.success(expert ? t("settings.experts.updated") : t("settings.experts.created"));
@@ -205,55 +235,59 @@ function ExpertEditDialog({
             <Input
               value={name}
               disabled={!!expert}
-              placeholder="architect"
+              placeholder="coding-architect"
               onChange={(e) => setName(e.target.value)}
             />
+            <p className="text-xs text-muted-foreground">{t("settings.experts.nameHint")}</p>
           </div>
           <div className="space-y-1.5">
-            <Label>{t("settings.experts.description")}</Label>
-            <Input value={description} onChange={(e) => setDescription(e.target.value)} />
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label>{t("settings.experts.model")}</Label>
-              <Input
-                value={model}
-                placeholder="provider::model（留空 = 跟随默认）"
-                onChange={(e) => setModel(e.target.value)}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label>{t("settings.experts.memory")}</Label>
-              <Input
-                value={memory}
-                placeholder="project"
-                onChange={(e) => setMemory(e.target.value)}
-              />
-            </div>
+            <Label>{t("settings.experts.model")}</Label>
+            <Select value={model || "none"} onValueChange={(v) => setModel(!v || v === "none" ? "" : v)}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder={t("settings.experts.modelNone")} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">{t("settings.experts.modelNone")}</SelectItem>
+                {modelGroups.map((group) => (
+                  <SelectGroup key={group.id}>
+                    <SelectLabel>{group.name}</SelectLabel>
+                    {group.models.map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">{t("settings.experts.modelHint")}</p>
           </div>
           <div className="space-y-1.5">
             <Label>{t("settings.experts.tools")}</Label>
-            <Input
-              value={tools}
-              placeholder="read,bash,edit,write"
-              onChange={(e) => setTools(e.target.value)}
-            />
+            <div className="grid grid-cols-2 gap-1.5 rounded-md border p-3 sm:grid-cols-3">
+              {BUILTIN_TOOLS.map((tool) => (
+                <label
+                  key={tool}
+                  className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm hover:bg-accent/50"
+                >
+                  <input
+                    type="checkbox"
+                    checked={tools.has(tool)}
+                    onChange={(e) => toggleTool(tool, e.target.checked)}
+                    className="size-4 shrink-0 accent-primary"
+                  />
+                  <span className="font-mono text-xs">{tool}</span>
+                </label>
+              ))}
+            </div>
             <p className="text-xs text-muted-foreground">{t("settings.experts.toolsHint")}</p>
-          </div>
-          <div className="space-y-1.5">
-            <Label>{t("settings.experts.extensions")}</Label>
-            <Input
-              value={extensions}
-              placeholder="web-search（留空 = 不限制）"
-              onChange={(e) => setExtensions(e.target.value)}
-            />
-            <p className="text-xs text-muted-foreground">{t("settings.experts.extensionsHint")}</p>
           </div>
           <div className="space-y-1.5">
             <Label>{t("settings.experts.systemPrompt")}</Label>
             <Textarea
               rows={8}
               value={systemPrompt}
+              placeholder={t("settings.experts.systemPromptPlaceholder")}
               onChange={(e) => setSystemPrompt(e.target.value)}
             />
           </div>

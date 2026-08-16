@@ -10,13 +10,14 @@
 
 import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { CheckCircle2, Download, RefreshCw, Rocket, XCircle } from "lucide-react";
+import { CheckCircle2, Download, RefreshCw, Rocket, SlidersHorizontal, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { useAppStore } from "@/stores/app-store";
 import { api } from "@/api/client";
+import { cn } from "@/lib/utils";
 
 /// 应用版本兜底（health 未加载时展示）；加载后以后端版本为准（单源）
 const APP_VERSION = "0.1.1";
@@ -35,11 +36,21 @@ type UpdateState =
 export function AboutSettings() {
   const { t } = useTranslation();
   const health = useAppStore((s) => s.health);
+  const settingsTier = useAppStore((s) => s.settingsTier);
+  const setSettingsTier = useAppStore((s) => s.setSettingsTier);
   // 应用版本以 health.version（后端）为准，常量仅作启动兜底
   const appVersion = health?.version ?? APP_VERSION;
   const [state, setState] = useState<UpdateState>({ status: "idle" });
   // 轮询句柄：卸载/重进时清理，防升级完成前组件销毁后继续 setState
   const pollRef = useRef<number | null>(null);
+
+  // 设置分级（2026-08-16 设计定调）：开关只在此处——开启资深前二次确认，
+  // 开启后设置中心不再显示切换器（"开一定就锁定了，不用重复开"）
+  const switchTier = (tier: "basic" | "expert") => {
+    if (tier === settingsTier) return;
+    if (tier === "expert" && !window.confirm(t("settings.about.tierConfirm"))) return;
+    setSettingsTier(tier);
+  };
 
   // 桌面环境检测（Tauri 注入的全局）：managed 模式需调壳的 backend_restart；
   // Web 版（Linux 部署）由后端自身 exec 重启，同样支持热升级
@@ -137,6 +148,37 @@ export function AboutSettings() {
           <span>{isDesktop ? t("settings.about.desktop") : t("settings.about.web")}</span>
         </div>
         <p className="text-xs text-muted-foreground">{t("settings.about.updateViaReleases")}</p>
+      </div>
+
+      {/* 设置模式（2026-08-16 定调：开关只在此处，开启即锁定） */}
+      <div className="space-y-3 rounded-xl border p-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <SlidersHorizontal size={16} className="text-muted-foreground" />
+            <h3 className="font-semibold">{t("settings.about.tierTitle")}</h3>
+          </div>
+          <Badge variant={settingsTier === "expert" ? "secondary" : "outline"}>
+            {t(`settings.tier.${settingsTier}`)}
+          </Badge>
+        </div>
+        <p className="text-xs text-muted-foreground">{t("settings.about.tierDesc")}</p>
+        <div className="flex w-fit items-center rounded-lg border p-0.5">
+          {(["basic", "expert"] as const).map((tier) => (
+            <button
+              key={tier}
+              type="button"
+              onClick={() => switchTier(tier)}
+              className={cn(
+                "rounded-md px-3 py-1 text-sm transition-colors",
+                settingsTier === tier
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {t(`settings.tier.${tier}`)}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* 更新状态区（全部用户手动触发） */}

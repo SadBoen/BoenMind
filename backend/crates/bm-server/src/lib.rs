@@ -441,9 +441,21 @@ fn referer_allowed(referer: &axum::http::HeaderValue) -> bool {
 /// 供独立二进制与 Tauri 壳共用，保证两端行为一致。
 pub async fn init() -> Result<(AppConfig, Db), Box<dyn std::error::Error>> {
     // 1. 配置与工作文件夹
-    let config = bm_core::config::load();
+    let mut config = bm_core::config::load();
     if let Err(err) = bm_core::config::ensure_working_dir(&config) {
         eprintln!("[bm-server] 工作文件夹创建失败: {err}");
+    }
+
+    // 1.5 预置专家前缀迁移（2026-08-16：architect → coding-architect 等，
+    // 幂等；config [apps.*].expert 引用一并更新）
+    match bm_core::experts::migrate_builtin_experts(&mut config) {
+        Ok(true) => {
+            if let Err(err) = bm_core::config::save(&config) {
+                eprintln!("[bm-server] 专家迁移后配置保存失败: {err}");
+            }
+        }
+        Ok(false) => {}
+        Err(err) => eprintln!("[bm-server] 预置专家前缀迁移失败: {err}"),
     }
 
     // 3.25 预置子代理角色定义（agents/*.md），让 subagent 工具开箱可用
@@ -549,10 +561,11 @@ async fn serve_inner(
             config: shared_config.clone(),
         });
         // 记忆服务面：全局单例（facts.md 同一文件；会话注入实例在
-        // EngineBuilder 另开——append 容忍并发写，见 bm_engine.rs 注释）
+        // EngineBuilder 另开——append 容忍并发写，见 bm_engine.rs 注释。
+        // 2026-08-16 记忆桶：目录模式，桶文件 memory/<bucket>.md）
         let memory: Arc<std::sync::Mutex<bm_memory::MemoryFilePlugin>> =
-            Arc::new(std::sync::Mutex::new(bm_memory::MemoryFilePlugin::open(
-                bm_core::config::app_dir().join("memory").join("facts.md"),
+            Arc::new(std::sync::Mutex::new(bm_memory::MemoryFilePlugin::open_dir(
+                bm_core::config::app_dir().join("memory"),
                 20,
             )));
         Arc::new(
