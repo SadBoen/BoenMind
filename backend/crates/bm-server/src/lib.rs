@@ -10,6 +10,8 @@ pub mod builtin_tools;
 pub mod builtin_gate;
 // MCP 官方插件（bm-mcp）— 外部 MCP server 工具权限门（mcp__ 工具询问链）
 pub mod mcp_gate;
+// 反向 MCP server（bm-server --mcp-serve）
+pub mod mcp_serve;
 pub mod chat;
 pub mod compat_engine;
 pub mod governance;

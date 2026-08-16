@@ -1,6 +1,6 @@
 # 计划：MCP 官方插件（bm-mcp）
 
-日期：2026-08-16 ｜ 状态：**阶段 0-3 已完成**（阶段 4/5 待续；前端设置页待排期）
+日期：2026-08-16 ｜ 状态：**阶段 0-3 + 前端设置页 + 阶段 4b 反向 MCP server 全部完成**（阶段 4c OAuth 2.1 后置待续）
 
 一句话：BoenMind 内置一个默认官方 MCP 插件，作为 MCP client 接入任意外部 MCP server（stdio / Streamable HTTP），工具进入模型工具面；**协议目标 2026-07-28（MCP 2.0）+ dual-era 兼容存量 server；兼容性第一**——配置格式、工具命名、环境变量展开与主流生态一致，并自动读取主流 agent 的 MCP 配置。
 
@@ -177,6 +177,12 @@
   - 集成测试：`tests/fixtures/echo_server.mjs` 纯 Node JSON-RPC fixture（零 npm 依赖，含 crash 工具）；legacy 协商/枚举/调用/崩溃重连全链路；node 缺失自动跳过（CI 兜底）。
   - 验收：三来源五 server 并存（2.0/legacy 混合）；TS 声明 server 真实会话调用成功。
   - 注：bm-compat 4 个 doom/ext_conformance 测试失败为既有环境缺失（artifacts 未下载），与改动无关。
+- **前端设置页（81d549e）**：`routes/mcp.rs` 管理 API（GET servers 状态 + POST connect/disconnect，连接持久化 config.toml `mcp` 数组重启生效）；`McpSettings.tsx` 设置页（5s 轮询、协议版本/工具数展示、断开、添加表单 stdio/http）；SETTINGS 注册表 + i18n 四语言；vite 代理 BM_API_TARGET 可覆盖。**浏览器实测通过**：列表渲染 6 server 状态正确，CUA 填表添加 ui-test → 出现（2026-07-28/2 工具）→ config.toml 持久化。坑：McpServerConfig Option 字段须 skip_serializing_if（TOML 不支持 null）；运行中进程锁 exe 导致 build 静默失败（反复跑旧二进制）——build 前先杀服务。
+- **阶段 4b（反向 MCP server，`bm-server --mcp-serve`）**：把内置工具面（read/write/edit/grep/find/ls/bash——主引擎同款 BuiltinTools）暴露成 stdio MCP server，供 Claude Code / Claude Desktop / Cursor 等外部 client 经 mcpServers 配置接入。实现：`bm-mcp/src/serve.rs`（McpServeTool + Router + ToolRoute::new_dyn 注册，结果转 CallToolResult + structured_content）；`bm-server/src/mcp_serve.rs`（BuiltinTools 定义映射，executor 闭包内按 cwd 重建实例）；main.rs `--mcp-serve` 分支（tracing 不初始化，stdout 是协议通道）。**手动全链路验证**：discover（2026-07-28 直通、supportedVersions 全列表）→ tools/list（7 工具）→ tools/call read 返回真实文件内容。坑：
+  - **RunningService 必须持有**——DropGuard drop 时取消服务任务；`serve_server().await` 返回值直接丢弃 → discover 响应后任务即取消，后续请求无人应答（症状：connect 成功但 tools 列表空、进程秒退）。修复 = `running.waiting().await`。
+  - **wire 格式**：2.0 无状态请求的 `_meta` 在 `params` 内（`Request` 的 serde 实现从 `params._meta` 提取），key 是 `io.modelcontextprotocol/protocolVersion` 长格式；裸 key/顶层 `_meta` 会被 server 拒为 "expect initialized request"。
+  - **结果形状**：宿主工具 text_output 包装 `{content:[{type:text,text}],details:null}` 若整个塞进 structured_content，client 端（structured 优先）返回包装对象而非文本——serve.rs 解包为纯文本，结构化结果（bash 的 {stdout,stderr,code,killed}）保留 structured_content。
+  - 集成测试 `bm-server/tests/mcp_serve.rs`：spawn exe → bm-mcp client 接入 → 断言协议 2026-07-28、7 工具齐全、ls/read 真实调用通过。
 
 ---
 

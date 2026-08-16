@@ -69,3 +69,4 @@ ignore = "0.4"
 rust-embed = { version = "8", optional = true }
 
 [dev-dependencies]
+bm-mcp = { path = "../bm-mcp" }

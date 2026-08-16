@@ -8,8 +8,10 @@ description = "BoenMind 默认官方 MCP 插件：MCP client（协议 2026-07-28
 bm-protocol = { workspace = true }
 rmcp = { version = "3.1", default-features = false, features = [
     "client",
+    "server", # 反向 MCP server（bm-server --mcp-serve）
     "reqwest", # streamable-http 的 rustls TLS（纯 Rust，三平台通用）
     "transport-child-process", # stdio：spawn 子进程
+    "transport-io", # stdio 传输（server 端）
     "transport-streamable-http-client-reqwest", # streamable HTTP client
 ] }
 tokio = { workspace = true }

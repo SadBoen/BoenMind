@@ -4,12 +4,24 @@
 //! 子代理模式：上游 subagent 工具 spawn 本二进制并传 `--mode json --print
 //! --no-session ...` 参数——main 最先判别并转交 `subagent_child::run`，
 //! 不初始化 tracing（stdout 是协议通道）也不启动 HTTP。
+//!
+//! 反向 MCP server：`--mcp-serve` 以 stdio MCP server 身份运行（同
+//! subagent 模式——stdout 是协议通道，不初始化 tracing）。
 
 #[tokio::main]
 async fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if bm_server::subagent_child::should_enter_child_mode(&args) {
         std::process::exit(bm_server::subagent_child::run(&args).await);
+    }
+    if args.iter().any(|a| a == "--mcp-serve") {
+        std::process::exit(match bm_server::mcp_serve::run().await {
+            Ok(()) => 0,
+            Err(err) => {
+                eprintln!("[bm-server] mcp-serve: {err}");
+                1
+            }
+        });
     }
 
     tracing_subscriber::fmt()

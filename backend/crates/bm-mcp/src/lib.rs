@@ -8,6 +8,7 @@ pub mod client;
 pub mod config;
 pub mod discover;
 pub mod expand;
+pub mod serve;
 
 pub use client::{
     McpClientManager, McpError, McpServerHandle, McpServerInfo, McpService, McpToolDef,

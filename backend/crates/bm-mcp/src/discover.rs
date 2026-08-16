@@ -114,9 +114,14 @@ fn parse_server_entry(name: &str, entry: &serde_json::Value) -> Result<McpServer
     let transport = match entry_type {
         Some("stdio") | None if command.is_some() => McpTransportKind::Stdio,
         Some("http") => McpTransportKind::Http,
-        Some("sse") | Some("ws") => {
-            return Err(format!("传输 `{entry_type:?}` 已弃用（用 streamable HTTP / stdio）"));
+        // legacy SSE 端点（GET /sse + POST /messages）已弃用（SEP-2596，
+        // 12 个月后移除）；rmcp 3 的 streamable-http client 只处理该传输
+        // 内部的 SSE 响应流，不支持纯 legacy 双端点模式。存量 SSE server
+        // 请升级 streamable HTTP 或经 stdio 接入——如实拒绝而非虚假支持。
+        Some("sse") => {
+            return Err("sse 传输已弃用且当前 client 不支持 legacy SSE 端点（升级 server 至 streamable HTTP，或改用 stdio）".to_string());
         }
+        Some("ws") => return Err("传输 `ws` 不支持（主流生态亦未采用）".to_string()),
         Some(other) => return Err(format!("未知传输类型 `{other:?}`")),
         None if url.is_some() => McpTransportKind::Http,
         None => return Err("既无 command 也无 url".to_string()),
@@ -271,15 +276,16 @@ mod tests {
     }
 
     #[test]
-    fn deprecated_sse_skipped_not_fatal() {
+    fn deprecated_sse_ws_skipped_not_fatal() {
         let text = r#"{
             "mcpServers": {
-                "old": { "type": "sse", "url": "https://x.dev/sse" },
+                "old-ws": { "type": "ws", "url": "wss://x.dev/mcp" },
+                "legacy-sse": { "type": "sse", "url": "https://x.dev/sse" },
                 "new": { "type": "stdio", "command": "npx" }
             }
         }"#;
         let servers = parse_mcp_servers_file(text).unwrap();
-        assert_eq!(servers.len(), 1);
+        assert_eq!(servers.len(), 1, "ws 与 legacy sse 跳过，stdio 保留");
         assert_eq!(servers[0].name, "new");
     }
 
