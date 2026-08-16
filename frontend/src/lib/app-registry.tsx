@@ -21,6 +21,7 @@ import {
   Puzzle,
   ScrollText,
   Settings,
+  ShieldCheck,
   Users,
   Wand2,
 } from "lucide-react";
@@ -37,6 +38,7 @@ import { McpSettings } from "@/components/settings/McpSettings";
 import { PluginsSettings } from "@/components/settings/PluginsSettings";
 import { ProviderSettings } from "@/components/settings/ProviderSettings";
 import { RefinementSettings } from "@/components/settings/RefinementSettings";
+import { SecuritySettings } from "@/components/settings/SecuritySettings";
 import { SkillsSettings } from "@/components/settings/SkillsSettings";
 import { StewardSettings } from "@/components/settings/StewardSettings";
 import { WorkspaceSettings } from "@/components/settings/WorkspaceSettings";
@@ -138,6 +140,7 @@ export type SettingsTab =
   | "appearance"
   | "mcp"
   | "providers"
+  | "security"
   | "steward"
   | "workspace"
   | "plugins"
@@ -154,6 +157,8 @@ export interface SettingsEntry {
   group?: "app" | "system";
   /** 设置分级（设置架构 §十）：expert 项只在资深模式显示（默认 basic 可见） */
   tier?: "expert";
+  /** 桌面壳（Tauri）隐藏：页面仅公网站点有意义（如「安全」= UI 登录门） */
+  desktopHidden?: boolean;
 }
 
 /** 设置页注册表（表内顺序即设置菜单顺序；新增 SettingsTab 必须在此登记） */
@@ -203,6 +208,14 @@ export const SETTINGS: Record<SettingsTab, SettingsEntry> = {
     descKey: "settings.menu.providersDesc",
     icon: <MonitorCog size={16} />,
     component: ProviderSettings,
+  },
+  // 安全（公网站点 UI 登录门）：改密 + 登出；桌面壳（Tauri）本地无登录门，隐藏
+  security: {
+    labelKey: "settings.menu.security",
+    descKey: "settings.menu.securityDesc",
+    icon: <ShieldCheck size={16} />,
+    component: SecuritySettings,
+    desktopHidden: true,
   },
   steward: {
     labelKey: "settings.menu.steward",

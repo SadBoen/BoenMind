@@ -29,3 +29,6 @@ backend/crates/bm-compat/Cargo.lock
 # 双开对比/回归运行产物（artifacts/ 与 compression-regression/out/）
 artifacts/
 scripts/compression-regression/out/
+
+# 运行时数据（本机启动生成的 ~/.boenmind 镜像/数据库/日志，不属于源码）
+var/

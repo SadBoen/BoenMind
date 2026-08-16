@@ -5,6 +5,14 @@ import type { Translation } from "./zh";
 
 export const en: Translation = {
   auth: {
+    // Public site UI login gate (password only, no username)
+    login: "Sign in",
+    loginDesc: "Enter the access password",
+    passwordLabel: "Password",
+    passwordPlaceholder: "Access password",
+    loggingIn: "Signing in…",
+    wrongPassword: "Wrong password, please try again",
+    // BOENMIND_TOKEN access token (API guard)
     title: "Access token required",
     desc: "This server requires a BOENMIND_TOKEN access token. Enter it to continue.",
     placeholder: "Access token",
@@ -298,6 +306,8 @@ coding: {
       skillsDesc: "Agent Skill management",
       refinement: "Refinements",
       refinementDesc: "Agent-suggested improvements",
+      security: "Security",
+      securityDesc: "Access password & sessions",
       about: "About",
       aboutDesc: "Version & updates",
     },
@@ -439,6 +449,21 @@ coding: {
       langDesc: "Choose the BoenMind interface language",
       langSaved: "Language updated",
       langHint: "The language is also saved in the backend config, consistent across desktop and web.",
+    },
+    security: {
+      title: "Security",
+      desc: "Access password and session management for the public site",
+      changePassword: "Change password",
+      changePasswordDesc: "The new password applies from the next sign-in (min 4 characters)",
+      currentPassword: "Current password",
+      newPassword: "New password",
+      confirmPassword: "Confirm new password",
+      savePassword: "Save password",
+      passwordMismatch: "The new passwords do not match",
+      passwordChanged: "Password updated",
+      session: "Session",
+      sessionDesc: "Signing out will ask for the password again in this browser",
+      logout: "Sign out",
     },
     steward: {
       title: "Steward status",

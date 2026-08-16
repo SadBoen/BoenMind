@@ -5,6 +5,14 @@ import type { Translation } from "./zh";
 
 export const ko: Translation = {
   auth: {
+    // 공개 사이트 UI 로그인 게이트 (비밀번호만, 사용자 이름 없음)
+    login: "로그인",
+    loginDesc: "액세스 비밀번호를 입력하세요",
+    passwordLabel: "비밀번호",
+    passwordPlaceholder: "액세스 비밀번호",
+    loggingIn: "로그인 중…",
+    wrongPassword: "비밀번호가 올바르지 않습니다. 다시 시도하세요",
+    // BOENMIND_TOKEN 액세스 토큰 (API 가드)
     title: "액세스 토큰 필요",
     desc: "이 서버는 BOENMIND_TOKEN 액세스 토큰이 필요합니다. 입력하여 계속하세요.",
     placeholder: "액세스 토큰",
@@ -298,6 +306,8 @@ coding: {
       skillsDesc: "설치 및 관리",
       refinement: "개선 제안",
       refinementDesc: "에이전트 제안 승인 및 되돌리기",
+      security: "보안",
+      securityDesc: "액세스 비밀번호 및 세션 관리",
       about: "정보",
       aboutDesc: "버전 및 업데이트",
     },
@@ -439,6 +449,21 @@ coding: {
       langDesc: "BoenMind 인터페이스 언어 선택",
       langSaved: "언어가 업데이트되었습니다",
       langHint: "언어는 백엔드 설정에도 저장되어 데스크톱과 웹에서 일치합니다.",
+    },
+    security: {
+      title: "보안",
+      desc: "공개 사이트의 액세스 비밀번호 및 세션 관리",
+      changePassword: "비밀번호 변경",
+      changePasswordDesc: "변경 후 다음 로그인부터 새 비밀번호 (최소 4자)",
+      currentPassword: "현재 비밀번호",
+      newPassword: "새 비밀번호",
+      confirmPassword: "새 비밀번호 확인",
+      savePassword: "비밀번호 저장",
+      passwordMismatch: "새 비밀번호가 일치하지 않습니다",
+      passwordChanged: "비밀번호가 업데이트되었습니다",
+      session: "세션",
+      sessionDesc: "로그아웃하면 이 브라우저에서 다시 비밀번호를 입력해야 합니다",
+      logout: "로그아웃",
     },
     steward: {
       title: "스튜어드 상태",

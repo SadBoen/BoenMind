@@ -5,6 +5,14 @@ import type { Translation } from "./zh";
 
 export const ja: Translation = {
   auth: {
+    // 公サイト UI ログインゲート（パスワードのみ・ユーザー名なし）
+    login: "ログイン",
+    loginDesc: "アクセスパスワードを入力してください",
+    passwordLabel: "パスワード",
+    passwordPlaceholder: "アクセスパスワード",
+    loggingIn: "ログイン中…",
+    wrongPassword: "パスワードが違います。もう一度お試しください",
+    // BOENMIND_TOKEN アクセストークン（API ガード）
     title: "アクセストークンが必要です",
     desc: "このサーバーには BOENMIND_TOKEN アクセストークンが必要です。入力して続行してください。",
     placeholder: "アクセストークン",
@@ -298,6 +306,8 @@ coding: {
       skillsDesc: "インストールと管理",
       refinement: "改善提案",
       refinementDesc: "エージェント提案の承認と復元",
+      security: "セキュリティ",
+      securityDesc: "アクセスパスワードとセッション管理",
       about: "このアプリについて",
       aboutDesc: "バージョンと更新",
     },
@@ -439,6 +449,21 @@ coding: {
       langDesc: "BoenMind の表示言語を選択",
       langSaved: "言語を更新しました",
       langHint: "言語はバックエンド設定にも保存され、デスクトップ版とウェブ版で一致します。",
+    },
+    security: {
+      title: "セキュリティ",
+      desc: "公サイトのアクセスパスワードとセッション管理",
+      changePassword: "パスワードを変更",
+      changePasswordDesc: "変更後は次回ログインから新パスワード（最短 4 文字）",
+      currentPassword: "現在のパスワード",
+      newPassword: "新しいパスワード",
+      confirmPassword: "新しいパスワード（確認）",
+      savePassword: "パスワードを保存",
+      passwordMismatch: "新しいパスワードが一致しません",
+      passwordChanged: "パスワードを更新しました",
+      session: "セッション",
+      sessionDesc: "ログアウトすると、このブラウザでは再度パスワード入力が必要です",
+      logout: "ログアウト",
     },
     steward: {
       title: "スチュワード状態",

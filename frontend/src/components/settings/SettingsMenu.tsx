@@ -6,6 +6,7 @@
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { SETTINGS, type SettingsTab } from "@/lib/app-registry";
+import { isDesktopShell } from "@/lib/desktop";
 import { useAppStore } from "@/stores/app-store";
 
 const GROUP_ORDER: ("app" | "system")[] = ["app", "system"];
@@ -15,6 +16,8 @@ export function SettingsMenu() {
   const settingsTab = useAppStore((s) => s.settingsTab);
   const setSettingsTab = useAppStore((s) => s.setSettingsTab);
   const settingsTier = useAppStore((s) => s.settingsTier);
+  // 桌面壳（Tauri）无 UI 登录门：隐藏「安全」页（其改密/登出仅公网站点有意义）
+  const desktop = isDesktopShell();
 
   const renderItem = (key: string, item: (typeof SETTINGS)[SettingsTab]) => (
     <button
@@ -41,7 +44,9 @@ export function SettingsMenu() {
           ([, item]) =>
             (item.group ?? "system") === group &&
             // 普通模式隐藏资深项（设置架构 §十：切换只改可见性，不动设置值）
-            (settingsTier === "expert" || item.tier !== "expert"),
+            (settingsTier === "expert" || item.tier !== "expert") &&
+            // 桌面壳隐藏桌面无意义项（如「安全」——UI 登录门仅公网站点）
+            !(desktop && item.desktopHidden),
         );
         if (items.length === 0) return null;
         return (

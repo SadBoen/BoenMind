@@ -4,6 +4,14 @@
  */
 export const zh = {
   auth: {
+    // 公网站点 UI 登录门（只密码，无用户名）
+    login: "登录",
+    loginDesc: "请输入访问密码",
+    passwordLabel: "密码",
+    passwordPlaceholder: "访问密码",
+    loggingIn: "登录中…",
+    wrongPassword: "密码错误，请重试",
+    // BOENMIND_TOKEN 访问令牌（API 守卫）
     title: "需要访问令牌",
     desc: "该服务器设置了 BOENMIND_TOKEN 访问令牌，请输入后继续使用。",
     placeholder: "访问令牌",
@@ -297,6 +305,8 @@ coding: {
       skillsDesc: "Agent Skill 管理",
       refinement: "改进建议",
       refinementDesc: "代理提交的改进建议审批",
+      security: "安全",
+      securityDesc: "访问密码与会话管理",
       about: "关于",
       aboutDesc: "版本与更新",
     },
@@ -438,6 +448,21 @@ coding: {
       langDesc: "选择 BoenMind 的界面显示语言",
       langSaved: "界面语言已更新",
       langHint: "语言选择同时保存在后端配置中，桌面端与网页端一致。",
+    },
+    security: {
+      title: "安全",
+      desc: "公网站点的访问密码与会话管理",
+      changePassword: "修改密码",
+      changePasswordDesc: "修改后下次登录使用新密码（最短 4 位）",
+      currentPassword: "当前密码",
+      newPassword: "新密码",
+      confirmPassword: "确认新密码",
+      savePassword: "保存密码",
+      passwordMismatch: "两次输入的新密码不一致",
+      passwordChanged: "密码已更新",
+      session: "会话",
+      sessionDesc: "登出后当前浏览器需重新输入密码",
+      logout: "登出",
     },
     steward: {
       title: "管家状态",

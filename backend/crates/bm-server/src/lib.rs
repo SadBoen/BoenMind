@@ -227,6 +227,8 @@ fn router(state: AppState) -> Router {
         .route("/api/plugins/pdf-omni/parse", post(routes::pdf_omni::parse_pdf))
         .route("/api/plugins/pdf-omni/probe", post(routes::pdf_omni::probe))
         .merge(routes::wiki::router())
+        // UI 登录门（公网站点，2026-08-17）：只密码登录 + 会话 + 改密
+        .merge(routes::auth::router())
         .route("/api/updates/check", get(routes::updates::check_update))
         .route("/api/updates/apply", post(routes::updates::apply_update))
         .route("/api/updates/restart", post(routes::updates::restart_update))
@@ -434,6 +436,12 @@ async fn auth_middleware(
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
+    // /api/auth/* 免 token：密码本身就是浏览器入口守卫，设了 BOENMIND_TOKEN
+    // 也不能把登录页锁死（前端 authHeaders() 已带 X-BoenMind-Client 头，
+    // CSRF 仍由 origin_middleware 兜底）
+    if request.uri().path().starts_with("/api/auth/") {
+        return next.run(request).await;
+    }
     let Some(expected) = std::env::var("BOENMIND_TOKEN").ok().filter(|t| !t.is_empty()) else {
         return next.run(request).await;
     };

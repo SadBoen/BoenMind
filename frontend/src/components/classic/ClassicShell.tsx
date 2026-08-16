@@ -14,11 +14,14 @@
  *
  * 应用内容区 = DockLayout 可停靠视图容器（v0.23）：导航图标右键菜单提供
  * 「重置布局」（只对有默认布局声明的应用显示，恢复该应用布局快照为默认）。
+ *
+ * UI 登录门（公网站点）：App 层传入 onLogout 时（网页版）底部显示登出按钮，
+ * 点击即清会话回登录页；桌面壳不传，按钮不渲染。
  */
 import { useEffect, useState } from "react";
 import type { AppId } from "@/lib/app-registry";
 import { useTranslation } from "react-i18next";
-import { LayoutPanelLeft, Settings } from "lucide-react";
+import { LayoutPanelLeft, LogOut, Settings } from "lucide-react";
 import { APPS } from "@/lib/app-registry";
 import { hasDockLayout } from "@/lib/dock-views";
 import { resetDockLayout } from "@/components/layout/DockLayout";
@@ -38,7 +41,7 @@ interface NavContextMenu {
   appId: AppId;
 }
 
-export function ClassicShell() {
+export function ClassicShell({ onLogout }: { onLogout?: () => void }) {
   const { t } = useTranslation();
   const activeNav = useAppStore((s) => s.activeNav);
   const setActiveNav = useAppStore((s) => s.setActiveNav);
@@ -73,7 +76,7 @@ export function ClassicShell() {
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background text-foreground">
       <div className="flex min-h-0 flex-1">
-        {/* 左侧导航条：顶部=软件导航（对话/编程）；底部=设置 + 桌面模式 */}
+        {/* 左侧导航条：顶部=软件导航（对话/编程）；底部=设置 + 登出（网页版） */}
         <nav
           aria-label={t("desktop.classicNav")}
           className="flex w-12 shrink-0 flex-col items-center gap-1 border-r border-border bg-muted/40 py-2"
@@ -112,7 +115,8 @@ export function ClassicShell() {
             );
           })}
 
-          {/* 底部独立区：设置入口（系统级，非软件）；桌面模式入口已并入
+          {/* 底部独立区：设置入口（系统级，非软件）；公网站点（onLogout 传入）
+              另放登出按钮——桌面壳本地使用不渲染；桌面模式入口已并入
               设置→外观（形态切换卡片），导航条不再放 */}
           <div className="mt-auto flex flex-col items-center gap-1 border-t border-border pt-2">
             <button
@@ -129,6 +133,17 @@ export function ClassicShell() {
             >
               <Settings size={17} />
             </button>
+            {onLogout && (
+              <button
+                type="button"
+                aria-label={t("settings.security.logout")}
+                title={t("settings.security.logout")}
+                onClick={onLogout}
+                className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+              >
+                <LogOut size={17} />
+              </button>
+            )}
           </div>
         </nav>
 

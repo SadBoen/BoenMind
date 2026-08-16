@@ -484,14 +484,48 @@ function notifyUnauthorized() {
   unauthorizedHandler?.();
 }
 
+// ── UI 登录门会话（公网站点；与 BOENMIND_TOKEN 的 Authorization 分离）──
+// 会话 token 持久化在 localStorage；浏览器入口必须先过登录页，桌面壳不经过。
+let uiSession: string = (() => {
+  try {
+    return localStorage.getItem("boenmind.session") ?? "";
+  } catch {
+    return "";
+  }
+})();
+const SESSION_KEY = "boenmind.session";
+
+/** 设置/清除 UI 登录门会话 token（公网站点浏览器入口；桌面版不经过登录门） */
+export function setUiSession(token: string) {
+  uiSession = token.trim();
+  try {
+    if (uiSession) localStorage.setItem(SESSION_KEY, uiSession);
+    else localStorage.removeItem(SESSION_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** 401（login required）回调：UI 登录门据此复位回登录页 */
+let uiUnauthorizedHandler: (() => void) | null = null;
+export function onUiUnauthorized(handler: (() => void) | null) {
+  uiUnauthorizedHandler = handler;
+}
+
+function notifyUiUnauthorized() {
+  uiUnauthorizedHandler?.();
+}
+
 function authHeaders(): Record<string, string> {
   return {
     "X-BoenMind-Client": "1",
     ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+    ...(uiSession ? { "X-BoenMind-Session": uiSession } : {}),
   };
 }
 
-/** 统一错误解析：401 unauthorized 触发令牌回调，其余透传服务端 error 详情 */
+/** 统一错误解析：401 unauthorized 触发令牌回调、login required 触发登录门复位，
+ * 其余透传服务端 error 详情 */
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,
@@ -501,14 +535,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     let detail = res.statusText;
     let unauthorized = false;
+    let uiLoginRequired = false;
     try {
       const body = await res.json();
       detail = body.error ?? detail;
+      // 两个 401 语义分离：token 门（BOENMIND_TOKEN）vs UI 登录门会话失效
       unauthorized = res.status === 401 && body.error === "unauthorized";
+      uiLoginRequired = res.status === 401 && body.error === "login required";
     } catch {
       /* ignore */
     }
     if (unauthorized) notifyUnauthorized();
+    if (uiLoginRequired) notifyUiUnauthorized();
     throw new Error(detail);
   }
   return res.json() as Promise<T>;
@@ -538,6 +576,7 @@ async function readSSEStream(
   if (!res.ok || !res.body) {
     const body = await res.json().catch(() => null);
     if (res.status === 401 && body?.error === "unauthorized") notifyUnauthorized();
+    if (res.status === 401 && body?.error === "login required") notifyUiUnauthorized();
     throw new Error(body?.error ?? i18n.t("api.requestFailed", { status: res.status }));
   }
   const reader = res.body.getReader();
@@ -577,6 +616,24 @@ export const api = {
   getConfig: () => request<AppConfig>("/api/config"),
   saveConfig: (config: AppConfig) =>
     request<{ ok: boolean }>("/api/config", { method: "PUT", body: JSON.stringify(config) }),
+
+  // ── UI 登录门（公网站点；只密码，无用户名）──
+  /** 当前浏览器会话是否有效（桌面版后端无登录门，永远返回 true 语义由 App 层绕过） */
+  authStatus: () => request<{ authenticated: boolean }>("/api/auth/status"),
+  /** 登录：密码正确签发会话 token（默认 loveBM@86，可在设置中心「安全」页修改） */
+  authLogin: (password: string) =>
+    request<{ ok: boolean; token: string }>("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ password }),
+    }),
+  /** 登出：作废当前会话 token（幂等） */
+  authLogout: () => request<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
+  /** 修改密码（需当前密码正确 + 会话有效；新密码最短 4 位） */
+  changePassword: (body: { current_password: string; new_password: string }) =>
+    request<{ ok: boolean }>("/api/auth/password", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
 
   /** 向提供商接口拉取模型列表（表单临时填写的端点/key，不落盘） */
   listProviderModels: (body: {
