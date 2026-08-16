@@ -43,7 +43,7 @@ export function SkinBackground() {
       ) : (
         <div className="h-full w-full" style={{ background: presetCss ?? defaultCss }} />
       )}
-      {/* 背景特效层（独立开关；wave = 蓝色波纹动画，叠加在任何壁纸之上） */}
+      {/* 背景特效层（独立开关；wave = 蓝色波纹动画，自带流体底色盖过壁纸） */}
       {backgroundEffect === "wave" && <EffectWave />}
       {/* 明暗遮罩：背景图之上、内容之下，压出可读对比度（已极淡，避免压死背景） */}
       <div className="absolute inset-0 bg-white/10 dark:bg-black/20" />

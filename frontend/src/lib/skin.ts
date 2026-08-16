@@ -72,8 +72,8 @@ export function wallpaperById(id: string | null): PresetWallpaper | null {
 }
 
 /**
- * 背景特效（2026-08-16）：独立于皮肤/壁纸的动画层开关——特效层叠加在壁纸之上
- * （mix-blend 混合），与壁纸选择完全解耦；以后新增特效（礼花/微风等）在此登记。
+ * 背景特效（2026-08-16）：独立于皮肤/壁纸的动画层开关——wave 特效自带
+ * 完整流体画面（盖过壁纸，2D canvas 全环境呈现）；以后新增特效在此登记。
  * 全部特效共用全局时钟（performance.now()/1000），多界面速度一致。
  */
 export interface BackgroundEffect {
