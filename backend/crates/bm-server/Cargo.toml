@@ -32,6 +32,8 @@ bm-compactor = { path = "../bm-compactor" }
 # 记忆插件（§6.1 最小实现）：StreamHooks 组合，on_request 注入 facts.md
 bm-memory = { path = "../bm-memory" }
 bm-mcp = { path = "../bm-mcp" }
+# WIKI 应用引擎（xu-wiki 迁移 Rust 重写）：Page/LRU 关系/检索 + REST 面
+bm-wiki = { path = "../bm-wiki" }
 axum = "0.8"
 async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }

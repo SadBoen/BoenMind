@@ -30,6 +30,9 @@ pub mod subagent_child;
 pub mod terminal;
 // M2 — 活任务清单工具与 REST 面（todo/write 事件快照是唯一事实源）
 pub mod todo_tool;
+// WIKI 应用场景工具（xu-wiki agent 驱动迁移）：定义进 bm_engine 场景注册点，
+// 执行在 compat_engine 分派中枢按 wiki_ 前缀路由
+pub mod wiki_tools;
 // 专家团队在 bm 引擎的落地：subagent 父侧工具（发现角色 → spawn 子进程 → 摄取
 // stdout JSON 事件流；子进程协议 = subagent_child）
 pub mod subagent_tool;
@@ -220,6 +223,7 @@ fn router(state: AppState) -> Router {
         .route("/api/providers/test", post(routes::providers::test_provider))
         .route("/api/plugins/pdf-omni/parse", post(routes::pdf_omni::parse_pdf))
         .route("/api/plugins/pdf-omni/probe", post(routes::pdf_omni::probe))
+        .merge(routes::wiki::router())
         .route("/api/updates/check", get(routes::updates::check_update))
         .route("/api/updates/apply", post(routes::updates::apply_update))
         .route("/api/updates/restart", post(routes::updates::restart_update))

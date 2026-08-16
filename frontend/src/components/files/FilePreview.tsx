@@ -4,11 +4,9 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ArrowLeft, FileQuestion, Loader2 } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import rehypeHighlight from "rehype-highlight";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Markdown } from "@/components/shared/Markdown";
 import { api, type FileEntry } from "@/api/client";
 import { useAppStore } from "@/stores/app-store";
 
@@ -68,19 +66,7 @@ export function FilePreview({ file }: { file: FileEntry }) {
           ) : data.kind === "text" ? (
             data.mime === "text/markdown" ? (
               <article className="prose prose-sm dark:prose-invert max-w-none break-words">
-                <ReactMarkdown
-                  remarkPlugins={[remarkGfm]}
-                  rehypePlugins={[rehypeHighlight]}
-                  components={{
-                    pre: ({ children }) => (
-                      <pre className="overflow-x-auto rounded-lg border bg-muted/60 p-3 text-xs">
-                        {children}
-                      </pre>
-                    ),
-                  }}
-                >
-                  {data.content}
-                </ReactMarkdown>
+                <Markdown content={data.content} />
               </article>
             ) : (
               <pre className="whitespace-pre-wrap break-words rounded-lg border bg-muted/40 p-3 font-mono text-xs leading-relaxed">

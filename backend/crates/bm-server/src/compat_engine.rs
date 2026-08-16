@@ -1212,6 +1212,22 @@ impl ToolExecutor for QuickJsToolExecutor {
                     },
                 }
             }
+        } else if req.name.starts_with("wiki_") {
+            // WIKI 场景工具（wiki_tools）：场景隔离由注册侧保证（仅 wiki
+            // 会话工具面有这些名字）；执行直调 bm-wiki 引擎（同步文件 IO）。
+            let working_dir = self
+                .engine
+                .as_ref()
+                .map(|e| e.working_dir.clone())
+                .unwrap_or_default();
+            match crate::wiki_tools::execute(&req.name, &req.args, &working_dir.to_string_lossy()) {
+                Ok(value) => ToolOutcome {
+                    ok: true,
+                    output: tool_result_text(&value),
+                    meta: Some(value),
+                },
+                Err(err) => ToolOutcome { ok: false, output: err, meta: None },
+            }
         } else if crate::builtin_tools::BuiltinTools::NAMES.contains(&req.name.as_str()) {            let builtin = BuiltinTools::new(working_dir);
             match builtin.execute(&req.name, req.args.clone()).await {
                 Ok(value) => ToolOutcome {

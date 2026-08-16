@@ -26,10 +26,10 @@ import { useAppStore } from "@/stores/app-store";
 import { StatusBar } from "@/components/shared/StatusBar";
 import { cn } from "@/lib/utils";
 
-/** 软件导航顺序（顶部区）：对话 + 编程 + wiki（占位）；新软件在此登记 */
+/** 软件导航顺序（顶部区）：对话 + 编程 + Wiki；新软件在此登记 */
 const NAV_APPS: AppId[] = ["chat", "coding", "wiki"];
-/** 占位应用（未立项）：导航置灰点不了（wiki 现状） */
-const PLACEHOLDER_APPS: AppId[] = ["wiki"];
+/** 占位应用（未立项）：导航置灰点不了（当前无——wiki 已上线） */
+const PLACEHOLDER_APPS: AppId[] = [];
 
 /** 导航图标右键菜单（当前仅「重置布局」一项） */
 interface NavContextMenu {
@@ -46,11 +46,11 @@ export function ClassicShell() {
   const Page = APPS[activeNav].component;
   const [ctxMenu, setCtxMenu] = useState<NavContextMenu | null>(null);
 
-  // 切到有会话场景的应用（chat/coding）：把聚焦会话切到该场景最近使用的会话
+  // 切到有会话场景的应用（chat/coding/wiki）：把聚焦会话切到该场景最近使用的会话
   // （一软件一会话，架构 §四·B 补充；无该场景会话时保持现状，由应用内引导创建）
   const switchTo = (id: AppId) => {
     setActiveNav(id);
-    if (id === "chat" || id === "coding") void activateApp(id);
+    if (id === "chat" || id === "coding" || id === "wiki") void activateApp(id);
   };
 
   // 右键菜单关闭：点击任意处 / Esc / 滚动

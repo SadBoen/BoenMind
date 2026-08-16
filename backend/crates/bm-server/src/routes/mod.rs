@@ -16,6 +16,7 @@ pub mod steward;
 pub mod terminal;
 pub mod todos;
 pub mod updates;
+pub mod wiki;
 pub mod workspace;
 
 use axum::{Json, extract::State};

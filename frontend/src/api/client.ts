@@ -368,6 +368,78 @@ export type ChatStreamEvent =
   | { type: "done" }
   | { type: "error"; message: string };
 
+// ── WIKI 应用（bm-wiki 引擎 REST 面）──
+
+/** 树条目（四分区之一） */
+export interface WikiTreeEntry {
+  uid: string;
+  title: string;
+  layer: "Page" | "List" | "Report" | "Entity";
+  node_path: string;
+  content_type: string;
+  created_at: number;
+  active: boolean;
+}
+
+export interface WikiTree {
+  pages: WikiTreeEntry[];
+  lists: WikiTreeEntry[];
+  reports: WikiTreeEntry[];
+  entities: WikiTreeEntry[];
+}
+
+export interface WikiRelation {
+  to_uid: string;
+  relation_name: string;
+  comment: string;
+  created_at: number;
+  position: number;
+}
+
+export interface WikiPatch {
+  op: string;
+  delta: string;
+  created_at: number;
+}
+
+/** 节点全文（node_view） */
+export interface WikiNode {
+  uid: string;
+  title: string;
+  layer: "Page" | "List" | "Report" | "Entity";
+  content_type: string;
+  node_path: string;
+  active: boolean;
+  created_at: number;
+  body: string;
+  relations: WikiRelation[];
+  patches: WikiPatch[];
+  members: { uid: string; note: string; position: number }[];
+  references: { ref_uid: string; note: string }[];
+  raw_path?: string | null;
+  source_page?: string | null;
+  parent_uid?: string | null;
+  split_index?: number | null;
+}
+
+/** 检索命中（节点级，score 降序） */
+export interface WikiHit {
+  uid: string;
+  title: string;
+  layer: string;
+  node_path: string;
+  score: number;
+  matched_lines: number[];
+  title_hits: number;
+  body_hits: number;
+}
+
+export interface WikiStatus {
+  exists: boolean;
+  root: string;
+  counts: { pages: number; lists: number; reports: number; entities: number } | null;
+}
+
 const API_BASE: string = (() => {
   const fromEnv = import.meta.env.VITE_API_BASE as string | undefined;
   if (fromEnv) return fromEnv;
@@ -550,6 +622,61 @@ export const api = {
     ),
   createSession: (body?: { provider_id?: string; model?: string; title?: string; app?: string }) =>
     request<Session>("/api/sessions", { method: "POST", body: JSON.stringify(body ?? {}) }),
+  // ── WIKI 应用（bm-wiki 引擎；库 = working_dir/wiki）──
+  wikiStatus: () => request<WikiStatus>("/api/wiki/status"),
+  wikiCreate: (name: string) =>
+    request<{ ok: boolean; root: string }>("/api/wiki/create", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
+  wikiTree: () => request<WikiTree>("/api/wiki/tree"),
+  wikiNode: (uid: string) => request<WikiNode>(`/api/wiki/node/${uid}`),
+  wikiUpdateNode: (uid: string, body: { title?: string; body?: string }) =>
+    request<WikiNode>(`/api/wiki/node/${uid}`, { method: "PATCH", body: JSON.stringify(body) }),
+  wikiIngest: (body: { title: string; content: string; node_path?: string; file?: string }) =>
+    request<{
+      pages: { uid: string; title: string; md_path: string; split_index: number; lines: number }[];
+      deduped: { source_hash: string; existing_uid: string; existing_title: string } | null;
+    }>("/api/wiki/ingest", { method: "POST", body: JSON.stringify(body) }),
+  wikiQuery: (keywords: string) =>
+    request<{ keywords: string[]; count: number; hits: WikiHit[] }>(
+      `/api/wiki/query?keywords=${encodeURIComponent(keywords)}`,
+    ),
+  wikiRelations: (uid: string) =>
+    request<{ count: number; max: number; edges: WikiRelation[] }>(`/api/wiki/relations/${uid}`),
+  wikiAddRelation: (body: {
+    from_uid: string;
+    to_uid: string;
+    relation_name: string;
+    comment?: string;
+  }) =>
+    request<{ action: string; evicted: string | null }>("/api/wiki/relations", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  wikiRemoveRelation: (body: { from_uid: string; to_uid: string; relation_name: string }) =>
+    request<{ removed: boolean }>("/api/wiki/relations", {
+      method: "DELETE",
+      body: JSON.stringify(body),
+    }),
+  wikiCreateList: (body: {
+    title: string;
+    body: string;
+    node_path?: string;
+    members?: string[];
+  }) => request<WikiNode>("/api/wiki/lists", { method: "POST", body: JSON.stringify(body) }),
+  wikiCreateReport: (body: {
+    title: string;
+    body: string;
+    node_path?: string;
+    references?: { ref_uid: string; note?: string }[];
+  }) => request<WikiNode>("/api/wiki/reports", { method: "POST", body: JSON.stringify(body) }),
+  wikiCreateEntity: (body: {
+    title: string;
+    body: string;
+    node_path?: string;
+    source_page?: string;
+  }) => request<WikiNode>("/api/wiki/entities", { method: "POST", body: JSON.stringify(body) }),
   getSession: (id: string) =>
     request<{ session: Session; messages: Message[] }>(`/api/sessions/${id}`),
   renameSession: (id: string, title: string) =>

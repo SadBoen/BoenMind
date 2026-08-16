@@ -8,7 +8,6 @@
  * 动态加载留后续轮（§四·C）。
  */
 import type { ComponentType, ReactNode } from "react";
-import { useTranslation } from "react-i18next";
 import {
   Activity,
   BookOpen,
@@ -26,6 +25,7 @@ import {
   Wand2,
 } from "lucide-react";
 import { CodingApp } from "@/components/coding/CodingApp";
+import { WikiApp } from "@/components/wiki/WikiApp";
 import { DockLayout } from "@/components/layout/DockLayout";
 import { SettingsMenu } from "@/components/settings/SettingsMenu";
 import { LogsSettings } from "@/components/settings/LogsSettings";
@@ -83,8 +83,8 @@ export const APPS: Record<AppId, AppEntry> = {
     id: "wiki",
     nameKey: "desktop.app.wiki",
     icon: <BookOpen size={18} />,
-    // 占位：WIKI 未立项，导航置灰点不了（编程 M2 前的同款语义）
-    component: WikiPlaceholder,
+    // WIKI 应用（xu-wiki 迁移 · bm-wiki 引擎）：三栏（树/阅读编辑/关系对话）
+    component: WikiApp,
   },
   settings: {
     id: "settings",
@@ -125,20 +125,9 @@ function SettingsAppView() {
   );
 }
 
-/** WIKI 占位（未立项）：导航/开始菜单置灰点不了，点开也只显示建设中 */
-function WikiPlaceholder() {
-  const { t } = useTranslation();
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 bg-background text-muted-foreground">
-      <BookOpen size={40} strokeWidth={1.5} />
-      <p className="text-sm">{t("desktop.app.wikiDesc")}</p>
-    </div>
-  );
-}
-
 /**
- * 编程应用占位已退役（M2 起由 CodingApp 真实壳接管）；删除占位组件与
- * codingComingSoon 提示文案（ClassicShell disabled 语义一并解除）。
+ * WIKI 占位已退役（2026-08-16 WIKI 应用上线，见 components/wiki/WikiApp）；
+ * WikiPlaceholder 组件与 desktop.app.wikiDesc 建设中文案一并删除。
  */
 
 export type SettingsTab =

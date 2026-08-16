@@ -11,6 +11,7 @@ members = [
     "crates/bm-compactor",
     "crates/bm-memory",
     "crates/bm-mcp",
+    "crates/bm-wiki",
     "tests/event_log",
 ]
 

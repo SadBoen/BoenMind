@@ -4,15 +4,13 @@
  * 正式答复（纯文本）下方不再显示工具块。
  */
 import { memo, useMemo, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import rehypeHighlight from "rehype-highlight";
 import { Bot, Check, Copy, GitFork, User } from "lucide-react";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import type { Message } from "@/api/client";
 import { useAppStore } from "@/stores/app-store";
+import { Markdown as MarkdownRenderer } from "@/components/shared/Markdown";
 import { ProcessBlock, parseThinkBlocks } from "./ThinkBlock";
 import { ToolCallBlock, type ToolCallView } from "./ToolCallBlock";
 
@@ -158,21 +156,8 @@ function MessageActions({ content, messageId }: { content: string; messageId: nu
 
 function Markdown({ content }: { content: string }) {
   return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      rehypePlugins={[rehypeHighlight]}
-      components={{
-        pre: ({ children }) => (
-          <pre className="overflow-x-auto rounded-lg border bg-muted/60 p-3 text-xs">{children}</pre>
-        ),
-        a: ({ children, ...props }) => (
-          <a {...props} target="_blank" rel="noreferrer" className="text-primary underline">
-            {children}
-          </a>
-        ),
-      }}
-    >
-      {content}
-    </ReactMarkdown>
+    <div className="text-sm">
+      <MarkdownRenderer content={content} />
+    </div>
   );
 }

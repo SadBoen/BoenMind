@@ -364,12 +364,19 @@ fn build_loop_agent(
         tracing::warn!(event = "bm.tool_register_failed", tool = %todo_def.name, error = %err.message);
     }
     // 场景工具按 session.app 组装（架构 §四·B 补充 v0.22）：内置手脚与
-    // 系统增强插件全局生效，场景工具只在该场景注册。当前无场景工具
-    // （剪辑渲染/wiki 检索等未立项）——此处为登记点，场景工具落地时
-    // 按 app 分支注册，保证"剪辑插件不在编程生效"由机制保证。
+    // 系统增强插件全局生效，场景工具只在该场景注册。wiki 场景注册 wiki_*
+    // 三件套（query/ingest/add_relation），chat/coding 不注册——"剪辑插件
+    // 不在编程生效"由机制保证。
     match app {
         "chat" | "coding" => {
             // 无场景工具（todo/subagent 属内置手脚，已在上面全局注册）
+        }
+        "wiki" => {
+            for tool in crate::wiki_tools::definitions() {
+                if let Err(err) = tools.register(tool) {
+                    tracing::warn!(event = "bm.tool_register_failed", tool = %err.message);
+                }
+            }
         }
         _ => tracing::debug!(event = "bm.unknown_scene", app, session = %session_id),
     }
