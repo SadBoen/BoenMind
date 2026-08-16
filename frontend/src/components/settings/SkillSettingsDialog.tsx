@@ -167,7 +167,8 @@ export function SkillSettingsDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto">
+      {/* 黄金比例宽度（页宽 768 × 0.618 ≈ 29.6rem）——2026-08-16 统一 */}
+      <DialogContent className="max-h-[85vh] overflow-y-auto" size="md">
         <DialogHeader>
           <DialogTitle>{t("settings.skills.settingsTitle", { name: skill.name })}</DialogTitle>
           <DialogDescription>{t("settings.skills.settingsDesc")}</DialogDescription>

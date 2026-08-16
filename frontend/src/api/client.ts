@@ -635,6 +635,9 @@ export const api = {
   deleteExpert: (id: string) =>
     request<{ ok: boolean }>(`/api/experts/${id}`, { method: "DELETE" }),
 
+  /** 记忆桶枚举（专家表单下拉数据源；默认桶 facts = 历史 facts.md） */
+  memoryBuckets: () => request<{ buckets: string[] }>("/api/memory/buckets"),
+
   /** 设置中心「日志」页：内存环形日志（level = 最低级别，q = 关键字，最新在前） */
   logs: (params?: { level?: string; q?: string; limit?: number; offset?: number }) => {
     const qs = new URLSearchParams();

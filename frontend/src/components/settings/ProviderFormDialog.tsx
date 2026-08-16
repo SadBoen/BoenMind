@@ -138,7 +138,8 @@ export function ProviderFormDialog({
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-md">
+      {/* 黄金比例宽度（页宽 768 × 0.618 ≈ 29.6rem）——2026-08-16 统一 */}
+      <DialogContent size="md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2.5">
             {/* 品牌图标随类型联动 */}

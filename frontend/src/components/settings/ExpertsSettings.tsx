@@ -174,6 +174,12 @@ function ExpertEditDialog({
   const [tools, setTools] = useState<Set<string>>(new Set(expert?.tools ?? []));
   const [systemPrompt, setSystemPrompt] = useState(expert?.system_prompt ?? "");
   const [saving, setSaving] = useState(false);
+  /** 记忆桶（空 = 自动绑定专家名）；已装扩展（插件/Skills id 集合） */
+  const [memory, setMemory] = useState(expert?.memory ?? "");
+  const [extensions, setExtensions] = useState<Set<string>>(new Set(expert?.extensions ?? []));
+  const [buckets, setBuckets] = useState<string[]>([]);
+  const [plugins, setPlugins] = useState<string[]>([]);
+  const [skills, setSkills] = useState<string[]>([]);
 
   /** 模型选项按提供商分组（providerId::modelId），同聊天页模型选择器 */
   const modelGroups = useMemo(() => {
@@ -185,6 +191,20 @@ function ExpertEditDialog({
     }));
   }, [config]);
 
+  // 打开时加载：记忆桶 + 已装插件/Skills（扩展子集 = 已装扩展勾选）
+  useEffect(() => {
+    if (!open) return;
+    void api.memoryBuckets().then((r) => setBuckets(r.buckets)).catch(() => setBuckets([]));
+    void api
+      .listPlugins()
+      .then((list) => setPlugins(list.filter((p) => p.enabled).map((p) => p.id)))
+      .catch(() => setPlugins([]));
+    void api
+      .listSkills()
+      .then((list) => setSkills(list.filter((s) => s.enabled).map((s) => s.id)))
+      .catch(() => setSkills([]));
+  }, [open]);
+
   const toggleTool = (tool: string, checked: boolean) => {
     setTools((prev) => {
       const next = new Set(prev);
@@ -194,20 +214,36 @@ function ExpertEditDialog({
     });
   };
 
+  const toggleExt = (id: string, checked: boolean) => {
+    setExtensions((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
+
   const save = async () => {
-    if (!name.trim()) {
+    const trimmed = name.trim();
+    if (!trimmed) {
       toast.error(t("settings.experts.nameRequired"));
+      return;
+    }
+    // 名称统一 APP 前缀（2026-08-16 定调）：default（通用执行者）除外，
+    // 新建专家必须以 coding-/chat- 开头，防"找 coder 找不到"的命名混乱
+    if (trimmed !== "default" && !/^(coding|chat)-[a-z0-9_-]+$/.test(trimmed)) {
+      toast.error(t("settings.experts.namePrefixHint"));
       return;
     }
     setSaving(true);
     try {
-      await api.putExpert(name.trim(), {
+      await api.putExpert(trimmed, {
         description: "",
         model: model || undefined,
         reasoning: expert?.reasoning,
         tools: tools.size > 0 ? [...tools] : undefined,
-        extensions: undefined,
-        memory: undefined, // 自动绑定 = 专家名（后端回填）
+        extensions: extensions.size > 0 ? [...extensions] : undefined,
+        memory: memory || undefined, // 空 = 后端回填自动绑定（= 专家名）
         system_prompt: systemPrompt,
       });
       toast.success(expert ? t("settings.experts.updated") : t("settings.experts.created"));
@@ -264,6 +300,23 @@ function ExpertEditDialog({
             <p className="text-xs text-muted-foreground">{t("settings.experts.modelHint")}</p>
           </div>
           <div className="space-y-1.5">
+            <Label>{t("settings.experts.memory")}</Label>
+            <Select value={memory || "auto"} onValueChange={(v) => setMemory(!v || v === "auto" ? "" : v)}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder={t("settings.experts.memoryAuto")} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="auto">{t("settings.experts.memoryAuto")}</SelectItem>
+                {buckets.map((b) => (
+                  <SelectItem key={b} value={b}>
+                    {b}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">{t("settings.experts.memoryHint")}</p>
+          </div>
+          <div className="space-y-1.5">
             <Label>{t("settings.experts.tools")}</Label>
             <div className="grid grid-cols-2 gap-1.5 rounded-md border p-3 sm:grid-cols-3">
               {BUILTIN_TOOLS.map((tool) => (
@@ -282,6 +335,49 @@ function ExpertEditDialog({
               ))}
             </div>
             <p className="text-xs text-muted-foreground">{t("settings.experts.toolsHint")}</p>
+          </div>
+          <div className="space-y-1.5">
+            <Label>{t("settings.experts.extensions")}</Label>
+            <div className="grid grid-cols-2 gap-1.5 rounded-md border p-3 sm:grid-cols-3">
+              {plugins.length === 0 && skills.length === 0 && (
+                <p className="col-span-full text-xs text-muted-foreground">
+                  {t("settings.experts.extensionsNone")}
+                </p>
+              )}
+              {plugins.map((id) => (
+                <label
+                  key={`p-${id}`}
+                  className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm hover:bg-accent/50"
+                >
+                  <input
+                    type="checkbox"
+                    checked={extensions.has(id)}
+                    onChange={(e) => toggleExt(id, e.target.checked)}
+                    className="size-4 shrink-0 accent-primary"
+                  />
+                  <span className="truncate font-mono text-xs" title={id}>
+                    {id}
+                  </span>
+                </label>
+              ))}
+              {skills.map((id) => (
+                <label
+                  key={`s-${id}`}
+                  className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm hover:bg-accent/50"
+                >
+                  <input
+                    type="checkbox"
+                    checked={extensions.has(id)}
+                    onChange={(e) => toggleExt(id, e.target.checked)}
+                    className="size-4 shrink-0 accent-primary"
+                  />
+                  <span className="truncate font-mono text-xs" title={id}>
+                    {id}
+                  </span>
+                </label>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">{t("settings.experts.extensionsHint")}</p>
           </div>
           <div className="space-y-1.5">
             <Label>{t("settings.experts.systemPrompt")}</Label>

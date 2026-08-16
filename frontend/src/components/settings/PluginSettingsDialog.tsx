@@ -283,11 +283,8 @@ export function PluginSettingsDialog({ plugin, open, onClose }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      {/* 配置项多（用量 + 多源 + 自定义源），用宽对话框；inline style 覆盖默认 sm:max-w-sm */}
-      <DialogContent
-        className="max-h-[85vh] overflow-y-auto"
-        style={{ width: "44rem", maxWidth: "calc(100vw - 2rem)" }}
-      >
+      {/* 配置项多（用量 + 多源 + 自定义源）：黄金比例宽度（2026-08-16 统一） */}
+      <DialogContent className="max-h-[85vh] overflow-y-auto" size="md">
         <DialogHeader>
           <DialogTitle>{t("settings.plugins.settingsTitle", { name: plugin.name })}</DialogTitle>
           <DialogDescription>{t("settings.plugins.settingsDesc")}</DialogDescription>

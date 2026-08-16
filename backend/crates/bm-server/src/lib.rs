@@ -195,6 +195,7 @@ fn router(state: AppState) -> Router {
         .route("/api/skills/{id}/settings", get(routes::skills::get_skill_settings).put(routes::skills::put_skill_settings))
         .route("/api/skills/{id}/scope", put(routes::skills::put_skill_scope))
         .route("/api/experts", get(routes::experts::list_experts))
+        .route("/api/memory/buckets", get(routes::experts::list_memory_buckets))
         .route("/api/logs", get(routes::logs::get_logs))
         .route(
             "/api/experts/{id}",

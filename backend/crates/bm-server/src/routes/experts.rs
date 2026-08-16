@@ -8,6 +8,28 @@ use serde::Deserialize;
 
 use crate::{ApiResult, api_error, api_error_from};
 
+/// GET /api/memory/buckets — 记忆桶枚举（~/.boenmind/memory/<bucket>.md，
+/// 默认桶 facts = 历史 facts.md）。专家表单"记忆桶"下拉的数据源。
+pub async fn list_memory_buckets() -> ApiResult<Json<serde_json::Value>> {
+    let dir = bm_core::config::app_dir().join("memory");
+    let mut buckets: Vec<String> = Vec::new();
+    if dir.is_dir() {
+        for entry in std::fs::read_dir(&dir).map_err(|e| {
+            api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("读取记忆目录失败: {e}"))
+        })? {
+            let entry = entry.map_err(|e| {
+                api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("读取记忆目录失败: {e}"))
+            })?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            if let Some(stem) = name.strip_suffix(".md") {
+                buckets.push(stem.to_string());
+            }
+        }
+    }
+    buckets.sort();
+    Ok(Json(serde_json::json!({ "buckets": buckets })))
+}
+
 pub async fn list_experts() -> ApiResult<Json<Vec<bm_core::experts::ExpertDef>>> {
     bm_core::experts::list_experts()
         .map(Json)
