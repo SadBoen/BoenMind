@@ -44,7 +44,7 @@ export function AppSettings({ appId }: { appId: string }) {
     }
   };
 
-  const bindExpert = (value: string) => {
+  const bindExpert = (value: string | null) => {
     setExpert(value);
     void save({ expert: value || undefined });
   };

@@ -39,6 +39,7 @@ import { SkillsSettings } from "@/components/settings/SkillsSettings";
 import { StewardSettings } from "@/components/settings/StewardSettings";
 import { WorkspaceSettings } from "@/components/settings/WorkspaceSettings";
 import { useAppStore } from "@/stores/app-store";
+import { cn } from "@/lib/utils";
 import { FolderOpen } from "lucide-react";
 
 /** 每软件 APP 的专属设置页（AppSettings 按 appId 渲染） */
@@ -214,6 +215,8 @@ export interface SettingsEntry {
   component: ComponentType;
   /** 设置菜单分组（设置架构 2026-08-16）：app = 每软件 APP 设置；system = 全局设置 */
   group?: "app" | "system";
+  /** 设置分级（设置架构 §十）：expert 项只在资深模式显示（默认 basic 可见） */
+  tier?: "expert";
 }
 
 /** 设置页注册表（表内顺序即设置菜单顺序；新增 SettingsTab 必须在此登记） */
@@ -263,6 +266,7 @@ export const SETTINGS: Record<SettingsTab, SettingsEntry> = {
     descKey: "settings.menu.stewardDesc",
     icon: <Activity size={16} />,
     component: StewardSettings,
+    tier: "expert",
   },
   workspace: {
     labelKey: "settings.menu.workspace",
@@ -296,13 +300,36 @@ export const SETTINGS: Record<SettingsTab, SettingsEntry> = {
   },
 };
 
-/** 设置主面板：按当前 tab 渲染对应设置页（带滚动容器） */
+/** 设置主面板：按当前 tab 渲染对应设置页（带滚动容器）+ 右上角分级开关 */
 export function SettingsPage() {
+  const { t } = useTranslation();
   const settingsTab = useAppStore((s) => s.settingsTab);
+  const settingsTier = useAppStore((s) => s.settingsTier);
+  const setSettingsTier = useAppStore((s) => s.setSettingsTier);
   const { component: Page } = SETTINGS[settingsTab];
   return (
     <div className="h-full min-w-0 overflow-y-auto bg-background">
       <div className="mx-auto max-w-3xl px-6 py-6">
+        <div className="mb-4 flex items-center justify-end gap-1.5">
+          <span className="text-xs text-muted-foreground">{t("settings.tier.label")}</span>
+          <div className="flex items-center rounded-lg border p-0.5">
+            {(["basic", "expert"] as const).map((tier) => (
+              <button
+                key={tier}
+                type="button"
+                onClick={() => setSettingsTier(tier)}
+                className={cn(
+                  "rounded-md px-2 py-0.5 text-xs transition-colors",
+                  settingsTier === tier
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {t(`settings.tier.${tier}`)}
+              </button>
+            ))}
+          </div>
+        </div>
         <Page />
       </div>
     </div>

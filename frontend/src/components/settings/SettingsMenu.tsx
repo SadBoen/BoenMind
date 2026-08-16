@@ -14,6 +14,7 @@ export function SettingsMenu() {
   const { t } = useTranslation();
   const settingsTab = useAppStore((s) => s.settingsTab);
   const setSettingsTab = useAppStore((s) => s.setSettingsTab);
+  const settingsTier = useAppStore((s) => s.settingsTier);
 
   const renderItem = (key: string, item: (typeof SETTINGS)[SettingsTab]) => (
     <button
@@ -36,7 +37,12 @@ export function SettingsMenu() {
   return (
     <div className="flex flex-col gap-1 p-2">
       {GROUP_ORDER.map((group) => {
-        const items = Object.entries(SETTINGS).filter(([, item]) => (item.group ?? "system") === group);
+        const items = Object.entries(SETTINGS).filter(
+          ([, item]) =>
+            (item.group ?? "system") === group &&
+            // 普通模式隐藏资深项（设置架构 §十：切换只改可见性，不动设置值）
+            (settingsTier === "expert" || item.tier !== "expert"),
+        );
         if (items.length === 0) return null;
         return (
           <div key={group} className="flex flex-col gap-0.5">

@@ -28,6 +28,7 @@ const CATEGORY_FILTERS: CategoryFilter[] = ["all", "system", "app"];
 export function PluginsSettings() {
   const { t } = useTranslation();
   const config = useAppStore((s) => s.config);
+  const tierExpert = useAppStore((s) => s.settingsTier) === "expert";
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [installPath, setInstallPath] = useState("");
@@ -231,15 +232,17 @@ export function PluginsSettings() {
         ]}
         extraActions={(plugin) => (
           <>
-            <ScopePicker
-              key="scope"
-              name={plugin.name}
-              current={config?.pluginScopes?.[plugin.id]}
-              onSave={async (scopes) => {
-                await api.setPluginScope(plugin.id, scopes);
-                await useAppStore.getState().loadConfig();
-              }}
-            />
+            {tierExpert && (
+              <ScopePicker
+                key="scope"
+                name={plugin.name}
+                current={config?.pluginScopes?.[plugin.id]}
+                onSave={async (scopes) => {
+                  await api.setPluginScope(plugin.id, scopes);
+                  await useAppStore.getState().loadConfig();
+                }}
+              />
+            )}
             {plugin.settingsSchema ? (
               <Button
                 variant="ghost"

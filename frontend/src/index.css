@@ -84,6 +84,68 @@
     --sidebar-ring: oklch(0.708 0 0);
 }
 
+/* 强调色（资深外观）：data-accent 覆盖主色/描边色，明暗两套；默认 = 黑白主题 */
+:root[data-accent="violet"] {
+    --primary: oklch(0.5 0.2 290);
+    --ring: oklch(0.5 0.2 290);
+    --sidebar-primary: oklch(0.5 0.2 290);
+}
+.dark[data-accent="violet"] {
+    --primary: oklch(0.72 0.17 290);
+    --ring: oklch(0.72 0.17 290);
+    --sidebar-primary: oklch(0.72 0.17 290);
+}
+:root[data-accent="blue"] {
+    --primary: oklch(0.52 0.19 255);
+    --ring: oklch(0.52 0.19 255);
+    --sidebar-primary: oklch(0.52 0.19 255);
+}
+.dark[data-accent="blue"] {
+    --primary: oklch(0.7 0.15 255);
+    --ring: oklch(0.7 0.15 255);
+    --sidebar-primary: oklch(0.7 0.15 255);
+}
+:root[data-accent="green"] {
+    --primary: oklch(0.52 0.17 155);
+    --ring: oklch(0.52 0.17 155);
+    --sidebar-primary: oklch(0.52 0.17 155);
+}
+.dark[data-accent="green"] {
+    --primary: oklch(0.72 0.15 155);
+    --ring: oklch(0.72 0.15 155);
+    --sidebar-primary: oklch(0.72 0.15 155);
+}
+:root[data-accent="orange"] {
+    --primary: oklch(0.62 0.18 45);
+    --ring: oklch(0.62 0.18 45);
+    --sidebar-primary: oklch(0.62 0.18 45);
+}
+.dark[data-accent="orange"] {
+    --primary: oklch(0.75 0.15 55);
+    --ring: oklch(0.75 0.15 55);
+    --sidebar-primary: oklch(0.75 0.15 55);
+}
+:root[data-accent="pink"] {
+    --primary: oklch(0.58 0.2 350);
+    --ring: oklch(0.58 0.2 350);
+    --sidebar-primary: oklch(0.58 0.2 350);
+}
+.dark[data-accent="pink"] {
+    --primary: oklch(0.74 0.16 350);
+    --ring: oklch(0.74 0.16 350);
+    --sidebar-primary: oklch(0.74 0.16 350);
+}
+
+/* 减少动画（资深外观）：近零时长，保留状态切换的即时反馈 */
+.reduce-motion *,
+.reduce-motion *::before,
+.reduce-motion *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+}
+
 .dark {
     --background: oklch(0.145 0 0);
     --foreground: oklch(0.985 0 0);

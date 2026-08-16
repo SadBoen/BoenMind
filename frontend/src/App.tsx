@@ -5,7 +5,8 @@
  */
 import { useEffect, useState } from "react";
 import { ClassicShell } from "@/components/classic/ClassicShell";
-import { applyFontScale, fontScale } from "@/lib/appearance";
+import { applyAccent, applyFontScale, applyReduceMotion, fontScale } from "@/lib/appearance";
+import { useAppStore } from "@/stores/app-store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -19,7 +20,6 @@ import {
 import { useTranslation } from "react-i18next";
 import { KeyRound } from "lucide-react";
 import { onUnauthorized, setAuthToken } from "@/api/client";
-import { useAppStore } from "@/stores/app-store";
 
 export default function App() {
   const refreshHealth = useAppStore((s) => s.refreshHealth);
@@ -28,8 +28,11 @@ export default function App() {
 
   // 启动加载：健康状态（轮询）+ 配置 + 会话列表
   useEffect(() => {
-    // 全局字体档位（外观设置；rem 布局随根字号缩放）
+    // 全局外观：字体档位 + 强调色/减少动画（资深外观设置；挂载恢复）
     applyFontScale(fontScale());
+    const s = useAppStore.getState();
+    applyAccent(s.accent);
+    applyReduceMotion(s.reduceMotion);
     void refreshHealth();
     void loadConfig();
     void loadSessions();

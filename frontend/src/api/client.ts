@@ -235,6 +235,9 @@ export interface SkillInfo {
   settingsSchema?: SettingField[];
 }
 
+/** 设置表单值（插件/SKILL 设置共用的扁平值类型） */
+export type SettingValue = string | number | boolean;
+
 /** 代理提交的改进建议（refine-suggest；审批后生效，skill 类型可回滚） */
 export interface RefinementSuggestion {
   id: string;

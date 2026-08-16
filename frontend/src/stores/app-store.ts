@@ -9,6 +9,7 @@ import { toast } from "sonner";
 // 导航/设置页类型定义在 lib/app-registry.tsx 注册表（单一数据源）
 export type { SettingsTab, AppId } from "@/lib/app-registry";
 import type { SettingsTab, AppId } from "@/lib/app-registry";
+import { ACCENTS, applyAccent, applyReduceMotion, type Accent } from "@/lib/appearance";
 
 /** 活任务清单操作（M2；与后端 todo 工具参数对齐，index 1 起） */
 export type TodoOp = {
@@ -89,6 +90,14 @@ interface AppStore {
   // 设置页（设置应用内部）
   settingsTab: SettingsTab;
   setSettingsTab: (tab: SettingsTab) => void;
+  /** 设置分级（设置架构 §十）：basic = 普通用户（默认）；expert = 资深者（更多设置内容） */
+  settingsTier: "basic" | "expert";
+  setSettingsTier: (tier: "basic" | "expert") => void;
+  /** 外观高级项（资深模式可见）：强调色 / 减少动画 */
+  accent: Accent;
+  setAccent: (accent: Accent) => void;
+  reduceMotion: boolean;
+  setReduceMotion: (enabled: boolean) => void;
 
   // 后端健康
   health: HealthInfo | null;
@@ -258,6 +267,27 @@ export const useAppStore = create<AppStore>((set, get) => {
 
     settingsTab: "appearance",
     setSettingsTab: (tab) => set({ settingsTab: tab }),
+    // 设置分级：basic（默认）/ expert；切换只改可见性，不动任何设置值
+    settingsTier: (localStorage.getItem("boenmind.settingsTier") === "expert" ? "expert" : "basic"),
+    setSettingsTier: (tier) => {
+      localStorage.setItem("boenmind.settingsTier", tier);
+      set({ settingsTier: tier });
+    },
+    accent: (() => {
+      const saved = localStorage.getItem("boenmind.appearance.accent");
+      return (ACCENTS.find((a) => a.key === saved)?.key ?? "default") as Accent;
+    })(),
+    setAccent: (accent) => {
+      localStorage.setItem("boenmind.appearance.accent", accent);
+      applyAccent(accent);
+      set({ accent });
+    },
+    reduceMotion: localStorage.getItem("boenmind.appearance.reduceMotion") === "1",
+    setReduceMotion: (enabled) => {
+      localStorage.setItem("boenmind.appearance.reduceMotion", enabled ? "1" : "0");
+      applyReduceMotion(enabled);
+      set({ reduceMotion: enabled });
+    },
 
     pendingPermission: null,
     permissionMode: "default",

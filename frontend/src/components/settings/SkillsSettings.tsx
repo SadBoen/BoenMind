@@ -21,6 +21,7 @@ const RANDOM_COUNT = 5;
 export function SkillsSettings() {
   const { t } = useTranslation();
   const config = useAppStore((s) => s.config);
+  const tierExpert = useAppStore((s) => s.settingsTier) === "expert";
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [candidates, setCandidates] = useState<SkillCandidate[]>([]);
@@ -199,15 +200,17 @@ export function SkillsSettings() {
         uninstall={(skill) => void uninstall(skill)}
         extraActions={(skill) => (
           <>
-            <ScopePicker
-              key="scope"
-              name={skill.name}
-              current={config?.skillScopes?.[skill.id]}
-              onSave={async (scopes) => {
-                await api.setSkillScope(skill.id, scopes);
-                await useAppStore.getState().loadConfig();
-              }}
-            />
+            {tierExpert && (
+              <ScopePicker
+                key="scope"
+                name={skill.name}
+                current={config?.skillScopes?.[skill.id]}
+                onSave={async (scopes) => {
+                  await api.setSkillScope(skill.id, scopes);
+                  await useAppStore.getState().loadConfig();
+                }}
+              />
+            )}
             {skill.settingsSchema ? (
               <Button
                 key="settings"
