@@ -205,6 +205,15 @@
 
 ---
 
+## 九、待完成任务（剩余事项清单）
+
+已完成：阶段 0-3（客户端底座/配置/兼容性/TS 注册面）+ 前端设置页 + 阶段 4a（MRTR 内建确认、SSE legacy 实测拒绝）+ 阶段 4b（反向 MCP server）。
+
+- [ ] **阶段 4c：OAuth 2.1 远程认证**（拍定后置）——本地 stdio/localhost 零 token 场景用不到；当出现受保护的远程 HTTP server 需求时启动：rmcp `auth` feature（PKCE + RFC 8707 resource 指示符 + AS 发现 + `iss` 校验）+ token 存储 + 授权流程。**启动判据：首个需要认证的远程 server 接入需求**。
+- [ ] 阶段 5 远期（另行排期）：SSE legacy 传输（按存量需求）、prompts → 斜杠命令（`/mcp__server__prompt`）、MCP Marketplace 目录集成（Glama / mcp.so）、MCP Apps / Skills-over-MCP 扩展跟随。
+
+---
+
 ## 参考来源（要点）
 
 - MCP 规范 2026-07-28 changelog / versioning / authorization：modelcontextprotocol.io/specification/2026-07-28/
