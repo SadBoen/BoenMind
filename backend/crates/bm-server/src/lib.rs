@@ -689,6 +689,41 @@ async fn serve_inner(
                 ),
             }
         }
+        // TS 注册面接通（bm-mcp 阶段 3）：插件 `pi.registerMcpServer` 声明
+        // 也进连接池（优先级最低——兼容 pi 生态插件声明，显式/发现优先）
+        if let Some(compat) = compat.as_ref() {
+            match compat.read_mcp_servers().await {
+                Ok(specs) => {
+                    for spec in specs {
+                        match bm_mcp::parse_ts_server_spec(&spec) {
+                            Ok(server) => {
+                                if !names.insert(server.name.clone()) {
+                                    continue;
+                                }
+                                let server_name = server.name.clone();
+                                match manager.connect(server).await {
+                                    Ok(handle) => tracing::info!(
+                                        event = "bm.mcp_ts_connected",
+                                        server = %handle.config.name,
+                                        version = %handle.protocol_version.read().unwrap(),
+                                    ),
+                                    Err(err) => tracing::warn!(
+                                        event = "bm.mcp_ts_failed",
+                                        server = %server_name,
+                                        error = %err,
+                                    ),
+                                }
+                            }
+                            Err(err) => tracing::warn!(
+                                event = "bm.mcp_ts_spec_invalid",
+                                error = %err,
+                            ),
+                        }
+                    }
+                }
+                Err(err) => tracing::warn!(event = "bm.mcp_ts_unavailable", error = %err),
+            }
+        }
         if manager.servers().await.is_empty() {
             (None, None)
         } else {

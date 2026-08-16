@@ -141,6 +141,10 @@ enum CompatCmd {
     Tools {
         reply: oneshot::Sender<CompatResult<Vec<ExtensionToolDef>>>,
     },
+    /// TS 注册面接通（bm-mcp）：读取插件 `pi.registerMcpServer` 声明。
+    McpServers {
+        reply: oneshot::Sender<CompatResult<Vec<serde_json::Value>>>,
+    },
     /// B6：宿主→插件事件（pi.on handler 链），返回 handler 链最后非
     /// undefined 值（无 handler → Null）。
     DispatchEvent {
@@ -661,6 +665,10 @@ impl CompatEngine {
                                 let res = thread.runtime().get_registered_tools().await;
                                 let _ = reply.send(res);
                             }
+                            CompatCmd::McpServers { reply } => {
+                                let res = thread.runtime().get_registered_mcp_servers().await;
+                                let _ = reply.send(res);
+                            }
                             CompatCmd::DispatchEvent { name, payload, ctx, reply } => {
                                 let ctx_cwd = ctx
                                     .get("cwd")
@@ -798,6 +806,17 @@ impl CompatEngine {
         let (reply, rx) = oneshot::channel();
         self.tx
             .send(CompatCmd::Tools { reply })
+            .map_err(|_| "compat 引擎已停止".to_string())?;
+        rx.await
+            .map_err(|_| "compat 引擎已停止".to_string())?
+            .map_err(|err| err.to_string())
+    }
+
+    /// 读回插件声明的 MCP server（`pi.registerMcpServer`；TS 注册面）。
+    pub async fn read_mcp_servers(&self) -> Result<Vec<serde_json::Value>, String> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(CompatCmd::McpServers { reply })
             .map_err(|_| "compat 引擎已停止".to_string())?;
         rx.await
             .map_err(|_| "compat 引擎已停止".to_string())?

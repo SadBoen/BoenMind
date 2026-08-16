@@ -103,7 +103,11 @@ fn parse_server_entry(name: &str, entry: &serde_json::Value) -> Result<McpServer
     let obj = entry
         .as_object()
         .ok_or_else(|| "条目必须是对象".to_string())?;
-    let entry_type = obj.get("type").and_then(|v| v.as_str());
+    // 标准格式用 `type`；TS 插件注册面（pi.registerMcpServer）用 `transport`
+    let entry_type = obj
+        .get("type")
+        .or_else(|| obj.get("transport"))
+        .and_then(|v| v.as_str());
     let command = obj.get("command").and_then(|v| v.as_str()).map(str::to_string);
     let url = obj.get("url").and_then(|v| v.as_str()).map(str::to_string);
 
@@ -171,6 +175,16 @@ fn parse_server_entry(name: &str, entry: &serde_json::Value) -> Result<McpServer
         validate_http_url(u).map_err(|e| format!("url 校验失败: {e}"))?;
     }
     Ok(config)
+}
+
+/// 解析 TS 插件注册面（`pi.registerMcpServer`）的 spec：
+/// `{ name, transport?, command?, url?, args?, env? }`。
+pub fn parse_ts_server_spec(spec: &serde_json::Value) -> Result<McpServerConfig, String> {
+    let name = spec
+        .get("name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "缺少 name".to_string())?;
+    parse_server_entry(name, spec)
 }
 
 /// SSRF 防护（语义对齐 bm-core providers.rs `validate_base_url`）：

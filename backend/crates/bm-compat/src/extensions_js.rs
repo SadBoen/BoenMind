@@ -17352,6 +17352,29 @@ impl<C: SchedulerClock + 'static> PiJsRuntime<C> {
         serde_json::from_value(value).map_err(|err| Error::Json(Box::new(err)))
     }
 
+    /// Get MCP server declarations from loaded JS extensions
+    /// （`pi.registerMcpServer` 注册面；bm-server 组装层消费——TS 注册面
+    /// 接通，兼容 pi 生态插件声明）。spec 形状对齐 McpServerConfig 字段。
+    pub async fn get_registered_mcp_servers(&self) -> Result<Vec<serde_json::Value>> {
+        self.interrupt_budget.reset();
+        let bridge_secret = self.bridge_secret.clone();
+        let value = match self
+            .context
+            .with(move |ctx| {
+                let global = ctx.globals();
+                let getter: Function<'_> = global.get("__pi_get_registered_mcp_servers")?;
+                let servers: Value<'_> = getter.call((bridge_secret,))?;
+                js_to_json(&servers)
+            })
+            .await
+        {
+            Ok(value) => value,
+            Err(err) => return Err(self.map_quickjs_error(&err).await),
+        };
+
+        serde_json::from_value(value).map_err(|err| Error::Json(Box::new(err)))
+    }
+
     /// Read a global value by name and convert it to JSON.
     ///
     /// This is intentionally a narrow helper that avoids exposing raw `rquickjs`
@@ -20176,6 +20199,18 @@ function __pi_get_registered_tools() {
     const out = [];
     for (const name of names) {
         const record = __pi_tool_index.get(name);
+        if (!record || !record.spec) continue;
+        out.push(record.spec);
+    }
+    return out;
+}
+
+function __pi_get_registered_mcp_servers() {
+    const names = Array.from(__pi_mcp_server_index.keys()).map((v) => String(v));
+    names.sort();
+    const out = [];
+    for (const name of names) {
+        const record = __pi_mcp_server_index.get(name);
         if (!record || !record.spec) continue;
         out.push(record.spec);
     }
@@ -24278,6 +24313,7 @@ __pi_export_privileged(
 for (const [name, fn] of Object.entries({
     __pi_runtime_registry_snapshot,
     __pi_get_registered_tools,
+    __pi_get_registered_mcp_servers,
     __pi_complete_hostcall,
     __pi_fire_timer,
     __pi_dispatch_event,
@@ -24370,10 +24406,10 @@ mod tests {
                 sha256_hex(source.as_bytes())
             );
         }
-        assert_eq!(bridge.len(), 193_144);
+        assert_eq!(bridge.len(), 193_537);
         assert_eq!(
             sha256_hex(bridge.as_bytes()),
-            "c3047ae81da821cf2eee265a6adc4a15a1d951268e40daaad8b2e2fa6540a5e8"
+            "44f15aeb62766536769da0bb7d20d2f5cf8ec9ff4203bc43d54493681cda4ca8"
         );
 
         for (name, expected_len, expected_sha256) in [

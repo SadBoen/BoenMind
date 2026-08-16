@@ -15,6 +15,7 @@ pub use client::{
 };
 pub use config::{McpServerConfig, McpTransportKind};
 pub use discover::{
-    McpConfigSource, discover_servers, parse_mcp_servers_file, validate_http_url,
+    McpConfigSource, discover_servers, parse_mcp_servers_file, parse_ts_server_spec,
+    validate_http_url,
 };
 pub use expand::expand_env;
