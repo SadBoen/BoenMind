@@ -6,9 +6,15 @@
 
 pub mod client;
 pub mod config;
+pub mod discover;
+pub mod expand;
 
 pub use client::{
     McpClientManager, McpError, McpServerHandle, McpServerInfo, McpService, McpToolDef,
     qualify_tool_name,
 };
 pub use config::{McpServerConfig, McpTransportKind};
+pub use discover::{
+    McpConfigSource, discover_servers, parse_mcp_servers_file, validate_http_url,
+};
+pub use expand::expand_env;

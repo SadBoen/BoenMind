@@ -21,10 +21,31 @@ const TOOL_HASH_LEN: usize = 12;
 pub struct McpServerHandle {
     pub config: McpServerConfig,
     /// rmcp 运行中的 client 服务（Deref 到 `Peer<RoleClient>`）。
+    /// 重连时整体替换（supervisor 任务持有同一 Arc）。
     running: Mutex<rmcp::service::RunningService<RoleClient, ()>>,
-    /// 协商成功的协议版本（dual-era 协商结果）。
-    pub protocol_version: ProtocolVersion,
+    /// 协商成功的协议版本（dual-era 协商结果；重连后更新）。
+    pub protocol_version: std::sync::RwLock<ProtocolVersion>,
+    /// 主动断开标志（disconnect 置位；supervisor 见 true 退出，不重连）。
+    disconnected: std::sync::atomic::AtomicBool,
 }
+
+impl McpServerHandle {
+    /// 是否已主动断开（诊断/测试用）。
+    pub fn disconnected(&self) -> bool {
+        self.disconnected.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// 传输是否已关闭（崩溃/断开检测；重连完成后为 false）。
+    pub async fn is_connected(&self) -> bool {
+        !self.running.lock().await.is_transport_closed()
+    }
+}
+
+/// 重连策略参数（吸收 dsh mcp-client）：指数退避 500ms → 30s，
+/// 连续失败 10 次熔断（不再重连，日志告警）。
+const RECONNECT_BACKOFF_INITIAL_MS: u64 = 500;
+const RECONNECT_BACKOFF_MAX_MS: u64 = 30_000;
+const RECONNECT_MAX_FAILURES: u32 = 10;
 
 /// 合入模型工具面的 MCP 工具定义。
 #[derive(Debug, Clone)]
@@ -70,10 +91,11 @@ pub struct McpServerInfo {
 pub struct McpClientManager {
     servers: RwLock<HashMap<String, Arc<McpServerHandle>>>,
     /// 工具快照缓存（connect/refresh 后刷新；std 锁——执行线程可能在
-    /// tokio 上下文调用同步面，不能用 blocking_*）。
-    tools_cache: std::sync::RwLock<Vec<McpToolDef>>,
+    /// tokio 上下文调用同步面，不能用 blocking_*）。Arc 共享给重连
+    /// supervisor 任务更新。
+    tools_cache: Arc<std::sync::RwLock<Vec<McpToolDef>>>,
     /// server 状态快照（同步读）。
-    servers_info: std::sync::RwLock<Vec<McpServerInfo>>,
+    servers_info: Arc<std::sync::RwLock<Vec<McpServerInfo>>>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -119,40 +141,21 @@ impl McpClientManager {
             preferred_versions: vec![ProtocolVersion::V_2026_07_28],
             legacy_version: Some(ProtocolVersion::V_2025_11_25),
         };
-        let running = match config.transport {
-            McpTransportKind::Stdio => {
-                let command = config.command.as_deref().unwrap();
-                let mut cmd = tokio::process::Command::new(command);
-                cmd.args(&config.args).envs(&config.env);
-                debug!(server = %config.name, %command, args = ?config.args, "spawn MCP stdio server");
-                ()
-                    .serve_with_lifecycle(TokioChildProcess::new(cmd)?, lifecycle)
-                    .await
-            }
-            McpTransportKind::Http => {
-                let url = config.url.as_deref().unwrap();
-                let transport = StreamableHttpClientTransport::from_uri(url);
-                ()
-                    .serve_with_lifecycle(transport, lifecycle)
-                    .await
-            }
-        }
-        .map_err(|e| McpError::Connect(format!("{}: {e}", config.name)))?;
-
-        let protocol_version = running
-            .peer_info()
-            .map(|info| info.protocol_version.clone())
-            .unwrap_or_default();
+        let (running, protocol_version) = establish(&config, lifecycle).await?;
         info!(server = %config.name, version = %protocol_version, "MCP server 已连接");
 
         let handle = Arc::new(McpServerHandle {
             config,
             running: Mutex::new(running),
-            protocol_version,
+            protocol_version: std::sync::RwLock::new(protocol_version),
+            disconnected: std::sync::atomic::AtomicBool::new(false),
         });
         self.servers.write().await.insert(handle.config.name.clone(), handle.clone());
         self.refresh().await?;
         self.sync_servers_info().await;
+        // 崩溃重连监督（吸收 dsh mcp-client：指数退避 + 熔断）；主动
+        // disconnect 置位后 supervisor 自然退出
+        self.spawn_supervisor(handle.clone());
         Ok(handle)
     }
 
@@ -163,6 +166,8 @@ impl McpClientManager {
             .await
             .remove(server)
             .ok_or_else(|| McpError::NotConnected(server.to_string()))?;
+        // 先置位再 close：supervisor 看到主动断开标志即退出（不重连）
+        handle.disconnected.store(true, std::sync::atomic::Ordering::SeqCst);
         handle
             .running
             .lock()
@@ -176,17 +181,73 @@ impl McpClientManager {
         Ok(())
     }
 
+    /// 崩溃重连监督任务：等连接退出（is_closed 轮询）→ 指数退避重连 →
+    /// 成功替换 running 并刷新该 server 工具快照；连续失败 10 次熔断。
+    fn spawn_supervisor(&self, handle: Arc<McpServerHandle>) {
+        let tools_cache = self.tools_cache.clone();
+        let servers_info = self.servers_info.clone();
+        tokio::spawn(async move {
+            let mut backoff_ms = RECONNECT_BACKOFF_INITIAL_MS;
+            let mut failures = 0u32;
+            loop {
+                // 等连接退出（500ms 轮询；用 is_transport_closed——被动断开
+                // 时 is_closed 不会置位，只有显式 close/cancel 才置位）
+                loop {
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    let closed = handle.running.lock().await.is_transport_closed();
+                    if closed {
+                        break;
+                    }
+                }
+                if handle.disconnected.load(std::sync::atomic::Ordering::SeqCst) {
+                    break; // 主动断开，不重连
+                }
+                warn!(server = %handle.config.name, "MCP server 连接退出，尝试重连");
+                match try_reconnect(&handle.config).await {
+                    Ok((running, version)) => {
+                        *handle.running.lock().await = running;
+                        *handle.protocol_version.write().unwrap() = version.clone();
+                        // 工具快照：该 server 旧条目移除 + 新条目并入
+                        match refresh_one(&handle).await {
+                            Ok(tools) => {
+                                let mut cache = tools_cache.write().unwrap();
+                                cache.retain(|t| t.server_name != handle.config.name);
+                                cache.extend(tools);
+                            }
+                            Err(err) => warn!(server = %handle.config.name, error = %err, "重连后工具快照刷新失败"),
+                        }
+                        {
+                            let mut info = servers_info.write().unwrap();
+                            if let Some(entry) = info.iter_mut().find(|i| i.name == handle.config.name) {
+                                entry.protocol_version = version.to_string();
+                            }
+                        }
+                        info!(server = %handle.config.name, version = %version, "MCP server 重连成功");
+                        backoff_ms = RECONNECT_BACKOFF_INITIAL_MS;
+                        failures = 0;
+                    }
+                    Err(err) => {
+                        failures += 1;
+                        if failures >= RECONNECT_MAX_FAILURES {
+                            warn!(server = %handle.config.name, "MCP server 重连熔断（连续失败 {failures} 次），停止自动重连");
+                            break;
+                        }
+                        warn!(server = %handle.config.name, backoff_ms, error = %err, "重连失败，退避后重试");
+                        tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                        backoff_ms = (backoff_ms * 2).min(RECONNECT_BACKOFF_MAX_MS);
+                    }
+                }
+            }
+        });
+    }
+
     /// 重新枚举全部已连接 server 的工具（`tools/list` → 快照）。
     pub async fn refresh(&self) -> Result<(), McpError> {
         let mut out = Vec::new();
         for handle in self.servers().await {
-            let running = handle.running.lock().await;
-            let tools = running
-                .list_all_tools()
-                .await
-                .map_err(|e| McpError::Call(format!("server `{}` tools/list 失败: {e}", handle.config.name)))?;
-            for tool in tools {
-                out.push(to_mcp_tool_def(&handle.config.name, tool));
+            match refresh_one(&handle).await {
+                Ok(tools) => out.extend(tools),
+                Err(err) => tracing::warn!(event = "bm.mcp_refresh_failed", server = %handle.config.name, error = %err),
             }
         }
         *self.tools_cache.write().unwrap() = out;
@@ -198,7 +259,7 @@ impl McpClientManager {
         for handle in self.servers().await {
             out.push(McpServerInfo {
                 name: handle.config.name.clone(),
-                protocol_version: handle.protocol_version.to_string(),
+                protocol_version: handle.protocol_version.read().unwrap().to_string(),
                 transport: handle.config.transport,
             });
         }
@@ -275,6 +336,76 @@ impl McpService for McpClientManager {
             result.map_err(|e| e.to_string())
         })
     }
+}
+
+/// 建立与一个 server 的连接（stdio spawn 或 streamable HTTP）+ dual-era 协商。
+/// 供 connect 与重连 supervisor 共用。
+async fn establish(
+    config: &McpServerConfig,
+    lifecycle: ClientLifecycleMode,
+) -> Result<
+    (
+        rmcp::service::RunningService<RoleClient, ()>,
+        ProtocolVersion,
+    ),
+    McpError,
+> {
+    let running = match config.transport {
+        McpTransportKind::Stdio => {
+            let command = config.command.as_deref().unwrap();
+            let mut cmd = tokio::process::Command::new(command);
+            cmd.args(&config.args).envs(&config.env);
+            debug!(server = %config.name, %command, args = ?config.args, "spawn MCP stdio server");
+            ()
+                .serve_with_lifecycle(TokioChildProcess::new(cmd)?, lifecycle)
+                .await
+        }
+        McpTransportKind::Http => {
+            let url = config.url.as_deref().unwrap();
+            let transport = StreamableHttpClientTransport::from_uri(url);
+            ()
+                .serve_with_lifecycle(transport, lifecycle)
+                .await
+        }
+    }
+    .map_err(|e| McpError::Connect(format!("{}: {e}", config.name)))?;
+    let protocol_version = running
+        .peer_info()
+        .map(|info| info.protocol_version.clone())
+        .unwrap_or_default();
+    Ok((running, protocol_version))
+}
+
+/// 枚举单个 server 的工具（`tools/list` → 快照条目）。
+async fn refresh_one(
+    handle: &McpServerHandle,
+) -> Result<Vec<McpToolDef>, McpError> {
+    let running = handle.running.lock().await;
+    let tools = running
+        .list_all_tools()
+        .await
+        .map_err(|e| McpError::Call(format!("server `{}` tools/list 失败: {e}", handle.config.name)))?;
+    Ok(tools
+        .into_iter()
+        .map(|t| to_mcp_tool_def(&handle.config.name, t))
+        .collect())
+}
+
+/// 重连入口（supervisor 用）：与 establish 同构，语义分离便于日志。
+async fn try_reconnect(
+    config: &McpServerConfig,
+) -> Result<
+    (
+        rmcp::service::RunningService<RoleClient, ()>,
+        ProtocolVersion,
+    ),
+    McpError,
+> {
+    let lifecycle = ClientLifecycleMode::Auto {
+        preferred_versions: vec![ProtocolVersion::V_2026_07_28],
+        legacy_version: Some(ProtocolVersion::V_2025_11_25),
+    };
+    establish(config, lifecycle).await
 }
 
 /// 工具名规范化：`mcp__<server>__<tool>`，超长截断 + 12 位哈希防撞

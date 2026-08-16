@@ -38,7 +38,7 @@ async fn main() {
     };
 
     let handle = manager.connect(config).await.expect("连接失败");
-    println!("[ok] 协商协议版本: {}", handle.protocol_version);
+    println!("[ok] 协商协议版本: {}", handle.protocol_version.read().unwrap());
 
     let tools = manager.tools();
     println!("[ok] 工具数量: {}", tools.len());

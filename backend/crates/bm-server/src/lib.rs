@@ -632,22 +632,30 @@ async fn serve_inner(
         config.extension_policy.as_deref() != Some("permissive"),
     ));
 
-    // MCP 官方插件（bm-mcp，协议层一等公民 Z4）：config.toml `mcp` 段 →
-    // 连接全部 server（dual-era 协商；单个失败不阻断，日志 warn 跳过）→
-    // 服务面注册 kernel port "mcp"。工具进模型面在 build_loop_agent 注册段
-    // （经 AppState.mcp 传递）；权限门在 executor 侧（McpGate）。
-    // 连接失败/配置为空 → (None, None)：零 mcp 工具、零询问开销。
+    // MCP 官方插件（bm-mcp，协议层一等公民 Z4）：config.toml `mcp` 段 +
+    // 标准配置自动发现（项目 .mcp.json / ~/.agents/mcp.json /
+    // ~/.config/mcp/mcp.json，兼容性主体——pi-mcp-adapter/Warp 同款
+    // 多生态读取）→ 连接全部 server（dual-era 协商；单个失败不阻断，
+    // 日志 warn 跳过）→ 服务面注册 kernel port "mcp"。工具进模型面在
+    // build_loop_agent 注册段（经 AppState.mcp 传递）；权限门在 executor
+    // 侧（McpGate）。连接失败/配置为空 → (None, None)：零 mcp 工具、
+    // 零询问开销。
     let (mcp_service, mcp_gate) = {
         let manager = Arc::new(bm_mcp::McpClientManager::new());
+        // 显式配置（config.toml）最高优先级；自动发现只补漏不覆盖
+        let mut names: std::collections::HashSet<String> = std::collections::HashSet::new();
         if let Some(value) = config.mcp.clone() {
             match serde_json::from_value::<Vec<bm_mcp::McpServerConfig>>(value) {
                 Ok(servers) => {
                     for server in servers {
+                        if !names.insert(server.name.clone()) {
+                            continue;
+                        }
                         match manager.connect(server).await {
                             Ok(handle) => tracing::info!(
                                 event = "bm.mcp_connected",
                                 server = %handle.config.name,
-                                version = %handle.protocol_version,
+                                version = %handle.protocol_version.read().unwrap(),
                             ),
                             Err(err) => tracing::warn!(
                                 event = "bm.mcp_connect_failed",
@@ -660,6 +668,25 @@ async fn serve_inner(
                 Err(err) => {
                     tracing::warn!(event = "bm.mcp_config_invalid", error = %err);
                 }
+            }
+        }
+        for (server, source) in bm_mcp::discover_servers(&config.working_dir) {
+            if !names.insert(server.name.clone()) {
+                continue;
+            }
+            let server_name = server.name.clone();
+            match manager.connect(server).await {
+                Ok(handle) => tracing::info!(
+                    event = "bm.mcp_discovered_connected",
+                    server = %handle.config.name,
+                    source = ?source,
+                    version = %handle.protocol_version.read().unwrap(),
+                ),
+                Err(err) => tracing::warn!(
+                    event = "bm.mcp_discovered_failed",
+                    server = %server_name,
+                    error = %err,
+                ),
             }
         }
         if manager.servers().await.is_empty() {
