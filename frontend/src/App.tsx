@@ -1,13 +1,10 @@
 /**
- * 双 DE 壳入口：启动画面 → 经典软件界面（默认）或桌面壳。
- * 界面模式由用户选择持久化（boenmind.viewMode），两壳共享同一 store、
- * 同一批应用内容组件（APPS 注册表），后端零改动——架构 §四·B
- * "前端壳多套并存"的实作验证。
+ * 壳入口：经典软件界面（唯一形态）。
+ * 桌面形态已退役（2026-08-16，用户拍板：全删除，留切换开关占位），
+ * viewMode 状态保留供开关回显，渲染恒为 ClassicShell。
  */
-import { useCallback, useEffect, useState } from "react";
-import { Desktop } from "@/components/desktop/Desktop";
+import { useEffect, useState } from "react";
 import { ClassicShell } from "@/components/classic/ClassicShell";
-import { BootScreen } from "@/components/desktop/BootScreen";
 import { applyFontScale, fontScale } from "@/lib/appearance";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,15 +22,13 @@ import { onUnauthorized, setAuthToken } from "@/api/client";
 import { useAppStore } from "@/stores/app-store";
 
 export default function App() {
-  const [booted, setBooted] = useState(false);
-  const viewMode = useAppStore((s) => s.viewMode);
   const refreshHealth = useAppStore((s) => s.refreshHealth);
   const loadConfig = useAppStore((s) => s.loadConfig);
   const loadSessions = useAppStore((s) => s.loadSessions);
 
   // 启动加载：健康状态（轮询）+ 配置 + 会话列表
   useEffect(() => {
-    // 全局字体档位（软件形态外观设置；rem 布局随根字号缩放）
+    // 全局字体档位（外观设置；rem 布局随根字号缩放）
     applyFontScale(fontScale());
     void refreshHealth();
     void loadConfig();
@@ -42,21 +37,9 @@ export default function App() {
     return () => clearInterval(timer);
   }, [refreshHealth, loadConfig, loadSessions]);
 
-  // 启动画面（仅桌面形态）：OS 开机体验的一部分；软件形态直接进界面，
-  // 不等待 2s 启动动画（用户反馈"软件形态刷新不该看 macOS 开机"）
-  const finishBoot = useCallback(() => setBooted(true), []);
-
   return (
     <div className="h-screen w-screen overflow-hidden bg-background text-foreground">
-      {viewMode === "desktop" ? (
-        booted ? (
-          <Desktop />
-        ) : (
-          <BootScreen onFinish={finishBoot} />
-        )
-      ) : (
-        <ClassicShell />
-      )}
+      <ClassicShell />
       <TokenGate />
     </div>
   );

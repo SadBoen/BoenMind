@@ -9,7 +9,6 @@ import { toast } from "sonner";
 // 导航/设置页类型定义在 lib/app-registry.tsx 注册表（单一数据源）
 export type { SettingsTab, AppId } from "@/lib/app-registry";
 import type { SettingsTab, AppId } from "@/lib/app-registry";
-import type { Wallpaper } from "@/lib/appearance";
 
 /** 活任务清单操作（M2；与后端 todo 工具参数对齐，index 1 起） */
 export type TodoOp = {
@@ -80,27 +79,12 @@ export function defaultModelValue(config: AppConfig): string | null {
 }
 
 interface AppStore {
-  // ── 双 DE（架构 §四·B：多套前端壳并存，切换验证）──
-  // classic = 经典软件界面（左侧导航条+主面板）；desktop = 桌面壳
+  // ── 界面形态（2026-08-16 桌面形态退役：仅保留切换开关占位，恒为 classic）──
   viewMode: "classic" | "desktop";
   setViewMode: (mode: "classic" | "desktop") => void;
-  /** 经典界面的当前导航（与桌面壳 openApps 并存互不干扰） */
+  /** 经典界面的当前导航 */
   activeNav: AppId;
   setActiveNav: (id: AppId) => void;
-  /** 桌面形态壁纸模板（外观设置里切换；响应式状态） */
-  wallpaper: Wallpaper;
-  setWallpaper: (w: Wallpaper) => void;
-
-  // 桌面窗口（应用打开顺序即 z 序；单例：重复打开=聚焦+置顶）
-  openApps: AppId[];
-  focusedApp: AppId | null;
-  /** 最小化的窗口（保留在 openApps 维持 z 序与 Dock 指示点，渲染时跳过） */
-  minimized: AppId[];
-  openApp: (id: AppId) => void;
-  closeApp: (id: AppId) => void;
-  focusApp: (id: AppId) => void;
-  minimizeApp: (id: AppId) => void;
-  restoreApp: (id: AppId) => void;
 
   // 设置页（设置应用内部）
   settingsTab: SettingsTab;
@@ -260,7 +244,7 @@ export const useAppStore = create<AppStore>((set, get) => {
   };
 
   return {
-    // 默认经典软件界面（用户拍板）；选择持久化，桌面模式为 OS 形态入口
+    // 默认经典软件界面（用户拍板）；桌面形态退役（2026-08-16），开关仅占位
     viewMode: (localStorage.getItem("boenmind.viewMode") as "desktop" | null) ?? "classic",
     setViewMode: (mode) => {
       localStorage.setItem("boenmind.viewMode", mode);
@@ -270,67 +254,6 @@ export const useAppStore = create<AppStore>((set, get) => {
     setActiveNav: (id) => {
       localStorage.setItem(ACTIVE_NAV_KEY, id);
       set({ activeNav: id });
-    },
-    // 桌面壁纸模板（外观设置里的桌面形态专属设置；localStorage 持久化）
-    wallpaper: (() => {
-      const saved = localStorage.getItem("boenmind.wallpaper");
-      return saved === "aurora" ? "aurora" : "starry";
-    })(),
-    setWallpaper: (w) => {
-      localStorage.setItem("boenmind.wallpaper", w);
-      set({ wallpaper: w });
-    },
-
-    openApps: [],
-    focusedApp: null,
-    minimized: [],
-    openApp: (id) => {
-      const s = get();
-      if (s.openApps.includes(id)) {
-        if (s.minimized.includes(id)) {
-          // 已打开但最小化：恢复（移出最小化 + 置顶聚焦）
-          set({
-            minimized: s.minimized.filter((a) => a !== id),
-            focusedApp: id,
-            openApps: [...s.openApps.filter((a) => a !== id), id],
-          });
-        } else {
-          // 单例：已打开则置顶聚焦
-          set({ openApps: [...s.openApps.filter((a) => a !== id), id], focusedApp: id });
-        }
-        return;
-      }
-      set({ openApps: [...s.openApps, id], focusedApp: id });
-    },
-    closeApp: (id) => {
-      const s = get();
-      const rest = s.openApps.filter((a) => a !== id);
-      set({
-        openApps: rest,
-        minimized: s.minimized.filter((a) => a !== id),
-        focusedApp: s.focusedApp === id ? (rest[rest.length - 1] ?? null) : s.focusedApp,
-      });
-    },
-    focusApp: (id) => {
-      const s = get();
-      if (s.focusedApp === id) return;
-      set({ focusedApp: id, openApps: [...s.openApps.filter((a) => a !== id), id] });
-    },
-    minimizeApp: (id) => {
-      const s = get();
-      if (s.minimized.includes(id)) return;
-      set({ minimized: [...s.minimized, id] });
-      // 聚焦转移给 z 序上一个可见窗口（macOS 语义）；没有则空桌面
-      const next = [...s.openApps].reverse().find((a) => a !== id && !s.minimized.includes(a));
-      set({ focusedApp: next ?? null });
-    },
-    restoreApp: (id) => {
-      const s = get();
-      set({
-        minimized: s.minimized.filter((a) => a !== id),
-        focusedApp: id,
-        openApps: [...s.openApps.filter((a) => a !== id), id],
-      });
     },
 
     settingsTab: "appearance",

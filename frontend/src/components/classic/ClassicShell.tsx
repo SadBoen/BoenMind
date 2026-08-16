@@ -7,10 +7,10 @@
  * bottom 分区语义一致（设置不是"软件"，是系统入口；插件/管家/模型提供商
  * 等设置项在设置应用二级菜单里）。
  * + 主面板（渲染 APPS[activeNav].component，内容组件零改动）
- * + 底部状态栏（复用桌面壳 StatusBar，浅色变体）。
- * 与桌面壳共享同一 store（会话/消息/配置），后端零改动。
+ * + 底部状态栏（共享 StatusBar，浅色跟随主题）。
+ * 与后端共享同一 store（会话/消息/配置）。
  *
- * 默认界面 = 本壳（用户拍板：软件形式优先）；桌面模式从设置→外观形态切换进。
+ * 桌面形态已退役（2026-08-16，用户拍板：全删除，留切换开关占位）。
  *
  * 应用内容区 = DockLayout 可停靠视图容器（v0.23）：导航图标右键菜单提供
  * 「重置布局」（只对有默认布局声明的应用显示，恢复该应用布局快照为默认）。
@@ -23,7 +23,7 @@ import { APPS } from "@/lib/app-registry";
 import { hasDockLayout } from "@/lib/dock-views";
 import { resetDockLayout } from "@/components/layout/DockLayout";
 import { useAppStore } from "@/stores/app-store";
-import { StatusBar } from "@/components/desktop/StatusBar";
+import { StatusBar } from "@/components/shared/StatusBar";
 import { cn } from "@/lib/utils";
 
 /** 软件导航顺序（顶部区）：对话 + 编程 + wiki（占位）；新软件在此登记 */
@@ -138,7 +138,7 @@ export function ClassicShell() {
         </main>
       </div>
 
-      <StatusBar variant="classic" />
+      <StatusBar />
 
       {/* 导航右键菜单：重置该应用的可停靠布局 */}
       {ctxMenu && (

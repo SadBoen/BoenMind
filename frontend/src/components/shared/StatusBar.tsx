@@ -1,15 +1,13 @@
 /**
  * 底部状态栏：后端状态点+版本 | 模型 | 工作文件夹。
- * desktop 变体 = 深色玻璃与星空壁纸融合（Dock 下方细条）；
- * classic 变体 = 浅色跟随主题（经典软件界面底部）。
- * （原三栏壳 StatusBar 的信息落点；时钟在顶部菜单栏/经典界面由系统提供）
+ * （原桌面壳 StatusBar 的 classic 变体；桌面形态退役后仅剩此变体，2026-08-16）
  */
 import { useTranslation } from "react-i18next";
 import { FolderOpen, HardDrive, Wifi, WifiOff } from "lucide-react";
 import { useAppStore } from "@/stores/app-store";
 import { cn } from "@/lib/utils";
 
-export function StatusBar({ variant = "desktop" }: { variant?: "desktop" | "classic" }) {
+export function StatusBar() {
   const { t } = useTranslation();
   const online = useAppStore((s) => s.online);
   const health = useAppStore((s) => s.health);
@@ -18,14 +16,7 @@ export function StatusBar({ variant = "desktop" }: { variant?: "desktop" | "clas
   const model = config?.default_model ?? t("statusbar.noModel");
 
   return (
-    <footer
-      className={cn(
-        "flex h-7 shrink-0 items-center gap-4 border-t px-3 text-[11px]",
-        variant === "classic"
-          ? "border-border bg-muted/40 text-muted-foreground"
-          : "border-white/10 bg-black/25 text-white/80 backdrop-blur-xl",
-      )}
-    >
+    <footer className="flex h-7 shrink-0 items-center gap-4 border-t border-border bg-muted/40 px-3 text-[11px] text-muted-foreground">
       <span className="flex items-center gap-1.5">
         {online ? (
           <Wifi size={12} className="text-emerald-400" />
