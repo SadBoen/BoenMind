@@ -1,0 +1,82 @@
+/* ============ 玻璃皮肤（src/skins/glass/，2026-08-16） ============
+ * 作用域 :root[data-skin="glass"]（html 挂属性即启用，去掉即还原）。
+ * 只覆盖 CSS 令牌变量 + 对静态区追加 backdrop-blur——组件代码零改动。
+ * 可调参数（--skin-hue 色调 / --skin-alpha 玻璃不透明度 / --skin-blur 模糊）：
+ * 亮暗两套色板共用同一组变量（明暗随全局主题，色调/材质随皮肤参数）。
+ * 性能策略（借鉴 dsh-client-ui-aqua 实测经验）：导航/状态栏/tab 栏/浮层等
+ * 静态区域 blur；滚动内容区（dockview 面板/消息列表）仅半透明不 blur。 */
+
+:root[data-skin="glass"] {
+  --background: oklch(1 0 0 / calc(0.38 + var(--skin-alpha, 0.6) * 0.5));
+  --foreground: oklch(0.2 0.015 var(--skin-hue, 250));
+  --card: oklch(1 0 0 / calc(0.42 + var(--skin-alpha, 0.6) * 0.48));
+  --card-foreground: oklch(0.2 0.015 var(--skin-hue, 250));
+  --popover: oklch(0.985 0.01 calc(var(--skin-hue, 250) + 12) / 0.88);
+  --popover-foreground: oklch(0.2 0.015 var(--skin-hue, 250));
+  --primary: oklch(0.52 0.16 var(--skin-hue, 250));
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.95 0.012 var(--skin-hue, 250) / 0.55);
+  --secondary-foreground: oklch(0.28 0.03 var(--skin-hue, 250));
+  --muted: oklch(0.95 0.012 var(--skin-hue, 250) / 0.55);
+  --muted-foreground: oklch(0.47 0.02 var(--skin-hue, 250));
+  --accent: oklch(0.93 0.02 var(--skin-hue, 250) / 0.6);
+  --accent-foreground: oklch(0.3 0.045 var(--skin-hue, 250));
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.5 0.03 var(--skin-hue, 250) / 0.3);
+  --input: oklch(0.5 0.03 var(--skin-hue, 250) / 0.38);
+  --ring: oklch(0.6 0.15 var(--skin-hue, 250) / 0.55);
+  --sidebar: oklch(1 0 0 / 0.4);
+  --sidebar-foreground: oklch(0.2 0.015 var(--skin-hue, 250));
+  --sidebar-primary: oklch(0.52 0.16 var(--skin-hue, 250));
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.93 0.02 var(--skin-hue, 250) / 0.5);
+  --sidebar-accent-foreground: oklch(0.3 0.045 var(--skin-hue, 250));
+  --sidebar-border: oklch(0.5 0.03 var(--skin-hue, 250) / 0.26);
+  --sidebar-ring: oklch(0.6 0.15 var(--skin-hue, 250) / 0.5);
+}
+
+.dark[data-skin="glass"] {
+  --background: oklch(0.15 0.014 var(--skin-hue, 250) / calc(0.42 + var(--skin-alpha, 0.6) * 0.42));
+  --foreground: oklch(0.96 0.008 var(--skin-hue, 250));
+  --card: oklch(0.19 0.016 var(--skin-hue, 250) / 0.6);
+  --card-foreground: oklch(0.96 0.008 var(--skin-hue, 250));
+  --popover: oklch(0.16 0.016 var(--skin-hue, 250) / 0.9);
+  --popover-foreground: oklch(0.96 0.008 var(--skin-hue, 250));
+  --primary: oklch(0.74 0.15 var(--skin-hue, 250));
+  --primary-foreground: oklch(0.16 0.01 var(--skin-hue, 250));
+  --secondary: oklch(0.27 0.018 var(--skin-hue, 250) / 0.55);
+  --secondary-foreground: oklch(0.95 0.008 var(--skin-hue, 250));
+  --muted: oklch(0.27 0.018 var(--skin-hue, 250) / 0.55);
+  --muted-foreground: oklch(0.7 0.02 var(--skin-hue, 250));
+  --accent: oklch(0.31 0.024 var(--skin-hue, 250) / 0.6);
+  --accent-foreground: oklch(0.94 0.01 var(--skin-hue, 250));
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 0.14);
+  --input: oklch(1 0 0 / 0.22);
+  --ring: oklch(0.7 0.13 var(--skin-hue, 250) / 0.6);
+  --sidebar: oklch(0.12 0.013 var(--skin-hue, 250) / 0.5);
+  --sidebar-foreground: oklch(0.96 0.008 var(--skin-hue, 250));
+  --sidebar-primary: oklch(0.74 0.15 var(--skin-hue, 250));
+  --sidebar-primary-foreground: oklch(0.16 0.01 var(--skin-hue, 250));
+  --sidebar-accent: oklch(0.31 0.024 var(--skin-hue, 250) / 0.5);
+  --sidebar-accent-foreground: oklch(0.94 0.01 var(--skin-hue, 250));
+  --sidebar-border: oklch(1 0 0 / 0.12);
+  --sidebar-ring: oklch(0.7 0.13 var(--skin-hue, 250) / 0.5);
+}
+
+/* 玻璃片（backdrop-blur）：导航条 / 状态栏 / dockview tab 栏 / 浮层。
+   backdrop-filter 特性降级（无支持时仅半透明，样式仍可用）。
+   滚动内容区（dockview 面板 .dv-view）刻意不 blur：滚动时每帧重算模糊开销大，
+   半透明底色已保证可读性（Aqua 兼容模式实测经验）。 */
+@supports (backdrop-filter: blur(1px)) {
+  :root[data-skin="glass"] nav,
+  :root[data-skin="glass"] footer,
+  :root[data-skin="glass"] .dv-tabs-and-actions-container,
+  :root[data-skin="glass"] [data-slot="dialog-content"],
+  :root[data-skin="glass"] [data-slot="select-content"],
+  :root[data-skin="glass"] [data-slot="dropdown-menu-content"],
+  :root[data-skin="glass"] [data-slot="tooltip-content"] {
+    backdrop-filter: blur(var(--skin-blur, 16px));
+    -webkit-backdrop-filter: blur(var(--skin-blur, 16px));
+  }
+}

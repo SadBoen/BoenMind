@@ -6,14 +6,25 @@
  * - 字体档位：软件界面字号（全局 rem 缩放）。
  * - 通用外观：主题（亮/暗/系统）+ 界面语言。
  */
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTheme } from "next-themes";
 import { useTranslation } from "react-i18next";
-import { Globe, Laptop, Monitor, Moon, PanelLeft, Sparkles, Sun, Type } from "lucide-react";
+import { Droplets, Globe, ImagePlus, Laptop, Monitor, Moon, PanelLeft, Sparkles, Sun, Type } from "lucide-react";
 import { useAppStore } from "@/stores/app-store";
 import { toast } from "sonner";
 import { LANGS, LANG_NAMES, applyLang, type Lang } from "@/i18n";
 import { ACCENTS, FONT_SCALES, applyAccent, applyFontScale, fontScale } from "@/lib/appearance";
+import { SKINS, type SkinParam } from "@/skins";
+import {
+  autoGlassParams,
+  compressImageFile,
+  sampleImage,
+  skinById,
+  skinParamValue,
+  type SkinBackground,
+} from "@/lib/skin";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
@@ -44,12 +55,63 @@ export function AppearanceSettings() {
   const setAccent = useAppStore((s) => s.setAccent);
   const reduceMotion = useAppStore((s) => s.reduceMotion);
   const setReduceMotion = useAppStore((s) => s.setReduceMotion);
+  // 皮肤（风格模板切换）
+  const skin = useAppStore((s) => s.skin);
+  const setSkin = useAppStore((s) => s.setSkin);
+  const skinParams = useAppStore((s) => s.skinParams);
+  const setSkinParam = useAppStore((s) => s.setSkinParam);
+  const skinBackground = useAppStore((s) => s.skinBackground);
+  const setSkinBackground = useAppStore((s) => s.setSkinBackground);
+  const skinAuto = useAppStore((s) => s.skinAuto);
+  const setSkinAuto = useAppStore((s) => s.setSkinAuto);
   const expertMode = settingsTier === "expert";
+
+  const [urlDraft, setUrlDraft] = useState("");
+  const fileRef = useRef<HTMLInputElement>(null);
 
   // 挂载时应用持久化的字体档位（重进设置页后回显）
   useEffect(() => {
     applyFontScale(fontScale());
   }, []);
+
+  /** 自动配色：取样背景图 → 写回色调/透明度/模糊（false = 图片不可读，调用方提示） */
+  const autoColorize = async (bg: SkinBackground): Promise<boolean> => {
+    if (!skinAuto) return true;
+    try {
+      const sample = await sampleImage(bg.value);
+      const { alpha, blur } = autoGlassParams(sample);
+      setSkinParam("hue", Math.round(sample.hue));
+      setSkinParam("alpha", alpha);
+      setSkinParam("blur", blur);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const dataUrl = await compressImageFile(file);
+      setSkinBackground({ kind: "data", value: dataUrl });
+      const ok = await autoColorize({ kind: "data", value: dataUrl });
+      toast.success(t(ok ? "settings.appearance.skin.bgApplied" : "settings.appearance.skin.bgAppliedNoAuto"));
+    } catch (err) {
+      toast.error(t("settings.appearance.skin.fileFailed", { error: String(err) }));
+    }
+  };
+
+  const applyUrl = async () => {
+    const url = urlDraft.trim();
+    if (!url) return;
+    const bg: SkinBackground = { kind: "url", value: url };
+    setSkinBackground(bg);
+    setUrlDraft("");
+    const ok = await autoColorize(bg);
+    toast.success(t(ok ? "settings.appearance.skin.bgApplied" : "settings.appearance.skin.bgAppliedNoAuto"));
+  };
 
   const applyTheme = async (key: string) => {
     setTheme(key);
@@ -167,6 +229,118 @@ export function AppearanceSettings() {
           ))}
         </div>
         <p className="mt-3 text-xs text-muted-foreground">{t("settings.appearance.hint")}</p>
+      </div>
+
+      {/* 皮肤（风格模板切换，2026-08-16）：不改布局，只换材质风格；玻璃皮肤可调
+          色调/透明度/模糊 + 背景图（本地文件或 URL），支持按图自动配色 */}
+      <div className="border-t pt-5">
+        <h3 className="text-sm font-semibold">{t("settings.appearance.skin.title")}</h3>
+        <p className="text-xs text-muted-foreground">{t("settings.appearance.skin.desc")}</p>
+        <div className="mt-3 grid grid-cols-2 gap-3">
+          {SKINS.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => {
+                setSkin(s.id);
+                toast.success(t("settings.appearance.saved"));
+              }}
+              className={cn(
+                "flex flex-col items-center gap-2 rounded-xl border-2 p-4 transition-colors",
+                skin === s.id
+                  ? "border-primary bg-primary/5"
+                  : "border-border hover:border-muted-foreground/40",
+              )}
+            >
+              <span
+                aria-hidden
+                className={cn(
+                  "flex h-12 w-full items-center justify-center rounded-lg border border-border",
+                  s.id === "glass" && "bg-gradient-to-br from-primary/35 via-primary/15 to-transparent",
+                )}
+              >
+                {s.id === "glass" ? (
+                  <Droplets size={18} className={skin === s.id ? "text-primary" : "text-muted-foreground"} />
+                ) : (
+                  <PanelLeft size={18} className={skin === s.id ? "text-primary" : "text-muted-foreground"} />
+                )}
+              </span>
+              <span className="text-sm font-medium">{t(s.nameKey)}</span>
+              <span className="text-center text-[11px] leading-snug text-muted-foreground">{t(s.descKey)}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* 玻璃皮肤参数面板 */}
+        {skin === "glass" && (
+          <div className="mt-4 space-y-4 rounded-xl border p-4">
+            {/* 背景图：本地文件（压缩存储）/ URL 直链 */}
+            <div>
+              <p className="text-xs font-medium text-muted-foreground">{t("settings.appearance.skin.backgroundTitle")}</p>
+              <p className="text-xs text-muted-foreground">{t("settings.appearance.skin.backgroundDesc")}</p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()}>
+                  <ImagePlus size={14} />
+                  {t("settings.appearance.skin.selectFile")}
+                </Button>
+                <Input
+                  value={urlDraft}
+                  onChange={(e) => setUrlDraft(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && void applyUrl()}
+                  placeholder={t("settings.appearance.skin.urlPlaceholder")}
+                  className="h-8 w-56"
+                />
+                <Button variant="outline" size="sm" onClick={() => void applyUrl()} disabled={!urlDraft.trim()}>
+                  {t("settings.appearance.skin.apply")}
+                </Button>
+                {skinBackground && (
+                  <Button variant="ghost" size="sm" onClick={() => setSkinBackground(null)}>
+                    {t("settings.appearance.skin.remove")}
+                  </Button>
+                )}
+              </div>
+              <input ref={fileRef} type="file" accept="image/*" hidden onChange={handleFile} />
+              {skinBackground && (
+                <img
+                  src={skinBackground.value}
+                  alt=""
+                  className="mt-2 h-16 w-28 rounded-lg border border-border object-cover"
+                />
+              )}
+            </div>
+
+            {/* 自动配色开关 */}
+            <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
+              <div className="min-w-0">
+                <p className="text-sm font-medium">{t("settings.appearance.skin.autoTitle")}</p>
+                <p className="text-xs text-muted-foreground">{t("settings.appearance.skin.autoDesc")}</p>
+              </div>
+              <Switch checked={skinAuto} onCheckedChange={setSkinAuto} />
+            </div>
+
+            {/* 参数滑杆（注册表声明驱动） */}
+            {skinById(skin).params.map((p: SkinParam) => (
+              <div key={p.key}>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-medium text-muted-foreground">{t(p.labelKey)}</span>
+                  <span className="tabular-nums text-foreground">
+                    {skinParamValue(skin, skinParams, p.key)}
+                    {p.format === "percent" ? "%" : p.format === "px" ? "px" : "°"}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={p.min}
+                  max={p.max}
+                  step={p.step}
+                  value={skinParamValue(skin, skinParams, p.key)}
+                  onChange={(e) => setSkinParam(p.key, Number(e.target.value))}
+                  className="skin-range mt-1.5 w-full"
+                />
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* 高级外观（资深模式可见）：强调色 + 减少动画 */}

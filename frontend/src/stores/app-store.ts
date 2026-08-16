@@ -10,6 +10,17 @@ import { toast } from "sonner";
 export type { SettingsTab, AppId } from "@/lib/app-registry";
 import type { SettingsTab, AppId } from "@/lib/app-registry";
 import { ACCENTS, applyAccent, applyReduceMotion, type Accent } from "@/lib/appearance";
+import {
+  applySkin,
+  applySkinParams,
+  loadSkinBackground,
+  loadSkinId,
+  loadSkinParams,
+  saveSkinBackground,
+  saveSkinParams,
+  type SkinBackground,
+} from "@/lib/skin";
+import { type SkinId, type SkinParams } from "@/skins";
 
 /** 活任务清单操作（M2；与后端 todo 工具参数对齐，index 1 起） */
 export type TodoOp = {
@@ -98,6 +109,19 @@ interface AppStore {
   setAccent: (accent: Accent) => void;
   reduceMotion: boolean;
   setReduceMotion: (enabled: boolean) => void;
+
+  // 皮肤（外观：风格模板切换，2026-08-16；不改布局，只换材质风格）
+  skin: SkinId;
+  setSkin: (id: SkinId) => void;
+  /** 当前皮肤参数（未设置的键走 SkinParam.default） */
+  skinParams: SkinParams;
+  setSkinParam: (key: string, value: number) => void;
+  /** 背景图（data = 本地压缩 dataURL；url = 外链） */
+  skinBackground: SkinBackground | null;
+  setSkinBackground: (bg: SkinBackground | null) => void;
+  /** 自动配色：上传/应用背景图时按图片调节色调/透明度/模糊 */
+  skinAuto: boolean;
+  setSkinAuto: (enabled: boolean) => void;
 
   // 后端健康
   health: HealthInfo | null;
@@ -289,6 +313,36 @@ export const useAppStore = create<AppStore>((set, get) => {
       localStorage.setItem("boenmind.appearance.reduceMotion", enabled ? "1" : "0");
       applyReduceMotion(enabled);
       set({ reduceMotion: enabled });
+    },
+
+    // 皮肤：初始从 localStorage 恢复并立即应用（参数按皮肤分开持久化）
+    skin: (() => {
+      const id = loadSkinId();
+      applySkin(id, loadSkinParams(id));
+      return id;
+    })(),
+    setSkin: (skin) => {
+      localStorage.setItem("boenmind.skin", skin);
+      applySkin(skin, loadSkinParams(skin));
+      set({ skin, skinParams: loadSkinParams(skin) });
+    },
+    skinParams: loadSkinParams(loadSkinId()),
+    setSkinParam: (key, value) => {
+      const skin = get().skin;
+      const skinParams = { ...get().skinParams, [key]: value };
+      saveSkinParams(skin, skinParams);
+      applySkinParams(skin, skinParams);
+      set({ skinParams });
+    },
+    skinBackground: loadSkinBackground(),
+    setSkinBackground: (skinBackground) => {
+      saveSkinBackground(skinBackground);
+      set({ skinBackground });
+    },
+    skinAuto: localStorage.getItem("boenmind.skin.auto") === "1",
+    setSkinAuto: (enabled) => {
+      localStorage.setItem("boenmind.skin.auto", enabled ? "1" : "0");
+      set({ skinAuto: enabled });
     },
 
     pendingPermission: null,

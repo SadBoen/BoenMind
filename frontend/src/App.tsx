@@ -2,10 +2,15 @@
  * 壳入口：经典软件界面（唯一形态）。
  * 桌面形态已退役（2026-08-16，用户拍板：全删除，留切换开关占位），
  * viewMode 状态保留供开关回显，渲染恒为 ClassicShell。
+ *
+ * 皮肤层（2026-08-16）：根容器 relative + 背景层 z-0 + 内容 z-10——
+ * 玻璃皮肤下 --background 半透明，背景层（图片/渐变）透出成为玻璃材质的内容物。
  */
 import { useEffect, useState } from "react";
 import { ClassicShell } from "@/components/classic/ClassicShell";
+import { SkinBackground } from "@/components/skin/SkinBackground";
 import { applyAccent, applyFontScale, applyReduceMotion, fontScale } from "@/lib/appearance";
+import { applySkin } from "@/lib/skin";
 import { useAppStore } from "@/stores/app-store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,11 +33,12 @@ export default function App() {
 
   // 启动加载：健康状态（轮询）+ 配置 + 会话列表
   useEffect(() => {
-    // 全局外观：字体档位 + 强调色/减少动画（资深外观设置；挂载恢复）
+    // 全局外观：字体档位 + 强调色/减少动画 + 皮肤（挂载恢复）
     applyFontScale(fontScale());
     const s = useAppStore.getState();
     applyAccent(s.accent);
     applyReduceMotion(s.reduceMotion);
+    applySkin(s.skin, s.skinParams);
     void refreshHealth();
     void loadConfig();
     void loadSessions();
@@ -41,8 +47,11 @@ export default function App() {
   }, [refreshHealth, loadConfig, loadSessions]);
 
   return (
-    <div className="h-screen w-screen overflow-hidden bg-background text-foreground">
-      <ClassicShell />
+    <div className="relative h-screen w-screen overflow-hidden bg-background text-foreground">
+      <SkinBackground />
+      <div className="relative z-10 h-full">
+        <ClassicShell />
+      </div>
       <TokenGate />
     </div>
   );

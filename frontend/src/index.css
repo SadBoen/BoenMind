@@ -3,6 +3,9 @@
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
 @import "dockview-react/dist/styles/dockview.css";
+/* 皮肤包（2026-08-16）：一个皮肤一个文件夹；作用域 [data-skin="<id>"] 覆盖令牌变量，
+   :root[data-skin] 特异性高于 :root/.dark，变量级生效、组件零改动 */
+@import "./skins/glass/style.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -213,6 +216,40 @@
 }
 .scrollbar-none::-webkit-scrollbar {
   display: none;
+}
+
+/* 皮肤参数滑杆（外观设置 → 皮肤，2026-08-16）：原生 range + 主题变量，零依赖 */
+.skin-range {
+  height: 20px;
+  cursor: pointer;
+  accent-color: var(--primary);
+  background: transparent;
+}
+.skin-range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 9999px;
+  background: var(--border);
+}
+.skin-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border-radius: 9999px;
+  background: var(--primary);
+  box-shadow: 0 1px 3px oklch(0 0 0 / 0.3);
+}
+.skin-range::-moz-range-track {
+  height: 4px;
+  border-radius: 9999px;
+  background: var(--border);
+}
+.skin-range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: none;
+  border-radius: 9999px;
+  background: var(--primary);
 }
 
 /* ============ 可停靠视图容器（dockview）主题：桥接 Tailwind 令牌 ============
