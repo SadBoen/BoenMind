@@ -170,6 +170,7 @@ coding: {
   statusbar: {
     noModel: "未选择模型",
     backendOffline: "后端未连接",
+    backendDisconnected: "与后端连接已断开，等待重连…",
     backendOnline: "后端已连接",
     backendV: "后端 v{{version}}",
     loadingDir: "加载中…",

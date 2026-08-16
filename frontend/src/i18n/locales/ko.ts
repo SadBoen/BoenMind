@@ -171,6 +171,7 @@ coding: {
   statusbar: {
     noModel: "모델 미선택",
     backendOffline: "백엔드 연결 안 됨",
+    backendDisconnected: "백엔드 연결이 끊어졌습니다. 재연결 대기 중…",
     backendOnline: "백엔드 연결됨",
     backendV: "백엔드 v{{version}}",
     loadingDir: "불러오는 중…",

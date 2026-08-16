@@ -171,7 +171,8 @@ coding: {
   statusbar: {
     noModel: "No model selected",
     backendOffline: "Backend offline",
-    backendOnline: "Backend connected",
+    backendDisconnected: "Backend connection lost, waiting to reconnect…",
+    backendOnline: "Backend online",
     backendV: "Backend v{{version}}",
     loadingDir: "Loading…",
     tokenUsage: "Token usage",

@@ -101,9 +101,10 @@ export interface DockPanelSpec {
 
 /** 应用默认布局（每应用一份；新应用有可停靠视图时在此声明） */
 export const DEFAULT_LAYOUTS: Partial<Record<AppId, { panels: DockPanelSpec[] }>> = {
-  // 编程壳（v8 重排，2026-08-15 用户"对话放中间，左=项目和文件列表，右=todo"）：
-  // 中=对话主区 / 左=文件列表（含项目切换器+git 状态）/ 右=任务清单 /
-  // 底部=终端|分支图叠放。编辑器视图仍在注册表（可多开，用户随时可加回）。
+  // 编程壳（v9 重排，2026-08-16 用户"命令行放工作文件夹右侧，聊天单元不会太矮太宽"）：
+  // 中=对话主区 / 左列=文件列表（含项目切换器+git 状态）+ 终端（终端在文件面板
+  // 右侧、对话左侧，不再压矮聊天单元）/ 右=任务清单 / 终端内叠放分支图。
+  // 编辑器视图仍在注册表（可多开，用户随时可加回）。
   coding: {
     panels: [
       {
@@ -116,19 +117,19 @@ export const DEFAULT_LAYOUTS: Partial<Record<AppId, { panels: DockPanelSpec[] }>
         view: "file-panel",
         params: { coding: true },
         position: { reference: "chat-pane", direction: "left" },
-        initialWidth: 240,
+        initialWidth: 200,
+      },
+      {
+        id: "terminal",
+        view: "terminal",
+        position: { reference: "file-panel", direction: "right" },
+        initialWidth: 280,
       },
       {
         id: "todo-panel",
         view: "todo-panel",
         position: { reference: "chat-pane", direction: "right" },
-        initialWidth: 300,
-      },
-      {
-        id: "terminal",
-        view: "terminal",
-        position: { reference: "chat-pane", direction: "below" },
-        initialHeight: 200,
+        initialWidth: 280,
       },
       {
         id: "git-graph",

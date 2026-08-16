@@ -427,8 +427,18 @@ export const useAppStore = create<AppStore>((set, get) => {
           prev.theme !== health.theme ||
           prev.lang !== health.lang;
         if (changed) set({ health, online: true });
+        // 恢复连接：关闭固定断连提示（若之前弹出过）
+        toast.dismiss("backend-offline");
       } catch {
-        if (get().online) set({ online: false });
+        if (get().online) {
+          set({ online: false });
+          // 断连提示（2026-08-16 用户要求"别一直弹"）：固定 id + duration Infinity =
+          // 只弹一个且不消失，恢复连接后 dismiss；状态栏红字常驻兜底
+          toast.error(i18n.t("statusbar.backendDisconnected"), {
+            id: "backend-offline",
+            duration: Infinity,
+          });
+        }
       }
     },
 

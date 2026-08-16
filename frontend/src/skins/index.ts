@@ -51,7 +51,7 @@ export const SKINS = [
         key: "alpha",
         labelKey: "settings.appearance.skin.param.alpha",
         min: 30,
-        max: 90,
+        max: 95,
         step: 5,
         default: 60,
         format: "percent",

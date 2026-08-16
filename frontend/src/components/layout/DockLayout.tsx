@@ -47,8 +47,10 @@ interface DockLayoutProps {
  * 后重建默认布局。代价是用户自定义布局随版本重置一次；插件默认布局声明
  * （§四·C）落地时再设计精细迁移（快照指纹对比），当前阶段默认布局即用户
  * 所见，bump 可接受。
+ * v9：coding 终端移到文件面板右侧（2026-08-16 用户"命令行放工作文件夹右侧，
+ * 聊天单元不会太矮太宽"）。
  */
-const layoutKey = (appId: AppId) => `boenmind.dock.v8.${appId}`;
+const layoutKey = (appId: AppId) => `boenmind.dock.v9.${appId}`;
 
 /**
  * 布局重置注册表：DockLayout 实例挂载时登记，壳层（导航右键菜单/标题栏）
