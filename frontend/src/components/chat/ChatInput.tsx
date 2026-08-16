@@ -292,9 +292,6 @@ export function ChatInput({ compact = false }: { compact?: boolean }) {
             </div>
           </div>
         </div>
-        <p className="mt-1.5 text-center text-[10px] text-muted-foreground">
-          {t("chat.input.aiDisclaimer")}
-        </p>
       </div>
     </div>
   );

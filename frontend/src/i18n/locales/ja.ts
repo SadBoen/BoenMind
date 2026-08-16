@@ -67,7 +67,6 @@ export const ja: Translation = {
       attach: "添付ファイル",
       language: "言語",
       voice: "音声入力",
-      aiDisclaimer: "AI が生成した内容です。重要な情報はご確認ください",
     },
     thinking: {
       off: "思考なし",
@@ -361,6 +360,12 @@ coding: {
         backgroundDesc: "ローカル画像または画像URL（ローカル画像は自動圧縮して保存）",
         wallpaperTitle: "プリセット壁紙",
         wallpaperDesc: "内蔵壁紙。クリックで適用（推奨の色相を自動適用）",
+        effectTitle: "背景エフェクト",
+        effectDesc: "壁紙に重ねるアニメーション層（スキン/壁紙から独立、いつでも切替可）",
+        effect: {
+          none: "なし",
+          wave: "ブルーリップル",
+        },
         customTitle: "カスタム背景",
         wallpaper: {
           aqua: "アクアフロー",

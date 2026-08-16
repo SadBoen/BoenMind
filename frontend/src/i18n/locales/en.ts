@@ -67,7 +67,6 @@ export const en: Translation = {
       attach: "Attachment",
       language: "Language",
       voice: "Voice input",
-      aiDisclaimer: "AI-generated content, verify important information",
     },
     thinking: {
       off: "No thinking",
@@ -361,6 +360,12 @@ coding: {
         backgroundDesc: "Local image or image URL; local images are compressed before storage",
         wallpaperTitle: "Preset wallpapers",
         wallpaperDesc: "Built-in wallpapers, one click to apply (auto-uses recommended tint)",
+        effectTitle: "Background effects",
+        effectDesc: "Animated layer over the wallpaper (decoupled from skin/wallpaper, toggle anytime)",
+        effect: {
+          none: "None",
+          wave: "Blue ripple",
+        },
         customTitle: "Custom background",
         wallpaper: {
           aqua: "Aqua flow",

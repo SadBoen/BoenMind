@@ -14,14 +14,17 @@ import {
   applySkin,
   applySkinParams,
   loadSkinBackground,
+  loadSkinEffect,
   loadSkinId,
   loadSkinParams,
   loadSkinWallpaper,
   saveSkinBackground,
+  saveSkinEffect,
   saveSkinParams,
   saveSkinWallpaper,
   type SkinBackground,
 } from "@/lib/skin";
+import { type BackgroundEffectId } from "@/lib/skin";
 import { type SkinId, type SkinParams } from "@/skins";
 
 /** 活任务清单操作（M2；与后端 todo 工具参数对齐，index 1 起） */
@@ -124,6 +127,9 @@ interface AppStore {
   /** 内置预设壁纸（preset id；与自定义背景图互斥） */
   skinWallpaper: string | null;
   setSkinWallpaper: (id: string | null) => void;
+  /** 背景特效（独立于皮肤/壁纸：动画层叠加；wave=蓝色波纹，none=无） */
+  backgroundEffect: BackgroundEffectId;
+  setBackgroundEffect: (id: BackgroundEffectId) => void;
   /** 自动配色：上传/应用背景图时按图片调节色调/透明度/模糊 */
   skinAuto: boolean;
   setSkinAuto: (enabled: boolean) => void;
@@ -360,6 +366,11 @@ export const useAppStore = create<AppStore>((set, get) => {
       } else {
         set({ skinWallpaper });
       }
+    },
+    backgroundEffect: loadSkinEffect(),
+    setBackgroundEffect: (backgroundEffect) => {
+      saveSkinEffect(backgroundEffect);
+      set({ backgroundEffect });
     },
     skinAuto: localStorage.getItem("boenmind.skin.auto") === "1",
     setSkinAuto: (enabled) => {

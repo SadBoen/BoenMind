@@ -67,7 +67,6 @@ export const ko: Translation = {
       attach: "첨부 파일",
       language: "언어",
       voice: "음성 입력",
-      aiDisclaimer: "AI가 생성한 내용입니다. 중요한 정보는 확인하세요",
     },
     thinking: {
       off: "생각 안 함",
@@ -361,6 +360,12 @@ coding: {
         backgroundDesc: "로컬 이미지 또는 이미지 URL(로컬 이미지는 자동 압축 저장)",
         wallpaperTitle: "프리셋 배경화면",
         wallpaperDesc: "내장 배경화면. 클릭 한 번으로 적용(추천 색상 자동 적용)",
+        effectTitle: "배경 효과",
+        effectDesc: "배경화면 위에 겹치는 애니메이션 레이어(스킨/배경화면과 분리, 언제든 전환)",
+        effect: {
+          none: "없음",
+          wave: "블루 리플",
+        },
         customTitle: "사용자 지정 배경",
         wallpaper: {
           aqua: "아쿠아 플로우",

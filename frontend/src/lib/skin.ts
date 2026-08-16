@@ -77,6 +77,34 @@ export function wallpaperById(id: string | null): PresetWallpaper | null {
   return PRESET_WALLPAPERS.find((w) => w.id === id) ?? null;
 }
 
+/**
+ * 背景特效（2026-08-16）：独立于皮肤/壁纸的动画层开关——特效层叠加在壁纸之上
+ * （mix-blend 混合），与壁纸选择完全解耦；以后新增特效（礼花/微风等）在此登记。
+ * 全部特效共用全局时钟（performance.now()/1000），多界面速度一致。
+ */
+export interface BackgroundEffect {
+  id: string;
+  nameKey: string;
+}
+
+export const BACKGROUND_EFFECTS: BackgroundEffect[] = [
+  { id: "none", nameKey: "settings.appearance.skin.effect.none" },
+  { id: "wave", nameKey: "settings.appearance.skin.effect.wave" },
+];
+
+export type BackgroundEffectId = (typeof BACKGROUND_EFFECTS)[number]["id"];
+
+const SKIN_EFFECT_KEY = "boenmind.skin.effect";
+
+export function loadSkinEffect(): BackgroundEffectId {
+  const saved = localStorage.getItem(SKIN_EFFECT_KEY);
+  return BACKGROUND_EFFECTS.some((e) => e.id === saved) ? (saved as BackgroundEffectId) : "wave";
+}
+
+export function saveSkinEffect(id: BackgroundEffectId) {
+  localStorage.setItem(SKIN_EFFECT_KEY, id);
+}
+
 const SKIN_KEY = "boenmind.skin";
 const SKIN_PARAMS_KEY = "boenmind.skin.params";
 const SKIN_BG_KEY = "boenmind.skin.background";

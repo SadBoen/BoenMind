@@ -67,7 +67,6 @@ export const zh = {
       attach: "附件",
       language: "常用语言",
       voice: "语音输入",
-      aiDisclaimer: "内容由 AI 生成，请核实重要信息",
     },
     thinking: {
       off: "不思考",
@@ -360,6 +359,12 @@ coding: {
         backgroundDesc: "本地图片或图片 URL；本地图片自动压缩存储",
         wallpaperTitle: "预设壁纸",
         wallpaperDesc: "内置壁纸，点击即用（自动套用推荐色调）",
+        effectTitle: "背景特效",
+        effectDesc: "叠加在壁纸上的动画层（与皮肤/壁纸解耦，随时开关）",
+        effect: {
+          none: "无",
+          wave: "蓝色波纹",
+        },
         customTitle: "自定义背景",
         wallpaper: {
           aqua: "青蓝流体",

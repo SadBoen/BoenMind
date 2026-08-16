@@ -9,7 +9,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTheme } from "next-themes";
 import { useTranslation } from "react-i18next";
-import { Droplets, Globe, ImagePlus, Laptop, Monitor, Moon, PanelLeft, Sparkles, Sun, Type } from "lucide-react";
+import { Droplets, Globe, ImagePlus, Laptop, Monitor, Moon, PanelLeft, Sparkles, Sun, Type, Waves } from "lucide-react";
 import { useAppStore } from "@/stores/app-store";
 import { toast } from "sonner";
 import { LANGS, LANG_NAMES, applyLang, type Lang } from "@/i18n";
@@ -17,6 +17,7 @@ import { ACCENTS, FONT_SCALES, applyAccent, applyFontScale, fontScale } from "@/
 import { SKINS, type SkinParam } from "@/skins";
 import {
   autoGlassParams,
+  BACKGROUND_EFFECTS,
   compressImageFile,
   PRESET_WALLPAPERS,
   sampleImage,
@@ -91,6 +92,8 @@ export function AppearanceSettings() {
   const setSkinWallpaper = useAppStore((s) => s.setSkinWallpaper);
   const skinAuto = useAppStore((s) => s.skinAuto);
   const setSkinAuto = useAppStore((s) => s.setSkinAuto);
+  const backgroundEffect = useAppStore((s) => s.backgroundEffect);
+  const setBackgroundEffect = useAppStore((s) => s.setBackgroundEffect);
   const expertMode = settingsTier === "expert";
 
   const [urlDraft, setUrlDraft] = useState("");
@@ -324,6 +327,33 @@ export function AppearanceSettings() {
                     )}
                   >
                     <WallpaperThumb preset={w} dark={resolvedTheme === "dark"} />
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* 背景特效（独立于皮肤/壁纸的动画层开关，2026-08-16） */}
+            <div>
+              <p className="text-xs font-medium text-muted-foreground">{t("settings.appearance.skin.effectTitle")}</p>
+              <p className="text-xs text-muted-foreground">{t("settings.appearance.skin.effectDesc")}</p>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                {BACKGROUND_EFFECTS.map((e) => (
+                  <button
+                    key={e.id}
+                    type="button"
+                    onClick={() => {
+                      setBackgroundEffect(e.id);
+                      toast.success(t("settings.appearance.saved"));
+                    }}
+                    className={cn(
+                      "flex items-center justify-center gap-1.5 rounded-lg border-2 px-3 py-2 text-xs font-medium transition-colors",
+                      backgroundEffect === e.id
+                        ? "border-primary bg-primary/5 text-primary"
+                        : "border-border text-muted-foreground hover:border-muted-foreground/40",
+                    )}
+                  >
+                    {e.id === "wave" && <Waves size={13} />}
+                    {t(e.nameKey)}
                   </button>
                 ))}
               </div>
