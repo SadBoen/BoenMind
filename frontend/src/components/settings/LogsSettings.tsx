@@ -157,7 +157,7 @@ export function LogsSettings() {
           entries.map((e, i) => (
             <div
               key={`${e.ts_ms}-${i}`}
-              className={`flex gap-2 border-b border-border/50 px-3 py-1 ${paused ? "" : ""}`}
+              className="flex gap-2 border-b border-border/50 px-3 py-1"
             >
               <span className="shrink-0 tabular-nums text-muted-foreground">
                 {formatTime(e.ts_ms)}

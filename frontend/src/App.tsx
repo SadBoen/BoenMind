@@ -7,6 +7,7 @@
  * 玻璃皮肤下 --background 半透明，背景层（图片/渐变）透出成为玻璃材质的内容物。
  */
 import { useEffect, useState } from "react";
+import { useTheme } from "next-themes";
 import { ClassicShell } from "@/components/classic/ClassicShell";
 import { SkinBackground } from "@/components/skin/SkinBackground";
 import { applyAccent, applyFontScale, applyReduceMotion, fontScale } from "@/lib/appearance";
@@ -25,13 +26,23 @@ import {
 import { useTranslation } from "react-i18next";
 import { KeyRound } from "lucide-react";
 import { onUnauthorized, setAuthToken } from "@/api/client";
+import { usePolling } from "@/lib/use-polling";
 
 export default function App() {
   const refreshHealth = useAppStore((s) => s.refreshHealth);
   const loadConfig = useAppStore((s) => s.loadConfig);
   const loadSessions = useAppStore((s) => s.loadSessions);
+  const config = useAppStore((s) => s.config);
+  const { setTheme } = useTheme();
 
-  // 启动加载：健康状态（轮询）+ 配置 + 会话列表
+  // 主题以后端 config.toml 为准（与 lang 同规则，2026-08-16 修复双轨）：
+  // 配置加载/变更时校正 next-themes；用户显式选择经 saveConfig 写回后端，
+  // 桌面端与网页端 localStorage 各自独立也不再漂移。
+  useEffect(() => {
+    if (config?.theme) setTheme(config.theme);
+  }, [config?.theme, setTheme]);
+
+  // 启动加载：外观恢复 + 配置 + 会话列表（一次）；健康状态走统一轮询（离线暂停）
   useEffect(() => {
     // 全局外观：字体档位 + 强调色/减少动画 + 皮肤（挂载恢复）
     applyFontScale(fontScale());
@@ -39,12 +50,10 @@ export default function App() {
     applyAccent(s.accent);
     applyReduceMotion(s.reduceMotion);
     applySkin(s.skin, s.skinParams);
-    void refreshHealth();
     void loadConfig();
     void loadSessions();
-    const timer = setInterval(() => void refreshHealth(), 5000);
-    return () => clearInterval(timer);
-  }, [refreshHealth, loadConfig, loadSessions]);
+  }, [loadConfig, loadSessions]);
+  usePolling(() => void refreshHealth(), 5000, true);
 
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-background text-foreground">

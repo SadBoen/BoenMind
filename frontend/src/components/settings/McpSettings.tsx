@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { api, type McpServerConfig, type McpServerStatus } from "@/api/client";
+import { usePolling } from "@/lib/use-polling";
 
 /** 键值对编辑行（env / headers 共用） */
 interface KvRow {
@@ -52,9 +53,8 @@ export function McpSettings() {
 
   useEffect(() => {
     void load();
-    const timer = setInterval(() => void load(), 5000);
-    return () => clearInterval(timer);
   }, []);
+  usePolling(() => void load(), 5000, true);
 
   /** 键值行 → Record（忽略空键行） */
   const kvToMap = (rows: KvRow[]): Record<string, string> => {

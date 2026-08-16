@@ -155,7 +155,10 @@ export function ClassicShell() {
             type="button"
             role="menuitem"
             onClick={() => {
-              resetDockLayout(ctxMenu.appId);
+              // 重置会丢弃用户自定义布局（快照单键无备份），确认后再执行（2026-08-16）
+              if (window.confirm(t("dock.resetLayoutConfirm"))) {
+                resetDockLayout(ctxMenu.appId);
+              }
               setCtxMenu(null);
             }}
             className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-sm text-foreground hover:bg-accent"

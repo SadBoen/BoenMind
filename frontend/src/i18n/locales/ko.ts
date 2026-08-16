@@ -189,6 +189,7 @@ coding: {
       gitGraph: "브랜치 그래프",
     },
     resetLayout: "레이아웃 재설정",
+    resetLayoutConfirm: "레이아웃을 초기화하면 기본 패널 배치로 복원되고 사용자 지정 배치가 손실됩니다. 계속하시겠습니까?",
     addView: "패널 추가",
     emptyHint: "패널이 닫혔습니다 — 클릭하여 다시 열기",
   },

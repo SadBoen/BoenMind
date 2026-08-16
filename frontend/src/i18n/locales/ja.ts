@@ -189,6 +189,7 @@ coding: {
       gitGraph: "ブランチグラフ",
     },
     resetLayout: "レイアウトをリセット",
+    resetLayoutConfirm: "レイアウトをリセットすると既定のパネル配置に戻り、カスタム配置は失われます。続行しますか？",
     addView: "パネルを追加",
     emptyHint: "パネルが閉じられました — クリックで再表示",
   },

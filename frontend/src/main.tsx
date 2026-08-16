@@ -8,7 +8,7 @@ import App from "./App.tsx";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+    <ThemeProvider attribute="class" defaultTheme="system" enableSystem storageKey="boenmind.theme">
       <TooltipProvider delay={300}>
         <App />
         <Toaster position="bottom-right" richColors />

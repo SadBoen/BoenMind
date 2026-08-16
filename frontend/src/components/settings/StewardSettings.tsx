@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { api, type StewardStatus } from "@/api/client";
+import { usePolling } from "@/lib/use-polling";
 
 export function StewardSettings() {
   const { t } = useTranslation();
@@ -28,12 +29,11 @@ export function StewardSettings() {
     }
   };
 
-  // 5s 轮询：管家回合进行中 inFlight 徽标实时可见（卸载即停）
+  // 5s 轮询：管家回合进行中 inFlight 徽标实时可见（卸载即停）；离线暂停（2026-08-16）
   useEffect(() => {
     void load();
-    const timer = setInterval(() => void load(), 5000);
-    return () => clearInterval(timer);
   }, []);
+  usePolling(() => void load(), 5000, true);
 
   const inject = async () => {
     const text = message.trim();

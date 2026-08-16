@@ -175,6 +175,7 @@ export function ChatInput({ compact = false }: { compact?: boolean }) {
                     className="h-6 w-6 rounded-md text-muted-foreground"
                     disabled
                     title={t("chat.input.attach")}
+                    aria-label={t("chat.input.attach")}
                   >
                     <Paperclip size={13} />
                   </Button>
@@ -184,6 +185,7 @@ export function ChatInput({ compact = false }: { compact?: boolean }) {
                     className="h-6 w-6 rounded-md text-muted-foreground"
                     disabled
                     title={t("chat.input.language")}
+                    aria-label={t("chat.input.language")}
                   >
                     <Languages size={13} />
                   </Button>
@@ -193,6 +195,7 @@ export function ChatInput({ compact = false }: { compact?: boolean }) {
                     className="h-6 w-6 rounded-md text-muted-foreground"
                     disabled
                     title={t("chat.input.voice")}
+                    aria-label={t("chat.input.voice")}
                   >
                     <Mic size={13} />
                   </Button>

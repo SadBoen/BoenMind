@@ -189,6 +189,7 @@ coding: {
       gitGraph: "Branch Graph",
     },
     resetLayout: "Reset Layout",
+    resetLayoutConfirm: "Resetting the layout will restore the default panels and discard your custom layout. Continue?",
     addView: "Add Panel",
     emptyHint: "Panels closed — click to reopen",
   },

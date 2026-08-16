@@ -97,6 +97,7 @@ export function ProjectSwitcher() {
                   <button
                     type="button"
                     title={t("coding.project.delete")}
+                    aria-label={t("coding.project.delete")}
                     onClick={(e) => {
                       e.stopPropagation();
                       removeProject(p.id);

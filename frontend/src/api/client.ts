@@ -437,6 +437,63 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/**
+ * SSE 流解析（2026-08-16 三处复制统一：chat/subscribeEvents/subscribeTerminal）：
+ * fetch 后逐块读取，按 `\n\n` 分隔事件，宽容解析 `data:` 行（可选空格），
+ * JSON.parse 失败由调用方跳过。非 2xx 抛错 + 401 通知（行为以 chat 的最强者为准，
+ * subscribeTerminal 原静默 return 一并统一——调用方 catch 语义不变）。
+ */
+async function readSSEStream(
+  url: string,
+  onData: (line: string) => void,
+  opts: { method?: string; body?: unknown; signal?: AbortSignal } = {},
+): Promise<void> {
+  const res = await fetch(url, {
+    method: opts.method ?? "GET",
+    headers: {
+      Accept: "text/event-stream",
+      ...(opts.body ? { "Content-Type": "application/json" } : {}),
+      ...authHeaders(),
+    },
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+    signal: opts.signal,
+  });
+  if (!res.ok || !res.body) {
+    const body = await res.json().catch(() => null);
+    if (res.status === 401 && body?.error === "unauthorized") notifyUnauthorized();
+    throw new Error(body?.error ?? i18n.t("api.requestFailed", { status: res.status }));
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done: streamDone, value } = await reader.read();
+    if (streamDone) break;
+    buffer += decoder.decode(value, { stream: true });
+    // SSE 事件以空行分隔
+    let sep: number;
+    while ((sep = buffer.indexOf("\n\n")) !== -1) {
+      const raw = buffer.slice(0, sep);
+      buffer = buffer.slice(sep + 2);
+      for (const line of raw.split("\n")) {
+        // 宽容解析：`data:` 后可选空格（服务端格式微变不致断流）
+        if (line.startsWith("data:")) {
+          onData(line.slice(5).trim());
+        }
+      }
+    }
+  }
+}
+
+/** 大块字节数组分块 base64 编码（String.fromCharCode 展开上限 ~64KB，2026-08-16） */
+function chunkedToBase64(data: Uint8Array): string {
+  let out = "";
+  for (let i = 0; i < data.length; i += 0x8000) {
+    out += btoa(String.fromCharCode(...data.subarray(i, i + 0x8000)));
+  }
+  return out;
+}
+
 export const api = {
   health: () => request<HealthInfo>("/api/health"),
 
@@ -520,7 +577,11 @@ export const api = {
   terminalInput: (id: string, data: Uint8Array) =>
     request<{ ok: boolean }>(`/api/terminal/${id}/input`, {
       method: "POST",
-      body: JSON.stringify({ data: btoa(String.fromCharCode(...data)) }),
+      // 分块编码：`String.fromCharCode(...data)` 对 >64KB 数组展开会栈溢出
+      // （RangeError），大段粘贴静默丢数据（2026-08-16 修复）
+      body: JSON.stringify({
+        data: chunkedToBase64(data),
+      }),
     }),
   terminalResize: (id: string, cols: number, rows: number) =>
     request<{ ok: boolean }>(`/api/terminal/${id}/resize`, {
@@ -735,51 +796,27 @@ export const api = {
     const done = new Promise<void>((resolve) => {
       (async () => {
         try {
-          const res = await fetch(`${API_BASE}/api/chat`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Accept: "text/event-stream",
-              ...authHeaders(),
-            },
-            body: JSON.stringify({
-              session_id: sessionId,
-              message,
-              provider: opts?.provider,
-              model: opts?.model,
-              thinking: opts?.thinking,
-            }),
-            signal: controller.signal,
-          });
-          if (!res.ok || !res.body) {
-            const body = await res.json().catch(() => null);
-            if (res.status === 401 && body?.error === "unauthorized") notifyUnauthorized();
-            throw new Error(body?.error ?? i18n.t("api.requestFailed", { status: res.status }));
-          }
-          const reader = res.body.getReader();
-          const decoder = new TextDecoder();
-          let buffer = "";
-          while (true) {
-            const { done: streamDone, value } = await reader.read();
-            if (streamDone) break;
-            buffer += decoder.decode(value, { stream: true });
-            // SSE 事件以空行分隔
-            let sep: number;
-            while ((sep = buffer.indexOf("\n\n")) !== -1) {
-              const raw = buffer.slice(0, sep);
-              buffer = buffer.slice(sep + 2);
-              for (const line of raw.split("\n")) {
-                // 宽容解析：`data:` 后可选空格（服务端格式微变不致断流）
-                if (line.startsWith("data:")) {
-                  try {
-                    onEvent(JSON.parse(line.slice(5).trim()) as ChatStreamEvent);
-                  } catch {
-                    /* 跳过无法解析的 data 行 */
-                  }
-                }
+          await readSSEStream(
+            `${API_BASE}/api/chat`,
+            (line) => {
+              try {
+                onEvent(JSON.parse(line) as ChatStreamEvent);
+              } catch {
+                /* 跳过无法解析的 data 行 */
               }
-            }
-          }
+            },
+            {
+              method: "POST",
+              body: {
+                session_id: sessionId,
+                message,
+                provider: opts?.provider,
+                model: opts?.model,
+                thinking: opts?.thinking,
+              },
+              signal: controller.signal,
+            },
+          );
         } catch (err) {
           if (!controller.signal.aborted) {
             onEvent({ type: "error", message: String(err) });
@@ -805,51 +842,42 @@ export const api = {
   /**
    * 会话事件流订阅（M2 活任务清单投影）：fetch + 流式读取（可带 Bearer 头，
    * EventSource 做不到）。after=0 重放全部历史（todo/write 全量快照语义，
-   * 重放即得初始状态，幂等）。返回 close() 取消订阅。
+   * 重放即得初始状态，幂等）。断线后指数退避自动重连（1s→…→30s 封顶，
+   * 2026-08-16 修复：原实现断连静默，TodoPanel 投影永久停更）。返回 close()。
    */
   subscribeEvents: (sessionId: string, onEvent: (ev: SessionEvent) => void) => {
     const controller = new AbortController();
+    let closed = false;
+    const close = () => {
+      closed = true;
+      controller.abort();
+    };
     (async () => {
-      try {
-        const res = await fetch(
-          `${API_BASE}/api/sessions/${sessionId}/events?after=0`,
-          {
-            headers: { Accept: "text/event-stream", ...authHeaders() },
-            signal: controller.signal,
-          },
-        );
-        if (!res.ok || !res.body) {
-          const body = await res.json().catch(() => null);
-          if (res.status === 401 && body?.error === "unauthorized") notifyUnauthorized();
-          throw new Error(body?.error ?? i18n.t("api.requestFailed", { status: res.status }));
-        }
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        while (true) {
-          const { done: streamDone, value } = await reader.read();
-          if (streamDone) break;
-          buffer += decoder.decode(value, { stream: true });
-          let sep: number;
-          while ((sep = buffer.indexOf("\n\n")) !== -1) {
-            const raw = buffer.slice(0, sep);
-            buffer = buffer.slice(sep + 2);
-            for (const line of raw.split("\n")) {
-              if (line.startsWith("data:")) {
-                try {
-                  onEvent(JSON.parse(line.slice(5).trim()) as SessionEvent);
-                } catch {
-                  /* 跳过无法解析的 data 行 */
-                }
+      let attempt = 0;
+      while (!closed && !controller.signal.aborted) {
+        try {
+          await readSSEStream(
+            `${API_BASE}/api/sessions/${sessionId}/events?after=0`,
+            (line) => {
+              try {
+                onEvent(JSON.parse(line) as SessionEvent);
+              } catch {
+                /* 跳过无法解析的 data 行 */
               }
-            }
-          }
+            },
+            { signal: controller.signal },
+          );
+          if (closed) return;
+        } catch {
+          if (controller.signal.aborted) return;
         }
-      } catch {
-        /* 取消（abort）静默；网络中断由 keep-alive 重连语义交给上层 */
+        // 事件流是长连接：服务端关流/网络中断都走退避重连（快照语义重放幂等）
+        const delay = Math.min(1000 * 2 ** attempt, 30000);
+        attempt++;
+        await new Promise((r) => setTimeout(r, delay));
       }
     })();
-    return () => controller.abort();
+    return close;
   },
   /**
    * 终端输出流订阅（TerminalPane 一期）：SSE `{type:"output",data:<base64>}` /
@@ -862,33 +890,17 @@ export const api = {
     const controller = new AbortController();
     (async () => {
       try {
-        const res = await fetch(`${API_BASE}/api/terminal/${id}/stream`, {
-          headers: { Accept: "text/event-stream", ...authHeaders() },
-          signal: controller.signal,
-        });
-        if (!res.ok || !res.body) return;
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        while (true) {
-          const { done: streamDone, value } = await reader.read();
-          if (streamDone) break;
-          buffer += decoder.decode(value, { stream: true });
-          let sep: number;
-          while ((sep = buffer.indexOf("\n\n")) !== -1) {
-            const raw = buffer.slice(0, sep);
-            buffer = buffer.slice(sep + 2);
-            for (const line of raw.split("\n")) {
-              if (line.startsWith("data:")) {
-                try {
-                  onEvent(JSON.parse(line.slice(5).trim()));
-                } catch {
-                  /* 跳过无法解析的 data 行 */
-                }
-              }
+        await readSSEStream(
+          `${API_BASE}/api/terminal/${id}/stream`,
+          (line) => {
+            try {
+              onEvent(JSON.parse(line));
+            } catch {
+              /* 跳过无法解析的 data 行 */
             }
-          }
-        }
+          },
+          { signal: controller.signal },
+        );
       } catch {
         /* abort 静默 */
       }

@@ -188,6 +188,7 @@ coding: {
       gitGraph: "分支图",
     },
     resetLayout: "重置布局",
+    resetLayoutConfirm: "重置布局将恢复默认面板布局，当前自定义布局会丢失。继续？",
     addView: "添加面板",
     emptyHint: "面板已关闭——点击重新打开",
   },

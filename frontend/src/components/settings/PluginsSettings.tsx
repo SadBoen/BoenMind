@@ -33,7 +33,11 @@ export function PluginsSettings() {
   const [loading, setLoading] = useState(true);
   const [installPath, setInstallPath] = useState("");
   const [settingsFor, setSettingsFor] = useState<PluginInfo | null>(null);
-  const [permissionMode, setPermissionMode] = useState<string>("default");
+  // 权限模式单源在 store（ChatInput 工具条同源订阅，2026-08-16 收口：本地实现
+  // 与 store 各写一份映射曾导致设置页改模式后聊天工具条不同步）
+  const permissionMode = useAppStore((s) => s.permissionMode);
+  const loadPermissionMode = useAppStore((s) => s.loadPermissionMode);
+  const storeSetPermissionMode = useAppStore((s) => s.setPermissionMode);
   const [category, setCategory] = useState<CategoryFilter>("all");
 
   const load = async () => {
@@ -47,43 +51,19 @@ export function PluginsSettings() {
     }
   };
 
-  /** 读取权限模式（yolo = permissive + allowDangerous 的组合） */
-  const loadPermissionMode = async () => {
-    try {
-      const cfg = await api.getConfig();
-      const policy = cfg.extension_policy;
-      const mode =
-        policy === "permissive" && cfg.extension_allow_dangerous
-          ? "yolo"
-          : policy && PERMISSION_MODES.includes(policy as (typeof PERMISSION_MODES)[number])
-            ? policy
-            : "default";
-      setPermissionMode(mode);
-    } catch {
-      // 读取失败保持默认展示，设置保存时会报错提示
-    }
-  };
-
   useEffect(() => {
     void load();
     void loadPermissionMode();
-  }, []);
+  }, [loadPermissionMode]);
 
-  /** 切换权限模式：读当前配置 → 改字段 → 全量保存 */
+  /** 切换权限模式：store 落配置，本页补成功/失败提示 */
   const changePermissionMode = async (mode: string | null) => {
     if (!mode) return;
-    const prev = permissionMode;
-    setPermissionMode(mode);
     try {
-      const cfg = await api.getConfig();
-      cfg.extension_policy =
-        mode === "default" || mode === "yolo" ? (mode === "yolo" ? "permissive" : undefined) : mode;
-      cfg.extension_allow_dangerous = mode === "yolo";
-      await api.saveConfig(cfg);
+      await storeSetPermissionMode(mode);
       toast.success(t("settings.plugins.permissionModeSaved"));
     } catch (err) {
       toast.error(t("settings.plugins.permissionModeSaveFailed", { error: String(err) }));
-      setPermissionMode(prev);
     }
   };
 
