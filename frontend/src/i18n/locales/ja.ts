@@ -40,6 +40,13 @@ export const ja: Translation = {
     panelTitle: "チャット",
     sessions: "会話リスト（新規/切り替え）",
     stop: "停止",
+    message: {
+      copy: "コピー",
+      copied: "コピーしました",
+      fork: "分岐",
+      forked: "このメッセージから新セッションを分岐しました",
+      forkFailed: "分岐に失敗: {{error}}",
+    },
     taskRunning: "タスクは実行中です…",
     taskStatus: {
       completed: "タスク完了",

@@ -262,6 +262,82 @@ impl Db {
         }))
     }
 
+    /// 会话级分叉（2026-08-16 用户定调"答复末尾分叉"）：新会话 + 复制
+    /// 源会话历史（到 at_message 含，工具调用一并复制，历史渲染完整）。
+    /// 不动内核分支模型（fork 事件属架构三缺口；会话级分叉先落地 UI 语义）。
+    /// `new_id` 由调用方生成（bm-server 持 uuid 依赖，bm-core 不引）。
+    pub async fn fork_session(
+        &self,
+        src_id: &str,
+        new_id: &str,
+        at_message: i64,
+    ) -> Result<Session, turso::Error> {
+        let ts = now_ts();
+        let conn = self.conn.lock().await;
+        // 1. 源会话属性（不存在 → 报错）
+        let mut stmt = conn
+            .prepare("SELECT title, provider_id, model, app FROM sessions WHERE id = ?1")
+            .await?;
+        let mut rows = stmt.query([src_id]).await?;
+        let Some(row) = rows.next().await? else {
+            return Err(turso::Error::Error("源会话不存在".into()));
+        };
+        let (title, provider, model, app): (String, Option<String>, Option<String>, String) =
+            (row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?);
+        // 2. 建新会话（标题带分叉标记）
+        conn.execute(
+            "INSERT INTO sessions (id, title, provider_id, model, app, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+            (new_id, format!("{title}（分叉）"), provider.as_deref(), model.as_deref(), app.as_str(), ts),
+        )
+        .await?;
+        // 3. 复制消息（到 at_message 含）并记录新旧 id 映射
+        let mut msg_stmt = conn
+            .prepare("SELECT id, role, content, created_at FROM messages WHERE session_id = ?1 AND id <= ?2 ORDER BY id")
+            .await?;
+        let mut msg_rows = msg_stmt.query((src_id, at_message)).await?;
+        let mut id_map: Vec<(i64, i64)> = Vec::new();
+        while let Some(row) = msg_rows.next().await? {
+            let old_id: i64 = row.get(0)?;
+            let role: String = row.get(1)?;
+            let content: String = row.get(2)?;
+            let created_at: i64 = row.get(3)?;
+            conn.execute(
+                "INSERT INTO messages (session_id, role, content, created_at) VALUES (?1, ?2, ?3, ?4)",
+                (new_id, role.as_str(), content.as_str(), created_at),
+            )
+            .await?;
+            id_map.push((old_id, conn.last_insert_rowid()));
+        }
+        // 4. 复制工具调用（按新消息 id）
+        let mut tc_stmt = conn
+            .prepare("SELECT seq, tool_name, args, is_error FROM tool_calls WHERE message_id = ?1 ORDER BY seq")
+            .await?;
+        for (old_id, new_id) in id_map {
+            let mut tc_rows = tc_stmt.query([old_id]).await?;
+            while let Some(row) = tc_rows.next().await? {
+                let seq: i64 = row.get(0)?;
+                let name: String = row.get(1)?;
+                let args: String = row.get(2)?;
+                let is_error: i64 = row.get(3)?;
+                conn.execute(
+                    "INSERT INTO tool_calls (message_id, seq, tool_name, args, is_error) VALUES (?1, ?2, ?3, ?4, ?5)",
+                    (new_id, seq, name.as_str(), args.as_str(), is_error),
+                )
+                .await?;
+            }
+        }
+        Ok(Session {
+            id: new_id.to_string(),
+            title: format!("{title}（分叉）"),
+            provider_id: provider,
+            model,
+            app,
+            created_at: ts,
+            updated_at: ts,
+        })
+    }
+
     pub async fn rename_session(&self, id: &str, title: &str) -> Result<(), turso::Error> {
         let ts = now_ts();
         self.conn.lock().await.execute(

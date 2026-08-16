@@ -40,6 +40,13 @@ export const ko: Translation = {
     panelTitle: "대화",
     sessions: "대화 목록 (새로 만들기/전환)",
     stop: "중지",
+    message: {
+      copy: "복사",
+      copied: "복사됨",
+      fork: "포크",
+      forked: "이 메시지에서 새 세션을 포크했습니다",
+      forkFailed: "포크 실패: {{error}}",
+    },
     taskRunning: "작업이 아직 실행 중입니다…",
     taskStatus: {
       completed: "작업 완료",

@@ -3,13 +3,16 @@
  * 对齐 pi-web 语义：绿条（工具调用）属于"过程"，收纳在思考/执行折叠块内，
  * 正式答复（纯文本）下方不再显示工具块。
  */
-import { memo, useMemo } from "react";
+import { memo, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
-import { Bot, User } from "lucide-react";
+import { Bot, Check, Copy, GitFork, User } from "lucide-react";
+import { toast } from "sonner";
+import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import type { Message } from "@/api/client";
+import { useAppStore } from "@/stores/app-store";
 import { ProcessBlock, parseThinkBlocks } from "./ThinkBlock";
 import { ToolCallBlock, type ToolCallView } from "./ToolCallBlock";
 
@@ -62,7 +65,7 @@ export const MessageItem = memo(function MessageItem({
   const bodyText = textParts.map((s) => s.content).join("");
 
   return (
-    <div className="msg-enter flex gap-3">
+    <div className="msg-enter group flex gap-3">
       <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
         <Bot size={14} />
       </div>
@@ -86,10 +89,72 @@ export const MessageItem = memo(function MessageItem({
             <Markdown content={bodyText} />
           </div>
         )}
+        {/* 答复末尾操作栏（2026-08-16 用户定调）：复制 + 分叉，悬停显示 */}
+        {!streaming && bodyText.trim() !== "" && <MessageActions content={bodyText} messageId={message.id} />}
       </div>
     </div>
   );
 });
+
+/**
+ * 答复末尾操作栏：复制（纯文本）+ 分叉（从该消息开新会话，历史复制到此处）。
+ */
+function MessageActions({ content, messageId }: { content: string; messageId: number }) {
+  const { t } = useTranslation();
+  const forkFromMessage = useAppStore((s) => s.forkFromMessage);
+  const [copied, setCopied] = useState(false);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(content);
+    } catch {
+      // IAB/非安全上下文兜底：临时 textarea + execCommand
+      const ta = document.createElement("textarea");
+      ta.value = content;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      ta.remove();
+    }
+    setCopied(true);
+    toast.success(t("chat.message.copied"));
+    window.setTimeout(() => setCopied(false), 1500);
+  };
+
+  const fork = async () => {
+    try {
+      await forkFromMessage(messageId);
+      toast.success(t("chat.message.forked"));
+    } catch (err) {
+      toast.error(t("chat.message.forkFailed", { error: String(err) }));
+    }
+  };
+
+  return (
+    <div className="mt-1.5 flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+      <button
+        type="button"
+        onClick={() => void copy()}
+        title={t("chat.message.copy")}
+        className="flex h-6 items-center gap-1 rounded px-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+      >
+        {copied ? <Check size={12} className="text-emerald-500" /> : <Copy size={12} />}
+        {t("chat.message.copy")}
+      </button>
+      <button
+        type="button"
+        onClick={() => void fork()}
+        title={t("chat.message.fork")}
+        className="flex h-6 items-center gap-1 rounded px-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+      >
+        <GitFork size={12} />
+        {t("chat.message.fork")}
+      </button>
+    </div>
+  );
+}
 
 function Markdown({ content }: { content: string }) {
   return (

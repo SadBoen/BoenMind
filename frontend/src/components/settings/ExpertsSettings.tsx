@@ -222,7 +222,8 @@ function ExpertEditDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto">
+      {/* 黄金比例宽度（页宽 768 × 0.618 ≈ 29.6rem）——2026-08-16 用户定调 */}
+      <DialogContent className="max-h-[85vh] overflow-y-auto" size="md">
         <DialogHeader>
           <DialogTitle>
             {expert ? t("settings.experts.editTitle", { name: expert.name }) : t("settings.experts.createTitle")}

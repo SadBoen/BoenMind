@@ -100,11 +100,12 @@ export function ChatPane({ variant = "full", scene = "chat" }: ChatPaneProps) {
           窄面板 → 内部悬浮窗（overlay 不挤占聊天宽度）；宽面板 → 左侧内嵌侧栏 */}
       {sessionsOpen &&
         (narrow ? (
-          <div className="absolute inset-y-0 left-0 z-20 w-64 border-r bg-popover shadow-lg">
+          // 会话列表宽度：2026-08-16 用户定调（当前基础上 +1/5 = 19.2rem）
+          <div className="absolute inset-y-0 left-0 z-20 w-[19.2rem] border-r bg-popover shadow-lg">
             <SessionList scene={scene} />
           </div>
         ) : (
-          <div className="w-64 shrink-0 border-r">
+          <div className="w-[19.2rem] shrink-0 border-r">
             <SessionList scene={scene} />
           </div>
         ))}

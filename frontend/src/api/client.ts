@@ -492,6 +492,12 @@ export const api = {
     }),
   deleteSession: (id: string) =>
     request<{ ok: boolean }>(`/api/sessions/${id}`, { method: "DELETE" }),
+  /** 会话级分叉（2026-08-16）：新会话 + 复制历史到 at_message（含） */
+  forkSession: (id: string, atMessage: number) =>
+    request<Session>(`/api/sessions/${id}/fork`, {
+      method: "POST",
+      body: JSON.stringify({ at_message: atMessage }),
+    }),
   // 清空会话事件日志（回收站 C2：用户主动清除；messages 表不动）
   clearSessionEvents: (id: string) =>
     request<{ ok: boolean; cleared: number }>(`/api/sessions/${id}/events`, {

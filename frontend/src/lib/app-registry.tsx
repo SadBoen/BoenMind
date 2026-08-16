@@ -141,7 +141,8 @@ function ChatAppView() {
 function SettingsAppView() {
   return (
     <div className="flex h-full min-h-0">
-      <div className="w-52 shrink-0 overflow-y-auto border-r bg-background/60">
+      {/* 设置侧栏宽度：2026-08-16 用户定调（+1/4 = 16.25rem） */}
+      <div className="w-[16.25rem] shrink-0 overflow-y-auto border-r bg-background/60">
         <SettingsMenu />
       </div>
       <div className="min-w-0 flex-1">

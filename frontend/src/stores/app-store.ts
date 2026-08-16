@@ -124,6 +124,8 @@ interface AppStore {
   /** 确保该场景有会话（无则创建）：编程壳对话 Tab 等需要真实会话的入口用 */
   ensureAppSession: (app: string) => Promise<string | null>;
   renameSession: (id: string, title: string) => Promise<void>;
+  /** 会话级分叉（答复末尾分叉按钮）：返回新会话 id */
+  forkFromMessage: (messageId: number) => Promise<string | null>;
   removeSession: (id: string) => Promise<void>;
   clearSessionEvents: (id: string) => Promise<void>;
 
@@ -527,6 +529,16 @@ export const useAppStore = create<AppStore>((set, get) => {
       set({
         sessions: get().sessions.map((s) => (s.id === id ? { ...s, title } : s)),
       });
+    },
+    /** 会话级分叉（2026-08-16 用户定调"答复末尾分叉"）：新会话复制历史到
+     * 该消息，然后切到新会话。 */
+    forkFromMessage: async (messageId: number) => {
+      const srcId = get().activeSessionId;
+      if (!srcId) return null;
+      const session = await api.forkSession(srcId, messageId);
+      await get().loadSessions();
+      await get().selectSession(session.id);
+      return session.id;
     },
     removeSession: async (id) => {
       try {

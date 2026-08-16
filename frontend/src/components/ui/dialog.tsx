@@ -54,17 +54,23 @@ function DialogContent({
   className,
   children,
   showCloseButton = true,
+  // 2026-08-16 用户定调"多用黄金比例"：md = 页内容宽(768px) × 0.618 ≈ 29.6rem，
+  // 供专家表单等大表单弹窗使用；sm = 默认小弹窗（384px）
+  size = "sm",
   ...props
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean
+  size?: "sm" | "md"
 }) {
+  const widthClass = size === "md" ? "sm:max-w-[29.6rem]" : "sm:max-w-sm"
   return (
     <DialogPortal>
       <DialogOverlay />
       <DialogPrimitive.Popup
         data-slot="dialog-content"
         className={cn(
-          "pointer-events-auto fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          "pointer-events-auto fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          widthClass,
           className
         )}
         {...props}

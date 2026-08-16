@@ -173,6 +173,30 @@ pub async fn delete_session(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
+/// POST /api/sessions/{id}/fork — 会话级分叉（2026-08-16 用户定调）：
+/// 新会话 + 复制源会话历史（到 at_message 含）。前端"答复末尾分叉"按钮用。
+#[derive(Deserialize)]
+pub struct ForkSessionRequest {
+    /// 从哪条消息之后分叉（含该消息的历史复制到新会话）
+    pub at_message: i64,
+}
+
+pub async fn fork_session(
+    State(state): crate::SharedState,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(req): Json<ForkSessionRequest>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let new_id = Uuid::new_v4().to_string();
+    let session = state
+        .db
+        .fork_session(&id, &new_id, req.at_message)
+        .await
+        .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    serde_json::to_value(&session)
+        .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))
+        .map(Json)
+}
+
 // ---------------------------------------------------------------------------
 // A5 事件流（SSE）：前端投影引擎前置
 // ---------------------------------------------------------------------------

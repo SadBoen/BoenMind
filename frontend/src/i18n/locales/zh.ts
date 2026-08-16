@@ -40,6 +40,13 @@ export const zh = {
     panelTitle: "对话",
     sessions: "对话列表（新建/切换）",
     stop: "停止",
+    message: {
+      copy: "复制",
+      copied: "已复制",
+      fork: "分叉",
+      forked: "已从该消息分叉出新会话",
+      forkFailed: "分叉失败: {{error}}",
+    },
     taskRunning: "任务仍在进行中…",
     taskStatus: {
       completed: "任务已完成",

@@ -40,6 +40,13 @@ export const en: Translation = {
     panelTitle: "Chat",
     sessions: "Conversations (new / switch)",
     stop: "Stop",
+    message: {
+      copy: "Copy",
+      copied: "Copied",
+      fork: "Fork",
+      forked: "Forked a new session from this message",
+      forkFailed: "Fork failed: {{error}}",
+    },
     taskRunning: "Task still running…",
     taskStatus: {
       completed: "Task completed",
