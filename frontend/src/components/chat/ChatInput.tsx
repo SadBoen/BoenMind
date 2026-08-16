@@ -5,7 +5,7 @@
  */
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ArrowUp, Brain, Languages, Mic, Paperclip, ShieldCheck, Square } from "lucide-react";
+import { ArrowUp, Brain, Clock, Languages, Mic, Paperclip, ShieldCheck, Square } from "lucide-react";
 import { api } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -20,6 +20,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ProviderIcon } from "@/components/settings/provider-icons";
+import { TokenRing } from "./TokenRing";
 import { defaultModelValue, useAppStore } from "@/stores/app-store";
 
 /**
@@ -91,6 +92,8 @@ export function ChatInput({ compact = false }: { compact?: boolean }) {
   const streaming = useAppStore((s) => s.streaming);
   const sendMessage = useAppStore((s) => s.sendMessage);
   const stopStreaming = useAppStore((s) => s.stopStreaming);
+  const queuedMessage = useAppStore((s) => s.queuedMessage);
+  const cancelQueuedMessage = useAppStore((s) => s.cancelQueuedMessage);
   const selectedModel = useAppStore((s) => s.selectedModel);
   const setSelectedModel = useAppStore((s) => s.setSelectedModel);
   const selectedThinking = useAppStore((s) => s.selectedThinking);
@@ -114,7 +117,8 @@ export function ChatInput({ compact = false }: { compact?: boolean }) {
   const modelValue = selectedModel ?? defaultModel;
   // 当前选中模型的提供商 id（选择器前的小 logo 用）
   const modelProviderId = modelValue?.split("::")[0] ?? "";
-  const canSend = text.trim().length > 0 && !streaming;
+  // 可发送：有文字且未排队（排队中已有一条待接续消息，禁止重复排队）
+  const canSend = text.trim().length > 0 && !queuedMessage;
   // 当前模型的可用思考档位；已存档位不在列表时按最高可用档展示/发送
   // （与 pi 运行时 clamp 降级语义一致）
   const thinkingLevels = useThinkingLevels(modelValue);
@@ -140,6 +144,25 @@ export function ChatInput({ compact = false }: { compact?: boolean }) {
   return (
     <div className="shrink-0 border-t p-3">
       <div className="px-1">
+        {/* 插入排队提示条：流式中发送的消息不打断生成，回复完成后自动接续 */}
+        {queuedMessage && (
+          <div
+            className="mb-1.5 flex items-center justify-between gap-2 rounded-lg border bg-muted/50 px-2.5 py-1.5"
+            title={t("chat.input.queuedTitle")}
+          >
+            <span className="min-w-0 truncate text-xs text-muted-foreground">
+              {t("chat.input.queued", { text: queuedMessage.text })}
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-5 shrink-0 px-1.5 text-xs text-muted-foreground"
+              onClick={cancelQueuedMessage}
+            >
+              {t("chat.input.queuedCancel")}
+            </Button>
+          </div>
+        )}
         {/* 输入框（含内部下边缘工具条） */}
         <div className="rounded-xl border bg-background shadow-sm transition-shadow focus-within:shadow-md focus-within:ring-1 focus-within:ring-ring">
           <Textarea
@@ -154,7 +177,6 @@ export function ChatInput({ compact = false }: { compact?: boolean }) {
             placeholder={t("chat.input.placeholder")}
             rows={1}
             className="max-h-40 min-h-[2.25rem] resize-none border-0 bg-transparent p-3 pb-1 text-sm shadow-none focus-visible:ring-0"
-            disabled={streaming}
           />
           {/* 框内下边缘工具条：提示在左，模型/思考/发送整体靠右。
               compact（侧栏/面板形态）：窄栏隐藏提示与占位按钮，只留模型/思考/权限/发送 */}
@@ -284,18 +306,56 @@ export function ChatInput({ compact = false }: { compact?: boolean }) {
                 </SelectContent>
               </Select>
 
-              {/* 发送/停止原位切换：流式中发送按钮变停止按钮（停止后后端
-                  收口已生成内容，与正常完成同路径），停在原处不跳位 */}
+              {/* 会话 token 用量圆环（替代原右上角按钮；点击看明细） */}
+              {!compact && <TokenRing />}
+
+              {/* 主位按钮四态（2026-08-17 用户拍板"停止+发送并存"）：
+                  非流式=发送；流式+无文字=停止（原位）；流式+有文字=发送
+                  （点击=插入排队，不打断生成）；排队中=时钟（禁发）。
+                  流式+有文字时左侧出现小停止按钮：只停不发。 */}
               {streaming ? (
-                <Button
-                  size="icon"
-                  variant="outline"
-                  className="ml-0.5 h-7 w-7 rounded-lg border-primary/30 text-primary"
-                  onClick={stopStreaming}
-                  title={t("chat.stop")}
-                >
-                  <Square size={13} className="fill-current" />
-                </Button>
+                <>
+                  {!queuedMessage && text.trim().length > 0 && (
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7 rounded-lg text-muted-foreground"
+                      onClick={stopStreaming}
+                      title={t("chat.stop")}
+                    >
+                      <Square size={12} className="fill-current" />
+                    </Button>
+                  )}
+                  {queuedMessage ? (
+                    <Button
+                      size="icon"
+                      disabled
+                      className="ml-0.5 h-7 w-7 rounded-lg"
+                      title={t("chat.input.queuedTitle")}
+                    >
+                      <Clock size={15} />
+                    </Button>
+                  ) : text.trim().length > 0 ? (
+                    <Button
+                      size="icon"
+                      className="ml-0.5 h-7 w-7 rounded-lg"
+                      onClick={() => void submit()}
+                      title={t("chat.input.send")}
+                    >
+                      <ArrowUp size={15} />
+                    </Button>
+                  ) : (
+                    <Button
+                      size="icon"
+                      variant="outline"
+                      className="ml-0.5 h-7 w-7 rounded-lg border-primary/30 text-primary"
+                      onClick={stopStreaming}
+                      title={t("chat.stop")}
+                    >
+                      <Square size={13} className="fill-current" />
+                    </Button>
+                  )}
+                </>
               ) : (
                 <Button
                   size="icon"

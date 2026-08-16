@@ -175,6 +175,14 @@ interface AppStore {
   /** 状态栏 token 用量刷新信号：流结束（done/停止）时 +1，TokenUsage 订阅重拉 */
   usageVersion: number;
   /**
+   * 流式中的插入排队消息（用户拍板"插入不打断"2026-08-17）：流式中发送的
+   * 新消息进队列，当前回复完整跑完（done 收口）后自动接续发送，模型基于
+   * 含已生成内容的完整历史继续——"回复中途插话"语义；保留模型/思考快照
+   * （发送时刻的选择）。null = 无排队。取消 = cancelQueuedMessage。
+   */
+  queuedMessage: { text: string; provider?: string; model?: string; thinking?: string } | null;
+  cancelQueuedMessage: () => void;
+  /**
    * 聊天单元内嵌会话列表显隐（按场景：chat/coding…；默认 chat 展开、其余折叠）。
    * 用户拍板"列表在聊天单元内部，由顶部状态栏控制显隐"（2026-08-15）——
    * 状态栏 prefix 槽位的三横按钮 toggle 本标志，ChatPane 订阅渲染内嵌列表。
@@ -666,6 +674,8 @@ export const useAppStore = create<AppStore>((set, get) => {
     taskProgress: null,
     lastTask: null,
     usageVersion: 0,
+    queuedMessage: null,
+    cancelQueuedMessage: () => set({ queuedMessage: null }),
     // 聊天单元内嵌列表默认态：聊天应用展开（会话列表是聊天单元的一部分），
     // 编程等场景折叠（右列空间有限，随时经状态栏三横展开）
     chatSessionsOpen: { chat: true },
@@ -683,6 +693,20 @@ export const useAppStore = create<AppStore>((set, get) => {
     },
     setSelectedThinking: (value) => set({ selectedThinking: value ?? "off" }),
     sendMessage: async (text, opts) => {
+      // 流式中发送 = 插入排队：当前回复完整跑完（不打断），done 收口后自动
+      // 接续本消息——模型基于含已生成内容的完整历史继续（"中间插入信息"）。
+      // 排队消息保留发送时刻的模型/思考快照。想立即打断仍可点停止按钮。
+      if (get().streaming) {
+        set({
+          queuedMessage: {
+            text,
+            provider: opts?.provider,
+            model: opts?.model,
+            thinking: opts?.thinking,
+          },
+        });
+        return;
+      }
       const { activeSessionId } = get();
       let sessionId = activeSessionId;
       if (!sessionId) {
@@ -779,6 +803,18 @@ export const useAppStore = create<AppStore>((set, get) => {
         // 异常结束（无 done 事件）时清理状态
         set({ streaming: false, streamingToolCalls: [] });
       }
+      // 排队插入接续：当前回复已收口（已生成内容固化进历史），自动发送排队的
+      // 消息。此时 streaming=false，递归不会再次排队；队列在同一时间至多一条。
+      const queued = get().queuedMessage;
+      if (queued) {
+        set({ queuedMessage: null });
+        await get().sendMessage(queued.text, {
+          provider: queued.provider,
+          model: queued.model,
+          thinking: queued.thinking,
+        });
+        return;
+      }
       await get().loadSessions();
     },
     stopStreaming: () => {
@@ -793,6 +829,7 @@ export const useAppStore = create<AppStore>((set, get) => {
         setTimeout(() => {
           if (get().streaming && streamController === controller) {
             finalizeStream(activeSessionId);
+            controller.close(); // 关闭连接让 sendMessage 收尾路径触发排队接续
           }
         }, 8000);
       } else {

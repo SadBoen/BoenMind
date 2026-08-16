@@ -3,111 +3,19 @@
  * dockview 8.1 header action 槽位（rightHeaderActionsComponent）——每个面板组
  * 标题栏右侧挂本组件，按组内活跃面板渲染状态。
  *
- * 当前状态项：对话面板的会话 token 用量（数据源 /api/sessions/{id}/usage——
- * 事件日志 assistant/message 事件 usage 聚合）。宽度不足时图标 + 总量即可，
- * 明细（输入/输出/消息数）点开悬浮窗（用户拍板"右状态悬浮"）。
- * 后续状态项（缓存命中率等）在此追加。
+ * 状态项：会话 token 用量已迁入输入框圆环（TokenRing，2026-08-17 用户拍板），
+ * 本组件不再渲染右上角用量按钮。当前仅剩 "+" 视图菜单（面板关闭后的重开入口）。
  */
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { Coins, Loader2, Menu, Plus } from "lucide-react";
+import { Menu, Plus } from "lucide-react";
 import type { IDockviewHeaderActionsProps } from "dockview-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { api } from "@/api/client";
 import { useAppStore } from "@/stores/app-store";
 import { appIdOf, filterOpenable, layoutReopenItems, openPanel } from "@/lib/dock-open";
 import { VIEWS } from "@/lib/dock-views";
-
-/** token 数缩写：<1K 原样；<1M → x.xK；否则 x.xM */
-function formatTokens(n: number): string {
-  if (n < 1000) return String(n);
-  if (n < 1_000_000) return `${(n / 1000).toFixed(1)}K`;
-  return `${(n / 1_000_000).toFixed(1)}M`;
-}
-
-interface SessionUsage {
-  input_tokens: number;
-  output_tokens: number;
-  messages: number;
-}
-
-/** 对话面板 token 用量：图标 + 总量；点击悬浮窗看明细 */
-function TokenUsageButton() {
-  const { t } = useTranslation();
-  const activeSessionId = useAppStore((s) => s.activeSessionId);
-  // 流结束时 +1（store 在 finalizeStream 递增）→ 重新拉取
-  const usageVersion = useAppStore((s) => s.usageVersion);
-  const [usage, setUsage] = useState<SessionUsage | null>(null);
-  const [open, setOpen] = useState(false);
-  const [anchor, setAnchor] = useState<{ x: number; y: number } | null>(null);
-
-  useEffect(() => {
-    if (!activeSessionId) {
-      setUsage(null);
-      return;
-    }
-    let cancelled = false;
-    api
-      .getSessionUsage(activeSessionId)
-      .then((u) => {
-        if (!cancelled) setUsage(u);
-      })
-      .catch(() => {
-        if (!cancelled) setUsage(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [activeSessionId, usageVersion]);
-
-  if (!activeSessionId) return null;
-  const total = usage ? usage.input_tokens + usage.output_tokens : 0;
-
-  return (
-    <>
-      <Button
-        variant="ghost"
-        size="sm"
-        className="h-6 gap-1 px-1.5 text-[10px] font-normal text-muted-foreground"
-        title={t("statusbar.tokenUsage")}
-        onClick={(e) => {
-          const r = e.currentTarget.getBoundingClientRect();
-          setAnchor({ x: r.right, y: r.bottom });
-          setOpen((o) => !o);
-        }}
-      >
-        <Coins size={12} />
-        {usage ? formatTokens(total) : <Loader2 size={10} className="animate-spin" />}
-      </Button>
-      {open && anchor && (
-        createPortal(
-          <>
-            <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-            <div
-              className="fixed z-50 w-64 rounded-lg border bg-popover p-3 text-xs shadow-md"
-              style={{ right: Math.min(window.innerWidth - anchor.x + 8, 16), top: anchor.y + 6 }}
-            >
-              <p className="mb-2 font-medium">{t("statusbar.tokenUsage")}</p>
-              <dl className="grid grid-cols-2 gap-y-1.5 text-muted-foreground">
-                <dt>{t("statusbar.inputTokens")}</dt>
-                <dd className="text-right font-mono">{usage ? usage.input_tokens.toLocaleString() : "—"}</dd>
-                <dt>{t("statusbar.outputTokens")}</dt>
-                <dd className="text-right font-mono">{usage ? usage.output_tokens.toLocaleString() : "—"}</dd>
-                <dt>{t("statusbar.totalTokens")}</dt>
-                <dd className="text-right font-mono">{usage ? total.toLocaleString() : "—"}</dd>
-                <dt>{t("statusbar.messages")}</dt>
-                <dd className="text-right font-mono">{usage ? usage.messages.toLocaleString() : "—"}</dd>
-              </dl>
-            </div>
-          </>,
-          document.body,
-        )
-      )}
-    </>
-  );
-}
 
 /**
  * 标题栏"+"视图菜单（2026-08-15 用户"面板关闭后没有二次打开方法"补口）：
@@ -181,16 +89,10 @@ function AddPanelMenu({ api }: { api: IDockviewHeaderActionsProps["containerApi"
 
 /**
  * 统一状态区宿主：按组内活跃面板的视图类型渲染状态项。
- * 对话面板（chat-pane 视图）→ token 用量；所有面板 → "+" 视图菜单
- * （面板关闭后的重开入口）。其他状态项留扩展位。
+ * 当前仅 "+" 视图菜单（面板关闭后的重开入口）。token 用量已迁入输入框圆环。
  */
-export function StatusBarActions({ containerApi, activePanel }: IDockviewHeaderActionsProps) {
-  return (
-    <>
-      {activePanel?.view.contentComponent === "chat-pane" && <TokenUsageButton />}
-      <AddPanelMenu api={containerApi} />
-    </>
-  );
+export function StatusBarActions({ containerApi }: IDockviewHeaderActionsProps) {
+  return <AddPanelMenu api={containerApi} />;
 }
 
 /**
