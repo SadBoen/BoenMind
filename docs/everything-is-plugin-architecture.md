@@ -130,7 +130,7 @@
 | D9 | 会话日志级压缩事务（compaction/start→summary→replace→end） | 压缩状态本身可审计可恢复 | 事件协议 |
 | D10 | 双触发压缩（0.8 水线 + overflow 硬触发重试）+ 摘要吃 KV-cache + 不切 tool 配对 | 比现有 50% 水线更完整 | 压缩插件默认实现 |
 
-**落地状态（2026-08-16）**：D2（事件日志/分支寻址/fork 事件）、D3/D9（压缩 replace 事务 + 三事件协议）、D10（压缩插件默认实现 → bm-compactor）✅ 已落地；D4（把关链五事件）部分落地（PermissionBridge 询问链已就位，阶梯审批/配额待阶段 2 深化）；D1/D5/D6 是内核形态本身（加载器/服务注册表/scope 隔离已建成，§15.1）；D7/D8（skill catalog / PromptSection 注册表）待接线。
+**落地状态（2026-08-17）**：D2（事件日志/分支寻址/fork 事件）、D3/D9（压缩 replace 事务 + 三事件协议）、D10（压缩插件默认实现 → bm-compactor）✅ 已落地；D4（把关链五事件）部分落地（PermissionBridge 询问链已就位，阶梯审批/配额待阶段 2 深化）；D1/D5/D6 是内核形态本身（加载器/服务注册表/scope 隔离已建成，§15.1）；**D7 现行落地** = `enabled_skills_prompt` 按场景注入技能清单（名字+简介+路径，按需 `read` SKILL.md）——不是空货架；dsh 那种 catalog 事件 + 独立 skill 工具仍是形态差，不是「没注入」。D8 PromptSection 注册表形态待接线（角色插件 / `roles.rs` 已是现行注入面）。
 
 ### 3.2 从 pi 吸收（资产与生态）
 

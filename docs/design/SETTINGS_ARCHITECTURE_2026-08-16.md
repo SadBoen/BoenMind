@@ -106,7 +106,7 @@ KEY 等敏感值沿用 providers 做法：存 config.toml、表单掩码显示�
 APP 独有扩展（scope: chat/coding）→ 只进该 APP 会话工具面
 ```
 
-- 落地：manifest/配置加 `scopes` 字段；bm_engine.rs 场景工具组装登记点（L346 附近，现 chat/coding 分支为空）按 session.app 过滤插件工具/MCP 工具/场景 skill。
+- 落地（阶段 3 已完成，勿再读成空登记点）：`config.toml` 的 `plugin_scopes` / `skill_scopes` / MCP server scopes；引擎按 `session.app` 过滤插件工具、MCP 工具，以及 skill **系统提示**（`enabled_skills_prompt`）。chat/coding 没有额外「场景工具三件套」是刻意的（todo/subagent 属内置手脚，全局）；wiki 场景另有 `wiki_*`，本文件不展开。
 - 记忆按作用域：记忆桶 = (app, 可选项目)。聊天 APP 用全局 memory/facts.md；编程 APP 用 coding-memory 项目桶。
 - 前端：扩展中心每行显示作用域徽标（公共/聊天/编程）可改归属；插件页 category 分类（all/system/app）演进为作用域过滤。
 
