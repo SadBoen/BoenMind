@@ -108,7 +108,6 @@ export function saveSkinEffect(id: BackgroundEffectId) {
 const SKIN_KEY = "boenmind.skin";
 const SKIN_PARAMS_KEY = "boenmind.skin.params";
 const SKIN_BG_KEY = "boenmind.skin.background";
-const SKIN_AUTO_KEY = "boenmind.skin.auto";
 const SKIN_WALLPAPER_KEY = "boenmind.skin.wallpaper";
 
 /** 皮肤列表按 id 索引（参数声明/默认值查询） */

@@ -1,11 +1,11 @@
 /**
- * 应用注册器（DE 契约 §四·B）：桌面壳的单一数据源。
+ * 应用注册器（DE 契约 §四·B）：壳层（导航条/主面板）的单一数据源。
  *
  * 新增应用（AppId）时只需在这里登记一行 —— `Record<AppId, AppEntry>` 保证
- * 漏改会在编译期报错，开始菜单 / 任务栏 / 窗口层自动联动。
- * 应用 = 前端包：本期静态注册（内容组件零改动嵌入），动态加载留后续轮。
- *
- * 设置页注册表（SETTINGS）随导航表退役迁入本文件，由设置应用内部使用。
+ * 漏改会在编译期报错，导航条自动联动。plugins/steward 两条目已随桌面壳
+ * 退役收口（2026-08-16 清理轮）：内容组件经 SETTINGS 设置页可达，不再
+ * 占用 AppId。应用 = 前端包：本期静态注册（内容组件零改动嵌入），
+ * 动态加载留后续轮（§四·C）。
  */
 import type { ComponentType, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -51,77 +51,48 @@ export function AppSettingsCoding() {
   return <AppSettings appId="coding" />;
 }
 
-export type AppId = "chat" | "coding" | "wiki" | "settings" | "plugins" | "steward";
+export type AppId = "chat" | "coding" | "wiki" | "settings";
 
 export interface AppEntry {
   id: AppId;
   /** i18n key：应用显示名 */
   nameKey: string;
   icon: ReactNode;
-  /** Cosmos 渐变底色（应用卡 / 标题栏图标背景） */
-  gradient: string;
   component: ComponentType;
-  defaultSize: { width: number; height: number };
 }
 
 /**
- * 应用注册表（表内顺序即开始菜单顺序）。
- * 内容组件全部是既有成熟组件零改动嵌入；壳层（窗口/任务栏）只认本表。
+ * 应用注册表（表内顺序即导航顺序）。
+ * 内容组件全部是既有成熟组件零改动嵌入；壳层（导航/主面板）只认本表。
  */
 export const APPS: Record<AppId, AppEntry> = {
   chat: {
     id: "chat",
     nameKey: "desktop.app.chat",
     icon: <MessageSquare size={18} />,
-    gradient: "linear-gradient(135deg, #8b7cf6, #4ea8f0)",
     component: ChatAppView,
-    defaultSize: { width: 1040, height: 700 },
   },
   coding: {
     id: "coding",
     nameKey: "desktop.app.coding",
     icon: <Code2 size={18} />,
-    gradient: "linear-gradient(135deg, #34d399, #4ea8f0)",
     // M2：独立壳（文件树/编辑器/分支图 + 活任务清单）
     component: CodingApp,
-    defaultSize: { width: 1080, height: 700 },
   },
   wiki: {
     id: "wiki",
     nameKey: "desktop.app.wiki",
     icon: <BookOpen size={18} />,
-    gradient: "linear-gradient(135deg, #fbbf24, #f472b6)",
-    // 占位：WIKI 未立项，导航/开始菜单置灰点不了（编程 M2 前的同款语义）
+    // 占位：WIKI 未立项，导航置灰点不了（编程 M2 前的同款语义）
     component: WikiPlaceholder,
-    defaultSize: { width: 760, height: 560 },
   },
   settings: {
     id: "settings",
     nameKey: "desktop.app.settings",
     icon: <Settings size={18} />,
-    gradient: "linear-gradient(135deg, #f59e0b, #f472b6)",
     component: SettingsAppView,
-    defaultSize: { width: 880, height: 660 },
-  },
-  plugins: {
-    id: "plugins",
-    nameKey: "desktop.app.plugins",
-    icon: <Puzzle size={18} />,
-    gradient: "linear-gradient(135deg, #a78bfa, #f472b6)",
-    component: PluginsAppView,
-    defaultSize: { width: 820, height: 640 },
-  },
-  steward: {
-    id: "steward",
-    nameKey: "desktop.app.steward",
-    icon: <Activity size={18} />,
-    gradient: "linear-gradient(135deg, #f472b6, #fb923c)",
-    component: StewardAppView,
-    defaultSize: { width: 820, height: 640 },
   },
 };
-
-export const APP_LIST: AppEntry[] = Object.values(APPS);
 
 /**
  * 聊天应用 = 可停靠视图容器（v0.23 布局系统）：默认布局 = 左会话列表/中对话
@@ -169,32 +140,6 @@ function WikiPlaceholder() {
  * 编程应用占位已退役（M2 起由 CodingApp 真实壳接管）；删除占位组件与
  * codingComingSoon 提示文案（ClassicShell disabled 语义一并解除）。
  */
-
-/** 单页应用的滚动容器（PluginsSettings/StewardSettings 原依赖三栏壳面板的滚动，此处由壳补齐） */
-function ScrollPage({ children }: { children: ReactNode }) {
-  // p-6 与 SettingsPage 内容边距一致（窗口化后内容贴边框会显得间距不对）
-  return (
-    <div className="h-full min-w-0 overflow-y-auto bg-background p-6">
-      <div className="mx-auto max-w-3xl">{children}</div>
-    </div>
-  );
-}
-
-function PluginsAppView() {
-  return (
-    <ScrollPage>
-      <PluginsSettings />
-    </ScrollPage>
-  );
-}
-
-function StewardAppView() {
-  return (
-    <ScrollPage>
-      <StewardSettings />
-    </ScrollPage>
-  );
-}
 
 export type SettingsTab =
   | "app-chat"

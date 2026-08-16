@@ -22,18 +22,6 @@ export const zh = {
   api: {
     requestFailed: "请求失败: {{status}}",
   },
-  nav: {
-    chat: "对话",
-    team: "专家团队",
-    gallery: "图库",
-    knowledge: "知识库",
-    settings: "设置",
-    gallerySoon: "图库（即将推出）",
-    knowledgeSoon: "知识库（即将推出）",
-  },
-  team: {
-    docLoadFailed: "功能描述文档加载失败",
-  },
   chat: {
     /** 新会话默认标题（会随首条消息被自动命名，勿翻译成品牌词） */
     newSession: "新对话",
@@ -180,28 +168,13 @@ coding: {
     messages: "消息数",
   },
   desktop: {
-    bootSkip: "点击跳过启动",
-    startMenu: "开始菜单",
-    dock: "程序坞",
-    emptyHint: "从开始菜单打开应用",
-    windowClose: "关闭 {{app}}",
-    windowMinimize: "最小化 {{app}}",
-    windowMaximize: "最大化/还原 {{app}}",
     classicNav: "应用导航",
-    switchClassic: "切换经典软件界面",
-    switchDesktop: "桌面模式",
-    codingComingSoon: "编程应用建设中，敬请期待",
     app: {
       chat: "对话",
-      chatDesc: "与 AI 对话",
       coding: "编程",
-      codingDesc: "代码工作台（建设中）",
       wiki: "Wiki",
       wikiDesc: "Wiki 知识库（建设中）",
       settings: "设置",
-      plugins: "插件",
-      steward: "管家",
-      toolDesc: "系统工具",
     },
   },
   dock: {

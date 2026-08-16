@@ -63,7 +63,8 @@ const CURRENT_PROJECT_KEY = "boenmind.currentProject";
 const ACTIVE_NAV_KEY = "boenmind.activeNav";
 const ACTIVE_SESSION_KEY = "boenmind.activeSessionId";
 
-const APP_IDS: AppId[] = ["chat", "coding", "wiki", "settings", "plugins", "steward"];
+// 与注册表 APPS 的键集保持一致（清理轮 2026-08-16：plugins/steward 已随桌面壳收口）
+const APP_IDS: AppId[] = ["chat", "coding", "wiki", "settings"];
 
 function loadProjects(): Project[] {
   try {
@@ -96,9 +97,6 @@ export function defaultModelValue(config: AppConfig): string | null {
 }
 
 interface AppStore {
-  // ── 界面形态（2026-08-16 桌面形态退役：仅保留切换开关占位，恒为 classic）──
-  viewMode: "classic" | "desktop";
-  setViewMode: (mode: "classic" | "desktop") => void;
   /** 经典界面的当前导航 */
   activeNav: AppId;
   setActiveNav: (id: AppId) => void;
@@ -291,11 +289,6 @@ export const useAppStore = create<AppStore>((set, get) => {
 
   return {
     // 默认经典软件界面（用户拍板）；桌面形态退役（2026-08-16），开关仅占位
-    viewMode: (localStorage.getItem("boenmind.viewMode") as "desktop" | null) ?? "classic",
-    setViewMode: (mode) => {
-      localStorage.setItem("boenmind.viewMode", mode);
-      set({ viewMode: mode });
-    },
     activeNav: (APP_IDS.find((a) => a === localStorage.getItem(ACTIVE_NAV_KEY)) ?? "chat") as AppId,
     setActiveNav: (id) => {
       localStorage.setItem(ACTIVE_NAV_KEY, id);
@@ -746,6 +739,10 @@ export const useAppStore = create<AppStore>((set, get) => {
           case "done": {
             // 后端确认结束（正常完成或停止后的部分文本）：固化流式内容
             finalizeStream(sessionId!);
+            // 重拉消息使 id 与服务器一致（后端落库先于 done 事件）。
+            // 否则乐观 id（Date.now()）会泄漏进 fork 契约——后端按自增 id 定位，
+            // 时间戳恒大于任何自增 id，导致分叉静默复制整个会话。
+            void api.getSession(sessionId!).then(({ messages }) => set({ messages }));
             break;
           }
           case "error":

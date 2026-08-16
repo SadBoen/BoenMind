@@ -75,7 +75,6 @@ export function AppearanceSettings() {
   const { theme, setTheme, resolvedTheme } = useTheme();
   const config = useAppStore((s) => s.config);
   const saveConfig = useAppStore((s) => s.saveConfig);
-  const viewMode = useAppStore((s) => s.viewMode);
   const settingsTier = useAppStore((s) => s.settingsTier);
   const accent = useAppStore((s) => s.accent);
   const setAccent = useAppStore((s) => s.setAccent);
@@ -184,12 +183,10 @@ export function AppearanceSettings() {
             type="button"
             className={cn(
               "flex flex-col items-center gap-2 rounded-xl border-2 p-4 transition-colors",
-              viewMode === "classic"
-                ? "border-primary bg-primary/5"
-                : "border-border hover:border-muted-foreground/40",
+              "border-primary bg-primary/5",
             )}
           >
-            <PanelLeft size={18} className={viewMode === "classic" ? "text-primary" : ""} />
+            <PanelLeft size={18} className="text-primary" />
             <span className="text-sm font-medium">{t("settings.appearance.form.classic")}</span>
           </button>
           <button

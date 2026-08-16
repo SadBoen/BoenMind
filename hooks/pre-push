@@ -32,4 +32,9 @@ echo "[pre-push] ③ clippy 存量两档（--no-deps -D warnings）..."
 cargo clippy -p bm-core --lib --no-deps -q -- -D warnings
 cargo clippy -p bm-server --lib --no-deps -q -- -D warnings
 
+echo "[pre-push] ④ 前端构建（tsc -b && vite build；拦 i18n 缺键/类型断裂——2026-08-16 P0 教训）..."
+cd "$ROOT/frontend"
+pnpm build
+cd "$ROOT/backend"
+
 echo "[pre-push] ✅ 质量门全绿，放行推送"

@@ -10,27 +10,12 @@ function Dialog({ ...props }: DialogPrimitive.Root.Props) {
   return <DialogPrimitive.Root data-slot="dialog" {...props} />
 }
 
-function DialogTrigger({ ...props }: DialogPrimitive.Trigger.Props) {
-  return <DialogPrimitive.Trigger data-slot="dialog-trigger" {...props} />
-}
-
 /**
- * 系统弹窗统一挂载到桌面壳的 #system-ui 宿主层（Desktop 渲染，z-[60] 最高层），
- * 避免散落 body 与窗口层/Dock 层级打架；容器不存在时（无壳场景）回退 body。
+ * 弹窗直接挂载到 body（桌面壳 #system-ui 宿主层已随退役删除，2026-08-16 清理轮）。
  * base-ui 的 modal Dialog 自带焦点陷阱（Tab 循环在弹窗内，不会跑进背后窗口）。
  */
 function DialogPortal({ ...props }: DialogPrimitive.Portal.Props) {
-  return (
-    <DialogPrimitive.Portal
-      data-slot="dialog-portal"
-      container={document.getElementById("system-ui") ?? document.body}
-      {...props}
-    />
-  )
-}
-
-function DialogClose({ ...props }: DialogPrimitive.Close.Props) {
-  return <DialogPrimitive.Close data-slot="dialog-close" {...props} />
+  return <DialogPrimitive.Portal data-slot="dialog-portal" {...props} />
 }
 
 function DialogOverlay({
@@ -41,7 +26,6 @@ function DialogOverlay({
     <DialogPrimitive.Backdrop
       data-slot="dialog-overlay"
       className={cn(
-        // pointer-events-auto：宿主层 #system-ui 是 pointer-events-none 的穿透容器
         "pointer-events-auto fixed inset-0 isolate z-50 bg-black/10 duration-100 supports-backdrop-filter:backdrop-blur-xs data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
         className
       )}
@@ -170,7 +154,6 @@ function DialogDescription({
 
 export {
   Dialog,
-  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -178,5 +161,4 @@ export {
   DialogOverlay,
   DialogPortal,
   DialogTitle,
-  DialogTrigger,
 }
