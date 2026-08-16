@@ -328,7 +328,7 @@ pub fn migrate_builtin_experts(config: &mut AppConfig) -> Result<bool, AppError>
             eprintln!("[bm-core] expert migrated: {old} -> {new}");
             changed = true;
         }
-        for (_, profile) in config.apps.iter_mut() {
+        for profile in config.apps.values_mut() {
             if profile.expert.as_deref() == Some(old) {
                 profile.expert = Some(new.to_string());
                 changed = true;
