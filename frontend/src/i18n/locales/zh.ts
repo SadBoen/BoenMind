@@ -341,8 +341,7 @@ coding: {
         },
         customTitle: "自定义背景",
         wallpaper: {
-          aqua: "青蓝流体",
-          bluewave: "蓝色波浪",
+          aqua: "青蓝",
           sunset: "日落",
           aurora: "极光",
           nebula: "星云",

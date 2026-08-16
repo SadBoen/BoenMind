@@ -342,8 +342,7 @@ coding: {
         },
         customTitle: "사용자 지정 배경",
         wallpaper: {
-          aqua: "아쿠아 플로우",
-          bluewave: "블루 웨이브",
+          aqua: "아쿠아",
           sunset: "선셋",
           aurora: "오로라",
           nebula: "네뷸라",

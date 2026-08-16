@@ -42,12 +42,6 @@ export const PRESET_WALLPAPERS: PresetWallpaper[] = [
     hue: 190,
   },
   {
-    id: "bluewave",
-    nameKey: "settings.appearance.skin.wallpaper.bluewave",
-    kind: "fluid",
-    hue: 220,
-  },
-  {
     id: "sunset",
     nameKey: "settings.appearance.skin.wallpaper.sunset",
     kind: "gradient",
