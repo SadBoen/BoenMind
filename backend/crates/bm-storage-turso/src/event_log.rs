@@ -710,25 +710,37 @@ impl EventStorePort for TursoEventStore {
             conn.execute("BEGIN", ()).await.map_err(|e| {
                 ProtocolError::new(ErrorCode::StoreUnavailable, format!("clear begin: {e}"))
             })?;
-            let removed = conn
+            let removed = match conn
                 .execute(
                     "DELETE FROM event_log WHERE session_id = ?1",
                     [sid.as_str()],
                 )
                 .await
-                .map_err(|e| {
-                    let _ = conn.execute("ROLLBACK", ());
-                    ProtocolError::new(ErrorCode::StoreUnavailable, format!("clear events: {e}"))
-                })?;
-            conn.execute(
-                "DELETE FROM branch_heads WHERE session_id = ?1",
-                [sid.as_str()],
-            )
-            .await
-            .map_err(|e| {
-                let _ = conn.execute("ROLLBACK", ());
-                ProtocolError::new(ErrorCode::StoreUnavailable, format!("clear heads: {e}"))
-            })?;
+            {
+                Ok(n) => n,
+                Err(e) => {
+                    // 出错回滚：必须 await 真正执行（此前 let _ 直接丢弃 future，
+                    // ROLLBACK 从未发出——clippy let_underscore_future 实爆暴露）
+                    let _ = conn.execute("ROLLBACK", ()).await;
+                    return Err(ProtocolError::new(
+                        ErrorCode::StoreUnavailable,
+                        format!("clear events: {e}"),
+                    ));
+                }
+            };
+            if let Err(e) = conn
+                .execute(
+                    "DELETE FROM branch_heads WHERE session_id = ?1",
+                    [sid.as_str()],
+                )
+                .await
+            {
+                let _ = conn.execute("ROLLBACK", ()).await;
+                return Err(ProtocolError::new(
+                    ErrorCode::StoreUnavailable,
+                    format!("clear heads: {e}"),
+                ));
+            }
             if let Err(e) = conn.execute("COMMIT", ()).await {
                 let _ = conn.execute("ROLLBACK", ()).await;
                 return Err(ProtocolError::new(

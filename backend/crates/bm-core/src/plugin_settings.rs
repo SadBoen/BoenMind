@@ -323,7 +323,7 @@ pub fn save_settings_file(
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&file, fs::Permissions::from_mode(0o600));
+        let _ = fs::set_permissions(file, fs::Permissions::from_mode(0o600));
     }
     Ok(Value::Object(out))
 }

@@ -32,6 +32,10 @@ echo "[pre-push] ③ clippy 存量两档（--no-deps -D warnings）..."
 cargo clippy -p bm-core --lib --no-deps -q -- -D warnings
 cargo clippy -p bm-server --lib --no-deps -q -- -D warnings
 
+echo "[pre-push] ③b clippy 内核四件套 + bm-compat（2026-08-16 补齐：v0.1.3 CI 实爆 let_underscore_future，钩子原只覆盖存量两档）..."
+cargo clippy -p bm-protocol -p bm-kernel -p bm-storage-turso -p bm-loop -p bm-event-log-tests -p bm-compactor -p bm-memory --all-targets --no-deps -q -- -D warnings
+cargo clippy -p bm-compat --lib --test host --test load --test execute --test events --test session --no-deps -q -- -D warnings
+
 echo "[pre-push] ④ 前端构建（tsc -b && vite build；拦 i18n 缺键/类型断裂——2026-08-16 P0 教训）..."
 cd "$ROOT/frontend"
 pnpm build
