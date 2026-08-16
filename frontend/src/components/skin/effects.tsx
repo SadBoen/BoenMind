@@ -1,18 +1,20 @@
 /**
  * 背景特效层（2026-08-16）：独立于皮肤/壁纸的动画层，叠加在壁纸之上。
- * - EffectWave：半透明蓝色波纹（透明 canvas 直接叠加，实色 rgba 填充），
- *   30fps 动画，全局时钟 performance.now()/1000——与界面/挂载无关，多界面速度一致。
- * - 特效与壁纸解耦：任何壁纸（渐变/自定义图）都可叠加波浪动画。
- * - 以后新增特效（礼花/微风等）：按 EffectWave 模式新写一个组件 + 注册表登记。
- * - reduce-motion 开启时只渲染一帧静态纹理并停止调度（无障碍契约，2026-08-16 修复：
- *   旧实现两分支相同、开启后照常 30fps 动画）；后台标签页/窗口隐藏时暂停循环。
+ * - EffectWave：蓝色波纹动画（2D canvas 全屏多组正弦丝带），30fps。
  *
- * 实现说明（2D canvas + 实色直绘，2026-08-16 二次修复）：
- * ① 交接 HANDOFF_BG_EFFECT_ANIMATION：WebGL 帧不被合成器提交（假设 A）→ 2D canvas；
- * ② 2D 版仍不可见——根因是 mix-blend-overlay：浅色壁纸上 overlay 对比度趋近于零
- *    （画了也看不见），且 Chromium 对 blend-mode 元素存在不重绘的已知问题
- *    （issue 503638）。现去掉混合模式、改普通透明 canvas + 实色 rgba 直绘：
- *    无合成怪癖、浅色/深色壁纸上都可见。帧内容仍经 dataset.frames/lastTime 观测。
+ * 实现说明（git 证据链 + 环境实测，2026-08-16 最终定版）：
+ * ① 7dcf783 初版 WebGL（alpha:true + mix-blend-overlay + setTimeout）：静态纹理
+ *    可呈现但不流动（HANDOFF_BG_EFFECT_ANIMATION 交接）；
+ * ② ba2d1df 时代 FluidWave 动画版（WebGL alpha:false + rAF）曾像素级验证有效
+ *    （"实测 1.2s 内 73.6% 像素变化"），但 7dcf783 静态化后动画归特效层；
+ * ③ 恢复 WebGL 机制后纯红 shader 测试：**WebGL drawing buffer 在当前环境
+ *    （WebView2 系）完全不呈现**（背景 CSS 与 2D canvas 均正常，唯独 WebGL 空白）——
+ *    而 2D canvas 的呈现路径已被像素级验证（实色深蓝可见）。
+ * → 定版：2D canvas 全屏波纹（呈现可靠 + 无 GPU 依赖），实色直绘保证可见。
+ *
+ * - reduce-motion 开启时只渲染一帧静态纹理并停止调度（无障碍契约）；
+ * - 后台标签页/窗口隐藏时暂停循环（还原时补一帧）；
+ * - dataset.frames/lastTime 帧心跳（交接文档实证有效的观测手段）。
  */
 import { useEffect, useRef } from "react";
 import { useAppStore } from "@/stores/app-store";
@@ -34,11 +36,14 @@ interface WaveLayer {
   band: number;
 }
 
-/** 三层正弦丝带（不同波长/速度/相位），实色直绘保证任何壁纸上可见 */
+/** 六组正弦丝带覆盖全屏（不同波长/速度/相位），实色直绘保证任何壁纸上可见 */
 const WAVE_LAYERS: WaveLayer[] = [
-  { amp: 0.05, freq: 2.2, speed: 1.1, phase: 0.0, alpha: 0.34, base: 0.28, band: 0.040 },
-  { amp: 0.035, freq: 3.4, speed: 1.7, phase: 1.7, alpha: 0.26, base: 0.50, band: 0.032 },
-  { amp: 0.065, freq: 1.4, speed: 0.6, phase: 3.1, alpha: 0.20, base: 0.72, band: 0.050 },
+  { amp: 0.06, freq: 1.6, speed: 0.8, phase: 0.0, alpha: 0.40, base: 0.10, band: 0.050 },
+  { amp: 0.045, freq: 2.4, speed: 1.2, phase: 1.2, alpha: 0.32, base: 0.27, band: 0.042 },
+  { amp: 0.055, freq: 1.9, speed: 0.6, phase: 2.4, alpha: 0.28, base: 0.44, band: 0.048 },
+  { amp: 0.040, freq: 3.0, speed: 1.5, phase: 3.3, alpha: 0.30, base: 0.60, band: 0.038 },
+  { amp: 0.060, freq: 1.4, speed: 0.9, phase: 4.5, alpha: 0.26, base: 0.76, band: 0.052 },
+  { amp: 0.035, freq: 2.6, speed: 1.0, phase: 5.6, alpha: 0.24, base: 0.90, band: 0.034 },
 ];
 
 /** 单条正弦丝带：上下两条同相正弦曲线围成闭合路径 */
@@ -62,7 +67,7 @@ function drawRibbon(
     ctx.lineTo(x, cy(x, L.band));
   }
   ctx.closePath();
-  ctx.fillStyle = `rgba(70, 125, 235, ${L.alpha})`;
+  ctx.fillStyle = `rgba(60, 115, 230, ${L.alpha})`;
   ctx.fill();
   // 丝带顶缘高光（波纹"亮脊"）
   ctx.beginPath();
@@ -74,7 +79,7 @@ function drawRibbon(
     ctx.lineTo(x, cy(x, Math.max(0.004, L.band * 0.2)));
   }
   ctx.closePath();
-  ctx.fillStyle = `rgba(255, 255, 255, ${Math.min(0.25, L.alpha * 0.6)})`;
+  ctx.fillStyle = `rgba(255, 255, 255, ${Math.min(0.25, L.alpha * 0.5)})`;
   ctx.fill();
 }
 
@@ -91,7 +96,7 @@ function renderWave2D(
   }
 }
 
-/** 波浪特效层：叠加在壁纸之上（overlay 混合），全局时钟驱动 */
+/** 蓝色波纹特效层：30fps 动画（reduce-motion 静态帧；后台暂停） */
 export function EffectWave() {
   const ref = useRef<HTMLCanvasElement>(null);
   const reduceMotion = useAppStore((s) => s.reduceMotion);
@@ -108,8 +113,7 @@ export function EffectWave() {
     const render = () => {
       // 全局时钟：所有特效/界面共用同一时间源，速度天然一致
       renderWave2D(ctx, canvas.width, canvas.height, performance.now() / 1000);
-      // 帧心跳观测（交接文档实证有效的排查手段）：IAB 截图冻结帧无法验证动画，
-      // 改代码后凭 dataset 计数器确认渲染循环在跑
+      // 帧心跳观测（交接文档实证有效的排查手段）
       canvas.dataset.frames = String(Number(canvas.dataset.frames ?? 0) + 1);
       canvas.dataset.lastTime = String(Math.round(performance.now()));
     };
