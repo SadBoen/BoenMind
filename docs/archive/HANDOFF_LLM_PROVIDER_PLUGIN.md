@@ -1,5 +1,8 @@
 # 交接：LLM Provider 插件化（方案 A）——立即执行
 
+> **✅ 已完成（2026-08-16）**：§八验收全过，本文档归档至 docs/archive/HANDOFF_LLM_PROVIDER_PLUGIN.md。
+> 落地提交：93d542f（后端）+ 6eed10a（前端）。详见 docs/EXTENSION_POINTS_REGISTRY.md（provider 服务面登记）。
+>
 > 交接日期：2026-08-16 ｜ 拍板人：用户（已拍板，本任务直接开工，不需要再问方向）
 > 背景：三工具交叉审查轮（docs/REVIEW_TOOLS_CROSS_2026-08-16.md）发现 `pi_name` 24 路映射是
 > 唯一被判"真死代码"的扩展点。用户定调：**按万物皆插件，把整个 LLM provider 剥离成插件**，
