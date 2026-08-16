@@ -148,6 +148,11 @@ impl<C: SchedulerClock + 'static> HostThread<C> {
         &self.runtime
     }
 
+    /// 热更新权限档位（审查 2026-08-17：设置页切档后无需重启）。
+    pub fn set_policy(&mut self, policy: ExtensionPolicy) {
+        self.policy = policy;
+    }
+
     /// Policy decision + routing for a single request (pure in the sense
     /// that it does not touch the runtime queue; unit-testable directly).
     pub async fn dispatch_one(&self, request: &HostcallRequest) -> HostcallOutcome {

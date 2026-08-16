@@ -849,6 +849,13 @@ export const useAppStore = create<AppStore>((set, get) => {
         // 首个项目自动设为当前（后续新建不抢焦点）
         const currentProjectId = s.currentProjectId ?? project.id;
         localStorage.setItem(CURRENT_PROJECT_KEY, currentProjectId);
+        const config = s.config;
+        if (config) {
+          const roots = [...new Set([...(config.trusted_project_roots ?? []), project.root])];
+          const next = { ...config, trusted_project_roots: roots };
+          void api.saveConfig(next);
+          return { projects, currentProjectId, currentProject: projects.find((p) => p.id === currentProjectId) ?? null, config: next };
+        }
         return { projects, currentProjectId, currentProject: projects.find((p) => p.id === currentProjectId) ?? null };
       });
     },
@@ -856,6 +863,10 @@ export const useAppStore = create<AppStore>((set, get) => {
       set((s) => {
         const projects = s.projects.filter((p) => p.id !== id);
         localStorage.setItem(PROJECTS_KEY, JSON.stringify(projects));
+        const config = s.config
+          ? { ...s.config, trusted_project_roots: projects.map((p) => p.root) }
+          : s.config;
+        if (config) void api.saveConfig(config);
         // 删除的是当前项目 → 回退到列表首个（无则 null = 配置工作目录兜底）
         const currentProjectId = s.currentProjectId === id ? (projects[0]?.id ?? null) : s.currentProjectId;
         localStorage.setItem(CURRENT_PROJECT_KEY, currentProjectId ?? "");
@@ -866,6 +877,7 @@ export const useAppStore = create<AppStore>((set, get) => {
           workspaceDir: "",
           entries: [],
           previewFile: null,
+          ...(config ? { config } : {}),
         };
       });
     },

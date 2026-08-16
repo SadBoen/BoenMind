@@ -29,9 +29,12 @@ pub async fn parse_pdf(
     State(state): crate::SharedState,
     Json(body): Json<ParsePdfBody>,
 ) -> ApiResult<Json<crate::pdf_omni::ParsePdfResult>> {
-    let config = state.config.read().await;
-    let workspace_root = config.working_dir.clone();
-    drop(config);
+    let workspace_root = state
+        .config
+        .read()
+        .expect("config poisoned")
+        .working_dir
+        .clone();
 
     // 从插件设置文件读 API keys（单源：设置页写入处）
     let keys = read_plugin_keys();

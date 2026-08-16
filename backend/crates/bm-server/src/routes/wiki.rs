@@ -59,7 +59,7 @@ pub fn router() -> Router<crate::AppState> {
 
 /// GET /api/wiki/status — 库状态（不存在时 exists=false + root 供建库引导）。
 pub async fn status(State(state): crate::SharedState) -> ApiResult<Json<serde_json::Value>> {
-    let config = state.config.read().await;
+    let config = state.config.read().expect("config poisoned");
     let root = wiki_root(&config.working_dir);
     let root_str = root.display().to_string();
     drop(config);
@@ -87,7 +87,7 @@ pub async fn create(
     State(state): crate::SharedState,
     Json(body): Json<CreateWikiBody>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let config = state.config.read().await;
+    let config = state.config.read().expect("config poisoned");
     let root = wiki_root(&config.working_dir);
     drop(config);
     WikiStore::create(&root, &body.name).map_err(err_http)?;
@@ -98,7 +98,7 @@ pub async fn create(
 
 /// GET /api/wiki/tree — 四分区节点树。
 pub async fn tree(State(state): crate::SharedState) -> ApiResult<Json<serde_json::Value>> {
-    let config = state.config.read().await;
+    let config = state.config.read().expect("config poisoned");
     let store = open_store(&config.working_dir).map_err(err_http)?;
     drop(config);
     let t = store.tree().map_err(err_http)?;
@@ -110,7 +110,7 @@ pub async fn read_node(
     State(state): crate::SharedState,
     AxumPath(uid): AxumPath<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let config = state.config.read().await;
+    let config = state.config.read().expect("config poisoned");
     let store = open_store(&config.working_dir).map_err(err_http)?;
     drop(config);
     let node = store.read(&uid).map_err(err_http)?;
@@ -131,7 +131,7 @@ pub async fn update_node(
     AxumPath(uid): AxumPath<String>,
     Json(body): Json<UpdateNodeBody>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let config = state.config.read().await;
+    let config = state.config.read().expect("config poisoned");
     let store = open_store(&config.working_dir).map_err(err_http)?;
     drop(config);
     let node = store
@@ -152,7 +152,7 @@ pub async fn append_patch(
     AxumPath(uid): AxumPath<String>,
     Json(body): Json<PatchBody>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let config = state.config.read().await;
+    let config = state.config.read().expect("config poisoned");
     let store = open_store(&config.working_dir).map_err(err_http)?;
     drop(config);
     let node = store.append_patch(&uid, &body.op, &body.delta).map_err(err_http)?;
@@ -177,7 +177,7 @@ pub async fn ingest(
     State(state): crate::SharedState,
     Json(body): Json<IngestBody>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let config = state.config.read().await;
+    let config = state.config.read().expect("config poisoned");
     let store = open_store(&config.working_dir).map_err(err_http)?;
     drop(config);
     let req = bm_wiki::ingest::IngestRequest {
@@ -201,7 +201,7 @@ pub async fn query(
     State(state): crate::SharedState,
     Query(params): Query<QueryParams>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let config = state.config.read().await;
+    let config = state.config.read().expect("config poisoned");
     let store = open_store(&config.working_dir).map_err(err_http)?;
     drop(config);
     let kws: Vec<String> = params
@@ -224,7 +224,7 @@ pub async fn expand(
     State(state): crate::SharedState,
     Json(body): Json<ExpandBody>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let config = state.config.read().await;
+    let config = state.config.read().expect("config poisoned");
     let store = open_store(&config.working_dir).map_err(err_http)?;
     drop(config);
     let mut nodes = serde_json::Map::new();
@@ -256,7 +256,7 @@ pub async fn relations_of(
     State(state): crate::SharedState,
     AxumPath(uid): AxumPath<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let config = state.config.read().await;
+    let config = state.config.read().expect("config poisoned");
     let store = open_store(&config.working_dir).map_err(err_http)?;
     drop(config);
     let rels = store.relations(&uid).map_err(err_http)?;
@@ -277,7 +277,7 @@ pub async fn add_relation(
     State(state): crate::SharedState,
     Json(body): Json<RelationBody>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let config = state.config.read().await;
+    let config = state.config.read().expect("config poisoned");
     let store = open_store(&config.working_dir).map_err(err_http)?;
     drop(config);
     store
@@ -298,7 +298,7 @@ pub async fn remove_relation(
     State(state): crate::SharedState,
     Json(body): Json<RemoveRelationBody>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let config = state.config.read().await;
+    let config = state.config.read().expect("config poisoned");
     let store = open_store(&config.working_dir).map_err(err_http)?;
     drop(config);
     let removed = store
@@ -354,7 +354,7 @@ pub async fn create_list(
     State(state): crate::SharedState,
     Json(body): Json<LayerBody>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let config = state.config.read().await;
+    let config = state.config.read().expect("config poisoned");
     let store = open_store(&config.working_dir).map_err(err_http)?;
     drop(config);
     let node = store.create_layer(layer_create(body, Layer::List)).map_err(err_http)?;
@@ -366,7 +366,7 @@ pub async fn create_report(
     State(state): crate::SharedState,
     Json(body): Json<LayerBody>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let config = state.config.read().await;
+    let config = state.config.read().expect("config poisoned");
     let store = open_store(&config.working_dir).map_err(err_http)?;
     drop(config);
     let node = store.create_layer(layer_create(body, Layer::Report)).map_err(err_http)?;
@@ -378,7 +378,7 @@ pub async fn create_entity(
     State(state): crate::SharedState,
     Json(body): Json<LayerBody>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let config = state.config.read().await;
+    let config = state.config.read().expect("config poisoned");
     let store = open_store(&config.working_dir).map_err(err_http)?;
     drop(config);
     let node = store.create_layer(layer_create(body, Layer::Entity)).map_err(err_http)?;

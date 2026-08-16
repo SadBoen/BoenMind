@@ -42,7 +42,7 @@ pub async fn approve_suggestion(
         return Err(api_error(StatusCode::CONFLICT, "建议已批准，请勿重复操作"));
     }
     let backup = {
-        let mut config = state.config.write().await;
+        let mut config = state.config.write().expect("config poisoned");
         bm_core::refine::apply_suggestion(&mut config, &suggestion).map_err(api_error_from)?
     };
     // 生效成功才改状态并记录备份路径
@@ -101,7 +101,7 @@ pub async fn rollback_suggestion(
         .as_deref()
         .ok_or_else(|| api_error(StatusCode::CONFLICT, "该建议无备份（system_prompt 类型追加不可回滚）"))?;
     {
-        let config = state.config.read().await;
+        let config = state.config.read().expect("config poisoned");
         bm_core::refine::rollback_suggestion(&config, backup).map_err(api_error_from)?;
     }
     state

@@ -55,7 +55,9 @@ impl bm_protocol::SettingsPort for SettingsPortImpl {
 /// 服务化——消费方不再自己算）。
 pub struct StatsPortImpl {
     pub store: Arc<dyn EventStorePort>,
-}impl bm_protocol::StatsPort for StatsPortImpl {
+}
+
+impl bm_protocol::StatsPort for StatsPortImpl {
     fn session_usage(
         &self,
         session_id: &SessionId,
@@ -223,8 +225,13 @@ impl bm_protocol::LlmPort for LlmPortImpl {
         })?;
         let cfg = crate::bm_engine::resolve_llm_config(&provider, &desc, model, thinking)
             .map_err(|(_, msg)| ProtocolError::new(ErrorCode::InvalidArgument, msg))?;
-        serde_json::to_value(cfg)
-            .map_err(|e| ProtocolError::new(ErrorCode::InvalidArgument, e.to_string()))
+        let mut value = serde_json::to_value(cfg)
+            .map_err(|e| ProtocolError::new(ErrorCode::InvalidArgument, e.to_string()))?;
+        // 密钥不经 Port JSON 边界（审查 2026-08-17 A-8）；消费方走 CredentialsPort。
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert("api_key".into(), Value::String(String::new()));
+        }
+        Ok(value)
     }
 
     fn providers(&self) -> Value {
@@ -514,7 +521,7 @@ mod tests {
         let port = LlmPortImpl { config, provider_port };
         let cfg = port.resolve_config("test-provider", "m1", None).unwrap();
         assert_eq!(cfg["base_url"], "https://example.com/v1");
-        assert_eq!(cfg["api_key"], "sk-test");
+        assert_eq!(cfg["api_key"], "");
         assert_eq!(cfg["model"], "m1");
         // 未知提供商 → NotFound
         let err = port.resolve_config("nope", "m1", None).unwrap_err();

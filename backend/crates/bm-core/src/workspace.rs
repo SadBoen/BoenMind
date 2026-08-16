@@ -151,6 +151,31 @@ pub fn write_file(root: &Path, rel: &str, content: &str) -> Result<(), Workspace
     Ok(())
 }
 
+/// 路径是否落在任一已登记根之下（canonicalize 后按前缀比较）。
+/// 根本身不存在时回落到字面 `starts_with`，避免未建目录的工作区被误拒。
+pub fn path_under_any(candidate: &Path, roots: &[PathBuf]) -> bool {
+    let norm_candidate = candidate.canonicalize().unwrap_or_else(|_| candidate.to_path_buf());
+    roots.iter().any(|root| {
+        let norm_root = root.canonicalize().unwrap_or_else(|_| root.clone());
+        norm_candidate == norm_root || norm_candidate.starts_with(&norm_root)
+    })
+}
+
+/// 配置里可作为工作区根的全部路径：全局 working_dir + APP 覆盖 + 已确认项目。
+pub fn trusted_roots(config: &crate::config::AppConfig) -> Vec<PathBuf> {
+    let mut roots = vec![config.working_dir.clone()];
+    for profile in config.apps.values() {
+        if let Some(dir) = &profile.working_dir {
+            let trimmed = dir.trim();
+            if !trimmed.is_empty() {
+                roots.push(PathBuf::from(trimmed));
+            }
+        }
+    }
+    roots.extend(config.trusted_project_roots.iter().cloned());
+    roots
+}
+
 /// 是否为可安全按 UTF-8 文本展示的媒体类型。
 /// json 走 application/json（mime_for 特例），实质是文本——编辑/预览按
 /// 文本处理（M2 编辑器实测发现：不认则 package.json 被判 binary 只读）。
@@ -220,6 +245,14 @@ mod tests {
             ));
             fs::remove_file(&outside).ok();
         }
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn path_under_any_accepts_child_and_rejects_sibling() {
+        let root = temp_root();
+        assert!(path_under_any(&root.join("a/b"), &[root.clone()]));
+        assert!(!path_under_any(&root.parent().unwrap().join("other"), &[root.clone()]));
         let _ = fs::remove_dir_all(&root);
     }
 }

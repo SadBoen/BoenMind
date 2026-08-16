@@ -27,7 +27,7 @@ pub async fn list_skills(State(state): crate::SharedState) -> ApiResult<Json<Vec
         }
         return Ok(Json(infos));
     }
-    let config = state.config.read().await;
+    let config = state.config.read().expect("config poisoned");
     bm_core::skills::list_skills(&config)
         .map(Json)
         .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))
@@ -65,7 +65,7 @@ pub async fn put_skill_scope(
     Json(req): Json<PutSkillScopeRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
     {
-        let config = state.config.read().await;
+        let config = state.config.read().expect("config poisoned");
         bm_core::skills::list_skills(&config)
             .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?
             .iter()
@@ -78,7 +78,7 @@ pub async fn put_skill_scope(
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty() && s != "*")
         .collect();
-    let mut config = state.config.write().await;
+    let mut config = state.config.write().expect("config poisoned");
     if scopes.is_empty() {
         config.skill_scopes.remove(&id);
     } else {
@@ -121,7 +121,7 @@ pub async fn set_skill(
         port.set_enabled(&id, req.enabled)
             .map_err(|err| api_error(StatusCode::NOT_FOUND, err.to_string()))?;
     } else {
-        let mut config = state.config.write().await;
+        let mut config = state.config.write().expect("config poisoned");
         bm_core::skills::set_skill_enabled(&mut config, &id, req.enabled).map_err(api_error_from)?;
     }
     // 启停改变 skill 注入面：失效会话 agent，当前对话下一条消息即按新配置重建
@@ -139,7 +139,7 @@ pub async fn uninstall_skill(
         port.uninstall(&id)
             .map_err(|err| api_error(StatusCode::NOT_FOUND, err.to_string()))?;
     } else {
-        let mut config = state.config.write().await;
+        let mut config = state.config.write().expect("config poisoned");
         bm_core::skills::uninstall_skill(&mut config, &id).map_err(api_error_from)?;
     }
     crate::bm_engine::invalidate_loop_agents(&state).await;

@@ -192,6 +192,43 @@ pub async fn fork_session(
         .fork_session(&id, &new_id, req.at_message)
         .await
         .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    // 双写冻结期内仍复制 event_log，避免分叉会话「有历史、无 todo/压缩态」
+    // （审查 2026-08-17 A-5）。复制失败只告警，不回滚 messages 分叉。
+    if let Some(kernel) = &state.kernel {
+        let store = kernel.event_store();
+        let src = bm_protocol::SessionId::new(id.clone());
+        let dst = bm_protocol::SessionId::new(new_id.clone());
+        let bid = bm_protocol::BranchId::new("main");
+        match store
+            .read(bm_protocol::EventQuery::new(src, bid.clone()))
+            .await
+        {
+            Ok(evs) if !evs.is_empty() => {
+                let copied: Vec<_> = evs
+                    .into_iter()
+                    .map(|mut ev| {
+                        ev.session_id = dst.clone();
+                        ev.seq = bm_protocol::SeqNo::new(0);
+                        ev
+                    })
+                    .collect();
+                if let Err(err) = store.append_batch(copied).await {
+                    tracing::warn!(
+                        event = "bm.fork_event_log_copy_failed",
+                        src = %id,
+                        dst = %new_id,
+                        error = %err,
+                    );
+                }
+            }
+            Ok(_) => {}
+            Err(err) => tracing::warn!(
+                event = "bm.fork_event_log_read_failed",
+                src = %id,
+                error = %err,
+            ),
+        }
+    }
     serde_json::to_value(&session)
         .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))
         .map(Json)

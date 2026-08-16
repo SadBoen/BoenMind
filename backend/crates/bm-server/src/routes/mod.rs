@@ -24,7 +24,7 @@ use axum::{Json, extract::State};
 use crate::VERSION;
 
 pub async fn health(State(state): crate::SharedState) -> Json<serde_json::Value> {
-    let config = state.config.read().await;
+    let config = state.config.read().expect("config poisoned");
     Json(serde_json::json!({
         "status": "ok",
         "version": VERSION,

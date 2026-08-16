@@ -98,7 +98,7 @@ fn resolve_base_url(kind: ProviderKind, base_url: &str) -> Result<String, AppErr
 /// 回环地址（localhost/127.0.0.1/::1）放行——本地模型服务（ollama 等）
 /// 经 custom 接入是合法场景（原 ollama/llamacpp kind 的豁免随厂商精简
 /// 并入 custom）；私网网段/链路本地仍拦截（防局域网横向与云元数据探测）。
-fn validate_base_url(url: &str) -> Result<(), AppError> {
+pub fn validate_base_url(url: &str) -> Result<(), AppError> {
     let parsed = url::Url::parse(url)
         .map_err(|_| AppError::invalid("API 端点必须是完整的 http(s):// URL"))?;
     if !matches!(parsed.scheme(), "http" | "https") {

@@ -12,7 +12,7 @@ use crate::{ApiResult, api_error, api_error_from};
 // ---------------------------------------------------------------------------
 
 pub async fn list_plugins(State(state): crate::SharedState) -> ApiResult<Json<Vec<bm_core::plugins::PluginInfo>>> {
-    let config = state.config.read().await;
+    let config = state.config.read().expect("config poisoned");
     bm_core::plugins::list_plugins(&config)
         .map(Json)
         .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))
@@ -29,7 +29,7 @@ pub async fn set_plugin(
     Json(req): Json<SetPluginRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
     {
-        let mut config = state.config.write().await;
+        let mut config = state.config.write().expect("config poisoned");
         bm_core::plugins::set_plugin_enabled(&mut config, &id, req.enabled)
             .map_err(api_error_from)?;
     }
@@ -37,7 +37,7 @@ pub async fn set_plugin(
     // 禁用无运行时卸载路径，工具面保留至服务重启（compat_engine.rs reload 注释）
     if req.enabled {
         if let Some(compat) = &state.compat {
-            let config = state.config.read().await;
+            let config = state.config.read().expect("config poisoned").clone();
             compat.reload(&config).await;
         }
         crate::bm_engine::invalidate_loop_agents(&state).await;
@@ -49,7 +49,7 @@ pub async fn uninstall_plugin(
     State(state): crate::SharedState,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let mut config = state.config.write().await;
+    let mut config = state.config.write().expect("config poisoned");
     bm_core::plugins::uninstall_plugin(&mut config, &id)
         .map_err(api_error_from)?;
     drop(config);
@@ -98,7 +98,7 @@ async fn plugin_info(
     state: &crate::AppState,
     id: &str,
 ) -> Result<Option<bm_core::plugins::PluginInfo>, (StatusCode, axum::Json<serde_json::Value>)> {
-    let config = state.config.read().await;
+    let config = state.config.read().expect("config poisoned");
     let plugins = bm_core::plugins::list_plugins(&config)
         .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
     Ok(plugins.into_iter().find(|p| p.id == id))
@@ -137,7 +137,7 @@ async fn read_plugin_quota(
     state: &crate::AppState,
     quota: Option<&bm_core::plugin_settings::QuotaDecl>,
 ) -> Option<serde_json::Value> {
-    let working_dir = state.config.read().await.working_dir.clone();
+    let working_dir = state.config.read().expect("config poisoned").working_dir.clone();
     let file = workspace::safe_join(&working_dir, quota?.path.as_str()).ok()?;
     let text = std::fs::read_to_string(&file).ok()?;
     serde_json::from_str::<serde_json::Value>(&text).ok()
@@ -171,7 +171,7 @@ pub async fn put_plugin_scope(
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty() && s != "*")
         .collect();
-    let mut config = state.config.write().await;
+    let mut config = state.config.write().expect("config poisoned");
     if scopes.is_empty() {
         config.plugin_scopes.remove(&id);
     } else {
@@ -261,7 +261,7 @@ async fn bump_plugin_quota(
     if !decl.count_on_test.iter().any(|s| s == source) {
         return None;
     }
-    let working_dir = state.config.read().await.working_dir.clone();
+    let working_dir = state.config.read().expect("config poisoned").working_dir.clone();
     let file = workspace::safe_join(&working_dir, decl.path.as_str()).ok()?;
     let mut quota: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).ok()?).ok()?;
     let entry = quota.get_mut(source)?;

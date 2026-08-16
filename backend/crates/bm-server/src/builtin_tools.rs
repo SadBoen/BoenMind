@@ -89,7 +89,7 @@ impl BuiltinTools {
         vec![
             bm_loop::model::ToolDef::new(
                 "read",
-                "Read a file's text content (relative or absolute path; offset/limit in bytes).",
+                "Read a file's text content (path relative to the working directory; offset/limit in bytes).",
                 serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -195,14 +195,27 @@ impl BuiltinTools {
         }
     }
 
-    /// 相对路径解析到 cwd 下（绝对路径原样）。legacy 的 sandbox 越界拒绝
-    /// 由 host 层 policy 裁决承担，这里不复制 cwd 圈禁。
-    fn resolve(&self, path: &str) -> PathBuf {
-        let p = Path::new(path);
-        if p.is_absolute() {
-            p.to_path_buf()
-        } else {
-            self.cwd.join(p)
+    /// 相对路径解析到 cwd 下。绝对路径或 `..` 一律拒绝（审查 2026-08-17：
+    /// 门注释自称工作区圈禁，实现不得再放行任意磁盘路径）。
+    fn resolve(&self, path: &str) -> Result<PathBuf, ToolError> {
+        bm_core::workspace::safe_join(&self.cwd, path).map_err(|err| {
+            ToolError::invalid(format!("path outside working directory: {err}"))
+        })
+    }
+
+    /// 写路径：目标文件可以还不存在，只校验父目录落在 cwd 内。
+    fn resolve_writable(&self, path: &str) -> Result<PathBuf, ToolError> {
+        match self.resolve(path) {
+            Ok(p) => Ok(p),
+            Err(_) => {
+                let rel = path.trim_start_matches('/');
+                if rel.is_empty() || rel.split('/').any(|seg| seg == "..") || Path::new(rel).is_absolute() {
+                    return Err(ToolError::invalid(format!(
+                        "path outside working directory: {path}"
+                    )));
+                }
+                Ok(self.cwd.join(rel))
+            }
         }
     }
 
@@ -215,7 +228,7 @@ impl BuiltinTools {
         let offset = input.get("offset").and_then(serde_json::Value::as_i64).unwrap_or(0);
         let limit = input.get("limit").and_then(serde_json::Value::as_i64);
 
-        let resolved = self.resolve(path);
+        let resolved = self.resolve(path)?;
         let bytes = std::fs::read(&resolved)
             .map_err(|e| ToolError::io(format!("read failed for {}: {e}", resolved.display())))?;
 
@@ -248,7 +261,7 @@ impl BuiltinTools {
             )));
         }
 
-        let resolved = self.resolve(path);
+        let resolved = self.resolve_writable(path)?;
         let parent = resolved.parent().unwrap_or_else(|| Path::new("."));
         std::fs::create_dir_all(parent)
             .map_err(|e| ToolError::io(format!("Failed to create directories: {e}")))?;
@@ -272,7 +285,7 @@ impl BuiltinTools {
             return Err(ToolError::invalid("edit: old_text must not be empty"));
         }
 
-        let resolved = self.resolve(path);
+        let resolved = self.resolve(path)?;
         let content = std::fs::read_to_string(&resolved)
             .map_err(|e| ToolError::io(format!("edit failed for {}: {e}", resolved.display())))?;
         let replaced = content.matches(old_text).count();
@@ -297,7 +310,7 @@ impl BuiltinTools {
         let pattern = input.get("pattern").and_then(serde_json::Value::as_str)
             .ok_or_else(|| ToolError::invalid("grep: pattern is required"))?;
         let root = match input.get("path").and_then(serde_json::Value::as_str) {
-            Some(p) => self.resolve(p),
+            Some(p) => self.resolve(p)?,
             None => self.cwd.clone(),
         };
         let ignore_case = input.get("ignore_case").and_then(serde_json::Value::as_bool)
@@ -327,7 +340,7 @@ impl BuiltinTools {
         let pattern = input.get("pattern").and_then(serde_json::Value::as_str)
             .ok_or_else(|| ToolError::invalid("find: pattern is required"))?;
         let root = match input.get("path").and_then(serde_json::Value::as_str) {
-            Some(p) => self.resolve(p),
+            Some(p) => self.resolve(p)?,
             None => self.cwd.clone(),
         };
         let limit = input.get("limit").and_then(serde_json::Value::as_u64)
@@ -351,7 +364,7 @@ impl BuiltinTools {
     /// `{path?, limit?}` → 列目录（目录后缀 `/`）。
     fn ls(&self, input: &serde_json::Value) -> ToolResult {
         let root = match input.get("path").and_then(serde_json::Value::as_str) {
-            Some(p) => self.resolve(p),
+            Some(p) => self.resolve(p)?,
             None => self.cwd.clone(),
         };
         let limit = input.get("limit").and_then(serde_json::Value::as_u64)
@@ -383,7 +396,7 @@ impl BuiltinTools {
             .filter(|t| *t > 0)
             .unwrap_or(DEFAULT_BASH_TIMEOUT_MS);
         let cwd = match input.get("cwd").and_then(serde_json::Value::as_str) {
-            Some(c) => self.resolve(c),
+            Some(c) => self.resolve(c)?,
             None => self.cwd.clone(),
         };
         let (program, arg) = shell_program();
@@ -401,7 +414,7 @@ impl BuiltinTools {
         timeout_ms: u64,
     ) -> ToolResult {
         let cwd = match cwd {
-            Some(c) => self.resolve(c),
+            Some(c) => self.resolve(c)?,
             None => self.cwd.clone(),
         };
         let args_ref: Vec<&str> = args.iter().map(String::as_str).collect();

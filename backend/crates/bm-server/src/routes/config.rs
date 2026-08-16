@@ -6,12 +6,18 @@ use bm_core::AppConfig;
 use crate::{ApiResult, api_error};
 
 pub async fn get_config(State(state): crate::SharedState) -> Json<AppConfig> {
-    Json(state.config.read().await.clone())
+    let mut config = state.config.read().expect("config poisoned").clone();
+    for provider in &mut config.providers {
+        if let Some(key) = provider.api_key.as_deref().filter(|s| !s.is_empty()) {
+            provider.api_key = Some(bm_core::plugin_settings::mask_secret(key));
+        }
+    }
+    Json(config)
 }
 
 pub async fn put_config(
     State(state): crate::SharedState,
-    Json(config): Json<AppConfig>,
+    Json(mut config): Json<AppConfig>,
 ) -> ApiResult<Json<serde_json::Value>> {
     // 基本校验：提供商 id 唯一
     let mut seen = std::collections::HashSet::new();
@@ -31,6 +37,31 @@ pub async fn put_config(
             ));
         }
 
+    // GET 回传的是掩码：提交掩码或空串视为「未改」，保留服务端原值。
+    {
+        let current = state.config.read().expect("config poisoned");
+        for provider in &mut config.providers {
+            let Some(submitted) = provider.api_key.as_deref() else {
+                continue;
+            };
+            let existing = current
+                .providers
+                .iter()
+                .find(|p| p.id == provider.id)
+                .and_then(|p| p.api_key.clone())
+                .unwrap_or_default();
+            if submitted.is_empty()
+                || submitted == bm_core::plugin_settings::mask_secret(&existing)
+            {
+                provider.api_key = if existing.is_empty() {
+                    None
+                } else {
+                    Some(existing)
+                };
+            }
+        }
+    }
+
     // 持久化 + 同步 skills 目录 + 更新内存
     if let Err(err) = bm_core::config::save(&config) {
         return Err(api_error(
@@ -47,7 +78,11 @@ pub async fn put_config(
         ));
     }
     let _ = bm_core::config::ensure_working_dir(&config);
-    *state.config.write().await = config;
+    if let Some(compat) = &state.compat {
+        compat.set_policy(crate::compat_engine::extension_policy_from_config(&config));
+    }
+    *state.config.write().expect("config poisoned") = config;
+    crate::bm_engine::invalidate_loop_agents(&state).await;
 
     Ok(Json(serde_json::json!({ "ok": true })))
 }

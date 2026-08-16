@@ -19,11 +19,25 @@ export function Markdown({ content }: { content: string }) {
             {children}
           </pre>
         ),
-        a: ({ children, ...props }) => (
-          <a {...props} target="_blank" rel="noreferrer" className="text-primary underline">
-            {children}
-          </a>
-        ),
+        a: ({ children, href, ...props }) => {
+          const safe =
+            !href ||
+            href.startsWith("#") ||
+            href.startsWith("http://") ||
+            href.startsWith("https://") ||
+            href.startsWith("mailto:");
+          return (
+            <a
+              {...props}
+              href={safe ? href : undefined}
+              target="_blank"
+              rel="noreferrer"
+              className="text-primary underline"
+            >
+              {children}
+            </a>
+          );
+        },
       }}
     >
       {content}

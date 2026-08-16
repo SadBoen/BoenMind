@@ -39,13 +39,24 @@ pub async fn create_terminal(
     State(state): crate::SharedState,
     Json(req): Json<CreateTerminalRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let cwd = req.cwd.or_else(|| {
-        state
-            .config
-            .try_read()
-            .ok()
-            .map(|c| c.working_dir.to_string_lossy().to_string())
-    });
+    let cwd = {
+        let config = state.config.read().expect("config poisoned");
+        match req.cwd {
+            Some(raw) if !raw.trim().is_empty() => {
+                let candidate = std::path::PathBuf::from(raw.trim());
+                let allowed = bm_core::workspace::trusted_roots(&config);
+                if bm_core::workspace::path_under_any(&candidate, &allowed) {
+                    Some(candidate.to_string_lossy().into_owned())
+                } else {
+                    return Err(api_error(
+                        StatusCode::BAD_REQUEST,
+                        format!("终端 cwd 未登记：{}", candidate.display()),
+                    ));
+                }
+            }
+            _ => Some(config.working_dir.to_string_lossy().into_owned()),
+        }
+    };
     let id = state
         .terminal
         .create(cwd, req.cols, req.rows)

@@ -6,9 +6,10 @@
 //! 见 compat_engine::extension_policy_from_config）。
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use bm_core::agent::AgentStreamEvent;
+use bm_core::AppConfig;
 use tokio::sync::{mpsc, oneshot, Mutex as TokioMutex};
 
 use crate::compat_engine::ask_capability;
@@ -24,9 +25,9 @@ pub struct BuiltinGate {
     store: Arc<std::sync::Mutex<PermissionStore>>,
     streams: Arc<TokioMutex<HashMap<String, mpsc::UnboundedSender<AgentStreamEvent>>>>,
     pending: Arc<TokioMutex<HashMap<String, oneshot::Sender<PermissionDecision>>>>,
-    /// true = 高权限工具走询问链（safe/balanced/default）；
-    /// false = 直放（permissive/yolo——用户已选全自动档位）。
-    ask_high_risk: bool,
+    /// 运行时配置（与 AppState/kernel 同一把锁）。每次 check 读当前档位，
+    /// 避免启动快照让 yolo→safe 热切换失效（审查 2026-08-17 P1）。
+    config: Arc<RwLock<AppConfig>>,
 }
 
 impl BuiltinGate {
@@ -34,20 +35,25 @@ impl BuiltinGate {
         store: Arc<std::sync::Mutex<PermissionStore>>,
         streams: Arc<TokioMutex<HashMap<String, mpsc::UnboundedSender<AgentStreamEvent>>>>,
         pending: Arc<TokioMutex<HashMap<String, oneshot::Sender<PermissionDecision>>>>,
-        ask_high_risk: bool,
+        config: Arc<RwLock<AppConfig>>,
     ) -> Self {
         Self {
             store,
             streams,
             pending,
-            ask_high_risk,
+            config,
         }
+    }
+
+    fn ask_high_risk(&self) -> bool {
+        let config = self.config.read().expect("config poisoned");
+        config.extension_policy.as_deref() != Some("permissive")
     }
 
     /// 工具执行前裁决。Ok = 放行；Err = 拒绝原因（模型可见文案，
     /// 帮助模型收敛重试策略——审查 BUG-004 的"莫名失败"体验）。
     pub async fn check(&self, session_id: &str, tool: &str) -> Result<(), String> {
-        if !self.ask_high_risk || !HIGH_RISK_TOOLS.contains(&tool) {
+        if !self.ask_high_risk() || !HIGH_RISK_TOOLS.contains(&tool) {
             return Ok(());
         }
         let message = match tool {
@@ -81,13 +87,19 @@ mod tests {
 
     use super::*;
 
+    fn test_config(permissive: bool) -> Arc<RwLock<AppConfig>> {
+        let mut cfg = AppConfig::default();
+        cfg.extension_policy = Some(if permissive { "permissive" } else { "safe" }.into());
+        Arc::new(RwLock::new(cfg))
+    }
+
     fn test_gate(ask_high_risk: bool) -> (BuiltinGate, Arc<std::sync::Mutex<PermissionStore>>) {
         let store = Arc::new(std::sync::Mutex::new(PermissionStore::ephemeral()));
         let streams: Arc<TokioMutex<HashMap<String, mpsc::UnboundedSender<AgentStreamEvent>>>> =
             Arc::new(TokioMutex::new(HashMap::new()));
         let pending: Arc<TokioMutex<HashMap<String, oneshot::Sender<PermissionDecision>>>> =
             Arc::new(TokioMutex::new(HashMap::new()));
-        let gate = BuiltinGate::new(store.clone(), streams, pending, ask_high_risk);
+        let gate = BuiltinGate::new(store.clone(), streams, pending, test_config(!ask_high_risk));
         (gate, store)
     }
 
@@ -149,7 +161,7 @@ mod tests {
             }
             panic!("询问未在 1s 内注册");
         });
-        let gate = BuiltinGate::new(store.clone(), streams, pending, true);
+        let gate = BuiltinGate::new(store.clone(), streams, pending, test_config(false));
         assert!(gate.check("s1", "bash").await.is_ok());
         responder.await.unwrap();
         // always 决策已回写：二次调用命中记忆，无响应者也不询问
@@ -180,10 +192,31 @@ mod tests {
             }
             panic!("询问未在 1s 内注册");
         });
-        let gate = BuiltinGate::new(store.clone(), streams, pending, true);
+        let gate = BuiltinGate::new(store.clone(), streams, pending, test_config(false));
         let r = gate.check("s1", "bash").await;
         responder.await.unwrap();
         assert!(r.is_err());
         assert!(r.unwrap_err().contains("未获权限"));
+    }
+
+    #[tokio::test]
+    async fn live_policy_switch_tightens_without_rebuild() {
+        let store = Arc::new(std::sync::Mutex::new(PermissionStore::ephemeral()));
+        let streams: Arc<TokioMutex<HashMap<String, mpsc::UnboundedSender<AgentStreamEvent>>>> =
+            Arc::new(TokioMutex::new(HashMap::new()));
+        let pending: Arc<TokioMutex<HashMap<String, oneshot::Sender<PermissionDecision>>>> =
+            Arc::new(TokioMutex::new(HashMap::new()));
+        let config = test_config(true);
+        let gate = BuiltinGate::new(store.clone(), streams, pending, config.clone());
+        store
+            .lock()
+            .unwrap()
+            .record("builtin", "bash", false)
+            .unwrap();
+        // permissive 直放，不读记忆
+        assert!(gate.check("s1", "bash").await.is_ok());
+        config.write().unwrap().extension_policy = Some("safe".into());
+        // 切回 safe 后同一扇门立即读记忆拒绝，无需重建
+        assert!(gate.check("s1", "bash").await.is_err());
     }
 }

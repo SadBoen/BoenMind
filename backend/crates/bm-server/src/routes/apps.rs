@@ -31,7 +31,7 @@ pub async fn put_app_profile(
     if app_id.is_empty() {
         return Err(api_error(StatusCode::BAD_REQUEST, "app id 不能为空"));
     }
-    let mut config = state.config.write().await;
+    let mut config = state.config.write().expect("config poisoned");
     let profile = config.apps.entry(app_id.clone()).or_default();
     profile.expert = req.expert.filter(|s| !s.is_empty());
     profile.memory = req.memory.filter(|s| !s.is_empty());

@@ -11,11 +11,25 @@ use crate::{ApiResult, api_error};
 // ---------------------------------------------------------------------------
 
 /// 解析项目根：请求显式 root（项目切换，编程壳传当前项目根）优先，
-/// 缺省 = 全局配置工作目录（设置页 working_dir 兜底，旧行为不变）。
-fn resolve_root(default: &std::path::Path, root: Option<&str>) -> std::path::PathBuf {
+/// 缺省 = 全局配置工作目录。显式 root 必须落在已登记白名单内。
+fn resolve_root(
+    config: &bm_core::AppConfig,
+    root: Option<&str>,
+) -> Result<std::path::PathBuf, String> {
     match root {
-        Some(r) if !r.trim().is_empty() => std::path::PathBuf::from(r),
-        _ => default.to_path_buf(),
+        Some(r) if !r.trim().is_empty() => {
+            let candidate = std::path::PathBuf::from(r.trim());
+            let allowed = workspace::trusted_roots(config);
+            if workspace::path_under_any(&candidate, &allowed) {
+                Ok(candidate)
+            } else {
+                Err(format!(
+                    "项目根未登记：{}（请先在设置中加入 trusted_project_roots）",
+                    candidate.display()
+                ))
+            }
+        }
+        _ => Ok(config.working_dir.clone()),
     }
 }
 
@@ -32,8 +46,10 @@ pub async fn list_workspace(
     State(state): crate::SharedState,
     Query(params): Query<ListWorkspaceParams>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let config = state.config.read().await;
-    let root = resolve_root(&config.working_dir, params.root.as_deref());
+    let config = state.config.read().expect("config poisoned");
+    let root = resolve_root(&config, params.root.as_deref()).map_err(|msg| {
+        api_error(StatusCode::BAD_REQUEST, msg)
+    })?;
     drop(config);
     match workspace::list_dir(&root, &params.dir) {
         Ok(entries) => Ok(Json(serde_json::json!({
@@ -60,8 +76,10 @@ pub async fn read_workspace_file(
     State(state): crate::SharedState,
     Query(params): Query<ReadFileParams>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let config = state.config.read().await;
-    let root = resolve_root(&config.working_dir, params.root.as_deref());
+    let config = state.config.read().expect("config poisoned");
+    let root = resolve_root(&config, params.root.as_deref()).map_err(|msg| {
+        api_error(StatusCode::BAD_REQUEST, msg)
+    })?;
     drop(config);
 
     let bytes = match workspace::read_file(&root, &params.path) {
@@ -124,8 +142,10 @@ pub async fn write_workspace_file(
     State(state): crate::SharedState,
     Json(params): Json<WriteFileParams>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let config = state.config.read().await;
-    let root = resolve_root(&config.working_dir, params.root.as_deref());
+    let config = state.config.read().expect("config poisoned");
+    let root = resolve_root(&config, params.root.as_deref()).map_err(|msg| {
+        api_error(StatusCode::BAD_REQUEST, msg)
+    })?;
     drop(config);
     workspace::write_file(&root, &params.path, &params.content)
         .map_err(|err| crate::api_error_bad_request(err.to_string()))?;
@@ -146,8 +166,10 @@ pub async fn git_info(
     State(state): crate::SharedState,
     Query(params): Query<GitInfoParams>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let config = state.config.read().await;
-    let root = resolve_root(&config.working_dir, params.root.as_deref());
+    let config = state.config.read().expect("config poisoned");
+    let root = resolve_root(&config, params.root.as_deref()).map_err(|msg| {
+        api_error(StatusCode::BAD_REQUEST, msg)
+    })?;
     drop(config);
     Ok(Json(git_info_inner(&root)))
 }
@@ -249,13 +271,15 @@ mod tests {
 
     #[test]
     fn resolve_root_prefers_explicit_root() {
-        let default = std::path::Path::new("D:\\default");
+        let mut config = bm_core::AppConfig::default();
+        config.working_dir = std::path::PathBuf::from("D:\\default");
+        config.trusted_project_roots = vec![std::path::PathBuf::from("D:\\projects\\my-app")];
         assert_eq!(
-            resolve_root(default, Some("D:\\projects\\my-app")),
+            resolve_root(&config, Some("D:\\projects\\my-app")).unwrap(),
             std::path::PathBuf::from("D:\\projects\\my-app")
         );
-        assert_eq!(resolve_root(default, None), default.to_path_buf());
-        // 空串 = 未提供 → 兜底默认
-        assert_eq!(resolve_root(default, Some("  ")), default.to_path_buf());
+        assert_eq!(resolve_root(&config, None).unwrap(), config.working_dir);
+        assert_eq!(resolve_root(&config, Some("  ")).unwrap(), config.working_dir);
+        assert!(resolve_root(&config, Some("D:\\evil")).is_err());
     }
 }

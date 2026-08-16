@@ -43,6 +43,8 @@ export interface AppConfig {
   skill_scopes?: Record<string, string[]>;
   /** 每软件 APP 专属配置（单源 config.toml 的 [apps.<id>] 段） */
   apps?: Record<string, AppProfile>;
+  /** 已确认项目根（审查 2026-08-17：workspace root 白名单） */
+  trusted_project_roots?: string[];
 }
 
 /** 每软件 APP 的专属配置（设置架构 §五） */
@@ -483,7 +485,10 @@ function notifyUnauthorized() {
 }
 
 function authHeaders(): Record<string, string> {
-  return authToken ? { Authorization: `Bearer ${authToken}` } : {};
+  return {
+    "X-BoenMind-Client": "1",
+    ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+  };
 }
 
 /** 统一错误解析：401 unauthorized 触发令牌回调，其余透传服务端 error 详情 */

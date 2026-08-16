@@ -41,7 +41,7 @@ pub async fn list_servers(State(state): crate::SharedState) -> Json<Vec<McpServe
 /// 已配置 server（config.toml `mcp` 数组）完整配置列表——前端"编辑"表单回填用
 /// （env/headers 为明文，本地应用；config.toml 本身就是明文存储）。
 pub async fn list_configs(State(state): crate::SharedState) -> ApiResult<Json<Vec<bm_mcp::McpServerConfig>>> {
-    let app_config = state.config.read().await;
+    let app_config = state.config.read().expect("config poisoned");
     let servers: Vec<bm_mcp::McpServerConfig> = app_config
         .mcp
         .clone()
@@ -99,7 +99,7 @@ async fn persist_servers(
     state: &crate::AppState,
     config: bm_mcp::McpServerConfig,
 ) -> ApiResult<()> {
-    let mut app_config = state.config.write().await;
+    let mut app_config = state.config.write().expect("config poisoned");
     let mut servers: Vec<bm_mcp::McpServerConfig> = app_config
         .mcp
         .clone()

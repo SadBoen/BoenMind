@@ -318,13 +318,19 @@ fn build_loop_agent(
     let llm = match kernel.port::<dyn bm_protocol::LlmPort>("llm") {
         Ok(port) => match port.resolve_config(&provider.id, model, thinking) {
             Ok(cfg) => {
-                let llm_cfg = serde_json::from_value::<bm_loop::llm::LlmConfig>(cfg)
+                let mut llm_cfg = serde_json::from_value::<bm_loop::llm::LlmConfig>(cfg)
                     .map_err(|e| {
                         (
                             StatusCode::INTERNAL_SERVER_ERROR,
                             format!("llm 服务配置解析失败: {e}"),
                         )
                     })?;
+                if llm_cfg.api_key.is_empty()
+                    && let Ok(cred) = kernel.port::<dyn bm_protocol::CredentialsPort>("credentials")
+                    && let Some(key) = cred.api_key(&provider.id)
+                {
+                    llm_cfg.api_key = key;
+                }
                 OpenAiClient::new(llm_cfg)
             }
             Err(e) => {
@@ -513,6 +519,10 @@ fn build_loop_agent(
             // MCP 官方插件（bm-mcp）：服务面 + 权限门。门与服务同生共死
             // （None = MCP 未配置，子进程路径 executor 不挂双保险）。
             executor = executor.with_mcp(mcp.cloned(), mcp_gate.cloned());
+            let scheduler = kernel
+                .port::<dyn bm_protocol::SchedulerPort>("scheduler")
+                .ok();
+            executor = executor.with_scheduler(scheduler);
             executor
         },
     ))
@@ -595,7 +605,7 @@ async fn get_or_create_loop_agent(
     // 专家接线（2026-08-16）：APP 绑定专家时，专家角色提示词替换基础
     // SYSTEM_PROMPT（正文为空则回落）；skills/custom/平台提示仍追加。
     let (system_prompt, compaction, plugin_scopes, expert_tools, memory_bucket) = {
-        let config = state.config.read().await;
+        let config = state.config.read().expect("config poisoned");
         let skills = bm_core::skills::enabled_skills_prompt(&config, app);
         let custom = config.custom_system_prompt.clone().unwrap_or_default();
         // 绑定专家的角色提示词（正文替换基础系统提示）
@@ -718,7 +728,7 @@ pub async fn chat_bm(
     // 该 APP 会话默认按专家的提供商/模型跑；用户显式切换（请求/会话级）
     // 仍优先——专家的模型是默认不是强制。
     let expert_model: Option<String> = {
-        let config = state.config.read().await;
+        let config = state.config.read().expect("config poisoned");
         config
             .apps
             .get(&session.app)
@@ -731,7 +741,7 @@ pub async fn chat_bm(
         .and_then(|m| m.split_once("::"))
         .map(|(p, _)| p.to_string());
     let provider = {
-        let config = state.config.read().await;
+        let config = state.config.read().expect("config poisoned");
         match bm_core::config::resolve_provider(
             &config,
             provider_override
@@ -1069,7 +1079,7 @@ async fn run_bm_prompt(p: BmPromptParams) {
         };
         if should_send {
             let cwd = {
-                let config = state.config.read().await;
+                let config = state.config.read().expect("config poisoned");
                 config.working_dir.display().to_string()
             };
             if let Err(err) = compat
@@ -1167,7 +1177,7 @@ pub async fn run_steward_turn(
     // 成本杠杆（v0.20）：StewardConfig（BM_STEWARD_PROVIDER/BM_STEWARD_MODEL）
     // 指定时管家回合用低成本模型（24×7 心跳主要烧钱点，§14.2）；配错回落会话级
     let (provider, model) = {
-        let config = state.config.read().await;
+        let config = state.config.read().expect("config poisoned");
         resolve_steward_llm(
             &config,
             session.provider_id.as_deref(),

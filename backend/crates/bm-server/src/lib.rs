@@ -48,7 +48,7 @@ use axum::{
     routing::{delete, get, post, put},
 };
 use bm_core::{AppConfig, Db};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::Mutex;
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
 pub const DEFAULT_PORT: u16 = 17321;
@@ -66,7 +66,9 @@ const AGENT_SWEEP_INTERVAL: std::time::Duration = std::time::Duration::from_secs
 
 #[derive(Clone)]
 pub struct AppState {
-    pub config: Arc<RwLock<AppConfig>>,
+    /// 运行时配置唯一可变权威（审查 2026-08-17 P1）：HTTP 路由、kernel 服务面、
+    /// 权限门共用这一把 `std::sync::RwLock`。禁止再 `clone()` 出第二份权威。
+    pub config: Arc<std::sync::RwLock<AppConfig>>,
     pub db: Arc<Db>,
     /// 活跃 prompt 的 SSE 事件通道（key = session_id）。权限询问桥据此把
     /// 询问事件推给前端；prompt 结束时移除。
@@ -124,7 +126,7 @@ impl AppState {
     // （config/db/双写/内核/兼容引擎/双通道/管家），不分拆更可读
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        config: AppConfig,
+        config: Arc<std::sync::RwLock<AppConfig>>,
         db: Arc<Db>,
         dual_writer: Option<Arc<bm_storage_turso::dual_write::DualWriter>>,
         kernel: Option<Arc<bm_kernel::Kernel>>,
@@ -140,7 +142,7 @@ impl AppState {
         mcp_gate: Option<Arc<mcp_gate::McpGate>>,
     ) -> Self {
         Self {
-            config: Arc::new(RwLock::new(config)),
+            config,
             db,
             session_streams,
             permission_pending,
@@ -351,6 +353,7 @@ mod tests {
             "https://evil.example.com/pwn",
             "http://192.168.1.10/",
             "file:///tmp/x.html",
+            "tauri://evil.example.com",
         ] {
             assert!(
                 !referer_allowed(&HeaderValue::from_str(bad).unwrap()),
@@ -403,12 +406,16 @@ async fn auth_middleware(
     next.run(request).await
 }
 
-/// CSRF 防护（审查 P0-3）：状态变更请求（非 GET/HEAD/OPTIONS）校验
-/// Origin/Referer 必须为本机来源。CORS 只挡浏览器"读"跨源响应，
-/// 挡不住跨源"发送"（表单提交/fetch no-cors 仍送达）——恶意网页可
-/// 借此 POST /api/chat 驱动本地 Agent 执行任意命令，或经
-/// /api/workspace/file 读写任意文件。无 Origin/Referer 的请求
-/// （同源/curl/CLI）不受影响。
+/// 前端/桌面壳状态变更请求必须带的自定义头（审查 2026-08-17 SEC-001）：
+/// 简单 form CSRF 带不上自定义头；本机任意端口的恶意页因此无法静默 POST。
+/// CLI / curl 无头请求仍走 Origin 豁免（无 Origin+无 Referer 放行）。
+pub const CLIENT_HEADER: &str = "x-boenmind-client";
+
+/// CSRF 防护（审查 P0-3 + 2026-08-17 收口）：状态变更请求
+/// （非 GET/HEAD/OPTIONS）校验 Origin/Referer 必须为本机来源。
+/// 有 Origin/Referer 的浏览器请求还须带 `X-BoenMind-Client`，
+/// 挡住本机任意端口网页的 form CSRF。无 Origin/Referer 的请求
+/// （curl/CLI）不受自定义头约束。
 async fn origin_middleware(
     request: axum::extract::Request,
     next: axum::middleware::Next,
@@ -416,6 +423,8 @@ async fn origin_middleware(
     let method = request.method().clone();
     if !matches!(method, Method::GET | Method::HEAD | Method::OPTIONS) {
         let headers = request.headers();
+        let has_origin_or_referer = headers.get(axum::http::header::ORIGIN).is_some()
+            || headers.get(axum::http::header::REFERER).is_some();
         let origin_ok = match headers.get(axum::http::header::ORIGIN) {
             // 浏览器跨站请求必带 Origin；白名单外（恶意网页/DNS rebinding）拒绝
             Some(o) => cors_origin_allowed(o),
@@ -429,6 +438,10 @@ async fn origin_middleware(
             return api_error(StatusCode::FORBIDDEN, "cross-origin request rejected")
                 .into_response();
         }
+        // 浏览器请求（带 Origin/Referer）必须带自定义头——简单 form 发不出
+        if has_origin_or_referer && headers.get(CLIENT_HEADER).is_none() {
+            return api_error(StatusCode::FORBIDDEN, "missing client header").into_response();
+        }
     }
     next.run(request).await
 }
@@ -440,7 +453,7 @@ fn referer_allowed(referer: &axum::http::HeaderValue) -> bool {
         return false;
     };
     if referer.starts_with("tauri://") {
-        return true;
+        return referer.starts_with("tauri://localhost");
     }
     let Some(rest) = referer
         .strip_prefix("http://")
@@ -568,11 +581,11 @@ async fn serve_inner(
     // 内置能力注册为 kernel 服务——插件 deps() 可依赖、第二实现可替换
     // （服务面 = 承诺 API，实现面等第二实现）。
     // 装配失败 = 编程错误（预装插件 bug），fail-fast 于启动。
+    // 运行时配置唯一可变权威（审查 2026-08-17 P1）：HTTP / kernel Port / 权限门共用。
+    let shared_config = Arc::new(std::sync::RwLock::new(config.clone()));
     let kernel = dual_writer.as_ref().map(|d| {
         let store = d.event_log().store();
-        // 服务面铺开第二批：llm（客户端配置解析）/credentials（密钥读取）
-        // ——LlmPort 消费方 = build_loop_agent（kernel 不可用退化直调）
-        let shared_config = Arc::new(std::sync::RwLock::new(config.clone()));
+        let shared_config = shared_config.clone();
         // 厂商面（SERVICE_FACES #15，LLM provider 插件化方案 A）：厂商注册表
         // （内置 minimax/deepseek/custom 出厂注册；官方端点/形状单源 bm-core）。
         // LlmPort 解析经它取端点/协议形状——LlmPortImpl 与 kernel 注册共享
@@ -679,7 +692,7 @@ async fn serve_inner(
         permission_store,
         session_streams.clone(),
         permission_pending.clone(),
-        config.extension_policy.as_deref() != Some("permissive"),
+        shared_config.clone(),
     ));
 
     // MCP 官方插件（bm-mcp，协议层一等公民 Z4）：config.toml `mcp` 段 +
@@ -779,13 +792,16 @@ async fn serve_inner(
         } else {
             let service: Arc<dyn bm_mcp::McpService> = manager;
             if let Some(kernel) = kernel.as_ref() {
-                let _ = kernel.ctx().register_port("mcp", service.clone());
+                kernel
+                    .ctx()
+                    .register_port("mcp", service.clone())
+                    .expect("运行期注册 mcp 面失败");
             }
             let gate = Arc::new(mcp_gate::McpGate::new(
                 mcp_permission_store,
                 session_streams.clone(),
                 permission_pending.clone(),
-                config.extension_policy.as_deref() != Some("permissive"),
+                shared_config.clone(),
             ));
             (Some(service), Some(gate))
         }
@@ -801,19 +817,28 @@ async fn serve_inner(
                     .map(|c| c.tools.clone())
                     .unwrap_or_else(|| Arc::new(std::sync::Mutex::new(Vec::new()))),
             });
-        let _ = kernel.ctx().register_port("tools", tools_port);
+        kernel
+            .ctx()
+            .register_port("tools", tools_port)
+            .expect("运行期注册 tools 面失败");
         // 通知面（SERVICE_FACES #13）：session_streams 就绪后运行期注册
         let notify_port: Arc<dyn bm_protocol::NotifyPort> =
             Arc::new(service_faces::NotifyPortImpl {
                 streams: session_streams.clone(),
             });
-        let _ = kernel.ctx().register_port("notify", notify_port);
+        kernel
+            .ctx()
+            .register_port("notify", notify_port)
+            .expect("运行期注册 notify 面失败");
         // 权限面（SERVICE_FACES #14）：询问表就绪后运行期注册
         let gate_port: Arc<dyn bm_protocol::GatePort> =
             Arc::new(service_faces::GatePortImpl {
                 pending: permission_pending.clone(),
             });
-        let _ = kernel.ctx().register_port("gate", gate_port);
+        kernel
+            .ctx()
+            .register_port("gate", gate_port)
+            .expect("运行期注册 gate 面失败");
     }
 
     // Steward 轮（v0.19）：管家状态（next_wake_at 落点 = steward.json）。
@@ -837,11 +862,14 @@ async fn serve_inner(
     {
         let scheduler_port: Arc<dyn bm_protocol::SchedulerPort> =
             Arc::new(service_faces::SchedulerPortImpl { store: store.clone() });
-        let _ = kernel.ctx().register_port("scheduler", scheduler_port);
+        kernel
+            .ctx()
+            .register_port("scheduler", scheduler_port)
+            .expect("运行期注册 scheduler 面失败");
     }
 
     let state = AppState::new(
-        config,
+        shared_config,
         db,
         dual_writer,
         kernel,

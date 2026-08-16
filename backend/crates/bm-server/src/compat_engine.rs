@@ -153,6 +153,10 @@ enum CompatCmd {
         ctx: serde_json::Value,
         reply: oneshot::Sender<CompatResult<serde_json::Value>>,
     },
+    SetPolicy {
+        policy: ExtensionPolicy,
+        reply: oneshot::Sender<()>,
+    },
 }
 
 /// B5/B6 权限桥的宿主服务实现。
@@ -178,6 +182,8 @@ pub struct BridgeServices {
     pub event_log: Option<bm_kernel::EventLog>,
     /// B6：events 端口的 active tools 记忆（None = 全量）。
     pub active_tools: Mutex<Option<Vec<String>>>,
+    /// 插件 HTTP 共用 Client（审查 2026-08-17：避免每次 new 丢连接池）。
+    pub http: reqwest::Client,
 }
 
 impl BridgeServices {
@@ -289,15 +295,20 @@ impl HostServices for BridgeServices {
                 message: "http hostcall: url is required".to_string(),
             };
         };
+        if let Err(err) = bm_core::providers::validate_base_url(url) {
+            return HostcallOutcome::Error {
+                code: "denied".to_string(),
+                message: format!("http hostcall: {err}"),
+            };
+        }
         let is_get = payload
             .get("method")
             .and_then(serde_json::Value::as_str)
             .is_some_and(|m| m.eq_ignore_ascii_case("GET"));
-        let client = reqwest::Client::new();
         let mut builder = if is_get {
-            client.get(url)
+            self.http.get(url)
         } else {
-            client.post(url)
+            self.http.post(url)
         };
         if let Some(headers) = payload.get("headers").and_then(serde_json::Value::as_object) {
             for (key, value) in headers {
@@ -334,6 +345,7 @@ impl HostServices for BridgeServices {
                 )
             })
             .collect();
+        const HTTP_BODY_LIMIT: usize = 8 * 1024 * 1024;
         let body_bytes = match response.bytes().await {
             Ok(b) => b,
             Err(err) => {
@@ -343,6 +355,15 @@ impl HostServices for BridgeServices {
                 };
             }
         };
+        if body_bytes.len() > HTTP_BODY_LIMIT {
+            return HostcallOutcome::Error {
+                code: "io".to_string(),
+                message: format!(
+                    "http hostcall body exceeds {HTTP_BODY_LIMIT} bytes (got {})",
+                    body_bytes.len()
+                ),
+            };
+        }
         let mut output = serde_json::Map::new();
         output.insert("status".to_string(), serde_json::json!(status));
         output.insert("headers".to_string(), serde_json::Value::Object(headers));
@@ -617,6 +638,10 @@ impl CompatEngine {
             db,
             event_log,
             active_tools: Mutex::new(None),
+            http: reqwest::Client::builder()
+                .timeout(HOSTCALL_TIMEOUT)
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new()),
         });
         let handle = std::thread::Builder::new()
             .name("bm-compat".to_string())
@@ -636,7 +661,7 @@ impl CompatEngine {
                             return;
                         }
                     };
-                    let thread = HostThread::new(
+                    let mut thread = HostThread::new(
                         std::rc::Rc::new(runtime),
                         services.clone(),
                         extension_policy,
@@ -671,6 +696,10 @@ impl CompatEngine {
                             CompatCmd::McpServers { reply } => {
                                 let res = thread.runtime().get_registered_mcp_servers().await;
                                 let _ = reply.send(res);
+                            }
+                            CompatCmd::SetPolicy { policy, reply } => {
+                                thread.set_policy(policy);
+                                let _ = reply.send(());
                             }
                             CompatCmd::DispatchEvent { name, payload, ctx, reply } => {
                                 let ctx_cwd = ctx
@@ -872,6 +901,12 @@ impl CompatEngine {
 
     /// B6：宿主→插件事件（startup/tool_call/tool_result…）。返回 handler
     /// 链最后非 undefined 值（无 handler → Null）。
+    /// 热更新插件权限档位（审查 2026-08-17：设置页切档后无需重启）。
+    pub fn set_policy(&self, policy: ExtensionPolicy) {
+        let (reply, _rx) = oneshot::channel();
+        let _ = self.tx.send(CompatCmd::SetPolicy { policy, reply });
+    }
+
     pub async fn dispatch_event(
         &self,
         name: &str,
@@ -1005,7 +1040,7 @@ pub async fn init_compat(
 /// - default/safe/balanced → Prompt 模式（关键能力询问，上游默认）
 /// - permissive → 全自动放行（插件能力不经询问）
 /// - yolo（permissive + allow_dangerous）→ 全放行且放开 exec/env
-fn extension_policy_from_config(config: &bm_core::AppConfig) -> ExtensionPolicy {
+pub(crate) fn extension_policy_from_config(config: &bm_core::AppConfig) -> ExtensionPolicy {
     let mut policy = ExtensionPolicy::default();
     match config.extension_policy.as_deref() {
         Some("permissive") => {
@@ -1046,6 +1081,8 @@ pub struct QuickJsToolExecutor {
     mcp: Option<Arc<dyn bm_mcp::McpService>>,
     /// MCP 工具权限门（bm-mcp 配套；None = 不裁决）。
     mcp_gate: Option<Arc<crate::mcp_gate::McpGate>>,
+    /// 调度面（审查 2026-08-17 A-6）：set_wake 优先经 SchedulerPort。
+    scheduler: Option<Arc<dyn bm_protocol::SchedulerPort>>,
 }
 
 impl QuickJsToolExecutor {
@@ -1062,6 +1099,7 @@ impl QuickJsToolExecutor {
             gate: None,
             mcp: None,
             mcp_gate: None,
+            scheduler: None,
         }
     }
 
@@ -1086,6 +1124,11 @@ impl QuickJsToolExecutor {
     ) -> Self {
         self.mcp = mcp;
         self.mcp_gate = gate;
+        self
+    }
+
+    pub fn with_scheduler(mut self, scheduler: Option<Arc<dyn bm_protocol::SchedulerPort>>) -> Self {
+        self.scheduler = scheduler;
         self
     }
 
@@ -1144,8 +1187,18 @@ impl ToolExecutor for QuickJsToolExecutor {
             // （子进程协议 = subagent_child；取消经 kill_on_drop 传播）
             crate::subagent_tool::run(req.args.clone(), &working_dir).await
         } else if req.name == "set_wake" {
-            // 管家自调节奏（Steward 轮）：写 next_wake_at（治理层夹区间）。
-            // 只注册进管家会话工具面；store 缺失时模型面也不会有此工具（双保险）。
+            // 管家自调节奏：优先走已注册的 SchedulerPort（审查 2026-08-17 A-6），
+            // 面未接线时回落 StewardStore 直调。
+            if let Some(port) = &self.scheduler {
+                match execute_set_wake_via_port(port.as_ref(), &self.session_id, &req.args).await {
+                    Ok(value) => ToolOutcome {
+                        ok: true,
+                        output: tool_result_text(&value),
+                        meta: Some(value),
+                    },
+                    Err(err) => ToolOutcome { ok: false, output: err, meta: None },
+                }
+            } else {
             match &self.steward {
                 Some(store) => match crate::steward::execute_set_wake(store, &self.session_id, &req.args).await {
                     Ok(value) => ToolOutcome {
@@ -1160,6 +1213,7 @@ impl ToolExecutor for QuickJsToolExecutor {
                     output: "管家未启用（set_wake 不可用）".to_string(),
                     meta: None,
                 },
+            }
             }
         } else if req.name == "todo" {
             // 活任务清单（M2）：读/写事件日志 todo/write 快照（事实源）。
@@ -1288,6 +1342,34 @@ impl ToolExecutor for QuickJsToolExecutor {
     }
 }
 
+async fn execute_set_wake_via_port(
+    port: &dyn bm_protocol::SchedulerPort,
+    session_id: &str,
+    args: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let after = args
+        .get("after_seconds")
+        .and_then(serde_json::Value::as_i64)
+        .ok_or_else(|| "set_wake 需要整数参数 after_seconds".to_string())?;
+    let reason = args.get("reason").and_then(serde_json::Value::as_str);
+    if after <= 0 {
+        port.clear_wake(session_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        return Ok(serde_json::json!({
+            "content": [{ "type": "text", "text": "已清除唤醒，管家进入静默（等待下次 set_wake 或外部汇报）" }],
+            "details": null,
+        }));
+    }
+    port.set_wake(session_id, after, reason)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({
+        "content": [{ "type": "text", "text": format!("已登记 {after} 秒后唤醒") }],
+        "details": null,
+    }))
+}
+
 /// 工具结果 → legacy `ToolResult` 事件同款 content 块数组（ctx-compactor
 /// 的 `extractText` 消费此形状；无 content 数组时文本块兜底保真）。
 fn content_blocks(outcome: &ToolOutcome) -> serde_json::Value {
@@ -1363,6 +1445,7 @@ mod tests {
             db: test_db().await,
             event_log: None,
             active_tools: Mutex::new(None),
+            http: reqwest::Client::new(),
         }
     }
 

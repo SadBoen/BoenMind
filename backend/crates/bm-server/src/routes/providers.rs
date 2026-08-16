@@ -125,7 +125,7 @@ pub async fn thinking_levels(
     State(state): crate::SharedState,
     Query(params): Query<ThinkingLevelsParams>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    let config = state.config.read().await;
+    let config = state.config.read().expect("config poisoned");
     let provider = config
         .providers
         .iter()

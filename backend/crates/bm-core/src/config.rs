@@ -129,6 +129,10 @@ pub struct AppConfig {
     /// appId（chat/coding/…）→ 专家绑定/记忆/工作区覆盖
     #[serde(default)]
     pub apps: HashMap<String, AppProfile>,
+    /// 已确认的项目根白名单（审查 2026-08-17）：workspace/terminal 的 `root`/`cwd`
+    /// 必须是 working_dir、某 APP working_dir 或本列表中的前缀。前端项目集合上移。
+    #[serde(default)]
+    pub trusted_project_roots: Vec<PathBuf>,
 }
 
 /// 每软件 APP 的专属配置（单源 config.toml 的 `[apps.<id>]` 段）。
@@ -419,6 +423,7 @@ impl Default for AppConfig {
             plugin_scopes: HashMap::new(),
             skill_scopes: HashMap::new(),
             apps: HashMap::new(),
+            trusted_project_roots: Vec::new(),
         }
     }
 }
@@ -623,6 +628,7 @@ mod tests {
             extension_allow_dangerous: None,
             custom_system_prompt: None,
             mcp: None,
+            trusted_project_roots: Vec::new(),
         };
         assert_eq!(resolve_provider(&config, Some("missing")).unwrap().id, "b");
         assert_eq!(resolve_model(&config.providers[1], None).unwrap(), "qwen");

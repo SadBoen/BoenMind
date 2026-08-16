@@ -1,4 +1,5 @@
-//! 五个扩展点（A6 骨架定稿；调用点随主体实现接入）。
+//! 十二个扩展点（A6 骨架定稿；生产主要消费 request / stream_chunk / tool_pre / tool_post。
+//! 其余挂点按登记表保留，新增必须改 EXTENSION_POINTS_REGISTRY）。
 //!
 //! 与 dsh 扩展点对齐（回合词汇表/交互契约借鉴）：
 //! pre-step / request / request-error / tools pre+post / turn-stopping。
