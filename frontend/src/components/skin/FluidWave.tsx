@@ -36,29 +36,33 @@ interface WaveBand {
   tilt: number;
 }
 
-/** 三条粗壮光带覆盖全屏（上中下），不同波长/速度/相位——流动层次感 */
+/** 三条粗壮光带覆盖全屏（上中下），不同波长/速度/相位——流动层次感。
+ *  速度约 0.6~1.3 rad/s（全波长周期 5~10s）：透过玻璃面板的 backdrop-blur
+ *  仍能明确感知流动——更慢会被模糊抹平成静态底色（2026-08-16 观感教训）。 */
 const BANDS: WaveBand[] = [
-  { amp: 0.10, freq: 1.4, speed: 0.55, phase: 0.0, base: 0.24, band: 0.34, tilt: 0.02 },
-  { amp: 0.09, freq: 1.9, speed: 0.85, phase: 2.1, base: 0.52, band: 0.36, tilt: 0.07 },
-  { amp: 0.12, freq: 1.2, speed: 0.40, phase: 4.2, base: 0.80, band: 0.38, tilt: -0.05 },
+  { amp: 0.11, freq: 1.4, speed: 0.90, phase: 0.0, base: 0.24, band: 0.34, tilt: 0.02 },
+  { amp: 0.10, freq: 1.9, speed: 1.30, phase: 2.1, base: 0.52, band: 0.36, tilt: 0.07 },
+  { amp: 0.13, freq: 1.2, speed: 0.65, phase: 4.2, base: 0.80, band: 0.38, tilt: -0.05 },
 ];
 
 /** 背景雾层：低频大振幅半透明正弦晕（慢速漂移），增加流体通透感 */
-const HAZE: WaveBand = { amp: 0.22, freq: 0.6, speed: 0.25, phase: 1.4, base: 0.5, band: 1.1, tilt: 0 };
+const HAZE: WaveBand = { amp: 0.22, freq: 0.6, speed: 0.40, phase: 1.4, base: 0.5, band: 1.1, tilt: 0 };
 
-/** 亮/暗两套配色：bg 垂直渐变 + 光带顶/底色 + 高光 */
+/** 亮/暗两套配色：bg 垂直渐变 + 光带顶/底色 + 高光。
+ *  对比度按"叠在玻璃面板（半透明+backdrop-blur）之下仍分明"校准：
+ *  底色压深、波脊提亮，避免被模糊抹成一片均匀底色。 */
 const PALETTES = {
   light: {
-    bg: ["#bfdbfe", "#5e9ff2"],
-    band: ["#ffffff", "#7cb3f7"],
-    haze: "rgba(255,255,255,0.55)",
-    glow: "rgba(255,255,255,0.75)",
+    bg: ["#9ec5f8", "#3f7fdd"],
+    band: ["#ffffff", "#5e9ff2"],
+    haze: "rgba(255,255,255,0.5)",
+    glow: "rgba(255,255,255,0.9)",
   },
   dark: {
-    bg: ["#0a2350", "#0d4aa0"],
-    band: ["#e8f2ff", "#1a5cbd"],
-    haze: "rgba(96,165,250,0.32)",
-    glow: "rgba(232,242,255,0.8)",
+    bg: ["#081b45", "#0d4aa0"],
+    band: ["#f0f6ff", "#2f74e0"],
+    haze: "rgba(96,165,250,0.35)",
+    glow: "rgba(240,246,255,0.9)",
   },
 } as const;
 
@@ -113,7 +117,7 @@ export function renderFluid(canvas: HTMLCanvasElement, dark: boolean, time = 0) 
   const w = canvas.width;
   const h = canvas.height;
   const pal = dark ? PALETTES.dark : PALETTES.light;
-  const t = time * 0.8; // 全局慢速（流动舒缓不晃眼）
+  const t = time; // 原速（速度已按"透过玻璃模糊仍可见"校准进 BANDS.speed）
 
   // 底：垂直渐变
   const bg = ctx.createLinearGradient(0, 0, 0, h);

@@ -335,7 +335,7 @@ coding: {
         wallpaperTitle: "프리셋 배경화면",
         wallpaperDesc: "내장 배경화면. 클릭 한 번으로 적용(추천 색상 자동 적용)",
         effectTitle: "배경 효과",
-        effectDesc: "배경화면 위에 겹치는 애니메이션 레이어(스킨/배경화면과 분리, 언제든 전환)",
+        effectDesc: "배경화면 위의 애니메이션 레이어. 포인터를 따라 빛이 따라오고 클릭하면 물결이 퍼집니다",
         effect: {
           none: "없음",
           wave: "블루 리플",

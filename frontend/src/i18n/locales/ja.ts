@@ -335,7 +335,7 @@ coding: {
         wallpaperTitle: "プリセット壁紙",
         wallpaperDesc: "内蔵壁紙。クリックで適用（推奨の色相を自動適用）",
         effectTitle: "背景エフェクト",
-        effectDesc: "壁紙に重ねるアニメーション層（スキン/壁紙から独立、いつでも切替可）",
+        effectDesc: "壁紙に重ねるアニメーション層。ポインターで柔光が付き、クリックで波紋が広がります",
         effect: {
           none: "なし",
           wave: "ブルーリップル",

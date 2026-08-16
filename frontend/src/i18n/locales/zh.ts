@@ -334,7 +334,7 @@ coding: {
         wallpaperTitle: "预设壁纸",
         wallpaperDesc: "内置壁纸，点击即用（自动套用推荐色调）",
         effectTitle: "背景特效",
-        effectDesc: "叠加在壁纸上的动画层（与皮肤/壁纸解耦，随时开关）",
+        effectDesc: "叠加在壁纸上的动画层；指针移动带柔光，点击任意处泛起涟漪",
         effect: {
           none: "无",
           wave: "蓝色波纹",
