@@ -101,7 +101,7 @@ C 的 FAIL **不是**「架构文件必须重写」。按该 skill 规则：存�
 1. **MCP 组合根**（C P1）：空配置启动仍持有 `McpClientManager`，设置页可连第一个 server。
 2. **插件禁用收回**（C P2）：`tools_for_app` + executor 按 enabled fail-closed。
 3. OpenAPI / 前端 vitest / 皮肤键收口（08-16 前端轮遗留）。
-4. skill 系统提示按场景注入（与「引擎已按 app 过滤扩展」拆开）。
+4. ~~skill 系统提示按场景注入~~ → **当时误判，代码已落地**（`enabled_skills_prompt` + `skill_scopes`；2026-08-17 已回写宪法/HANDOFF）。
 5. 登记表是否每次接线改「最后核对」日期（纪律，不是功能）。
 6. TokenRing 是否改为读模型 `context_window`（产品契约）。
 7. §十一·11.3 历史清单逐行已修/仍开（可整节迁 archive）。
