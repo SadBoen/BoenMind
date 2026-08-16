@@ -334,10 +334,11 @@ coding: {
         wallpaperTitle: "预设壁纸",
         wallpaperDesc: "内置壁纸，点击即用（自动套用推荐色调）",
         effectTitle: "背景特效",
-        effectDesc: "叠加在壁纸上的动画层；指针移动带柔光，点击任意处泛起涟漪",
+        effectDesc: "叠加在壁纸上的动画层；波纹随指针流动，点击任意处绽放礼花",
         effect: {
           none: "无",
           wave: "蓝色波纹",
+          fireworks: "夜空礼花",
         },
         customTitle: "自定义背景",
         wallpaper: {

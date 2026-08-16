@@ -335,10 +335,11 @@ coding: {
         wallpaperTitle: "プリセット壁紙",
         wallpaperDesc: "内蔵壁紙。クリックで適用（推奨の色相を自動適用）",
         effectTitle: "背景エフェクト",
-        effectDesc: "壁紙に重ねるアニメーション層。ポインターで柔光が付き、クリックで波紋が広がります",
+        effectDesc: "壁紙に重ねるアニメーション層。波紋はポインターに追従し、クリックで花火が開花します",
         effect: {
           none: "なし",
           wave: "ブルーリップル",
+          fireworks: "夜空の花火",
         },
         customTitle: "カスタム背景",
         wallpaper: {

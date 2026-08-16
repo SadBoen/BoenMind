@@ -13,7 +13,7 @@ import { useTheme } from "next-themes";
 import { useAppStore } from "@/stores/app-store";
 import { wallpaperById } from "@/lib/skin";
 import { FluidWave } from "@/components/skin/FluidWave";
-import { EffectWave } from "@/components/skin/effects";
+import { EffectWave, EffectFireworks } from "@/components/skin/effects";
 
 export function SkinBackground() {
   const skin = useAppStore((s) => s.skin);
@@ -43,12 +43,14 @@ export function SkinBackground() {
       ) : (
         <div className="h-full w-full" style={{ background: presetCss ?? defaultCss }} />
       )}
-      {/* 背景特效层（独立开关；wave = 蓝色波纹动画，自带流体底色盖过壁纸） */}
+      {/* 背景特效层（独立开关；wave = 蓝色波纹动画，fireworks = 夜空礼花；
+          两者都自带完整画面盖过壁纸） */}
       {backgroundEffect === "wave" && <EffectWave />}
+      {backgroundEffect === "fireworks" && <EffectFireworks />}
       {/* 明暗遮罩：背景图之上、内容之下，压出可读对比度。
-          wave 特效不叠——流体配色已按"玻璃面板之下仍分明"校准，
+          wave/fireworks 特效不叠——特效配色已按"玻璃面板之下仍分明"校准，
           再压一层会把它抹回静态底色（2026-08-16 观感教训）。 */}
-      {backgroundEffect !== "wave" && <div className="absolute inset-0 bg-white/10 dark:bg-black/20" />}
+      {backgroundEffect === "none" && <div className="absolute inset-0 bg-white/10 dark:bg-black/20" />}
     </div>
   );
 }

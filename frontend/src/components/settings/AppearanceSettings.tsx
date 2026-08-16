@@ -350,6 +350,7 @@ export function AppearanceSettings() {
                     )}
                   >
                     {e.id === "wave" && <Waves size={13} />}
+                    {e.id === "fireworks" && <Sparkles size={13} />}
                     {t(e.nameKey)}
                   </button>
                 ))}

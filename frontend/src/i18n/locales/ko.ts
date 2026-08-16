@@ -335,10 +335,11 @@ coding: {
         wallpaperTitle: "프리셋 배경화면",
         wallpaperDesc: "내장 배경화면. 클릭 한 번으로 적용(추천 색상 자동 적용)",
         effectTitle: "배경 효과",
-        effectDesc: "배경화면 위의 애니메이션 레이어. 포인터를 따라 빛이 따라오고 클릭하면 물결이 퍼집니다",
+        effectDesc: "배경화면 위의 애니메이션 레이어. 물결은 포인터를 따라가고 클릭하면 불꽃이 피어납니다",
         effect: {
           none: "없음",
           wave: "블루 리플",
+          fireworks: "밤하늘 불꽃놀이",
         },
         customTitle: "사용자 지정 배경",
         wallpaper: {

@@ -335,10 +335,11 @@ coding: {
         wallpaperTitle: "Preset wallpapers",
         wallpaperDesc: "Built-in wallpapers, one click to apply (auto-uses recommended tint)",
         effectTitle: "Background effects",
-        effectDesc: "Animated layer over the wallpaper; pointer glow follows the cursor, click anywhere for ripples",
+        effectDesc: "Animated layer over the wallpaper; ripples follow the cursor, fireworks bloom on click",
         effect: {
           none: "None",
           wave: "Blue ripple",
+          fireworks: "Night fireworks",
         },
         customTitle: "Custom background",
         wallpaper: {

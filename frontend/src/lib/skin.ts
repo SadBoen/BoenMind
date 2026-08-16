@@ -84,6 +84,7 @@ export interface BackgroundEffect {
 export const BACKGROUND_EFFECTS: BackgroundEffect[] = [
   { id: "none", nameKey: "settings.appearance.skin.effect.none" },
   { id: "wave", nameKey: "settings.appearance.skin.effect.wave" },
+  { id: "fireworks", nameKey: "settings.appearance.skin.effect.fireworks" },
 ];
 
 export type BackgroundEffectId = (typeof BACKGROUND_EFFECTS)[number]["id"];

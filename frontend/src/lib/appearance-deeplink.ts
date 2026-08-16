@@ -10,7 +10,7 @@ const seedKey = (storageKey: string, param: string, allowed?: readonly string[])
 };
 
 seedKey("boenmind.skin", "skin", ["classic", "glass"]);
-seedKey("boenmind.skin.effect", "effect", ["none", "wave"]);
+seedKey("boenmind.skin.effect", "effect", ["none", "wave", "fireworks"]);
 seedKey(
   "boenmind.skin.wallpaper",
   "wallpaper",
