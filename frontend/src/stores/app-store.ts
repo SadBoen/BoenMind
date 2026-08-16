@@ -81,6 +81,43 @@ function loadCurrentProjectId(projects: Project[]): string | null {
   return id && projects.some((p) => p.id === id) ? id : null;
 }
 
+function projectNameFromRoot(root: string): string {
+  const norm = root.replace(/[\\/]+$/, "");
+  const parts = norm.split(/[\\/]/);
+  return parts[parts.length - 1] || norm;
+}
+
+/** 服务器工作区 → 项目列表：远程浏览器没有本机 localStorage，否则编程 APP 像没迁仓库。 */
+function seedProjectsFromConfig(config: AppConfig, existing: Project[]): {
+  projects: Project[];
+  currentProjectId: string | null;
+} {
+  const roots: string[] = [];
+  const push = (p?: string) => {
+    const t = p?.trim();
+    if (t && !roots.includes(t)) roots.push(t);
+  };
+  push(config.apps?.coding?.working_dir);
+  push(config.working_dir);
+  for (const r of config.trusted_project_roots ?? []) push(r);
+
+  const have = new Set(existing.map((p) => p.root.replace(/[\\/]+$/, "")));
+  const projects = [...existing];
+  for (const root of roots) {
+    const key = root.replace(/[\\/]+$/, "");
+    if (have.has(key)) continue;
+    projects.push({ id: crypto.randomUUID(), name: projectNameFromRoot(root), root });
+    have.add(key);
+  }
+  let currentProjectId = loadCurrentProjectId(projects);
+  if (!currentProjectId && projects[0]) currentProjectId = projects[0].id;
+  if (projects.length !== existing.length) {
+    localStorage.setItem(PROJECTS_KEY, JSON.stringify(projects));
+  }
+  if (currentProjectId) localStorage.setItem(CURRENT_PROJECT_KEY, currentProjectId);
+  return { projects, currentProjectId };
+}
+
 /**
  * 配置默认模型（"providerId::modelId"）：全局 default_model → 所属提供商，
  * 无则取第一个提供商的首个模型；未配置任何提供商时为 null。
@@ -458,7 +495,13 @@ export const useAppStore = create<AppStore>((set, get) => {
     loadConfig: async () => {
       try {
         const config = await api.getConfig();
-        set({ config });
+        const seeded = seedProjectsFromConfig(config, get().projects);
+        set({
+          config,
+          projects: seeded.projects,
+          currentProjectId: seeded.currentProjectId,
+          currentProject: seeded.projects.find((p) => p.id === seeded.currentProjectId) ?? null,
+        });
         // 语言以后端 config.toml 为准（桌面/网页一致），与 localStorage 不同时校正
         if (isLang(config.lang) && config.lang !== i18n.language) {
           applyLang(config.lang);

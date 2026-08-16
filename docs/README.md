@@ -13,6 +13,7 @@
 | **everything-is-plugin-architecture.md** | 架构宪法（v0.26）：三铁律/内核/借鉴清单/插件化设计/渐进路线；当前态以页眉 + 登记表为准 | 架构决策、设计参照 |
 | **EXTENSION_POINTS_REGISTRY.md** | 扩展点唯一计数器（协议 14 面 + mcp / 12 挂点 / 产品扩展点） | 每轮新增/接线扩展点时 |
 | **HANDOFF_KERNEL_PHASE1.md** | 迭代指针：当前状态表 / 下一步 / 待拍板（后文日记以上表为准） | 每轮开工前 |
+| **design/WIKI_REWRITE_ARCHITECTURE_2026-08-17.md** | WIKI APP 重写架构（用户 7 条 + 三席合成） | 重写 WIKI / 摄取 / 图谱 / wiki.db 时 |
 | **design/SETTINGS_ARCHITECTURE_2026-08-16.md** | 设置中心拍板 + 阶段 1–5 已落地 | 改设置/作用域/`[apps]` 时 |
 | **PLAN_MCP_PLUGIN_2026-08-16.md** | MCP 官方插件计划（0–3+4b 完成，4c OAuth 后置） | 改 MCP / 连 server 时 |
 | **boenmind-strategic-review.md** | 战略层回看：命名哲学/三护城河/五年路径 | 战略决策 |
