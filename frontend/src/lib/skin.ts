@@ -14,17 +14,20 @@ export interface SkinBackground {
 }
 
 /**
- * 内置预设壁纸（2026-08-16）：Aqua 插件观感（流体渐变）自研版，CSS 纯渐变零体积。
+ * 内置预设壁纸（2026-08-16）：Aqua 插件观感自研版。
+ * gradient = CSS 纯渐变（零体积）；fluid = WebGL 静态流体波浪（蓝色波浪款）。
  * 亮暗两套渐变 + 推荐色调（选中时写入 --skin-hue，与自动配色同一通道）。
  * 优先级：自定义背景图 > 预设壁纸 > 默认色调渐变。
  */
 export interface PresetWallpaper {
   id: string;
   nameKey: string;
-  /** 亮色主题渐变 */
-  css: string;
-  /** 暗色主题渐变 */
-  darkCss: string;
+  /** gradient = CSS 渐变（css/darkCss 生效）；fluid = WebGL 波浪（FluidWave 渲染） */
+  kind: "gradient" | "fluid";
+  /** 亮色主题渐变（fluid 款不用） */
+  css?: string;
+  /** 暗色主题渐变（fluid 款不用） */
+  darkCss?: string;
   /** 推荐色调（0-360，应用时写入 hue 参数） */
   hue: number;
 }
@@ -33,13 +36,21 @@ export const PRESET_WALLPAPERS: PresetWallpaper[] = [
   {
     id: "aqua",
     nameKey: "settings.appearance.skin.wallpaper.aqua",
+    kind: "gradient",
     css: "radial-gradient(120% 100% at 15% 10%, rgba(20,184,166,0.55) 0%, transparent 55%), radial-gradient(110% 110% at 90% 85%, rgba(59,130,246,0.5) 0%, transparent 60%), linear-gradient(135deg, #ecfeff 0%, #cffafe 45%, #bfdbfe 100%)",
     darkCss: "radial-gradient(120% 100% at 15% 10%, rgba(13,148,136,0.6) 0%, transparent 55%), radial-gradient(110% 110% at 90% 85%, rgba(37,99,235,0.55) 0%, transparent 60%), linear-gradient(135deg, #042f2e 0%, #083344 50%, #172554 100%)",
     hue: 190,
   },
   {
+    id: "bluewave",
+    nameKey: "settings.appearance.skin.wallpaper.bluewave",
+    kind: "fluid",
+    hue: 220,
+  },
+  {
     id: "sunset",
     nameKey: "settings.appearance.skin.wallpaper.sunset",
+    kind: "gradient",
     css: "radial-gradient(120% 100% at 20% 20%, rgba(251,146,60,0.6) 0%, transparent 55%), radial-gradient(110% 110% at 85% 80%, rgba(236,72,153,0.45) 0%, transparent 60%), linear-gradient(135deg, #fff7ed 0%, #fed7aa 50%, #fbcfe8 100%)",
     darkCss: "radial-gradient(120% 100% at 20% 20%, rgba(234,88,12,0.55) 0%, transparent 55%), radial-gradient(110% 110% at 85% 80%, rgba(190,24,93,0.5) 0%, transparent 60%), linear-gradient(135deg, #431407 0%, #7c2d12 55%, #4c0519 100%)",
     hue: 25,
@@ -47,6 +58,7 @@ export const PRESET_WALLPAPERS: PresetWallpaper[] = [
   {
     id: "aurora",
     nameKey: "settings.appearance.skin.wallpaper.aurora",
+    kind: "gradient",
     css: "radial-gradient(120% 100% at 25% 15%, rgba(52,211,153,0.5) 0%, transparent 55%), radial-gradient(110% 110% at 80% 85%, rgba(168,85,247,0.4) 0%, transparent 60%), linear-gradient(135deg, #f0fdf4 0%, #d1fae5 45%, #ede9fe 100%)",
     darkCss: "radial-gradient(120% 100% at 25% 15%, rgba(16,185,129,0.5) 0%, transparent 55%), radial-gradient(110% 110% at 80% 85%, rgba(147,51,234,0.5) 0%, transparent 60%), linear-gradient(135deg, #022c22 0%, #064e3b 50%, #2e1065 100%)",
     hue: 155,
@@ -54,6 +66,7 @@ export const PRESET_WALLPAPERS: PresetWallpaper[] = [
   {
     id: "nebula",
     nameKey: "settings.appearance.skin.wallpaper.nebula",
+    kind: "gradient",
     css: "radial-gradient(120% 100% at 15% 20%, rgba(129,140,248,0.5) 0%, transparent 55%), radial-gradient(110% 110% at 85% 75%, rgba(244,114,182,0.4) 0%, transparent 60%), linear-gradient(135deg, #eef2ff 0%, #e0e7ff 50%, #fce7f3 100%)",
     darkCss: "radial-gradient(120% 100% at 15% 20%, rgba(99,102,241,0.55) 0%, transparent 55%), radial-gradient(110% 110% at 85% 75%, rgba(219,39,119,0.45) 0%, transparent 60%), linear-gradient(135deg, #1e1b4b 0%, #312e81 50%, #500724 100%)",
     hue: 250,

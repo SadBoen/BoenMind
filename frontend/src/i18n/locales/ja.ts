@@ -363,6 +363,7 @@ coding: {
         customTitle: "カスタム背景",
         wallpaper: {
           aqua: "アクアフロー",
+          bluewave: "ブルーウェーブ",
           sunset: "サンセット",
           aurora: "オーロラ",
           nebula: "ネビュラ",

@@ -363,6 +363,7 @@ coding: {
         customTitle: "Custom background",
         wallpaper: {
           aqua: "Aqua flow",
+          bluewave: "Blue wave",
           sunset: "Sunset",
           aurora: "Aurora",
           nebula: "Nebula",

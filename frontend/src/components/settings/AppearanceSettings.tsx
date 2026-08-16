@@ -22,8 +22,10 @@ import {
   sampleImage,
   skinById,
   skinParamValue,
+  type PresetWallpaper,
   type SkinBackground,
 } from "@/lib/skin";
+import { renderFluid } from "@/components/skin/FluidWave";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -44,6 +46,28 @@ const ACCENT_SWATCH: Record<string, string> = {
   orange: "oklch(0.62 0.18 45)",
   pink: "oklch(0.58 0.2 350)",
 };
+
+/** 壁纸缩略图：gradient 款用 CSS 渐变；fluid 款（蓝色波浪）用 WebGL 渲染一帧 */
+function WallpaperThumb({ preset, dark }: { preset: PresetWallpaper; dark: boolean }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const c = ref.current;
+    if (!c || preset.kind !== "fluid") return;
+    c.width = 160;
+    c.height = 80;
+    renderFluid(c, dark);
+  }, [preset, dark]);
+  if (preset.kind === "fluid") {
+    return <canvas ref={ref} className="h-12 w-full rounded-lg" aria-hidden />;
+  }
+  return (
+    <span
+      aria-hidden
+      className="block h-12 w-full rounded-lg"
+      style={{ background: dark ? preset.darkCss : preset.css }}
+    />
+  );
+}
 
 export function AppearanceSettings() {
   const { t, i18n } = useTranslation();
@@ -281,7 +305,7 @@ export function AppearanceSettings() {
             <div>
               <p className="text-xs font-medium text-muted-foreground">{t("settings.appearance.skin.wallpaperTitle")}</p>
               <p className="text-xs text-muted-foreground">{t("settings.appearance.skin.wallpaperDesc")}</p>
-              <div className="mt-2 grid grid-cols-4 gap-2">
+              <div className="mt-2 grid grid-cols-5 gap-2">
                 {PRESET_WALLPAPERS.map((w) => (
                   <button
                     key={w.id}
@@ -293,13 +317,14 @@ export function AppearanceSettings() {
                       toast.success(t("settings.appearance.saved"));
                     }}
                     className={cn(
-                      "h-12 rounded-lg border-2 transition-colors",
+                      "overflow-hidden rounded-lg border-2 transition-colors",
                       skinWallpaper === w.id
                         ? "border-primary"
                         : "border-border hover:border-muted-foreground/40",
                     )}
-                    style={{ background: resolvedTheme === "dark" ? w.darkCss : w.css }}
-                  />
+                  >
+                    <WallpaperThumb preset={w} dark={resolvedTheme === "dark"} />
+                  </button>
                 ))}
               </div>
             </div>

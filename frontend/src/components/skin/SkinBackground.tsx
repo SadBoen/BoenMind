@@ -1,14 +1,16 @@
 /**
  * 皮肤背景层（皮肤系统，2026-08-16）：玻璃皮肤的视觉内容物。
- * 优先级：自定义背景图 > 内置预设壁纸（明暗自适应渐变）> 默认色调渐变。
+ * 优先级：自定义背景图 > 内置预设壁纸（渐变/流体两类）> 默认色调渐变。
  * - 自定义图：cover 铺满 + brightness/saturate 提亮（半透明白压层会吃掉色彩）。
- * - 预设壁纸：lib/skin.ts PRESET_WALLPAPERS 声明的流体渐变（亮暗两套），
- *   观感吸收 dsh-client-ui-aqua 的流体壁纸，CSS 纯渐变零体积。
+ * - 渐变壁纸：PRESET_WALLPAPERS 声明的流体渐变（亮暗两套），零体积。
+ * - 流体壁纸（蓝色波浪）：FluidWave WebGL 静态渲染，观感吸收 dsh-client-ui-aqua
+ *   的 fluid shader（deepseek.com 官网同款风格），自研实现且只渲染一帧。
  * 渲染在 App 根容器内 z-0，内容层（ClassicShell）在 z-10，组件无感。
  */
 import { useTheme } from "next-themes";
 import { useAppStore } from "@/stores/app-store";
 import { wallpaperById } from "@/lib/skin";
+import { FluidWave } from "@/components/skin/FluidWave";
 
 export function SkinBackground() {
   const skin = useAppStore((s) => s.skin);
@@ -18,7 +20,8 @@ export function SkinBackground() {
   if (skin !== "glass") return null;
 
   const preset = wallpaperById(wallpaperId);
-  const presetCss = preset ? (resolvedTheme === "dark" ? preset.darkCss : preset.css) : null;
+  const isDark = resolvedTheme === "dark";
+  const presetCss = preset && preset.kind === "gradient" ? (isDark ? preset.darkCss : preset.css) : null;
   const defaultCss =
     "linear-gradient(135deg, hsl(var(--skin-hue, 250) 55% 88%), hsl(calc(var(--skin-hue, 250) + 70) 50% 78%))";
 
@@ -31,6 +34,8 @@ export function SkinBackground() {
           className="h-full w-full object-cover"
           style={{ filter: "brightness(1.12) saturate(1.18)" }}
         />
+      ) : preset?.kind === "fluid" ? (
+        <FluidWave />
       ) : (
         <div className="h-full w-full" style={{ background: presetCss ?? defaultCss }} />
       )}
