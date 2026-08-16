@@ -11,6 +11,7 @@
 | **boenmind-strategic-review.md** | 战略层回看：命名哲学/三护城河/五年路径/100 小弟时间哲学 | 战略决策 |
 | **REVIEW_LANDSCAPE_2026-08-15.md** | 全网对标调研报告（底座 Top10 + 吸收清单 21+16 条） | 吸收项执行时（待拍板 3 引用） |
 | **REVIEW_TOOLS_CROSS_2026-08-16.md** | 三工具交叉审查（code-architecture/codebase-reviewer/ln-24 各独立全库审查 + 交叉校验；P0-P3 修复状态表） | 本轮回头看结论、修复排期 |
+| **REVIEW_FRONTEND_CROSS_2026-08-16.md** | 前端专项三工具交叉审查（同三工具各独立审前端 + 实证复核；P0 构建断裂未修 / P1 fork 语义 / 清理轮清单） | 前端问题修复排期 |
 | **EXTENSION_POINTS_REGISTRY.md** | 扩展点消费者登记表（14 服务面/12 挂点/8 扩展点逐行登记；新扩展点必须登记——防"谜之空货架"纪律） | 每轮新增/接线扩展点时 |
 | **research/** | 架构方向调研素材（2026-08-15 四份：agent-foundations/memory-systems/plugin-landscape/desktop-shell-landscape） | 阶段 4/5 设计时 |
 
@@ -25,6 +26,7 @@
 - 根目录 README.md：产品使用手册（启动/配置/发布/部署）
 - frontend/README.md：前端开发说明
 - review-tools-2026-08-16/：三工具交叉审查的三份独立报告（工具A code-architecture 29 条 / 工具B codebase-reviewer 26 条 / 工具C ln-24 14 条；结论见 REVIEW_TOOLS_CROSS_2026-08-16.md）
+- review-frontend-2026-08-16/：前端专项三工具独立报告（A code-review 52 条 / B code-architecture 6 担忧+Simplicity Check / C ln-24 10 条；结论见 REVIEW_FRONTEND_CROSS_2026-08-16.md）
 
 ## 决策轨迹速查
 
