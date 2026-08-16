@@ -364,7 +364,23 @@ jobs:
           New-Item -ItemType Directory -Force -Path ..\dist-win | Out-Null
           # 二进制名来自 Cargo package name（app.exe），对外重命名为 BoenMind.exe
           Copy-Item src-tauri\target\release\app.exe ..\dist-win\BoenMind.exe
-          Compress-Archive -Path ..\dist-win\BoenMind.exe -DestinationPath "..\dist-win\BoenMind_${VER}_x64_portable.zip" -CompressionLevel Optimal
+          # 多文件便携形态（2026-08-16 用户拍板"前，后，skills, plugins, mcps"）：
+          # web/（前端静态资源，bm-server BOENMIND_WEB_DIR 磁盘形态 serve）
+          New-Item -ItemType Directory -Force -Path ..\dist-win\web | Out-Null
+          Copy-Item -Recurse -Force ..\dist\* ..\dist-win\web\
+          # server/（随包 bm-server.exe；壳启动优先包内，热升级 runtime 覆盖）
+          New-Item -ItemType Directory -Force -Path ..\dist-win\server | Out-Null
+          Copy-Item ..\backend\target\release\bm-server.exe ..\dist-win\server\bm-server.exe
+          # skills/ + plugins/（出厂资源随包，目录扫描替代内嵌；bm-server 本构建
+          # 仍带 embed-plugins 无副作用——便携形态下预装跳过、列表合并包内）
+          New-Item -ItemType Directory -Force -Path ..\dist-win\skills | Out-Null
+          Copy-Item -Recurse -Force ..\backend\skills\* ..\dist-win\skills\
+          New-Item -ItemType Directory -Force -Path ..\dist-win\plugins | Out-Null
+          Copy-Item -Recurse -Force ..\backend\plugins\* ..\dist-win\plugins\
+          # mcps/（本地 MCP server 资源目录，暂无出厂内容，留说明）
+          New-Item -ItemType Directory -Force -Path ..\dist-win\mcps | Out-Null
+          Set-Content -Path ..\dist-win\mcps\README.txt -Value "Put local MCP server scripts/binaries here. Reference them from Settings > MCP." -Encoding utf8
+          Compress-Archive -Path ..\dist-win\* -DestinationPath "..\dist-win\BoenMind_${VER}_x64_portable.zip" -CompressionLevel Optimal
           # 热升级 runtime 资产：独立 bm-server.exe gzip 压缩（Node zlib，runner 无 gzip 命令）
           # + 签名；归独立 tag（runtime-v$VER）发布
           New-Item -ItemType Directory -Force -Path ..\dist-win-runtime | Out-Null

@@ -35,6 +35,46 @@ fn runtime_dir() -> PathBuf {
         .join("runtime")
 }
 
+/// 便携包根：当前可执行文件所在目录中**存在 web/ 目录**时即为便携形态
+/// （2026-08-16 用户拍板多文件：web/server/skills/plugins/mcps/data）。
+/// 老单文件形态（无 web/）不设置 → bm-server 走 ~/.boenmind（行为不变）。
+fn portable_root() -> Option<PathBuf> {
+    let exe_dir = std::env::current_exe()
+        .ok()?
+        .parent()
+        .map(PathBuf::from)?;
+    exe_dir.join("web").is_dir().then_some(exe_dir)
+}
+
+/// 便携形态数据目录：包内 data/ 存在 = 完全便携（BOENMIND_HOME 指向包内）；
+/// 不存在 = 数据走用户主目录（老数据不丢）。壳只做检测与传参。
+fn portable_data_home() -> Option<PathBuf> {
+    let root = portable_root()?;
+    let data = root.join("data");
+    data.is_dir().then_some(data)
+}
+
+/// 便携形态环境变量注入（子进程与内嵌 serve 共用）：
+/// BOENMIND_PORTABLE_DIR + BOENMIND_WEB_DIR（包内 web/ 磁盘形态静态服务）+
+/// 可选 BOENMIND_HOME（包内 data/）。未设置的环境变量需显式移除，
+/// 防止上次启动残留污染本次启动。
+fn apply_portable_env() {
+    match portable_root() {
+        Some(root) => {
+            unsafe { std::env::set_var("BOENMIND_PORTABLE_DIR", &root) };
+            let web = root.join("web");
+            unsafe { std::env::set_var("BOENMIND_WEB_DIR", web) };
+            if let Some(data) = portable_data_home() {
+                unsafe { std::env::set_var("BOENMIND_HOME", data) };
+            }
+        }
+        None => {
+            unsafe { std::env::remove_var("BOENMIND_PORTABLE_DIR") };
+            unsafe { std::env::remove_var("BOENMIND_WEB_DIR") };
+        }
+    }
+}
+
 /// 扫描 runtime 目录，返回最新版本的后端二进制（无则 None）。
 /// 命名约定 `boenmind-runtime-<ver>-<triple>[.exe]`，与发布管线一致。
 fn latest_runtime_binary() -> Option<PathBuf> {
@@ -205,6 +245,8 @@ fn backend_restart(manager: tauri::State<'_, Arc<BackendManager>>) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 便携形态环境变量先于一切后端启动注入（子进程 spawn 与内嵌 serve 都读它）
+    apply_portable_env();
     let manager = Arc::new(BackendManager::default());
 
     // 启动后端（runtime 最新版优先，无则内嵌兜底）

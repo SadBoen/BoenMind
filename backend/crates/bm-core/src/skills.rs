@@ -227,31 +227,46 @@ fn fetch_skill_md(owner: &str, repo: &str, skill_id: &str) -> Option<String> {
 // ---------------------------------------------------------------------------
 
 /// 扫描管理目录返回已安装 skill 列表。
+///
+/// 便携形态（BOENMIND_PORTABLE_DIR）合并包内 skills/（出厂默认，只读随包）
+/// 与用户 ~/.boenmind/skills/；同 id 用户目录优先。
 pub fn list_skills(config: &AppConfig) -> Result<Vec<SkillInfo>, std::io::Error> {
-    let dir = skills_dir();
-    let mut out = Vec::new();
-    if !dir.exists() {
-        return Ok(out);
+    let user_dir = skills_dir();
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Some(pkg) = crate::config::portable_skills_dir() {
+        dirs.push(pkg);
     }
-    for entry in fs::read_dir(&dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if !path.is_dir() || !path.join("SKILL.md").is_file() {
+    dirs.push(user_dir);
+
+    let mut out: Vec<SkillInfo> = Vec::new();
+    for dir in &dirs {
+        if !dir.exists() {
             continue;
         }
-        let id = entry.file_name().to_string_lossy().to_string();
-        let (name, description) = describe_skill_dir(&path, &id);
-        let meta = read_meta(&path);
-        out.push(SkillInfo {
-            id: id.clone(),
-            name,
-            description,
-            owner: meta.as_ref().and_then(|m| (!m.owner.is_empty()).then(|| m.owner.clone())),
-            repo: meta.as_ref().and_then(|m| (!m.repo.is_empty()).then(|| m.repo.clone())),
-            source: meta.map(|m| m.source).unwrap_or_else(|| "local".to_string()),
-            enabled: config.enabled_skills.contains(&id),
-            settings_schema: skill_settings_schema(&id),
-        });
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if !path.is_dir() || !path.join("SKILL.md").is_file() {
+                continue;
+            }
+            let id = entry.file_name().to_string_lossy().to_string();
+            // 同 id 已收录（用户目录在后，覆盖包内）→ 跳过
+            if out.iter().any(|s| s.id == id) {
+                continue;
+            }
+            let (name, description) = describe_skill_dir(&path, &id);
+            let meta = read_meta(&path);
+            out.push(SkillInfo {
+                id: id.clone(),
+                name,
+                description,
+                owner: meta.as_ref().and_then(|m| (!m.owner.is_empty()).then(|| m.owner.clone())),
+                repo: meta.as_ref().and_then(|m| (!m.repo.is_empty()).then(|| m.repo.clone())),
+                source: meta.map(|m| m.source).unwrap_or_else(|| "local".to_string()),
+                enabled: config.enabled_skills.contains(&id),
+                settings_schema: skill_settings_schema(&id),
+            });
+        }
     }
     out.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(out)

@@ -21,6 +21,55 @@ pub const DEFAULT_WORKSPACE_DIR: &str = "BoenMind";
 /// 子代理/兼容目录（`~/.boenmind/agents`，子代理角色 + 兼容 skills）
 pub const AGENTS_DIR: &str = "agents";
 
+// ---------------------------------------------------------------------------
+// 便携版包目录（2026-08-16 用户拍板"前，后，skills, plugins, mcps"多文件形态）
+// ---------------------------------------------------------------------------
+// 便携包目录名（相对包根；包根由 BOENMIND_PORTABLE_DIR 环境变量指定——
+// 桌面壳启动后端时设置，指向 BoenMind.exe 所在目录）。
+pub const PORTABLE_WEB_DIR: &str = "web";
+pub const PORTABLE_SERVER_DIR: &str = "server";
+pub const PORTABLE_SKILLS_DIR: &str = "skills";
+pub const PORTABLE_PLUGINS_DIR: &str = "plugins";
+pub const PORTABLE_MCPS_DIR: &str = "mcps";
+pub const PORTABLE_DATA_DIR: &str = "data";
+
+/// 便携包根（None = 非便携形态，全部走 ~/.boenmind）。壳负责设置
+/// `BOENMIND_PORTABLE_DIR`；standalone/服务器版不设置 → None。
+pub fn portable_root() -> Option<PathBuf> {
+    std::env::var_os("BOENMIND_PORTABLE_DIR").map(PathBuf::from)
+}
+
+/// 包内 web/（前端静态资源；None = 非便携形态）
+pub fn portable_web_dir() -> Option<PathBuf> {
+    portable_root().map(|r| r.join(PORTABLE_WEB_DIR))
+}
+
+/// 包内 plugins/（出厂插件，目录扫描替代 embed-plugins 内嵌）
+pub fn portable_plugins_dir() -> Option<PathBuf> {
+    portable_root().map(|r| r.join(PORTABLE_PLUGINS_DIR))
+}
+
+/// 包内 skills/（出厂 skills）
+pub fn portable_skills_dir() -> Option<PathBuf> {
+    portable_root().map(|r| r.join(PORTABLE_SKILLS_DIR))
+}
+
+/// 包内 mcps/（本地 MCP server 资源目录）
+pub fn portable_mcps_dir() -> Option<PathBuf> {
+    portable_root().map(|r| r.join(PORTABLE_MCPS_DIR))
+}
+
+/// 包内 server/（随包 bm-server.exe）
+pub fn portable_server_dir() -> Option<PathBuf> {
+    portable_root().map(|r| r.join(PORTABLE_SERVER_DIR))
+}
+
+/// 数据目录（壳设置 BOENMIND_HOME 的判据）：包内 data/ 目录存在 = 完全便携
+/// （U 盘可带走）；不存在 = 数据走用户主目录（老数据不丢，免安装形态）。
+pub fn portable_data_dir() -> Option<PathBuf> {
+    portable_root().map(|r| r.join(PORTABLE_DATA_DIR))
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(default)]

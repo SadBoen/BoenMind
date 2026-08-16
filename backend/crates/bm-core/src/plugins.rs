@@ -76,43 +76,60 @@ pub fn plugins_dir() -> PathBuf {
 }
 
 /// 扫描插件目录并返回插件列表。
+///
+/// 便携形态（BOENMIND_PORTABLE_DIR）合并两个来源：包内 plugins/（出厂默认，
+/// 只读随包）+ 用户 ~/.boenmind/extensions/（用户安装与覆盖版本）；同 id 时
+/// **用户目录优先**（可覆盖出厂版本）。enabled 按配置判定（包内出厂插件同样
+/// 可被启用/禁用）。
 pub fn list_plugins(config: &AppConfig) -> Result<Vec<PluginInfo>, std::io::Error> {
-    let dir = plugins_dir();
-    let mut out = Vec::new();
-    if !dir.exists() {
-        return Ok(out);
+    let user_dir = plugins_dir();
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Some(pkg) = crate::config::portable_plugins_dir() {
+        dirs.push(pkg);
     }
-    for entry in fs::read_dir(&dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().to_string();
-        // 单文件 .ts 扩展 或 含 extension.json 的目录
-        let (id, kind, desc) = if path.is_file() {
-            if !name.ends_with(".ts") {
+    dirs.push(user_dir.clone());
+
+    let mut out: Vec<PluginInfo> = Vec::new();
+    for dir in &dirs {
+        if !dir.exists() {
+            continue;
+        }
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            // 单文件 .ts 扩展 或 含 extension.json 的目录
+            let (id, kind, desc) = if path.is_file() {
+                if !name.ends_with(".ts") {
+                    continue;
+                }
+                let id = name.strip_suffix(".ts").unwrap_or(&name).to_string();
+                (id.clone(), "single".to_string(), describe_plugin(&path, &id))
+            } else if path.is_dir() && path.join("extension.json").is_file() {
+                let id = name.clone();
+                (id, "manifest".to_string(), describe_plugin(&path, &name))
+            } else {
+                continue;
+            };
+            // 同 id 已收录（用户目录在后，覆盖包内）→ 跳过
+            if out.iter().any(|p| p.id == id) {
                 continue;
             }
-            let id = name.strip_suffix(".ts").unwrap_or(&name).to_string();
-            (id.clone(), "single".to_string(), describe_plugin(&path, &id))
-        } else if path.is_dir() && path.join("extension.json").is_file() {
-            let id = name.clone();
-            (id, "manifest".to_string(), describe_plugin(&path, &name))
-        } else {
-            continue;
-        };
-        // 插件文件/目录已被手动删除（配置残留）时，不显示为已启用
-        let enabled = config.enabled_plugins.contains(&id) && plugin_exists(&dir, &id);
-        out.push(PluginInfo {
-            id: id.clone(),
-            name: id.clone(),
-            description: desc,
-            kind,
-            enabled,
-            builtin: BUILTIN_PLUGINS.iter().any(|(bid, _)| *bid == id),
-            category: manifest_category(&path),
-            settings_schema: manifest_settings_schema(&path),
-            quota: manifest_quota(&path),
-            test_sources: manifest_test_sources(&path),
-        });
+            // 插件文件/目录已被手动删除（配置残留）时，不显示为已启用
+            let enabled = config.enabled_plugins.contains(&id) && plugin_exists(&user_dir, &id);
+            out.push(PluginInfo {
+                id: id.clone(),
+                name: id.clone(),
+                description: desc,
+                kind,
+                enabled,
+                builtin: BUILTIN_PLUGINS.iter().any(|(bid, _)| *bid == id),
+                category: manifest_category(&path),
+                settings_schema: manifest_settings_schema(&path),
+                quota: manifest_quota(&path),
+                test_sources: manifest_test_sources(&path),
+            });
+        }
     }
     out.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(out)
@@ -455,9 +472,16 @@ pub fn enabled_extension_paths(config: &AppConfig) -> Vec<PathBuf> {
 /// 内置插件同样可卸载；卸载后写入 removed_builtin_plugins，启动预装时不再恢复。
 pub fn uninstall_plugin(config: &mut AppConfig, id: &str) -> Result<(), AppError> {
     let dir = plugins_dir();
+    // 便携形态：出厂插件在包内（只读随包），卸载 = 配置移除 + 记入
+    // removed_builtin_plugins（启动预装跳过），不删包内文件。
+    let in_pkg = crate::config::portable_plugins_dir()
+        .map(|p| p.join(id).join("extension.json").is_file())
+        .unwrap_or(false);
     let file = dir.join(format!("{id}.ts"));
     let dir_plugin = dir.join(id);
-    if file.exists() {
+    if in_pkg {
+        // 包内出厂插件：仅配置移除
+    } else if file.exists() {
         fs::remove_file(&file).map_err(|e| AppError::internal(format!("删除插件文件失败: {e}")))?;
     } else if dir_plugin.exists() {
         fs::remove_dir_all(&dir_plugin)
@@ -483,6 +507,11 @@ pub fn uninstall_plugin(config: &mut AppConfig, id: &str) -> Result<(), AppError
 /// - embed 构建（服务器版）：目录型插件从二进制内嵌资源写出（部署机没有仓库路径，
 ///   此前静默失败导致服务器用户实际无插件）
 pub fn ensure_builtin_plugins(config: &AppConfig) -> Result<(), std::io::Error> {
+    // 便携形态：出厂插件随包分发（包内 plugins/，list_plugins 合并扫描），
+    // 无需预装；removed_builtin_plugins 语义由包内插件跳过启用承接。
+    if crate::config::portable_plugins_dir().is_some() {
+        return Ok(());
+    }
     let dir = plugins_dir();
     fs::create_dir_all(&dir)?;
     for (id, _desc) in BUILTIN_PLUGINS {

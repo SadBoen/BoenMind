@@ -238,9 +238,20 @@ fn router(state: AppState) -> Router {
         .layer(axum::middleware::from_fn(auth_middleware))
         .layer(cors);
 
-    // 服务器版（--features embed）：未命中的 GET 交给内嵌前端（SPA fallback）
+    // 静态资源：服务器版（--features embed）内嵌前端；便携版多文件形态
+    // （BOENMIND_WEB_DIR 环境变量，壳启动时设置）serve 包内 web/ 磁盘目录。
+    // 两者都是同源 serve SPA 与 /api，未命中 /api 的 GET 走 fallback。
     #[cfg(feature = "embed")]
     let router = router.fallback(static_files::handle_static);
+
+    #[cfg(not(feature = "embed"))]
+    let router = {
+        if std::env::var_os("BOENMIND_WEB_DIR").is_some() {
+            router.fallback(static_files::handle_static)
+        } else {
+            router
+        }
+    };
 
     router
 }
