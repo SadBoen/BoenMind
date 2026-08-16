@@ -55,10 +55,13 @@ export function saveSkinParams(id: SkinId, params: SkinParams) {
   localStorage.setItem(SKIN_PARAMS_KEY, JSON.stringify(all));
 }
 
-/** 写入参数 CSS 变量（--skin-<key>）；缺省参数不写，走皮肤 CSS 的 var() 默认值 */
+/** 写入参数 CSS 变量（--skin-<key>）；缺省参数不写，走皮肤 CSS 的 var() 默认值。
+ *  单位归一化：percent 参数（0-100）归一为 0-1 alpha 语义；hue/blur 写原始数值，
+ *  blur 单位在皮肤 CSS 里 calc(* 1px) 补上。 */
 export function applySkinParams(id: SkinId, params: SkinParams) {
   for (const p of skinById(id).params) {
-    const v = params[p.key] ?? p.default;
+    let v = params[p.key] ?? p.default;
+    if (p.format === "percent") v /= 100;
     document.documentElement.style.setProperty(`--skin-${p.key}`, String(v));
   }
 }
@@ -184,6 +187,6 @@ export async function sampleImage(src: string): Promise<ImageSample> {
 export function autoGlassParams(sample: ImageSample): { alpha: number; blur: number } {
   const delta = Math.abs(sample.lightness - 0.5); // 0 ~ 0.5
   const alpha = Math.round(55 + delta * 40); // 55% ~ 75%
-  const blur = Math.round(10 + delta * 14); // 10px ~ 24px
+  const blur = Math.round(14 + delta * 20); // 14px ~ 24px
   return { alpha, blur };
 }

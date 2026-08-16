@@ -15,7 +15,13 @@ export function SkinBackground() {
   return (
     <div aria-hidden className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
       {bg ? (
-        <img src={bg.value} alt="" className="h-full w-full object-cover" />
+        // brightness/saturate 提亮背景图：半透明白压层会吃掉暖色，先补回来
+        <img
+          src={bg.value}
+          alt=""
+          className="h-full w-full object-cover"
+          style={{ filter: "brightness(1.12) saturate(1.18)" }}
+        />
       ) : (
         <div
           className="h-full w-full"
