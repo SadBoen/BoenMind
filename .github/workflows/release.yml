@@ -13,13 +13,16 @@
 name: Release
 
 on:
+  # 2026-08-16：移除 main 每提交自动触发——每提交质量门由本地 pre-push 钩子
+  # （hooks/pre-push，测试 + clippy + 前端构建）覆盖，CI 随提交跑持续消耗
+  # GitHub Actions 免费额度（额度耗尽后整页失败记录，用户拍板停用）。
+  # CI 只在打 tag（全量发布）或 workflow_dispatch（试跑）时运行。
   push:
-    branches: ["main"] # 日常 push 只跑质量门（4 并行 job）
-    tags: ["v*"]       # 打 tag 全量构建发布
+    tags: ["v*"] # 打 tag 全量构建发布
   workflow_dispatch: {}
 
-# 同一 ref 连续 push 时取消旧轮（质量门只看最新提交；避免多轮排队全跑浪费）。
-# tag ref 与 main 的 group 不同，不影响发布构建。
+# 同一 ref 连续触发时取消旧轮（避免多轮排队全跑浪费）。
+# tag ref 各自成组互不干扰。
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -34,42 +37,16 @@ env:
 
 jobs:
   # ============================================================
-  # 改动检测：按路径决定质量门哪些 job 需要跑（纯 docs 提交跳过
-  # Rust 编译，省 20 分钟空转）。workflow_dispatch / tag 时无 base
-  # diff，paths-filter 保守按"全改动"处理 → 质量门全跑。
-  # ============================================================
-  changes:
-    name: 改动检测
-    runs-on: ubuntu-24.04
-    outputs:
-      backend: ${{ steps.filter.outputs.backend }}
-      frontend: ${{ steps.filter.outputs.frontend }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dorny/paths-filter@v3
-        id: filter
-        with:
-          filters: |
-            backend:
-              - 'backend/**'
-              - '.github/**'
-            frontend:
-              - 'frontend/**'
-              - '.github/**'
-
-  # ============================================================
   # 质量门：后端测试 / 后端 clippy（-D warnings）/ 前端 strict 类型检查 + lint。
-  # 拆 4 个并行 job（无 needs 依赖）：push main 全跑，任一红即拦；
-  # 打 tag / 手动触发时与构建链并行，不阻塞发布构建。
-  # 构建前拦截回归（曾出现 0 测试、CI 只验证"能编译"的问题）。
-  # 纯 docs 提交时 Rust job 经 changes 检测跳过。
+  # 拆 4 个并行 job（无 needs 依赖），仅在打 tag / workflow_dispatch 时运行，
+  # 与构建链并行、不阻塞发布构建。构建前拦截回归（曾出现 0 测试、
+  # CI 只验证"能编译"的问题）。每提交质量门由本地 pre-push 钩子覆盖
+  # （2026-08-16 起 CI 不再随 main push 触发，省免费额度）。
   # ============================================================
   # ---------- quality-test：后端测试 ----------
   quality-test:
     name: 质量门 - 后端测试
-    needs: [changes]
-    if: needs.changes.outputs.backend == 'true' || github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
     # 自托管：VMware Debian（debian-coding，6 核/20G，cargo rsproxy 镜像）——
     # 磁盘/工具链缓存常驻，测速后定论（2026-08-15 起，之前 ubuntu-24.04 20min）
     runs-on: [self-hosted, Linux, X64]
@@ -109,8 +86,7 @@ jobs:
   # ---------- quality-clippy：存量 crate（编译最重的一档，单独成 job） ----------
   quality-clippy:
     name: 质量门 - 后端 clippy（存量）
-    needs: [changes]
-    if: needs.changes.outputs.backend == 'true' || github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, Linux, X64]
     # 同 quality-test 的磁盘治理：clippy 也整树编译一遍，同样关 debuginfo + 增量缓存。
     env:
@@ -136,8 +112,7 @@ jobs:
   # ---------- quality-clippy-kernel：内核四件套 + bm-compat ----------
   quality-clippy-kernel:
     name: 质量门 - 后端 clippy（内核 + bm-compat）
-    needs: [changes]
-    if: needs.changes.outputs.backend == 'true' || github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, Linux, X64]
     # 同 quality-test 的磁盘治理：clippy 也整树编译一遍，同样关 debuginfo + 增量缓存。
     env:
@@ -171,8 +146,7 @@ jobs:
   # ---------- quality-frontend：前端 strict 类型检查 + lint ----------
   quality-frontend:
     name: 质量门 - 前端 (strict 类型检查 + lint)
-    needs: [changes]
-    if: needs.changes.outputs.frontend == 'true' || github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -204,7 +178,7 @@ jobs:
   macos:
     name: macOS (Apple Silicon)
     runs-on: macos-14
-    # 日常 push main 只跑质量门；构建/发布仅在打 tag 或手动触发
+    # 构建/发布仅在打 tag 或手动触发（2026-08-16 起 main push 不再触发 CI）
     # 说明：v0.1.2 起不再发布 Intel (x86_64) 版（用户明确要求；Intel Mac 可继续用 v0.1.1）
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     steps:
