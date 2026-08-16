@@ -8,6 +8,8 @@
 //! 反向 MCP server：`--mcp-serve` 以 stdio MCP server 身份运行（同
 //! subagent 模式——stdout 是协议通道，不初始化 tracing）。
 
+use tracing_subscriber::prelude::*;
+
 #[tokio::main]
 async fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -24,11 +26,16 @@ async fn main() {
         });
     }
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
+    // 日志双通道：stdout fmt（现状）+ 内存环形缓冲（设置中心「日志」页）。
+    // 缓冲只收已通过 EnvFilter 的事件（默认 info,bm_server=debug）。
+    let log_buffer = bm_server::log_buffer::LogBuffer::install();
+    tracing_subscriber::registry()
+        .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,bm_server=debug")),
         )
+        .with(tracing_subscriber::fmt::layer())
+        .with(bm_server::log_buffer::BufferLayer::new(log_buffer))
         .init();
 
     let port = std::env::var("BOENMIND_PORT")

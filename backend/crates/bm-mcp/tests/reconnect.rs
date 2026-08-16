@@ -33,6 +33,7 @@ fn echo_config(js: PathBuf) -> McpServerConfig {
         url: None,
         headers: Default::default(),
         tool_timeout_ms: Some(10_000),
+        scopes: vec![],
     }
 }
 

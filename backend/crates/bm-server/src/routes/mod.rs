@@ -4,6 +4,7 @@
 pub mod apps;
 pub mod config;
 pub mod experts;
+pub mod logs;
 pub mod mcp;
 pub mod pdf_omni;
 pub mod plugins;

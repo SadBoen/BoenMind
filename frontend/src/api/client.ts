@@ -46,8 +46,7 @@ export interface AppConfig {
 }
 
 /** 每软件 APP 的专属配置（设置架构 §五） */
-export interface AppProfile {
-  /** 该 APP 默认专家预设 id（None = 未绑定） */
+export interface AppProfile {  /** 该 APP 默认专家预设 id（None = 未绑定） */
   expert?: string;
   /** 记忆桶（None = APP 默认） */
   memory?: string;
@@ -71,6 +70,17 @@ export interface ExpertDef {
   system_prompt: string;
   /** 出厂预置（禁删） */
   builtin: boolean;
+}
+
+/** 日志条目（设置中心「日志」页；后端内存环形缓冲） */
+export interface LogEntry {
+  /** Unix 毫秒时间戳 */
+  ts_ms: number;
+  level: string;
+  /** 来源模块（tracing target） */
+  target: string;
+  /** 格式化消息 */
+  message: string;
 }
 
 export interface Session {
@@ -624,6 +634,17 @@ export const api = {
     }),
   deleteExpert: (id: string) =>
     request<{ ok: boolean }>(`/api/experts/${id}`, { method: "DELETE" }),
+
+  /** 设置中心「日志」页：内存环形日志（level = 最低级别，q = 关键字，最新在前） */
+  logs: (params?: { level?: string; q?: string; limit?: number; offset?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.level) qs.set("level", params.level);
+    if (params?.q) qs.set("q", params.q);
+    if (params?.limit) qs.set("limit", String(params.limit));
+    if (params?.offset) qs.set("offset", String(params.offset));
+    const suffix = qs.size > 0 ? `?${qs.toString()}` : "";
+    return request<{ entries: LogEntry[] }>(`/api/logs${suffix}`);
+  },
 
   /** 每软件 APP 专属配置（专家绑定/记忆/工作区） */
   putAppProfile: (appId: string, body: AppProfile) =>

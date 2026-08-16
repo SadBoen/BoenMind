@@ -29,6 +29,7 @@ async fn main() {
             url: Some(url.clone()),
             headers: Default::default(),
             tool_timeout_ms: Some(30_000),
+            scopes: vec![],
         },
         [_, js, dir] => McpServerConfig {
             name: "probe".into(),
@@ -39,6 +40,7 @@ async fn main() {
             url: None,
             headers: Default::default(),
             tool_timeout_ms: Some(30_000),
+            scopes: vec![],
         },
         _ => {
             eprintln!("用法: probe_stdio <server_js> <workdir> | probe_stdio --http <url>");

@@ -20,6 +20,7 @@ import {
   MonitorCog,
   Palette,
   Puzzle,
+  ScrollText,
   Settings,
   Users,
   Wand2,
@@ -27,6 +28,7 @@ import {
 import { CodingApp } from "@/components/coding/CodingApp";
 import { DockLayout } from "@/components/layout/DockLayout";
 import { SettingsMenu } from "@/components/settings/SettingsMenu";
+import { LogsSettings } from "@/components/settings/LogsSettings";
 import { AboutSettings } from "@/components/settings/AboutSettings";
 import { AppearanceSettings } from "@/components/settings/AppearanceSettings";
 import { AppSettings } from "@/components/settings/AppSettings";
@@ -198,6 +200,7 @@ export type SettingsTab =
   | "app-chat"
   | "app-coding"
   | "experts"
+  | "logs"
   | "appearance"
   | "mcp"
   | "providers"
@@ -242,6 +245,12 @@ export const SETTINGS: Record<SettingsTab, SettingsEntry> = {
     descKey: "settings.menu.expertsDesc",
     icon: <Users size={16} />,
     component: ExpertsSettings,
+  },
+  logs: {
+    labelKey: "settings.menu.logs",
+    descKey: "settings.menu.logsDesc",
+    icon: <ScrollText size={16} />,
+    component: LogsSettings,
   },
   mcp: {
     labelKey: "settings.menu.mcp",

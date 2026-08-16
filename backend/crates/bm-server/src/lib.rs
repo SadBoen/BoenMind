@@ -15,6 +15,8 @@ pub mod mcp_serve;
 pub mod chat;
 pub mod compat_engine;
 pub mod governance;
+// 设置中心「日志」页：内存环形日志缓冲（tracing Layer 收集 + /api/logs 查询）
+pub mod log_buffer;
 pub mod pdf_omni;
 // B6 — 插件权限决策记忆（extension-permissions.json，格式兼容 pi 上游）
 pub mod permission_store;
@@ -193,6 +195,7 @@ fn router(state: AppState) -> Router {
         .route("/api/skills/{id}/settings", get(routes::skills::get_skill_settings).put(routes::skills::put_skill_settings))
         .route("/api/skills/{id}/scope", put(routes::skills::put_skill_scope))
         .route("/api/experts", get(routes::experts::list_experts))
+        .route("/api/logs", get(routes::logs::get_logs))
         .route(
             "/api/experts/{id}",
             get(routes::experts::get_expert)

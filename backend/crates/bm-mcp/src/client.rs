@@ -540,6 +540,7 @@ mod tests {
             url: None,
             headers: Default::default(),
             tool_timeout_ms: None,
+            scopes: vec![],
         };
         assert!(ok.validate().is_ok());
 
@@ -564,6 +565,7 @@ mod tests {
             url: None,
             headers: Default::default(),
             tool_timeout_ms: None,
+            scopes: vec![],
         };
         assert!(no_url.validate().is_err());
     }
