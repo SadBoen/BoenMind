@@ -147,11 +147,14 @@ export function ChatInput({ compact = false }: { compact?: boolean }) {
         {/* 插入排队提示条：流式中发送的消息不打断生成，回复完成后自动接续 */}
         {queuedMessage && (
           <div
-            className="mb-1.5 flex items-center justify-between gap-2 rounded-lg border bg-muted/50 px-2.5 py-1.5"
+            className="mb-1.5 flex items-center justify-between gap-2 rounded-[14px] border bg-muted/50 px-2.5 py-1.5"
             title={t("chat.input.queuedTitle")}
           >
-            <span className="min-w-0 truncate text-xs text-muted-foreground">
-              {t("chat.input.queued", { text: queuedMessage.text })}
+            <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+              <Clock size={12} className="shrink-0" />
+              <span className="truncate">
+                {t("chat.input.queued", { text: queuedMessage.text })}
+              </span>
             </span>
             <Button
               variant="ghost"
@@ -163,8 +166,9 @@ export function ChatInput({ compact = false }: { compact?: boolean }) {
             </Button>
           </div>
         )}
-        {/* 输入框（含内部下边缘工具条） */}
-        <div className="rounded-xl border bg-background shadow-sm transition-shadow focus-within:shadow-md focus-within:ring-1 focus-within:ring-ring">
+        {/* 输入框（含内部下边缘工具条）。容器视觉对齐 hermes-webui composer：
+            14px 圆角 + 聚焦 2px 强调环（accent 色系 ring），聚焦反馈更明确 */}
+        <div className="rounded-[14px] border bg-background shadow-sm transition-shadow focus-within:shadow-md focus-within:ring-2 focus-within:ring-ring/60">
           <Textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
@@ -330,7 +334,7 @@ export function ChatInput({ compact = false }: { compact?: boolean }) {
                     <Button
                       size="icon"
                       disabled
-                      className="ml-0.5 h-7 w-7 rounded-lg"
+                      className="ml-0.5 h-7 w-7 rounded-lg disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100"
                       title={t("chat.input.queuedTitle")}
                     >
                       <Clock size={15} />
@@ -359,7 +363,7 @@ export function ChatInput({ compact = false }: { compact?: boolean }) {
               ) : (
                 <Button
                   size="icon"
-                  className="ml-0.5 h-7 w-7 rounded-lg"
+                  className="ml-0.5 h-7 w-7 rounded-lg disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100"
                   onClick={() => void submit()}
                   disabled={!canSend}
                   title={t("chat.input.send")}
