@@ -1,0 +1,28 @@
+# 在线编译探测：不打安装包，只在 GitHub 上 cargo check。
+# 给 VPS 编程 APP / gh workflow run 用，避免在 2 核机器上编产品。
+
+name: 在线编译
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: online-compile-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-check:
+    name: cargo check (bm-server)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2.9.1
+        with:
+          workspaces: backend
+      - name: cargo check
+        working-directory: backend
+        run: cargo check -p bm-server --lib
