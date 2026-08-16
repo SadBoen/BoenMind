@@ -338,6 +338,14 @@ jobs:
           New-Item -ItemType Directory -Force -Path ..\dist-win | Out-Null
           # 二进制名来自 Cargo package name（app.exe），对外重命名为 BoenMind.exe
           Copy-Item src-tauri\target\release\app.exe ..\dist-win\BoenMind.exe
+          # WebView2Loader.dll 必须与 exe 同目录：tauri Windows exe 动态依赖该
+          # loader（其职责是定位系统 WebView2 运行时），构建时产在
+          # target/release/ 下。便携包漏拷则解压后启动即报"找不到
+          # webview2loader.dll"（v0.1.2/v0.1.3 便携包均因此不可用）。
+          Copy-Item src-tauri\target\release\WebView2Loader.dll ..\dist-win\WebView2Loader.dll
+          if (-not (Test-Path ..\dist-win\WebView2Loader.dll)) {
+            throw "WebView2Loader.dll 未随构建产出——便携包缺此文件将无法启动"
+          }
           # 多文件便携形态（2026-08-16 用户拍板"前，后，skills, plugins, mcps"）：
           # web/（前端静态资源，bm-server BOENMIND_WEB_DIR 磁盘形态 serve）
           New-Item -ItemType Directory -Force -Path ..\dist-win\web | Out-Null
@@ -568,7 +576,8 @@ jobs:
 
             **Windows（便携版，免安装）**
             - `BoenMind_*_x64_portable.zip` 解压运行 `BoenMind.exe`
-            - 依赖系统 WebView2（Win10/11 自带；老版本 Win10 需自行安装 WebView2 Runtime）
+            - 依赖系统 WebView2 Runtime（Win10/11 自带；老版本 Win10 需自行安装）；
+              WebView2Loader.dll 已随包提供，无需手动配置
             - 壳（外框）更新需手动下载新版便携包
             - 内置插件（ctx-compactor 压缩 / web-search 搜索 / refine-suggest 改进建议）随程序预装，默认启用
 
