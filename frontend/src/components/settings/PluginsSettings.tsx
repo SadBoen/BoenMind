@@ -228,7 +228,7 @@ export function PluginsSettings() {
           <Badge key="kind" variant="outline" className="text-[10px] font-normal">
             {plugin.kind === "single" ? t("settings.plugins.singleFile") : t("settings.plugins.manifestDir")}
           </Badge>,
-          <ScopeBadge key="scope" scopes={config?.pluginScopes?.[plugin.id]} />,
+          <ScopeBadge key="scope" scopes={config?.plugin_scopes?.[plugin.id]} />,
         ]}
         extraActions={(plugin) => (
           <>
@@ -236,7 +236,7 @@ export function PluginsSettings() {
               <ScopePicker
                 key="scope"
                 name={plugin.name}
-                current={config?.pluginScopes?.[plugin.id]}
+                current={config?.plugin_scopes?.[plugin.id]}
                 onSave={async (scopes) => {
                   await api.setPluginScope(plugin.id, scopes);
                   await useAppStore.getState().loadConfig();

@@ -52,7 +52,7 @@ export function SkillSettingsDialog({
   /** 待清除的 secret 字段（提交时带 __clear.<key> 标记） */
   const [clears, setClears] = useState<Set<string>>(new Set());
 
-  const schema = skill.settingsSchema ?? EMPTY_SCHEMA;
+  const schema = skill.settings_schema ?? EMPTY_SCHEMA;
 
   // 非 group 字段按点分前缀分组（平铺渲染）
   const groups = useMemo(() => {

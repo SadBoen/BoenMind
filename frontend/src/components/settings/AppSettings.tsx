@@ -50,8 +50,8 @@ export function AppSettings({ appId }: { appId: string }) {
   };
 
   // 该 APP 独有扩展（作用域 = 本 APP 的插件与 skill）
-  const exclusivePlugins = Object.entries(config?.pluginScopes ?? {}).filter(([, v]) => v.includes(appId));
-  const exclusiveSkills = Object.entries(config?.skillScopes ?? {}).filter(([, v]) => v.includes(appId));
+  const exclusivePlugins = Object.entries(config?.plugin_scopes ?? {}).filter(([, v]) => v.includes(appId));
+  const exclusiveSkills = Object.entries(config?.skill_scopes ?? {}).filter(([, v]) => v.includes(appId));
   const profile = config?.apps?.[appId];
   const appName = t(`settings.menu.app${appId === "chat" ? "Chat" : "Coding"}`);
 

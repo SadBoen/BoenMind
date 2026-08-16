@@ -38,9 +38,9 @@ export interface AppConfig {
   /** YOLO 开关：放行 exec/env 等危险能力 */
   extension_allow_dangerous?: boolean;
   /** 插件作用域（设置架构 §八）：插件 id → 生效 APP 列表（空/缺失 = 公共） */
-  pluginScopes?: Record<string, string[]>;
+  plugin_scopes?: Record<string, string[]>;
   /** skill 作用域（同上） */
-  skillScopes?: Record<string, string[]>;
+  skill_scopes?: Record<string, string[]>;
   /** 每软件 APP 专属配置（单源 config.toml 的 [apps.<id>] 段） */
   apps?: Record<string, AppProfile>;
 }
@@ -232,7 +232,7 @@ export interface SkillInfo {
   source: string;
   enabled: boolean;
   /** 设置 schema（skill 目录 settings.json 声明，与插件 settings 数组同构）；无则无设置页 */
-  settingsSchema?: SettingField[];
+  settings_schema?: SettingField[];
 }
 
 /** 设置表单值（插件/SKILL 设置共用的扁平值类型） */

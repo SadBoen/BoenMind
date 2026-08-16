@@ -133,6 +133,11 @@ APP 独有扩展（scope: chat/coding）→ 只进该 APP 会话工具面
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | 1 | 桌面形态退役（删代码、留开关、简化外观页） | ✅ 2026-08-16：desktop 8 文件删 7 留 StatusBar→shared；store 删 wallpaper/窗口状态；外观页留切换开关（点桌面仅 toast）；i18n/壁纸 CSS 清理；tsc+build 通过 |
+| 2 | 扩展统一设置模式（SKILL settings.json + MCP env 表单；插件保持） | ✅ 2026-08-16：plugin_settings 泛化文件版；SKILL settings.json 声明 + settings.value.json 存值；GET/PUT /api/skills/{id}/settings；MCP connect 同名先断开重连 + GET configs + env/headers 编辑器 + 编辑回填 |
+| 3 | 作用域（manifest scopes + 引擎按 session.app 过滤 + 前端徽标/编辑） | ✅ 2026-08-16：config.toml plugin_scopes/skill_scopes + MCP scopes；CompatEngine 工具归属表 + tools_for_app；引擎按 session.app 过滤插件/MCP 工具与 SKILL 注入；ScopePicker 徽标+编辑（资深模式）；PUT /api/{plugins,skills}/{id}/scope |
+| 4 | 专家预设页 + 编程三专家预置 + per-app 设置页（[apps] 段 + 双入口） | ✅ 2026-08-16：bm-core experts 模块（agents/*.md 管理面）+ architect/coder/reviewer 预置；专家 API；设置中心两级分组（应用/系统）；ExpertsSettings 页；AppSettings 通用 per-app 页（专家绑定/独有扩展/记忆/工作区）；[apps.<id>] 单源段 |
+| 5 | 普通/资深分级机制 + 高级项收尾 | ✅ 2026-08-16：右上角 标准/资深 开关（localStorage，默认标准）；tab 级 tier（管家页资深）；外观高级组（强调色 5 色板 + 减少动画）；作用域编辑按钮资深才显示 |
+| 6 | 可选：设置搜索、外观配置导入导出、主题插件化 | ⬜ 待续 |
 | 2 | 扩展统一设置模式（SKILL settings.json + MCP env 表单；插件保持） | ⬜ |
 | 3 | 作用域（manifest scopes + 引擎按 session.app 过滤 + 前端徽标/编辑） | ⬜ |
 | 4 | 专家预设页 + 编程三专家预置 + per-app 设置页（[apps] 段 + AppEntry.settingsComponent + 双入口） | ⬜ |

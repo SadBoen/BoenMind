@@ -194,7 +194,7 @@ export function SkillsSettings() {
                 </Badge>,
               ]
             : []),
-          <ScopeBadge key="scope" scopes={config?.skillScopes?.[skill.id]} />,
+          <ScopeBadge key="scope" scopes={config?.skill_scopes?.[skill.id]} />,
         ]}
         toggle={(skill) => void toggle(skill)}
         uninstall={(skill) => void uninstall(skill)}
@@ -204,14 +204,14 @@ export function SkillsSettings() {
               <ScopePicker
                 key="scope"
                 name={skill.name}
-                current={config?.skillScopes?.[skill.id]}
+                current={config?.skill_scopes?.[skill.id]}
                 onSave={async (scopes) => {
                   await api.setSkillScope(skill.id, scopes);
                   await useAppStore.getState().loadConfig();
                 }}
               />
             )}
-            {skill.settingsSchema ? (
+            {skill.settings_schema ? (
               <Button
                 key="settings"
                 type="button"
