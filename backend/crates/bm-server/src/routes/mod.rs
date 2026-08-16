@@ -1,7 +1,9 @@
 //! REST 路由（按领域拆分）：config / sessions / plugins / skills / providers / workspace / updates / steward / todos / terminal。
 //! 共享类型 ApiResult / api_error / SharedState 在 crate 根（lib.rs）。
 
+pub mod apps;
 pub mod config;
+pub mod experts;
 pub mod mcp;
 pub mod pdf_omni;
 pub mod plugins;

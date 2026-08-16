@@ -7,6 +7,7 @@ pub mod compaction;
 pub mod config;
 pub mod db;
 pub mod error;
+pub mod experts;
 mod http_util;
 pub mod plugin_settings;
 pub mod plugin_test;

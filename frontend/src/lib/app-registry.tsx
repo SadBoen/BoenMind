@@ -21,6 +21,7 @@ import {
   Palette,
   Puzzle,
   Settings,
+  Users,
   Wand2,
 } from "lucide-react";
 import { CodingApp } from "@/components/coding/CodingApp";
@@ -28,6 +29,8 @@ import { DockLayout } from "@/components/layout/DockLayout";
 import { SettingsMenu } from "@/components/settings/SettingsMenu";
 import { AboutSettings } from "@/components/settings/AboutSettings";
 import { AppearanceSettings } from "@/components/settings/AppearanceSettings";
+import { AppSettings } from "@/components/settings/AppSettings";
+import { ExpertsSettings } from "@/components/settings/ExpertsSettings";
 import { McpSettings } from "@/components/settings/McpSettings";
 import { PluginsSettings } from "@/components/settings/PluginsSettings";
 import { ProviderSettings } from "@/components/settings/ProviderSettings";
@@ -37,6 +40,14 @@ import { StewardSettings } from "@/components/settings/StewardSettings";
 import { WorkspaceSettings } from "@/components/settings/WorkspaceSettings";
 import { useAppStore } from "@/stores/app-store";
 import { FolderOpen } from "lucide-react";
+
+/** 每软件 APP 的专属设置页（AppSettings 按 appId 渲染） */
+export function AppSettingsChat() {
+  return <AppSettings appId="chat" />;
+}
+export function AppSettingsCoding() {
+  return <AppSettings appId="coding" />;
+}
 
 export type AppId = "chat" | "coding" | "wiki" | "settings" | "plugins" | "steward";
 
@@ -183,6 +194,9 @@ function StewardAppView() {
 }
 
 export type SettingsTab =
+  | "app-chat"
+  | "app-coding"
+  | "experts"
   | "appearance"
   | "mcp"
   | "providers"
@@ -198,10 +212,34 @@ export interface SettingsEntry {
   descKey: string;
   icon: ReactNode;
   component: ComponentType;
+  /** 设置菜单分组（设置架构 2026-08-16）：app = 每软件 APP 设置；system = 全局设置 */
+  group?: "app" | "system";
 }
 
 /** 设置页注册表（表内顺序即设置菜单顺序；新增 SettingsTab 必须在此登记） */
 export const SETTINGS: Record<SettingsTab, SettingsEntry> = {
+  // ── 应用组：每软件 APP 的专属设置（设置架构 2026-08-16）──
+  "app-chat": {
+    labelKey: "settings.menu.appChat",
+    descKey: "settings.menu.appChatDesc",
+    icon: <MessageSquare size={16} />,
+    component: AppSettingsChat,
+    group: "app",
+  },
+  "app-coding": {
+    labelKey: "settings.menu.appCoding",
+    descKey: "settings.menu.appCodingDesc",
+    icon: <Code2 size={16} />,
+    component: AppSettingsCoding,
+    group: "app",
+  },
+  // ── 系统组：全局设置 ──
+  experts: {
+    labelKey: "settings.menu.experts",
+    descKey: "settings.menu.expertsDesc",
+    icon: <Users size={16} />,
+    component: ExpertsSettings,
+  },
   mcp: {
     labelKey: "settings.menu.mcp",
     descKey: "settings.menu.mcpDesc",

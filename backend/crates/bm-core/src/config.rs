@@ -76,6 +76,24 @@ pub struct AppConfig {
     /// skill 作用域（同上；注入面 = system prompt 的 available_skills 块）
     #[serde(default)]
     pub skill_scopes: HashMap<String, Vec<String>>,
+    /// 每 APP 专属配置（设置架构 §五；单源 config.toml 内分段，底层引擎共用一套）：
+    /// appId（chat/coding/…）→ 专家绑定/记忆/工作区覆盖
+    #[serde(default)]
+    pub apps: HashMap<String, AppProfile>,
+}
+
+/// 每软件 APP 的专属配置（单源 config.toml 的 `[apps.<id>]` 段）。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AppProfile {
+    /// 该 APP 默认专家预设 id（~/.boenmind/agents/*.md；None = 未绑定）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expert: Option<String>,
+    /// 记忆桶（None = APP 默认；如编程 = 按项目分桶）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory: Option<String>,
+    /// 工作目录覆盖（None = 全局 working_dir / 项目切换）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub working_dir: Option<String>,
 }
 
 /// 作用域匹配：作用域空/含 `*` = 公共（任何 APP 生效）；否则要求包含 app。
@@ -221,21 +239,29 @@ pub fn migrate_legacy_agent_dir() -> std::io::Result<()> {
     Ok(())
 }
 
-/// 预置子代理角色定义（`<agents_dir>/agents/*.md`，上游 subagent 工具的
-/// 角色来源）。仅创建目录与首个 `default.md`，已存在/用户自定义的绝不覆盖。
+/// 预置子代理角色/专家定义（`<agents_dir>/agents/*.md`，上游 subagent 工具的
+/// 角色来源 + 专家预设池）。逐个创建，已存在/用户自定义的绝不覆盖。
 pub fn ensure_builtin_agents() -> Result<(), std::io::Error> {
     use std::io::Write;
 
     migrate_legacy_agent_dir()?;
     let dir = agents_dir().join("agents");
     fs::create_dir_all(&dir)?;
-    let default_path = dir.join("default.md");
-    if default_path.exists() {
-        return Ok(());
+    let builtins: [(&str, &str); 4] = [
+        ("default", DEFAULT_AGENT_DEFINITION),
+        ("architect", ARCHITECT_AGENT_DEFINITION),
+        ("coder", CODER_AGENT_DEFINITION),
+        ("reviewer", REVIEWER_AGENT_DEFINITION),
+    ];
+    for (name, content) in builtins {
+        let path = dir.join(format!("{name}.md"));
+        if path.exists() {
+            continue;
+        }
+        // frontmatter 字段对齐上游 subagents.rs 解析（name/description/tools/model/reasoning）
+        let mut f = fs::File::create(&path)?;
+        f.write_all(content.as_bytes())?;
     }
-    // frontmatter 字段对齐上游 subagents.rs 解析（name/description/tools/model/reasoning）
-    let mut f = fs::File::create(&default_path)?;
-    f.write_all(DEFAULT_AGENT_DEFINITION.as_bytes())?;
     Ok(())
 }
 
@@ -262,6 +288,64 @@ tools: read,bash,edit,write,grep,find,ls,hashline_edit
 - 不修改工作区 .boenmind 目录下的任何文件。
 "#;
 
+/// 编程专家预置①：架构师（方案与设计，只读 + 写方案文档）
+const ARCHITECT_AGENT_DEFINITION: &str = r#"---
+name: architect
+description: 架构师：需求拆解、方案设计、代码结构决策与技术评审。用于编程 APP 的设计与规划任务
+tools: read,grep,find,ls,write
+---
+你是 BoenMind 的架构师专家，负责设计而非实现。
+
+职责：
+1. 把需求拆解为可执行的方案：模块划分、数据流、接口契约、里程碑；
+2. 评审现有代码结构，指出设计问题与改进路径（含取舍与风险）；
+3. 输出简洁的决策记录（选型理由、备选方案、未决项）。
+
+行为准则：
+- 只读代码与写方案文档；不直接修改业务实现代码；
+- 方案需要落地时，明确指出应交给 coder 专家实现的部分；
+- 不确定时明确说明，不臆造接口与假设。
+"#;
+
+/// 编程专家预置②：码农（按方案实现，全工具面）
+const CODER_AGENT_DEFINITION: &str = r#"---
+name: coder
+description: 码农：按方案实现代码、修 bug（全工具面，写完跑构建/测试验证）
+tools: read,bash,edit,write,grep,find,ls,hashline_edit
+---
+你是 BoenMind 的码农专家，负责把方案变成可运行的代码。
+
+职责：
+1. 按架构师方案或明确需求实现代码，保持既有代码风格；
+2. 修 bug 先复现定位，再最小改动修复，并补测试；
+3. 完成后跑构建/测试验证，附验证输出摘要。
+
+行为准则：
+- 不擅自扩大改动范围；设计取舍不确定时先问主代理；
+- 改动遵循"最小可验证"：一次提交一个关注点；
+- 不修改工作区 .boenmind 目录下的任何文件。
+"#;
+
+/// 编程专家预置③：审查者（质量把关，只读 + 跑测试）
+const REVIEWER_AGENT_DEFINITION: &str = r#"---
+name: reviewer
+description: 审查者：代码审查、测试验证与质量报告（只读 + 跑测试/静态检查）
+tools: read,grep,find,ls,bash
+---
+你是 BoenMind 的审查者专家，负责把质量关。
+
+职责：
+1. 审查代码：正确性、边界条件、安全隐患、可维护性、与需求的一致性；
+2. 运行测试与静态检查验证改动（只读环境 + 执行验证命令）；
+3. 输出结构化审查报告：按严重度列出问题（位置、原因、建议），
+   并明确"通过 / 需修复后复审"的结论。
+
+行为准则：
+- 只读代码与执行验证命令，不修改任何文件；
+- 问题交回实现方修复；复审查看修复是否到位；
+- 不确定时明确说明，不放过可疑点也不夸大风险。
+"#;
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -285,6 +369,7 @@ impl Default for AppConfig {
             mcp: None,
             plugin_scopes: HashMap::new(),
             skill_scopes: HashMap::new(),
+            apps: HashMap::new(),
         }
     }
 }
@@ -453,6 +538,7 @@ mod tests {
         let config = AppConfig {
             plugin_scopes: HashMap::new(),
             skill_scopes: HashMap::new(),
+            apps: HashMap::new(),
             providers: vec![
                 ProviderConfig {
                     id: "a".into(),

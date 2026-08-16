@@ -41,6 +41,36 @@ export interface AppConfig {
   pluginScopes?: Record<string, string[]>;
   /** skill 作用域（同上） */
   skillScopes?: Record<string, string[]>;
+  /** 每软件 APP 专属配置（单源 config.toml 的 [apps.<id>] 段） */
+  apps?: Record<string, AppProfile>;
+}
+
+/** 每软件 APP 的专属配置（设置架构 §五） */
+export interface AppProfile {
+  /** 该 APP 默认专家预设 id（None = 未绑定） */
+  expert?: string;
+  /** 记忆桶（None = APP 默认） */
+  memory?: string;
+  /** 工作目录覆盖（None = 全局配置/项目切换） */
+  working_dir?: string;
+}
+
+/** 专家预设（设置架构 §六）：与 subagent 角色同池的 agents/*.md */
+export interface ExpertDef {
+  name: string;
+  description: string;
+  model?: string;
+  reasoning?: string;
+  /** 工具子集（None = 全部） */
+  tools?: string[];
+  /** 允许的扩展子集（插件/SKILL id；None = 不限制） */
+  extensions?: string[];
+  /** 记忆桶 */
+  memory?: string;
+  /** 角色提示词正文 */
+  system_prompt: string;
+  /** 出厂预置（禁删） */
+  builtin: boolean;
 }
 
 export interface Session {
@@ -570,6 +600,27 @@ export const api = {
     request<{ ok: boolean }>(`/api/skills/${id}/scope`, {
       method: "PUT",
       body: JSON.stringify({ scopes }),
+    }),
+
+  /** 专家预设：列表 / 读取 / 写（创建+更新）/ 删除（预置禁删） */
+  listExperts: () => request<ExpertDef[]>("/api/experts"),
+  getExpert: (id: string) => request<ExpertDef>(`/api/experts/${id}`),
+  putExpert: (
+    id: string,
+    body: Omit<ExpertDef, "name" | "builtin">,
+  ) =>
+    request<{ ok: boolean }>(`/api/experts/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  deleteExpert: (id: string) =>
+    request<{ ok: boolean }>(`/api/experts/${id}`, { method: "DELETE" }),
+
+  /** 每软件 APP 专属配置（专家绑定/记忆/工作区） */
+  putAppProfile: (appId: string, body: AppProfile) =>
+    request<{ ok: boolean }>(`/api/apps/${appId}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
     }),
 
   listRefinementSuggestions: (status?: string) =>

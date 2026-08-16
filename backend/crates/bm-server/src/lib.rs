@@ -191,6 +191,14 @@ fn router(state: AppState) -> Router {
         .route("/api/skills/{id}", post(routes::skills::set_skill).delete(routes::skills::uninstall_skill))
         .route("/api/skills/{id}/settings", get(routes::skills::get_skill_settings).put(routes::skills::put_skill_settings))
         .route("/api/skills/{id}/scope", put(routes::skills::put_skill_scope))
+        .route("/api/experts", get(routes::experts::list_experts))
+        .route(
+            "/api/experts/{id}",
+            get(routes::experts::get_expert)
+                .put(routes::experts::put_expert)
+                .delete(routes::experts::delete_expert),
+        )
+        .route("/api/apps/{id}", put(routes::apps::put_app_profile))
         .route("/api/chat", post(chat::chat))
         .route("/api/chat/stop", post(chat::stop_chat))
         .route("/api/chat/permission-response", post(chat::respond_permission))
