@@ -5,7 +5,7 @@
  */
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ArrowUp, Brain, Languages, Mic, Paperclip, ShieldCheck } from "lucide-react";
+import { ArrowUp, Brain, Languages, Mic, Paperclip, ShieldCheck, Square } from "lucide-react";
 import { api } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -90,6 +90,7 @@ export function ChatInput({ compact = false }: { compact?: boolean }) {
   const { t } = useTranslation();
   const streaming = useAppStore((s) => s.streaming);
   const sendMessage = useAppStore((s) => s.sendMessage);
+  const stopStreaming = useAppStore((s) => s.stopStreaming);
   const selectedModel = useAppStore((s) => s.selectedModel);
   const setSelectedModel = useAppStore((s) => s.setSelectedModel);
   const selectedThinking = useAppStore((s) => s.selectedThinking);
@@ -283,15 +284,29 @@ export function ChatInput({ compact = false }: { compact?: boolean }) {
                 </SelectContent>
               </Select>
 
-              <Button
-                size="icon"
-                className="ml-0.5 h-7 w-7 rounded-lg"
-                onClick={() => void submit()}
-                disabled={!canSend}
-                title={t("chat.input.send")}
-              >
-                <ArrowUp size={15} />
-              </Button>
+              {/* 发送/停止原位切换：流式中发送按钮变停止按钮（停止后后端
+                  收口已生成内容，与正常完成同路径），停在原处不跳位 */}
+              {streaming ? (
+                <Button
+                  size="icon"
+                  variant="outline"
+                  className="ml-0.5 h-7 w-7 rounded-lg border-primary/30 text-primary"
+                  onClick={stopStreaming}
+                  title={t("chat.stop")}
+                >
+                  <Square size={13} className="fill-current" />
+                </Button>
+              ) : (
+                <Button
+                  size="icon"
+                  className="ml-0.5 h-7 w-7 rounded-lg"
+                  onClick={() => void submit()}
+                  disabled={!canSend}
+                  title={t("chat.input.send")}
+                >
+                  <ArrowUp size={15} />
+                </Button>
+              )}
             </div>
           </div>
         </div>

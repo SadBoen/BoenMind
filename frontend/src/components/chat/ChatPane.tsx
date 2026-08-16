@@ -9,8 +9,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Square, Sparkles } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Message } from "@/api/client";
 import { useAppStore } from "@/stores/app-store";
@@ -47,7 +46,6 @@ export function ChatPane({ variant = "full", scene = "chat" }: ChatPaneProps) {
   const streaming = useAppStore((s) => s.streaming);
   const streamingText = useAppStore((s) => s.streamingText);
   const streamingToolCalls = useAppStore((s) => s.streamingToolCalls);
-  const stopStreaming = useAppStore((s) => s.stopStreaming);
   const activeSessionId = useAppStore((s) => s.activeSessionId);
   // 内嵌会话列表显隐（状态栏 prefix 三横按钮 toggle；聊天应用默认展开）
   const sessionsOpen = useAppStore((s) => s.chatSessionsOpen[scene] ?? scene === "chat");
@@ -126,14 +124,6 @@ export function ChatPane({ variant = "full", scene = "chat" }: ChatPaneProps) {
             <span className="text-muted-foreground">
               {panel ? t("chat.panelTitle") : t("chat.selectOrCreate")}
             </span>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          {streaming && (
-            <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={stopStreaming}>
-              <Square size={12} className="fill-current" />
-              {t("chat.stop")}
-            </Button>
           )}
         </div>
       </header>
