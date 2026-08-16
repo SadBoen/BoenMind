@@ -16,8 +16,10 @@ import {
   loadSkinBackground,
   loadSkinId,
   loadSkinParams,
+  loadSkinWallpaper,
   saveSkinBackground,
   saveSkinParams,
+  saveSkinWallpaper,
   type SkinBackground,
 } from "@/lib/skin";
 import { type SkinId, type SkinParams } from "@/skins";
@@ -119,6 +121,9 @@ interface AppStore {
   /** 背景图（data = 本地压缩 dataURL；url = 外链） */
   skinBackground: SkinBackground | null;
   setSkinBackground: (bg: SkinBackground | null) => void;
+  /** 内置预设壁纸（preset id；与自定义背景图互斥） */
+  skinWallpaper: string | null;
+  setSkinWallpaper: (id: string | null) => void;
   /** 自动配色：上传/应用背景图时按图片调节色调/透明度/模糊 */
   skinAuto: boolean;
   setSkinAuto: (enabled: boolean) => void;
@@ -337,7 +342,24 @@ export const useAppStore = create<AppStore>((set, get) => {
     skinBackground: loadSkinBackground(),
     setSkinBackground: (skinBackground) => {
       saveSkinBackground(skinBackground);
-      set({ skinBackground });
+      // 自定义背景图与预设壁纸互斥（应用自定义时清预设）
+      if (skinBackground) {
+        saveSkinWallpaper(null);
+        set({ skinBackground, skinWallpaper: null });
+      } else {
+        set({ skinBackground });
+      }
+    },
+    skinWallpaper: loadSkinWallpaper(),
+    setSkinWallpaper: (skinWallpaper) => {
+      saveSkinWallpaper(skinWallpaper);
+      // 预设壁纸与自定义背景图互斥（选预设时清自定义）
+      if (skinWallpaper) {
+        saveSkinBackground(null);
+        set({ skinWallpaper, skinBackground: null });
+      } else {
+        set({ skinWallpaper });
+      }
     },
     skinAuto: localStorage.getItem("boenmind.skin.auto") === "1",
     setSkinAuto: (enabled) => {

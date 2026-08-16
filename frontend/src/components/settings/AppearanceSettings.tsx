@@ -18,6 +18,7 @@ import { SKINS, type SkinParam } from "@/skins";
 import {
   autoGlassParams,
   compressImageFile,
+  PRESET_WALLPAPERS,
   sampleImage,
   skinById,
   skinParamValue,
@@ -46,7 +47,7 @@ const ACCENT_SWATCH: Record<string, string> = {
 
 export function AppearanceSettings() {
   const { t, i18n } = useTranslation();
-  const { theme, setTheme } = useTheme();
+  const { theme, setTheme, resolvedTheme } = useTheme();
   const config = useAppStore((s) => s.config);
   const saveConfig = useAppStore((s) => s.saveConfig);
   const viewMode = useAppStore((s) => s.viewMode);
@@ -62,6 +63,8 @@ export function AppearanceSettings() {
   const setSkinParam = useAppStore((s) => s.setSkinParam);
   const skinBackground = useAppStore((s) => s.skinBackground);
   const setSkinBackground = useAppStore((s) => s.setSkinBackground);
+  const skinWallpaper = useAppStore((s) => s.skinWallpaper);
+  const setSkinWallpaper = useAppStore((s) => s.setSkinWallpaper);
   const skinAuto = useAppStore((s) => s.skinAuto);
   const setSkinAuto = useAppStore((s) => s.setSkinAuto);
   const expertMode = settingsTier === "expert";
@@ -274,9 +277,36 @@ export function AppearanceSettings() {
         {/* 玻璃皮肤参数面板 */}
         {skin === "glass" && (
           <div className="mt-4 space-y-4 rounded-xl border p-4">
-            {/* 背景图：本地文件（压缩存储）/ URL 直链 */}
+            {/* 预设壁纸（Aqua 观感流体渐变四款，明暗自适应；选中自动套推荐色调） */}
             <div>
-              <p className="text-xs font-medium text-muted-foreground">{t("settings.appearance.skin.backgroundTitle")}</p>
+              <p className="text-xs font-medium text-muted-foreground">{t("settings.appearance.skin.wallpaperTitle")}</p>
+              <p className="text-xs text-muted-foreground">{t("settings.appearance.skin.wallpaperDesc")}</p>
+              <div className="mt-2 grid grid-cols-4 gap-2">
+                {PRESET_WALLPAPERS.map((w) => (
+                  <button
+                    key={w.id}
+                    type="button"
+                    title={t(w.nameKey)}
+                    onClick={() => {
+                      setSkinWallpaper(w.id);
+                      setSkinParam("hue", w.hue);
+                      toast.success(t("settings.appearance.saved"));
+                    }}
+                    className={cn(
+                      "h-12 rounded-lg border-2 transition-colors",
+                      skinWallpaper === w.id
+                        ? "border-primary"
+                        : "border-border hover:border-muted-foreground/40",
+                    )}
+                    style={{ background: resolvedTheme === "dark" ? w.darkCss : w.css }}
+                  />
+                ))}
+              </div>
+            </div>
+
+            {/* 自定义背景：本地文件（压缩存储）/ URL 直链 */}
+            <div>
+              <p className="text-xs font-medium text-muted-foreground">{t("settings.appearance.skin.customTitle")}</p>
               <p className="text-xs text-muted-foreground">{t("settings.appearance.skin.backgroundDesc")}</p>
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()}>
@@ -293,8 +323,15 @@ export function AppearanceSettings() {
                 <Button variant="outline" size="sm" onClick={() => void applyUrl()} disabled={!urlDraft.trim()}>
                   {t("settings.appearance.skin.apply")}
                 </Button>
-                {skinBackground && (
-                  <Button variant="ghost" size="sm" onClick={() => setSkinBackground(null)}>
+                {(skinBackground || skinWallpaper) && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setSkinBackground(null);
+                      setSkinWallpaper(null);
+                    }}
+                  >
                     {t("settings.appearance.skin.remove")}
                   </Button>
                 )}
