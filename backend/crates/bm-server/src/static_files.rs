@@ -18,6 +18,18 @@ fn web_dir() -> Option<std::path::PathBuf> {
         .filter(|p| p.is_dir())
 }
 
+/// 缓存策略：`/assets/` 下为 vite 内容哈希文件名（内容不变名不变），
+/// 可长缓存；其余（index.html / favicon / docs 等）一律 no-cache——
+/// 曾现便携版与开发版同源 127.0.0.1:17321 共用 WebView2 缓存导致
+/// 加载旧页面/设置页异常（2026-08-16 模型提供商"打不开"排查定论）。
+fn cache_control(path: &str) -> &'static str {
+    if path.starts_with("/assets/") {
+        "public, max-age=31536000, immutable"
+    } else {
+        "no-cache"
+    }
+}
+
 /// 静态资源 + SPA fallback 处理器，挂在主 router 的 fallback 上，
 /// 只处理 `/api` 未命中的 GET 请求（含 history 路由，如 `/settings`）。
 pub async fn handle_static(request: Request) -> Response {
@@ -53,8 +65,14 @@ pub async fn handle_static(request: Request) -> Response {
                 None => return StatusCode::NOT_FOUND.into_response(),
             },
         };
+        let cache = if path.starts_with("assets/") {
+            "public, max-age=31536000, immutable"
+        } else {
+            "no-cache"
+        };
         Response::builder()
             .header(header::CONTENT_TYPE, mime.as_ref())
+            .header(header::CACHE_CONTROL, cache)
             .body(Body::from(data))
             .unwrap()
     }
@@ -92,12 +110,14 @@ async fn serve_disk(
         return StatusCode::NOT_FOUND.into_response();
     }
     let path = dir.join(normalized.trim_start_matches('/'));
+    let cache = cache_control(&normalized);
     let data = tokio::fs::read(&path).await;
     match data {
         Ok(bytes) => {
             let mime = mime_guess::from_path(&path).first_or_octet_stream();
             Response::builder()
                 .header(header::CONTENT_TYPE, mime.as_ref())
+                .header(header::CACHE_CONTROL, cache)
                 .body(Body::from(bytes))
                 .unwrap()
         }
@@ -107,6 +127,7 @@ async fn serve_disk(
             match tokio::fs::read(&index).await {
                 Ok(bytes) => Response::builder()
                     .header(header::CONTENT_TYPE, mime_guess::mime::TEXT_HTML.as_ref())
+                    .header(header::CACHE_CONTROL, "no-cache")
                     .body(Body::from(bytes))
                     .unwrap(),
                 Err(_) => StatusCode::NOT_FOUND.into_response(),
@@ -150,6 +171,26 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
         assert_eq!(&body[..], b"<html>index</html>");
+
+        // 缓存策略：哈希资源长缓存；HTML no-cache（防 WebView2 缓存旧页面）
+        let req = HttpRequest::builder()
+            .uri(Uri::from_static("/assets/app.js"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = serve_disk(&dir, req).await;
+        assert_eq!(
+            resp.headers().get("cache-control").map(|v| v.to_str().unwrap()),
+            Some("public, max-age=31536000, immutable")
+        );
+        let req = HttpRequest::builder()
+            .uri(Uri::from_static("/index.html"))
+            .body(Body::empty())
+            .unwrap();
+        let resp = serve_disk(&dir, req).await;
+        assert_eq!(
+            resp.headers().get("cache-control").map(|v| v.to_str().unwrap()),
+            Some("no-cache")
+        );
 
         // 路径穿越：/../secret.txt → 404
         let req = HttpRequest::builder()
