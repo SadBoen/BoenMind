@@ -280,6 +280,8 @@ fn build_loop_agent(
     compat: Option<&Arc<CompatEngine>>,
     steward: Option<&Arc<crate::steward::StewardStore>>,
     gate: Option<&Arc<crate::builtin_gate::BuiltinGate>>,
+    mcp: Option<&Arc<dyn bm_mcp::McpService>>,
+    mcp_gate: Option<&Arc<crate::mcp_gate::McpGate>>,
     is_steward_session: bool,
     app: &str,
     session_id: &str,
@@ -364,6 +366,21 @@ fn build_loop_agent(
         for tool in compat.tools.lock().unwrap().iter() {
             if let Err(err) = tools.register(tool.clone()) {
                 tracing::warn!(event = "bm.tool_register_failed", tool = %tool.name, error = %err.message);
+            }
+        }
+    }
+    // MCP 官方插件（bm-mcp）：外部 MCP server 工具进模型工具面
+    // （mcp__<server>__<tool> 命名，权限门在 executor 侧裁决）。
+    if let Some(mcp) = mcp {
+        for tool in mcp.tools() {
+            let name = tool.qualified_name.clone();
+            let def = bm_loop::model::ToolDef::new(
+                tool.qualified_name,
+                tool.description,
+                tool.input_schema,
+            );
+            if let Err(err) = tools.register(def) {
+                tracing::warn!(event = "bm.tool_register_failed", tool = %name, error = %err.message);
             }
         }
     }
@@ -454,6 +471,9 @@ fn build_loop_agent(
             if let Some(gate) = gate {
                 executor = executor.with_gate(gate.clone());
             }
+            // MCP 官方插件（bm-mcp）：服务面 + 权限门。门与服务同生共死
+            // （None = MCP 未配置，子进程路径 executor 不挂双保险）。
+            executor = executor.with_mcp(mcp.cloned(), mcp_gate.cloned());
             executor
         },
     ))
@@ -555,6 +575,8 @@ async fn get_or_create_loop_agent(
         state.compat.as_ref(),
         state.steward.as_ref(),
         state.builtin_gate.as_ref(),
+        state.mcp.as_ref(),
+        state.mcp_gate.as_ref(),
         is_steward_session,
         app,
         session_id,

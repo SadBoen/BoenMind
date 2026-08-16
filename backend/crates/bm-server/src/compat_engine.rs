@@ -969,6 +969,11 @@ pub struct QuickJsToolExecutor {
     /// 内置工具权限门（审查 P0-2）。None = 不裁决（子进程模式无询问
     /// 通道；子代理入口已在父侧过门）。
     gate: Option<Arc<crate::builtin_gate::BuiltinGate>>,
+    /// MCP 官方插件（bm-mcp）：外部 MCP server 工具执行侧。
+    /// None = MCP 未启用（无 mcp 配置或连接失败）。
+    mcp: Option<Arc<dyn bm_mcp::McpService>>,
+    /// MCP 工具权限门（bm-mcp 配套；None = 不裁决）。
+    mcp_gate: Option<Arc<crate::mcp_gate::McpGate>>,
 }
 
 impl QuickJsToolExecutor {
@@ -983,6 +988,8 @@ impl QuickJsToolExecutor {
             steward,
             event_log: None,
             gate: None,
+            mcp: None,
+            mcp_gate: None,
         }
     }
 
@@ -995,6 +1002,18 @@ impl QuickJsToolExecutor {
     /// 挂内置工具权限门。bm 引擎父进程路径调用；子进程不挂（无询问通道）。
     pub fn with_gate(mut self, gate: Arc<crate::builtin_gate::BuiltinGate>) -> Self {
         self.gate = Some(gate);
+        self
+    }
+
+    /// 挂 MCP 服务与权限门（bm-mcp 官方插件）。bm 引擎父进程路径调用；
+    /// 子进程不挂（无询问通道，且子代理工具面不含 mcp 工具双保险）。
+    pub fn with_mcp(
+        mut self,
+        mcp: Option<Arc<dyn bm_mcp::McpService>>,
+        gate: Option<Arc<crate::mcp_gate::McpGate>>,
+    ) -> Self {
+        self.mcp = mcp;
+        self.mcp_gate = gate;
         self
     }
 
@@ -1088,8 +1107,40 @@ impl ToolExecutor for QuickJsToolExecutor {
                     meta: None,
                 },
             }
-        } else if crate::builtin_tools::BuiltinTools::NAMES.contains(&req.name.as_str()) {
-            let builtin = BuiltinTools::new(working_dir);
+        } else if req.name.starts_with("mcp__") {
+            // MCP 官方插件（bm-mcp）：外部 MCP server 工具。
+            // 权限门先裁决（决策记忆 + 询问链；permissive 直放）；
+            // 执行经 McpService 按 qualified_name 反查定位。
+            if let Some(gate) = &self.mcp_gate
+                && let Err(reason) = gate.check(&self.session_id, &req.name).await
+            {
+                ToolOutcome {
+                    ok: false,
+                    output: reason,
+                    meta: None,
+                }
+            } else {
+                let Some(mcp) = &self.mcp else {
+                    return ToolOutcome {
+                        ok: false,
+                        output: "MCP 插件未启用（无 mcp 配置或连接失败）".to_string(),
+                        meta: None,
+                    };
+                };
+                match mcp.call_tool(&req.name, req.args.clone()).await {
+                    Ok(value) => ToolOutcome {
+                        ok: true,
+                        output: tool_result_text(&value),
+                        meta: Some(value),
+                    },
+                    Err(err) => ToolOutcome {
+                        ok: false,
+                        output: err,
+                        meta: None,
+                    },
+                }
+            }
+        } else if crate::builtin_tools::BuiltinTools::NAMES.contains(&req.name.as_str()) {            let builtin = BuiltinTools::new(working_dir);
             match builtin.execute(&req.name, req.args.clone()).await {
                 Ok(value) => ToolOutcome {
                     ok: true,

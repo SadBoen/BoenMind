@@ -10,6 +10,7 @@ members = [
     "crates/bm-compat",
     "crates/bm-compactor",
     "crates/bm-memory",
+    "crates/bm-mcp",
     "tests/event_log",
 ]
 

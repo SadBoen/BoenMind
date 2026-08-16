@@ -8,6 +8,8 @@ pub mod bm_engine;
 pub mod builtin_tools;
 // 审查 P0-2 — 内置工具权限门（bash/subagent 经决策记忆+询问链）
 pub mod builtin_gate;
+// MCP 官方插件（bm-mcp）— 外部 MCP server 工具权限门（mcp__ 工具询问链）
+pub mod mcp_gate;
 pub mod chat;
 pub mod compat_engine;
 pub mod governance;
@@ -93,6 +95,11 @@ pub struct AppState {
     /// 内置工具权限门（审查 P0-2）：bash/subagent 经决策记忆+询问链。
     /// 与插件引擎共享同一 PermissionStore（决策互认）。
     pub builtin_gate: Option<Arc<builtin_gate::BuiltinGate>>,
+    /// MCP 官方插件（bm-mcp）：外部 MCP server 服务面（工具枚举/调用）。
+    /// None = 未配置 mcp（config.toml `mcp` 为空）。
+    pub mcp: Option<Arc<dyn bm_mcp::McpService>>,
+    /// MCP 工具权限门：mcp__ 工具经决策记忆+询问链（permissive 直放）。
+    pub mcp_gate: Option<Arc<mcp_gate::McpGate>>,
 }
 
 /// 前端对一次权限询问的决策。
@@ -122,6 +129,8 @@ impl AppState {
         steward: Option<Arc<steward::StewardStore>>,
         steward_cfg: steward::StewardConfig,
         builtin_gate: Option<Arc<builtin_gate::BuiltinGate>>,
+        mcp: Option<Arc<dyn bm_mcp::McpService>>,
+        mcp_gate: Option<Arc<mcp_gate::McpGate>>,
     ) -> Self {
         Self {
             config: Arc::new(RwLock::new(config)),
@@ -137,6 +146,8 @@ impl AppState {
             steward_cfg,
             terminal: Arc::new(terminal::TerminalStore::new()),
             builtin_gate,
+            mcp,
+            mcp_gate,
         }
     }
 }
@@ -612,12 +623,61 @@ async fn serve_inner(
     // 内置工具权限门（审查 P0-2）：与插件引擎共享同一决策记忆实例。
     // 档位 permissive/yolo → 高权限工具直放（全自动档位语义一致）；
     // 其余（default/safe/balanced）→ bash/subagent 走询问链。
+    // MCP 权限门先 clone 决策记忆（同 store 双门互认）。
+    let mcp_permission_store = permission_store.clone();
     let builtin_gate = Arc::new(builtin_gate::BuiltinGate::new(
         permission_store,
         session_streams.clone(),
         permission_pending.clone(),
         config.extension_policy.as_deref() != Some("permissive"),
     ));
+
+    // MCP 官方插件（bm-mcp，协议层一等公民 Z4）：config.toml `mcp` 段 →
+    // 连接全部 server（dual-era 协商；单个失败不阻断，日志 warn 跳过）→
+    // 服务面注册 kernel port "mcp"。工具进模型面在 build_loop_agent 注册段
+    // （经 AppState.mcp 传递）；权限门在 executor 侧（McpGate）。
+    // 连接失败/配置为空 → (None, None)：零 mcp 工具、零询问开销。
+    let (mcp_service, mcp_gate) = {
+        let manager = Arc::new(bm_mcp::McpClientManager::new());
+        if let Some(value) = config.mcp.clone() {
+            match serde_json::from_value::<Vec<bm_mcp::McpServerConfig>>(value) {
+                Ok(servers) => {
+                    for server in servers {
+                        match manager.connect(server).await {
+                            Ok(handle) => tracing::info!(
+                                event = "bm.mcp_connected",
+                                server = %handle.config.name,
+                                version = %handle.protocol_version,
+                            ),
+                            Err(err) => tracing::warn!(
+                                event = "bm.mcp_connect_failed",
+                                error = %err,
+                                "MCP server 连接失败（跳过）",
+                            ),
+                        }
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!(event = "bm.mcp_config_invalid", error = %err);
+                }
+            }
+        }
+        if manager.servers().await.is_empty() {
+            (None, None)
+        } else {
+            let service: Arc<dyn bm_mcp::McpService> = manager;
+            if let Some(kernel) = kernel.as_ref() {
+                let _ = kernel.ctx().register_port("mcp", service.clone());
+            }
+            let gate = Arc::new(mcp_gate::McpGate::new(
+                mcp_permission_store,
+                session_streams.clone(),
+                permission_pending.clone(),
+                config.extension_policy.as_deref() != Some("permissive"),
+            ));
+            (Some(service), Some(gate))
+        }
+    };
 
     // 工具面（SERVICE_FACES #5）：compat 快照就绪后运行期注册——
     // ToolsPort 持有同一 Arc 快照，插件变更 reload 后自动同步
@@ -679,6 +739,8 @@ async fn serve_inner(
         steward,
         steward_cfg,
         Some(builtin_gate),
+        mcp_service,
+        mcp_gate,
     );
     spawn_agent_sweeper(state.loop_agents.clone());
     // C1 回收站超期清除：孤儿会话（sessions 表已删）事件保留 N 天后物理删除

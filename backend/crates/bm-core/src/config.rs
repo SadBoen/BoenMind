@@ -57,6 +57,16 @@ pub struct AppConfig {
     /// 用户批准的系统提示词追加段（refine-suggest 审批生效；拼接在 SYSTEM_PROMPT 之后）
     #[serde(default)]
     pub custom_system_prompt: Option<String>,
+    /// MCP server 连接配置（bm-mcp 官方插件）：JSON 数组形态（TOML 内联
+    /// 表数组），组装层反序列化为 bm_mcp::McpServerConfig。示例：
+    /// ```toml
+    /// mcp = [
+    ///   { name = "fs", transport = "stdio", command = "node",
+    ///     args = ["C:/x/index.js", "D:/work"] },
+    /// ]
+    /// ```
+    #[serde(default)]
+    pub mcp: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -258,6 +268,7 @@ impl Default for AppConfig {
             extension_policy: None,
             extension_allow_dangerous: None,
             custom_system_prompt: None,
+            mcp: None,
         }
     }
 }
@@ -458,6 +469,7 @@ mod tests {
             extension_policy: None,
             extension_allow_dangerous: None,
             custom_system_prompt: None,
+            mcp: None,
         };
         assert_eq!(resolve_provider(&config, Some("missing")).unwrap().id, "b");
         assert_eq!(resolve_model(&config.providers[1], None).unwrap(), "qwen");
