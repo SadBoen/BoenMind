@@ -16,7 +16,7 @@ export default defineConfig({
     // Web 开发模式下，/api 代理到本地 Rust 后端
     proxy: {
       "/api": {
-        target: "http://127.0.0.1:17321",
+        target: process.env.BM_API_TARGET || "http://127.0.0.1:17321",
         changeOrigin: true,
       },
     },

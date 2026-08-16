@@ -75,6 +75,13 @@ pub trait McpService: Send + Sync {
         qualified_name: &str,
         arguments: serde_json::Value,
     ) -> BoxFuture<'_, Result<serde_json::Value, String>>;
+    /// 运行时连接一个 server（管理 API 用；成功后刷新工具快照）。
+    fn connect_server(
+        &self,
+        config: McpServerConfig,
+    ) -> BoxFuture<'_, Result<(), String>>;
+    /// 运行时断开一个 server（管理 API 用）。
+    fn disconnect_server(&self, name: &str) -> BoxFuture<'_, Result<(), String>>;
 }
 
 /// server 状态快照（设置页/诊断用）。
@@ -291,8 +298,7 @@ impl McpService for McpClientManager {
     ) -> BoxFuture<'_, Result<serde_json::Value, String>> {
         let qualified_name = qualified_name.to_string(); // owned，规避 async move 捕获引用
         Box::pin(async move {
-            let result: Result<serde_json::Value, McpError> = async {
-                let target = self
+            let result: Result<serde_json::Value, McpError> = async {                let target = self
                     .tools_cache
                     .read()
                     .unwrap()
@@ -334,6 +340,25 @@ impl McpService for McpClientManager {
             }
             .await;
             result.map_err(|e| e.to_string())
+        })
+    }
+
+    fn connect_server(
+        &self,
+        config: McpServerConfig,
+    ) -> BoxFuture<'_, Result<(), String>> {
+        Box::pin(async move {
+            self.connect(config)
+                .await
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+        })
+    }
+
+    fn disconnect_server(&self, name: &str) -> BoxFuture<'_, Result<(), String>> {
+        let name = name.to_string();
+        Box::pin(async move {
+            self.disconnect(&name).await.map_err(|e| e.to_string())
         })
     }
 }

@@ -22,7 +22,7 @@ pub struct McpServerConfig {
     pub name: String,
     pub transport: McpTransportKind,
     /// stdio：可执行程序（如 `node`、`uvx`、`npx`）。
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
     #[serde(default)]
     pub args: Vec<String>,
@@ -30,12 +30,12 @@ pub struct McpServerConfig {
     #[serde(default)]
     pub env: BTreeMap<String, String>,
     /// http：server 端点。
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
     #[serde(default)]
     pub headers: BTreeMap<String, String>,
     /// 单次工具调用超时（毫秒），默认 60s。
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_timeout_ms: Option<u64>,
 }
 

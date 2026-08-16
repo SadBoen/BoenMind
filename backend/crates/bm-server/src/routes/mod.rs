@@ -2,6 +2,7 @@
 //! 共享类型 ApiResult / api_error / SharedState 在 crate 根（lib.rs）。
 
 pub mod config;
+pub mod mcp;
 pub mod pdf_omni;
 pub mod plugins;
 pub mod providers;

@@ -1,6 +1,6 @@
 # 计划：MCP 官方插件（bm-mcp）
 
-日期：2026-08-16 ｜ 状态：**阶段 0/1/2 已完成**（拍板点已全部拍定，见 §六；阶段 3/4/5 待续）
+日期：2026-08-16 ｜ 状态：**阶段 0-3 已完成**（阶段 4/5 待续；前端设置页待排期）
 
 一句话：BoenMind 内置一个默认官方 MCP 插件，作为 MCP client 接入任意外部 MCP server（stdio / Streamable HTTP），工具进入模型工具面；**协议目标 2026-07-28（MCP 2.0）+ dual-era 兼容存量 server；兼容性第一**——配置格式、工具命名、环境变量展开与主流生态一致，并自动读取主流 agent 的 MCP 配置。
 
@@ -170,6 +170,13 @@
 - **阶段 0 spike**：rmcp 3.1.2 裁剪 features 编译通过；双场景实测——legacy（官方 filesystem server，TS SDK 1.29）协商 2025-11-25 回退成功；modern（TS SDK v2 自写 server）协商 2026-07-28 首选成功；stdio spawn / tools/list / tools/call / structuredContent 提取 / 断开全通。
 - **阶段 1**：`bm-mcp` crate（backend/crates/bm-mcp）：`McpServerConfig`（配置形状对齐 Claude Code mcpServers）、`McpClientManager`（连接/枚举/调用/断开 + 工具快照缓存）、`McpService` 服务面 trait（tools/servers/call_tool，std 锁同步读）、工具名规范化 + 哈希防撞。6 单测全绿。
 - **阶段 2**：组装层接线（bm-core config.rs `mcp` 字段 → bm-server lib.rs 启动连接 → kernel port "mcp" 注册 → build_loop_agent 工具注册段 → QuickJsToolExecutor `mcp__` 分支 → McpGate 权限门（决策记忆 + 询问链，permissive 直放，与 BuiltinGate 同源））。**端到端验收通过**（隔离 BOENMIND_HOME + 双 server）：modern 协商 2026-07-28、legacy 协商 2025-11-25 并存；真实会话模型调 `mcp__modern__hello` 成功返回 "hello BoenMind"。全量测试 219 全绿 + clippy 新增代码零警告。
+- **阶段 3（eaf0227 + a26c910）**：兼容性与生命周期——
+  - `discover.rs`：项目 `.mcp.json`（Claude Code 格式）+ `~/.agents/mcp.json` + `~/.config/mcp/mcp.json` 自动发现（pi-mcp-adapter/Warp 同款）；标准 mcpServers 条目解析（sse/ws 弃用跳过）；`${VAR}`/`${VAR:-default}` 展开；HTTP url SSRF 校验（语义对齐提供商端点）。
+  - `client.rs`：崩溃重连 supervisor——`is_transport_closed` 检测（**is_closed 仅显式关闭才置位，被动断开必须用传输状态**——踩坑）、指数退避 500ms→30s、连续 10 次熔断、重连后工具快照刷新。
+  - TS 注册面接通：`pi.registerMcpServer` 声明进连接池（第三来源：config.toml > 自动发现 > TS 声明）。
+  - 集成测试：`tests/fixtures/echo_server.mjs` 纯 Node JSON-RPC fixture（零 npm 依赖，含 crash 工具）；legacy 协商/枚举/调用/崩溃重连全链路；node 缺失自动跳过（CI 兜底）。
+  - 验收：三来源五 server 并存（2.0/legacy 混合）；TS 声明 server 真实会话调用成功。
+  - 注：bm-compat 4 个 doom/ext_conformance 测试失败为既有环境缺失（artifacts 未下载），与改动无关。
 
 ---
 

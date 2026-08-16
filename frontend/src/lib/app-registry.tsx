@@ -16,6 +16,7 @@ import {
   Info,
   Lightbulb,
   MessageSquare,
+  Cable,
   MonitorCog,
   Palette,
   Puzzle,
@@ -27,6 +28,7 @@ import { DockLayout } from "@/components/layout/DockLayout";
 import { SettingsMenu } from "@/components/settings/SettingsMenu";
 import { AboutSettings } from "@/components/settings/AboutSettings";
 import { AppearanceSettings } from "@/components/settings/AppearanceSettings";
+import { McpSettings } from "@/components/settings/McpSettings";
 import { PluginsSettings } from "@/components/settings/PluginsSettings";
 import { ProviderSettings } from "@/components/settings/ProviderSettings";
 import { RefinementSettings } from "@/components/settings/RefinementSettings";
@@ -182,6 +184,7 @@ function StewardAppView() {
 
 export type SettingsTab =
   | "appearance"
+  | "mcp"
   | "providers"
   | "steward"
   | "workspace"
@@ -199,6 +202,12 @@ export interface SettingsEntry {
 
 /** 设置页注册表（表内顺序即设置菜单顺序；新增 SettingsTab 必须在此登记） */
 export const SETTINGS: Record<SettingsTab, SettingsEntry> = {
+  mcp: {
+    labelKey: "settings.menu.mcp",
+    descKey: "settings.menu.mcpDesc",
+    icon: <Cable size={16} />,
+    component: McpSettings,
+  },
   appearance: {
     labelKey: "settings.menu.appearance",
     descKey: "settings.menu.appearanceDesc",

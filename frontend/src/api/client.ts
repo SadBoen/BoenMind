@@ -68,6 +68,26 @@ export interface ToolCall {
   is_error: boolean;
 }
 
+/** MCP 官方插件：server 状态（/api/mcp/servers） */
+export interface McpServerStatus {
+  name: string;
+  transport: string;
+  protocol_version: string;
+  tool_count: number;
+}
+
+/** MCP 官方插件：server 连接配置（对齐后端 bm_mcp::McpServerConfig） */
+export interface McpServerConfig {
+  name: string;
+  transport: "stdio" | "http";
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+  tool_timeout_ms?: number;
+}
+
 /** 管家（Steward）状态（后端 /api/steward/status；未启用 = { enabled: false }） */
 export interface StewardStatus {
   enabled: boolean;
@@ -789,4 +809,22 @@ export const api = {
         ...(wakeAfterSeconds != null ? { wake_after_seconds: wakeAfterSeconds } : {}),
       }),
     }),
+
+  /** MCP 官方插件：已连接 server 状态 */
+  mcpServers: () => request<McpServerStatus[]>("/api/mcp/servers"),
+
+  /** MCP 官方插件：运行时连接 server（持久化到 config.toml） */
+  mcpConnect: (config: McpServerConfig) =>
+    request<{ ok: boolean }>("/api/mcp/connect", {
+      method: "POST",
+      body: JSON.stringify(config),
+    }),
+
+  /** MCP 官方插件：断开 server */
+  mcpDisconnect: (name: string) =>
+    request<{ ok: boolean }>("/api/mcp/disconnect", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
+
 };
