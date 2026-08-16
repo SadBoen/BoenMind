@@ -20,6 +20,7 @@ use std::time::{Duration, Instant};
 use crate::config::{AppConfig, agents_dir};
 use crate::error::AppError;
 use crate::http_util::{copy_dir_excluding, http_agent};
+use crate::plugin_settings::{SettingField, parse_settings_schema, read_settings_masked_file, save_settings_file};
 
 /// 管理目录名（位于 ~/.boenmind 下）
 pub const SKILLS_DIR: &str = "skills";
@@ -50,6 +51,9 @@ pub struct SkillInfo {
     /// 来源：registry（skills.sh）/ local
     pub source: String,
     pub enabled: bool,
+    /// 设置 schema（skill 目录 `settings.json` 声明，与插件 manifest `settings`
+    /// 数组同构）；无声明为 None（前端不显示"设置"入口）
+    pub settings_schema: Option<Vec<SettingField>>,
 }
 
 /// skills.sh 随机抽取的候选（已抓取描述，尚未安装）。
@@ -143,6 +147,46 @@ fn describe_skill_dir(dir: &Path, fallback: &str) -> (String, String) {
 }
 
 // ---------------------------------------------------------------------------
+// 设置（SKILL 扩展设置，与插件同构的"设置页注册机制"）：
+// - schema 声明 = skill 目录内 `settings.json`（`{"settings": [...]}`，字段格式
+//   与插件 manifest 的 settings 数组完全一致，复用 SettingField 解析）；
+// - 值存 `settings.value.json`（同目录，与声明分开）：复制进兼容目录
+//   （agents/skills）时排除，SKILL.md 保持官方规范兼容不受影响。
+// ---------------------------------------------------------------------------
+
+/// skill 目录内的设置声明文件。
+fn skill_settings_schema_file(dir: &Path) -> PathBuf {
+    dir.join("settings.json")
+}
+
+/// skill 设置值文件。
+fn skill_settings_value_file(dir: &Path) -> PathBuf {
+    dir.join("settings.value.json")
+}
+
+/// 读取 skill 的设置 schema（无 settings.json 或未声明字段 → None）。
+pub fn skill_settings_schema(id: &str) -> Option<Vec<SettingField>> {
+    let file = skill_settings_schema_file(&skills_dir().join(id));
+    let text = fs::read_to_string(&file).ok()?;
+    let json = serde_json::from_str::<serde_json::Value>(&text).ok()?;
+    parse_settings_schema(&json)
+}
+
+/// 读取 skill 设置（掩码版，供前端回显）：普通字段明文，secret 字段打掩码。
+pub fn read_skill_settings_masked(id: &str, schema: &[SettingField]) -> serde_json::Value {
+    read_settings_masked_file(&skill_settings_value_file(&skills_dir().join(id)), schema)
+}
+
+/// 保存 skill 设置（语义同插件 save_settings：secret 掩码=未修改，`__clear.` 显式清除）。
+pub fn save_skill_settings(
+    id: &str,
+    schema: &[SettingField],
+    values: &serde_json::Value,
+) -> Result<serde_json::Value, AppError> {
+    save_settings_file(&skill_settings_value_file(&skills_dir().join(id)), schema, values)
+}
+
+// ---------------------------------------------------------------------------
 // HTTP（同步，调用方应放 spawn_blocking；agent 见 http_util）
 // ---------------------------------------------------------------------------
 
@@ -206,6 +250,7 @@ pub fn list_skills(config: &AppConfig) -> Result<Vec<SkillInfo>, std::io::Error>
             repo: meta.as_ref().and_then(|m| (!m.repo.is_empty()).then(|| m.repo.clone())),
             source: meta.map(|m| m.source).unwrap_or_else(|| "local".to_string()),
             enabled: config.enabled_skills.contains(&id),
+            settings_schema: skill_settings_schema(&id),
         });
     }
     out.sort_by(|a, b| a.id.cmp(&b.id));
@@ -303,6 +348,7 @@ pub fn install_skill_from_github(owner: &str, repo: &str, skill_id: &str) -> Res
         repo: Some(repo.to_string()),
         source: "registry".to_string(),
         enabled: false,
+        settings_schema: skill_settings_schema(skill_id),
     })
 }
 
@@ -342,6 +388,7 @@ pub fn install_skill_from_path(source: &Path) -> Result<SkillInfo, AppError> {
     }?;
 
     let (name, description) = describe_skill_dir(&dest, &id);
+    let schema = skill_settings_schema(&id);
     Ok(SkillInfo {
         id,
         name,
@@ -350,6 +397,7 @@ pub fn install_skill_from_path(source: &Path) -> Result<SkillInfo, AppError> {
         repo: None,
         source: "local".to_string(),
         enabled: false,
+        settings_schema: schema,
     })
 }
 
@@ -467,7 +515,8 @@ pub fn set_skill_enabled(config: &mut AppConfig, id: &str, enabled: bool) -> Res
     let dest_dir = agent_skills_dir().join(id);
     if enabled {
         fs::create_dir_all(&dest_dir)?;
-        copy_dir_excluding(&src, &dest_dir, &[".bm-meta.json"])?;
+        // 排除来源元数据与设置值（设置值属管理目录，随卸载删除；兼容目录只放注入内容）
+        copy_dir_excluding(&src, &dest_dir, &[".bm-meta.json", "settings.value.json"])?;
         if !config.enabled_skills.iter().any(|s| s == id) {
             config.enabled_skills.push(id.to_string());
         }
@@ -504,7 +553,7 @@ pub fn sync_skills_to_pi(config: &AppConfig) -> Result<(), AppError> {
             continue;
         }
         fs::create_dir_all(&dest_dir)?;
-        copy_dir_excluding(&src, &dest_dir, &[".bm-meta.json"])?;
+        copy_dir_excluding(&src, &dest_dir, &[".bm-meta.json", "settings.value.json"])?;
     }
     Ok(())
 }

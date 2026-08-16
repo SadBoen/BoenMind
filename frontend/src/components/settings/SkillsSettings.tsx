@@ -6,12 +6,13 @@
  */
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Dices, Loader2, Plus, Wand2 } from "lucide-react";
+import { Dices, Loader2, Plus, Settings2, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { api, type SkillCandidate, type SkillInfo } from "@/api/client";
 import { LocalInstallRow, ManagedItemsList } from "./ManagedItemsList";
+import { SkillSettingsDialog } from "./SkillSettingsDialog";
 
 const RANDOM_COUNT = 5;
 
@@ -23,6 +24,8 @@ export function SkillsSettings() {
   const [fetching, setFetching] = useState(false);
   const [installingId, setInstallingId] = useState<string | null>(null);
   const [installPath, setInstallPath] = useState("");
+  /** 正在编辑设置的 skill（null = 对话框关闭） */
+  const [settingsSkill, setSettingsSkill] = useState<SkillInfo | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -190,9 +193,28 @@ export function SkillsSettings() {
         ]}
         toggle={(skill) => void toggle(skill)}
         uninstall={(skill) => void uninstall(skill)}
+        extraActions={(skill) =>
+          skill.settingsSchema ? (
+            <Button
+              key="settings"
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="shrink-0"
+              onClick={() => setSettingsSkill(skill)}
+              aria-label={t("settings.skills.settings")}
+            >
+              <Settings2 size={14} />
+            </Button>
+          ) : null
+        }
         emptyKey="settings.skills.empty"
         uninstallTitleKey="settings.skills.uninstall"
       />
+
+      {settingsSkill && (
+        <SkillSettingsDialog skill={settingsSkill} open onClose={() => setSettingsSkill(null)} />
+      )}
 
       <p className="text-xs text-muted-foreground">{t("settings.skills.tip")}</p>
     </section>

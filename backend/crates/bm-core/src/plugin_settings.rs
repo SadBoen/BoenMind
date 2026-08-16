@@ -24,7 +24,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::error::AppError;
 use crate::plugins::plugins_dir;
@@ -197,8 +197,13 @@ fn settings_file(id: &str) -> PathBuf {
 /// 读取插件设置：文件中的值 + schema 默认值合并（缺字段补默认）。
 /// 返回扁平 `{key: value}`；文件缺失/损坏时仅返回默认值。
 pub fn read_settings(id: &str, schema: &[SettingField]) -> Value {
+    read_settings_file(&settings_file(id), schema)
+}
+
+/// 读取任意设置文件（插件/SKILL 通用）：文件中的值 + schema 默认值合并。
+pub fn read_settings_file(path: &Path, schema: &[SettingField]) -> Value {
     let mut out = serde_json::Map::new();
-    let saved = load_saved_map(id);
+    let saved = load_map(path);
     // 先铺默认值（Group 已按实例展开）
     for flat in expand_schema(schema, &saved) {
         if let Some(d) = &flat.field.default {
@@ -214,9 +219,9 @@ pub fn read_settings(id: &str, schema: &[SettingField]) -> Value {
     Value::Object(out)
 }
 
-/// 读取设置文件为 Map（不存在/损坏时返回空）。
-fn load_saved_map(id: &str) -> serde_json::Map<String, Value> {
-    if let Ok(text) = fs::read_to_string(settings_file(id))
+/// 读取任意设置文件为 Map（不存在/损坏时返回空）。
+fn load_map(path: &Path) -> serde_json::Map<String, Value> {
+    if let Ok(text) = fs::read_to_string(path)
         && let Ok(Value::Object(saved)) = serde_json::from_str::<Value>(&text)
     {
         return saved;
@@ -226,8 +231,13 @@ fn load_saved_map(id: &str) -> serde_json::Map<String, Value> {
 
 /// 读取插件设置（掩码版，供前端回显）：普通字段明文，secret 字段打掩码。
 pub fn read_settings_masked(id: &str, schema: &[SettingField]) -> Value {
-    let raw = read_settings(id, schema);
-    let saved = load_saved_map(id);
+    read_settings_masked_file(&settings_file(id), schema)
+}
+
+/// 读取任意设置文件（掩码版，插件/SKILL 通用）。
+pub fn read_settings_masked_file(path: &Path, schema: &[SettingField]) -> Value {
+    let raw = read_settings_file(path, schema);
+    let saved = load_map(path);
     let mut out = serde_json::Map::new();
     for flat in expand_schema(schema, &saved) {
         let v = raw.get(&flat.key).cloned().unwrap_or_default();
@@ -250,7 +260,16 @@ pub fn read_settings_masked(id: &str, schema: &[SettingField]) -> Value {
 /// secret 字段提交空/掩码视为"未修改"保留原值，`__clear.<key>: true` 显式清除。
 /// 返回合并后的完整设置。
 pub fn save_settings(id: &str, schema: &[SettingField], values: &Value) -> Result<Value, AppError> {
-    let current = read_settings(id, schema);
+    save_settings_file(&settings_file(id), schema, values)
+}
+
+/// 保存任意设置文件（插件/SKILL 通用），语义同 `save_settings`。
+pub fn save_settings_file(
+    path: &Path,
+    schema: &[SettingField],
+    values: &Value,
+) -> Result<Value, AppError> {
+    let current = read_settings_file(path, schema);
     let mut out = serde_json::Map::new();
     let submitted = values
         .as_object()
@@ -293,13 +312,13 @@ pub fn save_settings(id: &str, schema: &[SettingField], values: &Value) -> Resul
         };
         out.insert(key.clone(), value);
     }
-    let file = settings_file(id);
+    let file = path;
     if let Some(parent) = file.parent() {
-        fs::create_dir_all(parent).map_err(|e| AppError::internal(format!("创建插件设置目录失败: {e}")))?;
+        fs::create_dir_all(parent).map_err(|e| AppError::internal(format!("创建设置目录失败: {e}")))?;
     }
     let json = serde_json::to_string_pretty(&Value::Object(out.clone()))
         .map_err(|e| AppError::internal(format!("序列化设置失败: {e}")))?;
-    fs::write(&file, json).map_err(|e| AppError::internal(format!("写入设置失败: {e}")))?;
+    fs::write(file, json).map_err(|e| AppError::internal(format!("写入设置失败: {e}")))?;
     // 密钥明文只留在本地文件：Unix 下收紧权限
     #[cfg(unix)]
     {

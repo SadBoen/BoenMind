@@ -38,7 +38,20 @@ pub async fn list_servers(State(state): crate::SharedState) -> Json<Vec<McpServe
     Json(out)
 }
 
+/// 已配置 server（config.toml `mcp` 数组）完整配置列表——前端"编辑"表单回填用
+/// （env/headers 为明文，本地应用；config.toml 本身就是明文存储）。
+pub async fn list_configs(State(state): crate::SharedState) -> ApiResult<Json<Vec<bm_mcp::McpServerConfig>>> {
+    let app_config = state.config.read().await;
+    let servers: Vec<bm_mcp::McpServerConfig> = app_config
+        .mcp
+        .clone()
+        .and_then(|v| serde_json::from_value::<Vec<bm_mcp::McpServerConfig>>(v).ok())
+        .unwrap_or_default();
+    Ok(Json(servers))
+}
+
 /// 运行时连接一个 MCP server（stdio / streamable HTTP），并持久化配置。
+/// 同名已连接时先断开再连接（编辑保存语义：改 env/headers/超时后整体覆盖）。
 pub async fn connect_server(
     State(state): crate::SharedState,
     Json(config): Json<bm_mcp::McpServerConfig>,
@@ -49,6 +62,8 @@ pub async fn connect_server(
             "MCP 插件未启用（bm-server 未配置 mcp）",
         ));
     };
+    // 同名覆盖：先断开（未连接时 disconnect 返回 Err，忽略）
+    let _ = mcp.disconnect_server(&config.name).await;
     mcp.connect_server(config.clone())
         .await
         .map_err(|err| api_error(axum::http::StatusCode::BAD_REQUEST, err))?;

@@ -195,6 +195,8 @@ export interface SkillInfo {
   /** registry（skills.sh）/ local */
   source: string;
   enabled: boolean;
+  /** 设置 schema（skill 目录 settings.json 声明，与插件 settings 数组同构）；无则无设置页 */
+  settingsSchema?: SettingField[];
 }
 
 /** 代理提交的改进建议（refine-suggest；审批后生效，skill 类型可回滚） */
@@ -541,6 +543,15 @@ export const api = {
   randomSkills: (count = 5) =>
     request<SkillCandidate[]>(`/api/skills/registry/random?count=${count}`),
 
+  /** SKILL 扩展设置（schema 由 skill 目录 settings.json 声明；secret 掩码回显） */
+  getSkillSettings: (id: string) =>
+    request<{ settings: Record<string, SettingValue> }>(`/api/skills/${id}/settings`),
+  saveSkillSettings: (id: string, values: Record<string, SettingValue>) =>
+    request<{ ok: boolean }>(`/api/skills/${id}/settings`, {
+      method: "PUT",
+      body: JSON.stringify({ values }),
+    }),
+
   listRefinementSuggestions: (status?: string) =>
     request<RefinementSuggestion[]>(
       `/api/refinement-suggestions${status ? `?status=${status}` : ""}`,
@@ -812,6 +823,9 @@ export const api = {
 
   /** MCP 官方插件：已连接 server 状态 */
   mcpServers: () => request<McpServerStatus[]>("/api/mcp/servers"),
+
+  /** MCP 官方插件：已配置 server 完整配置（config.toml；编辑表单回填用） */
+  mcpConfigs: () => request<McpServerConfig[]>("/api/mcp/servers/configs"),
 
   /** MCP 官方插件：运行时连接 server（持久化到 config.toml） */
   mcpConnect: (config: McpServerConfig) =>

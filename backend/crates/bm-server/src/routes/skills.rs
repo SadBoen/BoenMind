@@ -17,14 +17,50 @@ pub async fn list_skills(State(state): crate::SharedState) -> ApiResult<Json<Vec
         let list = port
             .list()
             .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
-        return serde_json::from_value(list)
-            .map(Json)
-            .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()));
+        let mut infos: Vec<bm_core::skills::SkillInfo> = serde_json::from_value(list)
+            .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+        // 服务面返回不含设置 schema（kernel 不感知扩展设置），统一在此补齐
+        for info in &mut infos {
+            if info.settings_schema.is_none() {
+                info.settings_schema = bm_core::skills::skill_settings_schema(&info.id);
+            }
+        }
+        return Ok(Json(infos));
     }
     let config = state.config.read().await;
     bm_core::skills::list_skills(&config)
         .map(Json)
         .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))
+}
+
+/// GET /api/skills/{id}/settings — 读取 skill 设置（schema + 掩码值回显）。
+/// skill 无 settings.json 声明 → 404（前端据此不显示"设置"入口）。
+pub async fn get_skill_settings(
+    State(_state): crate::SharedState,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let schema = bm_core::skills::skill_settings_schema(&id)
+        .ok_or_else(|| api_error(StatusCode::NOT_FOUND, "skill 未安装或无设置声明"))?;
+    let settings = bm_core::skills::read_skill_settings_masked(&id, &schema);
+    Ok(Json(serde_json::json!({ "settings": settings })))
+}
+
+#[derive(serde::Deserialize)]
+pub struct PutSkillSettingsRequest {
+    /// 扁平 {key: value}；secret 字段提交掩码/空 = 保留原值
+    pub values: serde_json::Value,
+}
+
+/// PUT /api/skills/{id}/settings — 保存 skill 设置（语义同插件设置）。
+pub async fn put_skill_settings(
+    State(_state): crate::SharedState,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(req): Json<PutSkillSettingsRequest>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let schema = bm_core::skills::skill_settings_schema(&id)
+        .ok_or_else(|| api_error(StatusCode::NOT_FOUND, "skill 未安装或无设置声明"))?;
+    let saved = bm_core::skills::save_skill_settings(&id, &schema, &req.values).map_err(api_error_from)?;
+    Ok(Json(serde_json::json!({ "ok": true, "settings": saved })))
 }
 
 #[derive(Deserialize)]
