@@ -266,6 +266,10 @@ coding: {
       addHeader: "リクエストヘッダーを追加",
       headers: "HTTP リクエストヘッダー（http トランスポート）",
       removeRow: "この行を削除",
+      scope: "スコープ",
+      scopePublic: "公共（すべての APP）",
+      scopeChat: "チャットのみ",
+      scopeCoding: "プログラミングのみ",
       hint: "Auto-discovery: project .mcp.json, ~/.agents/mcp.json, ~/.config/mcp/mcp.json",
     },
     appearance: {
@@ -483,6 +487,20 @@ coding: {
       settingsLoadFailed: "読み込みに失敗しました: {{error}}",
       removeInstance: "このインスタンスを削除",
       tip: "ヒント：有効化したスキルは <code>~/.boenmind/pi/skills/</code> に同期され、アシスタントが必要に応じて SKILL.md を読み込みます。有効化/無効化は新しいチャットセッションから反映されます。",
+    },
+    scope: {
+      title: "スコープ",
+      desc: "この拡張が有効なソフトウェア APP：公共 = 全 APP で有効。バインド後はその APP のセッションのみで有効（例：チャットとプログラミングで記憶/拡張を分離）",
+      public: "公共（すべての APP）",
+      chat: "チャットのみ",
+      coding: "プログラミングのみ",
+      saved: "「{{name}}」のスコープを更新しました。新しいセッションから反映されます",
+      saveFailed: "保存に失敗しました: {{error}}",
+      badge: {
+        public: "公共",
+        chat: "チャット",
+        coding: "プログラミング",
+      },
     },
     refinement: {
       loadFailed: "提案リストの読み込みに失敗しました: {{error}}",

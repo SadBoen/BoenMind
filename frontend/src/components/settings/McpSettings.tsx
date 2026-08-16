@@ -37,6 +37,8 @@ export function McpSettings() {
   const [toolTimeoutMs, setToolTimeoutMs] = useState("");
   const [env, setEnv] = useState<KvRow[]>(EMPTY_FORM);
   const [headers, setHeaders] = useState<KvRow[]>(EMPTY_FORM);
+  /** 作用域（设置架构 §八）："" = 公共（所有 APP）；chat/coding = 仅该 APP */
+  const [scope, setScope] = useState("");
   /** 编辑中的 server 名（null = 添加模式；编辑时名称锁定） */
   const [editing, setEditing] = useState<string | null>(null);
 
@@ -76,6 +78,7 @@ export function McpSettings() {
     setToolTimeoutMs("");
     setEnv(EMPTY_FORM);
     setHeaders(EMPTY_FORM);
+    setScope("");
     setEditing(null);
   };
 
@@ -97,6 +100,8 @@ export function McpSettings() {
       setToolTimeoutMs(cfg.tool_timeout_ms ? String(cfg.tool_timeout_ms) : "");
       setEnv(mapToKv(cfg.env));
       setHeaders(mapToKv(cfg.headers));
+      const norm = (cfg.scopes ?? []).filter((s) => s && s !== "*");
+      setScope(norm.length === 0 ? "" : norm[0]);
     } catch (err) {
       toast.error(t("settings.mcp.loadFailed", { error: String(err) }));
     }
@@ -115,6 +120,7 @@ export function McpSettings() {
     const headerMap = kvToMap(headers);
     if (Object.keys(envMap).length > 0) cfg.env = envMap;
     if (Object.keys(headerMap).length > 0) cfg.headers = headerMap;
+    if (scope) cfg.scopes = [scope];
     if (!cfg.name || (transport === "stdio" ? !cfg.command : !cfg.url)) {
       toast.error(t("settings.mcp.formIncomplete"));
       return;
@@ -305,6 +311,16 @@ export function McpSettings() {
             value={toolTimeoutMs}
             onChange={(e) => setToolTimeoutMs(e.target.value)}
           />
+          <select
+            className="h-9 rounded-md border bg-background px-2 text-sm"
+            value={scope}
+            onChange={(e) => setScope(e.target.value)}
+            title={t("settings.mcp.scope")}
+          >
+            <option value="">{t("settings.mcp.scopePublic")}</option>
+            <option value="chat">{t("settings.mcp.scopeChat")}</option>
+            <option value="coding">{t("settings.mcp.scopeCoding")}</option>
+          </select>
           {editing && (
             <Button size="sm" variant="ghost" onClick={resetForm}>
               {t("settings.mcp.cancel")}

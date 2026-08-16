@@ -11,6 +11,7 @@
 //! （UserMessage/RequestHeader/TurnStart/Step*/TurnEnd 全由 loop 落），
 //! 本模块不再重复落日志；SQLite 的 messages 表仍照常写（前端历史从 DB 读）。
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{
@@ -289,6 +290,7 @@ fn build_loop_agent(
     model: &str,
     thinking: Option<&str>,
     compaction: Option<bm_core::compaction::EffectiveCompaction>,
+    plugin_scopes: &HashMap<String, Vec<String>>,
     progress: Arc<std::sync::Mutex<String>>,
 ) -> Result<BmLoopAgent, (StatusCode, String)> {
     // 内核（v0.21 接线）：事件日志与压缩服务都从 kernel 取——事件日志
@@ -362,17 +364,29 @@ fn build_loop_agent(
         }
     }
     if let Some(compat) = compat {
+        // 作用域过滤（设置架构 §八）：插件工具只进其生效 APP 的会话工具面。
         // 快照在启动/插件变更后固化；重名拒绝是防呆（工具名是 call_id 关联键）
-        for tool in compat.tools.lock().unwrap().iter() {
-            if let Err(err) = tools.register(tool.clone()) {
-                tracing::warn!(event = "bm.tool_register_failed", tool = %tool.name, error = %err.message);
+        for tool in compat.tools_for_app(app, plugin_scopes) {
+            let name = tool.name.clone();
+            if let Err(err) = tools.register(tool) {
+                tracing::warn!(event = "bm.tool_register_failed", tool = %name, error = %err.message);
             }
         }
     }
     // MCP 官方插件（bm-mcp）：外部 MCP server 工具进模型工具面
     // （mcp__<server>__<tool> 命名，权限门在 executor 侧裁决）。
+    // 作用域过滤：server 的 scopes（config.toml）空/`*` = 公共，否则仅命中 app。
     if let Some(mcp) = mcp {
+        let server_scopes: HashMap<String, Vec<String>> = mcp
+            .servers()
+            .iter()
+            .map(|s| (s.name.clone(), s.scopes.clone()))
+            .collect();
         for tool in mcp.tools() {
+            let scopes: &[String] = server_scopes.get(&tool.server_name).map(Vec::as_slice).unwrap_or(&[]);
+            if !bm_core::config::scope_matches(scopes, app) {
+                continue;
+            }
             let name = tool.qualified_name.clone();
             let def = bm_loop::model::ToolDef::new(
                 tool.qualified_name,
@@ -553,9 +567,9 @@ async fn get_or_create_loop_agent(
     // 系统提示拼接（与 pi 路径同构：SYSTEM_PROMPT + skills + custom；
     // 管家会话再追管家职责段——Steward 轮）+ 压缩参数换算
     // （[compaction] 配置 → 策略插件构造参数；enabled=false → None 不挂）
-    let (system_prompt, compaction) = {
+    let (system_prompt, compaction, plugin_scopes) = {
         let config = state.config.read().await;
-        let skills = bm_core::skills::enabled_skills_prompt(&config);
+        let skills = bm_core::skills::enabled_skills_prompt(&config, app);
         let custom = config.custom_system_prompt.clone().unwrap_or_default();
         let base = if skills.is_empty() && custom.is_empty() {
             bm_core::agent::SYSTEM_PROMPT.to_string()
@@ -567,7 +581,11 @@ async fn get_or_create_loop_agent(
         } else {
             format!("{base}{}", PLATFORM_HINT)
         };
-        (system_prompt, config.compaction.effective(&provider.id, model))
+        (
+            system_prompt,
+            config.compaction.effective(&provider.id, model),
+            config.plugin_scopes.clone(),
+        )
     };
     let agent = build_loop_agent(
         &system_prompt,
@@ -584,6 +602,7 @@ async fn get_or_create_loop_agent(
         model,
         Some(thinking),
         compaction,
+        &plugin_scopes,
         progress,
     )?;
     let arc = Arc::new(Mutex::new(agent));

@@ -16,6 +16,7 @@ async fn serve_stdio_exposes_and_executes_builtin_tools() {
         url: None,
         headers: Default::default(),
         tool_timeout_ms: Some(30_000),
+        scopes: Vec::new(),
     };
 
     let handle = manager.connect(config).await.expect("反向 server 连接失败");

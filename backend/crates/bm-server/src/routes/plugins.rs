@@ -150,6 +150,43 @@ pub struct PutPluginSettingsRequest {
 }
 
 #[derive(Deserialize)]
+pub struct PutPluginScopeRequest {
+    /// 生效 APP 列表（空 = 公共；含 "*" = 公共；["chat"] = 仅聊天）
+    pub scopes: Vec<String>,
+}
+
+/// PUT /api/plugins/{id}/scope — 设置插件作用域（config.toml plugin_scopes 覆盖；
+/// 引擎组装会话工具面时按 session.app 过滤）。
+pub async fn put_plugin_scope(
+    State(state): crate::SharedState,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(req): Json<PutPluginScopeRequest>,
+) -> ApiResult<Json<serde_json::Value>> {
+    plugin_info(&state, &id)
+        .await?
+        .ok_or_else(|| api_error(StatusCode::NOT_FOUND, "插件不存在"))?;
+    let scopes: Vec<String> = req
+        .scopes
+        .iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty() && s != "*")
+        .collect();
+    let mut config = state.config.write().await;
+    if scopes.is_empty() {
+        config.plugin_scopes.remove(&id);
+    } else {
+        config.plugin_scopes.insert(id, scopes);
+    }
+    bm_core::config::save(&config).map_err(|err| {
+        api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("配置写入失败: {err}"),
+        )
+    })?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
 pub struct TestSourceRequest {
     /// 源标识：jina / tavily / exa / serper / firecrawl / custom1 …
     pub source: String,

@@ -266,6 +266,10 @@ coding: {
       addHeader: "Add request header",
       headers: "HTTP request headers (http transport)",
       removeRow: "Remove row",
+      scope: "Scope",
+      scopePublic: "Public (all apps)",
+      scopeChat: "Chat only",
+      scopeCoding: "Coding only",
       hint: "Auto-discovery: project .mcp.json (Claude Code format), ~/.agents/mcp.json, ~/.config/mcp/mcp.json; TS plugins may declare via pi.registerMcpServer; ${VAR} expansion and SSRF checks apply automatically",
     },
     appearance: {
@@ -483,6 +487,20 @@ coding: {
       settingsLoadFailed: "Load failed: {{error}}",
       removeInstance: "Remove this instance",
       tip: "Tip: enabling a skill syncs it to <code>~/.boenmind/pi/skills/</code>; the assistant reads SKILL.md on demand. Enabling/disabling affects new chat sessions.",
+    },
+    scope: {
+      title: "Scope",
+      desc: "The app where this extension is effective: Public = visible in all apps; bound = visible only in that app's sessions (e.g. chat and coding keep memory/extensions isolated)",
+      public: "Public (all apps)",
+      chat: "Chat only",
+      coding: "Coding only",
+      saved: "\"{{name}}\" scope updated; takes effect in new sessions",
+      saveFailed: "Save failed: {{error}}",
+      badge: {
+        public: "Public",
+        chat: "Chat",
+        coding: "Coding",
+      },
     },
     refinement: {
       loadFailed: "Failed to load suggestions: {{error}}",

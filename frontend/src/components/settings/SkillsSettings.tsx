@@ -13,11 +13,14 @@ import { toast } from "sonner";
 import { api, type SkillCandidate, type SkillInfo } from "@/api/client";
 import { LocalInstallRow, ManagedItemsList } from "./ManagedItemsList";
 import { SkillSettingsDialog } from "./SkillSettingsDialog";
+import { ScopeBadge, ScopePicker } from "./ScopePicker";
+import { useAppStore } from "@/stores/app-store";
 
 const RANDOM_COUNT = 5;
 
 export function SkillsSettings() {
   const { t } = useTranslation();
+  const config = useAppStore((s) => s.config);
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [candidates, setCandidates] = useState<SkillCandidate[]>([]);
@@ -190,24 +193,36 @@ export function SkillsSettings() {
                 </Badge>,
               ]
             : []),
+          <ScopeBadge key="scope" scopes={config?.skillScopes?.[skill.id]} />,
         ]}
         toggle={(skill) => void toggle(skill)}
         uninstall={(skill) => void uninstall(skill)}
-        extraActions={(skill) =>
-          skill.settingsSchema ? (
-            <Button
-              key="settings"
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="shrink-0"
-              onClick={() => setSettingsSkill(skill)}
-              aria-label={t("settings.skills.settings")}
-            >
-              <Settings2 size={14} />
-            </Button>
-          ) : null
-        }
+        extraActions={(skill) => (
+          <>
+            <ScopePicker
+              key="scope"
+              name={skill.name}
+              current={config?.skillScopes?.[skill.id]}
+              onSave={async (scopes) => {
+                await api.setSkillScope(skill.id, scopes);
+                await useAppStore.getState().loadConfig();
+              }}
+            />
+            {skill.settingsSchema ? (
+              <Button
+                key="settings"
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="shrink-0"
+                onClick={() => setSettingsSkill(skill)}
+                aria-label={t("settings.skills.settings")}
+              >
+                <Settings2 size={14} />
+              </Button>
+            ) : null}
+          </>
+        )}
         emptyKey="settings.skills.empty"
         uninstallTitleKey="settings.skills.uninstall"
       />

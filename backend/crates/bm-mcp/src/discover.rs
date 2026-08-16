@@ -160,6 +160,11 @@ fn parse_server_entry(name: &str, entry: &serde_json::Value) -> Result<McpServer
             })
             .unwrap_or_default(),
         tool_timeout_ms: None,
+        scopes: obj
+            .get("scopes")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+            .unwrap_or_default(),
     };
     config
         .validate()

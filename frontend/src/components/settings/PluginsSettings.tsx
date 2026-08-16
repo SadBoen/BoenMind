@@ -13,6 +13,8 @@ import { toast } from "sonner";
 import { api, type PluginInfo } from "@/api/client";
 import { LocalInstallRow, ManagedItemsList } from "./ManagedItemsList";
 import { PluginSettingsDialog } from "./PluginSettingsDialog";
+import { ScopeBadge, ScopePicker } from "./ScopePicker";
+import { useAppStore } from "@/stores/app-store";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
@@ -25,6 +27,7 @@ const CATEGORY_FILTERS: CategoryFilter[] = ["all", "system", "app"];
 
 export function PluginsSettings() {
   const { t } = useTranslation();
+  const config = useAppStore((s) => s.config);
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [installPath, setInstallPath] = useState("");
@@ -224,20 +227,32 @@ export function PluginsSettings() {
           <Badge key="kind" variant="outline" className="text-[10px] font-normal">
             {plugin.kind === "single" ? t("settings.plugins.singleFile") : t("settings.plugins.manifestDir")}
           </Badge>,
+          <ScopeBadge key="scope" scopes={config?.pluginScopes?.[plugin.id]} />,
         ]}
-        extraActions={(plugin) =>
-          plugin.settingsSchema ? (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="text-muted-foreground"
-              title={t("settings.plugins.settings")}
-              onClick={() => setSettingsFor(plugin)}
-            >
-              <Settings2 size={15} />
-            </Button>
-          ) : null
-        }
+        extraActions={(plugin) => (
+          <>
+            <ScopePicker
+              key="scope"
+              name={plugin.name}
+              current={config?.pluginScopes?.[plugin.id]}
+              onSave={async (scopes) => {
+                await api.setPluginScope(plugin.id, scopes);
+                await useAppStore.getState().loadConfig();
+              }}
+            />
+            {plugin.settingsSchema ? (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="text-muted-foreground"
+                title={t("settings.plugins.settings")}
+                onClick={() => setSettingsFor(plugin)}
+              >
+                <Settings2 size={15} />
+              </Button>
+            ) : null}
+          </>
+        )}
         toggle={(plugin) => void toggle(plugin)}
         uninstall={(plugin) => void uninstall(plugin)}
         emptyKey="settings.plugins.empty"

@@ -580,6 +580,9 @@ pub struct CompatEngine {
     /// 工具快照（bm-loop ToolDef 形态；reload 后整体替换，std Mutex 短临界区）。
     /// Arc 共享：tools 服务面（ToolsPort）持有同一快照，插件变更后自动同步。
     pub tools: Arc<std::sync::Mutex<Vec<bm_loop::model::ToolDef>>>,
+    /// 工具归属表（工具名 → 插件 id）：加载循环按"加载前后差集"填充。
+    /// 作用域过滤（tools_for_app）据此把插件工具限定到其生效的 APP。
+    tool_owners: std::sync::Mutex<HashMap<String, String>>,
     /// B6：已注册工具名快照（events getActiveTools 的数据面；加载完成后填入）。
     pub tool_names: std::sync::Mutex<Vec<String>>,
     /// B6：工作目录（插件事件 ctx 的 cwd 数据面）。
@@ -713,6 +716,7 @@ impl CompatEngine {
             loaded_ids: TokioMutex::new(HashSet::new()),
             tools: Arc::new(std::sync::Mutex::new(Vec::new())),
             tool_names: std::sync::Mutex::new(Vec::new()),
+            tool_owners: std::sync::Mutex::new(HashMap::new()),
             working_dir: engine_working_dir,
         })
     }
@@ -726,6 +730,43 @@ impl CompatEngine {
         rx.await
             .map_err(|_| "compat 引擎已停止".to_string())?
             .map_err(|err| err.to_string())    }
+
+    /// 记录某插件加载后新增工具的归属（工具名 → 插件 id）。
+    /// 用加载前后工具名差集判定——runtime 聚合快照不携带归属信息。
+    async fn record_tool_owners(&self, extension_id: &str, before: &HashSet<String>) {
+        if let Ok(tools) = self.read_tools().await {
+            let mut owners = self.tool_owners.lock().unwrap();
+            for t in tools {
+                if !before.contains(&t.name) {
+                    owners.insert(t.name, extension_id.to_string());
+                }
+            }
+        }
+    }
+
+    /// 按会话场景（session.app）过滤插件工具面：工具归属插件的作用域
+    /// （config.plugin_scopes 覆盖；空/缺失 = 公共）命中当前 app 才保留。
+    /// 无归属记录的工具（历史快照等）按公共处理。
+    pub fn tools_for_app(
+        &self,
+        app: &str,
+        plugin_scopes: &HashMap<String, Vec<String>>,
+    ) -> Vec<bm_loop::model::ToolDef> {
+        let owners = self.tool_owners.lock().unwrap();
+        self.tools
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|t| match owners.get(&t.name) {
+                Some(id) => bm_core::config::scope_matches(
+                    plugin_scopes.get(id).map(Vec::as_slice).unwrap_or(&[]),
+                    app,
+                ),
+                None => true,
+            })
+            .cloned()
+            .collect()
+    }
 
     /// 增量加载当前配置里尚未加载的启用插件，并刷新工具快照
     /// （P2，2026-08-15 长程测试：插件安装/启用后当前对话即时生效——
@@ -745,9 +786,15 @@ impl CompatEngine {
             if self.loaded_ids.lock().await.contains(&spec.extension_id) {
                 continue;
             }
+            let before: HashSet<String> = self
+                .read_tools()
+                .await
+                .map(|ts| ts.iter().map(|t| t.name.clone()).collect())
+                .unwrap_or_default();
             match self.load(&spec).await {
                 Ok(_) => {
                     self.loaded_ids.lock().await.insert(spec.extension_id.clone());
+                    self.record_tool_owners(&spec.extension_id, &before).await;
                     loaded += 1;
                     tracing::info!(event = "bm.compat_plugin_loaded", id = %spec.extension_id, reload = true);
                 }
@@ -918,9 +965,15 @@ pub async fn init_compat(
                 continue;
             }
         };
+        let before: HashSet<String> = engine
+            .read_tools()
+            .await
+            .map(|ts| ts.iter().map(|t| t.name.clone()).collect())
+            .unwrap_or_default();
         match engine.load(&spec).await {
             Ok(_) => {
                 engine.loaded_ids.lock().await.insert(spec.extension_id.clone());
+                engine.record_tool_owners(&spec.extension_id, &before).await;
                 loaded += 1;
                 tracing::info!(event = "bm.compat_plugin_loaded", id = %spec.extension_id);
             }

@@ -37,6 +37,10 @@ pub struct McpServerConfig {
     /// 单次工具调用超时（毫秒），默认 60s。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_timeout_ms: Option<u64>,
+    /// 作用域（设置架构 §八）：生效的 APP 列表。
+    /// 空/含 "*" = 公共（所有 APP 会话工具面可见）；["chat"] = 仅聊天 APP。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scopes: Vec<String>,
 }
 
 impl McpServerConfig {

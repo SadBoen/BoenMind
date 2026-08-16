@@ -51,6 +51,48 @@ pub struct PutSkillSettingsRequest {
     pub values: serde_json::Value,
 }
 
+#[derive(serde::Deserialize)]
+pub struct PutSkillScopeRequest {
+    /// 生效 APP 列表（空 = 公共；含 "*" = 公共；["chat"] = 仅聊天）
+    pub scopes: Vec<String>,
+}
+
+/// PUT /api/skills/{id}/scope — 设置 skill 作用域（config.toml skill_scopes 覆盖；
+/// 注入面 = system prompt 的 available_skills 块按 session.app 过滤）。
+pub async fn put_skill_scope(
+    State(state): crate::SharedState,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(req): Json<PutSkillScopeRequest>,
+) -> ApiResult<Json<serde_json::Value>> {
+    {
+        let config = state.config.read().await;
+        bm_core::skills::list_skills(&config)
+            .map_err(|err| api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?
+            .iter()
+            .find(|s| s.id == id)
+            .ok_or_else(|| api_error(StatusCode::NOT_FOUND, "skill 未安装"))?;
+    }
+    let scopes: Vec<String> = req
+        .scopes
+        .iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty() && s != "*")
+        .collect();
+    let mut config = state.config.write().await;
+    if scopes.is_empty() {
+        config.skill_scopes.remove(&id);
+    } else {
+        config.skill_scopes.insert(id, scopes);
+    }
+    bm_core::config::save(&config).map_err(|err| {
+        api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("配置写入失败: {err}"),
+        )
+    })?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
 /// PUT /api/skills/{id}/settings — 保存 skill 设置（语义同插件设置）。
 pub async fn put_skill_settings(
     State(_state): crate::SharedState,

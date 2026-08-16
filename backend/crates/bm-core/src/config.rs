@@ -6,6 +6,7 @@
 //! - 本地或 OpenAI 兼容端点（ollama / llamacpp / 自定义 openai 兼容）：必须提供 base_url
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -67,6 +68,19 @@ pub struct AppConfig {
     /// ```
     #[serde(default)]
     pub mcp: Option<serde_json::Value>,
+    /// 插件作用域（设置架构 §八）：插件 id → 生效的 APP 列表。
+    /// 空/缺失/含 "*" = 公共（所有 APP 生效）；["chat"] = 仅聊天。
+    /// 引擎组装会话工具面时按 session.app 过滤（公共扩展 + 命中扩展）。
+    #[serde(default)]
+    pub plugin_scopes: HashMap<String, Vec<String>>,
+    /// skill 作用域（同上；注入面 = system prompt 的 available_skills 块）
+    #[serde(default)]
+    pub skill_scopes: HashMap<String, Vec<String>>,
+}
+
+/// 作用域匹配：作用域空/含 `*` = 公共（任何 APP 生效）；否则要求包含 app。
+pub fn scope_matches(scopes: &[String], app: &str) -> bool {
+    scopes.is_empty() || scopes.iter().any(|s| s == "*" || s == app)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -269,6 +283,8 @@ impl Default for AppConfig {
             extension_allow_dangerous: None,
             custom_system_prompt: None,
             mcp: None,
+            plugin_scopes: HashMap::new(),
+            skill_scopes: HashMap::new(),
         }
     }
 }
@@ -435,6 +451,8 @@ mod tests {
     #[test]
     fn resolve_provider_falls_back_to_default() {
         let config = AppConfig {
+            plugin_scopes: HashMap::new(),
+            skill_scopes: HashMap::new(),
             providers: vec![
                 ProviderConfig {
                     id: "a".into(),

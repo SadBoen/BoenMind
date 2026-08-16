@@ -40,7 +40,7 @@ use axum::{
     extract::State,
     http::{Method, StatusCode},
     response::{IntoResponse, Response},
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
 };
 use bm_core::{AppConfig, Db};
 use tokio::sync::{Mutex, RwLock};
@@ -183,12 +183,14 @@ fn router(state: AppState) -> Router {
         .route("/api/plugins/install-source", post(routes::plugins::install_plugin_from_source))
         .route("/api/plugins/{id}", post(routes::plugins::set_plugin).delete(routes::plugins::uninstall_plugin))
         .route("/api/plugins/{id}/settings", get(routes::plugins::get_plugin_settings).put(routes::plugins::put_plugin_settings))
+        .route("/api/plugins/{id}/scope", put(routes::plugins::put_plugin_scope))
         .route("/api/plugins/{id}/test-source", post(routes::plugins::test_plugin_source))
         .route("/api/skills", get(routes::skills::list_skills))
         .route("/api/skills/install", post(routes::skills::install_skill))
         .route("/api/skills/registry/random", get(routes::skills::random_skills))
         .route("/api/skills/{id}", post(routes::skills::set_skill).delete(routes::skills::uninstall_skill))
         .route("/api/skills/{id}/settings", get(routes::skills::get_skill_settings).put(routes::skills::put_skill_settings))
+        .route("/api/skills/{id}/scope", put(routes::skills::put_skill_scope))
         .route("/api/chat", post(chat::chat))
         .route("/api/chat/stop", post(chat::stop_chat))
         .route("/api/chat/permission-response", post(chat::respond_permission))

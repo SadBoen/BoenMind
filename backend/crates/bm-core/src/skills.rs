@@ -667,11 +667,22 @@ pub fn random_skills(count: usize) -> Result<Vec<SkillCandidate>, AppError> {
 /// 生成启用的 skill 的注入文本（追加到 system prompt）。
 /// 格式与 pi CLI 的 `format_skills_for_prompt` 一致，location 指向
 /// agents/skills 下的 SKILL.md（agent 可用 read 工具加载全文与脚本）。
-pub fn enabled_skills_prompt(config: &AppConfig) -> String {
+/// `app` = 会话场景（session.app）：skill 作用域（config.skill_scopes）
+/// 过滤——公共（空/`*`）+ 命中当前 APP 的 skill 才注入（设置架构 §八）。
+pub fn enabled_skills_prompt(config: &AppConfig, app: &str) -> String {
     let Ok(infos) = list_skills(config) else {
         return String::new();
     };
-    let enabled: Vec<&SkillInfo> = infos.iter().filter(|s| s.enabled).collect();
+    let enabled: Vec<&SkillInfo> = infos
+        .iter()
+        .filter(|s| {
+            s.enabled
+                && crate::config::scope_matches(
+                    config.skill_scopes.get(&s.id).map(Vec::as_slice).unwrap_or(&[]),
+                    app,
+                )
+        })
+        .collect();
     if enabled.is_empty() {
         return String::new();
     }

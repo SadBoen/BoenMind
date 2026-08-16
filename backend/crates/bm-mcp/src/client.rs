@@ -91,6 +91,8 @@ pub struct McpServerInfo {
     /// 协商成功的协议版本（如 "2026-07-28" / "2025-11-25"）。
     pub protocol_version: String,
     pub transport: McpTransportKind,
+    /// 作用域（config.toml 配置；空/`*` = 公共）
+    pub scopes: Vec<String>,
 }
 
 /// MCP client 管理器：server 注册表 + 连接 + 工具枚举 + 调用。
@@ -268,6 +270,7 @@ impl McpClientManager {
                 name: handle.config.name.clone(),
                 protocol_version: handle.protocol_version.read().unwrap().to_string(),
                 transport: handle.config.transport,
+                scopes: handle.config.scopes.clone(),
             });
         }
         *self.servers_info.write().unwrap() = out;

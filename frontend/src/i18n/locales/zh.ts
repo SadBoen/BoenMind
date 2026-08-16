@@ -265,6 +265,10 @@ coding: {
       addHeader: "添加请求头",
       headers: "HTTP 请求头（http 传输）",
       removeRow: "删除此行",
+      scope: "作用域",
+      scopePublic: "公共（所有 APP）",
+      scopeChat: "仅聊天",
+      scopeCoding: "仅编程",
       hint: "自动发现：项目 .mcp.json（Claude Code 格式）、~/.agents/mcp.json、~/.config/mcp/mcp.json；TS 插件可经 pi.registerMcpServer 声明； 环境变量展开与 SSRF 校验自动生效",
     },
     appearance: {
@@ -482,6 +486,20 @@ coding: {
       settingsLoadFailed: "加载失败: {{error}}",
       removeInstance: "删除此实例",
       tip: "提示：skill 启用后同步到 <code>~/.boenmind/pi/skills/</code>，由 AI 助手按需读取 SKILL.md 使用；启用/禁用后新建对话生效。",
+    },
+    scope: {
+      title: "作用域",
+      desc: "该扩展生效的软件 APP：公共 = 所有 APP 可见；绑定后仅该 APP 的会话可见（如聊天与编程的记忆/扩展相互隔离）",
+      public: "公共（所有 APP）",
+      chat: "仅聊天",
+      coding: "仅编程",
+      saved: "「{{name}}」作用域已更新，新会话生效",
+      saveFailed: "保存失败: {{error}}",
+      badge: {
+        public: "公共",
+        chat: "聊天",
+        coding: "编程",
+      },
     },
     refinement: {
       loadFailed: "加载建议列表失败: {{error}}",

@@ -37,6 +37,10 @@ export interface AppConfig {
   extension_policy?: string;
   /** YOLO 开关：放行 exec/env 等危险能力 */
   extension_allow_dangerous?: boolean;
+  /** 插件作用域（设置架构 §八）：插件 id → 生效 APP 列表（空/缺失 = 公共） */
+  pluginScopes?: Record<string, string[]>;
+  /** skill 作用域（同上） */
+  skillScopes?: Record<string, string[]>;
 }
 
 export interface Session {
@@ -86,6 +90,8 @@ export interface McpServerConfig {
   url?: string;
   headers?: Record<string, string>;
   tool_timeout_ms?: number;
+  /** 作用域（设置架构 §八）：空/["*"] = 公共；["chat"] = 仅聊天 */
+  scopes?: string[];
 }
 
 /** 管家（Steward）状态（后端 /api/steward/status；未启用 = { enabled: false }） */
@@ -550,6 +556,20 @@ export const api = {
     request<{ ok: boolean }>(`/api/skills/${id}/settings`, {
       method: "PUT",
       body: JSON.stringify({ values }),
+    }),
+
+  /** 设置插件作用域（空/["*"] = 公共） */
+  setPluginScope: (id: string, scopes: string[]) =>
+    request<{ ok: boolean }>(`/api/plugins/${id}/scope`, {
+      method: "PUT",
+      body: JSON.stringify({ scopes }),
+    }),
+
+  /** 设置 skill 作用域（空/["*"] = 公共） */
+  setSkillScope: (id: string, scopes: string[]) =>
+    request<{ ok: boolean }>(`/api/skills/${id}/scope`, {
+      method: "PUT",
+      body: JSON.stringify({ scopes }),
     }),
 
   listRefinementSuggestions: (status?: string) =>

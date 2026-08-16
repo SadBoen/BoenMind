@@ -266,6 +266,10 @@ coding: {
       addHeader: "요청 헤더 추가",
       headers: "HTTP 요청 헤더 (http 전송)",
       removeRow: "이 행 삭제",
+      scope: "범위",
+      scopePublic: "공개 (모든 APP)",
+      scopeChat: "채팅만",
+      scopeCoding: "프로그래밍만",
       hint: "Auto-discovery: project .mcp.json, ~/.agents/mcp.json, ~/.config/mcp/mcp.json",
     },
     appearance: {
@@ -483,6 +487,20 @@ coding: {
       settingsLoadFailed: "로드 실패: {{error}}",
       removeInstance: "이 인스턴스 삭제",
       tip: "팁: 활성화된 스킬은 <code>~/.boenmind/pi/skills/</code>에 동기화되며 어시스턴트가 필요에 따라 SKILL.md를 읽습니다. 활성화/비활성화는 새 대화 세션부터 적용됩니다.",
+    },
+    scope: {
+      title: "범위",
+      desc: "이 확장이 적용되는 소프트웨어 APP: 공개 = 모든 APP에서 유효. 바인딩 시 해당 APP 세션에서만 유효 (예: 채팅과 프로그래밍의 메모리/확장 분리)",
+      public: "공개 (모든 APP)",
+      chat: "채팅만",
+      coding: "프로그래밍만",
+      saved: "\"{{name}}\" 범위가 업데이트되었습니다. 새 세션부터 적용됩니다",
+      saveFailed: "저장 실패: {{error}}",
+      badge: {
+        public: "공개",
+        chat: "채팅",
+        coding: "프로그래밍",
+      },
     },
     refinement: {
       loadFailed: "제안 목록을 불러오지 못했습니다: {{error}}",
