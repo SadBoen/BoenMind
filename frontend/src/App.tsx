@@ -42,7 +42,7 @@ export default function App() {
     if (config?.theme) setTheme(config.theme);
   }, [config?.theme, setTheme]);
 
-  // 启动加载：外观恢复 + 配置 + 会话列表（一次）；健康状态走统一轮询（离线暂停）
+  // 启动加载：外观恢复 + 首拉（health/配置/会话）；health 轮询走统一节奏（离线降频）
   useEffect(() => {
     // 全局外观：字体档位 + 强调色/减少动画 + 皮肤（挂载恢复）
     applyFontScale(fontScale());
@@ -50,9 +50,10 @@ export default function App() {
     applyAccent(s.accent);
     applyReduceMotion(s.reduceMotion);
     applySkin(s.skin, s.skinParams);
+    void refreshHealth();
     void loadConfig();
     void loadSessions();
-  }, [loadConfig, loadSessions]);
+  }, [refreshHealth, loadConfig, loadSessions]);
   usePolling(() => void refreshHealth(), 5000, true);
 
   return (
