@@ -87,16 +87,15 @@
    ⚠️ Chromium 实现限制：backdrop-filter 作用在滚动容器（.dv-view 等 overflow
    元素）上不生效——必须放在不滚动的父容器（.dv-groupview）。背景层是静态图/
    渐变，滚动时 backdrop 内容不变，blur 层可复用（性能安全）。
-   saturate 提亮背景色彩，避免被半透明白压灰。 */
+   saturate 提亮背景色彩，避免被半透明白压灰。
+   弹层（菜单/选择器/提示）不 blur：操作浮层必须实色清晰、恒在最顶层
+   （2026-08-16 修复：菜单毛玻璃化后被感知为"盖在玻璃下方"）。 */
 @supports (backdrop-filter: blur(1px)) {
   :root[data-skin="glass"] nav,
   :root[data-skin="glass"] footer,
   :root[data-skin="glass"] .dv-tabs-and-actions-container,
   :root[data-skin="glass"] .dv-groupview,
-  :root[data-skin="glass"] [data-slot="dialog-content"],
-  :root[data-skin="glass"] [data-slot="select-content"],
-  :root[data-skin="glass"] [data-slot="dropdown-menu-content"],
-  :root[data-skin="glass"] [data-slot="tooltip-content"] {
+  :root[data-skin="glass"] [data-slot="dialog-content"] {
     backdrop-filter: blur(calc(var(--skin-blur, 16) * 1px)) saturate(1.35);
     -webkit-backdrop-filter: blur(calc(var(--skin-blur, 16) * 1px)) saturate(1.35);
   }
