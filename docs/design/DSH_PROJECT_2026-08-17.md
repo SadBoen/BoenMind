@@ -75,6 +75,15 @@ boenmind-dsh/               # 新仓库（或现有仓库新分支 refactor/dsh-
 - 配置 DeepSeek 模型（`dsh-llm-deepseek` 已在全家桶）。
 - **门禁 0**：纯官方全家桶下，Chat 全链路 + 文件工具 + 子代理 + 工作区浏览全通。
 
+### M0.5 最小化评估与皮肤接入（2026-08-17 实测）
+
+**最小化评估结论（不是官方所有插件都装，但 dsh-base 不可裁剪）**：
+- `dsh-base` 是**原子 bundle**（78 个激活行 = 核心能力：agent loop/session/llm/typert/api-gateway/凭证/持久化/压缩/沙箱/子代理……几乎与其 80 依赖一一对应）——拆它 = 手工拆分官方 bundle = 二开上游，违背"不二开"原则，维护成本远超收益。
+- 真正可裁的是**主包额外 29 依赖**（headless/terminal/mcp-client/schedule/codex 子代理等）——但它们是可选的**能力**而非负担（激活是服务可用性驱动，非全量运行；磁盘大头是原生 addon，裁剪收益很小）。
+- **正确的最小化策略 = 保持官方全家桶 + 用自研插件替换后逐个下掉对应官方包**（M2 起执行），而非起步就手工裁包。启动器 `scripts/dsh.cjs` 统一 DSH_HOME，插件管理 `pnpm plugin --profile web` 走项目目录。
+
+**毛玻璃皮肤（dsh-frosted-window）已接入**：`pnpm plugin --profile web add <release tgz>` → 自动写入 profile bundles → 重启生效。Settings → **Frosted**：开关（绿开灰关，关闭即恢复官方外观）+ 壁纸上图 + 玻璃密度/模糊/饱和度/压暗四滑杆。**可切换**，与官方 Light/Dark/System 主题并存（`overrideTokens` 不改 `setTheme('custom')`）。
+
 ### M1 产品外壳（登录/鉴权/桌面）
 
 - Tauri 壳移植：窗口加载 dsh web、图标/签名/updater 配置迁入；`BOENMIND_TOKEN` 鉴权语义接入 `dsh-api-gateway`（全家桶自带）。
