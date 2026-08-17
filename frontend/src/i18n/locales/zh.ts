@@ -709,7 +709,7 @@ coding: {
       empty: "暂无专家预设",
       builtin: "预置",
       custom: "自定义",
-      toolsCount: "{{count}} 个工具",
+      extensionsCount: "{{count}} 个扩展",
       bucketAuto: "记忆桶（自动）: {{bucket}}",
       edit: "编辑",
       deleteConfirm: "确定删除专家「{{name}}」？其记忆桶文件会保留（记忆资产），删除记录写入使用档案。",

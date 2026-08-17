@@ -709,7 +709,7 @@ coding: {
       empty: "전문가 프리셋이 없습니다",
       builtin: "프리셋",
       custom: "사용자 정의",
-      toolsCount: "{{count}}개 도구",
+      extensionsCount: "{{count}}개 확장",
       bucketAuto: "메모리 버킷(자동): {{bucket}}",
       edit: "편집",
       deleteConfirm: "전문가「{{name}}」을(를) 삭제하시겠습니까? 메모리 버킷 파일은 유지되며 삭제 기록이 남습니다.",

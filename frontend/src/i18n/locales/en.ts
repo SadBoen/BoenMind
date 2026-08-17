@@ -710,7 +710,7 @@ coding: {
       empty: "No experts yet",
       builtin: "Built-in",
       custom: "Custom",
-      toolsCount: "{{count}} tools",
+      extensionsCount: "{{count}} extensions",
       bucketAuto: "Memory bucket (auto): {{bucket}}",
       edit: "Edit",
       deleteConfirm: "Delete expert「{{name}}」? Its memory bucket file is kept (memory asset); the deletion is recorded.",

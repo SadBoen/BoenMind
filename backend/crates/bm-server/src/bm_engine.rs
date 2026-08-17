@@ -333,10 +333,6 @@ fn build_loop_agent(
     plugin_scopes: &HashMap<String, Vec<String>>,
     enabled_plugins: &[String],
     progress: Arc<std::sync::Mutex<String>>,
-    // 专家工具子集（2026-08-16 接线）：None = 全部内置工具；
-    // Some = 只注册命中子集的内置工具。插件/MCP 工具不受影响
-    // （它们由作用域管理，不与专家工具面双重机制）。
-    expert_tools: Option<&[String]>,
     // 会话记忆桶（专家接线）：未绑定专家 = 默认桶。
     memory_bucket: String,
 ) -> Result<BmLoopAgent, (StatusCode, String)> {
@@ -382,13 +378,10 @@ fn build_loop_agent(
     let mut tools = bm_loop::ToolRegistry::new();
     // B6：内置工具集 schema 进模型可见面（对齐 pi BUILTIN_TOOL_NAMES 全开），
     // 执行侧 QuickJsToolExecutor 按名分派到 BuiltinTools。
-    // 专家工具子集：命中才注册（read/write/bash 等按专家 tools 过滤）
+    // 2026-08-17 用户定调：内置能力对全部 Agent 角色开放——不再按专家
+    // tools 子集裁剪；角色配置只控制扩展（SKILL/MCP/插件，见 plugin_scopes/
+    // skill_scopes/server scopes）。
     for tool in crate::builtin_tools::BuiltinTools::definitions() {
-        if let Some(list) = expert_tools
-            && !list.iter().any(|n| n == &tool.name)
-        {
-            continue;
-        }
         if let Err(err) = tools.register(tool.clone()) {
             tracing::warn!(event = "bm.tool_register_failed", tool = %tool.name, error = %err.message);
         }
@@ -662,7 +655,7 @@ async fn get_or_create_loop_agent(
     // （[compaction] 配置 → 策略插件构造参数；enabled=false → None 不挂）
     // 专家接线（2026-08-16）：APP 绑定专家时，专家角色提示词替换基础
     // SYSTEM_PROMPT（正文为空则回落）；skills/custom/平台提示仍追加。
-    let (system_prompt, compaction, plugin_scopes, enabled_plugins, expert_tools, memory_bucket) = {
+    let (system_prompt, compaction, plugin_scopes, enabled_plugins, memory_bucket) = {
         let config = state.config.read().expect("config poisoned");
         let skills = bm_core::skills::enabled_skills_prompt(&config, app);
         let custom = config.custom_system_prompt.clone().unwrap_or_default();
@@ -688,25 +681,23 @@ async fn get_or_create_loop_agent(
         } else {
             format!("{base}{}", PLATFORM_HINT)
         };
-        let expert_tools = expert.as_ref().and_then(|e| e.tools.clone());
-        // 会话记忆桶：绑定专家 → 专家桶（显式 memory 字段优先，否则专家名）；
-        // 未绑定 → 默认桶（facts）
-        let memory_bucket = expert
-            .as_ref()
-            .map(|e| {
-                e.memory
-                    .clone()
-                    .unwrap_or_else(|| e.name.clone())
-            })
-            .unwrap_or_else(|| bm_memory::DEFAULT_BUCKET.to_string());
-        (
-            system_prompt,
-            config.compaction.effective(&provider.id, model),
-            config.plugin_scopes.clone(),
-            config.enabled_plugins.clone(),
-            expert_tools,
-            memory_bucket,
-        )
+    // 会话记忆桶：绑定专家 → 专家桶（显式 memory 字段优先，否则专家名）；
+    // 未绑定 → 默认桶（facts）
+    let memory_bucket = expert
+        .as_ref()
+        .map(|e| {
+            e.memory
+                .clone()
+                .unwrap_or_else(|| e.name.clone())
+        })
+        .unwrap_or_else(|| bm_memory::DEFAULT_BUCKET.to_string());
+    (
+        system_prompt,
+        config.compaction.effective(&provider.id, model),
+        config.plugin_scopes.clone(),
+        config.enabled_plugins.clone(),
+        memory_bucket,
+    )
     };
     let agent = build_loop_agent(
         &system_prompt,
@@ -728,7 +719,6 @@ async fn get_or_create_loop_agent(
         &plugin_scopes,
         &enabled_plugins,
         progress,
-        expert_tools.as_deref(),
         memory_bucket,
     )?;
     let arc = Arc::new(Mutex::new(agent));

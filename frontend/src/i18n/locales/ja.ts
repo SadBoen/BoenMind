@@ -709,7 +709,7 @@ coding: {
       empty: "エキスパートがありません",
       builtin: "プリセット",
       custom: "カスタム",
-      toolsCount: "{{count}} ツール",
+      extensionsCount: "{{count}} 拡張",
       bucketAuto: "メモリバケット（自動）: {{bucket}}",
       edit: "編集",
       deleteConfirm: "エキスパート「{{name}}」を削除しますか？メモリバケットファイルは保持され、削除記録が残ります。",

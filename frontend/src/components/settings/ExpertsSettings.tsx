@@ -3,12 +3,8 @@
  * 专家与 subagent 角色同池（~/.boenmind/agents/*.md）——子代理派工与
  * APP 专家读同一批人。预置（coding-* 系列与 default）禁删。
  *
- * 2026-08-16 设计定调：
- * - 专家 = 模板（非实例），同一模板可派多个 Agent（码农一号/二号）；
- * - 名称统一 APP 前缀（coding-architect…），名称即描述（无 description 字段）；
- * - 模型下拉选择（按提供商分组，同聊天页）；工具子集复选；
- * - 记忆桶自动绑定 = 专家名（用户不关心命名），删除专家保留桶；
- * - 扩展子集并入作用域机制（插件/Skills 列表徽标），表单不再出现。
+ * 2026-08-17 用户定调：内置能力对全部角色开放，专家配置界面只控制
+ * SKILL/MCP/插件（扩展子集）；工具子集字段已退役（后端忽略）。
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -39,8 +35,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-/** 内置工具面（与后端 BuiltinTools::NAMES 对齐；None = 全部） */
-const BUILTIN_TOOLS = ["read", "write", "edit", "grep", "find", "ls", "bash"] as const;
+/** 无内置工具子集：2026-08-17 用户定调，内置能力对全部角色开放 */
 
 export function ExpertsSettings() {
   const { t } = useTranslation();
@@ -119,7 +114,7 @@ export function ExpertsSettings() {
                   )}
                 </div>
                 <p className="mt-0.5 text-[10px] text-muted-foreground">
-                  {t("settings.experts.toolsCount", { count: expert.tools?.length ?? 0 })}
+                  {t("settings.experts.extensionsCount", { count: expert.extensions?.length ?? 0 })}
                   {" · "}
                   {t("settings.experts.bucketAuto", { bucket: expert.memory ?? expert.name })}
                 </p>
@@ -171,7 +166,6 @@ function ExpertEditDialog({
   const config = useAppStore((s) => s.config);
   const [name, setName] = useState(expert?.name ?? "");
   const [model, setModel] = useState(expert?.model ?? "");
-  const [tools, setTools] = useState<Set<string>>(new Set(expert?.tools ?? []));
   const [systemPrompt, setSystemPrompt] = useState(expert?.system_prompt ?? "");
   const [saving, setSaving] = useState(false);
   /** 记忆桶（空 = 自动绑定专家名）；已装扩展（插件/Skills id 集合） */
@@ -205,15 +199,6 @@ function ExpertEditDialog({
       .catch(() => setSkills([]));
   }, [open]);
 
-  const toggleTool = (tool: string, checked: boolean) => {
-    setTools((prev) => {
-      const next = new Set(prev);
-      if (checked) next.add(tool);
-      else next.delete(tool);
-      return next;
-    });
-  };
-
   const toggleExt = (id: string, checked: boolean) => {
     setExtensions((prev) => {
       const next = new Set(prev);
@@ -241,7 +226,6 @@ function ExpertEditDialog({
         description: "",
         model: model || undefined,
         reasoning: expert?.reasoning,
-        tools: tools.size > 0 ? [...tools] : undefined,
         extensions: extensions.size > 0 ? [...extensions] : undefined,
         memory: memory || undefined, // 空 = 后端回填自动绑定（= 专家名）
         system_prompt: systemPrompt,
@@ -315,26 +299,6 @@ function ExpertEditDialog({
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground">{t("settings.experts.memoryHint")}</p>
-          </div>
-          <div className="space-y-1.5">
-            <Label>{t("settings.experts.tools")}</Label>
-            <div className="grid grid-cols-2 gap-1.5 rounded-md border p-3 sm:grid-cols-3">
-              {BUILTIN_TOOLS.map((tool) => (
-                <label
-                  key={tool}
-                  className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm hover:bg-accent/50"
-                >
-                  <input
-                    type="checkbox"
-                    checked={tools.has(tool)}
-                    onChange={(e) => toggleTool(tool, e.target.checked)}
-                    className="size-4 shrink-0 accent-primary"
-                  />
-                  <span className="font-mono text-xs">{tool}</span>
-                </label>
-              ))}
-            </div>
-            <p className="text-xs text-muted-foreground">{t("settings.experts.toolsHint")}</p>
           </div>
           <div className="space-y-1.5">
             <Label>{t("settings.experts.extensions")}</Label>

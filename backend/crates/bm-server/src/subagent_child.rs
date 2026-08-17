@@ -154,21 +154,13 @@ pub async fn run(args: &[String]) -> i32 {
         return 2;
     };
 
-    // 工具面：角色 csv ∩ 内置工具集（pi 特有工具如 hashline_edit 无 bm
-    // 对应实现，忽略——自研底座以 read/write/edit 覆盖同场景）
+    // 工具面（2026-08-17 用户定调）：内置能力对全部 Agent 角色开放——
+    // 不再按角色 tools csv 裁剪（角色配置只控制 SKILL/MCP/插件）。
+    // pi 特有工具名（如 hashline_edit）无 bm 对应实现，忽略——自研底座
+    // 以 read/write/edit 覆盖同场景。
     let mut tools = ToolRegistry::new();
-    let csv_names = if child.tools.is_empty() {
-        None
-    } else {
-        Some(child.tools.iter().map(String::as_str).collect::<Vec<_>>())
-    };
     for def in crate::builtin_tools::BuiltinTools::definitions() {
-        let wanted = csv_names
-            .as_ref()
-            .is_none_or(|names| names.iter().any(|n| *n == def.name));
-        if wanted
-            && let Err(err) = tools.register(def.clone())
-        {
+        if let Err(err) = tools.register(def.clone()) {
             eprintln!("[bm-server:subagent] 工具注册失败 {}: {}", def.name, err.message);
         }
     }
@@ -464,18 +456,11 @@ mod tests {
         assert_eq!(text, "最终结论");
     }
 
-    /// 工具面过滤：角色 csv ∩ 内置工具集（hashline_edit 等 pi 特有工具被忽略）。
+    /// 工具面（2026-08-17 用户定调）：内置能力全开放——角色 tools csv 不再
+    /// 裁剪内置工具（角色配置只控制 SKILL/MCP/插件）；内置面 7 个文件手脚。
     #[test]
-    fn tool_csv_intersects_builtin_names() {
+    fn builtin_tools_all_open_for_all_roles() {
         let builtin: Vec<&str> = crate::builtin_tools::BuiltinTools::NAMES.to_vec();
-        let csv = vec!["read".to_string(), "bash".to_string(), "hashline_edit".to_string()];
-        let kept: Vec<&str> = csv
-            .iter()
-            .map(String::as_str)
-            .filter(|n| builtin.contains(n))
-            .collect();
-        assert_eq!(kept, vec!["read"]);
-        // 空 csv = 全部内置（bash 已删除，2026-08-17：内置面 6 个文件手脚）
-        assert!(builtin.len() >= 6);
+        assert_eq!(builtin, vec!["read", "write", "edit", "grep", "find", "ls", "glob"]);
     }
 }
