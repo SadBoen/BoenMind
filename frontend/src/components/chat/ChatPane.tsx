@@ -13,6 +13,7 @@ import { Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Message } from "@/api/client";
 import { useAppStore } from "@/stores/app-store";
+import { toolDisplayForScene } from "@/lib/chat-display-config";
 import { MessageItem } from "./MessageItem";
 import { ChatInput } from "./ChatInput";
 import { ScrollIndicators } from "./ScrollIndicators";
@@ -47,6 +48,8 @@ export function ChatPane({ variant = "full", scene = "chat" }: ChatPaneProps) {
   const streamingText = useAppStore((s) => s.streamingText);
   const streamingToolCalls = useAppStore((s) => s.streamingToolCalls);
   const activeSessionId = useAppStore((s) => s.activeSessionId);
+  // 场景显示档位（任务5：不同 APP 不同输出配置；coding 等编程场景 full）
+  const toolDisplay = toolDisplayForScene(scene);
   // 内嵌会话列表显隐（状态栏 prefix 三横按钮 toggle；聊天应用默认展开）
   const sessionsOpen = useAppStore((s) => s.chatSessionsOpen[scene] ?? scene === "chat");
 
@@ -145,7 +148,7 @@ export function ChatPane({ variant = "full", scene = "chat" }: ChatPaneProps) {
             <div className="flex flex-col gap-5 px-6 py-6">
               {messages.map((m, i) => (
                 <div key={m.id} data-mid={i} data-role={m.role} data-preview={previews.get(m.id)}>
-                  <MessageItem message={m} />
+                  <MessageItem message={m} toolDisplay={toolDisplay} />
                 </div>
               ))}
               {streaming && (
@@ -172,6 +175,7 @@ export function ChatPane({ variant = "full", scene = "chat" }: ChatPaneProps) {
                         // 收到 ToolCallEnd 前保持"执行中"中性色
                         running: !c.done,
                       }))}
+                      toolDisplay={toolDisplay}
                     />
                   ) : (
                     <div className="flex items-center gap-1.5 py-2">

@@ -165,6 +165,11 @@ pub struct StreamHooks {
     /// 会话记忆桶（专家接线 2026-08-16）：APP 绑定专家 → 专家同名桶；
     /// 未绑定 = 默认桶（facts）。注入时按桶取记忆（角色记忆互不污染）。
     bucket: String,
+    /// 本轮工具调用收集（2026-08-17 修复：此前 ToolCallStart/End 只推 SSE
+    /// 不入库，历史回放看不到工具执行过程）。on_tool_pre 入队、on_tool_post
+    /// 回写成败；run_agent_turn 收尾随 assistant 消息落 tool_calls 表。
+    /// 值 = (工具名, 参数 JSON, is_error)；回合内同步钩子顺序写入，无并发。
+    tool_calls: std::sync::Mutex<Vec<(String, serde_json::Value, bool)>>,
 }
 
 impl StreamHooks {
@@ -181,7 +186,14 @@ impl StreamHooks {
             memory,
             role,
             bucket,
+            tool_calls: std::sync::Mutex::new(Vec::new()),
         }
+    }
+
+    /// 取走本轮工具调用记录（取后清空：run_agent_turn 收尾调用，防下一轮
+    /// 把上一轮的调用重复入库）。
+    fn take_tool_calls(&self) -> Vec<(String, serde_json::Value, bool)> {
+        std::mem::take(&mut *self.tool_calls.lock().unwrap())
     }
 
     /// 记忆插件句柄（外部 remember 入口；无记忆插件时为 None）。
@@ -252,6 +264,11 @@ impl LoopHooks for StreamHooks {
         // B4：工具调用开始事件（前端工具卡片）；权限裁决是 B5（此处恒 Allow——
         // 执行前拦截由 loop 的 ToolGate 语义承载，权限桥接上后在此返回 Deny）
         *self.progress.lock().unwrap() = format!("工具: {}", ctx.name);
+        self.tool_calls.lock().unwrap().push((
+            ctx.name.clone(),
+            ctx.args.clone(),
+            false,
+        ));
         if !self.try_send(AgentStreamEvent::ToolCallStart {
             id: ctx.call_id.clone(),
             name: ctx.name.clone(),
@@ -263,6 +280,12 @@ impl LoopHooks for StreamHooks {
     }
 
     fn on_tool_post(&mut self, ctx: &ToolCtx, ok: bool) {
+        // 回写成败到上一条同名调用（工具调用按回合顺序串行，末条即本条）
+        if let Some(last) = self.tool_calls.lock().unwrap().last_mut()
+            && last.0 == ctx.name
+        {
+            last.2 = !ok;
+        }
         if !self.try_send(AgentStreamEvent::ToolCallEnd {
             id: ctx.call_id.clone(),
             name: ctx.name.clone(),
@@ -1000,15 +1023,22 @@ async fn run_agent_turn(
     agent.hooks().attach(tx, cancel_tx);
     let outcome = agent.run_turn(request, reason, &mut cancel_rx).await;
     agent.hooks().detach();
+    // 取走本轮工具调用（随 assistant 消息落库；取后清空防下一轮重复入库）
+    let tool_calls = agent.hooks().take_tool_calls();
     // 释放 agent 锁（drop 前退出作用域约定；显式 drop 防 detach 后继续持锁）
     drop(agent);
     timeout_task.abort();
 
     match outcome {
         Ok(o) => {
-            // 收尾：与 pi 路径同语义——无论成功/取消/失败，已生成文本照常入库
-            if !o.final_text.trim().is_empty() {
-                let _ = state.db.add_message(session_id, "assistant", &o.final_text).await;
+            // 收尾：与 pi 路径同语义——无论成功/取消/失败，已生成文本照常入库；
+            // 工具调用随消息写入（回放时前端据此还原工具执行过程）
+            if !o.final_text.trim().is_empty()
+                && let Ok(msg) = state.db.add_message(session_id, "assistant", &o.final_text).await
+            {
+                if !tool_calls.is_empty() {
+                    let _ = state.db.add_tool_calls(msg.id, &tool_calls).await;
+                }
                 let _ = state.db.touch_session(session_id).await;
             }
             TurnResult {

@@ -10,6 +10,7 @@ import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import type { Message } from "@/api/client";
 import { useAppStore } from "@/stores/app-store";
+import type { ToolDisplayMode } from "@/lib/tool-summary";
 import { Markdown as MarkdownRenderer } from "@/components/shared/Markdown";
 import { ProcessBlock, parseThinkBlocks } from "./ThinkBlock";
 import { ToolCallBlock, type ToolCallView } from "./ToolCallBlock";
@@ -18,11 +19,14 @@ export const MessageItem = memo(function MessageItem({
   message,
   streaming,
   streamingToolCalls,
+  toolDisplay = "summary",
 }: {
   message: Message;
   streaming?: boolean;
   /** 流式中的工具调用（仅临时 assistant 消息传入，running 状态展示） */
   streamingToolCalls?: ToolCallView[];
+  /** 工具显示档位（按场景配置，见 ChatPane）：coding 等编程场景 full，其余 summary */
+  toolDisplay?: ToolDisplayMode;
 }) {
   const isUser = message.role === "user";
 
@@ -77,7 +81,7 @@ export const MessageItem = memo(function MessageItem({
           >
             {toolCalls.map((c, i) => (
               // 名称+序号做 key：流式固化后索引位移不会把展开状态错挂到别的调用上
-              <ToolCallBlock key={`${c.tool_name}-${i}`} call={c} />
+              <ToolCallBlock key={`${c.tool_name}-${i}`} call={c} mode={toolDisplay} />
             ))}
           </ProcessBlock>
         )}
