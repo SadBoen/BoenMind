@@ -339,13 +339,20 @@ jobs:
           # 二进制名来自 Cargo package name（app.exe），对外重命名为 BoenMind.exe
           Copy-Item src-tauri\target\release\app.exe ..\dist-win\BoenMind.exe
           # WebView2Loader.dll 必须与 exe 同目录：tauri Windows exe 动态依赖该
-          # loader（其职责是定位系统 WebView2 运行时），构建时产在
-          # target/release/ 下。便携包漏拷则解压后启动即报"找不到
-          # webview2loader.dll"（v0.1.2/v0.1.3 便携包均因此不可用）。
-          Copy-Item src-tauri\target\release\WebView2Loader.dll ..\dist-win\WebView2Loader.dll
-          if (-not (Test-Path ..\dist-win\WebView2Loader.dll)) {
-            throw "WebView2Loader.dll 未随构建产出——便携包缺此文件将无法启动"
+          # loader（其职责是定位系统 WebView2 运行时），便携包漏拷则解压后启动
+          # 即报"找不到 webview2loader.dll"。注意：`tauri build --no-bundle` 不会把
+          # dll 拷到 target/release（2026-08-17 全新 checkout 实测缺失致打包失败，
+          # 此前 v0.1.2/v0.1.3 补拷逻辑从未在 CI 实测过）。dll 随 webview2-com-sys
+          # crate 分发（源码包内 x64/x86/arm64 各一份），从 cargo registry 定位最稳。
+          $dllSrc = Get-ChildItem "$env:CARGO_HOME\registry\src\*\webview2-com-sys-*\x64\WebView2Loader.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $dllSrc) {
+            # 兜底：构建脚本产物（target/release/build/webview2-com-sys-*/out/<arch>/）
+            $dllSrc = Get-ChildItem "src-tauri\target\release\build\webview2-com-sys-*\out\x64\WebView2Loader.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
           }
+          if (-not $dllSrc) {
+            throw "WebView2Loader.dll 未找到——便携包缺此文件将无法启动"
+          }
+          Copy-Item $dllSrc.FullName ..\dist-win\WebView2Loader.dll
           # 多文件便携形态（2026-08-16 用户拍板"前，后，skills, plugins, mcps"）：
           # web/（前端静态资源，bm-server BOENMIND_WEB_DIR 磁盘形态 serve）
           # 注意：dist 是 frontend/dist（tauri beforeBuildCommand 产物），
