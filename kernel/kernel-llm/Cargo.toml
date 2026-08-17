@@ -1,0 +1,13 @@
+[package]
+name = "kernel-llm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "LLM provider trait 的 mock 实现（门禁 1 用，不接真实 API）"
+
+[dependencies]
+kernel-contracts = { path = "../kernel-contracts" }
+async-trait.workspace = true
+async-stream.workspace = true
+futures.workspace = true
+serde_json.workspace = true

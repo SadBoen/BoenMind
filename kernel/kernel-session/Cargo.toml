@@ -1,0 +1,15 @@
+[package]
+name = "kernel-session"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "append-only SessionEvent 日志（唯一事实源）与投影（sessions/messages/tool_calls）"
+
+[dependencies]
+kernel-contracts = { path = "../kernel-contracts" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+parking_lot.workspace = true

@@ -1,0 +1,20 @@
+[package]
+name = "kernel-loop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "回合循环：turn/step 驱动，waterfall 事件语义，model-visible-means-logged"
+
+[dependencies]
+kernel-contracts = { path = "../kernel-contracts" }
+kernel-session = { path = "../kernel-session" }
+kernel-tools = { path = "../kernel-tools" }
+async-trait.workspace = true
+async-stream.workspace = true
+futures.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+chrono.workspace = true

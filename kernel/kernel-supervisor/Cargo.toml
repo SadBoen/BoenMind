@@ -1,0 +1,14 @@
+[package]
+name = "kernel-supervisor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "插件进程宿主雏形：拉起/健康检查/崩溃重启的最小实现（M3 完整）"
+
+[dependencies]
+kernel-contracts = { path = "../kernel-contracts" }
+async-trait.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["process"] }
+uuid.workspace = true
+parking_lot.workspace = true
