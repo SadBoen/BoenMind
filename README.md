@@ -1,30 +1,29 @@
 # BoenMind（dsh 内核版）
 
-以 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 为核心的 BoenMind 扶正项目——dsh 是运行时真身，BoenMind 的差异化能力（专家团队/管家/皮肤/审计/记忆）全部以 dsh 插件形态叠加。
+以 Rust 微内核自研后端 + 借 DeepSeek Harness 前端生态的 BoenMind 新一代。
 
-> 状态：M0 全家桶 bootstrap（2026-08-17 启动）。计划见旧仓库 `docs/design/DSH_PROJECT_2026-08-17.md`（本仓库 README 会同步）。
-> 前身仓库 `BoenMind`（pi 内核时代）只作参考资产，只读不改造。
+> 方向 v2 定稿（2026-08-17）：**后端全 Rust 微内核（loop/session/tools/storage/mcp）+ 插件/APP 全 Rust（编译产物分发、进程隔离、状态外置）+ 前端全套借 dsh 生态（官方 web-app UI/皮肤/ui-slots）**，两者由 Rust web-server 协议兼容层接通。
+> 完整计划：`docs/design/DSH_PROJECT_V2_2026-08-17.md`（旧仓库 BoenMind/docs）。
+
+## 当前状态
+
+- **M0 前端生态基础（已完成）**：dsh 全家桶 bootstrap 跑通（web 3080）+ 毛玻璃皮肤接入 + DSH_HOME 统一启动器 `scripts/dsh.cjs`。dsh web 角色 = 前端宿主 + 协议参考实现。
+- **M1 起**：Rust 微内核骨架（loop/session/tools/storage/mcp + supervisor 雏形）。
 
 ## 快速开始
 
 ```bash
-pnpm install
-pnpm dsh web          # 启动 web 版，http://127.0.0.1:3080
+pnpm install          # dsh 前端生态（M0）
+pnpm web              # 启动 dsh web（前端宿主，http://127.0.0.1:3080）
 ```
-
-## 里程碑
-
-- M0 全家桶 bootstrap：官方 dsh-base + dsh-web-app 原样跑通完整会话
-- M1 产品外壳：登录/鉴权（dsh-api-gateway）+ 浏览器先行发布
-- M2 业务插件面：记忆/皮肤/审计/权限策略
-- M3 专家团队 + 管家（team / steward 插件）
-- M4 发布：v0.1.0 三平台 + 便携包（Node runtime 内置）
 
 ## 目录
 
 ```
-dsh-home/     DSH_HOME（profiles/ 配置）
-plugins/      自研插件（team/steward/skins/memory/audit/browser）
-shell/        Tauri 2 桌面壳（后置）
-docs/         设计文档
+kernel/      Rust 微内核（loop/session/tools/storage/mcp/supervisor）
+plugins/     Rust 插件（team/steward/memory/audit/browser/skins）
+web-server/  Rust 协议兼容层（dsh 前端接口合同 6 面）
+frontend/    dsh web-app 产物 + 皮肤（借来的）
+shell/       Tauri 2 桌面壳（后置）
+apps/        Rust APP（编译产物分发，闭源可选）
 ```
