@@ -46,9 +46,6 @@ pub struct OpenAiProviderConfig {
     pub models: Vec<LlmModelInfo>,
     /// 模型清单探测端点形态。
     pub list_endpoint: ModelListEndpoint,
-    /// 是否解析 `delta.reasoning_content` 为推理增量（provider 能力声明，
-    /// 由外部配置提供——内核不做模型名猜测）。
-    pub supports_reasoning: bool,
 }
 
 /// OpenAI 兼容流式适配器。
@@ -227,8 +224,6 @@ impl OpenAICompatLlm {
         let url = self.chat_url();
         let key = self.cfg.api_key.clone();
         let body = self.build_request(&request);
-        // 推理增量能力来自 provider 配置声明（不做模型名猜测）。
-        let supports_reasoning = self.cfg.supports_reasoning;
         Box::pin(async_stream::stream! {
             let resp = match client
                 .post(&url)
@@ -323,12 +318,11 @@ impl OpenAICompatLlm {
                             yield Ok(StreamChunk::TextDelta { text: t.to_string() });
                         }
                     }
-                    // 推理增量（deepseek-reasoner / minimax M3 系）。
-                    if supports_reasoning {
-                        if let Some(t) = delta.get("reasoning_content").and_then(Value::as_str) {
-                            if !t.is_empty() {
-                                yield Ok(StreamChunk::ReasoningDelta { text: t.to_string() });
-                            }
+                    // 推理增量（对齐 DSH `llm-deepseek/src/translate.ts`：`delta.reasoning_content`
+                    // 非空即解析——wire 协议行为，与模型名/配置无关）。
+                    if let Some(t) = delta.get("reasoning_content").and_then(Value::as_str) {
+                        if !t.is_empty() {
+                            yield Ok(StreamChunk::ReasoningDelta { text: t.to_string() });
                         }
                     }
                     // 工具调用增量。
@@ -481,7 +475,6 @@ mod tests {
             api_key: "k".into(),
             models: vec![],
             list_endpoint: ModelListEndpoint::Standard,
-            supports_reasoning: false,
         });
         let req = GenerateOptions {
             provider: "deepseek".into(),
