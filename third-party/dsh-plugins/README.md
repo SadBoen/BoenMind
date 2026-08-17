@@ -1,6 +1,6 @@
 # third-party/dsh-plugins —— DSH 插件选型快照（2026-08-17）
 
-> 用途：BoenMind 迁移 dsh 内核的**插件选型快照**（见 `docs/design/DSH_MIGRATION_2026-08-17.md` §四）。
+> 用途：BoenMind 扶正 dsh 内核的**插件选型快照**（见 `docs/design/DSH_PROJECT_2026-08-17.md` §三/四）。
 > 快照策略：锁版本、源码级核验、只收"官方缝 + 我们缺且官方无"两类。**更新**：正式采用某插件前，重拉 latest 并更新本表（dsh 是 rc 生态，迭代极快）。
 > 许可：分发/内置前逐包复核。官方 `@deepseek-ai` 包以各自 tgz 内 package.json 为准（主体 MIT）；社区见下表。
 
