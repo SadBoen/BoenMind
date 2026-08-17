@@ -1,0 +1,22 @@
+{
+  "method": "POST",
+  "path": "/api/session.history",
+  "rpcMethod": "session.history",
+  "requestBody": "{\"type\":\"client-request\",\"rpcId\":\"ce220f99-9b15-4c13-8651-741f14afcb6d\",\"method\":\"session.history\",\"payload\":{\"sessionId\":\"session-a28b0535-cd09-4c85-bbf4-396e82164b6b\"}}",
+  "requestHeaders": {
+    "host": "127.0.0.1:3080",
+    "origin": "http://127.0.0.1:3080"
+  },
+  "status": 200,
+  "responseHeaders": {
+    "connection": "keep-alive",
+    "content-type": "application/json",
+    "date": "Mon, 17 Aug 2026 16:07:27 GMT",
+    "keep-alive": "timeout=5",
+    "transfer-encoding": "chunked"
+  },
+  "responseBody": "{\"type\":\"server-response\",\"rpcId\":\"ce220f99-9b15-4c13-8651-741f14afcb6d\",\"result\":{\"ok\":true,\"value\":{\"events\":[{\"event\":{\"type\":\"permission/preset\",\"seq\":0,\"time\":1786982847292,\"data\":{\"preset\":\"workspace-write\"}}},{\"event\":{\"type\":\"sandbox/mode\",\"seq\":1,\"time\":1786982847295,\"data\":{\"mode\":\"workspace-write\"}}},{\"event\":{\"type\":\"approval/policy\",\"seq\":2,\"time\":1786982847295,\"data\":{\"policy\":\"ask\"}}}],\"hasMore\":false,\"projections\":{\"asOfSeq\":2,\"values\":{\"sessionStats\":{\"turns\":0,\"steps\":0,\"llmMs\":0,\"toolMs\":0,\"ttftMs\":0,\"ttftSteps\":0,\"decodeMs\":0,\"decodeTokens\":0},\"title\":null,\"goal\":null,\"tokenUsage\":{\"uncachedInputTokens\":0,\"outputTokens\":0,\"cacheReadTokens\":0,\"cacheWriteTokens\":0},\"contextPressure\":{},\"contextBreakdown\":{\"systemTokens\":0,\"toolsTokens\":0,\"messageTokens\":0},\"subagentTiming\":{\"settledMs\":0},\"subagent\":null,\"permissions\":{\"options\":[{\"value\":\"read-only\",\"name\":\"read-only\"},{\"value\":\"workspace-write\",\"name\":\"workspace-write\"},{\"value\":\"danger-full-access\",\"name\":\"danger-full-access\"}],\"currentValue\":\"workspace-write\"},\"sessionListMetadata\":{\"blank\":true,\"lastPromptAt\":null},\"imageLimits\":{\"maxImageBytes\":5242880,\"maxImagesPerMessage\":20,\"maxMessageImageBytes\":104857600,\"maxImagePixels\":40000000,\"mediaTypes\":[\"image/png\",\"image/jpeg\",\"image/webp\",\"image/gif\"]},\"todos\":null,\"plan\":{\"active\":false,\"pending\":false}}}}}}",
+  "error": null,
+  "requestStartedAt": "2026-08-17T16:07:27.300Z",
+  "requestFinishedAt": "2026-08-17T16:07:27.307Z"
+}

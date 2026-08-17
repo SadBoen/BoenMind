@@ -1,0 +1,22 @@
+{
+  "method": "POST",
+  "path": "/api/llm.models",
+  "rpcMethod": "llm.models",
+  "requestBody": "{\"type\":\"client-request\",\"rpcId\":\"f2946291-54cb-445b-9264-a3206448925d\",\"method\":\"llm.models\",\"payload\":{}}",
+  "requestHeaders": {
+    "host": "127.0.0.1:3080",
+    "origin": "http://127.0.0.1:3080"
+  },
+  "status": 200,
+  "responseHeaders": {
+    "connection": "keep-alive",
+    "content-type": "application/json",
+    "date": "Mon, 17 Aug 2026 16:07:27 GMT",
+    "keep-alive": "timeout=5",
+    "transfer-encoding": "chunked"
+  },
+  "responseBody": "{\"type\":\"server-response\",\"rpcId\":\"f2946291-54cb-445b-9264-a3206448925d\",\"result\":{\"ok\":true,\"value\":{\"groups\":[{\"id\":\"deepseek-official\",\"name\":\"DeepSeek\",\"models\":[{\"id\":\"deepseek-v4-flash\",\"name\":\"DeepSeek-V4-Flash\",\"reasoning\":{\"efforts\":[{\"id\":\"off\",\"name\":\"Off\"},{\"id\":\"high\",\"name\":\"High\"},{\"id\":\"max\",\"name\":\"Max\"}],\"defaultEffort\":\"high\"}},{\"id\":\"deepseek-v4-pro\",\"name\":\"DeepSeek-V4-Pro\",\"reasoning\":{\"efforts\":[{\"id\":\"off\",\"name\":\"Off\"},{\"id\":\"high\",\"name\":\"High\"},{\"id\":\"max\",\"name\":\"Max\"}],\"defaultEffort\":\"high\"}}]}],\"failures\":[]}}}",
+  "error": null,
+  "requestStartedAt": "2026-08-17T16:07:27.028Z",
+  "requestFinishedAt": "2026-08-17T16:07:27.030Z"
+}

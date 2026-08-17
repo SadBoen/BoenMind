@@ -1,0 +1,22 @@
+{
+  "method": "POST",
+  "path": "/api/session.rename",
+  "rpcMethod": "session.rename",
+  "requestBody": "{\"type\":\"client-request\",\"rpcId\":\"91b9a823-352d-4296-b1b0-f4e7824a368d\",\"method\":\"session.rename\",\"payload\":{\"sessionId\":\"session-a28b0535-cd09-4c85-bbf4-396e82164b6b\",\"title\":\"测试标题\"}}",
+  "requestHeaders": {
+    "host": "127.0.0.1:3080",
+    "origin": "http://127.0.0.1:3080"
+  },
+  "status": 200,
+  "responseHeaders": {
+    "connection": "keep-alive",
+    "content-type": "application/json",
+    "date": "Mon, 17 Aug 2026 16:07:27 GMT",
+    "keep-alive": "timeout=5",
+    "transfer-encoding": "chunked"
+  },
+  "responseBody": "{\"type\":\"server-response\",\"rpcId\":\"91b9a823-352d-4296-b1b0-f4e7824a368d\",\"result\":{\"ok\":true,\"value\":{\"title\":\"测试标题\",\"seq\":6}}}",
+  "error": null,
+  "requestStartedAt": "2026-08-17T16:07:27.319Z",
+  "requestFinishedAt": "2026-08-17T16:07:27.322Z"
+}

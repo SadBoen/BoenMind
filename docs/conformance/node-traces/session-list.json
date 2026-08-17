@@ -1,0 +1,22 @@
+{
+  "method": "POST",
+  "path": "/api/session.list",
+  "rpcMethod": "session.list",
+  "requestBody": "{\"type\":\"client-request\",\"rpcId\":\"88f6bc1f-827c-468f-bd12-109502c81cd5\",\"method\":\"session.list\",\"payload\":{}}",
+  "requestHeaders": {
+    "host": "127.0.0.1:3080",
+    "origin": "http://127.0.0.1:3080"
+  },
+  "status": 200,
+  "responseHeaders": {
+    "connection": "keep-alive",
+    "content-type": "application/json",
+    "date": "Mon, 17 Aug 2026 16:07:27 GMT",
+    "keep-alive": "timeout=5",
+    "transfer-encoding": "chunked"
+  },
+  "responseBody": "{\"type\":\"server-response\",\"rpcId\":\"88f6bc1f-827c-468f-bd12-109502c81cd5\",\"result\":{\"ok\":true,\"value\":{\"items\":[]}}}",
+  "error": null,
+  "requestStartedAt": "2026-08-17T16:07:27.021Z",
+  "requestFinishedAt": "2026-08-17T16:07:27.024Z"
+}

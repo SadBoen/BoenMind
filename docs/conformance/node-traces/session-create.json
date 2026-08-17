@@ -1,0 +1,22 @@
+{
+  "method": "POST",
+  "path": "/api/session.create",
+  "rpcMethod": "session.create",
+  "requestBody": "{\"type\":\"client-request\",\"rpcId\":\"1d03654f-6677-40e5-9a7c-a2f4cbacca48\",\"method\":\"session.create\",\"payload\":{}}",
+  "requestHeaders": {
+    "host": "127.0.0.1:3080",
+    "origin": "http://127.0.0.1:3080"
+  },
+  "status": 200,
+  "responseHeaders": {
+    "connection": "keep-alive",
+    "content-type": "application/json",
+    "date": "Mon, 17 Aug 2026 16:07:27 GMT",
+    "keep-alive": "timeout=5",
+    "transfer-encoding": "chunked"
+  },
+  "responseBody": "{\"type\":\"server-response\",\"rpcId\":\"1d03654f-6677-40e5-9a7c-a2f4cbacca48\",\"result\":{\"ok\":true,\"value\":{\"sessionId\":\"session-a28b0535-cd09-4c85-bbf4-396e82164b6b\",\"agentPreset\":\"standard\"}}}",
+  "error": null,
+  "requestStartedAt": "2026-08-17T16:07:27.030Z",
+  "requestFinishedAt": "2026-08-17T16:07:27.298Z"
+}

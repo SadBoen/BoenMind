@@ -1,0 +1,22 @@
+{
+  "method": "POST",
+  "path": "/api/host.describe",
+  "rpcMethod": "host.describe",
+  "requestBody": "{\"type\":\"client-request\",\"rpcId\":\"afd6b341-418a-4a1b-8827-290b6e6c1e78\",\"method\":\"host.describe\",\"payload\":{}}",
+  "requestHeaders": {
+    "host": "127.0.0.1:3080",
+    "origin": "http://127.0.0.1:3080"
+  },
+  "status": 200,
+  "responseHeaders": {
+    "connection": "keep-alive",
+    "content-type": "application/json",
+    "date": "Mon, 17 Aug 2026 16:07:27 GMT",
+    "keep-alive": "timeout=5",
+    "transfer-encoding": "chunked"
+  },
+  "responseBody": "{\"type\":\"server-response\",\"rpcId\":\"afd6b341-418a-4a1b-8827-290b6e6c1e78\",\"result\":{\"ok\":true,\"value\":{\"version\":\"0.0.1\",\"cwd\":\"D:\\\\96_CoderWorld\\\\BoenMind\",\"provider\":\"deepseek-official\",\"model\":\"deepseek-v4-flash\",\"attachedSessions\":0,\"canOpenPath\":true}}}",
+  "error": null,
+  "requestStartedAt": "2026-08-17T16:07:26.992Z",
+  "requestFinishedAt": "2026-08-17T16:07:27.021Z"
+}

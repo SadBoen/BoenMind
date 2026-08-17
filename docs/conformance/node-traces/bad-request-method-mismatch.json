@@ -1,0 +1,22 @@
+{
+  "method": "POST",
+  "path": "/api/session.list",
+  "rpcMethod": "host.describe",
+  "requestBody": "{\"type\":\"client-request\",\"rpcId\":\"012b0fbc-5c6e-47e1-a7f1-6351caa6719d\",\"method\":\"host.describe\",\"payload\":{}}",
+  "requestHeaders": {
+    "host": "127.0.0.1:3080",
+    "origin": "http://127.0.0.1:3080"
+  },
+  "status": 200,
+  "responseHeaders": {
+    "connection": "keep-alive",
+    "content-type": "application/json",
+    "date": "Mon, 17 Aug 2026 16:07:27 GMT",
+    "keep-alive": "timeout=5",
+    "transfer-encoding": "chunked"
+  },
+  "responseBody": "{\"type\":\"server-response\",\"rpcId\":\"012b0fbc-5c6e-47e1-a7f1-6351caa6719d\",\"result\":{\"ok\":false,\"error\":{\"code\":\"bad-request\",\"message\":\"method \\\"host.describe\\\" does not match path \\\"session.list\\\"\",\"details\":{\"issues\":[]}}}}",
+  "error": null,
+  "requestStartedAt": "2026-08-17T16:07:27.337Z",
+  "requestFinishedAt": "2026-08-17T16:07:27.339Z"
+}

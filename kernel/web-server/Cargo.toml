@@ -1,0 +1,28 @@
+[package]
+name = "web-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Rust 协议兼容层：dsh 前端接口合同 9 面 + 双栅栏（v2 计划 §三）"
+
+[dependencies]
+kernel-contracts = { path = "../kernel-contracts" }
+kernel-session = { path = "../kernel-session" }
+kernel-loop = { path = "../kernel-loop" }
+kernel-assembly = { path = "../kernel-assembly" }
+serde.workspace = true
+serde_json.workspace = true
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "net", "io-util", "time"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+axum = { version = "0.8", features = ["ws"] }
+tokio-tungstenite = "0.24"
+tower-http = { version = "0.6", features = ["fs"] }
+futures.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }
