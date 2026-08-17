@@ -1,0 +1,4 @@
+# dsh-workspace-search bundle patch: register the plugin row.
+- insert:
+    - id: workspace-search
+      name: dsh-workspace-search

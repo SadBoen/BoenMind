@@ -1,0 +1,46 @@
+/** Settings copy. Chinese is the key-set source of truth. */
+export const zh = {
+  nav: '磨砂主题',
+  title: '磨砂玻璃窗口',
+  description: '选一张图铺满整个窗口，界面以半透明磨砂叠上去。浅色 / 深色仍跟随官方外观。',
+  enable: '启用主题',
+  drop: '把图片拖到这里，或点击选择',
+  dropReplace: '更换图片',
+  choose: '选择图片',
+  save: '保存',
+  saved: '已保存',
+  unsaved: '未保存',
+  remove: '删除',
+  glass: '玻璃浓度',
+  blur: '磨砂模糊',
+  saturate: '色彩饱和',
+  dim: '壁纸压暗',
+  busy: '正在读取图片…',
+  empty: '还没有壁纸',
+  errorType: '只支持 JPEG、PNG、WebP 或 GIF。',
+  errorGeneric: '无法读取这张图片，请换一张再试。',
+} satisfies Record<string, string>
+
+export type FrostedKey = keyof typeof zh
+
+export const en = {
+  nav: 'Frosted',
+  title: 'Frosted window',
+  description: 'Pick an image for the whole window. The chrome sits on it as frosted glass and still follows official Light / Dark.',
+  enable: 'Enable',
+  drop: 'Drop an image here, or click to choose',
+  dropReplace: 'Replace image',
+  choose: 'Choose image',
+  save: 'Save',
+  saved: 'Saved',
+  unsaved: 'Unsaved',
+  remove: 'Delete',
+  glass: 'Glass',
+  blur: 'Blur',
+  saturate: 'Saturation',
+  dim: 'Dim',
+  busy: 'Reading image…',
+  empty: 'No wallpaper yet',
+  errorType: 'JPEG, PNG, WebP, or GIF only.',
+  errorGeneric: 'Could not read that image. Try another file.',
+} satisfies Record<FrostedKey, string>

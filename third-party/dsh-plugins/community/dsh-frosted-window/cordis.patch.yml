@@ -1,0 +1,5 @@
+# Insert the host entry so the loader mounts this package and the
+# client-modules scanner can discover `dsh.client` in package.json.
+- insert:
+    - id: dsh-frosted-window
+      name: dsh-frosted-window

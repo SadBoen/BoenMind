@@ -1,0 +1,6 @@
+node_modules/
+lib/
+research/
+*.tgz
+.DS_Store
+npm-cache/
