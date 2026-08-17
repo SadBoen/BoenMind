@@ -785,6 +785,7 @@ dependencies = [
  "bm-storage-turso",
  "bm-wiki",
  "fancy-regex",
+ "globset",
  "ignore",
  "image",
  "lopdf",

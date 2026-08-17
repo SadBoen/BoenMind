@@ -35,6 +35,13 @@ use crate::AppState;
 /// executor 兜底报错）。
 pub type BmLoopAgent = ReactLoopAgent<StreamHooks, OpenAiClient, QuickJsToolExecutor>;
 
+/// ask_user 桥的 SSE 通道表（AppState.session_streams 的别名；executor 按
+/// 会话路由。类型过长拆别名，clippy type_complexity）。
+type AskStreamsMap =
+    Arc<tokio::sync::Mutex<HashMap<String, mpsc::UnboundedSender<bm_core::agent::AgentStreamEvent>>>>;
+/// ask_user 回答表（AppState.ask_pending 的别名）。
+type AskPendingMap = Arc<tokio::sync::Mutex<HashMap<String, tokio::sync::oneshot::Sender<String>>>>;
+
 /// 会话级 bm-loop agent 条目（对齐 pi 的 AgentSessionEntry）。
 /// agent 本体只是「日志 + 配置 + 客户端」的壳——事件日志是唯一状态源，
 /// 换 provider/model 或空闲淘汰时弃置重建零损失。
@@ -312,6 +319,10 @@ fn build_loop_agent(
     gate: Option<&Arc<crate::builtin_gate::BuiltinGate>>,
     mcp: Option<&Arc<dyn bm_mcp::McpService>>,
     mcp_gate: Option<&Arc<crate::mcp_gate::McpGate>>,
+    // ask_user 桥：SSE 通道 + 回答表（AppState 组件；executor 按会话路由）。
+    ask_streams: Option<&AskStreamsMap>,
+    // ask_user 桥的回答表（与 ask_streams 配套）。
+    ask_pending: Option<&AskPendingMap>,
     is_steward_session: bool,
     app: &str,
     session_id: &str,
@@ -392,6 +403,23 @@ fn build_loop_agent(
     let todo_def = crate::todo_tool::todo_def();
     if let Err(err) = tools.register(todo_def.clone()) {
         tracing::warn!(event = "bm.tool_register_failed", tool = %todo_def.name, error = %err.message);
+    }
+    // ask_user（2026-08-17）：向用户提问的通用能力（全局注册，不属内置
+    // 文件手脚；执行侧经 executor 的 AskBridge 走 SSE 弹窗）。子代理子
+    // 进程工具面也含（子进程 executor 无 ask 桥 → 返回"不可用"，不崩）。
+    let ask_def = bm_loop::model::ToolDef::new(
+        "ask_user",
+        "Ask the user a question and wait for their text answer (blocks until the user responds or times out).",
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "question": { "type": "string", "description": "The question to ask the user" },
+            },
+            "required": ["question"],
+        }),
+    );
+    if let Err(err) = tools.register(ask_def) {
+        tracing::warn!(event = "bm.tool_register_failed", tool = "ask_user", error = %err.message);
     }
     // 场景工具按 session.app 组装（架构 §四·B 补充 v0.22）：内置手脚与
     // 系统增强插件全局生效，场景工具只在该场景注册。wiki 场景注册 wiki_*
@@ -548,6 +576,11 @@ fn build_loop_agent(
                 .ok();
             executor = executor.with_scheduler(scheduler);
             executor = executor.with_enabled_plugins(enabled_plugins.to_vec());
+            // ask_user 桥：父进程路径挂 SSE 通道 + 回答表；子进程不挂
+            // （ask 工具不可用，返回"无 UI 通道"）。
+            if let (Some(streams), Some(pending)) = (ask_streams, ask_pending) {
+                executor = executor.with_ask(streams.clone(), pending.clone());
+            }
             executor
         },
     ))
@@ -683,6 +716,8 @@ async fn get_or_create_loop_agent(
         state.builtin_gate.as_ref(),
         state.mcp.as_ref(),
         state.mcp_gate.as_ref(),
+        Some(&state.session_streams),
+        Some(&state.ask_pending),
         is_steward_session,
         app,
         session_id,

@@ -250,6 +250,14 @@ interface AppStore {
   dismissPermission: () => void;
   /** 读取权限模式（聊天工具条与设置页共用） */
   loadPermissionMode: () => Promise<void>;
+
+  // ask_user（2026-08-17 新增工具）
+  /** 挂起的模型提问（SSE askUser 事件触发弹窗；null = 无） */
+  pendingAsk: { id: string; question: string } | null;
+  /** 回传回答（清空弹窗） */
+  respondAsk: (answer: string) => Promise<void>;
+  /** 弹窗关闭/超时清空（后端已按无回答失败收尾） */
+  dismissAsk: () => void;
   /** 切换权限模式（yolo = permissive + allowDangerous） */
   setPermissionMode: (mode: string) => Promise<void>;
 
@@ -429,6 +437,18 @@ export const useAppStore = create<AppStore>((set, get) => {
     },
     // 询问超时（60s）自动关闭弹窗；后端已 fail-closed 拒绝，前端无需上报
     dismissPermission: () => set({ pendingPermission: null }),
+    pendingAsk: null,
+    respondAsk: async (answer) => {
+      const pending = get().pendingAsk;
+      if (!pending) return;
+      try {
+        await api.respondAsk(pending.id, answer);
+      } finally {
+        set({ pendingAsk: null });
+      }
+    },
+    // 弹窗关闭/超时清空（后端已按无回答失败收尾）
+    dismissAsk: () => set({ pendingAsk: null }),
     loadPermissionMode: async () => {
       try {
         const cfg = await api.getConfig();
@@ -798,6 +818,10 @@ export const useAppStore = create<AppStore>((set, get) => {
                 message: ev.message,
               },
             });
+            break;
+          case "askUser":
+            // 模型提问：覆盖旧弹窗（旧的超时按无回答失败收尾）
+            set({ pendingAsk: { id: ev.id, question: ev.question } });
             break;
           case "taskProgress":
             // 任务心跳：进行中任务的状态条展示（断线重连后从 listSessionTasks 恢复）

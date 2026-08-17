@@ -53,8 +53,7 @@ export const TOOL_RULES: Record<string, ToolRule> = {
   ls: { verb: "listDir", args: ["path"], altArgs: ["directory"], icon: Folder },
   list_dir: { verb: "listDir", args: ["path"], altArgs: ["directory"], icon: Folder },
   glob: { verb: "findFiles", args: ["pattern"], altArgs: ["glob", "path"], icon: Folder },
-  find: { verb: "findFiles", args: ["pattern"], altArgs: ["path"], icon: Folder },
-  // 文件编辑/写入
+  find: { verb: "findFiles", args: ["pattern"], altArgs: ["path"], icon: Folder },  // 文件编辑/写入
   write_file: { verb: "writeFile", args: ["path"], altArgs: ["file_path", "file"], icon: FileEdit },
   write: { verb: "writeFile", args: ["path"], altArgs: ["file_path", "file"], icon: FileEdit },
   edit_file: { verb: "editFile", args: ["path"], altArgs: ["file_path", "file"], icon: FileEdit },

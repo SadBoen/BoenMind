@@ -192,6 +192,44 @@ pub async fn respond_permission(
     axum::Json(serde_json::json!({ "ok": true })).into_response()
 }
 
+/// ask_user 询问事件推送：经会话当前活跃 prompt 的 SSE 通道发给前端。
+/// prompt 结束后通道已移除 → 事件丢失（询问仍会超时收尾，无泄漏）。
+pub async fn send_ask_user(
+    session_streams: &tokio::sync::Mutex<
+        HashMap<String, tokio::sync::mpsc::UnboundedSender<AgentStreamEvent>>,
+    >,
+    session_id: &str,
+    request_id: &str,
+    question: &str,
+) {
+    let tx = session_streams.lock().await.get(session_id).cloned();
+    if let Some(tx) = tx {
+        let _ = tx.send(AgentStreamEvent::AskUser {
+            id: request_id.to_string(),
+            question: question.to_string(),
+        });
+    }
+}
+
+/// ask_user 回答回传（前端弹窗填写后 POST）。
+/// 无挂起询问时幂等返回 ok（可能已超时）。
+#[derive(Deserialize)]
+pub struct AskResponseRequest {
+    pub request_id: String,
+    pub answer: String,
+}
+
+pub async fn respond_ask(
+    State(state): State<AppState>,
+    Json(req): Json<AskResponseRequest>,
+) -> Response {
+    if let Some(tx) = state.ask_pending.lock().await.remove(&req.request_id) {
+        let _ = tx.send(req.answer);
+        tracing::info!(event = "bm.ask_responded", request = %req.request_id);
+    }
+    axum::Json(serde_json::json!({ "ok": true })).into_response()
+}
+
 /// AgentStreamEvent → SSE data 行（前端事件形状；bm 引擎与权限询问共用）。
 pub(crate) fn to_sse_event(event: &AgentStreamEvent) -> Event {
     let json = serde_json::to_string(event).unwrap_or_else(|_| "{}".to_string());

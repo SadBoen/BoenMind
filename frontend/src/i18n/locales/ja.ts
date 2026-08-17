@@ -106,6 +106,11 @@ export const ja: Translation = {
         unknown: "ツール呼び出し",
       },
     },
+    ask: {
+      title: "モデルからの質問",
+      placeholder: "回答を入力…",
+      submit: "回答を送信",
+    },
     permission: {
       title: "プラグイン権限リクエスト",
       unknownExtension: "不明なプラグイン",

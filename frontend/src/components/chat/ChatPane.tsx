@@ -18,6 +18,7 @@ import { MessageItem } from "./MessageItem";
 import { ChatInput } from "./ChatInput";
 import { ScrollIndicators } from "./ScrollIndicators";
 import { PermissionDialog } from "./PermissionDialog";
+import { AskDialog } from "./AskDialog";
 import { SessionList } from "./SessionList";
 import { TaskStatusBar } from "./TaskStatusBar";
 import { parseThinkBlocks } from "./ThinkBlock";
@@ -196,6 +197,8 @@ export function ChatPane({ variant = "full", scene = "chat" }: ChatPaneProps) {
       <ChatInput compact={panel} />
       {/* 插件权限询问弹窗（SSE permissionRequest 事件触发） */}
       <PermissionDialog />
+      {/* ask_user 提问弹窗（SSE askUser 事件触发） */}
+      <AskDialog />
       </div>
     </div>
   );

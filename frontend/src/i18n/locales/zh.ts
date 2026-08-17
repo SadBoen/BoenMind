@@ -107,6 +107,11 @@ export const zh = {
         unknown: "调用工具",
       },
     },
+    ask: {
+      title: "模型向你提问",
+      placeholder: "输入回答…",
+      submit: "发送回答",
+    },
     permission: {
       title: "插件权限请求",
       unknownExtension: "未知插件",

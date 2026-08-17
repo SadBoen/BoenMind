@@ -107,6 +107,11 @@ export const en: Translation = {
         unknown: "Tool call",
       },
     },
+    ask: {
+      title: "The model asks you",
+      placeholder: "Type your answer…",
+      submit: "Send answer",
+    },
     permission: {
       title: "Plugin permission request",
       unknownExtension: "Unknown plugin",

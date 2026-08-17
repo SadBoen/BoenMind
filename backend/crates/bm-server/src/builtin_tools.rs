@@ -80,8 +80,8 @@ impl BuiltinTools {
     /// 内置工具名（模型侧可见 + 插件 pi.tool 可调）。
     /// 2026-08-17 用户定调：内置工具面不做系统命令执行（bash 已删除），
     /// 能力一律走 MCP/SKILL 扩展体系。文件手脚仍内置（工作区圈禁内）。
-    pub const NAMES: [&'static str; 6] =
-        ["read", "write", "edit", "grep", "find", "ls"];
+    pub const NAMES: [&'static str; 7] =
+        ["read", "write", "edit", "grep", "find", "ls", "glob"];
 
     /// 内置工具的模型侧 schema（bm-loop ToolDef 形态；对齐 pi
     /// BUILTIN_TOOL_NAMES 全开语义——模型可直接调 read/write/bash）。
@@ -165,6 +165,20 @@ impl BuiltinTools {
                     },
                 }),
             ),
+            bm_loop::model::ToolDef::new(
+                "glob",
+                "Recursively find files matching a glob pattern (e.g. '**/*.rs' or 'src/**/test_*.py'; respects .gitignore/.ignore and skips hidden files).",
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "pattern": { "type": "string", "description": "Glob pattern, relative to path" },
+                        "path": { "type": "string", "description": "Root directory (default: working dir)" },
+                        "limit": { "type": "integer" },
+                        "timeout": { "type": "integer", "description": "Timeout in ms (default 60000)" },
+                    },
+                    "required": ["pattern"],
+                }),
+            ),
         ]
     }
 
@@ -177,6 +191,7 @@ impl BuiltinTools {
             "grep" => self.grep(&input).await,
             "find" => self.find(&input).await,
             "ls" => self.ls(&input),
+            "glob" => self.glob(&input).await,
             other => Err(ToolError::invalid(format!("Unknown tool: {other}"))),
         }
     }
@@ -373,6 +388,41 @@ impl BuiltinTools {
         Ok(text_output(out))
     }
 
+    /// `{pattern(必填), path?, limit?, timeout?}` → 递归找匹配 glob 的文件。
+    /// 遍历同样尊重 .gitignore 且有超时兜底（同 grep/find）。模式用 globset
+    /// 编译（`**` 递归/`*` 单段/`?` 单字符），输出每行一个相对路径。
+    async fn glob(&self, input: &serde_json::Value) -> ToolResult {
+        let pattern = input.get("pattern").and_then(serde_json::Value::as_str)
+            .ok_or_else(|| ToolError::invalid("glob: pattern is required"))?;
+        let root = match input.get("path").and_then(serde_json::Value::as_str) {
+            Some(p) => self.resolve(p)?,
+            None => self.cwd.clone(),
+        };
+        let limit = input.get("limit").and_then(serde_json::Value::as_u64)
+            .map(|l| l as usize)
+            .unwrap_or(DEFAULT_LIST_LIMIT);
+        let timeout_ms = input.get("timeout").and_then(serde_json::Value::as_u64)
+            .filter(|t| *t > 0)
+            .unwrap_or(DEFAULT_GREP_TIMEOUT_MS);
+
+        // literal_separator：`*` 不跨目录分隔符（`src/*.rs` 不匹配
+        // `src/a/lib.rs`），与 Claude Code/Codex 的 glob 语义一致；`**` 仍递归
+        let matcher = globset::GlobBuilder::new(pattern)
+            .literal_separator(true)
+            .build()
+            .map_err(|e| ToolError::invalid(format!("glob: invalid pattern: {e}")))?
+            .compile_matcher();
+        let (root, matcher) = (root.clone(), matcher);
+        let task = tokio::task::spawn_blocking(move || glob_walk(&matcher, &root, limit));
+        match tokio::time::timeout(Duration::from_millis(timeout_ms), task).await {
+            Ok(Ok(out)) => Ok(text_output(out)),
+            Ok(Err(e)) => Err(ToolError::io(format!("glob task failed: {e}"))),
+            Err(_) => Err(ToolError::timeout(format!(
+                "glob timed out after {timeout_ms}ms (narrow pattern or raise timeout)"
+            ))),
+        }
+    }
+
     /// `pi.exec(cmd, {args, options})` 的进程执行侧（非 shell 包装，直接
     /// spawn cmd + args）。输出形状与 bash 相同 `{stdout, stderr, code, killed}`
     /// ——对齐 legacy 非流式 exec hostcall 的返回。
@@ -549,6 +599,26 @@ fn find_walk(pattern: &str, root: &Path, limit: usize) -> String {
     out
 }
 
+/// glob 同步搜索体（spawn_blocking 内执行，见 BuiltinTools::glob）。
+/// 输出每行一个相对路径（目录不输出，仅文件），上限 limit。
+fn glob_walk(matcher: &globset::GlobMatcher, root: &Path, limit: usize) -> String {
+    let mut out = String::new();
+    let mut hits = 0usize;
+    for entry in walk_files(root) {
+        if hits >= limit {
+            break;
+        }
+        let rel = entry.strip_prefix(root).unwrap_or(&entry);
+        let rel_str = rel_slashes(rel);
+        if matcher.is_match(&rel_str) {
+            out.push_str(&rel_str);
+            out.push('\n');
+            hits += 1;
+        }
+    }
+    out
+}
+
 /// 临时文件 + rename 原子落盘（同目录 rename 保证原子性）。
 fn atomic_write(path: &Path, content: &[u8]) -> std::io::Result<()> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
@@ -669,6 +739,36 @@ mod tests {
 
         let out = t.ls(&serde_json::json!({ "path": "sub" })).unwrap();
         assert!(out["content"][0]["text"].as_str().unwrap().contains("deep/"));
+    }
+
+    #[tokio::test]
+    async fn glob_matches_recursive_patterns() {
+        let dir = tempfile::tempdir().unwrap();
+        let t = tools(dir.path());
+        std::fs::create_dir_all(dir.path().join("src/a")).unwrap();
+        std::fs::write(dir.path().join("src/a/lib.rs"), "x").unwrap();
+        std::fs::write(dir.path().join("src/main.rs"), "x").unwrap();
+        std::fs::write(dir.path().join("README.md"), "x").unwrap();
+
+        let out = t.glob(&serde_json::json!({ "pattern": "**/*.rs" })).await.unwrap();
+        let text = out["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("src/main.rs"), "{text}");
+        assert!(text.contains("src/a/lib.rs"), "{text}");
+        assert!(!text.contains("README.md"), "{text}");
+
+        // 单段模式 + 具体文件名
+        let out2 = t.glob(&serde_json::json!({ "pattern": "src/*.rs" })).await.unwrap();
+        let text2 = out2["content"][0]["text"].as_str().unwrap();
+        assert!(text2.contains("src/main.rs"), "{text2}");
+        assert!(!text2.contains("src/a/lib.rs"), "{text2}");
+    }
+
+    #[tokio::test]
+    async fn glob_rejects_invalid_pattern() {
+        let dir = tempfile::tempdir().unwrap();
+        let t = tools(dir.path());
+        let err = t.glob(&serde_json::json!({ "pattern": "a[b" })).await.unwrap_err();
+        assert_eq!(err.code, "invalid_request", "{err}");
     }
 
     #[tokio::test]

@@ -50,6 +50,14 @@ pub enum AgentStreamEvent {
         /// 面向用户的询问文案（title: message 或 method 驱动的描述）
         message: String,
     },
+    /// ask_user 工具询问：模型向用户提问，前端弹窗，回答经
+    /// POST /api/chat/ask-response 回传；无响应超时后按"无回答"失败收尾。
+    AskUser {
+        /// 询问请求 id（回传时原样带回）
+        id: String,
+        /// 面向用户的问题
+        question: String,
+    },
     /// 任务心跳进度（每 5s 由 bm-server 心跳 task 推送；进行中任务的状态条展示）。
     /// 仅活跃 prompt 期间出现，不作为消息落库。
     TaskProgress { progress: String },

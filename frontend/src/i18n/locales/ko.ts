@@ -106,6 +106,11 @@ export const ko: Translation = {
         unknown: "도구 호출",
       },
     },
+    ask: {
+      title: "모델이 질문합니다",
+      placeholder: "답변 입력…",
+      submit: "답변 보내기",
+    },
     permission: {
       title: "플러그인 권한 요청",
       unknownExtension: "알 수 없는 플러그인",

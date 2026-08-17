@@ -1123,6 +1123,19 @@ pub struct QuickJsToolExecutor {
     scheduler: Option<Arc<dyn bm_protocol::SchedulerPort>>,
     /// 当前启用插件 id（审查 C P2）：执行期对已禁用插件工具 fail-closed。
     enabled_plugins: Vec<String>,
+    /// ask_user 桥（2026-08-17 新增工具）：SSE 通道 + 挂起回答表。
+    /// None = 子进程模式（无 UI 通道，ask_user 返回"不可用"）。
+    ask: Option<AskBridge>,
+}
+
+/// ask_user 工具桥：经会话 SSE 通道发 AskUser 事件，等前端回传回答。
+#[derive(Clone)]
+struct AskBridge {
+    streams: Arc<
+        TokioMutex<HashMap<String, mpsc::UnboundedSender<bm_core::agent::AgentStreamEvent>>>,
+    >,
+    pending: Arc<TokioMutex<HashMap<String, tokio::sync::oneshot::Sender<String>>>>,
+    session_id: String,
 }
 
 impl QuickJsToolExecutor {
@@ -1141,7 +1154,25 @@ impl QuickJsToolExecutor {
             mcp_gate: None,
             scheduler: None,
             enabled_plugins: Vec::new(),
+            ask: None,
         }
+    }
+
+    /// 挂 ask_user 桥（SSE 通道 + 回答表）。bm 引擎父进程路径调用；
+    /// 子进程不挂（无 UI 通道，ask_user 不可用）。
+    pub fn with_ask(
+        mut self,
+        streams: Arc<
+            TokioMutex<HashMap<String, mpsc::UnboundedSender<bm_core::agent::AgentStreamEvent>>>,
+        >,
+        pending: Arc<TokioMutex<HashMap<String, tokio::sync::oneshot::Sender<String>>>>,
+    ) -> Self {
+        self.ask = Some(AskBridge {
+            streams,
+            pending,
+            session_id: self.session_id.clone(),
+        });
+        self
     }
 
     pub fn with_enabled_plugins(mut self, enabled: Vec<String>) -> Self {
@@ -1288,6 +1319,52 @@ impl ToolExecutor for QuickJsToolExecutor {
                     output: "todo 工具不可用（事件日志未挂载）".to_string(),
                     meta: None,
                 },
+            }
+        } else if req.name == "ask_user" {
+            // 向用户提问（2026-08-17 新增）：SSE 推 AskUser 事件 → 前端弹窗 →
+            // POST /api/chat/ask-response 回传 → oneshot 等回答（60s 超时按失败）。
+            let Some(ask) = &self.ask else {
+                return ToolOutcome {
+                    ok: false,
+                    output: "ask_user 不可用（无 UI 通道）".to_string(),
+                    meta: None,
+                };
+            };
+            let question = req
+                .args
+                .get("question")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_default();
+            if question.trim().is_empty() {
+                return ToolOutcome {
+                    ok: false,
+                    output: "ask_user: question is required".to_string(),
+                    meta: None,
+                };
+            }
+            let request_id = uuid::Uuid::new_v4().to_string();
+            let (tx, rx) = tokio::sync::oneshot::channel::<String>();
+            ask.pending
+                .lock()
+                .await
+                .insert(request_id.clone(), tx);
+            crate::chat::send_ask_user(&ask.streams, &ask.session_id, &request_id, &question).await;
+            match tokio::time::timeout(PERMISSION_TIMEOUT, rx).await {
+                Ok(Ok(answer)) => ToolOutcome {
+                    ok: true,
+                    output: tool_result_text(&serde_json::json!({ "answer": answer })),
+                    meta: Some(serde_json::json!({ "answer": answer })),
+                },
+                Ok(Err(_)) | Err(_) => {
+                    // 通道断开或超时：回答缺失按失败收尾（模型可见，避免空转）
+                    ask.pending.lock().await.remove(&request_id);
+                    ToolOutcome {
+                        ok: false,
+                        output: "ask_user 无回答（用户未响应或弹窗超时）".to_string(),
+                        meta: None,
+                    }
+                }
             }
         } else if req.name.starts_with("mcp__") {
             // MCP 官方插件（bm-mcp）：外部 MCP server 工具。

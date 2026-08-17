@@ -375,6 +375,7 @@ export type ChatStreamEvent =
       capability: string;
       message: string;
     }
+  | { type: "askUser"; id: string; question: string }
   | { type: "taskProgress"; progress: string }
   | { type: "done" }
   | { type: "error"; message: string };
@@ -1119,6 +1120,13 @@ export const api = {
     request<{ ok: boolean }>("/api/chat/permission-response", {
       method: "POST",
       body: JSON.stringify({ request_id: requestId, allow, always }),
+    }),
+
+  /** ask_user 回答回传（模型提问弹窗的文本回答） */
+  respondAsk: (requestId: string, answer: string) =>
+    request<{ ok: boolean }>("/api/chat/ask-response", {
+      method: "POST",
+      body: JSON.stringify({ request_id: requestId, answer }),
     }),
 
   /** 检查更新（用户手动触发；不做任何自动检查） */

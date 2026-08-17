@@ -76,6 +76,8 @@ pub struct AppState {
     pub session_streams: Arc<Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<bm_core::agent::AgentStreamEvent>>>>,
     /// 挂起的权限询问（key = 上游询问请求 id）：等待前端决策（允许/拒绝/总是允许）。
     pub permission_pending: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<PermissionDecision>>>>,
+    /// 挂起的 ask_user 询问（key = 询问请求 id）：等待前端回答（字符串）。
+    pub ask_pending: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<String>>>>,
     /// 阶段 0 事件日志双写器（None = 事件日志不可用，双写静默跳过，
     /// 主链路不受影响——事件日志是渐进式吸收的新家，不是闸门）。
     pub dual_writer: Option<Arc<bm_storage_turso::dual_write::DualWriter>>,
@@ -136,6 +138,7 @@ impl AppState {
             Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<bm_core::agent::AgentStreamEvent>>>,
         >,
         permission_pending: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<PermissionDecision>>>>,
+        ask_pending: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<String>>>>,
         steward: Option<Arc<steward::StewardStore>>,
         steward_cfg: steward::StewardConfig,
         builtin_gate: Option<Arc<builtin_gate::BuiltinGate>>,
@@ -147,6 +150,7 @@ impl AppState {
             db,
             session_streams,
             permission_pending,
+            ask_pending,
             dual_writer,
             kernel,
             bm_aborts: Arc::new(Mutex::new(HashMap::new())),
@@ -213,6 +217,7 @@ fn router(state: AppState) -> Router {
         .route("/api/chat", post(chat::chat))
         .route("/api/chat/stop", post(chat::stop_chat))
         .route("/api/chat/permission-response", post(chat::respond_permission))
+        .route("/api/chat/ask-response", post(chat::respond_ask))
         // Steward 轮（v0.19）：OS 层主动汇报通道 + 管家状态查询
         .route("/api/steward/inject", post(routes::steward::inject))
         .route("/api/steward/status", get(routes::steward::status))
@@ -730,6 +735,8 @@ async fn serve_inner(
     let permission_pending: Arc<
         Mutex<HashMap<String, tokio::sync::oneshot::Sender<PermissionDecision>>>,
     > = Arc::new(Mutex::new(HashMap::new()));
+    let ask_pending: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<String>>>> =
+        Arc::new(Mutex::new(HashMap::new()));
     let (compat, permission_store) = compat_engine::init_compat(
         &config,
         session_streams.clone(),
@@ -936,6 +943,7 @@ async fn serve_inner(
         compat,
         session_streams,
         permission_pending,
+        ask_pending,
         steward,
         steward_cfg,
         Some(builtin_gate),
