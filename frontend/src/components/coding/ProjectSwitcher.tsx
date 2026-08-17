@@ -244,7 +244,8 @@ function ProjectDialog({ open, onClose }: { open: boolean; onClose: () => void }
 
   return (
     <Dialog open={open} onOpenChange={(v: boolean) => !v && onClose()}>
-      <DialogContent className="max-w-lg">
+      {/* size="md"（黄金比例 29.6rem）：父目录长路径需要更宽弹窗，默认 sm 放不下 */}
+      <DialogContent size="md">
         <DialogHeader>
           <DialogTitle>{t("coding.project.new")}</DialogTitle>
           <DialogDescription>{t("coding.project.newDesc")}</DialogDescription>
@@ -332,7 +333,9 @@ function ProjectDialog({ open, onClose }: { open: boolean; onClose: () => void }
               value={parent}
               onChange={(e) => setParent(e.target.value)}
               placeholder="D:\\projects"
-              className="h-8 font-mono text-xs"
+              className="h-8 font-mono"
+              style={{ fontSize: 11 }}
+              title={parent}
             />
             <p className="text-[10px] text-muted-foreground">
               {t("coding.project.parentHint")}
