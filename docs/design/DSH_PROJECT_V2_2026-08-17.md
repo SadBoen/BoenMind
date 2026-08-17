@@ -1,0 +1,167 @@
+# BoenMind 计划 v2：Rust 微内核自研 + 前端借 DSH 生态（2026-08-17）
+
+> 状态：**定稿方向**（微内核一步到位已拍板；§八 拍板点 1–10 全部拍板）
+> 修订史：v1（同日夜）＝新建项目、dsh 全家桶为唯一真身、逐单元升级 → **v2（本稿）＝Rust 微内核自研后端 + 前端全套借 dsh 生态 + 插件/APP 全 Rust**。v1 的"全家桶 bootstrap / 毛玻璃皮肤 / DSH_HOME 启动器"成果保留（前端生态基础），后台路线按微内核重排。
+> 事实基线：只依据 2026-08-17 核查（npm registry + 本机 dsh 浅克隆 + 官方 docs/source），不引用旧结论。
+> 关联：`docs/design/DSH_PROJECT_2026-08-17.md`（v1 全文，已归档为 `docs/archive/`）、`frontend/public/docs/expert-team.md`（专家团队载体）、`backend/vendor/UPSTREAM_TRACKING.md`（上游台账）。
+
+---
+
+## 〇、一句话结论
+
+**后端 = 全 Rust 微内核**（agent loop / session log / 工具注册 / 存储 / MCP 全自研 Rust，核心做小）；**插件与 APP = 全 Rust**（编译产物分发，进程级隔离 + 状态外置，支持 Linux 服务器长期运行时的无感重起）；**前端 = 全套借 dsh 生态**（官方 web-app UI + 皮肤 + ui-slots，不自己打磨前端）；两者之间由 **Rust 实现的 web-server 协议兼容层**接通——照着 dsh 前端的接口合同逐条实现，让 dsh 的 React 界面直接消费我们的 Rust 后端。
+
+---
+
+## 一、用户四条定调（2026-08-17 原话要点 + 推论）
+
+| # | 用户定调 | 推论 |
+|---|---|---|
+| 1 | 基本自用，开源，也提供给同事；**部分 APP 可能不开源** | 插件/APP 分发 = **编译产物（二进制）**，闭源 APP 不给源码；Rust 插件天然二进制，契合 |
+| 2 | **后端全 Rust；前端兼容 dsh 生态**；前端是短板、不愿花时间打磨 | 前端借成熟生态（官方 web-app + 皮肤），不自己造；**工程核心 = Rust web-server 兼容层**（§三） |
+| 3 | **所有插件、APP 以后都用 Rust 写** | 插件模型 = cdylib 或独立进程 + 状态外置纪律；弃 TS 插件路线（现有 bm-compat QuickJS 桥退役） |
+| 4 | 热插拔意义不大，**但 Linux 服务器长期运行时有意义** | 插件进程化 + supervisor（崩溃自动拉起/蓝绿替换）统一本地与服务器；优先级后置但架构现在留口 |
+
+---
+
+## 二、新项目形态（微内核）
+
+```
+boenmind-dsh/
+├── kernel/                 # Rust 微内核（核心做小）
+│   ├── loop/               #   回合循环（turn/step，waterfall 事件）
+│   ├── session/            #   append-only SessionEvent 日志（唯一事实源）
+│   ├── tools/              #   工具注册表 + 门控（enabled 名单 + fail-closed）
+│   ├── storage/            #   sqlite（sessions/messages/tool_calls/事件）
+│   ├── mcp/                #   MCP client/server（bm-mcp 语义迁入）
+│   └── supervisor/         #   插件进程宿主（拉起/健康检查/崩溃重启/蓝绿切换）
+├── plugins/                # Rust 插件（编译产物，进程隔离 + 状态外置）
+│   ├── team/               # 专家团队（对齐 expert-team.md）
+│   ├── steward/            # 管家（治理区间 + wake）
+│   ├── memory/             # 记忆分层/项目隔离
+│   ├── audit/              # 审计/工具调用显示
+│   ├── browser/            # 浏览器自动化（自研，T4 续）
+│   └── skins/              # 皮肤适配（映射到 dsh --dsw-* 令牌）
+├── web-server/             # Rust 协议兼容层（§三：dsh 前端接口合同 6 面）
+├── frontend/               # dsh web-app 产物 + 皮肤（借来的，build 时打包）
+├── shell/                  # Tauri 2 桌面壳（复用现有配置，后置）
+├── apps/                   # 我们的 Rust APP（编译产物分发，闭源可选，无授权密钥）
+└── docs/
+```
+
+- **版本**：v0.1.0 起（已拍板）。
+- **历史资产**：现有 BoenMind 仓库只读参考（插件逻辑/专家提示词/记忆语义是搬运素材）；dsh 全家桶 bootstrap 保留作前端生态基础与协议参考实现。
+
+---
+
+## 三、web-server 协议兼容层（本计划最大工程点，专节详解）
+
+### 3.1 为什么要它（大白话）
+
+dsh 的界面（React）只跟 dsh 的 Node 后端说话，两边有一套固定的**接口合同**。我们要"遥控器还用 dsh 的、电视换成自己 Rust 造的"，就必须写一个**信号翻译器**（Rust 版 web-server），照着合同逐条发出 dsh 遥控器认得的信号。合同不满足，界面就白屏或断流。
+
+### 3.2 接口合同（2026-08-17 源码级实取，`packages/client/connection` + `host/webserver`）
+
+| # | 面 | 形状 | 谁消费 |
+|---|---|---|---|
+| 1 | **HTTP `/api/*`** | REST 请求面（会话/模型/设置/工具…），`API_PATH='/api'` 前缀 | 前端 fetch/RPC |
+| 2 | **WS `/api/events.mux`** | 浏览器→宿主 上行复用流（mux-frame，一连接多路请求） | 前端命令上行 |
+| 3 | **WS `/api/events.host`** | 宿主→浏览器 下行事件流（两条 server-to-browser 流：会话事件/宿主事件） | 前端实时投影 |
+| 4 | **静态 SPA** | index.html + 资产，SPA 路由兜底 200 | 页面加载 |
+| 5 | **`/plugins/<id>/client.js`** | 插件前端 bundle（`__ModuleLoader__` 注册） | 前端插件系统 |
+| 6 | **`__DSH_BOOT__`** | 注入 index.html 的启动图（`tapIndex` 变换） | 前端启动 |
+
+外加 **trust fence**（`api-request-trust.ts`）：只信 loopback + `--trusted-host` 声明的主机，非 loopback 绑定即网络暴露——我们直接沿用（绑定 127.0.0.1 默认姿态）。
+
+### 3.3 为什么可行（不是黑盒）
+
+- **合同是组合的、公开的**：每一面由独立包注册（api-gateway / frontend-static / client-modules / client-connection），源码在 `packages/` 下可逐行读；协议就是"REST + 两条 WebSocket + 静态文件"，形状清晰。
+- **我们有参考实现**：本机 dsh 克隆就是活的参照物，逐条对表实现 + 用真实前端验收。
+- **前端不用动**：dsh web-app 产物原样打包，皮肤/ui-slots 生态原样可用。
+
+### 3.4 落地顺序（即使架构一步到位，实现仍分阶段验收）
+
+1. 静态 SPA + `__DSH_BOOT__`（页面能加载，白屏问题最先解决）
+2. HTTP `/api/*` 最小子集（会话列表/建会话/发消息/取回复——聊天闭环）
+3. WS 下行事件流（消息流式、工具调用实时投影）
+4. WS 上行 mux + 完整 API 面
+5. `/plugins/*/client.js`（前端插件系统可用，皮肤/第三方 UI 生效）
+
+> **风险**：这是全计划最大不确定工程（dsh 前端内部契约多、文档薄，主要靠源码对表）。**缓解**：与 dsh 官方保持同版本锁死（升级前端 = 同步核对合同）；先做出聊天闭环再谈其他。
+
+---
+
+## 四、后台实现顺序（微内核）
+
+> 里程碑按微内核重排；前端 dsh 生态全程并行（M0 已跑通，作 UI 宿主与协议参考）。
+
+### M0 前端生态基础（已完成）
+dsh 全家桶 bootstrap 跑通（3080 服务、__DSH_BOOT__、插件资产 200）+ 毛玻璃皮肤接入 + DSH_HOME 统一启动器（`scripts/dsh.cjs`）。**此后 dsh web 角色 = 前端宿主 + 协议参考实现。**
+
+### M1 微内核骨架（Rust）
+- kernel/loop + session + tools + storage（sqlite）+ mcp：把 bm 内核四件套语义 + dsh 的 harness 语义（append-only 事件流、turn/step waterfall、model-visible-means-logged）合并为 Rust 微内核；**状态外置纪律**（进程只持可重建状态）。
+- supervisor 雏形：插件进程宿主骨架（拉起/健康检查/崩溃重启）。
+- **门禁 1**：headless 回合全链路（消息→工具→回复）在 Rust 微内核上跑通。
+
+### M2 Rust web-server 兼容层
+- §3.4 顺序实现 6 面合同；dsh 前端直连 Rust 后端（不再起 Node 后端）。
+- **门禁 2**：浏览器里 dsh 界面 + 我们 Rust 后端：建会话→发消息→流式回复→工具调用可见，全通；皮肤可用。
+
+### M3 插件/APP 全面 Rust 化 + 微内核红利
+- 插件 = Rust 进程（编译产物分发、闭源可行）；权限两档（官方/自研宿主 + 第三方隔离 worker）；记忆/审计/团队/管家插件逐个移植（JS→Rust）。
+- supervisor 完整（蓝绿替换、崩溃计数、IPC 版本化+鉴权）——**Linux 服务器无感重起就绪**。
+- **门禁 3**：禁用插件→蓝绿替换→会话不中断；专家团队全链路（派工→并行→结构化返回→汇总）。
+
+### M4 发布
+- v0.1.0：浏览器版首发 + Tauri 壳（后置项）+ CI（Rust 质量门：测试/clippy/VMware runner 复用）+ Docker + 便携包（Rust 单二进制，无需内置 Node）。
+- **门禁 4**：全量回归 + 便携包真实启动（沿用"先本地实测再发版"铁律）。
+
+---
+
+## 五、功能亮点处理（不变，全部 Rust 插件形态）
+
+1. **专家团队**：`team` 插件（Rust）= 团队配置 + 子代理进程（隔离天然数据隔离）+ 编排（parallel/chain）+ 结构化返回（JSON 契约）；DAG 可视化参照 dsh-task-dag 映射到前端槽位。
+2. **管家 Steward**：`steward` 插件 = 治理区间 + wake + 版本化替换进化（supervisor 蓝绿替换天然承载）。
+3. **皮肤/特效**：前端借 dsh 生态原样（官方主题 + 毛玻璃已接入）；我们 skins 语义（参数化滑杆）映射 `--dsw-*` 令牌。
+4. **工具调用显示/审计**：前端借官方 trajectory + 我们的摘要键逻辑（存于前端插件）。
+5. **记忆分层/项目隔离**：`memory` 插件（Rust，storage-domain 语义 + 桶/项目隔离）。
+6. **可审计心智**：Rust 微内核原生 append-only SessionEvent（与 dsh 同构），审计 UI 借前端生态。
+7. **热升级/便携包**：Rust 单二进制便携包（无 Node 依赖）+ supervisor 蓝绿替换 = 热升级天然载体。
+
+---
+
+## 六、风险与对策
+
+| 风险 | 对策 |
+|---|---|
+| **web-server 兼容层工程量/未知**（dsh 前端契约多、文档薄） | §3.4 分阶段；与官方同版本锁死；源码对表 + 真实前端验收；聊天闭环优先 |
+| dsh 前端 rc 生态漂移 | 锁版本快照；升级=显式核对合同 |
+| 微内核复杂度（进程编排） | 从 supervisor 雏形渐进；IPC 协议化+鉴权；状态外置纪律是硬前提 |
+| 无沙箱问题 | Rust 插件进程隔离本身就是沙箱（进程级隔离 > 无隔离）；第三方插件 worker 降权运行 |
+| 插件/APP 全 Rust 的构建速度 | sccache/CI runner 复用；插件增量编译；Rust 热替换靠 supervisor 不是进程内动态加载 |
+
+---
+
+## 七、拍板点（全部已拍，2026-08-17）
+
+| # | 议题 | 决议 |
+|---|---|---|
+| 1 | 仓库形态 | 新仓库 `boenmind-dsh`（已建，github.com/SadBoen/boenmind-dsh） |
+| 2 | 版本号 | v0.1.0 起 |
+| 3 | Node 分发 | **不内置 Node**（Rust 单二进制便携包；v1 的 node-runtime 项作废） |
+| 4 | 桌面壳 | 浏览器先行，Tauri 2 壳后置 |
+| 5 | 插件信任 | Rust 进程隔离两档（官方/自研 + 第三方 worker 降权） |
+| 6 | 浏览器自动化 | M3 后排期（v0.2.x） |
+| 7 | 历史数据 | 只读归档（现有 turso 不动） |
+| 8 | **后端架构** | **Rust 微内核一步到位**（不先全家桶后迁移；v2 定稿） |
+| 9 | **前端协议** | **Rust web-server 兼容层直连 dsh 前端**（一步到位，§三） |
+| 10 | **插件/APP 语言与分发** | **全 Rust 编译产物**；闭源可选；**不做授权密钥**（基础 APP 出来后再议） |
+
+---
+
+## 附：与既往决策的连续性（语义层）
+
+- "学 dsh 不抄 dsh" → 前端借生态、后端自研微内核（dsh 语义吸收：harness 事件流/组合思路）。
+- 万物皆插件/插件自治边界 → Rust 插件进程化 = 完整实现；supervisor 替换 = 功能原子化替换决策权（管家）。
+- 微内核讨论（上轮）→ 本稿 M1/M3 即其落地：核心做小、插件进程化、状态外置、supervisor 守护。
+- 三护城河（可审计心智/软件形态革命/Steward 治理）→ 全部在 Rust 微内核语义上保留。
