@@ -6,9 +6,10 @@
   "type": "module",
   "packageManager": "pnpm@11.21.0",
   "scripts": {
-    "dsh": "dsh",
-    "web": "dsh web",
-    "headless": "dsh --profile headless"
+    "dsh": "node scripts/dsh.cjs",
+    "web": "node scripts/dsh.cjs web",
+    "headless": "node scripts/dsh.cjs --profile headless",
+    "plugin": "node scripts/dsh.cjs plugin"
   },
   "dependencies": {
     "@deepseek-ai/dsh": "0.1.0-rc.6"
