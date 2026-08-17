@@ -789,7 +789,7 @@ mod tests {
             description: "调研员".into(),
             model: Some("deepseek-chat".into()),
             reasoning: Some("low".into()),
-            tools: Some(vec!["read".into(), "bash".into()]),
+            tools: Some(vec!["read".into(), "edit".into()]),
             system_prompt: "你是调研员。".into(),
             source: AgentSource::User,
         }
@@ -867,7 +867,7 @@ mod tests {
             args,
             vec![
                 "--mode", "json", "--print", "--no-session",
-                "--tools", "read,bash",
+                "--tools", "read,edit",
                 "--model", "deepseek-chat",
                 "--thinking", "low",
                 "--append-system-prompt", "你是调研员。",

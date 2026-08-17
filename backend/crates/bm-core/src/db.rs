@@ -714,7 +714,7 @@ mod tests {
             a.id,
             &[
                 ("web_search".into(), serde_json::json!({"q": "x"}), false),
-                ("bash".into(), serde_json::json!({"cmd": "ls"}), true),
+                ("grep".into(), serde_json::json!({"pattern": "y"}), true),
             ],
         )
         .await

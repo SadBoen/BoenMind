@@ -21,8 +21,6 @@ use tokio::io::AsyncReadExt as _;
 const READ_TOOL_MAX_BYTES: u64 = 100 * 1024 * 1024;
 /// write/edit 单文件上限（对齐 legacy `WRITE_TOOL_MAX_BYTES` = 100MB）。
 const WRITE_TOOL_MAX_BYTES: usize = 100 * 1024 * 1024;
-/// bash 默认超时（ms）。
-const DEFAULT_BASH_TIMEOUT_MS: u64 = 60_000;
 /// grep/find 默认超时（ms）：遍历尊重 .gitignore 后正常搜索亚秒级，
 /// 60s 兜底防极端目录树挂死回合（M1 验收问题 2）。
 const DEFAULT_GREP_TIMEOUT_MS: u64 = 60_000;
@@ -80,8 +78,10 @@ impl BuiltinTools {
     }
 
     /// 内置工具名（模型侧可见 + 插件 pi.tool 可调）。
-    pub const NAMES: [&'static str; 7] =
-        ["read", "write", "edit", "grep", "find", "ls", "bash"];
+    /// 2026-08-17 用户定调：内置工具面不做系统命令执行（bash 已删除），
+    /// 能力一律走 MCP/SKILL 扩展体系。文件手脚仍内置（工作区圈禁内）。
+    pub const NAMES: [&'static str; 6] =
+        ["read", "write", "edit", "grep", "find", "ls"];
 
     /// 内置工具的模型侧 schema（bm-loop ToolDef 形态；对齐 pi
     /// BUILTIN_TOOL_NAMES 全开语义——模型可直接调 read/write/bash）。
@@ -165,19 +165,6 @@ impl BuiltinTools {
                     },
                 }),
             ),
-            bm_loop::model::ToolDef::new(
-                "bash",
-                "Run a shell command (Windows: cmd /C; others: /bin/sh -c). Returns {stdout, stderr, code, killed}.",
-                serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "command": { "type": "string" },
-                        "cwd": { "type": "string" },
-                        "timeout": { "type": "integer", "description": "Timeout in ms (default 60000)" },
-                    },
-                    "required": ["command"],
-                }),
-            ),
         ]
     }
 
@@ -190,7 +177,6 @@ impl BuiltinTools {
             "grep" => self.grep(&input).await,
             "find" => self.find(&input).await,
             "ls" => self.ls(&input),
-            "bash" => self.bash(&input).await,
             other => Err(ToolError::invalid(format!("Unknown tool: {other}"))),
         }
     }
@@ -387,22 +373,6 @@ impl BuiltinTools {
         Ok(text_output(out))
     }
 
-    /// `{command(必填), timeout?, cwd?}` → 跑 shell 命令（Windows: cmd /C；
-    /// 其余: /bin/sh -c）。输出对齐 pi.exec 形状 `{stdout, stderr, code, killed}`。
-    async fn bash(&self, input: &serde_json::Value) -> ToolResult {
-        let command = input.get("command").and_then(serde_json::Value::as_str)
-            .ok_or_else(|| ToolError::invalid("bash: command is required"))?;
-        let timeout_ms = input.get("timeout").and_then(serde_json::Value::as_u64)
-            .filter(|t| *t > 0)
-            .unwrap_or(DEFAULT_BASH_TIMEOUT_MS);
-        let cwd = match input.get("cwd").and_then(serde_json::Value::as_str) {
-            Some(c) => self.resolve(c)?,
-            None => self.cwd.clone(),
-        };
-        let (program, arg) = shell_program();
-        run_command(program, [arg, command], &cwd, timeout_ms).await
-    }
-
     /// `pi.exec(cmd, {args, options})` 的进程执行侧（非 shell 包装，直接
     /// spawn cmd + args）。输出形状与 bash 相同 `{stdout, stderr, code, killed}`
     /// ——对齐 legacy 非流式 exec hostcall 的返回。
@@ -510,18 +480,6 @@ where
         "code": code,
         "killed": killed,
     }))
-}
-
-/// 平台 shell：Windows 用 cmd /C，其余 /bin/sh -c。
-fn shell_program() -> (&'static str, &'static str) {
-    #[cfg(windows)]
-    {
-        ("cmd", "/C")
-    }
-    #[cfg(not(windows))]
-    {
-        ("/bin/sh", "-c")
-    }
 }
 
 /// 相对路径输出统一正斜杠（跨平台稳定，对齐 pi 的相对路径语义）。
@@ -720,19 +678,5 @@ mod tests {
         let err = t.execute("not-builtin", serde_json::json!({})).await.unwrap_err();
         assert_eq!(err.code, "invalid_request");
         assert!(err.message.contains("Unknown tool"), "{err}");
-    }
-
-    #[tokio::test]
-    async fn bash_runs_shell_and_captures() {
-        let dir = tempfile::tempdir().unwrap();
-        let t = tools(dir.path());
-        #[cfg(windows)]
-        let command = "echo hello-boen";
-        #[cfg(not(windows))]
-        let command = "echo hello-boen";
-        let out = t.bash(&serde_json::json!({ "command": command })).await.unwrap();
-        assert_eq!(out["code"], 0, "{out}");
-        assert!(out["stdout"].as_str().unwrap().contains("hello-boen"), "{out}");
-        assert!(!out["killed"].as_bool().unwrap_or(true), "{out}");
     }
 }

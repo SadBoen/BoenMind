@@ -342,7 +342,7 @@ mod tests {
             "--print".to_string(),
             "--no-session".to_string(),
             "--tools".to_string(),
-            "read,bash,edit".to_string(),
+            "read,edit,write".to_string(),
             "--model".to_string(),
             "deepseek-chat".to_string(),
             "--thinking".to_string(),
@@ -355,7 +355,7 @@ mod tests {
         assert_eq!(
             parsed,
             ChildArgs {
-                tools: vec!["read".into(), "bash".into(), "edit".into()],
+                tools: vec!["read".into(), "edit".into(), "write".into()],
                 model: Some("deepseek-chat".into()),
                 thinking: Some("low".into()),
                 append_system_prompt: Some("你是研究员。".into()),
@@ -474,8 +474,8 @@ mod tests {
             .map(String::as_str)
             .filter(|n| builtin.contains(n))
             .collect();
-        assert_eq!(kept, vec!["read", "bash"]);
-        // 空 csv = 全部内置
-        assert!(builtin.len() >= 7);
+        assert_eq!(kept, vec!["read"]);
+        // 空 csv = 全部内置（bash 已删除，2026-08-17：内置面 6 个文件手脚）
+        assert!(builtin.len() >= 6);
     }
 }

@@ -32,9 +32,10 @@ async fn serve_stdio_exposes_and_executes_builtin_tools() {
         tools.iter().any(|t| t.qualified_name == "mcp__reverse__read"),
         "内置工具 read 应暴露"
     );
+    // 2026-08-17 用户定调：系统命令执行不走内置工具面（bash 已删除）
     assert!(
-        tools.iter().any(|t| t.qualified_name == "mcp__reverse__bash"),
-        "内置工具 bash 应暴露"
+        !tools.iter().any(|t| t.qualified_name == "mcp__reverse__bash"),
+        "内置工具 bash 已移除（能力走 MCP/SKILL 扩展体系）"
     );
 
     // 调用 ls（无参数：默认工作目录）

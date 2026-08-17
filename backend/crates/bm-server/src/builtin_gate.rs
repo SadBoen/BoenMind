@@ -1,9 +1,8 @@
 //! 内置工具权限门（审查 P0-2）——模型工具面中高权限内置工具
-//! （bash/subagent）执行前经决策记忆 + 询问链裁决，修复"沙箱插件严格
-//! 设闸、内置 bash 零闸"的威胁方向倒置（架构 §5.4 把关链对主路径生效）。
-//! 低权限内置工具（ls/find/grep/read/write/edit…，工作区 safe_join 圈禁
-//! 内）不打扰；permissive/yolo 档位直放（与插件引擎同一档位来源，
-//! 见 compat_engine::extension_policy_from_config）。
+//! （subagent；bash 已删除，2026-08-17 用户定调系统命令执行不走内置面）
+//! 执行前经决策记忆 + 询问链裁决。低权限内置工具（ls/find/grep/read/write/
+//! edit…，工作区 safe_join 圈禁内）不打扰；permissive/yolo 档位直放
+//! （与插件引擎同一档位来源，见 compat_engine::extension_policy_from_config）。
 
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -16,9 +15,10 @@ use crate::compat_engine::ask_capability;
 use crate::permission_store::PermissionStore;
 use crate::PermissionDecision;
 
-/// 高权限内置工具（需过门）：bash = 任意命令执行；subagent = 派生子
-/// 进程。其余内置工具在工作区 safe_join 圈禁内，不打扰用户。
-const HIGH_RISK_TOOLS: &[&str] = &["bash", "subagent"];
+/// 高权限内置工具（需过门）：subagent = 派生子代理。bash 已删除
+/// （2026-08-17 用户定调：系统命令执行不走内置工具面，能力一律经
+/// MCP/SKILL 扩展体系）。其余内置工具在工作区 safe_join 圈禁内，不打扰用户。
+const HIGH_RISK_TOOLS: &[&str] = &["subagent"];
 
 /// 内置工具权限门。全服务共享一个实例（决策记忆/询问通道全局）。
 pub struct BuiltinGate {
@@ -57,7 +57,6 @@ impl BuiltinGate {
             return Ok(());
         }
         let message = match tool {
-            "bash" => "内置工具请求：bash（执行任意命令）",
             "subagent" => "内置工具请求：subagent（派生子代理执行任务）",
             _ => unreachable!("check 仅对高权限工具调用"),
         };
@@ -114,7 +113,6 @@ mod tests {
     #[tokio::test]
     async fn permissive_mode_passes_high_risk() {
         let (gate, _) = test_gate(false);
-        assert!(gate.check("s1", "bash").await.is_ok());
         assert!(gate.check("s1", "subagent").await.is_ok());
     }
 
@@ -124,16 +122,16 @@ mod tests {
         store
             .lock()
             .unwrap()
-            .record("builtin", "bash", true)
+            .record("builtin", "subagent", true)
             .unwrap();
-        assert!(gate.check("s1", "bash").await.is_ok());
+        assert!(gate.check("s1", "subagent").await.is_ok());
 
         store
             .lock()
             .unwrap()
-            .record("builtin", "bash", false)
+            .record("builtin", "subagent", false)
             .unwrap();
-        assert!(gate.check("s1", "bash").await.is_err());
+        assert!(gate.check("s1", "subagent").await.is_err());
     }
 
     #[tokio::test]
@@ -162,10 +160,10 @@ mod tests {
             panic!("询问未在 1s 内注册");
         });
         let gate = BuiltinGate::new(store.clone(), streams, pending, test_config(false));
-        assert!(gate.check("s1", "bash").await.is_ok());
+        assert!(gate.check("s1", "subagent").await.is_ok());
         responder.await.unwrap();
         // always 决策已回写：二次调用命中记忆，无响应者也不询问
-        assert!(gate.check("s1", "bash").await.is_ok());
+        assert!(gate.check("s1", "subagent").await.is_ok());
     }
 
     #[tokio::test]
@@ -193,7 +191,7 @@ mod tests {
             panic!("询问未在 1s 内注册");
         });
         let gate = BuiltinGate::new(store.clone(), streams, pending, test_config(false));
-        let r = gate.check("s1", "bash").await;
+        let r = gate.check("s1", "subagent").await;
         responder.await.unwrap();
         assert!(r.is_err());
         assert!(r.unwrap_err().contains("未获权限"));
@@ -211,12 +209,12 @@ mod tests {
         store
             .lock()
             .unwrap()
-            .record("builtin", "bash", false)
+            .record("builtin", "subagent", false)
             .unwrap();
         // permissive 直放，不读记忆
-        assert!(gate.check("s1", "bash").await.is_ok());
+        assert!(gate.check("s1", "subagent").await.is_ok());
         config.write().unwrap().extension_policy = Some("safe".into());
         // 切回 safe 后同一扇门立即读记忆拒绝，无需重建
-        assert!(gate.check("s1", "bash").await.is_err());
+        assert!(gate.check("s1", "subagent").await.is_err());
     }
 }
