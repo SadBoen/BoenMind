@@ -161,6 +161,7 @@ impl Runtime {
             persist: Arc::clone(&self.persist),
             provider: self.provider.clone(),
             model: self.model.clone(),
+            max_steps: kernel_loop::DEFAULT_MAX_STEPS,
         })
     }
 }
@@ -247,8 +248,8 @@ mod tests {
         let rt2 = Runtime::headless(db.clone()).unwrap();
         let restored = rt2.restore_session("s1").await.unwrap();
         let events = restored.session().events();
-        // 空脚本 LLM：SessionStarted + User + Step/S + AssistantMessage(空) + Step/E + TurnE
-        assert_eq!(events.len(), 6);
+        // 空脚本 LLM：SessionStarted + User + Step/S + AssistantChunk(Finish) + AssistantMessage(空) + Step/E + TurnE
+        assert_eq!(events.len(), 7);
         // 恢复后的会话可继续跑（turn 编号接续，不重复）。
         let outcome = restored.run_turn(Some("again")).await.unwrap();
         assert!(outcome.steps >= 1);

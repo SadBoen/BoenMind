@@ -8,7 +8,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::llm::{ContentBlock, Role, ToolCall, ToolCallResult};
+use crate::llm::{ContentBlock, Role, StreamChunk, TokenUsage, ToolCall, ToolCallResult};
 
 /// 会话唯一标识。
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -52,11 +52,26 @@ pub struct SessionHeader {
     pub updated_at: DateTime<Utc>,
 }
 
+/// 回合结束原因（对齐 DSH `TurnEndReasonMap`：completed/aborted/blocked/error/max-tokens/interrupted）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TurnEndReason {
+    Completed,
+    /// 取消请求中断了活跃回合。
+    Aborted { reason: String },
+    Blocked,
+    /// 回合失败（结构化错误：message/code）。
+    Error { message: String, code: String },
+    /// 至少一个 step 达到输出 token 上限。
+    MaxTokens,
+    /// 持久化后端在重载时关闭了崩溃孤儿回合（loop 从不发出）。
+    Interrupted,
+}
+
 /// 回合级事件负载。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TurnEvent {
     Started { turn: u64 },
-    Ended { turn: u64 },
+    Ended { turn: u64, reason: TurnEndReason },
 }
 
 /// 步骤级事件负载。
@@ -77,10 +92,13 @@ pub enum SessionEvent {
     Turn(TurnEvent),
     /// 步骤开始/结束（一次模型调用 + 工具执行为一个 step）。
     Step { turn: u64, step: u64, phase: StepPhase },
-    /// 模型流式文本增量（assistant/chunk 语义：model-visible-means-logged）。
-    AssistantChunk { text: String },
+    /// 模型流式原始块增量（assistant/chunk 语义：raw chunk 入日志保重放保真）。
+    AssistantChunk { chunk: StreamChunk },
     /// 模型完整消息（含工具调用块）。
-    AssistantMessage { content: Vec<ContentBlock> },
+    AssistantMessage {
+        content: Vec<ContentBlock>,
+        usage: Option<TokenUsage>,
+    },
     /// 工具调用（模型侧发出）。
     ToolCall { call: ToolCall },
     /// 工具执行结果。

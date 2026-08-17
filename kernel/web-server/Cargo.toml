@@ -24,6 +24,7 @@ tracing-subscriber.workspace = true
 chrono.workspace = true
 uuid.workspace = true
 toml = "0.8"
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 http-body-util = "0.1"

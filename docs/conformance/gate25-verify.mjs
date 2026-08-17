@@ -67,15 +67,19 @@ const wsDone = new Promise((resolve, reject) => {
 try { await wsDone; } catch (e) { console.log("FAIL ws frames:", e.message); failures++; }
 const events = frames.filter(f => f.method === "session/event");
 const seqs = events.map(f => f.payload.event.seq);
-ok("ws 5 frames", events.length === 5, `got ${events.length}`);
-ok("seq continuous 0-4", seqs.join(",") === "0,1,2,3,4", seqs.join(","));
+// M3 对齐 DSH 流协议：mock 空脚本产出 Finish 空回合。结构性断言（与 mock 脚本内容无关）：
+// seq 连续、首条 user/message、末条 turn/end、全部带 sessionId 与 data。
+ok("ws frames >= 4", events.length >= 4, `got ${events.length}`);
+ok("seq continuous from 0", seqs.every((s, i) => s === i), seqs.join(","));
 ok("sessionId in frames", events.every(f => f.payload.sessionId === sid));
 ok("frame payload shape", events.every(f => f.payload.event.type && f.payload.event.data !== undefined));
+ok("first event user/message", events[0].payload.event.type === "user/message", events[0]?.payload.event.type);
+ok("last event turn/end", events[events.length - 1].payload.event.type === "turn/end", events[events.length - 1]?.payload.event.type);
 
-// 7. session.history：完整回合（user → assistant → turn/end）
+// 7. session.history：完整回合（user → ... → turn/end）
 const h = await rpc("session.history", { sessionId: sid });
 const types = h.value.events.map(e => e.event.type);
-ok("history complete turn", types.join(",") === "user/message,step/start,assistant/message,step/end,turn/end", types.join(","));
+ok("history complete turn", types[0] === "user/message" && types.includes("step/start") && types[types.length - 1] === "turn/end", types.join(","));
 
 // 8. session.rename + cancel
 const rn = await rpc("session.rename", { sessionId: sid, title: "gate25 session" });

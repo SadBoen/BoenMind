@@ -117,6 +117,9 @@ fn main() {
                     id: m.clone(),
                     label: None,
                     supports_tools: true,
+                    context_window: None,
+                    max_tokens: None,
+                    reasoning: None,
                 })
                 .collect();
             let adapter = Arc::new(OpenAICompatLlm::new(OpenAiProviderConfig {
@@ -184,6 +187,36 @@ fn main() {
     let state = Arc::new(AppState::assemble(runtime, trusted_hosts.clone(), provider_runtimes));
     // 持有总线监听器句柄到进程结束（drop 即注销，实时事件流依赖它）。
     let _bus_listener = state.attach_event_bus();
+
+    // 启动恢复：把持久化会话全部 restore 进 live 表（kill -9 恢复语义，
+    // restore_session 内部自动做 interrupted-turn 修复）。blank/running 按日志判定。
+    {
+        let ids = futures::executor::block_on(state.runtime.persist.list_sessions())
+            .unwrap_or_default();
+        for id in ids {
+            match futures::executor::block_on(state.runtime.restore_session(&id)) {
+                Ok(agent) => {
+                    let events = agent.session().events();
+                    let has_turn_start = events
+                        .iter()
+                        .any(|r| matches!(&r.event, kernel_contracts::session::SessionEvent::Turn(kernel_contracts::session::TurnEvent::Started { .. })));
+                    let running = false;
+                    state.sessions.lock().unwrap().insert(
+                        id.clone(),
+                        web_server::api::SessionHandle {
+                            agent: Arc::new(agent),
+                            running,
+                            blank: !has_turn_start,
+                            title: None,
+                            selected: None,
+                        },
+                    );
+                    tracing::info!("restored session {id} (blank={})", !has_turn_start);
+                }
+                Err(e) => tracing::warn!("skip restore of session {id}: {e}"),
+            }
+        }
+    }
 
     let app = web_server::router(Arc::clone(&state), dist.clone(), boot_json);
 

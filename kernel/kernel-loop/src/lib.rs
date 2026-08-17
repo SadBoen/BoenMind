@@ -4,16 +4,18 @@
 //!
 //! 核心纪律 **model-visible-means-logged**：模型看到的一切都从会话事件日志
 //! 投影（`Session::derive_messages`），每次模型调用前日志已完整；
-//! 流式文本逐块 `AssistantChunk` 入日志，工具调用先记 `ToolCall` 再执行。
+//! 流式块逐块以**原始 chunk** 入日志（`AssistantChunk { chunk }`，对齐 DSH
+//! agent-loop：raw chunk 入日志保 replay 保真），工具调用先记 `ToolCall` 再执行。
 //!
 //! 单回合流程（`run_turn`）：
 //! 1. `append(UserMessage)`（可选，恢复续跑时已入日志则传 `None`）；
-//! 2. step 循环（上限 [`MAX_STEPS`]，超限判 torn）：
+//! 2. step 循环（上限 [`LoopRuntime::max_steps`]，超限判 torn）：
 //!    a. `append(Step Started)`；
 //!    b. 投影消息 + enabled 工具 schema；
-//!    c. `llm.stream(request)` 逐块消费（文本→chunk 日志，工具→暂存，Finish 收尾）；
-//!    d. 分派：工具调用 → `AssistantMessage(ToolCall)` + 逐个 `ToolCall`/`ToolResult`，否则 → `AssistantMessage(Text)` 收尾。
-//! 3. `append(Turn Ended)`。
+//!    c. `llm.stream(request)` 逐块消费（原始 chunk 入日志 + `BlockAssembler` 累积）；
+//!    d. 流末按 finish 分派：usage 随 `AssistantMessage` 入日志；工具调用 →
+//!    `AssistantMessage(ToolCall)` + 逐个 `ToolCall`/`ToolResult`，否则 →
+//!    `AssistantMessage(blocks)` 收尾。//! 3. `append(Turn Ended{reason})`——completed / max-tokens / error。
 //!
 //! 持久化纪律：**logged-means-persisted**——每个事件 append 进会话日志后立即
 //! 经 [`LoopRuntime::persist`] 落盘（单事件事务）。kill -9 发生时已 append 的事件
@@ -25,15 +27,17 @@ use std::sync::Arc;
 use futures::StreamExt;
 use kernel_contracts::llm::{
     ContentBlock, FinishReason, GenerateOptions, LlmPort, StreamChunk, ToolCall, ToolCallResult,
+    TokenUsage,
 };
 use kernel_contracts::ports::SessionPersistPort;
-use kernel_contracts::session::{SessionEvent, StepPhase, TurnEvent};
+use kernel_contracts::session::{SessionEvent, StepPhase, TurnEndReason, TurnEvent};
 use kernel_contracts::tools::ToolExecutionInput;
 use kernel_session::{Session, SessionStore};
 use kernel_tools::{ToolGate, ToolRegistry};
 
-/// 单回合最大 step 数；超限即 `LoopError::MaxSteps`（torn）。
-pub const MAX_STEPS: u64 = 32;
+/// 单回合最大 step 数默认值；超限即 `LoopError::MaxSteps`（torn）。数值属策略，
+/// 装配方可经 `LoopRuntime::max_steps` 覆盖。
+pub const DEFAULT_MAX_STEPS: u64 = 32;
 
 /// 回合循环运行时装配：LLM 端口 + 会话存储 + 工具注册表/门控 + provider 标识 + 持久化端口。
 pub struct LoopRuntime {
@@ -44,6 +48,8 @@ pub struct LoopRuntime {
     pub persist: Arc<dyn SessionPersistPort>,
     pub provider: String,
     pub model: String,
+    /// 单回合最大 step 数（默认 [`DEFAULT_MAX_STEPS`]）。
+    pub max_steps: u64,
 }
 
 /// 单回合结果。
@@ -51,8 +57,8 @@ pub struct LoopRuntime {
 pub struct TurnOutcome {
     /// 实际执行的 step 数。
     pub steps: u64,
-    /// 最后一段非空模型文本（无则 None）。
-    pub last_text: Option<String>,
+    /// 回合结束原因。
+    pub reason: TurnEndReason,
 }
 
 /// 回合循环错误。
@@ -64,8 +70,8 @@ pub enum LoopError {
     Tool(String),
     #[error("persist error: {0}")]
     Persist(String),
-    #[error("turn exceeded max steps (32)")]
-    MaxSteps,
+    #[error("turn exceeded max steps ({0})")]
+    MaxSteps(u64),
 }
 
 /// 反应式回合代理：一次用户输入 → 若干 step，直到模型产出文本。
@@ -75,6 +81,156 @@ pub struct ReactLoopAgent {
     /// per-session 模型覆盖（session.selectModel 语义）：Some((provider, model)) 时
     /// 优先于 LoopRuntime 全局默认。未设置 = 用运行时默认。
     model_override: std::sync::Mutex<Option<(String, String)>>,
+}
+
+/// 增量 chunk → 消息装配器（对齐 DSH `BlockAssembler`：原始 chunk 累积，
+/// `block-end` 权威冻结，delta-only 协议也容忍；usage/finish 单独持有）。
+struct BlockAssembler {
+    partials: BTreeMap<usize, PartialBlock>,
+    order: Vec<usize>,
+    usage: Option<TokenUsage>,
+    finish: Option<FinishReason>,
+}
+
+struct PartialBlock {
+    block_type: String,
+    text: String,
+    tool_call_id: String,
+    tool_call_name: String,
+    /// block-end 已闭：权威块，冻结 partial。
+    block: Option<ContentBlock>,
+}
+
+impl BlockAssembler {
+    fn new() -> Self {
+        Self {
+            partials: BTreeMap::new(),
+            order: Vec::new(),
+            usage: None,
+            finish: None,
+        }
+    }
+
+    fn push(&mut self, chunk: &StreamChunk) {
+        match chunk {
+            StreamChunk::BlockStart { index, block_type } => {
+                if !self.partials.contains_key(index) {
+                    self.order.push(*index);
+                    self.partials.insert(
+                        *index,
+                        PartialBlock {
+                            block_type: block_type.clone(),
+                            text: String::new(),
+                            tool_call_id: String::new(),
+                            tool_call_name: String::new(),
+                            block: None,
+                        },
+                    );
+                }
+            }
+            StreamChunk::TextDelta { index, text } | StreamChunk::ReasoningDelta { index, text } => {
+                let is_text = matches!(chunk, StreamChunk::TextDelta { .. });
+                let partial = self.ensure(*index, if is_text { "text" } else { "reasoning" });
+                if partial.block.is_some() {
+                    return; // 已闭：忽略迟到增量
+                }
+                partial.text.push_str(text);
+            }
+            StreamChunk::ToolCallDelta {
+                index,
+                id,
+                name,
+                arguments_delta,
+            } => {
+                let partial = self.ensure(*index, "tool-call");
+                if partial.block.is_some() {
+                    return;
+                }
+                if !id.is_empty() {
+                    partial.tool_call_id.clone_from(id);
+                }
+                if let Some(n) = name {
+                    partial.tool_call_name.clone_from(n);
+                }
+                partial.text.push_str(arguments_delta);
+            }
+            StreamChunk::BlockEnd { index, block } => {
+                let partial = self.ensure(*index, "");
+                // 首闭胜出：忽略重闭迟到块。
+                if partial.block.is_some() {
+                    return;
+                }
+                partial.block = Some(block.clone());
+            }
+            StreamChunk::Usage(u) => {
+                self.usage = Some(u.clone());
+            }
+            StreamChunk::Finish(reason) => {
+                self.finish = Some(reason.clone());
+            }
+        }
+    }
+
+    fn ensure(&mut self, index: usize, block_type: &str) -> &mut PartialBlock {
+        if !self.partials.contains_key(&index) {
+            self.order.push(index);
+        }
+        self.partials
+            .entry(index)
+            .or_insert_with(|| PartialBlock {
+                block_type: block_type.to_string(),
+                text: String::new(),
+                tool_call_id: String::new(),
+                tool_call_name: String::new(),
+                block: None,
+            })
+    }
+
+    fn assemble(&self, index: usize, partial: &PartialBlock) -> ContentBlock {
+        if let Some(b) = &partial.block {
+            return b.clone();
+        }
+        match partial.block_type.as_str() {
+            "text" => ContentBlock::Text(partial.text.clone()),
+            "reasoning" => ContentBlock::Reasoning(partial.text.clone()),
+            "tool-call" => ContentBlock::ToolCall(ToolCall {
+                id: if partial.tool_call_id.is_empty() {
+                    format!("call-{index}")
+                } else {
+                    partial.tool_call_id.clone()
+                },
+                name: partial.tool_call_name.clone(),
+                arguments: partial.text.clone(),
+            }),
+            _ => ContentBlock::Text(partial.text.clone()),
+        }
+    }
+
+    /// 组装全部已见块（按开块序）。max-tokens 截断丢弃无法安全执行的 tool-call 块。
+    fn blocks(&self) -> Vec<ContentBlock> {
+        let blocks: Vec<ContentBlock> = self
+            .order
+            .iter()
+            .map(|i| self.assemble(*i, self.partials.get(i).expect("order invariant")))
+            .collect();
+        if self.finish() == FinishReason::MaxTokens {
+            blocks
+                .into_iter()
+                .filter(|b| !matches!(b, ContentBlock::ToolCall(_)))
+                .collect()
+        } else {
+            blocks
+        }
+    }
+
+    fn usage(&self) -> Option<TokenUsage> {
+        self.usage.clone()
+    }
+
+    /// finish 缺省 stop（对齐 DSH `get finish()`）。
+    fn finish(&self) -> FinishReason {
+        self.finish.clone().unwrap_or(FinishReason::Stop)
+    }
 }
 
 impl ReactLoopAgent {
@@ -140,6 +296,7 @@ impl ReactLoopAgent {
     /// 跑一个回合。`user_text = Some` 时先入日志（新回合）；
     /// `None` 表示恢复续跑（用户消息已在日志中，从断点重跑）。
     /// 事件序列见模块文档；torn 流（Err 或缺失 Finish）直接返回 Err。
+    /// 回合结束（含 error 收尾）必写 `Turn Ended{reason}`——对齐 DSH 断连恢复语义。
     pub async fn run_turn(&self, user_text: Option<&str>) -> Result<TurnOutcome, LoopError> {
         let turn = self.next_turn();
 
@@ -151,12 +308,21 @@ impl ReactLoopAgent {
         }
 
         let mut steps: u64 = 0;
-        let mut last_text: Option<String> = None;
 
         loop {
             steps += 1;
-            if steps > MAX_STEPS {
-                return Err(LoopError::MaxSteps);
+            if steps > self.rt.max_steps {
+                let rec = self
+                    .session
+                    .append(SessionEvent::Turn(TurnEvent::Ended {
+                        turn,
+                        reason: TurnEndReason::Error {
+                            message: format!("turn exceeded max steps ({})", self.rt.max_steps),
+                            code: "MAX_STEPS".to_string(),
+                        },
+                    }));
+                let _ = self.persist(&rec).await;
+                return Err(LoopError::MaxSteps(self.rt.max_steps));
             }
 
             let rec = self.session.append(SessionEvent::Step {
@@ -181,168 +347,181 @@ impl ReactLoopAgent {
                 session_id: Some(self.session.id().as_str().to_string()),
             };
 
-            // ---- 消费模型流 ----
+            // ---- 消费模型流：原始 chunk 入日志 + 装配器累积 ----
             let mut stream = self.rt.llm.stream(request);
-            let mut step_text = String::new();
-            let mut finish_reason: Option<FinishReason> = None;
-            // index -> (name, 累积 arguments)
-            let mut pending_calls: BTreeMap<usize, (String, String)> = BTreeMap::new();
-            let mut tool_calls: Vec<ToolCall> = Vec::new();
+            let mut assembler = BlockAssembler::new();
 
             while let Some(chunk) = stream.next().await {
-                match chunk {
-                    Ok(StreamChunk::TextDelta { text }) => {
-                        step_text.push_str(&text);
-                        let rec = self.session.append(SessionEvent::AssistantChunk { text });
-                        self.persist(&rec).await?;
-                    }
-                    // M1：推理增量不进日志、不进上下文。
-                    Ok(StreamChunk::ReasoningDelta { .. }) => {}
-                    Ok(StreamChunk::ToolCallDelta {
-                        index,
-                        name,
-                        arguments_delta,
-                    }) => {
-                        let entry = pending_calls
-                            .entry(index)
-                            .or_insert_with(|| (name, String::new()));
-                        entry.1.push_str(&arguments_delta);
-                    }
-                    Ok(StreamChunk::ToolCallDone {
-                        index,
-                        name,
-                        arguments,
-                    }) => {
-                        // ToolCallDone 自带完整 arguments；为空时用 delta 累积兜底。
-                        let final_args = if arguments.is_empty() {
-                            pending_calls
-                                .remove(&index)
-                                .map(|(_, acc)| acc)
-                                .unwrap_or_default()
-                        } else {
-                            arguments
-                        };
-                        let parsed =
-                            serde_json::from_str(&final_args).unwrap_or(serde_json::Value::Null);
-                        tool_calls.push(ToolCall {
-                            id: format!("call_{index}"),
-                            name,
-                            arguments: parsed,
-                        });
-                    }
-                    // M1：token 用量不计入。
-                    Ok(StreamChunk::Usage(_)) => {}
-                    Ok(StreamChunk::Finish(reason)) => {
-                        finish_reason = Some(reason);
-                        break;
-                    }
+                let chunk = match chunk {
+                    Ok(c) => c,
                     // torn 流：禁止静默中断。
-                    Err(e) => return Err(LoopError::Llm(e.message)),
-                }
+                    Err(e) => {
+                        let rec = self
+                            .session
+                            .append(SessionEvent::Turn(TurnEvent::Ended {
+                                turn,
+                                reason: TurnEndReason::Error {
+                                    message: e.message.clone(),
+                                    code: "LLM_STREAM".to_string(),
+                                },
+                            }));
+                        let _ = self.persist(&rec).await;
+                        return Err(LoopError::Llm(e.message));
+                    }
+                };
+                // raw chunk 入日志（对齐 DSH agent-loop：`session.append('assistant/chunk',
+                // {turn, step, chunk}).seq` 保 replay 保真）。
+                let rec = self.session.append(SessionEvent::AssistantChunk {
+                    chunk: chunk.clone(),
+                });
+                self.persist(&rec).await?;
+                assembler.push(&chunk);
             }
 
-            // Finish 缺失 = torn（端口契约要求流以 Finish 收尾）。
-            if finish_reason.is_none() {
+            let finish = assembler.finish();
+            let usage = assembler.usage();
+
+            // finish 缺失 = torn（端口契约要求流以 Finish 收尾）。
+            if assembler.finish.is_none() {
+                let rec = self
+                    .session
+                    .append(SessionEvent::Turn(TurnEvent::Ended {
+                        turn,
+                        reason: TurnEndReason::Error {
+                            message: "stream ended without Finish (torn)".to_string(),
+                            code: "STREAM_CLOSED".to_string(),
+                        },
+                    }));
+                let _ = self.persist(&rec).await;
                 return Err(LoopError::Llm(
                     "stream ended without Finish (torn)".to_string(),
                 ));
             }
 
-            // 兜底：provider 只发 delta 没发 Done 时，把已累积 arguments 拼成调用。
-            for (index, (name, acc)) in pending_calls {
-                if !tool_calls.iter().any(|c| c.id == format!("call_{index}")) {
-                    let parsed =
-                        serde_json::from_str(&acc).unwrap_or(serde_json::Value::Null);
-                    tool_calls.push(ToolCall {
-                        id: format!("call_{index}"),
-                        name,
-                        arguments: parsed,
-                    });
-                }
+            // error/aborted finish：回合失败收尾（无重试瀑布，M3 直错）。
+            if matches!(finish, FinishReason::Error { .. } | FinishReason::Cancelled) {
+                let (message, code) = match &finish {
+                    FinishReason::Error { message, code } => (message.clone(), code.clone()),
+                    _ => ("cancelled".to_string(), "ABORTED".to_string()),
+                };
+                let rec = self
+                    .session
+                    .append(SessionEvent::Turn(TurnEvent::Ended {
+                        turn,
+                        reason: TurnEndReason::Error {
+                            message: message.clone(),
+                            code: code.clone(),
+                        },
+                    }));
+                let _ = self.persist(&rec).await;
+                return Err(LoopError::Llm(format!(
+                    "model finish: {message} ({code})"
+                )));
             }
 
-            if !step_text.trim().is_empty() {
-                last_text = Some(step_text.clone());
-            }
+            // 组装最终消息块（max-tokens 截断丢弃 tool-call 块，对齐 DSH assembler.blocks()）。
+            let blocks = assembler.blocks();
+            let tool_calls: Vec<ToolCall> = blocks
+                .iter()
+                .filter_map(|b| match b {
+                    ContentBlock::ToolCall(c) => Some(c.clone()),
+                    _ => None,
+                })
+                .collect();
 
-            let wants_tools =
-                finish_reason == Some(FinishReason::ToolCalls) || !tool_calls.is_empty();
+            // 模型即将看到的内容：工具调用或文本块。
+            let rec = self.session.append(SessionEvent::AssistantMessage {
+                content: if tool_calls.is_empty() { blocks } else {
+                    tool_calls.iter().cloned().map(ContentBlock::ToolCall).collect()
+                },
+                usage,
+            });
+            self.persist(&rec).await?;
 
-            if wants_tools {
-                // 模型即将看到工具调用：先记 AssistantMessage。
-                let content: Vec<ContentBlock> = tool_calls
-                    .iter()
-                    .map(|c| ContentBlock::ToolCall(c.clone()))
-                    .collect();
-                let rec = self.session.append(SessionEvent::AssistantMessage { content });
-                self.persist(&rec).await?;
-
-                for call in &tool_calls {
-                    // 先记调用，再执行（对齐 dsh tool/call 事件语义）。
-                    let rec = self
-                        .session
-                        .append(SessionEvent::ToolCall { call: call.clone() });
-                    self.persist(&rec).await?;
-                    let input = ToolExecutionInput {
-                        name: call.name.clone(),
-                        arguments: call.arguments.clone(),
-                    };
-                    let result = match self
-                        .rt
-                        .gate
-                        .execute_guarded(&self.rt.tools, input)
-                        .await
-                    {
-                        Ok(r) => ToolCallResult {
-                            call_id: call.id.clone(),
-                            output: r.output.clone(),
-                            is_error: r.is_error,
-                        },
-                        // fail-closed / 执行失败也回写日志（is_error=true）。
-                        Err(e) => ToolCallResult {
-                            call_id: call.id.clone(),
-                            output: format!("tool error: {e}"),
-                            is_error: true,
-                        },
-                    };
-                    let rec = self.session.append(SessionEvent::ToolResult { result });
-                    self.persist(&rec).await?;
-                }
-
+            if finish == FinishReason::MaxTokens {
                 let rec = self.session.append(SessionEvent::Step {
                     turn,
                     step: steps,
                     phase: StepPhase::Ended,
                 });
                 self.persist(&rec).await?;
-                continue;
+                let rec = self
+                    .session
+                    .append(SessionEvent::Turn(TurnEvent::Ended {
+                        turn,
+                        reason: TurnEndReason::MaxTokens,
+                    }));
+                self.persist(&rec).await?;
+                return Ok(TurnOutcome {
+                    steps,
+                    reason: TurnEndReason::MaxTokens,
+                });
             }
 
-            // 文本收尾（Stop / MaxTokens / Cancelled / Error）。
-            let content = if finish_reason == Some(FinishReason::Error) {
-                vec![ContentBlock::Text(
-                    "model generation failed (finish_reason=Error)".to_string(),
-                )]
-            } else {
-                vec![ContentBlock::Text(step_text.clone())]
-            };
-            let rec = self.session.append(SessionEvent::AssistantMessage { content });
-            self.persist(&rec).await?;
+            if tool_calls.is_empty() {
+                // 文本收尾（stop）。
+                let rec = self.session.append(SessionEvent::Step {
+                    turn,
+                    step: steps,
+                    phase: StepPhase::Ended,
+                });
+                self.persist(&rec).await?;
+                let rec = self
+                    .session
+                    .append(SessionEvent::Turn(TurnEvent::Ended {
+                        turn,
+                        reason: TurnEndReason::Completed,
+                    }));
+                self.persist(&rec).await?;
+                return Ok(TurnOutcome {
+                    steps,
+                    reason: TurnEndReason::Completed,
+                });
+            }
+
+            // 工具调用序列：逐个执行。
+            for call in &tool_calls {
+                // 先记调用，再执行（对齐 dsh tool/call 事件语义）。
+                let rec = self
+                    .session
+                    .append(SessionEvent::ToolCall { call: call.clone() });
+                self.persist(&rec).await?;
+                let input = ToolExecutionInput {
+                    name: call.name.clone(),
+                    // 模型原始 JSON 文本解析为 Value 供 schema 校验；解析失败 → Null。
+                    arguments: serde_json::from_str(&call.arguments)
+                        .unwrap_or(serde_json::Value::Null),
+                };
+                let result = match self
+                    .rt
+                    .gate
+                    .execute_guarded(&self.rt.tools, input)
+                    .await
+                {
+                    Ok(r) => ToolCallResult {
+                        call_id: call.id.clone(),
+                        output: r.output.clone(),
+                        is_error: r.is_error,
+                    },
+                    // fail-closed / 执行失败也回写日志（is_error=true）。
+                    Err(e) => ToolCallResult {
+                        call_id: call.id.clone(),
+                        output: format!("tool error: {e}"),
+                        is_error: true,
+                    },
+                };
+                let rec = self.session.append(SessionEvent::ToolResult { result });
+                self.persist(&rec).await?;
+            }
+
             let rec = self.session.append(SessionEvent::Step {
                 turn,
                 step: steps,
                 phase: StepPhase::Ended,
             });
             self.persist(&rec).await?;
-            break;
+            continue;
         }
-
-        let rec = self
-            .session
-            .append(SessionEvent::Turn(TurnEvent::Ended { turn }));
-        self.persist(&rec).await?;
-
-        Ok(TurnOutcome { steps, last_text })
     }
 }
 
@@ -394,18 +573,20 @@ mod tests {
         }
     }
 
-    /// 脚本式 LLM：每次 `stream()` 弹出队首一步。
+    /// 脚本式 LLM：每次 `stream()` 弹出队首一步（按 DSH 流协议产出块）。
     #[derive(Clone)]
     enum ScriptStep {
-        /// 一步模型调用 → `[TextDelta, Finish(Stop)]`。
+        /// 一步模型调用 → `[BlockStart(text), TextDelta, BlockEnd, Finish(Stop)]`。
         Text(String),
-        /// 一步模型调用 → `[ToolCallDone, Finish(ToolCalls)]`；
+        /// 一步模型调用 → `[BlockStart(tool-call), ToolCallDelta, BlockEnd, Finish(ToolCalls)]`；
         /// `then_text` 为下一轮调用的文本（预插队）。
         Tool {
             name: String,
             arguments: serde_json::Value,
             then_text: Option<String>,
         },
+        /// 一步模型调用 → `[Usage, Finish(MaxTokens)]`（无块）。
+        MaxTokens,
     }
 
     struct ScriptLlm {
@@ -433,7 +614,9 @@ mod tests {
             };
             match step {
                 ScriptStep::Text(text) => Box::pin(futures::stream::iter(vec![
-                    Ok(StreamChunk::TextDelta { text }),
+                    Ok(StreamChunk::BlockStart { index: 0, block_type: "text".to_string() }),
+                    Ok(StreamChunk::TextDelta { index: 0, text: text.clone() }),
+                    Ok(StreamChunk::BlockEnd { index: 0, block: ContentBlock::Text(text) }),
                     Ok(StreamChunk::Finish(FinishReason::Stop)),
                 ])),
                 ScriptStep::Tool {
@@ -447,14 +630,34 @@ mod tests {
                     let args = serde_json::to_string(&arguments)
                         .unwrap_or_else(|_| "null".to_string());
                     Box::pin(futures::stream::iter(vec![
-                        Ok(StreamChunk::ToolCallDone {
+                        Ok(StreamChunk::BlockStart { index: 0, block_type: "tool-call".to_string() }),
+                        Ok(StreamChunk::ToolCallDelta {
                             index: 0,
-                            name,
-                            arguments: args,
+                            id: "call_0".to_string(),
+                            name: Some(name.clone()),
+                            arguments_delta: args.clone(),
+                        }),
+                        Ok(StreamChunk::BlockEnd {
+                            index: 0,
+                            block: ContentBlock::ToolCall(ToolCall {
+                                id: "call_0".to_string(),
+                                name,
+                                arguments: args,
+                            }),
                         }),
                         Ok(StreamChunk::Finish(FinishReason::ToolCalls)),
                     ]))
                 }
+                ScriptStep::MaxTokens => Box::pin(futures::stream::iter(vec![
+                    Ok(StreamChunk::Usage(TokenUsage {
+                        input: 10,
+                        output: 5,
+                        cache_read: None,
+                        cache_write: None,
+                        reasoning: None,
+                    })),
+                    Ok(StreamChunk::Finish(FinishReason::MaxTokens)),
+                ])),
             }
         }
     }
@@ -466,6 +669,9 @@ mod tests {
                 id: self.model.clone(),
                 label: None,
                 supports_tools: true,
+                context_window: None,
+                max_tokens: None,
+                reasoning: None,
             }])
         }
 
@@ -531,6 +737,7 @@ mod tests {
             persist,
             provider: "script".to_string(),
             model: "script-1".to_string(),
+            max_steps: DEFAULT_MAX_STEPS,
         });
         let session = store.create(test_header("s1"), EventBus::new());
         (rt, session)
@@ -544,10 +751,22 @@ mod tests {
         }
     }
 
+    /// 从日志找最后一个指定事件（辅助断言）。
+    fn last_turn_end(events: &[SessionEvent]) -> &TurnEndReason {
+        events
+            .iter()
+            .rev()
+            .find_map(|e| match e {
+                SessionEvent::Turn(TurnEvent::Ended { reason, .. }) => Some(reason),
+                _ => None,
+            })
+            .expect("turn/end present")
+    }
+
     // ---------- tests ----------
 
-    /// 纯文本回合：UserMessage → Step Started → AssistantChunk →
-    /// AssistantMessage(文本) → Step Ended → Turn Ended。
+    /// 纯文本回合：UserMessage → Step Started → AssistantChunk(原始块) →
+    /// AssistantMessage(文本) → Step Ended → Turn Ended(completed)。
     #[tokio::test]
     async fn plain_text_turn_sequence() {
         let (rt, session) = runtime(vec![ScriptStep::Text("你好".to_string())], &[]);
@@ -555,13 +774,14 @@ mod tests {
         let outcome = agent.run_turn(Some("hi")).await.unwrap();
 
         assert_eq!(outcome.steps, 1);
-        assert_eq!(outcome.last_text.as_deref(), Some("你好"));
+        assert_eq!(outcome.reason, TurnEndReason::Completed);
 
         let events: Vec<SessionEvent> = session.events().into_iter().map(|r| r.event).collect();
-        // [0] SessionStarted（Session::new 自动 append）, [1] UserMessage,
-        // [2] Step{1,1,Started}, [3] AssistantChunk, [4] AssistantMessage(Text),
-        // [5] Step{1,1,Ended}, [6] Turn Ended
-        assert_eq!(events.len(), 7);
+        // [0] SessionStarted, [1] UserMessage, [2] Step{1,1,Started},
+        // [3..6] AssistantChunk（BlockStart/TextDelta/BlockEnd/Finish 四块——对齐 DSH：
+        //        agent-loop 对流的每个 chunk（含 finish）都 append assistant/chunk 保 replay 保真）,
+        // [7] AssistantMessage(Text), [8] Step Ended, [9] Turn Ended
+        assert_eq!(events.len(), 10);
         assert!(matches!(&events[1], SessionEvent::UserMessage { text } if text.as_str() == "hi"));
         assert!(matches!(
             &events[2],
@@ -569,18 +789,37 @@ mod tests {
         ));
         assert!(matches!(
             &events[3],
-            SessionEvent::AssistantChunk { text } if text.as_str() == "你好"
+            SessionEvent::AssistantChunk { chunk }
+                if matches!(chunk, StreamChunk::BlockStart { index: 0, block_type } if block_type == "text")
         ));
         assert!(matches!(
             &events[4],
-            SessionEvent::AssistantMessage { content }
-                if matches!(&content[..], [ContentBlock::Text(t)] if t.as_str() == "你好")
+            SessionEvent::AssistantChunk { chunk }
+                if matches!(chunk, StreamChunk::TextDelta { index: 0, text } if text == "你好")
         ));
         assert!(matches!(
             &events[5],
+            SessionEvent::AssistantChunk { chunk }
+                if matches!(chunk, StreamChunk::BlockEnd { index: 0, .. })
+        ));
+        assert!(matches!(
+            &events[6],
+            SessionEvent::AssistantChunk { chunk }
+                if matches!(chunk, StreamChunk::Finish(FinishReason::Stop))
+        ));
+        assert!(matches!(
+            &events[7],
+            SessionEvent::AssistantMessage { content, usage: None }
+                if matches!(&content[..], [ContentBlock::Text(t)] if t.as_str() == "你好")
+        ));
+        assert!(matches!(
+            &events[8],
             SessionEvent::Step { turn: 1, step: 1, phase: StepPhase::Ended }
         ));
-        assert!(matches!(&events[6], SessionEvent::Turn(TurnEvent::Ended { turn: 1 })));
+        assert!(matches!(
+            &events[9],
+            SessionEvent::Turn(TurnEvent::Ended { turn: 1, reason: TurnEndReason::Completed })
+        ));
     }
 
     /// 工具回合：ToolCall → ToolResult → 第二轮模型产出文本，steps >= 2。
@@ -598,45 +837,55 @@ mod tests {
         let outcome = agent.run_turn(Some("你好")).await.unwrap();
 
         assert!(outcome.steps >= 2, "expected >=2 steps, got {}", outcome.steps);
-        assert_eq!(outcome.last_text.as_deref(), Some("完成"));
+        assert_eq!(outcome.reason, TurnEndReason::Completed);
 
         let events: Vec<SessionEvent> = session.events().into_iter().map(|r| r.event).collect();
         // [0] SessionStarted, [1] UserMessage, [2] Step{1,1,Started},
-        // [3] AssistantMessage([ToolCall]), [4] ToolCall, [5] ToolResult, [6] Step{1,1,Ended},
-        // [7] Step{1,2,Started}, [8] AssistantChunk("完成"), [9] AssistantMessage(Text),
-        // [10] Step{1,2,Ended}, [11] Turn Ended
+        // [3..6] AssistantChunk（tool-call 块 + finish）, [7] AssistantMessage([ToolCall]),
+        // [8] ToolCall, [9] ToolResult, [10] Step{1,1,Ended},
+        // [11] Step{1,2,Started}, [12..15] AssistantChunk（文本块 + finish）,
+        // [16] AssistantMessage(Text), [17] Step{1,2,Ended}, [18] Turn Ended
+        let chunk_seq: Vec<String> = events
+            .iter()
+            .filter_map(|e| match e {
+                SessionEvent::AssistantChunk { chunk } => Some(chunk.to_wire()["type"].as_str().unwrap_or("").to_string()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            chunk_seq,
+            vec![
+                "block-start", "tool-call-delta", "block-end", "finish",
+                "block-start", "text-delta", "block-end", "finish",
+            ]
+        );
         assert!(matches!(
-            &events[3],
-            SessionEvent::AssistantMessage { content }
+            &events[7],
+            SessionEvent::AssistantMessage { content, .. }
                 if matches!(&content[..], [ContentBlock::ToolCall(_)])
         ));
         assert!(matches!(
-            &events[4],
+            &events[8],
             SessionEvent::ToolCall { call }
                 if call.name.as_str() == "echo" && call.id.as_str() == "call_0"
         ));
         assert!(matches!(
-            &events[5],
+            &events[9],
             SessionEvent::ToolResult { result } if !result.is_error
         ));
+        let text_msg = events.iter().find_map(|e| match e {
+            SessionEvent::AssistantMessage { content, .. }
+                if matches!(&content[..], [ContentBlock::Text(_)]) =>
+            {
+                Some(content.clone())
+            }
+            _ => None,
+        });
+        assert!(matches!(&text_msg, Some(c) if matches!(&c[..], [ContentBlock::Text(t)] if t.as_str() == "完成")));
         assert!(matches!(
-            &events[7],
-            SessionEvent::Step { step: 2, phase: StepPhase::Started, .. }
+            &events[events.len() - 1],
+            SessionEvent::Turn(TurnEvent::Ended { turn: 1, reason: TurnEndReason::Completed })
         ));
-        assert!(matches!(
-            &events[8],
-            SessionEvent::AssistantChunk { text } if text.as_str() == "完成"
-        ));
-        assert!(matches!(
-            &events[9],
-            SessionEvent::AssistantMessage { content }
-                if matches!(&content[..], [ContentBlock::Text(t)] if t.as_str() == "完成")
-        ));
-        assert!(matches!(
-            &events[10],
-            SessionEvent::Step { step: 2, phase: StepPhase::Ended, .. }
-        ));
-        assert!(matches!(&events[11], SessionEvent::Turn(TurnEvent::Ended { turn: 1 })));
     }
 
     /// fail-closed：不 enable 工具就触发工具调用 → ToolResult.is_error == true。
@@ -677,14 +926,44 @@ mod tests {
             .any(|e| matches!(e, SessionEvent::Step { step: 2, .. })));
     }
 
-    /// MaxSteps：脚本给 40 个工具回合（> 32）→ Err(MaxSteps)。
+    /// MaxSteps：脚本给 40 个工具回合（> 32）→ Err(MaxSteps) + turn/end(MAX_STEPS)。
     #[tokio::test]
     async fn max_steps_is_torn() {
         let steps: Vec<ScriptStep> = (0..40).map(tool_step).collect();
         let (rt, session) = runtime(steps, &["echo"]);
         let agent = ReactLoopAgent::new(rt, Arc::clone(&session));
         let err = agent.run_turn(Some("loop")).await.unwrap_err();
-        assert!(matches!(err, LoopError::MaxSteps));
+        assert!(matches!(err, LoopError::MaxSteps(_)));
+        // 回合仍以 error reason 收尾（断连恢复语义：日志无 torn tail）。
+        let events: Vec<SessionEvent> = session.events().into_iter().map(|r| r.event).collect();
+        assert!(matches!(
+            last_turn_end(&events),
+            TurnEndReason::Error { code, .. } if code == "MAX_STEPS"
+        ));
+    }
+
+    /// max-tokens 回合：usage 随 AssistantMessage、turn/end reason = max-tokens。
+    #[tokio::test]
+    async fn max_tokens_turn_records_usage_and_reason() {
+        let (rt, session) = runtime(vec![ScriptStep::MaxTokens], &[]);
+        let agent = ReactLoopAgent::new(rt, Arc::clone(&session));
+        let outcome = agent.run_turn(Some("long")).await.unwrap();
+        assert_eq!(outcome.reason, TurnEndReason::MaxTokens);
+
+        let events: Vec<SessionEvent> = session.events().into_iter().map(|r| r.event).collect();
+        let msg = events
+            .iter()
+            .find_map(|e| match e {
+                SessionEvent::AssistantMessage { content, usage } => Some((content, usage)),
+                _ => None,
+            })
+            .expect("assistant message present");
+        assert_eq!(msg.0.len(), 0); // 无块
+        assert_eq!(msg.1, &Some(TokenUsage { input: 10, output: 5, cache_read: None, cache_write: None, reasoning: None }));
+        assert!(matches!(
+            last_turn_end(&events),
+            TurnEndReason::MaxTokens
+        ));
     }
 
     /// 记录最近一次 GenerateOptions 的 provider/model，验证 override 路由生效。
@@ -701,7 +980,9 @@ mod tests {
         fn stream(&self, request: GenerateOptions) -> ChunkStream {
             self.seen.lock().unwrap().push((request.provider, request.model));
             Box::pin(futures::stream::iter(vec![
-                Ok(StreamChunk::TextDelta { text: "ok".to_string() }),
+                Ok(StreamChunk::BlockStart { index: 0, block_type: "text".to_string() }),
+                Ok(StreamChunk::TextDelta { index: 0, text: "ok".to_string() }),
+                Ok(StreamChunk::BlockEnd { index: 0, block: ContentBlock::Text("ok".to_string()) }),
                 Ok(StreamChunk::Finish(FinishReason::Stop)),
             ]))
         }
@@ -724,6 +1005,7 @@ mod tests {
             persist,
             provider: "script".to_string(),
             model: "script-1".to_string(),
+            max_steps: DEFAULT_MAX_STEPS,
         });
         let session = store.create(test_header("s1"), EventBus::new());
         let agent = ReactLoopAgent::new(rt, Arc::clone(&session));

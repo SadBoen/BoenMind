@@ -103,8 +103,29 @@ async fn main() {
             let agent = rt.create_session(header(session)).await.unwrap();
             let outcome = agent.run_turn(Some("hi")).await.unwrap();
             assert!(outcome.steps >= 2, "expected >=2 steps, got {}", outcome.steps);
+            assert_eq!(outcome.reason, kernel_contracts::session::TurnEndReason::Completed);
+            // 最后一段文本从日志投影：AssistantMessage 文本块。
+            let last_text = agent
+                .session()
+                .events()
+                .iter()
+                .rev()
+                .find_map(|r| match &r.event {
+                    SessionEvent::AssistantMessage { content, .. } => {
+                        let t: String = content
+                            .iter()
+                            .filter_map(|b| match b {
+                                kernel_contracts::ContentBlock::Text(t) => Some(t.clone()),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        if t.is_empty() { None } else { Some(t) }
+                    }
+                    _ => None,
+                });
             assert_eq!(
-                outcome.last_text.as_deref(),
+                last_text.as_deref(),
                 Some("你好，我是 BoenMind 微内核。")
             );
             println!("roundtrip OK: {} steps", outcome.steps);
@@ -144,8 +165,14 @@ async fn main() {
                 std::process::abort();
             }
             // 模拟模型文本 chunk（断点 2：落盘后自死）
-            agent.session().append(SessionEvent::AssistantChunk { text: "part".into() });
-            persist.append_events(&sid, &[SessionEvent::AssistantChunk { text: "part".into() }]).await.unwrap();
+            let chunk = SessionEvent::AssistantChunk {
+                chunk: kernel_contracts::StreamChunk::TextDelta {
+                    index: 0,
+                    text: "part".into(),
+                },
+            };
+            agent.session().append(chunk.clone());
+            persist.append_events(&sid, &[chunk]).await.unwrap();
             if step == 2 {
                 std::process::abort();
             }
@@ -260,17 +287,18 @@ mod tests {
             max_tokens: None,
             session_id: None,
         });
-        let mut saw_tool_done = false;
+        let mut saw_tool_block = false;
         while let Some(chunk) = stream.next().await {
-            if let Ok(StreamChunk::ToolCallDone { name, .. }) = &chunk {
-                assert_eq!(name, "echo");
-                saw_tool_done = true;
+            if let Ok(StreamChunk::BlockEnd { block, .. }) = &chunk {
+                if matches!(block, kernel_contracts::ContentBlock::ToolCall(c) if c.name == "echo") {
+                    saw_tool_block = true;
+                }
             }
             if let Ok(StreamChunk::Finish(FinishReason::ToolCalls)) = chunk {
                 break;
             }
         }
-        assert!(saw_tool_done);
+        assert!(saw_tool_block);
     }
 
     #[test]
@@ -280,7 +308,10 @@ mod tests {
             SessionEvent::Step { turn: 1, step: 1, phase: StepPhase::Started },
             SessionEvent::Step { turn: 1, step: 1, phase: StepPhase::Ended },
             SessionEvent::Turn(TurnEvent::Started { turn: 1 }),
-            SessionEvent::Turn(TurnEvent::Ended { turn: 1 }),
+            SessionEvent::Turn(TurnEvent::Ended {
+                turn: 1,
+                reason: kernel_contracts::TurnEndReason::Completed,
+            }),
         ];
         assert!(check_tail(&events));
         // 悬空 Step Started → false

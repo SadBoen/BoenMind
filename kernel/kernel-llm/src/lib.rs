@@ -12,9 +12,10 @@ mod multi;
 pub use multi::MultiProviderLlm;
 pub use openai::{ModelListEndpoint, OpenAiProviderConfig, OpenAICompatLlm};
 
-// ScriptLlm 按脚本逐回合产出：纯文本回合产出 TextDelta 增量 + Usage + Finish(Stop)；
-// 工具回合产出 ToolCallDelta + ToolCallDone + Usage + Finish(ToolCalls)，并把
-// then_text 推入内部 followup 队列，下一次 stream() 调用优先消费 followup 产出文本。
+// ScriptLlm 按脚本逐回合产出（对齐 DSH 流协议：block-start/delta/block-end 序）：
+// 纯文本回合产出 BlockStart(text) + TextDelta + BlockEnd + Usage + Finish(Stop)；
+// 工具回合产出 BlockStart(tool-call) + ToolCallDelta + BlockEnd + Usage + Finish(ToolCalls)，
+// 并把 then_text 推入内部 followup 队列，下一次 stream() 调用优先消费 followup 产出文本。
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -22,17 +23,17 @@ use std::sync::{Arc, Mutex};
 use async_stream::stream;
 use async_trait::async_trait;
 use kernel_contracts::{
-    ChunkStream, FinishReason, GenerateOptions, LlmError, LlmModelInfo, LlmPort, StreamChunk,
-    TokenUsage,
+    ChunkStream, ContentBlock, FinishReason, GenerateOptions, LlmError, LlmModelInfo, LlmPort,
+    StreamChunk, TokenUsage, ToolCall,
 };
 use serde_json::Value;
 
 /// 一回合 mock 输出。
 #[derive(Debug, Clone)]
 pub enum MockTurn {
-    /// 纯文本回合：产出 TextDelta 增量 + Finish(Stop)。
+    /// 纯文本回合：产出 BlockStart(text) + TextDelta + BlockEnd + Finish(Stop)。
     Text(String),
-    /// 工具回合：产出 ToolCallDelta(name, args) + ToolCallDone + Finish(ToolCalls)，
+    /// 工具回合：产出 BlockStart(tool-call) + ToolCallDelta + BlockEnd + Finish(ToolCalls)，
     /// 并把 `then_text` 推入内部 followup 队列（下一轮调用先消费 followup 产出文本）。
     Tool {
         name: String,
@@ -70,6 +71,9 @@ impl LlmPort for ScriptLlm {
             id: self.model.clone(),
             label: None,
             supports_tools: true,
+            context_window: None,
+            max_tokens: None,
+            reasoning: None,
         }])
     }
 
@@ -81,10 +85,15 @@ impl LlmPort for ScriptLlm {
             let followup = { followups.lock().unwrap().pop_front() };
             if let Some(text) = followup {
                 let output = text.chars().count() as u64;
-                yield Ok(StreamChunk::TextDelta { text });
+                yield Ok(StreamChunk::BlockStart { index: 0, block_type: "text".to_string() });
+                yield Ok(StreamChunk::TextDelta { index: 0, text: text.clone() });
+                yield Ok(StreamChunk::BlockEnd { index: 0, block: ContentBlock::Text(text) });
                 yield Ok(StreamChunk::Usage(TokenUsage {
                     input: 1,
                     output,
+                    cache_read: None,
+                    cache_write: None,
+                    reasoning: None,
                 }));
                 yield Ok(StreamChunk::Finish(FinishReason::Stop));
             } else {
@@ -93,10 +102,15 @@ impl LlmPort for ScriptLlm {
                 match turn {
                     Some(MockTurn::Text(text)) => {
                         let output = text.chars().count() as u64;
-                        yield Ok(StreamChunk::TextDelta { text });
+                        yield Ok(StreamChunk::BlockStart { index: 0, block_type: "text".to_string() });
+                        yield Ok(StreamChunk::TextDelta { index: 0, text: text.clone() });
+                        yield Ok(StreamChunk::BlockEnd { index: 0, block: ContentBlock::Text(text) });
                         yield Ok(StreamChunk::Usage(TokenUsage {
                             input: 1,
                             output,
+                            cache_read: None,
+                            cache_write: None,
+                            reasoning: None,
                         }));
                         yield Ok(StreamChunk::Finish(FinishReason::Stop));
                     }
@@ -110,17 +124,28 @@ impl LlmPort for ScriptLlm {
                         followups.lock().unwrap().push_back(then_text);
                         let arguments_json = serde_json::to_string(&arguments)
                             .unwrap_or_else(|_| "{}".to_string());
+                        yield Ok(StreamChunk::BlockStart { index: 0, block_type: "tool-call".to_string() });
                         yield Ok(StreamChunk::ToolCallDelta {
                             index: 0,
-                            name: name.clone(),
+                            id: "call_0".to_string(),
+                            name: Some(name.clone()),
                             arguments_delta: arguments_json.clone(),
                         });
-                        yield Ok(StreamChunk::ToolCallDone {
+                        yield Ok(StreamChunk::BlockEnd {
                             index: 0,
-                            name,
-                            arguments: arguments_json,
+                            block: ContentBlock::ToolCall(ToolCall {
+                                id: "call_0".to_string(),
+                                name,
+                                arguments: arguments_json,
+                            }),
                         });
-                        yield Ok(StreamChunk::Usage(TokenUsage { input: 1, output: 1 }));
+                        yield Ok(StreamChunk::Usage(TokenUsage {
+                            input: 1,
+                            output: 1,
+                            cache_read: None,
+                            cache_write: None,
+                            reasoning: None,
+                        }));
                         yield Ok(StreamChunk::Finish(FinishReason::ToolCalls));
                     }
                     // 3) 空脚本 + 空 followup：空回合安全返回
@@ -163,7 +188,7 @@ mod tests {
     }
 
     #[test]
-    fn text_turn_yields_delta_usage_finish() {
+    fn text_turn_yields_blocks_usage_finish() {
         let llm = ScriptLlm::new(
             "mock".to_string(),
             "mock-1".to_string(),
@@ -173,10 +198,19 @@ mod tests {
         assert_eq!(
             chunks,
             vec![
-                StreamChunk::TextDelta {
-                    text: "hello world".to_string()
+                StreamChunk::BlockStart { index: 0, block_type: "text".to_string() },
+                StreamChunk::TextDelta { index: 0, text: "hello world".to_string() },
+                StreamChunk::BlockEnd {
+                    index: 0,
+                    block: ContentBlock::Text("hello world".to_string())
                 },
-                StreamChunk::Usage(TokenUsage { input: 1, output: 11 }),
+                StreamChunk::Usage(TokenUsage {
+                    input: 1,
+                    output: 11,
+                    cache_read: None,
+                    cache_write: None,
+                    reasoning: None,
+                }),
                 StreamChunk::Finish(FinishReason::Stop),
             ]
         );
@@ -199,17 +233,28 @@ mod tests {
         assert_eq!(
             chunks1,
             vec![
+                StreamChunk::BlockStart { index: 0, block_type: "tool-call".to_string() },
                 StreamChunk::ToolCallDelta {
                     index: 0,
-                    name: "echo".to_string(),
+                    id: "call_0".to_string(),
+                    name: Some("echo".to_string()),
                     arguments_delta: r#"{"text":"hi"}"#.to_string(),
                 },
-                StreamChunk::ToolCallDone {
+                StreamChunk::BlockEnd {
                     index: 0,
-                    name: "echo".to_string(),
-                    arguments: r#"{"text":"hi"}"#.to_string(),
+                    block: ContentBlock::ToolCall(ToolCall {
+                        id: "call_0".to_string(),
+                        name: "echo".to_string(),
+                        arguments: r#"{"text":"hi"}"#.to_string(),
+                    }),
                 },
-                StreamChunk::Usage(TokenUsage { input: 1, output: 1 }),
+                StreamChunk::Usage(TokenUsage {
+                    input: 1,
+                    output: 1,
+                    cache_read: None,
+                    cache_write: None,
+                    reasoning: None,
+                }),
                 StreamChunk::Finish(FinishReason::ToolCalls),
             ]
         );
@@ -219,10 +264,19 @@ mod tests {
         assert_eq!(
             chunks2,
             vec![
-                StreamChunk::TextDelta {
-                    text: "done".to_string()
+                StreamChunk::BlockStart { index: 0, block_type: "text".to_string() },
+                StreamChunk::TextDelta { index: 0, text: "done".to_string() },
+                StreamChunk::BlockEnd {
+                    index: 0,
+                    block: ContentBlock::Text("done".to_string())
                 },
-                StreamChunk::Usage(TokenUsage { input: 1, output: 4 }),
+                StreamChunk::Usage(TokenUsage {
+                    input: 1,
+                    output: 4,
+                    cache_read: None,
+                    cache_write: None,
+                    reasoning: None,
+                }),
                 StreamChunk::Finish(FinishReason::Stop),
             ]
         );

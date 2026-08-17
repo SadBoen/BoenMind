@@ -15,14 +15,15 @@ pub mod tools;
 pub use bus::{Disposer, EventBus, EventListener};
 pub use error::{LlmError, PortError, PortErrorKind, PortResult, ToolError};
 pub use llm::{
-    text_message, ChunkStream, ContentBlock, FinishReason, GenerateOptions, LlmMessage,
-    LlmModelInfo, LlmPort, Role, StreamChunk, TokenUsage, ToolCall, ToolCallResult,
+    block_to_wire, text_message, ChunkStream, ContentBlock, FinishReason, GenerateOptions,
+    LlmMessage, LlmModelInfo, LlmPort, LlmResolvedModelInfo, ModelReasoning, ReasoningEffort, Role,
+    StreamChunk, TokenUsage, ToolCall, ToolCallResult,
 };
 pub use ports::{
     FsPort, PluginRuntimeAvailability, PluginRuntimePort, SessionPersistPort, ShellPort,
     ShellRequest, ShellResult, UnavailablePluginRuntime,
 };
 pub use session::{
-    SessionEvent, SessionHeader, SessionId, SessionRecord, StepPhase, TurnEvent,
+    SessionEvent, SessionHeader, SessionId, SessionRecord, StepPhase, TurnEndReason, TurnEvent,
 };
 pub use tools::{ExecutionMode, ToolExecutionInput, ToolExecutionResult, ToolHandler, ToolSchema};

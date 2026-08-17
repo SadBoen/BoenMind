@@ -117,7 +117,10 @@ async fn append_batches_keep_order_and_contiguous_seq() {
             "s2",
             &[
                 SessionEvent::AssistantChunk {
-                    text: "world".to_string(),
+                    chunk: kernel_contracts::StreamChunk::TextDelta {
+                        index: 0,
+                        text: "world".to_string(),
+                    },
                 },
                 SessionEvent::SessionEnded {
                     reason: "done".to_string(),
@@ -136,7 +139,7 @@ async fn append_batches_keep_order_and_contiguous_seq() {
     );
     assert!(matches!(&events[2], SessionEvent::Turn(TurnEvent::Started { turn: 1 })));
     assert!(
-        matches!(&events[3], SessionEvent::AssistantChunk { text } if text == "world"),
+        matches!(&events[3], SessionEvent::AssistantChunk { chunk: kernel_contracts::StreamChunk::TextDelta { text, .. } } if text == "world"),
         "batch 2 must follow batch 1 in order"
     );
     assert!(matches!(&events[4], SessionEvent::SessionEnded { reason } if reason == "done"));

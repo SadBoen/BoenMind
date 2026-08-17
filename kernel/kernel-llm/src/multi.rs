@@ -51,7 +51,10 @@ impl LlmPort for MultiProviderLlm {
                     "no llm provider registered for '{}'",
                     request.provider
                 ))),
-                Ok(StreamChunk::Finish(FinishReason::Error)),
+                Ok(StreamChunk::Finish(FinishReason::Error {
+                    message: format!("no llm provider registered for '{}'", request.provider),
+                    code: "NO_PROVIDER".to_string(),
+                })),
             ])),
         }
     }

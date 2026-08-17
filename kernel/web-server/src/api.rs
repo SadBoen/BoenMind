@@ -15,6 +15,12 @@ use serde_json::{json, Value};
 
 use crate::events::translate_events;
 use crate::rpc::{err, err_with_details, ok};
+use crate::rpc_m3::{
+    agent_preset_copy, agent_preset_open_document, agent_preset_read, agent_preset_remove,
+    agent_preset_select, goal_clear, goal_complete, goal_create, goal_edit, goal_pause,
+    goal_resume, host_open_path, session_attachment, session_update_queue, settings_open_document,
+    subagent_history, subagent_interrupt, subagent_list, subagent_prompt,
+};
 
 /// 活跃会话句柄。
 pub struct SessionHandle {
@@ -52,6 +58,8 @@ pub struct AppState {
     pub events_tx: tokio::sync::broadcast::Sender<Value>,
     /// host 流事件广播（HostFrame 下行）：(method, payload) 对，host_loop 包帧发送。
     pub host_events_tx: tokio::sync::broadcast::Sender<(String, Value)>,
+    /// mux 流额外帧广播（approval/question 重放 + session/projection 等）。
+    pub mux_events_tx: tokio::sync::broadcast::Sender<crate::rpc::ServerRequestFrame>,
     /// 信任栅栏的 trustedHosts（部署时 --trusted-host 传入）。
     pub trusted_hosts: Vec<String>,
     /// 设置命名空间内存视图（M2.5：settings.* 写面的最小存储；持久化后置）。
@@ -64,6 +72,45 @@ pub struct AppState {
     pub credentials: Mutex<HashMap<String, String>>,
     /// 真实 provider 运行时（M3；空 = mock 单 provider 模式）。
     pub providers: Vec<ProviderRuntime>,
+    /// respond pending 表（approval 先、question 后；M3 收尾）。
+    pub pending: crate::pending::PendingState,
+    /// session/projection 槽（契约层注册机制）：(key, (watermark_seq, value))。
+    pub projections: Mutex<HashMap<String, (i64, Value)>>,
+    /// goal 内存态最小桥（wire 契约在 web-server，自动续跑语义归 goal 插件）。
+    pub goals: Mutex<HashMap<String, GoalRecord>>,
+    /// 会话日志的附件引用表（session.attachment 语义：日志含 attachmentId 才回）。
+    pub attachments: Mutex<HashMap<String, Vec<String>>>,
+}
+
+/// goal 记录（对齐 DSH `GoalSnapshot`/`GoalView` 的 wire 形状；web-server 内存态）。
+#[derive(Debug, Clone)]
+pub struct GoalRecord {
+    pub id: String,
+    pub revision: u64,
+    pub objective: String,
+    pub phase: String, // 'active' | 'paused' | 'blocked' | 'complete'
+    pub max_goal_rounds: u64,
+    pub rounds_started: u64,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+impl GoalRecord {
+    /// wire 投影值（`GoalProjection`：goal snapshot + roundsStarted + createdAt/updatedAt）。
+    pub fn projection(&self) -> Value {
+        json!({
+            "goal": {
+                "id": self.id,
+                "revision": self.revision,
+                "objective": self.objective,
+                "phase": self.phase,
+                "maxGoalRounds": self.max_goal_rounds,
+            },
+            "roundsStarted": self.rounds_started,
+            "createdAt": self.created_at,
+            "updatedAt": self.updated_at,
+        })
+    }
 }
 
 impl AppState {
@@ -85,6 +132,7 @@ impl AppState {
             .unwrap_or_default();
         let (events_tx, _rx) = tokio::sync::broadcast::channel(256);
         let (host_events_tx, _hrx) = tokio::sync::broadcast::channel(256);
+        let (mux_events_tx, _mrx) = tokio::sync::broadcast::channel(256);
         Self {
             runtime,
             sessions: Mutex::new(HashMap::new()),
@@ -92,18 +140,62 @@ impl AppState {
             host_cwd,
             events_tx,
             host_events_tx,
+            mux_events_tx,
             trusted_hosts,
             settings: Mutex::new(HashMap::new()),
             workspaces: Mutex::new(HashMap::new()),
             archived_session_ids: Mutex::new(Vec::new()),
             credentials: Mutex::new(HashMap::new()),
             providers,
+            pending: crate::pending::PendingState::new(),
+            projections: Mutex::new(HashMap::new()),
+            goals: Mutex::new(HashMap::new()),
+            attachments: Mutex::new(HashMap::new()),
         }
     }
 
     /// 广播一帧 host 事件（HostFrame 下行）。调用方自行构造 payload 全形。
     pub fn broadcast_host(&self, method: impl Into<String>, payload: Value) {
         let _ = self.host_events_tx.send((method.into(), payload));
+    }
+
+    /// 广播一帧 mux 事件（MuxFrame 下行；approval/question 重放与 session/projection）。
+    pub fn broadcast_mux_frame(
+        &self,
+        rpc_id: impl Into<String>,
+        method: impl Into<String>,
+        payload: Value,
+    ) {
+        let frame = crate::rpc::ServerRequestFrame::new(rpc_id, method, payload);
+        let _ = self.mux_events_tx.send(frame);
+    }
+
+    /// 全部投影单元的当前值（key → value；seq 由单元持有，快照不带）。
+    pub fn projection_snapshot(&self) -> serde_json::Map<String, Value> {
+        let mut map = serde_json::Map::new();
+        for (k, (_seq, v)) in self.projections.lock().unwrap().iter() {
+            map.insert(k.clone(), v.clone());
+        }
+        map
+    }
+
+    /// 写一个投影单元（key, seq 单调递增，客户端 higher-seq-wins）并广播 session/projection 帧。
+    pub fn write_projection(&self, session_id: &str, key: &str, value: Value) {
+        let mut proj = self.projections.lock().unwrap();
+        let (seq, _) = proj.get(key).cloned().unwrap_or((0, Value::Null));
+        let next_seq = seq + 1;
+        proj.insert(key.to_string(), (next_seq, value.clone()));
+        drop(proj);
+        self.broadcast_mux_frame(
+            uuid::Uuid::new_v4().to_string(),
+            "session/projection",
+            json!({
+                "sessionId": session_id,
+                "key": key,
+                "value": value,
+                "seq": next_seq,
+            }),
+        );
     }
 
     /// 全量 workspace 快照（workspace-changed 帧的 value 形态）。
@@ -186,11 +278,84 @@ pub async fn dispatch(state: &Arc<AppState>, method: &str, payload: Value) -> Va
         "credentials.describe" => credentials_describe(state, payload),
         "credentials.set" => credentials_set(state, payload),
         "credentials.unset" => credentials_unset(state, payload),
+        "session.attachment" => session_attachment(state, payload),
+        "session.updateQueue" => session_update_queue(state, payload),
+        "settings.openDocument" => settings_open_document(),
+        "host.openPath" => host_open_path(payload),
+        "goal.create" => goal_create(state, payload),
+        "goal.edit" => goal_edit(state, payload),
+        "goal.pause" => goal_pause(state, payload),
+        "goal.resume" => goal_resume(state, payload),
+        "goal.complete" => goal_complete(state, payload),
+        "goal.clear" => goal_clear(state, payload),
+        "subagent.list" => subagent_list(state, payload),
+        "subagent.history" => subagent_history(state, payload),
+        "subagent.prompt" => subagent_prompt(state, payload),
+        "subagent.interrupt" => subagent_interrupt(state, payload),
+        "agentPreset.select" => agent_preset_select(state, payload),
+        "agentPreset.read" => agent_preset_read(state, payload),
+        "agentPreset.copy" => agent_preset_copy(state, payload),
+        "agentPreset.openDocument" => agent_preset_open_document(state, payload),
+        "agentPreset.remove" => agent_preset_remove(state, payload),
+        // 测试钩子（仅 BM_TEST_HOOKS=1 时可用）：注入 pending 条目走 respond 全链路。
+        "_test.registerApproval" | "_test.registerQuestion" if test_hooks_enabled() => {
+            test_register_pending(state, method, payload)
+        }
         _ => err(
             "bad-request",
             format!("method \"{method}\" is not implemented by this server"),
         ),
     }
+}
+
+/// 测试钩子开关：`BM_TEST_HOOKS=1`（生产缺省关闭，绝不暴露管理面）。
+fn test_hooks_enabled() -> bool {
+    std::env::var("BM_TEST_HOOKS").map(|v| v == "1").unwrap_or(false)
+}
+
+/// 注入 pending 条目（respond 全链路验收用；approval/question 表逐字登记）。
+fn test_register_pending(state: &AppState, method: &str, payload: Value) -> Value {
+    let Some(session_id) = payload.get("sessionId").and_then(Value::as_str) else {
+        return err("bad-request", "missing sessionId");
+    };
+    let rpc_id = payload
+        .get("rpcId")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let rpc_id = if rpc_id.is_empty() {
+        uuid::Uuid::new_v4().to_string()
+    } else {
+        rpc_id
+    };
+    let mut reg = state.pending.lock();
+    if method == "_test.registerApproval" {
+        let Some(approval_id) = payload.get("approvalId").and_then(Value::as_str) else {
+            return err("bad-request", "missing approvalId");
+        };
+        let tool_name = payload
+            .get("toolName")
+            .and_then(Value::as_str)
+            .unwrap_or("test_tool")
+            .to_string();
+        reg.register_approval(
+            rpc_id.clone(),
+            session_id.to_string(),
+            approval_id.to_string(),
+            tool_name,
+            payload.get("callId").and_then(Value::as_str).map(str::to_string),
+            payload.get("reason").and_then(Value::as_str).map(str::to_string),
+        );
+    } else {
+        let questions = payload
+            .get("questions")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        reg.register_question(rpc_id.clone(), session_id.to_string(), questions);
+    }
+    drop(reg);
+    ok(json!({ "rpcId": rpc_id }))
 }
 
 fn host_describe(state: &AppState) -> Value {
@@ -207,7 +372,7 @@ fn host_describe(state: &AppState) -> Value {
         "provider": state.runtime.provider,
         "model": state.runtime.model,
         "attachedSessions": attached,
-        "canOpenPath": false,
+        "canOpenPath": true,
     }))
 }
 
@@ -332,11 +497,14 @@ async fn session_history(state: &Arc<AppState>, payload: Value) -> Value {
         .iter()
         .map(|ev| json!({ "event": ev }))
         .collect();
-    // projections：tail 页才有；M1 简化给空。
+    // projections：tail 页才有（当前无分页 = 恒 tail）。asOfSeq = wire 长度 - 1
+    // （空日志 -1，对齐 session/subscribed 的 lastSeq 约定）。
+    let as_of_seq = wire.len() as i64 - 1;
+    let projections = state.projection_snapshot();
     ok(json!({
         "events": items,
         "hasMore": false,
-        "projections": { "asOfSeq": -1i64, "values": {} }
+        "projections": { "asOfSeq": as_of_seq, "values": projections }
     }))
 }
 
@@ -385,7 +553,7 @@ async fn session_search(state: &Arc<AppState>, payload: Value) -> Value {
                         break;
                     }
                 }
-                SessionEvent::AssistantMessage { content } => {
+                SessionEvent::AssistantMessage { content, .. } => {
                     let t: String = content
                         .iter()
                         .filter_map(|b| match b {
@@ -575,19 +743,18 @@ async fn session_prompt(state: &Arc<AppState>, payload: Value) -> Value {
     ok(json!({ "accepted": true }))
 }
 
-/// mock provider 模型分组（llm.models / session.models 共用）。
+/// mock provider 模型分组（llm.models / session.models 共用；对齐 modelProviderGroupSchema）。
 fn mock_model_group() -> Value {
     json!({
         "id": "mock",
-        "provider": "mock",
-        "label": "Mock",
         "name": "Mock",
         "models": [{ "id": "mock-1", "name": "Mock 1" }],
     })
 }
 
 /// 模型分组目录（llm.models / session.models 共用）：真 provider 时每 provider 一组，
-/// mock 模式（无配置）时单 mock 组。
+/// mock 模式（无配置）时单 mock 组。wire 形状对齐 modelProviderGroupSchema：
+/// `{id, name, models:[{id, name, description?, reasoning?}]}`。
 fn model_groups(state: &AppState) -> Value {
     if state.providers.is_empty() {
         return json!([mock_model_group()]);
@@ -598,13 +765,28 @@ fn model_groups(state: &AppState) -> Value {
         .map(|p| {
             json!({
                 "id": p.id,
-                "provider": p.id,
-                "label": p.display_name,
                 "name": p.display_name,
-                "models": p.models.iter().map(|m| json!({
-                    "id": m.id,
-                    "name": m.label.clone().unwrap_or_else(|| m.id.clone()),
-                })).collect::<Vec<_>>(),
+                "models": p.models.iter().map(|m| {
+                    let mut v = json!({
+                        "id": m.id,
+                        "name": m.label.clone().unwrap_or_else(|| m.id.clone()),
+                    });
+                    if let Some(r) = &m.reasoning {
+                        let efforts: Vec<Value> = r.efforts.iter().map(|e| {
+                            let mut ev = json!({ "id": e.id, "name": e.name });
+                            if let Some(d) = &e.description {
+                                ev["description"] = json!(d);
+                            }
+                            ev
+                        }).collect();
+                        let mut rv = json!({ "efforts": efforts });
+                        if let Some(d) = &r.default_effort {
+                            rv["defaultEffort"] = json!(d);
+                        }
+                        v["reasoning"] = rv;
+                    }
+                    v
+                }).collect::<Vec<_>>(),
             })
         })
         .collect();
@@ -767,12 +949,20 @@ async fn llm_discover_models(state: &AppState, payload: Value) -> Value {
     };
     match adapter.list_models_remote().await {
         Ok(models) => ok(json!({
-            "models": models.iter().map(|m| json!({
-                "id": m.id,
-                "name": m.label.clone().unwrap_or_else(|| m.id.clone()),
-                "contextWindow": null,
-                "maxTokens": null,
-            })).collect::<Vec<_>>()
+            "models": models.iter().map(|m| {
+                let mut v = json!({
+                    "id": m.id,
+                    "name": m.label.clone().unwrap_or_else(|| m.id.clone()),
+                });
+                // contextWindow/maxTokens 仅已知时带（schema `.optional()`，未知省略）。
+                if let Some(c) = m.context_window {
+                    v["contextWindow"] = json!(c);
+                }
+                if let Some(t) = m.max_tokens {
+                    v["maxTokens"] = json!(t);
+                }
+                v
+            }).collect::<Vec<_>>()
         })),
         Err(e) => err_with_details(
             "model-discovery-failed",

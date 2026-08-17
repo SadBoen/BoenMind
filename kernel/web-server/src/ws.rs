@@ -10,8 +10,9 @@ use serde_json::json;
 use crate::api::AppState;
 use crate::rpc::ServerRequestFrame;
 
-/// mux 流：连接时发 subscribed 基线（每 attached session 一帧），然后订阅 bus
-/// 把实时 wire 事件包成 session/event 帧下行。
+/// mux 流：连接时发 subscribed 基线（每 attached session 一帧）+ 重放仍 pending 的
+/// approval/question（rpcId 原样复用），然后订阅 bus 把实时 wire 事件包成
+/// session/event 帧下行 + mux_events_tx 的额外帧（approval/question 重放、projection）。
 pub async fn mux_loop(mut socket: WebSocket, state: Arc<AppState>) {
     tracing::info!("mux connected");
     // Open 基线（台账 §4 断连恢复）：每 attached session 一帧 session/subscribed，
@@ -47,7 +48,30 @@ pub async fn mux_loop(mut socket: WebSocket, state: Arc<AppState>) {
         }
     }
 
+    // 重放仍 pending 的 approval/requested 与 question/requested（rpcId 原样复用）。
+    let replay: Vec<ServerRequestFrame> = {
+        let reg = state.pending.lock();
+        let mut frames: Vec<ServerRequestFrame> = reg
+            .approvals
+            .values()
+            .map(|p| reg.approval_frame(p))
+            .collect();
+        frames.extend(reg.questions.values().map(|q| reg.question_frame(q)));
+        frames
+    };
+    for frame in replay {
+        let text = serde_json::to_string(&frame).unwrap_or_default();
+        if socket
+            .send(Message::Text(axum::extract::ws::Utf8Bytes::from(text)))
+            .await
+            .is_err()
+        {
+            return;
+        }
+    }
+
     let mut rx = state.events_tx.subscribe();
+    let mut mux_rx = state.mux_events_tx.subscribe();
     loop {
         tokio::select! {
             ev = rx.recv() => {
@@ -60,6 +84,18 @@ pub async fn mux_loop(mut socket: WebSocket, state: Arc<AppState>) {
                             "session/event",
                             wire,
                         );
+                        let text = serde_json::to_string(&frame).unwrap_or_default();
+                        if socket.send(Message::Text(axum::extract::ws::Utf8Bytes::from(text))).await.is_err() {
+                            tracing::info!("mux send failed; closing");
+                            return;
+                        }
+                    }
+                    Err(_) => continue,
+                }
+            }
+            ev = mux_rx.recv() => {
+                match ev {
+                    Ok(frame) => {
                         let text = serde_json::to_string(&frame).unwrap_or_default();
                         if socket.send(Message::Text(axum::extract::ws::Utf8Bytes::from(text))).await.is_err() {
                             tracing::info!("mux send failed; closing");

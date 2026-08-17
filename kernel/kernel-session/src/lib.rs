@@ -132,7 +132,7 @@ impl Session {
                 SessionEvent::UserMessage { text } => {
                     messages.push(text_message(Role::User, text.clone()));
                 }
-                SessionEvent::AssistantMessage { content } => {
+                SessionEvent::AssistantMessage { content, .. } => {
                     messages.push(LlmMessage {
                         role: Role::Assistant,
                         content: content.clone(),
@@ -228,6 +228,7 @@ mod tests {
         });
         let r3 = session.append(SessionEvent::AssistantMessage {
             content: vec![ContentBlock::Text("hi".to_string())],
+            usage: None,
         });
         let r4 = session.append(SessionEvent::ToolResult {
             result: ToolCallResult {
@@ -388,13 +389,16 @@ mod tests {
             phase: kernel_contracts::StepPhase::Started,
         });
         session.append(SessionEvent::AssistantChunk {
-            text: "chunk".to_string(),
+            chunk: kernel_contracts::StreamChunk::TextDelta {
+                index: 0,
+                text: "chunk".to_string(),
+            },
         });
         session.append(SessionEvent::ToolCall {
             call: ToolCall {
                 id: "c1".to_string(),
                 name: "echo".to_string(),
-                arguments: serde_json::json!({ "text": "hi" }),
+                arguments: r#"{"text":"hi"}"#.to_string(),
             },
         });
         session.append(SessionEvent::SessionEnded {
