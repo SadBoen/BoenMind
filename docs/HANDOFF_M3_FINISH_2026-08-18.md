@@ -12,10 +12,12 @@
 **下一轮目标：M3 干到完成 = ① respond pending 表 + approval/question 重放 → ②
 session/projection 槽 → goal.\*（6 法）→ ③ session.{attachment,updateQueue} +
 settings.openDocument + host.openPath + session.export → ④ 热升级 supervisor 蓝绿 +
-过渡态/门禁 3 热升级半验收 → ⑤（最大块，视工程量）subagent.\*（4 法，依赖内核子代理）。
+过渡态/门禁 3 热升级半验收 → ⑤ subagent.\*（4 法，wire 契约在 web-server，执行走
+team 插件进程，**内核不动**——见 §2 第 8 项架构澄清）。
 RPC 从 28 推到 52/52；respond 从恒 not-pending 变为真 pending 表；session.export 从恒 404
-变为真 ZIP。若 subagent 本轮做不完：门禁 3 的"热升级半"必须完成并验收，"专家团队半"明确挂起
-并登记（依赖内核子代理设计）。**
+变为真 ZIP。若 team 插件（真实子代理执行）本轮做不完：wire 契约 + 空态（无插件时
+parent-unavailable/空 entries）必须完成，真实执行登记为 M3.5 前置（依赖 supervisor/IPC
+完整化，与热升级同批工程）。**门禁 3 的"热升级半"必须完成并验收。**
 
 ---
 
@@ -41,7 +43,7 @@ RPC 从 28 推到 52/52；respond 从恒 not-pending 变为真 pending 表；ses
 | 5 | settings.openDocument / host.openPath | bad-request | 无 |
 | 6 | session.export（ZIP 流式下载） | 恒 404 | 无 |
 | 7 | 热升级 supervisor 蓝绿 + 过渡态验收 | supervisor 雏形已有（M1） | 无 |
-| 8 | subagent.\*（list/history/prompt/interrupt） | bad-request | **内核子代理**（最大块） |
+| 8 | subagent.\*（list/history/prompt/interrupt） | bad-request | **supervisor/IPC 插件管线（team 插件）**——wire 契约在 web-server，执行在插件，内核不动 |
 
 ---
 
@@ -125,18 +127,26 @@ RPC 从 28 推到 52/52；respond 从恒 not-pending 变为真 pending 表；ses
   本轮合流成脚本）。
 - 本地形态延续旧版：standalone 单二进制替换 / 壳重启子进程（验签 ed25519 后置）。
 
-### 8) subagent.\*（最大块，依赖内核子代理——单独评估）
-- 契约：list{parentSessionId} → {entries, parentAvailable}（child one-shot/continuable +
-  diagnostic）；history{parentSessionId, childSessionId, mode, beforeSeq?, maxMessages?} →
-  {events, hasMore, projections?}；prompt{..., mode:'continuable', content} → {messageId}；
-  interrupt{...} → {accepted:true}。
-- **内核缺口**：ReactLoopAgent 是单会话代理，无 parent-child 关联、无 one-shot 子代理回合、
-  无 `origin:'subagent'` 会话字段。最小实现：子会话 = 普通会话（header 带 parent 关联字段或
-  内存表 parent→children），child 事件日志独立；parent 侧只做"派工"（session.prompt 由
-  subagent.prompt 代理到子会话 run_turn）；`agent-busy`/`subagent-*` 错误码全表实现。
-- **判据**：若本轮 1-7 完成后剩余时间/复杂度可控则做最小版（one-shot + continuable 表 +
-  wire 全通，parentAvailable 语义简化）；否则挂起并更新台账标注"subagent 依赖内核子代理，
-  M3 遗留 → M3.5/M4 前置"。
+### 8) subagent.\*（**架构澄清：wire 在 web-server，执行是插件，内核不动**）
+- **分层（修正）**：subagent 不是内核功能。按定调"万物皆插件"（核心只留不可变语义+挂点）
+  与架构 §五·1：专家团队 = `team` 插件（Rust 独立进程，进程隔离天然数据隔离，supervisor
+  托管 + IPC 协议）。**内核（kernel-loop/kernel-session）不引入 parent-child 子代理概念**——
+  子代理 = 插件进程里的独立会话，父会话派工/收集是插件职责。
+- **web-server 侧（本轮做）**：subagent.\* 4 法 wire 契约逐字对齐：
+  list{parentSessionId} → {entries, parentAvailable}（无插件时 parentAvailable:false /
+  diagnostic entries）；history{parentSessionId, childSessionId, mode, beforeSeq?,
+  maxMessages?} → {events, hasMore, projections?}；prompt{..., mode:'continuable',
+  content} → {messageId}；interrupt{...} → {accepted:true}；错误码
+  subagent-parent-unavailable / subagent-not-found / subagent-catalog-diagnostic /
+  subagent-not-resumable / subagent-unauthorized / subagent-delivery-unavailable 全表。
+  **无插件装配时的诚实行为**：list 返回 parentAvailable:false（前端据此降级显示），
+  prompt/history/interrupt 返回对应 subagent-* 错误——不装死、不假成功。
+- **team 插件（本轮视工程量，可挂 M3.5）**：Rust 独立进程 + supervisor 托管 + IPC；
+  子代理 = 插件内独立会话；web-server 经 PluginRuntimePort 调插件。**与热升级同批工程**
+  （supervisor 完整化 + IPC 协议版本化/鉴权），故本轮先做 web-server wire + 空态，
+  插件管线随 supervisor 蓝绿一并推进。
+- **判据**：web-server wire + 空态必须完成（RPC 52/52 达成）；真实子代理执行（team 插件）
+  若本轮做不完 → 台账标注"M3 遗留 → M3.5 前置（supervisor/IPC 完整化）"。
 
 ---
 
