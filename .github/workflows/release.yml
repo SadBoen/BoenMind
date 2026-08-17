@@ -542,7 +542,10 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: release-assets
-          pattern: "macos-artifacts|windows-artifacts|linux-artifacts"
+          # v4 的 pattern 是 glob 语法：`|` 是字面字符不是分隔符，多模式须
+          # 换行分隔；`*-artifacts` 匹配三个主产物（macos/windows/linux），
+          # 不含 `*-runtime`（2026-08-17 首发实测：`a|b|c` 形式 0 匹配致 Release 失败）。
+          pattern: "*-artifacts"
           merge-multiple: true
 
       - uses: actions/download-artifact@v4
