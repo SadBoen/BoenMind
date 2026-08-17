@@ -37,17 +37,24 @@ fn resolve_within_root(dist_root: &Path, pathname: &str) -> Option<PathBuf> {
     for seg in pathname.split('/') {
         match seg {
             "" | "." => {}
-            ".." => return None,
+            ".." => return None, // 越界：拒绝
             s => joined.push(s),
         }
     }
-    // 规范化后必须仍在 dist_root 下
-    let canonical = joined.canonicalize().ok()?;
-    let root = dist_root.canonicalize().ok()?;
-    if canonical.starts_with(&root) {
-        Some(canonical)
+    // 存在才 canonicalize 确认仍在 dist_root 下（防 symlink 逃逸）；
+    // 不存在（SPA miss）用词法路径即可——不是越界，交回退逻辑。
+    let root = match dist_root.canonicalize() {
+        Ok(r) => r,
+        Err(_) => return Some(joined),
+    };
+    if joined.exists() {
+        match joined.canonicalize() {
+            Ok(c) if c.starts_with(&root) => Some(c),
+            _ => None, // symlink 逃逸 → 越界
+        }
     } else {
-        None
+        // SPA miss：词法路径（调用方回退 index.html）。
+        Some(joined)
     }
 }
 

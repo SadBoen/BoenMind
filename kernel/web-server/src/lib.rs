@@ -34,6 +34,16 @@ pub fn router(state: Arc<AppState>, dist_root: PathBuf, boot_json: Option<String
         .route("/api/events.host", get(handle_ws_host))
         .route("/api/session.export", get(handle_session_export))
         .route(
+            "/",
+            get({
+                let dist = dist_root.clone();
+                let boot = boot_json.clone();
+                move |method: Method, uri: axum::http::Uri| {
+                    static_spa::static_handler(method, uri, dist.clone(), boot.clone())
+                }
+            }),
+        )
+        .route(
             "/{*path}",
             get({
                 let dist = dist_root.clone();

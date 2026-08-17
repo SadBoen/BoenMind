@@ -1,10 +1,11 @@
-# CONTRACT_LEDGER_DSH —— dsh 前端契约台账（已填满）
+# CONTRACT_LEDGER_DSH —— dsh 前端契约台账（已填满，M2 已勾销核心项）
 
 > 状态：**已填满**（实现清单 + 验收标准，全部条目从 dsh 源码逐字提取，可直接作为 Rust 兼容层的 conformance 勾销表）。
 > 用途：实现清单 + 验收标准（v2 计划 §3.2/§3.4/§3.5）。来源：dsh `packages/` 源码，**逐条提取，逐条勾销**（勾销标准 = conformance harness 双后端 wire 轨迹 diff 一致）。
 > 基线：`@deepseek-ai/dsh@0.1.0-rc.6`（2026-08-17 快照，与前端锁死同版本）。
 > 提取基线：deepseek-harness master commit `47f9438`（`D:/96_CoderWorld/deepseek-harness`）。以下每个条目标注提取源（仓库相对路径）。
 > 说明：本台账内的「任务简报数字」若与源码不符，一律以源码为准并在该条目标注「未在源码找到，待确认」。
+> 实施进度（2026-08-17 M2）：Rust 兼容层已实现面 1/2/3/4/6/7/8 与 13 个 RPC 方法，Node 轨迹 conformance 17/17 全对齐（`docs/conformance/diff-traces.mjs`）。未实现方法（返回 bad-request）：workspace.create/rename/delete/insertBefore/insertSessionBefore/archiveSession、goal.*、skill.list、agentPresets.*、subagent.*、llm.discoverModels、session.search/fork/attachment/updateQueue、settings.update/replace/mutate/openDocument、credentials.set/unset、host.pickDirectory/listDirectory/createDirectory/openPath。
 
 ## 1. 传输面（9 面 + 双栅栏）
 
@@ -288,9 +289,9 @@ llm.discoverModels
 
 ## 5. 验收（conformance harness）
 
-- [ ] wire 轨迹录制：dsh Node 后端 + 同一前端 → 请求/响应轨迹
-- [ ] Rust 兼容层重放同一轨迹 → diff 一致
-- [ ] 皮肤/第三方插件 UI 不改即用
+- [x] wire 轨迹录制：dsh Node 后端 + 同一前端 → 请求/响应轨迹（18 条，`docs/conformance/node-traces/`，2026-08-17）
+- [x] Rust 兼容层重放同一轨迹 → diff 一致（`docs/conformance/diff-traces.mjs`，**17 pass / 0 fail**；1 条传输层已知差异跳过：hyper 强制注入 Host 头，Node http.request 可不带）
+- [ ] 皮肤/第三方插件 UI 不改即用（需 dsh 前端产物直连，M2.5）
 
 ### 双后端 wire 轨迹 diff 的具体比对点清单
 
