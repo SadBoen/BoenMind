@@ -88,16 +88,41 @@ parent-unavailable/空 entries）必须完成，真实执行登记为 M3.5 前�
   那是可变策略，归插件。
 - goal.create/edit/pause/resume/complete/clear wire 形状逐字对齐（见台账 §2 goals 表）。
 
-### 内核越界审查登记（2026-08-18 晚，用户质询后自查）
-- ✅ **已修**：kernel-llm `openai.rs` 原硬编码 `model.contains("m3"|"deepseek-reasoner")`
-  推断推理增量——"哪些模型有 reasoning_content"是可变的 provider 能力事实（策略），被写进
-  内核。已改为 `OpenAiProviderConfig.supports_reasoning` 字段，由 config.toml 声明
-  （minimax/deepseek 缺省 true、可覆盖，custom 缺省 false）。真 provider 实测 11/11 不变。
-- 📋 **已登记（低优先，不阻塞 M3）**：kernel-loop `MAX_STEPS=32` 硬编码——防失控上限的
-  "语义"属内核（合理），但数值是策略（M1 曾调过），应可配置。随配置面（settings/--config
-  扩展）一并做。
-- 📋 **已登记（低优先）**：kernel-assembly `headless()` 默认 mock provider/model 是装配
-  缺省（web-server 会覆写），可接受；保持现状。
+### 内核越界审查登记（2026-08-18 晚，用户质询后自查 + 对照 DSH 核心源码复核）
+- ✅ **已修（第一版→第二版）**：kernel-llm `openai.rs` 原硬编码 `model.contains("m3"|"deepseek-reasoner")`
+  推断推理增量。第一版改成 `OpenAiProviderConfig.supports_reasoning` 配置字段——**仍错**。
+  **对照 DSH 核心源码**（`packages/llm/llm-deepseek/src/translate.ts`）：`delta.reasoning_content`
+  非空即解析，**无条件协议行为**，与模型名/配置无关（官方测试 `translate.spec.ts`、
+  `adapter.spec.ts` 逐字节验证该行为）。已移除 supports_reasoning，改无条件解析（d08f88a）。
+  **教训：挂载点对齐必须看 DSH 源码该行为的归属，不是"硬编码 vs 配置"二选一。**
+- 📋 **官方测试集通过性差距（重大，须正视）**：DSH 官方测试是 vitest/TS 单测
+  （`packages/*/tests/*.spec.ts`）+ e2e（`apps/web/tests`），测的是 DSH 自己包的 wire 行为。
+  我们的 conformance 方法（Node 轨迹 vs Rust 轨迹 diff，`docs/conformance/diff-traces.mjs`）
+  是对标的机器化等价验证。**"通过官方测试集"的正解 = 我们的 Rust 实现逐条对齐 DSH 源码
+  的 wire 契约**（测试测什么我们就对齐什么）。本轮已确认 LLM 层存在以下挂载点差距，
+  须在 M3 收尾逐条对齐（每条都给了源码依据）：
+  1. **StreamChunk 词汇**：DSH `{type:'text-delta'|'reasoning-delta'|'block-start'|'block-end',
+     index, block}`（`llm/src/index.ts` + `llm-deepseek/src/translate.ts`）；我们
+     `TextDelta{text}`/`ReasoningDelta{text}` 无 index/block 结构。→ 补 index + block-start/end
+     对齐（影响 assembler 契约，前端 chunk 渲染依赖 block 语义）。
+  2. **模型能力元数据**：DSH `LlmAdapter.resolveModel()` 返回 `{context, defaultMaxTokens,
+     reasoning:{efforts, defaultEffort}, inputModalities}`（`llm/src/index.ts` + 
+     `llm-deepseek/src/adapter.ts:175`）；我们 `LlmModelInfo{id,label,supports_tools}` 没有
+     contextWindow/maxTokens/reasoning efforts。→ LlmModelInfo 扩展 + adapter 提供
+     resolveModel 等价物（wire 上 llm.models/session.models 的 contextWindow/maxTokens 字段
+     真实填充）。
+  3. **注册机制**：DSH `LlmRuntime.registerAdapter()` + `AdapterRegistrationHandle.replace()`
+     （settings 变更热生效，`llm/src/index.ts:239`）；我们是启动参数装配（--config），
+     settingsNs 形状已对齐但写面未接。→ settings 命名空间写 provider 配置 + 热替换（M3.5）。
+  4. **finish 语义**：DSH `finish` 必须最后（usage 先于 finish、finish 后无 chunk）；
+     `[DONE]` 缺失即 `STREAM_CLOSED` 错误（`llm-deepseek/src/sse.ts`）；我们已对齐
+     （usage→finish、无 DONE 判 torn）✓。
+  5. **usage 语义**：DSH 缓存剔除（`prompt_tokens - cached_tokens`，disjoint 约定，
+     `translate.ts:mapUsage`）；我们直接透传——补 cacheRead/reasoningTokens 字段。
+- 📋 **已登记（低优先，不阻塞 M3）**：kernel-loop `MAX_STEPS=32` 数值应可配置
+  （语义属内核、数值属策略）。
+- 📋 **已登记（低优先）**：kernel-assembly `headless()` 默认 mock provider/model 是装配缺省
+  （web-server 会覆写），可接受；保持现状。
 
 ### 4) session.attachment / session.updateQueue
 - attachment：会话日志含 `attachmentId` 引用才回（当前内核无附件事件——实现按"日志引用表"
