@@ -99,17 +99,113 @@ pub async fn mux_loop(mut socket: WebSocket, state: Arc<AppState>) {
     }
 }
 
-/// host 流：连接保持（recv 挂起），收到任意上行消息 → close(1008, 'downlink only')。
-pub async fn host_loop(mut socket: WebSocket, _state: Arc<AppState>) {
-    match socket.recv().await {
-        None | Some(Ok(Message::Close(_))) | Some(Err(_)) => {}
-        Some(Ok(_)) => {
-            let _ = socket
-                .send(Message::Close(Some(axum::extract::ws::CloseFrame {
-                    code: 1008,
-                    reason: "downlink only".into(),
-                })))
-                .await;
+/// host 流（契约台账 §3.1 HostFrame）：连接时发基线帧（workspace-changed 全量 +
+/// 每 session 一帧 session-added + running 状态），然后订阅 host_events_tx 转发实时帧。
+/// 收到任意上行消息 → close(1008, 'downlink only')。
+pub async fn host_loop(mut socket: WebSocket, state: Arc<AppState>) {
+    tracing::info!("host connected");
+
+    // Open 基线（台账 §4：host 流无持久化基线，重连侧由前端 workspace.list 打底；
+    // 这里提供完整快照帧，前端可据此重建会话列表/工作区状态）。
+    let snapshot = state.workspace_snapshot();
+    let frame = ServerRequestFrame::new(
+        uuid::Uuid::new_v4().to_string(),
+        "host/workspace-changed",
+        snapshot,
+    );
+    let text = serde_json::to_string(&frame).unwrap_or_default();
+    if socket
+        .send(Message::Text(axum::extract::ws::Utf8Bytes::from(text)))
+        .await
+        .is_err()
+    {
+        return;
+    }
+
+    // 每 session 一帧 session-added（blank + running 状态）。
+    let sessions: Vec<(String, bool, bool)> = state
+        .sessions
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(id, h)| (id.clone(), h.blank, h.running))
+        .collect();
+    tracing::info!("host baseline sessions: {:?}", sessions);
+    for (sid, blank, running) in sessions {
+        let frame = ServerRequestFrame::new(
+            uuid::Uuid::new_v4().to_string(),
+            "host/session-added",
+            json!({ "sessionId": sid, "blank": blank }),
+        );
+        let text = serde_json::to_string(&frame).unwrap_or_default();
+        if socket
+            .send(Message::Text(axum::extract::ws::Utf8Bytes::from(text)))
+            .await
+            .is_err()
+        {
+            return;
+        }
+        let frame = ServerRequestFrame::new(
+            uuid::Uuid::new_v4().to_string(),
+            "host/session-status",
+            json!({ "sessionId": sid, "running": running }),
+        );
+        let text = serde_json::to_string(&frame).unwrap_or_default();
+        if socket
+            .send(Message::Text(axum::extract::ws::Utf8Bytes::from(text)))
+            .await
+            .is_err()
+        {
+            return;
+        }
+    }
+
+    let mut rx = state.host_events_tx.subscribe();
+    loop {
+        tokio::select! {
+            ev = rx.recv() => {
+                match ev {
+                    Ok((method, payload)) => {
+                        let frame = ServerRequestFrame::new(
+                            uuid::Uuid::new_v4().to_string(),
+                            method,
+                            payload,
+                        );
+                        let text = serde_json::to_string(&frame).unwrap_or_default();
+                        if socket.send(Message::Text(axum::extract::ws::Utf8Bytes::from(text))).await.is_err() {
+                            tracing::info!("host send failed; closing");
+                            return;
+                        }
+                    }
+                    Err(_) => continue,
+                }
+            }
+            msg = socket.recv() => {
+                match msg {
+                    Some(Ok(Message::Close(_))) => {
+                        tracing::info!("host closed by peer");
+                        return;
+                    }
+                    Some(Ok(_)) => {
+                        let _ = socket.send(Message::Close(Some(
+                            axum::extract::ws::CloseFrame {
+                                code: 1008,
+                                reason: "downlink only".into(),
+                            }
+                        ))).await;
+                        tracing::info!("host rejected uplink; closing 1008");
+                        return;
+                    }
+                    Some(Err(_)) => {
+                        tracing::info!("host recv error");
+                        return;
+                    }
+                    None => {
+                        tracing::info!("host socket closed");
+                        return;
+                    }
+                }
+            }
         }
     }
 }

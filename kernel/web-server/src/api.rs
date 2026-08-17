@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use kernel_assembly::Runtime;
 use kernel_contracts::llm::LlmModelInfo;
-use kernel_contracts::session::{SessionHeader, SessionId};
+use kernel_contracts::session::{SessionEvent, SessionHeader, SessionId};
 use kernel_loop::ReactLoopAgent;
 use serde_json::{json, Value};
 
@@ -50,6 +50,8 @@ pub struct AppState {
     pub host_cwd: String,
     /// 实时 wire 事件广播（bus → WS/SSE 下行）：payload 已是 WireSessionEvent JSON。
     pub events_tx: tokio::sync::broadcast::Sender<Value>,
+    /// host 流事件广播（HostFrame 下行）：(method, payload) 对，host_loop 包帧发送。
+    pub host_events_tx: tokio::sync::broadcast::Sender<(String, Value)>,
     /// 信任栅栏的 trustedHosts（部署时 --trusted-host 传入）。
     pub trusted_hosts: Vec<String>,
     /// 设置命名空间内存视图（M2.5：settings.* 写面的最小存储；持久化后置）。
@@ -82,12 +84,14 @@ impl AppState {
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default();
         let (events_tx, _rx) = tokio::sync::broadcast::channel(256);
+        let (host_events_tx, _hrx) = tokio::sync::broadcast::channel(256);
         Self {
             runtime,
             sessions: Mutex::new(HashMap::new()),
             version: "0.1.0".to_string(),
             host_cwd,
             events_tx,
+            host_events_tx,
             trusted_hosts,
             settings: Mutex::new(HashMap::new()),
             workspaces: Mutex::new(HashMap::new()),
@@ -95,6 +99,24 @@ impl AppState {
             credentials: Mutex::new(HashMap::new()),
             providers,
         }
+    }
+
+    /// 广播一帧 host 事件（HostFrame 下行）。调用方自行构造 payload 全形。
+    pub fn broadcast_host(&self, method: impl Into<String>, payload: Value) {
+        let _ = self.host_events_tx.send((method.into(), payload));
+    }
+
+    /// 全量 workspace 快照（workspace-changed 帧的 value 形态）。
+    pub fn workspace_snapshot(&self) -> Value {
+        let mut items: Vec<Value> = self.workspaces.lock().unwrap().values().cloned().collect();
+        items.sort_by_key(|w| {
+            w.get("createdAt")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string()
+        });
+        let archived = self.archived_session_ids.lock().unwrap().clone();
+        json!({ "items": items, "archivedSessionIds": archived })
     }
 
     /// 把 kernel 事件总线接到实时下行通道（幂等：仅调用一次）。
@@ -133,6 +155,8 @@ pub async fn dispatch(state: &Arc<AppState>, method: &str, payload: Value) -> Va
         "session.list" => session_list(state).await,
         "session.create" => session_create(state, payload).await,
         "session.history" => session_history(state, payload).await,
+        "session.search" => session_search(state, payload).await,
+        "session.fork" => session_fork(state, payload).await,
         "session.prompt" => session_prompt(state, payload).await,
         "session.cancel" => session_cancel(state, payload),
         "session.rename" => session_rename(state, payload),
@@ -226,13 +250,16 @@ async fn session_create(state: &Arc<AppState>, payload: Value) -> Value {
         .and_then(Value::as_str)
         .map(str::to_string)
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    let cwd = payload.get("cwd").and_then(Value::as_str).map(str::to_string);
+    let cwd = payload
+        .get("cwd")
+        .and_then(Value::as_str)
+        .map(str::to_string);
 
     let header = SessionHeader {
         id: SessionId(session_id.clone()),
         app: "web".into(),
         profile: "web".into(),
-        workspace: cwd,
+        workspace: cwd.clone(),
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
     };
@@ -275,6 +302,16 @@ async fn session_create(state: &Arc<AppState>, payload: Value) -> Value {
                     selected: None,
                 },
             );
+            drop(sessions);
+            // HostFrame：新会话广播（blank 恒 true，首个 running 时翻转——由 prompt 侧翻转）。
+            state.broadcast_host(
+                "host/session-added",
+                json!({ "sessionId": session_id, "blank": true, "cwd": cwd }),
+            );
+            // workspace attach 后也广播 workspace 快照。
+            if payload.get("workspaceId").and_then(Value::as_str).is_some() {
+                state.broadcast_host("host/workspace-changed", state.workspace_snapshot());
+            }
             ok(json!({ "sessionId": session_id, "agentPreset": "standard" }))
         }
         Err(e) => err("internal", format!("session create failed: {e}")),
@@ -301,6 +338,183 @@ async fn session_history(state: &Arc<AppState>, payload: Value) -> Value {
         "hasMore": false,
         "projections": { "asOfSeq": -1i64, "values": {} }
     }))
+}
+
+/// 搜索结果限制（台账 §2 session.search：`SESSION_SEARCH_RESULT_LIMIT=20`、
+/// `SESSION_SEARCH_SNIPPET_MAX_CODE_POINTS=240`）。
+const SESSION_SEARCH_RESULT_LIMIT: usize = 20;
+const SESSION_SEARCH_SNIPPET_MAX_CODE_POINTS: usize = 240;
+
+/// session.search：query trim 后 1-500 字符、禁 NUL；扫全部会话日志找文本匹配，
+/// snippet 取匹配点附近窗口（≤240 code points），结果 ≤20 条。
+async fn session_search(state: &Arc<AppState>, payload: Value) -> Value {
+    let Some(query) = payload.get("query").and_then(Value::as_str) else {
+        return err("bad-request", "missing query");
+    };
+    let query = query.trim();
+    if query.is_empty() {
+        return err("bad-request", "query must be at least 1 character");
+    }
+    if query.chars().count() > 500 {
+        return err("bad-request", "query must be at most 500 characters");
+    }
+    if query.contains('\0') {
+        return err("bad-request", "query must not contain NUL");
+    }
+
+    let session_ids = match state.runtime.persist.list_sessions().await {
+        Ok(ids) => ids,
+        Err(e) => return err("internal", format!("search failed: {e}")),
+    };
+    let mut items: Vec<Value> = Vec::new();
+    for sid in session_ids {
+        if items.len() >= SESSION_SEARCH_RESULT_LIMIT {
+            break;
+        }
+        let events = match state.runtime.persist.load_events(&sid).await {
+            Ok(Some(e)) => e,
+            _ => continue,
+        };
+        // 只扫表面文本事件（user/message、assistant/message）。
+        let mut snippet: Option<String> = None;
+        for ev in &events {
+            match ev {
+                SessionEvent::UserMessage { text } => {
+                    if let Some(snip) = make_snippet(text, query) {
+                        snippet = Some(snip);
+                        break;
+                    }
+                }
+                SessionEvent::AssistantMessage { content } => {
+                    let t: String = content
+                        .iter()
+                        .filter_map(|b| match b {
+                            kernel_contracts::ContentBlock::Text(t) => Some(t.clone()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    if !t.is_empty() {
+                        if let Some(snip) = make_snippet(&t, query) {
+                            snippet = Some(snip);
+                            break;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let Some(snip) = snippet {
+            items.push(json!({ "sessionId": sid, "snippet": snip }));
+        }
+    }
+    ok(json!({ "items": items, "hasMore": false }))
+}
+
+/// 从文本中截取包含 query 首匹配的 snippet 窗口（≤240 code points）。
+/// 无匹配 → None。
+fn make_snippet(text: &str, query: &str) -> Option<String> {
+    let pos = text.find(query)?;
+    let max = SESSION_SEARCH_SNIPPET_MAX_CODE_POINTS;
+    // 以匹配点为中心取窗口：匹配前留 100、匹配后留到 240（不足则向前补）。
+    let total_chars = text.chars().count();
+    let lead = 100usize;
+    let start_char = pos.saturating_sub(lead).min(total_chars.saturating_sub(max));
+    let mut out: String = text.chars().skip(start_char).take(max).collect();
+    if out.chars().count() >= max {
+        out = out.chars().take(max.saturating_sub(1)).collect::<String>() + "…";
+    }
+    // 折叠连续空白为单空格，trim。
+    let collapsed = out.split_whitespace().collect::<Vec<_>>().join(" ");
+    Some(collapsed)
+}
+
+/// session.fork：以 atSeq 锚定第一个 ≥atSeq 的 turn/end；省略/越界回退最后完成 turn。
+/// 复制源日志（不含 SessionStarted）到新会话（新 id、连续 seq）。返回 `{sessionId}`。
+/// 日志中无完成 turn → `fork-unavailable`。
+async fn session_fork(state: &Arc<AppState>, payload: Value) -> Value {
+    use kernel_contracts::session::TurnEvent;
+
+    let Some(source_id) = payload.get("sessionId").and_then(Value::as_str) else {
+        return err("bad-request", "missing sessionId");
+    };
+    let at_seq = payload.get("atSeq").and_then(Value::as_u64);
+    let events = match state.runtime.persist.load_events(source_id).await {
+        Ok(Some(e)) => e,
+        Ok(None) => {
+            return err("session-not-found", format!("session {source_id} not found"))
+        }
+        Err(e) => return err("internal", format!("fork failed: {e}")),
+    };
+
+    // 锚点：所有完成 turn 的（事件 seq，含 SessionStarted 的 seq=1 偏移）。
+    // 事件 Vec 下标 0 = SessionStarted（seq 1），事件下标 i 对应持久化 seq i+1。
+    let turn_ends: Vec<(usize, u64)> = events
+        .iter()
+        .enumerate()
+        .filter_map(|(i, ev)| match ev {
+            SessionEvent::Turn(TurnEvent::Ended { .. }) => Some((i, i as u64 + 1)),
+            _ => None,
+        })
+        .collect();
+    let anchor = match at_seq {
+        // 锚定第一个 ≥atSeq 的 turn/end。
+        Some(at) => turn_ends.iter().find(|(_, seq)| *seq >= at).map(|(i, _)| *i),
+        None => turn_ends.last().map(|(i, _)| *i),
+    };
+    let Some(anchor_idx) = anchor else {
+        // in-log 锚点 turn 未闭（或日志无完成 turn）。
+        return err_with_details(
+            "fork-unavailable",
+            "no completed turn to fork from",
+            json!({ "sessionId": source_id }),
+        );
+    };
+
+    // 复制 [1..=anchor_idx]（下标 1 起跳过 SessionStarted）的事件到新会话。
+    let mut header = match &events[0] {
+        SessionEvent::SessionStarted { header } => header.clone(),
+        _ => return err("internal", "source log has no SessionStarted"),
+    };
+    let new_id = uuid::Uuid::new_v4().to_string();
+    header.id = SessionId(new_id.clone());
+    header.created_at = chrono::Utc::now();
+    header.updated_at = chrono::Utc::now();
+    let fork_cwd = header.workspace.clone();
+
+    let agent = match state.runtime.create_session(header).await {
+        Ok(a) => a,
+        Err(e) => return err("internal", format!("fork create failed: {e}")),
+    };
+    for ev in events.iter().take(anchor_idx + 1).skip(1) {
+        let rec = agent.session().append(ev.clone());
+        if let Err(e) = state
+            .runtime
+            .persist
+            .append_events(&new_id, std::slice::from_ref(&rec.event))
+            .await
+        {
+            return err("internal", format!("fork persist failed: {e}"));
+        }
+    }
+
+    let mut sessions = state.sessions.lock().unwrap();
+    sessions.insert(
+        new_id.clone(),
+        SessionHandle {
+            agent: Arc::new(agent),
+            running: false,
+            blank: false,
+            title: None,
+            selected: None,
+        },
+    );
+    drop(sessions);
+    state.broadcast_host(
+        "host/session-added",
+        json!({ "sessionId": new_id, "blank": false, "cwd": fork_cwd }),
+    );
+    ok(json!({ "sessionId": new_id }))
 }
 
 async fn session_prompt(state: &Arc<AppState>, payload: Value) -> Value {
@@ -344,11 +558,19 @@ async fn session_prompt(state: &Arc<AppState>, payload: Value) -> Value {
     };
     let state2 = Arc::clone(state);
     let sid = session_id.to_string();
+    state2.broadcast_host(
+        "host/session-status",
+        json!({ "sessionId": sid, "running": true }),
+    );
     tokio::spawn(async move {
         let _ = agent.run_turn(Some(&text)).await;
         if let Some(h) = state2.sessions.lock().unwrap().get_mut(&sid) {
             h.running = false;
         }
+        state2.broadcast_host(
+            "host/session-status",
+            json!({ "sessionId": sid, "running": false }),
+        );
     });
     ok(json!({ "accepted": true }))
 }
@@ -562,21 +784,7 @@ async fn llm_discover_models(state: &AppState, payload: Value) -> Value {
 
 /// workspace.list：内存注册表快照（createdAt/updatedAt 为 ISO-8601 string）+ 归档集。
 fn workspace_list(state: &AppState) -> Value {
-    let mut items: Vec<Value> = state
-        .workspaces
-        .lock()
-        .unwrap()
-        .values()
-        .cloned()
-        .collect();
-    items.sort_by_key(|w| {
-        w.get("createdAt")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string()
-    });
-    let archived = state.archived_session_ids.lock().unwrap().clone();
-    ok(json!({ "items": items, "archivedSessionIds": archived }))
+    ok(state.workspace_snapshot())
 }
 
 /// workspace.create（未特权）：对已存在目录幂等注册。
@@ -614,6 +822,8 @@ fn workspace_create(state: &AppState, payload: Value) -> Value {
     });
     let id = workspace["workspaceId"].as_str().unwrap().to_string();
     ws.insert(id, workspace.clone());
+    drop(ws);
+    state.broadcast_host("host/workspace-changed", state.workspace_snapshot());
     ok(json!({ "workspace": workspace, "created": true }))
 }
 
@@ -651,7 +861,10 @@ fn workspace_rename(state: &AppState, payload: Value) -> Value {
     };
     view["title"] = json!(title);
     view["updatedAt"] = json!(chrono::Utc::now().to_rfc3339());
-    ok(json!({ "workspace": view.clone() }))
+    let updated = view.clone();
+    drop(ws);
+    state.broadcast_host("host/workspace-changed", state.workspace_snapshot());
+    ok(json!({ "workspace": updated }))
 }
 
 /// workspace.delete：仅删注册，目录/文件/日志不动；未知 id → `workspace-not-found`。
@@ -667,6 +880,13 @@ fn workspace_delete(state: &AppState, payload: Value) -> Value {
             json!({ "workspaceId": workspace_id }),
         );
     }
+    drop(ws);
+    // HostFrame：注册删除增量（台账 §3.1 host/workspace-removed）+ 快照。
+    state.broadcast_host(
+        "host/workspace-removed",
+        json!({ "workspaceId": workspace_id }),
+    );
+    state.broadcast_host("host/workspace-changed", state.workspace_snapshot());
     ok(json!({ "deleted": true }))
 }
 
@@ -710,6 +930,12 @@ fn workspace_insert_before(state: &AppState, payload: Value) -> Value {
         }
         None => order.push(workspace_id.to_string()),
     }
+    drop(ws);
+    // HostFrame：重排后完整持久序（台账 §3.1 host/workspace-order-changed）。
+    state.broadcast_host(
+        "host/workspace-order-changed",
+        json!({ "workspaceIds": order }),
+    );
     ok(json!({ "workspaceIds": order }))
 }
 
@@ -780,7 +1006,10 @@ fn workspace_insert_session_before(state: &AppState, payload: Value) -> Value {
         view["sessionIds"] = json!(session_ids);
         view["updatedAt"] = json!(chrono::Utc::now().to_rfc3339());
     }
-    ok(json!({ "workspace": view.clone() }))
+    let updated = view.clone();
+    drop(ws);
+    state.broadcast_host("host/workspace-changed", state.workspace_snapshot());
+    ok(json!({ "workspace": updated }))
 }
 
 /// workspace.archiveSession：把 sessionId 加入归档集（幂等）；会话既非 live 也不在持久化
@@ -809,7 +1038,14 @@ async fn workspace_archive_session(state: &AppState, payload: Value) -> Value {
     if !archived.contains(&session_id.to_string()) {
         archived.push(session_id.to_string());
     }
-    ok(json!({ "archivedSessionIds": archived.clone() }))
+    let new_set = archived.clone();
+    drop(archived);
+    // HostFrame：归档集每次持久化变更后全量（台账 §3.1 host/archived-sessions-changed）。
+    state.broadcast_host(
+        "host/archived-sessions-changed",
+        json!({ "archivedSessionIds": new_set }),
+    );
+    ok(json!({ "archivedSessionIds": new_set }))
 }
 
 /// host.pickDirectory（特权）：无 OS 对话框实现 → 返回服务 cwd 作默认选择。
