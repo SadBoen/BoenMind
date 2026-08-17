@@ -10,7 +10,8 @@
 
 | 文档 | 角色 | 何时读 |
 |---|---|---|
-| **design/DSH_PROJECT_V2_2026-08-17.md** | **BoenMind 新方向宪法（v2 定稿）**：Rust 微内核自研后端 + 前端借 dsh 生态 + web-server 协议兼容层 + 插件/APP 全 Rust | **所有新开发，开工前必读** |
+| **design/DSH_PROJECT_V2_2026-08-17.md** | **BoenMind 新方向宪法（v2.1 定稿）**：Rust 微内核自研后端 + 前端借 dsh 生态 + web-server 协议兼容层 + 插件/APP 全 Rust | **所有新开发，开工前必读** |
+| **HANDOFF_DSH_V21_2026-08-17.md** | **dsh 内核 v2.1 迭代指针**：现状/下一轮 M1 动手清单/铁律/坑/材料索引 | **下一轮开工前必读** |
 | **everything-is-plugin-architecture.md** | 架构宪法（v0.26，pi 内核时代）：三铁律/内核/插件化设计——语义层仍有效，dsh 方向由其 v2 计划接管 | 历史语义/三铁律参照 |
 | **EXTENSION_POINTS_REGISTRY.md** | 扩展点唯一计数器（协议 14 面 + mcp / 12 挂点 / 产品扩展点） | 每轮新增/接线扩展点时 |
 | **HANDOFF_KERNEL_PHASE1.md** | 迭代指针：当前状态表 / 下一步 / 待拍板（后文日记以上表为准） | 每轮开工前 |
