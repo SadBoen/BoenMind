@@ -1,6 +1,6 @@
 //! UI 登录门（公网站点）：只密码、无用户名。
 //!
-//! - 默认密码 `loveBM@86`（未设置过密码时生效）；设置中心「安全」页可改。
+//! - 默认密码 `adminadmin`（未设置过密码时生效）；设置中心「安全」页可改。
 //! - 会话：内存 token（`X-BoenMind-Session` 请求头），30 天有效；重启即全员重登。
 //! - 密码记录持久化在 `~/.boenmind/auth.json`（salt + SHA-256，明文不落盘）。
 //! - 与 `BOENMIND_TOKEN`（API 守卫，`Authorization: Bearer`）互不干扰：
@@ -26,7 +26,7 @@ use tokio::sync::Mutex;
 use crate::{ApiResult, api_error};
 
 /// 默认密码（未设置过密码时的出厂值；建议首次登录后在设置里改掉）。
-const DEFAULT_PASSWORD: &str = "loveBM@86";
+const DEFAULT_PASSWORD: &str = "adminadmin";
 /// 会话有效期：30 天。
 const SESSION_TTL_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 /// 浏览器会话 token 携带头（与 BOENMIND_TOKEN 的 Authorization 头分离）。
@@ -51,7 +51,7 @@ fn sessions() -> &'static Mutex<HashMap<String, i64>> {
 
 /// 随机 token / salt（UUID v4 128 位熵，32 位 hex）。
 fn random_hex() -> String {
-    uuid::Uuid::new_v4().to_simple().to_string()
+    uuid::Uuid::new_v4().simple().to_string()
 }
 
 /// 密码记录（~/.boenmind/auth.json）。

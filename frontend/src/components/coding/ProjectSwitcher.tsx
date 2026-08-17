@@ -6,12 +6,25 @@
  * 编辑器内容属于旧项目不跨项目保留）；GitBar/分支图经 currentProjectId
  * 订阅自动刷新；新开终端以项目根为 cwd。
  *
- * 新建项目 = 名称 + 根目录绝对路径（本地桌面应用无目录选择器，直接输路径）；
- * 提交前用 /api/workspace/list 探测路径可访问（不可用 → toast 提示）。
+ * 新建项目（2026-08-17 完善）：目录浏览器选择父目录（/api/workspace/browse，
+ * 空路径 = 系统根盘符）→ 填名称（默认取当前目录名）→ 可选 git init →
+ * 后端建目录 + 自动登记 trusted_project_roots 白名单（无需手动改设置）。
  */
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ChevronDown, Folder, FolderKanban, Loader2, Plus, X } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Folder,
+  FolderKanban,
+  FolderOpen,
+  HardDrive,
+  Loader2,
+  Plus,
+  RefreshCw,
+  X,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -25,7 +38,7 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { api } from "@/api/client";
+import { api, type BrowseResult, type FileEntry } from "@/api/client";
 import { useAppStore } from "@/stores/app-store";
 
 export function ProjectSwitcher() {
@@ -131,24 +144,96 @@ export function ProjectSwitcher() {
   );
 }
 
-/** 新建项目弹窗：名称 + 根目录路径（绝对路径；提交前探测可访问性） */
+/** 新建项目弹窗：目录浏览器选父目录 + 名称 + git init。 */
 function ProjectDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { t } = useTranslation();
   const addProject = useAppStore((s) => s.addProject);
+  const config = useAppStore((s) => s.config);
+  const [cur, setCur] = useState("");
+  const [browse, setBrowse] = useState<BrowseResult | null>(null);
+  const [browseError, setBrowseError] = useState<string | null>(null);
+  const [parent, setParent] = useState("");
   const [name, setName] = useState("");
-  const [root, setRoot] = useState("");
+  const [gitInit, setGitInit] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(false);
+  // 目录历史（"上一级/下一级"）
+  const [history, setHistory] = useState<string[]>([]);
+
+  /** 首次打开：默认定位到配置工作目录（后端兜底根之一） */
+  useEffect(() => {
+    if (open) {
+      setHistory([]);
+      void openDir(config?.working_dir ?? "");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  const openDir = useCallback(async (dir: string) => {
+    setLoading(true);
+    setBrowseError(null);
+    try {
+      const result = await api.browseWorkspace(dir);
+      setBrowse(result);
+      setCur(result.path);
+      // 首次进入新目录时记住上一级（供返回）
+      setHistory((h) => (h.length > 0 && h[h.length - 1] === result.parent ? h : [...h, result.parent]));
+      setParent(result.path || result.parent);
+    } catch (err) {
+      setBrowseError(err instanceof Error ? err.message : String(err));
+      setBrowse(null);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const currentEntries = useMemo(() => {
+    if (!browse) return [];
+    return browse.entries
+      .filter((e) => e.is_dir)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [browse]);
+
+  /** 名称默认 = 当前目录名（每次进入父目录刷新一次） */
+  useEffect(() => {
+    if (!cur) {
+      setName("");
+      return;
+    }
+    const parts = cur.replace(/[\\/]+$/, "").split(/[\\/]/);
+    setName(parts[parts.length - 1] || "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cur]);
+
+  /** 进入选中子目录 */
+  const enterDir = (entry: FileEntry) => {
+    const next = cur ? joinPath(cur, entry.name) : entry.name;
+    void openDir(next);
+  };
+
+  const goUp = () => {
+    if (!browse?.parent) return;
+    void openDir(browse.parent);
+  };
+
+  const goBack = () => {
+    if (history.length < 2) return;
+    const target = history[history.length - 2];
+    setHistory((h) => h.slice(0, -1));
+    void openDir(target);
+  };
 
   const submit = async () => {
-    const path = root.trim();
-    if (!path || busy) return;
+    const dir = parent.trim();
+    const projectName = name.trim();
+    if (!dir || !projectName || busy) return;
     setBusy(true);
     try {
-      // 探测路径可访问（list 目录即验证；不可访问 → 后端报错）
-      await api.listWorkspace("", path);
-      addProject(name, path);
+      const res = await api.newProject({ parent: dir, name: projectName, git_init: gitInit });
+      addProject(projectName, res.root);
+      toast.success(t("coding.project.created"));
+      setParent("");
       setName("");
-      setRoot("");
       onClose();
     } catch (err) {
       toast.error(t("coding.project.pathInvalid", { msg: String(err) }));
@@ -159,12 +244,100 @@ function ProjectDialog({ open, onClose }: { open: boolean; onClose: () => void }
 
   return (
     <Dialog open={open} onOpenChange={(v: boolean) => !v && onClose()}>
-      <DialogContent>
+      <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle>{t("coding.project.new")}</DialogTitle>
           <DialogDescription>{t("coding.project.newDesc")}</DialogDescription>
         </DialogHeader>
+
+        {/* 目录浏览器 */}
+        <div className="rounded-lg border">
+          <div className="flex items-center gap-1 border-b bg-muted/30 p-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              title={t("coding.project.up")}
+              disabled={!browse?.parent}
+              onClick={() => void goUp()}
+            >
+              <ChevronLeft size={13} />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              title={t("coding.project.back")}
+              disabled={history.length < 2}
+              onClick={goBack}
+            >
+              <ChevronRight size={13} />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6"
+              title={t("coding.project.refresh")}
+              onClick={() => void openDir(cur)}
+            >
+              <RefreshCw size={12} />
+            </Button>
+            <div className="min-w-0 flex-1 truncate px-1 font-mono text-[11px] text-muted-foreground">
+              {cur ? (
+                <span className="inline-flex items-center gap-1">
+                  <HardDrive size={11} className="shrink-0" />
+                  <span className="truncate">{cur}</span>
+                </span>
+              ) : (
+                t("coding.project.browseRoot")
+              )}
+            </div>
+          </div>
+          <div className="max-h-44 overflow-y-auto p-1">
+            {loading ? (
+              <div className="flex items-center justify-center gap-2 py-6 text-xs text-muted-foreground">
+                <Loader2 size={13} className="animate-spin" />
+                {t("statusbar.loadingDir")}
+              </div>
+            ) : browseError ? (
+              <p className="px-2 py-4 text-center text-xs text-destructive">{browseError}</p>
+            ) : currentEntries.length === 0 ? (
+              <p className="px-2 py-4 text-center text-xs text-muted-foreground">
+                {t("coding.project.noSubdirs")}
+              </p>
+            ) : (
+              currentEntries.map((entry) => (
+                <button
+                  key={entry.path}
+                  type="button"
+                  className="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-xs hover:bg-accent"
+                  onClick={() => enterDir(entry)}
+                >
+                  <FolderOpen size={13} className="shrink-0 text-muted-foreground" />
+                  <span className="truncate">{entry.name}</span>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+
         <div className="grid gap-3">
+          <div className="grid gap-1.5">
+            <Label htmlFor="project-parent">{t("coding.project.parentDir")}</Label>
+            <Input
+              id="project-parent"
+              value={parent}
+              onChange={(e) => setParent(e.target.value)}
+              placeholder="D:\\projects"
+              className="h-8 font-mono text-xs"
+            />
+            <p className="text-[10px] text-muted-foreground">
+              {t("coding.project.parentHint")}
+            </p>
+          </div>
           <div className="grid gap-1.5">
             <Label htmlFor="project-name">{t("coding.project.name")}</Label>
             <Input
@@ -173,24 +346,23 @@ function ProjectDialog({ open, onClose }: { open: boolean; onClose: () => void }
               onChange={(e) => setName(e.target.value)}
               placeholder={t("coding.project.namePlaceholder")}
               className="h-8 text-sm"
-            />
-          </div>
-          <div className="grid gap-1.5">
-            <Label htmlFor="project-root">{t("coding.project.root")}</Label>
-            <Input
-              id="project-root"
-              value={root}
-              onChange={(e) => setRoot(e.target.value)}
-              placeholder={t("coding.project.rootPlaceholder")}
-              className="h-8 font-mono text-xs"
               onKeyDown={(e) => {
                 if (e.key === "Enter") void submit();
               }}
             />
           </div>
+          <label className="flex cursor-pointer items-center gap-2 text-xs">
+            <input
+              type="checkbox"
+              checked={gitInit}
+              onChange={(e) => setGitInit(e.target.checked)}
+              className="size-3.5 accent-primary"
+            />
+            {t("coding.project.gitInit")}
+          </label>
         </div>
         <DialogFooter>
-          <Button size="sm" disabled={!root.trim() || busy} onClick={() => void submit()}>
+          <Button size="sm" disabled={!parent.trim() || !name.trim() || busy} onClick={() => void submit()}>
             {busy && <Loader2 size={12} className="animate-spin" />}
             {t("coding.project.create")}
           </Button>
@@ -198,4 +370,11 @@ function ProjectDialog({ open, onClose }: { open: boolean; onClose: () => void }
       </DialogContent>
     </Dialog>
   );
+}
+
+/** 拼接路径（兼容 / 与 \） */
+function joinPath(a: string, b: string): string {
+  if (!a) return b;
+  const sep = a.includes("\\") ? "\\" : "/";
+  return `${a.replace(/[\\/]+$/, "")}${sep}${b}`;
 }

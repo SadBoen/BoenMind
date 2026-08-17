@@ -233,6 +233,8 @@ fn router(state: AppState) -> Router {
         .route("/api/updates/apply", post(routes::updates::apply_update))
         .route("/api/updates/restart", post(routes::updates::restart_update))
         .route("/api/workspace/list", get(routes::workspace::list_workspace))
+        .route("/api/workspace/browse", get(routes::workspace::browse_workspace))
+        .route("/api/workspace/projects/new", post(routes::workspace::new_project))
         .route("/api/workspace/git-info", get(routes::workspace::git_info))
         .route("/api/workspace/file", get(routes::workspace::read_workspace_file).post(routes::workspace::write_workspace_file))
         // TerminalPane 一期：终端会话（创建/输入/调尺寸/输出流/关闭）

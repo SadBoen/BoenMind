@@ -33,6 +33,15 @@ fn resolve_root(
     }
 }
 
+/// 允许作为新建项目父目录的信任根（白名单 + 配置工作目录）。
+/// 新建项目必须在这些根之下，避免把任意系统目录登记进白名单。
+fn project_parent_roots(config: &bm_core::AppConfig) -> Vec<std::path::PathBuf> {
+    let mut roots = workspace::trusted_roots(config);
+    // 新项目默认建在全局工作目录下
+    roots.push(config.working_dir.clone());
+    roots
+}
+
 #[derive(Deserialize)]
 pub struct ListWorkspaceParams {
     #[serde(default)]
@@ -256,6 +265,85 @@ fn git_info_inner(root: &std::path::Path) -> serde_json::Value {
         "branches": branches,
         "status": status,
     })
+}
+
+#[derive(Deserialize)]
+pub struct BrowseParams {
+    /// 要浏览的绝对目录；空 = 系统根（Windows 盘符 / Unix /）
+    #[serde(default)]
+    pub path: String,
+}
+
+/// GET /api/workspace/browse — 目录选择器：浏览任意绝对目录（只读）。
+/// 不校验白名单——浏览本身不产生任何变更；新建项目时才在信任根下创建。
+pub async fn browse_workspace(
+    Query(params): Query<BrowseParams>,
+) -> ApiResult<Json<serde_json::Value>> {
+    match workspace::browse_dir(&params.path) {
+        Ok(result) => Ok(Json(serde_json::to_value(result).unwrap_or(serde_json::json!({})))),
+        Err(err) => Err(api_error(StatusCode::BAD_REQUEST, err.to_string())),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct NewProjectParams {
+    /// 父目录（必须位于配置工作目录或白名单根之下）
+    pub parent: String,
+    /// 项目名称（不含路径分隔符；同时是目录名）
+    pub name: String,
+    /// 是否 git init -b main
+    #[serde(default)]
+    pub git_init: bool,
+}
+
+/// POST /api/workspace/projects/new — 新建项目：建目录（可选 git init）+
+/// 自动登记 trusted_project_roots + 持久化配置。前端调用后可直接切换新项目。
+pub async fn new_project(
+    State(state): crate::SharedState,
+    Json(body): Json<NewProjectParams>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let parent = std::path::PathBuf::from(body.parent.trim());
+    if !parent.is_dir() {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            format!("父目录不存在或不可读: {}", parent.display()),
+        ));
+    }
+    let parent_canon = parent.canonicalize().unwrap_or(parent.clone());
+    let config = state.config.read().expect("config poisoned");
+    let allowed = project_parent_roots(&config);
+    if !workspace::path_under_any(&parent_canon, &allowed) {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            format!("项目父目录未在信任范围内（请选择工作目录或已登记项目根下的位置）: {}", parent_canon.display()),
+        ));
+    }
+    // 提取当前白名单，create 成功后写回
+    let roots = config.trusted_project_roots.clone();
+    drop(config);
+
+    let (project, new_roots, git_ok) = workspace::create_project(&parent_canon, &body.name, body.git_init, &roots)
+        .map_err(|err| crate::api_error_bad_request(err.to_string()))?;
+
+    // 白名单有新增才写配置（create_project 已去重）
+    if new_roots.len() != roots.len() {
+        let mut config = state.config.write().expect("config poisoned");
+        config.trusted_project_roots = new_roots;
+        if let Err(err) = bm_core::config::save(&config) {
+            // 目录已建、白名单登记失败 → 回滚登记并报错（目录保留，用户可手动加白名单）
+            return Err(api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("项目目录已创建，但白名单登记失败（请手动在设置中添加）: {err}"),
+            ));
+        }
+    }
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "name": body.name,
+        "root": project.display().to_string(),
+        "git_init_ok": git_ok,
+    })))
 }
 
 #[cfg(test)]

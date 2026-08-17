@@ -77,6 +77,157 @@ pub fn list_dir(root: &Path, rel: &str) -> Result<Vec<FileEntry>, WorkspaceError
     Ok(entries)
 }
 
+/// 目录浏览器结果：指定目录内容 + 父目录（供前端「新建项目」选父目录时逐级上溯）。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BrowseResult {
+    /// 规范化后的当前目录
+    pub path: String,
+    /// 父目录路径（系统根时为空字符串）
+    pub parent: String,
+    pub entries: Vec<FileEntry>,
+}
+
+/// 浏览任意绝对目录（目录选择器用，不校验白名单——浏览是只读操作，
+/// 与 `list_workspace`（工作区内浏览）互补；权限不足的目录项会跳过）。
+pub fn browse_dir(path: &str) -> Result<BrowseResult, WorkspaceError> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        // 系统根：Windows 枚举盘符，Unix 列 /
+        return browse_system_root();
+    }
+    let dir = PathBuf::from(trimmed);
+    if !dir.is_dir() {
+        return Err(WorkspaceError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("目录不存在或不可读: {}", dir.display()),
+        )));
+    }
+    let canon = dir.canonicalize().unwrap_or_else(|_| dir.clone());
+    // 跳过无权限的子目录（系统目录常见），其余照常列出
+    let entries = fs::read_dir(&canon)
+        .map_err(WorkspaceError::Io)?
+        .filter_map(|e| e.ok())
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let is_dir = entry.file_type().ok()?.is_dir();
+            let size = entry.metadata().ok().map(|m| if is_dir { 0 } else { m.len() }).unwrap_or(0);
+            Some(FileEntry {
+                path: name.clone(),
+                modified: entry
+                    .metadata()
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0),
+                is_dir,
+                size,
+                name,
+            })
+        })
+        .collect::<Vec<_>>();
+    let parent = canon.parent().map(|p| p.display().to_string()).unwrap_or_default();
+    Ok(BrowseResult {
+        path: canon.display().to_string(),
+        parent,
+        entries,
+    })
+}
+
+/// 系统根视图：Windows 枚举逻辑盘符（`C:\`、`D:\`…），Unix 列 `/`。
+/// 返回的 path 为空字符串，parent 也为空——前端据此显示根目录面包屑。
+fn browse_system_root() -> Result<BrowseResult, WorkspaceError> {
+    #[cfg(windows)]
+    let entries = {
+        let mut v = Vec::new();
+        // 枚举 A:\..Z:\，只保留存在的盘符
+        for letter in b'A'..=b'Z' {
+            let drive = format!("{}:\\", letter as char);
+            if Path::new(&drive).exists() {
+                v.push(FileEntry {
+                    path: drive.clone(),
+                    modified: 0,
+                    is_dir: true,
+                    size: 0,
+                    name: drive,
+                });
+            }
+        }
+        v
+    };
+    #[cfg(not(windows))]
+    let entries = {
+        match fs::read_dir("/") {
+            Ok(rd) => rd
+                .filter_map(|e| e.ok())
+                .filter_map(|entry| {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    let is_dir = entry.file_type().ok()?.is_dir();
+                    Some(FileEntry { path: name.clone(), modified: 0, is_dir, size: 0, name })
+                })
+                .collect::<Vec<_>>(),
+            Err(_) => Vec::new(),
+        }
+    };
+    Ok(BrowseResult {
+        path: String::new(),
+        parent: String::new(),
+        entries,
+    })
+}
+
+/// 创建新项目：在 `parent` 下建 `name` 目录（可选 `git init`），并把项目
+/// 路径追加进白名单。返回（项目绝对路径, 新白名单, git 是否初始化成功）。
+///
+/// 路径语义：项目必须位于调用方（路由层）已校验的信任根之下，本函数只做
+/// 目录操作与白名单去重，不重复做越界判断。
+pub fn create_project(
+    parent: &Path,
+    name: &str,
+    git_init: bool,
+    roots: &[PathBuf],
+) -> Result<(PathBuf, Vec<PathBuf>, bool), WorkspaceError> {
+    let name = name.trim();
+    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\']) {
+        return Err(WorkspaceError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "项目名称非法（不能为空、不能含路径分隔符）",
+        )));
+    }
+    let norm_parent = parent.canonicalize().map_err(WorkspaceError::Io)?;
+    let project = norm_parent.join(name);
+    if project.exists() {
+        return Err(WorkspaceError::Io(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!("目录已存在: {}", project.display()),
+        )));
+    }
+    fs::create_dir_all(&project).map_err(WorkspaceError::Io)?;
+
+    let git_ok = if git_init {
+        run_git_init(&project)
+    } else {
+        true
+    };
+    let mut roots = roots.to_vec();
+    if !roots.iter().any(|r| r == &project) {
+        roots.push(project.clone());
+    }
+    Ok((project, roots, git_ok))
+}
+
+/// `git init -b main`（失败不致命：项目目录已建好，只是没有版本控制）。
+fn run_git_init(project: &Path) -> bool {
+    std::process::Command::new("git")
+        .args(["init", "-b", "main"])
+        .current_dir(project)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 /// 按扩展名推断媒体类型。
 pub fn mime_for(name: &str) -> &'static str {
     let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
@@ -253,6 +404,36 @@ mod tests {
         let root = temp_root();
         assert!(path_under_any(&root.join("a/b"), &[root.clone()]));
         assert!(!path_under_any(&root.parent().unwrap().join("other"), &[root.clone()]));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn browse_dir_lists_and_reports_parent() {
+        let root = temp_root();
+        let r = browse_dir(root.to_str().unwrap()).expect("browse 应成功");
+        assert!(r.entries.iter().any(|e| e.name == "target.txt"));
+        assert!(!r.parent.is_empty(), "应返回父目录");
+        let up = browse_dir(&r.parent).expect("父目录浏览应成功");
+        assert!(up.path == r.parent);
+        assert!(browse_dir(&format!("{}/no-such-dir", root.display())).is_err());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn create_project_makes_dir_git_and_whitelist() {
+        let root = temp_root();
+        let roots: Vec<PathBuf> = vec![root.clone()];
+        let (project, new_roots, git_ok) =
+            create_project(&root, "my-app", true, &roots).expect("create 应成功");
+        assert!(project.join(".git").is_dir(), "git init 应生效");
+        assert!(git_ok);
+        assert_eq!(new_roots.len(), 2, "白名单应新增项目");
+        assert!(new_roots.contains(&project));
+        // 已存在目录 → 拒绝
+        assert!(create_project(&root, "my-app", false, &roots).is_err());
+        // 非法名称 → 拒绝
+        assert!(create_project(&root, "../evil", false, &roots).is_err());
+        assert!(create_project(&root, "", false, &roots).is_err());
         let _ = fs::remove_dir_all(&root);
     }
 }

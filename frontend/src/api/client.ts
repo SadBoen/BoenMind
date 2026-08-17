@@ -162,6 +162,15 @@ export interface FileEntry {
   modified: number;
 }
 
+/** 目录选择器结果（/api/workspace/browse） */
+export interface BrowseResult {
+  /** 规范化后的当前目录；系统根时为空字符串 */
+  path: string;
+  /** 父目录（系统根时为空字符串） */
+  parent: string;
+  entries: FileEntry[];
+}
+
 export interface HealthInfo {
   status: string;
   version: string;
@@ -620,7 +629,7 @@ export const api = {
   // ── UI 登录门（公网站点；只密码，无用户名）──
   /** 当前浏览器会话是否有效（桌面版后端无登录门，永远返回 true 语义由 App 层绕过） */
   authStatus: () => request<{ authenticated: boolean }>("/api/auth/status"),
-  /** 登录：密码正确签发会话 token（默认 loveBM@86，可在设置中心「安全」页修改） */
+  /** 登录：密码正确签发会话 token（默认 adminadmin，可在设置中心「安全」页修改） */
   authLogin: (password: string) =>
     request<{ ok: boolean; token: string }>("/api/auth/login", {
       method: "POST",
@@ -958,6 +967,15 @@ export const api = {
   listWorkspace: (dir = "", root?: string) =>
     request<{ dir: string; entries: FileEntry[] }>(
       `/api/workspace/list?dir=${encodeURIComponent(dir)}${root ? `&root=${encodeURIComponent(root)}` : ""}`,
+    ),
+  /** 目录选择器：浏览任意绝对目录（只读）；path 为空 = 系统根（Windows 盘符） */
+  browseWorkspace: (path = "") =>
+    request<BrowseResult>(`/api/workspace/browse?path=${encodeURIComponent(path)}`),
+  /** 新建项目：建目录（可选 git init）+ 自动登记 trusted_project_roots 白名单 */
+  newProject: (body: { parent: string; name: string; git_init?: boolean }) =>
+    request<{ ok: boolean; name: string; root: string; git_init_ok: boolean }>(
+      "/api/workspace/projects/new",
+      { method: "POST", body: JSON.stringify(body) },
     ),
   readFile: (path: string, root?: string) =>
     request<{

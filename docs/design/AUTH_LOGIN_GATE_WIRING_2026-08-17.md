@@ -9,7 +9,7 @@
 
 ## 1. 目标（任务定义）
 
-- 公网站点仅密码登录，默认 `loveBM@86`，设置中心可改
+- 公网站点仅密码登录，默认 `adminadmin`，设置中心可改
 - 未登录禁入聊天/编程/WIKI/设置（UI 登录门）
 - `BOENMIND_TOKEN` 仅继续供 API 守卫；`/api/auth/*` 豁免 token 中间件
 
@@ -138,7 +138,7 @@ useEffect(() => {
 ## 5. 验收清单（coder 完成后按此核对）
 
 1. `cargo check -p bm-server` 通过；`pnpm build`（或 `tsc --noEmit`）通过
-2. 无 BOENMIND_TOKEN：浏览器访问 → 登录页；输 `loveBM@86` → 进主界面
+2. 无 BOENMIND_TOKEN：浏览器访问 → 登录页；输 `adminadmin` → 进主界面
 3. 设 BOENMIND_TOKEN 后：登录页可进（豁免生效）→ 主界面数据 401 → TokenGate 弹窗
 4. 设置中心「安全」页：改密成功（新密码 ≥4 位）；改密后当前会话仍有效
 5. 安全页/壳层登出 → 回登录页；刷新后仍为未登录（服务端已删 token）
@@ -257,7 +257,7 @@ git status --short
 
 # 3) 暂存并提交
 git add -A
-git commit -m "feat(auth): 公网站点密码登录门（loveBM@86 默认，设置可改）
+git commit -m "feat(auth): 公网站点密码登录门（adminadmin 默认，设置可改）
 
 - 后端：/api/auth/{status,login,logout,password} 内存会话 + SHA-256 密码落盘；
   auth_middleware 豁免 /api/auth/*（BOENMIND_TOKEN 仍守卫其余 API）

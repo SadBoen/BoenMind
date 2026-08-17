@@ -30,5 +30,10 @@ backend/crates/bm-compat/Cargo.lock
 artifacts/
 scripts/compression-regression/out/
 
+# 本地构建产物（便携包目录）与临时探测文件
+dist-win/
+.tmp/
+.tmp-*.json
+
 # 运行时数据（本机启动生成的 ~/.boenmind 镜像/数据库/日志，不属于源码）
 var/
