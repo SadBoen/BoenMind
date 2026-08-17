@@ -1,0 +1,23 @@
+{
+  "name": "boenmind-dsh",
+  "version": "0.1.0",
+  "private": true,
+  "description": "BoenMind（dsh 内核版）——以 DeepSeek Harness 为运行时真身的心智平台",
+  "type": "module",
+  "packageManager": "pnpm@11.21.0",
+  "scripts": {
+    "dsh": "dsh",
+    "web": "dsh web",
+    "headless": "dsh --profile headless"
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh": "0.1.0-rc.6"
+  },
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "^11.21.0",
+      "onFail": "download"
+    }
+  }
+}
