@@ -32,6 +32,12 @@ impl From<String> for SessionId {
     }
 }
 
+impl From<&str> for SessionId {
+    fn from(v: &str) -> Self {
+        SessionId(v.to_string())
+    }
+}
+
 /// 会话头：会话的静态元信息。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionHeader {
@@ -90,18 +96,21 @@ pub enum StepPhase {
 }
 
 /// 带单调序号的事件信封（seq 是日志内排序键，也是崩溃恢复的对账锚点）。
+/// session_id 是归属会话（进程内总线不按会话过滤，监听方据此路由）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionRecord {
     pub seq: u64,
     pub timestamp: DateTime<Utc>,
+    pub session_id: SessionId,
     pub event: SessionEvent,
 }
 
 impl SessionRecord {
-    pub fn new(seq: u64, event: SessionEvent) -> Self {
+    pub fn new(seq: u64, session_id: impl Into<SessionId>, event: SessionEvent) -> Self {
         Self {
             seq,
             timestamp: Utc::now(),
+            session_id: session_id.into(),
             event,
         }
     }

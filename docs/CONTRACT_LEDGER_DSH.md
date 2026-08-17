@@ -5,7 +5,7 @@
 > 基线：`@deepseek-ai/dsh@0.1.0-rc.6`（2026-08-17 快照，与前端锁死同版本）。
 > 提取基线：deepseek-harness master commit `47f9438`（`D:/96_CoderWorld/deepseek-harness`）。以下每个条目标注提取源（仓库相对路径）。
 > 说明：本台账内的「任务简报数字」若与源码不符，一律以源码为准并在该条目标注「未在源码找到，待确认」。
-> 实施进度（2026-08-17 M2）：Rust 兼容层已实现面 1/2/3/4/6/7/8 与 13 个 RPC 方法，Node 轨迹 conformance 17/17 全对齐（`docs/conformance/diff-traces.mjs`）。未实现方法（返回 bad-request）：workspace.create/rename/delete/insertBefore/insertSessionBefore/archiveSession、goal.*、skill.list、agentPresets.*、subagent.*、llm.discoverModels、session.search/fork/attachment/updateQueue、settings.update/replace/mutate/openDocument、credentials.set/unset、host.pickDirectory/listDirectory/createDirectory/openPath。
+> 实施进度（2026-08-18 M2.5）：Rust 兼容层已实现面 1/2/3/4/6/7/8 与 **24 个 RPC 方法**（host.describe/pickDirectory/listDirectory/createDirectory、session.{list,create,history,prompt,cancel,rename,models,selectModel}、workspace.{list,create,rename,delete,insertBefore,insertSessionBefore,archiveSession}、llm.{providers,models,discoverModels}、agentPreset.list、skill.list、settings.{describe,update,replace,mutate}、credentials.describe），Node 轨迹 conformance 17/17 全对齐 + 门禁 2.5 等价验证 15/15（`docs/conformance/gate25-verify.mjs`）。**M2.5 前端直连已达成**：内置快照（`kernel/web-server/frontend/`，dsh rc.6 壳层+boot 38 entries+插件 bundles）+ WS subscribed 基线 + sessionId/seq 修正。未实现方法（返回 bad-request）：goal.*、subagent.*、session.{search,fork,attachment,updateQueue}、settings.openDocument、credentials.{set,unset}、host.openPath。
 
 ## 1. 传输面（9 面 + 双栅栏）
 

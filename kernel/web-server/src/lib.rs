@@ -119,6 +119,7 @@ async fn handle_rpc(
         return (StatusCode::OK, Json(resp)).into_response();
     }
 
+    tracing::info!(method = %request.method, "rpc call");
     let result = api::dispatch(&state, &request.method, request.payload).await;
     let resp = ServerResponse {
         type_: "server-response",

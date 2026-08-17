@@ -50,14 +50,15 @@ pub fn parse_authority(authority: &str) -> Option<(String, Option<String>)> {
         return None;
     }
     if let Some(rest) = authority.strip_prefix('[') {
-        // IPv6 字面量 [::1]:port
+        // IPv6 字面量 [::1]:port（默认端口 80 归一到 None，与主机名分支一致）。
         let idx = rest.find(']')?;
         let ip = &rest[..idx];
         let after = &rest[idx + 1..];
         let port = if after.is_empty() {
             None
         } else {
-            Some(after.strip_prefix(':')?.to_string())
+            let p = after.strip_prefix(':')?.to_string();
+            if p == "80" { None } else { Some(p) }
         };
         return Some((format!("[{ip}]"), port));
     }

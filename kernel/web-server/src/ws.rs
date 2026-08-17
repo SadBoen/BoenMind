@@ -10,24 +10,59 @@ use serde_json::json;
 use crate::api::AppState;
 use crate::rpc::ServerRequestFrame;
 
-/// mux 流：订阅 bus，把实时 wire 事件包成 session/event 帧下行。
+/// mux 流：连接时发 subscribed 基线（每 attached session 一帧），然后订阅 bus
+/// 把实时 wire 事件包成 session/event 帧下行。
 pub async fn mux_loop(mut socket: WebSocket, state: Arc<AppState>) {
+    tracing::info!("mux connected");
+    // Open 基线（台账 §4 断连恢复）：每 attached session 一帧 session/subscribed，
+    // lastSeq = 日志 wire 长度 - 1（空日志 -1）。前端以此订阅会话事件流。
+    let sessions: Vec<String> = state
+        .sessions
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(_, h)| h.running || !h.blank)
+        .map(|(id, _)| id.clone())
+        .collect();
+    for sid in sessions {
+        let last_seq = match state.runtime.persist.load_events(&sid).await {
+            Ok(Some(events)) => {
+                let wire_count = crate::events::translate_events(&events).len() as i64;
+                wire_count - 1
+            }
+            _ => -1,
+        };
+        let frame = ServerRequestFrame::new(
+            uuid::Uuid::new_v4().to_string(),
+            "session/subscribed",
+            json!({ "sessionId": sid, "lastSeq": last_seq }),
+        );
+        let text = serde_json::to_string(&frame).unwrap_or_default();
+        if socket
+            .send(Message::Text(axum::extract::ws::Utf8Bytes::from(text)))
+            .await
+            .is_err()
+        {
+            return;
+        }
+    }
+
     let mut rx = state.events_tx.subscribe();
     loop {
         tokio::select! {
             ev = rx.recv() => {
                 match ev {
                     Ok(wire) => {
+                        // wire 事件信封已带 sessionId/seq（AppState::attach_event_bus 在
+                        // 发送前填入；见 api.rs）。
                         let frame = ServerRequestFrame::new(
                             uuid::Uuid::new_v4().to_string(),
                             "session/event",
-                            json!({
-                                "sessionId": "",
-                                "event": wire,
-                            }),
+                            wire,
                         );
                         let text = serde_json::to_string(&frame).unwrap_or_default();
                         if socket.send(Message::Text(axum::extract::ws::Utf8Bytes::from(text))).await.is_err() {
+                            tracing::info!("mux send failed; closing");
                             return;
                         }
                     }
@@ -36,7 +71,10 @@ pub async fn mux_loop(mut socket: WebSocket, state: Arc<AppState>) {
             }
             msg = socket.recv() => {
                 match msg {
-                    Some(Ok(Message::Close(_))) => return,
+                    Some(Ok(Message::Close(_))) => {
+                        tracing::info!("mux closed by peer");
+                        return;
+                    }
                     Some(Ok(_)) => {
                         let _ = socket.send(Message::Close(Some(
                             axum::extract::ws::CloseFrame {
@@ -44,10 +82,17 @@ pub async fn mux_loop(mut socket: WebSocket, state: Arc<AppState>) {
                                 reason: "downlink only".into(),
                             }
                         ))).await;
+                        tracing::info!("mux rejected uplink; closing 1008");
                         return;
                     }
-                    Some(Err(_)) => return,
-                    None => return,
+                    Some(Err(_)) => {
+                        tracing::info!("mux recv error");
+                        return;
+                    }
+                    None => {
+                        tracing::info!("mux socket closed");
+                        return;
+                    }
                 }
             }
         }
@@ -89,10 +134,11 @@ pub async fn handle_mux_sse(
         loop {
             match rx.recv().await {
                 Ok(wire) => {
+                    // wire 已是 {sessionId, event} 完整帧 payload。
                     let frame = ServerRequestFrame::new(
                         uuid::Uuid::new_v4().to_string(),
                         "session/event",
-                        json!({ "sessionId": "", "event": wire }),
+                        wire,
                     );
                     let text = format!("data: {}\n\n", serde_json::to_string(&frame).unwrap_or_default());
                     if body_tx.send(Ok(text)).await.is_err() {

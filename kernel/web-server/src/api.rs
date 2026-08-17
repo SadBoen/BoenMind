@@ -4,6 +4,7 @@
 //! 由错误码承载），随 conformance 轮逐步补齐。
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use kernel_assembly::Runtime;
@@ -12,7 +13,7 @@ use kernel_loop::ReactLoopAgent;
 use serde_json::{json, Value};
 
 use crate::events::translate_events;
-use crate::rpc::{err, ok};
+use crate::rpc::{err, err_with_details, ok};
 
 /// 活跃会话句柄。
 pub struct SessionHandle {
@@ -32,6 +33,12 @@ pub struct AppState {
     pub events_tx: tokio::sync::broadcast::Sender<Value>,
     /// 信任栅栏的 trustedHosts（部署时 --trusted-host 传入）。
     pub trusted_hosts: Vec<String>,
+    /// 设置命名空间内存视图（M2.5：settings.* 写面的最小存储；持久化后置）。
+    pub settings: Mutex<HashMap<String, serde_json::Map<String, Value>>>,
+    /// 工作区注册表（M2.5 内存态）：workspaceId → WorkspaceView。
+    pub workspaces: Mutex<HashMap<String, Value>>,
+    /// 归档会话集（workspace.archiveSession 持久集）。
+    pub archived_session_ids: Mutex<Vec<String>>,
 }
 
 impl AppState {
@@ -51,21 +58,38 @@ impl AppState {
             host_cwd,
             events_tx,
             trusted_hosts,
+            settings: Mutex::new(HashMap::new()),
+            workspaces: Mutex::new(HashMap::new()),
+            archived_session_ids: Mutex::new(Vec::new()),
         }
     }
 
     /// 把 kernel 事件总线接到实时下行通道（幂等：仅调用一次）。
-    /// bus listener 是同步闭包：锁翻译游标 → 翻译单条 → 塞进 broadcast。
-    pub fn attach_event_bus(&self) {
+    /// bus listener 是同步闭包：按会话维护翻译游标 + wire seq 累计（每会话从 0 连续，
+    /// 与 translate_events 一致；SessionStarted 不翻译但占 record.seq，故不能用 record.seq-1）。
+    /// 返回的 Disposer 必须持有（drop 即注销），调用方负责保活到进程结束。
+    pub fn attach_event_bus(&self) -> kernel_contracts::bus::Disposer {
         let tx = self.events_tx.clone();
-        let translator = std::sync::Mutex::new(crate::events::EventTranslator::new());
+        let per_session: std::sync::Mutex<
+            HashMap<String, (crate::events::EventTranslator, i64)>,
+        > = std::sync::Mutex::new(HashMap::new());
         let listener = move |record: &kernel_contracts::SessionRecord| {
-            let mut trans = translator.lock().unwrap();
-            if let Some(wire) = trans.translate_one(&record.event) {
-                let _ = tx.send(serde_json::to_value(&wire).unwrap_or_default());
+            let mut table = per_session.lock().unwrap();
+            let (trans, seq) = table
+                .entry(record.session_id.as_str().to_string())
+                .or_insert_with(|| (crate::events::EventTranslator::new(), 0));
+            if let Some(mut wire) = trans.translate_one(&record.event) {
+                wire.seq = *seq;
+                *seq += 1;
+                wire.time = record.timestamp.timestamp_millis();
+                let payload = json!({
+                    "sessionId": record.session_id.as_str(),
+                    "event": wire,
+                });
+                let _ = tx.send(payload);
             }
         };
-        let _ = self.runtime.bus.on_event(listener);
+        self.runtime.bus.on_event(listener)
     }
 }
 
@@ -79,10 +103,29 @@ pub async fn dispatch(state: &Arc<AppState>, method: &str, payload: Value) -> Va
         "session.prompt" => session_prompt(state, payload).await,
         "session.cancel" => session_cancel(state, payload),
         "session.rename" => session_rename(state, payload),
+        "session.models" => session_models(state, payload),
+        "session.selectModel" => session_select_model(payload),
         "llm.providers" => llm_providers(state).await,
         "llm.models" => llm_models(state).await,
-        "workspace.list" => workspace_list(),
-        "settings.describe" => settings_describe(),
+        "llm.discoverModels" => llm_discover_models(payload),
+        "workspace.list" => workspace_list(state),
+        "workspace.create" => workspace_create(state, payload),
+        "workspace.rename" => workspace_rename(state, payload),
+        "workspace.delete" => workspace_delete(state, payload),
+        "workspace.insertBefore" => workspace_insert_before(state, payload),
+        "workspace.insertSessionBefore" => workspace_insert_session_before(state, payload),
+        "workspace.archiveSession" => workspace_archive_session(state, payload).await,
+        "agentPreset.list" => agent_preset_list(),
+        "skill.list" => skill_list(payload),
+        "host.listDirectory" => host_list_directory(payload),
+        "host.createDirectory" => host_create_directory(payload),
+        // M2.5：无 OS 目录选择对话框，pickDirectory 返回服务 cwd 作默认工作目录
+        // （契约形状 {path: string|null} 对齐；null=用户取消）。
+        "host.pickDirectory" => host_pick_directory(state),
+        "settings.describe" => settings_describe(state),
+        "settings.update" => settings_update(state, payload),
+        "settings.replace" => settings_replace(state, payload),
+        "settings.mutate" => settings_mutate(state, payload),
         "credentials.describe" => credentials_describe(payload),
         _ => err(
             "bad-request",
@@ -126,6 +169,9 @@ async fn session_list(state: &Arc<AppState>) -> Value {
                     "updatedAt": "1970-01-01T00:00:00.000Z",
                     "running": h.map(|s| s.running).unwrap_or(false),
                     "blank": h.map(|s| s.blank).unwrap_or(true),
+                    "cwd": h
+                        .and_then(|s| s.agent.session().header().workspace.clone())
+                        .unwrap_or_default(),
                 })
             })
             .collect::<Vec<_>>()
@@ -157,6 +203,32 @@ async fn session_create(state: &Arc<AppState>, payload: Value) -> Value {
     };
     match state.runtime.create_session(header).await {
         Ok(agent) => {
+            // workspaceId 语义（台账 §2 session.create）：新会话 attach 进该 workspace，
+            // prepend 到 sessionIds（活动时显示序首）。未知 workspace → workspace-not-found。
+            if let Some(ws_id) = payload.get("workspaceId").and_then(Value::as_str) {
+                let mut ws = state.workspaces.lock().unwrap();
+                let Some(view) = ws.get_mut(ws_id) else {
+                    return err_with_details(
+                        "workspace-not-found",
+                        "workspace not found",
+                        json!({ "workspaceId": ws_id }),
+                    );
+                };
+                let mut session_ids: Vec<String> = view["sessionIds"]
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_string)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if !session_ids.contains(&session_id) {
+                    session_ids.insert(0, session_id.clone());
+                    view["sessionIds"] = json!(session_ids);
+                    view["updatedAt"] = json!(chrono::Utc::now().to_rfc3339());
+                }
+            }
             let mut sessions = state.sessions.lock().unwrap();
             sessions.insert(
                 session_id.clone(),
@@ -241,6 +313,48 @@ async fn session_prompt(state: &Arc<AppState>, payload: Value) -> Value {
     ok(json!({ "accepted": true }))
 }
 
+/// mock provider 模型分组（llm.models / session.models 共用）。
+fn mock_model_group() -> Value {
+    json!({
+        "id": "mock",
+        "provider": "mock",
+        "label": "Mock",
+        "name": "Mock",
+        "models": [{ "id": "mock-1", "name": "Mock 1" }],
+    })
+}
+
+/// session.models：当前选择 + 可路由 + 目录（subagent → `agent-busy` 未区分，M2.5 简化）。
+fn session_models(state: &Arc<AppState>, payload: Value) -> Value {
+    let Some(_session_id) = payload.get("sessionId").and_then(Value::as_str) else {
+        return err("bad-request", "missing sessionId");
+    };
+    ok(json!({
+        "current": { "provider": state.runtime.provider, "model": state.runtime.model },
+        "routable": true,
+        "groups": [mock_model_group()],
+        "failures": [],
+    }))
+}
+
+/// session.selectModel：目录成员关系仅 advisory，M2.5 直接接受任何 provider/model。
+fn session_select_model(payload: Value) -> Value {
+    let Some(_session_id) = payload.get("sessionId").and_then(Value::as_str) else {
+        return err("bad-request", "missing sessionId");
+    };
+    let Some(provider) = payload.get("provider").and_then(Value::as_str) else {
+        return err("bad-request", "missing provider");
+    };
+    let Some(model) = payload.get("model").and_then(Value::as_str) else {
+        return err("bad-request", "missing model");
+    };
+    let mut selected = json!({ "provider": provider, "model": model });
+    if let Some(re) = payload.get("reasoningEffort") {
+        selected["reasoningEffort"] = re.clone();
+    }
+    ok(json!({ "selected": selected }))
+}
+
 fn session_cancel(_state: &Arc<AppState>, payload: Value) -> Value {
     let Some(_session_id) = payload.get("sessionId").and_then(Value::as_str) else {
         return err("bad-request", "missing sessionId");
@@ -305,17 +419,570 @@ async fn llm_models(state: &AppState) -> Value {
     }))
 }
 
-fn workspace_list() -> Value {
-    ok(json!({ "items": [], "archivedSessionIds": [] }))
+/// workspace.list：内存注册表快照（createdAt/updatedAt 为 ISO-8601 string）+ 归档集。
+fn workspace_list(state: &AppState) -> Value {
+    let mut items: Vec<Value> = state
+        .workspaces
+        .lock()
+        .unwrap()
+        .values()
+        .cloned()
+        .collect();
+    items.sort_by_key(|w| {
+        w.get("createdAt")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string()
+    });
+    let archived = state.archived_session_ids.lock().unwrap().clone();
+    ok(json!({ "items": items, "archivedSessionIds": archived }))
 }
 
-/// settings.describe（特权）：基本形状；namespaces 内容依赖实际配置（动态）。
-fn settings_describe() -> Value {
+/// workspace.create（未特权）：对已存在目录幂等注册。
+/// 目录缺失/非目录 → `workspace-invalid-path`；已属某 workspace → 返回该 workspace（created:false）。
+fn workspace_create(state: &AppState, payload: Value) -> Value {
+    use std::path::Path;
+
+    let Some(path) = payload.get("path").and_then(Value::as_str) else {
+        return err("bad-request", "missing path");
+    };
+    let p = Path::new(path);
+    if !p.is_dir() {
+        return err_with_details(
+            "workspace-invalid-path",
+            "path is not a directory",
+            json!({ "path": path }),
+        );
+    }
+
+    // 已注册同路径 → 幂等返回（created:false）。
+    let mut ws = state.workspaces.lock().unwrap();
+    for v in ws.values() {
+        if v.get("path").and_then(Value::as_str) == Some(path) {
+            return ok(json!({ "workspace": v, "created": false }));
+        }
+    }
+    let now = chrono::Utc::now().to_rfc3339();
+    let workspace = json!({
+        "workspaceId": uuid::Uuid::new_v4().to_string(),
+        "path": path,
+        "title": p.file_name().and_then(|n| n.to_str()).unwrap_or(path).to_string(),
+        "sessionIds": [],
+        "createdAt": now,
+        "updatedAt": now,
+    });
+    let id = workspace["workspaceId"].as_str().unwrap().to_string();
+    ws.insert(id, workspace.clone());
+    ok(json!({ "workspace": workspace, "created": true }))
+}
+
+/// workspace.rename：title trim 后非空；未知 id → `workspace-not-found`；冲突 → `workspace-name-conflict`；
+/// 改回原名 = 空操作成功。返回更新后的 workspace。
+fn workspace_rename(state: &AppState, payload: Value) -> Value {
+    let Some(workspace_id) = payload.get("workspaceId").and_then(Value::as_str) else {
+        return err("bad-request", "missing workspaceId");
+    };
+    let Some(title) = payload.get("title").and_then(Value::as_str).map(str::trim) else {
+        return err("bad-request", "missing title");
+    };
+    if title.is_empty() {
+        return err("bad-request", "title must be non-empty");
+    }
+    let mut ws = state.workspaces.lock().unwrap();
+    // 标题冲突预检（不持可变借用）：另一 workspace 已用同名（改回原名除外）。
+    for v in ws.values() {
+        if v.get("title").and_then(Value::as_str) == Some(title)
+            && v.get("workspaceId").and_then(Value::as_str) != Some(workspace_id)
+        {
+            return err_with_details(
+                "workspace-name-conflict",
+                "workspace title already in use",
+                json!({ "name": title }),
+            );
+        }
+    }
+    let Some(view) = ws.get_mut(workspace_id) else {
+        return err_with_details(
+            "workspace-not-found",
+            "workspace not found",
+            json!({ "workspaceId": workspace_id }),
+        );
+    };
+    view["title"] = json!(title);
+    view["updatedAt"] = json!(chrono::Utc::now().to_rfc3339());
+    ok(json!({ "workspace": view.clone() }))
+}
+
+/// workspace.delete：仅删注册，目录/文件/日志不动；未知 id → `workspace-not-found`。
+fn workspace_delete(state: &AppState, payload: Value) -> Value {
+    let Some(workspace_id) = payload.get("workspaceId").and_then(Value::as_str) else {
+        return err("bad-request", "missing workspaceId");
+    };
+    let mut ws = state.workspaces.lock().unwrap();
+    if ws.remove(workspace_id).is_none() {
+        return err_with_details(
+            "workspace-not-found",
+            "workspace not found",
+            json!({ "workspaceId": workspace_id }),
+        );
+    }
+    ok(json!({ "deleted": true }))
+}
+
+/// workspace.insertBefore：DOM-insertBefore 语义；省略锚点 = 追加末尾。
+/// 返回完整显示序。
+fn workspace_insert_before(state: &AppState, payload: Value) -> Value {
+    let Some(workspace_id) = payload.get("workspaceId").and_then(Value::as_str) else {
+        return err("bad-request", "missing workspaceId");
+    };
+    let before = payload.get("beforeWorkspaceId").and_then(Value::as_str);
+    let ws = state.workspaces.lock().unwrap();
+    let ids: Vec<String> = ws.keys().cloned().collect();
+    if !ids.contains(&workspace_id.to_string()) {
+        return err_with_details(
+            "workspace-not-found",
+            "workspace not found",
+            json!({ "workspaceId": workspace_id }),
+        );
+    }
+    if let Some(anchor) = before {
+        if !ids.contains(&anchor.to_string()) {
+            return err_with_details(
+                "workspace-not-found",
+                "anchor workspace not found",
+                json!({ "workspaceId": anchor }),
+            );
+        }
+    }
+    // 重排：把 workspace_id 从当前位移除，插到锚点前（无锚点 = 末尾）。
+    let mut order: Vec<String> = ids
+        .into_iter()
+        .filter(|id| id != workspace_id)
+        .collect();
+    match before {
+        Some(anchor) => {
+            if let Some(pos) = order.iter().position(|id| id == anchor) {
+                order.insert(pos, workspace_id.to_string());
+            } else {
+                order.push(workspace_id.to_string());
+            }
+        }
+        None => order.push(workspace_id.to_string()),
+    }
+    ok(json!({ "workspaceIds": order }))
+}
+
+/// workspace.insertSessionBefore：把 sessionId 加进（或重排）workspace.sessionIds。
+/// 未知 workspace → `workspace-not-found`；session/锚点不在账 → `workspace-move-invalid`；
+/// 原位移动 = 空操作。返回更新后的 workspace。
+fn workspace_insert_session_before(state: &AppState, payload: Value) -> Value {
+    let Some(workspace_id) = payload.get("workspaceId").and_then(Value::as_str) else {
+        return err("bad-request", "missing workspaceId");
+    };
+    let Some(session_id) = payload.get("sessionId").and_then(Value::as_str) else {
+        return err("bad-request", "missing sessionId");
+    };
+    let before = payload.get("beforeSessionId").and_then(Value::as_str);
+    let mut ws = state.workspaces.lock().unwrap();
+    let Some(view) = ws.get_mut(workspace_id) else {
+        return err_with_details(
+            "workspace-not-found",
+            "workspace not found",
+            json!({ "workspaceId": workspace_id }),
+        );
+    };
+    let mut session_ids: Vec<String> = view["sessionIds"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    // 会话须已在账（新会话由前端 create 后 insert 进来）。
+    if !session_ids.contains(&session_id.to_string()) {
+        return err_with_details(
+            "workspace-move-invalid",
+            "session is not in this workspace",
+            json!({
+                "workspaceId": workspace_id,
+                "sessionId": session_id,
+                "beforeSessionId": before,
+            }),
+        );
+    }
+    if let Some(anchor) = before {
+        if !session_ids.contains(&anchor.to_string()) {
+            return err_with_details(
+                "workspace-move-invalid",
+                "anchor session is not in this workspace",
+                json!({ "workspaceId": workspace_id, "sessionId": session_id }),
+            );
+        }
+    }
+    // 原位移动 = 空操作成功。
+    let already_in_place = before.is_none()
+        || session_ids.last() == before.map(|b| b.to_string()).as_ref();
+    if !already_in_place {
+        session_ids.retain(|id| id != session_id);
+        match before {
+            Some(anchor) => {
+                if let Some(pos) = session_ids.iter().position(|id| id == anchor) {
+                    session_ids.insert(pos, session_id.to_string());
+                } else {
+                    session_ids.push(session_id.to_string());
+                }
+            }
+            None => session_ids.push(session_id.to_string()),
+        }
+        view["sessionIds"] = json!(session_ids);
+        view["updatedAt"] = json!(chrono::Utc::now().to_rfc3339());
+    }
+    ok(json!({ "workspace": view.clone() }))
+}
+
+/// workspace.archiveSession：把 sessionId 加入归档集（幂等）；会话既非 live 也不在持久化
+/// → `session-not-found`。返回完整新归档集。
+async fn workspace_archive_session(state: &AppState, payload: Value) -> Value {
+    let Some(session_id) = payload.get("sessionId").and_then(Value::as_str) else {
+        return err("bad-request", "missing sessionId");
+    };
+    // 会话存在性：live 或持久化。
+    let live = state.sessions.lock().unwrap().contains_key(session_id);
+    let persisted = state
+        .runtime
+        .persist
+        .list_sessions()
+        .await
+        .map(|ids| ids.contains(&session_id.to_string()))
+        .unwrap_or(false);
+    if !live && !persisted {
+        return err_with_details(
+            "session-not-found",
+            "session not found",
+            json!({ "sessionId": session_id }),
+        );
+    }
+    let mut archived = state.archived_session_ids.lock().unwrap();
+    if !archived.contains(&session_id.to_string()) {
+        archived.push(session_id.to_string());
+    }
+    ok(json!({ "archivedSessionIds": archived.clone() }))
+}
+
+/// host.pickDirectory（特权）：无 OS 对话框实现 → 返回服务 cwd 作默认选择。
+fn host_pick_directory(state: &AppState) -> Value {
+    ok(json!({ "path": state.host_cwd }))
+}
+
+/// 目录条目隐藏判定：`.` 前缀（Unix 惯例）+ Windows FILE_ATTRIBUTE_HIDDEN。
+fn is_hidden_path(p: &Path) -> bool {
+    let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    if name.starts_with('.') && !name.is_empty() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+        if let Ok(meta) = p.metadata() {
+            return meta.file_attributes() & FILE_ATTRIBUTE_HIDDEN != 0;
+        }
+    }
+    false
+}
+
+/// host.listDirectory（特权）：列一个目录层级 + 祖先 breadcrumb。
+/// 缺省 path = 家目录；不可读 → `directory-unreadable {path}`。
+fn host_list_directory(payload: Value) -> Value {
+    use std::path::{Component, PathBuf};
+
+    let raw = payload.get("path").and_then(Value::as_str);
+    let home = std::env::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    let home_str = home.to_string_lossy().to_string();
+    let target: PathBuf = match raw {
+        Some(p) if !p.is_empty() => {
+            let p = PathBuf::from(p);
+            if p.is_absolute() { p } else { home.join(p) }
+        }
+        _ => home,
+    };
+
+    // 目录必须存在且可读。
+    let read = match std::fs::read_dir(&target) {
+        Ok(rd) => rd,
+        Err(e) => {
+            return err_with_details(
+                "directory-unreadable",
+                format!("cannot read directory: {e}"),
+                json!({ "path": target.to_string_lossy() }),
+            );
+        }
+    };
+
+    let mut entries: Vec<Value> = Vec::new();
+    for item in read.flatten() {
+        let path = item.path();
+        entries.push(json!({
+            "name": item.file_name().to_string_lossy(),
+            "path": path.to_string_lossy(),
+            "hidden": is_hidden_path(&path),
+        }));
+    }
+    entries.sort_by(|a, b| {
+        let an = a["name"].as_str().unwrap_or("");
+        let bn = b["name"].as_str().unwrap_or("");
+        an.to_lowercase().cmp(&bn.to_lowercase())
+    });
+
+    // crumbs：从根到当前目录每层一个 {name, path}（hidden 恒 false）。
+    // Windows 上 Prefix("D:") + RootDir("\") 合并为一段 "D:\"。
+    let mut crumbs: Vec<Value> = Vec::new();
+    let mut acc = PathBuf::new();
+    let mut pending_prefix: Option<String> = None;
+    for comp in target.components() {
+        match comp {
+            Component::Prefix(_) => {
+                acc.push(comp.as_os_str());
+                pending_prefix = Some(acc.to_string_lossy().to_string());
+            }
+            Component::RootDir => {
+                acc.push(comp.as_os_str());
+                crumbs.push(json!({
+                    "name": pending_prefix
+                        .take()
+                        .unwrap_or_else(|| acc.to_string_lossy().trim_end_matches(['/', '\\']).to_string()),
+                    "path": acc.to_string_lossy(),
+                    "hidden": false,
+                }));
+            }
+            Component::Normal(seg) => {
+                acc.push(seg);
+                crumbs.push(json!({
+                    "name": seg.to_string_lossy(),
+                    "path": acc.to_string_lossy(),
+                    "hidden": false,
+                }));
+            }
+            _ => {}
+        }
+    }
+    // 家目录缺省空 crumbs 时的兜底：至少一段。
+    if crumbs.is_empty() {
+        crumbs.push(json!({
+            "name": home_str,
+            "path": home_str,
+            "hidden": false,
+        }));
+    }
+
     ok(json!({
-        "writable": true,
-        "hasDocument": false,
-        "namespaces": []
+        "path": target.to_string_lossy(),
+        "home": home_str,
+        "crumbs": crumbs,
+        "entries": entries,
+        "truncated": false,
     }))
+}
+
+/// host.createDirectory（特权）：name 须单路径段；已存在 → `directory-exists`；
+/// 创建失败 → `directory-create-failed`。返回创建后的绝对路径。
+fn host_create_directory(payload: Value) -> Value {
+    use std::path::PathBuf;
+
+    let Some(path) = payload.get("path").and_then(Value::as_str) else {
+        return err("bad-request", "missing path");
+    };
+    let Some(name) = payload.get("name").and_then(Value::as_str) else {
+        return err("bad-request", "missing name");
+    };
+    let name = name.trim();
+    if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\\') {
+        return err(
+            "bad-request",
+            "host.createDirectory requires a single non-blank path segment name",
+        );
+    }
+    let dir = PathBuf::from(path).join(name);
+    if dir.exists() {
+        return err_with_details(
+            "directory-exists",
+            "directory already exists",
+            json!({ "path": dir.to_string_lossy() }),
+        );
+    }
+    match std::fs::create_dir(&dir) {
+        Ok(()) => ok(json!({ "path": dir.to_string_lossy() })),
+        Err(e) => err_with_details(
+            "directory-create-failed",
+            format!("create directory failed: {e}"),
+            json!({ "path": dir.to_string_lossy() }),
+        ),
+    }
+}
+
+/// agentPreset.list（未特权）：M2.5 返回空清单（无 authoring 预设）。
+/// hasDocument=false：无原生 preset 文档可编辑（特权面 openDocument 相关）。
+fn agent_preset_list() -> Value {
+    ok(json!({ "presets": [], "authorable": true, "hasDocument": false }))
+}
+
+/// skill.list：M1 无技能注册，返回空清单（技能调用是 session.prompt 前导 `/name`）。
+fn skill_list(payload: Value) -> Value {
+    if payload.get("sessionId").and_then(Value::as_str).is_none() {
+        return err("bad-request", "missing sessionId");
+    }
+    ok(json!({ "skills": [] }))
+}
+
+/// llm.discoverModels（特权）：mock provider 直接回模型清单（无真实探测）。
+fn llm_discover_models(payload: Value) -> Value {
+    let settings_ns = payload
+        .get("settingsNs")
+        .and_then(Value::as_str)
+        .unwrap_or("llm.mock");
+    if settings_ns == "llm.mock" {
+        ok(json!({
+            "models": [{ "id": "mock-1", "name": "Mock 1" }]
+        }))
+    } else {
+        err_with_details(
+            "model-discovery-failed",
+            "no mock provider for this settings namespace",
+            json!({ "settingsNs": settings_ns }),
+        )
+    }
+}
+
+/// Web 可写设置命名空间白名单（台账 §2 settings.*：WEB_SETTINGS_NAMESPACES 子集）。
+const WEB_SETTINGS_NAMESPACES: &[&str] = &[
+    "agent-loop",
+    "shell",
+    "locale",
+    "permission",
+    "ui-conversation",
+    "ui-theme",
+    "ui-onboarding",
+];
+
+/// 构造单个 SettingsNamespaceView（台账 §2：{ns, schema, value, base?, user?, applies, secrets, revision}）。
+/// 脱敏铁律：secret 字段永不随响应出域（M2.5 无 secret 字段，secrets 槽恒空）。
+fn settings_view(ns: &str, value: &serde_json::Map<String, Value>) -> Value {
+    json!({
+        "ns": ns,
+        "schema": {},
+        "value": value,
+        "applies": "restart",
+        "secrets": [],
+        "revision": 0,
+    })
+}
+
+/// settings.describe（特权）：返回白名单命名空间视图。
+fn settings_describe(state: &AppState) -> Value {
+    let settings = state.settings.lock().unwrap();
+    let mut namespaces = Vec::new();
+    for ns in WEB_SETTINGS_NAMESPACES {
+        let value = settings.get(*ns).cloned().unwrap_or_default();
+        namespaces.push(settings_view(ns, &value));
+    }
+    ok(json!({ "writable": true, "hasDocument": false, "namespaces": namespaces }))
+}
+
+/// settings.update（特权）：整 ns patch 合并（对象深合并，JSON patch 语义近似）。
+fn settings_update(state: &AppState, payload: Value) -> Value {
+    settings_write(state, payload, |cur, payload| {
+        if let Some(patch) = payload.get("patch").and_then(Value::as_object) {
+            for (k, v) in patch {
+                cur.insert(k.clone(), v.clone());
+            }
+        }
+    })
+}
+
+/// settings.replace（特权）：整段替换。
+fn settings_replace(state: &AppState, payload: Value) -> Value {
+    settings_write(state, payload, |cur, payload| {
+        if let Some(section) = payload.get("section").and_then(Value::as_object) {
+            *cur = section.clone();
+        }
+    })
+}
+
+/// settings.mutate（特权）：{op:'set',path,value} / {op:'unset',path} 点路径写。
+fn settings_mutate(state: &AppState, payload: Value) -> Value {
+    settings_write(state, payload, |cur, payload| {
+        let Some(ops) = payload.get("ops").and_then(Value::as_array) else {
+            return;
+        };
+        for op in ops {
+            let Some(op_kind) = op.get("op").and_then(Value::as_str) else {
+                continue;
+            };
+            let path: Vec<String> = op
+                .get("path")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default();
+            match op_kind {
+                "set" => {
+                    if let Some(value) = op.get("value").cloned() {
+                        if path.is_empty() {
+                            continue;
+                        }
+                        let last = path.len() - 1;
+                        let mut node = &mut *cur;
+                        for (i, seg) in path.iter().enumerate() {
+                            if i == last {
+                                node.insert(seg.clone(), value.clone());
+                            } else {
+                                // 中间段：缺失或非对象 → 以 {} 垫底后下钻。
+                                let missing = match node.get(seg) {
+                                    Some(v) => !v.is_object(),
+                                    None => true,
+                                };
+                                if missing {
+                                    node.insert(seg.clone(), json!({}));
+                                }
+                                node = node.get_mut(seg).unwrap().as_object_mut().unwrap();
+                            }
+                        }
+                    }
+                }
+                "unset" => {
+                    if let Some(last) = path.last() {
+                        cur.remove(last);
+                    }
+                }
+                _ => {}
+            }
+        }
+    })
+}
+
+/// 共用写面：定位 ns → 应用闭包变更 → 返回新视图。
+/// 未知 ns → `settings-rejected {ns}`（台账：schema 校验/未知 ns/只读 provider → settings-rejected）。
+fn settings_write<F>(state: &AppState, payload: Value, apply: F) -> Value
+where
+    F: FnOnce(&mut serde_json::Map<String, Value>, &Value),
+{
+    let Some(ns) = payload.get("ns").and_then(Value::as_str) else {
+        return err("bad-request", "missing ns");
+    };
+    if !WEB_SETTINGS_NAMESPACES.contains(&ns) {
+        return err_with_details("settings-rejected", "namespace not writable", json!({ "ns": ns }));
+    }
+    let mut settings = state.settings.lock().unwrap();
+    let mut value = settings.get(ns).cloned().unwrap_or_default();
+    apply(&mut value, &payload);
+    settings.insert(ns.to_string(), value.clone());
+    ok(settings_view(ns, &value))
 }
 
 /// credentials.describe（特权）：永不带值，只报 configured/writable。

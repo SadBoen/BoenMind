@@ -102,7 +102,7 @@ impl Session {
     /// append 一条事件：seq 自增、时间戳 = `Utc::now()`、push 进日志、发布到总线。
     pub fn append(&self, event: SessionEvent) -> SessionRecord {
         let seq = self.next_seq.fetch_add(1, Ordering::SeqCst);
-        let record = SessionRecord::new(seq, event);
+        let record = SessionRecord::new(seq, self.header.id.clone(), event);
         self.log.write().push(record.clone());
         self.bus.emit(&record);
         record
@@ -292,8 +292,8 @@ mod tests {
     #[test]
     fn from_log_rejects_non_consecutive_seq() {
         let records = vec![
-            SessionRecord::new(1, SessionEvent::SessionStarted { header: header("x") }),
-            SessionRecord::new(3, SessionEvent::UserMessage { text: "a".to_string() }),
+            SessionRecord::new(1, "x", SessionEvent::SessionStarted { header: header("x") }),
+            SessionRecord::new(3, "x", SessionEvent::UserMessage { text: "a".to_string() }),
         ];
         let err = Session::from_log(header("x"), records, EventBus::new())
             .err()
@@ -309,6 +309,7 @@ mod tests {
         // 首条不是 SessionStarted
         let records = vec![SessionRecord::new(
             1,
+            "x",
             SessionEvent::UserMessage { text: "a".to_string() },
         )];
         let err = Session::from_log(header("x"), records, EventBus::new())
@@ -319,6 +320,7 @@ mod tests {
         // header 不匹配
         let records = vec![SessionRecord::new(
             1,
+            "x",
             SessionEvent::SessionStarted { header: header("other") },
         )];
         let err = Session::from_log(header("x"), records, EventBus::new())
@@ -365,9 +367,9 @@ mod tests {
     fn store_restore_rejects_invalid_log() {
         let store = SessionStore::new();
         let records = vec![
-            SessionRecord::new(1, SessionEvent::SessionStarted { header: header("s2") }),
-            SessionRecord::new(2, SessionEvent::UserMessage { text: "a".to_string() }),
-            SessionRecord::new(4, SessionEvent::UserMessage { text: "b".to_string() }),
+            SessionRecord::new(1, "s2", SessionEvent::SessionStarted { header: header("s2") }),
+            SessionRecord::new(2, "s2", SessionEvent::UserMessage { text: "a".to_string() }),
+            SessionRecord::new(4, "s2", SessionEvent::UserMessage { text: "b".to_string() }),
         ];
         assert!(store.restore(header("s2"), records, EventBus::new()).is_err());
         assert!(store.get("s2").is_none());

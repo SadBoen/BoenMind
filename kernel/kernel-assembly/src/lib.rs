@@ -130,7 +130,9 @@ impl Runtime {
         let records: Vec<kernel_contracts::SessionRecord> = repaired
             .iter()
             .enumerate()
-            .map(|(i, e)| kernel_contracts::SessionRecord::new((i + 1) as u64, e.clone()))
+            .map(|(i, e)| {
+                kernel_contracts::SessionRecord::new((i + 1) as u64, session_id, e.clone())
+            })
             .collect();
         let session = self
             .store

@@ -1,6 +1,10 @@
 //! web-server 二进制：Rust 协议兼容层服务入口。
 //!
-//! 用法：web-server [--db <path>] [--dist <dist_root>] [--port <port>] [--trusted-host <host>]
+//! 用法：web-server [--db <path>] [--dist <dist_root>] [--boot-json <file>] [--port <port>] [--trusted-host <host>]
+//!
+//! 默认 `--dist` 指向内置前端快照 `kernel/web-server/frontend/`（dsh rc.6 壳层 +
+//! 真实 boot 清单 + 38 插件 client bundle，见同目录 README）。快照 index.html 已含
+//! `window.__DSH_BOOT__` 注入，无需再注入；对自备 dist 可用 `--boot-json` 提供清单。
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -19,7 +23,8 @@ fn main() {
 
     let args: Vec<String> = std::env::args().collect();
     let mut db = PathBuf::from("boenmind.db");
-    let mut dist = PathBuf::from("frontend/dist");
+    let mut dist = PathBuf::from("kernel/web-server/frontend");
+    let mut boot_json: Option<String> = None;
     let mut port: u16 = 3080;
     let mut trusted_hosts: Vec<String> = vec![];
 
@@ -34,6 +39,14 @@ fn main() {
                 i += 1;
                 dist = PathBuf::from(&args[i]);
             }
+            "--boot-json" => {
+                i += 1;
+                let path = &args[i];
+                boot_json = Some(
+                    std::fs::read_to_string(path)
+                        .unwrap_or_else(|e| panic!("cannot read boot json {path}: {e}")),
+                );
+            }
             "--port" => {
                 i += 1;
                 port = args[i].parse().expect("port must be a number");
@@ -44,7 +57,7 @@ fn main() {
             }
             "--help" | "-h" => {
                 println!(
-                    "usage: web-server [--db <path>] [--dist <dir>] [--port <n>] [--trusted-host <host>]"
+                    "usage: web-server [--db <path>] [--dist <dir>] [--boot-json <file>] [--port <n>] [--trusted-host <host>]"
                 );
                 return;
             }
@@ -56,17 +69,6 @@ fn main() {
         i += 1;
     }
 
-    // boot 3 槽（面 6）：__DSH_BOOT__ JSON。
-    let boot_json = format!(
-        r#"{{"rev":"{:012x}","entries":[]}}"#,
-        simple_hash(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()
-        )
-    );
-
     let runtime = match Runtime::headless(db.clone()) {
         Ok(r) => r,
         Err(e) => {
@@ -75,9 +77,10 @@ fn main() {
         }
     };
     let state = Arc::new(AppState::with_trusted_hosts(runtime, trusted_hosts.clone()));
-    state.attach_event_bus();
+    // 持有总线监听器句柄到进程结束（drop 即注销，实时事件流依赖它）。
+    let _bus_listener = state.attach_event_bus();
 
-    let app = web_server::router(Arc::clone(&state), dist.clone(), Some(boot_json));
+    let app = web_server::router(Arc::clone(&state), dist.clone(), boot_json);
 
     let addr = format!("127.0.0.1:{port}");
     tokio::runtime::Runtime::new()
@@ -97,7 +100,3 @@ fn main() {
         });
 }
 
-/// 简单 12 位 hex 哈希（rev 字段：boot manifest 要求 12 位 hex）。
-fn simple_hash(n: u128) -> u64 {
-    (n ^ (n >> 32) ^ (n >> 64) ^ (n >> 96)) as u64
-}

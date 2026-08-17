@@ -7,10 +7,15 @@ target/
 # dsh 运行数据（会话/存储/配置，不入库；settings.yaml 未来含 API key）
 dsh-home/storages/
 dsh-home/settings.yaml
+dsh-home/sessions/
 dsh-home/profiles/*/node_modules/
 dsh-home/profiles/*/data/
 dsh-home/profiles/*/pnpm-lock.yaml
+rpc-calls.log
 
 # 自研插件构建产物
 plugins/*/lib/
 plugins/*/dist/
+
+# ZCode 内部文件
+.zcode/

@@ -51,7 +51,7 @@ impl ServerResponse {
             rpc_id: rpc_id.to_string(),
             result: json!({
                 "ok": false,
-                "error": { "code": code, "message": message.into() }
+                "error": { "code": code, "message": message.into(), "details": {} }
             }),
         }
     }
@@ -150,9 +150,9 @@ pub fn ok(value: Value) -> Value {
     json!({ "ok": true, "value": value })
 }
 
-/// 便利函数：构造 `{ok:false, error:{code, message}}`。
+/// 便利函数：构造 `{ok:false, error:{code, message, details:{}}}`。
 pub fn err(code: &str, message: impl Into<String>) -> Value {
-    json!({ "ok": false, "error": { "code": code, "message": message.into() } })
+    json!({ "ok": false, "error": { "code": code, "message": message.into(), "details": {} } })
 }
 
 /// 便利函数：构造 `{ok:false, error:{code, message, details}}`。
@@ -177,7 +177,8 @@ mod tests {
         let e = ServerResponse::err("abc", "session-not-found", "nope");
         assert_eq!(
             serde_json::to_string(&e).unwrap(),
-            r#"{"type":"server-response","rpcId":"abc","result":{"ok":false,"error":{"code":"session-not-found","message":"nope"}}}"#
+            // serde_json Map 按键序序列化：code < details < message。
+            r#"{"type":"server-response","rpcId":"abc","result":{"ok":false,"error":{"code":"session-not-found","details":{},"message":"nope"}}}"#
         );
     }
 
