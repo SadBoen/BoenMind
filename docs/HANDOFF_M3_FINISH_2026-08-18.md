@@ -71,20 +71,33 @@ parent-unavailable/空 entries）必须完成，真实执行登记为 M3.5 前�
   重放仍 pending 的 `question/requested` 与 `approval/requested`（**rpcId 原样复用**）。
 
 ### 2) session/projection 槽（台账 §3.3 + §4）
-- `AppState` 加投影单元注册表：`Mutex<HashMap<String, (Value watermark_seq, Value value)>>`
-  （key → (seq, value)，seq 单调，客户端 higher-seq-wins）。
+- web-server 提供**投影单元注册机制**（契约层；单元内容来自各插件/宿主）：
+  `Mutex<HashMap<key, (watermark_seq, value)>>`；seq 单调，客户端 higher-seq-wins。
 - `session/projection` 帧（mux 下行）：`{sessionId, key, value, seq}`；
 - `session.history` tail 页（当前无分页 = 恒 tail）带 `projections:{asOfSeq, values}`。
-- 与现有 `attach_event_bus` 联动：投影变更时走 events_tx 广播（事件类型区分）。
+- 投影单元**产生者是插件**（goal 插件等）；web-server 内存态最小桥（goal 轮）先写入，
+  插件化后移交给插件。
 
-### 3) goal.\*（台账 §2 goals 表 + 错误码）
-- **无读方法**——状态只走 projection（key `'goal'`）+ history tail projections。
-- `goal.create{sessionId, objective≥1, maxGoalRounds?}` → `{ref:{id, revision}}`；
-  内部建 GoalRecord{id, objective, rounds, revision:1, phase:'active'|'paused'|'completed'}，
-  写 projection 变更 + 事件（goal/change）。
-- edit（不改 phase，revision+1）、pause/resume（翻转 armed 状态）、complete（解除+projection
-  终态）、clear（留墓碑 + `{cleared:true}`）。
-- 本实现是**状态表 + wire 契约**；与内核 loop 的"自动续跑"接合可后置（M3 先保证 wire 全通）。
+### 3) goal.\*（台账 §2 goals 表 + 错误码）——**架构澄清：wire 在 web-server，语义属 goal 插件**
+- **分层（修正，与 subagent 同逻辑）**：goal 在 dsh 是插件包（`goal/goal`，事件
+  `goal/change`）。**内核不持有 goal 概念**。web-server 只做 wire 契约 + 内存态最小桥
+  （对齐 settings/credentials 的"契约先通、持久化/插件化后置"）：goal 记录
+  {objective, rounds, revision, phase} 存 web-server 内存态，写 projection（key `'goal'`）
+  + 事件，无读方法（走 history tail projections + session/projection 帧）。
+- **自动续跑语义 = goal 插件职责（M3.5）**：web-server 不实现"武装目标自动续跑"——
+  那是可变策略，归插件。
+- goal.create/edit/pause/resume/complete/clear wire 形状逐字对齐（见台账 §2 goals 表）。
+
+### 内核越界审查登记（2026-08-18 晚，用户质询后自查）
+- ✅ **已修**：kernel-llm `openai.rs` 原硬编码 `model.contains("m3"|"deepseek-reasoner")`
+  推断推理增量——"哪些模型有 reasoning_content"是可变的 provider 能力事实（策略），被写进
+  内核。已改为 `OpenAiProviderConfig.supports_reasoning` 字段，由 config.toml 声明
+  （minimax/deepseek 缺省 true、可覆盖，custom 缺省 false）。真 provider 实测 11/11 不变。
+- 📋 **已登记（低优先，不阻塞 M3）**：kernel-loop `MAX_STEPS=32` 硬编码——防失控上限的
+  "语义"属内核（合理），但数值是策略（M1 曾调过），应可配置。随配置面（settings/--config
+  扩展）一并做。
+- 📋 **已登记（低优先）**：kernel-assembly `headless()` 默认 mock provider/model 是装配
+  缺省（web-server 会覆写），可接受；保持现状。
 
 ### 4) session.attachment / session.updateQueue
 - attachment：会话日志含 `attachmentId` 引用才回（当前内核无附件事件——实现按"日志引用表"

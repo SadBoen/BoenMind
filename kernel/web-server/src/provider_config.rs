@@ -43,6 +43,9 @@ pub struct ProviderConfig {
     pub api_key: String,
     pub models: Vec<String>,
     pub default_model: Option<String>,
+    /// 是否解析 `reasoning_content` 为推理增量（minimax/deepseek 系默认 true；
+    /// 显式配置可覆盖。字段不出现时解析无害）。
+    pub supports_reasoning: bool,
 }
 
 /// provider 通道类别（决定模型列表端点形态）。
@@ -93,6 +96,7 @@ struct RawProvider {
     api_key: Option<String>,
     models: Option<Vec<String>>,
     default_model: Option<String>,
+    supports_reasoning: Option<bool>,
 }
 
 /// 读取并校验配置文件。文件不存在/解析失败 → Err（fail-loud：配置是显式请求的）。
@@ -161,6 +165,11 @@ fn build_provider(raw: RawProvider) -> Result<Option<ProviderConfig>, String> {
         },
     };
 
+    // 推理增量能力：显式配置 > 按 kind 推断（minimax/deepseek 系默认 true）。
+    let supports_reasoning = raw
+        .supports_reasoning
+        .unwrap_or(matches!(kind, ProviderKind::Minimax | ProviderKind::DeepSeek));
+
     Ok(Some(ProviderConfig {
         id,
         name,
@@ -169,6 +178,7 @@ fn build_provider(raw: RawProvider) -> Result<Option<ProviderConfig>, String> {
         api_key,
         models: raw.models.unwrap_or_default(),
         default_model: raw.default_model,
+        supports_reasoning,
     }))
 }
 

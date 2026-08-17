@@ -127,6 +127,7 @@ fn main() {
                 api_key: p.api_key.clone(),
                 models,
                 list_endpoint,
+                supports_reasoning: p.supports_reasoning,
             }));
             provider_runtimes.push(ProviderRuntime {
                 id: p.id.clone(),
