@@ -1,7 +1,7 @@
 # BoenMind 计划 v2：Rust 微内核自研 + 前端借 DSH 生态（2026-08-17）
 
 > 状态：**定稿方向**（微内核一步到位已拍板；§八 拍板点 1–10 全部拍板）
-> 修订史：v1（同日夜）＝新建项目、dsh 全家桶为唯一真身、逐单元升级 → **v2（本稿）＝Rust 微内核自研后端 + 前端全套借 dsh 生态 + 插件/APP 全 Rust**。v1 的"全家桶 bootstrap / 毛玻璃皮肤 / DSH_HOME 启动器"成果保留（前端生态基础），后台路线按微内核重排。
+> 修订史：v1（同日夜）＝新建项目、dsh 全家桶为唯一真身、逐单元升级 → **v2（本稿）＝Rust 微内核自研后端 + 前端全套借 dsh 生态 + 插件/APP 全 Rust**。v1 的"全家桶 bootstrap / 毛玻璃皮肤 / DSH_HOME 启动器"成果保留（前端生态基础），后台路线按微内核重排。**v2.1（本稿，同日夜）＝三架构师 SKILL 交叉评审修正**（code-architecture / codebase-reviewer / ln-24，报告见 `docs/review-dsh-v2/`）：契约面 6→9、mux 方向修正、三层事件澄清、插件进程模型拍板、LLM 端口补入、存储模型统一、双栅栏 trust fence。**对外契约逐字对齐为用户拍板铁律（§3.4）。**
 > 事实基线：只依据 2026-08-17 核查（npm registry + 本机 dsh 浅克隆 + 官方 docs/source），不引用旧结论。
 > 关联：`docs/design/DSH_PROJECT_2026-08-17.md`（v1 全文，已归档为 `docs/archive/`）、`frontend/public/docs/expert-team.md`（专家团队载体）、`backend/vendor/UPSTREAM_TRACKING.md`（上游台账）。
 
@@ -32,10 +32,11 @@ boenmind-dsh/
 │   ├── loop/               #   回合循环（turn/step，waterfall 事件）
 │   ├── session/            #   append-only SessionEvent 日志（唯一事实源）
 │   ├── tools/              #   工具注册表 + 门控（enabled 名单 + fail-closed）
-│   ├── storage/            #   sqlite（sessions/messages/tool_calls/事件）
+│   ├── llm/                #   LLM 适配端口（provider trait，门禁 1 前置）【v2.1 补】
+│   ├── storage/            #   sqlite 持久化后端（事件日志唯一事实源；sessions/messages 为其投影）
 │   ├── mcp/                #   MCP client/server（bm-mcp 语义迁入）
 │   └── supervisor/         #   插件进程宿主（拉起/健康检查/崩溃重启/蓝绿切换）
-├── plugins/                # Rust 插件（编译产物，进程隔离 + 状态外置）
+├── plugins/                # Rust 插件（**独立进程**，编译产物，状态外置）【v2.1 拍板】
 │   ├── team/               # 专家团队（对齐 expert-team.md）
 │   ├── steward/            # 管家（治理区间 + wake）
 │   ├── memory/             # 记忆分层/项目隔离
@@ -60,18 +61,23 @@ boenmind-dsh/
 
 dsh 的界面（React）只跟 dsh 的 Node 后端说话，两边有一套固定的**接口合同**。我们要"遥控器还用 dsh 的、电视换成自己 Rust 造的"，就必须写一个**信号翻译器**（Rust 版 web-server），照着合同逐条发出 dsh 遥控器认得的信号。合同不满足，界面就白屏或断流。
 
-### 3.2 接口合同（2026-08-17 源码级实取，`packages/client/connection` + `host/webserver`）
+### 3.2 接口合同（v2.1 修正：9 面 + 双栅栏，2026-08-17 源码级实取）
+
+> v2.1 修正（三架构师评审 + 亲验）：原 6 面 → 9 面；**face2 mux 方向修正**（原稿写反：mux 是宿主→浏览器下行，WS 上行一律拒绝，浏览器上行走 HTTP POST envelope）；补 `/api/respond`、`session.export`、SSE 备选、HMR 通道；boot 协议实为 3 槽。
 
 | # | 面 | 形状 | 谁消费 |
 |---|---|---|---|
-| 1 | **HTTP `/api/*`** | REST 请求面（会话/模型/设置/工具…），`API_PATH='/api'` 前缀 | 前端 fetch/RPC |
-| 2 | **WS `/api/events.mux`** | 浏览器→宿主 上行复用流（mux-frame，一连接多路请求） | 前端命令上行 |
-| 3 | **WS `/api/events.host`** | 宿主→浏览器 下行事件流（两条 server-to-browser 流：会话事件/宿主事件） | 前端实时投影 |
-| 4 | **静态 SPA** | index.html + 资产，SPA 路由兜底 200 | 页面加载 |
+| 1 | **HTTP POST `/api/<channel>/<endpoint>`** | **RPC 信封**（非 REST）：`client-request` + `rpcId` + `method` + `payload`，回 `server-response`（rpcId 回显校验）。55 个 RPC 方法 + 6 宿主概念（workspace/goals/skills/agentPresets/subagent/jobs） | 前端所有请求上行 |
+| 2 | **WS `/api/events.mux`** | **宿主→浏览器 下行**多会话聚合流（MuxFrame 9 种）；浏览器上行消息一律 close(1008 'downlink only') 拒绝 | 前端实时投影 |
+| 3 | **WS `/api/events.host`** | 宿主→浏览器 下行宿主事件流（HostFrame 9 种） | 前端宿主状态 |
+| 4 | **静态 SPA** | index.html + 资产，SPA 兜底 200 / 非 GET 405 / 越界 403 / 未知扩展 octet-stream | 页面加载 |
 | 5 | **`/plugins/<id>/client.js`** | 插件前端 bundle（`__ModuleLoader__` 注册） | 前端插件系统 |
-| 6 | **`__DSH_BOOT__`** | 注入 index.html 的启动图（`tapIndex` 变换） | 前端启动 |
+| 6 | **boot 3 槽** | `__DSH_BOOT__`（启动图）+ `__ModuleLoader__` + `__DSH_MODULES__`（模块表），注入 index.html | 前端启动 |
+| 7 | **`POST /api/respond`** | 审批/提问应答上行（rpc 之外的特殊面） | 权限弹窗/提问 |
+| 8 | **`GET /api/session.export`** | 会话日志 ZIP 下载 | 审计/导出 |
+| 9 | **SSE 备选 carrier + `/plugins/events` HMR 通道** | 非 WebSocket 环境的 SSE 流；插件前端 HMR 热更新事件 | 特殊宿主/开发 |
 
-外加 **trust fence**（`api-request-trust.ts`）：只信 loopback + `--trusted-host` 声明的主机，非 loopback 绑定即网络暴露——我们直接沿用（绑定 127.0.0.1 默认姿态）。
+**双栅栏 trust fence（v2.1 补）**：除 Host/Origin 栅栏（`api-request-trust.ts`，只信 loopback + `--trusted-host`）外，另有 **16 个特权方法的 loopback-pin**（`PRIVILEGED_METHODS`：settings.*、credentials.*、agentPreset.read/copy/remove/openDocument、host.pickDirectory/openPath、llm.discoverModels 等）——即使 LAN 部署也强制 loopback。Rust 兼容层两栅栏都要复刻。
 
 ### 3.3 为什么可行（不是黑盒）
 
@@ -86,7 +92,10 @@ dsh 的界面（React）只跟 dsh 的 Node 后端说话，两边有一套固定
 - **路径/帧/字段/错误码逐字一致**：`/api/events.mux`、`/api/events.host`、REST 路由、WS 帧、JSON 字段、HTTP 错误码——不自创、不改名、不改形状。
 - **事件名/负载形状逐字一致**：`agent/pre-step`、`turn/stopping`、`tool/execute`…事件名与字段与 dsh 源码一致（语义随内部实现走 Rust，对外事件语义不变）。
 - **行为细节逐字一致**：SPA 兜底 200、非 GET/HEAD 405、路径越界 403、未知扩展 octet-stream、trust fence（只信 loopback + 显式 trusted-host）——插件依赖的正是这些边角行为。
-- **挂点集合一致**：dsh 有哪些挂点（boot/服务激活/事件流/插槽），我们就有哪些对应的对外表现——一个不多一个不少；内部实现（Rust trait/通道/supervisor）自由。
+- **挂点集合一致（按三层重述，v2.1）**：dsh 事件分**三层**，复刻范围不同——
+  1. **wire 层**（前端看到的，必须逐字复刻）：MuxFrame 9 种 + HostFrame 9 种 + SessionEvent 信封（wide-data + ignorable 守卫）；持久化 SessionEvent 46 种（core 14 + 插件扩展 32）。
+  2. **进程内 cordis 事件**（`agent/pre-step`、`tool/execute`、`turn/stopping`…）：**不上 wire**，前端不直接消费——Rust 宿主内部可自由组织，无需逐字复刻（语义对齐即可）。
+  3. **扩展槽**：`session/projection`、`host/remote-event` 是开放扩展点，插件可挂。
 
 **契约台账（产物）**：M2 开工先产出 `CONTRACT_LEDGER_DSH.md`——从 dsh `packages/` 源码逐条提取的路由/事件/负载/语义清单，双用途：实现清单 + 验收标准。
 **验收方法**：同一份 dsh 官方前端，分别连 dsh Node 后端与我们的 Rust 兼容层，行为逐项对比；对上一项才勾销一项。前端升级 = 对台账核对。
@@ -111,18 +120,19 @@ dsh 的界面（React）只跟 dsh 的 Node 后端说话，两边有一套固定
 dsh 全家桶 bootstrap 跑通（3080 服务、__DSH_BOOT__、插件资产 200）+ 毛玻璃皮肤接入 + DSH_HOME 统一启动器（`scripts/dsh.cjs`）。**此后 dsh web 角色 = 前端宿主 + 协议参考实现。**
 
 ### M1 微内核骨架（Rust）
-- kernel/loop + session + tools + storage（sqlite）+ mcp：把 bm 内核四件套语义 + dsh 的 harness 语义（append-only 事件流、turn/step waterfall、model-visible-means-logged）合并为 Rust 微内核；**状态外置纪律**（进程只持可重建状态）。
+- kernel/loop + session + tools + **llm（provider trait，先接 mock LLM）** + storage（sqlite）+ mcp：把 bm 内核四件套语义 + dsh 的 harness 语义（append-only 事件流、turn/step waterfall、model-visible-means-logged）合并为 Rust 微内核；**状态外置纪律**（进程只持可重建状态）。
+- 存储模型统一（v2.1）：**事件日志（append-only SessionEvent）= 唯一事实源**；sessions/messages/tool_calls 是它的**投影**；崩溃恢复语义对齐 dsh（fsync + 原子发布 + interrupted-turn 修复）。
 - supervisor 雏形：插件进程宿主骨架（拉起/健康检查/崩溃重启）。
-- **门禁 1**：headless 回合全链路（消息→工具→回复）在 Rust 微内核上跑通。
+- **门禁 1**：headless 回合全链路（消息→工具→回复）在 Rust 微内核上跑通；**mock LLM 下 kill -9 恢复测试**（中断回合可续跑，事件日志无 torn-tail）；crate 边界守卫（依赖只许向下，借鉴 bobleer check-crate-boundaries 思路）。
 
 ### M2 Rust web-server 兼容层
-- 先产出 **`CONTRACT_LEDGER_DSH.md` 契约台账**（dsh 前端合同逐条提取），再按 §3.4 顺序实现 6 面；dsh 前端直连 Rust 后端（不再起 Node 后端）。
-- **门禁 2**：**同一份 dsh 前端分别连 Node 后端与 Rust 兼容层，行为逐项对比一致**——建会话→发消息→流式回复→工具调用可见全通；皮肤可用；契约台账全部勾销。
+- 先产出 **`CONTRACT_LEDGER_DSH.md` 契约台账**（9 面 + 双栅栏 + 55 RPC 方法 + 46 SessionEvent + MuxFrame/HostFrame 9+9 + boot 3 槽，逐条从 dsh `packages/` 源码提取），再按 §3.5 顺序实现；dsh 前端直连 Rust 后端（不再起 Node 后端）。
+- **门禁 2**：**conformance harness**（台账机器化：wire 轨迹 diff，同一 dsh 前端连 Node 后端 vs Rust 兼容层，请求/响应逐帧对比一致）——建会话→发消息→流式回复→工具调用可见全通；皮肤可用；台账全部勾销。
 
 ### M3 插件/APP 全面 Rust 化 + 微内核红利
-- 插件 = Rust 进程（编译产物分发、闭源可行）；权限两档（官方/自研宿主 + 第三方隔离 worker）；记忆/审计/团队/管家插件逐个移植（JS→Rust）。
-- supervisor 完整（蓝绿替换、崩溃计数、IPC 版本化+鉴权）——**Linux 服务器无感重起就绪**。
-- **门禁 3**：禁用插件→蓝绿替换→会话不中断；专家团队全链路（派工→并行→结构化返回→汇总）。
+- 插件 = **Rust 独立进程**（编译产物分发、闭源可行）；权限两档（官方/自研宿主 + 第三方 worker 降权）；**进程隔离 ≠ 沙箱**（v2.1 澄清：第三方 worker 需额外降权/能力裁剪，防读全盘）；记忆/审计/团队/管家插件逐个移植。
+- supervisor 完整（蓝绿替换、崩溃计数、IPC 协议版本化+鉴权）——**Linux 服务器无感重起就绪**。
+- **门禁 3**：禁用插件→蓝绿替换→**流式进行中**实测会话不中断；专家团队全链路（派工→并行→结构化返回→汇总）。
 
 ### M4 发布
 - v0.1.0：浏览器版首发 + Tauri 壳（后置项）+ CI（Rust 质量门：测试/clippy/VMware runner 复用）+ Docker + 便携包（Rust 单二进制，无需内置 Node）。
@@ -146,10 +156,10 @@ dsh 全家桶 bootstrap 跑通（3080 服务、__DSH_BOOT__、插件资产 200�
 
 | 风险 | 对策 |
 |---|---|
-| **web-server 兼容层工程量/未知**（dsh 前端契约多、文档薄） | §3.4 分阶段；与官方同版本锁死；源码对表 + 真实前端验收；聊天闭环优先 |
-| dsh 前端 rc 生态漂移 | 锁版本快照；升级=显式核对合同 |
+| **web-server 兼容层工程量/未知**（dsh 前端契约多、文档薄） | §3.5 分阶段；与官方同版本锁死；源码对表 + conformance harness（wire 轨迹 diff）；聊天闭环优先 |
+| 契约漂移（dsh rc 生态） | 锁版本快照；升级=显式核对台账 |
 | 微内核复杂度（进程编排） | 从 supervisor 雏形渐进；IPC 协议化+鉴权；状态外置纪律是硬前提 |
-| 无沙箱问题 | Rust 插件进程隔离本身就是沙箱（进程级隔离 > 无隔离）；第三方插件 worker 降权运行 |
+| 进程隔离 ≠ 沙箱（第三方插件可读全盘） | 第三方 worker 降权 + 能力裁剪（v2.1 明确） |
 | 插件/APP 全 Rust 的构建速度 | sccache/CI runner 复用；插件增量编译；Rust 热替换靠 supervisor 不是进程内动态加载 |
 
 ---
