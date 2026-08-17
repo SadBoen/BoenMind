@@ -177,8 +177,8 @@ mod tests {
         let e = ServerResponse::err("abc", "session-not-found", "nope");
         assert_eq!(
             serde_json::to_string(&e).unwrap(),
-            // serde_json Map 按键序序列化：code < details < message。
-            r#"{"type":"server-response","rpcId":"abc","result":{"ok":false,"error":{"code":"session-not-found","details":{},"message":"nope"}}}"#
+            // serde_json Map 按键序（BTreeMap 字母序）序列化：error < ok；code < details < message。
+            r#"{"type":"server-response","rpcId":"abc","result":{"error":{"code":"session-not-found","details":{},"message":"nope"},"ok":false}}"#
         );
     }
 

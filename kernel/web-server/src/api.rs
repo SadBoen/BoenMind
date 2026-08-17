@@ -8,6 +8,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use kernel_assembly::Runtime;
+use kernel_contracts::llm::LlmModelInfo;
 use kernel_contracts::session::{SessionHeader, SessionId};
 use kernel_loop::ReactLoopAgent;
 use serde_json::{json, Value};
@@ -21,6 +22,24 @@ pub struct SessionHandle {
     pub running: bool,
     pub blank: bool,
     pub title: Option<String>,
+    /// per-session 模型选择（session.selectModel 写入；prompt 时同步给 agent）。
+    pub selected: Option<(String, String)>,
+}
+
+/// 真实 provider 运行时（M3）：静态模型清单 + 流式适配器（None = mock 模式）。
+pub struct ProviderRuntime {
+    pub id: String,
+    pub display_name: String,
+    pub settings_ns: String,
+    pub base_url: String,
+    pub models: Vec<LlmModelInfo>,
+    pub adapter: Option<Arc<kernel_llm::OpenAICompatLlm>>,
+}
+
+impl ProviderRuntime {
+    pub fn settings_path(&self) -> Vec<String> {
+        vec!["llm".to_string(), self.id.clone()]
+    }
 }
 
 /// 兼容层应用状态。
@@ -39,6 +58,10 @@ pub struct AppState {
     pub workspaces: Mutex<HashMap<String, Value>>,
     /// 归档会话集（workspace.archiveSession 持久集）。
     pub archived_session_ids: Mutex<Vec<String>>,
+    /// 凭据存储（credentials.set/unset 写面；内存态，值永不出域，只报 configured）。
+    pub credentials: Mutex<HashMap<String, String>>,
+    /// 真实 provider 运行时（M3；空 = mock 单 provider 模式）。
+    pub providers: Vec<ProviderRuntime>,
 }
 
 impl AppState {
@@ -47,6 +70,14 @@ impl AppState {
     }
 
     pub fn with_trusted_hosts(runtime: Runtime, trusted_hosts: Vec<String>) -> Self {
+        Self::assemble(runtime, trusted_hosts, vec![])
+    }
+
+    pub fn assemble(
+        runtime: Runtime,
+        trusted_hosts: Vec<String>,
+        providers: Vec<ProviderRuntime>,
+    ) -> Self {
         let host_cwd = std::env::current_dir()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default();
@@ -61,6 +92,8 @@ impl AppState {
             settings: Mutex::new(HashMap::new()),
             workspaces: Mutex::new(HashMap::new()),
             archived_session_ids: Mutex::new(Vec::new()),
+            credentials: Mutex::new(HashMap::new()),
+            providers,
         }
     }
 
@@ -104,10 +137,10 @@ pub async fn dispatch(state: &Arc<AppState>, method: &str, payload: Value) -> Va
         "session.cancel" => session_cancel(state, payload),
         "session.rename" => session_rename(state, payload),
         "session.models" => session_models(state, payload),
-        "session.selectModel" => session_select_model(payload),
+        "session.selectModel" => session_select_model(state, payload),
         "llm.providers" => llm_providers(state).await,
         "llm.models" => llm_models(state).await,
-        "llm.discoverModels" => llm_discover_models(payload),
+        "llm.discoverModels" => llm_discover_models(state, payload).await,
         "workspace.list" => workspace_list(state),
         "workspace.create" => workspace_create(state, payload),
         "workspace.rename" => workspace_rename(state, payload),
@@ -126,7 +159,9 @@ pub async fn dispatch(state: &Arc<AppState>, method: &str, payload: Value) -> Va
         "settings.update" => settings_update(state, payload),
         "settings.replace" => settings_replace(state, payload),
         "settings.mutate" => settings_mutate(state, payload),
-        "credentials.describe" => credentials_describe(payload),
+        "credentials.describe" => credentials_describe(state, payload),
+        "credentials.set" => credentials_set(state, payload),
+        "credentials.unset" => credentials_unset(state, payload),
         _ => err(
             "bad-request",
             format!("method \"{method}\" is not implemented by this server"),
@@ -237,6 +272,7 @@ async fn session_create(state: &Arc<AppState>, payload: Value) -> Value {
                     running: false,
                     blank: true,
                     title: None,
+                    selected: None,
                 },
             );
             ok(json!({ "sessionId": session_id, "agentPreset": "standard" }))
@@ -300,6 +336,10 @@ async fn session_prompt(state: &Arc<AppState>, payload: Value) -> Value {
         }
         h.running = true;
         h.blank = false;
+        // per-session 模型选择同步给 agent（session.selectModel 语义）。
+        if let Some((provider, model)) = h.selected.clone() {
+            h.agent.set_model_override(provider, model);
+        }
         Arc::clone(&h.agent)
     };
     let state2 = Arc::clone(state);
@@ -324,22 +364,65 @@ fn mock_model_group() -> Value {
     })
 }
 
+/// 模型分组目录（llm.models / session.models 共用）：真 provider 时每 provider 一组，
+/// mock 模式（无配置）时单 mock 组。
+fn model_groups(state: &AppState) -> Value {
+    if state.providers.is_empty() {
+        return json!([mock_model_group()]);
+    }
+    let groups: Vec<Value> = state
+        .providers
+        .iter()
+        .map(|p| {
+            json!({
+                "id": p.id,
+                "provider": p.id,
+                "label": p.display_name,
+                "name": p.display_name,
+                "models": p.models.iter().map(|m| json!({
+                    "id": m.id,
+                    "name": m.label.clone().unwrap_or_else(|| m.id.clone()),
+                })).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    json!(groups)
+}
+
+/// 当前模型选择：(provider, model)——会话 override 优先，否则运行时默认。
+fn current_model(state: &AppState, session_id: &str) -> (String, String) {
+    if let Some(h) = state.sessions.lock().unwrap().get(session_id) {
+        if let Some(sel) = &h.selected {
+            return sel.clone();
+        }
+    }
+    (state.runtime.provider.clone(), state.runtime.model.clone())
+}
+
 /// session.models：当前选择 + 可路由 + 目录（subagent → `agent-busy` 未区分，M2.5 简化）。
-fn session_models(state: &Arc<AppState>, payload: Value) -> Value {
-    let Some(_session_id) = payload.get("sessionId").and_then(Value::as_str) else {
+fn session_models(state: &AppState, payload: Value) -> Value {
+    let Some(session_id) = payload.get("sessionId").and_then(Value::as_str) else {
         return err("bad-request", "missing sessionId");
     };
+    let (provider, model) = current_model(state, session_id);
+    // 可路由：真 provider 模式下当前 provider 必须已装配；mock 模式恒 true。
+    let routable = if state.providers.is_empty() {
+        true
+    } else {
+        state.providers.iter().any(|p| p.id == provider)
+    };
     ok(json!({
-        "current": { "provider": state.runtime.provider, "model": state.runtime.model },
-        "routable": true,
-        "groups": [mock_model_group()],
+        "current": { "provider": provider, "model": model },
+        "routable": routable,
+        "groups": model_groups(state),
         "failures": [],
     }))
 }
 
-/// session.selectModel：目录成员关系仅 advisory，M2.5 直接接受任何 provider/model。
-fn session_select_model(payload: Value) -> Value {
-    let Some(_session_id) = payload.get("sessionId").and_then(Value::as_str) else {
+/// session.selectModel：目录成员关系仅 advisory，直接接受任何 provider/model；
+/// 写入会话级选择（prompt 时生效）。mock 模式下仍可接受（advisory）。
+fn session_select_model(state: &AppState, payload: Value) -> Value {
+    let Some(session_id) = payload.get("sessionId").and_then(Value::as_str) else {
         return err("bad-request", "missing sessionId");
     };
     let Some(provider) = payload.get("provider").and_then(Value::as_str) else {
@@ -348,6 +431,14 @@ fn session_select_model(payload: Value) -> Value {
     let Some(model) = payload.get("model").and_then(Value::as_str) else {
         return err("bad-request", "missing model");
     };
+    let mut sessions = state.sessions.lock().unwrap();
+    let Some(h) = sessions.get_mut(session_id) else {
+        return err("session-not-found", format!("session {session_id} not found"));
+    };
+    h.selected = Some((provider.to_string(), model.to_string()));
+    // 立即同步给 agent（若本会话已开跑，下一回合生效）。
+    h.agent
+        .set_model_override(provider.to_string(), model.to_string());
     let mut selected = json!({ "provider": provider, "model": model });
     if let Some(re) = payload.get("reasoningEffort") {
         selected["reasoningEffort"] = re.clone();
@@ -383,40 +474,90 @@ fn session_rename(state: &Arc<AppState>, payload: Value) -> Value {
 }
 
 async fn llm_providers(state: &AppState) -> Value {
-    // M1：单一 mock provider。
-    ok(json!({
-        "providers": [{
-            "provider": state.runtime.provider,
-            "displayName": "Mock",
-            "settingsNs": "llm.mock",
-            "settingsPath": ["llm", "mock"],
-            "active": true,
-        }]
-    }))
+    if state.providers.is_empty() {
+        // M1：单一 mock provider。
+        return ok(json!({
+            "providers": [{
+                "provider": state.runtime.provider,
+                "displayName": "Mock",
+                "settingsNs": "llm.mock",
+                "settingsPath": ["llm", "mock"],
+                "active": true,
+            }]
+        }));
+    }
+    let providers: Vec<Value> = state
+        .providers
+        .iter()
+        .map(|p| {
+            json!({
+                "provider": p.id,
+                "displayName": p.display_name,
+                "settingsNs": p.settings_ns,
+                "settingsPath": p.settings_path(),
+                "active": true,
+            })
+        })
+        .collect();
+    ok(json!({ "providers": providers }))
 }
 
 async fn llm_models(state: &AppState) -> Value {
-    let models = state
-        .runtime
-        .llm
-        .list_models(&state.runtime.provider)
-        .await
-        .unwrap_or_default();
-    // Node 形状：groups[{id, provider, label, name, models:[{id, name, ...}]}]。
-    let group = json!({
-        "id": state.runtime.provider,
-        "provider": state.runtime.provider,
-        "label": "Mock",
-        "name": "Mock",
-        "models": models.iter().map(|m| json!({
-            "id": m.id,
-            "name": m.label.clone().unwrap_or_else(|| m.id.clone()),
-        })).collect::<Vec<_>>(),
-    });
+    if state.providers.is_empty() {
+        // mock 模式：单 mock 组。
+        return ok(json!({
+            "groups": [mock_model_group()],
+            "failures": []
+        }));
+    }
     ok(json!({
-        "groups": [group],
+        "groups": model_groups(state),
         "failures": []
     }))
+}
+
+/// llm.discoverModels（特权）：真实探测。settingsNs 匹配到已装配 provider →
+/// 用其 API 请求模型列表端点；不匹配/失败 → `model-discovery-failed`。
+async fn llm_discover_models(state: &AppState, payload: Value) -> Value {
+    let settings_ns = payload
+        .get("settingsNs")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let Some(provider) = state.providers.iter().find(|p| p.settings_ns == settings_ns) else {
+        // 无配置（mock 模式）或未知 ns：回退 mock 已知 ns。
+        if state.providers.is_empty() && (settings_ns == "llm.mock" || settings_ns.is_empty()) {
+            return ok(json!({
+                "models": [{ "id": "mock-1", "name": "Mock 1" }]
+            }));
+        }
+        return err_with_details(
+            "model-discovery-failed",
+            "no provider for this settings namespace",
+            json!({ "settingsNs": settings_ns }),
+        );
+    };
+    let Some(adapter) = &provider.adapter else {
+        return err_with_details(
+            "model-discovery-failed",
+            "provider has no discovery endpoint",
+            json!({ "settingsNs": settings_ns }),
+        );
+    };
+    match adapter.list_models_remote().await {
+        Ok(models) => ok(json!({
+            "models": models.iter().map(|m| json!({
+                "id": m.id,
+                "name": m.label.clone().unwrap_or_else(|| m.id.clone()),
+                "contextWindow": null,
+                "maxTokens": null,
+            })).collect::<Vec<_>>()
+        })),
+        Err(e) => err_with_details(
+            "model-discovery-failed",
+            e.message,
+            json!({ "settingsNs": settings_ns, "baseURL": provider.base_url }),
+        ),
+    }
 }
 
 /// workspace.list：内存注册表快照（createdAt/updatedAt 为 ISO-8601 string）+ 归档集。
@@ -836,25 +977,6 @@ fn skill_list(payload: Value) -> Value {
     ok(json!({ "skills": [] }))
 }
 
-/// llm.discoverModels（特权）：mock provider 直接回模型清单（无真实探测）。
-fn llm_discover_models(payload: Value) -> Value {
-    let settings_ns = payload
-        .get("settingsNs")
-        .and_then(Value::as_str)
-        .unwrap_or("llm.mock");
-    if settings_ns == "llm.mock" {
-        ok(json!({
-            "models": [{ "id": "mock-1", "name": "Mock 1" }]
-        }))
-    } else {
-        err_with_details(
-            "model-discovery-failed",
-            "no mock provider for this settings namespace",
-            json!({ "settingsNs": settings_ns }),
-        )
-    }
-}
-
 /// Web 可写设置命名空间白名单（台账 §2 settings.*：WEB_SETTINGS_NAMESPACES 子集）。
 const WEB_SETTINGS_NAMESPACES: &[&str] = &[
     "agent-loop",
@@ -986,20 +1108,68 @@ where
 }
 
 /// credentials.describe（特权）：永不带值，只报 configured/writable。
-fn credentials_describe(payload: Value) -> Value {
+fn credentials_describe(state: &AppState, payload: Value) -> Value {
     let refs = payload
         .get("refs")
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
+    let store = state.credentials.lock().unwrap();
     let mut credentials = serde_json::Map::new();
     for r in refs {
         if let Some(name) = r.as_str() {
             credentials.insert(
                 name.to_string(),
-                json!({ "configured": false, "writable": true }),
+                json!({ "configured": store.contains_key(name), "writable": true }),
             );
         }
     }
     ok(json!({ "credentials": credentials }))
+}
+
+/// ref 名校验：`/^[A-Za-z_][A-Za-z0-9_]*$/`（台账 §2 credentials.*）。
+fn valid_credential_ref(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// credentials.set（特权）：ref + value(≥1) → {}。内存存储（持久化后置）。
+/// ref 非法 → bad-request；value 空 → bad-request。
+fn credentials_set(state: &AppState, payload: Value) -> Value {
+    let Some(name) = payload.get("ref").and_then(Value::as_str) else {
+        return err("bad-request", "missing ref");
+    };
+    if !valid_credential_ref(name) {
+        return err(
+            "bad-request",
+            "ref must match /^[A-Za-z_][A-Za-z0-9_]*$/",
+        );
+    }
+    let Some(value) = payload.get("value").and_then(Value::as_str) else {
+        return err("bad-request", "missing value");
+    };
+    if value.is_empty() {
+        return err("bad-request", "value must be at least 1 character");
+    }
+    state.credentials.lock().unwrap().insert(name.to_string(), value.to_string());
+    ok(json!({}))
+}
+
+/// credentials.unset（特权）：ref → {}（无引用也成功）。
+fn credentials_unset(state: &AppState, payload: Value) -> Value {
+    let Some(name) = payload.get("ref").and_then(Value::as_str) else {
+        return err("bad-request", "missing ref");
+    };
+    if !valid_credential_ref(name) {
+        return err(
+            "bad-request",
+            "ref must match /^[A-Za-z_][A-Za-z0-9_]*$/",
+        );
+    }
+    state.credentials.lock().unwrap().remove(name);
+    ok(json!({}))
 }

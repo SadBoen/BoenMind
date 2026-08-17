@@ -6,6 +6,8 @@
 > 提取基线：deepseek-harness master commit `47f9438`（`D:/96_CoderWorld/deepseek-harness`）。以下每个条目标注提取源（仓库相对路径）。
 > 说明：本台账内的「任务简报数字」若与源码不符，一律以源码为准并在该条目标注「未在源码找到，待确认」。
 > 实施进度（2026-08-18 M2.5）：Rust 兼容层已实现面 1/2/3/4/6/7/8 与 **24 个 RPC 方法**（host.describe/pickDirectory/listDirectory/createDirectory、session.{list,create,history,prompt,cancel,rename,models,selectModel}、workspace.{list,create,rename,delete,insertBefore,insertSessionBefore,archiveSession}、llm.{providers,models,discoverModels}、agentPreset.list、skill.list、settings.{describe,update,replace,mutate}、credentials.describe），Node 轨迹 conformance 17/17 全对齐 + 门禁 2.5 等价验证 15/15（`docs/conformance/gate25-verify.mjs`）。**M2.5 前端直连已达成**：内置快照（`kernel/web-server/frontend/`，dsh rc.6 壳层+boot 38 entries+插件 bundles）+ WS subscribed 基线 + sessionId/seq 修正。未实现方法（返回 bad-request）：goal.*、subagent.*、session.{search,fork,attachment,updateQueue}、settings.openDocument、credentials.{set,unset}、host.openPath。
+>
+> 实施进度（2026-08-18 **M3 起步**）：**真 provider 三通道落地**——`kernel-llm::openai`（OpenAI 兼容流式适配器，SSE 逐行解析、tool_calls 增量、usage、torn 纪律）+ `multi`（按 provider 路由的聚合端口）+ `kernel-loop` per-session 模型覆盖（session.selectModel 真实生效）+ `web-server::provider_config`（兼容旧 boenmind `config.toml` 子集：minimax/deepseek/custom，key 缺省读 env `{ID}_API_KEY`）+ `--config` CLI。`llm.providers/models` 真 provider 目录、`llm.discoverModels` 真实探测（`GET {base}/models`，minimax/deepseek 实测同构）。**端到端实测**：真实 MiniMax-M3 流式回复（`docs/conformance/m3-real-provider-verify.mjs` 11/11 PASS）；门禁 2.5 回归 15/15、conformance 17/17 不变。**credentials.{set,unset} 已补**（ref 正则校验、值永不出域、内存态）。未实现方法（返回 bad-request）：goal.*、subagent.*、session.{search,fork,attachment,updateQueue}、settings.openDocument、host.openPath。
 
 ## 1. 传输面（9 面 + 双栅栏）
 

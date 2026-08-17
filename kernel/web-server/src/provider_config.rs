@@ -1,0 +1,248 @@
+//! 真 provider 配置文件解析（M3）。
+//!
+//! 复用既有 boenmind 形态的 `config.toml` 子集（`~/.boenmind/config.toml` 兼容，
+//! 见旧版 backend 配置），只取与 LLM 相关的段：
+//!
+//! ```toml
+//! default_provider = "minimax"        # 可选：默认 provider
+//! default_model = "MiniMax-M3"        # 可选：默认模型
+//!
+//! [[providers]]
+//! id = "minimax"                      # provider id（wire 上 llm.providers.provider）
+//! name = "MiniMax"                    # 可选：显示名（缺省 = id）
+//! kind = "minimax"                    # minimax | deepseek | custom（OpenAI 兼容）
+//! base_url = "https://api.minimaxi.com/v1"   # 可选：kind 有内置缺省
+//! api_key = "..."                     # 可选：缺省读 env {ID}_API_KEY（大写）
+//! models = ["MiniMax-M3", ...]        # 可选：静态模型清单
+//! default_model = "MiniMax-M3"        # 可选：该 provider 的默认模型
+//! ```
+//!
+//! 无 key（配置缺 + env 缺）的 provider 跳过并警告；base_url 无法推断的 custom
+//! provider 跳过并警告。**不传 --config 时服务保持 mock provider（旧行为不变）。**
+
+use std::collections::HashMap;
+use std::path::Path;
+
+use serde::Deserialize;
+
+/// 加载后的 LLM 配置。
+#[derive(Debug, Clone, Default)]
+pub struct LlmConfig {
+    pub default_provider: Option<String>,
+    pub default_model: Option<String>,
+    pub providers: Vec<ProviderConfig>,
+}
+
+/// 单个 provider 配置（已校验，可直接构造适配器）。
+#[derive(Debug, Clone)]
+pub struct ProviderConfig {
+    pub id: String,
+    pub name: String,
+    pub kind: ProviderKind,
+    pub base_url: String,
+    pub api_key: String,
+    pub models: Vec<String>,
+    pub default_model: Option<String>,
+}
+
+/// provider 通道类别（决定模型列表端点形态）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderKind {
+    /// MiniMax：OpenAI 兼容 + reasoning_content；模型列表 `GET /models/list`。
+    Minimax,
+    /// DeepSeek：OpenAI 兼容；模型列表 `GET /models`。
+    DeepSeek,
+    /// 任意 OpenAI 兼容端点。
+    Custom,
+}
+
+impl ProviderKind {
+    fn infer(id: &str, kind: &str) -> ProviderKind {
+        match kind.to_ascii_lowercase().as_str() {
+            "minimax" => ProviderKind::Minimax,
+            "deepseek" => ProviderKind::DeepSeek,
+            "custom" | "openai-compatible" | "" => {
+                // 未声明时按 id 推断（兼容旧 config.toml 只有 kind 字段的写法）。
+                match id.to_ascii_lowercase().as_str() {
+                    "minimax" => ProviderKind::Minimax,
+                    "deepseek" => ProviderKind::DeepSeek,
+                    _ => ProviderKind::Custom,
+                }
+            }
+            other => {
+                tracing::warn!("provider {id}: unknown kind '{other}', treating as custom");
+                ProviderKind::Custom
+            }
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct ConfigFile {
+    default_provider: Option<String>,
+    default_model: Option<String>,
+    providers: Option<Vec<RawProvider>>,
+}
+
+#[derive(Deserialize)]
+struct RawProvider {
+    id: String,
+    name: Option<String>,
+    kind: Option<String>,
+    base_url: Option<String>,
+    api_key: Option<String>,
+    models: Option<Vec<String>>,
+    default_model: Option<String>,
+}
+
+/// 读取并校验配置文件。文件不存在/解析失败 → Err（fail-loud：配置是显式请求的）。
+pub fn load_llm_config(path: &Path) -> Result<LlmConfig, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("cannot read config {}: {e}", path.display()))?;
+    let file: ConfigFile =
+        toml::from_str(&text).map_err(|e| format!("config parse failed: {e}"))?;
+
+    let mut providers = Vec::new();
+    for raw in file.providers.unwrap_or_default() {
+        match build_provider(raw) {
+            Ok(Some(p)) => providers.push(p),
+            Ok(None) => {} // 跳过并已警告
+            Err(e) => tracing::warn!("{e}"),
+        }
+    }
+
+    // 去重（同 id 后者覆盖前者的语义 → 报错更安全）。
+    let mut seen: HashMap<String, ()> = HashMap::new();
+    providers.retain(|p| seen.insert(p.id.clone(), ()).is_none());
+
+    Ok(LlmConfig {
+        default_provider: file.default_provider,
+        default_model: file.default_model,
+        providers,
+    })
+}
+
+fn build_provider(raw: RawProvider) -> Result<Option<ProviderConfig>, String> {
+    let id = raw.id.trim().to_string();
+    if id.is_empty() {
+        return Err("provider entry with empty id skipped".into());
+    }
+    let kind = ProviderKind::infer(&id, raw.kind.as_deref().unwrap_or(""));
+    let name = raw.name.unwrap_or_else(|| id.clone());
+
+    let base_url = match raw.base_url {
+        Some(u) => u.trim_end_matches('/').to_string(),
+        None => match kind {
+            ProviderKind::Minimax => "https://api.minimaxi.com/v1".to_string(),
+            ProviderKind::DeepSeek => "https://api.deepseek.com/v1".to_string(),
+            ProviderKind::Custom => {
+                tracing::warn!("provider {id}: custom kind requires base_url, skipped");
+                return Ok(None);
+            }
+        },
+    };
+    if !base_url.starts_with("http://") && !base_url.starts_with("https://") {
+        tracing::warn!("provider {id}: invalid base_url '{base_url}', skipped");
+        return Ok(None);
+    }
+
+    // api_key：配置 > env {ID}_API_KEY > 跳过。
+    let api_key = match raw.api_key {
+        Some(k) if !k.trim().is_empty() => k.trim().to_string(),
+        _ => match std::env::var(format!("{}_API_KEY", id.to_uppercase())) {
+            Ok(k) if !k.trim().is_empty() => k.trim().to_string(),
+            _ => {
+                tracing::warn!(
+                    "provider {id}: no api_key (config or {}_API_KEY), skipped",
+                    id.to_uppercase()
+                );
+                return Ok(None);
+            }
+        },
+    };
+
+    Ok(Some(ProviderConfig {
+        id,
+        name,
+        kind,
+        base_url,
+        api_key,
+        models: raw.models.unwrap_or_default(),
+        default_model: raw.default_model,
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn write_tmp(content: &str) -> PathBuf {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("bm-llmcfg-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(content.as_bytes()).unwrap();
+        path
+    }
+
+    #[test]
+    fn parses_minimax_and_deepseek() {
+        let path = write_tmp(
+            r#"
+default_provider = "minimax"
+default_model = "MiniMax-M3"
+
+[[providers]]
+id = "minimax"
+name = "MiniMax"
+kind = "minimax"
+api_key = "k1"
+models = ["MiniMax-M3", "MiniMax-M2.7"]
+
+[[providers]]
+id = "deepseek"
+kind = "deepseek"
+api_key = "k2"
+models = ["deepseek-chat"]
+"#,
+        );
+        let cfg = load_llm_config(&path).unwrap();
+        assert_eq!(cfg.default_provider.as_deref(), Some("minimax"));
+        assert_eq!(cfg.providers.len(), 2);
+        assert_eq!(cfg.providers[0].kind, ProviderKind::Minimax);
+        assert_eq!(cfg.providers[0].base_url, "https://api.minimaxi.com/v1");
+        assert_eq!(cfg.providers[1].kind, ProviderKind::DeepSeek);
+        assert_eq!(cfg.providers[1].models, vec!["deepseek-chat"]);
+    }
+
+    #[test]
+    fn missing_key_skips_provider() {
+        let path = write_tmp(
+            r#"
+[[providers]]
+id = "minimax"
+kind = "minimax"
+"#,
+        );
+        // env 缺 → 跳过。
+        std::env::remove_var("MINIMAX_API_KEY");
+        let cfg = load_llm_config(&path).unwrap();
+        assert!(cfg.providers.is_empty());
+    }
+
+    #[test]
+    fn custom_requires_base_url() {
+        let path = write_tmp(
+            r#"
+[[providers]]
+id = "myproxy"
+kind = "custom"
+api_key = "k"
+"#,
+        );
+        let cfg = load_llm_config(&path).unwrap();
+        assert!(cfg.providers.is_empty());
+    }
+}

@@ -5,6 +5,7 @@
 
 pub mod api;
 pub mod events;
+pub mod provider_config;
 pub mod rpc;
 pub mod static_spa;
 pub mod trust;

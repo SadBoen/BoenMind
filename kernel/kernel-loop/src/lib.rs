@@ -72,15 +72,46 @@ pub enum LoopError {
 pub struct ReactLoopAgent {
     rt: Arc<LoopRuntime>,
     session: Arc<Session>,
+    /// per-session 模型覆盖（session.selectModel 语义）：Some((provider, model)) 时
+    /// 优先于 LoopRuntime 全局默认。未设置 = 用运行时默认。
+    model_override: std::sync::Mutex<Option<(String, String)>>,
 }
 
 impl ReactLoopAgent {
     pub fn new(rt: Arc<LoopRuntime>, session: Arc<Session>) -> Self {
-        Self { rt, session }
+        Self {
+            rt,
+            session,
+            model_override: std::sync::Mutex::new(None),
+        }
     }
 
     pub fn session(&self) -> Arc<Session> {
         Arc::clone(&self.session)
+    }
+
+    /// 设置本会话的模型选择（provider, model）。之后 run_turn 的 GenerateOptions
+    /// 携带该 provider/model，MultiProviderLlm 据此路由到对应通道。
+    pub fn set_model_override(&self, provider: impl Into<String>, model: impl Into<String>) {
+        *self.model_override.lock().unwrap() = Some((provider.into(), model.into()));
+    }
+
+    /// 当前会话的模型覆盖（None = 用运行时默认）。
+    pub fn model_override(&self) -> Option<(String, String)> {
+        self.model_override.lock().unwrap().clone()
+    }
+
+    pub fn clear_model_override(&self) {
+        *self.model_override.lock().unwrap() = None;
+    }
+
+    /// 本次请求实际使用的 (provider, model)：override 优先，否则运行时默认。
+    fn request_provider_model(&self) -> (String, String) {
+        self.model_override
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| (self.rt.provider.clone(), self.rt.model.clone()))
     }
 
     /// 下一条回合编号：日志中已出现过的最大 turn 序号 + 1（恢复续跑不重复）。
@@ -138,10 +169,11 @@ impl ReactLoopAgent {
             // model-visible-means-logged：模型看到的全部来自日志投影。
             let messages = self.session.derive_messages();
             let tools = self.rt.gate.enabled_schemas(&self.rt.tools);
+            let (provider, model) = self.request_provider_model();
 
             let request = GenerateOptions {
-                provider: self.rt.provider.clone(),
-                model: self.rt.model.clone(),
+                provider,
+                model,
                 messages,
                 tools,
                 temperature: None,
@@ -653,5 +685,58 @@ mod tests {
         let agent = ReactLoopAgent::new(rt, Arc::clone(&session));
         let err = agent.run_turn(Some("loop")).await.unwrap_err();
         assert!(matches!(err, LoopError::MaxSteps));
+    }
+
+    /// 记录最近一次 GenerateOptions 的 provider/model，验证 override 路由生效。
+    #[derive(Clone, Default)]
+    struct CapturingLlm {
+        seen: Arc<std::sync::Mutex<Vec<(String, String)>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl LlmPort for CapturingLlm {
+        async fn list_models(&self, _provider: &str) -> Result<Vec<LlmModelInfo>, LlmError> {
+            Ok(vec![])
+        }
+        fn stream(&self, request: GenerateOptions) -> ChunkStream {
+            self.seen.lock().unwrap().push((request.provider, request.model));
+            Box::pin(futures::stream::iter(vec![
+                Ok(StreamChunk::TextDelta { text: "ok".to_string() }),
+                Ok(StreamChunk::Finish(FinishReason::Stop)),
+            ]))
+        }
+    }
+
+    #[tokio::test]
+    async fn model_override_routes_generate_options() {
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let llm = Arc::new(CapturingLlm { seen: Arc::clone(&seen) });
+        let tools = Arc::new(ToolRegistry::new());
+        let gate = Arc::new(ToolGate::new());
+        let store = Arc::new(SessionStore::new());
+        let persist: Arc<dyn SessionPersistPort> =
+            Arc::new(InMemoryPersist(std::sync::Mutex::new(vec![])));
+        let rt = Arc::new(LoopRuntime {
+            llm,
+            store: Arc::clone(&store),
+            tools,
+            gate,
+            persist,
+            provider: "script".to_string(),
+            model: "script-1".to_string(),
+        });
+        let session = store.create(test_header("s1"), EventBus::new());
+        let agent = ReactLoopAgent::new(rt, Arc::clone(&session));
+        // 覆盖为其他 provider/model。
+        agent.set_model_override("minimax", "MiniMax-M3");
+        agent.run_turn(Some("hi")).await.unwrap();
+        let seen1 = seen.lock().unwrap().clone();
+        assert_eq!(seen1.len(), 1);
+        assert_eq!(seen1[0], ("minimax".to_string(), "MiniMax-M3".to_string()));
+        // 清除后回落运行时默认。
+        agent.clear_model_override();
+        agent.run_turn(Some("hi2")).await.unwrap();
+        let seen2 = seen.lock().unwrap().clone();
+        assert_eq!(seen2[1], ("script".to_string(), "script-1".to_string()));
     }
 }

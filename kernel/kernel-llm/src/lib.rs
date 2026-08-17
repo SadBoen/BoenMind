@@ -1,11 +1,20 @@
 //! # kernel-llm
 //!
-//! `LlmPort` 的 mock 实现（门禁 1 用，不接真实 API）。
-//!
-//! `ScriptLlm` 按脚本逐回合产出：纯文本回合产出 TextDelta 增量 +
-//! Usage + Finish(Stop)；工具回合产出 ToolCallDelta + ToolCallDone +
-//! Usage + Finish(ToolCalls)，并把 `then_text` 推入内部 followup 队列，
-//! 下一次 `stream()` 调用优先消费 followup 产出文本。
+//! `LlmPort` 的实现集：
+//! - [`ScriptLlm`]（mock，门禁 1 用，不接真实 API）；
+//! - [`openai::OpenAICompatLlm`]（M3 真 provider 三通道的 OpenAI 兼容底座）；
+//! - [`MultiProviderLlm`]（按 `GenerateOptions.provider` 路由到子端口的聚合实现，
+//!   ——多 provider 同时装配时，`LoopRuntime` 仍只需持有单一 `Arc<dyn LlmPort>`）。
+
+mod openai;
+mod multi;
+
+pub use multi::MultiProviderLlm;
+pub use openai::{ModelListEndpoint, OpenAiProviderConfig, OpenAICompatLlm};
+
+// ScriptLlm 按脚本逐回合产出：纯文本回合产出 TextDelta 增量 + Usage + Finish(Stop)；
+// 工具回合产出 ToolCallDelta + ToolCallDone + Usage + Finish(ToolCalls)，并把
+// then_text 推入内部 followup 队列，下一次 stream() 调用优先消费 followup 产出文本。
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
