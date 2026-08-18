@@ -13,6 +13,11 @@ dsh-home/profiles/*/data/
 dsh-home/profiles/*/pnpm-lock.yaml
 rpc-calls.log
 
+# 本地运行数据库（web-server 运行时生成）
+boenmind.db
+boenmind.db-shm
+boenmind.db-wal
+
 # 自研插件构建产物
 plugins/*/lib/
 plugins/*/dist/

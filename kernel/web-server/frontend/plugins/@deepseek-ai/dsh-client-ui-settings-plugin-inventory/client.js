@@ -8,7 +8,7 @@ window.__ModuleLoader__.load({
 		let react = require("react");
 		let _deepseek_ai_dsh_client_ui_primitives = require("@deepseek-ai/dsh-client-ui-primitives");
 		//#region \0dsh-css:/home/runner/work/deepseek-harness/deepseek-harness/packages/client/ui-settings-plugin-inventory/src/client/PluginInventorySettingsTab.module.css.mjs
-		const css = ".qSYn7G_section{width:100%;max-width:760px;color:var(--dsw-alias-label-primary);flex-direction:column;gap:14px;display:flex}.qSYn7G_catalogHeading h3,.qSYn7G_status,.qSYn7G_failure p{margin:0}.qSYn7G_status,.qSYn7G_failure{color:var(--dsw-alias-label-tertiary);font-size:13px;line-height:20px}.qSYn7G_failure{color:var(--dsw-alias-state-error-primary);align-items:center;gap:10px;display:flex}.qSYn7G_failure button{border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-primary);font:inherit;cursor:pointer;background:0 0;border-radius:6px;padding:4px 10px}.qSYn7G_catalog{flex-direction:column;gap:12px;display:flex}.qSYn7G_search{width:100%;color:var(--dsw-alias-label-tertiary);align-items:center;display:flex;position:relative}.qSYn7G_search>svg{pointer-events:none;position:absolute;left:12px}.qSYn7G_search input{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);width:100%;height:36px;color:var(--dsw-alias-label-primary);font:inherit;border-radius:8px;outline:none;padding:0 34px 0 36px;font-size:13px}.qSYn7G_search input::placeholder{color:var(--dsw-alias-label-tertiary)}.qSYn7G_search input:focus-visible{border-color:var(--dsw-alias-state-business-primary);box-shadow:0 0 0 2px color-mix(in srgb, var(--dsw-alias-state-business-primary) 18%, transparent)}.qSYn7G_catalogHeading{align-items:baseline;gap:7px;padding:0 2px;display:flex}.qSYn7G_catalogHeading h3{font-size:13px;font-weight:600;line-height:20px}.qSYn7G_catalogHeading span{color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums;font-size:12px;line-height:18px}.qSYn7G_cards{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start;gap:10px;margin:0;padding:0;list-style:none;display:grid}.qSYn7G_card{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);border-radius:10px;min-width:0;overflow:hidden}.qSYn7G_card[data-open=true]{border-color:var(--dsw-alias-border-l1);box-shadow:var(--dsw-shadow-lv1)}.qSYn7G_cardContent{box-sizing:border-box;width:100%;min-height:52px;color:inherit;font:inherit;text-align:left;cursor:pointer;background:0 0;border:0;justify-content:space-between;align-items:center;gap:12px;padding:12px 14px;display:flex}.qSYn7G_cardContent:hover,.qSYn7G_card[data-open=true]>.qSYn7G_cardContent{background:var(--dsw-alias-interactive-bg-hover)}.qSYn7G_cardContent:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:-2px}.qSYn7G_cardTitle{text-overflow:ellipsis;white-space:nowrap;min-width:0;font-size:14px;font-weight:600;line-height:20px;overflow:hidden}.qSYn7G_cardTrailing{color:var(--dsw-alias-label-tertiary);flex:none;align-items:center;gap:7px;display:inline-flex}.qSYn7G_statusDot{background:var(--dsw-alias-label-tertiary);border-radius:999px;flex:none;width:7px;height:7px;display:inline-block}.qSYn7G_statusDot[data-phase=active]{background:var(--dsw-alias-state-success-primary)}.qSYn7G_statusDot[data-phase=failed]{background:var(--dsw-alias-state-error-primary)}.qSYn7G_statusDot[data-phase=loading]{background:var(--dsw-alias-state-business-primary)}.qSYn7G_configTag{background:var(--dsw-alias-bg-layer-1);min-height:20px;color:var(--dsw-alias-label-secondary);white-space:nowrap;border-radius:5px;align-items:center;padding:1px 6px;font-size:11px;line-height:16px;display:inline-flex}.qSYn7G_configTag[data-enabled=true]{background:color-mix(in srgb, var(--dsw-alias-state-success-primary) 10%, transparent);color:var(--dsw-alias-state-success-primary)}.qSYn7G_chevron{color:var(--dsw-alias-label-tertiary);flex:none}.qSYn7G_card[data-open=true] .qSYn7G_chevron{transform:rotate(180deg)}.qSYn7G_cardDetails{border-top:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-module-platform);padding:10px 14px 12px}.qSYn7G_entryValue{overflow-wrap:anywhere;color:var(--dsw-alias-label-primary);font-family:var(--ds-font-family-code);font-size:12px;line-height:18px;display:block}.qSYn7G_details{grid-template-columns:76px minmax(0,1fr);gap:6px 10px;margin:8px 0 0;display:grid}.qSYn7G_details div{display:contents}.qSYn7G_details dt{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:17px}.qSYn7G_details dd{overflow-wrap:anywhere;min-width:0;color:var(--dsw-alias-label-secondary);margin:0;font-size:12px;line-height:17px}.qSYn7G_visuallyHidden{clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;width:1px;height:1px;position:absolute;overflow:hidden}@media (prefers-reduced-motion:no-preference){.qSYn7G_chevron{transition:transform .14s var(--ds-ease-in-out)}}@media (width<=680px){.qSYn7G_cards{grid-template-columns:minmax(0,1fr)}}";
+		const css = ".qSYn7G_section{width:100%;max-width:760px;color:var(--dsw-alias-label-primary);flex-direction:column;gap:14px;display:flex}.qSYn7G_catalogHeading h3,.qSYn7G_status,.qSYn7G_failure p{margin:0}.qSYn7G_status,.qSYn7G_failure{color:var(--dsw-alias-label-tertiary);font-size:13px;line-height:20px}.qSYn7G_failure{color:var(--dsw-alias-state-error-primary);align-items:center;gap:10px;display:flex}.qSYn7G_failure button{border:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-primary);font:inherit;cursor:pointer;background:0 0;border-radius:6px;padding:4px 10px}.qSYn7G_catalog{flex-direction:column;gap:12px;display:flex}.qSYn7G_search{width:100%;color:var(--dsw-alias-label-tertiary);align-items:center;display:flex;position:relative}.qSYn7G_search>svg{pointer-events:none;position:absolute;left:12px}.qSYn7G_search input{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);width:100%;height:36px;color:var(--dsw-alias-label-primary);font:inherit;border-radius:8px;outline:none;padding:0 34px 0 36px;font-size:13px}.qSYn7G_search input::placeholder{color:var(--dsw-alias-label-tertiary)}.qSYn7G_search input:focus-visible{border-color:var(--dsw-alias-state-business-primary);box-shadow:0 0 0 2px color-mix(in srgb, var(--dsw-alias-state-business-primary) 18%, transparent)}.qSYn7G_catalogHeading{align-items:baseline;gap:7px;padding:0 2px;display:flex}.qSYn7G_catalogHeading h3{font-size:13px;font-weight:600;line-height:20px}.qSYn7G_catalogHeading span{color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums;font-size:12px;line-height:18px}.qSYn7G_cards{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start;gap:10px;margin:0;padding:0;list-style:none;display:grid}.qSYn7G_card{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);border-radius:10px;min-width:0;overflow:hidden}.qSYn7G_card[data-open=true]{border-color:var(--dsw-alias-border-l1);box-shadow:var(--dsw-shadow-lv1)}.qSYn7G_cardContent{box-sizing:border-box;width:100%;min-height:52px;color:inherit;font:inherit;text-align:left;cursor:pointer;background:0 0;border:0;justify-content:space-between;align-items:center;gap:12px;padding:12px 14px;display:flex}.qSYn7G_cardContent:hover,.qSYn7G_card[data-open=true]>.qSYn7G_cardContent{background:var(--dsw-alias-interactive-bg-hover)}.qSYn7G_cardContent:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:-2px}.qSYn7G_cardTitle{text-overflow:ellipsis;white-space:nowrap;min-width:0;font-size:14px;font-weight:600;line-height:20px;overflow:hidden}.qSYn7G_cardTrailing{color:var(--dsw-alias-label-tertiary);flex:none;align-items:center;gap:7px;display:inline-flex}.qSYn7G_statusDot{background:var(--dsw-alias-label-tertiary);border-radius:999px;flex:none;width:7px;height:7px;display:inline-block}.qSYn7G_statusDot[data-phase=active]{background:var(--dsw-alias-state-success-primary)}.qSYn7G_statusDot[data-phase=failed]{background:var(--dsw-alias-state-error-primary)}.qSYn7G_statusDot[data-phase=loading]{background:var(--dsw-alias-state-business-primary)}.qSYn7G_configTag{background:var(--dsw-alias-bg-layer-1);min-height:20px;color:var(--dsw-alias-label-secondary);white-space:nowrap;border-radius:5px;align-items:center;padding:1px 6px;font-size:11px;line-height:16px;display:inline-flex}.qSYn7G_configTag[data-enabled=true]{background:color-mix(in srgb, var(--dsw-alias-state-success-primary) 10%, transparent);color:var(--dsw-alias-state-success-primary)}.qSYn7G_chevron{color:var(--dsw-alias-label-tertiary);flex:none}.qSYn7G_card[data-open=true] .qSYn7G_chevron{transform:rotate(180deg)}.qSYn7G_cardDetails{border-top:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-module-platform);padding:10px 14px 12px}.qSYn7G_entryValue{overflow-wrap:anywhere;color:var(--dsw-alias-label-primary);font-family:var(--ds-font-family-code);font-size:12px;line-height:18px;display:block}.qSYn7G_details{grid-template-columns:76px minmax(0,1fr);gap:6px 10px;margin:8px 0 0;display:grid}.qSYn7G_details div{display:contents}.qSYn7G_details dt{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:17px}.qSYn7G_details dd{overflow-wrap:anywhere;min-width:0;color:var(--dsw-alias-label-secondary);margin:0;font-size:12px;line-height:17px}.qSYn7G_visuallyHidden{clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;width:1px;height:1px;position:absolute;overflow:hidden}@media (prefers-reduced-motion:no-preference){.qSYn7G_chevron{transition:transform .14s var(--ds-ease-in-out)}}@media (width<=680px){.qSYn7G_cards{grid-template-columns:minmax(0,1fr)}}.qCORE_coreSection{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);border-radius:10px;overflow:hidden}.qCORE_coreSummary{list-style:none;width:100%;box-sizing:border-box;align-items:center;gap:7px;padding:10px 14px;display:flex;cursor:pointer}.qCORE_coreSummary::-webkit-details-marker{display:none}.qCORE_coreSummary:hover{background:var(--dsw-alias-interactive-bg-hover)}.qCORE_coreTitle{color:var(--dsw-alias-label-primary);font-size:13px;font-weight:600}.qCORE_coreCount{color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums;font-size:12px}.qCORE_coreChevron{margin-left:auto;color:var(--dsw-alias-label-tertiary)}.qCORE_coreBody{flex-direction:column;gap:8px;padding:2px 10px 10px;display:flex}.qCORE_coreRow{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);border-radius:8px;align-items:center;gap:10px;padding:8px 10px;display:flex}.qCORE_coreName{color:var(--dsw-alias-label-primary);min-width:0;font-size:13px;font-weight:600;text-overflow:ellipsis;white-space:nowrap;overflow:hidden}.qCORE_coreDesc{color:var(--dsw-alias-label-secondary);min-width:0;font-size:12px;text-overflow:ellipsis;white-space:nowrap;overflow:hidden}.qCORE_coreCat{color:var(--dsw-alias-state-business-primary);background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 12%,transparent);border-radius:5px;padding:1px 6px;font-size:11px;flex:none}";
 		const tagId = "@deepseek-ai/dsh-client-ui-settings-plugin-inventory/PluginInventorySettingsTab.module.css";
 		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId) + "]") === null) {
 			const tag = document.createElement("style");
@@ -35,7 +35,17 @@ window.__ModuleLoader__.load({
 			"statusDot": "qSYn7G_statusDot",
 			"cardDetails": "qSYn7G_cardDetails",
 			"details": "qSYn7G_details",
-			"card": "qSYn7G_card"
+			"card": "qSYn7G_card",
+			"coreSection": "qCORE_coreSection",
+			"coreSummary": "qCORE_coreSummary",
+			"coreTitle": "qCORE_coreTitle",
+			"coreCount": "qCORE_coreCount",
+			"coreChevron": "qCORE_coreChevron",
+			"coreBody": "qCORE_coreBody",
+			"coreRow": "qCORE_coreRow",
+			"coreName": "qCORE_coreName",
+			"coreDesc": "qCORE_coreDesc",
+			"coreCat": "qCORE_coreCat"
 		};
 		//#endregion
 		//#region lib/types/client/PluginInventorySettingsTab.js
@@ -65,6 +75,7 @@ window.__ModuleLoader__.load({
 			const [request, setRequest] = (0, react.useState)(0);
 			const [query, setQuery] = (0, react.useState)("");
 			const [expanded, setExpanded] = (0, react.useState)(null);
+			const [corePlugins, setCorePlugins] = (0, react.useState)(null);
 			const [state, setState] = (0, react.useState)({ status: "loading" });
 			(0, react.useEffect)(() => {
 				let current = true;
@@ -80,6 +91,24 @@ window.__ModuleLoader__.load({
 					current = false;
 				};
 			}, [list, request]);
+			(0, react.useEffect)(() => {
+				let current = true;
+				Promise.resolve().then(() => fetch("/api/plugin.core.list", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ type: "client-request", rpcId: "client-plugin-core", method: "plugin.core.list", payload: {} })
+				}).then((res) => res.json()).then((envelope) => {
+					if (envelope && envelope.result && envelope.result.ok) return envelope.result.value.plugins || [];
+					throw new Error("plugin.core.list failed");
+				})).then((plugins) => {
+					if (current) setCorePlugins(plugins);
+				}, () => {
+					if (current) setCorePlugins([]);
+				});
+				return () => {
+					current = false;
+				};
+			}, []);
 			const normalizedQuery = query.trim().toLocaleLowerCase();
 			const filteredEntries = (0, react.useMemo)(() => state.status === "ready" ? state.snapshot.entries.filter((entry) => matches(entry, normalizedQuery)) : [], [normalizedQuery, state]);
 			(0, react.useEffect)(() => {
@@ -111,6 +140,39 @@ window.__ModuleLoader__.load({
 					state.status === "ready" ? (0, react_jsx_runtime.jsxs)("div", {
 						className: PluginInventorySettingsTab_module_css_default.catalog,
 						children: [
+							corePlugins && corePlugins.length > 0 ? (0, react_jsx_runtime.jsx)("details", {
+								className: PluginInventorySettingsTab_module_css_default.coreSection,
+								children: [(0, react_jsx_runtime.jsx)("summary", {
+									className: PluginInventorySettingsTab_module_css_default.coreSummary,
+									children: [(0, react_jsx_runtime.jsx)("span", {
+										className: PluginInventorySettingsTab_module_css_default.coreTitle,
+										children: t("corePlugins")
+									}), (0, react_jsx_runtime.jsx)("span", {
+										className: PluginInventorySettingsTab_module_css_default.coreCount,
+										children: corePlugins.length
+									}), (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconChevronDownOutline14, {
+										className: PluginInventorySettingsTab_module_css_default.coreChevron,
+										size: 12,
+										"aria-hidden": "true"
+									})]
+								}), (0, react_jsx_runtime.jsx)("div", {
+									className: PluginInventorySettingsTab_module_css_default.coreBody,
+									children: corePlugins.map((plugin) => (0, react_jsx_runtime.jsxs)("div", {
+										className: PluginInventorySettingsTab_module_css_default.coreRow,
+										children: [(0, react_jsx_runtime.jsx)("span", {
+											className: PluginInventorySettingsTab_module_css_default.coreName,
+											title: plugin.description,
+											children: plugin.name
+										}), plugin.description ? (0, react_jsx_runtime.jsx)("span", {
+											className: PluginInventorySettingsTab_module_css_default.coreDesc,
+											children: plugin.description
+										}) : null, (0, react_jsx_runtime.jsx)("span", {
+											className: PluginInventorySettingsTab_module_css_default.coreCat,
+											children: plugin.category || "Core"
+										})]
+									}, plugin.id))
+								})]
+							}) : null,
 							(0, react_jsx_runtime.jsxs)("label", {
 								className: PluginInventorySettingsTab_module_css_default.search,
 								children: [
@@ -234,7 +296,8 @@ window.__ModuleLoader__.load({
 			loadingPhase: "加载中",
 			active: "已挂载",
 			failed: "挂载失败",
-			unloading: "卸载中"
+			unloading: "卸载中",
+			corePlugins: "核心插件"
 		};
 		/** English dictionary checked against the Chinese key set. */
 		const en = {
@@ -255,7 +318,8 @@ window.__ModuleLoader__.load({
 			loadingPhase: "Loading",
 			active: "Mounted",
 			failed: "Mount failed",
-			unloading: "Unloading"
+			unloading: "Unloading",
+			corePlugins: "Core plugins"
 		};
 		//#endregion
 		//#region lib/types/client/index.js
