@@ -1,0 +1,3 @@
+# vendored dsh 官方前端快照（12MB JS，供 web-server --dist 服务）——
+# 标记为 vendored，GitHub 语言统计排除，仓库语言显示为 Rust
+bm/web-server/frontend/** linguist-vendored

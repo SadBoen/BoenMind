@@ -1,0 +1,10 @@
+[package]
+name = "quickjs-bridge"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "QuickJS 宿主桥：rquickjs 内嵌引擎，暴露 host API 面给 JS 插件（占位，随设计文档后置）"
+
+[dependencies]
+kernel-contracts = { path = "../../kernel/kernel-contracts" }
+rquickjs = { version = "0.6", features = ["macro"] }

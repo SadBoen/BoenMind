@@ -1,0 +1,20 @@
+[package]
+name = "plugin-loop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "回合循环插件：ReactLoopAgent（AgentPort 实现）"
+
+[dependencies]
+kernel-contracts = { path = "../../kernel/kernel-contracts" }
+kernel-session = { path = "../../kernel/kernel-session" }
+plugin-tools = { path = "../plugin-tools" }
+async-trait.workspace = true
+async-stream.workspace = true
+futures.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+chrono.workspace = true

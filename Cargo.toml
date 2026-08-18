@@ -1,0 +1,43 @@
+# BoenMind 产品层 workspace（组合根 + 最终程序 + Rust 插件 + QuickJS 桥）。
+#
+# 分层（依赖只许向下）：
+#   kernel-contracts / kernel-session / kernel-storage / kernel-supervisor  ← kernel/ 子模块（纯内核库）
+#   plugins/*          ← 产品插件（独立 crate，只依赖 kernel-contracts/session）
+#   bm/assembly        ← 组合根（唯一装配点：把插件 + 内核端口拧成 Runtime）
+#   bm/web-server / bm/headless ← 最终程序（只消费 bm-assembly::assemble，不做装配）
+#   bm/quickjs-bridge  ← QuickJS 宿主桥（产品层，host API 走内核契约端口）
+[workspace]
+resolver = "2"
+members = [
+    "bm/assembly",
+    "bm/web-server",
+    "bm/headless",
+    "bm/quickjs-bridge",
+    "plugins/plugin-llm",
+    "plugins/plugin-loop",
+    "plugins/plugin-tools",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util"] }
+async-trait = "0.1"
+async-stream = "0.3"
+futures = "0.3"
+regex = "1"
+chrono = { version = "0.4", features = ["serde"] }
+parking_lot = "0.12"
+uuid = { version = "1", features = ["v4", "serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+[profile.release]
+lto = "thin"

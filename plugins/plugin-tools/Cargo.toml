@@ -1,0 +1,17 @@
+[package]
+name = "plugin-tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "工具注册表插件：ToolRegistry/ToolGate 实现"
+
+[dependencies]
+kernel-contracts = { path = "../../kernel/kernel-contracts" }
+async-trait.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+parking_lot.workspace = true
+jsonschema = "0.26"
+
+[dev-dependencies]
+tokio.workspace = true

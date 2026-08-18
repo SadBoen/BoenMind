@@ -1,0 +1,27 @@
+[package]
+name = "bm-assembly"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "组合根（BoenMind 产品层唯一装配点）：装配内核端口 + Rust 插件为运行时，插件依赖核心契约，无循环"
+
+[dependencies]
+kernel-contracts = { path = "../../kernel/kernel-contracts" }
+kernel-session = { path = "../../kernel/kernel-session" }
+kernel-storage = { path = "../../kernel/kernel-storage" }
+kernel-supervisor = { path = "../../kernel/kernel-supervisor" }
+plugin-llm = { path = "../../plugins/plugin-llm" }
+plugin-loop = { path = "../../plugins/plugin-loop" }
+plugin-tools = { path = "../../plugins/plugin-tools" }
+serde_json.workspace = true
+thiserror.workspace = true
+chrono.workspace = true
+parking_lot.workspace = true
+async-trait.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+toml = "0.8"
+futures.workspace = true

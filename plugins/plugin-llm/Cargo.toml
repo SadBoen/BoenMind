@@ -1,0 +1,21 @@
+[package]
+name = "plugin-llm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "LLM 提供者插件：mock / OpenAI 兼容 / 多 provider 路由（LlmPort 实现）"
+
+[dependencies]
+kernel-contracts = { path = "../../kernel/kernel-contracts" }
+async-trait.workspace = true
+async-stream.workspace = true
+futures.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+regex.workspace = true
+chrono.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
