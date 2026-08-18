@@ -1,7 +1,7 @@
 # BoenMind 计划 v2：Rust 微内核自研 + 前端借 DSH 生态（2026-08-17）
 
 > 状态：**定稿方向**（微内核一步到位已拍板；§八 拍板点 1–10 全部拍板）
-> 修订史：v1（同日夜）＝新建项目、dsh 全家桶为唯一真身、逐单元升级 → **v2（本稿）＝Rust 微内核自研后端 + 前端全套借 dsh 生态 + 插件/APP 全 Rust**。v1 的"全家桶 bootstrap / 毛玻璃皮肤 / DSH_HOME 启动器"成果保留（前端生态基础），后台路线按微内核重排。**v2.1（本稿，同日夜）＝三架构师 SKILL 交叉评审修正**（code-architecture / codebase-reviewer / ln-24，报告见 `docs/review-dsh-v2/`）：契约面 6→9、mux 方向修正、三层事件澄清、插件进程模型拍板、LLM 端口补入、存储模型统一、双栅栏 trust fence。**对外契约逐字对齐为用户拍板铁律（§3.4）。** **v2.2（2026-08-18）＝核心剥离为独立仓 dsh-rust-core，BoenMind 以 git submodule 消费（§二"核心演进"）**。
+> 修订史：v1（同日夜）＝新建项目、dsh 全家桶为唯一真身、逐单元升级 → **v2（本稿）＝Rust 微内核自研后端 + 前端全套借 dsh 生态 + 插件/APP 全 Rust**。v1 的"全家桶 bootstrap / 毛玻璃皮肤 / DSH_HOME 启动器"成果保留（前端生态基础），后台路线按微内核重排。**v2.1（本稿，同日夜）＝三架构师 SKILL 交叉评审修正**（code-architecture / codebase-reviewer / ln-24，报告见 `docs/review-dsh-v2/`）：契约面 6→9、mux 方向修正、三层事件澄清、插件进程模型拍板、LLM 端口补入、存储模型统一、双栅栏 trust fence。**对外契约逐字对齐为用户拍板铁律（§3.4）。** **v2.2（2026-08-18）＝核心剥离为独立仓 dsh-rust-core，BoenMind 以 git submodule 消费（§二"核心演进"）**。**v2.3（2026-08-19）＝插件独立成仓 dsh-rust-plugins**——核心三插件（llm/loop/tools）实现移出 core，契约独立文件夹（§二），装配改依赖插件仓；**皮肤全删**（前端恢复官方默认 38 bundle）。
 > 事实基线：只依据 2026-08-17 核查（npm registry + 本机 dsh 浅克隆 + 官方 docs/source），不引用旧结论。
 > 关联：`docs/design/DSH_PROJECT_2026-08-17.md`（v1 全文，已归档为 `docs/archive/`）、`frontend/public/docs/expert-team.md`（专家团队载体）、`backend/vendor/UPSTREAM_TRACKING.md`（上游台账）。
 
@@ -26,43 +26,54 @@
 
 ## 二、新项目形态（微内核）
 
-> **2026-08-18 更新**：核心已落地为独立仓库 `dsh-rust-core`
-> （`https://github.com/SadBoen/dsh-rust-core`），BoenMind 以 **git submodule** 方式消费
-> （`kernel/` = submodule 指针）。形态图更新为真实 crate 结构；`plugins/`/`apps/`/`shell/`
-> 仍为规划（见"核心演进"小节）。
+> **2026-08-18/19 更新**：核心已落地为独立仓库 `dsh-rust-core`（BoenMind 以 **git submodule**
+> 消费，`kernel/` = 指针）；**插件独立成仓 `dsh-rust-plugins`**（2026-08-19 用户拍板"插件与
+> 核心物理隔离"——防 AI 协作时把插件功能嵌入核心）。形态图更新为**三仓**真实结构：
+> 主仓 BoenMind（前端资产/文档/工具链）+ 核心仓 dsh-rust-core（submodule）+ 插件仓
+> dsh-rust-plugins（并行目录，装配依赖）。`apps/`/`shell/` 仍为规划（见"核心演进"小节）。
 
 ```
-BoenMind/                      # 主仓：前端资产 + 文档 + 工具链
-├── kernel/                    # git submodule → SadBoen/dsh-rust-core（Rust 微内核）
-│   ├── kernel-contracts/      #   端口 trait + 事件词汇 + DTO（含 plugin.rs 分类标签）
-│   ├── kernel-session/        #   append-only SessionEvent 日志（唯一事实源）+ 投影
-│   ├── kernel-llm/            #   LlmPort（mock / OpenAI 兼容 / minimax/deepseek/custom）
-│   ├── kernel-tools/          #   工具注册表 + 门控（enabled 名单 + fail-closed）
+D:/96_CoderWorld/
+├── BoenMind/                  # 主仓：前端资产 + 文档 + 工具链
+│   ├── kernel/                # git submodule → SadBoen/dsh-rust-core（Rust 微内核）
+│   ├── dsh-home/              # dsh 全家桶 profile（官方 38 bundle，无皮肤；快照重抓源）
+│   ├── docs/  scripts/  .tmp/
+├── dsh-rust-core/             # 核心仓（独立演进，BoenMind submodule 引用）
+│   ├── kernel-contracts/      #   契约：端口 trait + DTO + 事件词汇 + plugin.rs 分类标签
+│   ├── kernel-session/        #   会话日志（唯一事实源）+ agent.rs 独立契约文件（AgentPort）
 │   ├── kernel-storage/        #   sqlite 持久化（WAL + synchronous=FULL + 原子发布）
-│   ├── kernel-loop/           #   AgentPort trait + ReactLoopAgent 回合循环
 │   ├── kernel-supervisor/     #   热升级/进程编排（M5 后置）
 │   ├── kernel-assembly/       #   组合根：swap_llm/swap_loop/工具装卸 + plugin_manifest
-│   ├── headless/              #   无头装配（最小基座 = llm/loop/tools 三插件）
+│   ├── headless/              #   无头装配（最小基座 = llm/loop/tools 三插件装配）
 │   └── web-server/            #   Rust 协议兼容层（§三：dsh 前端接口合同 9 面）
-├── dsh-home/                  # dsh 全家桶 profile（前端生态基座，重抓快照源）
-├── frontend/                  # web-server 内置静态快照（kernel/web-server/frontend/）
-├── docs/                      # 设计/交接/审查文档
-├── scripts/                   # 门禁/热升级验证脚本
-└── .tmp/                      # 验证工具（conformance/gate25/仿真/vision，不入库）
+└── dsh-rust-plugins/          # 插件仓（一目录一插件，依赖 core 契约）
+    ├── plugin-llm/            #   LLM 提供者：mock / OpenAI 兼容 / 多 provider 路由（实现 LlmPort）
+    ├── plugin-loop/           #   回合循环：ReactLoopAgent（实现 AgentPort）
+    └── plugin-tools/          #   工具注册表：ToolRegistry / ToolGate（实现 ToolHandler）
 ```
 
 - **版本**：v0.1.0 起（已拍板）。
 - **历史资产**：现有 BoenMind 仓库只读参考（插件逻辑/专家提示词/记忆语义是搬运素材）；dsh 全家桶 bootstrap 保留作前端生态基础与协议参考实现。
+- **皮肤已删**（2026-08-19）：`@linxin666/*` 12 皮肤 + web-ui-all + frosted-window 全部移除，前端快照 = 官方 38 bundle（rev b14991c14466），恢复官方默认观感。
 
-### 核心演进（2026-08-18 新增）
+### 核心与插件演进（2026-08-18/19）
 
-- **核心 = 独立仓 dsh-rust-core**：`kernel/` 是 submodule 指针（锁 commit），所有 dsh 核心
-  （Rust crate + web-server + 前端快照）在 dsh-rust-core 独立演进；BoenMind 只是消费者。
+- **核心 = 独立仓 dsh-rust-core**：`kernel/` 是 submodule 指针（锁 commit），内核
+  （契约/会话/存储/装配/web-server/headless）在 dsh-rust-core 独立演进；BoenMind 只是消费者。
+- **插件 = 独立仓 dsh-rust-plugins**（2026-08-19）：核心三插件实现移出 core，一目录一插件；
+  依赖 core 的契约（`kernel-contracts` / `kernel-session`），**核心不依赖插件**。
+  装配在最外层（assembly/web-server/headless）以跨仓 path 依赖完成——对齐官方
+  `dsh-agent`（契约包）↔ `dsh-agent-loop`（实现包）的分离，仓库边界更强。
+- **契约独立文件夹**（用户纪律）：`LlmPort`/`ToolHandler` 在 kernel-contracts（纯契约）；
+  `AgentPort`/`TurnOutcome`/`LoopError`/`DEFAULT_MAX_STEPS` 在 kernel-session/src/agent.rs
+  （独立契约文件；因依赖 `Session` 实现类型故放 session 而非 contracts，避免循环依赖）。
 - **更新核心**：`cd kernel && git pull && cd .. && git add kernel && git commit`
 - **首次 clone BoenMind**：须 `git clone --recursive`（否则 kernel/ 为空），或 clone 后
   `git submodule update --init`
-- **开发纪律**：核心功能改动在 dsh-rust-core 提交；BoenMind 侧只做前端资产/文档/工具链。
-  验证三件套（cargo test/clippy/gate1）在 kernel/ 子模块内执行。
+- **开发纪律**：内核功能改动在 dsh-rust-core 提交；插件改动在 dsh-rust-plugins 提交；
+  BoenMind 侧只做前端资产/文档/工具链。验证三件套（cargo test/clippy/gate1）在
+  kernel/ 子模块内执行（插件仓另有独立验证）。跨仓 path 依赖要求两仓并行存在于
+  `D:/96_CoderWorld/` 下。
 
 
 ---
@@ -142,6 +153,8 @@ dsh 全家桶 bootstrap 跑通（3080 服务、__DSH_BOOT__、插件资产 200�
 - **门禁 2**：**conformance harness**（台账机器化：wire 轨迹 diff，同一 dsh 前端连 Node 后端 vs Rust 兼容层，请求/响应逐帧对比一致）——建会话→发消息→流式回复→工具调用可见全通；皮肤可用；台账全部勾销。
 
 ### M3 插件/APP 全面 Rust 化 + 微内核红利
+- **核心三插件（llm/loop/tools）已先行落地于 dsh-rust-plugins**（2026-08-19，进程内组件 +
+  trait object 换装，见 §二）；本节指**业务插件**（team/steward/memory 等，独立进程规划）。
 - 插件 = **Rust 独立进程**（编译产物分发、闭源可行）；权限两档（官方/自研宿主 + 第三方 worker 降权）；**进程隔离 ≠ 沙箱**（v2.1 澄清：第三方 worker 需额外降权/能力裁剪，防读全盘）；记忆/审计/团队/管家插件逐个移植。
 - supervisor 完整（蓝绿替换、崩溃计数、IPC 协议版本化+鉴权）——**Linux 服务器无感重起就绪**；本地形态延续旧版热升级（单二进制替换 / 壳重启子进程，§五·7）。
 - **门禁 3**：禁用插件→蓝绿替换→**流式进行中**实测会话不中断；专家团队全链路（派工→并行→结构化返回→汇总）。
@@ -156,7 +169,7 @@ dsh 全家桶 bootstrap 跑通（3080 服务、__DSH_BOOT__、插件资产 200�
 
 1. **专家团队**：`team` 插件（Rust）= 团队配置 + 子代理进程（隔离天然数据隔离）+ 编排（parallel/chain）+ 结构化返回（JSON 契约）；DAG 可视化参照 dsh-task-dag 映射到前端槽位。
 2. **管家 Steward**：`steward` 插件 = 治理区间 + wake + 版本化替换进化（supervisor 蓝绿替换天然承载）。
-3. **皮肤/特效**：前端借 dsh 生态原样（官方主题 + 毛玻璃已接入）；我们 skins 语义（参数化滑杆）映射 `--dsw-*` 令牌。
+3. **皮肤/特效**：前端借 dsh 生态**官方默认**（2026-08-19 已删第三方皮肤插件，恢复官方 38 bundle 观感）；未来若要皮肤，在 dsh-rust-plugins 里做（参数化滑杆映射 `--dsw-*` 令牌）。
 4. **工具调用显示/审计**：前端借官方 trajectory + 我们的摘要键逻辑（存于前端插件）。
 5. **记忆分层/项目隔离**：`memory` 插件（Rust，storage-domain 语义 + 桶/项目隔离）。
 6. **可审计心智**：Rust 微内核原生 append-only SessionEvent（与 dsh 同构），审计 UI 借前端生态。
