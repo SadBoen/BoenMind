@@ -12,7 +12,9 @@ use kernel_contracts::llm::LlmPort;
 use kernel_contracts::ports::{
     PluginRuntimeAvailability, PluginRuntimePort, SessionPersistPort,
 };
-use kernel_contracts::session::{SessionEvent, SessionHeader, StepPhase, TurnEvent};
+use kernel_contracts::session::{
+    SessionEvent, SessionHeader, StepPhase, TurnEndReason, TurnEvent,
+};
 use kernel_contracts::PortResult;
 use kernel_loop::{LoopRuntime, ReactLoopAgent};
 use kernel_session::SessionStore;
@@ -177,49 +179,64 @@ impl Runtime {
     }
 }
 
-/// interrupted-turn 修复：修剪未完成回合的尾部未配对事件。
+/// interrupted-turn 修复：闭合崩溃孤儿回合（对齐 DSH session-persistence 恢复语义）。
 ///
 /// kill -9 可能发生在回合中途（Step Started 已落、Ended 未落，或 Turn Started 已落、
-/// Ended 未落）。恢复时这些"悬空"事件会污染投影（例如 Step Started 后没有消息），
-/// 因此按配对规则修剪：从尾部往回，遇到未配对的 Started 就丢弃。
+/// Ended 未落）。**不删除任何已落盘事件**——只扫描配对，发现未闭合的 Step/Turn
+/// 就在日志尾部追加 closers（Step Ended + `Turn Ended{Interrupted}`），把回合闭合。
+/// 这样事件日志作为唯一事实源完整保留（含已闭合错误回合的 requestId 审计事实），
+/// 且不越过 Turn Ended 截断——后续已闭合回合的历史永不丢失。
 fn repair_interrupted_turn(events: Vec<SessionEvent>) -> Vec<SessionEvent> {
     let mut repaired = events;
-    let mut step_open = 0u64;
-    let mut turn_open = false;
-    let mut cut = repaired.len();
-    for (idx, ev) in repaired.iter().enumerate().rev() {
+    // 正向扫描配对深度：depth>0 说明有未配对 Started（本回合或嵌套残留）。
+    let mut step_open: u64 = 0;
+    let mut turn_open: u64 = 0;
+    let mut last_open_step: Option<(u64, u64)> = None;
+    let mut last_open_turn: Option<u64> = None;
+    for ev in &repaired {
         match ev {
+            SessionEvent::Step {
+                turn,
+                step,
+                phase: StepPhase::Started,
+            } => {
+                step_open += 1;
+                last_open_step = Some((*turn, *step));
+            }
             SessionEvent::Step {
                 phase: StepPhase::Ended,
                 ..
             } => {
-                step_open += 1;
-            }
-            SessionEvent::Step {
-                phase: StepPhase::Started,
-                ..
-            } => {
-                if step_open > 0 {
-                    step_open -= 1;
-                } else if cut == repaired.len() {
-                    cut = idx;
+                step_open = step_open.saturating_sub(1);
+                if step_open == 0 {
+                    last_open_step = None;
                 }
             }
-            SessionEvent::Turn(TurnEvent::Ended { .. }) => {
-                turn_open = true;
+            SessionEvent::Turn(TurnEvent::Started { turn }) => {
+                turn_open += 1;
+                last_open_turn = Some(*turn);
             }
-            SessionEvent::Turn(TurnEvent::Started { .. }) => {
-                if turn_open {
-                    turn_open = false;
-                } else if cut == repaired.len() {
-                    cut = idx;
+            SessionEvent::Turn(TurnEvent::Ended { .. }) => {
+                turn_open = turn_open.saturating_sub(1);
+                if turn_open == 0 {
+                    last_open_turn = None;
                 }
             }
             _ => {}
         }
     }
-    if cut < repaired.len() {
-        repaired.truncate(cut);
+    if let Some((turn, step)) = last_open_step {
+        repaired.push(SessionEvent::Step {
+            turn,
+            step,
+            phase: StepPhase::Ended,
+        });
+    }
+    if let Some(turn) = last_open_turn {
+        repaired.push(SessionEvent::Turn(TurnEvent::Ended {
+            turn,
+            reason: TurnEndReason::Interrupted,
+        }));
     }
     repaired
 }
@@ -259,8 +276,9 @@ mod tests {
         let rt2 = Runtime::headless(db.clone()).unwrap();
         let restored = rt2.restore_session("s1").await.unwrap();
         let events = restored.session().events();
-        // 空脚本 LLM：SessionStarted + User + Step/S + AssistantChunk(Finish) + AssistantMessage(空) + Step/E + TurnE
-        assert_eq!(events.len(), 7);
+        // 空脚本 LLM：SessionStarted + User + Turn Started + Step/S + AssistantChunk(Finish)
+        // + AssistantMessage(空) + Step/E + TurnE
+        assert_eq!(events.len(), 8);
         // 恢复后的会话可继续跑（turn 编号接续，不重复）。
         let outcome = restored.run_turn(Some("again")).await.unwrap();
         assert!(outcome.steps >= 1);
@@ -268,31 +286,196 @@ mod tests {
     }
 
     #[test]
-    fn repair_drops_open_step_tail() {
-        let mut v = vec![
+    fn repair_closes_open_step_and_turn_tail() {
+        // 未配对 Step Started（kill-9 于 step 中）：追加 closers 闭合，
+        // 历史事件（SessionStarted/UserMessage/Turn Started）全部保留。
+        let v = vec![
             SessionEvent::SessionStarted {
                 header: header("x"),
             },
             SessionEvent::UserMessage { text: "hi".into() },
+            SessionEvent::Turn(TurnEvent::Started { turn: 1 }),
             SessionEvent::Step {
                 turn: 1,
                 step: 1,
                 phase: StepPhase::Started,
             },
         ];
-        // 无配对 Ended：尾巴应被修剪。
-        let r = repair_interrupted_turn(v.clone());
-        assert_eq!(r.len(), 2);
-
-        v.push(SessionEvent::Step {
-            turn: 1,
-            step: 1,
-            phase: StepPhase::Ended,
-        });
-        v.push(SessionEvent::Turn(TurnEvent::Started { turn: 1 }));
         let r = repair_interrupted_turn(v);
-        // 完整的 step 保留，未闭合的 Turn Started 修剪。
-        assert_eq!(r.len(), 4);
+        assert_eq!(r.len(), 6);
+        assert!(matches!(
+            r[4],
+            SessionEvent::Step {
+                turn: 1,
+                step: 1,
+                phase: StepPhase::Ended
+            }
+        ));
+        assert!(matches!(
+            r[5],
+            SessionEvent::Turn(TurnEvent::Ended {
+                turn: 1,
+                reason: TurnEndReason::Interrupted
+            })
+        ));
+    }
+
+    #[test]
+    fn repair_keeps_closed_history_and_closes_only_tail() {
+        // 完整闭合的 turn 1 + kill-9 于 turn 2 中途：只闭合 turn 2 尾部，
+        // turn 1 的 Turn Ended（含审计事实）原样保留——不越过 Turn Ended 截断。
+        let v = vec![
+            SessionEvent::SessionStarted {
+                header: header("x"),
+            },
+            SessionEvent::UserMessage { text: "hi".into() },
+            SessionEvent::Turn(TurnEvent::Started { turn: 1 }),
+            SessionEvent::Step {
+                turn: 1,
+                step: 1,
+                phase: StepPhase::Started,
+            },
+            SessionEvent::Step {
+                turn: 1,
+                step: 1,
+                phase: StepPhase::Ended,
+            },
+            SessionEvent::Turn(TurnEvent::Ended {
+                turn: 1,
+                reason: TurnEndReason::Error {
+                    message: "boom".into(),
+                    code: "E".into(),
+                    request_id: Some("req-1".into()),
+                },
+            }),
+            SessionEvent::UserMessage { text: "again".into() },
+            SessionEvent::Turn(TurnEvent::Started { turn: 2 }),
+            SessionEvent::Step {
+                turn: 2,
+                step: 1,
+                phase: StepPhase::Started,
+            },
+        ];
+        let r = repair_interrupted_turn(v);
+        assert_eq!(r.len(), 11);
+        // turn 1 的闭合回合（含 requestId）保留。
+        assert!(matches!(
+            &r[5],
+            SessionEvent::Turn(TurnEvent::Ended {
+                turn: 1,
+                reason: TurnEndReason::Error {
+                    code,
+                    request_id: Some(rid),
+                    ..
+                }
+            }) if code == "E" && rid == "req-1"
+        ));
+        // 尾部 = closers（Step Ended + Turn Ended{Interrupted}）。
+        assert!(matches!(
+            r[9],
+            SessionEvent::Step {
+                turn: 2,
+                step: 1,
+                phase: StepPhase::Ended
+            }
+        ));
+        assert!(matches!(
+            r[10],
+            SessionEvent::Turn(TurnEvent::Ended {
+                turn: 2,
+                reason: TurnEndReason::Interrupted
+            })
+        ));
+    }
+
+    /// 取消/报错回合（已闭合，含 requestId）→ 用户再发消息 → kill-9 于新回合中途 →
+    /// restore：错误回合历史完整保留，中断回合被 closers 闭合（回归 P1-2/P1-3：
+    /// 旧实现会在未配对 Step Started 处整段截断，删掉错误回合及后续全部历史）。
+    #[tokio::test]
+    async fn restore_after_closed_error_turn_preserves_history() {
+        let db = tmp_db("cancel-history");
+        let rt = Runtime::headless(db.clone()).unwrap();
+        let agent = rt.create_session(header("s1")).await.unwrap();
+        // 手工构造：turn 1 错误闭合（Step 配对 + Turn Ended Error 带 requestId），
+        // turn 2 中断于 Step Started（模拟 kill-9 于取消后新回合中途）。
+        let seq = [
+            SessionEvent::Turn(TurnEvent::Started { turn: 1 }),
+            SessionEvent::Step {
+                turn: 1,
+                step: 1,
+                phase: StepPhase::Started,
+            },
+            SessionEvent::Step {
+                turn: 1,
+                step: 1,
+                phase: StepPhase::Ended,
+            },
+            SessionEvent::Turn(TurnEvent::Ended {
+                turn: 1,
+                reason: TurnEndReason::Error {
+                    message: "boom".into(),
+                    code: "E".into(),
+                    request_id: Some("req-1".into()),
+                },
+            }),
+            SessionEvent::Turn(TurnEvent::Started { turn: 2 }),
+            SessionEvent::Step {
+                turn: 2,
+                step: 1,
+                phase: StepPhase::Started,
+            },
+        ];
+        for e in seq {
+            let rec = agent.session().append(e);
+            rt.persist
+                .append_events("s1", std::slice::from_ref(&rec.event))
+                .await
+                .unwrap();
+        }
+        drop(rt);
+
+        let rt2 = Runtime::headless(db.clone()).unwrap();
+        let restored = rt2.restore_session("s1").await.unwrap();
+        let events: Vec<kernel_contracts::session::SessionEvent> = restored
+            .session()
+            .events()
+            .into_iter()
+            .map(|r| r.event)
+            .collect();
+        // 错误回合的审计事实（requestId）不丢。
+        assert!(events.iter().any(|e| matches!(
+            e,
+            SessionEvent::Turn(TurnEvent::Ended {
+                turn: 1,
+                reason: TurnEndReason::Error {
+                    code,
+                    request_id: Some(rid),
+                    ..
+                }
+            }) if code == "E" && rid == "req-1"
+        )));
+        // 中断回合被 closers 闭合。
+        assert!(events.iter().any(|e| matches!(
+            e,
+            SessionEvent::Turn(TurnEvent::Ended {
+                turn: 2,
+                reason: TurnEndReason::Interrupted
+            })
+        )));
+        // 恢复后 turn 编号接续（下一次 run_turn 应开 turn 3）。
+        let outcome = restored.run_turn(Some("again")).await.unwrap();
+        assert!(outcome.steps >= 1);
+        let starts: Vec<u64> = restored
+            .session()
+            .events()
+            .into_iter()
+            .filter_map(|r| match r.event {
+                SessionEvent::Turn(TurnEvent::Started { turn }) => Some(turn),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(starts, vec![1, 2, 3]);
+        let _ = std::fs::remove_dir_all(db.parent().unwrap());
     }
 
     #[tokio::test]

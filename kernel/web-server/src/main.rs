@@ -245,11 +245,9 @@ fn main() {
     }
 
     let state = Arc::new(AppState::assemble(runtime, trusted_hosts.clone(), provider_runtimes));
-    // 持有总线监听器句柄到进程结束（drop 即注销，实时事件流依赖它）。
-    let _bus_listener = state.attach_event_bus();
-
     // 启动恢复：把持久化会话全部 restore 进 live 表（kill -9 恢复语义，
     // restore_session 内部自动做 interrupted-turn 修复）。blank/running 按日志判定。
+    // 必须先于 attach_event_bus：attach 按 live 表历史播种实时 seq 游标。
     {
         let ids = futures::executor::block_on(state.runtime.persist.list_sessions())
             .unwrap_or_default();
@@ -277,6 +275,8 @@ fn main() {
             }
         }
     }
+    // 持有总线监听器句柄到进程结束（drop 即注销，实时事件流依赖它）。
+    let _bus_listener = state.attach_event_bus();
 
     let app = web_server::router(Arc::clone(&state), dist.clone(), boot_json);
 

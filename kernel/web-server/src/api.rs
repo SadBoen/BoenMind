@@ -218,12 +218,29 @@ impl AppState {
     /// 把 kernel 事件总线接到实时下行通道（幂等：仅调用一次）。
     /// bus listener 是同步闭包：按会话维护翻译游标 + wire seq 累计（每会话从 0 连续，
     /// 与 translate_events 一致；SessionStarted 不翻译但占 record.seq，故不能用 record.seq-1）。
+    /// 预填：启动恢复过的会话按历史 wire 长度播种游标——重启后实时 seq 从历史尾部
+    /// 接续，不回退到 0 撞历史基线（回归 BUG-002：前端按水位单调去重会丢弃恢复后事件）。
     /// 返回的 Disposer 必须持有（drop 即注销），调用方负责保活到进程结束。
+    /// 必须在启动恢复循环（live 表填完）之后调用。
     pub fn attach_event_bus(&self) -> kernel_contracts::bus::Disposer {
         let tx = self.events_tx.clone();
         let per_session: std::sync::Mutex<
             HashMap<String, (crate::events::EventTranslator, i64)>,
         > = std::sync::Mutex::new(HashMap::new());
+        // 预填种子：live 表里已恢复会话的历史 wire 长度（events() 含修复后的完整日志）。
+        {
+            let sessions = self.sessions.lock().unwrap();
+            let mut table = per_session.lock().unwrap();
+            for (sid, h) in sessions.iter() {
+                let history: Vec<SessionEvent> =
+                    h.agent.session().events().into_iter().map(|r| r.event).collect();
+                let seed = crate::events::translate_events(&history).len() as i64;
+                table.insert(
+                    sid.clone(),
+                    (crate::events::EventTranslator::new(), seed),
+                );
+            }
+        }
         let listener = move |record: &kernel_contracts::SessionRecord| {
             let mut table = per_session.lock().unwrap();
             let (trans, seq) = table
@@ -1710,5 +1727,62 @@ mod tests {
         let s = make_snippet("a   b\n\nc  query  here", "query").unwrap();
         assert!(!s.contains('\n'));
         assert!(s.contains("query here"), "snippet: {s}");
+    }
+
+    /// 回归 BUG-002：attach_event_bus 对已恢复会话的实时 wire seq 必须从历史
+    /// 长度播种，不回退到 0 撞历史基线（前端按水位单调去重会丢恢复后事件）。
+    #[tokio::test]
+    async fn attach_seeds_seq_from_history() {
+        use kernel_assembly::Runtime;
+        use kernel_contracts::session::{SessionHeader, SessionId, StepPhase, TurnEndReason, TurnEvent};
+        use std::sync::Arc;
+
+        let db = std::env::temp_dir().join(format!("bm-seed-{}.db", uuid::Uuid::new_v4()));
+        let rt = Runtime::headless(db.clone()).unwrap();
+        let agent = rt.create_session(SessionHeader {
+            id: SessionId("s1".into()),
+            app: "test".into(),
+            profile: "test".into(),
+            workspace: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        })
+        .await
+        .unwrap();
+        // 历史：User + Turn Started + Step Started + Step Ended + Turn Ended（5 个事件全翻译）。
+        let seq = [
+            SessionEvent::UserMessage { text: "hi".into() },
+            SessionEvent::Turn(TurnEvent::Started { turn: 1 }),
+            SessionEvent::Step { turn: 1, step: 1, phase: StepPhase::Started },
+            SessionEvent::Step { turn: 1, step: 1, phase: StepPhase::Ended },
+            SessionEvent::Turn(TurnEvent::Ended { turn: 1, reason: TurnEndReason::Completed }),
+        ];
+        for e in seq {
+            let rec = agent.session().append(e);
+            rt.persist
+                .append_events("s1", std::slice::from_ref(&rec.event))
+                .await
+                .unwrap();
+        }
+        let state = Arc::new(AppState::assemble(rt, vec![], vec![]));
+        state.sessions.lock().unwrap().insert(
+            "s1".into(),
+            SessionHandle {
+                agent: Arc::new(agent),
+                running: false,
+                blank: false,
+                title: None,
+                selected: None,
+            },
+        );
+        let mut rx = state.events_tx.subscribe();
+        let _disposer = state.attach_event_bus();
+        // 经会话 append 触发总线（attach 后实时链路）→ seq 应从历史 wire 数（5）接续。
+        let agent2 = state.runtime.store.get("s1").unwrap();
+        agent2.append(SessionEvent::UserMessage { text: "second".into() });
+        let payload = rx.recv().await.expect("event frame");
+        let seq_value = payload["event"]["seq"].as_i64().unwrap_or(-1);
+        assert_eq!(seq_value, 5, "实时 seq 应从历史 wire 长度接续，实际 {seq_value}");
+        let _ = std::fs::remove_file(db);
     }
 }

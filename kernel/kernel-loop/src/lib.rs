@@ -9,13 +9,17 @@
 //!
 //! 单回合流程（`run_turn`）：
 //! 1. `append(UserMessage)`（可选，恢复续跑时已入日志则传 `None`）；
-//! 2. step 循环（上限 [`LoopRuntime::max_steps`]，超限判 torn）：
+//! 2. `append(Turn Started{turn})`——turn = 日志 max+1（对齐 DSH agent-loop 每回合
+//!    开头 append `turn/start`；续跑也写，中断回合已被恢复期 closers 闭合）；
+//! 3. step 循环（上限 [`LoopRuntime::max_steps`]，超限判 torn）：
 //!    a. `append(Step Started)`；
 //!    b. 投影消息 + enabled 工具 schema；
 //!    c. `llm.stream(request)` 逐块消费（原始 chunk 入日志 + `BlockAssembler` 累积）；
 //!    d. 流末按 finish 分派：usage 随 `AssistantMessage` 入日志；工具调用 →
 //!    `AssistantMessage(ToolCall)` + 逐个 `ToolCall`/`ToolResult`，否则 →
-//!    `AssistantMessage(blocks)` 收尾。//! 3. `append(Turn Ended{reason})`——completed / max-tokens / error。
+//!    `AssistantMessage(blocks)` 收尾。
+//! 4. `append(Turn Ended{reason})`——completed / max-tokens / error（错误终态路径
+//!    先 `append(Step Ended)` 闭合当前 step，日志恒无未配对 Started）。
 //!
 //! 持久化纪律：**logged-means-persisted**——每个事件 append 进会话日志后立即
 //! 经 [`LoopRuntime::persist`] 落盘（单事件事务）。kill -9 发生时已 append 的事件
@@ -305,6 +309,30 @@ impl ReactLoopAgent {
             .map_err(|e| LoopError::Persist(e.to_string()))
     }
 
+    /// 终态收尾（错误/取消路径专用）：闭合当前 step 后写 Turn Ended。
+    /// 保证日志恒无未配对 Started（对齐 DSH agent-loop 的 finally 语义：
+    /// 错误路径同时写 `step/end` 与 `turn/end`）。持久化失败 fail-loud 传播。
+    async fn close_turn(
+        &self,
+        turn: u64,
+        steps: u64,
+        reason: TurnEndReason,
+    ) -> Result<(), LoopError> {
+        let rec = self
+            .session
+            .append(SessionEvent::Step {
+                turn,
+                step: steps,
+                phase: StepPhase::Ended,
+            });
+        self.persist(&rec).await?;
+        let rec = self
+            .session
+            .append(SessionEvent::Turn(TurnEvent::Ended { turn, reason }));
+        self.persist(&rec).await?;
+        Ok(())
+    }
+
     /// 跑一个回合。`user_text = Some` 时先入日志（新回合）；
     /// `None` 表示恢复续跑（用户消息已在日志中，从断点重跑）。
     /// 事件序列见模块文档；torn 流（Err 或缺失 Finish）直接返回 Err。
@@ -318,6 +346,12 @@ impl ReactLoopAgent {
             });
             self.persist(&rec).await?;
         }
+
+        // 回合开启事件（对齐 DSH：每回合开头 append turn/start；turn 号 = 日志 max+1）。
+        let rec = self
+            .session
+            .append(SessionEvent::Turn(TurnEvent::Started { turn }));
+        self.persist(&rec).await?;
 
         let mut steps: u64 = 0;
 
@@ -347,7 +381,7 @@ impl ReactLoopAgent {
                         request_id: None,
                         },
                     }));
-                let _ = self.persist(&rec).await;
+                self.persist(&rec).await?;
                 return Err(LoopError::MaxSteps(self.rt.max_steps));
             }
 
@@ -384,19 +418,21 @@ impl ReactLoopAgent {
             while let Some(chunk) = stream.next().await {
                 let chunk = match chunk {
                     Ok(c) => c,
-                    // torn 流：禁止静默中断。
+                    // torn 流：禁止静默中断。闭合 step 后以结构化 failure 收尾
+                    //（对齐 normalizeLlmFailure：code/request_id 从 LlmError 事实投影，
+                    // 不硬编码 LLM_STREAM）。
                     Err(e) => {
-                        let rec = self
-                            .session
-                            .append(SessionEvent::Turn(TurnEvent::Ended {
-                                turn,
-                                reason: TurnEndReason::Error {
-                                    message: e.message.clone(),
-                                    code: "LLM_STREAM".to_string(),
-                                request_id: None,
-                                },
-                            }));
-                        let _ = self.persist(&rec).await;
+                        let failure = e.to_failure();
+                        self.close_turn(
+                            turn,
+                            steps,
+                            TurnEndReason::Error {
+                                message: failure.message.clone(),
+                                code: failure.code.clone(),
+                                request_id: failure.request_id.clone(),
+                            },
+                        )
+                        .await?;
                         return Err(LoopError::Llm(e.message));
                     }
                 };
@@ -414,17 +450,16 @@ impl ReactLoopAgent {
 
             // finish 缺失 = torn（端口契约要求流以 Finish 收尾）。
             if assembler.finish.is_none() {
-                let rec = self
-                    .session
-                    .append(SessionEvent::Turn(TurnEvent::Ended {
-                        turn,
-                        reason: TurnEndReason::Error {
-                            message: "stream ended without Finish (torn)".to_string(),
-                            code: "STREAM_CLOSED".to_string(),
+                self.close_turn(
+                    turn,
+                    steps,
+                    TurnEndReason::Error {
+                        message: "stream ended without Finish (torn)".to_string(),
+                        code: "STREAM_CLOSED".to_string(),
                         request_id: None,
-                        },
-                    }));
-                let _ = self.persist(&rec).await;
+                    },
+                )
+                .await?;
                 return Err(LoopError::Llm(
                     "stream ended without Finish (torn)".to_string(),
                 ));
@@ -436,33 +471,31 @@ impl ReactLoopAgent {
                     // 取消请求中断回合 → TurnEndReason::Aborted（对齐 DSH：aborted
                     // 是独立 reason 词汇，不再归 Error{ABORTED}）。
                     FinishReason::Cancelled => {
-                        let rec = self
-                            .session
-                            .append(SessionEvent::Turn(TurnEvent::Ended {
-                                turn,
-                                reason: TurnEndReason::Aborted {
-                                    reason: "request cancelled".to_string(),
-                                },
-                            }));
-                        let _ = self.persist(&rec).await;
+                        self.close_turn(
+                            turn,
+                            steps,
+                            TurnEndReason::Aborted {
+                                reason: "request cancelled".to_string(),
+                            },
+                        )
+                        .await?;
                         return Err(LoopError::Llm(
                             "model finish: cancelled (ABORTED)".to_string(),
                         ));
                     }
                     FinishReason::Error { message, code, extra } => {
-                        let rec = self
-                            .session
-                            .append(SessionEvent::Turn(TurnEvent::Ended {
-                                turn,
-                                reason: TurnEndReason::Error {
-                                    message: message.clone(),
-                                    code: code.clone(),
-                                    // 提供商请求 id 从 finish failure 结构化事实投影
-                                    //（诊断/审计链；无则省略）。
-                                    request_id: extra.as_ref().and_then(|e| e.request_id.clone()),
-                                },
-                            }));
-                        let _ = self.persist(&rec).await;
+                        self.close_turn(
+                            turn,
+                            steps,
+                            TurnEndReason::Error {
+                                message: message.clone(),
+                                code: code.clone(),
+                                // 提供商请求 id 从 finish failure 结构化事实投影
+                                //（诊断/审计链；无则省略）。
+                                request_id: extra.as_ref().and_then(|e| e.request_id.clone()),
+                            },
+                        )
+                        .await?;
                         return Err(LoopError::Llm(format!(
                             "model finish: {message} ({code})"
                         )));
@@ -829,47 +862,52 @@ mod tests {
         assert_eq!(outcome.reason, TurnEndReason::Completed);
 
         let events: Vec<SessionEvent> = session.events().into_iter().map(|r| r.event).collect();
-        // [0] SessionStarted, [1] UserMessage, [2] Step{1,1,Started},
-        // [3..6] AssistantChunk（BlockStart/TextDelta/BlockEnd/Finish 四块——对齐 DSH：
-        //        agent-loop 对流的每个 chunk（含 finish）都 append assistant/chunk 保 replay 保真）,
-        // [7] AssistantMessage(Text), [8] Step Ended, [9] Turn Ended
-        assert_eq!(events.len(), 10);
+        // [0] SessionStarted, [1] UserMessage, [2] Turn Started{1},
+        // [3] Step{1,1,Started}, [4..7] AssistantChunk（BlockStart/TextDelta/BlockEnd/Finish
+        // 四块——对齐 DSH：agent-loop 对流的每个 chunk（含 finish）都 append
+        // assistant/chunk 保 replay 保真）, [8] AssistantMessage(Text),
+        // [9] Step Ended, [10] Turn Ended
+        assert_eq!(events.len(), 11);
         assert!(matches!(&events[1], SessionEvent::UserMessage { text } if text.as_str() == "hi"));
         assert!(matches!(
             &events[2],
-            SessionEvent::Step { turn: 1, step: 1, phase: StepPhase::Started }
+            SessionEvent::Turn(TurnEvent::Started { turn: 1 })
         ));
         assert!(matches!(
             &events[3],
-            SessionEvent::AssistantChunk { chunk }
-                if matches!(chunk, StreamChunk::BlockStart { index: 0, block_type } if block_type == "text")
+            SessionEvent::Step { turn: 1, step: 1, phase: StepPhase::Started }
         ));
         assert!(matches!(
             &events[4],
             SessionEvent::AssistantChunk { chunk }
-                if matches!(chunk, StreamChunk::TextDelta { index: 0, text } if text == "你好")
+                if matches!(chunk, StreamChunk::BlockStart { index: 0, block_type } if block_type == "text")
         ));
         assert!(matches!(
             &events[5],
             SessionEvent::AssistantChunk { chunk }
-                if matches!(chunk, StreamChunk::BlockEnd { index: 0, .. })
+                if matches!(chunk, StreamChunk::TextDelta { index: 0, text } if text == "你好")
         ));
         assert!(matches!(
             &events[6],
             SessionEvent::AssistantChunk { chunk }
-                if matches!(chunk, StreamChunk::Finish(FinishReason::Stop))
+                if matches!(chunk, StreamChunk::BlockEnd { index: 0, .. })
         ));
         assert!(matches!(
             &events[7],
+            SessionEvent::AssistantChunk { chunk }
+                if matches!(chunk, StreamChunk::Finish(FinishReason::Stop))
+        ));
+        assert!(matches!(
+            &events[8],
             SessionEvent::AssistantMessage { content, usage: None }
                 if matches!(&content[..], [ContentBlock::Text(t)] if t.as_str() == "你好")
         ));
         assert!(matches!(
-            &events[8],
+            &events[9],
             SessionEvent::Step { turn: 1, step: 1, phase: StepPhase::Ended }
         ));
         assert!(matches!(
-            &events[9],
+            &events[10],
             SessionEvent::Turn(TurnEvent::Ended { turn: 1, reason: TurnEndReason::Completed })
         ));
     }
@@ -892,15 +930,20 @@ mod tests {
         assert_eq!(outcome.reason, TurnEndReason::Completed);
 
         let events: Vec<SessionEvent> = session.events().into_iter().map(|r| r.event).collect();
-        // [0] SessionStarted, [1] UserMessage, [2] Step{1,1,Started},
-        // [3..6] AssistantChunk（tool-call 块 + finish）, [7] AssistantMessage([ToolCall]),
-        // [8] ToolCall, [9] ToolResult, [10] Step{1,1,Ended},
-        // [11] Step{1,2,Started}, [12..15] AssistantChunk（文本块 + finish）,
-        // [16] AssistantMessage(Text), [17] Step{1,2,Ended}, [18] Turn Ended
+        // [0] SessionStarted, [1] UserMessage, [2] Turn Started{1},
+        // [3] Step{1,1,Started}, [4..7] AssistantChunk（tool-call 块 + finish）,
+        // [8] AssistantMessage([ToolCall]), [9] ToolCall, [10] ToolResult,
+        // [11] Step{1,1,Ended}, [12] Step{1,2,Started}, [13..16] AssistantChunk（文本块 + finish）,
+        // [17] AssistantMessage(Text), [18] Step{1,2,Ended}, [19] Turn Ended
         let chunk_seq: Vec<String> = events
             .iter()
             .filter_map(|e| match e {
-                SessionEvent::AssistantChunk { chunk } => Some(chunk.to_wire()["type"].as_str().unwrap_or("").to_string()),
+                SessionEvent::AssistantChunk { chunk } => Some(
+                    chunk.to_wire()["type"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_string(),
+                ),
                 _ => None,
             })
             .collect();
@@ -912,17 +955,17 @@ mod tests {
             ]
         );
         assert!(matches!(
-            &events[7],
+            &events[8],
             SessionEvent::AssistantMessage { content, .. }
                 if matches!(&content[..], [ContentBlock::ToolCall(_)])
         ));
         assert!(matches!(
-            &events[8],
+            &events[9],
             SessionEvent::ToolCall { call }
                 if call.name.as_str() == "echo" && call.id.as_str() == "call_0"
         ));
         assert!(matches!(
-            &events[9],
+            &events[10],
             SessionEvent::ToolResult { result } if !result.is_error
         ));
         let text_msg = events.iter().find_map(|e| match e {
@@ -976,6 +1019,37 @@ mod tests {
         assert!(events
             .iter()
             .any(|e| matches!(e, SessionEvent::Step { step: 2, .. })));
+    }
+
+    /// 多回合 turn 编号单调递增：两次 run_turn 产出 Turn Started{1}、{2}，
+    /// 且每个回合的 Turn Started 都有配对 Ended（回归 P1-1：Turn Started 曾从不落日志）。
+    #[tokio::test]
+    async fn turn_numbers_increment_across_rounds() {
+        let (rt, session) = runtime(
+            vec![ScriptStep::Text("一".to_string()), ScriptStep::Text("二".to_string())],
+            &[],
+        );
+        let agent = ReactLoopAgent::new(rt, Arc::clone(&session));
+        agent.run_turn(Some("first")).await.unwrap();
+        agent.run_turn(Some("second")).await.unwrap();
+
+        let events: Vec<SessionEvent> = session.events().into_iter().map(|r| r.event).collect();
+        let starts: Vec<u64> = events
+            .iter()
+            .filter_map(|e| match e {
+                SessionEvent::Turn(TurnEvent::Started { turn }) => Some(*turn),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(starts, vec![1, 2]);
+        let ends: Vec<u64> = events
+            .iter()
+            .filter_map(|e| match e {
+                SessionEvent::Turn(TurnEvent::Ended { turn, .. }) => Some(*turn),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ends, vec![1, 2]);
     }
 
     /// MaxSteps：脚本给 40 个工具回合（> 32）→ Err(MaxSteps) + turn/end(MAX_STEPS)。

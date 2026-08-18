@@ -150,6 +150,9 @@ async fn main() {
                 .session()
                 .append(SessionEvent::UserMessage { text: "hi".into() });
             persist.append_events(&sid, &[SessionEvent::UserMessage { text: "hi".into() }]).await.unwrap();
+            // Turn Started（对齐真实 loop 的回合开启事件；断点语义保持）
+            agent.session().append(SessionEvent::Turn(TurnEvent::Started { turn: 1 }));
+            persist.append_events(&sid, &[SessionEvent::Turn(TurnEvent::Started { turn: 1 })]).await.unwrap();
             // Step Started（断点 1：落盘后自死）
             agent.session().append(SessionEvent::Step {
                 turn: 1,
