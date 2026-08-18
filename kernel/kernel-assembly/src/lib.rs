@@ -43,11 +43,21 @@ pub struct Runtime {
     pub provider: String,
     pub model: String,
     pub bus: EventBus,
+    /// 单回合最大 step 数（数值可配置；装配默认 [`kernel_loop::DEFAULT_MAX_STEPS`]）。
+    pub max_steps: u64,
 }
 
 impl Runtime {
     /// 创建一个新的运行时（headless profile：内存 store + sqlite 持久化 + mock LLM）。
     pub fn headless(sqlite_path: PathBuf) -> Result<Self, AssemblyError> {
+        Self::headless_with_max_steps(sqlite_path, kernel_loop::DEFAULT_MAX_STEPS)
+    }
+
+    /// 带 max_steps 的 headless 装配（web-server 经 `--max-steps` 覆盖）。
+    pub fn headless_with_max_steps(
+        sqlite_path: PathBuf,
+        max_steps: u64,
+    ) -> Result<Self, AssemblyError> {
         let persist = Arc::new(
             SqlitePersist::open(&sqlite_path).map_err(|e| AssemblyError::Persist(e.to_string()))?,
         );
@@ -70,6 +80,7 @@ impl Runtime {
             provider: "mock".to_string(),
             model: "mock-1".to_string(),
             bus,
+            max_steps,
         })
     }
 
@@ -161,7 +172,7 @@ impl Runtime {
             persist: Arc::clone(&self.persist),
             provider: self.provider.clone(),
             model: self.model.clone(),
-            max_steps: kernel_loop::DEFAULT_MAX_STEPS,
+            max_steps: self.max_steps,
         })
     }
 }

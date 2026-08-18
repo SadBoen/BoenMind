@@ -1,10 +1,11 @@
 //! web-server 二进制：Rust 协议兼容层服务入口。
 //!
 //! 用法：web-server [--db <path>] [--dist <dist_root>] [--boot-json <file>] [--port <port>]
-//!         [--trusted-host <host>] [--config <toml>]
+//!         [--trusted-host <host>] [--config <toml>] [--max-steps <n>]
 //!
 //! `--config` 指向既有 boenmind 形态的 LLM 配置（minimax/deepseek/custom 三通道，
 //! 见 provider_config 模块）。不传时服务保持 mock provider（旧行为不变）。
+//! `--max-steps` 覆盖单回合最大 step 数（默认 32）。
 //!
 //! 默认 `--dist` 指向内置前端快照 `kernel/web-server/frontend/`（dsh rc.6 壳层 +
 //! 真实 boot 清单 + 38 插件 client bundle，见同目录 README）。快照 index.html 已含
@@ -35,6 +36,7 @@ fn main() {
     let mut port: u16 = 3080;
     let mut trusted_hosts: Vec<String> = vec![];
     let mut config: Option<PathBuf> = None;
+    let mut max_steps: u64 = kernel_loop::DEFAULT_MAX_STEPS;
 
     let mut i = 1;
     while i < args.len() {
@@ -67,9 +69,17 @@ fn main() {
                 i += 1;
                 config = Some(PathBuf::from(&args[i]));
             }
+            "--max-steps" => {
+                i += 1;
+                max_steps = args[i].parse().expect("max-steps must be a number");
+                if max_steps == 0 {
+                    eprintln!("max-steps must be at least 1");
+                    std::process::exit(2);
+                }
+            }
             "--help" | "-h" => {
                 println!(
-                    "usage: web-server [--db <path>] [--dist <dir>] [--boot-json <file>] [--port <n>] [--trusted-host <host>] [--config <toml>]"
+                    "usage: web-server [--db <path>] [--dist <dir>] [--boot-json <file>] [--port <n>] [--trusted-host <host>] [--config <toml>] [--max-steps <n>]"
                 );
                 return;
             }
@@ -81,7 +91,7 @@ fn main() {
         i += 1;
     }
 
-    let mut runtime = match Runtime::headless(db.clone()) {
+    let mut runtime = match Runtime::headless_with_max_steps(db.clone(), max_steps) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("runtime init failed: {e}");

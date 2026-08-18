@@ -45,17 +45,18 @@ impl LlmPort for MultiProviderLlm {
     fn stream(&self, request: GenerateOptions) -> ChunkStream {
         match self.route(&request.provider) {
             Some(p) => p.stream(request),
-            // 未知 provider：torn 错误流（调用方以 Finish 缺失判 torn，绝不静默空转）。
-            None => Box::pin(futures::stream::iter(vec![
-                Err(LlmError::new(format!(
-                    "no llm provider registered for '{}'",
-                    request.provider
-                ))),
-                Ok(StreamChunk::Finish(FinishReason::Error {
-                    message: format!("no llm provider registered for '{}'", request.provider),
-                    code: "NO_PROVIDER".to_string(),
-                })),
-            ])),
+            // 未知 provider：错误以 finish 呈现（对齐 DSH service.spec：
+            // 未注册 provider → NO_ADAPTER 终态 error finish；不产 Err chunk，
+            // 否则 loop 的 torn 分支会把 code 覆盖成 LLM_STREAM 并双回合收尾）。
+            None => Box::pin(futures::stream::iter(vec![Ok(
+                StreamChunk::Finish(FinishReason::Error {
+                    message: format!(
+                        "no adapter registered for provider '{}'",
+                        request.provider
+                    ),
+                    code: "NO_ADAPTER".to_string(),
+                }),
+            )])),
         }
     }
 }
@@ -94,7 +95,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unknown_provider_returns_torn_error_stream() {
+    async fn unknown_provider_returns_no_adapter_finish() {
         let m = MultiProviderLlm::new(vec![]);
         let mut s = m.stream(GenerateOptions {
             provider: "nope".into(),
@@ -106,6 +107,13 @@ mod tests {
             session_id: None,
         });
         let first = s.next().await;
-        assert!(matches!(first, Some(Err(_))), "unknown provider must error");
+        match first {
+            Some(Ok(StreamChunk::Finish(FinishReason::Error { code, .. }))) => {
+                assert_eq!(code, "NO_ADAPTER");
+            }
+            other => panic!("expected NO_ADAPTER finish, got {other:?}"),
+        }
+        // 只一个 chunk（不产 Err，避免 loop torn 覆盖 code）。
+        assert!(s.next().await.is_none());
     }
 }

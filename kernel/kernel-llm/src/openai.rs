@@ -16,6 +16,8 @@
 //!   `prompt_tokens_details.cached_tokens` 或 `prompt_cache_hit_tokens` 减去；
 //! - finish stop 但未开任何块 → EMPTY_RESPONSE 错误 finish。
 
+use std::sync::{Arc, Mutex};
+
 use async_trait::async_trait;
 use kernel_contracts::error::LlmError;
 use kernel_contracts::llm::{
@@ -59,10 +61,22 @@ pub struct OpenAiProviderConfig {
     pub list_endpoint: ModelListEndpoint,
 }
 
+/// 请求级动态覆盖（对齐 DSH `llm-deepseek` 的 settings section + credentials
+/// 每请求解析语义：`baseURL` 走 settings ns、API key 走 credentials store，
+/// 写后下一请求即生效，无需重启/重新注册）。
+#[derive(Debug, Default, Clone)]
+struct DynamicOverrides {
+    /// settings 写的 `baseURL`；None = 用装配值。
+    base_url: Option<String>,
+    /// credentials.set 写的 API key；None = 用装配值/env。
+    api_key: Option<String>,
+}
+
 /// OpenAI 兼容流式适配器。
 pub struct OpenAICompatLlm {
     cfg: OpenAiProviderConfig,
     client: reqwest::Client,
+    dynamic: Arc<Mutex<DynamicOverrides>>,
 }
 
 impl OpenAICompatLlm {
@@ -71,7 +85,11 @@ impl OpenAICompatLlm {
             .connect_timeout(std::time::Duration::from_secs(15))
             .build()
             .expect("reqwest client build");
-        Self { cfg, client }
+        Self {
+            cfg,
+            client,
+            dynamic: Arc::new(Mutex::new(DynamicOverrides::default())),
+        }
     }
 
     pub fn provider_id(&self) -> &str {
@@ -86,6 +104,7 @@ impl OpenAICompatLlm {
         &self.cfg.settings_ns
     }
 
+    /// 装配基址（不含运行时覆盖）。
     pub fn base_url(&self) -> &str {
         &self.cfg.base_url
     }
@@ -94,12 +113,38 @@ impl OpenAICompatLlm {
         &self.cfg.models
     }
 
+    /// settings ns 写面入口：更新 `baseURL` 覆盖（None = 恢复装配值）。
+    pub fn set_base_url_override(&self, base_url: Option<String>) {
+        self.dynamic.lock().unwrap().base_url = base_url;
+    }
+
+    /// credentials 写面入口：更新 API key 覆盖（None = 恢复装配值/env）。
+    pub fn set_api_key_override(&self, api_key: Option<String>) {
+        self.dynamic.lock().unwrap().api_key = api_key;
+    }
+
+    /// 当前生效 base_url（覆盖优先，缺省装配值）。
+    pub fn effective_base_url(&self) -> String {
+        let dynamic = self.dynamic.lock().unwrap();
+        dynamic
+            .base_url
+            .clone()
+            .unwrap_or_else(|| self.cfg.base_url.clone())
+    }
+
+    /// 当前生效 API key（覆盖优先，缺省装配值；均无 → None）。
+    pub fn effective_api_key(&self) -> Option<String> {
+        let dynamic = self.dynamic.lock().unwrap();
+        let k = dynamic.api_key.clone().unwrap_or_else(|| self.cfg.api_key.clone());
+        (!k.is_empty()).then_some(k)
+    }
+
     fn chat_url(&self) -> String {
-        format!("{}/chat/completions", self.cfg.base_url.trim_end_matches('/'))
+        format!("{}/chat/completions", self.effective_base_url().trim_end_matches('/'))
     }
 
     fn models_url(&self) -> String {
-        format!("{}/models", self.cfg.base_url.trim_end_matches('/'))
+        format!("{}/models", self.effective_base_url().trim_end_matches('/'))
     }
 
     /// 把内核消息序列翻译为 OpenAI chat/completions messages。
@@ -135,7 +180,9 @@ impl OpenAICompatLlm {
             let mut msg = json!({ "role": m.role.as_str() });
             match m.role {
                 Role::Assistant if !tool_calls.is_empty() => {
-                    msg["content"] = Value::Null;
+                    // 对齐 DSH serialize：tool-call 轮 content 用空串而非 null
+                    // （`content:''`，null 会被 API 400；官方 serialize.spec.ts 逐字节验证）。
+                    msg["content"] = json!("");
                     msg["tool_calls"] = Value::Array(tool_calls);
                 }
                 Role::Tool => {
@@ -187,10 +234,15 @@ impl OpenAICompatLlm {
     /// 真实模型清单探测：`GET {base}/models`（或 minimax 形态）。
     /// 失败（网络/非 2xx/形状不符）→ Err，调用方回退静态清单或报 model-discovery-failed。
     pub async fn list_models_remote(&self) -> Result<Vec<LlmModelInfo>, LlmError> {
+        // 对齐 DSH：keyless 时可浏览目录但请求 MISSING_CREDENTIAL；
+        // 探测无 key → NO_ADAPTER（resolveModelInfo 未注册同码）。
+        let key = self
+            .effective_api_key()
+            .ok_or_else(|| LlmError::new("no adapter registered for provider".to_string()))?;
         let resp = self
             .client
             .get(self.models_url())
-            .header("authorization", format!("Bearer {}", self.cfg.api_key))
+            .header("authorization", format!("Bearer {key}"))
             .send()
             .await
             .map_err(|e| LlmError::retryable(format!("model discovery request failed: {e}")))?;
@@ -252,9 +304,19 @@ impl OpenAICompatLlm {
     fn stream_inner(&self, request: GenerateOptions) -> ChunkStream {
         let client = self.client.clone();
         let url = self.chat_url();
-        let key = self.cfg.api_key.clone();
+        let key = self.effective_api_key();
         let body = self.build_request(&request);
         Box::pin(async_stream::stream! {
+            let Some(key) = key else {
+                // keyless：对齐 DSH resolveApiKey —— 无 key 即 MISSING_CREDENTIAL。
+                // 错误以 finish 呈现（对齐 translate：错误是 finish 语义，不产 Err chunk，
+                // 否则 loop 的 torn 分支会把 code 覆盖成 LLM_STREAM）。
+                yield Ok(StreamChunk::Finish(FinishReason::Error {
+                    message: format!("no API key for provider route '{}'", request.provider),
+                    code: "MISSING_CREDENTIAL".to_string(),
+                }));
+                return;
+            };
             let resp = match client
                 .post(&url)
                 .header("content-type", "application/json")
@@ -265,7 +327,11 @@ impl OpenAICompatLlm {
             {
                 Ok(r) => r,
                 Err(e) => {
-                    yield Err(LlmError::retryable(format!("chat request failed: {e}")));
+                    // TRANSPORT（对齐 adapter.spec：连接失败带 endpoint；finish 呈现）。
+                    yield Ok(StreamChunk::Finish(FinishReason::Error {
+                        message: format!("LLM request to {url} failed: {e}"),
+                        code: "TRANSPORT".to_string(),
+                    }));
                     return;
                 }
             };
@@ -273,10 +339,13 @@ impl OpenAICompatLlm {
                 let status = resp.status();
                 // 读 body 拿错误详情（非流式，体量小）。
                 let text = resp.text().await.unwrap_or_default();
-                let detail = extract_api_error(&text).unwrap_or_else(|| text.clone());
-                yield Err(LlmError::new(format!(
-                    "chat completions HTTP {status}: {detail}"
-                )));
+                let (code, detail) = map_http_code(status.as_u16(), &text);
+                // 错误以 finish 呈现（对齐 adapter.spec 词汇；不产 Err chunk，
+                // 否则 loop 的 torn 分支会把 code 覆盖成 LLM_STREAM 并双回合收尾）。
+                yield Ok(StreamChunk::Finish(FinishReason::Error {
+                    message: format!("HTTP {status}: {detail}"),
+                    code,
+                }));
                 return;
             }
             let mut stream = resp.bytes_stream();
@@ -320,7 +389,11 @@ impl OpenAICompatLlm {
                 let bytes = match chunk {
                     Ok(b) => b,
                     Err(e) => {
-                        yield Err(LlmError::retryable(format!("stream read failed: {e}")));
+                        // 流中途断开 → TRANSPORT（对齐 adapter.spec abrupt body close）。
+                        yield Ok(StreamChunk::Finish(FinishReason::Error {
+                            message: format!("LLM stream from {url} failed: {e}"),
+                            code: "TRANSPORT".to_string(),
+                        }));
                         return;
                     }
                 };
@@ -374,9 +447,11 @@ impl OpenAICompatLlm {
                     let parsed: Value = match serde_json::from_str(data) {
                         Ok(v) => v,
                         Err(e) => {
-                            yield Err(LlmError::new(format!(
-                                "malformed SSE payload: {e}"
-                            )));
+                            // 畸形 JSON → MALFORMED_RESPONSE（对齐 translate.spec）。
+                            yield Ok(StreamChunk::Finish(FinishReason::Error {
+                                message: format!("malformed SSE payload: {e}"),
+                                code: "MALFORMED_RESPONSE".to_string(),
+                            }));
                             return;
                         }
                     };
@@ -512,9 +587,11 @@ impl OpenAICompatLlm {
 
             // [DONE] 未出现但流已尽：parseSse 保证哨兵（或抛错）——违反契约。
             if !done_seen {
-                yield Err(LlmError::new(
-                    "SSE payload stream ended without [DONE]",
-                ));
+                // STREAM_CLOSED（对齐 sse.spec：EOF 无 [DONE]）。
+                yield Ok(StreamChunk::Finish(FinishReason::Error {
+                    message: "SSE payload stream ended without [DONE]".to_string(),
+                    code: "STREAM_CLOSED".to_string(),
+                }));
                 return;
             }
         })
@@ -586,6 +663,25 @@ fn extract_api_error(body: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+/// HTTP 状态码 → DSH 错误码（对齐 `adapter.spec.ts`：401/403→AUTH、429→RATE_LIMIT、
+/// 400→INVALID_REQUEST、500/503→SERVER、其余→HTTP_<status>）。
+fn map_http_code(status: u16, body: &str) -> (String, String) {
+    let detail = extract_api_error(body).unwrap_or_else(|| body.to_string());
+    let detail = if detail.trim().is_empty() {
+        format!("HTTP {status}")
+    } else {
+        detail
+    };
+    let code = match status {
+        401 | 403 => "AUTH".to_string(),
+        429 => "RATE_LIMIT".to_string(),
+        400 => "INVALID_REQUEST".to_string(),
+        500 | 503 => "SERVER".to_string(),
+        other => format!("HTTP_{other}"),
+    };
+    (code, detail)
+}
+
 #[async_trait]
 impl LlmPort for OpenAICompatLlm {
     async fn list_models(&self, provider: &str) -> Result<Vec<LlmModelInfo>, LlmError> {
@@ -649,7 +745,7 @@ mod tests {
         }];
         let out = OpenAICompatLlm::translate_messages(&msgs);
         assert_eq!(out[0]["role"], "assistant");
-        assert_eq!(out[0]["content"], Value::Null);
+        assert_eq!(out[0]["content"], "");
         assert_eq!(out[0]["tool_calls"][0]["id"], "call_1");
         assert_eq!(
             out[0]["tool_calls"][0]["function"]["arguments"],
@@ -716,6 +812,23 @@ mod tests {
     }
 
     #[test]
+    fn map_http_code_vocabulary() {
+        // 401/403→AUTH、429→RATE_LIMIT、400→INVALID_REQUEST、500/503→SERVER、其余→HTTP_<status>。
+        assert_eq!(map_http_code(401, r#"{"error":{"message":"bad key"}}"#).0, "AUTH");
+        assert_eq!(map_http_code(403, "denied").0, "AUTH");
+        assert_eq!(map_http_code(429, "slow down").0, "RATE_LIMIT");
+        assert_eq!(map_http_code(400, r#"{"error":{"message":"nope"}}"#).0, "INVALID_REQUEST");
+        assert_eq!(map_http_code(500, "boom").0, "SERVER");
+        assert_eq!(map_http_code(503, "down").0, "SERVER");
+        assert_eq!(map_http_code(418, "teapot").0, "HTTP_418");
+        // 消息：JSON body 取 error.message；无消息 → 状态行文本。
+        let (_, d) = map_http_code(400, r#"{"error":{"message":"bad request"}}"#);
+        assert_eq!(d, "bad request");
+        let (_, d2) = map_http_code(500, "");
+        assert_eq!(d2, "HTTP 500");
+    }
+
+    #[test]
     fn map_finish_reason_vocabulary() {
         assert_eq!(map_finish_reason("stop"), FinishReason::Stop);
         assert_eq!(map_finish_reason("tool_calls"), FinishReason::ToolCalls);
@@ -756,5 +869,77 @@ mod tests {
         assert_eq!(u3.input, 10);
         assert_eq!(u3.cache_read, None);
         assert_eq!(u3.reasoning, None);
+    }
+
+    #[test]
+    fn dynamic_overrides_take_effect_per_request() {
+        let llm = OpenAICompatLlm::new(OpenAiProviderConfig {
+            id: "deepseek".into(),
+            display_name: "DeepSeek".into(),
+            settings_ns: "llm.deepseek".into(),
+            base_url: "https://api.deepseek.com/v1".into(),
+            api_key: "assemble-key".into(),
+            models: vec![],
+            list_endpoint: ModelListEndpoint::Standard,
+        });
+        // 装配值生效。
+        assert_eq!(llm.effective_base_url(), "https://api.deepseek.com/v1");
+        assert_eq!(llm.effective_api_key().as_deref(), Some("assemble-key"));
+
+        // settings 写 baseURL + credentials 写 key → 下一请求即用新值。
+        llm.set_base_url_override(Some("http://127.0.0.1:9999/v1".into()));
+        llm.set_api_key_override(Some("hot-key".into()));
+        assert_eq!(llm.effective_base_url(), "http://127.0.0.1:9999/v1");
+        assert_eq!(llm.effective_api_key().as_deref(), Some("hot-key"));
+        assert_eq!(
+            llm.chat_url(),
+            "http://127.0.0.1:9999/v1/chat/completions"
+        );
+
+        // 清覆盖 → 回退装配值。
+        llm.set_base_url_override(None);
+        llm.set_api_key_override(None);
+        assert_eq!(llm.effective_base_url(), "https://api.deepseek.com/v1");
+        assert_eq!(llm.effective_api_key().as_deref(), Some("assemble-key"));
+    }
+
+    #[test]
+    fn keyless_stream_fails_missing_credential() {
+        use futures::StreamExt;
+        let llm = OpenAICompatLlm::new(OpenAiProviderConfig {
+            id: "deepseek".into(),
+            display_name: "DeepSeek".into(),
+            settings_ns: "llm.deepseek".into(),
+            base_url: "https://api.deepseek.com/v1".into(),
+            api_key: String::new(), // keyless
+            models: vec![],
+            list_endpoint: ModelListEndpoint::Standard,
+        });
+        let req = GenerateOptions {
+            provider: "deepseek".into(),
+            model: "deepseek-chat".into(),
+            messages: vec![text_message(Role::User, "hi")],
+            tools: vec![],
+            temperature: None,
+            max_tokens: None,
+            session_id: None,
+        };
+        let chunks = futures::executor::block_on(async {
+            let mut stream = llm.stream(req);
+            let mut out = Vec::new();
+            while let Some(c) = stream.next().await {
+                out.push(c);
+            }
+            out
+        });
+        // 错误以 finish 呈现（对齐 translate），且不得有 Err chunk（避免 loop torn 覆盖 code）。
+        assert!(chunks.iter().all(Result::is_ok));
+        assert_eq!(chunks.len(), 1);
+        match &chunks[0] {
+            Ok(StreamChunk::Finish(FinishReason::Error { code, .. })) => {
+                assert_eq!(code, "MISSING_CREDENTIAL")
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
     }
 }

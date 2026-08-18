@@ -17,7 +17,8 @@
 //! default_model = "MiniMax-M3"        # 可选：该 provider 的默认模型
 //! ```
 //!
-//! 无 key（配置缺 + env 缺）的 provider 跳过并警告；base_url 无法推断的 custom
+//! 无 key（配置缺 + env 缺）的 provider 以 keyless 装配（请求时 MISSING_CREDENTIAL，
+//! key 可经 credentials.set `{ID}_API_KEY` 热补）；base_url 无法推断的 custom
 //! provider 跳过并警告。**不传 --config 时服务保持 mock provider（旧行为不变）。**
 
 use std::collections::HashMap;
@@ -146,20 +147,19 @@ fn build_provider(raw: RawProvider) -> Result<Option<ProviderConfig>, String> {
         return Ok(None);
     }
 
-    // api_key：配置 > env {ID}_API_KEY > 跳过。
+    // api_key：配置 > env {ID}_API_KEY > keyless（空串；请求时 MISSING_CREDENTIAL）。
+    // 对齐 DSH `dynamic-config.spec.ts`："starts keyless and serves the next request
+    // once the key arrives"——装配不要求 key，key 可经 credentials.set 热补。
     let api_key = match raw.api_key {
         Some(k) if !k.trim().is_empty() => k.trim().to_string(),
-        _ => match std::env::var(format!("{}_API_KEY", id.to_uppercase())) {
-            Ok(k) if !k.trim().is_empty() => k.trim().to_string(),
-            _ => {
-                tracing::warn!(
-                    "provider {id}: no api_key (config or {}_API_KEY), skipped",
-                    id.to_uppercase()
-                );
-                return Ok(None);
-            }
-        },
+        _ => std::env::var(format!("{}_API_KEY", id.to_uppercase())).unwrap_or_default(),
     };
+    if api_key.is_empty() {
+        tracing::warn!(
+            "provider {id}: no api_key (config or {}_API_KEY); serving keyless — requests fail MISSING_CREDENTIAL until a key is set",
+            id.to_uppercase()
+        );
+    }
 
     Ok(Some(ProviderConfig {
         id,
@@ -218,18 +218,21 @@ models = ["deepseek-chat"]
     }
 
     #[test]
-    fn missing_key_skips_provider() {
+    fn missing_key_keeps_provider_keyless() {
         let path = write_tmp(
             r#"
 [[providers]]
 id = "minimax"
 kind = "minimax"
+models = ["MiniMax-M3"]
 "#,
         );
-        // env 缺 → 跳过。
+        // env 缺 → keyless（不跳过；key 可经 credentials.set 热补）。
         std::env::remove_var("MINIMAX_API_KEY");
         let cfg = load_llm_config(&path).unwrap();
-        assert!(cfg.providers.is_empty());
+        assert_eq!(cfg.providers.len(), 1);
+        assert_eq!(cfg.providers[0].id, "minimax");
+        assert!(cfg.providers[0].api_key.is_empty());
     }
 
     #[test]

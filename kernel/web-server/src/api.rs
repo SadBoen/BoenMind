@@ -1431,8 +1431,15 @@ fn settings_view(ns: &str, value: &serde_json::Map<String, Value>) -> Value {
 fn settings_describe(state: &AppState) -> Value {
     let settings = state.settings.lock().unwrap();
     let mut namespaces = Vec::new();
-    for ns in WEB_SETTINGS_NAMESPACES {
-        let value = settings.get(*ns).cloned().unwrap_or_default();
+    // 静态白名单 + 真实 provider 的 settings ns（llm.<id>，对齐 DSH 每个插件一个 ns）。
+    let mut ns_list: Vec<&str> = WEB_SETTINGS_NAMESPACES.to_vec();
+    for p in &state.providers {
+        if !ns_list.contains(&p.settings_ns.as_str()) {
+            ns_list.push(&p.settings_ns);
+        }
+    }
+    for ns in ns_list {
+        let value = settings.get(ns).cloned().unwrap_or_default();
         namespaces.push(settings_view(ns, &value));
     }
     ok(json!({ "writable": true, "hasDocument": false, "namespaces": namespaces }))
@@ -1514,8 +1521,10 @@ fn settings_mutate(state: &AppState, payload: Value) -> Value {
     })
 }
 
-/// 共用写面：定位 ns → 应用闭包变更 → 返回新视图。
+/// 共用写面：定位 ns → 应用闭包变更 → 同步 provider 动态覆盖 → 返回新视图。
 /// 未知 ns → `settings-rejected {ns}`（台账：schema 校验/未知 ns/只读 provider → settings-rejected）。
+/// provider 的 `llm.<id>` ns 是动态写面（M3 收尾）：`baseURL` 变更同步到适配器，
+/// 下一请求即生效（对齐 DSH `llm-deepseek` settings section 每请求解析）。
 fn settings_write<F>(state: &AppState, payload: Value, apply: F) -> Value
 where
     F: FnOnce(&mut serde_json::Map<String, Value>, &Value),
@@ -1523,14 +1532,31 @@ where
     let Some(ns) = payload.get("ns").and_then(Value::as_str) else {
         return err("bad-request", "missing ns");
     };
-    if !WEB_SETTINGS_NAMESPACES.contains(&ns) {
+    let dynamic_ns = state.providers.iter().any(|p| p.settings_ns == ns);
+    if !WEB_SETTINGS_NAMESPACES.contains(&ns) && !dynamic_ns {
         return err_with_details("settings-rejected", "namespace not writable", json!({ "ns": ns }));
     }
     let mut settings = state.settings.lock().unwrap();
     let mut value = settings.get(ns).cloned().unwrap_or_default();
     apply(&mut value, &payload);
     settings.insert(ns.to_string(), value.clone());
+    if dynamic_ns {
+        sync_provider_overrides(state, ns, &value);
+    }
     ok(settings_view(ns, &value))
+}
+
+/// 把 `llm.<id>` 命名空间写面的 baseURL 同步到适配器（覆盖优先、恢复装配值用 null/缺省）。
+fn sync_provider_overrides(state: &AppState, ns: &str, value: &serde_json::Map<String, Value>) {
+    let Some(provider) = state.providers.iter().find(|p| p.settings_ns == ns) else {
+        return;
+    };
+    if let Some(adapter) = &provider.adapter {
+        match value.get("baseURL") {
+            Some(Value::String(u)) if !u.is_empty() => adapter.set_base_url_override(Some(u.clone())),
+            _ => adapter.set_base_url_override(None),
+        }
+    }
 }
 
 /// credentials.describe（特权）：永不带值，只报 configured/writable。
@@ -1565,6 +1591,8 @@ fn valid_credential_ref(name: &str) -> bool {
 
 /// credentials.set（特权）：ref + value(≥1) → {}。内存存储（持久化后置）。
 /// ref 非法 → bad-request；value 空 → bad-request。
+/// ref 形如 `{ID}_API_KEY` 时同步到同名 provider 适配器（对齐 DSH：key 经 credentials
+/// 服务每请求解析，写后下一请求生效，无需重启）。
 fn credentials_set(state: &AppState, payload: Value) -> Value {
     let Some(name) = payload.get("ref").and_then(Value::as_str) else {
         return err("bad-request", "missing ref");
@@ -1582,6 +1610,7 @@ fn credentials_set(state: &AppState, payload: Value) -> Value {
         return err("bad-request", "value must be at least 1 character");
     }
     state.credentials.lock().unwrap().insert(name.to_string(), value.to_string());
+    sync_provider_key_override(state, name, Some(value.to_string()));
     ok(json!({}))
 }
 
@@ -1597,5 +1626,21 @@ fn credentials_unset(state: &AppState, payload: Value) -> Value {
         );
     }
     state.credentials.lock().unwrap().remove(name);
+    sync_provider_key_override(state, name, None);
     ok(json!({}))
+}
+
+/// ref `{ID}_API_KEY`（大写 env 形态）命中同名 provider → 同步 key 覆盖（None = 恢复装配值/env）。
+fn sync_provider_key_override(state: &AppState, ref_name: &str, value: Option<String>) {
+    let Some(suffix) = ref_name.strip_suffix("_API_KEY") else {
+        return;
+    };
+    for p in &state.providers {
+        if p.id.to_uppercase() == suffix {
+            if let Some(adapter) = &p.adapter {
+                adapter.set_api_key_override(value.clone());
+            }
+            return;
+        }
+    }
 }
