@@ -4,7 +4,7 @@
 //! 由错误码承载），随 conformance 轮逐步补齐。
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use kernel_assembly::Runtime;
@@ -73,6 +73,9 @@ pub struct AppState {
     pub archived_session_ids: Mutex<Vec<String>>,
     /// 凭据存储（credentials.set/unset 写面；内存态，值永不出域，只报 configured）。
     pub credentials: Mutex<HashMap<String, String>>,
+    /// settings/credentials 持久化文件（None = 内存态不落盘；Some = 每次写面
+    /// 成功后原子写盘，启动时加载恢复——P2-C：重启不再静默丢配置/凭据）。
+    pub settings_path: Option<PathBuf>,
     /// 真实 provider 运行时（M3；空 = mock 单 provider 模式）。
     pub providers: Vec<ProviderRuntime>,
     /// respond pending 表（approval 先、question 后；M3 收尾）。
@@ -130,13 +133,24 @@ impl AppState {
         trusted_hosts: Vec<String>,
         providers: Vec<ProviderRuntime>,
     ) -> Self {
+        Self::assemble_with_settings_path(runtime, trusted_hosts, providers, None)
+    }
+
+    /// 带 settings 持久化文件的装配（main.rs 传 home 下的 settings.json；
+    /// 测试/无 home 场景传 None 保持内存态）。
+    pub fn assemble_with_settings_path(
+        runtime: Runtime,
+        trusted_hosts: Vec<String>,
+        providers: Vec<ProviderRuntime>,
+        settings_path: Option<PathBuf>,
+    ) -> Self {
         let host_cwd = std::env::current_dir()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default();
         let (events_tx, _rx) = tokio::sync::broadcast::channel(256);
         let (host_events_tx, _hrx) = tokio::sync::broadcast::channel(256);
         let (mux_events_tx, _mrx) = tokio::sync::broadcast::channel(256);
-        Self {
+        let state = Self {
             runtime,
             sessions: Mutex::new(HashMap::new()),
             version: "0.1.0".to_string(),
@@ -155,6 +169,103 @@ impl AppState {
             projections: Mutex::new(HashMap::new()),
             goals: Mutex::new(HashMap::new()),
             attachments: Mutex::new(HashMap::new()),
+            settings_path,
+        };
+        state.load_settings_file();
+        state
+    }
+
+    /// 把 settings/credentials 快照原子写盘（tmp + rename；Unix 0600）。
+    /// 固定锁序 settings → revisions → credentials；所有写路径先释放各自锁
+    /// 再调用本方法，无交叉等待。写盘失败仅记录（内存已生效，不阻断请求）。
+    pub fn persist_settings(&self) {
+        let Some(path) = &self.settings_path else {
+            return;
+        };
+        let snapshot = {
+            let settings = self.settings.lock().unwrap();
+            let revisions = self.settings_revisions.lock().unwrap();
+            let credentials = self.credentials.lock().unwrap();
+            let mut s = serde_json::Map::new();
+            for (ns, value) in settings.iter() {
+                let rev = revisions.get(ns).copied().unwrap_or(0);
+                s.insert(
+                    ns.clone(),
+                    json!({ "value": value, "revision": rev }),
+                );
+            }
+            let creds: serde_json::Map<String, Value> = credentials
+                .iter()
+                .map(|(k, v)| (k.clone(), json!(v)))
+                .collect();
+            json!({ "settings": s, "credentials": creds })
+        };
+        let tmp = PathBuf::from(format!("{}.tmp", path.display()));
+        let write_res = (|| -> std::io::Result<()> {
+            std::fs::write(&tmp, serde_json::to_string_pretty(&snapshot).unwrap_or_default())?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
+            }
+            std::fs::rename(&tmp, path)
+        })();
+        if let Err(e) = write_res {
+            tracing::error!("settings persist failed: {e}");
+        }
+    }
+
+    /// 启动加载 settings 文件（损坏/缺失 → 从空开始并记录；恢复后同步
+    /// provider 覆盖——凭据回填 adapter，baseURL 覆盖重放）。
+    pub fn load_settings_file(&self) {
+        let Some(path) = &self.settings_path else {
+            return;
+        };
+        let text = match std::fs::read_to_string(path) {
+            Ok(t) => t,
+            Err(_) => return, // 首次启动无文件
+        };
+        let parsed: Value = match serde_json::from_str(&text) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("settings file parse failed, starting empty: {e}");
+                return;
+            }
+        };
+        if let Some(s) = parsed.get("settings").and_then(Value::as_object) {
+            {
+                let mut settings = self.settings.lock().unwrap();
+                let mut revisions = self.settings_revisions.lock().unwrap();
+                for (ns, entry) in s {
+                    let rev = entry.get("revision").and_then(Value::as_u64).unwrap_or(0);
+                    let value = entry
+                        .get("value")
+                        .and_then(Value::as_object)
+                        .cloned()
+                        .unwrap_or_default();
+                    settings.insert(ns.clone(), value);
+                    revisions.insert(ns.clone(), rev);
+                }
+            }
+            for (ns, entry) in s {
+                if let Some(value) = entry.get("value").and_then(Value::as_object) {
+                    sync_provider_overrides(self, ns, value);
+                }
+            }
+        }
+        if let Some(creds) = parsed.get("credentials").and_then(Value::as_object) {
+            {
+                let mut store = self.credentials.lock().unwrap();
+                for (k, v) in creds {
+                    if let Some(s) = v.as_str() {
+                        store.insert(k.clone(), s.to_string());
+                    }
+                }
+            }
+            for k in creds.keys() {
+                let value = self.credentials.lock().unwrap().get(k).cloned();
+                sync_provider_key_override(self, k, value);
+            }
         }
     }
 
@@ -1616,9 +1727,11 @@ where
     settings.insert(ns.to_string(), value.clone());
     revisions.insert(ns.to_string(), current + 1);
     drop(revisions);
+    drop(settings); // persist_settings 需重取 settings 锁，先释放本写者锁
     if dynamic_ns {
         sync_provider_overrides(state, ns, &value);
     }
+    state.persist_settings();
     ok(settings_view(ns, &value, current + 1))
 }
 
@@ -1687,6 +1800,7 @@ fn credentials_set(state: &AppState, payload: Value) -> Value {
     }
     state.credentials.lock().unwrap().insert(name.to_string(), value.to_string());
     sync_provider_key_override(state, name, Some(value.to_string()));
+    state.persist_settings();
     ok(json!({}))
 }
 
@@ -1703,6 +1817,7 @@ fn credentials_unset(state: &AppState, payload: Value) -> Value {
     }
     state.credentials.lock().unwrap().remove(name);
     sync_provider_key_override(state, name, None);
+    state.persist_settings();
     ok(json!({}))
 }
 
@@ -1750,6 +1865,69 @@ mod tests {
         let s = make_snippet("a   b\n\nc  query  here", "query").unwrap();
         assert!(!s.contains('\n'));
         assert!(s.contains("query here"), "snippet: {s}");
+    }
+
+    /// 回归 P2-C：settings/credentials 写盘后，新 AppState 从文件恢复
+    /// （value/revision/凭据三样齐全；重启不再静默丢配置）。
+    #[tokio::test]
+    async fn settings_file_persists_and_reloads() {
+        use kernel_assembly::Runtime;
+        let dir = std::env::temp_dir().join(format!("bm-settings-{}.json", uuid::Uuid::new_v4()));
+        let db = dir.with_extension("db");
+        let rt = Runtime::headless(db.clone()).unwrap();
+        let state = Arc::new(AppState::assemble_with_settings_path(
+            rt,
+            vec![],
+            vec![],
+            Some(dir.clone()),
+        ));
+        {
+            let mut s = state.settings.lock().unwrap();
+            s.insert(
+                "shell".to_string(),
+                serde_json::json!({ "cwd": "/tmp" })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            );
+            state.settings_revisions.lock().unwrap().insert("shell".to_string(), 1);
+            state
+                .credentials
+                .lock()
+                .unwrap()
+                .insert("TEST_API_KEY".to_string(), "sekret".to_string());
+        }
+        state.persist_settings();
+        assert!(dir.exists(), "settings file must exist after persist");
+
+        let db2 = db.with_extension("db2");
+        let rt2 = Runtime::headless(db2.clone()).unwrap();
+        let state2 = Arc::new(AppState::assemble_with_settings_path(
+            rt2,
+            vec![],
+            vec![],
+            Some(dir.clone()),
+        ));
+        assert_eq!(
+            state2.settings.lock().unwrap().get("shell").cloned(),
+            Some(
+                serde_json::json!({ "cwd": "/tmp" })
+                    .as_object()
+                    .unwrap()
+                    .clone()
+            )
+        );
+        assert_eq!(
+            state2.settings_revisions.lock().unwrap().get("shell").copied(),
+            Some(1)
+        );
+        assert_eq!(
+            state2.credentials.lock().unwrap().get("TEST_API_KEY").map(String::as_str),
+            Some("sekret")
+        );
+        let _ = std::fs::remove_file(&dir);
+        let _ = std::fs::remove_file(&db);
+        let _ = std::fs::remove_file(&db2);
     }
 
     /// 回归 BUG-002：attach_event_bus 对已恢复会话的实时 wire seq 必须从历史

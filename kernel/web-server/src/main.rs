@@ -259,7 +259,16 @@ fn main() {
         );
     }
 
-    let state = Arc::new(AppState::assemble(runtime, trusted_hosts.clone(), provider_runtimes));
+    // settings/credentials 持久化文件（P2-C：重启恢复配置与凭据；
+    // 无 home 场景回落内存态）。
+    let settings_path = std::env::home_dir()
+        .map(|h| h.join(".boenmind").join("settings.json"));
+    let state = Arc::new(AppState::assemble_with_settings_path(
+        runtime,
+        trusted_hosts.clone(),
+        provider_runtimes,
+        settings_path,
+    ));
     // 启动恢复：把持久化会话全部 restore 进 live 表（kill -9 恢复语义，
     // restore_session 内部自动做 interrupted-turn 修复）。blank/running 按日志判定。
     // 必须先于 attach_event_bus：attach 按 live 表历史播种实时 seq 游标。

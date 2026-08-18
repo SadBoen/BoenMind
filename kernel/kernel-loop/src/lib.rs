@@ -195,14 +195,14 @@ impl BlockAssembler {
             })
     }
 
-    fn assemble(&self, index: usize, partial: &PartialBlock) -> ContentBlock {
+    fn assemble(&self, index: usize, partial: &PartialBlock) -> Option<ContentBlock> {
         if let Some(b) = &partial.block {
-            return b.clone();
+            return Some(b.clone());
         }
         match partial.block_type.as_str() {
-            "text" => ContentBlock::Text(partial.text.clone()),
-            "reasoning" => ContentBlock::Reasoning(partial.text.clone()),
-            "tool-call" => ContentBlock::ToolCall(ToolCall {
+            "text" => Some(ContentBlock::Text(partial.text.clone())),
+            "reasoning" => Some(ContentBlock::Reasoning(partial.text.clone())),
+            "tool-call" => Some(ContentBlock::ToolCall(ToolCall {
                 id: if partial.tool_call_id.is_empty() {
                     format!("call-{index}")
                 } else {
@@ -210,8 +210,10 @@ impl BlockAssembler {
                 },
                 name: partial.tool_call_name.clone(),
                 arguments: partial.text.clone(),
-            }),
-            _ => ContentBlock::Text(partial.text.clone()),
+            })),
+            // 未知块类型：不产出消息块（绝不静默 flatten 成 Text——上游协议外
+            // 类型要么有对应语义要么被丢弃，冒充文本会污染投影/模型输入）。
+            _ => None,
         }
     }
 
@@ -220,7 +222,7 @@ impl BlockAssembler {
         let blocks: Vec<ContentBlock> = self
             .order
             .iter()
-            .map(|i| self.assemble(*i, self.partials.get(i).expect("order invariant")))
+            .filter_map(|i| self.assemble(*i, self.partials.get(i).expect("order invariant")))
             .collect();
         if self.finish() == FinishReason::MaxTokens {
             blocks
@@ -1091,6 +1093,24 @@ mod tests {
         agent.run_turn(Some("hi")).await.unwrap();
         let aborted = llm.aborted.lock().unwrap().clone();
         assert_eq!(aborted, vec![true], "pending cancel must abort the request signal");
+    }
+
+    /// 未知块类型不静默 flatten 成文本：协议外类型不产出消息块
+    ///（回归 P2-E：旧实现 `_ => ContentBlock::Text(...)` 会把上游异常块冒充文本）。
+    #[test]
+    fn unknown_block_type_not_flattened_to_text() {
+        let mut a = BlockAssembler::new();
+        a.push(&StreamChunk::BlockStart { index: 0, block_type: "unknown".to_string() });
+        a.push(&StreamChunk::TextDelta { index: 0, text: "leak".to_string() });
+        assert!(
+            a.blocks().is_empty(),
+            "unknown block type must not be flattened to text"
+        );
+        // 已知类型不受影响。
+        let mut b = BlockAssembler::new();
+        b.push(&StreamChunk::BlockStart { index: 0, block_type: "text".to_string() });
+        b.push(&StreamChunk::TextDelta { index: 0, text: "ok".to_string() });
+        assert_eq!(b.blocks().len(), 1);
     }
 
     /// 多回合 turn 编号单调递增：两次 run_turn 产出 Turn Started{1}、{2}，
