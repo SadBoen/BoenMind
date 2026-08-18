@@ -9,6 +9,8 @@
 
 三份独立报告：`docs/review-dsh-rust-core-2026-08-18/`（code-architecture-report.md / code-review-QUESTIONS.md / ln24-audit.md）
 
+**附轮（同日）：第四方审查者 Grok 4.6 后台派工**——两份越界专项报告（grok-core-review.md / grok-shell-review.md），对照结果见文末"附轮"章节；Grok 独中 1 条新 P2 并独立复现全部共识 P1。
+
 ## 结论
 
 **Verdict：FAIL（对齐 ln-24）——2 条已实锤的 P1 正确性缺陷，其余为 P2/P3 加固面。架构本身健康。**
@@ -54,6 +56,7 @@
 | 30 | P3 | Session::append 先 fetch_add 后加锁 push：并发 append 时日志向量序≠seq 序 | `kernel-session/src/lib.rs:103-109` | code-review(BUG-011) | 锁内分配 seq |
 | 31 | P3 | headless 复刻 loop 的 append+persist 序列，配对算法三处并存已现语义漂移 | `headless/src/main.rs:148-177,232-261`；`kernel-assembly/src/lib.rs:185-225` | architecture(ARCH-010)、code-review(QUAL-003) | 收敛到 Runtime 单一实现 |
 | 32 | P3 | 其余 P3 小项（运行时全 pub 字段二次装配、SSE 行长、projection 快照全局、BlockAssembler 未知块降级 Text、test hooks 环境变量门、http base_url 明文、WS Lagged 静默丢、export 整 ZIP 进内存、僵尸进程、死字段等） | 见三份报告 | code-review 为主 | 随轮次清理 |
+| 33 | P2 | host.listDirectory / host.createDirectory 注释自称"特权"但不在 PRIVILEGED_METHODS 表（15 项）→ 不走 loopback-pin，LAN trusted-host 配置下暴露目录枚举/创建面 | `web-server/src/api.rs:1277,1370`；`web-server/src/trust.rs:6-20` | **Grok(GROK-S-08) 独中**，三 SKILL 均漏 | 纳入特权表 |
 
 ## 定级调整记录（交叉验证结论）
 
@@ -77,3 +80,56 @@
 - 三份审查各自独立完成，未共享发现；交叉验证中主代理通读了 kernel-loop 全部 1077 行、assembly 全部 309 行、bus/边界守卫全文及 web-server/storage/llm 关键区段，全部 P0/P1/P2 发现均经源码确认，无一被驳回。
 - 官方对照：DSH `agent.ts` 回合开头 append `turn/start`、流错误/取消在 finally 同时写 `step/end`+`turn/end`（github.com 核实）——P1 两条的外部证据成立。
 - 现有门禁（91 测试全过、clippy 零警告、gate25、conformance 17/17）不覆盖 P1 两条序列（"闭合错误回合+后续回合"恢复、turn 编号递增），故未拦截；修复后应把这两条序列纳入 conformance 镜像。
+
+---
+
+# 附轮：第四方审查者 Grok（2026-08-18 同日）
+
+用户安排 Grok 作为第四位独立审查者，重点看**越界**。经后台 API 派工（ZCode 自定义 provider `grok-4.6` @ apikey.fun 中转），分两组内联全部 kernel/ 源码（core 组 134KB / shell 组 272KB）流式完成。
+
+## 通道与"思考模拟"之谜（排障结论）
+
+- **ZCode UI 侧**：Grok 模型条目没有 `reasoning` 声明块（对比 GLM-5.3 有 variants/defaultVariant），ZCode 无从显示思考档位。
+- **API 侧实测**：中转 catalog 声明 `supportsReasoningEffort=true`（low/medium/high，默认 high）。**不传参数时思考默认开启**（响应恒带 `reasoning_content`）；显式传 `reasoning_effort:"high"` 或 `thinking:{type:"enabled"}` 均报 `upstream_error`；**`reasoning_effort:"low"` 可用**。
+- **超时规律**：默认档（high）在 78k token 载荷下静默推理 >5 分钟 → 中转空闲超时断流（流式停滞、非流式 fetch failed）；`low` 档流式 100 秒内完成。大载荷派工务必 `--effort=low` + 流式。
+- **agent 人格坑**：中转注入的 system prompt 把模型塑造成带工具编码 agent——不加约束时它输出 `web_search` 工具调用后自停等待；提示词开头加"你没有任何工具，禁止工具调用语法"硬约束后正常出稿。
+
+## Grok 报告结论
+
+| 组 | 范围 | 发现 | 疑点 | Verdict |
+|---|---|---|---|---|
+| core | 8 内核 crate + README + Cargo + 边界守卫测试 | 10 | 4 | FAIL |
+| shell | kernel-llm + web-server + headless | 12 | 4 | FAIL |
+
+报告原文：`docs/review-dsh-rust-core-2026-08-18/grok-core-review.md` / `grok-shell-review.md`（含 reasoning_content 思考过程）。
+
+## 越界结论交叉对照（Grok ↔ 三 SKILL ↔ 主代理核实）
+
+| Grok | 主题 | 三 SKILL 对应 | 主代理核实 |
+|---|---|---|---|
+| GROK-C-01/02 (P1/P2) | 边界守卫漏 web-server + 解析可绕过 + 断言过弱 | ARCH-004/LN-003/ARCH-002 | ✓ 已核实 |
+| GROK-C-04 (P0) | 错误路径 let _ = 吞 persist，拆掉 logged-means-persisted | ARCH-003/BUG-006 | ✓ 已核实（本报告定 P2，Grok 更严） |
+| GROK-C-05 (P0) | 内存 seq/timestamp 与磁盘重写分叉，恢复全伪造 | ARCH-002/QUAL-005/LN-005 | ✓ 已核实 |
+| GROK-C-06 (P1) | Err/Finish 双轨 + BlockAssembler 缺省 Finish=Stop | LN-004 | ✓ 已核实（新增"缺省 Stop"角度） |
+| GROK-C-07 (P1) | Runtime 全 pub 可 poke + supervisor 已实现未装配 | ARCH-005/ARCH-008/LN-006 | ✓ 已核实 |
+| GROK-C-09 (P2) | EventBus 吞观察者 panic（fail-loud 反面） | ARCH-007 | ✓ 已核实 |
+| GROK-C-10 (P3) | resolve_model 默认体 unwrap_or_default 吞错 | QUAL-006 | ✓ 已核实 |
+| GROK-C-03 (P1) | contracts 层揽了 EventBus/AbortSignal/默认体等业务实现 | ARCH-009 | ✓（Grok 定级更严，本报告 P3） |
+| GROK-C-08 (P2) | loop 写死 MAX_STEPS 错误码等策略；工具 JSON 解析失败静默变 Null | BUG-014 相关 | ✓ 新角度 |
+| GROK-S-01/02/04 (P1/P1/P2) | 壳层 poke Runtime 字段；web-server 越层直依赖 loop/llm；fork 在壳层手写持久化序列 | ARCH-005/LN-003 | ✓ 已核实 |
+| GROK-S-03 (P1) | 壳层双实现翻译游标/wire seq（实时 vs history 批译） | ARCH-006/BUG-002 | ✓ 已核实 |
+| GROK-S-05/06 (P2/P2) | LlmPort 契约"Err 结束流"vs 全程 Finish 呈现；thinking/reasoning_effort 只有单测活着 + expect 会 panic | LN-004/ARCH-006/BUG-009/QUAL-001 | ✓ 已核实 |
+| GROK-S-07 (P0) | /api/respond 与 /api/session.export 无任何栅栏 | ARCH-014/SEC-001 | ✓ 已核实（本报告 P2，Grok P0） |
+| GROK-S-09 (P0) | host.openPath cmd /C 命令注入面 | SEC-003 | ✓ 已核实 |
+| GROK-S-10 (P1) | SSE line_buf 无界 + 仅 connect_timeout 无读超时 | SEC-006/IMP-003 | ✓ 已核实 |
+| **GROK-S-08 (P1)** | **新增**：host.listDirectory / host.createDirectory 注释自称"特权"但不在 PRIVILEGED_METHODS 表（15 项），不走 loopback-pin | 三 SKILL 均漏 | ✓ 已核实（api.rs:1277,1370 vs trust.rs:6-20）→ 记为**新 P2** |
+| GROK-S-11 (P2) | run_turn 吞结果 / block_on 嵌套 / list_sessions 失败变空列表 | QUAL-004/ARCH-003 | ✓ 已核实 |
+| GROK-S-12 (P3) | headless 手写事件落盘模拟 kill-9（与内核 repair 双实现） | ARCH-010 | ✓ 已核实 |
+| core D-1 疑点 | "run_turn 从不 append Turn Started，是死策略还是漏写事件" | 本报告 P1-1（BUG-001/LN-001） | Grok 独立嗅到同一异常，未定级 |
+| shell 疑点 | goal 状态机在 web-server（wire 在壳、语义在插件） | M3 内核越界审查结论 | 一致 |
+
+## 附轮结论
+
+1. **越界主结论四票归一**：本报告 3 条 P1 中的两条（Turn Started 缺失、Step 不闭合→恢复删历史）Grok 以"疑点+契约双轨"形式独立触及；守卫盲区、persist 吞错、seq/时间戳重写、Runtime 可 poke、supervisor 悬空、栅栏缺口全部被 Grok 独立复现。**唯一实质分歧是定级尺度**：Grok 把 persist 吞错、seq 重写、respond/export 无栅栏、openPath 注入定到 P0，本报告交叉验证维持 P2（判据：无即发数据丢失、默认配置 loopback 已缓解），但四票压力提示这些项修复优先级应上浮到 P1 批尾部。
+2. **Grok 独中 1 条新 P2**：listDirectory/createDirectory 缺 loopback-pin（注释与特权表不一致）——已核实并并入主矩阵（新增 #33）。
+3. **通道知识**：grok-4.6 经此中转派工的正解 = 流式 + `reasoning_effort:"low"` + 无工具硬约束；思考输出在 `reasoning_content` 字段随正文返回，不需要任何额外参数。ZCode UI 想显示思考需在模型条目补 `reasoning` 声明块。
