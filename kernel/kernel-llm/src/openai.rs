@@ -26,6 +26,10 @@ use kernel_contracts::llm::{
 };
 use serde_json::{json, Value};
 
+/// 产品身份 User-Agent（对齐 DSH `attribution.ts`：`product/version (+url)`
+/// RFC 9110 §10.1.5 约定；公开产品事实，非个人/实例标识）。
+const ATTRIBUTION_USER_AGENT: &str = "boenmind/0.1.0 (+https://github.com/SadBoen/BoenMind)";
+
 /// 翻译状态机中的一个 open block（对齐 DSH `translate.ts` OpenBlock）。
 struct OpenBlock {
     index: usize,
@@ -59,6 +63,9 @@ pub struct OpenAiProviderConfig {
     pub models: Vec<LlmModelInfo>,
     /// 模型清单探测端点形态。
     pub list_endpoint: ModelListEndpoint,
+    /// 匿名用户 id（归因头 `x-deepseek-harness-user-id`；装配层解析注入，
+    /// 对齐 DSH `.anonymous-user-id` 语义：home 范围稳定、非个人标识）。
+    pub user_id: String,
 }
 
 /// 请求级动态覆盖（对齐 DSH `llm-deepseek` 的 settings section + credentials
@@ -368,6 +375,8 @@ impl OpenAICompatLlm {
             .client
             .get(self.models_url())
             .header("authorization", format!("Bearer {key}"))
+            .header("user-agent", ATTRIBUTION_USER_AGENT)
+            .header("x-deepseek-harness-user-id", &self.cfg.user_id)
             .send()
             .await
             .map_err(|e| LlmError::retryable(format!("model discovery request failed: {e}")))?;
@@ -432,6 +441,8 @@ impl OpenAICompatLlm {
         let key = self.effective_api_key();
         let body = self.build_request(&request);
         let signal = request.signal.clone();
+        // 归因 user id 在 Box 外 clone（boxed 'static 流不得借用 self）。
+        let user_id = self.cfg.user_id.clone();
         Box::pin(async_stream::stream! {
             // 预中止：请求发出前已 abort → 直接终态（对齐 adapter.spec
             // "classifies an aborted request as an aborted finish"：不碰传输，
@@ -457,6 +468,19 @@ impl OpenAICompatLlm {
                 .post(&url)
                 .header("content-type", "application/json")
                 .header("authorization", format!("Bearer {key}"))
+                // 归因头（对齐 DSH `attributionHeaders` + adapter.ts：产品身份 +
+                // home 匿名用户 id + 会话 id（按需）+ compact 标记（按需）。
+                // 全部为公开产品事实，不含密钥/路径/提示词/个人标识。
+                .header("user-agent", ATTRIBUTION_USER_AGENT)
+                .header("x-deepseek-harness-user-id", user_id.clone())
+                .header(
+                    "x-deepseek-harness-session-id",
+                    request.session_id.as_deref().unwrap_or(""),
+                )
+                .header(
+                    "x-deepseek-harness-compact",
+                    if request.purpose.as_deref() == Some("compaction") { "1" } else { "" },
+                )
                 .json(&body)
                 .send();
             let resp = match &signal {
@@ -1049,6 +1073,7 @@ mod tests {
             api_key: "k".into(),
             models: vec![],
             list_endpoint: ModelListEndpoint::Standard,
+            user_id: "test-user".into(),
         });
         let req = GenerateOptions {
             provider: "deepseek".into(),
@@ -1088,6 +1113,7 @@ mod tests {
             api_key: "k".into(),
             models: vec![],
             list_endpoint: ModelListEndpoint::Standard,
+            user_id: "test-user".into(),
         });
         let req = GenerateOptions {
             provider: "deepseek".into(),
@@ -1335,6 +1361,7 @@ mod tests {
             api_key: "assemble-key".into(),
             models: vec![],
             list_endpoint: ModelListEndpoint::Standard,
+            user_id: "test-user".into(),
         });
         // 装配值生效。
         assert_eq!(llm.effective_base_url(), "https://api.deepseek.com/v1");
@@ -1368,6 +1395,7 @@ mod tests {
             api_key: String::new(), // keyless
             models: vec![],
             list_endpoint: ModelListEndpoint::Standard,
+            user_id: "test-user".into(),
         });
         let req = GenerateOptions {
             provider: "deepseek".into(),
@@ -1566,6 +1594,7 @@ mod tests {
             api_key: "k".into(),
             models: vec![],
             list_endpoint: ModelListEndpoint::Standard,
+            user_id: "test-user".into(),
         })
     }
 
@@ -1743,6 +1772,84 @@ mod tests {
             out.push(c.expect("no Err chunks in translate path"));
         }
         out
+    }
+
+    /// 起一个捕获请求头的 mock 端点：读完整请求头后把原始 ASCII 头经 mpsc 发回，
+    /// 随即回 200 + [DONE]。返回 (base_url, header_receiver)。
+    fn mock_capture_server() -> (String, std::sync::mpsc::Receiver<String>) {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 8192];
+                let mut seen = Vec::new();
+                loop {
+                    let n = stream.read(&mut buf).unwrap_or(0);
+                    if n == 0 {
+                        return;
+                    }
+                    seen.extend_from_slice(&buf[..n]);
+                    if seen.windows(4).any(|w| w == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                let headers = String::from_utf8_lossy(&seen).to_lowercase();
+                let _ = tx.send(headers);
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\ndata: [DONE]\n\n",
+                );
+                let _ = stream.flush();
+            }
+        });
+        (format!("http://{addr}/v1"), rx)
+    }
+
+    #[tokio::test]
+    async fn attribution_headers_sent_on_every_request() {
+        // 归因头（对齐 DSH attribution.ts + adapter.ts）：user-agent 产品身份、
+        // x-deepseek-harness-user-id 恒发、session-id 随 options、compact 仅 compaction。
+        let (base, rx) = mock_capture_server();
+        let llm = OpenAICompatLlm::new(OpenAiProviderConfig {
+            id: "deepseek".into(),
+            display_name: "DeepSeek".into(),
+            settings_ns: "llm.deepseek".into(),
+            base_url: base.clone(),
+            api_key: "k".into(),
+            models: vec![],
+            list_endpoint: ModelListEndpoint::Standard,
+            user_id: "11111111-2222-4333-8444-555555555555".into(),
+        });
+        let mut req = abort_request(kernel_contracts::AbortSignal::new());
+        req.session_id = Some("sess-1".into());
+        let mut stream = llm.stream(req);
+        use futures::StreamExt;
+        while stream.next().await.is_some() {}
+        let headers = rx.recv_timeout(std::time::Duration::from_secs(3)).expect("headers captured");
+        assert!(headers.contains("user-agent: boenmind/0.1.0 (+https://github.com/sadboen/boenmind)"), "{headers}");
+        assert!(headers.contains("x-deepseek-harness-user-id: 11111111-2222-4333-8444-555555555555"), "{headers}");
+        assert!(headers.contains("x-deepseek-harness-session-id: sess-1"), "{headers}");
+
+        // compaction 用途 → compact 标记。
+        let (base2, rx2) = mock_capture_server();
+        let llm2 = OpenAICompatLlm::new(OpenAiProviderConfig {
+            id: "deepseek".into(),
+            display_name: "DeepSeek".into(),
+            settings_ns: "llm.deepseek".into(),
+            base_url: base2,
+            api_key: "k".into(),
+            models: vec![],
+            list_endpoint: ModelListEndpoint::Standard,
+            user_id: "u".into(),
+        });
+        let mut req2 = abort_request(kernel_contracts::AbortSignal::new());
+        req2.purpose = Some("compaction".into());
+        let mut stream2 = llm2.stream(req2);
+        while stream2.next().await.is_some() {}
+        let headers2 = rx2.recv_timeout(std::time::Duration::from_secs(3)).expect("headers2 captured");
+        assert!(headers2.contains("x-deepseek-harness-compact: 1"), "{headers2}");
     }
 
     #[tokio::test]

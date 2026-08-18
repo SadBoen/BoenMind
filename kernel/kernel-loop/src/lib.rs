@@ -344,6 +344,7 @@ impl ReactLoopAgent {
                         reason: TurnEndReason::Error {
                             message: format!("turn exceeded max steps ({})", self.rt.max_steps),
                             code: "MAX_STEPS".to_string(),
+                        request_id: None,
                         },
                     }));
                 let _ = self.persist(&rec).await;
@@ -392,6 +393,7 @@ impl ReactLoopAgent {
                                 reason: TurnEndReason::Error {
                                     message: e.message.clone(),
                                     code: "LLM_STREAM".to_string(),
+                                request_id: None,
                                 },
                             }));
                         let _ = self.persist(&rec).await;
@@ -419,6 +421,7 @@ impl ReactLoopAgent {
                         reason: TurnEndReason::Error {
                             message: "stream ended without Finish (torn)".to_string(),
                             code: "STREAM_CLOSED".to_string(),
+                        request_id: None,
                         },
                     }));
                 let _ = self.persist(&rec).await;
@@ -446,7 +449,7 @@ impl ReactLoopAgent {
                             "model finish: cancelled (ABORTED)".to_string(),
                         ));
                     }
-                    FinishReason::Error { message, code, .. } => {
+                    FinishReason::Error { message, code, extra } => {
                         let rec = self
                             .session
                             .append(SessionEvent::Turn(TurnEvent::Ended {
@@ -454,6 +457,9 @@ impl ReactLoopAgent {
                                 reason: TurnEndReason::Error {
                                     message: message.clone(),
                                     code: code.clone(),
+                                    // 提供商请求 id 从 finish failure 结构化事实投影
+                                    //（诊断/审计链；无则省略）。
+                                    request_id: extra.as_ref().and_then(|e| e.request_id.clone()),
                                 },
                             }));
                         let _ = self.persist(&rec).await;

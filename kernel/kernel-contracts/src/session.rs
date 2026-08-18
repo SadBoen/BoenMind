@@ -59,8 +59,14 @@ pub enum TurnEndReason {
     /// 取消请求中断了活跃回合。
     Aborted { reason: String },
     Blocked,
-    /// 回合失败（结构化错误：message/code）。
-    Error { message: String, code: String },
+    /// 回合失败（结构化错误：message/code，可选 request_id——提供商请求 id，
+    /// 从 finish failure 结构化事实投影，诊断/审计用）。
+    Error {
+        message: String,
+        code: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        request_id: Option<String>,
+    },
     /// 至少一个 step 达到输出 token 上限。
     MaxTokens,
     /// 持久化后端在重载时关闭了崩溃孤儿回合（loop 从不发出）。

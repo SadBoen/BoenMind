@@ -1,7 +1,8 @@
 # HANDOFF：M4 完成交接——官方测试集主线 P0+P1 全落地（2026-08-18）
 
 > 状态：**M4 全部任务完成并已推送**。本轮做了交接文档 `docs/HANDOFF_M4_2026-08-18.md`
-> 里列的 P0 三项 + P1 五项 + 官方 spec 镜像单测收尾。下一轮 = 从 §4 的 P2 队列开题
+> 里列的 P0 三项 + P1 五项 + 官方 spec 镜像单测收尾，以及本交接 §4 挂账 A/B
+> （归因头 + requestId 投影，随附轮完成）。下一轮 = 从 §4 的 P2 队列开题
 > （都是 P0/P1 之后的自然延续），或回插件面续建。验证矩阵全绿见 §3。
 
 ---
@@ -96,7 +97,7 @@ clippy 零警告、conformance 17/17、gate25 PASS、m3-r3 PASS、hot-replace AL
 
 | 项 | 结果 |
 |---|---|
-| cargo test --workspace | **90 全过**（基线 67 → 90，+23 镜像单测） |
+| cargo test --workspace | **91 全过**（基线 67 → 91，+24 镜像单测） |
 | cargo clippy --workspace --all-targets | 零警告 |
 | conformance（3081） | 17/17 |
 | gate25（3079，全新 db + BM_TEST_HOOKS=1） | PASS |
@@ -107,8 +108,8 @@ clippy 零警告、conformance 17/17、gate25 PASS、m3-r3 PASS、hot-replace AL
 
 | # | 项 | 说明 |
 |---|---|---|
-| A | 请求归因头 `x-deepseek-harness-session-id/user-id` + user-agent | P0 台账列了但本轮未做（affects 平台归因/审计）；属内核 wire |
-| B | `requestId` 上 message/历史 | loop 消费 error finish 时 `FailureInfo.request_id` 可投影进 TurnEndReason |
+| ~~A~~ | ~~请求归因头 `x-deepseek-harness-session-id/user-id` + user-agent~~ | ✅ **已落地**（随附轮）：openai.rs 恒发 user-agent（`boenmind/0.1.0 (+url)`）+ `x-deepseek-harness-user-id`（`~/.boenmind/.anonymous-user-id` 持久 UUID v4，`wx` 独占创建防并发、best-effort 不阻塞）+ session-id（按需）+ compact（compaction 用途）；list_models_remote 同带 |
+| ~~B~~ | ~~`requestId` 上 message/历史~~ | ✅ **已落地**（随附轮）：`TurnEndReason::Error.request_id` 从 finish failure 结构化事实投影 → events wire `error.requestId`（无则省略） |
 | C | settings/credentials 文件层（0600/注释保留/热发布/writer 锁） | P2 登记，挂存储工程 |
 | D | session-query 全套（SESSION_QUERY_* / cursor / SQLite 索引） | P2 登记，插件面 |
 | E | BlockAssembler replayState 剪枝 / message 冻结 / retry-policy schema | P2 登记 |

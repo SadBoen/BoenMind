@@ -140,10 +140,13 @@ fn turn_reason_wire(reason: &TurnEndReason) -> Value {
             "reason": { "kind": reason },
         }),
         TurnEndReason::Blocked => json!({ "kind": "blocked" }),
-        TurnEndReason::Error { message, code } => json!({
-            "kind": "error",
-            "error": { "message": message, "code": code },
-        }),
+        TurnEndReason::Error { message, code, request_id } => {
+            let mut error = json!({ "message": message, "code": code });
+            if let Some(rid) = request_id {
+                error["requestId"] = json!(rid);
+            }
+            json!({ "kind": "error", "error": error })
+        }
         TurnEndReason::MaxTokens => json!({ "kind": "max-tokens" }),
         TurnEndReason::Interrupted => json!({ "kind": "interrupted" }),
     }
@@ -291,10 +294,24 @@ mod tests {
             reason: TurnEndReason::Error {
                 message: "bad model".into(),
                 code: "MAX_STEPS".into(),
+                request_id: Some("req-123".into()),
             },
         })];
         let wire = translate_events(&events);
         assert_eq!(wire[0].data["reason"]["kind"], "error");
         assert_eq!(wire[0].data["reason"]["error"]["code"], "MAX_STEPS");
+        assert_eq!(wire[0].data["reason"]["error"]["requestId"], "req-123");
+
+        // 无 request_id → wire 上不出该字段（精确形状）。
+        let plain = vec![SessionEvent::Turn(TurnEvent::Ended {
+            turn: 2,
+            reason: TurnEndReason::Error {
+                message: "m".into(),
+                code: "C".into(),
+                request_id: None,
+            },
+        })];
+        let wire2 = translate_events(&plain);
+        assert!(wire2[0].data["reason"]["error"].get("requestId").is_none());
     }
 }

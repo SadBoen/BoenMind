@@ -21,6 +21,55 @@ use web_server::api::{AppState, ProviderRuntime};
 use web_server::provider_config::load_llm_config;
 use web_server::rpc::API_PATH;
 
+/// 解析 home 范围的匿名用户 id（归因头 `x-deepseek-harness-user-id`）。
+/// 镜像 DSH `.anonymous-user-id` 语义：文件 `~/.boenmind/.anonymous-user-id`
+/// 存一行 UUID v4（`wx` 独占创建防并发双写；读失败/写失败 best-effort 保持
+/// 内存 id——归因永不阻塞请求，也永不从主机名/网络/远端派生）。
+fn resolve_anonymous_user_id() -> String {
+    use std::io::Write;
+    let home = std::env::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    let dir = home.join(".boenmind");
+    let file = dir.join(".anonymous-user-id");
+    // 已存在且合法 → 复用。
+    if let Ok(text) = std::fs::read_to_string(&file) {
+        let id = text.trim();
+        if is_uuid_v4(id) {
+            return id.to_string();
+        }
+    }
+    let created = uuid::Uuid::new_v4().to_string();
+    let _ = std::fs::create_dir_all(&dir);
+    let mut wrote = false;
+    if let Ok(mut f) = std::fs::OpenOptions::new().create_new(true).write(true).open(&file) {
+        if f.write_all(format!("{created}\n").as_bytes()).is_ok() {
+            wrote = true;
+        }
+    }
+    if !wrote {
+        // 并发输家/只读 home：best-effort 重读胜者 id，否则保留内存 id。
+        if let Ok(text) = std::fs::read_to_string(&file) {
+            let id = text.trim();
+            if is_uuid_v4(id) {
+                return id.to_string();
+            }
+        }
+    }
+    created
+}
+
+fn is_uuid_v4(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    bytes.len() == 36
+        && bytes[8] == b'-'
+        && bytes[13] == b'-'
+        && bytes[14] == b'4' // version 4
+        && bytes[18] == b'-'
+        && bytes[23] == b'-'
+        && bytes.iter().all(|&b| {
+            b.is_ascii_hexdigit() || b == b'-'
+        })
+}
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -140,6 +189,7 @@ fn main() {
                 api_key: p.api_key.clone(),
                 models,
                 list_endpoint,
+                user_id: resolve_anonymous_user_id(),
             }));
             provider_runtimes.push(ProviderRuntime {
                 id: p.id.clone(),
