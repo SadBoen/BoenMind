@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use kernel_assembly::Runtime;
 use kernel_contracts::llm::LlmModelInfo;
 use kernel_contracts::session::{SessionEvent, SessionHeader, SessionId};
-use kernel_loop::ReactLoopAgent;
+use kernel_loop::AgentPort;
 use serde_json::{json, Value};
 
 use crate::events::translate_events;
@@ -24,7 +24,8 @@ use crate::rpc_m3::{
 
 /// 活跃会话句柄。
 pub struct SessionHandle {
-    pub agent: Arc<ReactLoopAgent>,
+    /// 会话代理（loop 插件：`swap_loop` 换装后新会话用新实现）。
+    pub agent: Arc<dyn AgentPort>,
     pub running: bool,
     pub blank: bool,
     pub title: Option<String>,
@@ -389,6 +390,9 @@ pub async fn dispatch(state: &Arc<AppState>, method: &str, payload: Value) -> Va
         "llm.providers" => llm_providers(state).await,
         "llm.models" => llm_models(state).await,
         "llm.discoverModels" => llm_discover_models(state, payload).await,
+        // 核心插件清单（llm / loop / tools，category=Core）：插件管理员按类
+        // 分组/隐藏的数据源（当前仅核心三件；Feature 插件随功能面扩展追加）。
+        "plugin.core.list" => plugin_core_list(state),
         "workspace.list" => workspace_list(state),
         "workspace.create" => workspace_create(state, payload),
         "workspace.rename" => workspace_rename(state, payload),
@@ -488,6 +492,12 @@ fn test_register_pending(state: &AppState, method: &str, payload: Value) -> Valu
     }
     drop(reg);
     ok(json!({ "rpcId": rpc_id }))
+}
+
+/// 核心插件清单：返回 llm / loop / tools 三条清单条目（category=Core）。
+/// 形状 `{ "plugins": [{id, category, name, description, version}] }`。
+fn plugin_core_list(state: &AppState) -> Value {
+    ok(json!({ "plugins": state.runtime.plugin_manifest() }))
 }
 
 fn host_describe(state: &AppState) -> Value {
@@ -609,7 +619,7 @@ async fn session_create(state: &Arc<AppState>, payload: Value) -> Value {
             sessions.insert(
                 session_id.clone(),
                 SessionHandle {
-                    agent: Arc::new(agent),
+                    agent,
                     running: false,
                     blank: true,
                     title: None,
@@ -829,7 +839,7 @@ async fn session_fork(state: &Arc<AppState>, payload: Value) -> Value {
     sessions.insert(
         new_id.clone(),
         SessionHandle {
-            agent: Arc::new(agent),
+            agent,
             running: false,
             blank: false,
             title: None,
@@ -1969,7 +1979,7 @@ mod tests {
         state.sessions.lock().unwrap().insert(
             "s1".into(),
             SessionHandle {
-                agent: Arc::new(agent),
+                agent,
                 running: false,
                 blank: false,
                 title: None,

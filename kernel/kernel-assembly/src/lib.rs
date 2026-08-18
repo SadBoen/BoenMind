@@ -3,12 +3,22 @@
 //! 组合根：装配微内核各端口为运行时，并提供会话创建/恢复的完整闭环
 //! （含 interrupted-turn 修复：kill -9 后重载日志，把未完成回合的尾部
 //! 未配对事件修剪掉，保证恢复后的日志没有 torn 状态）。
+//!
+//! 核心三插件化（最小基座 = provider + loop + tools）：
+//! - LLM 与 Tools 已是 `Arc<dyn>` trait object / 运行期注册表（插拔友好），
+//!   此处补**正式换装 API**（`swap_llm` / `register_tool` / `unregister_tool`，
+//!   替代上层裸改 pub 字段）；
+//! - Loop 抽象为 [`kernel_loop::AgentPort`]（对应 dsh 官方 `dsh-agent-loop`
+//!   插件），`swap_loop` 换装会话代理工厂；
+//! - 三插件各有清单身份（category=Core），经 [`Runtime::plugin_manifest`]
+//!   对外暴露，供插件管理员分组隐藏。
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use kernel_contracts::bus::EventBus;
-use kernel_contracts::llm::LlmPort;
+use kernel_contracts::llm::{GenerateOptions, LlmPort};
+use kernel_contracts::plugin::PluginManifestEntry;
 use kernel_contracts::ports::{
     PluginRuntimeAvailability, PluginRuntimePort, SessionPersistPort,
 };
@@ -16,10 +26,11 @@ use kernel_contracts::session::{
     SessionEvent, SessionHeader, StepPhase, TurnEndReason, TurnEvent,
 };
 use kernel_contracts::PortResult;
-use kernel_loop::{LoopRuntime, ReactLoopAgent};
-use kernel_session::SessionStore;
+use kernel_loop::{AgentPort, LoopRuntime, ReactLoopAgent};
+use kernel_session::{Session, SessionStore};
 use kernel_storage::SqlitePersist;
 use kernel_tools::{ToolGate, ToolRegistry};
+use parking_lot::RwLock;
 
 /// 装配错误。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -34,9 +45,52 @@ pub enum AssemblyError {
     PluginUnavailable(String),
 }
 
+/// 会话代理工厂：装配方用它把（loop 运行时 + 会话）组装成代理。
+/// `Runtime` 本身持有默认工厂（ReactLoopAgent）；`swap_loop` 可换装
+/// 自定义实现——运行中会话不受影响，后续 create/restore 用新实现。
+/// `Arc`（非 `Box`）：读锁内 clone 后释放锁再调用，避免持锁跨 await。
+pub type AgentFactory = Arc<dyn Fn(Arc<LoopRuntime>, Arc<Session>) -> Arc<dyn AgentPort> + Send + Sync>;
+
+/// 默认工厂：产出标准 [`ReactLoopAgent`]（官方 `dsh-agent-loop` 的 Rust 移植）。
+pub fn default_agent_factory() -> AgentFactory {
+    Arc::new(|rt, session| -> Arc<dyn AgentPort> { Arc::new(ReactLoopAgent::new(rt, session)) })
+}
+
+/// LLM 共享换装代理：每回合**现读**当前装配实现（`swap_llm` 后下一请求
+/// 生效，对**所有**已创建会话生效——对齐 settingsNs 热替换"写后下一请求
+/// 生效"语义；运行中回合持旧 `Arc` 不受影响，RwLock 读侧零锁开销）。
+struct SharedLlm {
+    inner: Arc<RwLock<Arc<dyn LlmPort>>>,
+}
+
+impl SharedLlm {
+    fn new(inner: Arc<RwLock<Arc<dyn LlmPort>>>) -> Self {
+        Self { inner }
+    }
+}
+
+#[async_trait::async_trait]
+impl LlmPort for SharedLlm {
+    async fn list_models(&self, provider: &str) -> Result<Vec<kernel_contracts::LlmModelInfo>, kernel_contracts::LlmError> {
+        // parking_lot guard 非 Send：先 clone 出 Arc 释放锁，再跨 await。
+        let llm = self.inner.read().clone();
+        llm.list_models(provider).await
+    }
+
+    fn stream(&self, request: GenerateOptions) -> kernel_contracts::ChunkStream {
+        let llm = self.inner.read().clone();
+        llm.stream(request)
+    }
+}
+
 /// 微内核组合根：所有端口经此装配。
 pub struct Runtime {
-    pub llm: Arc<dyn LlmPort>,
+    /// LLM 端口（核心插件 `llm`）：`Arc<RwLock<..>>` 承载 `swap_llm` 热换装，
+    /// 与各会话的 SharedLlm 共享同一把锁——换装后**下一请求生效**（所有会话），
+    /// 运行中回合持旧 `Arc` 不受影响。
+    llm: Arc<RwLock<Arc<dyn LlmPort>>>,
+    /// 会话代理工厂（核心插件 `loop`）：`swap_loop` 换装后新会话生效。
+    agent_factory: RwLock<AgentFactory>,
     pub store: Arc<SessionStore>,
     pub tools: Arc<ToolRegistry>,
     pub gate: Arc<ToolGate>,
@@ -47,6 +101,8 @@ pub struct Runtime {
     pub bus: EventBus,
     /// 单回合最大 step 数（数值可配置；装配默认 [`kernel_loop::DEFAULT_MAX_STEPS`]）。
     pub max_steps: u64,
+    /// 核心插件清单（llm / loop / tools，category=Core）。
+    core_plugins: Vec<PluginManifestEntry>,
 }
 
 impl Runtime {
@@ -56,6 +112,10 @@ impl Runtime {
     }
 
     /// 带 max_steps 的 headless 装配（web-server 经 `--max-steps` 覆盖）。
+    ///
+    /// 走**核心三插件装配路径**：llm 插件（ScriptLlm mock）+ loop 插件
+    /// （ReactLoopAgent 默认工厂）+ tools 插件（内置工具组）——最小基座
+    /// 即完整回合闭环；真实 provider 由上层 `swap_llm` 换装。
     pub fn headless_with_max_steps(
         sqlite_path: PathBuf,
         max_steps: u64,
@@ -71,9 +131,11 @@ impl Runtime {
         let bus = EventBus::new();
         let store = Arc::new(SessionStore::new());
         let tools = Arc::new(ToolRegistry::new());
+        // tools 插件装配点：内置工具组注册（当前为空集，host 工具由 web-server 注册）。
+        kernel_tools::plugin::register_builtin(&tools);
         let gate = Arc::new(ToolGate::new());
         Ok(Self {
-            llm,
+            llm: Arc::new(RwLock::new(llm)),
             store,
             tools,
             gate,
@@ -83,28 +145,67 @@ impl Runtime {
             model: "mock-1".to_string(),
             bus,
             max_steps,
+            agent_factory: RwLock::new(default_agent_factory()),
+            core_plugins: vec![
+                kernel_llm::plugin::manifest(),
+                kernel_loop::plugin::manifest(),
+                kernel_tools::plugin::manifest(),
+            ],
         })
+    }
+
+    /// 核心插件清单（llm / loop / tools，category 全 Core）。供插件管理员/
+    /// 前端按分类分组展示——核心组件与功能插件分界，用户日常不可见。
+    pub fn plugin_manifest(&self) -> Vec<PluginManifestEntry> {
+        self.core_plugins.clone()
+    }
+
+    /// 热换装 LLM 实现（核心插件 `llm`）：替换后**下一请求生效**——
+    /// 运行中回合持旧 `Arc` 不受影响；每回合现读当前实现，所有已创建
+    /// 会话共享（对齐 settingsNs 热替换语义）。替代旧做法（裸改 pub 字段）。
+    pub fn swap_llm(&self, llm: Arc<dyn LlmPort>) {
+        *self.llm.write() = llm;
+    }
+
+    /// 热换装 loop 实现（核心插件 `loop`）：替换会话代理工厂——
+    /// 运行中会话不受影响，后续 `create_session` / `restore_session`
+    /// 产出新实现。形态 = 进程内组件（trait object 分发），与 dsh 官方
+    /// `dsh-agent-loop` Cordis 插件同构，非独立进程。
+    pub fn swap_loop(&self, factory: AgentFactory) {
+        *self.agent_factory.write() = factory;
+    }
+
+    /// 注册一个工具（运行期热插拔；重名拒绝）。门控 fail-closed 默认全禁用，
+    /// 需显式 `gate.enable`。
+    pub fn register_tool(&self, handler: Arc<dyn kernel_contracts::ToolHandler>) -> Result<(), kernel_contracts::ToolError> {
+        self.tools.register(handler)
+    }
+
+    /// 卸载一个工具（运行期热插拔）。
+    pub fn unregister_tool(&self, name: &str) -> Result<(), kernel_contracts::ToolError> {
+        self.tools.unregister(name)
     }
 
     /// 创建一个新会话（写入 header 索引 + 首条 SessionStarted），返回代理。
     pub async fn create_session(
         &self,
         header: SessionHeader,
-    ) -> Result<ReactLoopAgent, AssemblyError> {
+    ) -> Result<Arc<dyn AgentPort>, AssemblyError> {
         let session = self.store.create(header, self.bus.clone());
         self.persist
             .create_session(session.header())
             .await
             .map_err(|e| AssemblyError::Persist(e.to_string()))?;
         let rt = self.loop_runtime();
-        Ok(ReactLoopAgent::new(rt, session))
+        let factory = self.agent_factory.read().clone();
+        Ok(factory(rt, session))
     }
 
     /// 从持久化日志恢复会话（kill -9 后重载），自动做 interrupted-turn 修复。
     pub async fn restore_session(
         &self,
         session_id: &str,
-    ) -> Result<ReactLoopAgent, AssemblyError> {
+    ) -> Result<Arc<dyn AgentPort>, AssemblyError> {
         let Some(records) = self
             .persist
             .load_events(session_id)
@@ -168,7 +269,8 @@ impl Runtime {
             .restore(header, records, self.bus.clone())
             .map_err(|e| AssemblyError::InvalidLog(e.to_string()))?;
         let rt = self.loop_runtime();
-        Ok(ReactLoopAgent::new(rt, session))
+        let factory = self.agent_factory.read().clone();
+        Ok(factory(rt, session))
     }
 
     /// 列出已持久化的会话 id。
@@ -183,7 +285,9 @@ impl Runtime {
 
     fn loop_runtime(&self) -> Arc<LoopRuntime> {
         Arc::new(LoopRuntime {
-            llm: Arc::clone(&self.llm),
+            // SharedLlm：每回合现读当前装配实现（swap_llm 后下一请求生效，
+            // 对所有会话生效——不随会话创建快照旧实现）。
+            llm: Arc::new(SharedLlm::new(Arc::clone(&self.llm))),
             store: Arc::clone(&self.store),
             tools: Arc::clone(&self.tools),
             gate: Arc::clone(&self.gate),

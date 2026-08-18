@@ -921,7 +921,9 @@ dependencies = [
 name = "kernel-assembly"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "chrono",
+ "futures",
  "kernel-contracts",
  "kernel-llm",
  "kernel-loop",
@@ -929,6 +931,7 @@ dependencies = [
  "kernel-storage",
  "kernel-supervisor",
  "kernel-tools",
+ "parking_lot",
  "serde_json",
  "thiserror 2.0.20",
  "tokio",

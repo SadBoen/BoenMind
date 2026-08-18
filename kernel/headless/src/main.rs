@@ -70,9 +70,9 @@ fn install_tools(rt: &Runtime) {
 }
 
 /// 把 headless 的 mock LLM 换成"固定脚本"：第一轮工具调用，第二轮文本。
-fn install_scripted_llm(rt: &mut Runtime) {
-    // Runtime 字段公开可改，直接替换 llm。
-    rt.llm = Arc::new(kernel_llm::ScriptLlm::new(
+fn install_scripted_llm(rt: &Runtime) {
+    // 核心插件 `llm` 的正式换装 API（替代裸改 pub 字段）。
+    rt.swap_llm(Arc::new(kernel_llm::ScriptLlm::new(
         "mock".to_string(),
         "mock-1".to_string(),
         vec![
@@ -82,7 +82,7 @@ fn install_scripted_llm(rt: &mut Runtime) {
                 then_text: "你好，我是 BoenMind 微内核。".to_string(),
             },
         ],
-    ));
+    )));
 }
 
 #[tokio::main]
@@ -97,8 +97,8 @@ async fn main() {
 
     match mode {
         "roundtrip" => {
-            let mut rt = Runtime::headless(db).unwrap();
-            install_scripted_llm(&mut rt);
+            let rt = Runtime::headless(db).unwrap();
+            install_scripted_llm(&rt);
             install_tools(&rt);
             let agent = rt.create_session(header(session)).await.unwrap();
             let outcome = agent.run_turn(Some("hi")).await.unwrap();

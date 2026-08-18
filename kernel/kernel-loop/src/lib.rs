@@ -28,6 +28,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use futures::StreamExt;
 use kernel_contracts::llm::{
     ContentBlock, FinishReason, GenerateOptions, LlmPort, StreamChunk, ToolCall, ToolCallResult,
@@ -38,6 +39,8 @@ use kernel_contracts::session::{SessionEvent, StepPhase, TurnEndReason, TurnEven
 use kernel_contracts::tools::ToolExecutionInput;
 use kernel_session::{Session, SessionStore};
 use kernel_tools::{ToolGate, ToolRegistry};
+
+pub mod plugin;
 
 /// 单回合最大 step 数默认值；超限即 `LoopError::MaxSteps`（torn）。数值属策略，
 /// 装配方可经 `LoopRuntime::max_steps` 覆盖。
@@ -76,6 +79,35 @@ pub enum LoopError {
     Persist(String),
     #[error("turn exceeded max steps ({0})")]
     MaxSteps(u64),
+}
+
+/// 会话代理端口（loop 插件化抽象）。
+///
+/// dsh 官方架构中 loop 就是插件（`@deepseek-ai/dsh-agent-loop` 以 Cordis
+/// 插件发布，`static inject = ['agents','sessions','llm','tools','systemPrompt']`，
+/// 内部实现即 `ReactLoopAgent`——本 crate 的同名实现正是它的 Rust 移植）。
+/// 把 `ReactLoopAgent` 抽象为端口后，装配方（`Runtime::swap_loop`）可换装
+/// loop 实现：运行中会话不受影响，新会话用新实现。形态 = 进程内组件
+/// （trait object 分发），与官方 Cordis 插件同构，非独立进程。
+#[async_trait]
+pub trait AgentPort: Send + Sync {
+    /// 跑一个回合。`user_text = Some` 时先入日志（新回合）；`None` 表示恢复续跑。
+    async fn run_turn(&self, user_text: Option<&str>) -> Result<TurnOutcome, LoopError>;
+
+    /// 触发当前活跃回合的取消（session.cancel 语义）。
+    fn abort(&self);
+
+    /// 本会话（事件日志访问面；模型可见即落日志的审计入口）。
+    fn session(&self) -> Arc<Session>;
+
+    /// 设置本会话的模型选择（provider, model）。之后 run_turn 的 GenerateOptions
+    /// 携带该 provider/model，MultiProviderLlm 据此路由到对应通道。
+    fn set_model_override(&self, provider: String, model: String);
+
+    /// 当前会话的模型覆盖（None = 用运行时默认）。
+    fn model_override(&self) -> Option<(String, String)>;
+
+    fn clear_model_override(&self);
 }
 
 /// 反应式回合代理：一次用户输入 → 若干 step，直到模型产出文本。
@@ -624,6 +656,33 @@ impl ReactLoopAgent {
             self.persist(&rec).await?;
             continue;
         }
+    }
+}
+
+#[async_trait]
+impl AgentPort for ReactLoopAgent {
+    async fn run_turn(&self, user_text: Option<&str>) -> Result<TurnOutcome, LoopError> {
+        ReactLoopAgent::run_turn(self, user_text).await
+    }
+
+    fn abort(&self) {
+        ReactLoopAgent::abort(self);
+    }
+
+    fn session(&self) -> Arc<Session> {
+        ReactLoopAgent::session(self)
+    }
+
+    fn set_model_override(&self, provider: String, model: String) {
+        ReactLoopAgent::set_model_override(self, provider, model);
+    }
+
+    fn model_override(&self) -> Option<(String, String)> {
+        ReactLoopAgent::model_override(self)
+    }
+
+    fn clear_model_override(&self) {
+        ReactLoopAgent::clear_model_override(self);
     }
 }
 

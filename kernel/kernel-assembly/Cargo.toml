@@ -16,9 +16,12 @@ kernel-supervisor = { path = "../kernel-supervisor" }
 serde_json.workspace = true
 thiserror.workspace = true
 chrono.workspace = true
+parking_lot.workspace = true
+async-trait.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true
 chrono.workspace = true
 uuid.workspace = true
 toml = "0.8"
+futures.workspace = true

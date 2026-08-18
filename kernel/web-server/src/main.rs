@@ -243,7 +243,9 @@ fn main() {
                     .and_then(|p| p.models.first().cloned())
             })
             .unwrap_or_default();
-        runtime.llm = Arc::new(MultiProviderLlm::new(ports));
+        // 热换装 LLM 实现（核心插件 `llm` 的正式装配点）：MultiProviderLlm 聚合
+        // 全部 provider 通道，替换后下一请求生效——替代旧做法（裸改 runtime.llm）。
+        runtime.swap_llm(Arc::new(MultiProviderLlm::new(ports)));
         runtime.provider = default_provider;
         runtime.model = default_model;
         tracing::info!(
@@ -286,7 +288,7 @@ fn main() {
                     state.sessions.lock().unwrap().insert(
                         id.clone(),
                         web_server::api::SessionHandle {
-                            agent: Arc::new(agent),
+                            agent,
                             running,
                             blank: !has_turn_start,
                             title: None,

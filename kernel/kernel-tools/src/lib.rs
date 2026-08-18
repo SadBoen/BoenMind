@@ -6,12 +6,17 @@
 //! `parameters()` JSON Schema 校验 arguments，通过后再调用 handler 本体。
 //! `ToolGate` 维护 enabled 名单（默认 fail-closed，全禁用）：未启用的工具
 //! 不会出现在 `enabled_schemas` 里，也一律被 `execute_guarded` 拒绝。
+//!
+//! 工具插件化：注册表运行期可装卸（`register` / `unregister`），
+//! 对应 dsh 官方 `@deepseek-ai/dsh-tools` 的工具注册面。
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use kernel_contracts::{ToolError, ToolExecutionInput, ToolExecutionResult, ToolHandler, ToolSchema};
 use parking_lot::RwLock;
+
+pub mod plugin;
 
 /// 工具注册表：name → handler。
 #[derive(Default)]
@@ -37,6 +42,15 @@ impl ToolRegistry {
 
     pub fn get(&self, name: &str) -> Option<Arc<dyn ToolHandler>> {
         self.handlers.read().get(name).cloned()
+    }
+
+    /// 卸载一个工具（热插拔：注册表运行期装卸）。不存在返回 Err。
+    pub fn unregister(&self, name: &str) -> Result<(), ToolError> {
+        let mut handlers = self.handlers.write();
+        if handlers.remove(name).is_none() {
+            return Err(ToolError::new(format!("tool '{name}' not registered")));
+        }
+        Ok(())
     }
 
     /// 所有已注册工具的 schema（按名称字典序稳定输出）。

@@ -8,6 +8,7 @@
 
 mod openai;
 mod multi;
+pub mod plugin;
 
 pub use multi::MultiProviderLlm;
 pub use openai::{ModelListEndpoint, OpenAiProviderConfig, OpenAICompatLlm};

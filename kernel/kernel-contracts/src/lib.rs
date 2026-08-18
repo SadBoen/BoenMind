@@ -8,6 +8,7 @@
 pub mod bus;
 pub mod error;
 pub mod llm;
+pub mod plugin;
 pub mod ports;
 pub mod session;
 pub mod tools;
@@ -19,6 +20,7 @@ pub use llm::{
     GenerateOptions, LlmMessage, LlmModelInfo, LlmPort, LlmResolvedModelInfo, ModelReasoning,
     ReasoningEffort, Role, StreamChunk, TokenUsage, ToolCall, ToolCallResult,
 };
+pub use plugin::{PluginCategory, PluginManifestEntry, PLUGIN_LLM, PLUGIN_LOOP, PLUGIN_TOOLS};
 pub use ports::{
     FsPort, PluginRuntimeAvailability, PluginRuntimePort, SessionPersistPort, ShellPort,
     ShellRequest, ShellResult, UnavailablePluginRuntime,
