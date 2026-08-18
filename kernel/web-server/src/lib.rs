@@ -198,6 +198,16 @@ async fn handle_respond(
     headers: HeaderMap,
     body: String,
 ) -> Response {
+    // 栅栏 A：respond 也是受信任通道（approval/question 应答会触发权限副作用），
+    // 必须与 handle_rpc 同一信任判定——DNS-rebinding 下未栅栏等同放开审批面。
+    let host = headers.get(HOST).and_then(|v| v.to_str().ok());
+    let origin = headers.get(ORIGIN).and_then(|v| v.to_str().ok());
+    let sec_fetch_site = headers
+        .get("sec-fetch-site")
+        .and_then(|v| v.to_str().ok());
+    if !trust::is_trusted_api_request(host, origin, sec_fetch_site, &state.trusted_hosts) {
+        return (StatusCode::FORBIDDEN, "forbidden").into_response();
+    }
     let is_json = headers
         .get(CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
@@ -304,8 +314,19 @@ fn respond_dispatch(state: &AppState, message: &ClientResponse) -> Value {
 /// GET /api/session.export（面 8）：会话日志 ZIP 下载（session.jsonl；无子代理/媒体段）。
 async fn handle_session_export(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Response {
+    // 栅栏 A：export 下载完整会话日志（含工具输出/凭据引用的审计面），
+    // 未栅栏时 DNS-rebinding 可静默拉走全部会话 JSONL。
+    let host = headers.get(HOST).and_then(|v| v.to_str().ok());
+    let origin = headers.get(ORIGIN).and_then(|v| v.to_str().ok());
+    let sec_fetch_site = headers
+        .get("sec-fetch-site")
+        .and_then(|v| v.to_str().ok());
+    if !trust::is_trusted_api_request(host, origin, sec_fetch_site, &state.trusted_hosts) {
+        return (StatusCode::FORBIDDEN, "forbidden").into_response();
+    }
     use std::io::Write;
 
     let Some(session_id) = params.get("sessionId") else {

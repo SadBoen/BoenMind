@@ -436,6 +436,23 @@ async fn session_create(state: &Arc<AppState>, payload: Value) -> Value {
         .and_then(Value::as_str)
         .map(str::to_string)
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+    // 幂等保护：客户端可控 sessionId 重复 create 时静默替换活代理（旧实现），
+    // 会丢掉 running 状态、磁盘日志与新会话 seq 撞车。已存在 → 拒绝（BUG-007）。
+    if state.sessions.lock().unwrap().contains_key(&session_id) {
+        return err("session-exists", format!("session {session_id} already exists"));
+    }
+    if state
+        .runtime
+        .persist
+        .list_sessions()
+        .await
+        .unwrap_or_default()
+        .contains(&session_id)
+    {
+        return err("session-exists", format!("session {session_id} already exists"));
+    }
+
     let cwd = payload
         .get("cwd")
         .and_then(Value::as_str)

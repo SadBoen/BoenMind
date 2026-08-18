@@ -1,8 +1,10 @@
 //! 双栅栏 trust fence（契约台账 §1 栅栏 A/B）：
 //! A. Host/Origin 信任栅栏（DNS-rebinding 防御）：loopback + 显式 trustedHosts。
-//! B. 15 个特权方法 loopback-pin：即使 LAN 部署也强制 loopback。
+//! B. 17 个特权方法 loopback-pin：即使 LAN 部署也强制 loopback。
 
-/// 特权方法表（台账逐字 15 个；源 packages/client/connection/src/index.ts PRIVILEGED_METHODS）。
+/// 特权方法表（台账逐字 15 个 + 目录 2 个；源 packages/client/connection/src/index.ts
+/// PRIVILEGED_METHODS；host.listDirectory/host.createDirectory 触碰文件系统，
+/// 注释即"特权"，2026-08-18 交叉审查 #33 补录）。
 pub const PRIVILEGED_METHODS: &[&str] = &[
     "agentPreset.read",
     "agentPreset.copy",
@@ -10,6 +12,8 @@ pub const PRIVILEGED_METHODS: &[&str] = &[
     "agentPreset.remove",
     "host.pickDirectory",
     "host.openPath",
+    "host.listDirectory",
+    "host.createDirectory",
     "settings.describe",
     "settings.openDocument",
     "settings.update",
@@ -113,24 +117,26 @@ pub fn is_trusted_api_request(
     if sec_fetch_site == Some("cross-site") {
         return false;
     }
-    // 3. Origin 栅栏：无 Origin 放行；有 Origin 必须 host 匹配；'null' 拒绝。
+    // 3. Origin 栅栏：无 Origin 放行；有 Origin 必须 host(+port) 匹配；'null' 拒绝。
     match origin {
         None => true,
         Some(o) => {
             if o == "null" {
                 return false;
             }
-            // Origin 是完整 URL（带 scheme）——按 WHATWG new URL(origin).host 取 host。
-            match extract_url_host(o) {
-                Some(o_host) => o_host == hostname,
+            // Origin 是完整 URL（带 scheme）——按 WHATWG new URL(origin).host 取
+            // host:port（含端口比对：http://127.0.0.1:evil 不得冒充 :3080）。
+            match extract_url_host_port(o) {
+                Some((o_host, o_port)) => o_host == hostname && o_port == port,
                 None => false,
             }
         }
     }
 }
 
-/// 从完整 URL 提取 host[:port]（WHATWG new URL(x).host 语义：剥 scheme/路径/查询）。
-fn extract_url_host(url: &str) -> Option<String> {
+/// 从完整 URL 提取 host:port（WHATWG new URL(x).host 语义：剥 scheme/路径/查询，
+/// 端口与 Host 侧 parse_authority 同一归一规则：显式 :80 → None）。
+fn extract_url_host_port(url: &str) -> Option<(String, Option<String>)> {
     let rest = match url.find("://") {
         Some(idx) => &url[idx + 3..],
         None => url,
@@ -140,8 +146,7 @@ fn extract_url_host(url: &str) -> Option<String> {
         .find(['/', '?', '#'])
         .unwrap_or(rest.len());
     let authority = &rest[..end];
-    let (hostname, _port) = parse_authority(authority)?;
-    Some(hostname)
+    parse_authority(authority)
 }
 
 /// 特权方法判定：路径 `/api/<method>` 的 method 段命中特权表。
@@ -226,11 +231,38 @@ mod tests {
 
     #[test]
     fn privileged_methods_verbatim() {
-        assert_eq!(PRIVILEGED_METHODS.len(), 15);
+        assert_eq!(PRIVILEGED_METHODS.len(), 17);
         assert_eq!(is_privileged_method("/api/settings.describe"), Some("settings.describe"));
         assert_eq!(is_privileged_method("/api/session.list"), None);
         assert!(PRIVILEGED_METHODS.contains(&"llm.discoverModels"));
         assert!(PRIVILEGED_METHODS.contains(&"host.pickDirectory"));
         assert!(PRIVILEGED_METHODS.contains(&"credentials.set"));
+        // #33：目录 RPC 注释即特权，必须 loopback-pin。
+        assert_eq!(is_privileged_method("/api/host.listDirectory"), Some("host.listDirectory"));
+        assert_eq!(is_privileged_method("/api/host.createDirectory"), Some("host.createDirectory"));
+    }
+
+    #[test]
+    fn origin_port_must_match() {
+        // 回归 SEC-002：Origin 端口与 Host 端口必须一致（跨端口 localhost 不得过闸）。
+        assert!(is_trusted_api_request(
+            Some("127.0.0.1:3080"),
+            Some("http://127.0.0.1:3080"),
+            None,
+            &[]
+        ));
+        assert!(!is_trusted_api_request(
+            Some("127.0.0.1:3080"),
+            Some("http://127.0.0.1:9999"),
+            None,
+            &[]
+        ));
+        // 显式 :80 归一为 None，与无端口 Host 匹配（对齐 WHATWG）。
+        assert!(is_trusted_api_request(
+            Some("127.0.0.1"),
+            Some("http://127.0.0.1:80"),
+            None,
+            &[]
+        ));
     }
 }

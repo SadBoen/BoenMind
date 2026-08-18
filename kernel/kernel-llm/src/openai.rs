@@ -90,6 +90,9 @@ impl OpenAICompatLlm {
     pub fn new(cfg: OpenAiProviderConfig) -> Self {
         let client = reqwest::Client::builder()
             .connect_timeout(std::time::Duration::from_secs(15))
+            // 读超时：挂死的流必须在时限内以 TRANSPORT finish 收尾，
+            // 不能永久占用会话 running（SEC-010 读/idle 超时缺失）。
+            .timeout(std::time::Duration::from_secs(300))
             .build()
             .expect("reqwest client build");
         Self {

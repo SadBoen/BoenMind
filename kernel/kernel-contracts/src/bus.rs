@@ -26,7 +26,9 @@ pub type EventListener = Arc<dyn Fn(&SessionRecord) + Send + Sync>;
 #[derive(Default)]
 pub struct EventBus {
     slots: Arc<RwLock<Vec<(u64, EventListener)>>>,
-    next_id: std::sync::atomic::AtomicU64,
+    /// 监听器 id 计数器。克隆共享同一计数器（clone 只复制 slots 引用，
+    /// 计数器独立会发出重复 id → Disposer 误删对方监听器）。
+    next_id: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl EventBus {
@@ -65,9 +67,41 @@ impl Clone for EventBus {
     fn clone(&self) -> Self {
         Self {
             slots: Arc::clone(&self.slots),
-            next_id: std::sync::atomic::AtomicU64::new(
-                self.next_id.load(std::sync::atomic::Ordering::Relaxed),
-            ),
+            next_id: Arc::clone(&self.next_id),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clone_shares_listener_ids() {
+        // 回归 BUG-003：克隆共享 next_id，两个 clone 注册的监听器 id 不重复，
+        // drop 一个 Disposer 不误删对方监听器。
+        let bus = EventBus::new();
+        let bus2 = bus.clone();
+        let fired = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let fired1 = Arc::clone(&fired);
+        let d1 = bus.on_event(move |_| fired1.lock().unwrap().push("d1"));
+        let d2 = bus2.on_event(|_| {});
+        drop(d2);
+        let header = crate::session::SessionHeader {
+            id: crate::session::SessionId("s".into()),
+            app: "t".into(),
+            profile: "t".into(),
+            workspace: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        bus.emit(&SessionRecord::new(
+            1,
+            header.id.clone(),
+            crate::session::SessionEvent::SessionStarted { header },
+        ));
+        // d2 已注销；d1 仍在且被触发一次。
+        assert_eq!(fired.lock().unwrap().as_slice(), &["d1"]);
+        drop(d1);
     }
 }

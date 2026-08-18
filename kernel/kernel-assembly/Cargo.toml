@@ -20,3 +20,4 @@ thiserror.workspace = true
 tokio.workspace = true
 chrono.workspace = true
 uuid.workspace = true
+toml = "0.8"

@@ -69,12 +69,22 @@ pub fn settings_open_document() -> Value {
 
 /// host.openPath（特权）：path ≥1 → 调 OS 打开；打开失败 → `{opened:false}`。
 /// 唯一真实 OS 副作用方法；验证用无害路径（如临时文件）。
+/// Windows 经 `cmd /C start ""` 拼接执行——`&|^<>` 等 cmd 元字符会被解释成
+/// 命令语法（SEC-003 命令注入面），一律拒绝；Unix 侧 xdg-open 不经过 shell
+/// 无此风险，但为跨平台一致也拒绝控制字符。
 pub fn host_open_path(payload: Value) -> Value {
     let Some(path) = payload.get("path").and_then(Value::as_str) else {
         return err("bad-request", "missing path");
     };
     if path.is_empty() {
         return err("bad-request", "path must be at least 1 character");
+    }
+    // cmd 元字符 + 控制字符拒绝（含 \r\n 防头注入）。
+    if path
+        .chars()
+        .any(|c| c.is_control() || "&|^<>%\"".contains(c))
+    {
+        return err("bad-request", "path contains characters not allowed");
     }
     #[cfg(windows)]
     {
