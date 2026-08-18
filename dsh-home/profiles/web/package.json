@@ -2,6 +2,19 @@
   "name": "dsh-profile-web",
   "private": true,
   "dependencies": {
+    "@linxin666/dsh-client-ui-skin-blue-fantasy": "^0.1.20",
+    "@linxin666/dsh-client-ui-skin-dragon-heir": "^0.1.20",
+    "@linxin666/dsh-client-ui-skin-harbor": "^0.1.20",
+    "@linxin666/dsh-client-ui-skin-matrix": "^0.1.20",
+    "@linxin666/dsh-client-ui-skin-miku": "^0.1.20",
+    "@linxin666/dsh-client-ui-skin-minecraft": "^0.1.20",
+    "@linxin666/dsh-client-ui-skin-qq98": "^0.1.20",
+    "@linxin666/dsh-client-ui-skin-ths": "^0.1.20",
+    "@linxin666/dsh-client-ui-skin-trading": "^0.1.20",
+    "@linxin666/dsh-client-ui-skin-whale-mom": "^0.1.20",
+    "@linxin666/dsh-client-ui-skin-whale-song": "^0.1.20",
+    "@linxin666/dsh-client-ui-skin-xp": "^0.1.20",
+    "@linxin666/dsh-web-ui-all": "^0.1.20",
     "dsh-frosted-window": "https://github.com/SenryLee/dsh-frosted-window/releases/latest/download/dsh-frosted-window-0.1.0.tgz"
   },
   "dsh": {
@@ -9,7 +22,20 @@
       "bundles": [
         "@deepseek-ai/dsh-base",
         "@deepseek-ai/dsh-web-app",
-        "dsh-frosted-window"
+        "dsh-frosted-window",
+        "@linxin666/dsh-web-ui-all",
+        "@linxin666/dsh-client-ui-skin-blue-fantasy",
+        "@linxin666/dsh-client-ui-skin-dragon-heir",
+        "@linxin666/dsh-client-ui-skin-harbor",
+        "@linxin666/dsh-client-ui-skin-matrix",
+        "@linxin666/dsh-client-ui-skin-miku",
+        "@linxin666/dsh-client-ui-skin-minecraft",
+        "@linxin666/dsh-client-ui-skin-qq98",
+        "@linxin666/dsh-client-ui-skin-ths",
+        "@linxin666/dsh-client-ui-skin-trading",
+        "@linxin666/dsh-client-ui-skin-whale-mom",
+        "@linxin666/dsh-client-ui-skin-whale-song",
+        "@linxin666/dsh-client-ui-skin-xp"
       ]
     }
   }

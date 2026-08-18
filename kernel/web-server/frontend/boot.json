@@ -1,5 +1,5 @@
 {
-  "rev": "dcccb8324e44",
+  "rev": "c7d29214a72e",
   "entries": [
     {
       "id": "@deepseek-ai/dsh-typert-registry",
@@ -395,6 +395,216 @@
         "@deepseek-ai/dsh-client-runtime",
         "@deepseek-ai/dsh-client-ui-conversation"
       ]
+    },
+    {
+      "id": "dsh-frosted-window",
+      "url": "/plugins/dsh-frosted-window/client.js?rev=fea960484d91",
+      "rev": "fea960484d91",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-theme",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ],
+      "immediately": true
+    },
+    {
+      "id": "@linxin666/dsh-web-ui-all",
+      "url": "/plugins/@linxin666/dsh-web-ui-all/client.js?rev=0724f001958c",
+      "rev": "0724f001958c",
+      "inject": []
+    },
+    {
+      "id": "@linxin666/dsh-client-ui-web-ui-settings",
+      "url": "/plugins/@linxin666/dsh-client-ui-web-ui-settings/client.js?rev=54840dfe7860",
+      "rev": "54840dfe7860",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    },
+    {
+      "id": "@linxin666/dsh-client-ui-community-plugins",
+      "url": "/plugins/@linxin666/dsh-client-ui-community-plugins/client.js?rev=20c8e32d999c",
+      "rev": "20c8e32d999c",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    },
+    {
+      "id": "@linxin666/dsh-client-ui-aionui-panel",
+      "url": "/plugins/@linxin666/dsh-client-ui-aionui-panel/client.js?rev=c066b01410d1",
+      "rev": "c066b01410d1",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    },
+    {
+      "id": "@linxin666/dsh-client-ui-task-board",
+      "url": "/plugins/@linxin666/dsh-client-ui-task-board/client.js?rev=1eb3476a9e9e",
+      "rev": "1eb3476a9e9e",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    },
+    {
+      "id": "@linxin666/dsh-client-ui-git-graph",
+      "url": "/plugins/@linxin666/dsh-client-ui-git-graph/client.js?rev=a917aa27b324",
+      "rev": "a917aa27b324",
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    },
+    {
+      "id": "@linxin666/dsh-pet",
+      "url": "/plugins/@linxin666/dsh-pet/client.js?rev=b58fda0ab99a",
+      "rev": "b58fda0ab99a",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    },
+    {
+      "id": "@linxin666/dsh-remote-web-ui",
+      "url": "/plugins/@linxin666/dsh-remote-web-ui/client.js?rev=caa27733b234",
+      "rev": "caa27733b234",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ]
+    },
+    {
+      "id": "@linxin666/dsh-live-stats",
+      "url": "/plugins/@linxin666/dsh-live-stats/client.js?rev=dc13dcf72335",
+      "rev": "dc13dcf72335",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    },
+    {
+      "id": "@linxin666/dsh-ssh",
+      "url": "/plugins/@linxin666/dsh-ssh/client.js?rev=43e98f83eb04",
+      "rev": "43e98f83eb04",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    },
+    {
+      "id": "@linxin666/dsh-tool-describe-image",
+      "url": "/plugins/@linxin666/dsh-tool-describe-image/client.js?rev=dbdfdf45fc3e",
+      "rev": "dbdfdf45fc3e",
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-slots"
+      ]
+    },
+    {
+      "id": "@linxin666/dsh-client-ui-skin-center",
+      "url": "/plugins/@linxin666/dsh-client-ui-skin-center/client.js?rev=1de1209d4792",
+      "rev": "1de1209d4792",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-theme"
+      ]
+    },
+    {
+      "id": "@linxin666/dsh-client-ui-skin-blue-fantasy",
+      "url": "/plugins/@linxin666/dsh-client-ui-skin-blue-fantasy/client.js?rev=fedcc461cfd3",
+      "rev": "fedcc461cfd3",
+      "inject": []
+    },
+    {
+      "id": "@linxin666/dsh-client-ui-skin-dragon-heir",
+      "url": "/plugins/@linxin666/dsh-client-ui-skin-dragon-heir/client.js?rev=723ecb5669bd",
+      "rev": "723ecb5669bd",
+      "inject": []
+    },
+    {
+      "id": "@linxin666/dsh-client-ui-skin-harbor",
+      "url": "/plugins/@linxin666/dsh-client-ui-skin-harbor/client.js?rev=0dfed597d053",
+      "rev": "0dfed597d053",
+      "inject": []
+    },
+    {
+      "id": "@linxin666/dsh-client-ui-skin-matrix",
+      "url": "/plugins/@linxin666/dsh-client-ui-skin-matrix/client.js?rev=60a37cbbb149",
+      "rev": "60a37cbbb149",
+      "inject": []
+    },
+    {
+      "id": "@linxin666/dsh-client-ui-skin-miku",
+      "url": "/plugins/@linxin666/dsh-client-ui-skin-miku/client.js?rev=040756f03359",
+      "rev": "040756f03359",
+      "inject": []
+    },
+    {
+      "id": "@linxin666/dsh-client-ui-skin-minecraft",
+      "url": "/plugins/@linxin666/dsh-client-ui-skin-minecraft/client.js?rev=baae0184ff83",
+      "rev": "baae0184ff83",
+      "inject": []
+    },
+    {
+      "id": "@linxin666/dsh-client-ui-skin-qq98",
+      "url": "/plugins/@linxin666/dsh-client-ui-skin-qq98/client.js?rev=30adef1ea066",
+      "rev": "30adef1ea066",
+      "inject": []
+    },
+    {
+      "id": "@linxin666/dsh-client-ui-skin-ths",
+      "url": "/plugins/@linxin666/dsh-client-ui-skin-ths/client.js?rev=bc179940ff94",
+      "rev": "bc179940ff94",
+      "inject": [
+        "@deepseek-ai/dsh-client-connection"
+      ]
+    },
+    {
+      "id": "@linxin666/dsh-client-ui-skin-trading",
+      "url": "/plugins/@linxin666/dsh-client-ui-skin-trading/client.js?rev=c3fcd61788b3",
+      "rev": "c3fcd61788b3",
+      "inject": [
+        "@deepseek-ai/dsh-client-connection"
+      ]
+    },
+    {
+      "id": "@linxin666/dsh-client-ui-skin-whale-mom",
+      "url": "/plugins/@linxin666/dsh-client-ui-skin-whale-mom/client.js?rev=f4f51048b137",
+      "rev": "f4f51048b137",
+      "inject": []
+    },
+    {
+      "id": "@linxin666/dsh-client-ui-skin-whale-song",
+      "url": "/plugins/@linxin666/dsh-client-ui-skin-whale-song/client.js?rev=3597e5b01fc6",
+      "rev": "3597e5b01fc6",
+      "inject": []
+    },
+    {
+      "id": "@linxin666/dsh-client-ui-skin-xp",
+      "url": "/plugins/@linxin666/dsh-client-ui-skin-xp/client.js?rev=c51be4baea0d",
+      "rev": "c51be4baea0d",
+      "inject": []
     },
     {
       "id": "@deepseek-ai/dsh-client-ui-directory-picker-native",
