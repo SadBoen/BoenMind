@@ -9,9 +9,11 @@
 //! `translate.spec.ts` 逐字节验证该协议行为）：
 //! - 每个 content/reasoning/tool-call 索引一个状态化 harness 块；空字符串首增量不开块；
 //! - 推理优先：thinking 模式把推理增量交错在文本之前；
-//! - finish_reason 与最新 usage 推迟到 `[DONE]`（覆盖 finish 附带与尾部 usage-only
-//!   两种形状，保证 finish 后无任何块）；
-//! - `[DONE]` 缺失 → `STREAM_CLOSED` 错误；畸形 JSON → `MALFORMED_RESPONSE`；
+//! - finish_reason 与最新 usage 推迟到统一收尾（覆盖 finish 附带与尾部 usage-only
+//!   两种形状，保证 finish 后无任何块；官方 `[DONE]` 与 EOF-with-finish 同路径）；
+//! - 流尽时无任何完成证据（无 `[DONE]` 也无 finish_reason）→ `STREAM_CLOSED` 错误
+//!   （部分兼容服务如 MiniMax 以 finish_reason 帧收尾、不发 `[DONE]`——已见 finish
+//!   则正常收尾）；畸形 JSON → `MALFORMED_RESPONSE`；
 //! - usage 缓存剔除：`prompt_tokens` 含缓存命中（deepseek 语义），按
 //!   `prompt_tokens_details.cached_tokens` 或 `prompt_cache_hit_tokens` 减去；
 //! - finish stop 但未开任何块 → EMPTY_RESPONSE 错误 finish。
@@ -694,42 +696,9 @@ impl OpenAICompatLlm {
                     }
                     let data = line[5..].trim();
                     if data == "[DONE]" {
-                        // 翻译器只在 [DONE] 时收尾：先发全部 block-end（开块序），
-                        // 再发 usage，最后 finish——保证 finish 后无任何块。
+                        // 官方哨兵：置位后走循环外统一收尾（与 EOF-with-finish
+                        // 兼容服务同路径，见收尾块）。
                         done_seen = true;
-                        for idx in &order {
-                            let b = if let Some(blk) = text_block.as_ref()
-                                .filter(|b| &b.index == idx) {
-                                Some(close_block(blk))
-                            } else if let Some(blk) = reasoning_block.as_ref()
-                                .filter(|b| &b.index == idx) {
-                                Some(close_block(blk))
-                            } else {
-                                tool_blocks.get(idx).map(close_block)
-                            };
-                            if let Some(block) = b {
-                                yield Ok(StreamChunk::BlockEnd {
-                                    index: *idx,
-                                    block,
-                                });
-                            }
-                        }
-                        if let Some(u) = pending_usage.take() {
-                            yield Ok(StreamChunk::Usage(u));
-                        }
-                        let reason = pending_finish.take().unwrap_or(FinishReason::Stop);
-                        // finish stop 但未开任何块 = 空响应错误（DSH EMPTY_RESPONSE）。
-                        let final_reason = if reason == FinishReason::Stop && order.is_empty() {
-                            FinishReason::Error {
-                                message: "model returned a completed response with no content"
-                                    .to_string(),
-                                code: "EMPTY_RESPONSE".to_string(),
-                                extra: None,
-                            }
-                        } else {
-                            reason
-                        };
-                        yield Ok(StreamChunk::Finish(final_reason));
                         break 'lines;
                     }
                     let parsed: Value = match serde_json::from_str(data) {
@@ -874,9 +843,11 @@ impl OpenAICompatLlm {
                 }
             }
 
-            // [DONE] 未出现但流已尽：parseSse 保证哨兵（或抛错）——违反契约。
-            if !done_seen {
-                // STREAM_CLOSED（对齐 sse.spec：EOF 无 [DONE]）。
+            // 统一收尾（`[DONE]` 与 EOF-with-finish 兼容服务同路径）：先发全部
+            // block-end（开块序），再发 usage，最后 finish——保证 finish 后无任何块。
+            if !done_seen && pending_finish.is_none() {
+                // 流尽且无任何完成证据（无 `[DONE]` 也无 finish_reason）= 违反
+                // 契约的 torn 流 → STREAM_CLOSED（对齐 sse.spec "EOF 无哨兵"）。
                 yield Ok(StreamChunk::Finish(FinishReason::Error {
                     message: "SSE payload stream ended without [DONE]".to_string(),
                     code: "STREAM_CLOSED".to_string(),
@@ -884,6 +855,40 @@ impl OpenAICompatLlm {
                 }));
                 return;
             }
+            // 部分兼容服务（实测 MiniMax 流式响应以 finish_reason 帧收尾、不发
+            // `[DONE]`）：EOF 时已见 finish → 与 `[DONE]` 同语义正常收尾。
+            for idx in &order {
+                let b = if let Some(blk) = text_block.as_ref()
+                    .filter(|b| &b.index == idx) {
+                    Some(close_block(blk))
+                } else if let Some(blk) = reasoning_block.as_ref()
+                    .filter(|b| &b.index == idx) {
+                    Some(close_block(blk))
+                } else {
+                    tool_blocks.get(idx).map(close_block)
+                };
+                if let Some(block) = b {
+                    yield Ok(StreamChunk::BlockEnd {
+                        index: *idx,
+                        block,
+                    });
+                }
+            }
+            if let Some(u) = pending_usage.take() {
+                yield Ok(StreamChunk::Usage(u));
+            }
+            let reason = pending_finish.take().unwrap_or(FinishReason::Stop);
+            // finish stop 但未开任何块 = 空响应错误（DSH EMPTY_RESPONSE）。
+            let final_reason = if reason == FinishReason::Stop && order.is_empty() {
+                FinishReason::Error {
+                    message: "model returned a completed response with no content".to_string(),
+                    code: "EMPTY_RESPONSE".to_string(),
+                    extra: None,
+                }
+            } else {
+                reason
+            };
+            yield Ok(StreamChunk::Finish(final_reason));
         })
     }
 }
@@ -1999,6 +2004,37 @@ mod tests {
             .position(|c| matches!(c, StreamChunk::Finish(_)))
             .expect("finish present");
         assert_eq!(finish_idx, chunks.len() - 1);
+    }
+
+    #[tokio::test]
+    async fn eof_with_finish_reason_closes_normally() {
+        // 兼容服务（实测 MiniMax 流式响应）以 finish_reason 帧收尾、不发 [DONE]。
+        // EOF 时已见 finish → 与 [DONE] 同语义正常收尾（回归：真实 Minimax 回合
+        // 曾被误判 STREAM_CLOSED，torn 无产出）。
+        let base = mock_sse_server(
+            vec![
+                r#"{"choices":[{"delta":{"content":"你好"}}]}"#,
+                r#"{"choices":[{"delta":{},"finish_reason":"stop"}]}"#,
+            ],
+            false,
+        );
+        let llm = abort_llm(&base);
+        let chunks = collect_stream(&llm, abort_request(kernel_contracts::AbortSignal::new())).await;
+        assert_eq!(chunks.last().unwrap(), &StreamChunk::Finish(FinishReason::Stop));
+        // finish 后无任何块。
+        let finish_idx = chunks
+            .iter()
+            .position(|c| matches!(c, StreamChunk::Finish(_)))
+            .expect("finish present");
+        assert_eq!(finish_idx, chunks.len() - 1);
+        // 文本块完整（block-end 携带权威块）。
+        assert!(chunks.iter().any(|c| matches!(
+            c,
+            StreamChunk::BlockEnd {
+                block: kernel_contracts::ContentBlock::Text(t),
+                ..
+            } if t == "你好"
+        )));
     }
 
     #[tokio::test]
