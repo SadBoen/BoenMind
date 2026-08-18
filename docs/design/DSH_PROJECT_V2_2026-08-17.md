@@ -1,7 +1,7 @@
 # BoenMind 计划 v2：Rust 微内核自研 + 前端借 DSH 生态（2026-08-17）
 
 > 状态：**定稿方向**（微内核一步到位已拍板；§八 拍板点 1–10 全部拍板）
-> 修订史：v1（同日夜）＝新建项目、dsh 全家桶为唯一真身、逐单元升级 → **v2（本稿）＝Rust 微内核自研后端 + 前端全套借 dsh 生态 + 插件/APP 全 Rust**。v1 的"全家桶 bootstrap / 毛玻璃皮肤 / DSH_HOME 启动器"成果保留（前端生态基础），后台路线按微内核重排。**v2.1（本稿，同日夜）＝三架构师 SKILL 交叉评审修正**（code-architecture / codebase-reviewer / ln-24，报告见 `docs/review-dsh-v2/`）：契约面 6→9、mux 方向修正、三层事件澄清、插件进程模型拍板、LLM 端口补入、存储模型统一、双栅栏 trust fence。**对外契约逐字对齐为用户拍板铁律（§3.4）。**
+> 修订史：v1（同日夜）＝新建项目、dsh 全家桶为唯一真身、逐单元升级 → **v2（本稿）＝Rust 微内核自研后端 + 前端全套借 dsh 生态 + 插件/APP 全 Rust**。v1 的"全家桶 bootstrap / 毛玻璃皮肤 / DSH_HOME 启动器"成果保留（前端生态基础），后台路线按微内核重排。**v2.1（本稿，同日夜）＝三架构师 SKILL 交叉评审修正**（code-architecture / codebase-reviewer / ln-24，报告见 `docs/review-dsh-v2/`）：契约面 6→9、mux 方向修正、三层事件澄清、插件进程模型拍板、LLM 端口补入、存储模型统一、双栅栏 trust fence。**对外契约逐字对齐为用户拍板铁律（§3.4）。** **v2.2（2026-08-18）＝核心剥离为独立仓 dsh-rust-core，BoenMind 以 git submodule 消费（§二"核心演进"）**。
 > 事实基线：只依据 2026-08-17 核查（npm registry + 本机 dsh 浅克隆 + 官方 docs/source），不引用旧结论。
 > 关联：`docs/design/DSH_PROJECT_2026-08-17.md`（v1 全文，已归档为 `docs/archive/`）、`frontend/public/docs/expert-team.md`（专家团队载体）、`backend/vendor/UPSTREAM_TRACKING.md`（上游台账）。
 
@@ -26,32 +26,44 @@
 
 ## 二、新项目形态（微内核）
 
+> **2026-08-18 更新**：核心已落地为独立仓库 `dsh-rust-core`
+> （`https://github.com/SadBoen/dsh-rust-core`），BoenMind 以 **git submodule** 方式消费
+> （`kernel/` = submodule 指针）。形态图更新为真实 crate 结构；`plugins/`/`apps/`/`shell/`
+> 仍为规划（见"核心演进"小节）。
+
 ```
-boenmind-dsh/
-├── kernel/                 # Rust 微内核（核心做小）
-│   ├── loop/               #   回合循环（turn/step，waterfall 事件）
-│   ├── session/            #   append-only SessionEvent 日志（唯一事实源）
-│   ├── tools/              #   工具注册表 + 门控（enabled 名单 + fail-closed）
-│   ├── llm/                #   LLM 适配端口（provider trait，门禁 1 前置）【v2.1 补】
-│   ├── storage/            #   sqlite 持久化后端（事件日志唯一事实源；sessions/messages 为其投影）
-│   ├── mcp/                #   MCP client/server（bm-mcp 语义迁入）
-│   └── supervisor/         #   插件进程宿主（拉起/健康检查/崩溃重启/蓝绿切换）
-├── plugins/                # Rust 插件（**独立进程**，编译产物，状态外置）【v2.1 拍板】
-│   ├── team/               # 专家团队（对齐 expert-team.md）
-│   ├── steward/            # 管家（治理区间 + wake）
-│   ├── memory/             # 记忆分层/项目隔离
-│   ├── audit/              # 审计/工具调用显示
-│   ├── browser/            # 浏览器自动化（自研，T4 续）
-│   └── skins/              # 皮肤适配（映射到 dsh --dsw-* 令牌）
-├── web-server/             # Rust 协议兼容层（§三：dsh 前端接口合同 6 面）
-├── frontend/               # dsh web-app 产物 + 皮肤（借来的，build 时打包）
-├── shell/                  # Tauri 2 桌面壳（复用现有配置，后置）
-├── apps/                   # 我们的 Rust APP（编译产物分发，闭源可选，无授权密钥）
-└── docs/
+BoenMind/                      # 主仓：前端资产 + 文档 + 工具链
+├── kernel/                    # git submodule → SadBoen/dsh-rust-core（Rust 微内核）
+│   ├── kernel-contracts/      #   端口 trait + 事件词汇 + DTO（含 plugin.rs 分类标签）
+│   ├── kernel-session/        #   append-only SessionEvent 日志（唯一事实源）+ 投影
+│   ├── kernel-llm/            #   LlmPort（mock / OpenAI 兼容 / minimax/deepseek/custom）
+│   ├── kernel-tools/          #   工具注册表 + 门控（enabled 名单 + fail-closed）
+│   ├── kernel-storage/        #   sqlite 持久化（WAL + synchronous=FULL + 原子发布）
+│   ├── kernel-loop/           #   AgentPort trait + ReactLoopAgent 回合循环
+│   ├── kernel-supervisor/     #   热升级/进程编排（M5 后置）
+│   ├── kernel-assembly/       #   组合根：swap_llm/swap_loop/工具装卸 + plugin_manifest
+│   ├── headless/              #   无头装配（最小基座 = llm/loop/tools 三插件）
+│   └── web-server/            #   Rust 协议兼容层（§三：dsh 前端接口合同 9 面）
+├── dsh-home/                  # dsh 全家桶 profile（前端生态基座，重抓快照源）
+├── frontend/                  # web-server 内置静态快照（kernel/web-server/frontend/）
+├── docs/                      # 设计/交接/审查文档
+├── scripts/                   # 门禁/热升级验证脚本
+└── .tmp/                      # 验证工具（conformance/gate25/仿真/vision，不入库）
 ```
 
 - **版本**：v0.1.0 起（已拍板）。
 - **历史资产**：现有 BoenMind 仓库只读参考（插件逻辑/专家提示词/记忆语义是搬运素材）；dsh 全家桶 bootstrap 保留作前端生态基础与协议参考实现。
+
+### 核心演进（2026-08-18 新增）
+
+- **核心 = 独立仓 dsh-rust-core**：`kernel/` 是 submodule 指针（锁 commit），所有 dsh 核心
+  （Rust crate + web-server + 前端快照）在 dsh-rust-core 独立演进；BoenMind 只是消费者。
+- **更新核心**：`cd kernel && git pull && cd .. && git add kernel && git commit`
+- **首次 clone BoenMind**：须 `git clone --recursive`（否则 kernel/ 为空），或 clone 后
+  `git submodule update --init`
+- **开发纪律**：核心功能改动在 dsh-rust-core 提交；BoenMind 侧只做前端资产/文档/工具链。
+  验证三件套（cargo test/clippy/gate1）在 kernel/ 子模块内执行。
+
 
 ---
 
