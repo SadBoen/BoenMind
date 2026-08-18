@@ -81,6 +81,8 @@ pub struct ReactLoopAgent {
     /// per-session 模型覆盖（session.selectModel 语义）：Some((provider, model)) 时
     /// 优先于 LoopRuntime 全局默认。未设置 = 用运行时默认。
     model_override: std::sync::Mutex<Option<(String, String)>>,
+    /// 当前活跃回合的取消信号（session.cancel 端口触发；None = 无活跃回合）。
+    cancel: std::sync::Mutex<Option<kernel_contracts::AbortSignal>>,
 }
 
 /// 增量 chunk → 消息装配器（对齐 DSH `BlockAssembler`：原始 chunk 累积，
@@ -239,6 +241,16 @@ impl ReactLoopAgent {
             rt,
             session,
             model_override: std::sync::Mutex::new(None),
+            cancel: std::sync::Mutex::new(None),
+        }
+    }
+
+    /// 触发当前活跃回合的取消（对齐 DSH `session.cancel`：请求 signal abort →
+    /// 流以 finish{kind:'aborted', code:'ABORTED'} 收尾）。无活跃回合时无效果。
+    pub fn abort(&self) {
+        let signal = self.cancel.lock().unwrap().clone();
+        if let Some(s) = signal {
+            s.abort();
         }
     }
 
@@ -309,6 +321,19 @@ impl ReactLoopAgent {
 
         let mut steps: u64 = 0;
 
+        // 本回合取消信号：session.cancel 经 agent.abort() 触发，贯穿整个回合
+        // （多 step 共用同一信号——对齐 DSH 请求 signal 语义）。
+        let signal = kernel_contracts::AbortSignal::new();
+        *self.cancel.lock().unwrap() = Some(signal.clone());
+        // 回合结束（任意 return 路径）清空取消槽：避免残留信号被下一回合复用。
+        struct ClearCancel<'a>(&'a std::sync::Mutex<Option<kernel_contracts::AbortSignal>>);
+        impl Drop for ClearCancel<'_> {
+            fn drop(&mut self) {
+                *self.0.lock().unwrap() = None;
+            }
+        }
+        let _clear = ClearCancel(&self.cancel);
+
         loop {
             steps += 1;
             if steps > self.rt.max_steps {
@@ -345,6 +370,10 @@ impl ReactLoopAgent {
                 temperature: None,
                 max_tokens: None,
                 session_id: Some(self.session.id().as_str().to_string()),
+                signal: Some(signal.clone()),
+                reasoning_effort: None,
+                thinking: None,
+                purpose: None,
             };
 
             // ---- 消费模型流：原始 chunk 入日志 + 装配器累积 ----
@@ -398,25 +427,42 @@ impl ReactLoopAgent {
                 ));
             }
 
-            // error/aborted finish：回合失败收尾（无重试瀑布，M3 直错）。
+            // error/aborted finish：回合收尾（无重试瀑布，M3 直错）。
             if matches!(finish, FinishReason::Error { .. } | FinishReason::Cancelled) {
-                let (message, code) = match &finish {
-                    FinishReason::Error { message, code } => (message.clone(), code.clone()),
-                    _ => ("cancelled".to_string(), "ABORTED".to_string()),
-                };
-                let rec = self
-                    .session
-                    .append(SessionEvent::Turn(TurnEvent::Ended {
-                        turn,
-                        reason: TurnEndReason::Error {
-                            message: message.clone(),
-                            code: code.clone(),
-                        },
-                    }));
-                let _ = self.persist(&rec).await;
-                return Err(LoopError::Llm(format!(
-                    "model finish: {message} ({code})"
-                )));
+                match &finish {
+                    // 取消请求中断回合 → TurnEndReason::Aborted（对齐 DSH：aborted
+                    // 是独立 reason 词汇，不再归 Error{ABORTED}）。
+                    FinishReason::Cancelled => {
+                        let rec = self
+                            .session
+                            .append(SessionEvent::Turn(TurnEvent::Ended {
+                                turn,
+                                reason: TurnEndReason::Aborted {
+                                    reason: "request cancelled".to_string(),
+                                },
+                            }));
+                        let _ = self.persist(&rec).await;
+                        return Err(LoopError::Llm(
+                            "model finish: cancelled (ABORTED)".to_string(),
+                        ));
+                    }
+                    FinishReason::Error { message, code, .. } => {
+                        let rec = self
+                            .session
+                            .append(SessionEvent::Turn(TurnEvent::Ended {
+                                turn,
+                                reason: TurnEndReason::Error {
+                                    message: message.clone(),
+                                    code: code.clone(),
+                                },
+                            }));
+                        let _ = self.persist(&rec).await;
+                        return Err(LoopError::Llm(format!(
+                            "model finish: {message} ({code})"
+                        )));
+                    }
+                    _ => unreachable!("guarded by matches!"),
+                }
             }
 
             // 组装最终消息块（max-tokens 截断丢弃 tool-call 块，对齐 DSH assembler.blocks()）。

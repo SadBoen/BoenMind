@@ -7,12 +7,85 @@
 //! `Err` 结束即中断，调用方以 `Finish` 缺失判定 torn。
 
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use futures::Stream;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::error::LlmError;
+
+/// 请求级取消信号（对齐 DSH `AbortController/AbortSignal` 语义：单向置位、
+/// 异步等待）。最小自研实现：`AtomicBool`（同步查询）+ `tokio::sync::watch`
+/// （异步等待无竞态——subscribe 后 `borrow_and_update` 立即反映已置位状态）。
+/// `abort()` 幂等。
+#[derive(Clone)]
+pub struct AbortSignal {
+    inner: Arc<AbortInner>,
+}
+
+struct AbortInner {
+    aborted: AtomicBool,
+    tx: tokio::sync::watch::Sender<bool>,
+    /// 永久 receiver：tokio watch 的 `send` 在无活跃 receiver 时返回 Err 且
+    /// **不更新值**——保留它保证任意时序的 `abort()`（含订阅前的预中止）
+    /// 都让后续 `wait_aborted` 立即读到 true。
+    _keep_alive: tokio::sync::watch::Receiver<bool>,
+}
+
+impl Default for AbortSignal {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Debug for AbortSignal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AbortSignal")
+            .field("aborted", &self.is_aborted())
+            .finish()
+    }
+}
+
+impl AbortSignal {
+    pub fn new() -> Self {
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        Self {
+            inner: Arc::new(AbortInner {
+                aborted: AtomicBool::new(false),
+                tx,
+                _keep_alive: rx,
+            }),
+        }
+    }
+
+    pub fn is_aborted(&self) -> bool {
+        self.inner.aborted.load(Ordering::Acquire)
+    }
+
+    /// 触发取消：置位并唤醒所有等待者（幂等，仅首次生效）。
+    pub fn abort(&self) {
+        if self.inner.aborted.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let _ = self.inner.tx.send(true);
+    }
+
+    /// 异步等待取消发生（已置位时立即返回）。用于中断挂起的传输读——
+    /// 对齐 DSH "abort penetrates resolveModel and fetch"。
+    pub async fn wait_aborted(&self) {
+        let mut rx = self.inner.tx.subscribe();
+        loop {
+            if *rx.borrow_and_update() {
+                return;
+            }
+            if rx.changed().await.is_err() {
+                return;
+            }
+        }
+    }
+}
 
 /// 流式块流。
 pub type ChunkStream = Pin<Box<dyn Stream<Item = Result<StreamChunk, LlmError>> + Send>>;
@@ -24,8 +97,14 @@ pub enum FinishReason {
     MaxTokens,
     /// 工具调用序列结束（模型请求执行工具）。
     ToolCalls,
-    /// 错误中断（failure 携带 message/code）。
-    Error { message: String, code: String },
+    /// 错误中断（failure 携带 message/code；`extra` = 结构化 LlmFailure 可选事实
+    /// status/providerRetryAfterMs/requestId，None 时 wire 只出 message/code）。
+    Error {
+        message: String,
+        code: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        extra: Option<crate::error::FailureInfo>,
+    },
     /// 被取消（wire 上映射 aborted）。
     Cancelled,
 }
@@ -121,10 +200,23 @@ impl FinishReason {
             FinishReason::Stop => json!({ "kind": "stop" }),
             FinishReason::MaxTokens => json!({ "kind": "max-tokens" }),
             FinishReason::ToolCalls => json!({ "kind": "tool-calls" }),
-            FinishReason::Error { message, code } => json!({
-                "kind": "error",
-                "failure": { "message": message, "code": code },
-            }),
+            FinishReason::Error { message, code, extra } => {
+                let mut failure = json!({ "message": message, "code": code });
+                // 结构化事实透传（对齐 adapter.spec：status/providerRetryAfterMs/requestId
+                // 仅在携带时出现——toEqual 精确形状断言）。
+                if let Some(e) = extra {
+                    if let Some(s) = e.status {
+                        failure["status"] = json!(s);
+                    }
+                    if let Some(ra) = e.provider_retry_after_ms {
+                        failure["providerRetryAfterMs"] = json!(ra);
+                    }
+                    if let Some(rid) = &e.request_id {
+                        failure["requestId"] = json!(rid);
+                    }
+                }
+                json!({ "kind": "error", "failure": failure })
+            }
             FinishReason::Cancelled => json!({
                 "kind": "aborted",
                 "failure": { "message": "cancelled", "code": "ABORTED" },
@@ -234,6 +326,20 @@ pub struct GenerateOptions {
     pub max_tokens: Option<u64>,
     /// 会话 id（用于 provider 侧上下文关联与日志）。
     pub session_id: Option<String>,
+    /// 请求级取消信号（对齐 DSH `options.signal`：abort → 终态
+    /// finish{kind:'aborted', code:'ABORTED'}）。仅进程内传递，不上 wire/不落盘。
+    #[serde(skip)]
+    pub signal: Option<AbortSignal>,
+    /// 请求级推理档位（'off'/'low'/'high'/'max'；None = 用 adapter 默认）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+    /// 请求级 thinking 开关（'enabled'/'disabled'；None = adapter 默认）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<String>,
+    /// 请求用途（'session-title'/'compaction' 强制 thinking disabled；
+    /// None = 普通会话调用）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub purpose: Option<String>,
 }
 
 /// LLM 提供者端口。

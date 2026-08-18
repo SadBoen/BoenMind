@@ -15,9 +15,9 @@ pub mod tools;
 pub use bus::{Disposer, EventBus, EventListener};
 pub use error::{LlmError, PortError, PortErrorKind, PortResult, ToolError};
 pub use llm::{
-    block_to_wire, text_message, ChunkStream, ContentBlock, FinishReason, GenerateOptions,
-    LlmMessage, LlmModelInfo, LlmPort, LlmResolvedModelInfo, ModelReasoning, ReasoningEffort, Role,
-    StreamChunk, TokenUsage, ToolCall, ToolCallResult,
+    block_to_wire, text_message, AbortSignal, ChunkStream, ContentBlock, FinishReason,
+    GenerateOptions, LlmMessage, LlmModelInfo, LlmPort, LlmResolvedModelInfo, ModelReasoning,
+    ReasoningEffort, Role, StreamChunk, TokenUsage, ToolCall, ToolCallResult,
 };
 pub use ports::{
     FsPort, PluginRuntimeAvailability, PluginRuntimePort, SessionPersistPort, ShellPort,

@@ -173,6 +173,10 @@ mod tests {
             temperature: None,
             max_tokens: None,
             session_id: None,
+            signal: None,
+            reasoning_effort: None,
+            thinking: None,
+            purpose: None,
         }
     }
 

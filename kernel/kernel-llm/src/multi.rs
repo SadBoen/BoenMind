@@ -55,6 +55,7 @@ impl LlmPort for MultiProviderLlm {
                         request.provider
                     ),
                     code: "NO_ADAPTER".to_string(),
+                    extra: None,
                 }),
             )])),
         }
@@ -105,6 +106,10 @@ mod tests {
             temperature: None,
             max_tokens: None,
             session_id: None,
+            signal: None,
+            reasoning_effort: None,
+            thinking: None,
+            purpose: None,
         });
         let first = s.next().await;
         match first {

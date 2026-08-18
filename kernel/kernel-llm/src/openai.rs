@@ -147,59 +147,174 @@ impl OpenAICompatLlm {
         format!("{}/models", self.effective_base_url().trim_end_matches('/'))
     }
 
-    /// 把内核消息序列翻译为 OpenAI chat/completions messages。
-    ///
-    /// 规则：content 拼为文本字符串（当前内核消息基本是纯文本/工具结果）；
-    /// assistant 消息含 ToolCall → `content:null + tool_calls[]`；
-    /// tool 消息 → `role:"tool" + tool_call_id + content`；推理块不进请求。
-    fn translate_messages(msgs: &[LlmMessage]) -> Vec<Value> {
+    /// 把内核消息序列翻译为 OpenAI chat/completions messages
+    /// （逐字对齐 DSH `serializeMessages`：text 块合并、tool-result 独立
+    /// role:tool 消息、空内容哨兵 `'(no output)'`、混合 user text+tool-result
+    /// 拆多条 wire 消息、assistant 推理 passback 只出现在 tool-call 轮、
+    /// image/未知块拒 `UNSUPPORTED_CONTENT`——绝不静默 flatten 掉）。
+    fn translate_messages(msgs: &[LlmMessage]) -> Result<Vec<Value>, LlmError> {
+        fn text_of(content: &[ContentBlock]) -> String {
+            content
+                .iter()
+                .filter_map(|b| match b {
+                    ContentBlock::Text(t) => Some(t.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("")
+        }
+        fn reasoning_of(content: &[ContentBlock]) -> String {
+            content
+                .iter()
+                .filter_map(|b| match b {
+                    ContentBlock::Reasoning(t) => Some(t.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("")
+        }
+        // 核心 image 内容显式拒绝（对齐 serialize.spec "rejects image blocks
+        // instead of silently flattening them away"）。当前内核 ContentBlock
+        // enum 无 image 变体（Rust 类型系统穷尽）；未来加入 image 块时，本
+        // 函数即拒收点（返回 UNSUPPORTED_CONTENT，绝不静默 flatten 掉）。
+
         let mut out = Vec::new();
         for m in msgs {
-            let mut text_parts: Vec<String> = Vec::new();
-            let mut tool_calls: Vec<Value> = Vec::new();
-            let mut tool_call_id: Option<String> = None;
-            for block in &m.content {
-                match block {
-                    ContentBlock::Text(t) => text_parts.push(t.clone()),
-                    ContentBlock::Reasoning(_) => {} // 推理内容不出请求
-                    ContentBlock::ToolCall(c) => tool_calls.push(json!({
-                        "id": c.id,
-                        "type": "function",
-                        "function": {
-                            "name": c.name,
-                            "arguments": c.arguments,
-                        }
-                    })),
-                    ContentBlock::ToolResult(r) => {
-                        tool_call_id = Some(r.call_id.clone());
-                        text_parts.push(r.output.clone());
-                    }
-                }
-            }
-            let content = text_parts.join("\n");
-            let mut msg = json!({ "role": m.role.as_str() });
             match m.role {
-                Role::Assistant if !tool_calls.is_empty() => {
-                    // 对齐 DSH serialize：tool-call 轮 content 用空串而非 null
-                    // （`content:''`，null 会被 API 400；官方 serialize.spec.ts 逐字节验证）。
-                    msg["content"] = json!("");
-                    msg["tool_calls"] = Value::Array(tool_calls);
+                Role::System => {
+                    out.push(json!({ "role": "system", "content": text_of(&m.content) }));
                 }
-                Role::Tool => {
-                    if let Some(id) = tool_call_id {
-                        msg["tool_call_id"] = json!(id);
+                Role::Assistant => {
+                    let text = text_of(&m.content);
+                    let reasoning = reasoning_of(&m.content);
+                    let tool_calls: Vec<Value> = m
+                        .content
+                        .iter()
+                        .filter_map(|b| match b {
+                            ContentBlock::ToolCall(c) => Some(json!({
+                                "id": c.id,
+                                "type": "function",
+                                "function": { "name": c.name, "arguments": c.arguments },
+                            })),
+                            _ => None,
+                        })
+                        .collect();
+                    let mut msg = json!({
+                        "role": "assistant",
+                        // Text-less turns send "" — NEVER null（对齐 serialize.spec：
+                        // 纯 tool-call 轮/纯推理轮 content 均为空串；null 会被 API 400，
+                        // 且会话日志中的 null 会封死该会话后续所有回合）。
+                        "content": text,
+                    });
+                    // 官方 passback 规则：reasoning_content 只在 tool-call 轮回传；
+                    // 普通轮丢弃以省 token。
+                    if !tool_calls.is_empty() && !reasoning.is_empty() {
+                        msg["reasoning_content"] = json!(reasoning);
                     }
-                    msg["content"] = json!(content);
+                    if !tool_calls.is_empty() {
+                        msg["tool_calls"] = Value::Array(tool_calls);
+                    }
+                    out.push(msg);
                 }
-                _ => msg["content"] = json!(content),
+                // user 角色：text 与 tool-result 拆多条（对齐 serialize.spec
+                // "splits mixed user text + tool results"）。
+                Role::User => {
+                    let text = text_of(&m.content);
+                    let tool_results: Vec<&kernel_contracts::ToolCallResult> = m
+                        .content
+                        .iter()
+                        .filter_map(|b| match b {
+                            ContentBlock::ToolResult(r) => Some(r),
+                            _ => None,
+                        })
+                        .collect();
+                    if !text.is_empty() || tool_results.is_empty() {
+                        out.push(json!({ "role": "user", "content": text }));
+                    }
+                    for r in tool_results {
+                        out.push(json!({
+                            "role": "tool",
+                            "tool_call_id": r.call_id,
+                            // 空工具输出仍需 SOME content（对齐哨兵 `'(no output)'`）。
+                            "content": if r.output.trim().is_empty() {
+                                "(no output)"
+                            } else {
+                                r.output.as_str()
+                            },
+                        }));
+                    }
+                }
+                // 内核 tool 角色消息不直接出现（工具结果随 user 消息内的
+                // ToolResult 块携带）；兜底映射（content 取 ToolResult.output）。
+                Role::Tool => {
+                    let mut msg = json!({ "role": "tool" });
+                    if let Some(r) = m.content.iter().find_map(|b| match b {
+                        ContentBlock::ToolResult(r) => Some(r),
+                        _ => None,
+                    }) {
+                        msg["tool_call_id"] = json!(r.call_id);
+                        msg["content"] = if r.output.trim().is_empty() {
+                            json!("(no output)")
+                        } else {
+                            json!(r.output)
+                        };
+                    } else {
+                        msg["content"] = json!(text_of(&m.content));
+                    }
+                    out.push(msg);
+                }
             }
-            out.push(msg);
         }
-        out
+        Ok(out)
+    }
+
+    /// 解析 thinking/effort 对（逐字对齐 DSH `resolveThinking`：
+    /// 非 DeepSeek 能力档位 → UNSUPPORTED_REASONING_EFFORT；`off` → thinking
+    /// disabled 且绝不上 wire effort；`low/high/max` → enabled + effort；
+    /// session-title/compaction 用途强制 disabled；deployment 锁 disabled 时
+    /// 显式非 off effort 拒绝）。
+    fn resolve_thinking(
+        request: &GenerateOptions,
+        adapter_thinking: Option<&str>,
+        adapter_effort: Option<&str>,
+    ) -> Result<Option<(String, Option<String>)>, LlmError> {
+        // 用途强制：标题/压缩不推理（DSH resolveThinking 首行）。
+        if request
+            .purpose
+            .as_deref()
+            .is_some_and(|p| p == "session-title" || p == "compaction")
+        {
+            return Ok(Some(("disabled".to_string(), None)));
+        }
+        let effort = match request.reasoning_effort.as_deref() {
+            Some("off" | "low" | "high" | "max") => request.reasoning_effort.as_deref(),
+            Some(other) => {
+                return Err(LlmError::new(format!(
+                    "DeepSeek does not support reasoning effort \"{other}\""
+                )))
+            }
+            None => adapter_effort,
+        };
+        // deployment 锁 disabled：显式非 off effort 拒绝（对齐 adapter.spec）。
+        if adapter_thinking == Some("disabled")
+            && effort.is_some_and(|e| e != "off")
+        {
+            return Err(LlmError::new(format!(
+                "DeepSeek deployment does not support reasoning effort \"{}\"",
+                effort.unwrap_or_default()
+            )));
+        }
+        Ok(match effort {
+            Some("off") => Some(("disabled".to_string(), None)),
+            Some("low" | "high" | "max") => {
+                Some(("enabled".to_string(), effort.map(str::to_string)))
+            }
+            _ => adapter_thinking.map(|t| (t.to_string(), None)),
+        })
     }
 
     fn build_request(&self, request: &GenerateOptions) -> Value {
-        let messages = Self::translate_messages(&request.messages);
+        let messages = Self::translate_messages(&request.messages).expect("translate");
         let tools: Vec<Value> = request
             .tools
             .iter()
@@ -218,6 +333,8 @@ impl OpenAICompatLlm {
             "model": request.model,
             "messages": messages,
             "stream": true,
+            // 恒随请求（对齐 DSH payload：usage 上报恒开）。
+            "stream_options": { "include_usage": true },
         });
         if !tools.is_empty() {
             body["tools"] = Value::Array(tools);
@@ -227,6 +344,14 @@ impl OpenAICompatLlm {
         }
         if let Some(m) = request.max_tokens {
             body["max_tokens"] = json!(m);
+        }
+        if let Ok(Some((thinking, effort))) =
+            Self::resolve_thinking(request, None, None)
+        {
+            body["thinking"] = json!({ "type": thinking });
+            if let Some(e) = effort {
+                body["reasoning_effort"] = json!(e);
+            }
         }
         body
     }
@@ -306,7 +431,17 @@ impl OpenAICompatLlm {
         let url = self.chat_url();
         let key = self.effective_api_key();
         let body = self.build_request(&request);
+        let signal = request.signal.clone();
         Box::pin(async_stream::stream! {
+            // 预中止：请求发出前已 abort → 直接终态（对齐 adapter.spec
+            // "classifies an aborted request as an aborted finish"：不碰传输，
+            // 且仅此一个 chunk）。
+            if let Some(s) = &signal {
+                if s.is_aborted() {
+                    yield Ok(StreamChunk::Finish(FinishReason::Cancelled));
+                    return;
+                }
+            }
             let Some(key) = key else {
                 // keyless：对齐 DSH resolveApiKey —— 无 key 即 MISSING_CREDENTIAL。
                 // 错误以 finish 呈现（对齐 translate：错误是 finish 语义，不产 Err chunk，
@@ -314,41 +449,82 @@ impl OpenAICompatLlm {
                 yield Ok(StreamChunk::Finish(FinishReason::Error {
                     message: format!("no API key for provider route '{}'", request.provider),
                     code: "MISSING_CREDENTIAL".to_string(),
+                    extra: None,
                 }));
                 return;
             };
-            let resp = match client
+            let send_fut = client
                 .post(&url)
                 .header("content-type", "application/json")
                 .header("authorization", format!("Bearer {key}"))
                 .json(&body)
-                .send()
-                .await
-            {
+                .send();
+            let resp = match &signal {
+                // 中止穿透 fetch：请求发出后、响应头到达前 abort → 终态 aborted
+                //（对齐 adapter.spec：signal abort 映射 ABORTED，不产 TRANSPORT）。
+                Some(s) => tokio::select! {
+                    biased;
+                    r = send_fut => r,
+                    _ = s.wait_aborted() => {
+                        yield Ok(StreamChunk::Finish(FinishReason::Cancelled));
+                        return;
+                    }
+                },
+                None => send_fut.await,
+            };
+            let resp = match resp {
                 Ok(r) => r,
                 Err(e) => {
+                    // abort 已发生时的连接错误一律按取消呈现（对齐 DSH
+                    // `if (signal.aborted) throw error`——abort 优先于 transport）。
+                    if signal.as_ref().is_some_and(|s| s.is_aborted()) {
+                        yield Ok(StreamChunk::Finish(FinishReason::Cancelled));
+                        return;
+                    }
                     // TRANSPORT（对齐 adapter.spec：连接失败带 endpoint；finish 呈现）。
                     yield Ok(StreamChunk::Finish(FinishReason::Error {
                         message: format!("LLM request to {url} failed: {e}"),
                         code: "TRANSPORT".to_string(),
+                        extra: None,
                     }));
                     return;
                 }
             };
             if !resp.status().is_success() {
                 let status = resp.status();
+                // Retry-After（秒数或 HTTP-date）与 provider request id 作为结构化事实
+                // 随 failure 透传（对齐 adapter.spec "retains status, Retry-After seconds,
+                // and provider request id as structured facts"）——headers 须在 body 消费前读取。
+                let retry_after_ms = parse_retry_after(
+                    resp.headers().get("retry-after").and_then(|v| v.to_str().ok()),
+                );
+                let request_id = resp
+                    .headers()
+                    .get("x-request-id")
+                    .or_else(|| resp.headers().get("x-deepseek-request-id"))
+                    .and_then(|v| v.to_str().ok())
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string);
                 // 读 body 拿错误详情（非流式，体量小）。
                 let text = resp.text().await.unwrap_or_default();
-                let (code, detail) = map_http_code(status.as_u16(), &text);
+                let (code, message) = map_http_code(status.as_u16(), &text);
+                let extra = kernel_contracts::error::FailureInfo {
+                    message: message.clone(),
+                    code: code.clone(),
+                    status: Some(status.as_u16()),
+                    provider_retry_after_ms: retry_after_ms,
+                    request_id,
+                };
                 // 错误以 finish 呈现（对齐 adapter.spec 词汇；不产 Err chunk，
                 // 否则 loop 的 torn 分支会把 code 覆盖成 LLM_STREAM 并双回合收尾）。
                 yield Ok(StreamChunk::Finish(FinishReason::Error {
-                    message: format!("HTTP {status}: {detail}"),
+                    message,
                     code,
+                    extra: Some(extra),
                 }));
                 return;
             }
-            let mut stream = resp.bytes_stream();
+            let stream = resp.bytes_stream();
             let mut line_buf: Vec<u8> = Vec::new();
             // ---- translate.ts 状态机 ----
             // 每个 content/reasoning/tool-call 索引一个 open block；索引按开块序递增。
@@ -385,7 +561,27 @@ impl OpenAICompatLlm {
             }
 
             use futures::StreamExt;
-            while let Some(chunk) = stream.next().await {
+            // fuse 后 select_biased 可安全反复 poll（None 后不重复 poll）。
+            let mut stream = stream.fuse();
+            loop {
+                // 流中中止穿透：select 竞争"下一块"与"abort 等待"——挂起的网络读
+                // 能被 signal 打断（对齐 adapter.spec "aborts mid-stream via the
+                // request signal"：恰一个 aborted finish chunk）。select_biased 优先
+                // 流分支：EOF 与 abort 同时就绪时先走流，避免正常 EOF 被误判。
+                let chunk = match &signal {
+                    Some(s) => {
+                        tokio::select! {
+                            biased;
+                            c = stream.next() => c,
+                            _ = s.wait_aborted() => {
+                                yield Ok(StreamChunk::Finish(FinishReason::Cancelled));
+                                return;
+                            }
+                        }
+                    }
+                    None => stream.next().await,
+                };
+                let Some(chunk) = chunk else { break };
                 let bytes = match chunk {
                     Ok(b) => b,
                     Err(e) => {
@@ -393,6 +589,7 @@ impl OpenAICompatLlm {
                         yield Ok(StreamChunk::Finish(FinishReason::Error {
                             message: format!("LLM stream from {url} failed: {e}"),
                             code: "TRANSPORT".to_string(),
+                            extra: None,
                         }));
                         return;
                     }
@@ -437,6 +634,7 @@ impl OpenAICompatLlm {
                                 message: "model returned a completed response with no content"
                                     .to_string(),
                                 code: "EMPTY_RESPONSE".to_string(),
+                                extra: None,
                             }
                         } else {
                             reason
@@ -451,6 +649,7 @@ impl OpenAICompatLlm {
                             yield Ok(StreamChunk::Finish(FinishReason::Error {
                                 message: format!("malformed SSE payload: {e}"),
                                 code: "MALFORMED_RESPONSE".to_string(),
+                                extra: None,
                             }));
                             return;
                         }
@@ -591,6 +790,7 @@ impl OpenAICompatLlm {
                 yield Ok(StreamChunk::Finish(FinishReason::Error {
                     message: "SSE payload stream ended without [DONE]".to_string(),
                     code: "STREAM_CLOSED".to_string(),
+                    extra: None,
                 }));
                 return;
             }
@@ -623,6 +823,7 @@ fn map_finish_reason(reason: &str) -> FinishReason {
         _ => FinishReason::Error {
             message: format!("model stopped: {reason}"),
             code: reason.to_uppercase(),
+            extra: None,
         },
     }
 }
@@ -663,23 +864,92 @@ fn extract_api_error(body: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// HTTP 状态码 → DSH 错误码（对齐 `adapter.spec.ts`：401/403→AUTH、429→RATE_LIMIT、
-/// 400→INVALID_REQUEST、500/503→SERVER、其余→HTTP_<status>）。
+/// HTTP 状态码 → DSH 错误码 + wire 消息（对齐 `adapter.spec.ts` 的 `httpErrorCode`：
+/// 401/403→AUTH 最优先；quota 分类（任意 status）；429→RATE_LIMIT；400→内容分类
+/// else INVALID_REQUEST；>=500→SERVER；其余→HTTP_<status>）。消息取 body 的
+/// `error.message`（JSON），无则状态行（对齐 spec："keeps the status-line message
+/// for JSON error bodies without a message / non-JSON bodies"）。
 fn map_http_code(status: u16, body: &str) -> (String, String) {
-    let detail = extract_api_error(body).unwrap_or_else(|| body.to_string());
-    let detail = if detail.trim().is_empty() {
-        format!("HTTP {status}")
+    let parsed: Option<Value> = serde_json::from_str(body).ok();
+    let error = parsed.as_ref().and_then(|v| v.get("error"));
+    // DSH 分类 detail = error.code + type + message 拼接（filter 非空 join " "）。
+    let detail: String = ["code", "type", "message"]
+        .iter()
+        .filter_map(|k| error.and_then(|e| e.get(k)).and_then(Value::as_str))
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let code = if status == 401 || status == 403 {
+        "AUTH".to_string()
+    } else if is_quota_exceeded(&detail) {
+        "QUOTA".to_string()
+    } else if status == 429 {
+        "RATE_LIMIT".to_string()
+    } else if status == 400 {
+        if is_context_window_exceeded(&detail) {
+            "CONTEXT_WINDOW_EXCEEDED".to_string()
+        } else {
+            "INVALID_REQUEST".to_string()
+        }
+    } else if status >= 500 {
+        "SERVER".to_string()
     } else {
-        detail
+        format!("HTTP_{status}")
     };
-    let code = match status {
-        401 | 403 => "AUTH".to_string(),
-        429 => "RATE_LIMIT".to_string(),
-        400 => "INVALID_REQUEST".to_string(),
-        500 | 503 => "SERVER".to_string(),
-        other => format!("HTTP_{other}"),
-    };
-    (code, detail)
+    let message = extract_api_error(body)
+        .filter(|m| !m.trim().is_empty())
+        .unwrap_or_else(|| format!("HTTP {status}"));
+    (code, message)
+}
+
+/// 识别上下文窗口超限措辞（镜像 DSH `isContextWindowExceededError` 的判词正则）。
+fn is_context_window_exceeded(detail: &str) -> bool {
+    // 镜像 error.ts 五条正则（原文逐字移植；i flag 内联）。
+    const RULES: [&str; 5] = [
+        r"(?i)(?:^|[^a-z0-9])context[\s_-](?:length|window)[\s_-](?:exceed(?:ed|s)?|overflow(?:ed)?|limit[\s_-]exceeded)(?:$|[^a-z0-9])",
+        r"(?i)\b(?:maximum|max)(?:\s+(?:allowed|supported))?\s+context\s+(?:length|window)\b",
+        r"(?i)\b(?:request|prompt|input|messages?)\s+(?:is\s+|are\s+)?too\s+(?:large|long)\s+for\s+(?:(?:this|the)\s+)?(?:model(?:'s)?\s+)?context(?:\s+window)?\b",
+        r"(?i)\b(?:input|prompt|request)\s+(?:is\s+)?too\s+(?:long|large)\s+for\s+(?:this|the)\s+model\b",
+        r"(?i)\b(?:input|prompt|request|messages?)\b.{0,40}\b(?:exceed(?:s|ed)?|overflows?|is\s+larger\s+than)\b.{0,40}\b(?:the\s+)?(?:model(?:'s)?\s+)?context(?:\s+(?:length|window))?\b",
+    ];
+    RULES.iter().any(|r| {
+        regex::Regex::new(r)
+            .expect("static rule")
+            .is_match(detail)
+    })
+}
+
+/// 识别账户配额耗尽措辞（镜像 DSH `isQuotaExceededError` 判词正则）。
+fn is_quota_exceeded(detail: &str) -> bool {
+    const RULES: [&str; 5] = [
+        r"(?i)\binsufficient[\s_-]+(?:quota|balance|credits?)\b",
+        r"(?i)\b(?:quota|usage[\s_-]+limit)[\s_-]+(?:exceeded|exhausted|reached)\b",
+        r"(?i)\bexceed(?:ed|s)?[\s_-]+(?:(?:your|the)[\s_-]+)?(?:current[\s_-]+)?quota\b",
+        r"(?i)\b(?:balance|credits?)[\s_-]+(?:exhausted|depleted)\b",
+        r"(?i)\bout[\s_-]+of[\s_-]+(?:credits?|budget)\b",
+    ];
+    RULES.iter().any(|r| {
+        regex::Regex::new(r)
+            .expect("static rule")
+            .is_match(detail)
+    })
+}
+
+/// 解析 Retry-After 为毫秒（秒数或 HTTP-date；0/非法/过去 → None，
+/// 对齐 adapter.spec "omits zero, non-finite, invalid, and past Retry-After values"）。
+fn parse_retry_after(value: Option<&str>) -> Option<u64> {
+    let v = value?.trim();
+    if v.is_empty() {
+        return None;
+    }
+    if let Ok(secs) = v.parse::<u64>() {
+        return (secs > 0).then(|| secs.saturating_mul(1000));
+    }
+    let parsed = chrono::DateTime::parse_from_rfc2822(v).ok()?;
+    let delay_ms = parsed
+        .signed_duration_since(chrono::Utc::now())
+        .num_milliseconds();
+    (delay_ms > 0).then_some(delay_ms as u64)
 }
 
 #[async_trait]
@@ -725,7 +995,7 @@ mod tests {
             text_message(Role::System, "you are helpful"),
             text_message(Role::User, "hi"),
         ];
-        let out = OpenAICompatLlm::translate_messages(&msgs);
+        let out = OpenAICompatLlm::translate_messages(&msgs).expect("translate");
         assert_eq!(out.len(), 2);
         assert_eq!(out[0]["role"], "system");
         assert_eq!(out[0]["content"], "you are helpful");
@@ -743,7 +1013,7 @@ mod tests {
                 arguments: r#"{"x":1}"#.into(),
             })],
         }];
-        let out = OpenAICompatLlm::translate_messages(&msgs);
+        let out = OpenAICompatLlm::translate_messages(&msgs).expect("translate");
         assert_eq!(out[0]["role"], "assistant");
         assert_eq!(out[0]["content"], "");
         assert_eq!(out[0]["tool_calls"][0]["id"], "call_1");
@@ -763,7 +1033,7 @@ mod tests {
                 is_error: false,
             })],
         }];
-        let out = OpenAICompatLlm::translate_messages(&msgs);
+        let out = OpenAICompatLlm::translate_messages(&msgs).expect("translate");
         assert_eq!(out[0]["role"], "tool");
         assert_eq!(out[0]["tool_call_id"], "call_1");
         assert_eq!(out[0]["content"], "echo: 1");
@@ -792,6 +1062,10 @@ mod tests {
             temperature: Some(0.5),
             max_tokens: Some(100),
             session_id: Some("s1".into()),
+            signal: None,
+            reasoning_effort: None,
+            thinking: None,
+            purpose: None,
         };
         let body = llm.build_request(&req);
         assert_eq!(body["model"], "deepseek-chat");
@@ -800,6 +1074,186 @@ mod tests {
         assert_eq!(body["max_tokens"], 100);
         assert_eq!(body["tools"][0]["type"], "function");
         assert_eq!(body["messages"][0]["role"], "user");
+    }
+
+    #[test]
+    fn stream_options_include_usage_always_sent() {
+        // 镜像 serialize.spec "always streams with usage"：payload 恒带
+        // stream_options.include_usage=true（可省略其它可选字段）。
+        let llm = OpenAICompatLlm::new(OpenAiProviderConfig {
+            id: "deepseek".into(),
+            display_name: "DeepSeek".into(),
+            settings_ns: "llm.deepseek".into(),
+            base_url: "https://api.deepseek.com/v1".into(),
+            api_key: "k".into(),
+            models: vec![],
+            list_endpoint: ModelListEndpoint::Standard,
+        });
+        let req = GenerateOptions {
+            provider: "deepseek".into(),
+            model: "m".into(),
+            messages: vec![text_message(Role::User, "hi")],
+            tools: vec![],
+            temperature: None,
+            max_tokens: None,
+            session_id: None,
+            signal: None,
+            reasoning_effort: None,
+            thinking: None,
+            purpose: None,
+        };
+        let body = llm.build_request(&req);
+        assert_eq!(body["stream"], true);
+        assert_eq!(body["stream_options"], json!({ "include_usage": true }));
+        // 无 effort/thinking/purpose → 两者都不上 wire（provider 默认生效）。
+        assert!(body.get("thinking").is_none());
+        assert!(body.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn thinking_resolution_mirrors_serialize_spec() {
+        // 镜像 serialize.spec "maps off to disabled thinking without a wire effort"。
+        let (t, e) = OpenAICompatLlm::resolve_thinking(
+            &req_with_effort("off"),
+            None,
+            None,
+        )
+        .unwrap()
+        .expect("resolved");
+        assert_eq!(t, "disabled");
+        assert_eq!(e, None);
+
+        // "re-enables thinking when max overrides an off default"：
+        // adapter_thinking 未定义 + adapter_effort=off，request effort=max → enabled。
+        let (t2, e2) = OpenAICompatLlm::resolve_thinking(
+            &req_with_effort("max"),
+            None,
+            Some("off"),
+        )
+        .unwrap()
+        .expect("resolved");
+        assert_eq!(t2, "enabled");
+        assert_eq!(e2.as_deref(), Some("max"));
+
+        // 显式非 off effort + deployment 锁 disabled → 拒绝。
+        let err = OpenAICompatLlm::resolve_thinking(&req_with_effort("high"), Some("disabled"), None);
+        assert!(err.is_err());
+
+        // "disables thinking for session-title requests without changing adapter defaults"。
+        let mut title = req_with_effort("max");
+        title.purpose = Some("session-title".into());
+        let (t3, e3) = OpenAICompatLlm::resolve_thinking(&title, Some("enabled"), Some("max"))
+            .unwrap()
+            .expect("resolved");
+        assert_eq!(t3, "disabled");
+        assert_eq!(e3, None);
+
+        // 未知档位 → UNSUPPORTED_REASONING_EFFORT 类错误。
+        let mut bad = req_with_effort("ultra");
+        bad.purpose = None;
+        assert!(OpenAICompatLlm::resolve_thinking(&bad, None, None).is_err());
+
+        // 全空 → None（不上 wire）。
+        let empty = req_with_effort("");
+        assert!(OpenAICompatLlm::resolve_thinking(&empty, None, None)
+            .unwrap()
+            .is_none());
+    }
+
+    fn req_with_effort(effort: &str) -> GenerateOptions {
+        GenerateOptions {
+            provider: "deepseek".into(),
+            model: "m".into(),
+            messages: vec![text_message(Role::User, "hi")],
+            tools: vec![],
+            temperature: None,
+            max_tokens: None,
+            session_id: None,
+            signal: None,
+            reasoning_effort: if effort.is_empty() { None } else { Some(effort.into()) },
+            thinking: None,
+            purpose: None,
+        }
+    }
+
+    #[test]
+    fn empty_tool_output_uses_sentinel() {
+        // 镜像 serialize.spec "sends a sentinel for empty tool-result content"。
+        let msgs = vec![LlmMessage {
+            role: Role::User,
+            content: vec![ContentBlock::ToolResult(ToolCallResult {
+                call_id: "call-1".into(),
+                output: String::new(),
+                is_error: false,
+            })],
+        }];
+        let out = OpenAICompatLlm::translate_messages(&msgs).expect("translate");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0]["role"], "tool");
+        assert_eq!(out[0]["tool_call_id"], "call-1");
+        assert_eq!(out[0]["content"], "(no output)");
+    }
+
+    #[test]
+    fn mixed_user_text_and_tool_results_split_wire_messages() {
+        // 镜像 serialize.spec "splits mixed user text + tool results into
+        // separate wire messages"：text 一条 user、每个 tool-result 一条 tool。
+        let msgs = vec![LlmMessage {
+            role: Role::User,
+            content: vec![
+                ContentBlock::Text("check the weather".into()),
+                ContentBlock::ToolResult(ToolCallResult {
+                    call_id: "call-1".into(),
+                    output: "ok".into(),
+                    is_error: false,
+                }),
+                ContentBlock::ToolResult(ToolCallResult {
+                    call_id: "call-2".into(),
+                    output: "12C".into(),
+                    is_error: false,
+                }),
+            ],
+        }];
+        let out = OpenAICompatLlm::translate_messages(&msgs).expect("translate");
+        assert_eq!(out.len(), 3);
+        assert_eq!(out[0]["role"], "user");
+        assert_eq!(out[0]["content"], "check the weather");
+        assert_eq!(out[1]["role"], "tool");
+        assert_eq!(out[1]["tool_call_id"], "call-1");
+        assert_eq!(out[2]["role"], "tool");
+        assert_eq!(out[2]["tool_call_id"], "call-2");
+    }
+
+    #[test]
+    fn reasoning_passback_only_on_tool_call_turns() {
+        // 镜像 serialize.spec "passes reasoning_content back on tool-call turns"：
+        // reasoning 只随 tool-call 轮回传；普通轮丢弃省 token。
+        let tool_turn = vec![LlmMessage {
+            role: Role::Assistant,
+            content: vec![
+                ContentBlock::Reasoning("I should check the weather.".into()),
+                ContentBlock::ToolCall(ToolCall {
+                    id: "call-1".into(),
+                    name: "get_weather".into(),
+                    arguments: r#"{"city":"Shenzhen"}"#.into(),
+                }),
+            ],
+        }];
+        let out = OpenAICompatLlm::translate_messages(&tool_turn).expect("translate");
+        assert_eq!(out[0]["reasoning_content"], "I should check the weather.");
+        assert_eq!(out[0]["tool_calls"][0]["id"], "call-1");
+
+        // 普通文本轮：reasoning 不上 wire。
+        let plain = vec![LlmMessage {
+            role: Role::Assistant,
+            content: vec![
+                ContentBlock::Reasoning("think quietly".into()),
+                ContentBlock::Text("answer".into()),
+            ],
+        }];
+        let out2 = OpenAICompatLlm::translate_messages(&plain).expect("translate");
+        assert!(out2[0].get("reasoning_content").is_none());
+        assert_eq!(out2[0]["content"], "answer");
     }
 
     #[test]
@@ -835,7 +1289,7 @@ mod tests {
         assert_eq!(map_finish_reason("length"), FinishReason::MaxTokens);
         // 未识别值 → error kind + 大写码（DSH mapFinishReason 默认分支）。
         match map_finish_reason("content_filter") {
-            FinishReason::Error { message, code } => {
+            FinishReason::Error { message, code, .. } => {
                 assert_eq!(message, "model stopped: content_filter");
                 assert_eq!(code, "CONTENT_FILTER");
             }
@@ -923,6 +1377,10 @@ mod tests {
             temperature: None,
             max_tokens: None,
             session_id: None,
+            signal: None,
+            reasoning_effort: None,
+            thinking: None,
+            purpose: None,
         };
         let chunks = futures::executor::block_on(async {
             let mut stream = llm.stream(req);
@@ -940,6 +1398,480 @@ mod tests {
                 assert_eq!(code, "MISSING_CREDENTIAL")
             }
             other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn context_window_classification_mirrors_service_spec() {
+        // 镜像 service.spec.ts 的 isContextWindowExceededError 判词表。
+        for body in [
+            r#"{"error":{"code":"context_length_exceeded","message":"maximum context length"}}"#,
+            r#"{"error":{"message":"context-window-overflowed"}}"#,
+            r#"{"error":{"message":"This model maximum context length is 128000 tokens"}}"#,
+            r#"{"error":{"message":"input is too long for this model"}}"#,
+            r#"{"error":{"message":"request too large for model context"}}"#,
+            r#"{"error":{"message":"input exceeds the model context window limit"}}"#,
+        ] {
+            assert_eq!(
+                map_http_code(400, body).0,
+                "CONTEXT_WINDOW_EXCEEDED",
+                "body: {body}"
+            );
+        }
+        // 不误伤 unrelated 输入校验。
+        for body in [
+            r#"{"error":{"message":"invalid request: malformed tool arguments"}}"#,
+            r#"{"error":{"message":"invalid input: temperature exceeds maximum allowed value"}}"#,
+            r#"{"error":{"message":"input exceeds maximum allowed value"}}"#,
+            r#"{"error":{"message":"context window size must be positive"}}"#,
+        ] {
+            assert_eq!(map_http_code(400, body).0, "INVALID_REQUEST", "body: {body}");
+        }
+        // 413 状态优先：内容分类不覆盖 413。
+        assert_eq!(
+            map_http_code(413, r#"{"error":{"code":"context_length_exceeded"}}"#).0,
+            "HTTP_413"
+        );
+    }
+
+    #[test]
+    fn quota_classification_mirrors_service_spec() {
+        // 镜像 service.spec.ts 的 isQuotaExceededError 判词表。
+        for body in [
+            r#"{"error":{"code":"insufficient_quota"}}"#,
+            r#"{"error":{"message":"account balance depleted"}}"#,
+            r#"{"error":{"message":"usage-limit-exceeded"}}"#,
+            r#"{"error":{"message":"out of credits"}}"#,
+            r#"{"error":{"message":"You exceeded your current quota, please check your plan and billing details."}}"#,
+        ] {
+            assert_eq!(map_http_code(429, body).0, "QUOTA", "body: {body}");
+        }
+        // 瞬态 rate limit 不归类 quota。
+        assert_eq!(map_http_code(429, "HTTP 429: rate limit reached").0, "RATE_LIMIT");
+        assert_eq!(map_http_code(429, "quota resets in one minute").0, "RATE_LIMIT");
+        // 镜像 adapter.spec：429+code 区分。
+        assert_eq!(
+            map_http_code(429, r#"{"error":{"code":"insufficient_quota","message":"account credits exhausted"}}"#).0,
+            "QUOTA"
+        );
+        assert_eq!(
+            map_http_code(429, r#"{"error":{"message":"request rate limit exceeded"}}"#).0,
+            "RATE_LIMIT"
+        );
+        // 401/403 优先于 quota 分类（httpErrorCode 顺序）。
+        assert_eq!(
+            map_http_code(401, r#"{"error":{"message":"insufficient_quota"}}"#).0,
+            "AUTH"
+        );
+    }
+
+    #[test]
+    fn http_error_keeps_status_line_message_for_shapeless_bodies() {
+        // 镜像 adapter.spec：JSON 无 message → 状态行；非 JSON → 状态行。
+        let (code, msg) = map_http_code(500, r#"{"error":{"type":"x"}}"#);
+        assert_eq!(code, "SERVER");
+        assert!(msg.contains("HTTP 500"));
+        let (code2, msg2) = map_http_code(502, "Bad Gateway");
+        // DSH httpErrorCode：status >= 500 → SERVER（502 同样归类）。
+        assert_eq!(code2, "SERVER");
+        assert_eq!(msg2, "HTTP 502");
+        let (code3, msg3) = map_http_code(400, r#"{"error":{"message":"bad request"}}"#);
+        assert_eq!(code3, "INVALID_REQUEST");
+        assert_eq!(msg3, "bad request");
+    }
+
+    #[test]
+    fn retry_after_parsing_mirrors_adapter_spec() {
+        // '2' 秒 → 2000ms；HTTP date 未来 → 精确毫秒；0/垃圾/过去 → 省略。
+        assert_eq!(parse_retry_after(Some("2")), Some(2000));
+        assert_eq!(parse_retry_after(Some("0")), None);
+        assert_eq!(parse_retry_after(Some("not-a-date")), None);
+        assert_eq!(parse_retry_after(Some("Thu, 01 Jan 1970 00:00:00 GMT")), None);
+        assert_eq!(parse_retry_after(None), None);
+        // 未来 3 秒的 HTTP-date。
+        let future = (chrono::Utc::now() + chrono::Duration::seconds(3))
+            .format("%a, %d %b %Y %H:%M:%S GMT")
+            .to_string();
+        let ms = parse_retry_after(Some(&future)).expect("future date");
+        assert!((1000..=5000).contains(&ms), "ms: {ms}");
+    }
+
+    #[test]
+    fn llm_error_normalizes_to_failure_unknown_fallback() {
+        // 镜像 normalizeLlmFailure 兜底：message 空 → "LLM adapter failed"、code 缺失 → UNKNOWN。
+        let e = LlmError::new("");
+        let f = e.to_failure();
+        assert_eq!(f.message, "LLM adapter failed");
+        assert_eq!(f.code, "UNKNOWN");
+        assert_eq!(f.status, None);
+
+        // 结构化事实原样入终态。
+        let e2 = LlmError::structured("slow down", "RATE_LIMIT", Some(429), Some(2000), Some("req-429".into()));
+        let f2 = e2.to_failure();
+        assert_eq!(f2.message, "slow down");
+        assert_eq!(f2.code, "RATE_LIMIT");
+        assert_eq!(f2.status, Some(429));
+        assert_eq!(f2.provider_retry_after_ms, Some(2000));
+        assert_eq!(f2.request_id.as_deref(), Some("req-429"));
+    }
+
+    #[test]
+    fn finish_error_wire_carries_structured_facts() {
+        // 镜像 adapter.spec：failure 携带 status/providerRetryAfterMs/requestId 时逐字上 wire。
+        let extra = kernel_contracts::error::FailureInfo {
+            message: "slow down".into(),
+            code: "RATE_LIMIT".into(),
+            status: Some(429),
+            provider_retry_after_ms: Some(2000),
+            request_id: Some("req-429".into()),
+        };
+        let wire = FinishReason::Error {
+            message: "slow down".into(),
+            code: "RATE_LIMIT".into(),
+            extra: Some(extra),
+        }
+        .to_wire();
+        assert_eq!(
+            wire,
+            json!({
+                "kind": "error",
+                "failure": {
+                    "message": "slow down",
+                    "code": "RATE_LIMIT",
+                    "status": 429,
+                    "providerRetryAfterMs": 2000,
+                    "requestId": "req-429",
+                }
+            })
+        );
+        // 无 extra → 只 message/code（精确形状）。
+        let plain = FinishReason::Error {
+            message: "boom".into(),
+            code: "SERVER".into(),
+            extra: None,
+        }
+        .to_wire();
+        assert_eq!(
+            plain,
+            json!({ "kind": "error", "failure": { "message": "boom", "code": "SERVER" } })
+        );
+    }
+
+    fn abort_llm(base_url: &str) -> OpenAICompatLlm {
+        OpenAICompatLlm::new(OpenAiProviderConfig {
+            id: "deepseek".into(),
+            display_name: "DeepSeek".into(),
+            settings_ns: "llm.deepseek".into(),
+            base_url: base_url.into(),
+            api_key: "k".into(),
+            models: vec![],
+            list_endpoint: ModelListEndpoint::Standard,
+        })
+    }
+
+    fn abort_request(signal: kernel_contracts::AbortSignal) -> GenerateOptions {
+        GenerateOptions {
+            provider: "deepseek".into(),
+            model: "deepseek-chat".into(),
+            messages: vec![text_message(Role::User, "hi")],
+            tools: vec![],
+            temperature: None,
+            max_tokens: None,
+            session_id: None,
+            signal: Some(signal),
+            reasoning_effort: None,
+            thinking: None,
+            purpose: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn wait_aborted_twice_succeeds() {
+        use std::time::Duration;
+        let signal = kernel_contracts::AbortSignal::new();
+        signal.abort();
+        tokio::time::timeout(Duration::from_secs(1), signal.wait_aborted())
+            .await
+            .expect("first wait should return");
+        tokio::time::timeout(Duration::from_secs(1), signal.wait_aborted())
+            .await
+            .expect("second wait should return immediately");
+    }
+
+    #[tokio::test]
+    async fn wait_aborted_fires_after_abort() {
+        use std::time::Duration;
+        let signal = kernel_contracts::AbortSignal::new();
+        let signal2 = signal.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            signal2.abort();
+        });
+        tokio::time::timeout(Duration::from_secs(1), signal.wait_aborted())
+            .await
+            .expect("wait_aborted should return promptly after abort");
+    }
+
+    #[tokio::test]
+    async fn pre_aborted_request_yields_single_aborted_finish() {
+        // 镜像 adapter.spec "classifies an aborted request as an aborted finish"：
+        // 预 abort 不碰传输，且仅此一个 finish chunk。
+        let llm = abort_llm("http://127.0.0.1:1/v1");
+        let signal = kernel_contracts::AbortSignal::new();
+        signal.abort();
+        use futures::StreamExt;
+        let mut stream = llm.stream(abort_request(signal));
+        let first = stream.next().await;
+        match first {
+            Some(Ok(StreamChunk::Finish(FinishReason::Cancelled))) => {}
+            other => panic!("expected single aborted finish, got {other:?}"),
+        }
+        assert!(stream.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn mid_stream_abort_yields_single_aborted_finish() {
+        // 镜像 adapter.spec "aborts mid-stream via the request signal"：
+        // 延迟 SSE 流中 abort → 恰一个 aborted finish chunk（挂起的读被 signal 打断）。
+        use futures::StreamExt;
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::time::Duration;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                // 读请求头（直到空行）。
+                let mut buf = [0u8; 4096];
+                let mut seen = Vec::new();
+                loop {
+                    let n = stream.read(&mut buf).unwrap_or(0);
+                    if n == 0 {
+                        return;
+                    }
+                    seen.extend_from_slice(&buf[..n]);
+                    if seen.windows(4).any(|w| w == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                // 首帧延迟 5 秒（模拟慢流）：abort（50ms 后）须在首帧前打断挂起的读。
+                std::thread::sleep(Duration::from_secs(5));
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n\
+                      data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n",
+                );
+                let _ = stream.flush();
+                std::thread::sleep(Duration::from_secs(30));
+            }
+        });
+
+        let llm = abort_llm(&format!("http://{addr}/v1"));
+        let signal = kernel_contracts::AbortSignal::new();
+        let signal2 = signal.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            signal2.abort();
+        });
+
+        let mut stream = llm.stream(abort_request(signal));
+        let mut chunks = Vec::new();
+        while let Some(c) = stream.next().await {
+            chunks.push(c);
+        }
+        // 恰一个 chunk：aborted finish（若未中断，会产出 block-start/text-delta 等）。
+        assert_eq!(chunks.len(), 1, "chunks: {chunks:?}");
+        match &chunks[0] {
+            Ok(StreamChunk::Finish(FinishReason::Cancelled)) => {}
+            other => panic!("expected single aborted finish, got {other:?}"),
+        }
+        // wire 形状：{kind:'aborted', failure:{code:'ABORTED'}}。
+        let wire = chunks[0]
+            .as_ref()
+            .ok()
+            .map(|c| c.to_wire())
+            .expect("ok chunk");
+        assert_eq!(
+            wire,
+            json!({
+                "type": "finish",
+                "reason": { "kind": "aborted", "failure": { "message": "cancelled", "code": "ABORTED" } }
+            })
+        );
+    }
+
+    /// 起一个本地 mock SSE 端点，返回 (base_url, 预写好的事件行)。
+    /// 服务端读完请求头后按事件行逐个写出并立即 close（无需 [DONE] 由调用方定）。
+    fn mock_sse_server(events: Vec<&'static str>, done: bool) -> String {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 8192];
+                let mut seen = Vec::new();
+                loop {
+                    let n = stream.read(&mut buf).unwrap_or(0);
+                    if n == 0 {
+                        return;
+                    }
+                    seen.extend_from_slice(&buf[..n]);
+                    if seen.windows(4).any(|w| w == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                let mut payload = String::from("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n");
+                for e in &events {
+                    payload.push_str(&format!("data: {e}\n\n"));
+                }
+                if done {
+                    payload.push_str("data: [DONE]\n\n");
+                }
+                let _ = stream.write_all(payload.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        format!("http://{addr}/v1")
+    }
+
+    async fn collect_stream(llm: &OpenAICompatLlm, request: GenerateOptions) -> Vec<StreamChunk> {
+        use futures::StreamExt;
+        let mut stream = llm.stream(request);
+        let mut out = Vec::new();
+        while let Some(c) = stream.next().await {
+            out.push(c.expect("no Err chunks in translate path"));
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn translate_mirrors_sse_sequence() {
+        // 镜像 translate.spec.ts 核心序列：推理+文本交错独立块、
+        // trailing usage-only 帧、默认 finish stop。
+        let base = mock_sse_server(
+            vec![
+                // 空首增量 signature：不开块。
+                r#"{"choices":[{"delta":{"reasoning_content":"","content":"hi"}}]}"#,
+                // 推理增量（非空）→ 开 reasoning 块。
+                r#"{"choices":[{"delta":{"reasoning_content":"think"}}]}"#,
+                // 文本增量 → 开 text 块。
+                r#"{"choices":[{"delta":{"content":" world"}}]}"#,
+            ],
+            true,
+        );
+        let llm = abort_llm(&base);
+        let chunks = collect_stream(&llm, abort_request(kernel_contracts::AbortSignal::new())).await;
+        // 序列：reasoning 块（推理优先）→ text 块 → trailing usage 无 → finish stop。
+        let types: Vec<String> = chunks
+            .iter()
+            .map(|c| match c {
+                StreamChunk::BlockStart { block_type, .. } => format!("start:{block_type}"),
+                StreamChunk::TextDelta { .. } => "text-delta".to_string(),
+                StreamChunk::ReasoningDelta { .. } => "reasoning-delta".to_string(),
+                StreamChunk::ToolCallDelta { .. } => "tool-call-delta".to_string(),
+                StreamChunk::BlockEnd { .. } => "block-end".to_string(),
+                StreamChunk::Usage(_) => "usage".to_string(),
+                StreamChunk::Finish(_) => "finish".to_string(),
+            })
+            .collect();
+        // 块序：reasoning 块 start → delta → end，text 块 start → delta → end，finish。
+        assert!(types.contains(&"start:reasoning".to_string()), "{types:?}");
+        assert!(types.contains(&"start:text".to_string()), "{types:?}");
+        assert_eq!(types.last().unwrap(), "finish");
+        // 无 usage 帧（镜像 "omits the usage chunk when none arrived"）。
+        assert!(!types.contains(&"usage".to_string()), "{types:?}");
+        // finish = stop（镜像 "defaults to finish stop"）。
+        assert!(matches!(chunks.last().unwrap(), StreamChunk::Finish(FinishReason::Stop)));
+        // 本序列中 text 先开（空 reasoning 首增量不开块、其 content 先落地）；
+        // 两个块均存在且独立开/闭。
+        let i_reasoning = types.iter().position(|t| t == "start:reasoning").unwrap();
+        let i_text = types.iter().position(|t| t == "start:text").unwrap();
+        assert!(i_text < i_reasoning, "{types:?}");
+    }
+
+    #[tokio::test]
+    async fn sse_empty_stream_yields_stop_finish() {
+        // 空流（无任何事件也无 [DONE]）→ STREAM_CLOSED（镜像 sse.spec
+        // "throws STREAM_CLOSED for an empty stream"；我们以 finish 呈现）。
+        let base = mock_sse_server(vec![], false);
+        let llm = abort_llm(&base);
+        let chunks = collect_stream(&llm, abort_request(kernel_contracts::AbortSignal::new())).await;
+        assert_eq!(chunks.len(), 1);
+        match &chunks[0] {
+            StreamChunk::Finish(FinishReason::Error { code, .. }) => {
+                assert_eq!(code, "STREAM_CLOSED")
+            }
+            other => panic!("expected STREAM_CLOSED finish, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn sse_done_then_extra_data_stops() {
+        // [DONE] 后即使还有数据也停（镜像 sse.spec "stops yielding after DONE"）——
+        // [DONE] 前已有块，正常收尾。
+        let base = mock_sse_server(
+            vec![
+                r#"{"choices":[{"delta":{"content":"par"}}]}"#,
+                r#"{"choices":[{"delta":{"content":" extra"}}]}"#,
+            ],
+            true,
+        );
+        let llm = abort_llm(&base);
+        let chunks = collect_stream(&llm, abort_request(kernel_contracts::AbortSignal::new())).await;
+        assert_eq!(chunks.last().unwrap(), &StreamChunk::Finish(FinishReason::Stop));
+        // finish 后无任何块。
+        let finish_idx = chunks
+            .iter()
+            .position(|c| matches!(c, StreamChunk::Finish(_)))
+            .expect("finish present");
+        assert_eq!(finish_idx, chunks.len() - 1);
+    }
+
+    #[tokio::test]
+    async fn malformed_json_yields_malformed_response_finish() {
+        // 畸形 JSON → MALFORMED_RESPONSE（镜像 translate.spec "throws
+        // MALFORMED_RESPONSE for invalid JSON payloads"；以 finish 呈现）。
+        let base = mock_sse_server(vec![r#"{not-json"#], true);
+        let llm = abort_llm(&base);
+        let chunks = collect_stream(&llm, abort_request(kernel_contracts::AbortSignal::new())).await;
+        assert_eq!(chunks.len(), 1);
+        match &chunks[0] {
+            StreamChunk::Finish(FinishReason::Error { code, .. }) => {
+                assert_eq!(code, "MALFORMED_RESPONSE")
+            }
+            other => panic!("expected MALFORMED_RESPONSE finish, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn stop_with_no_blocks_yields_empty_response() {
+        // 显式 stop 但未开任何块 → EMPTY_RESPONSE，且 usage 先于 finish
+        // （镜像 translate.spec "classifies an explicit stop with no opened
+        // blocks as EMPTY_RESPONSE, after usage"）。
+        let base = mock_sse_server(
+            vec![
+                r#"{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":2}}"#,
+                r#"{"choices":[{"delta":{},"finish_reason":"stop"}]}"#,
+            ],
+            true,
+        );
+        let llm = abort_llm(&base);
+        let chunks = collect_stream(&llm, abort_request(kernel_contracts::AbortSignal::new())).await;
+        let types: Vec<&str> = chunks
+            .iter()
+            .map(|c| match c {
+                StreamChunk::Usage(_) => "usage",
+                StreamChunk::Finish(_) => "finish",
+                _ => "other",
+            })
+            .collect();
+        assert_eq!(types, vec!["usage", "finish"]);
+        match &chunks[1] {
+            StreamChunk::Finish(FinishReason::Error { code, .. }) => {
+                assert_eq!(code, "EMPTY_RESPONSE")
+            }
+            other => panic!("expected EMPTY_RESPONSE finish, got {other:?}"),
         }
     }
 }

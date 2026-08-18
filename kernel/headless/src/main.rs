@@ -286,6 +286,10 @@ mod tests {
             temperature: None,
             max_tokens: None,
             session_id: None,
+            signal: None,
+            reasoning_effort: None,
+            thinking: None,
+            purpose: None,
         });
         let mut saw_tool_block = false;
         while let Some(chunk) = stream.next().await {

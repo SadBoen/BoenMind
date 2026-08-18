@@ -64,6 +64,9 @@ pub struct AppState {
     pub trusted_hosts: Vec<String>,
     /// 设置命名空间内存视图（M2.5：settings.* 写面的最小存储；持久化后置）。
     pub settings: Mutex<HashMap<String, serde_json::Map<String, Value>>>,
+    /// 设置命名空间单调 revision（M4 P1-4：settings-conflict 语义——
+    /// 写成功 +1；写带 expectedRevision 不匹配 → settings-conflict）。
+    pub settings_revisions: Mutex<HashMap<String, u64>>,
     /// 工作区注册表（M2.5 内存态）：workspaceId → WorkspaceView。
     pub workspaces: Mutex<HashMap<String, Value>>,
     /// 归档会话集（workspace.archiveSession 持久集）。
@@ -143,6 +146,7 @@ impl AppState {
             mux_events_tx,
             trusted_hosts,
             settings: Mutex::new(HashMap::new()),
+            settings_revisions: Mutex::new(HashMap::new()),
             workspaces: Mutex::new(HashMap::new()),
             archived_session_ids: Mutex::new(Vec::new()),
             credentials: Mutex::new(HashMap::new()),
@@ -581,13 +585,17 @@ async fn session_search(state: &Arc<AppState>, payload: Value) -> Value {
 
 /// 从文本中截取包含 query 首匹配的 snippet 窗口（≤240 code points）。
 /// 无匹配 → None。
+/// astral 边界纪律：所有切分都走 `chars()`（Unicode scalar value），
+/// 绝不劈 surrogate pair；`find` 的字节偏移先换算成 char 位置再取窗口
+/// （否则 query 前的多字节字符会把窗口起点算偏）。
 fn make_snippet(text: &str, query: &str) -> Option<String> {
-    let pos = text.find(query)?;
+    let byte_pos = text.find(query)?;
     let max = SESSION_SEARCH_SNIPPET_MAX_CODE_POINTS;
-    // 以匹配点为中心取窗口：匹配前留 100、匹配后留到 240（不足则向前补）。
+    // 匹配点为中心：匹配前留 100，匹配后留到 240（不足则向前补）。
     let total_chars = text.chars().count();
+    let char_pos = text[..byte_pos].chars().count();
     let lead = 100usize;
-    let start_char = pos.saturating_sub(lead).min(total_chars.saturating_sub(max));
+    let start_char = char_pos.saturating_sub(lead).min(total_chars.saturating_sub(max));
     let mut out: String = text.chars().skip(start_char).take(max).collect();
     if out.chars().count() >= max {
         out = out.chars().take(max.saturating_sub(1)).collect::<String>() + "…";
@@ -850,11 +858,17 @@ fn session_select_model(state: &AppState, payload: Value) -> Value {
     ok(json!({ "selected": selected }))
 }
 
-fn session_cancel(_state: &Arc<AppState>, payload: Value) -> Value {
-    let Some(_session_id) = payload.get("sessionId").and_then(Value::as_str) else {
+fn session_cancel(state: &Arc<AppState>, payload: Value) -> Value {
+    let Some(session_id) = payload.get("sessionId").and_then(Value::as_str) else {
         return err("bad-request", "missing sessionId");
     };
-    // M1：无取消实现（ReactLoopAgent 无 cancel 端口）；接受但注明。
+    // M4：ReactLoopAgent.abort() 触发活跃回合的取消信号 → 流以
+    // finish{kind:'aborted', code:'ABORTED'} 收尾（对齐 DSH session.cancel 语义）。
+    let sessions = state.sessions.lock().unwrap();
+    let Some(h) = sessions.get(session_id) else {
+        return err("session-not-found", format!("session {session_id} not found"));
+    };
+    h.agent.abort();
     ok(json!({ "accepted": true }))
 }
 
@@ -1416,20 +1430,25 @@ const WEB_SETTINGS_NAMESPACES: &[&str] = &[
 
 /// 构造单个 SettingsNamespaceView（台账 §2：{ns, schema, value, base?, user?, applies, secrets, revision}）。
 /// 脱敏铁律：secret 字段永不随响应出域（M2.5 无 secret 字段，secrets 槽恒空）。
-fn settings_view(ns: &str, value: &serde_json::Map<String, Value>) -> Value {
+fn settings_view(
+    ns: &str,
+    value: &serde_json::Map<String, Value>,
+    revision: u64,
+) -> Value {
     json!({
         "ns": ns,
         "schema": {},
         "value": value,
         "applies": "restart",
         "secrets": [],
-        "revision": 0,
+        "revision": revision,
     })
 }
 
 /// settings.describe（特权）：返回白名单命名空间视图。
 fn settings_describe(state: &AppState) -> Value {
     let settings = state.settings.lock().unwrap();
+    let revisions = state.settings_revisions.lock().unwrap();
     let mut namespaces = Vec::new();
     // 静态白名单 + 真实 provider 的 settings ns（llm.<id>，对齐 DSH 每个插件一个 ns）。
     let mut ns_list: Vec<&str> = WEB_SETTINGS_NAMESPACES.to_vec();
@@ -1440,7 +1459,8 @@ fn settings_describe(state: &AppState) -> Value {
     }
     for ns in ns_list {
         let value = settings.get(ns).cloned().unwrap_or_default();
-        namespaces.push(settings_view(ns, &value));
+        let revision = revisions.get(ns).copied().unwrap_or(0);
+        namespaces.push(settings_view(ns, &value, revision));
     }
     ok(json!({ "writable": true, "hasDocument": false, "namespaces": namespaces }))
 }
@@ -1521,8 +1541,11 @@ fn settings_mutate(state: &AppState, payload: Value) -> Value {
     })
 }
 
-/// 共用写面：定位 ns → 应用闭包变更 → 同步 provider 动态覆盖 → 返回新视图。
+/// 共用写面：定位 ns → expectedRevision 冲突校验 → 应用闭包变更 → 同步
+/// provider 动态覆盖 → revision+1 → 返回新视图。
 /// 未知 ns → `settings-rejected {ns}`（台账：schema 校验/未知 ns/只读 provider → settings-rejected）。
+/// 写带 `expectedRevision` 且与当前 revision 不匹配 → `settings-conflict{ns, expected, actual}`
+/// （M4 P1-4，对齐 api-proxy-config.spec.ts）。
 /// provider 的 `llm.<id>` ns 是动态写面（M3 收尾）：`baseURL` 变更同步到适配器，
 /// 下一请求即生效（对齐 DSH `llm-deepseek` settings section 每请求解析）。
 fn settings_write<F>(state: &AppState, payload: Value, apply: F) -> Value
@@ -1537,13 +1560,26 @@ where
         return err_with_details("settings-rejected", "namespace not writable", json!({ "ns": ns }));
     }
     let mut settings = state.settings.lock().unwrap();
+    let mut revisions = state.settings_revisions.lock().unwrap();
+    let current = revisions.get(ns).copied().unwrap_or(0);
+    if let Some(expected) = payload.get("expectedRevision").and_then(Value::as_u64) {
+        if expected != current {
+            return err_with_details(
+                "settings-conflict",
+                "settings revision conflict",
+                json!({ "ns": ns, "expected": expected, "actual": current }),
+            );
+        }
+    }
     let mut value = settings.get(ns).cloned().unwrap_or_default();
     apply(&mut value, &payload);
     settings.insert(ns.to_string(), value.clone());
+    revisions.insert(ns.to_string(), current + 1);
+    drop(revisions);
     if dynamic_ns {
         sync_provider_overrides(state, ns, &value);
     }
-    ok(settings_view(ns, &value))
+    ok(settings_view(ns, &value, current + 1))
 }
 
 /// 把 `llm.<id>` 命名空间写面的 baseURL 同步到适配器（覆盖优先、恢复装配值用 null/缺省）。
@@ -1642,5 +1678,37 @@ fn sync_provider_key_override(state: &AppState, ref_name: &str, value: Option<St
             }
             return;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snippet_never_splits_astral_boundaries() {
+        // 纯 emoji（surrogate pair）长文本：截断必须落在 code point 边界。
+        let emoji = "🦀".repeat(300);
+        let s = make_snippet(&emoji, "🦀").expect("snippet");
+        // 不劈 surrogate pair：snippet 内每个字符都是完整 emoji（char 数 ≤ 240+省略号）。
+        assert!(s.chars().all(|c| c == '🦀' || c == '…'));
+        assert!(s.chars().count() <= 241);
+    }
+
+    #[test]
+    fn snippet_byte_offset_converted_to_char_offset() {
+        // 真实 bug 回归：query 前的多字节字符（中文）把字节偏移算进 char 窗口。
+        // 修复前 start_char 用字节 pos → 窗口整体前移、跳过匹配点。
+        let text = format!("{}hello", "心".repeat(120));
+        let s = make_snippet(&text, "hello").expect("snippet");
+        // 窗口必须仍包含匹配词（修复前会丢）。
+        assert!(s.contains("hello"), "snippet: {s}");
+    }
+
+    #[test]
+    fn snippet_collapses_whitespace() {
+        let s = make_snippet("a   b\n\nc  query  here", "query").unwrap();
+        assert!(!s.contains('\n'));
+        assert!(s.contains("query here"), "snippet: {s}");
     }
 }
