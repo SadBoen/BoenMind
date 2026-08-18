@@ -59,13 +59,13 @@ async fn create_then_load_round_trips_header_and_started_event() {
     store.create_session(&h).await.expect("create_session");
     assert_ne!(h.updated_at, now, "caller's header must not be mutated");
 
-    let events = store
+    let records = store
         .load_events("s1")
         .await
         .expect("load_events")
         .expect("session should exist");
-    assert_eq!(events.len(), 1, "fresh session holds exactly the SessionStarted event");
-    match &events[0] {
+    assert_eq!(records.len(), 1, "fresh session holds exactly the SessionStarted event");
+    match &records[0].event {
         SessionEvent::SessionStarted { header } => {
             assert_eq!(header.id.as_str(), "s1");
             assert_eq!(header.app, "test");
@@ -130,7 +130,8 @@ async fn append_batches_keep_order_and_contiguous_seq() {
         .await
         .expect("append batch 2");
 
-    let events = store.load_events("s2").await.expect("load_events").expect("exists");
+    let records = store.load_events("s2").await.expect("load_events").expect("exists");
+    let events: Vec<&SessionEvent> = records.iter().map(|r| &r.event).collect();
     assert_eq!(events.len(), 5, "started + 2 + 2");
     assert!(matches!(&events[0], SessionEvent::SessionStarted { .. }));
     assert!(
@@ -160,7 +161,6 @@ async fn append_batches_keep_order_and_contiguous_seq() {
     let after = store.load_events("s2").await.expect("load after empty append").expect("exists");
     assert_eq!(after.len(), 5);
 }
-
 #[tokio::test]
 async fn append_is_one_transaction_no_torn_tail() {
     let dir = TempDir::new();
@@ -195,9 +195,9 @@ async fn append_is_one_transaction_no_torn_tail() {
     assert!(res.is_err(), "a batch with a failing insert must error");
 
     // 原子性证明：seq2 绝不能残留（无 torn-tail）。
-    let events = store.load_events("s3").await.expect("load_events").expect("exists");
+    let records = store.load_events("s3").await.expect("load_events").expect("exists");
     assert_eq!(
-        events.len(),
+        records.len(),
         1,
         "rolled-back batch must leave zero trace (SessionStarted only)"
     );
@@ -219,10 +219,10 @@ async fn append_is_one_transaction_no_torn_tail() {
         .await
         .expect("append after trigger removed");
 
-    let events = store.load_events("s3").await.expect("load after retry").expect("exists");
-    assert_eq!(events.len(), 3);
-    assert_eq!(events[1], SessionEvent::UserMessage { text: "first".to_string() });
-    assert_eq!(events[2], SessionEvent::UserMessage { text: "second".to_string() });
+    let records = store.load_events("s3").await.expect("load after retry").expect("exists");
+    assert_eq!(records.len(), 3);
+    assert_eq!(records[1].event, SessionEvent::UserMessage { text: "first".to_string() });
+    assert_eq!(records[2].event, SessionEvent::UserMessage { text: "second".to_string() });
 }
 
 #[tokio::test]
@@ -251,9 +251,9 @@ async fn append_to_missing_session_returns_not_found_and_leaves_no_residue() {
         .await
         .expect("append");
 
-    let events = store.load_events("ghost").await.expect("load_events").expect("exists");
-    assert_eq!(events.len(), 2, "started + 1 user message, no residue");
-    assert!(matches!(&events[1], SessionEvent::UserMessage { text } if text == "y"));
+    let records = store.load_events("ghost").await.expect("load_events").expect("exists");
+    assert_eq!(records.len(), 2, "started + 1 user message, no residue");
+    assert!(matches!(&records[1].event, SessionEvent::UserMessage { text } if text == "y"));
 
     // seq 必须恰好是 1 和 2。
     let raw = rusqlite::Connection::open(&db_path).expect("raw connection");

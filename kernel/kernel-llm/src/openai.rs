@@ -323,8 +323,12 @@ impl OpenAICompatLlm {
         })
     }
 
-    fn build_request(&self, request: &GenerateOptions) -> Value {
-        let messages = Self::translate_messages(&request.messages).expect("translate");
+    /// 组装 OpenAI 兼容请求体（纯构造；thinking 已由调用方解析）。
+    fn build_request_with(
+        request: &GenerateOptions,
+        messages: Vec<Value>,
+        thinking: Option<(String, Option<String>)>,
+    ) -> Value {
         let tools: Vec<Value> = request
             .tools
             .iter()
@@ -355,15 +359,22 @@ impl OpenAICompatLlm {
         if let Some(m) = request.max_tokens {
             body["max_tokens"] = json!(m);
         }
-        if let Ok(Some((thinking, effort))) =
-            Self::resolve_thinking(request, None, None)
-        {
+        if let Some((thinking, effort)) = thinking {
             body["thinking"] = json!({ "type": thinking });
             if let Some(e) = effort {
                 body["reasoning_effort"] = json!(e);
             }
         }
         body
+    }
+
+    /// 同步便捷构造（单测用）：thinking 能力取缺省（无 adapter 档位）。
+    /// 生产流式路径见 `stream_inner`——translate/resolve 错误显式上 wire。
+    #[cfg(test)]
+    fn build_request(&self, request: &GenerateOptions) -> Result<Value, LlmError> {
+        let messages = Self::translate_messages(&request.messages)?;
+        let thinking = Self::resolve_thinking(request, None, None)?;
+        Ok(Self::build_request_with(request, messages, thinking))
     }
 
     /// 真实模型清单探测：`GET {base}/models`（或 minimax 形态）。
@@ -442,10 +453,19 @@ impl OpenAICompatLlm {
         let client = self.client.clone();
         let url = self.chat_url();
         let key = self.effective_api_key();
-        let body = self.build_request(&request);
         let signal = request.signal.clone();
         // 归因 user id 在 Box 外 clone（boxed 'static 流不得借用 self）。
         let user_id = self.cfg.user_id.clone();
+        // #8 生产接线：请求体在流内构造——translate / resolve_thinking 失败以结构化
+        // finish 呈现（不 panic、不静默吞；align "错误一律 finish 呈现"）。
+        // 模型 reasoning 档位从静态清单预取（等价 resolve_model 的清单查找）。
+        let messages_res = Self::translate_messages(&request.messages);
+        let reasoning = self
+            .cfg
+            .models
+            .iter()
+            .find(|m| m.id == request.model)
+            .and_then(|m| m.reasoning.clone());
         Box::pin(async_stream::stream! {
             // 预中止：请求发出前已 abort → 直接终态（对齐 adapter.spec
             // "classifies an aborted request as an aborted finish"：不碰传输，
@@ -467,6 +487,41 @@ impl OpenAICompatLlm {
                 }));
                 return;
             };
+            let messages = match messages_res {
+                Ok(m) => m,
+                Err(e) => {
+                    yield Ok(StreamChunk::Finish(FinishReason::Error {
+                        message: e.message.clone(),
+                        code: e.code.clone().unwrap_or_else(|| "LLM_ADAPTER".to_string()),
+                        extra: None,
+                    }));
+                    return;
+                }
+            };
+            // adapter 档位：模型有 reasoning 元数据 → enabled + default_effort 回退；
+            // 无声明 → resolve_thinking 的 None 语义（能力未声明不上 thinking）。
+            let adapter_thinking = reasoning
+                .as_ref()
+                .map(|r| if r.efforts.is_empty() { "disabled" } else { "enabled" });
+            let adapter_effort = reasoning.as_ref().and_then(|r| r.default_effort.clone());
+            let thinking = match Self::resolve_thinking(
+                &request,
+                adapter_thinking,
+                adapter_effort.as_deref(),
+            ) {
+                Ok(t) => t,
+                Err(e) => {
+                    yield Ok(StreamChunk::Finish(FinishReason::Error {
+                        message: e.message.clone(),
+                        code: e.code
+                            .clone()
+                            .unwrap_or_else(|| "UNSUPPORTED_REASONING_EFFORT".to_string()),
+                        extra: None,
+                    }));
+                    return;
+                }
+            };
+            let body = Self::build_request_with(&request, messages, thinking);
             let send_fut = client
                 .post(&url)
                 .header("content-type", "application/json")
@@ -591,6 +646,14 @@ impl OpenAICompatLlm {
             // fuse 后 select_biased 可安全反复 poll（None 后不重复 poll）。
             let mut stream = stream.fuse();
             loop {
+                // 同步预检：abort 已触发时下一轮立即终止，不等流停顿/EOF
+                //（BUG-005：biased 优先流分支，持续 Ready 的流会饿死 abort 分支）。
+                if let Some(s) = &signal {
+                    if s.is_aborted() {
+                        yield Ok(StreamChunk::Finish(FinishReason::Cancelled));
+                        return;
+                    }
+                }
                 // 流中中止穿透：select 竞争"下一块"与"abort 等待"——挂起的网络读
                 // 能被 signal 打断（对齐 adapter.spec "aborts mid-stream via the
                 // request signal"：恰一个 aborted finish chunk）。select_biased 优先
@@ -1095,7 +1158,7 @@ mod tests {
             thinking: None,
             purpose: None,
         };
-        let body = llm.build_request(&req);
+        let body = llm.build_request(&req).unwrap();
         assert_eq!(body["model"], "deepseek-chat");
         assert_eq!(body["stream"], true);
         assert_eq!(body["temperature"], 0.5);
@@ -1131,7 +1194,7 @@ mod tests {
             thinking: None,
             purpose: None,
         };
-        let body = llm.build_request(&req);
+        let body = llm.build_request(&req).unwrap();
         assert_eq!(body["stream"], true);
         assert_eq!(body["stream_options"], json!({ "include_usage": true }));
         // 无 effort/thinking/purpose → 两者都不上 wire（provider 默认生效）。

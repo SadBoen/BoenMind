@@ -345,14 +345,16 @@ async fn handle_session_export(
                 .into_response();
         }
     }
-    let events = match state.runtime.persist.load_events(session_id).await {
-        Ok(Some(e)) => e,
+    let records = match state.runtime.persist.load_events(session_id).await {
+        Ok(Some(r)) => r,
         Ok(None) => return (StatusCode::NOT_FOUND, "session not found").into_response(),
         Err(e) => {
             tracing::error!("session.export load failed: {e}");
             return (StatusCode::INTERNAL_SERVER_ERROR, "export failed").into_response();
         }
     };
+    let events: Vec<kernel_contracts::session::SessionEvent> =
+        records.into_iter().map(|r| r.event).collect();
     let wire = crate::events::translate_events(&events);
     let mut buf: Vec<u8> = Vec::new();
     {

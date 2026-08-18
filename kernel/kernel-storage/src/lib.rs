@@ -22,7 +22,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use kernel_contracts::error::{PortError, PortResult};
 use kernel_contracts::ports::SessionPersistPort;
-use kernel_contracts::session::{SessionEvent, SessionHeader};
+use kernel_contracts::session::{SessionEvent, SessionHeader, SessionId, SessionRecord};
 use rusqlite::{params, Connection};
 use thiserror::Error;
 
@@ -196,8 +196,12 @@ impl SessionPersistPort for SqlitePersist {
         Ok(())
     }
 
-    /// 按 seq 升序返回完整事件日志；会话不存在 → `Ok(None)`。
-    async fn load_events(&self, session_id: &str) -> PortResult<Option<Vec<SessionEvent>>> {
+    /// 按 seq 升序返回完整事件记录（含磁盘 seq/timestamp——时间线保真，
+    /// 恢复时直接沿用落盘时间，不重造）；会话不存在 → `Ok(None)`。
+    async fn load_events(
+        &self,
+        session_id: &str,
+    ) -> PortResult<Option<Vec<SessionRecord>>> {
         let conn = self.lock()?;
         match conn.query_row("SELECT 1 FROM sessions WHERE id=?1", params![session_id], |_| Ok(())) {
             Ok(()) => {}
@@ -206,17 +210,30 @@ impl SessionPersistPort for SqlitePersist {
         }
 
         let mut stmt = conn
-            .prepare("SELECT event_json FROM events WHERE session_id=?1 ORDER BY seq ASC")
+            .prepare("SELECT seq, event_json, timestamp FROM events WHERE session_id=?1 ORDER BY seq ASC")
             .map_err(to_port_error)?;
         let rows = stmt
-            .query_map(params![session_id], |row| row.get::<_, String>(0))
+            .query_map(params![session_id], |row| {
+                let seq: i64 = row.get(0)?;
+                let event_json: String = row.get(1)?;
+                let timestamp: String = row.get(2)?;
+                Ok((seq, event_json, timestamp))
+            })
             .map_err(to_port_error)?;
-        let mut events = Vec::new();
+        let mut records = Vec::new();
         for row in rows {
-            let event_json = row.map_err(to_port_error)?;
-            events.push(serde_json::from_str(&event_json).map_err(to_port_error)?);
+            let (seq, event_json, timestamp) = row.map_err(to_port_error)?;
+            let event: SessionEvent = serde_json::from_str(&event_json).map_err(to_port_error)?;
+            records.push(SessionRecord {
+                seq: seq as u64,
+                timestamp: timestamp
+                    .parse::<chrono::DateTime<Utc>>()
+                    .unwrap_or_else(|_| Utc::now()),
+                session_id: SessionId(session_id.to_string()),
+                event,
+            });
         }
-        Ok(Some(events))
+        Ok(Some(records))
     }
 
     /// 按最近活跃（updated_at）降序列出全部会话 id。
@@ -250,6 +267,7 @@ impl SessionPersistPort for SqlitePersist {
     /// 全量重写会话事件日志（事务内 DELETE + INSERT）。
     /// interrupted-turn 修复落盘用：恢复时把修剪后的完整日志写回，
     /// 保证磁盘与内存一致（无 torn-tail 是磁盘层的不变量）。
+    /// 保留原始时间戳：事件日志=唯一事实源，修复不重盖时间线。
     async fn rewrite_events(
         &self,
         session_id: &str,
@@ -257,6 +275,25 @@ impl SessionPersistPort for SqlitePersist {
     ) -> PortResult<()> {
         let mut conn = self.lock()?;
         let tx = conn.transaction().map_err(to_port_error)?;
+        // 先取现有时间戳（按 seq 映射），DELETE 后 INSERT 沿用——修复不重盖时间线。
+        let mut timestamps: std::collections::HashMap<i64, String> =
+            std::collections::HashMap::new();
+        {
+            let mut stmt = tx
+                .prepare("SELECT seq, timestamp FROM events WHERE session_id=?1")
+                .map_err(to_port_error)?;
+            let rows = stmt
+                .query_map(params![session_id], |row| {
+                    let seq: i64 = row.get(0)?;
+                    let ts: String = row.get(1)?;
+                    Ok((seq, ts))
+                })
+                .map_err(to_port_error)?;
+            for row in rows {
+                let (seq, ts) = row.map_err(to_port_error)?;
+                timestamps.insert(seq, ts);
+            }
+        }
         tx.execute("DELETE FROM events WHERE session_id=?1", params![session_id])
             .map_err(to_port_error)?;
         {
@@ -264,14 +301,14 @@ impl SessionPersistPort for SqlitePersist {
                 .prepare("INSERT INTO events (session_id, seq, event_json, timestamp) VALUES (?1, ?2, ?3, ?4)")
                 .map_err(to_port_error)?;
             for (i, event) in events.iter().enumerate() {
+                let seq = (i + 1) as i64;
                 let event_json = serde_json::to_string(event).map_err(to_port_error)?;
-                stmt.execute(params![
-                    session_id,
-                    (i + 1) as i64,
-                    event_json,
-                    chrono::Utc::now().to_rfc3339(),
-                ])
-                .map_err(to_port_error)?;
+                let ts = timestamps
+                    .get(&seq)
+                    .cloned()
+                    .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+                stmt.execute(params![session_id, seq, event_json, ts])
+                    .map_err(to_port_error)?;
             }
         }
         tx.execute(

@@ -87,6 +87,9 @@ pub struct ReactLoopAgent {
     model_override: std::sync::Mutex<Option<(String, String)>>,
     /// 当前活跃回合的取消信号（session.cancel 端口触发；None = 无活跃回合）。
     cancel: std::sync::Mutex<Option<kernel_contracts::AbortSignal>>,
+    /// 取消请求落在信号安装窗口外时暂存（BUG-004 竞态）：session.cancel 在
+    /// run_turn 装信号前到达 → 置位；装好信号后立即 abort，请求不丢。
+    pending_cancel: std::sync::atomic::AtomicBool,
 }
 
 /// 增量 chunk → 消息装配器（对齐 DSH `BlockAssembler`：原始 chunk 累积，
@@ -246,15 +249,20 @@ impl ReactLoopAgent {
             session,
             model_override: std::sync::Mutex::new(None),
             cancel: std::sync::Mutex::new(None),
+            pending_cancel: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
     /// 触发当前活跃回合的取消（对齐 DSH `session.cancel`：请求 signal abort →
-    /// 流以 finish{kind:'aborted', code:'ABORTED'} 收尾）。无活跃回合时无效果。
+    /// 流以 finish{kind:'aborted', code:'ABORTED'} 收尾）。无活跃回合或信号
+    /// 尚未安装时暂存请求（pending-cancel），run_turn 装好信号后立即生效。
     pub fn abort(&self) {
         let signal = self.cancel.lock().unwrap().clone();
         if let Some(s) = signal {
             s.abort();
+        } else {
+            self.pending_cancel
+                .store(true, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
@@ -359,6 +367,13 @@ impl ReactLoopAgent {
         // （多 step 共用同一信号——对齐 DSH 请求 signal 语义）。
         let signal = kernel_contracts::AbortSignal::new();
         *self.cancel.lock().unwrap() = Some(signal.clone());
+        // 消费 pending-cancel：信号安装前到达的取消请求立即生效（BUG-004 竞态收口）。
+        if self
+            .pending_cancel
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            signal.abort();
+        }
         // 回合结束（任意 return 路径）清空取消槽：避免残留信号被下一回合复用。
         struct ClearCancel<'a>(&'a std::sync::Mutex<Option<kernel_contracts::AbortSignal>>);
         impl Drop for ClearCancel<'_> {
@@ -647,7 +662,7 @@ mod tests {
         async fn load_events(
             &self,
             _session_id: &str,
-        ) -> Result<Option<Vec<SessionEvent>>, kernel_contracts::PortError> {
+        ) -> Result<Option<Vec<kernel_contracts::SessionRecord>>, kernel_contracts::PortError> {
             Ok(None)
         }
         async fn list_sessions(&self) -> Result<Vec<String>, kernel_contracts::PortError> {
@@ -1019,6 +1034,63 @@ mod tests {
         assert!(events
             .iter()
             .any(|e| matches!(e, SessionEvent::Step { step: 2, .. })));
+    }
+
+    /// 捕获请求 signal 的 LLM：验证 pending-cancel 消费后模型收到的 signal 已 abort。
+    #[derive(Clone, Default)]
+    struct SignalCapturingLlm {
+        aborted: Arc<std::sync::Mutex<Vec<bool>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl LlmPort for SignalCapturingLlm {
+        async fn list_models(&self, _provider: &str) -> Result<Vec<LlmModelInfo>, LlmError> {
+            Ok(vec![])
+        }
+        fn stream(&self, request: GenerateOptions) -> ChunkStream {
+            self.aborted.lock().unwrap().push(
+                request
+                    .signal
+                    .as_ref()
+                    .map(|s| s.is_aborted())
+                    .unwrap_or(false),
+            );
+            Box::pin(futures::stream::iter(vec![
+                Ok(StreamChunk::BlockStart { index: 0, block_type: "text".to_string() }),
+                Ok(StreamChunk::TextDelta { index: 0, text: "ok".to_string() }),
+                Ok(StreamChunk::BlockEnd { index: 0, block: ContentBlock::Text("ok".to_string()) }),
+                Ok(StreamChunk::Finish(FinishReason::Stop)),
+            ]))
+        }
+    }
+
+    /// 回归 BUG-004：abort 在 run_turn 装信号前到达（竞态窗口）→ pending 暂存，
+    /// 信号装好后立即 abort，模型收到的 signal 已是 aborted（旧实现请求被静默丢弃）。
+    #[tokio::test]
+    async fn pending_cancel_aborts_signal_before_stream() {
+        let llm = Arc::new(SignalCapturingLlm::default());
+        let tools = Arc::new(ToolRegistry::new());
+        let gate = Arc::new(ToolGate::new());
+        let store = Arc::new(SessionStore::new());
+        let persist: Arc<dyn SessionPersistPort> =
+            Arc::new(InMemoryPersist(std::sync::Mutex::new(vec![])));
+        let rt = Arc::new(LoopRuntime {
+            llm: llm.clone() as Arc<dyn LlmPort>,
+            store: Arc::clone(&store),
+            tools,
+            gate,
+            persist,
+            provider: "script".to_string(),
+            model: "script-1".to_string(),
+            max_steps: DEFAULT_MAX_STEPS,
+        });
+        let session = store.create(test_header("s1"), EventBus::new());
+        let agent = ReactLoopAgent::new(rt, Arc::clone(&session));
+        // 无活跃回合时 abort → pending-cancel 置位。
+        agent.abort();
+        agent.run_turn(Some("hi")).await.unwrap();
+        let aborted = llm.aborted.lock().unwrap().clone();
+        assert_eq!(aborted, vec![true], "pending cancel must abort the request signal");
     }
 
     /// 多回合 turn 编号单调递增：两次 run_turn 产出 Turn Started{1}、{2}，

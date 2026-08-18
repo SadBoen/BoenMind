@@ -27,7 +27,9 @@ pub async fn mux_loop(mut socket: WebSocket, state: Arc<AppState>) {
         .collect();
     for sid in sessions {
         let last_seq = match state.runtime.persist.load_events(&sid).await {
-            Ok(Some(events)) => {
+            Ok(Some(records)) => {
+                let events: Vec<kernel_contracts::session::SessionEvent> =
+                    records.into_iter().map(|r| r.event).collect();
                 let wire_count = crate::events::translate_events(&events).len() as i64;
                 wire_count - 1
             }

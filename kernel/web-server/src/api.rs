@@ -525,11 +525,12 @@ async fn session_history(state: &Arc<AppState>, payload: Value) -> Value {
     let Some(session_id) = payload.get("sessionId").and_then(Value::as_str) else {
         return err("bad-request", "missing sessionId");
     };
-    let events = match state.runtime.persist.load_events(session_id).await {
-        Ok(Some(e)) => e,
+    let records = match state.runtime.persist.load_events(session_id).await {
+        Ok(Some(r)) => r,
         Ok(None) => return err("session-not-found", format!("session {session_id} not found")),
         Err(e) => return err("internal", format!("history failed: {e}")),
     };
+    let events: Vec<SessionEvent> = records.into_iter().map(|r| r.event).collect();
     let wire = translate_events(&events);
     let items: Vec<Value> = wire
         .iter()
@@ -577,10 +578,11 @@ async fn session_search(state: &Arc<AppState>, payload: Value) -> Value {
         if items.len() >= SESSION_SEARCH_RESULT_LIMIT {
             break;
         }
-        let events = match state.runtime.persist.load_events(&sid).await {
-            Ok(Some(e)) => e,
+        let records = match state.runtime.persist.load_events(&sid).await {
+            Ok(Some(r)) => r,
             _ => continue,
         };
+        let events: Vec<SessionEvent> = records.into_iter().map(|r| r.event).collect();
         // 只扫表面文本事件（user/message、assistant/message）。
         let mut snippet: Option<String> = None;
         for ev in &events {
@@ -649,13 +651,14 @@ async fn session_fork(state: &Arc<AppState>, payload: Value) -> Value {
         return err("bad-request", "missing sessionId");
     };
     let at_seq = payload.get("atSeq").and_then(Value::as_u64);
-    let events = match state.runtime.persist.load_events(source_id).await {
-        Ok(Some(e)) => e,
+    let records = match state.runtime.persist.load_events(source_id).await {
+        Ok(Some(r)) => r,
         Ok(None) => {
             return err("session-not-found", format!("session {source_id} not found"))
         }
         Err(e) => return err("internal", format!("fork failed: {e}")),
     };
+    let events: Vec<SessionEvent> = records.into_iter().map(|r| r.event).collect();
 
     // 锚点：所有完成 turn 的（事件 seq，含 SessionStarted 的 seq=1 偏移）。
     // 事件 Vec 下标 0 = SessionStarted（seq 1），事件下标 i 对应持久化 seq i+1。
@@ -704,6 +707,9 @@ async fn session_fork(state: &Arc<AppState>, payload: Value) -> Value {
             .append_events(&new_id, std::slice::from_ref(&rec.event))
             .await
         {
+            // 清理孤儿半会话（内存 + 磁盘；fork 失败不留 residue——ARCH-005）。
+            let _ = state.runtime.persist.delete_session(&new_id).await;
+            state.sessions.lock().unwrap().remove(&new_id);
             return err("internal", format!("fork persist failed: {e}"));
         }
     }

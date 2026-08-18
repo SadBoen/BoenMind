@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 
 use crate::error::{PortError, PortResult};
-use crate::session::{SessionEvent, SessionHeader};
+use crate::session::{SessionEvent, SessionHeader, SessionRecord};
 
 /// 文件系统端口（工作区路径守卫：resolve 越界即 PermissionDenied）。
 #[async_trait]
@@ -58,8 +58,13 @@ pub trait SessionPersistPort: Send + Sync {
     /// 创建会话（写 header 事件）。
     async fn create_session(&self, header: &SessionHeader) -> PortResult<()>;
 
-    /// 加载会话完整事件日志（按 seq 升序）；不存在返回 None。
-    async fn load_events(&self, session_id: &str) -> PortResult<Option<Vec<SessionEvent>>>;
+    /// 加载会话完整事件记录（按 seq 升序，**含磁盘 seq/timestamp**——恢复时
+    /// 直接沿用落盘时间，不再重造；时间线保真是"事件日志=唯一事实源"的一部分）。
+    /// 不存在返回 None。
+    async fn load_events(
+        &self,
+        session_id: &str,
+    ) -> PortResult<Option<Vec<SessionRecord>>>;
 
     /// 全量重写会话事件日志（事务内 DELETE + INSERT）。
     /// 用于 interrupted-turn 修复落盘：kill -9 恢复时把修剪后的完整日志写回。

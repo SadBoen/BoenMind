@@ -105,7 +105,7 @@ impl Runtime {
         &self,
         session_id: &str,
     ) -> Result<ReactLoopAgent, AssemblyError> {
-        let Some(events) = self
+        let Some(records) = self
             .persist
             .load_events(session_id)
             .await
@@ -113,14 +113,14 @@ impl Runtime {
         else {
             return Err(AssemblyError::SessionNotFound(session_id.to_string()));
         };
-        if events.is_empty() {
+        if records.is_empty() {
             return Err(AssemblyError::InvalidLog("empty event log".into()));
         }
         // 首条必须是 SessionStarted，从中取回 header。
-        let first = events
+        let first = records
             .first()
             .ok_or_else(|| AssemblyError::InvalidLog("empty log".into()))?;
-        let header = match first {
+        let header = match &first.event {
             SessionEvent::SessionStarted { header } => header.clone(),
             _ => {
                 return Err(AssemblyError::InvalidLog(
@@ -129,8 +129,9 @@ impl Runtime {
             }
         };
 
-        let original_len = events.len();
-        // interrupted-turn 修复：把尾部未配对的 Step/Turn Started 修剪掉。
+        let original_len = records.len();
+        // interrupted-turn 修复：闭合孤儿回合尾部（追加 closers，不删事件）。
+        let events: Vec<SessionEvent> = records.iter().map(|r| r.event.clone()).collect();
         let repaired = repair_interrupted_turn(events);
         // 修复必须落盘：磁盘与内存一致，torn-tail 是磁盘层不变量。
         if repaired.len() != original_len {
@@ -139,14 +140,29 @@ impl Runtime {
                 .await
                 .map_err(|e| AssemblyError::Persist(e.to_string()))?;
         }
-
-        let records: Vec<kernel_contracts::SessionRecord> = repaired
-            .iter()
-            .enumerate()
-            .map(|(i, e)| {
-                kernel_contracts::SessionRecord::new((i + 1) as u64, session_id, e.clone())
-            })
-            .collect();
+        // 沿用磁盘 seq/timestamp（时间线保真）。rewrite 后磁盘 seq 连续从 1 起、
+        // 追加 closers 的时间戳 = rewrite 落盘时间，内存须与此一致。
+        let records: Vec<kernel_contracts::SessionRecord> = if repaired.len() != original_len {
+            repaired
+                .iter()
+                .enumerate()
+                .map(|(i, e)| {
+                    // 原事件沿用落盘时间戳；新增 closers（超出原长度）用现在。
+                    let timestamp = records
+                        .get(i)
+                        .map(|r| r.timestamp)
+                        .unwrap_or_else(chrono::Utc::now);
+                    kernel_contracts::SessionRecord {
+                        seq: (i + 1) as u64,
+                        timestamp,
+                        session_id: kernel_contracts::SessionId(session_id.to_string()),
+                        event: e.clone(),
+                    }
+                })
+                .collect()
+        } else {
+            records
+        };
         let session = self
             .store
             .restore(header, records, self.bus.clone())
@@ -396,6 +412,8 @@ mod tests {
         let db = tmp_db("cancel-history");
         let rt = Runtime::headless(db.clone()).unwrap();
         let agent = rt.create_session(header("s1")).await.unwrap();
+        // t0 记录写入窗口上界：恢复必须沿用落盘时间戳，不得在恢复时刻重造。
+        let write_deadline = chrono::Utc::now();
         // 手工构造：turn 1 错误闭合（Step 配对 + Turn Ended Error 带 requestId），
         // turn 2 中断于 Step Started（模拟 kill-9 于取消后新回合中途）。
         let seq = [
@@ -475,6 +493,13 @@ mod tests {
             })
             .collect();
         assert_eq!(starts, vec![1, 2, 3]);
+        // #7 时间戳保真：首条 SessionStarted 的时间戳是写入时刻（≤ write_deadline），
+        // 不是恢复时刻重造（旧实现 SessionRecord::new 会打上恢复时间 > write_deadline）。
+        let first_ts = restored.session().events()[0].timestamp;
+        assert!(
+            first_ts <= write_deadline,
+            "timestamp must be preserved from disk, got {first_ts} after deadline {write_deadline}"
+        );
         let _ = std::fs::remove_dir_all(db.parent().unwrap());
     }
 

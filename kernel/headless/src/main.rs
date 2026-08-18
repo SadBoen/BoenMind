@@ -213,15 +213,15 @@ async fn main() {
         }
         "dump" => {
             let rt = Runtime::headless(db).unwrap();
-            let events = rt
+            let records = rt
                 .persist
                 .load_events(session)
                 .await
                 .expect("load events");
-            match events {
-                Some(events) => {
-                    for (i, e) in events.iter().enumerate() {
-                        println!("[{i}] {}", serde_json::to_string(e).unwrap());
+            match records {
+                Some(records) => {
+                    for (i, r) in records.iter().enumerate() {
+                        println!("[{i}] {}", serde_json::to_string(&r.event).unwrap());
                     }
                 }
                 None => eprintln!("session not found"),
@@ -233,8 +233,8 @@ async fn main() {
 
 /// 尾部完整性检查：从日志尾部往回，断言没有未配对的 Step Started / Turn Started。
 async fn verify_tail(rt: &Runtime, session_id: &str) -> bool {
-    let events = match rt.persist.load_events(session_id).await {
-        Ok(Some(e)) => e,
+    let events: Vec<SessionEvent> = match rt.persist.load_events(session_id).await {
+        Ok(Some(records)) => records.into_iter().map(|r| r.event).collect(),
         _ => return false,
     };
     let mut step_open = 0u64;

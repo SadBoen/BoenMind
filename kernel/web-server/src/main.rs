@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use kernel_assembly::Runtime;
-use kernel_contracts::llm::{LlmModelInfo, LlmPort};
+use kernel_contracts::llm::{LlmModelInfo, LlmPort, ModelReasoning, ReasoningEffort};
 use kernel_llm::{ModelListEndpoint, MultiProviderLlm, OpenAiProviderConfig, OpenAICompatLlm};
 use web_server::api::{AppState, ProviderRuntime};
 use web_server::provider_config::load_llm_config;
@@ -178,7 +178,22 @@ fn main() {
                     supports_tools: true,
                     context_window: None,
                     max_tokens: None,
-                    reasoning: None,
+                    // #8 生产接线：DeepSeek 系默认具备推理能力（high 档），
+                    // 声明后 resolve_thinking 生产路径吃到 adapter 档位——
+                    // thinking:{type:enabled} + reasoning_effort:high 上 wire；
+                    // 其余模型不声明（None → provider 默认，能力未声明不上 thinking）。
+                    reasoning: if m.contains("deepseek") {
+                        Some(ModelReasoning {
+                            efforts: vec![ReasoningEffort {
+                                id: "high".to_string(),
+                                name: "High".to_string(),
+                                description: None,
+                            }],
+                            default_effort: Some("high".to_string()),
+                        })
+                    } else {
+                        None
+                    },
                 })
                 .collect();
             let adapter = Arc::new(OpenAICompatLlm::new(OpenAiProviderConfig {

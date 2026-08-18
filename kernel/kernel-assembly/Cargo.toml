@@ -15,6 +15,7 @@ kernel-loop = { path = "../kernel-loop" }
 kernel-supervisor = { path = "../kernel-supervisor" }
 serde_json.workspace = true
 thiserror.workspace = true
+chrono.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true
