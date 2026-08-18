@@ -73,11 +73,20 @@ pub struct ServerRequestFrame {
 }
 
 impl ServerRequestFrame {
-    pub fn new(rpc_id: impl Into<String>, method: impl Into<String>, payload: Value) -> Self {
+    /// 构造下行帧。method 同时作为 payload 的 `type` 判别字段注入——官方前端
+    /// `web-api-client.readWebSocket` 用 `frameSchema.parse(full.payload)` 校验
+    /// MuxFrame/HostFrame 判别联合（payload.type 必须存在），缺了整帧被丢弃
+    /// （对话空白/会话列表不刷新的根因）。外层信封保留官方 `server-request`
+    /// 四元判别，两层都要过 schema。
+    pub fn new(rpc_id: impl Into<String>, method: impl Into<String>, mut payload: Value) -> Self {
+        let method = method.into();
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("type".into(), json!(method));
+        }
         Self {
             type_: "server-request",
             rpc_id: rpc_id.into(),
-            method: method.into(),
+            method,
             payload,
         }
     }
@@ -185,10 +194,14 @@ mod tests {
     #[test]
     fn frame_shape_is_verbatim() {
         let f = ServerRequestFrame::new("r1", "session/event", json!({ "sessionId": "s" }));
-        assert_eq!(
-            serde_json::to_string(&f).unwrap(),
-            r#"{"type":"server-request","rpcId":"r1","method":"session/event","payload":{"sessionId":"s"}}"#
-        );
+        // 外层信封四元判别 + payload 内注入 type 判别字段（官方 frameSchema 要求）。
+        let v: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&f).unwrap()).unwrap();
+        assert_eq!(v["type"], "server-request");
+        assert_eq!(v["rpcId"], "r1");
+        assert_eq!(v["method"], "session/event");
+        assert_eq!(v["payload"]["type"], "session/event");
+        assert_eq!(v["payload"]["sessionId"], "s");
     }
 
     #[test]

@@ -16,6 +16,11 @@ pub struct WireSessionEvent {
     pub type_: String,
     pub seq: i64,
     pub time: i64,
+    /// surface 标记（对齐 DSH `SurfaceOp`：append/replace）。仅 user/message、
+    /// assistant/message、tool/result 三型 surface 事件携带——前端匹配器
+    /// `isAppendSurfaceEvent` 靠它识别可渲染消息（缺省 = 非 surface，前端跳过）。
+    #[serde(rename = "surfaceOp", skip_serializing_if = "Option::is_none")]
+    pub surface_op: Option<&'static str>,
     pub data: Value,
 }
 
@@ -24,6 +29,10 @@ pub struct WireSessionEvent {
 pub struct EventTranslator {
     cur_turn: i64,
     cur_step: i64,
+    /// 已产出的 wire 事件计数（= 下一事件在 wire 序列中的下标）。与外部 seq
+    /// 计数器同源（history 全量重建从 0、实时增量从历史尾部接续），message id
+    /// 据此生成，保证同一事件跨 history/实时两条路径拿到稳定一致的 id。
+    emitted: i64,
 }
 
 impl EventTranslator {
@@ -31,10 +40,21 @@ impl EventTranslator {
         Self::default()
     }
 
+    /// 实时路径构造器：把已产出的计数预填为历史 wire 长度，使后续增量事件
+    /// 的 message id 与 history 全量重建保持一致。
+    pub fn with_emitted(seed: i64) -> Self {
+        Self {
+            cur_turn: 0,
+            cur_step: 0,
+            emitted: seed,
+        }
+    }
+
     /// 翻译单条内部事件；无 wire 对应（SessionStarted/SessionEnded）→ None。
     pub fn translate_one(&mut self, ev: &SessionEvent) -> Option<WireSessionEvent> {
         let now_ms = chrono::Utc::now().timestamp_millis();
-        let (type_, data) = match ev {
+        let my_seq = self.emitted;
+        let (type_, surface_op, data) = match ev {
             SessionEvent::SessionStarted { .. } | SessionEvent::SessionEnded { .. } => {
                 return None
             }
@@ -42,27 +62,37 @@ impl EventTranslator {
                 self.cur_step = 0;
                 (
                     "user/message",
+                    Some("append"),
                     json!({
+                        // 对齐官方 Message 契约：id（稳定身份）+ content 块 +
+                        // source.kind='user'（前端按 kind 区分 user/context 节点，
+                        // 'human' 会被误分类为注入上下文）。
+                        "id": String::from("user-") + &my_seq.to_string(),
                         "content": [{ "type": "text", "text": text }],
-                        "source": { "kind": "human" }
+                        "source": { "kind": "user" }
                     }),
                 )
             }
             SessionEvent::Turn(TurnEvent::Started { turn }) => {
                 self.cur_turn = *turn as i64;
                 self.cur_step = 0;
-                ("turn/start", json!({ "turn": turn }))
+                ("turn/start", None, json!({ "turn": turn }))
             }
             SessionEvent::Turn(TurnEvent::Ended { turn, reason }) => (
                 "turn/end",
+                None,
                 json!({ "turn": turn, "reason": turn_reason_wire(reason) }),
             ),
             SessionEvent::Step { turn, step, phase } => {
                 self.cur_turn = *turn as i64;
                 self.cur_step = *step as i64;
                 match phase {
-                    StepPhase::Started => ("step/start", json!({ "turn": turn, "step": step })),
-                    StepPhase::Ended => ("step/end", json!({ "turn": turn, "step": step })),
+                    StepPhase::Started => (
+                        "step/start",
+                        None,
+                        json!({ "turn": turn, "step": step }),
+                    ),
+                    StepPhase::Ended => ("step/end", None, json!({ "turn": turn, "step": step })),
                 }
             }
             SessionEvent::AssistantChunk { chunk } => {
@@ -70,6 +100,7 @@ impl EventTranslator {
                 // finish 块：`{type:'finish', reason}`（usage 也在流中，逐块透传）。
                 (
                     "assistant/chunk",
+                    None,
                     json!({
                         "turn": self.cur_turn,
                         "step": self.cur_step,
@@ -86,15 +117,22 @@ impl EventTranslator {
                 let mut data = json!({
                     "turn": self.cur_turn,
                     "step": self.cur_step,
-                    "message": { "content": blocks }
+                    "message": {
+                        // 对齐官方 AssistantMessage：id + role + content + source（kind=model）。
+                        "id": String::from("assistant-") + &my_seq.to_string(),
+                        "role": "assistant",
+                        "content": blocks,
+                        "source": { "kind": "model" }
+                    }
                 });
                 if let Some(u) = usage {
                     data["usage"] = u.to_wire();
                 }
-                ("assistant/message", data)
+                ("assistant/message", Some("append"), data)
             }
             SessionEvent::ToolCall { call } => (
                 "tool/call",
+                None,
                 json!({
                     "turn": self.cur_turn,
                     "step": self.cur_step,
@@ -105,27 +143,37 @@ impl EventTranslator {
                 }),
             ),
             SessionEvent::ToolResult { result } => {
-                let data = if result.is_error {
-                    json!({
-                        "turn": self.cur_turn,
-                        "step": self.cur_step,
-                        "message": { "callId": result.call_id, "output": result.output },
-                        "error": { "name": "ToolError", "code": "tool-failed" }
-                    })
-                } else {
-                    json!({
-                        "turn": self.cur_turn,
-                        "step": self.cur_step,
-                        "message": { "callId": result.call_id, "output": result.output }
-                    })
-                };
-                ("tool/result", data)
+                // 对齐官方 ToolResultMessage：message 是完整 Message（id/role/content
+                // tool-result 块 + source.callId），error/meta 可选。
+                let block = json!({
+                    "type": "tool-result",
+                    "toolCallId": result.call_id,
+                    "content": [{ "type": "text", "text": result.output }],
+                    "isError": result.is_error,
+                });
+                let message = json!({
+                    "id": String::from("tool-") + &my_seq.to_string(),
+                    "role": "user",
+                    "content": [block],
+                    "source": { "kind": "tool", "callId": result.call_id }
+                });
+                let mut data = json!({
+                    "turn": self.cur_turn,
+                    "step": self.cur_step,
+                    "message": message
+                });
+                if result.is_error {
+                    data["error"] = json!({ "name": "ToolError", "code": "tool-failed" });
+                }
+                ("tool/result", Some("append"), data)
             }
         };
+        self.emitted += 1;
         Some(WireSessionEvent {
             type_: type_.to_string(),
             seq: -1, // 增量翻译不负责 seq；调用方（ws 层）维护
             time: now_ms,
+            surface_op,
             data,
         })
     }
@@ -211,6 +259,16 @@ mod tests {
         assert_eq!(wire[4].seq, 4);
         assert_eq!(wire[0].type_, "user/message");
         assert_eq!(wire[1].type_, "turn/start");
+        // surface 标记 + 官方 Message 契约字段（前端 isAppendSurfaceEvent 依赖）。
+        assert_eq!(wire[0].surface_op, Some("append"));
+        let ser = serde_json::to_value(&wire[0]).unwrap();
+        assert_eq!(ser["surfaceOp"], "append");
+        assert_eq!(ser["type"], "user/message");
+        assert_eq!(wire[0].data["id"], "user-0");
+        assert_eq!(wire[0].data["source"], json!({ "kind": "user" }));
+        // 非 surface 事件不序列化 surfaceOp（信封顶层无该键）。
+        let ser_turn = serde_json::to_value(&wire[1]).unwrap();
+        assert!(ser_turn.get("surfaceOp").is_none());
         // turn/end 带 reason 词汇。
         assert_eq!(wire[4].type_, "turn/end");
         assert_eq!(wire[4].data["reason"], json!({ "kind": "completed" }));
@@ -252,6 +310,11 @@ mod tests {
         assert_eq!(chunk.data["chunk"]["index"], 0);
         assert_eq!(chunk.data["chunk"]["text"], "think");
         let msg = wire.iter().find(|w| w.type_ == "assistant/message").unwrap();
+        // surface 标记 + 官方 AssistantMessage 契约（id/role/content/source）。
+        assert_eq!(msg.surface_op, Some("append"));
+        assert_eq!(msg.data["message"]["id"], "assistant-5");
+        assert_eq!(msg.data["message"]["role"], "assistant");
+        assert_eq!(msg.data["message"]["source"], json!({ "kind": "model" }));
         // usage 随 assistant/message（DSH 语义），且是 disjoint 计数。
         assert_eq!(msg.data["usage"]["inputTokens"], 27);
         assert_eq!(msg.data["usage"]["cacheReadTokens"], 256);
@@ -284,6 +347,10 @@ mod tests {
         // arguments 是模型原始 JSON 文本（字符串）
         assert_eq!(wire[0].data["arguments"], r#"{"text":"x"}"#);
         assert_eq!(wire[1].type_, "tool/result");
+        assert_eq!(wire[1].surface_op, Some("append"));
+        assert_eq!(wire[1].data["message"]["source"], json!({ "kind": "tool", "callId": "call_0" }));
+        assert_eq!(wire[1].data["message"]["content"][0]["type"], "tool-result");
+        assert_eq!(wire[1].data["message"]["content"][0]["toolCallId"], "call_0");
         assert!(wire[1].data.get("error").is_none());
     }
 

@@ -349,7 +349,7 @@ impl AppState {
                 let seed = crate::events::translate_events(&history).len() as i64;
                 table.insert(
                     sid.clone(),
-                    (crate::events::EventTranslator::new(), seed),
+                    (crate::events::EventTranslator::with_emitted(seed), seed),
                 );
             }
         }
@@ -357,7 +357,7 @@ impl AppState {
             let mut table = per_session.lock().unwrap();
             let (trans, seq) = table
                 .entry(record.session_id.as_str().to_string())
-                .or_insert_with(|| (crate::events::EventTranslator::new(), 0));
+                .or_insert_with(|| (crate::events::EventTranslator::with_emitted(0), 0));
             if let Some(mut wire) = trans.translate_one(&record.event) {
                 wire.seq = *seq;
                 *seq += 1;
@@ -632,9 +632,15 @@ async fn session_create(state: &Arc<AppState>, payload: Value) -> Value {
                 "host/session-added",
                 json!({ "sessionId": session_id, "blank": true, "cwd": cwd }),
             );
-            // workspace attach 后也广播 workspace 快照。
-            if payload.get("workspaceId").and_then(Value::as_str).is_some() {
-                state.broadcast_host("host/workspace-changed", state.workspace_snapshot());
+            // workspace attach 后广播该工作区（HostFrame 单 workspace 形状）。
+            if let Some(ws_id) = payload.get("workspaceId").and_then(Value::as_str) {
+                let ws = state.workspaces.lock().unwrap();
+                if let Some(view) = ws.get(ws_id) {
+                    state.broadcast_host(
+                        "host/workspace-changed",
+                        json!({ "workspace": view.clone() }),
+                    );
+                }
             }
             ok(json!({ "sessionId": session_id, "agentPreset": "standard" }))
         }
@@ -1188,7 +1194,10 @@ fn workspace_create(state: &AppState, payload: Value) -> Value {
     let id = workspace["workspaceId"].as_str().unwrap().to_string();
     ws.insert(id, workspace.clone());
     drop(ws);
-    state.broadcast_host("host/workspace-changed", state.workspace_snapshot());
+    state.broadcast_host(
+        "host/workspace-changed",
+        json!({ "workspace": workspace.clone() }),
+    );
     ok(json!({ "workspace": workspace, "created": true }))
 }
 
@@ -1228,7 +1237,10 @@ fn workspace_rename(state: &AppState, payload: Value) -> Value {
     view["updatedAt"] = json!(chrono::Utc::now().to_rfc3339());
     let updated = view.clone();
     drop(ws);
-    state.broadcast_host("host/workspace-changed", state.workspace_snapshot());
+    state.broadcast_host(
+        "host/workspace-changed",
+        json!({ "workspace": updated.clone() }),
+    );
     ok(json!({ "workspace": updated }))
 }
 
@@ -1246,12 +1258,12 @@ fn workspace_delete(state: &AppState, payload: Value) -> Value {
         );
     }
     drop(ws);
-    // HostFrame：注册删除增量（台账 §3.1 host/workspace-removed）+ 快照。
+    // HostFrame：注册删除增量（台账 §3.1 host/workspace-removed；官方 delete
+    // 语义 = 删除增量帧，前端据此移除列表项，无需全量快照）。
     state.broadcast_host(
         "host/workspace-removed",
         json!({ "workspaceId": workspace_id }),
     );
-    state.broadcast_host("host/workspace-changed", state.workspace_snapshot());
     ok(json!({ "deleted": true }))
 }
 
@@ -1373,7 +1385,10 @@ fn workspace_insert_session_before(state: &AppState, payload: Value) -> Value {
     }
     let updated = view.clone();
     drop(ws);
-    state.broadcast_host("host/workspace-changed", state.workspace_snapshot());
+    state.broadcast_host(
+        "host/workspace-changed",
+        json!({ "workspace": updated.clone() }),
+    );
     ok(json!({ "workspace": updated }))
 }
 

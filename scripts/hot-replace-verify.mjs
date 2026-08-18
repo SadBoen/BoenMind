@@ -60,7 +60,7 @@ async function main() {
   writeFileSync(cfgPath, `default_provider = "deepseek"\ndefault_model = "deepseek-chat"\n\n[[providers]]\nid = "deepseek"\nname = "DeepSeek"\nkind = "deepseek"\nbase_url = "http://127.0.0.1:3190/v1"\nmodels = ["deepseek-chat"]\n`);
 
   const db = join(work, "hot.db");
-  const child = spawn("kernel/target/debug/web-server.exe",
+  const child = spawn("kernel/target/release/web-server.exe",
     ["--db", db, "--port", String(PORT), "--dist", "kernel/web-server/frontend", "--config", cfgPath],
     { stdio: ["ignore", "pipe", "pipe"] });
   try {
