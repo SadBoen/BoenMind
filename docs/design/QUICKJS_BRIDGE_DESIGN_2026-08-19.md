@@ -1,9 +1,11 @@
 # QuickJS 桥设计基线（2026-08-19）
 
-> 状态：**落地中**。host 面契约已定稿（§4）+ rquickjs 桥已实现（§5.2 完成：
+> 状态：**全部落地**。host 面契约已定稿（§4）+ rquickjs 桥已实现（§5.2 完成：
 > `HostApi` 注册进全局 `host` + 异步泵打通，11 测试全绿）；manifest 驱动装载
 > （§5.3 完成：按 manifest 最小权限授面，16 测试全绿）；§5.4 接真 LLM + §5.5 tools/session
-> 面接线 + §5.6 目录插件注册表/config 面已完成。
+> 面接线 + §5.6 目录插件注册表/config 面已完成；**§6 接业务（web-server `--plugins-dir`
+> 装配 + 插件运行时收敛进 `PluginRuntimePort`）亦完成**（2026-08-19 同轮，见交接
+> `docs/HANDOFF_QUICKJS_BRIDGE_2026-08-19.md` §6）。
 > 本文件是实现的契约，不是 wiki。
 
 ## 1. 定位
@@ -166,10 +168,11 @@ workspace 全过 + clippy 零警告 + GATE1 ALL PASS。
 排序）；bm-assembly 18（+3：config 白名单命中与未命中 / load_js_plugin 端到端含
 config / scan_js_plugins 全清单）；workspace 全过 + clippy 零警告 + GATE1 ALL PASS。
 
-**下轮 §6**：桥主线落地完成——真 JS 插件跑通（目录插件注册表 + 按面授面 +
-llm/tools/session/config 全 face）。下一步把插件运行时收敛进 `PluginRuntimePort`
-（探针变 Ready）并接入 web-server 装配（`--plugins-dir`），或按业务顺序接
-dsh-rust-plugins 吸收（见台账）。
+**下轮 §6（已完成，2026-08-19 同轮）**：插件运行时收敛进 `PluginRuntimePort`
+（探针变 Ready）+ web-server 装配（`--plugins-dir`）：bm-assembly `JsPluginRuntime`
+（每插件一引擎，空清单 Unavailable 诚实失败）+ `Runtime::load_js_plugins_dir` +
+`plugin_manifest` 合并 Feature 条目 + web-server `--plugins-dir` 参数（fail-loud）。
+详见 `docs/HANDOFF_QUICKJS_BRIDGE_2026-08-19.md` §6。
 
 ## 6. 相关文件
 

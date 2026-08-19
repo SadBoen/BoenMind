@@ -1,10 +1,13 @@
-# HANDOFF：QuickJS 桥落地完成（引擎 + manifest 授面 + 真 LLM + tools/session + 注册表）（2026-08-19）
+# HANDOFF：QuickJS 桥落地完成（引擎 + manifest 授面 + 真 LLM + tools/session + 注册表 + 接业务）（2026-08-19）
 
-> 状态：**§5.2–§5.6 全部落地并全绿**（09f296f + b282257 + f5261c4 + ab9bf41 + 本轮）。
+> 状态：**§5.2–§5.6 全部落地并全绿**（09f296f + b282257 + f5261c4 + ab9bf41 + 9187f5f），
+> **§6 接业务（web-server `--plugins-dir` 装配）亦落地**（19119c0 + kernel c9cc695）。
 > quickjs-bridge 从占位 crate 变为完整可用引擎：`HostApi` 全局 `host` + 异步泵 +
-> manifest 最小权限授面 + 真 LlmPort 接线 + tools/session/config 面 + 目录插件注册表。
-> 32+18 测试全绿；workspace + clippy + gate1 全过。
-> 下轮：桥主线完成，接业务（web-server `--plugins-dir` 装配 / dsh-rust-plugins 吸收）。
+> manifest 最小权限授面 + 真 LlmPort 接线 + tools/session/config 面 + 目录插件注册表
+> + 插件运行时收敛进 `PluginRuntimePort`（探针 Ready）。
+> 测试全绿（bm-assembly 22 + web-server 20 + quickjs-bridge 32…）；workspace + clippy + gate1 全过；
+> release 起服实测 `probe=Ready` + `plugin.core.list` 4 条（hello JS 插件 category=feature）。
+> 下轮：JS 插件管理面 RPC（执行 `__main` 的端点）+ dsh-rust-plugins 吸收（台账流程）。
 
 ---
 
@@ -26,7 +29,8 @@ QuickJS 桥主线的落地顺序步骤**已全部完成**：**§5.2 引擎**（`
 | `b282257` | §5.3 manifest：`plugin.rs`（新）`JsPluginManifest` + `ALL_HOST_FACES` + `LoadedPlugin::load`；`new_with_faces` 按面注册 |
 | `f5261c4` | §5.4 接真 LLM：`host.rs`（新）+ `HostApi::llm_port()` + 默认 `llm_complete_stream`；`js_host.rs`（新 `RealHost`）+ `Runtime::js_bridge` |
 | `ab9bf41` | §5.5 tools/session 面 + 真 JS 插件全链路 + 修 qjs 堆损坏（去 drive 泵） |
-| 本轮 | §5.6 目录插件注册表（`registry.rs` `scan_plugins`/`PluginDir`）+ config 面白名单 + `Runtime::load_js_plugin`/`scan_js_plugins`/`js_bridge_with_config` |
+| `9187f5f` | §5.6 目录插件注册表（`registry.rs` `scan_plugins`/`PluginDir`）+ config 面白名单 + `Runtime::load_js_plugin`/`scan_js_plugins`/`js_bridge_with_config` |
+| `19119c0`（kernel `c9cc695`） | **§6 接业务**：web-server `--plugins-dir` 装配 + 插件运行时收敛进 `PluginRuntimePort`（见 §6） |
 
 ## 3. 验证矩阵（全绿）
 
@@ -76,15 +80,47 @@ AsyncRuntime + 上下文，天然隔离）。组合根入口：`Runtime::load_js
 
 ## 5. 下轮指针
 
-1. **桥主线完成 → 接业务**：web-server 装配 `--plugins-dir`（扫描 → 逐个
-   `load_js_plugin` → 引擎清单注册进 `PluginRuntimePort`，探针变 Ready）；或按
-   业务顺序接 dsh-rust-plugins 吸收（见台账）。
+1. **JS 插件管理面 RPC**：`plugin.core.list` 已合并 Feature 条目；执行端点为
+   `Runtime::js_plugins()` → `call(id)`（已就绪）。可加 `plugin.js.invoke`/
+   `plugin.js.list` RPC（web-server 经 `js_plugins()` 访问，不直接依赖 quickjs-bridge）。
 2. **待办 2：dsh-rust-plugins 更新流程**——源仓已打 tag `absorbed-into-boenmind-2026-08-19`
    锁 commit，台账 `docs/PLUGIN_ABSORPTION_LEDGER_2026-08-19.md`；后续按台账流程吸收。
 3. **待办 3：web-server 验证脚本路径**——conformance / gate25 / m3-r3 脚本如需跑，
    用新路径（hot-replace / hot-upgrade-transition 已更新为新布局）。
 
-## 6. 环境纪律（沿用）
+## 6. §6 接业务：web-server `--plugins-dir` 装配 + PluginRuntimePort 收敛（2026-08-19 同轮）
+
+**动机**：桥主线完成，下轮指针 = 接业务。把目录插件注册表收敛进 `PluginRuntimePort`
+（探针变 Ready）+ web-server 装配 `--plugins-dir`。
+
+**实现**（主仓 19119c0 + kernel c9cc695）：
+
+- **kernel-contracts**：`PluginRuntimePort` 增加 `as_any(&self) -> &dyn Any`（实现返回
+  `self`）——trait object 向下转型到具体实现，暴露专用入口（`UnavailablePluginRuntime`
+  与 `JsPluginRuntime` 均已实现）。
+- **bm-assembly `js_plugins.rs`（新）**：`JsPluginEntry`（manifest + 引擎保活 + 入口
+  已装载——装配即 `exec` 定义插件全局函数；`call_main` 执行 `__main`）+ `JsPluginRuntime`
+  （实现 `PluginRuntimePort`：空清单 → `Unavailable`（诚实失败，不假 Ready）；非空 →
+  `Ready`；`call(id)` 执行插件主函数；`manifest_entries()` 产出 Feature 清单条目）。
+- **`Runtime::load_js_plugins_dir(dir)`**：扫描 → 逐个按 manifest 最小权限授面建引擎 →
+  `JsPluginEntry::new`（装配即装载入口，失败 fail-loud）→ 注册进 `plugin_runtime` +
+  合并 `js_plugin_manifest`（Feature 分类）。空目录 → 0 插件，探针保持 `Unavailable`。
+- **`Runtime::plugin_manifest()`**：core 三插件（Core）+ JS 插件（Feature）合并。
+- **`Runtime::js_plugins()`**：`plugin_runtime.as_any().downcast_ref::<JsPluginRuntime>()`
+  → `Option<&JsPluginRuntime>`（业务侧执行/清单入口）。
+- **web-server main.rs**：`--plugins-dir <dir>` 参数 → `runtime.load_js_plugins_dir(dir)`；
+  失败 exit(1)（fail-loud），不传 = 探针 Unavailable（旧行为不变）。
+
+**验证**：bm-assembly 22 全绿（+4：探针 Ready/空目录 Unavailable/损坏 fail-loud/
+manifest 合并；`load_js_plugins_dir_probe_ready_and_executes` 端到端执行 alpha 插件
+`__main`）；web-server 20 全绿（+1 `plugin_core_list_merges_js_plugins`）；workspace +
+clippy + gate1 全过；**release 起服实测**：`js plugins assembled: 1 plugin(s) ... probe=Ready` +
+`plugin.core.list` 4 条（core 三件 + hello JS 插件 category=feature、4 host face(s)）。
+
+**纪律沿用**：JsBridge 内部 block_on 自带 runtime——web-server 测试里装配 JS 插件
+须用 `#[test]`（同步）而非 `#[tokio::test]`（嵌套 runtime 冲突，实测踩到）。
+
+## 7. 环境纪律（沿用）
 
 - 每轮先杀 web-server：`taskkill //F //IM web-server.exe`
 - 跑服务用 release（debug exe 2GB 超 PE 限制）
