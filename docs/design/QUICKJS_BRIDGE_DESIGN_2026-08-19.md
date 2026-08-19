@@ -1,8 +1,9 @@
 # QuickJS 桥设计基线（2026-08-19）
 
 > 状态：**落地中**。host 面契约已定稿（§4）+ rquickjs 桥已实现（§5.2 完成：
-> `HostApi` 注册进全局 `host` + 异步泵打通，11 测试全绿）；§5.3 manifest 装载、
-> §5.4 接真 LLM 待后续。本文件是实现的契约，不是 wiki。
+> `HostApi` 注册进全局 `host` + 异步泵打通，11 测试全绿）；manifest 驱动装载
+> （§5.3 完成：按 manifest 最小权限授面，16 测试全绿）；§5.4 接真 LLM 待后续。
+> 本文件是实现的契约，不是 wiki。
 
 ## 1. 定位
 
@@ -84,6 +85,25 @@ rquickjs 全局 `host`，异步泵打通。11 测试全绿（原 5 契约 + 6 rq
 **host 面**（JS 插件可见）：`host.log` / `host.config.get` / `host.tools.list` /
 `host.tools.invoke`（异步）/ `host.llm.complete`（异步）/ `host.session.append|get|poll`。
 不注册 `host.agent.step`。
+
+### 5.3 落地实录（2026-08-19：manifest 驱动装载完成）
+
+**实现**：`bm/quickjs-bridge/src/plugin.rs`——`JsPluginManifest`（`plugin.json`：
+id / name / version / entry / host 面声明）+ 面白名单 `ALL_HOST_FACES` +
+`LoadedPlugin::load`（目录 → manifest → 入口源码）。`JsBridge::new_with_faces`
+按声明面注册（未声明面不注入 JS，`host.tools`/`host.llm` 等为 `undefined`）。
+
+**最小权限授面**：
+- 面粒度 = 单个方法（`tools.invoke`、`llm.complete` 各自独立授面）。
+- manifest `host` 缺省 = 空集（最小）；未知面名拒绝解析（防拼错静默失效）。
+- 未授面调用：JS 访问 `host.tools.invoke` 抛 ReferenceError（实测钉死）。
+- 包装层动态生成（`build_wrapper`）：只含已授面，未声明面不出现在 `host` 上。
+
+**验证**：16 测试全绿（原 11 + §5.3 新增 5：manifest 解析/去重/最小权限 undefined/
+未授面调用抛错/目录装载）；workspace 全过 + clippy 零警告 + GATE1 ALL PASS。
+
+**下轮 §5.4 接真 LLM**：JS 插件用 `host.llm.complete` 打真实 provider——需组合根把
+真 `LlmPort`（经 `bm-assembly` 装配的聚合 LLM）接进 `HostApi` 实现，桥层无需改动。
 
 ## 6. 相关文件
 

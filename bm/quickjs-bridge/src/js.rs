@@ -1,6 +1,7 @@
 //! rquickjs 内嵌引擎 + host 注册（全局 `host` 对象）+ JS 执行与异步泵。
 //!
-//! 落地顺序 §5.2：把 [`HostApi`] trait 注册进 rquickjs 全局 `host`，异步泵打通。
+//! 落地顺序 §5.2/§5.3：把 [`HostApi`] trait 注册进 rquickjs 全局 `host`，异步泵打通；
+//! host 面按 manifest **最小权限授面**（未声明的面不注入）。
 //!
 //! # 异步泵架构（rquickjs 0.6 无 Node 事件循环，宿主必须驱动 Promise）
 //!
@@ -33,13 +34,15 @@
 //! - `host.session.append(session_id, event)` / `get(session_id)` / `poll(session_id, cursor)` 同步
 //!
 //! 不注册 `host.agent.step`（JS 当 Tool/Policy，不当第二 Agent）。
+//! 授面由 [`crate::plugin::JsPluginManifest`] 声明（最小权限，见 §5.3）。
 
 use std::sync::Arc;
 
 use rquickjs::function::Async;
 use rquickjs::prelude::Func;
-use rquickjs::{async_with, AsyncContext, AsyncRuntime, Function};
+use rquickjs::{async_with, AsyncContext, AsyncRuntime, Ctx, Function, Object};
 
+use crate::plugin::ALL_HOST_FACES;
 use crate::HostApi;
 
 /// 桥运行时：AsyncContext 引擎 + 宿主 API 实现。
@@ -52,36 +55,22 @@ pub struct JsBridge {
     ctx: AsyncContext,
 }
 
-/// JS 侧 host 包装层：原始 `__host_*` 函数返回 JSON 字符串，这里还原成对象。
-///
-/// `__host_tools_invoke` / `__host_llm_complete` 是 `Async` fn（返回 JS Promise），
-/// 包装方法必须是 async（返回 Promise），由调用方 `await`——QuickJS 无同步等待。
-const HOST_WRAPPER: &str = r#"
-globalThis.host = {
-  log: (level, msg) => __host_log(level, msg),
-  config: {
-    get: (pluginId, key) => JSON.parse(__host_config_get(pluginId, key)),
-  },
-  tools: {
-    list: () => JSON.parse(__host_tools_list()),
-    invoke: async (name, args) => JSON.parse(await __host_tools_invoke(name, JSON.stringify(args))),
-  },
-  llm: {
-    complete: async (req) => JSON.parse(await __host_llm_complete(JSON.stringify(req))),
-  },
-  session: {
-    append: (sessionId, event) => JSON.parse(__host_session_append(sessionId, JSON.stringify(event))),
-    get: (sessionId) => JSON.parse(__host_session_get(sessionId)),
-    poll: (sessionId, cursor) => JSON.parse(__host_session_poll(sessionId, cursor)),
-  },
-};
-"#;
-
 impl JsBridge {
-    /// 创建引擎并把 `host` 注册进 JS 全局对象（`globalThis.host`）。
+    /// 创建引擎并把 `host` 全部面注册进 JS 全局对象（`globalThis.host`）。
+    ///
+    /// 等价 `new_with_faces(host, ALL_HOST_FACES)`——全量授面（测试/内嵌便捷入口）；
+    /// 插件装载走 [`Self::new_with_faces`]（manifest 最小权限）。
+    pub fn new(host: Arc<dyn HostApi>) -> Result<Self, String> {
+        Self::new_with_faces(host, ALL_HOST_FACES)
+    }
+
+    /// 创建引擎并**按 `faces` 子集**注册 host 面（最小权限授面）。
+    ///
+    /// 未声明的面不注入 JS：`host.tools` / `host.llm` 等对应对象为 `undefined`，
+    /// 插件访问即抛 ReferenceError——权限治理单点 = 面白名单（`ALL_HOST_FACES`）。
     ///
     /// 引擎跑在专用异步线程的独立 tokio runtime 上；`rt.drive()` 常驻泵 JS 任务。
-    pub fn new(host: Arc<dyn HostApi>) -> Result<Self, String> {
+    pub fn new_with_faces(host: Arc<dyn HostApi>, faces: &[&str]) -> Result<Self, String> {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .thread_name("quickjs-pump")
             .enable_all()
@@ -96,105 +85,26 @@ impl JsBridge {
         // 泵线程：驱动 spawner 里所有 JS 任务（Async fn 的 Promise）。与宿主 runtime 分离。
         rt.spawn(js_rt.drive());
 
-        // 各 host 面用的 Arc 克隆：`async_with!` 闭包体是 async move，闭包内 clone 会整体
-        // move 捕获 `host`，故在此备齐，闭包体只引用这些局部变量。
-        let h_log = host.clone();
-        let h_config = host.clone();
-        let h_tools = host.clone();
-        let h_tools_invoke = host.clone();
-        let h_llm = host.clone();
-        let h_sess_append = host.clone();
-        let h_sess_get = host.clone();
-        let h_sess_poll = host.clone();
-
+        // `async_with!` 闭包体是 async move，闭包内 clone 会整体 move 捕获 `host`，
+        // 故逐面注册时从 `&Arc` clone 局部再用。
+        let h = host.clone();
         rt.block_on(async_with!(ctx => |ctx| {
             let globals = ctx.globals();
-
-            let log = Func::from(move |level: String, msg: String| {
-                h_log.log(&level, &msg);
-                rquickjs::Result::Ok(())
-            });
-            globals.set("__host_log", log).map_err(|e| e.to_string())?;
-
-            let config_get = Func::from(move |plugin_id: String, key: String| {
-                let r = h_config.config_get(&plugin_id, &key);
-                to_json_string(&r)
-            });
-            globals.set("__host_config_get", config_get).map_err(|e| e.to_string())?;
-
-            let tools_list = Func::from(move || {
-                let r = h_tools.tools_list();
-                to_json_string(&r)
-            });
-            globals.set("__host_tools_list", tools_list).map_err(|e| e.to_string())?;
-
-            let tools_invoke = Function::new(
-                ctx.clone(),
-                Async(move |name: String, args_json: String| {
-                    // 异步工具调用：JSON 字符串参数 → serde_json::Value → HostApi。
-                    let host = h_tools_invoke.clone();
-                    async move {
-                        let parsed: serde_json::Value =
-                            serde_json::from_str(&args_json).map_err(host_err)?;
-                        let r = host.tools_invoke(&name, parsed).await;
-                        to_json_string(&r)
-                    }
-                }),
-            )
-            .map_err(|e| e.to_string())?;
-            globals
-                .set("__host_tools_invoke", tools_invoke)
-                .map_err(|e| e.to_string())?;
-
-            let llm_complete = Function::new(
-                ctx.clone(),
-                Async(move |req_json: String| {
-                    let host = h_llm.clone();
-                    async move {
-                        let parsed: serde_json::Value =
-                            serde_json::from_str(&req_json).map_err(host_err)?;
-                        let request: crate::CompleteRequest =
-                            serde_json::from_value(parsed).map_err(host_err)?;
-                        let cancel = crate::Cancellation::new();
-                        let r = host.llm_complete_stream(request, cancel).await;
-                        to_json_string(&r)
-                    }
-                }),
-            )
-            .map_err(|e| e.to_string())?;
-            globals
-                .set("__host_llm_complete", llm_complete)
-                .map_err(|e| e.to_string())?;
-
-            let session_append = Func::from(move |session_id: String, event_json: String| {
-                let parsed: serde_json::Value =
-                    serde_json::from_str(&event_json).map_err(host_err)?;
-                let r = h_sess_append.session_append(&session_id, parsed);
-                to_json_string(&r)
-            });
-            globals
-                .set("__host_session_append", session_append)
-                .map_err(|e| e.to_string())?;
-
-            let session_get = Func::from(move |session_id: String| {
-                let r = h_sess_get.session_get(&session_id);
-                to_json_string(&r)
-            });
-            globals
-                .set("__host_session_get", session_get)
-                .map_err(|e| e.to_string())?;
-
-            let session_poll = Func::from(move |session_id: String, cursor: u64| {
-                let r = h_sess_poll.session_poll(&session_id, cursor);
-                to_json_string(&r)
-            });
-            globals
-                .set("__host_session_poll", session_poll)
-                .map_err(|e| e.to_string())?;
-
-            // JS 包装层：把 JSON 字符串还原成对象，暴露优雅 host 面。
-            ctx.eval::<(), _>(HOST_WRAPPER)
-                .map_err(|e| e.to_string())?;
+            for face in faces {
+                match *face {
+                    "log" => register_log(&ctx, &globals, &h)?,
+                    "config.get" => register_config_get(&ctx, &globals, &h)?,
+                    "tools.list" => register_tools_list(&ctx, &globals, &h)?,
+                    "tools.invoke" => register_tools_invoke(&ctx, &globals, &h)?,
+                    "llm.complete" => register_llm_complete(&ctx, &globals, &h)?,
+                    "session.append" => register_session_append(&ctx, &globals, &h)?,
+                    "session.get" => register_session_get(&ctx, &globals, &h)?,
+                    "session.poll" => register_session_poll(&ctx, &globals, &h)?,
+                    other => return Err(format!("unknown host face: {other}")),
+                }
+            }
+            let wrapper = build_wrapper(faces);
+            ctx.eval::<(), _>(wrapper).map_err(|e| e.to_string())?;
             Ok::<(), String>(())
         }))
         .map_err(|e| e.to_string())?;
@@ -265,6 +175,202 @@ impl std::fmt::Debug for JsBridge {
     }
 }
 
+// ---------- 逐面注册（未声明面不注入） ----------
+
+fn register_log<'js>(ctx: &Ctx<'js>, globals: &Object<'js>, host: &Arc<dyn HostApi>) -> Result<(), String> {
+    let h = host.clone();
+    let _ = ctx;
+    let log = Func::from(move |level: String, msg: String| {
+        h.log(&level, &msg);
+        rquickjs::Result::Ok(())
+    });
+    globals.set("__host_log", log).map_err(|e| e.to_string())
+}
+
+fn register_config_get<'js>(
+    ctx: &Ctx<'js>,
+    globals: &Object<'js>,
+    host: &Arc<dyn HostApi>,
+) -> Result<(), String> {
+    let h = host.clone();
+    let _ = ctx;
+    let config_get = Func::from(move |plugin_id: String, key: String| {
+        let r = h.config_get(&plugin_id, &key);
+        to_json_string(&r)
+    });
+    globals
+        .set("__host_config_get", config_get)
+        .map_err(|e| e.to_string())
+}
+
+fn register_tools_list<'js>(
+    ctx: &Ctx<'js>,
+    globals: &Object<'js>,
+    host: &Arc<dyn HostApi>,
+) -> Result<(), String> {
+    let h = host.clone();
+    let _ = ctx;
+    let tools_list = Func::from(move || {
+        let r = h.tools_list();
+        to_json_string(&r)
+    });
+    globals
+        .set("__host_tools_list", tools_list)
+        .map_err(|e| e.to_string())
+}
+
+fn register_tools_invoke<'js>(
+    ctx: &Ctx<'js>,
+    globals: &Object<'js>,
+    host: &Arc<dyn HostApi>,
+) -> Result<(), String> {
+    let h = host.clone();
+    let tools_invoke = Function::new(
+        ctx.clone(),
+        Async(move |name: String, args_json: String| {
+            // 异步工具调用：JSON 字符串参数 → serde_json::Value → HostApi。
+            let host = h.clone();
+            async move {
+                let parsed: serde_json::Value =
+                    serde_json::from_str(&args_json).map_err(host_err)?;
+                let r = host.tools_invoke(&name, parsed).await;
+                to_json_string(&r)
+            }
+        }),
+    )
+    .map_err(|e| e.to_string())?;
+    globals
+        .set("__host_tools_invoke", tools_invoke)
+        .map_err(|e| e.to_string())
+}
+
+fn register_llm_complete<'js>(
+    ctx: &Ctx<'js>,
+    globals: &Object<'js>,
+    host: &Arc<dyn HostApi>,
+) -> Result<(), String> {
+    let h = host.clone();
+    let llm_complete = Function::new(
+        ctx.clone(),
+        Async(move |req_json: String| {
+            let host = h.clone();
+            async move {
+                let parsed: serde_json::Value =
+                    serde_json::from_str(&req_json).map_err(host_err)?;
+                let request: crate::CompleteRequest =
+                    serde_json::from_value(parsed).map_err(host_err)?;
+                let cancel = crate::Cancellation::new();
+                let r = host.llm_complete_stream(request, cancel).await;
+                to_json_string(&r)
+            }
+        }),
+    )
+    .map_err(|e| e.to_string())?;
+    globals
+        .set("__host_llm_complete", llm_complete)
+        .map_err(|e| e.to_string())
+}
+
+fn register_session_append<'js>(
+    ctx: &Ctx<'js>,
+    globals: &Object<'js>,
+    host: &Arc<dyn HostApi>,
+) -> Result<(), String> {
+    let h = host.clone();
+    let _ = ctx;
+    let session_append = Func::from(move |session_id: String, event_json: String| {
+        let parsed: serde_json::Value = serde_json::from_str(&event_json).map_err(host_err)?;
+        let r = h.session_append(&session_id, parsed);
+        to_json_string(&r)
+    });
+    globals
+        .set("__host_session_append", session_append)
+        .map_err(|e| e.to_string())
+}
+
+fn register_session_get<'js>(
+    ctx: &Ctx<'js>,
+    globals: &Object<'js>,
+    host: &Arc<dyn HostApi>,
+) -> Result<(), String> {
+    let h = host.clone();
+    let _ = ctx;
+    let session_get = Func::from(move |session_id: String| {
+        let r = h.session_get(&session_id);
+        to_json_string(&r)
+    });
+    globals
+        .set("__host_session_get", session_get)
+        .map_err(|e| e.to_string())
+}
+
+fn register_session_poll<'js>(
+    ctx: &Ctx<'js>,
+    globals: &Object<'js>,
+    host: &Arc<dyn HostApi>,
+) -> Result<(), String> {
+    let h = host.clone();
+    let _ = ctx;
+    let session_poll = Func::from(move |session_id: String, cursor: u64| {
+        let r = h.session_poll(&session_id, cursor);
+        to_json_string(&r)
+    });
+    globals
+        .set("__host_session_poll", session_poll)
+        .map_err(|e| e.to_string())
+}
+
+/// 动态 JS 包装层：把已注册的 `__host_*` 函数（返回 JSON 字符串）还原成 `host.*`
+/// 对象。**只含已授面**——未声明面不出现在 `host` 上（访问即 undefined）。
+fn build_wrapper(faces: &[&str]) -> String {
+    let has = |face: &str| faces.contains(&face);
+    let mut out = String::from("globalThis.host = {\n");
+    if has("log") {
+        out.push_str("  log: (level, msg) => __host_log(level, msg),\n");
+    }
+    if has("config.get") {
+        out.push_str(
+            "  config: {\n    get: (pluginId, key) => JSON.parse(__host_config_get(pluginId, key)),\n  },\n",
+        );
+    }
+    if has("tools.list") || has("tools.invoke") {
+        out.push_str("  tools: {\n");
+        if has("tools.list") {
+            out.push_str("    list: () => JSON.parse(__host_tools_list()),\n");
+        }
+        if has("tools.invoke") {
+            out.push_str(
+                "    invoke: async (name, args) => JSON.parse(await __host_tools_invoke(name, JSON.stringify(args))),\n",
+            );
+        }
+        out.push_str("  },\n");
+    }
+    if has("llm.complete") {
+        out.push_str(
+            "  llm: {\n    complete: async (req) => JSON.parse(await __host_llm_complete(JSON.stringify(req))),\n  },\n",
+        );
+    }
+    if has("session.append") || has("session.get") || has("session.poll") {
+        out.push_str("  session: {\n");
+        if has("session.append") {
+            out.push_str(
+                "    append: (sessionId, event) => JSON.parse(__host_session_append(sessionId, JSON.stringify(event))),\n",
+            );
+        }
+        if has("session.get") {
+            out.push_str("    get: (sessionId) => JSON.parse(__host_session_get(sessionId)),\n");
+        }
+        if has("session.poll") {
+            out.push_str(
+                "    poll: (sessionId, cursor) => JSON.parse(__host_session_poll(sessionId, cursor)),\n",
+            );
+        }
+        out.push_str("  },\n");
+    }
+    out.push_str("};\n");
+    out
+}
+
 /// `globalThis.<name>(<json args>)`——serde_json 的 JSON 输出是合法 JS 表达式。
 fn build_call_expr(name: &str, args: &[serde_json::Value]) -> String {
     let args = args
@@ -313,8 +419,10 @@ fn js_value_to_json(v: &rquickjs::Value) -> Result<serde_json::Value, String> {
             let obj = v.as_object().ok_or("not an object")?;
             let mut map = serde_json::Map::new();
             for item in obj.props::<String, rquickjs::Value>() {
-                let (key, val) = (item.as_ref().map_err(|e| e.to_string())?.0.clone(),
-                    js_value_to_json(&item.map_err(|e| e.to_string())?.1)?);
+                let (key, val) = (
+                    item.as_ref().map_err(|e| e.to_string())?.0.clone(),
+                    js_value_to_json(&item.map_err(|e| e.to_string())?.1)?,
+                );
                 map.insert(key, val);
             }
             serde_json::Value::Object(map)

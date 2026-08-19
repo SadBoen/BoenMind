@@ -162,6 +162,7 @@ impl Cancellation {
 // ---------- rquickjs 内嵌引擎（落地顺序 §5.2：全局 host + 异步泵） ----------
 
 pub mod js;
+pub mod plugin;
 
 pub use js::JsBridge;
 
@@ -264,6 +265,7 @@ impl HostApi for MockHost {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plugin::{JsPluginManifest, LoadedPlugin};
 
     #[test]
     fn host_result_serializes_ok_and_err() {
@@ -368,6 +370,83 @@ mod tests {
     /// 同步读全局变量值（JS 值 → JSON）。
     fn read_global(bridge: &JsBridge, name: &str) -> Value {
         bridge.eval_value(&format!("globalThis.{name}")).unwrap()
+    }
+
+    // ---------- manifest 驱动装载 + 最小权限授面（落地顺序 §5.3） ----------
+
+    #[test]
+    fn manifest_parse_and_validate() {
+        let m = JsPluginManifest::from_json(
+            r#"{"id":"p1","name":"P1","version":"1.0.0","entry":"main.js","host":["tools.list","llm.complete"]}"#,
+        )
+        .unwrap();
+        assert_eq!(m.id, "p1");
+        assert_eq!(m.entry, "main.js");
+        assert_eq!(m.face_set().len(), 2);
+        // host 缺省 = 最小（空集）。
+        let m2 = JsPluginManifest::from_json(r#"{"id":"p2","name":"P2","entry":"main.js"}"#).unwrap();
+        assert!(m2.face_set().is_empty());
+        // 未知面名 → 拒绝（防拼错静默失效）。
+        assert!(JsPluginManifest::from_json(
+            r#"{"id":"p3","name":"P3","entry":"m.js","host":["fs.read"]}"#,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn manifest_face_set_dedups() {
+        let m = JsPluginManifest::from_json(
+            r#"{"id":"p","name":"P","entry":"m.js","host":["log","log","tools.list"]}"#,
+        )
+        .unwrap();
+        assert_eq!(m.face_set().len(), 2);
+    }
+
+    #[test]
+    fn js_least_privilege_unlisted_face_is_undefined() {
+        // 只授 log + tools.list：host.llm / host.session / host.tools.invoke 必须 undefined。
+        let host = Arc::new(MockHost::new());
+        let bridge =
+            JsBridge::new_with_faces(host, &["log", "tools.list"]).expect("new_with_faces");
+        bridge.exec("globalThis.__l = typeof host.log;").unwrap();
+        assert_eq!(read_global(&bridge, "__l"), serde_json::json!("function"));
+        bridge.exec("globalThis.__t = typeof host.tools.list;").unwrap();
+        assert_eq!(read_global(&bridge, "__t"), serde_json::json!("function"));
+        // 未授面：对象与方法都不存在。
+        bridge.exec("globalThis.__i = typeof host.tools.invoke;").unwrap();
+        assert_eq!(read_global(&bridge, "__i"), serde_json::json!("undefined"));
+        bridge.exec("globalThis.__llm = typeof host.llm;").unwrap();
+        assert_eq!(read_global(&bridge, "__llm"), serde_json::json!("undefined"));
+        bridge.exec("globalThis.__s = typeof host.session;").unwrap();
+        assert_eq!(read_global(&bridge, "__s"), serde_json::json!("undefined"));
+        bridge.exec("globalThis.__c = typeof host.config;").unwrap();
+        assert_eq!(read_global(&bridge, "__c"), serde_json::json!("undefined"));
+    }
+
+    #[test]
+    fn js_invoke_requires_tools_invoke_face() {
+        // 未授 tools.invoke 时调用 `host.tools.invoke` 必须抛（ReferenceError/TypeError）。
+        let host = Arc::new(MockHost::new());
+        let bridge = JsBridge::new_with_faces(host, &["log"]).expect("new_with_faces");
+        let r = bridge.exec_async("await host.tools.invoke('echo', {});");
+        assert!(r.is_err(), "invoke 应因面未授而失败: {r:?}");
+    }
+
+    #[test]
+    fn loaded_plugin_reads_dir() {
+        // 构造一个临时插件目录：plugin.json + main.js。
+        let dir = std::env::temp_dir().join(format!("qjs-plugin-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("plugin.json"),
+            r#"{"id":"demo","name":"Demo","version":"0.1.0","entry":"main.js","host":["log","tools.list"]}"#,
+        )
+        .unwrap();
+        std::fs::write(dir.join("main.js"), "host.log('info', 'loaded');").unwrap();
+        let loaded = LoadedPlugin::load(&dir).unwrap();
+        assert_eq!(loaded.manifest.id, "demo");
+        assert!(loaded.entry_source.contains("host.log"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
