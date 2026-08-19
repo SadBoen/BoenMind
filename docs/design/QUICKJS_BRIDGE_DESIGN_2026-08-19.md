@@ -1,7 +1,8 @@
 # QuickJS 桥设计基线（2026-08-19）
 
-> 状态：**架构定稿 + workspace 占位已建**（`bm/quickjs-bridge`）。宿主 API 面与
-> rquickjs 异步桥待实现（见 §5 落地顺序）。本文件是实现的契约，不是 wiki。
+> 状态：**落地中**。host 面契约已定稿（§4）+ rquickjs 桥已实现（§5.2 完成：
+> `HostApi` 注册进全局 `host` + 异步泵打通，11 测试全绿）；§5.3 manifest 装载、
+> §5.4 接真 LLM 待后续。本文件是实现的契约，不是 wiki。
 
 ## 1. 定位
 
@@ -57,6 +58,32 @@ host.agent.step(…)                        // 禁止 JS 自管循环（避免�
 3. **manifest 驱动装载**：`plugins/_manifest.toml` 或 JS 插件自带 manifest，声明 host 面 → 最小权限授面。
 4. **接真 LLM**：JS 插件能调 `host.llm.complete_stream` 打真实 provider。
 5. **禁止在 JS 里做**：HTTP、磁盘、加密、大 JSON transform、tokenizer、重试/backoff（全进 Rust 插件）。
+
+### 5.1 落地实录（2026-08-19：§5.2 完成）
+
+**实现**：`bm/quickjs-bridge/src/js.rs` 的 `JsBridge`——把 `HostApi` trait 注册进
+rquickjs 全局 `host`，异步泵打通。11 测试全绿（原 5 契约 + 6 rquickjs 端到端）。
+
+**异步泵架构（rquickjs 0.6 实测结论）**：
+- `Async` fn 注册成 JS Promise 后，future 压进 runtime spawner，**只能由
+  `AsyncContext` + `AsyncRuntime::drive()` 驱动**（`Ctx::eval` 不 poll futures）。
+- 引擎 = `AsyncContext`，跑在专用异步线程的独立 tokio runtime；`rt.spawn(js_rt.drive())`
+  常驻泵 JS 任务（同 rquickjs 官方 `async_test_case` 的 `drive` 用法）。
+- HostApi 调用（tools_invoke/llm_complete_stream）在 JS 插件线程 `block_on` 到**宿主**
+  tokio runtime——与泵线程独立 runtime 分离，杜绝跨 runtime deadlock。
+- 需 `parallel` feature（`tokio::spawn(rt.drive())` 要求 Send）。
+
+**跨桥类型（rquickjs 0.6 的坑）**：
+- `IntoJsFunc` 闭包不能返回带 `'js` lifetime 的 `Value`/`Ctx`（带捕获闭包推断不出统一
+  lifetime）→ host 原始函数统一返回 **JSON 字符串**（`Result<String>`），JS 侧包装层
+  `JSON.parse` 还原成对象——对齐官方 dsh 生态 `JSON.stringify` 风格。
+- `eval_promise`（`JS_EVAL_FLAG_ASYNC`）resolve 出**模块命名空间**而非脚本值 →
+  异步结果走「顶层 `await` 表达式写全局变量 + 同步 `eval_value` 读回」（`call_async`）。
+- `Async` fn 同步调用返回 Promise：包装层 `invoke`/`complete` 必须是 async 方法（调用方 await）。
+
+**host 面**（JS 插件可见）：`host.log` / `host.config.get` / `host.tools.list` /
+`host.tools.invoke`（异步）/ `host.llm.complete`（异步）/ `host.session.append|get|poll`。
+不注册 `host.agent.step`。
 
 ## 6. 相关文件
 

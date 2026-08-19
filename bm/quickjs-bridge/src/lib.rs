@@ -1,7 +1,8 @@
-//! quickjs-bridge：QuickJS 宿主桥（P2：host API 契约层，无 rquickjs）。
+//! quickjs-bridge：QuickJS 宿主桥（host API 契约层 + rquickjs 内嵌引擎）。
 //!
-//! 本模块定义 JS 插件能调用的**宿主 API 面契约**（Rust trait + JSON 出入参），
-//! 不依赖 rquickjs——先用 mock 实现测透契约，再在后续里程碑接 rquickjs。
+//! 本 crate 定义 JS 插件能调用的**宿主 API 面契约**（[`HostApi`] trait + JSON 出入参），
+//! 并把实现注册进 rquickjs 全局 `host`（[`JsBridge`]），异步泵打通（见 `js` 模块）。
+//! 引擎只在组合根装配，kernel 保持纯 Rust 内核库；桥只通过内核契约端口暴露宿主 API。
 //!
 //! 边界（grok 评审 + 实测定稿）：
 //! - JS 只做编排胶水；重逻辑（字符串/正则/JSON/网络/文件）一律回调宿主 Rust API；
@@ -157,6 +158,12 @@ impl Cancellation {
         self.cancelled.load(std::sync::atomic::Ordering::SeqCst)
     }
 }
+
+// ---------- rquickjs 内嵌引擎（落地顺序 §5.2：全局 host + 异步泵） ----------
+
+pub mod js;
+
+pub use js::JsBridge;
 
 // ---------- mock 实现（契约测试用，不接真实运行时） ----------
 
@@ -348,5 +355,109 @@ mod tests {
                 _ => None,
             }
         }
+    }
+
+    // ---------- rquickjs 端到端：host 面注册 + 异步泵（落地顺序 §5.2） ----------
+
+    fn new_bridge() -> (Arc<MockHost>, JsBridge) {
+        let host = Arc::new(MockHost::new());
+        let bridge = JsBridge::new(host.clone()).expect("JsBridge::new");
+        (host, bridge)
+    }
+
+    /// 同步读全局变量值（JS 值 → JSON）。
+    fn read_global(bridge: &JsBridge, name: &str) -> Value {
+        bridge.eval_value(&format!("globalThis.{name}")).unwrap()
+    }
+
+    #[test]
+    fn js_global_host_registered() {
+        let (_h, bridge) = new_bridge();
+        bridge.exec(r#"globalThis.__t = typeof host;"#).unwrap();
+        assert_eq!(read_global(&bridge, "__t"), serde_json::json!("object"));
+    }
+
+    #[test]
+    fn js_host_log_and_config_get() {
+        let (host, bridge) = new_bridge();
+        bridge
+            .exec(r#"host.log("info", "hello from js"); globalThis.__c = host.config.get("p1", "k1");"#)
+            .unwrap();
+        assert_eq!(host.log_lines.lock().unwrap()[0], ("info".into(), "hello from js".into()));
+        // config.get 未命中 → err 信封。
+        let c = read_global(&bridge, "__c");
+        assert_eq!(c["ok"], serde_json::json!("false"));
+        assert_eq!(c["err"]["code"], serde_json::json!("config-not-found"));
+    }
+
+    #[test]
+    fn js_host_tools_list_sync() {
+        let (_h, bridge) = new_bridge();
+        bridge.exec(r#"globalThis.__t = host.tools.list();"#).unwrap();
+        let t = read_global(&bridge, "__t");
+        // {ok:'true', value:[{name:'echo',...}]}
+        assert_eq!(t["ok"], serde_json::json!("true"));
+        assert_eq!(t["value"][0]["name"], serde_json::json!("echo"));
+    }
+
+    #[test]
+    fn js_host_tools_invoke_async_pump() {
+        let (host, bridge) = new_bridge();
+        // 异步工具调用：JS await host.tools.invoke → 泵线程驱动 → 宿主执行 → resolve。
+        // call_async 内部 await 整个 async 函数，结果 JSON 读回。
+        bridge
+            .exec(r#"globalThis.__invoke = async (n, a) => host.tools.invoke(n, a);"#)
+            .unwrap();
+        let r = bridge
+            .call_async("__invoke", &[serde_json::json!("echo"), serde_json::json!({ "text": "hi" })])
+            .unwrap();
+        assert_eq!(r["ok"], serde_json::json!("true"));
+        // 未知工具 → err 信封。
+        let r2 = bridge
+            .call_async("__invoke", &[serde_json::json!("nope"), serde_json::json!({})])
+            .unwrap();
+        assert_eq!(r2["err"]["code"], serde_json::json!("tool-not-found"));
+        let _ = host;
+    }
+
+    #[test]
+    fn js_host_llm_complete_async_pump() {
+        let (_h, bridge) = new_bridge();
+        // LLM 补全异步：JS await → mock 产 chunks。
+        bridge
+            .exec(
+                r#"globalThis.__llmCall = async (req) => host.llm.complete(req);"#,
+            )
+            .unwrap();
+        let r = bridge
+            .call_async(
+                "__llmCall",
+                &[serde_json::json!({
+                    "provider": "mock", "model": "mock-1",
+                    "messages": [{ "role": "user", "content": "hi" }],
+                })],
+            )
+            .unwrap();
+        assert_eq!(r["ok"], serde_json::json!("true"));
+        assert_eq!(r["value"]["chunks"][0]["type"], serde_json::json!("text-delta"));
+    }
+
+    #[test]
+    fn js_host_session_append_get_poll() {
+        let (host, bridge) = new_bridge();
+        bridge
+            .exec(
+                r#"
+                host.session.append("s1", { type: "user/message", text: "hi" });
+                globalThis.__g = host.session.get("s1");
+                globalThis.__p = host.session.poll("s1", 1);
+                "#,
+            )
+            .unwrap();
+        let g = read_global(&bridge, "__g");
+        assert_eq!(g["value"]["events"].as_array().unwrap().len(), 1);
+        let p = read_global(&bridge, "__p");
+        assert_eq!(p["value"]["events"].as_array().unwrap().len(), 0);
+        let _ = host;
     }
 }

@@ -63,9 +63,10 @@ layer 1 组合根 → layer 0 最终程序/桥。
 
 ## 5. 待办（下轮）
 
-1. **quickjs-bridge rquickjs 桥接**：host API 契约已钉死（`HostApi` trait + JSON 出入参 +
-   `{ok,err:{code,retryable}}` 信封 + 拉模型 session_poll + 取消令牌 + **无 agent.step**），
-   5 契约测试已绿。下一步把 `HostApi` 注册进 rquickjs 全局 `host`，异步泵打通。
+1. ~~**quickjs-bridge rquickjs 桥接**~~：**已完成（2026-08-19 同轮）**——`HostApi` 已注册进
+   rquickjs 全局 `host`，异步泵打通（AsyncContext 专用线程 + `rt.drive()`），11 测试全绿
+   （原 5 契约 + 6 rquickjs 端到端）。实现细节与坑见 `docs/design/QUICKJS_BRIDGE_DESIGN_2026-08-19.md` §5.1。
+   下轮：§5.3 manifest 驱动装载（按 manifest 声明授 host 面，最小权限）。
 2. **dsh-rust-plugins 更新流程**：源仓已打 tag `absorbed-into-boenmind-2026-08-19` 锁 commit，
    台账 `docs/PLUGIN_ABSORPTION_LEDGER_2026-08-19.md`；后续按台账流程吸收。
 3. **web-server 的 conformance / gate25 / m3-r3 脚本**：hot-replace / hot-upgrade-transition
