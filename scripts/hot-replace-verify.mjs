@@ -15,6 +15,28 @@ let failures = 0;
 const ok = (name, cond, extra = "") => { console.log(cond ? "PASS" : "FAIL", name, extra); if (!cond) failures++; };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// settings/credentials 写面会落盘到 ~/.boenmind/settings.json；运行前备份并清除，
+// 结束后恢复——防止本脚本的 hot-key/baseURL 污染后续验证轮（真实回归源）。
+import { homedir } from "node:os";
+import { existsSync, renameSync } from "node:fs";
+const settingsPath = join(homedir(), ".boenmind", "settings.json");
+const settingsBackup = settingsPath + ".hr-backup";
+function isolateSettings() {
+  if (existsSync(settingsPath)) {
+    renameSync(settingsPath, settingsBackup);
+  } else if (existsSync(settingsBackup)) {
+    rmSync(settingsBackup, { force: true });
+  }
+}
+function restoreSettings() {
+  // 隔离期新建的 settings.json（写面落盘）→ 删除；有备份则恢复。
+  if (existsSync(settingsBackup)) {
+    if (existsSync(settingsPath)) rmSync(settingsPath, { force: true });
+    renameSync(settingsBackup, settingsPath);
+  } else {
+    rmSync(settingsPath, { force: true });
+  }
+}
 async function rpc(method, payload, rpcId = "hr") {
   const r = await fetch(`${API}/${method}`, { method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ type: "client-request", rpcId, method, payload }) });
@@ -52,6 +74,7 @@ async function historyTailError(sid) {
 }
 
 async function main() {
+  isolateSettings();
   const A = await mockEndpoint(3190);
   const B = await mockEndpoint(3191);
 
@@ -60,8 +83,8 @@ async function main() {
   writeFileSync(cfgPath, `default_provider = "deepseek"\ndefault_model = "deepseek-chat"\n\n[[providers]]\nid = "deepseek"\nname = "DeepSeek"\nkind = "deepseek"\nbase_url = "http://127.0.0.1:3190/v1"\nmodels = ["deepseek-chat"]\n`);
 
   const db = join(work, "hot.db");
-  const child = spawn("kernel/target/release/web-server.exe",
-    ["--db", db, "--port", String(PORT), "--dist", "kernel/web-server/frontend", "--config", cfgPath],
+  const child = spawn("target/release/web-server.exe",
+    ["--db", db, "--port", String(PORT), "--dist", "bm/web-server/frontend", "--config", cfgPath],
     { stdio: ["ignore", "pipe", "pipe"] });
   try {
     const deadline = Date.now() + 20000;
@@ -126,8 +149,9 @@ async function main() {
 
   console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURES`);
   child.kill();
+  restoreSettings();
   rmSync(work, { recursive: true, force: true });
   process.exit(failures === 0 ? 0 : 1);
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+main().catch((e) => { restoreSettings(); console.error(e); process.exit(1); });

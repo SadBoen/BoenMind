@@ -22,8 +22,8 @@ async function rpc(method, payload, rpcId = "hotup") {
 
 function startServer(db, port) {
   // 从仓库根启动（--dist 相对根解析）。
-  const child = spawn("kernel/target/release/web-server.exe",
-    ["--db", db, "--port", String(port), "--dist", "kernel/web-server/frontend"],
+  const child = spawn("target/release/web-server.exe",
+    ["--db", db, "--port", String(port), "--dist", "bm/web-server/frontend"],
     { stdio: ["ignore", "pipe", "pipe"] });
   return child;
 }

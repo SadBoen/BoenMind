@@ -63,11 +63,13 @@ layer 1 组合根 → layer 0 最终程序/桥。
 
 ## 5. 待办（下轮）
 
-1. **quickjs-bridge 实现**（按设计文档 §5 顺序）：host 面契约测试 → rquickjs 桥接 → manifest 驱动 → 接真 LLM。
-2. **dsh-rust-plugins 源仓打 tag**：三插件已复制进 BoenMind/plugins，源仓应打 tag 锁 commit，
-   之后吸收机制 = 源仓冻结 → 产品 crate 吸收（不双向同步）。
-3. **web-server 的 conformance / gate25 / m3-r3 / hot-replace 脚本**：路径要跟到 BoenMind
-   （.tmp/ 下脚本引用 `kernel/web-server` 旧路径的需更新）。
+1. **quickjs-bridge rquickjs 桥接**：host API 契约已钉死（`HostApi` trait + JSON 出入参 +
+   `{ok,err:{code,retryable}}` 信封 + 拉模型 session_poll + 取消令牌 + **无 agent.step**），
+   5 契约测试已绿。下一步把 `HostApi` 注册进 rquickjs 全局 `host`，异步泵打通。
+2. **dsh-rust-plugins 更新流程**：源仓已打 tag `absorbed-into-boenmind-2026-08-19` 锁 commit，
+   台账 `docs/PLUGIN_ABSORPTION_LEDGER_2026-08-19.md`；后续按台账流程吸收。
+3. **web-server 的 conformance / gate25 / m3-r3 脚本**：hot-replace / hot-upgrade-transition
+   已更新为新路径；conformance 等如需跑用新路径。
 4. kernel `docs/harness-surface-comparison.md` 是历史对照（旧布局描述），保留；新布局见本交接。
 
 ## 5.5 P0 装配点收口（2026-08-19 同轮完成，grok 评审驱动）

@@ -1376,8 +1376,13 @@ dependencies = [
 name = "quickjs-bridge"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "futures",
  "kernel-contracts",
  "rquickjs",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

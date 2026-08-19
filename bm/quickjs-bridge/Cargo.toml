@@ -3,8 +3,15 @@ name = "quickjs-bridge"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "QuickJS 宿主桥：rquickjs 内嵌引擎，暴露 host API 面给 JS 插件（占位，随设计文档后置）"
+description = "QuickJS 宿主桥：host API 面契约（无 rquickjs，P2）+ rquickjs 内嵌引擎（后续）"
 
 [dependencies]
 kernel-contracts = { path = "../../kernel/kernel-contracts" }
+serde.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+futures.workspace = true
+
+[dev-dependencies]
 rquickjs = { version = "0.6", features = ["macro"] }
