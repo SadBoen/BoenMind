@@ -20,7 +20,7 @@ use kernel_contracts::bus::EventBus;
 use kernel_contracts::llm::{GenerateOptions, LlmPort};
 use kernel_contracts::plugin::{PluginCategory, PluginManifestEntry};
 use kernel_contracts::ports::{
-    PluginRuntimeAvailability, PluginRuntimePort, SessionPersistPort,
+    AuthPort, PluginRuntimeAvailability, PluginRuntimePort, SessionPersistPort,
 };
 use kernel_contracts::session::{
     SessionEvent, SessionHeader, StepPhase, TurnEndReason, TurnEvent,
@@ -43,6 +43,9 @@ pub use js_plugins::{JsPluginEntry, JsPluginRuntime};
 /// 脚本化 mock LLM 装配（门禁/headless 用）：按脚本产出工具调用 + 续文本。
 /// 组合根职责：装配 mock 也是装配；headless（L0）经此获得 mock，不直接依赖 plugin-llm。
 pub use plugin_llm::MockTurn;
+
+/// 认证插件默认密码（web-server `--auth` 日志用；组合根 re-export，L0 不依赖 plugin-auth）。
+pub use plugin_auth::DEFAULT_PASSWORD;
 
 /// 构造一个脚本化 mock LLM（`swap_llm` 的输入）。见 [`MockTurn`]。
 pub fn scripted_llm(
@@ -117,6 +120,9 @@ pub struct Runtime {
     pub gate: Arc<ToolGate>,
     pub persist: Arc<dyn SessionPersistPort>,
     pub plugin_runtime: Arc<dyn PluginRuntimePort>,
+    /// 认证端口（认证插件 `auth`）：未装配 = `None`（fail-loud：不假认证成功，
+    /// 业务侧显式处理——未装配时不启用登录门）。
+    pub auth: Option<Arc<dyn AuthPort>>,
     pub provider: String,
     pub model: String,
     pub bus: EventBus,
@@ -165,6 +171,7 @@ impl Runtime {
             gate,
             persist,
             plugin_runtime: Arc::new(kernel_contracts::UnavailablePluginRuntime),
+            auth: None,
             provider: "mock".to_string(),
             model: "mock-1".to_string(),
             bus,
@@ -331,6 +338,30 @@ impl Runtime {
         self.plugin_runtime
             .as_any()
             .downcast_ref::<JsPluginRuntime>()
+    }
+
+    /// JS 插件运行时 `Arc` 视图（异步/线程切换场景用：`call` 内部 block_on
+    /// 自带 runtime，须经 `spawn_blocking` 脱离 tokio 上下文，需要 `Arc` 克隆）。
+    pub fn js_plugins_arc(&self) -> Option<Arc<JsPluginRuntime>> {
+        Arc::downcast(self.plugin_runtime.clone()).ok()
+    }
+
+    /// 装配认证插件（`--auth`）：把 `AuthPort` 实现接进运行时（登录/登出/改密/
+    /// 会话校验）。`auth_path` = `auth.json` 持久化文件；None = 内存态（默认
+    /// 密码兜底，重启回默认）。装配后 `plugin_manifest()` 追加 auth（Feature）。
+    pub fn install_auth(&mut self, auth: Arc<dyn AuthPort>) {
+        self.auth = Some(auth);
+        self.core_plugins.push(plugin_auth::manifest());
+    }
+
+    /// 装配默认认证插件（web-server `--auth` 入口）：默认密码 + 可选持久化文件。
+    /// L0（web-server）不直接依赖 plugin-auth（边界守卫），经此组合根入口装配。
+    pub fn install_default_auth(&mut self, auth_path: Option<PathBuf>) {
+        let mut plugin = plugin_auth::AuthPlugin::new();
+        if let Some(p) = auth_path {
+            plugin = plugin.with_auth_file(p);
+        }
+        self.install_auth(Arc::new(plugin));
     }
 
     /// QuickJS 桥装配（§5.4 接真 LLM + §5.5 tools/session 面 + §5.6 config 面）：

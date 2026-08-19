@@ -357,9 +357,36 @@ impl AppState {
     }
 }
 
+/// 认证门控放行的方法（登录/登出/状态/改密——无会话也可调；改密需会话内校验）。
+fn auth_methods() -> &'static [&'static str] {
+    &[
+        "auth.status",
+        "auth.login",
+        "auth.logout",
+        "auth.changePassword",
+        "host.describe", // 前端启动先查状态，放行（不含敏感数据）
+    ]
+}
+
 /// 分派入口：method 与路径端点不一致时由调用方先判 bad-request（fetch/handler 语义）。
-pub async fn dispatch(state: &Arc<AppState>, method: &str, payload: Value) -> Value {
+///
+/// `token` = `x-boenmind-session` 请求头（认证插件 `--auth` 装配后生效）。
+/// 认证门控：装配了 AuthPort 时，除 [`auth_methods`] 外全部 RPC 需有效会话
+/// （`auth-required` 拒绝）；未装配（无 --auth）= 旧行为（不门控）。
+pub async fn dispatch(state: &Arc<AppState>, method: &str, payload: Value, token: Option<&str>) -> Value {
+    // 认证门控（fail-closed）：装配了认证插件才启用；未装配放行（旧行为）。
+    if let Some(auth) = &state.runtime.auth {
+        let is_auth_method = auth_methods().contains(&method);
+        if !is_auth_method && !auth.is_authenticated(token.unwrap_or("")) {
+            return err("auth-required", format!("method '{method}' requires login (--auth)"));
+        }
+    }
     match method {
+        // 认证面（--auth 装配；未装配 auth.* 报 not-available——诚实失败）。
+        "auth.status" => auth_status(state, token).await,
+        "auth.login" => auth_login(state, payload).await,
+        "auth.logout" => auth_logout(state, token).await,
+        "auth.changePassword" => auth_change_password(state, payload, token).await,
         "host.describe" => host_describe(state),
         "session.list" => session_list(state).await,
         "session.create" => session_create(state, payload).await,
@@ -377,6 +404,10 @@ pub async fn dispatch(state: &Arc<AppState>, method: &str, payload: Value) -> Va
         // 核心插件清单（llm / loop / tools，category=Core）：插件管理员按类
         // 分组/隐藏的数据源（当前仅核心三件；Feature 插件随功能面扩展追加）。
         "plugin.core.list" => plugin_core_list(state),
+        // JS 插件管理面（--plugins-dir 装配；未装配 fail-loud）：
+        // list = 已装配插件清单；invoke = 执行插件主函数（__main）。
+        "plugin.js.list" => plugin_js_list(state),
+        "plugin.js.invoke" => plugin_js_invoke(state, payload).await,
         "workspace.list" => workspace_list(state),
         "workspace.create" => workspace_create(state, payload),
         "workspace.rename" => workspace_rename(state, payload),
@@ -478,10 +509,118 @@ fn test_register_pending(state: &AppState, method: &str, payload: Value) -> Valu
     ok(json!({ "rpcId": rpc_id }))
 }
 
+/// 认证面：登录/登出/状态/改密（AuthPort；--auth 装配；未装配诚实失败）。
+fn auth_port(state: &AppState) -> Result<&dyn kernel_contracts::AuthPort, Value> {
+    state
+        .runtime
+        .auth
+        .as_deref()
+        .ok_or_else(|| err("auth-not-available", "auth plugin not installed (pass --auth)"))
+}
+
+/// auth.status：当前会话是否有效。
+async fn auth_status(state: &AppState, token: Option<&str>) -> Value {
+    match auth_port(state) {
+        Ok(auth) => ok(json!({ "authenticated": auth.is_authenticated(token.unwrap_or("")) })),
+        Err(e) => e,
+    }
+}
+
+/// auth.login：只密码登录，成功签发会话 token。
+async fn auth_login(state: &AppState, payload: Value) -> Value {
+    let auth = match auth_port(state) {
+        Ok(a) => a,
+        Err(e) => return e,
+    };
+    let Some(password) = payload.get("password").and_then(Value::as_str) else {
+        return err("bad-request", "missing password");
+    };
+    match auth.login(password).await {
+        Ok(r) if r.ok => ok(json!({ "token": r.token })),
+        Ok(_) => err("wrong-password", "wrong password"),
+        Err(e) => err("auth-error", format!("{e:?}")),
+    }
+}
+
+/// auth.logout：作废当前会话（幂等）。
+async fn auth_logout(state: &AppState, token: Option<&str>) -> Value {
+    match auth_port(state) {
+        Ok(auth) => {
+            if let Some(t) = token {
+                auth.logout(t);
+            }
+            ok(Value::Null)
+        }
+        Err(e) => e,
+    }
+}
+
+/// auth.changePassword：改密（需会话有效 + 当前密码正确）。
+async fn auth_change_password(state: &AppState, payload: Value, token: Option<&str>) -> Value {
+    let auth = match auth_port(state) {
+        Ok(a) => a,
+        Err(e) => return e,
+    };
+    let current = payload.get("currentPassword").and_then(Value::as_str).unwrap_or("");
+    let new = payload.get("newPassword").and_then(Value::as_str).unwrap_or("");
+    match auth
+        .change_password(token.unwrap_or(""), current, new)
+        .await
+    {
+        Ok(r) if r.ok => ok(Value::Null),
+        Ok(r) => err(&r.error, format!("auth failed: {}", r.error)),
+        Err(e) => err("auth-error", format!("{e:?}")),
+    }
+}
+
 /// 核心插件清单：返回 llm / loop / tools 三条清单条目（category=Core）。
 /// 形状 `{ "plugins": [{id, category, name, description, version}] }`。
 fn plugin_core_list(state: &AppState) -> Value {
     ok(json!({ "plugins": state.runtime.plugin_manifest() }))
+}
+
+/// JS 插件清单（--plugins-dir 装配后；未装配 fail-loud 报错，不假空清单）。
+/// 形状 `{ "plugins": [{id, name, version, faces}] }`（faces = manifest 声明的
+/// host 面子集，供管理面展示最小权限）。
+fn plugin_js_list(state: &AppState) -> Value {
+    let Some(rt) = state.runtime.js_plugins() else {
+        return err("plugin-runtime-unavailable", "no JS plugin runtime (pass --plugins-dir)");
+    };
+    let plugins: Vec<Value> = rt
+        .entries()
+        .iter()
+        .map(|e| {
+            json!({
+                "id": e.manifest.id,
+                "name": e.manifest.name,
+                "version": e.manifest.version,
+                "faces": e.manifest.host,
+            })
+        })
+        .collect();
+    ok(json!({ "plugins": plugins }))
+}
+
+/// 执行 JS 插件主函数（`__main`）。
+///
+/// 测试纪律（JsBridge 内部 block_on 自带 runtime）：`call` 必须脱离 tokio
+/// 上下文执行，经 `spawn_blocking` 派到阻塞线程——不能在 dispatch 的 async
+/// 上下文里直接调（"Cannot start a runtime from within a runtime"）。
+async fn plugin_js_invoke(state: &AppState, payload: Value) -> Value {
+    let Some(rt) = state.runtime.js_plugins_arc() else {
+        return err("plugin-runtime-unavailable", "no JS plugin runtime (pass --plugins-dir)");
+    };
+    let Some(plugin_id) = payload.get("pluginId").and_then(Value::as_str) else {
+        return err("bad-request", "missing pluginId");
+    };
+    let plugin_id = plugin_id.to_string();
+    // spawn_blocking：QuickJS 引擎执行（含内部 block_on）必须脱离 tokio 上下文。
+    let pid = plugin_id.clone();
+    match tokio::task::spawn_blocking(move || rt.call(&pid)).await {
+        Ok(Ok(value)) => ok(json!({ "result": value })),
+        Ok(Err(e)) => err("plugin-exec-error", format!("js plugin '{plugin_id}' failed: {e}")),
+        Err(e) => err("plugin-exec-error", format!("js plugin task panicked: {e}")),
+    }
 }
 
 fn host_describe(state: &AppState) -> Value {
@@ -2160,6 +2299,179 @@ mod tests {
         assert_eq!(js[0]["version"], "1.2.3");
 
         let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_file(db);
+    }
+
+    /// §6 JS 插件管理面：plugin.js.list 列已装配插件（faces 最小权限展示）；
+    /// plugin.js.invoke 经 spawn_blocking 执行插件主函数（脱离 tokio 上下文）。
+    ///
+    /// 测试纪律：JsBridge 内部 block_on 自带 runtime——装配 JS 插件必须在
+    /// `#[test]`（同步）上下文；invoke 的 spawn_blocking 需要 tokio runtime，
+    /// 故用 `#[test]` + 手建 runtime（`Runtime::new().block_on`）驱动 invoke，
+    /// 不经 `#[tokio::test]`（其上下文会与 JsBridge block_on 冲突）。
+    #[test]
+    fn plugin_js_list_and_invoke() {
+        use bm_assembly::Runtime;
+        use std::sync::Arc;
+
+        let db = std::env::temp_dir().join(format!("bm-plugin-js-{}.db", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("bm-plugin-js-dir-{}", uuid::Uuid::new_v4()));
+
+        // 未装配：list/invoke 都 fail-loud（不假空清单/假成功）。
+        let rt = Runtime::headless(db.clone()).unwrap();
+        let state = Arc::new(AppState::assemble(rt, vec![], vec![]));
+        let r0 = plugin_js_list(&state);
+        assert_eq!(r0["ok"], false);
+        assert_eq!(r0["error"]["code"], "plugin-runtime-unavailable");
+
+        // 装配一个 JS 插件（id=greet，faces=[log]；主函数返回欢迎语）。
+        let mut rt = Runtime::headless(db.clone()).unwrap();
+        let dir = root.join("greet");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("plugin.json"),
+            r#"{"id":"greet","name":"Greet","version":"0.1.0","entry":"main.js","host":["log"]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("main.js"),
+            r#"
+            globalThis.__main = () => {
+                host.log('info', 'greet called');
+                return { greeting: 'hello from greet plugin' };
+            };
+            "#,
+        )
+        .unwrap();
+        let n = rt.load_js_plugins_dir(&root).unwrap();
+        assert_eq!(n, 1);
+        let state = Arc::new(AppState::assemble(rt, vec![], vec![]));
+
+        // list：插件清单 + faces。
+        let rl = plugin_js_list(&state);
+        assert_eq!(rl["ok"], true);
+        assert_eq!(rl["value"]["plugins"][0]["id"], "greet");
+        assert_eq!(rl["value"]["plugins"][0]["faces"][0], "log");
+
+        // invoke：手建 tokio runtime 驱动（spawn_blocking 需要 runtime 上下文；
+        // 装配已在同步阶段完成，此处不重新装配 JS 引擎）。
+        let tokio_rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let ri = tokio_rt.block_on(plugin_js_invoke(
+            &state,
+            serde_json::json!({ "pluginId": "greet" }),
+        ));
+        assert_eq!(ri["ok"], true, "invoke ok: {ri}");
+        assert_eq!(ri["value"]["result"]["greeting"], "hello from greet plugin");
+
+        // 未知插件 id → plugin-exec-error。
+        let rmiss = tokio_rt.block_on(plugin_js_invoke(
+            &state,
+            serde_json::json!({ "pluginId": "nope" }),
+        ));
+        assert_eq!(rmiss["ok"], false);
+        assert_eq!(rmiss["error"]["code"], "plugin-exec-error");
+
+        // 缺 pluginId → bad-request。
+        let rbad = tokio_rt.block_on(plugin_js_invoke(&state, serde_json::json!({})));
+        assert_eq!(rbad["error"]["code"], "bad-request");
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_file(db);
+    }
+
+    /// §7 认证门控：装配 AuthPort 后，非 auth 方法需会话 token（auth-required 拒绝）；
+    /// auth.login 签发 token、auth.status 校验、auth.changePassword 改密。
+    ///
+    /// 测试用极简 AuthPort（web-server 是 L0，边界守卫禁 dev-deps 依赖 plugin-auth；
+    /// plugin-auth 自身行为在其 crate 测试覆盖，此处只测 web-server 门控接线）。
+    struct TestAuth;
+    #[async_trait::async_trait]
+    impl kernel_contracts::AuthPort for TestAuth {
+        fn is_authenticated(&self, token: &str) -> bool {
+            token == "valid-token"
+        }
+        async fn login(&self, password: &str) -> Result<kernel_contracts::AuthResult, kernel_contracts::PortError> {
+            if password == "secret" {
+                Ok(kernel_contracts::AuthResult::success("valid-token".into()))
+            } else {
+                Ok(kernel_contracts::AuthResult::failure("wrong-password"))
+            }
+        }
+        fn logout(&self, _token: &str) {}
+        async fn change_password(
+            &self,
+            token: &str,
+            _current: &str,
+            new: &str,
+        ) -> Result<kernel_contracts::AuthResult, kernel_contracts::PortError> {
+            if !self.is_authenticated(token) {
+                Ok(kernel_contracts::AuthResult::failure("login-required"))
+            } else if new.len() < 4 {
+                Ok(kernel_contracts::AuthResult::failure("password-too-short"))
+            } else {
+                Ok(kernel_contracts::AuthResult::success(String::new()))
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn auth_gate_blocks_and_login_flow() {
+        use bm_assembly::Runtime;
+        use std::sync::Arc;
+
+        let db = std::env::temp_dir().join(format!("bm-auth-gate-{}.db", uuid::Uuid::new_v4()));
+        // 未装配认证：不门控（旧行为），auth.* 诚实失败。
+        let rt = Runtime::headless(db.clone()).unwrap();
+        let state = Arc::new(AppState::assemble(rt, vec![], vec![]));
+        let r0 = dispatch(&state, "session.list", json!({}), None).await;
+        assert_eq!(r0["ok"], true, "no auth = no gate: {r0}");
+        let r0b = dispatch(&state, "auth.status", json!({}), None).await;
+        assert_eq!(r0b["error"]["code"], "auth-not-available");
+
+        // 装配认证：session.list 未登录 → auth-required；host.describe 放行。
+        let mut rt = Runtime::headless(db.clone()).unwrap();
+        rt.install_auth(Arc::new(TestAuth));
+        let state = Arc::new(AppState::assemble(rt, vec![], vec![]));
+        let r1 = dispatch(&state, "session.list", json!({}), None).await;
+        assert_eq!(r1["error"]["code"], "auth-required");
+        let r1b = dispatch(&state, "host.describe", json!({}), None).await;
+        assert_eq!(r1b["ok"], true, "host.describe is auth_methods: {r1b}");
+
+        // 错误密码 → wrong-password；正确密码 → token。
+        let r2 = dispatch(&state, "auth.login", json!({ "password": "nope" }), None).await;
+        assert_eq!(r2["error"]["code"], "wrong-password");
+        let r3 = dispatch(&state, "auth.login", json!({ "password": "secret" }), None).await;
+        let token = r3["value"]["token"].as_str().unwrap().to_string();
+        assert_eq!(token, "valid-token");
+
+        // 带 token → 放行。
+        let r4 = dispatch(&state, "session.list", json!({}), Some(&token)).await;
+        assert_eq!(r4["ok"], true, "with token: {r4}");
+        // 状态校验。
+        let r5 = dispatch(&state, "auth.status", json!({}), Some(&token)).await;
+        assert_eq!(r5["value"]["authenticated"], true);
+
+        // 未登录改密 → login-required；登录后改密成功。
+        let r6 = dispatch(
+            &state,
+            "auth.changePassword",
+            json!({ "currentPassword": "secret", "newPassword": "newsecret" }),
+            None,
+        )
+        .await;
+        assert_eq!(r6["error"]["code"], "login-required");
+        let r7 = dispatch(
+            &state,
+            "auth.changePassword",
+            json!({ "currentPassword": "secret", "newPassword": "newsecret" }),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(r7["ok"], true, "change with token: {r7}");
+
         let _ = std::fs::remove_file(db);
     }
 }

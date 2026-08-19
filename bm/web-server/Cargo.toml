@@ -25,5 +25,6 @@ toml = "0.8"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
+async-trait.workspace = true
 http-body-util = "0.1"
 tower = { version = "0.5", features = ["util"] }

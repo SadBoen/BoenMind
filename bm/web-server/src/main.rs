@@ -89,6 +89,7 @@ fn main() {
     let mut config: Option<PathBuf> = None;
     let mut max_steps: u64 = kernel_session::DEFAULT_MAX_STEPS;
     let mut plugins_dir: Option<PathBuf> = None;
+    let mut auth_enabled = false;
 
     let mut i = 1;
     while i < args.len() {
@@ -133,9 +134,12 @@ fn main() {
                 i += 1;
                 plugins_dir = Some(PathBuf::from(&args[i]));
             }
+            "--auth" => {
+                auth_enabled = true;
+            }
             "--help" | "-h" => {
                 println!(
-                    "usage: web-server [--db <path>] [--dist <dir>] [--boot-json <file>] [--port <n>] [--trusted-host <host>] [--config <toml>] [--max-steps <n>] [--plugins-dir <dir>]"
+                    "usage: web-server [--db <path>] [--dist <dir>] [--boot-json <file>] [--port <n>] [--trusted-host <host>] [--config <toml>] [--max-steps <n>] [--plugins-dir <dir>] [--auth]"
                 );
                 return;
             }
@@ -212,6 +216,19 @@ fn main() {
                 std::process::exit(1);
             }
         }
+    }
+
+    // 认证插件装配（--auth）：启用登录门——敏感方法（credentials.set /
+    // settings.update 等）与全部 RPC 需会话 token。密码文件 ~/.boenmind/auth.json
+    // （默认密码 adminadmin，首登后设置中心改）；不传 --auth = 无登录门（旧行为）。
+    // L0 不直接依赖 plugin-auth（边界守卫）：经 bm-assembly 组合根入口装配。
+    if auth_enabled {
+        let auth_path = std::env::home_dir().map(|h| h.join(".boenmind").join("auth.json"));
+        runtime.install_default_auth(auth_path);
+        tracing::info!(
+            "auth plugin installed (login gate on; default password {})",
+            bm_assembly::DEFAULT_PASSWORD
+        );
     }
 
     // settings/credentials 持久化文件（P2-C：重启恢复配置与凭据；

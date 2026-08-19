@@ -27,7 +27,7 @@ fn layer_of(crate_name: &str) -> Option<u32> {
         "kernel-contracts" => 5,
         "kernel-session" | "kernel-storage" => 4,
         "kernel-supervisor" => 3,
-        "plugin-llm" | "plugin-loop" | "plugin-tools" => 2,
+        "plugin-llm" | "plugin-loop" | "plugin-tools" | "plugin-auth" => 2,
         "bm-assembly" => 1,
         "web-server" | "headless" | "quickjs-bridge" => 0,
         _ => return None,
@@ -119,6 +119,7 @@ fn dependencies_are_downward_only() {
         "plugin-llm",
         "plugin-loop",
         "plugin-tools",
+        "plugin-auth",
     ] {
         layer_of(k).unwrap_or_else(|| panic!("expected crate {k} registered in layer_of"));
         if !k.starts_with("kernel-") {

@@ -122,7 +122,12 @@ async fn handle_rpc(
     }
 
     tracing::info!(method = %request.method, "rpc call");
-    let result = api::dispatch(&state, &request.method, request.payload).await;
+    let token = headers
+        .get("x-boenmind-session")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let result = api::dispatch(&state, &request.method, request.payload, token.as_deref()).await;
     let resp = ServerResponse {
         type_: "server-response",
         rpc_id: request.rpc_id,
