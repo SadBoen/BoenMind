@@ -2006,11 +2006,30 @@ fn hostfs_err(e: HostFsError) -> Value {
 }
 
 /// 目标相对 workdir 的 POSIX 风格路径（前端统一 / 分隔）。
+/// 用字符串前缀剥离（Windows 下 canonical 路径可能带 `\\?\` / `//?/` 前缀而
+/// read_dir 返回普通路径，Path::strip_prefix 会失败 → 归一化去前缀后按字符串比）。
 fn rel_from_workdir(wd: &Path, target: &Path) -> String {
-    target
-        .strip_prefix(wd)
-        .map(|p| p.to_string_lossy().replace('\\', "/"))
-        .unwrap_or_else(|_| target.to_string_lossy().replace('\\', "/"))
+    let norm = |s: &std::path::Path| {
+        s.to_string_lossy()
+            .replace('\\', "/")
+            .trim_end_matches('/')
+            .to_string()
+    };
+    // 统一去掉 Windows extended-length 前缀（`\\?\` → `//?/`）。
+    let strip_win_prefix = |s: String| {
+        if let Some(rest) = s.strip_prefix("//?/") {
+            rest.to_string()
+        } else {
+            s
+        }
+    };
+    let wd_s = strip_win_prefix(norm(wd));
+    let target_s = strip_win_prefix(norm(target));
+    let stripped = target_s
+        .strip_prefix(&wd_s)
+        .and_then(|r| r.strip_prefix('/'))
+        .unwrap_or(&target_s);
+    stripped.to_string()
 }
 
 /// 构造单个 SettingsNamespaceView（台账 §2：{ns, schema, value, base?, user?, applies, secrets, revision}）。

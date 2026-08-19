@@ -108,6 +108,18 @@ export default function FileManagerUnit() {
     refreshRoot();
   }, [refreshRoot]);
 
+  // 设置里保存工作目录 → 自动重载（无需手动刷新页面）
+  useEffect(() => {
+    const onWorkdirChanged = () => {
+      setOpenPath(null);
+      setEditMode(false);
+      setDirty(false);
+      refreshRoot();
+    };
+    window.addEventListener("bm-workdir-changed", onWorkdirChanged);
+    return () => window.removeEventListener("bm-workdir-changed", onWorkdirChanged);
+  }, [refreshRoot]);
+
   const toTreeNodes = (entries: TreeEntry[]): TreeNode[] =>
     entries
       .filter((e) => !e.hidden)
@@ -120,13 +132,20 @@ export default function FileManagerUnit() {
         icon: e.isDir ? <FolderOpenOutlined /> : <FileAddOutlined />,
       }));
 
-  // 懒加载子目录
+  // 懒加载子目录（受控 treeData 需不可变更新——直接改 node.children 不触发重渲染）
   const onLoadData = useCallback(
     async (node: any) => {
-      const v = await rpc<{ entries: TreeEntry[] }>("host.listWorkdir", { path: node.path });
-      const children = toTreeNodes(v.entries);
-      node.children = children;
-      setTreeData((td) => [...td]);
+      const path = node.path as string;
+      const v = await rpc<{ entries: TreeEntry[] }>("host.listWorkdir", { path });
+      const children = toTreeNodes(v.entries) as TreeNode[];
+      // 递归重建树，替换目标节点的 children
+      const update = (nodes: TreeNode[]): TreeNode[] =>
+        nodes.map((n) => {
+          if (n.key === node.key) return { ...n, children, isLeaf: children.length === 0 };
+          if (n.children) return { ...n, children: update(n.children as TreeNode[]) };
+          return n;
+        });
+      setTreeData((td) => update(td));
     },
     [],
   );
@@ -345,8 +364,8 @@ export default function FileManagerUnit() {
 
   return (
     <div className="fm-unit" ref={containerRef}>
-      {/* 宽模式：左右分栏；窄模式：预览覆盖 */}
-      {!narrow && (
+      {/* 宽模式：左右分栏；窄模式：未打开文件时显示树，打开文件后覆盖 */}
+      {(!narrow || !openPath) && (
         <div className="fm-tree-pane">
           {toolbar}
           <Tree

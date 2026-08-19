@@ -114,6 +114,8 @@ export default function SettingsModal({ onClose, preset, onPresetChange }: Props
       await rpc("settings.update", { ns: "host", patch: { workdir: workdir.trim() } });
       setWorkdirSet(!!workdir.trim());
       message.success(workdir.trim() ? "工作目录已设置" : "工作目录已清空");
+      // 通知文件管理器重载（若已挂载）
+      window.dispatchEvent(new CustomEvent("bm-workdir-changed"));
     } catch (e) {
       message.error(`设置失败: ${(e as Error).message}`);
     }
