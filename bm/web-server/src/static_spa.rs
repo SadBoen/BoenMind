@@ -70,10 +70,11 @@ pub async fn static_handler(
     uri: axum::http::Uri,
     dist_root: PathBuf,
     boot_json: Option<String>,
-) -> Response<Body> {
+) -> Response {
     if method != Method::GET && method != Method::HEAD {
         return response(StatusCode::METHOD_NOT_ALLOWED, "text/plain", b"".to_vec());
     }
+
     let pathname = uri.path();
     let Some(target) = resolve_within_root(&dist_root, pathname) else {
         return response(StatusCode::FORBIDDEN, "text/plain", b"forbidden".to_vec());
@@ -116,5 +117,49 @@ pub async fn static_handler(
             response(StatusCode::OK, "text/html", body)
         }
         Err(_) => response(StatusCode::NOT_FOUND, "text/plain", b"not found".to_vec()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tmp_dist() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("bm-static-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("index.html"), "<html><body>app</body></html>").unwrap();
+        std::fs::create_dir_all(dir.join("assets")).unwrap();
+        std::fs::write(dir.join("assets").join("app.js"), "console.log(1)").unwrap();
+        dir
+    }
+
+    fn call(path: &str) -> (axum::http::StatusCode, String) {
+        let dist = tmp_dist();
+        let uri: axum::http::Uri = path.parse().unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let resp = rt.block_on(static_handler(Method::GET, uri, dist.clone(), None));
+        let status = resp.status();
+        let body = rt
+            .block_on(axum::body::to_bytes(resp.into_body(), 1024 * 1024))
+            .map(|b| String::from_utf8_lossy(&b).to_string())
+            .unwrap_or_default();
+        let _ = std::fs::remove_dir_all(&dist);
+        (status, body)
+    }
+
+    #[test]
+    fn serves_index_html() {
+        // 静态服务原样返回 index.html（认证门控在应用层/RPC 层，静态层不拦）。
+        let (status, body) = call("/");
+        assert_eq!(status, axum::http::StatusCode::OK);
+        assert!(body.contains("<html>"), "should serve index: {body}");
+    }
+
+    #[test]
+    fn serves_asset() {
+        let (status, body) = call("/assets/app.js");
+        assert_eq!(status, axum::http::StatusCode::OK);
+        assert_eq!(body, "console.log(1)");
     }
 }

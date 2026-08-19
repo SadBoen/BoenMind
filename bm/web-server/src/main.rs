@@ -10,9 +10,8 @@
 //! manifest 最小权限授面建引擎，注册进 PluginRuntimePort（探针变 Ready）；
 //! 不传 = 探针 Unavailable（fail-loud，旧行为不变）。
 //!
-//! 默认 `--dist` 指向内置前端快照 `bm/web-server/frontend/`（dsh rc.6 壳层 +
-//! 真实 boot 清单 + 38 插件 client bundle，见同目录 README）。快照 index.html 已含
-//! `window.__DSH_BOOT__` 注入，无需再注入；对自备 dist 可用 `--boot-json` 提供清单。
+//! 默认 `--dist` 指向自研前端构建产物 `frontend/dist/`（React 19 + dockview 布局 +
+//! 应用层登录页，已替代 dsh 官方快照）。
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -82,7 +81,7 @@ fn main() {
 
     let args: Vec<String> = std::env::args().collect();
     let mut db = PathBuf::from("boenmind.db");
-    let mut dist = PathBuf::from("bm/web-server/frontend");
+    let mut dist = PathBuf::from("frontend/dist");
     let mut boot_json: Option<String> = None;
     let mut port: u16 = 3080;
     let mut trusted_hosts: Vec<String> = vec![];
@@ -220,11 +219,12 @@ fn main() {
 
     // 认证插件装配（--auth）：启用登录门——敏感方法（credentials.set /
     // settings.update 等）与全部 RPC 需会话 token。密码文件 ~/.boenmind/auth.json
-    // （默认密码 adminadmin，首登后设置中心改）；不传 --auth = 无登录门（旧行为）。
+    // （默认密码 adminadmin，首登后设置中心改）+ 会话持久化 sessions.jsonl（重启
+    // 不再全员登出）；不传 --auth = 无登录门（旧行为）。
     // L0 不直接依赖 plugin-auth（边界守卫）：经 bm-assembly 组合根入口装配。
     if auth_enabled {
-        let auth_path = std::env::home_dir().map(|h| h.join(".boenmind").join("auth.json"));
-        runtime.install_default_auth(auth_path);
+        let auth_dir = std::env::home_dir().map(|h| h.join(".boenmind"));
+        runtime.install_default_auth(auth_dir);
         tracing::info!(
             "auth plugin installed (login gate on; default password {})",
             bm_assembly::DEFAULT_PASSWORD

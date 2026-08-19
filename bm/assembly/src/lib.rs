@@ -354,12 +354,15 @@ impl Runtime {
         self.core_plugins.push(plugin_auth::manifest());
     }
 
-    /// 装配默认认证插件（web-server `--auth` 入口）：默认密码 + 可选持久化文件。
+    /// 装配默认认证插件（web-server `--auth` 入口）：默认密码 + 可选持久化文件
+    /// （auth.json 密码记录 + sessions.jsonl 会话持久化——重启不再全员登出）。
     /// L0（web-server）不直接依赖 plugin-auth（边界守卫），经此组合根入口装配。
-    pub fn install_default_auth(&mut self, auth_path: Option<PathBuf>) {
+    pub fn install_default_auth(&mut self, auth_dir: Option<PathBuf>) {
         let mut plugin = plugin_auth::AuthPlugin::new();
-        if let Some(p) = auth_path {
-            plugin = plugin.with_auth_file(p);
+        if let Some(dir) = auth_dir {
+            plugin = plugin
+                .with_auth_file(dir.join("auth.json"))
+                .with_sessions_file(dir.join("sessions.jsonl"));
         }
         self.install_auth(Arc::new(plugin));
     }

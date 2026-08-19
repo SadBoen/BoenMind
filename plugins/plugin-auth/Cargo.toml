@@ -3,16 +3,16 @@ name = "plugin-auth"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "认证插件：登录/登出/改密/会话（AuthPort 实现，salt+PBKDF2 密码存储）"
+description = "认证插件：登录/登出/改密/会话（AuthPort 实现，scrypt 密码存储）"
 
 [dependencies]
 kernel-contracts = { path = "../../kernel/kernel-contracts" }
 async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+scrypt = { version = "0.11", default-features = false }
 sha2.workspace = true
-pbkdf2 = "0.12"
-hmac = "0.12"
+subtle = "2"
 uuid.workspace = true
 tokio.workspace = true
 

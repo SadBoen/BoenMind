@@ -34,6 +34,9 @@ pub struct ServerResponse {
     #[serde(rename = "rpcId")]
     pub rpc_id: String,
     pub result: Value,
+    /// 认证登录成功时附加的 Set-Cookie（HttpOnly；不进 JSON 信封，由 handler 转响应头）。
+    #[serde(skip)]
+    pub set_cookie: Option<String>,
 }
 
 impl ServerResponse {
@@ -42,6 +45,7 @@ impl ServerResponse {
             type_: "server-response",
             rpc_id: rpc_id.to_string(),
             result: json!({ "ok": true, "value": value }),
+            set_cookie: None,
         }
     }
 
@@ -53,6 +57,7 @@ impl ServerResponse {
                 "ok": false,
                 "error": { "code": code, "message": message.into(), "details": {} }
             }),
+            set_cookie: None,
         }
     }
 

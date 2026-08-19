@@ -18,7 +18,7 @@ use std::sync::Arc;
 use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::{FromRequestParts, Path as AxumPath, Query, Request, State};
 use axum::http::header::{CONTENT_TYPE, HOST, ORIGIN};
-use axum::http::{HeaderMap, Method, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -56,6 +56,31 @@ pub fn router(state: Arc<AppState>, dist_root: PathBuf, boot_json: Option<String
             }),
         )
         .with_state(state)
+}
+
+/// 会话 token：优先 `x-boenmind-session` 头（API 客户端），其次 `Cookie: dsh_bm_session=...`
+/// （浏览器自动携带，HttpOnly）。未登录返回 None。
+fn session_token_from_headers(headers: &HeaderMap) -> Option<String> {
+    if let Some(t) = headers
+        .get("x-boenmind-session")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+    {
+        return Some(t);
+    }
+    if let Some(cookie) = headers.get(axum::http::header::COOKIE).and_then(|v| v.to_str().ok()) {
+        for part in cookie.split(';') {
+            let part = part.trim();
+            if let Some(v) = part.strip_prefix("dsh_bm_session=") {
+                let v = v.trim().trim_matches('"').to_string();
+                if !v.is_empty() {
+                    return Some(v);
+                }
+            }
+        }
+    }
+    None
 }
 
 /// RPC 入口（面 1 + 双栅栏）。
@@ -122,17 +147,32 @@ async fn handle_rpc(
     }
 
     tracing::info!(method = %request.method, "rpc call");
-    let token = headers
-        .get("x-boenmind-session")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
+    let token = session_token_from_headers(&headers);
     let result = api::dispatch(&state, &request.method, request.payload, token.as_deref()).await;
-    let resp = ServerResponse {
+    let mut resp = ServerResponse {
         type_: "server-response",
         rpc_id: request.rpc_id,
         result,
+        set_cookie: None,
     };
+    // 登录成功 → Set-Cookie（HttpOnly + SameSite=Strict，浏览器自动携带；
+    // 对齐 dsh-webui-auth 会话携带形态——前端零改动）。
+    if request.method == "auth.login" {
+        if let Some(t) = resp.result.get("value").and_then(|v| v.get("token")).and_then(|v| v.as_str()) {
+            let cookie = format!(
+                "dsh_bm_session={t}; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000"
+            );
+            resp.set_cookie = Some(cookie);
+        }
+    }
+    // set_cookie → 真实响应头（Set-Cookie 不进 JSON 信封）。
+    if let Some(cookie) = resp.set_cookie.take() {
+        let mut response = (StatusCode::OK, Json(resp)).into_response();
+        if let Ok(v) = HeaderValue::from_str(&cookie) {
+            response.headers_mut().insert(axum::http::header::SET_COOKIE, v);
+        }
+        return response;
+    }
     (StatusCode::OK, Json(resp)).into_response()
 }
 
