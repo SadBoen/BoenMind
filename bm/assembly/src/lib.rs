@@ -33,6 +33,22 @@ use kernel_storage::SqlitePersist;
 use plugin_tools::{ToolGate, ToolRegistry};
 use parking_lot::RwLock;
 
+pub mod config;
+pub mod provider;
+
+/// 脚本化 mock LLM 装配（门禁/headless 用）：按脚本产出工具调用 + 续文本。
+/// 组合根职责：装配 mock 也是装配；headless（L0）经此获得 mock，不直接依赖 plugin-llm。
+pub use plugin_llm::MockTurn;
+
+/// 构造一个脚本化 mock LLM（`swap_llm` 的输入）。见 [`MockTurn`]。
+pub fn scripted_llm(
+    provider: String,
+    model: String,
+    script: Vec<MockTurn>,
+) -> Arc<dyn LlmPort> {
+    Arc::new(plugin_llm::ScriptLlm::new(provider, model, script))
+}
+
 /// 装配错误。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AssemblyError {
@@ -166,6 +182,21 @@ impl Runtime {
     /// 会话共享（对齐 settingsNs 热替换语义）。替代旧做法（裸改 pub 字段）。
     pub fn swap_llm(&self, llm: Arc<dyn LlmPort>) {
         *self.llm.write() = llm;
+    }
+
+    /// 装配真 provider（组合根唯一装配点）：从配置构造适配器 + 聚合路由 +
+    /// 元数据，swap 进运行时，返回前端数据源。见 [`provider::assemble_providers`]。
+    pub fn apply_llm(
+        &mut self,
+        config: &config::LlmConfig,
+        user_id: String,
+    ) -> Result<(Vec<provider::ProviderRuntime>, String, String), String> {
+        let (runtimes, llm, default_provider, default_model) =
+            provider::assemble_providers(config, user_id)?;
+        self.swap_llm(llm);
+        self.provider = default_provider.clone();
+        self.model = default_model.clone();
+        Ok((runtimes, default_provider, default_model))
     }
 
     /// 热换装 loop 实现（核心插件 `loop`）：替换会话代理工厂——

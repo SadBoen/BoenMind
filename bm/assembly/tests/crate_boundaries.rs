@@ -6,11 +6,12 @@
 //!   layer 3  kernel-supervisor
 //!   layer 2  plugin-*            插件实现（llm/loop/tools，只依赖契约/会话）
 //!   layer 1  bm-assembly         组合根（唯一装配点，依赖全部实现）
-//!   layer 0  web-server / headless / quickjs-bridge  最终程序与桥（消费组装好的 Runtime）
+//!   layer 0  web-server / headless / quickjs-bridge  最终程序与桥（只消费组装好的 Runtime）
 //!
 //! 规则：crate 只能依赖层号 >= 自己的 workspace crate（向上依赖即违规）。
-//! 组合根层 1 依赖插件层 2 是正当的（装配职责），程序层 0 依赖插件层 2 也允许
-//! （web-server 直接装配具体 provider，见 main.rs）。
+//! 组合根层 1 依赖插件层 2 是正当的（装配职责）。
+//! **层 0 禁止依赖 plugin-*（L0 只依赖 bm-assembly + kernel-contracts）**——防止第二组合根：
+//! web-server/headless/quickjs-bridge 不得直接 new 具体 provider/loop/tools。
 //! 未知 workspace 成员硬失败（防新增 crate 漏登记）。`cargo test --workspace` 即门禁。
 //!
 //! 依赖收集：解析每个成员 Cargo.toml 的 dependencies/dev-dependencies，
@@ -85,6 +86,14 @@ fn dependencies_are_downward_only() {
             };
             seen.insert(package.clone());
             for dep in workspace_deps(&text) {
+                // L0（web-server/headless/quickjs-bridge）禁止依赖 plugin-*——
+                // 防第二组合根：具体 provider/loop/tools 只能在 bm-assembly 里 new。
+                if my_layer == 0 && dep.starts_with("plugin-") {
+                    panic!(
+                        "VIOLATION: L0 crate {package} depends on plugin implementation {dep} —\
+                         concrete plugins must only be assembled in bm-assembly (L1)"
+                    );
+                }
                 if let Some(dep_layer) = layer_of(&dep) {
                     assert!(
                         dep_layer >= my_layer,

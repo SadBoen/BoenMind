@@ -8,9 +8,7 @@ description = "Rust 协议兼容层：dsh 前端接口合同 9 面 + 双栅栏�
 [dependencies]
 kernel-contracts = { path = "../../kernel/kernel-contracts" }
 kernel-session = { path = "../../kernel/kernel-session" }
-plugin-loop = { path = "../../plugins/plugin-loop" }
 bm-assembly = { path = "../assembly" }
-plugin-llm = { path = "../../plugins/plugin-llm" }
 serde.workspace = true
 serde_json.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "net", "io-util", "time"] }

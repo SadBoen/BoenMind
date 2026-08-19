@@ -13,7 +13,10 @@ kernel-supervisor = { path = "../../kernel/kernel-supervisor" }
 plugin-llm = { path = "../../plugins/plugin-llm" }
 plugin-loop = { path = "../../plugins/plugin-loop" }
 plugin-tools = { path = "../../plugins/plugin-tools" }
+serde.workspace = true
 serde_json.workspace = true
+toml = "0.8"
+tracing.workspace = true
 thiserror.workspace = true
 chrono.workspace = true
 parking_lot.workspace = true

@@ -14,11 +14,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use bm_assembly::config::load_llm_config;
+use bm_assembly::provider::ProviderRuntime;
 use bm_assembly::Runtime;
-use kernel_contracts::llm::{LlmModelInfo, LlmPort, ModelReasoning, ReasoningEffort};
-use plugin_llm::{ModelListEndpoint, MultiProviderLlm, OpenAiProviderConfig, OpenAICompatLlm};
-use web_server::api::{AppState, ProviderRuntime};
-use web_server::provider_config::load_llm_config;
+use web_server::api::AppState;
 use web_server::rpc::API_PATH;
 
 /// 解析 home 范围的匿名用户 id（归因头 `x-deepseek-harness-user-id`）。
@@ -148,7 +147,9 @@ fn main() {
         }
     };
 
-    // M3：真 provider 装配（--config）。无配置 → mock provider（旧行为）。
+    // M3：真 provider 装配（--config），经组合根唯一装配点（bm_assembly::apply_llm）。
+    // 无配置 → mock provider（旧行为）。web-server 不再直接依赖 plugin-llm——
+    // 装配具体 provider 是组合根职责，main 只做配置读取与结果消费。
     let mut provider_runtimes: Vec<ProviderRuntime> = Vec::new();
     if let Some(cfg_path) = &config {
         let llm_cfg = match load_llm_config(cfg_path) {
@@ -162,90 +163,15 @@ fn main() {
             eprintln!("config has no usable providers (need id + api_key + models)");
             std::process::exit(1);
         }
-        let mut ports: Vec<(String, Arc<dyn LlmPort>)> = Vec::new();
-        for p in &llm_cfg.providers {
-            if p.models.is_empty() {
-                tracing::warn!("provider {}: no models declared, skipped", p.id);
-                continue;
-            }
-            let list_endpoint = ModelListEndpoint::Standard;
-            let models: Vec<LlmModelInfo> = p
-                .models
-                .iter()
-                .map(|m| LlmModelInfo {
-                    id: m.clone(),
-                    label: None,
-                    supports_tools: true,
-                    context_window: None,
-                    max_tokens: None,
-                    // #8 生产接线：DeepSeek 系默认具备推理能力（high 档），
-                    // 声明后 resolve_thinking 生产路径吃到 adapter 档位——
-                    // thinking:{type:enabled} + reasoning_effort:high 上 wire；
-                    // 其余模型不声明（None → provider 默认，能力未声明不上 thinking）。
-                    reasoning: if m.contains("deepseek") {
-                        Some(ModelReasoning {
-                            efforts: vec![ReasoningEffort {
-                                id: "high".to_string(),
-                                name: "High".to_string(),
-                                description: None,
-                            }],
-                            default_effort: Some("high".to_string()),
-                        })
-                    } else {
-                        None
-                    },
-                })
-                .collect();
-            let adapter = Arc::new(OpenAICompatLlm::new(OpenAiProviderConfig {
-                id: p.id.clone(),
-                display_name: p.name.clone(),
-                settings_ns: format!("llm.{}", p.id),
-                base_url: p.base_url.clone(),
-                api_key: p.api_key.clone(),
-                models,
-                list_endpoint,
-                user_id: resolve_anonymous_user_id(),
-            }));
-            provider_runtimes.push(ProviderRuntime {
-                id: p.id.clone(),
-                display_name: p.name.clone(),
-                settings_ns: format!("llm.{}", p.id),
-                base_url: p.base_url.clone(),
-                models: adapter.models().to_vec(),
-                adapter: Some(Arc::clone(&adapter)),
-            });
-            ports.push((p.id.clone(), adapter as Arc<dyn LlmPort>));
-        }
-        if ports.is_empty() {
-            eprintln!("config has no usable providers (all skipped)");
-            std::process::exit(1);
-        }
-        // 默认 provider/model：config 顶层优先，否则首个 provider 的 default_model，否则其首模型。
-        let default_provider = llm_cfg
-            .default_provider
-            .clone()
-            .unwrap_or_else(|| ports[0].0.clone());
-        let default_model = llm_cfg
-            .default_model
-            .clone()
-            .or_else(|| {
-                llm_cfg
-                    .providers
-                    .iter()
-                    .find(|p| p.id == default_provider)
-                    .and_then(|p| p.default_model.clone())
-            })
-            .or_else(|| {
-                llm_cfg
-                    .providers
-                    .iter()
-                    .find(|p| p.id == default_provider)
-                    .and_then(|p| p.models.first().cloned())
-            })
-            .unwrap_or_default();
-        // 热换装 LLM 实现（核心插件 `llm` 的正式装配点）：MultiProviderLlm 聚合
-        // 全部 provider 通道，替换后下一请求生效——替代旧做法（裸改 runtime.llm）。
-        runtime.swap_llm(Arc::new(MultiProviderLlm::new(ports)));
+        let (runtimes, default_provider, default_model) =
+            match runtime.apply_llm(&llm_cfg, resolve_anonymous_user_id()) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("config error: {e}");
+                    std::process::exit(1);
+                }
+            };
+        provider_runtimes = runtimes;
         runtime.provider = default_provider;
         runtime.model = default_model;
         tracing::info!(

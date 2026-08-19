@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use bm_assembly::provider::ProviderRuntime;
 use bm_assembly::Runtime;
-use kernel_contracts::llm::LlmModelInfo;
 use kernel_contracts::session::{SessionEvent, SessionHeader, SessionId};
 use kernel_session::AgentPort;
 use serde_json::{json, Value};
@@ -31,22 +31,6 @@ pub struct SessionHandle {
     pub title: Option<String>,
     /// per-session 模型选择（session.selectModel 写入；prompt 时同步给 agent）。
     pub selected: Option<(String, String)>,
-}
-
-/// 真实 provider 运行时（M3）：静态模型清单 + 流式适配器（None = mock 模式）。
-pub struct ProviderRuntime {
-    pub id: String,
-    pub display_name: String,
-    pub settings_ns: String,
-    pub base_url: String,
-    pub models: Vec<LlmModelInfo>,
-    pub adapter: Option<Arc<plugin_llm::OpenAICompatLlm>>,
-}
-
-impl ProviderRuntime {
-    pub fn settings_path(&self) -> Vec<String> {
-        vec!["llm".to_string(), self.id.clone()]
-    }
 }
 
 /// 兼容层应用状态。

@@ -18,7 +18,6 @@ use std::sync::Arc;
 use bm_assembly::Runtime;
 use kernel_contracts::session::{SessionEvent, SessionHeader, SessionId, StepPhase, TurnEvent};
 use kernel_contracts::tools::{ToolExecutionResult, ToolHandler};
-use plugin_llm::MockTurn;
 
 /// echo 工具：headless 工具回合的验证工具。
 struct EchoTool;
@@ -72,17 +71,15 @@ fn install_tools(rt: &Runtime) {
 /// 把 headless 的 mock LLM 换成"固定脚本"：第一轮工具调用，第二轮文本。
 fn install_scripted_llm(rt: &Runtime) {
     // 核心插件 `llm` 的正式换装 API（替代裸改 pub 字段）。
-    rt.swap_llm(Arc::new(plugin_llm::ScriptLlm::new(
+    rt.swap_llm(bm_assembly::scripted_llm(
         "mock".to_string(),
         "mock-1".to_string(),
-        vec![
-            MockTurn::Tool {
-                name: "echo".to_string(),
-                arguments: serde_json::json!({ "text": "hello" }),
-                then_text: "你好，我是 BoenMind 微内核。".to_string(),
-            },
-        ],
-    )));
+        vec![bm_assembly::MockTurn::Tool {
+            name: "echo".to_string(),
+            arguments: serde_json::json!({ "text": "hello" }),
+            then_text: "你好，我是 BoenMind 微内核。".to_string(),
+        }],
+    ));
 }
 
 #[tokio::main]
@@ -267,15 +264,15 @@ async fn verify_tail(rt: &Runtime, session_id: &str) -> bool {
 mod tests {
     use super::*;
     use futures::StreamExt;
-    use kernel_contracts::llm::{FinishReason, LlmPort, StreamChunk};
+    use kernel_contracts::llm::{FinishReason, StreamChunk};
 
     /// 脚本 LLM 端到端：固定脚本产出工具调用 + 续文本。
     #[tokio::test]
     async fn scripted_llm_produces_tool_then_text() {
-        let llm = plugin_llm::ScriptLlm::new(
+        let llm = bm_assembly::scripted_llm(
             "mock".to_string(),
             "mock-1".to_string(),
-            vec![MockTurn::Tool {
+            vec![bm_assembly::MockTurn::Tool {
                 name: "echo".to_string(),
                 arguments: serde_json::json!({ "text": "hi" }),
                 then_text: "done".to_string(),

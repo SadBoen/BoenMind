@@ -6,7 +6,6 @@
 pub mod api;
 pub mod events;
 pub mod pending;
-pub mod provider_config;
 pub mod rpc;
 pub mod rpc_m3;
 pub mod static_spa;

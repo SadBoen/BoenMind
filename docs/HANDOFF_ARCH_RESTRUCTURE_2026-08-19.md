@@ -70,6 +70,20 @@ layer 1 组合根 → layer 0 最终程序/桥。
    （.tmp/ 下脚本引用 `kernel/web-server` 旧路径的需更新）。
 4. kernel `docs/harness-surface-comparison.md` 是历史对照（旧布局描述），保留；新布局见本交接。
 
+## 5.5 P0 装配点收口（2026-08-19 同轮完成，grok 评审驱动）
+
+grok 评审指出"唯一组合根被 web-server 直接 new 具体 provider 挖空"。已收口：
+
+- **`bm-assembly` 新增 `config` / `provider` 模块**：`provider_config.rs` 从 web-server 迁入
+  （单源），新增 `assemble_providers`（配置→OpenAICompatLlm→MultiProviderLlm 聚合）+
+  `LlmAdapter` trait（L0 消费适配器的端口，隐藏具体实现）。
+- **`Runtime::apply_llm`**：唯一装配出口（`&mut self`，swap 聚合 LLM + 写默认 provider/model）。
+- **web-server main.rs**：删 plugin-llm 依赖，只调 `bm_assembly::apply_llm`；删 `provider_config.rs`。
+- **headless**：删 plugin-llm 依赖，用 `bm_assembly::scripted_llm` / `MockTurn`。
+- **边界守卫改严**：L0（web-server/headless/quickjs-bridge）**禁止依赖 plugin-\***，
+  具体插件只能在 bm-assembly（L1）装配——防第二组合根，测试钉死。
+- 验证：108 测试 + clippy + GATE1 + 起服（host.describe mock provider 正常）全绿。
+
 ## 6. 环境纪律（沿用）
 
 - 每轮先杀 web-server：`taskkill //F //IM web-server.exe`
