@@ -2110,4 +2110,56 @@ mod tests {
 
         let _ = std::fs::remove_file(db);
     }
+
+    /// §6 插件装配：plugin.core.list 合并 JS 插件（category=Feature）。
+    /// 核心三插件（Core）不变；--plugins-dir 装配后 Feature 条目追加——
+    /// 插件管理员按类分组展示的数据源。
+    ///
+    /// 注意：JsBridge 内部 block_on 自带 runtime（测试纪律），本测试用
+    /// `#[test]`（同步）而非 `#[tokio::test]`，避免嵌套 runtime 冲突。
+    #[test]
+    fn plugin_core_list_merges_js_plugins() {
+        use bm_assembly::Runtime;
+        use std::sync::Arc;
+
+        let db = std::env::temp_dir().join(format!("bm-plugin-list-{}.db", uuid::Uuid::new_v4()));
+        let rt = Runtime::headless(db.clone()).unwrap();
+        // 未装配：只有核心三件（category 全 Core）。
+        let r0 = plugin_core_list(&Arc::new(AppState::assemble(rt, vec![], vec![])));
+        let plugins0 = r0["value"]["plugins"].as_array().unwrap().clone();
+        assert_eq!(plugins0.len(), 3);
+        assert!(plugins0.iter().all(|p| p["category"] == "core"));
+
+        // 装配一个 JS 插件目录。
+        let mut rt = Runtime::headless(db.clone()).unwrap();
+        let root = std::env::temp_dir().join(format!("bm-plugin-list-js-{}", uuid::Uuid::new_v4()));
+        let dir = root.join("alpha");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("plugin.json"),
+            r#"{"id":"alpha","name":"Alpha","version":"1.2.3","entry":"main.js","host":["log"]}"#,
+        )
+        .unwrap();
+        std::fs::write(dir.join("main.js"), "host.log('info','alive');").unwrap();
+        let n = rt.load_js_plugins_dir(&root).unwrap();
+        assert_eq!(n, 1);
+        // 探针变 Ready（fail-loud 语义：装配了就 Ready）。
+        assert_eq!(
+            rt.plugin_availability(),
+            kernel_contracts::ports::PluginRuntimeAvailability::Ready
+        );
+
+        let state = Arc::new(AppState::assemble(rt, vec![], vec![]));
+        let r = plugin_core_list(&state);
+        let plugins = r["value"]["plugins"].as_array().unwrap().clone();
+        assert_eq!(plugins.len(), 4, "core 3 + js 1: {r}");
+        let js: Vec<&serde_json::Value> =
+            plugins.iter().filter(|p| p["category"] == "feature").collect();
+        assert_eq!(js.len(), 1);
+        assert_eq!(js[0]["id"], "alpha");
+        assert_eq!(js[0]["version"], "1.2.3");
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_file(db);
+    }
 }

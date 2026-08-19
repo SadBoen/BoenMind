@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use kernel_contracts::bus::EventBus;
 use kernel_contracts::llm::{GenerateOptions, LlmPort};
-use kernel_contracts::plugin::PluginManifestEntry;
+use kernel_contracts::plugin::{PluginCategory, PluginManifestEntry};
 use kernel_contracts::ports::{
     PluginRuntimeAvailability, PluginRuntimePort, SessionPersistPort,
 };
@@ -35,7 +35,10 @@ use parking_lot::RwLock;
 
 pub mod config;
 pub mod js_host;
+pub mod js_plugins;
 pub mod provider;
+
+pub use js_plugins::{JsPluginEntry, JsPluginRuntime};
 
 /// 脚本化 mock LLM 装配（门禁/headless 用）：按脚本产出工具调用 + 续文本。
 /// 组合根职责：装配 mock 也是装配；headless（L0）经此获得 mock，不直接依赖 plugin-llm。
@@ -121,6 +124,9 @@ pub struct Runtime {
     pub max_steps: u64,
     /// 核心插件清单（llm / loop / tools，category=Core）。
     core_plugins: Vec<PluginManifestEntry>,
+    /// JS 插件清单（--plugins-dir 装配，category=Feature；`plugin_manifest()`
+    /// 合并返回——插件管理员按类分组展示，Core 日常隐藏、Feature 可见）。
+    js_plugin_manifest: Vec<PluginManifestEntry>,
 }
 
 impl Runtime {
@@ -169,13 +175,16 @@ impl Runtime {
                 plugin_loop::plugin::manifest(),
                 plugin_tools::plugin::manifest(),
             ],
+            js_plugin_manifest: vec![],
         })
     }
 
-    /// 核心插件清单（llm / loop / tools，category 全 Core）。供插件管理员/
-    /// 前端按分类分组展示——核心组件与功能插件分界，用户日常不可见。
+    /// 插件清单（core 三插件 + JS 插件 Feature 分类合并）——供插件管理员/
+    /// 前端按分类分组展示：核心组件与功能插件分界，用户日常不可见。
     pub fn plugin_manifest(&self) -> Vec<PluginManifestEntry> {
-        self.core_plugins.clone()
+        let mut all = self.core_plugins.clone();
+        all.extend(self.js_plugin_manifest.clone());
+        all
     }
 
     /// 热换装 LLM 实现（核心插件 `llm`）：替换后**下一请求生效**——
@@ -316,6 +325,14 @@ impl Runtime {
         self.plugin_runtime.availability()
     }
 
+    /// JS 插件运行时视图（`--plugins-dir` 装配后可用；未装配返回 `None`）。
+    /// 业务侧经此执行已装配插件（`call(id)`）、读取插件清单（`entries()`）。
+    pub fn js_plugins(&self) -> Option<&JsPluginRuntime> {
+        self.plugin_runtime
+            .as_any()
+            .downcast_ref::<JsPluginRuntime>()
+    }
+
     /// QuickJS 桥装配（§5.4 接真 LLM + §5.5 tools/session 面 + §5.6 config 面）：
     /// 把当前装配的 LLM（`self.llm`，聚合 `LlmPort`，与 agent-loop 共享）、工具
     /// 注册表+门控（`self.tools`/`self.gate`，fail-closed）、会话存储（`self.store`
@@ -361,6 +378,42 @@ impl Runtime {
         let face_set = loaded.manifest.face_set();
         let faces: Vec<&str> = face_set.iter().map(|s| s.as_str()).collect();
         self.js_bridge(&faces)
+    }
+
+    /// §6 接业务：装载并装配 `dir` 下**全部** JS 插件（web-server
+    /// `--plugins-dir` 装配入口）。扫描 → 逐个按 manifest 最小权限授面建引擎
+    /// （每插件一引擎，独立 AsyncRuntime + 上下文，天然隔离）→ 注册进
+    /// `PluginRuntimePort`（探针变 `Ready`）；清单以 Feature 分类并入
+    /// [`Self::plugin_manifest`]。
+    ///
+    /// fail-loud：目录不存在 / 扫描出错 / 任一插件装配失败 → `Err`（不静默
+    /// 跳过损坏插件）；空目录（无 `plugin.json`）→ 返回 0，探针保持
+    /// `Unavailable`（诚实失败，不假 Ready）。
+    pub fn load_js_plugins_dir(
+        &mut self,
+        dir: &std::path::Path,
+    ) -> Result<usize, String> {
+        let plugins = quickjs_bridge::scan_plugins(dir)?;
+        let mut entries = Vec::with_capacity(plugins.len());
+        let mut js_manifest = Vec::with_capacity(plugins.len());
+        for p in &plugins {
+            let face_set = p.manifest.face_set();
+            let faces: Vec<&str> = face_set.iter().map(|s| s.as_str()).collect();
+            let engine = self.js_bridge(&faces)?;
+            // 装配即装载入口（exec 定义插件全局函数）；失败 fail-loud。
+            let entry = JsPluginEntry::new(p.manifest.clone(), &p.entry_source, engine)?;
+            js_manifest.push(PluginManifestEntry {
+                id: p.manifest.id.clone(),
+                category: PluginCategory::Feature,
+                name: p.manifest.name.clone(),
+                description: format!("JS plugin ({} host face(s))", faces.len()),
+                version: p.manifest.version.clone(),
+            });
+            entries.push(entry);
+        }
+        self.plugin_runtime = Arc::new(JsPluginRuntime::new(entries));
+        self.js_plugin_manifest = js_manifest;
+        Ok(plugins.len())
     }
 
     fn loop_runtime(&self) -> Arc<LoopRuntime> {
@@ -978,6 +1031,127 @@ mod tests {
         let plugins = rt.scan_js_plugins(&root).unwrap();
         let ids: Vec<&str> = plugins.iter().map(|p| p.manifest.id.as_str()).collect();
         assert_eq!(ids, vec!["a", "b"]); // 字典序
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(db.parent().unwrap());
+    }
+
+    // ---------- §6 接业务：目录插件注册表收敛进 PluginRuntimePort ----------
+
+    /// 写一个最小 JS 插件目录（可运行：暴露 `__main` 调 host.log + host.tools.list）。
+    fn write_js_plugin(root: &std::path::Path, id: &str, faces: &[&str]) {
+        let dir = root.join(id);
+        std::fs::create_dir_all(&dir).unwrap();
+        let faces_json: Vec<String> = faces.iter().map(|f| format!("\"{f}\"")).collect();
+        std::fs::write(
+            dir.join("plugin.json"),
+            format!(
+                r#"{{"id":"{id}","name":"{id}","version":"1.2.3","entry":"main.js","host":[{}]}}"#,
+                faces_json.join(",")
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("main.js"),
+            r#"
+            globalThis.__main = () => {
+                host.log('info', 'alive');
+                const list = host.tools.list();
+                return { id: '__PLUGIN_ID__', tools: list.value.map(t => t.name) };
+            };
+            "#
+            .replace("__PLUGIN_ID__", id),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn load_js_plugins_dir_probe_ready_and_executes() {
+        // --plugins-dir 装配：扫描 → 逐插件按 manifest 授面建引擎 → 探针 Ready；
+        // 引擎保活可执行（host.tools.list 走 ToolGate fail-closed）。
+        let db = tmp_db("js-dir");
+        let mut rt = Runtime::headless(db.clone()).unwrap();
+        // 注册 + 启用 echo 工具，插件 tools.list 才看得到（fail-closed 语义）。
+        rt.register_tool(Arc::new(EchoTool::new())).unwrap();
+        rt.gate.enable("echo");
+        // 未装配时探针 Unavailable（诚实失败）。
+        assert!(matches!(
+            rt.plugin_availability(),
+            PluginRuntimeAvailability::Unavailable { .. }
+        ));
+
+        let root = std::env::temp_dir().join(format!("qjs-dir-{}", uuid::Uuid::new_v4()));
+        write_js_plugin(&root, "alpha", &["log", "tools.list"]);
+        write_js_plugin(&root, "beta", &["log"]);
+        let n = rt.load_js_plugins_dir(&root).unwrap();
+        assert_eq!(n, 2);
+        // 探针变 Ready。
+        assert_eq!(rt.plugin_availability(), PluginRuntimeAvailability::Ready);
+        // 引擎保活可执行：执行已装配插件 alpha 的 __main（host.log + host.tools.list
+        // 按 manifest 授面注入）。
+        let runtimes = rt.plugin_runtime.as_any().downcast_ref::<JsPluginRuntime>()
+            .expect("plugin runtime is JsPluginRuntime");
+        let r = runtimes.call("alpha").expect("call alpha main");
+        assert_eq!(r["id"], serde_json::json!("alpha"));
+        assert_eq!(r["tools"], serde_json::json!(["echo"]));
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(db.parent().unwrap());
+    }
+
+    #[test]
+    fn load_js_plugins_dir_empty_stays_unavailable() {
+        // 空目录（无 plugin.json）：装配成功但 0 插件，探针保持 Unavailable（不假 Ready）。
+        let db = tmp_db("js-dir-empty");
+        let mut rt = Runtime::headless(db.clone()).unwrap();
+        let root = std::env::temp_dir().join(format!("qjs-dir-empty-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("plain")).unwrap();
+        std::fs::write(root.join("plain").join("main.js"), "x").unwrap();
+        let n = rt.load_js_plugins_dir(&root).unwrap();
+        assert_eq!(n, 0);
+        assert!(matches!(
+            rt.plugin_availability(),
+            PluginRuntimeAvailability::Unavailable { .. }
+        ));
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(db.parent().unwrap());
+    }
+
+    #[test]
+    fn load_js_plugins_dir_fails_loud() {
+        // 损坏插件 fail-loud（不静默跳过）。
+        let db = tmp_db("js-dir-bad");
+        let mut rt = Runtime::headless(db.clone()).unwrap();
+        let root = std::env::temp_dir().join(format!("qjs-dir-bad-{}", uuid::Uuid::new_v4()));
+        write_js_plugin(&root, "good", &["log"]);
+        std::fs::create_dir_all(root.join("bad")).unwrap();
+        std::fs::write(root.join("bad").join("plugin.json"), "{not json").unwrap();
+        let r = rt.load_js_plugins_dir(&root);
+        assert!(r.is_err(), "损坏插件必须 fail-loud: {r:?}");
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(db.parent().unwrap());
+    }
+
+    #[test]
+    fn plugin_manifest_merges_feature_js_plugins() {
+        // plugin_manifest = core 三插件 + JS 插件（category=Feature）合并：
+        // 前端插件管理员按类分组的数据源。
+        let db = tmp_db("js-dir-manifest");
+        let mut rt = Runtime::headless(db.clone()).unwrap();
+        // 未装配：只有核心三件（全 Core）。
+        let all = rt.plugin_manifest();
+        assert_eq!(all.len(), 3);
+        assert!(all.iter().all(|p| p.category == PluginCategory::Core));
+
+        let root = std::env::temp_dir().join(format!("qjs-dir-manifest-{}", uuid::Uuid::new_v4()));
+        write_js_plugin(&root, "alpha", &["log"]);
+        rt.load_js_plugins_dir(&root).unwrap();
+        let all = rt.plugin_manifest();
+        assert_eq!(all.len(), 4);
+        let js: Vec<&PluginManifestEntry> =
+            all.iter().filter(|p| p.category == PluginCategory::Feature).collect();
+        assert_eq!(js.len(), 1);
+        assert_eq!(js[0].id, "alpha");
+        assert_eq!(js[0].version, "1.2.3");
         let _ = std::fs::remove_dir_all(root);
         let _ = std::fs::remove_dir_all(db.parent().unwrap());
     }

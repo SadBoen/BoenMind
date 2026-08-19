@@ -1,11 +1,14 @@
 //! web-server 二进制：Rust 协议兼容层服务入口。
 //!
 //! 用法：web-server [--db <path>] [--dist <dist_root>] [--boot-json <file>] [--port <port>]
-//!         [--trusted-host <host>] [--config <toml>] [--max-steps <n>]
+//!         [--trusted-host <host>] [--config <toml>] [--max-steps <n>] [--plugins-dir <dir>]
 //!
 //! `--config` 指向既有 boenmind 形态的 LLM 配置（minimax/deepseek/custom 三通道，
 //! 见 provider_config 模块）。不传时服务保持 mock provider（旧行为不变）。
 //! `--max-steps` 覆盖单回合最大 step 数（默认 32）。
+//! `--plugins-dir` 指向 JS 插件目录（QuickJS 桥 §6）：扫描 plugin.json 逐个按
+//! manifest 最小权限授面建引擎，注册进 PluginRuntimePort（探针变 Ready）；
+//! 不传 = 探针 Unavailable（fail-loud，旧行为不变）。
 //!
 //! 默认 `--dist` 指向内置前端快照 `bm/web-server/frontend/`（dsh rc.6 壳层 +
 //! 真实 boot 清单 + 38 插件 client bundle，见同目录 README）。快照 index.html 已含
@@ -85,6 +88,7 @@ fn main() {
     let mut trusted_hosts: Vec<String> = vec![];
     let mut config: Option<PathBuf> = None;
     let mut max_steps: u64 = kernel_session::DEFAULT_MAX_STEPS;
+    let mut plugins_dir: Option<PathBuf> = None;
 
     let mut i = 1;
     while i < args.len() {
@@ -125,9 +129,13 @@ fn main() {
                     std::process::exit(2);
                 }
             }
+            "--plugins-dir" => {
+                i += 1;
+                plugins_dir = Some(PathBuf::from(&args[i]));
+            }
             "--help" | "-h" => {
                 println!(
-                    "usage: web-server [--db <path>] [--dist <dir>] [--boot-json <file>] [--port <n>] [--trusted-host <host>] [--config <toml>] [--max-steps <n>]"
+                    "usage: web-server [--db <path>] [--dist <dir>] [--boot-json <file>] [--port <n>] [--trusted-host <host>] [--config <toml>] [--max-steps <n>] [--plugins-dir <dir>]"
                 );
                 return;
             }
@@ -185,6 +193,25 @@ fn main() {
             runtime.model,
             cfg_path.display()
         );
+    }
+
+    // §6 JS 插件装配（--plugins-dir）：扫描 → 逐插件按 manifest 最小权限授面建引擎
+    // → 注册进 PluginRuntimePort（探针变 Ready）。fail-loud：扫描/任一插件装配失败
+    // 直接退出（不静默跳过损坏插件）；不传 = 探针 Unavailable（旧行为不变）。
+    if let Some(dir) = &plugins_dir {
+        match runtime.load_js_plugins_dir(dir) {
+            Ok(n) => {
+                tracing::info!(
+                    "js plugins assembled: {n} plugin(s) from {} (probe={:?})",
+                    dir.display(),
+                    runtime.plugin_availability()
+                );
+            }
+            Err(e) => {
+                eprintln!("plugins-dir error ({}) : {e}", dir.display());
+                std::process::exit(1);
+            }
+        }
     }
 
     // settings/credentials 持久化文件（P2-C：重启恢复配置与凭据；
