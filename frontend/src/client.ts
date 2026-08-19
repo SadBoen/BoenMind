@@ -45,6 +45,48 @@ export class AuthRequiredError extends Error {
   }
 }
 
+// ---- 文件面（工作目录作用域）----
+
+/** workdir 文件下载 URL（<img src> 直接内嵌预览；同源 cookie 自动携带） */
+export function downloadUrl(path: string): string {
+  return `/api/host.download?path=${encodeURIComponent(path)}`;
+}
+
+/** 触发浏览器下载（a[download] + blob） */
+export async function downloadFile(path: string, name?: string): Promise<void> {
+  const res = await fetch(downloadUrl(path));
+  if (!res.ok) throw new Error(`下载失败 (${res.status})`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name || path.split("/").pop() || "file";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+/** 上传文件到 workdir 内目录（multipart：dir 相对路径 + file）。overwrite=true 覆盖同名。 */
+export async function uploadFile(
+  dir: string,
+  file: File,
+  overwrite = false,
+): Promise<void> {
+  const form = new FormData();
+  form.append("dir", dir);
+  form.append("file", file, file.name);
+  const res = await fetch("/api/host.upload", {
+    method: "POST",
+    headers: overwrite ? { "x-bm-overwrite": "true" } : undefined,
+    body: form,
+  });
+  if (res.status === 401 || res.status === 403) throw new AuthRequiredError();
+  if (res.status === 409) throw new Error("同名文件已存在（如需覆盖请开启覆盖选项）");
+  if (res.status === 413) throw new Error("文件超过大小上限");
+  if (!res.ok) throw new Error(`上传失败 (${res.status})`);
+}
+
 // ---- 类型（与 kernel-contracts wire 形状对齐）----
 
 export interface SessionSummary {

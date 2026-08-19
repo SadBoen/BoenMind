@@ -10,6 +10,7 @@ import { DockviewReact, DockviewReadyEvent, themeAbyss } from "dockview-react";
 import "dockview/dist/styles/dockview.css";
 import ChatUnit from "./components/ChatUnit";
 import CodingApp from "./components/CodingApp";
+import FileManagerUnit from "./components/FileManagerUnit";
 import SettingsModal from "./components/SettingsModal";
 import Login from "./components/Login";
 import HeaderActions from "./components/HeaderActions";
@@ -56,13 +57,17 @@ export default function App() {
     setAuthed(false);
   };
 
-  // dockview 布局：聊天单元 + 右侧/底部空白面板（供拖拽停靠测试）。
+  // dockview 布局：聊天单元 + 文件管理器 + 空白面板（供拖拽停靠测试）。
   const onReady = (event: DockviewReadyEvent) => {
     const api = event.api;
     const chat = api.addPanel({ id: "chat", component: "chat", title: "聊天" });
     api.addPanel({
-      id: "blank-1", component: "blank", title: "空白 1",
+      id: "files", component: "files", title: "文件",
       position: { referencePanel: chat, direction: "right" },
+    });
+    api.addPanel({
+      id: "blank-1", component: "blank", title: "空白 1",
+      position: { referencePanel: chat, direction: "below" },
     });
     api.addPanel({
       id: "blank-2", component: "blank", title: "空白 2",
@@ -136,6 +141,7 @@ export default function App() {
                 rightHeaderActionsComponent={HeaderActions}
                 components={{
                   chat: () => <ChatUnit />,
+                  files: () => <FileManagerUnit />,
                   blank: () => <div className="pane-blank" />,
                 }}
               />

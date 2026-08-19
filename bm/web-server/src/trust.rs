@@ -14,6 +14,11 @@ pub const PRIVILEGED_METHODS: &[&str] = &[
     "host.openPath",
     "host.listDirectory",
     "host.createDirectory",
+    // 工作目录作用域文件面（文件管理器）：读/写/列/建目录全特权（触碰文件系统）。
+    "host.listWorkdir",
+    "host.readFile",
+    "host.writeFile",
+    "host.createWorkdirDirectory",
     "settings.describe",
     "settings.openDocument",
     "settings.update",
@@ -231,7 +236,7 @@ mod tests {
 
     #[test]
     fn privileged_methods_verbatim() {
-        assert_eq!(PRIVILEGED_METHODS.len(), 17);
+        assert_eq!(PRIVILEGED_METHODS.len(), 21);
         assert_eq!(is_privileged_method("/api/settings.describe"), Some("settings.describe"));
         assert_eq!(is_privileged_method("/api/session.list"), None);
         assert!(PRIVILEGED_METHODS.contains(&"llm.discoverModels"));
@@ -240,6 +245,14 @@ mod tests {
         // #33：目录 RPC 注释即特权，必须 loopback-pin。
         assert_eq!(is_privileged_method("/api/host.listDirectory"), Some("host.listDirectory"));
         assert_eq!(is_privileged_method("/api/host.createDirectory"), Some("host.createDirectory"));
+        // 文件管理器：工作目录作用域文件面全部特权。
+        assert_eq!(is_privileged_method("/api/host.listWorkdir"), Some("host.listWorkdir"));
+        assert_eq!(is_privileged_method("/api/host.readFile"), Some("host.readFile"));
+        assert_eq!(is_privileged_method("/api/host.writeFile"), Some("host.writeFile"));
+        assert_eq!(
+            is_privileged_method("/api/host.createWorkdirDirectory"),
+            Some("host.createWorkdirDirectory")
+        );
     }
 
     #[test]

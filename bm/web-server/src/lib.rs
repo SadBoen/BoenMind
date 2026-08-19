@@ -5,6 +5,7 @@
 
 pub mod api;
 pub mod events;
+pub mod host_fs;
 pub mod pending;
 pub mod rpc;
 pub mod rpc_m3;
@@ -35,6 +36,8 @@ pub fn router(state: Arc<AppState>, dist_root: PathBuf, boot_json: Option<String
         .route("/api/events.mux", get(handle_ws_mux))
         .route("/api/events.host", get(handle_ws_host))
         .route("/api/session.export", get(handle_session_export))
+        .route("/api/host.download", get(handle_host_download))
+        .route("/api/host.upload", post(handle_host_upload))
         .route(
             "/",
             get({
@@ -434,4 +437,171 @@ async fn handle_session_export(
         format!("attachment; filename=\"{filename}\"").parse().unwrap(),
     );
     (StatusCode::OK, headers, buf).into_response()
+}
+
+/// GET /api/host.download（特权，工作目录作用域）：下载 workdir 内文件。
+/// 鉴权：同 handle_rpc 的 token 判定（`x-boenmind-session` 头 / HttpOnly cookie），
+/// --auth 装配时未认证 → 401（不暴露存在性）。`<img src>` 直接内嵌预览的通道：
+/// 图片扩展名 → `Content-Disposition: inline` + allowlist MIME + nosniff + private。
+/// 其余 → `attachment`（svg/html 永远附件——防 XSS）。
+async fn handle_host_download(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    // 栅栏 A：download 也是受信通道（读任意 workdir 文件）——DNS-rebinding 未栅栏
+    // 等同放开文件读取面，必须与 handle_rpc 同一信任判定。
+    let host = headers.get(HOST).and_then(|v| v.to_str().ok());
+    let origin = headers.get(ORIGIN).and_then(|v| v.to_str().ok());
+    let sec_fetch_site = headers.get("sec-fetch-site").and_then(|v| v.to_str().ok());
+    if !trust::is_trusted_api_request(host, origin, sec_fetch_site, &state.trusted_hosts) {
+        return (StatusCode::FORBIDDEN, "forbidden").into_response();
+    }
+    // 栅栏 B：特权方法 loopback-pin（下载触碰文件系统，同 trust.rs 特权表语义）。
+    if !trust::is_trusted_api_request(host, origin, sec_fetch_site, &[]) {
+        return (StatusCode::FORBIDDEN, "forbidden").into_response();
+    }
+    // 认证：--auth 装配时要求有效会话（fail-closed），未装配放行（旧行为）。
+    if let Some(auth) = &state.runtime.auth {
+        let token = session_token_from_headers(&headers);
+        if !auth.is_authenticated(token.as_deref().unwrap_or("")) {
+            return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+        }
+    }
+    let Some(rel) = params.get("path") else {
+        return (StatusCode::BAD_REQUEST, "missing path query parameter").into_response();
+    };
+    let Some(wd) = api::host_workdir(&state) else {
+        return (StatusCode::CONFLICT, "workdir-not-configured").into_response();
+    };
+    let target = match crate::host_fs::resolve_in_workdir(&wd, rel) {
+        Ok(t) => t,
+        Err(e) => {
+            return (StatusCode::BAD_REQUEST, e.code()).into_response();
+        }
+    };
+    if !target.is_file() {
+        return (StatusCode::NOT_FOUND, "file not found").into_response();
+    }
+    let ext = target
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let filename = target.file_name().and_then(|n| n.to_str()).unwrap_or("file");
+    let bytes = match std::fs::read(&target) {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::error!("host.download read failed: {e}");
+            return (StatusCode::INTERNAL_SERVER_ERROR, "read failed").into_response();
+        }
+    };
+    let inline = crate::host_fs::is_image_previewable(&ext);
+    let mut h = HeaderMap::new();
+    h.insert("content-type", crate::host_fs::mime_for_ext(&ext).parse().unwrap());
+    h.insert("x-content-type-options", "nosniff".parse().unwrap());
+    h.insert("cache-control", "private, no-store".parse().unwrap());
+    let disposition = if inline {
+        format!("inline; filename=\"{filename}\"")
+    } else {
+        format!("attachment; filename=\"{filename}\"")
+    };
+    h.insert("content-disposition", disposition.parse().unwrap());
+    (StatusCode::OK, h, bytes).into_response()
+}
+
+/// POST /api/host.upload（特权，工作目录作用域）：上传单个文件到 workdir 内目录。
+/// multipart 字段：`dir`（相对路径，空 = workdir 根）+ `file`（文件，须含原始文件名）。
+/// 鉴权同 download；大小上限 100MiB（超限先拒）；目标名须合法单段（禁 / \ .. 与控制字符）；
+/// 已存在 → 409（显式 x-bm-overwrite:true 覆盖）。写盘：先收字节（上限内），原子 rename。
+async fn handle_host_upload(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    mut multipart: axum::extract::Multipart,
+) -> Response {
+    // 栅栏 A + B + 认证：与 download 同一套（上传是写面，风险更高）。
+    let host = headers.get(HOST).and_then(|v| v.to_str().ok());
+    let origin = headers.get(ORIGIN).and_then(|v| v.to_str().ok());
+    let sec_fetch_site = headers.get("sec-fetch-site").and_then(|v| v.to_str().ok());
+    if !trust::is_trusted_api_request(host, origin, sec_fetch_site, &state.trusted_hosts)
+        || !trust::is_trusted_api_request(host, origin, sec_fetch_site, &[])
+    {
+        return (StatusCode::FORBIDDEN, "forbidden").into_response();
+    }
+    if let Some(auth) = &state.runtime.auth {
+        let token = session_token_from_headers(&headers);
+        if !auth.is_authenticated(token.as_deref().unwrap_or("")) {
+            return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+        }
+    }
+    let Some(wd) = api::host_workdir(&state) else {
+        return (StatusCode::CONFLICT, "workdir-not-configured").into_response();
+    };
+    let mut dir_rel: String = String::new();
+    let mut file_name: Option<String> = None;
+    let mut bytes: Vec<u8> = Vec::new();
+    loop {
+        let field = match multipart.next_field().await {
+            Ok(Some(f)) => f,
+            Ok(None) => break,
+            Err(e) => {
+                tracing::error!("host.upload field failed: {e}");
+                return (StatusCode::BAD_REQUEST, "multipart read failed").into_response();
+            }
+        };
+        let name = field.name().unwrap_or("").to_string();
+        match name.as_str() {
+            "dir" => {
+                if let Ok(t) = field.text().await {
+                    dir_rel = t.trim().to_string();
+                }
+            }
+            "file" => {
+                file_name = field.file_name().map(str::to_string);
+                match field.bytes().await {
+                    Ok(b) => bytes = b.to_vec(),
+                    Err(e) => {
+                        tracing::error!("host.upload file bytes failed: {e}");
+                        return (StatusCode::BAD_REQUEST, "file read failed").into_response();
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let file_name = match file_name {
+        Some(n) if !n.is_empty() => n,
+        _ => return (StatusCode::BAD_REQUEST, "missing file part (with filename)").into_response(),
+    };
+    if bytes.len() as u64 > crate::host_fs::MAX_UPLOAD_BYTES {
+        return (StatusCode::PAYLOAD_TOO_LARGE, "file exceeds size limit").into_response();
+    }
+    let overwrite = headers
+        .get("x-bm-overwrite")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v == "true")
+        .unwrap_or(false);
+    // 文件名须合法单段（禁 / \ .. 与控制字符）——防路径注入。
+    if file_name == "."
+        || file_name == ".."
+        || file_name.contains('/')
+        || file_name.contains('\\')
+        || file_name.contains('\0')
+        || file_name.chars().any(|c| c.is_control() || ":\"*?<>|".contains(c))
+    {
+        return (StatusCode::BAD_REQUEST, "invalid file name").into_response();
+    }
+    let parent = match crate::host_fs::resolve_in_workdir(&wd, &dir_rel) {
+        Ok(t) => t,
+        Err(e) => return (StatusCode::BAD_REQUEST, e.code()).into_response(),
+    };
+    if !parent.is_dir() {
+        return (StatusCode::BAD_REQUEST, "wrong-file-kind").into_response();
+    }
+    let target = parent.join(&file_name);
+    if let Err(e) = crate::host_fs::atomic_write(&target, &bytes, overwrite) {
+        let code = e.code();
+        return (StatusCode::CONFLICT, code).into_response();
+    }
+    (StatusCode::OK, "uploaded").into_response()
 }

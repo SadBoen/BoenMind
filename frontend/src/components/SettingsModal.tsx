@@ -83,6 +83,10 @@ export default function SettingsModal({ onClose, preset, onPresetChange }: Props
     getBackground().type === "image" ? getBackground().value ?? "" : ""
   );
 
+  // 工作目录（通用区）
+  const [workdir, setWorkdirState] = useState("");
+  const [workdirSet, setWorkdirSet] = useState(false);
+
   // 改密
   const [currentPwd, setCurrentPwd] = useState("");
   const [newPwd, setNewPwd] = useState("");
@@ -93,7 +97,27 @@ export default function SettingsModal({ onClose, preset, onPresetChange }: Props
     rpc<{ providers: ProviderInfo[] }>("llm.providers", {})
       .then((v) => setProviders(v.providers ?? []))
       .catch(() => {});
+    // 读取已存工作目录（settings host.workdir）
+    rpc<{ namespaces: { ns: string; value: Record<string, unknown> }[] }>("settings.describe", {})
+      .then((v) => {
+        const ns = v.namespaces.find((n) => n.ns === "host");
+        const wd = (ns?.value?.workdir as string) || "";
+        setWorkdirState(wd);
+        setWorkdirSet(!!wd);
+      })
+      .catch(() => {});
   }, []);
+
+  // 保存工作目录（服务端校验绝对路径 + 存在可读）
+  const saveWorkdir = async () => {
+    try {
+      await rpc("settings.update", { ns: "host", patch: { workdir: workdir.trim() } });
+      setWorkdirSet(!!workdir.trim());
+      message.success(workdir.trim() ? "工作目录已设置" : "工作目录已清空");
+    } catch (e) {
+      message.error(`设置失败: ${(e as Error).message}`);
+    }
+  };
 
   const changePreset = (id: PresetId) => {
     onPresetChange(id);
@@ -175,6 +199,19 @@ export default function SettingsModal({ onClose, preset, onPresetChange }: Props
         <div className="settings-content">
           {section === "general" && (
             <SettingSection title="通用">
+              <SettingRow
+                label="工作目录"
+                desc={workdirSet ? "文件管理器以此目录为根（绝对路径）" : "未设置——文件管理器需先设置工作目录"}
+              >
+                <div className="pwd-row">
+                  <Input
+                    placeholder="如 D:\\work 或 /home/user/work"
+                    value={workdir}
+                    onChange={(e) => setWorkdirState(e.target.value)}
+                  />
+                  <Button onClick={saveWorkdir}>保存</Button>
+                </div>
+              </SettingRow>
               <SettingRow label="界面语言" desc="界面显示语言（占位，i18n 后置）">
                 <Select
                   className="settings-control"

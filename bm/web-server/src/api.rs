@@ -14,6 +14,7 @@ use kernel_session::AgentPort;
 use serde_json::{json, Value};
 
 use crate::events::translate_events;
+use crate::host_fs::{self, HostFsError};
 use crate::rpc::{err, err_with_details, ok};
 use crate::rpc_m3::{
     agent_preset_copy, agent_preset_open_document, agent_preset_read, agent_preset_remove,
@@ -422,6 +423,12 @@ pub async fn dispatch(state: &Arc<AppState>, method: &str, payload: Value, token
         // M2.5：无 OS 目录选择对话框，pickDirectory 返回服务 cwd 作默认工作目录
         // （契约形状 {path: string|null} 对齐；null=用户取消）。
         "host.pickDirectory" => host_pick_directory(state),
+        // 工作目录作用域文件面（文件管理器窗口单元；settings host.workdir 为事实源）：
+        // 全部经 host_fs::resolve_in_workdir 约束在 workdir 内，绕过一律拒绝。
+        "host.listWorkdir" => host_list_workdir(state, payload),
+        "host.readFile" => host_read_file(state, payload),
+        "host.writeFile" => host_write_file(state, payload),
+        "host.createWorkdirDirectory" => host_create_workdir_directory(state, payload),
         "settings.describe" => settings_describe(state),
         "settings.update" => settings_update(state, payload),
         "settings.replace" => settings_replace(state, payload),
@@ -1611,6 +1618,193 @@ fn host_pick_directory(state: &AppState) -> Value {
     ok(json!({ "path": state.host_cwd }))
 }
 
+/// host.listWorkdir（特权）：列工作目录（或其中相对子目录）的条目。
+/// 懒加载契约：前端每次展开传 path（相对路径，空 = workdir 根）。
+/// 条目 {name, path(相对), isDir, size, hidden}；目录优先 + 名字排序；
+/// 单目录上限 2000（超限截断 + truncated 标记）。未设置 workdir → workdir-not-configured。
+fn host_list_workdir(state: &AppState, payload: Value) -> Value {
+    let Some(wd) = host_workdir(state) else {
+        return err("workdir-not-configured", "work directory not set (settings → 工作目录)");
+    };
+    let rel = payload.get("path").and_then(Value::as_str).unwrap_or("");
+    let target = match host_fs::resolve_in_workdir(&wd, rel) {
+        Ok(t) => t,
+        Err(e) => return hostfs_err(e),
+    };
+    if !target.is_dir() {
+        return err_with_details(
+            "wrong-file-kind",
+            "not a directory",
+            json!({ "path": rel }),
+        );
+    }
+    let read = match std::fs::read_dir(&target) {
+        Ok(rd) => rd,
+        Err(e) => {
+            return err_with_details(
+                "directory-unreadable",
+                format!("cannot read directory: {e}"),
+                json!({ "path": rel }),
+            );
+        }
+    };
+    let mut entries: Vec<Value> = Vec::new();
+    for item in read.flatten() {
+        let path = item.path();
+        let is_dir = path.is_dir();
+        let size = path.metadata().map(|m| m.len()).unwrap_or(0);
+        entries.push(json!({
+            "name": item.file_name().to_string_lossy(),
+            "path": rel_from_workdir(&wd, &path),
+            "isDir": is_dir,
+            "size": size,
+            "hidden": host_fs::is_hidden_path(&path),
+        }));
+        if entries.len() >= host_fs::MAX_ENTRIES_PER_DIR {
+            break;
+        }
+    }
+    // 目录优先，其后按名（大小写不敏感）。
+    entries.sort_by(|a, b| {
+        let ad = a["isDir"].as_bool().unwrap_or(false);
+        let bd = b["isDir"].as_bool().unwrap_or(false);
+        if ad != bd {
+            return bd.cmp(&ad);
+        }
+        let an = a["name"].as_str().unwrap_or("");
+        let bn = b["name"].as_str().unwrap_or("");
+        an.to_lowercase().cmp(&bn.to_lowercase())
+    });
+    let truncated = entries.len() >= host_fs::MAX_ENTRIES_PER_DIR;
+    ok(json!({
+        "path": rel,
+        "workdir": wd.to_string_lossy().replace('\\', "/"),
+        "entries": entries,
+        "truncated": truncated,
+    }))
+}
+
+/// host.readFile（特权）：读 UTF-8 文本（md/txt/rs/... 均可，按扩展名不管，
+/// 内容须合法 UTF-8 且 ≤ 2MiB）。图片/二进制 → 前端走 download 端点。
+fn host_read_file(state: &AppState, payload: Value) -> Value {
+    let Some(wd) = host_workdir(state) else {
+        return err("workdir-not-configured", "work directory not set (settings → 工作目录)");
+    };
+    let Some(rel) = payload.get("path").and_then(Value::as_str) else {
+        return err("bad-request", "missing path");
+    };
+    let target = match host_fs::resolve_in_workdir(&wd, rel) {
+        Ok(t) => t,
+        Err(e) => return hostfs_err(e),
+    };
+    if !target.exists() {
+        return err_with_details("file-not-found", "file not found", json!({ "path": rel }));
+    }
+    if !target.is_file() {
+        return err_with_details("wrong-file-kind", "not a file", json!({ "path": rel }));
+    }
+    let len = target.metadata().map(|m| m.len()).unwrap_or(0);
+    if len > host_fs::MAX_TEXT_BYTES {
+        return err_with_details(
+            "file-too-large",
+            format!("text file exceeds {}-byte limit; open as download instead", host_fs::MAX_TEXT_BYTES),
+            json!({ "path": rel, "size": len, "limit": host_fs::MAX_TEXT_BYTES }),
+        );
+    }
+    let bytes = match std::fs::read(&target) {
+        Ok(b) => b,
+        Err(e) => return err_with_details("file-io-error", format!("read failed: {e}"), json!({ "path": rel })),
+    };
+    let content = match String::from_utf8(bytes) {
+        Ok(s) => s,
+        Err(_) => {
+            return err_with_details(
+                "invalid-utf8",
+                "file is not valid UTF-8 text; open as download instead",
+                json!({ "path": rel }),
+            )
+        }
+    };
+    ok(json!({ "path": rel_from_workdir(&wd, &target), "content": content, "size": len }))
+}
+
+/// host.writeFile（特权）：原子写文本（tmp + rename）。`overwrite` 缺省 false：
+/// 目标已存在 → file-exists（显式 overwrite:true 才覆盖）。拒绝写目录。
+fn host_write_file(state: &AppState, payload: Value) -> Value {
+    let Some(wd) = host_workdir(state) else {
+        return err("workdir-not-configured", "work directory not set (settings → 工作目录)");
+    };
+    let Some(rel) = payload.get("path").and_then(Value::as_str) else {
+        return err("bad-request", "missing path");
+    };
+    let Some(content) = payload.get("content").and_then(Value::as_str) else {
+        return err("bad-request", "missing content (string)");
+    };
+    let overwrite = payload.get("overwrite").and_then(Value::as_bool).unwrap_or(false);
+    if (content.len() as u64) > host_fs::MAX_TEXT_BYTES {
+        return err_with_details(
+            "file-too-large",
+            format!("content exceeds {}-byte limit", host_fs::MAX_TEXT_BYTES),
+            json!({ "path": rel, "limit": host_fs::MAX_TEXT_BYTES }),
+        );
+    }
+    let target = match host_fs::resolve_in_workdir(&wd, rel) {
+        Ok(t) => t,
+        Err(e) => return hostfs_err(e),
+    };
+    if let Err(e) = host_fs::atomic_write(&target, content.as_bytes(), overwrite) {
+        return hostfs_err(e);
+    }
+    ok(json!({ "path": rel_from_workdir(&wd, &target), "overwritten": overwrite }))
+}
+
+/// host.createWorkdirDirectory（特权）：在 workdir 内某目录下新建单段文件夹。
+/// name 须单路径段（禁 / \ . .. 与 Windows 保留字符）；已存在 → directory-exists。
+fn host_create_workdir_directory(state: &AppState, payload: Value) -> Value {
+    let Some(wd) = host_workdir(state) else {
+        return err("workdir-not-configured", "work directory not set (settings → 工作目录)");
+    };
+    let Some(rel) = payload.get("path").and_then(Value::as_str) else {
+        return err("bad-request", "missing path (parent directory)");
+    };
+    let Some(name) = payload.get("name").and_then(Value::as_str) else {
+        return err("bad-request", "missing name");
+    };
+    let name = name.trim();
+    if name.is_empty()
+        || name == "."
+        || name == ".."
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains('\0')
+        || name.chars().any(|c| c.is_control() || ":\"*?<>|".contains(c))
+    {
+        return err(
+            "bad-request",
+            "host.createWorkdirDirectory requires a single valid path segment name",
+        );
+    }
+    let parent = match host_fs::resolve_in_workdir(&wd, rel) {
+        Ok(t) => t,
+        Err(e) => return hostfs_err(e),
+    };
+    if !parent.is_dir() {
+        return err_with_details("wrong-file-kind", "parent is not a directory", json!({ "path": rel }));
+    }
+    let dir = parent.join(name);
+    if dir.exists() {
+        return err_with_details("directory-exists", "directory already exists", json!({ "path": rel_from_workdir(&wd, &dir) }));
+    }
+    match std::fs::create_dir(&dir) {
+        Ok(()) => ok(json!({ "path": rel_from_workdir(&wd, &dir) })),
+        Err(e) => err_with_details(
+            "directory-create-failed",
+            format!("create directory failed: {e}"),
+            json!({ "path": rel_from_workdir(&wd, &dir) }),
+        ),
+    }
+}
+
 /// 目录条目隐藏判定：`.` 前缀（Unix 惯例）+ Windows FILE_ATTRIBUTE_HIDDEN。
 fn is_hidden_path(p: &Path) -> bool {
     let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
@@ -1780,7 +1974,44 @@ const WEB_SETTINGS_NAMESPACES: &[&str] = &[
     "ui-conversation",
     "ui-theme",
     "ui-onboarding",
+    "host", // 工作目录等宿主设置（host.workdir 为文件管理器的唯一事实源）
 ];
+
+/// 读取当前工作目录（settings host.workdir；缺失/空 → None）。
+/// 文件管理器全部 FS 操作的服务端唯一事实源——不信任客户端随请求带来的路径。
+pub fn host_workdir(state: &AppState) -> Option<PathBuf> {
+    state
+        .settings
+        .lock()
+        .unwrap()
+        .get("host")
+        .and_then(|v| v.get("workdir"))
+        .and_then(Value::as_str)
+        .map(PathBuf::from)
+        .filter(|p| !p.as_os_str().is_empty())
+}
+
+/// host_fs 错误 → RPC 信封（{ok:false, error:{code,message,details}}）。
+fn hostfs_err(e: HostFsError) -> Value {
+    err_with_details(
+        e.code(),
+        e.to_string(),
+        json!({ "path": match &e {
+            HostFsError::InvalidPath(p) | HostFsError::NotInside(p)
+            | HostFsError::NotFound(p) | HostFsError::AlreadyExists(p)
+            | HostFsError::WrongKind(p) | HostFsError::WorkdirInvalid(p) => p.clone(),
+            _ => String::new(),
+        } }),
+    )
+}
+
+/// 目标相对 workdir 的 POSIX 风格路径（前端统一 / 分隔）。
+fn rel_from_workdir(wd: &Path, target: &Path) -> String {
+    target
+        .strip_prefix(wd)
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_else(|_| target.to_string_lossy().replace('\\', "/"))
+}
 
 /// 构造单个 SettingsNamespaceView（台账 §2：{ns, schema, value, base?, user?, applies, secrets, revision}）。
 /// 脱敏铁律：secret 字段永不随响应出域（M2.5 无 secret 字段，secrets 槽恒空）。
@@ -1927,6 +2158,30 @@ where
     }
     let mut value = settings.get(ns).cloned().unwrap_or_default();
     apply(&mut value, &payload);
+    // host 命名空间写面校验：workdir 必须是存在且可读的绝对目录（设置保存即校验，
+    // 防把工作目录指向 / 或不存在路径后文件面全量失效/全盘暴露）。
+    if ns == "host" {
+        if let Some(wd) = value.get("workdir").and_then(Value::as_str) {
+            let wd = wd.trim();
+            if !wd.is_empty() {
+                let p = Path::new(wd);
+                if !p.is_absolute() {
+                    return err_with_details(
+                        "settings-rejected",
+                        "host.workdir must be an absolute directory path",
+                        json!({ "ns": ns, "field": "workdir" }),
+                    );
+                }
+                if let Err(e) = host_fs::validate_workdir(p) {
+                    return err_with_details(
+                        "settings-rejected",
+                        format!("host.workdir invalid: {e}"),
+                        json!({ "ns": ns, "field": "workdir" }),
+                    );
+                }
+            }
+        }
+    }
     settings.insert(ns.to_string(), value.clone());
     revisions.insert(ns.to_string(), current + 1);
     drop(revisions);

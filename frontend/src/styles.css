@@ -660,3 +660,69 @@ body {
 
 /* ---- 空白面板（拖拽停靠测试） ---- */
 .pane-blank { height: 100%; background: var(--bm-bg); }
+
+/* ---- 文件管理器窗口单元（FileManagerUnit） ---- */
+.fm-unit { display: flex; height: 100%; position: relative; min-width: 0; }
+.fm-tree-pane {
+  width: 280px; flex-shrink: 0; display: flex; flex-direction: column;
+  border-right: 1px solid var(--bm-border); background: var(--bm-bg-2);
+}
+.fm-toolbar {
+  display: flex; align-items: center; gap: 2px; padding: 4px 6px;
+  border-bottom: 1px solid var(--bm-border); min-height: 34px;
+}
+.fm-workdir {
+  font-size: 11px; color: var(--bm-fg-dim); margin-left: auto;
+  max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fm-tree { flex: 1; overflow: auto; padding: 4px; background: transparent; }
+.fm-content-pane {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative;
+}
+.fm-content-header {
+  display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+  border-bottom: 1px solid var(--bm-border); background: var(--bm-bg-2);
+}
+.fm-path { font-size: 12px; color: var(--bm-fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fm-empty { margin-top: 30%; }
+.fm-preview-image {
+  flex: 1; overflow: auto; display: flex; align-items: center; justify-content: center;
+  padding: 12px; background: var(--bm-bg);
+}
+.fm-preview-image img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.fm-preview-text { flex: 1; overflow: auto; display: flex; flex-direction: column; }
+.fm-preview-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 10px; border-bottom: 1px solid var(--bm-border); background: var(--bm-bg-2);
+  font-size: 12px;
+}
+.fm-md { padding: 12px 16px; flex: 1; overflow: auto; font-size: 13px; line-height: 1.7; }
+.fm-md h1, .fm-md h2, .fm-md h3 { margin: 0.8em 0 0.4em; }
+.fm-md code { background: var(--bm-bg-3); padding: 1px 4px; border-radius: 3px; }
+.fm-md pre { background: var(--bm-bg-3); padding: 10px; border-radius: 6px; overflow: auto; }
+.fm-md img { max-width: 100%; }
+.fm-code {
+  flex: 1; margin: 0; padding: 10px 12px; overflow: auto;
+  font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; line-height: 1.6;
+  background: var(--bm-bg);
+}
+.fm-edit { flex: 1; display: flex; flex-direction: column; }
+.fm-edit-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 10px; border-bottom: 1px solid var(--bm-border); background: var(--bm-bg-2);
+  font-size: 12px;
+}
+.fm-edit-ta {
+  flex: 1; resize: none; border: none; outline: none; padding: 10px 12px;
+  background: var(--bm-bg); color: var(--bm-fg);
+  font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; line-height: 1.6;
+}
+.fm-preview-other {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 12px; color: var(--bm-fg-dim);
+}
+.fm-ctx-anchor { z-index: 1000; }
+.fm-mkdir-parent { font-size: 12px; color: var(--bm-fg-dim); margin-top: 8px; }
+
+/* 窄模式（覆盖）：树被预览替换时工具栏仍可用 */
+.fm-unit.narrow-tree-only .fm-tree-pane { display: none; }
