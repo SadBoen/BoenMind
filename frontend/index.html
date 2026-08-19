@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BoenMind</title>
+    <script>
+      // 防闪：bundle 加载前先应用已保存的风格档背景，避免白/黑闪一帧。
+      // 与 src/theme.ts 的 PRESETS 保持同源（此处只内联背景色精简版）。
+      (function () {
+        try {
+          var p = localStorage.getItem("bm_preset") || "ant";
+          var bg = {
+            ant: "#f5f6fa",
+            cartoon: "#E8DDC9",
+            glass: "#0e1320",
+            dark: "#08090c",
+          }[p] || "#f5f6fa";
+          var s = document.createElement("style");
+          s.id = "bm-pre-theme";
+          s.textContent = ":root{--bm-bg:" + bg + ";}";
+          document.head.appendChild(s);
+          document.documentElement.dataset.preset = p;
+          document.documentElement.style.background = bg;
+        } catch (e) { /* localStorage 不可用时忽略 */ }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
