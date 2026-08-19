@@ -405,13 +405,23 @@ body {
   box-shadow: 0 1px 6px rgba(0,0,0,.25);
   border-bottom: 1px solid var(--bm-border);
 }
-/* 常态隐藏 tab（透明热区） */
+/* 常态隐藏 tab（透明热区——保留可拖拽手柄，仅文字不可见） */
 .dv-groupview .dv-tabs-and-actions-container.dv-single-tab .dv-tab {
+  opacity: 0;
+  pointer-events: auto;
+  min-width: 3em; /* 给拖拽留热区 */
+}
+/* 单标签 hover 显示 tab 文字（可拖拽 + 可读） */
+.dv-groupview .dv-tabs-and-actions-container.dv-single-tab:hover .dv-tab {
+  opacity: 1;
+}
+/* 单标签 hover 时标题文字显示（常态隐藏；文字左对齐随样式） */
+.dv-groupview .dv-tabs-and-actions-container.dv-single-tab .dv-default-tab-title {
   display: none;
 }
-/* 单标签 hover 也不显示 tab（标题栏只有右侧动作点，不需要 tab 区域） */
-.dv-groupview .dv-tabs-and-actions-container.dv-single-tab:hover .dv-tab {
-  display: none;
+.dv-groupview .dv-tabs-and-actions-container.dv-single-tab:hover .dv-default-tab-title {
+  display: inline;
+  color: var(--bm-fg);
 }
 /* 强制 dockview 主题背景变量跟随主题档（否则 dockview abyss 默认深色覆盖） */
 .dockview-theme-abyss {
@@ -461,9 +471,8 @@ body {
   transition: width .12s ease, height .12s ease, background .12s ease;
 }
 
-/* 隐藏 tab 标题文字（只留右侧操作圆点） */
-.dockview-theme-abyss .dv-tab .dv-default-tab-title,
-.dockview-theme-abyss .dv-default-tab .dv-default-tab-title {
+/* 多标签组隐藏标题文字（单标签组 hover 时显示，见上） */
+.dv-groupview .dv-tabs-and-actions-container:not(.dv-single-tab) .dv-default-tab-title {
   display: none;
 }
 /* 隐藏 dockview 原生关闭 action（用自定义 HeaderActions 替代） */

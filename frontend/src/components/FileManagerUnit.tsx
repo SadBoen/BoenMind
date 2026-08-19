@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  App, Button, Dropdown, Empty, Input, Modal, Tooltip, Tree, Upload,
+  App, Button, Empty, Input, Menu, Modal, Tooltip, Tree, Upload,
 } from "antd";
 import type { MenuProps, TreeDataNode } from "antd";
 import {
@@ -119,6 +119,21 @@ export default function FileManagerUnit() {
     window.addEventListener("bm-workdir-changed", onWorkdirChanged);
     return () => window.removeEventListener("bm-workdir-changed", onWorkdirChanged);
   }, [refreshRoot]);
+
+  // 右键菜单：点击外部 / 滚轮 / Esc → 关闭
+  useEffect(() => {
+    if (!ctxPos) return;
+    const close = () => { setCtxPos(null); setMenuNode(null); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
+    document.addEventListener("click", close);
+    document.addEventListener("wheel", close);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("click", close);
+      document.removeEventListener("wheel", close);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [ctxPos]);
 
   const toTreeNodes = (entries: TreeEntry[]): TreeNode[] =>
     entries
@@ -408,21 +423,18 @@ export default function FileManagerUnit() {
       </div>
       {narrow && openPath && null}
 
-      {/* 右键菜单：受控 Dropdown 定位在鼠标处 */}
+      {/* 右键菜单：受控 Menu 渲染在鼠标位置（fixed 容器 + 最小宽度，排版稳定） */}
       {ctxPos && menuNode && (
         <div
-          className="fm-ctx-anchor"
-          style={{ position: "fixed", left: ctxPos.x, top: ctxPos.y, width: 0, height: 0 }}
+          className="fm-ctx-menu"
+          style={{ position: "fixed", left: ctxPos.x, top: ctxPos.y, zIndex: 1100 }}
         >
-          <Dropdown
-            open
-            trigger={["contextMenu"]}
-            menu={{ items: contextMenu, onClick: onCtx }}
-            onOpenChange={(o) => { if (!o) { setCtxPos(null); setMenuNode(null); } }}
-            getPopupContainer={(t) => t.parentElement!}
-          >
-            <span style={{ display: "block", width: 0, height: 0 }} />
-          </Dropdown>
+          <Menu
+            items={contextMenu}
+            onClick={onCtx}
+            style={{ minWidth: 168, boxShadow: "0 4px 16px rgba(0,0,0,0.25)" }}
+            className="fm-ctx-dropdown"
+          />
         </div>
       )}
 
