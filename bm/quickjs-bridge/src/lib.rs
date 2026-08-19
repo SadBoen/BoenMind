@@ -185,6 +185,7 @@ pub mod plugin;
 pub mod host;
 
 pub use js::JsBridge;
+pub use plugin::{JsPluginManifest, LoadedPlugin};
 
 // ---------- mock 实现（契约测试用，不接真实运行时） ----------
 

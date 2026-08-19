@@ -2,7 +2,8 @@
 
 > 状态：**落地中**。host 面契约已定稿（§4）+ rquickjs 桥已实现（§5.2 完成：
 > `HostApi` 注册进全局 `host` + 异步泵打通，11 测试全绿）；manifest 驱动装载
-> （§5.3 完成：按 manifest 最小权限授面，16 测试全绿）；§5.4 接真 LLM 已完成。
+> （§5.3 完成：按 manifest 最小权限授面，16 测试全绿）；§5.4 接真 LLM + §5.5 tools/session
+> 面接线已完成。
 > 本文件是实现的契约，不是 wiki。
 
 ## 1. 定位
@@ -128,9 +129,30 @@ id / name / version / entry / host 面声明）+ 面白名单 `ALL_HOST_FACES` +
 11 测试全绿（新增 js_bridge 真 LLM 接线 2 端到端 + RealHost 1）；workspace 全过 +
 clippy 零警告 + GATE1 ALL PASS。
 
-**下轮 §5.5**：真 JS 插件跑通（`LoadedPlugin` + `Runtime::js_bridge` 组合：装载目录插件
-→ 按 manifest 授面 → JS 里调 `host.llm.complete` 打真 provider），以及 tools/session
-面从占位升级为接 `ToolRegistry` / `SessionStore`。
+### 5.5 落地实录（2026-08-19：tools/session 面接线 + 真 JS 插件跑通 + 修 qjs 堆损坏）
+
+- **tools/session 面接线**：`RealHost` 接 `ToolRegistry` + `ToolGate`（与 agent-loop
+  同门控语义：未注册 `tool-not-found`、注册未启用 `tool-disabled` fail-closed、清单
+  只列已启用）+ `SessionStore`（`session.append` 反序列化内核 `SessionEvent` 追加 /
+  `get` 快照 / `poll` 游标续读——拉模型，禁止 JS 回调重入）。config 面留占位。
+- **真 JS 插件跑通**：`LoadedPlugin::load`（plugin.json + main.js）+ `Runtime::js_bridge`
+  按 manifest 授面组合——JS 插件里 `await host.llm.complete`（真端口）+ `host.tools.invoke`
+  （echo）+ `host.session.append/get`（拉模型投影）全链路测试通过；未声明面在 JS 里
+  `undefined`（授面纪律在装配层生效）。
+- **修 qjs 堆损坏（`0xc0000374`，异步路径间歇崩）**：§5.2 曾在引擎 runtime 常驻
+  `rt.spawn(js_rt.drive())` 泵 JS 任务。实测发现 rquickjs 0.6 的 `async_with!` 展开的
+  `WithFuture::poll` **内部持锁并驱动 spawner**（`spawner.poll` + `execute_pending_job`），
+  官方 `async_test_case` 从不单独 spawn drive。常驻 drive 泵导致 pump 线程与
+  `block_on` 线程**双线程并发 poll 同一 qjs spawner** → 堆损坏（mem::forget 探针证明
+  与 Drop 无关，纯运行期竞争）。**去掉常驻 drive 任务后单线程驱动，8 连跑稳定。**
+
+**验证**：quickjs-bridge 28 + bm-assembly 15（新增 tools/session 面 2 + 真 JS 插件
+全链路 1 + 最小权限 undefined 1 + swap 后 js_bridge 1）+ 1 边界 + 6 最小三插件；
+workspace 全过 + clippy 零警告 + GATE1 ALL PASS。
+
+**下轮 §5.6**：插件运行时（`PluginRuntimePort`）接入——`Runtime::js_bridge` + 
+`LoadedPlugin` 收敛为「目录插件注册表」（扫描 plugins 目录 → manifest 装载 → 按面
+授面），以及 config 面从占位升级（settings 白名单 + 永不含 secret）。
 
 ## 6. 相关文件
 

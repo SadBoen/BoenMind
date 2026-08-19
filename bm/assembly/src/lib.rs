@@ -316,15 +316,22 @@ impl Runtime {
         self.plugin_runtime.availability()
     }
 
-    /// QuickJS 桥装配（§5.4 接真 LLM）：把当前装配的 LLM（`self.llm`，聚合
-    /// `LlmPort`，与 agent-loop 共享）接进 `HostApi` 宿主并返回引擎。
+    /// QuickJS 桥装配（§5.4 接真 LLM + §5.5 tools/session 面）：把当前装配的
+    /// LLM（`self.llm`，聚合 `LlmPort`，与 agent-loop 共享）、工具注册表+门控
+    /// （`self.tools`/`self.gate`，fail-closed）与会话存储（`self.store` 拉模型
+    /// 投影）接进 `HostApi` 宿主并返回引擎。
     ///
     /// `faces` = manifest 声明的 host 面子集（最小权限授面，见
     /// quickjs-bridge §5.3）。`apply_llm` 之后调用即走真 provider；headless
     /// （ScriptLlm mock）也走同一端口（桥层对 mock/真 provider 无感）。
     pub fn js_bridge(&self, faces: &[&str]) -> Result<quickjs_bridge::JsBridge, String> {
         let llm = self.llm.read().clone();
-        let host = Arc::new(js_host::RealHost::new(llm));
+        let host = Arc::new(js_host::RealHost::new(
+            llm,
+            Arc::clone(&self.tools),
+            Arc::clone(&self.gate),
+            Arc::clone(&self.store),
+        ));
         quickjs_bridge::JsBridge::new_with_faces(host, faces)
     }
 
@@ -427,6 +434,37 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("bm-kernel-{tag}-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         dir.join("test.db")
+    }
+
+    /// 脚本化工具（echo）：§5.5 真 JS 插件跑通用。
+    struct EchoTool;
+    impl EchoTool {
+        fn new() -> Self {
+            Self
+        }
+    }
+    #[async_trait::async_trait]
+    impl kernel_contracts::ToolHandler for EchoTool {
+        fn name(&self) -> &str {
+            "echo"
+        }
+        fn description(&self) -> &str {
+            "echo back"
+        }
+        fn parameters(&self) -> serde_json::Value {
+            serde_json::json!({ "type": "object", "properties": { "text": { "type": "string" } } })
+        }
+        async fn execute(
+            &self,
+            input: kernel_contracts::tools::ToolExecutionInput,
+        ) -> Result<kernel_contracts::tools::ToolExecutionResult, kernel_contracts::error::ToolError> {
+            let text = input
+                .arguments
+                .get("text")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            Ok(kernel_contracts::tools::ToolExecutionResult::ok(format!("echo:{text}")))
+        }
     }
 
     #[tokio::test]
@@ -717,6 +755,113 @@ mod tests {
         assert_eq!(r["ok"], serde_json::json!("true"));
         assert_eq!(r["value"]["chunks"][0]["type"], serde_json::json!("text-delta"));
         assert_eq!(r["value"]["chunks"][0]["text"], serde_json::json!("hi from script"));
+        let _ = std::fs::remove_dir_all(db.parent().unwrap());
+    }
+
+    // ---------- §5.5 真 JS 插件跑通（LoadedPlugin + Runtime::js_bridge 组合） ----------
+
+    #[test]
+    fn js_plugin_load_and_run_full_tool_llm_flow() {
+        // 目录插件（plugin.json + main.js）→ LoadedPlugin → js_bridge 按 manifest
+        // 授面 → JS 内 await host.llm.complete + host.tools.invoke + host.session
+        // 全链路跑通（工具经 ToolGate fail-closed、会话拉模型投影）。
+        // 注意：JsBridge 内部 block_on 自带 runtime，桥调用必须脱离 tokio 测试
+        // 上下文（#[tokio::test] 里调会 "Cannot start a runtime from within a runtime"）。
+        let db = tmp_db("js-plugin");
+        let rt = Runtime::headless(db.clone()).unwrap();
+        // 注册一个工具并启用（echo）。
+        let echo = EchoTool::new();
+        rt.register_tool(Arc::new(echo)).unwrap();
+        rt.gate.enable("echo");
+        // 插件要 append 的会话：先创建（headless 内存 store）。
+        let _agent = futures::executor::block_on(rt.create_session(header("s1"))).unwrap();
+
+        // 装配工具脚本 LLM：文本回合 "hello plugin"。
+        rt.swap_llm(scripted_llm(
+            "mock".to_string(),
+            "mock-1".to_string(),
+            vec![plugin_llm::MockTurn::Text("hello plugin".to_string())],
+        ));
+
+        // 构造临时插件目录。
+        let dir = std::env::temp_dir().join(format!("qjs-plugin-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("plugin.json"),
+            r#"{
+                "id": "demo",
+                "name": "Demo",
+                "version": "0.1.0",
+                "entry": "main.js",
+                "host": ["log", "llm.complete", "tools.list", "tools.invoke", "session.get", "session.append"]
+            }"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("main.js"),
+            r#"
+            globalThis.__main = async () => {
+                const list = host.tools.list();
+                const toolNames = list.value.map(t => t.name);
+                const llm = await host.llm.complete({
+                    provider: "mock", model: "mock-1",
+                    messages: [{ role: "user", content: "hi" }],
+                });
+                const echo = await host.tools.invoke("echo", { text: "ping" });
+                host.session.append("s1", { UserMessage: { text: "from plugin" } });
+                const s = host.session.get("s1");
+                return { tools: toolNames, llmText: llm.value.chunks[0].text, echo: echo.value.output, sessionCursor: s.value.cursor };
+            };
+            "#,
+        )
+        .unwrap();
+
+        let loaded = quickjs_bridge::LoadedPlugin::load(&dir).unwrap();
+        let face_set = loaded.manifest.face_set();
+        let faces: Vec<&str> = face_set.iter().map(|s| s.as_str()).collect();
+        let bridge = rt.js_bridge(&faces).expect("js bridge");
+        bridge
+            .exec(&loaded.entry_source)
+            .expect("load plugin entry");
+        let r = bridge
+            .call_async("__main", &[])
+            .expect("run plugin main");
+        // llm.complete（真端口块流）→ "hello plugin"。
+        assert_eq!(r["llmText"], serde_json::json!("hello plugin"));
+        // tools.list（经 ToolGate）→ 只有 echo。
+        assert_eq!(r["tools"], serde_json::json!(["echo"]));
+        // tools.invoke → echo:ping。
+        assert_eq!(r["echo"], serde_json::json!("echo:ping"));
+        // session.append/get（拉模型投影）→ cursor 2（SessionStarted + UserMessage）。
+        assert_eq!(r["sessionCursor"], serde_json::json!(2));
+
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(db.parent().unwrap());
+    }
+
+    #[test]
+    fn js_plugin_unlisted_face_is_undefined() {
+        // manifest 最小权限：未声明 host.tools.invoke 的插件在 JS 里访问
+        // host.tools.invoke 必须 undefined（§5.3 授面纪律在装配层生效）。
+        let db = tmp_db("js-plugin-lp");
+        let rt = Runtime::headless(db.clone()).unwrap();
+        let dir = std::env::temp_dir().join(format!("qjs-plugin-lp-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("plugin.json"),
+            r#"{"id":"lp","name":"LP","entry":"main.js","host":["log","tools.list"]}"#,
+        )
+        .unwrap();
+        std::fs::write(dir.join("main.js"), r#"globalThis.__t = typeof host.tools.invoke;"#)
+            .unwrap();
+        let loaded = quickjs_bridge::LoadedPlugin::load(&dir).unwrap();
+        let face_set = loaded.manifest.face_set();
+        let faces: Vec<&str> = face_set.iter().map(|s| s.as_str()).collect();
+        let bridge = rt.js_bridge(&faces).expect("js bridge");
+        bridge.exec(&loaded.entry_source).unwrap();
+        let r = bridge.eval_value("globalThis.__t").unwrap();
+        assert_eq!(r, serde_json::json!("undefined"));
+        let _ = std::fs::remove_dir_all(dir);
         let _ = std::fs::remove_dir_all(db.parent().unwrap());
     }
 }

@@ -6,17 +6,18 @@
 //! # 异步泵架构（rquickjs 0.6 无 Node 事件循环，宿主必须驱动 Promise）
 //!
 //! rquickjs 0.6 的 `Async` fn 注册成 JS Promise 后，内部把 Rust future 压进
-//! **runtime 的 spawner**，只能由 `AsyncContext` + `AsyncRuntime::drive()`/`idle()`
-//! 驱动（常规 `Ctx::eval` 注释明说 "futures are not polled"）。因此：
-//!
-//! - **引擎 = `AsyncContext`，跑在专用异步线程的独立 tokio runtime 上**；
-//!   该 runtime 常驻 `tokio::spawn(rt.drive())` 泵 JS 任务（同 rquickjs 官方
-//!   `async_test_case` 的 `drive` 用法）。
-//! - **HostApi 调用（tools_invoke / llm_complete_stream 等）**在 JS 插件线程上
-//!   同步 `block_on` 到**宿主** tokio runtime 执行——与泵线程的独立 runtime
-//!   分离，杜绝跨 runtime deadlock。
+//! **runtime 的 spawner**。驱动方式是 `async_with!`（`AsyncContext::async_with`）：
+//! 它的 `WithFuture::poll` **内部持锁并驱动 spawner**（`spawner.poll` +
+//! `execute_pending_job`），因此**无需单独 spawn `rt.drive()` 泵线程**——官方
+//! `async_test_case` 同样不 spawn。曾加常驻 `rt.drive()` 泵，导致 pump 线程与
+//! `block_on` 线程**双线程并发 poll 同一 qjs spawner** → 实测 `0xc0000374`
+//! 堆损坏（异步路径间歇崩，多实例/单实例都复现）；去掉后单线程驱动，稳定。
+//! - **引擎 = `AsyncContext`，跑在专用 tokio runtime 上**（异步注册/求值）；
+//! - **HostApi 调用（tools_invoke / llm_complete_stream 等）**在 JS 线程上
+//!   同步 `block_on` 到**宿主** tokio runtime 执行——与引擎 runtime 分离，
+//!   杜绝跨 runtime deadlock；JS 侧 `await` 由 async_with 的 poll 驱动。
 //! - JS 插件编排：`host.llm.complete(req)` 等返回 Promise，`await` 即串行等待；
-//!   泵线程持续 poll，宿主调用完成后 resolve。
+//!   `exec_async`/`call_async` 等整个 async 函数完成后返回。
 //!
 //! # 跨桥类型（JSON 字符串，规避 rquickjs 0.6 闭包 lifetime 坑）
 //!
@@ -50,9 +51,17 @@ pub struct JsBridge {
     /// 持有宿主引用（Arc 生命周期与桥一致；注册进 JS 的函数各自再 clone）。
     #[allow(dead_code)]
     host: Arc<dyn HostApi>,
-    /// JS 专用线程的 tokio runtime（跑 AsyncContext + drive 泵）。
+    /// JS 专用线程的 tokio runtime（跑 AsyncContext + 泵 JS 任务）。
     rt: tokio::runtime::Runtime,
-    ctx: AsyncContext,
+    /// `Option`：Drop 时显式销毁 QuickJS 上下文（先于 runtime）。
+    ///
+    /// **无常驻泵任务**：rquickjs 0.6 的 `async_with!` 展开的 `WithFuture` 在
+    /// poll 时**内部持锁并驱动 spawner**（`spawner.poll` + `execute_pending_job`），
+    /// 官方 `async_test_case` 也从不单独 spawn `rt.drive()`。曾加常驻 drive 泵，
+    /// 导致 pump 线程与 `block_on` 线程**双线程并发 poll 同一 qjs spawner** →
+    /// 实测 `0xc0000374` 堆损坏（异步路径间歇崩）。去掉后全链路由 block_on
+    /// 单线程驱动，无跨线程竞争。
+    ctx: Option<AsyncContext>,
 }
 
 impl JsBridge {
@@ -77,16 +86,15 @@ impl JsBridge {
             .build()
             .map_err(|e| format!("create JS runtime: {e}"))?;
 
+        // 无泵任务：async_with! 在 poll 时自驱动 spawner（见结构体字段注释）。
         let js_rt = AsyncRuntime::new().map_err(|e| format!("create QuickJS runtime: {e}"))?;
         let ctx = rt
             .block_on(AsyncContext::full(&js_rt))
             .map_err(|e| format!("create QuickJS context: {e}"))?;
 
-        // 泵线程：驱动 spawner 里所有 JS 任务（Async fn 的 Promise）。与宿主 runtime 分离。
-        rt.spawn(js_rt.drive());
-
-        // `async_with!` 闭包体是 async move，闭包内 clone 会整体 move 捕获 `host`，
-        // 故逐面注册时从 `&Arc` clone 局部再用。
+        // 泵：Async fn 的 future 压进 spawner，由 async_with 的 poll 自驱动
+        //（与宿主 runtime 分离，防跨 runtime deadlock——HostApi 调用在 JS
+        // 线程 block_on 到宿主 runtime）。
         let h = host.clone();
         rt.block_on(async_with!(ctx => |ctx| {
             let globals = ctx.globals();
@@ -109,13 +117,13 @@ impl JsBridge {
         }))
         .map_err(|e| e.to_string())?;
 
-        Ok(Self { host, rt, ctx })
+        Ok(Self { host, rt, ctx: Some(ctx) })
     }
 
     /// 执行一段 JS（同步）。若脚本含 `await`（顶层 Promise），请用 [`Self::exec_async`]。
     pub fn exec(&self, code: &str) -> Result<(), String> {
         let code = code.to_string();
-        let res = self.rt.block_on(async_with!(self.ctx => |ctx| {
+        let res = self.rt.block_on(async_with!(self.ctx.as_ref().expect("ctx alive") => |ctx| {
             ctx.eval::<(), _>(code).map_err(|e| e.to_string())
         }));
         res.map_err(|e| format!("exec JS: {e}"))
@@ -126,7 +134,7 @@ impl JsBridge {
     /// QuickJS 无 Node 事件循环；脚本里 `await host.llm.complete(...)` 由泵线程驱动。
     pub fn exec_async(&self, code: &str) -> Result<(), String> {
         let code = code.to_string();
-        let res = self.rt.block_on(async_with!(self.ctx => |ctx| {
+        let res = self.rt.block_on(async_with!(self.ctx.as_ref().expect("ctx alive") => |ctx| {
             let promise = ctx.eval_promise(code).map_err(|e| e.to_string())?;
             promise
                 .into_future::<()>()
@@ -143,7 +151,7 @@ impl JsBridge {
     /// 脚本值，因此**异步结果一律走全局变量 + 此方法读回**（见 [`Self::call_async`]）。
     pub fn eval_value(&self, code: &str) -> Result<serde_json::Value, String> {
         let code = code.to_string();
-        let res = self.rt.block_on(async_with!(self.ctx => |ctx| {
+        let res = self.rt.block_on(async_with!(self.ctx.as_ref().expect("ctx alive") => |ctx| {
             let v: rquickjs::Value = ctx.eval(code).map_err(|e| e.to_string())?;
             js_value_to_json(&v)
         }));
@@ -166,6 +174,15 @@ impl JsBridge {
         let script = format!("globalThis.__result = await ({expr});");
         self.exec_async(&script)?;
         self.eval_value("globalThis.__result")
+    }
+}
+
+impl Drop for JsBridge {
+    fn drop(&mut self) {
+        // 无泵任务（async_with 自驱动），drop 时无并发访问 qjs。
+        // 仍先销毁 ctx（QuickJS 上下文）再 drop runtime：ctx 引用 rt 内存，
+        // 顺序颠倒会释放被引用方（防御性）。
+        self.ctx.take();
     }
 }
 
