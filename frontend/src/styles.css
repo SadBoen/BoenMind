@@ -179,11 +179,12 @@ body {
 .chat-unit { display: flex; height: 100%; position: relative; }
 .chat-unit-side {
   flex-shrink: 0;
-  border-right: 1px solid var(--bm-border);
   background: var(--bm-bg-2);
   display: flex;
   flex-direction: column;
   min-height: 0;
+  /* 无 border-right：与聊天面板的分隔交给 .chat-unit-resizer 的 1px 线，
+     避免两线相邻变粗（用户反馈分割线太粗） */
 }
 .chat-unit-side-floating {
   position: absolute;
@@ -192,26 +193,55 @@ body {
   box-shadow: 4px 0 24px rgba(0,0,0,.4);
 }
 .chat-unit-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+/* 会话列表与聊天之间的分割线：只留窗口间那种 1px 细黑线；宽热区保留拖拽（视觉不可见） */
+.chat-unit-resizer {
+  width: 6px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  background: transparent;
+  position: relative;
+  z-index: 25;
+}
+.chat-unit-resizer::before {
+  content: "";
+  position: absolute;
+  left: 2px; top: 0; bottom: 0;
+  width: 1px;
+  background: var(--bm-border);
+}
+.chat-unit-resizer:hover::before {
+  background: var(--bm-accent);
+}
 /* 会话列表收起/展开按钮：统一方形，竖向左缘中间（宽/窄模式一致）。
-   方框转 180°：圆角朝左（8px 0 0 8px），开口朝右（border-right 无）——收缩态箭头 ◀ 为左拉镜像。 */
+   展开态（open）= 完整方框：四角全圆角 + 四边全边框，箭头 ◀（朝左提示收起）；
+   收起态（closed）= 方框转 180°：圆角朝右（0 8px 8px 0）、开口朝左（border-left 无），箭头 ▶（朝右提示展开）。 */
 .chat-unit-toggle {
   position: absolute;
   left: 0; top: 50%; transform: translateY(-50%);
   z-index: 30;
   width: 24px; height: 40px;
   border: 1px solid var(--bm-border);
-  border-right: none;
-  border-radius: 8px 0 0 8px;
   background: var(--bm-bg-2);
   color: var(--bm-fg-dim);
   font-size: 11px;
   cursor: pointer;
   display: flex; align-items: center; justify-content: center;
+  transition: border-radius .12s ease;
 }
 .chat-unit-toggle.active { color: var(--bm-accent); }
-/* 展开时贴在会话列表右缘（列表宽 260px），收起时回左缘；都竖向居中、方形 */
-.chat-unit-toggle.open { left: calc(260px - 13px); }
-.chat-unit-toggle.closed { left: 0; }
+/* 展开时贴在会话列表右缘（列表宽 260px），完整方框（四角圆角+四边框） */
+.chat-unit-toggle.open {
+  left: calc(260px - 13px);
+  border-radius: 8px;
+  border: 1px solid var(--bm-border);
+}
+/* 收起时回左缘；方框转 180°（圆角朝右、开口朝左） */
+.chat-unit-toggle.closed {
+  left: 0;
+  border-radius: 0 8px 8px 0;
+  border: 1px solid var(--bm-border);
+  border-left: none;
+}
 
 /* 会话列表面板（chat-unit 内嵌版） */
 .chat-unit .session-list { display: flex; flex-direction: column; height: 100%; }
@@ -241,14 +271,29 @@ body {
 }
 .chat-empty { color: var(--bm-fg-dim); text-align: center; margin-top: 40px; }
 .msg { display: flex; gap: 10px; }
+/* 助手消息：LLM 在左（默认布局） */
+.msg-assistant { justify-content: flex-start; }
+/* 用户消息：我的发言在右，头像在右（row-reverse），气泡右对齐 */
+.msg-user {
+  justify-content: flex-end;
+  flex-direction: row-reverse;
+}
 .msg-avatar {
   width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
   font-size: 13px; background: var(--bm-bg-3); color: var(--bm-fg-dim);
 }
 .msg-assistant .msg-avatar { background: var(--bm-accent); color: #fff; }
-.msg-body { min-width: 0; }
+.msg-user .msg-avatar { background: var(--bm-bg-3); color: var(--bm-accent); }
+.msg-body { min-width: 0; max-width: 78%; }
+/* 用户消息气泡：右对齐圆角卡片；助手消息无框（文档式） */
+.msg-user .msg-body {
+  background: var(--bm-bg-3);
+  border-radius: 12px 12px 2px 12px;
+  padding: 8px 12px;
+}
 .msg-text { white-space: pre-wrap; line-height: 1.6; }
+.msg-user .msg-text { color: var(--bm-fg); }
 .msg-body p { margin: 0 0 8px; }
 .msg-body p:last-child { margin-bottom: 0; }
 .msg-body pre {
@@ -662,11 +707,12 @@ body {
   position: relative;
   z-index: 1;
 }
-/* 卡通：面板/输入区加粗描边（2px 墨绿），拉出卡通骨架 */
+/* 卡通：面板/输入区加粗描边（2px 墨绿），拉出卡通骨架。
+   注意：.chat-unit-side 不在此列——会话列表与聊天之间的分隔
+   只用默认 1px border-right（用户反馈左/下 2px 全描边=双线太粗）。 */
 .preset-cartoon .bm-sider {
   border-right: 2px solid #2C4A47;
 }
-.preset-cartoon .chat-unit-side,
 .preset-cartoon .chat-input-card,
 .preset-cartoon .msg-avatar {
   border: 2px solid #2C4A47;
@@ -733,7 +779,8 @@ body {
 .fm-unit { display: flex; height: 100%; position: relative; min-width: 0; }
 .fm-tree-pane {
   width: 280px; flex-shrink: 0; display: flex; flex-direction: column;
-  border-right: 1px solid var(--bm-border); background: var(--bm-bg-2);
+  background: var(--bm-bg-2);
+  /* 无 border-right：与内容区分隔交给 .fm-resizer 的 1px 线 */
 }
 .fm-toolbar {
   display: flex; align-items: center; gap: 2px; padding: 4px 6px;
@@ -744,6 +791,25 @@ body {
   max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .fm-tree { flex: 1; overflow: auto; padding: 4px; background: transparent; }
+/* 目录树与内容区之间的分割线：只留窗口间那种 1px 细黑线；宽热区保留拖拽（视觉不可见） */
+.fm-resizer {
+  width: 6px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  background: transparent;
+  position: relative;
+  z-index: 25;
+}
+.fm-resizer::before {
+  content: "";
+  position: absolute;
+  left: 2px; top: 0; bottom: 0;
+  width: 1px;
+  background: var(--bm-border);
+}
+.fm-resizer:hover::before {
+  background: var(--bm-accent);
+}
 .fm-content-pane {
   flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative;
 }
@@ -751,7 +817,13 @@ body {
   display: flex; align-items: center; gap: 8px; padding: 6px 10px;
   border-bottom: 1px solid var(--bm-border); background: var(--bm-bg-2);
 }
-.fm-path { font-size: 12px; color: var(--bm-fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fm-path { font-size: 12px; color: var(--bm-fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+/* 内容区关闭按钮：右上角，常态低调 */
+.fm-close-btn {
+  flex-shrink: 0;
+  color: var(--bm-fg-dim) !important;
+}
+.fm-close-btn:hover { background: var(--bm-bg-3) !important; color: var(--bm-fg) !important; }
 .fm-empty { margin-top: 30%; }
 .fm-preview-image {
   flex: 1; overflow: auto; display: flex; align-items: center; justify-content: center;
@@ -793,3 +865,61 @@ body {
 
 /* 窄模式（覆盖）：树被预览替换时工具栏仍可用 */
 .fm-unit.narrow-tree-only .fm-tree-pane { display: none; }
+
+/* ============================================================
+   dockview 标题栏/标签：悬停才显示（所有标签组统一）+ 修复非激活 tab 黑底
+   ============================================================ */
+/* tab 背景变量显式覆盖：堆叠时非激活 tab 用主题色，不再落回 abyss 默认黑底 */
+.dockview-theme-abyss.dv-theme-b {
+  --dv-activegroup-visiblepanel-tab-background-color: var(--bm-bg-3);
+  --dv-activegroup-visiblepanel-tab-color: var(--bm-fg);
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--bm-bg-2);
+  --dv-activegroup-hiddenpanel-tab-color: var(--bm-fg-dim);
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--bm-bg-2);
+  --dv-inactivegroup-visiblepanel-tab-color: var(--bm-fg-dim);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--bm-bg);
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--bm-fg-dim);
+}
+/* 标题栏容器：常态透明（单/多标签组统一），hover 才显示主题背景；
+   高度布局不变（过渡只在背景色，不位移）。前缀 .dv-theme-b 提高特异度，
+   压过既有 .dockview-theme-abyss 的多标签组背景规则 */
+.dockview-theme-abyss.dv-theme-b .dv-groupview .dv-tabs-and-actions-container:not(.dv-single-tab) {
+  background: transparent !important;
+  border-bottom: none !important;
+}
+.dockview-theme-abyss.dv-theme-b .dv-groupview .dv-tabs-and-actions-container:not(.dv-single-tab):hover {
+  background: var(--bm-bg-2) !important;
+  border-bottom: 1px solid var(--bm-border) !important;
+}
+/* 所有 tab（含非激活）：常态透明 + 主题文字色，hover 才显示背景 */
+.dockview-theme-abyss.dv-theme-b .dv-groupview .dv-tab {
+  background: transparent !important;
+  color: var(--bm-fg-dim) !important;
+}
+.dockview-theme-abyss.dv-theme-b .dv-groupview .dv-tab:hover {
+  background: color-mix(in srgb, var(--bm-bg-3) 60%, transparent) !important;
+  color: var(--bm-fg) !important;
+}
+/* 激活 tab：常态浅背景（可辨认当前面板），hover 主题高亮 */
+.dockview-theme-abyss.dv-theme-b .dv-groupview .dv-tab.dv-active-tab {
+  background: var(--bm-bg-3) !important;
+  color: var(--bm-fg) !important;
+}
+/* 标题文字：常态隐藏（悬停才显示）——与单标签悬浮标题一致 */
+.dockview-theme-abyss.dv-theme-b .dv-groupview .dv-tabs-and-actions-container:not(.dv-single-tab) .dv-default-tab-title {
+  opacity: 0;
+  transition: opacity .15s ease;
+}
+.dockview-theme-abyss.dv-theme-b .dv-groupview .dv-tabs-and-actions-container:not(.dv-single-tab):hover .dv-default-tab-title {
+  opacity: 1;
+}
+/* 悬停时标题栏操作（关闭点等）也随容器显示 */
+.dockview-theme-abyss.dv-theme-b .dv-groupview .dv-tabs-and-actions-container:not(.dv-single-tab) .bm-header-actions,
+.dockview-theme-abyss.dv-theme-b .dv-groupview .dv-tabs-and-actions-container:not(.dv-single-tab) .dv-default-tab-action {
+  opacity: 0;
+  transition: opacity .15s ease;
+}
+.dockview-theme-abyss.dv-theme-b .dv-groupview .dv-tabs-and-actions-container:not(.dv-single-tab):hover .bm-header-actions,
+.dockview-theme-abyss.dv-theme-b .dv-groupview .dv-tabs-and-actions-container:not(.dv-single-tab):hover .dv-default-tab-action {
+  opacity: 1;
+}

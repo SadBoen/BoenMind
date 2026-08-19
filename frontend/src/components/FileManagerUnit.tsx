@@ -4,7 +4,7 @@ import {
 } from "antd";
 import type { MenuProps, TreeDataNode } from "antd";
 import {
-  CloudUploadOutlined, CopyOutlined, DeleteOutlined, DownloadOutlined,
+  CloudUploadOutlined, CloseOutlined, CopyOutlined, DeleteOutlined, DownloadOutlined,
   EditOutlined, FileAddOutlined, FolderAddOutlined, FolderOpenOutlined,
   HomeOutlined, ReloadOutlined, SaveOutlined, UploadOutlined,
 } from "@ant-design/icons";
@@ -24,6 +24,9 @@ import { downloadFile, downloadUrl, rpc, uploadFile } from "../client";
 // 工作目录事实源：设置 → host.workdir（后端 settings.update 写入，服务端校验绝对路径）。
 
 const NARROW = 720;
+const TREE_W = 280;
+const TREE_W_MIN = 180;
+const TREE_W_MAX = 480;
 const PREVIEW_EXT = /\.(md|markdown|txt|log|json|toml|yaml|yml|rs|ts|tsx|js|jsx|css|html|py|sh)$/i;
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|ico|avif)$/i;
 
@@ -70,6 +73,8 @@ export default function FileManagerUnit() {
   const [mkdirOpen, setMkdirOpen] = useState(false);
   const [mkdirParent, setMkdirParent] = useState("");
   const [mkdirName, setMkdirName] = useState("");
+  // 树宽（分割线拖拽调宽；默认 TREE_W）
+  const [treeW, setTreeW] = useState(TREE_W);
 
   // 监听单元宽度 → 窄模式（覆盖）vs 宽模式（分栏）
   useEffect(() => {
@@ -377,11 +382,43 @@ export default function FileManagerUnit() {
     </Button>
   );
 
+  // 树/内容分割线拖拽调宽（宽模式分栏；窄模式覆盖无分割线）。
+  const dragRef = useRef<{ startX: number; startW: number } | null>(null);
+  const onResizeStart = (e: React.MouseEvent) => {
+    e.preventDefault();
+    dragRef.current = { startX: e.clientX, startW: treeW };
+    const onMove = (ev: MouseEvent) => {
+      const d = dragRef.current;
+      if (!d) return;
+      const w = Math.min(TREE_W_MAX, Math.max(TREE_W_MIN, d.startW + ev.clientX - d.startX));
+      setTreeW(w);
+    };
+    const onUp = () => {
+      dragRef.current = null;
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  };
+
+  // 关闭内容区：回到未打开文件的空状态。
+  const closeContent = () => {
+    if (dirty && !window.confirm("有未保存的修改，确定关闭吗？")) return;
+    setOpenPath(null);
+    setEditMode(false);
+    setDirty(false);
+  };
+
   return (
     <div className="fm-unit" ref={containerRef}>
       {/* 宽模式：左右分栏；窄模式：未打开文件时显示树，打开文件后覆盖 */}
       {(!narrow || !openPath) && (
-        <div className="fm-tree-pane">
+        <div className="fm-tree-pane" style={{ width: treeW }}>
           {toolbar}
           <Tree
             className="fm-tree"
@@ -401,12 +438,24 @@ export default function FileManagerUnit() {
           />
         </div>
       )}
+      {/* 树与内容区分割线：树可见时可拖拽调宽（窄模式打开文件、树被覆盖时隐藏） */}
+      {(!narrow || !openPath) && (
+        <div className="fm-resizer" onMouseDown={onResizeStart} title="拖拽调整目录树宽度" />
+      )}
       <div className="fm-content-pane">
         {openPath ? (
           <>
             <div className="fm-content-header">
               {narrow && backBtn}
               <span className="fm-path">{openPath}</span>
+              <Button
+                className="fm-close-btn"
+                size="small"
+                type="text"
+                icon={<CloseOutlined />}
+                title="关闭预览"
+                onClick={closeContent}
+              />
             </div>
             {renderPreview()}
           </>

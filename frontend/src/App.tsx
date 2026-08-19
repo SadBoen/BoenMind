@@ -75,10 +75,20 @@ export default function App() {
     });
   };
 
-  // VS Code 连通风标题栏（悬浮标题栏样式见 styles.css，固定启用）
+  // VS Code 连通风标题栏（悬浮标题栏样式见 styles.css，固定启用）。
+  // tab 背景必须显式覆盖 dockview 的 activegroup/inactivegroup 变量，
+  // 否则堆叠时非激活 tab 落回 abyss 默认深色（黑底）。
   const customTheme = {
     ...themeAbyss,
     className: `${themeAbyss.className} dv-theme-b`,
+    activegroupVisiblePanelTabBackgroundColor: "var(--bm-bg-3)",
+    activegroupVisiblePanelTabColor: "var(--bm-fg)",
+    activegroupHiddenPanelTabBackgroundColor: "var(--bm-bg-2)",
+    activegroupHiddenPanelTabColor: "var(--bm-fg-dim)",
+    inactivegroupVisiblePanelTabBackgroundColor: "var(--bm-bg-2)",
+    inactivegroupVisiblePanelTabColor: "var(--bm-fg-dim)",
+    inactivegroupHiddenPanelTabBackgroundColor: "var(--bm-bg)",
+    inactivegroupHiddenPanelTabColor: "var(--bm-fg-dim)",
   };
 
   const theme = PRESETS[preset].antd;
