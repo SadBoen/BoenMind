@@ -90,7 +90,7 @@ pub struct ToolSpec {
 }
 
 /// host.llm.complete 的流式块（供 JS 逐块消费；与 kernel StreamChunk 同构子集）。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum CompletionChunk {
     TextDelta { text: String },
@@ -121,7 +121,15 @@ pub trait HostApi: Send + Sync {
         &self,
         request: CompleteRequest,
         cancel: Cancellation,
-    ) -> HostResult;
+    ) -> HostResult {
+        // §5.4 默认实现：经 `llm_port()` 走内核契约端口（与 agent-loop 同一
+        // 聚合 LLM）。未装配真 LlmPort（如 MockHost 覆写前）→ `LLM_UNAVAILABLE`
+        // 诚实失败，绝不假成功。组合根装配的真宿主只需覆写 `llm_port()`。
+        match self.llm_port() {
+            Ok(llm) => crate::host::complete_with_port(llm, request, cancel).await,
+            Err(e) => HostResult::err(e),
+        }
+    }
 
     /// 会话追加事件（走 Session.append；JS 不得自管回合）。
     fn session_append(&self, session_id: &str, event: Value) -> HostResult;
@@ -131,6 +139,17 @@ pub trait HostApi: Send + Sync {
 
     /// 会话事件拉取：从游标起取增量（v1：一次性快照 + 游标续读；禁止回调重入）。
     fn session_poll(&self, session_id: &str, cursor: u64) -> HostResult;
+
+    /// 内核 LLM 端口（§5.4 接真 LLM）：默认实现 = 不可用（`LLM_UNAVAILABLE`）；
+    /// 组合根装配的真宿主把聚合 `LlmPort` 接进来，`llm_complete_stream` 经此
+    /// 走与 agent-loop 同一契约端口。**不提供 `agent.step`**——JS 插件当
+    /// Tool/Policy，不当第二 Agent（防双驱动毁掉 interrupted-turn）。
+    fn llm_port(&self) -> Result<Arc<dyn kernel_contracts::llm::LlmPort>, HostError> {
+        Err(HostError::new(
+            "LLM_UNAVAILABLE",
+            "host api has no llm port bound (assembly did not wire a real LlmPort)",
+        ))
+    }
 }
 
 /// 取消令牌：JS 任务 id → Rust CancellationToken/Drop。
@@ -163,6 +182,7 @@ impl Cancellation {
 
 pub mod js;
 pub mod plugin;
+pub mod host;
 
 pub use js::JsBridge;
 
@@ -334,6 +354,49 @@ mod tests {
         let host_api: &dyn HostApi = &MockHost::new();
         // 无法编译 `host.agent.step`——HostApi trait 没有该方法（此测试是编译期断言）。
         let _ = host_api.tools_list();
+    }
+
+    #[test]
+    fn llm_port_default_is_unavailable() {
+        // 未装配真 LlmPort 时 llm_complete_stream 必须诚实失败（不假成功）。
+        // 组合根装配的真宿主覆写 llm_port() 后，此路径被真实 provider 取代。
+        // 用只实现同步面的最小宿主（不覆写 llm_complete_stream → 走默认 llm_port）。
+        struct NoLlmHost;
+        #[async_trait::async_trait]
+        impl HostApi for NoLlmHost {
+            fn log(&self, _level: &str, _msg: &str) {}
+            fn config_get(&self, _plugin_id: &str, _key: &str) -> HostResult {
+                HostResult::ok(Value::Null)
+            }
+            fn tools_list(&self) -> HostResult {
+                HostResult::ok(Value::Null)
+            }
+            async fn tools_invoke(&self, _name: &str, _arguments: Value) -> HostResult {
+                HostResult::ok(Value::Null)
+            }
+            fn session_append(&self, _session_id: &str, _event: Value) -> HostResult {
+                HostResult::ok(Value::Null)
+            }
+            fn session_get(&self, _session_id: &str) -> HostResult {
+                HostResult::ok(Value::Null)
+            }
+            fn session_poll(&self, _session_id: &str, _cursor: u64) -> HostResult {
+                HostResult::ok(Value::Null)
+            }
+        }
+        let h = NoLlmHost;
+        let r = futures::executor::block_on(h.llm_complete_stream(
+            CompleteRequest {
+                provider: "minimax".into(),
+                model: "MiniMax-M3".into(),
+                messages: vec![ChatMessage { role: "user".into(), content: "hi".into() }],
+                tools: None,
+                temperature: None,
+                max_tokens: None,
+            },
+            Cancellation::new(),
+        ));
+        assert_eq!(r.err_or_code().as_deref(), Some("LLM_UNAVAILABLE"));
     }
 
     trait ResultExt {
@@ -538,5 +601,163 @@ mod tests {
         let p = read_global(&bridge, "__p");
         assert_eq!(p["value"]["events"].as_array().unwrap().len(), 0);
         let _ = host;
+    }
+
+    // ---------- §5.4 接真 LLM：默认 llm_complete_stream 经 llm_port() 走内核端口 ----------
+
+    /// 只实现 llm_port 的宿主（其余方法空实现）：验证 §5.4 默认路径把真 LlmPort
+    /// 接进 JS `host.llm.complete`——JS → 泵线程 → 默认 llm_complete_stream →
+    /// llm_port() → 内核块流 → 块 JSON 返回 JS。这就是组合根装配后的完整链路
+    /// （组合根只需覆写 llm_port 返回聚合 LLM）。
+    struct LlmOnlyHost {
+        llm: Arc<dyn kernel_contracts::llm::LlmPort>,
+    }
+
+    #[async_trait::async_trait]
+    impl HostApi for LlmOnlyHost {
+        fn log(&self, _level: &str, _msg: &str) {}
+        fn config_get(&self, _plugin_id: &str, _key: &str) -> HostResult {
+            HostResult::ok(Value::Null)
+        }
+        fn tools_list(&self) -> HostResult {
+            HostResult::ok(Value::Null)
+        }
+        async fn tools_invoke(&self, _name: &str, _arguments: Value) -> HostResult {
+            HostResult::ok(Value::Null)
+        }
+        fn session_append(&self, _session_id: &str, _event: Value) -> HostResult {
+            HostResult::ok(Value::Null)
+        }
+        fn session_get(&self, _session_id: &str) -> HostResult {
+            HostResult::ok(Value::Null)
+        }
+        fn session_poll(&self, _session_id: &str, _cursor: u64) -> HostResult {
+            HostResult::ok(Value::Null)
+        }
+        fn llm_port(&self) -> Result<Arc<dyn kernel_contracts::llm::LlmPort>, HostError> {
+            Ok(Arc::clone(&self.llm))
+        }
+    }
+
+    /// 脚本化 LlmPort（断言请求透传 + 产固定块流）。
+    struct ScriptLlm {
+        seen: Arc<std::sync::Mutex<Option<serde_json::Value>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl kernel_contracts::llm::LlmPort for ScriptLlm {
+        async fn list_models(
+            &self,
+            _provider: &str,
+        ) -> Result<Vec<kernel_contracts::llm::LlmModelInfo>, kernel_contracts::error::LlmError> {
+            Ok(vec![])
+        }
+        fn stream(
+            &self,
+            request: kernel_contracts::llm::GenerateOptions,
+        ) -> kernel_contracts::llm::ChunkStream {
+            *self.seen.lock().unwrap() = Some(serde_json::to_value(&request).unwrap());
+            Box::pin(futures::stream::iter(vec![
+                Ok(kernel_contracts::llm::StreamChunk::TextDelta {
+                    index: 0,
+                    text: "real provider".to_string(),
+                }),
+                Ok(kernel_contracts::llm::StreamChunk::Finish(
+                    kernel_contracts::llm::FinishReason::Stop,
+                )),
+            ]))
+        }
+    }
+
+    #[test]
+    fn js_llm_complete_wires_kernel_port_default_path() {
+        let seen = Arc::new(std::sync::Mutex::new(None));
+        let host = Arc::new(LlmOnlyHost {
+            llm: Arc::new(ScriptLlm { seen: Arc::clone(&seen) }),
+        });
+        let bridge = JsBridge::new_with_faces(host, &["llm.complete"]).expect("bridge");
+        bridge
+            .exec(r#"globalThis.__call = async (req) => host.llm.complete(req);"#)
+            .unwrap();
+        let r = bridge
+            .call_async(
+                "__call",
+                &[serde_json::json!({
+                    "provider": "minimax", "model": "MiniMax-M3",
+                    "messages": [
+                        { "role": "system", "content": "sys" },
+                        { "role": "user", "content": "hi" },
+                    ],
+                    "tools": [{ "name": "echo", "description": "echo back", "parameters": {} }],
+                })],
+            )
+            .unwrap();
+        // 真端口链路：块流翻译回 JS。
+        assert_eq!(r["ok"], serde_json::json!("true"));
+        assert_eq!(
+            r["value"]["chunks"][0]["type"],
+            serde_json::json!("text-delta")
+        );
+        assert_eq!(
+            r["value"]["chunks"][0]["text"],
+            serde_json::json!("real provider")
+        );
+        assert_eq!(
+            r["value"]["chunks"][1]["reason"],
+            serde_json::json!("stop")
+        );
+        // 请求透传：provider/model/messages 已翻译成内核 GenerateOptions（text-only）。
+        let seen = seen.lock().unwrap();
+        let req = seen.as_ref().expect("stream was called");
+        assert_eq!(req["provider"], serde_json::json!("minimax"));
+        assert_eq!(req["model"], serde_json::json!("MiniMax-M3"));
+        assert_eq!(req["messages"][0]["role"], serde_json::json!("System"));
+        assert_eq!(req["messages"][1]["content"][0]["Text"], serde_json::json!("hi"));
+        assert_eq!(req["tools"][0]["name"], serde_json::json!("echo"));
+        assert_eq!(req["sessionId"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn js_llm_complete_unavailable_without_port() {
+        // 宿主未覆写 llm_port → 默认 LLM_UNAVAILABLE 诚实失败（不假成功）。
+        #[async_trait::async_trait]
+        impl HostApi for NoPortHost {
+            fn log(&self, _level: &str, _msg: &str) {}
+            fn config_get(&self, _plugin_id: &str, _key: &str) -> HostResult {
+                HostResult::ok(Value::Null)
+            }
+            fn tools_list(&self) -> HostResult {
+                HostResult::ok(Value::Null)
+            }
+            async fn tools_invoke(&self, _name: &str, _arguments: Value) -> HostResult {
+                HostResult::ok(Value::Null)
+            }
+            fn session_append(&self, _session_id: &str, _event: Value) -> HostResult {
+                HostResult::ok(Value::Null)
+            }
+            fn session_get(&self, _session_id: &str) -> HostResult {
+                HostResult::ok(Value::Null)
+            }
+            fn session_poll(&self, _session_id: &str, _cursor: u64) -> HostResult {
+                HostResult::ok(Value::Null)
+            }
+        }
+        struct NoPortHost;
+        let bridge =
+            JsBridge::new_with_faces(Arc::new(NoPortHost), &["llm.complete"]).expect("bridge");
+        bridge
+            .exec(r#"globalThis.__call = async (req) => host.llm.complete(req);"#)
+            .unwrap();
+        let r = bridge
+            .call_async(
+                "__call",
+                &[serde_json::json!({
+                    "provider": "minimax", "model": "MiniMax-M3",
+                    "messages": [{ "role": "user", "content": "hi" }],
+                })],
+            )
+            .unwrap();
+        assert_eq!(r["ok"], serde_json::json!("false"));
+        assert_eq!(r["err"]["code"], serde_json::json!("LLM_UNAVAILABLE"));
     }
 }

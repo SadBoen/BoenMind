@@ -34,6 +34,7 @@ use plugin_tools::{ToolGate, ToolRegistry};
 use parking_lot::RwLock;
 
 pub mod config;
+pub mod js_host;
 pub mod provider;
 
 /// 脚本化 mock LLM 装配（门禁/headless 用）：按脚本产出工具调用 + 续文本。
@@ -313,6 +314,18 @@ impl Runtime {
     /// 探测插件运行时（fail-loud：未装配必须显式处理）。
     pub fn plugin_availability(&self) -> PluginRuntimeAvailability {
         self.plugin_runtime.availability()
+    }
+
+    /// QuickJS 桥装配（§5.4 接真 LLM）：把当前装配的 LLM（`self.llm`，聚合
+    /// `LlmPort`，与 agent-loop 共享）接进 `HostApi` 宿主并返回引擎。
+    ///
+    /// `faces` = manifest 声明的 host 面子集（最小权限授面，见
+    /// quickjs-bridge §5.3）。`apply_llm` 之后调用即走真 provider；headless
+    /// （ScriptLlm mock）也走同一端口（桥层对 mock/真 provider 无感）。
+    pub fn js_bridge(&self, faces: &[&str]) -> Result<quickjs_bridge::JsBridge, String> {
+        let llm = self.llm.read().clone();
+        let host = Arc::new(js_host::RealHost::new(llm));
+        quickjs_bridge::JsBridge::new_with_faces(host, faces)
     }
 
     fn loop_runtime(&self) -> Arc<LoopRuntime> {
@@ -648,5 +661,62 @@ mod tests {
                 reason: "plugin runtime is not registered in this delivery profile".into()
             }
         );
+    }
+
+    // ---------- QuickJS 桥装配（§5.4 接真 LLM） ----------
+
+    #[test]
+    fn js_bridge_wires_headless_llm_into_host() {
+        // headless（ScriptLlm mock）→ js_bridge → JS host.llm.complete 走同一端口。
+        let db = tmp_db("js-bridge");
+        let rt = Runtime::headless(db.clone()).unwrap();
+        let bridge = rt.js_bridge(&["llm.complete"]).expect("js bridge");
+        bridge
+            .exec(r#"globalThis.__call = async (req) => host.llm.complete(req);"#)
+            .unwrap();
+        let r = bridge
+            .call_async(
+                "__call",
+                &[serde_json::json!({
+                    "provider": "mock", "model": "mock-1",
+                    "messages": [{ "role": "user", "content": "hi" }],
+                })],
+            )
+            .unwrap();
+        // 空脚本 LLM：finish stop 终态（torn 纪律兜底）。
+        assert_eq!(r["ok"], serde_json::json!("true"));
+        assert_eq!(r["value"]["chunks"][0]["type"], serde_json::json!("finish"));
+        assert_eq!(r["value"]["chunks"][0]["reason"], serde_json::json!("stop"));
+        let _ = std::fs::remove_dir_all(db.parent().unwrap());
+    }
+
+    #[test]
+    fn js_bridge_uses_swapped_llm() {
+        // swap_llm 换装真 provider 形状的 LLM 后，js_bridge 同一装配入口
+        // 让 JS 插件吃到新实现——桥层对 mock/真 provider 无感。
+        let db = tmp_db("js-bridge-swap");
+        let rt = Runtime::headless(db.clone()).unwrap();
+        rt.swap_llm(scripted_llm(
+            "minimax".to_string(),
+            "MiniMax-M3".to_string(),
+            vec![plugin_llm::MockTurn::Text("hi from script".to_string())],
+        ));
+        let bridge = rt.js_bridge(&["llm.complete"]).expect("js bridge");
+        bridge
+            .exec(r#"globalThis.__call = async (req) => host.llm.complete(req);"#)
+            .unwrap();
+        let r = bridge
+            .call_async(
+                "__call",
+                &[serde_json::json!({
+                    "provider": "minimax", "model": "MiniMax-M3",
+                    "messages": [{ "role": "user", "content": "hi" }],
+                })],
+            )
+            .unwrap();
+        assert_eq!(r["ok"], serde_json::json!("true"));
+        assert_eq!(r["value"]["chunks"][0]["type"], serde_json::json!("text-delta"));
+        assert_eq!(r["value"]["chunks"][0]["text"], serde_json::json!("hi from script"));
+        let _ = std::fs::remove_dir_all(db.parent().unwrap());
     }
 }

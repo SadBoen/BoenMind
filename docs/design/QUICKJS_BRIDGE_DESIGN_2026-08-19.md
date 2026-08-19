@@ -2,7 +2,7 @@
 
 > 状态：**落地中**。host 面契约已定稿（§4）+ rquickjs 桥已实现（§5.2 完成：
 > `HostApi` 注册进全局 `host` + 异步泵打通，11 测试全绿）；manifest 驱动装载
-> （§5.3 完成：按 manifest 最小权限授面，16 测试全绿）；§5.4 接真 LLM 待后续。
+> （§5.3 完成：按 manifest 最小权限授面，16 测试全绿）；§5.4 接真 LLM 已完成。
 > 本文件是实现的契约，不是 wiki。
 
 ## 1. 定位
@@ -104,6 +104,33 @@ id / name / version / entry / host 面声明）+ 面白名单 `ALL_HOST_FACES` +
 
 **下轮 §5.4 接真 LLM**：JS 插件用 `host.llm.complete` 打真实 provider——需组合根把
 真 `LlmPort`（经 `bm-assembly` 装配的聚合 LLM）接进 `HostApi` 实现，桥层无需改动。
+
+### 5.4 落地实录（2026-08-19：接真 LLM 完成）
+
+桥层无需改动（§5.2 的异步泵 + §5.3 的授面已就绪），只在两侧各加一小块：
+
+- **quickjs-bridge**：`HostApi` 新增 `llm_port() -> Result<Arc<dyn LlmPort>>`，
+  **默认实现 = 不可用**（`LLM_UNAVAILABLE` 诚实失败，不假成功）；`llm_complete_stream`
+  改为**默认实现**：经 `llm_port()` 取内核端口 → 桥请求翻译成 `GenerateOptions`
+  （text-only，未知角色 `UNSUPPORTED_ROLE`，工具声明拷贝成 `ToolSchema`）→
+  `LlmPort::stream` → 逐块消费翻译成 `CompletionChunk` JSON（块索引保留，
+  reasoning-delta 折叠进 text，usage 不下发）→ `{ok, value:{chunks}}`。取消经
+  `Cancellation` 订阅触发内核 `AbortSignal`（provider 以 `finish{cancelled}` 收尾）。
+  新增 `host.rs` 模块（`to_kernel_messages` / `to_kernel_tools` / `complete_with_port` /
+  `translate_llm_chunks`），torn 纪律：流 Err 或 Finish 缺失都补 `STREAM_CLOSED` 终态。
+- **bm-assembly（组合根，唯一装配点）**：新增 `js_host.rs`（`RealHost`）——把
+  `Runtime.llm`（聚合 `LlmPort`，与 agent-loop 共享同一 `Arc`，`swap_llm` 后对 JS
+  插件同样下一请求生效）经 `llm_port()` 接进桥；其余面（log/config/tools/session）
+  留诚实占位。`Runtime::js_bridge(faces)` 是桥装配唯一入口（按 manifest 最小权限授面）。
+
+**验证**：28 测试全绿（原 16 + §5.4 新增 12：默认路径 LLM_UNAVAILABLE、桥消息/工具
+翻译、块流 5 案例 + 取消、JS 端到端真端口链路 + 无端口诚实失败）；bm-assembly
+11 测试全绿（新增 js_bridge 真 LLM 接线 2 端到端 + RealHost 1）；workspace 全过 +
+clippy 零警告 + GATE1 ALL PASS。
+
+**下轮 §5.5**：真 JS 插件跑通（`LoadedPlugin` + `Runtime::js_bridge` 组合：装载目录插件
+→ 按 manifest 授面 → JS 里调 `host.llm.complete` 打真 provider），以及 tools/session
+面从占位升级为接 `ToolRegistry` / `SessionStore`。
 
 ## 6. 相关文件
 
