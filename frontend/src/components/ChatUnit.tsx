@@ -40,7 +40,7 @@ export default function ChatUnit() {
         title={narrow ? "会话列表" : open ? "收起会话" : "展开会话"}
         onClick={toggle}
       >
-        {narrow ? "🗂️" : open ? "◀" : "▶"}
+        {narrow ? "🗂️" : open ? "▶" : "◀"}
       </button>
 
       {/* 侧栏：宽模式内联（open 时显示），窄模式悬浮 overlay（floating 时显示） */}

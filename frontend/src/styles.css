@@ -117,6 +117,64 @@ body {
 }
 .login-card .sub { color: var(--bm-fg-dim); font-size: 13px; margin-bottom: 20px; }
 
+/* 右键菜单：小圆角统一 + 紧凑行距（与字高成比例：13px 字 + 5px 上下 ≈ 29px 行高） */
+.fm-ctx-menu {
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bm-bg-2);
+  border: 1px solid var(--bm-border);
+}
+.fm-ctx-menu .bm-menu {
+  border-radius: 8px;
+  padding: 4px;
+  background: transparent;
+  border-inline-end: none !important;
+}
+.fm-ctx-menu .bm-menu-item {
+  height: auto;
+  line-height: 1.5;
+  padding: 5px 12px !important;
+  margin: 0;
+  font-size: 13px;
+  border-radius: 6px;
+}
+.fm-ctx-menu .bm-menu-item .bm-menu-item-icon {
+  font-size: 14px;
+  margin-inline-end: 10px !important;
+}
+.fm-ctx-menu .bm-menu-item-divider {
+  margin: 4px 8px;
+  border-color: var(--bm-border);
+}
+.fm-ctx-menu .bm-menu-item:not(.bm-menu-item-disabled):hover {
+  background: var(--bm-bg-3) !important;
+}
+
+/* ---- dockview 多标签组：去黑底方角，统一小圆角 ---- */
+/* 多标签标题栏：主题背景 + 顶部圆角 */
+.dockview-theme-abyss .dv-groupview .dv-tabs-and-actions-container:not(.dv-single-tab) {
+  background: var(--bm-bg-2) !important;
+  border-radius: 8px 8px 0 0;
+  border-bottom: 1px solid var(--bm-border);
+}
+/* dockview 内层 tabs 容器：跟主题背景（防 abyss 默认黑底透出） */
+.dockview-theme-abyss .dv-tabs-container {
+  background: var(--bm-bg-2) !important;
+}
+/* 所有 dockview tab：顶部小圆角（统一风格；覆盖 dv-theme-b 的 0px） */
+.dockview-theme-abyss.dv-theme-b .dv-tab {
+  border-radius: 6px 6px 0 0 !important;
+}
+/* active tab：主题高亮背景（非黑底），顶部圆角 */
+.dockview-theme-abyss.dv-theme-b .dv-active-tab {
+  background: var(--bm-bg-3) !important;
+  border-radius: 6px 6px 0 0 !important;
+}
+/* inactive tab hover：浅高亮，非深色 */
+.dockview-theme-abyss .dv-tab:not(.dv-active-tab):hover {
+  background: color-mix(in srgb, var(--bm-bg-3) 50%, transparent) !important;
+}
+
 /* ---- 聊天单元（Session 列表 + 聊天，同一 dockview 面板） ---- */
 .chat-unit { display: flex; height: 100%; position: relative; }
 .chat-unit-side {
@@ -134,15 +192,16 @@ body {
   box-shadow: 4px 0 24px rgba(0,0,0,.4);
 }
 .chat-unit-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-/* 会话列表收起/展开按钮：统一方形，竖向左缘中间（宽/窄模式一致） */
+/* 会话列表收起/展开按钮：统一方形，竖向左缘中间（宽/窄模式一致）。
+   方框转 180°：圆角朝左（8px 0 0 8px），开口朝右（border-right 无）——收缩态箭头 ◀ 为左拉镜像。 */
 .chat-unit-toggle {
   position: absolute;
   left: 0; top: 50%; transform: translateY(-50%);
   z-index: 30;
   width: 24px; height: 40px;
   border: 1px solid var(--bm-border);
-  border-left: none;
-  border-radius: 0 8px 8px 0;
+  border-right: none;
+  border-radius: 8px 0 0 8px;
   background: var(--bm-bg-2);
   color: var(--bm-fg-dim);
   font-size: 11px;
@@ -730,7 +789,6 @@ body {
   flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 12px; color: var(--bm-fg-dim);
 }
-.fm-ctx-anchor { z-index: 1000; }
 .fm-mkdir-parent { font-size: 12px; color: var(--bm-fg-dim); margin-top: 8px; }
 
 /* 窄模式（覆盖）：树被预览替换时工具栏仍可用 */
