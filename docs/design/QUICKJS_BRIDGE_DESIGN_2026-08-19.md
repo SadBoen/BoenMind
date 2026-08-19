@@ -3,7 +3,7 @@
 > 状态：**落地中**。host 面契约已定稿（§4）+ rquickjs 桥已实现（§5.2 完成：
 > `HostApi` 注册进全局 `host` + 异步泵打通，11 测试全绿）；manifest 驱动装载
 > （§5.3 完成：按 manifest 最小权限授面，16 测试全绿）；§5.4 接真 LLM + §5.5 tools/session
-> 面接线已完成。
+> 面接线 + §5.6 目录插件注册表/config 面已完成。
 > 本文件是实现的契约，不是 wiki。
 
 ## 1. 定位
@@ -150,9 +150,26 @@ clippy 零警告 + GATE1 ALL PASS。
 全链路 1 + 最小权限 undefined 1 + swap 后 js_bridge 1）+ 1 边界 + 6 最小三插件；
 workspace 全过 + clippy 零警告 + GATE1 ALL PASS。
 
-**下轮 §5.6**：插件运行时（`PluginRuntimePort`）接入——`Runtime::js_bridge` + 
-`LoadedPlugin` 收敛为「目录插件注册表」（扫描 plugins 目录 → manifest 装载 → 按面
-授面），以及 config 面从占位升级（settings 白名单 + 永不含 secret）。
+### 5.6 落地实录（2026-08-19：目录插件注册表 + config 面）
+
+- **目录插件注册表**：`bm/quickjs-bridge/src/registry.rs`（新）`scan_plugins`（递归
+  扫描任意深度，plugin.json 缺失目录跳过，损坏插件 fail-loud 不静默跳过，同名 id
+  后扫覆盖便于覆盖默认）+ `PluginDir` 只读视图。注册表只做发现+装载（读盘），
+  引擎装配仍走组合根（每插件一引擎 = 独立 AsyncRuntime + 上下文，天然隔离）。
+- **config 面升级**：`RealHost` 接白名单 `HashMap<"{plugin_id}.{key}", value>`——
+  命中返回、未命中 `config-not-found`；**白名单即全部内容，永不返回 secret**
+  （credentials 由凭据面管，不进此表）。`Runtime::js_bridge_with_config` 注入。
+- **组合根唯一入口**：`Runtime::load_js_plugin(dir)` = `LoadedPlugin::load` →
+  按 manifest 授面 → 引擎；`Runtime::scan_js_plugins(dir)` = 目录扫描清单。
+
+**验证**：quickjs-bridge 32（+4 注册表：嵌套扫描/重复 id 覆盖/损坏 fail-loud/视图
+排序）；bm-assembly 18（+3：config 白名单命中与未命中 / load_js_plugin 端到端含
+config / scan_js_plugins 全清单）；workspace 全过 + clippy 零警告 + GATE1 ALL PASS。
+
+**下轮 §6**：桥主线落地完成——真 JS 插件跑通（目录插件注册表 + 按面授面 +
+llm/tools/session/config 全 face）。下一步把插件运行时收敛进 `PluginRuntimePort`
+（探针变 Ready）并接入 web-server 装配（`--plugins-dir`），或按业务顺序接
+dsh-rust-plugins 吸收（见台账）。
 
 ## 6. 相关文件
 

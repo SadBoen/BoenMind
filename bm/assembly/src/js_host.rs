@@ -13,6 +13,7 @@
 //! 边界（与 quickjs-bridge crate 顶部同源）：JS 插件当 Tool/Policy，不当
 //! 第二 Agent；`host.llm.complete` 只做文本补全，不做 turn/工具循环。
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use kernel_contracts::llm::LlmPort;
@@ -24,23 +25,27 @@ use plugin_tools::{ToolGate, ToolRegistry};
 use quickjs_bridge::{HostApi, HostError, HostResult};
 use serde_json::{json, Value};
 
-/// 真宿主：组合根装配的 `HostApi` 实现。llm / tools / session 面已接线；
-/// config 面留占位（按 manifest 接入后续面时替换）。
+/// 真宿主：组合根装配的 `HostApi` 实现。llm / tools / session / config 面已接线。
 pub struct RealHost {
     llm: Arc<dyn LlmPort>,
     tools: Arc<ToolRegistry>,
     gate: Arc<ToolGate>,
     store: Arc<SessionStore>,
+    /// config 面白名单：`"{plugin_id}.{key}" → value`。白名单即全部内容——
+    /// **永不返回 secret**（credentials/API key 由凭据面管，不进此表）。
+    config: HashMap<String, String>,
 }
 
 impl RealHost {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         llm: Arc<dyn LlmPort>,
         tools: Arc<ToolRegistry>,
         gate: Arc<ToolGate>,
         store: Arc<SessionStore>,
+        config: HashMap<String, String>,
     ) -> Self {
-        Self { llm, tools, gate, store }
+        Self { llm, tools, gate, store, config }
     }
 
     /// 执行一个工具（对齐 agent-loop 门控语义：先查注册、再查启用——
@@ -83,10 +88,15 @@ impl HostApi for RealHost {
     }
 
     fn config_get(&self, plugin_id: &str, key: &str) -> HostResult {
-        HostResult::err(HostError::new(
-            "config-not-found",
-            format!("config face not wired yet for {plugin_id}.{key}"),
-        ))
+        // 白名单查询：`{plugin_id}.{key}`；未命中 → config-not-found（对齐
+        // MockHost 契约）。白名单即全部内容，secret 不在其中（见字段注释）。
+        match self.config.get(&format!("{plugin_id}.{key}")) {
+            Some(v) => HostResult::ok(Value::String(v.clone())),
+            None => HostResult::err(HostError::new(
+                "config-not-found",
+                format!("{plugin_id}.{key}"),
+            )),
+        }
     }
 
     fn tools_list(&self) -> HostResult {
@@ -262,6 +272,7 @@ mod tests {
             Arc::clone(&tools),
             Arc::clone(&gate),
             Arc::new(SessionStore::new()),
+            std::collections::HashMap::new(),
         );
         (host, tools, gate)
     }
@@ -323,6 +334,7 @@ mod tests {
             Arc::new(ToolRegistry::new()),
             Arc::new(ToolGate::new()),
             Arc::clone(&store),
+            std::collections::HashMap::new(),
         );
         // 追加一个事件 → get 投影（SessionEvent 外部 tag 形状；
         // 新建会话已含 SessionStarted，故 cursor 起点 = 2）。
@@ -337,6 +349,25 @@ mod tests {
         // 未知会话 → session-not-found。
         let r2 = host.session_get("nope");
         assert_eq!(r2.err_code_().as_deref(), Some("session-not-found"));
+    }
+
+    #[test]
+    fn config_face_whitelist_only() {
+        // config 白名单：命中返回；未命中 config-not-found（永不返回 secret——
+        // secret 不进白名单表，这是注入方的纪律，host 层白名单即全部内容）。
+        let mut cfg = std::collections::HashMap::new();
+        cfg.insert("demo.url".to_string(), "https://x".to_string());
+        let host = RealHost::new(
+            Arc::new(StubLlm),
+            Arc::new(ToolRegistry::new()),
+            Arc::new(ToolGate::new()),
+            Arc::new(SessionStore::new()),
+            cfg,
+        );
+        let hit = host.config_get("demo", "url").ok_value_();
+        assert_eq!(hit, json!("https://x"));
+        let miss = host.config_get("demo", "secret");
+        assert_eq!(miss.err_code_().as_deref(), Some("config-not-found"));
     }
 
     // 测试小助手：HostResult 解包。

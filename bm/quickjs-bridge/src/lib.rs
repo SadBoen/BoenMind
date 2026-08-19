@@ -183,9 +183,11 @@ impl Cancellation {
 pub mod js;
 pub mod plugin;
 pub mod host;
+pub mod registry;
 
 pub use js::JsBridge;
 pub use plugin::{JsPluginManifest, LoadedPlugin};
+pub use registry::{load_plugin, scan_plugins, PluginDir};
 
 // ---------- mock 实现（契约测试用，不接真实运行时） ----------
 

@@ -316,23 +316,51 @@ impl Runtime {
         self.plugin_runtime.availability()
     }
 
-    /// QuickJS 桥装配（§5.4 接真 LLM + §5.5 tools/session 面）：把当前装配的
-    /// LLM（`self.llm`，聚合 `LlmPort`，与 agent-loop 共享）、工具注册表+门控
-    /// （`self.tools`/`self.gate`，fail-closed）与会话存储（`self.store` 拉模型
-    /// 投影）接进 `HostApi` 宿主并返回引擎。
+    /// QuickJS 桥装配（§5.4 接真 LLM + §5.5 tools/session 面 + §5.6 config 面）：
+    /// 把当前装配的 LLM（`self.llm`，聚合 `LlmPort`，与 agent-loop 共享）、工具
+    /// 注册表+门控（`self.tools`/`self.gate`，fail-closed）、会话存储（`self.store`
+    /// 拉模型投影）与 config 白名单接进 `HostApi` 宿主并返回引擎。
     ///
     /// `faces` = manifest 声明的 host 面子集（最小权限授面，见
     /// quickjs-bridge §5.3）。`apply_llm` 之后调用即走真 provider；headless
     /// （ScriptLlm mock）也走同一端口（桥层对 mock/真 provider 无感）。
     pub fn js_bridge(&self, faces: &[&str]) -> Result<quickjs_bridge::JsBridge, String> {
+        self.js_bridge_with_config(faces, std::collections::HashMap::new())
+    }
+
+    /// 同 [`Self::js_bridge`]，额外注入 config 面白名单（`"{plugin_id}.{key}" →
+    /// value`）。**白名单即全部内容，永不返回 secret**（credentials 由凭据面管）。
+    pub fn js_bridge_with_config(
+        &self,
+        faces: &[&str],
+        config: std::collections::HashMap<String, String>,
+    ) -> Result<quickjs_bridge::JsBridge, String> {
         let llm = self.llm.read().clone();
         let host = Arc::new(js_host::RealHost::new(
             llm,
             Arc::clone(&self.tools),
             Arc::clone(&self.gate),
             Arc::clone(&self.store),
+            config,
         ));
         quickjs_bridge::JsBridge::new_with_faces(host, faces)
+    }
+
+    /// §5.6 目录插件注册表：扫描 `dir` 下全部插件（plugin.json），返回装载清单
+    /// （manifest + 入口源码，按 id 字典序；损坏插件 fail-loud）。引擎装配走
+    /// [`Self::js_bridge`]（按 manifest 授面）。
+    pub fn scan_js_plugins(&self, dir: &std::path::Path) -> Result<Vec<quickjs_bridge::LoadedPlugin>, String> {
+        let _ = &self;
+        quickjs_bridge::scan_plugins(dir)
+    }
+
+    /// §5.6 装载并装配单个插件目录：`LoadedPlugin::load` → 按 manifest 授面 →
+    /// [`Self::js_bridge`] 引擎。这是「目录插件跑起来」的组合根唯一入口。
+    pub fn load_js_plugin(&self, dir: &std::path::Path) -> Result<quickjs_bridge::JsBridge, String> {
+        let loaded = quickjs_bridge::load_plugin(dir)?;
+        let face_set = loaded.manifest.face_set();
+        let faces: Vec<&str> = face_set.iter().map(|s| s.as_str()).collect();
+        self.js_bridge(&faces)
     }
 
     fn loop_runtime(&self) -> Arc<LoopRuntime> {
@@ -862,6 +890,95 @@ mod tests {
         let r = bridge.eval_value("globalThis.__t").unwrap();
         assert_eq!(r, serde_json::json!("undefined"));
         let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(db.parent().unwrap());
+    }
+
+    // ---------- §5.6 目录插件注册表 + config 面 ----------
+
+    #[test]
+    fn load_js_plugin_end_to_end() {
+        // 组合根唯一入口 load_js_plugin：目录插件 → manifest 授面 → 引擎 →
+        // JS 调 llm/tools/config 全链路。config 面白名单注入 + 未命中诚实报错。
+        let db = tmp_db("js-plugin-e2e");
+        let rt = Runtime::headless(db.clone()).unwrap();
+        rt.register_tool(Arc::new(EchoTool::new())).unwrap();
+        rt.gate.enable("echo");
+        rt.swap_llm(scripted_llm(
+            "mock".to_string(),
+            "mock-1".to_string(),
+            vec![plugin_llm::MockTurn::Text("e2e".to_string())],
+        ));
+
+        let dir = std::env::temp_dir().join(format!("qjs-e2e-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("plugin.json"),
+            r#"{
+                "id": "e2e",
+                "name": "E2E",
+                "entry": "main.js",
+                "host": ["log", "config.get", "llm.complete", "tools.invoke"]
+            }"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("main.js"),
+            r#"
+            globalThis.__main = async () => {
+                const cfg = host.config.get("e2e", "url");
+                const llm = await host.llm.complete({
+                    provider: "mock", model: "mock-1",
+                    messages: [{ role: "user", content: "hi" }],
+                });
+                const echo = await host.tools.invoke("echo", { text: "x" });
+                const miss = host.config.get("e2e", "secret");
+                return { cfg: cfg.ok === "true" ? cfg.value : null, llm: llm.value.chunks[0].text, echo: echo.value.output, miss: miss.ok === "false" ? miss.err.code : null };
+            };
+            "#,
+        )
+        .unwrap();
+
+        let loaded = quickjs_bridge::load_plugin(&dir).unwrap();
+        let face_set = loaded.manifest.face_set();
+        let faces: Vec<&str> = face_set.iter().map(|s| s.as_str()).collect();
+        let mut config = std::collections::HashMap::new();
+        config.insert("e2e.url".to_string(), "https://e2e".to_string());
+        let bridge = rt.js_bridge_with_config(&faces, config).expect("js bridge");
+        bridge.exec(&loaded.entry_source).unwrap();
+        let r = bridge.call_async("__main", &[]).unwrap();
+        assert_eq!(r["cfg"], serde_json::json!("https://e2e"));
+        assert_eq!(r["llm"], serde_json::json!("e2e"));
+        assert_eq!(r["echo"], serde_json::json!("echo:x"));
+        // secret 不在白名单 → config-not-found（host 层白名单即全部内容）。
+        assert_eq!(r["miss"], serde_json::json!("config-not-found"));
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(db.parent().unwrap());
+    }
+
+    #[test]
+    fn scan_js_plugins_finds_all() {
+        // Runtime::scan_js_plugins：目录扫描 → 全清单（含嵌套、跳过非插件目录）。
+        let db = tmp_db("js-plugin-scan");
+        let rt = Runtime::headless(db.clone()).unwrap();
+        let root = std::env::temp_dir().join(format!("qjs-scan-{}", uuid::Uuid::new_v4()));
+        let mk = |sub: &str, id: &str| {
+            let d = root.join(sub);
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(
+                d.join("plugin.json"),
+                format!(r#"{{"id":"{id}","name":"{id}","entry":"main.js","host":["log"]}}"#),
+            )
+            .unwrap();
+            std::fs::write(d.join("main.js"), "host.log('info','x');").unwrap();
+        };
+        mk("a", "a");
+        mk("sub/b", "b");
+        std::fs::create_dir_all(root.join("sub").join("plain")).unwrap();
+        std::fs::write(root.join("sub").join("plain").join("main.js"), "x").unwrap();
+        let plugins = rt.scan_js_plugins(&root).unwrap();
+        let ids: Vec<&str> = plugins.iter().map(|p| p.manifest.id.as_str()).collect();
+        assert_eq!(ids, vec!["a", "b"]); // 字典序
+        let _ = std::fs::remove_dir_all(root);
         let _ = std::fs::remove_dir_all(db.parent().unwrap());
     }
 }
