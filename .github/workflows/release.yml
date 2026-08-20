@@ -124,8 +124,12 @@ jobs:
         run: |
           curl -fsSL -o /tmp/zig.tar.xz https://ziglang.org/download/0.14.0/zig-linux-x86_64-0.14.0.tar.xz
           tar -xf /tmp/zig.tar.xz -C /tmp
+          # tarball 顶层目录固定为 zig-linux-x86_64-0.14.0（含 zig 可执行文件）
           echo "/tmp/zig-linux-x86_64-0.14.0" >> "$GITHUB_PATH"
-          zig version
+
+      - name: 验证 zig
+        run: |
+          command -v zig && zig version
 
       - uses: Swatinem/rust-cache@v2
         with:
