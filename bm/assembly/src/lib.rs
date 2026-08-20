@@ -47,10 +47,6 @@ pub use plugin_llm::MockTurn;
 /// 认证插件默认密码（web-server `--auth` 日志用；组合根 re-export，L0 不依赖 plugin-auth）。
 pub use plugin_auth::DEFAULT_PASSWORD;
 
-/// 压缩策略端口（产品契约层 `bm-ports`）：组合根 re-export，核心插件与
-/// L0（web-server）经此铸造 trait object，不依赖具体实现。
-pub use bm_ports::Compactor;
-
 /// 上下文压缩默认策略（功能插件 `compactor`）：web-server（L0）经此装配，
 /// 不直接依赖 plugin-compactor（边界守卫，同 auth）。
 pub use plugin_compactor::DefaultCompactor;

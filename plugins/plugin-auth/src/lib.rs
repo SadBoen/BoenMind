@@ -16,6 +16,13 @@
 //!   `sessions.jsonl`（0600，重启保活）。
 //! - **密码记录**：`auth.json`（salt + scrypt hash，明文不落盘）。
 //! - 只密码、无用户名（本地单用户形态；LAN/公网多用户部署留待 `--trusted-host` 扩展）。
+//!
+//! **存储边界（2026-08-20 回头看定稿）**：本插件的 `auth.json`/`sessions.jsonl`
+//! 是**独立 bounded context**——认证域自管自持，不经 `kernel-storage`
+//! （`SqlitePersist` 只承载会话事件日志=唯一事实源，与认证无耦合）。两套
+//! 持久化并存是有意的：认证会话（token→过期）是短期凭据面，无需进事件日志；
+//! 事件日志管的是聊天/回合审计。**不要**把认证存储迁入 sqlite 事件表——职责
+//! 不同、生命周期不同，强绑会把认证变脆。
 
 use std::collections::HashMap;
 use std::path::PathBuf;
