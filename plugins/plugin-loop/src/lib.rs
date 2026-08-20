@@ -38,7 +38,7 @@ use kernel_contracts::ports::SessionPersistPort;
 use kernel_contracts::session::{SessionEvent, StepPhase, TurnEndReason, TurnEvent};
 use kernel_contracts::tools::ToolExecutionInput;
 use kernel_session::{AgentPort, LoopError, Session, SessionStore, TurnOutcome};
-use plugin_compactor::Compactor;
+use bm_ports::Compactor;
 use plugin_tools::{ToolGate, ToolRegistry};
 
 pub mod plugin;
@@ -652,13 +652,13 @@ impl AgentPort for ReactLoopAgent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bm_ports::Compactor;
     use kernel_contracts::error::{LlmError, ToolError};
     use kernel_contracts::llm::{ChunkStream, LlmMessage, LlmModelInfo, LlmPort, Role};
     use kernel_contracts::session::{SessionHeader, SessionId};
     use kernel_contracts::tools::{ToolExecutionResult, ToolHandler};
     use kernel_contracts::EventBus;
     use kernel_session::{DEFAULT_MAX_STEPS, SessionStore};
-    use plugin_compactor::DefaultCompactor;
     use serde_json::json;
     use std::collections::VecDeque;
     use std::sync::Mutex;
@@ -667,6 +667,50 @@ mod tests {
 
     /// 内存持久化桩：记录每会话事件，供持久化接线断言。
     struct InMemoryPersist(std::sync::Mutex<Vec<(String, Vec<SessionEvent>)>>);
+
+    // ---------- compactor stub ----------
+
+    /// 测试用压缩桩：永远触发（watermark 0）、把任一非空上下文替换成
+    /// 「固定 System 摘要 + 尾部保留」。不依赖 plugin-compactor 具体实现——
+    /// 断言装配路径与运行态视图变换契约，不测压缩策略。
+    #[derive(Debug)]
+    struct TestCompactor {
+        min_middle_tokens: u64,
+    }
+
+    #[async_trait::async_trait]
+    impl Compactor for TestCompactor {
+        fn should_compact(&self, _input_tokens: u64, _context_window: u64) -> bool {
+            true
+        }
+        fn keep_recent_tokens(&self, _context_window: u64) -> u64 {
+            0
+        }
+        fn min_middle_tokens(&self) -> u64 {
+            self.min_middle_tokens
+        }
+        fn summarize_request(
+            &self,
+            provider: &str,
+            model: &str,
+            _dialogue: &str,
+        ) -> GenerateOptions {
+            use kernel_contracts::text_message;
+            GenerateOptions {
+                provider: provider.to_string(),
+                model: model.to_string(),
+                messages: vec![text_message(Role::User, "summarize")],
+                tools: vec![],
+                temperature: None,
+                max_tokens: None,
+                session_id: None,
+                signal: None,
+                reasoning_effort: None,
+                thinking: None,
+                purpose: Some("compaction".to_string()),
+            }
+        }
+    }
 
     #[async_trait::async_trait]
     impl SessionPersistPort for InMemoryPersist {
@@ -1306,11 +1350,9 @@ mod tests {
         let store = Arc::new(SessionStore::new());
         let persist: Arc<dyn SessionPersistPort> =
             Arc::new(InMemoryPersist(std::sync::Mutex::new(vec![])));
-        // watermark 0 = 任何非空上下文都触发（便于断言）；中部 1 token 即可压。
-        let compactor: Arc<dyn Compactor> = Arc::new(DefaultCompactor {
-            watermark: 0.0,
+        // 永远触发 + 供断言的水线（中部 1 token 即可压）。
+        let compactor: Arc<dyn Compactor> = Arc::new(TestCompactor {
             min_middle_tokens: 1,
-            ..Default::default()
         });
         let rt = Arc::new(LoopRuntime {
             llm: llm.clone() as Arc<dyn LlmPort>,

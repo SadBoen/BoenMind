@@ -47,6 +47,10 @@ pub use plugin_llm::MockTurn;
 /// 认证插件默认密码（web-server `--auth` 日志用；组合根 re-export，L0 不依赖 plugin-auth）。
 pub use plugin_auth::DEFAULT_PASSWORD;
 
+/// 压缩策略端口（产品契约层 `bm-ports`）：组合根 re-export，核心插件与
+/// L0（web-server）经此铸造 trait object，不依赖具体实现。
+pub use bm_ports::Compactor;
+
 /// 上下文压缩默认策略（功能插件 `compactor`）：web-server（L0）经此装配，
 /// 不直接依赖 plugin-compactor（边界守卫，同 auth）。
 pub use plugin_compactor::DefaultCompactor;
@@ -135,7 +139,7 @@ pub struct Runtime {
     /// 上下文压缩插件（功能面，可选装配）：`Some` 时新会话/恢复会话的
     /// loop 在每次模型调用前做水线判定与运行态压缩变换；`None` = 未装配
     /// （透传，无感）。经 [`Runtime::install_compactor`] 装配。
-    compactor: Option<Arc<dyn plugin_compactor::Compactor>>,
+    compactor: Option<Arc<dyn bm_ports::Compactor>>,
     /// 核心插件清单（llm / loop / tools，category=Core）。
     core_plugins: Vec<PluginManifestEntry>,
     /// JS 插件清单（--plugins-dir 装配，category=Feature；`plugin_manifest()`
@@ -367,7 +371,7 @@ impl Runtime {
     /// 装配后新会话/恢复会话的 loop 在每次模型调用前做水线判定与运行态
     /// 压缩变换（`None` = 未装配透传）。装配后 `plugin_manifest()` 追加
     /// compactor（Feature）。未装配时不影响任何既有行为（优雅无感）。
-    pub fn install_compactor(&mut self, compactor: Arc<dyn plugin_compactor::Compactor>) {
+    pub fn install_compactor(&mut self, compactor: Arc<dyn bm_ports::Compactor>) {
         self.compactor = Some(compactor);
         self.core_plugins.push(plugin_compactor::plugin::manifest());
     }

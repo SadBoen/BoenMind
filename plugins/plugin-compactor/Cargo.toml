@@ -3,12 +3,11 @@ name = "plugin-compactor"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "上下文压缩插件：长会话按水线自动摘要压缩（运行态视图变换，前端无感）"
+description = "上下文压缩插件：默认压缩策略实现（Compactor 端口，事务协议在 bm-ports）"
 
 [dependencies]
+bm-ports = { path = "../../bm/ports" }
 kernel-contracts = { path = "../../kernel/kernel-contracts" }
-async-trait.workspace = true
-futures.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true

@@ -202,6 +202,7 @@ name = "bm-assembly"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bm-ports",
  "chrono",
  "futures",
  "kernel-contracts",
@@ -222,6 +223,16 @@ dependencies = [
  "toml",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "bm-ports"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "kernel-contracts",
+ "tokio",
 ]
 
 [[package]]
@@ -1404,8 +1415,7 @@ dependencies = [
 name = "plugin-compactor"
 version = "0.1.0"
 dependencies = [
- "async-trait",
- "futures",
+ "bm-ports",
  "kernel-contracts",
  "tokio",
 ]
@@ -1432,11 +1442,11 @@ version = "0.1.0"
 dependencies = [
  "async-stream",
  "async-trait",
+ "bm-ports",
  "chrono",
  "futures",
  "kernel-contracts",
  "kernel-session",
- "plugin-compactor",
  "plugin-tools",
  "serde_json",
  "thiserror 2.0.20",

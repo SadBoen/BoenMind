@@ -6,6 +6,7 @@ license.workspace = true
 description = "组合根（BoenMind 产品层唯一装配点）：装配内核端口 + Rust 插件为运行时，插件依赖核心契约，无循环"
 
 [dependencies]
+bm-ports = { path = "../ports" }
 kernel-contracts = { path = "../../kernel/kernel-contracts" }
 kernel-session = { path = "../../kernel/kernel-session" }
 kernel-storage = { path = "../../kernel/kernel-storage" }

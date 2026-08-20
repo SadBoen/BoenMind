@@ -1,7 +1,7 @@
 //! 真 provider 配置文件解析（M3）。
 //!
 //! 复用既有 boenmind 形态的 `config.toml` 子集（`~/.boenmind/config.toml` 兼容，
-//! 见旧版 backend 配置），只取与 LLM 相关的段：
+//! 见旧版 backend 配置），取 LLM 相关段 + 上下文压缩段：
 //!
 //! ```toml
 //! default_provider = "minimax"        # 可选：默认 provider
@@ -15,11 +15,19 @@
 //! api_key = "..."                     # 可选：缺省读 env {ID}_API_KEY（大写）
 //! models = ["MiniMax-M3", ...]        # 可选：静态模型清单
 //! default_model = "MiniMax-M3"        # 可选：该 provider 的默认模型
+//!
+//! [compaction]                        # 可选：上下文压缩默认策略（--compact 时生效）
+//! enabled = true                      # 可选：false = 覆盖默认装配（不压）
+//! watermark = 0.5                     # 可选：软水线（窗口占用比例）
+//! keep_recent_ratio = 0.1             # 可选：尾部保留比例
+//! keep_recent_floor = 4000            # 可选：尾部保留 token 下限
+//! min_middle_tokens = 512             # 可选：中部不足多少 token 不压
 //! ```
 //!
 //! 无 key（配置缺 + env 缺）的 provider 以 keyless 装配（请求时 MISSING_CREDENTIAL，
 //! key 可经 credentials.set `{ID}_API_KEY` 热补）；base_url 无法推断的 custom
-//! provider 跳过并警告。**不传 --config 时服务保持 mock provider（旧行为不变）。**
+//! provider 跳过并警告。**不传 --config 时服务保持 mock provider（旧行为不变）；
+//! 不传 --compact 时 compaction 段不生效（装配开关在 CLI）。**
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -32,6 +40,24 @@ pub struct LlmConfig {
     pub default_provider: Option<String>,
     pub default_model: Option<String>,
     pub providers: Vec<ProviderConfig>,
+    /// 上下文压缩策略段（`[compaction]`，可选）。
+    pub compaction: Option<CompactionConfig>,
+}
+
+/// `[compaction]` 段：上下文压缩默认策略参数（--compact 装配时消费）。
+/// 全部字段可选（缺省回落 DefaultCompactor 默认值）。
+#[derive(Debug, Clone, Default)]
+pub struct CompactionConfig {
+    /// false = 即使 --compact 也不压（配置级覆盖 CLI）。None = 用 CLI 决定。
+    pub enabled: Option<bool>,
+    /// 软水线（窗口占用比例）。缺省 0.5。
+    pub watermark: Option<f64>,
+    /// 尾部保留比例（窗口比例）。缺省 0.1。
+    pub keep_recent_ratio: Option<f64>,
+    /// 尾部保留 token 下限。缺省 4000。
+    pub keep_recent_floor: Option<u64>,
+    /// 中部不足多少 token 不压。缺省 512。
+    pub min_middle_tokens: Option<u64>,
 }
 
 /// 单个 provider 配置（已校验，可直接构造适配器）。
@@ -83,6 +109,16 @@ struct ConfigFile {
     default_provider: Option<String>,
     default_model: Option<String>,
     providers: Option<Vec<RawProvider>>,
+    compaction: Option<RawCompaction>,
+}
+
+#[derive(Deserialize)]
+struct RawCompaction {
+    enabled: Option<bool>,
+    watermark: Option<f64>,
+    keep_recent_ratio: Option<f64>,
+    keep_recent_floor: Option<u64>,
+    min_middle_tokens: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -120,6 +156,13 @@ pub fn load_llm_config(path: &Path) -> Result<LlmConfig, String> {
         default_provider: file.default_provider,
         default_model: file.default_model,
         providers,
+        compaction: file.compaction.map(|raw| CompactionConfig {
+            enabled: raw.enabled,
+            watermark: raw.watermark,
+            keep_recent_ratio: raw.keep_recent_ratio,
+            keep_recent_floor: raw.keep_recent_floor,
+            min_middle_tokens: raw.min_middle_tokens,
+        }),
     })
 }
 

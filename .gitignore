@@ -25,5 +25,8 @@ plugins/*/dist/
 # ZCode 内部文件
 .zcode/
 
+# 审计/评审临时产物（grok-review.md 等复盘材料保留，验证 db/log 不入库）
+.review/
+
 # codegraph 项目图库（本地工具产物，不入库）
 .codegraph/

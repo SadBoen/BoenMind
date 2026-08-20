@@ -1,0 +1,15 @@
+[package]
+name = "bm-ports"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "BoenMind 产品级契约层：核心插件需要的外部策略端口（Compactor 等），无实现、无内核依赖"
+
+# 依赖纪律：本 crate 只允许依赖 kernel-contracts（纯契约），不得依赖任何插件/组合根。
+[dependencies]
+kernel-contracts = { path = "../../kernel/kernel-contracts" }
+async-trait.workspace = true
+futures.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
