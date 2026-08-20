@@ -54,6 +54,17 @@ frontend/                             ← React 19 + dockview + theme 四档
 - **compaction 设置表单**：现在是启动参数语义（`--compact` + config.toml `[compaction]`），设置页无对应段。要做 = 升级为运行时可调（后端新增 settings ns + loop 每回合读），属**功能演进**，需产品确认。
 - **unwrap/expect 全面清理**（unwrap_used/expect_used lints 留 allow 待做）：测试与合法断言大量使用，清理是独立任务（TODO: unwrap-polish）。
 
+### 2026-08-21 深夜四插件交付（自主运行，用户睡觉）——已推 main
+- ✅ **plugin-code-runtime**（4f13e11）：`code.compile/python/shell`，workdir 作用域 + 30s 超时 kill + 输出钱包 512KB/流（并发排水防洪水输出死锁/撑爆上下文）。装配 `Runtime::install_code_runtime` + `--code-runtime`
+- ✅ **工具审批回灌**（36607fc）：bm-ports `ToolApprovalPort`（消费面）+ plugin-loop 执行前暂停点（Rejected → is_error「tool call rejected by user」回写日志，模型可见）+ web-server `ApprovalRouter`（PendingRegistry + oneshot 等待表 + respond 回拨唤醒）。`Runtime::install_approval`（&self，RwLock 热换装）+ `--approval`
+- ✅ **plugin-web-tools**（716a419）：`web.fetch`/`web.search`，SSRF 防线（仅公网，域名 DNS 全解析须公网）+ 输出钱包。`install_web_tools` + `--web-tools`
+- ✅ **plugin-schedule**（9710904）：`schedule.create/list/cancel`；bm-ports `SchedulePort` + web-server `Scheduler`（1s tick 后台驱动 run_turn，复用 session.prompt 语义；cron 简化：分/时 + */n）。`install_schedule` + `--schedule`
+
+### 下轮候选（2026-08-21 深夜收尾后）
+- **goal 自动续跑（M3.5，最缺）**：web-server rpc_m3.rs 已有完整 goal* 状态机（create/edit/pause/resume/complete/clear + GoalRecord/projection）但循环驱动缺失（注释"自动续跑 = 插件职责 M3.5"）。可复用 Scheduler 驱动模式
+- **前端审批弹窗**：`approval/requested` 帧已可下发，但无审批 UI + `/api/respond` 应答（allowed-once/rejected）
+- **已知坑：并行测试竞态**——`WORKDIR_SOURCE`/`SCHEDULE_SOURCE` 全局源跨 test 文件共享，全仓并行时 host_tools 测试 flaky；**串行 `cargo test --workspace -- --test-threads=1` 全绿**。CI 建议串行
+
 ## 六、经典陷阱（踩过的坑，别重踩）
 
 1. **api.rs 手工按行号切块极易错位**。拆分固定套路：先 `grep -n` 精确定函数边界 → 用 sed 按函数名提取到子模块文件（不是裸行号区间）→ 函数名 sed 加 `pub(super)` → api.rs 删除原块 → 补 `mod xx; use xx::*;`。删除前**先确认函数完整结束**（尤其最后一个函数，容易缺闭合 `}`）。本轮 host 拆分就因行号错位缺了 rel_from_workdir 的尾部 body。
