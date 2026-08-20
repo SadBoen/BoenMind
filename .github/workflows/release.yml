@@ -69,24 +69,26 @@ jobs:
       - name: 打包便携版 zip（BoenMind.exe + dist + README）
         shell: pwsh
         run: |
+          $Root = (Get-Location).Path
           $VER = (Get-Content frontend/src-tauri/tauri.conf.json | ConvertFrom-Json).version
-          New-Item -ItemType Directory -Force -Path "dist-win" | Out-Null
-          $STAGE = "dist-win\BoenMind-$VER-win-x64"
-          New-Item -ItemType Directory -Force -Path $STAGE\dist | Out-Null
-          Copy-Item target\release\web-server.exe "$STAGE\BoenMind.exe"
-          Copy-Item -Recurse frontend\dist\. "$STAGE\dist\"
+          New-Item -ItemType Directory -Force -Path "$Root\dist-win" | Out-Null
+          $STAGE = "$Root\dist-win\BoenMind-$VER-win-x64"
+          New-Item -ItemType Directory -Force -Path "$STAGE\dist" | Out-Null
+          Copy-Item "$Root\target\release\web-server.exe" "$STAGE\BoenMind.exe"
+          Copy-Item -Recurse "$Root\frontend\dist\." "$STAGE\dist\"
           @"
           BoenMind $VER 便携版（免安装）
           解压后运行 BoenMind.exe，自动打开 127.0.0.1:17321。
           数据文件（boenmind.db）保存在程序同目录。
           "@ | Out-File -Encoding utf8 "$STAGE\README.txt"
-          Compress-Archive -Path "$STAGE\*" -DestinationPath "..\dist-win\BoenMind_${VER}_x64_portable.zip" -Force
+          Compress-Archive -Path "$STAGE\*" -DestinationPath "$Root\dist-win\BoenMind_${VER}_x64_portable.zip" -Force
 
       - name: 收集桌面壳产物（安装器 + 自动更新清单）
         shell: pwsh
         run: |
-          Copy-Item frontend\src-tauri\target\release\bundle\nsis\*.exe ..\dist-win\
-          Copy-Item frontend\src-tauri\target\release\bundle\latest.json ..\dist-win\  -ErrorAction SilentlyContinue
+          $Root = (Get-Location).Path
+          Copy-Item "$Root\frontend\src-tauri\target\release\bundle\nsis\*.exe" "$Root\dist-win\"
+          Copy-Item "$Root\frontend\src-tauri\target\release\bundle\latest.json" "$Root\dist-win\" -ErrorAction SilentlyContinue
 
       - uses: actions/upload-artifact@v4
         with:
