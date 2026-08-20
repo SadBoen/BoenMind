@@ -17,6 +17,8 @@
   --bm-danger: #ff4d4f;
   --bm-radius: 8px;
   --bm-font: system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* 聊天中间区面板底色（比两侧 --bm-bg-glass 更实/更亮；theme.ts 每档覆写） */
+  --bm-panel-mid: #ffffff;
 
   /* dockview 主题变量（对接 --dv-*） */
   --dv-background-color: var(--bm-bg);
@@ -308,12 +310,13 @@ body {
 }
 
 /* ---- 聊天面板 + 消息流 ---- */
-/* 消息区用面板色（--bm-bg-2）做明确底色：四档下都与左右栏（--bm-bg-glass）形成层次。
+/* 消息区用 --bm-panel-mid（每档定义，比两侧 --bm-bg-glass 更实/更亮）做底色：
+   四档下中间聊天区都与左右栏（会话列表/文件管理器）形成清晰层次（用户要求"中间更白"）。
    不加 border-left/right——两侧分隔已由 .chat-unit-resizer / .fm-resizer 的 1px 线承担，
    再加边框会与 resizer 线相邻成双线（曾致用户反馈"分割线太粗"）。 */
 .chat-panel {
   display: flex; flex-direction: column; height: 100%;
-  background: var(--bm-bg-2);
+  background: var(--bm-panel-mid);
 }
 .chat-messages {
   flex: 1; overflow-y: auto; padding: 16px;
@@ -840,6 +843,45 @@ body {
 .settings-body { display: flex; gap: 16px; min-height: 420px; }
 .settings-nav { width: 180px; flex-shrink: 0; border-inline-end: none !important; }
 .settings-content { flex: 1; overflow-y: auto; padding-right: 4px; }
+
+/* ---- 设置中心（全页侧栏视图） ---- */
+.settings-page {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  background: var(--bm-bg-2);
+}
+.settings-page-nav {
+  width: 220px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 16px 10px 12px;
+  border-right: 1px solid var(--bm-border);
+  background: var(--bm-bg-1);
+}
+.settings-page-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px 14px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--bm-fg);
+}
+.settings-page-nav .settings-nav { width: 100%; }
+.settings-page-foot {
+  margin-top: auto;
+  padding: 12px 8px 0;
+  border-top: 1px solid var(--bm-border);
+}
+.settings-page-foot .bm-btn { width: 100%; }
+/* 全页模式内容区：去掉弹窗里仅供 popover 的右留白，撑满高度。 */
+.settings-page .settings-content {
+  overflow-y: auto;
+  padding: 20px 28px 32px;
+  min-width: 0;
+}
 .setting-section { margin-bottom: 20px; }
 .setting-section-title {
   font-size: 14px; font-weight: 600;
@@ -857,6 +899,21 @@ body {
 .settings-control { min-width: 160px; }
 .settings-hint { font-size: 12px; color: var(--bm-fg-dim); margin: 4px 0 12px; }
 .settings-static { font-size: 13px; color: var(--bm-fg-dim); }
+/* 外观区 segmented：胶囊内边距放宽（视觉模型识图指出的观感问题） */
+.settings-page .bm-segmented-item-label { padding: 0 14px; }
+.settings-page .bm-segmented-thumb { min-width: 0; }
+/* 强调色块：撑大点击区 + hover 外圈提示可点击 */
+.settings-page .bm-color-picker-trigger { padding: 4px; border-radius: 6px; transition: box-shadow 0.2s; }
+.settings-page .bm-color-picker-trigger:hover { box-shadow: 0 0 0 2px color-mix(in srgb, var(--bm-accent, #4a7dff) 35%, transparent); }
+/* 模型与 API：provider 卡片 */
+.provider-card { margin-bottom: 14px; }
+.provider-card-title { display: inline-flex; align-items: center; gap: 8px; }
+.provider-card-title .provider-tag { margin-inline-start: 2px; }
+.provider-card-title .provider-id {
+  font-size: 12px; color: var(--bm-fg-dim);
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+}
+.provider-custom-hint { margin-top: 8px; color: var(--bm-fg-dim); }
 .pwd-row { display: flex; gap: 8px; align-items: center; }
 .bg-image-row { display: flex; gap: 8px; align-items: center; }
 

@@ -11,19 +11,18 @@ import "dockview/dist/styles/dockview.css";
 import ChatUnit from "./components/ChatUnit";
 import CodingApp from "./components/CodingApp";
 import FileManagerUnit from "./components/FileManagerUnit";
-import SettingsModal from "./components/SettingsModal";
+import SettingsPage from "./components/SettingsPage";
 import Login from "./components/Login";
 import HeaderActions from "./components/HeaderActions";
 import StatusBar from "./components/StatusBar";
 import { AuthRequiredError, getToken, rpc, setToken } from "./client";
 import { getPresetId, PRESETS, setPresetId, useThemeSync, type PresetId } from "./theme";
 
-export type AppView = "chat" | "coding";
+export type AppView = "chat" | "coding" | "settings";
 
 export default function App() {
   const [authed, setAuthed] = useState<boolean | null>(null);
   const [view, setView] = useState<AppView>("chat");
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [preset, setPreset] = useState<PresetId>(getPresetId());
 
   // 启动同步主题（风格档/背景/字号 → CSS 变量 + body 背景）
@@ -124,8 +123,9 @@ export default function App() {
               <div className="bm-sider-spacer" />
               <Menu
                 mode="inline"
+                selectedKeys={view === "settings" ? ["settings"] : []}
                 onClick={({ key }) => {
-                  if (key === "settings") setSettingsOpen(true);
+                  if (key === "settings") setView("settings");
                   else logout();
                 }}
                 items={[
@@ -137,7 +137,13 @@ export default function App() {
 
             {/* 主区：dockview 作为布局根（antd 控件只进 panel 内部） */}
             <div className="app-main">
-              {view === "chat" ? (
+              {view === "settings" ? (
+                <SettingsPage
+                  preset={preset}
+                  onPresetChange={changePreset}
+                  onClose={() => setView("chat")}
+                />
+              ) : view === "chat" ? (
                 <DockviewReact
                   theme={customTheme}
                   className="dv-theme-b"
@@ -159,13 +165,6 @@ export default function App() {
           {/* 底部状态栏：与 App 无关的外壳层（层级同导航栏），满铺底部 */}
           <StatusBar />
         </div>
-        {settingsOpen && (
-          <SettingsModal
-            preset={preset}
-            onPresetChange={changePreset}
-            onClose={() => setSettingsOpen(false)}
-          />
-        )}
       </AntdApp>
     </ConfigProvider>
   );
