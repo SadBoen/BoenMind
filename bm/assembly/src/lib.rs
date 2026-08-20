@@ -310,6 +310,19 @@ impl Runtime {
         }
     }
 
+    /// 装配定时任务插件（功能）：注入 [`SchedulePort`] 实现（web-server Scheduler）
+    /// 到 plugin-schedule 全局源 + 注册 schedule.create/list/cancel 工具并全部
+    /// enable。未装配 = schedule 工具不可用（诚实失败）。可重复调用（幂等）。
+    pub fn install_schedule(&self, sched: Arc<dyn bm_ports::SchedulePort>) {
+        plugin_schedule::set_schedule_source(sched);
+        if let Err(e) = plugin_schedule::register_all(&self.tools) {
+            tracing::warn!("schedule tools registration skipped: {e}");
+        }
+        for name in plugin_schedule::ALL_TOOL_NAMES {
+            self.gate.enable(name);
+        }
+    }
+
     /// 装配工具审批端口（功能面，`&self` 装配——AppState 已在 Arc 中时仍可调用）：
     /// 把 [`ToolApprovalPort`] 实现接进运行时——新会话/恢复会话的 loop 在危险工具
     /// 调用执行前暂停、经端口推前端审批弹窗、等用户裁定（Allowed 执行 /

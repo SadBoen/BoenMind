@@ -35,7 +35,7 @@ fn layer_of(crate_name: &str) -> Option<u32> {
         "kernel-supervisor" => 3,
         "bm-ports" | "host-fs" => 2,
         "plugin-llm" | "plugin-loop" | "plugin-tools" | "plugin-auth" | "plugin-compactor"
-        | "plugin-host-tools" | "plugin-code-runtime" | "plugin-web-tools" => 2,
+        | "plugin-host-tools" | "plugin-code-runtime" | "plugin-web-tools" | "plugin-schedule" => 2,
         "bm-assembly" => 1,
         "web-server" | "headless" | "quickjs-bridge" => 0,
         _ => return None,
@@ -52,7 +52,7 @@ fn is_core_plugin(crate_name: &str) -> bool {
 
 /// 功能插件：用户可加装/可关闭的可选面（auth/compactor/code-runtime）。
 fn is_feature_plugin(crate_name: &str) -> bool {
-    matches!(crate_name, "plugin-auth" | "plugin-compactor" | "plugin-code-runtime" | "plugin-web-tools")
+    matches!(crate_name, "plugin-auth" | "plugin-compactor" | "plugin-code-runtime" | "plugin-web-tools" | "plugin-schedule")
 }
 
 /// 从 Cargo.toml 读 [package].name（目录名 ≠ 包名，如 bm/assembly → bm-assembly）。
@@ -163,6 +163,7 @@ fn dependencies_are_downward_only() {
         "plugin-compactor",
         "plugin-code-runtime",
         "plugin-web-tools",
+        "plugin-schedule",
     ] {
         layer_of(k).unwrap_or_else(|| panic!("expected crate {k} registered in layer_of"));
         if !k.starts_with("kernel-") {

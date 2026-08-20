@@ -1,0 +1,20 @@
+[package]
+name = "plugin-schedule"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "定时任务工具插件（功能）：schedule.create/list/cancel——周期任务驱动目标会话回合"
+
+[dependencies]
+kernel-contracts = { path = "../../kernel/kernel-contracts" }
+bm-ports = { path = "../../bm/ports" }
+plugin-tools = { path = "../plugin-tools" }
+serde_json.workspace = true
+async-trait.workspace = true
+
+[dev-dependencies]
+uuid.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }
+
+[lints]
+workspace = true

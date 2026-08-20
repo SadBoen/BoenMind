@@ -33,3 +33,9 @@ pub use host::WorkdirPort;
 pub mod approval;
 
 pub use approval::{ApprovalVerdict, ToolApprovalPort, APPROVAL_TIMEOUT};
+
+/// 定时任务契约（工具消费面）：创建/列出/取消周期任务，驱动目标会话回合。
+/// 调度器实现（web-server）注入；未装配 = schedule 工具不可用。
+pub mod schedule;
+
+pub use schedule::{SchedulePort, ScheduleSpec, ScheduleTrigger, ScheduleView};

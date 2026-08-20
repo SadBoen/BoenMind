@@ -9,6 +9,7 @@ pub mod events;
 pub mod pending;
 pub mod rpc;
 pub mod rpc_m3;
+pub mod scheduler;
 pub mod static_spa;
 pub mod trust;
 pub mod ws;

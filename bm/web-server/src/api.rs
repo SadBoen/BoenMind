@@ -153,6 +153,17 @@ impl AppState {
         self.runtime.install_code_runtime(workdir);
     }
 
+    /// 装配定时任务调度器（功能，`--schedule`）：创建 Scheduler（实现
+    /// `SchedulePort`）→ 经 bm-assembly `install_schedule`（注入 plugin-schedule
+    /// 全局源 + 注册/启用工具）→ 启动后台驱动循环。
+    pub fn install_scheduler(self: &Arc<Self>) -> Arc<crate::scheduler::Scheduler> {
+        let sched = Arc::new(crate::scheduler::Scheduler::new(Arc::clone(self)));
+        let port: Arc<dyn bm_ports::SchedulePort> = Arc::clone(&sched) as Arc<dyn bm_ports::SchedulePort>;
+        self.runtime.install_schedule(port);
+        sched.start();
+        sched
+    }
+
     pub fn assemble(
         runtime: Runtime,
         trusted_hosts: Vec<String>,

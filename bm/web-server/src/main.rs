@@ -108,6 +108,7 @@ fn main() {
     let mut code_runtime_enabled = false;
     let mut approval_enabled = false;
     let mut web_tools_enabled = false;
+    let mut schedule_enabled = false;
 
     let mut i = 1;
     while i < args.len() {
@@ -175,9 +176,12 @@ fn main() {
             "--web-tools" => {
                 web_tools_enabled = true;
             }
+            "--schedule" => {
+                schedule_enabled = true;
+            }
             "--help" | "-h" => {
                 println!(
-                    "usage: web-server [--db <path>] [--dist <dir>] [--boot-json <file>] [--port <n>] [--bind <host>] [--trusted-host <host>] [--config <toml>] [--max-steps <n>] [--plugins-dir <dir>] [--update-dir <dir>] [--auth] [--compact] [--code-runtime] [--approval] [--web-tools]"
+                    "usage: web-server [--db <path>] [--dist <dir>] [--boot-json <file>] [--port <n>] [--bind <host>] [--trusted-host <host>] [--config <toml>] [--max-steps <n>] [--plugins-dir <dir>] [--update-dir <dir>] [--auth] [--compact] [--code-runtime] [--approval] [--web-tools] [--schedule]"
                 );
                 return;
             }
@@ -346,6 +350,13 @@ fn main() {
     if web_tools_enabled {
         state.runtime.install_web_tools();
         tracing::info!("web tools plugin installed (web.fetch/web.search)");
+    }
+    // 定时任务插件装配（--schedule）：创建 Scheduler（实现 SchedulePort）
+    // → 经 bm-assembly install_schedule（注入源 + 注册/启用 schedule.* 工具）
+    // → 启动后台驱动循环。不传 = 未装配（旧行为不变）。
+    if schedule_enabled {
+        state.install_scheduler();
+        tracing::info!("schedule plugin installed (schedule.create/list/cancel)");
     }
     // 启动恢复：把持久化会话全部 restore 进 live 表（kill -9 恢复语义，
     // restore_session 内部自动做 interrupted-turn 修复）。blank/running 按日志判定。
