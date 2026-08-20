@@ -85,9 +85,11 @@ export default function ChatUnit() {
     <div className="chat-unit" ref={containerRef}>
       {/* 会话列表收起/展开按钮：统一方形，竖向左缘中间（宽/窄模式一致）。
           展开时 ◀（朝左，提示可收起）+ 完整方框（四角圆角+四边框）；
-          收起时 ▶（朝右，提示可展开）+ 方框转 180°（圆角朝右、开口朝左）。 */}
+          收起时 ▶（朝右，提示可展开）+ 方框转 180°（圆角朝右、开口朝左）。
+          位置跟随分割线（sideW 拖拽后按钮跟着跑，不再硬编码 260px）。 */}
       <button
         className={`chat-unit-toggle ${(narrow ? floating : open) ? "active" : ""} ${narrow ? "narrow" : open ? "open" : "closed"}`}
+        style={!narrow && open ? { left: `calc(${sideW}px - 13px)` } : undefined}
         title={narrow ? "会话列表" : open ? "收起会话" : "展开会话"}
         onClick={toggle}
       >

@@ -5,7 +5,8 @@ import {
 import type { MenuProps, TreeDataNode } from "antd";
 import {
   CloudUploadOutlined, CloseOutlined, CopyOutlined, DeleteOutlined, DownloadOutlined,
-  EditOutlined, FileAddOutlined, FolderAddOutlined, FolderOpenOutlined,
+  DoubleLeftOutlined, DoubleRightOutlined, EditOutlined, FileAddOutlined,
+  FolderAddOutlined, FolderOpenOutlined,
   HomeOutlined, ReloadOutlined, SaveOutlined, UploadOutlined,
 } from "@ant-design/icons";
 import ReactMarkdown from "react-markdown";
@@ -75,6 +76,8 @@ export default function FileManagerUnit() {
   const [mkdirName, setMkdirName] = useState("");
   // 树宽（分割线拖拽调宽；默认 TREE_W）
   const [treeW, setTreeW] = useState(TREE_W);
+  // 预览区开关：控制内容区是否显示（门型按钮）
+  const [previewOn, setPreviewOn] = useState(true);
 
   // 监听单元宽度 → 窄模式（覆盖）vs 宽模式（分栏）
   useEffect(() => {
@@ -308,17 +311,34 @@ export default function FileManagerUnit() {
 
   const toolbar = (
     <div className="fm-toolbar">
-      <Tooltip title="刷新">
-        <Button size="small" type="text" icon={<ReloadOutlined />} onClick={refreshRoot} />
-      </Tooltip>
-      <Tooltip title="上传到当前目录">
-        <Upload showUploadList={false} beforeUpload={onUpload} multiple={false}>
-          <Button size="small" type="text" icon={<UploadOutlined />} disabled={!workdir} />
-        </Upload>
-      </Tooltip>
-      <span className="fm-workdir" title={workdir ?? "未设置"}>
-        <HomeOutlined /> {workdir ?? "未设置工作目录"}
-      </span>
+      {/* 第一行：只显示工作目录路径 */}
+      <div className="fm-toolbar-row fm-toolbar-path">
+        <span className="fm-workdir" title={workdir ?? "未设置"}>
+          <HomeOutlined /> {workdir ?? "未设置工作目录"}
+        </span>
+      </div>
+      {/* 第二行：刷新 / 上传 / 门型预览开关 */}
+      <div className="fm-toolbar-row fm-toolbar-actions">
+        <Tooltip title="刷新">
+          <Button size="small" type="text" icon={<ReloadOutlined />} onClick={refreshRoot} />
+        </Tooltip>
+        <Tooltip title="上传到当前目录">
+          <Upload showUploadList={false} beforeUpload={onUpload} multiple={false}>
+            <Button size="small" type="text" icon={<UploadOutlined />} disabled={!workdir} />
+          </Upload>
+        </Tooltip>
+        <span className="fm-toolbar-spacer" />
+        {/* 门型开关：控制右侧预览区显示/隐藏（双箭头：开启=收起箭头，关闭=展开箭头） */}
+        <Tooltip title={previewOn ? "隐藏预览区" : "显示预览区"}>
+          <Button
+            size="small"
+            type="text"
+            className={previewOn ? "fm-preview-toggle on" : "fm-preview-toggle"}
+            icon={previewOn ? <DoubleLeftOutlined /> : <DoubleRightOutlined />}
+            onClick={() => setPreviewOn((v) => !v)}
+          />
+        </Tooltip>
+      </div>
     </div>
   );
 
@@ -418,7 +438,10 @@ export default function FileManagerUnit() {
     <div className="fm-unit" ref={containerRef}>
       {/* 宽模式：左右分栏；窄模式：未打开文件时显示树，打开文件后覆盖 */}
       {(!narrow || !openPath) && (
-        <div className="fm-tree-pane" style={{ width: treeW }}>
+        <div
+          className={`fm-tree-pane ${previewOn ? "" : "fm-tree-full"}`}
+          style={{ width: previewOn ? treeW : undefined }}
+        >
           {toolbar}
           <Tree
             className="fm-tree"
@@ -438,38 +461,41 @@ export default function FileManagerUnit() {
           />
         </div>
       )}
-      {/* 树与内容区分割线：树可见时可拖拽调宽（窄模式打开文件、树被覆盖时隐藏） */}
-      {(!narrow || !openPath) && (
+      {/* 树与内容区分割线：树可见且预览区开启时可拖拽调宽 */}
+      {(!narrow || !openPath) && previewOn && (
         <div className="fm-resizer" onMouseDown={onResizeStart} title="拖拽调整目录树宽度" />
       )}
-      <div className="fm-content-pane">
-        {openPath ? (
-          <>
-            <div className="fm-content-header">
-              {narrow && backBtn}
-              <span className="fm-path">{openPath}</span>
-              <Button
-                className="fm-close-btn"
-                size="small"
-                type="text"
-                icon={<CloseOutlined />}
-                title="关闭预览"
-                onClick={closeContent}
-              />
-            </div>
-            {renderPreview()}
-          </>
-        ) : (
-          <Empty
-            className="fm-empty"
-            description={
-              workdir
-                ? narrow ? "点选文件打开预览" : "点选文件在右侧预览"
-                : "请先在 设置 → 通用 → 工作目录 设置目录"
-            }
-          />
-        )}
-      </div>
+      {/* 内容区（预览区）：门型开关控制显示/隐藏；隐藏时树占满全宽 */}
+      {previewOn && (
+        <div className="fm-content-pane">
+          {openPath ? (
+            <>
+              <div className="fm-content-header">
+                {narrow && backBtn}
+                <span className="fm-path">{openPath}</span>
+                <Button
+                  className="fm-close-btn"
+                  size="small"
+                  type="text"
+                  icon={<CloseOutlined />}
+                  title="关闭预览"
+                  onClick={closeContent}
+                />
+              </div>
+              {renderPreview()}
+            </>
+          ) : (
+            <Empty
+              className="fm-empty"
+              description={
+                workdir
+                  ? narrow ? "点选文件打开预览" : "点选文件在右侧预览"
+                  : "请先在 设置 → 通用 → 工作目录 设置目录"
+              }
+            />
+          )}
+        </div>
+      )}
       {narrow && openPath && null}
 
       {/* 右键菜单：受控 Menu 渲染在鼠标位置（fixed 容器 + 最小宽度，排版稳定） */}

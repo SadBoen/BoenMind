@@ -824,13 +824,51 @@ body {
   background: var(--bm-bg-glass);
   /* 无 border-right：与内容区分隔交给 .fm-resizer 的 1px 线 */
 }
+/* 预览区关闭（门型开关）时：目录树占满剩余宽度 */
+.fm-tree-pane.fm-tree-full {
+  flex: 1;
+  width: auto !important;
+}
 .fm-toolbar {
-  display: flex; align-items: center; gap: 2px; padding: 4px 6px;
-  border-bottom: 1px solid var(--bm-border); min-height: 34px;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  border-bottom: 1px solid var(--bm-border);
+}
+.fm-toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 6px;
+}
+.fm-toolbar-row + .fm-toolbar-row {
+  border-top: 1px solid var(--bm-border);
+}
+/* 第一行：只显示路径 */
+.fm-toolbar-path {
+  min-height: 30px;
 }
 .fm-workdir {
-  font-size: 11px; color: var(--bm-fg-dim); margin-left: auto;
-  max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 11px;
+  color: var(--bm-fg-dim);
+  margin-left: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 第二行：刷新/上传/门型开关 */
+.fm-toolbar-actions {
+  min-height: 32px;
+}
+.fm-toolbar-spacer { flex: 1; }
+/* 门型预览开关：开启时高亮 accent */
+.fm-preview-toggle {
+  color: var(--bm-fg-dim) !important;
+}
+.fm-preview-toggle.on {
+  color: var(--bm-accent) !important;
+  background: color-mix(in srgb, var(--bm-accent) 12%, transparent) !important;
 }
 .fm-tree { flex: 1; overflow: auto; padding: 4px; background: transparent; }
 /* 目录树与内容区之间的分割线：只留窗口间那种 1px 细黑线；宽热区保留拖拽（视觉不可见） */
