@@ -24,3 +24,6 @@ plugins/*/dist/
 
 # ZCode 内部文件
 .zcode/
+
+# codegraph 项目图库（本地工具产物，不入库）
+.codegraph/

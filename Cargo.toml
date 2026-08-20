@@ -17,6 +17,7 @@ members = [
     "plugins/plugin-loop",
     "plugins/plugin-tools",
     "plugins/plugin-auth",
+    "plugins/plugin-compactor",
 ]
 
 [workspace.package]

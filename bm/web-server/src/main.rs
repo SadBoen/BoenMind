@@ -2,6 +2,7 @@
 //!
 //! 用法：web-server [--db <path>] [--dist <dist_root>] [--boot-json <file>] [--port <port>]
 //!         [--trusted-host <host>] [--config <toml>] [--max-steps <n>] [--plugins-dir <dir>]
+//!         [--auth] [--compact]
 //!
 //! `--config` 指向既有 boenmind 形态的 LLM 配置（minimax/deepseek/custom 三通道，
 //! 见 provider_config 模块）。不传时服务保持 mock provider（旧行为不变）。
@@ -9,6 +10,8 @@
 //! `--plugins-dir` 指向 JS 插件目录（QuickJS 桥 §6）：扫描 plugin.json 逐个按
 //! manifest 最小权限授面建引擎，注册进 PluginRuntimePort（探针变 Ready）；
 //! 不传 = 探针 Unavailable（fail-loud，旧行为不变）。
+//! `--compact` 装配上下文压缩插件（功能面）：长会话按水线自动摘要压缩
+//! （运行态视图变换，前端无感）；不传 = 未装配（透传，旧行为不变）。
 //!
 //! 默认 `--dist` 指向自研前端构建产物 `frontend/dist/`（React 19 + dockview 布局 +
 //! 应用层登录页，已替代 dsh 官方快照）。
@@ -89,6 +92,7 @@ fn main() {
     let mut max_steps: u64 = kernel_session::DEFAULT_MAX_STEPS;
     let mut plugins_dir: Option<PathBuf> = None;
     let mut auth_enabled = false;
+    let mut compact_enabled = false;
 
     let mut i = 1;
     while i < args.len() {
@@ -136,9 +140,12 @@ fn main() {
             "--auth" => {
                 auth_enabled = true;
             }
+            "--compact" => {
+                compact_enabled = true;
+            }
             "--help" | "-h" => {
                 println!(
-                    "usage: web-server [--db <path>] [--dist <dir>] [--boot-json <file>] [--port <n>] [--trusted-host <host>] [--config <toml>] [--max-steps <n>] [--plugins-dir <dir>] [--auth]"
+                    "usage: web-server [--db <path>] [--dist <dir>] [--boot-json <file>] [--port <n>] [--trusted-host <host>] [--config <toml>] [--max-steps <n>] [--plugins-dir <dir>] [--auth] [--compact]"
                 );
                 return;
             }
@@ -229,6 +236,16 @@ fn main() {
             "auth plugin installed (login gate on; default password {})",
             bm_assembly::DEFAULT_PASSWORD
         );
+    }
+
+    // 上下文压缩插件装配（--compact）：长会话按水线自动摘要压缩（运行态
+    // 视图变换，前端无感——聊天记录照常显示全部历史）。不传 = 未装配
+    // （透传，旧行为不变）。功能插件 = 用户可加装/可关闭的可选面。
+    if compact_enabled {
+        runtime.install_compactor(Arc::new(
+            bm_assembly::DefaultCompactor::default(),
+        ));
+        tracing::info!("context compactor plugin installed (watermark 0.5, tail 10%)");
     }
 
     // settings/credentials 持久化文件（P2-C：重启恢复配置与凭据；

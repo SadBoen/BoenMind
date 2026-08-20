@@ -38,6 +38,7 @@ use kernel_contracts::ports::SessionPersistPort;
 use kernel_contracts::session::{SessionEvent, StepPhase, TurnEndReason, TurnEvent};
 use kernel_contracts::tools::ToolExecutionInput;
 use kernel_session::{AgentPort, LoopError, Session, SessionStore, TurnOutcome};
+use plugin_compactor::Compactor;
 use plugin_tools::{ToolGate, ToolRegistry};
 
 pub mod plugin;
@@ -55,6 +56,9 @@ pub struct LoopRuntime {
     pub model: String,
     /// 单回合最大 step 数（默认 [`kernel_session::DEFAULT_MAX_STEPS`]）。
     pub max_steps: u64,
+    /// 上下文压缩插件（功能面，可选装配）：`Some` 时每次模型调用前对
+    /// 上下文做水线判定与运行态压缩变换；`None` = 未装配（透传，无感）。
+    pub compactor: Option<Arc<dyn Compactor>>,
 }
 
 /// 反应式回合代理：一次用户输入 → 若干 step，直到模型产出文本。
@@ -389,9 +393,21 @@ impl ReactLoopAgent {
             self.persist(&rec).await?;
 
             // model-visible-means-logged：模型看到的全部来自日志投影。
-            let messages = self.session.derive_messages();
+            let mut messages = self.session.derive_messages();
             let tools = self.rt.gate.enabled_schemas(&self.rt.tools);
             let (provider, model) = self.request_provider_model();
+
+            // 上下文压缩（可选功能面）：运行态视图变换——日志完整保留，发给
+            // 模型的上下文由 compactor 决定是否压成「摘要 + 尾部」。未达水线
+            // 或未装配 = 透传（零开销）。失败 fail-safe：保持原上下文。
+            if let Some(compactor) = &self.rt.compactor {
+                if let Some(compacted) = compactor
+                    .maybe_compact(&*self.rt.llm, &messages, &provider, &model, Some(signal.clone()))
+                    .await
+                {
+                    messages = compacted;
+                }
+            }
 
             let request = GenerateOptions {
                 provider,
@@ -637,11 +653,12 @@ impl AgentPort for ReactLoopAgent {
 mod tests {
     use super::*;
     use kernel_contracts::error::{LlmError, ToolError};
-    use kernel_contracts::llm::{ChunkStream, LlmModelInfo, LlmPort};
+    use kernel_contracts::llm::{ChunkStream, LlmMessage, LlmModelInfo, LlmPort, Role};
     use kernel_contracts::session::{SessionHeader, SessionId};
     use kernel_contracts::tools::{ToolExecutionResult, ToolHandler};
     use kernel_contracts::EventBus;
     use kernel_session::{DEFAULT_MAX_STEPS, SessionStore};
+    use plugin_compactor::DefaultCompactor;
     use serde_json::json;
     use std::collections::VecDeque;
     use std::sync::Mutex;
@@ -846,6 +863,7 @@ mod tests {
             provider: "script".to_string(),
             model: "script-1".to_string(),
             max_steps: DEFAULT_MAX_STEPS,
+            compactor: None,
         });
         let session = store.create(test_header("s1"), EventBus::new());
         (rt, session)
@@ -1091,6 +1109,7 @@ mod tests {
             provider: "script".to_string(),
             model: "script-1".to_string(),
             max_steps: DEFAULT_MAX_STEPS,
+            compactor: None,
         });
         let session = store.create(test_header("s1"), EventBus::new());
         let agent = ReactLoopAgent::new(rt, Arc::clone(&session));
@@ -1230,6 +1249,7 @@ mod tests {
             provider: "script".to_string(),
             model: "script-1".to_string(),
             max_steps: DEFAULT_MAX_STEPS,
+            compactor: None,
         });
         let session = store.create(test_header("s1"), EventBus::new());
         let agent = ReactLoopAgent::new(rt, Arc::clone(&session));
@@ -1244,5 +1264,81 @@ mod tests {
         agent.run_turn(Some("hi2")).await.unwrap();
         let seen2 = seen.lock().unwrap().clone();
         assert_eq!(seen2[1], ("script".to_string(), "script-1".to_string()));
+    }
+
+    /// 捕获每次请求的消息列表（验证压缩接线——模型收到的上下文已被变换）。
+    #[derive(Clone, Default)]
+    struct CapturingMessagesLlm {
+        seen: Arc<std::sync::Mutex<Vec<Vec<LlmMessage>>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl LlmPort for CapturingMessagesLlm {
+        async fn list_models(&self, _provider: &str) -> Result<Vec<LlmModelInfo>, LlmError> {
+            Ok(vec![LlmModelInfo {
+                id: "m".to_string(),
+                label: None,
+                supports_tools: false,
+                context_window: Some(128_000),
+                max_tokens: None,
+                reasoning: None,
+            }])
+        }
+        fn stream(&self, request: GenerateOptions) -> ChunkStream {
+            self.seen.lock().unwrap().push(request.messages);
+            Box::pin(futures::stream::iter(vec![
+                Ok(StreamChunk::BlockStart { index: 0, block_type: "text".to_string() }),
+                Ok(StreamChunk::TextDelta { index: 0, text: "ok".to_string() }),
+                Ok(StreamChunk::BlockEnd { index: 0, block: ContentBlock::Text("ok".to_string()) }),
+                Ok(StreamChunk::Finish(FinishReason::Stop)),
+            ]))
+        }
+    }
+
+    /// 压缩插件接线集成测试：装配 compactor 后，模型收到的上下文首条为
+    /// System 摘要（运行态视图变换，日志不改）。回归：LoopRuntime.compactor
+    /// 装配路径断裂会在此暴露。
+    #[tokio::test]
+    async fn compactor_transforms_context_before_model() {
+        let llm = Arc::new(CapturingMessagesLlm::default());
+        let tools = Arc::new(ToolRegistry::new());
+        let gate = Arc::new(ToolGate::new());
+        let store = Arc::new(SessionStore::new());
+        let persist: Arc<dyn SessionPersistPort> =
+            Arc::new(InMemoryPersist(std::sync::Mutex::new(vec![])));
+        // watermark 0 = 任何非空上下文都触发（便于断言）；中部 1 token 即可压。
+        let compactor: Arc<dyn Compactor> = Arc::new(DefaultCompactor {
+            watermark: 0.0,
+            min_middle_tokens: 1,
+            ..Default::default()
+        });
+        let rt = Arc::new(LoopRuntime {
+            llm: llm.clone() as Arc<dyn LlmPort>,
+            store: Arc::clone(&store),
+            tools,
+            gate,
+            persist,
+            provider: "script".to_string(),
+            model: "script-1".to_string(),
+            max_steps: DEFAULT_MAX_STEPS,
+            compactor: Some(compactor),
+        });
+        let session = store.create(test_header("s1"), EventBus::new());
+        let agent = ReactLoopAgent::new(rt, Arc::clone(&session));
+        agent.run_turn(Some("hi")).await.unwrap();
+
+        let seen = llm.seen.lock().unwrap().clone();
+        // 摘要请求 + 真实请求都走同端口；最后一次 = 发给模型的真实上下文。
+        assert!(!seen.is_empty());
+        let last = seen.last().expect("at least one request");
+        assert!(!last.is_empty());
+        assert_eq!(
+            last[0].role,
+            Role::System,
+            "model context must be compacted to System summary first"
+        );
+        // 日志完整保留（append-only 不删事件）：模型看到压缩视图，日志含全部消息。
+        let events: Vec<SessionEvent> = session.events().into_iter().map(|r| r.event).collect();
+        assert!(events.iter().any(|e| matches!(e, SessionEvent::UserMessage { .. })));
     }
 }

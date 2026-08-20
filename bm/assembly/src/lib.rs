@@ -47,6 +47,10 @@ pub use plugin_llm::MockTurn;
 /// 认证插件默认密码（web-server `--auth` 日志用；组合根 re-export，L0 不依赖 plugin-auth）。
 pub use plugin_auth::DEFAULT_PASSWORD;
 
+/// 上下文压缩默认策略（功能插件 `compactor`）：web-server（L0）经此装配，
+/// 不直接依赖 plugin-compactor（边界守卫，同 auth）。
+pub use plugin_compactor::DefaultCompactor;
+
 /// 构造一个脚本化 mock LLM（`swap_llm` 的输入）。见 [`MockTurn`]。
 pub fn scripted_llm(
     provider: String,
@@ -128,6 +132,10 @@ pub struct Runtime {
     pub bus: EventBus,
     /// 单回合最大 step 数（数值可配置；装配默认 [`kernel_session::DEFAULT_MAX_STEPS`]）。
     pub max_steps: u64,
+    /// 上下文压缩插件（功能面，可选装配）：`Some` 时新会话/恢复会话的
+    /// loop 在每次模型调用前做水线判定与运行态压缩变换；`None` = 未装配
+    /// （透传，无感）。经 [`Runtime::install_compactor`] 装配。
+    compactor: Option<Arc<dyn plugin_compactor::Compactor>>,
     /// 核心插件清单（llm / loop / tools，category=Core）。
     core_plugins: Vec<PluginManifestEntry>,
     /// JS 插件清单（--plugins-dir 装配，category=Feature；`plugin_manifest()`
@@ -176,6 +184,7 @@ impl Runtime {
             model: "mock-1".to_string(),
             bus,
             max_steps,
+            compactor: None,
             agent_factory: RwLock::new(default_agent_factory()),
             core_plugins: vec![
                 plugin_llm::plugin::manifest(),
@@ -354,6 +363,15 @@ impl Runtime {
         self.core_plugins.push(plugin_auth::manifest());
     }
 
+    /// 装配上下文压缩插件：把 [`Compactor`] 实现接进运行时（可选功能面）。
+    /// 装配后新会话/恢复会话的 loop 在每次模型调用前做水线判定与运行态
+    /// 压缩变换（`None` = 未装配透传）。装配后 `plugin_manifest()` 追加
+    /// compactor（Feature）。未装配时不影响任何既有行为（优雅无感）。
+    pub fn install_compactor(&mut self, compactor: Arc<dyn plugin_compactor::Compactor>) {
+        self.compactor = Some(compactor);
+        self.core_plugins.push(plugin_compactor::plugin::manifest());
+    }
+
     /// 装配默认认证插件（web-server `--auth` 入口）：默认密码 + 可选持久化文件
     /// （auth.json 密码记录 + sessions.jsonl 会话持久化——重启不再全员登出）。
     /// L0（web-server）不直接依赖 plugin-auth（边界守卫），经此组合根入口装配。
@@ -462,6 +480,7 @@ impl Runtime {
             provider: self.provider.clone(),
             model: self.model.clone(),
             max_steps: self.max_steps,
+            compactor: self.compactor.clone(),
         })
     }
 }

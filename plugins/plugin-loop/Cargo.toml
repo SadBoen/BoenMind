@@ -9,6 +9,7 @@ description = "回合循环插件：ReactLoopAgent（AgentPort 实现）"
 kernel-contracts = { path = "../../kernel/kernel-contracts" }
 kernel-session = { path = "../../kernel/kernel-session" }
 plugin-tools = { path = "../plugin-tools" }
+plugin-compactor = { path = "../plugin-compactor" }
 async-trait.workspace = true
 async-stream.workspace = true
 futures.workspace = true
