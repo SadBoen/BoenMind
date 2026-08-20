@@ -107,6 +107,7 @@ fn main() {
     let mut compact_enabled = false;
     let mut code_runtime_enabled = false;
     let mut approval_enabled = false;
+    let mut web_tools_enabled = false;
 
     let mut i = 1;
     while i < args.len() {
@@ -171,9 +172,12 @@ fn main() {
             "--approval" => {
                 approval_enabled = true;
             }
+            "--web-tools" => {
+                web_tools_enabled = true;
+            }
             "--help" | "-h" => {
                 println!(
-                    "usage: web-server [--db <path>] [--dist <dir>] [--boot-json <file>] [--port <n>] [--bind <host>] [--trusted-host <host>] [--config <toml>] [--max-steps <n>] [--plugins-dir <dir>] [--update-dir <dir>] [--auth] [--compact] [--code-runtime] [--approval]"
+                    "usage: web-server [--db <path>] [--dist <dir>] [--boot-json <file>] [--port <n>] [--bind <host>] [--trusted-host <host>] [--config <toml>] [--max-steps <n>] [--plugins-dir <dir>] [--update-dir <dir>] [--auth] [--compact] [--code-runtime] [--approval] [--web-tools]"
                 );
                 return;
             }
@@ -336,6 +340,12 @@ fn main() {
         let router = web_server::approval::ApprovalRouter::new(Arc::clone(&state));
         state.runtime.install_approval(Arc::new(router));
         tracing::info!("tool approval port installed (dangerous tool calls require approval)");
+    }
+    // Web 取数工具插件装配（--web-tools）：注册 web.fetch/web.search 工具
+    // （SSRF 防线 + 输出钱包，纯自动执行同 host.*）。不传 = 未装配（旧行为不变）。
+    if web_tools_enabled {
+        state.runtime.install_web_tools();
+        tracing::info!("web tools plugin installed (web.fetch/web.search)");
     }
     // 启动恢复：把持久化会话全部 restore 进 live 表（kill -9 恢复语义，
     // restore_session 内部自动做 interrupted-turn 修复）。blank/running 按日志判定。

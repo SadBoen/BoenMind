@@ -298,6 +298,18 @@ impl Runtime {
         }
     }
 
+    /// 装配 Web 取数工具插件（功能）：注册 web.fetch/web.search 工具到本运行时
+    /// 注册表，全部 enable。SSRF 防线（仅公网地址）+ 输出钱包内置在插件内，
+    /// 无 workdir 依赖。可重复调用（register_all 幂等跳过已注册项）。
+    pub fn install_web_tools(&self) {
+        if let Err(e) = plugin_web_tools::register_all(&self.tools) {
+            tracing::warn!("web tools registration skipped: {e}");
+        }
+        for name in plugin_web_tools::ALL_TOOL_NAMES {
+            self.gate.enable(name);
+        }
+    }
+
     /// 装配工具审批端口（功能面，`&self` 装配——AppState 已在 Arc 中时仍可调用）：
     /// 把 [`ToolApprovalPort`] 实现接进运行时——新会话/恢复会话的 loop 在危险工具
     /// 调用执行前暂停、经端口推前端审批弹窗、等用户裁定（Allowed 执行 /
@@ -1588,6 +1600,26 @@ mod tests {
         assert_eq!(std::fs::read_to_string(wd.join("allowed.txt")).unwrap(), "y");
 
         let _ = std::fs::remove_dir_all(&wd);
+        let _ = std::fs::remove_dir_all(db.parent().unwrap());
+    }
+
+    // ---------- Web 取数工具插件集成（install_web_tools 注册 + enable） ----------
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn web_tools_registered_enabled() {
+        let _serial = HOST_TOOLS_TEST_SERIAL.lock().await;
+        let db = tmp_db("web-tools");
+        let rt = Runtime::headless(db.clone()).unwrap();
+
+        rt.install_web_tools();
+        for name in plugin_web_tools::ALL_TOOL_NAMES {
+            assert!(rt.gate.is_enabled(name), "tool {name} should be enabled");
+        }
+        let schemas = rt.tools.schemas();
+        let names: Vec<&str> = schemas.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"web.fetch"), "web.fetch should be registered");
+        assert!(names.contains(&"web.search"), "web.search should be registered");
+
         let _ = std::fs::remove_dir_all(db.parent().unwrap());
     }
 }

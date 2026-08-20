@@ -15,6 +15,7 @@ plugin-loop = { path = "../../plugins/plugin-loop" }
 plugin-tools = { path = "../../plugins/plugin-tools" }
 plugin-host-tools = { path = "../../plugins/plugin-host-tools" }
 plugin-code-runtime = { path = "../../plugins/plugin-code-runtime" }
+plugin-web-tools = { path = "../../plugins/plugin-web-tools" }
 plugin-auth = { path = "../../plugins/plugin-auth" }
 plugin-compactor = { path = "../../plugins/plugin-compactor" }
 quickjs-bridge = { path = "../quickjs-bridge" }

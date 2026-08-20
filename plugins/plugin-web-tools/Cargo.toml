@@ -1,0 +1,21 @@
+[package]
+name = "plugin-web-tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Web 取数工具插件（功能）：web.fetch 抓取 + web.search 搜索（DuckDuckGo Instant Answer），SSRF 防线 + 输出钱包"
+
+[dependencies]
+kernel-contracts = { path = "../../kernel/kernel-contracts" }
+plugin-tools = { path = "../plugin-tools" }
+serde_json.workspace = true
+async-trait.workspace = true
+tokio = { workspace = true, features = ["time"] }
+futures-util = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+
+[dev-dependencies]
+uuid.workspace = true
+
+[lints]
+workspace = true

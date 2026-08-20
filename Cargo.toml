@@ -21,6 +21,7 @@ members = [
     "plugins/plugin-tools",
     "plugins/plugin-host-tools",
     "plugins/plugin-code-runtime",
+    "plugins/plugin-web-tools",
     "plugins/plugin-auth",
     "plugins/plugin-compactor",
 ]

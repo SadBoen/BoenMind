@@ -216,6 +216,7 @@ dependencies = [
  "plugin-llm",
  "plugin-loop",
  "plugin-tools",
+ "plugin-web-tools",
  "quickjs-bridge",
  "serde",
  "serde_json",
@@ -1492,6 +1493,20 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.20",
  "tokio",
+]
+
+[[package]]
+name = "plugin-web-tools"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures-util",
+ "kernel-contracts",
+ "plugin-tools",
+ "reqwest",
+ "serde_json",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
