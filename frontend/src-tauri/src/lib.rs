@@ -10,6 +10,7 @@
 use std::path::PathBuf;
 
 use tauri::Manager;
+use tauri_plugin_updater::UpdaterExt;
 
 /// web-server 后端监听地址（必须与 index.html 注入的 base 一致）。
 const BACKEND_ADDR: &str = "127.0.0.1:17321";
@@ -41,9 +42,9 @@ async fn check_update(app: tauri::AppHandle) -> Result<Option<serde_json::Value>
     if let Some(u) = update {
         Ok(Some(serde_json::json!({
             "available": true,
-            "version": u.version().clone(),
-            "date": u.date().map(|d| d.to_rfc3339()),
-            "body": u.body().clone(),
+            "version": u.version,
+            "date": u.date.map(|d| d.to_string()),
+            "body": u.body,
         })))
     } else {
         Ok(Some(serde_json::json!({ "available": false })))
