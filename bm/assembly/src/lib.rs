@@ -40,6 +40,17 @@ pub mod provider;
 
 pub use js_plugins::{JsPluginEntry, JsPluginRuntime};
 
+/// workdir 源缺省实现（headless 无 settings）：恒 None → 宿主工具返回
+/// "workdir not configured"。web-server 装配路径经 `install_host_tools`
+/// 注入真实现（从 settings 现读）。
+#[derive(Debug)]
+pub struct NoWorkdir;
+impl bm_ports::WorkdirPort for NoWorkdir {
+    fn current_workdir(&self) -> Option<PathBuf> {
+        None
+    }
+}
+
 /// 脚本化 mock LLM 装配（门禁/headless 用）：按脚本产出工具调用 + 续文本。
 /// 组合根职责：装配 mock 也是装配；headless（L0）经此获得 mock，不直接依赖 plugin-llm。
 pub use plugin_llm::MockTurn;
@@ -172,6 +183,13 @@ impl Runtime {
         // tools 插件装配点：内置工具组注册（当前为空集，host 工具由 web-server 注册）。
         plugin_tools::plugin::register_builtin(&tools);
         let gate = Arc::new(ToolGate::new());
+        // 宿主文件工具（核心插件）：默认装配注册 + 全启用。workdir 源缺省 = None
+        // （headless 无 settings；web-server 经 install_host_tools 注入真源）。
+        plugin_host_tools::set_workdir_source(Arc::new(crate::NoWorkdir));
+        let _ = plugin_host_tools::register_all(&tools);
+        for name in plugin_host_tools::ALL_TOOL_NAMES {
+            gate.enable(name);
+        }
         Ok(Self {
             llm: Arc::new(RwLock::new(llm)),
             store,
@@ -242,6 +260,20 @@ impl Runtime {
     /// 卸载一个工具（运行期热插拔）。
     pub fn unregister_tool(&self, name: &str) -> Result<(), kernel_contracts::ToolError> {
         self.tools.unregister(name)
+    }
+
+    /// 装配宿主文件工具插件（核心）：注册 4 个 host.* 工具到本运行时注册表，
+    /// 全部 enable（默认门控 fail-closed 自动放开），并注入 workdir 源（外层实现
+    /// `WorkdirPort` 从 settings 现读，工具执行时经端口取当前 workdir）。
+    /// 可重复调用（register_all 幂等跳过已注册项）。
+    pub fn install_host_tools(&self, workdir: Arc<dyn bm_ports::WorkdirPort>) {
+        plugin_host_tools::set_workdir_source(workdir);
+        if let Err(e) = plugin_host_tools::register_all(&self.tools) {
+            tracing::warn!("host tools registration skipped: {e}");
+        }
+        for name in plugin_host_tools::ALL_TOOL_NAMES {
+            self.gate.enable(name);
+        }
     }
 
     /// 创建一个新会话（写入 header 索引 + 首条 SessionStarted），返回代理。
@@ -967,8 +999,9 @@ mod tests {
             .expect("run plugin main");
         // llm.complete（真端口块流）→ "hello plugin"。
         assert_eq!(r["llmText"], serde_json::json!("hello plugin"));
-        // tools.list（经 ToolGate）→ 只有 echo。
-        assert_eq!(r["tools"], serde_json::json!(["echo"]));
+        // tools.list（经 ToolGate）→ 至少包含 echo（headless 默认装配还含 host 工具）。
+        let tools_arr = r["tools"].as_array().expect("tools is array");
+        assert!(tools_arr.iter().any(|t| t == "echo"), "echo must be listed, got {tools_arr:?}");
         // tools.invoke → echo:ping。
         assert_eq!(r["echo"], serde_json::json!("echo:ping"));
         // session.append/get（拉模型投影）→ cursor 2（SessionStarted + UserMessage）。
@@ -1150,7 +1183,8 @@ mod tests {
             .expect("plugin runtime is JsPluginRuntime");
         let r = runtimes.call("alpha").expect("call alpha main");
         assert_eq!(r["id"], serde_json::json!("alpha"));
-        assert_eq!(r["tools"], serde_json::json!(["echo"]));
+        let tools_arr = r["tools"].as_array().expect("tools is array");
+        assert!(tools_arr.iter().any(|t| t == "echo"), "echo must be listed, got {tools_arr:?}");
 
         let _ = std::fs::remove_dir_all(root);
         let _ = std::fs::remove_dir_all(db.parent().unwrap());
@@ -1211,6 +1245,144 @@ mod tests {
         assert_eq!(js[0].id, "alpha");
         assert_eq!(js[0].version, "1.2.3");
         let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(db.parent().unwrap());
+    }
+
+    // ---------- 宿主文件工具插件集成（headless 装配 + MockTurn 全链路） ----------
+
+    /// 测试用 workdir 源：现读可变目录。
+    #[derive(Debug)]
+    struct TestWorkdir {
+        cur: std::sync::Mutex<Option<PathBuf>>,
+    }
+    impl TestWorkdir {
+        fn new(dir: PathBuf) -> Self {
+            Self {
+                cur: std::sync::Mutex::new(Some(dir)),
+            }
+        }
+    }
+    impl bm_ports::WorkdirPort for TestWorkdir {
+        fn current_workdir(&self) -> Option<PathBuf> {
+            self.cur.lock().unwrap().clone()
+        }
+    }
+
+    /// host 工具集成测试共享全局 workdir 源（跨 await 持锁 = TokenIo 单线程下
+    /// MutexGuard 合法；current_thread flavor 保证不走多线程）。
+    static HOST_TOOLS_TEST_SERIAL: std::sync::LazyLock<tokio::sync::Mutex<()>> = std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn host_tools_registered_enabled_and_runnable_end_to_end() {
+        let _serial = HOST_TOOLS_TEST_SERIAL.lock().await;
+        let db = tmp_db("host-tools");
+        let rt = Runtime::headless(db.clone()).unwrap();
+
+        // headless 装配：4 个 host 工具已注册且启用（ToolGate fail-closed 已放开）。
+        let schemas = rt.tools.schemas();
+        let names: Vec<&str> = schemas.iter().map(|s| s.name.as_str()).collect();
+        for name in plugin_host_tools::ALL_TOOL_NAMES {
+            assert!(names.contains(&name), "tool {name} should be registered");
+            assert!(rt.gate.is_enabled(name), "tool {name} should be enabled");
+        }
+
+        // 注入测试 workdir（工具执行时经 WorkdirPort 现读）。
+        let wd = std::env::temp_dir().join(format!("bm-hosts-e2e-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&wd).unwrap();
+        plugin_host_tools::set_workdir_source(Arc::new(TestWorkdir::new(wd.clone())));
+
+        // 脚本化 LLM：回合 1 调 host.write_file 写 faq.txt，then_text 续文本；回合 2 文本收尾。
+        rt.swap_llm(scripted_llm(
+            "mock".to_string(),
+            "mock-1".to_string(),
+            vec![
+                plugin_llm::MockTurn::Tool {
+                    name: "host.write_file".to_string(),
+                    arguments: serde_json::json!({
+                        "path": "faq.txt",
+                        "content": "Q: 什么是 BoenMind\nA: 一个 Rust 微内核 agent 工作台",
+                    }),
+                    then_text: "文件已写入 faq.txt。".to_string(),
+                },
+                plugin_llm::MockTurn::Text("完毕。".to_string()),
+            ],
+        ));
+
+        let agent = rt.create_session(header("s1")).await.unwrap();
+        let outcome = agent.run_turn(Some("帮我写 faq.txt")).await.unwrap();
+        assert!(
+            outcome.steps >= 2,
+            "expected multi-step tool loop, got steps={}",
+            outcome.steps
+        );
+
+        // 文件真实落盘（原子写 + 内容正确）。
+        let written = std::fs::read_to_string(wd.join("faq.txt")).expect("faq.txt written");
+        assert!(written.contains("什么是 BoenMind"));
+
+        // 事件日志含 tool/call 与 tool/result。
+        let events: Vec<SessionEvent> = agent
+            .session()
+            .events()
+            .into_iter()
+            .map(|r| r.event)
+            .collect();
+        assert!(
+            events.iter().any(|e| matches!(e, SessionEvent::ToolCall { call } if call.name == "host.write_file")),
+            "log should contain host.write_file tool call"
+        );
+        assert!(
+            events.iter().any(|e| matches!(e, SessionEvent::ToolResult { result } if !result.is_error)),
+            "log should contain successful tool result"
+        );
+
+        let _ = std::fs::remove_dir_all(&wd);
+        let _ = std::fs::remove_dir_all(db.parent().unwrap());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn host_tools_escape_path_rejected_in_loop() {
+        let _serial = HOST_TOOLS_TEST_SERIAL.lock().await;
+        let db = tmp_db("host-tool-escape");
+        let rt = Runtime::headless(db.clone()).unwrap();
+        let wd = std::env::temp_dir().join(format!("bm-hostesc-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&wd).unwrap();
+        plugin_host_tools::set_workdir_source(Arc::new(TestWorkdir::new(wd.clone())));
+
+        // 脚本 LLM 只做一个工具回合：尝试逃逸路径写入（应 is_error）。
+        rt.swap_llm(scripted_llm(
+            "mock".to_string(),
+            "mock-1".to_string(),
+            vec![plugin_llm::MockTurn::Tool {
+                name: "host.write_file".to_string(),
+                arguments: serde_json::json!({ "path": "../evil.txt", "content": "x" }),
+                then_text: "ok".to_string(),
+            }],
+        ));
+
+        let agent = rt.create_session(header("s1")).await.unwrap();
+        let _ = agent.run_turn(Some("逃逸")).await.unwrap();
+
+        // 逃逸写入必须被拒绝（is_error 结果入日志），且 workdir 外无文件。
+        let events: Vec<SessionEvent> = agent
+            .session()
+            .events()
+            .into_iter()
+            .map(|r| r.event)
+            .collect();
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                SessionEvent::ToolResult { result } if result.is_error
+            )),
+            "escape write must produce error tool result"
+        );
+        assert!(
+            !wd.parent().unwrap().join("evil.txt").exists(),
+            "escape file must not be written outside workdir"
+        );
+
+        let _ = std::fs::remove_dir_all(&wd);
         let _ = std::fs::remove_dir_all(db.parent().unwrap());
     }
 }

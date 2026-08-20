@@ -15,9 +15,11 @@ members = [
     "bm/headless",
     "bm/quickjs-bridge",
     "bm/ports",
+    "bm/host-fs",
     "plugins/plugin-llm",
     "plugins/plugin-loop",
     "plugins/plugin-tools",
+    "plugins/plugin-host-tools",
     "plugins/plugin-auth",
     "plugins/plugin-compactor",
 ]

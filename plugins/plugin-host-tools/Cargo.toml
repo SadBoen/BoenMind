@@ -1,0 +1,24 @@
+[package]
+name = "plugin-host-tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "宿主文件工具插件（核心）：把 workdir 作用域文件读写/列目录/命令执行注册为 Agent 工具"
+
+[dependencies]
+kernel-contracts = { path = "../../kernel/kernel-contracts" }
+kernel-session = { path = "../../kernel/kernel-session" }
+bm-ports = { path = "../../bm/ports" }
+host-fs = { path = "../../bm/host-fs" }
+plugin-tools = { path = "../plugin-tools" }
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+async-trait.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "process", "io-util"] }
+
+[dev-dependencies]
+uuid.workspace = true
+
+[lints]
+workspace = true

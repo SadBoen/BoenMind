@@ -311,6 +311,10 @@ fn main() {
         provider_runtimes,
         settings_path,
     ));
+    // 宿主文件工具插件装配（核心）：注册 host.* 工具 + 注入 workdir 源
+    // （从 settings host.workdir 现读——设置页改工作目录后工具即时生效）。
+    // 经 bm-assembly 组合根装配（L0 不直接依赖 plugin-host-tools，守卫规则 2）。
+    state.install_host_tools();
     // 启动恢复：把持久化会话全部 restore 进 live 表（kill -9 恢复语义，
     // restore_session 内部自动做 interrupted-turn 修复）。blank/running 按日志判定。
     // 必须先于 attach_event_bus：attach 按 live 表历史播种实时 seq 游标。

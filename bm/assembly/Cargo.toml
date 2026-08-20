@@ -13,6 +13,7 @@ kernel-storage = { path = "../../kernel/kernel-storage" }
 plugin-llm = { path = "../../plugins/plugin-llm" }
 plugin-loop = { path = "../../plugins/plugin-loop" }
 plugin-tools = { path = "../../plugins/plugin-tools" }
+plugin-host-tools = { path = "../../plugins/plugin-host-tools" }
 plugin-auth = { path = "../../plugins/plugin-auth" }
 plugin-compactor = { path = "../../plugins/plugin-compactor" }
 quickjs-bridge = { path = "../quickjs-bridge" }

@@ -1,13 +1,15 @@
 //! host_fs —— 工作目录作用域的文件系统路径约束模块。
 //!
 //! 文件管理器窗口单元的全部 FS 操作（list/read/write/upload/download/mkdir）
+//! 与宿主文件工具（plugin-host-tools 的 read/write/list）共用同一套约束：
 //! 必须经 [`resolve_in_workdir`] 把**相对路径**解析为 workdir 内的绝对路径：
 //! 拒绝绝对路径 / `..` / null 字节；`canonicalize` 解析最终目标后按**路径组件**
 //! 前缀检查（`Path::starts_with` 是组件级比较，`/data/workdir` 不会匹配
 //! `/data/workdir-evil`）；symlink 逃逸（workdir 内软链指向外部）在此被拒。
 //!
 //! 设计边界：本模块是纯路径逻辑，不依赖 AppState（workdir 由调用方从
-//! settings 读取），保证安全规则可独立单测。
+//! settings 读取），保证安全规则可独立单测。web-server 的 host.* 端点与
+//! agent 工具（plugin-host-tools）共享本 crate，二者安全语义同源。
 
 use std::path::{Component, Path, PathBuf};
 
@@ -180,7 +182,6 @@ pub fn validate_workdir(workdir: &Path) -> Result<(), HostFsError> {
 }
 
 /// 隐藏条目判定：`.` 前缀（Unix 惯例）+ Windows FILE_ATTRIBUTE_HIDDEN。
-/// 与 api.rs `is_hidden_path` 同规则，模块内自持一份（避免循环依赖 api.rs）。
 pub fn is_hidden_path(p: &Path) -> bool {
     let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
     if name.starts_with('.') && !name.is_empty() {

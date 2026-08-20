@@ -2,11 +2,12 @@
 //! host 工作目录作用域文件面 + 通用目录/隐藏路径判断（全部经 host_fs）。
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde_json::{json, Value};
 
 use crate::api::AppState;
-use crate::host_fs::{self, HostFsError};
+use host_fs::{self, HostFsError};
 use crate::rpc::{err, err_with_details, ok};
 
 pub(super) fn host_pick_directory(state: &AppState) -> Value {
@@ -358,6 +359,29 @@ pub fn host_workdir(state: &AppState) -> Option<PathBuf> {
         .and_then(Value::as_str)
         .map(PathBuf::from)
         .filter(|p| !p.as_os_str().is_empty())
+}
+
+/// 宿主工具（plugin-host-tools）的 workdir 源：从 AppState.settings 现读，
+/// 与 [`host_workdir`] 同一条事实源（设置页改 workdir 后下一工具调用即时生效）。
+#[derive(Clone)]
+pub struct SettingsWorkdir(Arc<AppState>);
+
+impl std::fmt::Debug for SettingsWorkdir {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SettingsWorkdir").finish_non_exhaustive()
+    }
+}
+
+impl SettingsWorkdir {
+    pub fn new(state: Arc<AppState>) -> Self {
+        Self(state)
+    }
+}
+
+impl bm_ports::WorkdirPort for SettingsWorkdir {
+    fn current_workdir(&self) -> Option<PathBuf> {
+        host_workdir(&self.0)
+    }
 }
 
 /// host_fs 错误 → RPC 信封（{ok:false, error:{code,message,details}}）。

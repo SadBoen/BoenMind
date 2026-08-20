@@ -1,0 +1,11 @@
+[package]
+name = "host-fs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "工作目录作用域文件系统路径约束（host_fs 抽离为独立契约 crate，web-server 与 plugin-host-tools 共享）"
+
+[dependencies]
+
+[lints]
+workspace = true

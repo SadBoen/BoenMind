@@ -131,6 +131,15 @@ impl AppState {
         Self::assemble(runtime, trusted_hosts, vec![])
     }
 
+    /// 装配宿主文件工具插件（核心）：注册 host.* 工具 + 注入 workdir 源
+    /// （从 settings host.workdir 现读——设置页改工作目录后工具即时生效）。
+    /// 经 bm-assembly 组合根装配（L0 不直接依赖 plugin-host-tools，守卫规则 2）。
+    pub fn install_host_tools(self: &Arc<Self>) {
+        let workdir: Arc<dyn bm_ports::WorkdirPort> =
+            Arc::new(crate::api::host::SettingsWorkdir::new(Arc::clone(self)));
+        self.runtime.install_host_tools(workdir);
+    }
+
     pub fn assemble(
         runtime: Runtime,
         trusted_hosts: Vec<String>,

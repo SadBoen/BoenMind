@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 use std::path::Path;
 
 use crate::api::AppState;
-use crate::host_fs;
+use host_fs;
 use crate::rpc::{err, err_with_details, ok};
 
 pub(super) const WEB_SETTINGS_NAMESPACES: &[&str] = &[

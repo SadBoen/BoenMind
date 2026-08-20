@@ -23,3 +23,7 @@ pub use compactor::{
 pub mod tools;
 
 pub use tools::{ToolGatePort, ToolRegistryPort};
+
+pub mod host;
+
+pub use host::WorkdirPort;

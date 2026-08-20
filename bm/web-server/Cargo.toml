@@ -9,6 +9,8 @@ description = "Rust 协议兼容层：dsh 前端接口合同 9 面 + 双栅栏�
 kernel-contracts = { path = "../../kernel/kernel-contracts" }
 kernel-session = { path = "../../kernel/kernel-session" }
 bm-assembly = { path = "../assembly" }
+bm-ports = { path = "../ports" }
+host-fs = { path = "../host-fs" }
 serde.workspace = true
 serde_json.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "net", "io-util", "time"] }

@@ -33,8 +33,9 @@ fn layer_of(crate_name: &str) -> Option<u32> {
         "kernel-contracts" => 5,
         "kernel-session" | "kernel-storage" => 4,
         "kernel-supervisor" => 3,
-        "bm-ports" => 2,
-        "plugin-llm" | "plugin-loop" | "plugin-tools" | "plugin-auth" | "plugin-compactor" => 2,
+        "bm-ports" | "host-fs" => 2,
+        "plugin-llm" | "plugin-loop" | "plugin-tools" | "plugin-auth" | "plugin-compactor"
+        | "plugin-host-tools" => 2,
         "bm-assembly" => 1,
         "web-server" | "headless" | "quickjs-bridge" => 0,
         _ => return None,
@@ -43,7 +44,10 @@ fn layer_of(crate_name: &str) -> Option<u32> {
 
 /// 核心插件：最小基座（provider + loop + tools）——禁止依赖功能插件。
 fn is_core_plugin(crate_name: &str) -> bool {
-    matches!(crate_name, "plugin-llm" | "plugin-loop" | "plugin-tools")
+    matches!(
+        crate_name,
+        "plugin-llm" | "plugin-loop" | "plugin-tools" | "plugin-host-tools"
+    )
 }
 
 /// 功能插件：用户可加装/可关闭的可选面（auth/compactor）。

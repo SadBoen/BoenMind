@@ -5,7 +5,6 @@
 
 pub mod api;
 pub mod events;
-pub mod host_fs;
 pub mod pending;
 pub mod rpc;
 pub mod rpc_m3;
@@ -512,7 +511,7 @@ async fn handle_host_download(
     let Some(wd) = api::host_workdir(&state) else {
         return (StatusCode::CONFLICT, "workdir-not-configured").into_response();
     };
-    let target = match crate::host_fs::resolve_in_workdir(&wd, rel) {
+    let target = match host_fs::resolve_in_workdir(&wd, rel) {
         Ok(t) => t,
         Err(e) => {
             return (StatusCode::BAD_REQUEST, e.code()).into_response();
@@ -534,9 +533,9 @@ async fn handle_host_download(
             return (StatusCode::INTERNAL_SERVER_ERROR, "read failed").into_response();
         }
     };
-    let inline = crate::host_fs::is_image_previewable(&ext);
+    let inline = host_fs::is_image_previewable(&ext);
     let mut h = HeaderMap::new();
-    h.insert("content-type", crate::host_fs::mime_for_ext(&ext).parse().unwrap());
+    h.insert("content-type", host_fs::mime_for_ext(&ext).parse().unwrap());
     h.insert("x-content-type-options", "nosniff".parse().unwrap());
     h.insert("cache-control", "private, no-store".parse().unwrap());
     let disposition = if inline {
@@ -611,7 +610,7 @@ async fn handle_host_upload(
         Some(n) if !n.is_empty() => n,
         _ => return (StatusCode::BAD_REQUEST, "missing file part (with filename)").into_response(),
     };
-    if bytes.len() as u64 > crate::host_fs::MAX_UPLOAD_BYTES {
+    if bytes.len() as u64 > host_fs::MAX_UPLOAD_BYTES {
         return (StatusCode::PAYLOAD_TOO_LARGE, "file exceeds size limit").into_response();
     }
     let overwrite = headers
@@ -629,7 +628,7 @@ async fn handle_host_upload(
     {
         return (StatusCode::BAD_REQUEST, "invalid file name").into_response();
     }
-    let parent = match crate::host_fs::resolve_in_workdir(&wd, &dir_rel) {
+    let parent = match host_fs::resolve_in_workdir(&wd, &dir_rel) {
         Ok(t) => t,
         Err(e) => return (StatusCode::BAD_REQUEST, e.code()).into_response(),
     };
@@ -637,7 +636,7 @@ async fn handle_host_upload(
         return (StatusCode::BAD_REQUEST, "wrong-file-kind").into_response();
     }
     let target = parent.join(&file_name);
-    if let Err(e) = crate::host_fs::atomic_write(&target, &bytes, overwrite) {
+    if let Err(e) = host_fs::atomic_write(&target, &bytes, overwrite) {
         let code = e.code();
         return (StatusCode::CONFLICT, code).into_response();
     }
