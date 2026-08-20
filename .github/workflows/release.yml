@@ -122,9 +122,9 @@ jobs:
       # 用官方 ziglang.org 二进制（自包含，无第三方 action 依赖）。
       - name: 安装 zig
         run: |
-          curl -fsSL -o /tmp/zig.tar.xz https://ziglang.org/download/0.14.0/zig-x86_64-linux-0.14.0.tar.xz
+          curl -fsSL -o /tmp/zig.tar.xz https://ziglang.org/download/0.14.0/zig-linux-x86_64-0.14.0.tar.xz
           tar -xf /tmp/zig.tar.xz -C /tmp
-          echo "/tmp/zig-x86_64-linux-0.14.0" >> "$GITHUB_PATH"
+          echo "/tmp/zig-linux-x86_64-0.14.0" >> "$GITHUB_PATH"
           zig version
 
       - uses: Swatinem/rust-cache@v2
