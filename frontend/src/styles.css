@@ -87,6 +87,17 @@ body {
 }
 .bm-statusbar .status-item { white-space: nowrap; }
 .status-link { white-space: nowrap; }
+/* 检查更新按钮（桌面版状态栏）：低调、强调色悬停 */
+.update-item { display: inline-flex; align-items: center; }
+.update-btn {
+  color: var(--bm-accent);
+  cursor: pointer;
+  white-space: nowrap;
+  font-weight: 600;
+  text-decoration: none;
+}
+.update-btn:hover { text-decoration: underline; }
+.update-btn-disabled { opacity: .6; }
 /* 连接状态：WiFi 图标（三弧+圆点），颜色语义：绿=已连接 / 黄=连接中 / 红=断开 */
 .status-wifi {
   display: inline-flex;

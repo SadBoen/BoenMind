@@ -22,6 +22,13 @@ boenmind.db-wal
 plugins/*/lib/
 plugins/*/dist/
 
+# 打包产物（scripts/package.sh）
+out/
+
+# Tauri 桌面壳构建产物（frontend/src-tauri/target 与 gen）
+frontend/src-tauri/target/
+frontend/src-tauri/gen/
+
 # ZCode 内部文件
 .zcode/
 

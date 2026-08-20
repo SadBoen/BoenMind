@@ -1,0 +1,209 @@
+# BoenMind 发布流程：打 tag v* 自动构建三平台产物并创建 GitHub Release
+#   - Windows 便携版（zip，免安装，多文件：BoenMind.exe + dist/）
+#   - Windows 桌面安装器（NSIS，支持 Tauri 应用内热更新）+ latest.json
+#   - Linux 服务器版（web-server + dist + systemd 三件套 tar.gz，x86_64 + aarch64）
+#
+# 前置条件（一次性）：仓库 Secrets 添加
+#   TAURI_SIGNING_PRIVATE_KEY        = base64 ~/.boenmind/tauri-update.key
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+# 没有这两个 Secret 时 Windows 桌面部会失败（createUpdaterArtifacts 需要签名）。
+#
+# 触发：push tag v*（正式发布）或 workflow_dispatch（试跑，不创建 Release）。
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+env:
+  NODE_VERSION: "22"
+
+jobs:
+  # ============================================================
+  # Windows：便携版 zip + 桌面安装器（NSIS，带 updater 签名）
+  # ============================================================
+  windows:
+    name: Windows (portable + desktop)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive   # kernel/ submodule
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            frontend/src-tauri
+
+      - name: 安装前端依赖（含 @tauri-apps/cli）
+        working-directory: frontend
+        run: npm install
+
+      - name: 构建桌面壳（Tauri，无边框 + updater 签名）
+        working-directory: frontend
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npx tauri build
+
+      - name: 构建 web-server release（便携版后端）
+        working-directory: .
+        run: cargo build --release -p web-server
+
+      - name: 打包便携版 zip（BoenMind.exe + dist + README）
+        shell: pwsh
+        run: |
+          $VER = (Get-Content frontend/src-tauri/tauri.conf.json | ConvertFrom-Json).version
+          New-Item -ItemType Directory -Force -Path "dist-win" | Out-Null
+          $STAGE = "dist-win\BoenMind-$VER-win-x64"
+          New-Item -ItemType Directory -Force -Path $STAGE\dist | Out-Null
+          Copy-Item target\release\web-server.exe "$STAGE\BoenMind.exe"
+          Copy-Item -Recurse frontend\dist\. "$STAGE\dist\"
+          @"
+          BoenMind $VER 便携版（免安装）
+          解压后运行 BoenMind.exe，自动打开 127.0.0.1:17321。
+          数据文件（boenmind.db）保存在程序同目录。
+          "@ | Out-File -Encoding utf8 "$STAGE\README.txt"
+          Compress-Archive -Path "$STAGE\*" -DestinationPath "..\dist-win\BoenMind_${VER}_x64_portable.zip" -Force
+
+      - name: 收集桌面壳产物（安装器 + 自动更新清单）
+        shell: pwsh
+        run: |
+          Copy-Item frontend\src-tauri\target\release\bundle\nsis\*.exe ..\dist-win\
+          Copy-Item frontend\src-tauri\target\release\bundle\latest.json ..\dist-win\  -ErrorAction SilentlyContinue
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-artifacts
+          path: dist-win/*
+          if-no-files-found: error
+
+  # ============================================================
+  # Linux 服务器版：web-server + dist + systemd（x86_64 + aarch64）
+  # ============================================================
+  linux-server:
+    name: Linux server (x86_64 + aarch64)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu
+
+      - uses: taiki-e/install-action@cargo-zigbuild
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+
+      - name: 构建前端 dist
+        working-directory: frontend
+        run: npm install && npm run build
+
+      - name: 构建 x86_64
+        working-directory: .
+        run: cargo zigbuild --release -p web-server --target x86_64-unknown-linux-gnu
+
+      - name: 构建 aarch64
+        working-directory: .
+        run: cargo zigbuild --release -p web-server --target aarch64-unknown-linux-gnu
+
+      - name: 打包 tar.gz（web-server + dist + install.sh + service + README）
+        run: |
+          set -euxo pipefail
+          VER="$(node -p "require('./frontend/package.json').version")"
+          mkdir -p dist-linux
+          for ARCH in x86_64 aarch64; do
+            BIN="target/${ARCH}-unknown-linux-gnu/release/web-server"
+            STAGE="boenmind-server_${VER}_linux-${ARCH}"
+            mkdir -p "$STAGE/dist"
+            cp "$BIN" "$STAGE/web-server"
+            cp -r frontend/dist/. "$STAGE/dist/"
+            cp packaging/linux/install.sh "$STAGE/install.sh"
+            cp packaging/linux/boenmind.service "$STAGE/boenmind.service"
+            cp packaging/linux/README.md "$STAGE/README.md"
+            sed -i "s/__VERSION__/${VER}/" "$STAGE/install.sh"
+            chmod +x "$STAGE/install.sh"
+            tar czf "dist-linux/$STAGE.tar.gz" "$STAGE"
+            rm -rf "$STAGE"
+          done
+          ls -la dist-linux/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-artifacts
+          path: dist-linux/*
+          if-no-files-found: error
+
+  # ============================================================
+  # 聚合发布：创建 GitHub Release 并上传全部产物（仅正式 tag）
+  # ============================================================
+  release:
+    name: Create GitHub Release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [windows, linux-server]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: 产物清单
+        run: ls -la release-assets/
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          draft: true
+          fail_on_unmatched_files: true
+          files: release-assets/*
+          body: |
+            ## BoenMind ${{ github.ref_name }}
+
+            个人知识管理软件：LLM-WIKI 路线 + 个人 Agent。
+
+            ### 下载
+
+            **Windows**
+            - `BoenMind_*_x64_portable.zip` 便携版（免安装，多文件：BoenMind.exe + dist/）
+            - `BoenMind_*_x64-setup.exe` 桌面安装器（无边框窗口 + 应用内自动更新）
+            - 依赖系统 WebView2（Win10/11 自带）
+
+            **Linux 服务器版（Debian / x86_64 / aarch64）**
+            - `boenmind-server_*_linux-*.tar.gz`：web-server 二进制 + 前端 dist + systemd 三件套
+            - 安装：`sudo bash install.sh`（自动创建 systemd 服务并启动，监听 17321）
+            - 数据目录 /var/lib/boenmind
+
+            ### 更新说明
+            - 桌面安装器版支持应用内「检查更新」（设置 → 打开状态栏的检查更新）
+            - 自建 Update Server 端点：/update/latest.json（web-server --update-dir）
+
+            ### 安全提示
+            服务器版为 HTTP 明文且无登录认证，配置中的 API 密钥对能访问该端口的任何人可见，
+            请仅在可信内网使用，或通过反向代理加访问密码 / HTTPS 后对外。
