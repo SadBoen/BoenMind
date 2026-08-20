@@ -120,6 +120,35 @@ pub async fn static_handler(
     }
 }
 
+/// 文件服务处理器（无 SPA 回退）：供 `/update/{*path}` 热更新托管用。
+/// 越界 403；miss/目录 404——不回退 index.html（latest.json 目录语义错误时
+/// 保持诚实失败，避免把 HTML 当更新清单返回）。
+pub async fn static_handler_no_spa(
+    method: Method,
+    path: String,
+    root: PathBuf,
+) -> Response {
+    if method != Method::GET && method != Method::HEAD {
+        return response(StatusCode::METHOD_NOT_ALLOWED, "text/plain", b"".to_vec());
+    }
+    let Some(target) = resolve_within_root(&root, &path) else {
+        return response(StatusCode::FORBIDDEN, "text/plain", b"forbidden".to_vec());
+    };
+    if !target.is_file() {
+        return response(StatusCode::NOT_FOUND, "text/plain", b"not found".to_vec());
+    }
+    let ext = target
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let content_type = mime_for(&ext);
+    match std::fs::read(&target) {
+        Ok(body) => response(StatusCode::OK, content_type, body),
+        Err(_) => response(StatusCode::NOT_FOUND, "text/plain", b"not found".to_vec()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,5 +190,15 @@ mod tests {
         let (status, body) = call("/assets/app.js");
         assert_eq!(status, axum::http::StatusCode::OK);
         assert_eq!(body, "console.log(1)");
+    }
+
+    #[test]
+    fn no_spa_miss_is_404() {
+        // no_spa 处理器：miss 必须 404（update 目录不回退 index.html）。
+        let dist = tmp_dist();
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let resp = rt.block_on(static_handler_no_spa(Method::GET, "/missing.json".to_string(), dist.clone()));
+        assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
+        let _ = std::fs::remove_dir_all(&dist);
     }
 }

@@ -1,8 +1,9 @@
 //! web-server 二进制：Rust 协议兼容层服务入口。
 //!
 //! 用法：web-server [--db <path>] [--dist <dist_root>] [--boot-json <file>] [--port <port>]
+//!         [--bind <host>]
 //!         [--trusted-host <host>] [--config <toml>] [--max-steps <n>] [--plugins-dir <dir>]
-//!         [--auth] [--compact]
+//!         [--update-dir <dir>] [--auth] [--compact]
 //!
 //! `--config` 指向既有 boenmind 形态的 LLM 配置（minimax/deepseek/custom 三通道，
 //! 见 provider_config 模块）。不传时服务保持 mock provider（旧行为不变）。
@@ -10,6 +11,9 @@
 //! `--plugins-dir` 指向 JS 插件目录（QuickJS 桥 §6）：扫描 plugin.json 逐个按
 //! manifest 最小权限授面建引擎，注册进 PluginRuntimePort（探针变 Ready）；
 //! 不传 = 探针 Unavailable（fail-loud，旧行为不变）。
+//! `--update-dir` 指向热更新托管目录（自建 Update Server）：挂载
+//! `GET /update/{*path}` 静态服务 latest.json / 更新包，桌面壳（Tauri updater）
+//! 从该端点拉取版本与签名；不传 = 不挂该路由（旧行为不变）。
 //! `--compact` 装配上下文压缩插件（功能面）：长会话按水线自动摘要压缩
 //! （运行态视图变换，前端无感）；不传 = 未装配（透传，旧行为不变）。
 //!
@@ -87,10 +91,18 @@ fn main() {
     let mut dist = PathBuf::from("frontend/dist");
     let mut boot_json: Option<String> = None;
     let mut port: u16 = 3080;
+    let mut bind_host = "127.0.0.1".to_string();
+    // BOENMIND_BIND 环境变量（Linux 服务器版 systemd 注入，历史打包方案先例）
+    if let Ok(h) = std::env::var("BOENMIND_BIND") {
+        if !h.trim().is_empty() {
+            bind_host = h.trim().to_string();
+        }
+    }
     let mut trusted_hosts: Vec<String> = vec![];
     let mut config: Option<PathBuf> = None;
     let mut max_steps: u64 = kernel_session::DEFAULT_MAX_STEPS;
     let mut plugins_dir: Option<PathBuf> = None;
+    let mut update_dir: Option<PathBuf> = None;
     let mut auth_enabled = false;
     let mut compact_enabled = false;
 
@@ -117,6 +129,10 @@ fn main() {
                 i += 1;
                 port = args[i].parse().expect("port must be a number");
             }
+            "--bind" => {
+                i += 1;
+                bind_host = args[i].clone();
+            }
             "--trusted-host" => {
                 i += 1;
                 trusted_hosts.push(args[i].clone());
@@ -137,6 +153,10 @@ fn main() {
                 i += 1;
                 plugins_dir = Some(PathBuf::from(&args[i]));
             }
+            "--update-dir" => {
+                i += 1;
+                update_dir = Some(PathBuf::from(&args[i]));
+            }
             "--auth" => {
                 auth_enabled = true;
             }
@@ -145,7 +165,7 @@ fn main() {
             }
             "--help" | "-h" => {
                 println!(
-                    "usage: web-server [--db <path>] [--dist <dir>] [--boot-json <file>] [--port <n>] [--trusted-host <host>] [--config <toml>] [--max-steps <n>] [--plugins-dir <dir>] [--auth] [--compact]"
+                    "usage: web-server [--db <path>] [--dist <dir>] [--boot-json <file>] [--port <n>] [--bind <host>] [--trusted-host <host>] [--config <toml>] [--max-steps <n>] [--plugins-dir <dir>] [--update-dir <dir>] [--auth] [--compact]"
                 );
                 return;
             }
@@ -324,9 +344,9 @@ fn main() {
     // 持有总线监听器句柄到进程结束（drop 即注销，实时事件流依赖它）。
     let _bus_listener = state.attach_event_bus();
 
-    let app = web_server::router(Arc::clone(&state), dist.clone(), boot_json);
+    let app = web_server::router(Arc::clone(&state), dist.clone(), boot_json, update_dir);
 
-    let addr = format!("127.0.0.1:{port}");
+    let addr = format!("{bind_host}:{port}");
     tokio::runtime::Runtime::new()
         .expect("tokio runtime")
         .block_on(async move {

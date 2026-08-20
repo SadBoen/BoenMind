@@ -28,9 +28,19 @@ use serde_json::{json, Value};
 use api::AppState;
 use rpc::{ClientRequest, ClientResponse, ServerResponse};
 
+/// 更新服务目录（`--update-dir`）：托管 Tauri updater 的 latest.json 与更新包。
+pub type UpdateDir = Option<PathBuf>;
+
 /// 组装完整路由。
-pub fn router(state: Arc<AppState>, dist_root: PathBuf, boot_json: Option<String>) -> Router {
-    Router::new()
+/// - `update_dir`：`--update-dir` 传入时为 `Some(dir)`，挂载 `/update/{*path}`
+///   静态服务（桌面壳热更新拉取 latest.json / 更新包用）。
+pub fn router(
+    state: Arc<AppState>,
+    dist_root: PathBuf,
+    boot_json: Option<String>,
+    update_dir: UpdateDir,
+) -> Router {
+    let app = Router::new()
         .route("/api/{endpoint}", post(handle_rpc))
         .route("/api/respond", post(handle_respond))
         .route("/api/events.mux", get(handle_ws_mux))
@@ -57,8 +67,36 @@ pub fn router(state: Arc<AppState>, dist_root: PathBuf, boot_json: Option<String
                     static_spa::static_handler(method, uri, dist.clone(), boot.clone())
                 }
             }),
-        )
-        .with_state(state)
+        );
+
+    // 热更新托管：/update/{*path} → update_dir 下文件（Tauri updater 端点）。
+    // 仅 GET；越界同 static_spa 拒（../ 逃逸）。
+    // 注意：必须在 .route("/{*path}") 之后挂——axum 0.8 具体段优先，
+    // /update/... 命中本路由而非 SPA 兜底。
+    if let Some(dir) = update_dir {
+        return Router::new()
+            .merge(app)
+            .route(
+                "/update/{*path}",
+                get({
+                    let dir = dir.clone();
+                    move |method: Method, uri: axum::http::Uri| {
+                        // axum 的 {*path} 不剥路由前缀：uri.path() 含 /update/ 段，
+                        // 而 root=update_dir 不含该前缀，先剥掉再 resolve。
+                        // 剥成 owned String 供 async handler 持有。
+                        let stripped: String = uri
+                            .path()
+                            .strip_prefix("/update")
+                            .unwrap_or(uri.path())
+                            .to_string();
+                        static_spa::static_handler_no_spa(method, stripped, dir.clone())
+                    }
+                }),
+            )
+            .with_state(state);
+    }
+
+    app.with_state(state)
 }
 
 /// 会话 token：优先 `x-boenmind-session` 头（API 客户端），其次 `Cookie: dsh_bm_session=...`
