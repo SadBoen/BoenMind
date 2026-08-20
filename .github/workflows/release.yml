@@ -118,7 +118,9 @@ jobs:
           targets: x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu
 
       - uses: taiki-e/install-action@cargo-zigbuild
-      - uses: taiki-e/install-action@zig
+      - uses: taiki-e/install-action@v3
+        with:
+          tool: zig
 
       - uses: Swatinem/rust-cache@v2
         with:
