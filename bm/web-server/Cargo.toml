@@ -25,9 +25,9 @@ chrono.workspace = true
 uuid.workspace = true
 toml = "0.8"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+async-trait.workspace = true
 
 [dev-dependencies]
-async-trait.workspace = true
 http-body-util = "0.1"
 tower = { version = "0.5", features = ["util"] }
 

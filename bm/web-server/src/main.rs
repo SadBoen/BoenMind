@@ -106,6 +106,7 @@ fn main() {
     let mut auth_enabled = false;
     let mut compact_enabled = false;
     let mut code_runtime_enabled = false;
+    let mut approval_enabled = false;
 
     let mut i = 1;
     while i < args.len() {
@@ -167,9 +168,12 @@ fn main() {
             "--code-runtime" => {
                 code_runtime_enabled = true;
             }
+            "--approval" => {
+                approval_enabled = true;
+            }
             "--help" | "-h" => {
                 println!(
-                    "usage: web-server [--db <path>] [--dist <dir>] [--boot-json <file>] [--port <n>] [--bind <host>] [--trusted-host <host>] [--config <toml>] [--max-steps <n>] [--plugins-dir <dir>] [--update-dir <dir>] [--auth] [--compact] [--code-runtime]"
+                    "usage: web-server [--db <path>] [--dist <dir>] [--boot-json <file>] [--port <n>] [--bind <host>] [--trusted-host <host>] [--config <toml>] [--max-steps <n>] [--plugins-dir <dir>] [--update-dir <dir>] [--auth] [--compact] [--code-runtime] [--approval]"
                 );
                 return;
             }
@@ -324,6 +328,14 @@ fn main() {
     if code_runtime_enabled {
         state.install_code_runtime();
         tracing::info!("code runtime plugin installed (code.compile/code.python/code.shell)");
+    }
+    // 工具审批端口装配（--approval）：危险工具调用执行前推前端审批弹窗、等用户
+    // 裁定（allowed-once 执行 / rejected 记拒绝结果回写日志）。不传 = 审批面禁用
+    // （既有自动执行语义，旧行为不变）。
+    if approval_enabled {
+        let router = web_server::approval::ApprovalRouter::new(Arc::clone(&state));
+        state.runtime.install_approval(Arc::new(router));
+        tracing::info!("tool approval port installed (dangerous tool calls require approval)");
     }
     // 启动恢复：把持久化会话全部 restore 进 live 表（kill -9 恢复语义，
     // restore_session 内部自动做 interrupted-turn 修复）。blank/running 按日志判定。

@@ -147,6 +147,11 @@ pub struct Runtime {
     /// loop 在每次模型调用前做水线判定与运行态压缩变换；`None` = 未装配
     /// （透传，无感）。经 [`Runtime::install_compactor`] 装配。
     compactor: Option<Arc<dyn bm_ports::Compactor>>,
+    /// 工具审批端口（功能面，可选装配）：`Some` 时危险工具调用执行前暂停、
+    /// 经端口推前端审批弹窗、等用户裁定；`None` = 审批面禁用（透传无感）。
+    /// `RwLock` 承载（同 `llm`/`agent_factory` 热换装模式）：AppState 已在 Arc
+    /// 中时仍可 `&self` 装配（web-server `--approval`）。经 [`Runtime::install_approval`] 装配。
+    approval: parking_lot::RwLock<Option<Arc<dyn bm_ports::ToolApprovalPort>>>,
     /// 核心插件清单（llm / loop / tools，category=Core）。
     core_plugins: Vec<PluginManifestEntry>,
     /// JS 插件清单（--plugins-dir 装配，category=Feature；`plugin_manifest()`
@@ -203,6 +208,7 @@ impl Runtime {
             bus,
             max_steps,
             compactor: None,
+            approval: parking_lot::RwLock::new(None),
             agent_factory: RwLock::new(default_agent_factory()),
             core_plugins: vec![
                 plugin_llm::plugin::manifest(),
@@ -290,6 +296,16 @@ impl Runtime {
         for name in plugin_code_runtime::ALL_TOOL_NAMES {
             self.gate.enable(name);
         }
+    }
+
+    /// 装配工具审批端口（功能面，`&self` 装配——AppState 已在 Arc 中时仍可调用）：
+    /// 把 [`ToolApprovalPort`] 实现接进运行时——新会话/恢复会话的 loop 在危险工具
+    /// 调用执行前暂停、经端口推前端审批弹窗、等用户裁定（Allowed 执行 /
+    /// Rejected 记拒绝结果回写日志）。写锁替换后**下一会话生效**（同 settingsNs
+    /// 热替换语义）。`None` 未装配 = 审批面禁用（既有自动执行语义，透传无感）。
+    pub fn install_approval(&self, approval: Arc<dyn bm_ports::ToolApprovalPort>) {
+        *self.approval.write() = Some(approval);
+        tracing::info!("tool approval port installed (dangerous tool calls require user approval)");
     }
 
     /// 创建一个新会话（写入 header 索引 + 首条 SessionStarted），返回代理。
@@ -534,6 +550,7 @@ impl Runtime {
             model: self.model.clone(),
             max_steps: self.max_steps,
             compactor: self.compactor.clone(),
+            approval: self.approval.read().clone(),
         })
     }
 }
@@ -1457,6 +1474,118 @@ mod tests {
             "stdout must be fed back to loop, got: {}",
             result_ev.output.chars().take(200).collect::<String>()
         );
+
+        let _ = std::fs::remove_dir_all(&wd);
+        let _ = std::fs::remove_dir_all(db.parent().unwrap());
+    }
+
+    // ---------- 工具审批端口集成（install_approval + 拒绝路径） ----------
+
+    /// 审批桩：按配置返回 Allowed 或 Rejected（验证 loop 接线，不测 web-server 弹窗）。
+    #[derive(Debug)]
+    struct TestApproval {
+        verdict: bm_ports::ApprovalVerdict,
+    }
+
+    #[async_trait::async_trait]
+    impl bm_ports::ToolApprovalPort for TestApproval {
+        async fn request_approval(
+            &self,
+            _tool_name: &str,
+            _call_id: &str,
+            _reason: Option<String>,
+        ) -> Result<bm_ports::ApprovalVerdict, kernel_contracts::ToolError> {
+            Ok(self.verdict)
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn approval_rejected_blocks_tool_in_loop() {
+        let _serial = HOST_TOOLS_TEST_SERIAL.lock().await;
+        let db = tmp_db("approval-reject");
+        let rt = Runtime::headless(db.clone()).unwrap();
+        let wd = std::env::temp_dir().join(format!("bm-approve-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&wd).unwrap();
+        plugin_host_tools::set_workdir_source(Arc::new(TestWorkdir::new(wd.clone())));
+
+        // 装配审批端口（拒绝一切）。
+        rt.install_approval(Arc::new(TestApproval {
+            verdict: bm_ports::ApprovalVerdict::Rejected,
+        }));
+
+        // 脚本 LLM：回合 1 调 host.write_file；回合 2 文本收尾。
+        rt.swap_llm(scripted_llm(
+            "mock".to_string(),
+            "mock-1".to_string(),
+            vec![
+                plugin_llm::MockTurn::Tool {
+                    name: "host.write_file".to_string(),
+                    arguments: serde_json::json!({ "path": "blocked.txt", "content": "x" }),
+                    then_text: "ok".to_string(),
+                },
+                plugin_llm::MockTurn::Text("完毕。".to_string()),
+            ],
+        ));
+
+        let agent = rt.create_session(header("s1")).await.unwrap();
+        let _ = agent.run_turn(Some("写文件")).await.unwrap();
+
+        // 工具调用被拒绝：日志含 is_error 的 ToolResult（模型可见"用户拒绝"事实），
+        // 且文件未落盘（工具未真正执行）。
+        let events: Vec<SessionEvent> = agent
+            .session()
+            .events()
+            .into_iter()
+            .map(|r| r.event)
+            .collect();
+        let rejected = events.iter().any(|e| {
+            matches!(e, SessionEvent::ToolResult { result } if result.is_error && result.output.contains("rejected"))
+        });
+        assert!(rejected, "approval rejection must produce is_error tool result");
+        assert!(
+            !wd.join("blocked.txt").exists(),
+            "rejected tool must not execute (file must not be written)"
+        );
+
+        let _ = std::fs::remove_dir_all(&wd);
+        let _ = std::fs::remove_dir_all(db.parent().unwrap());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn approval_allowed_runs_tool_in_loop() {
+        let _serial = HOST_TOOLS_TEST_SERIAL.lock().await;
+        let db = tmp_db("approval-allow");
+        let rt = Runtime::headless(db.clone()).unwrap();
+        let wd = std::env::temp_dir().join(format!("bm-approve2-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&wd).unwrap();
+        plugin_host_tools::set_workdir_source(Arc::new(TestWorkdir::new(wd.clone())));
+
+        rt.install_approval(Arc::new(TestApproval {
+            verdict: bm_ports::ApprovalVerdict::Allowed,
+        }));
+
+        rt.swap_llm(scripted_llm(
+            "mock".to_string(),
+            "mock-1".to_string(),
+            vec![
+                plugin_llm::MockTurn::Tool {
+                    name: "host.write_file".to_string(),
+                    arguments: serde_json::json!({ "path": "allowed.txt", "content": "y" }),
+                    then_text: "ok".to_string(),
+                },
+                plugin_llm::MockTurn::Text("完毕。".to_string()),
+            ],
+        ));
+
+        let agent = rt.create_session(header("s1")).await.unwrap();
+        let _ = agent.run_turn(Some("写文件")).await.unwrap();
+
+        // 审批通过 → 工具真实执行，文件落盘。
+        assert!(
+            wd.join("allowed.txt").exists(),
+            "allowed tool must execute (file must be written)"
+        );
+        assert_eq!(std::fs::read_to_string(wd.join("allowed.txt")).unwrap(), "y");
 
         let _ = std::fs::remove_dir_all(&wd);
         let _ = std::fs::remove_dir_all(db.parent().unwrap());

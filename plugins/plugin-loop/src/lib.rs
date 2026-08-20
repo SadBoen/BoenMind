@@ -36,7 +36,7 @@ use kernel_contracts::ports::SessionPersistPort;
 use kernel_contracts::session::{SessionEvent, StepPhase, TurnEndReason, TurnEvent};
 use kernel_contracts::tools::ToolExecutionInput;
 use kernel_session::{AgentPort, LoopError, Session, SessionStore, TurnOutcome};
-use bm_ports::{Compactor, ToolGatePort, ToolRegistryPort};
+use bm_ports::{Compactor, ToolApprovalPort, ToolGatePort, ToolRegistryPort};
 
 pub mod plugin;
 
@@ -56,6 +56,10 @@ pub struct LoopRuntime {
     /// 上下文压缩插件（功能面，可选装配）：`Some` 时每次模型调用前对
     /// 上下文做水线判定与运行态压缩变换；`None` = 未装配（透传，无感）。
     pub compactor: Option<Arc<dyn Compactor>>,
+    /// 工具审批端口（功能面，可选装配）：`Some` 时危险工具调用执行前暂停、
+    /// 经端口推前端审批弹窗、等用户裁定（Allowed 执行 / Rejected 记拒绝结果
+    /// 回写日志）；`None` = 审批面禁用（既有自动执行语义，透传无感）。
+    pub approval: Option<Arc<dyn ToolApprovalPort>>,
 }
 
 /// 反应式回合代理：一次用户输入 → 若干 step，直到模型产出文本。
@@ -437,6 +441,32 @@ impl ReactLoopAgent {
                     arguments: serde_json::from_str(&call.arguments)
                         .unwrap_or(serde_json::Value::Null),
                 };
+                // 审批面（可选装配）：危险工具调用执行前暂停、推前端审批弹窗、
+                // 等用户裁定。Rejected/超时 → 记拒绝结果回写日志（模型可见事实）；
+                // 审批面错误 fail-loud 按拒绝处理（不静默放行危险工具）。
+                // 未装配（approval=None）= 审批面禁用，直接执行（既有语义）。
+                let approval_verdict = match &self.rt.approval {
+                    Some(port) => {
+                        match port.request_approval(&call.name, &call.id, None).await {
+                            Ok(v) => Some(v),
+                            Err(_e) => {
+                                // fail-loud：审批面出错不静默放行，按拒绝处理。
+                                Some(bm_ports::ApprovalVerdict::Rejected)
+                            }
+                        }
+                    }
+                    None => None,
+                };
+                if approval_verdict == Some(bm_ports::ApprovalVerdict::Rejected) {
+                    let result = ToolCallResult {
+                        call_id: call.id.clone(),
+                        output: "tool call rejected by user (approval)".to_string(),
+                        is_error: true,
+                    };
+                    let rec = self.session.append(SessionEvent::ToolResult { result });
+                    self.persist(&rec).await?;
+                    continue;
+                }
                 let result = match self
                     .rt
                     .gate
@@ -759,6 +789,7 @@ mod tests {
             model: "script-1".to_string(),
             max_steps: DEFAULT_MAX_STEPS,
             compactor: None,
+            approval: None,
         });
         let session = store.create(test_header("s1"), EventBus::new());
         (rt, session)
@@ -1005,6 +1036,7 @@ mod tests {
             model: "script-1".to_string(),
             max_steps: DEFAULT_MAX_STEPS,
             compactor: None,
+            approval: None,
         });
         let session = store.create(test_header("s1"), EventBus::new());
         let agent = ReactLoopAgent::new(rt, Arc::clone(&session));
@@ -1145,6 +1177,7 @@ mod tests {
             model: "script-1".to_string(),
             max_steps: DEFAULT_MAX_STEPS,
             compactor: None,
+            approval: None,
         });
         let session = store.create(test_header("s1"), EventBus::new());
         let agent = ReactLoopAgent::new(rt, Arc::clone(&session));
@@ -1215,6 +1248,7 @@ mod tests {
             model: "script-1".to_string(),
             max_steps: DEFAULT_MAX_STEPS,
             compactor: Some(compactor),
+            approval: None,
         });
         let session = store.create(test_header("s1"), EventBus::new());
         let agent = ReactLoopAgent::new(rt, Arc::clone(&session));

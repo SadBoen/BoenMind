@@ -4,6 +4,7 @@
 //! 实现子集按 §3.5 顺序：静态 SPA → RPC 信封 → WS 下行流 → 完整 API 面。
 
 pub mod api;
+pub mod approval;
 pub mod events;
 pub mod pending;
 pub mod rpc;
@@ -337,6 +338,12 @@ fn respond_dispatch(state: &AppState, message: &ClientResponse) -> Value {
         let approval_id = pending.approval_id.clone();
         let outcome = outcome.unwrap_or("rejected").to_string();
         drop(reg);
+        // 唤醒等待中的 loop 审批调用（Allowed-once ↔ Allowed / rejected ↔ Rejected）。
+        let verdict = match outcome.as_str() {
+            "allowed-once" => bm_ports::ApprovalVerdict::Allowed,
+            _ => bm_ports::ApprovalVerdict::Rejected,
+        };
+        crate::approval::resolve_approval_waiter(state, &approval_id, verdict);
         // 纯推送：approval/resolved（outcome 'allowed-once'|'rejected'）。
         state.broadcast_mux_frame(
             uuid::Uuid::new_v4().to_string(),

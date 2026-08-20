@@ -27,3 +27,9 @@ pub use tools::{ToolGatePort, ToolRegistryPort};
 pub mod host;
 
 pub use host::WorkdirPort;
+
+/// 工具审批契约（loop 消费面）：危险工具调用执行前暂停、推审批弹窗、等用户裁定。
+/// 可选装配：未装配 = 审批面禁用（既有自动执行语义不变）。
+pub mod approval;
+
+pub use approval::{ApprovalVerdict, ToolApprovalPort, APPROVAL_TIMEOUT};

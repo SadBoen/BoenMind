@@ -89,6 +89,10 @@ pub struct AppState {
     pub goals: Mutex<HashMap<String, GoalRecord>>,
     /// 会话日志的附件引用表（session.attachment 语义：日志含 attachmentId 才回）。
     pub attachments: Mutex<HashMap<String, Vec<String>>>,
+    /// 审批等待表（approval_id → oneshot 发送端）：工具审批端口登记后，
+    /// respond 路由（allowed-once/rejected）经此唤醒正在等待的 loop 调用。
+    /// 与 pending.approvals 同生共死（pending 管应答帧，这里管执行继续）。
+    pub approval_waiters: Mutex<HashMap<String, tokio::sync::oneshot::Sender<bm_ports::ApprovalVerdict>>>,
 }
 
 /// goal 记录（对齐 DSH `GoalSnapshot`/`GoalView` 的 wire 形状；web-server 内存态）。
@@ -190,6 +194,7 @@ impl AppState {
             projections: Mutex::new(HashMap::new()),
             goals: Mutex::new(HashMap::new()),
             attachments: Mutex::new(HashMap::new()),
+            approval_waiters: Mutex::new(HashMap::new()),
             settings_path,
         };
         state.load_settings_file();
