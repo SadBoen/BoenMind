@@ -105,6 +105,7 @@ fn main() {
     let mut update_dir: Option<PathBuf> = None;
     let mut auth_enabled = false;
     let mut compact_enabled = false;
+    let mut code_runtime_enabled = false;
 
     let mut i = 1;
     while i < args.len() {
@@ -163,9 +164,12 @@ fn main() {
             "--compact" => {
                 compact_enabled = true;
             }
+            "--code-runtime" => {
+                code_runtime_enabled = true;
+            }
             "--help" | "-h" => {
                 println!(
-                    "usage: web-server [--db <path>] [--dist <dir>] [--boot-json <file>] [--port <n>] [--bind <host>] [--trusted-host <host>] [--config <toml>] [--max-steps <n>] [--plugins-dir <dir>] [--update-dir <dir>] [--auth] [--compact]"
+                    "usage: web-server [--db <path>] [--dist <dir>] [--boot-json <file>] [--port <n>] [--bind <host>] [--trusted-host <host>] [--config <toml>] [--max-steps <n>] [--plugins-dir <dir>] [--update-dir <dir>] [--auth] [--compact] [--code-runtime]"
                 );
                 return;
             }
@@ -315,6 +319,12 @@ fn main() {
     // （从 settings host.workdir 现读——设置页改工作目录后工具即时生效）。
     // 经 bm-assembly 组合根装配（L0 不直接依赖 plugin-host-tools，守卫规则 2）。
     state.install_host_tools();
+    // 代码执行沙箱插件装配（--code-runtime）：注册 code.compile/python/shell 工具
+    // （workdir 作用域 + 超时 kill + 输出钱包）。不传 = 未装配（旧行为不变）。
+    if code_runtime_enabled {
+        state.install_code_runtime();
+        tracing::info!("code runtime plugin installed (code.compile/code.python/code.shell)");
+    }
     // 启动恢复：把持久化会话全部 restore 进 live 表（kill -9 恢复语义，
     // restore_session 内部自动做 interrupted-turn 修复）。blank/running 按日志判定。
     // 必须先于 attach_event_bus：attach 按 live 表历史播种实时 seq 游标。

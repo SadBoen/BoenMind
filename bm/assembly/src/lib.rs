@@ -276,6 +276,22 @@ impl Runtime {
         }
     }
 
+    /// 装配代码执行沙箱插件（功能）：注册 3 个 code.* 工具（compile/python/shell）
+    /// 到本运行时注册表，全部 enable，并注入 workdir 源（与 host 工具同一事实源）。
+    /// 安全同级 host.*：workdir 作用域 + 30s 超时 kill + 输出钱包（512KB/流 截断只记总数，
+    /// 防洪水输出撑爆进程内存/模型上下文）。
+    /// **默认装配即启用**（演示/内测档）；生产收紧时按工具名逐个 `gate.enable` 即可粒度控制。
+    /// 可重复调用（register_all 幂等跳过已注册项）。
+    pub fn install_code_runtime(&self, workdir: Arc<dyn bm_ports::WorkdirPort>) {
+        plugin_code_runtime::set_workdir_source(workdir);
+        if let Err(e) = plugin_code_runtime::register_all(&self.tools) {
+            tracing::warn!("code runtime registration skipped: {e}");
+        }
+        for name in plugin_code_runtime::ALL_TOOL_NAMES {
+            self.gate.enable(name);
+        }
+    }
+
     /// 创建一个新会话（写入 header 索引 + 首条 SessionStarted），返回代理。
     pub async fn create_session(
         &self,
@@ -1380,6 +1396,66 @@ mod tests {
         assert!(
             !wd.parent().unwrap().join("evil.txt").exists(),
             "escape file must not be written outside workdir"
+        );
+
+        let _ = std::fs::remove_dir_all(&wd);
+        let _ = std::fs::remove_dir_all(db.parent().unwrap());
+    }
+
+    // ---------- 代码执行沙箱插件集成（install_code_runtime + MockTurn 全链路） ----------
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn code_runtime_registered_enabled_and_shell_in_loop() {
+        let _serial = HOST_TOOLS_TEST_SERIAL.lock().await;
+        let db = tmp_db("code-runtime");
+        let rt = Runtime::headless(db.clone()).unwrap();
+
+        // install_code_runtime：注册 + enable 全部 code.* 工具 + 注入 workdir 源。
+        let wd = std::env::temp_dir().join(format!("bm-crt-e2e-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&wd).unwrap();
+        rt.install_code_runtime(Arc::new(TestWorkdir::new(wd.clone())));
+        for name in plugin_code_runtime::ALL_TOOL_NAMES {
+            assert!(rt.gate.is_enabled(name), "tool {name} should be enabled");
+        }
+
+        // 脚本 LLM：回合 1 调 code.shell（echo，走输出钱包路径）；回合 2 文本收尾。
+        rt.swap_llm(scripted_llm(
+            "mock".to_string(),
+            "mock-1".to_string(),
+            vec![
+                plugin_llm::MockTurn::Tool {
+                    name: "code.shell".to_string(),
+                    arguments: serde_json::json!({ "cmd": "echo runtime-ok", "cwd": "" }),
+                    then_text: "shell ok".to_string(),
+                },
+                plugin_llm::MockTurn::Text("完毕。".to_string()),
+            ],
+        ));
+
+        let agent = rt.create_session(header("s1")).await.unwrap();
+        let outcome = agent.run_turn(Some("执行")).await.unwrap();
+        assert!(outcome.steps >= 2, "expected multi-step tool loop, got {}", outcome.steps);
+
+        // 事件日志含 code.shell 调用与成功结果，且 stdout 回灌。
+        let events: Vec<SessionEvent> = agent
+            .session()
+            .events()
+            .into_iter()
+            .map(|r| r.event)
+            .collect();
+        assert!(
+            events.iter().any(|e| matches!(e, SessionEvent::ToolCall { call } if call.name == "code.shell")),
+            "log should contain code.shell tool call"
+        );
+        let result_ev = events.iter().find_map(|e| match e {
+            SessionEvent::ToolResult { result } if !result.is_error => Some(result.clone()),
+            _ => None,
+        });
+        let result_ev = result_ev.expect("log should contain successful code.shell result");
+        assert!(
+            result_ev.output.contains("runtime-ok"),
+            "stdout must be fed back to loop, got: {}",
+            result_ev.output.chars().take(200).collect::<String>()
         );
 
         let _ = std::fs::remove_dir_all(&wd);

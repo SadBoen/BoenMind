@@ -140,6 +140,15 @@ impl AppState {
         self.runtime.install_host_tools(workdir);
     }
 
+    /// 装配代码执行沙箱插件（功能，`--code-runtime`）：注册 code.* 工具 + 注入
+    /// workdir 源（与 host.* 同一事实源 settings host.workdir）。经 bm-assembly
+    /// 组合根装配（L0 不直接依赖 plugin-code-runtime，守卫规则 2）。
+    pub fn install_code_runtime(self: &Arc<Self>) {
+        let workdir: Arc<dyn bm_ports::WorkdirPort> =
+            Arc::new(crate::api::host::SettingsWorkdir::new(Arc::clone(self)));
+        self.runtime.install_code_runtime(workdir);
+    }
+
     pub fn assemble(
         runtime: Runtime,
         trusted_hosts: Vec<String>,

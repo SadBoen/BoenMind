@@ -1,0 +1,24 @@
+[package]
+name = "plugin-code-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "代码执行沙箱插件（功能）：把 workdir 作用域的编译/脚本执行注册为 Agent 工具，带输出钱包防上下文撑爆"
+
+[dependencies]
+kernel-contracts = { path = "../../kernel/kernel-contracts" }
+kernel-session = { path = "../../kernel/kernel-session" }
+bm-ports = { path = "../../bm/ports" }
+host-fs = { path = "../../bm/host-fs" }
+plugin-tools = { path = "../plugin-tools" }
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+async-trait.workspace = true
+tokio = { workspace = true, features = ["time", "process", "io-util"] }
+
+[dev-dependencies]
+uuid.workspace = true
+
+[lints]
+workspace = true
