@@ -273,9 +273,11 @@ body {
 .msg { display: flex; gap: 10px; }
 /* 助手消息：LLM 在左（默认布局） */
 .msg-assistant { justify-content: flex-start; }
-/* 用户消息：我的发言在右，头像在右（row-reverse），气泡右对齐 */
+/* 用户消息：我的发言在右，头像在右（row-reverse），气泡右对齐。
+   注意：row-reverse 下主轴起点在右边，flex-end 反而贴左（曾致所有消息贴左），
+   必须用 flex-start 才靠右。 */
 .msg-user {
-  justify-content: flex-end;
+  justify-content: flex-start;
   flex-direction: row-reverse;
 }
 .msg-avatar {
