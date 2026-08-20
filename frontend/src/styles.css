@@ -871,6 +871,27 @@ body {
   background: color-mix(in srgb, var(--bm-accent) 12%, transparent) !important;
 }
 .fm-tree { flex: 1; overflow: auto; padding: 4px; background: transparent; }
+/* 目录树紧凑化：箭头与文件夹图标拉近、子级缩进减小（用户反馈距离太远/缩进太多） */
+.fm-tree .bm-tree-switcher {
+  width: 14px;
+  margin-inline-end: 0;
+  line-height: inherit;
+}
+.fm-tree .bm-tree-switcher-icon {
+  font-size: 10px;
+}
+.fm-tree .bm-tree-indent-unit {
+  width: 12px;
+}
+.fm-tree .bm-tree-node-content-wrapper {
+  padding-inline-start: 2px;
+}
+.fm-tree .bm-tree-iconEle {
+  margin-inline-end: 4px !important;
+}
+.fm-tree .bm-tree-title {
+  margin-inline-start: 0;
+}
 /* 目录树与内容区之间的分割线：只留窗口间那种 1px 细黑线；宽热区保留拖拽（视觉不可见） */
 .fm-resizer {
   width: 6px;
