@@ -57,21 +57,13 @@ export default function App() {
     setAuthed(false);
   };
 
-  // dockview 布局：聊天单元 + 文件管理器 + 空白面板（供拖拽停靠测试）。
+  // dockview 布局：聊天单元（左）+ 文件管理器（右），默认两栏，无占位空白面板。
   const onReady = (event: DockviewReadyEvent) => {
     const api = event.api;
     const chat = api.addPanel({ id: "chat", component: "chat", title: "聊天" });
     api.addPanel({
       id: "files", component: "files", title: "文件",
       position: { referencePanel: chat, direction: "right" },
-    });
-    api.addPanel({
-      id: "blank-1", component: "blank", title: "空白 1",
-      position: { referencePanel: chat, direction: "below" },
-    });
-    api.addPanel({
-      id: "blank-2", component: "blank", title: "空白 2",
-      position: { referencePanel: chat, direction: "below" },
     });
   };
 
