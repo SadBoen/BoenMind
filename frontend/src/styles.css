@@ -35,20 +35,21 @@
 html, body, #root { height: 100%; }
 body {
   font-family: var(--bm-font);
-  background: var(--bm-bg);
+  background: var(--bm-bg-glass);
   color: var(--bm-fg);
   font-size: 14px;
 }
 
-/* ---- 应用外壳：左导航 + 主区（dockview 作为布局根，不用 antd Layout 外壳） ---- */
+/* ---- 应用外壳：左导航 + 主区 + 底部状态栏（dockview 作为布局根，不用 antd Layout 外壳） ---- */
 /* antd App 组件会渲染 .bm-app 包裹层（承载 message/modal 上下文），
    必须 height:100%，否则高度链断在它这里（曾实测 app-shell 塌陷 191px）。 */
 .bm-app { height: 100%; }
-.app-shell { display: flex; height: 100%; }
+.app-shell { display: flex; flex-direction: column; height: 100%; }
+.app-body { display: flex; flex: 1; min-height: 0; }
 .bm-sider {
   width: 52px;
   flex-shrink: 0;
-  background: var(--bm-bg-2);
+  background: var(--bm-bg-glass);
   border-right: 1px solid var(--bm-border);
   overflow-y: auto;
   display: flex;
@@ -60,6 +61,47 @@ body {
   min-width: 0;
   height: 100%;
 }
+/* ---- 底部状态栏：与 App 无关的外壳层（层级同导航栏），从左到右满铺 ---- */
+.bm-statusbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-shrink: 0;
+  height: 26px;
+  padding: 0 12px;
+  font-size: 11px;
+  color: var(--bm-fg-dim);
+  background: var(--bm-bg-glass);
+  border-top: 1px solid var(--bm-border);
+  user-select: none;
+}
+.bm-statusbar-left, .bm-statusbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.bm-statusbar .status-item { white-space: nowrap; }
+.status-link { white-space: nowrap; }
+/* 连接状态点 */
+.status-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-block;
+}
+.status-dot.ok { background: #52c41a; box-shadow: 0 0 4px rgba(82, 196, 26, .6); }
+.status-dot.pending { background: #faad14; box-shadow: 0 0 4px rgba(250, 173, 20, .6); }
+.status-dot.down { background: #ff4d4f; box-shadow: 0 0 4px rgba(255, 77, 79, .6); }
+/* 升级提示：强调色 */
+.status-upgrade {
+  color: var(--bm-accent);
+  font-weight: 600;
+  white-space: nowrap;
+  animation: status-upgrade-blink 2s ease-in-out infinite;
+}
+@keyframes status-upgrade-blink { 50% { opacity: .55; } }
 /* antd Menu 在图标栏内：垂直图标排列 */
 .bm-sider .bm-menu {
   background: transparent;
@@ -86,17 +128,14 @@ body {
   color: var(--bm-accent) !important;
 }
 
-/* dockview 面板背景强制跟随 --bm-*（浅色档时避免落到深色兜底） */
+/* dockview 面板背景：半透明（--bm-bg-glass）透出 body 满铺背景（贴纸/渐变可见）。
+   浅色档下避免落到深色兜底。 */
 .dockview-theme-abyss,
 .dockview-theme-abyss .dv-dockview,
 .dockview-theme-abyss .dv-groupview,
 .dockview-theme-abyss .dv-pane,
-.dockview-theme-abyss .dv-content-container,
-.dockview-theme-abyss .dv-tabs-and-actions-container {
-  background-color: var(--bm-bg) !important;
-}
-.dockview-theme-abyss .dv-tabs-and-actions-container {
-  background-color: var(--bm-bg-2) !important;
+.dockview-theme-abyss .dv-content-container {
+  background-color: var(--bm-bg-glass) !important;
 }
 
 /* ---- 启动屏 ---- */
@@ -108,7 +147,7 @@ body {
 /* ---- 登录页（antd Card 美化）---- */
 .login-wrap {
   height: 100%; display: flex; align-items: center; justify-content: center;
-  background: var(--bm-bg);
+  background: var(--bm-bg-glass);
 }
 .login-card {
   width: 340px;
@@ -121,7 +160,7 @@ body {
 .fm-ctx-menu {
   border-radius: 8px;
   overflow: hidden;
-  background: var(--bm-bg-2);
+  background: var(--bm-bg-glass);
   border: 1px solid var(--bm-border);
 }
 .fm-ctx-menu .bm-menu {
@@ -151,15 +190,15 @@ body {
 }
 
 /* ---- dockview 多标签组：去黑底方角，统一小圆角 ---- */
-/* 多标签标题栏：主题背景 + 顶部圆角 */
+/* 多标签标题栏：主题背景 + 顶部圆角（常态透明，hover 显示见标题栏区） */
 .dockview-theme-abyss .dv-groupview .dv-tabs-and-actions-container:not(.dv-single-tab) {
-  background: var(--bm-bg-2) !important;
+  background: transparent !important;
   border-radius: 8px 8px 0 0;
   border-bottom: 1px solid var(--bm-border);
 }
 /* dockview 内层 tabs 容器：跟主题背景（防 abyss 默认黑底透出） */
 .dockview-theme-abyss .dv-tabs-container {
-  background: var(--bm-bg-2) !important;
+  background: transparent !important;
 }
 /* 所有 dockview tab：顶部小圆角（统一风格；覆盖 dv-theme-b 的 0px） */
 .dockview-theme-abyss.dv-theme-b .dv-tab {
@@ -179,7 +218,7 @@ body {
 .chat-unit { display: flex; height: 100%; position: relative; }
 .chat-unit-side {
   flex-shrink: 0;
-  background: var(--bm-bg-2);
+  background: var(--bm-bg-glass);
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -221,7 +260,7 @@ body {
   z-index: 30;
   width: 24px; height: 40px;
   border: 1px solid var(--bm-border);
-  background: var(--bm-bg-2);
+  background: var(--bm-bg-glass);
   color: var(--bm-fg-dim);
   font-size: 11px;
   cursor: pointer;
@@ -309,11 +348,11 @@ body {
 @keyframes blink { 50% { opacity: 0; } }
 
 /* ---- 输入区（antd Input.TextArea 融入圆角卡片） ---- */
-.chat-input-wrap { padding: 12px; border-top: 1px solid var(--bm-border); background: var(--bm-bg); }
+.chat-input-wrap { padding: 12px; border-top: 1px solid var(--bm-border); background: var(--bm-bg-glass); }
 .chat-input-card {
   border: 1px solid var(--bm-border);
   border-radius: 14px;
-  background: var(--bm-bg-2);
+  background: var(--bm-bg-glass);
   box-shadow: 0 1px 2px rgba(0,0,0,.3);
   transition: box-shadow .15s ease, border-color .15s ease;
 }
@@ -425,7 +464,7 @@ body {
 .welcome-card-desc { font-size: 11px; color: var(--bm-fg-dim); }
 .editor-file {
   position: relative; height: 100%; overflow: auto;
-  background: var(--bm-bg);
+  background: var(--bm-bg-glass);
   padding: 12px 0;
 }
 .editor-code {
@@ -691,20 +730,21 @@ body {
 .preset-cartoon body {
   background: #E8DDC9;
 }
-/* 手绘贴纸：SVG data URI 画的 kawaii 几何图形（圆点眼+弧嘴+腮红）平铺 */
-.preset-cartoon .app-shell::before,
+/* 手绘贴纸：SVG data URI 画的 kawaii 几何图形（圆点眼+弧嘴+腮红）平铺。
+   铺在 body::before 且 z-index 高于面板内容（500：dockview 标题栏 40 < 贴纸
+   < antd modal ~1000），pointer-events:none + 低透明度——满铺可见又不挡交互。 */
+.preset-cartoon body::before,
 .preset-cartoon .login-wrap::before {
   content: "";
   position: fixed;
   inset: 0;
-  z-index: 0;
+  z-index: 500;
   pointer-events: none;
-  opacity: .6;
+  opacity: .16;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220' viewBox='0 0 220 220'%3E%3Cg fill='%23F5D4C0' stroke='%238B7355' stroke-width='2'%3E%3Ccircle cx='40' cy='40' r='26'/%3E%3C/g%3E%3Cg fill='%23D9C5A8' stroke='%238B7355' stroke-width='2'%3E%3Crect x='140' y='130' width='52' height='52' rx='14' transform='rotate(12 166 156)'/%3E%3C/g%3E%3Cg fill='%23FAF4E7' stroke='%238B7355' stroke-width='2'%3E%3Cpolygon points='90,170 110,150 130,170 122,190 98,190'/%3E%3C/g%3E%3Cg fill='none' stroke='%232C4A47' stroke-width='2.5'%3E%3Ccircle cx='34' cy='34' r='2.2'/%3E%3Ccircle cx='46' cy='34' r='2.2'/%3E%3Cpath d='M34 44 q6 6 12 0'/%3E%3Ccircle cx='152' cy='146' r='2.2'/%3E%3Ccircle cx='164' cy='146' r='2.2'/%3E%3Cpath d='M152 156 q6 6 12 0'/%3E%3C/g%3E%3Cg fill='%23F0A8A0'%3E%3Ccircle cx='29' cy='41' r='3.4'/%3E%3Ccircle cx='51' cy='41' r='3.4'/%3E%3Ccircle cx='147' cy='153' r='3.4'/%3E%3Ccircle cx='169' cy='153' r='3.4'/%3E%3C/g%3E%3C/svg%3E");
-  background-size: 220px 220px;
+  background-size: 280px 280px;
 }
-/* 内容层盖在贴纸上，但各面板本身保持实色（贴纸只在背景边缘露出） */
-.preset-cartoon .app-shell,
+/* 登录页内容层保持正常文档流 */
 .preset-cartoon .login-wrap {
   position: relative;
   z-index: 1;
@@ -746,7 +786,7 @@ body {
   .preset-glass .chat-input-card,
   .preset-glass .chat-unit-side {
     backdrop-filter: none;
-    background: var(--bm-bg-2);
+    background: var(--bm-bg-glass);
   }
 }
 
@@ -775,13 +815,13 @@ body {
 .bg-image-row { display: flex; gap: 8px; align-items: center; }
 
 /* ---- 空白面板（拖拽停靠测试） ---- */
-.pane-blank { height: 100%; background: var(--bm-bg); }
+.pane-blank { height: 100%; background: var(--bm-bg-glass); }
 
 /* ---- 文件管理器窗口单元（FileManagerUnit） ---- */
 .fm-unit { display: flex; height: 100%; position: relative; min-width: 0; }
 .fm-tree-pane {
   width: 280px; flex-shrink: 0; display: flex; flex-direction: column;
-  background: var(--bm-bg-2);
+  background: var(--bm-bg-glass);
   /* 无 border-right：与内容区分隔交给 .fm-resizer 的 1px 线 */
 }
 .fm-toolbar {
@@ -817,7 +857,7 @@ body {
 }
 .fm-content-header {
   display: flex; align-items: center; gap: 8px; padding: 6px 10px;
-  border-bottom: 1px solid var(--bm-border); background: var(--bm-bg-2);
+  border-bottom: 1px solid var(--bm-border); background: var(--bm-bg-glass);
 }
 .fm-path { font-size: 12px; color: var(--bm-fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
 /* 内容区关闭按钮：右上角，常态低调 */
@@ -829,13 +869,13 @@ body {
 .fm-empty { margin-top: 30%; }
 .fm-preview-image {
   flex: 1; overflow: auto; display: flex; align-items: center; justify-content: center;
-  padding: 12px; background: var(--bm-bg);
+  padding: 12px; background: var(--bm-bg-glass);
 }
 .fm-preview-image img { max-width: 100%; max-height: 100%; object-fit: contain; }
 .fm-preview-text { flex: 1; overflow: auto; display: flex; flex-direction: column; }
 .fm-preview-header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 6px 10px; border-bottom: 1px solid var(--bm-border); background: var(--bm-bg-2);
+  padding: 6px 10px; border-bottom: 1px solid var(--bm-border); background: var(--bm-bg-glass);
   font-size: 12px;
 }
 .fm-md { padding: 12px 16px; flex: 1; overflow: auto; font-size: 13px; line-height: 1.7; }
@@ -846,17 +886,17 @@ body {
 .fm-code {
   flex: 1; margin: 0; padding: 10px 12px; overflow: auto;
   font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; line-height: 1.6;
-  background: var(--bm-bg);
+  background: var(--bm-bg-glass);
 }
 .fm-edit { flex: 1; display: flex; flex-direction: column; }
 .fm-edit-header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 6px 10px; border-bottom: 1px solid var(--bm-border); background: var(--bm-bg-2);
+  padding: 6px 10px; border-bottom: 1px solid var(--bm-border); background: var(--bm-bg-glass);
   font-size: 12px;
 }
 .fm-edit-ta {
   flex: 1; resize: none; border: none; outline: none; padding: 10px 12px;
-  background: var(--bm-bg); color: var(--bm-fg);
+  background: var(--bm-bg-glass); color: var(--bm-fg);
   font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; line-height: 1.6;
 }
 .fm-preview-other {

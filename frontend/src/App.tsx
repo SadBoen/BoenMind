@@ -14,6 +14,7 @@ import FileManagerUnit from "./components/FileManagerUnit";
 import SettingsModal from "./components/SettingsModal";
 import Login from "./components/Login";
 import HeaderActions from "./components/HeaderActions";
+import StatusBar from "./components/StatusBar";
 import { AuthRequiredError, getToken, rpc, setToken } from "./client";
 import { getPresetId, PRESETS, setPresetId, useThemeSync, type PresetId } from "./theme";
 
@@ -107,50 +108,56 @@ export default function App() {
     <ConfigProvider prefixCls="bm" theme={theme}>
       <AntdApp>
         <div className="app-shell">
-          {/* 左侧图标导航栏（antd Menu 纯图标；设置/退出固定底部） */}
-          <div className="bm-sider">
-            <Menu
-              mode="inline"
-              selectedKeys={[view]}
-              onClick={({ key }) => setView(key as AppView)}
-              items={[
-                { key: "chat", icon: <MessageOutlined />, label: "聊天" },
-                { key: "coding", icon: <CodeOutlined />, label: "编程" },
-              ]}
-            />
-            <div className="bm-sider-spacer" />
-            <Menu
-              mode="inline"
-              onClick={({ key }) => {
-                if (key === "settings") setSettingsOpen(true);
-                else logout();
-              }}
-              items={[
-                { key: "settings", icon: <SettingOutlined />, label: "设置" },
-                { key: "logout", icon: <LogoutOutlined />, label: "退出登录", danger: true },
-              ]}
-            />
+          {/* 主区（导航栏 + 应用内容） */}
+          <div className="app-body">
+            {/* 左侧图标导航栏（antd Menu 纯图标；设置/退出固定底部） */}
+            <div className="bm-sider">
+              <Menu
+                mode="inline"
+                selectedKeys={[view]}
+                onClick={({ key }) => setView(key as AppView)}
+                items={[
+                  { key: "chat", icon: <MessageOutlined />, label: "聊天" },
+                  { key: "coding", icon: <CodeOutlined />, label: "编程" },
+                ]}
+              />
+              <div className="bm-sider-spacer" />
+              <Menu
+                mode="inline"
+                onClick={({ key }) => {
+                  if (key === "settings") setSettingsOpen(true);
+                  else logout();
+                }}
+                items={[
+                  { key: "settings", icon: <SettingOutlined />, label: "设置" },
+                  { key: "logout", icon: <LogoutOutlined />, label: "退出登录", danger: true },
+                ]}
+              />
+            </div>
+
+            {/* 主区：dockview 作为布局根（antd 控件只进 panel 内部） */}
+            <div className="app-main">
+              {view === "chat" ? (
+                <DockviewReact
+                  theme={customTheme}
+                  className="dv-theme-b"
+                  singleTabMode="fullwidth"
+                  onReady={onReady}
+                  rightHeaderActionsComponent={HeaderActions}
+                  components={{
+                    chat: () => <ChatUnit />,
+                    files: () => <FileManagerUnit />,
+                    blank: () => <div className="pane-blank" />,
+                  }}
+                />
+              ) : (
+                <CodingApp />
+              )}
+            </div>
           </div>
 
-          {/* 主区：dockview 作为布局根（antd 控件只进 panel 内部） */}
-          <div className="app-main">
-            {view === "chat" ? (
-              <DockviewReact
-                theme={customTheme}
-                className="dv-theme-b"
-                singleTabMode="fullwidth"
-                onReady={onReady}
-                rightHeaderActionsComponent={HeaderActions}
-                components={{
-                  chat: () => <ChatUnit />,
-                  files: () => <FileManagerUnit />,
-                  blank: () => <div className="pane-blank" />,
-                }}
-              />
-            ) : (
-              <CodingApp />
-            )}
-          </div>
+          {/* 底部状态栏：与 App 无关的外壳层（层级同导航栏），满铺底部 */}
+          <StatusBar />
         </div>
         {settingsOpen && (
           <SettingsModal
