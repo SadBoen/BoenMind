@@ -391,6 +391,51 @@ body {
 .msg-cursor { display: inline-block; animation: blink 1s step-start infinite; color: var(--bm-accent); }
 @keyframes blink { 50% { opacity: 0; } }
 
+/* ---- 工具调用卡片（Agent 工具回显） ---- */
+.tool-card {
+  margin: 8px 0;
+  border: 1px solid var(--bm-border);
+  border-radius: 8px;
+  background: var(--bm-bg-2);
+  overflow: hidden;
+  font-size: 13px;
+}
+.tool-card-head {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none; background: none; cursor: pointer;
+  color: var(--bm-fg);
+  text-align: left;
+  font: inherit;
+}
+.tool-card-head:hover { background: var(--bm-bg-3); }
+.tool-card-status { font-size: 12px; color: var(--bm-fg-dim); }
+.tool-card-name { font-weight: 600; }
+.tool-card-hint { margin-left: auto; font-size: 12px; color: var(--bm-fg-dim); }
+.tool-card-done .tool-card-status { color: var(--bm-success, #4caf50); }
+.tool-card-error { border-color: var(--bm-danger, #e5484d); }
+.tool-card-error .tool-card-status,
+.tool-card-error .tool-card-hint { color: var(--bm-danger, #e5484d); }
+.tool-card-detail {
+  padding: 8px 10px;
+  border-top: 1px solid var(--bm-border);
+  background: var(--bm-bg);
+}
+.tool-card-args, .tool-card-output {
+  margin: 0 0 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--bm-bg-1);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 220px; overflow: auto;
+}
+.tool-card-output { margin-bottom: 0; }
+.tool-card-output.is-error { color: var(--bm-danger, #e5484d); }
+
 /* ---- 输入区（antd Input.TextArea 融入圆角卡片） ---- */
 .chat-input-wrap { padding: 12px; border-top: 1px solid var(--bm-border); background: var(--bm-bg-glass); }
 .chat-input-card {

@@ -1,11 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { rpc } from "../client";
 
+export interface ToolBlock {
+  type: "tool-call" | "tool-result";
+  name?: string;
+  callId?: string;
+  arguments?: string;
+  output?: string;
+  isError?: boolean;
+}
+
 export interface Message {
   id: string;
   role: "user" | "assistant";
   text: string;
   pending?: boolean;
+  blocks?: ToolBlock[];
 }
 
 // dsh wire 事件（web-server translate 后，history 与 WS 同形）。
@@ -46,6 +56,30 @@ export function useChat(sessionId: string | null) {
             msgs.push({ id: crypto.randomUUID(), role: "user", text: eventText(event) });
           } else if (event.type === "assistant/message") {
             msgs.push({ id: crypto.randomUUID(), role: "assistant", text: eventText(event) });
+          } else if (event.type === "tool/call") {
+            const d = event.data ?? {};
+            msgs.push({
+              id: crypto.randomUUID(),
+              role: "assistant",
+              text: "",
+              blocks: [
+                {
+                  type: "tool-call",
+                  name: (d.name as string) ?? "",
+                  callId: (d.callId as string) ?? "",
+                  arguments: (d.arguments as string) ?? "",
+                },
+              ],
+            });
+          } else if (event.type === "tool/result") {
+            const d = event.data ?? {};
+            const callId = (d.callId as string) ?? "";
+            const msg = d.message as { content?: any[] } | undefined;
+            const block = msg?.content?.find((c) => c.type === "tool-result");
+            const textBlocks = Array.isArray(block?.content)
+              ? block.content.map((c: any) => c.text ?? "").join("")
+              : "";
+            attachToolResult(msgs, callId, textBlocks, block?.isError === true);
           }
         }
         setMessages(msgs);
@@ -81,6 +115,37 @@ export function useChat(sessionId: string | null) {
             return next;
           }
           return [...m, { id: crypto.randomUUID(), role: "assistant", text: delta, pending: true }];
+        });
+      } else if (ev.type === "tool/call") {
+        const d = ev.data ?? {};
+        setMessages((m) => [
+          ...m,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            text: "",
+            blocks: [
+              {
+                type: "tool-call",
+                name: (d.name as string) ?? "",
+                callId: (d.callId as string) ?? "",
+                arguments: (d.arguments as string) ?? "",
+              },
+            ],
+          },
+        ]);
+      } else if (ev.type === "tool/result") {
+        const d = ev.data ?? {};
+        const callId = (d.callId as string) ?? "";
+        const msg = d.message as { content?: any[] } | undefined;
+        const block = msg?.content?.find((c) => c.type === "tool-result");
+        const textBlocks = Array.isArray(block?.content)
+          ? block.content.map((c: any) => c.text ?? "").join("")
+          : "";
+        setMessages((m) => {
+          const next = [...m];
+          attachToolResult(next, callId, textBlocks, block?.isError === true);
+          return next;
         });
       } else if (ev.type === "assistant/message") {
         const text = eventText(ev);
@@ -128,4 +193,20 @@ function eventText(ev: WireEvent): string {
     .filter((b) => b.text !== undefined)
     .map((b) => b.text as string)
     .join("");
+}
+
+// 把 tool 结果挂到同 callId 的 tool-call 卡片上（跨消息：从后往前找最后一条
+// 未填充结果的 tool-call 块）。找不到则忽略（历史已重建/异常序）。
+function attachToolResult(msgs: Message[], callId: string, output: string, isError: boolean) {
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const blocks = msgs[i].blocks;
+    if (!blocks) continue;
+    for (let j = blocks.length - 1; j >= 0; j--) {
+      const b = blocks[j];
+      if (b.type === "tool-call" && (!b.callId || b.callId === callId) && b.output === undefined) {
+        blocks[j] = { ...b, output, isError };
+        return;
+      }
+    }
+  }
 }
