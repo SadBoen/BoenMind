@@ -4,6 +4,7 @@ import { rpc } from "../client";
 // 底部状态栏：与 App 无关的应用外壳层（层级同导航栏）。
 // 显示：后台链接状态（RPC 心跳 + WS mux 连接）+ 服务版本 + 升级提示（版本变化时）。
 // 升级提示数据源：host.describe 的 version；本地记录上次见到的版本，变化即提示。
+// 链接状态指示：WiFi 图标（三弧+圆点），颜色语义沿用三态：绿=已连接 / 黄=连接中 / 红=断开。
 
 const VERSION_KEY = "bm_seen_version";
 const HEARTBEAT_MS = 15000;
@@ -61,7 +62,14 @@ export default function StatusBar() {
   return (
     <div className="bm-statusbar">
       <div className="bm-statusbar-left">
-        <span className={`status-dot ${linkClass}`} title={linkLabel} />
+        <span className={`status-wifi ${linkClass}`} title={linkLabel}>
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M5 12.55a11 11 0 0 1 14.08 0" />
+            <path d="M1.42 9a16 16 0 0 1 21.16 0" />
+            <path d="M8.53 16.11a6 6 0 0 1 6.95 0" />
+            <circle cx="12" cy="19" r="1.4" fill="currentColor" stroke="none" />
+          </svg>
+        </span>
         <span className="status-link">{linkLabel}</span>
         {info?.version && <span className="status-item">v{info.version}</span>}
         {info?.provider && (

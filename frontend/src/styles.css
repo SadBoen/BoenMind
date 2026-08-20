@@ -71,6 +71,7 @@ body {
   height: 26px;
   padding: 0 12px;
   font-size: 11px;
+  font-weight: 500;
   color: var(--bm-fg-dim);
   background: var(--bm-bg-glass);
   border-top: 1px solid var(--bm-border);
@@ -84,16 +85,17 @@ body {
 }
 .bm-statusbar .status-item { white-space: nowrap; }
 .status-link { white-space: nowrap; }
-/* 连接状态点 */
-.status-dot {
-  width: 8px; height: 8px;
-  border-radius: 50%;
+/* 连接状态：WiFi 图标（三弧+圆点），颜色语义：绿=已连接 / 黄=连接中 / 红=断开 */
+.status-wifi {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
-  display: inline-block;
 }
-.status-dot.ok { background: #52c41a; box-shadow: 0 0 4px rgba(82, 196, 26, .6); }
-.status-dot.pending { background: #faad14; box-shadow: 0 0 4px rgba(250, 173, 20, .6); }
-.status-dot.down { background: #ff4d4f; box-shadow: 0 0 4px rgba(255, 77, 79, .6); }
+.status-wifi svg { display: block; }
+.status-wifi.ok { color: #52c41a; filter: drop-shadow(0 0 3px rgba(82, 196, 26, .55)); }
+.status-wifi.pending { color: #faad14; filter: drop-shadow(0 0 3px rgba(250, 173, 20, .55)); }
+.status-wifi.down { color: #ff4d4f; filter: drop-shadow(0 0 3px rgba(255, 77, 79, .55)); }
 /* 升级提示：强调色 */
 .status-upgrade {
   color: var(--bm-accent);
@@ -244,7 +246,7 @@ body {
 .chat-unit-resizer::before {
   content: "";
   position: absolute;
-  left: 2px; top: 0; bottom: 0;
+  left: 0; top: 0; bottom: 0;
   width: 1px;
   background: var(--bm-border);
 }
@@ -300,10 +302,19 @@ body {
   transition: background .12s ease;
 }
 .chat-unit .session-item:hover { background: var(--bm-bg-3); color: var(--bm-fg); }
-.chat-unit .session-item.active { background: var(--bm-bg-3); color: var(--bm-accent); }
+.chat-unit .session-item.active {
+  background: var(--bm-bg-3); color: var(--bm-accent);
+  box-shadow: inset 2px 0 0 var(--bm-accent);
+}
 
 /* ---- 聊天面板 + 消息流 ---- */
-.chat-panel { display: flex; flex-direction: column; height: 100%; }
+/* 消息区用面板色（--bm-bg-2）做明确底色：四档下都与左右栏（--bm-bg-glass）形成层次。
+   不加 border-left/right——两侧分隔已由 .chat-unit-resizer / .fm-resizer 的 1px 线承担，
+   再加边框会与 resizer 线相邻成双线（曾致用户反馈"分割线太粗"）。 */
+.chat-panel {
+  display: flex; flex-direction: column; height: 100%;
+  background: var(--bm-bg-2);
+}
 .chat-messages {
   flex: 1; overflow-y: auto; padding: 16px;
   display: flex; flex-direction: column; gap: 12px;
@@ -322,16 +333,35 @@ body {
 .msg-avatar {
   width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
-  font-size: 13px; background: var(--bm-bg-3); color: var(--bm-fg-dim);
+  font-size: 13px; font-weight: 600;
+  background: var(--bm-bg-3); color: var(--bm-fg-dim);
 }
-.msg-assistant .msg-avatar { background: var(--bm-accent); color: #fff; }
-.msg-user .msg-avatar { background: var(--bm-bg-3); color: var(--bm-accent); }
+.msg-assistant .msg-avatar {
+  background: var(--bm-accent);
+  color: #fff;
+  border: none;
+}
+.msg-user .msg-avatar {
+  background: color-mix(in srgb, var(--bm-accent) 16%, var(--bm-bg-2));
+  color: var(--bm-accent);
+  border: 1px solid color-mix(in srgb, var(--bm-accent) 40%, var(--bm-border));
+}
 .msg-body { min-width: 0; max-width: 78%; }
-/* 用户消息气泡：右对齐圆角卡片；助手消息无框（文档式） */
+/* 消息气泡：助手=面板色（文档式但带容器），用户=主题色浅调（四档下都与背景区分明显）。
+   颜色走 --bm-* 变量，布局结构不变。 */
+.msg-assistant .msg-body {
+  background: var(--bm-bg-2);
+  border: 1px solid var(--bm-border);
+  border-radius: 12px 12px 12px 2px;
+  padding: 8px 12px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+}
 .msg-user .msg-body {
-  background: var(--bm-bg-3);
+  background: color-mix(in srgb, var(--bm-accent) 32%, var(--bm-bg-2));
+  border: 1px solid color-mix(in srgb, var(--bm-accent) 60%, var(--bm-border));
   border-radius: 12px 12px 2px 12px;
   padding: 8px 12px;
+  box-shadow: 0 0 10px color-mix(in srgb, var(--bm-accent) 12%, transparent);
 }
 .msg-text { white-space: pre-wrap; line-height: 1.6; }
 .msg-user .msg-text { color: var(--bm-fg); }
@@ -428,7 +458,10 @@ body {
 .session-list-body { flex: 1; overflow-y: auto; padding: 6px; }
 .session-item { border-radius: 8px; margin-bottom: 2px; color: var(--bm-fg-dim); }
 .session-item:hover { background: var(--bm-bg-3); color: var(--bm-fg); }
-.session-item.active { background: var(--bm-bg-3); color: var(--bm-accent); }
+.session-item.active {
+  background: var(--bm-bg-3); color: var(--bm-accent);
+  box-shadow: inset 2px 0 0 var(--bm-accent);
+}
 .session-title { font-size: 13px; }
 .muted { color: var(--bm-fg-dim); font-size: 13px; }
 
@@ -740,9 +773,9 @@ body {
   inset: 0;
   z-index: 500;
   pointer-events: none;
-  opacity: .16;
+  opacity: .13;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220' viewBox='0 0 220 220'%3E%3Cg fill='%23F5D4C0' stroke='%238B7355' stroke-width='2'%3E%3Ccircle cx='40' cy='40' r='26'/%3E%3C/g%3E%3Cg fill='%23D9C5A8' stroke='%238B7355' stroke-width='2'%3E%3Crect x='140' y='130' width='52' height='52' rx='14' transform='rotate(12 166 156)'/%3E%3C/g%3E%3Cg fill='%23FAF4E7' stroke='%238B7355' stroke-width='2'%3E%3Cpolygon points='90,170 110,150 130,170 122,190 98,190'/%3E%3C/g%3E%3Cg fill='none' stroke='%232C4A47' stroke-width='2.5'%3E%3Ccircle cx='34' cy='34' r='2.2'/%3E%3Ccircle cx='46' cy='34' r='2.2'/%3E%3Cpath d='M34 44 q6 6 12 0'/%3E%3Ccircle cx='152' cy='146' r='2.2'/%3E%3Ccircle cx='164' cy='146' r='2.2'/%3E%3Cpath d='M152 156 q6 6 12 0'/%3E%3C/g%3E%3Cg fill='%23F0A8A0'%3E%3Ccircle cx='29' cy='41' r='3.4'/%3E%3Ccircle cx='51' cy='41' r='3.4'/%3E%3Ccircle cx='147' cy='153' r='3.4'/%3E%3Ccircle cx='169' cy='153' r='3.4'/%3E%3C/g%3E%3C/svg%3E");
-  background-size: 280px 280px;
+  background-size: 320px 320px;
 }
 /* 登录页内容层保持正常文档流 */
 .preset-cartoon .login-wrap {
@@ -766,19 +799,24 @@ body {
 .preset-cartoon .bm-sider .bm-menu-item-selected { background: #2C4A47 !important; color: #fff !important; }
 
 /* ---- 玻璃档补充样式（preset-glass 挂在 <html>） ---- */
+/* 玻璃档自带紫蓝渐变底层：半透明面板有真实模糊源（纯色底会糊成一片） */
+.preset-glass body {
+  background: linear-gradient(150deg, #232b45 0%, #2e3760 45%, #1c2338 100%) !important;
+  background-attachment: fixed;
+}
 .preset-glass .bm-sider {
-  background: rgba(22, 29, 46, 0.55) !important;
+  background: rgba(42, 52, 82, 0.62) !important;
   backdrop-filter: blur(12px);
 }
 .preset-glass .chat-input-card {
-  background: rgba(22, 29, 46, 0.5);
+  background: rgba(42, 52, 82, 0.58);
   backdrop-filter: blur(10px);
 }
 .preset-glass .msg-avatar {
-  background: rgba(29, 38, 57, 0.72);
+  background: rgba(52, 63, 96, 0.82);
 }
 .preset-glass .chat-unit-side {
-  background: rgba(22, 29, 46, 0.5);
+  background: rgba(42, 52, 82, 0.58);
   backdrop-filter: blur(10px);
 }
 @media (prefers-reduced-transparency: reduce) {
@@ -791,6 +829,14 @@ body {
 }
 
 /* ---- 设置中心（antd Modal 内布局） ---- */
+/* 弹窗内容实心化：玻璃档半透明会透出背后聊天文字（视觉反馈"内容透叠"）。
+   color-mix 92% 混合 → 接近实色，四档通吃；边框+阴影给出清晰边界与浮起感。
+   antd v6 Modal 容器类是 .bm-modal-container（.bm-modal-content 不存在）。 */
+.bm-settings-modal .bm-modal-container {
+  background: color-mix(in srgb, var(--bm-bg-2) 92%, var(--bm-bg));
+  border: 1px solid var(--bm-border);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+}
 .settings-body { display: flex; gap: 16px; min-height: 420px; }
 .settings-nav { width: 180px; flex-shrink: 0; border-inline-end: none !important; }
 .settings-content { flex: 1; overflow-y: auto; padding-right: 4px; }
@@ -843,8 +889,7 @@ body {
 }
 .fm-toolbar-row + .fm-toolbar-row {
   border-top: 1px solid var(--bm-border);
-}
-/* 第一行：只显示路径 */
+}/* 第一行：只显示路径 */
 .fm-toolbar-path {
   min-height: 30px;
 }
@@ -904,7 +949,7 @@ body {
 .fm-resizer::before {
   content: "";
   position: absolute;
-  left: 2px; top: 0; bottom: 0;
+  left: 0; top: 0; bottom: 0;
   width: 1px;
   background: var(--bm-border);
 }
