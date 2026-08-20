@@ -891,8 +891,17 @@ body {
   background: var(--bm-bg-2) !important;
   border-bottom: 1px solid var(--bm-border) !important;
 }
-/* 所有 tab（含非激活）：常态透明 + 主题文字色，hover 才显示背景 */
-.dockview-theme-abyss.dv-theme-b .dv-groupview .dv-tab {
+/* 内层 tabs 滚动容器：常态也透明（否则 bg-2 条带常显=标题栏不会自动隐藏），
+   跟随外层 hover 显示 */
+.dockview-theme-abyss.dv-theme-b .dv-groupview .dv-tabs-container {
+  background: transparent !important;
+}
+.dockview-theme-abyss.dv-theme-b .dv-groupview .dv-tabs-and-actions-container:not(.dv-single-tab):hover .dv-tabs-container {
+  background: var(--bm-bg-2) !important;
+}
+/* 所有 tab（含激活/非激活）：常态全透明，hover 才显示背景 */
+.dockview-theme-abyss.dv-theme-b .dv-groupview .dv-tab,
+.dockview-theme-abyss.dv-theme-b .dv-groupview .dv-tab.dv-active-tab {
   background: transparent !important;
   color: var(--bm-fg-dim) !important;
 }
@@ -900,10 +909,16 @@ body {
   background: color-mix(in srgb, var(--bm-bg-3) 60%, transparent) !important;
   color: var(--bm-fg) !important;
 }
-/* 激活 tab：常态浅背景（可辨认当前面板），hover 主题高亮 */
-.dockview-theme-abyss.dv-theme-b .dv-groupview .dv-tab.dv-active-tab {
+/* 激活 tab 背景 + 顶部 accent 线：hover 容器时才显示 */
+.dockview-theme-abyss.dv-theme-b .dv-groupview .dv-tabs-and-actions-container:not(.dv-single-tab):hover .dv-tab.dv-active-tab {
   background: var(--bm-bg-3) !important;
   color: var(--bm-fg) !important;
+}
+.dockview-theme-abyss.dv-theme-b .dv-groupview .dv-tabs-and-actions-container:not(.dv-single-tab) .dv-tab.dv-active-tab::before {
+  background: transparent !important;
+}
+.dockview-theme-abyss.dv-theme-b .dv-groupview .dv-tabs-and-actions-container:not(.dv-single-tab):hover .dv-tab.dv-active-tab::before {
+  background: var(--bm-accent) !important;
 }
 /* 标题文字：常态隐藏（悬停才显示）——与单标签悬浮标题一致 */
 .dockview-theme-abyss.dv-theme-b .dv-groupview .dv-tabs-and-actions-container:not(.dv-single-tab) .dv-default-tab-title {
