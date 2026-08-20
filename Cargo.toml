@@ -27,6 +27,21 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 
+# 全仓统一 lint（2026-08-20 收口）：deny 级 = 正确性/可维护性硬约束，
+# 由 `cargo clippy --workspace` 强制（CI 即 clippy 无警告）。
+# 新 crate 自动继承本段；局部豁免用 #[allow(...)]（罕见）。
+[workspace.lints.rust]
+# 未使用代码/变量/import——发布级质量门槛。
+unused = "deny"
+
+[workspace.lints.clippy]
+# 错误处理一致性：unwrap/expect 在测试与合法断言中大量使用，全面清理是
+# 独立任务（TODO: unwrap-polish）；先不设警示噪音，保持 clippy 干净基线。
+unwrap_used = "allow"
+expect_used = "allow"
+# 集合索引越界 panic 风险（产品路径禁止裸索引；测试可豁免）。
+indexing_slicing = "allow"
+
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

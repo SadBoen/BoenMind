@@ -13,3 +13,6 @@ async-trait.workspace = true
 tokio.workspace = true
 futures.workspace = true
 rquickjs = { version = "0.6", features = ["macro", "futures", "parallel"] }
+
+[lints]
+workspace = true

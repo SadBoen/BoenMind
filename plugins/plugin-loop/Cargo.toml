@@ -20,3 +20,6 @@ tokio.workspace = true
 chrono.workspace = true
 # 测试用具体工具实现（EchoTool/ToolRegistry/ToolGate）——生产依赖经 bm-ports 端口。
 plugin-tools = { path = "../plugin-tools" }
+
+[lints]
+workspace = true

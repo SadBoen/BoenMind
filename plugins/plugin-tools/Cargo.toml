@@ -22,3 +22,6 @@ schema-validation = ["dep:jsonschema"]
 
 [dev-dependencies]
 tokio.workspace = true
+
+[lints]
+workspace = true

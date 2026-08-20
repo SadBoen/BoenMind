@@ -31,3 +31,6 @@ chrono.workspace = true
 uuid.workspace = true
 toml = "0.8"
 futures.workspace = true
+
+[lints]
+workspace = true

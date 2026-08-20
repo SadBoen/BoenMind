@@ -11,3 +11,5 @@ kernel-contracts = { path = "../../kernel/kernel-contracts" }
 
 [dev-dependencies]
 tokio.workspace = true
+[lints]
+workspace = true
