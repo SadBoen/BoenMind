@@ -1,10 +1,20 @@
 import { useEffect, useRef, useState } from "react";
 import { Button, Select, Input, Tooltip } from "antd";
-import { PaperClipOutlined, SendOutlined, SoundOutlined, TranslationOutlined } from "@ant-design/icons";
+import { PaperClipOutlined, SoundOutlined, TranslationOutlined } from "@ant-design/icons";
+import { ArrowUp, CircleArrowUp, Send } from "lucide-react";
 import { useChat } from "../hooks/useChat";
 import { useCurrentSession } from "../sessionStore";
+import { getPresetId } from "../theme";
 import { rpc } from "../client";
 import MessageList from "./MessageList";
+
+// 发送按钮图标按风格档换肤（Grok 处方：黑白=向上箭头 / 卡通=纸飞机 / 玻璃=圆环箭头）
+function SendButtonIcon() {
+  const preset = getPresetId();
+  if (preset === "cartoon") return <Send size={18} strokeWidth={2.25} />;
+  if (preset === "glass") return <CircleArrowUp size={16} strokeWidth={1.5} />;
+  return <ArrowUp size={16} strokeWidth={2} />;
+}
 
 // 模型目录（session.models wire 形状）
 interface ModelGroup {
@@ -143,12 +153,12 @@ export default function ChatPanel() {
                 prefix={<span className="chat-select-icon">🧠</span>}
               />
 
-              {/* 发送按钮（圆形箭头） */}
+              {/* 发送按钮（图标随风格档：黑白↑ / 卡通✈ / 玻璃⭯） */}
               <Button
                 className="chat-send-btn"
                 type="primary"
                 shape="circle"
-                icon={<SendOutlined rotate={-45} />}
+                icon={<SendButtonIcon />}
                 title="发送"
                 disabled={!canSend}
                 onClick={submit}

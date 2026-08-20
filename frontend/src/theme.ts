@@ -13,7 +13,7 @@ import { theme as antdTheme } from "antd";
 import { useEffect } from "react";
 
 // ---- 类型 ----
-export type PresetId = "ant" | "cartoon" | "glass" | "dark";
+export type PresetId = "ant" | "cartoon" | "glass";
 export type BackgroundId = "default" | "gradient" | "image";
 export type BackgroundValue = { type: "none" | "gradient" | "image"; value?: string };
 
@@ -44,10 +44,21 @@ const PRESET_KEY = "bm_preset";
 const BACKGROUND_KEY = "bm_background";
 const ACCENT_KEY = "bm_accent";
 const FONT_KEY = "bm_fontsize";
+const GLASS_OPACITY_KEY = "bm_glass_opacity";
+
+/** 玻璃档面板透明度（0.2–0.95，默认 0.68）。仅玻璃档生效。 */
+export function getGlassOpacity(): number {
+  const v = Number(localStorage.getItem(GLASS_OPACITY_KEY));
+  if (Number.isFinite(v) && v >= 0.2 && v <= 0.95) return Math.round(v * 100) / 100;
+  return 0.68;
+}
+export function setGlassOpacity(v: number) {
+  localStorage.setItem(GLASS_OPACITY_KEY, String(Math.round(v * 100) / 100));
+}
 
 export function getPresetId(): PresetId {
   const v = localStorage.getItem(PRESET_KEY);
-  if (v === "glass" || v === "dark" || v === "cartoon") return v as PresetId;
+  if (v === "glass" || v === "cartoon") return v as PresetId;
   if (v === "mui") return "cartoon"; // 兼容旧 key
   return "ant";
 }
@@ -64,8 +75,10 @@ export function getBackground(): BackgroundValue {
 export function setBackground(v: BackgroundValue) {
   localStorage.setItem(BACKGROUND_KEY, JSON.stringify(v));
 }
-export function getAccent(): string {
-  return localStorage.getItem(ACCENT_KEY) || "#4a7dff";
+export function getAccent(): string | null {
+  // 用户显式自定义的强调色；无则 null → 主题档用自己的 accent（不全局覆盖）。
+  const v = localStorage.getItem(ACCENT_KEY);
+  return v && /^#[0-9a-fA-F]{6}$/.test(v.trim()) ? v.trim() : null;
 }
 export function setAccent(v: string) {
   localStorage.setItem(ACCENT_KEY, v);
@@ -83,54 +96,59 @@ export function setFontSize(v: number) {
 export const PRESETS: Record<PresetId, Preset> = {
   ant: {
     id: "ant",
-    label: "Ant 默认",
-    desc: "antd 经典蓝白红（浅色亮底）",
+    label: "黑白",
+    desc: "Graphite Editorial：黑白灰分层 + 克制蓝焦点（桌面工具）",
     antd: {
       algorithm: antdTheme.defaultAlgorithm,
       token: {
-        colorPrimary: "#1677ff",
-        colorError: "#ff4d4f",
-        colorBgBase: "#f5f6fa",
-        colorBgContainer: "#ffffff",
-        colorBgElevated: "#ffffff",
-        colorBorder: "#d9dce3",
-        colorTextBase: "#1f2430",
-        colorTextSecondary: "#5d6577",
+        colorPrimary: "#2563EB",
+        colorError: "#DC2626",
+        colorBgBase: "#F5F6FA",
+        colorBgContainer: "#FFFFFF",
+        colorBgElevated: "#FFFFFF",
+        colorBorder: "#E2E5EB",
+        colorTextBase: "#1A1D23",
+        colorTextSecondary: "#5C6370",
         borderRadius: 6,
         fontSize: 14,
       },
     },
     cssVars: {
-      "--bm-bg": "#f5f6fa",
-      "--bm-bg-2": "#ffffff",
-      "--bm-bg-3": "#e6e9ef",
+      "--bm-bg": "#F5F6FA",
+      "--bm-bg-2": "#FFFFFF",
+      "--bm-bg-3": "#ECEEF3",
       "--bm-bg-glass": "rgba(245, 246, 250, 0.92)",
-      "--bm-panel-mid": "#ffffff",
-      "--bm-border": "#c9ced8",
-      "--bm-fg": "#1f2430",
-      "--bm-fg-dim": "#5d6577",
-      "--bm-accent": "#1677ff",
-      "--bm-accent-2": "#4096ff",
-      "--bm-danger": "#ff4d4f",
-      "--bm-radius": "8px",
+      "--bm-panel-mid": "#F5F6FA",
+      "--bm-border": "#E2E5EB",
+      "--bm-border-strong": "#C5CAD6",
+      "--bm-border-subtle": "#EEEFF3",
+      "--bm-fg": "#1A1D23",
+      "--bm-fg-dim": "#5C6370",
+      "--bm-accent": "#2563EB",
+      "--bm-accent-hover": "#1D4ED8",
+      "--bm-accent-2": "#1E40AF",
+      "--bm-accent-soft": "rgba(37, 99, 235, 0.08)",
+      "--bm-danger": "#DC2626",
+      "--bm-radius": "6px",
     },
   },
   cartoon: {
     id: "cartoon",
     label: "卡通",
-    desc: "官网卡通风：暖米底 + 墨绿主色 + 大圆角（手账贴纸感）",
+    desc: "Kraft Journal：暖米牛皮纸 + sage 墨绿 + 大圆角（手账贴纸）",
     antd: {
       algorithm: antdTheme.defaultAlgorithm, // 浅色
       token: {
-        colorPrimary: "#2C4A47",
-        colorError: "#D14545",
+        colorPrimary: "#3E6B5E",
+        colorPrimaryHover: "#2F5448",
+        colorError: "#C45C4A",
         colorSuccess: "#5A8A7A",
         colorBgBase: "#E8DDC9",
-        colorBgContainer: "#FAF4E7",
-        colorBgElevated: "#FFFDF6",
-        colorBorder: "#C9B89A",
-        colorTextBase: "#2C4A47",
-        colorTextSecondary: "#7A6A50",
+        colorBgContainer: "#F7F1E6",
+        colorBgElevated: "#F7F1E6",
+        colorBorder: "#D4C4A8",
+        colorTextBase: "#2C2416",
+        colorTextSecondary: "#6B5D4D",
         borderRadius: 16,
         borderRadiusLG: 24,
         borderRadiusSM: 12,
@@ -138,94 +156,78 @@ export const PRESETS: Record<PresetId, Preset> = {
         fontSize: 14,
       },
       components: {
-        Tag: { borderRadiusSM: 9999, defaultBg: "#FAF4E7" },
-        Button: { borderRadius: 18, controlHeight: 38, primaryColor: "#fff" },
+        Tag: { borderRadiusSM: 9999, defaultBg: "#F7F1E6" },
+        Button: { borderRadius: 18, controlHeight: 38, primaryColor: "#F7F1E6" },
         Input: { borderRadius: 14 },
-        Segmented: { itemSelectedBg: "#2C4A47", itemSelectedColor: "#fff", borderRadius: 9999 },
+        Segmented: { itemSelectedBg: "#3E6B5E", itemSelectedColor: "#F7F1E6", borderRadius: 9999 },
       },
     },
     cssVars: {
       "--bm-bg": "#E8DDC9",
-      "--bm-bg-2": "#FAF4E7",
-      "--bm-bg-3": "#EFE3CE",
-      "--bm-bg-glass": "rgba(250, 244, 231, 0.72)",
-      "--bm-panel-mid": "#FFFDF6",
-      "--bm-border": "#C9B89A",
-      "--bm-fg": "#2C4A47",
-      "--bm-fg-dim": "#685a42",
-      "--bm-accent": "#2C4A47",
-      "--bm-accent-2": "#5A8A7A",
-      "--bm-danger": "#D14545",
-      "--bm-radius": "16px",
+      "--bm-bg-2": "#F7F1E6",
+      "--bm-bg-3": "#E4D8C0",
+      "--bm-bg-glass": "rgba(247, 241, 230, 0.88)",
+      "--bm-panel-mid": "rgba(62, 107, 94, 0.06)",
+      "--bm-border": "#D4C4A8",
+      "--bm-border-strong": "#C4B090",
+      "--bm-border-subtle": "#E5D9C4",
+      "--bm-fg": "#2C2416",
+      "--bm-fg-dim": "#6B5D4D",
+      "--bm-accent": "#3E6B5E",
+      "--bm-accent-hover": "#2F5448",
+      "--bm-accent-2": "#3E6B5E",
+      "--bm-accent-soft": "rgba(62, 107, 94, 0.12)",
+      "--bm-danger": "#C45C4A",
+      "--bm-radius": "20px",
     },
     className: "preset-cartoon",
   },
   glass: {
     id: "glass",
     label: "玻璃",
-    desc: "半透明面板 + 背景模糊（紫，提亮版）",
+    desc: "透明分层：单一深色背景 + 黑色不透明度分层 + 白边框（无面板色）",
     antd: {
       algorithm: antdTheme.darkAlgorithm,
       token: {
-        colorPrimary: "#a78bfa",
-        colorBgBase: "#232b45",
-        colorBgContainer: "rgba(42, 52, 82, 0.85)",
-        colorBgElevated: "rgba(52, 63, 96, 0.88)",
-        colorBorder: "rgba(167, 139, 250, 0.32)",
-        colorTextBase: "#f0f2fa",
-        colorTextSecondary: "#b3bccf",
-        borderRadius: 14,
+        colorPrimary: "#9AABB7",
+        colorError: "#FB7185",
+        colorBgBase: "#090A0C",
+        colorBgContainer: "rgba(0, 0, 0, 0.42)",
+        colorBgElevated: "rgba(0, 0, 0, 0.90)",
+        colorBorder: "rgba(255, 255, 255, 0.09)",
+        colorTextBase: "rgba(255, 255, 255, 0.92)",
+        colorTextSecondary: "rgba(255, 255, 255, 0.62)",
+        colorTextLightSolid: "rgba(255,255,255,0.95)",
+        borderRadius: 10,
         fontSize: 14,
       },
     },
     cssVars: {
-      "--bm-bg": "#232b45",
-      "--bm-bg-2": "rgba(42, 52, 82, 0.85)",
-      "--bm-bg-3": "rgba(52, 63, 96, 0.88)",
-      "--bm-bg-glass": "rgba(42, 52, 82, 0.68)",
-      "--bm-panel-mid": "rgba(52, 63, 96, 0.92)",
-      "--bm-border": "rgba(167, 139, 250, 0.32)",
-      "--bm-fg": "#f0f2fa",
-      "--bm-fg-dim": "#b3bccf",
-      "--bm-accent": "#a78bfa",
-      "--bm-accent-2": "#8b5cf6",
-      "--bm-danger": "#fb7185",
-      "--bm-radius": "14px",
+      // 唯一背景（深炭黑 + 中性高光渐变在 styles.css preset-glass body）
+      "--bm-bg": "#090A0C",
+      // 结构面：全黑纱，α 分层（相对滑块 --g 的偏移；默认 --g=0.42）
+      "--bm-bg-2": "rgba(0, 0, 0, 0.42)",
+      "--bm-bg-3": "rgba(0, 0, 0, 0.60)",
+      "--bm-bg-glass": "rgba(0, 0, 0, 0.42)",
+      "--bm-panel-mid": "rgba(0, 0, 0, 0.17)",
+      // 内容面全透黑纱底（气泡/菜单等由样式单独给）
+      "--bm-bg-glass-light": "rgba(255, 255, 255, 0.045)",
+      // 边框全白 alpha 三档
+      "--bm-border": "rgba(255, 255, 255, 0.09)",
+      "--bm-border-strong": "rgba(255, 255, 255, 0.15)",
+      "--bm-border-subtle": "rgba(255, 255, 255, 0.055)",
+      // 文字全白 alpha 层级
+      "--bm-fg": "rgba(255, 255, 255, 0.92)",
+      "--bm-fg-dim": "rgba(255, 255, 255, 0.62)",
+      // accent 极克制：雾蓝灰，仅线/焦点环/主按钮
+      "--bm-accent": "#9AABB7",
+      "--bm-accent-hover": "rgba(154, 171, 191, 0.60)",
+      "--bm-accent-2": "rgba(154, 171, 191, 0.45)",
+      "--bm-accent-soft": "rgba(154, 171, 191, 0.20)",
+      "--bm-danger": "#FB7185",
+      "--bm-radius": "10px",
     },
     className: "preset-glass",
-  },
-  dark: {
-    id: "dark",
-    label: "暗黑",
-    desc: "极致深黑，青色点缀",
-    antd: {
-      algorithm: antdTheme.darkAlgorithm,
-      token: {
-        colorPrimary: "#22d3ee",
-        colorBgBase: "#08090c",
-        colorBgContainer: "#171a21",
-        colorBgElevated: "#22262f",
-        colorBorder: "#2a3040",
-        colorTextBase: "#e6e8ec",
-        colorTextSecondary: "#9aa1b0",
-        borderRadius: 6,
-        fontSize: 14,
-      },
-    },
-    cssVars: {
-      "--bm-bg": "#08090c",
-      "--bm-bg-2": "#171a21",
-      "--bm-bg-3": "#22262f",
-      "--bm-bg-glass": "rgba(23, 26, 33, 0.88)",
-      "--bm-panel-mid": "#1c2029",
-      "--bm-border": "#2a3040",
-      "--bm-fg": "#e6e8ec",
-      "--bm-fg-dim": "#9aa1b0",
-      "--bm-accent": "#22d3ee",
-      "--bm-accent-2": "#0ea5e9",
-      "--bm-danger": "#fb7185",
-      "--bm-radius": "6px",
-    },
   },
 };
 
@@ -248,24 +250,37 @@ export const BACKGROUNDS: BackgroundDef[] = [
 ];
 
 // ---- 应用 CSS 变量到 :root（桥接 antd token ↔ --bm-* / --dv-*）----
-export function applyPresetCss(preset: Preset, accent: string) {
+export function applyPresetCss(preset: Preset, accent: string | null) {
+  const vars: Record<string, string> = { ...preset.cssVars };
+  // 玻璃档：滑块只绑结构层黑纱 α（--bm-bg-glass 的面板），内容层（气泡/菜单/代码）
+  // 锁死不随滑块——保证极端透明度下文字仍可读。默认 0.42（Grok α 分层）。
+  if (preset.id === "glass") {
+    const g = getGlassOpacity();
+    vars["--bm-bg-glass"] = `rgba(0, 0, 0, ${Math.round(g * 100) / 100})`;
+    // 结构面相对滑块偏移（nav/sidebar/status 比 panel 实一档；聊天画布最透）
+    vars["--bm-bg-2"] = `rgba(0, 0, 0, ${Math.min(g + 0.08, 0.92)})`;
+    vars["--bm-bg-3"] = `rgba(0, 0, 0, ${Math.min(g + 0.18, 0.92)})`;
+    vars["--bm-panel-mid"] = `rgba(0, 0, 0, ${Math.round(g * 0.4 * 100) / 100})`;
+    // blur 随透明度微减（越实越不需要霜）
+    vars["--bm-blur-shell"] = `${Math.round(28 - g * 10)}px`;
+  }
   // dockview 桥接变量
-  const vars: Record<string, string> = {
-    ...preset.cssVars,
-    "--dv-background-color": preset.cssVars["--bm-bg-glass"],
-    "--dv-group-view-background-color": preset.cssVars["--bm-bg-glass"],
-    "--dv-tabs-and-actions-container-background-color": preset.cssVars["--bm-bg-glass"],
-    "--dv-tab-active-background-color": preset.cssVars["--bm-bg-3"],
-    "--dv-tab-inactive-background-color": preset.cssVars["--bm-bg-glass"],
-    "--dv-tab-active-color": preset.cssVars["--bm-fg"],
-    "--dv-tab-inactive-color": preset.cssVars["--bm-fg-dim"],
-    "--dv-tabs-container-background-color": preset.cssVars["--bm-bg-glass"],
-    "--dv-active-sash-color": preset.cssVars["--bm-accent"],
-    "--dv-separator-border": preset.cssVars["--bm-border"],
-  };
-  // 用户自定义强调色覆盖 accent（含 80% 透明变体）
-  vars["--bm-accent"] = accent;
-  vars["--bm-accent-2"] = accent + "cc";
+  vars["--dv-background-color"] = vars["--bm-bg-glass"];
+  vars["--dv-group-view-background-color"] = vars["--bm-bg-glass"];
+  vars["--dv-tabs-and-actions-container-background-color"] = vars["--bm-bg-glass"];
+  vars["--dv-tab-active-background-color"] = preset.cssVars["--bm-bg-3"];
+  vars["--dv-tab-inactive-background-color"] = vars["--bm-bg-glass"];
+  vars["--dv-tab-active-color"] = preset.cssVars["--bm-fg"];
+  vars["--dv-tab-inactive-color"] = preset.cssVars["--bm-fg-dim"];
+  vars["--dv-tabs-container-background-color"] = vars["--bm-bg-glass"];
+  vars["--dv-active-sash-color"] = preset.cssVars["--bm-accent"];
+  vars["--dv-separator-border"] = preset.cssVars["--bm-border-strong"];
+  // 强调色：仅当用户显式自定义（localStorage bm_accent）时覆盖；否则各档用自己
+  // 的 accent（卡通墨绿 / 玻璃紫），不再拿全局默认蓝顶掉档内配色。
+  if (accent && /^#[0-9a-fA-F]{6}$/.test(accent)) {
+    vars["--bm-accent"] = accent;
+    vars["--bm-accent-2"] = accent + "cc";
+  }
   let css = "";
   for (const [k, v] of Object.entries(vars)) css += `${k}:${v};`;
   let style = document.getElementById("bm-theme") as HTMLStyleElement | null;
@@ -316,7 +331,7 @@ export function useThemeSync() {
 }
 
 // ---- 切风格档：应用 CSS 变量 + 重放背景（背景档可能残留上个档的渐变/图片）----
-export function applyPresetChange(id: PresetId, accent?: string) {
+export function applyPresetChange(id: PresetId, accent?: string | null) {
   applyPresetCss(PRESETS[id], accent ?? getAccent());
   applyBackground(getBackground());
 }

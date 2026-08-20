@@ -17,8 +17,10 @@
   --bm-danger: #ff4d4f;
   --bm-radius: 8px;
   --bm-font: system-ui, -apple-system, "Segoe UI", sans-serif;
-  /* 聊天中间区面板底色（比两侧 --bm-bg-glass 更实/更亮；theme.ts 每档覆写） */
-  --bm-panel-mid: #ffffff;
+  /* 分隔线层级：strong = 单元与单元之间（resizer/面板间，颜色更实）；
+     subtle = 单元内部（列表项、输入框上缘，颜色更弱）。theme.ts 每档覆写。 */
+  --bm-border-strong: #3a4560;
+  --bm-border-subtle: #242e45;
 
   /* dockview 主题变量（对接 --dv-*） */
   --dv-background-color: var(--bm-bg);
@@ -30,7 +32,7 @@
   --dv-tab-inactive-color: var(--bm-fg-dim);
   --dv-tabs-container-background-color: var(--bm-bg-2);
   --dv-active-sash-color: var(--bm-accent);
-  --dv-separator-border: var(--bm-border);
+  --dv-separator-border: var(--bm-border-strong);
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -52,7 +54,7 @@ body {
   width: 52px;
   flex-shrink: 0;
   background: var(--bm-bg-glass);
-  border-right: 1px solid var(--bm-border);
+  border-right: 1px solid var(--bm-border-strong);
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -76,7 +78,7 @@ body {
   font-weight: 500;
   color: var(--bm-fg-dim);
   background: var(--bm-bg-glass);
-  border-top: 1px solid var(--bm-border);
+  border-top: 1px solid var(--bm-border-subtle);
   user-select: none;
 }
 .bm-statusbar-left, .bm-statusbar-right {
@@ -209,7 +211,7 @@ body {
 .dockview-theme-abyss .dv-groupview .dv-tabs-and-actions-container:not(.dv-single-tab) {
   background: transparent !important;
   border-radius: 8px 8px 0 0;
-  border-bottom: 1px solid var(--bm-border);
+  border-bottom: 1px solid var(--bm-border-subtle);
 }
 /* dockview 内层 tabs 容器：跟主题背景（防 abyss 默认黑底透出） */
 .dockview-theme-abyss .dv-tabs-container {
@@ -261,7 +263,7 @@ body {
   position: absolute;
   left: 0; top: 0; bottom: 0;
   width: 1px;
-  background: var(--bm-border);
+  background: var(--bm-border-strong);
 }
 .chat-unit-resizer:hover::before {
   background: var(--bm-accent);
@@ -301,7 +303,7 @@ body {
 .chat-unit .session-list { display: flex; flex-direction: column; height: 100%; }
 .chat-unit .session-list-header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 0.4em 0.8em; border-bottom: 1px solid var(--bm-border);
+  padding: 0.4em 0.8em; border-bottom: 1px solid var(--bm-border-subtle);
   font-weight: 600; font-size: 0.85em;
 }
 .chat-unit .session-list-actions { display: flex; gap: 4px; }
@@ -316,18 +318,21 @@ body {
 }
 .chat-unit .session-item:hover { background: var(--bm-bg-3); color: var(--bm-fg); }
 .chat-unit .session-item.active {
-  background: var(--bm-bg-3); color: var(--bm-accent);
+  background: var(--bm-bg-3); color: var(--bm-fg);
   box-shadow: inset 2px 0 0 var(--bm-accent);
 }
 
 /* ---- 聊天面板 + 消息流 ---- */
-/* 消息区用 --bm-panel-mid（每档定义，比两侧 --bm-bg-glass 更实/更亮）做底色：
-   四档下中间聊天区都与左右栏（会话列表/文件管理器）形成清晰层次（用户要求"中间更白"）。
-   不加 border-left/right——两侧分隔已由 .chat-unit-resizer / .fm-resizer 的 1px 线承担，
-   再加边框会与 resizer 线相邻成双线（曾致用户反馈"分割线太粗"）。 */
+/* 消息区背景与左右栏统一（--bm-bg-glass）：整页一个底色，不单独提亮聊天区。
+   分隔仅由 .chat-unit-resizer / .fm-resizer 的 1px 线承担（域间分隔线用
+   --bm-border-strong——见 resizer 定义），不再给聊天面板独立背景。 */
 .chat-panel {
   display: flex; flex-direction: column; height: 100%;
-  background: var(--bm-panel-mid);
+  background: transparent;
+}
+.chat-messages {
+  flex: 1; overflow-y: auto; padding: 16px;
+  display: flex; flex-direction: column; gap: 12px;
 }
 .chat-messages {
   flex: 1; overflow-y: auto; padding: 16px;
@@ -366,14 +371,14 @@ body {
 .msg-assistant .msg-body {
   background: var(--bm-bg-2);
   border: 1px solid var(--bm-border);
-  border-radius: 12px 12px 12px 2px;
+  border-radius: 14px;
   padding: 8px 12px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
 }
 .msg-user .msg-body {
   background: color-mix(in srgb, var(--bm-accent) 32%, var(--bm-bg-2));
   border: 1px solid color-mix(in srgb, var(--bm-accent) 60%, var(--bm-border));
-  border-radius: 12px 12px 2px 12px;
+  border-radius: 14px;
   padding: 8px 12px;
   box-shadow: 0 0 10px color-mix(in srgb, var(--bm-accent) 12%, transparent);
 }
@@ -388,6 +393,17 @@ body {
 .msg-body code {
   font-family: ui-monospace, Consolas, monospace; font-size: 13px;
 }
+/* 引用块（含 AI 的 thinking 思考块）：柔和浅底 + 细左线，气泡内不破边 */
+.msg-body blockquote {
+  margin: 6px 0;
+  padding: 6px 10px;
+  background: var(--bm-bg-3);
+  border-left: 2px solid var(--bm-accent);
+  border-radius: 4px 8px 8px 4px;
+  color: var(--bm-fg-dim);
+  font-size: 0.92em;
+}
+.msg-body blockquote p { margin: 2px 0; }
 .msg-cursor { display: inline-block; animation: blink 1s step-start infinite; color: var(--bm-accent); }
 @keyframes blink { 50% { opacity: 0; } }
 
@@ -419,7 +435,7 @@ body {
 .tool-card-error .tool-card-hint { color: var(--bm-danger, #e5484d); }
 .tool-card-detail {
   padding: 8px 10px;
-  border-top: 1px solid var(--bm-border);
+  border-top: 1px solid var(--bm-border-subtle);
   background: var(--bm-bg);
 }
 .tool-card-args, .tool-card-output {
@@ -437,7 +453,7 @@ body {
 .tool-card-output.is-error { color: var(--bm-danger, #e5484d); }
 
 /* ---- 输入区（antd Input.TextArea 融入圆角卡片） ---- */
-.chat-input-wrap { padding: 12px; border-top: 1px solid var(--bm-border); background: var(--bm-bg-glass); }
+.chat-input-wrap { padding: 12px; border-top: 1px solid var(--bm-border-subtle); background: var(--bm-bg-glass); }
 .chat-input-card {
   border: 1px solid var(--bm-border);
   border-radius: 14px;
@@ -511,14 +527,14 @@ body {
 .session-list { display: flex; flex-direction: column; height: 100%; }
 .session-list-header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 12px; border-bottom: 1px solid var(--bm-border);
+  padding: 10px 12px; border-bottom: 1px solid var(--bm-border-subtle);
   font-weight: 600;
 }
 .session-list-body { flex: 1; overflow-y: auto; padding: 6px; }
 .session-item { border-radius: 8px; margin-bottom: 2px; color: var(--bm-fg-dim); }
 .session-item:hover { background: var(--bm-bg-3); color: var(--bm-fg); }
 .session-item.active {
-  background: var(--bm-bg-3); color: var(--bm-accent);
+  background: var(--bm-bg-3); color: var(--bm-fg);
   box-shadow: inset 2px 0 0 var(--bm-accent);
 }
 .session-title { font-size: 13px; }
@@ -531,7 +547,7 @@ body {
 .explorer-header {
   padding: 8px 12px; font-size: 12px; font-weight: 600;
   color: var(--bm-fg-dim);
-  border-bottom: 1px solid var(--bm-border);
+  border-bottom: 1px solid var(--bm-border-subtle);
 }
 .explorer-tree { flex: 1; overflow: auto; padding: 8px; }
 .editor-welcome {
@@ -578,14 +594,14 @@ body {
   flex-shrink: 0;
 }
 .ai-msg-text { font-size: 13px; line-height: 1.6; white-space: pre-wrap; }
-.ai-composer { padding: 8px; border-top: 1px solid var(--bm-border); }
+.ai-composer { padding: 8px; border-top: 1px solid var(--bm-border-subtle); }
 .ai-composer-footer {
   display: flex; align-items: center; justify-content: space-between;
   padding-top: 6px;
 }
 .ai-model { font-size: 11px; color: var(--bm-fg-dim); }
 .bottom-panel { display: flex; flex-direction: column; height: 100%; }
-.bottom-tabs { display: flex; border-bottom: 1px solid var(--bm-border); }
+.bottom-tabs { display: flex; border-bottom: 1px solid var(--bm-border-subtle); }
 .bottom-tab {
   padding: 6px 14px; border: none; background: transparent;
   color: var(--bm-fg-dim); font-size: 12px; cursor: pointer;
@@ -640,7 +656,7 @@ body {
 .dv-groupview .dv-tabs-and-actions-container.dv-single-tab:hover {
   background: var(--bm-bg-2) !important;
   box-shadow: 0 1px 6px rgba(0,0,0,.25);
-  border-bottom: 1px solid var(--bm-border);
+  border-bottom: 1px solid var(--bm-border-subtle);
 }
 /* 常态隐藏 tab（透明热区——保留可拖拽手柄，仅文字不可见） */
 .dv-groupview .dv-tabs-and-actions-container.dv-single-tab .dv-tab {
@@ -820,7 +836,7 @@ body {
 /* ---- 卡通档补充样式（preset-cartoon 挂在 <html>）---- */
 /* 官网卡通：暖米底 + 手绘贴纸几何图形（kawaii 表情）散布背景 */
 .preset-cartoon body {
-  background: #E8DDC9;
+  background: var(--bm-bg);
 }
 /* 手绘贴纸：SVG data URI 画的 kawaii 几何图形（圆点眼+弧嘴+腮红）平铺。
    铺在 body::before 且 z-index 高于面板内容（500：dockview 标题栏 40 < 贴纸
@@ -832,8 +848,8 @@ body {
   inset: 0;
   z-index: 500;
   pointer-events: none;
-  opacity: .13;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220' viewBox='0 0 220 220'%3E%3Cg fill='%23F5D4C0' stroke='%238B7355' stroke-width='2'%3E%3Ccircle cx='40' cy='40' r='26'/%3E%3C/g%3E%3Cg fill='%23D9C5A8' stroke='%238B7355' stroke-width='2'%3E%3Crect x='140' y='130' width='52' height='52' rx='14' transform='rotate(12 166 156)'/%3E%3C/g%3E%3Cg fill='%23FAF4E7' stroke='%238B7355' stroke-width='2'%3E%3Cpolygon points='90,170 110,150 130,170 122,190 98,190'/%3E%3C/g%3E%3Cg fill='none' stroke='%232C4A47' stroke-width='2.5'%3E%3Ccircle cx='34' cy='34' r='2.2'/%3E%3Ccircle cx='46' cy='34' r='2.2'/%3E%3Cpath d='M34 44 q6 6 12 0'/%3E%3Ccircle cx='152' cy='146' r='2.2'/%3E%3Ccircle cx='164' cy='146' r='2.2'/%3E%3Cpath d='M152 156 q6 6 12 0'/%3E%3C/g%3E%3Cg fill='%23F0A8A0'%3E%3Ccircle cx='29' cy='41' r='3.4'/%3E%3Ccircle cx='51' cy='41' r='3.4'/%3E%3Ccircle cx='147' cy='153' r='3.4'/%3E%3Ccircle cx='169' cy='153' r='3.4'/%3E%3C/g%3E%3C/svg%3E");
+  opacity: .09;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220' viewBox='0 0 220 220'%3E%3Cg fill='%23F5D4C0' stroke='%238B7355' stroke-width='2'%3E%3Ccircle cx='40' cy='40' r='26'/%3E%3C/g%3E%3Cg fill='%23D9C5A8' stroke='%238B7355' stroke-width='2'%3E%3Crect x='140' y='130' width='52' height='52' rx='14' transform='rotate(12 166 156)'/%3E%3C/g%3E%3Cg fill='%23FAF4E7' stroke='%238B7355' stroke-width='2'%3E%3Cpolygon points='90,170 110,150 130,170 122,190 98,190'/%3E%3C/g%3E%3Cg fill='none' stroke='%233E6B5E' stroke-width='2.5'%3E%3Ccircle cx='34' cy='34' r='2.2'/%3E%3Ccircle cx='46' cy='34' r='2.2'/%3E%3Cpath d='M34 44 q6 6 12 0'/%3E%3Ccircle cx='152' cy='146' r='2.2'/%3E%3Ccircle cx='164' cy='146' r='2.2'/%3E%3Cpath d='M152 156 q6 6 12 0'/%3E%3C/g%3E%3Cg fill='%23F0A8A0'%3E%3Ccircle cx='29' cy='41' r='3.4'/%3E%3Ccircle cx='51' cy='41' r='3.4'/%3E%3Ccircle cx='147' cy='153' r='3.4'/%3E%3Ccircle cx='169' cy='153' r='3.4'/%3E%3C/g%3E%3C/svg%3E");
   background-size: 320px 320px;
 }
 /* 登录页内容层保持正常文档流 */
@@ -841,50 +857,114 @@ body {
   position: relative;
   z-index: 1;
 }
-/* 卡通：面板/输入区加粗描边（2px 墨绿），拉出卡通骨架。
-   注意：.chat-unit-side 不在此列——会话列表与聊天之间的分隔
-   只用默认 1px border-right（用户反馈左/下 2px 全描边=双线太粗）。 */
-.preset-cartoon .bm-sider {
-  border-right: 2px solid #2C4A47;
-}
-.preset-cartoon .chat-input-card,
-.preset-cartoon .msg-avatar {
-  border: 2px solid #2C4A47;
-}
+/* 卡通：面板/分隔用细边框（--bm-border 暖咖）——骨架感来自暖米底 + 大圆角。
+   选中态用 accent 细指示条。全局 border 规则已覆盖 sider/input-card，此处只留圆角专属。 */
 .preset-cartoon .chat-input-card { border-radius: 20px; }
 .preset-cartoon .msg-avatar { border-radius: 12px; }
-.preset-cartoon .msg-assistant .msg-avatar { border: 2px solid #2C4A47; }
-.preset-cartoon .session-item:hover { background: #EFE3CE; }
-.preset-cartoon .bm-sider .bm-menu-item-selected { background: #2C4A47 !important; color: #fff !important; }
+.preset-cartoon .msg-assistant .msg-avatar {
+  border: 1px solid color-mix(in srgb, var(--bm-accent) 45%, var(--bm-border));
+}
+.preset-cartoon .bm-sider .bm-menu-item-selected {
+  background: color-mix(in srgb, var(--bm-accent) 18%, var(--bm-bg-2)) !important;
+  color: var(--bm-accent) !important;
+}
 
 /* ---- 玻璃档补充样式（preset-glass 挂在 <html>） ---- */
-/* 玻璃档自带紫蓝渐变底层：半透明面板有真实模糊源（纯色底会糊成一片） */
+/* ── 玻璃档 · 不透明度分层体系（Grok 处方，--g 滑块绑结构层）── */
+/* 唯一背景：深炭黑 + 两团中性高光（给 blur 提供明度），无主题色 */
 .preset-glass body {
-  background: linear-gradient(150deg, #232b45 0%, #2e3760 45%, #1c2338 100%) !important;
+  background-color: #090A0C !important;
+  background-image:
+    radial-gradient(ellipse 85% 55% at 12% -8%, #1C1F26 0%, transparent 58%),
+    radial-gradient(ellipse 70% 45% at 92% 108%, #14161A 0%, transparent 52%),
+    linear-gradient(180deg, #0C0D10 0%, #070809 100%) !important;
   background-attachment: fixed;
 }
+/* dockview 透出背景：面板底板是黑纱+blur，不让 dockview 自带实底截断 */
+.preset-glass .dv-dockview,
+.preset-glass .dv-groupview,
+.preset-glass .dv-content-container,
+.preset-glass .dv-tabs-and-actions-container {
+  background: transparent !important;
+}
+/* 结构层（A 壳）：黑纱 + 霜 + blur 24px + 上沿高光 */
 .preset-glass .bm-sider {
-  background: rgba(42, 52, 82, 0.62) !important;
-  backdrop-filter: blur(12px);
-}
-.preset-glass .chat-input-card {
-  background: rgba(42, 52, 82, 0.58);
-  backdrop-filter: blur(10px);
-}
-.preset-glass .msg-avatar {
-  background: rgba(52, 63, 96, 0.82);
+  background:
+    linear-gradient(rgba(255,255,255,.05), rgba(255,255,255,.05)),
+    var(--bm-bg-2) !important;
+  backdrop-filter: blur(var(--bm-blur-shell, 24px)) saturate(160%);
+  -webkit-backdrop-filter: blur(var(--bm-blur-shell, 24px)) saturate(160%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.12), inset 0 -1px 0 rgba(255,255,255,.04);
 }
 .preset-glass .chat-unit-side {
-  background: rgba(42, 52, 82, 0.58);
-  backdrop-filter: blur(10px);
+  background:
+    linear-gradient(rgba(255,255,255,.045), rgba(255,255,255,.045)),
+    var(--bm-bg-2) !important;
+  backdrop-filter: blur(var(--bm-blur-shell, 24px)) saturate(160%);
+  -webkit-backdrop-filter: blur(var(--bm-blur-shell, 24px)) saturate(160%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.12);
+}
+/* 聊天画布：最透（panel-mid ≈ 0.17），让气泡浮在上面 */
+.preset-glass .chat-panel {
+  background: var(--bm-panel-mid);
+}
+/* composer（B 条）：内容偏实 0.78 + blur 20px */
+.preset-glass .chat-input-card {
+  background:
+    linear-gradient(rgba(255,255,255,.05), rgba(255,255,255,.05)),
+    rgba(0,0,0,.78) !important;
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+  border-top: 1px solid rgba(255,255,255,.10);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.10);
+}
+/* 气泡/工具卡/代码块：内容层，固定 α 不随滑块（无额外 blur，防字糊） */
+.preset-glass .msg-assistant .msg-body {
+  background: rgba(0, 0, 0, 0.72);
+}
+.preset-glass .msg-user .msg-body {
+  background: rgba(0, 0, 0, 0.80);
+}
+.preset-glass .msg-body pre,
+.preset-glass .tool-card {
+  background: rgba(0, 0, 0, 0.80);
+}
+.preset-glass .msg-avatar {
+  background: rgba(0, 0, 0, 0.70);
+}
+/* 状态栏（B 条结构）：比面板实一档 */
+.preset-glass .app-statusbar,
+.preset-glass .statusbar {
+  background:
+    linear-gradient(rgba(255,255,255,.05), rgba(255,255,255,.05)),
+    rgba(0,0,0,.52) !important;
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
 }
 @media (prefers-reduced-transparency: reduce) {
   .preset-glass .bm-sider,
   .preset-glass .chat-input-card,
-  .preset-glass .chat-unit-side {
+  .preset-glass .chat-unit-side,
+  .preset-glass .app-statusbar,
+  .preset-glass .statusbar {
     backdrop-filter: none;
-    background: var(--bm-bg-glass);
   }
+}
+/* 玻璃档列表行：默认全透，悬停黑纱+霜（α 分层代替配色） */
+.preset-glass .session-item {
+  background: transparent;
+}
+.preset-glass .session-item:hover {
+  background: rgba(0, 0, 0, 0.28);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.06);
+}
+.preset-glass .session-item.active {
+  background:
+    linear-gradient(rgba(255,255,255,.08), rgba(255,255,255,.08)),
+    rgba(0,0,0,.34);
+  border: 1px solid rgba(255,255,255,.14);
+  box-shadow: inset 2px 0 0 var(--bm-accent);
+  color: var(--bm-fg);
 }
 
 /* ---- 设置中心（antd Modal 内布局） ---- */
@@ -913,7 +993,7 @@ body {
   display: flex;
   flex-direction: column;
   padding: 16px 10px 12px;
-  border-right: 1px solid var(--bm-border);
+  border-right: 1px solid var(--bm-border-strong);
   background: var(--bm-bg-1);
 }
 .settings-page-head {
@@ -929,7 +1009,7 @@ body {
 .settings-page-foot {
   margin-top: auto;
   padding: 12px 8px 0;
-  border-top: 1px solid var(--bm-border);
+  border-top: 1px solid var(--bm-border-subtle);
 }
 .settings-page-foot .bm-btn { width: 100%; }
 /* 全页模式内容区：去掉弹窗里仅供 popover 的右留白，撑满高度。 */
@@ -942,7 +1022,7 @@ body {
 .setting-section-title {
   font-size: 14px; font-weight: 600;
   margin-bottom: 12px; padding-bottom: 8px;
-  border-bottom: 1px solid var(--bm-border);
+  border-bottom: 1px solid var(--bm-border-subtle);
 }
 .setting-row {
   display: flex; align-items: center; justify-content: space-between;
@@ -992,7 +1072,7 @@ body {
   display: flex;
   flex-direction: column;
   padding: 0;
-  border-bottom: 1px solid var(--bm-border);
+  border-bottom: 1px solid var(--bm-border-subtle);
 }
 .fm-toolbar-row {
   display: flex;
@@ -1001,7 +1081,7 @@ body {
   padding: 4px 6px;
 }
 .fm-toolbar-row + .fm-toolbar-row {
-  border-top: 1px solid var(--bm-border);
+  border-top: 1px solid var(--bm-border-subtle);
 }/* 第一行：只显示路径 */
 .fm-toolbar-path {
   min-height: 30px;
@@ -1064,7 +1144,7 @@ body {
   position: absolute;
   left: 0; top: 0; bottom: 0;
   width: 1px;
-  background: var(--bm-border);
+  background: var(--bm-border-strong);
 }
 .fm-resizer:hover::before {
   background: var(--bm-accent);
@@ -1074,7 +1154,7 @@ body {
 }
 .fm-content-header {
   display: flex; align-items: center; gap: 8px; padding: 6px 10px;
-  border-bottom: 1px solid var(--bm-border); background: var(--bm-bg-glass);
+  border-bottom: 1px solid var(--bm-border-subtle); background: var(--bm-bg-glass);
 }
 .fm-path { font-size: 12px; color: var(--bm-fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
 /* 内容区关闭按钮：右上角，常态低调 */
@@ -1092,7 +1172,7 @@ body {
 .fm-preview-text { flex: 1; overflow: auto; display: flex; flex-direction: column; }
 .fm-preview-header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 6px 10px; border-bottom: 1px solid var(--bm-border); background: var(--bm-bg-glass);
+  padding: 6px 10px; border-bottom: 1px solid var(--bm-border-subtle); background: var(--bm-bg-glass);
   font-size: 12px;
 }
 .fm-md { padding: 12px 16px; flex: 1; overflow: auto; font-size: 13px; line-height: 1.7; }
@@ -1108,7 +1188,7 @@ body {
 .fm-edit { flex: 1; display: flex; flex-direction: column; }
 .fm-edit-header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 6px 10px; border-bottom: 1px solid var(--bm-border); background: var(--bm-bg-glass);
+  padding: 6px 10px; border-bottom: 1px solid var(--bm-border-subtle); background: var(--bm-bg-glass);
   font-size: 12px;
 }
 .fm-edit-ta {
@@ -1148,7 +1228,7 @@ body {
 }
 .dockview-theme-abyss.dv-theme-b .dv-groupview .dv-tabs-and-actions-container:not(.dv-single-tab):hover {
   background: var(--bm-bg-2) !important;
-  border-bottom: 1px solid var(--bm-border) !important;
+  border-bottom: 1px solid var(--bm-border-subtle) !important;
 }
 /* 内层 tabs 滚动容器：常态也透明（否则 bg-2 条带常显=标题栏不会自动隐藏），
    跟随外层 hover 显示 */

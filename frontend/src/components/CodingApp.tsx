@@ -1,11 +1,21 @@
 import { DockviewReact, DockviewReadyEvent } from "dockview-react";
 import { useState } from "react";
 import { Button, Input, Tree, Typography } from "antd";
-import { CaretDownOutlined, CaretRightOutlined, SendOutlined } from "@ant-design/icons";
+import { CaretDownOutlined, CaretRightOutlined } from "@ant-design/icons";
+import { ArrowUp, CircleArrowUp, Send } from "lucide-react";
 import HeaderActions from "./HeaderActions";
 
 // 编程 APP（轻量 AI IDE）：dockview 六区布局。
 // 左 Explorer（文件树）/ 中编辑器（欢迎页+多 tab）/ 右 AI 对话 / 下 终端·输出·问题 / 底状态栏。
+
+import { getPresetId } from "../theme";
+
+function CodingSendIcon() {
+  const preset = getPresetId();
+  if (preset === "cartoon") return <Send size={18} strokeWidth={2.25} />;
+  if (preset === "glass") return <CircleArrowUp size={16} strokeWidth={1.5} />;
+  return <ArrowUp size={16} strokeWidth={2} />;
+}
 
 export default function CodingApp() {
   const [model] = useState("mock-1");
@@ -181,7 +191,7 @@ function AIPanel({ model }: { model: string }) {
             className="chat-send-btn"
             type="primary"
             shape="circle"
-            icon={<SendOutlined rotate={-45} />}
+            icon={<CodingSendIcon />}
             disabled={!input.trim()}
             onClick={send}
           />

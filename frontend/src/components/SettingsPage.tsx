@@ -36,12 +36,14 @@ import {
   getAccent,
   getBackground,
   getFontSize,
+  getGlassOpacity,
   getPresetId,
   PRESETS,
   PresetId,
   setAccent,
   setBackground,
   setFontSize,
+  setGlassOpacity,
   applyPresetChange,
   applyBackground,
   applyFontSize,
@@ -101,6 +103,7 @@ export default function SettingsPage({ onClose, preset, onPresetChange }: Props)
   // 外观状态
   const [accent, setAccentState] = useState(getAccent());
   const [fontSize, setFontSizeState] = useState(getFontSize());
+  const [glassOpacity, setGlassOpacityState] = useState(getGlassOpacity());
   const [bgId, setBgId] = useState<BackgroundValue["type"]>(
     getBackground().type === "image" ? "image" : getBackground().type
   );
@@ -268,6 +271,12 @@ export default function SettingsPage({ onClose, preset, onPresetChange }: Props)
     setFontSizeState(v);
     setFontSize(v);
     applyFontSize(v);
+  };
+
+  const changeGlassOpacity = (v: number) => {
+    setGlassOpacityState(v);
+    setGlassOpacity(v);
+    applyPresetChange(preset, accent); // 重新应用 CSS 变量（玻璃档透明度即时生效）
   };
 
   const changeBg = (type: BackgroundValue["type"]) => {
@@ -468,7 +477,7 @@ export default function SettingsPage({ onClose, preset, onPresetChange }: Props)
 
         {section === "appearance" && (
           <SettingSection title="外观">
-            <SettingRow label="风格" desc="整体设计风格（Ant 蓝白红 / 卡通多彩 / 玻璃 / 暗黑）">
+            <SettingRow label="风格" desc="整体设计风格（黑白 / 玻璃 / 卡通）">
               <Segmented
                 value={preset}
                 onChange={(v) => changePreset(v as PresetId)}
@@ -522,6 +531,19 @@ export default function SettingsPage({ onClose, preset, onPresetChange }: Props)
                 showText
               />
             </SettingRow>
+            {preset === "glass" && (
+              <SettingRow label="玻璃透明度" desc="面板半透明程度（数值越大越不透明）">
+                <Slider
+                  className="settings-control"
+                  min={20}
+                  max={95}
+                  step={5}
+                  value={Math.round(glassOpacity * 100)}
+                  onChange={(v) => changeGlassOpacity((v as number) / 100)}
+                  marks={{ 20: "20%", 50: "50%", 95: "95%" }}
+                />
+              </SettingRow>
+            )}
             <SettingRow label="字号" desc={`${fontSize}px（界面基础字号）`}>
               <Slider
                 className="settings-control"

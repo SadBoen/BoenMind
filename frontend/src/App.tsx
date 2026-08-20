@@ -16,7 +16,7 @@ import Login from "./components/Login";
 import HeaderActions from "./components/HeaderActions";
 import StatusBar from "./components/StatusBar";
 import { AuthRequiredError, getToken, rpc, setToken } from "./client";
-import { getPresetId, PRESETS, setPresetId, useThemeSync, type PresetId } from "./theme";
+import { applyPresetChange, getAccent, getPresetId, PRESETS, setPresetId, useThemeSync, type PresetId } from "./theme";
 
 export type AppView = "chat" | "coding" | "settings";
 
@@ -88,6 +88,7 @@ export default function App() {
   const changePreset = (id: PresetId) => {
     setPreset(id);
     setPresetId(id);
+    applyPresetChange(id, getAccent()); // 切档立即应用 CSS 变量（含玻璃透明度）
   };
 
   if (authed === null) {
