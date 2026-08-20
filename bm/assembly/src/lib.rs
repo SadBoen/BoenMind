@@ -473,13 +473,18 @@ impl Runtime {
     }
 
     fn loop_runtime(&self) -> Arc<LoopRuntime> {
+        // 具体类型 → 端口 trait object（loop 只依赖 bm-ports 端口，不依赖插件具体类型）。
+        let tools: Arc<dyn bm_ports::ToolRegistryPort> =
+            Arc::clone(&self.tools) as Arc<dyn bm_ports::ToolRegistryPort>;
+        let gate: Arc<dyn bm_ports::ToolGatePort> =
+            Arc::clone(&self.gate) as Arc<dyn bm_ports::ToolGatePort>;
         Arc::new(LoopRuntime {
             // SharedLlm：每回合现读当前装配实现（swap_llm 后下一请求生效，
             // 对所有会话生效——不随会话创建快照旧实现）。
             llm: Arc::new(SharedLlm::new(Arc::clone(&self.llm))),
             store: Arc::clone(&self.store),
-            tools: Arc::clone(&self.tools),
-            gate: Arc::clone(&self.gate),
+            tools,
+            gate,
             persist: Arc::clone(&self.persist),
             provider: self.provider.clone(),
             model: self.model.clone(),

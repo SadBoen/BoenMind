@@ -19,3 +19,7 @@ pub mod compactor;
 pub use compactor::{
     build_dialogue, estimate_tokens, Compactor, DEFAULT_CONTEXT_WINDOW,
 };
+
+pub mod tools;
+
+pub use tools::{ToolGatePort, ToolRegistryPort};

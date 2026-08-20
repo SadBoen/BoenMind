@@ -19,9 +19,25 @@ use parking_lot::RwLock;
 pub mod plugin;
 
 /// 工具注册表：name → handler。
-#[derive(Default)]
 pub struct ToolRegistry {
     handlers: RwLock<HashMap<String, Arc<dyn ToolHandler>>>,
+}
+
+impl std::fmt::Debug for ToolRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // 不依赖 ToolHandler: Debug（契约层只要求 Send+Sync）；只打印已注册工具名。
+        let mut names: Vec<String> = self.handlers.read().keys().cloned().collect();
+        names.sort();
+        f.debug_struct("ToolRegistry").field("handlers", &names).finish()
+    }
+}
+
+impl Default for ToolRegistry {
+    fn default() -> Self {
+        Self {
+            handlers: RwLock::new(HashMap::new()),
+        }
+    }
 }
 
 impl ToolRegistry {
@@ -78,23 +94,40 @@ impl ToolRegistry {
         let handler = self
             .get(&input.name)
             .ok_or_else(|| ToolError::new(format!("tool '{}' not found", input.name)))?;
-        let schema = ToolSchema {
-            name: handler.name().to_string(),
-            description: handler.description().to_string(),
-            parameters: handler.parameters(),
-        };
-        let validator = jsonschema::validator_for(&schema.parameters).map_err(|e| {
-            ToolError::new(format!("invalid schema for tool '{}': {e}", input.name))
-        })?;
-        validator.validate(&input.arguments).map_err(|e| {
-            ToolError::new(format!("invalid arguments for tool '{}': {e}", input.name))
-        })?;
+        #[cfg(feature = "schema-validation")]
+        {
+            let schema = ToolSchema {
+                name: handler.name().to_string(),
+                description: handler.description().to_string(),
+                parameters: handler.parameters(),
+            };
+            let validator = jsonschema::validator_for(&schema.parameters).map_err(|e| {
+                ToolError::new(format!("invalid schema for tool '{}': {e}", input.name))
+            })?;
+            validator.validate(&input.arguments).map_err(|e| {
+                ToolError::new(format!("invalid arguments for tool '{}': {e}", input.name))
+            })?;
+        }
         handler.execute(input).await
     }
 }
 
+// 端口实现（bm-ports）：loop 等上层消费面经 trait object 注入，组合根装配。
+#[async_trait::async_trait]
+impl bm_ports::ToolRegistryPort for ToolRegistry {
+    fn schemas(&self) -> Vec<ToolSchema> {
+        ToolRegistry::schemas(self)
+    }
+    async fn execute(
+        &self,
+        input: ToolExecutionInput,
+    ) -> Result<ToolExecutionResult, ToolError> {
+        ToolRegistry::execute(self, input).await
+    }
+}
+
 /// 工具门控：enabled 名单 + fail-closed（空名单默认全部禁用）。
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct ToolGate {
     enabled: RwLock<HashSet<String>>,
 }
@@ -129,6 +162,31 @@ impl ToolGate {
     pub async fn execute_guarded(
         &self,
         registry: &ToolRegistry,
+        input: ToolExecutionInput,
+    ) -> Result<ToolExecutionResult, ToolError> {
+        if !self.is_enabled(&input.name) {
+            return Err(ToolError::new(format!(
+                "tool '{}' is disabled (fail-closed)",
+                input.name
+            )));
+        }
+        registry.execute(input).await
+    }
+}
+
+// 端口实现（bm-ports）：enabled_schemas / execute_guarded 经 trait object 消费。
+#[async_trait::async_trait]
+impl bm_ports::ToolGatePort for ToolGate {
+    fn enabled_schemas(&self, registry: &dyn bm_ports::ToolRegistryPort) -> Vec<ToolSchema> {
+        registry
+            .schemas()
+            .into_iter()
+            .filter(|schema| self.is_enabled(&schema.name))
+            .collect()
+    }
+    async fn execute_guarded(
+        &self,
+        registry: &dyn bm_ports::ToolRegistryPort,
         input: ToolExecutionInput,
     ) -> Result<ToolExecutionResult, ToolError> {
         if !self.is_enabled(&input.name) {
@@ -202,6 +260,7 @@ mod tests {
         assert_eq!(registry.schemas().len(), 1);
     }
 
+    #[cfg(feature = "schema-validation")]
     #[tokio::test]
     async fn execute_validates_arguments_against_schema() {
         let registry = ToolRegistry::new();

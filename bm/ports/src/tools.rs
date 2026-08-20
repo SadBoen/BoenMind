@@ -1,0 +1,40 @@
+//! 工具注册表 + 门控端口（产品契约层）。
+//!
+//! 核心插件 loop 需要"工具注册表 + 门控"能力，但内核契约 `kernel-contracts::tools`
+//! 只定义了工具类型（ToolSchema/ToolHandler/…）——注册表/门控是插件实现
+//! （plugin-tools）的具体类型。2026-08-20 回收：loop 不得编译期依赖
+//! plugin-tools 具体类型，改为依赖本层端口，plugin-tools 实现之，assembly 注入。
+//!
+//! 本层放的是**产品级所需的最小端口**（loop 只消费 `enabled_schemas` 与
+//! `execute_guarded`）；装配面（register/unregister/enable…）保留在
+//! plugin-tools 具体类型，组合根调用。
+
+use kernel_contracts::tools::{ToolExecutionInput, ToolExecutionResult, ToolSchema};
+use kernel_contracts::ToolError;
+
+/// 工具注册表端口（loop/上层消费面）：schema 清单 + 执行。
+/// 装配面（register/unregister）在具体实现（plugin-tools）上，由组合根调用。
+#[async_trait::async_trait]
+pub trait ToolRegistryPort: Send + Sync + std::fmt::Debug {
+    /// 所有已注册工具的 schema（按名称字典序稳定输出）。
+    fn schemas(&self) -> Vec<ToolSchema>;
+    /// 执行工具（含 schema 校验）。
+    async fn execute(
+        &self,
+        input: ToolExecutionInput,
+    ) -> Result<ToolExecutionResult, ToolError>;
+}
+
+/// 工具门控端口（fail-closed 消费面）。
+/// 装配面（enable/disable）在具体实现（plugin-tools）上，由组合根调用。
+#[async_trait::async_trait]
+pub trait ToolGatePort: Send + Sync + std::fmt::Debug {
+    /// 只返回已启用工具的 schema（发给模型的工具清单）。
+    fn enabled_schemas(&self, registry: &dyn ToolRegistryPort) -> Vec<ToolSchema>;
+    /// fail-closed 执行：未启用 → Err；启用则经注册表执行。
+    async fn execute_guarded(
+        &self,
+        registry: &dyn ToolRegistryPort,
+        input: ToolExecutionInput,
+    ) -> Result<ToolExecutionResult, ToolError>;
+}

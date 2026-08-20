@@ -7,11 +7,18 @@ description = "工具注册表插件：ToolRegistry/ToolGate 实现"
 
 [dependencies]
 kernel-contracts = { path = "../../kernel/kernel-contracts" }
+bm-ports = { path = "../../bm/ports" }
 async-trait.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 parking_lot.workspace = true
-jsonschema = "0.26"
+# schema 校验引擎（draft 2020-12）：feature-gate——默认开启；关闭时 execute 跳过
+# 校验直接执行（校验是防御层，非契约；keyword-schema 精简场景可去此依赖）。
+jsonschema = { version = "0.26", optional = true }
+
+[features]
+default = ["schema-validation"]
+schema-validation = ["dep:jsonschema"]
 
 [dev-dependencies]
 tokio.workspace = true

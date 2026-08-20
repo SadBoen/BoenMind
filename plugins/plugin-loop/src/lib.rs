@@ -25,21 +25,18 @@
 //! 经 [`LoopRuntime::persist`] 落盘（单事件事务）。kill -9 发生时已 append 的事件
 //! 必然已持久化，日志永不出现 torn-tail。
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::StreamExt;
 use kernel_contracts::llm::{
-    ContentBlock, FinishReason, GenerateOptions, LlmPort, StreamChunk, ToolCall, ToolCallResult,
-    TokenUsage,
+    ContentBlock, FinishReason, GenerateOptions, LlmPort, ToolCall, ToolCallResult,
 };
 use kernel_contracts::ports::SessionPersistPort;
 use kernel_contracts::session::{SessionEvent, StepPhase, TurnEndReason, TurnEvent};
 use kernel_contracts::tools::ToolExecutionInput;
 use kernel_session::{AgentPort, LoopError, Session, SessionStore, TurnOutcome};
-use bm_ports::Compactor;
-use plugin_tools::{ToolGate, ToolRegistry};
+use bm_ports::{Compactor, ToolGatePort, ToolRegistryPort};
 
 pub mod plugin;
 
@@ -49,8 +46,8 @@ pub mod plugin;
 pub struct LoopRuntime {
     pub llm: Arc<dyn LlmPort>,
     pub store: Arc<SessionStore>,
-    pub tools: Arc<ToolRegistry>,
-    pub gate: Arc<ToolGate>,
+    pub tools: Arc<dyn ToolRegistryPort>,
+    pub gate: Arc<dyn ToolGatePort>,
     pub persist: Arc<dyn SessionPersistPort>,
     pub provider: String,
     pub model: String,
@@ -74,158 +71,9 @@ pub struct ReactLoopAgent {
     /// run_turn 装信号前到达 → 置位；装好信号后立即 abort，请求不丢。
     pending_cancel: std::sync::atomic::AtomicBool,
 }
+pub mod assemble;
+use assemble::BlockAssembler;
 
-/// 增量 chunk → 消息装配器（对齐 DSH `BlockAssembler`：原始 chunk 累积，
-/// `block-end` 权威冻结，delta-only 协议也容忍；usage/finish 单独持有）。
-struct BlockAssembler {
-    partials: BTreeMap<usize, PartialBlock>,
-    order: Vec<usize>,
-    usage: Option<TokenUsage>,
-    finish: Option<FinishReason>,
-}
-
-struct PartialBlock {
-    block_type: String,
-    text: String,
-    tool_call_id: String,
-    tool_call_name: String,
-    /// block-end 已闭：权威块，冻结 partial。
-    block: Option<ContentBlock>,
-}
-
-impl BlockAssembler {
-    fn new() -> Self {
-        Self {
-            partials: BTreeMap::new(),
-            order: Vec::new(),
-            usage: None,
-            finish: None,
-        }
-    }
-
-    fn push(&mut self, chunk: &StreamChunk) {
-        match chunk {
-            StreamChunk::BlockStart { index, block_type } => {
-                if !self.partials.contains_key(index) {
-                    self.order.push(*index);
-                    self.partials.insert(
-                        *index,
-                        PartialBlock {
-                            block_type: block_type.clone(),
-                            text: String::new(),
-                            tool_call_id: String::new(),
-                            tool_call_name: String::new(),
-                            block: None,
-                        },
-                    );
-                }
-            }
-            StreamChunk::TextDelta { index, text } | StreamChunk::ReasoningDelta { index, text } => {
-                let is_text = matches!(chunk, StreamChunk::TextDelta { .. });
-                let partial = self.ensure(*index, if is_text { "text" } else { "reasoning" });
-                if partial.block.is_some() {
-                    return; // 已闭：忽略迟到增量
-                }
-                partial.text.push_str(text);
-            }
-            StreamChunk::ToolCallDelta {
-                index,
-                id,
-                name,
-                arguments_delta,
-            } => {
-                let partial = self.ensure(*index, "tool-call");
-                if partial.block.is_some() {
-                    return;
-                }
-                if !id.is_empty() {
-                    partial.tool_call_id.clone_from(id);
-                }
-                if let Some(n) = name {
-                    partial.tool_call_name.clone_from(n);
-                }
-                partial.text.push_str(arguments_delta);
-            }
-            StreamChunk::BlockEnd { index, block } => {
-                let partial = self.ensure(*index, "");
-                // 首闭胜出：忽略重闭迟到块。
-                if partial.block.is_some() {
-                    return;
-                }
-                partial.block = Some(block.clone());
-            }
-            StreamChunk::Usage(u) => {
-                self.usage = Some(u.clone());
-            }
-            StreamChunk::Finish(reason) => {
-                self.finish = Some(reason.clone());
-            }
-        }
-    }
-
-    fn ensure(&mut self, index: usize, block_type: &str) -> &mut PartialBlock {
-        if !self.partials.contains_key(&index) {
-            self.order.push(index);
-        }
-        self.partials
-            .entry(index)
-            .or_insert_with(|| PartialBlock {
-                block_type: block_type.to_string(),
-                text: String::new(),
-                tool_call_id: String::new(),
-                tool_call_name: String::new(),
-                block: None,
-            })
-    }
-
-    fn assemble(&self, index: usize, partial: &PartialBlock) -> Option<ContentBlock> {
-        if let Some(b) = &partial.block {
-            return Some(b.clone());
-        }
-        match partial.block_type.as_str() {
-            "text" => Some(ContentBlock::Text(partial.text.clone())),
-            "reasoning" => Some(ContentBlock::Reasoning(partial.text.clone())),
-            "tool-call" => Some(ContentBlock::ToolCall(ToolCall {
-                id: if partial.tool_call_id.is_empty() {
-                    format!("call-{index}")
-                } else {
-                    partial.tool_call_id.clone()
-                },
-                name: partial.tool_call_name.clone(),
-                arguments: partial.text.clone(),
-            })),
-            // 未知块类型：不产出消息块（绝不静默 flatten 成 Text——上游协议外
-            // 类型要么有对应语义要么被丢弃，冒充文本会污染投影/模型输入）。
-            _ => None,
-        }
-    }
-
-    /// 组装全部已见块（按开块序）。max-tokens 截断丢弃无法安全执行的 tool-call 块。
-    fn blocks(&self) -> Vec<ContentBlock> {
-        let blocks: Vec<ContentBlock> = self
-            .order
-            .iter()
-            .filter_map(|i| self.assemble(*i, self.partials.get(i).expect("order invariant")))
-            .collect();
-        if self.finish() == FinishReason::MaxTokens {
-            blocks
-                .into_iter()
-                .filter(|b| !matches!(b, ContentBlock::ToolCall(_)))
-                .collect()
-        } else {
-            blocks
-        }
-    }
-
-    fn usage(&self) -> Option<TokenUsage> {
-        self.usage.clone()
-    }
-
-    /// finish 缺省 stop（对齐 DSH `get finish()`）。
-    fn finish(&self) -> FinishReason {
-        self.finish.clone().unwrap_or(FinishReason::Stop)
-    }
-}
 
 impl ReactLoopAgent {
     pub fn new(rt: Arc<LoopRuntime>, session: Arc<Session>) -> Self {
@@ -394,7 +242,7 @@ impl ReactLoopAgent {
 
             // model-visible-means-logged：模型看到的全部来自日志投影。
             let mut messages = self.session.derive_messages();
-            let tools = self.rt.gate.enabled_schemas(&self.rt.tools);
+            let tools = self.rt.gate.enabled_schemas(&*self.rt.tools);
             let (provider, model) = self.request_provider_model();
 
             // 上下文压缩（可选功能面）：运行态视图变换——日志完整保留，发给
@@ -461,7 +309,7 @@ impl ReactLoopAgent {
             let usage = assembler.usage();
 
             // finish 缺失 = torn（端口契约要求流以 Finish 收尾）。
-            if assembler.finish.is_none() {
+            if !assembler.has_finish() {
                 self.close_turn(
                     turn,
                     steps,
@@ -592,7 +440,7 @@ impl ReactLoopAgent {
                 let result = match self
                     .rt
                     .gate
-                    .execute_guarded(&self.rt.tools, input)
+                    .execute_guarded(&*self.rt.tools, input)
                     .await
                 {
                     Ok(r) => ToolCallResult {
@@ -654,11 +502,12 @@ mod tests {
     use super::*;
     use bm_ports::Compactor;
     use kernel_contracts::error::{LlmError, ToolError};
-    use kernel_contracts::llm::{ChunkStream, LlmMessage, LlmModelInfo, LlmPort, Role};
+    use kernel_contracts::llm::{ChunkStream, LlmMessage, LlmModelInfo, LlmPort, Role, StreamChunk, TokenUsage};
     use kernel_contracts::session::{SessionHeader, SessionId};
     use kernel_contracts::tools::{ToolExecutionResult, ToolHandler};
     use kernel_contracts::EventBus;
     use kernel_session::{DEFAULT_MAX_STEPS, SessionStore};
+    use plugin_tools::{ToolGate, ToolRegistry};
     use serde_json::json;
     use std::collections::VecDeque;
     use std::sync::Mutex;
@@ -890,12 +739,14 @@ mod tests {
 
     fn runtime(steps: Vec<ScriptStep>, enabled: &[&str]) -> (Arc<LoopRuntime>, Arc<Session>) {
         let llm = Arc::new(ScriptLlm::new(steps));
-        let tools = Arc::new(ToolRegistry::new());
-        tools.register(Arc::new(EchoTool)).unwrap();
-        let gate = Arc::new(ToolGate::new());
+        let concrete_tools = ToolRegistry::new();
+        concrete_tools.register(Arc::new(EchoTool)).unwrap();
+        let tools: Arc<dyn ToolRegistryPort> = Arc::new(concrete_tools);
+        let concrete_gate = ToolGate::new();
         for name in enabled {
-            gate.enable(name);
+            concrete_gate.enable(name);
         }
+        let gate: Arc<dyn ToolGatePort> = Arc::new(concrete_gate);
         let store = Arc::new(SessionStore::new());
         let persist: Arc<dyn SessionPersistPort> = Arc::new(InMemoryPersist(std::sync::Mutex::new(vec![])));
         let rt = Arc::new(LoopRuntime {
@@ -1139,8 +990,8 @@ mod tests {
     #[tokio::test]
     async fn pending_cancel_aborts_signal_before_stream() {
         let llm = Arc::new(SignalCapturingLlm::default());
-        let tools = Arc::new(ToolRegistry::new());
-        let gate = Arc::new(ToolGate::new());
+        let tools: Arc<dyn ToolRegistryPort> = Arc::new(ToolRegistry::new());
+        let gate: Arc<dyn ToolGatePort> = Arc::new(ToolGate::new());
         let store = Arc::new(SessionStore::new());
         let persist: Arc<dyn SessionPersistPort> =
             Arc::new(InMemoryPersist(std::sync::Mutex::new(vec![])));
@@ -1279,8 +1130,8 @@ mod tests {
     async fn model_override_routes_generate_options() {
         let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
         let llm = Arc::new(CapturingLlm { seen: Arc::clone(&seen) });
-        let tools = Arc::new(ToolRegistry::new());
-        let gate = Arc::new(ToolGate::new());
+        let tools: Arc<dyn ToolRegistryPort> = Arc::new(ToolRegistry::new());
+        let gate: Arc<dyn ToolGatePort> = Arc::new(ToolGate::new());
         let store = Arc::new(SessionStore::new());
         let persist: Arc<dyn SessionPersistPort> =
             Arc::new(InMemoryPersist(std::sync::Mutex::new(vec![])));
@@ -1345,8 +1196,8 @@ mod tests {
     #[tokio::test]
     async fn compactor_transforms_context_before_model() {
         let llm = Arc::new(CapturingMessagesLlm::default());
-        let tools = Arc::new(ToolRegistry::new());
-        let gate = Arc::new(ToolGate::new());
+        let tools: Arc<dyn ToolRegistryPort> = Arc::new(ToolRegistry::new());
+        let gate: Arc<dyn ToolGatePort> = Arc::new(ToolGate::new());
         let store = Arc::new(SessionStore::new());
         let persist: Arc<dyn SessionPersistPort> =
             Arc::new(InMemoryPersist(std::sync::Mutex::new(vec![])));

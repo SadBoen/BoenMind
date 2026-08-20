@@ -9,7 +9,6 @@ description = "回合循环插件：ReactLoopAgent（AgentPort 实现）"
 kernel-contracts = { path = "../../kernel/kernel-contracts" }
 kernel-session = { path = "../../kernel/kernel-session" }
 bm-ports = { path = "../../bm/ports" }
-plugin-tools = { path = "../plugin-tools" }
 async-trait.workspace = true
 async-stream.workspace = true
 futures.workspace = true
@@ -19,3 +18,5 @@ tokio.workspace = true
 
 [dev-dependencies]
 chrono.workspace = true
+# 测试用具体工具实现（EchoTool/ToolRegistry/ToolGate）——生产依赖经 bm-ports 端口。
+plugin-tools = { path = "../plugin-tools" }
