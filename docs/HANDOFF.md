@@ -1,100 +1,115 @@
-# BoenMind 交接文档（2026-08-20）
+# BoenMind 交接文档（2026-08-21 深夜/凌晨批次）
 
-给下一轮对话/协作的接手者。这是「全面回头看 + 连续五轮架构修复」之后的仓库状态快照。
+给下一轮对话/协作的接手者。这是「全面回头看 + 连续多轮架构修复 + 前端展示层补齐 + 基础设施升级」之后的仓库状态快照。
 
 ## 一、仓库一句话
 
-BoenMind = Rust 微内核（`kernel/` 只读 submodule `dsh-rust-core`）+ 产品层（`bm/`）+ 功能插件（`plugins/`）+ 自研前端（`frontend/`，React 19 + dockview）。分层纪律「依赖只许向下」由 `bm/assembly/tests/crate_boundaries.rs` 硬守卫（`cargo test --workspace` 即门禁）。
+BoenMind = Rust 微内核（`kernel/` 只读 submodule `dsh-rust-core`）+ 产品层（`bm/`）+ 功能插件（`plugins/`）+ 自研前端（`frontend/`，React 19 + dockview + antd v6 prefixCls=bm）。分层纪律「依赖只许向下」由 `bm/assembly/tests/crate_boundaries.rs` 硬守卫（`cargo test --workspace` 即门禁）。
+
+核心插件（loop/llm/tools）只依赖 kernel-contracts + kernel-session + bm-ports——**不碰任何兄弟插件/功能插件**。这是多轮架构修复的核心成果。
 
 ## 二、最近改动（都已推 origin/main）
 
 | commit | 内容 |
 |---|---|
-| `c2df2cf` | 回头看修复：Compactor trait 上提 `bm/ports`（产品契约层）、crate 边界守卫补规则 3（核心禁依赖功能插件）、`[compaction]` config 段收口 |
-| `8e070c7` | 大手术：loop→tools 端口化（ToolRegistryPort/ToolGatePort 进 bm-ports）、plugin-loop 拆 assemble.rs、api.rs 拆 credentials 起范、supervisor 去死依赖、jsonschema feature-gate |
-| `c1dd392` | api.rs 2751→1636 行领域拆分（auth/credentials/llm/workspace/host/settings 六子模块）、assembly 门面收敛、auth 存储边界文档化 |
-| `e8489e9` | 交接文档入库（docs/HANDOFF.md） |
-| `fc4e797` | **session 域拆完 api.rs→1102 行 + workspace lints 收口 + 待办评估定案**（见第五节状态） |
+| `42321c5` | docs(handoff)：苹果审批标识/设置页策略可视化划入已交付 |
+| `4826f6a` | **feat(ui)：审批弹窗危险标识 + 设置页工具审批策略可视化**——危险工具弹窗附红「危险」徽章；设置页高级「工具审批」子区块（危险/安全 Tag 列表只读展示） |
+| `e59c2ba` | docs(handoff)：危险工具白名单划入已交付 |
+| `5cbc11c` | **feat(approval)：危险工具白名单**——审批只拦真危险（host.run_command/code.*/web.fetch/goal.create+update/schedule.create），安全工具自动放行；`ToolRegistryPort.requires_approval` + 各插件 `DANGEROUS_TOOL_NAMES` + assembly mark |
+| `76cbff9` | docs(handoff)：goal 创建 UI 划入已交付 |
+| `8173def` | **feat(goal)：前端新建目标表单**——GoalCard 无目标态转创建态（objective + 自动续跑轮次 1-64 默认 8），创建走 goal.create → 投影回灌切展示态 |
+| `5834ad5` | docs(handoff)：compaction 设置表单划入已交付 |
+| `84463fd` | **feat(compaction)：上下文压缩升级为运行时可调**——`Runtime.compactor` 换 RwLock + SettingsBackedCompactor（每回合现读 settings）+ 设置页压缩表单 |
+| `7be0004` | docs(handoff)：前端展示层两项划入已交付 |
+| `bf326b7` | **feat(ui)：前端审批弹窗 + goal 目标卡片**——useMuxEvents 全局帧总线 + ApprovalModal + GoalCard + client.ts auth 修复 |
+| `a32fd87` … `1186329` | 深夜四插件（code-runtime/审批回灌/web-tools/schedule）+ goal 自动续跑 M3.5 |
 
 ## 三、当前架构分层（最终形态）
 
 ```
 kernel-contracts (纯契约)              ← kernel/ submodule，只读不可改
 kernel-session / kernel-storage
-kernel-supervisor                     ← 死代码（无引用；只有大小 326 行雏形，M3 才接）
-bm/ports                              ← 产品级契约层：Compactor / ToolRegistryPort / ToolGatePort
-plugins/plugin-llm loop tools auth compactor
+kernel-supervisor                     ← 死代码（无引用；M3 才接）
+bm/ports                              ← 产品级契约层：Compactor / ToolRegistryPort / ToolGatePort / ToolApprovalPort / WorkdirPort / SchedulePort / GoalPort
+plugins/plugin-llm loop tools auth compactor host-tools code-runtime web-tools goal schedule
 bm/assembly                           ← 组合根（唯一装配点）
-bm/web-server / bm/headless / bm/quickjs-bridge   ← L0，只依赖 bm-assembly
-frontend/                             ← React 19 + dockview + theme 四档
+bm/web-server / bm/headless / bm/quickjs-bridge   ← L0
+frontend/                             ← React 19 + dockview + antd v6
 ```
 
-**核心插件（loop/llm/tools）只依赖 kernel-contracts + kernel-session + bm-ports**——不再编译期碰任何兄弟插件/功能插件。这是五轮修复的核心成果。
+**核心插件只依赖 kernel-contracts + kernel-session + bm-ports**——编译期不碰兄弟插件/功能插件。
 
 ## 四、关键设计决策（勿推翻，除非有强理由）
 
-1. **Compactor trait 在 bm-ports，不在 plugin-compactor**。kernel/ 只读塞不进 kernel-contracts，产品级策略端口统一放 bm-ports。新增核心插件需要的端口一律放这里（也只依赖 kernel-contracts + 无实现）。
-2. **bm-assembly 的 re-export（MockTurn/DEFAULT_PASSWORD/DefaultCompactor/scripted_llm）是守卫强制的 L0 出口，不是门面污染**。L0 只依赖 bm-assembly，装配参数必须经组合根 re-export。**别砍**（曾评估过，砍了 L0 就满足不了「只依赖 bm-assembly」）。
-3. **auth 双持久化是有意的 bounded context**。`auth.json`/`sessions.jsonl` 是认证域自管，不经 kernel-storage（sqlite 只承载事件日志=唯一事实源）。**不要**把认证存储迁进 sqlite 事件表（plugin-auth/src/lib.rs 模块 doc 有定稿说明）。
-4. **事件日志 = 唯一事实源**；上下文压缩是运行态视图变换（不改日志、前端无感）；model-visible-means-logged / logged-means-persisted 是 loop 铁律。
-5. **守卫规则 3**：核心插件（llm/loop/tools）禁依赖功能插件（auth/compactor）；功能插件互不依赖。新增插件先登记进 crate_boundaries.rs。
+1. **所有产品级策略端口统一放 bm-ports**（Compactor/ToolRegistryPort/ToolGatePort/ToolApprovalPort/WorkdirPort/SchedulePort/GoalPort）。kernel/ 只读塞不进契约。核心插件新增端口一律放这里（只依赖 kernel-contracts + 无实现）。
+2. **bm-assembly re-export（MockTurn/DEFAULT_PASSWORD/DefaultCompactor/scripted_llm）是守卫强制的 L0 出口**，L0 只依赖 bm-assembly，装配参数必须经组合根 re-export。**别砍**。
+3. **auth 双持久化是有意的 bounded context**（auth.json/sessions.jsonl 自管，不经 kernel-storage）。**不要**迁进 sqlite 事件表。
+4. **事件日志 = 唯一事实源**；上下文压缩是运行态视图变换（不改日志）。model-visible-means-logged / logged-means-persisted 是 loop 铁律。
+5. **守卫规则 3**：核心插件禁依赖功能插件；功能插件互不依赖。新增插件先登记 crate_boundaries.rs。
+6. **危险工具白名单**：审批只拦 `DANGEROUS_TOOL_NAMES` 声明的工具（插件常量 + assembly mark_dangerous），安全工具自动放行。危险度**不塞** kernel submodule 的 ToolSchema（规避改外部仓+升 gitlink）——以插件并行名单 + `ToolRegistryPort.requires_approval` 查询方法承载，模型侧 schema 输出不受影响。
+7. **settings-backed 端口模式**（三件套）：L0（web-server）提供 settings-backed 端口实现（内部 Arc<AppState> 现场锁读 settings）→ 经 bm-assembly 组合根装配 → 核心插件零改动。`SettingsWorkdir`（host.workdir）/`SettingsBackedCompactor`（compaction）已验证此模式。**web-server 装配 settings 类策略端口一律走此三件套，守卫规则 3 兼容**。
+8. **compaction 语义升级**：config.toml `[compaction]` 段降为**启动种子**（`--compact` 装配时种进 settings.compaction），settings.compaction 记录优先（重启保留）。`enabled=false` 否决权保留。设置页高级分区可调，下一回合生效。
 
-## 五、待办/候选（2026-08-20 终版）
+## 五、交付记录（2026-08-21 批次全清单）
 
-### 已清空（fc4e797 起）
-- ✅ api.rs 2751→**1102 行**：七领域全拆（auth/credentials/llm/workspace/host/settings/session），session 域 (542 行) 最后拆完；model 三 helper 作共享件留主文件
-- ✅ workspace lints：`[workspace.lints]` `unused=deny` 全仓强制（10 crate 继承），clippy 零自有警告
-- ✅ kernel-supervisor：**保留隔离态**（已脱离 BoenMind 依赖图；kernel submodule 只读不夺，M3 再接）
-- ✅ cargo-deny：**不引入**（自研 + 依赖面小，license/bans 低风险）
-- ✅ api.rs 测试区：**不拆**（测试贴 AppState/dispatch 是合理的，拆了徒增风险）
-- ✅ sharedConfig 漏传：**已过时**（M3 已用 llm.providers + settings.update 实现 provider 表单）
-- ✅ headless --compact：**不加**（会破坏 verify-gate1.sh 的位置参数签名）
+### 深夜批（已推 main）
+- ✅ **plugin-code-runtime**：code.compile/python/shell，workdir 作用域 + 30s 超时 kill + 输出钱包 512KB/流。`--code-runtime`
+- ✅ **工具审批回灌**：bm-ports ToolApprovalPort + plugin-loop 执行前暂停点（Rejected → is_error 回写）+ web-server ApprovalRouter（PendingRegistry + oneshot 等待表 + respond 回拨）。`--approval`
+- ✅ **plugin-web-tools**：web.fetch/web.search（SSRF 防线 + 输出钱包）。`--web-tools`
+- ✅ **plugin-schedule**：schedule.create/list/cancel；SchedulePort + Scheduler（1s tick 后台驱动）。`--schedule`
+- ✅ **goal 自动续跑 M3.5**：plugin-goal（goal.get/create/update）+ GoalRouter + GoalDriver（回合完成点续跑）。`--goal`
 
-### 剩余（需产品决策/功能演进，非 repair）
-- **unwrap/expect 全面清理**（unwrap_used/expect_used lints 留 allow 待做）：测试与合法断言大量使用，清理是独立任务（TODO: unwrap-polish）。
-- ✅ **compaction 设置表单已交付**（84463fd）：「启动参数语义 → 运行时可调」——`Runtime.compactor` 换 RwLock，新增 `SettingsBackedCompactor`（每次 maybe_compact 现读 settings.compaction），`--compact` 装配时把 config `[compaction]` 段种进 settings 作为初始值，设置页高级分区可调（下一回合生效）。语义：settings 有 compaction 记录即优先（重启保留），config 段仅作启动种子
+### 前端展示层批
+- ✅ **useMuxEvents 全局帧总线**（frontend/src/hooks/useMuxEvents.ts）：单例 WS，聚合 approval/requested、approval/resolved、session/projection。**handler 收完整帧（含外层 rpcId）**——审批应答必须回显帧 rpcId（曾因只传 payload 丢 rpcId 导致 respond 恒 bad-response，见坑 10）
+- ✅ **审批弹窗 ApprovalModal**：POST /api/respond（allowed-once/rejected），多帧排队、resolved 自动关闭、应答必达
+- ✅ **goal 卡片 GoalCard**：快照（session.history projections）+ 增量（session/projection，higher-seq-wins）合并展示；pause/resume/complete 走 goal RPC（CAS ref）；刷新后快照恢复
+- ✅ **goal 新建表单**：GoalCard 无目标态「🎯 新建目标」→ objective + 轮次 → goal.create → 投影回灌切展示态
+- ✅ **client.ts auth 修复**：auth-not-available 直接抛 code（原来被 err.message 吞，未开 --auth 时前端永久卡「载入中…」）
 
-### 2026-08-21 深夜四插件交付（自主运行，用户睡觉）——已推 main
-- ✅ **plugin-code-runtime**（4f13e11）：`code.compile/python/shell`，workdir 作用域 + 30s 超时 kill + 输出钱包 512KB/流（并发排水防洪水输出死锁/撑爆上下文）。装配 `Runtime::install_code_runtime` + `--code-runtime`
-- ✅ **工具审批回灌**（36607fc）：bm-ports `ToolApprovalPort`（消费面）+ plugin-loop 执行前暂停点（Rejected → is_error「tool call rejected by user」回写日志，模型可见）+ web-server `ApprovalRouter`（PendingRegistry + oneshot 等待表 + respond 回拨唤醒）。`Runtime::install_approval`（&self，RwLock 热换装）+ `--approval`
-- ✅ **plugin-web-tools**（716a419）：`web.fetch`/`web.search`，SSRF 防线（仅公网，域名 DNS 全解析须公网）+ 输出钱包。`install_web_tools` + `--web-tools`
-- ✅ **plugin-schedule**（9710904）：`schedule.create/list/cancel`；bm-ports `SchedulePort` + web-server `Scheduler`（1s tick 后台驱动 run_turn，复用 session.prompt 语义；cron 简化：分/时 + */n）。`install_schedule` + `--schedule`
+### 基础设施/策略批
+- ✅ **compaction 运行时可调**：见决策 8。设置页高级分区表单（启用/水线/尾部比例/下限/中部下限）
+- ✅ **危险工具白名单**：见决策 6。默认危险 = host.run_command / code.* 全 / web.fetch / goal.create+update / schedule.create；安全放行 = list_dir/read_file/write_file/goal.get/web.search/schedule.list+cancel
+- ✅ **审批弹窗危险徽章 + 设置页工具审批子区块**：前端 DANGEROUS_TOOLS 集合与后端名单对齐，纯展示
 
-### 下轮候选（2026-08-21 深夜收尾后）
-- ✅ **goal 自动续跑（M3.5）已交付**（1186329）：plugin-goal（goal.get/create/update 工具）+ GoalRouter（对接既有 goal RPC 状态机）+ GoalDriver（同会话续跑——回合完成点检查 active + 有额度目标 → roundsStarted 自增 → 注入 `<goal_round>` 用户消息续跑；抑制 = phase!=active 或额度耗尽；防嵌套）。`--goal` 开关装配
-- ✅ **前端审批弹窗已交付**（bf326b7）：useMuxEvents 全局帧总线 + ApprovalModal（approved/rejected → POST /api/respond 回显 rpcId）。真实工具链验证：MiniMax-M3 下 25+ 次工具调用全链路稳定（弹窗/批准/执行/回填）
-- ✅ **前端 goal 卡片已交付**（bf326b7）：GoalCard 展示 phase 徽章/轮次进度/objective，pause/resume/complete 走 goal RPC；快照 + 投影增量合并
-- ✅ **前端 goal 创建 UI 已交付**（8173def）：GoalCard 无目标态显「🎯 新建目标」表单（objective + 自动续跑轮次 1-64 默认 8），创建走 goal.create → 投影回灌切展示态；刷新后快照恢复
-- ✅ **危险工具白名单已交付**（5cbc11c）：审批只拦真危险工具（host.run_command/code.*/web.fetch/goal.create+update/schedule.create），安全工具（list_dir/read_file/goal.get/web.search 等）自动放行。`ToolRegistryPort.requires_approval` + 各插件 `DANGEROUS_TOOL_NAMES` + assembly mark。e2e：list_dir 无弹窗直接执行、run_command 逐个弹窗
-- ✅ **审批弹窗危险标识 + 设置页策略可视化已交付**（4826f6a）：危险工具弹窗附红色「危险」徽章；设置页高级分区「工具审批」子区块显示危险/安全名单
-- **unwrap/expect 全面清理**（unwrap_used/expect_used lints 留 allow 待做）：独立任务（TODO: unwrap-polish）
-- **已知坑：并行测试竞态**——`WORKDIR_SOURCE`/`SCHEDULE_SOURCE` 全局源跨 test 文件共享，全仓并行时 host_tools 测试 flaky；**串行 `cargo test --workspace -- --test-threads=1` 全绿**。CI 建议串行
-
-## 六、经典陷阱（踩过的坑，别重踩）
-
-1. **api.rs 手工按行号切块极易错位**。拆分固定套路：先 `grep -n` 精确定函数边界 → 用 sed 按函数名提取到子模块文件（不是裸行号区间）→ 函数名 sed 加 `pub(super)` → api.rs 删除原块 → 补 `mod xx; use xx::*;`。删除前**先确认函数完整结束**（尤其最后一个函数，容易缺闭合 `}`）。本轮 host 拆分就因行号错位缺了 rel_from_workdir 的尾部 body。
-2. **子模块里 `use super::xxx` 才能访问主文件的私有项**；主文件 `mod xx; use xx::*;` 只能导入子模块的 `pub(super)`/`pub` 项。函数要跨模块可见就标 `pub(super)`（不是 private）。
-3. **`Arc<具体类型>` 不能隐式给 `Arc<dyn Trait>` 字段**——需要显式 `as Arc<dyn ...>` 或在 let 处标注类型（assembly loop_runtime 里就是这么干的）。
-4. **trait object 需要 async_trait 宏**（async fn 直接进 trait 不能做 dyn）；实现端也要 `#[async_trait]` 宏。
-5. **`pub use host::host_workdir` re-export 要求该项本身是 `pub`**（不能是 pub(super)）。跨模块导出用 `pub`。
-6. **修改 Cargo.toml 后 Cargo.lock 会变**（如去掉 supervisor 依赖），提交时一起带上。
-7. **验证闭环**：`cargo build --workspace`（0 error）→ `cargo test --workspace`（查 FAILED）→ `cargo clippy --workspace --all-targets`（零警告，除 rquickjs future-incompat 提示）→ `bash scripts/verify-gate1.sh`（GATE1: ALL PASS）。**每次提交前过一遍**。
-
-## 七、验证命令速查
+## 六、验证闭环（每次提交前过一遍）
 
 ```bash
-cargo build --workspace
-cargo test --workspace            # 含 crate_boundaries 守卫；当前 29 组全绿
-cargo clippy --workspace --all-targets
-bash scripts/verify-gate1.sh      # headless 全链路 + kill-9 恢复
-# 端到端（web-server + --compact 消费 [compaction] 配置）：
-./target/debug/web-server.exe --db <tmp.db> --config ~/.boenmind/config.toml --compact --port 3099
+cargo build --workspace                        # 0 error
+cargo test --workspace -- --test-threads=1     # 串行（已知坑：并行测试竞态）
+cargo clippy --workspace --all-targets         # 零警告（除 rquickjs future-incompat）
+cd frontend && npx tsc --noEmit && npx vite build
+bash scripts/verify-gate1.sh                   # headless 全链路 + kill-9 恢复
 ```
+
+## 七、剩余待办/候选
+
+### 待办（非 repair，产品演进）
+- **unwrap/expect 全面清理**（unwrap_used/expect_used lints 留 allow）：TODO: unwrap-polish。**评估结论（2026-08-21）：建议维持现状**——550+ unwrap 绝大多数是 pthread 锁惯例、必成功构造、测试断言；全量改造噪音大、无功能收益、有回归风险。若做：先启用 lints 再用 `cargo fix` 分批，锁定非测试代码。
+- **compaction 深度**：config 段种子已实现「重启保留」；设置页可加「重置为默认」按钮（settings.clear 语义）。
+
+### 候选（下轮）
+- **审批体验深化**：「本会话信任此工具」/「记住上次选择」类记忆（当前每个危险调用都弹，无会话级豁免）
+- **goal 编辑**：改 objective/额度（现只有 pause/resume/complete，无 edit UI；RPC goal.edit 已存在）
+- **前端新视图/打磨**：设置页无缝体验、文件管理器深度集成、CodingApp 落地（当前占位）
+- **settings 页 app文档**：设置项 applies 恒 "restart" 元字段未真正区分；可将 compaction/workdir 类的"下一请求生效"语义显式化
+
+### 已知坑（别重踩）
+1. **并行测试竞态**：`WORKDIR_SOURCE`/`SCHEDULE_SOURCE` 全局源跨 test 文件共享，**串行全绿、并行 flaky**。CI 用 `--test-threads=1`。
+2. **api.rs 手工按行号切块极易错位**。固定套路：grep -n 精确函数边界 → sed 按函数名提取 → 加 pub(super) → 删原块 → 补 mod/use。删除前确认函数完整闭合。
+3. **子模块 `use super::xxx` 访问主文件私有项**；主文件 `mod xx; use xx::*;` 只能导入 pub(super)/pub。跨模块导出用 pub。
+4. **`Arc<具体类型>` 不能隐式给 `Arc<dyn Trait>`**——显式 `as Arc<dyn ...>` 或 let 处标注类型。
+5. **trait object 需要 async_trait**（async fn 进 trait 不能做 dyn）；实现端同样要宏。
+6. **`pub use` re-export 要求目标本身 pub**（非 pub(super)）。
+7. **改 Cargo.toml 后 Cargo.lock 会变**，提交一起带。
+8. **web-server.exe 被运行进程锁死**——`cargo build` 前先停 3080/3099 进程（`netstat -ano | grep :3080` 拿 PID → taskkill）。
+9. **Git Bash 中文提交信息显示乱码是终端假象**——git 存 UTF-8 正确，`git log` 看正常。
+10. **审批 rpcId 丢失劫**：approval/requested 帧的应答 key 是**外层信封 rpcId**（非 payload 内 approvalId）。前端总线只传 payload 会丢 rpcId → respond 恒 bad-response（曾定位半天）。useMuxEvent handler 必须收完整帧。
 
 ## 八、环境/备忘
 
 - 工作区根 `D:\96_CoderWorld\BoenMind`，branch `main`，remote `origin`（BoenMind.git）/`dsh-origin`（boenmind-dsh.git 另仓，勿混推）。
-- `kernel/` 是 git submodule（heads/main 在 95ab2659），内容只读不改。
-- 前端联调走 3080 生产服务（`frontend/dist`），开发用 vite dev（代理 web-server 3080）。
-- 记忆库见 `C:\Users\Boen\.zcode\cli\memories\projects\boenmind-...\memory/`（project-architecture-fix.md 汇总多轮架构决策）。
-- Grok 独立评审全文存档在 `.review/grok/grok-review.md`（已 gitignore，复盘可读）。
+- `kernel/` git submodule（heads/main 在 95ab2659），只读不改。
+- 前端联调：生产 `frontend/dist` 由 web-server 静态服务（默认 3080）；dev 用 vite（5173，代理 3080）。
+- 浏览器验证：会话内浏览器标签持续存活；定位器在 React 重渲染下易超时——危险弹窗等交互用坐标点击（evaluate 读 rect → tab.cua.click）最稳。**看界面必须识图**（Minimax/M3 视觉模型），不许只靠 DOM 文字猜。
+- 记忆库 `C:\Users\Boen\.zcode\cli\memories\projects\boenmind-...\memory/`：project-frontend-approval-goal / project-compaction-settings / project-dangerous-tool-whitelist / project-handoff 等。
+- Grok 独立评审全文存档 `.review/grok/grok-review.md`（已 gitignore）。
