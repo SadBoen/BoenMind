@@ -7,6 +7,7 @@ import { useCurrentSession } from "../sessionStore";
 import { getPresetId } from "../theme";
 import { rpc } from "../client";
 import MessageList from "./MessageList";
+import GoalCard from "./GoalCard";
 
 // 发送按钮图标按风格档换肤（Grok 处方：黑白=向上箭头 / 卡通=纸飞机 / 玻璃=圆环箭头）
 function SendButtonIcon() {
@@ -88,6 +89,7 @@ export default function ChatPanel() {
   return (
     <div className="chat-panel">
       <MessageList messages={messages} />
+      {sessionId && <GoalCard sessionId={sessionId} />}
       {error && <div className="chat-error">{error}</div>}
       {/* 输入区（对齐老前端 ChatInput）：圆角卡片 + 卡片内下边缘工具条 */}
       <div className="chat-input-wrap">

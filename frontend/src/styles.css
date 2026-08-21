@@ -330,6 +330,66 @@ body {
   display: flex; flex-direction: column; height: 100%;
   background: transparent;
 }
+
+/* ---- 目标卡片（goal 投影）---- */
+.goal-card {
+  margin: 0 16px 8px; padding: 10px 12px;
+  border: 1px solid var(--bm-border);
+  border-radius: var(--bm-radius);
+  background: var(--bm-bg-glass-light, var(--bm-bg-2));
+}
+.goal-card-head {
+  display: flex; align-items: center; gap: 8px;
+}
+.goal-card-title {
+  font-weight: 600; font-size: 13px; color: var(--bm-fg);
+}
+.goal-card-tag { margin-inline-end: 0; }
+.goal-card-rounds {
+  margin-left: auto; font-size: 12px; color: var(--bm-fg-dim);
+}
+.goal-card-objective {
+  margin: 6px 0 8px; font-size: 13px; color: var(--bm-fg);
+  line-height: 1.5; white-space: pre-wrap; word-break: break-word;
+}
+.goal-card-progress { margin-bottom: 8px; }
+.goal-card-bar {
+  height: 6px; border-radius: 999px; overflow: hidden;
+  background: var(--bm-bg-3);
+}
+.goal-card-bar-fill {
+  height: 100%; border-radius: 999px;
+  background: var(--bm-accent);
+  transition: width 0.25s ease;
+}
+.goal-card-actions {
+  display: flex; align-items: center; gap: 8px;
+}
+.goal-card-blocked {
+  font-size: 12px; color: var(--bm-fg-dim);
+}
+
+/* ---- 工具审批弹窗（antd Modal 容器内样式；z-index 契约见 theme.ts）---- */
+.approval-modal .approval-body {
+  display: flex; flex-direction: column; gap: 10px;
+}
+.approval-modal .approval-tool {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 15px; font-weight: 600; color: var(--bm-fg);
+}
+.approval-modal .approval-call {
+  font-size: 12px; color: var(--bm-fg-dim);
+}
+.approval-modal .approval-reason {
+  font-size: 13px; color: var(--bm-fg-dim);
+  background: var(--bm-accent-soft); border-radius: 6px; padding: 8px;
+}
+.approval-modal .approval-queue {
+  font-size: 12px; color: var(--bm-fg-dim);
+}
+.approval-modal .approval-actions {
+  display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px;
+}
 .chat-messages {
   flex: 1; overflow-y: auto; padding: 16px;
   display: flex; flex-direction: column; gap: 12px;

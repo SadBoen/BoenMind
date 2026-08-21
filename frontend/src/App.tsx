@@ -15,6 +15,7 @@ import SettingsPage from "./components/SettingsPage";
 import Login from "./components/Login";
 import HeaderActions from "./components/HeaderActions";
 import StatusBar from "./components/StatusBar";
+import ApprovalModal from "./components/ApprovalModal";
 import { AuthRequiredError, getToken, rpc, setToken } from "./client";
 import { applyPresetChange, getAccent, getPresetId, PRESETS, setPresetId, useThemeSync, type PresetId } from "./theme";
 
@@ -165,6 +166,8 @@ export default function App() {
 
           {/* 底部状态栏：与 App 无关的外壳层（层级同导航栏），满铺底部 */}
           <StatusBar />
+          {/* 全局工具审批弹窗（独立于会话；approved/rejected 走 /api/respond） */}
+          <ApprovalModal />
         </div>
       </AntdApp>
     </ConfigProvider>

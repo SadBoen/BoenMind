@@ -33,6 +33,9 @@ export async function rpc<T = unknown>(method: string, payload: unknown = {}): P
   if (!env.result.ok) {
     const err = env.result.error;
     if (err.code === "auth-required") throw new AuthRequiredError();
+    // 后端未装 auth 插件时 auth.status 返回 auth-not-available；把 code 带进 message，
+    // 让 App 的「免登录直接进」判定（includes("auth-not-available")）命中。
+    if (err.code === "auth-not-available") throw new Error("auth-not-available");
     throw new Error(err.message || err.code);
   }
   return env.result.value;
