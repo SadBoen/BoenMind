@@ -1,142 +1,85 @@
-# BoenMind 交接文档（2026-08-21 批次）
+# BoenMind 交接文档（2026-08-21 前端重写批）
 
-给下一轮对话/协作的接手者。这是「全面回头看 + 连续多轮架构修复 + 前端展示层补齐 + 基础设施升级」之后的仓库状态快照。
+给下一轮对话/协作的接手者。**本轮任务：废弃当前前端，从零重写前端**。交接内容 = 做什么 + 唯一参考（`docs/frontend-redesign/DESIGN.md`）+ 怎么用已装的 design skills。
 
-## 一、仓库一句话
+---
 
-BoenMind = Rust 微内核（`kernel/` 只读 submodule `dsh-rust-core`）+ 产品层（`bm/`）+ 功能插件（`plugins/`）+ 自研前端（`frontend/`，React 19 + dockview + antd v6 prefixCls=bm）。分层纪律「依赖只许向下」由 `bm/assembly/tests/crate_boundaries.rs` 硬守卫（`cargo test --workspace` 即门禁）。
+## 一、仓库一句话（本轮只需知道的）
 
-核心插件（loop/llm/tools）只依赖 kernel-contracts + kernel-session + bm-ports——**不碰任何兄弟插件/功能插件**。这是多轮架构修复的核心成果。
+BoenMind = Rust 微内核 agent 平台。后端（Rust web-server，默认 `127.0.0.1:3080`）**同时服务静态前端（`frontend/dist`）与全部 API**。前端当前是 React 19 + antd v6 + dockview 的 SPA（在 `frontend/src/`），**本轮整体废弃重写**。前端重写**不依赖后端改动**——后端契约（`POST /api/<method>` RPC + WebSocket mux 帧）已冻结，照 `DESIGN.md` 对接即可。
 
-## 二、最近改动（都已推 origin/main）
+分层：`kernel/`（submodule 只读）→ `bm/ports`（契约）→ `plugins/` → `bm/assembly`（组合根）→ `bm/web-server|headless`（L0）→ `frontend/`（本轮重写对象）。
 
-| commit | 内容 |
+---
+
+## 二、要做的事（本轮主线）
+
+### 核心：从头重写前端，做到与当前前端功能等价（并预留扩展）
+
+- **废弃** `frontend/src/` 当前全部实现（React 19 + antd + dockview 那套），随你选技术栈、布局方案，**只遵守 `DESIGN.md` §1.1 硬约束**（后端契约相关）。
+- **窗口覆盖**（全要，见 DESIGN.md §4）：登录、会话列表、聊天（消息流/流式/工具卡/模型选择/目标卡片）、文件管理器（树/预览/编辑/上传/新建文件夹/右键）、设置（五分区 + 三档主题系统）、全局状态栏 + 审批弹窗。**编程/CodingApp 本轮不做**（§4.6）。
+- **后端契约不得改**：RPC 信封、WS 帧、goal CAS、workdir 事实源、auth 双态——全部按 DESIGN.md §2/§3。
+- **主题**：仅黑白/卡通/玻璃**三档**（明暗维度已删，勿引入新档），背景维度（默认/渐变/图片）与三档正交。见 DESIGN.md §4.4.1。
+- **推理**：技术栈、布局自由；桌面壳 Tauri 能力浏览器下必须优雅降级。
+
+### 参考（必读，唯一事实源）
+
+1. **`docs/frontend-redesign/DESIGN.md`**（381 行）——前端重写设计文档：总体约束/数据契约/页面交互规格/状态管理/已知坑/验收清单。**实现前端的第一手依据**。
+2. **后端契约源码**（字段/语义如文档未尽，直接查）：`bm/web-server/src/` 的 `rpc.rs`（信封）、`ws.rs`（帧）、`api/`（各 RPC handler）、`approval.rs`。
+3. 三档主题设计稿（背景灵感）：`docs/themes/{heibai,karton,boli}/DESIGN.md`（黑白/卡通/玻璃三档）。
+
+### 验收门禁（交付前必须过）
+
+见 DESIGN.md §7 验证清单。额外：`cargo build --workspace && cargo test --workspace -- --test-threads=1` 后端不改也应全绿（接口必须按 §2/§3 对齐）；`frontend` 侧 `tsc --noEmit` + `vite build` 通过。**看界面必须识图**（视觉核对，不只靠 DOM 文字猜）。
+
+---
+
+## 三、怎么用这波已装的 design skills（ZCode 已装 18 个）
+
+装到了 `~/.zcode/skills/`（ZCode 用户级 skill 目录，frontmatter 已校验）。做前端时按需激活（自然语言触发即可，也可用 `/` 命令 `Skill` 调）：
+
+### 设计向（本轮主力）
+| skill | 装了什么 | 什么时候用 |
+|---|---|---|
+| **ui-ux-pro-max** | 整套 7 个：`ui-ux-pro-max`（UI/UX 智能体，79 样式/192 调色板/119 UX 指南/74 字体配/105 图标）、`design`（品牌/设计令牌/UI 风格/Logo/横幅/图标）、`design-system`（**三层 token 架构**：primitive→semantic→component + CSS 变量 + 间距/字体刻度）、`ui-styling`（shadcn/ui + Tailwind）、`slides`、`brand`、`banner-design` | 设计系统搭建、token 体系、组件规范、调色板/字距/UX 指南查询。**做 BoenMind 三档主题 + 组件库时首选** |
+| **interface-design** | 单 skill | **看板/设置页/SaaS 工具/数据界面**——BoenMind 设置页、文件管理、审批弹窗这类产品界面定向 |
+| **impeccable** | 单 skill | 设计评审/打磨/audit：交付前把 UI 过一遍，找 bland/anti-pattern |
+| **frontend-design**（anthropics 官方） | 单 skill（理念散文） | 做视觉方向/避免模板感：给每个界面定独特审美，不做反面教材 |
+
+### 工程向（过程方法论，Superpowers 核心子集）
+| skill | 用途 |
 |---|---|
-| `42321c5` | docs(handoff)：苹果审批标识/设置页策略可视化划入已交付 |
-| `689f59f` | **feat(approval)：豁免持久化 + 会话列表打磨**——approvalTrust localStorage 持久化（跨刷新/重启保留，隐私模式降级内存态）；SessionList blank 会话标题带 cwd（「新会话 · work」区分多空白会话） |
-| `b7be5a2` | **feat(ui)：审批豁免管理面 + 启动恢复最近会话**——豁免表提升模块级 store（approvalTrust.ts，useSyncExternalStore）跨组件共享；设置页高级「本会话豁免」展示+清除；sessionStore 持久化最近会话 + 启动恢复（设置页「启动行为」开关） |
-| `1fb9fe5` | **style(ui)：UI 打磨**——占位控件禁用化（界面语言/启动/遥测「即将推出」）/思考档位标注开发中（后端未接线）/「在忙」→「生效时机」/重置布局描述如实/CSS 重复块 |
-| `3d8171c` | **feat(approval,compaction)：审批会话级豁免 + 压缩策略重置**——ApprovalModal「本会话信任该工具」（(sessionId,toolName) 豁免表 ref 承载，同名调用自动放行）；SettingsPage「重置为默认」（回写出厂默认值）；`_test.registerApproval` 补广播（仅 BM_TEST_HOOKS=1） |
-| `5e24ad0` | **feat(goal)：前端目标编辑**——展示态新增「编辑」入口，objective/自动续跑轮次可改（goal.edit，CAS ref 同 pause/resume/complete）；至少改一项才提交，未修改直接退出，取消还原表单；goal.clear 墓碑/切换会话时同步退出编辑态；已过 tsc/vite/cargo/gate1/真实 UI 全链路 |
-| `4826f6a` | **feat(ui)：审批弹窗危险标识 + 设置页工具审批策略可视化**——危险工具弹窗附红「危险」徽章；设置页高级「工具审批」子区块（危险/安全 Tag 列表只读展示） |
-| `e59c2ba` | docs(handoff)：危险工具白名单划入已交付 |
-| `5cbc11c` | **feat(approval)：危险工具白名单**——审批只拦真危险（host.run_command/code.*/web.fetch/goal.create+update/schedule.create），安全工具自动放行；`ToolRegistryPort.requires_approval` + 各插件 `DANGEROUS_TOOL_NAMES` + assembly mark |
-| `76cbff9` | docs(handoff)：goal 创建 UI 划入已交付 |
-| `8173def` | **feat(goal)：前端新建目标表单**——GoalCard 无目标态转创建态（objective + 自动续跑轮次 1-64 默认 8），创建走 goal.create → 投影回灌切展示态 |
-| `5834ad5` | docs(handoff)：compaction 设置表单划入已交付 |
-| `84463fd` | **feat(compaction)：上下文压缩升级为运行时可调**——`Runtime.compactor` 换 RwLock + SettingsBackedCompactor（每回合现读 settings）+ 设置页压缩表单 |
-| `7be0004` | docs(handoff)：前端展示层两项划入已交付 |
-| `bf326b7` | **feat(ui)：前端审批弹窗 + goal 目标卡片**——useMuxEvents 全局帧总线 + ApprovalModal + GoalCard + client.ts auth 修复 |
-| `a32fd87` … `1186329` | 四插件交付（code-runtime/审批回灌/web-tools/schedule）+ goal 自动续跑 M3.5 |
+| **test-driven-development** | 按 TDD 写前端测试 |
+| **systematic-debugging** | 系统性排查（不瞎试） |
+| **executing-plans** | 计划执行（`writing-plans` 未装——有 DESIGN.md 即计划，不需要另装） |
+| **requesting-code-review / receiving-code-review** | 交互相审 |
+| **verification-before-completion** | 完成前验证（对应"验收门禁"） |
+| **dispatching-parallel-agents** | 拆并行子任务（如重写时并行审模块） |
+| **brainstorming** | 设计方向头脑风暴 |
 
-## 三、当前架构分层（最终形态）
+> 注：superpowers 装的是**核心 8 个**（没装 `writing-skills`/`using-superpowers` 等元技能，也没装 `writing-plans`——计划由 DESIGN.md 充当）。
 
-```
-kernel-contracts (纯契约)              ← kernel/ submodule，只读不可改
-kernel-session / kernel-storage
-kernel-supervisor                     ← 死代码（无引用；M3 才接）
-bm/ports                              ← 产品级契约层：Compactor / ToolRegistryPort / ToolGatePort / ToolRegistrarPort / ToolApprovalPort / WorkdirPort / SchedulePort / GoalPort
-plugins/plugin-llm loop tools auth compactor host-tools code-runtime web-tools goal schedule
-bm/assembly                           ← 组合根（唯一装配点）
-bm/web-server / bm/headless / bm/quickjs-bridge   ← L0
-frontend/                             ← React 19 + dockview + antd v6
-```
+### 触发方式
+- 你说"用 ui-ux-pro-max 设计系统"、"按 impeccable 评审"等，我（下轮对话的 ZCode）会匹配 skill 并加载其说明执行。装好的技能不占用当前上下文，触发才注入。
 
-**核心插件只依赖 kernel-contracts + kernel-session + bm-ports**——编译期不碰兄弟插件/功能插件。
-**插件间零依赖（集合：工具注册面已端口化）**——所有插件（核心/功能）的 `register_all` 收 `&dyn bm_ports::ToolRegistrarPort`（`plugin-tools::ToolRegistry` 实现之，组合根注入），不再编译期依赖 `plugin-tools` 具体类型。
+---
 
-## 四、关键设计决策（勿推翻，除非有强理由）
+## 四、本轮边界 / 已知坑（对照 DESIGN.md §6）
 
-1. **所有产品级策略端口统一放 bm-ports**（Compactor/ToolRegistryPort/ToolGatePort/ToolApprovalPort/WorkdirPort/SchedulePort/GoalPort）。kernel/ 只读塞不进契约。核心插件新增端口一律放这里（只依赖 kernel-contracts + 无实现）。**2026-08-21 插件间零依赖收紧后并入 `ToolRegistrarPort`**（工具注册面端口，见 9）。
-9. **插件间零依赖（2026-08-21 回头看新增）**：原功能插件 `register_all(registry: &plugin_tools::ToolRegistry)` 编译期依赖核心插件 plugin-tools 具体类型，违反纪律——故在 bm-ports 新增**工具注册面端口 `ToolRegistrarPort`**（register / get / mark_dangerous），`plugin-tools::ToolRegistry` 实现之（`impl ToolRegistrarPort for ToolRegistry`，复用其 `register`），组合根把注册表以 `&dyn ToolRegistrarPort` 注入各插件 `register_all`。**守卫规则 3 同步收紧**（crate_boundaries.rs）：插件之间零依赖——核心插件不得依赖功能插件；**功能插件不得依赖任何 plugin-**（含核心实现）。装配面一律经端口注入，编译期无插件↔插件边。
-10. **审批帧带发起会话 id**：`ToolApprovalPort.request_approval` 新增 `session_id: &str` 参数（plugin-loop 传 `self.session.id()`），web-server ApprovalRouter 写入 approval/requested 帧——供前端豁免表按 (sessionId, toolName) 区分会话、设置页管理面按会话展示。头less / JS 桥无双端审批面，经 loop 同一路径。（此前断言"审批帧不带会话上下文"的端到端武器化留白已收回）
-11. **code-runtime `out` 参数走 workdir 作用域**：`out` 同 `file` 一道经 `host_fs::resolve_in_workdir` 校验（拒绝绝对路径 / `..` / 逃逸 / symlink 前缀），解析后落 workdir 内绝对路径再转相对源目录传给 `-o`（编译器 cwd = 源目录）。回归测试 `compile_out_escape_rejected`。
-12. **web-tools SSRF 防线补全 IANA 保留段**：`is_public_ipv4` 拒绝 CGNAT 100.64/10、benchmark 198.18/15、TEST-NET 192.0.2/24 + 198.51.100/24 + 203.0.113/24、6to4 anycast 192.88.99/24、192.0.0.0/24 保留段。回归测试补全（F4）。
-2. **bm-assembly re-export（MockTurn/DEFAULT_PASSWORD/DefaultCompactor/scripted_llm）是守卫强制的 L0 出口**，L0 只依赖 bm-assembly，装配参数必须经组合根 re-export。**别砍**。
-3. **auth 双持久化是有意的 bounded context**（auth.json/sessions.jsonl 自管，不经 kernel-storage）。**不要**迁进 sqlite 事件表。
-4. **事件日志 = 唯一事实源**；上下文压缩是运行态视图变换（不改日志）。model-visible-means-logged / logged-means-persisted 是 loop 铁律。
-5. **守卫规则 3**：核心插件禁依赖功能插件；功能插件互不依赖。新增插件先登记 crate_boundaries.rs。
-6. **危险工具白名单**：审批只拦 `DANGEROUS_TOOL_NAMES` 声明的工具（插件常量 + assembly mark_dangerous），安全工具自动放行。危险度**不塞** kernel submodule 的 ToolSchema（规避改外部仓+升 gitlink）——以插件并行名单 + `ToolRegistryPort.requires_approval` 查询方法承载，模型侧 schema 输出不受影响。
-7. **settings-backed 端口模式**（三件套）：L0（web-server）提供 settings-backed 端口实现（内部 Arc<AppState> 现场锁读 settings）→ 经 bm-assembly 组合根装配 → 核心插件零改动。`SettingsWorkdir`（host.workdir）/`SettingsBackedCompactor`（compaction）已验证此模式。**web-server 装配 settings 类策略端口一律走此三件套，守卫规则 3 兼容**。
-8. **compaction 语义升级**：config.toml `[compaction]` 段降为**启动种子**（`--compact` 装配时种进 settings.compaction），settings.compaction 记录优先（重启保留）。`enabled=false` 否决权保留。设置页高级分区可调，下一回合生效。
+- **RPC 信封 method 必须逐字**匹配 path；审批应答 key = 外层 rpcId（不是 approvalId）。
+- **projection seq 去重**：快照不带 seq，增量 `seq>水位` 才收。
+- **session.list updatedAt 是假值**（恒 1970）——别用它排序。
+- **session.prompt 异步非流式**：HTTP 立返 `{accepted}`，消息全靠 WS `session/event` 增量。
+- **文件面**：workdir 未配置时文件窗口提示去设置；读文件失败转"仅下载"；上传 409/413 有文案。
+- **Markdown**：文件预览必须 sanitize，聊天消息不做（现状）。
+- **Tauri 能力**：浏览器下优雅降级（隐藏/空操作），不能崩。
+- **本地持久化键**（沿用不换名，用户在数据在）：`bm_session_token/bm_recentSession/bm_autoRestore/bm_preset/bm_background/bm_accent/bm_fontsize/bm_glass_opacity/bm_approvalTrust/bm_seen_version`。
 
-## 五、交付记录（2026-08-21 批次全清单）
+---
 
-### 2026-08-21 四插件交付批（已推 main）
-- ✅ **plugin-code-runtime**：code.compile/python/shell，workdir 作用域 + 30s 超时 kill + 输出钱包 512KB/流。`--code-runtime`
-- ✅ **工具审批回灌**：bm-ports ToolApprovalPort + plugin-loop 执行前暂停点（Rejected → is_error 回写）+ web-server ApprovalRouter（PendingRegistry + oneshot 等待表 + respond 回拨）。`--approval`
-- ✅ **plugin-web-tools**：web.fetch/web.search（SSRF 防线 + 输出钱包）。`--web-tools`
-- ✅ **plugin-schedule**：schedule.create/list/cancel；SchedulePort + Scheduler（1s tick 后台驱动）。`--schedule`
-- ✅ **goal 自动续跑 M3.5**：plugin-goal（goal.get/create/update）+ GoalRouter + GoalDriver（回合完成点续跑）。`--goal`
+## 五、本轮状态（写交接时）
 
-### 前端展示层批
-- ✅ **useMuxEvents 全局帧总线**（frontend/src/hooks/useMuxEvents.ts）：单例 WS，聚合 approval/requested、approval/resolved、session/projection。**handler 收完整帧（含外层 rpcId）**——审批应答必须回显帧 rpcId（曾因只传 payload 丢 rpcId 导致 respond 恒 bad-response，见坑 10）
-- ✅ **审批弹窗 ApprovalModal**：POST /api/respond（allowed-once/rejected），多帧排队、resolved 自动关闭、应答必达
-- ✅ **goal 卡片 GoalCard**：快照（session.history projections）+ 增量（session/projection，higher-seq-wins）合并展示；pause/resume/complete 走 goal RPC（CAS ref）；刷新后快照恢复
-- ✅ **goal 新建表单**：GoalCard 无目标态「🎯 新建目标」→ objective + 轮次 → goal.create → 投影回灌切展示态
-- ✅ **goal 编辑表单**：GoalCard 展示态「编辑」→ objective + 轮次预填 → goal.edit（CAS ref 同 pause/resume/complete，至少改一项才提交；未修改直接退出，取消还原表单）→ 投影回灌切展示态；goal.clear 墓碑/切换会话时同步退出编辑态
-- ✅ **client.ts auth 修复**：auth-not-available 直接抛 code（原来被 err.message 吞，未开 --auth 时前端永久卡「载入中…」）
-
-### 基础设施/策略批
-- ✅ **compaction 运行时可调**：见决策 8。设置页高级分区表单（启用/水线/尾部比例/下限/中部下限）
-- ✅ **危险工具白名单**：见决策 6。默认危险 = host.run_command / code.* 全 / web.fetch / goal.create+update / schedule.create；安全放行 = list_dir/read_file/write_file/goal.get/web.search/schedule.list+cancel
-- ✅ **审批弹窗危险徽章 + 设置页工具审批子区块**：前端 DANGEROUS_TOOLS 集合与后端名单对齐，纯展示
-- ✅ **审批会话级豁免**：ApprovalModal「本会话信任该工具」→ allowed-once 应答当前调用 + 记入 (sessionId, toolName) 豁免表（ref 承载）；同会话同名工具后续请求自动放行不弹窗；弹窗底部显示「本会话已信任 N 个工具」；纯前端豁免层（后端契约零改动），页面刷新豁免失效（内存态）
-- ✅ **豁免管理面**：豁免表提升为模块级 store（`hooks/approvalTrust.ts`，useSyncExternalStore）；设置页高级·工具审批「本会话豁免」子区块展示 sessionId+已信任工具 + 「清除豁免」按钮（跨组件共享）
-- ✅ **豁免持久化**：approvalTrust 持久化到 localStorage（`bm.approvalTrust`）——跨刷新/重启保留；localStorage 不可用（隐私模式）降级内存态不阻断；设置页豁免区描述如实
-- ✅ **启动恢复最近会话**：sessionStore 持久化最近会话 id 到 localStorage；启动经 session.list 校验后自动选中；设置页「启动行为」开关（默认开）；此前该开关是禁用占位——现为真实功能
-- ✅ **compaction 重置为默认**：SettingsPage 压缩表单「重置为默认」→ 回写 settings.compaction 出厂默认值（enabled/watermark/keepRecentRatio/keepRecentFloor/minMiddleTokens）+ 表单同步；`_test.registerApproval` 钩子补 broadcast（仅 BM_TEST_HOOKS=1，豁免全链路验收用）
-
-## 六、验证闭环（每次提交前过一遍）
-
-```bash
-cargo build --workspace                        # 0 error
-cargo test --workspace -- --test-threads=1     # 串行（已知坑：并行测试竞态）
-cargo clippy --workspace --all-targets         # 零警告（除 rquickjs future-incompat）
-cd frontend && npx tsc --noEmit && npx vite build
-bash scripts/verify-gate1.sh                   # headless 全链路 + kill-9 恢复
-```
-
-### 2026-08-21 插件间零依赖 + 三项安全加固批（本次收口）
-
-- ✅ **`ToolRegistrarPort` 注册面端口**（bm-ports 新增 trait：register/get/mark_dangerous）——`plugin-tools::ToolRegistry` 实现之，组合根把注册表以 `&dyn ToolRegistrarPort` 注入所有插件 `register_all`；**六插件全部**（host-tools/code-runtime/web-tools/schedule/goal）去掉 `plugin-tools` 编译期依赖（Cargo.toml 移除、Cargo.lock 同步）
-- ✅ **守卫规则 3 收紧为插件间零依赖**（crate_boundaries.rs）：功能插件禁依赖任何 plugin-（含核心实现）；核心插件仍允许 loop→tools 领域内聚，且一律经 bm-ports 端口交互
-- ✅ **审批会话上下文**：`ToolApprovalPort.request_approval` 新增 `session_id` 参数 → 前端豁免表/设置页管理面按会话区分；**决策 10**（收回此前"审批帧不带会话"留白）
-- ✅ **code-runtime out 逃逸修复**（P3 回归）：`out` 走 workdir 作用域 `resolve_in_workdir`，相对源目录传 `-o`；新增单测 `compile_out_escape_rejected`
-- ✅ **web-tools SSRF 补全 IANA 保留段**（F4 回归）：CGNAT/benchmark/TEST-NET×3/6to4/192.0.0.0/24；新增单测
-- ✅ **GoalDriver 续跑竞态收口**（F6 回归）：`continuing` 标志作为唯一排他门（检查+置位在最前原子完成，无 await 间隙），condemned 时统一释放；不 double-consume 额度、不双 spawn
-- 验证：`cargo build --workspace` 0 error；`cargo test --workspace -- --test-threads=1` 全绿；`cargo clippy --workspace --all-targets`（待跑）
-
-## 七、剩余待办/候选
-
-### 待办（非 repair，产品演进）
-- **unwrap/expect 全面清理**（unwrap_used/expect_used lints 留 allow）：TODO: unwrap-polish。**评估结论（2026-08-21）：建议维持现状**——550+ unwrap 绝大多数是 pthread 锁惯例、必成功构造、测试断言；全量改造噪音大、无功能收益、有回归风险。若做：先启用 lints 再用 `cargo fix` 分批，锁定非测试代码。
-- **compaction 深度**：config 段种子已实现「重启保留」；设置页可加「重置为默认」按钮（settings.clear 语义）。✅ 2026-08-21 已交付
-
-### 候选（下轮）
-- **审批体验深化**：~~「本会话信任此工具」/「记住上次选择」类记忆~~ ✅ 2026-08-21 已交付（会话级豁免 + 设置页管理面/清除 + **localStorage 持久化跨重启**）；残余：豁免是前端本地存储，无双端管理（换浏览器/清缓存即失）
-- **goal 编辑**：~~改 objective/额度（现只有 pause/resume/complete，无 edit UI；RPC goal.edit 已存在）~~ ✅ 2026-08-21 前端 GoalCard 已实现（见交付记录）
-- **前端新视图/打磨**：设置页无缝体验、文件管理器深度集成、CodingApp 落地（当前占位）
-- **settings 页 app文档**：设置项 applies 恒 "restart" 元字段未真正区分；可将 compaction/workdir 类的"下一请求生效"语义显式化
-
-### 已知坑（别重踩）
-1. **并行测试竞态**：`WORKDIR_SOURCE`/`SCHEDULE_SOURCE` 全局源跨 test 文件共享，**串行全绿、并行 flaky**。CI 用 `--test-threads=1`。
-2. **api.rs 手工按行号切块极易错位**。固定套路：grep -n 精确函数边界 → sed 按函数名提取 → 加 pub(super) → 删原块 → 补 mod/use。删除前确认函数完整闭合。
-3. **子模块 `use super::xxx` 访问主文件私有项**；主文件 `mod xx; use xx::*;` 只能导入 pub(super)/pub。跨模块导出用 pub。
-4. **`Arc<具体类型>` 不能隐式给 `Arc<dyn Trait>`**——显式 `as Arc<dyn ...>` 或 let 处标注类型。
-5. **trait object 需要 async_trait**（async fn 进 trait 不能做 dyn）；实现端同样要宏。
-6. **`pub use` re-export 要求目标本身 pub**（非 pub(super)）。
-7. **改 Cargo.toml 后 Cargo.lock 会变**，提交一起带。
-8. **web-server.exe 被运行进程锁死**——`cargo build` 前先停 3080/3099 进程（`netstat -ano | grep :3080` 拿 PID → taskkill）。
-9. **Git Bash 中文提交信息显示乱码是终端假象**——git 存 UTF-8 正确，`git log` 看正常。
-10. **审批 rpcId 丢失劫**：approval/requested 帧的应答 key 是**外层信封 rpcId**（非 payload 内 approvalId）。前端总线只传 payload 会丢 rpcId → respond 恒 bad-response（曾定位半天）。useMuxEvent handler 必须收完整帧。
-11. **session.list updatedAt 是假值**（恒 1970-01-01）：真实 updated_at 在 kernel-storage 的 sessions 表，但 `SessionPersistPort.list_sessions` 只返回 id（改契约需动 kernel/ submodule，不可行）。**当前无用户可见影响**——list_sessions 已按 updated_at 降序返回正确顺序，前端 SessionList 只用顺序不用该字段。若未来要真实时间：在 bm-ports 加扩展端口读 updated_at（`kernel/` 只读不动）。
-
-## 八、环境/备忘
-
-- 工作区根 `D:\96_CoderWorld\BoenMind`，branch `main`，remote `origin`（BoenMind.git）/`dsh-origin`（boenmind-dsh.git 另仓，勿混推）。
-- `kernel/` git submodule（heads/main 在 95ab2659），只读不改。
-- 前端联调：生产 `frontend/dist` 由 web-server 静态服务（默认 3080）；dev 用 vite（5173，代理 3080）。
-- 浏览器验证：会话内浏览器标签持续存活；定位器在 React 重渲染下易超时——危险弹窗等交互用坐标点击（evaluate 读 rect → tab.cua.click）最稳。**看界面必须识图**（Minimax/M3 视觉模型），不许只靠 DOM 文字猜。
-- 记忆库 `C:\Users\Boen\.zcode\cli\memories\projects\boenmind-...\memory/`：project-frontend-approval-goal / project-compaction-settings / project-dangerous-tool-whitelist / project-handoff 等。
-- Grok 独立评审全文存档 `.review/grok/grok-review.md`（已 gitignore）。
+- ✅ DESIGN.md 已定稿（技术栈不限定/只描述窗口/三档/无 CodingApp）
+- ✅ 5 个 skill 包共 18 个 skill 已装到 `~/.zcode/skills/` 并校验 frontmatter
+- ⬜ 前端重写尚未开始（等下一轮对话执行）
+- ⬜ DESIGN.md 本身未 commit（在工作区未跟踪），建议提交后再开始开发
