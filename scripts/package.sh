@@ -84,10 +84,11 @@ if [[ "$MODE" == "--all" || "$MODE" == "--linux" ]]; then
     cp "$LINUX_BIN" "$LINUX_STAGE/web-server"
     cp -r frontend/dist/. "$LINUX_STAGE/dist/"
     cp packaging/linux/install.sh "$LINUX_STAGE/install.sh"
+    cp packaging/linux/uninstall.sh "$LINUX_STAGE/uninstall.sh"
     cp packaging/linux/boenmind.service "$LINUX_STAGE/boenmind.service"
     cp packaging/linux/README.md "$LINUX_STAGE/README.md"
     sed -i "s/__VERSION__/${VER}/" "$LINUX_STAGE/install.sh"
-    chmod +x "$LINUX_STAGE/install.sh"
+    chmod +x "$LINUX_STAGE/install.sh" "$LINUX_STAGE/uninstall.sh"
     (cd "$OUT" && tar czf "boenmind-server_${VER}_linux-x86_64.tar.gz" "boenmind-server_${VER}_linux-x86_64")
     rm -rf "$LINUX_STAGE"
     echo "   ✅ $OUT/boenmind-server_${VER}_linux-x86_64.tar.gz"

@@ -11,14 +11,23 @@ User=boenmind
 Group=boenmind
 # 前端静态资源目录：web-server --dist 指向打包内的 dist/
 Environment=BOENMIND_DIST=/var/lib/boenmind/dist
-# 监听所有网卡，局域网内浏览器直接访问 http://服务器IP:17321
-ExecStart=/usr/local/bin/web-server --db /var/lib/boenmind/boenmind.db --dist /var/lib/boenmind/dist --port 17321 --bind 0.0.0.0
+# 默认监听所有网卡（内网浏览器直接访问 http://服务器IP:17321）。
+# 对外开放请改为 --bind 127.0.0.1 并经 nginx/caddy 反代：systemctl edit boenmind
+ExecStart=/usr/local/bin/boenmind --db /var/lib/boenmind/boenmind.db --dist /var/lib/boenmind/dist --port 17321 --bind 0.0.0.0
 Restart=always
 RestartSec=3
 # 安全加固
 NoNewPrivileges=true
+PrivateTmp=true
 ProtectSystem=full
 ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+SystemCallArchitectures=native
 
 [Install]
 WantedBy=multi-user.target
