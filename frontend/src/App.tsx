@@ -17,6 +17,7 @@ import HeaderActions from "./components/HeaderActions";
 import StatusBar from "./components/StatusBar";
 import ApprovalModal from "./components/ApprovalModal";
 import { AuthRequiredError, getToken, rpc, setToken } from "./client";
+import { restoreRecentSession } from "./sessionStore";
 import { applyPresetChange, getAccent, getPresetId, PRESETS, setPresetId, useThemeSync, type PresetId } from "./theme";
 
 export type AppView = "chat" | "coding" | "settings";
@@ -41,6 +42,11 @@ export default function App() {
         else if ((e as Error).message?.includes("auth-not-available")) setAuthed(true);
         else setAuthed(null);
       }
+      // 自动恢复最近会话（刷新/重开继承上次会话；startup 校验 id 仍存在才选中）。
+      try {
+        const list = await rpc<{ items: { sessionId: string }[] }>("session.list", {});
+        await restoreRecentSession(list.items ?? []);
+      } catch { /* 无会话/后端不可达时忽略 */ }
     })();
   }, []);
 

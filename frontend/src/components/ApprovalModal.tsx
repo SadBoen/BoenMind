@@ -2,9 +2,10 @@
 // POST /api/respond（回显帧的 rpcId + approvalId + outcome）。后端随帧带 callId 时
 // 展示工具参数摘要，便于用户判断。超时由后端兜底（APPROVAL_TIMEOUT=600s → 拒绝）。
 
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { Button, Modal, notification } from "antd";
 import { ApprovalRequested, ApprovalResolved, MuxFrame, useMuxEvent } from "../hooks/useMuxEvents";
+import { isTrusted, trustTool as storeTrustTool, useApprovalTrust } from "../hooks/approvalTrust";
 
 interface PendingApproval extends ApprovalRequested {
   ts: number;
@@ -25,15 +26,10 @@ const DANGEROUS_TOOLS = new Set([
 export default function ApprovalModal() {
   const [pending, setPending] = useState<PendingApproval[]>([]);
   const [busy, setBusy] = useState(false);
-  // 会话级豁免：「本会话信任此工具」后，同 sessionId + toolName 的后续请求自动放行
-  // （allowed-once 语义；纯前端豁免层不消耗后端契约）。用 ref 承载豁免表，
-  // 事件 handler 总是读到最新值（不受渲染闭包时序影响）。
-  const trustedRef = useRef<Record<string, string[]>>({});
-  const [trustedKeys, setTrustedKeys] = useState<Record<string, string[]>>({}); // 仅驱动按钮态/展示
+  // 会话级豁免（模块级 store，见 approvalTrust.ts）：命中 (sessionId, toolName) →
+  // 自动放行不弹窗；设置页管理面可查看/清除。
+  const trusted = useApprovalTrust();
   const [trustBusy, setTrustBusy] = useState(false);
-
-  const isTrusted = (sessionId: string, toolName: string) =>
-    (trustedRef.current[sessionId] ?? []).includes(toolName);
 
   // 核心应答：POST /api/respond（回显帧 rpcId + approvalId + outcome）。
   const respond = async (item: PendingApproval, outcome: "allowed-once" | "rejected") => {
@@ -69,13 +65,9 @@ export default function ApprovalModal() {
   };
 
   // 「本会话信任该工具」：允许本次 + 把 (sessionId, toolName) 记入豁免表（后续自动放行）。
-  const trustTool = async (item: PendingApproval) => {
+  const trustToolAction = async (item: PendingApproval) => {
     setTrustBusy(true);
-    trustedRef.current = {
-      ...trustedRef.current,
-      [item.sessionId]: [...(trustedRef.current[item.sessionId] ?? []), item.toolName],
-    };
-    setTrustedKeys(trustedRef.current);
+    storeTrustTool(item.sessionId, item.toolName);
     await respond(item, "allowed-once");
   };
 
@@ -119,9 +111,9 @@ export default function ApprovalModal() {
           {pending.length > 1 && (
             <div className="approval-queue">另有 {pending.length - 1} 个待审批</div>
           )}
-          {(trustedKeys[current.sessionId] ?? []).length > 0 && (
+          {(trusted[current.sessionId] ?? []).length > 0 && (
             <div className="approval-trusted">
-              本会话已信任 {(trustedKeys[current.sessionId] ?? []).length} 个工具（同名调用自动放行）
+              本会话已信任 {(trusted[current.sessionId] ?? []).length} 个工具（同名调用自动放行）
             </div>
           )}
           <div className="approval-actions">
@@ -129,7 +121,7 @@ export default function ApprovalModal() {
               拒绝
             </Button>
             <Button
-              onClick={() => trustTool(current)}
+              onClick={() => trustToolAction(current)}
               loading={trustBusy}
               disabled={busy}
             >

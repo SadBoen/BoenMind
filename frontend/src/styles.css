@@ -422,6 +422,14 @@ body {
   font-size: 12px; color: var(--bm-accent);
   background: var(--bm-accent-soft); border-radius: 6px; padding: 6px 8px;
 }
+/* 设置页审批豁免管理区 */
+.approval-trust-list { display: flex; flex-direction: column; gap: 6px; }
+.approval-trust-entry {
+  display: flex; flex-direction: column; gap: 2px;
+  font-size: 12px; color: var(--bm-fg-dim);
+}
+.approval-trust-sid { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; color: var(--bm-fg); }
+.approval-trust-tools { word-break: break-all; }
 .approval-modal .approval-actions {
   display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px;
 }

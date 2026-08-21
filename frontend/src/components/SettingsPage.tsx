@@ -30,6 +30,8 @@ import {
   UserOutlined,
 } from "@ant-design/icons";
 import { rpc } from "../client";
+import { clearTrusted as clearAllTrusted, useApprovalTrust } from "../hooks/approvalTrust";
+import { getAutoRestore, setAutoRestore } from "../sessionStore";
 import {
   BackgroundValue,
   BACKGROUNDS,
@@ -114,6 +116,16 @@ export default function SettingsPage({ onClose, preset, onPresetChange }: Props)
   // 工作目录（通用区）
   const [workdir, setWorkdirState] = useState("");
   const [workdirSet, setWorkdirSet] = useState(false);
+  // 启动恢复上次会话（通用区；localStorage）
+  const [autoRestore, setAutoRestoreState] = useState(getAutoRestore());
+
+  // 审批豁免表（只读展示 + 清除入口；见 approvalTrust.ts）
+  const approvalTrust = useApprovalTrust();
+  const approvalTrustEntries = Object.entries(approvalTrust).filter(([, tools]) => tools.length > 0);
+  const clearAllTrust = () => {
+    clearAllTrusted();
+    message.success("已清除全部审批豁免");
+  };
 
   // 上下文压缩（高级区；settings.compaction ns，settings-backed 每回合现读）
   const [compactEnabled, setCompactEnabled] = useState(true);
@@ -436,8 +448,11 @@ export default function SettingsPage({ onClose, preset, onPresetChange }: Props)
                 ]}
               />
             </SettingRow>
-            <SettingRow label="启动行为" desc="启动时自动恢复上次会话（即将推出）">
-              <Switch defaultChecked disabled />
+            <SettingRow label="启动行为" desc="启动/刷新时自动恢复上次会话">
+              <Switch
+                checked={autoRestore}
+                onChange={(v) => { setAutoRestore(v); setAutoRestoreState(v); message.success(v ? "已开启：启动恢复上次会话" : "已关闭：启动不恢复会话"); }}
+              />
             </SettingRow>
             <SettingRow label="遥测" desc="匿名使用统计（即将推出）">
               <Switch disabled />
@@ -745,6 +760,28 @@ export default function SettingsPage({ onClose, preset, onPresetChange }: Props)
                 desc="只读/沙箱内操作不弹窗；list_dir / read_file / goal.get / web.search 等"
               >
                 <span className="settings-static">host.list_dir · host.read_file · host.write_file · goal.get · web.search · schedule.list · schedule.cancel</span>
+              </SettingRow>
+              <SettingRow
+                label="本会话豁免"
+                desc="「本会话信任该工具」后，同会话同名工具调用自动放行（刷新页面失效）"
+              >
+                <div className="approval-trust-list">
+                  {approvalTrustEntries.length === 0 ? (
+                    <span className="settings-static">暂无豁免</span>
+                  ) : (
+                    approvalTrustEntries.map(([sid, tools]) => (
+                      <div key={sid} className="approval-trust-entry">
+                        <span className="approval-trust-sid">{sid}</span>
+                        <span className="approval-trust-tools">{tools.join(" · ")}</span>
+                      </div>
+                    ))
+                  )}
+                  {approvalTrustEntries.length > 0 && (
+                    <Button size="small" onClick={clearAllTrust} style={{ marginTop: 8 }}>
+                      清除豁免
+                    </Button>
+                  )}
+                </div>
               </SettingRow>
             </div>
             <SettingRow label="重置布局" desc="dockview 布局刷新后回到默认两栏（聊天+文件）">
