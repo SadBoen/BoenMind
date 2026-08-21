@@ -13,6 +13,7 @@ BoenMind = Rust 微内核（`kernel/` 只读 submodule `dsh-rust-core`）+ 产�
 | commit | 内容 |
 |---|---|
 | `42321c5` | docs(handoff)：苹果审批标识/设置页策略可视化划入已交付 |
+| `1fb9fe5` | **style(ui)：UI 打磨**——占位控件禁用化（界面语言/启动/遥测「即将推出」）/思考档位标注开发中（后端未接线）/「在忙」→「生效时机」/重置布局描述如实/CSS 重复块 |
 | `3d8171c` | **feat(approval,compaction)：审批会话级豁免 + 压缩策略重置**——ApprovalModal「本会话信任该工具」（(sessionId,toolName) 豁免表 ref 承载，同名调用自动放行）；SettingsPage「重置为默认」（回写出厂默认值）；`_test.registerApproval` 补广播（仅 BM_TEST_HOOKS=1） |
 | `5e24ad0` | **feat(goal)：前端目标编辑**——展示态新增「编辑」入口，objective/自动续跑轮次可改（goal.edit，CAS ref 同 pause/resume/complete）；至少改一项才提交，未修改直接退出，取消还原表单；goal.clear 墓碑/切换会话时同步退出编辑态；已过 tsc/vite/cargo/gate1/真实 UI 全链路 |
 | `4826f6a` | **feat(ui)：审批弹窗危险标识 + 设置页工具审批策略可视化**——危险工具弹窗附红「危险」徽章；设置页高级「工具审批」子区块（危险/安全 Tag 列表只读展示） |
