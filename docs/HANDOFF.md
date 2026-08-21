@@ -65,6 +65,7 @@ frontend/                             ← React 19 + dockview + theme 四档
 - ✅ **前端审批弹窗已交付**（bf326b7）：useMuxEvents 全局帧总线 + ApprovalModal（approved/rejected → POST /api/respond 回显 rpcId）。真实工具链验证：MiniMax-M3 下 25+ 次工具调用全链路稳定（弹窗/批准/执行/回填）
 - ✅ **前端 goal 卡片已交付**（bf326b7）：GoalCard 展示 phase 徽章/轮次进度/objective，pause/resume/complete 走 goal RPC；快照 + 投影增量合并
 - ✅ **前端 goal 创建 UI 已交付**（8173def）：GoalCard 无目标态显「🎯 新建目标」表单（objective + 自动续跑轮次 1-64 默认 8），创建走 goal.create → 投影回灌切展示态；刷新后快照恢复
+- ✅ **危险工具白名单已交付**（5cbc11c）：审批只拦真危险工具（host.run_command/code.*/web.fetch/goal.create+update/schedule.create），安全工具（list_dir/read_file/goal.get/web.search 等）自动放行。`ToolRegistryPort.requires_approval` + 各插件 `DANGEROUS_TOOL_NAMES` + assembly mark。e2e：list_dir 无弹窗直接执行、run_command 逐个弹窗
 - **unwrap/expect 全面清理**（unwrap_used/expect_used lints 留 allow 待做）：独立任务（TODO: unwrap-polish）
 - **已知坑：并行测试竞态**——`WORKDIR_SOURCE`/`SCHEDULE_SOURCE` 全局源跨 test 文件共享，全仓并行时 host_tools 测试 flaky；**串行 `cargo test --workspace -- --test-threads=1` 全绿**。CI 建议串行
 
