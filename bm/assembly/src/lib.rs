@@ -323,6 +323,20 @@ impl Runtime {
         }
     }
 
+    /// 装配目标管理工具插件（功能）：注入 [`GoalPort`] 实现（web-server GoalRouter）
+    /// 到 plugin-goal 全局源 + 注册 goal.get/create/update 工具并全部 enable。
+    /// goal-round-driver（同会话续跑）在 web-server 回合完成点独立装配。
+    /// 未装配 = goal 工具不可用（诚实失败）。可重复调用（幂等）。
+    pub fn install_goal(&self, gp: Arc<dyn bm_ports::GoalPort>) {
+        plugin_goal::set_goal_source(gp);
+        if let Err(e) = plugin_goal::register_all(&self.tools) {
+            tracing::warn!("goal tools registration skipped: {e}");
+        }
+        for name in plugin_goal::ALL_TOOL_NAMES {
+            self.gate.enable(name);
+        }
+    }
+
     /// 装配工具审批端口（功能面，`&self` 装配——AppState 已在 Arc 中时仍可调用）：
     /// 把 [`ToolApprovalPort`] 实现接进运行时——新会话/恢复会话的 loop 在危险工具
     /// 调用执行前暂停、经端口推前端审批弹窗、等用户裁定（Allowed 执行 /

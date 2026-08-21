@@ -1,0 +1,20 @@
+[package]
+name = "plugin-goal"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "目标管理工具插件（功能）：goal.get/create/update——模型侧目标控制，goal-round-driver 同会话续跑"
+
+[dependencies]
+kernel-contracts = { path = "../../kernel/kernel-contracts" }
+bm-ports = { path = "../../bm/ports" }
+plugin-tools = { path = "../plugin-tools" }
+serde_json.workspace = true
+async-trait.workspace = true
+
+[dev-dependencies]
+uuid.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }
+
+[lints]
+workspace = true

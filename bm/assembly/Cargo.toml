@@ -17,6 +17,7 @@ plugin-host-tools = { path = "../../plugins/plugin-host-tools" }
 plugin-code-runtime = { path = "../../plugins/plugin-code-runtime" }
 plugin-web-tools = { path = "../../plugins/plugin-web-tools" }
 plugin-schedule = { path = "../../plugins/plugin-schedule" }
+plugin-goal = { path = "../../plugins/plugin-goal" }
 plugin-auth = { path = "../../plugins/plugin-auth" }
 plugin-compactor = { path = "../../plugins/plugin-compactor" }
 quickjs-bridge = { path = "../quickjs-bridge" }

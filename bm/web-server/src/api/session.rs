@@ -453,6 +453,13 @@ pub(super) async fn session_prompt(state: &Arc<AppState>, payload: Value) -> Val
         if let Some(h) = state2.sessions.lock().unwrap().get_mut(&sid) {
             h.running = false;
         }
+        // goal-round-driver：回合完成后，若该 session 有 active + 有额度目标，
+        // 注入 <goal_round> 续跑下一轮（自动续跑到目标完成/暂停/额度耗尽）。
+        // 从 Mutex clone 出 Arc（不跨 await 持 guard）。
+        let driver = state2.goal_driver.lock().unwrap().clone();
+        if let Some(driver) = driver {
+            let _ = driver.maybe_continue(&sid).await;
+        }
         state2.broadcast_host(
             "host/session-status",
             json!({ "sessionId": sid, "running": false }),

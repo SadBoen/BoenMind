@@ -39,3 +39,9 @@ pub use approval::{ApprovalVerdict, ToolApprovalPort, APPROVAL_TIMEOUT};
 pub mod schedule;
 
 pub use schedule::{SchedulePort, ScheduleSpec, ScheduleTrigger, ScheduleView};
+
+/// 目标管理契约（工具消费面）：get/create/update 三动词，web-server 现有
+/// goal RPC 状态机语义；goal-round-driver 同会话续跑在回合完成点。
+pub mod goal;
+
+pub use goal::{GoalAction, GoalPort, GoalView};

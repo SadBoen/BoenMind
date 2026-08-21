@@ -109,6 +109,7 @@ fn main() {
     let mut approval_enabled = false;
     let mut web_tools_enabled = false;
     let mut schedule_enabled = false;
+    let mut goal_enabled = false;
 
     let mut i = 1;
     while i < args.len() {
@@ -179,9 +180,12 @@ fn main() {
             "--schedule" => {
                 schedule_enabled = true;
             }
+            "--goal" => {
+                goal_enabled = true;
+            }
             "--help" | "-h" => {
                 println!(
-                    "usage: web-server [--db <path>] [--dist <dir>] [--boot-json <file>] [--port <n>] [--bind <host>] [--trusted-host <host>] [--config <toml>] [--max-steps <n>] [--plugins-dir <dir>] [--update-dir <dir>] [--auth] [--compact] [--code-runtime] [--approval] [--web-tools] [--schedule]"
+                    "usage: web-server [--db <path>] [--dist <dir>] [--boot-json <file>] [--port <n>] [--bind <host>] [--trusted-host <host>] [--config <toml>] [--max-steps <n>] [--plugins-dir <dir>] [--update-dir <dir>] [--auth] [--compact] [--code-runtime] [--approval] [--web-tools] [--schedule] [--goal]"
                 );
                 return;
             }
@@ -357,6 +361,14 @@ fn main() {
     if schedule_enabled {
         state.install_scheduler();
         tracing::info!("schedule plugin installed (schedule.create/list/cancel)");
+    }
+    // 目标管理插件装配（--goal）：GoalRouter（goal.* 工具）+ GoalDriver
+    // （同会话续跑——回合完成后 active 目标自动 <goal_round> 续跑直到
+    // 完成/暂停/额度耗尽）。不传 = 未装配（旧行为不变）。
+    if goal_enabled {
+        state.install_goal();
+        state.start_goal_driver();
+        tracing::info!("goal plugin installed (goal.get/create/update + round driver)");
     }
     // 启动恢复：把持久化会话全部 restore 进 live 表（kill -9 恢复语义，
     // restore_session 内部自动做 interrupted-turn 修复）。blank/running 按日志判定。

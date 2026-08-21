@@ -6,6 +6,8 @@
 pub mod api;
 pub mod approval;
 pub mod events;
+pub mod goal;
+pub mod goal_driver;
 pub mod pending;
 pub mod rpc;
 pub mod rpc_m3;

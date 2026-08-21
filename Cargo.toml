@@ -23,6 +23,7 @@ members = [
     "plugins/plugin-code-runtime",
     "plugins/plugin-web-tools",
     "plugins/plugin-schedule",
+    "plugins/plugin-goal",
     "plugins/plugin-auth",
     "plugins/plugin-compactor",
 ]
