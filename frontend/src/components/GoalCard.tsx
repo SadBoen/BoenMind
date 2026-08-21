@@ -6,7 +6,7 @@
 // goal.clear 后投影为 null（墓碑，前端回到无目标空态）。
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Button, Input, Popconfirm, Tag } from "antd";
+import { Button, Input, Popconfirm, Space, Tag } from "antd";
 import { rpc } from "../client";
 import { MuxFrame, ProjectionFrame, useMuxEvent } from "../hooks/useMuxEvents";
 
@@ -40,6 +40,11 @@ export default function GoalCard({ sessionId }: { sessionId: string }) {
   const [objective, setObjective] = useState("");
   const [maxRounds, setMaxRounds] = useState(8);
   const [createBusy, setCreateBusy] = useState(false);
+  // 编辑已有目标表单态（展示态点击「编辑」进入）
+  const [editing, setEditing] = useState(false);
+  const [editObjective, setEditObjective] = useState("");
+  const [editRounds, setEditRounds] = useState(8);
+  const [editBusy, setEditBusy] = useState(false);
 
   // 切换会话：拉 history 快照（含投影）重置本地状态。
   useEffect(() => {
@@ -57,7 +62,8 @@ export default function GoalCard({ sessionId }: { sessionId: string }) {
           setRevision(v.goal.revision);
         }
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setEditing(false));
   }, [sessionId]);
 
   // 增量:session/projection 帧按 higher-seq-wins 合并（seq 单调递增，key="goal"）。
@@ -69,8 +75,10 @@ export default function GoalCard({ sessionId }: { sessionId: string }) {
       if (payload.seq <= seqRef.current) return;
       seqRef.current = payload.seq;
       if (payload.value === null) {
+        // goal.clear 墓碑：退出编辑态，回到无目标空态。
         setGoal(null);
         setRevision(1);
+        setEditing(false);
         return;
       }
       setGoal(payload.value as GoalProjection);
@@ -110,6 +118,44 @@ export default function GoalCard({ sessionId }: { sessionId: string }) {
     } finally {
       setCreateBusy(false);
     }
+  };
+
+  // 编辑已有目标：goal.edit（CAS ref 同 change）。至少改一项；成功靠投影回灌，失败保留表单。
+  const edit = async () => {
+    if (!goal || editBusy) return;
+    // 过滤无效编辑：objective 为空或与现值等、轮次相同 → 视为未修改，直接退出。
+    const obj = editObjective.trim();
+    const changed =
+      (obj !== "" && obj !== goal.goal.objective) ||
+      editRounds !== goal.goal.maxGoalRounds;
+    if (!changed) {
+      setEditing(false);
+      return;
+    }
+    setEditBusy(true);
+    try {
+      await rpc("goal.edit", {
+        sessionId,
+        ref: { id: goal.goal.id, revision: revision },
+        ...(obj !== "" && obj !== goal.goal.objective ? { objective: obj } : {}),
+        ...(editRounds !== goal.goal.maxGoalRounds
+          ? { maxGoalRounds: Math.max(1, Math.round(editRounds)) }
+          : {}),
+      });
+      setEditing(false);
+    } catch (e) {
+      // 冲突/校验失败：保留表单（投影会纠正显示），可再改后再提交
+    } finally {
+      setEditBusy(false);
+    }
+  };
+
+  // 进入编辑态：用当前目标预填表单。
+  const beginEdit = () => {
+    if (!goal) return;
+    setEditObjective(goal.goal.objective);
+    setEditRounds(goal.goal.maxGoalRounds);
+    setEditing(true);
   };
 
   if (!goal) {
@@ -168,6 +214,42 @@ export default function GoalCard({ sessionId }: { sessionId: string }) {
   const max = goal.goal.maxGoalRounds;
   const pct = Math.min(100, max > 0 ? Math.round((rounds / max) * 100) : 0);
 
+  if (editing) {
+    // 编辑态：可改 objective / 自动续跑轮次，保存走 goal.edit。
+    return (
+      <div className="goal-card goal-card-editing">
+        <div className="goal-card-head">
+          <span className="goal-card-title">🎯 编辑目标</span>
+          <Tag color={tag.color} className="goal-card-tag">{tag.label}</Tag>
+        </div>
+        <Input.TextArea
+          className="goal-create-input"
+          rows={2}
+          value={editObjective}
+          placeholder="目标描述"
+          onChange={(e) => setEditObjective(e.target.value)}
+        />
+        <div className="goal-create-row">
+          <span className="goal-create-label">自动续跑轮次</span>
+          <Input
+            className="goal-create-rounds"
+            type="number"
+            min={1}
+            max={64}
+            value={editRounds}
+            onChange={(e) => setEditRounds(Number(e.target.value) || 1)}
+          />
+          <span className="goal-create-hint">回合完成后自动续跑，直到目标完成或额度耗尽</span>
+        </div>
+        <div className="goal-card-actions">
+          <Button size="small" disabled={editBusy} onClick={() => setEditing(false)}>取消</Button>
+          <Button type="primary" size="small" loading={editBusy} onClick={edit}>保存</Button>
+          <span className="goal-card-blocked">未修改任何内容时可直接取消</span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="goal-card">
       <div className="goal-card-head">
@@ -176,6 +258,16 @@ export default function GoalCard({ sessionId }: { sessionId: string }) {
         {goal.goal.phase === "active" && (
           <span className="goal-card-rounds">第 {rounds}/{max} 轮</span>
         )}
+        <div className="goal-card-ops">
+          <Button
+            size="small"
+            type="text"
+            onClick={beginEdit}
+            disabled={goal.goal.phase === "complete" || goal.goal.phase === "blocked"}
+          >
+            编辑
+          </Button>
+        </div>
       </div>
       <div className="goal-card-objective">{goal.goal.objective}</div>
       {goal.goal.phase === "active" && (
