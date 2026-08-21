@@ -59,7 +59,9 @@ export default function SessionList({ onToggle, floating }: Props) {
                 style={{ padding: "8px 10px", cursor: "pointer" }}
               >
                 <Typography.Text ellipsis className="session-title">
-                  {s.blank ? "新会话" : s.sessionId.slice(0, 8)}
+                  {s.blank
+                    ? `新会话${s.cwd ? ` · ${s.cwd.split(/[\\/]/).filter(Boolean).slice(-2).join("/")}` : ""}`
+                    : s.sessionId.slice(0, 8)}
                 </Typography.Text>
               </List.Item>
             )}

@@ -763,7 +763,7 @@ export default function SettingsPage({ onClose, preset, onPresetChange }: Props)
               </SettingRow>
               <SettingRow
                 label="本会话豁免"
-                desc="「本会话信任该工具」后，同会话同名工具调用自动放行（刷新页面失效）"
+                desc="「本会话信任该工具」后，同会话同名工具调用自动放行（本地持久化，刷新/重启保留）"
               >
                 <div className="approval-trust-list">
                   {approvalTrustEntries.length === 0 ? (
