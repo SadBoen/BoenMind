@@ -1,4 +1,4 @@
-# BoenMind 交接文档（2026-08-21 深夜/凌晨批次）
+# BoenMind 交接文档（2026-08-21 批次）
 
 给下一轮对话/协作的接手者。这是「全面回头看 + 连续多轮架构修复 + 前端展示层补齐 + 基础设施升级」之后的仓库状态快照。
 
@@ -22,7 +22,7 @@ BoenMind = Rust 微内核（`kernel/` 只读 submodule `dsh-rust-core`）+ 产�
 | `84463fd` | **feat(compaction)：上下文压缩升级为运行时可调**——`Runtime.compactor` 换 RwLock + SettingsBackedCompactor（每回合现读 settings）+ 设置页压缩表单 |
 | `7be0004` | docs(handoff)：前端展示层两项划入已交付 |
 | `bf326b7` | **feat(ui)：前端审批弹窗 + goal 目标卡片**——useMuxEvents 全局帧总线 + ApprovalModal + GoalCard + client.ts auth 修复 |
-| `a32fd87` … `1186329` | 深夜四插件（code-runtime/审批回灌/web-tools/schedule）+ goal 自动续跑 M3.5 |
+| `a32fd87` … `1186329` | 四插件交付（code-runtime/审批回灌/web-tools/schedule）+ goal 自动续跑 M3.5 |
 
 ## 三、当前架构分层（最终形态）
 
@@ -52,7 +52,7 @@ frontend/                             ← React 19 + dockview + antd v6
 
 ## 五、交付记录（2026-08-21 批次全清单）
 
-### 深夜批（已推 main）
+### 2026-08-21 四插件交付批（已推 main）
 - ✅ **plugin-code-runtime**：code.compile/python/shell，workdir 作用域 + 30s 超时 kill + 输出钱包 512KB/流。`--code-runtime`
 - ✅ **工具审批回灌**：bm-ports ToolApprovalPort + plugin-loop 执行前暂停点（Rejected → is_error 回写）+ web-server ApprovalRouter（PendingRegistry + oneshot 等待表 + respond 回拨）。`--approval`
 - ✅ **plugin-web-tools**：web.fetch/web.search（SSRF 防线 + 输出钱包）。`--web-tools`
