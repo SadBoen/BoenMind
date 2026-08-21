@@ -691,6 +691,26 @@ export default function SettingsPage({ onClose, preset, onPresetChange }: Props)
                 </div>
               </div>
             )}
+            {/* 工具审批策略（危险白名单可视化——插件侧声明，前端只读展示） */}
+            <div className="setting-subsection">
+              <div className="setting-subsection-title">工具审批</div>
+              <SettingRow
+                label="危险工具（需审批）"
+                desc="以下工具调用时弹窗确认，批准后执行；装配 --approval 时生效"
+              >
+                <div className="approval-names-list">
+                  {["host.run_command", "code.compile", "code.python", "code.shell", "web.fetch", "goal.create", "goal.update", "schedule.create"].map((t) => (
+                    <Tag key={t} color="red" className="approval-name-tag">{t}</Tag>
+                  ))}
+                </div>
+              </SettingRow>
+              <SettingRow
+                label="安全工具（自动放行）"
+                desc="只读/沙箱内操作不弹窗；list_dir / read_file / goal.get / web.search 等"
+              >
+                <span className="settings-static">host.list_dir · host.read_file · host.write_file · goal.get · web.search · schedule.list · schedule.cancel</span>
+              </SettingRow>
+            </div>
             <SettingRow label="重置布局" desc="dockview 布局恢复默认（占位）">
               <Button onClick={() => location.reload()}>重置</Button>
             </SettingRow>

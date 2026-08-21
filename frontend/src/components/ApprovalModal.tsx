@@ -11,6 +11,18 @@ interface PendingApproval extends ApprovalRequested {
   ts: number;
 }
 
+// 危险工具名单（对齐后端各插件 DANGEROUS_TOOL_NAMES 汇合；仅展示层标识用）。
+const DANGEROUS_TOOLS = new Set([
+  "host.run_command",
+  "code.compile",
+  "code.python",
+  "code.shell",
+  "web.fetch",
+  "goal.create",
+  "goal.update",
+  "schedule.create",
+]);
+
 export default function ApprovalModal() {
   const [pending, setPending] = useState<PendingApproval[]>([]);
   const [busy, setBusy] = useState(false);
@@ -79,7 +91,12 @@ export default function ApprovalModal() {
     >
       {current && (
         <div className="approval-body">
-          <div className="approval-tool">{current.toolName}</div>
+          <div className="approval-tool">
+            {current.toolName}
+            {DANGEROUS_TOOLS.has(current.toolName) && (
+              <span className="approval-danger-badge">危险</span>
+            )}
+          </div>
           {current.callId && <div className="approval-call">调用 {current.callId}</div>}
           {current.reason && <div className="approval-reason">{current.reason}</div>}
           {pending.length > 1 && (
