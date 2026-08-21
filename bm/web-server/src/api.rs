@@ -605,6 +605,12 @@ fn test_register_pending(state: &AppState, method: &str, payload: Value) -> Valu
             payload.get("callId").and_then(Value::as_str).map(str::to_string),
             payload.get("reason").and_then(Value::as_str).map(str::to_string),
         );
+        // 测试钩子补齐广播（对齐 ApprovalRouter 的 push 语义）：cast 前端
+        // approval/requested 帧，方便豁免全链路验收（豁免消费 mux 帧，不直接调 serve）。
+        let frame = reg.approval_frame(reg.approvals.get(&rpc_id).expect("just registered"));
+        drop(reg);
+        state.broadcast_mux_frame(frame.rpc_id, frame.method, frame.payload);
+        return ok(json!({ "rpcId": rpc_id }));
     } else {
         let questions = payload
             .get("questions")

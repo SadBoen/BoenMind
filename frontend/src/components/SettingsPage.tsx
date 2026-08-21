@@ -122,6 +122,14 @@ export default function SettingsPage({ onClose, preset, onPresetChange }: Props)
   const [compactFloor, setCompactFloor] = useState(4000);
   const [compactMinMiddle, setCompactMinMiddle] = useState(512);
   const [compactSectionPresent, setCompactSectionPresent] = useState(false);
+  // compaction 出厂默认值（config.toml [compaction] 种子；重置按钮回退到这些）
+  const COMPACT_DEFAULTS = {
+    enabled: true,
+    watermark: 0.5,
+    keepRecentRatio: 0.1,
+    keepRecentFloor: 4000,
+    minMiddleTokens: 512,
+  };
 
   // 改密
   const [currentPwd, setCurrentPwd] = useState("");
@@ -289,6 +297,30 @@ export default function SettingsPage({ onClose, preset, onPresetChange }: Props)
       message.success("压缩策略已保存（下一回合生效）");
     } catch (e) {
       message.error(`保存失败: ${(e as Error).message}`);
+    }
+  };
+
+  // 重置压缩策略为出厂默认值：直接回写 settings.compaction（与保存同链路）+ 本地表单同步。
+  const resetCompaction = async () => {
+    setCompactEnabled(COMPACT_DEFAULTS.enabled);
+    setCompactWatermark(COMPACT_DEFAULTS.watermark);
+    setCompactRatio(COMPACT_DEFAULTS.keepRecentRatio);
+    setCompactFloor(COMPACT_DEFAULTS.keepRecentFloor);
+    setCompactMinMiddle(COMPACT_DEFAULTS.minMiddleTokens);
+    try {
+      await rpc("settings.update", {
+        ns: "compaction",
+        patch: {
+          enabled: COMPACT_DEFAULTS.enabled,
+          watermark: COMPACT_DEFAULTS.watermark,
+          keepRecentRatio: COMPACT_DEFAULTS.keepRecentRatio,
+          keepRecentFloor: COMPACT_DEFAULTS.keepRecentFloor,
+          minMiddleTokens: COMPACT_DEFAULTS.minMiddleTokens,
+        },
+      });
+      message.success("压缩策略已重置为默认（下一回合生效）");
+    } catch (e) {
+      message.error(`重置失败: ${(e as Error).message}`);
     }
   };
 
@@ -687,6 +719,9 @@ export default function SettingsPage({ onClose, preset, onPresetChange }: Props)
                 <div className="setting-row">
                   <Button type="primary" onClick={saveCompaction}>
                     保存压缩策略
+                  </Button>
+                  <Button onClick={resetCompaction} style={{ marginLeft: 8 }}>
+                    重置为默认
                   </Button>
                 </div>
               </div>

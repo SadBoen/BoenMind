@@ -2,10 +2,9 @@
 // POST /api/respond（回显帧的 rpcId + approvalId + outcome）。后端随帧带 callId 时
 // 展示工具参数摘要，便于用户判断。超时由后端兜底（APPROVAL_TIMEOUT=600s → 拒绝）。
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Button, Modal, notification } from "antd";
 import { ApprovalRequested, ApprovalResolved, MuxFrame, useMuxEvent } from "../hooks/useMuxEvents";
-import { rpc } from "../client";
 
 interface PendingApproval extends ApprovalRequested {
   ts: number;
@@ -26,26 +25,17 @@ const DANGEROUS_TOOLS = new Set([
 export default function ApprovalModal() {
   const [pending, setPending] = useState<PendingApproval[]>([]);
   const [busy, setBusy] = useState(false);
+  // 会话级豁免：「本会话信任此工具」后，同 sessionId + toolName 的后续请求自动放行
+  // （allowed-once 语义；纯前端豁免层不消耗后端契约）。用 ref 承载豁免表，
+  // 事件 handler 总是读到最新值（不受渲染闭包时序影响）。
+  const trustedRef = useRef<Record<string, string[]>>({});
+  const [trustedKeys, setTrustedKeys] = useState<Record<string, string[]>>({}); // 仅驱动按钮态/展示
+  const [trustBusy, setTrustBusy] = useState(false);
 
-  // approval/resolved 到达：按 approvalId 移除对应弹窗（防止重复应答 / 响应必达）。
-  useMuxEvent("approval/resolved", (f: MuxFrame) => {
-    const p = f.payload as ApprovalResolved;
-    if (!p?.approvalId) return;
-    setPending((list) => list.filter((a) => a.approvalId !== p.approvalId));
-  });
+  const isTrusted = (sessionId: string, toolName: string) =>
+    (trustedRef.current[sessionId] ?? []).includes(toolName);
 
-  // 收集帧。mux 流里本项目工具审批也广播给所有连接 —— 这里按 approvalId 去重。
-  // 帧的应答 key = 外层 rpcId（respond 路由用），approvalId 是展示/校验 id。
-  useMuxEvent("approval/requested", (f: MuxFrame) => {
-    const p = f.payload as ApprovalRequested;
-    if (!p?.approvalId) return;
-    setPending((list) => {
-      if (list.some((a) => a.approvalId === p.approvalId)) return list;
-      const next = [...list, { ...p, rpcId: f.rpcId, ts: Date.now() }];
-      return next.sort((x, y) => x.ts - y.ts);
-    });
-  });
-
+  // 核心应答：POST /api/respond（回显帧 rpcId + approvalId + outcome）。
   const respond = async (item: PendingApproval, outcome: "allowed-once" | "rejected") => {
     setBusy(true);
     try {
@@ -67,15 +57,42 @@ export default function ApprovalModal() {
       if (outcome === "rejected") {
         notification.info({ message: "已拒绝该工具调用", placement: "bottomRight" });
       }
-      // 后端会广播 approval/resolved → 上面 handler 移除弹窗。若已超时移除（后端 600s 超时拒绝），
+      // 后端会广播 approval/resolved → handler 移除弹窗。若已超时移除（后端 600s 超时拒绝），
       // 这里也兜底移除，用户不会看到僵死弹窗。
       setPending((list) => list.filter((a) => a.approvalId !== item.approvalId));
     } catch {
       notification.error({ message: "审批应答失败", description: "网络错误，请重试", placement: "bottomRight" });
     } finally {
       setBusy(false);
+      setTrustBusy(false);
     }
   };
+
+  // 「本会话信任该工具」：允许本次 + 把 (sessionId, toolName) 记入豁免表（后续自动放行）。
+  const trustTool = async (item: PendingApproval) => {
+    setTrustBusy(true);
+    trustedRef.current = {
+      ...trustedRef.current,
+      [item.sessionId]: [...(trustedRef.current[item.sessionId] ?? []), item.toolName],
+    };
+    setTrustedKeys(trustedRef.current);
+    await respond(item, "allowed-once");
+  };
+
+  // approval/requested 帧到达：先查豁免 → 命中自动放行（allowed-once，不打扰）；否则入弹窗队列。
+  useMuxEvent("approval/requested", (f: MuxFrame) => {
+    const p = f.payload as ApprovalRequested;
+    if (!p?.approvalId || !p.sessionId || !p.toolName) return;
+    if (isTrusted(p.sessionId, p.toolName)) {
+      void respond({ ...p, rpcId: f.rpcId, ts: Date.now() }, "allowed-once");
+      return;
+    }
+    setPending((list) => {
+      if (list.some((a) => a.approvalId === p.approvalId)) return list;
+      const next = [...list, { ...p, rpcId: f.rpcId, ts: Date.now() }];
+      return next.sort((x, y) => x.ts - y.ts);
+    });
+  });
 
   const current = pending[0];
   return (
@@ -102,14 +119,27 @@ export default function ApprovalModal() {
           {pending.length > 1 && (
             <div className="approval-queue">另有 {pending.length - 1} 个待审批</div>
           )}
+          {(trustedKeys[current.sessionId] ?? []).length > 0 && (
+            <div className="approval-trusted">
+              本会话已信任 {(trustedKeys[current.sessionId] ?? []).length} 个工具（同名调用自动放行）
+            </div>
+          )}
           <div className="approval-actions">
-            <Button onClick={() => respond(current, "rejected")} danger disabled={busy}>
+            <Button onClick={() => respond(current, "rejected")} danger disabled={busy || trustBusy}>
               拒绝
+            </Button>
+            <Button
+              onClick={() => trustTool(current)}
+              loading={trustBusy}
+              disabled={busy}
+            >
+              本会话信任该工具
             </Button>
             <Button
               type="primary"
               onClick={() => respond(current, "allowed-once")}
               loading={busy}
+              disabled={trustBusy}
             >
               仅本次允许
             </Button>

@@ -418,6 +418,10 @@ body {
 .approval-modal .approval-queue {
   font-size: 12px; color: var(--bm-fg-dim);
 }
+.approval-modal .approval-trusted {
+  font-size: 12px; color: var(--bm-accent);
+  background: var(--bm-accent-soft); border-radius: 6px; padding: 6px 8px;
+}
 .approval-modal .approval-actions {
   display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px;
 }
