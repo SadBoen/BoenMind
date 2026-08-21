@@ -22,7 +22,7 @@ pub use compactor::{
 
 pub mod tools;
 
-pub use tools::{ToolGatePort, ToolRegistryPort};
+pub use tools::{ToolGatePort, ToolRegistrarPort, ToolRegistryPort};
 
 pub mod host;
 

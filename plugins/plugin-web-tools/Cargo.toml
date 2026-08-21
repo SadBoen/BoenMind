@@ -7,7 +7,7 @@ description = "Web 取数工具插件（功能）：web.fetch 抓取 + web.searc
 
 [dependencies]
 kernel-contracts = { path = "../../kernel/kernel-contracts" }
-plugin-tools = { path = "../plugin-tools" }
+bm-ports = { path = "../../bm/ports" }
 serde_json.workspace = true
 async-trait.workspace = true
 tokio = { workspace = true, features = ["time"] }

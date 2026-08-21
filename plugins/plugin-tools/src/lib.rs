@@ -148,6 +148,21 @@ impl bm_ports::ToolRegistryPort for ToolRegistry {
     }
 }
 
+// 注册面端口（bm-ports）：功能插件 / host-tools 经此注册 handler，不再依赖
+// plugin-tools 具体类型。组合根装配时把 ToolRegistry 以 dyn ToolRegistrarPort 传入。
+#[async_trait::async_trait]
+impl bm_ports::ToolRegistrarPort for ToolRegistry {
+    fn register(&self, handler: Arc<dyn ToolHandler>) -> Result<(), ToolError> {
+        ToolRegistry::register(self, handler)
+    }
+    fn get(&self, name: &str) -> Option<Arc<dyn ToolHandler>> {
+        ToolRegistry::get(self, name)
+    }
+    fn mark_dangerous(&self, name: &str) {
+        ToolRegistry::mark_dangerous(self, name);
+    }
+}
+
 /// 工具门控：enabled 名单 + fail-closed（空名单默认全部禁用）。
 #[derive(Debug, Default)]
 pub struct ToolGate {

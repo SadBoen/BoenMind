@@ -8,7 +8,6 @@ description = "目标管理工具插件（功能）：goal.get/create/update—�
 [dependencies]
 kernel-contracts = { path = "../../kernel/kernel-contracts" }
 bm-ports = { path = "../../bm/ports" }
-plugin-tools = { path = "../plugin-tools" }
 serde_json.workspace = true
 async-trait.workspace = true
 

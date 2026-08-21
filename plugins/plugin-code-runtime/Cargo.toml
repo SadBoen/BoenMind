@@ -10,7 +10,6 @@ kernel-contracts = { path = "../../kernel/kernel-contracts" }
 kernel-session = { path = "../../kernel/kernel-session" }
 bm-ports = { path = "../../bm/ports" }
 host-fs = { path = "../../bm/host-fs" }
-plugin-tools = { path = "../plugin-tools" }
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true

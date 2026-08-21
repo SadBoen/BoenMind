@@ -4,7 +4,8 @@
 //! 接线：`ApprovalRouter` 持有 `Arc<AppState>`（PendingRegistry 登记 + mux 帧广播 +
 //! approval_waiters 等待表）。loop 执行危险工具前调 `request_approval`：
 //! 1. 生成 approval_id（uuid）；
-//! 2. 登记进 PendingRegistry（approval/requested 帧 → WS 下行 + 断连重放）；
+//! 2. 登记进 PendingRegistry（approval/requested 帧 → WS 下行 + 断连重放，带发起
+//!    会话 id——供前端豁免表/设置页管理面按会话展示）；
 //! 3. 建 oneshot 通道存入 approval_waiters；
 //! 4. 等待裁定（最多 [`bm_ports::APPROVAL_TIMEOUT`]，超时 → 拒绝）；
 //! 5. respond_dispatch（allowed-once/rejected）经 approval_waiters 唤醒等待者。
@@ -42,13 +43,16 @@ impl ApprovalRouter {
 impl bm_ports::ToolApprovalPort for ApprovalRouter {
     async fn request_approval(
         &self,
+        session_id: &str,
         tool_name: &str,
         call_id: &str,
         reason: Option<String>,
     ) -> Result<ApprovalVerdict, kernel_contracts::ToolError> {
         let approval_id = uuid::Uuid::new_v4().to_string();
         let rpc_id = uuid::Uuid::new_v4().to_string();
-        let session_id = "".to_string(); // 端到端武器化留白：审批帧不带会话上下文（对齐 approval_frame 缺省）
+        // 审批帧带发起会话 id：前端豁免表按 (sessionId, toolName) 区分会话，
+        // 设置页管理面按会话展示。空串 = 无会话上下文（端到端武器化留白）。
+        let session_id = session_id.to_string();
 
         // 1. 登记进 PendingRegistry（approval/requested 帧数据源；mux 断连重放）。
         {

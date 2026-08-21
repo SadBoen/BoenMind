@@ -93,9 +93,11 @@ pub fn schemas() -> Vec<ToolSchema> {
 }
 
 /// 注册全部宿主工具到注册表。
-/// 调用方来自装配方（bm-assembly），传 plug-tools 的 `ToolRegistry` 具体类型
-/// （装配面在具体实现上，端口只有消费面）。可重复调用（跳过已注册项，幂等）。
-pub fn register_all(registry: &plugin_tools::ToolRegistry) -> Result<(), ToolError> {
+/// 调用方来自装配方（bm-assembly），传实现 `ToolRegistrarPort` 的注册表
+/// （plugin-tools::ToolRegistry）；装配面在具体实现上，端口只有消费面。
+/// 核心插件 host-tools 同功能插件一道经注册面端口注入，不再依赖
+/// plugin-tools 具体类型。可重复调用（跳过已注册项，幂等）。
+pub fn register_all(registry: &dyn bm_ports::ToolRegistrarPort) -> Result<(), ToolError> {
     let handlers: Vec<Arc<dyn ToolHandler>> = vec![
         Arc::new(ReadFileTool),
         Arc::new(WriteFileTool),

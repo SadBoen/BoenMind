@@ -30,12 +30,14 @@ pub enum ApprovalVerdict {
 /// 工具审批端口（loop 消费面）：把一次待审批工具调用登记并等待用户裁定。
 #[async_trait::async_trait]
 pub trait ToolApprovalPort: Send + Sync + std::fmt::Debug {
-    /// 请求审批一个工具调用。`tool_name` + `call_id` 用于前端展示与匹配；
-    /// `reason` 为可选提示文本（如 workdir 外路径、shell 命令文本）。
-    /// 返回裁定：Allowed / Rejected（含超时拒绝）。
+    /// 请求审批一个工具调用。`session_id` 为发起调用的会话（供前端豁免表
+    /// 按会话区分、设置页管理面按会话展示）；`tool_name` + `call_id` 用于
+    /// 前端展示与匹配；`reason` 为可选提示文本（如 workdir 外路径、shell
+    /// 命令文本）。返回裁定：Allowed / Rejected（含超时拒绝）。
     /// 实现侧出错（登记失败等）必须 Err——fail-loud，调用方按拒绝处理。
     async fn request_approval(
         &self,
+        session_id: &str,
         tool_name: &str,
         call_id: &str,
         reason: Option<String>,

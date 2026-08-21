@@ -193,7 +193,7 @@ impl Runtime {
         // 宿主文件工具（核心插件）：默认装配注册 + 全启用。workdir 源缺省 = None
         // （headless 无 settings；web-server 经 install_host_tools 注入真源）。
         plugin_host_tools::set_workdir_source(Arc::new(crate::NoWorkdir));
-        let _ = plugin_host_tools::register_all(&tools);
+        let _ = plugin_host_tools::register_all(tools.as_ref());
         for name in plugin_host_tools::ALL_TOOL_NAMES {
             gate.enable(name);
         }
@@ -276,7 +276,7 @@ impl Runtime {
     /// 可重复调用（register_all 幂等跳过已注册项）。
     pub fn install_host_tools(&self, workdir: Arc<dyn bm_ports::WorkdirPort>) {
         plugin_host_tools::set_workdir_source(workdir);
-        if let Err(e) = plugin_host_tools::register_all(&self.tools) {
+        if let Err(e) = plugin_host_tools::register_all(self.tools.as_ref()) {
             tracing::warn!("host tools registration skipped: {e}");
         }
         for name in plugin_host_tools::ALL_TOOL_NAMES {
@@ -294,7 +294,7 @@ impl Runtime {
     /// 可重复调用（register_all 幂等跳过已注册项）。
     pub fn install_code_runtime(&self, workdir: Arc<dyn bm_ports::WorkdirPort>) {
         plugin_code_runtime::set_workdir_source(workdir);
-        if let Err(e) = plugin_code_runtime::register_all(&self.tools) {
+        if let Err(e) = plugin_code_runtime::register_all(self.tools.as_ref()) {
             tracing::warn!("code runtime registration skipped: {e}");
         }
         for name in plugin_code_runtime::ALL_TOOL_NAMES {
@@ -308,7 +308,7 @@ impl Runtime {
     /// 注册表，全部 enable。SSRF 防线（仅公网地址）+ 输出钱包内置在插件内，
     /// 无 workdir 依赖。可重复调用（register_all 幂等跳过已注册项）。
     pub fn install_web_tools(&self) {
-        if let Err(e) = plugin_web_tools::register_all(&self.tools) {
+        if let Err(e) = plugin_web_tools::register_all(self.tools.as_ref()) {
             tracing::warn!("web tools registration skipped: {e}");
         }
         for name in plugin_web_tools::ALL_TOOL_NAMES {
@@ -323,7 +323,7 @@ impl Runtime {
     /// enable。未装配 = schedule 工具不可用（诚实失败）。可重复调用（幂等）。
     pub fn install_schedule(&self, sched: Arc<dyn bm_ports::SchedulePort>) {
         plugin_schedule::set_schedule_source(sched);
-        if let Err(e) = plugin_schedule::register_all(&self.tools) {
+        if let Err(e) = plugin_schedule::register_all(self.tools.as_ref()) {
             tracing::warn!("schedule tools registration skipped: {e}");
         }
         for name in plugin_schedule::ALL_TOOL_NAMES {
@@ -339,7 +339,7 @@ impl Runtime {
     /// 未装配 = goal 工具不可用（诚实失败）。可重复调用（幂等）。
     pub fn install_goal(&self, gp: Arc<dyn bm_ports::GoalPort>) {
         plugin_goal::set_goal_source(gp);
-        if let Err(e) = plugin_goal::register_all(&self.tools) {
+        if let Err(e) = plugin_goal::register_all(self.tools.as_ref()) {
             tracing::warn!("goal tools registration skipped: {e}");
         }
         for name in plugin_goal::ALL_TOOL_NAMES {
@@ -1542,6 +1542,7 @@ mod tests {
     impl bm_ports::ToolApprovalPort for TestApproval {
         async fn request_approval(
             &self,
+            _session_id: &str,
             _tool_name: &str,
             _call_id: &str,
             _reason: Option<String>,

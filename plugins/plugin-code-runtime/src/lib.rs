@@ -95,9 +95,9 @@ pub fn schemas() -> Vec<ToolSchema> {
 }
 
 /// 注册全部 code-runtime 工具到注册表。
-/// 调用方来自装配方（bm-assembly），传 plug-tools 的 `ToolRegistry` 具体类型。
-/// 可重复调用（跳过已注册项，幂等）。
-pub fn register_all(registry: &plugin_tools::ToolRegistry) -> Result<(), ToolError> {
+/// 调用方来自装配方（bm-assembly），传实现 `ToolRegistrarPort` 的注册表
+/// （plugin-tools::ToolRegistry）。可重复调用（跳过已注册项，幂等）。
+pub fn register_all(registry: &dyn bm_ports::ToolRegistrarPort) -> Result<(), ToolError> {
     let handlers: Vec<Arc<dyn ToolHandler>> = vec![
         Arc::new(CompileTool),
         Arc::new(PythonTool),
@@ -339,8 +339,16 @@ impl CompileTool {
             .file_stem()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| file_name.clone());
-        let out_name = arg_str(&input.arguments, "out")
-            .unwrap_or_else(|| format!("{stem}{out_suffix}"));
+        let out_rel = arg_str(&input.arguments, "out").unwrap_or_else(|| format!("{stem}{out_suffix}"));
+        // 产物必须留在 workdir 内——`out` 同 `file` 一道经 resolve_in_workdir 作用域
+        // 校验（拒绝绝对路径 / `..` / 逃逸；symlink 前缀检查）。解析后落到 workdir 内
+        // 的绝对路径，再转成相对源文件目录的路径传给 `-o`（编译器 cwd = 源目录）。
+        let out_abs = host_fs::resolve_in_workdir(wd, &out_rel).map_err(tool_err)?;
+        let out_name = out_abs
+            .strip_prefix(&dir)
+            .unwrap_or(&out_abs)
+            .to_string_lossy()
+            .to_string();
         // 产物必须留在源文件目录（workdir 内），而非可执行目录——组装 `-o` 参数。
         let mut args = base_args;
         if toolchain == "go" {
@@ -583,6 +591,46 @@ mod tests {
         .unwrap();
         assert!(res.is_error);
         assert!(res.output.contains("unsupported extension"));
+        let _ = std::fs::remove_dir_all(&wd);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn compile_out_escape_rejected() {
+        // 回归 P3：`out` 参数同 `file` 一道走 workdir 作用域——绝对路径 / `..`
+        // 逃逸必须被拒（不得让编译器把产物写到 workdir 外）。
+        let wd = tmp_workdir("out-esc");
+        std::fs::write(wd.join("ok.c"), "int main(){return 0;}").unwrap();
+        // 绝对路径（Windows 盘符 / Unix 根）逃逸。
+        for out in [
+            "C:/Users/Public/evil.exe",
+            "/tmp/evil.exe",
+            "../../outside/evil.exe",
+            "sub/../../evil.exe",
+        ] {
+            let res = CompileTool::execute_with_workdir(
+                &input(CODE_COMPILE, serde_json::json!({ "file": "ok.c", "out": out })),
+                &wd,
+            )
+            .await;
+            let msg = format!("out {out:?}");
+            match res {
+                Err(e) => assert!(
+                    e.0.contains("invalid path") || e.0.contains("not inside"),
+                    "{msg}: unexpected err {e:?}"
+                ),
+                Ok(r) => assert!(r.is_error, "{msg}: escape must be rejected"),
+            }
+        }
+        // 合法 workdir 内 out 仍可用（占位；编译器实际工作上节已覆盖）。
+        let res = CompileTool::execute_with_workdir(
+            &input(
+                CODE_COMPILE,
+                serde_json::json!({ "file": "ok.c", "out": "ok-bin.exe" }),
+            ),
+            &wd,
+        )
+        .await;
+        assert!(res.is_ok() || res.unwrap().is_error, "valid out must not crash");
         let _ = std::fs::remove_dir_all(&wd);
     }
 

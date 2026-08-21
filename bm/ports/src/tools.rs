@@ -9,7 +9,9 @@
 //! `execute_guarded`）；装配面（register/unregister/enable…）保留在
 //! plugin-tools 具体类型，组合根调用。
 
-use kernel_contracts::tools::{ToolExecutionInput, ToolExecutionResult, ToolSchema};
+use std::sync::Arc;
+
+use kernel_contracts::tools::{ToolExecutionInput, ToolExecutionResult, ToolHandler, ToolSchema};
 use kernel_contracts::ToolError;
 
 /// 工具注册表端口（loop/上层消费面）：schema 清单 + 执行。
@@ -31,6 +33,21 @@ pub trait ToolRegistryPort: Send + Sync + std::fmt::Debug {
     fn requires_approval(&self, _name: &str) -> bool {
         false
     }
+}
+
+/// 工具**注册面**端口（插件装配用）：插件把 handler 注册进注册表。
+/// 2026-08-21 回头看新增：原功能插件 `register_all(registry: &plugin_tools::ToolRegistry)`
+/// 编译期依赖核心插件 plugin-tools 的具体类型，违反「插件之间零依赖」纪律——
+/// 故把装配面抽象到本层，plugin-tools 的 `ToolRegistry` 实现之，组合根注入。
+/// 核心/功能插件只依赖本端口，不再依赖 plugin-tools 具体类型。
+#[async_trait::async_trait]
+pub trait ToolRegistrarPort: Send + Sync + std::fmt::Debug {
+    /// 注册一个工具处理器；重名 → Err（留具体实现语义）。
+    fn register(&self, handler: Arc<dyn ToolHandler>) -> Result<(), ToolError>;
+    /// 按名取处理器（幂等注册检查用）。
+    fn get(&self, name: &str) -> Option<Arc<dyn ToolHandler>>;
+    /// 声明工具为危险（需要审批；装配面 mark_dangerous 同义）。
+    fn mark_dangerous(&self, name: &str);
 }
 
 /// 工具门控端口（fail-closed 消费面）。

@@ -51,19 +51,32 @@ impl GoalDriver {
 
     /// 回合完成点调用：若该 session 有 active + 有额度目标，注入下一轮并续跑。
     /// 防嵌套 + 幂等（判定在 goals 锁内完成）。返回是否发起了续跑。
+    ///
+    /// 竞态收口（回归 F6）：续跑中标志（continuing）作为**唯一排他门**——
+    /// 检查+置位在函数最前原子完成（无 await 间隙），`rounds_started` 自增在
+    /// 门内进行。两个并发 `maybe_continue`（如人类 prompt 完成点 + scheduler
+    /// 到期）后到者看到 continuing=true 直接返回，**不会 double-consume 额度、
+    /// 不会双 spawn**。spawn 完成后清标志（见 spawn 块）。
     pub async fn maybe_continue(&self, session_id: &str) -> bool {
-        // 防嵌套：本 session 已有续跑链 → 跳过。
-        if self.continuing.lock().await.get(session_id).copied().unwrap_or(false) {
-            return false;
+        // 单原子排他门：置位（防并发双续跑）。已在续跑中 → 直接跳过。
+        {
+            let mut cont = self.continuing.lock().await;
+            let key = session_id.to_string();
+            if cont.get(&key).copied().unwrap_or(false) {
+                return false;
+            }
+            cont.insert(key, true);
         }
-        // 判定 + 推进（CAS）：只有 active + 有额度才自增并占用轮次。
-        let admitted = {
+        // 判定 + 推进（CAS）：一次 goals 锁内完成「查询 active + 额度判定 + 自增 +
+        // 写回」。无目标 / 非 active / 额度耗尽 → admitted=None，guard drop 后
+        // 释放排他门（std 锁 guard 不 Send，不能跨 await 持有）。
+        let admitted: Option<(String, u64, u64)> = {
             let mut goals = self.state.goals.lock().unwrap();
             let Some(mut g) = goals.get(session_id).cloned() else {
-                return false;
+                return false; // 无目标 → 下方统一释放排他门
             };
             if g.phase != "active" || g.rounds_started >= g.max_goal_rounds {
-                return false;
+                return false; // 非 active / 额度耗尽
             }
             g.rounds_started += 1;
             g.updated_at = chrono::Utc::now().timestamp_millis();
@@ -74,38 +87,38 @@ impl GoalDriver {
             Some((objective, round, max))
         };
         let Some((objective, round, max)) = admitted else {
+            // 目标消失：释放排他门（goals guard 已 drop）。
+            self.continuing.lock().await.remove(session_id);
             return false;
         };
         // 投影广播（roundsStarted 推进可见）。
         crate::goal::broadcast_goal_projection_for_driver(&self.state, session_id);
 
-        // 标记续跑中（防嵌套），spawn 续跑回合（复用 session.prompt 的 run_turn 语义）。
-        {
-            let mut cont = self.continuing.lock().await;
-            cont.insert(session_id.to_string(), true);
-        }
         let prompt = round_prompt(&objective, round, max);
-        // 会话检查与运行状态判定（std 锁内绝不跨 await）。
-        let session_state = {
+        // 会话检查与运行状态判定（std 锁内绝不跨 await；guard 内只计算，
+        // guard drop 后统一决定是否释放排他门）。
+        let (agent, release_gate) = {
             let mut sessions = self.state.sessions.lock().unwrap();
-            let Some(h) = sessions.get_mut(session_id) else {
-                return false; // 会话已消失（防嵌套标志可能残留，但目标也随之没了）
-            };
-            if h.running {
-                // 人类 prompt 已接管：不叠（本轮额度已消耗，但 run_turn 一定会
-                // 发生——不过是 human 触发的，不 double；不标记续跑中）。
-                return false;
+            match sessions.get_mut(session_id) {
+                None => (None, true), // 会话已消失 → 释放排他门
+                Some(h) if h.running => {
+                    // 人类 prompt 已接管：不叠（本轮额度已消耗，但 run_turn 一定会
+                    // 发生——不过是 human 触发的，不 double）。释放排他门。
+                    (None, true)
+                }
+                Some(h) => {
+                    h.running = true;
+                    h.blank = false;
+                    (Some(Arc::clone(&h.agent)), false)
+                }
             }
-            h.running = true;
-            h.blank = false;
-            Arc::clone(&h.agent)
         };
-        // 标记续跑中（防嵌套），spawn 续跑回合（复用 session.prompt 的 run_turn 语义）。
-        {
-            let mut cont = self.continuing.lock().await;
-            cont.insert(session_id.to_string(), true);
+        if release_gate {
+            self.continuing.lock().await.remove(session_id);
         }
-        let agent = session_state;
+        let Some(agent) = agent else {
+            return false;
+        };
         let state = Arc::clone(&self.state);
         let sid = session_id.to_string();
         let cont_flag = Arc::clone(&self.continuing);

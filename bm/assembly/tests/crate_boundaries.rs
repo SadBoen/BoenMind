@@ -13,11 +13,16 @@
 //! 组合根层 1 依赖插件层 依赖是正当的（装配职责）。
 //! 规则 2（L0 禁令）：层 0 禁止依赖 plugin-*（L0 只依赖 bm-assembly + kernel-contracts）——
 //! 防止第二组合根：web-server/headless/quickjs-bridge 不得直接 new 具体 provider/loop/tools。
-//! 规则 3（插件间方向，2026-08-20 回头看新增）：**核心插件（llm/loop/tools）禁止依赖
-//! 功能插件（auth/compactor）**——核心不得被功能插件污染（plugin-loop 曾编译期依赖
-//! plugin-compactor 的 Compactor trait，trait 已上提 bm-ports 修复）。核心插件允许依赖
-//! 同层核心实现（loop→tools，ReAct 领域内聚）；`plugin-*` 一律禁止依赖 plugin-compactor
-//! 之外的 plugin-*（防功能插件互叠，防功能插件反向依赖核心实现的具体类型）。
+//! 规则 3（插件间方向，2026-08-20 回头看新增）：**核心插件（llm/loop/tools）
+//! 禁止依赖功能插件（auth/compactor）**——核心不得被功能插件污染（plugin-loop
+//! 曾编译期依赖 plugin-compactor 的 Compactor trait，trait 已上提 bm-ports 修复）。
+//! 核心插件允许依赖同层核心实现（loop→tools，ReAct 领域内聚）。
+//! 2026-08-21 回头看收紧：**插件之间零依赖**——功能插件（goal/schedule/
+//! web-tools/code-runtime/auth/compactor）禁止依赖任何 plugin-*（含核心实现
+//! plugin-tools/plugin-host-tools）；核心插件只允许依赖同层核心（llm/loop/tools/
+//! host-tools）**且必须经 bm-ports**（编译期禁止核心→功能；host-tools 经
+//! ToolRegistrarPort 注册，不再依赖 plugin-tools 具体类型）。插件一律经
+//! bm-ports 端口交互，组合根装配注入实现。
 //! 未知 workspace 成员硬失败（防新增 crate 漏登记）。`cargo test --workspace` 即门禁。
 //!
 //! 依赖收集：解析每个成员 Cargo.toml 的 dependencies/dev-dependencies，
@@ -122,8 +127,11 @@ fn dependencies_are_downward_only() {
                         "VIOLATION: {package} (layer {my_layer}) depends upward on {dep} (layer {dep_layer})"
                     );
                 }
-                // 规则 3（插件间方向）：核心插件不得依赖功能插件；插件不得依赖
-                // 另一功能插件（防功能插件互叠/反向依赖核心具体类型）。
+                // 规则 3（插件间方向）：插件之间零依赖（经 bm-ports 交互）。
+                // - 核心插件不得依赖功能插件（core→feature 禁：核心不被功能污染）
+                // - 功能插件不得依赖任何插件（feature→core 与 feature→feature 禁：
+                //   装配面经 bm-ports 端口注入，不编译期依赖核心实现具体类型）
+                // - 核心内部（core→core）仅限 loop→tools 领域内聚（编译期允许）。
                 if my_layer == 2 && dep.starts_with("plugin-") {
                     if is_core_plugin(&package) && is_feature_plugin(&dep) {
                         panic!(
@@ -132,10 +140,11 @@ fn dependencies_are_downward_only() {
                              move the needed interface up to bm-ports instead"
                         );
                     }
-                    if is_feature_plugin(&package) && is_feature_plugin(&dep) {
+                    if is_feature_plugin(&package) {
                         panic!(
-                            "VIOLATION: feature plugin {package} depends on feature plugin {dep} —\
-                             feature plugins must be independent (dependency inversion via bm-ports)"
+                            "VIOLATION: feature plugin {package} depends on plugin {dep} —\
+                             feature plugins must depend only on bm-ports (dependency \
+                             inversion; no compile-time edge to any plugin implementation)"
                         );
                     }
                 }

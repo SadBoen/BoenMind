@@ -64,9 +64,9 @@ pub fn schemas() -> Vec<ToolSchema> {
 }
 
 /// 注册全部 web-tools 工具到注册表。
-/// 调用方来自装配方（bm-assembly），传 plug-tools 的 `ToolRegistry` 具体类型。
-/// 可重复调用（跳过已注册项，幂等）。
-pub fn register_all(registry: &plugin_tools::ToolRegistry) -> Result<(), ToolError> {
+/// 调用方来自装配方（bm-assembly），传实现 `ToolRegistrarPort` 的注册表
+/// （plugin-tools::ToolRegistry）。可重复调用（跳过已注册项，幂等）。
+pub fn register_all(registry: &dyn bm_ports::ToolRegistrarPort) -> Result<(), ToolError> {
     use std::sync::Arc;
     let handlers: Vec<Arc<dyn ToolHandler>> = vec![Arc::new(FetchTool), Arc::new(SearchTool)];
     for h in handlers {
@@ -132,9 +132,11 @@ fn validate_host_target(host: &str) -> bool {
     }
 }
 
-/// IPv4 公网判定：非私网（10/8、172.16/12、192.168/16）、非回环 127/8、
-/// 非链路本地 169.254/16、非文档保留 192.0.2/24、198.51.100/24、203.0.113/24、
-/// 非组播 224/4、非 0.0.0.0。
+/// IPv4 公网判定：拒绝全部 IANA 保留段（RFC 6890 主集）——
+/// 私网 10/8、172.16/12、192.168/16；回环 127/8；链路本地 169.254/16
+/// （云元数据 169.254.169.254）；CGNAT 100.64/10；文档段 192.0.2/24、
+/// 198.51.100/24、203.0.113/24；benchmark 198.18/15；组播 224/4；广播 255/8；
+/// 0.0.0.0/8。含 192.0.0.0/24（保留）、192.88.99/24（6to4 anycast 弃用段）。
 fn is_public_ipv4(ip: &std::net::Ipv4Addr) -> bool {
     let octets = ip.octets();
     let a = octets[0];
@@ -142,12 +144,17 @@ fn is_public_ipv4(ip: &std::net::Ipv4Addr) -> bool {
     match a {
         0 | 127 => false,
         10 => false,
+        100 if (64..=127).contains(&b) => false, // CGNAT 100.64/10
         172 if (16..=31).contains(&b) => false,
-        192 if b == 168 => false,
-        169 if b == 254 => false, // 链路本地（云元数据 169.254.169.254）
+        192 if b == 168 => false,       // 私网
+        192 if b == 0 => false,         // 192.0.0.0/24 保留（含 192.0.2 TEST-NET-1）
+        198 if b == 18 || b == 19 => false, // benchmark 198.18/15
+        198 if b == 51 && octets[2] == 100 => false, // TEST-NET-2 198.51.100/24
+        203 if b == 0 && octets[2] == 113 => false,  // TEST-NET-3 203.0.113/24
+        192 if b == 88 && octets[2] == 99 => false,  // 6to4 anycast 弃用段
+        169 if b == 254 => false,  // 链路本地（云元数据 169.254.169.254）
         224..=239 => false, // 组播
         255 => false,
-        192 if b == 0 && (octets[2] == 0 || octets[2] == 51 || octets[2] == 52) => false,
         _ => true,
     }
 }
@@ -373,8 +380,19 @@ mod tests {
         assert!(check_url("file:///etc/passwd").is_err());
         assert!(check_url("ftp://example.com").is_err());
         assert!(check_url("http://[::1]/x").is_err());
+        // 完整 IANA 保留段（回归 F4）：CGNAT / benchmark / TEST-NET / 6to4。
+        assert!(check_url("http://100.64.0.1/x").is_err());
+        assert!(check_url("http://100.127.255.254/x").is_err());
+        assert!(check_url("http://198.18.0.1/x").is_err());
+        assert!(check_url("http://198.19.255.254/x").is_err());
+        assert!(check_url("http://192.0.2.1/x").is_err());     // TEST-NET-1
+        assert!(check_url("http://198.51.100.1/x").is_err());  // TEST-NET-2
+        assert!(check_url("http://203.0.113.1/x").is_err());   // TEST-NET-3
+        assert!(check_url("http://192.0.0.1/x").is_err());     // 192.0.0.0/24 保留
+        assert!(check_url("http://192.88.99.1/x").is_err());   // 6to4 anycast 弃用段
         // 公网字面量 IP 放行。
         assert!(check_url("http://8.8.8.8/x").is_ok());
+        assert!(check_url("http://198.51.101.1/x").is_ok()); // 198.51.100 之外公网段
         // 公网域名（DNS 解析后可过；离线 CI 可能解析失败 → 拒，但本地可解析）。
         assert!(check_url("https://example.com").is_ok());
     }

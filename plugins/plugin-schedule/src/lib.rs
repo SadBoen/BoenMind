@@ -71,9 +71,9 @@ pub fn schemas() -> Vec<ToolSchema> {
 }
 
 /// 注册全部 schedule 工具到注册表。
-/// 调用方来自装配方（bm-assembly），传 plug-tools 的 `ToolRegistry` 具体类型。
-/// 可重复调用（跳过已注册项，幂等）。
-pub fn register_all(registry: &plugin_tools::ToolRegistry) -> Result<(), ToolError> {
+/// 调用方来自装配方（bm-assembly），传实现 `ToolRegistrarPort` 的注册表
+/// （plugin-tools::ToolRegistry）。可重复调用（跳过已注册项，幂等）。
+pub fn register_all(registry: &dyn bm_ports::ToolRegistrarPort) -> Result<(), ToolError> {
     let handlers: Vec<Arc<dyn ToolHandler>> = vec![
         Arc::new(CreateScheduleTool),
         Arc::new(ListSchedulesTool),

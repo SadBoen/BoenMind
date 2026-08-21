@@ -448,7 +448,15 @@ impl ReactLoopAgent {
                 let approval_verdict = if self.rt.tools.requires_approval(&call.name) {
                     match &self.rt.approval {
                         Some(port) => {
-                            match port.request_approval(&call.name, &call.id, None).await {
+                            match port
+                                .request_approval(
+                                    self.session.id().as_str(),
+                                    &call.name,
+                                    &call.id,
+                                    None,
+                                )
+                                .await
+                            {
                                 Ok(v) => Some(v),
                                 Err(_e) => {
                                     // fail-loud：审批面出错不静默放行，按拒绝处理。
