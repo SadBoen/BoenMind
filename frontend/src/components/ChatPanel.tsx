@@ -144,16 +144,18 @@ export default function ChatPanel() {
               />
 
               {/* 思考档位（antd Select） */}
-              <Select
-                className="chat-thinking-select"
-                size="small"
-                variant="borderless"
-                value={thinking}
-                options={DEFAULT_THINKING.map((v) => ({ value: v, label: v }))}
-                popupMatchSelectWidth={false}
-                onChange={setThinking}
-                prefix={<span className="chat-select-icon">🧠</span>}
-              />
+              <Tooltip title="思考档位（开发中，mock 下不生效）">
+                <Select
+                  className="chat-thinking-select"
+                  size="small"
+                  variant="borderless"
+                  value={thinking}
+                  options={DEFAULT_THINKING.map((v) => ({ value: v, label: v }))}
+                  popupMatchSelectWidth={false}
+                  onChange={setThinking}
+                  prefix={<span className="chat-select-icon">🧠</span>}
+                />
+              </Tooltip>
 
               {/* 发送按钮（图标随风格档：黑白↑ / 卡通✈ / 玻璃⭯） */}
               <Button

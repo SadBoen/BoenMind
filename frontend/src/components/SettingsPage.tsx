@@ -425,21 +425,22 @@ export default function SettingsPage({ onClose, preset, onPresetChange }: Props)
                 <Button onClick={saveWorkdir}>保存</Button>
               </div>
             </SettingRow>
-            <SettingRow label="界面语言" desc="界面显示语言（占位，i18n 后置）">
+            <SettingRow label="界面语言" desc="界面显示语言（即将推出）">
               <Select
                 className="settings-control"
                 defaultValue="zh-CN"
+                disabled
                 options={[
                   { value: "zh-CN", label: "简体中文" },
                   { value: "en", label: "English" },
                 ]}
               />
             </SettingRow>
-            <SettingRow label="启动行为" desc="启动时自动恢复上次会话">
-              <Switch defaultChecked />
+            <SettingRow label="启动行为" desc="启动时自动恢复上次会话（即将推出）">
+              <Switch defaultChecked disabled />
             </SettingRow>
-            <SettingRow label="遥测" desc="匿名使用统计（占位）">
-              <Switch />
+            <SettingRow label="遥测" desc="匿名使用统计（即将推出）">
+              <Switch disabled />
             </SettingRow>
           </SettingSection>
         )}
@@ -713,7 +714,7 @@ export default function SettingsPage({ onClose, preset, onPresetChange }: Props)
                     onChange={(e) => setCompactMinMiddle(Number(e.target.value) || 0)}
                   />
                 </SettingRow>
-                <SettingRow label="在忙" desc="修改后直接对下一个回合生效">
+                <SettingRow label="生效时机" desc="修改后保存即写入，对下一个回合生效，无需重启">
                   <span className="settings-static">下一回合生效</span>
                 </SettingRow>
                 <div className="setting-row">
@@ -746,7 +747,7 @@ export default function SettingsPage({ onClose, preset, onPresetChange }: Props)
                 <span className="settings-static">host.list_dir · host.read_file · host.write_file · goal.get · web.search · schedule.list · schedule.cancel</span>
               </SettingRow>
             </div>
-            <SettingRow label="重置布局" desc="dockview 布局恢复默认（占位）">
+            <SettingRow label="重置布局" desc="dockview 布局刷新后回到默认两栏（聊天+文件）">
               <Button onClick={() => location.reload()}>重置</Button>
             </SettingRow>
             <SettingRow label="关于" desc="BoenMind · Rust 微内核 agent 平台">

@@ -429,10 +429,6 @@ body {
   flex: 1; overflow-y: auto; padding: 16px;
   display: flex; flex-direction: column; gap: 12px;
 }
-.chat-messages {
-  flex: 1; overflow-y: auto; padding: 16px;
-  display: flex; flex-direction: column; gap: 12px;
-}
 .chat-empty { color: var(--bm-fg-dim); text-align: center; margin-top: 40px; }
 .msg { display: flex; gap: 10px; }
 /* 助手消息：LLM 在左（默认布局） */
