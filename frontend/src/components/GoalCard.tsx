@@ -6,7 +6,7 @@
 // goal.clear 后投影为 null（墓碑，前端回到无目标空态）。
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Button, Popconfirm, Tag } from "antd";
+import { Button, Input, Popconfirm, Tag } from "antd";
 import { rpc } from "../client";
 import { MuxFrame, ProjectionFrame, useMuxEvent } from "../hooks/useMuxEvents";
 
@@ -35,6 +35,11 @@ export default function GoalCard({ sessionId }: { sessionId: string }) {
   const [loading, setLoading] = useState(false);
   const seqRef = useRef<number>(-1);
   const [revision, setRevision] = useState<number>(1);
+  // 新建目标表单态（无目标时显示）
+  const [creating, setCreating] = useState(false);
+  const [objective, setObjective] = useState("");
+  const [maxRounds, setMaxRounds] = useState(8);
+  const [createBusy, setCreateBusy] = useState(false);
 
   // 切换会话：拉 history 快照（含投影）重置本地状态。
   useEffect(() => {
@@ -88,7 +93,75 @@ export default function GoalCard({ sessionId }: { sessionId: string }) {
     }
   };
 
-  if (!goal) return null;
+  // 新建目标：goal.create → 成功后靠投影广播回灌切展示态（本会话立即有投影）。
+  const create = async () => {
+    if (!objective.trim() || createBusy) return;
+    setCreateBusy(true);
+    try {
+      await rpc("goal.create", {
+        sessionId,
+        objective: objective.trim(),
+        maxGoalRounds: Math.max(1, Math.round(maxRounds)),
+      });
+      setObjective("");
+      setCreating(false);
+    } catch (e) {
+      // 失败保留表单（用户可改）；错误 message 由 rpc 抛，这里静默避免打断
+    } finally {
+      setCreateBusy(false);
+    }
+  };
+
+  if (!goal) {
+    // 无目标空态：一行「🎯 新建目标」入口 → 展开创建表单。
+    return (
+      <div className="goal-card goal-card-empty">
+        {!creating ? (
+          <button className="goal-card-create-btn" type="button" onClick={() => setCreating(true)}>
+            🎯 新建目标
+          </button>
+        ) : (
+          <div className="goal-card-create">
+            <div className="goal-card-head">
+              <span className="goal-card-title">🎯 新建目标</span>
+            </div>
+            <Input.TextArea
+              className="goal-create-input"
+              rows={2}
+              value={objective}
+              placeholder="要达成的目标，例如：完成 5 个 Rust 所有权规则的讲解并验证"
+              autoFocus
+              onChange={(e) => setObjective(e.target.value)}
+            />
+            <div className="goal-create-row">
+              <span className="goal-create-label">自动续跑轮次</span>
+              <Input
+                className="goal-create-rounds"
+                type="number"
+                min={1}
+                max={64}
+                value={maxRounds}
+                onChange={(e) => setMaxRounds(Number(e.target.value) || 1)}
+              />
+              <span className="goal-create-hint">回合完成后自动续跑，直到目标完成或额度耗尽</span>
+            </div>
+            <div className="goal-card-actions">
+              <Button size="small" onClick={() => setCreating(false)}>取消</Button>
+              <Button
+                size="small"
+                type="primary"
+                loading={createBusy}
+                disabled={!objective.trim()}
+                onClick={create}
+              >
+                创建目标
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   const tag = PHASE_TAG[goal.goal.phase] ?? { color: "default", label: goal.goal.phase };
   const rounds = goal.roundsStarted;

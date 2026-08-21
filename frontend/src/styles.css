@@ -368,6 +368,28 @@ body {
 .goal-card-blocked {
   font-size: 12px; color: var(--bm-fg-dim);
 }
+/* ---- 目标卡片：新建空态 ---- */
+.goal-card-empty {
+  display: flex; justify-content: center;
+}
+.goal-card-create-btn {
+  background: none; border: none; cursor: pointer;
+  font-size: 13px; color: var(--bm-fg-dim);
+  padding: 4px 12px; border-radius: 8px;
+  transition: color 0.15s, background 0.15s;
+}
+.goal-card-create-btn:hover {
+  color: var(--bm-accent); background: var(--bm-accent-soft);
+}
+.goal-card-create { width: 100%; display: flex; flex-direction: column; gap: 8px; }
+.goal-create-input { resize: none; }
+.goal-create-row {
+  display: flex; align-items: center; gap: 8px;
+}
+.goal-create-label { font-size: 12px; color: var(--bm-fg-dim); flex-shrink: 0; }
+.goal-create-rounds { width: 72px; }
+.goal-create-hint { font-size: 12px; color: var(--bm-fg-dim); flex: 1; }
+.goal-card-actions .goal-create-hint { margin-left: auto; }
 
 /* ---- 工具审批弹窗（antd Modal 容器内样式；z-index 契约见 theme.ts）---- */
 .approval-modal .approval-body {
