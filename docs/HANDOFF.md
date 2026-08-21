@@ -51,8 +51,8 @@ frontend/                             ← React 19 + dockview + theme 四档
 - ✅ headless --compact：**不加**（会破坏 verify-gate1.sh 的位置参数签名）
 
 ### 剩余（需产品决策/功能演进，非 repair）
-- **compaction 设置表单**：现在是启动参数语义（`--compact` + config.toml `[compaction]`），设置页无对应段。要做 = 升级为运行时可调（后端新增 settings ns + loop 每回合读），属**功能演进**，需产品确认。
 - **unwrap/expect 全面清理**（unwrap_used/expect_used lints 留 allow 待做）：测试与合法断言大量使用，清理是独立任务（TODO: unwrap-polish）。
+- ✅ **compaction 设置表单已交付**（84463fd）：「启动参数语义 → 运行时可调」——`Runtime.compactor` 换 RwLock，新增 `SettingsBackedCompactor`（每次 maybe_compact 现读 settings.compaction），`--compact` 装配时把 config `[compaction]` 段种进 settings 作为初始值，设置页高级分区可调（下一回合生效）。语义：settings 有 compaction 记录即优先（重启保留），config 段仅作启动种子
 
 ### 2026-08-21 深夜四插件交付（自主运行，用户睡觉）——已推 main
 - ✅ **plugin-code-runtime**（4f13e11）：`code.compile/python/shell`，workdir 作用域 + 30s 超时 kill + 输出钱包 512KB/流（并发排水防洪水输出死锁/撑爆上下文）。装配 `Runtime::install_code_runtime` + `--code-runtime`
