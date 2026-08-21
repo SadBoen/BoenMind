@@ -13,6 +13,7 @@ BoenMind = Rust 微内核（`kernel/` 只读 submodule `dsh-rust-core`）+ 产�
 | commit | 内容 |
 |---|---|
 | `42321c5` | docs(handoff)：苹果审批标识/设置页策略可视化划入已交付 |
+| `689f59f` | **feat(approval)：豁免持久化 + 会话列表打磨**——approvalTrust localStorage 持久化（跨刷新/重启保留，隐私模式降级内存态）；SessionList blank 会话标题带 cwd（「新会话 · work」区分多空白会话） |
 | `b7be5a2` | **feat(ui)：审批豁免管理面 + 启动恢复最近会话**——豁免表提升模块级 store（approvalTrust.ts，useSyncExternalStore）跨组件共享；设置页高级「本会话豁免」展示+清除；sessionStore 持久化最近会话 + 启动恢复（设置页「启动行为」开关） |
 | `1fb9fe5` | **style(ui)：UI 打磨**——占位控件禁用化（界面语言/启动/遥测「即将推出」）/思考档位标注开发中（后端未接线）/「在忙」→「生效时机」/重置布局描述如实/CSS 重复块 |
 | `3d8171c` | **feat(approval,compaction)：审批会话级豁免 + 压缩策略重置**——ApprovalModal「本会话信任该工具」（(sessionId,toolName) 豁免表 ref 承载，同名调用自动放行）；SettingsPage「重置为默认」（回写出厂默认值）；`_test.registerApproval` 补广播（仅 BM_TEST_HOOKS=1） |
@@ -77,6 +78,7 @@ frontend/                             ← React 19 + dockview + antd v6
 - ✅ **审批弹窗危险徽章 + 设置页工具审批子区块**：前端 DANGEROUS_TOOLS 集合与后端名单对齐，纯展示
 - ✅ **审批会话级豁免**：ApprovalModal「本会话信任该工具」→ allowed-once 应答当前调用 + 记入 (sessionId, toolName) 豁免表（ref 承载）；同会话同名工具后续请求自动放行不弹窗；弹窗底部显示「本会话已信任 N 个工具」；纯前端豁免层（后端契约零改动），页面刷新豁免失效（内存态）
 - ✅ **豁免管理面**：豁免表提升为模块级 store（`hooks/approvalTrust.ts`，useSyncExternalStore）；设置页高级·工具审批「本会话豁免」子区块展示 sessionId+已信任工具 + 「清除豁免」按钮（跨组件共享）
+- ✅ **豁免持久化**：approvalTrust 持久化到 localStorage（`bm.approvalTrust`）——跨刷新/重启保留；localStorage 不可用（隐私模式）降级内存态不阻断；设置页豁免区描述如实
 - ✅ **启动恢复最近会话**：sessionStore 持久化最近会话 id 到 localStorage；启动经 session.list 校验后自动选中；设置页「启动行为」开关（默认开）；此前该开关是禁用占位——现为真实功能
 - ✅ **compaction 重置为默认**：SettingsPage 压缩表单「重置为默认」→ 回写 settings.compaction 出厂默认值（enabled/watermark/keepRecentRatio/keepRecentFloor/minMiddleTokens）+ 表单同步；`_test.registerApproval` 钩子补 broadcast（仅 BM_TEST_HOOKS=1，豁免全链路验收用）
 
@@ -97,7 +99,7 @@ bash scripts/verify-gate1.sh                   # headless 全链路 + kill-9 恢
 - **compaction 深度**：config 段种子已实现「重启保留」；设置页可加「重置为默认」按钮（settings.clear 语义）。✅ 2026-08-21 已交付
 
 ### 候选（下轮）
-- **审批体验深化**：~~「本会话信任此工具」/「记住上次选择」类记忆~~ ✅ 2026-08-21 已交付（会话级豁免 + 设置页管理面/清除）；可继续 **持久化豁免**（重启保留，现内存态）
+- **审批体验深化**：~~「本会话信任此工具」/「记住上次选择」类记忆~~ ✅ 2026-08-21 已交付（会话级豁免 + 设置页管理面/清除 + **localStorage 持久化跨重启**）；残余：豁免是前端本地存储，无双端管理（换浏览器/清缓存即失）
 - **goal 编辑**：~~改 objective/额度（现只有 pause/resume/complete，无 edit UI；RPC goal.edit 已存在）~~ ✅ 2026-08-21 前端 GoalCard 已实现（见交付记录）
 - **前端新视图/打磨**：设置页无缝体验、文件管理器深度集成、CodingApp 落地（当前占位）
 - **settings 页 app文档**：设置项 applies 恒 "restart" 元字段未真正区分；可将 compaction/workdir 类的"下一请求生效"语义显式化
@@ -113,6 +115,7 @@ bash scripts/verify-gate1.sh                   # headless 全链路 + kill-9 恢
 8. **web-server.exe 被运行进程锁死**——`cargo build` 前先停 3080/3099 进程（`netstat -ano | grep :3080` 拿 PID → taskkill）。
 9. **Git Bash 中文提交信息显示乱码是终端假象**——git 存 UTF-8 正确，`git log` 看正常。
 10. **审批 rpcId 丢失劫**：approval/requested 帧的应答 key 是**外层信封 rpcId**（非 payload 内 approvalId）。前端总线只传 payload 会丢 rpcId → respond 恒 bad-response（曾定位半天）。useMuxEvent handler 必须收完整帧。
+11. **session.list updatedAt 是假值**（恒 1970-01-01）：真实 updated_at 在 kernel-storage 的 sessions 表，但 `SessionPersistPort.list_sessions` 只返回 id（改契约需动 kernel/ submodule，不可行）。**当前无用户可见影响**——list_sessions 已按 updated_at 降序返回正确顺序，前端 SessionList 只用顺序不用该字段。若未来要真实时间：在 bm-ports 加扩展端口读 updated_at（`kernel/` 只读不动）。
 
 ## 八、环境/备忘
 
