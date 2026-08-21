@@ -39,6 +39,10 @@ pub const GOAL_UPDATE: &str = "goal.update";
 /// 全部 goal 工具名。
 pub const ALL_TOOL_NAMES: [&str; 3] = [GOAL_GET, GOAL_CREATE, GOAL_UPDATE];
 
+/// 危险工具（需用户审批）：goal.create/update 改变目标状态机（续跑行为副作用）；
+/// goal.get 只读投影，自动放行。
+pub const DANGEROUS_TOOL_NAMES: [&str; 2] = [GOAL_CREATE, GOAL_UPDATE];
+
 /// 全局 goal 源（装配方经 [`set_goal_source`] 注入；工具执行时现读）。
 static GOAL_SOURCE: Mutex<Option<Arc<dyn GoalPort>>> = Mutex::new(None);
 

@@ -33,6 +33,10 @@ pub const SCHEDULE_CANCEL: &str = "schedule.cancel";
 /// 全部 schedule 工具名。
 pub const ALL_TOOL_NAMES: [&str; 3] = [SCHEDULE_CREATE, SCHEDULE_LIST, SCHEDULE_CANCEL];
 
+/// 危险工具（需用户审批）：schedule.create 后台自动驱动会话回合（副作用面）；
+/// list/cancel 只读或撤销，自动放行。
+pub const DANGEROUS_TOOL_NAMES: [&str; 1] = [SCHEDULE_CREATE];
+
 /// 全局 schedule 源（装配方经 [`set_schedule_source`] 注入；工具执行时现读）。
 static SCHEDULE_SOURCE: Mutex<Option<Arc<dyn SchedulePort>>> = Mutex::new(None);
 

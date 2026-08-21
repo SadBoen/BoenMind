@@ -21,6 +21,10 @@ pub mod plugin;
 /// 工具注册表：name → handler。
 pub struct ToolRegistry {
     handlers: RwLock<HashMap<String, Arc<dyn ToolHandler>>>,
+    /// 危险工具名单（装配面 mark_dangerous 注入）：`requires_approval(name)`
+    /// 返回 true → loop 执行前弹审批窗。默认空 = 全自动放行（审批面存在但
+    /// 不拦安全工具）。
+    dangerous: RwLock<HashSet<String>>,
 }
 
 impl std::fmt::Debug for ToolRegistry {
@@ -36,6 +40,7 @@ impl Default for ToolRegistry {
     fn default() -> Self {
         Self {
             handlers: RwLock::new(HashMap::new()),
+            dangerous: RwLock::new(HashSet::new()),
         }
     }
 }
@@ -43,6 +48,20 @@ impl Default for ToolRegistry {
 impl ToolRegistry {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// 声明工具为危险（需要审批）。装配面调用——组合根在各插件 install_*
+    /// 里 mark。未注册的工具名静默忽略（宽松，避免装配顺序耦合）。
+    pub fn mark_dangerous(&self, name: &str) {
+        self.dangerous.write().insert(name.to_string());
+    }
+
+    /// 批量声明危险工具。
+    pub fn mark_dangerous_many<'a>(&self, names: impl IntoIterator<Item = &'a str>) {
+        let mut set = self.dangerous.write();
+        for n in names {
+            set.insert(n.to_string());
+        }
     }
 
     /// 注册一个工具处理器；重名返回 `Err("tool '{name}' already registered")`。
@@ -123,6 +142,9 @@ impl bm_ports::ToolRegistryPort for ToolRegistry {
         input: ToolExecutionInput,
     ) -> Result<ToolExecutionResult, ToolError> {
         ToolRegistry::execute(self, input).await
+    }
+    fn requires_approval(&self, name: &str) -> bool {
+        self.dangerous.read().contains(name)
     }
 }
 

@@ -282,6 +282,8 @@ impl Runtime {
         for name in plugin_host_tools::ALL_TOOL_NAMES {
             self.gate.enable(name);
         }
+        // 危险声明：run_command 需审批（装配 --approval 时 loop 只拦这些）。
+        self.tools.mark_dangerous_many(plugin_host_tools::DANGEROUS_TOOL_NAMES.iter().copied());
     }
 
     /// 装配代码执行沙箱插件（功能）：注册 3 个 code.* 工具（compile/python/shell）
@@ -298,6 +300,8 @@ impl Runtime {
         for name in plugin_code_runtime::ALL_TOOL_NAMES {
             self.gate.enable(name);
         }
+        // 危险声明：全部 code.* 都需审批（代码执行面）。
+        self.tools.mark_dangerous_many(plugin_code_runtime::DANGEROUS_TOOL_NAMES.iter().copied());
     }
 
     /// 装配 Web 取数工具插件（功能）：注册 web.fetch/web.search 工具到本运行时
@@ -310,6 +314,8 @@ impl Runtime {
         for name in plugin_web_tools::ALL_TOOL_NAMES {
             self.gate.enable(name);
         }
+        // 危险声明：web.fetch 外联需审批（web.search 自动放行）。
+        self.tools.mark_dangerous_many(plugin_web_tools::DANGEROUS_TOOL_NAMES.iter().copied());
     }
 
     /// 装配定时任务插件（功能）：注入 [`SchedulePort`] 实现（web-server Scheduler）
@@ -323,6 +329,8 @@ impl Runtime {
         for name in plugin_schedule::ALL_TOOL_NAMES {
             self.gate.enable(name);
         }
+        // 危险声明：schedule.create 后台驱动需审批（list/cancel 自动放行）。
+        self.tools.mark_dangerous_many(plugin_schedule::DANGEROUS_TOOL_NAMES.iter().copied());
     }
 
     /// 装配目标管理工具插件（功能）：注入 [`GoalPort`] 实现（web-server GoalRouter）
@@ -337,6 +345,8 @@ impl Runtime {
         for name in plugin_goal::ALL_TOOL_NAMES {
             self.gate.enable(name);
         }
+        // 危险声明：goal.create/update 改目标状态需审批（goal.get 自动放行）。
+        self.tools.mark_dangerous_many(plugin_goal::DANGEROUS_TOOL_NAMES.iter().copied());
     }
 
     /// 装配工具审批端口（功能面，`&self` 装配——AppState 已在 Arc 中时仍可调用）：
@@ -1553,6 +1563,9 @@ mod tests {
         rt.install_approval(Arc::new(TestApproval {
             verdict: bm_ports::ApprovalVerdict::Rejected,
         }));
+        // 测试工具声明为危险（生产经 install_host_tools 自动 mark host.run_command；
+        // 这里手动 mark write_file 模拟危险工具）。
+        rt.tools.mark_dangerous("host.write_file");
 
         // 脚本 LLM：回合 1 调 host.write_file；回合 2 文本收尾。
         rt.swap_llm(scripted_llm(
@@ -1604,6 +1617,8 @@ mod tests {
         rt.install_approval(Arc::new(TestApproval {
             verdict: bm_ports::ApprovalVerdict::Allowed,
         }));
+        // 声明 write_file 为危险（对齐 reject 测试；验证 allow 分支放行危险工具）。
+        rt.tools.mark_dangerous("host.write_file");
 
         rt.swap_llm(scripted_llm(
             "mock".to_string(),

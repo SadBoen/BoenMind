@@ -49,6 +49,10 @@ pub const ALL_TOOL_NAMES: [&str; 4] = [
     HOST_RUN_COMMAND,
 ];
 
+/// 危险工具（需用户审批）：run_command 可执行任意命令；其余是 workdir 内只读/写文件，
+/// 自动放行（越界由 resolve 防护）。装配 --approval 时组合根 mark_dangerous。
+pub const DANGEROUS_TOOL_NAMES: [&str; 1] = [HOST_RUN_COMMAND];
+
 /// 全局 workdir 源（装配方经 [`set_workdir_source`] 注入；工具执行时现读）。
 /// Mutex 包裹：生产装配期注入一次；测试/热切换可重新 set（后设覆盖先设）。
 static WORKDIR_SOURCE: Mutex<Option<Arc<dyn WorkdirPort>>> = Mutex::new(None);

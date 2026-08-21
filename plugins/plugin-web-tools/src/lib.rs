@@ -40,6 +40,10 @@ pub const WEB_SEARCH: &str = "web.search";
 /// 全部 web-tools 工具名。
 pub const ALL_TOOL_NAMES: [&str; 2] = [WEB_FETCH, WEB_SEARCH];
 
+/// 危险工具（需用户审批）：web.fetch 外联抓取（敏感面，SSRF 防线外仍要人确认）；
+/// web.search 只读公网搜索，自动放行。
+pub const DANGEROUS_TOOL_NAMES: [&str; 1] = [WEB_FETCH];
+
 /// 全部 web-tools 工具 schema（文档/装配可查询）。
 pub fn schemas() -> Vec<ToolSchema> {
     [WEB_FETCH, WEB_SEARCH]

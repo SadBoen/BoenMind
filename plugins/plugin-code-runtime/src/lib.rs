@@ -53,6 +53,10 @@ pub const CODE_SHELL: &str = "code.shell";
 /// 全部 code-runtime 工具名。
 pub const ALL_TOOL_NAMES: [&str; 3] = [CODE_COMPILE, CODE_PYTHON, CODE_SHELL];
 
+/// 危险工具（需用户审批）：全部 code.*（编译/脚本执行 = 代码执行面，高危）。
+/// 装配 --approval 时组合根 mark_dangerous。
+pub const DANGEROUS_TOOL_NAMES: [&str; 3] = [CODE_COMPILE, CODE_PYTHON, CODE_SHELL];
+
 /// 全局 workdir 源（装配方经 [`set_workdir_source`] 注入；工具执行时现读）。
 static WORKDIR_SOURCE: Mutex<Option<Arc<dyn WorkdirPort>>> = Mutex::new(None);
 

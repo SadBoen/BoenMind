@@ -23,6 +23,14 @@ pub trait ToolRegistryPort: Send + Sync + std::fmt::Debug {
         &self,
         input: ToolExecutionInput,
     ) -> Result<ToolExecutionResult, ToolError>;
+
+    /// 该工具是否需要用户审批（危险面声明）。默认 `false` = 自动放行；
+    /// 装配面（注册器 mark_dangerous）标记危险工具后覆写。loop 审批点在
+    /// 执行前调用——只有 `true` 的工具才弹审批窗（对齐 approval.rs 设计
+    /// 注释「仅声明了需要审批的工具会暂停」）。
+    fn requires_approval(&self, _name: &str) -> bool {
+        false
+    }
 }
 
 /// 工具门控端口（fail-closed 消费面）。

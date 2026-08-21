@@ -441,21 +441,25 @@ impl ReactLoopAgent {
                     arguments: serde_json::from_str(&call.arguments)
                         .unwrap_or(serde_json::Value::Null),
                 };
-                // 审批面（可选装配）：危险工具调用执行前暂停、推前端审批弹窗、
-                // 等用户裁定。Rejected/超时 → 记拒绝结果回写日志（模型可见事实）；
-                // 审批面错误 fail-loud 按拒绝处理（不静默放行危险工具）。
-                // 未装配（approval=None）= 审批面禁用，直接执行（既有语义）。
-                let approval_verdict = match &self.rt.approval {
-                    Some(port) => {
-                        match port.request_approval(&call.name, &call.id, None).await {
-                            Ok(v) => Some(v),
-                            Err(_e) => {
-                                // fail-loud：审批面出错不静默放行，按拒绝处理。
-                                Some(bm_ports::ApprovalVerdict::Rejected)
+                // 审批面（可选装配）：**危险工具**（注册器 mark_dangerous）调用执行前暂停、
+                // 推前端审批弹窗、等用户裁定；安全工具/未装配 = 自动放行直接执行。
+                // Rejected/超时 → 记拒绝结果回写日志（模型可见事实）；审批面错误
+                // fail-loud 按拒绝处理（不静默放行危险工具）。
+                let approval_verdict = if self.rt.tools.requires_approval(&call.name) {
+                    match &self.rt.approval {
+                        Some(port) => {
+                            match port.request_approval(&call.name, &call.id, None).await {
+                                Ok(v) => Some(v),
+                                Err(_e) => {
+                                    // fail-loud：审批面出错不静默放行，按拒绝处理。
+                                    Some(bm_ports::ApprovalVerdict::Rejected)
+                                }
                             }
                         }
+                        None => None,
                     }
-                    None => None,
+                } else {
+                    None
                 };
                 if approval_verdict == Some(bm_ports::ApprovalVerdict::Rejected) {
                     let result = ToolCallResult {
