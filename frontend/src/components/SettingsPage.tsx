@@ -115,6 +115,14 @@ export default function SettingsPage({ onClose, preset, onPresetChange }: Props)
   const [workdir, setWorkdirState] = useState("");
   const [workdirSet, setWorkdirSet] = useState(false);
 
+  // 上下文压缩（高级区；settings.compaction ns，settings-backed 每回合现读）
+  const [compactEnabled, setCompactEnabled] = useState(true);
+  const [compactWatermark, setCompactWatermark] = useState(0.5);
+  const [compactRatio, setCompactRatio] = useState(0.1);
+  const [compactFloor, setCompactFloor] = useState(4000);
+  const [compactMinMiddle, setCompactMinMiddle] = useState(512);
+  const [compactSectionPresent, setCompactSectionPresent] = useState(false);
+
   // 改密
   const [currentPwd, setCurrentPwd] = useState("");
   const [newPwd, setNewPwd] = useState("");
@@ -167,13 +175,23 @@ export default function SettingsPage({ onClose, preset, onPresetChange }: Props)
         }
       })
       .catch(() => {});
-    // 读取已存工作目录（settings host.workdir）
+    // 读取已存工作目录（settings host.workdir）与上下文压缩策略（settings.compaction）
     rpc<{ namespaces: { ns: string; value: Record<string, unknown> }[] }>("settings.describe", {})
       .then((v) => {
         const ns = v.namespaces.find((n) => n.ns === "host");
         const wd = (ns?.value?.workdir as string) || "";
         setWorkdirState(wd);
         setWorkdirSet(!!wd);
+        const cns = v.namespaces.find((n) => n.ns === "compaction");
+        if (cns) {
+          const c = cns.value ?? {};
+          if ("enabled" in c) setCompactEnabled(c.enabled as boolean);
+          if ("watermark" in c) setCompactWatermark(c.watermark as number);
+          if ("keepRecentRatio" in c) setCompactRatio(c.keepRecentRatio as number);
+          if ("keepRecentFloor" in c) setCompactFloor(c.keepRecentFloor as number);
+          if ("minMiddleTokens" in c) setCompactMinMiddle(c.minMiddleTokens as number);
+          setCompactSectionPresent(true);
+        }
       })
       .catch(() => {});
   }, []);
@@ -253,6 +271,24 @@ export default function SettingsPage({ onClose, preset, onPresetChange }: Props)
       window.dispatchEvent(new CustomEvent("bm-workdir-changed"));
     } catch (e) {
       message.error(`设置失败: ${(e as Error).message}`);
+    }
+  };
+
+  // 保存上下文压缩策略（settings.compaction；SettingsBackedCompactor 每回合现读，
+  // 无需重启即生效）
+  const saveCompaction = async () => {
+    const patch = {
+      enabled: compactEnabled,
+      watermark: Math.min(1, Math.max(0.1, compactWatermark)),
+      keepRecentRatio: Math.min(0.5, Math.max(0.02, compactRatio)),
+      keepRecentFloor: Math.max(256, Math.round(compactFloor)),
+      minMiddleTokens: Math.max(128, Math.round(compactMinMiddle)),
+    };
+    try {
+      await rpc("settings.update", { ns: "compaction", patch });
+      message.success("压缩策略已保存（下一回合生效）");
+    } catch (e) {
+      message.error(`保存失败: ${(e as Error).message}`);
     }
   };
 
@@ -585,6 +621,76 @@ export default function SettingsPage({ onClose, preset, onPresetChange }: Props)
 
         {section === "advanced" && (
           <SettingSection title="高级">
+            {/* 上下文压缩（--compact 装配后可见；策略 live 生效，无需重启） */}
+            {compactSectionPresent && (
+              <div className="setting-subsection">
+                <div className="setting-subsection-title">上下文压缩</div>
+                <SettingRow
+                  label="启用自动压缩"
+                  desc="长对话按水线自动摘要压缩历史（仅影响送模型上下文，聊天记录照常显示）"
+                >
+                  <Switch checked={compactEnabled} onChange={setCompactEnabled} />
+                </SettingRow>
+                <SettingRow
+                  label="水线（窗口占用比例）"
+                  desc={`上下文占用达到 ${Math.round(compactWatermark * 100)}% 时触发压缩`}
+                >
+                  <Slider
+                    className="settings-wide-control"
+                    min={10}
+                    max={95}
+                    step={5}
+                    value={Math.round(compactWatermark * 100)}
+                    onChange={(v) => setCompactWatermark(v / 100)}
+                    tooltip={{ formatter: (v) => `${v}%` }}
+                  />
+                </SettingRow>
+                <SettingRow
+                  label="尾部保留比例"
+                  desc={`保留最近 ${Math.round(compactRatio * 100)}% 上下文不被压缩`}
+                >
+                  <Slider
+                    className="settings-wide-control"
+                    min={2}
+                    max={50}
+                    step={1}
+                    value={Math.round(compactRatio * 100)}
+                    onChange={(v) => setCompactRatio(v / 100)}
+                    tooltip={{ formatter: (v) => `${v}%` }}
+                  />
+                </SettingRow>
+                <SettingRow
+                  label="尾部保留下限（token）"
+                  desc="精确命中该 token 数后按比例计算保留量"
+                >
+                  <Input
+                    type="number"
+                    className="settings-number-input"
+                    value={compactFloor}
+                    onChange={(e) => setCompactFloor(Number(e.target.value) || 0)}
+                  />
+                </SettingRow>
+                <SettingRow
+                  label="中部压缩下限（token）"
+                  desc="可压缩中部不足该值时不压（小对话不折腾）"
+                >
+                  <Input
+                    type="number"
+                    className="settings-number-input"
+                    value={compactMinMiddle}
+                    onChange={(e) => setCompactMinMiddle(Number(e.target.value) || 0)}
+                  />
+                </SettingRow>
+                <SettingRow label="在忙" desc="修改后直接对下一个回合生效">
+                  <span className="settings-static">下一回合生效</span>
+                </SettingRow>
+                <div className="setting-row">
+                  <Button type="primary" onClick={saveCompaction}>
+                    保存压缩策略
+                  </Button>
+                </div>
+              </div>
+            )}
             <SettingRow label="重置布局" desc="dockview 布局恢复默认（占位）">
               <Button onClick={() => location.reload()}>重置</Button>
             </SettingRow>

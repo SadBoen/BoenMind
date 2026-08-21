@@ -284,41 +284,14 @@ fn main() {
     // 上下文压缩插件装配（--compact）：长会话按水线自动摘要压缩（运行态
     // 视图变换，前端无感——聊天记录照常显示全部历史）。不传 = 未装配
     // （透传，旧行为不变）。功能插件 = 用户可加装/可关闭的可选面。
-    // 参数优先取 --config 内 [compaction] 段（缺省回落默认策略 0.5/10%/4000/512）。
-    if compact_enabled && !matches!(compaction_cfg.as_ref().and_then(|c| c.enabled), Some(false)) {
-        let def = bm_assembly::DefaultCompactor::default();
-        let compactor = bm_assembly::DefaultCompactor {
-            watermark: compaction_cfg
-                .as_ref()
-                .and_then(|c| c.watermark)
-                .unwrap_or(def.watermark),
-            keep_recent_ratio: compaction_cfg
-                .as_ref()
-                .and_then(|c| c.keep_recent_ratio)
-                .unwrap_or(def.keep_recent_ratio),
-            keep_recent_floor: compaction_cfg
-                .as_ref()
-                .and_then(|c| c.keep_recent_floor)
-                .unwrap_or(def.keep_recent_floor),
-            min_middle_tokens: compaction_cfg
-                .as_ref()
-                .and_then(|c| c.min_middle_tokens)
-                .unwrap_or(def.min_middle_tokens),
-        };
-        let watermark = compactor.watermark;
-        let keep_recent_ratio = compactor.keep_recent_ratio;
-        let keep_recent_floor = compactor.keep_recent_floor;
-        let min_middle_tokens = compactor.min_middle_tokens;
-        runtime.install_compactor(Arc::new(compactor));
-        tracing::info!(
-            "context compactor plugin installed (watermark {}, tail {:.0}% / floor {}, min-middle {})",
-            watermark,
-            keep_recent_ratio * 100.0,
-            keep_recent_floor,
-            min_middle_tokens
-        );
-    } else if compact_enabled {
-        tracing::info!("context compactor plugin skipped: [compaction] enabled=false");
+    // 装配推迟到 state 创建后（state.install_compactor）：settings-backed 实现
+    // 需要 Arc<AppState>，且把 config.toml [compaction] 段种进 settings 使
+    // 「运行时可调」生效——设置页改参数后下一回合即生效。
+    let compact_enabled = compact_enabled && !matches!(compaction_cfg.as_ref().and_then(|c| c.enabled), Some(false));
+    if compact_enabled {
+        tracing::info!("context compactor will be installed (settings-backed)");
+    } else {
+        tracing::info!("context compactor plugin skipped: --compact absent or [compaction] enabled=false");
     }
 
     // settings/credentials 持久化文件（P2-C：重启恢复配置与凭据；
@@ -335,6 +308,11 @@ fn main() {
     // （从 settings host.workdir 现读——设置页改工作目录后工具即时生效）。
     // 经 bm-assembly 组合根装配（L0 不直接依赖 plugin-host-tools，守卫规则 2）。
     state.install_host_tools();
+    // 上下文压缩装配（--compact，settings-backed）：种 config 种子 + 装配
+    // live 读 settings.compaction 的实现——设置页改参数下一回合即生效。
+    if compact_enabled {
+        state.install_compactor(compaction_cfg.as_ref());
+    }
     // 代码执行沙箱插件装配（--code-runtime）：注册 code.compile/python/shell 工具
     // （workdir 作用域 + 超时 kill + 输出钱包）。不传 = 未装配（旧行为不变）。
     if code_runtime_enabled {

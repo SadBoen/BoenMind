@@ -185,6 +185,45 @@ impl AppState {
         *self.goal_driver.lock().unwrap() = Some(driver);
     }
 
+    /// 装配上下文压缩（`--compact`）为运行时可调语义：没有显式 settings.compaction
+    /// 记录时，用 config.toml `[compaction]` 段（缺省回落默认策略 0.5/10%/4000/512）
+    /// **种入** settings 作为初始值，再装配 [`crate::compaction::SettingsBackedCompactor`]
+    /// （每次 maybe_compact 现场锁读——设置页改参数后下一回合即生效）。
+    /// 语义升级：config 段的 `enabled=false` 否决权保留（种入 enabled=false）。
+    pub fn install_compactor(self: &Arc<Self>, cfg: Option<&bm_assembly::config::CompactionConfig>) {
+        let mut settings = self.settings.lock().unwrap();
+        let compaction = settings.get_mut("compaction");
+        let empty = compaction.is_none() || compaction.map(|m| m.is_empty() || !m.contains_key("watermark")).unwrap_or(true);
+        if empty {
+            let def = bm_assembly::DefaultCompactor::default();
+            let mut seed = serde_json::Map::new();
+            seed.insert("enabled".into(), serde_json::json!(cfg.and_then(|c| c.enabled).unwrap_or(true)));
+            seed.insert(
+                "watermark".into(),
+                serde_json::json!(cfg.and_then(|c| c.watermark).unwrap_or(def.watermark)),
+            );
+            seed.insert(
+                "keepRecentRatio".into(),
+                serde_json::json!(cfg.and_then(|c| c.keep_recent_ratio).unwrap_or(def.keep_recent_ratio)),
+            );
+            seed.insert(
+                "keepRecentFloor".into(),
+                serde_json::json!(cfg.and_then(|c| c.keep_recent_floor).unwrap_or(def.keep_recent_floor)),
+            );
+            seed.insert(
+                "minMiddleTokens".into(),
+                serde_json::json!(cfg.and_then(|c| c.min_middle_tokens).unwrap_or(def.min_middle_tokens)),
+            );
+            settings.insert("compaction".to_string(), seed);
+        }
+        drop(settings);
+        // 装配 settings-backed 实现（RwLock 换装，&self——与 approval 装配同构）。
+        let compactor: Arc<dyn bm_ports::Compactor> =
+            Arc::new(crate::compaction::SettingsBackedCompactor::new(Arc::clone(self)));
+        self.runtime.install_compactor(compactor);
+        tracing::info!("context compactor plugin installed (settings-backed, live-updatable)");
+    }
+
     pub fn assemble(
         runtime: Runtime,
         trusted_hosts: Vec<String>,

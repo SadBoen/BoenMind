@@ -17,6 +17,7 @@ pub(super) const WEB_SETTINGS_NAMESPACES: &[&str] = &[
     "ui-theme",
     "ui-onboarding",
     "host", // 工作目录等宿主设置（host.workdir 为文件管理器的唯一事实源）
+    "compaction", // 上下文压缩策略（SettingsBackedCompactor 每回合现读）
 ];
 
 /// 构造单个 SettingsNamespaceView（台账 §2：{ns, schema, value, base?, user?, applies, secrets, revision}）。

@@ -5,6 +5,7 @@
 
 pub mod api;
 pub mod approval;
+pub mod compaction;
 pub mod events;
 pub mod goal;
 pub mod goal_driver;

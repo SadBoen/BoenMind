@@ -146,7 +146,9 @@ pub struct Runtime {
     /// 上下文压缩插件（功能面，可选装配）：`Some` 时新会话/恢复会话的
     /// loop 在每次模型调用前做水线判定与运行态压缩变换；`None` = 未装配
     /// （透传，无感）。经 [`Runtime::install_compactor`] 装配。
-    compactor: Option<Arc<dyn bm_ports::Compactor>>,
+    /// `RwLock` 承载（同 `approval` 热换装模式）：web-server 在 state 装配期
+    /// 经 `&self` 换装 settings-backed 实现（loop 每次现读 compaction settings）。
+    compactor: parking_lot::RwLock<Option<Arc<dyn bm_ports::Compactor>>>,
     /// 工具审批端口（功能面，可选装配）：`Some` 时危险工具调用执行前暂停、
     /// 经端口推前端审批弹窗、等用户裁定；`None` = 审批面禁用（透传无感）。
     /// `RwLock` 承载（同 `llm`/`agent_factory` 热换装模式）：AppState 已在 Arc
@@ -207,7 +209,7 @@ impl Runtime {
             model: "mock-1".to_string(),
             bus,
             max_steps,
-            compactor: None,
+            compactor: parking_lot::RwLock::new(None),
             approval: parking_lot::RwLock::new(None),
             agent_factory: RwLock::new(default_agent_factory()),
             core_plugins: vec![
@@ -470,9 +472,9 @@ impl Runtime {
     /// 装配后新会话/恢复会话的 loop 在每次模型调用前做水线判定与运行态
     /// 压缩变换（`None` = 未装配透传）。装配后 `plugin_manifest()` 追加
     /// compactor（Feature）。未装配时不影响任何既有行为（优雅无感）。
-    pub fn install_compactor(&mut self, compactor: Arc<dyn bm_ports::Compactor>) {
-        self.compactor = Some(compactor);
-        self.core_plugins.push(plugin_compactor::plugin::manifest());
+    pub fn install_compactor(&self, compactor: Arc<dyn bm_ports::Compactor>) {
+        *self.compactor.write() = Some(compactor);
+        tracing::info!("context compactor plugin installed (settings-backed)");
     }
 
     /// 装配默认认证插件（web-server `--auth` 入口）：默认密码 + 可选持久化文件
@@ -588,7 +590,7 @@ impl Runtime {
             provider: self.provider.clone(),
             model: self.model.clone(),
             max_steps: self.max_steps,
-            compactor: self.compactor.clone(),
+            compactor: self.compactor.read().clone(),
             approval: self.approval.read().clone(),
         })
     }
