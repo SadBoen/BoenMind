@@ -13,6 +13,7 @@ BoenMind = Rust 微内核（`kernel/` 只读 submodule `dsh-rust-core`）+ 产�
 | commit | 内容 |
 |---|---|
 | `42321c5` | docs(handoff)：苹果审批标识/设置页策略可视化划入已交付 |
+| `5e24ad0` | **feat(goal)：前端目标编辑**——展示态新增「编辑」入口，objective/自动续跑轮次可改（goal.edit，CAS ref 同 pause/resume/complete）；至少改一项才提交，未修改直接退出，取消还原表单；goal.clear 墓碑/切换会话时同步退出编辑态；已过 tsc/vite/cargo/gate1/真实 UI 全链路 |
 | `4826f6a` | **feat(ui)：审批弹窗危险标识 + 设置页工具审批策略可视化**——危险工具弹窗附红「危险」徽章；设置页高级「工具审批」子区块（危险/安全 Tag 列表只读展示） |
 | `e59c2ba` | docs(handoff)：危险工具白名单划入已交付 |
 | `5cbc11c` | **feat(approval)：危险工具白名单**——审批只拦真危险（host.run_command/code.*/web.fetch/goal.create+update/schedule.create），安全工具自动放行；`ToolRegistryPort.requires_approval` + 各插件 `DANGEROUS_TOOL_NAMES` + assembly mark |
@@ -64,6 +65,7 @@ frontend/                             ← React 19 + dockview + antd v6
 - ✅ **审批弹窗 ApprovalModal**：POST /api/respond（allowed-once/rejected），多帧排队、resolved 自动关闭、应答必达
 - ✅ **goal 卡片 GoalCard**：快照（session.history projections）+ 增量（session/projection，higher-seq-wins）合并展示；pause/resume/complete 走 goal RPC（CAS ref）；刷新后快照恢复
 - ✅ **goal 新建表单**：GoalCard 无目标态「🎯 新建目标」→ objective + 轮次 → goal.create → 投影回灌切展示态
+- ✅ **goal 编辑表单**：GoalCard 展示态「编辑」→ objective + 轮次预填 → goal.edit（CAS ref 同 pause/resume/complete，至少改一项才提交；未修改直接退出，取消还原表单）→ 投影回灌切展示态；goal.clear 墓碑/切换会话时同步退出编辑态
 - ✅ **client.ts auth 修复**：auth-not-available 直接抛 code（原来被 err.message 吞，未开 --auth 时前端永久卡「载入中…」）
 
 ### 基础设施/策略批
@@ -89,7 +91,7 @@ bash scripts/verify-gate1.sh                   # headless 全链路 + kill-9 恢
 
 ### 候选（下轮）
 - **审批体验深化**：「本会话信任此工具」/「记住上次选择」类记忆（当前每个危险调用都弹，无会话级豁免）
-- **goal 编辑**：改 objective/额度（现只有 pause/resume/complete，无 edit UI；RPC goal.edit 已存在）
+- **goal 编辑**：~~改 objective/额度（现只有 pause/resume/complete，无 edit UI；RPC goal.edit 已存在）~~ ✅ 2026-08-21 前端 GoalCard 已实现（见交付记录）
 - **前端新视图/打磨**：设置页无缝体验、文件管理器深度集成、CodingApp 落地（当前占位）
 - **settings 页 app文档**：设置项 applies 恒 "restart" 元字段未真正区分；可将 compaction/workdir 类的"下一请求生效"语义显式化
 
