@@ -64,6 +64,7 @@ frontend/                             ← React 19 + dockview + theme 四档
 - ✅ **goal 自动续跑（M3.5）已交付**（1186329）：plugin-goal（goal.get/create/update 工具）+ GoalRouter（对接既有 goal RPC 状态机）+ GoalDriver（同会话续跑——回合完成点检查 active + 有额度目标 → roundsStarted 自增 → 注入 `<goal_round>` 用户消息续跑；抑制 = phase!=active 或额度耗尽；防嵌套）。`--goal` 开关装配
 - ✅ **前端审批弹窗已交付**（bf326b7）：useMuxEvents 全局帧总线 + ApprovalModal（approved/rejected → POST /api/respond 回显 rpcId）。真实工具链验证：MiniMax-M3 下 25+ 次工具调用全链路稳定（弹窗/批准/执行/回填）
 - ✅ **前端 goal 卡片已交付**（bf326b7）：GoalCard 展示 phase 徽章/轮次进度/objective，pause/resume/complete 走 goal RPC；快照 + 投影增量合并
+- ✅ **前端 goal 创建 UI 已交付**（8173def）：GoalCard 无目标态显「🎯 新建目标」表单（objective + 自动续跑轮次 1-64 默认 8），创建走 goal.create → 投影回灌切展示态；刷新后快照恢复
 - **unwrap/expect 全面清理**（unwrap_used/expect_used lints 留 allow 待做）：独立任务（TODO: unwrap-polish）
 - **已知坑：并行测试竞态**——`WORKDIR_SOURCE`/`SCHEDULE_SOURCE` 全局源跨 test 文件共享，全仓并行时 host_tools 测试 flaky；**串行 `cargo test --workspace -- --test-threads=1` 全绿**。CI 建议串行
 
