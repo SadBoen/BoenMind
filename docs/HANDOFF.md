@@ -35,7 +35,7 @@ BoenMind = Rust 微内核（`kernel/` 只读 submodule `dsh-rust-core`）+ 产�
 kernel-contracts (纯契约)              ← kernel/ submodule，只读不可改
 kernel-session / kernel-storage
 kernel-supervisor                     ← 死代码（无引用；M3 才接）
-bm/ports                              ← 产品级契约层：Compactor / ToolRegistryPort / ToolGatePort / ToolApprovalPort / WorkdirPort / SchedulePort / GoalPort
+bm/ports                              ← 产品级契约层：Compactor / ToolRegistryPort / ToolGatePort / ToolRegistrarPort / ToolApprovalPort / WorkdirPort / SchedulePort / GoalPort
 plugins/plugin-llm loop tools auth compactor host-tools code-runtime web-tools goal schedule
 bm/assembly                           ← 组合根（唯一装配点）
 bm/web-server / bm/headless / bm/quickjs-bridge   ← L0
@@ -43,10 +43,15 @@ frontend/                             ← React 19 + dockview + antd v6
 ```
 
 **核心插件只依赖 kernel-contracts + kernel-session + bm-ports**——编译期不碰兄弟插件/功能插件。
+**插件间零依赖（集合：工具注册面已端口化）**——所有插件（核心/功能）的 `register_all` 收 `&dyn bm_ports::ToolRegistrarPort`（`plugin-tools::ToolRegistry` 实现之，组合根注入），不再编译期依赖 `plugin-tools` 具体类型。
 
 ## 四、关键设计决策（勿推翻，除非有强理由）
 
-1. **所有产品级策略端口统一放 bm-ports**（Compactor/ToolRegistryPort/ToolGatePort/ToolApprovalPort/WorkdirPort/SchedulePort/GoalPort）。kernel/ 只读塞不进契约。核心插件新增端口一律放这里（只依赖 kernel-contracts + 无实现）。
+1. **所有产品级策略端口统一放 bm-ports**（Compactor/ToolRegistryPort/ToolGatePort/ToolApprovalPort/WorkdirPort/SchedulePort/GoalPort）。kernel/ 只读塞不进契约。核心插件新增端口一律放这里（只依赖 kernel-contracts + 无实现）。**2026-08-21 插件间零依赖收紧后并入 `ToolRegistrarPort`**（工具注册面端口，见 9）。
+9. **插件间零依赖（2026-08-21 回头看新增）**：原功能插件 `register_all(registry: &plugin_tools::ToolRegistry)` 编译期依赖核心插件 plugin-tools 具体类型，违反纪律——故在 bm-ports 新增**工具注册面端口 `ToolRegistrarPort`**（register / get / mark_dangerous），`plugin-tools::ToolRegistry` 实现之（`impl ToolRegistrarPort for ToolRegistry`，复用其 `register`），组合根把注册表以 `&dyn ToolRegistrarPort` 注入各插件 `register_all`。**守卫规则 3 同步收紧**（crate_boundaries.rs）：插件之间零依赖——核心插件不得依赖功能插件；**功能插件不得依赖任何 plugin-**（含核心实现）。装配面一律经端口注入，编译期无插件↔插件边。
+10. **审批帧带发起会话 id**：`ToolApprovalPort.request_approval` 新增 `session_id: &str` 参数（plugin-loop 传 `self.session.id()`），web-server ApprovalRouter 写入 approval/requested 帧——供前端豁免表按 (sessionId, toolName) 区分会话、设置页管理面按会话展示。头less / JS 桥无双端审批面，经 loop 同一路径。（此前断言"审批帧不带会话上下文"的端到端武器化留白已收回）
+11. **code-runtime `out` 参数走 workdir 作用域**：`out` 同 `file` 一道经 `host_fs::resolve_in_workdir` 校验（拒绝绝对路径 / `..` / 逃逸 / symlink 前缀），解析后落 workdir 内绝对路径再转相对源目录传给 `-o`（编译器 cwd = 源目录）。回归测试 `compile_out_escape_rejected`。
+12. **web-tools SSRF 防线补全 IANA 保留段**：`is_public_ipv4` 拒绝 CGNAT 100.64/10、benchmark 198.18/15、TEST-NET 192.0.2/24 + 198.51.100/24 + 203.0.113/24、6to4 anycast 192.88.99/24、192.0.0.0/24 保留段。回归测试补全（F4）。
 2. **bm-assembly re-export（MockTurn/DEFAULT_PASSWORD/DefaultCompactor/scripted_llm）是守卫强制的 L0 出口**，L0 只依赖 bm-assembly，装配参数必须经组合根 re-export。**别砍**。
 3. **auth 双持久化是有意的 bounded context**（auth.json/sessions.jsonl 自管，不经 kernel-storage）。**不要**迁进 sqlite 事件表。
 4. **事件日志 = 唯一事实源**；上下文压缩是运行态视图变换（不改日志）。model-visible-means-logged / logged-means-persisted 是 loop 铁律。
@@ -91,6 +96,16 @@ cargo clippy --workspace --all-targets         # 零警告（除 rquickjs future
 cd frontend && npx tsc --noEmit && npx vite build
 bash scripts/verify-gate1.sh                   # headless 全链路 + kill-9 恢复
 ```
+
+### 2026-08-21 插件间零依赖 + 三项安全加固批（本次收口）
+
+- ✅ **`ToolRegistrarPort` 注册面端口**（bm-ports 新增 trait：register/get/mark_dangerous）——`plugin-tools::ToolRegistry` 实现之，组合根把注册表以 `&dyn ToolRegistrarPort` 注入所有插件 `register_all`；**六插件全部**（host-tools/code-runtime/web-tools/schedule/goal）去掉 `plugin-tools` 编译期依赖（Cargo.toml 移除、Cargo.lock 同步）
+- ✅ **守卫规则 3 收紧为插件间零依赖**（crate_boundaries.rs）：功能插件禁依赖任何 plugin-（含核心实现）；核心插件仍允许 loop→tools 领域内聚，且一律经 bm-ports 端口交互
+- ✅ **审批会话上下文**：`ToolApprovalPort.request_approval` 新增 `session_id` 参数 → 前端豁免表/设置页管理面按会话区分；**决策 10**（收回此前"审批帧不带会话"留白）
+- ✅ **code-runtime out 逃逸修复**（P3 回归）：`out` 走 workdir 作用域 `resolve_in_workdir`，相对源目录传 `-o`；新增单测 `compile_out_escape_rejected`
+- ✅ **web-tools SSRF 补全 IANA 保留段**（F4 回归）：CGNAT/benchmark/TEST-NET×3/6to4/192.0.0.0/24；新增单测
+- ✅ **GoalDriver 续跑竞态收口**（F6 回归）：`continuing` 标志作为唯一排他门（检查+置位在最前原子完成，无 await 间隙），condemned 时统一释放；不 double-consume 额度、不双 spawn
+- 验证：`cargo build --workspace` 0 error；`cargo test --workspace -- --test-threads=1` 全绿；`cargo clippy --workspace --all-targets`（待跑）
 
 ## 七、剩余待办/候选
 
