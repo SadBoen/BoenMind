@@ -154,7 +154,8 @@ mod tests {
     use super::*;
 
     fn tmp_dist() -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("bm-static-{}", std::process::id()));
+        // 每次调用独立目录（并行测试共用 pid 命名目录会互相 cleanup 踩踏——既有竞态）。
+        let dir = std::env::temp_dir().join(format!("bm-static-{}-{}", std::process::id(), uuid::Uuid::new_v4()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("index.html"), "<html><body>app</body></html>").unwrap();

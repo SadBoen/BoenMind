@@ -154,6 +154,9 @@ pub struct Runtime {
     /// `RwLock` 承载（同 `llm`/`agent_factory` 热换装模式）：AppState 已在 Arc
     /// 中时仍可 `&self` 装配（web-server `--approval`）。经 [`Runtime::install_approval`] 装配。
     approval: parking_lot::RwLock<Option<Arc<dyn bm_ports::ToolApprovalPort>>>,
+    /// 审批中心（万物皆插件②：pending 表住在 plugin-approval；留具体实例
+    /// 供 --approval 时把同一中心接进 loop 消费面）。
+    approval_center: parking_lot::RwLock<Option<Arc<plugin_approval::ApprovalCenter>>>,
     /// 核心插件清单（llm / loop / tools，category=Core）。
     core_plugins: parking_lot::RwLock<Vec<PluginManifestEntry>>,
     /// JS 插件清单（--plugins-dir 装配，category=Feature；`plugin_manifest()`
@@ -211,6 +214,7 @@ impl Runtime {
             max_steps,
             compactor: parking_lot::RwLock::new(None),
             approval: parking_lot::RwLock::new(None),
+            approval_center: parking_lot::RwLock::new(None),
             agent_factory: RwLock::new(default_agent_factory()),
             core_plugins: parking_lot::RwLock::new(vec![
                 plugin_llm::plugin::manifest(),
@@ -407,6 +411,28 @@ impl Runtime {
     pub fn install_approval(&self, approval: Arc<dyn bm_ports::ToolApprovalPort>) {
         *self.approval.write() = Some(approval);
         tracing::info!("tool approval port installed (dangerous tool calls require user approval)");
+    }
+
+    /// 装配审批**中心**（万物皆插件②：pending 表 + respond 路由住在
+    /// plugin-approval；**无条件装配**——respond/重放/测试钩子不依赖 --approval）。
+    /// 返回宿主委托面。
+    pub fn install_approval_center(
+        &self,
+        broadcast: Arc<dyn bm_ports::BroadcastPort>,
+    ) -> Arc<dyn bm_ports::ApprovalFacePort> {
+        let center: Arc<plugin_approval::ApprovalCenter> =
+            Arc::new(plugin_approval::ApprovalCenter::new(broadcast));
+        *self.approval_center.write() = Some(Arc::clone(&center));
+        self.push_core_plugin_manifest(plugin_approval::manifest());
+        center
+    }
+
+    /// 把审批中心接进 loop 消费面（--approval 装配时）：危险工具执行前暂停等裁定。
+    pub fn connect_approval_loop(&self) {
+        let center = self.approval_center.read().clone();
+        if let Some(center) = center {
+            self.install_approval(center);
+        }
     }
 
     /// 创建一个新会话（写入 header 索引 + 首条 SessionStarted），返回代理。

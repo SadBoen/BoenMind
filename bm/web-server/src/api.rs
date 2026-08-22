@@ -81,16 +81,13 @@ pub struct AppState {
     pub settings_path: Option<PathBuf>,
     /// 真实 provider 运行时（M3；空 = mock 单 provider 模式）。
     pub providers: Vec<ProviderRuntime>,
-    /// respond pending 表（approval 先、question 后；M3 收尾）。
-    pub pending: crate::pending::PendingState,
     /// session/projection 槽（契约层注册机制）：(key, (watermark_seq, value))。
     pub projections: Mutex<HashMap<String, (i64, Value)>>,
     /// 会话日志的附件引用表（session.attachment 语义：日志含 attachmentId 才回）。
     pub attachments: Mutex<HashMap<String, Vec<String>>>,
-    /// 审批等待表（approval_id → oneshot 发送端）：工具审批端口登记后，
-    /// respond 路由（allowed-once/rejected）经此唤醒正在等待的 loop 调用。
-    /// 与 pending.approvals 同生共死（pending 管应答帧，这里管执行继续）。
-    pub approval_waiters: Mutex<HashMap<String, tokio::sync::oneshot::Sender<bm_ports::ApprovalVerdict>>>,
+    /// 审批中心委托面（万物皆插件②：pending 表 + respond 路由住在
+    /// plugin-approval；respond/重放/测试钩子经此）。Mutex 承载（&Arc<Self> 装配）。
+    pub approval_face: Mutex<Option<Arc<dyn bm_ports::ApprovalFacePort>>>,
     /// 目标引擎（万物皆插件②：goal 状态机 + 续跑驱动住在 plugin-goal；
     /// wire 面 goal.* 与回合完成点续跑经此委托）。Mutex 承载（&Arc<Self> 装配）。
     pub goal_engine: Mutex<Option<Arc<dyn bm_ports::GoalEnginePort>>>,
@@ -151,6 +148,19 @@ impl AppState {
         self.runtime.install_goal(engine);
     }
 
+    /// 装配审批中心（万物皆插件②，**无条件**：pending 表 + respond 路由住在
+    /// plugin-approval；respond/重放/测试钩子不依赖 --approval）。
+    pub fn install_approval_center(self: &Arc<Self>) {
+        let broadcast: Arc<dyn bm_ports::BroadcastPort> =
+            Arc::new(crate::host_face::HostFace::new(Arc::clone(self)));
+        let face = self.runtime.install_approval_center(broadcast);
+        *self.approval_face.lock().unwrap() = Some(face);
+    }
+
+    /// 把审批中心接进 loop 消费面（`--approval`）：危险工具执行前暂停等裁定。
+    pub fn connect_approval_loop(self: &Arc<Self>) {
+        self.runtime.connect_approval_loop();
+    }
     /// 启用目标续跑驱动（`--goal`）：回合完成点 active 目标自动 `<goal_round>`
     /// 续跑直到完成/暂停/额度耗尽。
     pub fn enable_goal_driver(self: &Arc<Self>) {
@@ -235,10 +245,9 @@ impl AppState {
             archived_session_ids: Mutex::new(Vec::new()),
             credentials: Mutex::new(HashMap::new()),
             providers,
-            pending: crate::pending::PendingState::new(),
             projections: Mutex::new(HashMap::new()),
             attachments: Mutex::new(HashMap::new()),
-            approval_waiters: Mutex::new(HashMap::new()),
+            approval_face: Mutex::new(None),
             goal_engine: Mutex::new(None),
             settings_path,
         };
@@ -546,7 +555,8 @@ fn test_hooks_enabled() -> bool {
     std::env::var("BM_TEST_HOOKS").map(|v| v == "1").unwrap_or(false)
 }
 
-/// 注入 pending 条目（respond 全链路验收用；approval/question 表逐字登记）。
+/// 注入 pending 条目（respond 全链路验收用；经审批中心端口委托，
+/// 登记 + 广播语义住在 plugin-approval）。
 fn test_register_pending(state: &AppState, method: &str, payload: Value) -> Value {
     let Some(session_id) = payload.get("sessionId").and_then(Value::as_str) else {
         return err("bad-request", "missing sessionId");
@@ -561,7 +571,9 @@ fn test_register_pending(state: &AppState, method: &str, payload: Value) -> Valu
     } else {
         rpc_id
     };
-    let mut reg = state.pending.lock();
+    let Some(face) = state.approval_face.lock().unwrap().clone() else {
+        return err("internal", "approval center not installed");
+    };
     if method == "_test.registerApproval" {
         let Some(approval_id) = payload.get("approvalId").and_then(Value::as_str) else {
             return err("bad-request", "missing approvalId");
@@ -571,7 +583,7 @@ fn test_register_pending(state: &AppState, method: &str, payload: Value) -> Valu
             .and_then(Value::as_str)
             .unwrap_or("test_tool")
             .to_string();
-        reg.register_approval(
+        face.register_test_approval(
             rpc_id.clone(),
             session_id.to_string(),
             approval_id.to_string(),
@@ -579,24 +591,13 @@ fn test_register_pending(state: &AppState, method: &str, payload: Value) -> Valu
             payload.get("callId").and_then(Value::as_str).map(str::to_string),
             payload.get("reason").and_then(Value::as_str).map(str::to_string),
         );
-        // 测试钩子补齐广播（对齐 ApprovalRouter 的 push 语义）：cast 前端
-        // approval/requested 帧，方便豁免全链路验收（豁免消费 mux 帧，不直接调 serve）。
-        let frame = reg.approval_frame(reg.approvals.get(&rpc_id).expect("just registered"));
-        drop(reg);
-        state.broadcast_mux_frame(frame.rpc_id, frame.method, frame.payload);
         return ok(json!({ "rpcId": rpc_id }));
     } else {
-        let questions = payload
-            .get("questions")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        reg.register_question(rpc_id.clone(), session_id.to_string(), questions);
+        let questions = payload.get("questions").cloned().unwrap_or_else(|| serde_json::json!([]));
+        face.register_test_question(rpc_id.clone(), session_id.to_string(), questions);
     }
-    drop(reg);
     ok(json!({ "rpcId": rpc_id }))
 }
-
 /// 核心插件清单：返回 llm / loop / tools 三条清单条目（category=Core）。
 /// 形状 `{ "plugins": [{id, category, name, description, version}] }`。
 fn plugin_core_list(state: &AppState) -> Value {

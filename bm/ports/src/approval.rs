@@ -43,3 +43,36 @@ pub trait ToolApprovalPort: Send + Sync + std::fmt::Debug {
         reason: Option<String>,
     ) -> Result<ApprovalVerdict, ToolError>;
 }
+/// 中立 mux 帧（插件产出；宿主转自家 server-request 信封下行）。
+#[derive(Debug, Clone)]
+pub struct MuxFrameOut {
+    pub rpc_id: String,
+    pub method: String,
+    pub payload: serde_json::Value,
+}
+
+/// 审批中心面（万物皆插件②，2026-08-22）：pending 表与 respond 路由住在
+/// plugin-approval；宿主的 `POST /api/respond` 路由、mux 断连重放与测试钩子
+/// 经本端口委托。回执 reason 逐字（"bad-response" / "not-pending"）。
+pub trait ApprovalFacePort: Send + Sync + std::fmt::Debug {
+    /// /api/respond 路由（approval 表先、question 表后）：校验应答负载、
+    /// 移除 pending、唤醒等待者、广播 resolved 帧。返回 (accepted, reason)。
+    fn respond(&self, rpc_id: &str, result: &serde_json::Value) -> (bool, Option<&'static str>);
+
+    /// mux 重放帧（仍 pending 的 approval/question requested；rpcId 原样复用）。
+    fn pending_frames(&self) -> Vec<MuxFrameOut>;
+
+    /// 测试钩子登记（BM_TEST_HOOKS 门在宿主侧）：登记 + 广播 requested 帧。
+    fn register_test_approval(
+        &self,
+        rpc_id: String,
+        session_id: String,
+        approval_id: String,
+        tool_name: String,
+        call_id: Option<String>,
+        reason: Option<String>,
+    );
+
+    /// 测试钩子登记（question 表）。
+    fn register_test_question(&self, rpc_id: String, session_id: String, questions: serde_json::Value);
+}

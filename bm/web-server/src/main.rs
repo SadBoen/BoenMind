@@ -320,12 +320,12 @@ fn main() {
         state.install_code_runtime();
         tracing::info!("code runtime plugin installed (code.compile/code.python/code.shell)");
     }
-    // 工具审批端口装配（--approval）：危险工具调用执行前推前端审批弹窗、等用户
-    // 裁定（allowed-once 执行 / rejected 记拒绝结果回写日志）。不传 = 审批面禁用
-    // （既有自动执行语义，旧行为不变）。
+    // 审批中心随宿主常驻（万物皆插件②：pending 表 + respond 路由住在
+    // plugin-approval，无条件装配）；--approval 才把中心接进 loop 消费面
+    // （危险工具执行前推审批弹窗、等用户裁定）。
+    state.install_approval_center();
     if approval_enabled {
-        let router = web_server::approval::ApprovalRouter::new(Arc::clone(&state));
-        state.runtime.install_approval(Arc::new(router));
+        state.connect_approval_loop();
         tracing::info!("tool approval port installed (dangerous tool calls require approval)");
     }
     // Web 取数工具插件装配（--web-tools）：注册 web.fetch/web.search 工具

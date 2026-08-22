@@ -50,16 +50,15 @@ pub async fn mux_loop(mut socket: WebSocket, state: Arc<AppState>) {
         }
     }
 
-    // 重放仍 pending 的 approval/requested 与 question/requested（rpcId 原样复用）。
-    let replay: Vec<ServerRequestFrame> = {
-        let reg = state.pending.lock();
-        let mut frames: Vec<ServerRequestFrame> = reg
-            .approvals
-            .values()
-            .map(|p| reg.approval_frame(p))
-            .collect();
-        frames.extend(reg.questions.values().map(|q| reg.question_frame(q)));
-        frames
+    // 重放仍 pending 的 approval/requested 与 question/requested（rpcId 原样复用；
+    // 万物皆插件②：pending 表住在 plugin-approval，经端口取帧转自家信封）。
+    let replay: Vec<ServerRequestFrame> = match state.approval_face.lock().unwrap().as_ref() {
+        Some(face) => face
+            .pending_frames()
+            .into_iter()
+            .map(|f| ServerRequestFrame::new(f.rpc_id, f.method, f.payload))
+            .collect(),
+        None => Vec::new(),
     };
     for frame in replay {
         let text = serde_json::to_string(&frame).unwrap_or_default();

@@ -1,0 +1,20 @@
+[package]
+name = "plugin-approval"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "工具审批插件（功能）：审批中心——pending 表 + respond 路由 + loop 消费面（危险工具执行前弹窗裁定）"
+
+[dependencies]
+kernel-contracts = { path = "../../kernel/kernel-contracts" }
+bm-ports = { path = "../../bm/ports" }
+serde_json.workspace = true
+async-trait.workspace = true
+uuid.workspace = true
+tokio = { workspace = true, features = ["rt", "time"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "time"] }
+
+[lints]
+workspace = true

@@ -4,11 +4,9 @@
 //! 实现子集按 §3.5 顺序：静态 SPA → RPC 信封 → WS 下行流 → 完整 API 面。
 
 pub mod api;
-pub mod approval;
 pub mod compaction;
 pub mod events;
 pub mod host_face;
-pub mod pending;
 pub mod rpc;
 pub mod rpc_m3;
 pub mod static_spa;
@@ -342,94 +340,18 @@ async fn handle_respond(
     (StatusCode::OK, Json(receipt)).into_response()
 }
 
-/// respond 分发（approval 先、question 后）。
+/// respond 分发（万物皆插件②薄委托：表路由/校验/广播住在 plugin-approval）。
 fn respond_dispatch(state: &AppState, message: &ClientResponse) -> Value {
-    let mut reg = state.pending.lock();
-    // ---- approval 表先查 ----
-    if let Some(pending) = reg.approvals.get(&message.rpc_id).cloned() {
-        if !message.result.get("ok").and_then(Value::as_bool).unwrap_or(false) {
-            return json!({ "accepted": false, "reason": "bad-response" });
-        }
-        let value = message.result.get("value").cloned().unwrap_or(Value::Null);
-        // 应答负载须 {sessionId, approvalId, outcome:'allowed-once'|'rejected'}
-        // 且 approvalId/sessionId 与登记一致（对齐 approvals.schema.ts）。
-        let outcome = value.get("outcome").and_then(Value::as_str);
-        let ok_outcome = matches!(outcome, Some("allowed-once") | Some("rejected"));
-        let matches = value.get("sessionId").and_then(Value::as_str) == Some(pending.session_id.as_str())
-            && value.get("approvalId").and_then(Value::as_str) == Some(pending.approval_id.as_str())
-            && ok_outcome;
-        if !matches {
-            return json!({ "accepted": false, "reason": "bad-response" });
-        }
-        reg.approvals.remove(&message.rpc_id);
-        let session_id = pending.session_id.clone();
-        let approval_id = pending.approval_id.clone();
-        let outcome = outcome.unwrap_or("rejected").to_string();
-        drop(reg);
-        // 唤醒等待中的 loop 审批调用（Allowed-once ↔ Allowed / rejected ↔ Rejected）。
-        let verdict = match outcome.as_str() {
-            "allowed-once" => bm_ports::ApprovalVerdict::Allowed,
-            _ => bm_ports::ApprovalVerdict::Rejected,
-        };
-        crate::approval::resolve_approval_waiter(state, &approval_id, verdict);
-        // 纯推送：approval/resolved（outcome 'allowed-once'|'rejected'）。
-        state.broadcast_mux_frame(
-            uuid::Uuid::new_v4().to_string(),
-            "approval/resolved",
-            json!({
-                "sessionId": session_id,
-                "approvalId": approval_id,
-                "outcome": outcome,
-            }),
-        );
-        return json!({ "accepted": true });
-    }
-    // ---- question 表后查 ----
-    let pending = match reg.questions.get(&message.rpc_id).cloned() {
-        Some(p) => p,
-        None => return json!({ "accepted": false, "reason": "not-pending" }),
+    let (accepted, reason) = match state.approval_face.lock().unwrap().as_ref() {
+        Some(face) => face.respond(&message.rpc_id, &message.result),
+        None => (false, Some("not-pending")), // 装配缺位防御（生产无条件装配）
     };
-    let ok = message.result.get("ok").and_then(Value::as_bool).unwrap_or(false);
-    if !ok {
-        // result.ok:false && error.code==='cancelled' → accepted（用户取消）。
-        let code = message
-            .result
-            .get("error")
-            .and_then(|e| e.get("code"))
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        if code != "cancelled" {
-            return json!({ "accepted": false, "reason": "bad-response" });
-        }
-        reg.questions.remove(&message.rpc_id);
-        let session_id = pending.session_id.clone();
-        let rpc_id = pending.rpc_id.clone();
-        drop(reg);
-        state.broadcast_mux_frame(
-            uuid::Uuid::new_v4().to_string(),
-            "question/resolved",
-            json!({ "sessionId": session_id, "questionRpcId": rpc_id, "outcome": "cancelled" }),
-        );
-        return json!({ "accepted": true });
+    if accepted {
+        json!({ "accepted": true })
+    } else {
+        json!({ "accepted": false, "reason": reason })
     }
-    let value = message.result.get("value").cloned().unwrap_or(Value::Null);
-    let session_id = value.get("sessionId").and_then(Value::as_str).unwrap_or("");
-    let answers = value.get("answer").and_then(|a| a.get("answers")).cloned().unwrap_or(Value::Null);
-    if !reg.matches_questions(&pending, session_id, &answers) {
-        return json!({ "accepted": false, "reason": "bad-response" });
-    }
-    reg.questions.remove(&message.rpc_id);
-    let sid = pending.session_id.clone();
-    let rpc_id = pending.rpc_id.clone();
-    drop(reg);
-    state.broadcast_mux_frame(
-        uuid::Uuid::new_v4().to_string(),
-        "question/resolved",
-        json!({ "sessionId": sid, "questionRpcId": rpc_id, "outcome": "answered" }),
-    );
-    json!({ "accepted": true })
 }
-
 /// GET /api/session.export（面 8）：会话日志 ZIP 下载（session.jsonl；无子代理/媒体段）。
 async fn handle_session_export(
     State(state): State<Arc<AppState>>,

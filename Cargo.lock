@@ -209,6 +209,7 @@ dependencies = [
  "kernel-session",
  "kernel-storage",
  "parking_lot",
+ "plugin-approval",
  "plugin-auth",
  "plugin-code-runtime",
  "plugin-compactor",
@@ -236,6 +237,7 @@ dependencies = [
  "async-trait",
  "futures",
  "kernel-contracts",
+ "serde_json",
  "tokio",
 ]
 
@@ -1392,6 +1394,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
+name = "plugin-approval"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bm-ports",
+ "kernel-contracts",
+ "serde_json",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "plugin-auth"
 version = "0.1.0"
 dependencies = [
@@ -1438,6 +1452,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "bm-ports",
+ "chrono",
  "kernel-contracts",
  "serde_json",
  "tokio",
@@ -1499,6 +1514,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "bm-ports",
+ "chrono",
  "kernel-contracts",
  "serde_json",
  "tokio",
