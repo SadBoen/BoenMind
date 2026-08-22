@@ -386,7 +386,7 @@
 **File(s):** `bm/web-server/src/{scheduler,goal,goal_driver,approval,pending,rpc_m3}.rs`（约 1700 行领域逻辑）；`plugins/plugin-schedule/src/lib.rs`（仅 schemas+register+全局注入，无实现）；对照 `bm/assembly/tests/crate_boundaries.rs`（结构门禁在位）
 **Severity:** Medium（方向债，非缺陷）
 **Observation:** 结构面守住（依赖只许向下/L0 禁依赖 plugin-*/插件间零依赖，硬门禁）；语义面失守四点：①调度循环、goal 驱动、审批路由等能力后端实现在 web-server（L0），插件只剩工具面且经全局静态注入反向拿实现；②插件是进程级单例不可多实例（ARCH-001 的 flaky 实证）；③领域状态集中在 AppState；④PluginRuntimePort/supervisor 真装卸从未接线（K-ARCH-001）。当前实际形态 = 「万物皆端口 + 组合根静态装配」，唯一动态插件面是 JS 插件（quickjs-bridge）。
-**Answer:** ⏳ 方向决策已定（2026-08-22 用户拍板走回归路线）。**第①步已落地**：ARCH-001 构造注入完成（见上），插件恢复为完整可替换部件、Runtime 实例隔离。后续：② 能力后端（scheduler/goal-driver/approval/pending，~1700 行）从 web-server 下沉为插件侧实现 → ③ AppState 领域状态收编 → ④ 远期接 PluginRuntimePort。关联：ARCH-001（✔）、B-ARCH-002/003、B-QUAL-001/002、K-ARCH-001。
+**Answer:** 回归路线执行中（2026-08-22 用户拍板）。**①构造注入 ✔**（0a6caa4）；**②发动机搬家 ✔**（三批：ebfbe43 Scheduler 下沉 plugin-schedule + SessionDrivePort/BroadcastPort 端口铺设；d804af8 Goal 引擎（状态机+续跑驱动）下沉 plugin-goal，GoalEnginePort 完整领域面 + 类型化 GoalError，wire/工具两面语义逐字保留；2b2b49a 审批中心下沉新 crate plugin-approval，ApprovalFacePort 委托 respond/重放/钩子）。web-server 净减 ~1600 行领域实现，AppState 字段 20+ → 15（goals/pending/approval_waiters/goal_driver 四项状态随能力迁走）。**③AppState 剩余状态收编**（sessions/settings/workspaces/projections/attachments）与 **④PluginRuntimePort 真装卸**待续。关联：ARCH-001（✔）、B-ARCH-002/003、B-QUAL-001/002（部分缓解）、K-ARCH-001。
 
 ---
 
