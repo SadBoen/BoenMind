@@ -1,25 +1,20 @@
-//! 定时任务调度器（web-server 实现 [`bm_ports::SchedulePort`]）。
+//! 定时任务调度器运行时（万物皆插件②，2026-08-22 从 web-server 下沉）。
 //!
-//! 后台循环每秒唤醒：检查到期任务 → 对目标会话驱动一个回合（复用
-//! session.prompt 的 run_turn 语义：置 running、tokio::spawn、广播状态）→
-//! interval 任务重排 next_at；cron 任务触发一次后按表达式重排（简化匹配）。
+//! 后台循环每秒唤醒：检查到期任务 → 经 [`SessionDrivePort`] 驱动目标会话
+//! 回合（置 running、spawn run_turn、广播状态——宿主能力面承担）→ interval
+//! 任务重排 next_at；cron 任务触发一次后按表达式重排（简化匹配）。
 //!
-//! 目标会话缺省 = 当前活跃会话（state.sessions 里 running=true 的；若同时多个
-//! 取第一个；无活跃会话则跳过本次触发——诚实失败，不假成功）。
-//!
-//! 与 goal 的关系：goal 自动续跑（M3.5）可复用本调度器驱动会话回合；
-//! 独立语义（目标完成判定在 agent 侧）见 HANDOFF 待办。
+//! 目标会话缺省 = 当前活跃会话（无活跃则跳过本次触发——诚实失败，不假成功）。
+//! 定时触发的回合**不**携带 on_finish 钩子：不触发 goal 续跑（仅人类 prompt
+//! 完成点续跑，语义与拆分前一致）。
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use bm_ports::{SchedulePort, ScheduleSpec, ScheduleTrigger, ScheduleView};
-use serde_json::json;
+use bm_ports::{SchedulePort, ScheduleSpec, ScheduleTrigger, ScheduleView, SessionDrivePort};
 use tokio::sync::Mutex;
-
-use crate::api::AppState;
 
 /// 后台循环唤醒周期。
 const TICK: Duration = Duration::from_secs(1);
@@ -34,9 +29,9 @@ struct Entry {
     last_match_minutes: Option<i64>,
 }
 
-/// 定时任务调度器。
+/// 定时任务调度器（宿主能力经端口消费，状态自带——每实例独立）。
 pub struct Scheduler {
-    state: Arc<AppState>,
+    host: Arc<dyn SessionDrivePort>,
     /// id → 条目（Mutex：后台循环与工具调用并发访问）。
     entries: Mutex<HashMap<String, Entry>>,
 }
@@ -48,14 +43,14 @@ impl std::fmt::Debug for Scheduler {
 }
 
 impl Scheduler {
-    pub fn new(state: Arc<AppState>) -> Self {
+    pub fn new(host: Arc<dyn SessionDrivePort>) -> Self {
         Self {
-            state,
+            host,
             entries: Mutex::new(HashMap::new()),
         }
     }
 
-    /// 启动后台驱动循环（web-server main 在 serve 前调用一次；spawn 后返回）。
+    /// 启动后台驱动循环（装配方在 serve 前调用一次；spawn 后返回）。
     pub fn start(self: &Arc<Self>) {
         let sched = Arc::clone(self);
         tokio::spawn(async move {
@@ -81,9 +76,9 @@ impl Scheduler {
     /// 触发一次：驱动目标会话回合，然后重排（interval 循环 / cron 简化重排）。
     async fn fire(&self, e: &Entry) {
         let prompt = e.spec.prompt.clone();
-        let session_id = self.resolve_target(e).await;
-        if let Some(sid) = session_id {
-            self.drive_session(&sid, &prompt).await;
+        if let Some(sid) = self.resolve_target(e).await {
+            // 忙/不存在 → 宿主端口内跳过（不排队，防叠加）；不挂 on_finish。
+            let _ = self.host.spawn_turn(&sid, &prompt, None);
         }
         // 重排：interval → next = now + secs；cron → 触发后按 cron 简化重排。
         let next = match &e.spec.trigger {
@@ -113,51 +108,13 @@ impl Scheduler {
         )
     }
 
-    /// 解析目标会话：spec.session_id 指定 → 该会话若存在；缺省 → 当前活跃会话
-    /// （state.sessions 中 running 或非 blank 的第一个）；找不到 → None（跳过）。
+    /// 解析目标会话：spec.session_id 指定 → 该会话若存在；缺省 → 当前活跃会话；
+    /// 找不到 → None（跳过）。
     async fn resolve_target(&self, e: &Entry) -> Option<String> {
         if let Some(sid) = &e.spec.session_id {
-            let exists = self.state.sessions.lock().unwrap().contains_key(sid);
-            return if exists { Some(sid.clone()) } else { None };
+            return if self.host.session_exists(sid) { Some(sid.clone()) } else { None };
         }
-        let sessions = self.state.sessions.lock().unwrap();
-        sessions
-            .iter()
-            .find(|(_, h)| h.running || !h.blank)
-            .map(|(id, _)| id.clone())
-    }
-
-    /// 驱动会话回合（复用 session.prompt 语义：置 running、spawn run_turn、广播状态）。
-    async fn drive_session(&self, session_id: &str, prompt: &str) {
-        let agent = {
-            let mut sessions = self.state.sessions.lock().unwrap();
-            let Some(h) = sessions.get_mut(session_id) else {
-                return;
-            };
-            if h.running {
-                return; // 忙：跳过本次触发（不排队，防叠加）。
-            }
-            h.running = true;
-            h.blank = false;
-            Arc::clone(&h.agent)
-        };
-        let state = Arc::clone(&self.state);
-        let sid = session_id.to_string();
-        let text = prompt.to_string();
-        state.broadcast_host(
-            "host/session-status",
-            json!({ "sessionId": sid, "running": true }),
-        );
-        tokio::spawn(async move {
-            let _ = agent.run_turn(Some(&text)).await;
-            if let Some(h) = state.sessions.lock().unwrap().get_mut(&sid) {
-                h.running = false;
-            }
-            state.broadcast_host(
-                "host/session-status",
-                json!({ "sessionId": sid, "running": false }),
-            );
-        });
+        self.host.active_session()
     }
 }
 
@@ -356,5 +313,53 @@ mod tests {
         // 未到期必须仍在表里（原 bug 会把它删掉 → 定时任务整体失效）。
         assert!(entries.contains_key("future"), "future entry must survive the tick");
         assert!(!entries.contains_key("past") && !entries.contains_key("now"));
+    }
+
+    /// 桩宿主：记录 spawn 请求（验证端口消费语义：到期→驱动、指定会话解析）。
+    #[derive(Debug, Default)]
+    struct StubHost {
+        spawned: std::sync::Mutex<Vec<(String, String)>>,
+        exists: std::sync::Mutex<Vec<String>>,
+    }
+    impl SessionDrivePort for StubHost {
+        fn session_exists(&self, session_id: &str) -> bool {
+            let mut e = self.exists.lock().unwrap();
+            let known = !e.is_empty();
+            e.push(session_id.to_string());
+            known
+        }
+        fn active_session(&self) -> Option<String> {
+            None
+        }
+        fn spawn_turn(
+            &self,
+            session_id: &str,
+            prompt: &str,
+            _on_finish: Option<bm_ports::TurnFinishHook>,
+        ) -> bool {
+            self.spawned.lock().unwrap().push((session_id.to_string(), prompt.to_string()));
+            true
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn create_list_cancel_roundtrip() {
+        let host: Arc<StubHost> = Arc::new(StubHost::default());
+        let sched = Scheduler::new(Arc::clone(&host) as Arc<dyn SessionDrivePort>);
+        let id = sched
+            .schedule_create(ScheduleSpec {
+                trigger: ScheduleTrigger::Interval { secs: 3600 },
+                prompt: "tick".to_string(),
+                session_id: Some("s1".to_string()),
+            })
+            .await
+            .unwrap();
+        let list = sched.schedule_list().await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id, id);
+        assert_eq!(list[0].prompt, "tick");
+        sched.schedule_cancel(&id).await.unwrap();
+        assert!(sched.schedule_list().await.unwrap().is_empty());
+        assert!(sched.schedule_cancel(&id).await.is_err());
     }
 }

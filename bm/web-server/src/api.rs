@@ -156,15 +156,13 @@ impl AppState {
         self.runtime.install_code_runtime(workdir);
     }
 
-    /// 装配定时任务调度器（功能，`--schedule`）：创建 Scheduler（实现
-    /// `SchedulePort`）→ 经 bm-assembly `install_schedule`（注入 plugin-schedule
-    /// 全局源 + 注册/启用工具）→ 启动后台驱动循环。
-    pub fn install_scheduler(self: &Arc<Self>) -> Arc<crate::scheduler::Scheduler> {
-        let sched = Arc::new(crate::scheduler::Scheduler::new(Arc::clone(self)));
-        let port: Arc<dyn bm_ports::SchedulePort> = Arc::clone(&sched) as Arc<dyn bm_ports::SchedulePort>;
-        self.runtime.install_schedule(port);
-        sched.start();
-        sched
+    /// 装配定时任务引擎（功能，`--schedule`）：宿主能力面（HostFace）经
+    /// bm-assembly `install_schedule_engine` 下沉到 plugin-schedule（调度器
+    /// 运行时 + 工具消费面同源；万物皆插件②——web-server 不再内嵌调度器）。
+    pub fn install_scheduler(self: &Arc<Self>) {
+        let host: Arc<dyn bm_ports::SessionDrivePort> =
+            Arc::new(crate::host_face::HostFace::new(Arc::clone(self)));
+        self.runtime.install_schedule_engine(host);
     }
 
     /// 装配目标管理工具插件（功能，`--goal`）：创建 GoalRouter（实现 `GoalPort`，

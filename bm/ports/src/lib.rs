@@ -45,3 +45,15 @@ pub use schedule::{SchedulePort, ScheduleSpec, ScheduleTrigger, ScheduleView};
 pub mod goal;
 
 pub use goal::{GoalAction, GoalPort, GoalView};
+
+/// 会话回合驱动契约（插件消费面 / 宿主实现面）：scheduler 与 goal 续跑驱动
+/// 经本端口驱动宿主会话回合（万物皆插件②，2026-08-22）。
+pub mod session_drive;
+
+pub use session_drive::{SessionDrivePort, TurnFinishHook};
+
+/// 广播/投影契约（插件消费面 / 宿主实现面）：goal 引擎与审批中心经本端口
+/// 下行事件、写投影（万物皆插件②，2026-08-22）。
+pub mod broadcast;
+
+pub use broadcast::BroadcastPort;

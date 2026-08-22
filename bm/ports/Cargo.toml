@@ -10,6 +10,7 @@ description = "BoenMind 产品级契约层：核心插件需要的外部策略�
 kernel-contracts = { path = "../../kernel/kernel-contracts" }
 async-trait.workspace = true
 futures.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true

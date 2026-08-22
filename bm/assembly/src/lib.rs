@@ -155,7 +155,7 @@ pub struct Runtime {
     /// 中时仍可 `&self` 装配（web-server `--approval`）。经 [`Runtime::install_approval`] 装配。
     approval: parking_lot::RwLock<Option<Arc<dyn bm_ports::ToolApprovalPort>>>,
     /// 核心插件清单（llm / loop / tools，category=Core）。
-    core_plugins: Vec<PluginManifestEntry>,
+    core_plugins: parking_lot::RwLock<Vec<PluginManifestEntry>>,
     /// JS 插件清单（--plugins-dir 装配，category=Feature；`plugin_manifest()`
     /// 合并返回——插件管理员按类分组展示，Core 日常隐藏、Feature 可见）。
     js_plugin_manifest: Vec<PluginManifestEntry>,
@@ -212,11 +212,11 @@ impl Runtime {
             compactor: parking_lot::RwLock::new(None),
             approval: parking_lot::RwLock::new(None),
             agent_factory: RwLock::new(default_agent_factory()),
-            core_plugins: vec![
+            core_plugins: parking_lot::RwLock::new(vec![
                 plugin_llm::plugin::manifest(),
                 plugin_loop::plugin::manifest(),
                 plugin_tools::plugin::manifest(),
-            ],
+            ]),
             js_plugin_manifest: vec![],
         })
     }
@@ -224,7 +224,7 @@ impl Runtime {
     /// 插件清单（core 三插件 + JS 插件 Feature 分类合并）——供插件管理员/
     /// 前端按分类分组展示：核心组件与功能插件分界，用户日常不可见。
     pub fn plugin_manifest(&self) -> Vec<PluginManifestEntry> {
-        let mut all = self.core_plugins.clone();
+        let mut all = self.core_plugins.read().clone();
         all.extend(self.js_plugin_manifest.clone());
         all
     }
@@ -323,8 +323,8 @@ impl Runtime {
         self.tools.mark_dangerous_many(plugin_web_tools::DANGEROUS_TOOL_NAMES.iter().copied());
     }
 
-    /// 装配定时任务插件（功能）：把 [`SchedulePort`] 实现（web-server Scheduler）
-    /// **构造注入**到 plugin-schedule 工具 handler + 注册 schedule.create/list/cancel
+    /// 装配定时任务插件（功能）：把 [`SchedulePort`] 实现**构造注入**到
+    /// plugin-schedule 工具 handler + 注册 schedule.create/list/cancel
     /// 工具并全部 enable。未装配 = schedule 工具不可用（诚实失败）。
     /// 可重复调用（替换注册：先注销本组再注册）。
     pub fn install_schedule(&self, sched: Arc<dyn bm_ports::SchedulePort>) {
@@ -339,10 +339,27 @@ impl Runtime {
         }
         // 危险声明：schedule.create 后台驱动需审批（list/cancel 自动放行）。
         self.tools.mark_dangerous_many(plugin_schedule::DANGEROUS_TOOL_NAMES.iter().copied());
+        self.push_core_plugin_manifest(plugin_schedule::manifest());
     }
 
-    /// 装配目标管理工具插件（功能）：把 [`GoalPort`] 实现（web-server GoalRouter）
-    /// **构造注入**到 plugin-goal 工具 handler + 注册 goal.get/create/update 工具
+    /// 装配定时任务**引擎**（万物皆插件②：调度器运行时住在 plugin-schedule，
+    /// 宿主能力经 [`bm_ports::SessionDrivePort`] 注入）。构造 Scheduler → 启动
+    /// 后台循环 → 按 [`Self::install_schedule`] 注册工具消费面（源 = 同一实例）。
+    /// 返回端口供宿主留档。
+    pub fn install_schedule_engine(
+        &self,
+        host: Arc<dyn bm_ports::SessionDrivePort>,
+    ) -> Arc<dyn bm_ports::SchedulePort> {
+        let sched: Arc<plugin_schedule::scheduler::Scheduler> =
+            Arc::new(plugin_schedule::scheduler::Scheduler::new(host));
+        sched.start();
+        let port: Arc<dyn bm_ports::SchedulePort> = sched;
+        self.install_schedule(Arc::clone(&port));
+        port
+    }
+
+    /// 装配目标管理工具插件（功能）：把 [`GoalPort`] 实现**构造注入**到
+    /// plugin-goal 工具 handler + 注册 goal.get/create/update 工具
     /// 并全部 enable。goal-round-driver（同会话续跑）在 web-server 回合完成点独立
     /// 装配。未装配 = goal 工具不可用（诚实失败）。可重复调用（替换注册：先注销本组再注册）。
     pub fn install_goal(&self, gp: Arc<dyn bm_ports::GoalPort>) {
@@ -357,6 +374,18 @@ impl Runtime {
         }
         // 危险声明：goal.create/update 改目标状态需审批（goal.get 自动放行）。
         self.tools.mark_dangerous_many(plugin_goal::DANGEROUS_TOOL_NAMES.iter().copied());
+        self.push_core_plugin_manifest(plugin_goal::manifest());
+    }
+
+    /// 功能插件进 `plugin_manifest()`（防重复：已存在同 id 则跳过）。
+    /// 对齐 install_auth 的既有模式；修复 install_compactor 注释与实现
+    /// 不一致（注释称装配后追加 manifest，实现漏了 push）。
+    fn push_core_plugin_manifest(&self, entry: kernel_contracts::plugin::PluginManifestEntry) {
+        let mut all = self.core_plugins.write();
+        if all.iter().any(|p| p.id == entry.id) {
+            return;
+        }
+        all.push(entry);
     }
 
     /// 装配工具审批端口（功能面，`&self` 装配——AppState 已在 Arc 中时仍可调用）：
@@ -485,7 +514,7 @@ impl Runtime {
     /// 密码兜底，重启回默认）。装配后 `plugin_manifest()` 追加 auth（Feature）。
     pub fn install_auth(&mut self, auth: Arc<dyn AuthPort>) {
         self.auth = Some(auth);
-        self.core_plugins.push(plugin_auth::manifest());
+        self.push_core_plugin_manifest(plugin_auth::manifest());
     }
 
     /// 装配上下文压缩插件：把 [`Compactor`] 实现接进运行时（可选功能面）。
@@ -494,6 +523,7 @@ impl Runtime {
     /// compactor（Feature）。未装配时不影响任何既有行为（优雅无感）。
     pub fn install_compactor(&self, compactor: Arc<dyn bm_ports::Compactor>) {
         *self.compactor.write() = Some(compactor);
+        self.push_core_plugin_manifest(plugin_compactor::plugin::manifest());
         tracing::info!("context compactor plugin installed (settings-backed)");
     }
 

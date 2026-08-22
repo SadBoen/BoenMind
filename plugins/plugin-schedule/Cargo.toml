@@ -11,9 +11,12 @@ bm-ports = { path = "../../bm/ports" }
 serde_json.workspace = true
 async-trait.workspace = true
 
-[dev-dependencies]
+chrono.workspace = true
+tokio = { workspace = true, features = ["rt", "time"] }
 uuid.workspace = true
-tokio = { workspace = true, features = ["macros", "rt"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "time"] }
 
 [lints]
 workspace = true

@@ -23,6 +23,7 @@ use kernel_contracts::tools::{
 use kernel_contracts::ToolError;
 
 pub mod plugin;
+pub mod scheduler;
 
 pub use plugin::manifest;
 
