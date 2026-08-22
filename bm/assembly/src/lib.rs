@@ -190,10 +190,10 @@ impl Runtime {
         // tools 插件装配点：内置工具组注册（当前为空集，host 工具由 web-server 注册）。
         plugin_tools::plugin::register_builtin(&tools);
         let gate = Arc::new(ToolGate::new());
-        // 宿主文件工具（核心插件）：默认装配注册 + 全启用。workdir 源缺省 = None
-        // （headless 无 settings；web-server 经 install_host_tools 注入真源）。
-        plugin_host_tools::set_workdir_source(Arc::new(crate::NoWorkdir));
-        let _ = plugin_host_tools::register_all(tools.as_ref());
+        // 宿主文件工具（核心插件）：默认装配注册 + 全启用。workdir 源**构造注入**，
+        // 缺省 NoWorkdir（headless 无 settings；web-server 经 install_host_tools
+        // 以真源覆盖注册）。构造函数零全局副作用——多 Runtime 实例天然隔离。
+        let _ = plugin_host_tools::register_all(tools.as_ref(), Some(Arc::new(crate::NoWorkdir)));
         for name in plugin_host_tools::ALL_TOOL_NAMES {
             gate.enable(name);
         }
@@ -271,12 +271,15 @@ impl Runtime {
     }
 
     /// 装配宿主文件工具插件（核心）：注册 4 个 host.* 工具到本运行时注册表，
-    /// 全部 enable（默认门控 fail-closed 自动放开），并注入 workdir 源（外层实现
-    /// `WorkdirPort` 从 settings 现读，工具执行时经端口取当前 workdir）。
-    /// 可重复调用（register_all 幂等跳过已注册项）。
+    /// 全部 enable（默认门控 fail-closed 自动放开），workdir 源**构造注入**到
+    /// handler（外层实现 `WorkdirPort` 从 settings 现读，工具执行时经端口取
+    /// 当前 workdir）。可重复调用（替换注册：先注销本组再注册——构造期的
+    /// NoWorkdir handler 由真源 handler 覆盖）。
     pub fn install_host_tools(&self, workdir: Arc<dyn bm_ports::WorkdirPort>) {
-        plugin_host_tools::set_workdir_source(workdir);
-        if let Err(e) = plugin_host_tools::register_all(self.tools.as_ref()) {
+        for name in plugin_host_tools::ALL_TOOL_NAMES {
+            let _ = self.tools.unregister(name);
+        }
+        if let Err(e) = plugin_host_tools::register_all(self.tools.as_ref(), Some(workdir)) {
             tracing::warn!("host tools registration skipped: {e}");
         }
         for name in plugin_host_tools::ALL_TOOL_NAMES {
@@ -291,10 +294,12 @@ impl Runtime {
     /// 安全同级 host.*：workdir 作用域 + 30s 超时 kill + 输出钱包（512KB/流 截断只记总数，
     /// 防洪水输出撑爆进程内存/模型上下文）。
     /// **默认装配即启用**（演示/内测档）；生产收紧时按工具名逐个 `gate.enable` 即可粒度控制。
-    /// 可重复调用（register_all 幂等跳过已注册项）。
+    /// 可重复调用（替换注册：先注销本组再注册）。
     pub fn install_code_runtime(&self, workdir: Arc<dyn bm_ports::WorkdirPort>) {
-        plugin_code_runtime::set_workdir_source(workdir);
-        if let Err(e) = plugin_code_runtime::register_all(self.tools.as_ref()) {
+        for name in plugin_code_runtime::ALL_TOOL_NAMES {
+            let _ = self.tools.unregister(name);
+        }
+        if let Err(e) = plugin_code_runtime::register_all(self.tools.as_ref(), Some(workdir)) {
             tracing::warn!("code runtime registration skipped: {e}");
         }
         for name in plugin_code_runtime::ALL_TOOL_NAMES {
@@ -318,12 +323,15 @@ impl Runtime {
         self.tools.mark_dangerous_many(plugin_web_tools::DANGEROUS_TOOL_NAMES.iter().copied());
     }
 
-    /// 装配定时任务插件（功能）：注入 [`SchedulePort`] 实现（web-server Scheduler）
-    /// 到 plugin-schedule 全局源 + 注册 schedule.create/list/cancel 工具并全部
-    /// enable。未装配 = schedule 工具不可用（诚实失败）。可重复调用（幂等）。
+    /// 装配定时任务插件（功能）：把 [`SchedulePort`] 实现（web-server Scheduler）
+    /// **构造注入**到 plugin-schedule 工具 handler + 注册 schedule.create/list/cancel
+    /// 工具并全部 enable。未装配 = schedule 工具不可用（诚实失败）。
+    /// 可重复调用（替换注册：先注销本组再注册）。
     pub fn install_schedule(&self, sched: Arc<dyn bm_ports::SchedulePort>) {
-        plugin_schedule::set_schedule_source(sched);
-        if let Err(e) = plugin_schedule::register_all(self.tools.as_ref()) {
+        for name in plugin_schedule::ALL_TOOL_NAMES {
+            let _ = self.tools.unregister(name);
+        }
+        if let Err(e) = plugin_schedule::register_all(self.tools.as_ref(), Some(sched)) {
             tracing::warn!("schedule tools registration skipped: {e}");
         }
         for name in plugin_schedule::ALL_TOOL_NAMES {
@@ -333,13 +341,15 @@ impl Runtime {
         self.tools.mark_dangerous_many(plugin_schedule::DANGEROUS_TOOL_NAMES.iter().copied());
     }
 
-    /// 装配目标管理工具插件（功能）：注入 [`GoalPort`] 实现（web-server GoalRouter）
-    /// 到 plugin-goal 全局源 + 注册 goal.get/create/update 工具并全部 enable。
-    /// goal-round-driver（同会话续跑）在 web-server 回合完成点独立装配。
-    /// 未装配 = goal 工具不可用（诚实失败）。可重复调用（幂等）。
+    /// 装配目标管理工具插件（功能）：把 [`GoalPort`] 实现（web-server GoalRouter）
+    /// **构造注入**到 plugin-goal 工具 handler + 注册 goal.get/create/update 工具
+    /// 并全部 enable。goal-round-driver（同会话续跑）在 web-server 回合完成点独立
+    /// 装配。未装配 = goal 工具不可用（诚实失败）。可重复调用（替换注册：先注销本组再注册）。
     pub fn install_goal(&self, gp: Arc<dyn bm_ports::GoalPort>) {
-        plugin_goal::set_goal_source(gp);
-        if let Err(e) = plugin_goal::register_all(self.tools.as_ref()) {
+        for name in plugin_goal::ALL_TOOL_NAMES {
+            let _ = self.tools.unregister(name);
+        }
+        if let Err(e) = plugin_goal::register_all(self.tools.as_ref(), Some(gp)) {
             tracing::warn!("goal tools registration skipped: {e}");
         }
         for name in plugin_goal::ALL_TOOL_NAMES {
@@ -1352,13 +1362,10 @@ mod tests {
         }
     }
 
-    /// host 工具集成测试共享全局 workdir 源（跨 await 持锁 = TokenIo 单线程下
-    /// MutexGuard 合法；current_thread flavor 保证不走多线程）。
-    static HOST_TOOLS_TEST_SERIAL: std::sync::LazyLock<tokio::sync::Mutex<()>> = std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+    // （构造注入改造后各 Runtime 实例隔离，host 工具测试不再需要全局串行锁。）
 
     #[tokio::test(flavor = "current_thread")]
     async fn host_tools_registered_enabled_and_runnable_end_to_end() {
-        let _serial = HOST_TOOLS_TEST_SERIAL.lock().await;
         let db = tmp_db("host-tools");
         let rt = Runtime::headless(db.clone()).unwrap();
 
@@ -1373,7 +1380,7 @@ mod tests {
         // 注入测试 workdir（工具执行时经 WorkdirPort 现读）。
         let wd = std::env::temp_dir().join(format!("bm-hosts-e2e-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&wd).unwrap();
-        plugin_host_tools::set_workdir_source(Arc::new(TestWorkdir::new(wd.clone())));
+        rt.install_host_tools(Arc::new(TestWorkdir::new(wd.clone())));
 
         // 脚本化 LLM：回合 1 调 host.write_file 写 faq.txt，then_text 续文本；回合 2 文本收尾。
         rt.swap_llm(scripted_llm(
@@ -1426,12 +1433,11 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn host_tools_escape_path_rejected_in_loop() {
-        let _serial = HOST_TOOLS_TEST_SERIAL.lock().await;
         let db = tmp_db("host-tool-escape");
         let rt = Runtime::headless(db.clone()).unwrap();
         let wd = std::env::temp_dir().join(format!("bm-hostesc-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&wd).unwrap();
-        plugin_host_tools::set_workdir_source(Arc::new(TestWorkdir::new(wd.clone())));
+        rt.install_host_tools(Arc::new(TestWorkdir::new(wd.clone())));
 
         // 脚本 LLM 只做一个工具回合：尝试逃逸路径写入（应 is_error）。
         rt.swap_llm(scripted_llm(
@@ -1474,7 +1480,6 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn code_runtime_registered_enabled_and_shell_in_loop() {
-        let _serial = HOST_TOOLS_TEST_SERIAL.lock().await;
         let db = tmp_db("code-runtime");
         let rt = Runtime::headless(db.clone()).unwrap();
 
@@ -1553,12 +1558,11 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn approval_rejected_blocks_tool_in_loop() {
-        let _serial = HOST_TOOLS_TEST_SERIAL.lock().await;
         let db = tmp_db("approval-reject");
         let rt = Runtime::headless(db.clone()).unwrap();
         let wd = std::env::temp_dir().join(format!("bm-approve-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&wd).unwrap();
-        plugin_host_tools::set_workdir_source(Arc::new(TestWorkdir::new(wd.clone())));
+        rt.install_host_tools(Arc::new(TestWorkdir::new(wd.clone())));
 
         // 装配审批端口（拒绝一切）。
         rt.install_approval(Arc::new(TestApproval {
@@ -1608,12 +1612,11 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn approval_allowed_runs_tool_in_loop() {
-        let _serial = HOST_TOOLS_TEST_SERIAL.lock().await;
         let db = tmp_db("approval-allow");
         let rt = Runtime::headless(db.clone()).unwrap();
         let wd = std::env::temp_dir().join(format!("bm-approve2-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&wd).unwrap();
-        plugin_host_tools::set_workdir_source(Arc::new(TestWorkdir::new(wd.clone())));
+        rt.install_host_tools(Arc::new(TestWorkdir::new(wd.clone())));
 
         rt.install_approval(Arc::new(TestApproval {
             verdict: bm_ports::ApprovalVerdict::Allowed,
@@ -1652,7 +1655,6 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn web_tools_registered_enabled() {
-        let _serial = HOST_TOOLS_TEST_SERIAL.lock().await;
         let db = tmp_db("web-tools");
         let rt = Runtime::headless(db.clone()).unwrap();
 

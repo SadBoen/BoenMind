@@ -15,15 +15,16 @@
 //!   进程内内存也不会超过 (cap × 2 + 常数)，模型上下文不会被撑爆
 //!
 //! workdir 事实源 = [`WorkdirPort`]（bm-ports 产品契约），与 host-tools 同一注入模式：
-//! 装配方（bm-assembly）经 [`set_workdir_source`] 注入全局源，工具执行时现读——
-//! 设置页改 workdir 后**下一工具调用即时生效**。
+//! 装配方（bm-assembly）经 [`register_all`] 把源**构造注入**到每个工具 handler，
+//! 工具执行时现读——设置页改 workdir 后**下一工具调用即时生效**。源随 handler
+//! 存在于每 Runtime 独立的 ToolRegistry，不再有进程级全局静态（多实例天然隔离）。
 //!
 //! 接线：装配方调用 [`register_all`] 注册全部工具并 `gate.enable`（默认启用；
 //! 若需更严策略可按工具名单独 `gate.enable`）。之后 plugin-loop 每回合把已启用
 //! 工具 schema 发给模型，工具调用经 ToolGate 执行。
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use bm_ports::WorkdirPort;
@@ -57,21 +58,9 @@ pub const ALL_TOOL_NAMES: [&str; 3] = [CODE_COMPILE, CODE_PYTHON, CODE_SHELL];
 /// 装配 --approval 时组合根 mark_dangerous。
 pub const DANGEROUS_TOOL_NAMES: [&str; 3] = [CODE_COMPILE, CODE_PYTHON, CODE_SHELL];
 
-/// 全局 workdir 源（装配方经 [`set_workdir_source`] 注入；工具执行时现读）。
-static WORKDIR_SOURCE: Mutex<Option<Arc<dyn WorkdirPort>>> = Mutex::new(None);
-
-/// 注入 workdir 源（bm-assembly 装配点；web-server 实现 WorkdirPort 并经组合根传入）。
-pub fn set_workdir_source(src: Arc<dyn WorkdirPort>) {
-    *WORKDIR_SOURCE.lock().unwrap() = Some(src);
-}
-
-/// 当前 workdir（WorkdirPort 现读；未装配/未设置 → None）。
-fn workdir() -> Option<PathBuf> {
-    WORKDIR_SOURCE
-        .lock()
-        .unwrap()
-        .as_ref()
-        .and_then(|p| p.current_workdir())
+/// 当前 workdir（未装配源 / 源返回 None → None，调用方诚实报错）。
+fn source_workdir(src: &Option<Arc<dyn WorkdirPort>>) -> Option<PathBuf> {
+    src.as_ref().and_then(|p| p.current_workdir())
 }
 
 /// 全部 code-runtime 工具 schema（文档/装配可查询）。
@@ -80,9 +69,9 @@ pub fn schemas() -> Vec<ToolSchema> {
         .iter()
         .map(|name| {
             let h: Arc<dyn ToolHandler> = match *name {
-                CODE_COMPILE => Arc::new(CompileTool),
-                CODE_PYTHON => Arc::new(PythonTool),
-                CODE_SHELL => Arc::new(ShellTool),
+                CODE_COMPILE => Arc::new(CompileTool { src: None }),
+                CODE_PYTHON => Arc::new(PythonTool { src: None }),
+                CODE_SHELL => Arc::new(ShellTool { src: None }),
                 _ => unreachable!("known code tool name"),
             };
             ToolSchema {
@@ -94,19 +83,20 @@ pub fn schemas() -> Vec<ToolSchema> {
         .collect()
 }
 
-/// 注册全部 code-runtime 工具到注册表。
+/// 注册全部 code-runtime 工具到注册表（源构造注入：每个 handler 捕获同一 `src`）。
 /// 调用方来自装配方（bm-assembly），传实现 `ToolRegistrarPort` 的注册表
-/// （plugin-tools::ToolRegistry）。可重复调用（跳过已注册项，幂等）。
-pub fn register_all(registry: &dyn bm_ports::ToolRegistrarPort) -> Result<(), ToolError> {
+/// （plugin-tools::ToolRegistry）。总是覆盖注册（HashMap 语义）：后装者替换
+/// 先前的 handler——终态以最后一次为准。
+pub fn register_all(
+    registry: &dyn bm_ports::ToolRegistrarPort,
+    src: Option<Arc<dyn WorkdirPort>>,
+) -> Result<(), ToolError> {
     let handlers: Vec<Arc<dyn ToolHandler>> = vec![
-        Arc::new(CompileTool),
-        Arc::new(PythonTool),
-        Arc::new(ShellTool),
+        Arc::new(CompileTool { src: src.clone() }),
+        Arc::new(PythonTool { src: src.clone() }),
+        Arc::new(ShellTool { src }),
     ];
     for h in handlers {
-        if registry.get(h.name()).is_some() {
-            continue; // 幂等：已注册跳过
-        }
         registry.register(h)?;
     }
     Ok(())
@@ -245,8 +235,9 @@ fn result_json(c: &Captured) -> ToolExecutionResult {
 
 // ---- code.compile ----
 
-#[derive(Debug, Clone, Copy, Default)]
-struct CompileTool;
+struct CompileTool {
+    src: Option<Arc<dyn WorkdirPort>>,
+}
 
 #[async_trait::async_trait]
 impl ToolHandler for CompileTool {
@@ -276,7 +267,7 @@ impl ToolHandler for CompileTool {
         &self,
         input: ToolExecutionInput,
     ) -> Result<ToolExecutionResult, ToolError> {
-        let Some(wd) = workdir() else {
+        let Some(wd) = source_workdir(&self.src) else {
             return Err(ToolError::new("tool error: workdir not configured"));
         };
         Self::execute_with_workdir(&input, &wd).await
@@ -378,8 +369,9 @@ impl CompileTool {
 
 // ---- code.python ----
 
-#[derive(Debug, Clone, Copy, Default)]
-struct PythonTool;
+struct PythonTool {
+    src: Option<Arc<dyn WorkdirPort>>,
+}
 
 #[async_trait::async_trait]
 impl ToolHandler for PythonTool {
@@ -407,7 +399,7 @@ impl ToolHandler for PythonTool {
         &self,
         input: ToolExecutionInput,
     ) -> Result<ToolExecutionResult, ToolError> {
-        let Some(wd) = workdir() else {
+        let Some(wd) = source_workdir(&self.src) else {
             return Err(ToolError::new("tool error: workdir not configured"));
         };
         Self::execute_with_workdir(&input, &wd).await
@@ -458,8 +450,9 @@ impl PythonTool {
 
 // ---- code.shell ----
 
-#[derive(Debug, Clone, Copy, Default)]
-struct ShellTool;
+struct ShellTool {
+    src: Option<Arc<dyn WorkdirPort>>,
+}
 
 #[async_trait::async_trait]
 impl ToolHandler for ShellTool {
@@ -487,7 +480,7 @@ impl ToolHandler for ShellTool {
         &self,
         input: ToolExecutionInput,
     ) -> Result<ToolExecutionResult, ToolError> {
-        let Some(wd) = workdir() else {
+        let Some(wd) = source_workdir(&self.src) else {
             return Err(ToolError::new("tool error: workdir not configured"));
         };
         Self::execute_with_workdir(&input, &wd).await

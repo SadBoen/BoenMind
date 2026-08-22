@@ -7,15 +7,16 @@
 //! - `goal.update`  更新目标：edit/pause/resume/complete/blocked
 //!   （CAS revision 守卫；blocked 需 blocked_reason）
 //!
-//! 实现侧（web-server）注入全局 [`GoalPort`] 源（同 WorkdirPort/SchedulePort
-//! 模式）：装配方经 [`set_goal_source`] 注入；工具执行时现读。未装配 →
-//! goal 工具返回 "goal not configured"（诚实失败）。
+//! 实现侧（web-server）经 [`GoalPort`] 消费面接入（同 WorkdirPort/SchedulePort
+//! 模式）：装配方经 [`register_all`] 把源**构造注入**到每个工具 handler，工具
+//! 执行时现读；源随 handler 存在于每 Runtime 独立的 ToolRegistry（无进程级全局）。
+//! 未装配 → goal 工具返回 "goal not configured"（诚实失败）。
 //!
 //! 权威拆分：本插件只做工具消费面（model-facing）；goal-round-driver
 //! （同会话续跑）在 web-server 回合完成点，负责 roundsStarted 推进与续跑注入
 //! ——与官方 `dsh-tool-goal`/`dsh-goal-round-driver` 分工一致。
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use bm_ports::{GoalAction, GoalPort, GoalView};
 use kernel_contracts::tools::{
@@ -43,18 +44,7 @@ pub const ALL_TOOL_NAMES: [&str; 3] = [GOAL_GET, GOAL_CREATE, GOAL_UPDATE];
 /// goal.get 只读投影，自动放行。
 pub const DANGEROUS_TOOL_NAMES: [&str; 2] = [GOAL_CREATE, GOAL_UPDATE];
 
-/// 全局 goal 源（装配方经 [`set_goal_source`] 注入；工具执行时现读）。
-static GOAL_SOURCE: Mutex<Option<Arc<dyn GoalPort>>> = Mutex::new(None);
 
-/// 注入 goal 源（bm-assembly 装配点；web-server 实现 GoalPort 并经组合根传入）。
-pub fn set_goal_source(src: Arc<dyn GoalPort>) {
-    *GOAL_SOURCE.lock().unwrap() = Some(src);
-}
-
-/// 当前 goal 源（未装配 → None）。
-fn goal() -> Option<Arc<dyn GoalPort>> {
-    GOAL_SOURCE.lock().unwrap().clone()
-}
 
 /// session_id：工具参数显式传；缺省 = 当前活跃会话（web-server 侧从
 /// state.sessions 取；见 GoalRouter 实现——这里只把参数透传，缺省由实现定）。 
@@ -74,9 +64,9 @@ pub fn schemas() -> Vec<ToolSchema> {
         .iter()
         .map(|name| {
             let h: Arc<dyn ToolHandler> = match *name {
-                GOAL_GET => Arc::new(GetGoalTool),
-                GOAL_CREATE => Arc::new(CreateGoalTool),
-                GOAL_UPDATE => Arc::new(UpdateGoalTool),
+                GOAL_GET => Arc::new(GetGoalTool { src: None }),
+                GOAL_CREATE => Arc::new(CreateGoalTool { src: None }),
+                GOAL_UPDATE => Arc::new(UpdateGoalTool { src: None }),
                 _ => unreachable!("known goal tool name"),
             };
             ToolSchema {
@@ -88,19 +78,20 @@ pub fn schemas() -> Vec<ToolSchema> {
         .collect()
 }
 
-/// 注册全部 goal 工具到注册表。
+/// 注册全部 goal 工具到注册表（源构造注入：每个 handler 捕获同一 `src`）。
 /// 调用方来自装配方（bm-assembly），传实现 `ToolRegistrarPort` 的注册表
-/// （plugin-tools::ToolRegistry）。可重复调用（跳过已注册项，幂等）。
-pub fn register_all(registry: &dyn bm_ports::ToolRegistrarPort) -> Result<(), ToolError> {
+/// （plugin-tools::ToolRegistry）。总是覆盖注册（HashMap 语义）：后装者替换
+/// 先前的 handler——终态以最后一次为准。
+pub fn register_all(
+    registry: &dyn bm_ports::ToolRegistrarPort,
+    src: Option<Arc<dyn GoalPort>>,
+) -> Result<(), ToolError> {
     let handlers: Vec<Arc<dyn ToolHandler>> = vec![
-        Arc::new(GetGoalTool),
-        Arc::new(CreateGoalTool),
-        Arc::new(UpdateGoalTool),
+        Arc::new(GetGoalTool { src: src.clone() }),
+        Arc::new(CreateGoalTool { src: src.clone() }),
+        Arc::new(UpdateGoalTool { src }),
     ];
     for h in handlers {
-        if registry.get(h.name()).is_some() {
-            continue; // 幂等：已注册跳过
-        }
         registry.register(h)?;
     }
     Ok(())
@@ -124,8 +115,10 @@ fn view_json(v: &GoalView) -> serde_json::Value {
 
 // ---- goal.get ----
 
-#[derive(Debug, Clone, Copy, Default)]
-struct GetGoalTool;
+struct GetGoalTool {
+    /// goal 源（构造注入；None = 未装配，执行诚实报错）。
+    src: Option<Arc<dyn GoalPort>>,
+}
 
 #[async_trait::async_trait]
 impl ToolHandler for GetGoalTool {
@@ -152,7 +145,7 @@ impl ToolHandler for GetGoalTool {
         &self,
         input: ToolExecutionInput,
     ) -> Result<ToolExecutionResult, ToolError> {
-        let Some(src) = goal() else {
+        let Some(src) = self.src.as_ref() else {
             return Err(ToolError::new("tool error: goal not configured"));
         };
         let sid = session_arg(&input.arguments).unwrap_or_default();
@@ -168,8 +161,10 @@ impl ToolHandler for GetGoalTool {
 
 // ---- goal.create ----
 
-#[derive(Debug, Clone, Copy, Default)]
-struct CreateGoalTool;
+struct CreateGoalTool {
+    /// goal 源（构造注入；None = 未装配，执行诚实报错）。
+    src: Option<Arc<dyn GoalPort>>,
+}
 
 #[async_trait::async_trait]
 impl ToolHandler for CreateGoalTool {
@@ -198,7 +193,7 @@ impl ToolHandler for CreateGoalTool {
         &self,
         input: ToolExecutionInput,
     ) -> Result<ToolExecutionResult, ToolError> {
-        let Some(src) = goal() else {
+        let Some(src) = self.src.as_ref() else {
             return Err(ToolError::new("tool error: goal not configured"));
         };
         let Some(objective) = arg_str(&input.arguments, "objective") else {
@@ -227,8 +222,10 @@ impl ToolHandler for CreateGoalTool {
 
 // ---- goal.update ----
 
-#[derive(Debug, Clone, Copy, Default)]
-struct UpdateGoalTool;
+struct UpdateGoalTool {
+    /// goal 源（构造注入；None = 未装配，执行诚实报错）。
+    src: Option<Arc<dyn GoalPort>>,
+}
 
 #[async_trait::async_trait]
 impl ToolHandler for UpdateGoalTool {
@@ -261,7 +258,7 @@ impl ToolHandler for UpdateGoalTool {
         &self,
         input: ToolExecutionInput,
     ) -> Result<ToolExecutionResult, ToolError> {
-        let Some(src) = goal() else {
+        let Some(src) = self.src.as_ref() else {
             return Err(ToolError::new("tool error: goal not configured"));
         };
         let Some(goal_id) = arg_str(&input.arguments, "goal_id") else {
@@ -340,7 +337,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn unconfigured_source_fails_loud() {
         // 未装配 goal 源 → 工具异常（诚实失败，不假成功）。
-        let tool = GetGoalTool;
+        let tool = GetGoalTool { src: None };
         let r = tool
             .execute(ToolExecutionInput {
                 name: GOAL_GET.to_string(),

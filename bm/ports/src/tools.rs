@@ -40,6 +40,10 @@ pub trait ToolRegistryPort: Send + Sync + std::fmt::Debug {
 /// 编译期依赖核心插件 plugin-tools 的具体类型，违反「插件之间零依赖」纪律——
 /// 故把装配面抽象到本层，plugin-tools 的 `ToolRegistry` 实现之，组合根注入。
 /// 核心/功能插件只依赖本端口，不再依赖 plugin-tools 具体类型。
+/// 2026-08-22 万物皆插件①：带源插件（host-tools/code-runtime/schedule/goal）的
+/// `register_all(registry, src)` 把能力源**构造注入** handler——替代进程级全局
+/// 静态（多 Runtime 实例隔离）。重装语义由组合根承担：install_* 先按组注销
+/// 再注册（`register` 本身仍重名报错）。
 #[async_trait::async_trait]
 pub trait ToolRegistrarPort: Send + Sync + std::fmt::Debug {
     /// 注册一个工具处理器；重名 → Err（留具体实现语义）。

@@ -11,14 +11,16 @@
 //! 先经 resolve_in_workdir 校验。
 //!
 //! workdir 事实源 = [`WorkdirPort`]（bm-ports 产品契约）：外层实现并从 settings 现读，
-//! 装配方（bm-assembly）经 [`set_workdir_source`] 注入全局源，工具执行时现读——
-//! 设置页改 workdir 后**下一工具调用即时生效**（与 host.* RPC 的 settings 事实源同语义）。
+//! 装配方（bm-assembly）经 [`register_all`] 把源**构造注入**到每个工具 handler，
+//! 工具执行时现读——设置页改 workdir 后**下一工具调用即时生效**（与 host.* RPC 的
+//! settings 事实源同语义）。源随 handler 存在于每 Runtime 独立的 ToolRegistry，
+//! 不再有进程级全局静态（多 Runtime 实例天然隔离）。
 //!
 //! 接线：装配方调用 [`register_all`] 注册全部工具并 `gate.enable`，之后 plugin-loop
 //! 每回合把已启用工具 schema 发给模型，工具调用经 ToolGate 执行。
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use bm_ports::WorkdirPort;
@@ -53,34 +55,21 @@ pub const ALL_TOOL_NAMES: [&str; 4] = [
 /// 自动放行（越界由 resolve 防护）。装配 --approval 时组合根 mark_dangerous。
 pub const DANGEROUS_TOOL_NAMES: [&str; 1] = [HOST_RUN_COMMAND];
 
-/// 全局 workdir 源（装配方经 [`set_workdir_source`] 注入；工具执行时现读）。
-/// Mutex 包裹：生产装配期注入一次；测试/热切换可重新 set（后设覆盖先设）。
-static WORKDIR_SOURCE: Mutex<Option<Arc<dyn WorkdirPort>>> = Mutex::new(None);
-
-/// 注入 workdir 源（bm-assembly 装配点；web-server 实现 WorkdirPort 并经组合根传入）。
-pub fn set_workdir_source(src: Arc<dyn WorkdirPort>) {
-    *WORKDIR_SOURCE.lock().unwrap() = Some(src);
+/// 当前 workdir（未装配源 / 源返回 None → None，调用方诚实报错）。
+fn source_workdir(src: &Option<Arc<dyn WorkdirPort>>) -> Option<PathBuf> {
+    src.as_ref().and_then(|p| p.current_workdir())
 }
 
-/// 当前 workdir（WorkdirPort 现读；未装配/未设置 → None）。
-fn workdir() -> Option<PathBuf> {
-    WORKDIR_SOURCE
-        .lock()
-        .unwrap()
-        .as_ref()
-        .and_then(|p| p.current_workdir())
-}
-
-/// 全部宿主工具 schema（文档/装配可查询）。
+/// 全部宿主工具 schema（文档/装配可查询；元数据不依赖源，占位 None 构造）。
 pub fn schemas() -> Vec<ToolSchema> {
     [HOST_READ_FILE, HOST_WRITE_FILE, HOST_LIST_DIR, HOST_RUN_COMMAND]
         .iter()
         .map(|name| {
             let h: Arc<dyn ToolHandler> = match *name {
-                HOST_READ_FILE => Arc::new(ReadFileTool),
-                HOST_WRITE_FILE => Arc::new(WriteFileTool),
-                HOST_LIST_DIR => Arc::new(ListDirTool),
-                HOST_RUN_COMMAND => Arc::new(RunCommandTool),
+                HOST_READ_FILE => Arc::new(ReadFileTool { src: None }),
+                HOST_WRITE_FILE => Arc::new(WriteFileTool { src: None }),
+                HOST_LIST_DIR => Arc::new(ListDirTool { src: None }),
+                HOST_RUN_COMMAND => Arc::new(RunCommandTool { src: None }),
                 _ => unreachable!("known host tool name"),
             };
             ToolSchema {
@@ -92,22 +81,22 @@ pub fn schemas() -> Vec<ToolSchema> {
         .collect()
 }
 
-/// 注册全部宿主工具到注册表。
+/// 注册全部宿主工具到注册表（源构造注入：每个 handler 捕获同一 `src`）。
 /// 调用方来自装配方（bm-assembly），传实现 `ToolRegistrarPort` 的注册表
 /// （plugin-tools::ToolRegistry）；装配面在具体实现上，端口只有消费面。
-/// 核心插件 host-tools 同功能插件一道经注册面端口注入，不再依赖
-/// plugin-tools 具体类型。可重复调用（跳过已注册项，幂等）。
-pub fn register_all(registry: &dyn bm_ports::ToolRegistrarPort) -> Result<(), ToolError> {
+/// 总是覆盖注册（HashMap 语义）：装配方先以 NoWorkdir 注册、后以真源
+/// install 时替换为携带真源的 handler——终态以最后一次为准。
+pub fn register_all(
+    registry: &dyn bm_ports::ToolRegistrarPort,
+    src: Option<Arc<dyn WorkdirPort>>,
+) -> Result<(), ToolError> {
     let handlers: Vec<Arc<dyn ToolHandler>> = vec![
-        Arc::new(ReadFileTool),
-        Arc::new(WriteFileTool),
-        Arc::new(ListDirTool),
-        Arc::new(RunCommandTool),
+        Arc::new(ReadFileTool { src: src.clone() }),
+        Arc::new(WriteFileTool { src: src.clone() }),
+        Arc::new(ListDirTool { src: src.clone() }),
+        Arc::new(RunCommandTool { src }),
     ];
     for h in handlers {
-        if registry.get(h.name()).is_some() {
-            continue; // 幂等：已注册跳过
-        }
         registry.register(h)?;
     }
     Ok(())
@@ -124,8 +113,9 @@ fn arg_str(args: &serde_json::Value, key: &str) -> Option<String> {
 
 // ---- host.read_file ----
 
-#[derive(Debug, Clone, Copy, Default)]
-struct ReadFileTool;
+struct ReadFileTool {
+    src: Option<Arc<dyn WorkdirPort>>,
+}
 
 #[async_trait::async_trait]
 impl ToolHandler for ReadFileTool {
@@ -152,7 +142,7 @@ impl ToolHandler for ReadFileTool {
         &self,
         input: ToolExecutionInput,
     ) -> Result<ToolExecutionResult, ToolError> {
-        let Some(wd) = workdir() else {
+        let Some(wd) = source_workdir(&self.src) else {
             return Err(ToolError::new("tool error: workdir not configured"));
         };
         Self::execute_with_workdir(&input, &wd).await
@@ -203,8 +193,9 @@ impl ReadFileTool {
 
 // ---- host.write_file ----
 
-#[derive(Debug, Clone, Copy, Default)]
-struct WriteFileTool;
+struct WriteFileTool {
+    src: Option<Arc<dyn WorkdirPort>>,
+}
 
 #[async_trait::async_trait]
 impl ToolHandler for WriteFileTool {
@@ -233,7 +224,7 @@ impl ToolHandler for WriteFileTool {
         &self,
         input: ToolExecutionInput,
     ) -> Result<ToolExecutionResult, ToolError> {
-        let Some(wd) = workdir() else {
+        let Some(wd) = source_workdir(&self.src) else {
             return Err(ToolError::new("tool error: workdir not configured"));
         };
         Self::execute_with_workdir(&input, &wd).await
@@ -280,8 +271,9 @@ impl WriteFileTool {
 
 // ---- host.list_dir ----
 
-#[derive(Debug, Clone, Copy, Default)]
-struct ListDirTool;
+struct ListDirTool {
+    src: Option<Arc<dyn WorkdirPort>>,
+}
 
 #[async_trait::async_trait]
 impl ToolHandler for ListDirTool {
@@ -308,7 +300,7 @@ impl ToolHandler for ListDirTool {
         &self,
         input: ToolExecutionInput,
     ) -> Result<ToolExecutionResult, ToolError> {
-        let Some(wd) = workdir() else {
+        let Some(wd) = source_workdir(&self.src) else {
             return Err(ToolError::new("tool error: workdir not configured"));
         };
         Self::execute_with_workdir(&input, &wd).await
@@ -370,8 +362,9 @@ impl ListDirTool {
 
 // ---- host.run_command ----
 
-#[derive(Debug, Clone, Copy, Default)]
-struct RunCommandTool;
+struct RunCommandTool {
+    src: Option<Arc<dyn WorkdirPort>>,
+}
 
 #[async_trait::async_trait]
 impl ToolHandler for RunCommandTool {
@@ -399,7 +392,7 @@ impl ToolHandler for RunCommandTool {
         &self,
         input: ToolExecutionInput,
     ) -> Result<ToolExecutionResult, ToolError> {
-        let Some(wd) = workdir() else {
+        let Some(wd) = source_workdir(&self.src) else {
             return Err(ToolError::new("tool error: workdir not configured"));
         };
         Self::execute_with_workdir(&input, &wd).await

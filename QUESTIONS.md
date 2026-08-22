@@ -259,9 +259,10 @@
 
 ## 四、架构与结构
 
-### ⏳ B-ARCH-001: 进程级全局静态注入（workdir/schedule/goal source）
+### ✔ B-ARCH-001: 进程级全局静态注入（workdir/schedule/goal source）
+**File(s):** plugins/plugin-{host-tools,code-runtime,schedule,goal}、bm/assembly/src/lib.rs
 **Severity:** Medium
-**Answer:** 挂账，但附注：**已实证其危害**——bm-assembly 的 host-tools 测试存在 ~1/6 概率的间歇失败（干净 HEAD 基线同样复现），根因是不持锁的测试创建 Runtime 时装配代码换掉全局 workdir 源，踩踏持锁测试的回合。改构造注入（经 Runtime 传递）时应一并让测试免于串行锁。这是下一轮架构专项的第一优先。
+**Answer:** 已修（2026-08-22 万物皆插件①）。四个插件的 `set_*_source` 全局静态删除，`register_all(registry, src)` 把源**构造注入**到每个工具 handler；`Runtime::headless` 构造函数零全局副作用；install_* 改「先注销本组再注册」的替换语义（构造期 NoWorkdir → install 真源覆盖）。**多 Runtime 实例天然隔离，HOST_TOOLS_TEST_SERIAL 串行锁删除**——assembly 测试 6 连跑全绿（改造前 ~1/6 概率间歇失败，干净基线同样复现）。web-server/headless/quickjs-bridge/plugin-loop/plugin-tools/kernel 全部零改动。
 
 ---
 
@@ -385,7 +386,7 @@
 **File(s):** `bm/web-server/src/{scheduler,goal,goal_driver,approval,pending,rpc_m3}.rs`（约 1700 行领域逻辑）；`plugins/plugin-schedule/src/lib.rs`（仅 schemas+register+全局注入，无实现）；对照 `bm/assembly/tests/crate_boundaries.rs`（结构门禁在位）
 **Severity:** Medium（方向债，非缺陷）
 **Observation:** 结构面守住（依赖只许向下/L0 禁依赖 plugin-*/插件间零依赖，硬门禁）；语义面失守四点：①调度循环、goal 驱动、审批路由等能力后端实现在 web-server（L0），插件只剩工具面且经全局静态注入反向拿实现；②插件是进程级单例不可多实例（ARCH-001 的 flaky 实证）；③领域状态集中在 AppState；④PluginRuntimePort/supervisor 真装卸从未接线（K-ARCH-001）。当前实际形态 = 「万物皆端口 + 组合根静态装配」，唯一动态插件面是 JS 插件（quickjs-bridge）。
-**Answer:** ⏳ 方向决策待定。回归路线 = ARCH-001 构造注入先行 → 能力后端下沉为插件/端口实现 → AppState 状态收编 → 远期接 PluginRuntimePort；接受路线 = 把「静态组装 + JS 动态面」的取舍显式写进架构文档，消除代码与口号的分叉。关联：ARCH-001、B-ARCH-001/002/003、B-QUAL-001/002、K-ARCH-001。
+**Answer:** ⏳ 方向决策已定（2026-08-22 用户拍板走回归路线）。**第①步已落地**：ARCH-001 构造注入完成（见上），插件恢复为完整可替换部件、Runtime 实例隔离。后续：② 能力后端（scheduler/goal-driver/approval/pending，~1700 行）从 web-server 下沉为插件侧实现 → ③ AppState 领域状态收编 → ④ 远期接 PluginRuntimePort。关联：ARCH-001（✔）、B-ARCH-002/003、B-QUAL-001/002、K-ARCH-001。
 
 ---
 

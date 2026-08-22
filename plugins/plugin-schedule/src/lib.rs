@@ -6,14 +6,15 @@
 //! - `schedule.list`    列出全部活动任务（下次触发时间）
 //! - `schedule.cancel`  取消任务
 //!
-//! 实现侧（web-server Scheduler）注入全局 [`SchedulePort`] 源（同 WorkdirPort
-//! 模式）：装配方经 [`set_schedule_source`] 注入；工具执行时现读。未装配 →
-//! schedule 工具返回 "schedule not configured"（诚实失败，不假成功）。
+//! 实现侧（web-server Scheduler）经 [`SchedulePort`] 消费面接入（同 WorkdirPort
+//! 模式）：装配方经 [`register_all`] 把源**构造注入**到每个工具 handler，工具
+//! 执行时现读；源随 handler 存在于每 Runtime 独立的 ToolRegistry（无进程级全局）。
+//! 未装配 → schedule 工具返回 "schedule not configured"（诚实失败，不假成功）。
 //!
 //! 接线：装配方调用 [`register_all`] 注册全部工具并 `gate.enable`。之后
 //! plugin-loop 每回合把已启用工具 schema 发给模型，工具调用经 ToolGate 执行。
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use bm_ports::{SchedulePort, ScheduleSpec, ScheduleTrigger};
 use kernel_contracts::tools::{
@@ -37,18 +38,7 @@ pub const ALL_TOOL_NAMES: [&str; 3] = [SCHEDULE_CREATE, SCHEDULE_LIST, SCHEDULE_
 /// list/cancel 只读或撤销，自动放行。
 pub const DANGEROUS_TOOL_NAMES: [&str; 1] = [SCHEDULE_CREATE];
 
-/// 全局 schedule 源（装配方经 [`set_schedule_source`] 注入；工具执行时现读）。
-static SCHEDULE_SOURCE: Mutex<Option<Arc<dyn SchedulePort>>> = Mutex::new(None);
 
-/// 注入 schedule 源（bm-assembly 装配点；web-server 实现 SchedulePort 并经组合根传入）。
-pub fn set_schedule_source(src: Arc<dyn SchedulePort>) {
-    *SCHEDULE_SOURCE.lock().unwrap() = Some(src);
-}
-
-/// 当前 schedule 源（未装配 → None）。
-fn schedule() -> Option<Arc<dyn SchedulePort>> {
-    SCHEDULE_SOURCE.lock().unwrap().clone()
-}
 
 /// 全部 schedule 工具 schema（文档/装配可查询）。
 pub fn schemas() -> Vec<ToolSchema> {
@@ -56,9 +46,9 @@ pub fn schemas() -> Vec<ToolSchema> {
         .iter()
         .map(|name| {
             let h: Arc<dyn ToolHandler> = match *name {
-                SCHEDULE_CREATE => Arc::new(CreateScheduleTool),
-                SCHEDULE_LIST => Arc::new(ListSchedulesTool),
-                SCHEDULE_CANCEL => Arc::new(CancelScheduleTool),
+                SCHEDULE_CREATE => Arc::new(CreateScheduleTool { src: None }),
+                SCHEDULE_LIST => Arc::new(ListSchedulesTool { src: None }),
+                SCHEDULE_CANCEL => Arc::new(CancelScheduleTool { src: None }),
                 _ => unreachable!("known schedule tool name"),
             };
             ToolSchema {
@@ -70,19 +60,20 @@ pub fn schemas() -> Vec<ToolSchema> {
         .collect()
 }
 
-/// 注册全部 schedule 工具到注册表。
+/// 注册全部 schedule 工具到注册表（源构造注入：每个 handler 捕获同一 `src`）。
 /// 调用方来自装配方（bm-assembly），传实现 `ToolRegistrarPort` 的注册表
-/// （plugin-tools::ToolRegistry）。可重复调用（跳过已注册项，幂等）。
-pub fn register_all(registry: &dyn bm_ports::ToolRegistrarPort) -> Result<(), ToolError> {
+/// （plugin-tools::ToolRegistry）。总是覆盖注册（HashMap 语义）：后装者替换
+/// 先前的 handler——终态以最后一次为准。
+pub fn register_all(
+    registry: &dyn bm_ports::ToolRegistrarPort,
+    src: Option<Arc<dyn SchedulePort>>,
+) -> Result<(), ToolError> {
     let handlers: Vec<Arc<dyn ToolHandler>> = vec![
-        Arc::new(CreateScheduleTool),
-        Arc::new(ListSchedulesTool),
-        Arc::new(CancelScheduleTool),
+        Arc::new(CreateScheduleTool { src: src.clone() }),
+        Arc::new(ListSchedulesTool { src: src.clone() }),
+        Arc::new(CancelScheduleTool { src }),
     ];
     for h in handlers {
-        if registry.get(h.name()).is_some() {
-            continue; // 幂等：已注册跳过
-        }
         registry.register(h)?;
     }
     Ok(())
@@ -94,8 +85,10 @@ fn arg_str(args: &serde_json::Value, key: &str) -> Option<String> {
 
 // ---- schedule.create ----
 
-#[derive(Debug, Clone, Copy, Default)]
-struct CreateScheduleTool;
+struct CreateScheduleTool {
+    /// schedule 源（构造注入；None = 未装配，执行诚实报错）。
+    src: Option<Arc<dyn SchedulePort>>,
+}
 
 #[async_trait::async_trait]
 impl ToolHandler for CreateScheduleTool {
@@ -126,7 +119,7 @@ impl ToolHandler for CreateScheduleTool {
         &self,
         input: ToolExecutionInput,
     ) -> Result<ToolExecutionResult, ToolError> {
-        let Some(src) = schedule() else {
+        let Some(src) = self.src.as_ref() else {
             return Err(ToolError::new("tool error: schedule not configured"));
         };
         let Some(trigger_kind) = arg_str(&input.arguments, "trigger") else {
@@ -179,8 +172,10 @@ impl ToolHandler for CreateScheduleTool {
 
 // ---- schedule.list ----
 
-#[derive(Debug, Clone, Copy, Default)]
-struct ListSchedulesTool;
+struct ListSchedulesTool {
+    /// schedule 源（构造注入；None = 未装配，执行诚实报错）。
+    src: Option<Arc<dyn SchedulePort>>,
+}
 
 #[async_trait::async_trait]
 impl ToolHandler for ListSchedulesTool {
@@ -204,7 +199,7 @@ impl ToolHandler for ListSchedulesTool {
         &self,
         _input: ToolExecutionInput,
     ) -> Result<ToolExecutionResult, ToolError> {
-        let Some(src) = schedule() else {
+        let Some(src) = self.src.as_ref() else {
             return Err(ToolError::new("tool error: schedule not configured"));
         };
         let views = src.schedule_list().await?;
@@ -227,8 +222,10 @@ impl ToolHandler for ListSchedulesTool {
 
 // ---- schedule.cancel ----
 
-#[derive(Debug, Clone, Copy, Default)]
-struct CancelScheduleTool;
+struct CancelScheduleTool {
+    /// schedule 源（构造注入；None = 未装配，执行诚实报错）。
+    src: Option<Arc<dyn SchedulePort>>,
+}
 
 #[async_trait::async_trait]
 impl ToolHandler for CancelScheduleTool {
@@ -255,7 +252,7 @@ impl ToolHandler for CancelScheduleTool {
         &self,
         input: ToolExecutionInput,
     ) -> Result<ToolExecutionResult, ToolError> {
-        let Some(src) = schedule() else {
+        let Some(src) = self.src.as_ref() else {
             return Err(ToolError::new("tool error: schedule not configured"));
         };
         let Some(id) = arg_str(&input.arguments, "id") else {
@@ -286,7 +283,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn create_missing_trigger_is_business_error() {
         // 未装配 schedule 源 → 工具异常（诚实失败）；装配后缺 trigger → 业务错误。
-        let tool = CreateScheduleTool;
+        let tool = CreateScheduleTool { src: None };
         let r = tool
             .execute(ToolExecutionInput {
                 name: SCHEDULE_CREATE.to_string(),
