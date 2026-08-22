@@ -18,19 +18,16 @@
 
 use std::sync::Arc;
 
-use bm_ports::{GoalAction, GoalPort, GoalView};
+use bm_ports::{GoalAction, GoalEnginePort, GoalError, GoalView};
 use kernel_contracts::tools::{
     ToolExecutionInput, ToolExecutionResult, ToolHandler, ToolSchema,
 };
 use kernel_contracts::ToolError;
 
 pub mod plugin;
+pub mod engine;
 
 pub use plugin::manifest;
-
-/// 创建目标的缺省 max_goal_rounds（对齐 dsh-goal defaultMaxGoalRounds 的精神；
-/// 一个新目标若只给 objective，给合理默认上限）。
-pub const DEFAULT_MAX_GOAL_ROUNDS: u64 = 8;
 
 /// goal 工具 id 常量（门控白名单）。
 pub const GOAL_GET: &str = "goal.get";
@@ -84,7 +81,7 @@ pub fn schemas() -> Vec<ToolSchema> {
 /// 先前的 handler——终态以最后一次为准。
 pub fn register_all(
     registry: &dyn bm_ports::ToolRegistrarPort,
-    src: Option<Arc<dyn GoalPort>>,
+    src: Option<Arc<dyn GoalEnginePort>>,
 ) -> Result<(), ToolError> {
     let handlers: Vec<Arc<dyn ToolHandler>> = vec![
         Arc::new(GetGoalTool { src: src.clone() }),
@@ -96,6 +93,20 @@ pub fn register_all(
     }
     Ok(())
 }
+
+/// GoalError → 工具错误文案（对齐原 GoalRouter 的逐字消息）。
+fn goal_err_string(e: GoalError) -> String {
+    match e {
+        GoalError::NotFound => "goal-not-found".to_string(),
+        GoalError::Conflict => "goal-conflict (stale ref; re-read with get_goal)".to_string(),
+        GoalError::EmptyObjective => "objective must be at least 1 character".to_string(),
+        GoalError::InvalidMaxRounds => "maxGoalRounds must be a positive integer".to_string(),
+        GoalError::ResumeCapExhausted => "goal cap exhausted (rounds >= maxGoalRounds)".to_string(),
+    }
+}
+
+/// 会话解析失败文案（对齐原 GoalRouter 的 target session not found）。
+const SESSION_NOT_FOUND: &str = "tool error: target session not found";
 
 /// GoalView → 紧凑 JSON（wire 同款；activation 为活观测）。
 fn view_json(v: &GoalView) -> serde_json::Value {
@@ -117,7 +128,7 @@ fn view_json(v: &GoalView) -> serde_json::Value {
 
 struct GetGoalTool {
     /// goal 源（构造注入；None = 未装配，执行诚实报错）。
-    src: Option<Arc<dyn GoalPort>>,
+    src: Option<Arc<dyn GoalEnginePort>>,
 }
 
 #[async_trait::async_trait]
@@ -148,13 +159,17 @@ impl ToolHandler for GetGoalTool {
         let Some(src) = self.src.as_ref() else {
             return Err(ToolError::new("tool error: goal not configured"));
         };
-        let sid = session_arg(&input.arguments).unwrap_or_default();
-        match src.goal_get(&sid).await? {
-            Some(v) => {
+        let sid_arg = session_arg(&input.arguments).unwrap_or_default();
+        let Some(sid) = src.resolve_session(&sid_arg) else {
+            return Ok(ToolExecutionResult::ok("{\"goal\":null}".to_string()));
+        };
+        match src.goal_get(&sid) {
+            Ok(Some(v)) => {
                 let text = serde_json::to_string(&view_json(&v)).unwrap_or_else(|_| "{}".to_string());
                 Ok(ToolExecutionResult::ok(text))
             }
-            None => Ok(ToolExecutionResult::ok("{\"goal\":null}".to_string())),
+            Ok(None) => Ok(ToolExecutionResult::ok("{\"goal\":null}".to_string())),
+            Err(e) => Ok(ToolExecutionResult::error(format!("goal get failed: {}", goal_err_string(e)))),
         }
     }
 }
@@ -163,7 +178,7 @@ impl ToolHandler for GetGoalTool {
 
 struct CreateGoalTool {
     /// goal 源（构造注入；None = 未装配，执行诚实报错）。
-    src: Option<Arc<dyn GoalPort>>,
+    src: Option<Arc<dyn GoalEnginePort>>,
 }
 
 #[async_trait::async_trait]
@@ -204,13 +219,16 @@ impl ToolHandler for CreateGoalTool {
                 "objective must be at least 1 character",
             ));
         }
-        let sid = session_arg(&input.arguments).unwrap_or_default();
+        let sid_arg = session_arg(&input.arguments).unwrap_or_default();
         let max_rounds = input
             .arguments
             .get("max_goal_rounds")
             .and_then(serde_json::Value::as_u64)
             .filter(|n| *n > 0);
-        match src.goal_create(&sid, objective.trim(), max_rounds).await {
+        let Some(sid) = src.resolve_session(&sid_arg) else {
+            return Ok(ToolExecutionResult::error(format!("goal create failed: {SESSION_NOT_FOUND}")));
+        };
+        match src.goal_create(&sid, objective.trim(), max_rounds).map_err(goal_err_string) {
             Ok(v) => {
                 let text = serde_json::to_string(&view_json(&v)).unwrap_or_else(|_| "{}".to_string());
                 Ok(ToolExecutionResult::ok(text))
@@ -224,7 +242,7 @@ impl ToolHandler for CreateGoalTool {
 
 struct UpdateGoalTool {
     /// goal 源（构造注入；None = 未装配，执行诚实报错）。
-    src: Option<Arc<dyn GoalPort>>,
+    src: Option<Arc<dyn GoalEnginePort>>,
 }
 
 #[async_trait::async_trait]
@@ -289,13 +307,16 @@ impl ToolHandler for UpdateGoalTool {
                 "blocked action requires blocked_reason",
             ));
         }
-        let sid = session_arg(&input.arguments).unwrap_or_default();
+        let sid_arg = session_arg(&input.arguments).unwrap_or_default();
         let objective = arg_str(&input.arguments, "objective");
         let max_rounds = input
             .arguments
             .get("max_goal_rounds")
             .and_then(serde_json::Value::as_u64)
             .filter(|n| *n > 0);
+        let Some(sid) = src.resolve_session(&sid_arg) else {
+            return Ok(ToolExecutionResult::error(format!("goal update failed: {SESSION_NOT_FOUND}")));
+        };
         match src
             .goal_update(
                 &sid,
@@ -306,7 +327,7 @@ impl ToolHandler for UpdateGoalTool {
                 max_rounds,
                 blocked_reason.as_deref(),
             )
-            .await
+            .map_err(goal_err_string)
         {
             Ok(v) => {
                 let text = serde_json::to_string(&view_json(&v)).unwrap_or_else(|_| "{}".to_string());

@@ -40,11 +40,10 @@ pub mod schedule;
 
 pub use schedule::{SchedulePort, ScheduleSpec, ScheduleTrigger, ScheduleView};
 
-/// 目标管理契约（工具消费面）：get/create/update 三动词，web-server 现有
-/// goal RPC 状态机语义；goal-round-driver 同会话续跑在回合完成点。
+/// 目标管理契约（万物皆插件②：完整领域面 GoalEnginePort，plugin-goal 实现）。
 pub mod goal;
 
-pub use goal::{GoalAction, GoalPort, GoalView};
+pub use goal::{GoalAction, GoalEnginePort, GoalError, GoalView};
 
 /// 会话回合驱动契约（插件消费面 / 宿主实现面）：scheduler 与 goal 续跑驱动
 /// 经本端口驱动宿主会话回合（万物皆插件②，2026-08-22）。

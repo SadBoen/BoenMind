@@ -358,11 +358,11 @@ impl Runtime {
         port
     }
 
-    /// 装配目标管理工具插件（功能）：把 [`GoalPort`] 实现**构造注入**到
+    /// 装配目标管理工具插件（功能）：把 [`GoalEnginePort`] 引擎**构造注入**到
     /// plugin-goal 工具 handler + 注册 goal.get/create/update 工具
-    /// 并全部 enable。goal-round-driver（同会话续跑）在 web-server 回合完成点独立
-    /// 装配。未装配 = goal 工具不可用（诚实失败）。可重复调用（替换注册：先注销本组再注册）。
-    pub fn install_goal(&self, gp: Arc<dyn bm_ports::GoalPort>) {
+    /// 并全部 enable。未装配 = goal 工具不可用（诚实失败）。可重复调用
+    /// （替换注册：先注销本组再注册）。
+    pub fn install_goal(&self, gp: Arc<dyn bm_ports::GoalEnginePort>) {
         for name in plugin_goal::ALL_TOOL_NAMES {
             let _ = self.tools.unregister(name);
         }
@@ -375,6 +375,17 @@ impl Runtime {
         // 危险声明：goal.create/update 改目标状态需审批（goal.get 自动放行）。
         self.tools.mark_dangerous_many(plugin_goal::DANGEROUS_TOOL_NAMES.iter().copied());
         self.push_core_plugin_manifest(plugin_goal::manifest());
+    }
+
+    /// 装配目标**引擎**（万物皆插件②：goal 状态机 + 续跑驱动住在 plugin-goal，
+    /// 宿主能力经 [`bm_ports::SessionDrivePort`] / [`bm_ports::BroadcastPort`] 注入）。
+    /// 返回引擎端口供宿主留档（wire 面 goal.* 委托 + 回合完成点续跑）。
+    pub fn install_goal_engine(
+        &self,
+        host: Arc<dyn bm_ports::SessionDrivePort>,
+        broadcast: Arc<dyn bm_ports::BroadcastPort>,
+    ) -> Arc<dyn bm_ports::GoalEnginePort> {
+        Arc::new(plugin_goal::engine::GoalEngine::new(host, broadcast))
     }
 
     /// 功能插件进 `plugin_manifest()`（防重复：已存在同 id 则跳过）。

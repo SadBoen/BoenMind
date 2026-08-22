@@ -10,9 +10,10 @@ kernel-contracts = { path = "../../kernel/kernel-contracts" }
 bm-ports = { path = "../../bm/ports" }
 serde_json.workspace = true
 async-trait.workspace = true
+chrono.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
-uuid.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 
 [lints]

@@ -7,7 +7,9 @@
 
 use serde_json::{json, Value};
 
-use crate::api::{AppState, GoalRecord};
+use std::sync::Arc;
+
+use crate::api::AppState;
 use crate::rpc::{err, err_with_details, ok};
 
 // ---------- session.attachment / session.updateQueue ----------
@@ -108,7 +110,41 @@ pub fn host_open_path(payload: Value) -> Value {
 
 // ---------- goal.*（wire 契约在 web-server，语义属 goal 插件；自动续跑 = 插件职责 M3.5） ----------
 
-/// goal.create：objective ≥1 字符，maxGoalRounds 正整数；建并武装目标。
+// ---------- goal.*（万物皆插件②：状态机在 plugin-goal 引擎；此处为薄委托 + 错误码映射） ----------
+
+/// 引擎取用（装配缺位 → internal 错误；生产路径 main 无条件装配）。
+fn goal_engine(state: &AppState) -> Option<Arc<dyn bm_ports::GoalEnginePort>> {
+    state.goal_engine.lock().unwrap().clone()
+}
+
+/// GoalError → wire 逐字错误码（goal-not-found / goal-conflict 带 details）。
+fn goal_wire_err(session_id: &str, ref_id: &str, revision: u64, e: bm_ports::GoalError) -> Value {
+    match e {
+        bm_ports::GoalError::NotFound => err_with_details(
+            "goal-not-found",
+            "no goal for this session",
+            json!({ "sessionId": session_id }),
+        ),
+        bm_ports::GoalError::Conflict => err_with_details(
+            "goal-conflict",
+            "goal ref does not match current goal",
+            json!({ "sessionId": session_id, "ref": { "id": ref_id, "revision": revision } }),
+        ),
+        bm_ports::GoalError::EmptyObjective => err("bad-request", "objective must be at least 1 character"),
+        bm_ports::GoalError::InvalidMaxRounds => err("bad-request", "maxGoalRounds must be a positive integer"),
+        // wire 面相位直置无额度检查，此分支不可达（防御映射）。
+        bm_ports::GoalError::ResumeCapExhausted => err("bad-request", "goal cap exhausted"),
+    }
+}
+
+/// 解析 payload 里的 GoalRef（id + revision）。
+fn parse_goal_ref(payload: &Value) -> Option<(String, u64)> {
+    let id = payload.get("ref")?.get("id")?.as_str()?;
+    let revision = payload.get("ref")?.get("revision")?.as_u64()?;
+    Some((id.to_string(), revision))
+}
+
+/// goal.create：objective ≥1 字符，maxGoalRounds 正整数（wire 缺省 1）；建并武装目标。
 pub fn goal_create(state: &AppState, payload: Value) -> Value {
     let Some(session_id) = payload.get("sessionId").and_then(Value::as_str) else {
         return err("bad-request", "missing sessionId");
@@ -119,78 +155,21 @@ pub fn goal_create(state: &AppState, payload: Value) -> Value {
     if objective.trim().is_empty() {
         return err("bad-request", "objective must be at least 1 character");
     }
+    // wire 缺省 1（工具面缺省 8——既有差异由调用方显式传参）。
     let max_goal_rounds = match payload.get("maxGoalRounds") {
         Some(v) => match v.as_u64() {
-            Some(n) if n > 0 => n,
+            Some(n) if n > 0 => Some(n),
             _ => return err("bad-request", "maxGoalRounds must be a positive integer"),
         },
-        None => 1,
+        None => Some(1),
     };
-    let now = chrono::Utc::now().timestamp_millis();
-    let id = uuid::Uuid::new_v4().to_string();
-    let goal = GoalRecord {
-        id: id.clone(),
-        revision: 1,
-        objective: objective.to_string(),
-        phase: "active".to_string(),
-        max_goal_rounds,
-        rounds_started: 0,
-        created_at: now,
-        updated_at: now,
+    let Some(engine) = goal_engine(state) else {
+        return err("internal", "goal engine not installed");
     };
-    // 投影先算后插：曾 insert 后再取锁 get().unwrap()，并发 goal_clear 可在
-    // 窗口内 remove → unwrap panic。
-    let projection = goal.projection();
-    state.goals.lock().unwrap().insert(session_id.to_string(), goal);
-    // 写 'goal' 投影 + 广播 session/projection 帧（无读方法，客户端走投影）。
-    state.write_projection(session_id, "goal", projection);
-    ok(json!({ "ref": { "id": id, "revision": 1u64 } }))
-}
-
-/// 解析 payload 里的 GoalRef（id + revision）。
-fn parse_goal_ref(payload: &Value) -> Option<(String, u64)> {
-    let id = payload.get("ref")?.get("id")?.as_str()?;
-    let revision = payload.get("ref")?.get("revision")?.as_u64()?;
-    Some((id.to_string(), revision))
-}
-
-/// CAS 守卫的 goal 变更：ref 不匹配 → 逐字错误码。
-/// 返回 (session_id, 新 revision)；错误以 Value 返回。
-fn goal_cas_apply<F>(state: &AppState, payload: &Value, apply: F) -> Value
-where
-    F: FnOnce(&mut GoalRecord) -> Result<(), Value>,
-{
-    let Some(session_id) = payload.get("sessionId").and_then(Value::as_str) else {
-        return err("bad-request", "missing sessionId");
-    };
-    let Some((ref_id, revision)) = parse_goal_ref(payload) else {
-        return err("bad-request", "missing or invalid ref");
-    };
-    let mut goals = state.goals.lock().unwrap();
-    let Some(goal) = goals.get_mut(session_id) else {
-        return err_with_details(
-            "goal-not-found",
-            "no goal for this session",
-            json!({ "sessionId": session_id }),
-        );
-    };
-    if goal.id != ref_id || goal.revision != revision {
-        return err_with_details(
-            "goal-conflict",
-            "goal ref does not match current goal",
-            json!({ "sessionId": session_id, "ref": { "id": ref_id, "revision": revision } }),
-        );
+    match engine.goal_create(session_id, objective, max_goal_rounds) {
+        Ok(view) => ok(json!({ "ref": { "id": view.id, "revision": view.revision } })),
+        Err(e) => goal_wire_err(session_id, "", 0, e),
     }
-    if let Err(e) = apply(goal) {
-        return e;
-    }
-    goal.revision += 1;
-    goal.updated_at = chrono::Utc::now().timestamp_millis();
-    let new_rev = goal.revision;
-    let projection = goal.projection();
-    drop(goals);
-    state.write_projection(session_id, "goal", projection);
-    ok(json!({ "ref": { "id": ref_id, "revision": new_rev } }))
 }
 
 /// goal.edit：objective 和/或 maxGoalRounds（至少一个）；不改阶段；revision 递增。
@@ -200,73 +179,72 @@ pub fn goal_edit(state: &AppState, payload: Value) -> Value {
     if !has_objective && !has_rounds {
         return err("bad-request", "goal.edit requires objective or maxGoalRounds");
     }
-    goal_cas_apply(state, &payload, |goal| {
-        if let Some(obj) = payload.get("objective").and_then(Value::as_str) {
-            if obj.trim().is_empty() {
-                return Err(err("bad-request", "objective must be at least 1 character"));
-            }
-            goal.objective = obj.to_string();
-        }
-        if let Some(v) = payload.get("maxGoalRounds") {
-            match v.as_u64() {
-                Some(n) if n > 0 => goal.max_goal_rounds = n,
-                _ => return Err(err("bad-request", "maxGoalRounds must be a positive integer")),
-            }
-        }
-        Ok(())
+    goal_cas_call(state, &payload, |engine, sid, id, rev| {
+        engine
+            .goal_cas_edit(sid, id, rev, payload_get_str(&payload, "objective"), max_rounds_arg(&payload))
+            .map(|new_rev| json!({ "ref": { "id": id, "revision": new_rev } }))
     })
 }
 
 /// goal.pause：停用自动续跑（phase → paused）。
 pub fn goal_pause(state: &AppState, payload: Value) -> Value {
-    goal_phase_transition(state, payload, "paused")
+    goal_phase_transition(state, &payload, "paused")
 }
 
-/// goal.resume：恢复武装（phase → active）。
+/// goal.resume：恢复武装（phase → active；wire 直置，无额度检查）。
 pub fn goal_resume(state: &AppState, payload: Value) -> Value {
-    goal_phase_transition(state, payload, "active")
+    goal_phase_transition(state, &payload, "active")
 }
 
 /// goal.complete：完成并解除（phase → complete）。
 pub fn goal_complete(state: &AppState, payload: Value) -> Value {
-    goal_phase_transition(state, payload, "complete")
+    goal_phase_transition(state, &payload, "complete")
 }
 
-fn goal_phase_transition(state: &AppState, payload: Value, to_phase: &str) -> Value {
-    goal_cas_apply(state, &payload, |goal| {
-        goal.phase = to_phase.to_string();
-        Ok(())
+fn goal_phase_transition(state: &AppState, payload: &Value, to_phase: &str) -> Value {
+    goal_cas_call(state, payload, |engine, sid, id, rev| {
+        engine
+            .goal_cas_phase(sid, id, rev, to_phase)
+            .map(|new_rev| json!({ "ref": { "id": id, "revision": new_rev } }))
     })
 }
 
 /// goal.clear：留墓碑与历史（投影清空为 null）。
 pub fn goal_clear(state: &AppState, payload: Value) -> Value {
+    goal_cas_call(state, &payload, |engine, sid, id, rev| {
+        engine.goal_clear(sid, id, rev).map(|_| json!({ "cleared": true }))
+    })
+}
+
+/// CAS 调用共用：sessionId/ref 解析 → 引擎委托 → 错误码映射。
+fn goal_cas_call<F>(state: &AppState, payload: &Value, f: F) -> Value
+where
+    F: FnOnce(&dyn bm_ports::GoalEnginePort, &str, &str, u64) -> Result<Value, bm_ports::GoalError>,
+{
     let Some(session_id) = payload.get("sessionId").and_then(Value::as_str) else {
         return err("bad-request", "missing sessionId");
     };
-    let Some((ref_id, revision)) = parse_goal_ref(&payload) else {
+    let Some((ref_id, revision)) = parse_goal_ref(payload) else {
         return err("bad-request", "missing or invalid ref");
     };
-    let mut goals = state.goals.lock().unwrap();
-    let Some(goal) = goals.get(session_id) else {
-        return err_with_details(
-            "goal-not-found",
-            "no goal for this session",
-            json!({ "sessionId": session_id }),
-        );
+    let Some(engine) = goal_engine(state) else {
+        return err("internal", "goal engine not installed");
     };
-    if goal.id != ref_id || goal.revision != revision {
-        return err_with_details(
-            "goal-conflict",
-            "goal ref does not match current goal",
-            json!({ "sessionId": session_id, "ref": { "id": ref_id, "revision": revision } }),
-        );
+    match f(engine.as_ref(), session_id, &ref_id, revision) {
+        Ok(value) => ok(value),
+        Err(e) => goal_wire_err(session_id, &ref_id, revision, e),
     }
-    goals.remove(session_id);
-    drop(goals);
-    // 墓碑：投影置 null（客户端 higher-seq-wins 覆盖到空态）。
-    state.write_projection(session_id, "goal", Value::Null);
-    ok(json!({ "cleared": true }))
+}
+
+fn payload_get_str<'a>(payload: &'a Value, key: &str) -> Option<&'a str> {
+    payload.get(key).and_then(Value::as_str)
+}
+
+fn max_rounds_arg(payload: &Value) -> Option<u64> {
+    payload
+        .get("maxGoalRounds")
+        .and_then(Value::as_u64)
+        .filter(|n| *n > 0)
 }
 
 // ---------- subagent.*（wire 契约在 web-server，执行走 team 插件进程，内核不动） ----------

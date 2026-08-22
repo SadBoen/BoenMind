@@ -85,48 +85,15 @@ pub struct AppState {
     pub pending: crate::pending::PendingState,
     /// session/projection 槽（契约层注册机制）：(key, (watermark_seq, value))。
     pub projections: Mutex<HashMap<String, (i64, Value)>>,
-    /// goal 内存态最小桥（wire 契约在 web-server，自动续跑语义归 goal 插件）。
-    pub goals: Mutex<HashMap<String, GoalRecord>>,
     /// 会话日志的附件引用表（session.attachment 语义：日志含 attachmentId 才回）。
     pub attachments: Mutex<HashMap<String, Vec<String>>>,
     /// 审批等待表（approval_id → oneshot 发送端）：工具审批端口登记后，
     /// respond 路由（allowed-once/rejected）经此唤醒正在等待的 loop 调用。
     /// 与 pending.approvals 同生共死（pending 管应答帧，这里管执行继续）。
     pub approval_waiters: Mutex<HashMap<String, tokio::sync::oneshot::Sender<bm_ports::ApprovalVerdict>>>,
-    /// 目标续跑驱动（`--goal` 装配）：回合完成点检查 active 目标并续跑。
-    /// Mutex 承载（AppState 已在 Arc 中时仍可 `&Arc<Self>` 装配）。
-    pub goal_driver: Mutex<Option<Arc<crate::goal_driver::GoalDriver>>>,
-}
-
-/// goal 记录（对齐 DSH `GoalSnapshot`/`GoalView` 的 wire 形状；web-server 内存态）。
-#[derive(Debug, Clone)]
-pub struct GoalRecord {
-    pub id: String,
-    pub revision: u64,
-    pub objective: String,
-    pub phase: String, // 'active' | 'paused' | 'blocked' | 'complete'
-    pub max_goal_rounds: u64,
-    pub rounds_started: u64,
-    pub created_at: i64,
-    pub updated_at: i64,
-}
-
-impl GoalRecord {
-    /// wire 投影值（`GoalProjection`：goal snapshot + roundsStarted + createdAt/updatedAt）。
-    pub fn projection(&self) -> Value {
-        json!({
-            "goal": {
-                "id": self.id,
-                "revision": self.revision,
-                "objective": self.objective,
-                "phase": self.phase,
-                "maxGoalRounds": self.max_goal_rounds,
-            },
-            "roundsStarted": self.rounds_started,
-            "createdAt": self.created_at,
-            "updatedAt": self.updated_at,
-        })
-    }
+    /// 目标引擎（万物皆插件②：goal 状态机 + 续跑驱动住在 plugin-goal；
+    /// wire 面 goal.* 与回合完成点续跑经此委托）。Mutex 承载（&Arc<Self> 装配）。
+    pub goal_engine: Mutex<Option<Arc<dyn bm_ports::GoalEnginePort>>>,
 }
 
 impl AppState {
@@ -165,22 +132,31 @@ impl AppState {
         self.runtime.install_schedule_engine(host);
     }
 
-    /// 装配目标管理工具插件（功能，`--goal`）：创建 GoalRouter（实现 `GoalPort`，
-    /// 对接现有 goal RPC 状态机）→ 经 bm-assembly `install_goal`（注入 plugin-goal
-    /// 全局源 + 注册/启用 goal.* 工具）。goal-round-driver（同会话续跑）由
-    /// [`AppState::start_goal_driver`] 独立装配。
-    pub fn install_goal(self: &Arc<Self>) -> Arc<crate::goal::GoalRouter> {
-        let router = Arc::new(crate::goal::GoalRouter::new(Arc::clone(self)));
-        let port: Arc<dyn bm_ports::GoalPort> = Arc::clone(&router) as Arc<dyn bm_ports::GoalPort>;
-        self.runtime.install_goal(port);
-        router
+    /// 装配目标引擎（万物皆插件②，**无条件**：wire 面 goal.* 委托 + 回合完成点
+    /// 续跑经此——状态机住在 plugin-goal，宿主只持端口）。
+    pub fn install_goal_engine(self: &Arc<Self>) {
+        let host: Arc<dyn bm_ports::SessionDrivePort> =
+            Arc::new(crate::host_face::HostFace::new(Arc::clone(self)));
+        let broadcast: Arc<dyn bm_ports::BroadcastPort> =
+            Arc::new(crate::host_face::HostFace::new(Arc::clone(self)));
+        let engine = self.runtime.install_goal_engine(host, broadcast);
+        *self.goal_engine.lock().unwrap() = Some(engine);
     }
 
-    /// 装配目标续跑驱动（`--goal` 的一部分）：把 GoalDriver 挂进 state，
-    /// 之后 session_prompt 回合完成点经 `goal_driver.maybe_continue(sid)` 续跑。
-    pub fn start_goal_driver(self: &Arc<Self>) {
-        let driver = Arc::new(crate::goal_driver::GoalDriver::new(Arc::clone(self)));
-        *self.goal_driver.lock().unwrap() = Some(driver);
+    /// 装配 goal 工具面（`--goal`）：goal.get/create/update 注册进工具表。
+    pub fn install_goal_tools(self: &Arc<Self>) {
+        let Some(engine) = self.goal_engine.lock().unwrap().clone() else {
+            return;
+        };
+        self.runtime.install_goal(engine);
+    }
+
+    /// 启用目标续跑驱动（`--goal`）：回合完成点 active 目标自动 `<goal_round>`
+    /// 续跑直到完成/暂停/额度耗尽。
+    pub fn enable_goal_driver(self: &Arc<Self>) {
+        if let Some(e) = self.goal_engine.lock().unwrap().as_ref() {
+            e.set_driver_enabled(true);
+        }
     }
 
     /// 装配上下文压缩（`--compact`）为运行时可调语义：没有显式 settings.compaction
@@ -261,10 +237,9 @@ impl AppState {
             providers,
             pending: crate::pending::PendingState::new(),
             projections: Mutex::new(HashMap::new()),
-            goals: Mutex::new(HashMap::new()),
             attachments: Mutex::new(HashMap::new()),
             approval_waiters: Mutex::new(HashMap::new()),
-            goal_driver: Mutex::new(None),
+            goal_engine: Mutex::new(None),
             settings_path,
         };
         state.load_settings_file();

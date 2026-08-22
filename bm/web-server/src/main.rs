@@ -341,12 +341,13 @@ fn main() {
         state.install_scheduler();
         tracing::info!("schedule plugin installed (schedule.create/list/cancel)");
     }
-    // 目标管理插件装配（--goal）：GoalRouter（goal.* 工具）+ GoalDriver
-    // （同会话续跑——回合完成后 active 目标自动 <goal_round> 续跑直到
-    // 完成/暂停/额度耗尽）。不传 = 未装配（旧行为不变）。
+    // 目标引擎随宿主常驻（万物皆插件②：wire 面 goal.* 无条件可用——状态机
+    // 在 plugin-goal，宿主持端口）；--goal 才开工具面与续跑驱动（同会话续跑
+    // ——回合完成后 active 目标自动 <goal_round> 续跑直到完成/暂停/额度耗尽）。
+    state.install_goal_engine();
     if goal_enabled {
-        state.install_goal();
-        state.start_goal_driver();
+        state.install_goal_tools();
+        state.enable_goal_driver();
         tracing::info!("goal plugin installed (goal.get/create/update + round driver)");
     }
     // 启动恢复：把持久化会话全部 restore 进 live 表（kill -9 恢复语义，
