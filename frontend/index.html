@@ -1,32 +1,12 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="paper" data-style="modern" data-material="solid">
   <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>BoenMind</title>
-    <script>
-      // 防闪：bundle 加载前先应用已保存的风格档背景，避免白/黑闪一帧。
-      // 与 src/theme.ts 的 PRESETS 保持同源（此处只内联背景色精简版）。
-      (function () {
-        try {
-          var p = localStorage.getItem("bm_preset") || "ant";
-          var bg = {
-            ant: "#f5f6fa",
-            cartoon: "#E8DDC9",
-            glass: "#121826",
-          }[p] || "#f5f6fa";
-          var s = document.createElement("style");
-          s.id = "bm-pre-theme";
-          s.textContent = ":root{--bm-bg:" + bg + ";}";
-          document.head.appendChild(s);
-          document.documentElement.dataset.preset = p;
-          document.documentElement.style.background = bg;
-        } catch (e) { /* localStorage 不可用时忽略 */ }
-      })();
-    </script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="app"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

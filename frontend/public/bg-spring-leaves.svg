@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <defs>
+    <radialGradient id="glow" cx="30%" cy="18%" r="80%">
+      <stop offset="0%" stop-color="#dff3d0" stop-opacity="0.9"/>
+      <stop offset="55%" stop-color="#b9e3a8" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#7cbf63" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow2" cx="85%" cy="88%" r="70%">
+      <stop offset="0%" stop-color="#a5d98c" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#7cbf63" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1600" height="900" fill="#eaf7df"/>
+  <rect width="1600" height="900" fill="url(#glow)"/>
+  <rect width="1600" height="900" fill="url(#glow2)"/>
+  <!-- 叶片 -->
+  <g fill="#6db95a" stroke="#54993f" stroke-width="3" stroke-linejoin="round">
+    <path d="M180 420c40-160 180-240 320-250-20 150-140 260-320 250z"/>
+    <path d="M460 240c60-120 200-160 320-140-30 120-150 190-320 140z"/>
+    <path d="M1420 560c-60 140-200 200-330 180 30-120 150-180 330-180z"/>
+    <path d="M1050 760c60 90 180 110 280 70-40-100-160-140-280-70z"/>
+    <path d="M1180 240c-70-110-190-140-290-100 40 100 150 140 290 100z"/>
+  </g>
+  <!-- 叶脉 -->
+  <g stroke="#4a8a38" stroke-width="4" stroke-linecap="round" fill="none">
+    <path d="M210 404c70-60 150-90 240-92"/>
+    <path d="M480 236c55-50 130-70 210-60"/>
+    <path d="M1410 558c-60 60-130 90-210 88"/>
+    <path d="M1064 738c50 40 110 55 180 45"/>
+    <path d="M1172 250c-55-48-120-66-195-58"/>
+  </g>
+  <!-- 上方柔光 / 空气感 -->
+  <ellipse cx="500" cy="120" rx="320" ry="60" fill="#ffffff" opacity="0.35"/>
+  <ellipse cx="1250" cy="820" rx="280" ry="40" fill="#ffffff" opacity="0.25"/>
+</svg>

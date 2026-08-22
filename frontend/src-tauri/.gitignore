@@ -1,5 +1,0 @@
-# 桌面壳构建产物
-/target/
-/gen/schemas/
-# Tauri 前端依赖（主 frontend/package.json 管）
-/node_modules/

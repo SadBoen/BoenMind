@@ -498,6 +498,7 @@ pub async fn dispatch(state: &Arc<AppState>, method: &str, payload: Value, token
         "session.prompt" => session_prompt(state, payload).await,
         "session.cancel" => session_cancel(state, payload),
         "session.rename" => session_rename(state, payload),
+        "session.delete" => session_delete(state, payload).await,
         "session.models" => session_models(state, payload),
         "session.selectModel" => session_select_model(state, payload),
         "llm.providers" => llm_providers(state).await,
@@ -794,6 +795,47 @@ mod tests {
         let s = make_snippet("a   b\n\nc  query  here", "query").unwrap();
         assert!(!s.contains('\n'));
         assert!(s.contains("query here"), "snippet: {s}");
+    }
+
+    /// session.delete：删除会话（running 拒绝）；持久化日志 + live 表 +
+    /// host 广播 session-removed。
+    #[tokio::test]
+    async fn session_delete_removes_and_rejects_running() {
+        use bm_assembly::Runtime;
+        use std::sync::Arc;
+
+        let db = std::env::temp_dir().join(format!("bm-del-{}.db", uuid::Uuid::new_v4()));
+        let rt = Runtime::headless(db.clone()).unwrap();
+        let state = Arc::new(AppState::assemble(rt, vec![], vec![]));
+
+        // 创建会话 → 删除成功，会话从 live 表消失。
+        let c = session_create(&state, serde_json::json!({ "sessionId": "s-del" })).await;
+        assert_eq!(c["ok"], true, "create ok: {c}");
+        let d = session_delete(&state, serde_json::json!({ "sessionId": "s-del" })).await;
+        assert_eq!(d["ok"], true, "delete ok: {d}");
+        assert_eq!(d["value"]["deleted"], true);
+        assert!(state.sessions.lock().unwrap().get("s-del").is_none(), "live table must drop session");
+
+        // 持久化日志也被删除（delete_session 语义）。
+        let list = state.runtime.persist.list_sessions().await.unwrap_or_default();
+        assert!(!list.contains(&"s-del".to_string()), "persist must drop session");
+
+        // 未知会话 → 幂等删除（delete_session 对不存在的会话无副作用返回 Ok）。
+        let missing = session_delete(&state, serde_json::json!({ "sessionId": "nope" })).await;
+        assert_eq!(missing["ok"], true, "idempotent delete of missing session: {missing}");
+
+        // 运行中会话拒绝（agent-busy）。
+        let c2 = session_create(&state, serde_json::json!({ "sessionId": "s-run" })).await;
+        assert_eq!(c2["ok"], true);
+        state.sessions.lock().unwrap().get_mut("s-run").unwrap().running = true;
+        let r = session_delete(&state, serde_json::json!({ "sessionId": "s-run" })).await;
+        assert_eq!(r["error"]["code"], "agent-busy");
+        // 取消后即可删。
+        state.sessions.lock().unwrap().get_mut("s-run").unwrap().running = false;
+        let r2 = session_delete(&state, serde_json::json!({ "sessionId": "s-run" })).await;
+        assert_eq!(r2["ok"], true, "delete after unbusy: {r2}");
+
+        let _ = std::fs::remove_file(db);
     }
 
     /// 回归 P2-C：settings/credentials 写盘后，新 AppState 从文件恢复

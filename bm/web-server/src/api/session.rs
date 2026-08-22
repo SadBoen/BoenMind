@@ -547,3 +547,30 @@ pub(super) fn session_rename(state: &Arc<AppState>, payload: Value) -> Value {
     ok(json!({ "title": title, "seq": 1i64 }))
 }
 
+/// session.delete：删除会话（持久化日志 + live 表）。空会话/título 会话也允许删除；
+/// 未知会话 → bad-request（幂等删除由前端确认弹窗兜底，不静默吞错）。
+/// 运行中的会话拒绝删除（agent-busy——先取消再删）。
+pub(super) async fn session_delete(state: &Arc<AppState>, payload: Value) -> Value {
+    let Some(session_id) = payload.get("sessionId").and_then(Value::as_str) else {
+        return err("bad-request", "missing sessionId");
+    };
+    // 运行中会话拒绝（先 cancel 再删；避免悬空 running 状态）。
+    if let Some(h) = state.sessions.lock().unwrap().get(session_id) {
+        if h.running {
+            return err("agent-busy", "session is running; cancel before deleting");
+        }
+    }
+    match state.runtime.persist.delete_session(session_id).await {
+        Ok(()) => {
+            state.sessions.lock().unwrap().remove(session_id);
+            // 广播删除（前端会话列表据此移除）。
+            state.broadcast_host(
+                "host/session-removed",
+                json!({ "sessionId": session_id }),
+            );
+            ok(json!({ "deleted": true }))
+        }
+        Err(e) => err("internal", format!("delete failed: {e}")),
+    }
+}
+
