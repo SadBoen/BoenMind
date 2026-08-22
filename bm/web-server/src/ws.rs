@@ -92,7 +92,13 @@ pub async fn mux_loop(mut socket: WebSocket, state: Arc<AppState>) {
                             return;
                         }
                     }
-                    Err(_) => continue,
+                    // 慢消费者 lag：主动断开让客户端重连走全量基线（比静默缺帧诚实，
+                    // 否则前端 seq 水位出现永久缺口）。通道关闭：无生产者，退出。
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("mux subscriber lagged by {n}; closing for full resync");
+                        return;
+                    }
+                    Err(_) => return,
                 }
             }
             ev = mux_rx.recv() => {
@@ -104,7 +110,11 @@ pub async fn mux_loop(mut socket: WebSocket, state: Arc<AppState>) {
                             return;
                         }
                     }
-                    Err(_) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("mux frame subscriber lagged by {n}; closing for full resync");
+                        return;
+                    }
+                    Err(_) => return,
                 }
             }
             msg = socket.recv() => {

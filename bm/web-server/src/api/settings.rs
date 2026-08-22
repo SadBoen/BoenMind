@@ -123,8 +123,22 @@ pub(super) fn settings_mutate(state: &AppState, payload: Value) -> Value {
                     }
                 }
                 "unset" => {
-                    if let Some(last) = path.last() {
-                        cur.remove(last);
+                    // 与 set 对称的嵌套下钻：unset ["a","b"] 删 a.b，而非顶层 b
+                    //（回归：曾只删 path.last() 且在顶层删，多段路径语义错误）。
+                    if path.is_empty() {
+                        continue;
+                    }
+                    let last = path.len() - 1;
+                    let mut node = &mut *cur;
+                    for (i, seg) in path.iter().enumerate() {
+                        if i == last {
+                            node.remove(seg);
+                            break;
+                        }
+                        // 中间段缺失或非对象 → 无处可删，静默结束（unset 幂等）。
+                        let Some(v) = node.get_mut(seg) else { break };
+                        let Some(m) = v.as_object_mut() else { break };
+                        node = m;
                     }
                 }
                 _ => {}

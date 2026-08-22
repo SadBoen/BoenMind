@@ -111,57 +111,52 @@ fn main() {
     let mut schedule_enabled = false;
     let mut goal_enabled = false;
 
+    // 带值参数统一取值：值缺失（参数位于 argv 末尾）→ 友好报错退出。
+    // 回归：曾直接 args[i] 索引，越界 panic。
+    let arg_value = |i: &mut usize, name: &str| -> String {
+        *i += 1;
+        let Some(v) = args.get(*i) else {
+            eprintln!("missing value for {name}");
+            std::process::exit(2);
+        };
+        v.clone()
+    };
+
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
-            "--db" => {
-                i += 1;
-                db = PathBuf::from(&args[i]);
-            }
-            "--dist" => {
-                i += 1;
-                dist = PathBuf::from(&args[i]);
-            }
+            "--db" => db = PathBuf::from(arg_value(&mut i, "--db")),
+            "--dist" => dist = PathBuf::from(arg_value(&mut i, "--dist")),
             "--boot-json" => {
-                i += 1;
-                let path = &args[i];
+                let path = arg_value(&mut i, "--boot-json");
                 boot_json = Some(
-                    std::fs::read_to_string(path)
+                    std::fs::read_to_string(&path)
                         .unwrap_or_else(|e| panic!("cannot read boot json {path}: {e}")),
                 );
             }
             "--port" => {
-                i += 1;
-                port = args[i].parse().expect("port must be a number");
+                let v = arg_value(&mut i, "--port");
+                port = v.parse().unwrap_or_else(|_| {
+                    eprintln!("port must be a number");
+                    std::process::exit(2);
+                });
             }
-            "--bind" => {
-                i += 1;
-                bind_host = args[i].clone();
-            }
-            "--trusted-host" => {
-                i += 1;
-                trusted_hosts.push(args[i].clone());
-            }
-            "--config" => {
-                i += 1;
-                config = Some(PathBuf::from(&args[i]));
-            }
+            "--bind" => bind_host = arg_value(&mut i, "--bind"),
+            "--trusted-host" => trusted_hosts.push(arg_value(&mut i, "--trusted-host")),
+            "--config" => config = Some(PathBuf::from(arg_value(&mut i, "--config"))),
             "--max-steps" => {
-                i += 1;
-                max_steps = args[i].parse().expect("max-steps must be a number");
+                let v = arg_value(&mut i, "--max-steps");
+                max_steps = v.parse().unwrap_or_else(|_| {
+                    eprintln!("max-steps must be a number");
+                    std::process::exit(2);
+                });
                 if max_steps == 0 {
                     eprintln!("max-steps must be at least 1");
                     std::process::exit(2);
                 }
             }
-            "--plugins-dir" => {
-                i += 1;
-                plugins_dir = Some(PathBuf::from(&args[i]));
-            }
-            "--update-dir" => {
-                i += 1;
-                update_dir = Some(PathBuf::from(&args[i]));
-            }
+            "--plugins-dir" => plugins_dir = Some(PathBuf::from(arg_value(&mut i, "--plugins-dir"))),
+            "--update-dir" => update_dir = Some(PathBuf::from(arg_value(&mut i, "--update-dir"))),
             "--auth" => {
                 auth_enabled = true;
             }
@@ -195,6 +190,14 @@ fn main() {
             }
         }
         i += 1;
+    }
+
+    // 非 loopback 绑定 + 未启 --auth：全部 RPC 面（含 settings/credentials/host.*
+    // 特权方法）对网段开放——显著警告（默认 127.0.0.1 是安全缺省）。
+    if !auth_enabled && bind_host != "127.0.0.1" && bind_host != "localhost" && bind_host != "[::1]" {
+        tracing::warn!(
+            "binding on {bind_host} without --auth: all RPC methods (incl. privileged) are exposed to the network; consider --auth or --bind 127.0.0.1"
+        );
     }
 
     let mut runtime = match Runtime::headless_with_max_steps(db.clone(), max_steps) {
@@ -275,10 +278,8 @@ fn main() {
     if auth_enabled {
         let auth_dir = std::env::home_dir().map(|h| h.join(".boenmind"));
         runtime.install_default_auth(auth_dir);
-        tracing::info!(
-            "auth plugin installed (login gate on; default password {})",
-            bm_assembly::DEFAULT_PASSWORD
-        );
+        // 默认密码不进日志（明文打印 = 日志泄露面）；见 ~/.boenmind/auth.json。
+        tracing::info!("auth plugin installed (login gate on; default password active, change it in settings)");
     }
 
     // 上下文压缩插件装配（--compact）：长会话按水线自动摘要压缩（运行态

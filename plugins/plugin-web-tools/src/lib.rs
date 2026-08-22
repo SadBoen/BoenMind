@@ -195,10 +195,24 @@ fn dns_lookup_ips(host: &str) -> Option<Vec<std::net::IpAddr>> {
 }
 
 /// 共享的 HTTP 客户端（rustls TLS，连接池复用）。
+/// 重定向逐跳复用 SSRF 校验：默认策略盲跟 30x——公网 URL 302 跳到
+/// 169.254.169.254/内网即可绕过请求前的 check_url。每跳 host 不过校验 → 中止。
 fn client() -> reqwest::Client {
     reqwest::Client::builder()
         .timeout(REQUEST_TIMEOUT)
         .user_agent("BoenMind/0.1 (agent web tool)")
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            let public = attempt
+                .url()
+                .host_str()
+                .map(validate_host_target)
+                .unwrap_or(false);
+            if public {
+                attempt.follow()
+            } else {
+                attempt.error("tool error: redirect target is not a public address (SSRF blocked)")
+            }
+        }))
         .build()
         .unwrap_or_else(|_| reqwest::Client::new())
 }

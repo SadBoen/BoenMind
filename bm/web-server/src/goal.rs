@@ -95,14 +95,14 @@ impl GoalPort for GoalRouter {
             created_at: now,
             updated_at: now,
         };
-        {
+        let view = {
             let mut goals = self.state.goals.lock().unwrap();
             // 至多一个当前目标：替换旧目标（completed 可被新目标替换；active 直接覆盖 = 新目标优先）。
+            // 投影在锁内从刚插入的 goal 算：曾二次取锁 get().unwrap()，并发
+            // clear 可在窗口内 remove → unwrap panic。
+            let view = Self::to_view(&goal);
             goals.insert(sid.clone(), goal);
-        }
-        let view = {
-            let goals = self.state.goals.lock().unwrap();
-            Self::to_view(goals.get(&sid).unwrap())
+            view
         };
         self.state.write_projection(&sid, "goal", view_projection(&view));
         Ok(view)

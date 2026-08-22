@@ -97,10 +97,17 @@ pub fn router(
                     }
                 }),
             )
-            .with_state(state);
+            .with_state(state)
+            .layer(body_limit());
     }
 
-    app.with_state(state)
+    app.with_state(state).layer(body_limit())
+}
+
+/// 请求体上限：对齐 host.upload 宣称的 100MiB（axum 0.8 默认 2MiB 会先拦，
+/// >2MiB 上传在 multipart 层就失败，与 MAX_UPLOAD_BYTES 文案不符）。
+fn body_limit() -> axum::extract::DefaultBodyLimit {
+    axum::extract::DefaultBodyLimit::max(host_fs::MAX_UPLOAD_BYTES as usize)
 }
 
 /// 会话 token：优先 `x-boenmind-session` 头（API 客户端），其次 `Cookie: dsh_bm_session=...`
@@ -253,6 +260,25 @@ async fn handle_ws_upgrade(
         .and_then(|v| v.to_str().ok());
     if !trust::is_trusted_api_request(host, origin, sec_fetch_site, &state.trusted_hosts) {
         return (StatusCode::FORBIDDEN, "forbidden").into_response();
+    }
+    // 认证：--auth 装配时 WS 同样门控——mux 流可订阅全部会话事件 + 重放 pending
+    // 审批内容，host 流含工作区快照，未认证升级等同绕过 --auth（回归 SEC：此前
+    // 仅 RPC/download/upload 有门）。浏览器经 HttpOnly cookie 自动携带；API 客户端
+    // 可用 `?token=` 查询参数（WS 无法自定义请求头）。
+    if let Some(auth) = &state.runtime.auth {
+        let token = session_token_from_headers(&headers).or_else(|| {
+            req.uri()
+                .query()
+                .and_then(|q| {
+                    q.split('&').find_map(|kv| {
+                        kv.strip_prefix("token=").map(|t| t.trim().to_string())
+                    })
+                })
+                .filter(|t| !t.is_empty())
+        });
+        if !auth.is_authenticated(token.as_deref().unwrap_or("")) {
+            return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+        }
     }
     // 非升级 GET → 426（台账：connection: Upgrade + upgrade: websocket 头）。
     let wants_upgrade = headers
@@ -421,6 +447,17 @@ async fn handle_session_export(
         .and_then(|v| v.to_str().ok());
     if !trust::is_trusted_api_request(host, origin, sec_fetch_site, &state.trusted_hosts) {
         return (StatusCode::FORBIDDEN, "forbidden").into_response();
+    }
+    // 栅栏 B + 认证：export 导出全部会话日志（含工具输出/凭据引用），敏感度同
+    // host.download（loopback-pin + --auth 门控，fail-closed；未装配 auth 放行）。
+    if !trust::is_trusted_api_request(host, origin, sec_fetch_site, &[]) {
+        return (StatusCode::FORBIDDEN, "forbidden").into_response();
+    }
+    if let Some(auth) = &state.runtime.auth {
+        let token = session_token_from_headers(&headers);
+        if !auth.is_authenticated(token.as_deref().unwrap_or("")) {
+            return (StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+        }
     }
     use std::io::Write;
 

@@ -138,8 +138,10 @@ pub fn goal_create(state: &AppState, payload: Value) -> Value {
         created_at: now,
         updated_at: now,
     };
+    // 投影先算后插：曾 insert 后再取锁 get().unwrap()，并发 goal_clear 可在
+    // 窗口内 remove → unwrap panic。
+    let projection = goal.projection();
     state.goals.lock().unwrap().insert(session_id.to_string(), goal);
-    let projection = state.goals.lock().unwrap().get(session_id).unwrap().projection();
     // 写 'goal' 投影 + 广播 session/projection 帧（无读方法，客户端走投影）。
     state.write_projection(session_id, "goal", projection);
     ok(json!({ "ref": { "id": id, "revision": 1u64 } }))

@@ -68,26 +68,28 @@ impl GoalDriver {
             cont.insert(key, true);
         }
         // 判定 + 推进（CAS）：一次 goals 锁内完成「查询 active + 额度判定 + 自增 +
-        // 写回」。无目标 / 非 active / 额度耗尽 → admitted=None，guard drop 后
-        // 释放排他门（std 锁 guard 不 Send，不能跨 await 持有）。
+        // 写回」。无目标 / 非 active / 额度耗尽 → admitted=None，guard drop 后走
+        // 下方统一释放排他门（std 锁 guard 不 Send，不能跨 await 持有）。
+        // 回归：早退路径曾直接 return 不释放排他门——首次无目标经过回合完成点后
+        // 标志永久残留 true，该会话 goal 自动续跑从此被永久抑制。
         let admitted: Option<(String, u64, u64)> = {
             let mut goals = self.state.goals.lock().unwrap();
-            let Some(mut g) = goals.get(session_id).cloned() else {
-                return false; // 无目标 → 下方统一释放排他门
-            };
-            if g.phase != "active" || g.rounds_started >= g.max_goal_rounds {
-                return false; // 非 active / 额度耗尽
+            match goals.get(session_id).cloned() {
+                None => None,
+                Some(g) if g.phase != "active" || g.rounds_started >= g.max_goal_rounds => None,
+                Some(mut g) => {
+                    g.rounds_started += 1;
+                    g.updated_at = chrono::Utc::now().timestamp_millis();
+                    let objective = g.objective.clone();
+                    let round = g.rounds_started;
+                    let max = g.max_goal_rounds;
+                    goals.insert(session_id.to_string(), g);
+                    Some((objective, round, max))
+                }
             }
-            g.rounds_started += 1;
-            g.updated_at = chrono::Utc::now().timestamp_millis();
-            let objective = g.objective.clone();
-            let round = g.rounds_started;
-            let max = g.max_goal_rounds;
-            goals.insert(session_id.to_string(), g);
-            Some((objective, round, max))
         };
         let Some((objective, round, max)) = admitted else {
-            // 目标消失：释放排他门（goals guard 已 drop）。
+            // 无目标 / 非 active / 额度耗尽 / 目标消失：统一在此释放排他门。
             self.continuing.lock().await.remove(session_id);
             return false;
         };
@@ -242,6 +244,30 @@ mod tests {
         state.goals.lock().unwrap().remove("s1");
         let started2 = driver.maybe_continue("s1").await;
         assert!(!started2, "no goal -> no continuation");
+        // 回归：无目标路径不得泄漏排他门（标志残留会永久抑制该会话的续跑）。
+        assert!(
+            !driver.continuing.lock().await.get("s1").copied().unwrap_or(false),
+            "no-goal early return must release the continuation gate"
+        );
+
+        // 门已释放 → 重新种目标后续跑必须能再次发起。
+        let now = chrono::Utc::now().timestamp_millis();
+        state.goals.lock().unwrap().insert(
+            "s1".into(),
+            GoalRecord {
+                id: "g2".into(),
+                revision: 1,
+                objective: "再跑一轮".into(),
+                phase: "active".into(),
+                max_goal_rounds: 8,
+                rounds_started: 1,
+                created_at: now,
+                updated_at: now,
+            },
+        );
+        let started3 = driver.maybe_continue("s1").await;
+        assert!(started3, "goal re-armed after a no-goal pass must continue again");
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
         let _ = std::fs::remove_file(&db);
     }

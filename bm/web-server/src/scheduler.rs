@@ -67,20 +67,11 @@ impl Scheduler {
         loop {
             tokio::time::sleep(TICK).await;
             let now = chrono::Utc::now().timestamp_millis();
-            let mut due: Vec<Entry> = Vec::new();
-            {
+            // 到期条目移出表待触发，未到期保留（触发后 interval/cron 重排再插回）。
+            let due = {
                 let mut entries = self.entries.lock().await;
-                entries.retain(|_, e| e.next_at_ms <= now);
-                for e in entries.values() {
-                    due.push(e.clone());
-                }
-                if !due.is_empty() {
-                    // 到期条目从表里移除（触发后 interval 重排/cron 重排再插回）。
-                    for d in &due {
-                        entries.remove(&d.id);
-                    }
-                }
-            }
+                collect_due(&mut entries, now)
+            };
             for e in due {
                 self.fire(&e).await;
             }
@@ -168,6 +159,23 @@ impl Scheduler {
             );
         });
     }
+}
+
+/// 取出到期条目（`next_at_ms <= now`）并从表中移除，未到期保留。
+/// 独立函数便于单测（run_loop 是无限循环，测试不可达）。
+/// 回归：曾把谓词写反（保留已到期、删除未到期），任何未来任务下个 tick
+/// 即被清除——定时任务整体失效。
+fn collect_due(entries: &mut HashMap<String, Entry>, now: i64) -> Vec<Entry> {
+    let mut due = Vec::new();
+    entries.retain(|_, e| {
+        if e.next_at_ms <= now {
+            due.push(e.clone());
+            false
+        } else {
+            true
+        }
+    });
+    due
 }
 
 /// cron 简化匹配：5 段（分 时 日 月 周），只处理固定数值与 `*` 与
@@ -323,5 +331,30 @@ mod tests {
     fn cron_next_ms_hourly() {
         // "0 */2 * * *"（每 2 小时 0 分）应有 next（24h 内必然命中）。
         assert!(cron_next_ms("0 */2 * * *", None).is_some());
+    }
+
+    /// 调度循环取到期逻辑：到期移出待触发、未到期保留（回归 retain 反转）。
+    #[test]
+    fn collect_due_removes_expired_and_keeps_future() {
+        let mk = |id: &str, next: i64| Entry {
+            id: id.to_string(),
+            spec: ScheduleSpec {
+                trigger: ScheduleTrigger::Interval { secs: 60 },
+                prompt: "p".to_string(),
+                session_id: None,
+            },
+            next_at_ms: next,
+            last_match_minutes: None,
+        };
+        let mut entries = HashMap::new();
+        entries.insert("past".to_string(), mk("past", 900));
+        entries.insert("future".to_string(), mk("future", 1100));
+        entries.insert("now".to_string(), mk("now", 1000));
+        let due = collect_due(&mut entries, 1000);
+        assert_eq!(due.len(), 2, "past + now are due");
+        assert!(due.iter().all(|e| e.next_at_ms <= 1000));
+        // 未到期必须仍在表里（原 bug 会把它删掉 → 定时任务整体失效）。
+        assert!(entries.contains_key("future"), "future entry must survive the tick");
+        assert!(!entries.contains_key("past") && !entries.contains_key("now"));
     }
 }
