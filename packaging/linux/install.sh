@@ -138,7 +138,8 @@ if systemctl is-active --quiet "$SERVICE_NAME"; then
   echo "   服务管理：  systemctl status boenmind / systemctl restart boenmind"
   echo "   数据目录：  $DATA_DIR（boenmind.db、config 均在其下；升级前自动备份到 backups/）"
   echo
-  echo "   安全提示：当前版本无登录认证。若对外提供，请仅通过反向代理（nginx/caddy）"
+  echo "   安全提示：服务器版默认未开启登录认证（--auth 可开启；开启后凭据/设置等"
+  echo "   特权方法需登录）。若对外提供，建议开启 --auth，或通过反向代理（nginx/caddy）"
   echo "   加访问密码/HTTPS 后转发，并将服务绑定到 127.0.0.1（见 boenmind.service 注释）。"
 else
   echo "❌ 服务启动失败，请查看日志：journalctl -u $SERVICE_NAME -e" >&2

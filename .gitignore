@@ -37,3 +37,9 @@ frontend/src-tauri/gen/
 
 # codegraph 项目图库（本地工具产物，不入库）
 .codegraph/
+
+# GUI 测试截图（web-gui-tester 证据产物，不入库）
+gui-test-screenshots/
+
+# tsc 增量编译产物
+*.tsbuildinfo
