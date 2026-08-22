@@ -71,4 +71,4 @@ cd frontend && npx tsc -b && npm run build
 ```
 
 前端规格与交接见 `docs/FRONTEND-REQUIREMENTS.md`（需求）→ `docs/FRONTEND-GUIDE.md`（实现规格）→
-`docs/FRONTEND-HANDOFF.md`（交接快照）。
+`docs/FRONTEND-HANDOFF.md`（交接快照）；项目级交接与审计台账见 `docs/HANDOFF.md` 与根目录 `QUESTIONS.md`。
