@@ -1,0 +1,40 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/bm-contract",
+    "crates/bm-core",
+    "crates/bm-providers",
+    "crates/bm-testkit",
+    "crates/bm-runtime",
+]
+
+[workspace.package]
+version = "0.1.0-m1"
+edition = "2024"
+repository = "https://github.com/SadBoen/BoenMind"
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tokio-util = "0.7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+chrono = { version = "0.4", features = ["serde"] }
+ulid = { version = "1", features = ["serde"] }
+# 合同 schema 全部内嵌、无远程 $ref:关闭默认特性以甩掉 reqwest/rustls/aws-lc 重链
+jsonschema = { version = "0", default-features = false, features = ["resolve-file"] }
+async-trait = "0.1"
+proptest = "1"
+tempfile = "3"
+tracing = "0.1"
+keyring = "3"
+bm-contract = { path = "crates/bm-contract" }
+bm-core = { path = "crates/bm-core" }
+bm-providers = { path = "crates/bm-providers" }
+bm-testkit = { path = "crates/bm-testkit" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }

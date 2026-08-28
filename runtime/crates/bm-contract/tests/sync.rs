@@ -1,0 +1,600 @@
+//! 合同同步测试:Rust 投影 ↔ 冻结合同文本,任何漂移立即变红。
+//! 对应合同库 CI 规则 R2/R3/R4/R6 的实现侧镜像。
+
+use bm_contract::budget::{AccountingRecord, Budget};
+use bm_contract::connector::{InvokeRequest, InvokeResponse, Message, Role, Usage};
+use bm_contract::error_codes::{ErrorCode, M1_WIRE_CODES, Since, WireErrorCode};
+use bm_contract::events::{EventEnvelope, EventType};
+use bm_contract::exec_log::LogEntry;
+use bm_contract::registries;
+use bm_contract::schemas::{validate, validate_by_pointer};
+use bm_contract::states::{AgentState, OperationState, SessionState};
+use bm_contract::wire::{
+    AgentSpec, CancelResult, EventsPollResult, GetOperationParams, Receipt, RequestEnvelope,
+    ResponseEnvelope, SendInputParams, SessionCloseResult, SessionCreateParams,
+    SessionCreateResult, SessionResumeResult, WIRE_VERSION,
+};
+use serde_json::json;
+
+// ---- R6:envelope 错误码枚举 ↔ 注册表 -------------------------------------
+
+#[test]
+fn error_code_enum_matches_registry() {
+    let registry = registries::error_codes();
+    assert_eq!(
+        ErrorCode::ALL.len(),
+        registry.len(),
+        "枚举与注册表条数不一致"
+    );
+    for (variant, reg) in ErrorCode::ALL.iter().zip(&registry) {
+        assert_eq!(variant.as_str(), reg.code, "枚举顺序/名称与注册表不一致");
+        assert_eq!(
+            variant.cli_exit(),
+            reg.cli_exit,
+            "{} cli_exit 漂移",
+            reg.code
+        );
+        assert_eq!(
+            variant.default_retryable(),
+            reg.default_retryable,
+            "{} default_retryable 漂移",
+            reg.code
+        );
+        let since = match variant.available_since() {
+            Since::M1 => "M1",
+            Since::M4 => "M4",
+        };
+        assert_eq!(
+            since, reg.available_since,
+            "{} available_since 漂移",
+            reg.code
+        );
+    }
+}
+
+#[test]
+fn envelope_error_code_enum_is_exactly_m1_codes() {
+    let doc: serde_json::Value = serde_json::from_str(registries::ENVELOPE_SCHEMA).unwrap();
+    let enum_codes: Vec<&str> = doc
+        .pointer("/definitions/error_code/enum")
+        .and_then(|e| e.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .expect("envelope schema 应有 error_code 枚举");
+    let m1: Vec<&str> = M1_WIRE_CODES.iter().map(|c| c.as_str()).collect();
+    assert_eq!(enum_codes, m1, "envelope 枚举 ≠ M1 可用码(CI 规则 R6)");
+}
+
+#[test]
+fn wire_error_code_rejects_m4_codes() {
+    let json = serde_json::to_string(&WireErrorCode::new(ErrorCode::Timeout).unwrap()).unwrap();
+    let back: WireErrorCode = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.get(), ErrorCode::Timeout);
+
+    let m4 = serde_json::to_string(&ErrorCode::PermissionDenied.as_str()).unwrap();
+    assert!(
+        serde_json::from_str::<WireErrorCode>(&m4).is_err(),
+        "M4 码不得进 Wire 信封"
+    );
+}
+
+// ---- R3:事件类型 ⊆ 注册表,键集一致 --------------------------------------
+
+#[test]
+fn event_type_enum_matches_registry() {
+    let registry = registries::runtime_events();
+    assert_eq!(registry.len(), 20, "注册表事件数漂移");
+    for reg in &registry {
+        let t = EventType::from_wire(&reg.type_).unwrap_or_else(|| panic!("枚举缺 {}", reg.type_));
+        let mut expected: Vec<String> = t.payload_keys().iter().map(|s| s.to_string()).collect();
+        expected.sort();
+        let mut actual: Vec<String> = reg
+            .payload
+            .as_object()
+            .expect("payload 描述是对象")
+            .keys()
+            .cloned()
+            .collect();
+        actual.sort();
+        assert_eq!(expected, actual, "{} payload 键集漂移", reg.type_);
+    }
+}
+
+// ---- R4:迁移表 ↔ core-transitions JSON -----------------------------------
+
+#[test]
+fn state_machines_match_transitions_json() {
+    let machines = registries::core_transitions().machines;
+
+    let op = &machines["operation"];
+    assert_eq!(OperationState::ALL_LEN, op.states.len());
+    for s in &op.states {
+        let v = OperationState::from_wire(s).unwrap_or_else(|| panic!("operation 缺状态 {s}"));
+        assert_eq!(
+            v.is_terminal(),
+            op.terminal.contains(s),
+            "{s} terminal 漂移"
+        );
+    }
+    assert_eq!(OperationState::transitions().len(), op.transitions.len());
+    for tr in OperationState::transitions() {
+        assert!(
+            op.transitions.iter().any(|r| r.from == tr.from.as_str()
+                && r.to == tr.to.as_str()
+                && r.guard == tr.guard),
+            "operation 迁移 {:?}->{:?} 在 JSON 中无对应或 guard 漂移",
+            tr.from,
+            tr.to
+        );
+    }
+
+    let sess = &machines["session"];
+    assert_eq!(SessionState::ALL_LEN, sess.states.len());
+    assert_eq!(SessionState::transitions().len(), sess.transitions.len());
+
+    let agent = &machines["agent"];
+    assert_eq!(AgentState::ALL_LEN, agent.states.len());
+    assert_eq!(AgentState::transitions().len(), agent.transitions.len());
+    for tr in AgentState::transitions() {
+        assert!(
+            agent.transitions.iter().any(|r| r.from == tr.from.as_str()
+                && r.to == tr.to.as_str()
+                && r.guard == tr.guard),
+            "agent 迁移 {:?}->{:?} 漂移",
+            tr.from,
+            tr.to
+        );
+    }
+}
+
+// ---- R2(镜像):类型序列化后过对应 schema ---------------------------------
+
+fn sample_request(method: &str, params: serde_json::Value) -> serde_json::Value {
+    json!({
+        "v": WIRE_VERSION,
+        "method": method,
+        "request_id": "req_01J9Z8G3K2X7M4Q6B8WD5RNYVT",
+        "idempotency_key": null,
+        "params": params
+    })
+}
+
+#[test]
+fn wire_requests_validate_against_envelope() {
+    let cases = vec![
+        (
+            "session.create",
+            json!({"agent": {"name": "assistant", "model_chain": ["zhipu.glm-4-flash"]}}),
+        ),
+        (
+            "session.resume",
+            json!({"session_id": "sess_01J9Z8G4A1X7M4Q6B8WD5RQ2WX"}),
+        ),
+        (
+            "session.close",
+            json!({"session_id": "sess_01J9Z8G4A1X7M4Q6B8WD5RQ2WX", "reason": "user_request"}),
+        ),
+        (
+            "events.poll",
+            json!({"session_id": "sess_01J9Z8G4A1X7M4Q6B8WD5RQ2WX", "since_seq": 0}),
+        ),
+        (
+            "agent.send_input",
+            json!({
+            "session_id": "sess_01J9Z8G4A1X7M4Q6B8WD5RQ2WX",
+            "agent_id": "agent_01J9Z8G4A1X7M4Q6B8WD5RS3ZP",
+            "content": "用一句话解释什么是幂等性",
+            "input_trust": "trusted"}),
+        ),
+        (
+            "agent.cancel",
+            json!({
+            "session_id": "sess_01J9Z8G4A1X7M4Q6B8WD5RQ2WX",
+            "agent_id": "agent_01J9Z8G4A1X7M4Q6B8WD5RS3ZP",
+            "operation_id": "op_01J9Z8G56BX7M4Q6B8WD5RV6QM"}),
+        ),
+        (
+            "operations.get",
+            json!({"operation_id": "op_01J9Z8G56BX7M4Q6B8WD5RV6QM"}),
+        ),
+    ];
+    for (method, params) in cases {
+        let req = sample_request(method, params);
+        validate_by_pointer(registries::ENVELOPE_SCHEMA, "#/request", &req)
+            .unwrap_or_else(|e| panic!("{method} 请求应合法: {e}"));
+    }
+
+    // 方法名与序列化形态交叉验证
+    let env = RequestEnvelope::new(
+        bm_contract::wire::Method::SessionCreate,
+        "req_01J9Z8G3K2X7M4Q6B8WD5RNYVT".parse().unwrap(),
+        json!({}),
+    );
+    let ser = serde_json::to_value(&env).unwrap();
+    assert_eq!(ser["method"], "session.create");
+    assert_eq!(ser["v"], "0.1");
+    assert!(ser.get("idempotency_key").is_none(), "None 不应序列化");
+}
+
+#[test]
+fn wire_responses_validate_against_envelope() {
+    let ok = json!({
+        "v": WIRE_VERSION,
+        "request_id": "req_01J9Z8G3K2X7M4Q6B8WD5RNYVT",
+        "ok": true,
+        "result": {"session_id": "sess_01J9Z8G4A1X7M4Q6B8WD5RQ2WX"}
+    });
+    validate_by_pointer(registries::ENVELOPE_SCHEMA, "#/response", &ok).expect("成功响应合法");
+
+    let err = json!({
+        "v": WIRE_VERSION,
+        "request_id": "req_01J9Z8G56BX7M4Q6B8WD5RT8HK",
+        "ok": false,
+        "error": {
+            "code": "timeout",
+            "message": "模型降级链耗尽:2 次尝试均超时",
+            "retryable": false,
+            "retry_after_ms": null,
+            "detail_ref": null
+        }
+    });
+    validate_by_pointer(registries::ENVELOPE_SCHEMA, "#/response", &err)
+        .expect("错误响应合法(GT 场景 B 形态)");
+
+    let resp: ResponseEnvelope = serde_json::from_value(err).unwrap();
+    match &resp {
+        ResponseEnvelope::Failure { error, .. } => {
+            assert_eq!(error.code.get(), ErrorCode::Timeout);
+            assert!(!error.retryable);
+        }
+        _ => panic!("应为失败分支"),
+    }
+    let ser = serde_json::to_value(&resp).unwrap();
+    assert_eq!(
+        ser["error"]["retry_after_ms"],
+        serde_json::Value::Null,
+        "None 序列化为显式 null(GT 形态)"
+    );
+}
+
+#[test]
+fn session_and_agent_payloads_validate() {
+    let create = serde_json::to_value(SessionCreateParams {
+        agent: AgentSpec {
+            name: "assistant".into(),
+            model_chain: vec!["zhipu.glm-4-flash".into(), "openai.gpt-4o-mini".into()],
+            budget: Some(Budget {
+                max_tokens: 50000,
+                max_turns: 10,
+                extra: Default::default(),
+            }),
+        },
+    })
+    .unwrap();
+    validate_by_pointer(
+        registries::SESSION_SCHEMA,
+        "#/session.create/params",
+        &create,
+    )
+    .expect("session.create params 合法");
+
+    let create_result = serde_json::to_value(SessionCreateResult {
+        session_id: "sess_01J9Z8G4A1X7M4Q6B8WD5RQ2WX".parse().unwrap(),
+        agent_id: "agent_01J9Z8G4A1X7M4Q6B8WD5RS3ZP".parse().unwrap(),
+        created_at: "2026-08-29T09:30:00.220Z".into(),
+        resume_cursor: bm_contract::wire::Cursor { event_seq: 3 },
+    })
+    .unwrap();
+    validate_by_pointer(
+        registries::SESSION_SCHEMA,
+        "#/session.create/result",
+        &create_result,
+    )
+    .expect("session.create result 合法");
+
+    let resume_result = serde_json::to_value(SessionResumeResult {
+        session_state: SessionState::Active,
+        agent_state: AgentState::Running,
+        last_event_seq: 11,
+        events: vec![],
+    })
+    .unwrap();
+    validate_by_pointer(
+        registries::SESSION_SCHEMA,
+        "#/session.resume/result",
+        &resume_result,
+    )
+    .expect("session.resume result 合法");
+
+    let poll_result = serde_json::to_value(EventsPollResult {
+        events: vec![],
+        last_seq: 0,
+        has_more: false,
+    })
+    .unwrap();
+    validate_by_pointer(
+        registries::SESSION_SCHEMA,
+        "#/events.poll/result",
+        &poll_result,
+    )
+    .expect("events.poll result 合法");
+
+    let close_result = serde_json::to_value(SessionCloseResult {
+        closed_at: "2026-08-29T09:30:08.500Z".into(),
+        agent_final_state: "running".into(),
+    })
+    .unwrap();
+    validate_by_pointer(
+        registries::SESSION_SCHEMA,
+        "#/session.close/result",
+        &close_result,
+    )
+    .expect("session.close result 合法");
+
+    let cancel_result = serde_json::to_value(CancelResult {
+        accepted: true,
+        operation_id: "op_01J9Z8G56BX7M4Q6B8WD5RV6QM".parse().unwrap(),
+    })
+    .unwrap();
+    validate_by_pointer(
+        registries::AGENT_SCHEMA,
+        "#/agent.cancel/result",
+        &cancel_result,
+    )
+    .expect("agent.cancel result 合法");
+
+    let get_params = serde_json::to_value(GetOperationParams {
+        operation_id: "op_01J9Z8G56BX7M4Q6B8WD5RV6QM".parse().unwrap(),
+    })
+    .unwrap();
+    validate_by_pointer(
+        registries::AGENT_SCHEMA,
+        "#/operations.get/params",
+        &get_params,
+    )
+    .expect("operations.get params 合法");
+}
+
+#[test]
+fn gt_receipts_validate_against_agent_schema() {
+    // 黄金轨迹 A2 的执行收据
+    let running: Receipt = serde_json::from_value(json!({
+        "operation_id": "op_01J9Z8G56BX7M4Q6B8WD5RV6QM",
+        "request_id": "req_01J9Z8G56BX7M4Q6B8WD5RT8HK",
+        "principal": "user",
+        "task_type": "agent.turn",
+        "state": "running",
+        "created_at": "2026-08-29T09:30:05.012Z",
+        "completed_at": null,
+        "action_summary": "Agent 回合:解释幂等性",
+        "result_reference": null,
+        "error": null
+    }))
+    .unwrap();
+    let v = serde_json::to_value(&running).unwrap();
+    validate_by_pointer(registries::AGENT_SCHEMA, "#/definitions/receipt", &v)
+        .expect("GT-A2 收据应过 receipt schema");
+
+    // 黄金轨迹 A4 的终态收据
+    let done = json!({
+        "operation_id": "op_01J9Z8G56BX7M4Q6B8WD5RV6QM",
+        "request_id": "req_01J9Z8G56BX7M4Q6B8WD5RT8HK",
+        "principal": "user",
+        "task_type": "agent.turn",
+        "state": "succeeded",
+        "created_at": "2026-08-29T09:30:05.012Z",
+        "completed_at": "2026-08-29T09:30:07.110Z",
+        "action_summary": "已回答幂等性问题(412 入 / 58 出 token)",
+        "result_reference": {"kind": "execution_log", "ref": "log:op_01J9Z8G56BX7M4Q6B8WD5RV6QM"},
+        "error": null
+    });
+    validate_by_pointer(registries::AGENT_SCHEMA, "#/definitions/receipt", &done)
+        .expect("GT-A4 收据应过 receipt schema");
+}
+
+#[test]
+fn gt_exec_log_entries_validate() {
+    let entries = vec![
+        json!({
+            "log_seq": 1, "ts": "2026-08-29T09:30:05.012Z", "kind": "agent.turn",
+            "session_id": "sess_01J9Z8G4A1X7M4Q6B8WD5RQ2WX",
+            "agent_id": "agent_01J9Z8G4A1X7M4Q6B8WD5RS3ZP",
+            "operation_id": "op_01J9Z8G56BX7M4Q6B8WD5RV6QM",
+            "request_id": "req_01J9Z8G56BX7M4Q6B8WD5RT8HK",
+            "state": "running", "secret_scan": "passed",
+            "detail": {"turn_index": 1, "input_digest": "sha256:9f2c", "input_bytes": 42}
+        }),
+        json!({
+            "log_seq": 2, "ts": "2026-08-29T09:30:06.890Z", "kind": "model.invocation",
+            "session_id": "sess_01J9Z8G4A1X7M4Q6B8WD5RQ2WX",
+            "agent_id": "agent_01J9Z8G4A1X7M4Q6B8WD5RS3ZP",
+            "operation_id": "op_01J9Z8G56BX7M4Q6B8WD5RV6QM",
+            "request_id": "req_01J9Z8G56BX7M4Q6B8WD5RT8HK",
+            "state": "waiting_model", "secret_scan": "passed",
+            "detail": {"model_id": "zhipu.glm-4-flash", "attempt": 1,
+                       "usage": {"tokens_in": 412, "tokens_out": 58},
+                       "latency_ms": 1873, "stream_interrupted": false}
+        }),
+        json!({
+            "log_seq": 3, "ts": "2026-08-29T09:30:07.108Z", "kind": "budget.check",
+            "session_id": "sess_01J9Z8G4A1X7M4Q6B8WD5RQ2WX",
+            "agent_id": "agent_01J9Z8G4A1X7M4Q6B8WD5RS3ZP",
+            "operation_id": "op_01J9Z8G56BX7M4Q6B8WD5RV6QM",
+            "request_id": "req_01J9Z8G56BX7M4Q6B8WD5RT8HK",
+            "state": "running", "secret_scan": "passed",
+            "detail": {"scope": "agent", "used_tokens": 470, "limit_tokens": 50000, "ratio": 0.0094}
+        }),
+    ];
+    for e in &entries {
+        let parsed: LogEntry = serde_json::from_value(e.clone()).unwrap();
+        let ser = serde_json::to_value(&parsed).unwrap();
+        validate(registries::EXEC_LOG_SCHEMA, &ser).expect("GT 日志条目应过 schema");
+    }
+
+    // 非法:secret_scan 出现 "passed" 以外的值(schema const)
+    let mut bad = entries[0].clone();
+    bad["secret_scan"] = json!("failed");
+    assert!(
+        serde_json::from_value::<LogEntry>(bad).is_err(),
+        "SecretScan 枚举只允许 passed"
+    );
+}
+
+#[test]
+fn connector_invoke_validates() {
+    let req = InvokeRequest {
+        model_id: "zhipu.glm-4-flash".into(),
+        messages: vec![Message {
+            role: Role::User,
+            content: "用一句话解释什么是幂等性".into(),
+        }],
+        tools: vec![],
+        params: Default::default(),
+        secret_ref: "secret:model.zhipu".into(),
+        budget_ctx: bm_contract::connector::BudgetCtx {
+            operation_id: "op_01J9Z8G56BX7M4Q6B8WD5RV6QM".parse().unwrap(),
+            agent_id: "agent_01J9Z8G4A1X7M4Q6B8WD5RS3ZP".parse().unwrap(),
+            remaining_tokens: 50000,
+        },
+        deadline: "2026-08-29T09:30:35.012Z".into(),
+        attempt: 1,
+    };
+    let ser = serde_json::to_value(&req).unwrap();
+    validate_by_pointer(
+        registries::CONNECTOR_SCHEMA,
+        "#/definitions/invoke_request",
+        &ser,
+    )
+    .expect("invoke_request 应过 schema");
+
+    let ok_resp = InvokeResponse::Completed {
+        content: "幂等性是指同一操作执行多次与执行一次的效果相同。".into(),
+        finish_reason: bm_contract::connector::FinishReason::Stop,
+        usage: Usage {
+            tokens_in: 412,
+            tokens_out: 58,
+        },
+        model_id: "zhipu.glm-4-flash".into(),
+        latency_ms: 1873,
+        stream_interrupted: false,
+    };
+    let ser = serde_json::to_value(&ok_resp).unwrap();
+    validate_by_pointer(
+        registries::CONNECTOR_SCHEMA,
+        "#/definitions/invoke_response",
+        &ser,
+    )
+    .expect("invoke_response(ok) 应过 schema");
+
+    let fail_resp = InvokeResponse::Failed {
+        error_code: ErrorCode::Timeout,
+        retryable: true,
+        attempt: 1,
+        detail_ref: None,
+    };
+    let ser = serde_json::to_value(&fail_resp).unwrap();
+    validate_by_pointer(
+        registries::CONNECTOR_SCHEMA,
+        "#/definitions/invoke_response",
+        &ser,
+    )
+    .expect("invoke_response(failed) 应过 schema");
+}
+
+#[test]
+fn budget_validates() {
+    let b = Budget {
+        max_tokens: 50000,
+        max_turns: 10,
+        extra: Default::default(),
+    };
+    validate_by_pointer(
+        registries::BUDGET_SCHEMA,
+        "#/definitions/budget",
+        &serde_json::to_value(&b).unwrap(),
+    )
+    .expect("budget 合法");
+
+    // 开放键值:未知标量键被保留
+    let b2: Budget = serde_json::from_value(json!({
+        "max_tokens": 100, "max_turns": 1, "max_cost": 0.5, "owner": "boen"
+    }))
+    .unwrap();
+    assert_eq!(
+        b2.extra.get("owner"),
+        Some(&bm_contract::budget::ExtraValue::Str("boen".into()))
+    );
+
+    let rec = AccountingRecord {
+        scope: bm_contract::budget::BudgetScope::Agent,
+        operation_id: "op_01J9Z8G56BX7M4Q6B8WD5RV6QM".parse().unwrap(),
+        used_tokens: 470,
+        limit_tokens: 50000,
+        ratio: bm_contract::budget::round_ratio(470.0, 50000.0),
+        at: "2026-08-29T09:30:07.108Z".into(),
+    };
+    assert_eq!(serde_json::to_value(&rec).unwrap()["ratio"], json!(0.0094));
+    validate_by_pointer(
+        registries::BUDGET_SCHEMA,
+        "#/definitions/accounting_record",
+        &serde_json::to_value(&rec).unwrap(),
+    )
+    .expect("accounting_record 合法");
+}
+
+#[test]
+fn event_envelope_roundtrip_and_validation() {
+    let env = EventEnvelope::new(
+        1,
+        EventType::RuntimeStarted,
+        "2026-08-29T09:30:00.100Z".into(),
+        None,
+        None,
+        None,
+        json!({"pid": 43121, "version": "0.1.0-m1", "started_at": "2026-08-29T09:30:00.098Z"}),
+    );
+    let ser = serde_json::to_value(&env).unwrap();
+    validate_by_pointer(registries::ENVELOPE_SCHEMA, "#/event_envelope", &ser)
+        .expect("事件信封应过 envelope schema");
+    let back: EventEnvelope = serde_json::from_value(ser).unwrap();
+    assert_eq!(back, env);
+    assert_eq!(back.event_type, EventType::RuntimeStarted);
+
+    // 带 correlation 的事件
+    let env2 = EventEnvelope::new(
+        4,
+        EventType::AgentTurnStarted,
+        "2026-08-29T09:30:05.012Z".into(),
+        Some("sess_01J9Z8G4A1X7M4Q6B8WD5RQ2WX".parse().unwrap()),
+        Some("agent_01J9Z8G4A1X7M4Q6B8WD5RS3ZP".parse().unwrap()),
+        Some("op_01J9Z8G56BX7M4Q6B8WD5RV6QM".parse().unwrap()),
+        json!({"agent_id": "agent_01J9Z8G4A1X7M4Q6B8WD5RS3ZP",
+               "operation_id": "op_01J9Z8G56BX7M4Q6B8WD5RV6QM", "turn_index": 1}),
+    );
+    validate_by_pointer(
+        registries::ENVELOPE_SCHEMA,
+        "#/event_envelope",
+        &serde_json::to_value(&env2).unwrap(),
+    )
+    .expect("带关联字段的事件应过 schema");
+}
+
+#[test]
+fn send_input_params_roundtrip() {
+    let p: SendInputParams = serde_json::from_value(json!({
+        "session_id": "sess_01J9Z8G4A1X7M4Q6B8WD5RQ2WX",
+        "agent_id": "agent_01J9Z8G4A1X7M4Q6B8WD5RS3ZP",
+        "content": "你好",
+        "input_trust": "trusted"
+    }))
+    .unwrap();
+    assert_eq!(p.input_trust, bm_contract::wire::InputTrust::Trusted);
+    // M1 不接受 untrusted(schema enum 只冻了 trusted)
+    assert!(
+        serde_json::from_value::<SendInputParams>(json!({
+            "session_id": "sess_01J9Z8G4A1X7M4Q6B8WD5RQ2WX",
+            "agent_id": "agent_01J9Z8G4A1X7M4Q6B8WD5RS3ZP",
+            "content": "x", "input_trust": "untrusted"
+        }))
+        .is_err()
+    );
+}
