@@ -1,0 +1,1247 @@
+//! Runtime 核心循环:全部事件与日志写入只在唯一的循环任务内发生(单写者),
+//! 保证 event_seq/log_seq 的全局单调(INV-3/INV-4 的结构前提)。
+//! 回合任务只通过内部命令通道回报,不直接改状态。
+
+use crate::bus::EventBus;
+use crate::clock::Clock;
+use crate::exec_log::ExecutionLog;
+use crate::ports::{ModelConnector, SecretStore};
+use crate::state::{Agent, Operation, Session, budget_from_spec};
+use crate::{CoreError, CoreResult};
+use bm_contract::budget::BudgetScope;
+use bm_contract::connector::{BudgetCtx, InvokeRequest, InvokeResponse, Message, Role};
+use bm_contract::error_codes::ErrorCode;
+use bm_contract::events::{EventEnvelope, EventType};
+use bm_contract::exec_log::LogKind;
+use bm_contract::ids::{BmId, IdGen};
+use bm_contract::states::{AgentState, OperationState, SessionState};
+use bm_contract::timestamp::format_ts;
+use bm_contract::wire::{
+    self, CancelParams, CancelResult, Cursor, EventsPollParams, EventsPollResult,
+    GetOperationParams, Principal, Receipt, SendInputParams, SessionCloseParams,
+    SessionCloseResult, SessionCreateParams, SessionCreateResult, SessionResumeParams,
+    SessionResumeResult, TaskType, WireError,
+};
+use chrono::{DateTime, Duration, Utc};
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Instant;
+use tokio::sync::{mpsc, oneshot};
+use tokio_util::sync::CancellationToken;
+
+/// 回合默认超时(GT-A3:deadline = 发起 + 30s)。
+pub const DEFAULT_TURN_TIMEOUT_SECS: i64 = 30;
+
+/// 模型 → 凭据引用的默认映射(合同字符集内;实现可注入自己的映射)。
+pub fn default_secret_ref(model_id: &str) -> String {
+    format!("secret:model.{model_id}")
+}
+
+pub struct RuntimeConfig {
+    pub version: String,
+    pub data_dir: Option<std::path::PathBuf>,
+    pub connector: Arc<dyn ModelConnector>,
+    pub secret_store: Arc<dyn SecretStore>,
+    pub id_gen: Arc<dyn IdGen>,
+    pub clock: Arc<dyn Clock>,
+    pub turn_timeout_secs: i64,
+    /// 降级链最大尝试次数;None = 取链长(合同上限 3)。
+    pub max_attempts: Option<u32>,
+}
+
+/// 回合任务向核心循环回报的内部消息。
+enum TurnEvent {
+    /// 单次尝试失败(INV-4:每次尝试各产生一条 failed 事件 + 日志)。
+    AttemptFailed {
+        operation_id: BmId,
+        model_id: String,
+        attempt: u32,
+        error_code: ErrorCode,
+    },
+    /// 链耗尽(或不可重试错误):回合失败落定。
+    ChainExhausted {
+        operation_id: BmId,
+        error_code: ErrorCode,
+    },
+    /// 显式取消落定(回合边界)。
+    Cancelled { operation_id: BmId },
+    /// 单次尝试成功:回合成功落定。
+    Completed {
+        operation_id: BmId,
+        model_id: String,
+        attempt: u32,
+        usage_in: u64,
+        usage_out: u64,
+        latency_ms: u64,
+        stream_interrupted: bool,
+    },
+}
+
+enum Cmd {
+    SessionCreate {
+        request_id: BmId,
+        params: SessionCreateParams,
+        resp: oneshot::Sender<CoreResult<SessionCreateResult>>,
+    },
+    SessionResume {
+        request_id: BmId,
+        params: SessionResumeParams,
+        resp: oneshot::Sender<CoreResult<SessionResumeResult>>,
+    },
+    SessionClose {
+        request_id: BmId,
+        params: SessionCloseParams,
+        resp: oneshot::Sender<CoreResult<SessionCloseResult>>,
+    },
+    EventsPoll {
+        params: EventsPollParams,
+        resp: oneshot::Sender<CoreResult<EventsPollResult>>,
+    },
+    SendInput {
+        request_id: BmId,
+        params: SendInputParams,
+        resp: oneshot::Sender<CoreResult<Receipt>>,
+    },
+    Cancel {
+        params: CancelParams,
+        resp: oneshot::Sender<CoreResult<CancelResult>>,
+    },
+    GetOperation {
+        params: GetOperationParams,
+        resp: oneshot::Sender<CoreResult<Receipt>>,
+    },
+    /// 诊断端口(非 Wire 方法):全量事件流,测试/回放用。排空期照常应答。
+    EventsAll {
+        resp: oneshot::Sender<Vec<EventEnvelope>>,
+    },
+    Stop {
+        reason: String,
+        resp: oneshot::Sender<()>,
+    },
+    Turn(TurnEvent),
+}
+
+/// 运行期执行上下文(核心循环私有)。
+struct World {
+    config: RuntimeConfig,
+    tx: mpsc::Sender<Cmd>,
+    bus: EventBus,
+    exec_log: Arc<ExecutionLog>,
+    sessions: HashMap<BmId, Session>,
+    agents: HashMap<BmId, Agent>,
+    operations: HashMap<BmId, Operation>,
+    /// 运行中的回合:operation_id → 取消令牌。
+    in_flight: HashMap<BmId, CancellationToken>,
+    started_at: DateTime<Utc>,
+    started_instant: Instant,
+    draining: bool,
+    stopped: bool,
+}
+
+impl World {
+    fn now_ts(&self) -> bm_contract::BmTimestamp {
+        format_ts(self.config.clock.now())
+    }
+
+    /// 唯一的事件发射口:event_seq 分配 + 总线追加。
+    fn emit(
+        &mut self,
+        ty: EventType,
+        session_id: Option<BmId>,
+        agent_id: Option<BmId>,
+        operation_id: Option<BmId>,
+        payload: serde_json::Value,
+    ) -> EventEnvelope {
+        let seq = self.bus.next_seq();
+        let event = EventEnvelope::new(
+            seq,
+            ty,
+            self.now_ts(),
+            session_id,
+            agent_id,
+            operation_id,
+            payload,
+        );
+        self.bus.append(event.clone());
+        event
+    }
+
+    /// operation 终态落定 + operation.state.changed 事件(reason_code = guard 名)。
+    fn settle_operation(&mut self, op_id: &BmId, to: OperationState, error: Option<WireError>) {
+        let now = self.now_ts();
+        let (session_id, agent_id, from, to, reason) = {
+            let op = self.operations.get_mut(op_id).expect("operation 必然存在");
+            let (from, to, reason) = op.settle(to, error, now);
+            (op.session_id.clone(), op.agent_id.clone(), from, to, reason)
+        };
+        self.emit(
+            EventType::OperationStateChanged,
+            Some(session_id),
+            Some(agent_id),
+            Some(op_id.clone()),
+            serde_json::json!({
+                "operation_id": op_id.as_str(),
+                "from": from.as_str(),
+                "to": to.as_str(),
+                "reason_code": reason,
+            }),
+        );
+    }
+
+    /// 回合失败的统一收口:错误日志 → agent failed → operation failed → agent.failed。
+    fn fail_turn(&mut self, operation_id: &BmId, code: ErrorCode, message: String) {
+        let now = self.now_ts();
+        let (session_id, agent_id, request_id, agent_state) = {
+            let op = &self.operations[operation_id];
+            let a = &self.agents[&op.agent_id];
+            (
+                op.session_id.clone(),
+                op.agent_id.clone(),
+                op.request_id.clone(),
+                a.state.as_str().to_string(),
+            )
+        };
+        self.exec_log.record(crate::exec_log::LogRecord {
+            kind: LogKind::Error,
+            session_id: session_id.clone(),
+            agent_id: agent_id.clone(),
+            operation_id: operation_id.clone(),
+            request_id: Some(request_id),
+            agent_state,
+            detail: serde_json::json!({ "error_code": code.as_str(), "message": message }),
+            ts: now,
+        });
+        {
+            let a = self.agents.get_mut(&agent_id).expect("存在");
+            a.transition(AgentState::Failed);
+        }
+        let mut err = WireError::new(code, message);
+        // 回合已收口,运行时不会再自动重发 → retryable=false(GT-B 信封语义)
+        err.retryable = false;
+        self.settle_operation(operation_id, OperationState::Failed, Some(err));
+        self.emit(
+            EventType::AgentFailed,
+            Some(session_id),
+            Some(agent_id.clone()),
+            Some(operation_id.clone()),
+            serde_json::json!({
+                "agent_id": agent_id.as_str(),
+                "operation_id": operation_id.as_str(),
+                "error_code": code.as_str(),
+            }),
+        );
+    }
+
+    fn receipt_of(&self, op: &Operation) -> Receipt {
+        Receipt {
+            operation_id: op.id.clone(),
+            request_id: op.request_id.clone(),
+            principal: Principal::User,
+            task_type: TaskType::AgentTurn,
+            state: op.state,
+            created_at: op.created_at.clone(),
+            completed_at: op.completed_at.clone(),
+            action_summary: op.action_summary.clone(),
+            result_reference: op.result_reference.clone(),
+            error: op.error.clone(),
+        }
+    }
+}
+
+/// 运行句柄:进程内 Wire API(M1 方法集合)。
+#[derive(Clone)]
+pub struct RuntimeHandle {
+    tx: mpsc::Sender<Cmd>,
+}
+
+impl RuntimeHandle {
+    /// 启动 Runtime:发 runtime.started 事件并进入核心循环。
+    pub async fn start(config: RuntimeConfig) -> Self {
+        let (tx, rx) = mpsc::channel::<Cmd>(1024);
+        let exec_log = Arc::new(ExecutionLog::new(config.data_dir.as_deref()));
+        let started_at = config.clock.now();
+        let mut world = World {
+            bus: EventBus::new(),
+            exec_log,
+            in_flight: HashMap::new(),
+            sessions: HashMap::new(),
+            agents: HashMap::new(),
+            operations: HashMap::new(),
+            started_at,
+            started_instant: Instant::now(),
+            draining: false,
+            stopped: false,
+            tx: tx.clone(),
+            config,
+        };
+        world.emit(
+            EventType::RuntimeStarted,
+            None,
+            None,
+            None,
+            serde_json::json!({
+                "pid": std::process::id(),
+                "version": world.config.version,
+                "started_at": format_ts(world.started_at),
+            }),
+        );
+        tokio::spawn(core_loop(world, rx));
+        Self { tx }
+    }
+
+    pub async fn session_create(
+        &self,
+        request_id: BmId,
+        params: SessionCreateParams,
+    ) -> CoreResult<SessionCreateResult> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(Cmd::SessionCreate {
+                request_id,
+                params,
+                resp: tx,
+            })
+            .await
+            .map_err(|_| CoreError::Internal)?;
+        rx.await.map_err(|_| CoreError::Internal)?
+    }
+
+    pub async fn session_resume(
+        &self,
+        request_id: BmId,
+        params: SessionResumeParams,
+    ) -> CoreResult<SessionResumeResult> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(Cmd::SessionResume {
+                request_id,
+                params,
+                resp: tx,
+            })
+            .await
+            .map_err(|_| CoreError::Internal)?;
+        rx.await.map_err(|_| CoreError::Internal)?
+    }
+
+    pub async fn session_close(
+        &self,
+        request_id: BmId,
+        params: SessionCloseParams,
+    ) -> CoreResult<SessionCloseResult> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(Cmd::SessionClose {
+                request_id,
+                params,
+                resp: tx,
+            })
+            .await
+            .map_err(|_| CoreError::Internal)?;
+        rx.await.map_err(|_| CoreError::Internal)?
+    }
+
+    pub async fn events_poll(&self, params: EventsPollParams) -> CoreResult<EventsPollResult> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(Cmd::EventsPoll { params, resp: tx })
+            .await
+            .map_err(|_| CoreError::Internal)?;
+        rx.await.map_err(|_| CoreError::Internal)?
+    }
+
+    pub async fn send_input(
+        &self,
+        request_id: BmId,
+        params: SendInputParams,
+    ) -> CoreResult<Receipt> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(Cmd::SendInput {
+                request_id,
+                params,
+                resp: tx,
+            })
+            .await
+            .map_err(|_| CoreError::Internal)?;
+        rx.await.map_err(|_| CoreError::Internal)?
+    }
+
+    pub async fn agent_cancel(&self, params: CancelParams) -> CoreResult<CancelResult> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(Cmd::Cancel { params, resp: tx })
+            .await
+            .map_err(|_| CoreError::Internal)?;
+        rx.await.map_err(|_| CoreError::Internal)?
+    }
+
+    /// 收据查询幂等(INV-9):终态后任意多次调用结果一致。
+    pub async fn operations_get(&self, params: GetOperationParams) -> CoreResult<Receipt> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(Cmd::GetOperation { params, resp: tx })
+            .await
+            .map_err(|_| CoreError::Internal)?;
+        rx.await.map_err(|_| CoreError::Internal)?
+    }
+
+    /// 全量事件流(诊断端口,M1 供回放器使用;M3 由 watch/cursor 取代)。
+    #[doc(hidden)]
+    pub async fn events_all(&self) -> Vec<EventEnvelope> {
+        let (tx, rx) = oneshot::channel();
+        if self.tx.send(Cmd::EventsAll { resp: tx }).await.is_err() {
+            return Vec::new();
+        }
+        rx.await.unwrap_or_default()
+    }
+
+    /// 停机:排空进行中回合(不取消,INV-12),发 stopping/stopped 事件。
+    pub async fn stop(&self, reason: impl Into<String>) {
+        let (tx, rx) = oneshot::channel();
+        if self
+            .tx
+            .send(Cmd::Stop {
+                reason: reason.into(),
+                resp: tx,
+            })
+            .await
+            .is_err()
+        {
+            return;
+        }
+        let _ = rx.await;
+    }
+}
+
+async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
+    while let Some(cmd) = rx.recv().await {
+        // 停机后进入只读残存态:事件流与收据仍可查询(INV-6/9 精神),
+        // 业务命令一律拒绝。
+        if world.stopped {
+            match cmd {
+                Cmd::EventsAll { resp } => {
+                    let _ = resp.send(world.bus.events().to_vec());
+                }
+                Cmd::GetOperation { params, resp } => {
+                    let _ = resp.send(handle_get_operation(&world, params));
+                }
+                Cmd::Stop { resp, .. } => {
+                    let _ = resp.send(());
+                }
+                other => reply_unavailable(other),
+            }
+            continue;
+        }
+        match cmd {
+            Cmd::SessionCreate {
+                request_id,
+                params,
+                resp,
+            } => {
+                let _ = resp.send(handle_session_create(&mut world, request_id, params));
+            }
+            Cmd::SessionResume {
+                request_id,
+                params,
+                resp,
+            } => {
+                let _ = resp.send(handle_session_resume(&mut world, request_id, params));
+            }
+            Cmd::SessionClose {
+                request_id,
+                params,
+                resp,
+            } => {
+                let _ = resp.send(handle_session_close(&mut world, request_id, params));
+            }
+            Cmd::EventsPoll { params, resp } => {
+                let _ = resp.send(handle_events_poll(&world, params));
+            }
+            Cmd::SendInput {
+                request_id,
+                params,
+                resp,
+            } => {
+                let _ = resp.send(handle_send_input(&mut world, request_id, params));
+            }
+            Cmd::Cancel { params, resp } => {
+                let _ = resp.send(handle_cancel(&world, params));
+            }
+            Cmd::GetOperation { params, resp } => {
+                let _ = resp.send(handle_get_operation(&world, params));
+            }
+            Cmd::EventsAll { resp } => {
+                let _ = resp.send(world.bus.events().to_vec());
+            }
+            Cmd::Stop { reason, resp } => {
+                handle_stop(&mut world, &mut rx, reason, resp).await;
+            }
+            Cmd::Turn(event) => handle_turn_event(&mut world, event),
+        }
+    }
+}
+
+// ---- 会话与 Agent ----------------------------------------------------------
+
+fn handle_session_create(
+    w: &mut World,
+    _request_id: BmId,
+    params: SessionCreateParams,
+) -> CoreResult<SessionCreateResult> {
+    if w.draining {
+        return Err(CoreError::Semantic(
+            ErrorCode::Unavailable,
+            "Runtime 排空中,拒绝新会话".into(),
+        ));
+    }
+    let spec = &params.agent;
+    if spec.name.is_empty() || spec.name.len() > 64 || spec.model_chain.is_empty() {
+        return Err(CoreError::validation("agent 描述不完整"));
+    }
+    for m in &spec.model_chain {
+        bm_contract::connector::validate_model_id(m).map_err(CoreError::validation)?;
+    }
+
+    let now = w.now_ts();
+    let session_id = w.config.id_gen.next_id("sess");
+    let agent_id = w.config.id_gen.next_id("agent");
+
+    let mut session = Session {
+        id: session_id.clone(),
+        agent_id: agent_id.clone(),
+        state: SessionState::Created,
+        created_at: now.clone(),
+    };
+    // created→active(surface_attached):M1 进程内直调即视为已挂接。
+    session.transition(SessionState::Active);
+    w.sessions.insert(session_id.clone(), session);
+
+    let budget = budget_from_spec(spec.budget.as_ref());
+    w.agents.insert(
+        agent_id.clone(),
+        Agent {
+            id: agent_id.clone(),
+            session_id: session_id.clone(),
+            name: spec.name.clone(),
+            model_chain: spec.model_chain.clone(),
+            state: AgentState::Created,
+            budget,
+        },
+    );
+    // created→starting→running(agent_start + model_binding_ready):无事件(规格 §8.6)。
+    {
+        let agent = w.agents.get_mut(&agent_id).expect("已插入");
+        agent.transition(AgentState::Starting);
+        agent.transition(AgentState::Running);
+    }
+
+    w.emit(
+        EventType::SessionCreated,
+        Some(session_id.clone()),
+        None,
+        None,
+        serde_json::json!({
+            "session_id": session_id.as_str(),
+            "agent_id": agent_id.as_str(),
+        }),
+    );
+    w.emit(
+        EventType::AgentCreated,
+        Some(session_id.clone()),
+        Some(agent_id.clone()),
+        None,
+        serde_json::json!({
+            "agent_id": agent_id.as_str(),
+            "session_id": session_id.as_str(),
+            "model_chain": spec.model_chain,
+        }),
+    );
+
+    Ok(SessionCreateResult {
+        session_id,
+        agent_id,
+        created_at: now,
+        resume_cursor: Cursor {
+            event_seq: w.bus.last_seq(),
+        },
+    })
+}
+
+fn handle_session_resume(
+    w: &mut World,
+    _request_id: BmId,
+    params: SessionResumeParams,
+) -> CoreResult<SessionResumeResult> {
+    let session = w
+        .sessions
+        .get(&params.session_id)
+        .ok_or_else(|| CoreError::validation("session 不存在"))?
+        .clone();
+    if session.state == SessionState::Closed {
+        return Err(CoreError::validation("session 已关闭,不可 resume"));
+    }
+    let since = params.since_seq.unwrap_or(0);
+    let (events, _last, _) = w.bus.poll(&params.session_id, since, u32::MAX);
+    let agent_state = w
+        .agents
+        .get(&session.agent_id)
+        .map(|a| a.state)
+        .unwrap_or(AgentState::Failed);
+
+    w.emit(
+        EventType::SessionResumed,
+        Some(params.session_id.clone()),
+        None,
+        None,
+        serde_json::json!({
+            "session_id": params.session_id.as_str(),
+            "since_seq": since,
+            "replayed": events.len(),
+        }),
+    );
+
+    Ok(SessionResumeResult {
+        // M1 无 detached 路径(M3 Surface 断连引入);保持当前态。
+        session_state: SessionState::Active,
+        agent_state,
+        last_event_seq: w.bus.last_seq(),
+        events,
+    })
+}
+
+fn handle_session_close(
+    w: &mut World,
+    _request_id: BmId,
+    params: SessionCloseParams,
+) -> CoreResult<SessionCloseResult> {
+    let agent_final_state;
+    {
+        let session = w
+            .sessions
+            .get_mut(&params.session_id)
+            .ok_or_else(|| CoreError::validation("session 不存在"))?;
+        if session.state == SessionState::Closed {
+            return Err(CoreError::validation("session 已关闭"));
+        }
+        session.transition(SessionState::Closed);
+        let agent = w.agents.get(&session.agent_id).expect("session 必有 agent");
+        agent_final_state = agent.state.as_str().to_string();
+    }
+    // close 只关会话,不取消进行中的回合(INV-6);in_flight 不动。
+    let reason = params.reason.unwrap_or_else(|| "user_request".into());
+    w.emit(
+        EventType::SessionClosed,
+        Some(params.session_id.clone()),
+        None,
+        None,
+        serde_json::json!({
+            "session_id": params.session_id.as_str(),
+            "reason": reason,
+        }),
+    );
+    Ok(SessionCloseResult {
+        closed_at: w.now_ts(),
+        agent_final_state,
+    })
+}
+
+fn handle_events_poll(w: &World, params: EventsPollParams) -> CoreResult<EventsPollResult> {
+    let limit = params.limit.unwrap_or(100).clamp(1, 1000);
+    let (events, last_seq, has_more) = w.bus.poll(&params.session_id, params.since_seq, limit);
+    Ok(EventsPollResult {
+        events,
+        last_seq,
+        has_more,
+    })
+}
+
+// ---- 回合 ------------------------------------------------------------------
+
+fn handle_send_input(
+    w: &mut World,
+    request_id: BmId,
+    params: SendInputParams,
+) -> CoreResult<Receipt> {
+    if w.draining {
+        return Err(CoreError::Semantic(
+            ErrorCode::Unavailable,
+            "Runtime 排空中".into(),
+        ));
+    }
+    if params.content.is_empty() || params.content.len() > 100_000 {
+        return Err(CoreError::validation("content 长度越界(1..=100000 字节)"));
+    }
+
+    let session = w
+        .sessions
+        .get(&params.session_id)
+        .ok_or_else(|| CoreError::validation("session 不存在"))?
+        .clone();
+    if session.state == SessionState::Closed {
+        return Err(CoreError::validation("session 已关闭"));
+    }
+    let agent = w
+        .agents
+        .get(&params.agent_id)
+        .ok_or_else(|| CoreError::validation("agent 不存在"))?
+        .clone();
+    if agent.session_id != session.id {
+        return Err(CoreError::validation("agent 不属于该 session"));
+    }
+    if agent.state != AgentState::Running {
+        return Err(CoreError::validation("agent 不在可接单状态"));
+    }
+
+    // 强制点①(规格 §8.2):预算拒绝不创建 operation。
+    match agent.budget.check(true) {
+        crate::budget::Verdict::ExceededTokens | crate::budget::Verdict::ExceededTurns => {
+            let msg = match agent.budget.check(false) {
+                crate::budget::Verdict::ExceededTokens => "剩余预算不足,回合不发起",
+                _ => "回合数已用尽,回合不发起",
+            };
+            w.emit(
+                EventType::BudgetExceeded,
+                Some(session.id.clone()),
+                Some(agent.id.clone()),
+                None,
+                serde_json::json!({
+                    "agent_id": agent.id.as_str(),
+                    "scope": BudgetScope::Agent.as_str(),
+                    "used_tokens": agent.budget.used_tokens,
+                    "limit_tokens": agent.budget.max_tokens,
+                }),
+            );
+            return Err(CoreError::Semantic(ErrorCode::BudgetExceeded, msg.into()));
+        }
+        crate::budget::Verdict::Allow => {}
+    }
+
+    let now = w.now_ts();
+    let operation_id = w.config.id_gen.next_id("op");
+    let turn_index = agent.budget.turns_used + 1;
+
+    // not_started→running(dispatch_accepted):由收据承载,不发事件(规格 §8.1)。
+    let operation = Operation {
+        id: operation_id.clone(),
+        request_id: request_id.clone(),
+        session_id: session.id.clone(),
+        agent_id: agent.id.clone(),
+        state: OperationState::NotStarted,
+        turn_index,
+        created_at: now.clone(),
+        completed_at: None,
+        action_summary: format!("Agent 回合进行中(第 {turn_index} 回)"),
+        result_reference: None,
+        error: None,
+    }
+    .dispatch();
+    w.operations.insert(operation_id.clone(), operation);
+
+    let model_id0 = agent.model_chain[0].clone();
+    w.emit(
+        EventType::AgentTurnStarted,
+        Some(session.id.clone()),
+        Some(agent.id.clone()),
+        Some(operation_id.clone()),
+        serde_json::json!({
+            "agent_id": agent.id.as_str(),
+            "operation_id": operation_id.as_str(),
+            "turn_index": turn_index,
+        }),
+    );
+    // Execution Log:agent.turn(输入只留摘要,基线 8.4;A4:载荷原文不入日志)
+    {
+        let digest = Sha256::digest(params.content.as_bytes());
+        let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+        w.exec_log.record(crate::exec_log::LogRecord {
+            kind: LogKind::AgentTurn,
+            session_id: session.id.clone(),
+            agent_id: agent.id.clone(),
+            operation_id: operation_id.clone(),
+            request_id: Some(request_id.clone()),
+            agent_state: AgentState::Running.as_str().to_string(),
+            detail: serde_json::json!({
+                "turn_index": turn_index,
+                "input_digest": format!("sha256:{hex}"),
+                "input_bytes": params.content.len(),
+            }),
+            ts: now.clone(),
+        });
+    }
+
+    // running→waiting_model(model_invoke_issued)
+    {
+        let a = w.agents.get_mut(&agent.id).expect("存在");
+        a.transition(AgentState::WaitingModel);
+    }
+    w.emit(
+        EventType::AgentWaitingModel,
+        Some(session.id.clone()),
+        Some(agent.id.clone()),
+        Some(operation_id.clone()),
+        serde_json::json!({
+            "agent_id": agent.id.as_str(),
+            "operation_id": operation_id.as_str(),
+            "model_id": model_id0,
+        }),
+    );
+
+    // 强制点②(pre_invoke_check):M1 中与①同账本,防御性保留(基线 9.7)。
+    if agent.budget.check(false) != crate::budget::Verdict::Allow {
+        w.fail_turn(
+            &operation_id,
+            ErrorCode::BudgetExceeded,
+            "模型调用前预算检查未通过".into(),
+        );
+        return Err(CoreError::Semantic(
+            ErrorCode::BudgetExceeded,
+            "模型调用前预算检查未通过".into(),
+        ));
+    }
+
+    spawn_turn(w, &agent, &operation_id, params.content);
+
+    Ok(w.receipt_of(&w.operations[&operation_id]))
+}
+
+fn spawn_turn(w: &mut World, agent: &Agent, operation_id: &BmId, content: String) {
+    let cancel = CancellationToken::new();
+    w.in_flight.insert(operation_id.clone(), cancel.clone());
+
+    let connector = w.config.connector.clone();
+    let clock = w.config.clock.clone();
+    let chain = agent.model_chain.clone();
+    let agent_id = agent.id.clone();
+    let remaining = agent.budget.remaining_tokens();
+    let max_attempts = w
+        .config
+        .max_attempts
+        .unwrap_or_else(|| chain.len().min(3) as u32)
+        .clamp(1, 3);
+    let timeout_secs = w.config.turn_timeout_secs;
+    let tx = w.tx.clone();
+    let op_id = operation_id.clone();
+
+    tokio::spawn(async move {
+        for attempt in 1..=max_attempts {
+            let model_id = chain[((attempt - 1) as usize) % chain.len()].clone();
+            let req = InvokeRequest {
+                model_id: model_id.clone(),
+                messages: vec![Message {
+                    role: Role::User,
+                    content: content.clone(),
+                }],
+                tools: vec![],
+                params: Default::default(),
+                secret_ref: default_secret_ref(&model_id),
+                budget_ctx: BudgetCtx {
+                    operation_id: op_id.clone(),
+                    agent_id: agent_id.clone(),
+                    remaining_tokens: remaining,
+                },
+                deadline: format_ts(clock.now() + Duration::seconds(timeout_secs)),
+                attempt,
+            };
+
+            let resp = tokio::select! {
+                _ = cancel.cancelled() => InvokeResponse::Failed {
+                    error_code: ErrorCode::Cancelled, retryable: false, attempt, detail_ref: None,
+                },
+                r = connector.invoke(req, cancel.clone()) => r,
+            };
+
+            match resp {
+                InvokeResponse::Completed {
+                    content: _,
+                    finish_reason: _,
+                    usage,
+                    model_id: mid,
+                    latency_ms,
+                    stream_interrupted,
+                } => {
+                    let _ = tx
+                        .send(Cmd::Turn(TurnEvent::Completed {
+                            operation_id: op_id.clone(),
+                            model_id: mid,
+                            attempt,
+                            usage_in: usage.tokens_in,
+                            usage_out: usage.tokens_out,
+                            latency_ms,
+                            stream_interrupted,
+                        }))
+                        .await;
+                    return;
+                }
+                InvokeResponse::Failed {
+                    error_code,
+                    retryable,
+                    attempt,
+                    detail_ref: _,
+                } => {
+                    if error_code == ErrorCode::Cancelled {
+                        // 显式取消:回合边界落定为 cancelled(INV-12 唯一入口)。
+                        let _ = tx
+                            .send(Cmd::Turn(TurnEvent::Cancelled {
+                                operation_id: op_id.clone(),
+                            }))
+                            .await;
+                        return;
+                    }
+                    let _ = tx
+                        .send(Cmd::Turn(TurnEvent::AttemptFailed {
+                            operation_id: op_id.clone(),
+                            model_id,
+                            attempt,
+                            error_code,
+                        }))
+                        .await;
+                    if !retryable || attempt == max_attempts {
+                        let _ = tx
+                            .send(Cmd::Turn(TurnEvent::ChainExhausted {
+                                operation_id: op_id,
+                                error_code,
+                            }))
+                            .await;
+                        return;
+                    }
+                }
+            }
+        }
+    });
+}
+
+fn handle_cancel(w: &World, params: CancelParams) -> CoreResult<CancelResult> {
+    let op = w
+        .operations
+        .get(&params.operation_id)
+        .ok_or_else(|| CoreError::validation("operation 不存在"))?;
+    if op.session_id != params.session_id || op.agent_id != params.agent_id {
+        return Err(CoreError::validation("operation 与 session/agent 不匹配"));
+    }
+    if op.is_terminal() {
+        return Err(CoreError::validation("operation 已到终态,不可取消"));
+    }
+    // 触发取消令牌;真实落定在 TurnEvent::Cancelled(回合边界)。
+    if let Some(token) = w.in_flight.get(&params.operation_id) {
+        token.cancel();
+    }
+    Ok(CancelResult {
+        accepted: true,
+        operation_id: params.operation_id.clone(),
+    })
+}
+
+fn handle_get_operation(w: &World, params: GetOperationParams) -> CoreResult<Receipt> {
+    let op = w
+        .operations
+        .get(&params.operation_id)
+        .ok_or_else(|| CoreError::validation("operation 不存在"))?;
+    Ok(w.receipt_of(op))
+}
+
+fn handle_turn_event(w: &mut World, event: TurnEvent) {
+    match event {
+        TurnEvent::AttemptFailed {
+            operation_id,
+            model_id,
+            attempt,
+            error_code,
+        } => {
+            let (session_id, agent_id, request_id, agent_state) = {
+                let op = &w.operations[&operation_id];
+                let a = &w.agents[&op.agent_id];
+                (
+                    op.session_id.clone(),
+                    op.agent_id.clone(),
+                    op.request_id.clone(),
+                    a.state.as_str().to_string(),
+                )
+            };
+            w.emit(
+                EventType::ModelInvocationFailed,
+                Some(session_id.clone()),
+                Some(agent_id.clone()),
+                Some(operation_id.clone()),
+                serde_json::json!({
+                    "operation_id": operation_id.as_str(),
+                    "agent_id": agent_id.as_str(),
+                    "model_id": model_id,
+                    "attempt": attempt,
+                    "error_code": error_code.as_str(),
+                }),
+            );
+            w.exec_log.record(crate::exec_log::LogRecord {
+                kind: LogKind::ModelInvocation,
+                session_id,
+                agent_id,
+                operation_id,
+                request_id: Some(request_id),
+                agent_state,
+                detail: serde_json::json!({
+                    "model_id": model_id,
+                    "attempt": attempt,
+                    "error_code": error_code.as_str(),
+                    "stream_interrupted": false,
+                }),
+                ts: w.now_ts(),
+            });
+        }
+        TurnEvent::ChainExhausted {
+            operation_id,
+            error_code,
+        } => {
+            w.fail_turn(
+                &operation_id,
+                error_code,
+                format!("模型降级链耗尽({error_code})"),
+            );
+            w.in_flight.remove(&operation_id);
+        }
+        TurnEvent::Cancelled { operation_id } => {
+            // operation: running→cancelled(唯一合法入口 = 显式取消,INV-12)
+            let (session_id, agent_id) = {
+                let op = &w.operations[&operation_id];
+                (op.session_id.clone(), op.agent_id.clone())
+            };
+            {
+                let a = w.agents.get_mut(&agent_id).expect("存在");
+                // waiting_model→stopping(explicit_cancel)→stopped(turn_boundary_reached)
+                a.transition(AgentState::Stopping);
+                a.transition(AgentState::Stopped);
+            }
+            w.settle_operation(
+                &operation_id,
+                OperationState::Cancelled,
+                Some(WireError::new(
+                    ErrorCode::Cancelled,
+                    "用户显式取消".to_string(),
+                )),
+            );
+            w.emit(
+                EventType::AgentCancelled,
+                Some(session_id),
+                Some(agent_id.clone()),
+                Some(operation_id.clone()),
+                serde_json::json!({
+                    "agent_id": agent_id.as_str(),
+                    "operation_id": operation_id.as_str(),
+                }),
+            );
+            w.in_flight.remove(&operation_id);
+        }
+        TurnEvent::Completed {
+            operation_id,
+            model_id,
+            attempt,
+            usage_in,
+            usage_out,
+            latency_ms,
+            stream_interrupted,
+        } => {
+            let (session_id, agent_id, request_id, agent_state) = {
+                let op = &w.operations[&operation_id];
+                let a = &w.agents[&op.agent_id];
+                (
+                    op.session_id.clone(),
+                    op.agent_id.clone(),
+                    op.request_id.clone(),
+                    a.state.as_str().to_string(),
+                )
+            };
+            w.emit(
+                EventType::ModelInvocationCompleted,
+                Some(session_id.clone()),
+                Some(agent_id.clone()),
+                Some(operation_id.clone()),
+                serde_json::json!({
+                    "operation_id": operation_id.as_str(),
+                    "agent_id": agent_id.as_str(),
+                    "model_id": model_id,
+                    "attempt": attempt,
+                    "usage_in": usage_in,
+                    "usage_out": usage_out,
+                    "latency_ms": latency_ms,
+                    "stream_interrupted": stream_interrupted,
+                }),
+            );
+            w.exec_log.record(crate::exec_log::LogRecord {
+                kind: LogKind::ModelInvocation,
+                session_id: session_id.clone(),
+                agent_id: agent_id.clone(),
+                operation_id: operation_id.clone(),
+                request_id: Some(request_id),
+                agent_state,
+                detail: serde_json::json!({
+                    "model_id": model_id,
+                    "attempt": attempt,
+                    "usage": {"tokens_in": usage_in, "tokens_out": usage_out},
+                    "latency_ms": latency_ms,
+                    "stream_interrupted": stream_interrupted,
+                }),
+                ts: w.now_ts(),
+            });
+
+            // waiting_model→running(model_response_ok)
+            {
+                let a = w.agents.get_mut(&agent_id).expect("存在");
+                a.transition(AgentState::Running);
+            }
+
+            // 强制点③(post_invoke_accounting)
+            let turn_index = w.operations[&operation_id].turn_index;
+            let (ratio, warn, exceeded) = {
+                let a = w.agents.get_mut(&agent_id).expect("存在");
+                a.budget.account(usage_in.saturating_add(usage_out))
+            };
+            let used = w.agents[&agent_id].budget.used_tokens;
+            let limit = w.agents[&agent_id].budget.max_tokens;
+            w.exec_log.record(crate::exec_log::LogRecord {
+                kind: LogKind::BudgetCheck,
+                session_id: session_id.clone(),
+                agent_id: agent_id.clone(),
+                operation_id: operation_id.clone(),
+                request_id: None,
+                agent_state: AgentState::Running.as_str().to_string(),
+                detail: serde_json::json!({
+                    "scope": BudgetScope::Agent.as_str(),
+                    "used_tokens": used,
+                    "limit_tokens": limit,
+                    "ratio": ratio,
+                }),
+                ts: w.now_ts(),
+            });
+            if warn {
+                w.emit(
+                    EventType::BudgetWarning,
+                    Some(session_id.clone()),
+                    Some(agent_id.clone()),
+                    None,
+                    serde_json::json!({
+                        "agent_id": agent_id.as_str(),
+                        "scope": BudgetScope::Agent.as_str(),
+                        "used_tokens": used,
+                        "limit_tokens": limit,
+                        "ratio": ratio,
+                    }),
+                );
+            }
+            if exceeded {
+                w.emit(
+                    EventType::BudgetExceeded,
+                    Some(session_id.clone()),
+                    Some(agent_id.clone()),
+                    None,
+                    serde_json::json!({
+                        "agent_id": agent_id.as_str(),
+                        "scope": BudgetScope::Agent.as_str(),
+                        "used_tokens": used,
+                        "limit_tokens": limit,
+                    }),
+                );
+            }
+
+            // running→succeeded(result_recorded)+ agent.completed
+            {
+                let now = w.now_ts();
+                let op = w.operations.get_mut(&operation_id).expect("存在");
+                op.action_summary =
+                    format!("回合 {turn_index} 完成({usage_in} 入 / {usage_out} 出 token)");
+                op.result_reference = Some(wire::ResultReference {
+                    kind: wire::ResultRefKind::ExecutionLog,
+                    r#ref: format!("log:{operation_id}"),
+                });
+                let _ = now;
+            }
+            w.settle_operation(&operation_id, OperationState::Succeeded, None);
+            w.emit(
+                EventType::AgentCompleted,
+                Some(session_id),
+                Some(agent_id.clone()),
+                Some(operation_id.clone()),
+                serde_json::json!({
+                    "agent_id": agent_id.as_str(),
+                    "operation_id": operation_id.as_str(),
+                    "turn_index": turn_index,
+                }),
+            );
+            w.in_flight.remove(&operation_id);
+        }
+    }
+}
+
+async fn handle_stop(
+    w: &mut World,
+    rx: &mut mpsc::Receiver<Cmd>,
+    reason: String,
+    resp: oneshot::Sender<()>,
+) {
+    w.emit(
+        EventType::RuntimeStopping,
+        None,
+        None,
+        None,
+        serde_json::json!({ "reason": reason }),
+    );
+    // 排空:不取消进行中回合(INV-12),等它们自然落定。
+    w.draining = true;
+    while !w.in_flight.is_empty() {
+        match rx.recv().await {
+            Some(Cmd::Turn(event)) => handle_turn_event(w, event),
+            // 收据查询只读幂等,排空期照常应答(INV-6 精神)。
+            Some(Cmd::GetOperation { params, resp }) => {
+                let _ = resp.send(handle_get_operation(w, params));
+            }
+            Some(Cmd::EventsAll { resp }) => {
+                let _ = resp.send(w.bus.events().to_vec());
+            }
+            Some(other) => reply_unavailable(other),
+            None => break,
+        }
+    }
+    let uptime_ms = w.started_instant.elapsed().as_millis() as u64;
+    w.emit(
+        EventType::RuntimeStopped,
+        None,
+        None,
+        None,
+        serde_json::json!({ "uptime_ms": uptime_ms }),
+    );
+    w.stopped = true;
+    let _ = resp.send(());
+}
+
+/// 排空期对非回合命令的统一拒绝(保留应答,不悬挂调用方)。
+fn reply_unavailable(cmd: Cmd) {
+    let err = || CoreError::Semantic(ErrorCode::Unavailable, "Runtime 排空中".into());
+    match cmd {
+        Cmd::SessionCreate { resp, .. } => {
+            let _ = resp.send(Err(err()));
+        }
+        Cmd::SessionResume { resp, .. } => {
+            let _ = resp.send(Err(err()));
+        }
+        Cmd::SessionClose { resp, .. } => {
+            let _ = resp.send(Err(err()));
+        }
+        Cmd::EventsPoll { resp, .. } => {
+            let _ = resp.send(Err(err()));
+        }
+        Cmd::SendInput { resp, .. } => {
+            let _ = resp.send(Err(err()));
+        }
+        Cmd::Cancel { resp, .. } => {
+            let _ = resp.send(Err(err()));
+        }
+        Cmd::GetOperation { resp, .. } => {
+            let _ = resp.send(Err(err()));
+        }
+        Cmd::EventsAll { resp } => {
+            let _ = resp.send(Vec::new());
+        }
+        Cmd::Stop { resp, .. } => {
+            let _ = resp.send(());
+        }
+        Cmd::Turn(_) => {}
+    }
+}

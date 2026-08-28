@@ -127,4 +127,27 @@ impl EventEnvelope {
             payload,
         }
     }
+
+    /// 免注册表断言的构造:仅供总线/回放等传输层测试使用,
+    /// 发射侧一律走 [`EventEnvelope::new`]。
+    #[doc(hidden)]
+    pub fn new_unchecked(
+        event_seq: u64,
+        event_type: EventType,
+        occurred_at: BmTimestamp,
+        session_id: Option<BmId>,
+        agent_id: Option<BmId>,
+        operation_id: Option<BmId>,
+        payload: serde_json::Value,
+    ) -> Self {
+        Self {
+            event_seq,
+            event_type,
+            occurred_at,
+            session_id,
+            agent_id,
+            operation_id,
+            payload,
+        }
+    }
 }
