@@ -1,0 +1,12 @@
+# 与 BoenMind 规格层无关的个人目录(不纳入本仓库)
+00_MEM0SETUP/
+01_PROJECTS/
+
+# 通用垃圾
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+.DS_Store
+*.swp
+*~

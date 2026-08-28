@@ -1,0 +1,20 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "boenmind:registry:error-codes:v0.1",
+  "title": "BoenMind 错误码注册表 v0.1",
+  "description": "核心码封闭（基线 9.8）。扩展码格式 <namespace>.<extension>，须在扩展注册表中声明，不得与核心码冲突。available_since 标记该码最早可出现的里程碑。",
+  "codes": [
+    { "code": "validation_failed",     "cli_exit": 2, "default_retryable": false, "available_since": "M1" },
+    { "code": "unavailable",           "cli_exit": 7, "default_retryable": true,  "available_since": "M1" },
+    { "code": "timeout",               "cli_exit": 7, "default_retryable": true,  "available_since": "M1" },
+    { "code": "cancelled",             "cli_exit": 0, "default_retryable": false, "available_since": "M1" },
+    { "code": "budget_exceeded",       "cli_exit": 5, "default_retryable": false, "available_since": "M1" },
+    { "code": "outcome_unknown",       "cli_exit": 6, "default_retryable": false, "available_since": "M1" },
+    { "code": "internal",              "cli_exit": 5, "default_retryable": false, "available_since": "M1" },
+    { "code": "permission_denied",     "cli_exit": 3, "default_retryable": false, "available_since": "M4" },
+    { "code": "approval_required",     "cli_exit": 4, "default_retryable": true,  "available_since": "M4" },
+    { "code": "approval_denied",       "cli_exit": 3, "default_retryable": false, "available_since": "M4" },
+    { "code": "idempotency_conflict",  "cli_exit": 2, "default_retryable": false, "available_since": "M4" }
+  ],
+  "extension_rule": "additional codes MUST match ^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_.]*$ and MUST be declared in registry/extensions/*.json"
+}

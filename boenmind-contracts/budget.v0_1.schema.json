@@ -1,0 +1,46 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "boenmind:budget:v0.1",
+  "title": "Budget 对象 v0.1",
+  "description": "挂在 Agent 上的预算合同对象。核心维度 M1 只启用两个，结构开放：新增维度以键值对追加，老版本必须忽略未知键（基线 9.7）。",
+  "definitions": {
+    "budget": {
+      "type": "object",
+      "required": ["max_tokens", "max_turns"],
+      "additionalProperties": { "type": ["integer", "number", "string", "boolean"] },
+      "properties": {
+        "max_tokens": { "type": "integer", "minimum": 1, "description": "M1 生效" },
+        "max_turns": { "type": "integer", "minimum": 1, "description": "M1 生效" },
+        "max_cost": { "type": "number", "minimum": 0, "description": "M1 预留，记账不拦截" },
+        "max_wallclock_ms": { "type": "integer", "minimum": 0, "description": "预留" },
+        "max_tool_calls": { "type": "integer", "minimum": 0, "description": "M4+ 生效" },
+        "max_sub_agents": { "type": "integer", "minimum": 0, "description": "M6+ 生效" },
+        "max_depth": { "type": "integer", "minimum": 0, "description": "M6+ 生效" }
+      }
+    },
+    "accounting_record": {
+      "description": "模型/回合返回后的实际记账（基线 9.7 第三强制点），写入 Execution Log 并更新 Agent 账本。",
+      "type": "object",
+      "required": ["scope", "operation_id", "used_tokens", "limit_tokens", "ratio", "at"],
+      "additionalProperties": false,
+      "properties": {
+        "scope": { "enum": ["agent"] },
+        "operation_id": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/id" },
+        "used_tokens": { "type": "integer", "minimum": 0 },
+        "limit_tokens": { "type": "integer", "minimum": 1 },
+        "ratio": { "type": "number", "minimum": 0 },
+        "at": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/timestamp" }
+      }
+    },
+    "enforcement_points": {
+      "type": "array",
+      "items": { "type": "string" },
+      "const_note": "三个强制点缺一不可（基线 9.7）",
+      "const": [
+        "turn_start_estimate: 回合开始，剩余预算不足则不发起",
+        "pre_invoke_check: 模型调用前，已用量+预估 vs 上限，超限拒绝并发布 budget.exceeded",
+        "post_invoke_accounting: 返回后实际记账，ratio>=0.8 发布 budget.warning"
+      ]
+    }
+  }
+}

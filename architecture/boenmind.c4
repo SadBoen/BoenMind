@@ -1,0 +1,285 @@
+workspace "BoenMind" "面向个人软件生态的 AI Runtime/AI 操作系统——架构模型即代码。本工作区是《BoenMind 核心架构基线》(BoenMind-CORE-ARCHITECTURE.md)中全部架构图的结构化重构:§15 推荐核心拓扑(Container 视图)、§2.1 L0-L5 分层(元素标签与部署环境)、§4.3 运行时隔离(部署视图)、§6 Registry 与 §7 Broker(组件视图与动态视图)、§10.2/§11 协作路径、§13 热插拔与代际升级(动态视图)、§22 端到端工作流。基线原则:内核只由合同与最小机制组成,其余一切以 Provider/App/Surface/Plugin 身份接入;同一时刻只有一个 Runtime generation 拥有写入权。" {
+
+    model {
+        user = person "个人用户" "BoenMind 的唯一使用者;单用户、单设备、本地优先,无账号体系。"
+
+        boenmind = softwareSystem "BoenMind Runtime" "统一的 AI Runtime:Agent 生命周期、记忆与技能、能力注册、身份权限审批、App 间受控通信、多 Agent 协作、插件热替换与故障恢复;前端形态(Chat/CLI/语音/通知)全部解耦为可替换 Surface。" {
+
+            chat = container "Tauri Chat Surface" "图形交互界面:创建/接管 Task、提交审批决定;不拥有 Agent,可被 CLI 接管同一 Task。" "Tauri Desktop" "L5,Surface"
+            cli = container "CLI Surface" "标准命令行 Surface(boenmind):用户操作面(task/agent/approval)+ 受限运行控制面(runtime status/upgrade/rollback);无 GUI 时的人类控制入口,不绕过 Broker。" "Rust CLI" "L5,Surface"
+            voice = container "Voice Surface" "语音交互适配器;与其他 Surface 共享同一 Surface Protocol。" "语音适配器" "L5,Surface"
+            notif = container "Notification Surface" "通知中心:审批提醒、异步结果推送;GUI 关闭时兜底。" "通知适配器" "L5,Surface"
+
+            butler = container "Butler App" "管家 App:接单、创建 Task、召集 Coordinator Agent、催办与汇报;只拥有系统协调权(task.create/agent.spawn/team.create 等),不默认拥有任何领域操作权。Orchestrator 的任务板是从事件重建的投影,不是第二事实源。" "Rust App(可独立进程)" "L4,App"
+            mailApp = container "Mail App" "邮件业务域:暴露 mail.search/mail.read/mail.create_draft/mail.send(external-side-effect)等 Capability 与领域 Agent;数据域 memory:app:mail。" "App(可独立进程)" "L4,App"
+            stockApp = container "Stock App" "股票业务域:stock.quote.get/stock.analyze/stock.place_order(high-risk-command,需审批)。" "App(可独立进程)" "L4,App"
+            musicApp = container "Music App" "音乐业务域:music.search/music.play/music.pause;音量控制不属于 Music App 而属于系统服务 Audio Provider。" "App(可独立进程)" "L4,App"
+            wikiApp = container "Wiki App" "知识库业务域;首批真实 App 之一,与 Mail/Stock 共用同一套 Runtime/Broker/Task/日志机制。" "App(可独立进程)" "L4,App"
+
+            audio = container "Audio Provider (system.audio)" "系统服务 Provider:audio.volume.get/set、audio.mute、audio.output.list;低风险确定性能力,支持 verification 事后核验钩子。" "系统服务(可独立进程)" "L3,Provider"
+            fsProvider = container "File Provider" "文件系统能力 Provider:文件读写、选择器、导出。" "系统服务(可独立进程)" "L3,Provider"
+            mcp = container "MCP Provider 接入" "外部 MCP Server 作为普通 Provider 注册,命名空间 mcp:<server>.<tool>;风险未知按不低于 reversible-command 处理,首次调用需审批;崩溃走 Provider 崩溃路径。" "接入器进程" "L3,Provider"
+            timerProvider = container "Timer Provider" "定时与自动化触发;只是普通调用方,定时能力本身是可替换的系统服务 Provider,内核不持有调度特权。" "系统服务(可独立进程)" "L3,Provider"
+
+            l2core = container "L2 Runtime Core (active generation)" "可按代际升级的运行时内核:同一时刻只有一个 generation 对可写业务状态拥有写入权;持有 Task 规范状态、权限、事件规范序(event_seq 全局单调);重启或换代必须从持久状态恢复,不依赖旧进程内存。" "Rust 进程" "L2,RuntimeCore" {
+                registry = component "Runtime Registry" "统一注册中心,内部按对象类型分表:App/Plugin/Capability/Agent/Task-Team/Surface/Provider Binding;分表是开放集合。持久化逻辑目录 + 可重建的运行时缓存两层。" "Rust 模块"
+                broker = component "Capability Broker" "所有跨域调用统一入口:身份/权限/Task scope 检查 → 参数校验 → Provider Binding → 执行转发 → 超时/取消/重试(manifest 声明,Broker 唯一执行者)→ 审计与事件发布。调用方覆盖 Agent、按钮、语音、自动化规则、Timer、其他 App。" "Rust 模块"
+                bus = component "Event Bus" "持久事实源 + 内存分发层两级:需恢复/重放/跨代际交接的事件先进持久事件日志(单写者追加);token 增量等瞬态事件默认不落盘。事件表达「发生了什么」,不是「请做什么」。" "Rust 模块"
+                executor = component "Agent/Task Executor" "Agent 生命周期状态机(created→starting→running⇄waiting⇄paused→stopping→stopped/failed/cancelled,迁移携带原因码)、Task/Team 编排、Operation 状态机与执行收据;上下文压缩写 Execution Log。" "Rust 模块"
+                approval = component "Approval & Budget" "持久化审批对象(默认拒绝:超时即 denied);授权范围 once/task/count/ttl/forever;预算三层强制点(回合前预估/工具调用前/返回后记账),软限 80% 告警、硬限暂停。" "Rust 模块"
+                observation = component "Observation & Evaluation" "对照「Agent 声称完成」与「系统实际观察到」:执行 Capability manifest 的 verification 钩子;必要时独立 Judge(同一模型合同,tools=[],temperature=0)辅助判断;外部系统查询与确定性断言优先于模型自述。" "Rust 模块"
+                persistence = component "Persistence & Recovery" "SQLite 规范状态 + Append-only Event Log + Snapshot + Event Replay;outcome_unknown 只能经外部核验/用户裁定/明确恢复流程结束;删除=状态删除+墓碑+投影重建+记忆级联失效。" "Rust + SQLite"
+                memory = component "Memory & Skill" "按域隔离的记忆(memory:app|task|agent|user,地址即权限边界;FTS 检索,向量引擎可替换)+ Skill 知识包(步骤/提示模板 + allowed_capabilities,只是数据,加载不改变权限)。" "Rust 模块"
+                modelConnector = component "Model Connector" "模型连接器——普通 Provider 而非内核特权:稳定模型合同(messages/tools/参数→结果/用量/结束原因)、调用账本、降级链;阶段一可内建,阶段二外置为独立进程时调用方无感。" "Provider 合同实现"
+                secretStore = component "Secret Store" "凭据本体唯一存放地(OS keychain 优先,加密文件兜底),本身是可替换 Provider;上下文/日志/事件只出现 Secret Ref;录入轮换删除属 high-risk-command 需审批。" "Provider 合同实现"
+            }
+
+            l1 = container "L1 Kernel Contract" "所有可替换组件共同遵守的根合同:Wire API/Surface Protocol、事件 Schema 与全局顺序、Capability Manifest 与调用语义、Operation 收据与状态机、Approval 状态机与 Budget、身份权限与统一错误信封、Secret Ref 格式。字段自冻结之日起只增不破;改变 L1 才构成系统级大升级(Major)。" "合同(Schema 与协议)" "L1,Contract"
+
+            l0 = container "L0 Supervisor & Upgrade Manager" "最小且最稳定的启动底座,不承载业务逻辑:启动、监控、代际选择、健康检查、排空、回滚;Upgrade Manager 管理 generation 事务(prepared→migrating→validating→committing→active→draining,以及 rolled_back/failed)与单写者租约;不依赖待升级的 L2 即可完成回滚。" "Rust 最小程序" "L0,ControlPlane"
+        }
+
+        mailsvc = softwareSystem "邮件服务" "用户的 IMAP/SMTP 或邮件服务商;mail.send 的外部副作用以 message-id 收据回流。" "External"
+        stockserv = softwareSystem "行情/交易服务" "外部行情与交易 API;下单结果以订单号收据回流。" "External"
+        musicsvc = softwareSystem "音乐服务" "外部流媒体服务。" "External"
+        llm = softwareSystem "LLM API" "云端/本地模型;经稳定模型合同接入,可替换;凭据由 Secret Store 注入,Agent 全程不可见。" "External"
+        mcpext = softwareSystem "MCP 工具服务器" "第三方 MCP Server,提供 mcp:<server>.<tool> 工具;不可信外部内容来源。" "External"
+        oskeychain = softwareSystem "OS Keychain" "Windows Credential Manager / macOS Keychain / libsecret;凭据本体优先存放地。" "External"
+
+        user -> chat "创建 Task、会话、审批"
+        user -> cli "task/call/approval 命令;runtime status/doctor/upgrade/rollback"
+        user -> voice "语音请求"
+        user -> notif "查看通知与审批提醒"
+
+        chat -> l1 "Surface Protocol(Wire API)"
+        cli -> l1 "Surface Protocol:用户操作面与 L2 业务调用"
+        cli -> l0 "运行控制面:L0 Control Protocol(与业务权限、审计边界分离;L2 不可用时仍可 status/drain/rollback)"
+        voice -> l1 "Surface Protocol"
+        notif -> l1 "Surface Protocol"
+
+        l0 -> l2core "管理 Runtime generation:启动/健康检查/排空/回滚;升级事务状态归 L0 持久化"
+
+        l2core -> l1 "实现并执行根合同"
+
+        chat -> broker "确定性操作直接调用公开 Capability(不经 Agent)"
+        voice -> broker "确定性操作直接调用公开 Capability"
+        butler -> broker "task.create/task.cancel/agent.spawn/team.create/task.collect/capability.call"
+        butler -> bus "订阅事件;从事件重建 Task Board 投影(可丢弃可重建,非事实源)"
+        mailApp -> broker "注册并暴露 mail.* capability"
+        stockApp -> broker "注册并暴露 stock.* capability"
+        musicApp -> broker "注册并暴露 music.* capability"
+        wikiApp -> broker "注册并暴露 wiki.* capability"
+        audio -> broker "注册并暴露 audio.* capability"
+        fsProvider -> broker "注册并暴露 fs.* capability"
+        mcp -> broker "注册 mcp:<server>.<tool>;风险未知首次调用需审批"
+        timerProvider -> broker "作为普通调用方触发 capability.call"
+
+        broker -> registry "查找 capability → provider/version/protocol/status binding"
+        broker -> approval "reversible-command 及以上、或 untrusted 输入驱动的回合升级审批"
+        broker -> observation "Command 类调用触发 verification 事后核验;对照结果写 Observation Log"
+        broker -> bus "发布审计事件、provider.changed、budget.exceeded"
+        executor -> broker "Agent 执行中的一切工具/能力调用(不建立私有通道)"
+        executor -> modelConnector "模型回合;账本入 Execution Log"
+        executor -> bus "发布 agent.*/task.* 生命周期事件(携带原因码)"
+        executor -> memory "读写任务上下文与领域记忆(经 Broker,数据域隔离)"
+        memory -> persistence "记忆索引持久化"
+        bus -> persistence "持久事件日志落盘(单写者追加,event_seq 全局单调)"
+        observation -> persistence "读取 Event/Execution Log 与真实状态对照"
+        observation -> bus "发布 Evaluation Record 与监护状态(stalled/repeating/outcome_unknown…)"
+        approval -> persistence "审批对象持久化,Runtime 重启后恢复"
+        registry -> persistence "持久化逻辑目录 capability→provider/version/protocol/status"
+
+        broker -> audio "Broker 绑定并执行 capability(超时/取消/重试按 manifest,由 Broker 统一执行)"
+        broker -> mailApp "Broker 将调用转发至提供该 Capability 的 App/Provider"
+        chat -> executor "Surface 提交用户输入、创建 Task、接管与审批提交"
+        bus -> butler "task.* 事实事件分发:触发接单与任务板投影更新"
+        mailApp -> bus "领域进度与结果事件"
+        bus -> chat "Agent 流式输出、进度与结果事件(瞬态帧不落盘)"
+        butler -> executor "创建 Coordinator 与成员、请求领域 Agent(Task 授权范围内;经 Agent Service)"
+        bus -> executor "draining 与 agent.interrupted 等事件送达执行器,按恢复规则继续"
+        broker -> chat "调用返回明确 unavailable/timeout(调用方不无限等待)"
+        executor -> mailApp "Agent Service 请求领域 App 的领域 Agent(§10.2 路径 B)"
+        registry -> audio "Registry 对 Provider 执行 draining 标记、binding 切换与 handshake 校验"
+        audio -> registry "Provider 向 Registry 注册、排空回报与重新 handshake"
+        audio -> l0 "进程退出/崩溃被 Supervisor 检测"
+        l0 -> audio "Supervisor 拉起、停止与重启 Provider 进程"
+        l0 -> registry "Supervisor 通告 Provider/Generation 状态变更(如标记 unavailable)"
+        registry -> bus "在状态提交点发布 provider.changed / provider.crashed"
+        l0 -> cli "L0 Control Protocol 响应(status/doctor/upgrade/rollback 结果)"
+
+        mailApp -> mailsvc "IMAP/SMTP;副作用返回收据(message-id)入 result_reference"
+        stockApp -> stockserv "行情查询/下单;下单 = high-risk-command + 审批 + 外部收据"
+        musicApp -> musicsvc "流媒体播放"
+        mcp -> mcpext "MCP 协议;第三方返回值按 untrusted 信任级别处理"
+        modelConnector -> llm "稳定模型合同:messages/tools/参数→增量结果/用量/结束原因;超时超限走降级链"
+        secretStore -> oskeychain "OS keychain 优先,加密文件兜底"
+
+        deploymentEnvironment "阶段一(单进程)" {
+            deploymentNode "个人电脑" "Windows/Linux/macOS" "跨平台单机" {
+                containerInstance chat
+                containerInstance cli
+                containerInstance voice
+                containerInstance notif
+                containerInstance l2core
+                containerInstance butler
+                containerInstance mailApp
+                containerInstance stockApp
+                containerInstance musicApp
+                containerInstance wikiApp
+                containerInstance audio
+                containerInstance fsProvider
+                containerInstance mcp
+                containerInstance timerProvider
+            }
+        }
+
+        deploymentEnvironment "阶段二(多进程)" {
+            deploymentNode "个人电脑" "Windows/Linux/macOS" "跨平台单机" {
+                deploymentNode "boenmind-supervisor" "最小控制面,不依赖 L2 即可回滚" "L0 进程" {
+                    containerInstance l0
+                }
+                deploymentNode "boenmind-runtime" "当前 active generation" "L2 进程" {
+                    containerInstance l2core
+                }
+                deploymentNode "app-butler" "协调 App" "L4 进程" {
+                    containerInstance butler
+                }
+                deploymentNode "app-mail" "邮件域" "L4 进程" {
+                    containerInstance mailApp
+                }
+                deploymentNode "app-stock" "股票域" "L4 进程" {
+                    containerInstance stockApp
+                }
+                deploymentNode "app-music" "音乐域" "L4 进程" {
+                    containerInstance musicApp
+                }
+                deploymentNode "svc-audio" "音频系统服务" "L3 进程" {
+                    containerInstance audio
+                }
+                deploymentNode "svc-mcp" "MCP 接入器" "L3 进程" {
+                    containerInstance mcp
+                }
+            }
+        }
+    }
+
+    views {
+
+        systemContext boenmind "SystemContext" "系统上下文:一个 AI Runtime 统一服务多个 App 与 Surface(基线 §1:通信/邮件/音乐/股票/Wiki 共用同一个 AI Runtime)。" {
+            include *
+            autolayout lr
+        }
+
+        container boenmind "Container" "推荐核心拓扑(基线 §15)+ L0-L5 分层着色(基线 §2.1)。L5 Surfaces→L1 合同→L0 控制面与 L2 Runtime Core→L3/L4 Apps 与 Providers;所有跨域调用统一经 Capability Broker。" {
+            include *
+            autolayout tb
+        }
+
+        component l2core "L2Components" "L2 Runtime Core 内部结构(基线 §6-§9):Registry/Broker/Bus 三权分立——Registry 负责「谁提供什么」,Broker 负责「能不能调用以及调用谁」,Bus 负责「发生了什么」。" {
+            include *
+            autolayout tb
+        }
+
+        dynamic l2core "BrokerCall" "一次 broker.call 的统一裁决管线(基线 §7):身份→权限→参数→Binding→执行→收据与审计。" {
+            butler -> broker "1. broker.call「audio.volume.set」—— 携带 principal/task_id/deadline/idempotency_key/input_trust"
+            broker -> registry "2. 查找 Provider Binding(audio.volume.set → system.audio@1.2.0)"
+            broker -> approval "3. 身份/权限/Task scope 检查;untrusted 输入把实际风险上提一级"
+            broker -> audio "4. 绑定执行;超时/取消/重试按 manifest 声明,由 Broker 统一执行"
+            audio -> broker "5. 返回结果;Command 类能力触发 verification 事后核验"
+            broker -> bus "6. 记录审计并发布事件;产生 operation_id 执行收据"
+        }
+
+        dynamic l2core "ButlerPaths" "Butler 调用其他 App 的两条路径(基线 §10.2):A 直接调用公开 Capability;B 经 Agent Service 请求领域 Agent。" {
+            butler -> broker "路径 A:确定性、结构化、低延迟操作 → mail.search"
+            broker -> mailApp "路径 A:Broker 转发至 Mail Provider,返回结构化结果"
+            mailApp -> broker "路径 A:执行收据与审计事件回流"
+            butler -> executor "路径 B:复杂理解与多步推理 → 经 Agent Service 请求 Mail App 领域 Agent(Task 授权范围内)"
+            executor -> mailApp "路径 B:Mail Agent 以自身身份调用 mail.search/mail.read(权限=App 能力∩Task 授权∩成员角色)"
+            butler -> bus "两路径结果均经 Broker 审计;Butler 汇报前由 Observation 核验;任务板仅是投影"
+        }
+
+        dynamic l2core "TaskFlow" "端到端工作流(基线 §22):界面→可恢复 Runtime→持久化 Task→Butler/Coordinator→成员 Agent→Broker→Provider→日志与观察→汇报。" {
+            chat -> executor "1. GUI 把请求交给 Runtime:创建持久化 Task + operation_id"
+            bus -> butler "2. task.created 事实事件触发 Butler 接单:判断需要 Mail/Stock Agent"
+            butler -> broker "3. 创建 Coordinator Agent 与成员(权限=可授予协调权∩Task 授权∩用户授权;预算/深度/并发受限)"
+            broker -> registry "4. 查找 binding 与健康状态"
+            broker -> mailApp "5. Provider 真正访问邮件系统;每步写 Event Log/Execution Log"
+            mailApp -> mailsvc "6. IMAP/SMTP(不可信外部内容,带信任级别进入上下文)"
+            mailApp -> bus "7. 领域进度事件(瞬态帧不落盘,事实走持久日志)"
+            broker -> observation "8. Observation 对照「声称完成」与「实际观察到」;不足则请求用户裁定"
+            executor -> modelConnector "9. Agent 推理回合;调用账本入 Execution Log"
+            bus -> chat "10. 结果与流式输出回界面:Butler 汇报,保留可回放工作记录(断线可从 resume cursor 重连)"
+        }
+
+        dynamic l2core "ProviderHotSwap" "Provider 热替换(基线 §13.1):draining→handshake→原子切换 binding;调用方只见稳定的 Capability 名称。" {
+            registry -> audio "1. Provider A 标记 draining:不接受新请求;排空(等待短请求完成或按 deadline 取消)"
+            audio -> registry "2. 排空完成;Provider B handshake:校验能力合同与健康状态"
+            registry -> bus "3. 原子切换 binding:audio.volume.set → system.audio@新版本;发布 provider.changed"
+            l0 -> audio "4. 停止 Provider A"
+        }
+
+        dynamic l2core "ProviderCrash" "Provider 崩溃与恢复(基线 §13.2):不拖垮 Runtime,不让调用方无限等待。" {
+            audio -> l0 "1. Provider 崩溃:Supervisor 检测"
+            l0 -> registry "2. Registry 标记 unavailable"
+            registry -> bus "3. Bus 发布 provider.crashed"
+            broker -> chat "4. 新请求得到明确 unavailable(调用方不无限等待)"
+            l0 -> audio "5. Supervisor 重启 Provider"
+            audio -> registry "6. 重新 handshake/register;binding 恢复后由 Registry 发布 provider.changed"
+        }
+
+        dynamic l2core "GenerationUpgrade" "Runtime Core 代际升级(基线 §13.4/§13.7):新 generation 验证→原子切换→排空;失败回滚;单写者栅栏贯穿始终。" {
+            cli -> l0 "0. boenmind runtime upgrade(L0 Control Protocol)"
+            l0 -> registry "1. 安装 v2 独立版本目录;校验签名/依赖/L1 合同/迁移路径;创建快照/事件日志检查点;启动 v2/generation 42 = validating:隔离状态副本只读恢复 Registry/Agent/Task/权限,禁止真实外部副作用(prepared→migrating→validating)"
+            registry -> bus "2. 健康检查通过 → 取得单写者租约,原子切换 active(committing→active);发布 generation.changed"
+            bus -> executor "3. v1 = draining:排空或取消旧请求;未完成回合标记 interrupted,由新代际按恢复规则继续"
+            l0 -> cli "4. 停止 v1 并保留回滚材料;运行异常时回退 active 指针、恢复 v1、记录 rollback.completed(rolled_back);升级事务状态归 L0 持久化"
+        }
+
+        deployment boenmind "阶段一(单进程)" "Deployment-Phase1" "阶段一:一个跨平台软件,Runtime Core/Provider/Surface 可为同一进程内的逻辑模块;L0 独立控制面与系统级热升级不在阶段一范围(基线 §1.1/§21)。" {
+            include *
+            autolayout tb
+        }
+
+        deployment boenmind "阶段二(多进程)" "Deployment-Phase2" "阶段二演进模型:L0 独立控制面监督各进程,App/Provider 拥有独立崩溃隔离与热替换边界(基线 §4.3/§21);只有独立进程才具备真正的独立崩溃隔离和热替换能力。" {
+            include *
+            autolayout tb
+        }
+
+        styles {
+            element "Person" {
+                background "#08427b"
+                color "#ffffff"
+                shape Person
+            }
+            element "External" {
+                background "#999999"
+                color "#ffffff"
+            }
+            element "ControlPlane" {
+                background "#2d2d44"
+                color "#ffffff"
+            }
+            element "Contract" {
+                background "#1168bd"
+                color "#ffffff"
+                border Dashed
+            }
+            element "RuntimeCore" {
+                background "#438dd5"
+                color "#ffffff"
+            }
+            element "Provider" {
+                background "#0f7b6c"
+                color "#ffffff"
+            }
+            element "App" {
+                background "#b45309"
+                color "#ffffff"
+            }
+            element "Surface" {
+                background "#2e7d32"
+                color "#ffffff"
+            }
+        }
+    }
+}

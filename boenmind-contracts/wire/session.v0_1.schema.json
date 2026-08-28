@@ -1,0 +1,102 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "boenmind:wire:session:v0.1",
+  "title": "Session 方法参数与结果 v0.1",
+  "description": "M1 的 Session 绑定恰好一个 Agent（基线 2：Session 是 Surface 与 Agent 间可恢复交互上下文）。close 只关会话，不取消进行中的回合。",
+  "definitions": {
+    "agent_spec": {
+      "type": "object",
+      "required": ["name", "model_chain"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "model_chain": {
+          "type": "array", "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-_.]{0,62}$" },
+          "minItems": 1, "maxItems": 4,
+          "description": "降级链，按序尝试（基线 5.4 / M1.7）"
+        },
+        "budget": { "$ref": "boenmind:budget:v0.1#/definitions/budget" }
+      }
+    },
+    "cursor": {
+      "type": "object",
+      "required": ["event_seq"],
+      "additionalProperties": false,
+      "properties": { "event_seq": { "type": "integer", "minimum": 0 } }
+    }
+  },
+  "session.create": {
+    "params": { "type": "object", "required": ["agent"], "additionalProperties": false, "properties": { "agent": { "$ref": "#/definitions/agent_spec" } } },
+    "result": {
+      "type": "object",
+      "required": ["session_id", "agent_id", "created_at", "resume_cursor"],
+      "additionalProperties": false,
+      "properties": {
+        "session_id": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/id" },
+        "agent_id": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/id" },
+        "created_at": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/timestamp" },
+        "resume_cursor": { "$ref": "#/definitions/cursor" }
+      }
+    }
+  },
+  "session.resume": {
+    "description": "进程重启后按持久状态恢复会话；since_seq 之后的事件在 result.events 中补发（基线 14.2）。",
+    "params": {
+      "type": "object", "required": ["session_id"], "additionalProperties": false,
+      "properties": {
+        "session_id": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/id" },
+        "since_seq": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": ["session_state", "agent_state", "last_event_seq", "events"],
+      "additionalProperties": false,
+      "properties": {
+        "session_state": { "enum": ["created", "active", "detached"] },
+        "agent_state": { "enum": ["created", "starting", "running", "waiting_model", "stopping", "stopped", "failed", "cancelled", "interrupted", "resuming"] },
+        "last_event_seq": { "type": "integer" },
+        "events": { "type": "array", "items": { "$ref": "boenmind:wire:envelope:v0.1#/event_envelope" } }
+      }
+    }
+  },
+  "session.close": {
+    "params": {
+      "type": "object", "required": ["session_id"], "additionalProperties": false,
+      "properties": {
+        "session_id": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/id" },
+        "reason": { "type": "string", "maxLength": 200 }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": ["closed_at", "agent_final_state"],
+      "additionalProperties": false,
+      "properties": {
+        "closed_at": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/timestamp" },
+        "agent_final_state": { "type": "string", "description": "进行中的回合不被取消，仅脱离（INV-6）" }
+      }
+    }
+  },
+  "events.poll": {
+    "description": "M1 用拉取代替订阅流；消费位点 = event_seq，重复拉取由消费者去重（基线 8.3）。",
+    "params": {
+      "type": "object", "required": ["session_id", "since_seq"], "additionalProperties": false,
+      "properties": {
+        "session_id": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/id" },
+        "since_seq": { "type": "integer", "minimum": 0 },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 1000, "default": 100 }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": ["events", "last_seq", "has_more"],
+      "additionalProperties": false,
+      "properties": {
+        "events": { "type": "array", "items": { "$ref": "boenmind:wire:envelope:v0.1#/event_envelope" } },
+        "last_seq": { "type": "integer" },
+        "has_more": { "type": "boolean" }
+      }
+    }
+  }
+}

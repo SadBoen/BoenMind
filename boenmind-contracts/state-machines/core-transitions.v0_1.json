@@ -1,0 +1,63 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "boenmind:state-machines:core:v0.1",
+  "title": "M1 状态迁移表（Operation / Session / Agent）",
+  "description": "每次迁移必须产生一条 operation.state.changed（对 operation）并携带 reason_code。guard 是机器可检查的前置条件表达式。不在表中的迁移一律非法。terminal 列出的状态不可再迁出（M1）。",
+  "machines": {
+    "operation": {
+      "states": ["not_started", "running", "succeeded", "failed", "cancelled", "timeout", "outcome_unknown", "interrupted"],
+      "terminal": ["succeeded", "failed", "cancelled", "timeout", "outcome_unknown"],
+      "transitions": [
+        { "from": "not_started",    "to": "running",         "guard": "dispatch_accepted" },
+        { "from": "not_started",    "to": "cancelled",       "guard": "explicit_cancel_before_dispatch" },
+        { "from": "running",        "to": "succeeded",       "guard": "result_recorded" },
+        { "from": "running",        "to": "failed",          "guard": "error_terminal_and_no_external_effect_possible" },
+        { "from": "running",        "to": "cancelled",       "guard": "explicit_cancel_and_no_external_effect_possible" },
+        { "from": "running",        "to": "timeout",         "guard": "deadline_exceeded AND effect_class IN [read-only, low-risk-command]" },
+        { "from": "running",        "to": "outcome_unknown", "guard": "(deadline_exceeded OR crash OR cancel) AND effect_class IN [reversible-command, external-side-effect, high-risk-command]" },
+        { "from": "running",        "to": "interrupted",     "guard": "runtime_crash_before_terminal" },
+        { "from": "interrupted",    "to": "running",         "guard": "recovery_replay_ok" },
+        { "from": "interrupted",    "to": "cancelled",       "guard": "user_ruling" },
+        { "from": "outcome_unknown","to": "succeeded",       "guard": "external_verification OR user_ruling", "note": "仅恢复流程可进入，禁止普通重试逻辑触发（基线 9.5/20）" },
+        { "from": "outcome_unknown","to": "failed",          "guard": "external_verification OR user_ruling" }
+      ]
+    },
+    "session": {
+      "states": ["created", "active", "detached", "closed"],
+      "terminal": ["closed"],
+      "transitions": [
+        { "from": "created",  "to": "active",   "guard": "surface_attached" },
+        { "from": "active",   "to": "detached", "guard": "surface_disconnected", "note": "断开不取消进行中的 Operation（基线 7/14.2）" },
+        { "from": "detached", "to": "active",   "guard": "session_resume" },
+        { "from": "created",  "to": "closed",   "guard": "session_close" },
+        { "from": "active",   "to": "closed",   "guard": "session_close" },
+        { "from": "detached", "to": "closed",   "guard": "session_close" }
+      ]
+    },
+    "agent": {
+      "states": ["created", "starting", "running", "waiting_model", "stopping", "stopped", "failed", "cancelled", "interrupted", "resuming"],
+      "terminal": ["stopped", "failed", "cancelled"],
+      "m1_subset_note": "waiting_input/waiting_approval/waiting_tool 在 M4+ 增发，字段已在基线 3 预留，此处不加状态不加边",
+      "transitions": [
+        { "from": "created",       "to": "starting",      "guard": "agent_start" },
+        { "from": "created",       "to": "cancelled",     "guard": "explicit_cancel" },
+        { "from": "starting",      "to": "running",       "guard": "model_binding_ready" },
+        { "from": "starting",      "to": "failed",        "guard": "init_error" },
+        { "from": "running",       "to": "waiting_model", "guard": "model_invoke_issued" },
+        { "from": "waiting_model", "to": "running",       "guard": "model_response_ok" },
+        { "from": "waiting_model", "to": "failed",        "guard": "model_chain_exhausted OR budget_exceeded" },
+        { "from": "waiting_model", "to": "stopping",      "guard": "explicit_cancel" },
+        { "from": "running",       "to": "stopping",      "guard": "explicit_cancel" },
+        { "from": "running",       "to": "failed",        "guard": "unrecoverable_error" },
+        { "from": "stopping",      "to": "stopped",       "guard": "turn_boundary_reached" },
+        { "from": "stopping",      "to": "interrupted",   "guard": "runtime_crash_during_stop" },
+        { "from": "starting",      "to": "interrupted",   "guard": "runtime_crash" },
+        { "from": "running",       "to": "interrupted",   "guard": "runtime_crash" },
+        { "from": "waiting_model", "to": "interrupted",   "guard": "runtime_crash" },
+        { "from": "interrupted",   "to": "resuming",      "guard": "restart_recovery" },
+        { "from": "resuming",      "to": "running",       "guard": "replay_ok" },
+        { "from": "resuming",      "to": "stopped",       "guard": "replay_ok AND turn_was_stopping" }
+      ]
+    }
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "boenmind:logs:execution-log-entry:v0.1",
+  "title": "Execution Log 条目 v0.1",
+  "description": "Execution Log 回答'Agent 具体做了什么'（基线 8.4）。与 Event Log 分离：Event Log 记事实，本日志记过程。log_seq 由日志写者单调分配，仅在本日志内排序。",
+  "type": "object",
+  "required": ["log_seq", "ts", "kind", "session_id", "agent_id", "operation_id", "state", "detail"],
+  "additionalProperties": false,
+  "properties": {
+    "log_seq": { "type": "integer", "minimum": 1 },
+    "ts": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/timestamp" },
+    "kind": {
+      "enum": ["agent.turn", "model.invocation", "budget.check", "error"],
+      "description": "M1 范围；context.compaction 在引入长对话压缩时增发（基线 5.4）"
+    },
+    "session_id": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/id" },
+    "agent_id": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/id" },
+    "operation_id": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/id" },
+    "request_id": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/id" },
+    "state": { "type": "string", "description": "写入该条目时的 Agent 状态" },
+    "secret_scan": { "const": "passed", "description": "写盘前脱敏管线检查标记（INV-5）" },
+    "detail": {
+      "type": "object",
+      "description": "按 kind 变化：agent.turn 携带 turn_index 与输入摘要；model.invocation 携带 model_id/attempt/usage/latency/stream_interrupted；budget.check 携带 accounting_record；error 携带 error_code 与脱敏 message",
+      "additionalProperties": true
+    }
+  }
+}

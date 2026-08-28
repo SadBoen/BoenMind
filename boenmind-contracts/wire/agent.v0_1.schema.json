@@ -1,0 +1,74 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "boenmind:wire:agent:v0.1",
+  "title": "Agent 方法与执行收据 v0.1",
+  "description": "Agent 回合是可追踪执行：发起即产生 operation_id 与收据（基线 9.5）。M1 的 Agent 无工具、无审批、无 Task。",
+  "definitions": {
+    "receipt": {
+      "type": "object",
+      "required": ["operation_id", "request_id", "principal", "task_type", "state", "created_at", "action_summary"],
+      "additionalProperties": false,
+      "properties": {
+        "operation_id": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/id" },
+        "request_id": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/id" },
+        "principal": { "const": "user", "description": "M1 仅本地用户身份；M4 起扩展 principal 体系（基线 4.4）" },
+        "task_type": { "const": "agent.turn" },
+        "state": { "enum": ["not_started", "running", "succeeded", "failed", "cancelled", "timeout", "outcome_unknown", "interrupted"] },
+        "created_at": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/timestamp" },
+        "completed_at": { "type": ["string", "null"], "format": "date-time", "description": "终态前为 null" },
+        "action_summary": { "type": "string", "maxLength": 300 },
+        "result_reference": {
+          "type": ["object", "null"],
+          "required": ["kind", "ref"],
+          "properties": {
+            "kind": { "const": "execution_log" },
+            "ref": { "type": "string" }
+          }
+        },
+        "error": {
+          "oneOf": [
+            { "type": "null", "description": "非 failed/outcome_unknown 终态时为 null" },
+            { "$ref": "boenmind:wire:envelope:v0.1#/definitions/error" }
+          ]
+        }
+      }
+    }
+  },
+  "agent.send_input": {
+    "params": {
+      "type": "object", "required": ["session_id", "agent_id", "content", "input_trust"], "additionalProperties": false,
+      "properties": {
+        "session_id": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/id" },
+        "agent_id": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/id" },
+        "content": { "type": "string", "minLength": 1, "maxLength": 100000 },
+        "input_trust": { "enum": ["trusted"], "description": "M1 只接受用户直接输入；untrusted 分级门控随 Capability 引入（基线 4.5），字段现在冻结" }
+      }
+    },
+    "result": { "$ref": "#/definitions/receipt" }
+  },
+  "agent.cancel": {
+    "description": "显式取消；在模型调用中收到取消则中止回合，回合边界落定状态。",
+    "params": {
+      "type": "object", "required": ["session_id", "agent_id", "operation_id"], "additionalProperties": false,
+      "properties": {
+        "session_id": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/id" },
+        "agent_id": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/id" },
+        "operation_id": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/id" }
+      }
+    },
+    "result": {
+      "type": "object", "required": ["accepted", "operation_id"], "additionalProperties": false,
+      "properties": {
+        "accepted": { "const": true },
+        "operation_id": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/id" }
+      }
+    }
+  },
+  "operations.get": {
+    "params": {
+      "type": "object", "required": ["operation_id"], "additionalProperties": false,
+      "properties": { "operation_id": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/id" } }
+    },
+    "result": { "$ref": "#/definitions/receipt" }
+  }
+}
