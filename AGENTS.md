@@ -7,9 +7,9 @@ BoenMind:个人生态的 AI Runtime / AI OS,当前为**阶段一(跨平台单软
 对照验证(Erlang/OTP、Kubernetes、VS Code,见 `architecture/deepwiki-validation.md`)。
 合同库已冻结 v1.0(字段只增不破)。
 
-**当前进度:M1 进行中(2026-08-29 开工)——《M1 实现规格》已冻结 v1.0
-(`milestones/M1-implementation-spec.md`,裁决 D1-D3 定案,合同解读条款见 §8),
-按 T0-T10 任务分解实现中。远程:github.com/SadBoen/BoenMind(公开)。**
+**当前进度:M1 完成(2026-08-29,回看裁决 passed_with_conditions,
+条件=CI 三平台矩阵全绿后关闭)。下一步 = M2:持久化/事件日志/崩溃恢复——
+开工前结算 ADR-0003/0004 相关验收条件(含 S4 混沌测试四项)。**
 
 ## 文件地图(规格分层,基线 §0)
 
@@ -40,7 +40,7 @@ runtime/                        第 3 层  源代码(M1 起,Rust workspace;crate
 
 - [x] M0 范围/合同/测试基线(2026-08-28,tag `m0.2-contracts-frozen`)
 - [x] 2026-08-29 ADR-0009 部署形态裁决:VPS 托管 + Web/交互式 TUI Surface + Windows Tauri 壳(受限解除「无远程访问」;M3 增 HTTP 传输+鉴权合同,M8 增 Web UI v1 与 Tauri 壳)
-- [ ] **M1 最小 Runtime 与单 Agent 闭环 ← 当前**
+- [x] **M1 最小 Runtime 与单 Agent 闭环(2026-08-29,tag `m1-runtime-loop`;规格 `milestones/M1-implementation-spec.md`,回看 `milestones/M1-review.md`,50 测试全绿,GT-01 两场景可回放)**
 - [ ] M2 持久化/事件日志/崩溃恢复(开工前结算 ADR-0003/0004 相关验收条件)
 - [ ] M4 Capability/Broker/权限审批(开工前结算 ADR-0001/0002 相关验收条件)
 - [ ] M3/M5-M8 见基线 §18;33 项验收条件的分布见各 ADR「条件与验收」
