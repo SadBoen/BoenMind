@@ -6,3 +6,6 @@ __pycache__/
 .DS_Store
 *.swp
 *~
+
+# ZCode 会话本地工件(计划草稿等),不入库
+.zcode/
