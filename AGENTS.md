@@ -7,8 +7,9 @@ BoenMind:个人生态的 AI Runtime / AI OS,当前为**阶段一(跨平台单软
 对照验证(Erlang/OTP、Kubernetes、VS Code,见 `architecture/deepwiki-validation.md`)。
 合同库已冻结 v1.0(字段只增不破)。
 
-**当前进度:M0 完成(2026-08-28)。下一步 = M1:最小 Runtime 与单 Agent 闭环——
-先写《M1 实现规格》(技术栈、仓库结构、CI),再写代码。规格属于第 2 层,开工时写,不预写。**
+**当前进度:M1 进行中(2026-08-29 开工)——《M1 实现规格》已冻结 v1.0
+(`milestones/M1-implementation-spec.md`,裁决 D1-D3 定案,合同解读条款见 §8),
+按 T0-T10 任务分解实现中。远程:github.com/SadBoen/BoenMind(公开)。**
 
 ## 文件地图(规格分层,基线 §0)
 
