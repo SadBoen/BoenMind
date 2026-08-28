@@ -1,11 +1,11 @@
 # BoenMind 合同工件库（Layer 1）
 
 > 本文不是架构文档。架构原则见《BoenMind 核心架构基线》；这里是基线 M0.2 所说的
-> "可机器校验合同"的实际载体。当前为 **M1 范围示范**，版本 v0.1（未冻结草稿）。
+> "可机器校验合同"的实际载体。当前为 **M1 范围**，版本 **v1.0（2026-08-28 冻结，M0.2 交付）**。
 >
 > **这不是项目源代码，也不只是校验器。**本目录是规格层：真正的源代码（Rust
 > Runtime Core 等）尚不存在，将由 AI 实现者按本目录的 schema、迁移表、黄金轨迹
-> 和不变量编写，并接受它们的验收。validate.py 只是本目录 13 个文件中的 1 个——
+> 和不变量编写，并接受它们的验收。validate.py 只是本目录 17 个文件中的 1 个——
 > 它现在校验合同自身的一致性；实现开始后，在校验实现是否符合合同（进 CI）。
 
 ## 在规格分层中的位置
@@ -49,6 +49,12 @@ v0.x  草稿，可在里程碑回看时修订
 扩展错误码/事件类型：新增命名空间条目，不改既有条目
 ```
 
+> **冻结记录（2026-08-28）**：M1 范围内 9 个 JSON 合同自本日起冻结为 v1.0——
+> 每个 JSON 顶部带 `"x-frozen": "2026-08-28"` 机器可读注解。文件名与 `$id` 中的
+> `v0.1` 后缀**保持不变**（作为谱系标识，避免破坏跨文件 `$ref` 与黄金轨迹引用），
+> 内容版本以本记录为准。自冻结之日起：删字段/改字段名/改字段语义 = Major，
+> 新增可选字段 = Minor，修错别字与描述 = Patch（基线 §13.5 分级同样适用于本库）。
+
 ## 当前范围（M1）
 
 M1 = 最小 Runtime 与单 Agent 闭环：无 Capability（M4）、无 Approval（M4）、
@@ -68,6 +74,11 @@ registry/runtime-events.v0_1.json         运行时事件注册表
 state-machines/core-transitions.v0_1.json Operation/Session/Agent 迁移表
 golden-traces/M1-GT-01-single-agent-turn.md  黄金轨迹（含成功与超时两条场景）
 invariants/M1-invariants.md               不变量断言清单
+
+m0/test-matrix.v0_1.md                    三平台测试矩阵（M0.3）
+m0/prompt-injection-cases.v0_1.md         提示注入用例集（M0.4）
+m0/threat-model.v0_1.md                   威胁模型与数据信任分级（M0.5）
+m0/perf-baseline.v0_1.md                  性能与资源基线定标骨架（M0.6，数值由 M1 回填）
 ```
 
 ## 约定

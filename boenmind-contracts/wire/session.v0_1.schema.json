@@ -1,6 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "boenmind:wire:session:v0.1",
+  "x-frozen": "2026-08-28",
   "title": "Session 方法参数与结果 v0.1",
   "description": "M1 的 Session 绑定恰好一个 Agent（基线 2：Session 是 Surface 与 Agent 间可恢复交互上下文）。close 只关会话，不取消进行中的回合。",
   "definitions": {

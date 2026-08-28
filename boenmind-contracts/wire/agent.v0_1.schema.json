@@ -1,6 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "boenmind:wire:agent:v0.1",
+  "x-frozen": "2026-08-28",
   "title": "Agent 方法与执行收据 v0.1",
   "description": "Agent 回合是可追踪执行：发起即产生 operation_id 与收据（基线 9.5）。M1 的 Agent 无工具、无审批、无 Task。",
   "definitions": {

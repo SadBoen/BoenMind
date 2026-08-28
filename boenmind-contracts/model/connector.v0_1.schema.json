@@ -1,6 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "boenmind:model:connector:v0.1",
+  "x-frozen": "2026-08-28",
   "title": "模型连接器合同 v0.1",
   "description": "模型调用是 Provider 合同而非内核特权（基线 2.3/5.4）。本合同是连接器实现的全部边界：实现可替换，合同不破。invoke 是 Runtime 内部调用，不走 Wire API。",
   "definitions": {

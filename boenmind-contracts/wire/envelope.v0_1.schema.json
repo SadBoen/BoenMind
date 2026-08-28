@@ -1,6 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "boenmind:wire:envelope:v0.1",
+  "x-frozen": "2026-08-28",
   "title": "Wire API 信封 v0.1",
   "description": "传输无关的请求/响应信封（基线 7 的关联字段由此承载）。M1 方法集合：session.create / session.resume / session.close / events.poll / agent.send_input / agent.cancel / operations.get。",
   "definitions": {

@@ -1,6 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "boenmind:state-machines:core:v0.1",
+  "x-frozen": "2026-08-28",
   "title": "M1 状态迁移表（Operation / Session / Agent）",
   "description": "每次迁移必须产生一条 operation.state.changed（对 operation）并携带 reason_code。guard 是机器可检查的前置条件表达式。不在表中的迁移一律非法。terminal 列出的状态不可再迁出（M1）。",
   "machines": {

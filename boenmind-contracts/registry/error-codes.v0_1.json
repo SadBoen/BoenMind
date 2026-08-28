@@ -1,6 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "boenmind:registry:error-codes:v0.1",
+  "x-frozen": "2026-08-28",
   "title": "BoenMind 错误码注册表 v0.1",
   "description": "核心码封闭（基线 9.8）。扩展码格式 <namespace>.<extension>，须在扩展注册表中声明，不得与核心码冲突。available_since 标记该码最早可出现的里程碑。",
   "codes": [

@@ -1,6 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "boenmind:budget:v0.1",
+  "x-frozen": "2026-08-28",
   "title": "Budget 对象 v0.1",
   "description": "挂在 Agent 上的预算合同对象。核心维度 M1 只启用两个，结构开放：新增维度以键值对追加，老版本必须忽略未知键（基线 9.7）。",
   "definitions": {

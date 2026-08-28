@@ -1,6 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "boenmind:logs:execution-log-entry:v0.1",
+  "x-frozen": "2026-08-28",
   "title": "Execution Log 条目 v0.1",
   "description": "Execution Log 回答'Agent 具体做了什么'（基线 8.4）。与 Event Log 分离：Event Log 记事实，本日志记过程。log_seq 由日志写者单调分配，仅在本日志内排序。",
   "type": "object",
