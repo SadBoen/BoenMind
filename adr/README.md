@@ -16,3 +16,4 @@
 | [ADR-0006](ADR-0006-permission-by-contract.md) | 权限以合同显式化(元原则) | accepted | 未列入合同的权力视为不存在 |
 | [ADR-0007](ADR-0007-l0-bootstrap-exemption.md) | L0 自举豁免与升级信任链 | accepted-with-conditions | L0 是唯一显式自举豁免体,豁免清单冻结 |
 | [ADR-0008](ADR-0008-architecture-as-code-validation.md) | 架构即代码与外部实证验证 | accepted | C4 DSL 为唯一权威;C1-C8 验证成立;S1-S10 proposed |
+| [ADR-0009](ADR-0009-deployment-and-surface.md) | 部署形态与 Surface 策略 | accepted-with-conditions | VPS 托管+Web/交互式 TUI Surface+Windows 壳;受限解除「无远程访问」 |

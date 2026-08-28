@@ -14,7 +14,7 @@ BoenMind:个人生态的 AI Runtime / AI OS,当前为**阶段一(跨平台单软
 
 ```text
 BoenMind-CORE-ARCHITECTURE.md   第 0 层  架构基线:原则/边界/不变量;§17 七条核心裁决;§18 里程碑;§19 回看制度
-adr/                            第 0 层  架构决策记录(ADR-0001..0008;基线正文与 ADR 冲突时,以更新的 ADR 为准)
+adr/                            第 0 层  架构决策记录(ADR-0001..0009;基线正文与 ADR 冲突时,以更新的 ADR 为准)
 architecture/                   第 0 层  C4 模型 boenmind.c4(拓扑唯一权威)+ 辩论转录(debates/)+ 验证报告
 boenmind-contracts/             第 1 层  机器可读合同(v1.0 冻结)+ validate.py 校验器 + m0/ 测试基准
 milestones/                     第 2 层  里程碑实现规格与回看记录(M1 起建)
@@ -38,6 +38,7 @@ runtime/                        第 3 层  源代码(M1 起,Rust workspace;crate
 ## 进度
 
 - [x] M0 范围/合同/测试基线(2026-08-28,tag `m0.2-contracts-frozen`)
+- [x] 2026-08-29 ADR-0009 部署形态裁决:VPS 托管 + Web/交互式 TUI Surface + Windows Tauri 壳(受限解除「无远程访问」;M3 增 HTTP 传输+鉴权合同,M8 增 Web UI v1 与 Tauri 壳)
 - [ ] **M1 最小 Runtime 与单 Agent 闭环 ← 当前**
 - [ ] M2 持久化/事件日志/崩溃恢复(开工前结算 ADR-0003/0004 相关验收条件)
 - [ ] M4 Capability/Broker/权限审批(开工前结算 ADR-0001/0002 相关验收条件)

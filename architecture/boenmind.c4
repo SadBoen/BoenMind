@@ -2,10 +2,12 @@ workspace "BoenMind" "面向个人软件生态的 AI Runtime/AI 操作系统—�
 
     model {
         user = person "个人用户" "BoenMind 的唯一使用者;单用户、单设备、本地优先,无账号体系。"
+        browser = softwareSystem "用户浏览器" "用户设备上的现代浏览器:无状态 Surface 呈现层,经 TLS+令牌访问 Web Surface(ADR-0009);不保存任何任务状态。" "External,Web"
 
         boenmind = softwareSystem "BoenMind Runtime" "统一的 AI Runtime:Agent 生命周期、记忆与技能、能力注册、身份权限审批、App 间受控通信、多 Agent 协作、插件热替换与故障恢复;前端形态(Chat/CLI/语音/通知)全部解耦为可替换 Surface。" {
 
             chat = container "Tauri Chat Surface" "图形交互界面:创建/接管 Task、提交审批决定;不拥有 Agent,可被 CLI 接管同一 Task。" "Tauri Desktop" "L5,Surface"
+            webui = container "Web Surface" "网页交互界面:创建/接管 Task、提交审批、watch 观察任务流;与 Tauri 桌面壳共用同一前端代码库(ADR-0009);经 TLS+令牌访问,不绕过 Broker。" "Web App (TypeScript)" "L5,Surface"
             cli = container "CLI Surface" "标准命令行 Surface(boenmind):用户操作面(task/agent/approval)+ 受限运行控制面(runtime status/upgrade/rollback);无 GUI 时的人类控制入口,不绕过 Broker。" "Rust CLI" "L5,Surface"
             voice = container "Voice Surface" "语音交互适配器;与其他 Surface 共享同一 Surface Protocol。" "语音适配器" "L5,Surface"
             notif = container "Notification Surface" "通知中心:审批提醒、异步结果推送;GUI 关闭时兜底。" "通知适配器" "L5,Surface"
@@ -106,6 +108,8 @@ workspace "BoenMind" "面向个人软件生态的 AI Runtime/AI 操作系统—�
         l0 -> registry "Supervisor 通告 Provider/Generation 状态变更(如标记 unavailable)"
         registry -> bus "在状态提交点发布 provider.changed / provider.crashed"
         l0 -> cli "L0 Control Protocol 响应(status/doctor/upgrade/rollback 结果)"
+        browser -> webui "HTTPS(TLS) + SSE/WebSocket;单用户令牌/passkey 鉴权(ADR-0009)"
+        user -> browser "经浏览器访问自管 VPS 上的 Runtime;访问端无状态"
 
         mailApp -> mailsvc "IMAP/SMTP;副作用返回收据(message-id)入 result_reference"
         stockApp -> stockserv "行情查询/下单;下单 = high-risk-command + 审批 + 外部收据"
@@ -133,6 +137,27 @@ workspace "BoenMind" "面向个人软件生态的 AI Runtime/AI 操作系统—�
             }
         }
 
+        deploymentEnvironment "阶段一变体(VPS托管)" {
+            deploymentNode "vps" "用户自管 Linux 服务器" "单进程 Runtime,默认 headless(ADR-0009)" {
+                containerInstance cli
+                containerInstance webui
+                containerInstance voice
+                containerInstance notif
+                containerInstance l2core
+                containerInstance butler
+                containerInstance mailApp
+                containerInstance stockApp
+                containerInstance musicApp
+                containerInstance wikiApp
+                containerInstance audio
+                containerInstance fsProvider
+                containerInstance mcp
+                containerInstance timerProvider
+            }
+            deploymentNode "user-device" "任意现代浏览器" "无状态访问端" {
+                softwareSystemInstance browser
+            }
+        }
         deploymentEnvironment "阶段二(多进程)" {
             deploymentNode "个人电脑" "Windows/Linux/macOS" "跨平台单机" {
                 deploymentNode "boenmind-supervisor" "最小控制面,不依赖 L2 即可回滚" "L0 进程" {
@@ -236,6 +261,10 @@ workspace "BoenMind" "面向个人软件生态的 AI Runtime/AI 操作系统—�
         }
 
         deployment boenmind "阶段一(单进程)" "Deployment-Phase1" "阶段一:一个跨平台软件,Runtime Core/Provider/Surface 可为同一进程内的逻辑模块;L0 独立控制面与系统级热升级不在阶段一范围(基线 §1.1/§21)。" {
+            include *
+            autolayout tb
+        }
+        deployment boenmind "阶段一变体(VPS托管)" "Deployment-VPS" "ADR-0009:单用户经浏览器访问自管 VPS 上的单进程 Runtime;访问端无状态,TLS+令牌鉴权。" {
             include *
             autolayout tb
         }

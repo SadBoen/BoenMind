@@ -52,6 +52,8 @@ Agent 接到了什么任务？
 
 阶段一同时冻结一批非目标：单用户、单设备、本地优先，无账号体系；无多设备同步与远程访问；无用户可编程自动化规则引擎；无移动端 Surface；无插件市场（仅本地安装）；无跨能力自动事务。非目标不是永远不做，而是防止范围蔓延；解除某条非目标前，必须先检查它是否破坏既有合同与扩展点。
 
+> **ADR-0009 增补（2026-08-29）**：解除「无远程访问」的受限版本——Runtime 允许部署于用户自管的 Linux VPS，单用户经 TLS + 个人令牌/passkey 的网页 Surface 访问；仍无账号体系、无多用户、无多设备同步（访问端无状态，状态单一权威仍在 Runtime）、无移动端。「本地优先」修正为「私有部署优先（本机或自管 VPS）」。Surface 矩阵：CLI（脚本 JSON/JSONL + 交互式 TUI）与 Web UI 为阶段一交付 Surface；Tauri 仅作 Windows 桌面壳并复用 Web 前端同一代码库；不做 Linux/macOS 桌面壳。安全前置与里程碑落点见 ADR-0009 与威胁模型 T-13/T-14。
+
 ## 2. 核心对象边界
 
 必须严格区分以下概念：
@@ -1522,7 +1524,7 @@ GUI 不可用             → CLI 继续提供用户操作和运行控制
 
 CLI 对 L0 的运行控制请求走单独的 Control Protocol；对 L2 的用户操作请求仍走 Surface Protocol 和 Capability Broker。两条路径可以由同一个 `boenmind` 可执行文件提供，但合同、权限和审计边界必须保持分离。
 
-> **模型即代码（2026-08-28 起）**：本拓扑已重构为 Structurizr C4 DSL 工作区 `architecture/boenmind.c4`（经 structurizr-dsl 4.1.0 解析验证：66 元素、111 关系、11 视图），含系统上下文、容器、L2 组件三类静态视图，六个动态视图（§7 调用管线、§10.2 双路径、§22 端到端流、§13.1 热替换、§13.2 崩溃恢复、§13.4 代际升级），以及两个部署环境（阶段一单进程／阶段二多进程，对应 §2.1／§4.3／§21）。拓扑变更自本文档生效起一律先改模型、再改文字；文字图与模型不一致时，以模型为准（见 §24 与 ADR-0008）。
+> **模型即代码（2026-08-28 起）**：本拓扑已重构为 Structurizr C4 DSL 工作区 `architecture/boenmind.c4`（经 structurizr-dsl 4.1.0 解析验证：85 元素、128 关系、12 视图），含系统上下文、容器、L2 组件三类静态视图，六个动态视图（§7 调用管线、§10.2 双路径、§22 端到端流、§13.1 热替换、§13.2 崩溃恢复、§13.4 代际升级），以及三个部署环境（阶段一单进程／阶段一变体 VPS 托管／阶段二多进程，对应 §2.1／§4.3／§21；VPS 变体自 2026-08-29 ADR-0009 起）。拓扑变更自本文档生效起一律先改模型、再改文字；文字图与模型不一致时，以模型为准（见 §24 与 ADR-0008）。
 
 所有跨域调用统一经过：
 
@@ -1984,9 +1986,10 @@ Butler 向用户汇报，并保留可回放的工作记录
 | ADR-0006 | 权限以合同显式化（元原则） | accepted |
 | ADR-0007 | L0 自举豁免与升级信任链 | accepted-with-conditions |
 | ADR-0008 | 架构即代码与外部实证验证 | accepted |
+| ADR-0009 | 部署形态与 Surface 策略：VPS 托管／Web＋TUI Surface／Windows 桌面壳 | accepted-with-conditions |
 
 ## 24. 架构模型即代码与外部实证验证
 
-- **模型即代码**：全文架构图以 Structurizr C4 DSL 维护于 `architecture/boenmind.c4`（structurizr-dsl 4.1.0 解析验证通过；66 元素、111 关系、11 视图：SystemContext／Container／L2Components＋BrokerCall／ButlerPaths／TaskFlow／ProviderHotSwap／ProviderCrash／GenerationUpgrade 六个动态视图＋阶段一单进程／阶段二多进程两个部署环境）。任何 Structurizr 兼容渲染器导入即可出图；修改架构先改模型（ADR-0008）。
+- **模型即代码**：全文架构图以 Structurizr C4 DSL 维护于 `architecture/boenmind.c4`（structurizr-dsl 4.1.0 解析验证通过；85 元素、128 关系、12 视图：SystemContext／Container／L2Components＋BrokerCall／ButlerPaths／TaskFlow／ProviderHotSwap／ProviderCrash／GenerationUpgrade 六个动态视图＋阶段一单进程／阶段一变体 VPS 托管／阶段二多进程三个部署环境）。任何 Structurizr 兼容渲染器导入即可出图；修改架构先改模型（ADR-0008；VPS 部署环境自 ADR-0009 起）。
 - **外部实证验证**：以 DeepWiki 对照 Erlang/OTP、Kubernetes、VS Code 三个真实 runtime 系统验证 L0-L5 分层与插件热替换设计，报告见 `architecture/deepwiki-validation.md`——C1-C8 逐条裁决：热替换与崩溃隔离（C7/C8）确认，分层与合同化（C1-C6）部分确认，无偏差；单写者租约与验证期禁副作用为本设计独有加强。修订建议 S1-S10 全部列为 proposed，待对应里程碑回看裁决。
 - **辩论记录**：`architecture/debates/` 存有五条核心裁决的完整辩论转录（三方两轮+逐裁决合成）与跨裁决终局合成，是 §17.1 与全部 ADR 的证据底稿。

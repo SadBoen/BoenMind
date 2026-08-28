@@ -27,12 +27,13 @@ deepwiki-validation.md         Erlang/OTP、Kubernetes、VS Code 三系统对照
 | ProviderCrash | 动态 | §13.2 |
 | GenerationUpgrade | 动态 | §13.4/§13.7 |
 | Deployment-Phase1 | 部署(阶段一单进程) | §1.1/§21 |
+| Deployment-VPS | 部署(阶段一变体:VPS 托管,浏览器无状态访问) | §1.1 ADR-0009 增补/§21 |
 | Deployment-Phase2 | 部署(阶段二多进程) | §4.3/§21 |
 
 ## 验证与渲染
 
 ```text
-验证:structurizr-dsl 4.1.0 解析通过(66 元素 / 111 关系 / 11 视图)。
+验证:structurizr-dsl 4.1.0 解析通过(85 元素 / 128 关系 / 12 视图,2026-08-29 ADR-0009 起)。
      本仓库验证方式:Maven 引入 com.structurizr:structurizr-dsl,
      StructurizrDslParser.parse(new File("boenmind.c4")) 无异常即通过。
 渲染:任意 Structurizr 兼容渲染器(structurizr.com、on-premises、Ilograph 导出等)
