@@ -124,7 +124,8 @@ fn t24_rebuild_projection_is_deterministic_chaos3() {
             Some(sess.clone()),
             Some(agent.clone()),
             Some(op.clone()),
-            json!({"agent_id": a, "operation_id": o, "turn_index": 1}),
+            json!({"agent_id": a, "operation_id": o, "turn_index": 1,
+                   "content": "chaos3 回答"}),
         );
     }
 

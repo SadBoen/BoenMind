@@ -48,7 +48,7 @@ impl EventType {
             EventType::AgentStarted => &["agent_id"],
             EventType::AgentTurnStarted => &["agent_id", "operation_id", "turn_index"],
             EventType::AgentWaitingModel => &["agent_id", "operation_id", "model_id"],
-            EventType::AgentCompleted => &["agent_id", "operation_id", "turn_index"],
+            EventType::AgentCompleted => &["agent_id", "operation_id", "turn_index", "content"],
             EventType::AgentFailed => &["agent_id", "operation_id", "error_code"],
             EventType::AgentCancelled => &["agent_id", "operation_id"],
             EventType::AgentInterrupted => &["agent_id", "operation_id", "reason"],

@@ -87,6 +87,7 @@ enum TurnEvent {
         operation_id: BmId,
         model_id: String,
         attempt: u32,
+        content: String,
         usage_in: u64,
         usage_out: u64,
         latency_ms: u64,
@@ -1233,7 +1234,7 @@ fn spawn_turn(w: &mut World, agent: &Agent, operation_id: &BmId, content: String
 
             match resp {
                 InvokeResponse::Completed {
-                    content: _,
+                    content,
                     finish_reason: _,
                     usage,
                     model_id: mid,
@@ -1245,6 +1246,7 @@ fn spawn_turn(w: &mut World, agent: &Agent, operation_id: &BmId, content: String
                             operation_id: op_id.clone(),
                             model_id: mid,
                             attempt,
+                            content,
                             usage_in: usage.tokens_in,
                             usage_out: usage.tokens_out,
                             latency_ms,
@@ -1501,6 +1503,7 @@ fn handle_turn_event(w: &mut World, event: TurnEvent) {
             operation_id,
             model_id,
             attempt,
+            content,
             usage_in,
             usage_out,
             latency_ms,
@@ -1630,6 +1633,7 @@ fn handle_turn_event(w: &mut World, event: TurnEvent) {
                     "agent_id": agent_id.as_str(),
                     "operation_id": operation_id.as_str(),
                     "turn_index": turn_index,
+                    "content": content,
                 }),
             );
             w.in_flight.remove(&operation_id);

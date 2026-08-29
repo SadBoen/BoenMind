@@ -127,7 +127,8 @@ fn t29_corrupt_state_db_rebuilt_from_log_chaos2() {
     );
     push(
         EventType::AgentCompleted,
-        json!({"agent_id": a, "operation_id": o, "turn_index": 1}),
+        json!({"agent_id": a, "operation_id": o, "turn_index": 1,
+               "content": "重建场景的回答"}),
         Some(sess.clone()),
         Some(agent.clone()),
         Some(op.clone()),

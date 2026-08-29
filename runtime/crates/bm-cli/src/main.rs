@@ -235,6 +235,29 @@ fn main() {
                             std::thread::sleep(std::time::Duration::from_millis(100));
                         }
                         let _ = settled;
+                        // 显示回答内容(经 events.poll 取 agent.completed 载荷;
+                        // A4 边界:回答为模型输出,非外部不可信载荷)
+                        #[allow(clippy::collapsible_if)] // 三层条件各带日志语义
+                        if final_receipt["state"] == "succeeded" {
+                            if let Ok(events) = client.call(
+                                Method::EventsPoll,
+                                serde_json::json!({"session_id": session_id, "since_seq": 0, "limit": 1000}),
+                            ) {
+                                if let Some(content) = events["events"].as_array().and_then(|arr| {
+                                    arr.iter()
+                                        .rev()
+                                        .find(|e| {
+                                            e["type"] == "agent.completed"
+                                                && e["payload"]["operation_id"].as_str() == Some(op.as_str())
+                                        })
+                                        .and_then(|e| e["payload"]["content"].as_str())
+                                        .map(|s| s.to_string())
+                                }) {
+                                    println!("--- 回答 ---
+{content}");
+                                }
+                            }
+                        }
                         Ok(final_receipt)
                     }
                     Err(e) => Err(e),

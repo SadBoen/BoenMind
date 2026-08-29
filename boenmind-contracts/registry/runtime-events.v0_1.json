@@ -83,7 +83,8 @@
       "payload": {
         "agent_id": "id",
         "operation_id": "id",
-        "turn_index": "integer"
+        "turn_index": "integer",
+        "content": "string"
       }
     },
     {
