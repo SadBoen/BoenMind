@@ -5,10 +5,12 @@
 pub mod error;
 pub mod event_log;
 pub mod materialize;
+pub mod recovery;
 pub mod sqlite_state;
 pub mod store;
 
 pub use error::StoreError;
 pub use event_log::JsonlEventLog;
+pub use recovery::{RecoveryReport, WorldRows, load_rows, pending_operations, repair_tail};
 pub use sqlite_state::StateDb;
 pub use store::{EventStore, META_LAST_APPLIED, META_SNAPSHOT_SEQ, PersistStore};

@@ -15,6 +15,18 @@ pub trait EventStore: Send + Sync {
     /// 规范状态 → ③ 位点推进。任一步失败即整体失败,调用方必须拒绝命令。
     fn record(&self, event: &EventEnvelope) -> StoreResult<()>;
 
+    /// 启动恢复:修复位点之后的日志尾部(补物化),返回恢复报告。
+    fn recover(&self) -> StoreResult<crate::recovery::RecoveryReport>;
+
+    /// 未终态 operation 清点:(id, agent_id, state)。
+    fn pending_operations(&self) -> StoreResult<Vec<(String, String, String)>>;
+
+    /// 行装配(内存视图重建)。
+    fn load_rows(&self) -> StoreResult<crate::recovery::WorldRows>;
+
+    /// 单事件物化(恢复路径专用;写穿走 record)。
+    fn materialize_event(&self, event: &EventEnvelope) -> StoreResult<()>;
+
     /// ① 日志先行:追加事件并 flush。失败 = 本次命令失败(核心循环须拒绝,不可静默)。
     fn append(&self, event: &EventEnvelope) -> StoreResult<()>;
 
@@ -86,6 +98,28 @@ impl EventStore for PersistStore {
         // ② 物化 + ③ 位点,同一状态侧顺序
         self.state.materialize(event)?;
         self.mark_applied(event.event_seq)
+    }
+
+    fn recover(&self) -> StoreResult<crate::recovery::RecoveryReport> {
+        let replayed = crate::recovery::repair_tail(self)?;
+        let interrupted_recovered = crate::recovery::pending_operations(&self.state)?.len();
+        Ok(crate::recovery::RecoveryReport {
+            last_applied_seq: self.applied()?,
+            replayed,
+            interrupted_recovered,
+        })
+    }
+
+    fn pending_operations(&self) -> StoreResult<Vec<(String, String, String)>> {
+        crate::recovery::pending_operations(&self.state)
+    }
+
+    fn load_rows(&self) -> StoreResult<crate::recovery::WorldRows> {
+        crate::recovery::load_rows(&self.state)
+    }
+
+    fn materialize_event(&self, event: &EventEnvelope) -> StoreResult<()> {
+        self.state.materialize(event)
     }
 
     fn append(&self, event: &EventEnvelope) -> StoreResult<()> {

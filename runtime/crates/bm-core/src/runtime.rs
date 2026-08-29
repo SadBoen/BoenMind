@@ -147,6 +147,113 @@ struct World {
 }
 
 impl World {
+    /// 自规范状态行装配内存视图(M2 启动恢复,任务 T3)。
+    /// request_id 未持久化(事件流不承载):以 op 的 ULID 段确定性合成 req_ 前缀 ID,
+    /// 保证恢复幂等;action_summary/result_reference 为非持久展示字段,恢复后为占位。
+    pub fn load_world_rows(
+        &mut self,
+        rows: bm_persist::WorldRows,
+        pending_interrupts: &mut Vec<(BmId, BmId, String)>,
+    ) {
+        for s in rows.sessions {
+            let id = BmId::parse(s.id).expect("库内 session id 合法");
+            let state = SessionState::from_wire(&s.state).expect("库内 session 状态合法");
+            self.sessions.insert(
+                id.clone(),
+                Session {
+                    id: id.clone(),
+                    agent_id: BmId::parse(s.agent_id).expect("合法"),
+                    state,
+                    created_at: s.created_at,
+                },
+            );
+        }
+        for a in rows.agents {
+            let id = BmId::parse(a.id).expect("库内 agent id 合法");
+            let state = AgentState::from_wire(&a.state).expect("库内 agent 状态合法");
+            let chain: Vec<String> =
+                serde_json::from_str(&a.model_chain).expect("model_chain 为 JSON 数组");
+            let mut budget = crate::budget::BudgetState::new(
+                a.budget_max_tokens.map(|v| v as u64).unwrap_or(u64::MAX),
+                a.budget_max_turns.map(|v| v as u32).unwrap_or(u32::MAX),
+            );
+            budget.used_tokens = a.budget_used_tokens as u64;
+            budget.turns_used = a.budget_turns_used as u32;
+            self.agents.insert(
+                id.clone(),
+                Agent {
+                    id: id.clone(),
+                    session_id: BmId::parse(a.session_id).expect("合法"),
+                    name: a.name,
+                    model_chain: chain,
+                    state,
+                    budget,
+                },
+            );
+        }
+        for o in rows.operations {
+            let id = BmId::parse(o.id).expect("库内 operation id 合法");
+            let state = OperationState::from_wire(&o.state).expect("库内 operation 状态合法");
+            let request_id = match &o.request_id {
+                Some(r) => BmId::parse(r).expect("合法"),
+                None => BmId::from_parts("req", id.ulid_part()).expect("同段合成合法"),
+            };
+            let error = o.error_code.as_ref().map(|code| {
+                let code = ErrorCode::from_wire(code).unwrap_or(ErrorCode::Internal);
+                let mut e = WireError::new(code, "恢复自持久状态".to_string());
+                e.retryable = false;
+                e
+            });
+            let running = state == OperationState::Running;
+            self.operations.insert(
+                id.clone(),
+                Operation {
+                    id: id.clone(),
+                    request_id,
+                    session_id: BmId::parse(o.session_id).expect("合法"),
+                    agent_id: BmId::parse(o.agent_id).expect("合法"),
+                    state,
+                    turn_index: o.turn_index as u32,
+                    created_at: o.created_at,
+                    completed_at: o.completed_at,
+                    action_summary: o.action_summary.unwrap_or_default(),
+                    result_reference: o.result_reference.map(|r| wire::ResultReference {
+                        kind: wire::ResultRefKind::ExecutionLog,
+                        r#ref: r,
+                    }),
+                    error,
+                },
+            );
+            if running {
+                let agent_id = self.operations[&id].agent_id.clone();
+                pending_interrupts.push((id, agent_id, "running".into()));
+            }
+        }
+    }
+
+    /// 会话相关事件读取:有持久层走日志(跨进程历史完整),否则走内存总线。
+    fn events_for_session(
+        &self,
+        session_id: &BmId,
+        since: u64,
+        limit: u32,
+    ) -> (Vec<EventEnvelope>, u64, bool) {
+        if let Some(store) = &self.store {
+            let mut evs: Vec<EventEnvelope> = store
+                .replay_since(since)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|e| e.session_id.as_ref() == Some(session_id))
+                .collect();
+            let last = store.last_log_seq().unwrap_or(0);
+            let has_more = evs.len() > limit as usize;
+            evs.truncate(limit as usize);
+            (evs, last, has_more)
+        } else {
+            self.bus.poll(session_id, since, limit)
+        }
+    }
+
     fn now_ts(&self) -> bm_contract::BmTimestamp {
         format_ts(self.config.clock.now())
     }
@@ -274,7 +381,8 @@ pub struct RuntimeHandle {
 }
 
 impl RuntimeHandle {
-    /// 启动 Runtime:发 runtime.started 事件并进入核心循环。
+    /// 启动 Runtime:恢复持久状态(如配置了 store)→ runtime.started →
+    /// 中断清点的审计事件 → runtime.recovered,随后进入核心循环。
     pub async fn start(config: RuntimeConfig) -> Self {
         let (tx, rx) = mpsc::channel::<Cmd>(1024);
         let exec_log = Arc::new(ExecutionLog::new(config.data_dir.as_deref()));
@@ -295,6 +403,24 @@ impl RuntimeHandle {
             store: config.store.clone(),
             config,
         };
+
+        // T3 启动恢复:修复窗口 → 行装配 → 中断清点。恢复失败 = 拒绝启动
+        // (宁可拒开,不带残缺状态服务)。
+        let mut pending_interrupts: Vec<(BmId, BmId, String)> = Vec::new();
+        let mut report = None;
+        if let Some(store) = world.store.clone() {
+            let r = store.recover().expect("启动恢复失败,拒绝启动(宁可拒开)");
+            let rows = store.load_rows().expect("规范状态行装配失败,拒绝启动");
+            world.load_world_rows(rows, &mut pending_interrupts);
+            // seq 分配器重同步到持久日志末尾之后:跨重启 seq 连续(INV-3)
+            let log_last = r.last_applied_seq.max(store.last_log_seq().unwrap_or(0));
+            world.bus.resync_to(log_last + 1);
+            // 空库首启 = 新启动,不是恢复:不产生 runtime.recovered 噪音事件
+            if log_last > 0 {
+                report = Some(r);
+            }
+        }
+
         world.emit(
             EventType::RuntimeStarted,
             None,
@@ -306,6 +432,58 @@ impl RuntimeHandle {
                 "started_at": format_ts(world.started_at),
             }),
         );
+
+        // 中断清点(留审计事件,ADR-0004 恢复语义):崩溃时未终态的 operation
+        // 走 running→interrupted(runtime_crash_before_terminal);agent 走
+        // waiting_model/running→interrupted→resuming→running(无外部副作用,
+        // replay_ok 可安全续跑)。落地 M2.6 的 claim 前半段。
+        for (op_id, agent_id, op_state) in pending_interrupts.drain(..) {
+            if op_state == "running" {
+                world.settle_operation(&op_id, OperationState::Interrupted, None);
+            }
+            world.emit(
+                EventType::AgentInterrupted,
+                None,
+                Some(agent_id.clone()),
+                Some(op_id.clone()),
+                serde_json::json!({
+                    "agent_id": agent_id.as_str(),
+                    "operation_id": op_id.as_str(),
+                    "reason": "runtime_recovery",
+                }),
+            );
+            {
+                let a = world.agents.get_mut(&agent_id).expect("恢复行必有 agent");
+                a.transition(AgentState::Interrupted);
+                a.transition(AgentState::Resuming);
+                a.transition(AgentState::Running);
+            }
+            world.emit(
+                EventType::AgentResumed,
+                None,
+                Some(agent_id.clone()),
+                Some(op_id.clone()),
+                serde_json::json!({
+                    "agent_id": agent_id.as_str(),
+                    "operation_id": op_id.as_str(),
+                }),
+            );
+        }
+
+        if let Some(r) = report {
+            world.emit(
+                EventType::RuntimeRecovered,
+                None,
+                None,
+                None,
+                serde_json::json!({
+                    "last_applied_seq": r.last_applied_seq,
+                    "replayed": r.replayed,
+                    "interrupted_recovered": r.interrupted_recovered,
+                }),
+            );
+        }
+
         tokio::spawn(core_loop(world, rx));
         Self { tx }
     }
@@ -441,7 +619,11 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
         if world.stopped {
             match cmd {
                 Cmd::EventsAll { resp } => {
-                    let _ = resp.send(world.bus.events().to_vec());
+                    let events = match &world.store {
+                        Some(store) => store.replay_since(0).unwrap_or_default(),
+                        None => world.bus.events().to_vec(),
+                    };
+                    let _ = resp.send(events);
                 }
                 Cmd::GetOperation { params, resp } => {
                     let _ = resp.send(handle_get_operation(&world, params));
@@ -492,7 +674,11 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
                 let _ = resp.send(handle_get_operation(&world, params));
             }
             Cmd::EventsAll { resp } => {
-                let _ = resp.send(world.bus.events().to_vec());
+                let events = match &world.store {
+                    Some(store) => store.replay_since(0).unwrap_or_default(),
+                    None => world.bus.events().to_vec(),
+                };
+                let _ = resp.send(events);
             }
             Cmd::Stop { reason, resp } => {
                 handle_stop(&mut world, &mut rx, reason, resp).await;
@@ -610,7 +796,7 @@ fn handle_session_resume(
         return Err(CoreError::validation("session 已关闭,不可 resume"));
     }
     let since = params.since_seq.unwrap_or(0);
-    let (events, _last, _) = w.bus.poll(&params.session_id, since, u32::MAX);
+    let (events, _last, _) = w.events_for_session(&params.session_id, since, u32::MAX);
     let agent_state = w
         .agents
         .get(&session.agent_id)
@@ -682,7 +868,8 @@ fn handle_session_close(
 
 fn handle_events_poll(w: &World, params: EventsPollParams) -> CoreResult<EventsPollResult> {
     let limit = params.limit.unwrap_or(100).clamp(1, 1000);
-    let (events, last_seq, has_more) = w.bus.poll(&params.session_id, params.since_seq, limit);
+    let (events, last_seq, has_more) =
+        w.events_for_session(&params.session_id, params.since_seq, limit);
     Ok(EventsPollResult {
         events,
         last_seq,
@@ -1227,7 +1414,11 @@ async fn handle_stop(
                 let _ = resp.send(handle_get_operation(w, params));
             }
             Some(Cmd::EventsAll { resp }) => {
-                let _ = resp.send(w.bus.events().to_vec());
+                let events = match &w.store {
+                    Some(store) => store.replay_since(0).unwrap_or_default(),
+                    None => w.bus.events().to_vec(),
+                };
+                let _ = resp.send(events);
             }
             Some(other) => reply_unavailable(other),
             None => break,

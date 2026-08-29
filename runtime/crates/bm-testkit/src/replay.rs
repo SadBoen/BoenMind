@@ -117,6 +117,48 @@ impl TestRig {
     }
 }
 
+/// 在给定目录上启动 Runtime(不清理目录):跨进程恢复测试用。
+pub async fn rig_on(dir: &std::path::Path, script: Vec<Step>) -> TestRig {
+    let connector = Arc::new(MockConnector::new(script));
+    let secrets = Arc::new(MemSecretStore::with(
+        &bm_core::runtime::default_secret_ref(MODEL_A),
+        "sk-demo-zhipu-secret-value-001",
+    ));
+    secrets
+        .put(
+            &bm_core::runtime::default_secret_ref(MODEL_B),
+            "sk-demo-openai-secret-value-002",
+        )
+        .expect("内存存储写入成功");
+
+    let clock = Arc::new(MockClock::at_ms(1_787_952_900_098));
+    let ids = Arc::new(SeqIdGen::new());
+    let store: Arc<dyn bm_persist::EventStore> =
+        Arc::new(bm_persist::PersistStore::open(dir).expect("打开持久层"));
+
+    let config = RuntimeConfig {
+        version: "0.1.0-m1".into(),
+        data_dir: Some(dir.to_path_buf()),
+        store: Some(store),
+        connector: connector.clone(),
+        secret_store: secrets.clone(),
+        id_gen: ids.clone(),
+        clock: clock.clone(),
+        turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
+        max_attempts: None,
+    };
+    let handle = RuntimeHandle::start(config).await;
+    TestRig {
+        handle,
+        ids,
+        clock,
+        connector,
+        secrets,
+        _dir: None,
+        data_dir: Some(dir.to_path_buf()),
+    }
+}
+
 /// 组装一台确定性 Runtime(固定时钟起点、确定性 ID、脚本化模型)。
 pub async fn rig(script: Vec<Step>, budget: Option<(u64, u32)>, with_dir: bool) -> TestRig {
     let _ = budget; // 预算在 create_session 时给定;保留参数给未来变体

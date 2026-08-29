@@ -94,7 +94,9 @@ impl Operation {
             .map(|t| t.guard)
             .unwrap_or_else(|| panic!("表外迁移: operation {from:?} -> {to:?}"));
         self.state = to;
-        self.completed_at = Some(now);
+        if to.is_terminal() {
+            self.completed_at = Some(now);
+        }
         self.error = error;
         (from, to, guard)
     }

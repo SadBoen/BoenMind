@@ -11,6 +11,9 @@ const BROADCAST_CAPACITY: usize = 4096;
 pub struct EventBus {
     log: Vec<EventEnvelope>,
     tx: broadcast::Sender<EventEnvelope>,
+    /// seq 分配器。无持久层时与 log.len()+1 等价;有持久层时启动恢复后
+    /// resync_to(日志末尾+1),保证跨重启 seq 连续(INV-3)。
+    next_seq_counter: u64,
 }
 
 impl Default for EventBus {
@@ -25,23 +28,30 @@ impl EventBus {
         Self {
             log: Vec::new(),
             tx,
+            next_seq_counter: 1,
         }
+    }
+
+    /// 恢复路径:把 seq 分配器重同步到持久日志末尾之后(仅启动阶段调用)。
+    pub fn resync_to(&mut self, next_seq: u64) {
+        self.next_seq_counter = self.next_seq_counter.max(next_seq);
     }
 
     /// 追加一条事件(seq 已由调用方分配)。返回全局序号。
     pub fn append(&mut self, event: EventEnvelope) -> u64 {
         let seq = event.event_seq;
+        self.next_seq_counter = self.next_seq_counter.max(seq + 1);
         self.log.push(event.clone());
         let _ = self.tx.send(event);
         seq
     }
 
     pub fn next_seq(&self) -> u64 {
-        self.log.len() as u64 + 1
+        self.next_seq_counter
     }
 
     pub fn last_seq(&self) -> u64 {
-        self.log.len() as u64
+        self.next_seq_counter.saturating_sub(1)
     }
 
     pub fn events(&self) -> &[EventEnvelope] {

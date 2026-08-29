@@ -96,6 +96,20 @@ impl StateDb {
                     }
                     Ok(1)
                 }
+                EventType::AgentInterrupted => {
+                    conn.execute(
+                        "UPDATE agents SET state='interrupted' WHERE id=?1",
+                        [str_field(p, "agent_id")?],
+                    )?;
+                    Ok(1)
+                }
+                EventType::AgentResumed => {
+                    conn.execute(
+                        "UPDATE agents SET state='running' WHERE id=?1",
+                        [str_field(p, "agent_id")?],
+                    )?;
+                    Ok(1)
+                }
                 EventType::AgentCancelled => {
                     conn.execute(
                         "UPDATE agents SET state='stopped' WHERE id=?1",

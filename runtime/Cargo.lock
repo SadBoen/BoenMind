@@ -171,6 +171,7 @@ version = "0.1.0-m1"
 dependencies = [
  "bm-contract",
  "rusqlite",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror",
