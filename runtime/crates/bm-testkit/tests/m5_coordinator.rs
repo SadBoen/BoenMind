@@ -102,20 +102,19 @@ async fn t70_coordination_bootstrap_on_task_create() {
         .map(|e| e.payload.clone())
         .collect();
     let task_scope = format!("task:{}", created.task_id.as_str());
+    let coord_aud = format!("agent:coord:{}", created.task_id.as_str());
+    let worker_aud = format!("agent:worker:{}", created.task_id.as_str());
     let coord = grants
         .iter()
-        .filter(|g| g["audience"] == json!("agent:coordinator"))
+        .filter(|g| g["audience"] == json!(coord_aud))
         .count();
     let worker = grants
         .iter()
-        .filter(|g| g["audience"] == json!("agent:worker"))
+        .filter(|g| g["audience"] == json!(worker_aud))
         .count();
     assert_eq!(coord, 3, "每授权条目一枚 Coordinator Grant");
     assert_eq!(worker, 1, "capability.call 谓词逐枚 Worker Grant");
-    for g in grants
-        .iter()
-        .filter(|g| g["audience"] == json!("agent:worker"))
-    {
+    for g in grants.iter().filter(|g| g["audience"] == json!(worker_aud)) {
         println!(
             "DBG scope={} vs {task_scope} | action={} | depth={} | hash_len={}",
             g["scope"],
@@ -127,7 +126,7 @@ async fn t70_coordination_bootstrap_on_task_create() {
     assert!(
         grants
             .iter()
-            .filter(|g| g["audience"] == json!("agent:worker"))
+            .filter(|g| g["audience"] == json!(worker_aud))
             .all(|g| g["scope"] == json!(task_scope)
                 && g["action"] == json!("system.notes.write")
                 && g["delegation_depth"] == json!(0)
@@ -140,7 +139,7 @@ async fn t70_coordination_bootstrap_on_task_create() {
     assert!(
         grants
             .iter()
-            .filter(|g| g["audience"] == json!("agent:coordinator"))
+            .filter(|g| g["audience"] == json!(coord_aud))
             .all(|g| g["scope"] == json!(task_scope) && g["delegation_depth"] == json!(0)),
         "Coordinator Grant:task scope(签发者 issued_by 在持久行,不在事件键集)"
     );
@@ -185,14 +184,18 @@ async fn t71_worker_grant_direct_pass_and_terminal_revocation() {
         )
         .await
         .expect("task grant 直通");
-    assert_eq!(receipt["principal"], json!("agent:worker"));
+    assert_eq!(
+        receipt["principal"],
+        json!(format!("agent:worker:{}", created.task_id.as_str()))
+    );
     assert_eq!(receipt["state"], json!("succeeded"));
     let events = handle.events_all().await;
     assert!(
         events
             .iter()
             .any(|e| e.event_type == EventType::CapabilityInvoked
-                && e.payload["principal"] == json!("agent:worker")
+                && e.payload["principal"]
+                    == json!(format!("agent:worker:{}", created.task_id.as_str()))
                 && e.payload["outcome"] == json!("ok")),
         "审计归因:worker principal 的 capability.invoked"
     );

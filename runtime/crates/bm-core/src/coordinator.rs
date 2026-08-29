@@ -78,6 +78,8 @@ fn task_grant(
 pub fn intersection_grants(
     ids: &dyn IdGen,
     task_id: &str,
+    coord_audience: &str,
+    worker_audience: &str,
     authorization: &[TaskAuthorizationEntry],
     now: DateTime<chrono::Utc>,
     mut butler_verb_grant: impl FnMut(&str) -> Option<Grant>,
@@ -115,7 +117,7 @@ pub fn intersection_grants(
             let g = task_grant(
                 ids,
                 task_id,
-                COORDINATOR_PRINCIPAL,
+                coord_audience,
                 &entry.verb,
                 r.clone(),
                 sha256_hex(&serde_json::to_string(&parent).unwrap_or_default()),
@@ -137,7 +139,7 @@ pub fn intersection_grants(
                 let wg = task_grant(
                     ids,
                     task_id,
-                    WORKER_PRINCIPAL,
+                    worker_audience,
                     &capability,
                     r,
                     sha256_hex(&serde_json::to_string(&parent_call).unwrap_or_default()),
@@ -184,13 +186,16 @@ mod tests {
         let (coord, worker) = intersection_grants(
             &ids,
             "task_01JAAAAAAAAAAAAAAAAAAAAAB2",
+            &crate::team::coord_principal("task_01JAAAAAAAAAAAAAAAAAAAAAB2"),
+            &crate::team::worker_principal("task_01JAAAAAAAAAAAAAAAAAAAAAB2"),
             &authorization,
             clock.now(),
             butler_lookup,
         );
         // Coordinator:3 枚(每条目一枚)task scope Grant
         assert_eq!(coord.len(), 3);
-        assert!(coord.iter().all(|g| g.audience == COORDINATOR_PRINCIPAL
+        assert!(coord.iter().all(|g| g.audience
+            == crate::team::coord_principal("task_01JAAAAAAAAAAAAAAAAAAAAAB2")
             && matches!(g.scope, GrantScope::Task(_))
             && g.issued_by == crate::butler::BUTLER_PRINCIPAL
             && g.delegation_depth == 0));
@@ -204,7 +209,10 @@ mod tests {
         // Worker:恰 1 枚,action = 谓词能力,parent = Coordinator 的
         // capability.call Grant 内容哈希
         assert_eq!(worker.len(), 1);
-        assert_eq!(worker[0].audience, WORKER_PRINCIPAL);
+        assert_eq!(
+            worker[0].audience,
+            crate::team::worker_principal("task_01JAAAAAAAAAAAAAAAAAAAAAB2")
+        );
         assert_eq!(worker[0].action, "system.notes.write");
         let parent_call = coord
             .iter()
@@ -224,8 +232,15 @@ mod tests {
         let authorization = auth(json!([
             {"verb": "task.collect", "klass": "safe"}
         ]));
-        let (coord, worker) =
-            intersection_grants(&ids, "task_x", &authorization, clock.now(), butler_lookup);
+        let (coord, worker) = intersection_grants(
+            &ids,
+            "task_x",
+            &crate::team::coord_principal("task_x"),
+            &crate::team::worker_principal("task_x"),
+            &authorization,
+            clock.now(),
+            butler_lookup,
+        );
         assert_eq!(coord.len(), 1);
         assert!(worker.is_empty(), "无 capability.call 授权 = Worker 零授权");
     }
@@ -239,14 +254,21 @@ mod tests {
             {"verb": "agent.spawn", "klass": "mutation"}
         ]));
         // agent.spawn 的上界已撤销(Butler 查证返回 None)
-        let (coord, worker) =
-            intersection_grants(&ids, "task_x", &authorization, clock.now(), |verb| {
+        let (coord, worker) = intersection_grants(
+            &ids,
+            "task_x",
+            &crate::team::coord_principal("task_x"),
+            &crate::team::worker_principal("task_x"),
+            &authorization,
+            clock.now(),
+            |verb| {
                 if verb == "agent.spawn" {
                     None
                 } else {
                     butler_lookup(verb)
                 }
-            });
+            },
+        );
         assert_eq!(coord.len(), 1, "上界已撤销的动词不物化");
         assert_eq!(coord[0].action, "task.collect");
         assert!(worker.is_empty());

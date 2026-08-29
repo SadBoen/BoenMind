@@ -867,7 +867,7 @@ mod tests {
             conn.query_row("PRAGMA user_version", [], |r| r.get(0))
                 .unwrap()
         };
-        assert_eq!(version, 6);
+        assert_eq!(version, 7);
 
         // approvals:upsert + 状态过滤
         db.save_approval(ApprovalRow {
@@ -1060,6 +1060,8 @@ mod tests {
             id: "task_01JAAAAAAAAAAAAAAAAAAAAAB2",
             title: "整理读书笔记",
             state: "created",
+            parent_task_id: None,
+            delegation_depth: 0,
             created_by: "butler:system",
             task_epoch: 1,
             payload,
@@ -1071,6 +1073,8 @@ mod tests {
             id: "task_01JAAAAAAAAAAAAAAAAAAAAAB2",
             title: "整理读书笔记",
             state: "paused",
+            parent_task_id: None,
+            delegation_depth: 2,
             created_by: "butler:system",
             task_epoch: 2,
             payload,

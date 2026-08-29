@@ -854,6 +854,7 @@ fn task_object_validates() {
         "state": "running",
         "created_by": "butler:system",
         "task_epoch": 1,
+        "delegation_depth": 0,
         "authorization": [
             {"verb": "task.collect", "klass": "safe"},
             {"verb": "agent.spawn", "klass": "mutation"}

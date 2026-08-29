@@ -21,6 +21,7 @@ pub mod registry;
 pub mod runtime;
 pub mod state;
 pub mod task;
+pub mod team;
 pub mod watchdog;
 
 pub use approval::{ApprovalError, ApprovalManager, OpenApproval, RespondDecision};
@@ -41,4 +42,8 @@ pub use observation::{ObservationEntry, expect_satisfied};
 pub use registry::{BindingStatus, CapabilityDiscovery, CapabilityProvider, CapabilityRegistry};
 pub use runtime::{RuntimeConfig, RuntimeHandle};
 pub use task::{MemberRole, Task, TaskBoard, TaskBoardEntry, TaskError, TaskMember};
+pub use team::{
+    MAX_CONCURRENT_WORKERS, MAX_DELEGATION_DEPTH, authorization_subset, budget_ok, coord_principal,
+    depth_ok, max_tool_calls_of, worker_principal,
+};
 pub use watchdog::{REPEAT_THRESHOLD, ScanDecision, TaskWatch, WATCHDOG_TICK_MS, WatchdogState};

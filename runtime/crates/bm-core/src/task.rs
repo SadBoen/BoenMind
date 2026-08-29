@@ -77,6 +77,8 @@ pub struct Task {
 
 impl Task {
     /// 创建(created 态;启动迁移由调用方推进并各自落事件)。
+    /// #[allow]:参数与 Task 合同字段一一对应(压缩反损可读性)。
+    #[allow(clippy::too_many_arguments)]
     pub fn create(
         ids: &dyn IdGen,
         title: impl Into<String>,

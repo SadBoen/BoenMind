@@ -205,6 +205,26 @@ enum Cmd {
     WatchdogScan {
         resp: oneshot::Sender<CoreResult<usize>>,
     },
+    /// 追加 Worker 成员(M6.3;并发门禁)
+    TaskSpawnMember {
+        task_id: BmId,
+        resp: oneshot::Sender<CoreResult<serde_json::Value>>,
+    },
+    /// 委派子任务(M6.3/M6.5;深度/子集/预算/并发四门禁)
+    TaskSpawnSubtask {
+        params: SpawnSubtaskParams,
+        resp: oneshot::Sender<CoreResult<serde_json::Value>>,
+    },
+    /// 成员移除(M6.3;替换留痕)
+    TaskRemoveMember {
+        params: RemoveMemberParams,
+        resp: oneshot::Sender<CoreResult<serde_json::Value>>,
+    },
+    /// 结果收集(M6.6;来源/状态/关联 Operation)
+    TaskCollect {
+        task_id: BmId,
+        resp: oneshot::Sender<CoreResult<serde_json::Value>>,
+    },
     /// Worker 能力调用(M5 Agent 路径;task:<id> Grant 直通,无授权走审批)
     WorkerCall {
         request_id: BmId,
@@ -275,6 +295,32 @@ struct World {
     watchdog: crate::watchdog::WatchdogState,
     /// M5-T8:operation → capability(核验证据定位;内存索引,事件可重建)。
     op_capability: HashMap<BmId, String>,
+    /// M6:成员结果收集(task_id → 结果流水;来源/状态/关联 Operation)。
+    task_results: HashMap<BmId, Vec<serde_json::Value>>,
+}
+
+/// 追加成员入参(M6.3)。
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpawnMemberParams {
+    pub task_id: BmId,
+}
+
+/// 子任务委派入参(M6.3/M6.5;四门禁:深度/子集/预算/并发)。
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpawnSubtaskParams {
+    pub parent_task_id: BmId,
+    pub title: String,
+    pub goal: String,
+    pub authorization: Vec<wire::TaskAuthorizationEntry>,
+    pub budget: Option<bm_contract::budget::Budget>,
+}
+
+/// 成员移除入参(替换/退出留痕;墓碑语义)。
+#[derive(Debug, Clone, PartialEq)]
+pub struct RemoveMemberParams {
+    pub task_id: BmId,
+    pub agent_id: BmId,
+    pub reason: String,
 }
 
 /// Worker 能力调用入参(Agent 路径;非 Wire 面——GT-03 场景 A3,worker 以
@@ -664,6 +710,7 @@ impl RuntimeHandle {
             task_tool_calls: HashMap::new(),
             watchdog: crate::watchdog::WatchdogState::default(),
             op_capability: HashMap::new(),
+            task_results: HashMap::new(),
             tx: tx.clone(),
             store: config.store.clone(),
             config,
@@ -1305,6 +1352,53 @@ impl RuntimeHandle {
         rx.await.map_err(|_| CoreError::Internal)?
     }
 
+    /// 追加 Worker 成员(M6.3):并发门禁内再签发一枚 Worker(授权链同自举)。
+    pub async fn task_spawn_member(&self, task_id: BmId) -> CoreResult<serde_json::Value> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(Cmd::TaskSpawnMember { task_id, resp: tx })
+            .await
+            .map_err(|_| CoreError::Internal)?;
+        rx.await.map_err(|_| CoreError::Internal)?
+    }
+
+    /// 委派子任务(M6.3/M6.5):深度/授权子集/预算/并发四门禁后建子 Task
+    /// 并完成其协调链自举(委派 = 子任务,规格 §5.2)。
+    pub async fn task_spawn_subtask(
+        &self,
+        params: SpawnSubtaskParams,
+    ) -> CoreResult<serde_json::Value> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(Cmd::TaskSpawnSubtask { params, resp: tx })
+            .await
+            .map_err(|_| CoreError::Internal)?;
+        rx.await.map_err(|_| CoreError::Internal)?
+    }
+
+    /// 成员移除(M6.3):替换/退出留痕(task.member.removed,墓碑语义)。
+    pub async fn task_remove_member(
+        &self,
+        params: RemoveMemberParams,
+    ) -> CoreResult<serde_json::Value> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(Cmd::TaskRemoveMember { params, resp: tx })
+            .await
+            .map_err(|_| CoreError::Internal)?;
+        rx.await.map_err(|_| CoreError::Internal)?
+    }
+
+    /// 结果收集(M6.6):聚合成员结果(来源/状态/关联 Operation)+ 子任务概览。
+    pub async fn task_collect(&self, task_id: BmId) -> CoreResult<serde_json::Value> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(Cmd::TaskCollect { task_id, resp: tx })
+            .await
+            .map_err(|_| CoreError::Internal)?;
+        rx.await.map_err(|_| CoreError::Internal)?
+    }
+
     /// Worker 能力调用(M5 Agent 路径):worker 以 task:<id> Grant 经
     /// Broker 统一裁决(Grant 命中直通,无授权 untrusted 100% 升级审批)。
     pub async fn worker_capability_call(
@@ -1548,6 +1642,18 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
                 resp,
             } => {
                 let _ = resp.send(handle_worker_call(&mut world, request_id, params));
+            }
+            Cmd::TaskSpawnMember { task_id, resp } => {
+                let _ = resp.send(handle_task_spawn_member(&mut world, task_id));
+            }
+            Cmd::TaskSpawnSubtask { params, resp } => {
+                let _ = resp.send(handle_task_spawn_subtask(&mut world, params));
+            }
+            Cmd::TaskRemoveMember { params, resp } => {
+                let _ = resp.send(handle_task_remove_member(&mut world, params));
+            }
+            Cmd::TaskCollect { task_id, resp } => {
+                let _ = resp.send(handle_task_collect(&world, task_id));
             }
             Cmd::TaskBudgetIncrease {
                 task_id,
@@ -3039,6 +3145,7 @@ fn handle_task_create(
             "task_id": task.id.as_str(),
             "title": task.title,
             "created_by": task.created_by,
+            "parent_task_id": null,
         }),
     );
     let (from, to, guard) = task
@@ -3062,6 +3169,9 @@ fn handle_task_create(
     // + Coordinator/单 Worker 成员事实(GT-03 场景 A2 形态)
     {
         let task_id_str = task.id.as_str().to_string();
+        // M6:per-task principal 命名空间(跨 Task 访问在 Grant 查表层结构性不命中)
+        let coord_aud = crate::team::coord_principal(&task_id_str);
+        let worker_aud = crate::team::worker_principal(&task_id_str);
         // 分阶段作用域:butler 上界查证闭包借用 w.grants,产出后即释放
         let (coord_grants, worker_grants) = {
             let mut butler_lookup = |verb: &str| {
@@ -3073,6 +3183,8 @@ fn handle_task_create(
             crate::coordinator::intersection_grants(
                 &*w.config.id_gen,
                 &task_id_str,
+                &coord_aud,
+                &worker_aud,
                 &task.authorization,
                 now,
                 &mut butler_lookup,
@@ -3614,6 +3726,392 @@ fn handle_task_budget_increase(
     }))
 }
 
+// ---- M6:Team 编队与委派(T2)----------------------------------------------
+
+/// 追加 Worker 成员(M6.3):并发门禁(存活 worker ≤ 5)→ 授权链签发
+/// (与自举同构,per-task principal)→ member.added。
+fn handle_task_spawn_member(w: &mut World, task_id: BmId) -> CoreResult<serde_json::Value> {
+    if w.draining || w.persist_poisoned {
+        return Err(CoreError::Semantic(
+            ErrorCode::Unavailable,
+            "Runtime 排空中或持久层故障,拒绝成员追加".into(),
+        ));
+    }
+    // 分阶段作用域:读任务与并发计数,门禁通过后即释放借用
+    let (coord_aud, worker_aud, authorization) = {
+        let Some(task) = w.tasks.get(&task_id) else {
+            return Err(CoreError::Semantic(
+                ErrorCode::ValidationFailed,
+                format!("Task 不存在: {}", task_id.as_str()),
+            ));
+        };
+        if task.state != bm_contract::states::TaskState::Running {
+            return Err(CoreError::Semantic(
+                ErrorCode::ValidationFailed,
+                format!("Task 状态 {} 不可追加成员", task.state.as_str()),
+            ));
+        }
+        let alive_workers = task
+            .members
+            .iter()
+            .filter(|m| m.role == crate::task::MemberRole::Worker)
+            .count() as u64;
+        if alive_workers >= crate::team::MAX_CONCURRENT_WORKERS {
+            return Err(CoreError::Semantic(
+                ErrorCode::ValidationFailed,
+                format!(
+                    "并发上限:存活 worker {} 已达 {}",
+                    alive_workers,
+                    crate::team::MAX_CONCURRENT_WORKERS
+                ),
+            ));
+        }
+        (
+            crate::team::coord_principal(task_id.as_str()),
+            crate::team::worker_principal(task_id.as_str()),
+            task.authorization.clone(),
+        )
+    };
+    let now = w.config.clock.now();
+    let (_coord_grants, worker_grants) = {
+        let mut butler_lookup = |verb: &str| {
+            w.grants
+                .active_for(crate::butler::BUTLER_PRINCIPAL, verb, now)
+                .into_iter()
+                .next()
+        };
+        crate::coordinator::intersection_grants(
+            &*w.config.id_gen,
+            task_id.as_str(),
+            &coord_aud,
+            &worker_aud,
+            &authorization,
+            now,
+            &mut butler_lookup,
+        )
+    };
+    for g in worker_grants.iter() {
+        w.grants.record(g.clone());
+        persist_grant(w, &g.grant_id);
+        w.emit(
+            EventType::GrantCreated,
+            None,
+            None,
+            None,
+            serde_json::json!({
+                "grant_id": g.grant_id,
+                "approval_id": null,
+                "audience": g.audience,
+                "action": g.action,
+                "scope": g.scope.to_wire(),
+                "delegation_depth": g.delegation_depth,
+                "expires_at": null,
+                "parent_hash": g.parent_grant_hash,
+            }),
+        );
+    }
+    let member_id = w.config.id_gen.next_id("agent");
+    let grant_id = worker_grants.first().map(|g| g.grant_id.clone());
+    let ev = w.emit(
+        EventType::TaskMemberAdded,
+        None,
+        None,
+        None,
+        serde_json::json!({
+            "task_id": task_id.as_str(),
+            "agent_id": member_id.as_str(),
+            "role": "worker",
+            "grant_id": grant_id,
+        }),
+    );
+    {
+        let Some(task) = w.tasks.get_mut(&task_id) else {
+            return Err(CoreError::Internal);
+        };
+        task.add_member(crate::task::TaskMember {
+            agent_id: member_id.clone(),
+            role: crate::task::MemberRole::Worker,
+            grant_id: grant_id.clone(),
+            joined_seq: ev.event_seq,
+        });
+    }
+    let snapshot = w.tasks[&task_id].clone();
+    persist_task(w, &snapshot);
+    Ok(serde_json::json!({
+        "task_id": task_id.as_str(),
+        "agent_id": member_id.as_str(),
+        "grant_id": grant_id,
+    }))
+}
+
+/// 委派子任务(M6.3/M6.5):四门禁(深度/授权子集/预算/并发)→ 子 Task
+/// 创建 + 协调链自举。委派 = 子任务(规格 §5.2);权限只减不增。
+fn handle_task_spawn_subtask(
+    w: &mut World,
+    params: SpawnSubtaskParams,
+) -> CoreResult<serde_json::Value> {
+    if w.draining || w.persist_poisoned {
+        return Err(CoreError::Semantic(
+            ErrorCode::Unavailable,
+            "Runtime 排空中或持久层故障,拒绝委派".into(),
+        ));
+    }
+    // 门禁(分阶段作用域:校验后即释放借用)
+    let (parent_snapshot, coord_aud, _worker_aud, child_authorization) = {
+        let Some(parent) = w.tasks.get(&params.parent_task_id) else {
+            return Err(CoreError::Semantic(
+                ErrorCode::ValidationFailed,
+                format!("父 Task 不存在: {}", params.parent_task_id.as_str()),
+            ));
+        };
+        if !crate::team::depth_ok(parent.delegation_depth) {
+            return Err(CoreError::Semantic(
+                ErrorCode::ValidationFailed,
+                format!(
+                    "委派深度超限:父深度 {} + 1 > {}",
+                    parent.delegation_depth,
+                    crate::team::MAX_DELEGATION_DEPTH
+                ),
+            ));
+        }
+        if !crate::team::authorization_subset(&params.authorization, &parent.authorization) {
+            return Err(CoreError::Semantic(
+                ErrorCode::ValidationFailed,
+                "委派授权必须为父授权的子集(成员权限只减不增)".into(),
+            ));
+        }
+        let parent_max = crate::team::max_tool_calls_of(parent.budget.as_ref());
+        let parent_used = *w.task_tool_calls.get(&params.parent_task_id).unwrap_or(&0);
+        let child_max = crate::team::max_tool_calls_of(params.budget.as_ref());
+        if !crate::team::budget_ok(child_max, parent_max, parent_used) {
+            return Err(CoreError::Semantic(
+                ErrorCode::ValidationFailed,
+                "子任务预算超父包络剩余(预算子分配门禁)".into(),
+            ));
+        }
+        (
+            parent.clone(),
+            crate::team::coord_principal(params.parent_task_id.as_str()),
+            crate::team::worker_principal(params.parent_task_id.as_str()),
+            params.authorization.clone(),
+        )
+    };
+    let now = w.config.clock.now();
+    let parent_id_str = params.parent_task_id.as_str().to_string();
+    // 子 Task 创建(wire 之外的内核委派路径;created_by = 父 Coordinator)
+    let mut child = crate::task::Task::create(
+        &*w.config.id_gen,
+        params.title,
+        params.goal,
+        child_authorization,
+        params.budget,
+        None,
+        Some(params.parent_task_id.clone()),
+        parent_snapshot.delegation_depth + 1,
+        now,
+    );
+    child.created_by = coord_aud.clone();
+    w.emit(
+        EventType::TaskCreated,
+        None,
+        None,
+        None,
+        serde_json::json!({
+            "task_id": child.id.as_str(),
+            "title": child.title,
+            "created_by": child.created_by,
+            "parent_task_id": child.parent_task_id.as_ref().map(|p| p.as_str()),
+        }),
+    );
+    let (from, to, guard) = child
+        .transition(bm_contract::states::TaskState::Running, None, now)
+        .expect("created→running 是迁移表边");
+    w.emit(
+        EventType::TaskStateChanged,
+        None,
+        None,
+        None,
+        serde_json::json!({
+            "task_id": child.id.as_str(),
+            "from": from.as_str(),
+            "to": to.as_str(),
+            "reason_code": guard,
+            "task_epoch": child.task_epoch,
+        }),
+    );
+    // 子任务协调链自举(per-child principal;Grant 链仍回溯 Butler 上界)
+    let child_id_str = child.id.as_str().to_string();
+    let child_coord_aud = crate::team::coord_principal(&child_id_str);
+    let child_worker_aud = crate::team::worker_principal(&child_id_str);
+    let (coord_grants, worker_grants) = {
+        let mut butler_lookup = |verb: &str| {
+            w.grants
+                .active_for(crate::butler::BUTLER_PRINCIPAL, verb, now)
+                .into_iter()
+                .next()
+        };
+        crate::coordinator::intersection_grants(
+            &*w.config.id_gen,
+            &child_id_str,
+            &child_coord_aud,
+            &child_worker_aud,
+            &child.authorization,
+            now,
+            &mut butler_lookup,
+        )
+    };
+    for g in coord_grants.iter().chain(worker_grants.iter()) {
+        w.grants.record(g.clone());
+        persist_grant(w, &g.grant_id);
+        w.emit(
+            EventType::GrantCreated,
+            None,
+            None,
+            None,
+            serde_json::json!({
+                "grant_id": g.grant_id,
+                "approval_id": null,
+                "audience": g.audience,
+                "action": g.action,
+                "scope": g.scope.to_wire(),
+                "delegation_depth": g.delegation_depth,
+                "expires_at": null,
+                "parent_hash": g.parent_grant_hash,
+            }),
+        );
+    }
+    let coord_member_id = w.config.id_gen.next_id("agent");
+    let coord_grant_id = coord_grants.first().map(|g| g.grant_id.clone());
+    let ev = w.emit(
+        EventType::TaskMemberAdded,
+        None,
+        None,
+        None,
+        serde_json::json!({
+            "task_id": child_id_str,
+            "agent_id": coord_member_id.as_str(),
+            "role": "coordinator",
+            "grant_id": coord_grant_id,
+        }),
+    );
+    child.add_member(crate::task::TaskMember {
+        agent_id: coord_member_id,
+        role: crate::task::MemberRole::Coordinator,
+        grant_id: coord_grant_id,
+        joined_seq: ev.event_seq,
+    });
+    if !worker_grants.is_empty() {
+        let worker_member_id = w.config.id_gen.next_id("agent");
+        let worker_grant_id = worker_grants[0].grant_id.clone();
+        let ev = w.emit(
+            EventType::TaskMemberAdded,
+            None,
+            None,
+            None,
+            serde_json::json!({
+                "task_id": child_id_str,
+                "agent_id": worker_member_id.as_str(),
+                "role": "worker",
+                "grant_id": worker_grant_id,
+            }),
+        );
+        child.add_member(crate::task::TaskMember {
+            agent_id: worker_member_id,
+            role: crate::task::MemberRole::Worker,
+            grant_id: Some(worker_grant_id),
+            joined_seq: ev.event_seq,
+        });
+    }
+    persist_task(w, &child);
+    let result = serde_json::json!({
+        "task_id": child.id.as_str(),
+        "parent_task_id": parent_id_str,
+        "delegation_depth": child.delegation_depth,
+        "state": child.state.as_str(),
+    });
+    w.tasks.insert(child.id.clone(), child);
+    Ok(result)
+}
+
+/// 成员移除(M6.3):member.removed 留痕 + 成员列表移除(墓碑语义)。
+fn handle_task_remove_member(
+    w: &mut World,
+    params: RemoveMemberParams,
+) -> CoreResult<serde_json::Value> {
+    if w.draining || w.persist_poisoned {
+        return Err(CoreError::Semantic(
+            ErrorCode::Unavailable,
+            "Runtime 排空中或持久层故障,拒绝成员移除".into(),
+        ));
+    }
+    let removed = {
+        let Some(task) = w.tasks.get_mut(&params.task_id) else {
+            return Err(CoreError::Semantic(
+                ErrorCode::ValidationFailed,
+                format!("Task 不存在: {}", params.task_id.as_str()),
+            ));
+        };
+        let before = task.members.len();
+        task.members
+            .retain(|m| m.agent_id.as_str() != params.agent_id.as_str());
+        before != task.members.len()
+    };
+    if !removed {
+        return Err(CoreError::Semantic(
+            ErrorCode::ValidationFailed,
+            format!("成员不存在: {}", params.agent_id.as_str()),
+        ));
+    }
+    w.emit(
+        EventType::TaskMemberRemoved,
+        None,
+        None,
+        None,
+        serde_json::json!({
+            "task_id": params.task_id.as_str(),
+            "agent_id": params.agent_id.as_str(),
+            "reason": params.reason,
+        }),
+    );
+    let snapshot = w.tasks[&params.task_id].clone();
+    persist_task(w, &snapshot);
+    Ok(serde_json::json!({
+        "task_id": params.task_id.as_str(),
+        "agent_id": params.agent_id.as_str(),
+        "removed": true,
+    }))
+}
+
+/// 结果收集(M6.6):来源/状态/关联 Operation 三要素 + 子任务概览。
+fn handle_task_collect(w: &World, task_id: BmId) -> CoreResult<serde_json::Value> {
+    let Some(task) = w.tasks.get(&task_id) else {
+        return Err(CoreError::Semantic(
+            ErrorCode::ValidationFailed,
+            format!("Task 不存在: {}", task_id.as_str()),
+        ));
+    };
+    let results = w.task_results.get(&task_id).cloned().unwrap_or_default();
+    let children: Vec<serde_json::Value> = w
+        .tasks
+        .values()
+        .filter(|t| t.parent_task_id.as_ref() == Some(&task_id))
+        .map(|t| {
+            serde_json::json!({
+                "task_id": t.id.as_str(),
+                "title": t.title,
+                "state": t.state.as_str(),
+                "delegation_depth": t.delegation_depth,
+            })
+        })
+        .collect();
+    Ok(serde_json::json!({
+        "task_id": task_id.as_str(),
+        "state": task.state.as_str(),
+        "results": results,
+        "children": children,
+    }))
+}
+
 /// Worker 能力调用(Agent 路径):Task 必须在运行态;worker principal +
 /// untrusted 上下文走统一执行体(Grant 命中直通 / 无授权 100% 升级审批)。
 fn handle_worker_call(
@@ -3738,10 +4236,13 @@ fn handle_worker_call(
         }
     }
     // Agent 路径信任归因:worker 上下文 = agent-derived/untrusted(内容
-    // 来源链随任务传递,不可自报降级);Grant 命中优先,无授权则 100% 升级
-    let ctx =
-        CallContext::content_chain(crate::coordinator::WORKER_PRINCIPAL, DataTrust::Untrusted)
-            .map_err(|_| CoreError::Internal)?;
+    // 来源链随任务传递,不可自报降级);Grant 命中优先,无授权则 100% 升级。
+    // M6:per-task principal(跨 Task 结构性隔离)
+    let ctx = CallContext::content_chain(
+        crate::team::worker_principal(params.task_id.as_str()).as_str(),
+        DataTrust::Untrusted,
+    )
+    .map_err(|_| CoreError::Internal)?;
     let outcome = capability_call_inner(
         w,
         request_id,
@@ -3774,6 +4275,21 @@ fn handle_worker_call(
         if let Some(store) = &w.store {
             let _ = store.save_task_budget(params.task_id.as_str(), "", used_now, 0, &w.now_ts());
         }
+        // M6.6:结果流水(来源/状态/关联 Operation;collect 聚合面)
+        let summary = match &outcome {
+            Ok(r) => r["action_summary"].as_str().unwrap_or_default().to_string(),
+            Err(_) => String::new(),
+        };
+        w.task_results
+            .entry(params.task_id.clone())
+            .or_default()
+            .push(serde_json::json!({
+                "agent_id": crate::team::worker_principal(params.task_id.as_str()),
+                "operation_id": w.op_capability.keys().last().map(|k| k.as_str()).unwrap_or(""),
+                "capability": params.capability,
+                "state": if outcome.is_ok() { "succeeded" } else { "failed" },
+                "action_summary": summary,
+            }));
     }
     if repeat_count == crate::watchdog::REPEAT_THRESHOLD {
         w.emit(
@@ -4296,6 +4812,18 @@ fn reply_unavailable(cmd: Cmd) {
             let _ = resp.send(Err(err()));
         }
         Cmd::WorkerCall { resp, .. } => {
+            let _ = resp.send(Err(err()));
+        }
+        Cmd::TaskSpawnMember { resp, .. } => {
+            let _ = resp.send(Err(err()));
+        }
+        Cmd::TaskSpawnSubtask { resp, .. } => {
+            let _ = resp.send(Err(err()));
+        }
+        Cmd::TaskRemoveMember { resp, .. } => {
+            let _ = resp.send(Err(err()));
+        }
+        Cmd::TaskCollect { resp, .. } => {
             let _ = resp.send(Err(err()));
         }
         Cmd::TaskBudgetIncrease { resp, .. } => {
