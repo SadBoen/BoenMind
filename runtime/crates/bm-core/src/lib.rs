@@ -28,4 +28,4 @@ pub use clock::{Clock, MockClock, SystemClock};
 pub use error::{CoreError, CoreResult};
 pub use registry::{BindingStatus, CapabilityDiscovery, CapabilityProvider, CapabilityRegistry};
 pub use runtime::{RuntimeConfig, RuntimeHandle};
-pub use task::{MemberRole, Task, TaskError, TaskMember};
+pub use task::{MemberRole, Task, TaskBoard, TaskBoardEntry, TaskError, TaskMember};

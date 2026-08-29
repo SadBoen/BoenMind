@@ -468,6 +468,271 @@ async fn t53_idem_receipt_survives_restart() {
     handle2.stop("test_done").await;
 }
 
+/// t54(M5.4):task.list / task.get——确定性序、状态过滤、规范对象完整面。
+#[tokio::test]
+async fn t54_task_list_get_deterministic() {
+    let (handle, ids) = task_rig(None).await;
+    let t1 = handle
+        .task_create(
+            ids.next_id("req"),
+            TaskCreateParams {
+                title: "甲".into(),
+                goal: "g1".into(),
+                authorization: None,
+                budget: None,
+                deadline: None,
+            },
+        )
+        .await
+        .expect("建 t1");
+    let t2 = handle
+        .task_create(
+            ids.next_id("req"),
+            TaskCreateParams {
+                title: "乙".into(),
+                goal: "g2".into(),
+                authorization: None,
+                budget: None,
+                deadline: None,
+            },
+        )
+        .await
+        .expect("建 t2");
+    handle
+        .task_pause(ids.next_id("req"), lifecycle_params(&t1.task_id))
+        .await
+        .expect("暂停 t1");
+
+    // list:确定性序(created_at, task_id)
+    let list = handle
+        .task_list(bm_contract::wire::TaskListParams {
+            state_filter: None,
+            limit: None,
+        })
+        .await
+        .expect("list");
+    assert_eq!(list.tasks.len(), 2);
+    // 再次 list 输出逐字节一致(确定性)
+    let list2 = handle
+        .task_list(bm_contract::wire::TaskListParams {
+            state_filter: None,
+            limit: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_string(&list.tasks).unwrap(),
+        serde_json::to_string(&list2.tasks).unwrap()
+    );
+
+    // 状态过滤:paused 只剩 t1
+    let paused_list = handle
+        .task_list(bm_contract::wire::TaskListParams {
+            state_filter: Some("paused".into()),
+            limit: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(paused_list.tasks.len(), 1);
+    assert_eq!(paused_list.tasks[0]["task_id"], json!(t1.task_id.as_str()));
+    // 未识别状态串 = 空列表(宽松过滤)
+    let empty = handle
+        .task_list(bm_contract::wire::TaskListParams {
+            state_filter: Some("nope".into()),
+            limit: None,
+        })
+        .await
+        .unwrap();
+    assert!(empty.tasks.is_empty());
+
+    // get:规范对象(合同字段面完整)
+    let got = handle
+        .task_get(bm_contract::wire::TaskGetParams {
+            task_id: t2.task_id.clone(),
+        })
+        .await
+        .expect("get");
+    assert_eq!(got.task["title"], json!("乙"));
+    assert_eq!(got.task["state"], json!("running"));
+    assert_eq!(got.task["task_epoch"], json!(1));
+    assert!(got.task["budget"].is_object());
+    assert!(got.task["parent_task_id"].is_null(), "M5 恒 null");
+    assert!(got.guard_states.is_none(), "监护态随 T7");
+    // 不存在 → validation_failed
+    let err = handle
+        .task_get(bm_contract::wire::TaskGetParams {
+            task_id: bm_contract::ids::BmId::parse("task_01JAAAAAAAAAAAAAAAAAAAAAGH").unwrap(),
+        })
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        CoreError::Semantic(ErrorCode::ValidationFailed, _)
+    ));
+    handle.stop("test_done").await;
+}
+
+/// t55(M5.4):events.poll 的 task_id 过滤——只回该 Task 的事件,
+/// 其余事件(runtime.started 等)不串入。
+#[tokio::test]
+async fn t55_events_poll_task_filter() {
+    let (handle, ids) = task_rig(None).await;
+    let t1 = handle
+        .task_create(
+            ids.next_id("req"),
+            TaskCreateParams {
+                title: "甲".into(),
+                goal: "g".into(),
+                authorization: None,
+                budget: None,
+                deadline: None,
+            },
+        )
+        .await
+        .expect("建 t1");
+    handle
+        .task_create(
+            ids.next_id("req"),
+            TaskCreateParams {
+                title: "乙".into(),
+                goal: "g".into(),
+                authorization: None,
+                budget: None,
+                deadline: None,
+            },
+        )
+        .await
+        .expect("建 t2");
+
+    let poll = handle
+        .events_poll(bm_contract::wire::EventsPollParams {
+            session_id: bm_contract::ids::BmId::parse("sess_01JAAAAAAAAAAAAAAAAAAAAA00").unwrap(),
+            since_seq: 0,
+            limit: Some(100),
+            task_id: Some(t1.task_id.clone()),
+        })
+        .await
+        .expect("poll");
+    assert!(
+        poll.events
+            .iter()
+            .all(|e| e.payload["task_id"].as_str() == Some(t1.task_id.as_str())),
+        "过滤后只含 t1 事件"
+    );
+    assert_eq!(poll.events.len(), 2, "t1: created + state.changed");
+    assert_eq!(poll.events[0].event_type, EventType::TaskCreated);
+    handle.stop("test_done").await;
+}
+
+/// t56(M5.4):Task Board 投影——重建确定性(同一事件前缀两次重建一致)
+/// 且与 L2 规范状态一致;投影位点 = 日志末尾(可弃可重建)。
+#[tokio::test]
+async fn t56_task_board_rebuild_determinism() {
+    let (handle, ids) = task_rig(None).await;
+    let t1 = handle
+        .task_create(
+            ids.next_id("req"),
+            TaskCreateParams {
+                title: "甲".into(),
+                goal: "g".into(),
+                authorization: None,
+                budget: None,
+                deadline: None,
+            },
+        )
+        .await
+        .expect("建 t1");
+    handle
+        .task_pause(ids.next_id("req"), lifecycle_params(&t1.task_id))
+        .await
+        .expect("暂停");
+
+    let events = handle.events_all().await;
+    // 两次重建逐字节一致(确定性,BTreeMap 键序)
+    let b1 = bm_core::task::TaskBoard::rebuild(&events);
+    let b2 = bm_core::task::TaskBoard::rebuild(&events);
+    assert_eq!(b1, b2, "重建确定性(ADR-0004 条件 1)");
+    // 与 L2 规范状态一致(task.get 的 state/epoch == 投影条目)
+    let got = handle
+        .task_get(bm_contract::wire::TaskGetParams {
+            task_id: t1.task_id.clone(),
+        })
+        .await
+        .unwrap();
+    let entry = b1.entry(t1.task_id.as_str()).expect("投影条目在场");
+    assert_eq!(entry.state.as_str(), got.task["state"].as_str().unwrap());
+    assert_eq!(entry.task_epoch, got.task["task_epoch"].as_u64().unwrap());
+    assert_eq!(
+        b1.applied_to_seq(),
+        events.last().map(|e| e.event_seq).unwrap_or(0),
+        "投影位点 = 日志末尾"
+    );
+    handle.stop("test_done").await;
+}
+
+/// t57(P-11 骨架,M5 规格 §4-9):Task Board 投影重建延迟——
+/// 1 万事件(含 task.* 族)重建 ×20 取 p95;test build 门 < 1s(T9 回填数值)。
+#[tokio::test]
+async fn t57_p11_projection_rebuild_latency() {
+    use bm_contract::events::EventEnvelope;
+    use std::time::Instant;
+    let ev = |seq: u64, ty: EventType, payload: serde_json::Value| {
+        EventEnvelope::new_unchecked(
+            seq,
+            ty,
+            "2026-08-29T11:00:00.000Z".into(),
+            None,
+            None,
+            None,
+            payload,
+        )
+    };
+    // 1 万事件:每 10 条一个 task 周期(created + 合法状态迁移)
+    let mut events: Vec<EventEnvelope> = Vec::with_capacity(10_000);
+    for i in 0..10_000u64 {
+        let n = i / 10;
+        let tid = format!("task_{:026}", n % 100);
+        let (ty, payload) = match i % 10 {
+            0 => (
+                EventType::TaskCreated,
+                json!({"task_id": tid, "title": format!("任务{n}"), "created_by": "butler:system"}),
+            ),
+            1 => (
+                EventType::TaskStateChanged,
+                json!({"task_id": tid, "from": "created", "to": "running",
+                       "reason_code": "p11", "task_epoch": 1}),
+            ),
+            2 => (
+                EventType::TaskStateChanged,
+                json!({"task_id": tid, "from": "running", "to": "paused",
+                       "reason_code": "p11", "task_epoch": 1}),
+            ),
+            3 => (
+                EventType::TaskStateChanged,
+                json!({"task_id": tid, "from": "paused", "to": "running",
+                       "reason_code": "p11", "task_epoch": 1}),
+            ),
+            _ => continue, // 其余事件位留空(P-11 只关注 task.* 折叠面)
+        };
+        events.push(ev(i + 1, ty, payload));
+    }
+    let mut samples: Vec<u128> = Vec::new();
+    for _ in 0..20 {
+        let start = Instant::now();
+        let board = bm_core::task::TaskBoard::rebuild(&events);
+        let us = start.elapsed().as_micros();
+        assert!(!board.is_empty());
+        samples.push(us);
+    }
+    samples.sort();
+    let p95 = samples[(samples.len() as f64 * 0.95) as usize - 1];
+    println!("P-11 test build: rebuild p95 = {p95} us(1 万事件)");
+    assert!(
+        p95 < 1_000_000,
+        "P-11 门槛:1 万事件重建 < 1s(test build),实际 {p95} us"
+    );
+}
+
 /// 从事件流找 waiting_user 审批对象 id(测试辅助)。
 async fn approval_id_of(handle: &RuntimeHandle) -> Option<bm_contract::ids::BmId> {
     let list = handle

@@ -49,8 +49,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: EventsCmd,
     },
-    /// 任务(M5 提供)
-    Task,
+    /// 任务(M5):创建/查看/暂停/恢复/停止
+    Task {
+        #[command(subcommand)]
+        cmd: TaskCmd,
+    },
     /// 审批(M4):查看待裁决审批并批准/拒绝
     Approval {
         #[command(subcommand)]
@@ -138,8 +141,27 @@ enum EventsCmd {
 
 #[derive(Subcommand)]
 enum TaskCmd {
-    /// 占位:M5 提供
-    List,
+    /// 创建任务并即启动(L2 规范状态;预算缺省用运行时默认包络)
+    Create {
+        title: String,
+        goal: String,
+        /// 截止时间(ISO-8601 UTC;可选)
+        #[arg(long)]
+        deadline: Option<String>,
+    },
+    /// 列出任务(缺省全部;--state 过滤)
+    List {
+        #[arg(long)]
+        state: Option<String>,
+    },
+    /// 查看任务规范对象
+    Show { task_id: String },
+    /// 暂停任务(成员级联 agent.pause)
+    Pause { task_id: String },
+    /// 恢复任务(编排重启触发者之一:用户显式 resume)
+    Resume { task_id: String },
+    /// 停止任务(进行中副作用按 §9.5 收敛)
+    Stop { task_id: String },
 }
 
 #[derive(Subcommand)]
@@ -332,10 +354,35 @@ fn main() {
                 std::process::exit(0);
             }
         },
-        Cmd::Task => {
-            println!("task 命令组随 M5(Task 对象)提供;当前里程碑范围见基线 §18-M4");
-            return;
-        }
+        Cmd::Task { cmd } => match cmd {
+            TaskCmd::Create {
+                title,
+                goal,
+                deadline,
+            } => client.call(
+                Method::TaskCreate,
+                serde_json::json!({ "title": title, "goal": goal, "deadline": deadline }),
+            ),
+            TaskCmd::List { state } => client.call(
+                Method::TaskList,
+                serde_json::json!({ "state_filter": state }),
+            ),
+            TaskCmd::Show { task_id } => {
+                client.call(Method::TaskGet, serde_json::json!({ "task_id": task_id }))
+            }
+            TaskCmd::Pause { task_id } => client.call(
+                Method::TaskPause,
+                serde_json::json!({ "task_id": task_id, "reason": "user_request" }),
+            ),
+            TaskCmd::Resume { task_id } => client.call(
+                Method::TaskResume,
+                serde_json::json!({ "task_id": task_id }),
+            ),
+            TaskCmd::Stop { task_id } => client.call(
+                Method::TaskStop,
+                serde_json::json!({ "task_id": task_id, "reason": "user_request" }),
+            ),
+        },
         Cmd::Approval { cmd } => match cmd {
             ApprovalCmd::List { state } => client.call(
                 Method::ApprovalList,

@@ -396,6 +396,19 @@ pub struct TaskGetParams {
     pub task_id: BmId,
 }
 
+/// task.list result(tasks = task/task.v0.1 对象数组;顺序确定性由实现侧保证)。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TaskListResult {
+    pub tasks: Vec<serde_json::Value>,
+}
+
+/// task.get result(guard_states = 监护态投影,基线 §20 八态;T7 起填充)。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TaskGetResult {
+    pub task: serde_json::Value,
+    pub guard_states: Option<serde_json::Value>,
+}
+
 /// Task 生命周期命令共用 result(pause/resume/stop)。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TaskStateResult {

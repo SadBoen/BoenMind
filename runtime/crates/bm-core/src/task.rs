@@ -214,6 +214,121 @@ pub fn parse_or_epoch(ts: &BmTimestamp) -> Option<DateTime<chrono::Utc>> {
     bm_contract::timestamp::parse_ts(ts)
 }
 
+// ---- Task Board 投影(M5.4;ADR-0004:任务板仅为投影,可弃可重建)--------
+
+/// 投影条目:任务板的卡片字段(全部自 task.* 事件可导出;不含 L2 规范载荷)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskBoardEntry {
+    pub task_id: String,
+    pub title: String,
+    pub state: TaskState,
+    pub task_epoch: u64,
+    /// 成员 agent_id(加入序)。
+    pub members: Vec<String>,
+    /// 最后一次命中的 event_seq(投影绑定事件日志的位点依据)。
+    pub last_seq: u64,
+}
+
+/// Task Board 投影:BTreeMap 键序 + 单调 seq 折叠 = 重建确定性(同一事件
+/// 前缀两次重建逐字节一致)。可随时丢弃,自事件日志全量重建(丢弃不丢失
+/// 信息——规范状态在 L2,本结构只是视图)。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TaskBoard {
+    entries: std::collections::BTreeMap<String, TaskBoardEntry>,
+    applied_to_seq: u64,
+}
+
+impl TaskBoard {
+    /// 折叠单条事件;非 task.* 事件为 no-op。
+    pub fn apply(&mut self, event: &bm_contract::events::EventEnvelope) {
+        use bm_contract::events::EventType;
+        let p = &event.payload;
+        let Some(task_id) = p["task_id"].as_str().map(str::to_string) else {
+            return;
+        };
+        match event.event_type {
+            EventType::TaskCreated => {
+                let entry = TaskBoardEntry {
+                    task_id: task_id.clone(),
+                    title: p["title"].as_str().unwrap_or_default().to_string(),
+                    state: TaskState::Created,
+                    task_epoch: 1,
+                    members: Vec::new(),
+                    last_seq: event.event_seq,
+                };
+                self.entries.insert(task_id, entry);
+            }
+            EventType::TaskStateChanged => {
+                if let Some(e) = self.entries.get_mut(&task_id) {
+                    if let Some(to) = TaskState::from_wire(p["to"].as_str().unwrap_or_default()) {
+                        e.state = to;
+                    }
+                    e.task_epoch = p["task_epoch"].as_u64().unwrap_or(e.task_epoch);
+                    e.last_seq = event.event_seq;
+                }
+            }
+            EventType::TaskMemberAdded => {
+                if let Some(e) = self.entries.get_mut(&task_id)
+                    && let Some(agent) = p["agent_id"].as_str()
+                {
+                    e.members.push(agent.to_string());
+                    e.last_seq = event.event_seq;
+                }
+            }
+            _ => return,
+        }
+        self.applied_to_seq = self.applied_to_seq.max(event.event_seq);
+    }
+
+    /// 全量重建:自事件流折叠(ADR-0004 条件 1:投影重建只绑定事件日志)。
+    /// 重建结果与事件顺序的折叠等价,BTreeMap 保证确定性。
+    pub fn rebuild(events: &[bm_contract::events::EventEnvelope]) -> Self {
+        let mut board = Self::default();
+        for e in events {
+            board.apply(e);
+        }
+        board
+    }
+
+    /// 投影位点(已折叠到的 event_seq;可观测丢弃/重建的一致性)。
+    pub fn applied_to_seq(&self) -> u64 {
+        self.applied_to_seq
+    }
+
+    /// 自 L2 行补齐条目(仅用于事件前缀已被压实的场景:tasks 表行即同一
+    /// 事件流的快照态;已存在的条目不覆盖——重放优先)。
+    pub fn restore_row(&mut self, task_id: &str, title: &str, state: &str, task_epoch: u64) {
+        let state = TaskState::from_wire(state).unwrap_or(TaskState::Created);
+        self.entries
+            .entry(task_id.to_string())
+            .or_insert_with(|| TaskBoardEntry {
+                task_id: task_id.to_string(),
+                title: title.to_string(),
+                state,
+                task_epoch,
+                members: Vec::new(),
+                last_seq: 0,
+            });
+    }
+
+    /// 条目只读视图(BTreeMap 键序 = task_id 字典序,确定性枚举)。
+    pub fn entries(&self) -> impl Iterator<Item = &TaskBoardEntry> {
+        self.entries.values()
+    }
+
+    pub fn entry(&self, task_id: &str) -> Option<&TaskBoardEntry> {
+        self.entries.get(task_id)
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

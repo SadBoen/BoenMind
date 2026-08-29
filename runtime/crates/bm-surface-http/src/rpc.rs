@@ -90,16 +90,31 @@ async fn rpc_inner(state: &AppState, method: Method, req: &RequestEnvelope) -> C
                     .await,
             )
         }
-        // M5:task 六方法(T0 仅合同与镜像增发;服务端行为 M5-T2 实现,当前 unavailable)
-        Method::TaskCreate
-        | Method::TaskList
-        | Method::TaskGet
-        | Method::TaskPause
-        | Method::TaskResume
-        | Method::TaskStop => Err(bm_core::CoreError::Semantic(
-            bm_contract::error_codes::ErrorCode::Unavailable,
-            "task 方法随 M5-T2 启用".into(),
-        )),
+        // M5:task 六方法(T2 起服务端实现)
+        Method::TaskCreate => {
+            let p: bm_contract::wire::TaskCreateParams = params(req)?;
+            to_value(state.handle.task_create(req.request_id.clone(), p).await)
+        }
+        Method::TaskList => {
+            let p: bm_contract::wire::TaskListParams = params(req)?;
+            to_value(state.handle.task_list(p).await)
+        }
+        Method::TaskGet => {
+            let p: bm_contract::wire::TaskGetParams = params(req)?;
+            to_value(state.handle.task_get(p).await)
+        }
+        Method::TaskPause => {
+            let p: bm_contract::wire::TaskLifecycleParams = params(req)?;
+            to_value(state.handle.task_pause(req.request_id.clone(), p).await)
+        }
+        Method::TaskResume => {
+            let p: bm_contract::wire::TaskLifecycleParams = params(req)?;
+            to_value(state.handle.task_resume(req.request_id.clone(), p).await)
+        }
+        Method::TaskStop => {
+            let p: bm_contract::wire::TaskLifecycleParams = params(req)?;
+            to_value(state.handle.task_stop(req.request_id.clone(), p).await)
+        }
     }
 }
 

@@ -14,9 +14,11 @@ v1.0——ADR-0004 条件 6(触发者两类:用户 resume / Watchdog 自动;停�
 与 ADR-0002 预算包络二分已落入规格,随 M5 回看逐条闭合。
 M5 实现进度:T0 合同增发九项已落地(全 Minor,镜像同步);
 T1 已落地(bm-core task.rs 对象/状态机/完成判定门禁/epoch 门禁 + SQLite v4
-五表 + T6c 两项收紧经跨重启实证,151 测试全绿)。
-下一步 = T2(Wire task.* 六方法 + events.poll task_id 过滤 + CLI task 组 +
-Task Board 投影重建,P-11 骨架)。**
+五表 + T6c 两项收紧经跨重启实证);
+T2 已落地(Wire task.* 六方法启用 + events.poll task_id 过滤 + CLI task 组 +
+Task Board 投影:重建确定性/启动重建/emit 增量双路等价,P-11 骨架测试,156 测试全绿)。
+下一步 = T3(Butler 内置 App:注册、bootstrap 协调权 Grant 集、领域权默认拒绝
+权限矩阵、task.create 全链路、双路径收据来源标注启用)。**
 
 ## 文件地图(规格分层,基线 §0)
 

@@ -178,6 +178,16 @@ enum Cmd {
         params: wire::TaskLifecycleParams,
         resp: oneshot::Sender<CoreResult<wire::TaskStateResult>>,
     },
+    /// task.list(M5):Task Board 列表(确定性序)。
+    TaskList {
+        params: wire::TaskListParams,
+        resp: oneshot::Sender<CoreResult<wire::TaskListResult>>,
+    },
+    /// task.get(M5):Task 规范对象 + 监护态投影。
+    TaskGet {
+        params: wire::TaskGetParams,
+        resp: oneshot::Sender<CoreResult<wire::TaskGetResult>>,
+    },
     Stop {
         reason: String,
         resp: oneshot::Sender<()>,
@@ -228,6 +238,8 @@ struct World {
     system_agent: BmId,
     /// M5:Task 规范状态(task/task.v0.1;L2 唯一持有,World 内为内存视图)。
     tasks: HashMap<BmId, crate::task::Task>,
+    /// M5.4:Task Board 投影(可弃可重建;emit 钩子增量维护)。
+    task_board: crate::task::TaskBoard,
 }
 
 /// 待审批的能力调用载荷(approval 对象只存摘要,重放执行需要原 args)。
@@ -363,6 +375,28 @@ impl World {
         }
     }
 
+    /// Task 事件流读取(watch 观察面):跨会话按 payload.task_id 过滤。
+    fn events_for_task(
+        &self,
+        task_id: &BmId,
+        since: u64,
+        limit: u32,
+    ) -> (Vec<EventEnvelope>, u64, bool) {
+        let mut evs: Vec<EventEnvelope> = if let Some(store) = &self.store {
+            store.replay_since(since).unwrap_or_default()
+        } else {
+            self.bus.events().to_vec()
+        };
+        let last = match &self.store {
+            Some(store) => store.last_log_seq().unwrap_or(0),
+            None => self.bus.last_seq(),
+        };
+        evs.retain(|e| e.payload["task_id"].as_str() == Some(task_id.as_str()));
+        let has_more = evs.len() > limit as usize;
+        evs.truncate(limit as usize);
+        (evs, last, has_more)
+    }
+
     fn now_ts(&self) -> bm_contract::BmTimestamp {
         format_ts(self.config.clock.now())
     }
@@ -440,6 +474,9 @@ impl World {
             }
         }
         self.bus.append(event.clone());
+        // M5.4:task.* 事件增量入 Task Board 投影(与持久化同一单写者时点,
+        // 投影永远可丢弃后自事件日志重建——增量与重建两条路径等价有测试)
+        self.task_board.apply(&event);
         event
     }
 
@@ -562,6 +599,7 @@ impl RuntimeHandle {
             system_session,
             system_agent,
             tasks: HashMap::new(),
+            task_board: crate::task::TaskBoard::default(),
             tx: tx.clone(),
             store: config.store.clone(),
             config,
@@ -641,6 +679,21 @@ impl RuntimeHandle {
                     && let Ok(v) = serde_json::from_str::<serde_json::Value>(payload)
                 {
                     world.idem_results.insert(h.to_string(), v);
+                }
+            }
+            // M5.4:Task Board 投影启动重建——重放事件日志折叠(ADR-0004 条件 1);
+            // 已被压实的前缀自 L2 行补齐(行即同一事件流的快照态,键列确定性)
+            let events = store.replay_since(0).unwrap_or_default();
+            world.task_board = crate::task::TaskBoard::rebuild(&events);
+            for row in store.list_tasks().unwrap_or_default() {
+                let id = row["id"].as_str().unwrap_or_default().to_string();
+                if world.task_board.entry(&id).is_none() {
+                    world.task_board.restore_row(
+                        &id,
+                        row["title"].as_str().unwrap_or_default(),
+                        row["state"].as_str().unwrap_or("created"),
+                        row["task_epoch"].as_u64().unwrap_or(1),
+                    );
                 }
             }
             for row in store.list_approvals().unwrap_or_default() {
@@ -1113,6 +1166,29 @@ impl RuntimeHandle {
             .await
     }
 
+    /// task.list(M5.4):任务列表(L2 规范状态投影为合同对象;确定性序)。
+    pub async fn task_list(
+        &self,
+        params: wire::TaskListParams,
+    ) -> CoreResult<wire::TaskListResult> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(Cmd::TaskList { params, resp: tx })
+            .await
+            .map_err(|_| CoreError::Internal)?;
+        rx.await.map_err(|_| CoreError::Internal)?
+    }
+
+    /// task.get(M5.2/M5.4):规范对象 + 监护态(guard_states 随 T7 填充)。
+    pub async fn task_get(&self, params: wire::TaskGetParams) -> CoreResult<wire::TaskGetResult> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(Cmd::TaskGet { params, resp: tx })
+            .await
+            .map_err(|_| CoreError::Internal)?;
+        rx.await.map_err(|_| CoreError::Internal)?
+    }
+
     async fn task_lifecycle(
         &self,
         request_id: BmId,
@@ -1248,6 +1324,12 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
                 let _ = resp.send(handle_task_lifecycle(
                     &mut world, request_id, action, params,
                 ));
+            }
+            Cmd::TaskList { params, resp } => {
+                let _ = resp.send(handle_task_list(&world, params));
+            }
+            Cmd::TaskGet { params, resp } => {
+                let _ = resp.send(handle_task_get(&world, params));
             }
             Cmd::GetOperation { params, resp } => {
                 let _ = resp.send(handle_get_operation(&world, params));
@@ -1471,6 +1553,16 @@ fn handle_session_close(
 
 fn handle_events_poll(w: &World, params: EventsPollParams) -> CoreResult<EventsPollResult> {
     let limit = params.limit.unwrap_or(100).clamp(1, 1000);
+    // M5 增发:task_id 过滤(watch 观察面;task 事件不携带 session 关联,
+    // 过滤在事件信封 payload.task_id 上执行,wire/session 合同语义)
+    if let Some(task_id) = &params.task_id {
+        let (events, last_seq, has_more) = w.events_for_task(task_id, params.since_seq, limit);
+        return Ok(EventsPollResult {
+            events,
+            last_seq,
+            has_more,
+        });
+    }
     let (events, last_seq, has_more) =
         w.events_for_session(&params.session_id, params.since_seq, limit);
     Ok(EventsPollResult {
@@ -2693,6 +2785,40 @@ fn handle_task_lifecycle(
     Ok(state_result)
 }
 
+/// task.list:全量任务投影为合同对象;(created_at, task_id) 字典序确定性。
+/// state_filter 未识别的状态串 = 空列表(宽松过滤,合同未约束枚举面)。
+fn handle_task_list(w: &World, params: wire::TaskListParams) -> CoreResult<wire::TaskListResult> {
+    let mut tasks: Vec<&crate::task::Task> = w
+        .tasks
+        .values()
+        .filter(|t| match &params.state_filter {
+            Some(f) => t.state.as_str() == f,
+            None => true,
+        })
+        .collect();
+    tasks.sort_by(|a, b| (&a.created_at, a.id.as_str()).cmp(&(&b.created_at, b.id.as_str())));
+    Ok(wire::TaskListResult {
+        tasks: tasks
+            .iter()
+            .map(|t| serde_json::from_str(&task_contract_json(t)).unwrap_or_default())
+            .collect(),
+    })
+}
+
+/// task.get:规范对象 + 监护态投影(guard_states 随 T7 Watchdog 填充)。
+fn handle_task_get(w: &World, params: wire::TaskGetParams) -> CoreResult<wire::TaskGetResult> {
+    let Some(task) = w.tasks.get(&params.task_id) else {
+        return Err(CoreError::Semantic(
+            ErrorCode::ValidationFailed,
+            format!("Task 不存在: {}", params.task_id.as_str()),
+        ));
+    };
+    Ok(wire::TaskGetResult {
+        task: serde_json::from_str(&task_contract_json(task)).unwrap_or_default(),
+        guard_states: None,
+    })
+}
+
 /// TaskError → 统一错误信封(脱敏;epoch 拒绝带 reason_code 语义)。
 fn task_error_to_core(task_id: &BmId, e: crate::task::TaskError) -> CoreError {
     let msg = match e {
@@ -3108,11 +3234,17 @@ fn reply_unavailable(cmd: Cmd) {
         Cmd::ApprovalRespond { resp, .. } => {
             let _ = resp.send(Err(err()));
         }
-        // M5:task 生命周期命令是新业务命令(停机态一律拒绝)
+        // M5:task 命令组(停机态一律拒绝;查询面随 M8 只读残存评估)
         Cmd::TaskCreate { resp, .. } => {
             let _ = resp.send(Err(err()));
         }
         Cmd::TaskLifecycle { resp, .. } => {
+            let _ = resp.send(Err(err()));
+        }
+        Cmd::TaskList { resp, .. } => {
+            let _ = resp.send(Err(err()));
+        }
+        Cmd::TaskGet { resp, .. } => {
             let _ = resp.send(Err(err()));
         }
         Cmd::EventsAll { resp } => {

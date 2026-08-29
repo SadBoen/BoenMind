@@ -578,3 +578,87 @@ async fn t35_builtin_capability_set_smoke() {
     assert_eq!(body["result"]["state"], "approved");
     rig.handle.stop("test_done").await;
 }
+
+/// t58(M5-T2):task 六方法经 HTTP 全链路——create/list/get/pause/resume/stop
+/// 同一 Wire 信封;错误信封语义(unavailable 前置校验同源)。
+#[tokio::test]
+async fn t58_task_methods_via_http() {
+    let rig = rig(vec![]).await;
+    let client = rig.client(Some(&rig.token));
+
+    // create:即启动(running)
+    let (status, resp) = rig
+        .rpc(
+            &client,
+            Method::TaskCreate,
+            serde_json::json!({"title": "HTTP 冒烟", "goal": "经 Wire 建 Task"}),
+        )
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(resp["ok"], serde_json::json!(true));
+    let task_id = resp["result"]["task_id"].as_str().unwrap().to_string();
+    assert_eq!(resp["result"]["state"], serde_json::json!("running"));
+
+    // list / get
+    let (status, resp) = rig
+        .rpc(&client, Method::TaskList, serde_json::json!({}))
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(resp["result"]["tasks"].as_array().unwrap().len(), 1);
+    let (status, resp) = rig
+        .rpc(
+            &client,
+            Method::TaskGet,
+            serde_json::json!({"task_id": task_id}),
+        )
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(
+        resp["result"]["task"]["title"],
+        serde_json::json!("HTTP 冒烟")
+    );
+
+    // pause → resume → stop
+    for (m, extra) in [
+        (Method::TaskPause, serde_json::json!({"reason": "http"})),
+        (Method::TaskResume, serde_json::json!({})),
+        (Method::TaskStop, serde_json::json!({"reason": "http"})),
+    ] {
+        let mut params = serde_json::json!({ "task_id": task_id });
+        if let (Some(obj), Some(e)) = (params.as_object_mut(), extra.as_object()) {
+            for (k, v) in e {
+                obj.insert(k.clone(), v.clone());
+            }
+        }
+        let (status, resp) = rig.rpc(&client, m, params).await;
+        assert_eq!(status, 200);
+        assert_eq!(resp["ok"], serde_json::json!(true), "{m:?}: {resp}");
+    }
+    let (status, resp) = rig
+        .rpc(
+            &client,
+            Method::TaskGet,
+            serde_json::json!({"task_id": task_id}),
+        )
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(
+        resp["result"]["task"]["state"],
+        serde_json::json!("cancelled")
+    );
+
+    // 表外拒绝:终态后再 pause → 信封内 validation_failed(业务 200 + ok=false)
+    let (status, resp) = rig
+        .rpc(
+            &client,
+            Method::TaskPause,
+            serde_json::json!({"task_id": task_id}),
+        )
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(resp["ok"], serde_json::json!(false));
+    assert_eq!(
+        resp["error"]["code"],
+        serde_json::json!("validation_failed")
+    );
+}
