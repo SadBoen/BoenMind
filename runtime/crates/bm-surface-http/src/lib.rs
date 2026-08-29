@@ -25,6 +25,8 @@ pub struct AppState {
     pub handle: RuntimeHandle,
     pub token: Arc<String>,
     pub store: Arc<dyn bm_persist::EventStore>,
+    /// 应用层停机信号(M3.6:/shutdown 触发;服务宿主 await 它以退出)。
+    pub shutdown: Arc<tokio::sync::Notify>,
 }
 
 /// 组装 Surface 路由。`token` 为已加载的访问令牌;/health 豁免鉴权,
@@ -33,15 +35,18 @@ pub fn router(
     handle: RuntimeHandle,
     token: Arc<String>,
     store: Arc<dyn bm_persist::EventStore>,
+    shutdown: Arc<tokio::sync::Notify>,
 ) -> Router {
     let state = AppState {
         handle,
         token,
         store,
+        shutdown,
     };
     Router::new()
         .route("/rpc/{method}", post(rpc::rpc_endpoint))
         .route("/events/{session_id}", get(sse::events_sse))
+        .route("/shutdown", post(rpc::shutdown_endpoint))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_bearer,

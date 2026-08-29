@@ -42,7 +42,8 @@ async fn rig(script: Vec<Step>) -> Rig {
     })
     .await;
 
-    let app = bm_surface_http::router(handle.clone(), token.clone(), store.clone());
+    let shutdown = Arc::new(tokio::sync::Notify::new());
+    let app = bm_surface_http::router(handle.clone(), token.clone(), store.clone(), shutdown);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("绑定");
@@ -309,4 +310,72 @@ async fn t31_turn_via_http_receipt_and_events() {
     );
 
     rig.handle.stop("test_done").await;
+}
+
+#[tokio::test]
+async fn t33_shutdown_endpoint_is_authed_and_notifies() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let token = Arc::new(token::load_or_create(dir.path()).expect("令牌"));
+    let store: Arc<PersistStore> = Arc::new(PersistStore::open(dir.path()).expect("打开"));
+    let connector: Arc<dyn ModelConnector> = Arc::new(MockConnector::new(vec![]));
+    let handle = RuntimeHandle::start(RuntimeConfig {
+        version: "0.1.0-m1".into(),
+        data_dir: Some(dir.path().to_path_buf()),
+        store: Some(store.clone()),
+        connector,
+        secret_store: Arc::new(MemSecretStore::new()),
+        id_gen: Arc::new(SeqIdGen::new()),
+        clock: Arc::new(SystemClock),
+        turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
+        max_attempts: None,
+    })
+    .await;
+
+    let shutdown = Arc::new(tokio::sync::Notify::new());
+    let assert_notified = shutdown.clone();
+    let app = bm_surface_http::router(handle.clone(), token.clone(), store.clone(), shutdown);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("绑定");
+    let addr = listener.local_addr().expect("地址");
+    tokio::spawn(async move { axum::serve(listener, app).await.expect("serve") });
+    let url = format!("http://{addr}");
+
+    let authed = reqwest::Client::builder()
+        .default_headers(authed_header(&token))
+        .build()
+        .expect("客户端");
+
+    // 无令牌 → 401(停机是受控操作)
+    let r = reqwest::Client::new()
+        .post(format!("{url}/shutdown"))
+        .send()
+        .await
+        .expect("无令牌 shutdown");
+    assert_eq!(r.status().as_u16(), 401);
+
+    // 有令牌 → 200 draining=true,且 Notify 触发
+    let notified = assert_notified.notified();
+    let r = authed
+        .post(format!("{url}/shutdown"))
+        .send()
+        .await
+        .expect("shutdown");
+    assert_eq!(r.status().as_u16(), 200);
+    let body: serde_json::Value = r.json().await.expect("JSON");
+    assert_eq!(body["draining"], true);
+    tokio::time::timeout(Duration::from_secs(2), notified)
+        .await
+        .expect("停机信号必须触发");
+
+    handle.stop("test_done").await;
+}
+
+fn authed_header(token: &str) -> reqwest::header::HeaderMap {
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        reqwest::header::AUTHORIZATION,
+        format!("Bearer {token}").parse().expect("头"),
+    );
+    headers
 }

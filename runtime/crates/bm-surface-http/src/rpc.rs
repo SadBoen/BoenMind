@@ -13,6 +13,12 @@ use bm_contract::wire::{
 use bm_core::CoreResult;
 use serde_json::Value;
 
+/// 应用层优雅停机(需鉴权):通知宿主排空(INV-12)后退出。
+pub async fn shutdown_endpoint(State(state): State<AppState>) -> impl IntoResponse {
+    state.shutdown.notify_waiters();
+    Json(serde_json::json!({"ok": true, "draining": true}))
+}
+
 pub async fn health() -> impl IntoResponse {
     Json(serde_json::json!({
         "ok": true,

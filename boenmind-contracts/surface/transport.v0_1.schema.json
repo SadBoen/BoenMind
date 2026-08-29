@@ -47,14 +47,20 @@
     },
     "http_status_mapping": {
       "type": "object",
-      "required": ["business", "unauthorized", "unknown_path", "not_running"],
+      "required": ["business", "unauthorized", "unknown_path", "not_running", "malformed"],
       "additionalProperties": false,
       "properties": {
         "business": { "const": 200, "description": "业务结果(含信封内 error)恒 200,语义在信封" },
         "unauthorized": { "const": 401 },
         "unknown_path": { "const": 404 },
-        "not_running": { "const": 503 }
+        "not_running": { "const": 503 },
+        "malformed": { "const": 400, "description": "请求体非合法信封(无法回信封)" }
       }
+    },
+    "shutdown_path": {
+      "type": "string",
+      "const": "/shutdown",
+      "description": "POST /shutdown(需鉴权):应用层优雅停机(M3.6;测试矩阵『信号』条——SIGTERM 在 Windows 无对应物),触发排空(进行中回合不被取消,INV-12)后退出"
     }
   }
 }

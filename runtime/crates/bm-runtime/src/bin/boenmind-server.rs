@@ -75,7 +75,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     })
     .await;
 
-    let app = bm_surface_http::router(handle.clone(), Arc::new(token.clone()), store);
+    let shutdown = Arc::new(tokio::sync::Notify::new());
+    let app = bm_surface_http::router(
+        handle.clone(),
+        Arc::new(token.clone()),
+        store,
+        shutdown.clone(),
+    );
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     let actual = listener.local_addr()?;
     println!(
@@ -89,15 +95,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal(handle))
+        .with_graceful_shutdown(shutdown_signal(handle, shutdown))
         .await?;
     Ok(())
 }
 
-/// 优雅停机:Ctrl-C / 终止信号 → 排空进行中回合(INV-12)→ 退出。
-async fn shutdown_signal(handle: RuntimeHandle) {
-    let _ = tokio::signal::ctrl_c().await;
-    println!("收到停机信号,排空中(进行中回合不被取消,INV-12)……");
+/// 优雅停机(三入口):Ctrl-C、Unix SIGTERM(M3.6 适配)、应用层 /shutdown。
+/// 任一触发 → 排空进行中回合(INV-12)→ 退出。
+async fn shutdown_signal(handle: RuntimeHandle, shutdown: Arc<tokio::sync::Notify>) {
+    let ctrl_c = tokio::signal::ctrl_c();
+    #[cfg(unix)]
+    let term = async {
+        use tokio::signal::unix::{SignalKind, signal};
+        match signal(SignalKind::terminate()) {
+            Ok(mut s) => {
+                s.recv().await;
+            }
+            Err(_) => std::future::pending::<()>().await,
+        }
+    };
+    #[cfg(not(unix))]
+    let term = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => println!("收到 Ctrl-C,排空中……"),
+        _ = term => println!("收到 SIGTERM,排空中……"),
+        _ = shutdown.notified() => println!("收到 /shutdown,排空中……"),
+    }
+    println!("排空进行中回合(不被取消,INV-12)……");
     handle.stop("server_shutdown").await;
     println!("排空完成");
 }
