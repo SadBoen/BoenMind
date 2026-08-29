@@ -304,3 +304,33 @@ pub struct CancelResult {
 pub struct GetOperationParams {
     pub operation_id: BmId,
 }
+
+// ---- capability.call / approval.list / approval.respond(M4;wire/capability)--
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CapabilityCallParams {
+    pub capability: String,
+    pub args: serde_json::Value,
+    /// external-side-effect 类必备(基线 §9.5/ADR-0004);M4 暂记调用面。
+    #[serde(default)]
+    pub idempotency_key: Option<String>,
+    #[serde(default)]
+    pub deadline_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ApprovalListParams {
+    /// 缺省 = 全部;waiting_user 在前由实现侧排序。
+    #[serde(default)]
+    pub state_filter: Option<String>,
+}
+
+/// decision:approve | deny | withdraw(实现侧校验;approve 必带 scope,
+/// 须 ∈ 该 Approval 的 scope_choices —— wire/capability 合同 description)。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ApprovalRespondParams {
+    pub approval_id: BmId,
+    pub decision: String,
+    #[serde(default)]
+    pub scope: Option<String>,
+}

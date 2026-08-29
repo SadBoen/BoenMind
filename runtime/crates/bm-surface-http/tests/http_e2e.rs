@@ -27,6 +27,7 @@ async fn rig(script: Vec<Step>) -> Rig {
     let store: Arc<PersistStore> = Arc::new(PersistStore::open(dir.path()).expect("打开"));
     let connector: Arc<dyn ModelConnector> = Arc::new(MockConnector::new(script));
     let handle = RuntimeHandle::start(RuntimeConfig {
+        capabilities: Vec::new(),
         version: "0.1.0-m1".into(),
         data_dir: Some(dir.path().to_path_buf()),
         store: Some(store.clone()),
@@ -319,6 +320,7 @@ async fn t33_shutdown_endpoint_is_authed_and_notifies() {
     let store: Arc<PersistStore> = Arc::new(PersistStore::open(dir.path()).expect("打开"));
     let connector: Arc<dyn ModelConnector> = Arc::new(MockConnector::new(vec![]));
     let handle = RuntimeHandle::start(RuntimeConfig {
+        capabilities: Vec::new(),
         version: "0.1.0-m1".into(),
         data_dir: Some(dir.path().to_path_buf()),
         store: Some(store.clone()),

@@ -137,6 +137,7 @@ pub async fn rig_on(dir: &std::path::Path, script: Vec<Step>) -> TestRig {
         Arc::new(bm_persist::PersistStore::open(dir).expect("打开持久层"));
 
     let config = RuntimeConfig {
+        capabilities: Vec::new(),
         version: "0.1.0-m1".into(),
         data_dir: Some(dir.to_path_buf()),
         store: Some(store),
@@ -193,6 +194,7 @@ pub async fn rig(script: Vec<Step>, budget: Option<(u64, u32)>, with_dir: bool) 
     };
 
     let config = RuntimeConfig {
+        capabilities: Vec::new(),
         version: "0.1.0-m1".into(),
         data_dir: data_dir.clone(),
         store,

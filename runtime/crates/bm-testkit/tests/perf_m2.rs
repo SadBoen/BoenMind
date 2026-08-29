@@ -80,6 +80,7 @@ async fn p02_session_resume_with_10k_events() {
     let connector: Arc<dyn bm_core::ports::ModelConnector> =
         Arc::new(bm_providers::mock_model::MockConnector::new(vec![]));
     let handle = bm_core::runtime::RuntimeHandle::start(bm_core::runtime::RuntimeConfig {
+        capabilities: Vec::new(),
         version: "0.1.0-m1".into(),
         data_dir: Some(dir.path().to_path_buf()),
         store: Some(Arc::new(

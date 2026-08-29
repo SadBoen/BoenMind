@@ -23,6 +23,7 @@ async fn start_runtime(
     data_dir: Option<std::path::PathBuf>,
 ) -> RuntimeHandle {
     RuntimeHandle::start(RuntimeConfig {
+        capabilities: Vec::new(),
         version: "0.1.0-m1".into(),
         data_dir,
         store: None,

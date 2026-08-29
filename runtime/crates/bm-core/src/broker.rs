@@ -321,7 +321,19 @@ impl<'a> Broker<'a> {
         } else {
             manifest.effect
         };
-        // 步 4:审批判定——high-risk 恒审批(双保险,无视声明);
+        // 步 4(scope/授权):Grant 查表 O(1) + 常量校验 + 资源谓词。
+        // Grant 命中优先于审批判定——审批的产物就是 Grant,已授权调用不得
+        // 再撞审批弹窗(否则 Grant 失去意义);高危亦然(ADR-0002 裁决 4
+        // 的「task:<id> 批量预授权」语义)。
+        let now = self.clock.now();
+        for g in self.grants.active_for(&ctx.principal, capability, now) {
+            if resource_matches(&g.resource, args) {
+                return Decision::Allowed {
+                    grant_id: Some(g.grant_id),
+                };
+            }
+        }
+        // 步 5:审批判定——high-risk 恒审批(双保险,无视声明);
         // manifest 声明 required;effective_risk reversible 及以上(含
         // trusted 直调——直通只豁免 read-only/low-risk,规格 §5.4)。
         if manifest.effect == RiskClass::HighRiskCommand
@@ -332,15 +344,6 @@ impl<'a> Broker<'a> {
                 risk_class: manifest.effect,
                 effective_risk: effective,
             };
-        }
-        // 步 5(scope/授权):Grant 查表 O(1) + 常量校验 + 资源谓词。
-        let now = self.clock.now();
-        for g in self.grants.active_for(&ctx.principal, capability, now) {
-            if resource_matches(&g.resource, args) {
-                return Decision::Allowed {
-                    grant_id: Some(g.grant_id),
-                };
-            }
         }
         // 步 6:内建直通(仅 trusted × not-required × read-only/low-risk)。
         if ctx.trust == DataTrust::Trusted

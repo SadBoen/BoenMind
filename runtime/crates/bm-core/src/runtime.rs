@@ -4,13 +4,17 @@
 
 use bm_persist::EventStore;
 
+use crate::approval::{ApprovalError, ApprovalManager, OpenApproval, RespondDecision};
+use crate::broker::{Broker, CallContext, CallOutcome, Decision, DenyReason, GrantLedger};
 use crate::bus::EventBus;
 use crate::clock::Clock;
 use crate::exec_log::ExecutionLog;
 use crate::ports::{ModelConnector, SecretStore};
+use crate::registry::{CapabilityProvider, CapabilityRegistry};
 use crate::state::{Agent, Operation, Session, budget_from_spec};
 use crate::{CoreError, CoreResult};
 use bm_contract::budget::BudgetScope;
+use bm_contract::capability::{Approval, DataTrust, GrantScope};
 use bm_contract::connector::{BudgetCtx, InvokeRequest, InvokeResponse, Message, Role};
 use bm_contract::error_codes::ErrorCode;
 use bm_contract::events::{EventEnvelope, EventType};
@@ -64,6 +68,12 @@ pub struct RuntimeConfig {
     pub turn_timeout_secs: i64,
     /// 降级链最大尝试次数;None = 取链长(合同上限 3)。
     pub max_attempts: Option<u32>,
+    /// 内置能力集(M4):启动时注册进 Capability Registry;
+    /// 空集 = 无能力面(等价 M3 形态)。
+    pub capabilities: Vec<(
+        bm_contract::capability::CapabilityManifest,
+        Arc<dyn CapabilityProvider>,
+    )>,
 }
 
 /// 回合任务向核心循环回报的内部消息。
@@ -138,6 +148,23 @@ enum Cmd {
     EventsAll {
         resp: oneshot::Sender<Vec<EventEnvelope>>,
     },
+    /// capability.call(M4):统一入口裁决 + 执行;需审批时停在 waiting_approval。
+    CapabilityCall {
+        request_id: BmId,
+        params: wire::CapabilityCallParams,
+        resp: oneshot::Sender<CoreResult<serde_json::Value>>,
+    },
+    /// approval.list(M4):待裁决审批列表。
+    ApprovalList {
+        params: wire::ApprovalListParams,
+        resp: oneshot::Sender<CoreResult<serde_json::Value>>,
+    },
+    /// approval.respond(M4):批准(物化 Grant 并重放执行)/拒绝/取消。
+    ApprovalRespond {
+        request_id: BmId,
+        params: wire::ApprovalRespondParams,
+        resp: oneshot::Sender<CoreResult<serde_json::Value>>,
+    },
     Stop {
         reason: String,
         resp: oneshot::Sender<()>,
@@ -163,6 +190,24 @@ struct World {
     stopped: bool,
     /// 持久层故障拒写态:置位后拒绝一切业务命令;内存视图以持久层为准重建。
     persist_poisoned: bool,
+    // ---- M4:Capability / Broker / Approval ---------------------------------
+    registry: CapabilityRegistry,
+    grants: GrantLedger,
+    /// 审批对象(approval_id → 对象);持久化随 T3c 接 SQLite。
+    approvals: HashMap<BmId, Approval>,
+    /// 待裁决的能力调用:approval_id → 载荷(批准后重放执行用)。
+    cap_pending: HashMap<BmId, PendingCapabilityCall>,
+    /// capability 操作的系统容器 ID(内存合成;M4 能力调用不依赖 Session/Agent,
+    /// operations 表不落行,规范状态由 approvals/grants 承载——回看复核项)。
+    system_session: BmId,
+    system_agent: BmId,
+}
+
+/// 待审批的能力调用载荷(approval 对象只存摘要,重放执行需要原 args)。
+struct PendingCapabilityCall {
+    op_id: BmId,
+    capability: String,
+    args: serde_json::Value,
 }
 
 impl World {
@@ -418,6 +463,10 @@ impl RuntimeHandle {
         let (tx, rx) = mpsc::channel::<Cmd>(1024);
         let exec_log = Arc::new(ExecutionLog::new(config.data_dir.as_deref()));
         let started_at = config.clock.now();
+        // capability 操作的系统容器(内存合成;不与任何 Session/Agent 关联)
+        let system_session = config.id_gen.next_id("sess");
+        let system_agent = config.id_gen.next_id("agent");
+        let config = config;
         let mut world = World {
             bus: EventBus::new(),
             exec_log,
@@ -430,6 +479,12 @@ impl RuntimeHandle {
             draining: false,
             stopped: false,
             persist_poisoned: false,
+            registry: CapabilityRegistry::new(),
+            grants: GrantLedger::new(),
+            approvals: HashMap::new(),
+            cap_pending: HashMap::new(),
+            system_session,
+            system_agent,
             tx: tx.clone(),
             store: config.store.clone(),
             config,
@@ -451,6 +506,15 @@ impl RuntimeHandle {
             if log_last > 0 {
                 report = Some(r);
             }
+        }
+        // M4:内置能力注册(启动面;epoch 持久恢复随 T3c 接 SQLite)
+        let caps = std::mem::take(&mut world.config.capabilities);
+        for (manifest, provider) in caps {
+            let instance = format!("{}@{}", manifest.capability, manifest.version);
+            world
+                .registry
+                .register(manifest, &instance, provider)
+                .expect("内置能力首次注册不得冲突");
         }
 
         world.emit(
@@ -734,6 +798,56 @@ impl RuntimeHandle {
         rx.await.map_err(|_| CoreError::Internal)?
     }
 
+    /// capability.call(M4.2):统一入口;需审批时返回 approval_required 错误,
+    /// operation 停在 waiting_approval,经 approval.respond 续行。
+    pub async fn capability_call(
+        &self,
+        request_id: BmId,
+        params: wire::CapabilityCallParams,
+    ) -> CoreResult<serde_json::Value> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(Cmd::CapabilityCall {
+                request_id,
+                params,
+                resp: tx,
+            })
+            .await
+            .map_err(|_| CoreError::Internal)?;
+        rx.await.map_err(|_| CoreError::Internal)?
+    }
+
+    /// approval.list(M4.7):审批对象列表(默认全部,waiting_user 在前)。
+    pub async fn approval_list(
+        &self,
+        params: wire::ApprovalListParams,
+    ) -> CoreResult<serde_json::Value> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(Cmd::ApprovalList { params, resp: tx })
+            .await
+            .map_err(|_| CoreError::Internal)?;
+        rx.await.map_err(|_| CoreError::Internal)?
+    }
+
+    /// approval.respond(M4.7):批准(物化 Grant 并重放执行)/拒绝/取消。
+    pub async fn approval_respond(
+        &self,
+        request_id: BmId,
+        params: wire::ApprovalRespondParams,
+    ) -> CoreResult<serde_json::Value> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(Cmd::ApprovalRespond {
+                request_id,
+                params,
+                resp: tx,
+            })
+            .await
+            .map_err(|_| CoreError::Internal)?;
+        rx.await.map_err(|_| CoreError::Internal)?
+    }
+
     /// 停机:排空进行中回合(不取消,INV-12),发 stopping/stopped 事件。
     pub async fn stop(&self, reason: impl Into<String>) {
         let (tx, rx) = oneshot::channel();
@@ -816,6 +930,23 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
                 resp,
             } => {
                 let _ = resp.send(handle_recovery_settle(&mut world, operation_id, verdict));
+            }
+            Cmd::CapabilityCall {
+                request_id,
+                params,
+                resp,
+            } => {
+                let _ = resp.send(handle_capability_call(&mut world, request_id, params));
+            }
+            Cmd::ApprovalList { params, resp } => {
+                let _ = resp.send(handle_approval_list(&world, params));
+            }
+            Cmd::ApprovalRespond {
+                request_id,
+                params,
+                resp,
+            } => {
+                let _ = resp.send(handle_approval_respond(&mut world, request_id, params));
             }
             Cmd::GetOperation { params, resp } => {
                 let _ = resp.send(handle_get_operation(&world, params));
@@ -1380,6 +1511,488 @@ fn handle_recovery_settle(
     }
 }
 
+// ---- Capability Broker / Approval(M4;ADR-0001/0002)------------------------
+
+const CAPABILITY_CALLER: &str = "surface:user";
+/// 审批可选范围(GT-02 形态;forever 的收紧策略随 M5 审批 UI,规格 §8.6)。
+fn capability_scope_choices() -> Vec<GrantScope> {
+    vec![
+        GrantScope::Once,
+        GrantScope::Count(5),
+        GrantScope::Ttl(3_600_000),
+    ]
+}
+
+fn handle_capability_call(
+    w: &mut World,
+    request_id: BmId,
+    params: wire::CapabilityCallParams,
+) -> CoreResult<serde_json::Value> {
+    if w.draining || w.persist_poisoned {
+        return Err(CoreError::Semantic(
+            ErrorCode::Unavailable,
+            "Runtime 排空中或持久层故障,拒绝能力调用".into(),
+        ));
+    }
+    let ctx = CallContext::new(CAPABILITY_CALLER, DataTrust::Trusted);
+    // 步 1-4:查表裁决(Broker 为字段级临时借用,用后即还)
+    let decision = {
+        let broker = Broker::new(
+            &w.registry,
+            &mut w.grants,
+            &*w.config.clock,
+            &*w.config.id_gen,
+        );
+        broker.decide(&ctx, &params.capability, &params.args)
+    };
+    // operation 载体:系统容器上的内存操作(M4 能力调用不依赖 Session/Agent;
+    // 规范状态由 approvals/grants 承载,operations 表不落行——回看复核项)
+    let op_id = w.config.id_gen.next_id("op");
+    let created_at = w.now_ts();
+    let operation = Operation {
+        id: op_id.clone(),
+        request_id: request_id.clone(),
+        session_id: w.system_session.clone(),
+        agent_id: w.system_agent.clone(),
+        state: bm_contract::states::OperationState::NotStarted,
+        turn_index: 0,
+        created_at: created_at.clone(),
+        completed_at: None,
+        action_summary: format!("能力调用 {}", params.capability),
+        result_reference: None,
+        error: None,
+    };
+    w.operations.insert(op_id.clone(), operation.dispatch());
+
+    match decision {
+        Decision::Allowed { grant_id } => {
+            let outcome = {
+                let mut broker = Broker::new(
+                    &w.registry,
+                    &mut w.grants,
+                    &*w.config.clock,
+                    &*w.config.id_gen,
+                );
+                broker.call(&ctx, &params.capability, params.args.clone())
+            };
+            match outcome {
+                CallOutcome::Completed {
+                    call_id,
+                    credential,
+                    result,
+                    ..
+                } => {
+                    let completed_at = w.now_ts();
+                    w.settle_operation(&op_id, OperationState::Succeeded, None);
+                    w.emit(
+                        EventType::CapabilityInvoked,
+                        None,
+                        None,
+                        Some(op_id.clone()),
+                        serde_json::json!({
+                            "call_id": call_id,
+                            "operation_id": op_id.as_str(),
+                            "capability": params.capability,
+                            "principal": CAPABILITY_CALLER,
+                            "binding_epoch": credential.binding_epoch,
+                            "provider_instance_id": credential.provider_instance_id,
+                            "outcome": "ok",
+                            "error_code": null,
+                            "idempotency_key_hash": null,
+                        }),
+                    );
+                    Ok(serde_json::json!({
+                        "operation_id": op_id.as_str(),
+                        "request_id": request_id.as_str(),
+                        "principal": CAPABILITY_CALLER,
+                        "capability": params.capability,
+                        "state": "succeeded",
+                        "created_at": created_at,
+                        "completed_at": completed_at,
+                        "action_summary": format!("能力 {} 执行完成", params.capability),
+                        "result_reference": null,
+                        "error": null,
+                        "grant_used": grant_id,
+                        "result": result,
+                    }))
+                }
+                CallOutcome::InvalidArgs { message } => {
+                    fail_capability_call(
+                        w,
+                        &op_id,
+                        &params.capability,
+                        ErrorCode::ValidationFailed,
+                        &message,
+                    );
+                    Err(CoreError::Semantic(ErrorCode::ValidationFailed, message))
+                }
+                CallOutcome::StaleBinding { expected_epoch, .. } => {
+                    fail_capability_call(
+                        w,
+                        &op_id,
+                        &params.capability,
+                        ErrorCode::Unavailable,
+                        &format!("binding 已切换(凭证 epoch {expected_epoch}),请重试"),
+                    );
+                    Err(CoreError::Semantic(
+                        ErrorCode::Unavailable,
+                        "Provider binding 已切换,请重试".into(),
+                    ))
+                }
+                CallOutcome::ProviderError { message } | CallOutcome::InvalidOutput { message } => {
+                    fail_capability_call(
+                        w,
+                        &op_id,
+                        &params.capability,
+                        ErrorCode::Internal,
+                        &message,
+                    );
+                    Err(CoreError::Internal)
+                }
+                CallOutcome::Rejected { .. } => {
+                    unreachable!("Allowed 分支不会再被拒绝")
+                }
+            }
+        }
+        Decision::RequireApproval {
+            risk_class,
+            effective_risk,
+        } => {
+            let mut mgr = ApprovalManager::new(&mut w.grants, &*w.config.clock, &*w.config.id_gen);
+            let mut approval = mgr.open(OpenApproval {
+                capability: &params.capability,
+                principal: CAPABILITY_CALLER,
+                risk_class,
+                effective_risk,
+                input_trust: DataTrust::Trusted,
+                args: &params.args,
+                args_summary: &format!("能力 {} 调用", params.capability),
+                scope_choices: capability_scope_choices(),
+                ttl_ms: 300_000,
+            });
+            let approval_id = BmId::parse(approval.approval_id.clone()).expect("appr_ 前缀合法");
+            w.settle_operation(&op_id, OperationState::WaitingApproval, None);
+            w.emit(
+                EventType::ApprovalRequested,
+                None,
+                None,
+                Some(op_id.clone()),
+                serde_json::json!({
+                    "approval_id": approval.approval_id,
+                    "operation_id": op_id.as_str(),
+                    "capability": params.capability,
+                    "principal": CAPABILITY_CALLER,
+                    "risk_class": risk_class.as_str(),
+                    "effective_risk": effective_risk.as_str(),
+                    "input_trust": approval.input_trust.as_str(),
+                    "expires_at": approval.expires_at,
+                }),
+            );
+            approval.grant_id = None;
+            w.approvals.insert(approval_id.clone(), approval);
+            w.cap_pending.insert(
+                approval_id,
+                PendingCapabilityCall {
+                    op_id,
+                    capability: params.capability.clone(),
+                    args: params.args.clone(),
+                },
+            );
+            // GT-02 场景 A2 形态:approval_required 错误信封;operation 停在
+            // waiting_approval,由 approval.respond 续行(基线 §9.6)
+            Err(CoreError::Semantic(
+                ErrorCode::ApprovalRequired,
+                format!("能力 {} 需要用户审批", params.capability),
+            ))
+        }
+        Decision::Denied { reason } => {
+            let (msg, call_id) = match reason {
+                DenyReason::UnknownCapability => (
+                    "未知能力,且审批不能补授权(默认拒绝)",
+                    w.config.id_gen.next_id("call"),
+                ),
+                DenyReason::NoGrant => ("无有效授权(默认拒绝)", w.config.id_gen.next_id("call")),
+            };
+            let reason_code = match reason {
+                DenyReason::UnknownCapability => "unknown_capability",
+                DenyReason::NoGrant => "no_grant",
+            };
+            w.settle_operation(
+                &op_id,
+                OperationState::Failed,
+                Some(WireError::new(ErrorCode::PermissionDenied, msg.to_string())),
+            );
+            w.emit(
+                EventType::CapabilityDenied,
+                None,
+                None,
+                Some(op_id.clone()),
+                serde_json::json!({
+                    "call_id": call_id.as_str(),
+                    "capability": params.capability,
+                    "principal": CAPABILITY_CALLER,
+                    "input_trust": ctx.trust.as_str(),
+                    "reason_code": reason_code,
+                }),
+            );
+            Err(CoreError::Semantic(
+                ErrorCode::PermissionDenied,
+                msg.to_string(),
+            ))
+        }
+    }
+}
+
+/// 执行失败的统一收口:operation → failed + capability.invoked(outcome=error)。
+fn fail_capability_call(
+    w: &mut World,
+    op_id: &BmId,
+    capability: &str,
+    code: ErrorCode,
+    message: &str,
+) {
+    w.settle_operation(
+        op_id,
+        OperationState::Failed,
+        Some(WireError::new(code, message.to_string())),
+    );
+    w.emit(
+        EventType::CapabilityInvoked,
+        None,
+        None,
+        Some(op_id.clone()),
+        serde_json::json!({
+            "call_id": w.config.id_gen.next_id("call").as_str(),
+            "operation_id": op_id.as_str(),
+            "capability": capability,
+            "principal": CAPABILITY_CALLER,
+            "binding_epoch": 0,
+            "provider_instance_id": "n/a",
+            "outcome": "error",
+            "error_code": code.as_str(),
+            "idempotency_key_hash": null,
+        }),
+    );
+}
+
+fn handle_approval_list(
+    w: &World,
+    params: wire::ApprovalListParams,
+) -> CoreResult<serde_json::Value> {
+    let mut rows: Vec<&Approval> = w
+        .approvals
+        .values()
+        .filter(|a| {
+            params
+                .state_filter
+                .as_deref()
+                .map(|f| a.state.as_str() == f)
+                .unwrap_or(true)
+        })
+        .collect();
+    rows.sort_by(|a, b| a.requested_at.cmp(&b.requested_at));
+    let mut approvals = Vec::new();
+    for a in rows {
+        approvals.push(serde_json::to_value(a).map_err(|_| CoreError::Internal)?);
+    }
+    Ok(serde_json::json!({ "approvals": approvals }))
+}
+
+fn handle_approval_respond(
+    w: &mut World,
+    request_id: BmId,
+    params: wire::ApprovalRespondParams,
+) -> CoreResult<serde_json::Value> {
+    let decision = match params.decision.as_str() {
+        "approve" => RespondDecision::Approve,
+        "deny" => RespondDecision::Deny,
+        "withdraw" => RespondDecision::Withdraw,
+        other => return Err(CoreError::validation(format!("非法 decision: {other}"))),
+    };
+    let scope = params
+        .scope
+        .as_deref()
+        .map(|s| GrantScope::from_wire(s).ok_or_else(|| CoreError::validation("非法 scope")))
+        .transpose()?;
+    let pending = w
+        .cap_pending
+        .get(&params.approval_id)
+        .map(|p| (p.op_id.clone(), p.capability.clone(), p.args.clone()));
+    let resource = bm_contract::capability::GrantResource {
+        capability: w
+            .approvals
+            .get(&params.approval_id)
+            .map(|a| a.capability.clone())
+            .ok_or_else(|| CoreError::validation("未知审批对象"))?,
+        args_predicates: Default::default(),
+    };
+    let respond_result = {
+        let approval = w
+            .approvals
+            .get_mut(&params.approval_id)
+            .ok_or_else(|| CoreError::validation("未知审批对象"))?;
+        let mut mgr = ApprovalManager::new(&mut w.grants, &*w.config.clock, &*w.config.id_gen);
+        mgr.respond(approval, decision, scope, resource, CAPABILITY_CALLER)
+    };
+    let op = pending;
+    match respond_result {
+        Ok(Some(grant)) => {
+            let op_key = op.as_ref().map(|(op_id, ..)| op_id.clone());
+            w.emit(
+                EventType::GrantCreated,
+                None,
+                None,
+                op_key.clone(),
+                serde_json::json!({
+                    "grant_id": grant.grant_id,
+                    "approval_id": params.approval_id.as_str(),
+                    "audience": grant.audience,
+                    "action": grant.action,
+                    "scope": grant.scope.to_wire(),
+                    "delegation_depth": grant.delegation_depth,
+                    "expires_at": grant.expires_at,
+                    "parent_hash": grant.parent_grant_hash,
+                }),
+            );
+            // approval.resolved 键集:[approval_id, operation_id, outcome, scope, grant_id]
+            w.emit(
+                EventType::ApprovalResolved,
+                None,
+                None,
+                op_key.clone(),
+                serde_json::json!({
+                    "approval_id": params.approval_id.as_str(),
+                    "operation_id": op_key.as_ref().map(|o| o.as_str()),
+                    "outcome": "approved",
+                    "scope": grant.scope.to_wire(),
+                    "grant_id": grant.grant_id,
+                }),
+            );
+            // 批准:operation 续行(waiting_approval→running→执行)
+            if let Some((op_id, capability, args)) = op {
+                w.settle_operation(&op_id, OperationState::Running, None);
+                let ctx = CallContext::new(CAPABILITY_CALLER, DataTrust::Trusted);
+                let outcome = {
+                    let mut broker = Broker::new(
+                        &w.registry,
+                        &mut w.grants,
+                        &*w.config.clock,
+                        &*w.config.id_gen,
+                    );
+                    broker.call(&ctx, &capability, args)
+                };
+                match outcome {
+                    CallOutcome::Completed {
+                        call_id,
+                        credential,
+                        ..
+                    } => {
+                        w.settle_operation(&op_id, OperationState::Succeeded, None);
+                        w.emit(
+                            EventType::CapabilityInvoked,
+                            None,
+                            None,
+                            Some(op_id.clone()),
+                            serde_json::json!({
+                                "call_id": call_id,
+                                "operation_id": op_id.as_str(),
+                                "capability": capability,
+                                "principal": CAPABILITY_CALLER,
+                                "binding_epoch": credential.binding_epoch,
+                                "provider_instance_id": credential.provider_instance_id,
+                                "outcome": "ok",
+                                "error_code": null,
+                                "idempotency_key_hash": null,
+                            }),
+                        );
+                        w.cap_pending.remove(&params.approval_id);
+                    }
+                    other => {
+                        let code = match &other {
+                            CallOutcome::InvalidArgs { .. } => ErrorCode::ValidationFailed,
+                            CallOutcome::StaleBinding { .. } => ErrorCode::Unavailable,
+                            _ => ErrorCode::Internal,
+                        };
+                        let message = match &other {
+                            CallOutcome::InvalidArgs { message }
+                            | CallOutcome::ProviderError { message }
+                            | CallOutcome::InvalidOutput { message } => message.clone(),
+                            CallOutcome::StaleBinding { .. } => "binding 已切换".into(),
+                            _ => "批准后执行失败".into(),
+                        };
+                        w.settle_operation(
+                            &op_id,
+                            OperationState::Failed,
+                            Some(WireError::new(code, message)),
+                        );
+                    }
+                }
+            }
+            Ok(serde_json::json!({
+                "approval_id": params.approval_id.as_str(),
+                "state": "approved",
+                "grant_id": grant.grant_id,
+                "request_id": request_id.as_str(),
+            }))
+        }
+        Ok(None) => {
+            let outcome_str = match decision {
+                RespondDecision::Deny => "denied",
+                RespondDecision::Withdraw => "withdrawn",
+                RespondDecision::Approve => unreachable!("approve 必然返回 Some/Err"),
+            };
+            let op_key = op.as_ref().map(|(op_id, ..)| op_id.clone());
+            w.emit(
+                EventType::ApprovalResolved,
+                None,
+                None,
+                op_key.clone(),
+                serde_json::json!({
+                    "approval_id": params.approval_id.as_str(),
+                    "operation_id": op_key.as_ref().map(|o| o.as_str()),
+                    "outcome": outcome_str,
+                    "scope": null,
+                    "grant_id": null,
+                }),
+            );
+            // denied/expired/withdrawn → operation cancelled(基线 §9.6)
+            if let Some((op_id, ..)) = op {
+                w.settle_operation(&op_id, OperationState::Cancelled, None);
+                w.cap_pending.remove(&params.approval_id);
+            }
+            Ok(serde_json::json!({
+                "approval_id": params.approval_id.as_str(),
+                "state": outcome_str,
+                "grant_id": null,
+                "request_id": request_id.as_str(),
+            }))
+        }
+        Err(ApprovalError::Expired) => {
+            let op_key = op.as_ref().map(|(op_id, ..)| op_id.clone());
+            w.emit(
+                EventType::ApprovalExpired,
+                None,
+                None,
+                op_key.clone(),
+                serde_json::json!({
+                    "approval_id": params.approval_id.as_str(),
+                    "operation_id": op_key.as_ref().map(|o| o.as_str()),
+                    "expired_at": w.now_ts(),
+                }),
+            );
+            if let Some((op_id, ..)) = op {
+                w.settle_operation(&op_id, OperationState::Cancelled, None);
+                w.cap_pending.remove(&params.approval_id);
+            }
+            Err(CoreError::Semantic(
+                ErrorCode::ApprovalDenied,
+                "审批窗口已过期(等价拒绝)".into(),
+            ))
+        }
+        Err(e) => Err(CoreError::validation(format!("审批裁决失败: {e:?}"))),
+    }
+}
+
 fn handle_cancel(w: &World, params: CancelParams) -> CoreResult<CancelResult> {
     let op = w
         .operations
@@ -1712,6 +2325,16 @@ fn reply_unavailable(cmd: Cmd) {
             let _ = resp.send(Err(err()));
         }
         Cmd::RecoverySettle { resp, .. } => {
+            let _ = resp.send(Err(err()));
+        }
+        // M4:裁决后的审批落地在停机态仍应可答;capability.call 是新业务命令
+        Cmd::CapabilityCall { resp, .. } => {
+            let _ = resp.send(Err(err()));
+        }
+        Cmd::ApprovalList { resp, .. } => {
+            let _ = resp.send(Err(err()));
+        }
+        Cmd::ApprovalRespond { resp, .. } => {
             let _ = resp.send(Err(err()));
         }
         Cmd::EventsAll { resp } => {

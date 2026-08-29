@@ -29,6 +29,7 @@ async fn main() -> CoreResult<()> {
     ));
 
     let handle = RuntimeHandle::start(RuntimeConfig {
+        capabilities: Vec::new(),
         version: env!("CARGO_PKG_VERSION").into(),
         data_dir: None,
         store: None,
