@@ -1,0 +1,60 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "boenmind:surface:transport:v0.1",
+  "x-frozen": "2026-08-29",
+  "title": "Surface Protocol HTTP 传输绑定 v0.1",
+  "description": "Wire API v0.1 信封在 HTTP 上的绑定(M3.1,ADR-0009 增项)。原则:业务语义全在信封,传输层不二次翻译(基线 §14;M3 规格 §4/§8.1)。本合同只增不破;新增路径/头部以 definitions 追加。",
+  "definitions": {
+    "rpc_path": {
+      "type": "string",
+      "enum": [
+        "/rpc/session.create",
+        "/rpc/session.resume",
+        "/rpc/session.close",
+        "/rpc/events.poll",
+        "/rpc/agent.send_input",
+        "/rpc/agent.cancel",
+        "/rpc/operations.get"
+      ],
+      "description": "method → 路径映射:POST /rpc/{method},body = RequestEnvelope,响应体 = ResponseEnvelope;M4/M5 起新方法以同构追加"
+    },
+    "sse_frame": {
+      "type": "object",
+      "required": ["event", "id", "data"],
+      "additionalProperties": false,
+      "properties": {
+        "event": { "const": "envelope" },
+        "id": { "type": "string", "pattern": "^[0-9]+$", "description": "该事件的 event_seq(十进制字符串);EventSource 自动重连时携带为 Last-Event-ID,语义等价 resume cursor" },
+        "data": { "type": "string", "description": "完整 event_envelope JSON(单行)" }
+      },
+      "description": "GET /events/{session_id}?since_seq=N 的 SSE 帧;心跳为注释行(:keepalive)"
+    },
+    "auth_header": {
+      "type": "string",
+      "pattern": "^Bearer [A-Za-z0-9_-]{43}$",
+      "description": "Authorization: Bearer <token>;token = 256bit 随机数的 base64url(无填充,43 字符),见 surface/auth 合同"
+    },
+    "health_response": {
+      "type": "object",
+      "required": ["ok", "version", "state"],
+      "additionalProperties": false,
+      "properties": {
+        "ok": { "const": true },
+        "version": { "type": "string" },
+        "state": { "enum": ["starting", "running", "draining", "stopped"] }
+      },
+      "description": "GET /health,无鉴权;供探活与 L0 形态预演"
+    },
+    "http_status_mapping": {
+      "type": "object",
+      "required": ["business", "unauthorized", "unknown_path", "not_running"],
+      "additionalProperties": false,
+      "properties": {
+        "business": { "const": 200, "description": "业务结果(含信封内 error)恒 200,语义在信封" },
+        "unauthorized": { "const": 401 },
+        "unknown_path": { "const": 404 },
+        "not_running": { "const": 503 }
+      }
+    }
+  }
+}

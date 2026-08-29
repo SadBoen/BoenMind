@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "boenmind:surface:auth:v0.1",
+  "x-frozen": "2026-08-29",
+  "title": "Surface 鉴权合同 v0.1(单用户 bearer 令牌)",
+  "description": "M3 鉴权(ADR-0009 增项;基线 4.4 单用户无账号体系)。令牌 = 服务端访问凭证,非用户身份(M4 起才有 principal 体系)。本合同只增不破。",
+  "definitions": {
+    "token": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{43}$",
+      "description": "256bit 随机数 base64url(无填充);server 首次启动生成,轮换经 server 子命令"
+    },
+    "token_file": {
+      "type": "object",
+      "required": ["path", "permission"],
+      "additionalProperties": false,
+      "properties": {
+        "path": { "type": "string", "description": "<data_dir>/token(默认 data_dir:平台数据目录/boenmind;可用 --data-dir 覆盖)" },
+        "permission": { "type": "string", "enum": ["owner-only"], "description": "POSIX 0600;Windows 限当前用户 ACL" }
+      }
+    },
+    "rotation": {
+      "type": "object",
+      "required": ["command", "effect"],
+      "additionalProperties": false,
+      "properties": {
+        "command": { "const": "boenmind server rotate-token" },
+        "effect": { "type": "string", "description": "重写令牌文件并热加载;旧令牌立即失效" }
+      }
+    },
+    "transport_boundary": {
+      "type": "string",
+      "description": "M3 默认绑定 127.0.0.1;远程访问经 TLS 终止反向代理转发(M3 规格 §5.3);进程内 rustls 终止随 M8 部署形态再议"
+    }
+  }
+}
