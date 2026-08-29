@@ -546,8 +546,14 @@ impl<'a> Broker<'a> {
 
     /// 步 7:执行(返回值过 output_schema 后才算完成)。
     pub fn execute(&self, prepared: &PreparedCall, args: serde_json::Value) -> CallOutcome {
-        match prepared.handle.invoke(args) {
-            Ok(result) => {
+        // 故障半径(T8;ADR-0001 条件 1 证伪③):Provider panic 被 execute
+        // 收容为 ProviderError——决策路径与核心循环不被第三方实现击穿;
+        // 兜底仍由 L0 重启承担,无特权降级通道。
+        let invoke_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prepared.handle.invoke(args)
+        }));
+        match invoke_result {
+            Ok(Ok(result)) => {
                 if let Err(e) = bm_contract::schemas::validate(
                     &prepared.manifest.output_schema.to_string(),
                     &result,
@@ -561,7 +567,17 @@ impl<'a> Broker<'a> {
                     result,
                 }
             }
-            Err(e) => CallOutcome::ProviderError { message: e },
+            Ok(Err(e)) => CallOutcome::ProviderError { message: e },
+            Err(panic_payload) => {
+                let detail = panic_payload
+                    .downcast_ref::<&str>()
+                    .map(|s| s.to_string())
+                    .or_else(|| panic_payload.downcast_ref::<String>().cloned())
+                    .unwrap_or_else(|| "provider panicked".into());
+                CallOutcome::ProviderError {
+                    message: format!("Provider panic(已收容): {detail}"),
+                }
+            }
         }
     }
 
