@@ -17,5 +17,9 @@ tempfile = { workspace = true }
 [dev-dependencies]
 proptest = { workspace = true }
 
+[[bin]]
+name = "chaos-child"
+path = "src/bin/chaos_child.rs"
+
 [lints]
 workspace = true
