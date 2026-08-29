@@ -161,6 +161,8 @@ impl Behavior {
 pub struct InProcMcpServer {
     tools: Mutex<Vec<McpToolDef>>,
     behaviors: Mutex<HashMap<String, Behavior>>,
+    /// tools/call 次数(健康面测试:断言封禁后不再触达执行器)。
+    calls: Mutex<HashMap<String, u32>>,
     progress_tx: tokio::sync::mpsc::UnboundedSender<McpProgressNote>,
     progress_rx: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<McpProgressNote>>>,
 }
@@ -171,6 +173,7 @@ impl InProcMcpServer {
         Arc::new(Self {
             tools: Mutex::new(tools),
             behaviors: Mutex::new(HashMap::new()),
+            calls: Mutex::new(HashMap::new()),
             progress_tx: tx,
             progress_rx: Mutex::new(Some(rx)),
         })
@@ -181,6 +184,16 @@ impl InProcMcpServer {
             .lock()
             .expect("锁未中毒")
             .insert(tool.to_string(), behavior);
+    }
+
+    /// 某 tool 的 tools/call 次数(测试断言面)。
+    pub fn call_count(&self, tool: &str) -> u32 {
+        self.calls
+            .lock()
+            .expect("锁未中毒")
+            .get(tool)
+            .copied()
+            .unwrap_or(0)
     }
 }
 
@@ -213,6 +226,12 @@ impl McpTransport for InProcMcpServer {
                     .and_then(|v| v.as_str())
                     .unwrap_or_default()
                     .to_string();
+                *self
+                    .calls
+                    .lock()
+                    .expect("锁未中毒")
+                    .entry(name.clone())
+                    .or_insert(0) += 1;
                 let behavior = self
                     .behaviors
                     .lock()
@@ -257,9 +276,15 @@ impl McpTransport for InProcMcpServer {
 // ---- stdio 传输 ------------------------------------------------------------
 
 /// stdio 子进程传输(newline-delimited JSON-RPC 2.0)。
+/// 子进程退出后,下次 request 自动重生一代子进程(M7.4 重启语义;
+/// 重连上限由内核健康面计量)。
 pub struct StdioMcpTransport {
+    command: String,
+    args: Vec<String>,
+    env: HashMap<String, String>,
     inner: tokio::sync::Mutex<StdioInner>,
     progress_rx: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<McpProgressNote>>>,
+    alive: Arc<std::sync::atomic::AtomicBool>,
 }
 
 struct StdioInner {
@@ -267,7 +292,6 @@ struct StdioInner {
     /// 与读取泵共享的同一张在途表(request 注册,泵按 id 配对摘除)。
     pending: PendingMap,
     stdin: Option<tokio::process::ChildStdin>,
-    alive: bool,
 }
 
 impl StdioMcpTransport {
@@ -278,80 +302,124 @@ impl StdioMcpTransport {
         args: &[String],
         env: &HashMap<String, String>,
     ) -> Result<Arc<Self>, String> {
-        use tokio::io::{AsyncBufReadExt, BufReader};
-        use tokio::process::Command;
-
-        let mut cmd = Command::new(command);
-        cmd.args(args)
-            .envs(env)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null());
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| format!("MCP 子进程启动失败: {e}"))?;
-        let stdin = child.stdin.take().ok_or("MCP 子进程 stdin 不可用")?;
-        let stdout = child.stdout.take().ok_or("MCP 子进程 stdout 不可用")?;
-
-        let (progress_tx, progress_rx) = tokio::sync::mpsc::unbounded_channel();
-        let pending: PendingMap = Arc::new(Mutex::new(HashMap::new()));
-
-        // 读取泵:响应按 id 配对;通知解析进度;通道关闭 = 子进程退出
-        let pending_reader = pending.clone();
-        tokio::spawn(async move {
-            let reader = BufReader::new(stdout);
-            let mut lines = reader.lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                let Ok(msg) = serde_json::from_str::<Value>(&line) else {
-                    continue;
-                };
-                if let Some(id) = msg.get("id").and_then(|v| v.as_u64()) {
-                    let slot = pending_reader.lock().expect("锁未中毒").remove(&id);
-                    if let Some(tx) = slot {
-                        match msg.get("error") {
-                            Some(err) => {
-                                let _ = tx.send(Err(format!(
-                                    "rpc-error:{}",
-                                    err.get("code").and_then(|c| c.as_i64()).unwrap_or(-1)
-                                )));
-                            }
-                            None => {
-                                let _ =
-                                    tx.send(Ok(msg.get("result").cloned().unwrap_or(json!({}))));
-                            }
-                        }
-                    }
-                } else if msg.get("method").and_then(|v| v.as_str())
-                    == Some("notifications/progress")
-                {
-                    let p = msg.get("params").cloned().unwrap_or(json!({}));
-                    let _ = progress_tx.send(McpProgressNote {
-                        progress_token: p
-                            .get("progressToken")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or_default()
-                            .to_string(),
-                        progress: p.get("progress").and_then(|v| v.as_u64()).unwrap_or(0),
-                        total: p.get("total").and_then(|v| v.as_u64()),
-                        message: p.get("message").and_then(|v| v.as_str()).map(String::from),
-                    });
-                }
-            }
-            let mut map = pending_reader.lock().expect("锁未中毒");
-            for (_, tx) in map.drain() {
-                let _ = tx.send(Err("stdio-closed".into()));
-            }
-        });
-
+        let alive = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let (pending, stdin, progress_rx) = spawn_generation(command, args, env, alive.clone())?;
         Ok(Arc::new(Self {
+            command: command.to_string(),
+            args: args.to_vec(),
+            env: env.clone(),
             inner: tokio::sync::Mutex::new(StdioInner {
                 next_id: 0,
                 pending,
                 stdin: Some(stdin),
-                alive: true,
             }),
             progress_rx: Mutex::new(Some(progress_rx)),
+            alive,
         }))
+    }
+}
+
+/// 拉起一代子进程:返回在途表 / stdin / 进度接收端。
+fn spawn_generation(
+    command: &str,
+    args: &[String],
+    env: &HashMap<String, String>,
+    alive: Arc<std::sync::atomic::AtomicBool>,
+) -> Result<
+    (
+        PendingMap,
+        tokio::process::ChildStdin,
+        tokio::sync::mpsc::UnboundedReceiver<McpProgressNote>,
+    ),
+    String,
+> {
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    use tokio::process::Command;
+
+    let mut cmd = Command::new(command);
+    cmd.args(args)
+        .envs(env)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("MCP 子进程启动失败: {e}"))?;
+    let stdin = child.stdin.take().ok_or("MCP 子进程 stdin 不可用")?;
+    let stdout = child.stdout.take().ok_or("MCP 子进程 stdout 不可用")?;
+
+    let (progress_tx, progress_rx) = tokio::sync::mpsc::unbounded_channel();
+    let pending: PendingMap = Arc::new(Mutex::new(HashMap::new()));
+
+    // 读取泵:响应按 id 配对;通知解析进度;通道关闭 = 子进程退出
+    let pending_reader = pending.clone();
+    tokio::spawn(async move {
+        let reader = BufReader::new(stdout);
+        let mut lines = reader.lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            let Ok(msg) = serde_json::from_str::<Value>(&line) else {
+                continue;
+            };
+            if let Some(id) = msg.get("id").and_then(|v| v.as_u64()) {
+                let slot = pending_reader.lock().expect("锁未中毒").remove(&id);
+                if let Some(tx) = slot {
+                    match msg.get("error") {
+                        Some(err) => {
+                            let _ = tx.send(Err(format!(
+                                "rpc-error:{}",
+                                err.get("code").and_then(|c| c.as_i64()).unwrap_or(-1)
+                            )));
+                        }
+                        None => {
+                            let _ = tx.send(Ok(msg.get("result").cloned().unwrap_or(json!({}))));
+                        }
+                    }
+                }
+            } else if msg.get("method").and_then(|v| v.as_str()) == Some("notifications/progress") {
+                let p = msg.get("params").cloned().unwrap_or(json!({}));
+                let _ = progress_tx.send(McpProgressNote {
+                    progress_token: p
+                        .get("progressToken")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    progress: p.get("progress").and_then(|v| v.as_u64()).unwrap_or(0),
+                    total: p.get("total").and_then(|v| v.as_u64()),
+                    message: p.get("message").and_then(|v| v.as_str()).map(String::from),
+                });
+            }
+        }
+        alive.store(false, std::sync::atomic::Ordering::Relaxed);
+        let mut map = pending_reader.lock().expect("锁未中毒");
+        for (_, tx) in map.drain() {
+            let _ = tx.send(Err("stdio-closed".into()));
+        }
+    });
+
+    Ok((pending, stdin, progress_rx))
+}
+
+impl StdioMcpTransport {
+    /// 重生一代子进程(M7.4:下次调用重连)。旧代在途请求以
+    /// stdio-closed 收场(内核侧计为一次失败/探针)。
+    async fn respawn(&self) -> Result<(), String> {
+        let mut inner = self.inner.lock().await;
+        {
+            let mut map = inner.pending.lock().expect("锁未中毒");
+            for (_, tx) in map.drain() {
+                let _ = tx.send(Err("stdio-closed".into()));
+            }
+        }
+        let (pending, stdin, progress_rx) =
+            spawn_generation(&self.command, &self.args, &self.env, self.alive.clone())?;
+        inner.pending = pending;
+        inner.stdin = Some(stdin);
+        let mut slot = self.progress_rx.lock().expect("锁未中毒");
+        if slot.is_none() {
+            *slot = Some(progress_rx); // 首代订阅位空缺时续上重生代进度
+        }
+        self.alive.store(true, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
     }
 }
 
@@ -359,12 +427,12 @@ impl StdioMcpTransport {
 impl McpTransport for StdioMcpTransport {
     async fn request(&self, method: &str, params: Value) -> Result<Value, String> {
         use tokio::io::AsyncWriteExt;
+        if !self.alive.load(std::sync::atomic::Ordering::Relaxed) {
+            self.respawn().await?;
+        }
         let (tx, rx) = tokio::sync::oneshot::channel();
         {
             let mut inner = self.inner.lock().await;
-            if !inner.alive {
-                return Err("stdio-closed".into());
-            }
             inner.next_id += 1;
             let id = inner.next_id;
             inner.pending.lock().expect("锁未中毒").insert(id, tx);
@@ -390,9 +458,6 @@ impl McpTransport for StdioMcpTransport {
     async fn notify(&self, method: &str, params: Value) -> Result<(), String> {
         use tokio::io::AsyncWriteExt;
         let mut inner = self.inner.lock().await;
-        if !inner.alive {
-            return Err("stdio-closed".into());
-        }
         let stdin = inner.stdin.as_mut().expect("stdin 在活着时存在");
         let msg = json!({"jsonrpc": "2.0", "method": method, "params": params});
         let mut bytes = serde_json::to_string(&msg).map_err(|e| e.to_string())?;
@@ -612,4 +677,65 @@ impl AsyncCapabilityExecutor for McpHub {
     fn set_progress_sink(&self, sink: ProgressSink) {
         *self.sink.lock().expect("锁未中毒") = Some(sink);
     }
+}
+
+// ---- 安装配置装载(M7.7)----------------------------------------------------
+
+/// 单个 MCP server 的运行解析结果(env 已从 Secret Store 解析;
+/// 明文只进子进程环境,不入日志/事件,INV-5)。
+#[derive(Debug, Clone)]
+pub struct McpServerSetup {
+    pub name: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub env_resolved: HashMap<String, String>,
+    pub tool_timeout_ms: u64,
+    pub restart_limit: u32,
+}
+
+/// 从配置文件装载 MCP server 安装清单(每项过 mcp-server.v0_1 合同校验)。
+/// 文件显式列出 = 用户安装批准;env 一律 secret: 引用(明文拒绝由合同承担)。
+pub fn load_mcp_setups(
+    path: &std::path::Path,
+    store: &dyn bm_core::ports::SecretStore,
+) -> Result<Vec<McpServerSetup>, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("读取 MCP 配置失败: {e}"))?;
+    let arr: Vec<Value> =
+        serde_json::from_str(&text).map_err(|e| format!("MCP 配置不是 JSON 数组: {e}"))?;
+    let mut out = Vec::new();
+    for item in &arr {
+        bm_contract::schemas::validate(bm_contract::registries::MCP_SERVER_SCHEMA, item)
+            .map_err(|e| format!("MCP 配置项不合规: {e}"))?;
+        let mut env_resolved = HashMap::new();
+        if let Some(env) = item.get("env").and_then(|v| v.as_object()) {
+            for (k, v) in env {
+                let ref_ = v.as_str().ok_or("env 值必须为字符串")?;
+                let value = bm_core::ports::SecretStore::get(store, ref_)
+                    .map_err(|e| format!("env {k} 的 {ref_} 解析失败: {e:?}"))?;
+                env_resolved.insert(k.clone(), value);
+            }
+        }
+        out.push(McpServerSetup {
+            name: item["name"].as_str().unwrap_or_default().to_string(),
+            command: item["command"].as_str().unwrap_or_default().to_string(),
+            args: item["args"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            env_resolved,
+            tool_timeout_ms: item
+                .get("tool_timeout_ms")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(DEFAULT_TOOL_TIMEOUT_MS),
+            restart_limit: item
+                .get("restart_limit")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(3) as u32,
+        });
+    }
+    Ok(out)
 }

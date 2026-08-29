@@ -8,10 +8,15 @@ tools/list / tools/call(ping 工具)。供 m7_mcp_tests t104 使用。
 Windows 管道上受内部缓冲影响,会等到缓冲满才返回(挂起陷阱)。
 """
 import json
+import os
 import sys
 
 
 def main():
+    # MINI_MCP_DIE_AFTER=N:应答完第 N 个请求后退出(模拟子进程崩溃,
+    # 供 stdio 重生语义测试;重生代继承同一环境,再走一轮)
+    die_after = int(os.environ.get("MINI_MCP_DIE_AFTER", "0") or 0)
+    answered = 0
     while True:
         line = sys.stdin.readline()
         if not line:  # EOF
@@ -61,6 +66,9 @@ def main():
             )
             continue
         print(json.dumps({"jsonrpc": "2.0", "id": rid, "result": result}), flush=True)
+        answered += 1
+        if die_after and answered >= die_after:
+            sys.exit(0)
 
 
 if __name__ == "__main__":

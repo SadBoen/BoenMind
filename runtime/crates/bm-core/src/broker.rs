@@ -144,6 +144,10 @@ pub enum CallOutcome {
     ProviderError {
         message: String,
     },
+    /// M7 S5:Provider 熔断/重连超限(unavailable 语义,区别于内部错误)。
+    ProviderUnavailable {
+        message: String,
+    },
     /// M7 S4:已派发异步执行(收据 running;完成经 Cmd::ProviderCall 落定)。
     DispatchedAsync,
 }
@@ -433,7 +437,10 @@ impl<'a> Broker<'a> {
             };
         }
         // 步 6:内建直通(仅 trusted × not-required × read-only/low-risk)。
+        // M7.6:App 主体(surface:app:<name>)不享内建直通——跨 provider 访问
+        // 一律走显式 Grant(默认拒绝,基线 M7 通过条件第五句)。
         if ctx.trust == DataTrust::Trusted
+            && !ctx.principal.starts_with("surface:app:")
             && manifest.approval == ApprovalRequirement::NotRequired
             && matches!(
                 manifest.effect,
@@ -1356,5 +1363,71 @@ mod trust_gate_tests {
         let ctx2 = CallContext::content_chain("agent:bot", DataTrust::Untrusted).unwrap();
         let d2 = broker.decide(&ctx2, "system.high", &json!({}));
         assert!(matches!(d2, Decision::RequireApproval { .. }));
+    }
+}
+
+#[cfg(test)]
+mod m7_tests {
+    use super::*;
+    use crate::clock::MockClock;
+    use crate::registry::CapabilityRegistry;
+    use bm_contract::ids::SeqIdGen;
+    use serde_json::json;
+
+    /// M7.6:App 主体不享内建直通——跨 provider 访问一律默认拒绝,
+    /// 须经显式 Grant(基线 M7 通过条件第五句的结构面)。
+    #[test]
+    fn app_principal_gets_no_builtin_passthrough() {
+        let mut reg = CapabilityRegistry::new();
+        let m: CapabilityManifest = serde_json::from_value(json!({
+            "capability": "mcp.notes.search", "provider": "mcp.notes",
+            "version": "0.1.0", "input_schema": {"type": "object"},
+            "output_schema": {"type": "object"},
+            "effect": "read-only", "idempotent": false, "cancellable": true,
+            "timeout_ms": 1000, "approval": "not-required"
+        }))
+        .unwrap();
+        reg.register(m, "mcp.notes@0.1.0", provider_fn(Ok)).unwrap();
+        let clock = MockClock::at_ms(1_788_000_000_000);
+        let mut ledger = GrantLedger::new();
+        let ids = SeqIdGen::new();
+        let broker = Broker::new(&reg, &mut ledger, &clock, &ids);
+
+        // 普通用户 surface 直调:trusted × read-only × not-required → 直通
+        let user = CallContext::surface("surface:user");
+        assert!(matches!(
+            broker.decide(&user, "mcp.notes.search", &json!({})),
+            Decision::Allowed { .. }
+        ));
+
+        // App 主体同参直调:默认拒绝(无直通、无 Grant)
+        let app = CallContext::surface("surface:app:wiki");
+        assert!(matches!(
+            broker.decide(&app, "mcp.notes.search", &json!({})),
+            Decision::Denied { .. }
+        ));
+
+        // 显式 Grant 后放行(App 经批准获得跨 provider 访问)
+        let grant = Grant {
+            grant_id: ids.next_id("grant").to_string(),
+            audience: "surface:app:wiki".into(),
+            action: "mcp.notes.search".into(),
+            resource: GrantResource {
+                capability: "mcp.notes.search".into(),
+                args_predicates: Default::default(),
+            },
+            scope: GrantScope::Forever,
+            delegation_depth: 0,
+            expires_at: None,
+            revocation_version: 0,
+            parent_grant_hash: "seed".into(),
+            issued_by: "user_grant".into(),
+            created_at: "2026-08-30T00:00:00.000Z".into(),
+        };
+        broker.grants.record(grant);
+        assert!(matches!(
+            broker.decide(&app, "mcp.notes.search", &json!({})),
+            Decision::Allowed { .. }
+        ));
     }
 }

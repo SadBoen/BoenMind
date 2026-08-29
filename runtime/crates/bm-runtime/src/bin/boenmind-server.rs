@@ -28,14 +28,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut data_dir = default_data_dir();
     let mut bind = "127.0.0.1:7531".to_string();
     let mut web_dir: Option<PathBuf> = None;
+    let mut mcp_config: Option<PathBuf> = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--data-dir" => data_dir = PathBuf::from(args.next().expect("--data-dir 需要值")),
             "--bind" => bind = args.next().expect("--bind 需要值"),
             "--web-dir" => web_dir = Some(PathBuf::from(args.next().expect("--web-dir 需要值"))),
+            "--mcp-config" => {
+                let v = args.next().expect("--mcp-config 需要值");
+                mcp_config = Some(PathBuf::from(v));
+            }
             "--help" | "-h" => {
-                println!("boenmind-server [--data-dir <path>] [--bind <addr>] [--web-dir <path>]");
+                println!(
+                    "boenmind-server [--data-dir <path>] [--bind <addr>] [--web-dir <path>] [--mcp-config <path>]"
+                );
                 return Ok(());
             }
             other => return Err(format!("未知参数: {other}").into()),
@@ -106,9 +113,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let store: Arc<dyn bm_persist::EventStore> = Arc::new(persist);
 
+    // M7.2/M7.7:--mcp-config 显式安装清单(= 用户批准)→ 握手发现 →
+    // 动态注册 + 异步执行器装配;env 明文只进子进程(INV-5)
+    let mut capabilities = bm_providers::builtin::builtin_capability_set();
+    let mut mcp_executor: Option<Arc<dyn bm_core::ports::AsyncCapabilityExecutor>> = None;
+    if let Some(cfg) = &mcp_config {
+        let hub = bm_providers::mcp::McpHub::new();
+        let setups = bm_providers::mcp::load_mcp_setups(cfg, secrets.as_ref())?;
+        for setup in setups {
+            let transport = bm_providers::mcp::StdioMcpTransport::spawn(
+                &setup.command,
+                &setup.args,
+                &setup.env_resolved,
+            )?;
+            let manifests = hub
+                .connect(&setup.name, transport, setup.tool_timeout_ms)
+                .await?;
+            println!(
+                "MCP server {} 已接入:{} 个工具",
+                setup.name,
+                manifests.len()
+            );
+            capabilities.extend(bm_providers::mcp::McpHub::capability_entries(manifests));
+        }
+        mcp_executor = Some(hub);
+    }
+
     let handle = RuntimeHandle::start(RuntimeConfig {
-        capabilities: bm_providers::builtin::builtin_capability_set(),
-        async_executor: None,
+        capabilities,
+        async_executor: mcp_executor,
         version: format!("{}-server", env!("CARGO_PKG_VERSION")),
         data_dir: Some(data_dir.clone()),
         store: Some(store.clone()),

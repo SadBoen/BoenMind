@@ -316,6 +316,8 @@ struct World {
     op_async_meta: HashMap<BmId, AsyncCallMeta>,
     /// M7 S4:异步能力调用结果(operation_id → result;内存,随操作同寿命)。
     op_results: HashMap<BmId, serde_json::Value>,
+    /// M7 S5:Provider 健康面(provider → 状态;进程内,不入 core-transitions)。
+    provider_health: HashMap<String, ProviderHealth>,
     /// M7 S1:turn 模型调用 Broker 凭证留档(operation_id 索引;
     /// 授权点在 spawn,审计点在回合模型阶段终态——两段由 call_id 缝合)。
     model_call_audit: HashMap<BmId, ModelCallAudit>,
@@ -327,6 +329,74 @@ struct ModelCallAudit {
     epoch: u64,
     instance_id: String,
     principal: String,
+}
+
+/// M7 S5:Provider 健康状态(HTTP 熔断/MCP 重连共用;进程内软状态)。
+#[derive(Debug, Clone, Default)]
+pub struct ProviderHealth {
+    pub status: &'static str, // "healthy" | "unavailable"
+    /// HTTP:连续失败计数(>=3 开闸);MCP:未用。
+    pub fail_streak: u32,
+    /// MCP:unavailable 期间的重连探针次数(>=3 封禁)。
+    pub reconnect_attempts: u32,
+    /// HTTP:熔断冷却截止(半开放行探测);MCP:未用。
+    pub cooldown_until: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+const PROVIDER_FAIL_THRESHOLD: u32 = 3;
+const PROVIDER_COOLDOWN_MS: i64 = 30_000;
+const MCP_RECONNECT_LIMIT: u32 = 3;
+
+/// "mcp.<server>.<tool>" -> "mcp.<server>"(健康面主体;其余原样)。
+fn mcp_provider_of(capability: &str) -> String {
+    let parts: Vec<&str> = capability.split('.').collect();
+    if parts.len() >= 3 && parts[0] == "mcp" {
+        format!("mcp.{}", parts[1])
+    } else {
+        capability.to_string()
+    }
+}
+
+/// 健康迁移(只在状态变化时发事件;payload 见 registry)。
+fn emit_provider_health(w: &mut World, provider: &str, from: &str, to: &str, reason: &str) {
+    w.emit(
+        EventType::ProviderHealthChanged,
+        None,
+        None,
+        None,
+        serde_json::json!({
+            "provider": provider,
+            "from": from,
+            "to": to,
+            "reason": reason,
+        }),
+    );
+}
+
+/// HTTP 模型连接器:连续失败计账(>=3 开闸熔断,冷却 30s)。
+fn note_provider_failure(w: &mut World, provider: &str, reason: &str) {
+    let now = w.config.clock.now();
+    let entry = w.provider_health.entry(provider.to_string()).or_default();
+    entry.fail_streak += 1;
+    if entry.status != "unavailable" && entry.fail_streak >= PROVIDER_FAIL_THRESHOLD {
+        entry.status = "unavailable";
+        entry.cooldown_until = Some(now + chrono::Duration::milliseconds(PROVIDER_COOLDOWN_MS));
+        emit_provider_health(w, provider, "healthy", "unavailable", reason);
+    }
+}
+
+/// 成功落定:清计数;若在 unavailable(半开探测/重连成功)则恢复 healthy。
+fn note_provider_success(w: &mut World, provider: &str, reason: &str) {
+    let Some(entry) = w.provider_health.get_mut(provider) else {
+        return;
+    };
+    entry.fail_streak = 0;
+    entry.reconnect_attempts = 0;
+    if entry.status == "unavailable" {
+        entry.status = "healthy";
+        entry.cooldown_until = None;
+        emit_provider_health(w, provider, "unavailable", "healthy", reason);
+    }
 }
 
 /// 异步能力调用的在途留档(M7 S4):spawn 时捕获,完成回流时落定。
@@ -756,6 +826,7 @@ impl RuntimeHandle {
             task_results: HashMap::new(),
             op_async_meta: HashMap::new(),
             op_results: HashMap::new(),
+            provider_health: HashMap::new(),
             model_call_audit: HashMap::new(),
             tx: tx.clone(),
             store: config.store.clone(),
@@ -2247,6 +2318,28 @@ fn spawn_turn(w: &mut World, agent: &Agent, operation_id: &BmId, content: String
     w.model_call_audit
         .insert(operation_id.clone(), model_call_audit);
 
+    // M7 S5:模型连接器熔断门——冷却期内快速失败(不触连接器);
+    // 冷却已过即本次放行(半开探测,成败都由 TurnEvent 回账)。
+    {
+        let provider = w.config.connector.provider();
+        let now = w.config.clock.now();
+        let blocked = w
+            .provider_health
+            .get(provider)
+            .map(|h| {
+                h.status == "unavailable" && h.cooldown_until.map(|t| now < t).unwrap_or(false)
+            })
+            .unwrap_or(false);
+        if blocked {
+            w.fail_turn(
+                operation_id,
+                ErrorCode::Unavailable,
+                "模型 Provider 熔断冷却中,请稍后重试".into(),
+            );
+            return;
+        }
+    }
+
     let cancel = CancellationToken::new();
     w.in_flight.insert(operation_id.clone(), cancel.clone());
 
@@ -2684,6 +2777,17 @@ fn capability_call_inner(
                     );
                     Err(CoreError::Internal)
                 }
+                CallOutcome::ProviderUnavailable { message } => {
+                    fail_capability_call(
+                        w,
+                        &op_id,
+                        &params.capability,
+                        ctx.principal.as_str(),
+                        ErrorCode::Unavailable,
+                        &message,
+                    );
+                    Err(CoreError::Semantic(ErrorCode::Unavailable, message))
+                }
                 CallOutcome::Suppressed { original_result } => {
                     // 幂等抑制:不重复执行,返回原收据(审计已由助手落
                     // outcome=suppressed;ADR-0002 条件 6)
@@ -2884,6 +2988,8 @@ fn handle_provider_call(
                 persist_grant(w, gid);
             }
             w.op_results.insert(operation_id.clone(), value.clone());
+            // M7 S5:成功 -> 恢复 healthy(重连成功/清探针计数)
+            note_provider_success(w, &mcp_provider_of(&meta.capability), "重连握手成功");
             emit_capability_invoked_with(
                 w,
                 &meta.call_id,
@@ -2898,6 +3004,24 @@ fn handle_provider_call(
             );
         }
         Err(e) => {
+            // M7 S5:传输故障 -> MCP unavailable 立即;unavailable 期间的调用
+            // 即重连探针(到上限后由 dispatch 门快速失败)
+            if matches!(e, AsyncCallError::Transport(_)) {
+                let provider = mcp_provider_of(&meta.capability);
+                let was = w
+                    .provider_health
+                    .get(&provider)
+                    .map(|h| h.status)
+                    .unwrap_or("healthy");
+                let entry = w.provider_health.entry(provider.clone()).or_default();
+                entry.status = "unavailable";
+                if was == "unavailable" {
+                    entry.reconnect_attempts += 1;
+                }
+                if was != "unavailable" {
+                    emit_provider_health(w, &provider, "healthy", "unavailable", "子进程/通道故障");
+                }
+            }
             let (code, msg) = match e {
                 AsyncCallError::Timeout => (
                     ErrorCode::Timeout,
@@ -3123,6 +3247,18 @@ fn handle_approval_respond(
                         // (收据/Grant 消费态/outbox 均在完成处理器收口)
                         w.cap_pending.remove(&params.approval_id);
                     }
+                    CallOutcome::ProviderUnavailable { message } => {
+                        // M7 S5:重连超限在批准重放中同样快速失败(unavailable)
+                        fail_capability_call(
+                            w,
+                            &op_id,
+                            &capability,
+                            &principal,
+                            ErrorCode::Unavailable,
+                            &message,
+                        );
+                        w.cap_pending.remove(&params.approval_id);
+                    }
                     other => {
                         let code = match &other {
                             CallOutcome::InvalidArgs { .. } => ErrorCode::ValidationFailed,
@@ -3302,6 +3438,29 @@ fn dispatch_capability(
     // M7 S4:异步 Provider 路径——决策/校验/预扣/intent 门已过,执行交
     // 异步执行器,完成经 Cmd::ProviderCall 回单写者回路落定。
     if w.registry.is_async(capability) {
+        // M7 S5:MCP 重连超限 -> 快速失败(不再触执行器,直至重装)
+        let provider = mcp_provider_of(capability);
+        let blocked = w
+            .provider_health
+            .get(&provider)
+            .map(|h| h.status == "unavailable" && h.reconnect_attempts >= MCP_RECONNECT_LIMIT)
+            .unwrap_or(false);
+        if blocked {
+            emit_capability_invoked(
+                w,
+                op_id,
+                capability,
+                &ctx.principal,
+                Some(prepared.credential.binding_epoch),
+                Some(&prepared.credential.provider_instance_id),
+                "error",
+                Some(ErrorCode::Unavailable),
+                key_hash.as_deref(),
+            );
+            return CallOutcome::ProviderUnavailable {
+                message: "异步 Provider 重连超限,保持 unavailable 直至重装".into(),
+            };
+        }
         let Some(executor) = w.config.async_executor.clone() else {
             return CallOutcome::ProviderError {
                 message: "异步执行器未装配".into(),
@@ -4823,6 +4982,7 @@ fn error_code_of(outcome: &CallOutcome) -> ErrorCode {
         CallOutcome::ProviderError { .. } | CallOutcome::InvalidOutput { .. } => {
             ErrorCode::Internal
         }
+        CallOutcome::ProviderUnavailable { .. } => ErrorCode::Unavailable,
         CallOutcome::Rejected { .. } => ErrorCode::PermissionDenied,
         _ => ErrorCode::Internal,
     }
@@ -4911,6 +5071,8 @@ fn handle_turn_event(w: &mut World, event: TurnEvent) {
                 }),
                 ts: w.now_ts(),
             });
+            // M7 S5:失败回账(>=3 连续失败 -> 熔断开闸)
+            note_provider_failure(w, w.config.connector.provider(), "模型调用连续失败");
         }
         TurnEvent::ChainExhausted {
             operation_id,
@@ -4993,6 +5155,8 @@ fn handle_turn_event(w: &mut World, event: TurnEvent) {
                     "stream_interrupted": stream_interrupted,
                 }),
             );
+            // M7 S5:成功回账(清计数/半开恢复 healthy)
+            note_provider_success(w, w.config.connector.provider(), "模型调用成功");
             // M7 S1:模型调用审计(Broker 路径与普通能力调用同享 capability.invoked 面)
             if let Some(a) = w.model_call_audit.remove(&operation_id) {
                 emit_capability_invoked_with(
