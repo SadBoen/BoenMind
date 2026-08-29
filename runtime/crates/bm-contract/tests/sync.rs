@@ -277,6 +277,11 @@ fn wire_requests_validate_against_envelope() {
             json!({"session_id": "sess_01J9Z8G4A1X7M4Q6B8WD5RQ2WX", "since_seq": 0,
                    "task_id": "task_01JAAAAAAAAAAAAAAAAAAAAAB2"}),
         ),
+        // M8 增发:capability.cancel(语义取消)
+        (
+            "capability.cancel",
+            json!({"operation_id": "op_01JAAAAAAAAAAAAAAAAAAAAAB2"}),
+        ),
     ];
     for (method, params) in cases {
         let req = sample_request(method, params);
@@ -1079,4 +1084,33 @@ fn mcp_server_config_schema_accepts_minimal_and_rejects_bad() {
         "env": {"NOTES_TOKEN": "sk-plaintext"}
     });
     validate(registries::MCP_SERVER_SCHEMA, &leak).expect_err("env 明文必须拒绝,只收 secret: 引用");
+}
+
+// ---- M8:评估报告合同 -------------------------------------------------------
+
+#[test]
+fn evaluation_report_schema_accepts_minimal_and_rejects_bad() {
+    let ok = json!({
+        "report_id": "rep_01JAAAAAAAAAAAAAAAAAAAAAB2",
+        "range": {"from_seq": 1, "to_seq": 42},
+        "checks": [
+            {"check_id": "inv.single_terminal", "verdict": "pass", "evidence": "ops=7"},
+            {"check_id": "receipt.side_effect", "verdict": "fail", "evidence": "seq=31 无 published 行"}
+        ],
+        "summary": {"passed": 1, "failed": 1, "skipped": 0},
+        "judge_version": "0.1.0",
+        "generated_at": "2026-08-30T12:00:00.000Z"
+    });
+    validate(registries::EVALUATION_REPORT_SCHEMA, &ok).expect("评估报告合法");
+
+    let bad = json!({
+        "report_id": "rep_01JAAAAAAAAAAAAAAAAAAAAAB2",
+        "range": {"from_seq": 1, "to_seq": 42},
+        "checks": [],
+        "summary": {"passed": 0, "failed": 0, "skipped": 0},
+        "judge_version": "0.1.0",
+        "generated_at": "2026-08-30T12:00:00.000Z",
+        "notes": "自由文本字段不允许(脱敏纪律,合同结构阻止)"
+    });
+    validate(registries::EVALUATION_REPORT_SCHEMA, &bad).expect_err("自由文本字段必须拒");
 }

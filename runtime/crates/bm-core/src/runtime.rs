@@ -243,6 +243,13 @@ enum Cmd {
         reason: String,
         resp: oneshot::Sender<()>,
     },
+    /// M8.3:能力调用语义取消(在途异步;迟到完成丢弃)。
+    CapabilityCancel {
+        #[allow(dead_code)] // 信封规范要求请求携带 request_id;回执以 operation 为准
+        request_id: BmId,
+        params: wire::CapabilityCancelParams,
+        resp: oneshot::Sender<CoreResult<wire::CapabilityCancelResult>>,
+    },
     /// M7 S4:异步能力调用完成回流(单写者落定收据/审计/outbox)。
     ProviderCall {
         operation_id: BmId,
@@ -318,6 +325,8 @@ struct World {
     op_results: HashMap<BmId, serde_json::Value>,
     /// M7 S5:Provider 健康面(provider → 状态;进程内,不入 core-transitions)。
     provider_health: HashMap<String, ProviderHealth>,
+    /// M8.3:在途异步能力调用的取消令牌(operation_id → token)。
+    cap_in_flight: HashMap<BmId, CancellationToken>,
     /// M7 S1:turn 模型调用 Broker 凭证留档(operation_id 索引;
     /// 授权点在 spawn,审计点在回合模型阶段终态——两段由 call_id 缝合)。
     model_call_audit: HashMap<BmId, ModelCallAudit>,
@@ -827,6 +836,7 @@ impl RuntimeHandle {
             op_async_meta: HashMap::new(),
             op_results: HashMap::new(),
             provider_health: HashMap::new(),
+            cap_in_flight: HashMap::new(),
             model_call_audit: HashMap::new(),
             tx: tx.clone(),
             store: config.store.clone(),
@@ -1408,6 +1418,24 @@ impl RuntimeHandle {
     }
 
     /// approval.respond(M4.7):批准(物化 Grant 并重放执行)/拒绝/取消。
+    /// M8.3:能力调用语义取消(在途异步;迟到完成丢弃)。
+    pub async fn capability_cancel(
+        &self,
+        request_id: BmId,
+        params: wire::CapabilityCancelParams,
+    ) -> CoreResult<wire::CapabilityCancelResult> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(Cmd::CapabilityCancel {
+                request_id,
+                params,
+                resp: tx,
+            })
+            .await
+            .map_err(|_| CoreError::Internal)?;
+        rx.await.map_err(|_| CoreError::Internal)?
+    }
+
     pub async fn approval_respond(
         &self,
         request_id: BmId,
@@ -1809,6 +1837,13 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
                 result,
             } => {
                 handle_provider_call(&mut world, operation_id, result);
+            }
+            Cmd::CapabilityCancel {
+                request_id: _,
+                params,
+                resp,
+            } => {
+                let _ = resp.send(handle_capability_cancel(&mut world, params));
             }
             Cmd::ProviderProgress {
                 operation_id,
@@ -2950,6 +2985,7 @@ fn handle_provider_call(
     let Some(meta) = w.op_async_meta.remove(&operation_id) else {
         return;
     };
+    w.cap_in_flight.remove(&operation_id);
     if !w.operations.contains_key(&operation_id) {
         return; // 停机清场后回流的迟到完成:无载体,丢弃(事件已在日志)
     }
@@ -3043,6 +3079,59 @@ fn handle_provider_call(
             }
         }
     }
+}
+
+/// M8.3:能力调用语义取消——收据落 cancelled,令牌触发(传输层尽力终止),
+/// 迟到完成经 handle_provider_call 的 meta 缺失检查丢弃。
+fn handle_capability_cancel(
+    w: &mut World,
+    params: wire::CapabilityCancelParams,
+) -> CoreResult<wire::CapabilityCancelResult> {
+    let op = w
+        .operations
+        .get(&params.operation_id)
+        .ok_or_else(|| CoreError::validation("operation 不存在"))?;
+    if !matches!(
+        op.state,
+        OperationState::Running | OperationState::WaitingApproval
+    ) {
+        return Err(CoreError::validation("operation 不在可取消状态"));
+    }
+    if let Some(token) = w.cap_in_flight.remove(&params.operation_id) {
+        token.cancel();
+    }
+    if let Some(meta) = w.op_async_meta.remove(&params.operation_id)
+        && let Some(gid) = &meta.grant_id
+    {
+        persist_grant(w, gid);
+    }
+    w.settle_operation(
+        &params.operation_id,
+        OperationState::Cancelled,
+        Some(WireError::new(
+            ErrorCode::Cancelled,
+            params.reason.unwrap_or_else(|| "用户显式取消".into()),
+        )),
+    );
+    emit_capability_invoked(
+        w,
+        &params.operation_id,
+        w.op_capability
+            .get(&params.operation_id)
+            .cloned()
+            .unwrap_or_default()
+            .as_str(),
+        "user:cancel",
+        None,
+        None,
+        "error",
+        Some(ErrorCode::Cancelled),
+        None,
+    );
+    Ok(wire::CapabilityCancelResult {
+        operation_id: params.operation_id,
+        state: "cancelled".into(),
+    })
 }
 
 /// M7.5:异步能力进度回注 → capability.progress 事件(操作不存在则丢弃)。
@@ -3484,6 +3573,8 @@ fn dispatch_capability(
             persist_grant(w, gid);
         }
         let deadline_ms = prepared.manifest.timeout_ms.clamp(100, 600_000);
+        let cancel = CancellationToken::new();
+        w.cap_in_flight.insert(op_id.clone(), cancel.clone());
         let tx = w.tx.clone();
         let op = op_id.clone();
         let cap = capability.to_string();
@@ -5409,6 +5500,9 @@ fn reply_unavailable(cmd: Cmd) {
         }
         Cmd::ProviderCall { .. } => {}
         Cmd::ProviderProgress { .. } => {}
+        Cmd::CapabilityCancel { resp, .. } => {
+            let _ = resp.send(Err(err()));
+        }
         Cmd::Turn(_) => {}
     }
 }

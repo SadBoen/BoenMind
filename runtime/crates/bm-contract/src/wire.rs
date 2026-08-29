@@ -39,6 +39,8 @@ wire_str_enum!(Method {
     TaskPause => "task.pause",
     TaskResume => "task.resume",
     TaskStop => "task.stop",
+    // M8 增发(2026-08-30,Minor:envelope method 枚举同步;M7.5 语义取消)
+    CapabilityCancel => "capability.cancel",
 });
 
 wire_str_enum!(InputTrust {
@@ -346,6 +348,20 @@ pub struct ApprovalRespondParams {
     pub decision: String,
     #[serde(default)]
     pub scope: Option<String>,
+}
+
+/// M8.3:能力调用语义取消(在途异步调用;迟到完成丢弃)。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityCancelParams {
+    pub operation_id: BmId,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityCancelResult {
+    pub operation_id: BmId,
+    pub state: String,
 }
 
 // ---- task.create / task.list / task.get / task.pause / task.resume /

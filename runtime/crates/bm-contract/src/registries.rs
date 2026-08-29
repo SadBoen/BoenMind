@@ -46,6 +46,9 @@ pub const OBSERVATION_LOG_SCHEMA: &str =
 // M7 增发(2026-08-30,Minor):MCP server 接入配置合同。
 pub const MCP_SERVER_SCHEMA: &str =
     include_str!("../../../../boenmind-contracts/mcp/mcp-server.v0_1.schema.json");
+// M8 增发(2026-08-30,Minor):独立 Judge 评估报告合同。
+pub const EVALUATION_REPORT_SCHEMA: &str =
+    include_str!("../../../../boenmind-contracts/evaluation/evaluation-report.v0_1.schema.json");
 
 #[derive(Debug, Deserialize)]
 pub struct RegistryCode {

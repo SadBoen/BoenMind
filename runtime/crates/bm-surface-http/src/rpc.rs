@@ -59,6 +59,15 @@ async fn rpc_inner(state: &AppState, method: Method, req: &RequestEnvelope) -> C
             let p: SendInputParams = params(req)?;
             to_value(state.handle.send_input(req.request_id.clone(), p).await)
         }
+        Method::CapabilityCancel => {
+            let p: bm_contract::wire::CapabilityCancelParams = params(req)?;
+            to_value(
+                state
+                    .handle
+                    .capability_cancel(req.request_id.clone(), p)
+                    .await,
+            )
+        }
         Method::AgentCancel => {
             let p: CancelParams = params(req)?;
             to_value(state.handle.agent_cancel(p).await)

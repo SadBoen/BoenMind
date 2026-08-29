@@ -27,7 +27,7 @@
     "additionalProperties": false,
     "properties": {
       "v": { "const": "0.1" },
-      "method": { "enum": ["session.create", "session.resume", "session.close", "events.poll", "agent.send_input", "agent.cancel", "operations.get", "capability.call", "approval.list", "approval.respond", "task.create", "task.list", "task.get", "task.pause", "task.resume", "task.stop"] },
+      "method": { "enum": ["session.create", "session.resume", "session.close", "events.poll", "agent.send_input", "agent.cancel", "operations.get", "capability.call", "approval.list", "approval.respond", "task.create", "task.list", "task.get", "task.pause", "task.resume", "task.stop", "capability.cancel"] },
       "request_id": { "$ref": "#/definitions/id" },
       "idempotency_key": { "type": ["string", "null"], "description": "M1 未使用，字段预留（M4 起用于副作用操作）" },
       "params": { "type": "object" }
