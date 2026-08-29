@@ -7,13 +7,12 @@ BoenMind:个人生态的 AI Runtime / AI OS,当前为**阶段一(跨平台单软
 对照验证(Erlang/OTP、Kubernetes、VS Code,见 `architecture/deepwiki-validation.md`)。
 合同库已冻结 v1.0(字段只增不破)。
 
-**当前进度:M5 已收官(2026-08-30,tag `m5-butler-task`):
-`milestones/M5-review.md`——八项前置结算条件全部闭合(ADR-0004 条件 6;
-ADR-0002 条件 2/5 余项与条件 4 双开解除,对外口径升级「成立」),
-188 测试全绿,性能 P-11 首填(投影重建 release p95≈0.95ms/1 万事件),
-P-01 触门解释留档(bootstrap Grant 启动成本,非噪声,不回炉)。
-下一步 = 起草《M6 实现规格》(Team、Delegate 和多 Agent 协作;
-基线 §18-M6 六子项),沿用提速方案合批推进。**
+**当前进度:M6 已收官(2026-08-30,tag `m6-team-delegate`):
+`milestones/M6-review.md`——基线 M6 四条通过条件全部强制点化
+(成员权限只减不增/委派四门禁/成员故障不破坏 Task/collect 三要素),
+196 测试全绿;ADR-0002 条件 5 余项闭合(reservation 裁定延续不做)。
+下一步 = 起草《M7 实现规格》(Provider、MCP 和 App 隔离;基线 §18-M7
+五子项),沿用提速方案合批推进。**
 
 **提速方案(2026-08-30 起固化,每轮沿用)**:
 1. 强耦合任务合批(如 T4+T5、T6+T7、T8+T9),一轮交付、共享全量回归,
@@ -74,6 +73,9 @@ runtime/                        第 3 层  源代码(M1 起,Rust workspace;crate
 - [x] **M5 Butler、Task 和长期监护(2026-08-30,tag `m5-butler-task`;
       规格 `milestones/M5-implementation-spec.md`,回看 `milestones/M5-review.md`,
       188 测试全绿,八项前置结算条件闭合,ADR-0002 口径升级「成立」)**
-- [ ] M6/M7/M8 见基线 §18;33 项验收条件的分布见各 ADR「条件与验收」
+- [x] **M6 Team、Delegate 和多 Agent 协作(2026-08-30,tag `m6-team-delegate`;
+      规格 `milestones/M6-implementation-spec.md`,回看 `milestones/M6-review.md`,
+      196 测试全绿,四门禁强制点化,ADR-0002 条件 5 余项闭合)**
+- [ ] M7/M8 见基线 §18;33 项验收条件的分布见各 ADR「条件与验收」
 - 注意:`architecture/deepwiki-validation.md` 的 S1-S10 修订建议为 **proposed**,
   仅在各里程碑回看时逐条裁决,勿自动采纳。
