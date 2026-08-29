@@ -18,10 +18,14 @@ T1 已落地(bm-core task.rs 对象/状态机/完成判定门禁/epoch 门禁 + 
 T2 已落地(Wire task.* 六方法启用 + events.poll task_id 过滤 + CLI task 组 +
 Task Board 投影:重建确定性/启动重建/emit 增量双路等价,P-11 骨架测试);
 T3 已落地(butler.rs:bootstrap 协调权 Grant 集物化+跨重启幂等+可撤销、
-task.create 协调权门禁与授权上界校验、领域动词不可授权矩阵、163 测试全绿;
-GT-01/M1 生命周期测试按启动期系统事实同步更新)。
-下一步 = T4(Coordinator:三方交集物化为 task:<id> Grant、safe/mutation 二分
-执行、子树裁剪 Broker 强制、成员授权签发链 parent 哈希)。**
+task.create 协调权门禁与授权上界校验、领域动词不可授权矩阵、GT-01/M1
+生命周期测试按启动期系统事实同步更新);
+T4+T5 已落地(coordinator.rs 三方交集物化为 task:<id> Grant+授权签发链
+parent 哈希+Worker 单成员闭环+双路径统一收据(principal 来源标注)+
+Worker 调用命令+Task 终态 Grant 失效+approval task-scope 启用,170 测试全绿;
+M5-review.md 骨架已建,T10 回填)。
+下一步 = T6+T7 合批(budget.rs 两级账本/包络子分配/扩容受控变更/Broker
+预算执行点收编 + watchdog.rs 八项检测/停滞窗口/编排重启触发/G4 守护)。**
 
 ## 文件地图(规格分层,基线 §0)
 

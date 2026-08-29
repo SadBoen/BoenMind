@@ -188,6 +188,12 @@ enum Cmd {
         params: wire::TaskGetParams,
         resp: oneshot::Sender<CoreResult<wire::TaskGetResult>>,
     },
+    /// Worker 能力调用(M5 Agent 路径;task:<id> Grant 直通,无授权走审批)
+    WorkerCall {
+        request_id: BmId,
+        params: WorkerCallParams,
+        resp: oneshot::Sender<CoreResult<serde_json::Value>>,
+    },
     /// Butler 协调权撤销(M5.1;核心 API,wire 撤销面随 M8 审批 UI)。
     ButlerRevoke {
         reason: String,
@@ -247,12 +253,26 @@ struct World {
     task_board: crate::task::TaskBoard,
 }
 
+/// Worker 能力调用入参(Agent 路径;非 Wire 面——GT-03 场景 A3,worker 以
+/// task:<id> Grant 直通;worker agent 的自主回合循环随 M7 真实 Provider)。
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkerCallParams {
+    pub task_id: BmId,
+    pub capability: String,
+    pub args: serde_json::Value,
+    pub idempotency_key: Option<String>,
+    pub deadline_ms: Option<u64>,
+}
+
 /// 待审批的能力调用载荷(approval 对象只存摘要,重放执行需要原 args)。
 struct PendingCapabilityCall {
     op_id: BmId,
     capability: String,
     args: serde_json::Value,
     idempotency_key: Option<String>,
+    /// 调用方身份(M5 双路径:surface / worker;审批重放归因一致)
+    principal: String,
+    trust: DataTrust,
 }
 
 impl World {
@@ -750,6 +770,14 @@ impl RuntimeHandle {
                                     idempotency_key: call["idempotency_key"]
                                         .as_str()
                                         .map(|s| s.to_string()),
+                                    principal: call["principal"]
+                                        .as_str()
+                                        .unwrap_or(CAPABILITY_CALLER)
+                                        .to_string(),
+                                    trust: call["trust"]
+                                        .as_str()
+                                        .and_then(DataTrust::from_wire)
+                                        .unwrap_or(DataTrust::Trusted),
                                 },
                             );
                         }
@@ -1227,6 +1255,25 @@ impl RuntimeHandle {
         rx.await.map_err(|_| CoreError::Internal)?
     }
 
+    /// Worker 能力调用(M5 Agent 路径):worker 以 task:<id> Grant 经
+    /// Broker 统一裁决(Grant 命中直通,无授权 untrusted 100% 升级审批)。
+    pub async fn worker_capability_call(
+        &self,
+        request_id: BmId,
+        params: WorkerCallParams,
+    ) -> CoreResult<serde_json::Value> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(Cmd::WorkerCall {
+                request_id,
+                params,
+                resp: tx,
+            })
+            .await
+            .map_err(|_| CoreError::Internal)?;
+        rx.await.map_err(|_| CoreError::Internal)?
+    }
+
     /// Butler 协调权撤销(M5.1):撤销 bootstrap Grant 集(全部 mutation+
     /// safe 动词),撤销后仅剩只读查询面;重授走审批(交互随 M8)。
     /// 返回撤销的 Grant 数。
@@ -1393,6 +1440,13 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
             }
             Cmd::ButlerRevoke { reason, resp } => {
                 let _ = resp.send(handle_butler_revoke(&mut world, reason));
+            }
+            Cmd::WorkerCall {
+                request_id,
+                params,
+                resp,
+            } => {
+                let _ = resp.send(handle_worker_call(&mut world, request_id, params));
             }
             Cmd::TaskGet { params, resp } => {
                 let _ = resp.send(handle_task_get(&world, params));
@@ -2005,14 +2059,15 @@ fn persist_approval(
     w: &World,
     approval: &Approval,
     op_id: &BmId,
-    pending: Option<(&str, &serde_json::Value, Option<&str>)>,
+    pending: Option<(&str, &serde_json::Value, Option<&str>, &str, DataTrust)>,
 ) {
     if let Some(store) = &w.store {
         let mut wrap = serde_json::json!({ "approval": approval });
-        if let Some((capability, args, idempotency_key)) = pending {
+        if let Some((capability, args, idempotency_key, principal, trust)) = pending {
             wrap["call"] = serde_json::json!({
                 "capability": capability, "args": args,
-                "idempotency_key": idempotency_key
+                "idempotency_key": idempotency_key,
+                "principal": principal, "trust": trust.as_str()
             });
         }
         let _ = store.save_approval(bm_persist::sqlite_state::ApprovalRow {
@@ -2115,7 +2170,20 @@ fn handle_capability_call(
             "Runtime 排空中或持久层故障,拒绝能力调用".into(),
         ));
     }
+    // 直路径(Wire Surface):trusted 直调
     let ctx = CallContext::surface(CAPABILITY_CALLER);
+    capability_call_inner(w, request_id, ctx, params)
+}
+
+/// 统一执行体(M5 双路径同构):直路径 surface ctx / Agent 路径 worker ctx
+/// 共用同一裁决-执行-审计管道(ADR-0002 条件 4:双路径统一 Grant/幂等/
+/// 脱敏/收据合同;收据与事件的 principal 即来源标注)。
+fn capability_call_inner(
+    w: &mut World,
+    request_id: BmId,
+    ctx: CallContext,
+    params: wire::CapabilityCallParams,
+) -> CoreResult<serde_json::Value> {
     // 步 1-4:查表裁决(Broker 为字段级临时借用,用后即还)
     let decision = {
         let broker = Broker::new(
@@ -2167,7 +2235,7 @@ fn handle_capability_call(
                     Ok(serde_json::json!({
                         "operation_id": op_id.as_str(),
                         "request_id": request_id.as_str(),
-                        "principal": CAPABILITY_CALLER,
+                        "principal": ctx.principal.clone(),
                         "capability": params.capability,
                         "state": "succeeded",
                         "created_at": created_at,
@@ -2184,6 +2252,7 @@ fn handle_capability_call(
                         w,
                         &op_id,
                         &params.capability,
+                        ctx.principal.as_str(),
                         ErrorCode::ValidationFailed,
                         &message,
                     );
@@ -2194,6 +2263,7 @@ fn handle_capability_call(
                         w,
                         &op_id,
                         &params.capability,
+                        ctx.principal.as_str(),
                         ErrorCode::Unavailable,
                         &format!("binding 已切换(凭证 epoch {expected_epoch}),请重试"),
                     );
@@ -2207,6 +2277,7 @@ fn handle_capability_call(
                         w,
                         &op_id,
                         &params.capability,
+                        ctx.principal.as_str(),
                         ErrorCode::Internal,
                         &message,
                     );
@@ -2223,7 +2294,7 @@ fn handle_capability_call(
                     Ok(serde_json::json!({
                         "operation_id": op_id.as_str(),
                         "request_id": request_id.as_str(),
-                        "principal": CAPABILITY_CALLER,
+                        "principal": ctx.principal.clone(),
                         "capability": params.capability,
                         "state": "succeeded",
                         "created_at": created_at,
@@ -2247,10 +2318,10 @@ fn handle_capability_call(
             let mut mgr = ApprovalManager::new(&mut w.grants, &*w.config.clock, &*w.config.id_gen);
             let mut approval = mgr.open(OpenApproval {
                 capability: &params.capability,
-                principal: CAPABILITY_CALLER,
+                principal: &ctx.principal,
                 risk_class,
                 effective_risk,
-                input_trust: DataTrust::Trusted,
+                input_trust: ctx.trust,
                 args: &params.args,
                 args_summary: &format!("能力 {} 调用", params.capability),
                 scope_choices: capability_scope_choices(),
@@ -2267,7 +2338,7 @@ fn handle_capability_call(
                     "approval_id": approval.approval_id,
                     "operation_id": op_id.as_str(),
                     "capability": params.capability,
-                    "principal": CAPABILITY_CALLER,
+                    "principal": ctx.principal.clone(),
                     "risk_class": risk_class.as_str(),
                     "effective_risk": effective_risk.as_str(),
                     "input_trust": approval.input_trust.as_str(),
@@ -2284,6 +2355,8 @@ fn handle_capability_call(
                     &params.capability,
                     &params.args,
                     params.idempotency_key.as_deref(),
+                    ctx.principal.as_str(),
+                    ctx.trust,
                 )),
             );
             w.cap_pending.insert(
@@ -2293,6 +2366,8 @@ fn handle_capability_call(
                     capability: params.capability.clone(),
                     args: params.args.clone(),
                     idempotency_key: params.idempotency_key.clone(),
+                    principal: ctx.principal.clone(),
+                    trust: ctx.trust,
                 },
             );
             // GT-02 场景 A2 形态:approval_required 错误信封;operation 停在
@@ -2327,7 +2402,7 @@ fn handle_capability_call(
                 serde_json::json!({
                     "call_id": call_id.as_str(),
                     "capability": params.capability,
-                    "principal": CAPABILITY_CALLER,
+                    "principal": ctx.principal.clone(),
                     "input_trust": ctx.trust.as_str(),
                     "reason_code": reason_code,
                 }),
@@ -2345,6 +2420,7 @@ fn fail_capability_call(
     w: &mut World,
     op_id: &BmId,
     capability: &str,
+    principal: &str,
     code: ErrorCode,
     message: &str,
 ) {
@@ -2362,7 +2438,7 @@ fn fail_capability_call(
             "call_id": w.config.id_gen.next_id("call").as_str(),
             "operation_id": op_id.as_str(),
             "capability": capability,
-            "principal": CAPABILITY_CALLER,
+            "principal": principal,
             "binding_epoch": 0,
             "provider_instance_id": "n/a",
             "outcome": "error",
@@ -2411,12 +2487,26 @@ fn handle_approval_respond(
         .as_deref()
         .map(|s| GrantScope::from_wire(s).ok_or_else(|| CoreError::validation("非法 scope")))
         .transpose()?;
+    // M5 解读条款 4 兑现:task:<id> scope 自 Task 对象落地起启用;校验面
+    // 仅拒绝引用不存在 Task 的情形(M4 期恒拒的过渡语义移除)
+    if let Some(GrantScope::Task(task_id)) = &scope {
+        let exists = BmId::parse(task_id.clone())
+            .map(|id| w.tasks.contains_key(&id))
+            .unwrap_or(false);
+        if !exists {
+            return Err(CoreError::validation(format!(
+                "task scope 引用不存在的 Task: {task_id}"
+            )));
+        }
+    }
     let pending = w.cap_pending.get(&params.approval_id).map(|p| {
         (
             p.op_id.clone(),
             p.capability.clone(),
             p.args.clone(),
             p.idempotency_key.clone(),
+            p.principal.clone(),
+            p.trust,
         )
     });
     let resource = bm_contract::capability::GrantResource {
@@ -2476,9 +2566,11 @@ fn handle_approval_respond(
             );
             // 批准:operation 续行(waiting_approval→running→统一执行助手)
             persist_grant(w, &grant.grant_id);
-            if let Some((op_id, capability, args, idem)) = op {
+            if let Some((op_id, capability, args, idem, principal, trust)) = op {
                 w.settle_operation(&op_id, OperationState::Running, None);
-                let mut ctx = CallContext::surface(CAPABILITY_CALLER);
+                // 重放按原始调用方身份归因(M5 双路径:surface / worker)
+                let mut ctx = CallContext::content_chain(&principal, trust)
+                    .unwrap_or_else(|_| CallContext::surface(CAPABILITY_CALLER));
                 if let Some(k) = idem {
                     ctx = ctx.with_idempotency_key(k);
                 }
@@ -2825,6 +2917,97 @@ fn handle_task_create(
             "task_epoch": task.task_epoch,
         }),
     );
+
+    // M5-T4/T5:协调链自举——三方交集物化为 task:<id> Grant(ADR-0002 §11.3)
+    // + Coordinator/单 Worker 成员事实(GT-03 场景 A2 形态)
+    {
+        let task_id_str = task.id.as_str().to_string();
+        // 分阶段作用域:butler 上界查证闭包借用 w.grants,产出后即释放
+        let (coord_grants, worker_grants) = {
+            let mut butler_lookup = |verb: &str| {
+                w.grants
+                    .active_for(crate::butler::BUTLER_PRINCIPAL, verb, now)
+                    .into_iter()
+                    .next()
+            };
+            crate::coordinator::intersection_grants(
+                &*w.config.id_gen,
+                &task_id_str,
+                &task.authorization,
+                now,
+                &mut butler_lookup,
+            )
+        };
+        for g in coord_grants.iter().chain(worker_grants.iter()) {
+            w.grants.record(g.clone());
+            persist_grant(w, &g.grant_id);
+            w.emit(
+                EventType::GrantCreated,
+                None,
+                None,
+                None,
+                serde_json::json!({
+                    "grant_id": g.grant_id,
+                    "approval_id": null,
+                    "audience": g.audience,
+                    "action": g.action,
+                    "scope": g.scope.to_wire(),
+                    "delegation_depth": g.delegation_depth,
+                    "expires_at": null,
+                    "parent_hash": g.parent_grant_hash,
+                }),
+            );
+        }
+        // 成员事实:Coordinator(必有)+ Worker(仅当任务声明了能力资源)
+        let member_event = |w: &mut World, agent_id: &str, role: &str, grant_id: Option<&str>| {
+            w.emit(
+                EventType::TaskMemberAdded,
+                None,
+                None,
+                None,
+                serde_json::json!({
+                    "task_id": task_id_str,
+                    "agent_id": agent_id,
+                    "role": role,
+                    "grant_id": grant_id,
+                }),
+            )
+        };
+        let coord_member_id = w.config.id_gen.next_id("agent");
+        let coord_grant_id = coord_grants
+            .iter()
+            .find(|g| g.action == "agent.spawn")
+            .or_else(|| coord_grants.first())
+            .map(|g| g.grant_id.clone());
+        let ev = member_event(
+            w,
+            coord_member_id.as_str(),
+            "coordinator",
+            coord_grant_id.as_deref(),
+        );
+        task.add_member(crate::task::TaskMember {
+            agent_id: coord_member_id,
+            role: crate::task::MemberRole::Coordinator,
+            grant_id: coord_grant_id,
+            joined_seq: ev.event_seq,
+        });
+        if !worker_grants.is_empty() {
+            let worker_member_id = w.config.id_gen.next_id("agent");
+            let worker_grant_id = worker_grants[0].grant_id.clone();
+            let ev = member_event(
+                w,
+                worker_member_id.as_str(),
+                "worker",
+                Some(worker_grant_id.as_str()),
+            );
+            task.add_member(crate::task::TaskMember {
+                agent_id: worker_member_id,
+                role: crate::task::MemberRole::Worker,
+                grant_id: Some(worker_grant_id),
+                joined_seq: ev.event_seq,
+            });
+        }
+    }
     persist_task(w, &task);
     let result = wire::TaskCreateResult {
         task_id: task.id.clone(),
@@ -2891,7 +3074,100 @@ fn handle_task_lifecycle(
         }),
     );
     persist_task(w, &task_snapshot);
+    // Task 结束即失效(ADR-0002 要点 1):终态时该 Task 的全部 task:<id>
+    // Grant 撤销(审计 grant.revoked,持久行同步,重启不复活)
+    if to == bm_contract::states::TaskState::Cancelled {
+        let gids: Vec<String> = w
+            .grants
+            .grants_scoped_to(task_snapshot.id.as_str())
+            .into_iter()
+            .filter(|g| {
+                w.grants
+                    .entry_state(&g.grant_id)
+                    .map(|(_, revoked)| !revoked)
+                    .unwrap_or(false)
+            })
+            .map(|g| g.grant_id)
+            .collect();
+        for gid in gids {
+            let version = w.grants.revoke(&gid).map_err(|_| CoreError::Internal)?;
+            w.emit(
+                EventType::GrantRevoked,
+                None,
+                None,
+                None,
+                serde_json::json!({
+                    "grant_id": gid,
+                    "revocation_version": version,
+                    "reason": "task_cancelled",
+                }),
+            );
+            persist_grant(w, &gid);
+        }
+    }
     Ok(state_result)
+}
+
+/// Worker 能力调用(Agent 路径):Task 必须在运行态;worker principal +
+/// untrusted 上下文走统一执行体(Grant 命中直通 / 无授权 100% 升级审批)。
+fn handle_worker_call(
+    w: &mut World,
+    request_id: BmId,
+    params: WorkerCallParams,
+) -> CoreResult<serde_json::Value> {
+    if w.draining || w.persist_poisoned {
+        return Err(CoreError::Semantic(
+            ErrorCode::Unavailable,
+            "Runtime 排空中或持久层故障,拒绝成员调用".into(),
+        ));
+    }
+    // 分阶段作用域:状态检查完成后即释放 task 借用
+    let state = {
+        let Some(task) = w.tasks.get(&params.task_id) else {
+            return Err(CoreError::Semantic(
+                ErrorCode::ValidationFailed,
+                format!("Task 不存在: {}", params.task_id.as_str()),
+            ));
+        };
+        task.state
+    };
+    match state {
+        bm_contract::states::TaskState::Running => {}
+        bm_contract::states::TaskState::Paused => {
+            return Err(CoreError::Semantic(
+                ErrorCode::ValidationFailed,
+                "Task 暂停中,成员调用挂起".into(),
+            ));
+        }
+        bm_contract::states::TaskState::Blocked => {
+            return Err(CoreError::Semantic(
+                ErrorCode::ValidationFailed,
+                "Task blocked,等待用户裁定".into(),
+            ));
+        }
+        other => {
+            return Err(CoreError::Semantic(
+                ErrorCode::ValidationFailed,
+                format!("Task 状态 {} 不可执行成员调用", other.as_str()),
+            ));
+        }
+    }
+    // Agent 路径信任归因:worker 上下文 = agent-derived/untrusted(内容
+    // 来源链随任务传递,不可自报降级);Grant 命中优先,无授权则 100% 升级
+    let ctx =
+        CallContext::content_chain(crate::coordinator::WORKER_PRINCIPAL, DataTrust::Untrusted)
+            .map_err(|_| CoreError::Internal)?;
+    capability_call_inner(
+        w,
+        request_id,
+        ctx,
+        wire::CapabilityCallParams {
+            capability: params.capability,
+            args: params.args,
+            idempotency_key: params.idempotency_key,
+            deadline_ms: params.deadline_ms,
+        },
+    )
 }
 
 /// Butler 协调权撤销:撤销 bootstrap Grant 集(审计 grant.revoked),持久行
@@ -3395,6 +3671,9 @@ fn reply_unavailable(cmd: Cmd) {
             let _ = resp.send(Err(err()));
         }
         Cmd::ButlerRevoke { resp, .. } => {
+            let _ = resp.send(Err(err()));
+        }
+        Cmd::WorkerCall { resp, .. } => {
             let _ = resp.send(Err(err()));
         }
         Cmd::EventsAll { resp } => {

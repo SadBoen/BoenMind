@@ -325,6 +325,17 @@ impl GrantLedger {
         self.entries.get(grant_id).map(|e| &e.grant)
     }
 
+    /// 按作用域查 Grant(M5:task:<id> 作用域的「Task 结束即失效」撤销面)。
+    /// 返回该作用域的全部 Grant(含已撤销;调用方按需过滤)。
+    pub fn grants_scoped_to(&self, task_id: &str) -> Vec<Grant> {
+        self.entries
+            .values()
+            .map(|e| &e.grant)
+            .filter(|g| matches!(&g.scope, GrantScope::Task(t) if t == task_id))
+            .cloned()
+            .collect()
+    }
+
     /// 持久化视图:条目的 (used_count, revoked),供恢复/落库同步。
     pub fn entry_state(&self, grant_id: &str) -> Option<(u64, bool)> {
         self.entries

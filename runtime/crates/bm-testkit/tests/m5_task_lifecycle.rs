@@ -623,7 +623,9 @@ async fn t55_events_poll_task_filter() {
             .all(|e| e.payload["task_id"].as_str() == Some(t1.task_id.as_str())),
         "过滤后只含 t1 事件"
     );
-    assert_eq!(poll.events.len(), 2, "t1: created + state.changed");
+    // M5-T4 起建单即自举协调链:本 rig 授权缺省(空)→ 无 Grant 物化,
+    // 仅 coordinator 成员事实:created + state.changed + member.added = 3
+    assert_eq!(poll.events.len(), 3, "t1: 生命周期 + 协调链事件(payload.task_id 过滤)");
     assert_eq!(poll.events[0].event_type, EventType::TaskCreated);
     handle.stop("test_done").await;
 }

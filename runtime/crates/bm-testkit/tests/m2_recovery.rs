@@ -102,7 +102,10 @@ async fn t20_cross_process_resume_and_continue() {
     let first_log_len = rig1_events.len();
     // 无会话关联的事件数(runtime.started + M5 起的 12 条 bootstrap Grant 等):
     // resume 补发流只含会话关联事件(合同 events.poll 语义)
-    let uncorrelated = rig1_events.iter().filter(|e| e.session_id.is_none()).count();
+    let uncorrelated = rig1_events
+        .iter()
+        .filter(|e| e.session_id.is_none())
+        .count();
     rig1.handle.stop("restart").await;
 
     // 同目录启动第二台 Runtime:恢复 + 跨进程 resume

@@ -34,7 +34,7 @@ pub enum ApprovalError {
     AlreadyResolved,
     /// approve 未带 scope,或 scope 不在该对象的 scope_choices。
     ScopeNotAllowed,
-    /// M4 拒绝产生 task: 前缀 scope(Task 对象随 M5,规格 §8.4)。
+    /// M4 曾拒 task: 前缀 scope(M5 起启用;变体保留供恢复面兼容)。
     TaskScopeUnavailable,
     /// 裁决窗口已过(expired 等价 denied):不得再批准。
     Expired,
@@ -114,10 +114,10 @@ impl<'a> ApprovalManager<'a> {
                 let Some(scope) = scope else {
                     return Err(ApprovalError::ScopeNotAllowed);
                 };
-                if matches!(scope, GrantScope::Task(_)) {
-                    return Err(ApprovalError::TaskScopeUnavailable);
-                }
-                if !approval.scope_choices.contains(&scope) {
+                // M5 起启用 task:<id> scope(解读条款 4 兑现):引用存在性
+                // 由调用方(运行时任务表)校验;choices 约束仅约束固定枚举面
+                if !matches!(scope, GrantScope::Task(_)) && !approval.scope_choices.contains(&scope)
+                {
                     return Err(ApprovalError::ScopeNotAllowed);
                 }
                 // 父授权哈希 = 裁决前(waiting_user 形态)对象内容 SHA-256
@@ -326,19 +326,21 @@ mod tests {
             ),
             Err(ApprovalError::ScopeNotAllowed)
         );
-        // task: 前缀 M4 拒绝产生(即使出现在 choices 也应被构造侧排除;
-        // 此处直接传 Task 验证管理器守卫)
+        // M5 起 task:<id> scope 启用(解读条款 4 兑现):管理器接受并物化,
+        // 引用存在性由运行时任务表校验(此处无 Task 语境,直接验证物化形态)
         let mut a = mgr.open(open_params(&json!({}), "写笔记"));
-        assert_eq!(
-            mgr.respond(
+        let grant = mgr
+            .respond(
                 &mut a,
                 RespondDecision::Approve,
-                Some(GrantScope::Task("t1".into())),
+                Some(GrantScope::Task("task_01JAAAAAAAAAAAAAAAAAAAAAB2".into())),
                 resource,
-                "surface:user"
-            ),
-            Err(ApprovalError::TaskScopeUnavailable)
-        );
+                "surface:user",
+            )
+            .unwrap()
+            .expect("task scope 批准应物化 Grant");
+        assert!(matches!(grant.scope, GrantScope::Task(_)));
+        assert_eq!(grant.delegation_depth, 0);
     }
 
     #[test]
