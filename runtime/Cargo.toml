@@ -4,6 +4,7 @@ members = [
     "crates/bm-contract",
     "crates/bm-persist",
     "crates/bm-surface-http",
+    "crates/bm-cli",
     "crates/bm-core",
     "crates/bm-providers",
     "crates/bm-testkit",
@@ -35,6 +36,7 @@ axum = "0.8"
 async-stream = "0.3"
 getrandom = "0"
 dirs = "6"
+clap = { version = "4", features = ["derive"] }
 bm-surface-http = { path = "crates/bm-surface-http" }
 bm-persist = { path = "crates/bm-persist" }
 bm-contract = { path = "crates/bm-contract" }
