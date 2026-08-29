@@ -5,6 +5,7 @@
 //! 连接器/Secret Store 是可替换端口(基线 5.4);预算拒绝不创建 operation
 //! (规格 §8.2);`not_started→running` 由收据承载、不发事件(规格 §8.1)。
 
+pub mod broker;
 pub mod budget;
 pub mod bus;
 pub mod clock;
@@ -15,6 +16,10 @@ pub mod registry;
 pub mod runtime;
 pub mod state;
 
+pub use broker::{
+    Broker, CallContext, CallCredential, CallOutcome, Decision, DenyReason, GrantLedger, Lease,
+    LeaseError,
+};
 pub use bus::EventBus;
 pub use clock::{Clock, MockClock, SystemClock};
 pub use error::{CoreError, CoreResult};

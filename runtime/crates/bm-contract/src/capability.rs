@@ -39,7 +39,22 @@ impl RiskClass {
                 | RiskClass::HighRiskCommand
         )
     }
+
+    /// 审批承载级(reversible 及以上,与上一集合相同):Broker 裁决中,
+    /// effective_risk 落在此集合即 RequireApproval——直通仅限
+    /// read-only/low-risk(M4 规格 §5.4;trusted 直调 reversible+ 亦审批)。
+    pub fn is_approval_bearing(self) -> bool {
+        self.requires_approval_at_untrusted()
+    }
 }
+
+// 数据信任分级(基线 §4.5;capability/approval 合同 input_trust 字段)。
+// 声明面:随内容来源链传递,调用方不可自报降级(M4 规格 §5.4)。
+wire_str_enum!(DataTrust {
+    Trusted => "trusted",
+    AgentDerived => "agent-derived",
+    Untrusted => "untrusted",
+});
 
 wire_str_enum!(MutationClass {
     Safe => "safe",
@@ -101,6 +116,96 @@ impl CapabilityManifest {
             _ => MutationClass::Mutation,
         })
     }
+}
+
+/// 授权范围(基线 §9.6;grant 合同 scope pattern)。线上形态 = pattern 字符串,
+/// 解析后承载语义值:Ttl 以毫秒存储(ms/s/m/h 归一),序列化统一 `ttl:<n>ms`。
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum GrantScope {
+    Once,
+    Forever,
+    Count(u64),
+    Ttl(u64),
+    Task(String),
+}
+
+impl GrantScope {
+    pub fn from_wire(s: &str) -> Option<Self> {
+        match s {
+            "once" => return Some(Self::Once),
+            "forever" => return Some(Self::Forever),
+            _ => {}
+        }
+        let (kind, val) = s.split_once(':')?;
+        match kind {
+            "count" => val.parse().ok().map(Self::Count),
+            "task" => (!val.is_empty()).then(|| Self::Task(val.to_string())),
+            "ttl" => {
+                // 形态 ttl:<数字><ms|s|m|h>:找首个非数字字符切分数字与单位
+                let digits = val.find(|c: char| !c.is_ascii_digit()).unwrap_or(val.len());
+                let (num, unit) = val.split_at(digits);
+                let n: u64 = num.parse().ok()?;
+                match unit {
+                    "ms" => Some(Self::Ttl(n)),
+                    "s" => Some(Self::Ttl(n.saturating_mul(1_000))),
+                    "m" => Some(Self::Ttl(n.saturating_mul(60_000))),
+                    "h" => Some(Self::Ttl(n.saturating_mul(3_600_000))),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    pub fn to_wire(&self) -> String {
+        match self {
+            GrantScope::Once => "once".into(),
+            GrantScope::Forever => "forever".into(),
+            GrantScope::Count(n) => format!("count:{n}"),
+            GrantScope::Ttl(ms) => format!("ttl:{ms}ms"),
+            GrantScope::Task(id) => format!("task:{id}"),
+        }
+    }
+}
+
+impl Serialize for GrantScope {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_wire())
+    }
+}
+
+impl<'de> Deserialize<'de> for GrantScope {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        GrantScope::from_wire(&s)
+            .ok_or_else(|| serde::de::Error::custom(format!("非法 scope: {s:?}")))
+    }
+}
+
+/// 资源谓词(ADR-0002 条件 1 的下限实现:参数等值字典;缺省 = 全参授权)。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GrantResource {
+    pub capability: String,
+    #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub args_predicates: serde_json::Map<String, serde_json::Value>,
+}
+
+/// Capability Grant(Broker 记账载体;capability/grant.v0_1.schema.json 下限
+/// 字段集,ADR-0002 条件 1)。M4 单路径期:由用户批准的 Approval 物化,
+/// parent_grant_hash = Approval 对象 SHA-256;delegation_depth 恒 0。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Grant {
+    pub grant_id: String,
+    pub audience: String,
+    pub action: String,
+    pub resource: GrantResource,
+    pub scope: GrantScope,
+    pub delegation_depth: u32,
+    pub expires_at: Option<crate::BmTimestamp>,
+    pub revocation_version: u64,
+    pub parent_grant_hash: String,
+    pub issued_by: String,
+    pub created_at: crate::BmTimestamp,
 }
 
 #[cfg(test)]
@@ -171,5 +276,60 @@ mod tests {
         assert!(RiskClass::ReversibleCommand.requires_approval_at_untrusted());
         assert!(RiskClass::ExternalSideEffect.requires_approval_at_untrusted());
         assert!(RiskClass::HighRiskCommand.requires_approval_at_untrusted());
+    }
+
+    #[test]
+    fn grant_scope_wire_roundtrip() {
+        for (wire, scope) in [
+            ("once", GrantScope::Once),
+            ("forever", GrantScope::Forever),
+            ("count:5", GrantScope::Count(5)),
+            ("ttl:90s", GrantScope::Ttl(90_000)),
+            ("ttl:5m", GrantScope::Ttl(300_000)),
+            ("ttl:200ms", GrantScope::Ttl(200)),
+            ("task:t1", GrantScope::Task("t1".into())),
+        ] {
+            assert_eq!(GrantScope::from_wire(wire).as_ref(), Some(&scope));
+            assert_eq!(scope.to_wire(), {
+                // 归一化形态:ttl 统一 ms;其余原样
+                match &scope {
+                    GrantScope::Ttl(ms) => format!("ttl:{ms}ms"),
+                    _ => wire.to_string(),
+                }
+            });
+            let back = GrantScope::from_wire(&scope.to_wire()).unwrap();
+            assert_eq!(back, scope, "归一化形态必须稳定可解析");
+        }
+        for bad in ["count:", "ttl:5x", "task:", "whenever", "count:5x"] {
+            assert!(GrantScope::from_wire(bad).is_none(), "{bad} 应被拒绝");
+        }
+    }
+
+    #[test]
+    fn grant_serialization_matches_contract_shape() {
+        let g: Grant = serde_json::from_value(json!({
+            "grant_id": "grant_01JAAAAAAAAAAAAAAAAAAAAA0C",
+            "audience": "agent:note_bot",
+            "action": "system.notes.write",
+            "resource": {"capability": "system.notes.write",
+                         "args_predicates": {"path": "notes/inbox.md"}},
+            "scope": "once",
+            "delegation_depth": 0,
+            "expires_at": "2026-08-29T10:30:00.000Z",
+            "revocation_version": 0,
+            "parent_grant_hash": "9b1dec3f2a6c47d5b8e0f1a2c3d4e5f60718293a4b5c6d7e8f9a0b1c2d3e4f5a",
+            "issued_by": "surface:user",
+            "created_at": "2026-08-29T10:02:09.500Z"
+        }))
+        .unwrap();
+        assert_eq!(g.scope, GrantScope::Once);
+        // 空 args_predicates 不序列化(schema additionalProperties=false 下合法;
+        // 且缺省即全参授权)
+        let mut bare = g.clone();
+        bare.resource.args_predicates.clear();
+        let ser = serde_json::to_value(&bare).unwrap();
+        assert!(ser["resource"].get("args_predicates").is_none());
+        // delegation_depth 序列化在场(合同必填)
+        assert_eq!(ser["delegation_depth"], json!(0));
     }
 }
