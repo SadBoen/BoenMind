@@ -103,6 +103,19 @@ pub trait EventStore: Send + Sync {
 
     /// 恢复面:全部幂等收据行。
     fn list_idem_receipts(&self) -> StoreResult<Vec<serde_json::Value>>;
+
+    /// Task 预算账本行 upsert(M5-T6;agent_id = "" 为 Task 级聚合)。
+    fn save_task_budget(
+        &self,
+        task_id: &str,
+        agent_id: &str,
+        used_tool_calls: u64,
+        used_tokens: u64,
+        now: &str,
+    ) -> StoreResult<()>;
+
+    /// 恢复面:全部预算账本行。
+    fn list_task_budget(&self) -> StoreResult<Vec<serde_json::Value>>;
 }
 
 /// 默认压实触发间隔(条);ADR-0004 条件 2:压实是强制义务,不是可选项。
@@ -423,6 +436,22 @@ impl EventStore for PersistStore {
 
     fn list_idem_receipts(&self) -> StoreResult<Vec<serde_json::Value>> {
         self.state.list_idem_receipts()
+    }
+
+    fn save_task_budget(
+        &self,
+        task_id: &str,
+        agent_id: &str,
+        used_tool_calls: u64,
+        used_tokens: u64,
+        now: &str,
+    ) -> StoreResult<()> {
+        self.state
+            .save_task_budget(task_id, agent_id, used_tool_calls, used_tokens, now)
+    }
+
+    fn list_task_budget(&self) -> StoreResult<Vec<serde_json::Value>> {
+        self.state.list_task_budget()
     }
 }
 

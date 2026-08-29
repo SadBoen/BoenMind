@@ -188,6 +188,16 @@ enum Cmd {
         params: wire::TaskGetParams,
         resp: oneshot::Sender<CoreResult<wire::TaskGetResult>>,
     },
+    /// Task 预算扩容(M5-T6;用户批准面:单用户 M5 下命令即批准)
+    TaskBudgetIncrease {
+        task_id: BmId,
+        max_tool_calls: u64,
+        resp: oneshot::Sender<CoreResult<serde_json::Value>>,
+    },
+    /// Watchdog 手动扫描(测试与运维诊断入口;自动扫描随核心循环节拍)
+    WatchdogScan {
+        resp: oneshot::Sender<CoreResult<usize>>,
+    },
     /// Worker 能力调用(M5 Agent 路径;task:<id> Grant 直通,无授权走审批)
     WorkerCall {
         request_id: BmId,
@@ -251,6 +261,11 @@ struct World {
     tasks: HashMap<BmId, crate::task::Task>,
     /// M5.4:Task Board 投影(可弃可重建;emit 钩子增量维护)。
     task_board: crate::task::TaskBoard,
+    /// M5-T6:Task 包络工具调用记账(task_id → 已用次数;持久于
+    /// task_budget_ledger 聚合行,agent_id = "")。
+    task_tool_calls: HashMap<BmId, u64>,
+    /// M5-T7:Watchdog 监护状态(仅监督,不推断编排下一步)。
+    watchdog: crate::watchdog::WatchdogState,
 }
 
 /// Worker 能力调用入参(Agent 路径;非 Wire 面——GT-03 场景 A3,worker 以
@@ -502,6 +517,18 @@ impl World {
         // M5.4:task.* 事件增量入 Task Board 投影(与持久化同一单写者时点,
         // 投影永远可丢弃后自事件日志重建——增量与重建两条路径等价有测试)
         self.task_board.apply(&event);
+        // M5-T7:任务相关事实事件刷新停滞检测的进度信号
+        if matches!(
+            event.event_type,
+            EventType::TaskCreated
+                | EventType::TaskStateChanged
+                | EventType::TaskMemberAdded
+                | EventType::TaskBudgetIncreased
+        ) && let Some(tid) = event.payload["task_id"].as_str()
+        {
+            self.watchdog
+                .mark_progress(tid, self.config.clock.now(), event.event_seq);
+        }
         event
     }
 
@@ -625,6 +652,8 @@ impl RuntimeHandle {
             system_agent,
             tasks: HashMap::new(),
             task_board: crate::task::TaskBoard::default(),
+            task_tool_calls: HashMap::new(),
+            watchdog: crate::watchdog::WatchdogState::default(),
             tx: tx.clone(),
             store: config.store.clone(),
             config,
@@ -704,6 +733,16 @@ impl RuntimeHandle {
                     && let Ok(v) = serde_json::from_str::<serde_json::Value>(payload)
                 {
                     world.idem_results.insert(h.to_string(), v);
+                }
+            }
+            // M5-T6:Task 包络记账恢复(聚合行 agent_id = "")
+            for row in store.list_task_budget().unwrap_or_default() {
+                if row["agent_id"].as_str() == Some("")
+                    && let (Some(tid), Some(used)) =
+                        (row["task_id"].as_str(), row["used_tool_calls"].as_u64())
+                    && let Ok(id) = BmId::parse(tid.to_string())
+                {
+                    world.task_tool_calls.insert(id, used);
                 }
             }
             // M5.4:Task Board 投影启动重建——重放事件日志折叠(ADR-0004 条件 1);
@@ -863,6 +902,7 @@ impl RuntimeHandle {
             }
         }
 
+        world.watchdog.schedule_next(world.config.clock.now());
         world.emit(
             EventType::RuntimeStarted,
             None,
@@ -1274,6 +1314,35 @@ impl RuntimeHandle {
         rx.await.map_err(|_| CoreError::Internal)?
     }
 
+    /// Task 预算扩容(M5-T6):仅用户可发起(Broker/Coordinator 不可扩容,
+    /// ADR-0002 要点 5);blocked(budget_exhausted)的任务扩容后恢复运行。
+    pub async fn task_budget_increase(
+        &self,
+        task_id: BmId,
+        max_tool_calls: u64,
+    ) -> CoreResult<serde_json::Value> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(Cmd::TaskBudgetIncrease {
+                task_id,
+                max_tool_calls,
+                resp: tx,
+            })
+            .await
+            .map_err(|_| CoreError::Internal)?;
+        rx.await.map_err(|_| CoreError::Internal)?
+    }
+
+    /// Watchdog 手动扫描(诊断入口):返回本次产生的事件数。
+    pub async fn watchdog_scan(&self) -> CoreResult<usize> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(Cmd::WatchdogScan { resp: tx })
+            .await
+            .map_err(|_| CoreError::Internal)?;
+        rx.await.map_err(|_| CoreError::Internal)?
+    }
+
     /// Butler 协调权撤销(M5.1):撤销 bootstrap Grant 集(全部 mutation+
     /// safe 动词),撤销后仅剩只读查询面;重授走审批(交互随 M8)。
     /// 返回撤销的 Grant 数。
@@ -1448,6 +1517,21 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
             } => {
                 let _ = resp.send(handle_worker_call(&mut world, request_id, params));
             }
+            Cmd::TaskBudgetIncrease {
+                task_id,
+                max_tool_calls,
+                resp,
+            } => {
+                let _ = resp.send(handle_task_budget_increase(
+                    &mut world,
+                    task_id,
+                    max_tool_calls,
+                ));
+            }
+            Cmd::WatchdogScan { resp } => {
+                let n = world.watchdog_scan_now();
+                let _ = resp.send(Ok(n));
+            }
             Cmd::TaskGet { params, resp } => {
                 let _ = resp.send(handle_task_get(&world, params));
             }
@@ -1466,6 +1550,9 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
             }
             Cmd::Turn(event) => handle_turn_event(&mut world, event),
         }
+        // M5-T7:Watchdog 节拍扫描(每条命令处理后检查是否到期;
+        // 事实事件产出,不推断编排下一步)
+        world.maybe_watchdog_scan();
     }
 }
 
@@ -3108,6 +3195,208 @@ fn handle_task_lifecycle(
     Ok(state_result)
 }
 
+/// Watchdog 扫描(运行时执行面):判定 → 事实事件/状态变更。
+/// 仅监督,不推断编排下一步(G4);blocked 后不再自动重启(ADR-0004 条件 6)。
+fn watchdog_scan_run(w: &mut World) -> usize {
+    let now = w.config.clock.now();
+    let mut events = 0;
+    // 分阶段作用域:先收集 Running 任务与判定,再逐个变更
+    let mut decisions: Vec<(BmId, crate::watchdog::ScanDecision)> = Vec::new();
+    for t in w.tasks.values() {
+        if t.state != bm_contract::states::TaskState::Running {
+            continue;
+        }
+        let created = crate::watchdog::parse_or(t.created_at.as_str(), now);
+        if let Some(d) = w.watchdog.decide(t.id.as_str(), created, now) {
+            decisions.push((t.id.clone(), d));
+        }
+    }
+    for (tid, d) in decisions {
+        match d {
+            crate::watchdog::ScanDecision::Stall => {
+                let elapsed_ms = {
+                    let watch = w.watchdog.watches.get(tid.as_str());
+                    watch
+                        .map(|x| (now - x.last_progress_at).num_milliseconds())
+                        .unwrap_or(0)
+                };
+                let last_seq = w
+                    .watchdog
+                    .watches
+                    .get(tid.as_str())
+                    .map(|x| x.last_progress_seq)
+                    .unwrap_or(0);
+                w.watchdog.mark_stall_notified(tid.as_str());
+                w.emit(
+                    EventType::TaskStalled,
+                    None,
+                    None,
+                    None,
+                    serde_json::json!({
+                        "task_id": tid.as_str(),
+                        "stalled_ms": elapsed_ms,
+                        "last_progress_seq": last_seq,
+                    }),
+                );
+                w.emit(
+                    EventType::WatchdogReorchestrationTriggered,
+                    None,
+                    None,
+                    None,
+                    serde_json::json!({
+                        "task_id": tid.as_str(),
+                        "trigger": "watchdog",
+                        "reason": "stalled_after_default_window",
+                    }),
+                );
+                events += 2;
+            }
+            crate::watchdog::ScanDecision::HardLimit => {
+                // 分阶段作用域:迁移完成后即释放 task 借用
+                let Some((from, to, guard, snapshot)) = (|| {
+                    let task = w.tasks.get_mut(&tid)?;
+                    let (from, to, guard) = task
+                        .transition(bm_contract::states::TaskState::Blocked, None, now)
+                        .ok()?;
+                    Some((from, to, guard, task.clone()))
+                })() else {
+                    continue;
+                };
+                w.emit(
+                    EventType::TaskStateChanged,
+                    None,
+                    None,
+                    None,
+                    serde_json::json!({
+                        "task_id": tid.as_str(),
+                        "from": from.as_str(),
+                        "to": to.as_str(),
+                        "reason_code": guard,
+                        "task_epoch": snapshot.task_epoch,
+                    }),
+                );
+                persist_task(w, &snapshot);
+                events += 1;
+            }
+        }
+    }
+    events
+}
+
+impl World {
+    /// 到期自动扫描(核心循环节拍)。
+    fn maybe_watchdog_scan(&mut self) {
+        let now = self.config.clock.now();
+        if !self.watchdog.due(now) {
+            return;
+        }
+        watchdog_scan_run(self);
+        self.watchdog.schedule_next(now);
+    }
+
+    /// 手动扫描(诊断/测试入口):忽略节拍,直接执行并重排下次。
+    fn watchdog_scan_now(&mut self) -> usize {
+        let now = self.config.clock.now();
+        let n = watchdog_scan_run(self);
+        self.watchdog.schedule_next(now);
+        n
+    }
+}
+
+/// Task 预算扩容:更新包络 + 事实事件 + blocked 恢复(用户批准面)。
+fn handle_task_budget_increase(
+    w: &mut World,
+    task_id: BmId,
+    max_tool_calls: u64,
+) -> CoreResult<serde_json::Value> {
+    if w.draining || w.persist_poisoned {
+        return Err(CoreError::Semantic(
+            ErrorCode::Unavailable,
+            "Runtime 排空中或持久层故障,拒绝扩容".into(),
+        ));
+    }
+    // 分阶段作用域:包络更新与迁移完成后即释放 task 借用
+    let (old_limit, snapshot, transition) = {
+        let Some(task) = w.tasks.get_mut(&task_id) else {
+            return Err(CoreError::Semantic(
+                ErrorCode::ValidationFailed,
+                format!("Task 不存在: {}", task_id.as_str()),
+            ));
+        };
+        if task.is_terminal() {
+            return Err(CoreError::Semantic(
+                ErrorCode::ValidationFailed,
+                "终态 Task 不可扩容".into(),
+            ));
+        }
+        let old_limit = task
+            .budget
+            .as_ref()
+            .and_then(|b| b.extra.get("max_tool_calls"))
+            .and_then(|v| match v {
+                bm_contract::budget::ExtraValue::Int(n) => u64::try_from(*n).ok(),
+                _ => None,
+            })
+            .unwrap_or(0);
+        let budget = task
+            .budget
+            .get_or_insert_with(|| bm_contract::budget::Budget {
+                max_tokens: u64::MAX,
+                max_turns: u32::MAX,
+                extra: Default::default(),
+            });
+        budget.extra.insert(
+            "max_tool_calls".into(),
+            bm_contract::budget::ExtraValue::Int(max_tool_calls as i64),
+        );
+        // blocked(budget_exhausted)的任务:扩容即用户裁定 → 恢复运行
+        let mut transition = None;
+        if task.state == bm_contract::states::TaskState::Blocked {
+            let now = w.config.clock.now();
+            let (from, to, guard) = task
+                .transition(bm_contract::states::TaskState::Running, None, now)
+                .expect("blocked→running 是迁移表边(user_resolved)");
+            transition = Some((from, to, guard));
+        }
+        (old_limit, task.clone(), transition)
+    };
+    w.emit(
+        EventType::TaskBudgetIncreased,
+        None,
+        None,
+        None,
+        serde_json::json!({
+            "task_id": task_id.as_str(),
+            "key": "max_tool_calls",
+            "old_limit": old_limit,
+            "new_limit": max_tool_calls,
+            "approval_id": null,
+        }),
+    );
+    if let Some((from, to, guard)) = transition {
+        w.emit(
+            EventType::TaskStateChanged,
+            None,
+            None,
+            None,
+            serde_json::json!({
+                "task_id": task_id.as_str(),
+                "from": from.as_str(),
+                "to": to.as_str(),
+                "reason_code": guard,
+                "task_epoch": snapshot.task_epoch,
+            }),
+        );
+    }
+    persist_task(w, &snapshot);
+    let state_after = snapshot.state;
+    Ok(serde_json::json!({
+        "task_id": task_id.as_str(),
+        "max_tool_calls": max_tool_calls,
+        "state": state_after.as_str(),
+    }))
+}
+
 /// Worker 能力调用(Agent 路径):Task 必须在运行态;worker principal +
 /// untrusted 上下文走统一执行体(Grant 命中直通 / 无授权 100% 升级审批)。
 fn handle_worker_call(
@@ -3152,22 +3441,138 @@ fn handle_worker_call(
             ));
         }
     }
+    // M5-T6:Task 包络「工具调用前」强制点(Broker 路径唯一执行出口:
+    // 绕过 Broker 无预算执行出口——G 断言的结构面)
+    let max_tool_calls = w
+        .tasks
+        .get(&params.task_id)
+        .and_then(|t| t.budget.as_ref())
+        .and_then(|b| b.extra.get("max_tool_calls"))
+        .and_then(|v| match v {
+            bm_contract::budget::ExtraValue::Int(n) => u64::try_from(*n).ok(),
+            bm_contract::budget::ExtraValue::Float(f) => u64::try_from(*f as i64).ok(),
+            _ => None,
+        });
+    let used = *w.task_tool_calls.entry(params.task_id.clone()).or_insert(0);
+    if let Some(max) = max_tool_calls {
+        // 软限 80%:budget.warning(基线 §9.7;逐次逼近即告警)
+        if (used + 1) as f64 >= 0.8 * max as f64 && used < max {
+            w.emit(
+                EventType::BudgetWarning,
+                None,
+                None,
+                None,
+                serde_json::json!({
+                    "agent_id": w.system_agent.as_str(),
+                    "scope": format!("task:{}", params.task_id.as_str()),
+                    "used_tokens": used + 1,
+                    "limit_tokens": max,
+                    "ratio": bm_contract::budget::round_ratio((used + 1) as f64, max as f64),
+                }),
+            );
+        }
+        // 硬限:拒绝 + Task blocked(budget_exhausted)等待用户裁定
+        if used + 1 > max {
+            w.emit(
+                EventType::BudgetExceeded,
+                None,
+                None,
+                None,
+                serde_json::json!({
+                    "agent_id": w.system_agent.as_str(),
+                    "scope": format!("task:{}", params.task_id.as_str()),
+                    "used_tokens": used,
+                    "limit_tokens": max,
+                }),
+            );
+            let now = w.config.clock.now();
+            let (from, to, epoch) = {
+                let Some(task) = w.tasks.get_mut(&params.task_id) else {
+                    return Err(CoreError::Internal);
+                };
+                let epoch = task.task_epoch;
+                let (from, to, _g) = task
+                    .transition(bm_contract::states::TaskState::Blocked, None, now)
+                    .expect("running→blocked 是迁移表边");
+                (from, to, epoch)
+            };
+            w.emit(
+                EventType::TaskStateChanged,
+                None,
+                None,
+                None,
+                serde_json::json!({
+                    "task_id": params.task_id.as_str(),
+                    "from": from.as_str(),
+                    "to": to.as_str(),
+                    "reason_code": "budget_exhausted",
+                    "task_epoch": epoch,
+                }),
+            );
+            let snapshot = w.tasks[&params.task_id].clone();
+            persist_task(w, &snapshot);
+            return Err(CoreError::Semantic(
+                ErrorCode::BudgetExceeded,
+                format!(
+                    "Task {} 预算包络已耗尽(max_tool_calls={max}),转 blocked 等待用户裁定",
+                    params.task_id.as_str()
+                ),
+            ));
+        }
+    }
     // Agent 路径信任归因:worker 上下文 = agent-derived/untrusted(内容
     // 来源链随任务传递,不可自报降级);Grant 命中优先,无授权则 100% 升级
     let ctx =
         CallContext::content_chain(crate::coordinator::WORKER_PRINCIPAL, DataTrust::Untrusted)
             .map_err(|_| CoreError::Internal)?;
-    capability_call_inner(
+    let outcome = capability_call_inner(
         w,
         request_id,
         ctx,
         wire::CapabilityCallParams {
-            capability: params.capability,
-            args: params.args,
-            idempotency_key: params.idempotency_key,
+            capability: params.capability.clone(),
+            args: params.args.clone(),
+            idempotency_key: params.idempotency_key.clone(),
             deadline_ms: params.deadline_ms,
         },
-    )
+    );
+    // 「返回后记账」+ 重复检测 + 进度信号(waiting_approval 豁免:等人的
+    // 时间不算停滞,进度随审批挂起刷新)
+    let outcome_str = match &outcome {
+        Ok(_) => "ok",
+        Err(CoreError::Semantic(ErrorCode::ApprovalRequired, _)) => "approval",
+        Err(_) => "error",
+    };
+    let now = w.config.clock.now();
+    let sig = crate::watchdog::call_sig(&params.capability, &params.args, outcome_str);
+    let repeat_count = if outcome_str == "approval" {
+        w.watchdog.mark_waiting(params.task_id.as_str(), now, 0);
+        0
+    } else {
+        w.watchdog.note_call(params.task_id.as_str(), sig, now, 0)
+    };
+    if outcome_str != "approval" {
+        *w.task_tool_calls.entry(params.task_id.clone()).or_insert(0) += 1;
+        let used_now = w.task_tool_calls[&params.task_id];
+        if let Some(store) = &w.store {
+            let _ = store.save_task_budget(params.task_id.as_str(), "", used_now, 0, &w.now_ts());
+        }
+    }
+    if repeat_count == crate::watchdog::REPEAT_THRESHOLD {
+        w.emit(
+            EventType::TaskRepeating,
+            None,
+            None,
+            None,
+            serde_json::json!({
+                "task_id": params.task_id.as_str(),
+                "agent_id": w.system_agent.as_str(),
+                "capability": params.capability,
+                "repeat_count": repeat_count,
+            }),
+        );
+    }
+    outcome
 }
 
 /// Butler 协调权撤销:撤销 bootstrap Grant 集(审计 grant.revoked),持久行
@@ -3674,6 +4079,12 @@ fn reply_unavailable(cmd: Cmd) {
             let _ = resp.send(Err(err()));
         }
         Cmd::WorkerCall { resp, .. } => {
+            let _ = resp.send(Err(err()));
+        }
+        Cmd::TaskBudgetIncrease { resp, .. } => {
+            let _ = resp.send(Err(err()));
+        }
+        Cmd::WatchdogScan { resp, .. } => {
             let _ = resp.send(Err(err()));
         }
         Cmd::EventsAll { resp } => {

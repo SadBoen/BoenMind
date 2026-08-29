@@ -712,6 +712,21 @@ impl bm_persist::EventStore for FailingStore {
     fn list_idem_receipts(&self) -> bm_persist::error::StoreResult<Vec<serde_json::Value>> {
         Ok(vec![])
     }
+    fn save_task_budget(
+        &self,
+        _t: &str,
+        _a: &str,
+        _u: u64,
+        _tok: u64,
+        _now: &str,
+    ) -> bm_persist::error::StoreResult<()> {
+        Err(bm_persist::error::StoreError::Io(std::io::Error::other(
+            "injected persist failure",
+        )))
+    }
+    fn list_task_budget(&self) -> bm_persist::error::StoreResult<Vec<serde_json::Value>> {
+        Ok(vec![])
+    }
     fn append(
         &self,
         _e: &bm_contract::events::EventEnvelope,

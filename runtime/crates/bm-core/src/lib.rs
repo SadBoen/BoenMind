@@ -19,6 +19,7 @@ pub mod registry;
 pub mod runtime;
 pub mod state;
 pub mod task;
+pub mod watchdog;
 
 pub use approval::{ApprovalError, ApprovalManager, OpenApproval, RespondDecision};
 pub use broker::{
@@ -36,3 +37,4 @@ pub use error::{CoreError, CoreResult};
 pub use registry::{BindingStatus, CapabilityDiscovery, CapabilityProvider, CapabilityRegistry};
 pub use runtime::{RuntimeConfig, RuntimeHandle};
 pub use task::{MemberRole, Task, TaskBoard, TaskBoardEntry, TaskError, TaskMember};
+pub use watchdog::{REPEAT_THRESHOLD, ScanDecision, TaskWatch, WATCHDOG_TICK_MS, WatchdogState};

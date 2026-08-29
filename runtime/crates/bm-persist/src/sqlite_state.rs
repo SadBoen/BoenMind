@@ -8,7 +8,7 @@ use rusqlite::Connection;
 use std::path::Path;
 use std::sync::Mutex;
 
-pub const SCHEMA_VERSION: i64 = 4;
+pub const SCHEMA_VERSION: i64 = 5;
 
 /// approvals 表行(载荷列 = Approval 合同 JSON 文本)。
 pub struct ApprovalRow<'a> {
@@ -86,6 +86,9 @@ impl StateDb {
         }
         if version < 4 {
             Self::migrate_v3_to_v4(&conn)?;
+        }
+        if version < 5 {
+            Self::migrate_v4_to_v5(&conn)?;
         }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(Self {
@@ -205,6 +208,19 @@ impl StateDb {
                 payload    TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
+            COMMIT;
+            "#,
+        )?;
+        Ok(())
+    }
+
+    /// v4→v5(M5-T6,expand 加列):task_budget_ledger 增 used_tool_calls
+    /// (Task 包络的工具调用维度记账;token 维度留给模型调用聚合)。
+    fn migrate_v4_to_v5(conn: &Connection) -> StoreResult<()> {
+        conn.execute_batch(
+            r#"
+            BEGIN;
+            ALTER TABLE task_budget_ledger ADD COLUMN used_tool_calls INTEGER NOT NULL DEFAULT 0;
             COMMIT;
             "#,
         )?;
@@ -563,6 +579,44 @@ impl StateDb {
         )
     }
 
+    /// Task 预算账本行 upsert(agent_id = "" 为 Task 级聚合行)。
+    pub fn save_task_budget(
+        &self,
+        task_id: &str,
+        agent_id: &str,
+        used_tool_calls: u64,
+        used_tokens: u64,
+        now: &str,
+    ) -> StoreResult<()> {
+        let conn = self.conn.lock().expect("锁未中毒");
+        conn.execute(
+            "INSERT INTO task_budget_ledger(task_id, agent_id, used_tokens, used_tool_calls,
+                                          updated_at)
+             VALUES(?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(task_id, agent_id) DO UPDATE SET
+                 used_tokens = excluded.used_tokens,
+                 used_tool_calls = excluded.used_tool_calls,
+                 updated_at = excluded.updated_at",
+            rusqlite::params![
+                task_id,
+                agent_id,
+                used_tokens as i64,
+                used_tool_calls as i64,
+                now
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// 恢复面:全部预算账本行。
+    pub fn list_task_budget(&self) -> StoreResult<Vec<serde_json::Value>> {
+        self.query_rows(
+            "SELECT task_id, agent_id, used_tokens, used_tool_calls, updated_at
+             FROM task_budget_ledger",
+            &[],
+        )
+    }
+
     /// 幂等收据落表(T6c):key_hash → 原收据;恢复后抑制判定不依赖内存。
     pub fn save_idem_receipt(
         &self,
@@ -661,7 +715,7 @@ mod tests {
             conn.query_row("PRAGMA user_version", [], |r| r.get(0))
                 .unwrap()
         };
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
 
         // approvals:upsert + 状态过滤
         db.save_approval(ApprovalRow {
