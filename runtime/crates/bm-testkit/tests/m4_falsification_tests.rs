@@ -67,6 +67,7 @@ fn p09_authorize_decision_p99_under_threshold() {
         samples.push(t0.elapsed().as_secs_f64() * 1e6);
     }
     let p99 = p99_us(&samples);
+    println!("P-09 authorize p99 = {p99:.3} us (test build, n=10000)");
     assert!(
         p99 < 200.0,
         "P-09 证伪:授权决策 p99 = {p99:.1} µs ≥ 200 µs 门槛(test build)——回炉查表实现"
@@ -107,6 +108,7 @@ fn p10_no_head_of_line_blocking_from_slow_provider() {
     };
     let base_p99 = measure(&mut grants, &baseline);
     let slow_p99 = measure(&mut grants, &reg);
+    println!("P-10 baseline p99 = {base_p99:.3} us / slow-provider p99 = {slow_p99:.3} us (n=500)");
     assert!(
         slow_p99 < base_p99 * 2.0 + 50.0,
         "P-10 证伪:慢 Provider 在册时无关授权 p99 劣化超阈(基线 {base_p99:.1} µs → {slow_p99:.1} µs)"
