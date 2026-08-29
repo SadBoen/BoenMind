@@ -33,6 +33,16 @@ pub struct GrantRow<'a> {
     pub created_at: &'a str,
 }
 
+/// capabilities 表行(manifest 列 = Capability Manifest 合同 JSON 文本)。
+pub struct CapabilityRow<'a> {
+    pub capability: &'a str,
+    pub provider_instance_id: &'a str,
+    pub epoch: u64,
+    pub status: &'a str,
+    pub manifest: &'a str,
+    pub updated_at: &'a str,
+}
+
 pub struct StateDb {
     pub(crate) conn: Mutex<Connection>,
 }
@@ -334,6 +344,14 @@ impl StateDb {
         Ok(out)
     }
 
+    /// 恢复面:全部审批行(id, operation_id, state, payload)。
+    pub fn list_approvals(&self) -> StoreResult<Vec<serde_json::Value>> {
+        self.query_rows(
+            "SELECT id, operation_id, state, payload FROM approvals ORDER BY created_at",
+            &[],
+        )
+    }
+
     /// 写入/更新 Grant(revoked 标志与版本随撤销推进)。
     pub fn save_grant(&self, row: GrantRow<'_>) -> StoreResult<()> {
         let conn = self.conn.lock().expect("锁未中毒");
@@ -366,15 +384,7 @@ impl StateDb {
     }
 
     /// 写入/更新 capability binding(epoch 单调由调用方保证,恢复时取 max)。
-    pub fn save_capability_binding(
-        &self,
-        capability: &str,
-        provider_instance_id: &str,
-        epoch: u64,
-        status: &str,
-        manifest: &str,
-        updated_at: &str,
-    ) -> StoreResult<()> {
+    pub fn save_capability_binding(&self, row: CapabilityRow<'_>) -> StoreResult<()> {
         let conn = self.conn.lock().expect("锁未中毒");
         conn.execute(
             "INSERT INTO capabilities(capability, provider_instance_id, epoch, status,
@@ -385,12 +395,12 @@ impl StateDb {
                  epoch = excluded.epoch, status = excluded.status,
                  manifest = excluded.manifest, updated_at = excluded.updated_at",
             rusqlite::params![
-                capability,
-                provider_instance_id,
-                epoch as i64,
-                status,
-                manifest,
-                updated_at
+                row.capability,
+                row.provider_instance_id,
+                row.epoch as i64,
+                row.status,
+                row.manifest,
+                row.updated_at
             ],
         )?;
         Ok(())
@@ -556,23 +566,23 @@ mod tests {
         assert_eq!(grants[0]["revocation_version"], serde_json::json!(1));
 
         // capabilities:epoch 持久计数
-        db.save_capability_binding(
-            "system.echo",
-            "system.echo@0.1.0",
-            7,
-            "active",
-            r#"{"capability":"system.echo"}"#,
-            "2026-08-29T10:00:00.100Z",
-        )
+        db.save_capability_binding(CapabilityRow {
+            capability: "system.echo",
+            provider_instance_id: "system.echo@0.1.0",
+            epoch: 7,
+            status: "active",
+            manifest: r#"{"capability":"system.echo"}"#,
+            updated_at: "2026-08-29T10:00:00.100Z",
+        })
         .expect("写 binding");
-        db.save_capability_binding(
-            "system.echo",
-            "system.echo@0.2.0",
-            8,
-            "active",
-            r#"{"capability":"system.echo"}"#,
-            "2026-08-29T10:05:00.100Z",
-        )
+        db.save_capability_binding(CapabilityRow {
+            capability: "system.echo",
+            provider_instance_id: "system.echo@0.2.0",
+            epoch: 8,
+            status: "active",
+            manifest: r#"{"capability":"system.echo"}"#,
+            updated_at: "2026-08-29T10:05:00.100Z",
+        })
         .expect("切 binding");
         let caps = db.list_capability_bindings().unwrap();
         assert_eq!(caps.len(), 1);

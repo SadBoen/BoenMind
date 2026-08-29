@@ -507,14 +507,107 @@ impl RuntimeHandle {
                 report = Some(r);
             }
         }
-        // M4:内置能力注册(启动面;epoch 持久恢复随 T3c 接 SQLite)
+        // M4:内置能力注册(启动面)+ 持久 binding/审批/授权恢复
         let caps = std::mem::take(&mut world.config.capabilities);
+        let mut registered: Vec<(String, Arc<dyn CapabilityProvider>)> = Vec::new();
         for (manifest, provider) in caps {
             let instance = format!("{}@{}", manifest.capability, manifest.version);
+            let manifest_json = serde_json::to_string(&manifest).unwrap_or_default();
+            let capability = manifest.capability.clone();
             world
                 .registry
-                .register(manifest, &instance, provider)
+                .register(manifest, &instance, provider.clone())
                 .expect("内置能力首次注册不得冲突");
+            registered.push((capability.clone(), provider));
+            if let Some(store) = &world.store {
+                let _ = store.save_capability_binding(bm_persist::sqlite_state::CapabilityRow {
+                    capability: &capability,
+                    provider_instance_id: &instance,
+                    epoch: 1,
+                    status: "active",
+                    manifest: &manifest_json,
+                    updated_at: &format_ts(world.started_at),
+                });
+            }
+        }
+        // M4 启动恢复:binding epoch 取持久 max(不回退,ADR-0001 条件 2);
+        // Grant 台账与审批对象重建——「审批中断后可以恢复」(基线 M4 通过条件)。
+        if let Some(store) = &world.store {
+            for row in store.list_capability_bindings().unwrap_or_default() {
+                let cap = row["capability"].as_str().unwrap_or("");
+                let epoch = row["epoch"].as_u64().unwrap_or(0);
+                let instance = row["provider_instance_id"].as_str().unwrap_or("");
+                if let Some(m) = world.registry.manifest_of(cap).cloned() {
+                    world.registry.restore_binding(m, instance, epoch);
+                }
+            }
+            // restore_binding 清空可丢失运行时缓存(T1 语义):句柄由注册流程
+            // 重新 attach——否则恢复后执行入口拿不到 Provider。
+            for (cap, provider) in &registered {
+                let _ = world.registry.attach_handle(cap, provider.clone());
+            }
+            for row in store.list_grants().unwrap_or_default() {
+                let payload = row["payload"].as_str().unwrap_or("null");
+                let Ok(grant) = serde_json::from_str::<bm_contract::capability::Grant>(payload)
+                else {
+                    continue;
+                };
+                let revoked = row["revoked"].as_i64().unwrap_or(0) == 1;
+                world.grants.restore(grant, 0, revoked);
+            }
+            for row in store.list_approvals().unwrap_or_default() {
+                let payload = row["payload"].as_str().unwrap_or("null");
+                let Ok(wrap) = serde_json::from_str::<serde_json::Value>(payload) else {
+                    continue;
+                };
+                let Ok(approval) = serde_json::from_value::<Approval>(wrap["approval"].clone())
+                else {
+                    continue;
+                };
+                let state = approval.state;
+                let approval_id =
+                    BmId::parse(approval.approval_id.clone()).expect("库内 approval id 合法");
+                let Ok(op_id) = BmId::parse(row["operation_id"].as_str().unwrap_or("")) else {
+                    continue;
+                };
+                if state == bm_contract::capability::ApprovalState::WaitingUser {
+                    // waiting_approval 的 operation 内存重建(从未离开该状态)
+                    let request_id =
+                        BmId::from_parts("req", op_id.ulid_part()).expect("同段合成合法");
+                    let created_at = approval.requested_at.clone();
+                    world.operations.insert(
+                        op_id.clone(),
+                        Operation {
+                            id: op_id.clone(),
+                            request_id,
+                            session_id: world.system_session.clone(),
+                            agent_id: world.system_agent.clone(),
+                            state: OperationState::WaitingApproval,
+                            turn_index: 0,
+                            created_at,
+                            completed_at: None,
+                            action_summary: "能力调用(恢复)".to_string(),
+                            result_reference: None,
+                            error: None,
+                        },
+                    );
+                    if let Some(call) = wrap.get("call") {
+                        let capability = call["capability"].as_str().unwrap_or("").to_string();
+                        let args = call["args"].clone();
+                        if !capability.is_empty() {
+                            world.cap_pending.insert(
+                                approval_id.clone(),
+                                PendingCapabilityCall {
+                                    op_id,
+                                    capability,
+                                    args,
+                                },
+                            );
+                        }
+                    }
+                }
+                world.approvals.insert(approval_id, approval);
+            }
         }
 
         world.emit(
@@ -1514,6 +1607,52 @@ fn handle_recovery_settle(
 // ---- Capability Broker / Approval(M4;ADR-0001/0002)------------------------
 
 const CAPABILITY_CALLER: &str = "surface:user";
+
+/// 审批对象持久化(payload = 包装 JSON:approval 合同形态;未决时附重放执行
+/// 载荷 call,裁决后剥离)。写失败仅告警不阻断:审批对象当次仍在内存可裁决,
+/// 重启丢失窗口留 T6 事务性 outbox 统一收紧。
+fn persist_approval(
+    w: &World,
+    approval: &Approval,
+    op_id: &BmId,
+    pending: Option<(&str, &serde_json::Value)>,
+) {
+    if let Some(store) = &w.store {
+        let mut wrap = serde_json::json!({ "approval": approval });
+        if let Some((capability, args)) = pending {
+            wrap["call"] = serde_json::json!({ "capability": capability, "args": args });
+        }
+        let _ = store.save_approval(bm_persist::sqlite_state::ApprovalRow {
+            id: approval.approval_id.as_str(),
+            operation_id: op_id.as_str(),
+            capability: approval.capability.as_str(),
+            principal: approval.principal.as_str(),
+            state: approval.state.as_str(),
+            payload: &wrap.to_string(),
+            created_at: approval.requested_at.as_str(),
+            resolved_at: approval.resolved_at.as_deref(),
+        });
+    }
+}
+
+/// Grant 行同步(含消费态:Once 消费即 revoked 落行,恢复后不复活)。
+fn persist_grant(w: &World, grant_id: &str) {
+    if let Some(store) = &w.store
+        && let Some(grant) = w.grants.get(grant_id).cloned()
+    {
+        let (used, revoked) = w.grants.entry_state(grant_id).unwrap_or((0, false));
+        let _ = store.save_grant(bm_persist::sqlite_state::GrantRow {
+            id: grant.grant_id.as_str(),
+            audience: grant.audience.as_str(),
+            action: grant.action.as_str(),
+            revocation_version: grant.revocation_version,
+            revoked: revoked || used >= 1 && matches!(grant.scope, GrantScope::Once),
+            payload: &serde_json::to_string(&grant).unwrap_or_default(),
+            created_at: grant.created_at.as_str(),
+        });
+    }
+}
+
 /// 审批可选范围(GT-02 形态;forever 的收紧策略随 M5 审批 UI,规格 §8.6)。
 fn capability_scope_choices() -> Vec<GrantScope> {
     vec![
@@ -1584,6 +1723,10 @@ fn handle_capability_call(
                 } => {
                     let completed_at = w.now_ts();
                     w.settle_operation(&op_id, OperationState::Succeeded, None);
+                    // Grant 消费态落行(Once 消费即 revoked,重启后不复活)
+                    if let Some(gid) = &grant_id {
+                        persist_grant(w, gid);
+                    }
                     w.emit(
                         EventType::CapabilityInvoked,
                         None,
@@ -1689,7 +1832,13 @@ fn handle_capability_call(
                 }),
             );
             approval.grant_id = None;
-            w.approvals.insert(approval_id.clone(), approval);
+            w.approvals.insert(approval_id.clone(), approval.clone());
+            persist_approval(
+                w,
+                &approval,
+                &op_id,
+                Some((&params.capability, &params.args)),
+            );
             w.cap_pending.insert(
                 approval_id,
                 PendingCapabilityCall {
@@ -1834,6 +1983,11 @@ fn handle_approval_respond(
         let mut mgr = ApprovalManager::new(&mut w.grants, &*w.config.clock, &*w.config.id_gen);
         mgr.respond(approval, decision, scope, resource, CAPABILITY_CALLER)
     };
+    // 裁决后同步审批行(非 waiting 态剥离重放载荷)
+    let op_row_id = pending.as_ref().map(|(op_id, ..)| op_id.clone());
+    if let (Some(a), Some(op_id)) = (w.approvals.get(&params.approval_id), op_row_id.as_ref()) {
+        persist_approval(w, a, op_id, None);
+    }
     let op = pending;
     match respond_result {
         Ok(Some(grant)) => {
@@ -1869,6 +2023,7 @@ fn handle_approval_respond(
                 }),
             );
             // 批准:operation 续行(waiting_approval→running→执行)
+            persist_grant(w, &grant.grant_id);
             if let Some((op_id, capability, args)) = op {
                 w.settle_operation(&op_id, OperationState::Running, None);
                 let ctx = CallContext::new(CAPABILITY_CALLER, DataTrust::Trusted);
@@ -1888,6 +2043,7 @@ fn handle_approval_respond(
                         ..
                     } => {
                         w.settle_operation(&op_id, OperationState::Succeeded, None);
+                        persist_grant(w, &grant.grant_id);
                         w.emit(
                             EventType::CapabilityInvoked,
                             None,

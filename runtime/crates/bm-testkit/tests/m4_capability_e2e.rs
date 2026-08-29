@@ -321,3 +321,89 @@ async fn t42_approve_materializes_grant_and_completes() {
         CoreError::Semantic(ErrorCode::ValidationFailed, _)
     ));
 }
+
+#[tokio::test]
+async fn t43_approval_survives_restart() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    // 第一次启动:发起可审批调用后「崩溃」(句柄即进程)
+    std::fs::create_dir_all(dir.path().join("data")).expect("建数据目录");
+    let store =
+        Arc::new(bm_persist::PersistStore::open(&dir.path().join("data")).expect("打开持久层"));
+    let handle1 = m4_rig_at(dir.path().join("data"), store.clone()).await;
+    let req = bm_contract::ids::BmId::parse("req_01JAAAAAAAAAAAAAAAAAAAAA90").unwrap();
+    let err = handle1
+        .capability_call(
+            req,
+            call_params("system.notes.write", json!({"path": "a.md"})),
+        )
+        .await
+        .expect_err("reversible 应升级审批");
+    assert!(matches!(
+        err,
+        CoreError::Semantic(ErrorCode::ApprovalRequired, _)
+    ));
+    handle1.stop("crash-sim").await;
+
+    // 第二次启动(同目录):审批对象恢复,waiting_user 仍可裁决
+    let handle2 = m4_rig_at(dir.path().join("data"), store).await;
+    let list = handle2
+        .approval_list(bm_contract::wire::ApprovalListParams { state_filter: None })
+        .await
+        .expect("恢复后列表可查");
+    let approvals = list["approvals"].as_array().unwrap();
+    assert_eq!(approvals.len(), 1, "审批对象必须跨重启恢复");
+    assert_eq!(approvals[0]["state"], json!("waiting_user"));
+    let approval_id = approvals[0]["approval_id"].as_str().unwrap().to_string();
+
+    // 批准 → 重放执行载荷恢复 → 执行成功(审批中断后可以恢复,基线 M4)
+    let req = bm_contract::ids::BmId::parse("req_01JAAAAAAAAAAAAAAAAAAAAA91").unwrap();
+    let respond = handle2
+        .approval_respond(
+            req,
+            bm_contract::wire::ApprovalRespondParams {
+                approval_id: bm_contract::ids::BmId::parse(&approval_id).unwrap(),
+                decision: "approve".into(),
+                scope: Some("once".into()),
+            },
+        )
+        .await
+        .expect("恢复后批准应成功");
+    assert_eq!(respond["state"], json!("approved"));
+    assert!(respond["grant_id"].is_string());
+
+    let events = handle2.events_all().await;
+    assert!(
+        events
+            .iter()
+            .any(|e| e.event_type == EventType::GrantCreated)
+    );
+    assert!(events.iter().any(
+        |e| e.event_type == EventType::CapabilityInvoked && e.payload["outcome"] == json!("ok")
+    ));
+}
+
+/// 带持久层的 M4 装配(恢复测试用;clock 基准与 m4_rig 一致)。
+async fn m4_rig_at(
+    data_dir: std::path::PathBuf,
+    store: Arc<dyn bm_persist::EventStore>,
+) -> RuntimeHandle {
+    let connector = Arc::new(MockConnector::new(vec![]));
+    let secrets = Arc::new(MemSecretStore::with("secret:model.x", "sk-demo"));
+    let ids = Arc::new(SeqIdGen::new());
+    let config = RuntimeConfig {
+        capabilities: vec![(
+            manifest("system.notes.write", "reversible-command"),
+            provider_fn(|_| Ok(json!({"written": true}))),
+        )],
+        version: "0.1.0-m4".into(),
+        data_dir: Some(data_dir),
+        store: Some(store),
+        connector,
+        secret_store: secrets,
+        id_gen: ids,
+        clock: Arc::new(bm_core::clock::MockClock::at_ms(1_788_000_000_000)),
+        turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
+        max_attempts: None,
+    };
+    RuntimeHandle::start(config).await
+}

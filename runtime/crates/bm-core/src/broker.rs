@@ -273,6 +273,29 @@ impl GrantLedger {
     pub fn get(&self, grant_id: &str) -> Option<&Grant> {
         self.entries.get(grant_id).map(|e| &e.grant)
     }
+
+    /// 持久化视图:条目的 (used_count, revoked),供恢复/落库同步。
+    pub fn entry_state(&self, grant_id: &str) -> Option<(u64, bool)> {
+        self.entries
+            .get(grant_id)
+            .map(|e| (e.used_count, e.revoked))
+    }
+
+    /// 恢复:按持久行重建条目(used/revoked 原样装载)。
+    pub fn restore(&mut self, grant: Grant, used_count: u64, revoked: bool) {
+        let key = (grant.audience.clone(), grant.action.clone());
+        let id = grant.grant_id.clone();
+        self.entries.insert(
+            id.clone(),
+            LedgerEntry {
+                grant,
+                used_count,
+                revoked,
+            },
+        );
+        self.index.entry(key).or_default().push(id);
+        self.policy_version += 1;
+    }
 }
 
 /// Broker:持有 Registry(「谁提供什么」)的只读引用与 Grant 台账

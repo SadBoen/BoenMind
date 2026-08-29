@@ -53,6 +53,29 @@ pub trait EventStore: Send + Sync {
 
     /// 压实:截断 seq ≤ up_to 的日志前缀(仅可在快照位点 ≥ up_to 后调用)。
     fn compact(&self, up_to_seq: u64) -> StoreResult<usize>;
+
+    // ---- M4:approvals / grants / capabilities(审批中断恢复面)----------------
+    /// 写入/更新审批对象(payload = 包装 JSON:approval 合同形态 + 未决时的
+    /// 重放执行载荷)。
+    fn save_approval(&self, row: crate::sqlite_state::ApprovalRow<'_>) -> StoreResult<()>;
+
+    /// 恢复面:全部审批行(id, operation_id, state, payload)。
+    fn list_approvals(&self) -> StoreResult<Vec<serde_json::Value>>;
+
+    /// 写入/更新 Grant 行。
+    fn save_grant(&self, row: crate::sqlite_state::GrantRow<'_>) -> StoreResult<()>;
+
+    /// 恢复面:全部 Grant 行。
+    fn list_grants(&self) -> StoreResult<Vec<serde_json::Value>>;
+
+    /// 写入/更新 capability binding(epoch 持久计数)。
+    fn save_capability_binding(
+        &self,
+        row: crate::sqlite_state::CapabilityRow<'_>,
+    ) -> StoreResult<()>;
+
+    /// 恢复面:全部 binding 行。
+    fn list_capability_bindings(&self) -> StoreResult<Vec<serde_json::Value>>;
 }
 
 /// 默认压实触发间隔(条);ADR-0004 条件 2:压实是强制义务,不是可选项。
@@ -309,6 +332,33 @@ impl EventStore for PersistStore {
             });
         }
         self.log.truncate_prefix(up_to_seq)
+    }
+
+    fn save_approval(&self, row: crate::sqlite_state::ApprovalRow<'_>) -> StoreResult<()> {
+        self.state.save_approval(row)
+    }
+
+    fn list_approvals(&self) -> StoreResult<Vec<serde_json::Value>> {
+        self.state.list_approvals()
+    }
+
+    fn save_grant(&self, row: crate::sqlite_state::GrantRow<'_>) -> StoreResult<()> {
+        self.state.save_grant(row)
+    }
+
+    fn list_grants(&self) -> StoreResult<Vec<serde_json::Value>> {
+        self.state.list_grants()
+    }
+
+    fn save_capability_binding(
+        &self,
+        row: crate::sqlite_state::CapabilityRow<'_>,
+    ) -> StoreResult<()> {
+        self.state.save_capability_binding(row)
+    }
+
+    fn list_capability_bindings(&self) -> StoreResult<Vec<serde_json::Value>> {
+        self.state.list_capability_bindings()
     }
 }
 
