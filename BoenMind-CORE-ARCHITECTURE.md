@@ -1022,6 +1022,8 @@ L2 持有 Task 的规范状态、成员关系、预算、截止时间和生命�
 
 > **ADR-0004 增补（2026-08-28）**：新增恢复语义条款：Orchestrator 恢复 = 先结算未决意图，再从最近一致的持久状态与决策事件重新推理下一步；明确声明不重放 LLM 内部推理过程；Runtime 仅承担会话监督，并定义编排重启的触发者与停滞窗口上限。
 
+> **ADR-0004 条件 6 结算（2026-08-29，M5）**：编排重启触发者恰为二者：①用户显式 resume（任意 Surface 的 task.resume）；②Watchdog 自动触发——监护判定停滞成立后持久发布事实事件 watchdog.reorchestration.triggered，由编排器消费后从最近一致的持久状态与决策事件重新推理；Watchdog 与 Runtime 监督层均不推断编排下一步。停滞窗口：无进展信号（无新事件/无心跳更新/无 Operation 状态变化）持续超停滞阈值（默认 15 分钟，Task 可配置）判定 stalled 并触发自动重启；自最近进展累计超硬顶（默认 24 小时）不再自动重启，Task 转 blocked 等待用户裁定；waiting_approval 态豁免自动重启。数值与机制详见 `milestones/M5-implementation-spec.md` §5.2。
+
 ## 11. Agent Team 与 Coordinator Agent
 
 “队长是管家的分身”可以作为产品理解，但内核中不应复制 Butler 的完整身份。

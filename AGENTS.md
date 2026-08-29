@@ -7,12 +7,12 @@ BoenMind:个人生态的 AI Runtime / AI OS,当前为**阶段一(跨平台单软
 对照验证(Erlang/OTP、Kubernetes、VS Code,见 `architecture/deepwiki-validation.md`)。
 合同库已冻结 v1.0(字段只增不破)。
 
-**当前进度:M4 已收官(2026-08-29,tag `m4-capability-broker`):
-`milestones/M4-review.md`——11 条硬约束全部落地,134 测试全绿,
-性能证伪 P-09(p99≈0.2µs)/P-10(零劣化)经受实测。
-下一步 = 起草《M5 实现规格》(Butler/Task/长期监护),开工前先结算
-ADR-0004 条件 6(编排重启触发者/窗口,见 PENDING D-M2-2)与
-ADR-0002 预算包络相关验收条件。**
+**当前进度:M4 已收官(2026-08-29,tag `m4-capability-broker`)。
+M5 前置结算与规格已冻结(2026-08-29):`milestones/M5-implementation-spec.md`
+v1.0——ADR-0004 条件 6(触发者两类:用户 resume / Watchdog 自动;停滞窗口
+默认 15min、硬顶 24h,基线 §10.3 已补定义,数值大白话见 PENDING D-M5-1)
+与 ADR-0002 预算包络二分已落入规格,随 M5 回看逐条闭合。
+下一步 = 按规格 §6 T0–T10 序实现 M5(Butler/Task/长期监护),T0 合同增发起。**
 
 ## 文件地图(规格分层,基线 §0)
 
