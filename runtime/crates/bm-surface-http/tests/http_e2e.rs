@@ -526,3 +526,55 @@ async fn t34_capability_call_approval_cycle_over_http() {
 
     rig.handle.stop("test_done").await;
 }
+
+/// M4-T5 冒烟:server 将实际使用的内置能力集(builtin_capability_set)
+/// 经 HTTP 直通/审批链路可用(装配路径与 boenmind-server 完全一致)。
+#[tokio::test]
+async fn t35_builtin_capability_set_smoke() {
+    let rig = m4_rig(bm_providers::builtin::builtin_capability_set()).await;
+    let client = rig.client(Some(&rig.token));
+
+    // low-risk 直通:counter.bump 执行并返回内部结果
+    let (status, body) = rig
+        .rpc(
+            &client,
+            Method::CapabilityCall,
+            serde_json::json!({"capability": "system.counter.bump", "args": {"key": "k"}}),
+        )
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["result"]["result"]["count"], 1);
+
+    // external-side-effect → 升级审批(untrusted 门控无关;effective reversible+)
+    let (status, body) = rig
+        .rpc(
+            &client,
+            Method::CapabilityCall,
+            serde_json::json!({"capability": "system.mail.mock_send",
+                                "args": {"to": "a@x", "subject": "s"},
+                                "idempotency_key": "idem-1"}),
+        )
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(body["error"]["code"], "approval_required");
+
+    // 批准一次 → 执行成功,返回 mock 收据
+    let (_, list) = rig
+        .rpc(&client, Method::ApprovalList, serde_json::json!({}))
+        .await;
+    let approval_id = list["result"]["approvals"][0]["approval_id"]
+        .as_str()
+        .expect("id")
+        .to_string();
+    let (status, body) = rig
+        .rpc(
+            &client,
+            Method::ApprovalRespond,
+            serde_json::json!({"approval_id": approval_id, "decision": "approve", "scope": "once"}),
+        )
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(body["result"]["state"], "approved");
+    rig.handle.stop("test_done").await;
+}
