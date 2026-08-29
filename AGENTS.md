@@ -7,10 +7,10 @@ BoenMind:个人生态的 AI Runtime / AI OS,当前为**阶段一(跨平台单软
 对照验证(Erlang/OTP、Kubernetes、VS Code,见 `architecture/deepwiki-validation.md`)。
 合同库已冻结 v1.0(字段只增不破)。
 
-**当前进度:M3 进行中(2026-08-29 开工)。《M3 实现规格》已冻结 v1.0
-(`milestones/M3-implementation-spec.md`)。治理变更:技术规格由实现者
-自主冻结(基线锁定"做什么",规格只记录"怎么做");用户仅裁决产品体验与
-方向议题(大白话提出)。前置:M1/M2 遗留条件已全部关闭。**
+**当前进度:M3 完成(2026-08-29,回看裁决 passed_with_conditions)。
+下一步 = M4:Capability、Broker、权限和审批——开工前结算
+ADR-0001/0002 相关验收条件。治理变更生效:技术规格实现者自主冻结,
+用户仅裁决产品体验与方向议题(大白话,记 milestones/PENDING.md)。**
 
 ## 文件地图(规格分层,基线 §0)
 
@@ -46,7 +46,9 @@ runtime/                        第 3 层  源代码(M1 起,Rust workspace;crate
       规格 `milestones/M2-implementation-spec.md`,回看 `milestones/M2-review.md`,
       68 测试全绿,四项混沌验收通过,ADR-0004 四项 M2 适配映射已按默认路径落地)**
 - [ ] M4 Capability/Broker/权限审批(开工前结算 ADR-0001/0002 相关验收条件)
-- [ ] **M3 统一 Wire API、CLI 与跨平台启动 ← 当前(规格草案待冻结)**
+- [x] **M3 统一 Wire API、CLI 与跨平台启动(2026-08-29,tag `m3-surface-cli`;
+      规格 `milestones/M3-implementation-spec.md`,回看 `milestones/M3-review.md`,
+      74 测试全绿,CLI/桌面/Web 三形态同源可用)**
 - [ ] M4/M5-M8 见基线 §18;33 项验收条件的分布见各 ADR「条件与验收」
 - 注意:`architecture/deepwiki-validation.md` 的 S1-S10 修订建议为 **proposed**,
   仅在各里程碑回看时逐条裁决,勿自动采纳。
