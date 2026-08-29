@@ -1,0 +1,53 @@
+name: release
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["m*", "v*"]
+
+jobs:
+  # M3.5:CLI(boenmind)+ server(boenmind-server)三平台制品;
+  # Tauri Windows 安装包随 T6/M8 加入本工作流。
+  binaries:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: macos-latest
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: runtime
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: runtime
+      - run: cargo build --release --bin boenmind --bin boenmind-server
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p dist
+          for bin in boenmind boenmind-server; do
+            if [ -f "target/release/${bin}.exe" ]; then
+              cp "target/release/${bin}.exe" "dist/${bin}-${{ matrix.target }}.exe"
+            elif [ -f "target/release/${bin}" ]; then
+              cp "target/release/${bin}" "dist/${bin}-${{ matrix.target }}"
+            else
+              echo "未找到制品: ${bin}" && exit 1
+            fi
+          done
+          ls -la dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: boenmind-${{ matrix.target }}
+          path: runtime/dist/*
+          if-no-files-found: error
