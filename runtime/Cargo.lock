@@ -338,12 +338,16 @@ name = "bm-runtime"
 version = "0.1.0-m1"
 dependencies = [
  "axum",
+ "bm-cli",
  "bm-contract",
  "bm-core",
  "bm-persist",
  "bm-providers",
  "bm-surface-http",
  "dirs",
+ "reqwest",
+ "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
 ]

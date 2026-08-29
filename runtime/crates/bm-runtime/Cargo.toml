@@ -15,5 +15,11 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 dirs = { workspace = true }
 
+[dev-dependencies]
+bm-cli = { workspace = true }
+tempfile = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+
 [lints]
 workspace = true

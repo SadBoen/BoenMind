@@ -38,6 +38,7 @@ getrandom = "0"
 dirs = "6"
 clap = { version = "4", features = ["derive"] }
 bm-surface-http = { path = "crates/bm-surface-http" }
+bm-cli = { path = "crates/bm-cli" }
 bm-persist = { path = "crates/bm-persist" }
 bm-contract = { path = "crates/bm-contract" }
 bm-core = { path = "crates/bm-core" }

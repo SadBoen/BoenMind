@@ -77,8 +77,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = bm_surface_http::router(handle.clone(), Arc::new(token.clone()), store);
     let listener = tokio::net::TcpListener::bind(&bind).await?;
+    let actual = listener.local_addr()?;
     println!(
-        "boenmind-server v{} 监听 http://{bind}",
+        "boenmind-server v{} 监听 http://{actual}",
         env!("CARGO_PKG_VERSION")
     );
     println!(
