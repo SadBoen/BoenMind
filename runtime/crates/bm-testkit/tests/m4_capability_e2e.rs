@@ -586,3 +586,66 @@ async fn t44_idempotency_suppression_and_intent_gate() {
         .unwrap();
     assert_eq!(ok_hash, sup_hash, "同一幂等键的抑制可从审计证明");
 }
+
+/// M4-T6b:恢复三路(硬约束 5;基线 §13.3)。intent 落盘而结果不在(崩溃
+/// 窗口注入)→ 重启后 operation 以 outcome_unknown 重建,等待裁定入口
+/// (recovery_settle);禁止自动重放(ADR-0004)。裁定后审计闭环。
+#[tokio::test]
+async fn t45_outbox_pending_recovers_to_outcome_unknown() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let store: Arc<dyn bm_persist::EventStore> =
+        Arc::new(bm_persist::PersistStore::open(dir.path()).expect("打开持久层"));
+    // 注入崩溃窗口:intent 已落(outbox pending)而结果不在
+    store
+        .outbox_upsert(
+            "op_01JAAAAAAAAAAAAAAAAAAAAA0F",
+            "side_effect",
+            "pending",
+            r#"{"capability":"system.mail.mock_send","key_hash":"aa"}"#,
+            "2026-08-29T10:40:00.000Z",
+        )
+        .expect("注入 pending");
+
+    // 重启
+    let connector: Arc<dyn ModelConnector> = Arc::new(MockConnector::new(vec![]));
+    let handle = RuntimeHandle::start(RuntimeConfig {
+        capabilities: vec![],
+        version: "0.1.0-m4".into(),
+        data_dir: None,
+        store: Some(store),
+        connector,
+        secret_store: Arc::new(MemSecretStore::with("secret:model.x", "sk")),
+        id_gen: Arc::new(SeqIdGen::new()),
+        clock: Arc::new(SystemClock),
+        turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
+        max_attempts: None,
+    })
+    .await;
+
+    // 恢复面:outcome_unknown 可查(未执行、未自动重放)
+    let receipt = handle
+        .operations_get(bm_contract::wire::GetOperationParams {
+            operation_id: bm_contract::ids::BmId::parse("op_01JAAAAAAAAAAAAAAAAAAAAA0F").unwrap(),
+        })
+        .await
+        .expect("恢复的 operation 可查");
+    assert_eq!(receipt.state, OperationState::OutcomeUnknown);
+
+    // 裁定入口(用户核验外部系统后裁定 succeeded)→ 审计闭环
+    let settled = handle
+        .recovery_settle(
+            bm_contract::ids::BmId::parse("op_01JAAAAAAAAAAAAAAAAAAAAA0F").unwrap(),
+            bm_core::runtime::RecoveryVerdict::Succeeded,
+        )
+        .await
+        .expect("裁定成功");
+    assert_eq!(settled.state, OperationState::Succeeded);
+    let events = handle.events_all().await;
+    assert!(
+        events
+            .iter()
+            .any(|e| e.event_type == EventType::OperationStateChanged
+                && e.payload["to"] == serde_json::json!("succeeded"))
+    );
+    handle.stop("test_done").await;
+}

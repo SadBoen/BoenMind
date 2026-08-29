@@ -76,6 +76,19 @@ pub trait EventStore: Send + Sync {
 
     /// 恢复面:全部 binding 行。
     fn list_capability_bindings(&self) -> StoreResult<Vec<serde_json::Value>>;
+
+    /// outbox 记录 upsert(副作用对账底座;pending→published→verified)。
+    fn outbox_upsert(
+        &self,
+        operation_id: &str,
+        kind: &str,
+        state: &str,
+        payload: &str,
+        now: &str,
+    ) -> StoreResult<()>;
+
+    /// 恢复面:指定状态的 outbox 行(如 pending = intent 无结果)。
+    fn list_outbox_by_state(&self, state: &str) -> StoreResult<Vec<serde_json::Value>>;
 }
 
 /// 默认压实触发间隔(条);ADR-0004 条件 2:压实是强制义务,不是可选项。
@@ -359,6 +372,22 @@ impl EventStore for PersistStore {
 
     fn list_capability_bindings(&self) -> StoreResult<Vec<serde_json::Value>> {
         self.state.list_capability_bindings()
+    }
+
+    fn outbox_upsert(
+        &self,
+        operation_id: &str,
+        kind: &str,
+        state: &str,
+        payload: &str,
+        now: &str,
+    ) -> StoreResult<()> {
+        self.state
+            .outbox_upsert(operation_id, kind, state, payload, now)
+    }
+
+    fn list_outbox_by_state(&self, state: &str) -> StoreResult<Vec<serde_json::Value>> {
+        self.state.list_outbox_by_state(state)
     }
 }
 

@@ -616,6 +616,39 @@ impl RuntimeHandle {
                 }
                 world.approvals.insert(approval_id, approval);
             }
+            // T6b 恢复三路:pending outbox = intent 在而结果不在。Provider
+            // 幂等查询属 M7(外部核验);M4 落地 = operation 重建为
+            // outcome_unknown,等待裁定入口(recovery_settle:external_
+            // verification OR user_ruling),禁止自动重放(ADR-0004)。
+            for row in store.list_outbox_by_state("pending").unwrap_or_default() {
+                let Ok(op_id) = BmId::parse(row["operation_id"].as_str().unwrap_or("")) else {
+                    continue;
+                };
+                if world.operations.contains_key(&op_id) {
+                    continue;
+                }
+                let request_id = BmId::from_parts("req", op_id.ulid_part()).expect("同段合成合法");
+                world.operations.insert(
+                    op_id.clone(),
+                    Operation {
+                        id: op_id.clone(),
+                        request_id,
+                        session_id: world.system_session.clone(),
+                        agent_id: world.system_agent.clone(),
+                        state: OperationState::OutcomeUnknown,
+                        turn_index: 0,
+                        created_at: world.now_ts(),
+                        completed_at: None,
+                        action_summary: "外部副作用结果未知(恢复)".to_string(),
+                        result_reference: None,
+                        error: None,
+                    },
+                );
+                tracing::warn!(
+                    op = %op_id,
+                    "outbox pending:外部副作用结果未知,等待裁定(recovery_settle)"
+                );
+            }
         }
 
         world.emit(
@@ -2207,7 +2240,8 @@ fn dispatch_capability(
             };
         }
         // 前门禁:intent 落盘后方执行(崩溃窗口 = intent 在而结果不在 →
-        // 恢复期以 Provider 幂等查询对账,T6b)
+        // 恢复期以 Provider 幂等查询对账,T6b)。outbox pending 行与 intent
+        // 事件同批落盘,是恢复扫描的对账底座。
         emit_capability_invoked(
             w,
             op_id,
@@ -2219,6 +2253,19 @@ fn dispatch_capability(
             None,
             key_hash.as_deref(),
         );
+        if let Some(store) = &w.store {
+            let _ = store.outbox_upsert(
+                op_id.as_str(),
+                "side_effect",
+                "pending",
+                &serde_json::json!({
+                    "capability": capability,
+                    "key_hash": key_hash,
+                })
+                .to_string(),
+                &w.now_ts(),
+            );
+        }
     }
     let outcome = {
         let broker = Broker::new(
@@ -2245,6 +2292,21 @@ fn dispatch_capability(
                 None,
                 key_hash.as_deref(),
             );
+            if prepared.is_side_effect
+                && let Some(store) = &w.store
+            {
+                let _ = store.outbox_upsert(
+                    op_id.as_str(),
+                    "side_effect",
+                    "published",
+                    &serde_json::json!({
+                        "capability": capability,
+                        "key_hash": key_hash,
+                    })
+                    .to_string(),
+                    &w.now_ts(),
+                );
+            }
         }
         CallOutcome::Suppressed { .. } => unreachable!("抑制发生在 execute 前"),
         other => {
