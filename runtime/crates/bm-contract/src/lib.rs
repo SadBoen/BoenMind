@@ -8,6 +8,7 @@
 mod wirestr;
 
 pub mod budget;
+pub mod capability;
 pub mod connector;
 pub mod error_codes;
 pub mod events;

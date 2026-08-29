@@ -11,10 +11,12 @@ pub mod clock;
 pub mod error;
 pub mod exec_log;
 pub mod ports;
+pub mod registry;
 pub mod runtime;
 pub mod state;
 
 pub use bus::EventBus;
 pub use clock::{Clock, MockClock, SystemClock};
 pub use error::{CoreError, CoreResult};
+pub use registry::{BindingStatus, CapabilityDiscovery, CapabilityProvider, CapabilityRegistry};
 pub use runtime::{RuntimeConfig, RuntimeHandle};
