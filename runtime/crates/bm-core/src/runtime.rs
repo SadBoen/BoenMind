@@ -2249,6 +2249,8 @@ fn persist_task(w: &World, task: &crate::task::Task) {
             payload: &payload,
             created_at: task.created_at.as_str(),
             updated_at: task.updated_at.as_str(),
+            parent_task_id: task.parent_task_id.as_ref().map(|p| p.as_str()),
+            delegation_depth: task.delegation_depth,
         });
     }
 }
@@ -2275,7 +2277,8 @@ fn task_contract_json(task: &crate::task::Task) -> String {
         "budget": budget_json,
         "deadline": task.deadline.as_deref(),
         "members": [],
-        "parent_task_id": null,
+        "parent_task_id": task.parent_task_id.as_ref().map(|p| p.as_str()),
+        "delegation_depth": task.delegation_depth,
         "created_at": task.created_at.as_str(),
         "updated_at": task.updated_at.as_str(),
     })
@@ -3014,6 +3017,7 @@ fn handle_task_create(
         }
     }
     let now = w.config.clock.now();
+    // wire task.create 恒为根 Task(委派走 spawn_subtask 内核 API,M6 规格 §8-4)
     let mut task = crate::task::Task::create(
         &*w.config.id_gen,
         params.title,
@@ -3021,6 +3025,8 @@ fn handle_task_create(
         authorization,
         params.budget,
         params.deadline,
+        None,
+        0,
         now,
     );
     // task.created(事实)+ created→running(task_started)

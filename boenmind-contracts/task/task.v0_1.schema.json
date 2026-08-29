@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "boenmind:task:task:v0.1",
-  "x-frozen": "2026-08-29",
+  "x-frozen": "2026-08-30",
   "title": "Task 规范对象 v0.1(M5.2)",
   "description": "Task 的规范状态、生命周期、成员关系、预算与截止时间唯一由 L2 持有(ADR-0004 三层归属;基线 §2.2/§10.3)。任何 Task Board 与 Surface 视图仅为投影,不是存在性依据;删除以 L2 墓碑为准。写入门禁:task_epoch 递增 + CAS 条件写入 + 命令租约(ADR-0004;过期 epoch 命令 Stale 拒绝并留审计)。authorization 字段为三方交集(Butler 可授协调权 ∩ Task 授权 ∩ 用户授权,ADR-0002 §11.3)的 Task 分量载体。",
   "definitions": {
@@ -72,7 +72,7 @@
     }
   },
   "type": "object",
-  "required": ["task_id", "title", "goal", "state", "created_by", "task_epoch", "authorization", "budget", "members", "parent_task_id", "created_at", "updated_at"],
+  "required": ["task_id", "title", "goal", "state", "created_by", "task_epoch", "delegation_depth", "authorization", "budget", "members", "parent_task_id", "created_at", "updated_at"],
   "additionalProperties": false,
   "properties": {
     "task_id": { "$ref": "#/definitions/task_id" },
@@ -81,6 +81,7 @@
     "state": { "$ref": "#/definitions/task_state" },
     "created_by": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,15}:[A-Za-z0-9_.:\\-]{1,64}$", "description": "创建者 principal(通常 butler:system,形态同 capability/grant 的 principal)" },
     "task_epoch": { "type": "integer", "minimum": 1, "description": "写入门禁纪元:取得接管权时递增,过期 epoch 命令 Stale 拒绝(ADR-0004;持久于 tasks 表,重启不回退)" },
+    "delegation_depth": { "type": "integer", "minimum": 0, "maximum": 3, "description": "委派深度:根 Task = 0,子任务 = 父+1;上限 3(M6.5;spawn 强制点校验)" },
     "authorization": {
       "type": "array",
       "items": { "$ref": "#/definitions/authorization_entry" },
@@ -92,7 +93,7 @@
       "type": "array",
       "items": { "$ref": "#/definitions/member" }
     },
-    "parent_task_id": { "const": null, "description": "父 Task(M6 子任务预留;M5 恒 null,M6 以 Minor 放宽为 task 引用,基线 §11 子任务语境随 Team 定)" },
+    "parent_task_id": { "type": ["string", "null"], "pattern": "^task_[0-9A-HJKMNP-TV-Z]{26}$", "description": "父 Task(M6 启用:委派链以子任务表达,delegation_depth = 父+1,上限 3;根 Task 恒 null)" },
     "created_at": { "type": "string", "format": "date-time" },
     "updated_at": { "type": "string", "format": "date-time" }
   }

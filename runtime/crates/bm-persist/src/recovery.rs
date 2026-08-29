@@ -76,6 +76,8 @@ pub struct TaskStateRow {
     pub payload: String,
     pub created_at: String,
     pub updated_at: String,
+    pub parent_task_id: Option<String>,
+    pub delegation_depth: i64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -206,7 +208,8 @@ pub fn load_rows(state: &StateDb) -> StoreResult<WorldRows> {
         .collect();
     let tasks = state
         .query_rows(
-            "SELECT id, title, state, created_by, task_epoch, payload, created_at, updated_at
+            "SELECT id, title, state, created_by, task_epoch, payload, created_at,
+                    updated_at, parent_task_id, delegation_depth
              FROM tasks",
             &[],
         )?

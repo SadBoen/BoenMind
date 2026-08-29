@@ -288,7 +288,8 @@
       "payload": {
         "task_id": "id",
         "title": "string",
-        "created_by": "string"
+        "created_by": "string",
+        "parent_task_id": "id|null"
       }
     },
     {
@@ -353,10 +354,18 @@
         "verdict": "string",
         "guard_state": "string"
       }
+    },
+    {
+      "type": "task.member.removed",
+      "payload": {
+        "task_id": "id",
+        "agent_id": "id",
+        "reason": "string"
+      }
     }
   ],
   "payload_type_note": {
-    "id": "wire/common 的 id 格式 <prefix>_<ULID26>",
+    "id": "wire/common 的 id 格式 <prefix>_<ULID26>(task.created.parent_task_id 允许 null)",
     "timestamp": "ISO-8601 UTC",
     "state": "operation 状态机状态名",
     "task_state": "task 状态机状态名（M5 增发，machines.task）",

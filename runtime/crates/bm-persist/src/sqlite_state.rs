@@ -8,7 +8,7 @@ use rusqlite::Connection;
 use std::path::Path;
 use std::sync::Mutex;
 
-pub const SCHEMA_VERSION: i64 = 6;
+pub const SCHEMA_VERSION: i64 = 7;
 
 /// approvals 表行(载荷列 = Approval 合同 JSON 文本)。
 pub struct ApprovalRow<'a> {
@@ -45,6 +45,8 @@ pub struct TaskRow<'a> {
     pub payload: &'a str,
     pub created_at: &'a str,
     pub updated_at: &'a str,
+    pub parent_task_id: Option<&'a str>,
+    pub delegation_depth: u64,
 }
 
 /// capabilities 表行(manifest 列 = Capability Manifest 合同 JSON 文本)。
@@ -92,6 +94,9 @@ impl StateDb {
         }
         if version < 6 {
             Self::migrate_v5_to_v6(&conn)?;
+        }
+        if version < 7 {
+            Self::migrate_v6_to_v7(&conn)?;
         }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(Self {
@@ -245,6 +250,20 @@ impl StateDb {
         // FTS5 索引失败不阻塞迁移(LIKE 兜底)
         let _ = conn
             .execute_batch("CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(content);");
+        Ok(())
+    }
+
+    /// v6→v7(M6-T1,expand 加列):tasks.parent_task_id/delegation_depth
+    /// (委派链;事件物化与直接落行双路写)。
+    fn migrate_v6_to_v7(conn: &Connection) -> StoreResult<()> {
+        conn.execute_batch(
+            r#"
+            BEGIN;
+            ALTER TABLE tasks ADD COLUMN parent_task_id TEXT;
+            ALTER TABLE tasks ADD COLUMN delegation_depth INTEGER NOT NULL DEFAULT 0;
+            COMMIT;
+            "#,
+        )?;
         Ok(())
     }
 
@@ -572,11 +591,13 @@ impl StateDb {
         let conn = self.conn.lock().expect("锁未中毒");
         conn.execute(
             "INSERT INTO tasks(id, title, state, created_by, task_epoch, payload,
-                               created_at, updated_at)
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                               created_at, updated_at, parent_task_id, delegation_depth)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
              ON CONFLICT(id) DO UPDATE SET title = excluded.title,
                  state = excluded.state, task_epoch = excluded.task_epoch,
-                 payload = excluded.payload, updated_at = excluded.updated_at",
+                 payload = excluded.payload, updated_at = excluded.updated_at,
+                 parent_task_id = excluded.parent_task_id,
+                 delegation_depth = excluded.delegation_depth",
             rusqlite::params![
                 row.id,
                 row.title,
@@ -585,7 +606,9 @@ impl StateDb {
                 row.task_epoch as i64,
                 row.payload,
                 row.created_at,
-                row.updated_at
+                row.updated_at,
+                row.parent_task_id,
+                row.delegation_depth as i64,
             ],
         )?;
         Ok(())
@@ -594,7 +617,8 @@ impl StateDb {
     /// 恢复面:全部 Task 行。
     pub fn list_tasks(&self) -> StoreResult<Vec<serde_json::Value>> {
         self.query_rows(
-            "SELECT id, title, state, created_by, task_epoch, payload, created_at, updated_at
+            "SELECT id, title, state, created_by, task_epoch, payload, created_at,
+                    updated_at, parent_task_id, delegation_depth
              FROM tasks ORDER BY created_at",
             &[],
         )

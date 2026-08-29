@@ -67,8 +67,10 @@ pub struct Task {
     pub budget: Option<Budget>,
     pub deadline: Option<BmTimestamp>,
     pub members: Vec<TaskMember>,
-    /// M5 恒 None(M6 子任务预留,合同 const null)。
+    /// 父 Task(M6 启用:委派链以子任务表达;根 Task 恒 None)。
     pub parent_task_id: Option<bm_contract::ids::BmId>,
+    /// 委派深度:根 = 0,子任务 = 父+1(上限 3,M6.5)。
+    pub delegation_depth: u64,
     pub created_at: BmTimestamp,
     pub updated_at: BmTimestamp,
 }
@@ -82,6 +84,8 @@ impl Task {
         authorization: Vec<TaskAuthorizationEntry>,
         budget: Option<Budget>,
         deadline: Option<BmTimestamp>,
+        parent_task_id: Option<bm_contract::ids::BmId>,
+        delegation_depth: u64,
         now: chrono::DateTime<chrono::Utc>,
     ) -> Self {
         let now_ts = format_ts(now);
@@ -96,7 +100,8 @@ impl Task {
             budget,
             deadline,
             members: Vec::new(),
-            parent_task_id: None,
+            parent_task_id,
+            delegation_depth,
             created_at: now_ts.clone(),
             updated_at: now_ts,
         }
@@ -204,6 +209,7 @@ pub fn task_from_row(row: &bm_persist::recovery::TaskStateRow) -> Result<Task, S
             Some(s) => Some(bm_contract::ids::BmId::parse(s).map_err(|e| e.to_string())?),
             None => None,
         },
+        delegation_depth: row.delegation_depth.max(0) as u64,
         created_at: p.created_at.unwrap_or_else(|| row.created_at.clone()),
         updated_at: row.updated_at.clone(),
     })
@@ -347,6 +353,8 @@ mod tests {
             vec![],
             None,
             None,
+            None,
+            0,
             clock.now(),
         )
     }
@@ -479,6 +487,8 @@ mod tests {
             state: "paused".into(),
             created_by: t.created_by.clone(),
             task_epoch: 4,
+            parent_task_id: None,
+            delegation_depth: 0,
             payload: serde_json::json!({
                 "task_id": t.id.as_str(),
                 "title": t.title,

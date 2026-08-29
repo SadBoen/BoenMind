@@ -162,16 +162,23 @@ impl StateDb {
                 EventType::TaskCreated => {
                     // INSERT OR IGNORE:完整载荷行已由核心先落(直接落行先于
                     // 事件物化),此处仅兜底事件重建路径(重建载荷为键字段形态)。
+                    let parent = opt_str_field(p, "parent_task_id")?;
                     conn.execute(
                         "INSERT OR IGNORE INTO tasks(id, title, state, created_by, task_epoch,
-                                                    payload, created_at, updated_at)
-                         VALUES(?1, ?2, 'created', ?3, 1, ?4, ?5, ?5)",
+                                                    payload, created_at, updated_at,
+                                                    parent_task_id, delegation_depth)
+                         VALUES(?1, ?2, 'created', ?3, 1, ?4, ?5, ?5, ?6, ?7)",
                         rusqlite::params![
                             str_field(p, "task_id")?,
                             str_field(p, "title")?,
                             str_field(p, "created_by")?,
                             format!(r#"{{"task_id":"{}"}}"#, str_field(p, "task_id")?),
                             ts,
+                            parent,
+                            match &parent {
+                                Some(_) => 1i64,
+                                None => 0i64,
+                            },
                         ],
                     )?;
                     Ok(1)

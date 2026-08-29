@@ -99,8 +99,8 @@ fn event_type_enum_matches_registry() {
     let registry = registries::runtime_events();
     assert_eq!(
         registry.len(),
-        40,
-        "注册表事件数漂移(M1 20 + M2 增发 2 + M4 增发 10 + M5 增发 8)"
+        41,
+        "注册表事件数漂移(M1 20 + M2 增发 2 + M4 增发 10 + M5 增发 8 + M6 增发 1)"
     );
     for reg in &registry {
         let t = EventType::from_wire(&reg.type_).unwrap_or_else(|| panic!("枚举缺 {}", reg.type_));
@@ -879,12 +879,19 @@ fn task_object_validates() {
         "stalled 是监护态非状态机状态,不得入 Task.state"
     );
 
-    // parent_task_id 恒 null(M6 预留,M5 规格 §4-1)
+    // M6 启用:parent_task_id 放宽为 task 引用;delegation_depth 必填且 ≤3
+    let mut with_parent = task.clone();
+    with_parent["parent_task_id"] = json!("task_01JAAAAAAAAAAAAAAAAAAAAAB1");
+    with_parent["delegation_depth"] = json!(1);
+    assert!(
+        validate(registries::TASK_SCHEMA, &with_parent).is_ok(),
+        "M6:parent_task_id + delegation_depth 合法"
+    );
     let mut bad = task;
-    bad["parent_task_id"] = json!("task_01JAAAAAAAAAAAAAAAAAAAAAB1");
+    bad["delegation_depth"] = json!(4);
     assert!(
         validate(registries::TASK_SCHEMA, &bad).is_err(),
-        "parent_task_id M5 恒 null"
+        "委派深度上限 3(M6.5)"
     );
 }
 
