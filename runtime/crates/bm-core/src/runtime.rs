@@ -197,6 +197,9 @@ struct World {
     approvals: HashMap<BmId, Approval>,
     /// 待裁决的能力调用:approval_id → 载荷(批准后重放执行用)。
     cap_pending: HashMap<BmId, PendingCapabilityCall>,
+    /// 幂等收据仓(key_hash → 原收据;external-side-effect 抑制判据,
+    /// ADR-0002 条件 6)。T6a 内存态,持久化随 T6c。
+    idem_results: HashMap<String, serde_json::Value>,
     /// capability 操作的系统容器 ID(内存合成;M4 能力调用不依赖 Session/Agent,
     /// operations 表不落行,规范状态由 approvals/grants 承载——回看复核项)。
     system_session: BmId,
@@ -208,6 +211,7 @@ struct PendingCapabilityCall {
     op_id: BmId,
     capability: String,
     args: serde_json::Value,
+    idempotency_key: Option<String>,
 }
 
 impl World {
@@ -483,6 +487,7 @@ impl RuntimeHandle {
             grants: GrantLedger::new(),
             approvals: HashMap::new(),
             cap_pending: HashMap::new(),
+            idem_results: HashMap::new(),
             system_session,
             system_agent,
             tx: tx.clone(),
@@ -601,6 +606,9 @@ impl RuntimeHandle {
                                     op_id,
                                     capability,
                                     args,
+                                    idempotency_key: call["idempotency_key"]
+                                        .as_str()
+                                        .map(|s| s.to_string()),
                                 },
                             );
                         }
@@ -1615,12 +1623,15 @@ fn persist_approval(
     w: &World,
     approval: &Approval,
     op_id: &BmId,
-    pending: Option<(&str, &serde_json::Value)>,
+    pending: Option<(&str, &serde_json::Value, Option<&str>)>,
 ) {
     if let Some(store) = &w.store {
         let mut wrap = serde_json::json!({ "approval": approval });
-        if let Some((capability, args)) = pending {
-            wrap["call"] = serde_json::json!({ "capability": capability, "args": args });
+        if let Some((capability, args, idempotency_key)) = pending {
+            wrap["call"] = serde_json::json!({
+                "capability": capability, "args": args,
+                "idempotency_key": idempotency_key
+            });
         }
         let _ = store.save_approval(bm_persist::sqlite_state::ApprovalRow {
             id: approval.approval_id.as_str(),
@@ -1705,15 +1716,9 @@ fn handle_capability_call(
 
     match decision {
         Decision::Allowed { grant_id } => {
-            let outcome = {
-                let mut broker = Broker::new(
-                    &w.registry,
-                    &mut w.grants,
-                    &*w.config.clock,
-                    &*w.config.id_gen,
-                );
-                broker.call(&ctx, &params.capability, params.args.clone())
-            };
+            // 统一执行助手:副作用前门禁(intent)+ 幂等抑制 + 结果事件
+            let outcome =
+                dispatch_capability(w, &ctx, &params.capability, params.args.clone(), &op_id);
             match outcome {
                 CallOutcome::Completed {
                     call_id,
@@ -1727,23 +1732,7 @@ fn handle_capability_call(
                     if let Some(gid) = &grant_id {
                         persist_grant(w, gid);
                     }
-                    w.emit(
-                        EventType::CapabilityInvoked,
-                        None,
-                        None,
-                        Some(op_id.clone()),
-                        serde_json::json!({
-                            "call_id": call_id,
-                            "operation_id": op_id.as_str(),
-                            "capability": params.capability,
-                            "principal": CAPABILITY_CALLER,
-                            "binding_epoch": credential.binding_epoch,
-                            "provider_instance_id": credential.provider_instance_id,
-                            "outcome": "ok",
-                            "error_code": null,
-                            "idempotency_key_hash": null,
-                        }),
-                    );
+                    let _ = (call_id, credential);
                     Ok(serde_json::json!({
                         "operation_id": op_id.as_str(),
                         "request_id": request_id.as_str(),
@@ -1792,6 +1781,29 @@ fn handle_capability_call(
                     );
                     Err(CoreError::Internal)
                 }
+                CallOutcome::Suppressed { original_result } => {
+                    // 幂等抑制:不重复执行,返回原收据(审计已由助手落
+                    // outcome=suppressed;ADR-0002 条件 6)
+                    let completed_at = w.now_ts();
+                    w.settle_operation(&op_id, OperationState::Succeeded, None);
+                    if let Some(gid) = &grant_id {
+                        persist_grant(w, gid);
+                    }
+                    Ok(serde_json::json!({
+                        "operation_id": op_id.as_str(),
+                        "request_id": request_id.as_str(),
+                        "principal": CAPABILITY_CALLER,
+                        "capability": params.capability,
+                        "state": "succeeded",
+                        "created_at": created_at,
+                        "completed_at": completed_at,
+                        "action_summary": "幂等抑制:等价请求返回原收据",
+                        "result_reference": null,
+                        "error": null,
+                        "grant_used": grant_id,
+                        "result": original_result,
+                    }))
+                }
                 CallOutcome::Rejected { .. } => {
                     unreachable!("Allowed 分支不会再被拒绝")
                 }
@@ -1837,7 +1849,11 @@ fn handle_capability_call(
                 w,
                 &approval,
                 &op_id,
-                Some((&params.capability, &params.args)),
+                Some((
+                    &params.capability,
+                    &params.args,
+                    params.idempotency_key.as_deref(),
+                )),
             );
             w.cap_pending.insert(
                 approval_id,
@@ -1845,6 +1861,7 @@ fn handle_capability_call(
                     op_id,
                     capability: params.capability.clone(),
                     args: params.args.clone(),
+                    idempotency_key: params.idempotency_key.clone(),
                 },
             );
             // GT-02 场景 A2 形态:approval_required 错误信封;operation 停在
@@ -1928,16 +1945,16 @@ fn handle_approval_list(
     w: &World,
     params: wire::ApprovalListParams,
 ) -> CoreResult<serde_json::Value> {
+    // 缺省 = 待裁决队列(waiting_user):审批工作面只关心未决项;
+    // 显式 --state 过滤任意状态(wire/capability 合同 description)。
+    let state_filter = params
+        .state_filter
+        .as_deref()
+        .unwrap_or(bm_contract::capability::ApprovalState::WaitingUser.as_str());
     let mut rows: Vec<&Approval> = w
         .approvals
         .values()
-        .filter(|a| {
-            params
-                .state_filter
-                .as_deref()
-                .map(|f| a.state.as_str() == f)
-                .unwrap_or(true)
-        })
+        .filter(|a| a.state.as_str() == state_filter)
         .collect();
     rows.sort_by(|a, b| a.requested_at.cmp(&b.requested_at));
     let mut approvals = Vec::new();
@@ -1963,10 +1980,14 @@ fn handle_approval_respond(
         .as_deref()
         .map(|s| GrantScope::from_wire(s).ok_or_else(|| CoreError::validation("非法 scope")))
         .transpose()?;
-    let pending = w
-        .cap_pending
-        .get(&params.approval_id)
-        .map(|p| (p.op_id.clone(), p.capability.clone(), p.args.clone()));
+    let pending = w.cap_pending.get(&params.approval_id).map(|p| {
+        (
+            p.op_id.clone(),
+            p.capability.clone(),
+            p.args.clone(),
+            p.idempotency_key.clone(),
+        )
+    });
     let resource = bm_contract::capability::GrantResource {
         capability: w
             .approvals
@@ -2022,45 +2043,19 @@ fn handle_approval_respond(
                     "grant_id": grant.grant_id,
                 }),
             );
-            // 批准:operation 续行(waiting_approval→running→执行)
+            // 批准:operation 续行(waiting_approval→running→统一执行助手)
             persist_grant(w, &grant.grant_id);
-            if let Some((op_id, capability, args)) = op {
+            if let Some((op_id, capability, args, idem)) = op {
                 w.settle_operation(&op_id, OperationState::Running, None);
-                let ctx = CallContext::surface(CAPABILITY_CALLER);
-                let outcome = {
-                    let mut broker = Broker::new(
-                        &w.registry,
-                        &mut w.grants,
-                        &*w.config.clock,
-                        &*w.config.id_gen,
-                    );
-                    broker.call(&ctx, &capability, args)
-                };
+                let mut ctx = CallContext::surface(CAPABILITY_CALLER);
+                if let Some(k) = idem {
+                    ctx = ctx.with_idempotency_key(k);
+                }
+                let outcome = dispatch_capability(w, &ctx, &capability, args, &op_id);
                 match outcome {
-                    CallOutcome::Completed {
-                        call_id,
-                        credential,
-                        ..
-                    } => {
+                    CallOutcome::Completed { .. } | CallOutcome::Suppressed { .. } => {
                         w.settle_operation(&op_id, OperationState::Succeeded, None);
                         persist_grant(w, &grant.grant_id);
-                        w.emit(
-                            EventType::CapabilityInvoked,
-                            None,
-                            None,
-                            Some(op_id.clone()),
-                            serde_json::json!({
-                                "call_id": call_id,
-                                "operation_id": op_id.as_str(),
-                                "capability": capability,
-                                "principal": CAPABILITY_CALLER,
-                                "binding_epoch": credential.binding_epoch,
-                                "provider_instance_id": credential.provider_instance_id,
-                                "outcome": "ok",
-                                "error_code": null,
-                                "idempotency_key_hash": null,
-                            }),
-                        );
                         w.cap_pending.remove(&params.approval_id);
                     }
                     other => {
@@ -2147,6 +2142,177 @@ fn handle_approval_respond(
         }
         Err(e) => Err(CoreError::validation(format!("审批裁决失败: {e:?}"))),
     }
+}
+
+/// 统一执行助手(门禁+审计;T6 规格 §5.5/§5.9):副作用类先落 intent 事件
+/// (前门禁——intent 落盘后方允许 Provider 执行,ADR-0001 条件 5);幂等键
+/// 命中历史收据 → suppressed(不重复执行,ADR-0002 条件 6);结果落 ok/error
+/// 事件。operation 终态由调用方落定。
+fn dispatch_capability(
+    w: &mut World,
+    ctx: &CallContext,
+    capability: &str,
+    args: serde_json::Value,
+    op_id: &BmId,
+) -> CallOutcome {
+    let prepared = {
+        let mut broker = Broker::new(
+            &w.registry,
+            &mut w.grants,
+            &*w.config.clock,
+            &*w.config.id_gen,
+        );
+        match broker.prepare(ctx, capability, args.clone()) {
+            Ok(p) => p,
+            Err(outcome) => {
+                emit_capability_invoked(
+                    w,
+                    op_id,
+                    capability,
+                    &ctx.principal,
+                    None,
+                    None,
+                    "error",
+                    Some(error_code_of(&outcome)),
+                    None,
+                );
+                return outcome;
+            }
+        }
+    };
+    let key_hash: Option<String> = ctx.idempotency_key.as_ref().map(|k| {
+        sha256_hex(&format!(
+            "{k}:{}",
+            serde_json::to_string(&args).unwrap_or_default()
+        ))
+    });
+    if prepared.is_side_effect {
+        // 幂等抑制:等价请求返回原收据,Provider 不再执行
+        if let Some(h) = &key_hash
+            && let Some(original) = w.idem_results.get(h).cloned()
+        {
+            emit_capability_invoked(
+                w,
+                op_id,
+                capability,
+                &ctx.principal,
+                Some(prepared.credential.binding_epoch),
+                Some(&prepared.credential.provider_instance_id),
+                "suppressed",
+                None,
+                Some(h),
+            );
+            return CallOutcome::Suppressed {
+                original_result: original,
+            };
+        }
+        // 前门禁:intent 落盘后方执行(崩溃窗口 = intent 在而结果不在 →
+        // 恢复期以 Provider 幂等查询对账,T6b)
+        emit_capability_invoked(
+            w,
+            op_id,
+            capability,
+            &ctx.principal,
+            Some(prepared.credential.binding_epoch),
+            Some(&prepared.credential.provider_instance_id),
+            "intent",
+            None,
+            key_hash.as_deref(),
+        );
+    }
+    let outcome = {
+        let broker = Broker::new(
+            &w.registry,
+            &mut w.grants,
+            &*w.config.clock,
+            &*w.config.id_gen,
+        );
+        broker.execute(&prepared, args)
+    };
+    match &outcome {
+        CallOutcome::Completed { result, .. } => {
+            if let (Some(h), true) = (&key_hash, prepared.is_side_effect) {
+                w.idem_results.insert(h.clone(), result.clone());
+            }
+            emit_capability_invoked(
+                w,
+                op_id,
+                capability,
+                &ctx.principal,
+                Some(prepared.credential.binding_epoch),
+                Some(&prepared.credential.provider_instance_id),
+                "ok",
+                None,
+                key_hash.as_deref(),
+            );
+        }
+        CallOutcome::Suppressed { .. } => unreachable!("抑制发生在 execute 前"),
+        other => {
+            emit_capability_invoked(
+                w,
+                op_id,
+                capability,
+                &ctx.principal,
+                Some(prepared.credential.binding_epoch),
+                Some(&prepared.credential.provider_instance_id),
+                "error",
+                Some(error_code_of(other)),
+                key_hash.as_deref(),
+            );
+        }
+    }
+    outcome
+}
+
+#[allow(clippy::too_many_arguments)] // 审计字段与注册表 payload 键集一一对应
+fn emit_capability_invoked(
+    w: &mut World,
+    op_id: &BmId,
+    capability: &str,
+    principal: &str,
+    epoch: Option<u64>,
+    instance: Option<&str>,
+    outcome: &str,
+    error_code: Option<ErrorCode>,
+    key_hash: Option<&str>,
+) {
+    w.emit(
+        EventType::CapabilityInvoked,
+        None,
+        None,
+        Some(op_id.clone()),
+        serde_json::json!({
+            "call_id": w.config.id_gen.next_id("call").as_str(),
+            "operation_id": op_id.as_str(),
+            "capability": capability,
+            "principal": principal,
+            "binding_epoch": epoch.unwrap_or(0),
+            "provider_instance_id": instance.unwrap_or("n/a"),
+            "outcome": outcome,
+            "error_code": error_code.map(|c| c.as_str()),
+            "idempotency_key_hash": key_hash,
+        }),
+    );
+}
+
+fn error_code_of(outcome: &CallOutcome) -> ErrorCode {
+    match outcome {
+        CallOutcome::InvalidArgs { .. } => ErrorCode::ValidationFailed,
+        CallOutcome::StaleBinding { .. } => ErrorCode::Unavailable,
+        CallOutcome::ProviderError { .. } | CallOutcome::InvalidOutput { .. } => {
+            ErrorCode::Internal
+        }
+        CallOutcome::Rejected { .. } => ErrorCode::PermissionDenied,
+        _ => ErrorCode::Internal,
+    }
+}
+
+fn sha256_hex(s: &str) -> String {
+    use sha2::Digest;
+    let mut h = Sha256::new();
+    h.update(s.as_bytes());
+    let out = h.finalize();
+    out.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 fn handle_cancel(w: &World, params: CancelParams) -> CoreResult<CancelResult> {

@@ -10,6 +10,8 @@ use bm_contract::states::OperationState;
 use bm_contract::wire::GetOperationParams;
 use bm_core::CoreError;
 use bm_core::broker::provider_fn;
+use bm_core::clock::SystemClock;
+use bm_core::ports::ModelConnector;
 use bm_core::runtime::{DEFAULT_TURN_TIMEOUT_SECS, RuntimeConfig, RuntimeHandle};
 use bm_providers::mock_model::MockConnector;
 use bm_providers::secret::MemSecretStore;
@@ -295,7 +297,16 @@ async fn t42_approve_materializes_grant_and_completes() {
         .expect("Grant 命中应免审批直接执行");
     assert_eq!(out["grant_used"], json!(grant_used));
 
-    // scope 不在 choices → validation_failed
+    // scope 不在 choices → validation_failed:构造新审批(高危恒审批)
+    let req = ids.next_id("req");
+    let err = handle
+        .capability_call(req, call_params("system.danger.purge", json!({})))
+        .await
+        .expect_err("高危应升级审批");
+    assert!(matches!(
+        err,
+        CoreError::Semantic(ErrorCode::ApprovalRequired, _)
+    ));
     let list = handle
         .approval_list(bm_contract::wire::ApprovalListParams { state_filter: None })
         .await
@@ -406,4 +417,172 @@ async fn m4_rig_at(
         max_attempts: None,
     };
     RuntimeHandle::start(config).await
+}
+
+/// M4-T6:幂等抑制与副作用前门禁(硬约束 5/11;ADR-0002 条件 6)。
+/// 同 idempotency_key 的等价 external-side-effect 请求:Provider 恰执行一次,
+/// 第二次返回原收据且落 outcome=suppressed 审计(可从审计日志单独证明);
+/// intent 事件先于 ok(副作用前门禁,ADR-0001 条件 5)。
+#[tokio::test]
+async fn t44_idempotency_suppression_and_intent_gate() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    let send_count = Arc::new(AtomicU64::new(0));
+    let sc = send_count.clone();
+    let mail = bm_core::broker::provider_fn(move |_| {
+        sc.fetch_add(1, Ordering::SeqCst);
+        Ok(serde_json::json!({"message_id": "mock-000001", "queued": true}))
+    });
+    let connector: Arc<dyn ModelConnector> = Arc::new(MockConnector::new(vec![]));
+    let handle = RuntimeHandle::start(RuntimeConfig {
+        capabilities: vec![(
+            serde_json::from_value::<bm_contract::capability::CapabilityManifest>(
+                serde_json::json!({
+                    "capability": "system.mail.mock_send", "provider": "system.mail",
+                    "version": "0.1.0", "input_schema": {"type": "object"},
+                    "output_schema": {"type": "object"},
+                    "effect": "external-side-effect", "idempotent": true,
+                    "cancellable": true, "timeout_ms": 2000, "approval": "not-required"
+                }),
+            )
+            .unwrap(),
+            mail,
+        )],
+        version: "0.1.0-m4".into(),
+        data_dir: None,
+        store: None,
+        connector,
+        secret_store: Arc::new(MemSecretStore::with("secret:model.x", "sk")),
+        id_gen: Arc::new(SeqIdGen::new()),
+        clock: Arc::new(SystemClock),
+        turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
+        max_attempts: None,
+    })
+    .await;
+
+    let call_once = |handle: &RuntimeHandle, req: bm_contract::ids::BmId, key: &str| {
+        let handle = handle.clone();
+        let key = key.to_string();
+        async move {
+            handle
+                .capability_call(
+                    req,
+                    bm_contract::wire::CapabilityCallParams {
+                        capability: "system.mail.mock_send".into(),
+                        args: serde_json::json!({"to": "a@x"}),
+                        idempotency_key: Some(key),
+                        deadline_ms: Some(1000),
+                    },
+                )
+                .await
+        }
+    };
+
+    // 第一次:升级审批 → 批准 once → 执行成功
+    let req = bm_contract::ids::BmId::parse("req_01JAAAAAAAAAAAAAAAAAAAAA90").unwrap();
+    let err = call_once(&handle, req, "idem-1")
+        .await
+        .expect_err("external-side-effect 应升级审批");
+    assert!(matches!(
+        err,
+        CoreError::Semantic(ErrorCode::ApprovalRequired, _)
+    ));
+    let list = handle
+        .approval_list(bm_contract::wire::ApprovalListParams { state_filter: None })
+        .await
+        .unwrap();
+    let aid1 = list["approvals"][0]["approval_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let respond = handle
+        .approval_respond(
+            bm_contract::ids::BmId::parse("req_01JAAAAAAAAAAAAAAAAAAAAA91").unwrap(),
+            bm_contract::wire::ApprovalRespondParams {
+                approval_id: bm_contract::ids::BmId::parse(&aid1).unwrap(),
+                decision: "approve".into(),
+                scope: Some("once".into()),
+            },
+        )
+        .await
+        .expect("批准应成功");
+    assert_eq!(respond["state"], serde_json::json!("approved"));
+
+    // 第二次:同幂等键同参 → 再审批 → 批准 → 抑制(不执行)
+    let req = bm_contract::ids::BmId::parse("req_01JAAAAAAAAAAAAAAAAAAAAA92").unwrap();
+    let err = call_once(&handle, req, "idem-1")
+        .await
+        .expect_err("第二次调用仍需审批(Grant 已耗)");
+    assert!(matches!(
+        err,
+        CoreError::Semantic(ErrorCode::ApprovalRequired, _)
+    ));
+    let list = handle
+        .approval_list(bm_contract::wire::ApprovalListParams { state_filter: None })
+        .await
+        .unwrap();
+    let aid2 = list["approvals"][0]["approval_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let respond = handle
+        .approval_respond(
+            bm_contract::ids::BmId::parse("req_01JAAAAAAAAAAAAAAAAAAAAA93").unwrap(),
+            bm_contract::wire::ApprovalRespondParams {
+                approval_id: bm_contract::ids::BmId::parse(&aid2).unwrap(),
+                decision: "approve".into(),
+                scope: Some("once".into()),
+            },
+        )
+        .await
+        .expect("第二次批准应成功");
+    assert_eq!(respond["state"], serde_json::json!("approved"));
+
+    // 断言 1:Provider 恰执行一次(重复副作用 = 0,ADR-0002 条件 6)
+    assert_eq!(
+        send_count.load(Ordering::SeqCst),
+        1,
+        "Provider 必须恰执行一次"
+    );
+
+    // 断言 2:审计可证——事件流含 intent→ok→suppressed 序,
+    // suppressed 与 ok 的 idempotency_key_hash 一致(等价请求证明)
+    let events = handle.events_all().await;
+    let invocations: Vec<String> = events
+        .iter()
+        .filter(|e| e.event_type == EventType::CapabilityInvoked)
+        .map(|e| e.payload["outcome"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(
+        invocations,
+        vec!["intent", "ok", "suppressed"],
+        "事件序: {invocations:?}"
+    );
+    let ok_hash = events
+        .iter()
+        .find(|e| {
+            e.event_type == EventType::CapabilityInvoked
+                && e.payload["outcome"] == serde_json::json!("ok")
+        })
+        .map(|e| {
+            e.payload["idempotency_key_hash"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .unwrap();
+    let sup_hash = events
+        .iter()
+        .find(|e| {
+            e.event_type == EventType::CapabilityInvoked
+                && e.payload["outcome"] == serde_json::json!("suppressed")
+        })
+        .map(|e| {
+            e.payload["idempotency_key_hash"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .unwrap();
+    assert_eq!(ok_hash, sup_hash, "同一幂等键的抑制可从审计证明");
 }

@@ -17,7 +17,7 @@
 //! outbox 对账随 T6,不依赖消费退还。
 
 use crate::clock::Clock;
-use crate::registry::{BindingStatus, CapabilityRegistry, RegistryError};
+use crate::registry::{BindingStatus, CapabilityProvider, CapabilityRegistry, RegistryError};
 use bm_contract::capability::{
     ApprovalRequirement, CapabilityManifest, DataTrust, Grant, GrantResource, GrantScope, RiskClass,
 };
@@ -123,6 +123,11 @@ pub enum CallOutcome {
         credential: CallCredential,
         result: serde_json::Value,
     },
+    /// 幂等抑制(ADR-0002 条件 6):等价请求返回原收据,不重复执行;
+    /// 上层必须落 outcome=suppressed 审计事件以资证明。
+    Suppressed {
+        original_result: serde_json::Value,
+    },
     Rejected {
         decision: Decision,
     },
@@ -139,6 +144,17 @@ pub enum CallOutcome {
     ProviderError {
         message: String,
     },
+}
+
+/// 预备完成的调用:进入执行段的一切就绪(副作用门禁插在 prepare 与 execute
+/// 之间——intent 事件落盘后方允许 invoke)。
+pub struct PreparedCall {
+    pub manifest: CapabilityManifest,
+    pub credential: CallCredential,
+    pub grant_id: Option<String>,
+    /// manifest.effect == external-side-effect(前门禁触发面)。
+    pub is_side_effect: bool,
+    handle: Arc<dyn CapabilityProvider>,
 }
 
 /// 数据面通道凭证(ADR-0001 条件 4;capability/lease 合同)。瞬态结构,
@@ -464,74 +480,102 @@ impl<'a> Broker<'a> {
 
     // ---- 步 6-7:执行 + 结果校验 -------------------------------------------
 
-    /// 统一调用入口(七步管线的编排面;各步为上方分段函数)。
+    /// 预备完成:凭证/manifest/Grant 引用/Provider 句柄就绪,可进入执行段。
+    /// 副作用类(is_side_effect)在 prepare 与 execute 之间落 intent 事件
+    /// ——副作用前门禁(规格 §5.5;ADR-0001 条件 5)。
+    #[allow(clippy::result_large_err)] // CallOutcome 即合同错误形态,装箱无益
+    pub fn prepare(
+        &mut self,
+        ctx: &CallContext,
+        capability: &str,
+        args: serde_json::Value,
+    ) -> Result<PreparedCall, CallOutcome> {
+        let decision = self.decide(ctx, capability, &args);
+        let grant_id = match &decision {
+            Decision::Allowed { grant_id } => grant_id.clone(),
+            _ => return Err(CallOutcome::Rejected { decision }),
+        };
+        let Some(manifest) = self.registry.manifest_of(capability) else {
+            return Err(CallOutcome::Rejected {
+                decision: Decision::Denied {
+                    reason: DenyReason::UnknownCapability,
+                },
+            });
+        };
+        // 步 5:参数校验(违者 validation_failed,审计由上层映射 capability.denied)。
+        if let Err(e) = Self::validate_args(manifest, &args) {
+            return Err(CallOutcome::InvalidArgs { message: e });
+        }
+        // Grant 预扣(见模块注释的语义留档)。
+        if let Some(gid) = &grant_id
+            && self.grants.consume(gid, self.clock.now()).is_err()
+        {
+            return Err(CallOutcome::Rejected {
+                decision: Decision::Denied {
+                    reason: DenyReason::NoGrant,
+                },
+            });
+        }
+        // 步 6:凭证签发 + 执行点重验(不匹配即拒绝)。
+        let Ok(credential) = self.issue_credential(capability, &ctx.principal) else {
+            return Err(CallOutcome::Rejected {
+                decision: Decision::Denied {
+                    reason: DenyReason::UnknownCapability,
+                },
+            });
+        };
+        if let Err((expected, current)) = self.verify_credential(&credential) {
+            return Err(CallOutcome::StaleBinding {
+                expected_epoch: expected,
+                current_epoch: current,
+            });
+        }
+        let Some(handle) = self.registry.handle_of(capability) else {
+            return Err(CallOutcome::ProviderError {
+                message: "Provider 句柄不可用(binding 在而缓存缺失)".into(),
+            });
+        };
+        Ok(PreparedCall {
+            manifest: manifest.clone(),
+            credential,
+            grant_id,
+            is_side_effect: manifest.effect == RiskClass::ExternalSideEffect,
+            handle,
+        })
+    }
+
+    /// 步 7:执行(返回值过 output_schema 后才算完成)。
+    pub fn execute(&self, prepared: &PreparedCall, args: serde_json::Value) -> CallOutcome {
+        match prepared.handle.invoke(args) {
+            Ok(result) => {
+                if let Err(e) = bm_contract::schemas::validate(
+                    &prepared.manifest.output_schema.to_string(),
+                    &result,
+                ) {
+                    return CallOutcome::InvalidOutput { message: e };
+                }
+                CallOutcome::Completed {
+                    call_id: prepared.credential.call_id.clone(),
+                    grant_id: prepared.grant_id.clone(),
+                    credential: prepared.credential.clone(),
+                    result,
+                }
+            }
+            Err(e) => CallOutcome::ProviderError { message: e },
+        }
+    }
+
+    /// 统一调用入口(步 1-7 组合;副作用前门禁由调用方在 prepare/execute
+    /// 之间落 intent 事件——核心循环单写者)。
     pub fn call(
         &mut self,
         ctx: &CallContext,
         capability: &str,
         args: serde_json::Value,
     ) -> CallOutcome {
-        let decision = self.decide(ctx, capability, &args);
-        let grant_id = match &decision {
-            Decision::Allowed { grant_id } => grant_id.clone(),
-            _ => return CallOutcome::Rejected { decision },
-        };
-        let Some(manifest) = self.registry.manifest_of(capability) else {
-            return CallOutcome::Rejected {
-                decision: Decision::Denied {
-                    reason: DenyReason::UnknownCapability,
-                },
-            };
-        };
-        // 步 5:参数校验(违者 validation_failed,审计由上层映射 capability.denied)。
-        if let Err(e) = Self::validate_args(manifest, &args) {
-            return CallOutcome::InvalidArgs { message: e };
-        }
-        // Grant 预扣(见模块注释的语义留档)。
-        if let Some(gid) = &grant_id
-            && self.grants.consume(gid, self.clock.now()).is_err()
-        {
-            return CallOutcome::Rejected {
-                decision: Decision::Denied {
-                    reason: DenyReason::NoGrant,
-                },
-            };
-        }
-        // 步 6:凭证签发 + 执行点重验(不匹配即拒绝)。
-        let Ok(credential) = self.issue_credential(capability, &ctx.principal) else {
-            return CallOutcome::Rejected {
-                decision: Decision::Denied {
-                    reason: DenyReason::UnknownCapability,
-                },
-            };
-        };
-        if let Err((expected, current)) = self.verify_credential(&credential) {
-            return CallOutcome::StaleBinding {
-                expected_epoch: expected,
-                current_epoch: current,
-            };
-        }
-        let Some(handle) = self.registry.handle_of(capability) else {
-            return CallOutcome::ProviderError {
-                message: "Provider 句柄不可用(binding 在而缓存缺失)".into(),
-            };
-        };
-        // 步 7:执行(返回值过 output_schema 后才算完成)。
-        match handle.invoke(args) {
-            Ok(result) => {
-                if let Err(e) =
-                    bm_contract::schemas::validate(&manifest.output_schema.to_string(), &result)
-                {
-                    return CallOutcome::InvalidOutput { message: e };
-                }
-                CallOutcome::Completed {
-                    call_id: credential.call_id.clone(),
-                    grant_id,
-                    credential,
-                    result,
-                }
-            }
-            Err(e) => CallOutcome::ProviderError { message: e },
+        match self.prepare(ctx, capability, args.clone()) {
+            Ok(prepared) => self.execute(&prepared, args),
+            Err(outcome) => outcome,
         }
     }
 
