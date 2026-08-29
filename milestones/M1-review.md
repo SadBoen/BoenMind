@@ -63,8 +63,9 @@ reviewed_at:          2026-08-29
 5. **GLM 适配器(D1)仅编译验证**,未联调真实端点:留待 M2 开工前人工联调
    (feature 门控不影响验收)。
 6. **action_summary 无内容模板**(规格 §8.4)与 PI A4 一致,复核通过。
-7. **Windows CI**:ci.yml 已写好,因 gh token 缺 `workflow` scope 暂未推送,
-   推送后须确认三平台矩阵全绿——此为 H 裁决的条件项。
+7. **Windows CI**:【已关闭 2026-08-29】ci.yml 已推送(80cc449+ae0aa09 修正
+   working-directory),三平台矩阵全绿(run 33232349993:contracts-validate ✓
+   / ubuntu ✓ / windows ✓ / macos ✓)。
 
 ## §7 回看七问(基线)
 

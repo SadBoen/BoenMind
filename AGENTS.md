@@ -7,9 +7,9 @@ BoenMind:个人生态的 AI Runtime / AI OS,当前为**阶段一(跨平台单软
 对照验证(Erlang/OTP、Kubernetes、VS Code,见 `architecture/deepwiki-validation.md`)。
 合同库已冻结 v1.0(字段只增不破)。
 
-**当前进度:M2 完成(2026-08-29,回看裁决 passed_with_conditions,
-条件=CI 三平台矩阵全绿后关闭)。下一步 = M3:统一 Wire API、CLI 和跨平台启动
-(含 M1/M2 遗留条件:ci.yml 补推后跑绿三平台矩阵)。**
+**当前进度:M2 完成(2026-08-29,回看裁决 passed_with_conditions;
+遗留条件已关闭:CI 三平台矩阵全绿,run 33232349993)。下一步 = M3:
+统一 Wire API、CLI 和跨平台启动——开工先写《M3 实现规格》。**
 
 ## 文件地图(规格分层,基线 §0)
 
