@@ -7,9 +7,10 @@ BoenMind:个人生态的 AI Runtime / AI OS,当前为**阶段一(跨平台单软
 对照验证(Erlang/OTP、Kubernetes、VS Code,见 `architecture/deepwiki-validation.md`)。
 合同库已冻结 v1.0(字段只增不破)。
 
-**当前进度:M2 完成(2026-08-29,回看裁决 passed_with_conditions;
-遗留条件已关闭:CI 三平台矩阵全绿,run 33232349993)。下一步 = M3:
-统一 Wire API、CLI 和跨平台启动——开工先写《M3 实现规格》。**
+**当前进度:M3 进行中(2026-08-29 开工)。《M3 实现规格》草案已起草
+(`milestones/M3-implementation-spec.md`:HTTP Surface Protocol + CLI +
+Tauri 壳 + 三平台打包,含 §9 自主推进默认路径),待评审冻结;
+前置:M1/M2 遗留条件已全部关闭(CI 三平台矩阵全绿)。**
 
 ## 文件地图(规格分层,基线 §0)
 
@@ -45,6 +46,7 @@ runtime/                        第 3 层  源代码(M1 起,Rust workspace;crate
       规格 `milestones/M2-implementation-spec.md`,回看 `milestones/M2-review.md`,
       68 测试全绿,四项混沌验收通过,ADR-0004 四项 M2 适配映射已按默认路径落地)**
 - [ ] M4 Capability/Broker/权限审批(开工前结算 ADR-0001/0002 相关验收条件)
-- [ ] M3/M5-M8 见基线 §18;33 项验收条件的分布见各 ADR「条件与验收」
+- [ ] **M3 统一 Wire API、CLI 与跨平台启动 ← 当前(规格草案待冻结)**
+- [ ] M4/M5-M8 见基线 §18;33 项验收条件的分布见各 ADR「条件与验收」
 - 注意:`architecture/deepwiki-validation.md` 的 S1-S10 修订建议为 **proposed**,
   仅在各里程碑回看时逐条裁决,勿自动采纳。
