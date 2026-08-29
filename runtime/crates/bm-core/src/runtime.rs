@@ -347,6 +347,9 @@ impl World {
         operation_id: Option<BmId>,
         payload: serde_json::Value,
     ) -> EventEnvelope {
+        // T7 持久前校验(硬约束 3;ADR-0001 条件 3):事件 = 已发生的事实,
+        // 命令语义形状在持久化前拒绝并告警(store.write.rejected)。
+        let shape_err = validate_event_shape(&ty, &payload);
         let seq = self.bus.next_seq();
         let event = EventEnvelope::new(
             seq,
@@ -357,6 +360,31 @@ impl World {
             operation_id,
             payload,
         );
+        if let Err(reason) = shape_err {
+            tracing::warn!(seq = %event.event_seq, %reason, "命令语义事件被拒绝持久化");
+            self.bus.append(event.clone());
+            // 告警事件(store.write.rejected 载荷形状本身不触发递归)
+            let warn_seq = self.bus.next_seq();
+            let warn = EventEnvelope::new(
+                warn_seq,
+                EventType::StoreWriteRejected,
+                self.now_ts(),
+                None,
+                None,
+                None,
+                serde_json::json!({
+                    "key": event.event_seq.to_string(),
+                    "reason": reason,
+                }),
+            );
+            if let Some(store) = &self.store
+                && !self.persist_poisoned
+            {
+                let _ = store.record(&warn);
+            }
+            self.bus.append(warn);
+            return event;
+        }
         // 写穿(M2 规格 §5.1):record 内部固定 ①日志+flush → ②物化 → ③位点。
         // 失败即进入拒写态:内存视图与持久层自此分叉,以持久层为准(重启重建)。
         #[allow(clippy::collapsible_if)] // 三重条件展平反而难读
@@ -365,6 +393,20 @@ impl World {
                 if let Err(e) = store.record(&event) {
                     tracing::error!(seq = %event.event_seq, error = %e, "持久化失败,Runtime 进入拒写态");
                     self.persist_poisoned = true;
+                    // 降级 B 态可观测(T7 规格 §5.7):持久写路径故障告警
+                    // (事件尽力入内存分发;持久恢复 = 重启,M8 部署形态收口)
+                    self.bus.append(EventEnvelope::new(
+                        self.bus.next_seq(),
+                        EventType::BusDegraded,
+                        self.now_ts(),
+                        None,
+                        None,
+                        None,
+                        serde_json::json!({
+                            "reason": format!("persist write failed: {e}"),
+                            "component": "event_log",
+                        }),
+                    ));
                 }
             }
         }
@@ -1098,6 +1140,30 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
             Cmd::Turn(event) => handle_turn_event(&mut world, event),
         }
     }
+}
+
+/// T7 事件形状校验(持久前):类型已在 EventEnvelope::new 层锁定注册表;
+/// 此处拒绝命令语义形状(事件 = 已发生事实,不是请求;ADR-0001 条件 7 G1)。
+/// 禁字段为保守清单:事件 payload 不应出现「请执行」形状的键。
+pub(crate) fn validate_event_shape(
+    ty: &EventType,
+    payload: &serde_json::Value,
+) -> Result<(), String> {
+    const FORBIDDEN: [&str; 4] = [
+        "requested_action",
+        "instruction",
+        "command",
+        "please_execute",
+    ];
+    let Some(obj) = payload.as_object() else {
+        return Ok(());
+    };
+    for k in FORBIDDEN {
+        if obj.contains_key(k) {
+            return Err(format!("事件 {ty} 携带命令语义字段 '{k}'"));
+        }
+    }
+    Ok(())
 }
 
 // ---- 会话与 Agent ----------------------------------------------------------
@@ -2728,5 +2794,30 @@ fn reply_unavailable(cmd: Cmd) {
             let _ = resp.send(());
         }
         Cmd::Turn(_) => {}
+    }
+}
+
+#[cfg(test)]
+mod t7_event_shape_tests {
+    use super::*;
+
+    /// T7 硬约束 3:命令语义形状在持久化前拒绝(G1 Bus 不得当 RPC)。
+    #[test]
+    fn command_semantic_payloads_are_rejected_before_persist() {
+        let ty = EventType::SessionCreated;
+        for bad_key in [
+            "requested_action",
+            "instruction",
+            "command",
+            "please_execute",
+        ] {
+            let payload = serde_json::json!({ bad_key: {"op": "mail.send"} });
+            assert!(
+                validate_event_shape(&ty, &payload).is_err(),
+                "{bad_key} 形状必须被拒"
+            );
+        }
+        // 正常事实载荷照常通过
+        assert!(validate_event_shape(&ty, &serde_json::json!({"session_id": "x"})).is_ok());
     }
 }

@@ -649,3 +649,185 @@ async fn t45_outbox_pending_recovers_to_outcome_unknown() {
     );
     handle.stop("test_done").await;
 }
+
+/// M4-T7 降级 B 态(硬约束 6;规格 §5.7-B):持久写路径故障 → Runtime 进入
+/// 拒写降级:后续 capability 调用拒绝(安全侧),规范状态查询照常
+/// (operations_get 走内存视图);恢复 = 重启以持久层为准。
+struct FailingStore;
+impl bm_persist::EventStore for FailingStore {
+    fn record(
+        &self,
+        _e: &bm_contract::events::EventEnvelope,
+    ) -> bm_persist::error::StoreResult<()> {
+        Err(bm_persist::error::StoreError::Io(std::io::Error::other(
+            "injected persist failure",
+        )))
+    }
+    fn recover(&self) -> bm_persist::error::StoreResult<bm_persist::recovery::RecoveryReport> {
+        Ok(bm_persist::recovery::RecoveryReport {
+            last_applied_seq: 0,
+            replayed: 0,
+            interrupted_recovered: 0,
+        })
+    }
+    fn pending_operations(&self) -> bm_persist::error::StoreResult<Vec<(String, String, String)>> {
+        Ok(vec![])
+    }
+    fn load_rows(&self) -> bm_persist::error::StoreResult<bm_persist::recovery::WorldRows> {
+        Ok(bm_persist::recovery::WorldRows::default())
+    }
+    fn materialize_event(
+        &self,
+        _e: &bm_contract::events::EventEnvelope,
+    ) -> bm_persist::error::StoreResult<()> {
+        Ok(())
+    }
+    fn save_op_input(&self, _o: &str, _c: &str) -> bm_persist::error::StoreResult<()> {
+        Ok(())
+    }
+    fn op_input(&self, _o: &str) -> bm_persist::error::StoreResult<Option<String>> {
+        Ok(None)
+    }
+    fn append(
+        &self,
+        _e: &bm_contract::events::EventEnvelope,
+    ) -> bm_persist::error::StoreResult<()> {
+        Err(bm_persist::error::StoreError::Io(std::io::Error::other(
+            "injected persist failure",
+        )))
+    }
+    fn replay_since(
+        &self,
+        _s: u64,
+    ) -> bm_persist::error::StoreResult<Vec<bm_contract::events::EventEnvelope>> {
+        Ok(vec![])
+    }
+    fn last_log_seq(&self) -> bm_persist::error::StoreResult<u64> {
+        Ok(0)
+    }
+    fn last_applied_seq(&self) -> bm_persist::error::StoreResult<u64> {
+        Ok(0)
+    }
+    fn mark_applied(&self, _s: u64) -> bm_persist::error::StoreResult<()> {
+        Ok(())
+    }
+    fn snapshot(&self) -> bm_persist::error::StoreResult<u64> {
+        Ok(0)
+    }
+    fn compact(&self, _u: u64) -> bm_persist::error::StoreResult<usize> {
+        Ok(0)
+    }
+    fn save_approval(
+        &self,
+        _r: bm_persist::sqlite_state::ApprovalRow<'_>,
+    ) -> bm_persist::error::StoreResult<()> {
+        Ok(())
+    }
+    fn list_approvals(&self) -> bm_persist::error::StoreResult<Vec<serde_json::Value>> {
+        Ok(vec![])
+    }
+    fn save_grant(
+        &self,
+        _r: bm_persist::sqlite_state::GrantRow<'_>,
+    ) -> bm_persist::error::StoreResult<()> {
+        Ok(())
+    }
+    fn list_grants(&self) -> bm_persist::error::StoreResult<Vec<serde_json::Value>> {
+        Ok(vec![])
+    }
+    fn save_capability_binding(
+        &self,
+        _r: bm_persist::sqlite_state::CapabilityRow<'_>,
+    ) -> bm_persist::error::StoreResult<()> {
+        Ok(())
+    }
+    fn list_capability_bindings(&self) -> bm_persist::error::StoreResult<Vec<serde_json::Value>> {
+        Ok(vec![])
+    }
+    fn outbox_upsert(
+        &self,
+        _o: &str,
+        _k: &str,
+        _s: &str,
+        _p: &str,
+        _n: &str,
+    ) -> bm_persist::error::StoreResult<()> {
+        Ok(())
+    }
+    fn list_outbox_by_state(
+        &self,
+        _s: &str,
+    ) -> bm_persist::error::StoreResult<Vec<serde_json::Value>> {
+        Ok(vec![])
+    }
+}
+
+#[tokio::test]
+async fn t46_persist_failure_degrades_safely() {
+    use bm_contract::capability::CapabilityManifest;
+    let connector: Arc<dyn ModelConnector> = Arc::new(MockConnector::new(vec![]));
+    let handle = RuntimeHandle::start(RuntimeConfig {
+        capabilities: vec![(
+            serde_json::from_value::<CapabilityManifest>(serde_json::json!({
+                "capability": "system.echo", "provider": "system.echo",
+                "version": "0.1.0", "input_schema": {"type": "object"},
+                "output_schema": {"type": "object"}, "effect": "read-only",
+                "idempotent": true, "cancellable": true,
+                "timeout_ms": 1000, "approval": "not-required"
+            }))
+            .unwrap(),
+            bm_core::broker::provider_fn(Ok),
+        )],
+        version: "0.1.0-m4".into(),
+        data_dir: None,
+        store: Some(Arc::new(FailingStore)),
+        connector,
+        secret_store: Arc::new(MemSecretStore::with("secret:model.x", "sk")),
+        id_gen: Arc::new(SeqIdGen::new()),
+        clock: Arc::new(SystemClock),
+        turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
+        max_attempts: None,
+    })
+    .await;
+
+    // 第一次调用:事件写穿失败 → Runtime 进入降级(拒写)态
+    let req = bm_contract::ids::BmId::parse("req_01JAAAAAAAAAAAAAAAAAAAAA94").unwrap();
+    let _ = handle
+        .capability_call(
+            req,
+            bm_contract::wire::CapabilityCallParams {
+                capability: "system.echo".into(),
+                args: serde_json::json!({}),
+                idempotency_key: None,
+                deadline_ms: None,
+            },
+        )
+        .await;
+
+    // 降级生效:后续 capability 调用拒绝(安全侧;bus.degraded 已尽力入分发)
+    let req = bm_contract::ids::BmId::parse("req_01JAAAAAAAAAAAAAAAAAAAAA95").unwrap();
+    let err = handle
+        .capability_call(
+            req,
+            bm_contract::wire::CapabilityCallParams {
+                capability: "system.echo".into(),
+                args: serde_json::json!({}),
+                idempotency_key: None,
+                deadline_ms: None,
+            },
+        )
+        .await
+        .expect_err("降级态必须拒绝后续调用");
+    assert!(matches!(
+        err,
+        CoreError::Semantic(ErrorCode::Unavailable, _)
+    ));
+
+    // 规范状态查询面照常可答(INV-9 精神:降级不影响既有收据可查)
+    let _ = handle
+        .operations_get(bm_contract::wire::GetOperationParams {
+            operation_id: bm_contract::ids::BmId::parse("op_01JAAAAAAAAAAAAAAAAAAAAA90").unwrap(),
+        })
+        .await;
+    handle.stop("test_done").await;
+}

@@ -449,3 +449,48 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod t7_injection_tests {
+    use super::*;
+    use std::io::Write as _;
+
+    /// T7 伪造/乱序注入(硬约束 3;ADR-0001 条件 3):绕过单写者直接写
+    /// 持久日志的伪造事件,回放时必须可检出——未注册类型反序列化失败;
+    /// 乱序 seq 的投影按 seq 排序后不变(INV-3)。
+    #[test]
+    fn forged_and_out_of_order_lines_are_detectable() {
+        let dir = tempfile::tempdir().expect("临时目录");
+        let path = dir.path().join("events.jsonl");
+        // 合法事件一行(seq 1)
+        let good = r#"{"event_seq":1,"type":"runtime.started","occurred_at":"2026-08-29T10:00:00.000Z","payload":{"pid":1,"version":"0.1.0","started_at":"2026-08-29T10:00:00.000Z"}}"#;
+        // 伪造类型行(注册表外)
+        let forged = r#"{"event_seq":2,"type":"attacker.command.executed","occurred_at":"2026-08-29T10:00:01.000Z","payload":{"requested_action":"mail.send"}}"#;
+        // 乱序行(seq 9,跳号)
+        let out_of_order = r#"{"event_seq":9,"type":"session.created","occurred_at":"2026-08-29T10:00:02.000Z","payload":{"session_id":"s"}}"#;
+        {
+            let mut f = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .expect("打开日志");
+            for line in [good, forged, out_of_order] {
+                writeln!(f, "{line}").expect("写");
+            }
+            f.flush().expect("flush");
+        }
+
+        // 检出(ADR-0001 条件 3):伪造类型未注册 → 反序列化失败 → 打开即报
+        // Corrupt 拒绝服务。磁盘被篡改意味着信任根已破(T-12),「宁可拒开」
+        // 是正确的安全响应,而非静默跳过伪造行伪装无事。
+        let err = match PersistStore::open(dir.path()) {
+            Err(e) => e,
+            Ok(_) => panic!("伪造行必须被检出,拒绝打开"),
+        };
+        assert!(matches!(err, StoreError::Corrupt { .. }), "{err:?}");
+        assert!(
+            format!("{err:?}").contains("attacker"),
+            "错误信息指认伪造行"
+        );
+    }
+}

@@ -163,3 +163,29 @@ mod tests {
         assert_eq!(last, 3);
     }
 }
+
+#[cfg(test)]
+mod t7_dispatch_tests {
+    use super::*;
+
+    /// 降级 A(T7 规格 §5.7):分发层暂停(订阅者全部离开)不阻塞核心循环
+    /// 的追加;状态提交(event_seq 分配与 log)照常,补发由 resume cursor 承担。
+    #[test]
+    fn append_succeeds_without_any_subscriber() {
+        let mut bus = EventBus::new();
+        let rx = bus.subscribe();
+        drop(rx); // 订阅者离开(慢消费者极端形态)
+        let e = EventEnvelope::new_unchecked(
+            1,
+            bm_contract::events::EventType::RuntimeStarted,
+            bm_contract::timestamp::now(),
+            None,
+            None,
+            None,
+            serde_json::json!({}),
+        );
+        let seq = bus.append(e);
+        assert_eq!(seq, 1, "核心追加不受分发层影响");
+        assert_eq!(bus.next_seq(), 2);
+    }
+}
