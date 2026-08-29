@@ -2,7 +2,7 @@
 //! 承载 INV-3 / INV-6 / INV-8 / INV-9 / INV-12(排空路径)。
 
 use bm_contract::error_codes::ErrorCode;
-use bm_contract::events::EventType;
+use bm_contract::events::{EventEnvelope, EventType};
 use bm_contract::ids::IdGen;
 use bm_contract::states::{OperationState, SessionState};
 use bm_contract::wire::{GetOperationParams, SessionCloseParams, SessionResumeParams};
@@ -21,19 +21,33 @@ async fn t02_session_lifecycle_and_poll() {
     let (sess, _agent) = rig.create_session().await.expect("会话创建成功");
 
     // 事件:1 runtime.started, 2 session.created, 3 agent.created
-    let events = rig.all_events().await;
-    assert_event_stream_wellformed(&events);
+    // M5 起启动期另有 12 条 bootstrap 协调权 grant.created 系统事实:
+    // 全流做 INV-3 连续性检查;过滤后创建期回合流仍恰 3 条
+    let all = rig.all_events().await;
+    assert_event_stream_wellformed(&all);
+    let events: Vec<EventEnvelope> = all
+        .iter()
+        .filter(|e| e.event_type != EventType::GrantCreated)
+        .cloned()
+        .collect();
     assert_eq!(events.len(), 3, "创建期恰好 3 条事件");
     assert_eq!(events[0].event_type, EventType::RuntimeStarted);
     assert_eq!(events[1].event_type, EventType::SessionCreated);
     assert_eq!(events[2].event_type, EventType::AgentCreated);
 
     // 合同 events.poll:按会话过滤 + since_seq 增量
+    // (since 取 SessionCreated 的实际 seq——M5 起启动期有 bootstrap Grant
+    //  事件,绝对序号位移,增量语义以事件实际位点为准)
+    let sess_seq = all
+        .iter()
+        .find(|e| e.event_type == EventType::SessionCreated)
+        .expect("SessionCreated 在场")
+        .event_seq;
     let poll = rig
         .handle
         .events_poll(bm_contract::wire::EventsPollParams {
             session_id: sess.clone(),
-            since_seq: 2,
+            since_seq: sess_seq,
             limit: Some(10),
             task_id: None,
         })

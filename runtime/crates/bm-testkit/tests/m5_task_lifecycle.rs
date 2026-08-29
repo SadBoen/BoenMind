@@ -324,7 +324,11 @@ async fn t52_count_grant_exhaustion_survives_restart() {
     // 持久面直接证明:used_count = 2
     let store_check = bm_persist::PersistStore::open(dir.path()).expect("重开");
     let grants = store_check.state().list_grants().expect("读 grants");
-    assert_eq!(grants[0]["used_count"], json!(5), "T6c:消费计数持久");
+    let row = grants
+        .iter()
+        .find(|g| g["action"] == json!("system.danger.purge"))
+        .expect("count Grant 行在场");
+    assert_eq!(row["used_count"], json!(5), "T6c:消费计数持久");
     handle2.stop("test_done").await;
 }
 

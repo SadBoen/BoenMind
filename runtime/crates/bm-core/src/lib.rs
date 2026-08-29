@@ -9,6 +9,7 @@ pub mod approval;
 pub mod broker;
 pub mod budget;
 pub mod bus;
+pub mod butler;
 pub mod clock;
 pub mod error;
 pub mod exec_log;
@@ -24,6 +25,10 @@ pub use broker::{
     LeaseError,
 };
 pub use bus::EventBus;
+pub use butler::{
+    BOOTSTRAP_ISSUER, BUTLER_PRINCIPAL, CoordinationClass, bootstrap_grant, bootstrap_parent_hash,
+    materialize_missing, verb_class,
+};
 pub use clock::{Clock, MockClock, SystemClock};
 pub use error::{CoreError, CoreResult};
 pub use registry::{BindingStatus, CapabilityDiscovery, CapabilityProvider, CapabilityRegistry};

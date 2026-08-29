@@ -48,7 +48,12 @@ async fn t07_single_turn_success_event_shape() {
 
     let events = rig.all_events().await;
     assert_event_stream_wellformed(&events);
-    let types: Vec<EventType> = events.iter().map(|e| e.event_type).collect();
+    // 过滤启动期 bootstrap Grant 事件(系统事实,非回合流;M5 起)
+    let types: Vec<EventType> = events
+        .iter()
+        .filter(|e| e.event_type != EventType::GrantCreated)
+        .map(|e| e.event_type)
+        .collect();
     assert_eq!(
         types,
         vec![
@@ -101,7 +106,12 @@ async fn t08_chain_exhausted_maps_to_failed_not_outcome_unknown() {
 
     let events = rig.all_events().await;
     assert_event_stream_wellformed(&events);
-    let types: Vec<EventType> = events.iter().map(|e| e.event_type).collect();
+    // 过滤启动期 bootstrap Grant 事件(系统事实,非回合流;M5 起)
+    let types: Vec<EventType> = events
+        .iter()
+        .filter(|e| e.event_type != EventType::GrantCreated)
+        .map(|e| e.event_type)
+        .collect();
     assert_eq!(
         types,
         vec![
@@ -125,10 +135,15 @@ async fn t08_chain_exhausted_maps_to_failed_not_outcome_unknown() {
             .count(),
         2
     );
-    let failed1 = &events[5];
+    // 绝对下标改为按类型过滤定位(启动期 bootstrap Grant 事件使序号位移)
+    let failed_events: Vec<_> = events
+        .iter()
+        .filter(|e| e.event_type == EventType::ModelInvocationFailed)
+        .collect();
+    let failed1 = failed_events[0];
     assert_eq!(failed1.payload["attempt"], 1);
     assert_eq!(failed1.payload["model_id"], bm_testkit::replay::MODEL_A);
-    let failed2 = &events[6];
+    let failed2 = failed_events[1];
     assert_eq!(failed2.payload["attempt"], 2);
     assert_eq!(
         failed2.payload["model_id"],

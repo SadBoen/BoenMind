@@ -2,7 +2,7 @@
 //! 场景 A = 正常回合;场景 B = 模型链超时到失败(简版,补全会话生命周期)。
 //! 逐条比对事件序列 + payload 关键值;全事件流过 envelope schema;含不变量覆盖表。
 
-use bm_contract::events::EventType;
+use bm_contract::events::{EventEnvelope, EventType};
 use bm_contract::ids::IdGen;
 use bm_contract::registries;
 use bm_contract::schemas::validate_by_pointer;
@@ -77,10 +77,17 @@ async fn gt01_scenario_a_normal_turn() {
         .expect("close");
     rig.handle.stop("test_done").await;
 
-    // 逐条比对事件 1..11
-    let events = rig.all_events().await;
-    assert_event_stream_wellformed(&events);
-    assert_eq!(events.len(), 11, "GT-A:恰好 11 条事件(INV-3 无空洞)");
+    // 逐条比对回合流事件(M5 起启动期另有 12 条 bootstrap 协调权
+    // grant.created 系统事实——过滤后回合流仍恰 11 条;全流 seq 连续性
+    // 由 assert_event_stream_wellformed 覆盖,INV-3 无空洞)
+    let all = rig.all_events().await;
+    assert_event_stream_wellformed(&all);
+    let events: Vec<EventEnvelope> = all
+        .iter()
+        .filter(|e| e.event_type != EventType::GrantCreated)
+        .cloned()
+        .collect();
+    assert_eq!(events.len(), 11, "GT-A:回合流恰好 11 条事件");
 
     let expected = vec![
         Expected {
@@ -239,8 +246,13 @@ async fn gt01_scenario_b_timeout_chain() {
         .expect("close");
     rig.handle.stop("test_done").await;
 
-    let events = rig.all_events().await;
-    assert_event_stream_wellformed(&events);
+    let all = rig.all_events().await;
+    assert_event_stream_wellformed(&all);
+    let events: Vec<EventEnvelope> = all
+        .iter()
+        .filter(|e| e.event_type != EventType::GrantCreated)
+        .cloned()
+        .collect();
     let types: Vec<EventType> = events.iter().map(|e| e.event_type).collect();
     assert_eq!(
         types,

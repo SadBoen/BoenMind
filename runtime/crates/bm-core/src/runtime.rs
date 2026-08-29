@@ -188,6 +188,11 @@ enum Cmd {
         params: wire::TaskGetParams,
         resp: oneshot::Sender<CoreResult<wire::TaskGetResult>>,
     },
+    /// Butler 协调权撤销(M5.1;核心 API,wire 撤销面随 M8 审批 UI)。
+    ButlerRevoke {
+        reason: String,
+        resp: oneshot::Sender<CoreResult<usize>>,
+    },
     Stop {
         reason: String,
         resp: oneshot::Sender<()>,
@@ -787,6 +792,49 @@ impl RuntimeHandle {
             }
         }
 
+        // M5-T3:Butler bootstrap 协调权物化(基线 §10.1 全集;幂等——已有
+        // (含已撤销)不重发;撤销是持久事实,重授走审批随 M8 UI)
+        {
+            let mut existing_pairs: Vec<(String, String)> = Vec::new();
+            if let Some(store) = &world.store {
+                for row in store.list_grants().unwrap_or_default() {
+                    if row["audience"].as_str() == Some(crate::butler::BUTLER_PRINCIPAL)
+                        && let Some(action) = row["action"].as_str()
+                    {
+                        existing_pairs.push((
+                            crate::butler::BUTLER_PRINCIPAL.to_string(),
+                            action.to_string(),
+                        ));
+                    }
+                }
+            }
+            let issued = crate::butler::materialize_missing(
+                &mut world.grants,
+                &existing_pairs,
+                &*world.config.id_gen,
+                &*world.config.clock,
+            );
+            for g in issued {
+                persist_grant(&world, &g.grant_id);
+                world.emit(
+                    EventType::GrantCreated,
+                    None,
+                    None,
+                    None,
+                    serde_json::json!({
+                        "grant_id": g.grant_id,
+                        "approval_id": null,
+                        "audience": g.audience,
+                        "action": g.action,
+                        "scope": g.scope.to_wire(),
+                        "delegation_depth": g.delegation_depth,
+                        "expires_at": null,
+                        "parent_hash": g.parent_grant_hash,
+                    }),
+                );
+            }
+        }
+
         world.emit(
             EventType::RuntimeStarted,
             None,
@@ -1179,6 +1227,21 @@ impl RuntimeHandle {
         rx.await.map_err(|_| CoreError::Internal)?
     }
 
+    /// Butler 协调权撤销(M5.1):撤销 bootstrap Grant 集(全部 mutation+
+    /// safe 动词),撤销后仅剩只读查询面;重授走审批(交互随 M8)。
+    /// 返回撤销的 Grant 数。
+    pub async fn butler_revoke(&self, reason: impl Into<String>) -> CoreResult<usize> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(Cmd::ButlerRevoke {
+                reason: reason.into(),
+                resp: tx,
+            })
+            .await
+            .map_err(|_| CoreError::Internal)?;
+        rx.await.map_err(|_| CoreError::Internal)?
+    }
+
     /// task.get(M5.2/M5.4):规范对象 + 监护态(guard_states 随 T7 填充)。
     pub async fn task_get(&self, params: wire::TaskGetParams) -> CoreResult<wire::TaskGetResult> {
         let (tx, rx) = oneshot::channel();
@@ -1327,6 +1390,9 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
             }
             Cmd::TaskList { params, resp } => {
                 let _ = resp.send(handle_task_list(&world, params));
+            }
+            Cmd::ButlerRevoke { reason, resp } => {
+                let _ = resp.send(handle_butler_revoke(&mut world, reason));
             }
             Cmd::TaskGet { params, resp } => {
                 let _ = resp.send(handle_task_get(&world, params));
@@ -2678,12 +2744,55 @@ fn handle_task_create(
             "Runtime 排空中或持久层故障,拒绝创建 Task".into(),
         ));
     }
+    // 协调权门禁(M5.1):task.create 是 Butler 的 mutation 协调动词——
+    // bootstrap Grant 被撤销后此命令拒绝(重授走审批,撤销不影响既有 Task)
+    if w.grants
+        .active_for(
+            crate::butler::BUTLER_PRINCIPAL,
+            "task.create",
+            w.config.clock.now(),
+        )
+        .is_empty()
+    {
+        return Err(CoreError::Semantic(
+            ErrorCode::PermissionDenied,
+            "Butler 协调权(task.create)已被撤销,重授需用户批准".into(),
+        ));
+    }
+    // Task 授权校验:动词 ⊆ Butler 协调清单(上界);mutation 动词必须显式
+    // 标记 klass=mutation(ADR-0002 §11.2 二分;领域动词不可授权)
+    let authorization = params.authorization.unwrap_or_default();
+    for entry in &authorization {
+        let Some(class) = crate::butler::verb_class(&entry.verb) else {
+            return Err(CoreError::Semantic(
+                ErrorCode::ValidationFailed,
+                format!("非协调动词不可授权: {}", entry.verb),
+            ));
+        };
+        let ok = match class {
+            crate::butler::CoordinationClass::Mutation => {
+                entry.klass.as_deref() == Some("mutation")
+            }
+            crate::butler::CoordinationClass::Safe => {
+                matches!(entry.klass.as_deref(), None | Some("safe"))
+            }
+        };
+        if !ok {
+            return Err(CoreError::Semantic(
+                ErrorCode::ValidationFailed,
+                format!(
+                    "授权分级与动词默认分级不一致: {}(mutation 动词必须显式 klass=mutation)",
+                    entry.verb
+                ),
+            ));
+        }
+    }
     let now = w.config.clock.now();
     let mut task = crate::task::Task::create(
         &*w.config.id_gen,
         params.title,
         params.goal,
-        params.authorization.unwrap_or_default(),
+        authorization,
         params.budget,
         params.deadline,
         now,
@@ -2783,6 +2892,44 @@ fn handle_task_lifecycle(
     );
     persist_task(w, &task_snapshot);
     Ok(state_result)
+}
+
+/// Butler 协调权撤销:撤销 bootstrap Grant 集(审计 grant.revoked),持久行
+/// 同步(重启后不复活——materialize 尊重已撤销行)。
+fn handle_butler_revoke(w: &mut World, reason: String) -> CoreResult<usize> {
+    if w.draining || w.persist_poisoned {
+        return Err(CoreError::Semantic(
+            ErrorCode::Unavailable,
+            "Runtime 排空中或持久层故障,拒绝撤销操作".into(),
+        ));
+    }
+    let mut revoked = 0;
+    for (verb, _) in crate::butler::COORDINATION_VERBS {
+        // 分阶段作用域:收集后逐个撤销(避免跨字段借用)
+        let gids: Vec<String> = w
+            .grants
+            .active_for(crate::butler::BUTLER_PRINCIPAL, verb, w.config.clock.now())
+            .into_iter()
+            .map(|g| g.grant_id)
+            .collect();
+        for gid in gids {
+            let version = w.grants.revoke(&gid).map_err(|_| CoreError::Internal)?;
+            w.emit(
+                EventType::GrantRevoked,
+                None,
+                None,
+                None,
+                serde_json::json!({
+                    "grant_id": gid,
+                    "revocation_version": version,
+                    "reason": reason,
+                }),
+            );
+            persist_grant(w, &gid);
+            revoked += 1;
+        }
+    }
+    Ok(revoked)
 }
 
 /// task.list:全量任务投影为合同对象;(created_at, task_id) 字典序确定性。
@@ -3245,6 +3392,9 @@ fn reply_unavailable(cmd: Cmd) {
             let _ = resp.send(Err(err()));
         }
         Cmd::TaskGet { resp, .. } => {
+            let _ = resp.send(Err(err()));
+        }
+        Cmd::ButlerRevoke { resp, .. } => {
             let _ = resp.send(Err(err()));
         }
         Cmd::EventsAll { resp } => {

@@ -98,7 +98,11 @@ async fn t20_cross_process_resume_and_continue() {
         }
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
-    let first_log_len = rig1.all_events().await.len();
+    let rig1_events = rig1.all_events().await;
+    let first_log_len = rig1_events.len();
+    // 无会话关联的事件数(runtime.started + M5 起的 12 条 bootstrap Grant 等):
+    // resume 补发流只含会话关联事件(合同 events.poll 语义)
+    let uncorrelated = rig1_events.iter().filter(|e| e.session_id.is_none()).count();
     rig1.handle.stop("restart").await;
 
     // 同目录启动第二台 Runtime:恢复 + 跨进程 resume
@@ -123,11 +127,11 @@ async fn t20_cross_process_resume_and_continue() {
         resumed.agent_state,
         bm_contract::states::AgentState::Running
     );
-    // resume 补发的是【会话过滤】后的事件:8 条全事件中 1 条 runtime.started
-    // 无会话关联,不入补发流(合同 events.poll 语义)
+    // resume 补发的是【会话过滤】后的事件:无会话关联的事件
+    // (runtime.started + bootstrap Grant 等)不入补发流(合同 events.poll 语义)
     assert_eq!(
         resumed.events.len(),
-        first_log_len - 1,
+        first_log_len - uncorrelated,
         "resume 自日志补发全部会话历史"
     );
 

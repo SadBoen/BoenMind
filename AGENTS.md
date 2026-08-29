@@ -16,9 +16,12 @@ M5 实现进度:T0 合同增发九项已落地(全 Minor,镜像同步);
 T1 已落地(bm-core task.rs 对象/状态机/完成判定门禁/epoch 门禁 + SQLite v4
 五表 + T6c 两项收紧经跨重启实证);
 T2 已落地(Wire task.* 六方法启用 + events.poll task_id 过滤 + CLI task 组 +
-Task Board 投影:重建确定性/启动重建/emit 增量双路等价,P-11 骨架测试,156 测试全绿)。
-下一步 = T3(Butler 内置 App:注册、bootstrap 协调权 Grant 集、领域权默认拒绝
-权限矩阵、task.create 全链路、双路径收据来源标注启用)。**
+Task Board 投影:重建确定性/启动重建/emit 增量双路等价,P-11 骨架测试);
+T3 已落地(butler.rs:bootstrap 协调权 Grant 集物化+跨重启幂等+可撤销、
+task.create 协调权门禁与授权上界校验、领域动词不可授权矩阵、163 测试全绿;
+GT-01/M1 生命周期测试按启动期系统事实同步更新)。
+下一步 = T4(Coordinator:三方交集物化为 task:<id> Grant、safe/mutation 二分
+执行、子树裁剪 Broker 强制、成员授权签发链 parent 哈希)。**
 
 ## 文件地图(规格分层,基线 §0)
 
