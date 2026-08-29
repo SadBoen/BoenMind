@@ -1,0 +1,145 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "boenmind:wire:task:v0.1",
+  "x-frozen": "2026-08-29",
+  "title": "Wire API Task 方法 v0.1(M5.2/M5.5)",
+  "description": "task.create / task.list / task.get / task.pause / task.resume / task.stop 六方法的 params/result 合同,envelope 的 method 枚举同步增发(Minor)。task.watch 不设独立方法:观察复用 events.poll(增发可选 task_id 过滤参数,wire/session.v0.1);生命周期命令为编排命令,走 Wire/Broker 而非事件流(G4/G2 守护边界)。task.create 的 params 携带 Task 授权声明(三方交集 Task 分量,task/task.v0.1)。pause/resume/stop 为 Orchestrator 恢复语义的用户触发面(ADR-0004 条件 6:触发者 = 用户显式 resume ∪ Watchdog 自动)。",
+  "definitions": {
+    "task_id": { "$ref": "boenmind:task:task:v0.1#/definitions/task_id" },
+    "task_state": { "$ref": "boenmind:task:task:v0.1#/definitions/task_state" }
+  },
+  "task.create": {
+    "params": {
+      "type": "object",
+      "required": ["title", "goal"],
+      "additionalProperties": false,
+      "properties": {
+        "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "goal": { "type": "string", "maxLength": 2000, "description": "目标脱敏摘要" },
+        "authorization": {
+          "type": "array",
+          "items": { "$ref": "boenmind:task:task:v0.1#/definitions/authorization_entry" },
+          "description": "Task 授权白名单;缺省 = 仅 safe 类查询动词。mutation 动词须显式列出(ADR-0002 §11.2 二分)"
+        },
+        "budget": { "$ref": "boenmind:task:task:v0.1#/definitions/budget", "description": "Task 预算包络;缺省用运行时默认包络" },
+        "deadline": { "type": ["string", "null"], "format": "date-time" }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": ["task_id", "state", "created_at"],
+      "additionalProperties": false,
+      "properties": {
+        "task_id": { "$ref": "#/definitions/task_id" },
+        "state": { "$ref": "#/definitions/task_state" },
+        "created_at": { "type": "string", "format": "date-time" }
+      }
+    }
+  },
+  "task.list": {
+    "params": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "state_filter": {
+          "type": ["string", "null"],
+          "description": "task 状态过滤;缺省 = 全部(active 优先,投影自事件日志重建)"
+        },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 1000, "default": 100 }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": ["tasks"],
+      "additionalProperties": false,
+      "properties": {
+        "tasks": {
+          "type": "array",
+          "items": { "type": "object", "description": "task:task:v0.1 对象(载荷合同见该文件)" }
+        }
+      }
+    }
+  },
+  "task.get": {
+    "params": {
+      "type": "object",
+      "required": ["task_id"],
+      "additionalProperties": false,
+      "properties": {
+        "task_id": { "$ref": "#/definitions/task_id" }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": ["task"],
+      "additionalProperties": false,
+      "properties": {
+        "task": { "type": "object", "description": "task:task:v0.1 对象" },
+        "guard_states": {
+          "type": ["object", "null"],
+          "description": "监护态投影(基线 §20 八态:progressing/completed/failed/stalled/repeating/waiting_approval/outcome_unknown/interrupted;非 task 状态机状态,M5 规格 §5.6)"
+        }
+      }
+    }
+  },
+  "task.pause": {
+    "params": {
+      "type": "object",
+      "required": ["task_id"],
+      "additionalProperties": false,
+      "properties": {
+        "task_id": { "$ref": "#/definitions/task_id" },
+        "reason": { "type": ["string", "null"], "maxLength": 200 }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": ["task_id", "state"],
+      "additionalProperties": false,
+      "properties": {
+        "task_id": { "$ref": "#/definitions/task_id" },
+        "state": { "$ref": "#/definitions/task_state", "description": "迁移后状态(=paused);成员 Agent 级联 agent.pause(状态机 paused 边随本里程碑增发)" }
+      }
+    }
+  },
+  "task.resume": {
+    "params": {
+      "type": "object",
+      "required": ["task_id"],
+      "additionalProperties": false,
+      "properties": {
+        "task_id": { "$ref": "#/definitions/task_id" },
+        "note": { "type": ["string", "null"], "maxLength": 500, "description": "用户恢复时附带指示(脱敏)" }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": ["task_id", "state"],
+      "additionalProperties": false,
+      "properties": {
+        "task_id": { "$ref": "#/definitions/task_id" },
+        "state": { "$ref": "#/definitions/task_state", "description": "迁移后状态(=running);编排重启触发者之一 = 用户显式 resume(ADR-0004 条件 6/基线 §10.3)" }
+      }
+    }
+  },
+  "task.stop": {
+    "params": {
+      "type": "object",
+      "required": ["task_id"],
+      "additionalProperties": false,
+      "properties": {
+        "task_id": { "$ref": "#/definitions/task_id" },
+        "reason": { "type": ["string", "null"], "maxLength": 200 }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": ["task_id", "state"],
+      "additionalProperties": false,
+      "properties": {
+        "task_id": { "$ref": "#/definitions/task_id" },
+        "state": { "$ref": "#/definitions/task_state", "description": "迁移后状态(=cancelled);成员 Agent 级联停止,进行中副作用 Operation 按 §9.5 收敛(outcome_unknown 先核验)" }
+      }
+    }
+  }
+}

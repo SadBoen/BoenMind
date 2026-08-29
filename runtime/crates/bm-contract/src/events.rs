@@ -1,5 +1,5 @@
-//! 运行时事件注册表镜像(registry/runtime-events.v0_1.json,32 类,封闭集合:
-//! M1 20 + M2 增发 2 + M4 增发 10)。
+//! 运行时事件注册表镜像(registry/runtime-events.v0_1.json,40 类,封闭集合:
+//! M1 20 + M2 增发 2 + M4 增发 10 + M5 增发 8)。
 //!
 //! 注册表是「允许发射」的封闭集,不是「必须发射」集;哪些流程发射哪些事件
 //! 以黄金轨迹与迁移表为准(规格 §8.6)。`payload_keys` 是注册表声明的 payload
@@ -44,6 +44,15 @@ wire_str_enum!(EventType {
     ProviderBindingChanged => "provider.binding.changed",
     BusDegraded => "bus.degraded",
     BusResumed => "bus.resumed",
+    // M5 增发(2026-08-29,Minor:纯追加,M5 规格 §4-2;发射侧随 T1–T8)
+    TaskCreated => "task.created",
+    TaskStateChanged => "task.state.changed",
+    TaskMemberAdded => "task.member.added",
+    TaskBudgetIncreased => "task.budget.increased",
+    TaskStalled => "task.stalled",
+    TaskRepeating => "task.repeating",
+    WatchdogReorchestrationTriggered => "watchdog.reorchestration.triggered",
+    ObservationRecorded => "observation.recorded",
 });
 
 impl EventType {
@@ -147,6 +156,16 @@ impl EventType {
             ],
             EventType::BusDegraded => &["reason", "component"],
             EventType::BusResumed => &["component", "degraded_ms"],
+            EventType::TaskCreated => &["task_id", "title", "created_by"],
+            EventType::TaskStateChanged => &["task_id", "from", "to", "reason_code", "task_epoch"],
+            EventType::TaskMemberAdded => &["task_id", "agent_id", "role", "grant_id"],
+            EventType::TaskBudgetIncreased => {
+                &["task_id", "key", "old_limit", "new_limit", "approval_id"]
+            }
+            EventType::TaskStalled => &["task_id", "stalled_ms", "last_progress_seq"],
+            EventType::TaskRepeating => &["task_id", "agent_id", "capability", "repeat_count"],
+            EventType::WatchdogReorchestrationTriggered => &["task_id", "trigger", "reason"],
+            EventType::ObservationRecorded => &["task_id", "log_seq", "verdict", "guard_state"],
         }
     }
 }

@@ -34,6 +34,15 @@ pub const CAPABILITY_LEASE_SCHEMA: &str =
     include_str!("../../../../boenmind-contracts/capability/lease.v0_1.schema.json");
 pub const WIRE_CAPABILITY_SCHEMA: &str =
     include_str!("../../../../boenmind-contracts/wire/capability.v0_1.schema.json");
+// M5 增发(2026-08-29,Minor):task 对象 + wire/task + memory 条目 + 观察日志条目。
+pub const TASK_SCHEMA: &str =
+    include_str!("../../../../boenmind-contracts/task/task.v0_1.schema.json");
+pub const WIRE_TASK_SCHEMA: &str =
+    include_str!("../../../../boenmind-contracts/wire/task.v0_1.schema.json");
+pub const MEMORY_ENTRY_SCHEMA: &str =
+    include_str!("../../../../boenmind-contracts/memory/memory-entry.v0_1.schema.json");
+pub const OBSERVATION_LOG_SCHEMA: &str =
+    include_str!("../../../../boenmind-contracts/logs/observation-log-entry.v0_1.schema.json");
 
 #[derive(Debug, Deserialize)]
 pub struct RegistryCode {
@@ -120,6 +129,10 @@ mod tests {
             ("capability-approval", CAPABILITY_APPROVAL_SCHEMA),
             ("capability-lease", CAPABILITY_LEASE_SCHEMA),
             ("wire-capability", WIRE_CAPABILITY_SCHEMA),
+            ("task", TASK_SCHEMA),
+            ("wire-task", WIRE_TASK_SCHEMA),
+            ("memory-entry", MEMORY_ENTRY_SCHEMA),
+            ("observation-log", OBSERVATION_LOG_SCHEMA),
         ] {
             let v: serde_json::Value =
                 serde_json::from_str(text).unwrap_or_else(|e| panic!("{name}: {e}"));

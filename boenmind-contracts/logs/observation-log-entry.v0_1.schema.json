@@ -1,0 +1,48 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "boenmind:logs:observation-log-entry:v0.1",
+  "x-frozen": "2026-08-29",
+  "title": "Observation Log 条目 v0.1(M5.6;四类记录合同之二)",
+  "description": "Observation Log 记录「Agent 声称完成」与「系统实际观察到」的对照(基线 §8.4 四类记录之二;其一 execution-log-entry.v0.1 于 M1 落地)。写入门禁:claim 与 evidence 缺一不可;判定确定性优先——外部系统查询、文件状态、Provider 收据与确定性断言优先于模型自述(基线 §20);独立 Judge(M8.7 起)接口预留不实现。形态与 execution-log-entry 同构:log_seq 单调,经核心循环落盘,事件面镜像 observation.recorded。",
+  "definitions": {
+    "guard_state": {
+      "enum": ["progressing", "completed", "failed", "stalled", "repeating", "waiting_approval", "outcome_unknown", "interrupted"],
+      "description": "监护八态(基线 §20;非 task 状态机状态,投影呈现)"
+    },
+    "verdict": {
+      "enum": ["verified", "unverified", "failed"],
+      "description": "verified = 证据支持声称;unverified = 无可核验结果(完成判定门禁:不得 completed,转 outcome_unknown 等裁定);failed = 证据与声称相悖"
+    },
+    "evidence_kind": {
+      "enum": ["receipt", "event_seq", "state_check", "query_result"],
+      "description": "证据类型:执行收据/事件序列引用/状态确定性断言/外部系统查询结果(优先级自左向右不递减,模型自述不是证据)"
+    }
+  },
+  "type": "object",
+  "required": ["log_seq", "task_id", "claim_summary", "evidence", "verdict", "guard_state", "observed_at"],
+  "additionalProperties": false,
+  "properties": {
+    "log_seq": { "type": "integer", "minimum": 0, "description": "Observation Log 单调序号(与 Event Log event_seq 分立,形态同 execution-log-entry)" },
+    "task_id": { "$ref": "boenmind:task:task:v0.1#/definitions/task_id" },
+    "agent_id": { "type": ["string", "null"], "pattern": "^agent_[0-9A-HJKMNP-TV-Z]{26}$" },
+    "operation_id": { "type": ["string", "null"], "pattern": "^op_[0-9A-HJKMNP-TV-Z]{26}$", "description": "关联 Operation(声称所涉执行)" },
+    "claim_summary": { "type": "string", "maxLength": 500, "description": "声称摘要(脱敏;claim 原文入受保护引用)" },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["kind", "ref"],
+        "additionalProperties": false,
+        "properties": {
+          "kind": { "$ref": "#/definitions/evidence_kind" },
+          "ref": { "type": "string", "maxLength": 200, "description": "证据引用:收据 id / event_seq / 状态断言路径 / 查询结果摘要" }
+        }
+      }
+    },
+    "verdict": { "$ref": "#/definitions/verdict" },
+    "guard_state": { "$ref": "#/definitions/guard_state" },
+    "verification_hook": { "type": ["string", "null", "object"], "description": "消费的 manifest verification 钩子记录(query/expect/within_ms,M4 预留字段 M5 启用);null = 该能力未声明 verification" },
+    "observed_at": { "type": "string", "format": "date-time" }
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "boenmind:memory:memory-entry:v0.1",
+  "x-frozen": "2026-08-29",
+  "title": "Memory 条目 v0.1(M5.7)",
+  "description": "Memory 是一等合同对象,作用域即权限边界(基线 §4.1):memory:app:<app> App 域私有经验 / memory:task:<id> 任务上下文(结束后按保留策略归档或删除)/ memory:agent:<id> 单 Agent 工作记忆 / memory:user 用户级偏好与事实(写入需显式授权)。读写检索删除都走 Broker(memory.write / memory.search / memory.delete,M5 以内置 Provider 注册,复用 capability.* 合同与审计)。阶段一检索 FTS,向量引擎可替换接口预留不承诺;默认不自动写长期记忆;用户纠正优先级最高,覆盖而非追加;来源被删除时记忆级联失效(墓碑,回放不长回)。",
+  "definitions": {
+    "scope": {
+      "type": "string",
+      "pattern": "^memory:(app:[a-z][a-z0-9_]{1,31}|task:[A-Za-z0-9_\\-]{1,64}|agent:[0-9A-HJKMNP-TV-Z]{26}|user)$"
+    },
+    "trust": {
+      "enum": ["trusted", "agent-derived", "untrusted"],
+      "description": "来源信任分级(基线 §4.5 三级标注;跨域传递先脱敏并保留来源标注)"
+    }
+  },
+  "type": "object",
+  "required": ["entry_id", "scope", "content_ref", "source_trust", "content_hash", "created_at"],
+  "additionalProperties": false,
+  "properties": {
+    "entry_id": { "type": "string", "pattern": "^mem_[0-9A-HJKMNP-TV-Z]{26}$" },
+    "scope": { "$ref": "#/definitions/scope" },
+    "content_ref": { "type": "string", "maxLength": 500, "description": "内容受保护引用(脱敏一致性同日志,基线 §8.4;原文不入普通日志)" },
+    "content_digest_preview": { "type": ["string", "null"], "maxLength": 200, "description": "FTS 索引面:脱敏摘要文本(检索命中展示面)" },
+    "source_trust": { "$ref": "#/definitions/trust" },
+    "source_ref": { "type": ["string", "null"], "maxLength": 200, "description": "来源事件/收据引用(event_seq 或 operation_id);来源被删除时本条目级联失效" },
+    "content_hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "correction_of": { "type": ["string", "null"], "description": "被纠正条目的 entry_id(用户纠正覆盖而非追加,优先级最高);null = 非纠正" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "tombstoned": { "type": "boolean", "default": false, "description": "墓碑位:删除后置 true,消费者回放不得复活(基线 §8.4 删除语义)" }
+  }
+}

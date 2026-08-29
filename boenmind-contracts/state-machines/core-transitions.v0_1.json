@@ -2,8 +2,8 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "boenmind:state-machines:core:v0.1",
   "x-frozen": "2026-08-28",
-  "title": "M1 状态迁移表（Operation / Session / Agent）",
-  "description": "每次迁移必须产生一条 operation.state.changed（对 operation）并携带 reason_code。guard 是机器可检查的前置条件表达式。不在表中的迁移一律非法。terminal 列出的状态不可再迁出。M4 增发：operation.waiting_approval 状态与三条边（Minor）。",
+  "title": "M1 状态迁移表（Operation / Session / Agent / Task）",
+  "description": "每次迁移必须产生一条 operation.state.changed（对 operation）或 task.state.changed（对 task，M5 起）并携带 reason_code。guard 是机器可检查的前置条件表达式。不在表中的迁移一律非法。terminal 列出的状态不可再迁出。M4 增发：operation.waiting_approval 状态与三条边（Minor）。M5 增发：task 状态机（7 态 12 边）与 agent.paused 态四边（Minor；completed 必须 guard verified_completion——无 Observation 核验不得完成，M5 规格 §5.7）。",
   "machines": {
     "operation": {
       "states": ["not_started", "running", "waiting_approval", "succeeded", "failed", "cancelled", "timeout", "outcome_unknown", "interrupted"],
@@ -39,9 +39,9 @@
       ]
     },
     "agent": {
-      "states": ["created", "starting", "running", "waiting_model", "stopping", "stopped", "failed", "cancelled", "interrupted", "resuming"],
+      "states": ["created", "starting", "running", "waiting_model", "paused", "stopping", "stopped", "failed", "cancelled", "interrupted", "resuming"],
       "terminal": ["stopped", "failed", "cancelled"],
-      "m1_subset_note": "waiting_input/waiting_tool 随 M5 增发;waiting_approval 已于 M4 随 operation 增发(基线 3 预留;agent 侧状态随工具调用循环 M5 兑现,见 M4 规格 §8.5)",
+      "m1_subset_note": "M5 已增发 paused（级联 task.pause/resume，规格 §5.5）；waiting_input/waiting_tool/waiting_approval 的 agent 侧状态仍随工具调用循环演进（审批等待当前由 operation.waiting_approval 承载），兑现顺序记入 M5 回看复核",
       "transitions": [
         { "from": "created",       "to": "starting",      "guard": "agent_start" },
         { "from": "created",       "to": "cancelled",     "guard": "explicit_cancel" },
@@ -52,6 +52,10 @@
         { "from": "waiting_model", "to": "failed",        "guard": "model_chain_exhausted OR budget_exceeded" },
         { "from": "waiting_model", "to": "stopping",      "guard": "explicit_cancel" },
         { "from": "running",       "to": "stopping",      "guard": "explicit_cancel" },
+        { "from": "running",       "to": "paused",        "guard": "task_paused OR agent_paused", "note": "M5 增发：用户 task.pause 级联或 Coordinator 显式 agent.pause（ADR-0002 mutation 动词）" },
+        { "from": "paused",        "to": "running",       "guard": "task_resumed OR agent_resumed", "note": "M5 增发：用户 task.resume 级联（编排重启触发者之一，ADR-0004 条件 6）或 Coordinator agent.resume" },
+        { "from": "paused",        "to": "stopping",      "guard": "explicit_cancel", "note": "M5 增发" },
+        { "from": "paused",        "to": "cancelled",     "guard": "explicit_cancel", "note": "M5 增发" },
         { "from": "running",       "to": "failed",        "guard": "unrecoverable_error" },
         { "from": "stopping",      "to": "stopped",       "guard": "turn_boundary_reached" },
         { "from": "stopping",      "to": "interrupted",   "guard": "runtime_crash_during_stop" },
@@ -61,6 +65,25 @@
         { "from": "interrupted",   "to": "resuming",      "guard": "restart_recovery" },
         { "from": "resuming",      "to": "running",       "guard": "replay_ok" },
         { "from": "resuming",      "to": "stopped",       "guard": "replay_ok AND turn_was_stopping" }
+      ]
+    },
+    "task": {
+      "states": ["created", "running", "paused", "blocked", "completed", "failed", "cancelled"],
+      "terminal": ["completed", "failed", "cancelled"],
+      "m5_note": "waiting_approval 不入 task 状态机（Operation/Agent 级承载）；Task 层以监护态投影呈现（基线 §20 八态，Observation Log 承载）。blocked 入口三因：budget_exhausted / stall_hard_limit / outcome_unknown_pending（M5 规格 §5.1/§5.2）",
+      "transitions": [
+        { "from": "created",  "to": "running",   "guard": "task_started" },
+        { "from": "running",  "to": "paused",    "guard": "task_paused" },
+        { "from": "paused",   "to": "running",   "guard": "task_resumed" },
+        { "from": "running",  "to": "blocked",   "guard": "budget_exhausted OR stall_hard_limit OR outcome_unknown_pending" },
+        { "from": "blocked",  "to": "running",   "guard": "user_resolved", "note": "含用户批准扩容/恢复裁定/副作用核验确认；blocked 不自动重启（ADR-0004 条件 6：硬顶后等待用户）" },
+        { "from": "running",  "to": "completed", "guard": "verified_completion", "note": "完成判定门禁：无 Observation 核验不得完成（基线 M5 通过条件第 4 条；M5 规格 §5.7）" },
+        { "from": "paused",   "to": "completed", "guard": "verified_completion" },
+        { "from": "running",  "to": "failed",    "guard": "verified_failure" },
+        { "from": "paused",   "to": "failed",    "guard": "verified_failure" },
+        { "from": "running",  "to": "cancelled", "guard": "task_cancelled" },
+        { "from": "paused",   "to": "cancelled", "guard": "task_cancelled" },
+        { "from": "blocked",  "to": "cancelled", "guard": "task_cancelled" }
       ]
     }
   }

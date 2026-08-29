@@ -1,0 +1,99 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "boenmind:task:task:v0.1",
+  "x-frozen": "2026-08-29",
+  "title": "Task 规范对象 v0.1(M5.2)",
+  "description": "Task 的规范状态、生命周期、成员关系、预算与截止时间唯一由 L2 持有(ADR-0004 三层归属;基线 §2.2/§10.3)。任何 Task Board 与 Surface 视图仅为投影,不是存在性依据;删除以 L2 墓碑为准。写入门禁:task_epoch 递增 + CAS 条件写入 + 命令租约(ADR-0004;过期 epoch 命令 Stale 拒绝并留审计)。authorization 字段为三方交集(Butler 可授协调权 ∩ Task 授权 ∩ 用户授权,ADR-0002 §11.3)的 Task 分量载体。",
+  "definitions": {
+    "task_id": {
+      "type": "string",
+      "pattern": "^task_[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "task_state": {
+      "type": "string",
+      "enum": ["created", "running", "paused", "blocked", "completed", "failed", "cancelled"],
+      "description": "task 状态机状态(状态机合同见 state-machines/core-transitions machines.task);completed 必须 guard verified_completion(无 Observation 核验不得完成,M5 规格 §5.7)"
+    },
+    "coordination_verb": {
+      "type": "string",
+      "enum": [
+        "task.create", "task.cancel", "task.collect", "agent.spawn", "agent.pause",
+        "agent.resume", "agent.stop", "agent.watch", "team.create",
+        "capability.discover", "event.subscribe", "capability.call"
+      ],
+      "description": "协调动词(基线 §10.1 Butler 权限清单);Task 授权白名单从中选取。safe/mutation 二分(ADR-0002 §11.2):capability.discover/event.subscribe/task.collect/task.watch 类为 safe 可默认继承;task.cancel/agent.pause/agent.stop/agent.spawn/team.create 为 mutation 须显式列出"
+    },
+    "resource_predicate": {
+      "type": "object",
+      "description": "资源谓词:精确 capability 名 + 可选 args 等值谓词字典;空谓词 = 全参(与 capability/grant.v0.1 谓词语义一致)",
+      "required": ["capability"],
+      "additionalProperties": false,
+      "properties": {
+        "capability": { "$ref": "boenmind:wire:capability:v0.1#/definitions/capability_name" },
+        "args_eq": { "type": "object", "description": "args 等值谓词字典(键=参数名,值=标量)" }
+      }
+    },
+    "authorization_entry": {
+      "type": "object",
+      "required": ["verb"],
+      "additionalProperties": false,
+      "properties": {
+        "verb": { "$ref": "#/definitions/coordination_verb" },
+        "klass": { "enum": ["safe", "mutation"], "description": "二分分级;须与动词默认分级一致(mutation 动词必须 klass=mutation 且显式列入)" },
+        "resources": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/resource_predicate" },
+          "description": "作用资源谓词;缺省 = 仅本 Task 子树内对象"
+        }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "description": "Task 预算包络(基线 §9.7 Budget 对象,键值对扩展、老版本忽略未知键);包络内子分配允许、扩容禁止(ADR-0002 要点 5;扩容仅用户批准,经 task.budget.increased 事实事件)",
+      "additionalProperties": { "type": ["integer", "number", "string"] },
+      "properties": {
+        "max_tokens": { "type": "integer", "minimum": 0 },
+        "max_cost": { "type": "number", "minimum": 0 },
+        "max_wallclock_ms": { "type": "integer", "minimum": 0 },
+        "max_tool_calls": { "type": "integer", "minimum": 0 },
+        "max_turns": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "member": {
+      "type": "object",
+      "required": ["agent_id", "role", "joined_seq"],
+      "additionalProperties": false,
+      "properties": {
+        "agent_id": { "type": "string", "pattern": "^agent_[0-9A-HJKMNP-TV-Z]{26}$" },
+        "role": { "enum": ["coordinator", "worker"], "description": "M5 仅 coordinator+单 worker 闭环;多成员编队归 M6" },
+        "grant_id": { "type": ["string", "null"], "description": "成员角色授权 Grant(由 Coordinator 签发,parent 链不超上界,ADR-0002 §11.3)" },
+        "joined_seq": { "type": "integer", "minimum": 0, "description": "成员加入事实事件(task.member.added)的 event_seq;删除以 L2 墓碑为准" }
+      }
+    }
+  },
+  "type": "object",
+  "required": ["task_id", "title", "goal", "state", "created_by", "task_epoch", "authorization", "budget", "members", "parent_task_id", "created_at", "updated_at"],
+  "additionalProperties": false,
+  "properties": {
+    "task_id": { "$ref": "#/definitions/task_id" },
+    "title": { "type": "string", "minLength": 1, "maxLength": 200, "description": "人类可读标题(脱敏)" },
+    "goal": { "type": "string", "maxLength": 2000, "description": "目标脱敏摘要;大段原文入受保护引用(基线 §8.4)" },
+    "state": { "$ref": "#/definitions/task_state" },
+    "created_by": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,15}:[A-Za-z0-9_.:\\-]{1,64}$", "description": "创建者 principal(通常 butler:system,形态同 capability/grant 的 principal)" },
+    "task_epoch": { "type": "integer", "minimum": 1, "description": "写入门禁纪元:取得接管权时递增,过期 epoch 命令 Stale 拒绝(ADR-0004;持久于 tasks 表,重启不回退)" },
+    "authorization": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/authorization_entry" },
+      "description": "Task 授权白名单 = 三方交集的 Task 分量;Broker 按此裁剪协调动词与资源,子树外目标默认拒绝"
+    },
+    "budget": { "$ref": "#/definitions/budget" },
+    "deadline": { "type": ["string", "null"], "format": "date-time", "description": "截止时间;超时由 Watchdog 检测面覆盖(基线 §20)" },
+    "members": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/member" }
+    },
+    "parent_task_id": { "const": null, "description": "父 Task(M6 子任务预留;M5 恒 null,M6 以 Minor 放宽为 task 引用,基线 §11 子任务语境随 Team 定)" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" }
+  }
+}

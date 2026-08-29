@@ -1,10 +1,12 @@
 //! Wire API 信封与方法参数/结果镜像
-//! (wire/envelope + wire/session + wire/agent + wire/capability,v0.1)。
+//! (wire/envelope + wire/session + wire/agent + wire/capability + wire/task,v0.1)。
 //!
 //! M1 方法集合(7 个):session.create / session.resume / session.close /
 //! events.poll / agent.send_input / agent.cancel / operations.get。
 //! M4 增发(3 个):capability.call / approval.list / approval.respond
 //! (服务端实现随 M4-T5)。
+//! M5 增发(6 个):task.create / task.list / task.get / task.pause /
+//! task.resume / task.stop(服务端实现随 M5-T2)。
 
 use crate::BmTimestamp;
 use crate::budget::Budget;
@@ -29,6 +31,14 @@ wire_str_enum!(Method {
     CapabilityCall => "capability.call",
     ApprovalList => "approval.list",
     ApprovalRespond => "approval.respond",
+    // M5 增发(2026-08-29,Minor:envelope method 枚举同步;params/result 见
+    // wire/task.v0_1;服务端行为 M5-T2 实现,当前 unavailable)
+    TaskCreate => "task.create",
+    TaskList => "task.list",
+    TaskGet => "task.get",
+    TaskPause => "task.pause",
+    TaskResume => "task.resume",
+    TaskStop => "task.stop",
 });
 
 wire_str_enum!(InputTrust {
@@ -225,6 +235,9 @@ pub struct EventsPollParams {
     pub since_seq: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
+    /// M5 增发:按 Task 过滤事件流(null = 不过滤;wire/session events.poll)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<BmId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -333,4 +346,59 @@ pub struct ApprovalRespondParams {
     pub decision: String,
     #[serde(default)]
     pub scope: Option<String>,
+}
+
+// ---- task.create / task.list / task.get / task.pause / task.resume /
+//      task.stop(M5;wire/task)------------------------------------------
+
+/// Task 授权声明条目(task/task.v0.1 authorization_entry):三方交集的
+/// Task 分量载体;mutation 动词必须显式列入(ADR-0002 §11.2)。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TaskAuthorizationEntry {
+    pub verb: String,
+    /// safe | mutation(须与动词默认分级一致)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub klass: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resources: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TaskCreateParams {
+    pub title: String,
+    pub goal: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authorization: Option<Vec<TaskAuthorizationEntry>>,
+    /// Task 预算包络(基线 §9.7;开放键值,缺省用运行时默认包络)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget: Option<crate::budget::Budget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deadline: Option<BmTimestamp>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TaskCreateResult {
+    pub task_id: BmId,
+    pub state: crate::states::TaskState,
+    pub created_at: BmTimestamp,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TaskListParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state_filter: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TaskGetParams {
+    pub task_id: BmId,
+}
+
+/// Task 生命周期命令共用 result(pause/resume/stop)。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TaskStateResult {
+    pub task_id: BmId,
+    pub state: crate::states::TaskState,
 }

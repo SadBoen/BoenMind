@@ -80,13 +80,14 @@
     }
   },
   "events.poll": {
-    "description": "M1 用拉取代替订阅流；消费位点 = event_seq，重复拉取由消费者去重（基线 8.3）。",
+    "description": "M1 用拉取代替订阅流；消费位点 = event_seq，重复拉取由消费者去重（基线 8.3）。M5 增发可选 task_id 过滤（Task Board watch 观察面，M5 规格 §5.2；过滤在事件信封 payload.task_id 上执行）。",
     "params": {
       "type": "object", "required": ["session_id", "since_seq"], "additionalProperties": false,
       "properties": {
         "session_id": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/id" },
         "since_seq": { "type": "integer", "minimum": 0 },
-        "limit": { "type": "integer", "minimum": 1, "maximum": 1000, "default": 100 }
+        "limit": { "type": "integer", "minimum": 1, "maximum": 1000, "default": 100 },
+        "task_id": { "type": ["string", "null"], "pattern": "^task_[0-9A-HJKMNP-TV-Z]{26}$", "description": "M5 增发：按 Task 过滤事件流（null/缺省 = 不过滤）" }
       }
     },
     "result": {

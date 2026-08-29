@@ -90,6 +90,16 @@ async fn rpc_inner(state: &AppState, method: Method, req: &RequestEnvelope) -> C
                     .await,
             )
         }
+        // M5:task 六方法(T0 仅合同与镜像增发;服务端行为 M5-T2 实现,当前 unavailable)
+        Method::TaskCreate
+        | Method::TaskList
+        | Method::TaskGet
+        | Method::TaskPause
+        | Method::TaskResume
+        | Method::TaskStop => Err(bm_core::CoreError::Semantic(
+            bm_contract::error_codes::ErrorCode::Unavailable,
+            "task 方法随 M5-T2 启用".into(),
+        )),
     }
 }
 

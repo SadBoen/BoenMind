@@ -1,5 +1,5 @@
-//! 三台状态机镜像(state-machines/core-transitions.v0_1.json):
-//! Operation / Session / Agent。表外迁移一律非法(INV-2)。
+//! 四台状态机镜像(state-machines/core-transitions.v0_1.json):
+//! Operation / Session / Agent / Task。表外迁移一律非法(INV-2)。
 //! 迁移的 guard 文本原样保留,供测试与审计对照。
 
 wire_str_enum!(OperationState {
@@ -27,12 +27,25 @@ wire_str_enum!(AgentState {
     Starting => "starting",
     Running => "running",
     WaitingModel => "waiting_model",
+    // M5 增发(2026-08-29,Minor:级联 task.pause/resume 与 agent.pause/resume)
+    Paused => "paused",
     Stopping => "stopping",
     Stopped => "stopped",
     Failed => "failed",
     Cancelled => "cancelled",
     Interrupted => "interrupted",
     Resuming => "resuming",
+});
+
+// M5 增发(2026-08-29,Minor:task 状态机 7 态,基线 §2.2/§10.3,M5 规格 §5.1)
+wire_str_enum!(TaskState {
+    Created => "created",
+    Running => "running",
+    Paused => "paused",
+    Blocked => "blocked",
+    Completed => "completed",
+    Failed => "failed",
+    Cancelled => "cancelled",
 });
 
 /// 一条合法迁移。guard 为迁移表中的前置条件表达式原文。
@@ -187,7 +200,7 @@ pub const AGENT_TERMINAL: [AgentState; 3] = [
     AgentState::Cancelled,
 ];
 
-pub const AGENT_TRANSITIONS: [Transition<AgentState>; 18] = [
+pub const AGENT_TRANSITIONS: [Transition<AgentState>; 22] = [
     t(AgentState::Created, AgentState::Starting, "agent_start"),
     t(
         AgentState::Created,
@@ -221,6 +234,20 @@ pub const AGENT_TRANSITIONS: [Transition<AgentState>; 18] = [
         "explicit_cancel",
     ),
     t(AgentState::Running, AgentState::Stopping, "explicit_cancel"),
+    // M5 增发:paused 四边(用户 task.pause/resume 级联或 Coordinator 显式动词;
+    // resume 为编排重启触发者之一,ADR-0004 条件 6)
+    t(
+        AgentState::Running,
+        AgentState::Paused,
+        "task_paused OR agent_paused",
+    ),
+    t(
+        AgentState::Paused,
+        AgentState::Running,
+        "task_resumed OR agent_resumed",
+    ),
+    t(AgentState::Paused, AgentState::Stopping, "explicit_cancel"),
+    t(AgentState::Paused, AgentState::Cancelled, "explicit_cancel"),
     t(
         AgentState::Running,
         AgentState::Failed,
@@ -264,13 +291,49 @@ pub const AGENT_TRANSITIONS: [Transition<AgentState>; 18] = [
     ),
 ];
 
+pub const TASK_TERMINAL: [TaskState; 3] = [
+    TaskState::Completed,
+    TaskState::Failed,
+    TaskState::Cancelled,
+];
+
+// M5 增发:task 状态机 12 边(M5 规格 §5.1;completed 必须 verified_completion
+// ——完成判定门禁;blocked 仅 user_resolved 可回 running,ADR-0004 条件 6)
+pub const TASK_TRANSITIONS: [Transition<TaskState>; 12] = [
+    t(TaskState::Created, TaskState::Running, "task_started"),
+    t(TaskState::Running, TaskState::Paused, "task_paused"),
+    t(TaskState::Paused, TaskState::Running, "task_resumed"),
+    t(
+        TaskState::Running,
+        TaskState::Blocked,
+        "budget_exhausted OR stall_hard_limit OR outcome_unknown_pending",
+    ),
+    t(TaskState::Blocked, TaskState::Running, "user_resolved"),
+    t(
+        TaskState::Running,
+        TaskState::Completed,
+        "verified_completion",
+    ),
+    t(
+        TaskState::Paused,
+        TaskState::Completed,
+        "verified_completion",
+    ),
+    t(TaskState::Running, TaskState::Failed, "verified_failure"),
+    t(TaskState::Paused, TaskState::Failed, "verified_failure"),
+    t(TaskState::Running, TaskState::Cancelled, "task_cancelled"),
+    t(TaskState::Paused, TaskState::Cancelled, "task_cancelled"),
+    t(TaskState::Blocked, TaskState::Cancelled, "task_cancelled"),
+];
+
 const fn t<S>(from: S, to: S, guard: &'static str) -> Transition<S> {
     Transition { from, to, guard }
 }
 
 state_machine!(OperationState, 9, OPERATION_TERMINAL, OPERATION_TRANSITIONS);
 state_machine!(SessionState, 4, SESSION_TERMINAL, SESSION_TRANSITIONS);
-state_machine!(AgentState, 10, AGENT_TERMINAL, AGENT_TRANSITIONS);
+state_machine!(AgentState, 11, AGENT_TERMINAL, AGENT_TRANSITIONS);
+state_machine!(TaskState, 7, TASK_TERMINAL, TASK_TRANSITIONS);
 
 #[cfg(test)]
 mod tests {

@@ -9,52 +9,87 @@ use serde_json::{Value, json};
 
 const ENVELOPE_ID: &str = "boenmind:wire:envelope:v0.1#";
 const BUDGET_ID: &str = "boenmind:budget:v0.1#";
+const TASK_ID: &str = "boenmind:task:task:v0.1#";
+const WIRE_CAPABILITY_ID: &str = "boenmind:wire:capability:v0.1#";
 
 /// 合并跨文档引用,返回可独立编译的 schema 文档。
-/// 已知被引文档:envelope / budget(其余文档无外部引用)。
+/// 已知被引文档:envelope / budget / task / wire-capability(M5 起增后两者)。
+/// 合并是传递闭包:task 引用 wire-capability 的 definitions,合并进主文档后
+/// 会继续触发下一轮扫描,直到不再出现新的被引 id(不动点)。
 pub fn combine(schema_text: &str) -> Value {
     let mut doc: Value = serde_json::from_str(schema_text).expect("schema 必须是合法 JSON");
-    let text = serde_json::to_string(&doc).expect("序列化不会失败");
-    let needs_envelope = text.contains(ENVELOPE_ID);
-    let needs_budget = text.contains(BUDGET_ID);
-    if !needs_envelope && !needs_budget {
-        return doc;
-    }
 
-    fn definitions_of(schema_text: &str) -> serde_json::Map<String, Value> {
-        let doc: Value = serde_json::from_str(schema_text).expect("schema 合法");
-        doc.get("definitions")
-            .and_then(|d| d.as_object())
-            .expect("schema 必须有 definitions")
-            .clone()
-    }
+    const ENVELOPE: &str = "envelope";
+    const BUDGET: &str = "budget";
+    const TASK: &str = "task";
+    const WIRE_CAPABILITY: &str = "wire-capability";
 
-    let obj = doc.as_object_mut().expect("schema 顶层必须是对象");
-    let defs = obj
-        .entry("definitions")
-        .or_insert_with(|| Value::Object(Default::default()));
-    let defs_obj = defs.as_object_mut().expect("definitions 必须是对象");
-    if needs_envelope {
-        let envelope: Value =
-            serde_json::from_str(crate::registries::ENVELOPE_SCHEMA).expect("envelope schema 合法");
-        for (k, v) in envelope
-            .get("definitions")
-            .and_then(|d| d.as_object())
-            .expect("envelope 必须有 definitions")
-        {
-            defs_obj.entry(k.clone()).or_insert(v.clone());
+    fn source_of(name: &str) -> &'static str {
+        match name {
+            ENVELOPE => crate::registries::ENVELOPE_SCHEMA,
+            BUDGET => crate::registries::BUDGET_SCHEMA,
+            TASK => crate::registries::TASK_SCHEMA,
+            WIRE_CAPABILITY => crate::registries::WIRE_CAPABILITY_SCHEMA,
+            _ => unreachable!("未知被引文档"),
         }
-        // envelope 根层的命名子 schema(request/response/event_envelope)也被
-        // 跨文档引用,一并并入 definitions,使 "#/definitions/<name>" 可解析。
-        for name in ["request", "response", "event_envelope"] {
-            if let Some(sub) = envelope.get(name) {
-                defs_obj.entry(name.to_string()).or_insert(sub.clone());
+    }
+
+    fn id_of(name: &str) -> &'static str {
+        match name {
+            ENVELOPE => ENVELOPE_ID,
+            BUDGET => BUDGET_ID,
+            TASK => TASK_ID,
+            WIRE_CAPABILITY => WIRE_CAPABILITY_ID,
+            _ => unreachable!("未知被引文档"),
+        }
+    }
+
+    let mut merged: Vec<&'static str> = Vec::new();
+    loop {
+        let text = serde_json::to_string(&doc).expect("序列化不会失败");
+        let mut progressed = false;
+        for name in [ENVELOPE, BUDGET, TASK, WIRE_CAPABILITY] {
+            if text.contains(id_of(name)) && !merged.contains(&name) {
+                let obj = doc.as_object_mut().expect("schema 顶层必须是对象");
+                let defs = obj
+                    .entry("definitions")
+                    .or_insert_with(|| Value::Object(Default::default()));
+                let defs_obj = defs.as_object_mut().expect("definitions 必须是对象");
+                if name == ENVELOPE {
+                    let envelope: Value =
+                        serde_json::from_str(source_of(name)).expect("envelope schema 合法");
+                    for (k, v) in envelope
+                        .get("definitions")
+                        .and_then(|d| d.as_object())
+                        .expect("envelope 必须有 definitions")
+                    {
+                        defs_obj.entry(k.clone()).or_insert(v.clone());
+                    }
+                    // envelope 根层的命名子 schema(request/response/event_envelope)
+                    // 也被跨文档引用,一并并入 definitions,使 "#/definitions/<name>"
+                    // 可解析。
+                    for sub in ["request", "response", "event_envelope"] {
+                        if let Some(s) = envelope.get(sub) {
+                            defs_obj.entry(sub.to_string()).or_insert(s.clone());
+                        }
+                    }
+                } else {
+                    let src: Value =
+                        serde_json::from_str(source_of(name)).expect("被引 schema 合法");
+                    for (k, v) in src
+                        .get("definitions")
+                        .and_then(|d| d.as_object())
+                        .expect("被引 schema 必须有 definitions")
+                    {
+                        defs_obj.entry(k.clone()).or_insert(v.clone());
+                    }
+                }
+                merged.push(name);
+                progressed = true;
             }
         }
-    }
-    if needs_budget {
-        for (k, v) in definitions_of(crate::registries::BUDGET_SCHEMA) {
-            defs_obj.entry(k).or_insert(v);
+        if !progressed {
+            break;
         }
     }
 

@@ -35,6 +35,7 @@ async fn t02_session_lifecycle_and_poll() {
             session_id: sess.clone(),
             since_seq: 2,
             limit: Some(10),
+            task_id: None,
         })
         .await
         .expect("poll 成功");

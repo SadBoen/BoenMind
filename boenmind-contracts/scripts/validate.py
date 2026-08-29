@@ -163,6 +163,7 @@ edges = {m: {(t["from"], t["to"]) for t in spec["transitions"]} for m, spec in m
 ENV = store["boenmind:wire:envelope:v0.1"]
 AGENT = store["boenmind:wire:agent:v0.1"]
 LOGS = store["boenmind:logs:execution-log-entry:v0.1"]
+OBSLOG = store["boenmind:logs:observation-log-entry:v0.1"]
 
 trace_files = sorted((ROOT / "golden-traces").glob("*.md"))
 total_kinds = {"request": 0, "response": 0, "event": 0, "log": 0, "receipt": 0}
@@ -185,7 +186,7 @@ for tf in trace_files:
         fail("R3", f"{tf.name}: 轨迹错误码不在注册表: {c}")
 
     # R4: 状态迁移必须是迁移表中的边
-    for machine, chain in re.findall(r"\b(operation|agent|session)\s+([a-z_]+(?:→[a-z_]+)+)", trace):
+    for machine, chain in re.findall(r"\b(operation|agent|session|task)\s+([a-z_]+(?:→[a-z_]+)+)", trace):
         states = chain.split("→")
         for a, b in zip(states, states[1:]):
             total_trans += 1
@@ -215,7 +216,8 @@ for tf in trace_files:
             errs += validate(obj, ENV["event_envelope"], ENV)
             kinds["event"] += 1
         if isinstance(obj, dict) and "log_seq" in obj:
-            errs += validate(obj, LOGS, LOGS)
+            schema = OBSLOG if "verdict" in obj else LOGS
+            errs += validate(obj, schema, schema)
             kinds["log"] += 1
         for e in errs:
             fail("R2", f"{label}: {e}")

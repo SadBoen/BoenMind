@@ -8,7 +8,7 @@ use bm_contract::events::{EventEnvelope, EventType};
 use bm_contract::exec_log::LogEntry;
 use bm_contract::registries;
 use bm_contract::schemas::{validate, validate_by_pointer};
-use bm_contract::states::{AgentState, OperationState, SessionState};
+use bm_contract::states::{AgentState, OperationState, SessionState, TaskState};
 use bm_contract::wire::{
     AgentSpec, CancelResult, EventsPollResult, GetOperationParams, Receipt, RequestEnvelope,
     ResponseEnvelope, SendInputParams, SessionCloseResult, SessionCreateParams,
@@ -99,8 +99,8 @@ fn event_type_enum_matches_registry() {
     let registry = registries::runtime_events();
     assert_eq!(
         registry.len(),
-        32,
-        "注册表事件数漂移(M1 20 + M2 增发 2 + M4 增发 10)"
+        40,
+        "注册表事件数漂移(M1 20 + M2 增发 2 + M4 增发 10 + M5 增发 8)"
     );
     for reg in &registry {
         let t = EventType::from_wire(&reg.type_).unwrap_or_else(|| panic!("枚举缺 {}", reg.type_));
@@ -159,6 +159,29 @@ fn state_machines_match_transitions_json() {
                 && r.to == tr.to.as_str()
                 && r.guard == tr.guard),
             "agent 迁移 {:?}->{:?} 漂移",
+            tr.from,
+            tr.to
+        );
+    }
+
+    // M5 增发:task 状态机镜像
+    let task = &machines["task"];
+    assert_eq!(TaskState::ALL_LEN, task.states.len());
+    for s in &task.states {
+        let v = TaskState::from_wire(s).unwrap_or_else(|| panic!("task 缺状态 {s}"));
+        assert_eq!(
+            v.is_terminal(),
+            task.terminal.contains(s),
+            "task {s} terminal 漂移"
+        );
+    }
+    assert_eq!(TaskState::transitions().len(), task.transitions.len());
+    for tr in TaskState::transitions() {
+        assert!(
+            task.transitions.iter().any(|r| r.from == tr.from.as_str()
+                && r.to == tr.to.as_str()
+                && r.guard == tr.guard),
+            "task 迁移 {:?}->{:?} 在 JSON 中无对应或 guard 漂移",
             tr.from,
             tr.to
         );
@@ -225,6 +248,34 @@ fn wire_requests_validate_against_envelope() {
         (
             "approval.respond",
             json!({"approval_id": "appr_01JAAAAAAAAAAAAAAAAAAAAA04", "decision": "deny"}),
+        ),
+        // M5 增发六方法(GT-03 形态;params 合法性在 wire_task 方法级测试细化)
+        (
+            "task.create",
+            json!({"title": "整理读书笔记", "goal": "把 inbox 笔记归档到 notes 并复核"}),
+        ),
+        ("task.list", json!({})),
+        (
+            "task.get",
+            json!({"task_id": "task_01JAAAAAAAAAAAAAAAAAAAAAB2"}),
+        ),
+        (
+            "task.pause",
+            json!({"task_id": "task_01JAAAAAAAAAAAAAAAAAAAAAB2", "reason": "我先看看"}),
+        ),
+        (
+            "task.resume",
+            json!({"task_id": "task_01JAAAAAAAAAAAAAAAAAAAAAB2", "note": "继续"}),
+        ),
+        (
+            "task.stop",
+            json!({"task_id": "task_01JAAAAAAAAAAAAAAAAAAAAAB2", "reason": null}),
+        ),
+        // M5 增发:events.poll 可选 task_id 过滤(同名方法第二形态)
+        (
+            "events.poll",
+            json!({"session_id": "sess_01J9Z8G4A1X7M4Q6B8WD5RQ2WX", "since_seq": 0,
+                   "task_id": "task_01JAAAAAAAAAAAAAAAAAAAAAB2"}),
         ),
     ];
     for (method, params) in cases {
@@ -790,4 +841,207 @@ fn wire_capability_params_and_result_validate() {
         &respond_params,
     )
     .expect("approval.respond params 合法");
+}
+
+// ---- M5 增发(GT-03 形态):task / memory / observation 合同自检 ------------
+
+#[test]
+fn task_object_validates() {
+    let task = json!({
+        "task_id": "task_01JAAAAAAAAAAAAAAAAAAAAAB2",
+        "title": "整理读书笔记",
+        "goal": "把 inbox 笔记归档到 notes 并复核",
+        "state": "running",
+        "created_by": "butler:system",
+        "task_epoch": 1,
+        "authorization": [
+            {"verb": "task.collect", "klass": "safe"},
+            {"verb": "agent.spawn", "klass": "mutation"}
+        ],
+        "budget": {"max_tokens": 100000, "max_tool_calls": 50},
+        "deadline": null,
+        "members": [
+            {"agent_id": "agent_01JAAAAAAAAAAAAAAAAAAAAAB5",
+             "role": "worker", "grant_id": "grant_01JAAAAAAAAAAAAAAAAAAAAAB6",
+             "joined_seq": 5}
+        ],
+        "parent_task_id": null,
+        "created_at": "2026-08-29T11:00:01.000Z",
+        "updated_at": "2026-08-29T11:00:02.000Z"
+    });
+    validate(registries::TASK_SCHEMA, &task).expect("Task 对象合法");
+
+    // 非法状态必须被拒(状态机外状态)
+    let mut bad = task.clone();
+    bad["state"] = json!("stalled");
+    assert!(
+        validate(registries::TASK_SCHEMA, &bad).is_err(),
+        "stalled 是监护态非状态机状态,不得入 Task.state"
+    );
+
+    // parent_task_id 恒 null(M6 预留,M5 规格 §4-1)
+    let mut bad = task;
+    bad["parent_task_id"] = json!("task_01JAAAAAAAAAAAAAAAAAAAAAB1");
+    assert!(
+        validate(registries::TASK_SCHEMA, &bad).is_err(),
+        "parent_task_id M5 恒 null"
+    );
+}
+
+#[test]
+fn wire_task_params_and_results_validate() {
+    let create_params = json!({
+        "title": "整理读书笔记", "goal": "把 inbox 笔记归档到 notes 并复核",
+        "authorization": [{"verb": "task.collect", "klass": "safe"},
+                          {"verb": "agent.stop", "klass": "mutation"}],
+        "budget": {"max_tokens": 100000}, "deadline": null
+    });
+    validate_by_pointer(
+        registries::WIRE_TASK_SCHEMA,
+        "#/task.create/params",
+        &create_params,
+    )
+    .expect("task.create params 合法");
+
+    // 超长 title 必须被拒(合同 maxLength)
+    let mut bad = create_params.clone();
+    bad["title"] = json!("x".repeat(201));
+    assert!(
+        validate_by_pointer(registries::WIRE_TASK_SCHEMA, "#/task.create/params", &bad).is_err(),
+        "title 超长必须被拒"
+    );
+
+    let create_result = json!({
+        "task_id": "task_01JAAAAAAAAAAAAAAAAAAAAAB2",
+        "state": "created", "created_at": "2026-08-29T11:00:01.000Z"
+    });
+    validate_by_pointer(
+        registries::WIRE_TASK_SCHEMA,
+        "#/task.create/result",
+        &create_result,
+    )
+    .expect("task.create result 合法");
+
+    for m in ["task.pause", "task.resume", "task.stop"] {
+        let r = json!({"task_id": "task_01JAAAAAAAAAAAAAAAAAAAAAB2", "state": "running"});
+        validate_by_pointer(registries::WIRE_TASK_SCHEMA, &format!("#/{m}/result"), &r)
+            .unwrap_or_else(|e| panic!("{m} result 应合法: {e}"));
+    }
+}
+
+#[test]
+fn memory_entry_validates() {
+    let entry = json!({
+        "entry_id": "mem_01JAAAAAAAAAAAAAAAAAAAAAC5",
+        "scope": "memory:task:task_01JAAAAAAAAAAAAAAAAAAAAAB2",
+        "content_ref": "protected://mem/01JAAAAAAAAAAAAAAAAAAAAAC5",
+        "content_digest_preview": "归档偏好:按年目录",
+        "source_trust": "agent-derived",
+        "source_ref": "op_01JAAAAAAAAAAAAAAAAAAAAAB8",
+        "content_hash": "sha256:1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f809",
+        "correction_of": null,
+        "created_at": "2026-08-29T11:00:05.000Z",
+        "tombstoned": false
+    });
+    validate(registries::MEMORY_ENTRY_SCHEMA, &entry).expect("memory 条目合法");
+
+    // scope 枚举面:非法域必须被拒
+    let mut bad = entry.clone();
+    bad["scope"] = json!("memory:global");
+    assert!(
+        validate(registries::MEMORY_ENTRY_SCHEMA, &bad).is_err(),
+        "scope 即权限边界,未定义域必须被拒"
+    );
+
+    // 未知信任级别必须被拒
+    let mut bad = entry;
+    bad["source_trust"] = json!("very-trusted");
+    assert!(
+        validate(registries::MEMORY_ENTRY_SCHEMA, &bad).is_err(),
+        "trust 三级之外必须被拒"
+    );
+}
+
+#[test]
+fn observation_log_entry_validates() {
+    let entry = json!({
+        "log_seq": 1,
+        "task_id": "task_01JAAAAAAAAAAAAAAAAAAAAAB2",
+        "agent_id": "agent_01JAAAAAAAAAAAAAAAAAAAAAB5",
+        "operation_id": "op_01JAAAAAAAAAAAAAAAAAAAAAB8",
+        "claim_summary": "Worker 声称归档完成",
+        "evidence": [
+            {"kind": "receipt", "ref": "op_01JAAAAAAAAAAAAAAAAAAAAAB8"},
+            {"kind": "state_check", "ref": "notes/2026/archived.md exists"}
+        ],
+        "verdict": "verified",
+        "guard_state": "completed",
+        "verification_hook": {"query": "system.notes.read", "expect": "exists", "within_ms": 2000},
+        "observed_at": "2026-08-29T11:00:04.000Z"
+    });
+    validate(registries::OBSERVATION_LOG_SCHEMA, &entry).expect("observation 条目合法");
+
+    // 完成判定门禁面:unverified 是合法记录,但不得没有证据
+    let mut bad = entry.clone();
+    bad["evidence"] = json!([]);
+    assert!(
+        validate(registries::OBSERVATION_LOG_SCHEMA, &bad).is_err(),
+        "无证据的观察记录必须被拒(minItems=1)"
+    );
+
+    // 非法 verdict 必须被拒
+    let mut bad = entry;
+    bad["verdict"] = json!("agent-said-so");
+    assert!(
+        validate(registries::OBSERVATION_LOG_SCHEMA, &bad).is_err(),
+        "verdict 三值之外必须被拒"
+    );
+}
+
+#[test]
+fn task_state_machine_terminal_and_paused_edges() {
+    // M5 增发面:完成判定门禁——无 verified guard 不得进 completed
+    assert!(TaskState::can_transition(
+        TaskState::Running,
+        TaskState::Completed
+    ));
+    assert!(
+        !TaskState::can_transition(TaskState::Blocked, TaskState::Completed),
+        "blocked 无直达 completed 边(须先 user_resolved)"
+    );
+    assert!(
+        !TaskState::can_transition(TaskState::Created, TaskState::Completed),
+        "created 无直达 completed 边"
+    );
+    // blocked 自动出口封死(ADR-0004 条件 6:硬顶后等待用户)
+    assert!(TaskState::can_transition(
+        TaskState::Blocked,
+        TaskState::Running
+    ));
+    assert!(TaskState::can_transition(
+        TaskState::Blocked,
+        TaskState::Cancelled
+    ));
+    // agent paused 四边
+    assert!(AgentState::can_transition(
+        AgentState::Running,
+        AgentState::Paused
+    ));
+    assert!(AgentState::can_transition(
+        AgentState::Paused,
+        AgentState::Running
+    ));
+    assert!(AgentState::can_transition(
+        AgentState::Paused,
+        AgentState::Stopping
+    ));
+    assert!(AgentState::can_transition(
+        AgentState::Paused,
+        AgentState::Cancelled
+    ));
+    // paused 非终态
+    assert!(!AgentState::Paused.is_terminal());
+    // M8 序列化形态:paused 与 task 状态字符串与合同一致
+    assert_eq!(AgentState::Paused.as_str(), "paused");
+    assert_eq!(TaskState::Blocked.as_str(), "blocked");
 }
