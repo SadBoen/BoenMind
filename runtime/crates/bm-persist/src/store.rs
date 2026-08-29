@@ -116,6 +116,37 @@ pub trait EventStore: Send + Sync {
 
     /// 恢复面:全部预算账本行。
     fn list_task_budget(&self) -> StoreResult<Vec<serde_json::Value>>;
+
+    /// Observation Log 条目落表(M5-T8),返回 log_seq。
+    fn save_observation(
+        &self,
+        task_id: &str,
+        verdict: &str,
+        guard_state: &str,
+        payload: &str,
+        observed_at: &str,
+    ) -> StoreResult<u64>;
+
+    /// 记忆写入(M5-T7;correction_of 即时墓碑化被纠正条目)。
+    #[allow(clippy::too_many_arguments)]
+    fn memory_put(
+        &self,
+        entry_id: &str,
+        scope: &str,
+        content_ref: &str,
+        content_preview: Option<&str>,
+        source_trust: &str,
+        source_ref: Option<&str>,
+        correction_of: Option<&str>,
+        payload: &str,
+        created_at: &str,
+    ) -> StoreResult<()>;
+
+    /// 记忆检索(scope 内非墓碑;FTS5 优先 LIKE 兜底)。
+    fn memory_search(&self, scope: &str, query: &str) -> StoreResult<Vec<serde_json::Value>>;
+
+    /// 记忆删除(墓碑 + 来源级联),返回级联数。
+    fn memory_delete(&self, entry_id: &str) -> StoreResult<usize>;
 }
 
 /// 默认压实触发间隔(条);ADR-0004 条件 2:压实是强制义务,不是可选项。
@@ -452,6 +483,51 @@ impl EventStore for PersistStore {
 
     fn list_task_budget(&self) -> StoreResult<Vec<serde_json::Value>> {
         self.state.list_task_budget()
+    }
+
+    fn save_observation(
+        &self,
+        task_id: &str,
+        verdict: &str,
+        guard_state: &str,
+        payload: &str,
+        observed_at: &str,
+    ) -> StoreResult<u64> {
+        self.state
+            .save_observation(task_id, verdict, guard_state, payload, observed_at)
+    }
+
+    fn memory_put(
+        &self,
+        entry_id: &str,
+        scope: &str,
+        content_ref: &str,
+        content_preview: Option<&str>,
+        source_trust: &str,
+        source_ref: Option<&str>,
+        correction_of: Option<&str>,
+        payload: &str,
+        created_at: &str,
+    ) -> StoreResult<()> {
+        self.state.memory_put(
+            entry_id,
+            scope,
+            content_ref,
+            content_preview,
+            source_trust,
+            source_ref,
+            correction_of,
+            payload,
+            created_at,
+        )
+    }
+
+    fn memory_search(&self, scope: &str, query: &str) -> StoreResult<Vec<serde_json::Value>> {
+        self.state.memory_search(scope, query)
+    }
+
+    fn memory_delete(&self, entry_id: &str) -> StoreResult<usize> {
+        self.state.memory_delete(entry_id)
     }
 }
 

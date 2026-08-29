@@ -14,6 +14,8 @@ pub mod clock;
 pub mod coordinator;
 pub mod error;
 pub mod exec_log;
+pub mod memory;
+pub mod observation;
 pub mod ports;
 pub mod registry;
 pub mod runtime;
@@ -34,6 +36,8 @@ pub use butler::{
 pub use clock::{Clock, MockClock, SystemClock};
 pub use coordinator::{COORDINATOR_PRINCIPAL, WORKER_PRINCIPAL, intersection_grants};
 pub use error::{CoreError, CoreResult};
+pub use memory::memory_capabilities;
+pub use observation::{ObservationEntry, expect_satisfied};
 pub use registry::{BindingStatus, CapabilityDiscovery, CapabilityProvider, CapabilityRegistry};
 pub use runtime::{RuntimeConfig, RuntimeHandle};
 pub use task::{MemberRole, Task, TaskBoard, TaskBoardEntry, TaskError, TaskMember};

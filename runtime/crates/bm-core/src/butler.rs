@@ -55,6 +55,19 @@ pub fn verb_class(verb: &str) -> Option<CoordinationClass> {
         .map(|(_, c)| *c)
 }
 
+/// SHA-256 十六进制(memory 去重哈希等复用;非 butler 特有)。
+pub fn sha256_hex_pub(s: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(s.as_bytes());
+    let out = h.finalize();
+    let mut hex = String::with_capacity(64);
+    for b in out {
+        hex.push_str(&format!("{b:02x}"));
+    }
+    hex
+}
+
 /// bootstrap 父授权哈希:固定引导标记的 SHA-256(无 Approval 父对象)。
 pub fn bootstrap_parent_hash() -> String {
     let mut h = Sha256::new();

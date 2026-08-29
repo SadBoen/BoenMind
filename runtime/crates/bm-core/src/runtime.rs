@@ -194,6 +194,13 @@ enum Cmd {
         max_tool_calls: u64,
         resp: oneshot::Sender<CoreResult<serde_json::Value>>,
     },
+    /// Worker 声称任务完成(M5-T8;Observation 核验门禁入口)
+    TaskReportCompletion {
+        task_id: BmId,
+        claim_summary: String,
+        operation_id: Option<BmId>,
+        resp: oneshot::Sender<CoreResult<serde_json::Value>>,
+    },
     /// Watchdog 手动扫描(测试与运维诊断入口;自动扫描随核心循环节拍)
     WatchdogScan {
         resp: oneshot::Sender<CoreResult<usize>>,
@@ -266,6 +273,8 @@ struct World {
     task_tool_calls: HashMap<BmId, u64>,
     /// M5-T7:Watchdog 监护状态(仅监督,不推断编排下一步)。
     watchdog: crate::watchdog::WatchdogState,
+    /// M5-T8:operation → capability(核验证据定位;内存索引,事件可重建)。
+    op_capability: HashMap<BmId, String>,
 }
 
 /// Worker 能力调用入参(Agent 路径;非 Wire 面——GT-03 场景 A3,worker 以
@@ -654,6 +663,7 @@ impl RuntimeHandle {
             task_board: crate::task::TaskBoard::default(),
             task_tool_calls: HashMap::new(),
             watchdog: crate::watchdog::WatchdogState::default(),
+            op_capability: HashMap::new(),
             tx: tx.clone(),
             store: config.store.clone(),
             config,
@@ -1333,6 +1343,28 @@ impl RuntimeHandle {
         rx.await.map_err(|_| CoreError::Internal)?
     }
 
+    /// Worker 声称任务完成(M5-T8):Observation 消费 verification 钩子做
+    /// 确定性核验——verified → completed;unverified → blocked(outcome_
+    /// unknown_pending)等用户裁定,禁止自动标成功(完成判定门禁)。
+    pub async fn task_report_completion(
+        &self,
+        task_id: BmId,
+        claim_summary: impl Into<String>,
+        operation_id: Option<BmId>,
+    ) -> CoreResult<serde_json::Value> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(Cmd::TaskReportCompletion {
+                task_id,
+                claim_summary: claim_summary.into(),
+                operation_id,
+                resp: tx,
+            })
+            .await
+            .map_err(|_| CoreError::Internal)?;
+        rx.await.map_err(|_| CoreError::Internal)?
+    }
+
     /// Watchdog 手动扫描(诊断入口):返回本次产生的事件数。
     pub async fn watchdog_scan(&self) -> CoreResult<usize> {
         let (tx, rx) = oneshot::channel();
@@ -1531,6 +1563,19 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
             Cmd::WatchdogScan { resp } => {
                 let n = world.watchdog_scan_now();
                 let _ = resp.send(Ok(n));
+            }
+            Cmd::TaskReportCompletion {
+                task_id,
+                claim_summary,
+                operation_id,
+                resp,
+            } => {
+                let _ = resp.send(handle_task_report_completion(
+                    &mut world,
+                    task_id,
+                    claim_summary,
+                    operation_id,
+                ));
             }
             Cmd::TaskGet { params, resp } => {
                 let _ = resp.send(handle_task_get(&world, params));
@@ -2284,6 +2329,8 @@ fn capability_call_inner(
     // operation 载体:系统容器上的内存操作(M4 能力调用不依赖 Session/Agent;
     // 规范状态由 approvals/grants 承载,operations 表不落行——回看复核项)
     let op_id = w.config.id_gen.next_id("op");
+    w.op_capability
+        .insert(op_id.clone(), params.capability.clone());
     let created_at = w.now_ts();
     let operation = Operation {
         id: op_id.clone(),
@@ -3303,6 +3350,170 @@ impl World {
     }
 }
 
+/// Worker 声称完成 → Observation 核验 → 状态机终局(完成判定门禁):
+/// - 声称所涉 Operation 的能力声明了 verification 钩子 → 执行 query 能力
+///   (observation principal,read-only trusted 直通)做确定性核验;
+/// - verified → completed(verified_completion);证据不足/无核验钩子 →
+///   unverified → blocked(outcome_unknown_pending)等用户裁定;
+/// - 观测写 Observation Log(observation.recorded 事件镜像)。
+fn handle_task_report_completion(
+    w: &mut World,
+    task_id: BmId,
+    claim_summary: String,
+    operation_id: Option<BmId>,
+) -> CoreResult<serde_json::Value> {
+    if w.draining || w.persist_poisoned {
+        return Err(CoreError::Semantic(
+            ErrorCode::Unavailable,
+            "Runtime 排空中或持久层故障,拒绝完成报告".into(),
+        ));
+    }
+    let Some(task) = w.tasks.get(&task_id) else {
+        return Err(CoreError::Semantic(
+            ErrorCode::ValidationFailed,
+            format!("Task 不存在: {}", task_id.as_str()),
+        ));
+    };
+    if !matches!(
+        task.state,
+        bm_contract::states::TaskState::Running | bm_contract::states::TaskState::Paused
+    ) {
+        return Err(CoreError::Semantic(
+            ErrorCode::ValidationFailed,
+            format!("Task 状态 {} 不可受理完成报告", task.state.as_str()),
+        ));
+    }
+    // 核验证据:声称所涉 Operation 的能力 verification 钩子
+    let mut evidence: Vec<(String, String)> = Vec::new();
+    let mut verdict = "unverified";
+    if let Some(op_id) = &operation_id {
+        evidence.push(("receipt".into(), op_id.as_str().to_string()));
+        let capability = w.op_capability.get(op_id).cloned();
+        if let Some(cap) = capability
+            && let Some(manifest) = w.registry.manifest_of(&cap)
+            && let Some(hook) = &manifest.verification
+        {
+            let query = hook["query"].as_str().unwrap_or_default().to_string();
+            let expect = hook["expect"].as_str().unwrap_or("exists").to_string();
+            if !query.is_empty() {
+                // 观测查询:observation principal × read-only trusted → 直通
+                let req = w.config.id_gen.next_id("req");
+                let ctx = CallContext::surface("system:observation");
+                let outcome = capability_call_inner(
+                    w,
+                    req,
+                    ctx,
+                    wire::CapabilityCallParams {
+                        capability: query.clone(),
+                        args: serde_json::json!({"subject": task_id.as_str()}),
+                        idempotency_key: None,
+                        deadline_ms: Some(2000),
+                    },
+                );
+                match outcome {
+                    Ok(result) => {
+                        let satisfied = crate::observation::expect_satisfied(&result, &expect);
+                        evidence.push(("state_check".into(), format!("{query} expect={expect}")));
+                        verdict = match satisfied {
+                            Some(true) => "verified",
+                            _ => "unverified",
+                        };
+                    }
+                    Err(_) => {
+                        evidence.push(("state_check".into(), format!("{query} 不可得")));
+                        verdict = "unverified";
+                    }
+                }
+            }
+        }
+    }
+    let now = w.config.clock.now();
+    let now_ts = format_ts(now);
+    // 状态机终局(门禁在 Task::transition:verified=false 不得 completed)
+    let (from, to, guard, verified_flag) = {
+        let Some(task) = w.tasks.get_mut(&task_id) else {
+            return Err(CoreError::Internal);
+        };
+        if verdict == "verified" {
+            let r = task
+                .transition(bm_contract::states::TaskState::Completed, Some(true), now)
+                .expect("verified → completed 是迁移表边");
+            (r.0, r.1, r.2, true)
+        } else {
+            let r = task
+                .transition(bm_contract::states::TaskState::Blocked, None, now)
+                .map_err(|e| task_error_to_core(&task_id, e))?;
+            (r.0, r.1, r.2, false)
+        }
+    };
+    let guard_state = if verdict == "verified" {
+        "completed"
+    } else {
+        "outcome_unknown"
+    };
+    // Observation Log 行 + observation.recorded 事件
+    let entry = crate::observation::ObservationEntry {
+        log_seq: 0,
+        task_id: task_id.as_str().to_string(),
+        agent_id: None,
+        operation_id: operation_id.as_ref().map(|o| o.as_str().to_string()),
+        claim_summary: claim_summary.clone(),
+        evidence: evidence.clone(),
+        verdict: if verdict == "verified" {
+            "verified"
+        } else {
+            "unverified"
+        },
+        guard_state,
+        observed_at: now_ts.clone(),
+    };
+    if let Some(store) = &w.store {
+        let seq = store
+            .save_observation(
+                task_id.as_str(),
+                entry.verdict,
+                guard_state,
+                &entry.to_contract_json(),
+                &now_ts,
+            )
+            .unwrap_or(0);
+        w.emit(
+            EventType::ObservationRecorded,
+            None,
+            None,
+            None,
+            serde_json::json!({
+                "task_id": task_id.as_str(),
+                "log_seq": seq,
+                "verdict": entry.verdict,
+                "guard_state": guard_state,
+            }),
+        );
+    }
+    w.emit(
+        EventType::TaskStateChanged,
+        None,
+        None,
+        None,
+        serde_json::json!({
+            "task_id": task_id.as_str(),
+            "from": from.as_str(),
+            "to": to.as_str(),
+            "reason_code": guard,
+            "task_epoch": w.tasks[&task_id].task_epoch,
+        }),
+    );
+    let snapshot = w.tasks[&task_id].clone();
+    persist_task(w, &snapshot);
+    Ok(serde_json::json!({
+        "task_id": task_id.as_str(),
+        "verdict": entry.verdict,
+        "verified": verified_flag,
+        "state": snapshot.state.as_str(),
+        "claim_digest": crate::observation::claim_digest(&claim_summary),
+    }))
+}
+
 /// Task 预算扩容:更新包络 + 事实事件 + blocked 恢复(用户批准面)。
 fn handle_task_budget_increase(
     w: &mut World,
@@ -4085,6 +4296,9 @@ fn reply_unavailable(cmd: Cmd) {
             let _ = resp.send(Err(err()));
         }
         Cmd::WatchdogScan { resp, .. } => {
+            let _ = resp.send(Err(err()));
+        }
+        Cmd::TaskReportCompletion { resp, .. } => {
             let _ = resp.send(Err(err()));
         }
         Cmd::EventsAll { resp } => {

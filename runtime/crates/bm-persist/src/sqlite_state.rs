@@ -8,7 +8,7 @@ use rusqlite::Connection;
 use std::path::Path;
 use std::sync::Mutex;
 
-pub const SCHEMA_VERSION: i64 = 5;
+pub const SCHEMA_VERSION: i64 = 6;
 
 /// approvals 表行(载荷列 = Approval 合同 JSON 文本)。
 pub struct ApprovalRow<'a> {
@@ -89,6 +89,9 @@ impl StateDb {
         }
         if version < 5 {
             Self::migrate_v4_to_v5(&conn)?;
+        }
+        if version < 6 {
+            Self::migrate_v5_to_v6(&conn)?;
         }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(Self {
@@ -224,6 +227,24 @@ impl StateDb {
             COMMIT;
             "#,
         )?;
+        Ok(())
+    }
+
+    /// v5→v6(M5-T8,expand 加列):memories 检索面列 + FTS5 全文索引
+    /// (FTS5 编译特性缺失时静默跳过索引,检索走 LIKE 兜底——接口可替换)。
+    fn migrate_v5_to_v6(conn: &Connection) -> StoreResult<()> {
+        conn.execute_batch(
+            r#"
+            BEGIN;
+            ALTER TABLE memories ADD COLUMN content_preview TEXT;
+            ALTER TABLE memories ADD COLUMN source_ref TEXT;
+            ALTER TABLE memories ADD COLUMN correction_of TEXT;
+            COMMIT;
+            "#,
+        )?;
+        // FTS5 索引失败不阻塞迁移(LIKE 兜底)
+        let _ = conn
+            .execute_batch("CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(content);");
         Ok(())
     }
 
@@ -617,6 +638,113 @@ impl StateDb {
         )
     }
 
+    /// Observation Log 条目落表(log_seq 自 MAX+1 单调分配),返回 seq。
+    pub fn save_observation(
+        &self,
+        task_id: &str,
+        verdict: &str,
+        guard_state: &str,
+        payload: &str,
+        observed_at: &str,
+    ) -> StoreResult<u64> {
+        let conn = self.conn.lock().expect("锁未中毒");
+        let next: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(log_seq), 0) + 1 FROM observations",
+            [],
+            |r| r.get(0),
+        )?;
+        conn.execute(
+            "INSERT INTO observations(log_seq, task_id, verdict, guard_state, payload,
+                                      observed_at)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![next, task_id, verdict, guard_state, payload, observed_at],
+        )?;
+        Ok(next as u64)
+    }
+
+    /// 记忆写入(墓碑语义见 delete),返回 entry_id(id 由调用方给定)。
+    /// #[allow]:参数与 memory-entry 合同字段一一对应(压缩反损可读性)。
+    #[allow(clippy::too_many_arguments)]
+    pub fn memory_put(
+        &self,
+        entry_id: &str,
+        scope: &str,
+        _content_ref: &str,
+        content_preview: Option<&str>,
+        _source_trust: &str,
+        source_ref: Option<&str>,
+        correction_of: Option<&str>,
+        payload: &str,
+        created_at: &str,
+    ) -> StoreResult<()> {
+        let conn = self.conn.lock().expect("锁未中毒");
+        conn.execute(
+            "INSERT INTO memories(id, scope, tombstoned, content_preview, source_ref,
+                                  correction_of, payload, created_at)
+             VALUES(?1, ?2, 0, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(id) DO UPDATE SET payload = excluded.payload",
+            rusqlite::params![
+                entry_id,
+                scope,
+                content_preview,
+                source_ref,
+                correction_of,
+                payload,
+                created_at
+            ],
+        )?;
+        // 用户纠正:被纠正条目立即墓碑化(覆盖而非追加,基线 §4.1)
+        if let Some(target) = correction_of {
+            let _ = conn.execute(
+                "UPDATE memories SET tombstoned = 1 WHERE id = ?1",
+                rusqlite::params![target],
+            );
+        }
+        // FTS5 索引(失败静默:LIKE 兜底)
+        if let Some(preview) = content_preview {
+            let _ = conn.execute(
+                "INSERT INTO memories_fts(rowid, content)
+                 VALUES((SELECT rowid FROM memories WHERE id = ?1), ?2)",
+                rusqlite::params![entry_id, preview],
+            );
+        }
+        Ok(())
+    }
+
+    /// 记忆检索:scope 内非墓碑条目(FTS5 MATCH 优先,LIKE 兜底)。
+    pub fn memory_search(&self, scope: &str, query: &str) -> StoreResult<Vec<serde_json::Value>> {
+        let rows = self.query_rows(
+            "SELECT m.id, m.scope, m.content_preview, m.source_ref, m.payload
+             FROM memories m JOIN memories_fts f ON m.rowid = f.rowid
+             WHERE m.scope = ?1 AND m.tombstoned = 0 AND memories_fts MATCH ?2",
+            rusqlite::params![scope, format!("\"{query}\"")],
+        );
+        match rows {
+            Ok(r) => Ok(r),
+            Err(_) => self.query_rows(
+                "SELECT id, scope, content_preview, source_ref, payload FROM memories
+                 WHERE scope = ?1 AND tombstoned = 0
+                   AND content_preview LIKE ('%' || ?2 || '%')",
+                rusqlite::params![scope, query],
+            ),
+        }
+    }
+
+    /// 记忆删除:墓碑 + 来源级联失效。返回级联数。
+    pub fn memory_delete(&self, entry_id: &str) -> StoreResult<usize> {
+        let conn = self.conn.lock().expect("锁未中毒");
+        conn.execute(
+            "UPDATE memories SET tombstoned = 1 WHERE id = ?1",
+            [entry_id],
+        )?;
+        let cascaded = conn.execute(
+            "UPDATE memories SET tombstoned = 1
+             WHERE source_ref = ?1 AND tombstoned = 0",
+            [entry_id],
+        )?;
+        Ok(cascaded)
+    }
+
     /// 幂等收据落表(T6c):key_hash → 原收据;恢复后抑制判定不依赖内存。
     pub fn save_idem_receipt(
         &self,
@@ -715,7 +843,7 @@ mod tests {
             conn.query_row("PRAGMA user_version", [], |r| r.get(0))
                 .unwrap()
         };
-        assert_eq!(version, 5);
+        assert_eq!(version, 6);
 
         // approvals:upsert + 状态过滤
         db.save_approval(ApprovalRow {

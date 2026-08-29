@@ -727,6 +727,46 @@ impl bm_persist::EventStore for FailingStore {
     fn list_task_budget(&self) -> bm_persist::error::StoreResult<Vec<serde_json::Value>> {
         Ok(vec![])
     }
+    fn save_observation(
+        &self,
+        _t: &str,
+        _v: &str,
+        _g: &str,
+        _p: &str,
+        _now: &str,
+    ) -> bm_persist::error::StoreResult<u64> {
+        Err(bm_persist::error::StoreError::Io(std::io::Error::other(
+            "injected persist failure",
+        )))
+    }
+    fn memory_put(
+        &self,
+        _i: &str,
+        _s: &str,
+        _c: &str,
+        _cp: Option<&str>,
+        _t: &str,
+        _sr: Option<&str>,
+        _co: Option<&str>,
+        _p: &str,
+        _now: &str,
+    ) -> bm_persist::error::StoreResult<()> {
+        Err(bm_persist::error::StoreError::Io(std::io::Error::other(
+            "injected persist failure",
+        )))
+    }
+    fn memory_search(
+        &self,
+        _s: &str,
+        _q: &str,
+    ) -> bm_persist::error::StoreResult<Vec<serde_json::Value>> {
+        Ok(vec![])
+    }
+    fn memory_delete(&self, _i: &str) -> bm_persist::error::StoreResult<usize> {
+        Err(bm_persist::error::StoreError::Io(std::io::Error::other(
+            "injected persist failure",
+        )))
+    }
     fn append(
         &self,
         _e: &bm_contract::events::EventEnvelope,
