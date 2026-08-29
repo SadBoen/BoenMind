@@ -7,12 +7,13 @@ BoenMind:个人生态的 AI Runtime / AI OS,当前为**阶段一(跨平台单软
 对照验证(Erlang/OTP、Kubernetes、VS Code,见 `architecture/deepwiki-validation.md`)。
 合同库已冻结 v1.0(字段只增不破)。
 
-**当前进度:M6 已收官(2026-08-30,tag `m6-team-delegate`):
-`milestones/M6-review.md`——基线 M6 四条通过条件全部强制点化
-(成员权限只减不增/委派四门禁/成员故障不破坏 Task/collect 三要素),
-196 测试全绿;ADR-0002 条件 5 余项闭合(reservation 裁定延续不做)。
-下一步 = 起草《M7 实现规格》(Provider、MCP 和 App 隔离;基线 §18-M7
-五子项),沿用提速方案合批推进。**
+**当前进度:M7 已收官(2026-08-30,tag `m7-provider-mcp`):
+`milestones/M7-review.md`——基线五句通过条件逐条结算,passed_with_conditions;
+真实模型通道(第三方网关,ADR-0010)实网验证通过;模型调用过 Broker
+(M4 §5.8 豁免撤销);MCP 接入 v1(stdio,发现/调用/进度/崩溃重生);
+213 测试全绿;perf 记录⑤(P-03 门内,P-01 p95 噪声解释留档)。
+下一步 = 起草《M8 实现规格》(首批真实 App 与发行质量;基线 §18-M8
+八子项),长任务真实通道稳定性复测列硬条件。**
 
 **提速方案(2026-08-30 起固化,每轮沿用)**:
 1. 强耦合任务合批(如 T4+T5、T6+T7、T8+T9),一轮交付、共享全量回归,
@@ -76,6 +77,10 @@ runtime/                        第 3 层  源代码(M1 起,Rust workspace;crate
 - [x] **M6 Team、Delegate 和多 Agent 协作(2026-08-30,tag `m6-team-delegate`;
       规格 `milestones/M6-implementation-spec.md`,回看 `milestones/M6-review.md`,
       196 测试全绿,四门禁强制点化,ADR-0002 条件 5 余项闭合)**
-- [ ] M7/M8 见基线 §18;33 项验收条件的分布见各 ADR「条件与验收」
+- [x] **M7 Provider、MCP 和 App 隔离(2026-08-30,tag `m7-provider-mcp`;
+      规格 `milestones/M7-implementation-spec.md`,回看 `milestones/M7-review.md`,
+      213 测试全绿,五句通过条件逐条结算,真实网关实网验证通过,
+      ADR-0010 第三方网关信任边界)**
+- [ ] M8 见基线 §18;33 项验收条件的分布见各 ADR「条件与验收」
 - 注意:`architecture/deepwiki-validation.md` 的 S1-S10 修订建议为 **proposed**,
   仅在各里程碑回看时逐条裁决,勿自动采纳。
