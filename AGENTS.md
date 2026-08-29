@@ -39,6 +39,14 @@ runtime/                        第 3 层  源代码(M1 起,Rust workspace;crate
 1. 读本文件 → 2. 按手头任务读对应层文件 → 3. 动手前对照下方进度确认当前里程碑 →
 4. 产出后自检(合同有变更必跑 `python3 boenmind-contracts/scripts/validate.py`,须全绿)。
 
+## 环境与工具备忘
+
+- gh CLI 已装;Rust 1.98、Node 24、Python 3.13;tauri-cli 未装(桌面壳手工构建于 web/src-tauri/)。
+- 性能测试:`cargo test --release -p bm-testkit --test perf_smoke -- --ignored --nocapture`(perf_m2 同理);P-09/10 常驻测试套件。
+- context7 MCP 可用(库文档查询;M7 真实 Provider/MCP 接入时优先用)。
+- 已确认:libsqlite3-sys bundled 构建默认启用 SQLITE_ENABLE_FTS5——M5 memory 检索的 FTS5 路径实际生效,LIKE 仅兜底。
+- 踩坑:大段内联脚本(python heredoc)写文件易静默失败——先 Write 成文件再执行;cargo fmt 会重排代码,文本替换前先看当前实际内容;测试先行持续抓真 bug;跨字段借用冲突用分阶段作用域解决;时间基准对照 MockClock 实际基准值换算。
+
 ## 硬纪律(违反 = 返工)
 
 1. **合同冻结**:boenmind-contracts/ 字段只增不破;删字段/改名/改语义 = Major,走基线 §13.5。
