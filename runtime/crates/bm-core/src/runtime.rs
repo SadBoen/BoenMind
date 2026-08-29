@@ -2,6 +2,8 @@
 //! 保证 event_seq/log_seq 的全局单调(INV-3/INV-4 的结构前提)。
 //! 回合任务只通过内部命令通道回报,不直接改状态。
 
+use bm_persist::EventStore;
+
 use crate::bus::EventBus;
 use crate::clock::Clock;
 use crate::exec_log::ExecutionLog;
@@ -41,6 +43,8 @@ pub fn default_secret_ref(model_id: &str) -> String {
 pub struct RuntimeConfig {
     pub version: String,
     pub data_dir: Option<std::path::PathBuf>,
+    /// 持久层(M2 起);None = 纯内存(M1 兼容形态,测试用)。
+    pub store: Option<std::sync::Arc<dyn EventStore>>,
     pub connector: Arc<dyn ModelConnector>,
     pub secret_store: Arc<dyn SecretStore>,
     pub id_gen: Arc<dyn IdGen>,
@@ -126,6 +130,7 @@ enum Cmd {
 struct World {
     config: RuntimeConfig,
     tx: mpsc::Sender<Cmd>,
+    store: Option<std::sync::Arc<dyn EventStore>>,
     bus: EventBus,
     exec_log: Arc<ExecutionLog>,
     sessions: HashMap<BmId, Session>,
@@ -137,6 +142,8 @@ struct World {
     started_instant: Instant,
     draining: bool,
     stopped: bool,
+    /// 持久层故障拒写态:置位后拒绝一切业务命令;内存视图以持久层为准重建。
+    persist_poisoned: bool,
 }
 
 impl World {
@@ -144,7 +151,7 @@ impl World {
         format_ts(self.config.clock.now())
     }
 
-    /// 唯一的事件发射口:event_seq 分配 + 总线追加。
+    /// 唯一的事件发射口:event_seq 分配 + 写穿持久 + 总线追加。
     fn emit(
         &mut self,
         ty: EventType,
@@ -163,6 +170,17 @@ impl World {
             operation_id,
             payload,
         );
+        // 写穿(M2 规格 §5.1):record 内部固定 ①日志+flush → ②物化 → ③位点。
+        // 失败即进入拒写态:内存视图与持久层自此分叉,以持久层为准(重启重建)。
+        #[allow(clippy::collapsible_if)] // 三重条件展平反而难读
+        if let Some(store) = &self.store {
+            if !self.persist_poisoned {
+                if let Err(e) = store.record(&event) {
+                    tracing::error!(seq = %event.event_seq, error = %e, "持久化失败,Runtime 进入拒写态");
+                    self.persist_poisoned = true;
+                }
+            }
+        }
         self.bus.append(event.clone());
         event
     }
@@ -272,7 +290,9 @@ impl RuntimeHandle {
             started_instant: Instant::now(),
             draining: false,
             stopped: false,
+            persist_poisoned: false,
             tx: tx.clone(),
+            store: config.store.clone(),
             config,
         };
         world.emit(
@@ -489,10 +509,10 @@ fn handle_session_create(
     _request_id: BmId,
     params: SessionCreateParams,
 ) -> CoreResult<SessionCreateResult> {
-    if w.draining {
+    if w.draining || w.persist_poisoned {
         return Err(CoreError::Semantic(
             ErrorCode::Unavailable,
-            "Runtime 排空中,拒绝新会话".into(),
+            "Runtime 排空中或持久层故障,拒绝新会话".into(),
         ));
     }
     let spec = &params.agent;
@@ -546,6 +566,7 @@ fn handle_session_create(
             "agent_id": agent_id.as_str(),
         }),
     );
+    let budget_limits = &w.agents[&agent_id].budget;
     w.emit(
         EventType::AgentCreated,
         Some(session_id.clone()),
@@ -555,6 +576,7 @@ fn handle_session_create(
             "agent_id": agent_id.as_str(),
             "session_id": session_id.as_str(),
             "model_chain": spec.model_chain,
+            "budget": {"max_tokens": budget_limits.max_tokens, "max_turns": budget_limits.max_turns},
         }),
     );
 
@@ -573,6 +595,12 @@ fn handle_session_resume(
     _request_id: BmId,
     params: SessionResumeParams,
 ) -> CoreResult<SessionResumeResult> {
+    if w.persist_poisoned {
+        return Err(CoreError::Semantic(
+            ErrorCode::Unavailable,
+            "持久层故障,Runtime 拒写".into(),
+        ));
+    }
     let session = w
         .sessions
         .get(&params.session_id)
@@ -615,6 +643,12 @@ fn handle_session_close(
     _request_id: BmId,
     params: SessionCloseParams,
 ) -> CoreResult<SessionCloseResult> {
+    if w.persist_poisoned {
+        return Err(CoreError::Semantic(
+            ErrorCode::Unavailable,
+            "持久层故障,Runtime 拒写".into(),
+        ));
+    }
     let agent_final_state;
     {
         let session = w
@@ -663,10 +697,10 @@ fn handle_send_input(
     request_id: BmId,
     params: SendInputParams,
 ) -> CoreResult<Receipt> {
-    if w.draining {
+    if w.draining || w.persist_poisoned {
         return Err(CoreError::Semantic(
             ErrorCode::Unavailable,
-            "Runtime 排空中".into(),
+            "Runtime 排空中或持久层故障".into(),
         ));
     }
     if params.content.is_empty() || params.content.len() > 100_000 {

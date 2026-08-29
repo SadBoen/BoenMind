@@ -11,7 +11,7 @@ use std::sync::Mutex;
 pub const SCHEMA_VERSION: i64 = 1;
 
 pub struct StateDb {
-    conn: Mutex<Connection>,
+    pub(crate) conn: Mutex<Connection>,
 }
 
 impl StateDb {
@@ -65,7 +65,7 @@ impl StateDb {
                 id             TEXT PRIMARY KEY,
                 session_id     TEXT NOT NULL,
                 agent_id       TEXT NOT NULL,
-                request_id     TEXT NOT NULL,
+                request_id     TEXT,
                 state          TEXT NOT NULL,
                 turn_index     INTEGER NOT NULL,
                 created_at     TEXT NOT NULL,
@@ -86,6 +86,34 @@ impl StateDb {
         )?;
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(())
+    }
+
+    /// 通用行查询(恢复与测试读取用;返回按列名的 JSON 对象数组)。
+    pub fn query_rows(
+        &self,
+        sql: &str,
+        params: &[&dyn rusqlite::ToSql],
+    ) -> StoreResult<Vec<serde_json::Value>> {
+        let conn = self.conn.lock().expect("锁未中毒");
+        let mut stmt = conn.prepare(sql)?;
+        let names: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
+        let mut rows = stmt.query(params)?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            let mut obj = serde_json::Map::new();
+            for (i, name) in names.iter().enumerate() {
+                let v: serde_json::Value = match row.get_ref(i)? {
+                    rusqlite::types::ValueRef::Null => serde_json::Value::Null,
+                    rusqlite::types::ValueRef::Integer(n) => n.into(),
+                    rusqlite::types::ValueRef::Real(f) => f.into(),
+                    rusqlite::types::ValueRef::Text(t) => String::from_utf8_lossy(t).into(),
+                    rusqlite::types::ValueRef::Blob(_) => serde_json::Value::Null,
+                };
+                obj.insert(name.clone(), v);
+            }
+            out.push(serde_json::Value::Object(obj));
+        }
+        Ok(out)
     }
 
     /// meta 读。

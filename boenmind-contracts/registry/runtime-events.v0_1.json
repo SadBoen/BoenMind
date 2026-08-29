@@ -5,28 +5,183 @@
   "title": "M1 运行时事件注册表",
   "description": "事件信封见 events 由 Event Log 统一写入：{event_seq(全局单调), type, occurred_at, correlation, payload}。M4+ 事件（plugin.*, provider.*, approval.*, capability.*）不在此表，届时增发。",
   "events": [
-    { "type": "runtime.started",              "payload": { "pid": "integer", "version": "string", "started_at": "timestamp" } },
-    { "type": "runtime.stopping",             "payload": { "reason": "string" } },
-    { "type": "runtime.stopped",              "payload": { "uptime_ms": "integer" } },
-    { "type": "session.created",              "payload": { "session_id": "id", "agent_id": "id" } },
-    { "type": "session.resumed",              "payload": { "session_id": "id", "since_seq": "integer", "replayed": "integer" } },
-    { "type": "session.closed",               "payload": { "session_id": "id", "reason": "string" } },
-    { "type": "agent.created",                "payload": { "agent_id": "id", "session_id": "id", "model_chain": "string[]" } },
-    { "type": "agent.started",                "payload": { "agent_id": "id" } },
-    { "type": "agent.turn.started",           "payload": { "agent_id": "id", "operation_id": "id", "turn_index": "integer" } },
-    { "type": "agent.waiting_model",          "payload": { "agent_id": "id", "operation_id": "id", "model_id": "string" } },
-    { "type": "agent.completed",              "payload": { "agent_id": "id", "operation_id": "id", "turn_index": "integer" } },
-    { "type": "agent.failed",                 "payload": { "agent_id": "id", "operation_id": "id", "error_code": "error_code" } },
-    { "type": "agent.cancelled",              "payload": { "agent_id": "id", "operation_id": "id" } },
-    { "type": "agent.interrupted",            "payload": { "agent_id": "id", "operation_id": "id", "reason": "string" } },
-    { "type": "agent.resumed",                "payload": { "agent_id": "id", "operation_id": "id" } },
-    { "type": "operation.state.changed",      "payload": { "operation_id": "id", "from": "state", "to": "state", "reason_code": "string" } },
-    { "type": "model.invocation.completed",   "payload": { "operation_id": "id", "agent_id": "id", "model_id": "string", "attempt": "integer", "usage_in": "integer", "usage_out": "integer", "latency_ms": "integer", "stream_interrupted": "boolean" } },
-    { "type": "model.invocation.failed",      "payload": { "operation_id": "id", "agent_id": "id", "model_id": "string", "attempt": "integer", "error_code": "error_code" } },
-    { "type": "budget.warning",               "payload": { "agent_id": "id", "scope": "string", "used_tokens": "integer", "limit_tokens": "integer", "ratio": "number" } },
-    { "type": "budget.exceeded",              "payload": { "agent_id": "id", "scope": "string", "used_tokens": "integer", "limit_tokens": "integer" } },
-    { "type": "runtime.recovered",            "payload": { "last_applied_seq": "integer", "replayed": "integer", "interrupted_recovered": "integer" } },
-    { "type": "store.write.rejected",         "payload": { "key": "string", "reason": "string" } }
+    {
+      "type": "runtime.started",
+      "payload": {
+        "pid": "integer",
+        "version": "string",
+        "started_at": "timestamp"
+      }
+    },
+    {
+      "type": "runtime.stopping",
+      "payload": {
+        "reason": "string"
+      }
+    },
+    {
+      "type": "runtime.stopped",
+      "payload": {
+        "uptime_ms": "integer"
+      }
+    },
+    {
+      "type": "session.created",
+      "payload": {
+        "session_id": "id",
+        "agent_id": "id"
+      }
+    },
+    {
+      "type": "session.resumed",
+      "payload": {
+        "session_id": "id",
+        "since_seq": "integer",
+        "replayed": "integer"
+      }
+    },
+    {
+      "type": "session.closed",
+      "payload": {
+        "session_id": "id",
+        "reason": "string"
+      }
+    },
+    {
+      "type": "agent.created",
+      "payload": {
+        "agent_id": "id",
+        "session_id": "id",
+        "model_chain": "string[]",
+        "budget": "budget|null"
+      }
+    },
+    {
+      "type": "agent.started",
+      "payload": {
+        "agent_id": "id"
+      }
+    },
+    {
+      "type": "agent.turn.started",
+      "payload": {
+        "agent_id": "id",
+        "operation_id": "id",
+        "turn_index": "integer"
+      }
+    },
+    {
+      "type": "agent.waiting_model",
+      "payload": {
+        "agent_id": "id",
+        "operation_id": "id",
+        "model_id": "string"
+      }
+    },
+    {
+      "type": "agent.completed",
+      "payload": {
+        "agent_id": "id",
+        "operation_id": "id",
+        "turn_index": "integer"
+      }
+    },
+    {
+      "type": "agent.failed",
+      "payload": {
+        "agent_id": "id",
+        "operation_id": "id",
+        "error_code": "error_code"
+      }
+    },
+    {
+      "type": "agent.cancelled",
+      "payload": {
+        "agent_id": "id",
+        "operation_id": "id"
+      }
+    },
+    {
+      "type": "agent.interrupted",
+      "payload": {
+        "agent_id": "id",
+        "operation_id": "id",
+        "reason": "string"
+      }
+    },
+    {
+      "type": "agent.resumed",
+      "payload": {
+        "agent_id": "id",
+        "operation_id": "id"
+      }
+    },
+    {
+      "type": "operation.state.changed",
+      "payload": {
+        "operation_id": "id",
+        "from": "state",
+        "to": "state",
+        "reason_code": "string"
+      }
+    },
+    {
+      "type": "model.invocation.completed",
+      "payload": {
+        "operation_id": "id",
+        "agent_id": "id",
+        "model_id": "string",
+        "attempt": "integer",
+        "usage_in": "integer",
+        "usage_out": "integer",
+        "latency_ms": "integer",
+        "stream_interrupted": "boolean"
+      }
+    },
+    {
+      "type": "model.invocation.failed",
+      "payload": {
+        "operation_id": "id",
+        "agent_id": "id",
+        "model_id": "string",
+        "attempt": "integer",
+        "error_code": "error_code"
+      }
+    },
+    {
+      "type": "budget.warning",
+      "payload": {
+        "agent_id": "id",
+        "scope": "string",
+        "used_tokens": "integer",
+        "limit_tokens": "integer",
+        "ratio": "number"
+      }
+    },
+    {
+      "type": "budget.exceeded",
+      "payload": {
+        "agent_id": "id",
+        "scope": "string",
+        "used_tokens": "integer",
+        "limit_tokens": "integer"
+      }
+    },
+    {
+      "type": "runtime.recovered",
+      "payload": {
+        "last_applied_seq": "integer",
+        "replayed": "integer",
+        "interrupted_recovered": "integer"
+      }
+    },
+    {
+      "type": "store.write.rejected",
+      "payload": {
+        "key": "string",
+        "reason": "string"
+      }
+    }
   ],
   "payload_type_note": {
     "id": "wire/common 的 id 格式 <prefix>_<ULID26>",

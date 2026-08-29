@@ -44,7 +44,7 @@ impl EventType {
             EventType::SessionCreated => &["session_id", "agent_id"],
             EventType::SessionResumed => &["session_id", "since_seq", "replayed"],
             EventType::SessionClosed => &["session_id", "reason"],
-            EventType::AgentCreated => &["agent_id", "session_id", "model_chain"],
+            EventType::AgentCreated => &["agent_id", "session_id", "model_chain", "budget"],
             EventType::AgentStarted => &["agent_id"],
             EventType::AgentTurnStarted => &["agent_id", "operation_id", "turn_index"],
             EventType::AgentWaitingModel => &["agent_id", "operation_id", "model_id"],

@@ -11,6 +11,10 @@ pub const META_LAST_APPLIED: &str = "last_applied_seq";
 pub const META_SNAPSHOT_SEQ: &str = "snapshot_seq";
 
 pub trait EventStore: Send + Sync {
+    /// 写穿组合入口(M2 规格 §5.1 写序):① 日志追加+flush → ② 事件物化进
+    /// 规范状态 → ③ 位点推进。任一步失败即整体失败,调用方必须拒绝命令。
+    fn record(&self, event: &EventEnvelope) -> StoreResult<()>;
+
     /// ① 日志先行:追加事件并 flush。失败 = 本次命令失败(核心循环须拒绝,不可静默)。
     fn append(&self, event: &EventEnvelope) -> StoreResult<()>;
 
@@ -61,6 +65,11 @@ impl PersistStore {
         Ok(Self { log, state })
     }
 
+    /// 状态库只读访问(恢复与测试断言用)。
+    pub fn state(&self) -> &StateDb {
+        &self.state
+    }
+
     fn applied(&self) -> StoreResult<u64> {
         Ok(self
             .state
@@ -71,6 +80,14 @@ impl PersistStore {
 }
 
 impl EventStore for PersistStore {
+    fn record(&self, event: &EventEnvelope) -> StoreResult<()> {
+        // ① 日志先行(必须先于状态,崩溃窗口单向)
+        self.log.append(event, true)?;
+        // ② 物化 + ③ 位点,同一状态侧顺序
+        self.state.materialize(event)?;
+        self.mark_applied(event.event_seq)
+    }
+
     fn append(&self, event: &EventEnvelope) -> StoreResult<()> {
         self.log.append(event, true)
     }

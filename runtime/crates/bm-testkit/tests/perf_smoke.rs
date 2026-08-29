@@ -25,6 +25,7 @@ async fn start_runtime(
     RuntimeHandle::start(RuntimeConfig {
         version: "0.1.0-m1".into(),
         data_dir,
+        store: None,
         connector,
         secret_store: Arc::new(MemSecretStore::with(
             &bm_core::runtime::default_secret_ref(bm_testkit_replay::MODEL_A),

@@ -152,6 +152,7 @@ version = "0.1.0-m1"
 dependencies = [
  "async-trait",
  "bm-contract",
+ "bm-persist",
  "chrono",
  "serde",
  "serde_json",
@@ -212,6 +213,7 @@ version = "0.1.0-m1"
 dependencies = [
  "bm-contract",
  "bm-core",
+ "bm-persist",
  "bm-providers",
  "jsonschema",
  "proptest",

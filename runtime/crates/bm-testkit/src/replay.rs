@@ -142,9 +142,18 @@ pub async fn rig(script: Vec<Step>, budget: Option<(u64, u32)>, with_dir: bool) 
     let clock = Arc::new(MockClock::at_ms(1_787_952_900_098));
     let ids = Arc::new(SeqIdGen::new());
 
+    // 有落盘目录即启用写穿持久层(所有标准测试装配自动走 M2 路径)
+    let store: Option<Arc<dyn bm_persist::EventStore>> = match &data_dir {
+        Some(d) => Some(Arc::new(
+            bm_persist::PersistStore::open(d).expect("打开持久层"),
+        )),
+        None => None,
+    };
+
     let config = RuntimeConfig {
         version: "0.1.0-m1".into(),
         data_dir: data_dir.clone(),
+        store,
         connector: connector.clone(),
         secret_store: secrets.clone(),
         id_gen: ids.clone(),

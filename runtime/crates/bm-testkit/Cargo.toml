@@ -7,6 +7,7 @@ repository.workspace = true
 [dependencies]
 bm-contract = { workspace = true }
 bm-core = { workspace = true }
+bm-persist = { workspace = true }
 bm-providers = { workspace = true }
 tokio = { workspace = true }
 serde_json = { workspace = true }

@@ -4,6 +4,7 @@
 
 pub mod error;
 pub mod event_log;
+pub mod materialize;
 pub mod sqlite_state;
 pub mod store;
 

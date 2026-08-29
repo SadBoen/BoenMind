@@ -6,6 +6,7 @@ repository.workspace = true
 
 [dependencies]
 bm-contract = { workspace = true }
+bm-persist = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 async-trait = { workspace = true }

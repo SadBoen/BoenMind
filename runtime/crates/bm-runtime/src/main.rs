@@ -31,6 +31,7 @@ async fn main() -> CoreResult<()> {
     let handle = RuntimeHandle::start(RuntimeConfig {
         version: env!("CARGO_PKG_VERSION").into(),
         data_dir: None,
+        store: None,
         connector,
         secret_store: secrets,
         id_gen: Arc::new(SeqIdGen::new()),
