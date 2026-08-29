@@ -56,3 +56,11 @@ Tauri 壳目前只是把 Web 界面装进一个窗口:不会自动帮你启动/�
 boenmind-server,关窗口也不影响后台任务(这是特性也是限制)。要不要
 "打开桌面图标就自动拉起服务、关窗口就问要不要退出"?这属于产品体验,
 等 M8 打包时一起定。
+
+## D-M5-2 memory:user 显式授权的执行面(随 M7)
+
+基线 §4.1 要求 memory:user 写入需显式授权。M5 面:scope 形态即边界 + Broker
+信任分级适用,但 Provider 无法区分「用户 Surface 直写」与「Agent 写」
+(CapabilityProvider.invoke 不携带 principal),故 user 域的显式授权执行面
+(如仅 Surface 直写可过、Agent 写须持有专项 Grant)随 M7 principal-aware
+Provider 落地。追认或改判请留言。
