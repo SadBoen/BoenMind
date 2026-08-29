@@ -8,7 +8,30 @@ use rusqlite::Connection;
 use std::path::Path;
 use std::sync::Mutex;
 
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
+
+/// approvals 表行(载荷列 = Approval 合同 JSON 文本)。
+pub struct ApprovalRow<'a> {
+    pub id: &'a str,
+    pub operation_id: &'a str,
+    pub capability: &'a str,
+    pub principal: &'a str,
+    pub state: &'a str,
+    pub payload: &'a str,
+    pub created_at: &'a str,
+    pub resolved_at: Option<&'a str>,
+}
+
+/// grants 表行(载荷列 = Grant 合同 JSON 文本)。
+pub struct GrantRow<'a> {
+    pub id: &'a str,
+    pub audience: &'a str,
+    pub action: &'a str,
+    pub revocation_version: u64,
+    pub revoked: bool,
+    pub payload: &'a str,
+    pub created_at: &'a str,
+}
 
 pub struct StateDb {
     pub(crate) conn: Mutex<Connection>,
@@ -34,10 +57,67 @@ impl StateDb {
         if version < 2 {
             Self::migrate_v1_to_v2(&conn)?;
         }
+        if version < 3 {
+            Self::migrate_v2_to_v3(&conn)?;
+        }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
+    }
+
+    /// v2→v3(M4-T3,expand:纯新增四表,不动既有行):
+    /// approvals(审批持久对象)/ grants(Broker 授权台账)/
+    /// capabilities(Provider binding 逻辑目录,epoch 持久计数)/
+    /// outbox(副作用对账底座,T6 启用)。
+    /// 载荷列存合同形态 JSON(载荷合同 = capability/*.schema.json),
+    /// 行级键列供索引与审计查询。
+    fn migrate_v2_to_v3(conn: &Connection) -> StoreResult<()> {
+        conn.execute_batch(
+            r#"
+            BEGIN;
+            CREATE TABLE approvals (
+                id           TEXT PRIMARY KEY,
+                operation_id TEXT NOT NULL,
+                capability   TEXT NOT NULL,
+                principal    TEXT NOT NULL,
+                state        TEXT NOT NULL,
+                payload      TEXT NOT NULL,
+                created_at   TEXT NOT NULL,
+                resolved_at  TEXT
+            );
+            CREATE INDEX idx_approvals_state ON approvals(state);
+            CREATE TABLE grants (
+                id                 TEXT PRIMARY KEY,
+                audience           TEXT NOT NULL,
+                action             TEXT NOT NULL,
+                revocation_version INTEGER NOT NULL DEFAULT 0,
+                revoked            INTEGER NOT NULL DEFAULT 0,
+                payload            TEXT NOT NULL,
+                created_at         TEXT NOT NULL
+            );
+            CREATE INDEX idx_grants_audience_action ON grants(audience, action);
+            CREATE TABLE capabilities (
+                capability           TEXT PRIMARY KEY,
+                provider_instance_id TEXT NOT NULL,
+                epoch                INTEGER NOT NULL,
+                status               TEXT NOT NULL,
+                manifest             TEXT NOT NULL,
+                updated_at           TEXT NOT NULL
+            );
+            CREATE TABLE outbox (
+                operation_id TEXT NOT NULL,
+                kind         TEXT NOT NULL,
+                state        TEXT NOT NULL,
+                payload      TEXT NOT NULL,
+                created_at   TEXT NOT NULL,
+                updated_at   TEXT NOT NULL,
+                PRIMARY KEY (operation_id, kind)
+            );
+            COMMIT;
+            "#,
+        )?;
+        Ok(())
     }
 
     /// v1→v2(M2.6):operations 增 input_content 列(受保护存储)——
@@ -204,6 +284,154 @@ impl StateDb {
         )?;
         Ok(())
     }
+
+    // ---- v3:approvals / grants / capabilities / outbox(M4)------------------
+    // 载荷列 = 合同形态 JSON 文本(capability/*.schema.json);行级键列供索引。
+
+    /// 写入/更新审批对象(upsert)。
+    pub fn save_approval(&self, row: ApprovalRow<'_>) -> StoreResult<()> {
+        let conn = self.conn.lock().expect("锁未中毒");
+        conn.execute(
+            "INSERT INTO approvals(id, operation_id, capability, principal, state, payload,
+                                   created_at, resolved_at)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(id) DO UPDATE SET state = excluded.state,
+                 payload = excluded.payload, resolved_at = excluded.resolved_at",
+            rusqlite::params![
+                row.id,
+                row.operation_id,
+                row.capability,
+                row.principal,
+                row.state,
+                row.payload,
+                row.created_at,
+                row.resolved_at
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn approval_payload(&self, id: &str) -> StoreResult<Option<String>> {
+        let conn = self.conn.lock().expect("锁未中毒");
+        let mut stmt = conn.prepare("SELECT payload FROM approvals WHERE id = ?1")?;
+        let mut rows = stmt.query([id])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(row.get(0)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn list_approvals_by_state(&self, state: &str) -> StoreResult<Vec<String>> {
+        let conn = self.conn.lock().expect("锁未中毒");
+        let mut stmt =
+            conn.prepare("SELECT payload FROM approvals WHERE state = ?1 ORDER BY created_at")?;
+        let mut rows = stmt.query([state])?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            out.push(row.get(0)?);
+        }
+        Ok(out)
+    }
+
+    /// 写入/更新 Grant(revoked 标志与版本随撤销推进)。
+    pub fn save_grant(&self, row: GrantRow<'_>) -> StoreResult<()> {
+        let conn = self.conn.lock().expect("锁未中毒");
+        conn.execute(
+            "INSERT INTO grants(id, audience, action, revocation_version, revoked, payload,
+                                created_at)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(id) DO UPDATE SET revocation_version = excluded.revocation_version,
+                 revoked = excluded.revoked, payload = excluded.payload",
+            rusqlite::params![
+                row.id,
+                row.audience,
+                row.action,
+                row.revocation_version as i64,
+                row.revoked as i64,
+                row.payload,
+                row.created_at
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// 恢复面:全部 Grant 行(id, audience, action, revocation_version, revoked, payload)。
+    pub fn list_grants(&self) -> StoreResult<Vec<serde_json::Value>> {
+        self.query_rows(
+            "SELECT id, audience, action, revocation_version, revoked, payload
+             FROM grants ORDER BY created_at",
+            &[],
+        )
+    }
+
+    /// 写入/更新 capability binding(epoch 单调由调用方保证,恢复时取 max)。
+    pub fn save_capability_binding(
+        &self,
+        capability: &str,
+        provider_instance_id: &str,
+        epoch: u64,
+        status: &str,
+        manifest: &str,
+        updated_at: &str,
+    ) -> StoreResult<()> {
+        let conn = self.conn.lock().expect("锁未中毒");
+        conn.execute(
+            "INSERT INTO capabilities(capability, provider_instance_id, epoch, status,
+                                      manifest, updated_at)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(capability) DO UPDATE SET
+                 provider_instance_id = excluded.provider_instance_id,
+                 epoch = excluded.epoch, status = excluded.status,
+                 manifest = excluded.manifest, updated_at = excluded.updated_at",
+            rusqlite::params![
+                capability,
+                provider_instance_id,
+                epoch as i64,
+                status,
+                manifest,
+                updated_at
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// 恢复面:全部 binding 行。
+    pub fn list_capability_bindings(&self) -> StoreResult<Vec<serde_json::Value>> {
+        self.query_rows(
+            "SELECT capability, provider_instance_id, epoch, status, manifest
+             FROM capabilities ORDER BY capability",
+            &[],
+        )
+    }
+
+    /// outbox 记录 upsert(T6 副作用对账底座;状态 pending→published→verified)。
+    pub fn outbox_upsert(
+        &self,
+        operation_id: &str,
+        kind: &str,
+        state: &str,
+        payload: &str,
+        now: &str,
+    ) -> StoreResult<()> {
+        let conn = self.conn.lock().expect("锁未中毒");
+        conn.execute(
+            "INSERT INTO outbox(operation_id, kind, state, payload, created_at, updated_at)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?5)
+             ON CONFLICT(operation_id, kind) DO UPDATE SET state = excluded.state,
+                 payload = excluded.payload, updated_at = excluded.updated_at",
+            rusqlite::params![operation_id, kind, state, payload, now],
+        )?;
+        Ok(())
+    }
+
+    /// 恢复面:指定状态的 outbox 行。
+    pub fn list_outbox_by_state(&self, state: &str) -> StoreResult<Vec<serde_json::Value>> {
+        self.query_rows(
+            "SELECT operation_id, kind, state, payload FROM outbox WHERE state = ?1",
+            rusqlite::params![state],
+        )
+    }
 }
 
 #[cfg(test)]
@@ -254,5 +482,155 @@ mod tests {
         db.meta_compare_and_set("fresh", None, "1")
             .expect("absent 分支");
         assert_eq!(db.meta_get("fresh").expect("读"), Some("1".into()));
+    }
+
+    #[test]
+    fn v3_tables_roundtrip() {
+        let dir = tempfile::tempdir().expect("临时目录");
+        let db = StateDb::open(&dir.path().join("state.db")).expect("打开");
+        let version: i64 = {
+            let conn = db.conn.lock().expect("锁未中毒");
+            conn.query_row("PRAGMA user_version", [], |r| r.get(0))
+                .unwrap()
+        };
+        assert_eq!(version, 3);
+
+        // approvals:upsert + 状态过滤
+        db.save_approval(ApprovalRow {
+            id: "appr_01JAAAAAAAAAAAAAAAAAAAAA04",
+            operation_id: "op_01JAAAAAAAAAAAAAAAAAAAAA0A",
+            capability: "system.danger.purge",
+            principal: "surface:user",
+            state: "waiting_user",
+            payload: r#"{"approval_id":"appr_01JAAAAAAAAAAAAAAAAAAAAA04"}"#,
+            created_at: "2026-08-29T10:00:00.220Z",
+            resolved_at: None,
+        })
+        .expect("写 approval");
+        db.save_approval(ApprovalRow {
+            id: "appr_01JAAAAAAAAAAAAAAAAAAAAA04",
+            operation_id: "op_01JAAAAAAAAAAAAAAAAAAAAA0A",
+            capability: "system.danger.purge",
+            principal: "surface:user",
+            state: "denied",
+            payload: r#"{"approval_id":"appr_01JAAAAAAAAAAAAAAAAAAAAA04","state":"denied"}"#,
+            created_at: "2026-08-29T10:00:00.220Z",
+            resolved_at: Some("2026-08-29T10:02:00.000Z"),
+        })
+        .expect("更新 approval");
+        assert_eq!(
+            db.list_approvals_by_state("waiting_user").unwrap().len(),
+            0,
+            "resolved 后不再处于 waiting"
+        );
+        let p = db
+            .approval_payload("appr_01JAAAAAAAAAAAAAAAAAAAAA04")
+            .unwrap()
+            .expect("payload 在");
+        assert!(p.contains("denied"));
+
+        // grants:写 + 撤销 + 恢复面
+        db.save_grant(GrantRow {
+            id: "grant_01JAAAAAAAAAAAAAAAAAAAAA0C",
+            audience: "agent:note_bot",
+            action: "system.notes.write",
+            revocation_version: 0,
+            revoked: false,
+            payload: r#"{"grant_id":"grant_01JAAAAAAAAAAAAAAAAAAAAA0C"}"#,
+            created_at: "2026-08-29T10:02:09.500Z",
+        })
+        .expect("写 grant");
+        db.save_grant(GrantRow {
+            id: "grant_01JAAAAAAAAAAAAAAAAAAAAA0C",
+            audience: "agent:note_bot",
+            action: "system.notes.write",
+            revocation_version: 1,
+            revoked: true,
+            payload: r#"{"grant_id":"grant_01JAAAAAAAAAAAAAAAAAAAAA0C","revocation_version":1}"#,
+            created_at: "2026-08-29T10:02:09.500Z",
+        })
+        .expect("撤销 grant");
+        let grants = db.list_grants().unwrap();
+        assert_eq!(grants.len(), 1);
+        assert_eq!(grants[0]["revoked"], serde_json::json!(1));
+        assert_eq!(grants[0]["revocation_version"], serde_json::json!(1));
+
+        // capabilities:epoch 持久计数
+        db.save_capability_binding(
+            "system.echo",
+            "system.echo@0.1.0",
+            7,
+            "active",
+            r#"{"capability":"system.echo"}"#,
+            "2026-08-29T10:00:00.100Z",
+        )
+        .expect("写 binding");
+        db.save_capability_binding(
+            "system.echo",
+            "system.echo@0.2.0",
+            8,
+            "active",
+            r#"{"capability":"system.echo"}"#,
+            "2026-08-29T10:05:00.100Z",
+        )
+        .expect("切 binding");
+        let caps = db.list_capability_bindings().unwrap();
+        assert_eq!(caps.len(), 1);
+        assert_eq!(caps[0]["epoch"], serde_json::json!(8));
+
+        // outbox:upsert + 状态列表(T6 对账底座)
+        db.outbox_upsert(
+            "op_01JAAAAAAAAAAAAAAAAAAAAA0A",
+            "side_effect",
+            "pending",
+            r#"{"n":1}"#,
+            "2026-08-29T10:06:00.000Z",
+        )
+        .expect("upsert outbox");
+        db.outbox_upsert(
+            "op_01JAAAAAAAAAAAAAAAAAAAAA0A",
+            "side_effect",
+            "verified",
+            r#"{"n":2}"#,
+            "2026-08-29T10:07:00.000Z",
+        )
+        .expect("推进 outbox");
+        assert_eq!(db.list_outbox_by_state("pending").unwrap().len(), 0);
+        let verified = db.list_outbox_by_state("verified").unwrap();
+        assert_eq!(verified.len(), 1);
+        assert_eq!(verified[0]["payload"], serde_json::json!(r#"{"n":2}"#));
+    }
+
+    /// expand-contract:v2 库打开自动升 v3,既有行不受影响(ADR-0003 对偶)。
+    #[test]
+    fn v2_database_upgrades_to_v3_keeping_rows() {
+        let dir = tempfile::tempdir().expect("临时目录");
+        let path = dir.path().join("state.db");
+        {
+            let conn = rusqlite::Connection::open(&path).expect("建 v2 库");
+            conn.execute_batch(
+                r#"
+                CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                CREATE TABLE sessions (
+                    id TEXT PRIMARY KEY, state TEXT NOT NULL,
+                    agent_id TEXT NOT NULL, created_at TEXT NOT NULL);
+                INSERT INTO sessions VALUES('sess_01JAAAAAAAAAAAAAAAAAAAAA0B',
+                    'active', 'agent_01JAAAAAAAAAAAAAAAAAAAAA0C',
+                    '2026-08-28T10:00:00.000Z');
+                PRAGMA user_version = 2;
+                "#,
+            )
+            .expect("v2 schema");
+        }
+        let db = StateDb::open(&path).expect("打开 v2 库(自动迁移)");
+        let rows = db
+            .query_rows("SELECT id FROM sessions", &[])
+            .expect("读旧表");
+        assert_eq!(rows.len(), 1, "v2 既有行保留");
+        assert_eq!(
+            db.list_capability_bindings().unwrap().len(),
+            0,
+            "v3 新表为空"
+        );
     }
 }

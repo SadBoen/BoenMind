@@ -208,6 +208,44 @@ pub struct Grant {
     pub created_at: crate::BmTimestamp,
 }
 
+// 审批状态机(capability/approval.v0_1.schema.json;基线 §9.6):
+// requested → waiting_user → approved | denied;超时 → expired(等价 denied,
+// 无超时默认同意);调用方取消 → withdrawn。
+wire_str_enum!(ApprovalState {
+    Requested => "requested",
+    WaitingUser => "waiting_user",
+    Approved => "approved",
+    Denied => "denied",
+    Expired => "expired",
+    Withdrawn => "withdrawn",
+});
+
+/// Capability Approval(用户裁决载体,持久合同对象;基线 §9.6)。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Approval {
+    pub approval_id: String,
+    pub capability: String,
+    /// args 规范化 JSON 的 SHA-256(A4:原文不进普通日志)。
+    pub args_digest: String,
+    /// Broker 生成的结构化脱敏摘要(审批卡片主体)。
+    pub args_summary: String,
+    pub principal: String,
+    pub risk_class: RiskClass,
+    pub effective_risk: RiskClass,
+    pub input_trust: DataTrust,
+    pub state: ApprovalState,
+    /// 批准时用户可选择的授权范围(Broker 按 effective_risk 生成)。
+    pub scope_choices: Vec<GrantScope>,
+    pub requested_at: crate::BmTimestamp,
+    /// 等待用户裁决的截止;到期 → expired(等价 denied,无超时默认同意)。
+    pub expires_at: crate::BmTimestamp,
+    #[serde(default)]
+    pub resolved_at: Option<crate::BmTimestamp>,
+    /// 批准后物化的 Grant 回填;其余状态为 null。
+    #[serde(default)]
+    pub grant_id: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -303,6 +341,41 @@ mod tests {
         for bad in ["count:", "ttl:5x", "task:", "whenever", "count:5x"] {
             assert!(GrantScope::from_wire(bad).is_none(), "{bad} 应被拒绝");
         }
+    }
+
+    #[test]
+    fn approval_roundtrip_keeps_state_and_choices() {
+        let a: Approval = serde_json::from_value(json!({
+            "approval_id": "appr_01JAAAAAAAAAAAAAAAAAAAAA04",
+            "capability": "system.danger.purge",
+            "args_digest": "9b1dec3f2a6c47d5b8e0f1a2c3d4e5f60718293a4b5c6d7e8f9a0b1c2d3e4f5a",
+            "args_summary": "清除 notes 域全部内容(target=notes)",
+            "principal": "surface:user",
+            "risk_class": "high-risk-command",
+            "effective_risk": "high-risk-command",
+            "input_trust": "trusted",
+            "state": "waiting_user",
+            "scope_choices": ["once", "count:5", "ttl:1h"],
+            "requested_at": "2026-08-29T10:00:00.220Z",
+            "expires_at": "2026-08-29T10:05:00.220Z",
+            "resolved_at": null,
+            "grant_id": null
+        }))
+        .unwrap();
+        assert_eq!(a.state, ApprovalState::WaitingUser);
+        assert_eq!(
+            a.scope_choices,
+            vec![
+                GrantScope::Once,
+                GrantScope::Count(5),
+                GrantScope::Ttl(3_600_000)
+            ]
+        );
+        let ser = serde_json::to_value(&a).unwrap();
+        assert_eq!(ser["state"], json!("waiting_user"));
+        assert_eq!(ser["scope_choices"][2], json!("ttl:3600000ms"));
+        let back: Approval = serde_json::from_value(ser).unwrap();
+        assert_eq!(back, a);
     }
 
     #[test]
