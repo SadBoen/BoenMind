@@ -7,10 +7,9 @@ BoenMind:个人生态的 AI Runtime / AI OS,当前为**阶段一(跨平台单软
 对照验证(Erlang/OTP、Kubernetes、VS Code,见 `architecture/deepwiki-validation.md`)。
 合同库已冻结 v1.0(字段只增不破)。
 
-**当前进度:M3 完成(2026-08-29,回看裁决 passed_with_conditions)。
-下一步 = M4:Capability、Broker、权限和审批——开工前结算
-ADR-0001/0002 相关验收条件。治理变更生效:技术规格实现者自主冻结,
-用户仅裁决产品体验与方向议题(大白话,记 milestones/PENDING.md)。**
+**当前进度:M4 前置已结算(2026-08-29):`milestones/M4-adr-settlement.md`
+(ADR-0001 七条件 + ADR-0002 六条件逐条分类,M4 落地 8 项、部分 2 项、
+顺延 1 项,11 条硬约束清单)。下一步 = 起草《M4 实现规格》。**
 
 ## 文件地图(规格分层,基线 §0)
 
