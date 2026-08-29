@@ -132,13 +132,13 @@ async fn p08_redaction_scan_overhead() {
     let n = 100_000u64;
     let t0 = Instant::now();
     for i in 0..n {
-        log.record(LogRecordOf(i, sess.clone(), agent.clone(), op.clone()));
+        log.record(log_record_of(i, sess.clone(), agent.clone(), op.clone()));
     }
     let per_entry_us = t0.elapsed().as_micros() as f64 / n as f64;
     println!("P-08 redaction_scan_us_per_entry: {per_entry_us:.3} (N={n})");
 }
 
-fn LogRecordOf(
+fn log_record_of(
     _i: u64,
     sess: bm_contract::ids::BmId,
     agent: bm_contract::ids::BmId,
