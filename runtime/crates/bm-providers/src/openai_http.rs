@@ -190,7 +190,10 @@ impl ModelConnector for OpenAiConnector {
         InvokeResponse::Completed {
             content,
             finish_reason,
-            usage: usage.unwrap_or(Usage { tokens_in: 0, tokens_out: 0 }),
+            usage: usage.unwrap_or(Usage {
+                tokens_in: 0,
+                tokens_out: 0,
+            }),
             model_id: model,
             // latency 由调用方(turn 循环)按真实钟测量;此处给 0 占位,
             // 与 MockConnector 的「声明值」口径一致(基线 9.7)。

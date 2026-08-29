@@ -109,7 +109,9 @@ async fn t111_server_5xx_and_429_are_retryable_unavailable() {
         let resp = invoke(base, store_with_key(), req(30)).await;
         match resp {
             InvokeResponse::Failed {
-                error_code, retryable, ..
+                error_code,
+                retryable,
+                ..
             } => {
                 assert_eq!(error_code, ErrorCode::Unavailable, "status {status}");
                 assert!(retryable, "status {status} 应可重试");
@@ -125,7 +127,9 @@ async fn t112_auth_4xx_is_unavailable_not_retryable() {
     let resp = invoke(base, store_with_key(), req(30)).await;
     match resp {
         InvokeResponse::Failed {
-            error_code, retryable, ..
+            error_code,
+            retryable,
+            ..
         } => {
             assert_eq!(error_code, ErrorCode::Unavailable);
             assert!(!retryable, "鉴权失败不应盲目重试");
@@ -140,7 +144,9 @@ async fn t113_malformed_body_maps_internal_without_leaking() {
     let resp = invoke(base, store_with_key(), req(30)).await;
     match resp {
         InvokeResponse::Failed {
-            error_code, retryable, ..
+            error_code,
+            retryable,
+            ..
         } => {
             assert_eq!(error_code, ErrorCode::Internal);
             assert!(!retryable);
@@ -156,7 +162,9 @@ async fn t114_missing_secret_fails_fast_unavailable() {
     let resp = invoke(base, empty, req(30)).await;
     match resp {
         InvokeResponse::Failed {
-            error_code, retryable, ..
+            error_code,
+            retryable,
+            ..
         } => {
             assert_eq!(error_code, ErrorCode::Unavailable);
             assert!(retryable, "密钥缺失是可修复配置问题,标可重试");
@@ -172,7 +180,9 @@ async fn t115_deadline_timeout_fails_within_budget() {
     let resp = invoke(base, store_with_key(), req(0)).await; // deadline ≈ 现在
     match resp {
         InvokeResponse::Failed {
-            error_code, retryable, ..
+            error_code,
+            retryable,
+            ..
         } => {
             assert_eq!(error_code, ErrorCode::Unavailable);
             assert!(retryable, "超时可重试");

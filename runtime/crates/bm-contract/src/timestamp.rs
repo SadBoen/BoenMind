@@ -18,17 +18,6 @@ pub fn parse_ts(s: &str) -> Option<DateTime<Utc>> {
         .map(|d| d.with_timezone(&Utc))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn format_matches_contract_shape() {
-        let t = DateTime::parse_from_rfc3339("2026-08-29T09:30:00.100Z").unwrap();
-        assert_eq!(format_ts(t.with_timezone(&Utc)), "2026-08-29T09:30:00.100Z");
-    }
-}
-
 /// 距给定时间戳的剩余时长;不可解析返回 None,已过期为 Some(0)。
 /// M7 起供连接器把合同 deadline 折算成 HTTP 超时预算(bm-providers 无 chrono)。
 pub fn remaining_until(ts: &str) -> Option<std::time::Duration> {
@@ -38,4 +27,15 @@ pub fn remaining_until(ts: &str) -> Option<std::time::Duration> {
         return Some(std::time::Duration::ZERO);
     }
     remaining.to_std().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_matches_contract_shape() {
+        let t = DateTime::parse_from_rfc3339("2026-08-29T09:30:00.100Z").unwrap();
+        assert_eq!(format_ts(t.with_timezone(&Utc)), "2026-08-29T09:30:00.100Z");
+    }
 }

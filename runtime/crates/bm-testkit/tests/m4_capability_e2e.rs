@@ -609,7 +609,7 @@ async fn t45_outbox_pending_recovers_to_outcome_unknown() {
     // 重启
     let connector: Arc<dyn ModelConnector> = Arc::new(MockConnector::new(vec![]));
     let handle = RuntimeHandle::start(RuntimeConfig {
-        capabilities: vec![],
+        capabilities: vec![bm_providers::builtin::model_invoke_cap()],
         version: "0.1.0-m4".into(),
         data_dir: None,
         store: Some(store),

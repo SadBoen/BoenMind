@@ -100,6 +100,33 @@ pub fn bootstrap_grant(ids: &dyn IdGen, verb: &str, now: chrono::DateTime<chrono
     }
 }
 
+/// M7 S1:agent 的模型调用权(创建即授,Forever;可经 grant.revoke 收回)。
+/// 走授权面而非信任面:内容链构造层拒绝 trusted(基线 §4.5),而模型调用是
+/// 回合机器的固定动作——它应当是「可显式授予/收回的权力」(ADR-0006)。
+pub fn model_grant_for(
+    ids: &dyn IdGen,
+    agent_id: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Grant {
+    let action = "model.invoke";
+    Grant {
+        grant_id: ids.next_id("grant").to_string(),
+        audience: format!("agent:{agent_id}"),
+        action: action.to_string(),
+        resource: GrantResource {
+            capability: action.to_string(),
+            args_predicates: Default::default(),
+        },
+        scope: GrantScope::Forever,
+        delegation_depth: 0, // 不可再转授(基线 §11.2)
+        expires_at: None,
+        revocation_version: 0,
+        parent_grant_hash: bootstrap_parent_hash(),
+        issued_by: BOOTSTRAP_ISSUER.to_string(),
+        created_at: format_ts(now),
+    }
+}
+
 /// 引导期物化:对清单中每个动词,若台账/持久行中尚无该 (audience, action)
 /// 的 Grant(含已撤销),签发 bootstrap Grant 并返回之(调用方落库 + 发
 /// grant.created 事件)。已撤销的不再复活——撤销是持久事实。

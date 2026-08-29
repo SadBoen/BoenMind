@@ -173,7 +173,33 @@ pub fn builtin_capability_set() -> Vec<(CapabilityManifest, Arc<dyn CapabilityPr
         }),
     ));
 
+    out.push(model_invoke_cap());
+
     out
+}
+
+/// M7 model.invoke:模型调用收编进 Capability 面(M7 规格 S1;M4 §5.8 豁免撤销)。
+/// 执行体 = turn 循环内的连接器(spawn 前 Broker 查表放行);Wire 直调在此拒绝,
+/// 防止绕过 turn 语义(预算记账/取消/审计)直接触模型。独立导出供最小装配
+/// (TestRig::standard 只带 model.invoke,不携带演示能力)。
+pub fn model_invoke_cap() -> (CapabilityManifest, Arc<dyn CapabilityProvider>) {
+    (
+        manifest(
+            "model.invoke",
+            "read-only",
+            json!({
+                "scopes": ["domain:model"],
+                "idempotent": false,
+                "cancellable": true,
+                "timeout_ms": 120000,
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"model_id": {"type": "string"}}
+                }
+            }),
+        ),
+        provider_fn(|_args| Err("model.invoke 仅限运行时 turn 循环调用".to_string())),
+    )
 }
 
 #[cfg(test)]
@@ -185,8 +211,8 @@ mod tests {
         let set = builtin_capability_set();
         assert_eq!(
             set.len(),
-            6,
-            "echo/counter/notes.write/notes.delete/mail/purge"
+            7,
+            "echo/counter/notes.write/notes.delete/mail/purge + model.invoke(M7)"
         );
         let mut effects: Vec<String> = set
             .iter()

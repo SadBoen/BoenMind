@@ -29,7 +29,7 @@ async fn main() -> CoreResult<()> {
     ));
 
     let handle = RuntimeHandle::start(RuntimeConfig {
-        capabilities: Vec::new(),
+        capabilities: vec![bm_providers::builtin::model_invoke_cap()],
         version: env!("CARGO_PKG_VERSION").into(),
         data_dir: None,
         store: None,

@@ -137,7 +137,8 @@ pub async fn rig_on(dir: &std::path::Path, script: Vec<Step>) -> TestRig {
         Arc::new(bm_persist::PersistStore::open(dir).expect("打开持久层"));
 
     let config = RuntimeConfig {
-        capabilities: Vec::new(),
+        // M7 S1:turn 依赖 model.invoke 能力面;标准装配只带模型能力,不带演示能力
+        capabilities: vec![bm_providers::builtin::model_invoke_cap()],
         version: "0.1.0-m1".into(),
         data_dir: Some(dir.to_path_buf()),
         store: Some(store),
@@ -194,7 +195,8 @@ pub async fn rig(script: Vec<Step>, budget: Option<(u64, u32)>, with_dir: bool) 
     };
 
     let config = RuntimeConfig {
-        capabilities: Vec::new(),
+        // M7 S1:同上,最小模型能力装配
+        capabilities: vec![bm_providers::builtin::model_invoke_cap()],
         version: "0.1.0-m1".into(),
         data_dir: data_dir.clone(),
         store,

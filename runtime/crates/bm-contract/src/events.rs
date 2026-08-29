@@ -171,9 +171,14 @@ impl EventType {
             EventType::TaskRepeating => &["task_id", "agent_id", "capability", "repeat_count"],
             EventType::WatchdogReorchestrationTriggered => &["task_id", "trigger", "reason"],
             EventType::TaskMemberRemoved => &["task_id", "agent_id", "reason"],
-            EventType::CapabilityProgress => {
-                &["call_id", "operation_id", "capability", "progress", "total", "message"]
-            }
+            EventType::CapabilityProgress => &[
+                "call_id",
+                "operation_id",
+                "capability",
+                "progress",
+                "total",
+                "message",
+            ],
             EventType::ProviderHealthChanged => &["provider", "from", "to", "reason"],
             EventType::ObservationRecorded => &["task_id", "log_seq", "verdict", "guard_state"],
         }

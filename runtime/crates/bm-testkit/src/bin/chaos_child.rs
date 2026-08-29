@@ -29,7 +29,7 @@ async fn start_runtime(dir: &std::path::Path, script: Vec<Step>) -> RuntimeHandl
     let store: Arc<dyn bm_persist::EventStore> =
         Arc::new(PersistStore::open(dir).expect("子进程打开持久层"));
     RuntimeHandle::start(RuntimeConfig {
-        capabilities: Vec::new(),
+        capabilities: vec![bm_providers::builtin::model_invoke_cap()],
         version: "0.1.0-m1".into(),
         data_dir: Some(dir.to_path_buf()),
         store: Some(store),

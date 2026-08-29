@@ -297,6 +297,17 @@ struct World {
     op_capability: HashMap<BmId, String>,
     /// M6:成员结果收集(task_id → 结果流水;来源/状态/关联 Operation)。
     task_results: HashMap<BmId, Vec<serde_json::Value>>,
+    /// M7 S1:turn 模型调用 Broker 凭证留档(operation_id 索引;
+    /// 授权点在 spawn,审计点在回合模型阶段终态——两段由 call_id 缝合)。
+    model_call_audit: HashMap<BmId, ModelCallAudit>,
+}
+
+/// turn 模型调用的审计留档(M7 S1)。
+struct ModelCallAudit {
+    call_id: BmId,
+    epoch: u64,
+    instance_id: String,
+    principal: String,
 }
 
 /// 追加成员入参(M6.3)。
@@ -711,6 +722,7 @@ impl RuntimeHandle {
             watchdog: crate::watchdog::WatchdogState::default(),
             op_capability: HashMap::new(),
             task_results: HashMap::new(),
+            model_call_audit: HashMap::new(),
             tx: tx.clone(),
             store: config.store.clone(),
             config,
@@ -1809,6 +1821,29 @@ fn handle_session_create(
         }),
     );
 
+    // M7 S1:模型调用权显式授权(Grant 台账;ADR-0006)——创建即授 Forever,
+    // 可被 Butler revoke 收回;持久行保证重启后权利不丢。
+    let mg =
+        crate::butler::model_grant_for(&*w.config.id_gen, agent_id.as_str(), w.config.clock.now());
+    w.grants.record(mg.clone());
+    persist_grant(w, &mg.grant_id);
+    w.emit(
+        EventType::GrantCreated,
+        None,
+        None,
+        None,
+        serde_json::json!({
+            "grant_id": mg.grant_id,
+            "approval_id": null,
+            "audience": mg.audience,
+            "action": mg.action,
+            "scope": mg.scope.to_wire(),
+            "delegation_depth": mg.delegation_depth,
+            "expires_at": null,
+            "parent_hash": mg.parent_grant_hash,
+        }),
+    );
+
     Ok(SessionCreateResult {
         session_id,
         agent_id,
@@ -2093,6 +2128,60 @@ fn handle_send_input(
 }
 
 fn spawn_turn(w: &mut World, agent: &Agent, operation_id: &BmId, content: String) {
+    // M7 S1:模型调用过 Broker(M4 §5.8 豁免撤销;ADR-0010)。
+    // 授权走 Grant 台账:agent 创建即授 model.invoke 永续 Grant,可经
+    // grant.revoke 收回(ADR-0006 权力显式化)。不走信任面——内容链构造层
+    // 拒绝 trusted(基线 §4.5),而模型调用是回合机器的固定动作。
+    let model_call_audit = {
+        let ctx = CallContext::content_chain(
+            &format!("agent:{}", agent.id.as_str()),
+            DataTrust::Untrusted,
+        )
+        .expect("内容链不得声称 trusted(此处传 untrusted,构造恒成功)");
+        let principal = ctx.principal.clone();
+        let decision = {
+            let broker = Broker::new(
+                &w.registry,
+                &mut w.grants,
+                &*w.config.clock,
+                &*w.config.id_gen,
+            );
+            broker.decide(
+                &ctx,
+                "model.invoke",
+                &serde_json::json!({
+                    "model_id": agent.model_chain.first().cloned().unwrap_or_default()
+                }),
+            )
+        };
+        match decision {
+            Decision::Allowed { .. } => {
+                let (epoch, instance_id) = w
+                    .registry
+                    .binding_of("model.invoke")
+                    .map(|b| (b.epoch, b.provider_instance_id.clone()))
+                    .unwrap_or((0, "n/a".to_string()));
+                Some(ModelCallAudit {
+                    call_id: w.config.id_gen.next_id("call"),
+                    epoch,
+                    instance_id,
+                    principal,
+                })
+            }
+            _ => None,
+        }
+    };
+    let Some(model_call_audit) = model_call_audit else {
+        w.fail_turn(
+            operation_id,
+            ErrorCode::Internal,
+            "模型调用权未授予或已收回".into(),
+        );
+        return;
+    };
+    w.model_call_audit
+        .insert(operation_id.clone(), model_call_audit);
+
     let cancel = CancellationToken::new();
     w.in_flight.insert(operation_id.clone(), cancel.clone());
 
@@ -4400,9 +4489,47 @@ fn task_error_to_core(task_id: &BmId, e: crate::task::TaskError) -> CoreError {
     CoreError::Semantic(ErrorCode::ValidationFailed, msg)
 }
 
+/// M7 S1:回合模型阶段终态审计(outcome=error;成功路径见 TurnEvent::Completed)。
+fn emit_model_call_error_audit(w: &mut World, operation_id: &BmId, code: ErrorCode) {
+    if let Some(a) = w.model_call_audit.remove(operation_id) {
+        emit_capability_invoked_with(
+            w,
+            &a.call_id,
+            operation_id,
+            "model.invoke",
+            &a.principal,
+            Some(a.epoch),
+            Some(&a.instance_id),
+            "error",
+            Some(code),
+            None,
+        );
+    }
+}
+
 #[allow(clippy::too_many_arguments)] // 审计字段与注册表 payload 键集一一对应
 fn emit_capability_invoked(
     w: &mut World,
+    op_id: &BmId,
+    capability: &str,
+    principal: &str,
+    epoch: Option<u64>,
+    instance: Option<&str>,
+    outcome: &str,
+    error_code: Option<ErrorCode>,
+    key_hash: Option<&str>,
+) {
+    let call_id = w.config.id_gen.next_id("call");
+    emit_capability_invoked_with(
+        w, &call_id, op_id, capability, principal, epoch, instance, outcome, error_code, key_hash,
+    );
+}
+
+/// 带预生成 call_id 的变体(turn 模型调用:授权点与审计点分离,M7 S1)。
+#[allow(clippy::too_many_arguments)] // 审计字段与注册表 payload 键集一一对应
+fn emit_capability_invoked_with(
+    w: &mut World,
+    call_id: &BmId,
     op_id: &BmId,
     capability: &str,
     principal: &str,
@@ -4418,7 +4545,7 @@ fn emit_capability_invoked(
         None,
         Some(op_id.clone()),
         serde_json::json!({
-            "call_id": w.config.id_gen.next_id("call").as_str(),
+            "call_id": call_id.as_str(),
             "operation_id": op_id.as_str(),
             "capability": capability,
             "principal": principal,
@@ -4531,6 +4658,7 @@ fn handle_turn_event(w: &mut World, event: TurnEvent) {
             operation_id,
             error_code,
         } => {
+            emit_model_call_error_audit(w, &operation_id, error_code);
             w.fail_turn(
                 &operation_id,
                 error_code,
@@ -4539,6 +4667,7 @@ fn handle_turn_event(w: &mut World, event: TurnEvent) {
             w.in_flight.remove(&operation_id);
         }
         TurnEvent::Cancelled { operation_id } => {
+            emit_model_call_error_audit(w, &operation_id, ErrorCode::Cancelled);
             // operation: running→cancelled(唯一合法入口 = 显式取消,INV-12)
             let (session_id, agent_id) = {
                 let op = &w.operations[&operation_id];
@@ -4606,6 +4735,21 @@ fn handle_turn_event(w: &mut World, event: TurnEvent) {
                     "stream_interrupted": stream_interrupted,
                 }),
             );
+            // M7 S1:模型调用审计(Broker 路径与普通能力调用同享 capability.invoked 面)
+            if let Some(a) = w.model_call_audit.remove(&operation_id) {
+                emit_capability_invoked_with(
+                    w,
+                    &a.call_id,
+                    &operation_id,
+                    "model.invoke",
+                    &a.principal,
+                    Some(a.epoch),
+                    Some(&a.instance_id),
+                    "ok",
+                    None,
+                    None,
+                );
+            }
             w.exec_log.record(crate::exec_log::LogRecord {
                 kind: LogKind::ModelInvocation,
                 session_id: session_id.clone(),

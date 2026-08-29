@@ -87,7 +87,11 @@ async fn gt01_scenario_a_normal_turn() {
         .filter(|e| e.event_type != EventType::GrantCreated)
         .cloned()
         .collect();
-    assert_eq!(events.len(), 11, "GT-A:回合流恰好 11 条事件");
+    assert_eq!(
+        events.len(),
+        12,
+        "GT-A:回合流恰好 12 条事件(M7 起含 capability.invoked)"
+    );
 
     let expected = vec![
         Expected {
@@ -146,6 +150,36 @@ async fn gt01_scenario_a_normal_turn() {
                 ("usage_out", bm_testkit::replay::PVal::Num(58)),
                 ("latency_ms", bm_testkit::replay::PVal::Num(1873)),
                 ("stream_interrupted", bm_testkit::replay::PVal::Bool(false)),
+            ],
+        },
+        // M7 S1:模型调用过 Broker 的审计事件(与普通能力调用同构)
+        Expected {
+            ty: EventType::CapabilityInvoked,
+            payload: vec![
+                ("call_id", bm_testkit::replay::PVal::Any),
+                ("operation_id", id(receipt.operation_id.as_str())),
+                (
+                    "capability",
+                    bm_testkit::replay::PVal::Str("model.invoke".into()),
+                ),
+                (
+                    "principal",
+                    bm_testkit::replay::PVal::Str(format!("agent:{agent}")),
+                ),
+                ("binding_epoch", bm_testkit::replay::PVal::Num(1)),
+                (
+                    "provider_instance_id",
+                    bm_testkit::replay::PVal::Str("model.invoke@0.1.0".into()),
+                ),
+                ("outcome", bm_testkit::replay::PVal::Str("ok".into())),
+                (
+                    "error_code",
+                    bm_testkit::replay::PVal::Raw(serde_json::json!(null)),
+                ),
+                (
+                    "idempotency_key_hash",
+                    bm_testkit::replay::PVal::Raw(serde_json::json!(null)),
+                ),
             ],
         },
         Expected {
@@ -264,6 +298,7 @@ async fn gt01_scenario_b_timeout_chain() {
             EventType::AgentWaitingModel,
             EventType::ModelInvocationFailed, // attempt 1: zhipu
             EventType::ModelInvocationFailed, // attempt 2: openai(降级)
+            EventType::CapabilityInvoked,     // M7 S1:链耗尽审计(outcome=error)
             EventType::OperationStateChanged, // running→failed(guard: no external effect)
             EventType::AgentFailed,
             EventType::SessionClosed,
@@ -276,9 +311,9 @@ async fn gt01_scenario_b_timeout_chain() {
     assert_eq!(events[5].payload["model_id"], bm_testkit::replay::MODEL_A);
     assert_eq!(events[6].payload["attempt"], 2);
     assert_eq!(events[6].payload["model_id"], bm_testkit::replay::MODEL_B);
-    assert_eq!(events[7].payload["from"], "running");
-    assert_eq!(events[7].payload["to"], "failed");
-    assert_eq!(events[8].payload["error_code"], "timeout");
+    assert_eq!(events[8].payload["from"], "running");
+    assert_eq!(events[8].payload["to"], "failed");
+    assert_eq!(events[9].payload["error_code"], "timeout");
 
     // 场景 B 的关键对照:不出现 outcome_unknown
     assert!(

@@ -23,6 +23,19 @@ fn craft_crash_scene(store: &PersistStore, sess: &BmId, agent: &BmId, op: &BmId)
     use bm_contract::events::{EventEnvelope, EventType};
     use serde_json::json;
     let ids = SeqIdGen::new();
+    // M7 S1:真实运行时在会话创建时已持久 agent 的 model.invoke Grant;
+    // 崩溃场景必须如实包含,否则恢复后回合被 Broker 默认拒绝(ADR-0006)。
+    let grant = bm_core::butler::model_grant_for(&ids, agent.as_str(), chrono::Utc::now());
+    let _ = store.save_grant(bm_persist::sqlite_state::GrantRow {
+        id: grant.grant_id.as_str(),
+        audience: grant.audience.as_str(),
+        action: grant.action.as_str(),
+        revocation_version: 0,
+        revoked: false,
+        used_count: 0,
+        payload: &serde_json::to_string(&grant).expect("Grant 可序列化"),
+        created_at: grant.created_at.as_str(),
+    });
     let mut seq = store.last_log_seq().expect("日志末尾");
     let mut push = |ty: EventType,
                     session: Option<BmId>,

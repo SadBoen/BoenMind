@@ -63,10 +63,11 @@ async fn t07_single_turn_success_event_shape() {
             EventType::AgentTurnStarted,
             EventType::AgentWaitingModel,
             EventType::ModelInvocationCompleted,
+            EventType::CapabilityInvoked, // M7 S1:模型调用过 Broker 的审计事件
             EventType::OperationStateChanged,
             EventType::AgentCompleted,
         ],
-        "GT 场景 A 前 8 条事件形态"
+        "GT 场景 A 前 9 条事件形态(M7 起含 capability.invoked)"
     );
 
     // INV-1
@@ -122,10 +123,11 @@ async fn t08_chain_exhausted_maps_to_failed_not_outcome_unknown() {
             EventType::AgentWaitingModel,
             EventType::ModelInvocationFailed,
             EventType::ModelInvocationFailed,
+            EventType::CapabilityInvoked, // M7 S1:链耗尽落定时的审计(outcome=error)
             EventType::OperationStateChanged,
             EventType::AgentFailed,
         ],
-        "GT 场景 B 事件形态(简版补全)"
+        "GT 场景 B 事件形态(简版补全;M7 起含 capability.invoked)"
     );
     // INV-4:每次尝试恰好一条 failed 事件
     assert_eq!(
