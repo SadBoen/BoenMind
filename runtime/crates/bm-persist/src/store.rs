@@ -92,6 +92,34 @@ impl PersistStore {
         })
     }
 
+    /// 韧性打开(混沌②,M2 规格 §6-T8):状态库损坏时将其隔离,
+    /// 自事件日志重建投影——「投影重建只绑定事件日志」的终极验证。
+    /// 边界:若日志已压实(前缀不在),前缀状态无法重建,拒绝并要求快照恢复。
+    /// 返回 (store, 是否发生重建)。
+    pub fn open_resilient(dir: &Path) -> StoreResult<(Self, bool)> {
+        match Self::open(dir) {
+            Ok(s) => Ok((s, false)),
+            Err(StoreError::Sql(_)) | Err(StoreError::Corrupt { .. }) => {
+                let stamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis())
+                    .unwrap_or(0);
+                for name in ["state.db", "state.db-wal", "state.db-shm"] {
+                    let p = dir.join(name);
+                    if p.exists() {
+                        std::fs::rename(&p, dir.join(format!("{name}.corrupt-{stamp}")))?;
+                    }
+                }
+                let s = Self::open(dir)?;
+                let upto = s.last_log_seq()?;
+                let rebuilt = crate::recovery::rebuild_projection(&s, upto, &s.state)?;
+                tracing::warn!(rebuilt_seq = %rebuilt, "状态库损坏,已自事件日志重建投影");
+                Ok((s, true))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
     /// 以自定义压实间隔打开(测试小间隔;生产用默认)。
     pub fn with_compaction(dir: &Path, every_n: u64) -> StoreResult<Self> {
         let mut me = Self::open(dir)?;
@@ -125,6 +153,37 @@ impl PersistStore {
     /// 状态库只读访问(恢复与测试断言用)。
     pub fn state(&self) -> &StateDb {
         &self.state
+    }
+
+    /// 混沌④/CAS 门禁:带过期 expect 的写入被拒并落审计事件
+    /// `store.write.rejected`(M4 epoch fencing 的底座行为)。返回是否发生拒绝。
+    pub fn reject_and_audit(
+        &self,
+        audit_seq: u64,
+        key: &str,
+        stale_expect: &str,
+        new: &str,
+    ) -> StoreResult<bool> {
+        match self
+            .state
+            .meta_compare_and_set(key, Some(stale_expect), new)
+        {
+            Ok(()) => Ok(false),
+            Err(StoreError::CasMismatch { .. }) => {
+                let event = EventEnvelope::new(
+                    audit_seq,
+                    bm_contract::events::EventType::StoreWriteRejected,
+                    bm_contract::timestamp::now(),
+                    None,
+                    None,
+                    None,
+                    serde_json::json!({ "key": key, "reason": "stale_epoch" }),
+                );
+                self.record(&event)?;
+                Ok(true)
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// 当前快照位点(未快照过 = None)。
