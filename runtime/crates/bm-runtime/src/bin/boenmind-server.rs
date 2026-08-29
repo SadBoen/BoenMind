@@ -27,13 +27,15 @@ fn default_data_dir() -> PathBuf {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut data_dir = default_data_dir();
     let mut bind = "127.0.0.1:7531".to_string();
+    let mut web_dir: Option<PathBuf> = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--data-dir" => data_dir = PathBuf::from(args.next().expect("--data-dir 需要值")),
             "--bind" => bind = args.next().expect("--bind 需要值"),
+            "--web-dir" => web_dir = Some(PathBuf::from(args.next().expect("--web-dir 需要值"))),
             "--help" | "-h" => {
-                println!("boenmind-server [--data-dir <path>] [--bind <addr>]");
+                println!("boenmind-server [--data-dir <path>] [--bind <addr>] [--web-dir <path>]");
                 return Ok(());
             }
             other => return Err(format!("未知参数: {other}").into()),
@@ -81,7 +83,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::new(token.clone()),
         store,
         shutdown.clone(),
+        web_dir.clone(),
     );
+    if let Some(w) = &web_dir {
+        println!("Web Surface 目录 {w:?}(GET / 托管静态界面)");
+    }
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     let actual = listener.local_addr()?;
     println!(

@@ -9,6 +9,7 @@ bm-contract = { workspace = true }
 bm-core = { workspace = true }
 bm-persist = { workspace = true }
 axum = { workspace = true }
+tower-http = { workspace = true }
 async-stream = { workspace = true }
 getrandom = { workspace = true }
 serde = { workspace = true }

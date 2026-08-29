@@ -36,6 +36,7 @@ pub fn router(
     token: Arc<String>,
     store: Arc<dyn bm_persist::EventStore>,
     shutdown: Arc<tokio::sync::Notify>,
+    web_dir: Option<std::path::PathBuf>,
 ) -> Router {
     let state = AppState {
         handle,
@@ -43,7 +44,7 @@ pub fn router(
         store,
         shutdown,
     };
-    Router::new()
+    let app = Router::new()
         .route("/rpc/{method}", post(rpc::rpc_endpoint))
         .route("/events/{session_id}", get(sse::events_sse))
         .route("/shutdown", post(rpc::shutdown_endpoint))
@@ -52,5 +53,11 @@ pub fn router(
             auth::require_bearer,
         ))
         .route("/health", get(rpc::health))
-        .with_state(state)
+        .with_state(state);
+    // Web Surface 静态托管(公开:界面壳不含数据;数据一律经鉴权 API):
+    // 未匹配 API 的路径回落到静态文件
+    match web_dir {
+        Some(dir) => app.fallback_service(tower_http::services::ServeDir::new(dir)),
+        None => app,
+    }
 }
