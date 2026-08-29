@@ -99,8 +99,8 @@ fn event_type_enum_matches_registry() {
     let registry = registries::runtime_events();
     assert_eq!(
         registry.len(),
-        41,
-        "注册表事件数漂移(M1 20 + M2 增发 2 + M4 增发 10 + M5 增发 8 + M6 增发 1)"
+        43,
+        "注册表事件数漂移(M1 20 + M2 增发 2 + M4 增发 10 + M5 增发 8 + M6 增发 1 + M7 增发 2)"
     );
     for reg in &registry {
         let t = EventType::from_wire(&reg.type_).unwrap_or_else(|| panic!("枚举缺 {}", reg.type_));
@@ -1052,4 +1052,31 @@ fn task_state_machine_terminal_and_paused_edges() {
     // M8 序列化形态:paused 与 task 状态字符串与合同一致
     assert_eq!(AgentState::Paused.as_str(), "paused");
     assert_eq!(TaskState::Blocked.as_str(), "blocked");
+}
+
+// ---- M7:MCP server 配置合同 -----------------------------------------------
+
+#[test]
+fn mcp_server_config_schema_accepts_minimal_and_rejects_bad() {
+    let ok = json!({
+        "name": "notes", "transport": "stdio",
+        "command": "python", "args": ["-m", "notes_mcp"],
+        "env": {"NOTES_TOKEN": "secret:notes.token"},
+        "tool_timeout_ms": 20000, "restart_limit": 3,
+        "trust": "explicit-config"
+    });
+    validate(registries::MCP_SERVER_SCHEMA, &ok).expect("mcp 配置合法");
+
+    let bad = json!({
+        "name": "Bad-Name", "transport": "stdio",
+        "command": "x", "args": []
+    });
+    validate(registries::MCP_SERVER_SCHEMA, &bad).expect_err("server 名字符集必须拒连字符");
+
+    let leak = json!({
+        "name": "notes", "transport": "stdio",
+        "command": "x", "args": [],
+        "env": {"NOTES_TOKEN": "sk-plaintext"}
+    });
+    validate(registries::MCP_SERVER_SCHEMA, &leak).expect_err("env 明文必须拒绝,只收 secret: 引用");
 }

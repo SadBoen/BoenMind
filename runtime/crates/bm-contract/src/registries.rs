@@ -43,6 +43,9 @@ pub const MEMORY_ENTRY_SCHEMA: &str =
     include_str!("../../../../boenmind-contracts/memory/memory-entry.v0_1.schema.json");
 pub const OBSERVATION_LOG_SCHEMA: &str =
     include_str!("../../../../boenmind-contracts/logs/observation-log-entry.v0_1.schema.json");
+// M7 增发(2026-08-30,Minor):MCP server 接入配置合同。
+pub const MCP_SERVER_SCHEMA: &str =
+    include_str!("../../../../boenmind-contracts/mcp/mcp-server.v0_1.schema.json");
 
 #[derive(Debug, Deserialize)]
 pub struct RegistryCode {
