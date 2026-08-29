@@ -8,32 +8,49 @@ use rusqlite::Connection;
 use std::path::Path;
 use std::sync::Mutex;
 
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 pub struct StateDb {
     pub(crate) conn: Mutex<Connection>,
 }
 
 impl StateDb {
-    /// 打开并迁移到最新 schema。新建库直接建表;旧库按 user_version 逐级迁移。
+    /// 打开并迁移到最新 schema。链式 expand-contract 迁移(ADR-0003 对偶:
+    /// 只加列不删列,数据一致性不押注任何回滚)。
     pub fn open(path: &Path) -> StoreResult<Self> {
         let conn = Connection::open(path)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "FULL")?;
         let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        match version {
-            0 => Self::migrate_v0_to_v1(&conn)?,
-            SCHEMA_VERSION => {}
-            other => {
-                return Err(StoreError::Corrupt {
-                    seq: 0,
-                    reason: format!("未知 schema 版本 {other}(库来自更新的实现?)"),
-                });
-            }
+        if version > SCHEMA_VERSION {
+            return Err(StoreError::Corrupt {
+                seq: 0,
+                reason: format!("未知 schema 版本 {version}(库来自更新的实现?)"),
+            });
         }
+        if version < 1 {
+            Self::migrate_v0_to_v1(&conn)?;
+        }
+        if version < 2 {
+            Self::migrate_v1_to_v2(&conn)?;
+        }
+        conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
+    }
+
+    /// v1→v2(M2.6):operations 增 input_content 列(受保护存储)——
+    /// 输入原文只存规范状态库、不进事件/日志(A4),供 claim 幂等续跑。
+    fn migrate_v1_to_v2(conn: &Connection) -> StoreResult<()> {
+        conn.execute_batch(
+            r#"
+            BEGIN;
+            ALTER TABLE operations ADD COLUMN input_content TEXT;
+            COMMIT;
+            "#,
+        )?;
+        Ok(())
     }
 
     fn migrate_v0_to_v1(conn: &Connection) -> StoreResult<()> {
@@ -84,8 +101,29 @@ impl StateDb {
             COMMIT;
             "#,
         )?;
-        conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(())
+    }
+
+    /// 保存回合输入原文(受保护存储;A4:原文不进事件/日志)。
+    pub fn save_op_input(&self, operation_id: &str, content: &str) -> StoreResult<()> {
+        let conn = self.conn.lock().expect("锁未中毒");
+        conn.execute(
+            "UPDATE operations SET input_content = ?2 WHERE id = ?1",
+            rusqlite::params![operation_id, content],
+        )?;
+        Ok(())
+    }
+
+    /// 读回合输入原文(claim 续跑用)。
+    pub fn op_input(&self, operation_id: &str) -> StoreResult<Option<String>> {
+        let conn = self.conn.lock().expect("锁未中毒");
+        let mut stmt = conn.prepare("SELECT input_content FROM operations WHERE id = ?1")?;
+        let mut rows = stmt.query([operation_id])?;
+        if let Some(row) = rows.next()? {
+            Ok(row.get(0)?)
+        } else {
+            Ok(None)
+        }
     }
 
     /// 通用行查询(恢复与测试读取用;返回按列名的 JSON 对象数组)。

@@ -70,10 +70,9 @@ async fn t22_hard_kill_process_recovery() {
         .unwrap_or_else(|e| panic!("verify 输出应为 JSON({e}): {stdout}"));
 
     assert_eq!(report["session_state"], "active", "会话恢复为 active");
-    assert_eq!(
-        report["op_state"], "interrupted",
-        "被杀回合落 interrupted(非静默丢失)"
-    );
+    // T7 claim:被杀回合自动续跑至终态(幂等续跑,ADR-0004 共识)
+    assert_eq!(report["op_state"], "succeeded", "claim 重驱后回合完成");
+    assert_eq!(report["interrupted_audit"], true, "中断审计事件在场");
     assert_eq!(report["interrupted_recovered"], 1);
     assert_eq!(report["replayed"], 0, "硬杀未破坏位点一致性,无修复窗口");
 
@@ -89,5 +88,5 @@ async fn t22_hard_kill_process_recovery() {
         killed_op_id.trim(),
         "崩溃前的 operation 未消失(存在性恢复)"
     );
-    assert_eq!(ops[0]["state"], "interrupted");
+    assert_eq!(ops[0]["state"], "succeeded", "claim 续跑完成");
 }

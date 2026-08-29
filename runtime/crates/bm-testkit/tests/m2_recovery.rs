@@ -4,6 +4,7 @@
 //! - 崩溃遗留的非终态 operation 走 interrupted→resumed 恢复迁移并留审计事件;
 //! - runtime.recovered 事件报告恢复面。
 
+use bm_contract::error_codes::ErrorCode;
 use bm_contract::events::EventType;
 use bm_contract::ids::{BmId, IdGen, SeqIdGen};
 use bm_contract::states::OperationState;
@@ -243,6 +244,137 @@ async fn t21_interrupted_operation_recovered_with_audit() {
         .send(&sess, &agent, "新问题")
         .await
         .expect("恢复后 agent 可接单");
+    assert_eq!(receipt2.state, OperationState::Running);
+
+    rig.handle.stop("test_done").await;
+}
+
+#[tokio::test]
+async fn t25_claim_with_input_content_redrives_turn() {
+    // 与 t21 同场景,但崩溃前保存了输入原文 → 恢复必须自动 claim 续跑至终态
+    let dir = tempfile::tempdir().expect("临时目录");
+    let ids = SeqIdGen::new();
+    let sess: BmId = ids.next_id("sess");
+    let agent: BmId = ids.next_id("agent");
+    let op: BmId = ids.next_id("op");
+
+    {
+        let store = PersistStore::open(dir.path()).expect("打开");
+        craft_crash_scene(&store, &sess, &agent, &op);
+        store
+            .save_op_input(op.as_str(), "崩溃时的原始问题")
+            .expect("保存输入");
+    }
+
+    let rig = rig_on(dir.path(), vec![Step::ok("claim 续答", 30, 15)]).await;
+
+    let events = rig.all_events().await;
+    assert!(
+        events
+            .iter()
+            .any(|e| e.event_type == EventType::AgentInterrupted)
+    );
+    let to_running = events
+        .iter()
+        .find(|e| {
+            e.event_type == EventType::OperationStateChanged
+                && e.payload["operation_id"].as_str() == Some(op.as_str())
+                && e.payload["to"].as_str() == Some("running")
+        })
+        .expect("claim 落到 running");
+    assert_eq!(to_running.payload["reason_code"], "recovery_replay_ok");
+
+    let receipt = rig
+        .handle
+        .operations_get(GetOperationParams {
+            operation_id: op.clone(),
+        })
+        .await
+        .expect("查询");
+    assert_eq!(receipt.state, OperationState::Succeeded, "claim 续跑完成");
+
+    rig.handle.stop("test_done").await;
+}
+
+#[tokio::test]
+async fn t26_outcome_unknown_requires_ruling_not_retry() {
+    // INV-10/11:outcome_unknown 只能经核验/裁定结束;普通重试不得触碰
+    let dir = tempfile::tempdir().expect("临时目录");
+    let ids = SeqIdGen::new();
+    let sess: BmId = ids.next_id("sess");
+    let agent: BmId = ids.next_id("agent");
+    let op: BmId = ids.next_id("op");
+
+    {
+        let store = PersistStore::open(dir.path()).expect("打开");
+        craft_crash_scene(&store, &sess, &agent, &op);
+        let e = bm_contract::events::EventEnvelope::new(
+            store.last_log_seq().expect("末尾") + 1,
+            EventType::OperationStateChanged,
+            now_env(),
+            Some(sess.clone()),
+            Some(agent.clone()),
+            Some(op.clone()),
+            serde_json::json!({
+                "operation_id": op.as_str(),
+                "from": "running",
+                "to": "outcome_unknown",
+                "reason_code": "(deadline_exceeded OR crash OR cancel) AND effect_class IN [reversible-command, external-side-effect, high-risk-command]",
+            }),
+        );
+        store.record(&e).expect("落盘");
+    }
+
+    let rig = rig_on(dir.path(), vec![Step::ok("续答", 10, 5)]).await;
+
+    let receipt = rig
+        .handle
+        .operations_get(GetOperationParams {
+            operation_id: op.clone(),
+        })
+        .await
+        .expect("查询");
+    assert_eq!(
+        receipt.state,
+        OperationState::OutcomeUnknown,
+        "恢复不得自动收口 outcome_unknown"
+    );
+
+    let err = rig
+        .handle
+        .recovery_settle(op.clone(), bm_core::runtime::RecoveryVerdict::Cancelled)
+        .await
+        .expect_err("非法裁定拒绝");
+    assert!(matches!(
+        err,
+        bm_core::CoreError::Semantic(ErrorCode::ValidationFailed, _)
+    ));
+
+    let settled = rig
+        .handle
+        .recovery_settle(op.clone(), bm_core::runtime::RecoveryVerdict::Failed)
+        .await
+        .expect("裁定成功");
+    assert_eq!(settled.state, OperationState::Failed);
+    assert_eq!(
+        settled.error.as_ref().expect("带错误").code.get(),
+        ErrorCode::OutcomeUnknown
+    );
+
+    let err2 = rig
+        .handle
+        .recovery_settle(op.clone(), bm_core::runtime::RecoveryVerdict::Succeeded)
+        .await
+        .expect_err("终态不可再裁定");
+    assert!(matches!(
+        err2,
+        bm_core::CoreError::Semantic(ErrorCode::ValidationFailed, _)
+    ));
+
+    let receipt2 = rig
+        .send(&sess, &agent, "新回合")
+        .await
+        .expect("agent 已恢复可接单");
     assert_eq!(receipt2.state, OperationState::Running);
 
     rig.handle.stop("test_done").await;

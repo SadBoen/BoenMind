@@ -158,3 +158,44 @@ fn t24_rebuild_projection_is_deterministic_chaos3() {
     );
     assert_eq!(d1["meta"][0]["value"], "7", "重建位点=前缀末尾");
 }
+
+#[test]
+fn t27_schema_v1_to_v2_expand_migration() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let db_path = dir.path().join("state.db");
+
+    let conn = rusqlite::Connection::open(&db_path).expect("建 v1 库");
+    conn.execute_batch(
+        r#"
+        CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE TABLE sessions (id TEXT PRIMARY KEY, state TEXT, agent_id TEXT, created_at TEXT);
+        CREATE TABLE agents (id TEXT PRIMARY KEY);
+        CREATE TABLE operations (
+            id TEXT PRIMARY KEY, session_id TEXT, agent_id TEXT, request_id TEXT,
+            state TEXT, turn_index INTEGER, created_at TEXT, completed_at TEXT,
+            action_summary TEXT, result_ref TEXT, error_code TEXT, error_message TEXT
+        );
+        CREATE TABLE tombstones (kind TEXT, id TEXT, at TEXT, PRIMARY KEY (kind, id));
+        PRAGMA user_version = 1;
+        "#,
+    )
+    .expect("v1 schema");
+    conn.execute(
+        "INSERT INTO operations(id, session_id, agent_id, state, turn_index, created_at)
+         VALUES('op_x', 's', 'a', 'running', 1, '2026-08-29T00:00:00.000Z')",
+        [],
+    )
+    .expect("v1 数据");
+    drop(conn);
+
+    let db = StateDb::open(&db_path).expect("v2 打开");
+    let rows = db
+        .query_rows(
+            "SELECT id, state, input_content FROM operations WHERE id='op_x'",
+            &[],
+        )
+        .expect("查询");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["state"], "running");
+    assert!(rows[0]["input_content"].is_null(), "旧数据该列为 NULL");
+}

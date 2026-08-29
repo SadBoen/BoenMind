@@ -40,6 +40,18 @@ pub fn default_secret_ref(model_id: &str) -> String {
     format!("secret:model.{model_id}")
 }
 
+/// 恢复裁定(RecoveryPlan 的落点,基线 9.5/13.3;INV-10/11):
+/// - `ClaimRun` = 认领继续(仅 interrupted;NoEffect 域可安全重跑)
+/// - `Succeeded`/`Failed` = 外部核验或用户裁定的结论(outcome_unknown 仅此二出口)
+/// - `Cancelled` = 用户裁定取消(仅 interrupted;outcome_unknown 无此边)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecoveryVerdict {
+    ClaimRun,
+    Succeeded,
+    Failed,
+    Cancelled,
+}
+
 pub struct RuntimeConfig {
     pub version: String,
     pub data_dir: Option<std::path::PathBuf>,
@@ -111,6 +123,12 @@ enum Cmd {
         params: CancelParams,
         resp: oneshot::Sender<CoreResult<CancelResult>>,
     },
+    /// 恢复裁定(M2.6 内部命令,M4 起升级为合同方法;INV-10/11 的用户入口)
+    RecoverySettle {
+        operation_id: BmId,
+        verdict: RecoveryVerdict,
+        resp: oneshot::Sender<CoreResult<Receipt>>,
+    },
     GetOperation {
         params: GetOperationParams,
         resp: oneshot::Sender<CoreResult<Receipt>>,
@@ -154,6 +172,7 @@ impl World {
         &mut self,
         rows: bm_persist::WorldRows,
         pending_interrupts: &mut Vec<(BmId, BmId, String)>,
+        agents_to_resume: &mut Vec<(BmId, Option<BmId>)>,
     ) {
         for s in rows.sessions {
             let id = BmId::parse(s.id).expect("库内 session id 合法");
@@ -171,6 +190,17 @@ impl World {
         for a in rows.agents {
             let id = BmId::parse(a.id).expect("库内 agent id 合法");
             let state = AgentState::from_wire(&a.state).expect("库内 agent 状态合法");
+            // 崩溃时停在非运行中间态的 agent(starting/waiting_model/stopping/resuming)
+            // 需要走 interrupted→resuming→running 恢复(ADR-0003 决策要点 8)
+            if matches!(
+                state,
+                AgentState::Starting
+                    | AgentState::WaitingModel
+                    | AgentState::Stopping
+                    | AgentState::Resuming
+            ) {
+                agents_to_resume.push((id.clone(), None));
+            }
             let chain: Vec<String> =
                 serde_json::from_str(&a.model_chain).expect("model_chain 为 JSON 数组");
             let mut budget = crate::budget::BudgetState::new(
@@ -407,11 +437,12 @@ impl RuntimeHandle {
         // T3 启动恢复:修复窗口 → 行装配 → 中断清点。恢复失败 = 拒绝启动
         // (宁可拒开,不带残缺状态服务)。
         let mut pending_interrupts: Vec<(BmId, BmId, String)> = Vec::new();
+        let mut agents_to_resume: Vec<(BmId, Option<BmId>)> = Vec::new();
         let mut report = None;
         if let Some(store) = world.store.clone() {
             let r = store.recover().expect("启动恢复失败,拒绝启动(宁可拒开)");
             let rows = store.load_rows().expect("规范状态行装配失败,拒绝启动");
-            world.load_world_rows(rows, &mut pending_interrupts);
+            world.load_world_rows(rows, &mut pending_interrupts, &mut agents_to_resume);
             // seq 分配器重同步到持久日志末尾之后:跨重启 seq 连续(INV-3)
             let log_last = r.last_applied_seq.max(store.last_log_seq().unwrap_or(0));
             world.bus.resync_to(log_last + 1);
@@ -435,8 +466,11 @@ impl RuntimeHandle {
 
         // 中断清点(留审计事件,ADR-0004 恢复语义):崩溃时未终态的 operation
         // 走 running→interrupted(runtime_crash_before_terminal);agent 走
-        // waiting_model/running→interrupted→resuming→running(无外部副作用,
-        // replay_ok 可安全续跑)。落地 M2.6 的 claim 前半段。
+        // waiting_model/running→interrupted→resuming→running。
+        // T7 claim(M2.6):NoEffect 域且输入原文在受保护存储中时,自动
+        // interrupted→running(recovery_replay_ok)并重驱回合 → 幂等续跑;
+        // 无输入上下文或 outcome_unknown 者,留给裁定入口(recovery_settle)。
+        let mut claim_redrive: Vec<(BmId, BmId, String)> = Vec::new();
         for (op_id, agent_id, op_state) in pending_interrupts.drain(..) {
             if op_state == "running" {
                 world.settle_operation(&op_id, OperationState::Interrupted, None);
@@ -468,6 +502,90 @@ impl RuntimeHandle {
                     "operation_id": op_id.as_str(),
                 }),
             );
+            // claim 判定:有输入原文才可续跑
+            let content = world
+                .store
+                .as_ref()
+                .and_then(|s| s.op_input(op_id.as_str()).ok())
+                .flatten();
+            if let Some(content) = content {
+                claim_redrive.push((op_id, agent_id, content));
+            }
+        }
+
+        // 无 running op 但停在中间态的 agent:同样走中断恢复(outcome_unknown
+        // 场景:op 留给裁定,agent 恢复可接单)
+        for (agent_id, latest_op) in agents_to_resume.drain(..) {
+            // op 流可能已恢复该 agent:先查内存态,避免重复中断事件
+            if world.agents.get(&agent_id).map(|a| a.state) == Some(AgentState::Running) {
+                continue;
+            }
+            let op_hint = latest_op.or_else(|| {
+                world
+                    .operations
+                    .values()
+                    .filter(|o| o.agent_id == agent_id)
+                    .map(|o| o.id.clone())
+                    .next()
+            });
+            world.emit(
+                EventType::AgentInterrupted,
+                None,
+                Some(agent_id.clone()),
+                op_hint.clone(),
+                serde_json::json!({
+                    "agent_id": agent_id.as_str(),
+                    "operation_id": op_hint.as_ref().map(|o| o.as_str()),
+                    "reason": "runtime_recovery",
+                }),
+            );
+            {
+                let a = world.agents.get_mut(&agent_id).expect("恢复行必有 agent");
+                if AgentState::can_transition(a.state, AgentState::Interrupted) {
+                    a.transition(AgentState::Interrupted);
+                }
+                a.transition(AgentState::Resuming);
+                a.transition(AgentState::Running);
+            }
+            world.emit(
+                EventType::AgentResumed,
+                None,
+                Some(agent_id.clone()),
+                op_hint.clone(),
+                serde_json::json!({
+                    "agent_id": agent_id.as_str(),
+                    "operation_id": op_hint.as_ref().map(|o| o.as_str()),
+                }),
+            );
+        }
+
+        // claim 续跑:interrupted→running(recovery_replay_ok)后重驱回合
+        for (op_id, agent_id, content) in claim_redrive {
+            world.settle_operation(&op_id, OperationState::Running, None);
+            let agent = world
+                .agents
+                .get(&agent_id)
+                .cloned()
+                .expect("恢复行必有 agent");
+            // 重驱即再发模型调用:running→waiting_model(与 send_input 同构)
+            {
+                let a = world.agents.get_mut(&agent_id).expect("存在");
+                a.transition(AgentState::WaitingModel);
+            }
+            world.emit(
+                EventType::AgentResumed,
+                None,
+                Some(agent_id.clone()),
+                Some(op_id.clone()),
+                serde_json::json!({
+                    "agent_id": agent_id.as_str(),
+                    "operation_id": op_id.as_str(),
+                }),
+            );
+            world
+                .in_flight
+                .insert(op_id.clone(), CancellationToken::new());
+            spawn_turn(&mut world, &agent, &op_id, content);
         }
 
         if let Some(r) = report {
@@ -594,6 +712,27 @@ impl RuntimeHandle {
         rx.await.unwrap_or_default()
     }
 
+    /// 恢复裁定(M2.6 内部入口;INV-10:普通重试不得触碰 outcome_unknown)。
+    /// 迁移表合法边:outcome_unknown→succeeded/failed(external_verification OR
+    /// user_ruling);interrupted→running(claim)/cancelled(user_ruling)。
+    #[doc(hidden)]
+    pub async fn recovery_settle(
+        &self,
+        operation_id: BmId,
+        verdict: RecoveryVerdict,
+    ) -> CoreResult<Receipt> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(Cmd::RecoverySettle {
+                operation_id,
+                verdict,
+                resp: tx,
+            })
+            .await
+            .map_err(|_| CoreError::Internal)?;
+        rx.await.map_err(|_| CoreError::Internal)?
+    }
+
     /// 停机:排空进行中回合(不取消,INV-12),发 stopping/stopped 事件。
     pub async fn stop(&self, reason: impl Into<String>) {
         let (tx, rx) = oneshot::channel();
@@ -669,6 +808,13 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
             }
             Cmd::Cancel { params, resp } => {
                 let _ = resp.send(handle_cancel(&world, params));
+            }
+            Cmd::RecoverySettle {
+                operation_id,
+                verdict,
+                resp,
+            } => {
+                let _ = resp.send(handle_recovery_settle(&mut world, operation_id, verdict));
             }
             Cmd::GetOperation { params, resp } => {
                 let _ = resp.send(handle_get_operation(&world, params));
@@ -991,6 +1137,19 @@ fn handle_send_input(
         });
     }
 
+    // 输入原文入受保护存储(A4:不进事件/日志),供崩溃后 claim 幂等续跑(M2.6)
+    #[allow(clippy::collapsible_if)] // 与写穿主路径同构,保持三段式可读
+    if let Some(store) = &w.store {
+        if let Err(e) = store.save_op_input(operation_id.as_str(), &params.content) {
+            tracing::error!(error = %e, op = %operation_id, "输入持久化失败,进入拒写态");
+            w.persist_poisoned = true;
+            return Err(CoreError::Semantic(
+                ErrorCode::Internal,
+                "输入持久化失败".into(),
+            ));
+        }
+    }
+
     // running→waiting_model(model_invoke_issued)
     {
         let a = w.agents.get_mut(&agent.id).expect("存在");
@@ -1130,6 +1289,93 @@ fn spawn_turn(w: &mut World, agent: &Agent, operation_id: &BmId, content: String
             }
         }
     });
+}
+
+fn handle_recovery_settle(
+    w: &mut World,
+    operation_id: BmId,
+    verdict: RecoveryVerdict,
+) -> CoreResult<Receipt> {
+    if w.persist_poisoned {
+        return Err(CoreError::Semantic(
+            ErrorCode::Unavailable,
+            "持久层故障,Runtime 拒写".into(),
+        ));
+    }
+    let from = {
+        let op = w
+            .operations
+            .get(&operation_id)
+            .ok_or_else(|| CoreError::validation("operation 不存在"))?;
+        op.state
+    };
+    // INV-10/11:只允许恢复态被裁定,且只走迁移表合法边
+    let target = match (from, verdict) {
+        (OperationState::OutcomeUnknown, RecoveryVerdict::Succeeded) => {
+            Some(OperationState::Succeeded)
+        }
+        (OperationState::OutcomeUnknown, RecoveryVerdict::Failed) => Some(OperationState::Failed),
+        (OperationState::Interrupted, RecoveryVerdict::ClaimRun) => Some(OperationState::Running),
+        (OperationState::Interrupted, RecoveryVerdict::Cancelled) => {
+            Some(OperationState::Cancelled)
+        }
+        (OperationState::OutcomeUnknown, RecoveryVerdict::Cancelled) => {
+            return Err(CoreError::validation(
+                "outcome_unknown 无 →cancelled 边:只能经核验落 succeeded/failed(INV-11)",
+            ));
+        }
+        (OperationState::Interrupted, RecoveryVerdict::Succeeded)
+        | (OperationState::Interrupted, RecoveryVerdict::Failed) => {
+            return Err(CoreError::validation(
+                "interrupted 无直达 succeeded/failed 的边:claim 续跑或裁定取消",
+            ));
+        }
+        _ => {
+            return Err(CoreError::validation(
+                "仅恢复态(outcome_unknown/interrupted)可裁定",
+            ));
+        }
+    };
+    let target = target.expect("上表已穷尽");
+
+    // claim 续跑:需要受保护存储中的输入原文
+    if target == OperationState::Running {
+        let content = w
+            .store
+            .as_ref()
+            .and_then(|s| s.op_input(operation_id.as_str()).ok())
+            .flatten()
+            .ok_or_else(|| CoreError::validation("无输入上下文,不可续跑(裁定取消或核验结论)"))?;
+        w.settle_operation(&operation_id, OperationState::Running, None);
+        let agent = w
+            .agents
+            .get(&w.operations[&operation_id].agent_id)
+            .cloned()
+            .expect("存在");
+        {
+            let agent_id = agent.id.clone();
+            let a = w.agents.get_mut(&agent_id).expect("存在");
+            a.transition(AgentState::WaitingModel);
+        }
+        spawn_turn(w, &agent, &operation_id, content);
+        Ok(w.receipt_of(&w.operations[&operation_id]))
+    } else {
+        let error = match target {
+            OperationState::Failed => {
+                let mut e =
+                    WireError::new(ErrorCode::OutcomeUnknown, "恢复裁定:按失败收口".to_string());
+                e.retryable = false;
+                Some(e)
+            }
+            OperationState::Cancelled => Some(WireError::new(
+                ErrorCode::Cancelled,
+                "恢复裁定:用户裁定取消".to_string(),
+            )),
+            _ => None,
+        };
+        w.settle_operation(&operation_id, target, error);
+        Ok(w.receipt_of(&w.operations[&operation_id]))
+    }
 }
 
 fn handle_cancel(w: &World, params: CancelParams) -> CoreResult<CancelResult> {
@@ -1459,6 +1705,9 @@ fn reply_unavailable(cmd: Cmd) {
             let _ = resp.send(Err(err()));
         }
         Cmd::GetOperation { resp, .. } => {
+            let _ = resp.send(Err(err()));
+        }
+        Cmd::RecoverySettle { resp, .. } => {
             let _ = resp.send(Err(err()));
         }
         Cmd::EventsAll { resp } => {

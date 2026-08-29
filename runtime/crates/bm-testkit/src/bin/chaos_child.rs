@@ -83,7 +83,7 @@ async fn main() {
         }
         "verify" => {
             let handle = start_runtime(&dir, vec![Step::ok("续答", 10, 5)]).await;
-            // 恢复已在 start 内完成;重开一个只读连接读行(WAL 并发读)
+            // 恢复已在 start 内完成(含 claim 重驱);重开只读连接读行(WAL 并发读)
             let store = PersistStore::open(&dir).expect("verify 打开持久层");
             let sessions = store
                 .state()
@@ -93,40 +93,48 @@ async fn main() {
                 .state()
                 .query_rows("SELECT id, state FROM operations", &[])
                 .expect("读操作");
-            let recovered = store
-                .replay_since(0)
-                .expect("读日志")
-                .into_iter()
+            let log = store.replay_since(0).expect("读日志");
+            let recovered = log
+                .iter()
                 .find(|e| e.event_type == bm_contract::events::EventType::RuntimeRecovered)
                 .expect("恢复事件在场");
+            let interrupted_audit = log
+                .iter()
+                .any(|e| e.event_type == bm_contract::events::EventType::AgentInterrupted);
 
-            let op_state = ops
-                .first()
-                .map(|o| o["state"].as_str().unwrap_or("?").to_string())
-                .unwrap_or_else(|| "NONE".into());
             let session_state = sessions
                 .first()
                 .map(|s| s["state"].as_str().unwrap_or("?").to_string())
                 .unwrap_or_else(|| "NONE".into());
 
-            // 恢复后的收据可查询(INV-6)
-            if let Some(op_row) = ops.first() {
-                let op_id: BmId =
-                    BmId::parse(op_row["id"].as_str().unwrap_or_default()).expect("合法 op id");
+            // claim 重驱:等被杀回合到达终态(最长 30s)
+            let op_id: BmId = BmId::parse(
+                ops.first().expect("有 operation")["id"]
+                    .as_str()
+                    .expect("字符串"),
+            )
+            .expect("合法 op id");
+            let mut final_state = "TIMEOUT".to_string();
+            for _ in 0..300 {
                 let receipt = handle
                     .operations_get(GetOperationParams {
-                        operation_id: op_id,
+                        operation_id: op_id.clone(),
                     })
                     .await
-                    .expect("恢复后收据可查询");
-                assert_eq!(receipt.state.as_str(), op_state, "收据与库一致");
+                    .expect("收据查询");
+                if receipt.state.is_terminal() {
+                    final_state = receipt.state.as_str().to_string();
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             }
 
             println!(
                 "{}",
                 serde_json::json!({
                     "session_state": session_state,
-                    "op_state": op_state,
+                    "op_state": final_state,
+                    "interrupted_audit": interrupted_audit,
                     "interrupted_recovered": recovered.payload["interrupted_recovered"],
                     "replayed": recovered.payload["replayed"],
                 })

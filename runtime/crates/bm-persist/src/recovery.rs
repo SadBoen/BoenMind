@@ -61,6 +61,8 @@ pub struct OperationRow {
     pub error_code: Option<String>,
     #[serde(default)]
     pub error_message: Option<String>,
+    #[serde(default)]
+    pub input_content: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -158,7 +160,8 @@ pub fn load_rows(state: &StateDb) -> StoreResult<WorldRows> {
     let operations = state
         .query_rows(
             "SELECT id, session_id, agent_id, request_id, state, turn_index, created_at,
-                    completed_at, action_summary, result_ref, error_code, error_message
+                    completed_at, action_summary, result_ref, error_code, error_message,
+                    input_content
              FROM operations",
             &[],
         )?

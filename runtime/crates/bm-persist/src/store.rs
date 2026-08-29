@@ -27,6 +27,12 @@ pub trait EventStore: Send + Sync {
     /// 单事件物化(恢复路径专用;写穿走 record)。
     fn materialize_event(&self, event: &EventEnvelope) -> StoreResult<()>;
 
+    /// 保存回合输入原文(受保护存储;A4:原文不进事件/日志)。
+    fn save_op_input(&self, operation_id: &str, content: &str) -> StoreResult<()>;
+
+    /// 读回合输入原文(claim 续跑用)。
+    fn op_input(&self, operation_id: &str) -> StoreResult<Option<String>>;
+
     /// ① 日志先行:追加事件并 flush。失败 = 本次命令失败(核心循环须拒绝,不可静默)。
     fn append(&self, event: &EventEnvelope) -> StoreResult<()>;
 
@@ -172,6 +178,14 @@ impl EventStore for PersistStore {
 
     fn materialize_event(&self, event: &EventEnvelope) -> StoreResult<()> {
         self.state.materialize(event)
+    }
+
+    fn save_op_input(&self, operation_id: &str, content: &str) -> StoreResult<()> {
+        self.state.save_op_input(operation_id, content)
+    }
+
+    fn op_input(&self, operation_id: &str) -> StoreResult<Option<String>> {
+        self.state.op_input(operation_id)
     }
 
     fn append(&self, event: &EventEnvelope) -> StoreResult<()> {

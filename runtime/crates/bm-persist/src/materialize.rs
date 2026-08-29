@@ -118,8 +118,9 @@ impl StateDb {
                     Ok(1)
                 }
                 EventType::AgentTurnStarted => {
+                    // OR IGNORE:input_content 在事件之外受保护写入,重放不得覆盖丢失
                     conn.execute(
-                        "INSERT OR REPLACE INTO operations(
+                        "INSERT OR IGNORE INTO operations(
                             id, session_id, agent_id, request_id, state, turn_index, created_at)
                          VALUES(?1, ?2, ?3, NULL, 'running', ?4, ?5)",
                         rusqlite::params![
