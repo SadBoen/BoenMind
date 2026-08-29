@@ -101,6 +101,43 @@ pub fn pending_operations(state: &StateDb) -> StoreResult<Vec<(String, String, S
         .collect())
 }
 
+/// 投影重建(ADR-0004 条件 1 / 混沌③):把 seq ≤ upto 的事件经同一 reducer
+/// 物化进一个全新 StateDb。两次重建结果必须逐字段一致(确定性由「同一
+/// materialize 函数」结构保证,本函数即混沌③的被测对象)。
+pub fn rebuild_projection(
+    store: &dyn EventStore,
+    upto_seq: u64,
+    dest: &StateDb,
+) -> StoreResult<u64> {
+    let events = store.replay_since(0)?;
+    let mut last = 0u64;
+    for event in events {
+        if event.event_seq > upto_seq {
+            break;
+        }
+        dest.materialize(&event)?;
+        last = event.event_seq;
+    }
+    if last > 0 {
+        let expect = dest.meta_get(crate::store::META_LAST_APPLIED)?;
+        if expect.is_none() {
+            dest.meta_compare_and_set(crate::store::META_LAST_APPLIED, None, &last.to_string())?;
+        }
+    }
+    Ok(last)
+}
+
+/// 全表导出(确定性比对用):四张表的规范 JSON。
+pub fn dump_all(state: &StateDb) -> StoreResult<serde_json::Value> {
+    use serde_json::json;
+    Ok(json!({
+        "meta": state.query_rows("SELECT key, value FROM meta ORDER BY key", &[])?,
+        "sessions": state.query_rows("SELECT * FROM sessions ORDER BY id", &[])?,
+        "agents": state.query_rows("SELECT * FROM agents ORDER BY id", &[])?,
+        "operations": state.query_rows("SELECT * FROM operations ORDER BY id", &[])?,
+    }))
+}
+
 /// ② 行装配。
 pub fn load_rows(state: &StateDb) -> StoreResult<WorldRows> {
     let sessions = state

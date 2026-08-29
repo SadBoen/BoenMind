@@ -49,10 +49,15 @@ pub trait EventStore: Send + Sync {
     fn compact(&self, up_to_seq: u64) -> StoreResult<usize>;
 }
 
+/// 默认压实触发间隔(条);ADR-0004 条件 2:压实是强制义务,不是可选项。
+pub const DEFAULT_COMPACTION_EVERY: u64 = 10_000;
+
 /// 默认组合实现。
 pub struct PersistStore {
     log: JsonlEventLog,
     state: StateDb,
+    /// 每 N 条事件自动 快照+压实;None = 关闭(测试专用)。
+    compaction_every: Option<u64>,
 }
 
 impl PersistStore {
@@ -74,12 +79,54 @@ impl PersistStore {
                 ),
             });
         }
-        Ok(Self { log, state })
+        Ok(Self {
+            log,
+            state,
+            compaction_every: Some(DEFAULT_COMPACTION_EVERY),
+        })
+    }
+
+    /// 以自定义压实间隔打开(测试小间隔;生产用默认)。
+    pub fn with_compaction(dir: &Path, every_n: u64) -> StoreResult<Self> {
+        let mut me = Self::open(dir)?;
+        me.compaction_every = Some(every_n.max(1));
+        Ok(me)
+    }
+
+    /// 关闭自动压实(测试专用)。
+    pub fn without_compaction(mut self) -> Self {
+        self.compaction_every = None;
+        self
+    }
+
+    fn maybe_autocompact(&self, seq: u64) -> StoreResult<()> {
+        let Some(every) = self.compaction_every else {
+            return Ok(());
+        };
+        let snap: u64 = self
+            .state
+            .meta_get(META_SNAPSHOT_SEQ)?
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        if seq.saturating_sub(snap) >= every {
+            self.snapshot()?;
+            self.compact(seq)?;
+            tracing::info!(seq = %seq, snapshot = %seq, "自动压实完成");
+        }
+        Ok(())
     }
 
     /// 状态库只读访问(恢复与测试断言用)。
     pub fn state(&self) -> &StateDb {
         &self.state
+    }
+
+    /// 当前快照位点(未快照过 = None)。
+    pub fn snapshot_seq(&self) -> StoreResult<Option<u64>> {
+        Ok(self
+            .state
+            .meta_get(META_SNAPSHOT_SEQ)?
+            .and_then(|v| v.parse().ok()))
     }
 
     fn applied(&self) -> StoreResult<u64> {
@@ -97,7 +144,12 @@ impl EventStore for PersistStore {
         self.log.append(event, true)?;
         // ② 物化 + ③ 位点,同一状态侧顺序
         self.state.materialize(event)?;
-        self.mark_applied(event.event_seq)
+        self.mark_applied(event.event_seq)?;
+        // ④ 达到间隔则快照+压实(失败不阻断写路径:压实是优化,重试即可)
+        if let Err(e) = self.maybe_autocompact(event.event_seq) {
+            tracing::warn!(error = %e, seq = %event.event_seq, "自动压实失败(不影响写入)");
+        }
+        Ok(())
     }
 
     fn recover(&self) -> StoreResult<crate::recovery::RecoveryReport> {
@@ -157,8 +209,17 @@ impl EventStore for PersistStore {
 
     fn snapshot(&self) -> StoreResult<u64> {
         let applied = self.applied()?;
-        self.state
-            .meta_compare_and_set(META_SNAPSHOT_SEQ, None, &applied.to_string())?;
+        // 从上个快照位点单调推进(CAS);重复同位点为幂等快照
+        let prev = self.snapshot_seq()?;
+        if prev == Some(applied) {
+            return Ok(applied);
+        }
+        let expect = prev.map(|v| v.to_string());
+        self.state.meta_compare_and_set(
+            META_SNAPSHOT_SEQ,
+            expect.as_deref(),
+            &applied.to_string(),
+        )?;
         Ok(applied)
     }
 
