@@ -155,67 +155,80 @@ def validate(inst, schema, root, path="$", debug=False):
     return errs
 
 
-# ---------- R3: 轨迹中的事件类型与错误码必须在注册表内 ----------
-trace = (ROOT / "golden-traces" / "M1-GT-01-single-agent-turn.md").read_text(encoding="utf-8")
+# ---------- R3/R4/R2: 每条黄金轨迹逐文件校验(遍历 golden-traces/*.md) ----------
 etypes = {e["type"] for e in docs[Path("registry/runtime-events.v0_1.json")]["events"]}
 codes = {c["code"] for c in docs[Path("registry/error-codes.v0_1.json")]["codes"]}
-used_events = set(re.findall(r'"type":\s*"([a-z]+(?:\.[a-z_]+)+)"', trace))
-used_events |= set(re.findall(r"事件\s*\d+[' ]*\s+([a-z]+(?:\.[a-z_]+)+)", trace))
-used_codes = set(re.findall(r'"(?:error_)?code":\s*"([a-z_]+)"', trace))
-used_codes |= set(re.findall(r'(?<![a-z_])(?:error_)?code:\s*"([a-z_]+)"', trace))
-for t in sorted(used_events - etypes):
-    fail("R3", f"轨迹事件类型不在注册表: {t}")
-for c in sorted(used_codes - codes):
-    fail("R3", f"轨迹错误码不在注册表: {c}")
-print(f"R3  注册表覆盖         : 事件 {len(used_events)} 种 / 错误码 {len(used_codes)} 种，"
-      f"{sum(1 for x in problems if x.startswith('[R3'))} 个越界")
-
-# ---------- R4: 轨迹中的状态迁移必须是迁移表中的边 ----------
 machines = docs[Path("state-machines/core-transitions.v0_1.json")]["machines"]
 edges = {m: {(t["from"], t["to"]) for t in spec["transitions"]} for m, spec in machines.items()}
-n_trans = 0
-for machine, chain in re.findall(r"\b(operation|agent|session)\s+([a-z_]+(?:→[a-z_]+)+)", trace):
-    states = chain.split("→")
-    for a, b in zip(states, states[1:]):
-        n_trans += 1
-        if (a, b) not in edges[machine]:
-            fail("R4", f"{machine}: {a}→{b} 不是迁移表中的合法边")
-print(f"R4  状态迁移边检查     : 轨迹中 {n_trans} 次迁移，"
-      f"{sum(1 for x in problems if x.startswith('[R4'))} 个非法")
-
-# ---------- R2: 轨迹 payload 必须通过对应 schema ----------
 ENV = store["boenmind:wire:envelope:v0.1"]
 AGENT = store["boenmind:wire:agent:v0.1"]
 LOGS = store["boenmind:logs:execution-log-entry:v0.1"]
-kinds = {"request": 0, "response": 0, "event": 0, "log": 0, "receipt": 0}
-for bi, raw in enumerate(re.findall(r"```json\n(.*?)```", trace, re.S), 1):
-    label = f"轨迹第{bi}个JSON块 {raw.strip()[:48]!r}…"
-    try:
-        obj = json.loads(raw)
-    except Exception as e:  # noqa: BLE001
-        fail("R2", f"{label}: 不可解析: {e}")
-        continue
-    errs = []
-    if "method" in obj:
-        errs += validate(obj, ENV["request"], ENV)
-        kinds["request"] += 1
-    elif "ok" in obj:
-        errs += validate(obj, ENV["response"], ENV)
-        kinds["response"] += 1
-    if isinstance(obj, dict) and isinstance(obj.get("result"), dict) and "task_type" in obj["result"]:
-        errs += validate(obj["result"], _frag(AGENT, "definitions/receipt"), AGENT)
-        kinds["receipt"] += 1
-    if isinstance(obj, dict) and "event_seq" in obj:
-        errs += validate(obj, ENV["event_envelope"], ENV)
-        kinds["event"] += 1
-    if isinstance(obj, dict) and "log_seq" in obj:
-        errs += validate(obj, LOGS, LOGS)
-        kinds["log"] += 1
-    for e in errs:
-        fail("R2", f"{label}: {e}")
-print(f"R2  payload 校验       : 校验 {sum(kinds.values())} 个负载 "
-      f"(request={kinds['request']} response={kinds['response']} event={kinds['event']} "
-      f"log={kinds['log']} receipt={kinds['receipt']})，"
+
+trace_files = sorted((ROOT / "golden-traces").glob("*.md"))
+total_kinds = {"request": 0, "response": 0, "event": 0, "log": 0, "receipt": 0}
+total_trans = 0
+total_events = set()
+total_codes = set()
+for tf in trace_files:
+    trace = tf.read_text(encoding="utf-8")
+
+    # R3: 事件类型与错误码必须在注册表内
+    used_events = set(re.findall(r'"type":\s*"([a-z]+(?:\.[a-z_]+)+)"', trace))
+    used_events |= set(re.findall(r"事件\s*\d+[' ]*\s+([a-z]+(?:\.[a-z_]+)+)", trace))
+    used_codes = set(re.findall(r'"(?:error_)?code":\s*"([a-z_]+)"', trace))
+    used_codes |= set(re.findall(r'(?<![a-z_])(?:error_)?code:\s*"([a-z_]+)"', trace))
+    total_events |= used_events
+    total_codes |= used_codes
+    for t in sorted(used_events - etypes):
+        fail("R3", f"{tf.name}: 轨迹事件类型不在注册表: {t}")
+    for c in sorted(used_codes - codes):
+        fail("R3", f"{tf.name}: 轨迹错误码不在注册表: {c}")
+
+    # R4: 状态迁移必须是迁移表中的边
+    for machine, chain in re.findall(r"\b(operation|agent|session)\s+([a-z_]+(?:→[a-z_]+)+)", trace):
+        states = chain.split("→")
+        for a, b in zip(states, states[1:]):
+            total_trans += 1
+            if (a, b) not in edges[machine]:
+                fail("R4", f"{tf.name}: {machine}: {a}→{b} 不是迁移表中的合法边")
+
+    # R2: payload 必须通过对应 schema
+    kinds = {"request": 0, "response": 0, "event": 0, "log": 0, "receipt": 0}
+    for bi, raw in enumerate(re.findall(r"```json\n(.*?)```", trace, re.S), 1):
+        label = f"{tf.name} 第{bi}个JSON块 {raw.strip()[:48]!r}…"
+        try:
+            obj = json.loads(raw)
+        except Exception as e:  # noqa: BLE001
+            fail("R2", f"{label}: 不可解析: {e}")
+            continue
+        errs = []
+        if "method" in obj:
+            errs += validate(obj, ENV["request"], ENV)
+            kinds["request"] += 1
+        elif "ok" in obj:
+            errs += validate(obj, ENV["response"], ENV)
+            kinds["response"] += 1
+        if isinstance(obj, dict) and isinstance(obj.get("result"), dict) and "task_type" in obj["result"]:
+            errs += validate(obj["result"], _frag(AGENT, "definitions/receipt"), AGENT)
+            kinds["receipt"] += 1
+        if isinstance(obj, dict) and "event_seq" in obj:
+            errs += validate(obj, ENV["event_envelope"], ENV)
+            kinds["event"] += 1
+        if isinstance(obj, dict) and "log_seq" in obj:
+            errs += validate(obj, LOGS, LOGS)
+            kinds["log"] += 1
+        for e in errs:
+            fail("R2", f"{label}: {e}")
+    for k, n in kinds.items():
+        total_kinds[k] += n
+
+print(f"R3  注册表覆盖         : 轨迹 {len(trace_files)} 条，事件 {len(total_events)} 种 / "
+      f"错误码 {len(total_codes)} 种，{sum(1 for x in problems if x.startswith('[R3'))} 个越界")
+print(f"R4  状态迁移边检查     : 轨迹中 {total_trans} 次迁移，"
+      f"{sum(1 for x in problems if x.startswith('[R4'))} 个非法")
+print(f"R2  payload 校验       : 校验 {sum(total_kinds.values())} 个负载 "
+      f"(request={total_kinds['request']} response={total_kinds['response']} "
+      f"event={total_kinds['event']} log={total_kinds['log']} receipt={total_kinds['receipt']}），"
       f"{sum(1 for x in problems if x.startswith('[R2'))} 个失败")
 
 # ---------- 结果 ----------

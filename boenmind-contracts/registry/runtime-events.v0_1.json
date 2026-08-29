@@ -3,7 +3,7 @@
   "$id": "boenmind:registry:runtime-events:v0.1",
   "x-frozen": "2026-08-28",
   "title": "M1 运行时事件注册表",
-  "description": "事件信封见 events 由 Event Log 统一写入：{event_seq(全局单调), type, occurred_at, correlation, payload}。M4+ 事件（plugin.*, provider.*, approval.*, capability.*）不在此表，届时增发。",
+  "description": "事件信封见 events 由 Event Log 统一写入：{event_seq(全局单调), type, occurred_at, correlation, payload}。M4 增发 approval.* / grant.* / capability.* / provider.binding.changed / bus.* 十类（Minor，纯追加）。",
   "events": [
     {
       "type": "runtime.started",
@@ -181,6 +181,106 @@
       "payload": {
         "key": "string",
         "reason": "string"
+      }
+    },
+    {
+      "type": "approval.requested",
+      "payload": {
+        "approval_id": "id",
+        "operation_id": "id",
+        "capability": "string",
+        "principal": "string",
+        "risk_class": "string",
+        "effective_risk": "string",
+        "input_trust": "string",
+        "expires_at": "timestamp"
+      }
+    },
+    {
+      "type": "approval.resolved",
+      "payload": {
+        "approval_id": "id",
+        "operation_id": "id",
+        "outcome": "string",
+        "scope": "string|null",
+        "grant_id": "id|null"
+      }
+    },
+    {
+      "type": "approval.expired",
+      "payload": {
+        "approval_id": "id",
+        "operation_id": "id",
+        "expired_at": "timestamp"
+      }
+    },
+    {
+      "type": "grant.created",
+      "payload": {
+        "grant_id": "id",
+        "approval_id": "id",
+        "audience": "string",
+        "action": "string",
+        "scope": "string",
+        "delegation_depth": "integer",
+        "expires_at": "timestamp|null",
+        "parent_hash": "string"
+      }
+    },
+    {
+      "type": "grant.revoked",
+      "payload": {
+        "grant_id": "id",
+        "revocation_version": "integer",
+        "reason": "string"
+      }
+    },
+    {
+      "type": "capability.invoked",
+      "payload": {
+        "call_id": "id",
+        "operation_id": "id",
+        "capability": "string",
+        "principal": "string",
+        "binding_epoch": "integer",
+        "provider_instance_id": "string",
+        "outcome": "string",
+        "error_code": "string|null",
+        "idempotency_key_hash": "string|null"
+      }
+    },
+    {
+      "type": "capability.denied",
+      "payload": {
+        "call_id": "id",
+        "capability": "string",
+        "principal": "string",
+        "input_trust": "string",
+        "reason_code": "string"
+      }
+    },
+    {
+      "type": "provider.binding.changed",
+      "payload": {
+        "capability": "string",
+        "provider_instance_id": "string",
+        "old_epoch": "integer",
+        "new_epoch": "integer",
+        "reason": "string"
+      }
+    },
+    {
+      "type": "bus.degraded",
+      "payload": {
+        "reason": "string",
+        "component": "string"
+      }
+    },
+    {
+      "type": "bus.resumed",
+      "payload": {
+        "component": "string",
+        "degraded_ms": "integer"
       }
     }
   ],

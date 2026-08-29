@@ -3,11 +3,11 @@
   "$id": "boenmind:wire:envelope:v0.1",
   "x-frozen": "2026-08-28",
   "title": "Wire API 信封 v0.1",
-  "description": "传输无关的请求/响应信封（基线 7 的关联字段由此承载）。M1 方法集合：session.create / session.resume / session.close / events.poll / agent.send_input / agent.cancel / operations.get。",
+  "description": "传输无关的请求/响应信封（基线 7 的关联字段由此承载）。M1 方法集合：session.create / session.resume / session.close / events.poll / agent.send_input / agent.cancel / operations.get。M4 增发：capability.call / approval.list / approval.respond（Minor，params/result 见 wire/capability.v0_1）。",
   "definitions": {
     "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]{1,15}_[0-9A-HJKMNP-TV-Z]{26}$" },
     "timestamp": { "type": "string", "format": "date-time" },
-    "error_code": { "type": "string", "description": "M1 可用码见 registry/error-codes.v0_1.json available_since=M1；本枚举随注册表同步（CI 规则 R6）", "enum": ["validation_failed", "unavailable", "timeout", "cancelled", "budget_exceeded", "outcome_unknown", "internal"] },
+    "error_code": { "type": "string", "description": "可用码见 registry/error-codes.v0_1.json（M1 七码 + M4 四码，available_since 标注）；本枚举随注册表同步（CI 规则 R6）", "enum": ["validation_failed", "unavailable", "timeout", "cancelled", "budget_exceeded", "outcome_unknown", "internal", "permission_denied", "approval_required", "approval_denied", "idempotency_conflict"] },
     "error": {
       "type": "object",
       "required": ["code", "message", "retryable"],
@@ -27,7 +27,7 @@
     "additionalProperties": false,
     "properties": {
       "v": { "const": "0.1" },
-      "method": { "enum": ["session.create", "session.resume", "session.close", "events.poll", "agent.send_input", "agent.cancel", "operations.get"] },
+      "method": { "enum": ["session.create", "session.resume", "session.close", "events.poll", "agent.send_input", "agent.cancel", "operations.get", "capability.call", "approval.list", "approval.respond"] },
       "request_id": { "$ref": "#/definitions/id" },
       "idempotency_key": { "type": ["string", "null"], "description": "M1 未使用，字段预留（M4 起用于副作用操作）" },
       "params": { "type": "object" }

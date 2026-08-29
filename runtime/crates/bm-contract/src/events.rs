@@ -1,4 +1,5 @@
-//! 运行时事件注册表镜像(registry/runtime-events.v0_1.json,20 类,封闭集合)。
+//! 运行时事件注册表镜像(registry/runtime-events.v0_1.json,32 类,封闭集合:
+//! M1 20 + M2 增发 2 + M4 增发 10)。
 //!
 //! 注册表是「允许发射」的封闭集,不是「必须发射」集;哪些流程发射哪些事件
 //! 以黄金轨迹与迁移表为准(规格 §8.6)。`payload_keys` 是注册表声明的 payload
@@ -32,6 +33,17 @@ wire_str_enum!(EventType {
     // M2 增发(2026-08-29,Minor:纯追加,规格 §5.5)
     RuntimeRecovered => "runtime.recovered",
     StoreWriteRejected => "store.write.rejected",
+    // M4 增发(2026-08-29,Minor:纯追加,M4 规格 §4-7)
+    ApprovalRequested => "approval.requested",
+    ApprovalResolved => "approval.resolved",
+    ApprovalExpired => "approval.expired",
+    GrantCreated => "grant.created",
+    GrantRevoked => "grant.revoked",
+    CapabilityInvoked => "capability.invoked",
+    CapabilityDenied => "capability.denied",
+    ProviderBindingChanged => "provider.binding.changed",
+    BusDegraded => "bus.degraded",
+    BusResumed => "bus.resumed",
 });
 
 impl EventType {
@@ -79,6 +91,62 @@ impl EventType {
                 &["last_applied_seq", "replayed", "interrupted_recovered"]
             }
             EventType::StoreWriteRejected => &["key", "reason"],
+            EventType::ApprovalRequested => &[
+                "approval_id",
+                "operation_id",
+                "capability",
+                "principal",
+                "risk_class",
+                "effective_risk",
+                "input_trust",
+                "expires_at",
+            ],
+            EventType::ApprovalResolved => &[
+                "approval_id",
+                "operation_id",
+                "outcome",
+                "scope",
+                "grant_id",
+            ],
+            EventType::ApprovalExpired => &["approval_id", "operation_id", "expired_at"],
+            EventType::GrantCreated => &[
+                "grant_id",
+                "approval_id",
+                "audience",
+                "action",
+                "scope",
+                "delegation_depth",
+                "expires_at",
+                "parent_hash",
+            ],
+            EventType::GrantRevoked => &["grant_id", "revocation_version", "reason"],
+            EventType::CapabilityInvoked => &[
+                "call_id",
+                "operation_id",
+                "capability",
+                "principal",
+                "binding_epoch",
+                "provider_instance_id",
+                "outcome",
+                "error_code",
+                "idempotency_key_hash",
+            ],
+            EventType::CapabilityDenied => &[
+                "call_id",
+                "capability",
+                "principal",
+                "input_trust",
+                "reason_code",
+            ],
+            EventType::ProviderBindingChanged => &[
+                "capability",
+                "provider_instance_id",
+                "old_epoch",
+                "new_epoch",
+                "reason",
+            ],
+            EventType::BusDegraded => &["reason", "component"],
+            EventType::BusResumed => &["component", "degraded_ms"],
         }
     }
 }

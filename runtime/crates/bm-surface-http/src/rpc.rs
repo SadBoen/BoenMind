@@ -67,6 +67,14 @@ async fn rpc_inner(state: &AppState, method: Method, req: &RequestEnvelope) -> C
             let p: GetOperationParams = params(req)?;
             to_value(state.handle.operations_get(p).await)
         }
+        // M4-T5 实现前的合同占位:方法已在合同层注册(Minor),服务端行为未接,
+        // 明确报 unavailable 而非 404(与信封语义一致)。
+        Method::CapabilityCall | Method::ApprovalList | Method::ApprovalRespond => {
+            Err(bm_core::CoreError::Semantic(
+                bm_contract::error_codes::ErrorCode::Unavailable,
+                "该方法自 M4-T5 起实现(capability/approval 服务端行为未接入)".into(),
+            ))
+        }
     }
 }
 

@@ -94,7 +94,7 @@ runtime/crates/bm-cli  # approval 命令组兑现;capability list/call 增发
    waiting_approval→cancelled(guard approval_denied_or_expired_or_withdrawn)。
    agent 状态机 waiting_approval 不在本期(工具调用循环 M5 随行;
    m1_subset_note 的兑现顺序记入 §8 解读条款)。
-9. `golden-traces/M2-GT-02-capability-approval.md`:GT-02 两场景
+9. `golden-traces/M4-GT-02-capability-approval.md`:GT-02 两场景
    (预授权直通 / untrusted 升级审批→批准→执行→审计)。validate.py R2–R4
    从硬编码 GT-01 改为遍历 golden-traces/*.md(泛化,不改判定规则)。
 10. `m0/perf-baseline.v0_1.md` 增 P-09(Broker 授权开销)/ P-10(队头阻塞)

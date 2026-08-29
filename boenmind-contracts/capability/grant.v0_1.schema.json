@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "boenmind:capability:grant:v0.1",
+  "x-frozen": "2026-08-29",
+  "title": "Capability Grant v0.1(M4.4,ADR-0002 条件 1 下限字段集)",
+  "description": "Broker 记账的授权载体(基线 §11.3 增补:三方交集物化为按引用绑定的 Grant)。字段 = ADR-0002 下限清单全量:audience/action/资源谓词/scope/delegation_depth=0(不可再转授)/过期/撤回版本/父授权哈希。M4 单路径期:Grant 仅由用户批准的 Approval 物化(issued_by = 用户 surface 身份,parent_hash = Approval 对象内容 SHA-256);Coordinator 签发链随 M5 启用,字段不增不改。双路径(直接 Capability 与 Domain Agent)统一以本合同为唯一授权合同(ADR-0002 条件 4;单路径期仅定义不启用)。",
+  "definitions": {
+    "grant_id": {
+      "type": "string",
+      "pattern": "^grant_[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "principal": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,15}:[A-Za-z0-9_.:\\-]{1,64}$",
+      "description": "调用方身份 kind:local-id(如 surface:user / agent:note_bot);kind 集合开放,审计按 kind 归因;权限只来自 Grant 与注册合同,不来自身份声明本身(ADR-0006)"
+    },
+    "capability_name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
+    },
+    "scope": {
+      "type": "string",
+      "pattern": "^(once|forever|count:[0-9]{1,6}|ttl:[0-9]+(ms|s|m|h)|task:[A-Za-z0-9_\\-]{1,64})$",
+      "description": "授权范围(基线 §9.6):once=首次消费即失效;count:<n>=n 次;ttl:<dur>=时限内;forever=不过期;task:<id>=本 Task 内(M4 校验层拒绝产生 task: 前缀的新 Grant,枚举值合法保留随 M5)"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  },
+  "type": "object",
+  "required": ["grant_id", "audience", "action", "resource", "scope", "delegation_depth", "expires_at", "revocation_version", "parent_grant_hash", "issued_by", "created_at"],
+  "additionalProperties": true,
+  "properties": {
+    "grant_id": { "$ref": "#/definitions/grant_id" },
+    "audience": { "$ref": "#/definitions/principal", "description": "被授权的调用方(Grant 只对此 audience 生效)" },
+    "action": { "$ref": "#/definitions/capability_name", "description": "被授权的能力名(精确匹配)" },
+    "resource": {
+      "type": "object",
+      "required": ["capability"],
+      "additionalProperties": false,
+      "properties": {
+        "capability": { "$ref": "#/definitions/capability_name" },
+        "args_predicates": {
+          "type": "object",
+          "description": "资源谓词(下限实现:参数等值字典,值 = string|number|boolean);缺省 = 全参授权;前缀/区间谓词为后继 Minor 扩展位"
+        }
+      },
+      "description": "资源谓词(ADR-0002:资源谓词为必备下限字段;M4 下限 = 能力名 + 可选等值谓词)"
+    },
+    "scope": { "$ref": "#/definitions/scope" },
+    "delegation_depth": { "const": 0, "description": "不可再转授(基线 §11.2);>0 的转授链随 M5/M6 另行增发,当前恒 0" },
+    "expires_at": { "type": ["string", "null"], "format": "date-time", "description": "过期时间;scope=forever 时为 null;超时即失效(默认拒绝,无超时默认同意)" },
+    "revocation_version": { "type": "integer", "minimum": 0, "description": "撤回版本:每次撤销 +1,消费点校验版本一致,旧副本即失效(可撤销,基线 §11.3)" },
+    "parent_grant_hash": { "$ref": "#/definitions/sha256", "description": "父授权对象内容哈希(M4 = 批准该 Grant 的 Approval 对象 SHA-256;授权链可重建,ADR-0002 条件 1)" },
+    "issued_by": { "$ref": "#/definitions/principal", "description": "签发者:M4 恒为用户 surface 身份;M5 起 Coordinator 可在其自身 Grant 上界内签发成员角色授权" },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

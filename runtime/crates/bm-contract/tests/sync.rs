@@ -3,7 +3,7 @@
 
 use bm_contract::budget::{AccountingRecord, Budget};
 use bm_contract::connector::{InvokeRequest, InvokeResponse, Message, Role, Usage};
-use bm_contract::error_codes::{ErrorCode, M1_WIRE_CODES, Since, WireErrorCode};
+use bm_contract::error_codes::{ErrorCode, Since, WIRE_CODES, WireErrorCode};
 use bm_contract::events::{EventEnvelope, EventType};
 use bm_contract::exec_log::LogEntry;
 use bm_contract::registries;
@@ -53,27 +53,42 @@ fn error_code_enum_matches_registry() {
 }
 
 #[test]
-fn envelope_error_code_enum_is_exactly_m1_codes() {
+fn envelope_error_code_enum_matches_wire_codes() {
     let doc: serde_json::Value = serde_json::from_str(registries::ENVELOPE_SCHEMA).unwrap();
     let enum_codes: Vec<&str> = doc
         .pointer("/definitions/error_code/enum")
         .and_then(|e| e.as_array())
         .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
         .expect("envelope schema 应有 error_code 枚举");
-    let m1: Vec<&str> = M1_WIRE_CODES.iter().map(|c| c.as_str()).collect();
-    assert_eq!(enum_codes, m1, "envelope 枚举 ≠ M1 可用码(CI 规则 R6)");
+    let wire: Vec<&str> = WIRE_CODES.iter().map(|c| c.as_str()).collect();
+    assert_eq!(
+        enum_codes, wire,
+        "envelope 枚举 ≠ Wire 可用码(M1∪M4,CI 规则 R6)"
+    );
 }
 
 #[test]
-fn wire_error_code_rejects_m4_codes() {
+fn wire_error_code_accepts_all_registry_codes() {
     let json = serde_json::to_string(&WireErrorCode::new(ErrorCode::Timeout).unwrap()).unwrap();
     let back: WireErrorCode = serde_json::from_str(&json).unwrap();
     assert_eq!(back.get(), ErrorCode::Timeout);
 
-    let m4 = serde_json::to_string(&ErrorCode::PermissionDenied.as_str()).unwrap();
+    // M4 起:四码进入信封枚举(Minor 增发),全量注册表码可序列化往返
+    for code in [
+        ErrorCode::PermissionDenied,
+        ErrorCode::ApprovalRequired,
+        ErrorCode::ApprovalDenied,
+        ErrorCode::IdempotencyConflict,
+    ] {
+        let ser = serde_json::to_string(&WireErrorCode::new(code).unwrap()).unwrap();
+        let back: WireErrorCode = serde_json::from_str(&ser).unwrap();
+        assert_eq!(back.get(), code, "{code:?} 应可进 Wire 信封(M4)");
+    }
+
+    // 未知码仍然拒绝(核心码封闭,基线 9.8)
     assert!(
-        serde_json::from_str::<WireErrorCode>(&m4).is_err(),
-        "M4 码不得进 Wire 信封"
+        serde_json::from_str::<WireErrorCode>("\"not_a_code\"").is_err(),
+        "未注册码不得进 Wire 信封"
     );
 }
 
@@ -82,7 +97,11 @@ fn wire_error_code_rejects_m4_codes() {
 #[test]
 fn event_type_enum_matches_registry() {
     let registry = registries::runtime_events();
-    assert_eq!(registry.len(), 22, "注册表事件数漂移(M1 20 + M2 增发 2)");
+    assert_eq!(
+        registry.len(),
+        32,
+        "注册表事件数漂移(M1 20 + M2 增发 2 + M4 增发 10)"
+    );
     for reg in &registry {
         let t = EventType::from_wire(&reg.type_).unwrap_or_else(|| panic!("枚举缺 {}", reg.type_));
         let mut expected: Vec<String> = t.payload_keys().iter().map(|s| s.to_string()).collect();
@@ -195,6 +214,17 @@ fn wire_requests_validate_against_envelope() {
         (
             "operations.get",
             json!({"operation_id": "op_01J9Z8G56BX7M4Q6B8WD5RV6QM"}),
+        ),
+        // M4 增发三方法(GT-02 形态)
+        (
+            "capability.call",
+            json!({"capability": "system.echo", "args": {"message": "ping"},
+                   "idempotency_key": null, "deadline_ms": 1000}),
+        ),
+        ("approval.list", json!({})),
+        (
+            "approval.respond",
+            json!({"approval_id": "appr_01JAAAAAAAAAAAAAAAAAAAAA04", "decision": "deny"}),
         ),
     ];
     for (method, params) in cases {
@@ -597,4 +627,167 @@ fn send_input_params_roundtrip() {
         }))
         .is_err()
     );
+}
+
+// ---- M4 增发(GT-02 形态):capability.* 合同自检 ---------------------------
+
+#[test]
+fn capability_manifest_validates() {
+    let m = json!({
+        "capability": "system.echo",
+        "provider": "system.echo",
+        "version": "0.1.0",
+        "input_schema": {"type": "object"},
+        "output_schema": {"type": "object"},
+        "effect": "read-only",
+        "idempotent": true,
+        "cancellable": true,
+        "timeout_ms": 1000,
+        "approval": "not-required",
+        "scopes": ["system.echo"],
+        "verification": {"query": "system.echo", "within_ms": 2000},
+        "undo": null,
+        "retry": {"max_attempts": 1, "backoff_ms": 100, "retry_on": []},
+        "deprecated_by": null,
+        "mutation_class": "safe"
+    });
+    validate(registries::CAPABILITY_MANIFEST_SCHEMA, &m).expect("manifest 合法");
+
+    let mut bad = m.clone();
+    bad["effect"] = json!("ultra-risky");
+    assert!(
+        validate(registries::CAPABILITY_MANIFEST_SCHEMA, &bad).is_err(),
+        "未知风险等级必须被拒"
+    );
+}
+
+#[test]
+fn capability_grant_validates() {
+    let g = json!({
+        "grant_id": "grant_01JAAAAAAAAAAAAAAAAAAAAA0C",
+        "audience": "agent:note_bot",
+        "action": "system.notes.write",
+        "resource": {"capability": "system.notes.write",
+                     "args_predicates": {"path": "notes/inbox.md"}},
+        "scope": "once",
+        "delegation_depth": 0,
+        "expires_at": "2026-08-29T10:30:00.000Z",
+        "revocation_version": 0,
+        "parent_grant_hash": "9b1dec3f2a6c47d5b8e0f1a2c3d4e5f60718293a4b5c6d7e8f9a0b1c2d3e4f5a",
+        "issued_by": "surface:user",
+        "created_at": "2026-08-29T10:02:09.500Z"
+    });
+    validate(registries::CAPABILITY_GRANT_SCHEMA, &g).expect("grant 合法");
+
+    // delegation_depth 恒 0(不可再转授,ADR-0002)
+    let mut bad = g.clone();
+    bad["delegation_depth"] = json!(1);
+    assert!(
+        validate(registries::CAPABILITY_GRANT_SCHEMA, &bad).is_err(),
+        "delegation_depth > 0 必须被拒"
+    );
+
+    // scope 枚举形态
+    let mut bad = g;
+    bad["scope"] = json!("whenever");
+    assert!(
+        validate(registries::CAPABILITY_GRANT_SCHEMA, &bad).is_err(),
+        "非法 scope 必须被拒"
+    );
+}
+
+#[test]
+fn capability_approval_and_lease_validate() {
+    let a = json!({
+        "approval_id": "appr_01JAAAAAAAAAAAAAAAAAAAAA04",
+        "capability": "system.danger.purge",
+        "args_digest": "9b1dec3f2a6c47d5b8e0f1a2c3d4e5f60718293a4b5c6d7e8f9a0b1c2d3e4f5a",
+        "args_summary": "清除 notes 域全部内容(target=notes)",
+        "principal": "surface:user",
+        "risk_class": "high-risk-command",
+        "effective_risk": "high-risk-command",
+        "input_trust": "trusted",
+        "state": "waiting_user",
+        "scope_choices": ["once", "count:5", "ttl:1h"],
+        "requested_at": "2026-08-29T10:00:00.220Z",
+        "expires_at": "2026-08-29T10:05:00.220Z",
+        "resolved_at": null,
+        "grant_id": null
+    });
+    validate(registries::CAPABILITY_APPROVAL_SCHEMA, &a).expect("approval 合法");
+
+    let mut bad = a;
+    bad["input_trust"] = json!("very-trusted");
+    assert!(
+        validate(registries::CAPABILITY_APPROVAL_SCHEMA, &bad).is_err(),
+        "未知信任级别必须被拒"
+    );
+
+    let l = json!({
+        "lease_id": "lease_01JAAAAAAAAAAAAAAAAAAAAA0G",
+        "binding_epoch": 1,
+        "policy_version": "policy-1",
+        "operation_id": "op_01JAAAAAAAAAAAAAAAAAAAAA03",
+        "provider_instance_id": "system.echo@0.1.0",
+        "deadline": "2026-08-29T10:00:10.000Z",
+        "byte_budget": 1048576
+    });
+    validate(registries::CAPABILITY_LEASE_SCHEMA, &l).expect("lease 合法");
+}
+
+#[test]
+fn wire_capability_params_and_result_validate() {
+    let call_params = json!({
+        "capability": "system.echo", "args": {"message": "ping"},
+        "idempotency_key": null, "deadline_ms": 1000
+    });
+    validate_by_pointer(
+        registries::WIRE_CAPABILITY_SCHEMA,
+        "#/capability.call/params",
+        &call_params,
+    )
+    .expect("capability.call params 合法");
+
+    // input_trust 不在参数面(调用方不可自报信任级别,规格 §5.4)
+    let mut bad = call_params.clone();
+    bad["input_trust"] = json!("trusted");
+    assert!(
+        validate_by_pointer(
+            registries::WIRE_CAPABILITY_SCHEMA,
+            "#/capability.call/params",
+            &bad
+        )
+        .is_err(),
+        "params 不得携带 input_trust(additionalProperties=false)"
+    );
+
+    let call_result = json!({
+        "operation_id": "op_01JAAAAAAAAAAAAAAAAAAAAA03",
+        "request_id": "req_01JAAAAAAAAAAAAAAAAAAAAA06",
+        "principal": "surface:user",
+        "capability": "system.echo",
+        "state": "succeeded",
+        "created_at": "2026-08-29T10:00:00.150Z",
+        "completed_at": "2026-08-29T10:00:00.180Z",
+        "action_summary": "echo 回显完成",
+        "result_reference": null,
+        "error": null
+    });
+    validate_by_pointer(
+        registries::WIRE_CAPABILITY_SCHEMA,
+        "#/capability.call/result",
+        &call_result,
+    )
+    .expect("capability.call result(执行收据)合法");
+
+    let respond_params = json!({
+        "approval_id": "appr_01JAAAAAAAAAAAAAAAAAAAAA0B",
+        "decision": "approve", "scope": "once"
+    });
+    validate_by_pointer(
+        registries::WIRE_CAPABILITY_SCHEMA,
+        "#/approval.respond/params",
+        &respond_params,
+    )
+    .expect("approval.respond params 合法");
 }

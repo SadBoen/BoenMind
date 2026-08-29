@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "boenmind:capability:approval:v0.1",
+  "x-frozen": "2026-08-29",
+  "title": "Capability Approval v0.1(M4.5/M4.7,基线 §9.6)",
+  "description": "审批是持久合同对象,不是一次性弹窗(基线 §9.6)。状态机:requested → waiting_user → approved | denied;waiting_user 超时 → expired(等价 denied,任何配置不允许超时默认同意);调用方取消 → withdrawn。对象持久于 L2,Runtime 重启后恢复;等待审批的 Operation 处于 waiting_approval,denied/expired/withdrawn → cancelled。凭证驻留 L2 状态机而非随调用方漂移(ADR-0002 共识:不引入可窃取的 bearer token)。",
+  "definitions": {
+    "approval_id": {
+      "type": "string",
+      "pattern": "^appr_[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "principal": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,15}:[A-Za-z0-9_.:\\-]{1,64}$"
+    },
+    "risk_class": {
+      "type": "string",
+      "enum": ["read-only", "low-risk-command", "reversible-command", "external-side-effect", "high-risk-command"]
+    },
+    "input_trust": {
+      "type": "string",
+      "enum": ["trusted", "agent-derived", "untrusted"],
+      "description": "调用输入信任级别(基线 §4.5);由内容来源链决定,调用方不可自报降级(规格 §5.4)"
+    },
+    "scope": {
+      "type": "string",
+      "pattern": "^(once|forever|count:[0-9]{1,6}|ttl:[0-9]+(ms|s|m|h)|task:[A-Za-z0-9_\\-]{1,64})$"
+    },
+    "approval_state": {
+      "type": "string",
+      "enum": ["requested", "waiting_user", "approved", "denied", "expired", "withdrawn"]
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  },
+  "type": "object",
+  "required": ["approval_id", "capability", "args_digest", "args_summary", "principal", "risk_class", "effective_risk", "input_trust", "state", "scope_choices", "requested_at", "expires_at", "resolved_at", "grant_id"],
+  "additionalProperties": true,
+  "properties": {
+    "approval_id": { "$ref": "#/definitions/approval_id" },
+    "capability": { "type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$" },
+    "args_digest": { "$ref": "#/definitions/sha256", "description": "args 规范化 JSON 的 SHA-256(A4:原文不入普通日志,以摘要/受保护引用代替,基线 §8.4)" },
+    "args_summary": { "type": "string", "maxLength": 500, "description": "Broker 生成的结构化脱敏摘要(审批卡片主体);untrusted 原文只能作为带标注引用展示,不能冒充任务理由(基线 §4.5)" },
+    "principal": { "$ref": "#/definitions/principal", "description": "发起调用的主体" },
+    "risk_class": { "$ref": "#/definitions/risk_class", "description": "manifest 声明的风险等级" },
+    "effective_risk": { "$ref": "#/definitions/risk_class", "description": "input_trust=untrusted 时按 §5.3 风险序上提一级后的实际裁决等级" },
+    "input_trust": { "$ref": "#/definitions/input_trust" },
+    "state": { "$ref": "#/definitions/approval_state" },
+    "scope_choices": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/scope" },
+      "description": "批准时用户可选择的授权范围(Broker 按 effective_risk 生成;高风险不提供 forever 选项的策略随 M5 审批 UI 定,规格解读条款 6)"
+    },
+    "requested_at": { "type": "string", "format": "date-time" },
+    "expires_at": { "type": "string", "format": "date-time", "description": "等待用户裁决的截止时间;到期 → expired(等价 denied)" },
+    "resolved_at": { "type": ["string", "null"], "format": "date-time" },
+    "grant_id": { "type": ["string", "null"], "pattern": "^grant_[0-9A-HJKMNP-TV-Z]{26}$", "description": "批准后物化的 Grant 回填;其余状态为 null" }
+  }
+}

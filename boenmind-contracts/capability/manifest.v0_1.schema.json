@@ -1,0 +1,70 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "boenmind:capability:manifest:v0.1",
+  "x-frozen": "2026-08-29",
+  "title": "Capability Manifest v0.1(M4.1)",
+  "description": "能力注册合同(基线 §5.2 十必填字段全量;manifest 是开放结构,新增可选字段 = Minor,消费方必须忽略不认识的字段)。mutation_class 为 M4 增发(ADR-0002 条件 2 结算:safe/mutation 分级,M5 协调动词过滤消费;缺省由 effect 派生:read-only→safe,其余→mutation)。",
+  "definitions": {
+    "capability_name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+      "description": "稳定能力名,至少两段命名空间(如 system.echo);调用方只依赖此名(基线 §6.4)"
+    },
+    "risk_class": {
+      "type": "string",
+      "enum": ["read-only", "low-risk-command", "reversible-command", "external-side-effect", "high-risk-command"],
+      "description": "风险等级(基线 §5.3);untrusted 来源按此序上提一级(基线 §4.5)"
+    },
+    "scope_label": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]{1,31}$",
+      "description": "权限范围标签,授权与审计以 scope 为粒度(基线 §5.2)"
+    },
+    "retry_policy": {
+      "type": "object",
+      "required": ["max_attempts", "backoff_ms", "retry_on"],
+      "additionalProperties": false,
+      "properties": {
+        "max_attempts": { "type": "integer", "minimum": 1, "maximum": 3 },
+        "backoff_ms": { "type": "integer", "minimum": 0 },
+        "retry_on": {
+          "type": "array",
+          "items": { "enum": ["timeout", "unavailable"] },
+          "description": "仅 read-only 与 low-risk-command 允许自动重试;reversible 及以上必须依赖幂等键或恢复流程(基线 §5.2)"
+        }
+      }
+    },
+    "verification_hook": {
+      "type": "object",
+      "required": ["query", "within_ms"],
+      "additionalProperties": false,
+      "properties": {
+        "query": { "$ref": "#/definitions/capability_name", "description": "事后核验查询能力(如 audio.volume.get)" },
+        "expect": { "type": "object", "description": "期望断言(开放键值,如 {\"volume\": 60})" },
+        "within_ms": { "type": "integer", "minimum": 1 }
+      },
+      "description": "事后核验钩子(基线 §5.2):使『Agent 声称完成』与『系统实际观察到』的对照成为机制"
+    }
+  },
+  "type": "object",
+  "required": ["capability", "provider", "version", "input_schema", "output_schema", "effect", "idempotent", "cancellable", "timeout_ms", "approval"],
+  "additionalProperties": true,
+  "properties": {
+    "capability": { "$ref": "#/definitions/capability_name" },
+    "provider": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]{1,63}$", "description": "提供方身份(如 system.audio)" },
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "input_schema": { "type": "object", "description": "入参 JSON Schema(M4.3 决策点校验)" },
+    "output_schema": { "type": "object", "description": "出参 JSON Schema(M4.3 决策点校验)" },
+    "effect": { "$ref": "#/definitions/risk_class" },
+    "idempotent": { "type": "boolean" },
+    "cancellable": { "type": "boolean" },
+    "timeout_ms": { "type": "integer", "minimum": 1 },
+    "approval": { "enum": ["not-required", "required"], "description": "注册时声明的审批要求;untrusted 门控可覆盖为强制审批(ADR-0002 条件 3)" },
+    "scopes": { "type": "array", "items": { "$ref": "#/definitions/scope_label" } },
+    "verification": { "type": ["object", "null"], "description": "事后核验钩子,结构见 #/definitions/verification_hook(query/expect/within_ms);无法声明 verification 的 external-side-effect 能力必须返回外部收据(基线 §5.2)" },
+    "undo": { "type": ["object", "null"], "description": "可补偿性声明:reversible-command 鼓励声明逆操作(基线 §5.2);阶段一只要求可补偿性显式化,不要求自动事务" },
+    "retry": { "type": ["object", "null"], "description": "自动重试策略,结构见 #/definitions/retry_policy;由 Broker 统一执行,仅 read-only 与 low-risk-command 允许自动重试" },
+    "deprecated_by": { "type": ["string", "null"], "description": "能力废弃链,旧版本保留期与调用告警由此驱动;值 = 替代能力名" },
+    "mutation_class": { "enum": ["safe", "mutation"], "description": "M4 增发:safe/mutation 分级(ADR-0002 §11.2 增补);缺省由 effect 派生(read-only→safe,其余→mutation);M5 协调动词子树过滤消费" }
+  }
+}

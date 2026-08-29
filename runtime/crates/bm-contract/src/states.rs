@@ -5,6 +5,8 @@
 wire_str_enum!(OperationState {
     NotStarted => "not_started",
     Running => "running",
+    // M4 增发(2026-08-29,Minor:基线 §9.6 等待审批的 Operation;M4 规格 §4-8)
+    WaitingApproval => "waiting_approval",
     Succeeded => "succeeded",
     Failed => "failed",
     Cancelled => "cancelled",
@@ -73,7 +75,7 @@ pub const OPERATION_TERMINAL: [OperationState; 5] = [
     OperationState::OutcomeUnknown,
 ];
 
-pub const OPERATION_TRANSITIONS: [Transition<OperationState>; 12] = [
+pub const OPERATION_TRANSITIONS: [Transition<OperationState>; 15] = [
     t(
         OperationState::NotStarted,
         OperationState::Running,
@@ -113,6 +115,22 @@ pub const OPERATION_TRANSITIONS: [Transition<OperationState>; 12] = [
         OperationState::Running,
         OperationState::Interrupted,
         "runtime_crash_before_terminal",
+    ),
+    // M4 增发:审批等待三边(基线 §9.6;denied/expired 等价拒绝,无超时默认同意)
+    t(
+        OperationState::Running,
+        OperationState::WaitingApproval,
+        "approval_pending",
+    ),
+    t(
+        OperationState::WaitingApproval,
+        OperationState::Running,
+        "approval_granted",
+    ),
+    t(
+        OperationState::WaitingApproval,
+        OperationState::Cancelled,
+        "approval_denied_or_expired_or_withdrawn",
     ),
     t(
         OperationState::Interrupted,
@@ -250,7 +268,7 @@ const fn t<S>(from: S, to: S, guard: &'static str) -> Transition<S> {
     Transition { from, to, guard }
 }
 
-state_machine!(OperationState, 8, OPERATION_TERMINAL, OPERATION_TRANSITIONS);
+state_machine!(OperationState, 9, OPERATION_TERMINAL, OPERATION_TRANSITIONS);
 state_machine!(SessionState, 4, SESSION_TERMINAL, SESSION_TRANSITIONS);
 state_machine!(AgentState, 10, AGENT_TERMINAL, AGENT_TRANSITIONS);
 

@@ -1,7 +1,8 @@
 //! 错误码注册表镜像(registry/error-codes.v0_1.json,核心码封闭,基线 9.8)。
 //!
-//! Wire 信封可用码 = `available_since == M1` 的 7 个(与 envelope schema 的
-//! error_code 枚举同步,CI 规则 R6);M4 起增发 4 个。
+//! Wire 信封可用码 = 注册表全量 11 码(M1 七码 + M4 四码 permission_denied /
+//! approval_required / approval_denied / idempotency_conflict;M4 起信封枚举
+//! 同步增发,CI 规则 R6)。
 
 wire_str_enum!(ErrorCode {
     ValidationFailed => "validation_failed",
@@ -82,7 +83,7 @@ impl ErrorCode {
     ];
 }
 
-/// M1 可用码(= envelope schema error_code 枚举的 7 项,顺序一致)。
+/// M1 可用码(M1 时期信封枚举的 7 项,顺序一致;保留作历史对照)。
 pub const M1_WIRE_CODES: [ErrorCode; 7] = [
     ErrorCode::ValidationFailed,
     ErrorCode::Unavailable,
@@ -93,13 +94,19 @@ pub const M1_WIRE_CODES: [ErrorCode; 7] = [
     ErrorCode::Internal,
 ];
 
-/// Wire 信封错误码:仅允许 `available_since == M1` 的码,反序列化强制校验。
+/// Wire 信封可用码全量(M4 起 = M1 ∪ M4,与 envelope schema error_code 枚举
+/// 11 项逐位一致,CI 规则 R6)。
+pub const WIRE_CODES: [ErrorCode; 11] = ErrorCode::ALL;
+
+/// Wire 信封错误码:仅允许注册表内的码(M1 ∪ M4 全量),反序列化强制校验。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct WireErrorCode(ErrorCode);
 
 impl WireErrorCode {
     pub fn new(code: ErrorCode) -> Option<Self> {
-        (code.available_since() == Since::M1).then_some(Self(code))
+        // 核心码封闭(基线 9.8):注册表全量码自其 available_since 起可用;
+        // M4 起全部 11 码均在信封枚举内,故门禁 = 必须是注册表已知码。
+        ErrorCode::ALL.contains(&code).then_some(Self(code))
     }
 
     pub fn get(self) -> ErrorCode {
@@ -111,7 +118,7 @@ impl TryFrom<ErrorCode> for WireErrorCode {
     type Error = &'static str;
 
     fn try_from(code: ErrorCode) -> Result<Self, Self::Error> {
-        Self::new(code).ok_or("该错误码自 M4 起才可出现在 Wire 信封")
+        Self::new(code).ok_or("未知错误码(不在注册表内)")
     }
 }
 
@@ -126,7 +133,6 @@ impl<'de> serde::Deserialize<'de> for WireErrorCode {
         let s = String::deserialize(deserializer)?;
         let code = ErrorCode::from_wire(&s)
             .ok_or_else(|| serde::de::Error::custom(format!("未知错误码: {s}")))?;
-        WireErrorCode::new(code)
-            .ok_or_else(|| serde::de::Error::custom(format!("错误码 {s} 自 M4 起才可用")))
+        WireErrorCode::new(code).ok_or_else(|| serde::de::Error::custom(format!("未知错误码: {s}")))
     }
 }

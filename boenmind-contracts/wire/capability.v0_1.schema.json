@@ -1,0 +1,114 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "boenmind:wire:capability:v0.1",
+  "x-frozen": "2026-08-29",
+  "title": "Wire API 能力与审批方法 v0.1(M4.2/M4.5/M4.7)",
+  "description": "capability.call / approval.list / approval.respond 三方法的 params/result 合同,envelope 的 method 枚举同步增发(Minor)。capability.call 的 result 是 Broker 执行收据形态:归因字段为 capability(与 agent 收据的 task_type 互补,基线 §9.5);args 经 manifest input_schema 校验(M4.3),违者 validation_failed。",
+  "definitions": {
+    "capability_name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
+    },
+    "approval_id": {
+      "type": "string",
+      "pattern": "^appr_[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "grant_id": {
+      "type": "string",
+      "pattern": "^grant_[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "principal": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,15}:[A-Za-z0-9_.:\\-]{1,64}$"
+    },
+    "operation_state": {
+      "type": "string",
+      "enum": ["not_started", "running", "waiting_approval", "succeeded", "failed", "cancelled", "timeout", "outcome_unknown", "interrupted"]
+    },
+    "scope": {
+      "type": "string",
+      "pattern": "^(once|forever|count:[0-9]{1,6}|ttl:[0-9]+(ms|s|m|h)|task:[A-Za-z0-9_\\-]{1,64})$"
+    },
+    "receipt_error": {
+      "type": ["object", "null"],
+      "description": "收据内错误摘要 {code, message, retryable};形态同 envelope #/definitions/error,此处内联避免跨文档引用"
+    },
+    "result_reference": {
+      "type": ["object", "null"],
+      "description": "结果受保护引用 {kind, ref};副作用能力必须返回外部收据引用(基线 §5.2)"
+    }
+  },
+  "capability.call": {
+    "params": {
+      "type": "object",
+      "required": ["capability", "args"],
+      "additionalProperties": false,
+      "properties": {
+        "capability": { "$ref": "#/definitions/capability_name" },
+        "args": { "type": "object", "description": "能力入参;Broker 按 manifest input_schema 校验(M4.3)。input_trust 不在参数面:Wire Surface 直调恒 trusted,调用方不可自报信任级别(规格 §5.4)" },
+        "idempotency_key": { "type": ["string", "null"], "maxLength": 128, "description": "副作用操作幂等键(external-side-effect 类必备,基线 §9.5/ADR-0004);等价请求幂等抑制并留审计(规格 §5.9)" },
+        "deadline_ms": { "type": ["integer", "null"], "minimum": 1, "description": "相对截止时间;缺省用 manifest timeout_ms" }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": ["operation_id", "request_id", "principal", "capability", "state", "created_at", "completed_at", "action_summary", "result_reference", "error"],
+      "additionalProperties": true,
+      "properties": {
+        "operation_id": { "type": "string", "pattern": "^op_[0-9A-HJKMNP-TV-Z]{26}$" },
+        "request_id": { "type": "string", "pattern": "^req_[0-9A-HJKMNP-TV-Z]{26}$" },
+        "principal": { "$ref": "#/definitions/principal" },
+        "capability": { "$ref": "#/definitions/capability_name" },
+        "state": { "$ref": "#/definitions/operation_state" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "completed_at": { "type": ["string", "null"], "format": "date-time" },
+        "action_summary": { "type": "string", "maxLength": 500, "description": "脱敏的动作摘要" },
+        "result_reference": { "$ref": "#/definitions/result_reference" },
+        "error": { "$ref": "#/definitions/receipt_error" }
+      },
+      "description": "Broker 执行收据(基线 §9.5);审计归因链 = capability.invoked 事件中的 request_id/operation_id/principal/binding_epoch"
+    }
+  },
+  "approval.list": {
+    "params": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "state_filter": { "enum": ["waiting_user", "approved", "denied", "expired", "withdrawn", null], "description": "缺省 = 全部未决(waiting_user)在前" }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": ["approvals"],
+      "additionalProperties": false,
+      "properties": {
+        "approvals": {
+          "type": "array",
+          "items": { "type": "object", "description": "capability:approval:v0.1 对象(载荷合同见该文件)" }
+        }
+      }
+    }
+  },
+  "approval.respond": {
+    "params": {
+      "type": "object",
+      "required": ["approval_id", "decision"],
+      "additionalProperties": false,
+      "properties": {
+        "approval_id": { "$ref": "#/definitions/approval_id" },
+        "decision": { "enum": ["approve", "deny", "withdraw"] },
+        "scope": { "$ref": "#/definitions/scope", "description": "decision=approve 时必选(实现侧强制):用户在批准时选择授权范围(基线 §9.6);须 ∈ 该 Approval 的 scope_choices" }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": ["approval_id", "state", "grant_id"],
+      "additionalProperties": false,
+      "properties": {
+        "approval_id": { "$ref": "#/definitions/approval_id" },
+        "state": { "enum": ["approved", "denied", "withdrawn", "expired"] },
+        "grant_id": { "type": ["string", "null"], "description": "approved 时回填物化的 Grant id" }
+      }
+    }
+  }
+}

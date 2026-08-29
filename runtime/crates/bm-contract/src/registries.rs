@@ -23,6 +23,17 @@ pub const RUNTIME_EVENTS_REGISTRY: &str =
     include_str!("../../../../boenmind-contracts/registry/runtime-events.v0_1.json");
 pub const CORE_TRANSITIONS: &str =
     include_str!("../../../../boenmind-contracts/state-machines/core-transitions.v0_1.json");
+// M4 增发(2026-08-29,Minor):capability.* 四合同 + wire/capability。
+pub const CAPABILITY_MANIFEST_SCHEMA: &str =
+    include_str!("../../../../boenmind-contracts/capability/manifest.v0_1.schema.json");
+pub const CAPABILITY_GRANT_SCHEMA: &str =
+    include_str!("../../../../boenmind-contracts/capability/grant.v0_1.schema.json");
+pub const CAPABILITY_APPROVAL_SCHEMA: &str =
+    include_str!("../../../../boenmind-contracts/capability/approval.v0_1.schema.json");
+pub const CAPABILITY_LEASE_SCHEMA: &str =
+    include_str!("../../../../boenmind-contracts/capability/lease.v0_1.schema.json");
+pub const WIRE_CAPABILITY_SCHEMA: &str =
+    include_str!("../../../../boenmind-contracts/wire/capability.v0_1.schema.json");
 
 #[derive(Debug, Deserialize)]
 pub struct RegistryCode {
@@ -104,6 +115,11 @@ mod tests {
             ("error-codes", ERROR_CODES_REGISTRY),
             ("runtime-events", RUNTIME_EVENTS_REGISTRY),
             ("core-transitions", CORE_TRANSITIONS),
+            ("capability-manifest", CAPABILITY_MANIFEST_SCHEMA),
+            ("capability-grant", CAPABILITY_GRANT_SCHEMA),
+            ("capability-approval", CAPABILITY_APPROVAL_SCHEMA),
+            ("capability-lease", CAPABILITY_LEASE_SCHEMA),
+            ("wire-capability", WIRE_CAPABILITY_SCHEMA),
         ] {
             let v: serde_json::Value =
                 serde_json::from_str(text).unwrap_or_else(|e| panic!("{name}: {e}"));

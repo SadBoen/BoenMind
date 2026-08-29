@@ -45,6 +45,9 @@ fn legal_actions(state: OperationState, effect: EffectClass) -> Vec<Action> {
         }
         Interrupted => vec![Recover, UserRuling],
         OutcomeUnknown => vec![VerifySucceeded, VerifyFailed, IllegalRetry],
+        // M4 增发状态:审批裁决动作(Approve/Deny)随 M4-T3 加入 fuzz 动作集;
+        // T0 阶段无可用动作,游走在此停止(apply 的兜底拒绝任何表外迁移)。
+        WaitingApproval => vec![],
         Succeeded | Failed | Cancelled | Timeout => vec![],
     }
 }

@@ -14,9 +14,12 @@
         "/rpc/events.poll",
         "/rpc/agent.send_input",
         "/rpc/agent.cancel",
-        "/rpc/operations.get"
+        "/rpc/operations.get",
+        "/rpc/capability.call",
+        "/rpc/approval.list",
+        "/rpc/approval.respond"
       ],
-      "description": "method → 路径映射:POST /rpc/{method},body = RequestEnvelope,响应体 = ResponseEnvelope;M4/M5 起新方法以同构追加"
+      "description": "method → 路径映射:POST /rpc/{method},body = RequestEnvelope,响应体 = ResponseEnvelope;M4 增发 capability.call / approval.list / approval.respond(Minor,信封复用)"
     },
     "sse_frame": {
       "type": "object",

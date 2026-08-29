@@ -1,8 +1,10 @@
 //! Wire API 信封与方法参数/结果镜像
-//! (wire/envelope + wire/session + wire/agent,v0.1)。
+//! (wire/envelope + wire/session + wire/agent + wire/capability,v0.1)。
 //!
 //! M1 方法集合(7 个):session.create / session.resume / session.close /
 //! events.poll / agent.send_input / agent.cancel / operations.get。
+//! M4 增发(3 个):capability.call / approval.list / approval.respond
+//! (服务端实现随 M4-T5)。
 
 use crate::BmTimestamp;
 use crate::budget::Budget;
@@ -22,6 +24,11 @@ wire_str_enum!(Method {
     AgentSendInput => "agent.send_input",
     AgentCancel => "agent.cancel",
     OperationsGet => "operations.get",
+    // M4 增发(2026-08-29,Minor:envelope method 枚举同步;params/result 见
+    // wire/capability.v0_1;服务端行为 M4-T5 实现,当前 unavailable)
+    CapabilityCall => "capability.call",
+    ApprovalList => "approval.list",
+    ApprovalRespond => "approval.respond",
 });
 
 wire_str_enum!(InputTrust {

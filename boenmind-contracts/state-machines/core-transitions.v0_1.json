@@ -3,10 +3,10 @@
   "$id": "boenmind:state-machines:core:v0.1",
   "x-frozen": "2026-08-28",
   "title": "M1 状态迁移表（Operation / Session / Agent）",
-  "description": "每次迁移必须产生一条 operation.state.changed（对 operation）并携带 reason_code。guard 是机器可检查的前置条件表达式。不在表中的迁移一律非法。terminal 列出的状态不可再迁出（M1）。",
+  "description": "每次迁移必须产生一条 operation.state.changed（对 operation）并携带 reason_code。guard 是机器可检查的前置条件表达式。不在表中的迁移一律非法。terminal 列出的状态不可再迁出。M4 增发：operation.waiting_approval 状态与三条边（Minor）。",
   "machines": {
     "operation": {
-      "states": ["not_started", "running", "succeeded", "failed", "cancelled", "timeout", "outcome_unknown", "interrupted"],
+      "states": ["not_started", "running", "waiting_approval", "succeeded", "failed", "cancelled", "timeout", "outcome_unknown", "interrupted"],
       "terminal": ["succeeded", "failed", "cancelled", "timeout", "outcome_unknown"],
       "transitions": [
         { "from": "not_started",    "to": "running",         "guard": "dispatch_accepted" },
@@ -17,6 +17,9 @@
         { "from": "running",        "to": "timeout",         "guard": "deadline_exceeded AND effect_class IN [read-only, low-risk-command]" },
         { "from": "running",        "to": "outcome_unknown", "guard": "(deadline_exceeded OR crash OR cancel) AND effect_class IN [reversible-command, external-side-effect, high-risk-command]" },
         { "from": "running",        "to": "interrupted",     "guard": "runtime_crash_before_terminal" },
+        { "from": "running",        "to": "waiting_approval","guard": "approval_pending", "note": "M4 增发（基线 §9.6：等待审批的 Operation 处于 waiting_approval）" },
+        { "from": "waiting_approval","to": "running",        "guard": "approval_granted", "note": "M4 增发" },
+        { "from": "waiting_approval","to": "cancelled",      "guard": "approval_denied_or_expired_or_withdrawn", "note": "M4 增发；denied/expired 等价拒绝（基线 §9.6：denied → cancelled），无超时默认同意" },
         { "from": "interrupted",    "to": "running",         "guard": "recovery_replay_ok" },
         { "from": "interrupted",    "to": "cancelled",       "guard": "user_ruling" },
         { "from": "outcome_unknown","to": "succeeded",       "guard": "external_verification OR user_ruling", "note": "仅恢复流程可进入，禁止普通重试逻辑触发（基线 9.5/20）" },
@@ -38,7 +41,7 @@
     "agent": {
       "states": ["created", "starting", "running", "waiting_model", "stopping", "stopped", "failed", "cancelled", "interrupted", "resuming"],
       "terminal": ["stopped", "failed", "cancelled"],
-      "m1_subset_note": "waiting_input/waiting_approval/waiting_tool 在 M4+ 增发，字段已在基线 3 预留，此处不加状态不加边",
+      "m1_subset_note": "waiting_input/waiting_tool 随 M5 增发;waiting_approval 已于 M4 随 operation 增发(基线 3 预留;agent 侧状态随工具调用循环 M5 兑现,见 M4 规格 §8.5)",
       "transitions": [
         { "from": "created",       "to": "starting",      "guard": "agent_start" },
         { "from": "created",       "to": "cancelled",     "guard": "explicit_cancel" },
