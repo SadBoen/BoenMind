@@ -1,0 +1,20 @@
+[
+  {
+    "name": "wiki",
+    "transport": "stdio",
+    "command": "python",
+    "args": ["apps/wiki_server.py", "--dir", "<wiki 数据目录>"],
+    "trust": "explicit-config",
+    "tool_timeout_ms": 30000,
+    "restart_limit": 3
+  },
+  {
+    "name": "market",
+    "transport": "stdio",
+    "command": "python",
+    "args": ["apps/market_server.py"],
+    "trust": "explicit-config",
+    "tool_timeout_ms": 15000,
+    "restart_limit": 3
+  }
+]

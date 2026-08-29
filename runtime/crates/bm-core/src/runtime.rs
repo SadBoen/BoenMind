@@ -243,6 +243,11 @@ enum Cmd {
         reason: String,
         resp: oneshot::Sender<()>,
     },
+    /// M8.1:查询异步能力调用结果(诊断端口;非 wire 方法)。
+    GetOpResult {
+        operation_id: BmId,
+        resp: oneshot::Sender<CoreResult<Option<serde_json::Value>>>,
+    },
     /// M8.3:能力调用语义取消(在途异步;迟到完成丢弃)。
     CapabilityCancel {
         #[allow(dead_code)] // 信封规范要求请求携带 request_id;回执以 operation 为准
@@ -1418,6 +1423,22 @@ impl RuntimeHandle {
     }
 
     /// approval.respond(M4.7):批准(物化 Grant 并重放执行)/拒绝/取消。
+    /// M8.1:异步能力调用结果(核心诊断端口;wire 面随按需增发)。
+    pub async fn operation_result(
+        &self,
+        operation_id: BmId,
+    ) -> CoreResult<Option<serde_json::Value>> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(Cmd::GetOpResult {
+                operation_id,
+                resp: tx,
+            })
+            .await
+            .map_err(|_| CoreError::Internal)?;
+        rx.await.map_err(|_| CoreError::Internal)?
+    }
+
     /// M8.3:能力调用语义取消(在途异步;迟到完成丢弃)。
     pub async fn capability_cancel(
         &self,
@@ -1844,6 +1865,9 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
                 resp,
             } => {
                 let _ = resp.send(handle_capability_cancel(&mut world, params));
+            }
+            Cmd::GetOpResult { operation_id, resp } => {
+                let _ = resp.send(Ok(world.op_results.get(&operation_id).cloned()));
             }
             Cmd::ProviderProgress {
                 operation_id,
@@ -5502,6 +5526,9 @@ fn reply_unavailable(cmd: Cmd) {
         Cmd::ProviderProgress { .. } => {}
         Cmd::CapabilityCancel { resp, .. } => {
             let _ = resp.send(Err(err()));
+        }
+        Cmd::GetOpResult { resp, .. } => {
+            let _ = resp.send(Ok(None));
         }
         Cmd::Turn(_) => {}
     }
