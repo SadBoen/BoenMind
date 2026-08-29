@@ -381,3 +381,148 @@ fn authed_header(token: &str) -> reqwest::header::HeaderMap {
     );
     headers
 }
+
+// ---- M4:审批全链路 HTTP 形态(高风险 → approval_required → 批准 → 执行)----
+
+async fn m4_rig(
+    capabilities: Vec<(
+        bm_contract::capability::CapabilityManifest,
+        std::sync::Arc<dyn bm_core::registry::CapabilityProvider>,
+    )>,
+) -> Rig {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let token = Arc::new(token::load_or_create(dir.path()).expect("令牌"));
+    let store: Arc<PersistStore> = Arc::new(PersistStore::open(dir.path()).expect("打开"));
+    let connector: Arc<dyn ModelConnector> = Arc::new(MockConnector::new(vec![]));
+    let handle = RuntimeHandle::start(RuntimeConfig {
+        capabilities,
+        version: "0.1.0-m4".into(),
+        data_dir: Some(dir.path().to_path_buf()),
+        store: Some(store.clone()),
+        connector,
+        secret_store: Arc::new(MemSecretStore::with(
+            &bm_core::runtime::default_secret_ref(bm_testkit_replay::MODEL_A),
+            "sk-demo-zhipu-secret-value-001",
+        )),
+        id_gen: Arc::new(SeqIdGen::new()),
+        clock: Arc::new(SystemClock),
+        turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
+        max_attempts: None,
+    })
+    .await;
+
+    let shutdown = Arc::new(tokio::sync::Notify::new());
+    let app = bm_surface_http::router(handle.clone(), token.clone(), store.clone(), shutdown, None);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("绑定");
+    let addr = listener.local_addr().expect("地址");
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("serve");
+    });
+
+    Rig {
+        url: format!("http://{addr}"),
+        token: token.to_string(),
+        handle,
+        ids: Arc::new(SeqIdGen::new()),
+        _dir: dir,
+    }
+}
+
+fn m4_manifest(name: &str, effect: &str) -> bm_contract::capability::CapabilityManifest {
+    serde_json::from_value(serde_json::json!({
+        "capability": name, "provider": name, "version": "0.1.0",
+        "input_schema": {"type": "object"},
+        "output_schema": {"type": "object"},
+        "effect": effect, "idempotent": true, "cancellable": true,
+        "timeout_ms": 1000, "approval": "not-required"
+    }))
+    .expect("manifest 合法")
+}
+
+#[tokio::test]
+async fn t34_capability_call_approval_cycle_over_http() {
+    let rig = m4_rig(vec![
+        (
+            m4_manifest("system.echo", "read-only"),
+            bm_core::broker::provider_fn(Ok),
+        ),
+        (
+            m4_manifest("system.danger.purge", "high-risk-command"),
+            bm_core::broker::provider_fn(|_| Ok(serde_json::json!({"purged": true}))),
+        ),
+    ])
+    .await;
+    let client = rig.client(Some(&rig.token));
+
+    // 直通:read-only 经 HTTP 成功
+    let (status, body) = rig
+        .rpc(
+            &client,
+            Method::CapabilityCall,
+            serde_json::json!({"capability": "system.echo", "args": {"m": "hi"}}),
+        )
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["result"]["state"], "succeeded");
+
+    // 高风险 → approval_required 信封(业务 200)
+    let (status, body) = rig
+        .rpc(
+            &client,
+            Method::CapabilityCall,
+            serde_json::json!({"capability": "system.danger.purge", "args": {}}),
+        )
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(body["ok"], false);
+    assert_eq!(body["error"]["code"], "approval_required");
+
+    // approval.list 可见 waiting_user
+    let (status, body) = rig
+        .rpc(&client, Method::ApprovalList, serde_json::json!({}))
+        .await;
+    assert_eq!(status, 200);
+    let approvals = body["result"]["approvals"]
+        .as_array()
+        .expect("approvals 数组");
+    assert_eq!(approvals.len(), 1);
+    assert_eq!(approvals[0]["state"], "waiting_user");
+    let approval_id = approvals[0]["approval_id"]
+        .as_str()
+        .expect("id")
+        .to_string();
+
+    // 批准(scope=once)→ approved
+    let (status, body) = rig
+        .rpc(
+            &client,
+            Method::ApprovalRespond,
+            serde_json::json!({"approval_id": approval_id, "decision": "approve", "scope": "once"}),
+        )
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(body["result"]["state"], "approved");
+    assert!(body["result"]["grant_id"].is_string());
+
+    // 审计:capability.invoked(ok)与 grant.created 落事件流
+    let (status, body) = rig
+        .rpc(&client, Method::EventsPoll,
+             serde_json::json!({"session_id": rig.ids.next_id("sess").as_str(), "since_seq": 0, "limit": 1000}))
+        .await;
+    let _ = (status, body);
+    let events = rig.handle.events_all().await;
+    assert!(events.iter().any(|e| {
+        e.event_type == bm_contract::events::EventType::CapabilityInvoked
+            && e.payload["outcome"] == serde_json::json!("ok")
+    }));
+    assert!(
+        events
+            .iter()
+            .any(|e| e.event_type == bm_contract::events::EventType::GrantCreated)
+    );
+
+    rig.handle.stop("test_done").await;
+}

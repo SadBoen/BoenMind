@@ -1,7 +1,7 @@
 //! boenmind:Surface CLI(M3.2)。薄壳——协议逻辑在 bm-cli 库。
 //!
-//! 命令组:session / agent / operations / events 全量;task / approval
-//! 随 M4/M5 增发(对象尚不存在,预留子命令位,M3 规格 §1)。
+//! 命令组:session / agent / operations / events 全量;approval / capability
+//! 自 M4 兑现(经同一 Wire API);task 随 M5 增发。
 
 use bm_cli::EnvelopeClient;
 use bm_contract::wire::Method;
@@ -49,10 +49,18 @@ enum Cmd {
         #[command(subcommand)]
         cmd: EventsCmd,
     },
-    /// 任务(M4 提供)
+    /// 任务(M5 提供)
     Task,
-    /// 审批(M4 提供)
-    Approval,
+    /// 审批(M4):查看待裁决审批并批准/拒绝
+    Approval {
+        #[command(subcommand)]
+        cmd: ApprovalCmd,
+    },
+    /// 能力(M4):经 Broker 统一入口调用注册能力
+    Capability {
+        #[command(subcommand)]
+        cmd: CapabilityCmd,
+    },
 }
 
 #[derive(Subcommand)]
@@ -130,14 +138,43 @@ enum EventsCmd {
 
 #[derive(Subcommand)]
 enum TaskCmd {
-    /// 占位:M4 提供
+    /// 占位:M5 提供
     List,
 }
 
 #[derive(Subcommand)]
 enum ApprovalCmd {
-    /// 占位:M4 提供
-    List,
+    /// 列出审批对象(缺省全部;--state 过滤)
+    List {
+        #[arg(long)]
+        state: Option<String>,
+    },
+    /// 批准(须选授权范围:once / count:<n> / ttl:<dur>,见审批卡片 scope_choices)
+    Approve {
+        approval_id: String,
+        #[arg(long)]
+        scope: String,
+    },
+    /// 拒绝(等价默认拒绝,operation 转 cancelled)
+    Deny { approval_id: String },
+    /// 撤销(调用方取消)
+    Withdraw { approval_id: String },
+}
+
+#[derive(Subcommand)]
+enum CapabilityCmd {
+    /// 调用能力(经 Broker;需审批时返回 approval_required,随后 approval approve/deny)
+    Call {
+        /// 能力名(如 system.echo)
+        capability: String,
+        /// 入参 JSON 对象
+        #[arg(long, default_value = "{}")]
+        args: String,
+        #[arg(long)]
+        idempotency_key: Option<String>,
+        #[arg(long)]
+        deadline_ms: Option<u64>,
+    },
 }
 
 fn main() {
@@ -296,13 +333,51 @@ fn main() {
             }
         },
         Cmd::Task => {
-            println!("task 命令组随 M4(Task 对象)提供;当前里程碑范围见基线 §18-M3");
+            println!("task 命令组随 M5(Task 对象)提供;当前里程碑范围见基线 §18-M4");
             return;
         }
-        Cmd::Approval => {
-            println!("approval 命令组随 M4(Approval 对象)提供;当前里程碑范围见基线 §18-M3");
-            return;
-        }
+        Cmd::Approval { cmd } => match cmd {
+            ApprovalCmd::List { state } => client.call(
+                Method::ApprovalList,
+                serde_json::json!({ "state_filter": state }),
+            ),
+            ApprovalCmd::Approve { approval_id, scope } => client.call(
+                Method::ApprovalRespond,
+                serde_json::json!({
+                    "approval_id": approval_id,
+                    "decision": "approve",
+                    "scope": scope
+                }),
+            ),
+            ApprovalCmd::Deny { approval_id } => client.call(
+                Method::ApprovalRespond,
+                serde_json::json!({ "approval_id": approval_id, "decision": "deny" }),
+            ),
+            ApprovalCmd::Withdraw { approval_id } => client.call(
+                Method::ApprovalRespond,
+                serde_json::json!({ "approval_id": approval_id, "decision": "withdraw" }),
+            ),
+        },
+        Cmd::Capability { cmd } => match cmd {
+            CapabilityCmd::Call {
+                capability,
+                args,
+                idempotency_key,
+                deadline_ms,
+            } => {
+                let args_v: serde_json::Value = serde_json::from_str(&args)
+                    .unwrap_or_else(|e| fail(&format!("--args 须为 JSON 对象: {e}"), 2));
+                client.call(
+                    Method::CapabilityCall,
+                    serde_json::json!({
+                        "capability": capability,
+                        "args": args_v,
+                        "idempotency_key": idempotency_key,
+                        "deadline_ms": deadline_ms
+                    }),
+                )
+            }
+        },
     };
 
     print_result(&out, "rpc");
