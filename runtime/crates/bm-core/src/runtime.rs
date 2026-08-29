@@ -1673,7 +1673,7 @@ fn handle_capability_call(
             "Runtime 排空中或持久层故障,拒绝能力调用".into(),
         ));
     }
-    let ctx = CallContext::new(CAPABILITY_CALLER, DataTrust::Trusted);
+    let ctx = CallContext::surface(CAPABILITY_CALLER);
     // 步 1-4:查表裁决(Broker 为字段级临时借用,用后即还)
     let decision = {
         let broker = Broker::new(
@@ -2026,7 +2026,7 @@ fn handle_approval_respond(
             persist_grant(w, &grant.grant_id);
             if let Some((op_id, capability, args)) = op {
                 w.settle_operation(&op_id, OperationState::Running, None);
-                let ctx = CallContext::new(CAPABILITY_CALLER, DataTrust::Trusted);
+                let ctx = CallContext::surface(CAPABILITY_CALLER);
                 let outcome = {
                     let mut broker = Broker::new(
                         &w.registry,
