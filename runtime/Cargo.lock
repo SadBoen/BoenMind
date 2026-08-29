@@ -380,11 +380,13 @@ dependencies = [
  "bm-core",
  "bm-persist",
  "bm-providers",
+ "chrono",
  "jsonschema",
  "proptest",
  "serde_json",
  "tempfile",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]

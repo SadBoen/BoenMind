@@ -10,6 +10,8 @@ bm-core = { workspace = true }
 bm-persist = { workspace = true }
 bm-providers = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
+chrono = { workspace = true }
 serde_json = { workspace = true }
 jsonschema = { workspace = true }
 tempfile = { workspace = true }

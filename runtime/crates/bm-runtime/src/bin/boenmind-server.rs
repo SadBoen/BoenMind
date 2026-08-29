@@ -53,15 +53,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let hint = bm_persist::id_counter_hint(persist.state()).unwrap_or(0);
     let id_gen = Arc::new(SeqIdGen::starting_at(hint));
 
-    let connector: Arc<dyn ModelConnector> = Arc::new(MockConnector::repeating(Step::ok(
-        "M3 演示回答(当前为 mock 模型;真实 GLM 适配器经 --feature glm 接入)",
-        120,
-        40,
-    )));
-    let secrets = Arc::new(MemSecretStore::with(
-        &bm_core::runtime::default_secret_ref("zhipu.glm-4-flash"),
-        "sk-demo-zhipu-secret-value-001",
-    ));
+    // M7(ADR-0010):BOEN_MODEL_BASE_URL + BOEN_MODEL_ID 齐备 → OpenAI 兼容真实网关;
+    // 密钥只存加密 Secret Store(FileSecretStore,主密钥 BOEN_SECRET_MASTER_KEY,
+    // ≥32 字符),首启可用 BOEN_MODEL_API_KEY 播种一次。缺省仍 mock(测试确定性)。
+    let (connector, secrets): (Arc<dyn ModelConnector>, Arc<dyn bm_core::ports::SecretStore>) =
+        match (
+            std::env::var("BOEN_MODEL_BASE_URL").ok().filter(|s| !s.is_empty()),
+            std::env::var("BOEN_MODEL_ID").ok().filter(|s| !s.is_empty()),
+        ) {
+            (Some(base), Some(model)) => {
+                let master = std::env::var("BOEN_SECRET_MASTER_KEY")
+                    .expect("真实网关模式需要 BOEN_SECRET_MASTER_KEY(至少 32 字符)");
+                let path = data_dir.join("secrets.enc");
+                let store = bm_providers::secret::FileSecretStore::open(path.clone(), &master)
+                    .expect("打开加密 Secret Store 失败");
+                let store: Arc<dyn bm_core::ports::SecretStore> = Arc::new(store);
+                let secret_ref = bm_core::runtime::default_secret_ref(&model);
+                if bm_core::ports::SecretStore::get(store.as_ref(), &secret_ref).is_err() {
+                    let seeded = std::env::var("BOEN_MODEL_API_KEY")
+                        .expect("密钥库缺该模型凭据:设 BOEN_MODEL_API_KEY 完成首次播种");
+                    bm_core::ports::SecretStore::put(store.as_ref(), &secret_ref, &seeded)
+                        .expect("播种密钥失败");
+                    eprintln!("模型凭据已加密写入 {}", path.display());
+                }
+                eprintln!("真实模型网关 {base}(model {model};凭据走加密 Secret Store)");
+                (
+                    Arc::new(bm_providers::openai_http::OpenAiConnector::new(base, store.clone())),
+                    store,
+                )
+            }
+            _ => {
+                let connector: Arc<dyn ModelConnector> = Arc::new(MockConnector::repeating(
+                    Step::ok("mock 模型回答(设 BOEN_MODEL_BASE_URL/BOEN_MODEL_ID 接真实网关)", 120, 40),
+                ));
+                let secrets = Arc::new(MemSecretStore::with(
+                    &bm_core::runtime::default_secret_ref("zhipu.glm-4-flash"),
+                    "sk-demo-zhipu-secret-value-001",
+                ));
+                (connector, secrets)
+            }
+        };
     let store: Arc<dyn bm_persist::EventStore> = Arc::new(persist);
 
     let handle = RuntimeHandle::start(RuntimeConfig {

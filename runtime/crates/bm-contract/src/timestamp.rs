@@ -28,3 +28,14 @@ mod tests {
         assert_eq!(format_ts(t.with_timezone(&Utc)), "2026-08-29T09:30:00.100Z");
     }
 }
+
+/// 距给定时间戳的剩余时长;不可解析返回 None,已过期为 Some(0)。
+/// M7 起供连接器把合同 deadline 折算成 HTTP 超时预算(bm-providers 无 chrono)。
+pub fn remaining_until(ts: &str) -> Option<std::time::Duration> {
+    let dl = parse_ts(ts)?;
+    let remaining = dl - chrono::Utc::now();
+    if remaining <= chrono::Duration::zero() {
+        return Some(std::time::Duration::ZERO);
+    }
+    remaining.to_std().ok()
+}
