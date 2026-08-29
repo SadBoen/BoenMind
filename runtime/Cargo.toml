@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/bm-contract",
+    "crates/bm-persist",
     "crates/bm-core",
     "crates/bm-providers",
     "crates/bm-testkit",
@@ -28,6 +29,8 @@ proptest = "1"
 tempfile = "3"
 tracing = "0.1"
 keyring = "3"
+rusqlite = { version = "0", features = ["bundled"] }
+bm-persist = { path = "crates/bm-persist" }
 bm-contract = { path = "crates/bm-contract" }
 bm-core = { path = "crates/bm-core" }
 bm-providers = { path = "crates/bm-providers" }

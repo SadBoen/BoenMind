@@ -3,10 +3,10 @@
 //! 口径:mock 模型无外网;延迟类先丢弃前 10 次预热(m0 定标 §2)。
 
 use bm_contract::ids::{IdGen, SeqIdGen};
-use bm_contract::wire::{GetOperationParams, SessionCreateParams, AgentSpec};
+use bm_contract::wire::{AgentSpec, GetOperationParams, SessionCreateParams};
 use bm_core::clock::SystemClock;
 use bm_core::ports::ModelConnector;
-use bm_core::runtime::{RuntimeConfig, RuntimeHandle, DEFAULT_TURN_TIMEOUT_SECS};
+use bm_core::runtime::{DEFAULT_TURN_TIMEOUT_SECS, RuntimeConfig, RuntimeHandle};
 use bm_providers::mock_model::{MockConnector, Step};
 use bm_providers::secret::MemSecretStore;
 use std::sync::Arc;
@@ -83,7 +83,10 @@ async fn p03_turn_latency_inject_200ms() {
     let handle = start_runtime(connector, Some(dir.path().to_path_buf())).await;
 
     let created = handle
-        .session_create(bm_contract::ids::IdGen::next_id(&SeqIdGen::new(), "req"), session_params())
+        .session_create(
+            bm_contract::ids::IdGen::next_id(&SeqIdGen::new(), "req"),
+            session_params(),
+        )
         .await
         .expect("会话创建");
 
@@ -100,7 +103,9 @@ async fn p03_turn_latency_inject_200ms() {
             .expect("回合发起");
         loop {
             let r = handle
-                .operations_get(GetOperationParams { operation_id: receipt.operation_id.clone() })
+                .operations_get(GetOperationParams {
+                    operation_id: receipt.operation_id.clone(),
+                })
                 .await
                 .expect("查询");
             if r.state.is_terminal() {
