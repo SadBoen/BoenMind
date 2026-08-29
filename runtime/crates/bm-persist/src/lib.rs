@@ -12,8 +12,8 @@ pub mod store;
 pub use error::StoreError;
 pub use event_log::JsonlEventLog;
 pub use recovery::{
-    RecoveryReport, WorldRows, dump_all, load_rows, pending_operations, rebuild_projection,
-    repair_tail,
+    RecoveryReport, WorldRows, dump_all, id_counter_hint, load_rows, pending_operations,
+    rebuild_projection, repair_tail,
 };
 pub use sqlite_state::StateDb;
 pub use store::{EventStore, META_LAST_APPLIED, META_SNAPSHOT_SEQ, PersistStore};

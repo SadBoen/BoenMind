@@ -8,8 +8,12 @@ repository.workspace = true
 bm-contract = { workspace = true }
 bm-core = { workspace = true }
 bm-providers = { workspace = true }
+bm-surface-http = { workspace = true }
+bm-persist = { workspace = true }
+axum = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+dirs = { workspace = true }
 
 [lints]
 workspace = true

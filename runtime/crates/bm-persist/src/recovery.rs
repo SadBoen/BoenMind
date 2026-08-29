@@ -140,6 +140,25 @@ pub fn dump_all(state: &StateDb) -> StoreResult<serde_json::Value> {
     }))
 }
 
+/// ID 计数提示:扫描三张表的 ULID 段(实现用十进制计数器)取最大值。
+/// 重启后的 ID 生成必须从 hint+1 起,否则 INSERT OR REPLACE 会覆盖历史行
+/// (M3 server 的单写者租约前置,任务 T2)。
+pub fn id_counter_hint(state: &StateDb) -> StoreResult<u64> {
+    let rows = state.query_rows(
+        "SELECT MAX(n) AS m FROM (
+            SELECT CAST(substr(id, 6) AS INTEGER) AS n FROM sessions
+            UNION ALL SELECT CAST(substr(id, 7) AS INTEGER) FROM agents
+            UNION ALL SELECT CAST(substr(id, 4) AS INTEGER) FROM operations
+         )",
+        &[],
+    )?;
+    Ok(rows
+        .first()
+        .and_then(|r| r["m"].as_i64())
+        .unwrap_or(0)
+        .max(0) as u64)
+}
+
 /// ② 行装配。
 pub fn load_rows(state: &StateDb) -> StoreResult<WorldRows> {
     let sessions = state

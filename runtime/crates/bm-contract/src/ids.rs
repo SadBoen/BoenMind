@@ -148,6 +148,13 @@ impl Default for SeqIdGen {
     }
 }
 
+impl SeqIdGen {
+    /// 从指定计数器起生成(持久化恢复:跳过已用号段防撞)。
+    pub fn starting_at(n: u64) -> Self {
+        Self(AtomicU64::new(n))
+    }
+}
+
 impl IdGen for SeqIdGen {
     fn next_id(&self, prefix: &str) -> BmId {
         let n = self.0.fetch_add(1, Ordering::Relaxed) + 1;

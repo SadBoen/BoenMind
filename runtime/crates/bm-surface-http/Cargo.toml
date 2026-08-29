@@ -1,0 +1,25 @@
+[package]
+name = "bm-surface-http"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[dependencies]
+bm-contract = { workspace = true }
+bm-core = { workspace = true }
+bm-persist = { workspace = true }
+axum = { workspace = true }
+async-stream = { workspace = true }
+getrandom = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+bm-providers = { workspace = true }
+tempfile = { workspace = true }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+[lints]
+workspace = true
