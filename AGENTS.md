@@ -7,25 +7,21 @@ BoenMind:个人生态的 AI Runtime / AI OS,当前为**阶段一(跨平台单软
 对照验证(Erlang/OTP、Kubernetes、VS Code,见 `architecture/deepwiki-validation.md`)。
 合同库已冻结 v1.0(字段只增不破)。
 
-**当前进度:M4 已收官(2026-08-29,tag `m4-capability-broker`)。
-M5 前置结算与规格已冻结(2026-08-29):`milestones/M5-implementation-spec.md`
-v1.0——ADR-0004 条件 6(触发者两类:用户 resume / Watchdog 自动;停滞窗口
-默认 15min、硬顶 24h,基线 §10.3 已补定义,数值大白话见 PENDING D-M5-1)
-与 ADR-0002 预算包络二分已落入规格,随 M5 回看逐条闭合。
-M5 实现进度:T0 合同增发九项已落地(全 Minor,镜像同步);
-T1 已落地(bm-core task.rs 对象/状态机/完成判定门禁/epoch 门禁 + SQLite v4
-五表 + T6c 两项收紧经跨重启实证);
-T2 已落地(Wire task.* 六方法启用 + events.poll task_id 过滤 + CLI task 组 +
-Task Board 投影:重建确定性/启动重建/emit 增量双路等价,P-11 骨架测试);
-T3 已落地(butler.rs:bootstrap 协调权 Grant 集物化+跨重启幂等+可撤销、
-task.create 协调权门禁与授权上界校验、领域动词不可授权矩阵、GT-01/M1
-生命周期测试按启动期系统事实同步更新);
-T4+T5 已落地(coordinator.rs 三方交集物化为 task:<id> Grant+授权签发链
-parent 哈希+Worker 单成员闭环+双路径统一收据(principal 来源标注)+
-Worker 调用命令+Task 终态 Grant 失效+approval task-scope 启用,170 测试全绿;
-M5-review.md 骨架已建,T10 回填)。
-下一步 = T6+T7 合批(budget.rs 两级账本/包络子分配/扩容受控变更/Broker
-预算执行点收编 + watchdog.rs 八项检测/停滞窗口/编排重启触发/G4 守护)。**
+**当前进度:M5 已收官(2026-08-30,tag `m5-butler-task`):
+`milestones/M5-review.md`——八项前置结算条件全部闭合(ADR-0004 条件 6;
+ADR-0002 条件 2/5 余项与条件 4 双开解除,对外口径升级「成立」),
+188 测试全绿,性能 P-11 首填(投影重建 release p95≈0.95ms/1 万事件),
+P-01 触门解释留档(bootstrap Grant 启动成本,非噪声,不回炉)。
+下一步 = 起草《M6 实现规格》(Team、Delegate 和多 Agent 协作;
+基线 §18-M6 六子项),沿用提速方案合批推进。**
+
+**提速方案(2026-08-30 起固化,每轮沿用)**:
+1. 强耦合任务合批(如 T4+T5、T6+T7、T8+T9),一轮交付、共享全量回归,
+   减少回归次数;依赖链顺序不变。
+2. 文档类产物(回看骨架、PENDING 大白话、perf-baseline 记录区)派后台
+   子代理并行起草——与代码文件零相交;主代理收圈时随手提交。
+3. 不做同仓多代理并行写代码(runtime.rs 单点合并成本 > 收益;
+   Rust target 目录锁/冷编译),防冲突规程与单写者纪律不破。**
 
 ## 文件地图(规格分层,基线 §0)
 
@@ -67,6 +63,9 @@ runtime/                        第 3 层  源代码(M1 起,Rust workspace;crate
 - [x] **M3 统一 Wire API、CLI 与跨平台启动(2026-08-29,tag `m3-surface-cli`;
       规格 `milestones/M3-implementation-spec.md`,回看 `milestones/M3-review.md`,
       74 测试全绿,CLI/桌面/Web 三形态同源可用)**
-- [ ] M4/M5-M8 见基线 §18;33 项验收条件的分布见各 ADR「条件与验收」
+- [x] **M5 Butler、Task 和长期监护(2026-08-30,tag `m5-butler-task`;
+      规格 `milestones/M5-implementation-spec.md`,回看 `milestones/M5-review.md`,
+      188 测试全绿,八项前置结算条件闭合,ADR-0002 口径升级「成立」)**
+- [ ] M6/M7/M8 见基线 §18;33 项验收条件的分布见各 ADR「条件与验收」
 - 注意:`architecture/deepwiki-validation.md` 的 S1-S10 修订建议为 **proposed**,
   仅在各里程碑回看时逐条裁决,勿自动采纳。
