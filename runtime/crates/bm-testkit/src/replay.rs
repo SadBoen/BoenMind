@@ -35,6 +35,8 @@ impl TestRig {
             script,
             Some((STANDARD_BUDGET_TOKENS, STANDARD_BUDGET_TURNS)),
             true,
+            Vec::new(),
+            None,
         )
         .await
     }
@@ -44,6 +46,27 @@ impl TestRig {
             script,
             Some((STANDARD_BUDGET_TOKENS, STANDARD_BUDGET_TURNS)),
             false,
+            Vec::new(),
+            None,
+        )
+        .await
+    }
+
+    /// M7:带额外能力(如 MCP stub 集)与异步执行器的标准装配。
+    pub async fn standard_with(
+        script: Vec<Step>,
+        extra_caps: Vec<(
+            bm_contract::capability::CapabilityManifest,
+            Arc<dyn bm_core::registry::CapabilityProvider>,
+        )>,
+        executor: Option<Arc<dyn bm_core::ports::AsyncCapabilityExecutor>>,
+    ) -> Self {
+        rig(
+            script,
+            Some((STANDARD_BUDGET_TOKENS, STANDARD_BUDGET_TURNS)),
+            true,
+            extra_caps,
+            executor,
         )
         .await
     }
@@ -139,6 +162,7 @@ pub async fn rig_on(dir: &std::path::Path, script: Vec<Step>) -> TestRig {
     let config = RuntimeConfig {
         // M7 S1:turn 依赖 model.invoke 能力面;标准装配只带模型能力,不带演示能力
         capabilities: vec![bm_providers::builtin::model_invoke_cap()],
+        async_executor: None,
         version: "0.1.0-m1".into(),
         data_dir: Some(dir.to_path_buf()),
         store: Some(store),
@@ -162,7 +186,16 @@ pub async fn rig_on(dir: &std::path::Path, script: Vec<Step>) -> TestRig {
 }
 
 /// 组装一台确定性 Runtime(固定时钟起点、确定性 ID、脚本化模型)。
-pub async fn rig(script: Vec<Step>, budget: Option<(u64, u32)>, with_dir: bool) -> TestRig {
+pub async fn rig(
+    script: Vec<Step>,
+    budget: Option<(u64, u32)>,
+    with_dir: bool,
+    extra_caps: Vec<(
+        bm_contract::capability::CapabilityManifest,
+        Arc<dyn bm_core::registry::CapabilityProvider>,
+    )>,
+    executor: Option<Arc<dyn bm_core::ports::AsyncCapabilityExecutor>>,
+) -> TestRig {
     let _ = budget; // 预算在 create_session 时给定;保留参数给未来变体
     let dir = if with_dir {
         Some(tempfile::tempdir().expect("临时目录可建"))
@@ -195,8 +228,9 @@ pub async fn rig(script: Vec<Step>, budget: Option<(u64, u32)>, with_dir: bool) 
     };
 
     let config = RuntimeConfig {
-        // M7 S1:同上,最小模型能力装配
-        capabilities: vec![bm_providers::builtin::model_invoke_cap()],
+        // M7 S1:最小模型能力装配 + 调用方额外能力(MCP stub 等)
+        capabilities: [vec![bm_providers::builtin::model_invoke_cap()], extra_caps].concat(),
+        async_executor: executor,
         version: "0.1.0-m1".into(),
         data_dir: data_dir.clone(),
         store,

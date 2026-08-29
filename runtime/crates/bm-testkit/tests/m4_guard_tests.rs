@@ -45,6 +45,7 @@ async fn guard_rig() -> (RuntimeHandle, Arc<SeqIdGen>) {
         clock: Arc::new(bm_core::clock::SystemClock),
         turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
         max_attempts: None,
+        async_executor: None,
     })
     .await;
     (handle, Arc::new(SeqIdGen::new()))

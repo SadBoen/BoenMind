@@ -41,6 +41,7 @@ async fn task_rig(dir: Option<&std::path::Path>) -> (RuntimeHandle, Arc<SeqIdGen
         clock: Arc::new(bm_core::clock::MockClock::at_ms(1_788_000_000_000)),
         turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
         max_attempts: None,
+        async_executor: None,
     };
     (RuntimeHandle::start(config).await, ids)
 }
@@ -237,6 +238,7 @@ async fn t52_count_grant_exhaustion_survives_restart() {
         clock: Arc::new(SystemClock),
         turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
         max_attempts: None,
+        async_executor: None,
     };
     let handle = RuntimeHandle::start(config).await;
     let call = |h: &RuntimeHandle, r: bm_contract::ids::BmId| {
@@ -306,6 +308,7 @@ async fn t52_count_grant_exhaustion_survives_restart() {
         clock: Arc::new(SystemClock),
         turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
         max_attempts: None,
+        async_executor: None,
     };
     let handle2 = RuntimeHandle::start(config2).await;
     let err = call(&handle2, ids2.next_id("req"))
@@ -368,6 +371,7 @@ async fn t53_idem_receipt_survives_restart() {
             clock: Arc::new(SystemClock),
             turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
             max_attempts: None,
+            async_executor: None,
         }
     };
 

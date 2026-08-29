@@ -28,6 +28,7 @@ async fn rig(script: Vec<Step>) -> Rig {
     let connector: Arc<dyn ModelConnector> = Arc::new(MockConnector::new(script));
     let handle = RuntimeHandle::start(RuntimeConfig {
         capabilities: bm_providers::builtin::builtin_capability_set(),
+        async_executor: None,
         version: "0.1.0-m1".into(),
         data_dir: Some(dir.path().to_path_buf()),
         store: Some(store.clone()),
@@ -321,6 +322,7 @@ async fn t33_shutdown_endpoint_is_authed_and_notifies() {
     let connector: Arc<dyn ModelConnector> = Arc::new(MockConnector::new(vec![]));
     let handle = RuntimeHandle::start(RuntimeConfig {
         capabilities: bm_providers::builtin::builtin_capability_set(),
+        async_executor: None,
         version: "0.1.0-m1".into(),
         data_dir: Some(dir.path().to_path_buf()),
         store: Some(store.clone()),
@@ -389,6 +391,7 @@ async fn m4_rig(
         bm_contract::capability::CapabilityManifest,
         std::sync::Arc<dyn bm_core::registry::CapabilityProvider>,
     )>,
+    executor: Option<std::sync::Arc<dyn bm_core::ports::AsyncCapabilityExecutor>>,
 ) -> Rig {
     let dir = tempfile::tempdir().expect("临时目录");
     let token = Arc::new(token::load_or_create(dir.path()).expect("令牌"));
@@ -408,6 +411,7 @@ async fn m4_rig(
         clock: Arc::new(SystemClock),
         turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
         max_attempts: None,
+        async_executor: executor,
     })
     .await;
 
@@ -443,16 +447,19 @@ fn m4_manifest(name: &str, effect: &str) -> bm_contract::capability::CapabilityM
 
 #[tokio::test]
 async fn t34_capability_call_approval_cycle_over_http() {
-    let rig = m4_rig(vec![
-        (
-            m4_manifest("system.echo", "read-only"),
-            bm_core::broker::provider_fn(Ok),
-        ),
-        (
-            m4_manifest("system.danger.purge", "high-risk-command"),
-            bm_core::broker::provider_fn(|_| Ok(serde_json::json!({"purged": true}))),
-        ),
-    ])
+    let rig = m4_rig(
+        vec![
+            (
+                m4_manifest("system.echo", "read-only"),
+                bm_core::broker::provider_fn(Ok),
+            ),
+            (
+                m4_manifest("system.danger.purge", "high-risk-command"),
+                bm_core::broker::provider_fn(|_| Ok(serde_json::json!({"purged": true}))),
+            ),
+        ],
+        None,
+    )
     .await;
     let client = rig.client(Some(&rig.token));
 
@@ -531,7 +538,7 @@ async fn t34_capability_call_approval_cycle_over_http() {
 /// 经 HTTP 直通/审批链路可用(装配路径与 boenmind-server 完全一致)。
 #[tokio::test]
 async fn t35_builtin_capability_set_smoke() {
-    let rig = m4_rig(bm_providers::builtin::builtin_capability_set()).await;
+    let rig = m4_rig(bm_providers::builtin::builtin_capability_set(), None).await;
     let client = rig.client(Some(&rig.token));
 
     // low-risk 直通:counter.bump 执行并返回内部结果

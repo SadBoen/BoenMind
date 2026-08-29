@@ -54,6 +54,7 @@ async fn m4_rig() -> (RuntimeHandle, Arc<SeqIdGen>) {
         clock: Arc::new(bm_core::clock::MockClock::at_ms(1_788_000_000_000)),
         turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
         max_attempts: None,
+        async_executor: None,
     };
     (RuntimeHandle::start(config).await, ids)
 }
@@ -415,6 +416,7 @@ async fn m4_rig_at(
         clock: Arc::new(bm_core::clock::MockClock::at_ms(1_788_000_000_000)),
         turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
         max_attempts: None,
+        async_executor: None,
     };
     RuntimeHandle::start(config).await
 }
@@ -457,6 +459,7 @@ async fn t44_idempotency_suppression_and_intent_gate() {
         clock: Arc::new(SystemClock),
         turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
         max_attempts: None,
+        async_executor: None,
     })
     .await;
 
@@ -619,6 +622,7 @@ async fn t45_outbox_pending_recovers_to_outcome_unknown() {
         clock: Arc::new(SystemClock),
         turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
         max_attempts: None,
+        async_executor: None,
     })
     .await;
 
@@ -866,6 +870,7 @@ async fn t46_persist_failure_degrades_safely() {
         clock: Arc::new(SystemClock),
         turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
         max_attempts: None,
+        async_executor: None,
     })
     .await;
 

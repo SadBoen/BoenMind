@@ -101,6 +101,9 @@ pub struct CapabilityRegistry {
     manifests: HashMap<String, CapabilityManifest>,
     bindings: HashMap<String, Binding>,
     cache: HashMap<String, RuntimeCache>,
+    /// M7:异步执行标记(manifest.provider 以 "mcp." 开头注册时置位;
+    /// 可丢失缓存——每次启动随注册流程重建)。
+    async_exec: std::collections::HashSet<String>,
 }
 
 impl CapabilityRegistry {
@@ -235,6 +238,15 @@ impl CapabilityRegistry {
 
     pub fn binding_of(&self, capability: &str) -> Option<&Binding> {
         self.bindings.get(capability)
+    }
+
+    /// M7:标记该能力走异步执行路径(dispatch 不再同步等 Provider)。
+    pub fn mark_async(&mut self, capability: &str) {
+        self.async_exec.insert(capability.to_string());
+    }
+
+    pub fn is_async(&self, capability: &str) -> bool {
+        self.async_exec.contains(capability)
     }
 
     pub fn handle_of(&self, capability: &str) -> Option<Arc<dyn CapabilityProvider>> {

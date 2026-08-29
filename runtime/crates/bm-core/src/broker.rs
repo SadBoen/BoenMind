@@ -144,6 +144,8 @@ pub enum CallOutcome {
     ProviderError {
         message: String,
     },
+    /// M7 S4:已派发异步执行(收据 running;完成经 Cmd::ProviderCall 落定)。
+    DispatchedAsync,
 }
 
 /// 预备完成的调用:进入执行段的一切就绪(副作用门禁插在 prepare 与 execute

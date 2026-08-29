@@ -47,6 +47,7 @@ async fn m6_rig(fail_mode: bool) -> (RuntimeHandle, Arc<SeqIdGen>) {
         clock: Arc::new(SystemClock),
         turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
         max_attempts: None,
+        async_executor: None,
     };
     (RuntimeHandle::start(config).await, ids)
 }

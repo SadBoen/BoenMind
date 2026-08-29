@@ -74,6 +74,9 @@ pub struct RuntimeConfig {
         bm_contract::capability::CapabilityManifest,
         Arc<dyn CapabilityProvider>,
     )>,
+    /// M7 S4:异步能力执行器(MCP 等慢外部 Provider)。manifest.provider
+    /// 以 "mcp." 开头的能力注册时标记 async,dispatch 走本执行器。
+    pub async_executor: Option<Arc<dyn crate::ports::AsyncCapabilityExecutor>>,
 }
 
 /// 回合任务向核心循环回报的内部消息。
@@ -240,6 +243,18 @@ enum Cmd {
         reason: String,
         resp: oneshot::Sender<()>,
     },
+    /// M7 S4:异步能力调用完成回流(单写者落定收据/审计/outbox)。
+    ProviderCall {
+        operation_id: BmId,
+        result: Result<serde_json::Value, crate::ports::AsyncCallError>,
+    },
+    /// M7.5:异步能力进度回注(capability.progress 事件)。
+    ProviderProgress {
+        operation_id: String,
+        progress: u64,
+        total: Option<u64>,
+        message: Option<String>,
+    },
     Turn(TurnEvent),
 }
 
@@ -297,6 +312,10 @@ struct World {
     op_capability: HashMap<BmId, String>,
     /// M6:成员结果收集(task_id → 结果流水;来源/状态/关联 Operation)。
     task_results: HashMap<BmId, Vec<serde_json::Value>>,
+    /// M7 S4:在途异步能力调用(operation_id → 留档)。
+    op_async_meta: HashMap<BmId, AsyncCallMeta>,
+    /// M7 S4:异步能力调用结果(operation_id → result;内存,随操作同寿命)。
+    op_results: HashMap<BmId, serde_json::Value>,
     /// M7 S1:turn 模型调用 Broker 凭证留档(operation_id 索引;
     /// 授权点在 spawn,审计点在回合模型阶段终态——两段由 call_id 缝合)。
     model_call_audit: HashMap<BmId, ModelCallAudit>,
@@ -308,6 +327,19 @@ struct ModelCallAudit {
     epoch: u64,
     instance_id: String,
     principal: String,
+}
+
+/// 异步能力调用的在途留档(M7 S4):spawn 时捕获,完成回流时落定。
+struct AsyncCallMeta {
+    capability: String,
+    principal: String,
+    call_id: BmId,
+    epoch: u64,
+    instance_id: String,
+    key_hash: Option<String>,
+    is_side_effect: bool,
+    output_schema: String,
+    grant_id: Option<String>,
 }
 
 /// 追加成员入参(M6.3)。
@@ -722,6 +754,8 @@ impl RuntimeHandle {
             watchdog: crate::watchdog::WatchdogState::default(),
             op_capability: HashMap::new(),
             task_results: HashMap::new(),
+            op_async_meta: HashMap::new(),
+            op_results: HashMap::new(),
             model_call_audit: HashMap::new(),
             tx: tx.clone(),
             store: config.store.clone(),
@@ -752,10 +786,14 @@ impl RuntimeHandle {
             let instance = format!("{}@{}", manifest.capability, manifest.version);
             let manifest_json = serde_json::to_string(&manifest).unwrap_or_default();
             let capability = manifest.capability.clone();
+            let is_async = manifest.provider.starts_with("mcp.");
             world
                 .registry
                 .register(manifest, &instance, provider.clone())
                 .expect("内置能力首次注册不得冲突");
+            if is_async {
+                world.registry.mark_async(&capability);
+            }
             registered.push((capability.clone(), provider));
             if let Some(store) = &world.store {
                 let _ = store.save_capability_binding(bm_persist::sqlite_state::CapabilityRow {
@@ -969,6 +1007,19 @@ impl RuntimeHandle {
                     }),
                 );
             }
+        }
+
+        // M7.5:异步执行器进度回注(回路外 → Cmd 回流单写者)
+        if let Some(ex) = world.config.async_executor.clone() {
+            let tx = world.tx.clone();
+            ex.set_progress_sink(Box::new(move |n| {
+                let _ = tx.try_send(Cmd::ProviderProgress {
+                    operation_id: n.operation_id,
+                    progress: n.progress,
+                    total: n.total,
+                    message: n.message,
+                });
+            }));
         }
 
         world.watchdog.schedule_next(world.config.clock.now());
@@ -1681,6 +1732,20 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
             Cmd::WatchdogScan { resp } => {
                 let n = world.watchdog_scan_now();
                 let _ = resp.send(Ok(n));
+            }
+            Cmd::ProviderCall {
+                operation_id,
+                result,
+            } => {
+                handle_provider_call(&mut world, operation_id, result);
+            }
+            Cmd::ProviderProgress {
+                operation_id,
+                progress,
+                total,
+                message,
+            } => {
+                handle_provider_progress(&mut world, operation_id, progress, total, message);
             }
             Cmd::TaskReportCompletion {
                 task_id,
@@ -2500,8 +2565,12 @@ fn handle_capability_call(
             "Runtime 排空中或持久层故障,拒绝能力调用".into(),
         ));
     }
-    // 直路径(Wire Surface):trusted 直调
-    let ctx = CallContext::surface(CAPABILITY_CALLER);
+    // 直路径(Wire Surface):trusted 直调;幂等键随合同参数面挂链
+    // (M7-T3 修复:此前仅 worker 路径挂键,Wire 直调的 idempotency_key 被忽略)
+    let mut ctx = CallContext::surface(CAPABILITY_CALLER);
+    if let Some(k) = &params.idempotency_key {
+        ctx = ctx.with_idempotency_key(k);
+    }
     capability_call_inner(w, request_id, ctx, params)
 }
 
@@ -2638,6 +2707,23 @@ fn capability_call_inner(
                         "result": original_result,
                     }))
                 }
+                CallOutcome::DispatchedAsync => {
+                    // M7 S4:已派发异步执行;调用方经 operations.get 轮询终态
+                    Ok(serde_json::json!({
+                        "operation_id": op_id.as_str(),
+                        "request_id": request_id.as_str(),
+                        "principal": ctx.principal.clone(),
+                        "capability": params.capability,
+                        "state": "running",
+                        "created_at": created_at,
+                        "completed_at": null,
+                        "action_summary": format!("能力 {} 异步执行中", params.capability),
+                        "result_reference": null,
+                        "error": null,
+                        "grant_used": grant_id,
+                        "result": null,
+                    }))
+                }
                 CallOutcome::Rejected { .. } => {
                     unreachable!("Allowed 分支不会再被拒绝")
                 }
@@ -2745,6 +2831,125 @@ fn capability_call_inner(
             ))
         }
     }
+}
+
+/// M7 S4:异步能力调用完成落定(单写者内)。
+/// 成功:出参校验 → succeeded + 幂等收据/outbox published + capability.invoked ok;
+/// 失败:Timeout/Transport/ToolError 三类映射,副作用 outbox 保持 pending
+/// (超时 = 结果未知,对账语义与崩溃窗口一致)。
+fn handle_provider_call(
+    w: &mut World,
+    operation_id: BmId,
+    result: Result<serde_json::Value, crate::ports::AsyncCallError>,
+) {
+    use crate::ports::AsyncCallError;
+    let Some(meta) = w.op_async_meta.remove(&operation_id) else {
+        return;
+    };
+    if !w.operations.contains_key(&operation_id) {
+        return; // 停机清场后回流的迟到完成:无载体,丢弃(事件已在日志)
+    }
+    match result {
+        Ok(value) => {
+            if let Err(e) = bm_contract::schemas::validate(&meta.output_schema, &value) {
+                fail_capability_call(
+                    w,
+                    &operation_id,
+                    &meta.capability,
+                    &meta.principal,
+                    ErrorCode::Internal,
+                    &format!("异步结果出参校验失败: {e}"),
+                );
+                return;
+            }
+            w.settle_operation(&operation_id, OperationState::Succeeded, None);
+            if let (Some(h), true) = (&meta.key_hash, meta.is_side_effect) {
+                w.idem_results.insert(h.clone(), value.clone());
+                if let Some(store) = &w.store {
+                    let _ = store.save_idem_receipt(h, &value.to_string(), &w.now_ts());
+                    let _ = store.outbox_upsert(
+                        operation_id.as_str(),
+                        "side_effect",
+                        "published",
+                        &serde_json::json!({
+                            "capability": meta.capability,
+                            "key_hash": meta.key_hash,
+                        })
+                        .to_string(),
+                        &w.now_ts(),
+                    );
+                }
+            }
+            if let Some(gid) = &meta.grant_id {
+                persist_grant(w, gid);
+            }
+            w.op_results.insert(operation_id.clone(), value.clone());
+            emit_capability_invoked_with(
+                w,
+                &meta.call_id,
+                &operation_id,
+                &meta.capability,
+                &meta.principal,
+                Some(meta.epoch),
+                Some(&meta.instance_id),
+                "ok",
+                None,
+                meta.key_hash.as_deref(),
+            );
+        }
+        Err(e) => {
+            let (code, msg) = match e {
+                AsyncCallError::Timeout => (
+                    ErrorCode::Timeout,
+                    "异步调用超时(结果未知,对账由 outbox 承载)",
+                ),
+                AsyncCallError::Transport(_) => (ErrorCode::Unavailable, "Provider 传输故障"),
+                AsyncCallError::ToolError => (ErrorCode::Internal, "工具报告执行失败"),
+            };
+            fail_capability_call(
+                w,
+                &operation_id,
+                &meta.capability,
+                &meta.principal,
+                code,
+                msg,
+            );
+            if let Some(gid) = &meta.grant_id {
+                persist_grant(w, gid);
+            }
+        }
+    }
+}
+
+/// M7.5:异步能力进度回注 → capability.progress 事件(操作不存在则丢弃)。
+fn handle_provider_progress(
+    w: &mut World,
+    operation_id: String,
+    progress: u64,
+    total: Option<u64>,
+    message: Option<String>,
+) {
+    let Ok(op_id) = BmId::parse(&operation_id) else {
+        return;
+    };
+    if !w.operations.contains_key(&op_id) {
+        return;
+    }
+    let capability = w.op_capability.get(&op_id).cloned().unwrap_or_default();
+    w.emit(
+        EventType::CapabilityProgress,
+        None,
+        None,
+        Some(op_id.clone()),
+        serde_json::json!({
+            "call_id": w.config.id_gen.next_id("call").as_str(),
+            "operation_id": op_id.as_str(),
+            "capability": capability,
+            "progress": progress,
+            "total": total,
+            "message": message,
+        }),
+    );
 }
 
 /// 执行失败的统一收口:operation → failed + capability.invoked(outcome=error)。
@@ -2911,6 +3116,11 @@ fn handle_approval_respond(
                     CallOutcome::Completed { .. } | CallOutcome::Suppressed { .. } => {
                         w.settle_operation(&op_id, OperationState::Succeeded, None);
                         persist_grant(w, &grant.grant_id);
+                        w.cap_pending.remove(&params.approval_id);
+                    }
+                    CallOutcome::DispatchedAsync => {
+                        // M7 S4:异步执行中;完成经 Cmd::ProviderCall 落定
+                        // (收据/Grant 消费态/outbox 均在完成处理器收口)
                         w.cap_pending.remove(&params.approval_id);
                     }
                     other => {
@@ -3088,6 +3298,54 @@ fn dispatch_capability(
                 &w.now_ts(),
             );
         }
+    }
+    // M7 S4:异步 Provider 路径——决策/校验/预扣/intent 门已过,执行交
+    // 异步执行器,完成经 Cmd::ProviderCall 回单写者回路落定。
+    if w.registry.is_async(capability) {
+        let Some(executor) = w.config.async_executor.clone() else {
+            return CallOutcome::ProviderError {
+                message: "异步执行器未装配".into(),
+            };
+        };
+        let meta = AsyncCallMeta {
+            capability: capability.to_string(),
+            principal: ctx.principal.clone(),
+            call_id: BmId::parse(&prepared.credential.call_id)
+                .unwrap_or_else(|_| w.config.id_gen.next_id("call")),
+            epoch: prepared.credential.binding_epoch,
+            instance_id: prepared.credential.provider_instance_id.clone(),
+            key_hash: key_hash.clone(),
+            is_side_effect: prepared.is_side_effect,
+            output_schema: prepared.manifest.output_schema.to_string(),
+            grant_id: prepared.grant_id.clone(),
+        };
+        w.op_async_meta.insert(op_id.clone(), meta);
+        // Grant 消费态随 spawn 落行(count 类重启不回满)
+        if let Some(gid) = &prepared.grant_id {
+            persist_grant(w, gid);
+        }
+        let deadline_ms = prepared.manifest.timeout_ms.clamp(100, 600_000);
+        let tx = w.tx.clone();
+        let op = op_id.clone();
+        let cap = capability.to_string();
+        let exec_args = args.clone();
+        tokio::spawn(async move {
+            let result = executor
+                .call(
+                    op.as_str(),
+                    &cap,
+                    exec_args,
+                    std::time::Duration::from_millis(deadline_ms),
+                )
+                .await;
+            let _ = tx
+                .send(Cmd::ProviderCall {
+                    operation_id: op,
+                    result,
+                })
+                .await;
+        });
+        return CallOutcome::DispatchedAsync;
     }
     let outcome = {
         let broker = Broker::new(
@@ -4985,6 +5243,8 @@ fn reply_unavailable(cmd: Cmd) {
         Cmd::Stop { resp, .. } => {
             let _ = resp.send(());
         }
+        Cmd::ProviderCall { .. } => {}
+        Cmd::ProviderProgress { .. } => {}
         Cmd::Turn(_) => {}
     }
 }

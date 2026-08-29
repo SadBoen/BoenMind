@@ -48,6 +48,7 @@ async fn coord_rig() -> (RuntimeHandle, Arc<SeqIdGen>) {
         clock: Arc::new(bm_core::clock::MockClock::at_ms(1_788_000_000_000)),
         turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
         max_attempts: None,
+        async_executor: None,
     };
     (RuntimeHandle::start(config).await, ids)
 }

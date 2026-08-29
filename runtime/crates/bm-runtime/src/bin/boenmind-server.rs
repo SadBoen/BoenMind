@@ -108,6 +108,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let handle = RuntimeHandle::start(RuntimeConfig {
         capabilities: bm_providers::builtin::builtin_capability_set(),
+        async_executor: None,
         version: format!("{}-server", env!("CARGO_PKG_VERSION")),
         data_dir: Some(data_dir.clone()),
         store: Some(store.clone()),

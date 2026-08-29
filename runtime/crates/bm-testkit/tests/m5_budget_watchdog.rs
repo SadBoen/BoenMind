@@ -59,6 +59,7 @@ async fn bw_rig(script_err: bool) -> (RuntimeHandle, Arc<SeqIdGen>, Arc<MockCloc
         clock: clock.clone(),
         turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
         max_attempts: None,
+        async_executor: None,
     };
     (RuntimeHandle::start(config).await, ids, clock)
 }
