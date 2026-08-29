@@ -29,6 +29,9 @@ wire_str_enum!(EventType {
     ModelInvocationFailed => "model.invocation.failed",
     BudgetWarning => "budget.warning",
     BudgetExceeded => "budget.exceeded",
+    // M2 增发(2026-08-29,Minor:纯追加,规格 §5.5)
+    RuntimeRecovered => "runtime.recovered",
+    StoreWriteRejected => "store.write.rejected",
 });
 
 impl EventType {
@@ -72,6 +75,10 @@ impl EventType {
                 &["agent_id", "scope", "used_tokens", "limit_tokens", "ratio"]
             }
             EventType::BudgetExceeded => &["agent_id", "scope", "used_tokens", "limit_tokens"],
+            EventType::RuntimeRecovered => {
+                &["last_applied_seq", "replayed", "interrupted_recovered"]
+            }
+            EventType::StoreWriteRejected => &["key", "reason"],
         }
     }
 }

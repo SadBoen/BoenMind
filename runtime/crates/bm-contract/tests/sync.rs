@@ -82,7 +82,7 @@ fn wire_error_code_rejects_m4_codes() {
 #[test]
 fn event_type_enum_matches_registry() {
     let registry = registries::runtime_events();
-    assert_eq!(registry.len(), 20, "注册表事件数漂移");
+    assert_eq!(registry.len(), 22, "注册表事件数漂移(M1 20 + M2 增发 2)");
     for reg in &registry {
         let t = EventType::from_wire(&reg.type_).unwrap_or_else(|| panic!("枚举缺 {}", reg.type_));
         let mut expected: Vec<String> = t.payload_keys().iter().map(|s| s.to_string()).collect();

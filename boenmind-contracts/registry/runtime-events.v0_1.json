@@ -24,7 +24,9 @@
     { "type": "model.invocation.completed",   "payload": { "operation_id": "id", "agent_id": "id", "model_id": "string", "attempt": "integer", "usage_in": "integer", "usage_out": "integer", "latency_ms": "integer", "stream_interrupted": "boolean" } },
     { "type": "model.invocation.failed",      "payload": { "operation_id": "id", "agent_id": "id", "model_id": "string", "attempt": "integer", "error_code": "error_code" } },
     { "type": "budget.warning",               "payload": { "agent_id": "id", "scope": "string", "used_tokens": "integer", "limit_tokens": "integer", "ratio": "number" } },
-    { "type": "budget.exceeded",              "payload": { "agent_id": "id", "scope": "string", "used_tokens": "integer", "limit_tokens": "integer" } }
+    { "type": "budget.exceeded",              "payload": { "agent_id": "id", "scope": "string", "used_tokens": "integer", "limit_tokens": "integer" } },
+    { "type": "runtime.recovered",            "payload": { "last_applied_seq": "integer", "replayed": "integer", "interrupted_recovered": "integer" } },
+    { "type": "store.write.rejected",         "payload": { "key": "string", "reason": "string" } }
   ],
   "payload_type_note": {
     "id": "wire/common 的 id 格式 <prefix>_<ULID26>",
