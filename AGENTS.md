@@ -7,9 +7,9 @@ BoenMind:个人生态的 AI Runtime / AI OS,当前为**阶段一(跨平台单软
 对照验证(Erlang/OTP、Kubernetes、VS Code,见 `architecture/deepwiki-validation.md`)。
 合同库已冻结 v1.0(字段只增不破)。
 
-**当前进度:M2 进行中(2026-08-29)。开工前置已结算:`milestones/M2-adr-settlement.md`
-(ADR-0003/0004 十四条件逐条分类,7 条硬约束清单);《M2 实现规格》草案已起草
-(`milestones/M2-implementation-spec.md`,含 §9 自主推进默认路径),待用户评审冻结。**
+**当前进度:M2 完成(2026-08-29,回看裁决 passed_with_conditions,
+条件=CI 三平台矩阵全绿后关闭)。下一步 = M3:统一 Wire API、CLI 和跨平台启动
+(含 M1/M2 遗留条件:ci.yml 补推后跑绿三平台矩阵)。**
 
 ## 文件地图(规格分层,基线 §0)
 
@@ -41,7 +41,9 @@ runtime/                        第 3 层  源代码(M1 起,Rust workspace;crate
 - [x] M0 范围/合同/测试基线(2026-08-28,tag `m0.2-contracts-frozen`)
 - [x] 2026-08-29 ADR-0009 部署形态裁决:VPS 托管 + Web/交互式 TUI Surface + Windows Tauri 壳(受限解除「无远程访问」;M3 增 HTTP 传输+鉴权合同,M8 增 Web UI v1 与 Tauri 壳)
 - [x] **M1 最小 Runtime 与单 Agent 闭环(2026-08-29,tag `m1-runtime-loop`;规格 `milestones/M1-implementation-spec.md`,回看 `milestones/M1-review.md`,50 测试全绿,GT-01 两场景可回放)**
-- [ ] **M2 持久化/事件日志/崩溃恢复 ← 当前(前置已结算;规格草案待冻结)**
+- [x] **M2 持久化/事件日志/崩溃恢复(2026-08-29,tag `m2-persist-recovery`;
+      规格 `milestones/M2-implementation-spec.md`,回看 `milestones/M2-review.md`,
+      68 测试全绿,四项混沌验收通过,ADR-0004 四项 M2 适配映射已按默认路径落地)**
 - [ ] M4 Capability/Broker/权限审批(开工前结算 ADR-0001/0002 相关验收条件)
 - [ ] M3/M5-M8 见基线 §18;33 项验收条件的分布见各 ADR「条件与验收」
 - 注意:`architecture/deepwiki-validation.md` 的 S1-S10 修订建议为 **proposed**,
