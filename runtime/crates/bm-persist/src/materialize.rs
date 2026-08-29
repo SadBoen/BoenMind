@@ -157,6 +157,53 @@ impl StateDb {
                     )?;
                     Ok(1)
                 }
+                // M5 增发:task.* 物化(ADR-0004:Task 规范状态归 L2,行自事件
+                // 可重建键列;完整载荷由核心直接落行,重建时键列正确即可)。
+                EventType::TaskCreated => {
+                    // INSERT OR IGNORE:完整载荷行已由核心先落(直接落行先于
+                    // 事件物化),此处仅兜底事件重建路径(重建载荷为键字段形态)。
+                    conn.execute(
+                        "INSERT OR IGNORE INTO tasks(id, title, state, created_by, task_epoch,
+                                                    payload, created_at, updated_at)
+                         VALUES(?1, ?2, 'created', ?3, 1, ?4, ?5, ?5)",
+                        rusqlite::params![
+                            str_field(p, "task_id")?,
+                            str_field(p, "title")?,
+                            str_field(p, "created_by")?,
+                            format!(r#"{{"task_id":"{}"}}"#, str_field(p, "task_id")?),
+                            ts,
+                        ],
+                    )?;
+                    Ok(1)
+                }
+                EventType::TaskStateChanged => {
+                    conn.execute(
+                        "UPDATE tasks SET state=?3, task_epoch=?4, updated_at=?5 WHERE id=?1
+                         AND state=?2",
+                        rusqlite::params![
+                            str_field(p, "task_id")?,
+                            str_field(p, "from")?,
+                            str_field(p, "to")?,
+                            p["task_epoch"].as_i64().unwrap_or(1),
+                            ts,
+                        ],
+                    )?;
+                    Ok(1)
+                }
+                EventType::TaskMemberAdded => {
+                    conn.execute(
+                        "INSERT OR IGNORE INTO task_members(task_id, agent_id, role, grant_id,
+                                                            joined_seq)
+                         VALUES(?1, ?2, ?3, ?4, 0)",
+                        rusqlite::params![
+                            str_field(p, "task_id")?,
+                            str_field(p, "agent_id")?,
+                            str_field(p, "role")?,
+                            opt_str_field(p, "grant_id")?,
+                        ],
+                    )?;
+                    Ok(1)
+                }
                 // 非状态类事件:合法 no-op
                 _ => Ok(0),
             }

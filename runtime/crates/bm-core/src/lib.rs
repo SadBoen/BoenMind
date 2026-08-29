@@ -16,6 +16,7 @@ pub mod ports;
 pub mod registry;
 pub mod runtime;
 pub mod state;
+pub mod task;
 
 pub use approval::{ApprovalError, ApprovalManager, OpenApproval, RespondDecision};
 pub use broker::{
@@ -27,3 +28,4 @@ pub use clock::{Clock, MockClock, SystemClock};
 pub use error::{CoreError, CoreResult};
 pub use registry::{BindingStatus, CapabilityDiscovery, CapabilityProvider, CapabilityRegistry};
 pub use runtime::{RuntimeConfig, RuntimeHandle};
+pub use task::{MemberRole, Task, TaskError, TaskMember};

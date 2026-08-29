@@ -688,6 +688,30 @@ impl bm_persist::EventStore for FailingStore {
     fn op_input(&self, _o: &str) -> bm_persist::error::StoreResult<Option<String>> {
         Ok(None)
     }
+    fn save_task(
+        &self,
+        _row: bm_persist::sqlite_state::TaskRow<'_>,
+    ) -> bm_persist::error::StoreResult<()> {
+        Err(bm_persist::error::StoreError::Io(std::io::Error::other(
+            "injected persist failure",
+        )))
+    }
+    fn list_tasks(&self) -> bm_persist::error::StoreResult<Vec<serde_json::Value>> {
+        Ok(vec![])
+    }
+    fn save_idem_receipt(
+        &self,
+        _h: &str,
+        _p: &str,
+        _t: &str,
+    ) -> bm_persist::error::StoreResult<()> {
+        Err(bm_persist::error::StoreError::Io(std::io::Error::other(
+            "injected persist failure",
+        )))
+    }
+    fn list_idem_receipts(&self) -> bm_persist::error::StoreResult<Vec<serde_json::Value>> {
+        Ok(vec![])
+    }
     fn append(
         &self,
         _e: &bm_contract::events::EventEnvelope,

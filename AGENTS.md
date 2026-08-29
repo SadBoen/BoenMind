@@ -12,7 +12,11 @@ M5 前置结算与规格已冻结(2026-08-29):`milestones/M5-implementation-spec
 v1.0——ADR-0004 条件 6(触发者两类:用户 resume / Watchdog 自动;停滞窗口
 默认 15min、硬顶 24h,基线 §10.3 已补定义,数值大白话见 PENDING D-M5-1)
 与 ADR-0002 预算包络二分已落入规格,随 M5 回看逐条闭合。
-下一步 = 按规格 §6 T0–T10 序实现 M5(Butler/Task/长期监护),T0 合同增发起。**
+M5 实现进度:T0 合同增发九项已落地(全 Minor,镜像同步);
+T1 已落地(bm-core task.rs 对象/状态机/完成判定门禁/epoch 门禁 + SQLite v4
+五表 + T6c 两项收紧经跨重启实证,151 测试全绿)。
+下一步 = T2(Wire task.* 六方法 + events.poll task_id 过滤 + CLI task 组 +
+Task Board 投影重建,P-11 骨架)。**
 
 ## 文件地图(规格分层,基线 §0)
 

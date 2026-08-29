@@ -402,3 +402,14 @@ pub struct TaskStateResult {
     pub task_id: BmId,
     pub state: crate::states::TaskState,
 }
+
+/// task.pause / task.resume / task.stop 共用 params(各方法按合同只填
+/// 自己声明的可选字段:pause/stop 用 reason,resume 用 note)。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TaskLifecycleParams {
+    pub task_id: BmId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}

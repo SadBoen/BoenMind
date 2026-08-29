@@ -165,11 +165,33 @@ enum Cmd {
         params: wire::ApprovalRespondParams,
         resp: oneshot::Sender<CoreResult<serde_json::Value>>,
     },
+    /// task.create(M5):Task 创建并启动(created→running)。
+    TaskCreate {
+        request_id: BmId,
+        params: wire::TaskCreateParams,
+        resp: oneshot::Sender<CoreResult<wire::TaskCreateResult>>,
+    },
+    /// task.pause / task.resume / task.stop(M5):生命周期命令。
+    TaskLifecycle {
+        request_id: BmId,
+        action: TaskAction,
+        params: wire::TaskLifecycleParams,
+        resp: oneshot::Sender<CoreResult<wire::TaskStateResult>>,
+    },
     Stop {
         reason: String,
         resp: oneshot::Sender<()>,
     },
     Turn(TurnEvent),
+}
+
+/// Task 生命周期动作(M5-T1;completed/failed 无 wire 入口——完成判定门禁
+/// 在 T8 Observation 核验路径上)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TaskAction {
+    Pause,
+    Resume,
+    Stop,
 }
 
 /// 运行期执行上下文(核心循环私有)。
@@ -198,12 +220,14 @@ struct World {
     /// 待裁决的能力调用:approval_id → 载荷(批准后重放执行用)。
     cap_pending: HashMap<BmId, PendingCapabilityCall>,
     /// 幂等收据仓(key_hash → 原收据;external-side-effect 抑制判据,
-    /// ADR-0002 条件 6)。T6a 内存态,持久化随 T6c。
+    /// ADR-0002 条件 6)。T6c 收紧(M5-T1):落表持久,恢复期装载。
     idem_results: HashMap<String, serde_json::Value>,
     /// capability 操作的系统容器 ID(内存合成;M4 能力调用不依赖 Session/Agent,
     /// operations 表不落行,规范状态由 approvals/grants 承载——回看复核项)。
     system_session: BmId,
     system_agent: BmId,
+    /// M5:Task 规范状态(task/task.v0.1;L2 唯一持有,World 内为内存视图)。
+    tasks: HashMap<BmId, crate::task::Task>,
 }
 
 /// 待审批的能力调用载荷(approval 对象只存摘要,重放执行需要原 args)。
@@ -308,6 +332,11 @@ impl World {
                 let agent_id = self.operations[&id].agent_id.clone();
                 pending_interrupts.push((id, agent_id, "running".into()));
             }
+        }
+        // M5:Task 规范状态装载(tasks 表;成员事实由 task_members 自事件承载)
+        for t in rows.tasks {
+            let task = crate::task::task_from_row(&t).expect("库内 task 行合法");
+            self.tasks.insert(task.id.clone(), task);
         }
     }
 
@@ -532,6 +561,7 @@ impl RuntimeHandle {
             idem_results: HashMap::new(),
             system_session,
             system_agent,
+            tasks: HashMap::new(),
             tx: tx.clone(),
             store: config.store.clone(),
             config,
@@ -600,7 +630,18 @@ impl RuntimeHandle {
                     continue;
                 };
                 let revoked = row["revoked"].as_i64().unwrap_or(0) == 1;
-                world.grants.restore(grant, 0, revoked);
+                // T6c 收紧(M5-T1):消费计数随行恢复,count 类余量重启不回满
+                let used = row["used_count"].as_u64().unwrap_or(0);
+                world.grants.restore(grant, used, revoked);
+            }
+            // T6c 收紧(M5-T1):幂等收据仓自持久层装载
+            for row in store.list_idem_receipts().unwrap_or_default() {
+                if let (Some(h), Some(payload)) =
+                    (row["key_hash"].as_str(), row["payload"].as_str())
+                    && let Ok(v) = serde_json::from_str::<serde_json::Value>(payload)
+                {
+                    world.idem_results.insert(h.to_string(), v);
+                }
             }
             for row in store.list_approvals().unwrap_or_default() {
                 let payload = row["payload"].as_str().unwrap_or("null");
@@ -1024,6 +1065,73 @@ impl RuntimeHandle {
         rx.await.map_err(|_| CoreError::Internal)?
     }
 
+    /// task.create(M5.2):Task 创建并启动(L2 规范状态;wire/task.v0.1)。
+    pub async fn task_create(
+        &self,
+        request_id: BmId,
+        params: wire::TaskCreateParams,
+    ) -> CoreResult<wire::TaskCreateResult> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(Cmd::TaskCreate {
+                request_id,
+                params,
+                resp: tx,
+            })
+            .await
+            .map_err(|_| CoreError::Internal)?;
+        rx.await.map_err(|_| CoreError::Internal)?
+    }
+
+    /// task.pause(M5.5):暂停 Task 及其成员编排推进。
+    pub async fn task_pause(
+        &self,
+        request_id: BmId,
+        params: wire::TaskLifecycleParams,
+    ) -> CoreResult<wire::TaskStateResult> {
+        self.task_lifecycle(request_id, TaskAction::Pause, params)
+            .await
+    }
+
+    /// task.resume(M5.5):恢复 = 编排重启触发者之一(ADR-0004 条件 6)。
+    pub async fn task_resume(
+        &self,
+        request_id: BmId,
+        params: wire::TaskLifecycleParams,
+    ) -> CoreResult<wire::TaskStateResult> {
+        self.task_lifecycle(request_id, TaskAction::Resume, params)
+            .await
+    }
+
+    /// task.stop(M5.5):取消 Task(进行中副作用按 §9.5 收敛,成员级联停止)。
+    pub async fn task_stop(
+        &self,
+        request_id: BmId,
+        params: wire::TaskLifecycleParams,
+    ) -> CoreResult<wire::TaskStateResult> {
+        self.task_lifecycle(request_id, TaskAction::Stop, params)
+            .await
+    }
+
+    async fn task_lifecycle(
+        &self,
+        request_id: BmId,
+        action: TaskAction,
+        params: wire::TaskLifecycleParams,
+    ) -> CoreResult<wire::TaskStateResult> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(Cmd::TaskLifecycle {
+                request_id,
+                action,
+                params,
+                resp: tx,
+            })
+            .await
+            .map_err(|_| CoreError::Internal)?;
+        rx.await.map_err(|_| CoreError::Internal)?
+    }
+
     /// 停机:排空进行中回合(不取消,INV-12),发 stopping/stopped 事件。
     pub async fn stop(&self, reason: impl Into<String>) {
         let (tx, rx) = oneshot::channel();
@@ -1123,6 +1231,23 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
                 resp,
             } => {
                 let _ = resp.send(handle_approval_respond(&mut world, request_id, params));
+            }
+            Cmd::TaskCreate {
+                request_id,
+                params,
+                resp,
+            } => {
+                let _ = resp.send(handle_task_create(&mut world, request_id, params));
+            }
+            Cmd::TaskLifecycle {
+                request_id,
+                action,
+                params,
+                resp,
+            } => {
+                let _ = resp.send(handle_task_lifecycle(
+                    &mut world, request_id, action, params,
+                ));
             }
             Cmd::GetOperation { params, resp } => {
                 let _ = resp.send(handle_get_operation(&world, params));
@@ -1745,7 +1870,8 @@ fn persist_approval(
     }
 }
 
-/// Grant 行同步(含消费态:Once 消费即 revoked 落行,恢复后不复活)。
+/// Grant 行同步(含消费态:Once 消费即 revoked 落行,T6c 起消费计数随行
+/// 持久,重启后 count 类余量不回满)。
 fn persist_grant(w: &World, grant_id: &str) {
     if let Some(store) = &w.store
         && let Some(grant) = w.grants.get(grant_id).cloned()
@@ -1757,10 +1883,58 @@ fn persist_grant(w: &World, grant_id: &str) {
             action: grant.action.as_str(),
             revocation_version: grant.revocation_version,
             revoked: revoked || used >= 1 && matches!(grant.scope, GrantScope::Once),
+            used_count: used,
             payload: &serde_json::to_string(&grant).unwrap_or_default(),
             created_at: grant.created_at.as_str(),
         });
     }
+}
+
+/// Task 行同步(M5-T1):完整合同载荷落 tasks 表;先于事件物化(与
+/// persist_approval 同款顺序,事件 INSERT OR IGNORE 不覆盖完整行)。
+fn persist_task(w: &World, task: &crate::task::Task) {
+    if let Some(store) = &w.store {
+        let payload = task_contract_json(task);
+        let _ = store.save_task(bm_persist::sqlite_state::TaskRow {
+            id: task.id.as_str(),
+            title: &task.title,
+            state: task.state.as_str(),
+            created_by: &task.created_by,
+            task_epoch: task.task_epoch,
+            payload: &payload,
+            created_at: task.created_at.as_str(),
+            updated_at: task.updated_at.as_str(),
+        });
+    }
+}
+
+/// Task 合同形态 JSON(task/task.v0.1;members 在行级表 + 事件承载,不入载荷)。
+/// budget None = 运行时默认包络(落为显式对象,合同 budget 必为对象)。
+fn task_contract_json(task: &crate::task::Task) -> String {
+    const DEFAULT_MAX_TOKENS: i64 = 1_000_000;
+    const DEFAULT_MAX_TURNS: i64 = 1_000;
+    let budget_json = match &task.budget {
+        Some(b) => serde_json::to_value(b).unwrap_or(serde_json::json!({})),
+        None => serde_json::json!({
+            "max_tokens": DEFAULT_MAX_TOKENS, "max_turns": DEFAULT_MAX_TURNS
+        }),
+    };
+    serde_json::json!({
+        "task_id": task.id.as_str(),
+        "title": task.title,
+        "goal": task.goal,
+        "state": task.state.as_str(),
+        "created_by": task.created_by,
+        "task_epoch": task.task_epoch,
+        "authorization": task.authorization,
+        "budget": budget_json,
+        "deadline": task.deadline.as_deref(),
+        "members": [],
+        "parent_task_id": null,
+        "created_at": task.created_at.as_str(),
+        "updated_at": task.updated_at.as_str(),
+    })
+    .to_string()
 }
 
 /// 审批可选范围(GT-02 形态;forever 的收紧策略随 M5 审批 UI,规格 §8.6)。
@@ -2346,6 +2520,10 @@ fn dispatch_capability(
         CallOutcome::Completed { result, .. } => {
             if let (Some(h), true) = (&key_hash, prepared.is_side_effect) {
                 w.idem_results.insert(h.clone(), result.clone());
+                // T6c 收紧(M5-T1):幂等收据落表,恢复期抑制判定不依赖内存
+                if let Some(store) = &w.store {
+                    let _ = store.save_idem_receipt(h, &result.to_string(), &w.now_ts());
+                }
             }
             emit_capability_invoked(
                 w,
@@ -2390,6 +2568,149 @@ fn dispatch_capability(
         }
     }
     outcome
+}
+
+// ---- M5:Task 生命周期(T1)--------------------------------------------------
+
+/// task.create:Task 对象入 L2(tasks 表 + task.created 事件)并即启动
+/// (created→running,GT-03 场景 A1 语义:Butler 接单即开跑)。
+/// request_id 预留审计(M5 规格归因链随 T3 Butler 接线启用)。
+fn handle_task_create(
+    w: &mut World,
+    _request_id: BmId,
+    params: wire::TaskCreateParams,
+) -> CoreResult<wire::TaskCreateResult> {
+    if w.draining || w.persist_poisoned {
+        return Err(CoreError::Semantic(
+            ErrorCode::Unavailable,
+            "Runtime 排空中或持久层故障,拒绝创建 Task".into(),
+        ));
+    }
+    let now = w.config.clock.now();
+    let mut task = crate::task::Task::create(
+        &*w.config.id_gen,
+        params.title,
+        params.goal,
+        params.authorization.unwrap_or_default(),
+        params.budget,
+        params.deadline,
+        now,
+    );
+    // task.created(事实)+ created→running(task_started)
+    w.emit(
+        EventType::TaskCreated,
+        None,
+        None,
+        None,
+        serde_json::json!({
+            "task_id": task.id.as_str(),
+            "title": task.title,
+            "created_by": task.created_by,
+        }),
+    );
+    let (from, to, guard) = task
+        .transition(bm_contract::states::TaskState::Running, None, now)
+        .expect("created→running 是迁移表边");
+    w.emit(
+        EventType::TaskStateChanged,
+        None,
+        None,
+        None,
+        serde_json::json!({
+            "task_id": task.id.as_str(),
+            "from": from.as_str(),
+            "to": to.as_str(),
+            "reason_code": guard,
+            "task_epoch": task.task_epoch,
+        }),
+    );
+    persist_task(w, &task);
+    let result = wire::TaskCreateResult {
+        task_id: task.id.clone(),
+        state: task.state,
+        created_at: task.created_at.clone(),
+    };
+    w.tasks.insert(task.id.clone(), task);
+    Ok(result)
+}
+
+/// task.pause / task.resume / task.stop:生命周期命令(表内边 + epoch 门禁 +
+/// 事实事件 + 行同步)。wire 面不暴露 epoch 参数(与 input_trust 同款收权):
+/// wire 命令恒以当前 epoch 出示;stale 语义由编排器内部路径与测试行使。
+fn handle_task_lifecycle(
+    w: &mut World,
+    _request_id: BmId,
+    action: TaskAction,
+    params: wire::TaskLifecycleParams,
+) -> CoreResult<wire::TaskStateResult> {
+    if w.draining || w.persist_poisoned {
+        return Err(CoreError::Semantic(
+            ErrorCode::Unavailable,
+            "Runtime 排空中或持久层故障,拒绝 Task 生命周期命令".into(),
+        ));
+    }
+    let Some(task) = w.tasks.get_mut(&params.task_id) else {
+        return Err(CoreError::Semantic(
+            ErrorCode::ValidationFailed,
+            format!("Task 不存在: {}", params.task_id.as_str()),
+        ));
+    };
+    // epoch 门禁:wire 路径出示当前 epoch(接管权变更后旧命令在核心面拒绝)
+    task.require_epoch(task.task_epoch)
+        .map_err(|e| task_error_to_core(&params.task_id, e))?;
+    let now = w.config.clock.now();
+    let to = match action {
+        TaskAction::Pause => bm_contract::states::TaskState::Paused,
+        TaskAction::Resume => bm_contract::states::TaskState::Running,
+        TaskAction::Stop => bm_contract::states::TaskState::Cancelled,
+    };
+    // 分阶段作用域(跨字段借用):迁移与取值完成后即释放 task 借用
+    let (transition, state_result, task_snapshot) = {
+        let (from, to, guard) = task
+            .transition(to, None, now)
+            .map_err(|e| task_error_to_core(&params.task_id, e))?;
+        let result = wire::TaskStateResult {
+            task_id: task.id.clone(),
+            state: task.state,
+        };
+        (Some((from, to, guard)), result, task.clone())
+    };
+    let (from, to, guard) = transition.expect("迁移已成功");
+    w.emit(
+        EventType::TaskStateChanged,
+        None,
+        None,
+        None,
+        serde_json::json!({
+            "task_id": task_snapshot.id.as_str(),
+            "from": from.as_str(),
+            "to": to.as_str(),
+            "reason_code": guard,
+            "task_epoch": task_snapshot.task_epoch,
+        }),
+    );
+    persist_task(w, &task_snapshot);
+    Ok(state_result)
+}
+
+/// TaskError → 统一错误信封(脱敏;epoch 拒绝带 reason_code 语义)。
+fn task_error_to_core(task_id: &BmId, e: crate::task::TaskError) -> CoreError {
+    let msg = match e {
+        crate::task::TaskError::IllegalTransition { from, to } => format!(
+            "Task {} 表外迁移: {} -> {}",
+            task_id.as_str(),
+            from.as_str(),
+            to.as_str()
+        ),
+        crate::task::TaskError::UnverifiedCompletion => {
+            format!("Task {} 无核验结论不得终局(完成判定门禁)", task_id.as_str())
+        }
+        crate::task::TaskError::StaleEpoch { current, presented } => format!(
+            "Task {} 命令携带过期 epoch({presented},当前 {current}),Stale 拒绝",
+            task_id.as_str()
+        ),
+    };
+    CoreError::Semantic(ErrorCode::ValidationFailed, msg)
 }
 
 #[allow(clippy::too_many_arguments)] // 审计字段与注册表 payload 键集一一对应
@@ -2785,6 +3106,13 @@ fn reply_unavailable(cmd: Cmd) {
             let _ = resp.send(Err(err()));
         }
         Cmd::ApprovalRespond { resp, .. } => {
+            let _ = resp.send(Err(err()));
+        }
+        // M5:task 生命周期命令是新业务命令(停机态一律拒绝)
+        Cmd::TaskCreate { resp, .. } => {
+            let _ = resp.send(Err(err()));
+        }
+        Cmd::TaskLifecycle { resp, .. } => {
             let _ = resp.send(Err(err()));
         }
         Cmd::EventsAll { resp } => {

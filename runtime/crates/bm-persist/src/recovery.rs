@@ -65,11 +65,25 @@ pub struct OperationRow {
     pub input_content: Option<String>,
 }
 
+/// Task 规范状态行(M5-T1;payload = task/task.v0.1 合同 JSON)。
+#[derive(Debug, Clone, Deserialize)]
+pub struct TaskStateRow {
+    pub id: String,
+    pub title: String,
+    pub state: String,
+    pub created_by: String,
+    pub task_epoch: i64,
+    pub payload: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct WorldRows {
     pub sessions: Vec<SessionRow>,
     pub agents: Vec<AgentRow>,
     pub operations: Vec<OperationRow>,
+    pub tasks: Vec<TaskStateRow>,
 }
 
 /// ① 修复窗口:重放位点之后的日志尾部并补物化。返回补放条数。
@@ -129,7 +143,7 @@ pub fn rebuild_projection(
     Ok(last)
 }
 
-/// 全表导出(确定性比对用):四张表的规范 JSON。
+/// 全表导出(确定性比对用):规范 JSON。
 pub fn dump_all(state: &StateDb) -> StoreResult<serde_json::Value> {
     use serde_json::json;
     Ok(json!({
@@ -137,6 +151,9 @@ pub fn dump_all(state: &StateDb) -> StoreResult<serde_json::Value> {
         "sessions": state.query_rows("SELECT * FROM sessions ORDER BY id", &[])?,
         "agents": state.query_rows("SELECT * FROM agents ORDER BY id", &[])?,
         "operations": state.query_rows("SELECT * FROM operations ORDER BY id", &[])?,
+        "tasks": state.query_rows("SELECT * FROM tasks ORDER BY id", &[])?,
+        "task_members": state.query_rows("SELECT * FROM task_members ORDER BY task_id, agent_id", &[])?,
+        "grants": state.query_rows("SELECT * FROM grants ORDER BY id", &[])?,
     }))
 }
 
@@ -187,9 +204,19 @@ pub fn load_rows(state: &StateDb) -> StoreResult<WorldRows> {
         .into_iter()
         .map(|v| serde_json::from_value(v).expect("行结构与 OperationRow 一致"))
         .collect();
+    let tasks = state
+        .query_rows(
+            "SELECT id, title, state, created_by, task_epoch, payload, created_at, updated_at
+             FROM tasks",
+            &[],
+        )?
+        .into_iter()
+        .map(|v| serde_json::from_value(v).expect("行结构与 TaskStateRow 一致"))
+        .collect();
     Ok(WorldRows {
         sessions,
         agents,
         operations,
+        tasks,
     })
 }

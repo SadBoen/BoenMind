@@ -89,6 +89,20 @@ pub trait EventStore: Send + Sync {
 
     /// 恢复面:指定状态的 outbox 行(如 pending = intent 无结果)。
     fn list_outbox_by_state(&self, state: &str) -> StoreResult<Vec<serde_json::Value>>;
+
+    // ---- M5:tasks / idempotency receipts(T1/T6c)----------------------------
+    /// 写入/更新 Task 行(payload = task/task.v0.1 合同 JSON)。
+    fn save_task(&self, row: crate::sqlite_state::TaskRow<'_>) -> StoreResult<()>;
+
+    /// 恢复面:全部 Task 行。
+    fn list_tasks(&self) -> StoreResult<Vec<serde_json::Value>>;
+
+    /// 幂等收据落表(T6c):恢复期抑制判定不依赖内存。
+    fn save_idem_receipt(&self, key_hash: &str, payload: &str, created_at: &str)
+    -> StoreResult<()>;
+
+    /// 恢复面:全部幂等收据行。
+    fn list_idem_receipts(&self) -> StoreResult<Vec<serde_json::Value>>;
 }
 
 /// 默认压实触发间隔(条);ADR-0004 条件 2:压实是强制义务,不是可选项。
@@ -388,6 +402,27 @@ impl EventStore for PersistStore {
 
     fn list_outbox_by_state(&self, state: &str) -> StoreResult<Vec<serde_json::Value>> {
         self.state.list_outbox_by_state(state)
+    }
+
+    fn save_task(&self, row: crate::sqlite_state::TaskRow<'_>) -> StoreResult<()> {
+        self.state.save_task(row)
+    }
+
+    fn list_tasks(&self) -> StoreResult<Vec<serde_json::Value>> {
+        self.state.list_tasks()
+    }
+
+    fn save_idem_receipt(
+        &self,
+        key_hash: &str,
+        payload: &str,
+        created_at: &str,
+    ) -> StoreResult<()> {
+        self.state.save_idem_receipt(key_hash, payload, created_at)
+    }
+
+    fn list_idem_receipts(&self) -> StoreResult<Vec<serde_json::Value>> {
+        self.state.list_idem_receipts()
     }
 }
 

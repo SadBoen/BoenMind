@@ -8,7 +8,7 @@ use rusqlite::Connection;
 use std::path::Path;
 use std::sync::Mutex;
 
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 4;
 
 /// approvals 表行(载荷列 = Approval 合同 JSON 文本)。
 pub struct ApprovalRow<'a> {
@@ -29,8 +29,22 @@ pub struct GrantRow<'a> {
     pub action: &'a str,
     pub revocation_version: u64,
     pub revoked: bool,
+    /// T6c 收紧(M5-T1):count 类 Grant 消费余量持久化,重启不再回满。
+    pub used_count: u64,
     pub payload: &'a str,
     pub created_at: &'a str,
+}
+
+/// tasks 表行(载荷列 = task/task.v0.1 合同 JSON 文本)。
+pub struct TaskRow<'a> {
+    pub id: &'a str,
+    pub title: &'a str,
+    pub state: &'a str,
+    pub created_by: &'a str,
+    pub task_epoch: u64,
+    pub payload: &'a str,
+    pub created_at: &'a str,
+    pub updated_at: &'a str,
 }
 
 /// capabilities 表行(manifest 列 = Capability Manifest 合同 JSON 文本)。
@@ -69,6 +83,9 @@ impl StateDb {
         }
         if version < 3 {
             Self::migrate_v2_to_v3(&conn)?;
+        }
+        if version < 4 {
+            Self::migrate_v3_to_v4(&conn)?;
         }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(Self {
@@ -123,6 +140,70 @@ impl StateDb {
                 created_at   TEXT NOT NULL,
                 updated_at   TEXT NOT NULL,
                 PRIMARY KEY (operation_id, kind)
+            );
+            COMMIT;
+            "#,
+        )?;
+        Ok(())
+    }
+
+    /// v3→v4(M5-T1,expand:纯新增 + 加列,不动既有行):
+    /// tasks(Task 规范状态,L2 唯一持有,ADR-0004)/ task_members(成员事实,
+    /// 纯事件物化)/ task_budget_ledger(两级账本,T6 启用)/ observations
+    /// (Observation Log,T8 启用)/ memories(memory.* 底座,T8 启用)/
+    /// T6c 收紧两项:grants.used_count 列(count 消费余量持久化,重启不回满)
+    /// 与 idempotency_receipts 表(幂等收据落表,恢复期抑制判定不再依赖内存)。
+    fn migrate_v3_to_v4(conn: &Connection) -> StoreResult<()> {
+        conn.execute_batch(
+            r#"
+            BEGIN;
+            CREATE TABLE tasks (
+                id         TEXT PRIMARY KEY,
+                title      TEXT NOT NULL,
+                state      TEXT NOT NULL,
+                created_by TEXT NOT NULL,
+                task_epoch INTEGER NOT NULL,
+                payload    TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE INDEX idx_tasks_state ON tasks(state);
+            CREATE TABLE task_members (
+                task_id    TEXT NOT NULL,
+                agent_id   TEXT NOT NULL,
+                role       TEXT NOT NULL,
+                grant_id   TEXT,
+                joined_seq INTEGER NOT NULL,
+                PRIMARY KEY (task_id, agent_id)
+            );
+            CREATE TABLE task_budget_ledger (
+                task_id     TEXT NOT NULL,
+                agent_id    TEXT NOT NULL,
+                used_tokens INTEGER NOT NULL DEFAULT 0,
+                updated_at  TEXT NOT NULL,
+                PRIMARY KEY (task_id, agent_id)
+            );
+            CREATE TABLE observations (
+                log_seq     INTEGER PRIMARY KEY,
+                task_id     TEXT NOT NULL,
+                verdict     TEXT NOT NULL,
+                guard_state TEXT NOT NULL,
+                payload     TEXT NOT NULL,
+                observed_at TEXT NOT NULL
+            );
+            CREATE TABLE memories (
+                id         TEXT PRIMARY KEY,
+                scope      TEXT NOT NULL,
+                tombstoned INTEGER NOT NULL DEFAULT 0,
+                payload    TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX idx_memories_scope ON memories(scope);
+            ALTER TABLE grants ADD COLUMN used_count INTEGER NOT NULL DEFAULT 0;
+            CREATE TABLE idempotency_receipts (
+                key_hash   TEXT PRIMARY KEY,
+                payload    TEXT NOT NULL,
+                created_at TEXT NOT NULL
             );
             COMMIT;
             "#,
@@ -352,21 +433,23 @@ impl StateDb {
         )
     }
 
-    /// 写入/更新 Grant(revoked 标志与版本随撤销推进)。
+    /// 写入/更新 Grant(revoked 标志/版本/消费计数随推进;T6c 起消费余量持久)。
     pub fn save_grant(&self, row: GrantRow<'_>) -> StoreResult<()> {
         let conn = self.conn.lock().expect("锁未中毒");
         conn.execute(
-            "INSERT INTO grants(id, audience, action, revocation_version, revoked, payload,
-                                created_at)
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            "INSERT INTO grants(id, audience, action, revocation_version, revoked, used_count,
+                                payload, created_at)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
              ON CONFLICT(id) DO UPDATE SET revocation_version = excluded.revocation_version,
-                 revoked = excluded.revoked, payload = excluded.payload",
+                 revoked = excluded.revoked, used_count = excluded.used_count,
+                 payload = excluded.payload",
             rusqlite::params![
                 row.id,
                 row.audience,
                 row.action,
                 row.revocation_version as i64,
                 row.revoked as i64,
+                row.used_count as i64,
                 row.payload,
                 row.created_at
             ],
@@ -374,10 +457,11 @@ impl StateDb {
         Ok(())
     }
 
-    /// 恢复面:全部 Grant 行(id, audience, action, revocation_version, revoked, payload)。
+    /// 恢复面:全部 Grant 行(id, audience, action, revocation_version, revoked,
+    /// used_count, payload)。
     pub fn list_grants(&self) -> StoreResult<Vec<serde_json::Value>> {
         self.query_rows(
-            "SELECT id, audience, action, revocation_version, revoked, payload
+            "SELECT id, audience, action, revocation_version, revoked, used_count, payload
              FROM grants ORDER BY created_at",
             &[],
         )
@@ -442,6 +526,80 @@ impl StateDb {
             rusqlite::params![state],
         )
     }
+
+    // ---- v4:tasks / task_members / idempotency_receipts(M5-T1)--------------
+    // 载荷列 = task/task.v0.1 合同形态 JSON;行级键列供索引与恢复。
+
+    /// 写入/更新 Task(upsert;task_epoch 单调由调用方保证,恢复时取 max)。
+    pub fn save_task(&self, row: TaskRow<'_>) -> StoreResult<()> {
+        let conn = self.conn.lock().expect("锁未中毒");
+        conn.execute(
+            "INSERT INTO tasks(id, title, state, created_by, task_epoch, payload,
+                               created_at, updated_at)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(id) DO UPDATE SET title = excluded.title,
+                 state = excluded.state, task_epoch = excluded.task_epoch,
+                 payload = excluded.payload, updated_at = excluded.updated_at",
+            rusqlite::params![
+                row.id,
+                row.title,
+                row.state,
+                row.created_by,
+                row.task_epoch as i64,
+                row.payload,
+                row.created_at,
+                row.updated_at
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// 恢复面:全部 Task 行。
+    pub fn list_tasks(&self) -> StoreResult<Vec<serde_json::Value>> {
+        self.query_rows(
+            "SELECT id, title, state, created_by, task_epoch, payload, created_at, updated_at
+             FROM tasks ORDER BY created_at",
+            &[],
+        )
+    }
+
+    /// 幂等收据落表(T6c):key_hash → 原收据;恢复后抑制判定不依赖内存。
+    pub fn save_idem_receipt(
+        &self,
+        key_hash: &str,
+        payload: &str,
+        created_at: &str,
+    ) -> StoreResult<()> {
+        let conn = self.conn.lock().expect("锁未中毒");
+        conn.execute(
+            "INSERT INTO idempotency_receipts(key_hash, payload, created_at)
+             VALUES(?1, ?2, ?3)
+             ON CONFLICT(key_hash) DO NOTHING",
+            rusqlite::params![key_hash, payload, created_at],
+        )?;
+        Ok(())
+    }
+
+    /// 读幂等收据(T6c:恢复期判定「外部是否已执行」)。
+    pub fn idem_receipt(&self, key_hash: &str) -> StoreResult<Option<String>> {
+        let conn = self.conn.lock().expect("锁未中毒");
+        let mut stmt =
+            conn.prepare("SELECT payload FROM idempotency_receipts WHERE key_hash = ?1")?;
+        let mut rows = stmt.query([key_hash])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(row.get(0)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// 恢复面:全部幂等收据行。
+    pub fn list_idem_receipts(&self) -> StoreResult<Vec<serde_json::Value>> {
+        self.query_rows(
+            "SELECT key_hash, payload, created_at FROM idempotency_receipts ORDER BY created_at",
+            &[],
+        )
+    }
 }
 
 #[cfg(test)]
@@ -503,7 +661,7 @@ mod tests {
             conn.query_row("PRAGMA user_version", [], |r| r.get(0))
                 .unwrap()
         };
-        assert_eq!(version, 3);
+        assert_eq!(version, 4);
 
         // approvals:upsert + 状态过滤
         db.save_approval(ApprovalRow {
@@ -539,13 +697,14 @@ mod tests {
             .expect("payload 在");
         assert!(p.contains("denied"));
 
-        // grants:写 + 撤销 + 恢复面
+        // grants:写 + 撤销 + 恢复面(T6c 起消费计数随行持久)
         db.save_grant(GrantRow {
             id: "grant_01JAAAAAAAAAAAAAAAAAAAAA0C",
             audience: "agent:note_bot",
             action: "system.notes.write",
             revocation_version: 0,
             revoked: false,
+            used_count: 0,
             payload: r#"{"grant_id":"grant_01JAAAAAAAAAAAAAAAAAAAAA0C"}"#,
             created_at: "2026-08-29T10:02:09.500Z",
         })
@@ -556,6 +715,7 @@ mod tests {
             action: "system.notes.write",
             revocation_version: 1,
             revoked: true,
+            used_count: 3,
             payload: r#"{"grant_id":"grant_01JAAAAAAAAAAAAAAAAAAAAA0C","revocation_version":1}"#,
             created_at: "2026-08-29T10:02:09.500Z",
         })
@@ -564,6 +724,11 @@ mod tests {
         assert_eq!(grants.len(), 1);
         assert_eq!(grants[0]["revoked"], serde_json::json!(1));
         assert_eq!(grants[0]["revocation_version"], serde_json::json!(1));
+        assert_eq!(
+            grants[0]["used_count"],
+            serde_json::json!(3),
+            "T6c:消费余量持久"
+        );
 
         // capabilities:epoch 持久计数
         db.save_capability_binding(CapabilityRow {
@@ -642,5 +807,96 @@ mod tests {
             0,
             "v3 新表为空"
         );
+    }
+
+    /// expand-contract:v3 库打开自动升 v4,既有 grants 行的 used_count 取默认 0。
+    #[test]
+    fn v3_database_upgrades_to_v4_keeping_rows() {
+        let dir = tempfile::tempdir().expect("临时目录");
+        let path = dir.path().join("state.db");
+        {
+            let conn = rusqlite::Connection::open(&path).expect("建 v3 库");
+            conn.execute_batch(
+                r#"
+                CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                CREATE TABLE sessions (
+                    id TEXT PRIMARY KEY, state TEXT NOT NULL,
+                    agent_id TEXT NOT NULL, created_at TEXT NOT NULL);
+                CREATE TABLE grants (
+                    id TEXT PRIMARY KEY, audience TEXT NOT NULL, action TEXT NOT NULL,
+                    revocation_version INTEGER NOT NULL DEFAULT 0,
+                    revoked INTEGER NOT NULL DEFAULT 0,
+                    payload TEXT NOT NULL, created_at TEXT NOT NULL);
+                INSERT INTO grants VALUES('grant_01JAAAAAAAAAAAAAAAAAAAAA0C',
+                    'agent:note_bot', 'system.notes.write', 0, 0, '{}',
+                    '2026-08-29T10:02:09.500Z');
+                PRAGMA user_version = 3;
+                "#,
+            )
+            .expect("v3 schema");
+        }
+        let db = StateDb::open(&path).expect("打开 v3 库(自动迁移)");
+        let grants = db.list_grants().unwrap();
+        assert_eq!(grants.len(), 1, "v3 既有行保留");
+        assert_eq!(grants[0]["used_count"], serde_json::json!(0), "新列默认 0");
+        assert_eq!(db.list_tasks().unwrap().len(), 0, "v4 新表为空");
+    }
+
+    /// v4:tasks 行往返 + task_epoch 单调推进 + 幂等收据(T6c)。
+    #[test]
+    fn v4_tasks_and_idem_receipts_roundtrip() {
+        let dir = tempfile::tempdir().expect("临时目录");
+        let db = StateDb::open(&dir.path().join("state.db")).expect("打开");
+
+        let payload =
+            r#"{"task_id":"task_01JAAAAAAAAAAAAAAAAAAAAAB2","state":"running","task_epoch":1}"#;
+        db.save_task(TaskRow {
+            id: "task_01JAAAAAAAAAAAAAAAAAAAAAB2",
+            title: "整理读书笔记",
+            state: "created",
+            created_by: "butler:system",
+            task_epoch: 1,
+            payload,
+            created_at: "2026-08-29T11:00:01.000Z",
+            updated_at: "2026-08-29T11:00:01.000Z",
+        })
+        .expect("写 task");
+        db.save_task(TaskRow {
+            id: "task_01JAAAAAAAAAAAAAAAAAAAAAB2",
+            title: "整理读书笔记",
+            state: "paused",
+            created_by: "butler:system",
+            task_epoch: 2,
+            payload,
+            created_at: "2026-08-29T11:00:01.000Z",
+            updated_at: "2026-08-29T11:05:00.000Z",
+        })
+        .expect("推进 task");
+        let tasks = db.list_tasks().unwrap();
+        assert_eq!(tasks.len(), 1, "upsert 不重复建行");
+        assert_eq!(tasks[0]["state"], serde_json::json!("paused"));
+        assert_eq!(
+            tasks[0]["task_epoch"],
+            serde_json::json!(2),
+            "epoch 随行持久"
+        );
+
+        // 幂等收据:首写落行,冲突写忽略(原收据不被覆盖)
+        let receipt = r#"{"operation_id":"op_01JAAAAAAAAAAAAAAAAAAAAAB8","state":"succeeded"}"#;
+        db.save_idem_receipt("sha256:1a2b", receipt, "2026-08-29T11:00:03.200Z")
+            .expect("写收据");
+        db.save_idem_receipt(
+            "sha256:1a2b",
+            r#"{"tampered":true}"#,
+            "2026-08-29T11:00:09.000Z",
+        )
+        .expect("重复写为 no-op");
+        assert_eq!(
+            db.idem_receipt("sha256:1a2b").unwrap().as_deref(),
+            Some(receipt),
+            "原收据不被覆盖"
+        );
+        assert_eq!(db.list_idem_receipts().unwrap().len(), 1);
+        assert_eq!(db.idem_receipt("sha256:absent").unwrap(), None);
     }
 }
