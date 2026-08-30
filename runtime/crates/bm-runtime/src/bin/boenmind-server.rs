@@ -159,6 +159,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     })
     .await;
 
+    // P0(第四轮评审):INV-5 脱敏接线——把模型凭据明文注册进 Execution
+    // Log 扫描面,此后任何日志条目命中即整条降格,密钥明文禁止落盘。
+    if let Ok(key_value) = std::env::var("BOEN_MODEL_API_KEY") {
+        handle.register_redaction_value(&key_value);
+    }
+
     let shutdown = Arc::new(tokio::sync::Notify::new());
     let app = bm_surface_http::router(
         handle.clone(),

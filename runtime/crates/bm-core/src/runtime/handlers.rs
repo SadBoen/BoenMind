@@ -522,6 +522,15 @@ pub(crate) fn handle_approval_respond(
             // 批准:operation 续行(waiting_approval→running→统一执行助手)
             persist_grant(w, &grant.grant_id);
             if let Some((op_id, capability, args, idem, principal, trust)) = op {
+                // P0(第四轮评审):重放前的纵深防护——操作已被取消(或其他
+                // 路径终态)时拒绝重放,宁可报错也不踩表外迁移。
+                let op_state = w.operations.get(&op_id).map(|o| o.state);
+                if !matches!(op_state, Some(OperationState::WaitingApproval)) {
+                    w.cap_pending.remove(&params.approval_id);
+                    return Err(CoreError::validation(
+                        "审批对应的操作已不在等待审批状态(可能已被取消),批准未重放",
+                    ));
+                }
                 w.settle_operation(&op_id, OperationState::Running, None);
                 // 重放按原始调用方身份归因(M5 双路径:surface / worker)
                 let mut ctx = CallContext::content_chain(&principal, trust)

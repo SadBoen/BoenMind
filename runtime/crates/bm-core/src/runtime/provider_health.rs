@@ -61,6 +61,10 @@ pub(crate) fn note_provider_failure(w: &mut World, provider: &str, reason: &str)
         entry.status = "unavailable";
         entry.cooldown_until = Some(now + chrono::Duration::milliseconds(PROVIDER_COOLDOWN_MS));
         emit_provider_health(w, provider, "healthy", "unavailable", reason);
+    } else if entry.status == "unavailable" {
+        // P1(第四轮评审):半开探测失败必须重开冷却——否则冷却过期后每个
+        // 请求都穿透打到死 provider,熔断器只挡前 30 秒。
+        entry.cooldown_until = Some(now + chrono::Duration::milliseconds(PROVIDER_COOLDOWN_MS));
     }
 }
 

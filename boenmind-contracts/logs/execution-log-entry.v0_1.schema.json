@@ -19,7 +19,7 @@
     "operation_id": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/id" },
     "request_id": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/id" },
     "state": { "type": "string", "description": "写入该条目时的 Agent 状态" },
-    "secret_scan": { "const": "passed", "description": "写盘前脱敏管线检查标记（INV-5）" },
+    "secret_scan": { "enum": ["passed", "failed"], "description": "写盘前脱敏管线检查标记（INV-5）" },
     "detail": {
       "type": "object",
       "description": "按 kind 变化：agent.turn 携带 turn_index 与输入摘要；model.invocation 携带 model_id/attempt/usage/latency/stream_interrupted；budget.check 携带 accounting_record；error 携带 error_code 与脱敏 message",

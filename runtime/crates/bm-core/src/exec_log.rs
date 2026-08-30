@@ -53,11 +53,16 @@ impl ExecutionLog {
     pub fn register_scan_value(&self, value: &str) {
         if value.len() >= 6 {
             // 过短的值误报率高,不进扫描面
-            self.inner
-                .lock()
-                .expect("锁未中毒")
-                .scan_values
-                .insert(value.to_string());
+            let mut inner = self.inner.lock().expect("锁未中毒");
+            inner.scan_values.insert(value.to_string());
+            // P0(第四轮评审):序列化后凭据里的 "\|\" 等字符会转义,纯明文
+            // contains 永不命中——同步注册 JSON 转义形态。
+            if let Ok(esc) = serde_json::to_string(value) {
+                let trimmed = esc.trim_matches('"').to_string();
+                if trimmed != value {
+                    inner.scan_values.insert(trimmed);
+                }
+            }
         }
     }
 
@@ -88,11 +93,28 @@ impl ExecutionLog {
                 entry.detail = serde_json::from_str(&serialized).unwrap_or(entry.detail);
             }
         }
-        // 复扫:脱敏后必须 0 命中
+        // 复扫:脱敏后必须 0 命中。P0(第四轮评审)修复:原先 debug_assert
+        // 在 release 不执行,fail-open;现改为 release 级 fail-closed——
+        // 仍命中则整条降格为占位(禁止明文落盘),扫描态如实记 failed。
         let recheck = serde_json::to_string(&entry).expect("日志条目可序列化");
+        let mut hit = false;
         for secret in &inner.scan_values {
-            debug_assert!(!recheck.contains(secret.as_str()), "脱敏后仍命中凭据明文");
+            if recheck.contains(secret.as_str()) {
+                hit = true;
+                break;
+            }
         }
+        let line = if hit {
+            entry.secret_scan = Some(SecretScan::Failed);
+            entry.detail = serde_json::json!({
+                "redaction_failed": true,
+                "kind": entry.kind.as_str(),
+                "note": "脱敏复扫未通过,原文禁止落盘(INV-5)"
+            });
+            serde_json::to_string(&entry).expect("占位条目可序列化")
+        } else {
+            recheck
+        };
 
         inner.entries.push(entry.clone());
         if let Some(path) = &self.path {
@@ -101,7 +123,7 @@ impl ExecutionLog {
                 .append(true)
                 .open(path)
                 .expect("Execution Log 文件可打开");
-            writeln!(file, "{recheck}").expect("Execution Log 追加写成功");
+            writeln!(file, "{line}").expect("Execution Log 追加写成功");
             file.flush().expect("Execution Log flush 成功");
         }
         log_seq
@@ -150,5 +172,47 @@ impl ExecutionLog {
             std::fs::write(path, payload).expect("Execution Log 重写成功");
         }
         removed
+    }
+}
+
+#[cfg(test)]
+mod m9_review_tests {
+    use super::*;
+    use bm_contract::exec_log::LogKind;
+
+    /// P0(第四轮评审)验收:含引号/反斜杠的凭据,其 JSON 转义形态也必须
+    /// 被脱敏(此前纯明文 contains 对转义形态永不命中)。
+    #[test]
+    fn redaction_covers_json_escaped_secret_forms() {
+        let log = ExecutionLog::new(None);
+        let secret = "sk-t\"quote\\back-123456";
+        log.register_scan_value(secret);
+        log.record(LogRecord {
+            kind: LogKind::Error,
+            session_id: BmId::parse("sess_00000000000000000000000001").unwrap(),
+            agent_id: BmId::parse("agent_00000000000000000000000002").unwrap(),
+            operation_id: BmId::parse("op_00000000000000000000000003").unwrap(),
+            request_id: Some(BmId::parse("req_00000000000000000000000004").unwrap()),
+            agent_state: "running".into(),
+            detail: serde_json::json!({ "note": format!("用户输入回显 {secret}") }),
+            ts: "2026-08-30T00:00:00.000Z".into(),
+        });
+        let entries = log.entries();
+        assert_eq!(entries.len(), 1);
+        let serialized = serde_json::to_string(&entries[0]).unwrap();
+        assert!(
+            !serialized.contains("sk-t"),
+            "凭据明文(含转义形态)禁止出现在日志:{serialized}"
+        );
+        assert!(serialized.contains("[REDACTED]"), "命中应替换为 REDACTED");
+    }
+
+    /// SecretScan::Failed 可序列化为合同值 "failed"(fail-closed 降格态)。
+    #[test]
+    fn secret_scan_failed_wire_value() {
+        assert_eq!(
+            serde_json::to_string(&SecretScan::Failed).unwrap(),
+            "\"failed\""
+        );
     }
 }

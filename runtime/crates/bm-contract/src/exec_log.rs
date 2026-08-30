@@ -16,6 +16,9 @@ wire_str_enum!(LogKind {
 // 脱敏管线检查标记;schema const "passed"——未通过扫描的条目禁止落盘(INV-5)。
 wire_str_enum!(SecretScan {
     Passed => "passed",
+    // P0(第四轮评审)增发:复扫失败的条目以 failed 态降格落盘占位
+    //(release 级 fail-closed;原文禁止落盘),不再依赖 debug_assert。
+    Failed => "failed",
 });
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

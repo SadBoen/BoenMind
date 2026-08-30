@@ -382,6 +382,12 @@ fn spawn_generation(
     use tokio::process::Command;
 
     let mut cmd = Command::new(command);
+    // P0(第四轮评审):子进程默认继承父进程全部环境 = 主密钥/令牌外泄
+    // (INV-5)。清空后仅放行运行所需白名单,再加各 server 显式配置的 env。
+    cmd.env_clear();
+    for (k, v) in child_inherited_env() {
+        cmd.env(k, v);
+    }
     cmd.args(args)
         .envs(env)
         .stdin(std::process::Stdio::piped())
@@ -495,10 +501,15 @@ impl McpTransport for StdioMcpTransport {
             let msg = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
             let mut bytes = serde_json::to_string(&msg).map_err(|e| e.to_string())?;
             bytes.push('\n');
-            stdin
-                .write_all(bytes.as_bytes())
-                .await
-                .map_err(|e| format!("stdio 写失败: {e}"))?;
+            // P1(第四轮评审):写管道限时——子进程挂起(非崩溃)时锁跨
+            // await 持有,无超时则该域能力永久坏死(respawn 也拿不到锁)。
+            tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                stdin.write_all(bytes.as_bytes()),
+            )
+            .await
+            .map_err(|_| "stdio 写超时(子进程 10s 未消费,判定挂起)".to_string())?
+            .map_err(|e| format!("stdio 写失败: {e}"))?;
             stdin
                 .flush()
                 .await
@@ -895,5 +906,62 @@ mod x05_tests {
             m.approval,
             bm_contract::capability::ApprovalRequirement::NotRequired
         );
+    }
+}
+
+/// MCP 子进程继承环境白名单(测试可见):父进程其余环境变量一律不下发。
+fn child_inherited_env() -> Vec<(&'static str, String)> {
+    const ALLOW: &[&str] = &[
+        "PATH",
+        "Path",
+        "SYSTEMROOT",
+        "SystemRoot",
+        "systemroot",
+        "COMSPEC",
+        "ComSpec",
+        "TEMP",
+        "TMP",
+        "TMPDIR",
+        "HOME",
+        "USERPROFILE",
+    ];
+    ALLOW
+        .iter()
+        .filter_map(|k| std::env::var(k).ok().map(|v| (*k, v)))
+        .collect()
+}
+
+#[cfg(test)]
+mod m9_review_env_tests {
+    use super::child_inherited_env;
+
+    /// P0(第四轮评审)验收:子进程继承面只含白名单——主密钥等父进程
+    /// 敏感环境变量一律不下发。
+    #[test]
+    fn child_env_allowlist_excludes_parent_secrets() {
+        const ALLOW: &[&str] = &[
+            "PATH",
+            "Path",
+            "SYSTEMROOT",
+            "SystemRoot",
+            "systemroot",
+            "COMSPEC",
+            "ComSpec",
+            "TEMP",
+            "TMP",
+            "TMPDIR",
+            "HOME",
+            "USERPROFILE",
+        ];
+        for (k, _) in child_inherited_env() {
+            assert!(
+                ALLOW.contains(&k),
+                "白名单外的环境变量不得下发给 MCP 子进程: {k}"
+            );
+            assert!(
+                !k.to_ascii_uppercase().starts_with("BOEN_"),
+                "BOEN_* 变量(主密钥/开关)禁止下发: {k}"
+            );
+        }
     }
 }

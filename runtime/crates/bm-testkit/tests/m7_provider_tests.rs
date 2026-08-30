@@ -122,7 +122,9 @@ async fn t111_server_5xx_and_429_are_retryable_unavailable() {
 }
 
 #[tokio::test]
-async fn t112_auth_4xx_is_unavailable_not_retryable() {
+async fn t112_auth_4xx_is_permission_denied_not_retryable() {
+    // P1(第四轮评审)修订:401/403 归 PermissionDenied(配置错,不烧熔断),
+    // 不再是 Unavailable。
     let base = spawn_mock(401, r#"{"error":{"message":"bad key"}}"#, 0);
     let resp = invoke(base, store_with_key(), req(30)).await;
     match resp {
@@ -131,7 +133,7 @@ async fn t112_auth_4xx_is_unavailable_not_retryable() {
             retryable,
             ..
         } => {
-            assert_eq!(error_code, ErrorCode::Unavailable);
+            assert_eq!(error_code, ErrorCode::PermissionDenied);
             assert!(!retryable, "鉴权失败不应盲目重试");
         }
         other => panic!("应为 Failed,实为 {other:?}"),

@@ -8,6 +8,8 @@ use super::*;
 #[derive(Clone)]
 pub struct RuntimeHandle {
     tx: mpsc::Sender<Cmd>,
+    /// P0(第四轮评审):脱敏扫描面注册口(INV-5 接线)。
+    exec_log: Arc<ExecutionLog>,
 }
 
 impl RuntimeHandle {
@@ -23,7 +25,7 @@ impl RuntimeHandle {
         let config = config;
         let mut world = World {
             bus: EventBus::new(),
-            exec_log,
+            exec_log: exec_log.clone(),
             in_flight: HashMap::new(),
             sessions: HashMap::new(),
             agents: HashMap::new(),
@@ -471,7 +473,7 @@ impl RuntimeHandle {
         }
 
         tokio::spawn(core_loop(world, rx));
-        Self { tx }
+        Self { tx, exec_log }
     }
 
     pub async fn session_create(
@@ -687,6 +689,12 @@ impl RuntimeHandle {
 
     /// task.create(M5.2):Task 创建并启动(L2 规范状态;wire/task.v0.1)。
     /// M9-S3:worker 自主环 v0——受理后事件驱动逐步推进(单写者内)。
+    /// P0(第四轮评审):把本进程经手的凭据明文注册进 Execution Log 脱敏
+    /// 扫描面(INV-5 接线)——此后任何日志条目命中即整条降格,禁止明文落盘。
+    pub fn register_redaction_value(&self, value: &str) {
+        self.exec_log.register_scan_value(value);
+    }
+
     pub async fn task_autorun(
         &self,
         request_id: BmId,

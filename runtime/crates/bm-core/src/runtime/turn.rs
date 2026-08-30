@@ -826,6 +826,46 @@ pub(crate) fn handle_capability_cancel(
             params.reason.unwrap_or_else(|| "用户显式取消".into()),
         )),
     );
+    // P0(第四轮评审):取消等待审批的操作必须连带撤审。否则用户随后批准
+    // 会触发 Cancelled→Running 的表外迁移,状态机 panic,单写者死亡。
+    let affected: Vec<BmId> = w
+        .cap_pending
+        .iter()
+        .filter(|(_, p)| p.op_id == params.operation_id)
+        .map(|(aid, _)| aid.clone())
+        .collect();
+    for aid in affected {
+        w.cap_pending.remove(&aid);
+        if let Some(mut approval) = w.approvals.get(&aid).cloned() {
+            let resource = bm_contract::capability::GrantResource {
+                capability: approval.capability.clone(),
+                args_predicates: Default::default(),
+            };
+            let respond = {
+                let mut mgr = crate::approval::ApprovalManager::new(
+                    &mut w.grants,
+                    &*w.config.clock,
+                    &*w.config.id_gen,
+                );
+                mgr.respond(
+                    &mut approval,
+                    crate::approval::RespondDecision::Withdraw,
+                    None,
+                    resource,
+                    "system:cancel",
+                )
+            };
+            if let Ok(None) = respond {
+                w.approvals.insert(aid.clone(), approval);
+                persist_approval(
+                    w,
+                    w.approvals.get(&aid).expect("存在"),
+                    &params.operation_id,
+                    None,
+                );
+            }
+        }
+    }
     emit_capability_invoked(
         w,
         &params.operation_id,
@@ -1292,7 +1332,11 @@ pub(crate) fn handle_turn_event(w: &mut World, event: TurnEvent) {
                 ts: w.now_ts(),
             });
             // M7 S5:失败回账(>=3 连续失败 -> 熔断开闸)
-            note_provider_failure(w, w.config.connector.provider(), "模型调用连续失败");
+            // P1(第四轮评审):仅故障类(Unavailable)计熔断;鉴权/参数错
+            // (PermissionDenied/ValidationFailed)是配置错,不烧熔断器。
+            if error_code == ErrorCode::Unavailable {
+                note_provider_failure(w, w.config.connector.provider(), "模型调用连续失败");
+            }
         }
         TurnEvent::ChainExhausted {
             operation_id,

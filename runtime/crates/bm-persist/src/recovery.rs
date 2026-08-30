@@ -159,7 +159,9 @@ pub fn dump_all(state: &StateDb) -> StoreResult<serde_json::Value> {
     }))
 }
 
-/// ID 计数提示:扫描三张表的 ULID 段(实现用十进制计数器)取最大值。
+/// ID 计数提示:扫描全部持久化发号表(会话/代理/操作/任务/授权/审批/记忆)
+/// 取最大值(P0 第四轮评审修复:此前漏 task/grant/approval/memory,重启
+/// 回退会撞号覆写权力记录)。
 /// 重启后的 ID 生成必须从 hint+1 起,否则 INSERT OR REPLACE 会覆盖历史行
 /// (M3 server 的单写者租约前置,任务 T2)。
 pub fn id_counter_hint(state: &StateDb) -> StoreResult<u64> {
@@ -168,6 +170,10 @@ pub fn id_counter_hint(state: &StateDb) -> StoreResult<u64> {
             SELECT CAST(substr(id, 6) AS INTEGER) AS n FROM sessions
             UNION ALL SELECT CAST(substr(id, 7) AS INTEGER) FROM agents
             UNION ALL SELECT CAST(substr(id, 4) AS INTEGER) FROM operations
+            UNION ALL SELECT CAST(substr(id, 6) AS INTEGER) FROM tasks
+            UNION ALL SELECT CAST(substr(id, 7) AS INTEGER) FROM grants
+            UNION ALL SELECT CAST(substr(id, 6) AS INTEGER) FROM approvals
+            UNION ALL SELECT CAST(substr(id, 5) AS INTEGER) FROM memories
          )",
         &[],
     )?;

@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use bm_contract::connector::{FinishReason, InvokeRequest, InvokeResponse, Role, Usage};
 use bm_contract::error_codes::ErrorCode;
 use bm_core::ports::ModelConnector;
+use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 /// 进程级 Secret Store 桥:组装方启动时调用 [`set_secret_bridge`]。
@@ -125,11 +126,16 @@ impl ModelConnector for GlmConnector {
             stream: false,
         };
 
+        // P1(第四轮评审):对齐 openai 连接器,预算超时防网络悬挂
+        // (悬挂会让 stop() 排空永不返回)。
+        let budget = bm_contract::timestamp::remaining_until(&req.deadline)
+            .unwrap_or(Duration::from_secs(120));
         let fut = self
             .http
             .post(&self.endpoint)
             .bearer_auth(api_key)
             .json(&body)
+            .timeout(budget)
             .send();
 
         let resp = tokio::select! {

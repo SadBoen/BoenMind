@@ -156,7 +156,10 @@ fn failed(code: ErrorCode, retryable: bool, attempt: u32) -> InvokeResponse {
 fn map_status(status: u16, attempt: u32) -> InvokeResponse {
     match status {
         429 | 500..=599 => failed(ErrorCode::Unavailable, true, attempt),
-        400..=499 => failed(ErrorCode::Unavailable, false, attempt),
+        // P1(第四轮评审):4xx(鉴权/参数错)归非故障类——不再计入 provider
+        // 熔断(401 反复失败不该把通道熔断,掩盖配置错误)。
+        401 | 403 => failed(ErrorCode::PermissionDenied, false, attempt),
+        400..=499 => failed(ErrorCode::ValidationFailed, false, attempt),
         _ => failed(ErrorCode::Internal, false, attempt),
     }
 }
@@ -425,6 +428,41 @@ mod m9_stream_tests {
                 assert!(!stream_interrupted);
             }
             _ => panic!("应为 Completed"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod m9_review_status_tests {
+    use super::*;
+
+    /// P1(第四轮评审)验收:401/403 归 PermissionDenied(非故障类),
+    /// 不再计入 provider 熔断;429 仍为可重试 Unavailable。
+    #[test]
+    fn auth_errors_are_not_provider_faults() {
+        for status in [401u16, 403] {
+            match map_status(status, 1) {
+                InvokeResponse::Failed {
+                    error_code,
+                    retryable,
+                    ..
+                } => {
+                    assert_eq!(error_code, ErrorCode::PermissionDenied);
+                    assert!(!retryable);
+                }
+                _ => panic!("应为 Failed"),
+            }
+        }
+        match map_status(429, 1) {
+            InvokeResponse::Failed {
+                error_code,
+                retryable,
+                ..
+            } => {
+                assert_eq!(error_code, ErrorCode::Unavailable);
+                assert!(retryable);
+            }
+            _ => panic!("应为 Failed"),
         }
     }
 }

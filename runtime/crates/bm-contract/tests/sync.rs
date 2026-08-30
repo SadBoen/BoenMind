@@ -516,12 +516,19 @@ fn gt_exec_log_entries_validate() {
         validate(registries::EXEC_LOG_SCHEMA, &ser).expect("GT 日志条目应过 schema");
     }
 
-    // 非法:secret_scan 出现 "passed" 以外的值(schema const)
+    // P0(第四轮评审):secret_scan 增 "failed"(fail-closed 降格态,Minor);
+    // 未知值仍拒绝。
+    let mut ok_failed = entries[0].clone();
+    ok_failed["secret_scan"] = json!("failed");
+    assert!(
+        serde_json::from_value::<LogEntry>(ok_failed).is_ok(),
+        "failed 态(fail-closed 降格)应合法"
+    );
     let mut bad = entries[0].clone();
-    bad["secret_scan"] = json!("failed");
+    bad["secret_scan"] = json!("bogus");
     assert!(
         serde_json::from_value::<LogEntry>(bad).is_err(),
-        "SecretScan 枚举只允许 passed"
+        "SecretScan 未知值仍拒绝"
     );
 }
 
