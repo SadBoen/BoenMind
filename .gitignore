@@ -14,3 +14,4 @@ __pycache__/
 .secrets/*
 !.secrets/example.env
 perf_m9_run.txt
+server.log
