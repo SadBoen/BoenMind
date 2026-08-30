@@ -7,13 +7,13 @@ BoenMind:个人生态的 AI Runtime / AI OS,当前为**阶段一(跨平台单软
 对照验证(Erlang/OTP、Kubernetes、VS Code,见 `architecture/deepwiki-validation.md`)。
 合同库已冻结 v1.0(字段只增不破)。
 
-**当前进度:M7 已收官(2026-08-30,tag `m7-provider-mcp`):
-`milestones/M7-review.md`——基线五句通过条件逐条结算,passed_with_conditions;
-真实模型通道(第三方网关,ADR-0010)实网验证通过;模型调用过 Broker
-(M4 §5.8 豁免撤销);MCP 接入 v1(stdio,发现/调用/进度/崩溃重生);
-213 测试全绿;perf 记录⑤(P-03 门内,P-01 p95 噪声解释留档)。
-下一步 = 起草《M8 实现规格》(首批真实 App 与发行质量;基线 §18-M8
-八子项),长任务真实通道稳定性复测列硬条件。**
+**当前进度:M8 已收官(2026-08-30,tag `m8-apps-release`)——阶段一
+(M0–M8)全部收官!`milestones/M8-review.md`:基线五句通过条件逐条
+结算,passed_with_conditions;首批双真实 App(Wiki/Market)经 MCP 全
+链路;独立 Judge + 实网长任务压测 6 回合全过;备份/迁移/墓碑回放;
+Web UI v1 + Tauri 壳骨架 + release 出包;229 测试全绿,perf 记录⑥。
+下一步 = 阶段二规划(回看遗留:S4 draining、lease 吞吐、worker 自主
+环、流式输出、memory:user 授权)+ 一周真实使用反馈定优先级。**
 
 **提速方案(2026-08-30 起固化,每轮沿用)**:
 1. 强耦合任务合批(如 T4+T5、T6+T7、T8+T9),一轮交付、共享全量回归,
@@ -81,6 +81,11 @@ runtime/                        第 3 层  源代码(M1 起,Rust workspace;crate
       规格 `milestones/M7-implementation-spec.md`,回看 `milestones/M7-review.md`,
       213 测试全绿,五句通过条件逐条结算,真实网关实网验证通过,
       ADR-0010 第三方网关信任边界)**
-- [ ] M8 见基线 §18;33 项验收条件的分布见各 ADR「条件与验收」
+- [x] **M8 首批真实 App 与发行质量(2026-08-30,tag `m8-apps-release`;
+      规格 `milestones/M8-implementation-spec.md`,回看 `milestones/M8-review.md`,
+      229 测试全绿,双真实 App + Judge + 实网压测 + 备份迁移 + 三平台,
+      ADR-0011 App=MCP 形态)——阶段一收官**
+- 注意:ADR-0011(App 形态)与各回看「§6 条件与遗留」是后续规划的
+  输入清单;deepwiki S1-S10 修订建议仍为 proposed,逐里程碑裁决
 - 注意:`architecture/deepwiki-validation.md` 的 S1-S10 修订建议为 **proposed**,
   仅在各里程碑回看时逐条裁决,勿自动采纳。
