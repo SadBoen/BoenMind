@@ -84,7 +84,7 @@
 
 ```text
 [内部] connector.invoke(attempt=1)   [S: model/connector#/definitions/invoke_request]
-请求要点：model_id=zhipu.glm-4-flash；tools=[]；secret_ref="secret:model/zhipu"；
+请求要点：model_id=zhipu.glm-4-flash；tools=[]；secret_ref="secret:model.zhipu"；
 budget_ctx.remaining_tokens=50000；deadline="2026-08-29T09:30:35.012Z"
 响应要点：ok=true；usage={tokens_in: 412, tokens_out: 58}；finish_reason="stop"；
 latency_ms=1873；stream_interrupted=false                        [INV-4][INV-5]
