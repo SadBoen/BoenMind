@@ -31,6 +31,7 @@ async fn rig() -> (RuntimeHandle, Arc<SeqIdGen>) {
         turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
         max_attempts: None,
         async_executor: None,
+        model_streaming: false,
     };
     (RuntimeHandle::start(config).await, ids)
 }

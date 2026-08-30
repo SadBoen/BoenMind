@@ -11,7 +11,7 @@ async-trait = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 keyring = { workspace = true }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 tokio = { workspace = true }
 tracing = { workspace = true }
 aes-gcm = "0.11.1"

@@ -163,6 +163,11 @@ pub(crate) enum Cmd {
         total: Option<u64>,
         message: Option<String>,
     },
+    /// M9-S2:回合模型输出增量(流式开启时逐块回核心循环,单写者落事件)
+    ProviderDelta {
+        operation_id: BmId,
+        delta: String,
+    },
     Turn(TurnEvent),
 }
 
@@ -261,6 +266,7 @@ pub(crate) fn reply_unavailable(cmd: Cmd) {
         }
         Cmd::ProviderCall { .. } => {}
         Cmd::ProviderProgress { .. } => {}
+        Cmd::ProviderDelta { .. } => {}
         Cmd::CapabilityCancel { resp, .. } => {
             let _ = resp.send(Err(err()));
         }

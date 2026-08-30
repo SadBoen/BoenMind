@@ -11,6 +11,25 @@ use tokio_util::sync::CancellationToken;
 pub trait ModelConnector: Send + Sync {
     async fn invoke(&self, req: InvokeRequest, cancel: CancellationToken) -> InvokeResponse;
 
+    /// 流式调用(M9-S2):增量经 `on_delta` 逐块回调;默认实现退化为
+    /// 非流式 `invoke`(整段作为单个 delta 回调)——既有连接器零改动兼容,
+    /// 真 SSE 由连接器按需覆写。返回值与非流式同一合同(聚合全量)。
+    async fn invoke_stream(
+        &self,
+        req: InvokeRequest,
+        cancel: CancellationToken,
+        mut on_delta: Box<dyn for<'a> FnMut(&'a str) + Send + 'static>,
+    ) -> InvokeResponse {
+        let r = self.invoke(req, cancel).await;
+        if let InvokeResponse::Completed { content, .. } = &r {
+            if !content.is_empty() {
+                (on_delta)(content.as_str());
+            }
+        }
+        drop(on_delta); // 先丢回调(析构借用)再归还结果
+        r
+    }
+
     /// 连接器实现标识(model descriptor 的 provider 字段)。
     fn provider(&self) -> &'static str;
 }

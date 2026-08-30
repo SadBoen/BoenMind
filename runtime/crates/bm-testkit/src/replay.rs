@@ -163,6 +163,7 @@ pub async fn rig_on(dir: &std::path::Path, script: Vec<Step>) -> TestRig {
         // M7 S1:turn 依赖 model.invoke 能力面;标准装配只带模型能力,不带演示能力
         capabilities: vec![bm_providers::builtin::model_invoke_cap()],
         async_executor: None,
+        model_streaming: false,
         version: "0.1.0-m1".into(),
         data_dir: Some(dir.to_path_buf()),
         store: Some(store),
@@ -231,6 +232,7 @@ pub async fn rig(
         // M7 S1:最小模型能力装配 + 调用方额外能力(MCP stub 等)
         capabilities: [vec![bm_providers::builtin::model_invoke_cap()], extra_caps].concat(),
         async_executor: executor,
+        model_streaming: false,
         version: "0.1.0-m1".into(),
         data_dir: data_dir.clone(),
         store,

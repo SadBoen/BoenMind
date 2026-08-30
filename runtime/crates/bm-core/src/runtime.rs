@@ -77,6 +77,9 @@ pub struct RuntimeConfig {
     /// M7 S4:异步能力执行器(MCP 等慢外部 Provider)。manifest.provider
     /// 以 "mcp." 开头的能力注册时标记 async,dispatch 走本执行器。
     pub async_executor: Option<Arc<dyn crate::ports::AsyncCapabilityExecutor>>,
+    /// M9-S2:模型真流式开关(默认关——既有测试/黄金轨迹零变化;
+    /// 开启时回合模型输出以 model.content.delta 逐块入事件流)。
+    pub model_streaming: bool,
 }
 
 /// 回合任务向核心循环回报的内部消息。
@@ -155,6 +158,8 @@ struct World {
     task_results: HashMap<BmId, Vec<serde_json::Value>>,
     /// M7 S4:在途异步能力调用(operation_id → 留档)。
     op_async_meta: HashMap<BmId, AsyncCallMeta>,
+    /// M9-S2:在途回合已发 delta 计数(index 单调,0 起;completed 后随审计清理可留)
+    model_delta_seq: HashMap<BmId, u64>,
     /// M7 S4:异步能力调用结果(operation_id → result;内存,随操作同寿命)。
     op_results: HashMap<BmId, serde_json::Value>,
     /// M7 S5:Provider 健康面(provider → 状态;进程内,不入 core-transitions)。
@@ -544,6 +549,28 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
                 resp,
             } => {
                 let _ = resp.send(handle_send_input(&mut world, request_id, params));
+            }
+            Cmd::ProviderDelta { operation_id, delta } => {
+                let idx = {
+                    let e = world
+                        .model_delta_seq
+                        .entry(operation_id.clone())
+                        .or_insert(0);
+                    let v = *e;
+                    *e += 1;
+                    v
+                };
+                world.emit(
+                    EventType::ModelContentDelta,
+                    None,
+                    None,
+                    Some(operation_id.clone()),
+                    serde_json::json!({
+                        "operation_id": operation_id.as_str(),
+                        "index": idx,
+                        "delta": content_trunc(&delta),
+                    }),
+                );
             }
             Cmd::Cancel { params, resp } => {
                 let _ = resp.send(handle_cancel(&world, params));

@@ -225,6 +225,7 @@ async fn t119c_user_deletion_tombstone_survives_replay() {
         let handle = RuntimeHandle::start(RuntimeConfig {
             capabilities: caps,
             async_executor: None,
+            model_streaming: false,
             version: "0.1.0-m8".into(),
             data_dir: Some(dir_path.clone()),
             store: Some(store),
@@ -319,6 +320,7 @@ async fn t119c_user_deletion_tombstone_survives_replay() {
         let handle = RuntimeHandle::start(RuntimeConfig {
             capabilities: caps,
             async_executor: None,
+            model_streaming: false,
             version: "0.1.0-m8".into(),
             data_dir: Some(dir_path.clone()),
             store: Some(store),

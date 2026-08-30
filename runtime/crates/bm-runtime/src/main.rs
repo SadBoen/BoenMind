@@ -31,6 +31,7 @@ async fn main() -> CoreResult<()> {
     let handle = RuntimeHandle::start(RuntimeConfig {
         capabilities: vec![bm_providers::builtin::model_invoke_cap()],
         async_executor: None,
+        model_streaming: std::env::var("BOEN_MODEL_STREAM").as_deref() == Ok("1"),
         version: env!("CARGO_PKG_VERSION").into(),
         data_dir: None,
         store: None,

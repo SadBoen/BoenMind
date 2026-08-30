@@ -55,6 +55,7 @@ async fn m4_rig() -> (RuntimeHandle, Arc<SeqIdGen>) {
         turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
         max_attempts: None,
         async_executor: None,
+        model_streaming: false,
     };
     (RuntimeHandle::start(config).await, ids)
 }
@@ -417,6 +418,7 @@ async fn m4_rig_at(
         turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
         max_attempts: None,
         async_executor: None,
+        model_streaming: false,
     };
     RuntimeHandle::start(config).await
 }
@@ -460,6 +462,7 @@ async fn t44_idempotency_suppression_and_intent_gate() {
         turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
         max_attempts: None,
         async_executor: None,
+        model_streaming: false,
     })
     .await;
 
@@ -623,6 +626,7 @@ async fn t45_outbox_pending_recovers_to_outcome_unknown() {
         turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
         max_attempts: None,
         async_executor: None,
+        model_streaming: false,
     })
     .await;
 
@@ -888,6 +892,7 @@ async fn t46_persist_failure_degrades_safely() {
         turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
         max_attempts: None,
         async_executor: None,
+        model_streaming: false,
     })
     .await;
 

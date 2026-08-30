@@ -29,6 +29,7 @@ async fn rig(script: Vec<Step>) -> Rig {
     let handle = RuntimeHandle::start(RuntimeConfig {
         capabilities: bm_providers::builtin::builtin_capability_set(),
         async_executor: None,
+        model_streaming: false,
         version: "0.1.0-m1".into(),
         data_dir: Some(dir.path().to_path_buf()),
         store: Some(store.clone()),
@@ -323,6 +324,7 @@ async fn t33_shutdown_endpoint_is_authed_and_notifies() {
     let handle = RuntimeHandle::start(RuntimeConfig {
         capabilities: bm_providers::builtin::builtin_capability_set(),
         async_executor: None,
+        model_streaming: false,
         version: "0.1.0-m1".into(),
         data_dir: Some(dir.path().to_path_buf()),
         store: Some(store.clone()),
@@ -412,6 +414,7 @@ async fn m4_rig(
         turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
         max_attempts: None,
         async_executor: executor,
+        model_streaming: false,
     })
     .await;
 

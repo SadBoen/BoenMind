@@ -33,6 +33,7 @@ async fn butler_rig(dir: Option<&std::path::Path>) -> (RuntimeHandle, Arc<SeqIdG
         turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
         max_attempts: None,
         async_executor: None,
+        model_streaming: false,
     };
     (RuntimeHandle::start(config).await, ids)
 }

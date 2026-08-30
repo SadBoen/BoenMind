@@ -129,6 +129,7 @@ pub(crate) fn spawn_turn(w: &mut World, agent: &Agent, operation_id: &BmId, cont
     let timeout_secs = w.config.turn_timeout_secs;
     let tx = w.tx.clone();
     let op_id = operation_id.clone();
+    let streaming = w.config.model_streaming;
 
     tokio::spawn(async move {
         for attempt in 1..=max_attempts {
@@ -151,11 +152,31 @@ pub(crate) fn spawn_turn(w: &mut World, agent: &Agent, operation_id: &BmId, cont
                 attempt,
             };
 
-            let resp = tokio::select! {
-                _ = cancel.cancelled() => InvokeResponse::Failed {
-                    error_code: ErrorCode::Cancelled, retryable: false, attempt, detail_ref: None,
-                },
-                r = connector.invoke(req, cancel.clone()) => r,
+            // M9-S2:流式开关开启时走 invoke_stream,增量经 ProviderDelta
+            // 回核心循环(单写者落 model.content.delta 事件);通道满则丢弃
+            // 单个增量(事件面渐进性降级,不影响终态聚合)。
+            let resp = if streaming {
+                let delta_tx = tx.clone();
+                let delta_op = op_id.clone();
+                let on_delta = Box::new(move |d: &str| {
+                    let _ = delta_tx.try_send(Cmd::ProviderDelta {
+                        operation_id: delta_op.clone(),
+                        delta: d.to_string(),
+                    });
+                });
+                tokio::select! {
+                    _ = cancel.cancelled() => InvokeResponse::Failed {
+                        error_code: ErrorCode::Cancelled, retryable: false, attempt, detail_ref: None,
+                    },
+                    r = connector.invoke_stream(req, cancel.clone(), on_delta) => r,
+                }
+            } else {
+                tokio::select! {
+                    _ = cancel.cancelled() => InvokeResponse::Failed {
+                        error_code: ErrorCode::Cancelled, retryable: false, attempt, detail_ref: None,
+                    },
+                    r = connector.invoke(req, cancel.clone()) => r,
+                }
             };
 
             match resp {

@@ -96,6 +96,7 @@ async fn p02_session_resume_with_10k_events() {
         turn_timeout_secs: bm_core::runtime::DEFAULT_TURN_TIMEOUT_SECS,
         max_attempts: None,
         async_executor: None,
+        model_streaming: false,
     })
     .await;
 

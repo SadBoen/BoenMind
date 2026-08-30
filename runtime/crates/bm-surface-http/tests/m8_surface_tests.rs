@@ -57,6 +57,7 @@ async fn rig_with_slow_mcp() -> Rig {
     let handle = RuntimeHandle::start(RuntimeConfig {
         capabilities: [vec![bm_providers::builtin::model_invoke_cap()], entries].concat(),
         async_executor: Some(hub),
+        model_streaming: false,
         version: "0.1.0-m8".into(),
         data_dir: Some(dir.path().to_path_buf()),
         store: Some(store.clone()),
