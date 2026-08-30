@@ -203,6 +203,11 @@ impl PersistStore {
     /// 自事件日志重建投影——「投影重建只绑定事件日志」的终极验证。
     /// 边界:若日志已压实(前缀不在),前缀状态无法重建,拒绝并要求快照恢复。
     /// 返回 (store, 是否发生重建)。
+    /// M8.5:在线备份(WAL checkpoint + 主库拷贝;运行中可取的一致快照)。
+    pub fn backup_into(&self, target: &Path) -> StoreResult<()> {
+        self.state.backup_into(target)
+    }
+
     pub fn open_resilient(dir: &Path) -> StoreResult<(Self, bool)> {
         match Self::open(dir) {
             Ok(s) => Ok((s, false)),

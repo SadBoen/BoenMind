@@ -396,6 +396,7 @@ dependencies = [
  "chrono",
  "jsonschema",
  "proptest",
+ "rusqlite",
  "serde_json",
  "tempfile",
  "tokio",

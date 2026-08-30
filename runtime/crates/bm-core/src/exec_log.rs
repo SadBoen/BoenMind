@@ -119,3 +119,36 @@ impl ExecutionLog {
         self.len() == 0
     }
 }
+
+impl ExecutionLog {
+    /// M8.8:保留期修剪——删除 ts < cutoff 的条目并重写日志文件。
+    /// cutoff 为 ISO-8601 UTC(合同形态,字典序即时间序);返回删除条数。
+    /// 仅修剪 execution log(过程面);事件日志为审计本体,永不修剪。
+    pub fn prune_before(&self, cutoff: &str) -> usize {
+        let mut inner = self.inner.lock().expect("锁未中毒");
+        let before = inner.entries.len();
+        inner.entries.retain(|e| e.ts.as_str() >= cutoff);
+        let removed = before - inner.entries.len();
+        if removed > 0
+            && let Some(path) = &self.path
+        {
+            let out = inner
+                .entries
+                .iter()
+                .map(|e| serde_json::to_string(e).expect("日志条目可序列化"))
+                .collect::<Vec<_>>()
+                .join(
+                    "
+",
+                );
+            let payload = if out.is_empty() {
+                String::new()
+            } else {
+                out + "
+"
+            };
+            std::fs::write(path, payload).expect("Execution Log 重写成功");
+        }
+        removed
+    }
+}
