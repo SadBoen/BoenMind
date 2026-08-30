@@ -79,9 +79,10 @@ function cfg() {
 function conn() {
   const c = cfg();
   $("base").value = c.base; $("token").value = c.token;
-  api("operations.get", { operation_id: "op_00000000000000000000000000" })
-    .then(() => $("conn").textContent = "已连接")
-    .catch(() => $("conn").textContent = "未连接(检查地址/令牌)");
+  // 连通性探测用必然成功的调用(此前错用不存在的 operation → 永远显示未连接)
+  api("task.list", {})
+    .then(() => { $("conn").textContent = "已连接"; })
+    .catch(() => { $("conn").textContent = "未连接(检查地址/令牌)"; });
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(loadApprovals, 3000);
   loadApprovals(); loadTasks();
@@ -151,23 +152,31 @@ async function pollOp(opId, tries = 300) {
   }
 }
 async function watchEvents() {
-  const c = cfg(); const base = c.base || location.origin;
-  const es = new EventSource(`${base}/events/${sessionId}?since_seq=${lastSeq}`);
-  es.addEventListener("envelope", (m) => {
+  // M8 体验修复:事件流改走合同方法 events.poll 轮询——EventSource 无法
+  // 携带 Authorization 头,被鉴权中间件 401 静默拒绝
+  if (watchEvents.timer) clearInterval(watchEvents.timer);
+  watchEvents.timer = setInterval(async () => {
+    if (!sessionId) return;
     try {
-      const e = JSON.parse(m.data);
-      lastSeq = e.event_seq || lastSeq;
-      if (e.event_type === "model.invocation.completed" && e.payload && e.payload.content) {
-        log("assistant", e.payload.content);
-      } else if (e.event_type === "model.invocation.failed") {
-        log("error", `模型调用失败:${(e.payload && e.payload.error_code) || "?"}`);
-      } else if (e.event_type === "operation.state.changed" && e.payload && e.payload.to === "failed") {
-        log("error", `回合失败:${e.payload.reason_code || ""}`);
+      const res = await api("events.poll",
+        { session_id: sessionId, since_seq: lastSeq });
+      for (const e of res.events || []) {
+        lastSeq = e.event_seq || lastSeq;
+        const ty = e.type, p = e.payload || {}; // 信封 JSON 字段名是 type
+        if (ty === "model.invocation.completed" && p.content) {
+          log("assistant", p.content);
+        } else if (ty === "model.invocation.failed") {
+          log("error", "模型调用失败:" + (p.error_code || "?"));
+        } else if (ty === "operation.state.changed" && p.to === "failed") {
+          log("error", "回合失败:" + (p.reason_code || ""));
+        } else if (ty === "agent.turn.started") {
+          log("runtime", "思考中…");
+        }
       }
-    } catch (_) { /* 忽略非 JSON */ }
-  };
-  es.onerror = () => es.close();
+    } catch (e) { /* 下一轮重试 */ }
+  }, 1500);
 }
+
 async function health() {
   const c = cfg(); const base = c.base || location.origin;
   const r = await fetch(`${base}/health`);

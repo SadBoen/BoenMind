@@ -41,6 +41,17 @@ runtime/                        第 3 层  源代码(M1 起,Rust workspace;crate
 
 ## 环境与工具备忘
 
+### 真实用户面踩坑(2026-08-30,浏览器实测四连)
+1. **事件信封 JSON 字段名是 `type`**(serde rename),不是 Rust 字段名
+   `event_type`——前端按后者读永远 undefined;
+2. **EventSource(SSE)无法携带 Authorization 头** → /events 被 401 静默
+   拒绝;前端改走合同方法 `events.poll` 轮询(1.5s);
+3. **静态页无缓存头,浏览器缓存旧页**——发版后必须 Ctrl+F5 或带查询串;
+4. 内联脚本的语法错误会**整页静默失效**(所有按钮无反应且无报错),
+   改完必须 `node --check`。
+教训:229 个测试全绿测不出这四个 bug——**P0 之外必须有真实浏览器
+端到端手测轮**。
+
 - gh CLI 已装;Rust 1.98、Node 24、Python 3.13;tauri-cli 未装(桌面壳手工构建于 web/src-tauri/)。
 - 性能测试:`cargo test --release -p bm-testkit --test perf_smoke -- --ignored --nocapture`(perf_m2 同理);P-09/10 常驻测试套件。
 - context7 MCP 可用(库文档查询;M7 真实 Provider/MCP 接入时优先用)。
