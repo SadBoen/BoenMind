@@ -582,17 +582,18 @@ window.__ModuleLoader__.load({
 				name: "settings.close",
 				locale: NS
 			}, CloseLabel));
-			ctx.slots.inject("settings.section", () => ctx.slots.register({
-				name: "settings.section",
-				id: "general",
-				order: 0,
-				label: () => t("general.nav"),
-				locale: NS,
-				children: { "settings.general.item": {
-					kind: "list",
-					scope: "root"
-				} }
-			}, GeneralSection));
+			/* BoenMind:按用户裁决移除通用设置节(含外观/语言等;用户裁决设置只留 LLM provider),保留原代码便于恢复 */
+		//ctx.slots.inject("settings.section", () => ctx.slots.register({
+		//		name: "settings.section",
+		//		id: "general",
+		//		order: 0,
+		//		label: () => t("general.nav"),
+		//		locale: NS,
+		//		children: { "settings.general.item": {
+		//			kind: "list",
+		//			scope: "root"
+		//		} }
+		//	}, GeneralSection));
 		}
 		//#endregion
 		exports.SettingsDocumentStore = SettingsDocumentStore;

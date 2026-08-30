@@ -121,17 +121,15 @@ async fn t120_web_ui_served_and_functional() {
     let rig = rig_with_web().await;
     let anon = rig.client(false);
 
-    // GET / → Web UI v1 页面(零构建链单页)
+    // GET / → Web 前端(dsh 官方前端整体复刻,MIT;2026-08-30 起)
     let r = reqwest::get(format!("{}/", rig.url)).await.expect("GET /");
     assert_eq!(r.status().as_u16(), 200);
     let html = r.text().await.expect("正文");
-    assert!(html.contains("BoenMind"), "页面含产品名");
     // 审批面暂离界面(2026-08-30 用户裁决:先对齐 dsh 布局,功能待定回归方案);
     // 后端 approval.* 合同方法不受影响
-    assert!(html.contains("agent.send_input"), "页面调用回合面");
-    assert!(html.contains("session.create"), "页面调用会话面");
-    assert!(html.contains("tokens.css"), "页面引用设计令牌表");
-    assert!(html.contains("window.boenmind"), "页面暴露前端界面插槽");
+    assert!(html.contains("__DSH_BOOT__"), "页面含 dsh 启动引导清单");
+    assert!(html.contains("/plugins/@deepseek-ai/dsh-client-ui-sidebar/client.js"), "页面加载侧栏模块");
+    assert!(html.contains("dsh-typert-registry"), "页面含启动模块清单条目");
 
     // /health 无鉴权探针
     let r = reqwest::get(format!("{}/health", rig.url))

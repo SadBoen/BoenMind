@@ -8,6 +8,7 @@
 //! - `GET /health`:无鉴权探针;
 //! - 鉴权:除 /health 外一律 Bearer 令牌(合同库 surface/auth.v0_1)。
 
+pub mod api_dsh;
 pub mod auth;
 pub mod rpc;
 pub mod sse;
@@ -53,6 +54,10 @@ pub fn router(
             auth::require_bearer,
         ))
         .route("/health", get(rpc::health))
+        // dsh 前端宿主协议(公开挂载,见 api_dsh.rs 安全边界说明)
+        .route("/api/{*rest}", post(api_dsh::unary))
+        .route("/api/events.mux", get(api_dsh::events_channel))
+        .route("/api/events.host", get(api_dsh::events_channel))
         .with_state(state);
     // Web Surface 静态托管(公开:界面壳不含数据;数据一律经鉴权 API):
     // 未匹配 API 的路径回落到静态文件

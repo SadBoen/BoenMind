@@ -19,11 +19,24 @@
 2. `plugins/@deepseek-ai/dsh-client-ui-conversation/client.js`:
    locale 词典 `hero.headline` "探索未至之境" → "个人生态的 AI Runtime"。
 
-## 后端连接现状
+## 后端连接现状(2026-08-30,dsh 宿主协议适配已起步)
 
-dsh 前端经由其自有 WebSocket 协议与宿主通信(`connection` 模块);
-BoenMind 后端(rust)尚未实现该协议,故界面为未连接空状态。
-后续按"后端连接一点点做好"路线逐项适配(见 milestones/PENDING.md D-M3-1)。
+dsh 前端经 api-gateway 协议与宿主通信,BoenMind 侧适配层:
+`runtime/crates/bm-surface-http/src/api_dsh.rs`。已接通:
+
+- `POST /api/host.describe`(连接握手,host 元信息)
+- `GET /api/events.mux`、`/api/events.host`(WebSocket 事件流 + SSE 回退,
+  当前为空事件流心跳)
+- `POST /api/workspace.list` / `session.list` / `agentPreset.list`(合法空态)
+- `POST /api/settings.describe` / `settings.mutate`(内存存储,预置
+  ui-onboarding 关闭内测声明;重启重置)
+- `POST /api/llm.providers` / `llm.models` / `llm.discoverModels`
+  (单 provider=服务器 env 网关配置)
+- 未适配方法 → `{ok:false, error:{code:"bad-request"}}`(dsh 错误码封闭
+  枚举内合法值)
+
+设置面板已按用户裁决精简:仅留「模型(LLM provider)」节(通用/插件/
+Agent 预设三节注册已注释保留原码,见各 client.js 内 BoenMind 标记)。
 
 许可证:上游 MIT 文本见 deepseek-harness 仓库 LICENSE;本仓库第 0 层
 AGENTS.md 不变。

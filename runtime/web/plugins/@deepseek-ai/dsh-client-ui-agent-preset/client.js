@@ -1703,14 +1703,15 @@ window.__ModuleLoader__.load({
 				locale: "settings.agentPreset",
 				inject: injected
 			}, AgentPresetRow));
-			ctx.slots.inject("settings.section", () => ctx.slots.register({
-				name: "settings.section",
-				id: "agent-presets",
-				order: 20,
-				label: () => ctx.locale.bind("settings.agentPreset")("nav"),
-				locale: "settings.agentPreset",
-				inject: sectionInjected
-			}, AgentPresetSection));
+			/* BoenMind:按用户裁决移除Agent 预设节,保留原代码便于恢复 */
+		//ctx.slots.inject("settings.section", () => ctx.slots.register({
+		//		name: "settings.section",
+		//		id: "agent-presets",
+		//		order: 20,
+		//		label: () => ctx.locale.bind("settings.agentPreset")("nav"),
+		//		locale: "settings.agentPreset",
+		//		inject: sectionInjected
+		//	}, AgentPresetSection));
 		}
 		//#endregion
 		exports.AGENT_PRESET_SETTINGS_NS = AGENT_PRESET_SETTINGS_NS;

@@ -1273,18 +1273,19 @@ window.__ModuleLoader__.load({
 					};
 				}
 			} } });
-			ctx.slots.inject("settings.section", () => ctx.slots.register({
-				name: "settings.section",
-				id: "plugins",
-				order: 15,
-				label: () => t("nav"),
-				locale: NS,
-				inject: sectionInjected,
-				children: { "settings.plugins.tab": {
-					kind: "list",
-					scope: "root"
-				} }
-			}, PluginsSettingsSection));
+			/* BoenMind:按用户裁决移除dsh 插件设置节,保留原代码便于恢复 */
+		//ctx.slots.inject("settings.section", () => ctx.slots.register({
+		//		name: "settings.section",
+		//		id: "plugins",
+		//		order: 15,
+		//		label: () => t("nav"),
+		//		locale: NS,
+		//		inject: sectionInjected,
+		//		children: { "settings.plugins.tab": {
+		//			kind: "list",
+		//			scope: "root"
+		//		} }
+		//	}, PluginsSettingsSection));
 			ctx.slots.inject("settings.plugins.tab", () => ctx.slots.register({
 				name: "settings.plugins.tab",
 				id: "configurable",
