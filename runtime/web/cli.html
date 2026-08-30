@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BoenMind CLI 终端</title>
+<style>
+  :root { --bg:#0a0e14; --fg:#d8e2f5; --dim:#7a8aa8; --acc:#5b8cff; --ok:#3ecf8e; --err:#ff6b6b; --line:#22304a; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:13px/1.5 Consolas,"Courier New",monospace; }
+  header { padding:8px 14px; border-bottom:1px solid var(--line); display:flex; gap:10px; align-items:center; }
+  header b { color:var(--acc); }
+  header span { color:var(--dim); font-size:12px; }
+  #term { height:calc(100vh - 96px); overflow:auto; padding:10px 14px; white-space:pre-wrap; word-break:break-all; }
+  .cmd { color:var(--acc); } .cmd::before { content:"$ "; color:var(--dim); }
+  .out { color:var(--fg); } .err { color:var(--err); } .sys { color:var(--dim); }
+  #line { display:flex; gap:0; border-top:1px solid var(--line); align-items:center; }
+  #line .ps { color:var(--ok); padding:8px 0 8px 14px; }
+  #cmdin { flex:1; background:transparent; border:0; outline:0; color:var(--fg); font:inherit; padding:8px; }
+</style>
+</head>
+<body>
+<header>
+  <b>BoenMind CLI</b>
+  <span>常见场景见 scenarios/README.md · 危险操作会走审批流 · 此终端后端需服务器以 BOEN_CLI_WEB=1 启动</span>
+  <span style="margin-left:auto" id="tok">令牌:<input id="token" size="46" style="background:#0a0e14;color:var(--dim);border:1px solid var(--line);font:inherit"></span>
+</header>
+<div id="term"><div class="sys">BoenMind CLI 终端(命令经服务器转发给 boenmind CLI;--url/--token 自动注入)。</div><div class="sys">试试:session create --name demo   |   capability call system.echo --args "{\"msg\":\"hi\"}"</div></div>
+<div id="line"><span class="ps">boenmind&gt;</span><input id="cmdin" autofocus autocomplete="off"></div>
+<script>
+const $ = (id) => document.getElementById(id);
+const term = $("term"), cmdin = $("cmdin");
+$("token").value = localStorage.getItem("bm.token") || "";
+let history = JSON.parse(localStorage.getItem("cli.history") || "[]");
+let hi = history.length;
+
+function append(cls, text) {
+  const d = document.createElement("div");
+  d.className = cls;
+  d.textContent = text;
+  term.appendChild(d);
+  term.scrollTop = term.scrollHeight;
+}
+
+async function run(cmd) {
+  append("cmd", cmd);
+  try {
+    const token = $("token").value.trim();
+    const r = await fetch("/admin/cli", {
+      method: "POST",
+      headers: Object.assign({ "Content-Type": "application/json" },
+        token ? { Authorization: "Bearer " + token } : {}),
+      body: JSON.stringify({ cmd })
+    });
+    const text = await r.text();
+    if (r.status !== 200) { append("err", `[HTTP ${r.status}] ${text}`); return; }
+    const body = JSON.parse(text);
+    if (body.stdout) append("out", body.stdout.trimEnd());
+    if (body.stderr) append("err", body.stderr.trimEnd());
+    append(body.exit_code === 0 ? "sys" : "err",
+      `[退出码 ${body.exit_code}]`);
+    localStorage.setItem("bm.token", token);
+  } catch (e) { append("err", String(e)); }
+}
+
+cmdin.addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter") {
+    const cmd = cmdin.value.trim();
+    if (!cmd) return;
+    history.push(cmd); hi = history.length;
+    localStorage.setItem("cli.history", JSON.stringify(history.slice(-50)));
+    cmdin.value = "";
+    run(cmd);
+  } else if (ev.key === "ArrowUp") {
+    if (hi > 0) { hi -= 1; cmdin.value = history[hi] || ""; }
+    ev.preventDefault();
+  } else if (ev.key === "ArrowDown") {
+    if (hi < history.length - 1) { hi += 1; cmdin.value = history[hi] || ""; }
+    else { hi = history.length; cmdin.value = ""; }
+    ev.preventDefault();
+  }
+});
+</script>
+</body>
+</html>

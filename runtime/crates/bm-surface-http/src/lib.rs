@@ -48,6 +48,7 @@ pub fn router(
         .route("/rpc/{method}", post(rpc::rpc_endpoint))
         .route("/events/{session_id}", get(sse::events_sse))
         .route("/shutdown", post(rpc::shutdown_endpoint))
+        .route("/admin/cli", post(rpc::cli_endpoint))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_bearer,
