@@ -126,9 +126,12 @@ async fn t120_web_ui_served_and_functional() {
     assert_eq!(r.status().as_u16(), 200);
     let html = r.text().await.expect("正文");
     assert!(html.contains("BoenMind"), "页面含产品名");
-    assert!(html.contains("approval.list"), "页面调用审批面");
+    // 审批面暂离界面(2026-08-30 用户裁决:先对齐 dsh 布局,功能待定回归方案);
+    // 后端 approval.* 合同方法不受影响
     assert!(html.contains("agent.send_input"), "页面调用回合面");
     assert!(html.contains("session.create"), "页面调用会话面");
+    assert!(html.contains("tokens.css"), "页面引用设计令牌表");
+    assert!(html.contains("window.boenmind"), "页面暴露前端界面插槽");
 
     // /health 无鉴权探针
     let r = reqwest::get(format!("{}/health", rig.url))

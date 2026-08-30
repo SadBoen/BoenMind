@@ -17,17 +17,15 @@
   * { box-sizing:border-box; }
   html, body { height:100%; }
   body {
-    margin:0; display:grid; grid-template-columns:264px 1fr auto;
+    margin:0; display:grid; grid-template-columns:264px 1fr;
     background:var(--bm-alias-bg-base); color:var(--bm-alias-label-primary);
     font:14px/1.6 var(--bm-font-family);
     transition:background var(--bm-transition-duration) var(--bm-ease-in-out);
   }
-  button, input, select, textarea {
-    font:inherit; color:inherit; background:transparent; border:0; outline:0;
-  }
+  button, input, select, textarea { font:inherit; color:inherit; background:transparent; border:0; outline:0; }
   button { cursor:pointer; }
 
-  /* ===== 左侧栏 ===== */
+  /* ===== 左侧栏(抄 dsh:logo/新会话/会话区/底部设置)===== */
   #side {
     background:var(--bm-specific-sidebar-fill); border-right:1px solid var(--bm-alias-border-l1);
     display:flex; flex-direction:column; padding:14px 12px; gap:10px; min-height:0;
@@ -47,48 +45,24 @@
   #side h3 {
     margin:8px 6px 2px; font-size:11px; font-weight:500; letter-spacing:.06em;
     text-transform:uppercase; color:var(--bm-alias-label-caption);
+    display:flex; align-items:center; justify-content:space-between;
   }
-  .navitem {
-    display:flex; align-items:center; gap:8px; padding:8px 10px; border-radius:8px;
-    color:var(--bm-alias-label-secondary); width:100%; text-align:left;
-    transition:background var(--bm-transition-duration-fast) var(--bm-ease-in-out);
-  }
-  .navitem:hover { background:var(--bm-specific-sidebar-nav-item-hover); color:var(--bm-alias-label-primary); }
-  #side .spacer { flex:1; }
   #sessCard {
     border:1px solid var(--bm-alias-border-l1); border-radius:10px; padding:8px 10px;
     font-size:12px; color:var(--bm-alias-label-tertiary); margin:0 2px;
   }
   #sessCard b { display:block; color:var(--bm-alias-label-secondary); font-weight:500;
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  #connBox { border-top:1px solid var(--bm-alias-border-l1); padding-top:10px; display:grid; gap:6px; }
-  #connBox input {
-    background:var(--bm-specific-login-input); border:1px solid var(--bm-alias-border-l1);
-    border-radius:8px; padding:6px 9px; font-size:12px; width:100%;
+  #side .spacer { flex:1; }
+  #slot-sidebar-extra { display:grid; gap:8px; }
+  #settingsBtn {
+    display:flex; align-items:center; gap:8px; padding:9px 10px; border-radius:8px;
+    color:var(--bm-alias-label-secondary); width:100%; text-align:left;
+    transition:background var(--bm-transition-duration-fast) var(--bm-ease-in-out);
   }
-  #connBox input:focus { border-color:var(--bm-alias-button-info-fill); }
-  #connBtn {
-    border:1px solid var(--bm-alias-border-l2); border-radius:8px; padding:6px;
-    color:var(--bm-alias-label-secondary); text-align:center; font-size:12px;
-  }
-  #connBtn:hover { border-color:var(--bm-alias-button-info-fill); color:var(--bm-alias-label-primary); }
-  #conn { font-size:11px; padding:1px 8px; border-radius:10px; justify-self:start;
-    background:var(--bm-specific-tip); color:var(--bm-alias-label-tertiary); }
-  #conn.ok { color:var(--bm-alias-state-success-primary); }
-  .themeRow { display:flex; gap:4px; }
-  .themeRow button {
-    flex:1; font-size:11px; padding:5px 0; border-radius:7px; color:var(--bm-alias-label-tertiary);
-    border:1px solid transparent;
-  }
-  .themeRow button:hover { background:var(--bm-alias-interactive-bg-hover); color:var(--bm-alias-label-primary); }
-  .themeRow button[aria-pressed="true"] {
-    background:var(--bm-specific-tip); color:var(--bm-alias-label-primary);
-    border-color:var(--bm-alias-border-l1);
-  }
-  .slot { display:contents; }
-  #slot-sidebar-extra { display:grid; gap:6px; }
+  #settingsBtn:hover { background:var(--bm-specific-sidebar-nav-item-hover); color:var(--bm-alias-label-primary); }
 
-  /* ===== 主区:对话 ===== */
+  /* ===== 主区:欢迎 + 消息流 + 输入卡 ===== */
   #main { display:flex; flex-direction:column; min-width:0; min-height:0; }
   #welcome {
     flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
@@ -115,8 +89,6 @@
     color:var(--bm-alias-label-primary); font-size:12px; border-radius:9px; }
   .msg .who { color:var(--bm-alias-label-tertiary); font-size:12px; margin-right:6px; }
   .msg.user .who, .msg.assistant .who { display:none; }
-
-  /* ===== 输入卡 ===== */
   #composer { padding:10px 22px 20px; }
   #composerCard {
     background:var(--bm-specific-input-major); border:1px solid var(--bm-alias-border-l2);
@@ -132,6 +104,7 @@
     color:var(--bm-alias-label-tertiary); font-size:16px;
   }
   #composerTools .tool:hover { background:var(--bm-alias-interactive-bg-hover); color:var(--bm-alias-label-primary); }
+  #slot-composer-tools { display:flex; gap:6px; align-items:center; }
   #sendBtn {
     margin-left:auto; width:32px; height:32px; border-radius:50%;
     background:var(--bm-alias-button-info-fill); color:var(--bm-alias-label-primary-foreground);
@@ -139,70 +112,74 @@
     transition:background var(--bm-transition-duration-fast) var(--bm-ease-in-out);
   }
   #sendBtn:hover { background:var(--bm-alias-button-info-hover); }
-  #composerTools .slot { display:contents; }
-  #slot-composer-tools { display:flex; gap:6px; align-items:center; }
 
-  /* ===== 右侧监护栏 ===== */
-  #guard {
-    width:308px; border-left:1px solid var(--bm-alias-border-l1); padding:14px 12px;
-    display:flex; flex-direction:column; gap:12px; min-height:0; overflow-y:auto;
-    background:var(--bm-specific-sidebar-fill);
+  /* ===== 设置面板(抄 dsh:居中卡片 + 左导航分节)===== */
+  #settingsMask {
+    position:fixed; inset:0; background:var(--bm-alias-bg-mask-1);
+    display:none; place-items:center; z-index:40;
   }
-  body.guard-off #guard { display:none; }
-  body.guard-off { grid-template-columns:264px 1fr; }
-  #guard h2 {
-    margin:0 2px 8px; font-size:11px; font-weight:500; letter-spacing:.06em;
-    text-transform:uppercase; color:var(--bm-alias-label-caption);
-    display:flex; align-items:center; justify-content:space-between;
+  #settingsMask.open { display:grid; }
+  #settingsCard {
+    width:min(720px, 92vw); max-height:84vh; overflow:hidden; display:grid;
+    grid-template-columns:180px 1fr;
+    background:var(--bm-alias-bg-layer-2); border:1px solid var(--bm-alias-border-l2);
+    border-radius:18px; box-shadow:0 18px 50px rgba(0,0,0,.35);
   }
-  #guard h2 button { color:var(--bm-alias-label-tertiary); font-size:12px; }
-  #guard h2 button:hover { color:var(--bm-alias-label-primary); }
-  .panel { background:var(--bm-alias-bg-layer-2); border:1px solid var(--bm-alias-border-l1);
-    border-radius:12px; padding:10px; }
-  #guard ul { list-style:none; margin:0; padding:0; display:grid; gap:6px; }
-  #guard li {
-    border:1px solid var(--bm-alias-border-l1); border-radius:9px; padding:7px 9px;
-    display:flex; gap:8px; align-items:center; flex-wrap:wrap; font-size:13px;
+  #settingsCard nav { padding:16px 10px; border-right:1px solid var(--bm-alias-border-l1);
+    display:grid; gap:4px; align-content:start; }
+  #settingsCard nav .stitle { font-size:15px; font-weight:500; padding:2px 10px 12px; }
+  #settingsCard nav button {
+    text-align:left; padding:8px 10px; border-radius:8px; color:var(--bm-alias-label-secondary);
   }
-  .tag { font-size:11px; padding:1px 8px; border-radius:10px;
-    background:var(--bm-specific-tip); color:var(--bm-alias-label-tertiary); }
-  #guard .ok { color:var(--bm-alias-state-success-primary); }
-  #guard .err { color:var(--bm-alias-state-error-primary); }
-  #guard button.p, #guard button:not(.tag) {
-    border:1px solid var(--bm-alias-border-l2); border-radius:8px; padding:4px 10px;
-    font-size:12px; color:var(--bm-alias-label-secondary);
+  #settingsCard nav button:hover { background:var(--bm-alias-interactive-bg-hover); color:var(--bm-alias-label-primary); }
+  #settingsCard nav button[aria-pressed="true"] { background:var(--bm-specific-tip); color:var(--bm-alias-label-primary); }
+  #settingsBody { padding:18px 20px; overflow-y:auto; display:grid; gap:16px; align-content:start; }
+  #settingsBody h4 { margin:0; font-size:13px; font-weight:500; color:var(--bm-alias-label-primary); }
+  #settingsBody .hint { font-size:12px; color:var(--bm-alias-label-tertiary); margin-top:-10px; }
+  #settingsBody input {
+    width:100%; background:var(--bm-specific-login-input); border:1px solid var(--bm-alias-border-l1);
+    border-radius:8px; padding:7px 10px; font-size:13px;
   }
-  #guard button.p { background:var(--bm-alias-button-info-fill); border-color:transparent;
-    color:var(--bm-alias-label-primary-foreground); }
-  #guard button:hover { border-color:var(--bm-alias-button-info-fill); color:var(--bm-alias-label-primary); }
-  #guard button.p:hover { background:var(--bm-alias-button-info-hover); color:var(--bm-alias-label-primary-foreground); }
-  #slot-guard-extra { display:grid; gap:12px; }
-  @media (max-width: 980px) { body, body.guard-off { grid-template-columns:64px 1fr; }
-    #side .logo b, #side h3, #newBtn, #connBox, #sessCard, .navitem span { display:none; } }
+  #settingsBody input:focus { border-color:var(--bm-alias-button-info-fill); }
+  #settingsBody .row { display:flex; gap:8px; align-items:center; }
+  #settingsBody .row .grow { flex:1; display:grid; gap:6px; }
+  .themeCards { display:flex; gap:10px; }
+  .themeCards button {
+    flex:1; border:1px solid var(--bm-alias-border-l2); border-radius:10px; padding:12px 0;
+    font-size:13px; color:var(--bm-alias-label-secondary); display:grid; gap:4px; justify-items:center;
+  }
+  .themeCards button .ico { font-size:16px; }
+  .themeCards button[aria-pressed="true"] { border-color:var(--bm-alias-label-primary); color:var(--bm-alias-label-primary); }
+  .ghostBtn {
+    border:1px solid var(--bm-alias-border-l2); border-radius:8px; padding:6px 14px;
+    color:var(--bm-alias-label-secondary); font-size:13px;
+  }
+  .ghostBtn:hover { border-color:var(--bm-alias-button-info-fill); color:var(--bm-alias-label-primary); }
+  .primaryBtn {
+    background:var(--bm-alias-button-info-fill); color:var(--bm-alias-label-primary-foreground);
+    border-radius:8px; padding:6px 14px; font-size:13px;
+  }
+  .primaryBtn:hover { background:var(--bm-alias-button-info-hover); }
+  #settingsClose { position:absolute; margin:14px 16px 0 0; }
+  #settingsCard { position:relative; }
+  #closeSettings { position:absolute; top:12px; right:14px; font-size:16px;
+    color:var(--bm-alias-label-tertiary); z-index:2; }
+  #closeSettings:hover { color:var(--bm-alias-label-primary); }
+  #plugList { display:grid; gap:6px; font-size:13px; color:var(--bm-alias-label-secondary); }
+  #conn { font-size:11px; padding:1px 8px; border-radius:10px;
+    background:var(--bm-specific-tip); color:var(--bm-alias-label-tertiary); justify-self:start; }
+  #conn.ok { color:var(--bm-alias-state-success-primary); }
 </style>
 </head>
 <body>
 <nav id="side">
   <div class="logo"><b>BoenMind</b><span class="ver">控制台</span></div>
   <button id="newBtn" onclick="createSession()">＋ 新会话</button>
+  <h3>会话</h3>
   <div id="sessCard">当前会话<b id="sessId">未创建</b><span id="agentTag">agent: assistant</span></div>
-  <h3>监护</h3>
-  <button class="navitem" onclick="document.body.classList.toggle('guard-off')">◈ 审批与任务</button>
   <div class="slot" data-slot="sidebar-extra" id="slot-sidebar-extra"></div>
   <div class="spacer"></div>
-  <div id="connBox">
-    <input id="base" placeholder="server 地址(缺省同源)">
-    <input id="token" placeholder="访问令牌(auth.v0_1)" type="password">
-    <button id="connBtn" onclick="saveCfg()">连接</button>
-    <span id="conn" class="tag">未连接</span>
-    <input id="agentName" placeholder="agent 名称(高级)" value="assistant">
-  </div>
-  <div class="themeRow" id="themeRow">
-    <button data-t="light">浅色</button>
-    <button data-t="dark">深色</button>
-    <button data-t="auto">跟随系统</button>
-  </div>
-  <a class="navitem" href="/cli.html" style="text-decoration:none">⌨ CLI 终端</a>
+  <button id="settingsBtn" onclick="openSettings()">⚙ 设置</button>
 </nav>
 
 <main id="main">
@@ -220,23 +197,68 @@
   </div>
 </main>
 
-<aside id="guard">
-  <section class="panel">
-    <h2>审批队列 <button onclick="document.body.classList.add('guard-off')">收起 ›</button></h2>
-    <ul id="approvals"></ul>
-    <div style="margin-top:6px"><button onclick="loadApprovals()">刷新</button></div>
-  </section>
-  <section class="panel">
-    <h2>任务看板</h2>
-    <ul id="tasks"></ul>
-    <div style="margin-top:6px"><button onclick="loadTasks()">刷新</button></div>
-  </section>
-  <div class="slot" data-slot="guard-extra" id="slot-guard-extra"></div>
-</aside>
+<!-- 设置面板(抄 dsh:遮罩 + 居中卡片 + 左导航) -->
+<div id="settingsMask">
+  <div id="settingsCard">
+    <button id="closeSettings" onclick="closeSettings()" title="关闭">✕</button>
+    <nav>
+      <div class="stitle">设置</div>
+      <button id="navGeneral" aria-pressed="true" onclick="showSettingsSection('general')">通用设置</button>
+      <button id="navPlugins" aria-pressed="false" onclick="showSettingsSection('plugins')">插件</button>
+    </nav>
+    <div id="settingsBody">
+      <!-- 通用 -->
+      <div id="secGeneral" style="display:grid; gap:16px;">
+        <div style="display:grid; gap:8px;">
+          <h4>外观</h4>
+          <div class="themeCards" id="themeRow">
+            <button data-t="light"><span class="ico">☀</span>浅色</button>
+            <button data-t="dark"><span class="ico">☾</span>深色</button>
+            <button data-t="auto"><span class="ico">◉</span>跟随系统</button>
+          </div>
+        </div>
+        <div style="display:grid; gap:8px;">
+          <h4>连接</h4>
+          <div class="row">
+            <div class="grow">
+              <input id="base" placeholder="server 地址(缺省同源)">
+              <input id="token" placeholder="访问令牌(auth.v0_1)" type="password">
+              <input id="agentName" placeholder="新建会话的 agent 名称" value="assistant">
+            </div>
+          </div>
+          <div class="row">
+            <button class="primaryBtn" onclick="saveCfg()">连接</button>
+            <span id="conn" class="">未连接</span>
+          </div>
+        </div>
+      </div>
+      <!-- 插件(前端界面插槽) -->
+      <div id="secPlugins" style="display:none; grid; gap:16px;">
+        <div style="display:grid; gap:8px;">
+          <h4>前端界面插槽</h4>
+          <p class="hint">声明即授权:插件只能向下方声明的插槽注册 DOM 节点,不接受 HTML 字符串;插槽机制不提供任何后端能力,功能类数据一律走权限合同。</p>
+          <p class="hint" id="declaredSlots"></p>
+        </div>
+        <div style="display:grid; gap:8px;">
+          <h4>已加载插件</h4>
+          <div id="plugList">无</div>
+        </div>
+        <div style="display:grid; gap:8px;">
+          <h4>示例插件</h4>
+          <p class="hint">演示插槽机制:加载后侧栏出现一个面板,不改界面源码。</p>
+          <div class="row">
+            <button class="primaryBtn" onclick="loadDemoPlugin()">加载示例插件</button>
+            <button class="ghostBtn" onclick="unloadDemoPlugin()">卸载</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
 
 <script>
 const $ = (id) => document.getElementById(id);
-let sessionId = "", agentId = "", lastSeq = 0, pollTimer = null;
+let sessionId = "", agentId = "", lastSeq = 0;
 
 function saveCfg() {
   localStorage.setItem("bm.base", $("base").value.trim());
@@ -256,9 +278,6 @@ function conn() {
   api("task.list", {})
     .then(() => { $("conn").textContent = "已连接"; $("conn").classList.add("ok"); })
     .catch(() => { $("conn").textContent = "未连接(检查地址/令牌)"; $("conn").classList.remove("ok"); });
-  if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(loadApprovals, 3000);
-  loadApprovals(); loadTasks();
 }
 async function api(method, params) {
   const c = cfg();
@@ -281,7 +300,7 @@ function rid() {
 function log(who, text) {
   // 安全审计修复:消息一律 textContent,杜绝 LLM/App 输出注入 HTML
   const d = document.createElement("div");
-  d.className = "msg " + who; // 改版:附类型类供对话式样式(逻辑不变)
+  d.className = "msg " + who;
   const w = document.createElement("span");
   w.className = "who" + (who === "runtime" ? " sys" : "");
   w.textContent = who;
@@ -326,7 +345,6 @@ async function createSession() {
     log("runtime", `会话已创建 ${sessionId}(agent ${agentId})`);
     $("sessId").textContent = sessionId;
     $("agentTag").textContent = "agent: " + agentId;
-    document.body.classList.remove("guard-off");
     watchEvents();
   } catch (e) { log("error", e.message); }
 }
@@ -394,49 +412,6 @@ async function health() {
   const r = await fetch(`${base}/health`);
   log("runtime", `/health → ${r.status}`);
 }
-async function loadApprovals() {
-  try {
-    const res = await api("approval.list", {});
-    const ul = $("approvals"); ul.innerHTML = "";
-    (res.approvals || []).filter((a) => a.state === "waiting_user").forEach((a) => {
-      const li = document.createElement("li");
-      const tag = document.createElement("span"); tag.className = "tag";
-      tag.textContent = a.risk_class;
-      const name = document.createElement("b"); name.textContent = a.capability;
-      const spacer = document.createElement("span"); spacer.style.flex = "1";
-      const yes = document.createElement("button"); yes.className = "p"; yes.textContent = "批准";
-      const no = document.createElement("button"); no.textContent = "拒绝";
-      yes.onclick = async () => {
-        await api("approval.respond", { approval_id: a.approval_id, decision: "approve", scope: "once" });
-        loadApprovals();
-      };
-      no.onclick = async () => {
-        await api("approval.respond", { approval_id: a.approval_id, decision: "deny", scope: null });
-        loadApprovals();
-      };
-      li.append(tag, name, spacer, yes, no);
-      ul.appendChild(li);
-    });
-    if (!(res.approvals || []).some((a) => a.state === "waiting_user"))
-      ul.innerHTML = "<li class='tag'>队列空</li>";
-  } catch (e) { /* 静默重试 */ }
-}
-async function loadTasks() {
-  try {
-    const res = await api("task.list", {});
-    const ul = $("tasks"); ul.innerHTML = "";
-    (res.tasks || []).forEach((t) => {
-      const li = document.createElement("li");
-      const tag = document.createElement("span"); tag.className = "tag";
-      tag.textContent = t.state;
-      const label = document.createElement("span");
-      label.textContent = t.title || t.task_id; // 任务标题为用户输入,禁止 HTML 拼接
-      li.append(tag, label);
-      ul.appendChild(li);
-    });
-    if (!(res.tasks || []).length) ul.innerHTML = "<li class='tag'>暂无任务</li>";
-  } catch (e) { /* 静默 */ }
-}
 conn();
 
 // 对话式输入:Enter 直接发送(原版仅按钮触发;shift+enter 换行预留)
@@ -444,7 +419,7 @@ $("input").addEventListener("keydown", (ev) => {
   if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); sendInput(); }
 });
 
-/* ===== 主题三态(浅/深/跟随系统)===== */
+/* ===== 主题三态(浅/深/跟随系统;入口在设置面板)===== */
 (function () {
   const row = $("themeRow");
   function paint() {
@@ -469,13 +444,26 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
   applyTheme(localStorage.getItem("bm.theme") || "auto");
 });
 
+/* ===== 设置面板(抄 dsh:遮罩 + 居中卡片 + 左导航)===== */
+function openSettings() { $("settingsMask").classList.add("open"); showSettingsSection("general"); }
+function closeSettings() { $("settingsMask").classList.remove("open"); }
+function showSettingsSection(sec) {
+  $("secGeneral").style.display = sec === "general" ? "grid" : "none";
+  $("secPlugins").style.display = sec === "plugins" ? "grid" : "none";
+  $("navGeneral").setAttribute("aria-pressed", String(sec === "general"));
+  $("navPlugins").setAttribute("aria-pressed", String(sec === "plugins"));
+}
+$("settingsMask").addEventListener("click", (ev) => {
+  if (ev.target === $("settingsMask")) closeSettings(); // 点遮罩关闭
+});
+
 /* ===== 前端界面插槽(2026-08-30 方案,PENDING D-M3-1)=====
  * 声明即授权(参照 dsh ui-slots 模式):只允许向下方 DECLARED 集合里
  * 声明过的插槽注册节点;主题换肤走 tokens.css 的 --bm-* 变量,外观类
- * 插件零 JS 也可工作。功能类面板的数据一律走后端权限合同(ADR-0006),
- * 插槽机制本身不提供任何后端能力。 */
+ * 插件零 JS 也可工作。插槽机制不提供任何后端能力,功能类数据一律走
+ * 后端权限合同(ADR-0006)。 */
 window.boenmind = (function () {
-  const DECLARED = new Set(["sidebar-extra", "composer-tools", "guard-extra"]);
+  const DECLARED = new Set(["sidebar-extra", "composer-tools"]);
   const nodes = new Map(); // id -> {slot, node, order}
   function render(slot) {
     const host = document.querySelector(`[data-slot="${slot}"]`);
@@ -508,6 +496,28 @@ window.boenmind = (function () {
     setTheme: applyTheme
   };
 })();
+$("declaredSlots").textContent = "可插插槽:" + window.boenmind.declared.join("、");
+
+/* ===== 示例插件加载器(验证插槽生效;演示用,不改界面源码)===== */
+function loadDemoPlugin() {
+  if (window.__demoPluginLoaded) { return; }
+  const s = document.createElement("script");
+  s.src = "plugins/demo-sidebar.js";
+  s.onload = () => {
+    window.__demoPluginLoaded = true;
+    const li = document.createElement("div");
+    li.textContent = "demo-sidebar(已加载)";
+    li.id = "plugDemoRow";
+    $("plugList").replaceChildren(li);
+  };
+  document.head.appendChild(s);
+}
+function unloadDemoPlugin() {
+  if (window.__demoPluginUnload) { window.__demoPluginUnload(); }
+  window.__demoPluginLoaded = false;
+  const row = $("plugDemoRow");
+  if (row) row.textContent = "demo-sidebar(未加载)";
+}
 </script>
 </body>
 </html>
