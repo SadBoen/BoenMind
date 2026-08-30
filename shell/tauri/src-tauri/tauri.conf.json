@@ -1,0 +1,27 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "BoenMind Shell",
+  "version": "0.1.0",
+  "identifier": "top.boenmind.shell",
+  "build": {
+    "frontendDist": "../../runtime/web"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "BoenMind",
+        "width": 1280,
+        "height": 800,
+        "url": "index.html"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:* https:; img-src 'self' data:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": []
+  }
+}
