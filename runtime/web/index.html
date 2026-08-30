@@ -153,7 +153,7 @@ async function pollOp(opId, tries = 300) {
 async function watchEvents() {
   const c = cfg(); const base = c.base || location.origin;
   const es = new EventSource(`${base}/events/${sessionId}?since_seq=${lastSeq}`);
-  es.onmessage = (m) => {
+  es.addEventListener("envelope", (m) => {
     try {
       const e = JSON.parse(m.data);
       lastSeq = e.event_seq || lastSeq;
