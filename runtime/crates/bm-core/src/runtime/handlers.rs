@@ -100,6 +100,7 @@ pub(crate) fn handle_session_create(
             "delegation_depth": mg.delegation_depth,
             "expires_at": null,
             "parent_hash": mg.parent_grant_hash,
+            "resource": serde_json::to_value(&mg.resource).expect("resource 序列化"),
         }),
     );
 
@@ -450,13 +451,26 @@ pub(crate) fn handle_approval_respond(
             p.trust,
         )
     });
+    let cap_for_resource = w
+        .approvals
+        .get(&params.approval_id)
+        .map(|a| a.capability.clone())
+        .ok_or_else(|| CoreError::validation("未知审批对象"))?;
+    // M9 S1:memory.* 审批签发的 Grant 捕获抽屉谓词——批准只覆盖被批准的
+    // 那个 scope(资源谓词命中步 4 的 Grant 查表),而非全抽屉能力。
+    let mut predicates = serde_json::Map::new();
+    if cap_for_resource.starts_with("memory.") {
+        if let Some(s) = pending
+            .as_ref()
+            .and_then(|(_, _, args, _, _, _)| args.get("scope"))
+            .and_then(|v| v.as_str())
+        {
+            predicates.insert("scope".to_string(), serde_json::json!(s));
+        }
+    }
     let resource = bm_contract::capability::GrantResource {
-        capability: w
-            .approvals
-            .get(&params.approval_id)
-            .map(|a| a.capability.clone())
-            .ok_or_else(|| CoreError::validation("未知审批对象"))?,
-        args_predicates: Default::default(),
+        capability: cap_for_resource,
+        args_predicates: predicates,
     };
     let respond_result = {
         let approval = w
@@ -489,6 +503,7 @@ pub(crate) fn handle_approval_respond(
                     "delegation_depth": grant.delegation_depth,
                     "expires_at": grant.expires_at,
                     "parent_hash": grant.parent_grant_hash,
+                    "resource": serde_json::to_value(&grant.resource).expect("resource 序列化"),
                 }),
             );
             // approval.resolved 键集:[approval_id, operation_id, outcome, scope, grant_id]

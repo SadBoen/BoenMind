@@ -130,6 +130,7 @@ impl EventType {
                 "approval_id",
                 "audience",
                 "action",
+                "resource",
                 "scope",
                 "delegation_depth",
                 "expires_at",

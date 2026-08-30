@@ -226,7 +226,7 @@
         "scope": "string",
         "delegation_depth": "integer",
         "expires_at": "timestamp|null",
-        "parent_hash": "string"
+        "parent_hash": "string", "resource": "object"
       }
     },
     {

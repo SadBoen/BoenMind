@@ -424,6 +424,18 @@ impl<'a> Broker<'a> {
                 };
             }
         }
+        // 步 4.5(M9 S1):记忆抽屉在主体维度的权限边界——「作用域即权限
+        // 边界」(基线 §4.1)落到「谁可写哪个抽屉」。agent/task 族主体对
+        // 自己的抽屉常量放行(agent 本体 ↔ memory:agent:<id>;coord/worker
+        // ↔ memory:task:<id>);search 对 memory:user 放行(读不产生内容
+        // 污染);越界抽屉一律升级审批——不静默拒绝,产出可审批事实,
+        // 批准即签发带 scope 谓词的 Grant(资源谓词捕获见 handlers)。
+        // App 主体不享抽屉直通(M7.6 延续:跨域一律显式 Grant);user
+        // Surface 与系统主体按既有流。memory.delete 按条目 ID 定位、args
+        // 不含 scope,主体维度执行面随条目所有权列(留档演进)。
+        if let Some(v) = Self::memory_drawer_verdict(ctx, capability, args, manifest, effective) {
+            return v;
+        }
         // 步 5:审批判定——high-risk 恒审批(双保险,无视声明);
         // manifest 声明 required;effective_risk reversible 及以上(含
         // trusted 直调——直通只豁免 read-only/low-risk,规格 §5.4)。
@@ -456,6 +468,36 @@ impl<'a> Broker<'a> {
     }
 
     // ---- 步 5:参数校验(M4.3)---------------------------------------------
+
+    /// 步 4.5 的记忆抽屉裁决(None = 本步不适用,继续既有流)。
+    fn memory_drawer_verdict(
+        ctx: &CallContext,
+        capability: &str,
+        args: &serde_json::Value,
+        manifest: &CapabilityManifest,
+        effective: RiskClass,
+    ) -> Option<Decision> {
+        if capability != "memory.write" && capability != "memory.search" {
+            return None;
+        }
+        let scope = args["scope"].as_str()?; // 缺 scope 由 Provider 形态校验拒
+        let own = ctx.principal.strip_prefix("agent:").map(|rest| {
+            // 任务族成员(coord:/worker: 前缀)的抽屉按 task 维度;
+            // 其余即 agent 本体(M6 per-task principal 命名空间)。
+            rest.strip_prefix("coord:")
+                .or_else(|| rest.strip_prefix("worker:"))
+                .map(|tid| format!("memory:task:{tid}"))
+                .unwrap_or_else(|| format!("memory:agent:{rest}"))
+        });
+        let own = own?; // surface:user / 系统主体 / App:本步不适用
+        if scope == own || (capability == "memory.search" && scope == "memory:user") {
+            return Some(Decision::Allowed { grant_id: None });
+        }
+        Some(Decision::RequireApproval {
+            risk_class: manifest.effect,
+            effective_risk: effective,
+        })
+    }
 
     fn validate_args(
         manifest: &CapabilityManifest,
@@ -1427,6 +1469,150 @@ mod m7_tests {
         broker.grants.record(grant);
         assert!(matches!(
             broker.decide(&app, "mcp.notes.search", &json!({})),
+            Decision::Allowed { .. }
+        ));
+    }
+
+    // ---- M9 S1:记忆抽屉主体边界(步 4.5)--------------------------------
+
+    const BASE_MS: u128 = 1_788_000_000_000;
+
+    fn memory_registry() -> CapabilityRegistry {
+        let mut reg = CapabilityRegistry::new();
+        for (name, effect) in [
+            ("memory.write", "low-risk-command"),
+            ("memory.search", "read-only"),
+        ] {
+            let m: CapabilityManifest = serde_json::from_value(json!({
+                "capability": name, "provider": "memory", "version": "0.1.0",
+                "input_schema": {"type": "object"},
+                "output_schema": {"type": "object"},
+                "effect": effect, "idempotent": true, "cancellable": true,
+                "timeout_ms": 1000, "approval": "not-required"
+            }))
+            .unwrap();
+            reg.register(m, &format!("{name}@0.1.0"), provider_fn(|_| Ok(json!({}))))
+                .unwrap();
+        }
+        reg
+    }
+
+    fn drawer_call(
+        reg: &CapabilityRegistry,
+        grants: &mut GrantLedger,
+        principal: &str,
+        capability: &str,
+        scope: &str,
+    ) -> Decision {
+        let clock = MockClock::at_ms(BASE_MS);
+        let ids = SeqIdGen::new();
+        let broker = Broker::new(reg, grants, &clock, &ids);
+        let ctx = CallContext::content_chain(principal, DataTrust::Untrusted).unwrap();
+        broker.decide(&ctx, capability, &json!({"scope": scope}))
+    }
+
+    /// t130:agent 写自己的抽屉 → 常量放行(无需 Grant)。
+    #[test]
+    fn t130_drawer_agent_own_write_allowed() {
+        let reg = memory_registry();
+        let mut grants = GrantLedger::new();
+        assert!(matches!(
+            drawer_call(&reg, &mut grants, "agent:AGENTAGENTAGENTAGENTAG1", "memory.write",
+                "memory:agent:AGENTAGENTAGENTAGENTAG1"),
+            Decision::Allowed { grant_id: None }
+        ));
+    }
+
+    /// t131:agent 写 user 抽屉 → 升级审批(不静默拒绝)。
+    #[test]
+    fn t131_drawer_agent_user_write_escalates() {
+        let reg = memory_registry();
+        let mut grants = GrantLedger::new();
+        assert!(matches!(
+            drawer_call(&reg, &mut grants, "agent:AGENTAGENTAGENTAGENTAG1", "memory.write",
+                "memory:user"),
+            Decision::RequireApproval { .. }
+        ));
+    }
+
+    /// t133:跨 agent 抽屉 → 升级审批。
+    #[test]
+    fn t133_drawer_agent_cross_agent_escalates() {
+        let reg = memory_registry();
+        let mut grants = GrantLedger::new();
+        assert!(matches!(
+            drawer_call(&reg, &mut grants, "agent:AGENTAGENTAGENTAGENTAG1", "memory.write",
+                "memory:agent:AGENTAGENTAGENTAGENTAG2"),
+            Decision::RequireApproval { .. }
+        ));
+    }
+
+    /// t134:task 族成员(coord/worker)只可写本任务抽屉。
+    #[test]
+    fn t134_drawer_task_members_scoped_to_own_task() {
+        let reg = memory_registry();
+        let mut grants = GrantLedger::new();
+        for principal in ["agent:worker:t_01", "agent:coord:t_01"] {
+            assert!(matches!(
+                drawer_call(&reg, &mut grants, principal, "memory.write", "memory:task:t_01"),
+                Decision::Allowed { grant_id: None }
+            ));
+            assert!(matches!(
+                drawer_call(&reg, &mut grants, principal, "memory.write", "memory:user"),
+                Decision::RequireApproval { .. }
+            ));
+        }
+    }
+
+    /// t135:search 放宽——user 抽屉可检索(读不污染),他人抽屉仍升级。
+    #[test]
+    fn t135_drawer_search_user_allowed_cross_agent_escalates() {
+        let reg = memory_registry();
+        let mut grants = GrantLedger::new();
+        assert!(matches!(
+            drawer_call(&reg, &mut grants, "agent:AGENTAGENTAGENTAGENTAG1", "memory.search",
+                "memory:user"),
+            Decision::Allowed { grant_id: None }
+        ));
+        assert!(matches!(
+            drawer_call(&reg, &mut grants, "agent:AGENTAGENTAGENTAGENTAG1", "memory.search",
+                "memory:agent:AGENTAGENTAGENTAGENTAG2"),
+            Decision::RequireApproval { .. }
+        ));
+    }
+
+    /// t132 前半:显式 Grant(带 scope 谓词)命中优先于步 4.5——批准一次,
+    /// 之后同抽屉调用走 Grant 台账(Allowed 且携带 grant_id)。
+    #[test]
+    fn t132_drawer_explicit_grant_predicates_match_before_drawer_step() {
+        let reg = memory_registry();
+        let mut grants = GrantLedger::new();
+        let mut g = crate::butler::model_grant_for(&SeqIdGen::new(), "AGENTAGENTAGENTAGENTAG1",
+            MockClock::at_ms(BASE_MS).now());
+        g.action = "memory.write".into();
+        g.resource.args_predicates.insert(
+            "scope".into(),
+            json!("memory:user"),
+        );
+        grants.record(g.clone());
+        assert!(matches!(
+            drawer_call(&reg, &mut grants, "agent:AGENTAGENTAGENTAGENTAG1", "memory.write",
+                "memory:user"),
+            Decision::Allowed { grant_id: Some(_) }
+        ));
+    }
+
+    /// user Surface 直写不受步 4.5 影响(既有直通/审批流原样)。
+    #[test]
+    fn drawer_surface_user_unchanged() {
+        let reg = memory_registry();
+        let mut grants = GrantLedger::new();
+        let clock = MockClock::at_ms(BASE_MS);
+        let ids = SeqIdGen::new();
+        let broker = Broker::new(&reg, &mut grants, &clock, &ids);
+        let ctx = CallContext::surface("surface:user");
+        assert!(matches!(
+            broker.decide(&ctx, "memory.search", &json!({"scope": "memory:user"})),
             Decision::Allowed { .. }
         ));
     }

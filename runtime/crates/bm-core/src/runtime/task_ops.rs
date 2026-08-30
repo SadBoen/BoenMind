@@ -231,6 +231,7 @@ pub(crate) fn handle_task_create(
                     "delegation_depth": g.delegation_depth,
                     "expires_at": null,
                     "parent_hash": g.parent_grant_hash,
+                    "resource": serde_json::to_value(&g.resource).expect("resource 序列化"),
                 }),
             );
         }
@@ -834,6 +835,7 @@ pub(crate) fn handle_task_spawn_member(
                 "delegation_depth": g.delegation_depth,
                 "expires_at": null,
                 "parent_hash": g.parent_grant_hash,
+                "resource": serde_json::to_value(&g.resource).expect("resource 序列化"),
             }),
         );
     }
@@ -1004,6 +1006,7 @@ pub(crate) fn handle_task_spawn_subtask(
                 "delegation_depth": g.delegation_depth,
                 "expires_at": null,
                 "parent_hash": g.parent_grant_hash,
+                "resource": serde_json::to_value(&g.resource).expect("resource 序列化"),
             }),
         );
     }
