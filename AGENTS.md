@@ -101,6 +101,11 @@ runtime/                        第 3 层  源代码(M1 起,Rust workspace;crate
       随回看用户拍板五项全落定:下一批=先用一周再开工远程 MCP / 桌面包搁置
       骨架保留 / 看护闹钟 15min·3 次·24h 定案 / 三笔追认+GT-01 示例已修正;
       待拍板队列清零**
+- [x] **Web 界面改版 v2(2026-08-30,D-M3-1 方案落地;`runtime/web/`:tokens.css
+      设计令牌表机械复刻自 dsh ui-theme(MIT)→ 明暗双主题 + dsh 式布局 +
+      前端界面插槽(window.boenmind,声明即授权/拒 HTML 串)+ Enter 发送;
+      JS 功能逻辑逐字保留;真实浏览器手测通过(流式/审批/任务/CLI/主题/
+      插槽冒烟),260 测试全绿;Penpot 速成页 PENPOT-quickstart.md)**
 - 注意:ADR-0011(App 形态)与各回看「§6 条件与遗留」是后续规划的
   输入清单;deepwiki S1-S10 逐里程碑裁决中(S5/S9 已闭合,S3/S4/S8 部分
   采纳,余 proposed;总表见 FULL-REVIEW §2.4),勿自动采纳
