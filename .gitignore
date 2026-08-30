@@ -13,3 +13,4 @@ __pycache__/
 # 本地密钥与机敏文件,永不入库(基线 4.6 / INV-5;ADR-0010)
 .secrets/*
 !.secrets/example.env
+perf_m9_run.txt
