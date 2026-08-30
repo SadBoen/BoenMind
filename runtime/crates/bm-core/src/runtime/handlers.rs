@@ -459,14 +459,13 @@ pub(crate) fn handle_approval_respond(
     // M9 S1:memory.* 审批签发的 Grant 捕获抽屉谓词——批准只覆盖被批准的
     // 那个 scope(资源谓词命中步 4 的 Grant 查表),而非全抽屉能力。
     let mut predicates = serde_json::Map::new();
-    if cap_for_resource.starts_with("memory.") {
-        if let Some(s) = pending
+    if cap_for_resource.starts_with("memory.")
+        && let Some(s) = pending
             .as_ref()
             .and_then(|(_, _, args, _, _, _)| args.get("scope"))
             .and_then(|v| v.as_str())
-        {
-            predicates.insert("scope".to_string(), serde_json::json!(s));
-        }
+    {
+        predicates.insert("scope".to_string(), serde_json::json!(s));
     }
     let resource = bm_contract::capability::GrantResource {
         capability: cap_for_resource,

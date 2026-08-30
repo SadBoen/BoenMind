@@ -168,6 +168,11 @@ pub(crate) enum Cmd {
         operation_id: BmId,
         delta: String,
     },
+    TaskAutorun {
+        request_id: BmId,
+        params: bm_contract::wire::TaskAutorunParams,
+        resp: oneshot::Sender<CoreResult<bm_contract::wire::TaskAutorunResult>>,
+    },
     Turn(TurnEvent),
 }
 
@@ -267,6 +272,9 @@ pub(crate) fn reply_unavailable(cmd: Cmd) {
         Cmd::ProviderCall { .. } => {}
         Cmd::ProviderProgress { .. } => {}
         Cmd::ProviderDelta { .. } => {}
+        Cmd::TaskAutorun { resp, .. } => {
+            let _ = resp.send(Err(err()));
+        }
         Cmd::CapabilityCancel { resp, .. } => {
             let _ = resp.send(Err(err()));
         }

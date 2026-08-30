@@ -99,8 +99,8 @@ fn event_type_enum_matches_registry() {
     let registry = registries::runtime_events();
     assert_eq!(
         registry.len(),
-        44,
-        "注册表事件数漂移(M1 20 + M2 增发 2 + M4 增发 10 + M5 增发 8 + M6 增发 1 + M7 增发 2 + M9 增发 1)"
+        45,
+        "注册表事件数漂移(M1 20 + M2 增发 2 + M4 增发 10 + M5 增发 8 + M6 增发 1 + M7 增发 2 + M9 增发 2)"
     );
     for reg in &registry {
         let t = EventType::from_wire(&reg.type_).unwrap_or_else(|| panic!("枚举缺 {}", reg.type_));

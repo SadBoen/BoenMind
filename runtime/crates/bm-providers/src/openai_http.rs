@@ -367,13 +367,12 @@ impl ModelConnector for OpenAiConnector {
                     if let Some(f) = &c.finish_reason {
                         finish = f.clone();
                     }
-                    if let Some(d) = &c.delta {
-                        if let Some(t) = &d.content {
-                            if !t.is_empty() {
-                                content.push_str(t);
-                                (on_delta)(t);
-                            }
-                        }
+                    if let Some(d) = &c.delta
+                        && let Some(t) = &d.content
+                        && !t.is_empty()
+                    {
+                        content.push_str(t);
+                        (on_delta)(t);
                     }
                 }
             }
@@ -390,11 +389,12 @@ mod m9_stream_tests {
     #[test]
     fn t143_sse_chunk_decode_and_completed_aggregation() {
         // 数据块:增量 + finish_reason + usage 各自独立到达(OpenAI 线格式)
-        let chunk1: WireStreamChunk = serde_json::from_str(
-            r#"{"choices":[{"delta":{"content":"你"}}]}"#,
-        )
-        .expect("块1");
-        assert_eq!(chunk1.choices[0].delta.as_ref().unwrap().content.as_deref(), Some("你"));
+        let chunk1: WireStreamChunk =
+            serde_json::from_str(r#"{"choices":[{"delta":{"content":"你"}}]}"#).expect("块1");
+        assert_eq!(
+            chunk1.choices[0].delta.as_ref().unwrap().content.as_deref(),
+            Some("你")
+        );
         assert!(chunk1.usage.is_none());
 
         let chunk2: WireStreamChunk = serde_json::from_str(
@@ -407,13 +407,7 @@ mod m9_stream_tests {
         assert!(serde_json::from_str::<WireStreamChunk>("{not json").is_err());
 
         // finish_reason 收敛:length → Length,其余 → Stop
-        let done = completed_stream(
-            "你好".into(),
-            "length",
-            chunk2.usage,
-            false,
-            "m1",
-        );
+        let done = completed_stream("你好".into(), "length", chunk2.usage, false, "m1");
         match done {
             InvokeResponse::Completed {
                 content,

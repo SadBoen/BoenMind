@@ -47,7 +47,8 @@ impl RuntimeHandle {
             op_capability: HashMap::new(),
             task_results: HashMap::new(),
             model_delta_seq: HashMap::new(),
-        op_async_meta: HashMap::new(),
+            autorun: HashMap::new(),
+            op_async_meta: HashMap::new(),
             op_results: HashMap::new(),
             provider_health: HashMap::new(),
             cap_in_flight: HashMap::new(),
@@ -685,6 +686,24 @@ impl RuntimeHandle {
     }
 
     /// task.create(M5.2):Task 创建并启动(L2 规范状态;wire/task.v0.1)。
+    /// M9-S3:worker 自主环 v0——受理后事件驱动逐步推进(单写者内)。
+    pub async fn task_autorun(
+        &self,
+        request_id: BmId,
+        params: wire::TaskAutorunParams,
+    ) -> CoreResult<wire::TaskAutorunResult> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(Cmd::TaskAutorun {
+                request_id,
+                params,
+                resp: tx,
+            })
+            .await
+            .map_err(|_| CoreError::Internal)?;
+        rx.await.map_err(|_| CoreError::Internal)?
+    }
+
     pub async fn task_create(
         &self,
         request_id: BmId,

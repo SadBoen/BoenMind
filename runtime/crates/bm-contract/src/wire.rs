@@ -41,6 +41,8 @@ wire_str_enum!(Method {
     TaskStop => "task.stop",
     // M8 增发(2026-08-30,Minor:envelope method 枚举同步;M7.5 语义取消)
     CapabilityCancel => "capability.cancel",
+    // M9 增发(2026-08-30,Minor:envelope method 枚举同步;worker 自主环 v0)
+    TaskAutorun => "task.autorun",
 });
 
 wire_str_enum!(InputTrust {
@@ -348,6 +350,22 @@ pub struct ApprovalRespondParams {
     pub decision: String,
     #[serde(default)]
     pub scope: Option<String>,
+}
+
+/// M9-S3:worker 自主环 v0(task.autorun)。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TaskAutorunParams {
+    pub task_id: BmId,
+    /// 至多推进的模型回合数(缺省 6;预算硬限独立生效)。
+    #[serde(default)]
+    pub max_turns: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TaskAutorunResult {
+    pub session_id: BmId,
+    pub agent_id: BmId,
+    pub accepted: bool,
 }
 
 /// M8.3:能力调用语义取消(在途异步调用;迟到完成丢弃)。

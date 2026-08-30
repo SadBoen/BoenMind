@@ -1244,6 +1244,8 @@ pub(crate) fn sha256_hex(s: &str) -> String {
 }
 
 pub(crate) fn handle_turn_event(w: &mut World, event: TurnEvent) {
+    // M9-S3:先捕获回执 ID(事件随即被消费),处理完做自主环裁决
+    let autorun_op = turn_event_op(&event).cloned();
     match event {
         TurnEvent::AttemptFailed {
             operation_id,
@@ -1347,6 +1349,7 @@ pub(crate) fn handle_turn_event(w: &mut World, event: TurnEvent) {
             latency_ms,
             stream_interrupted,
         } => {
+            autorun_note_completed(w, &operation_id, &content);
             let (session_id, agent_id, request_id, agent_state) = {
                 let op = &w.operations[&operation_id];
                 let a = &w.agents[&op.agent_id];
@@ -1496,6 +1499,18 @@ pub(crate) fn handle_turn_event(w: &mut World, event: TurnEvent) {
                 }),
             );
             w.in_flight.remove(&operation_id);
+        }
+    }
+    if let Some(op) = autorun_op {
+        autorun_pump(w, &op);
+    }
+    /// M9-S3:TurnEvent → 回执 ID(自主环裁决入口用)。
+    fn turn_event_op(e: &TurnEvent) -> Option<&BmId> {
+        match e {
+            TurnEvent::Completed { operation_id, .. }
+            | TurnEvent::Cancelled { operation_id }
+            | TurnEvent::AttemptFailed { operation_id, .. }
+            | TurnEvent::ChainExhausted { operation_id, .. } => Some(operation_id),
         }
     }
 }

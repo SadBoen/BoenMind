@@ -21,10 +21,10 @@ pub trait ModelConnector: Send + Sync {
         mut on_delta: Box<dyn for<'a> FnMut(&'a str) + Send + 'static>,
     ) -> InvokeResponse {
         let r = self.invoke(req, cancel).await;
-        if let InvokeResponse::Completed { content, .. } = &r {
-            if !content.is_empty() {
-                (on_delta)(content.as_str());
-            }
+        if let InvokeResponse::Completed { content, .. } = &r
+            && !content.is_empty()
+        {
+            (on_delta)(content.as_str());
         }
         drop(on_delta); // 先丢回调(析构借用)再归还结果
         r

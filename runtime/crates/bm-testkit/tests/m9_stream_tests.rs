@@ -31,7 +31,10 @@ impl ModelConnector for ChunkedConnector {
         InvokeResponse::Completed {
             content: self.chunks.concat(),
             finish_reason: FinishReason::Stop,
-            usage: Usage { tokens_in: 1, tokens_out: 2 },
+            usage: Usage {
+                tokens_in: 1,
+                tokens_out: 2,
+            },
             model_id: "m1".into(),
             latency_ms: 0,
             stream_interrupted: false,
@@ -62,7 +65,10 @@ impl ModelConnector for ChunkedConnector {
         InvokeResponse::Completed {
             content: self.chunks.concat(),
             finish_reason: FinishReason::Stop,
-            usage: Usage { tokens_in: 1, tokens_out: 2 },
+            usage: Usage {
+                tokens_in: 1,
+                tokens_out: 2,
+            },
             model_id: "m1".into(),
             latency_ms: 0,
             stream_interrupted: false,
@@ -70,7 +76,11 @@ impl ModelConnector for ChunkedConnector {
     }
 }
 
-async fn rig_streaming(on: bool, chunks: Vec<String>, delay_ms: u64) -> (RuntimeHandle, Arc<SeqIdGen>) {
+async fn rig_streaming(
+    on: bool,
+    chunks: Vec<String>,
+    delay_ms: u64,
+) -> (RuntimeHandle, Arc<SeqIdGen>) {
     let ids = Arc::new(SeqIdGen::new());
     let config = RuntimeConfig {
         capabilities: vec![bm_providers::builtin::model_invoke_cap()],
@@ -136,7 +146,7 @@ fn agent_spec() -> bm_contract::wire::AgentSpec {
 async fn wait_done(handle: &RuntimeHandle, op: &bm_contract::ids::BmId) -> OperationState {
     for _ in 0..300 {
         let r = handle
-            .operations_get(GetOpParams4test(op.clone()))
+            .operations_get(get_op_params(op.clone()))
             .await
             .expect("收据");
         if matches!(
@@ -150,7 +160,7 @@ async fn wait_done(handle: &RuntimeHandle, op: &bm_contract::ids::BmId) -> Opera
     panic!("回合 300 轮内未终态");
 }
 
-fn GetOpParams4test(op: bm_contract::ids::BmId) -> bm_contract::wire::GetOperationParams {
+fn get_op_params(op: bm_contract::ids::BmId) -> bm_contract::wire::GetOperationParams {
     bm_contract::wire::GetOperationParams { operation_id: op }
 }
 
@@ -159,7 +169,12 @@ async fn deltas_of(handle: &RuntimeHandle) -> Vec<(u64, String)> {
     events
         .iter()
         .filter(|e| e.event_type == EventType::ModelContentDelta)
-        .map(|e| (e.payload["index"].as_u64().unwrap(), e.payload["delta"].as_str().unwrap().to_string()))
+        .map(|e| {
+            (
+                e.payload["index"].as_u64().unwrap(),
+                e.payload["delta"].as_str().unwrap().to_string(),
+            )
+        })
         .collect()
 }
 
@@ -168,7 +183,10 @@ async fn deltas_of(handle: &RuntimeHandle) -> Vec<(u64, String)> {
 async fn t140_streaming_off_no_delta_events() {
     let (handle, ids) = rig_streaming(false, vec!["你".into(), "好".into()], 5).await;
     let ctx = one_turn(&handle, &ids).await;
-    assert_eq!(wait_done(&handle, &ctx.operation_id).await, OperationState::Succeeded);
+    assert_eq!(
+        wait_done(&handle, &ctx.operation_id).await,
+        OperationState::Succeeded
+    );
     assert!(deltas_of(&handle).await.is_empty(), "关态不得有 delta 事件");
 }
 
@@ -177,9 +195,15 @@ async fn t140_streaming_off_no_delta_events() {
 async fn t141_streaming_delta_sequence_matches_completed() {
     let (handle, ids) = rig_streaming(true, vec!["你".into(), "好".into(), "世界".into()], 5).await;
     let ctx = one_turn(&handle, &ids).await;
-    assert_eq!(wait_done(&handle, &ctx.operation_id).await, OperationState::Succeeded);
+    assert_eq!(
+        wait_done(&handle, &ctx.operation_id).await,
+        OperationState::Succeeded
+    );
     let deltas = deltas_of(&handle).await;
-    assert_eq!(deltas.iter().map(|(i, _)| *i).collect::<Vec<_>>(), vec![0, 1, 2]);
+    assert_eq!(
+        deltas.iter().map(|(i, _)| *i).collect::<Vec<_>>(),
+        vec![0, 1, 2]
+    );
     let joined: String = deltas.iter().map(|(_, d)| d.as_str()).collect();
     assert_eq!(joined, "你好世界");
     let events = handle.events_all().await;
@@ -215,7 +239,9 @@ async fn t142_cancel_mid_stream_keeps_deltas_no_completed() {
     assert!(!deltas_of(&handle).await.is_empty(), "已发增量不得回滚");
     let events = handle.events_all().await;
     assert!(
-        !events.iter().any(|e| e.event_type == EventType::ModelInvocationCompleted),
+        !events
+            .iter()
+            .any(|e| e.event_type == EventType::ModelInvocationCompleted),
         "取消后不得有 completed 事件"
     );
 }
@@ -234,10 +260,11 @@ async fn t144_live_streaming_one_turn() {
 
     let ids = Arc::new(SeqIdGen::new());
     let secret_ref = bm_core::runtime::default_secret_ref(&model);
-    let connector: Arc<dyn ModelConnector> = Arc::new(bm_providers::openai_http::OpenAiConnector::new(
-        base,
-        Arc::new(MemSecretStore::with(&secret_ref, &key)),
-    ));
+    let connector: Arc<dyn ModelConnector> =
+        Arc::new(bm_providers::openai_http::OpenAiConnector::new(
+            base,
+            Arc::new(MemSecretStore::with(&secret_ref, &key)),
+        ));
     let config = RuntimeConfig {
         capabilities: vec![bm_providers::builtin::model_invoke_cap()],
         version: "0.1.0-m9".into(),
@@ -267,5 +294,9 @@ async fn t144_live_streaming_one_turn() {
         .payload
         .clone();
     assert_eq!(joined, completed["content"].as_str().unwrap_or_default());
-    eprintln!("t144 实网流式:delta 块数={} 聚合字节数={}", deltas.len(), joined.len());
+    eprintln!(
+        "t144 实网流式:delta 块数={} 聚合字节数={}",
+        deltas.len(),
+        joined.len()
+    );
 }

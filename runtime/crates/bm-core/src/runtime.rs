@@ -160,6 +160,8 @@ struct World {
     op_async_meta: HashMap<BmId, AsyncCallMeta>,
     /// M9-S2:在途回合已发 delta 计数(index 单调,0 起;completed 后随审计清理可留)
     model_delta_seq: HashMap<BmId, u64>,
+    /// M9-S3:worker 自主环在途状态(task → 状态;终局即移除)
+    autorun: HashMap<BmId, AutorunState>,
     /// M7 S4:异步能力调用结果(operation_id → result;内存,随操作同寿命)。
     op_results: HashMap<BmId, serde_json::Value>,
     /// M7 S5:Provider 健康面(provider → 状态;进程内,不入 core-transitions)。
@@ -550,7 +552,17 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
             } => {
                 let _ = resp.send(handle_send_input(&mut world, request_id, params));
             }
-            Cmd::ProviderDelta { operation_id, delta } => {
+            Cmd::TaskAutorun {
+                request_id,
+                params,
+                resp,
+            } => {
+                let _ = resp.send(handle_task_autorun_start(&mut world, request_id, params));
+            }
+            Cmd::ProviderDelta {
+                operation_id,
+                delta,
+            } => {
                 let idx = {
                     let e = world
                         .model_delta_seq

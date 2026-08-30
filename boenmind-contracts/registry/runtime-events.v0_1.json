@@ -384,7 +384,7 @@
         "to": "string",
         "reason": "string"
       }
-    }, {"type": "model.content.delta", "payload": {"operation_id": "id", "index": "integer", "delta": "string"}}
+    }, {"type": "model.content.delta", "payload": {"operation_id": "id", "index": "integer", "delta": "string"}}, {"type": "task.autorun.state.changed", "payload": {"task_id": "id", "phase": "string", "turn": "integer", "reason": "string|null"}}
   ],
   "payload_type_note": {
     "id": "wire/common 的 id 格式 <prefix>_<ULID26>(task.created.parent_task_id 允许 null)",

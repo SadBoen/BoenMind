@@ -1517,8 +1517,13 @@ mod m7_tests {
         let reg = memory_registry();
         let mut grants = GrantLedger::new();
         assert!(matches!(
-            drawer_call(&reg, &mut grants, "agent:AGENTAGENTAGENTAGENTAG1", "memory.write",
-                "memory:agent:AGENTAGENTAGENTAGENTAG1"),
+            drawer_call(
+                &reg,
+                &mut grants,
+                "agent:AGENTAGENTAGENTAGENTAG1",
+                "memory.write",
+                "memory:agent:AGENTAGENTAGENTAGENTAG1"
+            ),
             Decision::Allowed { grant_id: None }
         ));
     }
@@ -1529,8 +1534,13 @@ mod m7_tests {
         let reg = memory_registry();
         let mut grants = GrantLedger::new();
         assert!(matches!(
-            drawer_call(&reg, &mut grants, "agent:AGENTAGENTAGENTAGENTAG1", "memory.write",
-                "memory:user"),
+            drawer_call(
+                &reg,
+                &mut grants,
+                "agent:AGENTAGENTAGENTAGENTAG1",
+                "memory.write",
+                "memory:user"
+            ),
             Decision::RequireApproval { .. }
         ));
     }
@@ -1541,8 +1551,13 @@ mod m7_tests {
         let reg = memory_registry();
         let mut grants = GrantLedger::new();
         assert!(matches!(
-            drawer_call(&reg, &mut grants, "agent:AGENTAGENTAGENTAGENTAG1", "memory.write",
-                "memory:agent:AGENTAGENTAGENTAGENTAG2"),
+            drawer_call(
+                &reg,
+                &mut grants,
+                "agent:AGENTAGENTAGENTAGENTAG1",
+                "memory.write",
+                "memory:agent:AGENTAGENTAGENTAGENTAG2"
+            ),
             Decision::RequireApproval { .. }
         ));
     }
@@ -1554,7 +1569,13 @@ mod m7_tests {
         let mut grants = GrantLedger::new();
         for principal in ["agent:worker:t_01", "agent:coord:t_01"] {
             assert!(matches!(
-                drawer_call(&reg, &mut grants, principal, "memory.write", "memory:task:t_01"),
+                drawer_call(
+                    &reg,
+                    &mut grants,
+                    principal,
+                    "memory.write",
+                    "memory:task:t_01"
+                ),
                 Decision::Allowed { grant_id: None }
             ));
             assert!(matches!(
@@ -1570,13 +1591,23 @@ mod m7_tests {
         let reg = memory_registry();
         let mut grants = GrantLedger::new();
         assert!(matches!(
-            drawer_call(&reg, &mut grants, "agent:AGENTAGENTAGENTAGENTAG1", "memory.search",
-                "memory:user"),
+            drawer_call(
+                &reg,
+                &mut grants,
+                "agent:AGENTAGENTAGENTAGENTAG1",
+                "memory.search",
+                "memory:user"
+            ),
             Decision::Allowed { grant_id: None }
         ));
         assert!(matches!(
-            drawer_call(&reg, &mut grants, "agent:AGENTAGENTAGENTAGENTAG1", "memory.search",
-                "memory:agent:AGENTAGENTAGENTAGENTAG2"),
+            drawer_call(
+                &reg,
+                &mut grants,
+                "agent:AGENTAGENTAGENTAGENTAG1",
+                "memory.search",
+                "memory:agent:AGENTAGENTAGENTAGENTAG2"
+            ),
             Decision::RequireApproval { .. }
         ));
     }
@@ -1587,17 +1618,24 @@ mod m7_tests {
     fn t132_drawer_explicit_grant_predicates_match_before_drawer_step() {
         let reg = memory_registry();
         let mut grants = GrantLedger::new();
-        let mut g = crate::butler::model_grant_for(&SeqIdGen::new(), "AGENTAGENTAGENTAGENTAG1",
-            MockClock::at_ms(BASE_MS).now());
-        g.action = "memory.write".into();
-        g.resource.args_predicates.insert(
-            "scope".into(),
-            json!("memory:user"),
+        let mut g = crate::butler::model_grant_for(
+            &SeqIdGen::new(),
+            "AGENTAGENTAGENTAGENTAG1",
+            MockClock::at_ms(BASE_MS).now(),
         );
+        g.action = "memory.write".into();
+        g.resource
+            .args_predicates
+            .insert("scope".into(), json!("memory:user"));
         grants.record(g.clone());
         assert!(matches!(
-            drawer_call(&reg, &mut grants, "agent:AGENTAGENTAGENTAGENTAG1", "memory.write",
-                "memory:user"),
+            drawer_call(
+                &reg,
+                &mut grants,
+                "agent:AGENTAGENTAGENTAGENTAG1",
+                "memory.write",
+                "memory:user"
+            ),
             Decision::Allowed { grant_id: Some(_) }
         ));
     }

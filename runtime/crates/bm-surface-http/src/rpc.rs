@@ -108,6 +108,10 @@ async fn rpc_inner(state: &AppState, method: Method, req: &RequestEnvelope) -> C
             let p: bm_contract::wire::TaskListParams = params(req)?;
             to_value(state.handle.task_list(p).await)
         }
+        Method::TaskAutorun => {
+            let p: bm_contract::wire::TaskAutorunParams = params(req)?;
+            to_value(state.handle.task_autorun(req.request_id.clone(), p).await)
+        }
         Method::TaskGet => {
             let p: bm_contract::wire::TaskGetParams = params(req)?;
             to_value(state.handle.task_get(p).await)

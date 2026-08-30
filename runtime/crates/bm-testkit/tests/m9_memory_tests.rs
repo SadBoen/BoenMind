@@ -109,7 +109,9 @@ async fn t131_132_escalate_approve_grant_predicate_then_retry_ok() {
 
     // 找到挂起审批并批准(forever)
     let list = handle
-        .approval_list(ApprovalListParams { state_filter: Some("waiting_user".into()) })
+        .approval_list(ApprovalListParams {
+            state_filter: Some("waiting_user".into()),
+        })
         .await
         .expect("审批列表");
     let approval_id = list["approvals"][0]["approval_id"]
@@ -166,7 +168,10 @@ async fn t131_132_escalate_approve_grant_predicate_then_retry_ok() {
         )
         .await
         .expect_err("谓词未覆盖的抽屉仍须升级");
-    assert!(matches!(err, CoreError::Semantic(ErrorCode::ApprovalRequired, _)));
+    assert!(matches!(
+        err,
+        CoreError::Semantic(ErrorCode::ApprovalRequired, _)
+    ));
 }
 
 /// t133:worker 写他人 agent 抽屉 → 升级审批。
@@ -186,7 +191,10 @@ async fn t133_worker_cross_agent_drawer_escalates() {
         )
         .await
         .expect_err("跨主体抽屉必须升级");
-    assert!(matches!(err, CoreError::Semantic(ErrorCode::ApprovalRequired, _)));
+    assert!(matches!(
+        err,
+        CoreError::Semantic(ErrorCode::ApprovalRequired, _)
+    ));
 }
 
 /// t135:search 对 user 抽屉放宽(读不污染);他人 agent 抽屉仍升级。
@@ -214,5 +222,8 @@ async fn t135_worker_search_user_ok_cross_agent_escalates() {
         )
         .await
         .expect_err("他人抽屉检索须升级");
-    assert!(matches!(err, CoreError::Semantic(ErrorCode::ApprovalRequired, _)));
+    assert!(matches!(
+        err,
+        CoreError::Semantic(ErrorCode::ApprovalRequired, _)
+    ));
 }
