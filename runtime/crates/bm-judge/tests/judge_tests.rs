@@ -74,7 +74,8 @@ fn t117_judge_deterministic_and_contract_shaped() {
                 "operation_id": op_a, "agent_id": op_a,
                 "model_id": "gpt-5.6-luna", "attempt": 1,
                 "usage_in": 100, "usage_out": 10,
-                "latency_ms": 1800, "stream_interrupted": false
+                "latency_ms": 1800, "stream_interrupted": false,
+                "content": "seed", "content_truncated": false
             }),
         ),
     ];

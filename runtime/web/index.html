@@ -157,8 +157,12 @@ async function watchEvents() {
     try {
       const e = JSON.parse(m.data);
       lastSeq = e.event_seq || lastSeq;
-      if (e.event_type === "agent.completed" || e.event_type === "model.invocation.completed") {
-        log("runtime", `${e.event_type} (seq ${e.event_seq})`);
+      if (e.event_type === "model.invocation.completed" && e.payload && e.payload.content) {
+        log("assistant", e.payload.content);
+      } else if (e.event_type === "model.invocation.failed") {
+        log("error", `模型调用失败:${(e.payload && e.payload.error_code) || "?"}`);
+      } else if (e.event_type === "operation.state.changed" && e.payload && e.payload.to === "failed") {
+        log("error", `回合失败:${e.payload.reason_code || ""}`);
       }
     } catch (_) { /* 忽略非 JSON */ }
   };

@@ -89,6 +89,8 @@ impl EventType {
                 "usage_out",
                 "latency_ms",
                 "stream_interrupted",
+                "content",
+                "content_truncated",
             ],
             EventType::ModelInvocationFailed => &[
                 "operation_id",

@@ -109,7 +109,8 @@ fn t24_rebuild_projection_is_deterministic_chaos3() {
             Some(op.clone()),
             json!({"operation_id": o, "agent_id": a, "model_id": "zhipu.glm-4-flash",
                     "attempt": 1, "usage_in": 412, "usage_out": 58,
-                    "latency_ms": 1873, "stream_interrupted": false}),
+                    "latency_ms": 1873, "stream_interrupted": false,
+                    "content": "seed", "content_truncated": false}),
         );
         push(
             EventType::OperationStateChanged,

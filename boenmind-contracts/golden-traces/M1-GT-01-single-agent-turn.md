@@ -92,7 +92,9 @@ latency_ms=1873；stream_interrupted=false                        [INV-4][INV-5]
 
 ```text
 事件 6  model.invocation.completed {attempt: 1, usage_in: 412, usage_out: 58,
-                                    latency_ms: 1873, stream_interrupted: false}
+                                    latency_ms: 1873, stream_interrupted: false,
+                                    content: "…回答正文…(M8.1 起携带,截断 16KB)",
+                                    content_truncated: false}
 事件迁移：agent waiting_model→running；operation running→succeeded
 事件 7  operation.state.changed {from: "running", to: "succeeded", reason_code: "result_recorded"}
 事件 8  agent.completed {turn_index: 1}

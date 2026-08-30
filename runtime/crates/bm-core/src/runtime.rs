@@ -5026,6 +5026,20 @@ fn task_error_to_core(task_id: &BmId, e: crate::task::TaskError) -> CoreError {
 }
 
 /// M7 S1:回合模型阶段终态审计(outcome=error;成功路径见 TurnEvent::Completed)。
+/// 回答正文截断(16KB;ISO 边界按字符切割,UTF-8 安全)。
+fn content_trunc(content: &str) -> String {
+    const LIMIT: usize = 16 * 1024;
+    if content.len() <= LIMIT {
+        content.to_string()
+    } else {
+        let mut end = LIMIT;
+        while !content.is_char_boundary(end) {
+            end -= 1;
+        }
+        content[..end].to_string()
+    }
+}
+
 fn emit_model_call_error_audit(w: &mut World, operation_id: &BmId, code: ErrorCode) {
     if let Some(a) = w.model_call_audit.remove(operation_id) {
         emit_capability_invoked_with(
@@ -5272,6 +5286,10 @@ fn handle_turn_event(w: &mut World, event: TurnEvent) {
                     "usage_out": usage_out,
                     "latency_ms": latency_ms,
                     "stream_interrupted": stream_interrupted,
+                    // M8.1 修复:回答正文入事件(截断 16KB,防日志膨胀;
+                    // 截断标记如实)——正文此前无处落地,用户面不可见
+                    "content": content_trunc(&content),
+                    "content_truncated": content.len() > 16 * 1024,
                 }),
             );
             // M7 S5:成功回账(清计数/半开恢复 healthy)
