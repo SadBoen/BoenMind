@@ -106,9 +106,14 @@ function rid() {
   return s;
 }
 function log(who, text) {
+  // 安全审计修复:消息一律 textContent,杜绝 LLM/App 输出注入 HTML
   const d = document.createElement("div");
   d.className = "msg";
-  d.innerHTML = `<span class="who ${who === "runtime" ? "sys" : ""}">${who}</span> ${String(text).replace(/</g, "&lt;")}`;
+  const w = document.createElement("span");
+  w.className = "who" + (who === "runtime" ? " sys" : "");
+  w.textContent = who;
+  d.appendChild(w);
+  d.appendChild(document.createTextNode(" " + text));
   $("log").appendChild(d);
   $("log").scrollTop = $("log").scrollHeight;
 }
@@ -188,17 +193,21 @@ async function loadApprovals() {
     const ul = $("approvals"); ul.innerHTML = "";
     (res.approvals || []).filter((a) => a.state === "waiting_user").forEach((a) => {
       const li = document.createElement("li");
-      li.innerHTML = `<span class="tag">${a.risk_class}</span> <b>${a.capability}</b>
-        <span style="flex:1"></span>
-        <button class="p">批准</button><button>拒绝</button>`;
-      li.children[2].onclick = async () => {
+      const tag = document.createElement("span"); tag.className = "tag";
+      tag.textContent = a.risk_class;
+      const name = document.createElement("b"); name.textContent = a.capability;
+      const spacer = document.createElement("span"); spacer.style.flex = "1";
+      const yes = document.createElement("button"); yes.className = "p"; yes.textContent = "批准";
+      const no = document.createElement("button"); no.textContent = "拒绝";
+      yes.onclick = async () => {
         await api("approval.respond", { approval_id: a.approval_id, decision: "approve", scope: "once" });
         loadApprovals();
       };
-      li.children[3].onclick = async () => {
+      no.onclick = async () => {
         await api("approval.respond", { approval_id: a.approval_id, decision: "deny", scope: null });
         loadApprovals();
       };
+      li.append(tag, name, spacer, yes, no);
       ul.appendChild(li);
     });
     if (!(res.approvals || []).some((a) => a.state === "waiting_user"))
@@ -211,7 +220,11 @@ async function loadTasks() {
     const ul = $("tasks"); ul.innerHTML = "";
     (res.tasks || []).forEach((t) => {
       const li = document.createElement("li");
-      li.innerHTML = `<span class="tag">${t.state}</span> ${t.title || t.task_id}`;
+      const tag = document.createElement("span"); tag.className = "tag";
+      tag.textContent = t.state;
+      const label = document.createElement("span");
+      label.textContent = t.title || t.task_id; // 任务标题为用户输入,禁止 HTML 拼接
+      li.append(tag, label);
       ul.appendChild(li);
     });
     if (!(res.tasks || []).length) ul.innerHTML = "<li class='tag'>暂无任务</li>";

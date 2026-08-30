@@ -387,6 +387,9 @@ fn spawn_generation(
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null());
+    // 外部审计:kill_on_drop 绑定子进程生命周期——连接器对象被丢弃时
+    // 子进程随之终止,防止服务端异常退出后 Python App 成为孤儿进程。
+    cmd.kill_on_drop(true);
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("MCP 子进程启动失败: {e}"))?;
