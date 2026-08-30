@@ -494,3 +494,65 @@ async fn t109_app_principal_isolation() {
         Decision::Allowed { .. }
     ));
 }
+
+/// t114:capability.cancel 语义——运行中取消 → 收据 cancelled;
+/// 取消令牌贯穿传输层(InProc 睡眠中断),迟到完成被丢弃。
+#[tokio::test]
+async fn t114_capability_cancel_discards_late_completion() {
+    let server = InProcMcpServer::new(vec![tool("search", true)]);
+    server.set_behavior(
+        "search",
+        Behavior {
+            delay_ms: 5_000,
+            ..Behavior::done(json!({"content": [{"type": "text", "text": "late"}]}))
+        },
+    );
+    let (rig, _hub) = rig_with_server(server.clone()).await;
+
+    let req = rig.ids.next_id("req");
+    let receipt = rig
+        .handle
+        .capability_call(req, call_params("mcp.notes.search", None))
+        .await
+        .expect("派发");
+    let op_id = BmId::parse(receipt["operation_id"].as_str().expect("op")).expect("BmId");
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let res = rig
+        .handle
+        .capability_cancel(
+            rig.ids.next_id("req"),
+            bm_contract::wire::CapabilityCancelParams {
+                operation_id: op_id.clone(),
+                reason: Some("不想等了".into()),
+            },
+        )
+        .await
+        .expect("取消成功");
+    assert_eq!(res.state, "cancelled");
+
+    let r = rig
+        .handle
+        .operations_get(bm_contract::wire::GetOperationParams {
+            operation_id: op_id.clone(),
+        })
+        .await
+        .expect("查询");
+    assert_eq!(r.state, bm_contract::states::OperationState::Cancelled);
+
+    // 迟到完成丢弃:取消已令传输提前返回,完成回流时 meta 缺失 → 收据不变
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+    let r2 = rig
+        .handle
+        .operations_get(bm_contract::wire::GetOperationParams {
+            operation_id: op_id.clone(),
+        })
+        .await
+        .expect("查询");
+    assert_eq!(
+        r2.state,
+        bm_contract::states::OperationState::Cancelled,
+        "迟到完成不得改写收据"
+    );
+    rig.stop().await;
+}

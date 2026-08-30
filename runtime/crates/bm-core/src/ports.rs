@@ -68,4 +68,7 @@ pub trait AsyncCapabilityExecutor: Send + Sync {
 
     /// 装配期注入进度回注通道(缺省无进度支持,静默忽略)。
     fn set_progress_sink(&self, _sink: Box<dyn Fn(ProgressNotice) + Send + Sync>) {}
+
+    /// 语义取消的传输层贯彻(尽力终止;M8.3)。缺省无操作。
+    fn cancel_op(&self, _operation_id: &str) {}
 }

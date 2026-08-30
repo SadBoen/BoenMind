@@ -127,6 +127,9 @@ pub trait McpTransport: Send + Sync {
     async fn notify(&self, method: &str, params: Value) -> Result<(), String>;
     /// 订阅服务端通知流(进度)。每连接取一次(先到先得)。
     fn subscribe_progress(&self) -> tokio::sync::mpsc::UnboundedReceiver<McpProgressNote>;
+
+    /// 按进度令牌取消在途请求(MCP notifications/cancelled;尽力终止)。
+    fn cancel_by_token(&self, _token: &str) {}
 }
 
 fn dead_progress_rx() -> tokio::sync::mpsc::UnboundedReceiver<McpProgressNote> {
@@ -163,6 +166,8 @@ pub struct InProcMcpServer {
     behaviors: Mutex<HashMap<String, Behavior>>,
     /// tools/call 次数(健康面测试:断言封禁后不再触达执行器)。
     calls: Mutex<HashMap<String, u32>>,
+    /// 进度令牌 → 取消标志(M8.3:语义取消的 InProc 贯穿)。
+    cancel_flags: Mutex<HashMap<String, Arc<std::sync::atomic::AtomicBool>>>,
     progress_tx: tokio::sync::mpsc::UnboundedSender<McpProgressNote>,
     progress_rx: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<McpProgressNote>>>,
 }
@@ -174,6 +179,7 @@ impl InProcMcpServer {
             tools: Mutex::new(tools),
             behaviors: Mutex::new(HashMap::new()),
             calls: Mutex::new(HashMap::new()),
+            cancel_flags: Mutex::new(HashMap::new()),
             progress_tx: tx,
             progress_rx: Mutex::new(Some(rx)),
         })
@@ -232,6 +238,13 @@ impl McpTransport for InProcMcpServer {
                     .expect("锁未中毒")
                     .entry(name.clone())
                     .or_insert(0) += 1;
+                if !token.is_empty() {
+                    self.cancel_flags
+                        .lock()
+                        .expect("锁未中毒")
+                        .entry(token.clone())
+                        .or_insert_with(|| Arc::new(std::sync::atomic::AtomicBool::new(false)));
+                }
                 let behavior = self
                     .behaviors
                     .lock()
@@ -248,7 +261,26 @@ impl McpTransport for InProcMcpServer {
                     });
                 }
                 if behavior.delay_ms > 0 {
-                    tokio::time::sleep(Duration::from_millis(behavior.delay_ms)).await;
+                    let flag = self
+                        .cancel_flags
+                        .lock()
+                        .expect("锁未中毒")
+                        .get(&token)
+                        .cloned();
+                    let stop_at =
+                        tokio::time::Instant::now() + Duration::from_millis(behavior.delay_ms);
+                    tokio::select! {
+                        _ = tokio::time::sleep_until(stop_at) => {}
+                        _ = async {
+                            if let Some(f) = flag {
+                                while !f.load(std::sync::atomic::Ordering::Relaxed) {
+                                    tokio::time::sleep(Duration::from_millis(5)).await;
+                                }
+                            } else {
+                                std::future::pending::<()>().await;
+                            }
+                        } => {}
+                    }
                 }
                 match behavior.result {
                     Some(Ok(v)) => Ok(v),
@@ -271,6 +303,12 @@ impl McpTransport for InProcMcpServer {
             .take()
             .unwrap_or_else(dead_progress_rx)
     }
+
+    fn cancel_by_token(&self, token: &str) {
+        if let Some(f) = self.cancel_flags.lock().expect("锁未中毒").get(token) {
+            f.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
 }
 
 // ---- stdio 传输 ------------------------------------------------------------
@@ -282,7 +320,7 @@ pub struct StdioMcpTransport {
     command: String,
     args: Vec<String>,
     env: HashMap<String, String>,
-    inner: tokio::sync::Mutex<StdioInner>,
+    inner: Arc<tokio::sync::Mutex<StdioInner>>,
     progress_rx: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<McpProgressNote>>>,
     alive: Arc<std::sync::atomic::AtomicBool>,
 }
@@ -292,6 +330,8 @@ struct StdioInner {
     /// 与读取泵共享的同一张在途表(request 注册,泵按 id 配对摘除)。
     pending: PendingMap,
     stdin: Option<tokio::process::ChildStdin>,
+    /// 进度令牌 → 在途 rpc id(取消通知定位;响应即摘除)。
+    token_to_id: HashMap<String, u64>,
 }
 
 impl StdioMcpTransport {
@@ -308,11 +348,12 @@ impl StdioMcpTransport {
             command: command.to_string(),
             args: args.to_vec(),
             env: env.clone(),
-            inner: tokio::sync::Mutex::new(StdioInner {
+            inner: Arc::new(tokio::sync::Mutex::new(StdioInner {
                 next_id: 0,
                 pending,
                 stdin: Some(stdin),
-            }),
+                token_to_id: HashMap::new(),
+            })),
             progress_rx: Mutex::new(Some(progress_rx)),
             alive,
         }))
@@ -436,6 +477,13 @@ impl McpTransport for StdioMcpTransport {
             inner.next_id += 1;
             let id = inner.next_id;
             inner.pending.lock().expect("锁未中毒").insert(id, tx);
+            if let Some(tok) = params
+                .get("_meta")
+                .and_then(|m| m.get("progressToken"))
+                .and_then(|v| v.as_str())
+            {
+                inner.token_to_id.insert(tok.to_string(), id);
+            }
             let stdin = inner.stdin.as_mut().expect("stdin 在活着时存在");
             let msg = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
             let mut bytes = serde_json::to_string(&msg).map_err(|e| e.to_string())?;
@@ -449,10 +497,21 @@ impl McpTransport for StdioMcpTransport {
                 .await
                 .map_err(|e| format!("stdio 写失败: {e}"))?;
         }
-        match rx.await {
+        let out = match rx.await {
             Ok(r) => r,
             Err(_) => Err("stdio-closed".into()),
+        };
+        {
+            let mut inner = self.inner.lock().await;
+            if let Some(tok) = params
+                .get("_meta")
+                .and_then(|m| m.get("progressToken"))
+                .and_then(|v| v.as_str())
+            {
+                inner.token_to_id.remove(tok);
+            }
         }
+        out
     }
 
     async fn notify(&self, method: &str, params: Value) -> Result<(), String> {
@@ -479,6 +538,29 @@ impl McpTransport for StdioMcpTransport {
             .take()
             .unwrap_or_else(dead_progress_rx)
     }
+
+    fn cancel_by_token(&self, token: &str) {
+        use tokio::io::AsyncWriteExt;
+        let inner = self.inner.clone();
+        let token = token.to_string();
+        tokio::spawn(async move {
+            let mut guard = inner.lock().await;
+            if let Some(id) = guard.token_to_id.remove(&token)
+                && let Some(stdin) = guard.stdin.as_mut()
+            {
+                let msg = json!({
+                    "jsonrpc": "2.0",
+                    "method": "notifications/cancelled",
+                    "params": {"requestId": id}
+                });
+                if let Ok(mut bytes) = serde_json::to_vec(&msg) {
+                    bytes.push(b'\n');
+                    let _ = stdin.write_all(&bytes).await;
+                    let _ = stdin.flush().await;
+                }
+            }
+        });
+    }
 }
 
 // ---- Hub:握手/发现/路由/异步执行器 -----------------------------------------
@@ -499,6 +581,8 @@ struct Route {
 pub struct McpHub {
     routes: Mutex<HashMap<String, Route>>,
     sink: Arc<Mutex<Option<ProgressSink>>>,
+    /// 在途调用:operation_id → 传输(取消通知定位)。
+    inflight: Mutex<HashMap<String, Arc<dyn McpTransport>>>,
 }
 
 impl Default for McpHub {
@@ -516,6 +600,7 @@ impl McpHub {
         Self {
             routes: Mutex::new(HashMap::new()),
             sink: Arc::new(Mutex::new(None)),
+            inflight: Mutex::new(HashMap::new()),
         }
     }
 
@@ -645,9 +730,25 @@ impl AsyncCapabilityExecutor for McpHub {
             "arguments": args,
             "_meta": {"progressToken": operation_id},
         });
+        self.inflight
+            .lock()
+            .expect("锁未中毒")
+            .insert(operation_id.to_string(), route.0.clone());
         let resp = tokio::select! {
-            _ = tokio::time::sleep(deadline) => return Err(AsyncCallError::Timeout),
-            r = route.0.request("tools/call", req) => r.map_err(AsyncCallError::Transport)?,
+            _ = tokio::time::sleep(deadline) => {
+                self.inflight
+                    .lock()
+                    .expect("锁未中毒")
+                    .remove(operation_id);
+                return Err(AsyncCallError::Timeout);
+            }
+            r = route.0.request("tools/call", req) => {
+                self.inflight
+                    .lock()
+                    .expect("锁未中毒")
+                    .remove(operation_id);
+                r.map_err(AsyncCallError::Transport)?
+            }
         };
         let is_err = resp
             .get("isError")
@@ -676,6 +777,13 @@ impl AsyncCapabilityExecutor for McpHub {
 
     fn set_progress_sink(&self, sink: ProgressSink) {
         *self.sink.lock().expect("锁未中毒") = Some(sink);
+    }
+
+    fn cancel_op(&self, operation_id: &str) {
+        let transport = self.inflight.lock().expect("锁未中毒").remove(operation_id);
+        if let Some(t) = transport {
+            t.cancel_by_token(operation_id);
+        }
     }
 }
 

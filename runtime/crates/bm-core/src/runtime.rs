@@ -3124,6 +3124,10 @@ fn handle_capability_cancel(
     if let Some(token) = w.cap_in_flight.remove(&params.operation_id) {
         token.cancel();
     }
+    // M8.3:语义取消的传输层贯彻(notifications/cancelled;尽力终止)
+    if let Some(ex) = &w.config.async_executor {
+        ex.cancel_op(params.operation_id.as_str());
+    }
     if let Some(meta) = w.op_async_meta.remove(&params.operation_id)
         && let Some(gid) = &meta.grant_id
     {
