@@ -7,13 +7,12 @@ BoenMind:个人生态的 AI Runtime / AI OS,当前为**阶段一(跨平台单软
 对照验证(Erlang/OTP、Kubernetes、VS Code,见 `architecture/deepwiki-validation.md`)。
 合同库已冻结 v1.0(字段只增不破)。
 
-**当前进度:M8 已收官(2026-08-30,tag `m8-apps-release`)——阶段一
-(M0–M8)全部收官!`milestones/M8-review.md`:基线五句通过条件逐条
-结算,passed_with_conditions;首批双真实 App(Wiki/Market)经 MCP 全
-链路;独立 Judge + 实网长任务压测 6 回合全过;备份/迁移/墓碑回放;
-Web UI v1 + Tauri 壳骨架 + release 出包;229 测试全绿,perf 记录⑥。
-下一步 = 阶段二规划(回看遗留:S4 draining、lease 吞吐、worker 自主
-环、流式输出、memory:user 授权)+ 一周真实使用反馈定优先级。**
+**当前进度:M9 已收官(2026-08-30,tag `m9-stage2-batch1`):
+`milestones/M9-review.md`——阶段二第一批三轨全落地(S1 记忆抽屉授权闭合
+D-M5-2 / S2 模型真流式 BOEN_MODEL_STREAM=1 / S3 worker 自主环 v0 哨兵完成+
+停滞+超限+暂停四出口),254 测试全绿,t144 实网流式通过。
+下一步 = 按既定策略先真实使用一周攒手感;候选队列:远程 MCP(用户拍板
+下一批)、自主环真工具闭环、web 版调整(用户指定优先于桌面壳)。**
 
 **提速方案(2026-08-30 起固化,每轮沿用)**:
 1. 强耦合任务合批(如 T4+T5、T6+T7、T8+T9),一轮交付、共享全量回归,

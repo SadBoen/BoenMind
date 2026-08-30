@@ -117,6 +117,31 @@ function log(who, text) {
   $("log").appendChild(d);
   $("log").scrollTop = $("log").scrollHeight;
 }
+// M9-S2 真流式:在途回答的增量缓冲(回执 ID → DOM 节点)
+const streamBuf = new Map();
+function streamDelta(opId, delta) {
+  if (!streamBuf.has(opId)) {
+    const d = document.createElement("div");
+    d.className = "msg";
+    const w = document.createElement("span");
+    w.className = "who";
+    w.textContent = "assistant·流式";
+    d.appendChild(w);
+    const t = document.createTextNode("");
+    d.appendChild(t);
+    $("log").appendChild(d);
+    $("log").scrollTop = $("log").scrollHeight;
+    streamBuf.set(opId, { node: t, text: "" });
+  }
+  const b = streamBuf.get(opId);
+  b.text += delta;
+  b.node.textContent = " " + b.text + " ▌";
+}
+function finishStream(opId) {
+  const b = streamBuf.get(opId);
+  if (b) b.node.textContent = " " + b.text;
+  streamBuf.delete(opId);
+}
 async function createSession() {
   try {
     const res = await api("session.create", {
@@ -168,9 +193,15 @@ async function watchEvents() {
       for (const e of res.events || []) {
         lastSeq = e.event_seq || lastSeq;
         const ty = e.type, p = e.payload || {}; // 信封 JSON 字段名是 type
-        if (ty === "model.invocation.completed" && p.content) {
+        if (ty === "model.content.delta") {
+          // M9-S2 真流式:增量逐块追加到在途回答(流式渲染;textContent 防 XSS)
+          streamDelta(p.operation_id, p.delta || "");
+        } else if (ty === "model.invocation.completed" && p.content) {
+          // 终态落地:清在途流式缓冲,以完整内容为准
+          finishStream(p.operation_id);
           log("assistant", p.content);
         } else if (ty === "model.invocation.failed") {
+          finishStream(p.operation_id);
           log("error", "模型调用失败:" + (p.error_code || "?"));
         } else if (ty === "operation.state.changed" && p.to === "failed") {
           log("error", "回合失败:" + (p.reason_code || ""));

@@ -57,13 +57,11 @@ boenmind-server,关窗口也不影响后台任务(这是特性也是限制)。�
 "打开桌面图标就自动拉起服务、关窗口就问要不要退出"?这属于产品体验,
 等 M8 打包时一起定。
 
-## D-M5-2 memory:user 显式授权的执行面(随 M7)
+## D-M5-2 memory:user 显式授权的执行面——已闭合(2026-08-30,M9-S1)
 
-基线 §4.1 要求 memory:user 写入需显式授权。M5 面:scope 形态即边界 + Broker
-信任分级适用,但 Provider 无法区分「用户 Surface 直写」与「Agent 写」
-(CapabilityProvider.invoke 不携带 principal),故 user 域的显式授权执行面
-(如仅 Surface 直写可过、Agent 写须持有专项 Grant)随 M7 principal-aware
-Provider 落地。追认或改判请留言。
+闭合实录(M9-S1,Broker 步 4.5):agent 写 user 抽屉 → 升级审批(t131);
+批准签发带 scope 谓词的 Grant,重调命中台账(t132);worker/coord 只可写
+本任务抽屉;search 对 user 抽屉放宽。条目级删除所有权留档演进(M9-review §6-2)。
 
 ## D-M8-1 阶段二第一批做什么(大白话:六件挂起的事,先干哪件?)——逐条讲解已给,优先级待您回复
 

@@ -105,12 +105,12 @@ struct TurnCtx {
     operation_id: bm_contract::ids::BmId,
 }
 
-async fn one_turn(handle: &RuntimeHandle, ids: &Arc<SeqIdGen>) -> TurnCtx {
+async fn one_turn(handle: &RuntimeHandle, ids: &Arc<SeqIdGen>, model: &str) -> TurnCtx {
     let created = handle
         .session_create(
             ids.next_id("req"),
             SessionCreateParams {
-                agent: agent_spec(),
+                agent: agent_spec(model),
             },
         )
         .await
@@ -135,10 +135,10 @@ async fn one_turn(handle: &RuntimeHandle, ids: &Arc<SeqIdGen>) -> TurnCtx {
 }
 
 // AgentSpec 构造的小封装(字段随合同版本演进只改这里)。
-fn agent_spec() -> bm_contract::wire::AgentSpec {
+fn agent_spec(model: &str) -> bm_contract::wire::AgentSpec {
     bm_contract::wire::AgentSpec {
         name: "tester".into(),
-        model_chain: vec!["m1".into()],
+        model_chain: vec![model.to_string()],
         budget: None,
     }
 }
@@ -182,7 +182,8 @@ async fn deltas_of(handle: &RuntimeHandle) -> Vec<(u64, String)> {
 #[tokio::test]
 async fn t140_streaming_off_no_delta_events() {
     let (handle, ids) = rig_streaming(false, vec!["你".into(), "好".into()], 5).await;
-    let ctx = one_turn(&handle, &ids).await;
+    let model = "m1";
+    let ctx = one_turn(&handle, &ids, &model).await;
     assert_eq!(
         wait_done(&handle, &ctx.operation_id).await,
         OperationState::Succeeded
@@ -194,7 +195,8 @@ async fn t140_streaming_off_no_delta_events() {
 #[tokio::test]
 async fn t141_streaming_delta_sequence_matches_completed() {
     let (handle, ids) = rig_streaming(true, vec!["你".into(), "好".into(), "世界".into()], 5).await;
-    let ctx = one_turn(&handle, &ids).await;
+    let model = "m1";
+    let ctx = one_turn(&handle, &ids, model).await;
     assert_eq!(
         wait_done(&handle, &ctx.operation_id).await,
         OperationState::Succeeded
@@ -218,7 +220,8 @@ async fn t141_streaming_delta_sequence_matches_completed() {
 #[tokio::test]
 async fn t142_cancel_mid_stream_keeps_deltas_no_completed() {
     let (handle, ids) = rig_streaming(true, vec!["a".into(), "b".into(), "c".into()], 60).await;
-    let ctx = one_turn(&handle, &ids).await;
+    let model = "m1";
+    let ctx = one_turn(&handle, &ids, model).await;
     let op = ctx.operation_id.clone();
     // 等第一个 delta 落事件后取消
     for _ in 0..100 {
@@ -280,9 +283,30 @@ async fn t144_live_streaming_one_turn() {
         model_streaming: true,
     };
     let handle = RuntimeHandle::start(config).await;
-    let ctx = one_turn(&handle, &ids).await;
-    let state = wait_done(&handle, &ctx.operation_id).await;
-    assert_eq!(state, OperationState::Succeeded);
+    let ctx = one_turn(&handle, &ids, &model).await;
+    // 实网窗:真实模型延迟可达数十秒,给 60s(等 300×10ms 的 mock 窗不够)
+    let mut state = OperationState::Failed;
+    for _ in 0..6000 {
+        let r = handle
+            .operations_get(get_op_params(ctx.operation_id.clone()))
+            .await
+            .expect("收据");
+        if matches!(
+            r.state,
+            OperationState::Succeeded | OperationState::Failed | OperationState::Cancelled
+        ) {
+            state = r.state;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    if state != OperationState::Succeeded {
+        let r = handle
+            .operations_get(get_op_params(ctx.operation_id.clone()))
+            .await
+            .expect("收据");
+        panic!("实网回合未成功:{r:?}");
+    }
     let deltas = deltas_of(&handle).await;
     assert!(!deltas.is_empty(), "实网流式应产生增量");
     let joined: String = deltas.iter().map(|(_, d)| d.as_str()).collect();
