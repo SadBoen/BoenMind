@@ -26,7 +26,7 @@ D-M5-2 / S2 模型真流式 BOEN_MODEL_STREAM=1 / S3 worker 自主环 v0 哨兵�
 
 ```text
 BoenMind-CORE-ARCHITECTURE.md   第 0 层  架构基线:原则/边界/不变量;§17 七条核心裁决;§18 里程碑;§19 回看制度
-adr/                            第 0 层  架构决策记录(ADR-0001..0009;基线正文与 ADR 冲突时,以更新的 ADR 为准)
+adr/                            第 0 层  架构决策记录(ADR-0001..0011;基线正文与 ADR 冲突时,以更新的 ADR 为准)
 architecture/                   第 0 层  C4 模型 boenmind.c4(拓扑唯一权威)+ 辩论转录(debates/)+ 验证报告
 boenmind-contracts/             第 1 层  机器可读合同(v1.0 冻结)+ validate.py 校验器 + m0/ 测试基准
 milestones/                     第 2 层  里程碑实现规格与回看记录(M1 起建)
@@ -95,7 +95,11 @@ runtime/                        第 3 层  源代码(M1 起,Rust workspace;crate
       规格 `milestones/M8-implementation-spec.md`,回看 `milestones/M8-review.md`,
       229 测试全绿,双真实 App + Judge + 实网压测 + 备份迁移 + 三平台,
       ADR-0011 App=MCP 形态)——阶段一收官**
+- [x] **全面回看 M1-M9 整体(2026-08-30,`milestones/FULL-REVIEW-2026-08-30.md`;
+      四道门禁全绿 260 测试,架构红线主体干净,结论 passed_with_conditions;
+      新发现 F-01..F-11 入审计台账;条件:C4 模型回写列下一批开工前置)**
 - 注意:ADR-0011(App 形态)与各回看「§6 条件与遗留」是后续规划的
-  输入清单;deepwiki S1-S10 修订建议仍为 proposed,逐里程碑裁决
-- 注意:`architecture/deepwiki-validation.md` 的 S1-S10 修订建议为 **proposed**,
-  仅在各里程碑回看时逐条裁决,勿自动采纳。
+  输入清单;deepwiki S1-S10 逐里程碑裁决中(S5/S9 已闭合,S3/S4/S8 部分
+  采纳,余 proposed;总表见 FULL-REVIEW §2.4),勿自动采纳
+- 注意:`architecture/deepwiki-validation.md` 的 S1-S10 修订建议仅在各
+  里程碑回看时逐条裁决,勿自动采纳。
