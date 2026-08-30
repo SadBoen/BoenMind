@@ -183,7 +183,7 @@ async fn deltas_of(handle: &RuntimeHandle) -> Vec<(u64, String)> {
 async fn t140_streaming_off_no_delta_events() {
     let (handle, ids) = rig_streaming(false, vec!["你".into(), "好".into()], 5).await;
     let model = "m1";
-    let ctx = one_turn(&handle, &ids, &model).await;
+    let ctx = one_turn(&handle, &ids, model).await;
     assert_eq!(
         wait_done(&handle, &ctx.operation_id).await,
         OperationState::Succeeded
