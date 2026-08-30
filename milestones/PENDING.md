@@ -45,21 +45,23 @@ M5 给 AI 管家定了"发呆检测"的默认值,大白话版:
 
 ## D-M3-1 Web 界面观感——v3 已落地(2026-08-30 用户逐条纠偏后),持续迭代中
 
-**v3 变更(用户裁决:先 100% 对齐 dsh,功能后补)**:
-1. 布局重抄为 dsh 纯双栏(侧栏+主区对话),**审批队列/任务看板暂离界面**
-   (后端 approval.*/task.* 合同方法不受影响;回归方案待用户指示,候选:
-   插槽插件形态);
-2. **网页 CLI 终端删除**(cli.html + /admin/cli 端点 + BOEN_CLI_WEB 开关;
-   审计 A-06/A-07/A-08 随之消灭;桌面终端 boenmind CLI 保留);
-3. 设置改为 dsh 式齿轮弹窗(通用:主题三态/连接/agent 名;插件:插槽说明
-   +插件加载);**插件改用社区移植版**:plugins/pomodoro.js 移植自
-   dsh 社区插件 dsh-pomodoro(MIT,原作 causebefore;功能对齐:25/5 循环/
-   自动开始开关/🍅计数/浮窗拖动/localStorage 持久化),14 项浏览器仿真
-   测试全过(对话流/主题/插件生命周期/持久化/旧端点 404)。
+**v4 变更(用户裁决:整个前端拉 dsh 本体,后端逐项接;提交 7d01725/32e3892)**:
+1. 前端整体换为 **dsh 官方 Web 前端本体**(dist 构建产物 + 42 个官方客户端
+   模块,自 dsh server 原样抓取;旧自研界面含番茄钟插件全部移除);
+2. **后端连接适配第一批(api_dsh.rs)**:连接握手 host.describe、双协议
+   事件流(events.mux/events.host,WS 升级+SSE 回退)、workspace.list/
+   session.list/agentPreset.list 合法空态、settings.describe/mutate(预置
+   关闭内测声明)、llm.providers/llm.models/llm.discoverModels(单
+   provider=服务器 env 网关)——**连接循环消除,设置面板可开**;
+3. 设置面板按用户裁决精简:**只留「模型(LLM provider)」节**(通用/插件/
+   Agent 预设节注册已注释保留原码,client.js 内有 BoenMind 标记);
+   内测声明弹窗按用户裁决移除(settings 预置已确认状态)。
 
-v2 基础(同日早前):tokens.css 令牌表机械复刻自 dsh ui-theme(MIT),
-明暗双主题,前端界面插槽 window.boenmind(声明即授权),Enter 发送。
-后续按用户使用反馈迭代。
+**下一批**:workspace.create + session 创建/消息流(让"新建会话→对话"
+跑通);settings 内存存储接 SQLite 持久化;模型节 provider 行渲染对齐。
+
+v2/v3 历史要点:令牌表机械复刻 dsh ui-theme;网页 CLI 已删除(A-06~A-08
+销账);Enter 发送等交互已并入 dsh 本体行为差异待对齐。
 
 ## D-M3-2 桌面壳的"深度"(大白话:现在就是个套壳浏览器窗口)——已裁决(2026-08-30,用户):以后再说,骨架保留
 
