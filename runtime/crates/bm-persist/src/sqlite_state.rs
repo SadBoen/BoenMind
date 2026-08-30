@@ -8,7 +8,7 @@ use rusqlite::Connection;
 use std::path::Path;
 use std::sync::Mutex;
 
-pub const SCHEMA_VERSION: i64 = 7;
+pub const SCHEMA_VERSION: i64 = 8;
 
 /// approvals 表行(载荷列 = Approval 合同 JSON 文本)。
 pub struct ApprovalRow<'a> {
@@ -97,6 +97,9 @@ impl StateDb {
         }
         if version < 7 {
             Self::migrate_v6_to_v7(&conn)?;
+        }
+        if version < 8 {
+            Self::migrate_v7_to_v8(&conn)?;
         }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(Self {
@@ -262,6 +265,23 @@ impl StateDb {
             ALTER TABLE tasks ADD COLUMN parent_task_id TEXT;
             ALTER TABLE tasks ADD COLUMN delegation_depth INTEGER NOT NULL DEFAULT 0;
             COMMIT;
+            "#,
+        )?;
+        Ok(())
+    }
+
+    /// v7→v8(M8.5/M8.7,expand:纯新增一表):evaluation_reports——
+    /// 独立 Judge 的评估报告落库(报告 = 派生工件,不进事件日志)。
+    fn migrate_v7_to_v8(conn: &Connection) -> StoreResult<()> {
+        conn.execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS evaluation_reports (
+                report_id  TEXT PRIMARY KEY,
+                from_seq   INTEGER NOT NULL,
+                to_seq     INTEGER NOT NULL,
+                payload    TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
             "#,
         )?;
         Ok(())
@@ -576,6 +596,51 @@ impl StateDb {
     }
 
     /// 恢复面:指定状态的 outbox 行。
+    /// M8.7:评估报告写入(同 report_id 覆盖;报告为派生工件)。
+    pub fn save_evaluation_report(
+        &self,
+        report_id: &str,
+        from_seq: u64,
+        to_seq: u64,
+        payload: &str,
+        created_at: &str,
+    ) -> StoreResult<()> {
+        self.conn
+            .lock()
+            .expect("锁未中毒")
+            .execute(
+                "INSERT OR REPLACE INTO evaluation_reports                  (report_id, from_seq, to_seq, payload, created_at)                  VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    report_id,
+                    from_seq as i64,
+                    to_seq as i64,
+                    payload,
+                    created_at
+                ],
+            )?;
+        Ok(())
+    }
+
+    /// M8.7:评估报告列表(按创建时间)。
+    pub fn list_evaluation_reports(&self) -> StoreResult<Vec<serde_json::Value>> {
+        let conn = self.conn.lock().expect("锁未中毒");
+        let mut stmt = conn.prepare(
+            "SELECT report_id, payload, created_at FROM evaluation_reports ORDER BY created_at",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(serde_json::json!({
+                "report_id": r.get::<_, String>(0)?,
+                "payload": r.get::<_, String>(1)?,
+                "created_at": r.get::<_, String>(2)?,
+            }))
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
     pub fn list_outbox_by_state(&self, state: &str) -> StoreResult<Vec<serde_json::Value>> {
         self.query_rows(
             "SELECT operation_id, kind, state, payload FROM outbox WHERE state = ?1",
@@ -867,7 +932,7 @@ mod tests {
             conn.query_row("PRAGMA user_version", [], |r| r.get(0))
                 .unwrap()
         };
-        assert_eq!(version, 7);
+        assert_eq!(version, SCHEMA_VERSION);
 
         // approvals:upsert + 状态过滤
         db.save_approval(ApprovalRow {

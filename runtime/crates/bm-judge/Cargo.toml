@@ -1,0 +1,18 @@
+[package]
+name = "bm-judge"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[dependencies]
+bm-contract = { workspace = true }
+bm-persist = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

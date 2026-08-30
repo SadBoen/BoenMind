@@ -9,6 +9,7 @@ members = [
     "crates/bm-providers",
     "crates/bm-testkit",
     "crates/bm-runtime",
+    "crates/bm-judge",
 ]
 
 [workspace.package]
@@ -45,6 +46,7 @@ bm-contract = { path = "crates/bm-contract" }
 bm-core = { path = "crates/bm-core" }
 bm-providers = { path = "crates/bm-providers" }
 bm-testkit = { path = "crates/bm-testkit" }
+bm-judge = { path = "crates/bm-judge" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

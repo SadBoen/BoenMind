@@ -90,6 +90,19 @@ pub trait EventStore: Send + Sync {
     /// 恢复面:指定状态的 outbox 行(如 pending = intent 无结果)。
     fn list_outbox_by_state(&self, state: &str) -> StoreResult<Vec<serde_json::Value>>;
 
+    // ---- M8:评估报告(独立 Judge 产出;派生工件不进事件日志)----------------
+    /// 写入评估报告(同 report_id 覆盖)。
+    fn save_evaluation_report(
+        &self,
+        report_id: &str,
+        from_seq: u64,
+        to_seq: u64,
+        payload: &str,
+        created_at: &str,
+    ) -> StoreResult<()>;
+    /// 评估报告列表(按创建时间)。
+    fn list_evaluation_reports(&self) -> StoreResult<Vec<serde_json::Value>>;
+
     // ---- M5:tasks / idempotency receipts(T1/T6c)----------------------------
     /// 写入/更新 Task 行(payload = task/task.v0.1 合同 JSON)。
     fn save_task(&self, row: crate::sqlite_state::TaskRow<'_>) -> StoreResult<()>;
@@ -446,6 +459,22 @@ impl EventStore for PersistStore {
 
     fn list_outbox_by_state(&self, state: &str) -> StoreResult<Vec<serde_json::Value>> {
         self.state.list_outbox_by_state(state)
+    }
+
+    fn save_evaluation_report(
+        &self,
+        report_id: &str,
+        from_seq: u64,
+        to_seq: u64,
+        payload: &str,
+        created_at: &str,
+    ) -> StoreResult<()> {
+        self.state
+            .save_evaluation_report(report_id, from_seq, to_seq, payload, created_at)
+    }
+
+    fn list_evaluation_reports(&self) -> StoreResult<Vec<serde_json::Value>> {
+        self.state.list_evaluation_reports()
     }
 
     fn save_task(&self, row: crate::sqlite_state::TaskRow<'_>) -> StoreResult<()> {

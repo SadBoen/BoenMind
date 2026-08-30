@@ -302,6 +302,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "bm-judge"
+version = "0.1.0-m1"
+dependencies = [
+ "bm-contract",
+ "bm-persist",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "bm-persist"
 version = "0.1.0-m1"
 dependencies = [
@@ -378,6 +390,7 @@ version = "0.1.0-m1"
 dependencies = [
  "bm-contract",
  "bm-core",
+ "bm-judge",
  "bm-persist",
  "bm-providers",
  "chrono",

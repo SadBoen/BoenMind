@@ -9,6 +9,7 @@ bm-contract = { workspace = true }
 bm-core = { workspace = true }
 bm-persist = { workspace = true }
 bm-providers = { workspace = true }
+bm-judge = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 chrono = { workspace = true }

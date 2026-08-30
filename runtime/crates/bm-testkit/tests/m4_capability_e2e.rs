@@ -843,6 +843,23 @@ impl bm_persist::EventStore for FailingStore {
     ) -> bm_persist::error::StoreResult<Vec<serde_json::Value>> {
         Ok(vec![])
     }
+
+    fn save_evaluation_report(
+        &self,
+        _report_id: &str,
+        _from_seq: u64,
+        _to_seq: u64,
+        _payload: &str,
+        _created_at: &str,
+    ) -> bm_persist::error::StoreResult<()> {
+        Err(bm_persist::error::StoreError::Io(std::io::Error::other(
+            "injected persist failure",
+        )))
+    }
+
+    fn list_evaluation_reports(&self) -> bm_persist::error::StoreResult<Vec<serde_json::Value>> {
+        Ok(vec![])
+    }
 }
 
 #[tokio::test]
