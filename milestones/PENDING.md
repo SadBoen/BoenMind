@@ -52,7 +52,10 @@ M5 给 AI 管家定了"发呆检测"的默认值,大白话版:
 2. **网页 CLI 终端删除**(cli.html + /admin/cli 端点 + BOEN_CLI_WEB 开关;
    审计 A-06/A-07/A-08 随之消灭;桌面终端 boenmind CLI 保留);
 3. 设置改为 dsh 式齿轮弹窗(通用:主题三态/连接/agent 名;插件:插槽说明
-   +示例插件加载);示例插件 plugins/demo-sidebar.js 实证插槽生效。
+   +插件加载);**插件改用社区移植版**:plugins/pomodoro.js 移植自
+   dsh 社区插件 dsh-pomodoro(MIT,原作 causebefore;功能对齐:25/5 循环/
+   自动开始开关/🍅计数/浮窗拖动/localStorage 持久化),14 项浏览器仿真
+   测试全过(对话流/主题/插件生命周期/持久化/旧端点 404)。
 
 v2 基础(同日早前):tokens.css 令牌表机械复刻自 dsh ui-theme(MIT),
 明暗双主题,前端界面插槽 window.boenmind(声明即授权),Enter 发送。

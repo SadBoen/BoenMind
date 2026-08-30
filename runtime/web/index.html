@@ -244,11 +244,13 @@
           <div id="plugList">无</div>
         </div>
         <div style="display:grid; gap:8px;">
-          <h4>示例插件</h4>
-          <p class="hint">演示插槽机制:加载后侧栏出现一个面板,不改界面源码。</p>
+          <h4>番茄钟(社区插件移植)</h4>
+          <p class="hint">移植自 dsh 社区插件 dsh-pomodoro(MIT,原作 causebefore):
+            专注/休息循环 25/5 分钟可配、自动开始开关、🍅 计数、可拖浮窗;
+            经 sidebar-extra 插槽挂载,不改界面源码,不调后端。</p>
           <div class="row">
-            <button class="primaryBtn" onclick="loadDemoPlugin()">加载示例插件</button>
-            <button class="ghostBtn" onclick="unloadDemoPlugin()">卸载</button>
+            <button class="primaryBtn" onclick="loadPomodoroPlugin()">加载番茄钟</button>
+            <button class="ghostBtn" onclick="unloadPomodoroPlugin()">卸载</button>
           </div>
         </div>
       </div>
@@ -498,25 +500,25 @@ window.boenmind = (function () {
 })();
 $("declaredSlots").textContent = "可插插槽:" + window.boenmind.declared.join("、");
 
-/* ===== 示例插件加载器(验证插槽生效;演示用,不改界面源码)===== */
-function loadDemoPlugin() {
-  if (window.__demoPluginLoaded) { return; }
+/* ===== 插件加载器(番茄钟:移植自 dsh 社区插件 dsh-pomodoro,MIT)===== */
+function loadPomodoroPlugin() {
+  if (window.__pomodoroPluginLoaded) { return; }
   const s = document.createElement("script");
-  s.src = "plugins/demo-sidebar.js";
+  s.src = "plugins/pomodoro.js";
   s.onload = () => {
-    window.__demoPluginLoaded = true;
+    window.__pomodoroPluginLoaded = true;
     const li = document.createElement("div");
-    li.textContent = "demo-sidebar(已加载)";
-    li.id = "plugDemoRow";
+    li.textContent = "pomodoro(已加载)";
+    li.id = "plugPomodoroRow";
     $("plugList").replaceChildren(li);
   };
   document.head.appendChild(s);
 }
-function unloadDemoPlugin() {
-  if (window.__demoPluginUnload) { window.__demoPluginUnload(); }
-  window.__demoPluginLoaded = false;
-  const row = $("plugDemoRow");
-  if (row) row.textContent = "demo-sidebar(未加载)";
+function unloadPomodoroPlugin() {
+  if (window.__pluginPomodoroUnload) { window.__pluginPomodoroUnload(); }
+  window.__pomodoroPluginLoaded = false;
+  const row = $("plugPomodoroRow");
+  if (row) row.textContent = "pomodoro(未加载)";
 }
 </script>
 </body>
