@@ -142,7 +142,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let handle = RuntimeHandle::start(RuntimeConfig {
         capabilities,
         async_executor: mcp_executor,
-        model_streaming: std::env::var("BOEN_MODEL_STREAM").as_deref() == Ok("1"),
+        model_streaming: {
+            let on = std::env::var("BOEN_MODEL_STREAM").as_deref() == Ok("1");
+            eprintln!("启动配置:模型流式 = {on}");
+            on
+        },
         version: format!("{}-server", env!("CARGO_PKG_VERSION")),
         data_dir: Some(data_dir.clone()),
         store: Some(store.clone()),

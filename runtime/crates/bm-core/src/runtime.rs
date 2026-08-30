@@ -572,9 +572,14 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
                     *e += 1;
                     v
                 };
+                // 会话归属随收据回填(events.poll 按会话过滤,X-02 隔离纪律)
+                let session_id = world
+                    .operations
+                    .get(&operation_id)
+                    .map(|o| o.session_id.clone());
                 world.emit(
                     EventType::ModelContentDelta,
-                    None,
+                    session_id,
                     None,
                     Some(operation_id.clone()),
                     serde_json::json!({

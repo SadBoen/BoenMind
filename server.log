@@ -1,0 +1,10 @@
+真实模型网关 https://yujianwudi.top/v1(model gpt-5.6-luna;凭据走加密 Secret Store)
+启动配置:模型流式 = true
+Web Surface 目录 "runtime/web"(GET / 托管静态界面)
+boenmind-server v0.1.0-m1 监听 http://127.0.0.1:7531
+数据目录 C:\Users\Boen\AppData\Roaming\boenmind;访问令牌 C:\Users\Boen\AppData\Roaming\boenmind/token(auth 合同)
+真实模型网关 https://yujianwudi.top/v1(model gpt-5.6-luna;凭据走加密 Secret Store)
+启动配置:模型流式 = true
+Web Surface 目录 "runtime/web"(GET / 托管静态界面)
+boenmind-server v0.1.0-m1 监听 http://127.0.0.1:7531
+数据目录 C:\Users\Boen\AppData\Roaming\boenmind;访问令牌 C:\Users\Boen\AppData\Roaming\boenmind/token(auth 合同)
