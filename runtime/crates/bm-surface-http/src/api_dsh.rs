@@ -24,6 +24,57 @@ use std::convert::Infallible;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
+/// dsh 工作区/会话的内存存储(第一批:重启即失;持久化待接 SQLite)。
+#[derive(Default)]
+pub struct DshState {
+    pub workspaces: Vec<serde_json::Value>,
+    pub sessions: Vec<serde_json::Value>,
+    pub seq: u64,
+}
+
+fn dsh_state() -> &'static Mutex<DshState> {
+    static S: OnceLock<Mutex<DshState>> = OnceLock::new();
+    S.get_or_init(|| Mutex::new(DshState::default()))
+}
+
+/// mux/host 两条事件流的广播(帧 JSON 文本)。
+fn event_bus(channel: &str) -> &'static tokio::sync::broadcast::Sender<String> {
+    static MUX: OnceLock<tokio::sync::broadcast::Sender<String>> = OnceLock::new();
+    static HOST: OnceLock<tokio::sync::broadcast::Sender<String>> = OnceLock::new();
+    match channel {
+        "host" => HOST.get_or_init(|| tokio::sync::broadcast::channel(64).0),
+        _ => MUX.get_or_init(|| tokio::sync::broadcast::channel(64).0),
+    }
+}
+
+fn broadcast_frame(channel: &str, method: &str, payload: serde_json::Value) {
+    let frame = json!({
+        "type": "server-request",
+        "rpcId": uuid_like(),
+        "method": method,
+        "payload": payload,
+    });
+    let _ = event_bus(channel).send(frame.to_string());
+}
+
+fn now_iso() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    format!("2099-01-01T00:{:02}:{:02}Z", (n / 60) % 60, n % 60)
+}
+
+fn now_ts() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+/// 轻量唯一 id(时间戳纳秒,无需 crypto)
+fn uuid_like() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    format!("srv-{:x}", n)
+}
+
 /// dsh 前端 settings 命名空间的内存存储(ns → (值树, revision))。
 /// 预置 ui-onboarding.welcomeNoticeVersion = 内测声明已确认(用户裁决:
 /// 不要内测声明弹窗)。重启重置到预置态;接 SQLite 持久化待后续项。
@@ -58,6 +109,14 @@ fn server_response(rpc_id: &str, result: serde_json::Value) -> Response {
         "result": result,
     }))
     .into_response()
+}
+
+/// 从请求 URI 判断事件流通道(mux/host)。
+fn info_channel(headers: &axum::http::HeaderMap) -> &'static str {
+    // 由调用方在路由层区分;这里依据 Host 头不可行,改由端点拆分。
+    // 默认 mux;events.host 端点直接传 "host"。
+    let _ = headers;
+    "mux"
 }
 
 fn not_implemented(rpc_id: &str, method: &str) -> Response {
@@ -110,14 +169,18 @@ pub async fn unary(
             server_response(&req.rpc_id, json!({ "ok": true, "value": value }))
         }
         // —— 启动期清单类:先给合法空状态,让界面出空态而非报错 ——
-        "workspace.list" => server_response(
-            &req.rpc_id,
-            json!({ "ok": true, "value": { "items": [], "archivedSessionIds": [] } }),
-        ),
-        "session.list" => server_response(
-            &req.rpc_id,
-            json!({ "ok": true, "value": { "items": [] } }),
-        ),
+        "workspace.list" => {
+            let st = dsh_state().lock().unwrap();
+            server_response(
+                &req.rpc_id,
+                json!({ "ok": true, "value": {
+                    "items": st.workspaces, "archivedSessionIds": [] } }),
+            )
+        }
+        "session.list" => {
+            let st = dsh_state().lock().unwrap();
+            server_response(&req.rpc_id, json!({ "ok": true, "value": { "items": st.sessions } }))
+        },
         "agentPreset.list" => server_response(
             &req.rpc_id,
             json!({ "ok": true, "value": {
@@ -189,6 +252,142 @@ pub async fn unary(
             });
             server_response(&req.rpc_id, json!({ "ok": true, "value": view }))
         }
+        "host.pickDirectory" => {
+            // 单机形态:无 GUI 目录选择,固定返回服务器工作目录
+            let cwd = std::env::current_dir()
+                .map(|d| d.display().to_string())
+                .unwrap_or_else(|_| std::env::var("USERPROFILE").unwrap_or_default());
+            server_response(&req.rpc_id, json!({ "ok": true, "value": { "path": cwd } }))
+        }
+        "host.listDirectory" => {
+            let home = std::env::var("USERPROFILE").unwrap_or_default();
+            let cwd = std::env::current_dir()
+                .map(|d| d.display().to_string())
+                .unwrap_or_else(|_| home.clone());
+            let path = req.payload["path"]
+                .as_str()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| cwd.clone());
+            let mut entries = Vec::new();
+            if let Ok(rd) = std::fs::read_dir(&path) {
+                for e in rd.flatten().take(200) {
+                    let name = e.file_name().to_string_lossy().to_string();
+                    if name.starts_with('.') { continue; }
+                    let fp = e.path().display().to_string();
+                    entries.push(json!({ "name": name, "path": fp, "hidden": false }));
+                }
+            }
+            let crumbs = json!([{ "name": path, "path": path, "hidden": false }]);
+            server_response(
+                &req.rpc_id,
+                json!({ "ok": true, "value": {
+                    "path": path, "home": home, "crumbs": crumbs,
+                    "entries": entries, "truncated": false
+                } }),
+            )
+        }
+        "host.createDirectory" => {
+            let p = req.payload["path"].as_str().unwrap_or_default();
+            match std::fs::create_dir_all(p) {
+                Ok(_) => server_response(&req.rpc_id, json!({ "ok": true, "value": {} })),
+                Err(e) => server_response(&req.rpc_id, json!({ "ok": false, "error": {
+                    "code": "bad-request", "message": format!("创建目录失败: {e}"), "details": {} } })),
+            }
+        }
+        "workspace.create" => {
+            let path = req.payload["path"].as_str().unwrap_or_default().to_string();
+            if path.is_empty() {
+                return server_response(&req.rpc_id, json!({ "ok": false, "error": {
+                    "code": "workspace-invalid-path", "message": "缺少 path", "details": { "path": "" } } }));
+            }
+            let title = std::path::Path::new(&path)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| path.clone());
+            let mut st = dsh_state().lock().unwrap();
+            if let Some(w) = st.workspaces.iter().find(|w| w["path"] == json!(path)) {
+                return server_response(&req.rpc_id, json!({ "ok": true, "value": {
+                    "workspace": w.clone(), "created": false } }));
+            }
+            st.seq += 1;
+            let ws = json!({
+                "workspaceId": format!("ws_{}", st.seq),
+                "path": path,
+                "title": title,
+                "sessionIds": [],
+                "createdAt": now_iso(),
+                "updatedAt": now_iso(),
+            });
+            st.workspaces.push(ws.clone());
+            drop(st);
+            server_response(&req.rpc_id, json!({ "ok": true, "value": {
+                "workspace": ws, "created": true } }))
+        }
+        "session.create" => {
+            let mut st = dsh_state().lock().unwrap();
+            st.seq += 1;
+            let sid = format!("sess_{}", st.seq);
+            let workspace_id = req.payload["workspaceId"]
+                .as_str()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "ws_1".to_string());
+            let session = json!({
+                "sessionId": sid,
+                "updatedAt": now_ts(),
+                "running": false,
+                "blank": true,
+                "cwd": std::env::current_dir().map(|d| d.display().to_string()).unwrap_or_default(),
+            });
+            st.sessions.push(session);
+            if let Some(w) = st.workspaces.iter_mut().find(|w| w["workspaceId"] == json!(workspace_id)) {
+                if let Some(arr) = w["sessionIds"].as_array_mut() {
+                    arr.push(json!(sid));
+                }
+                w["updatedAt"] = json!(now_iso());
+            }
+            drop(st);
+            broadcast_frame("host", "events.host", json!({
+                "type": "host/session-added", "sessionId": sid, "blank": true
+            }));
+            broadcast_frame("mux", "events.mux", json!({
+                "type": "session/subscribed", "sessionId": sid, "lastSeq": 0
+            }));
+            server_response(&req.rpc_id, json!({ "ok": true, "value": { "sessionId": sid } }))
+        }
+        "subagent.list" => server_response(
+            &req.rpc_id,
+            json!({ "ok": true, "value": { "entries": [], "parentAvailable": false } }),
+        ),
+        "session.history" => server_response(
+            &req.rpc_id,
+            json!({ "ok": true, "value": { "events": [], "hasMore": false } }),
+        ),
+        "session.models" => {
+            let model = std::env::var("BOEN_MODEL_ID").unwrap_or_default();
+            let (groups, current) = if model.is_empty() {
+                (json!([]), json!(null))
+            } else {
+                (
+                    json!([{ "id": "boenmind", "name": "BoenMind 网关",
+                             "models": [{ "id": model, "name": model }] }]),
+                    json!({ "provider": "boenmind", "model": model }),
+                )
+            };
+            server_response(
+                &req.rpc_id,
+                json!({ "ok": true, "value": {
+                    "current": current, "routable": !model.is_empty(),
+                    "groups": groups, "failures": [] } }),
+            )
+        }
+        "commands/list" => server_response(
+            &req.rpc_id,
+            json!({ "ok": true, "value": { "commands": [] } }),
+        ),
+        "skill.list" => server_response(
+            &req.rpc_id,
+            json!({ "ok": true, "value": { "skills": [] } }),
+        ),
         "llm.providers" => {
             // 单一 provider:服务器 env 配置的网关(前端只读展示)
             let model = std::env::var("BOEN_MODEL_ID").unwrap_or_default();
@@ -230,7 +429,7 @@ pub async fn unary(
                 json!({ "ok": true, "value": { "models": models, "failures": [] } }),
             )
         }
-        "dynamicCordisRunner.inventory" | "dynamicCordisRunner.syncInspectManifest" => {
+        "dynamicCordisRunner/inventory" | "dynamicCordisRunner/syncInspectManifest" => {
             // dsh 插件清单:BoenMind 无 dsh 插件,空清单
             server_response(&req.rpc_id, json!({ "ok": true, "value": { "items": [] } }))
         }
@@ -254,19 +453,37 @@ fn events_stream() -> Response {
 }
 
 /// dsh WS 事件流:接受升级后保持打开、周期 Ping(前端只依赖 open 事件)。
-async fn events_ws(upgrade: axum::extract::ws::WebSocketUpgrade) -> Response {
+async fn events_ws_channel(upgrade: axum::extract::ws::WebSocketUpgrade, channel: &'static str) -> Response {
+    let mut rx = event_bus(channel).subscribe();
     upgrade
-        .on_upgrade(|mut socket| async move {
+        .on_upgrade(move |mut socket| async move {
+            let mut heartbeat = tokio::time::interval(Duration::from_secs(15));
             loop {
-                tokio::time::sleep(Duration::from_secs(15)).await;
-                if socket
-                    .send(axum::extract::ws::Message::Ping(
-                        axum::body::Bytes::new(),
-                    ))
-                    .await
-                    .is_err()
-                {
-                    break;
+                tokio::select! {
+                    _ = heartbeat.tick() => {
+                        if socket
+                            .send(axum::extract::ws::Message::Ping(axum::body::Bytes::new()))
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    msg = rx.recv() => {
+                        match msg {
+                            Ok(text) => {
+                                if socket
+                                    .send(axum::extract::ws::Message::Text(text.into()))
+                                    .await
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                            Err(_) => break,
+                        }
+                    }
                 }
             }
         })
@@ -274,29 +491,26 @@ async fn events_ws(upgrade: axum::extract::ws::WebSocketUpgrade) -> Response {
 
 /// GET /api/events.mux 与 /api/events.host 共用:dsh 前端当前装配用
 /// WebSocket 升级;保留 SSE 回退(readSse 虚方法的另一实现)。
-pub async fn events_channel(
-    State(_state): State<AppState>,
-    upgrade: axum::extract::ws::WebSocketUpgrade,
-    headers: axum::http::HeaderMap,
-) -> Response {
+async fn events_channel(state: AppState, upgrade: axum::extract::ws::WebSocketUpgrade, headers: axum::http::HeaderMap, channel: &'static str) -> Response {
     let wants_ws = headers
         .get(axum::http::header::UPGRADE)
         .and_then(|v| v.to_str().ok())
         .map(|v| v.eq_ignore_ascii_case("websocket"))
         .unwrap_or(false);
     if wants_ws {
-        events_ws(upgrade).await
+        events_ws_channel(upgrade, channel).await
     } else {
         events_stream()
     }
 }
 
 /// GET /api/events.mux
-pub async fn events_mux(State(_state): State<AppState>) -> Response {
-    events_stream().into_response()
+pub async fn events_mux(State(state): State<AppState>, upgrade: axum::extract::ws::WebSocketUpgrade, headers: axum::http::HeaderMap) -> Response {
+    events_channel(state, upgrade, headers, "mux").await
 }
 
 /// GET /api/events.host
-pub async fn events_host(State(_state): State<AppState>) -> Response {
-    events_stream().into_response()
+pub async fn events_host(State(state): State<AppState>, upgrade: axum::extract::ws::WebSocketUpgrade, headers: axum::http::HeaderMap) -> Response {
+    events_channel(state, upgrade, headers, "host").await
 }
+

@@ -56,8 +56,8 @@ pub fn router(
         .route("/health", get(rpc::health))
         // dsh 前端宿主协议(公开挂载,见 api_dsh.rs 安全边界说明)
         .route("/api/{*rest}", post(api_dsh::unary))
-        .route("/api/events.mux", get(api_dsh::events_channel))
-        .route("/api/events.host", get(api_dsh::events_channel))
+        .route("/api/events.mux", get(api_dsh::events_mux))
+        .route("/api/events.host", get(api_dsh::events_host))
         .with_state(state);
     // Web Surface 静态托管(公开:界面壳不含数据;数据一律经鉴权 API):
     // 未匹配 API 的路径回落到静态文件
