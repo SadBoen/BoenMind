@@ -203,15 +203,130 @@ impl PersistStore {
     /// 自事件日志重建投影——「投影重建只绑定事件日志」的终极验证。
     /// 边界:若日志已压实(前缀不在),前缀状态无法重建,拒绝并要求快照恢复。
     /// 返回 (store, 是否发生重建)。
-    /// M8.5:在线备份(WAL checkpoint + 主库拷贝;运行中可取的一致快照)。
-    pub fn backup_into(&self, target: &Path) -> StoreResult<()> {
-        self.state.backup_into(target)
+    /// M8.5(外部审计 X-04 修复):同位点原子备份。
+    /// 产出目录:state.db(SQLite Online Backup 一致快照)+ events.jsonl
+    /// (完整事件日志拷贝)+ manifest.json(双方 sha256 与位点)。
+    /// 运行中可取;写入顺序保证 manifest 最后落盘。
+    pub fn backup_into(&self, target_dir: &Path) -> StoreResult<()> {
+        use sha2::{Digest, Sha256};
+        use std::path::PathBuf;
+
+        std::fs::create_dir_all(target_dir)
+            .map_err(|e| StoreError::Io(std::io::Error::other(format!("备份目录创建失败: {e}"))))?;
+        let state_db: PathBuf = target_dir.join("state.db");
+        let _ = std::fs::remove_file(&state_db);
+        self.state.backup_into(&state_db)?;
+
+        let events_src = self
+            .event_log_path()
+            .ok_or_else(|| StoreError::Io(std::io::Error::other("事件日志路径未知")))?;
+        let events_dst: PathBuf = target_dir.join("events.jsonl");
+        std::fs::copy(&events_src, &events_dst)
+            .map_err(|e| StoreError::Io(std::io::Error::other(format!("事件日志拷贝失败: {e}"))))?;
+
+        let sha = |path: &Path| -> StoreResult<String> {
+            let data = std::fs::read(path).map_err(|e| {
+                StoreError::Io(std::io::Error::other(format!("hash 读取失败: {e}")))
+            })?;
+            Ok(format!("sha256:{:x}", Sha256::digest(&data)))
+        };
+        let manifest = serde_json::json!({
+            "kind": "boenmind-backup",
+            "manifest_version": 1,
+            "last_log_seq": self.last_log_seq()?,
+            "last_applied_seq": self.last_applied_seq()?,
+            "state_sha256": sha(&state_db)?,
+            "events_sha256": sha(&events_dst)?,
+        });
+        // manifest 最后写:存在即代表备份三件套完整
+        std::fs::write(
+            target_dir.join("manifest.json"),
+            serde_json::to_vec(&manifest)
+                .map_err(|e| StoreError::Io(std::io::Error::other(e.to_string())))?,
+        )
+        .map_err(|e| StoreError::Io(std::io::Error::other(format!("清单写入失败: {e}"))))?;
+        Ok(())
+    }
+
+    /// 校验备份目录:manifest 完整、双 sha256 匹配、位点与日志末尾一致。
+    /// 不匹配 = 拒绝恢复(审计 X-04 验收 3)。
+    pub fn verify_backup(target_dir: &Path) -> StoreResult<()> {
+        use sha2::{Digest, Sha256};
+        let manifest_path = target_dir.join("manifest.json");
+        let raw = std::fs::read(&manifest_path).map_err(|e| StoreError::Corrupt {
+            seq: 0,
+            reason: format!("备份清单缺失或不可读(manifest.json): {e}"),
+        })?;
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&raw).map_err(|e| StoreError::Corrupt {
+                seq: 0,
+                reason: format!("备份清单解析失败: {e}"),
+            })?;
+        let sha = |path: &Path| -> StoreResult<String> {
+            let data = std::fs::read(path).map_err(|e| StoreError::Corrupt {
+                seq: 0,
+                reason: format!("备份文件缺失: {e}"),
+            })?;
+            Ok(format!("sha256:{:x}", Sha256::digest(&data)))
+        };
+        let state_sha = sha(&target_dir.join("state.db"))?;
+        if state_sha != manifest["state_sha256"].as_str().unwrap_or("") {
+            return Err(StoreError::Corrupt {
+                seq: 0,
+                reason: "state.db 校验和与清单不符".into(),
+            });
+        }
+        let events_sha = sha(&target_dir.join("events.jsonl"))?;
+        if events_sha != manifest["events_sha256"].as_str().unwrap_or("") {
+            return Err(StoreError::Corrupt {
+                seq: 0,
+                reason: "events.jsonl 校验和与清单不符".into(),
+            });
+        }
+        let log = crate::event_log::JsonlEventLog::open(target_dir.join("events.jsonl"))?;
+        let last = log.last_seq()?;
+        if last != manifest["last_log_seq"].as_u64().unwrap_or(u64::MAX) {
+            return Err(StoreError::Corrupt {
+                seq: last,
+                reason: "事件日志位点与清单不符".into(),
+            });
+        }
+        Ok(())
+    }
+
+    /// 事件日志文件路径(备份用)。
+    pub fn event_log_path(&self) -> Option<std::path::PathBuf> {
+        Some(self.log.path().to_path_buf())
     }
 
     pub fn open_resilient(dir: &Path) -> StoreResult<(Self, bool)> {
         match Self::open(dir) {
             Ok(s) => Ok((s, false)),
             Err(StoreError::Sql(_)) | Err(StoreError::Corrupt { .. }) => {
+                // 外部审计 X-03(P1):fail-closed——先核验日志完整性。
+                // 首序号 > 1 = 前缀已压实,重建必丢前缀事实(注释承诺而
+                // 实现未兑现的缺口);空日志同理。此时拒绝自动重建并保持
+                // 现场不隔离,要求用户提供快照恢复。
+                {
+                    let log_path: std::path::PathBuf = dir.join("events.jsonl");
+                    if !log_path.exists() {
+                        return Err(StoreError::Corrupt {
+                            seq: 0,
+                            reason: "状态库损坏且事件日志缺失:无法重建,需快照恢复(拒绝自动重建)"
+                                .into(),
+                        });
+                    }
+                    let log = crate::event_log::JsonlEventLog::open(log_path)?;
+                    let first = log.first_seq()?;
+                    if first > 1 {
+                        return Err(StoreError::Corrupt {
+                            seq: first,
+                            reason: format!(
+                                "事件日志前缀已压实(首序号 {first}):自动重建将丢失前缀事实,需快照恢复"
+                            ),
+                        });
+                    }
+                }
                 let stamp = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_millis())

@@ -69,7 +69,8 @@ def tool_call(name, a):
     if name == "portfolio.add":
         sym = a.get("symbol", "")
         qty = a.get("qty", 0)
-        if sym not in FIXTURE or not isinstance(qty, int) or qty < 1:
+        # 外部审计 X-06(P3):bool 是 int 子类,必须严格排除
+        if sym not in FIXTURE or type(qty) is not int or qty < 1:
             return {"isError": True, "content": [{"type": "text", "text": "bad input"}]}
         portfolio[sym] = portfolio.get(sym, 0) + qty
         return {

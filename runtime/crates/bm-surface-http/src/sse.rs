@@ -40,6 +40,11 @@ pub async fn events_sse(
                         Ok(events) => {
                             for e in events {
                                 last = e.event_seq;
+                                // 外部审计 X-02(P1):按会话过滤——只发本会话
+                                // 关联事件;无会话关联的全局事件不进会话流。
+                                if e.session_id.as_ref() != Some(&sess) {
+                                    continue;
+                                }
                                 let data = serde_json::to_string(&e)
                                     .unwrap_or_else(|_| "{}".to_string());
                                 yield Ok::<_, Infallible>(

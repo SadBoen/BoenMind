@@ -430,3 +430,174 @@ async fn t113_two_apps_one_runtime() {
     );
     rig.stop().await;
 }
+
+/// t123(外部审计 X-01 验收):Wiki 符号链接越界写/读必须被拒。
+/// (Windows 建链可能无权限;无权限环境自动跳过)
+#[tokio::test]
+async fn t123_wiki_symlink_escape_rejected() {
+    if !gated() {
+        return;
+    }
+    let dir = tempfile::tempdir().expect("临时目录");
+    let wiki_dir = dir.path().join("wiki");
+    std::fs::create_dir_all(&wiki_dir).expect("建目录");
+    let outside = dir.path().join("outside.txt");
+    std::fs::write(&outside, "secret-outside").expect("外部文件");
+
+    // 建符号链接 wiki/link.md → outside.txt(无权限环境跳过)
+    let link = wiki_dir.join("link.md");
+    #[cfg(windows)]
+    {
+        if std::os::windows::fs::symlink_file(&outside, &link).is_err() {
+            eprintln!("跳过:当前环境无符号链接权限");
+            return;
+        }
+    }
+    #[cfg(not(windows))]
+    std::os::unix::fs::symlink(&outside, &link).expect("建链");
+
+    let hub = McpHub::new();
+    let transport = StdioMcpTransport::spawn(
+        "python",
+        &[
+            app_path("wiki_server.py").to_string_lossy().to_string(),
+            "--dir".into(),
+            wiki_dir.to_string_lossy().to_string(),
+        ],
+        &Default::default(),
+    )
+    .expect("子进程启动");
+    let manifests = hub.connect("wiki", transport, 30_000).await.expect("握手");
+    let entries = McpHub::capability_entries(manifests);
+    let rig = TestRig::standard_with(vec![], entries, Some(hub.clone())).await;
+
+    // 写路径需首调审批(破坏性工具)→ 先走一遍审批
+    let req = rig.ids.next_id("req");
+    let _ = rig
+        .handle
+        .capability_call(
+            req,
+            CapabilityCallParams {
+                capability: "mcp.wiki.page.write".into(),
+                args: json!({"name": "warmup", "content": "x"}),
+                idempotency_key: None,
+                deadline_ms: Some(30_000),
+            },
+        )
+        .await
+        .expect_err("首调必须审批");
+    let list = rig
+        .handle
+        .approval_list(bm_contract::wire::ApprovalListParams { state_filter: None })
+        .await
+        .expect("列表");
+    let approval_id = list["approvals"][0]["approval_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    rig.handle
+        .approval_respond(
+            rig.ids.next_id("req"),
+            ApprovalRespondParams {
+                approval_id: BmId::parse(&approval_id).unwrap(),
+                decision: "approve".into(),
+                scope: Some("count:5".into()),
+            },
+        )
+        .await
+        .expect("批准");
+
+    // 越界写:必须失败,且外部文件保持原样
+    let done = call_and_settle(
+        &rig,
+        "mcp.wiki.page.write",
+        json!({"name": "link", "content": "PWNED"}),
+        None,
+    )
+    .await;
+    assert_eq!(done.state, OperationState::Failed, "越界写必须失败");
+    assert_eq!(
+        std::fs::read_to_string(&outside).unwrap(),
+        "secret-outside",
+        "外部文件不得被改写"
+    );
+
+    // 越界读:同样拒绝
+    let done = call_and_settle(&rig, "mcp.wiki.page.read", json!({"name": "link"}), None).await;
+    assert_eq!(done.state, OperationState::Failed, "越界读必须失败");
+    rig.stop().await;
+}
+
+/// t124(外部审计 X-06 验收):Market qty=true 必须被拒(布尔非整数)。
+#[tokio::test]
+async fn t124_market_rejects_bool_qty() {
+    if !gated() {
+        return;
+    }
+    let hub = McpHub::new();
+    let transport = StdioMcpTransport::spawn(
+        "python",
+        &[app_path("market_server.py").to_string_lossy().to_string()],
+        &Default::default(),
+    )
+    .expect("子进程启动");
+    let manifests = hub
+        .connect("market", transport, 30_000)
+        .await
+        .expect("握手");
+    let entries = McpHub::capability_entries(manifests);
+    let rig = TestRig::standard_with(vec![], entries, Some(hub.clone())).await;
+
+    // 首调 add 需审批 → 批准 once → qty=true 必须工具级失败
+    let req = rig.ids.next_id("req");
+    let err = rig
+        .handle
+        .capability_call(
+            req,
+            CapabilityCallParams {
+                capability: "mcp.market.portfolio.add".into(),
+                args: json!({"symbol": "ACME", "qty": true}),
+                idempotency_key: None,
+                deadline_ms: Some(30_000),
+            },
+        )
+        .await
+        .expect_err("可逆写首调必须审批");
+    assert!(matches!(
+        err,
+        bm_core::CoreError::Semantic(bm_contract::error_codes::ErrorCode::ApprovalRequired, _)
+    ));
+    let list = rig
+        .handle
+        .approval_list(bm_contract::wire::ApprovalListParams { state_filter: None })
+        .await
+        .expect("列表");
+    let approval_id = list["approvals"][0]["approval_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    rig.handle
+        .approval_respond(
+            rig.ids.next_id("req"),
+            ApprovalRespondParams {
+                approval_id: BmId::parse(&approval_id).unwrap(),
+                decision: "approve".into(),
+                scope: Some("once".into()),
+            },
+        )
+        .await
+        .expect("批准");
+    let events = rig.all_events().await;
+    let requested = events
+        .iter()
+        .find(|e| e.event_type == EventType::ApprovalRequested)
+        .expect("approval.requested");
+    let op_id = BmId::parse(requested.payload["operation_id"].as_str().unwrap()).unwrap();
+    let done = wait_terminal(&rig, &op_id).await;
+    assert_eq!(
+        done.state,
+        OperationState::Failed,
+        "qty=true 必须被工具拒绝"
+    );
+    rig.stop().await;
+}

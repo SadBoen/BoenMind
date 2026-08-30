@@ -61,8 +61,6 @@ pub struct CapabilityRow<'a> {
 
 pub struct StateDb {
     pub(crate) conn: Mutex<Connection>,
-    /// 自身文件路径(内存形态 None;备份用)。
-    pub(crate) db_path: Option<std::path::PathBuf>,
 }
 
 impl StateDb {
@@ -106,7 +104,6 @@ impl StateDb {
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(Self {
             conn: Mutex::new(conn),
-            db_path: Some(path.to_path_buf()),
         })
     }
 
@@ -647,19 +644,31 @@ impl StateDb {
     /// M8.5:在线备份(VACUUM INTO;目标文件必须不存在)。运行中可取,
     /// 产出一致的快照副本(含 WAL 内容合并)。
     pub fn backup_into(&self, target: &std::path::Path) -> StoreResult<()> {
-        // WAL checkpoint 全量合并进主库文件,再拷贝——运行中可取的一致快照
-        self.conn
-            .lock()
-            .expect("锁未中毒")
-            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
-        let db_path = self.db_path.as_ref().ok_or_else(|| {
-            StoreError::Io(std::io::Error::other("状态库路径未知(内存形态无备份)"))
-        })?;
-        std::fs::copy(db_path, target)
-            .map_err(|e| StoreError::Io(std::io::Error::other(format!("状态库拷贝失败: {e}"))))?;
+        // 外部审计 X-04(P2):checkpoint+copy 之间存在提交窗口,且与
+        // 事件日志位点不绑定。改用 SQLite Online Backup API(一致快照),
+        // 并写入位点清单(manifest)供恢复侧校验。
+        use rusqlite::backup::Backup;
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                StoreError::Io(std::io::Error::other(format!("备份目录创建失败: {e}")))
+            })?;
+        }
+        let mut dst = rusqlite::Connection::open(target)?;
+        {
+            let src = self.conn.lock().expect("锁未中毒");
+            let b = Backup::new(&src, &mut dst)?;
+            // step 返回 StepResult(Done/More);Done 即完成
+            use rusqlite::backup::StepResult;
+            loop {
+                match b.step(64)? {
+                    StepResult::Done => break,
+                    _ => continue,
+                }
+            }
+        }
+
         Ok(())
     }
-
     pub fn list_outbox_by_state(&self, state: &str) -> StoreResult<Vec<serde_json::Value>> {
         self.query_rows(
             "SELECT operation_id, kind, state, payload FROM outbox WHERE state = ?1",

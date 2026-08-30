@@ -57,10 +57,25 @@ def main():
     wiki_dir = os.path.abspath(opts.dir)
     os.makedirs(wiki_dir, exist_ok=True)
 
+    wiki_dir_real = os.path.realpath(wiki_dir)
+
     def safe_path(name):
+        # 外部审计 X-01(P1):符号链接越界——open 会跟随链接写出目录。
+        # 防线:名字白名单 + 目标 lstat 拒链 + realpath 包含校验(防父级
+        # 目录被替换为链接);读写同查。残余 TOCTOU 竞态如实留档(纯
+        # Python 无 openat;后续可换目录 fd + O_NOFOLLOW 实现)。
         if not name or ".." in name or not NAME_RE.fullmatch(name):
             return None
-        return os.path.join(wiki_dir, name + ".md")
+        p = os.path.join(wiki_dir_real, name + ".md")
+        try:
+            if os.path.islink(p):
+                return None
+            real = os.path.realpath(p)
+        except OSError:
+            return None
+        if real != p and not real.startswith(wiki_dir_real + os.sep):
+            return None
+        return p
 
     def tool_call(name, a):
         if name == "page.read":

@@ -84,10 +84,14 @@ pub fn tool_manifest(
         .get("destructiveHint")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let effect = if read_only {
-        "read-only"
-    } else if destructive {
+    // 外部审计 X-05(P2):冲突标注裁决——destructiveHint 优先(第三方
+    // 元数据只能提高风险、不能降低)。readOnly+destructive 并存 → 按
+    // external-side-effect + required 注册,绝不降级为免审批只读。
+    let read_only = read_only && !destructive;
+    let effect = if destructive {
         "external-side-effect"
+    } else if read_only {
+        "read-only"
     } else {
         "reversible-command"
     };
@@ -846,4 +850,47 @@ pub fn load_mcp_setups(
         });
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod x05_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn def(name: &str, annotations: serde_json::Value) -> McpToolDef {
+        McpToolDef {
+            name: name.into(),
+            description: None,
+            input_schema: json!({"type": "object"}),
+            annotations,
+        }
+    }
+
+    /// X-05:readOnly+destructive 并存 → external-side-effect + required
+    /// (元数据只能提高风险,不能降级为免审批只读)。
+    #[test]
+    fn conflicting_annotations_escalate() {
+        let m = tool_manifest(
+            "srv",
+            &def("t", json!({"readOnlyHint": true, "destructiveHint": true})),
+            1000,
+        )
+        .expect("manifest");
+        assert_eq!(m.effect.as_str(), "external-side-effect");
+        assert_eq!(
+            m.approval,
+            bm_contract::capability::ApprovalRequirement::Required
+        );
+    }
+
+    #[test]
+    fn read_only_only_stays_passthrough() {
+        let m =
+            tool_manifest("srv", &def("t", json!({"readOnlyHint": true})), 1000).expect("manifest");
+        assert_eq!(m.effect.as_str(), "read-only");
+        assert_eq!(
+            m.approval,
+            bm_contract::capability::ApprovalRequirement::NotRequired
+        );
+    }
 }

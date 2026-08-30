@@ -189,3 +189,62 @@ async fn t115_multi_surface_cancel_collaboration() {
             && e.payload["error_code"] == "cancelled"
     }));
 }
+
+/// t121(外部审计 X-02 验收):SSE 会话流必须按 session_id 过滤——
+/// 订阅会话 A,断言流中不出现会话 B 的任何事件。
+#[tokio::test]
+async fn t121_sse_filters_by_session() {
+    let rig = rig_with_slow_mcp().await;
+    // 建两个会话:各自产生 session.created(会话关联事件)
+    let (status, body) = rig
+        .rpc(
+            &rig.client(Some(&rig.token)),
+            Method::SessionCreate,
+            json!({"agent": {"name": "A", "model_chain": ["zhipu.glm-4-flash"],
+                   "budget": {"max_tokens": 10000, "max_turns": 5}}}),
+        )
+        .await;
+    assert_eq!(status, 200);
+    let sess_a = body["result"]["session_id"].as_str().unwrap().to_string();
+
+    let (status, body) = rig
+        .rpc(
+            &rig.client(Some(&rig.token)),
+            Method::SessionCreate,
+            json!({"agent": {"name": "B", "model_chain": ["zhipu.glm-4-flash"],
+                   "budget": {"max_tokens": 10000, "max_turns": 5}}}),
+        )
+        .await;
+    assert_eq!(status, 200);
+    let sess_b = body["result"]["session_id"].as_str().unwrap().to_string();
+    assert_ne!(sess_a, sess_b);
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // 订阅 A 的流,限时读取(流无限,读够证据即断)
+    let client = rig.client(Some(&rig.token));
+    let r = client
+        .get(format!("{}/events/{}", rig.url, sess_a))
+        .timeout(Duration::from_secs(3))
+        .send()
+        .await
+        .expect("SSE 连接");
+    assert_eq!(r.status().as_u16(), 200);
+    let mut collected = String::new();
+    let mut resp = r;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    while tokio::time::Instant::now() < deadline {
+        match tokio::time::timeout(Duration::from_millis(300), resp.chunk()).await {
+            Ok(Ok(Some(chunk))) => collected.push_str(&String::from_utf8_lossy(&chunk)),
+            _ => break,
+        }
+    }
+    assert!(
+        collected.contains(sess_a.as_str()),
+        "必须包含会话 A 的事件:{collected}"
+    );
+    assert!(
+        !collected.contains(sess_b.as_str()),
+        "绝不允许出现会话 B 的事件(X-02):{collected}"
+    );
+}

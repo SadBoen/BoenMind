@@ -91,6 +91,25 @@ impl JsonlEventLog {
 
     /// 压实:截断 seq ≤ up_to 的前缀。先快照成功后才允许调用(M2 规格 §2)。
     /// 通过临时文件重写 + 原子改名;任何失败原文件保持不变。
+    /// 外部审计 X-03(P1):日志首序号(空文件 = 0)。
+    /// 恢复判据:首序号 > 1 表示前缀已压实,自动重建将丢失前缀事实。
+    pub fn first_seq(&self) -> StoreResult<u64> {
+        let file = File::open(&self.path)?;
+        for (idx, line) in BufReader::new(file).lines().enumerate() {
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            let event: EventEnvelope =
+                serde_json::from_str(&line).map_err(|e| StoreError::Corrupt {
+                    seq: idx as u64 + 1,
+                    reason: format!("行解析失败: {e}"),
+                })?;
+            return Ok(event.event_seq);
+        }
+        Ok(0)
+    }
+
     pub fn truncate_prefix(&self, up_to_seq: u64) -> StoreResult<usize> {
         let file = File::open(&self.path)?;
         let mut kept: Vec<String> = Vec::new();

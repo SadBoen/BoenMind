@@ -30,19 +30,32 @@ async fn t118_backup_restore_history_intact() {
     assert_eq!(old_receipt.state, OperationState::Succeeded);
     rig1.handle.stop("backup").await;
 
-    // 在线备份:状态库快照 + 事件日志拷贝
+    // 在线备份:同位点原子快照(state.db + events.jsonl + manifest)
     let backup = tempfile::tempdir().expect("备份目录");
     {
         let store = bm_persist::PersistStore::open(dir.path()).expect("打开");
-        store
-            .backup_into(&backup.path().join("state.db"))
-            .expect("VACUUM INTO");
+        store.backup_into(backup.path()).expect("备份");
+        bm_persist::PersistStore::verify_backup(backup.path()).expect("备份校验必须通过");
+        assert!(
+            backup.path().join("manifest.json").exists(),
+            "位点清单必须存在"
+        );
     }
-    std::fs::copy(
-        dir.path().join("events.jsonl"),
-        backup.path().join("events.jsonl"),
-    )
-    .expect("日志拷贝");
+    // 篡改检测:改坏 state.db → verify 必须拒绝(X-04 验收 3)
+    {
+        let tampered = backup.path().join("state.db");
+        let mut data = std::fs::read(&tampered).expect("读");
+        let mid = data.len() / 2;
+        data[mid] ^= 0xFF;
+        std::fs::write(&tampered, &data).expect("写");
+        assert!(
+            bm_persist::PersistStore::verify_backup(backup.path()).is_err(),
+            "篡改后的备份必须被拒绝"
+        );
+        let store = bm_persist::PersistStore::open(dir.path()).expect("打开");
+        store.backup_into(backup.path()).expect("重新备份");
+        bm_persist::PersistStore::verify_backup(backup.path()).expect("重新校验");
+    }
 
     // 恢复:副本打开 → 历史会话 resume → 新回合成功;旧收据不变
     let rig2 = rig_on(backup.path(), vec![Step::ok("恢复后新答", 80, 30)]).await;
@@ -415,4 +428,48 @@ async fn wait_done(handle: &RuntimeHandle, op: &BmId) {
 
 fn chrono_now() -> chrono::DateTime<chrono::Utc> {
     chrono::Utc::now()
+}
+
+/// t119e(外部审计 X-03 验收):先压实日志前缀、再损坏状态库 →
+/// open_resilient 必须 fail-closed 拒绝自动重建(而非静默生成不完整状态)。
+#[tokio::test]
+async fn t119e_compacted_corrupt_recovery_fails_closed() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let rig = rig_on(
+        dir.path(),
+        vec![Step::ok("答1", 30, 10), Step::ok("答2", 20, 8)],
+    )
+    .await;
+    let (sess, agent) = rig.create_session().await.expect("会话创建");
+    let r = rig.send(&sess, &agent, "问题").await.expect("回合发起");
+    wait_done(&rig.handle, &r.operation_id).await;
+    rig.handle.stop("done").await;
+
+    // 压实前缀:快照位点推进到中段再截断
+    {
+        let store = bm_persist::PersistStore::open(dir.path()).expect("打开");
+        let last = bm_persist::EventStore::last_log_seq(&store).expect("末尾");
+        let mid = last / 2;
+        bm_persist::EventStore::snapshot(&store).expect("快照");
+        bm_persist::EventStore::compact(&store, mid).expect("压实");
+    }
+    // 损坏状态库:拷贝到独立目录后破坏副本(原目录句柄由上一代持有)
+    let corrupt_dir = tempfile::tempdir().expect("破坏目录");
+    for name in ["state.db", "events.jsonl"] {
+        let src = dir.path().join(name);
+        if src.exists() {
+            std::fs::copy(&src, corrupt_dir.path().join(name)).expect("拷贝");
+        }
+    }
+    let _ = std::fs::remove_file(corrupt_dir.path().join("state.db-wal"));
+    std::fs::write(corrupt_dir.path().join("state.db"), b"garbage-state-db").expect("写坏");
+
+    // fail-closed:必须拒绝自动重建,理由指向快照恢复
+    let res = bm_persist::PersistStore::open_resilient(corrupt_dir.path());
+    assert!(res.is_err(), "压实 + 损坏必须拒绝自动重建");
+    let msg = format!("{:?}", res.err().unwrap());
+    assert!(
+        msg.contains("压实") || msg.contains("快照"),
+        "拒绝理由必须指向快照恢复:{msg}"
+    );
 }
