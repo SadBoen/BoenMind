@@ -108,8 +108,15 @@ runtime/                        第 3 层  源代码(M1 起,Rust workspace;crate
       [plugins/demo-sidebar.js];真实浏览器手测通过,260 测试全绿)**
 - [x] **弃用 dsh 复刻前端(2026-08-31,用户裁决;runtime/web 全量删除
       [137 文件],M10 未提交工作全量归档分支 `archive/m10-dsh-frontend`;
-      后端合同面/配置 API/事件流不动,ADR-0013;新参考界面待用户指定,
-      见 PENDING D-M10-1;删除后 261 测试全绿)**
+      后端合同面/配置 API/事件流不动,ADR-0013;删除后 261 测试全绿)**
+- [x] **W1(WEBUI 序列开篇,2026-09-01,ADR-0014):新前端 = assistant-ui
+      组件库自建壳(runtime/webapp,Vite+React+TS,三栏布局按用户蓝本)
+      + 后端 OpenAI 兼容插座 /v1/chat/completions(SSE 流式,X-Bm-Session
+      续接);真浏览器验收:发消息→真实网关流式回复上屏、第二轮连续
+      (banana 实测)。已知:中转站 deepseek-v4-flash 通道暂不可用
+      (503/超时已取证),验收用 gpt-5.6-luna;W2=会话列表/设置页/
+      停止生成。W 序列合约=每个组件组必须在 assistant-ui 找到原型
+      (W1 规格 §5)**
 - 注意:ADR-0011(App 形态)与各回看「§6 条件与遗留」是后续规划的
   输入清单;deepwiki S1-S10 逐里程碑裁决中(S5/S9 已闭合,S3/S4/S8 部分
   采纳,余 proposed;总表见 FULL-REVIEW §2.4),勿自动采纳

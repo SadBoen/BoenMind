@@ -25,3 +25,4 @@ server.log
 # W 系列 WebUI 壳子构建产物(源码在 runtime/webapp/src,构建入 dist)
 runtime/webapp/node_modules/
 runtime/webapp/dist/
+server-w.log
