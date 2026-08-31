@@ -696,7 +696,8 @@ window.__ModuleLoader__.load({
 				id: rowId(group.id, model.id),
 				label: model.name,
 				detail: model.description !== void 0 ? `${group.name} · ${model.description}` : group.name,
-				...directory.current.provider === group.id && directory.current.model === model.id ? { active: true } : {}
+				// BoenMind:current 允许为 null(未选模型),直接取字段会 TypeError
+				...directory.current?.provider === group.id && directory.current?.model === model.id ? { active: true } : {}
 			});
 			for (const failure of directory.failures) rows.push({
 				id: `failure/${failure.id}`,

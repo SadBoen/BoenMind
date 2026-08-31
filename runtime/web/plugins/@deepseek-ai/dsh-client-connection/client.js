@@ -127,7 +127,9 @@ window.__ModuleLoader__.load({
 			async pumpStream(stream, sink, onEnd) {
 				try {
 					for await (const envelope of stream) {
-						if (envelope.payload.type === "stream/error") break;
+						// BoenMind:stream/error 是会话级模型失败,投递给
+						// 业务层处理;原版在此 break 断流重连,错误丢失且
+						// 引发无谓重连风暴
 						if (sink !== void 0) this.callSink(() => {
 							sink(envelope);
 						});
@@ -5372,7 +5374,9 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 		object({ sessionId: sessionIdSchema });
 		/** session.models response value. */
 		const sessionModelsValueSchema = object({
-			current: modelSelectionSchema,
+			// BoenMind:未配置模型时后端返回 current:null,按 dsh 原版
+			// 非空校验会 zod 抛错,模型选择器永久卡「加载中」
+			current: modelSelectionSchema.nullable(),
 			routable: boolean(),
 			groups: array(modelProviderGroupSchema),
 			failures: array(modelCatalogFailureSchema)
@@ -5646,6 +5650,8 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			}),
 			object({
 				type: literal("stream/error"),
+				// BoenMind:可选 sessionId,供会话层路由模型失败
+				sessionId: sessionIdSchema.optional(),
 				error: rpcErrorSchema
 			})
 		]);
@@ -5697,6 +5703,8 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			}),
 			object({
 				type: literal("stream/error"),
+				// BoenMind:可选 sessionId,供会话层路由模型失败
+				sessionId: sessionIdSchema.optional(),
 				error: rpcErrorSchema
 			})
 		]);

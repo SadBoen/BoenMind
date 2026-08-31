@@ -60,20 +60,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let hint = bm_persist::id_counter_hint(persist.state()).unwrap_or(0);
     let id_gen = Arc::new(SeqIdGen::starting_at(hint));
 
-    // M7(ADR-0010):BOEN_MODEL_BASE_URL + BOEN_MODEL_ID 齐备 → OpenAI 兼容真实网关;
-    // 密钥只存加密 Secret Store(FileSecretStore,主密钥 BOEN_SECRET_MASTER_KEY,
-    // ≥32 字符),首启可用 BOEN_MODEL_API_KEY 播种一次。缺省仍 mock(测试确定性)。
+    // M7(ADR-0010):真实网关 = OpenAI 兼容 baseUrl + modelId。D-M3-1 起
+    // (ADR-0012)模型接入配置逐字段取「配置文件 > 启动 env」(boenmind-
+    // surface-http::config_store 同源合并);密钥只存加密 Secret Store
+    // (FileSecretStore,主密钥 BOEN_SECRET_MASTER_KEY,≥32 字符),首次缺失
+    // 时用生效 api_key 播种一次。缺省仍 mock(测试确定性)。
+    let model_cfg = bm_surface_http::config_store::effective_model(&data_dir);
     let (connector, secrets): (
         Arc<dyn ModelConnector>,
         Arc<dyn bm_core::ports::SecretStore>,
-    ) = match (
-        std::env::var("BOEN_MODEL_BASE_URL")
-            .ok()
-            .filter(|s| !s.is_empty()),
-        std::env::var("BOEN_MODEL_ID")
-            .ok()
-            .filter(|s| !s.is_empty()),
-    ) {
+    ) = match (model_cfg.base_url.clone(), model_cfg.model_id.clone()) {
         (Some(base), Some(model)) => {
             let master = std::env::var("BOEN_SECRET_MASTER_KEY")
                 .expect("真实网关模式需要 BOEN_SECRET_MASTER_KEY(至少 32 字符)");
@@ -83,13 +79,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let store: Arc<dyn bm_core::ports::SecretStore> = Arc::new(store);
             let secret_ref = bm_core::runtime::default_secret_ref(&model);
             if bm_core::ports::SecretStore::get(store.as_ref(), &secret_ref).is_err() {
-                let seeded = std::env::var("BOEN_MODEL_API_KEY")
-                    .expect("密钥库缺该模型凭据:设 BOEN_MODEL_API_KEY 完成首次播种");
+                let seeded = model_cfg.api_key.clone()
+                    .expect("密钥库缺该模型凭据:在设置界面保存密钥或设 BOEN_MODEL_API_KEY 完成首次播种");
                 bm_core::ports::SecretStore::put(store.as_ref(), &secret_ref, &seeded)
                     .expect("播种密钥失败");
                 eprintln!("模型凭据已加密写入 {}", path.display());
             }
-            eprintln!("真实模型网关 {base}(model {model};凭据走加密 Secret Store)");
+            let src = if data_dir.join("config/model.json").exists() {
+                "配置文件+env 合并"
+            } else {
+                "启动 env"
+            };
+            eprintln!("真实模型网关 {base}(model {model};来源 {src};凭据走加密 Secret Store)");
             (
                 Arc::new(bm_providers::openai_http::OpenAiConnector::new(
                     base,
@@ -143,7 +144,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         capabilities,
         async_executor: mcp_executor,
         model_streaming: {
-            let on = std::env::var("BOEN_MODEL_STREAM").as_deref() == Ok("1");
+            // ADR-0012:流式开关逐字段取「配置文件 > BOEN_MODEL_STREAM env」
+            let on = model_cfg.stream;
             eprintln!("启动配置:模型流式 = {on}");
             on
         },
@@ -151,7 +153,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         data_dir: Some(data_dir.clone()),
         store: Some(store.clone()),
         connector,
-        secret_store: secrets,
+        secret_store: secrets.clone(),
         id_gen,
         clock: Arc::new(SystemClock),
         turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
@@ -161,8 +163,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // P0(第四轮评审):INV-5 脱敏接线——把模型凭据明文注册进 Execution
     // Log 扫描面,此后任何日志条目命中即整条降格,密钥明文禁止落盘。
-    if let Ok(key_value) = std::env::var("BOEN_MODEL_API_KEY") {
-        handle.register_redaction_value(&key_value);
+    if let Some(key_value) = &model_cfg.api_key {
+        handle.register_redaction_value(key_value);
     }
 
     let shutdown = Arc::new(tokio::sync::Notify::new());
@@ -172,6 +174,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         store,
         shutdown.clone(),
         web_dir.clone(),
+        Some(data_dir.clone()),
+        Some(secrets.clone()),
     );
     if let Some(w) = &web_dir {
         println!("Web Surface 目录 {w:?}(GET / 托管静态界面)");

@@ -57,8 +57,14 @@ M5 给 AI 管家定了"发呆检测"的默认值,大白话版:
    Agent 预设节注册已注释保留原码,client.js 内有 BoenMind 标记);
    内测声明弹窗按用户裁决移除(settings 预置已确认状态)。
 
-**下一批**:workspace.create + session 创建/消息流(让"新建会话→对话"
-跑通);settings 内存存储接 SQLite 持久化;模型节 provider 行渲染对齐。
+**下一批 → 已升格 M10(2026-08-30 用户裁决:D-M3-1 web 线升格为正式里程碑,
+规格 `milestones/M10-implementation-spec.md`,ADR-0012 配置管理 API 随发)**:
+M10 = 配置管理 CRUD API(config.list/get/set/delete,用户裁决「凡允许用户改的
+配置一律成套增删改查」)+ 模型节界面接通(表单提交 JS 对齐 config 字段,
+布局不动)+ 对话闭环(session.prompt→agent.send_input,事件翻译回流,纯对话)。
+原「下一批」三条待办归拢:settings 内存接 SQLite 持久化 → config/model.json
+承担模型配置持久化(ui-onboarding 等界面杂项仍内存,候选尾巴);模型节
+provider 行渲染对齐 → llm.* 由生效配置驱动;session 消息流 → M10-S3。
 
 v2/v3 历史要点:令牌表机械复刻 dsh ui-theme;网页 CLI 已删除(A-06~A-08
 销账);Enter 发送等交互已并入 dsh 本体行为差异待对齐。

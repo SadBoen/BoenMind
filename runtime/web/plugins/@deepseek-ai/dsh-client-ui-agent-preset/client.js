@@ -389,6 +389,8 @@ window.__ModuleLoader__.load({
 		* @returns the chip, or null when the deployment composes no presets.
 		*/
 		function AgentPresetSeat({ load, select, introduced, useAgentPresetSeat, t }) {
+			// BoenMind:按用户裁决隐藏「标准模式」chip
+			return null;
 			const state = useAgentPresetSeat((snapshot) => snapshot);
 			const [open, setOpen] = (0, react.useState)(false);
 			(0, react.useEffect)(() => {
@@ -1645,11 +1647,8 @@ window.__ModuleLoader__.load({
 						seat.stage("cordis", true);
 						scope.workspaces.startSession();
 					};
-					const chip = scope.slots.register({
-						name: "conversation.hero.agentPreset",
-						locale: "settings.agentPreset",
-						inject: seatInjected
-					}, AgentPresetSeat);
+					// BoenMind:用户裁决移除「标准模式」chip
+					const chip = () => {};
 					const label = scope.slots.register({
 						name: "conversation.session.header.actions",
 						id: "agent-preset",

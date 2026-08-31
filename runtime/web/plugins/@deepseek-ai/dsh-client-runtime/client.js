@@ -8293,7 +8293,14 @@ Set the \`cycles\` parameter to \`"ref"\` to resolve cyclical schemas with defs.
 			*/
 			handleMuxEnvelope(envelope) {
 				const frame = envelope.payload;
-				if (frame.type === "stream/error") return;
+				// BoenMind:stream/error = 某会话模型调用失败,路由到该会话
+				// 的错误出口(原版静默丢弃,失败完全不可见);sessionId 缺席
+				// 时无处路由,记日志后忽略
+				if (frame.type === "stream/error") {
+					if (frame.sessionId !== void 0) this.sessions.get(frame.sessionId)?.handleAgentError(frame.error.message);
+					else console.error("[web-runtime] stream/error without sessionId:", frame.error.message);
+					return;
+				}
 				if (frame.type === "session/event" && frame.event.type === "user/message" && frame.event.data.source.kind === "user") this.recordMutation({
 					kind: "activity",
 					sessionId: frame.sessionId,

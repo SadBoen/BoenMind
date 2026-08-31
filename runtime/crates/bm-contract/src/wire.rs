@@ -43,6 +43,13 @@ wire_str_enum!(Method {
     CapabilityCancel => "capability.cancel",
     // M9 增发(2026-08-30,Minor:envelope method 枚举同步;worker 自主环 v0)
     TaskAutorun => "task.autorun",
+    // D-M3-1 配置管理批次增发(2026-08-30,Minor:envelope method 枚举同步;
+    // params/result 见 wire/config.v0_1;ADR-0012。服务端实现在 bm-surface-http
+    // 配置模块——配置节属服务器层,不经 RuntimeHandle,后端核心零改动)
+    ConfigList => "config.list",
+    ConfigGet => "config.get",
+    ConfigSet => "config.set",
+    ConfigDelete => "config.delete",
 });
 
 wire_str_enum!(InputTrust {
@@ -459,4 +466,69 @@ pub struct TaskLifecycleParams {
     pub reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+}
+
+// ---- config.list / config.get / config.set / config.delete(D-M3-1 配置管理
+//      批次;wire/config)----------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConfigListParams {}
+
+/// 配置节字段说明(config.list result)。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConfigFieldInfo {
+    pub name: String,
+    /// string | boolean | number(wire/config kind 枚举)。
+    pub kind: String,
+    pub secret: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+/// 配置节说明(config.list result)。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConfigSectionInfo {
+    pub ns: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// 配置文件路径(相对数据目录);null = 未启用持久化。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    pub fields: Vec<ConfigFieldInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConfigListResult {
+    pub sections: Vec<ConfigSectionInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConfigGetParams {
+    pub ns: String,
+}
+
+/// config.get / config.set / config.delete 共用 result:values = 逐字段按
+/// 「文件 > env > 默认」合并后的生效值投影(secret 字段恒 null);
+/// secret_set = secret 字段已设置标记。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConfigValuesResult {
+    pub ns: String,
+    pub values: serde_json::Value,
+    pub secret_set: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConfigSetParams {
+    pub ns: String,
+    /// 增量合并写入;secret 字段缺省/null/空串 = 保持不变。
+    pub values: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConfigDeleteParams {
+    pub ns: String,
+    /// 指定字段 = 仅删除该字段;缺省 = 整节复位(删除配置文件)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
 }

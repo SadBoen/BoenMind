@@ -18,3 +18,6 @@ __pycache__/
 !.secrets/example.env
 perf_m9_run.txt
 server.log
+
+# 本机浏览器调试工件(Edge profile / playwright),不入库
+.tools/

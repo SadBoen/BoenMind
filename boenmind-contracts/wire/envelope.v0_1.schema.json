@@ -3,7 +3,7 @@
   "$id": "boenmind:wire:envelope:v0.1",
   "x-frozen": "2026-08-28",
   "title": "Wire API 信封 v0.1",
-  "description": "传输无关的请求/响应信封（基线 7 的关联字段由此承载）。M1 方法集合：session.create / session.resume / session.close / events.poll / agent.send_input / agent.cancel / operations.get。M4 增发：capability.call / approval.list / approval.respond（Minor，params/result 见 wire/capability.v0_1）。M5 增发：task.create / task.list / task.get / task.pause / task.resume / task.stop（Minor，params/result 见 wire/task.v0_1）。",
+  "description": "传输无关的请求/响应信封（基线 7 的关联字段由此承载）。M1 方法集合：session.create / session.resume / session.close / events.poll / agent.send_input / agent.cancel / operations.get。M4 增发：capability.call / approval.list / approval.respond（Minor，params/result 见 wire/capability.v0_1）。M5 增发：task.create / task.list / task.get / task.pause / task.resume / task.stop（Minor，params/result 见 wire/task.v0_1）。D-M3-1 配置管理批次增发：config.list / config.get / config.set / config.delete（Minor，ADR-0012，params/result 见 wire/config.v0_1）。",
   "definitions": {
     "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]{1,15}_[0-9A-HJKMNP-TV-Z]{26}$" },
     "timestamp": { "type": "string", "format": "date-time" },
@@ -27,7 +27,7 @@
     "additionalProperties": false,
     "properties": {
       "v": { "const": "0.1" },
-      "method": { "enum": ["session.create", "session.resume", "session.close", "events.poll", "agent.send_input", "agent.cancel", "operations.get", "capability.call", "approval.list", "approval.respond", "task.create", "task.list", "task.get", "task.pause", "task.resume", "task.stop", "capability.cancel", "task.autorun"] },
+      "method": { "enum": ["session.create", "session.resume", "session.close", "events.poll", "agent.send_input", "agent.cancel", "operations.get", "capability.call", "approval.list", "approval.respond", "task.create", "task.list", "task.get", "task.pause", "task.resume", "task.stop", "capability.cancel", "task.autorun", "config.list", "config.get", "config.set", "config.delete"] },
       "request_id": { "$ref": "#/definitions/id" },
       "idempotency_key": { "type": ["string", "null"], "description": "M1 未使用，字段预留（M4 起用于副作用操作）" },
       "params": { "type": "object" }

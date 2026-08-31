@@ -40,3 +40,25 @@ Agent 预设三节注册已注释保留原码,见各 client.js 内 BoenMind 标�
 
 许可证:上游 MIT 文本见 deepseek-harness 仓库 LICENSE;本仓库第 0 层
 AGENTS.md 不变。
+
+
+## BoenMind 功能修订(2026-08-31,通讯审计修复批)
+
+前后端通讯全面审计(详见 milestones 与 INTERACTIONS.md 同日条目)后,
+对 vendored 前端做的最小功能修订——每处均以 `BoenMind:` 注释标记:
+
+1. `plugins/@deepseek-ai/dsh-client-connection/client.js`
+   - `sessionModelsValueSchema.current` 允许 `null`(后端未配置模型时
+     返回 null;原版非空校验致模型选择器永久卡「加载中」);
+   - mux/host 帧 `stream/error` 分支补可选 `sessionId`(后端按会话路由
+     模型失败;原版会 strip 该字段);
+   - `pumpStream` 不再对 `stream/error` 断流重连,改为投递业务层(原版
+     一次模型失败引发全量重连且错误丢失)。
+2. `plugins/@deepseek-ai/dsh-client-runtime/client.js`
+   - `handleMuxEnvelope` 将 `stream/error` 路由到该会话的错误出口
+     (`handleAgentError`;原版首行静默丢弃,失败完全不可见)。
+3. `plugins/@deepseek-ai/dsh-client-ui-model-selection/client.js`
+   - `optionsOf` 对 `current === null` 加可选链护栏(修 1 生效后此路径可达)。
+
+配套后端修订见 `bm-surface-http/src/api_dsh.rs` 同日变更;`index.html`
+`__DSH_BOOT__.rev` 已升 `boenmind20260831fix1` 破缓存。

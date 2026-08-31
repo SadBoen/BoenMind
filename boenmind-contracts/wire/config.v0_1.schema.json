@@ -1,0 +1,111 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "boenmind:wire:config:v0.1",
+  "x-frozen": "2026-08-30",
+  "title": "Wire API Config 方法 v0.1(D-M3-1 配置管理批次)",
+  "description": "config.list / config.get / config.set / config.delete 四方法(ADR-0012):凡是允许用户修改的配置节,统一经本方法族增删改查,不再为单个功能开一次性配置接口。配置节 = 一个命名空间(ns)+ 一份人可读的持久化文件;读取优先级 = 配置文件字段 > 启动 env > 内置默认(逐字段合并,ADR-0012)。变更落盘后于下次启动生效(v0 诚实边界)。secret 字段在 config.get/config.set/config.delete 的 values 回显中恒为 null,是否已设置由 secret_set 布尔标记承载;config.set 对 secret 字段的缺省/null/空串一律视为「保持不变」,清除须显式走 config.delete 并指定 field。",
+  "definitions": {
+    "config_getset_result": {
+      "type": "object",
+      "required": ["ns", "values", "secret_set"],
+      "additionalProperties": false,
+      "properties": {
+        "ns": { "type": "string", "minLength": 1 },
+        "values": {
+          "type": "object",
+          "description": "当前生效值投影(非文件原文):逐字段按 文件 > env > 默认 合并后的结果;secret 字段恒为 null"
+        },
+        "secret_set": {
+          "type": "object",
+          "description": "secret 字段的已设置标记,键 = 字段名,值 = 布尔"
+        }
+      }
+    }
+  },
+  "config.list": {
+    "params": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "result": {
+      "type": "object",
+      "required": ["sections"],
+      "additionalProperties": false,
+      "properties": {
+        "sections": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["ns", "title", "fields"],
+            "additionalProperties": false,
+            "properties": {
+              "ns": { "type": "string", "minLength": 1 },
+              "title": { "type": "string", "minLength": 1 },
+              "description": { "type": ["string", "null"] },
+              "file": {
+                "type": ["string", "null"],
+                "description": "配置文件路径(相对数据目录);null = 未启用持久化"
+              },
+              "fields": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["name", "kind", "secret"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": { "type": "string", "minLength": 1 },
+                    "kind": { "enum": ["string", "boolean", "number"] },
+                    "secret": { "type": "boolean" },
+                    "description": { "type": ["string", "null"] }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "config.get": {
+    "params": {
+      "type": "object",
+      "required": ["ns"],
+      "additionalProperties": false,
+      "properties": {
+        "ns": { "type": "string", "minLength": 1 }
+      }
+    },
+    "result": { "$ref": "#/definitions/config_getset_result" }
+  },
+  "config.set": {
+    "params": {
+      "type": "object",
+      "required": ["ns", "values"],
+      "additionalProperties": false,
+      "properties": {
+        "ns": { "type": "string", "minLength": 1 },
+        "values": {
+          "type": "object",
+          "description": "增量合并写入:仅出现在 values 中的字段被写入;secret 字段缺省/null/空串 = 保持不变;未知字段或非法值 → validation_failed"
+        }
+      }
+    },
+    "result": { "$ref": "#/definitions/config_getset_result" }
+  },
+  "config.delete": {
+    "params": {
+      "type": "object",
+      "required": ["ns"],
+      "additionalProperties": false,
+      "properties": {
+        "ns": { "type": "string", "minLength": 1 },
+        "field": {
+          "type": ["string", "null"],
+          "description": "指定字段 = 仅删除该字段(回落 env/默认);缺省 = 整节复位(删除配置文件)"
+        }
+      }
+    },
+    "result": { "$ref": "#/definitions/config_getset_result" }
+  }
+}

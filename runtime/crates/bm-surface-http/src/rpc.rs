@@ -128,8 +128,45 @@ async fn rpc_inner(state: &AppState, method: Method, req: &RequestEnvelope) -> C
             let p: bm_contract::wire::TaskLifecycleParams = params(req)?;
             to_value(state.handle.task_stop(req.request_id.clone(), p).await)
         }
+        // D-M3-1 配置管理(ADR-0012):配置节属服务器层,不经 RuntimeHandle,
+        // 后端核心零改动;data_dir 缺省(测试形态)→ unavailable。
+        Method::ConfigList => {
+            let store = config_store_of(state)?;
+            to_value(Ok(store.list()))
+        }
+        Method::ConfigGet => {
+            let p: bm_contract::wire::ConfigGetParams = params(req)?;
+            let store = config_store_of(state)?;
+            to_value(store.get(&p.ns))
+        }
+        Method::ConfigSet => {
+            let p: bm_contract::wire::ConfigSetParams = params(req)?;
+            let store = config_store_of(state)?;
+            to_value(store.set(&p.ns, &p.values))
+        }
+        Method::ConfigDelete => {
+            let p: bm_contract::wire::ConfigDeleteParams = params(req)?;
+            let store = config_store_of(state)?;
+            to_value(store.delete(&p.ns, p.field.as_deref()))
+        }
     }
 }
+
+/// 配置存储访问点:data_dir 未配置(测试形态)时统一 unavailable。
+fn config_store_of(
+    state: &AppState,
+) -> CoreResult<crate::config_store::ConfigStore> {
+    state
+        .data_dir
+        .as_ref()
+        .map(crate::config_store::ConfigStore::new)
+        .ok_or_else(|| {
+            bm_core::CoreError::Semantic(
+                bm_contract::error_codes::ErrorCode::Unavailable,
+                "配置存储未启用(服务器未配置数据目录)".to_string(),
+            )
+        })
+    }
 
 /// 统一 RPC 端点。未知方法 → 404;信封解析失败 → 400;其余 200 + 信封。
 pub async fn rpc_endpoint(

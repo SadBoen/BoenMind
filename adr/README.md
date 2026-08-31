@@ -17,3 +17,6 @@
 | [ADR-0007](ADR-0007-l0-bootstrap-exemption.md) | L0 自举豁免与升级信任链 | accepted-with-conditions | L0 是唯一显式自举豁免体,豁免清单冻结 |
 | [ADR-0008](ADR-0008-architecture-as-code-validation.md) | 架构即代码与外部实证验证 | accepted | C4 DSL 为唯一权威;C1-C8 验证成立;S1-S10 proposed |
 | [ADR-0009](ADR-0009-deployment-and-surface.md) | 部署形态与 Surface 策略 | accepted-with-conditions | VPS 托管+Web/交互式 TUI Surface+Windows 壳;受限解除「无远程访问」 |
+| [ADR-0010](ADR-0010-third-party-model-gateway.md) | 第三方中转网关作为模型 Provider | accepted | 第三方网关=OpenAI 兼容 Provider,信任边界与脱敏口径固化 |
+| [ADR-0011](ADR-0011-first-apps-as-mcp-servers.md) | 首批真实 App 以 MCP Server 形态接入 | accepted | App=进程外 MCP stdio server;零内核改动,复用 M7 隔离与审批 |
+| [ADR-0012](ADR-0012-config-management-api.md) | 配置管理 API——用户可改配置一律走成套 CRUD | accepted | config.list/get/set/delete 四方法;文件>env>默认,重启生效;secret 打码 |

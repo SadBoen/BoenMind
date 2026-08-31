@@ -1118,35 +1118,29 @@ window.__ModuleLoader__.load({
 			const hint = failure !== void 0 || ready || keyFailure !== void 0 || route.length === 0 || routeInvalid || routeTaken ? void 0 : baseURL.length === 0 ? t("customNeedsBaseUrl") : modelFailure !== void 0 ? `${t("model")} ${String(modelFailure.index + 1)}: ${t(modelFailure.key)}` : t("customNeedsModels");
 			/** Perform the create, returning a failure message or undefined. */
 			const createOnce = async () => {
-				const keyRef = deriveKeyRef(route);
-				const storesKey = keyValue.length > 0;
-				if (!committed) {
-					const profile = {
-						...displayName.length === 0 ? {} : { displayName },
-						...storesKey ? { apiKeyEnv: keyRef } : {},
-						api: protocol,
-						baseURL,
-						models: models.map((model) => ({ ...model }))
-					};
-					const response = await api.settings.mutate({
-						ns: NS$1,
-						ops: [{
-							op: "set",
-							path: ["providers", route],
-							value: profile
-						}],
-						expectedRevision: openedAt
-					});
-					if (!response.result.ok) return response.result.error.message;
-					setCommitted(true);
-				}
-				if (storesKey) {
-					const stored = await api.credentials.set({
-						ref: keyRef,
-						value: keyValue
-					});
-					if (!stored.result.ok) return stored.result.error.message;
-				}
+				// BoenMind(M10-S2,ADR-0012):表单字段对齐后端 config API——一次
+				// 写入 baseUrl/apiKey/modelId/displayName;留空密钥 = 保持不变。
+				// 保存后需重启服务生效(见配置节说明)。
+				const values = {
+					baseUrl: baseURL,
+					modelId: models[0].id,
+					...displayName.length === 0 ? {} : { displayName },
+					...keyValue.length === 0 ? {} : { apiKey: keyValue }
+				};
+				const response = await fetch("/api/config.set", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						type: "client-request",
+						rpcId: `web-${Date.now()}`,
+						method: "config.set",
+						payload: { ns: "model", values }
+					})
+				});
+				if (!response.ok) return `transport failure for /api/config.set: HTTP ${response.status}`;
+				const wire = await response.json();
+				if (!(wire.result && wire.result.ok)) return wire.result && wire.result.error ? wire.result.error.message : "config.set failed";
+				return void 0;
 			};
 			const create = async () => {
 				setBusy(true);
