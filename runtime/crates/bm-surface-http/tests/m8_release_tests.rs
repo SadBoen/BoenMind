@@ -15,10 +15,17 @@ use bm_surface_http::token;
 use std::sync::Arc;
 
 fn web_dir() -> std::path::PathBuf {
-    let mut p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    p.pop(); // crates
-    p.pop(); // runtime
-    p.join("web")
+    // 前端参考界面更替期(2026-08-31 用户裁决弃用 dsh 复刻前端,见
+    // ADR-0013):托管目录改为本测试自建的极简占位页,静态托管能力
+    // (T6a)断言口径不变;新前端接入后恢复真实资产断言。
+    let p = std::env::temp_dir().join("boenmind-m8-release-web");
+    std::fs::create_dir_all(&p).expect("创建托管目录");
+    let index = p.join("index.html");
+    if !index.exists() {
+        std::fs::write(&index, "<!DOCTYPE html><html><body>boenmind-surface</body></html>")
+            .expect("写占位页");
+    }
+    p
 }
 
 struct Rig {
@@ -121,15 +128,12 @@ async fn t120_web_ui_served_and_functional() {
     let rig = rig_with_web().await;
     let anon = rig.client(false);
 
-    // GET / → Web 前端(dsh 官方前端整体复刻,MIT;2026-08-30 起)
+    // GET / → 静态托管占位页(dsh 复刻前端已弃用;新参考界面接入前,
+    // 托管能力与鉴权面口径不变,2026-08-31 用户裁决,见 ADR-0013)
     let r = reqwest::get(format!("{}/", rig.url)).await.expect("GET /");
     assert_eq!(r.status().as_u16(), 200);
     let html = r.text().await.expect("正文");
-    // 审批面暂离界面(2026-08-30 用户裁决:先对齐 dsh 布局,功能待定回归方案);
-    // 后端 approval.* 合同方法不受影响
-    assert!(html.contains("__DSH_BOOT__"), "页面含 dsh 启动引导清单");
-    assert!(html.contains("/plugins/@deepseek-ai/dsh-client-ui-sidebar/client.js"), "页面加载侧栏模块");
-    assert!(html.contains("dsh-typert-registry"), "页面含启动模块清单条目");
+    assert!(html.contains("boenmind-surface"), "页面含占位正文");
 
     // /health 无鉴权探针
     let r = reqwest::get(format!("{}/health", rig.url))

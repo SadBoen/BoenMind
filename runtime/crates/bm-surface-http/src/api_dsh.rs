@@ -111,14 +111,6 @@ fn server_response(rpc_id: &str, result: serde_json::Value) -> Response {
     .into_response()
 }
 
-/// 从请求 URI 判断事件流通道(mux/host)。
-fn info_channel(headers: &axum::http::HeaderMap) -> &'static str {
-    // 由调用方在路由层区分;这里依据 Host 头不可行,改由端点拆分。
-    // 默认 mux;events.host 端点直接传 "host"。
-    let _ = headers;
-    "mux"
-}
-
 fn not_implemented(rpc_id: &str, method: &str) -> Response {
     // code 用 dsh 错误码封闭枚举内的合法值(bad-request),否则前端 zod
     // union 校验失败、错误无法渲染
@@ -491,7 +483,7 @@ async fn events_ws_channel(upgrade: axum::extract::ws::WebSocketUpgrade, channel
 
 /// GET /api/events.mux 与 /api/events.host 共用:dsh 前端当前装配用
 /// WebSocket 升级;保留 SSE 回退(readSse 虚方法的另一实现)。
-async fn events_channel(state: AppState, upgrade: axum::extract::ws::WebSocketUpgrade, headers: axum::http::HeaderMap, channel: &'static str) -> Response {
+async fn events_channel(_state: AppState, upgrade: axum::extract::ws::WebSocketUpgrade, headers: axum::http::HeaderMap, channel: &'static str) -> Response {
     let wants_ws = headers
         .get(axum::http::header::UPGRADE)
         .and_then(|v| v.to_str().ok())
