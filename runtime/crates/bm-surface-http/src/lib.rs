@@ -10,10 +10,12 @@
 
 pub mod api_dsh;
 pub mod auth;
+pub mod config_store;
 pub mod openai_compat;
 pub mod rpc;
 pub mod sse;
 pub mod token;
+pub mod webadmin;
 
 use axum::Router;
 use axum::middleware;
@@ -34,7 +36,8 @@ pub struct AppState {
 }
 
 /// 组装 Surface 路由。`token` 为已加载的访问令牌;/health 豁免鉴权,
-/// /rpc 与 /events 受 Bearer 保护。
+/// /rpc 与 /events 受 Bearer 保护。`admin` = W2 管理面配置(None = 不挂载,
+/// 管理面端点不存在)。
 pub fn router(
     handle: RuntimeHandle,
     token: Arc<String>,
@@ -42,6 +45,7 @@ pub fn router(
     shutdown: Arc<tokio::sync::Notify>,
     web_dir: Option<std::path::PathBuf>,
     default_model: Arc<String>,
+    admin: Option<webadmin::AdminConfig>,
 ) -> Router {
     let state = AppState {
         handle,
@@ -67,6 +71,11 @@ pub fn router(
         .route("/v1/chat/completions", post(openai_compat::chat_completions))
         .route("/v1/models", get(openai_compat::models))
         .with_state(state);
+    // W2 管理面(公开挂载 = W1 同款已登记欠账;None = 不挂载)
+    let app = match admin {
+        Some(cfg) => app.nest("/admin", webadmin::admin_routes(cfg)),
+        None => app,
+    };
     // Web Surface 静态托管(公开:界面壳不含数据;数据一律经鉴权 API):
     // 未匹配 API 的路径回落到静态文件
     match web_dir {

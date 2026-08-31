@@ -41,6 +41,7 @@ async fn rig(connector: Arc<dyn ModelConnector>) -> (String, reqwest::Client, te
         shutdown,
         None,
         Arc::new("mock-model".into()),
+        None,
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("绑定");
     let addr = listener.local_addr().expect("地址");

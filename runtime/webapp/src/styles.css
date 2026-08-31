@@ -1,4 +1,58 @@
 /* W1 设计令牌(见 milestones/W1-implementation-spec.md §3;蓝本=用户指定截图) */
+/* W2:引入 tailwind v4 + shadcn 变量桥(注册表组件选装共存策略,见 W2 规格 §5.1);
+   手写令牌与 shadcn --color-* 并存,W3 主题层统一覆盖两套 */
+@import "tailwindcss";
+@import "tw-shimmer";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+  --card: #ffffff;
+  --card-foreground: #171717;
+  --popover: #ffffff;
+  --popover-foreground: #171717;
+  --primary: #2563eb;
+  --primary-foreground: #ffffff;
+  --secondary: #f4f4f5;
+  --secondary-foreground: #171717;
+  --muted: #f4f4f5;
+  --muted-foreground: #525252;
+  --accent: #eff6ff;
+  --accent-foreground: #171717;
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
+  --border: #e5e7eb;
+  --input: #e5e7eb;
+  --ring: #2563eb;
+  --radius: 0.5rem;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
 :root {
   --bg-page: #ffffff;
   --bg-panel: #fafafa;
@@ -56,10 +110,10 @@ body {
 /* 会话列表(自有组件;W1 静态骨架) */
 .sessions {
   background: var(--bg-panel);
-  border-right: 1px solid var(--border);
   display: flex; flex-direction: column;
   padding: 12px 10px;
   gap: 8px;
+  min-width: 0;
 }
 .sessions-head {
   display: flex; align-items: center; justify-content: space-between;
@@ -194,12 +248,12 @@ body {
 }
 .send-btn:disabled { background: var(--bg-hover); color: var(--fg-3); cursor: default; }
 
-/* 工作区面板(自有组件,W1 静态空态) */
+/* 工作区面板(W2:文件 tab = 目录树+预览;其余 tab 仍空态) */
 .workspace {
-  border-left: 1px solid var(--border);
   background: var(--bg-panel);
   display: flex; flex-direction: column;
   padding: 12px 14px; gap: 10px;
+  min-width: 0;
 }
 .workspace-head {
   display: flex; align-items: center; justify-content: space-between;
@@ -240,3 +294,14 @@ body {
   border: none; border-radius: var(--radius-sm); background: var(--accent);
   color: #fff; padding: 7px 16px; font-size: 13px; cursor: pointer;
 }
+
+/* ---- 三栏拖宽分隔条(W2)---- */
+.splitter {
+  cursor: col-resize;
+  background: transparent;
+  min-width: 4px;
+  margin: 0 -2px;
+  z-index: 5;
+  transition: background-color .15s;
+}
+.splitter:hover, .splitter:active { background: color-mix(in srgb, var(--accent) 35%, transparent); }

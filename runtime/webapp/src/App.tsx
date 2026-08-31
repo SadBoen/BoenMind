@@ -1,8 +1,10 @@
-// W1(ADR-0014):BoenMind WebUI 壳子——三栏布局骨架 + 对话闭环
-// 布局蓝本与设计令牌见 milestones/W1-implementation-spec.md §3
+// W2:三栏布局 + 可拖分隔条(会话列表↕对话区、对话区↕工作区;宽度持久化
+// localStorage,刷新保持)+ 设置中心入口(W2 整页式)。对话区 = W1 原样。
 import { BoenmindRuntimeProvider } from "./w1/runtime";
 import { Thread } from "./w1/thread";
-import { useState } from "react";
+import { SettingsPage } from "./w2/SettingsPage";
+import { WorkspaceFiles } from "./w2/WorkspaceFiles";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   MessageCircle,
   Calendar,
@@ -16,18 +18,114 @@ import {
   RefreshCw,
 } from "lucide-react";
 
+// 三栏宽度持久化(W2 验收门 4:刷新后布局保持)
+const LAYOUT_KEY = "bm_layout";
+type Layout = { sessions: number; workspace: number };
+const DEFAULT_LAYOUT: Layout = { sessions: 260, workspace: 320 };
+const LIMITS = {
+  sessions: { min: 180, max: 440 },
+  workspace: { min: 240, max: 560 },
+};
+
+function loadLayout(): Layout {
+  try {
+    const raw = localStorage.getItem(LAYOUT_KEY);
+    if (!raw) return DEFAULT_LAYOUT;
+    const v = JSON.parse(raw) as Partial<Layout>;
+    return {
+      sessions: clamp(v.sessions ?? DEFAULT_LAYOUT.sessions, LIMITS.sessions),
+      workspace: clamp(
+        v.workspace ?? DEFAULT_LAYOUT.workspace,
+        LIMITS.workspace,
+      ),
+    };
+  } catch {
+    return DEFAULT_LAYOUT;
+  }
+}
+
+function clamp(v: number, l: { min: number; max: number }) {
+  return Math.min(l.max, Math.max(l.min, v));
+}
+
 export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [layout, setLayout] = useState<Layout>(loadLayout);
+
+  const saveLayout = useCallback((next: Layout) => {
+    setLayout(next);
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify(next));
+  }, []);
+
   return (
     <BoenmindRuntimeProvider>
-      <div className="app">
+      <div
+        className="app"
+        style={{
+          // 子元素顺序:rail, sessions, splitter, thread, splitter, workspace
+          gridTemplateColumns: `52px ${layout.sessions}px 5px minmax(0, 1fr) 5px ${layout.workspace}px`,
+        }}
+      >
         <Rail onSettings={() => setSettingsOpen(true)} />
         <SessionPanel />
+        <HSplitter
+          onDrag={(dx) =>
+            saveLayout({
+              ...layout,
+              sessions: clamp(layout.sessions + dx, LIMITS.sessions),
+            })
+          }
+        />
         <Thread />
+        <HSplitter
+          onDrag={(dx) =>
+            saveLayout({
+              ...layout,
+              workspace: clamp(layout.workspace - dx, LIMITS.workspace),
+            })
+          }
+        />
         <WorkspacePanel />
-        {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
+        {settingsOpen && (
+          <SettingsPage onClose={() => setSettingsOpen(false)} />
+        )}
       </div>
     </BoenmindRuntimeProvider>
+  );
+}
+
+// 拖宽分隔条:纯前端(pointer 事件),拖动期间直接改列宽。
+function HSplitter({ onDrag }: { onDrag: (dx: number) => void }) {
+  const lastX = useRef<number | null>(null);
+
+  const onPointerDown = (e: React.PointerEvent) => {
+    lastX.current = e.clientX;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  };
+  const onPointerMove = (e: React.PointerEvent) => {
+    if (lastX.current === null) return;
+    const dx = e.clientX - lastX.current;
+    lastX.current = e.clientX;
+    onDrag(dx);
+  };
+  const onPointerUp = (e: React.PointerEvent) => {
+    lastX.current = null;
+    e.currentTarget.releasePointerCapture(e.pointerId);
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+  };
+
+  return (
+    <div
+      className="splitter"
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      data-slot="splitter"
+      title="拖动调整列宽"
+    />
   );
 }
 
@@ -57,7 +155,7 @@ function Rail({ onSettings }: { onSettings: () => void }) {
         <FileText size={18} />
       </button>
       <div className="rail-spacer" />
-      <button className="rail-btn" title="设置" onClick={onSettings}>
+      <button className="rail-btn" title="设置" onClick={onSettings} data-slot="open-settings">
         <Settings size={18} />
       </button>
     </div>
@@ -82,16 +180,15 @@ function SessionPanel() {
         <span className="name">BoenMind 对话</span>
         <span className="meta">刚刚</span>
       </div>
-      <div className="sessions-empty">会话列表真数据随 W2 接入</div>
+      <div className="sessions-empty">会话列表真数据随 W 后续接入</div>
     </div>
   );
 }
 
 function WorkspacePanel() {
-  const [tab, setTab] = useState<"files" | "artifacts" | "todos">("todos");
-  const emptyText: Record<typeof tab, string> = {
-    files: "文件面随 W2 接入。",
-    artifacts: "产物面随 W2 接入。",
+  const [tab, setTab] = useState<"files" | "artifacts" | "todos">("files");
+  const emptyText: Record<"artifacts" | "todos", string> = {
+    artifacts: "产物面随 W 后续接入。",
     todos: "此会话暂无活动任务列表。",
   };
   return (
@@ -102,7 +199,11 @@ function WorkspacePanel() {
           <button className="icon-chip" title="新建(规划中)">
             <Plus size={15} />
           </button>
-          <button className="icon-chip" title="同步(规划中)">
+          <button
+            className="icon-chip"
+            title="同步(重载目录树)"
+            onClick={() => window.dispatchEvent(new CustomEvent("bm-ws-refresh"))}
+          >
             <RefreshCw size={14} />
           </button>
         </span>
@@ -124,31 +225,11 @@ function WorkspacePanel() {
           </button>
         ))}
       </div>
-      <div className="ws-empty">{emptyText[tab]}</div>
-    </div>
-  );
-}
-
-function SettingsDialog({ onClose }: { onClose: () => void }) {
-  return (
-    <div
-      className="overlay"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <div className="dialog">
-        <div className="dialog-title">设置</div>
-        <p className="dialog-text">
-          设置页(模型/外观/偏好)随 W2 提供。当前模型接入已由服务器配置文件
-          与环境变量驱动,无需手工填写。
-        </p>
-        <div className="dialog-actions">
-          <button className="btn-primary" onClick={onClose}>
-            知道了
-          </button>
-        </div>
-      </div>
+      {tab === "files" ? (
+        <WorkspaceFiles />
+      ) : (
+        <div className="ws-empty">{emptyText[tab]}</div>
+      )}
     </div>
   );
 }
