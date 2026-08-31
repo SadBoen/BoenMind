@@ -23,10 +23,16 @@ pub struct OpenAiConnector {
 
 impl OpenAiConnector {
     pub fn new(base_url: impl Into<String>, store: Arc<dyn SecretStore>) -> Self {
+        // UA 必带:部分网关(opencode zen 等)套 Cloudflare,无 UA 请求
+        // 403/1010 拒收;自报客户端身份即放行
+        let http = reqwest::Client::builder()
+            .user_agent(concat!("boenmind-server/", env!("CARGO_PKG_VERSION")))
+            .build()
+            .expect("reqwest Client 构造失败");
         Self {
             base_url: base_url.into(),
             store,
-            http: reqwest::Client::new(),
+            http,
         }
     }
 
