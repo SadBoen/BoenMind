@@ -33,10 +33,6 @@ impl MockClock {
     pub fn advance_ms(&self, ms: u128) {
         *self.current_ms.lock().expect("锁未中毒") += ms;
     }
-
-    pub fn set_ms(&self, ms: u128) {
-        *self.current_ms.lock().expect("锁未中毒") = ms;
-    }
 }
 
 impl Clock for MockClock {

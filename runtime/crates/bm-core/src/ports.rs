@@ -38,6 +38,10 @@ pub trait ModelConnector: Send + Sync {
 pub enum SecretError {
     #[error("secret 不存在: {0}")]
     NotFound(String),
+    /// A-13(审计台账):写路径 fail-fast——引用须过合同字符集
+    /// (`connector::validate_secret_ref`,`^secret:[A-Za-z0-9_.-]{1,64}$`)。
+    #[error("非法 secret_ref: {0}")]
+    InvalidRef(String),
     #[error("secret 后端故障")]
     Backend(String),
 }

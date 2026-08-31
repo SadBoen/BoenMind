@@ -391,9 +391,13 @@ pub(crate) fn handle_send_input(
 }
 
 pub(crate) fn handle_approval_list(
-    w: &World,
+    w: &mut World,
     params: wire::ApprovalListParams,
 ) -> CoreResult<serde_json::Value> {
+    // A-11(审计台账):列表前置到期扫描。respond() 的就地过期检查只兜
+    // 「有人来裁决」的路径;无人问津的滞留项在此收敛,保证待裁决队列
+    // 不出现已过期仍可点项(响应路径本身的过期检查保持不变)。
+    expire_due_approvals(w);
     // 缺省 = 待裁决队列(waiting_user):审批工作面只关心未决项;
     // 显式 --state 过滤任意状态(wire/capability 合同 description)。
     let state_filter = params
@@ -411,6 +415,50 @@ pub(crate) fn handle_approval_list(
         approvals.push(serde_json::to_value(a).map_err(|_| CoreError::Internal)?);
     }
     Ok(serde_json::json!({ "approvals": approvals }))
+}
+
+/// 到期审批扫描(waiting_user 且过 deadline → expired)。返回本次翻转的
+/// 审批 id。副作用与 respond() 的 Expired 分支逐项对齐:persist 行、
+/// approval.expired 事件、关联 operation 取消(仅当仍处 waiting_approval,
+/// 防表外迁移)、清 cap_pending。
+pub(crate) fn expire_due_approvals(w: &mut World) -> Vec<BmId> {
+    let mut expired: Vec<BmId> = Vec::new();
+    {
+        let mgr = ApprovalManager::new(&mut w.grants, &*w.config.clock, &*w.config.id_gen);
+        for (id, approval) in w.approvals.iter_mut() {
+            if mgr.expire_if_due(approval) {
+                expired.push(id.clone());
+            }
+        }
+    }
+    for id in &expired {
+        let op_row = w.cap_pending.get(id).map(|p| p.op_id.clone());
+        if let (Some(a), Some(op_id)) = (w.approvals.get(id), op_row.as_ref()) {
+            persist_approval(w, a, op_id, None);
+        }
+        w.emit(
+            EventType::ApprovalExpired,
+            None,
+            None,
+            op_row.clone(),
+            serde_json::json!({
+                "approval_id": id.as_str(),
+                "operation_id": op_row.as_ref().map(|o| o.as_str()),
+                "expired_at": w.now_ts(),
+            }),
+        );
+        if let Some(op_id) = op_row {
+            let still_waiting = w
+                .operations
+                .get(&op_id)
+                .is_some_and(|o| o.state == OperationState::WaitingApproval);
+            if still_waiting {
+                w.settle_operation(&op_id, OperationState::Cancelled, None);
+            }
+            w.cap_pending.remove(id);
+        }
+    }
+    expired
 }
 
 pub(crate) fn handle_approval_respond(

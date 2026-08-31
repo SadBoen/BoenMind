@@ -3,7 +3,6 @@
 
 use bm_contract::BmTimestamp;
 use bm_contract::budget::Budget;
-use bm_contract::error_codes::ErrorCode;
 use bm_contract::ids::BmId;
 use bm_contract::states::{AgentState, OperationState, SessionState};
 use bm_contract::wire::{ResultReference, WireError};
@@ -103,17 +102,6 @@ impl Operation {
 
     pub fn is_terminal(&self) -> bool {
         self.state.is_terminal()
-    }
-
-    /// 失败收据的通用收口。
-    pub fn fail_with(
-        &mut self,
-        code: ErrorCode,
-        message: String,
-        now: BmTimestamp,
-    ) -> (OperationState, OperationState, &'static str) {
-        let err = WireError::new(code, message);
-        self.settle(OperationState::Failed, Some(err), now)
     }
 }
 

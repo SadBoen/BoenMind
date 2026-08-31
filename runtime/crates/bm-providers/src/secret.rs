@@ -30,6 +30,13 @@ impl ScanLedger {
 
 // ---- MemSecretStore -------------------------------------------------------
 
+/// A-13(审计台账):合同字符集校验(`connector::validate_secret_ref`)。
+/// 只在写路径(put)fail-fast——坏引用当场拒绝,而不是静默入库、取用时
+/// 才 NotFound。读/删路径保持宽松(查无即 NotFound)。
+fn ensure_valid_ref(secret_ref: &str) -> Result<(), SecretError> {
+    bm_contract::connector::validate_secret_ref(secret_ref).map_err(SecretError::InvalidRef)
+}
+
 #[derive(Default)]
 pub struct MemSecretStore {
     map: Mutex<BTreeMap<String, String>>,
@@ -61,6 +68,7 @@ impl SecretStore for MemSecretStore {
     }
 
     fn put(&self, secret_ref: &str, value: &str) -> Result<(), SecretError> {
+        ensure_valid_ref(secret_ref)?;
         self.map
             .lock()
             .expect("锁未中毒")
@@ -119,6 +127,7 @@ impl SecretStore for KeyringSecretStore {
     }
 
     fn put(&self, secret_ref: &str, value: &str) -> Result<(), SecretError> {
+        ensure_valid_ref(secret_ref)?;
         // keyring v3:set_password 即 upsert(存在则更新)。
         self.entry(secret_ref)?
             .set_password(value)
@@ -199,6 +208,7 @@ impl SecretStore for FileSecretStore {
     }
 
     fn put(&self, secret_ref: &str, value: &str) -> Result<(), SecretError> {
+        ensure_valid_ref(secret_ref)?;
         let mut map = self.read_all()?;
         map.insert(secret_ref.to_string(), value.to_string());
         self.write_all(&map)?;
@@ -251,5 +261,36 @@ pub(crate) mod crypto {
         cipher
             .decrypt(nonce, ct)
             .map_err(|_| SecretError::Backend("密文库解密失败".into()))
+    }
+}
+
+// A-13(审计台账 2026-08-31)验收:写路径 fail-fast——合同字符集外的
+// secret_ref 拒绝入库(含超长 body、非法字符、缺前缀);合法引用不受影响。
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn put_rejects_invalid_secret_ref_charset() {
+        let s = MemSecretStore::new();
+        for bad in [
+            "model.x",
+            "secret:",
+            "secret:model/zhipu",
+            "secret:has space",
+            "secret:大写外字符",
+        ] {
+            let err = SecretStore::put(&s, bad, "v")
+                .expect_err(&format!("坏引用应被拒绝: {bad}"));
+            assert!(
+                matches!(err, SecretError::InvalidRef(_)),
+                "应为 InvalidRef: {bad}"
+            );
+            assert!(SecretStore::get(&s, bad).is_err());
+        }
+        // 合法引用(真实模型映射形状)不受影响
+        let good = "secret:model.gpt-5.6-luna";
+        SecretStore::put(&s, good, "sk-demo").expect("合法引用应入库");
+        assert_eq!(SecretStore::get(&s, good).unwrap(), "sk-demo");
     }
 }

@@ -196,11 +196,17 @@ mod tests {
     async fn scripted_sequence() {
         let m = MockConnector::new(vec![Step::timeout(), Step::ok("answer", 10, 5)]);
         let cancel = CancellationToken::new();
-        assert!(!m.invoke(req(1), cancel.clone()).await.is_ok());
+        assert!(matches!(
+            m.invoke(req(1), cancel.clone()).await,
+            InvokeResponse::Failed { .. }
+        ));
         let ok = m.invoke(req(2), cancel.clone()).await;
-        assert!(ok.is_ok());
+        assert!(matches!(ok, InvokeResponse::Completed { .. }));
         // 耗尽后:internal
-        assert!(!m.invoke(req(3), cancel).await.is_ok());
+        assert!(matches!(
+            m.invoke(req(3), cancel).await,
+            InvokeResponse::Failed { .. }
+        ));
     }
 
     #[tokio::test]
@@ -208,7 +214,10 @@ mod tests {
         let m = MockConnector::repeating(Step::ok("x", 1, 1));
         let cancel = CancellationToken::new();
         for i in 1..=3 {
-            assert!(m.invoke(req(i), cancel.clone()).await.is_ok());
+            assert!(matches!(
+                m.invoke(req(i), cancel.clone()).await,
+                InvokeResponse::Completed { .. }
+            ));
         }
     }
 }

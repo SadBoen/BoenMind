@@ -29,10 +29,11 @@ fn manifest(name: &str, effect: &str) -> CapabilityManifest {
     .unwrap()
 }
 
-async fn m4_rig() -> (RuntimeHandle, Arc<SeqIdGen>) {
+async fn m4_rig() -> (RuntimeHandle, Arc<SeqIdGen>, Arc<bm_core::clock::MockClock>) {
     let connector = Arc::new(MockConnector::new(vec![]));
     let secrets = Arc::new(MemSecretStore::with("secret:model.x", "sk-demo"));
     let ids = Arc::new(SeqIdGen::new());
+    let clock = Arc::new(bm_core::clock::MockClock::at_ms(1_788_000_000_000));
     let config = RuntimeConfig {
         capabilities: vec![
             (manifest("system.echo", "read-only"), provider_fn(Ok)),
@@ -51,13 +52,13 @@ async fn m4_rig() -> (RuntimeHandle, Arc<SeqIdGen>) {
         connector,
         secret_store: secrets,
         id_gen: ids.clone(),
-        clock: Arc::new(bm_core::clock::MockClock::at_ms(1_788_000_000_000)),
+        clock: clock.clone(),
         turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
         max_attempts: None,
         async_executor: None,
         model_streaming: false,
     };
-    (RuntimeHandle::start(config).await, ids)
+    (RuntimeHandle::start(config).await, ids, clock)
 }
 
 fn call_params(
@@ -74,7 +75,7 @@ fn call_params(
 
 #[tokio::test]
 async fn t40_direct_call_and_unknown_capability_denied() {
-    let (handle, ids) = m4_rig().await;
+    let (handle, ids, _clock) = m4_rig().await;
 
     // 直通:trusted × read-only × not-required → 执行成功
     let req = ids.next_id("req");
@@ -132,7 +133,7 @@ async fn t40_direct_call_and_unknown_capability_denied() {
 
 #[tokio::test]
 async fn t41_high_risk_approval_deny_cycle() {
-    let (handle, ids) = m4_rig().await;
+    let (handle, ids, _clock) = m4_rig().await;
 
     // 高风险恒审批(manifest 即使 not-required,双保险兜住)
     let req = ids.next_id("req");
@@ -226,9 +227,103 @@ impl BmIdErr {
     }
 }
 
+// A-11(审计台账 2026-08-31)验收:到期审批由 approval.list 前置扫描收敛。
+// expire_if_due 生产接线——无人裁决的滞留项不进 waiting_user 队列,
+// 关联 operation 连带取消,approval.expired 事件在案,过期后不可再裁决。
+#[tokio::test]
+async fn t41b_expired_approval_swept_from_waiting_list() {
+    let (handle, ids, clock) = m4_rig().await;
+
+    // 高风险调用 → waiting_user 审批(TTL 300_000ms,审批窗口)
+    let req = ids.next_id("req");
+    let _ = handle
+        .capability_call(req, call_params("system.danger.purge", json!({"t": 1})))
+        .await
+        .expect_err("高风险必须审批");
+    let list = handle
+        .approval_list(bm_contract::wire::ApprovalListParams {
+            state_filter: None,
+        })
+        .await
+        .expect("列表可查");
+    let approval_id = list["approvals"][0]["approval_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let events = handle.events_all().await;
+    let requested = events
+        .iter()
+        .find(|e| e.event_type == EventType::ApprovalRequested)
+        .expect("应有 approval.requested");
+    let op_id =
+        bm_contract::ids::BmId::parse(requested.payload["operation_id"].as_str().unwrap()).unwrap();
+
+    // 时钟拨过审批窗口 → 下一次 approval.list 前置扫描应收敛
+    clock.advance_ms(300_001);
+
+    let swept = handle
+        .approval_list(bm_contract::wire::ApprovalListParams {
+            state_filter: None,
+        })
+        .await
+        .expect("列表可查");
+    assert_eq!(
+        swept["approvals"].as_array().unwrap().len(),
+        0,
+        "过期审批不得留在待裁决队列"
+    );
+
+    // 显式过滤可见:state=expired,对象字段保持完整
+    let expired = handle
+        .approval_list(bm_contract::wire::ApprovalListParams {
+            state_filter: Some("expired".into()),
+        })
+        .await
+        .expect("列表可查");
+    let expired_rows = expired["approvals"].as_array().unwrap();
+    assert_eq!(expired_rows.len(), 1);
+    assert_eq!(expired_rows[0]["approval_id"], json!(approval_id));
+    assert_eq!(expired_rows[0]["state"], json!("expired"));
+
+    // 关联 operation 连带取消(基线 §9.6 同 respond 过期分支)
+    let receipt = handle
+        .operations_get(GetOperationParams {
+            operation_id: op_id,
+        })
+        .await
+        .expect("收据可查");
+    assert_eq!(receipt.state, OperationState::Cancelled);
+
+    // approval.expired 事件在案
+    let events = handle.events_all().await;
+    let expired_event = events
+        .iter()
+        .find(|e| e.event_type == EventType::ApprovalExpired)
+        .expect("应有 approval.expired");
+    assert_eq!(expired_event.payload["approval_id"], json!(approval_id));
+
+    // 已过期审批不可再裁决(扫后状态已终态,respond 报 AlreadyResolved)
+    let req = ids.next_id("req");
+    let err = handle
+        .approval_respond(
+            req,
+            bm_contract::wire::ApprovalRespondParams {
+                approval_id: bm_contract::ids::BmId::parse(approval_id).unwrap(),
+                decision: "approve".into(),
+                scope: None,
+            },
+        )
+        .await
+        .expect_err("过期审批不可再裁决");
+    assert!(matches!(
+        err,
+        CoreError::Semantic(ErrorCode::ValidationFailed, _)
+    ));
+}
+
 #[tokio::test]
 async fn t42_approve_materializes_grant_and_completes() {
-    let (handle, ids) = m4_rig().await;
+    let (handle, ids, _clock) = m4_rig().await;
 
     // reversible → 审批(trusted 直调 reversible+ 亦审批,规格 §5.4)
     let req = ids.next_id("req");

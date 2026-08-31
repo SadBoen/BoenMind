@@ -16,7 +16,6 @@ use bm_contract::ids::IdGen;
 use bm_contract::states::TaskState;
 use bm_contract::timestamp::format_ts;
 use bm_contract::wire::TaskAuthorizationEntry;
-use chrono::DateTime;
 
 /// 成员事实(task.member.added 事件承载;M5 = coordinator + 单 worker 闭环)。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -165,11 +164,6 @@ impl Task {
     }
 }
 
-/// 解析暂停/恢复原因码为状态迁移的语义类别(T1 仅供测试与 T7 复用)。
-pub fn reason_is_pause(reason: &str) -> bool {
-    reason == "task_paused"
-}
-
 /// 恢复装载:行 → Task(载荷合同 JSON 优先,行级键列为兜底)。
 pub fn task_from_row(row: &bm_persist::recovery::TaskStateRow) -> Result<Task, String> {
     #[derive(serde::Deserialize)]
@@ -215,11 +209,6 @@ pub fn task_from_row(row: &bm_persist::recovery::TaskStateRow) -> Result<Task, S
         created_at: p.created_at.unwrap_or_else(|| row.created_at.clone()),
         updated_at: row.updated_at.clone(),
     })
-}
-
-/// 时间换算辅助(与 approval.rs 同款语义;解析失败按安全侧处理)。
-pub fn parse_or_epoch(ts: &BmTimestamp) -> Option<DateTime<chrono::Utc>> {
-    bm_contract::timestamp::parse_ts(ts)
 }
 
 // ---- Task Board 投影(M5.4;ADR-0004:任务板仅为投影,可弃可重建)--------

@@ -103,12 +103,6 @@ pub struct Usage {
     pub tokens_out: u64,
 }
 
-impl Usage {
-    pub fn total(&self) -> u64 {
-        self.tokens_in + self.tokens_out
-    }
-}
-
 /// 调用结果:成败二选一,由 `ok` 字段判别。失败分支无自由文本字段——
 /// 合同结构本身阻止错误消息携带敏感内容(基线 8.4)。
 #[derive(Debug, Clone, PartialEq)]
@@ -127,12 +121,6 @@ pub enum InvokeResponse {
         attempt: u32,
         detail_ref: Option<String>,
     },
-}
-
-impl InvokeResponse {
-    pub fn is_ok(&self) -> bool {
-        matches!(self, InvokeResponse::Completed { .. })
-    }
 }
 
 impl Serialize for InvokeResponse {

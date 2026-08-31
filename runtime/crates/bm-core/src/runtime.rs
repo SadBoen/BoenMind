@@ -607,7 +607,7 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
                 let _ = resp.send(handle_capability_call(&mut world, request_id, params));
             }
             Cmd::ApprovalList { params, resp } => {
-                let _ = resp.send(handle_approval_list(&world, params));
+                let _ = resp.send(handle_approval_list(&mut world, params));
             }
             Cmd::ApprovalRespond {
                 request_id,
