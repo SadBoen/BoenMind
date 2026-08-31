@@ -154,6 +154,7 @@ body {
 /* 输入区 */
 .composer-dock {
   position: sticky; bottom: 0;
+  margin-top: auto; /* 空会话时也钉在底部,不再悬空 */
   padding: 10px 26px 16px;
   background: linear-gradient(180deg, rgba(255,255,255,0), var(--bg-page) 26px);
 }
