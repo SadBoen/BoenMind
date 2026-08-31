@@ -1,10 +1,15 @@
 // W2:三栏布局 + 可拖分隔条(会话列表↕对话区、对话区↕工作区;宽度持久化
 // localStorage,刷新保持)+ 设置中心入口(W2 整页式)。对话区 = W1 原样。
+// W3:主题系统启动恢复(useThemeBoot)+ 玻璃主题花瓣层(Petals)。
 import { BoenmindRuntimeProvider } from "./w1/runtime";
 import { Thread } from "./w1/thread";
 import { SettingsPage } from "./w2/SettingsPage";
 import { WorkspaceFiles } from "./w2/WorkspaceFiles";
+import { Petals } from "./w3/Petals";
+import { useThemeBoot, loadThemeState, type ThemeDef } from "./w3/themes";
 import { useCallback, useEffect, useRef, useState } from "react";
+
+type ThemeId = ThemeDef["id"];
 import {
   MessageCircle,
   Calendar,
@@ -51,6 +56,19 @@ function clamp(v: number, l: { min: number; max: number }) {
 export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [layout, setLayout] = useState<Layout>(loadLayout);
+  useThemeBoot(); // W3:重启保持(localStorage 恢复主题+设置项)
+  // 主题跟随 html[data-theme](外观页切换即时生效,花瓣层随之挂/卸)
+  const [theme, setTheme] = useState(loadThemeState().theme);
+  useEffect(() => {
+    const ob = new MutationObserver(() =>
+      setTheme(document.documentElement.getAttribute("data-theme") as ThemeId),
+    );
+    ob.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
+    return () => ob.disconnect();
+  }, []);
 
   const saveLayout = useCallback((next: Layout) => {
     setLayout(next);
@@ -66,6 +84,7 @@ export default function App() {
           gridTemplateColumns: `52px ${layout.sessions}px 5px minmax(0, 1fr) 5px ${layout.workspace}px`,
         }}
       >
+        {theme === "glass" ? <Petals /> : null}
         <Rail onSettings={() => setSettingsOpen(true)} />
         <SessionPanel />
         <HSplitter

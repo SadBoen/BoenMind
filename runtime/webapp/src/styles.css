@@ -75,9 +75,10 @@
 html, body, #root { height: 100%; margin: 0; }
 body {
   font-family: var(--font-ui);
-  font-size: 13.5px;
+  font-size: var(--font-size-root, 13.5px); /* W3 全局文字大小(与主题无关,§4 裁定) */
   color: var(--fg-1);
   background: var(--bg-page);
+  line-height: var(--leading, 1.6);
 }
 
 /* ---- 三栏布局骨架 ---- */
@@ -188,15 +189,15 @@ body {
 .welcome h1 { font-size: 17px; margin: 0; color: var(--fg-1); }
 .welcome p { margin: 0; font-size: 12.5px; }
 
-.msg { padding: 8px 0; max-width: 820px; width: 100%; margin: 0 auto; }
+.msg { padding: calc(8px * var(--density, 1)) 0; max-width: 820px; width: 100%; margin: 0 auto; }
 .msg.user { display: flex; justify-content: flex-end; }
 .msg.user .bubble {
   background: var(--accent); color: #fff;
   border-radius: 12px; padding: 9px 14px;
-  max-width: 78%; white-space: pre-wrap; line-height: 1.55;
+  max-width: 78%; white-space: pre-wrap; line-height: var(--leading, 1.55);
 }
 .msg.assistant .text {
-  white-space: pre-wrap; line-height: 1.65; color: var(--fg-1);
+  white-space: pre-wrap; line-height: var(--leading, 1.65); color: var(--fg-1);
   border: 1px solid var(--border); border-radius: var(--radius);
   padding: 10px 14px; background: var(--bg-panel);
 }

@@ -1,11 +1,12 @@
 // W2 设置中心:整页式(左侧设置导航 + 右内容区),齿轮进入。
-// 导航:模型提供商 / 插件 / MCP 管理 / 外观(W3 主题系统占位)+
+// 导航:模型提供商 / 插件 / MCP 管理 / 外观(W3 主题系统)+
 // 插件 PIN 快捷项(PIN 后在此显示,点击跳插件页并按名筛选)。
 import { useEffect, useState } from "react";
 import { ArrowLeftIcon, BoxIcon, PlugIcon, ServerIcon, SlidersHorizontalIcon, SparklesIcon } from "lucide-react";
 import { ProvidersPage } from "./ProvidersPage";
 import { PluginsPage, readPins } from "./PluginsPage";
 import { McpPage } from "./McpPage";
+import { AppearancePage } from "@/w3/AppearancePage";
 import { cn } from "@/lib/utils";
 
 type Section = "providers" | "plugins" | "mcp" | "appearance";
@@ -115,12 +116,7 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
                 onConsumedEditTarget={() => setMcpEditTarget(null)}
               />
             ) : null}
-            {section === "appearance" ? (
-              <div className="text-muted-foreground rounded-xl border border-dashed px-4 py-12 text-center text-[13px]">
-                外观与主题(W3 主题系统:古典 / 现代 / 卡通 / 玻璃)在此提供,
-                当前里程碑尚未开启。
-              </div>
-            ) : null}
+            {section === "appearance" ? <AppearancePage /> : null}
           </div>
         </main>
       </div>

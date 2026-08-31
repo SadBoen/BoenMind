@@ -1,0 +1,245 @@
+/* ===== W3 主题令牌(theme.css;规格 §2:主题 = 令牌预设覆盖 + 主题专属样式)=====
+
+   纪律(§4.1 踩坑):同 selector 的 background 只在一处定义——现代默认在
+   styles.css(:root + 各组件规则),本文件每主题一个令牌块 + 专属效果块,
+   玻璃对 styles.css 白底组件(search/chip/composer 等)的覆盖集中写在
+   玻璃专属段,不与令牌块混排。
+
+   两套变量并存:W1 手写令牌(--bg-*/--fg-*/--accent…)与 shadcn 桥接变量
+   (--background/--card/--primary/…,见 styles.css 顶部)随主题同步覆盖,
+   注册表选装组件自然换肤。 */
+
+/* ---- 现代 = W1 现状(styles.css :root 即此值;显式块便于回切)---- */
+[data-theme="modern"] {
+  --bg-page: #ffffff;
+  --bg-panel: #fafafa;
+  --bg-hover: #f4f4f5;
+  --bg-select: #eff6ff;
+  --border: #e5e7eb;
+  --fg-1: #171717;
+  --fg-2: #525252;
+  --fg-3: #a3a3a3;
+  --radius: 8px;
+  --radius-sm: 6px;
+  --background: #ffffff;
+  --card: #ffffff;
+  --popover: #ffffff;
+  --secondary: #f4f4f5;
+  --muted: #f4f4f5;
+  --accent-hover: #eff6ff;
+  --accent-foreground: #171717;
+  --input: #e5e7eb;
+  --density: 1;
+  --leading: 1.65;
+}
+
+/* ---- 古典:纸墨暖调 + 衬线 + 书房纹理 + 双线框 + 印章 logo ---- */
+[data-theme="classic"] {
+  --bg-page: #f3ecdc;
+  --bg-panel: #ede4cf;
+  --bg-hover: #e7dcc2;
+  --bg-select: #e8d9b4;
+  --border: #c9b98f;
+  --fg-1: #2b2118;
+  --fg-2: #5a4a33;
+  --fg-3: #a2906d;
+  --seal: #9e2b25;
+  --radius: 4px;
+  --radius-sm: 3px;
+  --font-mono: "Courier New", monospace;
+  --background: #f3ecdc;
+  --foreground: #2b2118;
+  --card: #ede4cf;
+  --card-foreground: #2b2118;
+  --popover: #ede4cf;
+  --popover-foreground: #2b2118;
+  --secondary: #e7dcc2;
+  --secondary-foreground: #2b2118;
+  --muted: #e7dcc2;
+  --muted-foreground: #5a4a33;
+  --accent-hover: #e8d9b4;
+  --accent-foreground: #2b2118;
+  --primary-foreground: #f6f1e7;
+  --input: #c9b98f;
+  --leading: 1.75;
+}
+[data-theme="classic"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(ellipse at 15% 8%, rgba(150, 120, 60, 0.14), transparent 45%),
+    radial-gradient(ellipse at 85% 92%, rgba(130, 100, 50, 0.12), transparent 45%),
+    radial-gradient(ellipse at 60% 30%, rgba(120, 90, 40, 0.06), transparent 60%);
+}
+[data-theme="classic"] .app { position: relative; z-index: 1; }
+[data-theme="classic"] .chat-head { border-bottom: 3px double #c9b98f; }
+[data-theme="classic"] .msg.assistant .text {
+  border: 1px solid #c9b98f;
+  outline: 1px solid rgba(201, 185, 143, 0.45);
+  outline-offset: 2px;
+}
+[data-theme="classic"] .welcome .logo {
+  background: var(--seal);
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 2px rgba(246, 241, 231, 0.85), inset 0 0 12px rgba(0, 0, 0, 0.22);
+}
+
+/* ---- 卡通:大圆角 + 明快配色 + 底部色影 + 表情装饰 ---- */
+[data-theme="cartoon"] {
+  --bg-page: #fff8f3;
+  --bg-panel: #fff1e8;
+  --bg-hover: #ffe9dc;
+  --bg-select: #ffe0ee;
+  --border: #ffc9df;
+  --fg-1: #4a2c3f;
+  --fg-2: #8a5f78;
+  --fg-3: #c9a3b8;
+  --radius: 18px;
+  --radius-sm: 14px;
+  --font-mono: "Comic Sans MS", monospace;
+  --background: #fff8f3;
+  --foreground: #4a2c3f;
+  --card: #fff1e8;
+  --card-foreground: #4a2c3f;
+  --popover: #fff1e8;
+  --popover-foreground: #4a2c3f;
+  --secondary: #ffe9dc;
+  --secondary-foreground: #4a2c3f;
+  --muted: #ffe9dc;
+  --muted-foreground: #8a5f78;
+  --accent-hover: #ffe0ee;
+  --accent-foreground: #4a2c3f;
+  --primary-foreground: #ffffff;
+  --input: #ffc9df;
+  --cartoon-shadow-a: 0.18;
+  --density: 1;
+  --leading: 1.65;
+}
+[data-theme="cartoon"] .msg.assistant .text,
+[data-theme="cartoon"] .session-item,
+[data-theme="cartoon"] .composer {
+  box-shadow: 0 3px 0 rgba(255, 107, 157, var(--cartoon-shadow-a, 0.18));
+}
+[data-emoji="1"] .welcome p::after { content: " 🐾"; }
+[data-emoji="1"] .ws-empty::after { content: " ✏️"; }
+[data-emoji="1"] .sessions-empty::after { content: " 💬"; }
+
+/* ---- 玻璃(已认可样张 §4.1:樱花照片底 + 花瓣 + 全面板毛玻璃 + 深墨文字)---- */
+[data-theme="glass"] {
+  --bg-page: rgba(255, 255, 255, 0.06);
+  --bg-panel: rgba(255, 255, 255, var(--glass-alpha, 0.42));
+  --bg-hover: rgba(255, 255, 255, calc(var(--glass-alpha, 0.42) + 0.10));
+  --bg-select: rgba(255, 255, 255, calc(var(--glass-alpha, 0.42) + 0.16));
+  --border: rgba(255, 255, 255, 0.6);
+  --fg-1: #232a37;
+  --fg-2: #414b60;
+  --fg-3: #75809a;
+  --radius: 16px;
+  --radius-sm: 12px;
+  --background: transparent;
+  --foreground: #232a37;
+  --card: rgba(255, 255, 255, var(--glass-alpha, 0.42));
+  --card-foreground: #232a37;
+  --popover: rgba(255, 255, 255, 0.72);
+  --popover-foreground: #232a37;
+  --secondary: rgba(255, 255, 255, 0.4);
+  --secondary-foreground: #232a37;
+  --muted: rgba(255, 255, 255, 0.35);
+  --muted-foreground: #414b60;
+  --accent-hover: rgba(255, 255, 255, 0.45);
+  --accent-foreground: #232a37;
+  --input: rgba(255, 255, 255, 0.45);
+  --glass-alpha: 0.42;
+  --glass-blur: 16px;
+  --glass-dim: 0.08;
+  --glass-bg-image: url("/themes/sakura.jpg");
+  --density: 1;
+  --leading: 1.65;
+}
+/* 页底 = 樱花照片(背景自定义入口)+ 暗化层;规则仅此一处(§4.1) */
+[data-theme="glass"] body {
+  background: var(--glass-bg-image) center / cover fixed no-repeat;
+}
+[data-theme="glass"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background: rgba(20, 30, 50, var(--glass-dim, 0.08));
+}
+[data-theme="glass"] .app { position: relative; z-index: 1; }
+/* 花瓣层(React .petals,仅玻璃挂载):面板之下,透毛玻璃呈模糊粉影 */
+[data-theme="glass"] .petals {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+[data-theme="glass"] .petal {
+  position: absolute;
+  top: -6vh;
+  left: var(--x);
+  width: var(--s);
+  height: calc(var(--s) * 0.72);
+  background: linear-gradient(135deg, #ffd7e2, #ff9db8);
+  border-radius: 100% 0 100% 0;
+  opacity: 0.9;
+  animation: petal-fall var(--t) linear var(--d) infinite;
+}
+@keyframes petal-fall {
+  0% { transform: translateY(-6vh) rotate(0deg) translateX(0); }
+  50% { transform: translateY(55vh) rotate(320deg) translateX(var(--sw)); }
+  100% { transform: translateY(112vh) rotate(680deg) translateX(0); }
+}
+/* 玻璃面板:三栏 + 对话区面 + composer 全面板毛玻璃(blur 值可调) */
+[data-theme="glass"] .rail,
+[data-theme="glass"] .sessions,
+[data-theme="glass"] .workspace {
+  background: rgba(255, 255, 255, var(--glass-alpha, 0.42));
+  backdrop-filter: blur(var(--glass-blur, 16px)) saturate(1.3);
+  -webkit-backdrop-filter: blur(var(--glass-blur, 16px)) saturate(1.3);
+}
+[data-theme="glass"] .chat { background: transparent; }
+[data-theme="glass"] .composer,
+[data-theme="glass"] .search,
+[data-theme="glass"] .chip,
+[data-theme="glass"] .tool-chip {
+  background: rgba(255, 255, 255, 0.32);
+  border-color: rgba(255, 255, 255, 0.45);
+}
+[data-theme="glass"] .composer {
+  backdrop-filter: blur(var(--glass-blur, 16px)) saturate(1.25);
+  -webkit-backdrop-filter: blur(var(--glass-blur, 16px)) saturate(1.25);
+}
+[data-theme="glass"] .composer-dock {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.18) 26px);
+}
+[data-theme="glass"] .msg.assistant .text {
+  background: rgba(255, 255, 255, 0.30);
+  backdrop-filter: blur(var(--glass-blur, 16px));
+  -webkit-backdrop-filter: blur(var(--glass-blur, 16px));
+  border: 1px solid rgba(255, 255, 255, 0.55);
+}
+[data-theme="glass"] .session-item {
+  background: rgba(255, 255, 255, 0.34);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+[data-theme="glass"] .chip.active {
+  background: rgba(255, 255, 255, 0.5);
+}
+[data-theme="glass"] .welcome .logo {
+  background: rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+[data-theme="glass"] .msg.user .bubble {
+  background: var(--accent);
+  color: #ffffff;
+  text-shadow: 0 1px 2px rgba(30, 40, 60, 0.25);
+}
