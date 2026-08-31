@@ -7,12 +7,15 @@ BoenMind:个人生态的 AI Runtime / AI OS,当前为**阶段一(跨平台单软
 对照验证(Erlang/OTP、Kubernetes、VS Code,见 `architecture/deepwiki-validation.md`)。
 合同库已冻结 v1.0(字段只增不破)。
 
-**当前进度:M9 已收官(2026-08-30,tag `m9-stage2-batch1`):
-`milestones/M9-review.md`——阶段二第一批三轨全落地(S1 记忆抽屉授权闭合
-D-M5-2 / S2 模型真流式 BOEN_MODEL_STREAM=1 / S3 worker 自主环 v0 哨兵完成+
-停滞+超限+暂停四出口),254 测试全绿,t144 实网流式通过。
-下一步 = 按既定策略先真实使用一周攒手感;候选队列:远程 MCP(用户拍板
-下一批)、自主环真工具闭环、web 版调整(用户指定优先于桌面壳)。**
+**当前进度:W3 已收官(2026-09-02,commit `551bcca`):W2 设置中心+工作区+
+可拖布局与 W3 两级主题系统同夜交付——W2:provider 库 CRUD/连通探针/模型
+清单/设为当前(config_store 按 ADR-0012 恢复,重启生效)/webadmin REST
+管理面(裁决=暂不入冻结合同,行为规格=webadmin_tests 9 测试)/插件=能力
+提供方(系统类禁卸)/目录树+文件预览(X-01 防护)/三栏拖宽持久;
+W3:四主题令牌预设+每主题设置项 schema(透明度仅玻璃)+实时预览+持久化,
+玻璃=已认可樱花样张直落。280 测试全绿,W2 五门+W3 四门浏览器实测过
+(截图 milestones/shots-w2/)。下一步:用户过目古典/卡通主题(样张草案
+落地,可按令牌微调);候选队列:远程 MCP、自主环真工具闭环、使用反馈。**
 
 **提速方案(2026-08-30 起固化,每轮沿用)**:
 1. 强耦合任务合批(如 T4+T5、T6+T7、T8+T9),一轮交付、共享全量回归,
@@ -117,6 +120,28 @@ runtime/                        第 3 层  源代码(M1 起,Rust workspace;crate
       (503/超时已取证),验收用 gpt-5.6-luna;W2=会话列表/设置页/
       停止生成。W 序列合约=每个组件组必须在 assistant-ui 找到原型
       (W1 规格 §5)**
+- [x] **W2 设置中心+工作区+可拖布局(2026-09-02,commit `5748f9a`;
+      规格 `milestones/W2-implementation-spec.md` §0 裁决登记+§7 验收记录,
+      截图 `milestones/shots-w2/`):provider 库增删改查+连通探针+模型清单
+      拉取+设为当前(config_store 按 ADR-0012 恢复,重启生效,主干重新
+      读 config/model.json);webadmin REST 管理面 /admin/*(providers/
+      probe/mcp/capabilities/fs;裁决=壳子私用暂不入冻结合同,行为规格=
+      webadmin_tests.rs 9 测试);插件语义=能力提供方(系统内置禁卸+
+      MCP 配置文件全集带 loaded 标注,卸载=移出配置重启生效;PIN=壳子
+      本地偏好);工作区目录树(elements-file-tree 选装改造,懒加载)+
+      文件预览盖树+返回(X-01 三重路径防护);三栏拖宽 localStorage 持久;
+      设置中心整页式(左导航+PIN 快捷项)。前端引入 tailwind v4+shadcn
+      (共存策略:W1 手写令牌保留+桥接变量并存)。五道验收门浏览器实测过,
+      280 测试全绿+clippy 零警告**
+- [x] **W3 主题系统·两级换肤(2026-09-02,commit `551bcca`;
+      规格 `milestones/W3-implementation-spec.md` §0 裁决+§6 验收记录):
+      一级四主题(现代=W1 现状/古典=纸墨衬线书房纹理/卡通=大圆角色影
+      表情装饰/玻璃=已认可樱花样张:照片底+花瓣+全面板毛玻璃)+
+      二级每主题自带设置项(项集不同:透明度仅玻璃、字体仅卡通;
+      theme.css 单一来源纪律);外观页主题卡片+动态表单+实时预览;
+      全局文字大小(§4 裁定不入主题);localStorage 重启保持;
+      四道验收门 DOM 探针实测过(截图通道会话级坏死已登记,视觉待
+      用户过目古典/卡通,可按令牌微调)**
 - 注意:ADR-0011(App 形态)与各回看「§6 条件与遗留」是后续规划的
   输入清单;deepwiki S1-S10 逐里程碑裁决中(S5/S9 已闭合,S3/S4/S8 部分
   采纳,余 proposed;总表见 FULL-REVIEW §2.4),勿自动采纳
