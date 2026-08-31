@@ -66,6 +66,14 @@
 | 目录树/文件读取 | §2 | 倾向入(host/browse 形态) |
 | 三栏拖宽 | §3 | 纯前端,无合同 |
 
+## 5.1 UI 库存引用(2026-09-01 摸爬)
+
+实现方式更新:组件面从「手写」改为「assistant-ui 注册表选装 + 令牌覆盖」,
+盘点与映射见 **milestones/W-ui-inventory.md**(100+ 现成组件,§2 为 W2
+直接命中清单:Model Picker/Thread List/Todo list/File tree/Artifact
+card/MCP Config Dialog/Settings/Chat panel);手写仅剩三栏拖宽与接线层。
+shadcn/tailwind 共存策略 W2 开工首日定案。
+
 ## 6. 验收门(全部走浏览器 MCP 可视化验收)
 
 1. 设置:新增 provider → 连通性绿灯 → 拉到模型清单 → 编辑/删除生效
