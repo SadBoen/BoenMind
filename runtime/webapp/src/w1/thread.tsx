@@ -6,7 +6,8 @@ import {
   ThreadPrimitive,
   useAuiState,
 } from "@assistant-ui/react";
-import type { ComponentPropsWithoutRef } from "react";
+import { Send, Square } from "lucide-react";
+import { useEffect, useState } from "react";
 
 export function Thread() {
   const isEmpty = useAuiState((s) => s.thread.isEmpty);
@@ -57,9 +58,10 @@ function UserMessage() {
 }
 
 function AssistantMessage() {
+  const isRunning = useAuiState((s) => s.message.isRunning);
   return (
     <MessagePrimitive.Root className="msg assistant">
-      <div className="model-tag">BoenMind Agent</div>
+      <div className="model-tag">BoenMind Agent{isRunning ? " · 生成中" : ""}</div>
       <div className="text">
         <MessagePrimitive.Parts>
           {({ part }) =>
@@ -75,6 +77,14 @@ function AssistantMessage() {
 
 function Composer() {
   const isRunning = useAuiState((s) => s.thread.isRunning);
+  const [model, setModel] = useState("…");
+  // 模型名动态取自服务器 /v1/models(单一配置模型,W1 口径)
+  useEffect(() => {
+    fetch("/v1/models")
+      .then((r) => r.json())
+      .then((v) => setModel(v?.data?.[0]?.id ?? "?"))
+      .catch(() => setModel("?"));
+  }, []);
   return (
     <ComposerPrimitive.Root className="composer">
       <ComposerPrimitive.Input
@@ -86,25 +96,20 @@ function Composer() {
       <div className="composer-toolbar">
         <span className="tool-chip disabled">📎 附件</span>
         <span className="tool-chip mono disabled" title="服务器配置模型(W1 固定)">
-          ⚙ deepseek-v4-flash
+          ⚙ {model}
         </span>
         <span className="tool-chip disabled">🏠 Home</span>
         <span className="composer-spacer" />
-        <SendButton />
-        {isRunning ? <span className="tool-chip disabled">生成中…</span> : null}
+        {isRunning ? (
+          <ComposerPrimitive.Cancel className="send-btn stop" title="停止生成">
+            <Square size={14} fill="currentColor" />
+          </ComposerPrimitive.Cancel>
+        ) : (
+          <ComposerPrimitive.Send className="send-btn" title="发送">
+            <Send size={15} />
+          </ComposerPrimitive.Send>
+        )}
       </div>
     </ComposerPrimitive.Root>
-  );
-}
-
-function SendButton(props: ComponentPropsWithoutRef<"button">) {
-  return (
-    <ComposerPrimitive.Send
-      {...(props as object)}
-      className="send-btn"
-      title="发送"
-    >
-      ➤
-    </ComposerPrimitive.Send>
   );
 }

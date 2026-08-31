@@ -5,7 +5,7 @@ import {
   useExternalStoreRuntime,
 } from "@assistant-ui/react";
 import type { AppendMessage, ThreadMessageLike } from "@assistant-ui/react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type TextPart = { type: "text"; text: string };
 
@@ -16,6 +16,9 @@ export function BoenmindRuntimeProvider({
 }) {
   const [messages, setMessages] = useState<ThreadMessageLike[]>([]);
   const [isRunning, setIsRunning] = useState(false);
+  // 生成中可随时中止(点「停止」):中断 SSE 并立即解锁输入框;
+  // 服务器侧该回合仍会后台完成并落库(W1 口径,不丢)
+  const abortRef = useRef<AbortController | null>(null);
 
   const sendUserText = async (text: string) => {
     setIsRunning(true);
@@ -42,6 +45,15 @@ export function BoenmindRuntimeProvider({
       });
     };
 
+    const controller = new AbortController();
+    abortRef.current = controller;
+    // 壳侧看门狗:60 秒无任何增量/完成即中止解锁(服务器侧硬上限 180s)
+    let watchdog = setTimeout(() => controller.abort(), 60_000);
+    const poke = () => {
+      clearTimeout(watchdog);
+      watchdog = setTimeout(() => controller.abort(), 60_000);
+    };
+
     try {
       const doFetch = (withSession: boolean) => {
         const headers: Record<string, string> = {
@@ -57,6 +69,7 @@ export function BoenmindRuntimeProvider({
             stream: true,
             messages: [{ role: "user", content: text }],
           }),
+          signal: controller.signal,
         });
       };
       let res = await doFetch(true);
@@ -78,6 +91,7 @@ export function BoenmindRuntimeProvider({
       stream: while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        poke();
         buf += dec.decode(value, { stream: true });
         const blocks = buf.split("\n\n");
         buf = blocks.pop() ?? "";
@@ -94,8 +108,15 @@ export function BoenmindRuntimeProvider({
         }
       }
     } catch (e) {
-      appendDelta(`\n[连接失败: ${e instanceof Error ? e.message : String(e)}]`);
+      const aborted = e instanceof DOMException && e.name === "AbortError";
+      appendDelta(
+        aborted
+          ? "\n[已停止]"
+          : `\n[连接失败: ${e instanceof Error ? e.message : String(e)}]`,
+      );
     } finally {
+      clearTimeout(watchdog);
+      abortRef.current = null;
       setIsRunning(false);
     }
   };
@@ -125,6 +146,9 @@ export function BoenmindRuntimeProvider({
     onNew,
     isRunning,
     convertMessage: (m) => m,
+    onCancel: async () => {
+      abortRef.current?.abort();
+    },
   });
 
   return (

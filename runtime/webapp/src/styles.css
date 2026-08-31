@@ -220,3 +220,22 @@ body {
   background: var(--bg-select);
 }
 .ws-empty { color: var(--fg-3); font-size: 12.5px; text-align: center; margin-top: 48px; }
+
+/* ---- 停止按钮 / 弹窗(W1.1 补) ---- */
+.send-btn.stop { background: var(--danger); }
+.overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,.45);
+  z-index: 2147483647; display: flex; align-items: center; justify-content: center;
+}
+.dialog {
+  background: #fff; border: 1px solid var(--border); border-radius: 12px;
+  padding: 22px 24px; width: 460px; max-width: 92vw;
+  box-shadow: 0 16px 48px rgba(0,0,0,.18);
+}
+.dialog-title { font-size: 15px; font-weight: 600; margin-bottom: 8px; }
+.dialog-text { color: var(--fg-2); font-size: 13px; line-height: 1.6; margin: 0 0 16px; }
+.dialog-actions { display: flex; justify-content: flex-end; }
+.btn-primary {
+  border: none; border-radius: var(--radius-sm); background: var(--accent);
+  color: #fff; padding: 7px 16px; font-size: 13px; cursor: pointer;
+}
