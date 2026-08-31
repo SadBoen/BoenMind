@@ -166,12 +166,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let shutdown = Arc::new(tokio::sync::Notify::new());
+    // W1(ADR-0014):/v1 插座与会话创建的默认模型 = 配置/env 驱动的启动模型
+    let default_model = Arc::new(
+        std::env::var("BOEN_MODEL_ID")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "zhipu.glm-4-flash".to_string()),
+    );
     let app = bm_surface_http::router(
         handle.clone(),
         Arc::new(token.clone()),
         store,
         shutdown.clone(),
         web_dir.clone(),
+        default_model.clone(),
     );
     if let Some(w) = &web_dir {
         println!("Web Surface 目录 {w:?}(GET / 托管静态界面)");

@@ -10,6 +10,7 @@
 
 pub mod api_dsh;
 pub mod auth;
+pub mod openai_compat;
 pub mod rpc;
 pub mod sse;
 pub mod token;
@@ -28,6 +29,8 @@ pub struct AppState {
     pub store: Arc<dyn bm_persist::EventStore>,
     /// 应用层停机信号(M3.6:/shutdown 触发;服务宿主 await 它以退出)。
     pub shutdown: Arc<tokio::sync::Notify>,
+    /// W1(ADR-0014):服务器默认模型(配置/env 驱动),/v1 插座与会话创建用。
+    pub default_model: Arc<String>,
 }
 
 /// 组装 Surface 路由。`token` 为已加载的访问令牌;/health 豁免鉴权,
@@ -38,12 +41,14 @@ pub fn router(
     store: Arc<dyn bm_persist::EventStore>,
     shutdown: Arc<tokio::sync::Notify>,
     web_dir: Option<std::path::PathBuf>,
+    default_model: Arc<String>,
 ) -> Router {
     let state = AppState {
         handle,
         token,
         store,
         shutdown,
+        default_model,
     };
     let app = Router::new()
         .route("/rpc/{method}", post(rpc::rpc_endpoint))
@@ -58,6 +63,9 @@ pub fn router(
         .route("/api/{*rest}", post(api_dsh::unary))
         .route("/api/events.mux", get(api_dsh::events_mux))
         .route("/api/events.host", get(api_dsh::events_host))
+        // W1(ADR-0014):OpenAI 兼容插座(公开挂载 = 已登记欠账,公网前补鉴权)
+        .route("/v1/chat/completions", post(openai_compat::chat_completions))
+        .route("/v1/models", get(openai_compat::models))
         .with_state(state);
     // Web Surface 静态托管(公开:界面壳不含数据;数据一律经鉴权 API):
     // 未匹配 API 的路径回落到静态文件
