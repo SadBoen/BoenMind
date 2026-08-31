@@ -106,6 +106,10 @@ runtime/                        第 3 层  源代码(M1 起,Rust workspace;crate
       /admin/cli+BOEN_CLI_WEB,审计 A-06~A-08 随之消灭];设置=dsh 式齿轮弹窗;
       tokens.css 令牌表机械复刻自 dsh ui-theme(MIT);前端界面插槽实证生效
       [plugins/demo-sidebar.js];真实浏览器手测通过,260 测试全绿)**
+- [x] **弃用 dsh 复刻前端(2026-08-31,用户裁决;runtime/web 全量删除
+      [137 文件],M10 未提交工作全量归档分支 `archive/m10-dsh-frontend`;
+      后端合同面/配置 API/事件流不动,ADR-0013;新参考界面待用户指定,
+      见 PENDING D-M10-1;删除后 261 测试全绿)**
 - 注意:ADR-0011(App 形态)与各回看「§6 条件与遗留」是后续规划的
   输入清单;deepwiki S1-S10 逐里程碑裁决中(S5/S9 已闭合,S3/S4/S8 部分
   采纳,余 proposed;总表见 FULL-REVIEW §2.4),勿自动采纳
