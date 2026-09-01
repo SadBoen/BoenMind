@@ -204,7 +204,8 @@ function SessionPanel() {
           <Plus size={16} />
         </button>
       </div>
-      <input className="search" placeholder="搜索对话…" disabled />
+      {/* 会话搜索框随会话列表真数据(W 后续)一起回来;禁用占位框会误导
+          「打不进字」,先移除 */}
       <div className="chips">
         <span className="chip active">全部</span>
         <span className="chip">未分配</span>
