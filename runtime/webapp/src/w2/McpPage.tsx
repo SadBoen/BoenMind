@@ -103,6 +103,8 @@ export function McpPage({
   const [draft, setDraft] = useState<Draft | null>(null);
   const [busy, setBusy] = useState(false);
   const [reloading, setReloading] = useState(false);
+  // 联通状态(绿点):加载时拉一次,之后 30s 轮询 + 手动「测试」即时刷新
+  const [statusMap, setStatusMap] = useState<Record<string, { ok: boolean; tools?: number; error?: string }>>({});
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [configTarget, setConfigTarget] = useState<ConfigTarget | null>(null);
@@ -118,6 +120,38 @@ export function McpPage({
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  const refreshStatus = useCallback(async () => {
+    try {
+      const r = await api.mcp.status();
+      const map: Record<string, { ok: boolean; tools?: number; error?: string }> = {};
+      for (const st of r.status) map[st.name] = st;
+      setStatusMap(map);
+    } catch {
+      /* 轮询失败静默(下一轮再试) */
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshStatus();
+    const t = setInterval(() => void refreshStatus(), 30_000);
+    return () => clearInterval(t);
+  }, [refreshStatus]);
+
+  const testOne = useCallback(
+    async (name: string) => {
+      try {
+        const r = await api.mcp.test(name);
+        setStatusMap((cur) => ({ ...cur, [name]: r }));
+      } catch (e) {
+        setStatusMap((cur) => ({
+          ...cur,
+          [name]: { ok: false, error: String(e instanceof Error ? e.message : e) },
+        }));
+      }
+    },
+    [],
+  );
 
   // 插件页「设置」跳转:直接打开对应条目编辑
   useEffect(() => {
@@ -176,6 +210,7 @@ export function McpPage({
                     : (r.note ?? "无新增"),
                 );
                 await reload();
+                await refreshStatus();
               } catch (e) {
                 setError(String(e instanceof Error ? e.message : e));
               } finally {
@@ -232,6 +267,15 @@ export function McpPage({
           >
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
+                <span
+                  title={(statusMap[s.name]?.ok ?? false) ? "联通" : "未联通/未装载"}
+                  data-slot="mcp-dot"
+                  data-ok={statusMap[s.name]?.ok ? "1" : "0"}
+                  className={
+                    "size-2 shrink-0 rounded-full " +
+                    (statusMap[s.name]?.ok ? "bg-emerald-500" : "bg-zinc-400")
+                  }
+                />
                 <span className="truncate font-mono text-[13px]">{s.name}</span>
                 <Badge variant="outline" className="text-[10px]">
                   stdio
@@ -258,6 +302,15 @@ export function McpPage({
             >
               <Trash2Icon />
               移除
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void testOne(s.name)}
+              title="主动探活(tools/list)"
+              data-slot="mcp-test"
+            >
+              测试
             </Button>
             {entry?.manifest?.config_schema?.length ? (
               <Button

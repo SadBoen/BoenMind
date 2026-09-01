@@ -535,6 +535,47 @@ pub async fn mcp_delete(State(cfg): State<AdminConfig>, AxumPath(name): AxumPath
     Json(json!({ "ok": true, "note": "已从配置移除,重启服务器后生效" })).into_response()
 }
 
+// ---- handler:MCP 探活(主动测试 + 被动轮询共用 hub.probe_server)-------
+
+/// 主动探活单条:POST /admin/mcp/test/{name}
+pub async fn mcp_test(
+    State(cfg): State<AdminConfig>,
+    AxumPath(name): AxumPath<String>,
+) -> Response {
+    let Some(hub) = cfg.hub.clone() else {
+        return admin_error(StatusCode::BAD_REQUEST, "服务器未启用 MCP 接线(--mcp-config)");
+    };
+    match hub.probe_server(&name).await {
+        Ok(tools) => Json(json!({ "ok": true, "name": name, "tools": tools }))
+            .into_response(),
+        Err(e) => Json(json!({ "ok": false, "name": name, "error": e })).into_response(),
+    }
+}
+
+/// 批量轮询:GET /admin/mcp/status(前端定时拉取刷新状态点)
+pub async fn mcp_status(State(cfg): State<AdminConfig>) -> Response {
+    let Some(hub) = cfg.hub.clone() else {
+        return Json(json!({ "status": [] })).into_response();
+    };
+    let loaded: Vec<String> = cfg
+        .mcp_servers
+        .read()
+        .map(|g| {
+            g.iter()
+                .filter_map(|s| s["name"].as_str().map(|n| n.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut status = Vec::new();
+    for name in loaded {
+        match hub.probe_server(&name).await {
+            Ok(tools) => status.push(json!({"name": name, "ok": true, "tools": tools})),
+            Err(e) => status.push(json!({"name": name, "ok": false, "error": e})),
+        }
+    }
+    Json(json!({ "status": status })).into_response()
+}
+
 // ---- handler:每 server 自声明配置(读/写 config/mcp-<name>.json)---------
 
 #[derive(serde::Deserialize)]
@@ -759,6 +800,8 @@ pub fn admin_routes(cfg: AdminConfig) -> axum::Router {
         .route("/model/active", get(model_active_get).put(model_active_set))
         .route("/mcp", get(mcp_list).post(mcp_create))
         .route("/mcp/reload", post(mcp_reload))
+        .route("/mcp/test/{name}", post(mcp_test))
+        .route("/mcp/status", get(mcp_status))
         .route(
             "/mcp-config/{name}",
             get(mcp_config_get).put(mcp_config_set),

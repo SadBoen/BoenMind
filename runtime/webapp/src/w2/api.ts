@@ -128,6 +128,15 @@ export const api = {
       req<{ ok: boolean }>(`/admin/mcp/${name}`, { method: "DELETE" }),
     reload: () =>
       req<McpReloadResult>("/admin/mcp/reload", { method: "POST" }),
+    test: (name: string) =>
+      req<{ ok: boolean; name: string; tools?: number; error?: string }>(
+        `/admin/mcp/test/${name}`,
+        { method: "POST" },
+      ),
+    status: () =>
+      req<{
+        status: { name: string; ok: boolean; tools?: number; error?: string }[];
+      }>("/admin/mcp/status"),
     getConfig: (name: string) =>
       req<{ name: string; values: Record<string, unknown> }>(
         `/admin/mcp-config/${name}`,

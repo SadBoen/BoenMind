@@ -3,7 +3,6 @@
 // (每主题 schema 不同,动态渲染)。改动即时生效(实时预览)并持久化。
 // 顶部另设全局偏好(文字大小,§4 裁定:与主题无关)。
 import { useState } from "react";
-import { CheckIcon } from "lucide-react";
 import {
   THEMES,
   THEME_ORDER,
@@ -15,7 +14,13 @@ import {
   type ThemeDef,
   type ThemeFieldValue,
 } from "./themes";
-import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
@@ -84,57 +89,36 @@ export function AppearancePage() {
         </span>
       </section>
 
-      {/* 一级:主题预设 */}
+      {/* 一级:主题预设(用户裁定:下拉选择器,页面紧凑) */}
       <section className="flex flex-col gap-2">
         <div className="text-[13px] font-medium">主题</div>
-        <div className="grid grid-cols-2 gap-2">
-          {THEME_ORDER.map((id) => {
-            const t = THEMES[id];
-            const active = id === state.theme;
-            return (
-              <button
-                key={id}
-                onClick={() => pickTheme(id)}
-                className={cn(
-                  "relative flex items-center gap-3 rounded-xl border p-3 text-left transition-colors",
-                  active
-                    ? "border-[var(--primary)] ring-[var(--primary)] ring-1"
-                    : "hover:bg-accent/50",
-                )}
-                data-slot="theme-card"
-                data-theme-id={id}
-              >
-                <span
-                  className="flex h-9 w-9 shrink-0 overflow-hidden rounded-lg border"
-                  aria-hidden
-                >
-                  <span
-                    className="flex-1"
-                    style={{ background: t.swatch.page }}
-                  />
-                  <span
-                    className="flex-1"
-                    style={{ background: t.swatch.panel }}
-                  />
-                  <span
-                    className="flex-1"
-                    style={{ background: t.swatch.accent }}
-                  />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block text-[13.5px] font-medium">
-                    {t.label}
-                  </span>
-                  <span className="text-muted-foreground block truncate text-[11.5px]">
-                    {t.desc}
-                  </span>
-                </span>
-                {active ? (
-                  <CheckIcon className="text-[var(--primary)] size-4 shrink-0" />
-                ) : null}
-              </button>
-            );
-          })}
+        <div className="flex items-center gap-3">
+          <Select
+            value={state.theme}
+            onValueChange={(v) => pickTheme(v as ThemeDef["id"])}
+          >
+            <SelectTrigger className="w-64" data-slot="theme-select">
+              <SelectValue placeholder="选择主题" />
+            </SelectTrigger>
+            <SelectContent>
+              {THEME_ORDER.map((id) => (
+                <SelectItem key={id} value={id} data-theme-id={id}>
+                  {THEMES[id].label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <span
+            className="flex h-6 w-16 shrink-0 overflow-hidden rounded border"
+            aria-hidden
+          >
+            <span className="flex-1" style={{ background: def.swatch.page }} />
+            <span className="flex-1" style={{ background: def.swatch.panel }} />
+            <span className="flex-1" style={{ background: def.swatch.accent }} />
+          </span>
+          <span className="text-muted-foreground min-w-0 flex-1 truncate text-[12px]">
+            {def.desc}
+          </span>
         </div>
       </section>
 
