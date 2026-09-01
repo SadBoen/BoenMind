@@ -15,15 +15,22 @@ import {
   type ThemeFieldValue,
 } from "./themes";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  MonitorIcon,
+  ScrollTextIcon,
+  StickerIcon,
+  DropletsIcon,
+} from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { MonitorIcon, ScrollTextIcon, StickerIcon, DropletsIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+const THEME_LOGOS = {
+  modern: MonitorIcon,
+  classic: ScrollTextIcon,
+  cartoon: StickerIcon,
+  glass: DropletsIcon,
+} as const;
 
 export function AppearancePage() {
   const [state, setState] = useState(loadThemeState);
@@ -89,36 +96,38 @@ export function AppearancePage() {
         </span>
       </section>
 
-      {/* 一级:主题预设(用户裁定:下拉选择器,页面紧凑) */}
+      {/* 一级:主题预设(用户裁定:一种风格一个小 LOGO,横排点选) */}
       <section className="flex flex-col gap-2">
         <div className="text-[13px] font-medium">主题</div>
-        <div className="flex items-center gap-3">
-          <Select
-            value={state.theme}
-            onValueChange={(v) => pickTheme(v as ThemeDef["id"])}
-          >
-            <SelectTrigger className="w-64" data-slot="theme-select">
-              <SelectValue placeholder="选择主题" />
-            </SelectTrigger>
-            <SelectContent>
-              {THEME_ORDER.map((id) => (
-                <SelectItem key={id} value={id} data-theme-id={id}>
-                  {THEMES[id].label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <span
-            className="flex h-6 w-16 shrink-0 overflow-hidden rounded border"
-            aria-hidden
-          >
-            <span className="flex-1" style={{ background: def.swatch.page }} />
-            <span className="flex-1" style={{ background: def.swatch.panel }} />
-            <span className="flex-1" style={{ background: def.swatch.accent }} />
-          </span>
-          <span className="text-muted-foreground min-w-0 flex-1 truncate text-[12px]">
-            {def.desc}
-          </span>
+        <div className="flex items-start gap-3" data-slot="theme-logos">
+          {THEME_ORDER.map((id) => {
+            const t = THEMES[id];
+            const active = id === state.theme;
+            const Logo = THEME_LOGOS[id];
+            return (
+              <button
+                key={id}
+                onClick={() => pickTheme(id)}
+                className={cn(
+                  "flex w-20 flex-col items-center gap-1.5 rounded-xl border p-2.5 transition-colors",
+                  active
+                    ? "border-[var(--primary)] bg-accent/40 ring-[var(--primary)] ring-1"
+                    : "hover:bg-accent/40",
+                )}
+                data-slot="theme-logo"
+                data-theme-id={id}
+                title={t.label}
+              >
+                <span
+                  className="flex size-9 items-center justify-center rounded-full text-white"
+                  style={{ background: t.swatch.accent }}
+                >
+                  <Logo className="size-4" />
+                </span>
+                <span className="text-[11.5px] font-medium">{t.label}</span>
+              </button>
+            );
+          })}
         </div>
       </section>
 

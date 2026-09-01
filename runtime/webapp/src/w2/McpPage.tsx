@@ -491,12 +491,14 @@ function ServerConfigDialog({
   onClose: () => void;
 }) {
   const [values, setValues] = useState<Record<string, unknown> | null>(null);
+  const [picked, setPicked] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     setValues(target ? { ...target.values } : null);
+    setPicked(target?.schema?.[0]?.key ?? "");
     setError(null);
     setNotice(null);
   }, [target]);
@@ -531,10 +533,29 @@ function ServerConfigDialog({
               {notice}
             </div>
           ) : null}
-          {target.schema.map((f) => {
+          {/* 用户裁定:配置项用下拉选择器(选一项,下方输入跟着变) */}
+          <div className="flex flex-col gap-1.5">
+            <Label>配置项</Label>
+            <select
+              className="border-input bg-background h-8 rounded-md border px-2 text-[12.5px] outline-none"
+              value={picked}
+              onChange={(e) => setPicked(e.target.value)}
+              data-slot="config-pick"
+            >
+              {target.schema.map((f) => (
+                <option key={f.key} value={f.key}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          {(() => {
+            const f =
+              target.schema.find((x) => x.key === picked) ?? target.schema[0];
+            if (!f) return null;
             const v = values ? values[f.key] : undefined;
             return (
-              <div key={f.key} className="flex flex-col gap-1.5">
+              <div className="flex flex-col gap-1.5">
                 <Label>{f.label}</Label>
                 {f.type === "range" ? (
                   <Input
@@ -562,7 +583,7 @@ function ServerConfigDialog({
                 ) : null}
               </div>
             );
-          })}
+          })()}
           {error ? (
             <div className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-[12.5px] text-red-700">
               {error}

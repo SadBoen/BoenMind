@@ -7,7 +7,6 @@ import { ProvidersPage } from "./ProvidersPage";
 import { PluginsPage, readPins } from "./PluginsPage";
 import { McpPage } from "./McpPage";
 import { RolesPage } from "./RolesPage";
-import { RolesPage } from "./RolesPage";
 import { AppearancePage } from "@/w3/AppearancePage";
 import { cn } from "@/lib/utils";
 
@@ -139,7 +138,6 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
               />
             ) : null}
             {section === "appearance" ? <AppearancePage /> : null}
-            {section === "roles" ? <RolesPage /> : null}
             {section === "roles" ? <RolesPage /> : null}
           </div>
         </main>
