@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>输入对照测试</title>
+    <style>
+      body { font-family: system-ui, "Microsoft YaHei", sans-serif; max-width: 720px; margin: 30px auto; padding: 0 16px; color: #171717; }
+      .case { border: 2px solid #ddd; border-radius: 10px; padding: 14px 16px; margin: 18px 0; }
+      .case h3 { margin: 0 0 8px; font-size: 15px; }
+      .case textarea { width: 100%; min-height: 56px; font: inherit; padding: 8px; box-sizing: border-box; }
+      .val { font-family: monospace; background: #f4f4f5; border-radius: 6px; padding: 6px 8px; margin-top: 8px; min-height: 1.4em; word-break: break-all; }
+      .hint { color: #666; font-size: 13px; }
+    </style>
+  </head>
+  <body>
+    <h2>输入对照测试(三个框各打几个字)</h2>
+    <p class="hint">
+      每个框下面实时显示「框里的值」。打完字后:
+      值有内容 = 该框正常;值一直是空 = 该框吞字。
+      测完把每个框的情况告诉 AI(比如「1 能 2 不能 3 能」)。
+    </p>
+    <div class="case" id="case-plain">
+      <h3>框 1:纯原生输入框(浏览器自带,无任何框架)</h3>
+    </div>
+    <div class="case" id="case-react">
+      <h3>框 2:React 受控输入框(React 框架接管)</h3>
+    </div>
+    <div class="case" id="case-aui">
+      <h3>框 3:BoenMind 同款组件(assistant-ui,与聊天输入框同款接线)</h3>
+    </div>
+    <script type="module" src="/src/input-test/main.tsx"></script>
+  </body>
+</html>
