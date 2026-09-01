@@ -86,7 +86,11 @@ export default function App() {
         className="app"
         style={{
           // 子元素顺序:rail, sessions, splitter, thread, splitter, workspace
-          gridTemplateColumns: `52px ${layout.sessions}px 5px minmax(0, 1fr) 5px ${layout.workspace}px`,
+          // 设置打开=聊天界面关闭(用户裁定):只留图标栏;composer 输入存于
+          // runtime(Provider 级),设置关闭后重新挂载即恢复,内容不丢
+          gridTemplateColumns: settingsOpen
+            ? "52px minmax(0, 1fr)"
+            : `52px ${layout.sessions}px 5px minmax(0, 1fr) 5px ${layout.workspace}px`,
         }}
       >
         {theme === "glass" ? <Petals /> : null}
@@ -94,27 +98,30 @@ export default function App() {
           settingsActive={settingsOpen}
           onSettings={() => setSettingsOpen((v) => !v)}
         />
-        <SessionPanel />
-        <HSplitter
-          onDrag={(dx) =>
-            saveLayout({
-              ...layout,
-              sessions: clamp(layout.sessions + dx, LIMITS.sessions),
-            })
-          }
-        />
-        <Thread />
-        <HSplitter
-          onDrag={(dx) =>
-            saveLayout({
-              ...layout,
-              workspace: clamp(layout.workspace - dx, LIMITS.workspace),
-            })
-          }
-        />
-        <WorkspacePanel />
-        {settingsOpen && (
+        {settingsOpen ? (
           <SettingsPage onClose={() => setSettingsOpen(false)} />
+        ) : (
+          <>
+            <SessionPanel />
+            <HSplitter
+              onDrag={(dx) =>
+                saveLayout({
+                  ...layout,
+                  sessions: clamp(layout.sessions + dx, LIMITS.sessions),
+                })
+              }
+            />
+            <Thread />
+            <HSplitter
+              onDrag={(dx) =>
+                saveLayout({
+                  ...layout,
+                  workspace: clamp(layout.workspace - dx, LIMITS.workspace),
+                })
+              }
+            />
+            <WorkspacePanel />
+          </>
         )}
       </div>
     </BoenmindRuntimeProvider>
