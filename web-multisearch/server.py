@@ -30,6 +30,8 @@ import os
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 from mcp.server.fastmcp import FastMCP
 
 from providers.omni import LiteWebSearchProvider, OmniWebSearchProvider, format_result
