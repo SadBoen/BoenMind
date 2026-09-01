@@ -1123,6 +1123,45 @@ pub async fn mcp_approve(State(cfg): State<AdminConfig>, Json(body): Json<Value>
     .into_response()
 }
 
+// ---- handler:运行日志查看(2026-09-02 用户要求「设置里接入日志」)--------
+
+/// 从文件尾部读最多 `max_bytes` 字节,返回最后 `n` 行(首行可能被截断则丢弃)。
+fn tail_lines(path: &Path, max_bytes: u64, n: usize) -> Vec<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return vec![];
+    };
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    let start = len.saturating_sub(max_bytes);
+    if f.seek(SeekFrom::Start(start)).is_err() {
+        return vec![];
+    }
+    let mut buf = String::new();
+    if f.read_to_string(&mut buf).is_err() {
+        return vec![];
+    }
+    let mut lines: Vec<&str> = buf.lines().collect();
+    if start > 0 && !lines.is_empty() {
+        lines.remove(0); // 截断边界上的半行不可信
+    }
+    let skip = lines.len().saturating_sub(n);
+    lines.into_iter().skip(skip).map(String::from).collect()
+}
+
+/// GET /admin/logs:数据目录两份日志的尾部直读(各取最后 200 行,单文件
+/// 最多回读 512KB)——execution-log.jsonl(回合/工具调用明细)与
+/// events.jsonl(事件流,含 capability.invoked 的 intent/result/error),
+/// 供诊断「工具调用卡死」一类运行期问题。
+pub async fn logs_tail(State(cfg): State<AdminConfig>) -> Response {
+    let dir = cfg.data_dir;
+    Json(json!({
+        "ok": true,
+        "exec": tail_lines(&dir.join("execution-log.jsonl"), 512 * 1024, 200),
+        "events": tail_lines(&dir.join("events.jsonl"), 512 * 1024, 200),
+    }))
+    .into_response()
+}
+
 /// 管理面子路由(挂载于 /admin;公开 = W1 同款已登记欠账)。
 pub fn admin_routes(cfg: AdminConfig) -> axum::Router {
     use axum::routing::{get, post, put};
@@ -1148,6 +1187,7 @@ pub fn admin_routes(cfg: AdminConfig) -> axum::Router {
         .route("/mcp/{name}", put(mcp_update).delete(mcp_delete))
         .route("/capabilities", get(capabilities_list))
         .route("/roles", get(roles_get).put(roles_set))
+        .route("/logs", get(logs_tail))
         .route("/fs/list", get(fs_list))
         .route("/fs/file", get(fs_file))
         .with_state((*cfg).clone())

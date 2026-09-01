@@ -574,3 +574,33 @@ async fn t_w2_mcp_scan_candidates_and_approve() {
     // 目录外的同声明文件不可被 approve(路径限定在插件目录)
     let _ = candidate; // 候选路径仅用于落盘条目;approve 只在插件目录内搜索
 }
+
+// ---- 运行日志查看(GET /admin/logs,2026-09-02 用户要求接入)----
+
+#[tokio::test]
+async fn t_w2_logs_tail_reads_data_dir_jsonl() {
+    let ws = tempfile::tempdir().unwrap();
+    let (base, dir) = spawn_app(ws.path().to_path_buf(), None).await;
+    // 预置两份日志(各 3 行,验证尾部读取与透传)
+    std::fs::write(
+        dir.path().join("execution-log.jsonl"),
+        "{\"a\":1}\n{\"a\":2}\n{\"a\":3}\n",
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("events.jsonl"), "{\"e\":1}\n{\"e\":2}\n").unwrap();
+
+    let (_, r) = get(&format!("{base}/admin/logs")).await;
+    assert_eq!(r["ok"], json!(true), "{r}");
+    let exec = r["exec"].as_array().unwrap();
+    assert_eq!(exec.len(), 3, "{r}");
+    assert_eq!(exec[2], json!("{\"a\":3}"));
+    let events = r["events"].as_array().unwrap();
+    assert_eq!(events.len(), 2);
+
+    // 文件不存在 = 空数组,不报错(起第二个 app,数据目录天然无日志文件)
+    let ws2 = tempfile::tempdir().unwrap();
+    let (base2, _dir2) = spawn_app(ws2.path().to_path_buf(), None).await;
+    let (_, r2) = get(&format!("{base2}/admin/logs")).await;
+    assert_eq!(r2["ok"], json!(true));
+    assert_eq!(r2["exec"].as_array().unwrap().len(), 0);
+}

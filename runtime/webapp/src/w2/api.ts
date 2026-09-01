@@ -174,6 +174,8 @@ export const api = {
         body: JSON.stringify({ name, system_prompt }),
       }),
   },
+  logs: () =>
+    req<{ ok: boolean; exec: string[]; events: string[] }>("/admin/logs"),
   capabilities: () =>
     req<{
       builtin: Capability[];

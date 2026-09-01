@@ -257,11 +257,20 @@ pub async fn chat_completions(
 
         let mut emitted: usize = 0; // 已按 delta 下发的字符数(补 completion 余量用)
         let deadline = Instant::now() + Duration::from_secs(180);
+        // 静默保活(2026-09-02 修「工具调用卡死」):工具轮执行期间事件面
+        // 可静默 25s+,前端看门狗(60s 无任何字节即中止)会被误杀。空闲超
+        // 10s 下发一行 SSE 注释——前端按任意字节重置看门狗,注释行被解析
+        // 器忽略,不污染内容。
+        let mut last_byte = Instant::now();
         loop {
             if Instant::now() > deadline {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(80)).await;
+            if last_byte.elapsed() > Duration::from_secs(10) {
+                last_byte = Instant::now();
+                yield Ok::<Bytes, std::io::Error>(Bytes::from(": keepalive\n\n"));
+            }
             let Ok(events) = store.replay_since(cursor) else {
                 continue;
             };
@@ -278,6 +287,7 @@ pub async fn chat_completions(
                             continue;
                         }
                         emitted += delta.chars().count();
+                        last_byte = Instant::now();
                         yield Ok(chunk(&sid, &default_model,
                             serde_json::json!({ "content": delta }), None));
                     }
