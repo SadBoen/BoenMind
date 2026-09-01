@@ -5,8 +5,8 @@
    玻璃对 styles.css 白底组件(search/chip/composer 等)的覆盖集中写在
    玻璃专属段,不与令牌块混排。
 
-   两套变量并存:W1 手写令牌(--bg-*/--fg-*/--accent…)与 shadcn 桥接变量
-   (--background/--card/--primary/…,见 styles.css 顶部)随主题同步覆盖,
+   两套变量并存:W1 手写令牌(背景 / 前景 / 主色等)与 shadcn 桥接变量
+   (background / card / primary 等,见 styles.css 顶部)随主题同步覆盖,
    注册表选装组件自然换肤。 */
 
 /* ---- 现代 = W1 现状(styles.css :root 即此值;显式块便于回切)---- */
