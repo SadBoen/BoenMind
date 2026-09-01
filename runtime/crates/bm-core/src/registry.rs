@@ -21,6 +21,13 @@ use std::sync::Arc;
 /// Provider 执行端口(M4 = 内置 Rust 实现;独立进程形态随 M7,调用方无感,
 /// 基线 §7)。args 已由 Broker 过 manifest input_schema;返回值由 Broker
 /// 过 output_schema(M4.3)。
+///
+/// 分层关系(与 [`crate::ports::AsyncCapabilityExecutor`] 的分工,2026-09-02
+/// 审计轮注释):两者共用同一条 Broker 决策管线(身份/凭据/预扣/intent 门),
+/// 仅执行步分道——`is_async()` 为真(外部慢路径,如 MCP)走异步执行器
+/// (运行期 spawn + manifest.timeout_ms 钳制超时 + 取消令牌 + 进度回流),
+/// 否则在本任务内联同步执行(panic 收容)。选型约束:同步实现不得长时间
+/// 阻塞——会占住单写者循环,耗时能力一律注册为异步。
 pub trait CapabilityProvider: Send + Sync {
     fn invoke(&self, args: serde_json::Value) -> Result<serde_json::Value, String>;
 }

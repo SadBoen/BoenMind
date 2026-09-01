@@ -51,8 +51,9 @@
 | F-07 | bm-surface-http → bm-persist 直依赖待裁决(收口或留档) | OPEN |
 | F-10 | autorun send_failed 等测试缺口 | OPEN |
 | F-11 | memory_drawer_verdict 硬编码权限规则与 ADR-0006 张力(2026-09-02 已在 broker.rs 源码补注;合同化重构待排期) | OPEN |
-| P3 大文件拆分 | broker.rs(1657 行)/turn.rs(1694)/task_ops.rs(1710)/sqlite_state.rs(1205);bm-core 过重,与 F-05/L-01/R-08 同批缓办(2026-09-01 代码审计轮) | OPEN(缓办) |
+| P3 大文件拆分 | broker.rs(1657 行)/turn.rs(1694)/task_ops.rs(1710)/sqlite_state.rs(1205);bm-core 过重,与 F-05/L-01/R-08 同批缓办(2026-09-01 代码审计轮);broker 建议拆法(2026-09-02 审计第二轮)=mod+policy(GrantLedger)/credential/executor/audit | OPEN(缓办) |
 | P4 非测试 unwrap 甄别清理 | 全仓约 400 处 unwrap 需区分测试/非测试逐步替换;非测试 panic 10 处均系不变量断言,评估=维持现状(同审计轮) | OPEN(缓办) |
+| P5 Capability 抽象演进 | ①同步 `CapabilityProvider::invoke` 无超时护栏(长阻塞会占住单写者;当前内置能力均快路径未爆,已在 trait 注释写明选型约束)②invoke 错误 `String`→结构化枚举(与 wire ErrorCode 信封对齐)③与 AsyncCapabilityExecutor 分层已注释(2026-09-02 审计第二轮);统一单 async trait 的评估留 M 系列回看 | OPEN(缓办) |
 
 ## 5. 文档与工程欠账(2026-09-01 文档对齐轮登记,ADR-0015)
 

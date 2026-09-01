@@ -79,6 +79,10 @@ pub struct ProgressNotice {
 
 /// 异步能力执行器端口。实现方(如 MCP Hub)自行路由 capability → 目标,
 /// `operation_id` 兼作进度令牌(MCP progressToken)。
+/// 外部慢路径执行器端口(异步;MCP hub 实现)。与 `registry::CapabilityProvider`
+/// (进程内同步快路径)共用同一条 Broker 决策管线,仅执行步分道:`is_async()`
+/// 为真的能力由运行期 spawn 走本端口,超时按 manifest.timeout_ms 钳制、可取消,
+/// 完成经 Cmd::ProviderCall 回单写者回路落定(turn.rs M7 S4/S5)。
 #[async_trait]
 pub trait AsyncCapabilityExecutor: Send + Sync {
     async fn call(
