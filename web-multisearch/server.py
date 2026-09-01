@@ -33,6 +33,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 
 from providers.omni import LiteWebSearchProvider, OmniWebSearchProvider, format_result
 
@@ -88,7 +89,9 @@ def _limit(args_limit: int | None, config: dict) -> int:
 mcp = FastMCP("web-multisearch")
 
 
-@mcp.tool()
+# 联网搜索=只读操作,manifest 标 readOnlyHint → approval=not-required(默认直通;
+# 用户裁定 2026-09-02:联网不属于危险操作,默认开启)
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 def web_search_lite(query: str, limit: int | None = None) -> str:
     """日常聚合搜索:searxng + ddgs + jina + marginalia(全免费源)并行,
     RRF 融合排序+同题镜像合并去重,description 带 [来源] 标注。
@@ -102,7 +105,7 @@ def web_search_lite(query: str, limit: int | None = None) -> str:
         return json.dumps({"success": False, "error": f"web_search_lite failed: {exc}"}, ensure_ascii=False)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 def web_search_all(query: str, limit: int | None = None) -> str:
     """全网搜:并行调用所有已配置搜索源(最多 12 家),RRF 融合排序+镜像合并,
     meta 带各源耗时遥测。用户要求「全网搜」、需要最大覆盖或交叉验证时使用。"""
