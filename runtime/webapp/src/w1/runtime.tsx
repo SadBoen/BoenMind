@@ -142,7 +142,7 @@ export function BoenmindRuntimeProvider({
 
   const runtime = useExternalStoreRuntime({
     messages,
-    setMessages,
+    setMessages: (m) => setMessages([...m]),
     onNew,
     isRunning,
     convertMessage: (m) => m,

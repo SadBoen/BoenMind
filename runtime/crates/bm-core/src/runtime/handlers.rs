@@ -769,3 +769,59 @@ pub(crate) async fn handle_stop(
     w.stopped = true;
     let _ = resp.send(());
 }
+
+/// W2 热装载:运行期追加注册能力(MCP 管理面重载)。
+///
+/// 语义收敛:只增——新 capability 逐条注册(binding 落持久,重启后随
+/// --mcp-config 装载自然恢复);同名已存在/注册失败逐条记错,不拖垮批量;
+/// 全部失败才整体报错。修改/删除仍走重启(v0 收敛,UI 明示)。
+pub(crate) fn handle_capabilities_register(
+    w: &mut World,
+    entries: Vec<(
+        bm_contract::capability::CapabilityManifest,
+        std::sync::Arc<dyn crate::registry::CapabilityProvider>,
+    )>,
+) -> CoreResult<Vec<String>> {
+    if w.draining || w.persist_poisoned {
+        return Err(CoreError::Semantic(
+            ErrorCode::Unavailable,
+            "Runtime 排空中或持久层故障,拒绝能力注册".into(),
+        ));
+    }
+    let mut registered: Vec<String> = Vec::new();
+    let mut errors: Vec<String> = Vec::new();
+    for (manifest, provider) in entries {
+        let instance = format!("{}@{}", manifest.capability, manifest.version);
+        let manifest_json = serde_json::to_string(&manifest).unwrap_or_default();
+        let capability = manifest.capability.clone();
+        match w.registry.register(manifest, &instance, provider) {
+            Ok(_) => {
+                if capability.starts_with("mcp.") {
+                    w.registry.mark_async(&capability);
+                }
+                if let Some(store) = &w.store {
+                    let _ = store.save_capability_binding(bm_persist::sqlite_state::CapabilityRow {
+                        capability: &capability,
+                        provider_instance_id: &instance,
+                        epoch: 1,
+                        status: "active",
+                        manifest: &manifest_json,
+                        updated_at: &format_ts(w.started_at),
+                    });
+                }
+                registered.push(capability);
+            }
+            Err(e) => errors.push(format!("{capability}: {e}")),
+        }
+    }
+    if registered.is_empty() && !errors.is_empty() {
+        return Err(CoreError::validation(format!(
+            "能力注册全部失败: {}",
+            errors.join("; ")
+        )));
+    }
+    for e in &errors {
+        tracing::warn!("capabilities_register 部分失败: {e}");
+    }
+    Ok(registered)
+}

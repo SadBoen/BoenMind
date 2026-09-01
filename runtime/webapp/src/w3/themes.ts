@@ -234,7 +234,7 @@ export const THEMES: Record<ThemeDef["id"], ThemeDef> = {
           { value: "kai", label: "楷体" },
         ],
         apply: (v, set) => {
-          const fonts = {
+          const fonts: Record<string, string> = {
             cartoon:
               '"Comic Sans MS", "Chalkboard SE", YouYuan, "幼圆", "Microsoft YaHei", sans-serif',
             round: 'YouYuan, "幼圆", "Microsoft YaHei", sans-serif',

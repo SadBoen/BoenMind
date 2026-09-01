@@ -58,7 +58,8 @@ function UserMessage() {
 }
 
 function AssistantMessage() {
-  const isRunning = useAuiState((s) => s.message.isRunning);
+  // 0.15:运行态在 thread 级(单会话口径,tag 显示全局即可)
+  const isRunning = useAuiState((s) => s.thread.isRunning);
   return (
     <MessagePrimitive.Root className="msg assistant">
       <div className="model-tag">BoenMind Agent{isRunning ? " · 生成中" : ""}</div>

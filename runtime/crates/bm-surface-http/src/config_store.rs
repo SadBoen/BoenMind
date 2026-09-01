@@ -104,14 +104,17 @@ fn read_file(path: &Path) -> Value {
         .unwrap_or_else(|| json!({}))
 }
 
+/// pretty JSON → CRLF 文本(Windows 人可读口径;webadmin 配置写入共用)。
+pub fn crlf(pretty: String) -> String {
+    pretty.replace('\n', "\r\n")
+}
+
 fn write_file(path: &Path, value: &Value) -> CoreResult<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)
             .map_err(|e| validation(format!("配置目录创建失败: {e}")))?;
     }
-    let text = serde_json::to_string_pretty(value)
-        .map_err(|_| CoreError::Internal)?
-        .replace('\n', "\r\n");
+    let text = crlf(serde_json::to_string_pretty(value).map_err(|_| CoreError::Internal)?);
     std::fs::write(path, text).map_err(|e| validation(format!("配置文件写入失败: {e}")))
 }
 

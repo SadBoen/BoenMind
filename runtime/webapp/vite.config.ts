@@ -12,11 +12,7 @@ export default defineConfig({
   },
   build: {
     rollupOptions: {
-      // 多入口:主界面 + 输入对照测试页(排查真键盘吞字)
-      input: {
-        main: path.resolve(__dirname, "index.html"),
-        "input-test": path.resolve(__dirname, "input-test.html"),
-      },
+      input: path.resolve(__dirname, "index.html"),
     },
   },
   server: {

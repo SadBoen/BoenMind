@@ -135,6 +135,14 @@ pub(crate) enum Cmd {
         reason: String,
         resp: oneshot::Sender<CoreResult<usize>>,
     },
+    /// W2 热装载:运行期追加注册能力(MCP 管理面重载;只增,不改/删仍走重启)。
+    CapabilitiesRegister {
+        entries: Vec<(
+            bm_contract::capability::CapabilityManifest,
+            std::sync::Arc<dyn crate::registry::CapabilityProvider>,
+        )>,
+        resp: oneshot::Sender<CoreResult<Vec<String>>>,
+    },
     Stop {
         reason: String,
         resp: oneshot::Sender<()>,
@@ -273,6 +281,10 @@ pub(crate) fn reply_unavailable(cmd: Cmd) {
         Cmd::ProviderProgress { .. } => {}
         Cmd::ProviderDelta { .. } => {}
         Cmd::TaskAutorun { resp, .. } => {
+            let _ = resp.send(Err(err()));
+        }
+        // W2 热装载:停机态拒绝(能力注册只在运行态有意义)
+        Cmd::CapabilitiesRegister { resp, .. } => {
             let _ = resp.send(Err(err()));
         }
         Cmd::CapabilityCancel { resp, .. } => {

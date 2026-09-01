@@ -559,6 +559,9 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
             } => {
                 let _ = resp.send(handle_task_autorun_start(&mut world, request_id, params));
             }
+            Cmd::CapabilitiesRegister { entries, resp } => {
+                let _ = resp.send(handle_capabilities_register(&mut world, entries));
+            }
             Cmd::ProviderDelta {
                 operation_id,
                 delta,

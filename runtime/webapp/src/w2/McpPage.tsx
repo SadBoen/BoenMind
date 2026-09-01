@@ -3,7 +3,14 @@
 // 冻结 schema;env 值必须 secret: 引用,明文不入配置 = INV-5 不倒退)。
 // 增删改落盘后重启服务器生效(v0 诚实边界,页面明示)。
 import { useCallback, useEffect, useState } from "react";
-import { Loader2Icon, PencilIcon, PlusIcon, Trash2Icon } from "lucide-react";
+import {
+  CogIcon,
+  Loader2Icon,
+  PencilIcon,
+  PlusIcon,
+  RefreshCwIcon,
+  Trash2Icon,
+} from "lucide-react";
 import { api, type McpListResult, type McpServer } from "./api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,6 +24,24 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+
+type McpManifestSchemaItem = {
+  key: string;
+  label: string;
+  hint?: string;
+  type: "string" | "secret" | "range" | "select";
+  default?: string | number;
+  min?: number;
+  max?: number;
+  unit?: string;
+  options?: { value: string; label: string }[];
+};
+
+type ConfigTarget = {
+  name: string;
+  schema: McpManifestSchemaItem[];
+  values: Record<string, unknown>;
+};
 
 type Draft = {
   name: string;
@@ -77,8 +102,10 @@ export function McpPage({
   const [data, setData] = useState<McpListResult | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [busy, setBusy] = useState(false);
+  const [reloading, setReloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [configTarget, setConfigTarget] = useState<ConfigTarget | null>(null);
 
   const reload = useCallback(async () => {
     try {
@@ -134,9 +161,40 @@ export function McpPage({
             {data ? `配置文件 ${data.file}` : "…"};增删改落盘后重启生效。
           </p>
         </div>
-        <Button size="sm" onClick={() => setDraft({ ...emptyDraft })}>
-          <PlusIcon /> 新增
-        </Button>
+        <span className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={reloading}
+            onClick={async () => {
+              setReloading(true);
+              try {
+                const r = await api.mcp.reload();
+                setNotice(
+                  r.registered.length
+                    ? "已装载新增: " + r.registered.join("、")
+                    : (r.note ?? "无新增"),
+                );
+                await reload();
+              } catch (e) {
+                setError(String(e instanceof Error ? e.message : e));
+              } finally {
+                setReloading(false);
+              }
+            }}
+            data-slot="mcp-reload"
+          >
+            {reloading ? (
+              <Loader2Icon className="animate-spin" />
+            ) : (
+              <RefreshCwIcon />
+            )}
+            重载 MCP
+          </Button>
+          <Button size="sm" onClick={() => setDraft({ ...emptyDraft })}>
+            <PlusIcon /> 新增
+          </Button>
+        </span>
       </div>
 
       {data ? (
@@ -164,7 +222,9 @@ export function McpPage({
       ) : null}
 
       <div className="flex flex-col gap-2">
-        {shown.map((s) => (
+        {shown.map((s) => {
+          const entry = data?.entries?.find((e) => e.server.name === s.name);
+          return (
           <div
             key={s.name}
             className="bg-card flex items-center gap-2 rounded-xl border p-3"
@@ -199,8 +259,27 @@ export function McpPage({
               <Trash2Icon />
               移除
             </Button>
+            {entry?.manifest?.config_schema?.length ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  api.mcp.getConfig(s.name).then((cfg) => {
+                    setConfigTarget({
+                      name: s.name,
+                      schema: entry.manifest?.config_schema ?? [],
+                      values: cfg.values,
+                    });
+                  });
+                }}
+              >
+                <CogIcon />
+                配置
+              </Button>
+            ) : null}
           </div>
-        ))}
+          );
+        })}
         {data && shown.length === 0 ? (
           <div className="text-muted-foreground rounded-lg border border-dashed px-3 py-8 text-center text-[12.5px]">
             {data.servers.length === 0
@@ -209,6 +288,11 @@ export function McpPage({
           </div>
         ) : null}
       </div>
+
+      <ServerConfigDialog
+        target={configTarget}
+        onClose={() => setConfigTarget(null)}
+      />
 
       <McpDialog
         draft={draft}
@@ -334,6 +418,109 @@ function McpDialog({
             取消
           </Button>
           <Button disabled={busy || !form.name || !form.command} onClick={() => void save()}>
+            {busy ? <Loader2Icon className="animate-spin" /> : null}
+            保存
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+
+/// 每 server 自声明配置表单(manifest.config_schema 动态渲染;
+/// 保存写 config/mcp-<name>.json,server 侧按 override 链消费)。
+function ServerConfigDialog({
+  target,
+  onClose,
+}: {
+  target: ConfigTarget | null;
+  onClose: () => void;
+}) {
+  const [values, setValues] = useState<Record<string, unknown> | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    setValues(target ? { ...target.values } : null);
+    setError(null);
+    setNotice(null);
+  }, [target]);
+
+  if (!target || !target.schema) return null;
+
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await api.mcp.saveConfig(target.name, values ?? {});
+      setNotice(r.note);
+    } catch (e) {
+      setError(String(e instanceof Error ? e.message : e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{"配置 · " + target.name}</DialogTitle>
+          <DialogDescription>
+            由插件 manifest 自声明;改 Key 立即生效,其余项重载/重启生效。
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col gap-3">
+          {notice ? (
+            <div className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-[12.5px] text-emerald-700">
+              {notice}
+            </div>
+          ) : null}
+          {target.schema.map((f) => {
+            const v = values ? values[f.key] : undefined;
+            return (
+              <div key={f.key} className="flex flex-col gap-1.5">
+                <Label>{f.label}</Label>
+                {f.type === "range" ? (
+                  <Input
+                    type="number"
+                    min={f.min}
+                    max={f.max}
+                    value={Number(v ?? f.default ?? 0)}
+                    onChange={(e) =>
+                      setValues({ ...values, [f.key]: Number(e.target.value) })
+                    }
+                    className="font-mono"
+                  />
+                ) : (
+                  <Input
+                    type={f.type === "secret" ? "password" : "text"}
+                    value={String(v ?? f.default ?? "")}
+                    onChange={(e) =>
+                      setValues({ ...values, [f.key]: e.target.value })
+                    }
+                    className="font-mono"
+                  />
+                )}
+                {f.hint ? (
+                  <div className="text-muted-foreground text-[11.5px]">{f.hint}</div>
+                ) : null}
+              </div>
+            );
+          })}
+          {error ? (
+            <div className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-[12.5px] text-red-700">
+              {error}
+            </div>
+          ) : null}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            关闭
+          </Button>
+          <Button disabled={busy} onClick={() => void save()}>
             {busy ? <Loader2Icon className="animate-spin" /> : null}
             保存
           </Button>

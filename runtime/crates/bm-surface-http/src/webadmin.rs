@@ -41,8 +41,14 @@ pub struct AdminConfig {
     /// 内置能力清单摘要(server 启动时从 capability 注册集提取:
     /// [{name, provider, effect, idempotent}])。
     pub builtin_caps: Arc<Vec<Value>>,
-    /// 启动时已装载的 MCP 服务器([{name, tools}])。
-    pub mcp_servers: Arc<Vec<Value>>,
+    /// 已装载的 MCP 服务器([{name, tools}];reload 会追加,可变共享)。
+    pub mcp_servers: Arc<std::sync::RwLock<Vec<Value>>>,
+    /// 热装载句柄:运行期把新 MCP server 的能力注册进核心(actor 命令)。
+    pub handle: bm_core::runtime::RuntimeHandle,
+    /// MCP hub(与启动装载共用同一实例;None = 启动未配 --mcp-config)。
+    pub hub: Option<Arc<bm_providers::mcp::McpHub>>,
+    /// MCP env secret: 引用解析用加密库(与启动装载同一实例)。
+    pub secrets: Option<Arc<dyn bm_core::ports::SecretStore>>,
 }
 
 /// 文件预览大小上限(512KB;个人单机预览面,防整读大文件)。
@@ -411,14 +417,46 @@ pub async fn mcp_list(State(cfg): State<AdminConfig>) -> Response {
         Ok(servers) => {
             let loaded: Vec<String> = cfg
                 .mcp_servers
+                .read()
+                .map(|g| g.iter().cloned().collect::<Vec<_>>())
+                .unwrap_or_default()
                 .iter()
                 .filter_map(|s| s["name"].as_str().map(|n| n.to_string()))
+                .collect();
+            // 自声明式配置:manifests/<name>.manifest.json(配置 schema)+
+            // config/mcp-<name>.json(当前配置值),均在 mcp.json 同级目录约定
+            let manifests_dir = path.parent().map(|d| d.join("manifests"));
+            let config_dir = path.parent().map(|d| d.join("config"));
+            let enriched: Vec<Value> = servers
+                .iter()
+                .map(|srv| {
+                    let name = srv["name"].as_str().unwrap_or("");
+                    let manifest = manifests_dir
+                        .as_ref()
+                        .and_then(|d| {
+                            std::fs::read_to_string(d.join(format!("{name}.manifest.json"))).ok()
+                        })
+                        .and_then(|t| serde_json::from_str::<Value>(&t).ok());
+                    let config = config_dir
+                        .as_ref()
+                        .and_then(|d| {
+                            std::fs::read_to_string(d.join(format!("mcp-{name}.json"))).ok()
+                        })
+                        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+                        .unwrap_or_else(|| json!({}));
+                    json!({
+                        "server": srv,
+                        "manifest": manifest,
+                        "config": config,
+                    })
+                })
                 .collect();
             Json(json!({
                 "file": path.display().to_string(),
                 "servers": servers,
+                "entries": enriched,
                 "loadedAtBoot": loaded,
-                "note": "增删改只落配置文件,重启服务器后生效",
+                "note": "增删改只落配置文件,重启或「重载」后生效",
             }))
             .into_response()
         }
@@ -497,6 +535,77 @@ pub async fn mcp_delete(State(cfg): State<AdminConfig>, AxumPath(name): AxumPath
     Json(json!({ "ok": true, "note": "已从配置移除,重启服务器后生效" })).into_response()
 }
 
+// ---- handler:每 server 自声明配置(读/写 config/mcp-<name>.json)---------
+
+#[derive(serde::Deserialize)]
+pub struct McpConfigBody {
+    pub values: Value,
+}
+
+/// 读某 server 当前配置值(供设置页表单回显)。
+pub async fn mcp_config_get(
+    State(cfg): State<AdminConfig>,
+    AxumPath(name): AxumPath<String>,
+) -> Response {
+    let Some(path) = cfg.mcp_config.clone() else {
+        return admin_error(StatusCode::BAD_REQUEST, "服务器未启用 MCP 配置文件(--mcp-config)");
+    };
+    let file = path
+        .parent()
+        .map(|d| d.join("config").join(format!("mcp-{name}.json")))
+        .unwrap_or_else(|| path.clone());
+    let values = std::fs::read_to_string(&file)
+        .ok()
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        .unwrap_or_else(|| json!({}));
+    Json(json!({ "name": name, "values": values })).into_response()
+}
+
+/// 写某 server 配置值(merge 保存)。改 key 免重启(override 文件链),
+/// 其余配置项重载/重启生效。
+pub async fn mcp_config_set(
+    State(cfg): State<AdminConfig>,
+    AxumPath(name): AxumPath<String>,
+    Json(body): Json<McpConfigBody>,
+) -> Response {
+    let Some(path) = cfg.mcp_config.clone() else {
+        return admin_error(StatusCode::BAD_REQUEST, "服务器未启用 MCP 配置文件(--mcp-config)");
+    };
+    let Some(dir) = path.parent().map(|d| d.join("config")) else {
+        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, "配置目录解析失败");
+    };
+    let Some(values) = body.values.as_object() else {
+        return admin_error(StatusCode::BAD_REQUEST, "values 必须是对象");
+    };
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, format!("配置目录创建失败: {e}"));
+    }
+    let file = dir.join(format!("mcp-{name}.json"));
+    let mut current: Value = std::fs::read_to_string(&file)
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_else(|| json!({}));
+    if let Some(obj) = current.as_object_mut() {
+        for (k, v) in values {
+            obj.insert(k.clone(), v.clone());
+        }
+    }
+    // CRLF 统一:与 config_store.write_file 同款(pretty 后按平台换行)
+    let text = match serde_json::to_string_pretty(&current) {
+        Ok(t) => crate::config_store::crlf(t),
+        Err(_) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, "序列化失败"),
+    };
+    if let Err(e) = std::fs::write(&file, text) {
+        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, format!("写入失败: {e}"));
+    }
+    Json(json!({
+        "ok": true,
+        "file": file.display().to_string(),
+        "note": "已保存;改 Key 对下一次搜索立即生效,其余项重载/重启生效",
+    }))
+    .into_response()
+}
+
 // ---- handler:插件(能力)清单 --------------------------------------------
 
 /// 插件 = 运行时能力提供方:builtin(系统类,禁卸载)+ MCP 服务器组
@@ -516,17 +625,19 @@ pub async fn capabilities_list(State(cfg): State<AdminConfig>) -> Response {
             let name = s["name"].as_str().unwrap_or("");
             let boot = cfg
                 .mcp_servers
-                .iter()
-                .find(|b| b["name"].as_str() == Some(name));
+                .read()
+                .ok()
+                .and_then(|g| g.iter().find(|b| b["name"].as_str() == Some(name)).cloned());
             json!({
                 "name": name,
-                "tools": boot.map(|b| b["tools"].clone()).unwrap_or(Value::Null),
+                "tools": boot.as_ref().map(|b| b["tools"].clone()).unwrap_or(Value::Null),
                 "loaded": boot.is_some(),
                 "pendingRemoval": false,
             })
         })
         .collect();
-    for b in cfg.mcp_servers.iter() {
+    let boot_snapshot = cfg.mcp_servers.read().map(|g| g.clone()).unwrap_or_default();
+    for b in boot_snapshot.iter() {
         let name = b["name"].as_str().unwrap_or("");
         if !file_servers.iter().any(|s| s["name"].as_str() == Some(name)) {
             mcp.push(json!({
@@ -647,9 +758,126 @@ pub fn admin_routes(cfg: AdminConfig) -> axum::Router {
         )
         .route("/model/active", get(model_active_get).put(model_active_set))
         .route("/mcp", get(mcp_list).post(mcp_create))
+        .route("/mcp/reload", post(mcp_reload))
+        .route(
+            "/mcp-config/{name}",
+            get(mcp_config_get).put(mcp_config_set),
+        )
         .route("/mcp/{name}", put(mcp_update).delete(mcp_delete))
         .route("/capabilities", get(capabilities_list))
         .route("/fs/list", get(fs_list))
         .route("/fs/file", get(fs_file))
         .with_state((*cfg).clone())
 }
+
+// ---- handler:MCP 热装载(v0 收敛:只装载新增 server,免重启)---------------
+
+/// 重载 MCP 配置:读 mcp.json 全量,对比已装载名单,**仅对新增条目**执行
+/// spawn+握手+运行期注册(修改/删除仍需重启,v0 收敛边界,UI 明示)。
+/// 装载成功后刷新 AdminConfig.mcp_servers 快照(插件清单页可见)。
+pub async fn mcp_reload(State(cfg): State<AdminConfig>) -> Response {
+    use bm_providers::mcp::{McpHub, StdioMcpTransport};
+
+    let Some(path) = cfg.mcp_config.clone() else {
+        return admin_error(StatusCode::BAD_REQUEST, "服务器未启用 MCP 配置文件(--mcp-config)");
+    };
+    let Some(hub) = cfg.hub.clone() else {
+        return admin_error(
+            StatusCode::BAD_REQUEST,
+            "启动时未完成 MCP 接线(检查启动日志的 MCP server 装载行)",
+        );
+    };
+    let Some(secrets) = cfg.secrets.clone() else {
+        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, "Secret Store 未就绪");
+    };
+
+    let servers = match read_mcp_servers(&path) {
+        Ok(servers) => servers,
+        Err(e) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e),
+    };
+    let loaded_names: Vec<String> = cfg
+        .mcp_servers
+        .read()
+        .map(|g| {
+            g.iter()
+                .filter_map(|s| s["name"].as_str().map(|n| n.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let fresh: Vec<Value> = servers
+        .iter()
+        .filter(|s| {
+            let n = s["name"].as_str().unwrap_or("");
+            !n.is_empty() && !loaded_names.iter().any(|l| l == n)
+        })
+        .cloned()
+        .collect();
+    if fresh.is_empty() {
+        return Json(json!({
+            "ok": true,
+            "registered": [],
+            "failed": [],
+            "note": "无新增 server(修改/删除条目仍需重启服务器)",
+        }))
+        .into_response();
+    }
+
+    let mut registered: Vec<String> = Vec::new();
+    let mut failed: Vec<Value> = Vec::new();
+    for item in &fresh {
+        let name = item["name"].as_str().unwrap_or("").to_string();
+        let command = item["command"].as_str().unwrap_or("").to_string();
+        let args: Vec<String> = item["args"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let timeout = item["tool_timeout_ms"].as_u64().unwrap_or(30_000);
+        // env 解析:配置文件里的 secret: 引用走与启动装载同一 SecretStore 链
+        let setup = match bm_providers::mcp::load_mcp_setups(&path, secrets.as_ref()) {
+            Ok(setups) => setups.into_iter().find(|s| s.name == name),
+            Err(e) => {
+                failed.push(json!({"name": name, "error": format!("配置解析失败: {e}")}));
+                continue;
+            }
+        };
+        let Some(setup) = setup else {
+            continue;
+        };
+        let loaded = async {
+            let transport = StdioMcpTransport::spawn(&command, &args, &setup.env_resolved)
+                .map_err(|e| e.to_string())?;
+            hub.connect(&name, transport, timeout)
+                .await
+                .map_err(|e| e.to_string())
+        }
+        .await;
+        match loaded {
+            Ok(manifests) => {
+                let count = manifests.len();
+                let entries = McpHub::capability_entries(manifests);
+                match cfg.handle.capabilities_register(entries).await {
+                    Ok(names) => {
+                        registered.extend(names);
+                        if let Ok(mut g) = cfg.mcp_servers.write() {
+                            g.push(json!({"name": name, "tools": count}));
+                        }
+                    }
+                    Err(e) => failed.push(json!({"name": name, "error": format!("{e}")})),
+                }
+            }
+            Err(e) => failed.push(json!({"name": name, "error": e})),
+        }
+    }
+    Json(json!({
+        "ok": failed.is_empty(),
+        "registered": registered,
+        "failed": failed,
+        "note": "新增已装载;修改/删除条目仍需重启服务器",
+    }))
+    .into_response()
+}
+

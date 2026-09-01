@@ -392,15 +392,28 @@ fn spawn_generation(
         .envs(env)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null());
+        .stderr(std::process::Stdio::inherit()); // W2 诊断:子进程报错直通 server.log
     // 外部审计:kill_on_drop 绑定子进程生命周期——连接器对象被丢弃时
     // 子进程随之终止,防止服务端异常退出后 Python App 成为孤儿进程。
     cmd.kill_on_drop(true);
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("MCP 子进程启动失败: {e}"))?;
+    eprintln!(
+        "MCP 子进程已拉起 pid={:?} command={}",
+        child.id(),
+        command
+    );
     let stdin = child.stdin.take().ok_or("MCP 子进程 stdin 不可用")?;
     let stdout = child.stdout.take().ok_or("MCP 子进程 stdout 不可用")?;
+    // W2 修复:Child 必须有人持有并 wait——kill_on_drop(true) 下被丢弃会
+    // 立刻杀死子进程(热装载路径 spawn_generation 返回即 drop,连接器
+    // 尚未建立路由,表现为 stdio-closed)。移入看护任务自然等待。
+    let command_owned = command.to_string();
+    tokio::spawn(async move {
+        let status = child.wait().await;
+        eprintln!("MCP 子进程退出: command={command_owned} status={status:?}");
+    });
 
     let (progress_tx, progress_rx) = tokio::sync::mpsc::unbounded_channel();
     let pending: PendingMap = Arc::new(Mutex::new(HashMap::new()));
@@ -965,3 +978,4 @@ mod m9_review_env_tests {
         }
     }
 }
+

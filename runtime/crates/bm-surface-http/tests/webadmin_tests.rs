@@ -14,11 +14,11 @@ use bm_providers::secret::MemSecretStore;
 use bm_surface_http::token;
 use bm_surface_http::webadmin::AdminConfig;
 use serde_json::{json, Value};
-use std::path::PathBuf;
+
 use std::sync::Arc;
 
 /// 起一个带 /admin 的完整 surface,返回 (base_url, 临时数据目录)。
-async fn spawn_app(admin: AdminConfig) -> (String, tempfile::TempDir) {
+async fn spawn_app(ws: std::path::PathBuf, mcp: Option<std::path::PathBuf>) -> (String, tempfile::TempDir) {
     let dir = tempfile::tempdir().expect("临时目录");
     let t = token::load_or_create(dir.path()).expect("令牌");
     let store: Arc<PersistStore> = Arc::new(PersistStore::open(dir.path()).expect("打开"));
@@ -38,6 +38,16 @@ async fn spawn_app(admin: AdminConfig) -> (String, tempfile::TempDir) {
         max_attempts: None,
     })
     .await;
+    let admin = AdminConfig {
+        data_dir: dir.path().to_path_buf(),
+        workspace_root: ws,
+        mcp_config: mcp,
+        builtin_caps: Arc::new(vec![json!({"name": "system.echo", "provider": "system.echo", "effect": "read-only", "idempotent": true})]),
+        mcp_servers: Arc::new(std::sync::RwLock::new(vec![json!({"name": "demo", "tools": 2})])),
+        handle: handle.clone(),
+        hub: None,
+        secrets: Some(Arc::new(MemSecretStore::new()) as Arc<dyn bm_core::ports::SecretStore>),
+    };
     let app = bm_surface_http::router(
         handle,
         Arc::new(t),
@@ -45,33 +55,12 @@ async fn spawn_app(admin: AdminConfig) -> (String, tempfile::TempDir) {
         Arc::new(tokio::sync::Notify::new()),
         None,
         Arc::new("mock-model".into()),
-        Some(admin_with(dir.path(), admin)),
+        Some(admin),
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("绑定");
     let addr = listener.local_addr().expect("地址");
     tokio::spawn(async move { axum::serve(listener, app).await.expect("serve") });
     (format!("http://{addr}"), dir)
-}
-
-/// 把测试传入的 admin 根路径替换到临时目录(便于声明意图)。
-fn admin_with(data_dir: &std::path::Path, admin: AdminConfig) -> AdminConfig {
-    AdminConfig {
-        data_dir: data_dir.to_path_buf(),
-        workspace_root: admin.workspace_root,
-        mcp_config: admin.mcp_config,
-        builtin_caps: admin.builtin_caps,
-        mcp_servers: admin.mcp_servers,
-    }
-}
-
-fn admin_cfg(data_dir: std::path::PathBuf, ws: std::path::PathBuf, mcp: Option<std::path::PathBuf>) -> AdminConfig {
-    AdminConfig {
-        data_dir,
-        workspace_root: ws,
-        mcp_config: mcp,
-        builtin_caps: Arc::new(vec![json!({"name": "system.echo", "provider": "system.echo", "effect": "read-only", "idempotent": true})]),
-        mcp_servers: Arc::new(vec![json!({"name": "demo", "tools": 2})]),
-    }
 }
 
 async fn get(url: &str) -> (u16, Value) {
@@ -97,7 +86,7 @@ async fn send_json(method: reqwest::Method, url: &str, body: Value) -> (u16, Val
 #[tokio::test]
 async fn t_w2_provider_crud_roundtrip_masking_and_delete() {
     let ws = tempfile::tempdir().unwrap();
-    let (base, _dir) = spawn_app(admin_cfg(PathBuf::default(), ws.path().to_path_buf(), None)).await;
+    let (base, _dir) = spawn_app(ws.path().to_path_buf(), None).await;
 
     // 增:回显打码,secretSet=true
     let (st, r) = send_json(
@@ -154,7 +143,7 @@ async fn t_w2_provider_crud_roundtrip_masking_and_delete() {
 #[tokio::test]
 async fn t_w2_provider_validation_and_404() {
     let ws = tempfile::tempdir().unwrap();
-    let (base, _dir) = spawn_app(admin_cfg(PathBuf::default(), ws.path().to_path_buf(), None)).await;
+    let (base, _dir) = spawn_app(ws.path().to_path_buf(), None).await;
 
     // baseUrl 非 http(s) 拒;name 空 拒
     let (st, _) = send_json(reqwest::Method::POST, &format!("{base}/admin/providers"),
@@ -190,7 +179,7 @@ async fn t_w2_probe_ok_parses_models_and_down_reports_error() {
     tokio::spawn(async move { axum::serve(listener, stub).await.unwrap() });
 
     let ws = tempfile::tempdir().unwrap();
-    let (base, _dir) = spawn_app(admin_cfg(PathBuf::default(), ws.path().to_path_buf(), None)).await;
+    let (base, _dir) = spawn_app(ws.path().to_path_buf(), None).await;
 
     let (st, r) = send_json(reqwest::Method::POST, &format!("{base}/admin/providers/probe"),
         json!({"baseUrl": format!("http://{stub_addr}/v1"), "apiKey": "sk-x"})).await;
@@ -217,7 +206,7 @@ async fn t_w2_probe_ok_parses_models_and_down_reports_error() {
 #[tokio::test]
 async fn t_w2_model_active_set_writes_config_file() {
     let ws = tempfile::tempdir().unwrap();
-    let (base, _dir) = spawn_app(admin_cfg(PathBuf::default(), ws.path().to_path_buf(), None)).await;
+    let (base, _dir) = spawn_app(ws.path().to_path_buf(), None).await;
 
     // 没 provider 时 404
     let (st, _) = send_json(reqwest::Method::PUT, &format!("{base}/admin/model/active"),
@@ -261,12 +250,7 @@ async fn t_w2_mcp_crud_with_contract_schema() {
     let ws = tempfile::tempdir().unwrap();
     let mcfile = tempfile::tempdir().unwrap();
     let mcp_path = mcfile.path().join("mcp.json");
-    let (base, _dir) = spawn_app(admin_cfg(
-        PathBuf::default(),
-        ws.path().to_path_buf(),
-        Some(mcp_path.clone()),
-    ))
-    .await;
+    let (base, _dir) = spawn_app(ws.path().to_path_buf(), Some(mcp_path.clone())).await;
 
     // 非法条目(name 大写)被合同 schema 拒
     let (st, r) = send_json(reqwest::Method::POST, &format!("{base}/admin/mcp"),
@@ -295,13 +279,13 @@ async fn t_w2_mcp_crud_with_contract_schema() {
     assert_eq!(st, 200);
     let (_, list) = get(&format!("{base}/admin/mcp")).await;
     assert_eq!(list["servers"].as_array().unwrap().len(), 0);
-    assert_eq!(list["note"], json!("增删改只落配置文件,重启服务器后生效"));
+    assert_eq!(list["note"], json!("增删改只落配置文件,重启或「重载」后生效"));
 }
 
 #[tokio::test]
 async fn t_w2_mcp_disabled_without_config_file() {
     let ws = tempfile::tempdir().unwrap();
-    let (base, _dir) = spawn_app(admin_cfg(PathBuf::default(), ws.path().to_path_buf(), None)).await;
+    let (base, _dir) = spawn_app(ws.path().to_path_buf(), None).await;
     let (st, r) = get(&format!("{base}/admin/mcp")).await;
     assert_eq!(st, 400, "{r}");
     assert!(r["error"]["message"].as_str().unwrap().contains("--mcp-config"));
@@ -312,7 +296,7 @@ async fn t_w2_mcp_disabled_without_config_file() {
 #[tokio::test]
 async fn t_w2_capabilities_builtin_and_mcp() {
     let ws = tempfile::tempdir().unwrap();
-    let (base, _dir) = spawn_app(admin_cfg(PathBuf::default(), ws.path().to_path_buf(), None)).await;
+    let (base, _dir) = spawn_app(ws.path().to_path_buf(), None).await;
     let (_, r) = get(&format!("{base}/admin/capabilities")).await;
     assert_eq!(r["builtin"][0]["name"], json!("system.echo"));
     assert_eq!(r["mcp"][0]["name"], json!("demo"));
@@ -326,12 +310,7 @@ async fn t_w2_fs_list_and_read_file() {
     std::fs::write(ws.path().join("hello.md"), "# 你好\nBoenMind").unwrap();
     std::fs::create_dir_all(ws.path().join("sub")).unwrap();
     std::fs::write(ws.path().join("sub").join("nested.txt"), "deep").unwrap();
-    let (base, _dir) = spawn_app(admin_cfg(
-        PathBuf::default(),
-        ws.path().to_path_buf(),
-        None,
-    ))
-    .await;
+    let (base, _dir) = spawn_app(ws.path().to_path_buf(), None).await;
 
     // 根列表:目录在前
     let (_, r) = get(&format!("{base}/admin/fs/list?path=")).await;
@@ -359,12 +338,7 @@ async fn t_w2_fs_blocks_traversal_and_absolute_and_symlink() {
     std::fs::write(ws.path().join("ok.txt"), "safe").unwrap();
     let outside = tempfile::tempdir().unwrap();
     std::fs::write(outside.path().join("secret.txt"), "top-secret").unwrap();
-    let (base, _dir) = spawn_app(admin_cfg(
-        PathBuf::default(),
-        ws.path().to_path_buf(),
-        None,
-    ))
-    .await;
+    let (base, _dir) = spawn_app(ws.path().to_path_buf(), None).await;
 
     // .. 穿越、绝对路径、URL 编码变体:全拒
     for bad in ["..", "a/../..", "../secret.txt", "sub/../../x", "C:/Windows", "/etc/passwd"] {

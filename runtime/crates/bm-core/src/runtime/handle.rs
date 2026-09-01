@@ -695,6 +695,27 @@ impl RuntimeHandle {
         self.exec_log.register_scan_value(value);
     }
 
+    /// W2 热装载:运行期追加注册能力(MCP 管理面重载;只增,不改/删仍走重启)。
+    /// 返回成功注册的 capability 名列表;同名已存在记入失败不拖垮批量。
+    pub async fn capabilities_register(
+        &self,
+        entries: Vec<(
+            bm_contract::capability::CapabilityManifest,
+            std::sync::Arc<dyn crate::registry::CapabilityProvider>,
+        )>,
+    ) -> CoreResult<Vec<String>> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.tx
+            .send(Cmd::CapabilitiesRegister { entries, resp: tx })
+            .await
+            .map_err(|_| {
+                CoreError::Semantic(ErrorCode::Unavailable, "Runtime 核心循环已退出".into())
+            })?;
+        rx.await.map_err(|_| {
+            CoreError::Semantic(ErrorCode::Unavailable, "Runtime 核心循环丢弃应答".into())
+        })?
+    }
+
     pub async fn task_autorun(
         &self,
         request_id: BmId,

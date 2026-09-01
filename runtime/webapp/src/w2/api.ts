@@ -40,7 +40,33 @@ export type McpServer = {
 export type McpListResult = {
   file: string;
   servers: McpServer[];
+  entries?: {
+    server: McpServer;
+    manifest?: {
+      title?: string;
+      description?: string;
+      config_schema?: {
+        key: string;
+        label: string;
+        hint?: string;
+        type: "string" | "secret" | "range" | "select";
+        default?: string | number;
+        min?: number;
+        max?: number;
+        unit?: string;
+        options?: { value: string; label: string }[];
+      }[];
+    } | null;
+    config?: Record<string, unknown>;
+  }[];
   loadedAtBoot: string[];
+  note: string;
+};
+
+export type McpReloadResult = {
+  ok: boolean;
+  registered: string[];
+  failed: { name: string; error: string }[];
   note: string;
 };
 
@@ -100,6 +126,17 @@ export const api = {
       req<{ ok: boolean }>(`/admin/mcp/${name}`, json("PUT", b)),
     remove: (name: string) =>
       req<{ ok: boolean }>(`/admin/mcp/${name}`, { method: "DELETE" }),
+    reload: () =>
+      req<McpReloadResult>("/admin/mcp/reload", { method: "POST" }),
+    getConfig: (name: string) =>
+      req<{ name: string; values: Record<string, unknown> }>(
+        `/admin/mcp-config/${name}`,
+      ),
+    saveConfig: (name: string, values: Record<string, unknown>) =>
+      req<{ ok: boolean; note: string }>(
+        `/admin/mcp-config/${name}`,
+        json("PUT", { values }),
+      ),
   },
   capabilities: () =>
     req<{

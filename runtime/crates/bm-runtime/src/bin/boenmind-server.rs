@@ -128,8 +128,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
     let mut mcp_loaded: Vec<serde_json::Value> = Vec::new();
     let mut mcp_executor: Option<Arc<dyn bm_core::ports::AsyncCapabilityExecutor>> = None;
+    // McpHub::new() 自返回 Arc(内部 OnceLock 全局共享)
+    let hub: Option<Arc<bm_providers::mcp::McpHub>> =
+        mcp_config.as_ref().map(|_| bm_providers::mcp::McpHub::new());
     if let Some(cfg) = &mcp_config {
-        let hub = bm_providers::mcp::McpHub::new();
+        let hub = hub.as_ref().expect("hub 已构造");
         let setups = bm_providers::mcp::load_mcp_setups(cfg, secrets.as_ref())?;
         for setup in setups {
             let transport = bm_providers::mcp::StdioMcpTransport::spawn(
@@ -148,7 +151,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             mcp_loaded.push(json!({ "name": setup.name, "tools": manifests.len() }));
             capabilities.extend(bm_providers::mcp::McpHub::capability_entries(manifests));
         }
-        mcp_executor = Some(hub);
+        mcp_executor = Some(hub.clone() as Arc<dyn bm_core::ports::AsyncCapabilityExecutor>);
     }
 
     // W2 管理面:工作区根(BOEN_WORKSPACE_DIR > <data-dir>/workspace)
@@ -158,14 +161,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(PathBuf::from)
         .unwrap_or_else(|| data_dir.join("workspace"));
     std::fs::create_dir_all(&workspace_root)?;
-    let admin = bm_surface_http::webadmin::AdminConfig {
-        data_dir: data_dir.clone(),
-        workspace_root,
-        mcp_config: mcp_config.clone(),
-        builtin_caps: Arc::new(builtin_caps),
-        mcp_servers: Arc::new(mcp_loaded),
-    };
-
     let handle = RuntimeHandle::start(RuntimeConfig {
         capabilities,
         async_executor: mcp_executor,
@@ -178,13 +173,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         data_dir: Some(data_dir.clone()),
         store: Some(store.clone()),
         connector,
-        secret_store: secrets,
+        secret_store: secrets.clone(),
         id_gen,
         clock: Arc::new(SystemClock),
         turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
         max_attempts: None,
     })
     .await;
+
+    std::fs::create_dir_all(&workspace_root)?;
+    // W2 管理面注入(handle 就绪后构造:热装载走 actor 命令)
+    let admin = bm_surface_http::webadmin::AdminConfig {
+        data_dir: data_dir.clone(),
+        workspace_root,
+        mcp_config: mcp_config.clone(),
+        builtin_caps: Arc::new(builtin_caps),
+        mcp_servers: Arc::new(std::sync::RwLock::new(mcp_loaded)),
+        handle: handle.clone(),
+        hub: hub.clone(),
+        secrets: Some(secrets.clone()),
+    };
+
 
     // P0(第四轮评审):INV-5 脱敏接线——把模型凭据明文注册进 Execution
     // Log 扫描面,此后任何日志条目命中即整条降格,密钥明文禁止落盘。
