@@ -88,13 +88,6 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
             label="角色"
             hint="W4"
           />
-          <NavItem
-            active={section === "roles"}
-            onClick={() => setSection("roles")}
-            icon={<BoxIcon className="size-4" />}
-            label="角色"
-            hint="W4"
-          />
           {pins.length > 0 ? (
             <div className="mt-4 border-t pt-3">
               <div className="text-muted-foreground px-2 pb-1.5 text-[11px] font-medium tracking-wide">

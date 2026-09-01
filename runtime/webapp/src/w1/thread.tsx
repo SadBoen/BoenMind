@@ -32,10 +32,10 @@ export function Thread() {
               }
             </ThreadPrimitive.Messages>
           )}
-          <ThreadPrimitive.ViewportFooter className="composer-dock">
-            <Composer />
-          </ThreadPrimitive.ViewportFooter>
         </ThreadPrimitive.Viewport>
+        <div className="composer-dock">
+          <Composer />
+        </div>
       </ThreadPrimitive.Root>
     </div>
   );
