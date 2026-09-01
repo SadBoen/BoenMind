@@ -80,6 +80,27 @@ export type Capability = {
 
 export type FsEntry = { name: string; kind: "dir" | "file"; size: number | null };
 
+// W5:一次模型调用的上下文快照(/admin/context 行;服务端已做凭据脱敏与
+// 单条内容 16K 字符截断)
+export type CtxStep = {
+  seq: number;
+  ts: string;
+  session_id: string;
+  agent_id: string;
+  operation_id: string;
+  turn_index: number;
+  step: number;
+  model_id: string;
+  streaming: boolean;
+  messages: { role: string; content: string; content_truncated?: boolean }[];
+  tools: { function?: { name?: string; description?: string } }[];
+  status: "ok" | "error" | "cancelled";
+  error_code?: string | null;
+  tokens_in?: number | null;
+  tokens_out?: number | null;
+  latency_ms?: number | null;
+};
+
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
   const body = await res.json().catch(() => null);
@@ -175,7 +196,9 @@ export const api = {
       }),
   },
   logs: () =>
-    req<{ ok: boolean; exec: string[]; events: string[] }>("/admin/logs"),
+    req<{ ok: boolean; exec: string[]; events: string[]; context: string[] }>("/admin/logs"),
+  // W5 上下文透视:模型调用请求快照(context-log.jsonl 尾部,最旧在前)
+  context: () => req<{ ok: boolean; steps: CtxStep[] }>("/admin/context"),
   capabilities: () =>
     req<{
       builtin: Capability[];

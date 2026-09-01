@@ -10,6 +10,8 @@ pub struct RuntimeHandle {
     tx: mpsc::Sender<Cmd>,
     /// P0(第四轮评审):脱敏扫描面注册口(INV-5 接线)。
     exec_log: Arc<ExecutionLog>,
+    /// W5:上下文快照日志(INV-5 同一扫描面)。
+    ctx_log: Arc<crate::context_log::ContextLog>,
 }
 
 impl RuntimeHandle {
@@ -18,6 +20,9 @@ impl RuntimeHandle {
     pub async fn start(config: RuntimeConfig) -> Self {
         let (tx, rx) = mpsc::channel::<Cmd>(1024);
         let exec_log = Arc::new(ExecutionLog::new(config.data_dir.as_deref()));
+        let ctx_log = Arc::new(crate::context_log::ContextLog::new(
+            config.data_dir.as_deref(),
+        ));
         let started_at = config.clock.now();
         // capability 操作的系统容器(内存合成;不与任何 Session/Agent 关联)
         let system_session = config.id_gen.next_id("sess");
@@ -55,6 +60,8 @@ impl RuntimeHandle {
             provider_health: HashMap::new(),
             cap_in_flight: HashMap::new(),
             model_call_audit: HashMap::new(),
+            session_chats: HashMap::new(),
+            ctx_log: ctx_log.clone(),
             tx: tx.clone(),
             store: config.store.clone(),
             config,
@@ -473,7 +480,11 @@ impl RuntimeHandle {
         }
 
         tokio::spawn(core_loop(world, rx));
-        Self { tx, exec_log }
+        Self {
+            tx,
+            exec_log,
+            ctx_log,
+        }
     }
 
     pub async fn session_create(
@@ -693,6 +704,8 @@ impl RuntimeHandle {
     /// 扫描面(INV-5 接线)——此后任何日志条目命中即整条降格,禁止明文落盘。
     pub fn register_redaction_value(&self, value: &str) {
         self.exec_log.register_scan_value(value);
+        // W5:上下文快照同面脱敏(会话原文可能误带凭据,同批登记)
+        self.ctx_log.register_scan_value(value);
     }
 
     /// W2 热装载:运行期追加注册能力(MCP 管理面重载;只增,不改/删仍走重启)。

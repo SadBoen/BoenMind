@@ -11,6 +11,7 @@ pub mod budget;
 pub mod bus;
 pub mod butler;
 pub mod clock;
+pub mod context_log;
 pub mod coordinator;
 pub mod error;
 pub mod exec_log;

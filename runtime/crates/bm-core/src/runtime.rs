@@ -171,6 +171,12 @@ struct World {
     /// M7 S1:turn 模型调用 Broker 凭证留档(operation_id 索引;
     /// 授权点在 spawn,审计点在回合模型阶段终态——两段由 call_id 缝合)。
     model_call_audit: HashMap<BmId, ModelCallAudit>,
+    /// W5:会话对话台账(session_id → [user, assistant] 对;内存,随进程
+    /// 寿命——会话本就不跨进程,openai_compat 重启即「未知会话」)。回合
+    /// spawn 时回喂模型(修复「多轮无记忆」),成功落定时回写。
+    session_chats: HashMap<BmId, Vec<(String, String)>>,
+    /// W5 上下文透视:每次模型调用请求快照(context-log.jsonl;/admin/context)。
+    ctx_log: Arc<crate::context_log::ContextLog>,
 }
 
 impl World {
@@ -730,6 +736,12 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
                 handle_stop(&mut world, &mut rx, reason, resp).await;
             }
             Cmd::Turn(event) => handle_turn_event(&mut world, event),
+            // W5:成功回合的对话台账回写(历史回喂的数据源)
+            Cmd::RememberTurn {
+                session_id,
+                user,
+                assistant,
+            } => crate::runtime::turn::remember_turn(&mut world, session_id, user, assistant),
         }
         // M5-T7:Watchdog 节拍扫描(每条命令处理后检查是否到期;
         // 事实事件产出,不推断编排下一步)

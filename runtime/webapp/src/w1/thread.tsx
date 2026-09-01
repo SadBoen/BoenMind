@@ -1,5 +1,6 @@
 // W1 对话区:assistant-ui 原语组合(Thread/Message/Composer)
 // 合约映射见 milestones/W1-implementation-spec.md §5
+// W5:对话区页签(对话/上下文)——上下文页 = 每次模型调用请求快照透视
 import {
   ComposerPrimitive,
   MessagePrimitive,
@@ -8,35 +9,67 @@ import {
 } from "@assistant-ui/react";
 import { Send, Square } from "lucide-react";
 import { useEffect, useState } from "react";
+import { ContextView } from "./context";
 
 export function Thread() {
   const isEmpty = useAuiState((s) => s.thread.isEmpty);
+  // W5 页签:对话 = 聊天;上下文 = 请求快照透视(dsh-context 同款布局理念)
+  const [tab, setTab] = useState<"chat" | "ctx">("chat");
+  const tabCls = (active: boolean) =>
+    "rounded-full px-2.5 py-0.5 text-[12px] transition-colors " +
+    (active
+      ? "bg-primary text-primary-foreground"
+      : "text-muted-foreground hover:bg-muted");
   return (
     <div className="chat">
       <div className="chat-head">
         <span className="name">BoenMind 对话</span>
+        <div className="flex items-center gap-1" role="tablist">
+          <button
+            role="tab"
+            data-slot="tab-chat"
+            data-active={tab === "chat"}
+            className={tabCls(tab === "chat")}
+            onClick={() => setTab("chat")}
+          >
+            对话
+          </button>
+          <button
+            role="tab"
+            data-slot="tab-ctx"
+            data-active={tab === "ctx"}
+            className={tabCls(tab === "ctx")}
+            onClick={() => setTab("ctx")}
+          >
+            上下文
+          </button>
+        </div>
         <span className="badge">self-hosted</span>
       </div>
-      <ThreadPrimitive.Root className="thread">
-        <ThreadPrimitive.Viewport className="thread-viewport">
-          {isEmpty ? (
-            <div className="welcome">
-              <div className="logo">B</div>
-              <h1>个人生态的 AI Runtime</h1>
-              <p>自研 Agent 已就绪——直接输入,流式回复。</p>
-            </div>
-          ) : (
-            <ThreadPrimitive.Messages>
-              {({ message }) =>
-                message.role === "user" ? <UserMessage /> : <AssistantMessage />
-              }
-            </ThreadPrimitive.Messages>
-          )}
-        </ThreadPrimitive.Viewport>
-        <div className="composer-dock">
-          <Composer />
-        </div>
-      </ThreadPrimitive.Root>
+      {tab === "ctx" ? (
+        <ContextView />
+      ) : (
+        <ThreadPrimitive.Root className="thread">
+          <ThreadPrimitive.Viewport className="thread-viewport">
+            {isEmpty ? (
+              <div className="welcome">
+                <div className="logo">B</div>
+                <h1>个人生态的 AI Runtime</h1>
+                <p>自研 Agent 已就绪——直接输入,流式回复。</p>
+              </div>
+            ) : (
+              <ThreadPrimitive.Messages>
+                {({ message }) =>
+                  message.role === "user" ? <UserMessage /> : <AssistantMessage />
+                }
+              </ThreadPrimitive.Messages>
+            )}
+          </ThreadPrimitive.Viewport>
+          <div className="composer-dock">
+            <Composer />
+          </div>
+        </ThreadPrimitive.Root>
+      )}
     </div>
   );
 }

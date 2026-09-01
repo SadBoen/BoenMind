@@ -1148,18 +1148,62 @@ fn tail_lines(path: &Path, max_bytes: u64, n: usize) -> Vec<String> {
     lines.into_iter().skip(skip).map(String::from).collect()
 }
 
-/// GET /admin/logs:数据目录两份日志的尾部直读(各取最后 200 行,单文件
-/// 最多回读 512KB)——execution-log.jsonl(回合/工具调用明细)与
-/// events.jsonl(事件流,含 capability.invoked 的 intent/result/error),
-/// 供诊断「工具调用卡死」一类运行期问题。
+/// GET /admin/logs:数据目录三份日志的尾部直读(各取最后 200 行,单文件
+/// 最多回读 512KB)——execution-log.jsonl(回合/工具调用明细)、
+/// events.jsonl(事件流,含 capability.invoked 的 intent/result/error)与
+/// context-log.jsonl(W5 上下文快照原文,调试用),供诊断「工具调用卡死」
+/// 一类运行期问题。
 pub async fn logs_tail(State(cfg): State<AdminConfig>) -> Response {
     let dir = cfg.data_dir;
     Json(json!({
         "ok": true,
         "exec": tail_lines(&dir.join("execution-log.jsonl"), 512 * 1024, 200),
         "events": tail_lines(&dir.join("events.jsonl"), 512 * 1024, 200),
+        "context": tail_lines(&dir.join("context-log.jsonl"), 512 * 1024, 200),
     }))
     .into_response()
+}
+
+/// GET /admin/context:context-log.jsonl 尾部解析为结构化数组(W5 上下文
+/// 透视页直用)。每行 = 一次模型调用的请求快照(messages/tools)+ 结果
+/// (status/usage/耗时);坏行跳过;最多回读 2MB、默认 120 条(新→旧即
+/// 最旧在前,与文件时序一致)。
+pub async fn context_tail(State(cfg): State<AdminConfig>) -> Response {
+    let steps = read_context_tail(
+        &cfg.data_dir.join("context-log.jsonl"),
+        2 * 1024 * 1024,
+        120,
+    );
+    Json(json!({ "ok": true, "steps": steps })).into_response()
+}
+
+/// context-log 尾部读取+逐行解析(只读诊断面;任何失败静默为空)。
+fn read_context_tail(path: &Path, max_bytes: u64, limit: usize) -> Vec<Value> {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return vec![];
+    };
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    let start = len.saturating_sub(max_bytes);
+    if f.seek(SeekFrom::Start(start)).is_err() {
+        return vec![];
+    }
+    let mut buf = String::new();
+    if f.read_to_string(&mut buf).is_err() {
+        return vec![];
+    }
+    let mut lines: Vec<&str> = buf.lines().collect();
+    if start > 0 && !lines.is_empty() {
+        lines.remove(0); // 截断边界上的半行不可信
+    }
+    let mut steps: Vec<Value> = lines
+        .iter()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect();
+    if steps.len() > limit {
+        steps = steps.split_off(steps.len() - limit);
+    }
+    steps
 }
 
 /// 管理面子路由(挂载于 /admin;公开 = W1 同款已登记欠账)。
@@ -1188,6 +1232,7 @@ pub fn admin_routes(cfg: AdminConfig) -> axum::Router {
         .route("/capabilities", get(capabilities_list))
         .route("/roles", get(roles_get).put(roles_set))
         .route("/logs", get(logs_tail))
+        .route("/context", get(context_tail))
         .route("/fs/list", get(fs_list))
         .route("/fs/file", get(fs_file))
         .with_state((*cfg).clone())

@@ -1,6 +1,7 @@
-// W2 设置中心 · 日志:数据目录两份 jsonl(execution-log / events)尾部直读,
-// 供诊断「工具调用卡死」一类运行期问题(2026-09-02 用户要求接入日志)。
-// 默认 5s 自动刷新,可在长回合中挂着观察;行原始 JSON,换行按条分隔。
+// W2 设置中心 · 日志:数据目录三份 jsonl(execution-log / events / context)
+// 尾部直读,供诊断「工具调用卡死」一类运行期问题(2026-09-02 用户要求接入
+// 日志)。默认 5s 自动刷新,可在长回合中挂着观察;行原始 JSON,换行按条分隔。
+// context = W5 上下文快照原文(可视化版在对话区「上下文」页签)。
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RefreshCwIcon, Loader2Icon } from "lucide-react";
 import { api } from "./api";
@@ -8,11 +9,12 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 
-type Which = "exec" | "events";
+type Which = "exec" | "events" | "ctx";
 
 const TABS: { key: Which; label: string; hint: string }[] = [
   { key: "exec", label: "执行日志", hint: "回合/工具调用明细" },
   { key: "events", label: "事件流", hint: "含 capability.invoked 状态" },
+  { key: "ctx", label: "上下文快照", hint: "每次模型调用的请求原文(W5)" },
 ];
 
 export function LogsPage() {
@@ -28,7 +30,7 @@ export function LogsPage() {
     setError(null);
     try {
       const r = await api.logs();
-      setLines(which === "exec" ? r.exec : r.events);
+      setLines(which === "exec" ? r.exec : which === "events" ? r.events : (r.context ?? []));
     } catch (e) {
       setError(String(e instanceof Error ? e.message : e));
     } finally {

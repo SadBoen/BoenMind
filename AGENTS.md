@@ -7,8 +7,9 @@ BoenMind:个人生态的 AI Runtime / AI OS,当前为**阶段一(跨平台单软
 (Erlang/OTP、Kubernetes、VS Code,见 `architecture/deepwiki-validation.md`)。
 合同库冻结 v1.0(字段只增不破)。
 
-**当前状态(2026-09-02)**:W4 对话工具闭环与设置中心完善已交付(commit `8cb2316`,
-280+ 测试全绿,validate.py 全绿)。交付全史见 `milestones/HISTORY.md`;
+**当前状态(2026-09-02)**:W5 会话记忆修复+上下文透视面板已交付(289 测试全绿,
+validate.py 全绿;对话历史已回喂模型,对话区新增「上下文」页签可透视每次请求)。
+此前:W4 对话工具闭环与设置中心完善(`8cb2316`)。交付全史见 `milestones/HISTORY.md`;
 **下一步做什么、还欠什么,唯一入口 = `milestones/BACKLOG.md`**(W4b、C4 模型
 回写前置、掉链项、远程 MCP 等都在那里)。
 

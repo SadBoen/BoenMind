@@ -182,6 +182,12 @@ pub(crate) enum Cmd {
         resp: oneshot::Sender<CoreResult<bm_contract::wire::TaskAutorunResult>>,
     },
     Turn(TurnEvent),
+    /// W5:成功回合的对话台账回写(session_chats;历史回喂的数据源)。
+    RememberTurn {
+        session_id: BmId,
+        user: String,
+        assistant: String,
+    },
 }
 
 /// Task 生命周期动作(M5-T1;completed/failed 无 wire 入口——完成判定门禁
@@ -294,5 +300,7 @@ pub(crate) fn reply_unavailable(cmd: Cmd) {
             let _ = resp.send(Ok(None));
         }
         Cmd::Turn(_) => {}
+        // W5:台账回写无应答方;排空期与 Turn 同口径静默应用即可(进程将终)
+        Cmd::RememberTurn { .. } => {}
     }
 }

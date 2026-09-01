@@ -29,7 +29,8 @@
 | W3 主题系统·两级换肤 | 2026-09-02 | `551bcca` | 280 | 四主题+每主题设置项 schema+实时预览;四道验收门 DOM 探针实测 |
 | W4 对话工具闭环+角色 | 2026-09-02 | `b2fc6a8`+`40988a7`(合同 Minor) | 280+ | tools 合同启用(maxItems 16)+FinishReason::ToolCalls+Role::Tool;直通工具免审批注入;角色 system_prompt 热生效;遗留=W4b(见 BACKLOG) |
 | W4 用户反馈四则 | 2026-09-02 | `8cb2316` | 280+ | 主题小 LOGO 按钮组;MCP 配置 Dialog 下拉选择器;RolesPage 重复渲染修复;临时补丁脚本清理 |
+| W5 会话记忆修复+上下文透视 | 2026-09-02 | (见 git) | 289 | **修复多轮无记忆**:turn.rs 历史回喂(session_chats 台账,20 轮/24K 字符上限,Cmd::RememberTurn);上下文透视面板:context-log.jsonl 快照(messages+tools+usage,INV-5 脱敏+16K 截断)+`/admin/context`+对话区「上下文」页签(组成条/趋势/逐项浏览器)+日志页快照页签;真模型实测两轮暗号往返+跨页面重载均答中,截图 shots-w5-context/;动因=用户提名 dsh-context(评估:DSH 插件不可装,照理念重做,登记 BACKLOG §6) |
 
 ## W 序列验收惯例
 
-W 序列不另立 review 文件:验收门与实测证据并入各规格(W2 §7、W3 §6;W4 待回填,见 BACKLOG)。截图目录:shots-w2/、shots-w3/。
+W 序列不另立 review 文件:验收门与实测证据并入各规格(W2 §7、W3 §6;W4 待回填,见 BACKLOG)。截图目录:shots-w2/、shots-w3/、shots-w5-context/。

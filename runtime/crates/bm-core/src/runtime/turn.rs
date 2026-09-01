@@ -144,12 +144,24 @@ pub(crate) fn spawn_turn(w: &mut World, agent: &Agent, operation_id: &BmId, cont
         .and_then(|r| r["system_prompt"].as_str().map(|s| s.to_string()))
         .filter(|s| !s.is_empty());
     let request_id = w.operations.get(operation_id).map(|o| o.request_id.clone());
+    // W5:会话对话台账快照(历史回喂)+ 上下文快照日志句柄 + 回合序号。
+    let session_id: Option<BmId> = w.operations.get(operation_id).map(|o| o.session_id.clone());
+    let turn_index = w
+        .operations
+        .get(operation_id)
+        .map(|o| o.turn_index)
+        .unwrap_or(0);
+    let history: Vec<(String, String)> = session_id
+        .as_ref()
+        .and_then(|sid| w.session_chats.get(sid).cloned())
+        .unwrap_or_default();
+    let ctx_log = w.ctx_log.clone();
 
     tokio::spawn(async move {
-        // W4:messages 含角色 prompt;tools=直通工具(OpenAI function 格式,
-        // capability 名的点映射为双下划线);工具结果经 CapabilityCall 回核心
-        // 循环执行(Broker 裁决/审计管道原样),轮询 operations 至终态取结果
-        // 回喂模型。工具轮上限 5,防循环失控。
+        // W4:messages 含角色 prompt + 历史回合 + 本轮输入;tools=直通工具
+        // (OpenAI function 格式,capability 名的点映射为双下划线);工具结果
+        // 经 CapabilityCall 回核心循环执行(Broker 裁决/审计管道原样),轮询
+        // operations 至终态取结果回喂模型。工具轮上限 5,防循环失控。
         const MAX_TOOL_ROUNDS: u32 = 5;
         let mut messages: Vec<Message> = Vec::new();
         if let Some(sp) = &role_prompt {
@@ -158,6 +170,20 @@ pub(crate) fn spawn_turn(w: &mut World, agent: &Agent, operation_id: &BmId, cont
                 content: sp.clone(),
             });
         }
+        // W5(2026-09-02 用户反馈轮):历史回合回喂。此前每轮从零组装,
+        // 模型对同会话前情失忆(W1 合同口径「历史由 runtime 侧维护」的实现
+        // 缺口);台账在回合成功落定时经 Cmd::RememberTurn 回写。
+        for (u, a) in &history {
+            messages.push(Message {
+                role: Role::User,
+                content: u.clone(),
+            });
+            messages.push(Message {
+                role: Role::Assistant,
+                content: a.clone(),
+            });
+        }
+        let user_input = content.clone();
         messages.push(Message {
             role: Role::User,
             content: content.clone(),
@@ -199,6 +225,11 @@ pub(crate) fn spawn_turn(w: &mut World, agent: &Agent, operation_id: &BmId, cont
                     attempt,
                 };
 
+                // W5:请求侧快照(发送前截取;结果侧在 resp 落定后随行落盘)
+                let snap_msgs = crate::context_log::snapshot_messages(&req.messages);
+                let snap_step = tool_rounds + 1;
+                let snap_model = model_id.clone();
+
                 // M9-S2:流式开关开启时走 invoke_stream,增量经 ProviderDelta
                 // 回核心循环(单写者落 model.content.delta 事件);通道满则丢弃
                 // 单个增量(事件面渐进性降级,不影响终态聚合)。
@@ -236,6 +267,27 @@ pub(crate) fn spawn_turn(w: &mut World, agent: &Agent, operation_id: &BmId, cont
                         latency_ms,
                         stream_interrupted,
                     } => {
+                        // W5:上下文快照落盘(请求侧+结果侧;诊断面失败静默)
+                        ctx_log.record(crate::context_log::ContextRecord {
+                            session_id: session_id
+                                .as_ref()
+                                .map(|s| s.as_str().to_string())
+                                .unwrap_or_default(),
+                            agent_id: agent_id.as_str().to_string(),
+                            operation_id: op_id.as_str().to_string(),
+                            turn_index,
+                            step: snap_step,
+                            model_id: snap_model,
+                            streaming,
+                            messages: snap_msgs,
+                            tools: tools_json.clone(),
+                            status: "ok",
+                            error_code: None,
+                            tokens_in: Some(usage.tokens_in),
+                            tokens_out: Some(usage.tokens_out),
+                            latency_ms: Some(latency_ms),
+                            ts: format_ts(clock.now()),
+                        });
                         // W4 工具轮:模型请求调用直通工具 → 回核心循环执行 →
                         // 结果以 Tool 消息回喂 → 重调模型(上限 MAX_TOOL_ROUNDS)。
                         if !tool_calls.is_empty() && tool_rounds < MAX_TOOL_ROUNDS {
@@ -314,6 +366,16 @@ pub(crate) fn spawn_turn(w: &mut World, agent: &Agent, operation_id: &BmId, cont
                             // 结果回喂后重调模型(仍在同一 attempt 的降级链内)
                             continue;
                         }
+                        // W5:对话台账回写(仅终稿成功;工具轮中间态不入账)
+                        if let Some(sid) = session_id.clone() {
+                            let _ = tx
+                                .send(Cmd::RememberTurn {
+                                    session_id: sid,
+                                    user: user_input,
+                                    assistant: content.clone(),
+                                })
+                                .await;
+                        }
                         let _ = tx
                             .send(Cmd::Turn(TurnEvent::Completed {
                                 operation_id: op_id.clone(),
@@ -334,6 +396,31 @@ pub(crate) fn spawn_turn(w: &mut World, agent: &Agent, operation_id: &BmId, cont
                         attempt,
                         detail_ref: _,
                     } => {
+                        // W5:失败/取消同样落快照(诊断「报错」「卡死」场景)
+                        ctx_log.record(crate::context_log::ContextRecord {
+                            session_id: session_id
+                                .as_ref()
+                                .map(|s| s.as_str().to_string())
+                                .unwrap_or_default(),
+                            agent_id: agent_id.as_str().to_string(),
+                            operation_id: op_id.as_str().to_string(),
+                            turn_index,
+                            step: snap_step,
+                            model_id: snap_model,
+                            streaming,
+                            messages: snap_msgs,
+                            tools: tools_json.clone(),
+                            status: if error_code == ErrorCode::Cancelled {
+                                "cancelled"
+                            } else {
+                                "error"
+                            },
+                            error_code: Some(error_code.as_str().to_string()),
+                            tokens_in: None,
+                            tokens_out: None,
+                            latency_ms: None,
+                            ts: format_ts(clock.now()),
+                        });
                         if error_code == ErrorCode::Cancelled {
                             // 显式取消:回合边界落定为 cancelled(INV-12 唯一入口)。
                             let _ = tx
@@ -1685,5 +1772,74 @@ pub(crate) fn handle_turn_event(w: &mut World, event: TurnEvent) {
             | TurnEvent::AttemptFailed { operation_id, .. }
             | TurnEvent::ChainExhausted { operation_id, .. } => Some(operation_id),
         }
+    }
+}
+
+// ---- W5:会话对话台账(历史回喂数据源) ------------------------------------
+
+/// 台账轮数上限(超出丢最旧;进程内启发式,不入冻结合同)。
+pub(crate) const HISTORY_MAX_TURNS: usize = 20;
+/// 台账字符总量上限(user+assistant 合计;防长会话上下文无界膨胀)。
+pub(crate) const HISTORY_MAX_CHARS: usize = 24_000;
+
+/// 成功回合终稿入账(工具轮中间态不入;只在 TurnEvent::Completed 路径调)。
+pub(crate) fn remember_turn(w: &mut World, session_id: BmId, user: String, assistant: String) {
+    push_capped(
+        w.session_chats.entry(session_id).or_default(),
+        user,
+        assistant,
+    );
+}
+
+/// 入账并执行双上限:轮数超限丢最旧;字符总量超限从最旧丢到达标
+/// (至少保留 1 条——最新一条永不因字符上限被丢)。
+fn push_capped(entry: &mut Vec<(String, String)>, user: String, assistant: String) {
+    entry.push((user, assistant));
+    while entry.len() > HISTORY_MAX_TURNS {
+        entry.remove(0);
+    }
+    let mut total: usize = entry.iter().map(|(u, a)| u.len() + a.len()).sum();
+    while total > HISTORY_MAX_CHARS && entry.len() > 1 {
+        total -= entry[0].0.len() + entry[0].1.len();
+        entry.remove(0);
+    }
+}
+
+#[cfg(test)]
+mod w5_history_tests {
+    use super::*;
+
+    #[test]
+    fn turn_count_cap_drops_oldest() {
+        let mut entry = Vec::new();
+        for i in 0..(HISTORY_MAX_TURNS + 5) {
+            push_capped(&mut entry, format!("u{i}"), format!("a{i}"));
+        }
+        assert_eq!(entry.len(), HISTORY_MAX_TURNS);
+        assert_eq!(entry[0], ("u5".to_string(), "a5".to_string()));
+        assert_eq!(
+            entry.last().unwrap().0,
+            format!("u{}", HISTORY_MAX_TURNS + 4)
+        );
+    }
+
+    #[test]
+    fn char_cap_drops_oldest_but_keeps_latest() {
+        let mut entry = Vec::new();
+        let big = "x".repeat(10_000);
+        for i in 0..4 {
+            push_capped(&mut entry, format!("{big}{i}"), big.clone());
+        }
+        // 每条 2 万字符,总量 8 万 > 24000:一路丢到只剩最新一条
+        assert_eq!(entry.len(), 1);
+        assert_eq!(entry[0].0, format!("{big}3"));
+    }
+
+    #[test]
+    fn char_cap_never_drops_single_latest() {
+        let mut entry = Vec::new();
+        let big = "y".repeat(HISTORY_MAX_CHARS + 100);
+        push_capped(&mut entry, big.clone(), big);
+        assert_eq!(entry.len(), 1, "最新一条不因字符上限被丢");
     }
 }

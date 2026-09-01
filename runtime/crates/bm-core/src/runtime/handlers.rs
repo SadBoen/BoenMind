@@ -187,6 +187,8 @@ pub(crate) fn handle_session_close(
         agent_final_state = agent.state.as_str().to_string();
     }
     // close 只关会话,不取消进行中的回合(INV-6);in_flight 不动。
+    // W5:对话台账随会话关闭清退(历史回喂数据源,内存面随会话寿命)。
+    w.session_chats.remove(&params.session_id);
     let reason = params.reason.unwrap_or_else(|| "user_request".into());
     w.emit(
         EventType::SessionClosed,
@@ -743,6 +745,12 @@ pub(crate) async fn handle_stop(
     while !w.in_flight.is_empty() {
         match rx.recv().await {
             Some(Cmd::Turn(event)) => handle_turn_event(w, event),
+            // W5:排空期回落中的台账回写照常应用(与 Turn 同口径)
+            Some(Cmd::RememberTurn {
+                session_id,
+                user,
+                assistant,
+            }) => crate::runtime::turn::remember_turn(w, session_id, user, assistant),
             // 收据查询只读幂等,排空期照常应答(INV-6 精神)。
             Some(Cmd::GetOperation { params, resp }) => {
                 let _ = resp.send(handle_get_operation(w, params));
