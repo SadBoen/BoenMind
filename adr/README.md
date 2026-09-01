@@ -17,3 +17,12 @@
 | [ADR-0007](ADR-0007-l0-bootstrap-exemption.md) | L0 自举豁免与升级信任链 | accepted-with-conditions | L0 是唯一显式自举豁免体,豁免清单冻结 |
 | [ADR-0008](ADR-0008-architecture-as-code-validation.md) | 架构即代码与外部实证验证 | accepted | C4 DSL 为唯一权威;C1-C8 验证成立;S1-S10 proposed |
 | [ADR-0009](ADR-0009-deployment-and-surface.md) | 部署形态与 Surface 策略 | accepted-with-conditions | VPS 托管+Web/交互式 TUI Surface+Windows 壳;受限解除「无远程访问」 |
+| [ADR-0010](ADR-0010-third-party-model-gateway.md) | 第三方模型网关信任边界 | accepted-with-conditions | 接受 NewAPI 型网关为真实模型通道;内容视同对网关可见,不改 input_trust 语义 |
+| [ADR-0011](ADR-0011-first-apps-as-mcp-servers.md) | 首批真实 App 以 MCP Server 形态接入 | accepted | App 以进程外 MCP stdio server 接入,不新增内核「App 对象」合同 |
+| — | *(ADR-0012 配置管理 API:随 M10 dsh 线未提交工作归档,编号永久跳空,存 `archive/m10-dsh-frontend` 分支)* | archived | — |
+| [ADR-0013](ADR-0013-dsh-frontend-abandoned.md) | 弃用 dsh 复刻前端 | accepted | dsh 复刻 Web 前端全量删除(归档分支),换新参考界面重做 |
+| [ADR-0014](ADR-0014-webui-w-series-assistant-ui.md) | W 序列 WEBUI 技术路线 | accepted | assistant-ui 组件库自建壳+OpenAI 兼容插座;W 序列独立编号 |
+| [ADR-0015](ADR-0015-doc-consolidation.md) | 文档体系整理:熔入式修订与三层附页 | accepted | 基线增补熔入正文不挂引注块;HISTORY/PLAYBOOK/BACKLOG 三附页;milestones/README 导航 |
+
+> 编号说明:ADR-0012 于 2026-08-31 随 M10 dsh 前端线归档(见 ADR-0013 编号说明),编号不回收;主干引用配置管理口径时以 config_store 现状与 W2/W4 规格为准。
+> 文体注:0001-0009 状态用小写 accepted(-with-conditions),0010/0011 起用 Accepted(日期)/已裁决(用户,日期)——语义等价,统一以本表为准。

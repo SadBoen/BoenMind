@@ -27,7 +27,7 @@ deepwiki-validation.md         Erlang/OTP、Kubernetes、VS Code 三系统对照
 | ProviderCrash | 动态 | §13.2 |
 | GenerationUpgrade | 动态 | §13.4/§13.7 |
 | Deployment-Phase1 | 部署(阶段一单进程) | §1.1/§21 |
-| Deployment-VPS | 部署(阶段一变体:VPS 托管,浏览器无状态访问) | §1.1 ADR-0009 增补/§21 |
+| Deployment-VPS | 部署(阶段一变体:VPS 托管,浏览器无状态访问) | §1.1(ADR-0009 修订)/§21 |
 | Deployment-Phase2 | 部署(阶段二多进程) | §4.3/§21 |
 
 ## 验证与渲染
@@ -45,4 +45,4 @@ deepwiki-validation.md         Erlang/OTP、Kubernetes、VS Code 三系统对照
 ## 辩论与验证结论速览
 
 - 五条裁决:R1 三权分立**有条件维持**(10:4);R2 Butler/Coordinator、R3 L0+generation、R4 Task 状态归 L2、R5 万物皆插件均**修订**(无一条被推翻)。新增裁决两条:权限以合同显式化(元原则)、L0 自举豁免与升级信任链。详见 `../adr/`。
-- 外部验证:L0-L5 分层被三系统印证;热替换 C7/C8 确认、C1-C6 部分确认、无偏差;单写者租约与验证期禁副作用为 BoenMind 独有加强;修订建议 S1-S10 全部 proposed,待里程碑回看裁决。
+- 外部验证:L0-L5 分层被三系统印证;热替换 C7/C8 确认、C1-C6 部分确认、无偏差;单写者租约与验证期禁副作用为 BoenMind 独有加强。修订建议 S1-S10 只在里程碑回看时逐条裁决、勿自动采纳;当前状态(S5/S9 已闭合,S3/S4/S8 部分采纳,S1/S2/S6/S7/S10 proposed 待裁决)以 `../milestones/BACKLOG.md` §3 台账为准,本 README 不再维护其状态。

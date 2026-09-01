@@ -3,147 +3,66 @@
 ## 这是什么
 
 BoenMind:个人生态的 AI Runtime / AI OS,当前为**阶段一(跨平台单软件)**。
-设计已定稿,经三模型辩论复核(五裁决修订后成立 + 两条新裁决,见 `adr/`)与三真实系统
-对照验证(Erlang/OTP、Kubernetes、VS Code,见 `architecture/deepwiki-validation.md`)。
-合同库已冻结 v1.0(字段只增不破)。
+设计已定稿,经三模型辩论复核(`adr/`)与三真实系统对照验证
+(Erlang/OTP、Kubernetes、VS Code,见 `architecture/deepwiki-validation.md`)。
+合同库冻结 v1.0(字段只增不破)。
 
-**当前进度:W3 已收官(2026-09-02,commit `551bcca`):W2 设置中心+工作区+
-可拖布局与 W3 两级主题系统同夜交付——W2:provider 库 CRUD/连通探针/模型
-清单/设为当前(config_store 按 ADR-0012 恢复,重启生效)/webadmin REST
-管理面(裁决=暂不入冻结合同,行为规格=webadmin_tests 9 测试)/插件=能力
-提供方(系统类禁卸)/目录树+文件预览(X-01 防护)/三栏拖宽持久;
-W3:四主题令牌预设+每主题设置项 schema(透明度仅玻璃)+实时预览+持久化,
-玻璃=已认可樱花样张直落。280 测试全绿,W2 五门+W3 四门浏览器实测过
-(截图 milestones/shots-w2/)。下一步:用户过目古典/卡通主题(样张草案
-落地,可按令牌微调);候选队列:远程 MCP、自主环真工具闭环、使用反馈。**
+**当前状态(2026-09-02)**:W4 对话工具闭环与设置中心完善已交付(commit `8cb2316`,
+280+ 测试全绿,validate.py 全绿)。交付全史见 `milestones/HISTORY.md`;
+**下一步做什么、还欠什么,唯一入口 = `milestones/BACKLOG.md`**(W4b、C4 模型
+回写前置、掉链项、远程 MCP 等都在那里)。
 
-**提速方案(2026-08-30 起固化,每轮沿用)**:
-1. 强耦合任务合批(如 T4+T5、T6+T7、T8+T9),一轮交付、共享全量回归,
-   减少回归次数;依赖链顺序不变。
-2. 文档类产物(回看骨架、PENDING 大白话、perf-baseline 记录区)派后台
-   子代理并行起草——与代码文件零相交;主代理收圈时随手提交。
-3. 不做同仓多代理并行写代码(runtime.rs 单点合并成本 > 收益;
-   Rust target 目录锁/冷编译),防冲突规程与单写者纪律不破。**
-
-## 文件地图(规格分层,基线 §0)
+## 文件地图(规格分层)
 
 ```text
-BoenMind-CORE-ARCHITECTURE.md   第 0 层  架构基线:原则/边界/不变量;§17 七条核心裁决;§18 里程碑;§19 回看制度
-adr/                            第 0 层  架构决策记录(ADR-0001..0011;基线正文与 ADR 冲突时,以更新的 ADR 为准)
+BoenMind-CORE-ARCHITECTURE.md   第 0 层  架构基线:原则/边界/不变量;§17 裁决;§18 里程碑定义;§19 回看制度
+adr/                            第 0 层  架构决策记录 ADR-0001..0015(0012 随 M10 dsh 线归档、编号跳空;基线与 ADR 冲突时以更新的 ADR 为准)
 architecture/                   第 0 层  C4 模型 boenmind.c4(拓扑唯一权威)+ 辩论转录(debates/)+ 验证报告
-boenmind-contracts/             第 1 层  机器可读合同(v1.0 冻结)+ validate.py 校验器 + m0/ 测试基准
-milestones/                     第 2 层  里程碑实现规格与回看记录(M1 起建)
-runtime/                        第 3 层  源代码(M1 起,Rust workspace;crate 划分在 M1 规格中定稿)
+boenmind-contracts/             第 1 层  机器可读合同(v1.0 冻结)+ validate.py 校验器 + m0/(测试矩阵/威胁模型/perf-baseline)
+milestones/                     第 2 层  实现规格+回看(M1-M9、W1-W4)+ 台账四件:HISTORY(交付时间线)/BACKLOG(未结事项)/PENDING(待裁决,现清零)/AUDIT-2026-08-30(审计)
+runtime/                        第 3 层  Rust workspace 9 个 crate(bm-contract/core/persist/providers/cli/surface-http/runtime/judge/testkit)+ webapp(W 序列前端,Vite+React+TS)
+apps/                           第 3 层  真实 App:wiki_server/market_server(stdio MCP,Python)+ mcp-config.example.json
+shell/tauri/                    第 3 层  Windows 桌面壳(Tauri v2;frontendDist 指 runtime/webapp/dist,手工构建)
+scenarios/                      实测    CLI 场景实测清单(S1-S10 与 2026-08-30 实测记录)
+PLAYBOOK.md                     附页    实操备忘:启动与环境变量/前端四坑/浏览器自动化怪癖/废止速查——动手前先看
+.agents/skills/boenmind-dev/    技能    按任务类型的操作清单(动合同/发 ADR/实现里程碑必加载)
+.github/                        CI      contracts-validate + Rust 三平台矩阵(fmt/clippy/nextest)+ release
 ```
 
 ## 新会话工作流
 
-1. 读本文件 → 2. 按手头任务读对应层文件 → 3. 动手前对照下方进度确认当前里程碑 →
-4. 产出后自检(合同有变更必跑 `python3 boenmind-contracts/scripts/validate.py`,须全绿)。
-
-## 环境与工具备忘
-
-### 真实用户面踩坑(2026-08-30,浏览器实测四连)
-1. **事件信封 JSON 字段名是 `type`**(serde rename),不是 Rust 字段名
-   `event_type`——前端按后者读永远 undefined;
-2. **EventSource(SSE)无法携带 Authorization 头** → /events 被 401 静默
-   拒绝;前端改走合同方法 `events.poll` 轮询(1.5s);
-3. **静态页无缓存头,浏览器缓存旧页**——发版后必须 Ctrl+F5 或带查询串;
-4. 内联脚本的语法错误会**整页静默失效**(所有按钮无反应且无报错),
-   改完必须 `node --check`。
-教训:229 个测试全绿测不出这四个 bug——**P0 之外必须有真实浏览器
-端到端手测轮**。
-
-- gh CLI 已装;Rust 1.98、Node 24、Python 3.13;tauri-cli 未装(桌面壳手工构建于 web/src-tauri/)。
-- 性能测试:`cargo test --release -p bm-testkit --test perf_smoke -- --ignored --nocapture`(perf_m2 同理);P-09/10 常驻测试套件。
-- context7 MCP 可用(库文档查询;M7 真实 Provider/MCP 接入时优先用)。
-- 已确认:libsqlite3-sys bundled 构建默认启用 SQLITE_ENABLE_FTS5——M5 memory 检索的 FTS5 路径实际生效,LIKE 仅兜底。
-- 踩坑:大段内联脚本(python heredoc)写文件易静默失败——先 Write 成文件再执行;cargo fmt 会重排代码,文本替换前先看当前实际内容;测试先行持续抓真 bug;跨字段借用冲突用分阶段作用域解决;时间基准对照 MockClock 实际基准值换算。
+1. 读本文件 → 2. 按手头任务读对应层文件(任务-文件对照见 boenmind-dev 技能)→
+3. 动工前看 BACKLOG 确认没有已登记的相关欠账 → 4. 产出后自检
+(合同有变更必跑 `python boenmind-contracts/scripts/validate.py`,须全绿)。
 
 ## 硬纪律(违反 = 返工)
 
 1. **合同冻结**:boenmind-contracts/ 字段只增不破;删字段/改名/改语义 = Major,走基线 §13.5。
 2. **先改模型再改文字**:架构变更先改 `architecture/boenmind.c4`;文字图与模型不一致以模型为准。
-3. **决策写 ADR**:新决策在 adr/ 发新文件(编号递增),不修改既有 ADR 的语义。
+3. **决策写 ADR**:新决策在 adr/ 发新文件(编号递增),不修改既有 ADR 的语义;对基线的增补**熔入正文并标注 ADR 编号**,不挂追加式引注块(ADR-0015)。
 4. **权限以合同显式化**(ADR-0006):未列入注册合同的权力视为不存在。
-5. **里程碑 = 可运行检查点**(§18):P0 测试套件全绿才算完成;完成后按 §19 回看再进下一个。
+5. **里程碑 = 可运行检查点**(§18/§19):P0 测试套件全绿才算完成;完成后按 §19 回看再进下一个;交付状态登记 HISTORY,遗留登记 BACKLOG。
 6. **真实进度只认 git**:主干应始终可校验(validate.py 全绿);提交说明写清动机。
+7. **用户可见面必须真实浏览器手测**(2026-09-01 用户明示):以页面可见内容/截图为证;接口测试全绿 ≠ 界面交付。
 
-## 进度
+## 工作方法(已固化,每轮沿用)
 
-- [x] M0 范围/合同/测试基线(2026-08-28,tag `m0.2-contracts-frozen`)
-- [x] 2026-08-29 ADR-0009 部署形态裁决:VPS 托管 + Web/交互式 TUI Surface + Windows Tauri 壳(受限解除「无远程访问」;M3 增 HTTP 传输+鉴权合同,M8 增 Web UI v1 与 Tauri 壳)
-- [x] **M1 最小 Runtime 与单 Agent 闭环(2026-08-29,tag `m1-runtime-loop`;规格 `milestones/M1-implementation-spec.md`,回看 `milestones/M1-review.md`,50 测试全绿,GT-01 两场景可回放)**
-- [x] **M2 持久化/事件日志/崩溃恢复(2026-08-29,tag `m2-persist-recovery`;
-      规格 `milestones/M2-implementation-spec.md`,回看 `milestones/M2-review.md`,
-      68 测试全绿,四项混沌验收通过,ADR-0004 四项 M2 适配映射已按默认路径落地)**
-- [x] **M4 Capability/Broker/权限审批(2026-08-29,tag `m4-capability-broker`;
-      规格 `milestones/M4-implementation-spec.md`,回看 `milestones/M4-review.md`,
-      134 测试全绿,11 条硬约束全部落地,三 Surface 同源审批闭环,
-      模型调用豁免与 capability 操作状态面留档随 M7/M5 复议)**
-- [x] **M3 统一 Wire API、CLI 与跨平台启动(2026-08-29,tag `m3-surface-cli`;
-      规格 `milestones/M3-implementation-spec.md`,回看 `milestones/M3-review.md`,
-      74 测试全绿,CLI/桌面/Web 三形态同源可用)**
-- [x] **M5 Butler、Task 和长期监护(2026-08-30,tag `m5-butler-task`;
-      规格 `milestones/M5-implementation-spec.md`,回看 `milestones/M5-review.md`,
-      188 测试全绿,八项前置结算条件闭合,ADR-0002 口径升级「成立」)**
-- [x] **M6 Team、Delegate 和多 Agent 协作(2026-08-30,tag `m6-team-delegate`;
-      规格 `milestones/M6-implementation-spec.md`,回看 `milestones/M6-review.md`,
-      196 测试全绿,四门禁强制点化,ADR-0002 条件 5 余项闭合)**
-- [x] **M7 Provider、MCP 和 App 隔离(2026-08-30,tag `m7-provider-mcp`;
-      规格 `milestones/M7-implementation-spec.md`,回看 `milestones/M7-review.md`,
-      213 测试全绿,五句通过条件逐条结算,真实网关实网验证通过,
-      ADR-0010 第三方网关信任边界)**
-- [x] **M8 首批真实 App 与发行质量(2026-08-30,tag `m8-apps-release`;
-      规格 `milestones/M8-implementation-spec.md`,回看 `milestones/M8-review.md`,
-      229 测试全绿,双真实 App + Judge + 实网压测 + 备份迁移 + 三平台,
-      ADR-0011 App=MCP 形态)——阶段一收官**
-- [x] **全面回看 M1-M9 整体(2026-08-30,`milestones/FULL-REVIEW-2026-08-30.md`;
-      四道门禁全绿 260 测试,架构红线主体干净,结论 passed_with_conditions;
-      新发现 F-01..F-11 入审计台账;条件:C4 模型回写列下一批开工前置)。
-      随回看用户拍板五项全落定:下一批=先用一周再开工远程 MCP / 桌面包搁置
-      骨架保留 / 看护闹钟 15min·3 次·24h 定案 / 三笔追认+GT-01 示例已修正;
-      待拍板队列清零**
-- [x] **Web 界面改版 v3(2026-08-30,D-M3-1;用户逐条纠偏后定稿:纯 dsh 双栏
-      布局,审批/任务暂离界面待用户定回归方案;网页 CLI 删除[cli.html+
-      /admin/cli+BOEN_CLI_WEB,审计 A-06~A-08 随之消灭];设置=dsh 式齿轮弹窗;
-      tokens.css 令牌表机械复刻自 dsh ui-theme(MIT);前端界面插槽实证生效
-      [plugins/demo-sidebar.js];真实浏览器手测通过,260 测试全绿)**
-- [x] **弃用 dsh 复刻前端(2026-08-31,用户裁决;runtime/web 全量删除
-      [137 文件],M10 未提交工作全量归档分支 `archive/m10-dsh-frontend`;
-      后端合同面/配置 API/事件流不动,ADR-0013;删除后 261 测试全绿)**
-- [x] **W1(WEBUI 序列开篇,2026-09-01,ADR-0014):新前端 = assistant-ui
-      组件库自建壳(runtime/webapp,Vite+React+TS,三栏布局按用户蓝本)
-      + 后端 OpenAI 兼容插座 /v1/chat/completions(SSE 流式,X-Bm-Session
-      续接);真浏览器验收:发消息→真实网关流式回复上屏、第二轮连续
-      (banana 实测)。已知:中转站 deepseek-v4-flash 通道暂不可用
-      (503/超时已取证),验收用 gpt-5.6-luna;W2=会话列表/设置页/
-      停止生成。W 序列合约=每个组件组必须在 assistant-ui 找到原型
-      (W1 规格 §5)**
-- [x] **W2 设置中心+工作区+可拖布局(2026-09-02,commit `5748f9a`;
-      规格 `milestones/W2-implementation-spec.md` §0 裁决登记+§7 验收记录,
-      截图 `milestones/shots-w2/`):provider 库增删改查+连通探针+模型清单
-      拉取+设为当前(config_store 按 ADR-0012 恢复,重启生效,主干重新
-      读 config/model.json);webadmin REST 管理面 /admin/*(providers/
-      probe/mcp/capabilities/fs;裁决=壳子私用暂不入冻结合同,行为规格=
-      webadmin_tests.rs 9 测试);插件语义=能力提供方(系统内置禁卸+
-      MCP 配置文件全集带 loaded 标注,卸载=移出配置重启生效;PIN=壳子
-      本地偏好);工作区目录树(elements-file-tree 选装改造,懒加载)+
-      文件预览盖树+返回(X-01 三重路径防护);三栏拖宽 localStorage 持久;
-      设置中心整页式(左导航+PIN 快捷项)。前端引入 tailwind v4+shadcn
-      (共存策略:W1 手写令牌保留+桥接变量并存)。五道验收门浏览器实测过,
-      280 测试全绿+clippy 零警告**
-- [x] **W3 主题系统·两级换肤(2026-09-02,commit `551bcca`;
-      规格 `milestones/W3-implementation-spec.md` §0 裁决+§6 验收记录):
-      一级四主题(现代=W1 现状/古典=纸墨衬线书房纹理/卡通=大圆角色影
-      表情装饰/玻璃=已认可樱花样张:照片底+花瓣+全面板毛玻璃)+
-      二级每主题自带设置项(项集不同:透明度仅玻璃、字体仅卡通;
-      theme.css 单一来源纪律);外观页主题卡片+动态表单+实时预览;
-      全局文字大小(§4 裁定不入主题);localStorage 重启保持;
-      四道验收门 DOM 探针实测过(截图通道会话级坏死已登记,视觉待
-      用户过目古典/卡通,可按令牌微调)**
-- 注意:ADR-0011(App 形态)与各回看「§6 条件与遗留」是后续规划的
-  输入清单;deepwiki S1-S10 逐里程碑裁决中(S5/S9 已闭合,S3/S4/S8 部分
-  采纳,余 proposed;总表见 FULL-REVIEW §2.4),勿自动采纳
-- 注意:`architecture/deepwiki-validation.md` 的 S1-S10 修订建议仅在各
-  里程碑回看时逐条裁决,勿自动采纳。
+1. 强耦合任务合批,一轮交付、共享全量回归,依赖链顺序不变;
+2. 文档类产物(与代码文件零相交)派后台子代理并行起草,主代理收圈时随手提交;
+3. **不做同仓多代理并行写代码**(runtime.rs 单点合并成本 > 收益;Rust target 目录锁/冷编译),防冲突规程与单写者纪律不破。
+
+## 环境与工具
+
+- Rust 1.98 / Node 24 / Python 3.13;gh CLI 已装;tauri-cli 未装(桌面壳 = `shell/tauri` 手工构建,见其 README);
+- 合同校验:`python boenmind-contracts/scripts/validate.py`(提交前置);
+- 性能测试命令、启动命令与 BOEN_* 环境变量表 → `PLAYBOOK.md` §1/§4;
+- context7 MCP 可用(库文档查询;真实 Provider/MCP 接入时优先用);
+- MCP 插件源码在独立仓 `D:\96_CoderWorld\boenmind-mcp-servers`(仓外);
+- 运行时配置在**数据目录**(默认 `%APPDATA%\Roaming\boenmind\config\`),不在仓库;
+- 已确认:libsqlite3-sys bundled 默认启用 SQLITE_ENABLE_FTS5——M5 memory 检索 FTS5 实际生效,LIKE 仅兜底。
+
+## 最高频坑(全表见 PLAYBOOK)
+
+1. 事件信封 JSON 字段名是 `type`(serde rename),不是 `event_type`;
+2. 静态页无缓存头,发版后 Ctrl+F5;内联脚本语法错误整页静默失效——改完必须 `node --check`;
+3. 大段内联脚本(python heredoc)写文件易静默失败——先 Write 成文件再执行。

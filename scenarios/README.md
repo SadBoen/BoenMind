@@ -1,10 +1,12 @@
 # 常见用户使用场景(CLI 实测清单)
 
+> ⚠ 状态(2026-09-01 标注):本清单的 2026-08-30 实测记录有效;但两处用法已过时——
+> 网页终端 cli.html 已随 dsh 前端废止删除,`scenarios/run_all.sh` 已不存在,
+> 实测请直接在本机终端逐条输入。场景命令本身仍可与 `boenmind --help` 对照使用。
+
 - 目的:以真实用户视角,经 `boenmind` CLI 走通常见场景;发现的问题
   一律记入 `milestones/AUDIT-2026-08-30.md` 台账,**只记录不修改**。
 - 前置:boenmind-server 运行中(本机 7531);`boenmind` CLI 在同目录。
-- 用法:可直接在网页终端 `http://127.0.0.1:7531/cli.html` 逐条输入,
-  或执行 `scenarios/run_all.sh`。
 
 ## 场景总表
 

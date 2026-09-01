@@ -1,12 +1,16 @@
 # BoenMind 合同工件库（Layer 1）
 
 > 本文不是架构文档。架构原则见《BoenMind 核心架构基线》；这里是基线 M0.2 所说的
-> "可机器校验合同"的实际载体。当前为 **M1 范围**，版本 **v1.0（2026-08-28 冻结，M0.2 交付）**。
+> "可机器校验合同"的实际载体。版本 **v1.0（2026-08-28 冻结，M0.2 交付；自冻结起
+> 字段只增不破，M4/M7/W4 等按 Minor 只增）**。
 >
-> **这不是项目源代码，也不只是校验器。**本目录是规格层：真正的源代码（Rust
-> Runtime Core 等）尚不存在，将由 AI 实现者按本目录的 schema、迁移表、黄金轨迹
-> 和不变量编写，并接受它们的验收。validate.py 只是本目录 17 个文件中的 1 个——
-> 它现在校验合同自身的一致性；实现开始后，在校验实现是否符合合同（进 CI）。
+> **这不是项目源代码，也不只是校验器。**本目录是规格层：源代码在 `../runtime/`
+> （Rust workspace），由 AI 实现者按本目录的 schema、迁移表、黄金轨迹和不变量
+> 编写并接受验收。validate.py 只是本目录（40+ 文件，22 个冻结 JSON）中的 1 个——
+> 它校验合同自身的一致性（R1-R4）；R5（不变量↔测试同名）与 R6（错误码枚举同步）
+> 由 `bm-contract`/`bm-testkit` 的 Rust 同步测试在 `cargo test` 中代偿执行。
+> 当前合同域：surface/wire/registry/state-machines/capability/task/mcp/memory/
+> model/evaluation/budget/logs + golden-traces + invariants。
 
 ## 在规格分层中的位置
 

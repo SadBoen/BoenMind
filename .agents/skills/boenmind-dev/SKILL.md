@@ -16,6 +16,11 @@ description: BoenMind 仓库的开发规程技能,把 AGENTS.md 硬纪律转成�
 | 架构变更 | `architecture/boenmind.c4`(先改)+ 相关 ADR |
 | 实现里程碑 | 基线 `BoenMind-CORE-ARCHITECTURE.md` §18 对应小节 + `milestones/` 既有规格 |
 | 任何新决策 | `adr/README.md`(新文件、编号递增,不改既有 ADR 语义) |
+| 查还欠什么 / 收官登记遗留 | `milestones/BACKLOG.md`(唯一台账) |
+| 环境/命令/踩坑 | 根目录 `PLAYBOOK.md` |
+
+补充纪律(ADR-0015):给基线增补=熔入正文并标注 ADR 编号,不挂追加式引注块;
+基线 §1-§24 编号是硬锚点,重排前先 `grep -rn "基线 §" adr/ milestones/`。
 
 ## 清单 A:改 boenmind-contracts(合同已冻结 v1.0)
 
@@ -27,7 +32,7 @@ description: BoenMind 仓库的开发规程技能,把 AGENTS.md 硬纪律转成�
 ## 清单 B:架构变更
 
 1. 先改 `architecture/boenmind.c4`,再改基线文字;两者不一致时以模型为准。
-2. 决策本身发新 ADR(`adr/ADR-000N-<slug>.md`);把结论并入基线正文时保留 ADR 增补标记。
+2. 决策本身发新 ADR(`adr/ADR-000N-<slug>.md`);把结论并入基线正文时**熔入对应段落并标注 ADR 编号**(ADR-0015:不再挂追加式引注块)。
 3. `architecture/deepwiki-validation.md` 的 S1–S10 是 proposed:只在里程碑回看时逐条裁决,不得自动采纳。
 
 ## 清单 C:实现里程碑(`runtime/` 代码)
@@ -41,7 +46,7 @@ description: BoenMind 仓库的开发规程技能,把 AGENTS.md 硬纪律转成�
 
 1. 全量测试 + `validate.py` 全绿 + 黄金轨迹回放通过。
 2. 按基线 §19 过回看门;逐条裁决本里程碑相关的 ADR 验收条件与 S1–S10 中相关项。
-3. 进度只认 git:更新 AGENTS.md 进度区 → 打 tag → 提交说明写清动机。
+3. 进度只认 git:`milestones/HISTORY.md` 加交付行、遗留入 `milestones/BACKLOG.md`、AGENTS.md 顶部当前状态一行 → 打 tag → 提交说明写清动机。
 
 ## 提交纪律
 

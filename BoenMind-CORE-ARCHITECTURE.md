@@ -1,10 +1,12 @@
 # BoenMind 核心架构基线
 
-> 状态：独立架构基线，暂不受既有 BoenMind 分支方案约束。
-> 来源：2026-08-26 与用户重新梳理后的核心愿景。
-> 本文讨论的是目标系统的第一性原理，不是对 DSH、Pi、Pi Agent Rust 或旧 BoenMind 方案的照搬。
-
-> **阶段修订说明（2026-08-27）**：本文分为两个阶段。阶段一先交付能够在 Windows、Linux、macOS 上运行的 AI 工作软件；阶段二才评估是否继续向 AI Runtime / AI OS 发展。阶段二的完整系统级设计保留为长期方向，但不是阶段一的实现前提或验收条件。
+> 定位：目标系统的第一性原理与稳定结论——原则、边界、不变量、核心裁决、里程碑制度。
+> 源起：2026-08-26 与用户重新梳理后的核心愿景；不照搬 DSH、Pi、Pi Agent Rust 或旧 BoenMind 方案。
+> 分期：阶段一交付能在 Windows、Linux、macOS 上长期运行的 AI 工作软件；阶段二才评估是否演进为 AI Runtime / AI OS（§21）。阶段二的完整系统级设计是长期方向，不是阶段一的前提或验收条件。
+>
+> **如何读**：§1-§16 原则与合同面；§17 核心裁决；§18 里程碑定义；§19 回看制度；§22 大白话版；§23 ADR 机制；§24 模型即代码。
+> **维护规则**：架构增量一律发 ADR（§23）；ADR 对本文的修订**直接熔入正文并标注 ADR 编号**，不挂追加式引注块（ADR-0015）；正文与 `architecture/boenmind.c4` 不一致时以模型为准。
+> **编号锚点**：§1-§24 编号被 adr/、milestones/ 大量引用（§13.5/§17/§18/§19 最密）；重排本文结构前必须先 grep 引用面（`grep -rn "基线 §" adr/ milestones/`）。
 
 ## 1. 产品本质
 
@@ -50,9 +52,9 @@ Agent 接到了什么任务？
 
 阶段一的 Wire API 是未来 L1 Kernel Contract 的子集与前身：凡进入 Wire API 的字段自冻结之日起只增不破；阶段二收敛 L1 合同时以阶段一的实证为基础收缩边界，而不是推倒重来。
 
-阶段一同时冻结一批非目标：单用户、单设备、本地优先，无账号体系；无多设备同步与远程访问；无用户可编程自动化规则引擎；无移动端 Surface；无插件市场（仅本地安装）；无跨能力自动事务。非目标不是永远不做，而是防止范围蔓延；解除某条非目标前，必须先检查它是否破坏既有合同与扩展点。
+阶段一同时冻结一批非目标：单用户、单设备，无账号体系；无多设备同步；无用户可编程自动化规则引擎；无移动端 Surface；无插件市场（仅本地安装）；无跨能力自动事务。非目标不是永远不做，而是防止范围蔓延；解除某条非目标前，必须先检查它是否破坏既有合同与扩展点。
 
-> **ADR-0009 增补（2026-08-29）**：解除「无远程访问」的受限版本——Runtime 允许部署于用户自管的 Linux VPS，单用户经 TLS + 个人令牌/passkey 的网页 Surface 访问；仍无账号体系、无多用户、无多设备同步（访问端无状态，状态单一权威仍在 Runtime）、无移动端。「本地优先」修正为「私有部署优先（本机或自管 VPS）」。Surface 矩阵：CLI（脚本 JSON/JSONL + 交互式 TUI）与 Web UI 为阶段一交付 Surface；Tauri 仅作 Windows 桌面壳并复用 Web 前端同一代码库；不做 Linux/macOS 桌面壳。安全前置与里程碑落点见 ADR-0009 与威胁模型 T-13/T-14。
+部署形态与 Surface 矩阵（ADR-0009 修订，2026-08-29）：原「本地优先」修正为**私有部署优先（本机或自管 VPS）**——Runtime 允许部署于用户自管的 Linux VPS，单用户经 TLS + 个人令牌/passkey 的网页 Surface 访问；仍无账号体系、无多用户、无多设备同步（访问端无状态，状态单一权威仍在 Runtime）、无移动端。Surface 矩阵：CLI（脚本 JSON/JSONL + 交互式 TUI）与 Web UI 为阶段一交付 Surface；Tauri 仅作 Windows 桌面壳并复用 Web 前端同一代码库（ADR-0013/0014 后 = `runtime/webapp`）；不做 Linux/macOS 桌面壳。安全前置与里程碑落点见 ADR-0009 与威胁模型 T-13/T-14。
 
 ## 2. 核心对象边界
 
@@ -140,9 +142,7 @@ App 状态：各 App 私有数据、凭据引用、领域投影
 Provider 状态：连接器游标、外部系统映射、可恢复的副作用记录
 ```
 
-Task 的规范状态、生命周期和事件归 L2 持有；Orchestrator 自己保存的 Task Board、编队策略和卡片布局属于 Projection 或编排层私有状态，可由事件重建，不能成为 Task 存在与否的唯一依据。
-
-> **ADR-0004 增补（2026-08-28）**：改写第 141 行及裁决原文的并列表述为三层归属：(a) Task/Session/Operation/Approval/Artifact 的规范状态与生命周期——L2 唯一持有；(b) 编排决策（命令意图、成员变更、预算扣减）——以不可变决策/意图事件持久写入 L2 事件日志，属持久合同；(c) UI 视图（Task Board、卡片布局、排序偏好）与 Orchestrator 策略私有参数（prompt 模板选择等）——Projection/私有状态，可随时丢弃重建，永不作为 Task 存在性依据。
+Task 的规范状态、生命周期和事件归 L2 持有；Orchestrator 自己保存的 Task Board、编队策略和卡片布局属于 Projection 或编排层私有状态，可由事件重建，不能成为 Task 存在与否的唯一依据。归属细分为三层（ADR-0004）：(a) Task/Session/Operation/Approval/Artifact 的规范状态与生命周期——L2 唯一持有；(b) 编排决策（命令意图、成员变更、预算扣减）——以不可变决策/意图事件持久写入 L2 事件日志，属持久合同；(c) UI 视图（Task Board、卡片布局、排序偏好）与 Orchestrator 策略私有参数（prompt 模板选择等）——Projection/私有状态，可随时丢弃重建，永不作为 Task 存在性依据。
 
 L0 只保存启动和升级所需的最小控制状态；业务状态归 L2、App 或 Provider 所有。
 Runtime Core 重启或换代时，必须从持久状态恢复，而不是依赖旧进程仍在内存中。
@@ -684,7 +684,7 @@ provider_instance_id 授权时固化的 Provider 实例标识
 resume_cursor    断线重连或事件重放位置，可为空
 ```
 
-> **ADR-0001 增补（2026-08-28）**：Broker 在授权决策点从 Registry 取 binding 并固化不可变 binding_epoch 与 provider_instance_id,写入调用凭证与审计记录并由 Provider 侧校验,不匹配即拒绝或重试;热替换(§13.1 draining→handshake→原子切 binding)只影响后续调用,不得改变在途调用的授权-执行-审计一致性;须对 §6.4 Provider Binding 结构与 §7 调用关联字段做相应字段增补。
+授权决策点固化（ADR-0001）：Broker 在授权决策点从 Registry 取 binding 并固化不可变 `binding_epoch` 与 `provider_instance_id`，写入调用凭证与审计记录并由 Provider 侧校验，不匹配即拒绝或重试；热替换（§13.1 draining→handshake→原子切 binding）只影响后续调用，不得改变在途调用的授权-执行-审计一致性。
 
 `operation_id` 对应一次可恢复的执行状态，而不是某个进程内的临时 Future。Surface 断开连接不等于 Operation 或 Task 被取消；取消必须是显式语义。
 
@@ -783,7 +783,7 @@ state
 
 日志与产物有保留策略：Event Log 与 Execution Log 默认保留期由配置决定；Artifact 有大小上限和回收规则。用户删除权是个人数据软件的硬需求：删除按范围（单 Task / 单 App 域 / 全局）执行，等于状态删除 + 事件日志墓碑标记 + 投影重建 + 记忆级联失效；墓碑保证消费者回放时不会"删了又长回来"。备份必须加密，脱敏一致性同日志，备份中的删除靠墓碑重放生效。
 
-> **ADR-0004 增补（2026-08-28）**：改写第 776 行为『投影自持久事件日志与周期性快照重建；事件日志实行 Kafka log compaction 式压实，快照/压实为强制义务，不依赖保留期配置』，并相应废止第 1316 行『仅升级前创建快照』的单一时点要求。
+投影与快照（ADR-0004）：投影自持久事件日志与周期性快照重建；事件日志实行 Kafka log compaction 式压实，**快照/压实为强制义务，不依赖保留期配置**。此项同时废止「仅升级前创建快照」的单一时点要求，§13.7 按此执行。
 
 ## 9. 四种交互语义
 
@@ -861,7 +861,7 @@ interrupted
 
 其中 `outcome_unknown` 只能通过外部系统核验、用户裁定或明确的恢复流程结束，不能被普通重试逻辑当作 `failed` 处理。
 
-> **ADR-0004 增补（2026-08-28）**：§9.5 增补：外部副作用命令必须携带稳定的 Task-step-attempt 幂等键；恢复时对 outcome_unknown 的 Operation 先查询/认领/补偿，禁止依据投影推导直接重发命令。
+幂等键（ADR-0004）：外部副作用命令必须携带稳定的 Task-step-attempt 幂等键；恢复时对 `outcome_unknown` 的 Operation 先查询/认领/补偿，禁止依据投影推导直接重发命令。
 
 ### 9.6 Approval 状态机
 
@@ -912,7 +912,7 @@ budget:
 追加预算是受控变更：只能由用户批准；Coordinator 不能扩大预算
 ```
 
-> **ADR-0002 增补（2026-08-28）**：§9.7/§11.1 增补预算二分明文:『Coordinator 可在 Task 预算包络内向成员子分配预算(逐笔记账、仅在包络内分配),不可扩容;包络扩容仅限用户批准(§9.7 第900行不变);成员重试受 manifest retry 策略与成员级预算双重约束,Broker 为唯一执行点。』
+预算二分（ADR-0002）：Coordinator 可在 Task 预算包络内向成员子分配预算（逐笔记账、仅在包络内分配），不可扩容；包络扩容仅限用户批准；成员重试受 manifest retry 策略与成员级预算双重约束，Broker 为唯一执行点。
 
 ### 9.8 统一错误信封
 
@@ -969,7 +969,7 @@ music.control
 
 > Butler 拥有系统协调权，不自动拥有其他领域的操作权。
 
-> **ADR-0002 增补（2026-08-28）**：§10.1 修订 capability.call 条目:『capability.call 作为协调权行使时,仅能引用 manifest 已批准的能力清单、资源谓词与风险等级,不得作为泛化逃生舱;来源含 untrusted 且风险等级 reversible 及以上时强制 approval_required;低风险确定性能力可按 task:<id> 作用域批量预授权。』
+capability.call 的边界（ADR-0002 修订）：作为协调权行使时，仅能引用 manifest 已批准的能力清单、资源谓词与风险等级，不得作为泛化逃生舱；来源含 untrusted 且风险等级 reversible 及以上时强制 approval_required；低风险确定性能力可按 task:<id> 作用域批量预授权。
 
 ### 10.2 Butler 调用其他 App 的两条路径
 
@@ -1020,9 +1020,7 @@ Butler App
 
 L2 持有 Task 的规范状态、成员关系、预算、截止时间和生命周期事件。Orchestrator 可以持有 Task Board、编队策略和任务卡片投影，但不能以自己的数据库代替 L2 的规范状态。Orchestrator 崩溃时，Task 和 Agent 会话继续由 Runtime 监督；Orchestrator 恢复后从持久状态和事件日志重建投影。
 
-> **ADR-0004 增补（2026-08-28）**：新增恢复语义条款：Orchestrator 恢复 = 先结算未决意图，再从最近一致的持久状态与决策事件重新推理下一步；明确声明不重放 LLM 内部推理过程；Runtime 仅承担会话监督，并定义编排重启的触发者与停滞窗口上限。
-
-> **ADR-0004 条件 6 结算（2026-08-29，M5）**：编排重启触发者恰为二者：①用户显式 resume（任意 Surface 的 task.resume）；②Watchdog 自动触发——监护判定停滞成立后持久发布事实事件 watchdog.reorchestration.triggered，由编排器消费后从最近一致的持久状态与决策事件重新推理；Watchdog 与 Runtime 监督层均不推断编排下一步。停滞窗口：无进展信号（无新事件/无心跳更新/无 Operation 状态变化）持续超停滞阈值（默认 15 分钟，Task 可配置）判定 stalled 并触发自动重启；自最近进展累计超硬顶（默认 24 小时）不再自动重启，Task 转 blocked 等待用户裁定；waiting_approval 态豁免自动重启。数值与机制详见 `milestones/M5-implementation-spec.md` §5.2。
+恢复语义（ADR-0004；条件 6 于 M5 结算）：Orchestrator 恢复 = 先结算未决意图，再从最近一致的持久状态与决策事件重新推理下一步；明确声明不重放 LLM 内部推理过程；Runtime 仅承担会话监督。编排重启的触发者恰为二者：①用户显式 resume（任意 Surface 的 task.resume）；②Watchdog 自动触发——监护判定停滞成立后持久发布事实事件 `watchdog.reorchestration.triggered`，由编排器消费后重新推理；Watchdog 与 Runtime 监督层均不推断编排下一步。停滞窗口：无进展信号（无新事件/无心跳更新/无 Operation 状态变化）持续超停滞阈值（默认 15 分钟，Task 可配置）判定 stalled 并触发自动重启；自最近进展累计超硬顶（默认 24 小时）不再自动重启，Task 转 blocked 等待用户裁定；waiting_approval 态豁免自动重启。数值与机制详见 `milestones/M5-implementation-spec.md` §5.2。
 
 ## 11. Agent Team 与 Coordinator Agent
 
@@ -1066,11 +1064,9 @@ Butler Agent
 不能扩大 Task 预算
 ```
 
-> **ADR-0002 增补（2026-08-28）**：§11.2 增补:『Coordinator 的协调动词按其所属 Task 子树裁剪:task.cancel/agent.pause/agent.stop/task.collect/team.create 仅可作用于本 Task 子树内的成员与子任务,作用域绑定 §3 的「当前 Task」与「父子归因」字段;子树外目标一律默认拒绝。』
+子树裁剪（ADR-0002）：Coordinator 的协调动词按其所属 Task 子树裁剪——task.cancel/agent.pause/agent.stop/task.collect/team.create 仅可作用于本 Task 子树内的成员与子任务，作用域绑定 §3 的「当前 Task」与「父子归因」字段；子树外目标一律默认拒绝。
 
-> **ADR-0002 增补（2026-08-28）**：§11.2 增补协调权二分:『协调权细分为 safe_coordination(只读查询、状态查询、结果收集,可默认继承)与 mutation_coordination(生命周期控制与团队组建:cancel/pause/stop/agent.spawn/team.create,须在 Task 授权中显式列出,不可默认继承)。』
-
-> **ADR-0002 增补（2026-08-28）**：§17/R2 措辞修订:『删除「Coordinator 为确定性有界状态机」类表述,改为:Coordinator 是含受限判断行为(创建成员、重试或替换成员)的非确定性控制面实体,其安全由交集、预算、默认拒绝审批与子树裁剪等补偿控制围堵而非消除。』
+协调权二分（ADR-0002）：协调权细分为 safe_coordination（只读查询、状态查询、结果收集，可默认继承）与 mutation_coordination（生命周期控制与团队组建：cancel/pause/stop/agent.spawn/team.create，须在 Task 授权中显式列出，不可默认继承）。据此，Coordinator 是含受限判断行为（创建成员、重试或替换成员）的**非确定性控制面实体**，其安全由交集、预算、默认拒绝审批与子树裁剪等补偿控制围堵而非消除（不采用「确定性有界状态机」类表述）。
 
 ### 11.3 权限计算
 
@@ -1104,7 +1100,7 @@ Progress Events
 
 团队不默认共享所有 App 原始记忆和数据库。
 
-> **ADR-0002 增补（2026-08-28）**：§11.3 增补公式落地条款:『三方交集的计算结果必须物化为经 Broker 记账的 Approval/Grant 绑定记录(作用域 task:<id>、默认拒绝、可撤销、重启可恢复);Grant 字段含 audience、action、资源谓词、delegation_depth=0(不可再转授)、过期时间、撤回版本与父授权哈希;成员角色授权的签发者定义为 Coordinator,且不得超过其自身 Grant 上界。』
+Grant 物化（ADR-0002）：三方交集的计算结果必须物化为经 Broker 记账的 Approval/Grant 绑定记录（作用域 task:<id>、默认拒绝、可撤销、重启可恢复）；Grant 字段含 audience、action、资源谓词、delegation_depth=0（不可再转授）、过期时间、撤回版本与父授权哈希；成员角色授权的签发者定义为 Coordinator，且不得超过其自身 Grant 上界。
 
 ## 12. Plugin 与 App 的运行模型
 
@@ -1285,12 +1281,11 @@ v2 验证失败或启动崩溃
   → 记录 rollback.completed
 ```
 
-> **ADR-0003 增补（2026-08-28）**：将『切换后异常可回退 active 指针』修订为带边界的表述:『active 指针回退仅对可执行工件、只读配置与本地指针原子有效;仅当状态格式未发生不兼容变更(或存在声明兼容读取层)且切换后未产生状态分叉时方可自动回退;不可逆迁移已执行或状态已分叉时,只能经迁移前快照恢复或人工维护窗口回退,禁止以指针回退制造旧代码读新事实的静默损坏(细化 §13.4 L1250-1258)。』
+回退边界（ADR-0003）：active 指针回退仅对可执行工件、只读配置与本地指针原子有效；仅当状态格式未发生不兼容变更（或存在声明兼容读取层）且切换后未产生状态分叉时方可自动回退；不可逆迁移已执行或状态已分叉时，只能经迁移前快照恢复或人工维护窗口回退，禁止以指针回退制造旧代码读新事实的静默损坏。
 
-双代际期间必须有写入栅栏：同一 Agent、Task、Registry 或事件日志不能被 v1/v2 同时写入。L0 通过 generation lease/单写者租约或等价机制确认当前写入者；仅有“两个进程都启动成功”不能视为切换完成。
+双代际期间必须有写入栅栏：同一 Agent、Task、Registry 或事件日志不能被 v1/v2 同时写入。L0 通过 generation lease/单写者租约或等价机制确认当前写入者；仅有“两个进程都启动成功”不能视为切换完成。术语定位（ADR-0003）：「单写者租约」统一为 lease/fencing 机制（排他写权+过期栅栏），不采用「consensus 原语」表述；其保证范围限于本地写权排他与旧代际禁写，不提供远端副作用确认或撤销；租约异常时拒绝授予新租约并冻结写入等待人工介入。
+
 模型正在生成的瞬态流不要求无缝续接；应将未完成回合标记为 `interrupted`，由新代际按恢复规则继续或重新执行。
-
-> **ADR-0003 增补（2026-08-28）**：术语修正:全文将『单写者租约』统一定位为 lease/fencing 机制(排他写权+过期栅栏),不采用『consensus 原语』表述;明确其保证范围限于本地写权排他与旧代际禁写,不提供远端副作用确认或撤销;租约异常时拒绝授予新租约并冻结写入等待人工介入。
 
 升级恢复的目标是**语义连续**，不是保证每个瞬间的内存状态连续：
 
@@ -1299,7 +1294,7 @@ v2 验证失败或启动崩溃
 - 不能安全判断结果的外部副作用必须进入 `outcome_unknown`，不能自动重放；
 - 新代际恢复后应向 Surface 发布 `generation.changed` 和必要的 `agent.interrupted`/`task.recovered` 事件。
 
-> **ADR-0003 增补（2026-08-28）**：明确语义连续边界与频率约束:『升级目标是会话级连续;in-flight 回合标记 agent.interrupted 并自持久状态恢复;升级频率纳入策略约束(升级窗口合并、最低升级间隔),连续性承诺不依赖内存连续,且 draining 范围与 interrupted 宽松度不得随实现放宽。』
+语义连续的边界与频率约束（ADR-0003）：升级目标是会话级连续；in-flight 回合标记 agent.interrupted 并自持久状态恢复；升级频率纳入策略约束（升级窗口合并、最低升级间隔）；连续性承诺不依赖内存连续，且 draining 范围与 interrupted 宽松度不得随实现放宽。
 
 升级事务至少应记录以下阶段，并且阶段状态本身归 L0 持久化：
 
@@ -1316,9 +1311,9 @@ failed       升级失败，等待清理或人工处理
 
 迁移必须优先写入新代际专属的临时/版本化状态，验证通过后再提交 active 指针；不能在旧代际仍 active 时直接原地改写其唯一状态库。迁移脚本必须声明输入版本、输出版本、是否可逆、失败清理方式和校验方法。
 
-> **ADR-0003 增补（2026-08-28）**：新增 post-switch probation 条款:新代际切换后进入观察窗,健康判据至少包括——规定时限内完成一次成功的 Agent 会话恢复、Provider binding 确认、租约正常续约、无未处理 error event;判据满足视为升级成功(对标 Android markBootSuccessful),状态未分叉的异常触发自动回退,状态已分叉的异常冻结写入并转人工处置;判据未在基线定义前不得启用自动回滚。
+切换后观察窗 probation（ADR-0003）：新代际切换后进入观察窗，健康判据至少包括——规定时限内完成一次成功的 Agent 会话恢复、Provider binding 确认、租约正常续约、无未处理 error event；判据满足视为升级成功（对标 Android markBootSuccessful）；状态未分叉的异常触发自动回退，状态已分叉的异常冻结写入并转人工处置；判据未在基线定义前不得启用自动回滚。
 
-> **ADR-0003 增补（2026-08-28）**：新增外部副作用前置条款:『触及真实 Provider 的升级,validating 通过不构成自动切换的充分条件;须叠加幂等键、Provider 查询/对账合同或升级前生产探针中的至少一项;不可证明副作用的升级标记为人工维护窗口并保留旧版本,不得宣称自动回滚』——将 §13.3 的核验流程前置为升级门槛。
+外部副作用前置（ADR-0003）：触及真实 Provider 的升级，validating 通过不构成自动切换的充分条件；须叠加幂等键、Provider 查询/对账合同或升级前生产探针中的至少一项；不可证明副作用的升级标记为人工维护窗口并保留旧版本，不得宣称自动回滚——§13.3 的核验流程由此前置为升级门槛。
 
 ### 13.5 升级级别
 
@@ -1335,7 +1330,7 @@ Major
 
 真正类似“Windows 10 → Windows 11”的，是 L1 根合同、身份/权限根语义或不可兼容的持久状态格式发生变化，而不是普通 Runtime Core 修复。
 
-> **ADR-0003 增补（2026-08-28）**：新增分层适用条款:『完整 generation 升级流程(双代际+隔离 validating)适用于不可兼容 L1/L2 语义升级(L1 Major)与 Runtime Service 级升级;L1 Minor 与 L2 插件默认走 §13.1/§13.6 局部 draining/原子 binding 替换,且局部路径强制同等单写者 fencing 与排空保证』——将 §13.5/§13.6 既有分级显式写入 R3 裁决文本。
+分层适用（ADR-0003）：完整 generation 升级流程（双代际+隔离 validating）适用于不可兼容 L1/L2 语义升级（L1 Major）与 Runtime Service 级升级；L1 Minor 与 L2 插件默认走 §13.1/§13.6 局部 draining/原子 binding 替换，且局部路径强制同等单写者 fencing 与排空保证。
 
 ### 13.6 局部升级与系统级升级对照
 
@@ -1353,7 +1348,7 @@ Upgrade Manager 属于 L0 控制面，不承载业务 Agent。它负责：
 
 - 管理 Runtime generation 和 active 指针；
 - 保存版本、合同、迁移和回滚元数据；
-- 在升级前创建快照或事件日志检查点；
+- 维护快照/事件日志压实的持续义务（§8.4，ADR-0004），升级前确认检查点就绪；
 - 启动验证代际并执行健康检查；
 - 施加“同一状态单写者”约束；
 - 处理排空、取消和长连接交接；
@@ -1487,56 +1482,18 @@ Model Provider 不可用 → Query、低风险确定性 Capability 仍可用
 GUI 不可用             → CLI 继续提供用户操作和运行控制
 ```
 
-> **ADR-0004 增补（2026-08-28）**：§14.2 增补接管协议：取得接管权时由 L2 递增 task_epoch；所有编排命令携带 epoch 并经 CAS 校验与租约门禁；过期 epoch 命令返回可审计的 stale-command 结果。
+接管协议（ADR-0004）：取得接管权时由 L2 递增 task_epoch；所有编排命令携带 epoch 并经 CAS 校验与租约门禁；过期 epoch 命令返回可审计的 stale-command 结果。
 
 ## 15. 推荐核心拓扑
 
-```text
-┌──────────────────────────────────────────────┐
-│                 Surfaces                     │
-│  Chat │ CLI │ Search │ Voice │ Notification │ API │
-└──────────────────────┬───────────────────────┘
-                       │ Surface Protocol
-                       ▼
-┌──────────────────────────────────────────────┐
-│ L0 Bootstrap / Supervisor / Upgrade Manager  │
-│ generation 选择、健康检查、排空、回滚        │
-└──────────────────────┬───────────────────────┘
-                       │ manages
-┌──────────────────────▼───────────────────────┐
-│ L1 Kernel Contract                           │
-│ IPC / Identity / Capability / Event / State  │
-└──────────────────────┬───────────────────────┘
-                       │ implemented by
-┌──────────────────────▼───────────────────────┐
-│ L2 AI Runtime Core / active generation      │
-│ Identity / Registry / Capability Broker      │
-│ Permission / Event Bus / Persistence          │
-│ Agent Lifecycle / Task / Team                 │
-│ Scheduler / Recovery / Memory / Skill         │
-└───────────────┬──────────────┬───────────────┘
-                │ IPC          │ IPC
-       ┌────────▼──────┐ ┌─────▼─────────┐
-       │ L4 Butler App │ │ L3/L4 Apps    │
-       │ Coordinator   │ │ Providers /   │
-       │ Task control  │ │ Mail/Stock/   │
-       └───────────────┘ │ Music/Audio   │
-                         └───────────────┘
-```
+拓扑唯一权威是 `architecture/boenmind.c4`（详见 §24，ADR-0008）。本节不再复制图形——2026-08-28 之前的 ASCII 文字拓扑已声明降级为非权威并移除；文字与模型不一致时，以模型为准。已裁决的形态增量（正文随 ADR 熔入）：部署形态 = 本机单进程或自管 VPS 托管（ADR-0009）；Web UI Surface = assistant-ui 自建壳 `runtime/webapp`（ADR-0013 弃 dsh 复刻、ADR-0014 定 assistant-ui 路线）；真实 App 与 MCP 工具以进程外 stdio server 接入（ADR-0011）。C4 模型与实现的已知漂移台账见 `milestones/BACKLOG.md`（F-06/F-08，模型回写列为下一批开工前置）。
 
-CLI 对 L0 的运行控制请求走单独的 Control Protocol；对 L2 的用户操作请求仍走 Surface Protocol 和 Capability Broker。两条路径可以由同一个 `boenmind` 可执行文件提供，但合同、权限和审计边界必须保持分离。
+本节保留两条恒定规则：
 
-> **模型即代码（2026-08-28 起）**：本拓扑已重构为 Structurizr C4 DSL 工作区 `architecture/boenmind.c4`（经 structurizr-dsl 4.1.0 解析验证：85 元素、128 关系、12 视图），含系统上下文、容器、L2 组件三类静态视图，六个动态视图（§7 调用管线、§10.2 双路径、§22 端到端流、§13.1 热替换、§13.2 崩溃恢复、§13.4 代际升级），以及三个部署环境（阶段一单进程／阶段一变体 VPS 托管／阶段二多进程，对应 §2.1／§4.3／§21；VPS 变体自 2026-08-29 ADR-0009 起）。拓扑变更自本文档生效起一律先改模型、再改文字；文字图与模型不一致时，以模型为准（见 §24 与 ADR-0008）。
+1. **CLI 双协议边界**：CLI 对 L0 的运行控制请求走单独的 Control Protocol；对 L2 的用户操作请求仍走 Surface Protocol 和 Capability Broker。两条路径可以由同一个 `boenmind` 可执行文件提供，但合同、权限和审计边界必须保持分离。
+2. **跨域调用统一入口**：Caller → Capability Broker → Registry → Policy → Provider，不存在第二条绕行通道。
 
-所有跨域调用统一经过：
-
-```text
-Caller
-  → Capability Broker
-  → Registry
-  → Policy
-  → Provider
-```
+L0-L5 分层与各部件职责见 §2.1；容器级拓扑、部署环境与动态视图见 `architecture/boenmind.c4`（§24）。
 
 ## 16. 核心规则总表
 
@@ -1599,27 +1556,17 @@ Runtime generation、状态迁移与回滚
 
 > **总线负责“发生了什么”和异步协作；注册表负责“谁提供什么”；Broker 负责“能不能调用以及调用谁”；Agent 只在需要理解和规划时介入；低风险、确定性的公开能力直接走 Capability Broker。**
 
-### 17.1 裁决复核与修订（2026-08-28）
+### 17.1 裁决复核（2026-08-28）与增补熔入
 
-上述裁决中的五条核心裁决已经多模型辩论复核。协议为 Zen consensus：glm-5-turbo、gpt-5.6-luna、gemini-3.7-flash 三个模型家族分任架构师（钢人论证）、挑战者（安全与可靠性反驳）、实证研究者（以真实系统证据裁决），角色跨裁决轮换，两轮辩论（独立立场→交叉质证）+逐裁决合成；全程转录见 `architecture/debates/`，决策与条件见 `adr/`。
-
-| 裁决 | 辩论结论 | 共识:分歧 | 条件 | ADR |
-|---|---|---|---|---|
-| Registry/Broker/Bus 三权分立 | 有条件维持（Broker 授权数据面快路径合法化；binding_epoch 固化） | 10:4 | 7 | ADR-0001 |
-| Butler 只有协调权、Coordinator 是受限队长 | 修订（协调动词按 Task 子树裁剪＋safe/mutation 二分＋Grant 物化） | 8:5 | 6 | ADR-0002 |
-| L0 独立控制面＋Runtime generation 升级回滚 | 修订（回退限定工件/指针层＋probation 观察窗＋完整代际流程仅限 L1 Major） | 7:4 | 6 | ADR-0003 |
-| Task 规范状态归 L2、任务板只是投影 | 修订（三层归属＋task_epoch fencing＋事件日志压实为强制义务） | 9:4 | 8 | ADR-0004 |
-| 万物皆插件：内核只有合同与最小机制 | 修订（内核最小机制封闭清单＋安全不变量四判据＋改合同双重门槛） | 9:4 | 6 | ADR-0005 |
-
-辩论新增两条裁决：**ADR-0006 权限以合同显式化（元原则）**——未列入注册合同的权力视为不存在；**ADR-0007 L0 自举豁免与升级信任链**——L0 是唯一显式声明的自举豁免体，化解「万物皆插件」与「谁来升级升级器」的自举悖论。
+五条核心裁决（R1-R5）经 Zen consensus 三模型辩论复核：glm-5-turbo、gpt-5.6-luna、gemini-3.7-flash 三个模型家族分任架构师（钢人论证）、挑战者（安全与可靠性反驳）、实证研究者（以真实系统证据裁决），角色跨裁决轮换，两轮辩论（独立立场→交叉质证）+逐裁决合成。结论：R1 三权分立有条件维持，R2-R5 修订，无一条被推翻；辩论新增两条裁决——**ADR-0006 权限以合同显式化（元原则）**与 **ADR-0007 L0 自举豁免与升级信任链**。逐裁决结论、共识比分与条件见 `adr/README.md` 索引与各 ADR 文件；全程转录见 `architecture/debates/`。
 
 三大结构性张力如实记录，供后续里程碑回看时优先审视：①权力分立与协调效率互斥；②极简内核与治理完备互斥；③唯一真源与投影时效互斥。
 
-各 ADR 中「对基线的修订」条款（涉及 §6.4／§7／§9.5／§9.7／§10.1／§11.2／§11.3／§13.4／§14.2 的增补文本）自本文档并入起生效；各修订已逐条并入正文（带 ADR-000N 增补标记），与 ADR 文本一致。外部系统对照验证结论与 S1-S10 修订建议见 §24 及 ADR-0008。
+各 ADR 对基线的修订（涉及 §2.2／§6.4／§7／§8.4／§9.5／§9.7／§10.1／§10.3／§11.2／§11.3／§13.4／§13.5／§13.7／§14.2）已熔入对应正文并标注 ADR 编号；ADR-0015 起这是对基线增补的唯一维护方式（不再使用追加式引注块）。外部系统对照验证结论与 S1-S10 修订建议见 §24 及 ADR-0008；S1-S10 的裁决状态台账见 `milestones/BACKLOG.md`。
 
-## 18. 阶段一：跨平台软件的大小里程碑
+## 18. 里程碑：阶段一 M0-M8 与阶段二批次
 
-阶段一必须按可运行检查点推进，而不是按“模块写完”推进。每个里程碑完成后，都要回头评估此前的设计和实现，再决定是否进入下一个里程碑。
+必须按可运行检查点推进，而不是按“模块写完”推进。每个里程碑完成后，都要回头评估此前的设计和实现，再决定是否进入下一个里程碑。阶段二批次（M9 起）与 W 序列（WebUI）同样按可运行检查点推进；本节只保留各里程碑的范围定义与通过条件，交付状态（日期/tag/测试数/结论/遗留）统一记录于 `milestones/HISTORY.md`，未结事项统一记录于 `milestones/BACKLOG.md`。
 
 ### M0：范围、合同和测试基线
 
@@ -1634,7 +1581,7 @@ M0.6 性能与资源基线定标
 
 通过条件：合同可机器校验，日志可以读取和回放，且至少有一条端到端轨迹作为后续回归基线；扩展点六问与非目标清单生效，成为此后每个新功能的准入检查。
 
-> **M0 交付状态（2026-08-28）**：M0.1 生效（§1.1 非目标清单与 §2.3 扩展点六问即此后每个新功能的准入检查）；M0.2 合同库冻结 v1.0（`boenmind-contracts`，9 个 JSON 带 `x-frozen` 注解 + README 冻结记录）；M0.3–M0.6 工件补齐于 `boenmind-contracts/m0/`——三平台测试矩阵、提示注入用例集（PI-01..12）、威胁模型与数据信任分级（T-01..12）、性能与资源基线定标骨架（P-01..08，数值由 M1 以 mock 模型回填）。通过条件现状：合同可机器校验 ✓；黄金轨迹可回放 ✓；跨平台执行记录自 M1 起按测试矩阵留痕。
+交付记录（2026-08-28，tag `m0.2-contracts-frozen`）：M0.1-M0.6 全部交付——§1.1 非目标清单与 §2.3 扩展点六问即此后每个新功能的准入检查；合同库冻结 v1.0（`boenmind-contracts`，彼时 9 个 JSON 带 `x-frozen` 注解，随后续里程碑只增）；M0.3-M0.6 工件在 `boenmind-contracts/m0/`——三平台测试矩阵、提示注入用例集（PI-01..12）、威胁模型与数据信任分级（T-01..12）、性能与资源基线定标（P-01..08，数值由 M1 以 mock 模型回填）。
 
 ### M1：最小 Runtime 与单 Agent 闭环
 
@@ -1663,9 +1610,7 @@ M2.6 outcome_unknown 处理
 M2.7 全局 event_seq 单调序与 resume cursor 语义
 ```
 
-通过条件：强制终止后可以恢复 Session、Task 和 Operation；已完成操作不会因重启自动重复；重复投递不会破坏投影；未知副作用不会被当成普通失败。
-
-> **ADR-0004 增补（2026-08-28）**：M2（第 1590 行）验收清单增补四项混沌测试（杀 Orchestrator 后 CLI attach、损坏本地任务板库、同 event_seq 前缀重建确定性校验、旧 epoch 命令拒绝）作为 R4 的可证伪验收前置。
+通过条件：强制终止后可以恢复 Session、Task 和 Operation；已完成操作不会因重启自动重复；重复投递不会破坏投影；未知副作用不会被当成普通失败。另含四项混沌测试（ADR-0004，作为 R4 的可证伪验收前置）：杀 Orchestrator 后 CLI attach、损坏本地任务板库、同 event_seq 前缀重建确定性校验、旧 epoch 命令拒绝。
 
 ### M3：统一 Wire API、CLI 和跨平台启动
 
@@ -1751,9 +1696,21 @@ M8.8 数据保留期、用户删除与墓碑回放验证
 
 通过条件：至少两个真实 App 使用同一套 Runtime、Broker、Task 和日志机制；长任务可以回放和评估；关键副作用有执行收据；三平台完成端到端回归；历史会话不因发布和迁移损坏。
 
+### M9：阶段二第一批——记忆抽屉授权、模型真流式、worker 自主环 v0
+
+范围：memory:user 显式授权执行面（Broker 裁决步升级审批 + Grant scope 谓词）；模型连接器真流式（SSE 打字机）；autorun worker 自主环初级版。通过条件：实网流式联通；真实浏览器端到端手测通过；授权与抽屉隔离有可证伪测试。规格与回看：`milestones/M9-implementation-spec.md`、`milestones/M9-review.md`。
+
+### 全面回看 M1-M9
+
+整体回看门：四道门禁全绿（260 测试）；新发现 F-01..F-11 入审计台账；条件：C4 模型回写（F-06）列为阶段二下一批开工前置。记录：`milestones/FULL-REVIEW-2026-08-30.md`。
+
+### W 序列（WebUI，ADR-0014）：W1-W4
+
+以 assistant-ui 组件库自建 Web 壳（`runtime/webapp`，Vite+React+TS），后端 OpenAI 兼容插座 `/v1/chat/completions`（SSE 流式）；约束：每个组件组必须在 assistant-ui 找到原型（W1 规格 §5）。W1 = 壳与流式对话；W2 = 设置中心/provider 库/工作区/可拖布局 + webadmin 管理面（壳子私用，暂不入冻结合同，行为规格 = webadmin_tests）；W3 = 两级主题系统（四主题 + 每主题设置项）；W4 = 对话工具闭环（tools 合同启用 + 直通工具注入）与角色 system prompt。惯例：W 序列验收记录并入各规格的验收门小节，不另立 review 文件（ADR-0015）。
+
 ## 19. 每个里程碑都必须回看、测试和评估
 
-每个 M0-M8 结束后，必须执行以下回看门。没有完成回看，就不算里程碑完成。
+每个里程碑（M 序列与 W 序列批次）结束后，必须执行以下回看门。没有完成回看，就不算里程碑完成。
 
 ```text
 A. 功能测试
@@ -1989,9 +1946,15 @@ Butler 向用户汇报，并保留可回放的工作记录
 | ADR-0007 | L0 自举豁免与升级信任链 | accepted-with-conditions |
 | ADR-0008 | 架构即代码与外部实证验证 | accepted |
 | ADR-0009 | 部署形态与 Surface 策略：VPS 托管／Web＋TUI Surface／Windows 桌面壳 | accepted-with-conditions |
+| ADR-0010 | 第三方模型网关信任边界 | accepted-with-conditions |
+| ADR-0011 | 首批真实 App 以 MCP Server 形态接入 | accepted |
+| ADR-0012 | 配置管理 API（随 M10 dsh 线未提交工作归档） | archived（编号永久跳空，存 `archive/m10-dsh-frontend` 分支，见 ADR-0013 编号说明） |
+| ADR-0013 | 弃用 dsh 复刻前端 | accepted |
+| ADR-0014 | W 序列 WEBUI：assistant-ui 自建壳 | accepted |
+| ADR-0015 | 文档体系整理：熔入式修订与三层附页 | accepted |
 
 ## 24. 架构模型即代码与外部实证验证
 
-- **模型即代码**：全文架构图以 Structurizr C4 DSL 维护于 `architecture/boenmind.c4`（structurizr-dsl 4.1.0 解析验证通过；85 元素、128 关系、12 视图：SystemContext／Container／L2Components＋BrokerCall／ButlerPaths／TaskFlow／ProviderHotSwap／ProviderCrash／GenerationUpgrade 六个动态视图＋阶段一单进程／阶段一变体 VPS 托管／阶段二多进程三个部署环境）。任何 Structurizr 兼容渲染器导入即可出图；修改架构先改模型（ADR-0008；VPS 部署环境自 ADR-0009 起）。
-- **外部实证验证**：以 DeepWiki 对照 Erlang/OTP、Kubernetes、VS Code 三个真实 runtime 系统验证 L0-L5 分层与插件热替换设计，报告见 `architecture/deepwiki-validation.md`——C1-C8 逐条裁决：热替换与崩溃隔离（C7/C8）确认，分层与合同化（C1-C6）部分确认，无偏差；单写者租约与验证期禁副作用为本设计独有加强。修订建议 S1-S10 全部列为 proposed，待对应里程碑回看裁决。
+- **模型即代码**：全文架构图以 Structurizr C4 DSL 维护于 `architecture/boenmind.c4`（structurizr-dsl 4.1.0 解析验证通过；冻结时点 66 元素/111 关系/11 视图，ADR-0009 后演进出 85 元素/128 关系/12 视图，演进口径以 `architecture/README.md` 为准：SystemContext／Container／L2Components＋六个动态视图＋三个部署环境）。任何 Structurizr 兼容渲染器导入即可出图；修改架构先改模型（ADR-0008；VPS 部署环境自 ADR-0009 起）。
+- **外部实证验证**：以 DeepWiki 对照 Erlang/OTP、Kubernetes、VS Code 三个真实 runtime 系统验证 L0-L5 分层与插件热替换设计，报告见 `architecture/deepwiki-validation.md`——C1-C8 逐条裁决：热替换与崩溃隔离（C7/C8）确认，分层与合同化（C1-C6）部分确认，无偏差；单写者租约与验证期禁副作用为本设计独有加强。修订建议 S1-S10 逐条裁决状态（S5/S9 已闭合，S3/S4/S8 部分采纳，余 proposed）以 `milestones/BACKLOG.md` 台账为准，只在里程碑回看时裁决，不自动采纳。
 - **辩论记录**：`architecture/debates/` 存有五条核心裁决的完整辩论转录（三方两轮+逐裁决合成）与跨裁决终局合成，是 §17.1 与全部 ADR 的证据底稿。
