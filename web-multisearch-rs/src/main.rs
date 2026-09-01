@@ -32,6 +32,43 @@ struct Ctx {
     client: reqwest::Client,
 }
 
+/// 自描述声明:插件目录扫描的识别载体。name/标题/描述/config_schema 与
+/// Python 版 manifest.json 逐字对齐;`args` 模板中的 `{config_file}` 由
+/// 批准方(BoenMind webadmin)替换为实际数据目录配置路径。
+fn self_description() -> Value {
+    let schema = json!([
+        {"key": "searxng_url", "label": "SearXNG 实例地址", "type": "string", "default": "",
+         "hint": "自托管 SearXNG 的地址(JSON API);留空则 searxng 源禁用"},
+        {"key": "serper_api_key", "label": "Serper API Key(Google SERP)", "type": "secret", "default": "",
+         "hint": "逗号分隔多把,401/403/429 自动轮换"},
+        {"key": "jina_api_key", "label": "Jina API Key", "type": "secret", "default": "",
+         "hint": "搜索+正文抓取(Reader);免费额度可用"},
+        {"key": "tavily_api_key", "label": "Tavily API Key", "type": "secret", "default": "",
+         "hint": "每月 1000 次免费"},
+        {"key": "exa_api_key", "label": "Exa API Key", "type": "secret", "default": "",
+         "hint": "语义搜索"},
+        {"key": "brave_api_key", "label": "Brave Search API Key", "type": "secret", "default": "",
+         "hint": "每月 2000 次免费"},
+        {"key": "langsearch_api_key", "label": "LangSearch API Key", "type": "secret", "default": "", "hint": ""},
+        {"key": "linkup_api_key", "label": "Linkup API Key", "type": "secret", "default": "", "hint": ""},
+        {"key": "you_api_key", "label": "You.com API Key", "type": "secret", "default": "", "hint": ""},
+        {"key": "websearchapi_api_key", "label": "WebSearchAPI Key", "type": "secret", "default": "", "hint": ""},
+        {"key": "default_limit", "label": "默认返回条数", "type": "range", "min": 1, "max": 20, "default": 5},
+    ]);
+    json!({
+        "name": "web_multisearch",
+        "title": "聚合搜索(12 源)",
+        "description": "并行调用全部搜索源,RRF 融合排序+CJK 同题镜像合并去重,多 Key 自动轮换。工具:web_search_lite(免费四源)/web_search_all(全源)。",
+        "config_schema": schema,
+        "suggested_entry": {
+            "transport": "stdio",
+            "args": ["--config", "{config_file}"],
+            "tool_timeout_ms": 30000,
+            "restart_limit": 3,
+        },
+    })
+}
+
 #[tokio::main]
 async fn main() {
     let mut config_path: Option<std::path::PathBuf> = None;
@@ -41,8 +78,20 @@ async fn main() {
             "--config" => {
                 config_path = args.next().map(std::path::PathBuf::from);
             }
+            // 自描述(两段式接入的"扫描发现"基础,2026-09-02 用户批准):
+            // 打印声明 JSON 后退出——BoenMind 插件目录扫描据此识别候选,
+            // 用户在管理界面点「批准接入」后才落盘 mcp.json(显式批准=安装)。
+            "--self-describe" => {
+                let mut out =
+                    serde_json::to_string_pretty(&self_description()).expect("声明序列化");
+                out.push('\n');
+                print!("{out}");
+                return;
+            }
             other => {
-                eprintln!("[{SERVER_NAME}] 未知参数:{other}(支持 --config <json>)");
+                eprintln!(
+                    "[{SERVER_NAME}] 未知参数:{other}(支持 --config <json> / --self-describe)"
+                );
             }
         }
     }
@@ -282,5 +331,26 @@ mod tests {
         .await
         .expect("应答");
         assert_eq!(resp["error"]["code"], -32601);
+    }
+}
+
+#[cfg(test)]
+mod self_describe_tests {
+    use super::*;
+
+    #[test]
+    fn declaration_shape_matches_contract() {
+        let d = self_description();
+        assert_eq!(d["name"], "web_multisearch");
+        assert!(!d["title"].as_str().unwrap().is_empty());
+        assert_eq!(d["config_schema"].as_array().unwrap().len(), 11);
+        assert_eq!(
+            d["suggested_entry"]["args"][0].as_str().unwrap(),
+            "--config"
+        );
+        assert!(d["suggested_entry"]["args"][1]
+            .as_str()
+            .unwrap()
+            .contains("{config_file}"));
     }
 }
