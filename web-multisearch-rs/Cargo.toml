@@ -1,0 +1,28 @@
+[package]
+name = "web-multisearch-rs"
+version = "0.2.0"
+edition = "2021"
+description = "web-multisearch MCP server(Rust 版):聚合搜索,协议手写零 SDK,单 exe 零运行时依赖"
+
+[[bin]]
+name = "web-multisearch"
+path = "src/main.rs"
+
+[features]
+ddg_debug_dump = []
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "time", "sync", "process"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "native-tls", "gzip"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+futures = "0.3"
+url = "2"
+regex = "1"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+strip = true
+lto = true
