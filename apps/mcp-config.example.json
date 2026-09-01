@@ -16,5 +16,17 @@
     "trust": "explicit-config",
     "tool_timeout_ms": 15000,
     "restart_limit": 3
+  },
+  {
+    "name": "web_multisearch",
+    "transport": "stdio",
+    "command": "D:\\96_CoderWorld\\boenmind-mcp-servers\\web-multisearch-rs\\target\\release\\web-multisearch.exe",
+    "args": [
+      "--config",
+      "<数据目录>\\config\\mcp-web_multisearch.json"
+    ],
+    "trust": "explicit-config",
+    "tool_timeout_ms": 30000,
+    "restart_limit": 3
   }
 ]
