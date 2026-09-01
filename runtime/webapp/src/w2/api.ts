@@ -90,6 +90,7 @@ export type CtxStep = {
   operation_id: string;
   turn_index: number;
   step: number;
+  attempt?: number;
   model_id: string;
   streaming: boolean;
   messages: { role: string; content: string; content_truncated?: boolean }[];

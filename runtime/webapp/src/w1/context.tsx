@@ -28,6 +28,9 @@ const ROLE_LABEL: Record<string, string> = {
 
 // 估算:chars/3(中英混合的粗密度;仅用于组成占比,真实值看 tokens_in/out)
 const est = (s: string) => Math.max(1, Math.ceil((s?.length ?? 0) / 3));
+// 耗时展示:≥1s 显秒,否则显毫秒
+const fmtDur = (ms?: number | null) =>
+  ms == null ? "—" : ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
 
 function catSizes(s: CtxStep): Record<CatKey, number> {
   const c: Record<CatKey, number> = { system: 0, tools: 0, user: 0, assistant: 0, toolres: 0 };
@@ -122,7 +125,12 @@ export function ContextView() {
         </span>
         <span className="flex-1" />
         <span className="flex items-center gap-1.5">
-          <Switch id="ctx-only" checked={onlyCurrent} onCheckedChange={setOnlyCurrent} />
+          <Switch
+            id="ctx-only"
+            checked={onlyCurrent && !!sid}
+            onCheckedChange={setOnlyCurrent}
+            disabled={!sid}
+          />
           <Label htmlFor="ctx-only" className="text-[12.5px]">仅当前会话</Label>
         </span>
         <span className="flex items-center gap-1.5">
@@ -148,7 +156,8 @@ export function ContextView() {
           {latest ? (
             <>
               <span className="text-[12.5px] text-muted-foreground">
-                估算合计 ≈{totalOf(latestCats!)} · 实际输入 {latest.tokens_in ?? "—"} / 输出 {latest.tokens_out ?? "—"}
+                估算合计 ≈{totalOf(latestCats!)} · 实际输入 {latest.tokens_in ?? "—"} / 输出{" "}
+                {latest.tokens_out ?? "—"} · 耗时 {fmtDur(latest.latency_ms)}
               </span>
               <span className="flex-1" />
               <span className="text-[12.5px] text-muted-foreground">
@@ -174,7 +183,9 @@ export function ContextView() {
           </>
         ) : (
           <div className="text-muted-foreground py-6 text-center text-[12.5px]" data-slot="ctx-empty">
-            还没有快照——发一条消息后这里就能看到发给了模型什么
+            {steps.length > 0
+              ? `当前会话还没有快照${onlyCurrent && sid ? `(库里有 ${steps.length} 条其他会话记录,可关闭「仅当前会话」查看)` : ""}——发一条消息后这里就能看到发给了模型什么`
+              : "还没有快照——发一条消息后这里就能看到发给了模型什么"}
           </div>
         )}
       </div>
@@ -210,7 +221,11 @@ export function ContextView() {
       {/* 步骤明细(新→旧;点击展开逐项浏览器) */}
       <div className="min-h-0 flex-1 overflow-auto rounded-xl border" data-slot="ctx-steps">
         {visible.length === 0 ? (
-          <div className="text-muted-foreground p-6 text-center text-[12.5px]">(无快照)</div>
+          <div className="text-muted-foreground p-6 text-center text-[12.5px]">
+            {steps.length > 0
+              ? `当前会话暂无快照(另有 ${steps.length} 条其他会话记录;可关闭「仅当前会话」查看)`
+              : "(无快照)"}
+          </div>
         ) : (
           visible.map((s) => {
             const c = catSizes(s);
@@ -228,14 +243,18 @@ export function ContextView() {
                   data-seq={s.seq}
                 >
                   <span className="font-mono text-[12px]">#{s.seq}</span>
-                  <span className="text-[12.5px]">第 {s.turn_index} 轮 · 第 {s.step} 步</span>
+                  <span className="text-[12.5px]">
+                    第 {s.turn_index} 轮 · 第 {s.step} 步
+                    {s.attempt && s.attempt > 1 ? ` · 尝试 ${s.attempt}` : ""}
+                  </span>
                   <span className="text-[12.5px] text-muted-foreground">{time}</span>
                   <span className={`rounded border px-1.5 py-0.5 text-[11px] ${STATUS_STYLE[s.status]}`}>
                     {s.status === "error" && s.error_code ? `${STATUS_LABEL[s.status]} ${s.error_code}` : STATUS_LABEL[s.status]}
                   </span>
                   <span className="flex-1" />
                   <span className="text-[12px] text-muted-foreground">
-                    实际 in {s.tokens_in ?? "—"} / out {s.tokens_out ?? "—"} · 估算 ≈{totalOf(c)} · {s.model_id}
+                    实际 in {s.tokens_in ?? "—"} / out {s.tokens_out ?? "—"} · 耗时 {fmtDur(s.latency_ms)} · 估算 ≈
+                    {totalOf(c)} · {s.model_id}
                   </span>
                 </button>
                 {open ? (

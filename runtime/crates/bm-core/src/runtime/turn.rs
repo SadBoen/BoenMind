@@ -225,10 +225,13 @@ pub(crate) fn spawn_turn(w: &mut World, agent: &Agent, operation_id: &BmId, cont
                     attempt,
                 };
 
-                // W5:请求侧快照(发送前截取;结果侧在 resp 落定后随行落盘)
+                // W5:请求侧快照(发送前截取;结果侧在 resp 落定后随行落盘)。
+                // latency 口径:connector 返回 0 占位(基线 9.7),由调用方按
+                // 真实钟测量——此处记墙钟起点,成败两路均落实测耗时。
                 let snap_msgs = crate::context_log::snapshot_messages(&req.messages);
                 let snap_step = tool_rounds + 1;
                 let snap_model = model_id.clone();
+                let snap_start = std::time::Instant::now();
 
                 // M9-S2:流式开关开启时走 invoke_stream,增量经 ProviderDelta
                 // 回核心循环(单写者落 model.content.delta 事件);通道满则丢弃
@@ -277,6 +280,7 @@ pub(crate) fn spawn_turn(w: &mut World, agent: &Agent, operation_id: &BmId, cont
                             operation_id: op_id.as_str().to_string(),
                             turn_index,
                             step: snap_step,
+                            attempt,
                             model_id: snap_model,
                             streaming,
                             messages: snap_msgs,
@@ -285,7 +289,7 @@ pub(crate) fn spawn_turn(w: &mut World, agent: &Agent, operation_id: &BmId, cont
                             error_code: None,
                             tokens_in: Some(usage.tokens_in),
                             tokens_out: Some(usage.tokens_out),
-                            latency_ms: Some(latency_ms),
+                            latency_ms: Some(snap_start.elapsed().as_millis() as u64),
                             ts: format_ts(clock.now()),
                         });
                         // W4 工具轮:模型请求调用直通工具 → 回核心循环执行 →
@@ -406,6 +410,7 @@ pub(crate) fn spawn_turn(w: &mut World, agent: &Agent, operation_id: &BmId, cont
                             operation_id: op_id.as_str().to_string(),
                             turn_index,
                             step: snap_step,
+                            attempt,
                             model_id: snap_model,
                             streaming,
                             messages: snap_msgs,
@@ -418,7 +423,7 @@ pub(crate) fn spawn_turn(w: &mut World, agent: &Agent, operation_id: &BmId, cont
                             error_code: Some(error_code.as_str().to_string()),
                             tokens_in: None,
                             tokens_out: None,
-                            latency_ms: None,
+                            latency_ms: Some(snap_start.elapsed().as_millis() as u64),
                             ts: format_ts(clock.now()),
                         });
                         if error_code == ErrorCode::Cancelled {
@@ -1783,7 +1788,17 @@ pub(crate) const HISTORY_MAX_TURNS: usize = 20;
 pub(crate) const HISTORY_MAX_CHARS: usize = 24_000;
 
 /// 成功回合终稿入账(工具轮中间态不入;只在 TurnEvent::Completed 路径调)。
+/// 存活守卫:close 不取消在途回合(INV-6),迟到的落定不得把已清退的
+/// 台账条目复活成孤儿——会话不存在或已 Closed 时丢弃。
 pub(crate) fn remember_turn(w: &mut World, session_id: BmId, user: String, assistant: String) {
+    let live = w
+        .sessions
+        .get(&session_id)
+        .map(|s| s.state != SessionState::Closed)
+        .unwrap_or(false);
+    if !live {
+        return;
+    }
     push_capped(
         w.session_chats.entry(session_id).or_default(),
         user,

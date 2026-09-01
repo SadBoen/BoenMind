@@ -30,6 +30,7 @@
 | W4 对话工具闭环+角色 | 2026-09-02 | `b2fc6a8`+`40988a7`(合同 Minor) | 280+ | tools 合同启用(maxItems 16)+FinishReason::ToolCalls+Role::Tool;直通工具免审批注入;角色 system_prompt 热生效;遗留=W4b(见 BACKLOG) |
 | W4 用户反馈四则 | 2026-09-02 | `8cb2316` | 280+ | 主题小 LOGO 按钮组;MCP 配置 Dialog 下拉选择器;RolesPage 重复渲染修复;临时补丁脚本清理 |
 | W5 会话记忆修复+上下文透视 | 2026-09-02 | (见 git) | 289 | **修复多轮无记忆**:turn.rs 历史回喂(session_chats 台账,20 轮/24K 字符上限,Cmd::RememberTurn);上下文透视面板:context-log.jsonl 快照(messages+tools+usage,INV-5 脱敏+16K 截断)+`/admin/context`+对话区「上下文」页签(组成条/趋势/逐项浏览器)+日志页快照页签;真模型实测两轮暗号往返+跨页面重载均答中,截图 shots-w5-context/;动因=用户提名 dsh-context(评估:DSH 插件不可装,照理念重做,登记 BACKLOG §6) |
+| W5 查漏补缺批 | 2026-09-02 | (见 git) | 289 | 用户要求核对逻辑与界面后修四处:①remember_turn 存活守卫(close 不取消在途回合,迟到落定不得复活已清退台账条目,INV-6 交互面);②快照增 attempt 字段(区分降级链重试的同序号步骤);③快照耗时改真实墙钟测量(补 openai_http「0 占位、由调用方测量」从未兑现的欠账,成败两路均记,实测 4.8s/4.2s);④界面耗时显示+attempt>1 标注+空态提示细化+无会话号禁用「仅当前会话」;工具轮两步流水(工具结果入组成)实测可见 |
 
 ## W 序列验收惯例
 

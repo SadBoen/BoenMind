@@ -24,6 +24,8 @@ pub struct ContextRecord {
     pub turn_index: u32,
     /// 本回合内第几次模型调用(1 起;工具轮结果回喂后重调即 +1)。
     pub step: u32,
+    /// 降级链尝试序号(1 起;区分重试间的同序号步骤)。
+    pub attempt: u32,
     pub model_id: String,
     pub streaming: bool,
     /// 请求消息序列([{role, content, content_truncated}];快照时点原样)。
@@ -118,6 +120,7 @@ impl ContextLog {
             "operation_id": rec.operation_id,
             "turn_index": rec.turn_index,
             "step": rec.step,
+            "attempt": rec.attempt,
             "model_id": rec.model_id,
             "streaming": rec.streaming,
             "messages": rec.messages,
@@ -176,6 +179,7 @@ mod tests {
             tokens_in: Some(412),
             tokens_out: Some(58),
             latency_ms: Some(1873),
+            attempt: 1,
             ts: "2026-09-02T00:00:00Z".into(),
         }
     }

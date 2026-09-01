@@ -176,4 +176,5 @@ async fn second_turn_request_carries_first_turn_history() {
     assert_eq!(lines[1]["tokens_out"], serde_json::json!(10));
     assert_eq!(lines[1]["session_id"], serde_json::json!(sess.as_str()));
     assert_eq!(lines[1]["step"], serde_json::json!(1));
+    assert_eq!(lines[1]["attempt"], serde_json::json!(1));
 }
