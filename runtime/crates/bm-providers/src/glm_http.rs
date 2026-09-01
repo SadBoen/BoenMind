@@ -117,6 +117,7 @@ impl ModelConnector for GlmConnector {
                         Role::System => "system",
                         Role::User => "user",
                         Role::Assistant => "assistant",
+                        Role::Tool => "tool",
                     },
                     content: &m.content,
                 })

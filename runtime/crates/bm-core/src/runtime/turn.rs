@@ -139,16 +139,11 @@ pub(crate) fn spawn_turn(w: &mut World, agent: &Agent, operation_id: &BmId, cont
         .config
         .data_dir
         .as_ref()
-        .and_then(|d| {
-            std::fs::read_to_string(d.join("config").join("roles.json")).ok()
-        })
+        .and_then(|d| std::fs::read_to_string(d.join("config").join("roles.json")).ok())
         .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
         .and_then(|r| r["system_prompt"].as_str().map(|s| s.to_string()))
         .filter(|s| !s.is_empty());
-    let request_id = w
-        .operations
-        .get(operation_id)
-        .map(|o| o.request_id.clone());
+    let request_id = w.operations.get(operation_id).map(|o| o.request_id.clone());
 
     tokio::spawn(async move {
         // W4:messages 含角色 prompt;tools=直通工具(OpenAI function 格式,
@@ -189,186 +184,186 @@ pub(crate) fn spawn_turn(w: &mut World, agent: &Agent, operation_id: &BmId, cont
             let model_id = chain[((attempt - 1) as usize) % chain.len()].clone();
             let mut tool_rounds: u32 = 0;
             loop {
-            let req = InvokeRequest {
-                model_id: model_id.clone(),
-                messages: messages.clone(),
-                tools: tools_json.clone(),
-                params: Default::default(),
-                secret_ref: default_secret_ref(&model_id),
-                budget_ctx: BudgetCtx {
-                    operation_id: op_id.clone(),
-                    agent_id: agent_id.clone(),
-                    remaining_tokens: remaining,
-                },
-                deadline: format_ts(clock.now() + Duration::seconds(timeout_secs)),
-                attempt,
-            };
-
-            // M9-S2:流式开关开启时走 invoke_stream,增量经 ProviderDelta
-            // 回核心循环(单写者落 model.content.delta 事件);通道满则丢弃
-            // 单个增量(事件面渐进性降级,不影响终态聚合)。
-            let resp = if streaming {
-                let delta_tx = tx.clone();
-                let delta_op = op_id.clone();
-                let on_delta = Box::new(move |d: &str| {
-                    let _ = delta_tx.try_send(Cmd::ProviderDelta {
-                        operation_id: delta_op.clone(),
-                        delta: d.to_string(),
-                    });
-                });
-                tokio::select! {
-                    _ = cancel.cancelled() => InvokeResponse::Failed {
-                        error_code: ErrorCode::Cancelled, retryable: false, attempt, detail_ref: None,
+                let req = InvokeRequest {
+                    model_id: model_id.clone(),
+                    messages: messages.clone(),
+                    tools: tools_json.clone(),
+                    params: Default::default(),
+                    secret_ref: default_secret_ref(&model_id),
+                    budget_ctx: BudgetCtx {
+                        operation_id: op_id.clone(),
+                        agent_id: agent_id.clone(),
+                        remaining_tokens: remaining,
                     },
-                    r = connector.invoke_stream(req, cancel.clone(), on_delta) => r,
-                }
-            } else {
-                tokio::select! {
-                    _ = cancel.cancelled() => InvokeResponse::Failed {
-                        error_code: ErrorCode::Cancelled, retryable: false, attempt, detail_ref: None,
-                    },
-                    r = connector.invoke(req, cancel.clone()) => r,
-                }
-            };
-
-            match resp {
-                InvokeResponse::Completed {
-                    content,
-                    tool_calls,
-                    finish_reason: _,
-                    usage,
-                    model_id: mid,
-                    latency_ms,
-                    stream_interrupted,
-                } => {
-                    // W4 工具轮:模型请求调用直通工具 → 回核心循环执行 →
-                    // 结果以 Tool 消息回喂 → 重调模型(上限 MAX_TOOL_ROUNDS)。
-                    if !tool_calls.is_empty() && tool_rounds < MAX_TOOL_ROUNDS {
-                        tool_rounds += 1;
-                        messages.push(Message {
-                            role: Role::Assistant,
-                            content: content.clone(),
-                        });
-                        for tc in tool_calls {
-                            let _ = tx.try_send(Cmd::ProviderDelta {
-                                operation_id: op_id.clone(),
-                                delta: format!("\n[调用 {}]\n", tc.name),
-                            });
-                            let capability = name_to_cap
-                                .get(&tc.name)
-                                .cloned()
-                                .unwrap_or_else(|| tc.name.clone());
-                            let args: serde_json::Value =
-                                serde_json::from_str(&tc.arguments)
-                                    .unwrap_or(serde_json::Value::Null);
-                            let (rtx, rrx) = tokio::sync::oneshot::channel();
-                            let call_req = request_id
-                                .clone()
-                                .unwrap_or_else(|| op_id.clone());
-                            let _ = tx
-                                .send(Cmd::CapabilityCall {
-                                    request_id: call_req,
-                                    params: wire::CapabilityCallParams {
-                                        capability,
-                                        args,
-                                        idempotency_key: Some(tc.id.clone()),
-                                        deadline_ms: None,
-                                    },
-                                    resp: rtx,
-                                })
-                                .await;
-                            // 受理/结果:直通能力同步出结果;MCP 异步能力经
-                            // operations 轮询至终态(上限 60s)。
-                            let mut tool_result = String::from("工具执行无应答");
-                            if let Ok(Ok(receipt_value)) = rrx.await {
-                                let op_ref = receipt_value["operation_id"]
-                                    .as_str()
-                                    .map(|s| s.to_string());
-                                let tool_op = op_ref
-                                    .and_then(|s| {
-                                        bm_contract::ids::BmId::parse(&s).ok()
-                                    });
-                                if let Some(tool_op) = tool_op {
-                                    let deadline = std::time::Instant::now()
-                                        + std::time::Duration::from_secs(60);
-                                    loop {
-                                        if std::time::Instant::now() > deadline {
-                                            tool_result = "工具执行超时".into();
-                                            break;
-                                        }
-                                        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-                                        let (otx, orx) = tokio::sync::oneshot::channel();
-                                        let _ = tx.send(Cmd::GetOpResult {
-                                            operation_id: tool_op.clone(),
-                                            resp: otx,
-                                        });
-                                        if let Ok(Ok(Some(v))) = orx.await {
-                                            tool_result = v.to_string();
-                                            break;
-                                        }
-                                    }
-                                } else {
-                                    tool_result = receipt_value.to_string();
-                                }
-                            }
-                            messages.push(Message {
-                                role: Role::Tool,
-                                content: tool_result,
-                            });
-                        }
-                        // 结果回喂后重调模型(仍在同一 attempt 的降级链内)
-                        continue;
-                    }
-                    let _ = tx
-                        .send(Cmd::Turn(TurnEvent::Completed {
-                            operation_id: op_id.clone(),
-                            model_id: mid,
-                            attempt,
-                            content,
-                            usage_in: usage.tokens_in,
-                            usage_out: usage.tokens_out,
-                            latency_ms,
-                            stream_interrupted,
-                        }))
-                        .await;
-                    return;
-                }
-                InvokeResponse::Failed {
-                    error_code,
-                    retryable,
+                    deadline: format_ts(clock.now() + Duration::seconds(timeout_secs)),
                     attempt,
-                    detail_ref: _,
-                } => {
-                    if error_code == ErrorCode::Cancelled {
-                        // 显式取消:回合边界落定为 cancelled(INV-12 唯一入口)。
+                };
+
+                // M9-S2:流式开关开启时走 invoke_stream,增量经 ProviderDelta
+                // 回核心循环(单写者落 model.content.delta 事件);通道满则丢弃
+                // 单个增量(事件面渐进性降级,不影响终态聚合)。
+                let resp = if streaming {
+                    let delta_tx = tx.clone();
+                    let delta_op = op_id.clone();
+                    let on_delta = Box::new(move |d: &str| {
+                        let _ = delta_tx.try_send(Cmd::ProviderDelta {
+                            operation_id: delta_op.clone(),
+                            delta: d.to_string(),
+                        });
+                    });
+                    tokio::select! {
+                        _ = cancel.cancelled() => InvokeResponse::Failed {
+                            error_code: ErrorCode::Cancelled, retryable: false, attempt, detail_ref: None,
+                        },
+                        r = connector.invoke_stream(req, cancel.clone(), on_delta) => r,
+                    }
+                } else {
+                    tokio::select! {
+                        _ = cancel.cancelled() => InvokeResponse::Failed {
+                            error_code: ErrorCode::Cancelled, retryable: false, attempt, detail_ref: None,
+                        },
+                        r = connector.invoke(req, cancel.clone()) => r,
+                    }
+                };
+
+                match resp {
+                    InvokeResponse::Completed {
+                        content,
+                        tool_calls,
+                        finish_reason: _,
+                        usage,
+                        model_id: mid,
+                        latency_ms,
+                        stream_interrupted,
+                    } => {
+                        // W4 工具轮:模型请求调用直通工具 → 回核心循环执行 →
+                        // 结果以 Tool 消息回喂 → 重调模型(上限 MAX_TOOL_ROUNDS)。
+                        if !tool_calls.is_empty() && tool_rounds < MAX_TOOL_ROUNDS {
+                            tool_rounds += 1;
+                            messages.push(Message {
+                                role: Role::Assistant,
+                                content: content.clone(),
+                            });
+                            for tc in tool_calls {
+                                let _ = tx.try_send(Cmd::ProviderDelta {
+                                    operation_id: op_id.clone(),
+                                    delta: format!("\n[调用 {}]\n", tc.name),
+                                });
+                                let capability = name_to_cap
+                                    .get(&tc.name)
+                                    .cloned()
+                                    .unwrap_or_else(|| tc.name.clone());
+                                let args: serde_json::Value = serde_json::from_str(&tc.arguments)
+                                    .unwrap_or(serde_json::Value::Null);
+                                let (rtx, rrx) = tokio::sync::oneshot::channel();
+                                let call_req = request_id.clone().unwrap_or_else(|| op_id.clone());
+                                let _ = tx
+                                    .send(Cmd::CapabilityCall {
+                                        request_id: call_req,
+                                        params: wire::CapabilityCallParams {
+                                            capability,
+                                            args,
+                                            idempotency_key: Some(tc.id.clone()),
+                                            deadline_ms: None,
+                                        },
+                                        resp: rtx,
+                                    })
+                                    .await;
+                                // 受理/结果:直通能力同步出结果;MCP 异步能力经
+                                // operations 轮询至终态(上限 60s)。
+                                let mut tool_result = String::from("工具执行无应答");
+                                if let Ok(Ok(receipt_value)) = rrx.await {
+                                    let op_ref = receipt_value["operation_id"]
+                                        .as_str()
+                                        .map(|s| s.to_string());
+                                    let tool_op =
+                                        op_ref.and_then(|s| bm_contract::ids::BmId::parse(&s).ok());
+                                    if let Some(tool_op) = tool_op {
+                                        let deadline = std::time::Instant::now()
+                                            + std::time::Duration::from_secs(60);
+                                        loop {
+                                            if std::time::Instant::now() > deadline {
+                                                tool_result = "工具执行超时".into();
+                                                break;
+                                            }
+                                            tokio::time::sleep(std::time::Duration::from_millis(
+                                                300,
+                                            ))
+                                            .await;
+                                            let (otx, orx) = tokio::sync::oneshot::channel();
+                                            let _ = tx
+                                                .send(Cmd::GetOpResult {
+                                                    operation_id: tool_op.clone(),
+                                                    resp: otx,
+                                                })
+                                                .await;
+                                            if let Ok(Ok(Some(v))) = orx.await {
+                                                tool_result = v.to_string();
+                                                break;
+                                            }
+                                        }
+                                    } else {
+                                        tool_result = receipt_value.to_string();
+                                    }
+                                }
+                                messages.push(Message {
+                                    role: Role::Tool,
+                                    content: tool_result,
+                                });
+                            }
+                            // 结果回喂后重调模型(仍在同一 attempt 的降级链内)
+                            continue;
+                        }
                         let _ = tx
-                            .send(Cmd::Turn(TurnEvent::Cancelled {
+                            .send(Cmd::Turn(TurnEvent::Completed {
                                 operation_id: op_id.clone(),
+                                model_id: mid,
+                                attempt,
+                                content,
+                                usage_in: usage.tokens_in,
+                                usage_out: usage.tokens_out,
+                                latency_ms,
+                                stream_interrupted,
                             }))
                             .await;
                         return;
                     }
-                    let _ = tx
-                        .send(Cmd::Turn(TurnEvent::AttemptFailed {
-                            operation_id: op_id.clone(),
-                            model_id,
-                            attempt,
-                            error_code,
-                        }))
-                        .await;
-                    if !retryable || attempt == max_attempts {
+                    InvokeResponse::Failed {
+                        error_code,
+                        retryable,
+                        attempt,
+                        detail_ref: _,
+                    } => {
+                        if error_code == ErrorCode::Cancelled {
+                            // 显式取消:回合边界落定为 cancelled(INV-12 唯一入口)。
+                            let _ = tx
+                                .send(Cmd::Turn(TurnEvent::Cancelled {
+                                    operation_id: op_id.clone(),
+                                }))
+                                .await;
+                            return;
+                        }
                         let _ = tx
-                            .send(Cmd::Turn(TurnEvent::ChainExhausted {
-                                operation_id: op_id,
+                            .send(Cmd::Turn(TurnEvent::AttemptFailed {
+                                operation_id: op_id.clone(),
+                                model_id,
+                                attempt,
                                 error_code,
                             }))
                             .await;
-                        return;
+                        if !retryable || attempt == max_attempts {
+                            let _ = tx
+                                .send(Cmd::Turn(TurnEvent::ChainExhausted {
+                                    operation_id: op_id,
+                                    error_code,
+                                }))
+                                .await;
+                            return;
+                        }
+                        // 降级链下一 attempt(退出工具轮)
+                        break;
                     }
-                    // 降级链下一 attempt(退出工具轮)
-                    break;
                 }
-            }
             }
         }
     });

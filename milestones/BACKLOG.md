@@ -34,7 +34,7 @@
 |---|---|---|
 | F-06 C4 模型回写(约 12+7 项模型-实现漂移;F-08 /admin 面一并) | FULL-REVIEW §2.2 + AUDIT F-06/F-08 | OPEN,**下一批开工前置** |
 | F-09 deepwiki S1/S2/S6/S7/S10 逐条裁决;S5 口径偏宽复核(t119b≠quarantined 分表) | AUDIT F-09 + FULL-REVIEW §2.4 | OPEN(随下一里程碑回看) |
-| W4b:异步能力结果回流超时优化(60s 轮询未取到终态) | W4 规格 §3 + commit b2fc6a8 | OPEN |
+| W4b:异步能力结果回流超时(60s 轮询未取到终态)——**根因已修**:turn.rs GetOpResult 轮询 `tx.send` 漏 `.await` 致命令从未发出(2026-09-01 代码审计轮),待真浏览器实测验证后闭合 | W4 规格 §3 + 代码审计轮 | 已修待验证 |
 | W4b:多角色与会话级角色选择;Skill 挂载(合同 Skill 实体未建) | W4 规格 §3 | OPEN |
 | W4b:非直通工具的对话内审批联动 | W4 规格 §3 | OPEN |
 | W4 验收记录回填(按规格 §4 验收门补实测证据与截图) | W4-implementation-spec | OPEN |
@@ -51,6 +51,8 @@
 | F-07 | bm-surface-http → bm-persist 直依赖待裁决(收口或留档) | OPEN |
 | F-10 | autorun send_failed 等测试缺口 | OPEN |
 | F-11 | memory_drawer_verdict 硬编码权限规则与 ADR-0006 张力(2026-09-02 已在 broker.rs 源码补注;合同化重构待排期) | OPEN |
+| P3 大文件拆分 | broker.rs(1657 行)/turn.rs(1694)/task_ops.rs(1710)/sqlite_state.rs(1205);bm-core 过重,与 F-05/L-01/R-08 同批缓办(2026-09-01 代码审计轮) | OPEN(缓办) |
+| P4 非测试 unwrap 甄别清理 | 全仓约 400 处 unwrap 需区分测试/非测试逐步替换;非测试 panic 10 处均系不变量断言,评估=维持现状(同审计轮) | OPEN(缓办) |
 
 ## 5. 文档与工程欠账(2026-09-01 文档对齐轮登记,ADR-0015)
 
@@ -61,6 +63,7 @@
 | release.yml 承诺未兑现 | `.github/workflows/release.yml` 注释称 Tauri Windows 安装包随 T6/M8 加入工作流,实际从未加入(或兑现或改注释) | OPEN |
 | webapp 无自动化测试 | 前端现状=真实浏览器手测+截图留档(纪律见 PLAYBOOK);候选:playwright 冒烟套件 | OPEN(候选) |
 | 坏 MCP 条目导致启动拒绝 | 一条损坏的 MCP 配置会拒绝整个 server 启动(用户反馈轮发现);应降级为跳过+告警 | OPEN |
+| fmt 门禁缺口:lib.rs | W 系列提交均未跑 `cargo fmt --check`(CI fmt 门禁红);2026-09-01 已全仓规范化,唯 lib.rs(HEAD 版本即不干净)留待 api_dsh 追认提交时一并入库闭合 | OPEN(随追认闭合) |
 | PENPOT-quickstart 过时 | 指向已删除的 runtime/web/tokens.css;已加过时标注(2026-09-01),待归档或更新 | OPEN(低优) |
 
 ## 6. 候选队列(用户提过、未排期)

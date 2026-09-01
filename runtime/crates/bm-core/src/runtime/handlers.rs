@@ -800,14 +800,15 @@ pub(crate) fn handle_capabilities_register(
                     w.registry.mark_async(&capability);
                 }
                 if let Some(store) = &w.store {
-                    let _ = store.save_capability_binding(bm_persist::sqlite_state::CapabilityRow {
-                        capability: &capability,
-                        provider_instance_id: &instance,
-                        epoch: 1,
-                        status: "active",
-                        manifest: &manifest_json,
-                        updated_at: &format_ts(w.started_at),
-                    });
+                    let _ =
+                        store.save_capability_binding(bm_persist::sqlite_state::CapabilityRow {
+                            capability: &capability,
+                            provider_instance_id: &instance,
+                            epoch: 1,
+                            status: "active",
+                            manifest: &manifest_json,
+                            updated_at: &format_ts(w.started_at),
+                        });
                 }
                 registered.push(capability);
             }

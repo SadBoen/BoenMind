@@ -15,7 +15,7 @@
 
 use bm_core::CoreError;
 use bm_core::CoreResult;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 /// 配置文件相对数据目录的路径。
@@ -45,7 +45,9 @@ pub fn validate_field(name: &str, value: &Value) -> CoreResult<()> {
                 .as_str()
                 .ok_or_else(|| validation("baseUrl 必须是字符串"))?;
             if !(s.len() <= 500 && (s.starts_with("http://") || s.starts_with("https://"))) {
-                return Err(validation("baseUrl 必须以 http:// 或 https:// 开头(≤500 字符)"));
+                return Err(validation(
+                    "baseUrl 必须以 http:// 或 https:// 开头(≤500 字符)",
+                ));
             }
         }
         "apiKey" => {
@@ -85,7 +87,9 @@ pub fn validate_field(name: &str, value: &Value) -> CoreResult<()> {
                 return Err(validation("models 至多 50 个模型"));
             }
             for m in arr {
-                let id = m.as_str().ok_or_else(|| validation("models 项必须是字符串"))?;
+                let id = m
+                    .as_str()
+                    .ok_or_else(|| validation("models 项必须是字符串"))?;
                 if id.is_empty() || id.len() > 200 {
                     return Err(validation("models 项不能为空且 ≤200 字符"));
                 }
@@ -111,8 +115,7 @@ pub fn crlf(pretty: String) -> String {
 
 fn write_file(path: &Path, value: &Value) -> CoreResult<()> {
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)
-            .map_err(|e| validation(format!("配置目录创建失败: {e}")))?;
+        std::fs::create_dir_all(dir).map_err(|e| validation(format!("配置目录创建失败: {e}")))?;
     }
     let text = crlf(serde_json::to_string_pretty(value).map_err(|_| CoreError::Internal)?);
     std::fs::write(path, text).map_err(|e| validation(format!("配置文件写入失败: {e}")))
@@ -314,8 +317,17 @@ mod tests {
     #[test]
     fn t_cfg_effective_merge_file_over_env() {
         let file = json!({"baseUrl": "https://file.example.com/v1", "stream": true});
-        let eff = effective_from(&file, Some("https://env.example.com"), Some("env-model"), false);
-        assert_eq!(eff["baseUrl"], json!("https://file.example.com/v1"), "文件优先");
+        let eff = effective_from(
+            &file,
+            Some("https://env.example.com"),
+            Some("env-model"),
+            false,
+        );
+        assert_eq!(
+            eff["baseUrl"],
+            json!("https://file.example.com/v1"),
+            "文件优先"
+        );
         assert_eq!(eff["stream"], json!(true));
         assert_eq!(eff["modelId"], json!("env-model"), "文件缺省回落 env");
         let eff = effective_from(&json!({}), None, None, false);
@@ -335,8 +347,15 @@ mod tests {
         }))
         .unwrap();
         let eff = effective_model(tmp.path());
-        assert_eq!(eff.base_url.as_deref(), Some("https://opencode.ai/zen/go/v1"));
-        assert_eq!(eff.api_key.as_deref(), Some("sk-file-key"), "文件密钥优先于 env");
+        assert_eq!(
+            eff.base_url.as_deref(),
+            Some("https://opencode.ai/zen/go/v1")
+        );
+        assert_eq!(
+            eff.api_key.as_deref(),
+            Some("sk-file-key"),
+            "文件密钥优先于 env"
+        );
         assert_eq!(eff.model_id.as_deref(), Some("mimo-v2.5"));
         assert_eq!(eff.models.len(), 2);
     }

@@ -22,8 +22,11 @@ fn web_dir() -> std::path::PathBuf {
     std::fs::create_dir_all(&p).expect("创建托管目录");
     let index = p.join("index.html");
     if !index.exists() {
-        std::fs::write(&index, "<!DOCTYPE html><html><body>boenmind-surface</body></html>")
-            .expect("写占位页");
+        std::fs::write(
+            &index,
+            "<!DOCTYPE html><html><body>boenmind-surface</body></html>",
+        )
+        .expect("写占位页");
     }
     p
 }

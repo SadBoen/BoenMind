@@ -13,12 +13,15 @@ use bm_providers::mock_model::MockConnector;
 use bm_providers::secret::MemSecretStore;
 use bm_surface_http::token;
 use bm_surface_http::webadmin::AdminConfig;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use std::sync::Arc;
 
 /// 起一个带 /admin 的完整 surface,返回 (base_url, 临时数据目录)。
-async fn spawn_app(ws: std::path::PathBuf, mcp: Option<std::path::PathBuf>) -> (String, tempfile::TempDir) {
+async fn spawn_app(
+    ws: std::path::PathBuf,
+    mcp: Option<std::path::PathBuf>,
+) -> (String, tempfile::TempDir) {
     let dir = tempfile::tempdir().expect("临时目录");
     let t = token::load_or_create(dir.path()).expect("令牌");
     let store: Arc<PersistStore> = Arc::new(PersistStore::open(dir.path()).expect("打开"));
@@ -42,8 +45,12 @@ async fn spawn_app(ws: std::path::PathBuf, mcp: Option<std::path::PathBuf>) -> (
         data_dir: dir.path().to_path_buf(),
         workspace_root: ws,
         mcp_config: mcp,
-        builtin_caps: Arc::new(vec![json!({"name": "system.echo", "provider": "system.echo", "effect": "read-only", "idempotent": true})]),
-        mcp_servers: Arc::new(std::sync::RwLock::new(vec![json!({"name": "demo", "tools": 2})])),
+        builtin_caps: Arc::new(vec![
+            json!({"name": "system.echo", "provider": "system.echo", "effect": "read-only", "idempotent": true}),
+        ]),
+        mcp_servers: Arc::new(std::sync::RwLock::new(vec![
+            json!({"name": "demo", "tools": 2}),
+        ])),
         handle: handle.clone(),
         hub: None,
         secrets: Some(Arc::new(MemSecretStore::new()) as Arc<dyn bm_core::ports::SecretStore>),
@@ -57,7 +64,9 @@ async fn spawn_app(ws: std::path::PathBuf, mcp: Option<std::path::PathBuf>) -> (
         Arc::new("mock-model".into()),
         Some(admin),
     );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("绑定");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("绑定");
     let addr = listener.local_addr().expect("地址");
     tokio::spawn(async move { axum::serve(listener, app).await.expect("serve") });
     (format!("http://{addr}"), dir)
@@ -146,19 +155,37 @@ async fn t_w2_provider_validation_and_404() {
     let (base, _dir) = spawn_app(ws.path().to_path_buf(), None).await;
 
     // baseUrl 非 http(s) 拒;name 空 拒
-    let (st, _) = send_json(reqwest::Method::POST, &format!("{base}/admin/providers"),
-        json!({"name": "x", "baseUrl": "ftp://nope"})).await;
+    let (st, _) = send_json(
+        reqwest::Method::POST,
+        &format!("{base}/admin/providers"),
+        json!({"name": "x", "baseUrl": "ftp://nope"}),
+    )
+    .await;
     assert_eq!(st, 400);
-    let (st, _) = send_json(reqwest::Method::POST, &format!("{base}/admin/providers"),
-        json!({"name": "", "baseUrl": "https://ok.example.com"})).await;
+    let (st, _) = send_json(
+        reqwest::Method::POST,
+        &format!("{base}/admin/providers"),
+        json!({"name": "", "baseUrl": "https://ok.example.com"}),
+    )
+    .await;
     assert_eq!(st, 400);
 
     // 改/删不存在的 id → 404
-    let (st, _) = send_json(reqwest::Method::PUT, &format!("{base}/admin/providers/prov_nope"),
-        json!({"name": "x", "baseUrl": "https://ok.example.com"})).await;
+    let (st, _) = send_json(
+        reqwest::Method::PUT,
+        &format!("{base}/admin/providers/prov_nope"),
+        json!({"name": "x", "baseUrl": "https://ok.example.com"}),
+    )
+    .await;
     assert_eq!(st, 404);
     let client = reqwest::Client::new();
-    let st = client.delete(format!("{base}/admin/providers/prov_nope")).send().await.unwrap().status().as_u16();
+    let st = client
+        .delete(format!("{base}/admin/providers/prov_nope"))
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .as_u16();
     assert_eq!(st, 404);
 }
 
@@ -167,13 +194,12 @@ async fn t_w2_provider_validation_and_404() {
 #[tokio::test]
 async fn t_w2_probe_ok_parses_models_and_down_reports_error() {
     // stub:OpenAI 兼容 /models
-    let stub = axum::Router::new()
-        .route(
-            "/v1/models",
-            axum::routing::get(|| async {
-                axum::Json(json!({"data": [{"id": "mimo-v2.5"}, {"id": "gpt-5.6"}]}))
-            }),
-        );
+    let stub = axum::Router::new().route(
+        "/v1/models",
+        axum::routing::get(|| async {
+            axum::Json(json!({"data": [{"id": "mimo-v2.5"}, {"id": "gpt-5.6"}]}))
+        }),
+    );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let stub_addr = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, stub).await.unwrap() });
@@ -181,23 +207,39 @@ async fn t_w2_probe_ok_parses_models_and_down_reports_error() {
     let ws = tempfile::tempdir().unwrap();
     let (base, _dir) = spawn_app(ws.path().to_path_buf(), None).await;
 
-    let (st, r) = send_json(reqwest::Method::POST, &format!("{base}/admin/providers/probe"),
-        json!({"baseUrl": format!("http://{stub_addr}/v1"), "apiKey": "sk-x"})).await;
+    let (st, r) = send_json(
+        reqwest::Method::POST,
+        &format!("{base}/admin/providers/probe"),
+        json!({"baseUrl": format!("http://{stub_addr}/v1"), "apiKey": "sk-x"}),
+    )
+    .await;
     assert_eq!(st, 200);
     assert_eq!(r["ok"], json!(true), "{r}");
     assert!(r["latencyMs"].as_u64().is_some());
-    assert_eq!(r["models"], json!(["mimo-v2.5", "gpt-5.6"]), "模型清单真实解析");
+    assert_eq!(
+        r["models"],
+        json!(["mimo-v2.5", "gpt-5.6"]),
+        "模型清单真实解析"
+    );
 
     // 不可达端口 → ok:false + error 摘要(不 500)
-    let (st, r) = send_json(reqwest::Method::POST, &format!("{base}/admin/providers/probe"),
-        json!({"baseUrl": "http://127.0.0.1:9"})).await;
+    let (st, r) = send_json(
+        reqwest::Method::POST,
+        &format!("{base}/admin/providers/probe"),
+        json!({"baseUrl": "http://127.0.0.1:9"}),
+    )
+    .await;
     assert_eq!(st, 200);
     assert_eq!(r["ok"], json!(false));
     assert!(r["error"].as_str().is_some());
 
     // baseUrl 非法 → 400
-    let (st, _) = send_json(reqwest::Method::POST, &format!("{base}/admin/providers/probe"),
-        json!({"baseUrl": "notaurl"})).await;
+    let (st, _) = send_json(
+        reqwest::Method::POST,
+        &format!("{base}/admin/providers/probe"),
+        json!({"baseUrl": "notaurl"}),
+    )
+    .await;
     assert_eq!(st, 400);
 }
 
@@ -209,16 +251,28 @@ async fn t_w2_model_active_set_writes_config_file() {
     let (base, _dir) = spawn_app(ws.path().to_path_buf(), None).await;
 
     // 没 provider 时 404
-    let (st, _) = send_json(reqwest::Method::PUT, &format!("{base}/admin/model/active"),
-        json!({"providerId": "prov_x"})).await;
+    let (st, _) = send_json(
+        reqwest::Method::PUT,
+        &format!("{base}/admin/model/active"),
+        json!({"providerId": "prov_x"}),
+    )
+    .await;
     assert_eq!(st, 404);
 
     // 建 provider(无模型清单)→ 设为当前 → 400(要求先拉清单)
-    let (_, r) = send_json(reqwest::Method::POST, &format!("{base}/admin/providers"),
-        json!({"name": "Go", "baseUrl": "https://opencode.ai/zen/go/v1", "apiKey": "sk-1"})).await;
+    let (_, r) = send_json(
+        reqwest::Method::POST,
+        &format!("{base}/admin/providers"),
+        json!({"name": "Go", "baseUrl": "https://opencode.ai/zen/go/v1", "apiKey": "sk-1"}),
+    )
+    .await;
     let id = r["provider"]["id"].as_str().unwrap();
-    let (st, _) = send_json(reqwest::Method::PUT, &format!("{base}/admin/model/active"),
-        json!({"providerId": id})).await;
+    let (st, _) = send_json(
+        reqwest::Method::PUT,
+        &format!("{base}/admin/model/active"),
+        json!({"providerId": id}),
+    )
+    .await;
     assert_eq!(st, 400, "无可用模型必须先拉清单");
 
     // 拉清单后设为当前 → model.json 落盘 + restartRequired
@@ -227,14 +281,21 @@ async fn t_w2_model_active_set_writes_config_file() {
         .json(&json!({"name": "Go", "baseUrl": "https://opencode.ai/zen/go/v1", "models": ["mimo-v2.5"], "defaultModel": "mimo-v2.5"}))
         .send().await.map(|x| (x.status().as_u16(), ())).unwrap();
     assert_eq!(st, 200);
-    let (st, r) = send_json(reqwest::Method::PUT, &format!("{base}/admin/model/active"),
-        json!({"providerId": id})).await;
+    let (st, r) = send_json(
+        reqwest::Method::PUT,
+        &format!("{base}/admin/model/active"),
+        json!({"providerId": id}),
+    )
+    .await;
     assert_eq!(st, 200, "{r}");
     assert_eq!(r["restartRequired"], json!(true));
     let raw = std::fs::read_to_string(_dir.path().join("config/model.json")).unwrap();
     assert!(raw.contains("opencode.ai"));
     assert!(raw.contains("mimo-v2.5"));
-    assert!(raw.contains("sk-1"), "密钥随「设为当前」写入 model.json(重启播种)");
+    assert!(
+        raw.contains("sk-1"),
+        "密钥随「设为当前」写入 model.json(重启播种)"
+    );
 
     // GET /admin/model/active:投影打码
     let (_, r) = get(&format!("{base}/admin/model/active")).await;
@@ -253,8 +314,12 @@ async fn t_w2_mcp_crud_with_contract_schema() {
     let (base, _dir) = spawn_app(ws.path().to_path_buf(), Some(mcp_path.clone())).await;
 
     // 非法条目(name 大写)被合同 schema 拒
-    let (st, r) = send_json(reqwest::Method::POST, &format!("{base}/admin/mcp"),
-        json!({"name": "BadName", "command": "uvx"})).await;
+    let (st, r) = send_json(
+        reqwest::Method::POST,
+        &format!("{base}/admin/mcp"),
+        json!({"name": "BadName", "command": "uvx"}),
+    )
+    .await;
     assert_eq!(st, 400, "{r}");
 
     // 合法条目:transport 自动补 stdio;文件落盘
@@ -263,23 +328,43 @@ async fn t_w2_mcp_crud_with_contract_schema() {
     assert_eq!(st, 200, "{r}");
     let raw = std::fs::read_to_string(&mcp_path).unwrap();
     assert!(raw.contains("\"transport\": \"stdio\""));
-    assert!(raw.contains("secret:wiki-token"), "env 引用形态透传(明文不入配置)");
+    assert!(
+        raw.contains("secret:wiki-token"),
+        "env 引用形态透传(明文不入配置)"
+    );
 
     // 重名 → 409;编辑 → 替换;删除 → 移除
-    let (st, _) = send_json(reqwest::Method::POST, &format!("{base}/admin/mcp"),
-        json!({"name": "wiki", "command": "uvx"})).await;
+    let (st, _) = send_json(
+        reqwest::Method::POST,
+        &format!("{base}/admin/mcp"),
+        json!({"name": "wiki", "command": "uvx"}),
+    )
+    .await;
     assert_eq!(st, 409);
-    let (st, _) = send_json(reqwest::Method::PUT, &format!("{base}/admin/mcp/wiki"),
-        json!({"name": "wiki", "command": "node", "args": ["wiki.js"], "tool_timeout_ms": 5000})).await;
+    let (st, _) = send_json(
+        reqwest::Method::PUT,
+        &format!("{base}/admin/mcp/wiki"),
+        json!({"name": "wiki", "command": "node", "args": ["wiki.js"], "tool_timeout_ms": 5000}),
+    )
+    .await;
     assert_eq!(st, 200);
     let raw = std::fs::read_to_string(&mcp_path).unwrap();
     assert!(raw.contains("wiki.js"));
     let client = reqwest::Client::new();
-    let st = client.delete(format!("{base}/admin/mcp/wiki")).send().await.unwrap().status().as_u16();
+    let st = client
+        .delete(format!("{base}/admin/mcp/wiki"))
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .as_u16();
     assert_eq!(st, 200);
     let (_, list) = get(&format!("{base}/admin/mcp")).await;
     assert_eq!(list["servers"].as_array().unwrap().len(), 0);
-    assert_eq!(list["note"], json!("增删改只落配置文件,重启或「重载」后生效"));
+    assert_eq!(
+        list["note"],
+        json!("增删改只落配置文件,重启或「重载」后生效")
+    );
 }
 
 #[tokio::test]
@@ -288,7 +373,12 @@ async fn t_w2_mcp_disabled_without_config_file() {
     let (base, _dir) = spawn_app(ws.path().to_path_buf(), None).await;
     let (st, r) = get(&format!("{base}/admin/mcp")).await;
     assert_eq!(st, 400, "{r}");
-    assert!(r["error"]["message"].as_str().unwrap().contains("--mcp-config"));
+    assert!(
+        r["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("--mcp-config")
+    );
 }
 
 // ---- 插件(能力)清单 ------------------------------------------------------
@@ -341,7 +431,14 @@ async fn t_w2_fs_blocks_traversal_and_absolute_and_symlink() {
     let (base, _dir) = spawn_app(ws.path().to_path_buf(), None).await;
 
     // .. 穿越、绝对路径、URL 编码变体:全拒
-    for bad in ["..", "a/../..", "../secret.txt", "sub/../../x", "C:/Windows", "/etc/passwd"] {
+    for bad in [
+        "..",
+        "a/../..",
+        "../secret.txt",
+        "sub/../../x",
+        "C:/Windows",
+        "/etc/passwd",
+    ] {
         let (st, _) = get(&format!("{base}/admin/fs/file?path={}", urlencode(bad))).await;
         assert_eq!(st, 400, "必须拒绝 {bad}");
         let (st, _) = get(&format!("{base}/admin/fs/list?path={}", urlencode(bad))).await;
@@ -350,9 +447,17 @@ async fn t_w2_fs_blocks_traversal_and_absolute_and_symlink() {
 
     // 符号链接:拒链(X-01;Windows 无特权建链失败则跳过该子项)
     #[cfg(unix)]
-    let link_ok = std::os::unix::fs::symlink(outside.path().join("secret.txt"), ws.path().join("leak.txt")).is_ok();
+    let link_ok = std::os::unix::fs::symlink(
+        outside.path().join("secret.txt"),
+        ws.path().join("leak.txt"),
+    )
+    .is_ok();
     #[cfg(windows)]
-    let link_ok = std::os::windows::fs::symlink_file(outside.path().join("secret.txt"), ws.path().join("leak.txt")).is_ok();
+    let link_ok = std::os::windows::fs::symlink_file(
+        outside.path().join("secret.txt"),
+        ws.path().join("leak.txt"),
+    )
+    .is_ok();
     if link_ok {
         let (st, r) = get(&format!("{base}/admin/fs/file?path=leak.txt")).await;
         assert_eq!(st, 400, "{r}");

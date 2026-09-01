@@ -6,7 +6,9 @@
 //! 响应体、请求内容或凭据明文;detail_ref 恒为 None。
 
 use async_trait::async_trait;
-use bm_contract::connector::{FinishReason, InvokeRequest, InvokeResponse, Role, ToolCallPayload, Usage};
+use bm_contract::connector::{
+    FinishReason, InvokeRequest, InvokeResponse, Role, ToolCallPayload, Usage,
+};
 use bm_contract::error_codes::ErrorCode;
 use bm_contract::timestamp;
 use bm_core::ports::{ModelConnector, SecretStore};
@@ -557,7 +559,14 @@ mod m9_stream_tests {
         assert!(serde_json::from_str::<WireStreamChunk>("{not json").is_err());
 
         // finish_reason 收敛:length → Length,其余 → Stop
-        let done = completed_stream("你好".into(), "length", chunk2.usage, false, "m1", Vec::new());
+        let done = completed_stream(
+            "你好".into(),
+            "length",
+            chunk2.usage,
+            false,
+            "m1",
+            Vec::new(),
+        );
         match done {
             InvokeResponse::Completed {
                 content,

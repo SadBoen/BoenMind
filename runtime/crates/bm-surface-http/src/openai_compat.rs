@@ -7,14 +7,14 @@
 //! 免鉴权 = 已登记欠账(公网部署前必须补 Bearer,沿 ADR-0009 T-13/T-14)。
 
 use crate::AppState;
+use axum::Json;
 use axum::body::{Body, Bytes};
 use axum::extract::State;
 use axum::http::{HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::Json;
+use bm_contract::events::EventType;
 use bm_contract::ids::{BmId, IdGen, UlidIdGen};
 use bm_contract::wire::{AgentSpec, InputTrust, SendInputParams, SessionCreateParams};
-use bm_contract::events::EventType;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -142,7 +142,12 @@ pub async fn chat_completions(
                         .insert(r.session_id.clone(), r.agent_id.clone());
                     (r.session_id, r.agent_id)
                 }
-                Err(e) => return err_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("会话创建失败: {e}")),
+                Err(e) => {
+                    return err_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        &format!("会话创建失败: {e}"),
+                    );
+                }
             }
         }
     };
@@ -163,11 +168,14 @@ pub async fn chat_completions(
         )
         .await;
     if let Err(e) = &sent {
-        return err_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("消息未受理: {e:?}"));
+        return err_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &format!("消息未受理: {e:?}"),
+        );
     }
 
-    let session_header = HeaderValue::from_str(rt_sid.as_str())
-        .unwrap_or(HeaderValue::from_static("invalid"));
+    let session_header =
+        HeaderValue::from_str(rt_sid.as_str()).unwrap_or(HeaderValue::from_static("invalid"));
     let stream = body["stream"].as_bool().unwrap_or(false);
 
     if !stream {
@@ -191,8 +199,12 @@ pub async fn chat_completions(
                 }
                 match e.event_type {
                     EventType::ModelInvocationCompleted => {
-                        content =
-                            Some(e.payload["content"].as_str().unwrap_or_default().to_string());
+                        content = Some(
+                            e.payload["content"]
+                                .as_str()
+                                .unwrap_or_default()
+                                .to_string(),
+                        );
                     }
                     EventType::AgentFailed | EventType::AgentCancelled => {
                         failed = true;

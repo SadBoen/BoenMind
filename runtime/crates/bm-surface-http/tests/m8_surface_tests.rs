@@ -74,7 +74,15 @@ async fn rig_with_slow_mcp() -> Rig {
     .await;
 
     let shutdown = Arc::new(tokio::sync::Notify::new());
-    let app = bm_surface_http::router(handle.clone(), token.clone(), store.clone(), shutdown, None, Arc::new("mock-model".into()), None);
+    let app = bm_surface_http::router(
+        handle.clone(),
+        token.clone(),
+        store.clone(),
+        shutdown,
+        None,
+        Arc::new("mock-model".into()),
+        None,
+    );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("绑定");

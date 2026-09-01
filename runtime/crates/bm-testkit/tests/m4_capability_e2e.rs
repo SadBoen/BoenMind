@@ -241,9 +241,7 @@ async fn t41b_expired_approval_swept_from_waiting_list() {
         .await
         .expect_err("高风险必须审批");
     let list = handle
-        .approval_list(bm_contract::wire::ApprovalListParams {
-            state_filter: None,
-        })
+        .approval_list(bm_contract::wire::ApprovalListParams { state_filter: None })
         .await
         .expect("列表可查");
     let approval_id = list["approvals"][0]["approval_id"]
@@ -262,9 +260,7 @@ async fn t41b_expired_approval_swept_from_waiting_list() {
     clock.advance_ms(300_001);
 
     let swept = handle
-        .approval_list(bm_contract::wire::ApprovalListParams {
-            state_filter: None,
-        })
+        .approval_list(bm_contract::wire::ApprovalListParams { state_filter: None })
         .await
         .expect("列表可查");
     assert_eq!(

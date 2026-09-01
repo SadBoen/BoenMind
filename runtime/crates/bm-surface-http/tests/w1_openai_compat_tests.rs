@@ -43,7 +43,9 @@ async fn rig(connector: Arc<dyn ModelConnector>) -> (String, reqwest::Client, te
         Arc::new("mock-model".into()),
         None,
     );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("绑定");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("绑定");
     let addr = listener.local_addr().expect("地址");
     tokio::spawn(async move {
         axum::serve(listener, app).await.expect("serve");
@@ -66,9 +68,9 @@ fn body(text: &str, stream: bool) -> serde_json::Value {
 // W1 合同:非流式 = 聚合 OpenAI chat.completion 形状 + X-Bm-Session 续聊头
 #[tokio::test]
 async fn t150_non_stream_completion_and_session_header() {
-    let connector = Arc::new(MockConnector::repeating(bm_providers::mock_model::Step::ok(
-        "回复内容", 10, 5,
-    )));
+    let connector = Arc::new(MockConnector::repeating(
+        bm_providers::mock_model::Step::ok("回复内容", 10, 5),
+    ));
     let (url, client, _dir) = rig(connector).await;
 
     let r = client
@@ -79,7 +81,11 @@ async fn t150_non_stream_completion_and_session_header() {
         .expect("请求");
     let status = r.status().as_u16();
     if status != 200 {
-        panic!("实际响应 {}: {}", status, r.text().await.unwrap_or_default());
+        panic!(
+            "实际响应 {}: {}",
+            status,
+            r.text().await.unwrap_or_default()
+        );
     }
     let session = r
         .headers()
@@ -90,8 +96,14 @@ async fn t150_non_stream_completion_and_session_header() {
         .to_string();
     let v: serde_json::Value = r.json().await.expect("JSON");
     assert_eq!(v["object"], serde_json::json!("chat.completion"));
-    assert_eq!(v["choices"][0]["message"]["role"], serde_json::json!("assistant"));
-    assert_eq!(v["choices"][0]["message"]["content"], serde_json::json!("回复内容"));
+    assert_eq!(
+        v["choices"][0]["message"]["role"],
+        serde_json::json!("assistant")
+    );
+    assert_eq!(
+        v["choices"][0]["message"]["content"],
+        serde_json::json!("回复内容")
+    );
     assert_eq!(v["choices"][0]["finish_reason"], serde_json::json!("stop"));
     assert_eq!(v["model"], serde_json::json!("mock-model"));
 
@@ -109,9 +121,9 @@ async fn t150_non_stream_completion_and_session_header() {
 // W1 合同:流式 = SSE(role 起手 → delta → finish → [DONE]),内容完整
 #[tokio::test]
 async fn t151_stream_sse_shape_and_content() {
-    let connector = Arc::new(MockConnector::repeating(bm_providers::mock_model::Step::ok(
-        "流式回复正文", 10, 5,
-    )));
+    let connector = Arc::new(MockConnector::repeating(
+        bm_providers::mock_model::Step::ok("流式回复正文", 10, 5),
+    ));
     let (url, client, _dir) = rig(connector).await;
 
     let r = client
@@ -128,36 +140,54 @@ async fn t151_stream_sse_shape_and_content() {
     let mut saw_role_start = false;
     let mut saw_finish = false;
     for line in text.lines() {
-        let Some(data) = line.strip_prefix("data: ") else { continue };
-        if data == "[DONE]" { break; }
+        let Some(data) = line.strip_prefix("data: ") else {
+            continue;
+        };
+        if data == "[DONE]" {
+            break;
+        }
         let v: serde_json::Value = serde_json::from_str(data).expect("帧为合法 JSON");
         let delta = &v["choices"][0]["delta"];
-        if delta["role"] == serde_json::json!("assistant") { saw_role_start = true; }
-        if v["choices"][0]["finish_reason"] == serde_json::json!("stop") { saw_finish = true; }
+        if delta["role"] == serde_json::json!("assistant") {
+            saw_role_start = true;
+        }
+        if v["choices"][0]["finish_reason"] == serde_json::json!("stop") {
+            saw_finish = true;
+        }
     }
     assert!(saw_role_start, "应有 role 起手帧:{text}");
     assert!(saw_finish, "应有 finish 帧:{text}");
-    assert!(text.trim_end().ends_with("data: [DONE]"), "应以 [DONE] 收口");
+    assert!(
+        text.trim_end().ends_with("data: [DONE]"),
+        "应以 [DONE] 收口"
+    );
 
     // 内容完整:起手空串 + delta/completion 余量拼接 = 全文(字符级不丢不重)
     let mut content = String::new();
     for line in text.lines() {
-        let Some(data) = line.strip_prefix("data: ") else { continue };
-        if data == "[DONE]" { break; }
+        let Some(data) = line.strip_prefix("data: ") else {
+            continue;
+        };
+        if data == "[DONE]" {
+            break;
+        }
         let v: serde_json::Value = serde_json::from_str(data).expect("帧为合法 JSON");
         if let Some(d) = v["choices"][0]["delta"]["content"].as_str() {
             content.push_str(d);
         }
     }
-    assert_eq!(content, "流式回复正文", "delta 拼接必须等于全文(不丢字不重字)");
+    assert_eq!(
+        content, "流式回复正文",
+        "delta 拼接必须等于全文(不丢字不重字)"
+    );
 }
 
 // W1 合同:错误形状(OpenAI error 对象)——空消息 / 非法会话
 #[tokio::test]
 async fn t152_error_shapes() {
-    let connector = Arc::new(MockConnector::repeating(bm_providers::mock_model::Step::ok(
-        "x", 5, 5,
-    )));
+    let connector = Arc::new(MockConnector::repeating(
+        bm_providers::mock_model::Step::ok("x", 5, 5),
+    ));
     let (url, client, _dir) = rig(connector).await;
 
     // 空 user 消息
@@ -187,11 +217,15 @@ async fn t152_error_shapes() {
 // W1 合同:GET /v1/models 返回服务器配置模型
 #[tokio::test]
 async fn t153_models_list() {
-    let connector = Arc::new(MockConnector::repeating(bm_providers::mock_model::Step::ok(
-        "x", 5, 5,
-    )));
+    let connector = Arc::new(MockConnector::repeating(
+        bm_providers::mock_model::Step::ok("x", 5, 5),
+    ));
     let (url, client, _dir) = rig(connector).await;
-    let r = client.get(format!("{url}/v1/models")).send().await.expect("请求");
+    let r = client
+        .get(format!("{url}/v1/models"))
+        .send()
+        .await
+        .expect("请求");
     assert_eq!(r.status().as_u16(), 200);
     let v: serde_json::Value = r.json().await.expect("JSON");
     assert_eq!(v["data"][0]["id"], serde_json::json!("mock-model"));

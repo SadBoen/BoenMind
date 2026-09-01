@@ -21,11 +21,11 @@
 //!   包含校验);文件读取只读、≤512KB、非 UTF-8 拒(二进制不预览)。
 
 use crate::config_store::ModelConfigStore;
+use axum::Json;
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
@@ -159,8 +159,8 @@ fn safe_resolve(root: &Path, rel: &str) -> Result<PathBuf, String> {
         for seg in Path::new(rel).components() {
             if let Component::Normal(s) = seg {
                 probe.push(s);
-                let meta = std::fs::symlink_metadata(&probe)
-                    .map_err(|_| "路径不存在".to_string())?;
+                let meta =
+                    std::fs::symlink_metadata(&probe).map_err(|_| "路径不存在".to_string())?;
                 if meta.file_type().is_symlink() {
                     return Err("拒绝符号链接".to_string());
                 }
@@ -186,10 +186,7 @@ pub async fn providers_list(State(cfg): State<AdminConfig>) -> Response {
     Json(json!({ "providers": list })).into_response()
 }
 
-pub async fn providers_create(
-    State(cfg): State<AdminConfig>,
-    Json(body): Json<Value>,
-) -> Response {
+pub async fn providers_create(State(cfg): State<AdminConfig>, Json(body): Json<Value>) -> Response {
     if let Err(e) = validate_provider_input(&body) {
         return admin_error(e.0, e.1);
     }
@@ -266,7 +263,10 @@ pub async fn providers_probe(State(_cfg): State<AdminConfig>, Json(body): Json<V
         return admin_error(StatusCode::BAD_REQUEST, "baseUrl 必须是字符串");
     };
     if !(base.len() <= 500 && (base.starts_with("http://") || base.starts_with("https://"))) {
-        return admin_error(StatusCode::BAD_REQUEST, "baseUrl 必须以 http:// 或 https:// 开头");
+        return admin_error(
+            StatusCode::BAD_REQUEST,
+            "baseUrl 必须以 http:// 或 https:// 开头",
+        );
     }
     let client = match reqwest::Client::builder()
         .user_agent(concat!("boenmind-server/", env!("CARGO_PKG_VERSION")))
@@ -274,7 +274,12 @@ pub async fn providers_probe(State(_cfg): State<AdminConfig>, Json(body): Json<V
         .build()
     {
         Ok(c) => c,
-        Err(e) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, format!("HTTP 客户端构建失败: {e}")),
+        Err(e) => {
+            return admin_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("HTTP 客户端构建失败: {e}"),
+            );
+        }
     };
     let mut req = client.get(format!("{base}/models"));
     if let Some(k) = body["apiKey"].as_str().filter(|s| !s.is_empty()) {
@@ -296,8 +301,10 @@ pub async fn providers_probe(State(_cfg): State<AdminConfig>, Json(body): Json<V
                             .collect::<Vec<_>>()
                     })
                     .unwrap_or_default();
-                Json(json!({ "ok": true, "status": status, "latencyMs": latency, "models": models }))
-                    .into_response()
+                Json(
+                    json!({ "ok": true, "status": status, "latencyMs": latency, "models": models }),
+                )
+                .into_response()
             } else {
                 let snippet: String = text.chars().take(200).collect();
                 Json(json!({ "ok": false, "status": status, "latencyMs": latency, "error": snippet }))
@@ -306,7 +313,8 @@ pub async fn providers_probe(State(_cfg): State<AdminConfig>, Json(body): Json<V
         }
         Err(e) => {
             let latency = started.elapsed().as_millis() as u64;
-            Json(json!({ "ok": false, "latencyMs": latency, "error": format!("{e}") })).into_response()
+            Json(json!({ "ok": false, "latencyMs": latency, "error": format!("{e}") }))
+                .into_response()
         }
     }
 }
@@ -331,9 +339,18 @@ pub async fn model_active_set(State(cfg): State<AdminConfig>, Json(body): Json<V
         .as_str()
         .map(|s| s.to_string())
         .or_else(|| p["defaultModel"].as_str().map(|s| s.to_string()))
-        .or_else(|| p["models"].as_array().and_then(|a| a.first()).and_then(|m| m.as_str()).map(|s| s.to_string()));
+        .or_else(|| {
+            p["models"]
+                .as_array()
+                .and_then(|a| a.first())
+                .and_then(|m| m.as_str())
+                .map(|s| s.to_string())
+        });
     let Some(model_id) = model_id else {
-        return admin_error(StatusCode::BAD_REQUEST, "该 provider 没有可用模型(先拉取模型清单)");
+        return admin_error(
+            StatusCode::BAD_REQUEST,
+            "该 provider 没有可用模型(先拉取模型清单)",
+        );
     };
     let store = ModelConfigStore::new(&cfg.data_dir);
     let mut values = json!({
@@ -368,8 +385,8 @@ fn mcp_file_or_error(cfg: &AdminConfig) -> Result<PathBuf, (StatusCode, String)>
 fn read_mcp_servers(path: &Path) -> Result<Vec<Value>, String> {
     match std::fs::read_to_string(path) {
         Ok(text) => {
-            let arr: Vec<Value> = serde_json::from_str(&text)
-                .map_err(|e| format!("MCP 配置不是 JSON 数组: {e}"))?;
+            let arr: Vec<Value> =
+                serde_json::from_str(&text).map_err(|e| format!("MCP 配置不是 JSON 数组: {e}"))?;
             Ok(arr)
         }
         Err(_) => Ok(vec![]), // 文件不存在 = 空清单(首条新增时创建)
@@ -515,7 +532,10 @@ pub async fn mcp_update(
     Json(json!({ "ok": true, "note": "已落盘,重启服务器后生效" })).into_response()
 }
 
-pub async fn mcp_delete(State(cfg): State<AdminConfig>, AxumPath(name): AxumPath<String>) -> Response {
+pub async fn mcp_delete(
+    State(cfg): State<AdminConfig>,
+    AxumPath(name): AxumPath<String>,
+) -> Response {
     let path = match mcp_file_or_error(&cfg) {
         Ok(p) => p,
         Err((s, m)) => return admin_error(s, m),
@@ -550,10 +570,13 @@ pub async fn roles_get(State(cfg): State<AdminConfig>) -> Response {
 /// 写默认角色(system_prompt;保存即热生效——turn 每回合读此文件)。
 pub async fn roles_set(State(cfg): State<AdminConfig>, Json(body): Json<Value>) -> Response {
     let file = roles_file(&cfg);
-    if let Some(dir) = file.parent() {
-        if let Err(e) = std::fs::create_dir_all(dir) {
-            return admin_error(StatusCode::INTERNAL_SERVER_ERROR, format!("目录创建失败: {e}"));
-        }
+    if let Some(dir) = file.parent()
+        && let Err(e) = std::fs::create_dir_all(dir)
+    {
+        return admin_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("目录创建失败: {e}"),
+        );
     }
     let doc = json!({
         "name": body["name"].as_str().unwrap_or("assistant"),
@@ -581,11 +604,13 @@ pub async fn mcp_test(
     AxumPath(name): AxumPath<String>,
 ) -> Response {
     let Some(hub) = cfg.hub.clone() else {
-        return admin_error(StatusCode::BAD_REQUEST, "服务器未启用 MCP 接线(--mcp-config)");
+        return admin_error(
+            StatusCode::BAD_REQUEST,
+            "服务器未启用 MCP 接线(--mcp-config)",
+        );
     };
     match hub.probe_server(&name).await {
-        Ok(tools) => Json(json!({ "ok": true, "name": name, "tools": tools }))
-            .into_response(),
+        Ok(tools) => Json(json!({ "ok": true, "name": name, "tools": tools })).into_response(),
         Err(e) => Json(json!({ "ok": false, "name": name, "error": e })).into_response(),
     }
 }
@@ -627,7 +652,10 @@ pub async fn mcp_config_get(
     AxumPath(name): AxumPath<String>,
 ) -> Response {
     let Some(path) = cfg.mcp_config.clone() else {
-        return admin_error(StatusCode::BAD_REQUEST, "服务器未启用 MCP 配置文件(--mcp-config)");
+        return admin_error(
+            StatusCode::BAD_REQUEST,
+            "服务器未启用 MCP 配置文件(--mcp-config)",
+        );
     };
     let file = path
         .parent()
@@ -648,7 +676,10 @@ pub async fn mcp_config_set(
     Json(body): Json<McpConfigBody>,
 ) -> Response {
     let Some(path) = cfg.mcp_config.clone() else {
-        return admin_error(StatusCode::BAD_REQUEST, "服务器未启用 MCP 配置文件(--mcp-config)");
+        return admin_error(
+            StatusCode::BAD_REQUEST,
+            "服务器未启用 MCP 配置文件(--mcp-config)",
+        );
     };
     let Some(dir) = path.parent().map(|d| d.join("config")) else {
         return admin_error(StatusCode::INTERNAL_SERVER_ERROR, "配置目录解析失败");
@@ -657,7 +688,10 @@ pub async fn mcp_config_set(
         return admin_error(StatusCode::BAD_REQUEST, "values 必须是对象");
     };
     if let Err(e) = std::fs::create_dir_all(&dir) {
-        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, format!("配置目录创建失败: {e}"));
+        return admin_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("配置目录创建失败: {e}"),
+        );
     }
     let file = dir.join(format!("mcp-{name}.json"));
     let mut current: Value = std::fs::read_to_string(&file)
@@ -715,10 +749,17 @@ pub async fn capabilities_list(State(cfg): State<AdminConfig>) -> Response {
             })
         })
         .collect();
-    let boot_snapshot = cfg.mcp_servers.read().map(|g| g.clone()).unwrap_or_default();
+    let boot_snapshot = cfg
+        .mcp_servers
+        .read()
+        .map(|g| g.clone())
+        .unwrap_or_default();
     for b in boot_snapshot.iter() {
         let name = b["name"].as_str().unwrap_or("");
-        if !file_servers.iter().any(|s| s["name"].as_str() == Some(name)) {
+        if !file_servers
+            .iter()
+            .any(|s| s["name"].as_str() == Some(name))
+        {
             mcp.push(json!({
                 "name": name, "tools": b["tools"].clone(),
                 "loaded": true, "pendingRemoval": true,
@@ -751,7 +792,12 @@ pub async fn fs_list(State(cfg): State<AdminConfig>, Query(p): Query<FsPathParam
     let mut entries = Vec::new();
     let rd = match std::fs::read_dir(&dir) {
         Ok(rd) => rd,
-        Err(e) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, format!("读取目录失败: {e}")),
+        Err(e) => {
+            return admin_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("读取目录失败: {e}"),
+            );
+        }
     };
     for entry in rd.flatten() {
         let Ok(meta) = entry.metadata() else { continue };
@@ -796,7 +842,11 @@ pub async fn fs_file(State(cfg): State<AdminConfig>, Query(p): Query<FsPathParam
     if meta.len() > FILE_PREVIEW_LIMIT {
         return admin_error(
             StatusCode::PAYLOAD_TOO_LARGE,
-            format!("文件超过预览上限({}KB > {}KB)", meta.len() / 1024, FILE_PREVIEW_LIMIT / 1024),
+            format!(
+                "文件超过预览上限({}KB > {}KB)",
+                meta.len() / 1024,
+                FILE_PREVIEW_LIMIT / 1024
+            ),
         );
     }
     match std::fs::read(&file) {
@@ -821,7 +871,11 @@ pub async fn fs_file(State(cfg): State<AdminConfig>, Query(p): Query<FsPathParam
 
 /// 管理面统一错误形状(壳子私用 REST 惯例,非 Wire 信封)。
 fn admin_error(status: StatusCode, message: impl Into<String>) -> Response {
-    (status, Json(json!({ "error": { "message": message.into() } }))).into_response()
+    (
+        status,
+        Json(json!({ "error": { "message": message.into() } })),
+    )
+        .into_response()
 }
 
 /// 管理面子路由(挂载于 /admin;公开 = W1 同款已登记欠账)。
@@ -861,7 +915,10 @@ pub async fn mcp_reload(State(cfg): State<AdminConfig>) -> Response {
     use bm_providers::mcp::{McpHub, StdioMcpTransport};
 
     let Some(path) = cfg.mcp_config.clone() else {
-        return admin_error(StatusCode::BAD_REQUEST, "服务器未启用 MCP 配置文件(--mcp-config)");
+        return admin_error(
+            StatusCode::BAD_REQUEST,
+            "服务器未启用 MCP 配置文件(--mcp-config)",
+        );
     };
     let Some(hub) = cfg.hub.clone() else {
         return admin_error(
@@ -962,4 +1019,3 @@ pub async fn mcp_reload(State(cfg): State<AdminConfig>) -> Response {
     }))
     .into_response()
 }
-

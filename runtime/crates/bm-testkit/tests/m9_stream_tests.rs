@@ -28,7 +28,8 @@ impl ModelConnector for ChunkedConnector {
     }
 
     async fn invoke(&self, _req: InvokeRequest, _cancel: CancellationToken) -> InvokeResponse {
-        InvokeResponse::Completed { tool_calls: Vec::new(),
+        InvokeResponse::Completed {
+            tool_calls: Vec::new(),
             content: self.chunks.concat(),
             finish_reason: FinishReason::Stop,
             usage: Usage {
@@ -62,7 +63,8 @@ impl ModelConnector for ChunkedConnector {
                 }
             }
         }
-        InvokeResponse::Completed { tool_calls: Vec::new(),
+        InvokeResponse::Completed {
+            tool_calls: Vec::new(),
             content: self.chunks.concat(),
             finish_reason: FinishReason::Stop,
             usage: Usage {

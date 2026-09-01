@@ -280,8 +280,7 @@ mod tests {
             "secret:has space",
             "secret:大写外字符",
         ] {
-            let err = SecretStore::put(&s, bad, "v")
-                .expect_err(&format!("坏引用应被拒绝: {bad}"));
+            let err = SecretStore::put(&s, bad, "v").expect_err(&format!("坏引用应被拒绝: {bad}"));
             assert!(
                 matches!(err, SecretError::InvalidRef(_)),
                 "应为 InvalidRef: {bad}"

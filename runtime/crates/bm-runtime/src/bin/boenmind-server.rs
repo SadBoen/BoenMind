@@ -129,8 +129,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut mcp_loaded: Vec<serde_json::Value> = Vec::new();
     let mut mcp_executor: Option<Arc<dyn bm_core::ports::AsyncCapabilityExecutor>> = None;
     // McpHub::new() 自返回 Arc(内部 OnceLock 全局共享)
-    let hub: Option<Arc<bm_providers::mcp::McpHub>> =
-        mcp_config.as_ref().map(|_| bm_providers::mcp::McpHub::new());
+    let hub: Option<Arc<bm_providers::mcp::McpHub>> = mcp_config
+        .as_ref()
+        .map(|_| bm_providers::mcp::McpHub::new());
     if let Some(cfg) = &mcp_config {
         let hub = hub.as_ref().expect("hub 已构造");
         let setups = bm_providers::mcp::load_mcp_setups(cfg, secrets.as_ref())?;
@@ -193,7 +194,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         hub: hub.clone(),
         secrets: Some(secrets.clone()),
     };
-
 
     // P0(第四轮评审):INV-5 脱敏接线——把模型凭据明文注册进 Execution
     // Log 扫描面,此后任何日志条目命中即整条降格,密钥明文禁止落盘。

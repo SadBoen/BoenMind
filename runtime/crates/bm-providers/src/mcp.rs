@@ -399,11 +399,7 @@ fn spawn_generation(
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("MCP 子进程启动失败: {e}"))?;
-    eprintln!(
-        "MCP 子进程已拉起 pid={:?} command={}",
-        child.id(),
-        command
-    );
+    eprintln!("MCP 子进程已拉起 pid={:?} command={}", child.id(), command);
     let stdin = child.stdin.take().ok_or("MCP 子进程 stdin 不可用")?;
     let stdout = child.stdout.take().ok_or("MCP 子进程 stdout 不可用")?;
     // W2 修复:Child 必须有人持有并 wait——kill_on_drop(true) 下被丢弃会
@@ -739,10 +735,7 @@ impl McpHub {
         let Some(transport) = transport else {
             return Err("未连接".into());
         };
-        let listed = transport
-            .request("tools/list", json!({}))
-            .await
-            .map_err(|e| e)?;
+        let listed = transport.request("tools/list", json!({})).await?;
         Ok(listed
             .get("tools")
             .and_then(|v| v.as_array())
@@ -1003,4 +996,3 @@ mod m9_review_env_tests {
         }
     }
 }
-
