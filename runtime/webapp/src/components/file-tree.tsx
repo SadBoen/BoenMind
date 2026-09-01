@@ -11,7 +11,7 @@ import {
   Loader2Icon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { mono, paper } from "@/lib/surfaces";
+import { mono } from "@/lib/surfaces";
 
 export interface FileTreeNode {
   path: string;
@@ -31,14 +31,11 @@ export function FileTree({
   nodes: readonly FileTreeNode[];
   onNodeClick?: (node: FileTreeNode) => void;
 }) {
+  // 用户裁定:不做独立底色卡片,融入所在面板(透明、无边框)
   return (
     <div
       data-slot="file-tree"
-      className={cn(
-        paper,
-        "flex w-full flex-col gap-1 rounded-xl p-2",
-        className,
-      )}
+      className={cn("flex w-full flex-col gap-1 p-1", className)}
       {...props}
     >
       <div className="flex flex-col">

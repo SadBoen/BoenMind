@@ -2,7 +2,7 @@
 // 导航:模型提供商 / 插件 / MCP 管理 / 外观(W3 主题系统)+
 // 插件 PIN 快捷项(PIN 后在此显示,点击跳插件页并按名筛选)。
 import { useEffect, useState } from "react";
-import { ArrowLeftIcon, BoxIcon, PlugIcon, ServerIcon, SlidersHorizontalIcon, SparklesIcon } from "lucide-react";
+import { BoxIcon, PlugIcon, ServerIcon, SlidersHorizontalIcon, SparklesIcon } from "lucide-react";
 import { ProvidersPage } from "./ProvidersPage";
 import { PluginsPage, readPins } from "./PluginsPage";
 import { McpPage } from "./McpPage";
@@ -28,6 +28,15 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
     setSection("plugins");
   };
 
+  // 图标栏常驻,齿轮即开关;Esc 也可关闭(用户裁定:返回按钮不再需要)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   return (
     // 从 rail(52px 图标栏)右侧起铺满:设置打开时图标栏常驻不消失(用户裁定)
     <div
@@ -35,15 +44,8 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
       data-slot="settings-page"
     >
       <div className="border-b flex items-center gap-3 px-4 py-3">
-        <button
-          className="hover:bg-accent flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[13px] transition-colors"
-          onClick={onClose}
-          data-slot="settings-back"
-        >
-          <ArrowLeftIcon className="size-4" />
-          返回对话
-        </button>
         <span className="text-[15px] font-semibold">设置</span>
+        <span className="text-muted-foreground text-[12px]">齿轮可开关 · Esc 关闭</span>
         <span className="flex-1" />
         <span className="text-muted-foreground font-mono text-[11px]">BoenMind W2</span>
       </div>
