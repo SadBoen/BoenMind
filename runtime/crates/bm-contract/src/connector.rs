@@ -50,10 +50,12 @@ pub struct ModelDescriptor {
     pub fallback_rank: u32,
 }
 
+// W4:Tool = 工具结果回喂消息(OpenAI 兼容 role:"tool")。
 wire_str_enum!(Role {
     System => "system",
     User => "user",
     Assistant => "assistant",
+    Tool => "tool",
 });
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -81,7 +83,8 @@ pub struct BudgetCtx {
 pub struct InvokeRequest {
     pub model_id: String,
     pub messages: Vec<Message>,
-    /// M1 恒为空数组(合同 maxItems: 0)。
+    /// M1 恒为空数组(合同 maxItems: 0);W4 对话工具闭环启用
+    /// (maxItems 0→16,OpenAI function 格式,只增不破)。
     pub tools: Vec<serde_json::Value>,
     #[serde(default)]
     pub params: InvokeParams,
@@ -92,10 +95,21 @@ pub struct InvokeRequest {
     pub attempt: u32,
 }
 
+// W4:ToolCalls = 模型请求调用工具(结果回喂后继续生成)。
 wire_str_enum!(FinishReason {
     Stop => "stop",
     Length => "length",
+    ToolCalls => "tool_calls",
 });
+
+/// W4:模型侧的工具调用请求(OpenAI 兼容形态的收敛结构)。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ToolCallPayload {
+    pub id: String,
+    pub name: String,
+    /// JSON 字符串形式的参数(与 OpenAI arguments 一致,原样透传)。
+    pub arguments: String,
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Usage {
@@ -114,6 +128,9 @@ pub enum InvokeResponse {
         model_id: String,
         latency_ms: u64,
         stream_interrupted: bool,
+        /// W4:finish_reason = tool_calls 时的调用清单(空 = 无;序列化
+        /// 非空才出字段)。
+        tool_calls: Vec<ToolCallPayload>,
     },
     Failed {
         error_code: ErrorCode,
@@ -135,6 +152,7 @@ impl Serialize for InvokeResponse {
                 model_id,
                 latency_ms,
                 stream_interrupted,
+                tool_calls,
             } => {
                 map.serialize_entry("ok", &true)?;
                 map.serialize_entry("content", content)?;
@@ -143,6 +161,9 @@ impl Serialize for InvokeResponse {
                 map.serialize_entry("model_id", model_id)?;
                 map.serialize_entry("latency_ms", latency_ms)?;
                 map.serialize_entry("stream_interrupted", stream_interrupted)?;
+                if !tool_calls.is_empty() {
+                    map.serialize_entry("tool_calls", tool_calls)?;
+                }
             }
             InvokeResponse::Failed {
                 error_code,
@@ -189,6 +210,8 @@ impl<'de> Deserialize<'de> for InvokeResponse {
             #[serde(default)]
             stream_interrupted: Option<bool>,
             #[serde(default)]
+            tool_calls: Option<Vec<ToolCallPayload>>,
+            #[serde(default)]
             error_code: Option<String>,
             #[serde(default)]
             retryable: Option<bool>,
@@ -200,6 +223,7 @@ impl<'de> Deserialize<'de> for InvokeResponse {
         let raw = Raw::deserialize(deserializer)?;
         if raw.ok {
             Ok(InvokeResponse::Completed {
+                tool_calls: raw.tool_calls.unwrap_or_default(),
                 content: raw
                     .content
                     .ok_or_else(|| serde::de::Error::missing_field("content"))?,

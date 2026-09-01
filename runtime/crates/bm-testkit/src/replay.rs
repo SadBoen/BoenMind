@@ -103,6 +103,7 @@ impl TestRig {
                             max_turns,
                             extra: Default::default(),
                         }),
+                        system_prompt: None,
                     },
                 },
             )

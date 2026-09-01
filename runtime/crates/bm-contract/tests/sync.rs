@@ -353,6 +353,7 @@ fn session_and_agent_payloads_validate() {
                 max_turns: 10,
                 extra: Default::default(),
             }),
+            system_prompt: None,
         },
     })
     .unwrap();
@@ -561,6 +562,7 @@ fn connector_invoke_validates() {
 
     let ok_resp = InvokeResponse::Completed {
         content: "幂等性是指同一操作执行多次与执行一次的效果相同。".into(),
+        tool_calls: Vec::new(),
         finish_reason: bm_contract::connector::FinishReason::Stop,
         usage: Usage {
             tokens_in: 412,

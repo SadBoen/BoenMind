@@ -133,6 +133,13 @@ export const api = {
         `/admin/mcp/test/${name}`,
         { method: "POST" },
       ),
+    rolesGet: () =>
+      req<{ name: string; system_prompt: string }>("/admin/roles"),
+    rolesSet: (name: string, system_prompt: string) =>
+      req<{ ok: boolean; note: string }>("/admin/roles", {
+        method: "PUT",
+        body: JSON.stringify({ name, system_prompt }),
+      }),
     status: () =>
       req<{
         status: { name: string; ok: boolean; tools?: number; error?: string }[];

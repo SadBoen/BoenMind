@@ -104,6 +104,7 @@ async fn t105_model_provider_circuit_breaker() {
             rig.ids.next_id("req"),
             bm_contract::wire::SessionCreateParams {
                 agent: bm_contract::wire::AgentSpec {
+                    system_prompt: None,
                     name: "a1".into(),
                     model_chain: vec![
                         bm_testkit::replay::MODEL_A.into(),
@@ -159,6 +160,7 @@ async fn t105_model_provider_circuit_breaker() {
             rig.ids.next_id("req"),
             bm_contract::wire::SessionCreateParams {
                 agent: bm_contract::wire::AgentSpec {
+                    system_prompt: None,
                     name: "assistant2".into(),
                     model_chain: vec![
                         bm_testkit::replay::MODEL_A.into(),
@@ -201,6 +203,7 @@ async fn t105_model_provider_circuit_breaker() {
             rig.ids.next_id("req"),
             bm_contract::wire::SessionCreateParams {
                 agent: bm_contract::wire::AgentSpec {
+                    system_prompt: None,
                     name: "assistant3".into(),
                     model_chain: vec![
                         bm_testkit::replay::MODEL_A.into(),

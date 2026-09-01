@@ -83,6 +83,7 @@ async fn t116_live_long_task_stress() {
             ids.next_id("req"),
             SessionCreateParams {
                 agent: AgentSpec {
+                    system_prompt: None,
                     name: "长任务助手".into(),
                     model_chain: vec![model.clone()],
                     budget: Some(Budget {

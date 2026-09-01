@@ -6,10 +6,12 @@ import { BoxIcon, PlugIcon, ServerIcon, SlidersHorizontalIcon, SparklesIcon } fr
 import { ProvidersPage } from "./ProvidersPage";
 import { PluginsPage, readPins } from "./PluginsPage";
 import { McpPage } from "./McpPage";
+import { RolesPage } from "./RolesPage";
+import { RolesPage } from "./RolesPage";
 import { AppearancePage } from "@/w3/AppearancePage";
 import { cn } from "@/lib/utils";
 
-type Section = "providers" | "plugins" | "mcp" | "appearance";
+type Section = "providers" | "plugins" | "mcp" | "appearance" | "roles";
 
 export function SettingsPage({ onClose }: { onClose: () => void }) {
   const [section, setSection] = useState<Section>("providers");
@@ -80,6 +82,20 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
             label="外观"
             hint="W3"
           />
+          <NavItem
+            active={section === "roles"}
+            onClick={() => setSection("roles")}
+            icon={<BoxIcon className="size-4" />}
+            label="角色"
+            hint="W4"
+          />
+          <NavItem
+            active={section === "roles"}
+            onClick={() => setSection("roles")}
+            icon={<BoxIcon className="size-4" />}
+            label="角色"
+            hint="W4"
+          />
           {pins.length > 0 ? (
             <div className="mt-4 border-t pt-3">
               <div className="text-muted-foreground px-2 pb-1.5 text-[11px] font-medium tracking-wide">
@@ -123,6 +139,8 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
               />
             ) : null}
             {section === "appearance" ? <AppearancePage /> : null}
+            {section === "roles" ? <RolesPage /> : null}
+            {section === "roles" ? <RolesPage /> : null}
           </div>
         </main>
       </div>

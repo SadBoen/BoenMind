@@ -232,6 +232,22 @@ impl CapabilityRegistry {
         effective
     }
 
+    /// W4 对话工具闭环:枚举全部「免审批直通」能力(只读类)。
+    /// 返回 (capability 名, input_schema);调用方据此构造模型侧 tools。
+    pub fn direct_tools(&self) -> Vec<(String, serde_json::Value)> {
+        let mut out: Vec<(String, serde_json::Value)> = self
+            .manifests
+            .iter()
+            .filter(|(_, m)| {
+                m.approval == bm_contract::capability::ApprovalRequirement::NotRequired
+                    && m.capability != "model.invoke"
+            })
+            .map(|(name, m)| (name.clone(), m.input_schema.clone()))
+            .collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
+    }
+
     pub fn manifest_of(&self, capability: &str) -> Option<&CapabilityManifest> {
         self.manifests.get(capability)
     }

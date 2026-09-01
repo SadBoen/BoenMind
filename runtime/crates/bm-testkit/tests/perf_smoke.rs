@@ -45,6 +45,7 @@ async fn start_runtime(
 fn session_params() -> SessionCreateParams {
     SessionCreateParams {
         agent: AgentSpec {
+            system_prompt: None,
             name: "assistant".into(),
             model_chain: vec![bm_testkit_replay::MODEL_A.into()],
             budget: Some(bm_contract::budget::Budget {

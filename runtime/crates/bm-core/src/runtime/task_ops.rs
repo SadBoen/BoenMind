@@ -1527,6 +1527,7 @@ pub(crate) fn handle_task_autorun_start(
                 name: format!("autorun-{}", params.task_id.as_str()),
                 model_chain,
                 budget: None,
+                system_prompt: None,
             },
         },
     )?;

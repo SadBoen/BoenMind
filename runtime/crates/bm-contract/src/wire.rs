@@ -178,6 +178,9 @@ pub struct AgentSpec {
     pub model_chain: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub budget: Option<Budget>,
+    /// W4 角色:会话级 system prompt(设置页「角色」定义;None = 无)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

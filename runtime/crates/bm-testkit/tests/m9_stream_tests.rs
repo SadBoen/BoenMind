@@ -28,7 +28,7 @@ impl ModelConnector for ChunkedConnector {
     }
 
     async fn invoke(&self, _req: InvokeRequest, _cancel: CancellationToken) -> InvokeResponse {
-        InvokeResponse::Completed {
+        InvokeResponse::Completed { tool_calls: Vec::new(),
             content: self.chunks.concat(),
             finish_reason: FinishReason::Stop,
             usage: Usage {
@@ -62,7 +62,7 @@ impl ModelConnector for ChunkedConnector {
                 }
             }
         }
-        InvokeResponse::Completed {
+        InvokeResponse::Completed { tool_calls: Vec::new(),
             content: self.chunks.concat(),
             finish_reason: FinishReason::Stop,
             usage: Usage {
@@ -137,6 +137,7 @@ async fn one_turn(handle: &RuntimeHandle, ids: &Arc<SeqIdGen>, model: &str) -> T
 // AgentSpec 构造的小封装(字段随合同版本演进只改这里)。
 fn agent_spec(model: &str) -> bm_contract::wire::AgentSpec {
     bm_contract::wire::AgentSpec {
+        system_prompt: None,
         name: "tester".into(),
         model_chain: vec![model.to_string()],
         budget: None,

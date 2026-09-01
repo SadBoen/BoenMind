@@ -158,6 +158,7 @@ impl ModelConnector for GlmConnector {
         match parsed {
             Ok(w) => match w.choices.into_iter().next() {
                 Some(c) => InvokeResponse::Completed {
+                    tool_calls: Vec::new(),
                     content: c.message.content.unwrap_or_default(),
                     finish_reason: match c.finish_reason.as_deref() {
                         Some("length") => FinishReason::Length,

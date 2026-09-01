@@ -129,6 +129,7 @@ pub async fn chat_completions(
                             name: "webui".to_string(),
                             model_chain: vec![default_model.clone()],
                             budget: None,
+                            system_prompt: None,
                         },
                     },
                 )

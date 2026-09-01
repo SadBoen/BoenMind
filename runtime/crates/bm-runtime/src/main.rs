@@ -56,6 +56,7 @@ async fn main() -> CoreResult<()> {
                         max_turns: 10,
                         extra: Default::default(),
                     }),
+                    system_prompt: None,
                 },
             },
         )

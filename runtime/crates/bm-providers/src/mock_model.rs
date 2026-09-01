@@ -119,6 +119,7 @@ impl ModelConnector for MockConnector {
                 latency_ms,
             } => InvokeResponse::Completed {
                 content,
+                tool_calls: Vec::new(),
                 finish_reason: FinishReason::Stop,
                 usage: Usage {
                     tokens_in,
@@ -138,6 +139,7 @@ impl ModelConnector for MockConnector {
                 tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
                 InvokeResponse::Completed {
                     content,
+                    tool_calls: Vec::new(),
                     finish_reason: FinishReason::Stop,
                     usage: Usage {
                         tokens_in,

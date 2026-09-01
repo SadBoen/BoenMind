@@ -130,17 +130,69 @@ pub(crate) fn spawn_turn(w: &mut World, agent: &Agent, operation_id: &BmId, cont
     let tx = w.tx.clone();
     let op_id = operation_id.clone();
     let streaming = w.config.model_streaming;
+    // W4 对话工具闭环:直通(免审批)工具清单 + 默认角色 system prompt。
+    // 工具 = registry 全部 approval=not-required 能力(联网搜索等只读类;
+    // 非直通能力不进对话,走审批面的既有入口);prompt 每回合读
+    // config/roles.json(设置页保存即热生效)。
+    let direct_tools: Vec<(String, serde_json::Value)> = w.registry.direct_tools();
+    let role_prompt: Option<String> = w
+        .config
+        .data_dir
+        .as_ref()
+        .and_then(|d| {
+            std::fs::read_to_string(d.join("config").join("roles.json")).ok()
+        })
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|r| r["system_prompt"].as_str().map(|s| s.to_string()))
+        .filter(|s| !s.is_empty());
+    let request_id = w
+        .operations
+        .get(operation_id)
+        .map(|o| o.request_id.clone());
 
     tokio::spawn(async move {
+        // W4:messages 含角色 prompt;tools=直通工具(OpenAI function 格式,
+        // capability 名的点映射为双下划线);工具结果经 CapabilityCall 回核心
+        // 循环执行(Broker 裁决/审计管道原样),轮询 operations 至终态取结果
+        // 回喂模型。工具轮上限 5,防循环失控。
+        const MAX_TOOL_ROUNDS: u32 = 5;
+        let mut messages: Vec<Message> = Vec::new();
+        if let Some(sp) = &role_prompt {
+            messages.push(Message {
+                role: Role::System,
+                content: sp.clone(),
+            });
+        }
+        messages.push(Message {
+            role: Role::User,
+            content: content.clone(),
+        });
+        let mut name_to_cap: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+        let tools_json: Vec<serde_json::Value> = direct_tools
+            .iter()
+            .map(|(cap, schema)| {
+                let openai_name = cap.replace('.', "__");
+                name_to_cap.insert(openai_name.clone(), cap.clone());
+                serde_json::json!({
+                    "type": "function",
+                    "function": {
+                        "name": openai_name,
+                        "description": format!("{cap} — 只读直通工具"),
+                        "parameters": schema,
+                    },
+                })
+            })
+            .collect();
+
         for attempt in 1..=max_attempts {
             let model_id = chain[((attempt - 1) as usize) % chain.len()].clone();
+            let mut tool_rounds: u32 = 0;
+            loop {
             let req = InvokeRequest {
                 model_id: model_id.clone(),
-                messages: vec![Message {
-                    role: Role::User,
-                    content: content.clone(),
-                }],
-                tools: vec![],
+                messages: messages.clone(),
+                tools: tools_json.clone(),
                 params: Default::default(),
                 secret_ref: default_secret_ref(&model_id),
                 budget_ctx: BudgetCtx {
@@ -182,12 +234,91 @@ pub(crate) fn spawn_turn(w: &mut World, agent: &Agent, operation_id: &BmId, cont
             match resp {
                 InvokeResponse::Completed {
                     content,
+                    tool_calls,
                     finish_reason: _,
                     usage,
                     model_id: mid,
                     latency_ms,
                     stream_interrupted,
                 } => {
+                    // W4 工具轮:模型请求调用直通工具 → 回核心循环执行 →
+                    // 结果以 Tool 消息回喂 → 重调模型(上限 MAX_TOOL_ROUNDS)。
+                    if !tool_calls.is_empty() && tool_rounds < MAX_TOOL_ROUNDS {
+                        tool_rounds += 1;
+                        messages.push(Message {
+                            role: Role::Assistant,
+                            content: content.clone(),
+                        });
+                        for tc in tool_calls {
+                            let _ = tx.try_send(Cmd::ProviderDelta {
+                                operation_id: op_id.clone(),
+                                delta: format!("\n[调用 {}]\n", tc.name),
+                            });
+                            let capability = name_to_cap
+                                .get(&tc.name)
+                                .cloned()
+                                .unwrap_or_else(|| tc.name.clone());
+                            let args: serde_json::Value =
+                                serde_json::from_str(&tc.arguments)
+                                    .unwrap_or(serde_json::Value::Null);
+                            let (rtx, rrx) = tokio::sync::oneshot::channel();
+                            let call_req = request_id
+                                .clone()
+                                .unwrap_or_else(|| op_id.clone());
+                            let _ = tx
+                                .send(Cmd::CapabilityCall {
+                                    request_id: call_req,
+                                    params: wire::CapabilityCallParams {
+                                        capability,
+                                        args,
+                                        idempotency_key: Some(tc.id.clone()),
+                                        deadline_ms: None,
+                                    },
+                                    resp: rtx,
+                                })
+                                .await;
+                            // 受理/结果:直通能力同步出结果;MCP 异步能力经
+                            // operations 轮询至终态(上限 60s)。
+                            let mut tool_result = String::from("工具执行无应答");
+                            if let Ok(Ok(receipt_value)) = rrx.await {
+                                let op_ref = receipt_value["operation_id"]
+                                    .as_str()
+                                    .map(|s| s.to_string());
+                                let tool_op = op_ref
+                                    .and_then(|s| {
+                                        bm_contract::ids::BmId::parse(&s).ok()
+                                    });
+                                if let Some(tool_op) = tool_op {
+                                    let deadline = std::time::Instant::now()
+                                        + std::time::Duration::from_secs(60);
+                                    loop {
+                                        if std::time::Instant::now() > deadline {
+                                            tool_result = "工具执行超时".into();
+                                            break;
+                                        }
+                                        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                                        let (otx, orx) = tokio::sync::oneshot::channel();
+                                        let _ = tx.send(Cmd::GetOpResult {
+                                            operation_id: tool_op.clone(),
+                                            resp: otx,
+                                        });
+                                        if let Ok(Ok(Some(v))) = orx.await {
+                                            tool_result = v.to_string();
+                                            break;
+                                        }
+                                    }
+                                } else {
+                                    tool_result = receipt_value.to_string();
+                                }
+                            }
+                            messages.push(Message {
+                                role: Role::Tool,
+                                content: tool_result,
+                            });
+                        }
+                        // 结果回喂后重调模型(仍在同一 attempt 的降级链内)
+                        continue;
+                    }
                     let _ = tx
                         .send(Cmd::Turn(TurnEvent::Completed {
                             operation_id: op_id.clone(),
@@ -234,7 +365,10 @@ pub(crate) fn spawn_turn(w: &mut World, agent: &Agent, operation_id: &BmId, cont
                             .await;
                         return;
                     }
+                    // 降级链下一 attempt(退出工具轮)
+                    break;
                 }
+            }
             }
         }
     });

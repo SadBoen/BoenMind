@@ -535,6 +535,44 @@ pub async fn mcp_delete(State(cfg): State<AdminConfig>, AxumPath(name): AxumPath
     Json(json!({ "ok": true, "note": "已从配置移除,重启服务器后生效" })).into_response()
 }
 
+// ---- handler:默认角色(W4;config/roles.json,ADR-0012 口径)---------
+
+/// 读默认角色(设置页回显)。
+pub async fn roles_get(State(cfg): State<AdminConfig>) -> Response {
+    let file = roles_file(&cfg);
+    let raw = std::fs::read_to_string(&file)
+        .ok()
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        .unwrap_or_else(|| json!({ "name": "assistant", "system_prompt": "" }));
+    Json(raw).into_response()
+}
+
+/// 写默认角色(system_prompt;保存即热生效——turn 每回合读此文件)。
+pub async fn roles_set(State(cfg): State<AdminConfig>, Json(body): Json<Value>) -> Response {
+    let file = roles_file(&cfg);
+    if let Some(dir) = file.parent() {
+        if let Err(e) = std::fs::create_dir_all(dir) {
+            return admin_error(StatusCode::INTERNAL_SERVER_ERROR, format!("目录创建失败: {e}"));
+        }
+    }
+    let doc = json!({
+        "name": body["name"].as_str().unwrap_or("assistant"),
+        "system_prompt": body["system_prompt"].as_str().unwrap_or(""),
+    });
+    let text = match serde_json::to_string_pretty(&doc) {
+        Ok(t) => crate::config_store::crlf(t),
+        Err(_) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, "序列化失败"),
+    };
+    if let Err(e) = std::fs::write(&file, text) {
+        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, format!("写入失败: {e}"));
+    }
+    Json(json!({ "ok": true, "note": "已保存,下一回合起生效" })).into_response()
+}
+
+fn roles_file(cfg: &AdminConfig) -> std::path::PathBuf {
+    cfg.data_dir.join("config").join("roles.json")
+}
+
 // ---- handler:MCP 探活(主动测试 + 被动轮询共用 hub.probe_server)-------
 
 /// 主动探活单条:POST /admin/mcp/test/{name}
@@ -808,6 +846,7 @@ pub fn admin_routes(cfg: AdminConfig) -> axum::Router {
         )
         .route("/mcp/{name}", put(mcp_update).delete(mcp_delete))
         .route("/capabilities", get(capabilities_list))
+        .route("/roles", get(roles_get).put(roles_set))
         .route("/fs/list", get(fs_list))
         .route("/fs/file", get(fs_file))
         .with_state((*cfg).clone())

@@ -59,6 +59,7 @@ async fn main() {
                     IdGen::next_id(&SeqIdGen::new(), "req"),
                     SessionCreateParams {
                         agent: AgentSpec {
+                            system_prompt: None,
                             name: "assistant".into(),
                             model_chain: vec![bm_testkit_replay::MODEL_A.into()],
                             budget: Some(Budget {
