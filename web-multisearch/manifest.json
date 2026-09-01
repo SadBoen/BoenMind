@@ -1,0 +1,86 @@
+{
+  "name": "web-multisearch",
+  "title": "聚合搜索(12 源)",
+  "description": "并行调用全部搜索源,RRF 融合排序+CJK 同题镜像合并去重,多 Key 自动轮换。工具:web_search_lite(免费四源)/web_search_all(全源)。",
+  "author": "Sadinsun (迁移自 Hermes 插件)",
+  "config_schema": [
+    {
+      "key": "searxng_url",
+      "label": "SearXNG 实例地址",
+      "type": "string",
+      "default": "",
+      "hint": "自托管 SearXNG 的地址(JSON API);留空则 searxng 源禁用"
+    },
+    {
+      "key": "serper_api_key",
+      "label": "Serper API Key(Google SERP)",
+      "type": "secret",
+      "default": "",
+      "hint": "逗号分隔多把,401/403/429 自动轮换"
+    },
+    {
+      "key": "jina_api_key",
+      "label": "Jina API Key",
+      "type": "secret",
+      "default": "",
+      "hint": "搜索+正文抓取(Reader);免费额度可用"
+    },
+    {
+      "key": "tavily_api_key",
+      "label": "Tavily API Key",
+      "type": "secret",
+      "default": "",
+      "hint": "每月 1000 次免费"
+    },
+    {
+      "key": "exa_api_key",
+      "label": "Exa API Key",
+      "type": "secret",
+      "default": "",
+      "hint": "语义搜索"
+    },
+    {
+      "key": "brave_api_key",
+      "label": "Brave Search API Key",
+      "type": "secret",
+      "default": "",
+      "hint": "每月 2000 次免费"
+    },
+    {
+      "key": "langsearch_api_key",
+      "label": "LangSearch API Key",
+      "type": "secret",
+      "default": "",
+      "hint": ""
+    },
+    {
+      "key": "linkup_api_key",
+      "label": "Linkup API Key",
+      "type": "secret",
+      "default": "",
+      "hint": ""
+    },
+    {
+      "key": "you_api_key",
+      "label": "You.com API Key",
+      "type": "secret",
+      "default": "",
+      "hint": ""
+    },
+    {
+      "key": "websearchapi_api_key",
+      "label": "WebSearchAPI Key",
+      "type": "secret",
+      "default": "",
+      "hint": ""
+    },
+    {
+      "key": "default_limit",
+      "label": "默认返回条数",
+      "type": "range",
+      "min": 1,
+      "max": 20,
+      "default": 5
+    }
+  ]
+}
