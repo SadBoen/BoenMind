@@ -8,6 +8,8 @@
 - 启动形状:环境变量**必须内联**在同一行命令;Web 前端指向 `--web-dir runtime/webapp/dist`(先 `cd runtime/webapp && npm run build`)。密钥类值不入仓,看本地 `.secrets/`(dev.env 不入 git,example.env 入)。
 - 生效模型优先级:**config/model.json(数据目录)> 环境变量**。现值 = OpenCode Go(mimo-v2.5,经 zen 网关);天机阁/deepseek-v4-flash 中转已清。
 - 配置文件都在**数据目录**(默认 `%APPDATA%\Roaming\boenmind\`,可用 `--data-dir` 改),不在仓库:`config/model.json`(当前模型)、`config/providers.json`(W2 起=界面 provider 库)、`config/roles.json`(W4 角色配置)、`mcp.json`(MCP server 配置)。
+- **MCP 插件目录 = `<数据目录>\mcp\`**(2026-09-02 规定):插件可执行文件放这里 → 管理界面「扫描插件」发现候选(候选以 `--self-describe` 自报家门)→「批准接入」落盘 mcp.json + manifests/ →「重载 MCP」免重启上线。扫描只认该目录内可执行文件;显式批准=安装(ADR-0005/0006)。web_multisearch Rust exe 已现役于此。
+- 启动必须带 `--mcp-config <数据目录>\mcp.json`(漏带 = MCP 管理面报「服务器未启用 MCP 配置文件」,2026-09-02 踩实);
 - 环境变量(boenmind-server):
 
 ```text

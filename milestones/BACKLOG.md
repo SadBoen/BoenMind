@@ -65,7 +65,7 @@
 | webapp 无自动化测试 | 前端现状=真实浏览器手测+截图留档(纪律见 PLAYBOOK);候选:playwright 冒烟套件 | OPEN(候选) |
 | 坏 MCP 条目导致启动拒绝 | 一条损坏的 MCP 配置会拒绝整个 server 启动(用户反馈轮发现);应降级为跳过+告警 | OPEN |
 | fmt 门禁缺口:lib.rs | W 系列提交均未跑 `cargo fmt --check`(CI fmt 门禁红);2026-09-01 已全仓规范化,唯 lib.rs(HEAD 版本即不干净)留待 api_dsh 追认提交时一并入库闭合 | OPEN(随追认闭合) |
-| web_multisearch Rust 版切换决策 | exe 已建成(独立仓 1aa5af3:单文件 5.3MB、协议手写零 SDK、26 单测全绿、RRF/镜像合并/多 Key 轮换逐行对齐;`--config` 热读修掉「设置页改 Key 无人读取」死信缺口)。**唯一缺口:ddgs 源被 DDG 指纹识别发人机验证页**(Python 版靠 primp 浏览器伪装通过);待拍板:①装 LLVM/CMake/NASM 集成 wreq 根治 ②切 exe 并配 jina 免费 Key/searxng 补位 ③维持 Python 版现役。切换后需重启 server + 浏览器 E2E(管理页探活+对话直通搜索) | OPEN(等用户拍板) |
+| web_multisearch Rust 版切换决策 | **已切换现役(2026-09-02)**:exe 安装于 `<数据目录>\mcp\`,经两段式(扫描→批准→重载)上线,探活绿、真模型对话实测工具闭环全通(注入/调用/结果回流/错误降级);剩 ddgs 指纹挑战与 Marginalia 公共 key 限流为外部状态(用户裁定当前不修),想恢复全源覆盖 = 设置页 MCP 配置表单填一把免费 Jina Key(热生效)或自建 searxng 填地址 | DONE(外部源覆盖随 Key) |
 | PENPOT-quickstart 过时 | 指向已删除的 runtime/web/tokens.css;已加过时标注(2026-09-01),待归档或更新 | OPEN(低优) |
 
 ## 6. 候选队列(用户提过、未排期)
