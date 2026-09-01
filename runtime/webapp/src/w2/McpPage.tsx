@@ -9,6 +9,7 @@ import {
   PencilIcon,
   PlusIcon,
   RefreshCwIcon,
+  ScanSearchIcon,
   Trash2Icon,
 } from "lucide-react";
 import { api, type McpListResult, type McpServer } from "./api";
@@ -41,6 +42,20 @@ type ConfigTarget = {
   name: string;
   schema: McpManifestSchemaItem[];
   values: Record<string, unknown>;
+};
+
+// 插件目录扫描(两段式接入:扫描发现 → 批准接入落盘)
+type McpCandidatesResult = {
+  ok: boolean;
+  dir: string;
+  candidates: {
+    file: string;
+    name: string;
+    title: string;
+    description: string;
+    registered: boolean;
+  }[];
+  note: string;
 };
 
 type Draft = {
@@ -108,6 +123,21 @@ export function McpPage({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [configTarget, setConfigTarget] = useState<ConfigTarget | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const [approving, setApproving] = useState<string | null>(null);
+  const [scanResult, setScanResult] = useState<McpCandidatesResult | null>(null);
+
+  const scanPlugins = useCallback(async () => {
+    setScanning(true);
+    setError(null);
+    try {
+      setScanResult(await api.mcp.candidates());
+    } catch (e) {
+      setError(String(e instanceof Error ? e.message : e));
+    } finally {
+      setScanning(false);
+    }
+  }, []);
 
   const reload = useCallback(async () => {
     try {
@@ -196,6 +226,20 @@ export function McpPage({
           </p>
         </div>
         <span className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={scanning}
+            onClick={() => void scanPlugins()}
+            data-slot="mcp-scan"
+          >
+            {scanning ? (
+              <Loader2Icon className="animate-spin" />
+            ) : (
+              <ScanSearchIcon />
+            )}
+            扫描插件
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -346,6 +390,71 @@ export function McpPage({
         target={configTarget}
         onClose={() => setConfigTarget(null)}
       />
+
+      {scanResult ? (
+        <Dialog open onOpenChange={(v) => !v && setScanResult(null)}>
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>插件目录扫描</DialogTitle>
+              <DialogDescription>
+                扫描目录:{scanResult.dir}。把插件可执行文件放进来,点「扫描插件」发现候选;批准后才接入。
+              </DialogDescription>
+            </DialogHeader>
+            {scanResult.candidates.length ? (
+              <div className="max-h-72 space-y-2 overflow-auto">
+                {scanResult.candidates.map((c) => (
+                  <div
+                    key={c.name}
+                    className="flex items-start justify-between gap-3 rounded-md border p-2"
+                  >
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium">
+                        {c.title || c.name}{" "}
+                        {c.registered ? (
+                          <span className="text-muted-foreground text-xs">(已登记)</span>
+                        ) : null}
+                      </div>
+                      <div className="text-muted-foreground truncate text-xs">
+                        {c.description || c.file}
+                      </div>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={c.registered || approving === c.name}
+                      onClick={async () => {
+                        setApproving(c.name);
+                        try {
+                          const r = await api.mcp.approve(c.name);
+                          setScanResult(null);
+                          await api.mcp.reload();
+                          await reload();
+                          await refreshStatus();
+                          flash(r.note ?? "已接入");
+                        } catch (e) {
+                          setError(String(e instanceof Error ? e.message : e));
+                        } finally {
+                          setApproving(null);
+                        }
+                      }}
+                      data-slot="mcp-approve"
+                    >
+                      {approving === c.name ? (
+                        <Loader2Icon className="animate-spin" />
+                      ) : null}
+                      批准接入
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-muted-foreground text-sm">
+                目录里没有可识别的插件(候选需支持 --self-describe 自报家门)。
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+      ) : null}
 
       <McpDialog
         draft={draft}

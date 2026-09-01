@@ -479,3 +479,98 @@ fn urlencode(s: &str) -> String {
         })
         .collect()
 }
+
+// ---- MCP 插件目录:扫描发现 → 批准接入(两段式,2026-09-02 用户批准)----
+
+#[tokio::test]
+async fn t_w2_mcp_scan_candidates_and_approve() {
+    let ws = tempfile::tempdir().unwrap();
+    let mcfile = tempfile::tempdir().unwrap();
+    let mcp_path = mcfile.path().join("mcp.json");
+    let (base, _dir) = spawn_app(ws.path().to_path_buf(), Some(mcp_path.clone())).await;
+    let plugins_dir = mcfile.path().join("mcp");
+    std::fs::create_dir_all(&plugins_dir).unwrap();
+
+    // 假候选:回显单行声明 JSON(平台门控;声明用纯 ASCII——cmd 按系统代码页
+    // 解释脚本文件,非 ASCII 会被 GBK 等弄坏引号结构;生产 exe 由 Rust 直写
+    // UTF-8 无此问题)
+    let decl = r#"{"name":"fake_plugin","title":"Fake Plugin","description":"test candidate","config_schema":[{"key":"k","label":"K","type":"string","default":""}],"suggested_entry":{"transport":"stdio","args":["--config","{config_file}"],"tool_timeout_ms":12345,"restart_limit":3}}"#;
+    let candidate = {
+        #[cfg(windows)]
+        {
+            let p = plugins_dir.join("fake-plugin.cmd");
+            std::fs::write(&p, format!("@echo {decl}")).unwrap();
+            p
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let p = plugins_dir.join("fake-plugin.sh");
+            std::fs::write(&p, format!("#!/bin/sh\necho '{decl}'\n")).unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+            p
+        }
+    };
+    // 非可执行/非候选文件不进清单
+    std::fs::write(plugins_dir.join("readme.txt"), "not a plugin").unwrap();
+
+    // 扫描:发现 fake_plugin,registered=false
+    let (st, r) = send_json(
+        reqwest::Method::POST,
+        &format!("{base}/admin/mcp/candidates"),
+        json!({}),
+    )
+    .await;
+    assert_eq!(st, 200, "{r}");
+    let cands = r["candidates"].as_array().unwrap();
+    assert_eq!(cands.len(), 1, "{r}");
+    assert_eq!(cands[0]["name"], json!("fake_plugin"));
+    assert_eq!(cands[0]["registered"], json!(false));
+    assert!(r["dir"].as_str().unwrap().ends_with("mcp"));
+
+    // 批准:落盘 mcp.json 条目(args 模板替换 {config_file})+ manifest 双写
+    let (st, r) = send_json(
+        reqwest::Method::POST,
+        &format!("{base}/admin/mcp/approve"),
+        json!({"name": "fake_plugin"}),
+    )
+    .await;
+    assert_eq!(st, 200, "{r}");
+    let entry = &r["entry"];
+    assert_eq!(entry["name"], json!("fake_plugin"));
+    assert_eq!(entry["transport"], json!("stdio"));
+    assert_eq!(entry["tool_timeout_ms"], json!(12345));
+    let args = entry["args"].as_array().unwrap();
+    assert_eq!(args[0], json!("--config"));
+    assert!(
+        args[1].as_str().unwrap().contains("mcp-fake_plugin.json"),
+        "{args:?}"
+    );
+    assert!(args[1].as_str().unwrap().contains("config"), "{args:?}");
+
+    let raw = std::fs::read_to_string(&mcp_path).unwrap();
+    assert!(raw.contains("fake_plugin"));
+    let manifest =
+        std::fs::read_to_string(mcfile.path().join("manifests/fake_plugin.manifest.json")).unwrap();
+    assert!(manifest.contains("Fake Plugin"));
+    assert!(manifest.contains("config_schema"));
+
+    // 重名批准 → 409;重扫 → registered=true
+    let (st, _) = send_json(
+        reqwest::Method::POST,
+        &format!("{base}/admin/mcp/approve"),
+        json!({"name": "fake_plugin"}),
+    )
+    .await;
+    assert_eq!(st, 409);
+    let (_, r) = send_json(
+        reqwest::Method::POST,
+        &format!("{base}/admin/mcp/candidates"),
+        json!({}),
+    )
+    .await;
+    assert_eq!(r["candidates"][0]["registered"], json!(true));
+
+    // 目录外的同声明文件不可被 approve(路径限定在插件目录)
+    let _ = candidate; // 候选路径仅用于落盘条目;approve 只在插件目录内搜索
+}

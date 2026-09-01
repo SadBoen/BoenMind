@@ -128,18 +128,29 @@ export const api = {
       req<{ ok: boolean }>(`/admin/mcp/${name}`, { method: "DELETE" }),
     reload: () =>
       req<McpReloadResult>("/admin/mcp/reload", { method: "POST" }),
+    candidates: () =>
+      req<{
+        ok: boolean;
+        dir: string;
+        candidates: {
+          file: string;
+          name: string;
+          title: string;
+          description: string;
+          registered: boolean;
+        }[];
+        note: string;
+      }>("/admin/mcp/candidates", { method: "POST" }),
+    approve: (name: string) =>
+      req<{ ok: boolean; note: string }>(
+        "/admin/mcp/approve",
+        json("POST", { name }),
+      ),
     test: (name: string) =>
       req<{ ok: boolean; name: string; tools?: number; error?: string }>(
         `/admin/mcp/test/${name}`,
         { method: "POST" },
       ),
-    rolesGet: () =>
-      req<{ name: string; system_prompt: string }>("/admin/roles"),
-    rolesSet: (name: string, system_prompt: string) =>
-      req<{ ok: boolean; note: string }>("/admin/roles", {
-        method: "PUT",
-        body: JSON.stringify({ name, system_prompt }),
-      }),
     status: () =>
       req<{
         status: { name: string; ok: boolean; tools?: number; error?: string }[];
@@ -153,6 +164,15 @@ export const api = {
         `/admin/mcp-config/${name}`,
         json("PUT", { values }),
       ),
+  },
+  roles: {
+    get: () =>
+      req<{ name: string; system_prompt: string }>("/admin/roles"),
+    set: (name: string, system_prompt: string) =>
+      req<{ ok: boolean; note: string }>("/admin/roles", {
+        method: "PUT",
+        body: JSON.stringify({ name, system_prompt }),
+      }),
   },
   capabilities: () =>
     req<{

@@ -878,6 +878,251 @@ fn admin_error(status: StatusCode, message: impl Into<String>) -> Response {
         .into_response()
 }
 
+// ---- handler:MCP 插件目录扫描与批准接入(两段式,2026-09-02 用户批准)----
+//
+// 目录约定:MCP 插件(可执行文件)放 `<mcp.json 同级>/mcp/`。扫描只认该
+// 目录;候选以 `--self-describe` 参数打印声明 JSON 识别(识别过程会运行
+// 候选文件——用户手动放入即视为安装意图,正式激活仍以「批准接入」落盘
+// mcp.json 为准,显式批准=安装,ADR-0005/0006)。
+
+fn mcp_plugins_dir(path: &Path) -> PathBuf {
+    path.parent()
+        .map(|d| d.join("mcp"))
+        .unwrap_or_else(|| path.to_path_buf())
+}
+
+/// 运行单个候选的 --self-describe(5s 超时;stdin 接 null 防候选挂住;
+/// 超时/退出失败/输出无 JSON = 非候选)。
+async fn self_describe(path: &Path) -> Option<Value> {
+    let spawn_result = tokio::process::Command::new(path)
+        .arg("--self-describe")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    let mut child = match spawn_result {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[mcp-candidates] 候选 spawn 失败 {}: {e}", path.display());
+            return None;
+        }
+    };
+    let mut stdout = child.stdout.take()?;
+    let mut out = Vec::new();
+    let wait = async {
+        use tokio::io::AsyncReadExt;
+        let _ = stdout.read_to_end(&mut out).await;
+        let _ = child.wait().await;
+    };
+    if tokio::time::timeout(std::time::Duration::from_secs(5), wait)
+        .await
+        .is_err()
+    {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out);
+    for line in text.lines() {
+        if let Ok(v) = serde_json::from_str::<Value>(line.trim())
+            && v.get("name").and_then(Value::as_str).is_some()
+        {
+            return Some(v);
+        }
+    }
+    eprintln!(
+        "[mcp-candidates] 候选 {} 自描述输出 {} 字节,无有效声明行;前 160 字节: {:?}",
+        path.display(),
+        out.len(),
+        text.get(..160).unwrap_or(&text)
+    );
+    None
+}
+
+fn candidate_is_executable(path: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        matches!(
+            path.extension().and_then(|e| e.to_str()),
+            Some("exe") | Some("cmd") | Some("bat")
+        )
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path)
+            .map(|m| m.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+    }
+}
+
+/// POST /admin/mcp/candidates:扫描插件目录,返回可批准接入的候选清单
+/// (含已在 mcp.json 中的标记,便于前端过滤)。
+pub async fn mcp_candidates(State(cfg): State<AdminConfig>) -> Response {
+    let path = match mcp_file_or_error(&cfg) {
+        Ok(p) => p,
+        Err((s, m)) => return admin_error(s, m),
+    };
+    let dir = mcp_plugins_dir(&path);
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        return admin_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("插件目录创建失败: {e}"),
+        );
+    }
+    let registered: Vec<String> = read_mcp_servers(&path)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|s| s["name"].as_str().map(String::from))
+        .collect();
+    let mut candidates: Vec<Value> = Vec::new();
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(e) => {
+            return admin_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("插件目录读取失败: {e}"),
+            );
+        }
+    };
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if !p.is_file() || !candidate_is_executable(&p) {
+            continue;
+        }
+        let Some(decl) = self_describe(&p).await else {
+            continue;
+        };
+        let name = decl["name"].as_str().unwrap_or_default().to_string();
+        if name.is_empty() {
+            continue;
+        }
+        candidates.push(json!({
+            "file": p.display().to_string(),
+            "name": name,
+            "title": decl.get("title").cloned().unwrap_or(json!("")),
+            "description": decl.get("description").cloned().unwrap_or(json!("")),
+            "registered": registered.iter().any(|r| r == &name),
+        }));
+    }
+    Json(json!({
+        "ok": true,
+        "dir": dir.display().to_string(),
+        "candidates": candidates,
+        "note": "扫描会以 --self-describe 运行目录内可执行文件;批准后才落盘 mcp.json",
+    }))
+    .into_response()
+}
+
+/// POST /admin/mcp/approve:批准候选接入。body {"name": "..."}。
+/// 落盘两处:mcp.json 条目(command=候选路径,args 用声明模板替换
+/// {config_file} 为数据目录配置路径)+ manifests/<name>.manifest.json
+/// (设置页配置表单的声明来源)。新增条目随后「重载 MCP」免重启上线。
+pub async fn mcp_approve(State(cfg): State<AdminConfig>, Json(body): Json<Value>) -> Response {
+    let path = match mcp_file_or_error(&cfg) {
+        Ok(p) => p,
+        Err((s, m)) => return admin_error(s, m),
+    };
+    let dir = mcp_plugins_dir(&path);
+    let want_name = body["name"].as_str().unwrap_or_default().to_string();
+    if want_name.is_empty() {
+        return admin_error(StatusCode::BAD_REQUEST, "缺少 name");
+    }
+    // 在插件目录内找到声明 name 匹配的候选(目录限定,防路径逃逸)
+    let mut target: Option<PathBuf> = None;
+    let mut decl: Option<Value> = None;
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if !p.is_file() || !candidate_is_executable(&p) {
+                continue;
+            }
+            if let Some(d) = self_describe(&p).await
+                && d["name"].as_str() == Some(want_name.as_str())
+            {
+                target = Some(p);
+                decl = Some(d);
+                break;
+            }
+        }
+    }
+    let (Some(file), Some(decl)) = (target, decl) else {
+        return admin_error(
+            StatusCode::NOT_FOUND,
+            format!("插件目录中没有自声明 name={want_name} 的候选"),
+        );
+    };
+
+    // args 模板:{config_file} → 数据目录 config/mcp-<name>.json
+    let config_dir = path
+        .parent()
+        .map(|d| d.join("config"))
+        .unwrap_or_else(|| path.clone());
+    let config_file = config_dir.join(format!("mcp-{want_name}.json"));
+    let placeholder = "{config_file}".to_string();
+    let default_args = vec![Value::String("--config".into()), Value::String(placeholder)];
+    let template = decl
+        .pointer("/suggested_entry/args")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or(default_args);
+    let args: Vec<Value> = template
+        .iter()
+        .map(|a| match a.as_str() {
+            Some(s) => json!(s.replace("{config_file}", &config_file.display().to_string())),
+            None => a.clone(),
+        })
+        .collect();
+    let entry_body = json!({
+        "name": want_name,
+        "command": file.display().to_string(),
+        "args": args,
+        "tool_timeout_ms": decl.pointer("/suggested_entry/tool_timeout_ms").cloned().unwrap_or(json!(30000)),
+        "restart_limit": decl.pointer("/suggested_entry/restart_limit").cloned().unwrap_or(json!(3)),
+    });
+    let entry = match validated_mcp_entry(&entry_body) {
+        Ok(e) => e,
+        Err(e) => return admin_error(StatusCode::BAD_REQUEST, e),
+    };
+
+    let mut servers = match read_mcp_servers(&path) {
+        Ok(s) => s,
+        Err(e) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e),
+    };
+    if servers
+        .iter()
+        .any(|s| s["name"].as_str() == Some(want_name.as_str()))
+    {
+        return admin_error(
+            StatusCode::CONFLICT,
+            format!("MCP server '{want_name}' 已存在"),
+        );
+    }
+    servers.push(entry.clone());
+    if let Err(e) = write_mcp_servers(&path, &servers) {
+        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
+    }
+
+    // 双写 manifests/<name>.manifest.json(设置页「配置」表单的声明来源)
+    let manifest = json!({
+        "name": want_name,
+        "title": decl.get("title").cloned().unwrap_or(json!("")),
+        "description": decl.get("description").cloned().unwrap_or(json!("")),
+        "config_schema": decl.get("config_schema").cloned().unwrap_or(json!([])),
+    });
+    if let Some(mdir) = path.parent().map(|d| d.join("manifests")) {
+        let _ = std::fs::create_dir_all(&mdir);
+        if let Ok(text) = serde_json::to_string_pretty(&manifest) {
+            let _ = std::fs::write(mdir.join(format!("{want_name}.manifest.json")), text);
+        }
+    }
+
+    Json(json!({
+        "ok": true,
+        "entry": entry,
+        "note": "已落盘(mcp.json + manifest);点「重载 MCP」免重启上线",
+    }))
+    .into_response()
+}
+
 /// 管理面子路由(挂载于 /admin;公开 = W1 同款已登记欠账)。
 pub fn admin_routes(cfg: AdminConfig) -> axum::Router {
     use axum::routing::{get, post, put};
@@ -892,6 +1137,8 @@ pub fn admin_routes(cfg: AdminConfig) -> axum::Router {
         .route("/model/active", get(model_active_get).put(model_active_set))
         .route("/mcp", get(mcp_list).post(mcp_create))
         .route("/mcp/reload", post(mcp_reload))
+        .route("/mcp/candidates", post(mcp_candidates))
+        .route("/mcp/approve", post(mcp_approve))
         .route("/mcp/test/{name}", post(mcp_test))
         .route("/mcp/status", get(mcp_status))
         .route(
