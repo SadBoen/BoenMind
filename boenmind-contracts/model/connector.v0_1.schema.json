@@ -5,87 +5,247 @@
   "title": "模型连接器合同 v0.1",
   "description": "模型调用是 Provider 合同而非内核特权（基线 2.3/5.4）。本合同是连接器实现的全部边界：实现可替换，合同不破。invoke 是 Runtime 内部调用，不走 Wire API。",
   "definitions": {
-    "model_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-_.]{0,62}$" },
-    "secret_ref": { "type": "string", "pattern": "^secret:[A-Za-z0-9_.-]{1,64}$", "description": "凭据引用；凭据本体只存在 Secret Store（基线 4.6），本合同任何字段不接受明文凭据" },
+    "model_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-_.]{0,62}$"
+    },
+    "secret_ref": {
+      "type": "string",
+      "pattern": "^secret:[A-Za-z0-9_.-]{1,64}$",
+      "description": "凭据引用；凭据本体只存在 Secret Store（基线 4.6），本合同任何字段不接受明文凭据"
+    },
     "model_descriptor": {
       "type": "object",
-      "required": ["model_id", "provider", "context_window", "max_output", "cost_per_1k_in", "cost_per_1k_out", "supports_tools", "fallback_rank"],
+      "required": [
+        "model_id",
+        "provider",
+        "context_window",
+        "max_output",
+        "cost_per_1k_in",
+        "cost_per_1k_out",
+        "supports_tools",
+        "fallback_rank"
+      ],
       "additionalProperties": false,
       "properties": {
-        "model_id": { "$ref": "#/definitions/model_id" },
-        "provider": { "type": "string", "description": "连接器实现标识，可替换" },
-        "context_window": { "type": "integer", "minimum": 1024 },
-        "max_output": { "type": "integer", "minimum": 1 },
-        "cost_per_1k_in": { "type": "number", "minimum": 0 },
-        "cost_per_1k_out": { "type": "number", "minimum": 0 },
-        "supports_tools": { "type": "boolean", "description": "M1 恒为 false；M4 引入 Capability 后由连接器如实上报" },
-        "fallback_rank": { "type": "integer", "minimum": 1, "description": "降级链位次，1 = 首选" }
+        "model_id": {
+          "$ref": "#/definitions/model_id"
+        },
+        "provider": {
+          "type": "string",
+          "description": "连接器实现标识，可替换"
+        },
+        "context_window": {
+          "type": "integer",
+          "minimum": 1024
+        },
+        "max_output": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "cost_per_1k_in": {
+          "type": "number",
+          "minimum": 0
+        },
+        "cost_per_1k_out": {
+          "type": "number",
+          "minimum": 0
+        },
+        "supports_tools": {
+          "type": "boolean",
+          "description": "M1 恒为 false；M4 引入 Capability 后由连接器如实上报"
+        },
+        "fallback_rank": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "降级链位次，1 = 首选"
+        }
       }
     },
     "invoke_request": {
       "type": "object",
-      "required": ["model_id", "messages", "params", "secret_ref", "budget_ctx", "deadline", "attempt"],
+      "required": [
+        "model_id",
+        "messages",
+        "params",
+        "secret_ref",
+        "budget_ctx",
+        "deadline",
+        "attempt"
+      ],
       "additionalProperties": false,
       "properties": {
-        "model_id": { "$ref": "#/definitions/model_id" },
+        "model_id": {
+          "$ref": "#/definitions/model_id"
+        },
         "messages": {
-          "type": "array", "minItems": 1,
+          "type": "array",
+          "minItems": 1,
           "items": {
-            "type": "object", "required": ["role", "content"], "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "role",
+              "content"
+            ],
+            "additionalProperties": false,
             "properties": {
-              "role": { "enum": ["system", "user", "assistant"] },
-              "content": { "type": "string" }
+              "role": {
+                "enum": [
+                  "system",
+                  "user",
+                  "assistant"
+                ]
+              },
+              "content": {
+                "type": "string"
+              }
             }
           }
         },
-        "tools": { "type": "array", "maxItems": 0, "description": "M1 恒为空数组；独立 Judge 模式亦然（基线 20）" },
+        "tools": {
+          "type": "array",
+          "maxItems": 16,
+          "description": "M1 恒为空数组；独立 Judge 模式亦然（基线 20）"
+        },
         "params": {
-          "type": "object", "additionalProperties": false,
+          "type": "object",
+          "additionalProperties": false,
           "properties": {
-            "temperature": { "type": ["number", "null"], "minimum": 0, "maximum": 2 },
-            "max_tokens": { "type": ["integer", "null"], "minimum": 1 }
+            "temperature": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 2
+            },
+            "max_tokens": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 1
+            }
           }
         },
-        "secret_ref": { "$ref": "#/definitions/secret_ref" },
+        "secret_ref": {
+          "$ref": "#/definitions/secret_ref"
+        },
         "budget_ctx": {
-          "type": "object", "required": ["operation_id", "agent_id", "remaining_tokens"], "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "operation_id",
+            "agent_id",
+            "remaining_tokens"
+          ],
+          "additionalProperties": false,
           "properties": {
-            "operation_id": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/id" },
-            "agent_id": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/id" },
-            "remaining_tokens": { "type": "integer", "minimum": 0 }
+            "operation_id": {
+              "$ref": "boenmind:wire:envelope:v0.1#/definitions/id"
+            },
+            "agent_id": {
+              "$ref": "boenmind:wire:envelope:v0.1#/definitions/id"
+            },
+            "remaining_tokens": {
+              "type": "integer",
+              "minimum": 0
+            }
           }
         },
-        "deadline": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/timestamp" },
-        "attempt": { "type": "integer", "minimum": 1, "maximum": 3, "description": "降级/重试链中的第几次尝试" }
+        "deadline": {
+          "$ref": "boenmind:wire:envelope:v0.1#/definitions/timestamp"
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3,
+          "description": "降级/重试链中的第几次尝试"
+        }
       }
     },
     "invoke_response": {
       "oneOf": [
         {
-          "type": "object", "required": ["ok", "content", "finish_reason", "usage", "model_id", "latency_ms", "stream_interrupted"],
+          "type": "object",
+          "required": [
+            "ok",
+            "content",
+            "finish_reason",
+            "usage",
+            "model_id",
+            "latency_ms",
+            "stream_interrupted"
+          ],
           "additionalProperties": false,
           "properties": {
-            "ok": { "const": true },
-            "content": { "type": "string" },
-            "finish_reason": { "enum": ["stop", "length"] },
-            "usage": {
-              "type": "object", "required": ["tokens_in", "tokens_out"], "additionalProperties": false,
-              "properties": { "tokens_in": { "type": "integer", "minimum": 0 }, "tokens_out": { "type": "integer", "minimum": 0 } }
+            "ok": {
+              "const": true
             },
-            "model_id": { "$ref": "#/definitions/model_id" },
-            "latency_ms": { "type": "integer", "minimum": 0 },
-            "stream_interrupted": { "type": "boolean" }
+            "content": {
+              "type": "string"
+            },
+            "finish_reason": {
+              "enum": [
+                "stop",
+                "length"
+              ]
+            },
+            "usage": {
+              "type": "object",
+              "required": [
+                "tokens_in",
+                "tokens_out"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "tokens_in": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "tokens_out": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            },
+            "model_id": {
+              "$ref": "#/definitions/model_id"
+            },
+            "latency_ms": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "stream_interrupted": {
+              "type": "boolean"
+            }
           }
         },
         {
-          "type": "object", "required": ["ok", "error_code", "retryable", "attempt"],
+          "type": "object",
+          "required": [
+            "ok",
+            "error_code",
+            "retryable",
+            "attempt"
+          ],
           "additionalProperties": false,
           "properties": {
-            "ok": { "const": false },
-            "error_code": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/error_code" },
-            "retryable": { "type": "boolean" },
-            "attempt": { "type": "integer" },
-            "detail_ref": { "type": "string", "description": "禁止携带原始错误文本中的敏感内容" }
+            "ok": {
+              "const": false
+            },
+            "error_code": {
+              "$ref": "boenmind:wire:envelope:v0.1#/definitions/error_code"
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "attempt": {
+              "type": "integer"
+            },
+            "detail_ref": {
+              "type": "string",
+              "description": "禁止携带原始错误文本中的敏感内容"
+            }
           }
         }
       ]
