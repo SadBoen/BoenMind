@@ -243,3 +243,10 @@
   color: #ffffff;
   text-shadow: 0 1px 2px rgba(30, 40, 60, 0.25);
 }
+/* 对比度微调(§4.1 授权):亮花枝上的弱文字加深一档 */
+[data-theme="glass"] .welcome p,
+[data-theme="glass"] .msg .model-tag,
+[data-theme="glass"] .ws-empty,
+[data-theme="glass"] .sessions-empty {
+  color: #3d4658;
+}

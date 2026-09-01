@@ -85,7 +85,10 @@ export default function App() {
         }}
       >
         {theme === "glass" ? <Petals /> : null}
-        <Rail onSettings={() => setSettingsOpen(true)} />
+        <Rail
+          settingsActive={settingsOpen}
+          onSettings={() => setSettingsOpen((v) => !v)}
+        />
         <SessionPanel />
         <HSplitter
           onDrag={(dx) =>
@@ -148,7 +151,13 @@ function HSplitter({ onDrag }: { onDrag: (dx: number) => void }) {
   );
 }
 
-function Rail({ onSettings }: { onSettings: () => void }) {
+function Rail({
+  settingsActive,
+  onSettings,
+}: {
+  settingsActive: boolean;
+  onSettings: () => void;
+}) {
   // 图标:W1 为界面骨架占位(lucide 线性图标);聊天页可用,其余随后续 W 项启用
   return (
     <div className="rail">
@@ -174,7 +183,12 @@ function Rail({ onSettings }: { onSettings: () => void }) {
         <FileText size={18} />
       </button>
       <div className="rail-spacer" />
-      <button className="rail-btn" title="设置" onClick={onSettings} data-slot="open-settings">
+      <button
+        className={"rail-btn" + (settingsActive ? " active" : "")}
+        title={settingsActive ? "关闭设置" : "设置"}
+        onClick={onSettings}
+        data-slot="open-settings"
+      >
         <Settings size={18} />
       </button>
     </div>
