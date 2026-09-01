@@ -6,7 +6,12 @@ import { Thread } from "./w1/thread";
 import { SettingsPage } from "./w2/SettingsPage";
 import { WorkspaceFiles } from "./w2/WorkspaceFiles";
 import { Petals } from "./w3/Petals";
-import { useThemeBoot, loadThemeState, type ThemeDef } from "./w3/themes";
+import {
+  useThemeBoot,
+  loadThemeState,
+  applyTheme,
+  type ThemeDef,
+} from "./w3/themes";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 type ThemeId = ThemeDef["id"];
@@ -56,9 +61,16 @@ function clamp(v: number, l: { min: number; max: number }) {
 export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [layout, setLayout] = useState<Layout>(loadLayout);
-  useThemeBoot(); // W3:重启保持(localStorage 恢复主题+设置项)
+  // 【输入排查·屏蔽法】用户裁定:只留中间聊天区,其余部件注释保留。
+  // 同时把主题钉回现代,排除玻璃花瓣/毛玻璃/透明层干扰;排查完恢复。
+  void useThemeBoot;
+  void loadThemeState;
+  useEffect(() => {
+    applyTheme({ theme: "modern", settings: {} });
+  }, []);
+  // useThemeBoot(); // W3:重启保持(localStorage 恢复主题+设置项)——排查期钉现代
   // 主题跟随 html[data-theme](外观页切换即时生效,花瓣层随之挂/卸)
-  const [theme, setTheme] = useState(loadThemeState().theme);
+  const [theme, setTheme] = useState<ThemeId>("modern");
   useEffect(() => {
     const ob = new MutationObserver(() =>
       setTheme(document.documentElement.getAttribute("data-theme") as ThemeId),
@@ -80,11 +92,12 @@ export default function App() {
       <div
         className="app"
         style={{
-          // 子元素顺序:rail, sessions, splitter, thread, splitter, workspace
-          gridTemplateColumns: `52px ${layout.sessions}px 5px minmax(0, 1fr) 5px ${layout.workspace}px`,
+          // 【输入排查·屏蔽法】只留中间聊天区;原三栏布局注释于下方
+          gridTemplateColumns: "minmax(0, 1fr)",
         }}
       >
         {theme === "glass" ? <Petals /> : null}
+        {/* 【屏蔽法·排查输入】以下部件临时注释,排查完恢复
         <Rail
           settingsActive={settingsOpen}
           onSettings={() => setSettingsOpen((v) => !v)}
@@ -98,7 +111,9 @@ export default function App() {
             })
           }
         />
+        */}
         <Thread />
+        {/*
         <HSplitter
           onDrag={(dx) =>
             saveLayout({
@@ -111,6 +126,7 @@ export default function App() {
         {settingsOpen && (
           <SettingsPage onClose={() => setSettingsOpen(false)} />
         )}
+        */}
       </div>
     </BoenmindRuntimeProvider>
   );
