@@ -130,18 +130,34 @@ pub(crate) fn spawn_turn(w: &mut World, agent: &Agent, operation_id: &BmId, cont
     let tx = w.tx.clone();
     let op_id = operation_id.clone();
     let streaming = w.config.model_streaming;
-    // W4 对话工具闭环:直通(免审批)工具清单 + 默认角色 system prompt。
+    // W4 对话工具闭环:直通(免审批)工具清单 + 角色 system prompt。
     // 工具 = registry 全部 approval=not-required 能力(联网搜索等只读类;
-    // 非直通能力不进对话,走审批面的既有入口);prompt 每回合读
-    // config/roles.json(设置页保存即热生效)。
+    // 非直通能力不进对话,走审批面的既有入口)。
+    // W4b 角色 prompt 优先级:
+    // ① agent 自身绑定的 system_prompt(会话级指定);
+    // ② 若无,读 config/roles.json 激活角色的 system_prompt(设置页保存即热生效)。
     let direct_tools: Vec<(String, serde_json::Value)> = w.registry.direct_tools();
-    let role_prompt: Option<String> = w
-        .config
-        .data_dir
-        .as_ref()
-        .and_then(|d| std::fs::read_to_string(d.join("config").join("roles.json")).ok())
-        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-        .and_then(|r| r["system_prompt"].as_str().map(|s| s.to_string()))
+    let role_prompt: Option<String> = agent
+        .system_prompt
+        .clone()
+        .or_else(|| {
+            let text =
+                w.config.data_dir.as_ref().and_then(|d| {
+                    std::fs::read_to_string(d.join("config").join("roles.json")).ok()
+                })?;
+            let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+            // 兼容多角色结构 (roles + active_id) 与旧单角色结构
+            if let Some(roles) = v["roles"].as_array() {
+                let active_id = v["active_id"].as_str().unwrap_or("assistant");
+                roles
+                    .iter()
+                    .find(|r| r["id"].as_str() == Some(active_id))
+                    .or_else(|| roles.first())
+                    .and_then(|r| r["system_prompt"].as_str().map(|s| s.to_string()))
+            } else {
+                v["system_prompt"].as_str().map(|s| s.to_string())
+            }
+        })
         .filter(|s| !s.is_empty());
     let request_id = w.operations.get(operation_id).map(|o| o.request_id.clone());
     // W5:会话对话台账快照(历史回喂)+ 上下文快照日志句柄 + 回合序号。

@@ -47,6 +47,7 @@ pub(crate) fn handle_session_create(
             model_chain: spec.model_chain.clone(),
             state: AgentState::Created,
             budget,
+            system_prompt: spec.system_prompt.clone(),
         },
     );
     // created→starting→running(agent_start + model_binding_ready):无事件(规格 §8.6)。

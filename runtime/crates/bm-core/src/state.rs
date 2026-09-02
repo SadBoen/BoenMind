@@ -36,6 +36,8 @@ pub struct Agent {
     pub model_chain: Vec<String>,
     pub state: AgentState,
     pub budget: crate::budget::BudgetState,
+    /// W4b: 会话级指定或创建时继承的角色 system prompt
+    pub system_prompt: Option<String>,
 }
 
 impl Agent {

@@ -61,6 +61,8 @@ export function BoenmindRuntimeProvider({
         };
         const sid = withSession ? localStorage.getItem("bm_session") : null;
         if (sid) headers["X-Bm-Session"] = sid;
+        const roleId = localStorage.getItem("bm_active_role");
+        if (roleId) headers["X-Bm-Role"] = roleId;
         return fetch("/v1/chat/completions", {
           method: "POST",
           headers,

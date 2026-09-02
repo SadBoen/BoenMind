@@ -78,7 +78,18 @@ export type Capability = {
   approval?: string;
 };
 
-export type FsEntry = { name: string; kind: "dir" | "file"; size: number | null };
+export type RoleItem = {
+  id: string;
+  name: string;
+  description?: string;
+  system_prompt: string;
+};
+
+export type RolesResponse = {
+  ok: boolean;
+  active_id: string;
+  roles: RoleItem[];
+};
 
 // W5:一次模型调用的上下文快照(/admin/context 行;服务端已做凭据脱敏与
 // 单条内容 16K 字符截断)
@@ -188,13 +199,18 @@ export const api = {
       ),
   },
   roles: {
-    get: () =>
-      req<{ name: string; system_prompt: string }>("/admin/roles"),
-    set: (name: string, system_prompt: string) =>
-      req<{ ok: boolean; note: string }>("/admin/roles", {
-        method: "PUT",
-        body: JSON.stringify({ name, system_prompt }),
+    get: () => req<RolesResponse>("/admin/roles"),
+    save: (role: Partial<RoleItem> & { id: string; set_active?: boolean }) =>
+      req<{ ok: boolean; note: string; active_id: string }>("/admin/roles", json("POST", role)),
+    delete: (id: string) =>
+      req<{ ok: boolean; note: string; active_id: string }>(`/admin/roles/${encodeURIComponent(id)}`, {
+        method: "DELETE",
       }),
+    setActive: (id: string) =>
+      req<{ ok: boolean; note: string; active_id: string }>(
+        `/admin/roles/active/${encodeURIComponent(id)}`,
+        { method: "PUT" },
+      ),
   },
   logs: () =>
     req<{ ok: boolean; exec: string[]; events: string[]; context: string[] }>("/admin/logs"),

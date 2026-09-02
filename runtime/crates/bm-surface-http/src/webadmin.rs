@@ -555,41 +555,179 @@ pub async fn mcp_delete(
     Json(json!({ "ok": true, "note": "已从配置移除,重启服务器后生效" })).into_response()
 }
 
-// ---- handler:默认角色(W4;config/roles.json,ADR-0012 口径)---------
+// ---- handler:多角色管理(W4b;config/roles.json,ADR-0012 口径)---------
 
-/// 读默认角色(设置页回显)。
-pub async fn roles_get(State(cfg): State<AdminConfig>) -> Response {
-    let file = roles_file(&cfg);
-    let raw = std::fs::read_to_string(&file)
-        .ok()
-        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
-        .unwrap_or_else(|| json!({ "name": "assistant", "system_prompt": "" }));
-    Json(raw).into_response()
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub struct RoleConfigDoc {
+    pub active_id: String,
+    pub roles: Vec<RoleItem>,
 }
 
-/// 写默认角色(system_prompt;保存即热生效——turn 每回合读此文件)。
-pub async fn roles_set(State(cfg): State<AdminConfig>, Json(body): Json<Value>) -> Response {
-    let file = roles_file(&cfg);
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub struct RoleItem {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub system_prompt: String,
+}
+
+pub fn read_roles_doc(file: &std::path::Path) -> RoleConfigDoc {
+    if let Ok(raw) = std::fs::read_to_string(file)
+        && let Ok(v) = serde_json::from_str::<Value>(&raw)
+    {
+        if let Some(roles_arr) = v["roles"].as_array() {
+            let active_id = v["active_id"].as_str().unwrap_or("assistant").to_string();
+            let roles: Vec<RoleItem> = roles_arr
+                .iter()
+                .filter_map(|r| serde_json::from_value(r.clone()).ok())
+                .collect();
+            if !roles.is_empty() {
+                return RoleConfigDoc { active_id, roles };
+            }
+        } else if let Some(sp) = v["system_prompt"].as_str() {
+            let name = v["name"].as_str().unwrap_or("assistant").to_string();
+            return RoleConfigDoc {
+                active_id: "assistant".into(),
+                roles: vec![RoleItem {
+                    id: "assistant".into(),
+                    name,
+                    description: Some("默认通用助理".into()),
+                    system_prompt: sp.to_string(),
+                }],
+            };
+        }
+    }
+    RoleConfigDoc {
+        active_id: "assistant".into(),
+        roles: vec![RoleItem {
+            id: "assistant".into(),
+            name: "assistant".into(),
+            description: Some("默认通用助理".into()),
+            system_prompt: "".into(),
+        }],
+    }
+}
+
+pub fn write_roles_doc(file: &std::path::Path, doc: &RoleConfigDoc) -> Result<(), String> {
     if let Some(dir) = file.parent()
         && let Err(e) = std::fs::create_dir_all(dir)
     {
-        return admin_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("目录创建失败: {e}"),
-        );
+        return Err(format!("目录创建失败: {e}"));
     }
-    let doc = json!({
-        "name": body["name"].as_str().unwrap_or("assistant"),
-        "system_prompt": body["system_prompt"].as_str().unwrap_or(""),
-    });
-    let text = match serde_json::to_string_pretty(&doc) {
+    let text = match serde_json::to_string_pretty(doc) {
         Ok(t) => crate::config_store::crlf(t),
-        Err(_) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, "序列化失败"),
+        Err(e) => return Err(format!("序列化失败: {e}")),
     };
-    if let Err(e) = std::fs::write(&file, text) {
-        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, format!("写入失败: {e}"));
+    std::fs::write(file, text).map_err(|e| format!("写入失败: {e}"))
+}
+
+/// 读全部角色与激活角色 id(设置页与聊天页下拉)。
+pub async fn roles_get(State(cfg): State<AdminConfig>) -> Response {
+    let file = roles_file(&cfg);
+    let doc = read_roles_doc(&file);
+    Json(json!({
+        "ok": true,
+        "active_id": doc.active_id,
+        "roles": doc.roles,
+    }))
+    .into_response()
+}
+
+/// 保存单角色(创建或更新,向后兼容 roles_set 以及多角色编辑)。
+pub async fn roles_set(State(cfg): State<AdminConfig>, Json(body): Json<Value>) -> Response {
+    let file = roles_file(&cfg);
+    let mut doc = read_roles_doc(&file);
+
+    // 如果传递了全量 roles 数组，则全量更新
+    if let Some(roles_arr) = body["roles"].as_array() {
+        let roles: Vec<RoleItem> = roles_arr
+            .iter()
+            .filter_map(|r| serde_json::from_value(r.clone()).ok())
+            .collect();
+        if roles.is_empty() {
+            return admin_error(StatusCode::BAD_REQUEST, "角色列表不能为空");
+        }
+        let active_id = body["active_id"]
+            .as_str()
+            .unwrap_or(&doc.active_id)
+            .to_string();
+        doc.roles = roles;
+        doc.active_id = active_id;
+    } else {
+        // 单角色增改形态
+        let id = body["id"]
+            .as_str()
+            .unwrap_or(body["name"].as_str().unwrap_or("assistant"))
+            .to_string();
+        let name = body["name"].as_str().unwrap_or(&id).to_string();
+        let description = body["description"].as_str().map(|s| s.to_string());
+        let system_prompt = body["system_prompt"].as_str().unwrap_or("").to_string();
+
+        if let Some(existing) = doc.roles.iter_mut().find(|r| r.id == id) {
+            existing.name = name;
+            existing.description = description;
+            existing.system_prompt = system_prompt;
+        } else {
+            doc.roles.push(RoleItem {
+                id: id.clone(),
+                name,
+                description,
+                system_prompt,
+            });
+        }
+        if body["set_active"].as_bool().unwrap_or(false) {
+            doc.active_id = id;
+        }
     }
-    Json(json!({ "ok": true, "note": "已保存,下一回合起生效" })).into_response()
+
+    if let Err(e) = write_roles_doc(&file, &doc) {
+        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
+    }
+    Json(json!({ "ok": true, "note": "已保存,下一回合起生效", "active_id": doc.active_id }))
+        .into_response()
+}
+
+/// 删除指定角色
+pub async fn roles_delete(
+    State(cfg): State<AdminConfig>,
+    AxumPath(id): AxumPath<String>,
+) -> Response {
+    let file = roles_file(&cfg);
+    let mut doc = read_roles_doc(&file);
+    if doc.roles.len() <= 1 {
+        return admin_error(StatusCode::BAD_REQUEST, "至少需要保留一个角色");
+    }
+    let orig_len = doc.roles.len();
+    doc.roles.retain(|r| r.id != id);
+    if doc.roles.len() == orig_len {
+        return admin_error(StatusCode::NOT_FOUND, "指定角色不存在");
+    }
+    if doc.active_id == id {
+        doc.active_id = doc.roles[0].id.clone();
+    }
+    if let Err(e) = write_roles_doc(&file, &doc) {
+        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
+    }
+    Json(json!({ "ok": true, "note": "角色已删除", "active_id": doc.active_id })).into_response()
+}
+
+/// 设置默认激活角色
+pub async fn roles_set_active(
+    State(cfg): State<AdminConfig>,
+    AxumPath(id): AxumPath<String>,
+) -> Response {
+    let file = roles_file(&cfg);
+    let mut doc = read_roles_doc(&file);
+    if !doc.roles.iter().any(|r| r.id == id) {
+        return admin_error(StatusCode::NOT_FOUND, "指定角色不存在");
+    }
+    doc.active_id = id;
+    if let Err(e) = write_roles_doc(&file, &doc) {
+        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
+    }
+    Json(json!({ "ok": true, "note": "已设为默认角色", "active_id": doc.active_id }))
+        .into_response()
 }
 
 fn roles_file(cfg: &AdminConfig) -> std::path::PathBuf {
@@ -1230,7 +1368,9 @@ pub fn admin_routes(cfg: AdminConfig) -> axum::Router {
         )
         .route("/mcp/{name}", put(mcp_update).delete(mcp_delete))
         .route("/capabilities", get(capabilities_list))
-        .route("/roles", get(roles_get).put(roles_set))
+        .route("/roles", get(roles_get).post(roles_set).put(roles_set))
+        .route("/roles/{id}", put(roles_set).delete(roles_delete))
+        .route("/roles/active/{id}", put(roles_set_active))
         .route("/logs", get(logs_tail))
         .route("/context", get(context_tail))
         .route("/fs/list", get(fs_list))

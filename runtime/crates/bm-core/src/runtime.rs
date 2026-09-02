@@ -233,6 +233,7 @@ impl World {
                     model_chain: chain,
                     state,
                     budget,
+                    system_prompt: None,
                 },
             );
         }

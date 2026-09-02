@@ -35,7 +35,7 @@
 | ~~F-06 C4 模型回写(约 12+7 项模型-实现漂移;F-08 /admin 面一并)~~ **已回写(2026-09-02)**:boenmind.c4 回写完成——超前容器标注阶段归属(阶段一现役/阶段二规划/阶段一并入内核)、App=MCP 真实形态(Market/Wiki 标注 stdio MCP)、Web Surface 标注现役 assistant-ui 壳+管理面、补齐阶段一内核组件(watchdog/contextLog/bm-judge 核验/内建模型连接器);硬纪律 2 闭合 | FULL-REVIEW §2.2 + AUDIT F-06/F-08 | DONE(2026-09-02) |
 | F-09 deepwiki S1/S2/S6/S7/S10 逐条裁决;S5 口径偏宽复核(t119b≠quarantined 分表) | AUDIT F-09 + FULL-REVIEW §2.4 | OPEN(随下一里程碑回看) |
 | W4b:异步能力结果回流超时(60s 轮询未取到终态)——根因已修(turn.rs GetOpResult 轮询 `tx.send` 漏 `.await`,2026-09-01 代码审计轮);**已闭合**:2026-09-02 上下文透视面板真模型实测工具轮两步流水全通(MCP 工具调用→结果回喂→模型重调,快照与趋势可见) | W4 规格 §3 + 代码审计轮 | DONE(2026-09-02) |
-| W4b:多角色与会话级角色选择;Skill 挂载(合同 Skill 实体未建) | W4 规格 §3 | OPEN |
+| ~~W4b:多角色与会话级角色选择;Skill 挂载(合同 Skill 实体未建)~~ **多角色与会话级选择已交付(2026-09-02)**:config/roles.json 扩展多角色模型 + /admin/roles 完整 CRUD + 设为默认;Agent 结构与 turn.rs 组装支持会话指定 system_prompt;Composer 工具栏集成角色下拉切换,发请求传 X-Bm-Role;真模型实测「代码架构师」角色答复符合设定且上下文透视面板中 System Prompt 验证生效(HISTORY W4b 角色行);Skill 挂载留待 Skill 实体规划 | W4 规格 §3 | DONE(2026-09-02) |
 | W4b:非直通工具的对话内审批联动 | W4 规格 §3 | OPEN |
 | W4 验收记录回填(按规格 §4 验收门补实测证据与截图) | W4-implementation-spec | OPEN |
 | ~~会话历史未回喂模型(多轮无记忆,P1 疑似)~~ **已确认并修复**:turn.rs 每回合 messages 从零组装属实;W5 修复=World.session_chats 台账(20 轮/24K 字符上限)+ spawn 时历史回喂 + 成功落定 Cmd::RememberTurn 回写;真模型实测两轮暗号往返+跨页面重载均答中(HISTORY W5 行) | W1 §4 vs turn.rs 代码对照 | DONE(2026-09-02) |

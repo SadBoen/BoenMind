@@ -32,6 +32,7 @@ pub struct AppState {
     pub shutdown: Arc<tokio::sync::Notify>,
     /// W1(ADR-0014):服务器默认模型(配置/env 驱动),/v1 插座与会话创建用。
     pub default_model: Arc<String>,
+    pub data_dir: Option<std::path::PathBuf>,
 }
 
 /// 组装 Surface 路由。`token` 为已加载的访问令牌;/health 豁免鉴权,
@@ -46,12 +47,14 @@ pub fn router(
     default_model: Arc<String>,
     admin: Option<webadmin::AdminConfig>,
 ) -> Router {
+    let data_dir = admin.as_ref().map(|a| a.data_dir.clone());
     let state = AppState {
         handle,
         token,
         store,
         shutdown,
         default_model,
+        data_dir,
     };
     let app = Router::new()
         .route("/rpc/{method}", post(rpc::rpc_endpoint))

@@ -100,6 +100,11 @@ pub async fn chat_completions(
         return err_response(StatusCode::BAD_REQUEST, "messages 缺少非空 user 消息");
     };
 
+    let target_role_id = headers
+        .get("x-bm-role")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
     // 会话寻址:有 X-Bm-Session 续聊;无则新建(默认配置模型)
     let (rt_sid, rt_aid) = match headers
         .get("x-bm-session")
@@ -120,6 +125,15 @@ pub async fn chat_completions(
         },
         None => {
             let request_id = UlidIdGen.next_id("req");
+            // W4b: 允许通过 X-Bm-Role 传入角色 ID，若无则使用 roles.json 中 active_id 角色
+            let initial_system_prompt = state.data_dir.as_ref().and_then(|d| {
+                let doc = crate::webadmin::read_roles_doc(&d.join("config").join("roles.json"));
+                let role_id = target_role_id.as_deref().unwrap_or(&doc.active_id);
+                doc.roles
+                    .iter()
+                    .find(|r| r.id == role_id)
+                    .map(|r| r.system_prompt.clone())
+            });
             match state
                 .handle
                 .session_create(
@@ -129,7 +143,7 @@ pub async fn chat_completions(
                             name: "webui".to_string(),
                             model_chain: vec![default_model.clone()],
                             budget: None,
-                            system_prompt: None,
+                            system_prompt: initial_system_prompt,
                         },
                     },
                 )

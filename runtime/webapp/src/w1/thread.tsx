@@ -112,13 +112,48 @@ function AssistantMessage() {
 function Composer() {
   const isRunning = useAuiState((s) => s.thread.isRunning);
   const [model, setModel] = useState("…");
-  // 模型名动态取自服务器 /v1/models(单一配置模型,W1 口径)
+  const [roles, setRoles] = useState<Array<{ id: string; name: string }>>([]);
+  const [activeRole, setActiveRole] = useState<string>(
+    () => localStorage.getItem("bm_active_role") || "",
+  );
+
+  const loadRoles = () => {
+    fetch("/admin/roles")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.roles && Array.isArray(d.roles)) {
+          setRoles(d.roles);
+          const current = localStorage.getItem("bm_active_role");
+          if (!current || !d.roles.some((r: any) => r.id === current)) {
+            const next = d.active_id || d.roles[0]?.id || "assistant";
+            setActiveRole(next);
+            localStorage.setItem("bm_active_role", next);
+          } else {
+            setActiveRole(current);
+          }
+        }
+      })
+      .catch(() => {});
+  };
+
   useEffect(() => {
     fetch("/v1/models")
       .then((r) => r.json())
       .then((v) => setModel(v?.data?.[0]?.id ?? "?"))
       .catch(() => setModel("?"));
+
+    loadRoles();
+    window.addEventListener("bm-roles-changed", loadRoles);
+    return () => window.removeEventListener("bm-roles-changed", loadRoles);
   }, []);
+
+  const handleRoleChange = (newRoleId: string) => {
+    setActiveRole(newRoleId);
+    localStorage.setItem("bm_active_role", newRoleId);
+    // 切换角色时清空旧会话并重开，使新角色的 system_prompt 立即绑定
+    window.dispatchEvent(new CustomEvent("bm-chat-new"));
+  };
+
   return (
     <ComposerPrimitive.Root className="composer">
       <ComposerPrimitive.Input
@@ -128,6 +163,24 @@ function Composer() {
         autoFocus
       />
       <div className="composer-toolbar">
+        {roles.length > 0 ? (
+          <div className="flex items-center gap-1">
+            <span className="text-[12px] text-muted-foreground ml-1">角色:</span>
+            <select
+              value={activeRole}
+              onChange={(e) => handleRoleChange(e.target.value)}
+              className="bg-muted/60 text-foreground hover:bg-muted focus:ring-ring h-7 rounded-md border px-2 text-[11.5px] font-medium outline-none transition-colors"
+              title="切换当前会话角色"
+              data-slot="role-select"
+            >
+              {roles.map((r) => (
+                <option key={r.id} value={r.id}>
+                  🎭 {r.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : null}
         <span className="tool-chip disabled">📎 附件</span>
         <span className="tool-chip mono disabled" title="服务器配置模型(W1 固定)">
           ⚙ {model}
