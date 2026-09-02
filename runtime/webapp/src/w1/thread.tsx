@@ -374,7 +374,7 @@ function Composer() {
             >
               <SelectValue />
             </SelectTrigger>
-            <SelectContent className="rounded-lg">
+            <SelectContent className="rounded-lg" side="top" position="popper">
               {roles.map((r) => (
                 <SelectItem key={r.id} value={r.id}>
                   🎭 {r.name}
@@ -403,13 +403,30 @@ function Composer() {
           >
             <SelectValue />
           </SelectTrigger>
-          <SelectContent className="rounded-lg">
-            <SelectItem value="__default__">⚙ 默认 {model}</SelectItem>
+          <SelectContent
+            className="rounded-lg"
+            side="top"
+            position="popper"
+          >
+            {/* W7 反馈:上拉;去掉「默认」字样;Provider 名大一号、模型名小一号
+                且缩进;在用项打钩(钩移到名字前面) */}
+            <SelectItem
+              value="__default__"
+              className="text-[12px] pl-2 [&_[data-slot=select-item-indicator]]:left-2 [&_[data-slot=select-item-indicator]]:right-auto"
+            >
+              ⚙ {model}
+            </SelectItem>
             {modelGroups.map((g) => (
               <SelectGroup key={g.provider}>
-                <SelectLabel>{g.provider}</SelectLabel>
+                <SelectLabel className="text-foreground/60 text-[12.5px] font-semibold">
+                  {g.provider}
+                </SelectLabel>
                 {g.models.map((m) => (
-                  <SelectItem key={m} value={m}>
+                  <SelectItem
+                    key={m}
+                    value={m}
+                    className="pl-7 text-[12px] [&_[data-slot=select-item-indicator]]:left-2 [&_[data-slot=select-item-indicator]]:right-auto"
+                  >
                     {m}
                   </SelectItem>
                 ))}

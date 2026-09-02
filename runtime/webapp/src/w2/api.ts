@@ -276,5 +276,9 @@ export const api = {
       req<{ path: string; name: string; size: number; content: string }>(
         `/admin/fs/file?path=${encodeURIComponent(path)}`,
       ),
+    // W7 目录树右键菜单
+    rename: (path: string, name: string) =>
+      req<{ ok: boolean }>(`/admin/fs/rename`, json("POST", { path, name })),
+    downloadUrl: (path: string) => `/admin/fs/download?path=${encodeURIComponent(path)}`,
   },
 };

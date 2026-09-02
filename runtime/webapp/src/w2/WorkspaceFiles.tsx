@@ -4,10 +4,26 @@
 // 目录树原型 = 注册表 elements-file-tree(选装适配见 file-tree.tsx);
 // 预览视图为自有组件。
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeftIcon, FileTextIcon, Loader2Icon } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  CopyIcon,
+  DownloadIcon,
+  FileTextIcon,
+  FolderDownIcon,
+  PencilIcon,
+  Loader2Icon,
+} from "lucide-react";
 import { api, type FsEntry } from "./api";
 import { FileTree, type FileTreeNode } from "@/components/file-tree";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 type Preview = {
@@ -17,6 +33,8 @@ type Preview = {
   content: string;
 } | null;
 
+type CtxMenu = { node: FileTreeNode; x: number; y: number } | null;
+
 export function WorkspaceFiles() {
   const [dirs, setDirs] = useState<Record<string, FsEntry[]>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -24,6 +42,17 @@ export function WorkspaceFiles() {
   const [preview, setPreview] = useState<Preview>(null);
   const [loadingFile, setLoadingFile] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [root, setRoot] = useState("");
+  // W7 反馈:目录树右键菜单(重命名/复制路径/下载/打包下载)
+  const [ctx, setCtx] = useState<CtxMenu>(null);
+  const [renaming, setRenaming] = useState<FileTreeNode | null>(null);
+  const [renameName, setRenameName] = useState("");
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const flash = (msg: string) => {
+    setNotice(msg);
+    setTimeout(() => setNotice(null), 2500);
+  };
 
   const loadDir = useCallback(async (path: string) => {
     setLoadingDir(path);
@@ -31,6 +60,7 @@ export function WorkspaceFiles() {
     try {
       const r = await api.fs.list(path);
       setDirs((cur) => ({ ...cur, [path]: r.entries }));
+      if (path === "") setRoot(r.root);
     } catch (e) {
       setError(String(e instanceof Error ? e.message : e));
     } finally {
@@ -82,6 +112,44 @@ export function WorkspaceFiles() {
     else void openFile(node.path);
   };
 
+  // ---- W7 右键菜单动作 ----------------------------------------------------
+  const absPath = (rel: string) => (root ? `${root}/${rel}` : rel);
+
+  const copyText = async (text: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      flash(`已复制${label}`);
+    } catch {
+      // 剪贴板 API 不可用(权限/环境)时退化为选中文本提示
+      setError(`复制失败:浏览器不允许访问剪贴板,请手动复制:${text}`);
+    }
+  };
+
+  const triggerDownload = (rel: string) => {
+    const a = document.createElement("a");
+    a.href = api.fs.downloadUrl(rel);
+    a.download = "";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    flash("已开始下载");
+  };
+
+  const doRename = async () => {
+    if (!renaming || !renameName.trim()) return;
+    try {
+      await api.fs.rename(renaming.path, renameName.trim());
+      setRenaming(null);
+      setCtx(null);
+      setDirs({});
+      setExpanded(new Set());
+      void loadDir("");
+      flash("已重命名");
+    } catch (e) {
+      setError(String(e instanceof Error ? e.message : e));
+    }
+  };
+
   // 展开态 → 拍平节点列表(懒加载:未加载的目录只显示自身一行)
   const nodes: FileTreeNode[] = [];
   const walk = (dirPath: string, depth: number) => {
@@ -116,6 +184,7 @@ export function WorkspaceFiles() {
         <FileTree
           nodes={nodes}
           onNodeClick={onNodeClick}
+          onNodeContextMenu={(node, pos) => setCtx({ node, ...pos })}
           className="min-h-0 flex-1 overflow-y-auto"
         />
         {loadingFile ? (
@@ -131,6 +200,103 @@ export function WorkspaceFiles() {
           {error}
         </div>
       ) : null}
+      {notice ? (
+        <div className="absolute inset-x-0 bottom-0 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-[12px] text-emerald-700">
+          {notice}
+        </div>
+      ) : null}
+
+      {/* W7 右键菜单(自绘,不用原生 contextmenu;点空白/Esc 关闭) */}
+      {ctx ? (
+        <div className="fixed inset-0 z-50" onClick={() => setCtx(null)} onContextMenu={(e) => { e.preventDefault(); setCtx(null); }}>
+          <div
+            className="bg-popover text-popover-foreground fixed min-w-44 rounded-lg border p-1 shadow-md"
+            style={{
+              left: Math.min(ctx.x, window.innerWidth - 190),
+              top: Math.min(ctx.y, window.innerHeight - 210),
+            }}
+            data-slot="fs-context-menu"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-muted-foreground truncate px-3 py-1 font-mono text-[10.5px]">
+              {ctx.node.name}
+            </div>
+            <button
+              className="hover:bg-muted flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-[12.5px]"
+              onClick={() => {
+                setRenameName(ctx.node.name);
+                setRenaming(ctx.node);
+                setCtx(null);
+              }}
+            >
+              <PencilIcon className="size-3.5" /> 重命名
+            </button>
+            <button
+              className="hover:bg-muted flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-[12.5px]"
+              onClick={() => {
+                void copyText(absPath(ctx.node.path), "绝对路径");
+                setCtx(null);
+              }}
+            >
+              <CopyIcon className="size-3.5" /> 复制绝对路径
+            </button>
+            <button
+              className="hover:bg-muted flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-[12.5px]"
+              onClick={() => {
+                void copyText(ctx.node.path, "相对路径");
+                setCtx(null);
+              }}
+            >
+              <CopyIcon className="size-3.5" /> 复制相对路径
+            </button>
+            {ctx.node.kind === "folder" ? (
+              <button
+                className="hover:bg-muted flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-[12.5px]"
+                onClick={() => {
+                  triggerDownload(ctx.node.path);
+                  setCtx(null);
+                }}
+              >
+                <FolderDownIcon className="size-3.5" /> 打包下载(zip)
+              </button>
+            ) : (
+              <button
+                className="hover:bg-muted flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-[12.5px]"
+                onClick={() => {
+                  triggerDownload(ctx.node.path);
+                  setCtx(null);
+                }}
+              >
+                <DownloadIcon className="size-3.5" /> 下载
+              </button>
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      {/* W7 重命名对话框 */}
+      <Dialog open={renaming !== null} onOpenChange={(v) => !v && setRenaming(null)}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>重命名</DialogTitle>
+          </DialogHeader>
+          <Input
+            autoFocus
+            value={renameName}
+            onChange={(e) => setRenameName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && void doRename()}
+            data-slot="rename-input"
+          />
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setRenaming(null)}>
+              取消
+            </Button>
+            <Button size="sm" disabled={!renameName.trim()} onClick={() => void doRename()}>
+              确认
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* 预览:盖住目录树;左上角返回图标回树(W2 验收形态) */}
       {preview ? (

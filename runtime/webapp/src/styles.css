@@ -85,8 +85,6 @@ body {
 .app {
   display: grid;
   grid-template-columns: 52px 260px minmax(0, 1fr) 320px;
-  /* W7 反馈:左右栏抽屉收放时列宽平滑过渡(抽屉效果) */
-  transition: grid-template-columns .18s ease;
   /* 行高锁死(2026-09-02 修输入框下移):列内消息再多也不许把行撑破视口,
      否则 .chat 高度随内容增长,吸底输入框被推出屏幕。minmax(0,1fr) 强制
      行高恰为一屏,溢出交由 .thread-viewport 内部滚动。 */
@@ -108,9 +106,9 @@ body {
   width: 34px; height: 34px;
   display: flex; align-items: center; justify-content: center;
   border: none; background: transparent; border-radius: var(--radius-sm);
-  color: var(--fg-3); cursor: pointer;
+  color: var(--fg-2); cursor: pointer;
 }
-.rail-btn:hover { background: var(--bg-hover); color: var(--fg-2); }
+.rail-btn:hover { background: var(--bg-hover); color: var(--fg-1); }
 .rail-btn.active { color: var(--accent); background: var(--bg-select); }
 .rail-spacer { flex: 1; }
 

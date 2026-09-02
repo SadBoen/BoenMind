@@ -1219,6 +1219,171 @@ pub async fn fs_file(State(cfg): State<AdminConfig>, Query(p): Query<FsPathParam
     }
 }
 
+/// W7 反馈:目录树右键菜单——重命名(路径防护同 X-01;新名校验)。
+pub async fn fs_rename(State(cfg): State<AdminConfig>, Json(body): Json<Value>) -> Response {
+    let Some(path) = body["path"].as_str() else {
+        return admin_error(StatusCode::BAD_REQUEST, "path 必须是字符串");
+    };
+    let target = match safe_resolve(&cfg.workspace_root, path) {
+        Ok(t) => t,
+        Err(e) => return admin_error(StatusCode::BAD_REQUEST, e),
+    };
+    let Some(new_name) = body["name"].as_str().map(|s| s.trim()) else {
+        return admin_error(StatusCode::BAD_REQUEST, "name 必须是字符串");
+    };
+    if new_name.is_empty() || new_name.len() > 200 || new_name == "." || new_name == ".." {
+        return admin_error(
+            StatusCode::BAD_REQUEST,
+            "name 必须是非空文件名(≤200 字符,不含路径分隔)",
+        );
+    }
+    if new_name.contains(['/', '\\']) {
+        return admin_error(StatusCode::BAD_REQUEST, "name 不允许包含路径分隔符");
+    }
+    let Some(parent) = target.parent() else {
+        return admin_error(StatusCode::BAD_REQUEST, "目标无父目录");
+    };
+    let new_path = parent.join(new_name);
+    if new_path.exists() {
+        return admin_error(StatusCode::CONFLICT, format!("「{new_name}」已存在"));
+    }
+    match std::fs::rename(&target, &new_path) {
+        Ok(_) => Json(json!({ "ok": true })).into_response(),
+        Err(e) => admin_error(StatusCode::INTERNAL_SERVER_ERROR, format!("重命名失败: {e}")),
+    }
+}
+
+const FS_DOWNLOAD_LIMIT: u64 = 256 * 1024 * 1024;
+
+/// W7 反馈:目录树右键菜单——下载(单文件原样)与打包下载(文件夹 zip)。
+/// 仅工作区内(safe_resolve 防逃逸);总量守门 256MB / 5000 条目。
+pub async fn fs_download(State(cfg): State<AdminConfig>, Query(p): Query<FsPathParams>) -> Response {
+    let target = match safe_resolve(&cfg.workspace_root, &p.path) {
+        Ok(t) => t,
+        Err(e) => return admin_error(StatusCode::BAD_REQUEST, e),
+    };
+    let Ok(meta) = std::fs::metadata(&target) else {
+        return admin_error(StatusCode::NOT_FOUND, "路径不存在");
+    };
+    let download_name = if meta.is_dir() {
+        target
+            .file_name()
+            .map(|n| format!("{}.zip", n.to_string_lossy()))
+            .unwrap_or_else(|| "workspace.zip".to_string())
+    } else {
+        target
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "download".to_string())
+    };
+    let content_type = if meta.is_dir() {
+        "application/zip"
+    } else {
+        "application/octet-stream"
+    };
+    let bytes = if meta.is_dir() {
+        match zip_dir(&target) {
+            Ok(b) => b,
+            Err(e) => {
+                return admin_error(StatusCode::INTERNAL_SERVER_ERROR, format!("打包失败: {e}"))
+            }
+        }
+    } else {
+        if meta.len() > FS_DOWNLOAD_LIMIT {
+            return admin_error(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                format!("文件超过下载上限({}MB)", FS_DOWNLOAD_LIMIT / 1024 / 1024),
+            );
+        }
+        match std::fs::read(&target) {
+            Ok(b) => b,
+            Err(e) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, format!("读取失败: {e}")),
+        }
+    };
+    // Content-Disposition:ASCII 兜底 + RFC 5987 UTF-8(中文文件名)
+    let ascii_name: String = download_name
+        .chars()
+        .map(|c| if c.is_ascii() { c } else { '_' })
+        .collect();
+    let mut resp = (StatusCode::OK, bytes).into_response();
+    if let Ok(v) = axum::http::HeaderValue::from_str(&format!(
+        "attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{}",
+        utf8_percent_encode(&download_name)
+    )) {
+        resp.headers_mut().insert(axum::http::header::CONTENT_DISPOSITION, v);
+    }
+    if let Ok(v) = axum::http::HeaderValue::from_str(content_type) {
+        resp.headers_mut().insert(axum::http::header::CONTENT_TYPE, v);
+    }
+    resp
+}
+
+fn utf8_percent_encode(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.as_bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+            out.push(*b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// 递归打包目录为 zip(内存;守门:≤5000 条目 / ≤256MB 解压总量)。
+fn zip_dir(dir: &std::path::Path) -> Result<Vec<u8>, String> {
+    let mut buf = std::io::Cursor::new(Vec::new());
+    {
+        let mut zip = zip::ZipWriter::new(&mut buf);
+        let options = zip::write::FileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        let mut count = 0usize;
+        let mut total = 0u64;
+        fn walk(
+            zip: &mut zip::ZipWriter<&mut std::io::Cursor<Vec<u8>>>,
+            options: &zip::write::FileOptions,
+            prefix: &str,
+            base: &std::path::Path,
+            count: &mut usize,
+            total: &mut u64,
+        ) -> Result<(), String> {
+            for entry in
+                std::fs::read_dir(base).map_err(|e| format!("read_dir {}: {e}", base.display()))?
+            {
+                let entry = entry.map_err(|e| format!("{e}"))?;
+                let path = entry.path();
+                let rel = if prefix.is_empty() {
+                    entry.file_name().to_string_lossy().to_string()
+                } else {
+                    format!("{prefix}/{}", entry.file_name().to_string_lossy())
+                };
+                if path.is_dir() {
+                    zip.add_directory(rel.clone(), options.clone())
+                        .map_err(|e| format!("{e}"))?;
+                    walk(zip, options, &rel, &path, count, total)?;
+                } else {
+                    *count += 1;
+                    if *count > 5000 {
+                        return Err("条目超过 5000,拒绝打包".into());
+                    }
+                    let data = std::fs::read(&path).map_err(|e| format!("read {rel}: {e}"))?;
+                    *total += data.len() as u64;
+                    if *total > FS_DOWNLOAD_LIMIT {
+                        return Err("总量超过 256MB,拒绝打包".into());
+                    }
+                    zip.start_file(rel.clone(), options.clone())
+                        .map_err(|e| format!("{e}"))?;
+                    std::io::Write::write_all(zip, &data).map_err(|e| format!("{e}"))?;
+                }
+            }
+            Ok(())
+        }
+        walk(&mut zip, &options, "", dir, &mut count, &mut total)?;
+        zip.finish().map_err(|e| format!("{e}"))?;
+    }
+    Ok(buf.into_inner())
+}
+
 // ---- 错误形状 ------------------------------------------------------------
 
 /// 管理面统一错误形状(壳子私用 REST 惯例,非 Wire 信封)。
@@ -1592,6 +1757,9 @@ pub fn admin_routes(cfg: AdminConfig) -> axum::Router {
         .route("/context", get(context_tail))
         .route("/fs/list", get(fs_list))
         .route("/fs/file", get(fs_file))
+        // W7 目录树右键菜单:重命名 / 下载(文件)与打包下载(文件夹 zip)
+        .route("/fs/rename", post(fs_rename))
+        .route("/fs/download", get(fs_download))
         // W7 关于与在线升级(apply 仅回环;铁规矩:绝不由此触发发布)
         .route("/about", get(crate::about::about))
         .route("/about/check-update", post(crate::about::check_update))

@@ -25,11 +25,13 @@ export interface FileTreeNode {
 export function FileTree({
   nodes,
   onNodeClick,
+  onNodeContextMenu,
   className,
   ...props
 }: Omit<ComponentProps<"div">, "children" | "nodes"> & {
   nodes: readonly FileTreeNode[];
   onNodeClick?: (node: FileTreeNode) => void;
+  onNodeContextMenu?: (node: FileTreeNode, pos: { x: number; y: number }) => void;
 }) {
   // 用户裁定:不做独立底色卡片,融入所在面板(透明、无边框)
   return (
@@ -45,6 +47,11 @@ export function FileTree({
             type="button"
             data-path={node.path}
             onClick={() => onNodeClick?.(node)}
+            onContextMenu={(e) => {
+              if (!onNodeContextMenu) return;
+              e.preventDefault();
+              onNodeContextMenu(node, { x: e.clientX, y: e.clientY });
+            }}
             className="hover:bg-foreground/[0.05] flex items-center gap-2 rounded-lg px-1 py-1 text-left text-[13px] transition-colors duration-150"
             style={{ paddingInlineStart: `${0.25 + node.depth * 0.85}rem` }}
           >
