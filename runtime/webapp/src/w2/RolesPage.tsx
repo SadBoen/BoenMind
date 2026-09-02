@@ -14,11 +14,8 @@ export function RolesPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api.rolesGet
-      ? undefined
-      : undefined;
-    fetch("/admin/roles")
-      .then((r) => r.json())
+    api.roles
+      .get()
       .then((d) => {
         setName(d.name ?? "assistant");
         setPrompt(d.system_prompt ?? "");
@@ -30,7 +27,7 @@ export function RolesPage() {
     setSaving(true);
     setError(null);
     try {
-      const r = await api.rolesSet(name, prompt);
+      const r = await api.roles.set(name, prompt);
       setNotice(r.note);
     } catch (e) {
       setError(String(e instanceof Error ? e.message : e));

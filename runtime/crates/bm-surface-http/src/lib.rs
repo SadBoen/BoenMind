@@ -8,7 +8,6 @@
 //! - `GET /health`:无鉴权探针;
 //! - 鉴权:除 /health 外一律 Bearer 令牌(合同库 surface/auth.v0_1)。
 
-pub mod api_dsh;
 pub mod auth;
 pub mod config_store;
 pub mod openai_compat;
@@ -63,12 +62,11 @@ pub fn router(
             auth::require_bearer,
         ))
         .route("/health", get(rpc::health))
-        // dsh 前端宿主协议(公开挂载,见 api_dsh.rs 安全边界说明)
-        .route("/api/{*rest}", post(api_dsh::unary))
-        .route("/api/events.mux", get(api_dsh::events_mux))
-        .route("/api/events.host", get(api_dsh::events_host))
         // W1(ADR-0014):OpenAI 兼容插座(公开挂载 = 已登记欠账,公网前补鉴权)
-        .route("/v1/chat/completions", post(openai_compat::chat_completions))
+        .route(
+            "/v1/chat/completions",
+            post(openai_compat::chat_completions),
+        )
         .route("/v1/models", get(openai_compat::models))
         .with_state(state);
     // W2 管理面(公开挂载 = W1 同款已登记欠账;None = 不挂载)

@@ -60,12 +60,12 @@
 
 | 条目 | 说明 | 状态 |
 |---|---|---|
-| api_dsh.rs 删除待追认 | 工作区已删 `bm-surface-http/src/api_dsh.rs`(dsh 宿主协议端点 /api/*),与 ADR-0013「后端保留 api_dsh 适配器」口径相抵;提交该删除时需用户追认并补记(下一条 ADR 或随回看) | OPEN |
+| ~~api_dsh.rs 删除待追认~~ **已追认删除(2026-09-02)**:用户同意按计划推进;dsh 协议端点 `/api/*` 正式移除(前端已弃用 ADR-0013,归档分支保留历史),bm-surface-http/src/lib.rs 同步清理 | DONE(2026-09-02) |
 | MCP 示例配置启动命令不实 | `apps/mcp-config.example.json` 的 web_multisearch 原写 `python -m boenmind_mcp_servers.web_multisearch`(模块任何环境不可 import);2026-09-02 已改为 Rust 版 exe + `--config` 真实形态 | DONE(2026-09-02) |
 | release.yml 承诺未兑现 | `.github/workflows/release.yml` 注释称 Tauri Windows 安装包随 T6/M8 加入工作流,实际从未加入(或兑现或改注释) | OPEN |
 | webapp 无自动化测试 | 前端现状=真实浏览器手测+截图留档(纪律见 PLAYBOOK);候选:playwright 冒烟套件 | OPEN(候选) |
 | 坏 MCP 条目导致启动拒绝 | 一条损坏的 MCP 配置会拒绝整个 server 启动(用户反馈轮发现);应降级为跳过+告警 | OPEN |
-| fmt 门禁缺口:lib.rs | W 系列提交均未跑 `cargo fmt --check`(CI fmt 门禁红);2026-09-01 已全仓规范化,唯 lib.rs(HEAD 版本即不干净)留待 api_dsh 追认提交时一并入库闭合 | OPEN(随追认闭合) |
+| ~~fmt 门禁缺口:lib.rs~~ **已闭合(2026-09-02)**:随 api_dsh 追认提交一并 cargo fmt 全量规范化 | DONE(2026-09-02) |
 | web_multisearch Rust 版切换决策 | **已切换现役(2026-09-02)**:exe 安装于 `<数据目录>\mcp\`,经两段式(扫描→批准→重载)上线,探活绿、真模型对话实测工具闭环全通(注入/调用/结果回流/错误降级);剩 ddgs 指纹挑战与 Marginalia 公共 key 限流为外部状态(用户裁定当前不修),想恢复全源覆盖 = 设置页 MCP 配置表单填一把免费 Jina Key(热生效)或自建 searxng 填地址 | DONE(外部源覆盖随 Key) |
 | PENPOT-quickstart 过时 | 指向已删除的 runtime/web/tokens.css;已加过时标注(2026-09-01),待归档或更新 | OPEN(低优) |
 

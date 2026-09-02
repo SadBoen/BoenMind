@@ -1,12 +1,16 @@
 # BoenMind Windows 桌面壳(Tauri v2)
 
 ADR-0009:桌面只出 Windows 壳;**前端与 Web UI 共用同一代码库**
-(`runtime/web/index.html`,禁止分叉)。壳本身不带业务逻辑——加载同一
+(`runtime/webapp`,经 `vite build` 产出 `dist/`,禁止分叉)。壳本身不带业务逻辑——加载同一
 静态页,页面内的 server 地址/令牌字段指向本机或 VPS 上的 boenmind-server。
 
 ## 复现构建
 
 ```bash
+# 0) 先构建前端(webapp 目录)
+cd runtime/webapp
+npm run build
+
 # 1) 安装 tauri-cli(一次)
 cargo install tauri-cli --locked
 
@@ -18,7 +22,7 @@ cargo tauri build
 
 ## 结构
 
-- `tauri.conf.json`:frontendDist 指向 `../../runtime/web`(同源前端唯一真源);
+- `tauri.conf.json`:frontendDist 指向 `../../runtime/webapp/dist`(webapp 构建产物);
   窗口加载 `index.html`,所有业务请求由页面 JS 直连 boenmind-server HTTP API。
 - `src-tauri/src/main.rs`:最小 Tauri 入口(窗口 + 资源)。
 

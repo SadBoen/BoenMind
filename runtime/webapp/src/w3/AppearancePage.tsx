@@ -22,7 +22,6 @@ import {
 } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { MonitorIcon, ScrollTextIcon, StickerIcon, DropletsIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const THEME_LOGOS = {
