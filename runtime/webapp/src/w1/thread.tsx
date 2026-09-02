@@ -10,6 +10,15 @@ import {
 } from "@assistant-ui/react";
 import { Send, ShieldAlert, Square } from "lucide-react";
 import { useEffect, useState } from "react";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { ContextView } from "./context";
 import { useBoenmindApprovals, type ApprovalRequest } from "./runtime";
 
@@ -314,54 +323,64 @@ function Composer() {
       />
       <div className="composer-toolbar">
         {roles.length > 0 ? (
-          <div className="flex items-center gap-1">
-            <span className="text-[12px] text-muted-foreground ml-1">角色:</span>
-            <select
-              value={activeRole}
-              onChange={(e) => handleRoleChange(e.target.value)}
-              className="bg-muted/60 text-foreground hover:bg-muted focus:ring-ring h-7 rounded-md border px-2 text-[11.5px] font-medium outline-none transition-colors"
+          // W6 反馈:去「角色:」文字标签;W7 反馈:换主题化下拉(弹出层跟皮肤走,不再是直角原生框)
+          <Select value={activeRole} onValueChange={handleRoleChange}>
+            <SelectTrigger
+              size="sm"
+              className="bg-muted/60 h-7 rounded-lg border px-2 text-[11.5px] font-medium"
               title="切换当前会话角色"
               data-slot="role-select"
             >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="rounded-lg">
               {roles.map((r) => (
-                <option key={r.id} value={r.id}>
+                <SelectItem key={r.id} value={r.id}>
                   🎭 {r.name}
-                </option>
+                </SelectItem>
               ))}
-            </select>
-          </div>
+            </SelectContent>
+          </Select>
         ) : null}
         <span className="tool-chip disabled">📎 附件</span>
-        <label className="flex items-center gap-1">
-          <span className="text-[12px] text-muted-foreground ml-1">模型:</span>
-          <select
-            value={selModel}
-            onChange={(e) => {
-              setSelModel(e.target.value);
-              if (e.target.value) localStorage.setItem("bm_active_model", e.target.value);
-              else localStorage.removeItem("bm_active_model");
-            }}
-            className="bg-muted/60 text-foreground hover:bg-muted focus:ring-ring h-7 rounded-md border px-2 text-[11.5px] font-medium outline-none transition-colors"
+        {/* W6 对话级模型选择:候选 = 各提供商「常用」并集;中途切换下一条生效。
+            Radix 不允许空值 item,服务器默认用哨兵 __default__ 表示(=不传 model) */}
+        <Select
+          value={selModel || "__default__"}
+          onValueChange={(v) => {
+            const val = v === "__default__" ? "" : v;
+            setSelModel(val);
+            if (val) localStorage.setItem("bm_active_model", val);
+            else localStorage.removeItem("bm_active_model");
+          }}
+        >
+          <SelectTrigger
+            size="sm"
+            className="bg-muted/60 h-7 rounded-lg border px-2 text-[11.5px] font-medium"
             title="切换对话模型:下一条消息即生效,无需新开会话;候选在 设置→模型 勾选「常用」"
             data-slot="model-select"
           >
-            <option value="">⚙ 默认 {model}</option>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent className="rounded-lg">
+            <SelectItem value="__default__">⚙ 默认 {model}</SelectItem>
             {modelGroups.map((g) => (
-              <optgroup key={g.provider} label={g.provider}>
+              <SelectGroup key={g.provider}>
+                <SelectLabel>{g.provider}</SelectLabel>
                 {g.models.map((m) => (
-                  <option key={m} value={m}>
+                  <SelectItem key={m} value={m}>
                     {m}
-                  </option>
+                  </SelectItem>
                 ))}
-              </optgroup>
+              </SelectGroup>
             ))}
             {modelGroups.length === 0 ? (
-              <option value="" disabled>
+              <SelectItem value="__none__" disabled>
                 未设置常用——去 设置→模型 勾选
-              </option>
+              </SelectItem>
             ) : null}
-          </select>
-        </label>
+          </SelectContent>
+        </Select>
         <span className="tool-chip disabled">🏠 Home</span>
         <span className="composer-spacer" />
         {isRunning ? (
