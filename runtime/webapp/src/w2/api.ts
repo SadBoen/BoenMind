@@ -239,6 +239,25 @@ export const api = {
   },
   logs: () =>
     req<{ ok: boolean; exec: string[]; events: string[]; context: string[] }>("/admin/logs"),
+  // W7 关于与在线升级(apply 仅回环;发新版本必须用户明说,此处只消费)
+  about: {
+    get: () =>
+      req<{ version: string; platform: string; dataDir: string; repo: string }>("/admin/about"),
+    checkUpdate: () =>
+      req<{
+        ok: boolean;
+        current: string;
+        latest?: string;
+        updateAvailable?: boolean;
+        asset?: { name: string; url: string };
+        notes?: string;
+        error?: string;
+      }>("/admin/about/check-update", { method: "POST" }),
+    applyUpdate: () =>
+      req<{ ok: boolean; restarting: boolean; note: string }>("/admin/about/apply-update", {
+        method: "POST",
+      }),
+  },
   // W5 上下文透视:模型调用请求快照(context-log.jsonl 尾部,最旧在前)
   context: () => req<{ ok: boolean; steps: CtxStep[] }>("/admin/context"),
   capabilities: () =>

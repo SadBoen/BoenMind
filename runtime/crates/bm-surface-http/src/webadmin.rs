@@ -52,6 +52,10 @@ pub struct AdminConfig {
     pub secrets: Option<Arc<dyn bm_core::ports::SecretStore>>,
     /// W6:对话级模型路由表(providers 写后重建;None = 未装配,如测试态)。
     pub model_routes: Option<Arc<bm_providers::routing::RoutingConnector>>,
+    /// W7 在线升级:应用层停机信号(apply 后排空本进程);None = 测试态。
+    pub shutdown: Option<Arc<tokio::sync::Notify>>,
+    /// W7 在线升级:Web 静态目录(--web-dir,升级时覆盖 dist);None = 未挂载。
+    pub web_dir: Option<PathBuf>,
 }
 
 /// 文件预览大小上限(512KB;个人单机预览面,防整读大文件)。
@@ -193,8 +197,7 @@ pub fn rebuild_routes(cfg: &AdminConfig) {
             }
             let secret_ref = bm_core::runtime::default_secret_ref(&id);
             if bm_core::ports::SecretStore::get(secrets.as_ref(), &secret_ref).is_err()
-                && let Err(e) =
-                    bm_core::ports::SecretStore::put(secrets.as_ref(), &secret_ref, key)
+                && let Err(e) = bm_core::ports::SecretStore::put(secrets.as_ref(), &secret_ref, key)
             {
                 eprintln!("[W6] 模型「{id}」密钥播种失败(不入路由): {e:?}");
                 continue;
@@ -1219,7 +1222,7 @@ pub async fn fs_file(State(cfg): State<AdminConfig>, Query(p): Query<FsPathParam
 // ---- 错误形状 ------------------------------------------------------------
 
 /// 管理面统一错误形状(壳子私用 REST 惯例,非 Wire 信封)。
-fn admin_error(status: StatusCode, message: impl Into<String>) -> Response {
+pub(crate) fn admin_error(status: StatusCode, message: impl Into<String>) -> Response {
     (
         status,
         Json(json!({ "error": { "message": message.into() } })),
@@ -1589,6 +1592,10 @@ pub fn admin_routes(cfg: AdminConfig) -> axum::Router {
         .route("/context", get(context_tail))
         .route("/fs/list", get(fs_list))
         .route("/fs/file", get(fs_file))
+        // W7 关于与在线升级(apply 仅回环;铁规矩:绝不由此触发发布)
+        .route("/about", get(crate::about::about))
+        .route("/about/check-update", post(crate::about::check_update))
+        .route("/about/apply-update", post(crate::about::apply_update))
         .with_state((*cfg).clone())
 }
 

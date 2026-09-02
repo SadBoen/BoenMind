@@ -8,6 +8,7 @@
 //! - `GET /health`:无鉴权探针;
 //! - 鉴权:除 /health 外一律 Bearer 令牌(合同库 surface/auth.v0_1)。
 
+pub mod about;
 pub mod auth;
 pub mod config_store;
 pub mod openai_compat;

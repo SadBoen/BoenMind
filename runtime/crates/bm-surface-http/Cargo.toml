@@ -19,6 +19,9 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 # W2 管理面连通探针(对 provider baseUrl 发 GET /models;UA 自报防 CF 拒收)
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+sha2 = "0.11.0"
+tar = "0.4"
+flate2 = "1"
 
 [dev-dependencies]
 bm-providers = { workspace = true }

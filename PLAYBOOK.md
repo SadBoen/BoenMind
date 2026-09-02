@@ -23,6 +23,7 @@ BOEN_WORKSPACE_DIR       工作区/文件浏览根,默认 <data-dir>/workspace
 ```
 
 - Node 走 fnm:Git Bash 里 node 命令前需 `source ~/.bashrc`。
+- **发版(2026-09-02 铁规矩:必须用户明确说才发)**:打 `v*` tag 推送 → release 工作流自动出 linux+windows 双 .tar.gz 并建 Release;**发版时同步 bump `runtime/Cargo.toml` 的 workspace version**(与 tag 一致,/health 与「关于」页/在线升级都读它);在线升级端点 `/admin/about/*` 仅回环可 apply。
 
 ## 2. 前端实测四坑(2026-08-30 真浏览器实测抓出)
 

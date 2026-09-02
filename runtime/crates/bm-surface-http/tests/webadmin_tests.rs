@@ -55,6 +55,8 @@ async fn spawn_app(
         hub: None,
         secrets: Some(Arc::new(MemSecretStore::new()) as Arc<dyn bm_core::ports::SecretStore>),
         model_routes: None,
+        shutdown: None,
+        web_dir: None,
     };
     let app = bm_surface_http::router(
         handle,

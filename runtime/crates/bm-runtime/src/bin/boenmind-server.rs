@@ -209,6 +209,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .await;
 
     // W2 管理面注入(handle 就绪后构造:热装载走 actor 命令)
+    let shutdown = Arc::new(tokio::sync::Notify::new());
     let admin = bm_surface_http::webadmin::AdminConfig {
         data_dir: data_dir.clone(),
         workspace_root,
@@ -219,6 +220,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         hub: hub.clone(),
         secrets: Some(secrets.clone()),
         model_routes: Some(model_routes.clone()),
+        shutdown: Some(shutdown.clone()),
+        web_dir: web_dir.clone(),
     };
     bm_surface_http::webadmin::rebuild_routes(&admin);
 
@@ -229,7 +232,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         handle.register_redaction_value(key_value);
     }
 
-    let shutdown = Arc::new(tokio::sync::Notify::new());
     // W1(ADR-0014):/v1 插座与会话创建的默认模型 = 生效模型(文件>env)
     let default_model = Arc::new(
         eff.model_id
@@ -249,7 +251,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(w) = &web_dir {
         println!("Web Surface 目录 {w:?}(GET / 托管静态界面)");
     }
-    let listener = tokio::net::TcpListener::bind(&bind).await?;
+    // W7:在线升级子进程(BOEN_UPGRADE_CHILD=1)容忍旧实例尚未让出端口,
+    // 重试绑定 ≤60s;常规启动仍一次失败即退(单进程铁律)。
+    let listener = if std::env::var("BOEN_UPGRADE_CHILD").as_deref() == Ok("1") {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        loop {
+            match tokio::net::TcpListener::bind(&bind).await {
+                Ok(l) => break l,
+                Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+                    if std::time::Instant::now() >= deadline {
+                        return Err(e.into());
+                    }
+                    eprintln!("[W7] 等待旧实例退出(端口占用中)……");
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+    } else {
+        tokio::net::TcpListener::bind(&bind).await?
+    };
     let actual = listener.local_addr()?;
     println!(
         "boenmind-server v{} 监听 http://{actual}",
@@ -261,9 +282,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         data_dir.display()
     );
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal(handle, shutdown))
-        .await?;
+    // W7:带 ConnectInfo(apply-update 端点据此限制仅回环可升)
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal(handle, shutdown))
+    .await?;
     Ok(())
 }
 

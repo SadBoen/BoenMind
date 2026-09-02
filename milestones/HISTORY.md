@@ -41,6 +41,7 @@
 | W4b 多角色管理与会话切换 | 2026-09-02 | (见 git) | 289 | **角色库 CRUD 与会话级选择交付**:config/roles.json 扩展多角色模型 + /admin/roles 增删改查及设为全局默认;Agent 结构与 turn.rs 组装支持会话级 system_prompt 覆盖;Composer 工具栏集成角色切换下拉,发请求传 X-Bm-Role;真模型实测「代码架构师」角色答复口吻精确匹配设定,上下文透视面板中 System Prompt 验证生效,截图 shots-w5-context/04 |
 | v0.0.1 首发:官方插件移入+Linux 发布线 | 2026-09-02 | `v0.0.1` | 插件 27+1 | **web-multisearch 自独立仓移入 `plugins/mcp/web-multisearch/`**(官方自带插件;外仓历史归档分支 archive/boenmind-mcp-servers,外仓目录已清;--self-describe 紧凑单行修复随移入库);release.yml 重写为 v* tag 触发的 Linux x86_64 发布线(boenmind-server+插件+预构建 dist 同包,自动建 GitHub Release,含 INSTALL-linux.md);用户裁决只要 Linux(VPS 安装场景) |
 | W6 对话级模型选择 | 2026-09-02 | (见 git) | 全量绿+validate 绿 | **设置「模型提供商」改名「模型」+常用清单+输入框选模型三合一**:①providers.json 增 modelsCommon(⊂models,设置页多选勾选,卡片显「清单共 N 个 · 常用设置为:…」);②合同 **Minor**:agent.send_input 增可选 model_override(turn 降级链整体替换);③bm-providers 新增 RoutingConnector(按 model_id 分发,未命中回落默认,invoke_stream 透传保流式),World/回合循环零改动;④providers 写后免重启重建路由+密钥播种(secret:model.<id>,INV-5 不破);⑤输入框模型下拉(localStorage 持久化,刷新/新对话不变,**同会话中途切换下一条即生效**);⑥未知模型 400 带可用清单;真模型实测同会话 glm-5.3-flash→mimo-v2.5 热切换,快照证两 turn model_id 各归其位(VPS mock 根因=未配 provider,W6 后设置页配好免重启即真模型) |
+| W7 关于页+在线升级 | 2026-09-02 | (见 git) | 全量绿 | **设置左侧新增「关于」**:版本/平台/数据目录/更新源 + 检查更新(GitHub latest release 三段版本比较,按平台选资产)+一键升级(下载→sha256 校验→tar 解包→换装二进制/dist/plugins→BOEN_UPGRADE_CHILD 拉新进程+旧进程排空,子进程绑定重试 60s);apply 仅回环地址;workspace 版本对齐 release 线(0.1.0-m1→0.0.2);release.yml 补 windows 双平台包;**铁规矩立档:未经用户明示严禁发版(打 tag/发 release)**,在线升级只消费不发布;apply 全链待下次授权发版实战 |
 
 ## W 序列验收惯例
 
