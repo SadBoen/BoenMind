@@ -102,11 +102,18 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
               </div>
               {pins.map((key) => {
                 const name = key.split(":")[1] ?? key;
+                // 2026-09-02 裁决:插件页只列系统内置;旧 mcp: 前缀 PIN
+                // (MCP 项已不在此页)点击改跳「MCP 管理」页
+                const toMcp = key.startsWith("mcp:");
                 return (
                   <button
                     key={key}
                     className="hover:bg-accent flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] transition-colors"
-                    onClick={() => goPluginWithFilter(name)}
+                    onClick={() =>
+                      toMcp
+                        ? (setMcpEditTarget(name), setSection("mcp"))
+                        : goPluginWithFilter(name)
+                    }
                     data-slot="pin-item"
                     data-name={name}
                   >
@@ -122,15 +129,7 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
         <main className="min-w-0 flex-1 overflow-y-auto p-6" data-slot="settings-content">
           <div className="mx-auto max-w-2xl">
             {section === "providers" ? <ProvidersPage /> : null}
-            {section === "plugins" ? (
-              <PluginsPage
-                initialFilter={pluginFilter}
-                onGoMcpEdit={(name) => {
-                  setMcpEditTarget(name);
-                  setSection("mcp");
-                }}
-              />
-            ) : null}
+            {section === "plugins" ? <PluginsPage initialFilter={pluginFilter} /> : null}
             {section === "mcp" ? (
               <McpPage
                 editTarget={mcpEditTarget}

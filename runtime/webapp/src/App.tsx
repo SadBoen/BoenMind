@@ -212,7 +212,14 @@ function SessionPanel() {
     <div className="sessions">
       <div className="sessions-head">
         <span className="title">聊天</span>
-        <button className="icon-chip" title="新建对话">
+        {/* 新建对话:清空聊天视图+丢弃会话号(下一条消息自动开新会话;
+            服务器侧旧会话随进程寿命留存,W1 口径)——事件由 w1/runtime 接 */}
+        <button
+          className="icon-chip"
+          title="新建对话"
+          data-slot="new-chat"
+          onClick={() => window.dispatchEvent(new CustomEvent("bm-chat-new"))}
+        >
           <Plus size={16} />
         </button>
       </div>

@@ -136,6 +136,19 @@ export function BoenmindRuntimeProvider({
     return () => clearTimeout(t);
   }, []);
 
+  // 「新建对话」(SessionPanel 加号派发 bm-chat-new):中止在途回合、
+  // 丢弃会话号、清空消息视图;下一条消息即自动开新会话。appendDelta
+  // 对空消息列表是安全空操作,中止回调不会把内容写回已清空的视图。
+  useEffect(() => {
+    const onNewChat = () => {
+      abortRef.current?.abort();
+      localStorage.removeItem("bm_session");
+      setMessages([]);
+    };
+    window.addEventListener("bm-chat-new", onNewChat);
+    return () => window.removeEventListener("bm-chat-new", onNewChat);
+  }, []);
+
   useEffect(() => {
     document.title = "BM n=" + messages.length + " run=" + isRunning;
   }, [messages, isRunning]);
