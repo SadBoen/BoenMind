@@ -6,22 +6,22 @@ workspace "BoenMind" "面向个人软件生态的 AI Runtime/AI 操作系统—�
 
         boenmind = softwareSystem "BoenMind Runtime" "统一的 AI Runtime:Agent 生命周期、记忆与技能、能力注册、身份权限审批、App 间受控通信、多 Agent 协作、插件热替换与故障恢复;前端形态(Chat/CLI/语音/通知)全部解耦为可替换 Surface。" {
 
-            chat = container "Tauri Chat Surface" "图形交互界面:创建/接管 Task、提交审批决定;不拥有 Agent,可被 CLI 接管同一 Task。" "Tauri Desktop" "L5,Surface"
-            webui = container "Web Surface" "网页交互界面:创建/接管 Task、提交审批、watch 观察任务流;与 Tauri 桌面壳共用同一前端代码库(ADR-0009);经 TLS+令牌访问,不绕过 Broker。" "Web App (TypeScript)" "L5,Surface"
-            cli = container "CLI Surface" "标准命令行 Surface(boenmind):用户操作面(task/agent/approval)+ 受限运行控制面(runtime status/upgrade/rollback);无 GUI 时的人类控制入口,不绕过 Broker。" "Rust CLI" "L5,Surface"
-            voice = container "Voice Surface" "语音交互适配器;与其他 Surface 共享同一 Surface Protocol。" "语音适配器" "L5,Surface"
-            notif = container "Notification Surface" "通知中心:审批提醒、异步结果推送;GUI 关闭时兜底。" "通知适配器" "L5,Surface"
+            chat = container "Tauri Chat Surface" "[阶段一桌面壳骨架] 图形交互界面:创建/接管 Task、提交审批决定;与 Web Surface 共用前端静态产物(ADR-0009);不拥有 Agent,可被 CLI 接管同一 Task。" "Tauri Desktop" "L5,Surface"
+            webui = container "Web Surface (assistant-ui 壳 + 管理面)" "[阶段一现役] 网页交互界面:对话闭环(/v1 OpenAI 插座)、上下文透视面板、设置中心(/admin 提供商/插件/MCP/角色/日志);经 TLS+令牌访问,不绕过 Broker。" "Web App (React + TypeScript)" "L5,Surface"
+            cli = container "CLI Surface" "[阶段一现役] 标准命令行 Surface(boenmind):用户操作面(task/agent/approval)+ 受限运行控制面(runtime status/upgrade/rollback);无 GUI 时的人类控制入口,不绕过 Broker。" "Rust CLI" "L5,Surface"
+            voice = container "Voice Surface" "[阶段二规划] 语音交互适配器;与其他 Surface 共享同一 Surface Protocol。" "语音适配器" "L5,Surface"
+            notif = container "Notification Surface" "[阶段二规划] 通知中心:审批提醒、异步结果推送;GUI 关闭时兜底。" "通知适配器" "L5,Surface"
 
-            butler = container "Butler App" "管家 App:接单、创建 Task、召集 Coordinator Agent、催办与汇报;只拥有系统协调权(task.create/agent.spawn/team.create 等),不默认拥有任何领域操作权。Orchestrator 的任务板是从事件重建的投影,不是第二事实源。" "Rust App(可独立进程)" "L4,App"
-            mailApp = container "Mail App" "邮件业务域:暴露 mail.search/mail.read/mail.create_draft/mail.send(external-side-effect)等 Capability 与领域 Agent;数据域 memory:app:mail。" "App(可独立进程)" "L4,App"
-            stockApp = container "Stock App" "股票业务域:stock.quote.get/stock.analyze/stock.place_order(high-risk-command,需审批)。" "App(可独立进程)" "L4,App"
-            musicApp = container "Music App" "音乐业务域:music.search/music.play/music.pause;音量控制不属于 Music App 而属于系统服务 Audio Provider。" "App(可独立进程)" "L4,App"
-            wikiApp = container "Wiki App" "知识库业务域;首批真实 App 之一,与 Mail/Stock 共用同一套 Runtime/Broker/Task/日志机制。" "App(可独立进程)" "L4,App"
+            butler = container "Butler App" "[阶段一已并入内核] 管家 App:接单、创建 Task、召集 Coordinator Agent、催办与汇报;只拥有系统协调权(task.create/agent.spawn/team.create 等),不默认拥有任何领域操作权。Orchestrator 的任务板是从事件重建的投影,不是第二事实源。" "Rust App(阶段一内建/阶段二独立进程)" "L4,App"
+            mailApp = container "Mail App" "[阶段二规划] 邮件业务域:暴露 mail.search/mail.read/mail.create_draft/mail.send(external-side-effect)等 Capability 与领域 Agent;数据域 memory:app:mail。" "App(可独立进程)" "L4,App"
+            stockApp = container "Market App" "[阶段一真实 App·ADR-0011] 行情/持仓业务域:apps/market_server.py(stdio MCP);暴露 quote.get/portfolio.add/portfolio.value。" "stdio MCP (Python)" "L4,App"
+            musicApp = container "Music App" "[阶段二规划] 音乐业务域:music.search/music.play/music.pause;音量控制不属于 Music App 而属于系统服务 Audio Provider。" "App(可独立进程)" "L4,App"
+            wikiApp = container "Wiki App" "[阶段一真实 App·ADR-0011] 知识库业务域:apps/wiki_server.py(stdio MCP);暴露 page.read/page.write/page.list,真实写盘带摘要收据。" "stdio MCP (Python)" "L4,App"
 
-            audio = container "Audio Provider (system.audio)" "系统服务 Provider:audio.volume.get/set、audio.mute、audio.output.list;低风险确定性能力,支持 verification 事后核验钩子。" "系统服务(可独立进程)" "L3,Provider"
-            fsProvider = container "File Provider" "文件系统能力 Provider:文件读写、选择器、导出。" "系统服务(可独立进程)" "L3,Provider"
-            mcp = container "MCP Provider 接入" "外部 MCP Server 作为普通 Provider 注册,命名空间 mcp:<server>.<tool>;风险未知按不低于 reversible-command 处理,首次调用需审批;崩溃走 Provider 崩溃路径。" "接入器进程" "L3,Provider"
-            timerProvider = container "Timer Provider" "定时与自动化触发;只是普通调用方,定时能力本身是可替换的系统服务 Provider,内核不持有调度特权。" "系统服务(可独立进程)" "L3,Provider"
+            audio = container "Audio Provider (system.audio)" "[阶段二规划] 系统服务 Provider:audio.volume.get/set、audio.mute、audio.output.list;低风险确定性能力,支持 verification 事后核验钩子。" "系统服务(可独立进程)" "L3,Provider"
+            fsProvider = container "File Provider" "[阶段二规划] 文件系统能力 Provider:文件读写、选择器、导出。" "系统服务(可独立进程)" "L3,Provider"
+            mcp = container "MCP Provider 接入" "[阶段一现役·两段式] 外部 MCP Server 作为普通 Provider 注册,扫描发现→显式批准落盘→热装载免重启;当前 web_multisearch 等现役。" "接入器(Rust StdioMcpTransport)" "L3,Provider"
+            timerProvider = container "Timer Provider" "[阶段二规划] 定时与自动化触发;只是普通调用方,定时能力本身是可替换的系统服务 Provider,内核不持有调度特权。" "系统服务(可独立进程)" "L3,Provider"
 
             l2core = container "L2 Runtime Core (active generation)" "可按代际升级的运行时内核:同一时刻只有一个 generation 对可写业务状态拥有写入权;持有 Task 规范状态、权限、事件规范序(event_seq 全局单调);重启或换代必须从持久状态恢复,不依赖旧进程内存。" "Rust 进程" "L2,RuntimeCore" {
                 registry = component "Runtime Registry" "统一注册中心,内部按对象类型分表:App/Plugin/Capability/Agent/Task-Team/Surface/Provider Binding;分表是开放集合。持久化逻辑目录 + 可重建的运行时缓存两层。" "Rust 模块"
@@ -29,16 +29,18 @@ workspace "BoenMind" "面向个人软件生态的 AI Runtime/AI 操作系统—�
                 bus = component "Event Bus" "持久事实源 + 内存分发层两级:需恢复/重放/跨代际交接的事件先进持久事件日志(单写者追加);token 增量等瞬态事件默认不落盘。事件表达「发生了什么」,不是「请做什么」。" "Rust 模块"
                 executor = component "Agent/Task Executor" "Agent 生命周期状态机(created→starting→running⇄waiting⇄paused→stopping→stopped/failed/cancelled,迁移携带原因码)、Task/Team 编排、Operation 状态机与执行收据;上下文压缩写 Execution Log。" "Rust 模块"
                 approval = component "Approval & Budget" "持久化审批对象(默认拒绝:超时即 denied);授权范围 once/task/count/ttl/forever;预算三层强制点(回合前预估/工具调用前/返回后记账),软限 80% 告警、硬限暂停。" "Rust 模块"
-                observation = component "Observation & Evaluation" "对照「Agent 声称完成」与「系统实际观察到」:执行 Capability manifest 的 verification 钩子;必要时独立 Judge(同一模型合同,tools=[],temperature=0)辅助判断;外部系统查询与确定性断言优先于模型自述。" "Rust 模块"
+                observation = component "Observation & Evaluation" "对照「Agent 声称完成」与「系统实际观察到」:执行 Capability manifest 的 verification 钩子;独立 Judge(bm-judge,确定性断言)辅助核验;外部系统查询与确定性断言优先于模型自述。" "Rust 模块"
+                watchdog = component "Watchdog" "[阶段一新增] 监护节拍扫描器:监督停滞/死循环/预算异动,产出 watchdog.* 事实事件,不推断编排下一步。" "Rust 模块"
                 persistence = component "Persistence & Recovery" "SQLite 规范状态 + Append-only Event Log + Snapshot + Event Replay;outcome_unknown 只能经外部核验/用户裁定/明确恢复流程结束;删除=状态删除+墓碑+投影重建+记忆级联失效。" "Rust + SQLite"
                 memory = component "Memory & Skill" "按域隔离的记忆(memory:app|task|agent|user,地址即权限边界;FTS 检索,向量引擎可替换)+ Skill 知识包(步骤/提示模板 + allowed_capabilities,只是数据,加载不改变权限)。" "Rust 模块"
-                modelConnector = component "Model Connector" "模型连接器——普通 Provider 而非内核特权:稳定模型合同(messages/tools/参数→结果/用量/结束原因)、调用账本、降级链;阶段一可内建,阶段二外置为独立进程时调用方无感。" "Provider 合同实现"
-                secretStore = component "Secret Store" "凭据本体唯一存放地(OS keychain 优先,加密文件兜底),本身是可替换 Provider;上下文/日志/事件只出现 Secret Ref;录入轮换删除属 high-risk-command 需审批。" "Provider 合同实现"
+                modelConnector = component "Model Connector" "模型连接器——普通 Provider 而非内核特权:稳定模型合同(messages/tools/参数→结果/用量/结束原因)、调用账本、降级链;阶段一内建(OpenAI兼容网关/GLM/Mock)。" "Provider 合同实现"
+                contextLog = component "Context Log" "[阶段一新增·W5] 模型调用上下文透视快照:每次调用截取 messages+tools+用量+耗时,INV-5 脱敏+16K 截断落 context-log.jsonl,供 /admin/context 读出。" "Rust 模块"
+                secretStore = component "Secret Store" "凭据本体唯一存放地(加密文件 FileSecretStore 或 MemSecretStore),本身是可替换 Provider;上下文/日志/事件只出现 Secret Ref;录入轮换删除属 high-risk-command 需审批。" "Provider 合同实现"
             }
 
             l1 = container "L1 Kernel Contract" "所有可替换组件共同遵守的根合同:Wire API/Surface Protocol、事件 Schema 与全局顺序、Capability Manifest 与调用语义、Operation 收据与状态机、Approval 状态机与 Budget、身份权限与统一错误信封、Secret Ref 格式。字段自冻结之日起只增不破;改变 L1 才构成系统级大升级(Major)。" "合同(Schema 与协议)" "L1,Contract"
 
-            l0 = container "L0 Supervisor & Upgrade Manager" "最小且最稳定的启动底座,不承载业务逻辑:启动、监控、代际选择、健康检查、排空、回滚;Upgrade Manager 管理 generation 事务(prepared→migrating→validating→committing→active→draining,以及 rolled_back/failed)与单写者租约;不依赖待升级的 L2 即可完成回滚。" "Rust 最小程序" "L0,ControlPlane"
+            l0 = container "L0 Supervisor & Upgrade Manager" "[阶段二规划] 最小且最稳定的启动底座,不承载业务逻辑:启动、监控、代际选择、健康检查、排空、回滚;Upgrade Manager 管理 generation 事务(prepared→migrating→validating→committing→active→draining,以及 rolled_back/failed)与单写者租约;不依赖待升级的 L2 即可完成回滚。" "Rust 最小程序" "L0,ControlPlane"
         }
 
         mailsvc = softwareSystem "邮件服务" "用户的 IMAP/SMTP 或邮件服务商;mail.send 的外部副作用以 message-id 收据回流。" "External"
@@ -108,8 +110,9 @@ workspace "BoenMind" "面向个人软件生态的 AI Runtime/AI 操作系统—�
         l0 -> registry "Supervisor 通告 Provider/Generation 状态变更(如标记 unavailable)"
         registry -> bus "在状态提交点发布 provider.changed / provider.crashed"
         l0 -> cli "L0 Control Protocol 响应(status/doctor/upgrade/rollback 结果)"
-        browser -> webui "HTTPS(TLS) + SSE/WebSocket;单用户令牌/passkey 鉴权(ADR-0009)"
-        user -> browser "经浏览器访问自管 VPS 上的 Runtime;访问端无状态"
+        browser -> webui "HTTPS(TLS) + SSE;单用户令牌鉴权(ADR-0009);/v1 对话闭环 + /admin 管理面"
+        webui -> l1 "OpenAI 兼容插座(/v1)与管理面(/admin),经 RuntimeHandle 直连"
+        user -> browser "经浏览器访问本地或自管 VPS 上的 Runtime;访问端无状态"
 
         mailApp -> mailsvc "IMAP/SMTP;副作用返回收据(message-id)入 result_reference"
         stockApp -> stockserv "行情查询/下单;下单 = high-risk-command + 审批 + 外部收据"

@@ -32,7 +32,7 @@
 
 | 条目 | 来源 | 状态 |
 |---|---|---|
-| F-06 C4 模型回写(约 12+7 项模型-实现漂移;F-08 /admin 面一并) | FULL-REVIEW §2.2 + AUDIT F-06/F-08 | OPEN,**下一批开工前置** |
+| ~~F-06 C4 模型回写(约 12+7 项模型-实现漂移;F-08 /admin 面一并)~~ **已回写(2026-09-02)**:boenmind.c4 回写完成——超前容器标注阶段归属(阶段一现役/阶段二规划/阶段一并入内核)、App=MCP 真实形态(Market/Wiki 标注 stdio MCP)、Web Surface 标注现役 assistant-ui 壳+管理面、补齐阶段一内核组件(watchdog/contextLog/bm-judge 核验/内建模型连接器);硬纪律 2 闭合 | FULL-REVIEW §2.2 + AUDIT F-06/F-08 | DONE(2026-09-02) |
 | F-09 deepwiki S1/S2/S6/S7/S10 逐条裁决;S5 口径偏宽复核(t119b≠quarantined 分表) | AUDIT F-09 + FULL-REVIEW §2.4 | OPEN(随下一里程碑回看) |
 | W4b:异步能力结果回流超时(60s 轮询未取到终态)——根因已修(turn.rs GetOpResult 轮询 `tx.send` 漏 `.await`,2026-09-01 代码审计轮);**已闭合**:2026-09-02 上下文透视面板真模型实测工具轮两步流水全通(MCP 工具调用→结果回喂→模型重调,快照与趋势可见) | W4 规格 §3 + 代码审计轮 | DONE(2026-09-02) |
 | W4b:多角色与会话级角色选择;Skill 挂载(合同 Skill 实体未建) | W4 规格 §3 | OPEN |
