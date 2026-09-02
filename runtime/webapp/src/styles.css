@@ -85,6 +85,8 @@ body {
 .app {
   display: grid;
   grid-template-columns: 52px 260px minmax(0, 1fr) 320px;
+  /* W7 反馈:左右栏抽屉收放时列宽平滑过渡(抽屉效果) */
+  transition: grid-template-columns .18s ease;
   /* 行高锁死(2026-09-02 修输入框下移):列内消息再多也不许把行撑破视口,
      否则 .chat 高度随内容增长,吸底输入框被推出屏幕。minmax(0,1fr) 强制
      行高恰为一屏,溢出交由 .thread-viewport 内部滚动。 */
@@ -272,17 +274,19 @@ body {
   color: var(--fg-2); font-weight: 600;
 }
 .workspace-head .actions { display: flex; gap: 2px; }
-.ws-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); }
+.ws-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); }
+/* 2026-09-02 反馈:页签太厚重——降高度/字号,active 去底色块只留细下划线 */
 .ws-tab {
   border: none; background: transparent; cursor: pointer;
-  padding: 8px 12px; font-size: 13px; color: var(--fg-2);
+  padding: 4px 8px; font-size: 12px; color: var(--fg-2);
   border-bottom: 2px solid transparent;
   border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  transition: color .15s ease;
 }
+.ws-tab:hover { color: var(--fg-1); }
 .ws-tab.active {
   color: var(--fg-1); font-weight: 600;
   border-bottom-color: var(--accent);
-  background: var(--bg-select);
 }
 .ws-empty { color: var(--fg-3); font-size: 12.5px; text-align: center; margin-top: 48px; }
 

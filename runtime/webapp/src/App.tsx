@@ -28,10 +28,20 @@ import {
   RefreshCw,
 } from "lucide-react";
 
-// 三栏宽度持久化(W2 验收门 4:刷新后布局保持)
+// 三栏宽度持久化(W2 验收门 4:刷新后布局保持);W7 反馈:左右栏抽屉收放状态同库持久化
 const LAYOUT_KEY = "bm_layout";
-type Layout = { sessions: number; workspace: number };
-const DEFAULT_LAYOUT: Layout = { sessions: 260, workspace: 320 };
+type Layout = {
+  sessions: number;
+  workspace: number;
+  sessionsCollapsed: boolean;
+  workspaceCollapsed: boolean;
+};
+const DEFAULT_LAYOUT: Layout = {
+  sessions: 260,
+  workspace: 320,
+  sessionsCollapsed: false,
+  workspaceCollapsed: false,
+};
 const LIMITS = {
   sessions: { min: 180, max: 440 },
   workspace: { min: 240, max: 560 },
@@ -48,6 +58,8 @@ function loadLayout(): Layout {
         v.workspace ?? DEFAULT_LAYOUT.workspace,
         LIMITS.workspace,
       ),
+      sessionsCollapsed: v.sessionsCollapsed ?? false,
+      workspaceCollapsed: v.workspaceCollapsed ?? false,
     };
   } catch {
     return DEFAULT_LAYOUT;
@@ -80,6 +92,24 @@ export default function App() {
     localStorage.setItem(LAYOUT_KEY, JSON.stringify(next));
   }, []);
 
+  const togglePanel = useCallback(
+    (side: "sessions" | "workspace") => {
+      setLayout((cur) => {
+        const key = side === "sessions" ? "sessionsCollapsed" : "workspaceCollapsed";
+        const next = { ...cur, [key]: !cur[key] } as Layout;
+        localStorage.setItem(LAYOUT_KEY, JSON.stringify(next));
+        return next;
+      });
+    },
+    [],
+  );
+
+  // 收起时该栏与其分隔条列宽归 0(children 数与模板列数保持一致)
+  const s = layout.sessionsCollapsed ? "0px" : `${layout.sessions}px`;
+  const ss = layout.sessionsCollapsed ? "0px" : "5px";
+  const w = layout.workspaceCollapsed ? "0px" : `${layout.workspace}px`;
+  const ws = layout.workspaceCollapsed ? "0px" : "5px";
+
   return (
     <BoenmindRuntimeProvider>
       <div
@@ -90,7 +120,7 @@ export default function App() {
           // runtime(Provider 级),设置关闭后重新挂载即恢复,内容不丢
           gridTemplateColumns: settingsOpen
             ? "52px minmax(0, 1fr)"
-            : `52px ${layout.sessions}px 5px minmax(0, 1fr) 5px ${layout.workspace}px`,
+            : `52px ${s} ${ss} minmax(0, 1fr) ${ws} ${w}`,
         }}
       >
         {theme === "glass" ? <Petals /> : null}
@@ -102,25 +132,34 @@ export default function App() {
           <SettingsPage onClose={() => setSettingsOpen(false)} />
         ) : (
           <>
-            <SessionPanel />
-            <HSplitter
-              onDrag={(dx) =>
-                saveLayout({
-                  ...layout,
-                  sessions: clamp(layout.sessions + dx, LIMITS.sessions),
-                })
-              }
+            <SessionPanel collapsed={layout.sessionsCollapsed} />
+            {!layout.sessionsCollapsed ? (
+              <HSplitter
+                onDrag={(dx) =>
+                  saveLayout({
+                    ...layout,
+                    sessions: clamp(layout.sessions + dx, LIMITS.sessions),
+                  })
+                }
+              />
+            ) : null}
+            <Thread
+              sessionsCollapsed={layout.sessionsCollapsed}
+              workspaceCollapsed={layout.workspaceCollapsed}
+              onToggleSessions={() => togglePanel("sessions")}
+              onToggleWorkspace={() => togglePanel("workspace")}
             />
-            <Thread />
-            <HSplitter
-              onDrag={(dx) =>
-                saveLayout({
-                  ...layout,
-                  workspace: clamp(layout.workspace - dx, LIMITS.workspace),
-                })
-              }
-            />
-            <WorkspacePanel />
+            {!layout.workspaceCollapsed ? (
+              <HSplitter
+                onDrag={(dx) =>
+                  saveLayout({
+                    ...layout,
+                    workspace: clamp(layout.workspace - dx, LIMITS.workspace),
+                  })
+                }
+              />
+            ) : null}
+            <WorkspacePanel collapsed={layout.workspaceCollapsed} />
           </>
         )}
       </div>
@@ -207,9 +246,17 @@ function Rail({
   );
 }
 
-function SessionPanel() {
+function SessionPanel({ collapsed }: { collapsed: boolean }) {
   return (
-    <div className="sessions">
+    <div
+      className="sessions"
+      style={{
+        overflow: "hidden",
+        minWidth: 0,
+        ...(collapsed ? { padding: 0 } : null),
+      }}
+      aria-hidden={collapsed || undefined}
+    >
       <div className="sessions-head">
         <span className="title">聊天</span>
         {/* 新建对话:清空聊天视图+丢弃会话号(下一条消息自动开新会话;
@@ -238,14 +285,22 @@ function SessionPanel() {
   );
 }
 
-function WorkspacePanel() {
+function WorkspacePanel({ collapsed }: { collapsed: boolean }) {
   const [tab, setTab] = useState<"files" | "artifacts" | "todos">("files");
   const emptyText: Record<"artifacts" | "todos", string> = {
     artifacts: "产物面随 W 后续接入。",
     todos: "此会话暂无活动任务列表。",
   };
   return (
-    <div className="workspace">
+    <div
+      className="workspace"
+      style={{
+        overflow: "hidden",
+        minWidth: 0,
+        ...(collapsed ? { padding: 0 } : null),
+      }}
+      aria-hidden={collapsed || undefined}
+    >
       <div className="workspace-head">
         <span className="title">WORKSPACE</span>
         <span className="actions">

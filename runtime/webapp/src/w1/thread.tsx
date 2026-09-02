@@ -8,7 +8,7 @@ import {
   ThreadPrimitive,
   useAuiState,
 } from "@assistant-ui/react";
-import { Send, ShieldAlert, Square } from "lucide-react";
+import { PanelLeft, PanelRight, Send, ShieldAlert, Square } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   Select,
@@ -22,7 +22,17 @@ import {
 import { ContextView } from "./context";
 import { useBoenmindApprovals, type ApprovalRequest } from "./runtime";
 
-export function Thread() {
+export function Thread({
+  sessionsCollapsed,
+  workspaceCollapsed,
+  onToggleSessions,
+  onToggleWorkspace,
+}: {
+  sessionsCollapsed: boolean;
+  workspaceCollapsed: boolean;
+  onToggleSessions: () => void;
+  onToggleWorkspace: () => void;
+}) {
   const isEmpty = useAuiState((s) => s.thread.isEmpty);
   // W5 页签:对话 = 聊天;上下文 = 请求快照透视(dsh-context 同款布局理念)
   const [tab, setTab] = useState<"chat" | "ctx">("chat");
@@ -31,10 +41,29 @@ export function Thread() {
     (active
       ? "bg-primary text-primary-foreground"
       : "text-muted-foreground hover:bg-muted");
+  // W7 反馈:左右栏抽屉开关放页签行两端(门型图标,与左侧导航同族 lucide)
+  const drawerCls = (collapsed: boolean) =>
+    "inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors " +
+    (collapsed
+      ? "bg-muted text-foreground"
+      : "text-muted-foreground hover:bg-muted");
   return (
     <div className="chat">
       <div className="chat-head">
-        <span className="name">BoenMind 对话</span>
+        <button
+          className={drawerCls(sessionsCollapsed)}
+          aria-pressed={sessionsCollapsed}
+          title={
+            sessionsCollapsed ? "展开 SESSION 面板" : "收起 SESSION 面板"
+          }
+          onClick={onToggleSessions}
+          data-slot="toggle-sessions"
+        >
+          <PanelLeft size={16} />
+        </button>
+        <span className="name" style={{ flex: 1 }}>
+          BoenMind 对话
+        </span>
         <div className="flex items-center gap-1" role="tablist">
           <button
             role="tab"
@@ -55,7 +84,19 @@ export function Thread() {
             上下文
           </button>
         </div>
+        <span style={{ flex: 1 }} />
         <span className="badge">self-hosted</span>
+        <button
+          className={drawerCls(workspaceCollapsed)}
+          aria-pressed={workspaceCollapsed}
+          title={
+            workspaceCollapsed ? "展开 WORKSPACE 面板" : "收起 WORKSPACE 面板"
+          }
+          onClick={onToggleWorkspace}
+          data-slot="toggle-workspace"
+        >
+          <PanelRight size={16} />
+        </button>
       </div>
       {tab === "ctx" ? (
         <ContextView />
