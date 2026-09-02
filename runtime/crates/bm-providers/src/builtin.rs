@@ -77,6 +77,8 @@ pub fn builtin_capability_set() -> Vec<(CapabilityManifest, Arc<dyn CapabilityPr
     ));
 
     // system.notes.write:笔记写入(reversible-command;undo = delete)
+    // W4b:input_schema 带 properties,模型据此传参(此前空 schema 导致
+    // 模型无法得知必填参数)
     let st = state.clone();
     out.push((
         manifest(
@@ -84,6 +86,14 @@ pub fn builtin_capability_set() -> Vec<(CapabilityManifest, Arc<dyn CapabilityPr
             "reversible-command",
             json!({
                 "scopes": ["system.notes"],
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "description": "笔记路径/标题(唯一键)"},
+                        "content": {"type": "string", "description": "笔记正文"}
+                    },
+                    "required": ["path", "content"]
+                },
                 "undo": {"capability": "system.notes.delete",
                          "args_map": {"path": "path"}}
             }),
@@ -111,7 +121,16 @@ pub fn builtin_capability_set() -> Vec<(CapabilityManifest, Arc<dyn CapabilityPr
         manifest(
             "system.notes.delete",
             "reversible-command",
-            json!({"scopes": ["system.notes"]}),
+            json!({
+                "scopes": ["system.notes"],
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "description": "要删除的笔记路径/标题"}
+                    },
+                    "required": ["path"]
+                }
+            }),
         ),
         provider_fn(move |args| {
             let path = args["path"]
@@ -132,6 +151,15 @@ pub fn builtin_capability_set() -> Vec<(CapabilityManifest, Arc<dyn CapabilityPr
             "external-side-effect",
             json!({
                 "scopes": ["system.mail"],
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "to": {"type": "string", "description": "收件人地址"},
+                        "subject": {"type": "string", "description": "邮件主题"},
+                        "body": {"type": "string", "description": "邮件正文"}
+                    },
+                    "required": ["to"]
+                },
                 "verification": null,
                 "timeout_ms": 2000
             }),

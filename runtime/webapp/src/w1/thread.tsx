@@ -1,15 +1,17 @@
 // W1 对话区:assistant-ui 原语组合(Thread/Message/Composer)
 // 合约映射见 milestones/W1-implementation-spec.md §5
 // W5:对话区页签(对话/上下文)——上下文页 = 每次模型调用请求快照透视
+// W4b:对话内审批卡片(ApprovalCards)——工具调用需审批时在流内渲染
 import {
   ComposerPrimitive,
   MessagePrimitive,
   ThreadPrimitive,
   useAuiState,
 } from "@assistant-ui/react";
-import { Send, Square } from "lucide-react";
+import { Send, ShieldAlert, Square } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ContextView } from "./context";
+import { useBoenmindApprovals, type ApprovalRequest } from "./runtime";
 
 export function Thread() {
   const isEmpty = useAuiState((s) => s.thread.isEmpty);
@@ -65,12 +67,130 @@ export function Thread() {
               </ThreadPrimitive.Messages>
             )}
           </ThreadPrimitive.Viewport>
+          <ApprovalCards />
           <div className="composer-dock">
             <Composer />
           </div>
         </ThreadPrimitive.Root>
       )}
     </div>
+  );
+}
+
+// W4b 对话内审批卡片:waiting 态可裁决;批准/拒绝后状态固化并回传 /rpc
+function ApprovalCards() {
+  const { pendingApprovals, respondApproval } = useBoenmindApprovals();
+  if (pendingApprovals.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-2 px-4 py-1" data-slot="approval-cards">
+      {pendingApprovals.map((a) => (
+        <ApprovalCard
+          key={a.approval_id}
+          req={a}
+          onRespond={respondApproval}
+        />
+      ))}
+    </div>
+  );
+}
+
+function ApprovalCard({
+  req,
+  onRespond,
+}: {
+  req: ApprovalRequest;
+  onRespond: (id: string, d: "approve" | "deny") => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const argsText =
+    req.args == null
+      ? "(参数见上文模型调用)"
+      : JSON.stringify(req.args, null, 2).slice(0, 600);
+  return (
+    <div
+      className="rounded-xl border border-amber-300 bg-amber-50 p-3 shadow-sm dark:bg-amber-950/30"
+      data-slot="approval-card"
+      data-approval-id={req.approval_id}
+      data-status={req.status}
+    >
+      <div className="flex items-center gap-2">
+        <ShieldAlert className="size-4 text-amber-600" />
+        <span className="text-[13px] font-semibold text-amber-800 dark:text-amber-200">
+          工具调用审批
+        </span>
+        <span className="rounded border border-amber-400 bg-amber-100 px-1.5 py-0.5 font-mono text-[10.5px] text-amber-800 dark:bg-amber-900/50 dark:text-amber-200">
+          {req.capability}
+        </span>
+        <span className="text-[11px] text-muted-foreground">
+          风险:需审批 · 单据 {req.approval_id.slice(-6)}
+        </span>
+      </div>
+      {req.args != null ? (
+        <pre className="bg-card mt-2 max-h-32 overflow-auto rounded-md border p-2 font-mono text-[11px] leading-relaxed">
+          {argsText}
+        </pre>
+      ) : null}
+      {req.status === "waiting" ? (
+        <div className="mt-2.5 flex items-center gap-2">
+          <Button
+            size="sm"
+            disabled={busy}
+            data-slot="approval-approve"
+            onClick={() => {
+              setBusy(true);
+              void onRespond(req.approval_id, "approve");
+            }}
+          >
+            批准执行(单次)
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy}
+            data-slot="approval-deny"
+            className="text-red-600 hover:text-red-700"
+            onClick={() => {
+              setBusy(true);
+              void onRespond(req.approval_id, "deny");
+            }}
+          >
+            拒绝
+          </Button>
+          <span className="text-[11px] text-muted-foreground">
+            批准后工具立即执行;5 分钟未裁决自动过期
+          </span>
+        </div>
+      ) : (
+        <div className="mt-2 text-[12.5px] font-medium text-muted-foreground">
+          {req.status === "approved"
+            ? "✓ 已批准——工具执行中/已完成,结果将回喂模型"
+            : "✕ 已拒绝——已告知模型本次调用被用户取消"}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// 小型本地 Button(避免从 w2 引入造成循环依赖;size/variant 仅作兼容占位)
+function Button({
+  children,
+  className = "",
+  ...rest
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & {
+  children: React.ReactNode;
+  size?: string;
+  variant?: string;
+}) {
+  return (
+    <button
+      className={
+        "bg-primary text-primary-foreground hover:bg-primary/90 inline-flex h-8 items-center justify-center gap-1.5 rounded-md px-3 text-[12.5px] font-medium transition-colors disabled:opacity-50 " +
+        className
+      }
+      {...rest}
+    >
+      {children}
+    </button>
   );
 }
 

@@ -591,7 +591,16 @@ pub(crate) fn handle_approval_respond(
                 }
                 let outcome = dispatch_capability(w, &ctx, &capability, args, &op_id);
                 match outcome {
-                    CallOutcome::Completed { .. } | CallOutcome::Suppressed { .. } => {
+                    CallOutcome::Completed { result, .. } => {
+                        // W4b 对话内审批:同步批准执行的成果入 op_results,
+                        // 供回合任务轮询取回喂模型
+                        w.op_results.insert(op_id.clone(), result);
+                        w.settle_operation(&op_id, OperationState::Succeeded, None);
+                        persist_grant(w, &grant.grant_id);
+                        w.cap_pending.remove(&params.approval_id);
+                    }
+                    CallOutcome::Suppressed { original_result } => {
+                        w.op_results.insert(op_id.clone(), original_result);
                         w.settle_operation(&op_id, OperationState::Succeeded, None);
                         persist_grant(w, &grant.grant_id);
                         w.cap_pending.remove(&params.approval_id);
@@ -752,6 +761,26 @@ pub(crate) async fn handle_stop(
                 user,
                 assistant,
             }) => crate::runtime::turn::remember_turn(w, session_id, user, assistant),
+            // W4b 排空期审批请求标记:照常透传(与核心循环同一形态)
+            Some(Cmd::ApprovalRequested {
+                approval_id,
+                capability,
+                args,
+                operation_id,
+            }) => {
+                let marker = serde_json::json!({
+                    "bm_approval_request": {
+                        "approval_id": approval_id,
+                        "capability": capability,
+                        "args": args,
+                        "operation_id": operation_id.as_str(),
+                    }
+                });
+                let _ = w.tx.try_send(Cmd::ProviderDelta {
+                    operation_id,
+                    delta: format!("\n[BM_APPROVAL:{}]\n", marker),
+                });
+            }
             // 收据查询只读幂等,排空期照常应答(INV-6 精神)。
             Some(Cmd::GetOperation { params, resp }) => {
                 let _ = resp.send(handle_get_operation(w, params));

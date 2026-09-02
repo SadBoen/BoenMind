@@ -1,13 +1,68 @@
 // W1(ADR-0014):ExternalStore 运行时接线——壳子状态 ↔ /v1/chat/completions
 // 合同:见 milestones/W1-implementation-spec.md §4/§5
+// W4b:对话内审批——SSE delta 中的 [BM_APPROVAL:{...}] 标记不入正文,
+// 转入 pendingApprovals 状态,由 thread.tsx 渲染审批卡片。
 import {
   AssistantRuntimeProvider,
   useExternalStoreRuntime,
 } from "@assistant-ui/react";
 import type { AppendMessage, ThreadMessageLike } from "@assistant-ui/react";
-import { useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 
 type TextPart = { type: "text"; text: string };
+
+export type ApprovalRequest = {
+  approval_id: string;
+  capability: string;
+  args: unknown;
+  operation_id: string;
+  status: "waiting" | "approved" | "denied";
+};
+
+// W4b:审批卡片状态与裁决动作,经 context 提供给 thread.tsx
+type ApprovalContextValue = {
+  pendingApprovals: ApprovalRequest[];
+  respondApproval: (id: string, decision: "approve" | "deny") => Promise<void>;
+};
+const BoenmindRuntimeContext = createContext<ApprovalContextValue>({
+  pendingApprovals: [],
+  respondApproval: async () => {},
+});
+export const useBoenmindApprovals = () => useContext(BoenmindRuntimeContext);
+
+// 从 delta 中剥离审批标记;命中则回调 onApproval
+function extractApprovalMarker(
+  delta: string,
+  onApproval: (req: ApprovalRequest) => void,
+): string {
+  const start = delta.indexOf("[BM_APPROVAL:");
+  if (start === -1) return delta;
+  const before = delta.slice(0, start);
+  const objStart = delta.indexOf("{", start);
+  if (objStart === -1) return before;
+  // 找配对的右括号(标记为单行 JSON,取最后一个 } 直到 ])
+  const end = delta.indexOf("]\n", objStart);
+  const jsonText = end === -1 ? delta.slice(objStart) : delta.slice(objStart, end);
+  try {
+    const parsed = JSON.parse(jsonText.replace(/\]\s*$/, "")) as {
+      bm_approval_request?: {
+        approval_id: string;
+        capability: string;
+        args: unknown;
+        operation_id: string;
+      };
+    };
+    if (parsed.bm_approval_request) {
+      onApproval({
+        ...parsed.bm_approval_request,
+        status: "waiting",
+      });
+    }
+  } catch {
+    // 标记不完整(分块到达):忽略,后续完整块再解析
+  }
+  return before;
+}
 
 export function BoenmindRuntimeProvider({
   children,
@@ -16,9 +71,13 @@ export function BoenmindRuntimeProvider({
 }) {
   const [messages, setMessages] = useState<ThreadMessageLike[]>([]);
   const [isRunning, setIsRunning] = useState(false);
+  const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequest[]>(
+    [],
+  );
   // 生成中可随时中止(点「停止」):中断 SSE 并立即解锁输入框;
   // 服务器侧该回合仍会后台完成并落库(W1 口径,不丢)
   const abortRef = useRef<AbortController | null>(null);
+  const approvalHandlerRef = useRef<(req: ApprovalRequest) => void>(() => {});
 
   const sendUserText = async (text: string) => {
     setIsRunning(true);
@@ -34,14 +93,25 @@ export function BoenmindRuntimeProvider({
     };
     setMessages((cur) => [...cur, assistant]);
     const appendDelta = (delta: string) => {
+      const cleaned = extractApprovalMarker(
+        delta,
+        (req) => approvalHandlerRef.current(req),
+      );
+      if (!cleaned) return;
       setMessages((cur) => {
         if (cur.length === 0) return cur;
         const copy = [...cur];
         const last = copy[copy.length - 1];
         const parts = (last.content as TextPart[]).map((p) => ({ ...p }));
-        parts[0] = { ...parts[0], text: parts[0].text + delta };
+        parts[0] = { ...parts[0], text: parts[0].text + cleaned };
         copy[copy.length - 1] = { ...last, content: parts };
         return copy;
+      });
+    };
+    approvalHandlerRef.current = (req) => {
+      setPendingApprovals((cur) => {
+        if (cur.some((a) => a.approval_id === req.approval_id)) return cur;
+        return [...cur, req];
       });
     };
 
@@ -155,6 +225,36 @@ export function BoenmindRuntimeProvider({
     document.title = "BM n=" + messages.length + " run=" + isRunning;
   }, [messages, isRunning]);
 
+  // W4b:审批裁决(前端卡片按钮)→ /admin/approvals/{id}/respond
+  // (与 /rpc 同一执行体,走 /admin 免鉴权口径——前端无令牌可带)
+  const respondApproval = async (
+    approvalId: string,
+    decision: "approve" | "deny",
+  ) => {
+    setPendingApprovals((cur) =>
+      cur.map((a) =>
+        a.approval_id === approvalId
+          ? { ...a, status: decision === "approve" ? "approved" : "denied" }
+          : a,
+      ),
+    );
+    try {
+      await fetch(
+        `/admin/approvals/${encodeURIComponent(approvalId)}/respond`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            decision,
+            scope: decision === "approve" ? "once" : undefined,
+          }),
+        },
+      );
+    } catch {
+      // 裁决失败保持卡片状态,可重试(卡片仍显示)
+    }
+  };
+
   const runtime = useExternalStoreRuntime({
     messages,
     setMessages: (m) => setMessages([...m]),
@@ -167,8 +267,12 @@ export function BoenmindRuntimeProvider({
   });
 
   return (
-    <AssistantRuntimeProvider runtime={runtime}>
-      {children}
-    </AssistantRuntimeProvider>
+    <BoenmindRuntimeContext.Provider
+      value={{ pendingApprovals, respondApproval }}
+    >
+      <AssistantRuntimeProvider runtime={runtime}>
+        {children}
+      </AssistantRuntimeProvider>
+    </BoenmindRuntimeContext.Provider>
   );
 }

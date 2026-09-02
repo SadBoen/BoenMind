@@ -351,16 +351,33 @@ async fn t107_mcp_install_trust_and_config() {
     assert_eq!(setups.len(), 1);
     assert_eq!(setups[0].env_resolved["NOTES_TOKEN"], "resolved-value");
 
-    // 不合规 server 名 → 拒
+    // 不合规 server 名 → 条目级跳过(W4b 容错:坏条目不再拖垮整个装载;
+    // 单独坏条目 = 空清单,坏+好混合 = 只留好条目)
     let bad = dir.path().join("bad.json");
     std::fs::write(
         &bad,
         json!([{"name": "Bad-Name", "transport": "stdio", "command": "x", "args": []}]).to_string(),
     )
     .expect("写");
-    assert!(bm_providers::mcp::load_mcp_setups(&bad, &store).is_err());
+    let skipped = bm_providers::mcp::load_mcp_setups(&bad, &store).expect("坏条目跳过而非整体失败");
+    assert!(skipped.is_empty(), "坏条目应被跳过");
 
-    // env 明文 → 合同拒绝(只收 secret: 引用)
+    // 坏+好混合:只装载好条目
+    let mixed = dir.path().join("mixed.json");
+    std::fs::write(
+        &mixed,
+        json!([
+            {"name": "Bad-Name", "transport": "stdio", "command": "x", "args": []},
+            {"name": "good", "transport": "stdio", "command": "x", "args": []}
+        ])
+        .to_string(),
+    )
+    .expect("写");
+    let mixed_out = bm_providers::mcp::load_mcp_setups(&mixed, &store).expect("混合装载成功");
+    assert_eq!(mixed_out.len(), 1);
+    assert_eq!(mixed_out[0].name, "good");
+
+    // env 明文 → 该条目跳过(合同拒绝语义保留在条目级)
     let leak = dir.path().join("leak.json");
     std::fs::write(
         &leak,
@@ -369,7 +386,9 @@ async fn t107_mcp_install_trust_and_config() {
         .to_string(),
     )
     .expect("写");
-    assert!(bm_providers::mcp::load_mcp_setups(&leak, &store).is_err());
+    let leak_out =
+        bm_providers::mcp::load_mcp_setups(&leak, &store).expect("明文条目跳过而非整体失败");
+    assert!(leak_out.is_empty(), "env 明文条目应被跳过");
 
     // 未安装能力:默认拒绝
     let server = InProcMcpServer::new(vec![tool("search", true)]);

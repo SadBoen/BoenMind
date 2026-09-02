@@ -36,7 +36,7 @@
 | F-09 deepwiki S1/S2/S6/S7/S10 逐条裁决;S5 口径偏宽复核(t119b≠quarantined 分表) | AUDIT F-09 + FULL-REVIEW §2.4 | OPEN(随下一里程碑回看) |
 | W4b:异步能力结果回流超时(60s 轮询未取到终态)——根因已修(turn.rs GetOpResult 轮询 `tx.send` 漏 `.await`,2026-09-01 代码审计轮);**已闭合**:2026-09-02 上下文透视面板真模型实测工具轮两步流水全通(MCP 工具调用→结果回喂→模型重调,快照与趋势可见) | W4 规格 §3 + 代码审计轮 | DONE(2026-09-02) |
 | ~~W4b:多角色与会话级角色选择;Skill 挂载(合同 Skill 实体未建)~~ **多角色与会话级选择已交付(2026-09-02)**:config/roles.json 扩展多角色模型 + /admin/roles 完整 CRUD + 设为默认;Agent 结构与 turn.rs 组装支持会话指定 system_prompt;Composer 工具栏集成角色下拉切换,发请求传 X-Bm-Role;真模型实测「代码架构师」角色答复符合设定且上下文透视面板中 System Prompt 验证生效(HISTORY W4b 角色行);Skill 挂载留待 Skill 实体规划 | W4 规格 §3 | DONE(2026-09-02) |
-| W4b:非直通工具的对话内审批联动 | W4 规格 §3 | OPEN |
+| ~~W4b:非直通工具的对话内审批联动~~ **已交付(2026-09-02)**:registry.chat_tools() 按 Broker 同口径(effect 可审批类或声明 required)暴露全部对话能力;turn.rs 审批等待流(CapabilityCall 返回 ApprovalRequired → 反查审批单 → BM_APPROVAL 标记随 SSE 上屏 → 轮询裁决+执行 300s);/admin/approvals/{id}/respond 免鉴权裁决端点;前端审批卡片(工具名+真实参数+批准/拒绝);顺带修三个真 bug:①幂等键纯 tc.id 跨回合碰撞致模型收到旧收据反复重调(改含 op_id);②内置工具 input_schema 空 schema 模型无法传参(补 properties);③工具结果回喂无引导致模型重复调用(加明确指令);真模型实测笔记写入审批全闭环(截图 shots-w5-context/06、07) | W4 规格 §3 | DONE(2026-09-02) |
 | W4 验收记录回填(按规格 §4 验收门补实测证据与截图) | W4-implementation-spec | OPEN |
 | ~~会话历史未回喂模型(多轮无记忆,P1 疑似)~~ **已确认并修复**:turn.rs 每回合 messages 从零组装属实;W5 修复=World.session_chats 台账(20 轮/24K 字符上限)+ spawn 时历史回喂 + 成功落定 Cmd::RememberTurn 回写;真模型实测两轮暗号往返+跨页面重载均答中(HISTORY W5 行) | W1 §4 vs turn.rs 代码对照 | DONE(2026-09-02) |
 
@@ -63,8 +63,8 @@
 | ~~api_dsh.rs 删除待追认~~ **已追认删除(2026-09-02)**:用户同意按计划推进;dsh 协议端点 `/api/*` 正式移除(前端已弃用 ADR-0013,归档分支保留历史),bm-surface-http/src/lib.rs 同步清理 | DONE(2026-09-02) |
 | MCP 示例配置启动命令不实 | `apps/mcp-config.example.json` 的 web_multisearch 原写 `python -m boenmind_mcp_servers.web_multisearch`(模块任何环境不可 import);2026-09-02 已改为 Rust 版 exe + `--config` 真实形态 | DONE(2026-09-02) |
 | release.yml 承诺未兑现 | `.github/workflows/release.yml` 注释称 Tauri Windows 安装包随 T6/M8 加入工作流,实际从未加入(或兑现或改注释) | OPEN |
-| webapp 无自动化测试 | 前端现状=真实浏览器手测+截图留档(纪律见 PLAYBOOK);候选:playwright 冒烟套件 | OPEN(候选) |
-| 坏 MCP 条目导致启动拒绝 | 一条损坏的 MCP 配置会拒绝整个 server 启动(用户反馈轮发现);应降级为跳过+告警 | OPEN |
+| ~~webapp 无自动化测试~~ **已建冒烟套件(2026-09-02)**:runtime/webapp/e2e/smoke.spec.ts(6 用例:对话闭环/新建清空/上下文页渲染与逐项浏览器/角色列表/插件页去重断言/日志页签);网络层 mock(/v1 SSE + /admin)确定性零 token;`npm run test:smoke` 全绿 4.4s;CI 接入与真实模型路径覆盖留候选 | DONE(2026-09-02,CI 接入留候选) |
+| ~~坏 MCP 条目导致启动拒绝~~ **已修复(2026-09-02)**:load_mcp_setups 条目级容错(单条合同校验/env 解析失败跳过并告警,不再整体失败);boenmind-server 启动循环 spawn/握手失败隔离跳过;测试 t107 更新为「坏条目跳过+坏好混合只留好条目」新语义 | DONE(2026-09-02) |
 | ~~fmt 门禁缺口:lib.rs~~ **已闭合(2026-09-02)**:随 api_dsh 追认提交一并 cargo fmt 全量规范化 | DONE(2026-09-02) |
 | web_multisearch Rust 版切换决策 | **已切换现役(2026-09-02)**:exe 安装于 `<数据目录>\mcp\`,经两段式(扫描→批准→重载)上线,探活绿、真模型对话实测工具闭环全通(注入/调用/结果回流/错误降级);剩 ddgs 指纹挑战与 Marginalia 公共 key 限流为外部状态(用户裁定当前不修),想恢复全源覆盖 = 设置页 MCP 配置表单填一把免费 Jina Key(热生效)或自建 searxng 填地址 | DONE(外部源覆盖随 Key) |
 | PENPOT-quickstart 过时 | 指向已删除的 runtime/web/tokens.css;已加过时标注(2026-09-01),待归档或更新 | OPEN(低优) |

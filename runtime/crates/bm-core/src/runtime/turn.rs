@@ -130,13 +130,11 @@ pub(crate) fn spawn_turn(w: &mut World, agent: &Agent, operation_id: &BmId, cont
     let tx = w.tx.clone();
     let op_id = operation_id.clone();
     let streaming = w.config.model_streaming;
-    // W4 对话工具闭环:直通(免审批)工具清单 + 角色 system prompt。
-    // 工具 = registry 全部 approval=not-required 能力(联网搜索等只读类;
-    // 非直通能力不进对话,走审批面的既有入口)。
+    // W4b 对话工具闭环升级:全部 chat 能力(直通+审批类)均暴露给模型;
     // W4b 角色 prompt 优先级:
     // ① agent 自身绑定的 system_prompt(会话级指定);
     // ② 若无,读 config/roles.json 激活角色的 system_prompt(设置页保存即热生效)。
-    let direct_tools: Vec<(String, serde_json::Value)> = w.registry.direct_tools();
+    let chat_tools: Vec<(String, serde_json::Value, bool)> = w.registry.chat_tools();
     let role_prompt: Option<String> = agent
         .system_prompt
         .clone()
@@ -206,16 +204,21 @@ pub(crate) fn spawn_turn(w: &mut World, agent: &Agent, operation_id: &BmId, cont
         });
         let mut name_to_cap: std::collections::HashMap<String, String> =
             std::collections::HashMap::new();
-        let tools_json: Vec<serde_json::Value> = direct_tools
+        let tools_json: Vec<serde_json::Value> = chat_tools
             .iter()
-            .map(|(cap, schema)| {
+            .map(|(cap, schema, needs_approval)| {
                 let openai_name = cap.replace('.', "__");
                 name_to_cap.insert(openai_name.clone(), cap.clone());
+                let desc = if *needs_approval {
+                    format!("{cap} — 需要用户审批的业务工具(调用后会弹出审批卡片)")
+                } else {
+                    format!("{cap} — 只读直通工具")
+                };
                 serde_json::json!({
                     "type": "function",
                     "function": {
                         "name": openai_name,
-                        "description": format!("{cap} — 只读直通工具"),
+                        "description": desc,
                         "parameters": schema,
                     },
                 })
@@ -333,35 +336,160 @@ pub(crate) fn spawn_turn(w: &mut World, agent: &Agent, operation_id: &BmId, cont
                                     .send(Cmd::CapabilityCall {
                                         request_id: call_req,
                                         params: wire::CapabilityCallParams {
-                                            capability,
-                                            args,
-                                            idempotency_key: Some(tc.id.clone()),
+                                            capability: capability.clone(),
+                                            args: args.clone(),
+                                            // W4b 修复:幂等键必须含回合操作 id——
+                                            // 模型不同回合的 tool_call id 会重复,
+                                            // 纯 tc.id 会让幂等抑制返回上一回合的
+                                            // 旧收据(模型看到旧结果反复重试)
+                                            idempotency_key: Some(format!(
+                                                "{}:{}",
+                                                op_id.as_str(),
+                                                tc.id
+                                            )),
                                             deadline_ms: None,
                                         },
                                         resp: rtx,
                                     })
                                     .await;
-                                // 受理/结果:直通能力同步出结果;MCP 异步能力经
-                                // operations 轮询至终态(上限 60s)。
-                                let mut tool_result = String::from("工具执行无应答");
-                                if let Ok(Ok(receipt_value)) = rrx.await {
-                                    let op_ref = receipt_value["operation_id"]
-                                        .as_str()
-                                        .map(|s| s.to_string());
-                                    let tool_op =
-                                        op_ref.and_then(|s| bm_contract::ids::BmId::parse(&s).ok());
-                                    if let Some(tool_op) = tool_op {
-                                        let deadline = std::time::Instant::now()
-                                            + std::time::Duration::from_secs(60);
-                                        loop {
-                                            if std::time::Instant::now() > deadline {
-                                                tool_result = "工具执行超时".into();
-                                                break;
-                                            }
-                                            tokio::time::sleep(std::time::Duration::from_millis(
-                                                300,
-                                            ))
+                                // W4b 对话内审批:需审批能力调用返回
+                                // ApprovalRequired 错误(审批单已开,operation
+                                // 停在 waiting_approval)。此时反查审批单,
+                                // 推送审批卡片标记随 SSE 流上屏,并轮询等待
+                                // 用户裁决+执行落定(上限 300s=审批 TTL)。
+                                let call_resp = rrx.await;
+                                let mut approval_id: Option<String> = None;
+                                let mut tool_op: Option<bm_contract::ids::BmId> = None;
+                                let cap_is_approval = chat_tools
+                                    .iter()
+                                    .find(|(c, _, _)| *c == capability)
+                                    .map(|(_, _, a)| *a)
+                                    .unwrap_or(false);
+                                if let Ok(Err(_)) = &call_resp {
+                                    if cap_is_approval {
+                                        let (ltx, lrx) = tokio::sync::oneshot::channel();
+                                        let _ = tx
+                                            .send(Cmd::ApprovalList {
+                                                params: wire::ApprovalListParams {
+                                                    state_filter: Some("waiting_user".into()),
+                                                },
+                                                resp: ltx,
+                                            })
                                             .await;
+                                        if let Ok(Ok(list)) = lrx.await
+                                            && let Some(items) = list["approvals"].as_array()
+                                        {
+                                            for it in items {
+                                                if it["capability"].as_str() == Some(&capability) {
+                                                    approval_id = it["approval_id"]
+                                                        .as_str()
+                                                        .map(|s| s.to_string());
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        if let Some(appr) = &approval_id {
+                                            let (ptx, prx) = tokio::sync::oneshot::channel();
+                                            let _ = tx
+                                                .send(Cmd::GetApprovalOp {
+                                                    approval_id: appr.clone(),
+                                                    resp: ptx,
+                                                })
+                                                .await;
+                                            if let Ok(Some(opid)) = prx.await {
+                                                tool_op = Some(opid);
+                                            }
+                                        }
+                                    }
+                                } else if let Ok(Ok(receipt_value)) = &call_resp {
+                                    tool_op = receipt_value["operation_id"]
+                                        .as_str()
+                                        .and_then(|s| bm_contract::ids::BmId::parse(s).ok());
+                                }
+
+                                if let Some(appr_id) = approval_id.clone() {
+                                    // 审批卡片标记:随 ProviderDelta 上屏,
+                                    // 前端识别 bm_approval_request 渲染卡片
+                                    // (args = 模型本次调用的真实参数,卡片展示用)
+                                    let _ = tx
+                                        .send(Cmd::ApprovalRequested {
+                                            approval_id: appr_id.clone(),
+                                            capability: capability.clone(),
+                                            args: args.clone(),
+                                            operation_id: op_id.clone(),
+                                        })
+                                        .await;
+                                }
+
+                                // 受理/结果:直通能力同步出结果;MCP 异步能力经
+                                // operations 轮询至终态(上限 60s);需审批能力
+                                // 轮询至审批裁决+执行终态(上限 300s)。
+                                let mut tool_result = String::from("工具执行无应答");
+                                let wait_secs = if approval_id.is_some() { 300 } else { 60 };
+                                if let Some(tool_op) = tool_op {
+                                    let deadline = std::time::Instant::now()
+                                        + std::time::Duration::from_secs(wait_secs);
+                                    loop {
+                                        if std::time::Instant::now() > deadline {
+                                            tool_result = if approval_id.is_some() {
+                                                "审批等待超时(用户未及时裁决,审批单已过期)".into()
+                                            } else {
+                                                "工具执行超时".into()
+                                            };
+                                            break;
+                                        }
+                                        tokio::time::sleep(std::time::Duration::from_millis(400))
+                                            .await;
+                                        // 审批路径先查操作状态(批准→succeeded /
+                                        // 拒绝→cancelled),再取结果载荷
+                                        if approval_id.is_some() {
+                                            let (stx, srx) = tokio::sync::oneshot::channel();
+                                            let _ = tx
+                                                .send(Cmd::GetOperation {
+                                                    params: wire::GetOperationParams {
+                                                        operation_id: tool_op.clone(),
+                                                    },
+                                                    resp: stx,
+                                                })
+                                                .await;
+                                            if let Ok(Ok(receipt)) = srx.await {
+                                                match receipt.state {
+                                                    bm_contract::states::OperationState::Succeeded => {
+                                                        let (rtx2, rrx2) =
+                                                            tokio::sync::oneshot::channel();
+                                                        let _ = tx
+                                                            .send(Cmd::GetOpResult {
+                                                                operation_id: tool_op.clone(),
+                                                                resp: rtx2,
+                                                            })
+                                                            .await;
+                                                        // 审批类工具回喂附带明确指令:
+                                                        // 防模型见到成功结果后重复
+                                                        // 发起同一调用(实测 mimo 会)
+                                                        let payload = match rrx2.await {
+                                                            Ok(Ok(Some(v))) => v.to_string(),
+                                                            _ => "{}".into(),
+                                                        };
+                                                        tool_result = format!(
+                                                            "用户已批准,工具执行成功。返回结果: {payload}。该调用已完成,请直接基于此结果回答用户,不要再次调用该工具。"
+                                                        );
+                                                        break;
+                                                    }
+                                                    bm_contract::states::OperationState::Cancelled => {
+                                                        tool_result = format!(
+                                                            "用户拒绝了能力 {capability} 的本次审批请求,工具未执行。请直接向用户说明情况,不要再次调用该工具。"
+                                                        );
+                                                        break;
+                                                    }
+                                                    bm_contract::states::OperationState::Failed => {
+                                                        tool_result =
+                                                            "用户已批准,但工具执行失败,请向用户说明。".into();
+                                                        break;
+                                                    }
+                                                    _ => {}
+                                                }
+                                            }
+                                        } else {
                                             let (otx, orx) = tokio::sync::oneshot::channel();
                                             let _ = tx
                                                 .send(Cmd::GetOpResult {
@@ -374,9 +502,9 @@ pub(crate) fn spawn_turn(w: &mut World, agent: &Agent, operation_id: &BmId, cont
                                                 break;
                                             }
                                         }
-                                    } else {
-                                        tool_result = receipt_value.to_string();
                                     }
+                                } else if let Ok(Ok(receipt_value)) = call_resp {
+                                    tool_result = receipt_value.to_string();
                                 }
                                 messages.push(Message {
                                     role: Role::Tool,

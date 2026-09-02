@@ -25,6 +25,7 @@ use axum::Json;
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use bm_contract::ids::{IdGen, UlidIdGen};
 use serde_json::{Value, json};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -734,6 +735,39 @@ fn roles_file(cfg: &AdminConfig) -> std::path::PathBuf {
     cfg.data_dir.join("config").join("roles.json")
 }
 
+// ---- handler:对话内审批裁决(W4b;与 /rpc/approval.respond 同一执行体,
+// 走 /admin 免鉴权口径——W1 同款已登记欠账;前端审批卡片无令牌可带)------
+
+/// POST /admin/approvals/{id}/respond  body: {decision: "approve"|"deny",
+/// scope?: "once"(approve 必带,走 once 单次口径)}
+pub async fn approval_respond(
+    State(cfg): State<AdminConfig>,
+    AxumPath(id): AxumPath<String>,
+    Json(body): Json<Value>,
+) -> Response {
+    let decision = body["decision"].as_str().unwrap_or("").to_string();
+    let scope = body["scope"].as_str().map(|s| s.to_string());
+    let request_id = UlidIdGen.next_id("req");
+    let Ok(appr_id) = bm_contract::ids::BmId::parse(&id) else {
+        return admin_error(StatusCode::BAD_REQUEST, "非法审批单 id");
+    };
+    match cfg
+        .handle
+        .approval_respond(
+            request_id,
+            bm_contract::wire::ApprovalRespondParams {
+                approval_id: appr_id,
+                decision,
+                scope,
+            },
+        )
+        .await
+    {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => admin_error(StatusCode::BAD_REQUEST, format!("审批裁决失败: {e}")),
+    }
+}
+
 // ---- handler:MCP 探活(主动测试 + 被动轮询共用 hub.probe_server)-------
 
 /// 主动探活单条:POST /admin/mcp/test/{name}
@@ -1371,6 +1405,7 @@ pub fn admin_routes(cfg: AdminConfig) -> axum::Router {
         .route("/roles", get(roles_get).post(roles_set).put(roles_set))
         .route("/roles/{id}", put(roles_set).delete(roles_delete))
         .route("/roles/active/{id}", put(roles_set_active))
+        .route("/approvals/{id}/respond", post(approval_respond))
         .route("/logs", get(logs_tail))
         .route("/context", get(context_tail))
         .route("/fs/list", get(fs_list))

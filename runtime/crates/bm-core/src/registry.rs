@@ -255,6 +255,25 @@ impl CapabilityRegistry {
         out
     }
 
+    /// W4b 对话工具闭环:枚举供对话 Agent 使用的全部能力(含直通与需审批的业务能力)。
+    /// 排除内核私有能力(如 model.invoke)。
+    /// needs_approval 与 Broker 步 5 判定同口径:effect 可审批类
+    /// (reversible/external/high-risk)或 manifest 声明 required → true。
+    pub fn chat_tools(&self) -> Vec<(String, serde_json::Value, bool)> {
+        let mut out: Vec<(String, serde_json::Value, bool)> = self
+            .manifests
+            .iter()
+            .filter(|(_, m)| m.capability != "model.invoke")
+            .map(|(name, m)| {
+                let require_approval = m.effect.is_approval_bearing()
+                    || m.approval == bm_contract::capability::ApprovalRequirement::Required;
+                (name.clone(), m.input_schema.clone(), require_approval)
+            })
+            .collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
+    }
+
     pub fn manifest_of(&self, capability: &str) -> Option<&CapabilityManifest> {
         self.manifests.get(capability)
     }

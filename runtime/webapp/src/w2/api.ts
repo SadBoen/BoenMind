@@ -78,6 +78,8 @@ export type Capability = {
   approval?: string;
 };
 
+export type FsEntry = { name: string; kind: "dir" | "file"; size: number | null };
+
 export type RoleItem = {
   id: string;
   name: string;

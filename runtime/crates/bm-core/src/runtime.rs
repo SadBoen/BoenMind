@@ -743,6 +743,33 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
                 user,
                 assistant,
             } => crate::runtime::turn::remember_turn(&mut world, session_id, user, assistant),
+            // W4b 对话内审批:审批请求经 ProviderDelta 形态进入事件面
+            // (前端按标记渲染审批卡片);此处仅透传,不改变核心状态。
+            Cmd::ApprovalRequested {
+                approval_id,
+                capability,
+                args,
+                operation_id,
+            } => {
+                let marker = serde_json::json!({
+                    "bm_approval_request": {
+                        "approval_id": approval_id,
+                        "capability": capability,
+                        "args": args,
+                        "operation_id": operation_id.as_str(),
+                    }
+                });
+                let _ = world.tx.try_send(Cmd::ProviderDelta {
+                    operation_id,
+                    delta: format!("\n[BM_APPROVAL:{}]\n", marker),
+                });
+            }
+            // W4b:反查审批单对应的 operation(回合任务等待轮询用)
+            Cmd::GetApprovalOp { approval_id, resp } => {
+                let key = BmId::parse(&approval_id).ok();
+                let _ =
+                    resp.send(key.and_then(|k| world.cap_pending.get(&k).map(|p| p.op_id.clone())));
+            }
         }
         // M5-T7:Watchdog 节拍扫描(每条命令处理后检查是否到期;
         // 事实事件产出,不推断编排下一步)

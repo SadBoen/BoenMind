@@ -861,16 +861,41 @@ pub fn load_mcp_setups(
         serde_json::from_str(&text).map_err(|e| format!("MCP 配置不是 JSON 数组: {e}"))?;
     let mut out = Vec::new();
     for item in &arr {
-        bm_contract::schemas::validate(bm_contract::registries::MCP_SERVER_SCHEMA, item)
-            .map_err(|e| format!("MCP 配置项不合规: {e}"))?;
+        let name = item
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        if let Err(e) =
+            bm_contract::schemas::validate(bm_contract::registries::MCP_SERVER_SCHEMA, item)
+        {
+            eprintln!("[MCP] 配置项 {name} 合同校验失败 (已跳过): {e}");
+            continue;
+        }
         let mut env_resolved = HashMap::new();
+        let mut env_err = false;
         if let Some(env) = item.get("env").and_then(|v| v.as_object()) {
             for (k, v) in env {
-                let ref_ = v.as_str().ok_or("env 值必须为字符串")?;
-                let value = bm_core::ports::SecretStore::get(store, ref_)
-                    .map_err(|e| format!("env {k} 的 {ref_} 解析失败: {e:?}"))?;
-                env_resolved.insert(k.clone(), value);
+                let Some(ref_) = v.as_str() else {
+                    eprintln!("[MCP] 配置项 {name} env {k} 值不是字符串 (已跳过该服务)");
+                    env_err = true;
+                    break;
+                };
+                match bm_core::ports::SecretStore::get(store, ref_) {
+                    Ok(value) => {
+                        env_resolved.insert(k.clone(), value);
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "[MCP] 配置项 {name} env {k} 密钥引用 {ref_} 解析失败 (已跳过该服务): {e:?}"
+                        );
+                        env_err = true;
+                        break;
+                    }
+                }
             }
+        }
+        if env_err {
+            continue;
         }
         out.push(McpServerSetup {
             name: item["name"].as_str().unwrap_or_default().to_string(),

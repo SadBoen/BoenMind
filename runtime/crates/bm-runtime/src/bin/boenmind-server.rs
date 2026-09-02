@@ -134,16 +134,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(|_| bm_providers::mcp::McpHub::new());
     if let Some(cfg) = &mcp_config {
         let hub = hub.as_ref().expect("hub 已构造");
-        let setups = bm_providers::mcp::load_mcp_setups(cfg, secrets.as_ref())?;
+        let setups =
+            bm_providers::mcp::load_mcp_setups(cfg, secrets.as_ref()).unwrap_or_else(|e| {
+                eprintln!("[MCP] 解析 MCP 配置文件失败: {e}");
+                Vec::new()
+            });
         for setup in setups {
-            let transport = bm_providers::mcp::StdioMcpTransport::spawn(
+            let transport = match bm_providers::mcp::StdioMcpTransport::spawn(
                 &setup.command,
                 &setup.args,
                 &setup.env_resolved,
-            )?;
-            let manifests = hub
+            ) {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("[MCP] 启动 MCP 服务「{}」失败 (已跳过): {e}", setup.name);
+                    continue;
+                }
+            };
+            let manifests = match hub
                 .connect(&setup.name, transport, setup.tool_timeout_ms)
-                .await?;
+                .await
+            {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!(
+                        "[MCP] 接入 MCP 服务「{}」握手失败 (已跳过): {e}",
+                        setup.name
+                    );
+                    continue;
+                }
+            };
             println!(
                 "MCP server {} 已接入:{} 个工具",
                 setup.name,
