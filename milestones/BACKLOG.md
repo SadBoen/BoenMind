@@ -52,7 +52,7 @@
 | F-07 | bm-surface-http → bm-persist 直依赖待裁决(收口或留档) | OPEN |
 | ~~F-10~~ | ~~autorun send_failed 等测试缺口~~ **已补(2026-09-02)**:t155 自主环 send_failed 收口验收(会话关闭→INV-6 回合不取消→续推失败→finished/send_failed)+ exec_log 复扫降格分支验收(凭据=脱敏标记自替换构造) | DONE(2026-09-02) |
 | F-11 | memory_drawer_verdict 硬编码权限规则与 ADR-0006 张力(2026-09-02 已在 broker.rs 源码补注;合同化重构待排期) | OPEN |
-| P3 大文件拆分 | broker.rs(1657 行)/turn.rs(1694)/task_ops.rs(1710)/sqlite_state.rs(1205);bm-core 过重,与 F-05/L-01/R-08 同批缓办(2026-09-01 代码审计轮);broker 建议拆法(2026-09-02 审计第二轮)=mod+policy(GrantLedger)/credential/executor/audit | OPEN(缓办) |
+| P3 大文件拆分 | broker.rs(1657 行)/turn.rs(1694)/task_ops.rs(1710)/sqlite_state.rs(1205)/webadmin.rs(1882 行,2026-09-02 外部评审合并版复核并入);bm-core 过重,与 F-05/L-01/R-08 同批缓办(2026-09-01 代码审计轮);broker 建议拆法(2026-09-02 审计第二轮)=mod+policy(GrantLedger)/credential/executor/audit | OPEN(缓办) |
 | P4 非测试 unwrap 甄别清理 | 全仓约 400 处 unwrap 需区分测试/非测试逐步替换;非测试 panic 10 处均系不变量断言,评估=维持现状(同审计轮) | OPEN(缓办) |
 | P5 Capability 抽象演进 | ①同步 `CapabilityProvider::invoke` 无超时护栏(长阻塞会占住单写者;当前内置能力均快路径未爆,已在 trait 注释写明选型约束)②invoke 错误 `String`→结构化枚举(与 wire ErrorCode 信封对齐)③与 AsyncCapabilityExecutor 分层已注释(2026-09-02 审计第二轮);统一单 async trait 的评估留 M 系列回看 | OPEN(缓办) |
 
@@ -88,4 +88,18 @@
 |---|---|---|
 | McpPage.tsx 组件解耦(714 行拆分子表单/子对话框) | 前端外部评审 | OPEN |
 | 前端静态分析集成(ESLint + Stylelint 接入 CI) | 前端外部评审 | OPEN |
+| theme.css 玻璃段 4 处 !important 收敛(毛玻璃化刻意选型,低优) | 外部评审合并版复核(REVIEW-2026-09-02-external) | OPEN(低) |
+| CustomEvent 类型化封装(现存 5 文件发事件/12 文件监听,低优,可随 ESLint 批次) | 外部评审合并版复核(REVIEW-2026-09-02-external) | OPEN(低) |
+
+## 8. 后端与架构演进(2026-09-02 外部评审合并版复核登记,明细见 milestones/REVIEW-2026-09-02-external.md)
+
+| 条目 | 说明 | 状态 |
+|---|---|---|
+| MCP 插件完整热插拔 | 现 mcp_reload 仅「新增」生效,条目修改/删除仍需重启;需实现 server 停止(JSON-RPC shutdown)+ Registry 摘除 + 重拉 | OPEN(MCP 插件轮遗留,本轮补登记) |
+| Skill 演进 v0.2 候选 | 按需加载(references/)/版本字段低成本高价值;脚本执行面(WASM/Shell)是新执行面,须先设计 Broker 七步管线如何覆盖脚本,再动合同 | OPEN(候选,动工前须用户裁决 + ADR) |
+| 内置能力全量 MCP 化评估 | 复核意见=倾向不采纳:同步 Rust trait 快路径系刻意选型(零进程开销,见 P5 注释约束),全量子进程化对单用户场景属倒退;热插拔诉求由上条「MCP 完整热插拔」承接 | OPEN(评估,倾向不采纳,留 M 系列回看) |
+| App 产品面候选 | App manifest(ui_panels 自动导航入口/数据域隔离/生命周期),支撑相册/音乐类个人生态扩展;需合同+前端动态路由,属远期里程碑 | OPEN(候选,远期) |
+| MCP 子进程 stderr 采集入日志面 | 现为 `Stdio::inherit()` 直通 server.log(W2 刻意诊断选型);后续可管道采集入插件页展示 | OPEN(低) |
+| allowed_capabilities 提示面措辞澄清 | 合同已注明「仅提示面数据」,后端确不读取;角色编辑 UI 宜加一句说明防误解为权限控制 | OPEN(低) |
+| clippy --all-targets 存量警告 14 处 | about.rs 12 / webadmin.rs 2(needless_borrow 类,疑测试代码);CI 矩阵与本地 --all-targets 口径盲区 | OPEN(低) |
 

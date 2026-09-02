@@ -1249,7 +1249,10 @@ pub async fn fs_rename(State(cfg): State<AdminConfig>, Json(body): Json<Value>) 
     }
     match std::fs::rename(&target, &new_path) {
         Ok(_) => Json(json!({ "ok": true })).into_response(),
-        Err(e) => admin_error(StatusCode::INTERNAL_SERVER_ERROR, format!("重命名失败: {e}")),
+        Err(e) => admin_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("重命名失败: {e}"),
+        ),
     }
 }
 
@@ -1257,7 +1260,10 @@ const FS_DOWNLOAD_LIMIT: u64 = 256 * 1024 * 1024;
 
 /// W7 反馈:目录树右键菜单——下载(单文件原样)与打包下载(文件夹 zip)。
 /// 仅工作区内(safe_resolve 防逃逸);总量守门 256MB / 5000 条目。
-pub async fn fs_download(State(cfg): State<AdminConfig>, Query(p): Query<FsPathParams>) -> Response {
+pub async fn fs_download(
+    State(cfg): State<AdminConfig>,
+    Query(p): Query<FsPathParams>,
+) -> Response {
     let target = match safe_resolve(&cfg.workspace_root, &p.path) {
         Ok(t) => t,
         Err(e) => return admin_error(StatusCode::BAD_REQUEST, e),
@@ -1285,7 +1291,7 @@ pub async fn fs_download(State(cfg): State<AdminConfig>, Query(p): Query<FsPathP
         match zip_dir(&target) {
             Ok(b) => b,
             Err(e) => {
-                return admin_error(StatusCode::INTERNAL_SERVER_ERROR, format!("打包失败: {e}"))
+                return admin_error(StatusCode::INTERNAL_SERVER_ERROR, format!("打包失败: {e}"));
             }
         }
     } else {
@@ -1297,7 +1303,9 @@ pub async fn fs_download(State(cfg): State<AdminConfig>, Query(p): Query<FsPathP
         }
         match std::fs::read(&target) {
             Ok(b) => b,
-            Err(e) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, format!("读取失败: {e}")),
+            Err(e) => {
+                return admin_error(StatusCode::INTERNAL_SERVER_ERROR, format!("读取失败: {e}"));
+            }
         }
     };
     // Content-Disposition:ASCII 兜底 + RFC 5987 UTF-8(中文文件名)
@@ -1310,10 +1318,12 @@ pub async fn fs_download(State(cfg): State<AdminConfig>, Query(p): Query<FsPathP
         "attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{}",
         utf8_percent_encode(&download_name)
     )) {
-        resp.headers_mut().insert(axum::http::header::CONTENT_DISPOSITION, v);
+        resp.headers_mut()
+            .insert(axum::http::header::CONTENT_DISPOSITION, v);
     }
     if let Ok(v) = axum::http::HeaderValue::from_str(content_type) {
-        resp.headers_mut().insert(axum::http::header::CONTENT_TYPE, v);
+        resp.headers_mut()
+            .insert(axum::http::header::CONTENT_TYPE, v);
     }
     resp
 }
@@ -1335,8 +1345,8 @@ fn zip_dir(dir: &std::path::Path) -> Result<Vec<u8>, String> {
     let mut buf = std::io::Cursor::new(Vec::new());
     {
         let mut zip = zip::ZipWriter::new(&mut buf);
-        let options = zip::write::FileOptions::default()
-            .compression_method(zip::CompressionMethod::Deflated);
+        let options =
+            zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
         let mut count = 0usize;
         let mut total = 0u64;
         fn walk(

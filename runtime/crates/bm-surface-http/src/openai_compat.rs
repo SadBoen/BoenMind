@@ -15,14 +15,7 @@ use axum::response::{IntoResponse, Response};
 use bm_contract::events::EventType;
 use bm_contract::ids::{BmId, IdGen, UlidIdGen};
 use bm_contract::wire::{AgentSpec, InputTrust, SendInputParams, SessionCreateParams};
-use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-
-fn session_map() -> &'static Mutex<HashMap<BmId, BmId>> {
-    static MAP: OnceLock<Mutex<HashMap<BmId, BmId>>> = OnceLock::new();
-    MAP.get_or_init(|| Mutex::new(HashMap::new()))
-}
 
 fn unix_now() -> i64 {
     SystemTime::now()
@@ -133,7 +126,7 @@ pub async fn chat_completions(
         .map(|s| s.to_string())
     {
         Some(raw) => match BmId::parse(raw) {
-            Ok(sid) => match session_map().lock().expect("锁未中毒").get(&sid) {
+            Ok(sid) => match state.v1_sessions.lock().expect("锁未中毒").get(&sid) {
                 Some(aid) => (sid, aid.clone()),
                 None => {
                     return err_response(
@@ -175,7 +168,8 @@ pub async fn chat_completions(
                 .await
             {
                 Ok(r) => {
-                    session_map()
+                    state
+                        .v1_sessions
                         .lock()
                         .expect("锁未中毒")
                         .insert(r.session_id.clone(), r.agent_id.clone());

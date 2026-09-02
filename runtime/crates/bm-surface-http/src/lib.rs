@@ -20,8 +20,10 @@ pub mod webadmin;
 use axum::Router;
 use axum::middleware;
 use axum::routing::{get, post};
+use bm_contract::ids::BmId;
 use bm_core::runtime::RuntimeHandle;
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 /// 共享应用状态。
 #[derive(Clone)]
@@ -36,6 +38,10 @@ pub struct AppState {
     pub data_dir: Option<std::path::PathBuf>,
     /// W6:对话级模型路由表(body.model 校验用;None = 不校验,测试/mock 态)。
     pub model_routes: Option<Arc<bm_providers::routing::RoutingConnector>>,
+    /// W1:OpenAI 兼容插座会话寻址表(web 会话 id → agent id)。原为进程级
+    /// 静态 OnceLock(评审指出绕过 AppState),2026-09-02 归入共享状态:
+    /// 随路由生灭、测试间隔离,语义不变(重启即失效由响应文案承接)。
+    pub v1_sessions: Arc<Mutex<HashMap<BmId, BmId>>>,
 }
 
 /// 组装 Surface 路由。`token` 为已加载的访问令牌;/health 豁免鉴权,
@@ -61,6 +67,7 @@ pub fn router(
         default_model,
         data_dir,
         model_routes,
+        v1_sessions: Arc::new(Mutex::new(HashMap::new())),
     };
     let app = Router::new()
         .route("/rpc/{method}", post(rpc::rpc_endpoint))
