@@ -158,30 +158,42 @@ function ApprovalCard({
       : JSON.stringify(req.args, null, 2).slice(0, 600);
   return (
     <div
-      className="rounded-xl border border-amber-300 bg-amber-50 p-3 shadow-sm dark:bg-amber-950/30"
+      className="notice-warn flex flex-col gap-2 shadow-sm"
+      style={{
+        background: "var(--state-warn-bg)",
+        borderColor: "var(--state-warn-border)",
+        color: "var(--state-warn-fg)",
+      }}
       data-slot="approval-card"
       data-approval-id={req.approval_id}
       data-status={req.status}
     >
       <div className="flex items-center gap-2">
-        <ShieldAlert className="size-4 text-amber-600" />
-        <span className="text-[13px] font-semibold text-amber-800 dark:text-amber-200">
+        <ShieldAlert className="size-4" style={{ color: "var(--state-warn-fg)" }} />
+        <span className="text-[13px] font-semibold" style={{ color: "var(--state-warn-fg)" }}>
           工具调用审批
         </span>
-        <span className="rounded border border-amber-400 bg-amber-100 px-1.5 py-0.5 font-mono text-[10.5px] text-amber-800 dark:bg-amber-900/50 dark:text-amber-200">
+        <span
+          className="rounded border px-1.5 py-0.5 font-mono text-[11px]"
+          style={{
+            borderColor: "var(--state-warn-border)",
+            background: "color-mix(in srgb, var(--state-warn-bg) 70%, #000)",
+            color: "var(--state-warn-fg)",
+          }}
+        >
           {req.capability}
         </span>
-        <span className="text-[11px] text-muted-foreground">
+        <span className="text-[11px] opacity-80">
           风险:需审批 · 单据 {req.approval_id.slice(-6)}
         </span>
       </div>
       {req.args != null ? (
-        <pre className="bg-card mt-2 max-h-32 overflow-auto rounded-md border p-2 font-mono text-[11px] leading-relaxed">
+        <pre className="bg-card/70 mt-1 max-h-32 overflow-auto rounded-md border p-2 font-mono text-[11px] leading-relaxed text-foreground">
           {argsText}
         </pre>
       ) : null}
       {req.status === "waiting" ? (
-        <div className="mt-2.5 flex items-center gap-2">
+        <div className="mt-2 flex items-center gap-2">
           <Button
             size="sm"
             disabled={busy}
@@ -198,7 +210,7 @@ function ApprovalCard({
             variant="outline"
             disabled={busy}
             data-slot="approval-deny"
-            className="text-red-600 hover:text-red-700"
+            className="text-destructive hover:bg-destructive/10"
             onClick={() => {
               setBusy(true);
               void onRespond(req.approval_id, "deny");
@@ -206,12 +218,12 @@ function ApprovalCard({
           >
             拒绝
           </Button>
-          <span className="text-[11px] text-muted-foreground">
+          <span className="text-[11px] opacity-80">
             批准后工具立即执行;5 分钟未裁决自动过期
           </span>
         </div>
       ) : (
-        <div className="mt-2 text-[12.5px] font-medium text-muted-foreground">
+        <div className="mt-1 text-[12px] font-medium opacity-90">
           {req.status === "approved"
             ? "✓ 已批准——工具执行中/已完成,结果将回喂模型"
             : "✕ 已拒绝——已告知模型本次调用被用户取消"}

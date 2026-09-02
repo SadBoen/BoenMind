@@ -31,6 +31,15 @@
   --input: #e5e7eb;
   --density: 1;
   --leading: 1.65;
+  --state-success-bg: #ecfdf5;
+  --state-success-border: #a7f3d0;
+  --state-success-fg: #047857;
+  --state-warn-bg: #fffbeb;
+  --state-warn-border: #fde68a;
+  --state-warn-fg: #b45309;
+  --state-error-bg: #fef2f2;
+  --state-error-border: #fecaca;
+  --state-error-fg: #b91c1c;
 }
 
 /* ---- 古典:纸墨暖调 + 衬线 + 书房纹理 + 双线框 + 印章 logo ---- */
@@ -62,6 +71,15 @@
   --primary-foreground: #f6f1e7;
   --input: #c9b98f;
   --leading: 1.75;
+  --state-success-bg: #e6edd9;
+  --state-success-border: #b8c99d;
+  --state-success-fg: #3d5a22;
+  --state-warn-bg: #f7eed7;
+  --state-warn-border: #dfcaa0;
+  --state-warn-fg: #835c1d;
+  --state-error-bg: #fae8e6;
+  --state-error-border: #e6b3af;
+  --state-error-fg: #9e2b25;
 }
 [data-theme="classic"] body::before {
   content: "";
@@ -117,10 +135,21 @@
   --cartoon-shadow-a: 0.18;
   --density: 1;
   --leading: 1.65;
+  --state-success-bg: #f0fdf4;
+  --state-success-border: #bbf7d0;
+  --state-success-fg: #15803d;
+  --state-warn-bg: #fffbeb;
+  --state-warn-border: #fde68a;
+  --state-warn-fg: #b45309;
+  --state-error-bg: #fff1f2;
+  --state-error-border: #fecdd3;
+  --state-error-fg: #be123c;
 }
 [data-theme="cartoon"] .msg.assistant .text,
 [data-theme="cartoon"] .session-item,
-[data-theme="cartoon"] .composer {
+[data-theme="cartoon"] .composer,
+[data-theme="cartoon"] [data-slot="dialog-content"],
+[data-theme="cartoon"] [data-slot="approval-card"] {
   box-shadow: 0 3px 0 rgba(255, 107, 157, var(--cartoon-shadow-a, 0.18));
 }
 [data-emoji="1"] .welcome p::after { content: " 🐾"; }
@@ -158,6 +187,15 @@
   --glass-bg-image: url("/themes/sakura.jpg");
   --density: 1;
   --leading: 1.65;
+  --state-success-bg: rgba(236, 253, 245, 0.65);
+  --state-success-border: rgba(167, 243, 208, 0.85);
+  --state-success-fg: #065f46;
+  --state-warn-bg: rgba(254, 243, 199, 0.65);
+  --state-warn-border: rgba(253, 230, 138, 0.85);
+  --state-warn-fg: #92400e;
+  --state-error-bg: rgba(254, 226, 226, 0.65);
+  --state-error-border: rgba(254, 202, 202, 0.85);
+  --state-error-fg: #991b1b;
 }
 /* 页底 = 樱花照片(背景自定义入口)+ 暗化层;规则仅此一处(§4.1) */
 [data-theme="glass"] body {
@@ -208,13 +246,15 @@
 [data-theme="glass"] .composer,
 [data-theme="glass"] .search,
 [data-theme="glass"] .chip,
-[data-theme="glass"] .tool-chip {
-  background: rgba(255, 255, 255, 0.32);
-  border-color: rgba(255, 255, 255, 0.45);
-}
-[data-theme="glass"] .composer {
-  backdrop-filter: blur(var(--glass-blur, 16px)) saturate(1.25);
-  -webkit-backdrop-filter: blur(var(--glass-blur, 16px)) saturate(1.25);
+[data-theme="glass"] .tool-chip,
+[data-theme="glass"] [data-slot="fs-context-menu"],
+[data-theme="glass"] [data-slot="dialog-content"],
+[data-theme="glass"] [data-slot="approval-card"],
+[data-theme="glass"] [data-slot="file-preview"] {
+  background: rgba(255, 255, 255, 0.45) !important;
+  border-color: rgba(255, 255, 255, 0.65) !important;
+  backdrop-filter: blur(var(--glass-blur, 16px)) saturate(1.3) !important;
+  -webkit-backdrop-filter: blur(var(--glass-blur, 16px)) saturate(1.3) !important;
 }
 [data-theme="glass"] .composer-dock {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.18) 26px);
@@ -260,4 +300,11 @@
 [data-theme="glass"] .ws-empty,
 [data-theme="glass"] .sessions-empty {
   color: #3d4658;
+}
+
+/* 玻璃风格下弹窗遮罩半透明 */
+[data-theme="glass"] [data-slot="dialog-overlay"] {
+  background: rgba(15, 23, 42, 0.25);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
 }

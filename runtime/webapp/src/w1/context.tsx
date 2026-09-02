@@ -65,10 +65,22 @@ function CompBar({ c, h = 10 }: { c: Record<CatKey, number>; h?: number }) {
   );
 }
 
-const STATUS_STYLE: Record<CtxStep["status"], string> = {
-  ok: "bg-emerald-50 text-emerald-700 border-emerald-200",
-  error: "bg-red-50 text-red-700 border-red-200",
-  cancelled: "bg-amber-50 text-amber-700 border-amber-200",
+const STATUS_STYLE: Record<CtxStep["status"], { bg: string; border: string; fg: string }> = {
+  ok: {
+    bg: "var(--state-success-bg)",
+    border: "var(--state-success-border)",
+    fg: "var(--state-success-fg)",
+  },
+  error: {
+    bg: "var(--state-error-bg)",
+    border: "var(--state-error-border)",
+    fg: "var(--state-error-fg)",
+  },
+  cancelled: {
+    bg: "var(--state-warn-bg)",
+    border: "var(--state-warn-border)",
+    fg: "var(--state-warn-fg)",
+  },
 };
 const STATUS_LABEL: Record<CtxStep["status"], string> = {
   ok: "成功",
@@ -144,7 +156,7 @@ export function ContextView() {
       </div>
 
       {error ? (
-        <div className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-[12.5px] text-red-700">
+        <div className="notice-error">
           {error}
         </div>
       ) : null}
@@ -248,7 +260,14 @@ export function ContextView() {
                     {s.attempt && s.attempt > 1 ? ` · 尝试 ${s.attempt}` : ""}
                   </span>
                   <span className="text-[12.5px] text-muted-foreground">{time}</span>
-                  <span className={`rounded border px-1.5 py-0.5 text-[11px] ${STATUS_STYLE[s.status]}`}>
+                  <span
+                    className="rounded border px-1.5 py-0.5 text-[11px]"
+                    style={{
+                      background: STATUS_STYLE[s.status].bg,
+                      borderColor: STATUS_STYLE[s.status].border,
+                      color: STATUS_STYLE[s.status].fg,
+                    }}
+                  >
                     {s.status === "error" && s.error_code ? `${STATUS_LABEL[s.status]} ${s.error_code}` : STATUS_LABEL[s.status]}
                   </span>
                   <span className="flex-1" />

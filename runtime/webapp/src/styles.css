@@ -25,6 +25,27 @@
   --input: #e5e7eb;
   --ring: #2563eb;
   --radius: 0.5rem;
+
+  /* 状态反馈语义变量(全主题自适应,杜绝页面内硬编码 bg-*-50) */
+  --state-success-bg: #ecfdf5;
+  --state-success-border: #a7f3d0;
+  --state-success-fg: #047857;
+  --state-warn-bg: #fffbeb;
+  --state-warn-border: #fde68a;
+  --state-warn-fg: #b45309;
+  --state-error-bg: #fef2f2;
+  --state-error-border: #fecaca;
+  --state-error-fg: #b91c1c;
+
+  /* Z-Index 层级标阶规范 */
+  --z-base: 1;
+  --z-splitter: 5;
+  --z-drawer: 20;
+  --z-settings: 40;
+  --z-dropdown: 50;
+  --z-modal: 60;
+  --z-popover: 70;
+  --z-toast: 80;
 }
 
 @theme inline {
@@ -313,7 +334,33 @@ body {
   background: transparent;
   min-width: 4px;
   margin: 0 -2px;
-  z-index: 5;
+  z-index: var(--z-splitter, 5);
   transition: background-color .15s;
 }
 .splitter:hover, .splitter:active { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+
+/* ---- 状态反馈卡片规范类 (统一替代各页硬编码) ---- */
+.notice-success {
+  background: var(--state-success-bg);
+  border: 1px solid var(--state-success-border);
+  color: var(--state-success-fg);
+  border-radius: var(--radius-sm, 6px);
+  padding: 8px 12px;
+  font-size: 12px;
+}
+.notice-warn {
+  background: var(--state-warn-bg);
+  border: 1px solid var(--state-warn-border);
+  color: var(--state-warn-fg);
+  border-radius: var(--radius-sm, 6px);
+  padding: 8px 12px;
+  font-size: 12px;
+}
+.notice-error {
+  background: var(--state-error-bg);
+  border: 1px solid var(--state-error-border);
+  color: var(--state-error-fg);
+  border-radius: var(--radius-sm, 6px);
+  padding: 8px 12px;
+  font-size: 12px;
+}

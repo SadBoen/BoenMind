@@ -290,12 +290,12 @@ export function McpPage({
       />
 
       {notice ? (
-        <div className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-[12.5px] text-emerald-700">
+        <div className="notice-success">
           {notice}
         </div>
       ) : null}
       {error ? (
-        <div className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-[12.5px] text-red-700">
+        <div className="notice-error">
           {error}
         </div>
       ) : null}

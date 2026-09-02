@@ -154,12 +154,12 @@ export function AboutPage() {
       ) : null}
 
       {message ? (
-        <div className="rounded-lg border border-sky-300 bg-sky-50 px-3 py-2 text-[12.5px] text-sky-700">
+        <div className="notice-success">
           {message}
         </div>
       ) : null}
       {error ? (
-        <div className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-[12.5px] text-red-700">
+        <div className="notice-error">
           {error}
         </div>
       ) : null}

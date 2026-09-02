@@ -196,21 +196,21 @@ export function WorkspaceFiles() {
       </div>
 
       {error ? (
-        <div className="absolute inset-x-0 bottom-0 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-[12px] text-red-700">
+        <div className="notice-error absolute inset-x-0 bottom-0 shadow-md">
           {error}
         </div>
       ) : null}
       {notice ? (
-        <div className="absolute inset-x-0 bottom-0 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-[12px] text-emerald-700">
+        <div className="notice-success absolute inset-x-0 bottom-0 shadow-md">
           {notice}
         </div>
       ) : null}
 
       {/* W7 右键菜单(自绘,不用原生 contextmenu;点空白/Esc 关闭) */}
       {ctx ? (
-        <div className="fixed inset-0 z-50" onClick={() => setCtx(null)} onContextMenu={(e) => { e.preventDefault(); setCtx(null); }}>
+        <div className="fixed inset-0 z-[var(--z-dropdown,50)]" onClick={() => setCtx(null)} onContextMenu={(e) => { e.preventDefault(); setCtx(null); }}>
           <div
-            className="bg-popover text-popover-foreground fixed min-w-44 rounded-lg border p-1 shadow-md"
+            className="bg-popover text-popover-foreground fixed min-w-44 rounded-lg border p-1 shadow-lg backdrop-blur-md"
             style={{
               left: Math.min(ctx.x, window.innerWidth - 190),
               top: Math.min(ctx.y, window.innerHeight - 210),
@@ -218,11 +218,11 @@ export function WorkspaceFiles() {
             data-slot="fs-context-menu"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="text-muted-foreground truncate px-3 py-1 font-mono text-[10.5px]">
+            <div className="text-muted-foreground truncate px-3 py-1 font-mono text-[11px]">
               {ctx.node.name}
             </div>
             <button
-              className="hover:bg-muted flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-[12.5px]"
+              className="hover:bg-muted flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-xs transition-colors"
               onClick={() => {
                 setRenameName(ctx.node.name);
                 setRenaming(ctx.node);
@@ -232,7 +232,7 @@ export function WorkspaceFiles() {
               <PencilIcon className="size-3.5" /> 重命名
             </button>
             <button
-              className="hover:bg-muted flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-[12.5px]"
+              className="hover:bg-muted flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-xs transition-colors"
               onClick={() => {
                 void copyText(absPath(ctx.node.path), "绝对路径");
                 setCtx(null);
@@ -241,7 +241,7 @@ export function WorkspaceFiles() {
               <CopyIcon className="size-3.5" /> 复制绝对路径
             </button>
             <button
-              className="hover:bg-muted flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-[12.5px]"
+              className="hover:bg-muted flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-xs transition-colors"
               onClick={() => {
                 void copyText(ctx.node.path, "相对路径");
                 setCtx(null);
@@ -251,7 +251,7 @@ export function WorkspaceFiles() {
             </button>
             {ctx.node.kind === "folder" ? (
               <button
-                className="hover:bg-muted flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-[12.5px]"
+                className="hover:bg-muted flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-xs transition-colors"
                 onClick={() => {
                   triggerDownload(ctx.node.path);
                   setCtx(null);
@@ -261,7 +261,7 @@ export function WorkspaceFiles() {
               </button>
             ) : (
               <button
-                className="hover:bg-muted flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-[12.5px]"
+                className="hover:bg-muted flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-xs transition-colors"
                 onClick={() => {
                   triggerDownload(ctx.node.path);
                   setCtx(null);

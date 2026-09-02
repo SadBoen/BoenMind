@@ -43,7 +43,7 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
   return (
     // 从 rail(52px 图标栏)右侧起铺满:设置打开时图标栏常驻不消失(用户裁定)
     <div
-      className="bg-background fixed inset-y-0 right-0 left-[52px] z-50 flex flex-col border-l"
+      className="bg-background fixed inset-y-0 right-0 left-[52px] z-[var(--z-settings,40)] flex flex-col border-l"
       data-slot="settings-page"
     >
       <div className="border-b flex items-center gap-3 px-4 py-3">
