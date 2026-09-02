@@ -133,32 +133,32 @@ export default function App() {
         ) : (
           <>
             <SessionPanel collapsed={layout.sessionsCollapsed} />
-            {!layout.sessionsCollapsed ? (
-              <HSplitter
-                onDrag={(dx) =>
-                  saveLayout({
-                    ...layout,
-                    sessions: clamp(layout.sessions + dx, LIMITS.sessions),
-                  })
-                }
-              />
-            ) : null}
+            {/* 分隔条必须始终渲染(收起时仅视觉隐藏)——网格子元素数与
+                模板列数一一对应,否则整体错位一格(2026-09-02 修) */}
+            <HSplitter
+              hidden={layout.sessionsCollapsed}
+              onDrag={(dx) =>
+                saveLayout({
+                  ...layout,
+                  sessions: clamp(layout.sessions + dx, LIMITS.sessions),
+                })
+              }
+            />
             <Thread
               sessionsCollapsed={layout.sessionsCollapsed}
               workspaceCollapsed={layout.workspaceCollapsed}
               onToggleSessions={() => togglePanel("sessions")}
               onToggleWorkspace={() => togglePanel("workspace")}
             />
-            {!layout.workspaceCollapsed ? (
-              <HSplitter
-                onDrag={(dx) =>
-                  saveLayout({
-                    ...layout,
-                    workspace: clamp(layout.workspace - dx, LIMITS.workspace),
-                  })
-                }
-              />
-            ) : null}
+            <HSplitter
+              hidden={layout.workspaceCollapsed}
+              onDrag={(dx) =>
+                saveLayout({
+                  ...layout,
+                  workspace: clamp(layout.workspace - dx, LIMITS.workspace),
+                })
+              }
+            />
             <WorkspacePanel collapsed={layout.workspaceCollapsed} />
           </>
         )}
@@ -168,7 +168,15 @@ export default function App() {
 }
 
 // 拖宽分隔条:纯前端(pointer 事件),拖动期间直接改列宽。
-function HSplitter({ onDrag }: { onDrag: (dx: number) => void }) {
+// hidden = 相邻面板收起:仍占位网格列(0px)但不可见不可交互——绝不条件
+// 卸载,否则网格子元素与模板列错位,整个布局散架(2026-09-02 修)。
+function HSplitter({
+  onDrag,
+  hidden,
+}: {
+  onDrag: (dx: number) => void;
+  hidden?: boolean;
+}) {
   const lastX = useRef<number | null>(null);
 
   const onPointerDown = (e: React.PointerEvent) => {
@@ -197,7 +205,8 @@ function HSplitter({ onDrag }: { onDrag: (dx: number) => void }) {
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       data-slot="splitter"
-      title="拖动调整列宽"
+      title={hidden ? undefined : "拖动调整列宽"}
+      style={hidden ? { visibility: "hidden", pointerEvents: "none" } : undefined}
     />
   );
 }
