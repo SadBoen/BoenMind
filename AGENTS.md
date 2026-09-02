@@ -7,12 +7,7 @@ BoenMind:个人生态的 AI Runtime / AI OS,当前为**阶段一(跨平台单软
 (Erlang/OTP、Kubernetes、VS Code,见 `architecture/deepwiki-validation.md`)。
 合同库冻结 v1.0(字段只增不破)。
 
-**当前状态(2026-09-02 晚)**:W4b+前端治理+外部评审复核收官(294 测试全绿,
-validate.py 全绿)。**用户已批新工批次(2026-09-02)**=Skill v0.2(分两步,
-scripts 走 wasmtime/WASM 为主)+ 音乐播放器 App(简单版,先写规格)+ 远程 MCP
-(补 SSE/HTTP 传输层,协议版本握手协商、新特性不补全)+ MCP 完整热插拔;
-内置能力全量 MCP 化裁决不搞。**下一步 = 按 `milestones/BACKLOG.md` 推进**
-(优先:启动流式开关漂移修复)。交付全史见 `milestones/HISTORY.md`;
+**当前状态(2026-09-03)**:启动流式修复 + MCP 完整热插拔 + Skill v0.2(第一步合同+ADR-0016 设计) + 音乐播放器 App + 远程 MCP 传输层全量交付(294 测试全绿, Playwright 冒烟全绿, validate.py 全绿, clippy 零警告)。**下一步 = 待用户过目确认 ADR-0016 后推进 Skill v0.2 第二步 wasmtime 脚本执行面实现**。交付全史见 `milestones/HISTORY.md`;
 **欠账唯一入口 = `milestones/BACKLOG.md`**(已闭合条目自 2026-09-02 起移出台账)。
 
 ## 文件地图(规格分层)

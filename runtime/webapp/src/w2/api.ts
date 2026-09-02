@@ -32,9 +32,11 @@ export type ProbeResult = {
 
 export type McpServer = {
   name: string;
-  transport: "stdio";
-  command: string;
-  args: string[];
+  transport: "stdio" | "sse" | "http" | "streamable-http";
+  url?: string;
+  bearer_token?: string;
+  command?: string;
+  args?: string[];
   env?: Record<string, string>;
   tool_timeout_ms?: number;
   restart_limit?: number;
@@ -69,6 +71,8 @@ export type McpListResult = {
 export type McpReloadResult = {
   ok: boolean;
   registered: string[];
+  updated?: string[];
+  uninstalled?: string[];
   failed: { name: string; error: string }[];
   note: string;
 };

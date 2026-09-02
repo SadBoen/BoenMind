@@ -2,8 +2,8 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "boenmind:capability:skill:v0.1",
   "x-frozen": "2026-09-02",
-  "title": "Skill 知识包 v0.1(W4b)",
-  "description": "Skill 是挂在角色/会话上的知识包:步骤/提示模板 + 允许使用的能力名单。只是数据,加载不改变权限(基线 Skill 定义):allowed_capabilities 仅作提示面与展示面数据,实际调用权限仍以 Capability Manifest 与审批面为准。挂载即把 instruction 注入对应回合的 system prompt(追加,不覆盖角色提示词)。",
+  "title": "Skill 知识包 v0.1(W4b/Skill v0.2)",
+  "description": "Skill 是挂在角色/会话上的知识包:步骤/提示模板 + 允许使用的能力名单。只是数据,加载不改变权限(基线 Skill 定义):allowed_capabilities 仅作提示面与展示面数据,实际调用权限仍以 Capability Manifest 与审批面为准。挂载即把 instruction 注入对应回合的 system prompt(追加,不覆盖角色提示词)。v0.2 增发 version 与 references(按需加载分支文档清单)。",
   "type": "object",
   "required": ["skill_id", "name", "instruction"],
   "additionalProperties": false,
@@ -19,6 +19,11 @@
       "maxLength": 64,
       "description": "展示名"
     },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+(\\.[0-9]+){1,2}$",
+      "description": "技能版本号(如 0.2 或 0.2.0;Minor 纯增)"
+    },
     "description": {
       "type": ["string", "null"],
       "maxLength": 200,
@@ -29,6 +34,22 @@
       "minLength": 1,
       "maxLength": 8000,
       "description": "步骤/提示模板:挂载后追加进 system prompt 的技能指令正文"
+    },
+    "references": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "path"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string", "maxLength": 64, "description": "参考文档标识或标题" },
+          "path": { "type": "string", "maxLength": 256, "description": "相对技能根目录或工作区的路径" },
+          "description": { "type": ["string", "null"], "maxLength": 200, "description": "参考内容简介(按需引导)" }
+        }
+      },
+      "maxItems": 32,
+      "default": [],
+      "description": "按需加载引用分支文件清单(入口指令常驻注入,分支文件回合内按需读取)"
     },
     "allowed_capabilities": {
       "type": "array",

@@ -18,6 +18,15 @@
     "restart_limit": 3
   },
   {
+    "name": "music",
+    "transport": "stdio",
+    "command": "python",
+    "args": ["apps/music_server.py", "--dir", "<音乐文件目录>"],
+    "trust": "explicit-config",
+    "tool_timeout_ms": 15000,
+    "restart_limit": 3
+  },
+  {
     "name": "web_multisearch",
     "transport": "stdio",
     "command": "plugins\\mcp\\web-multisearch\\target\\release\\web-multisearch.exe",

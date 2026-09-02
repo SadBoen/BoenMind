@@ -4,31 +4,22 @@
 > **维护口径(2026-09-02 用户裁决更新)**:已闭合条目**移出台账不再留行**,闭合史可溯 git 提交史与 `milestones/HISTORY.md`;台账只留未结项,每项须有来源与状态;裁决「不做」的进 §7 备忘防重开。
 > 状态口径:OPEN=未动工 / DEFERRED=用户拍板后置 / INPROGRESS=进行中。
 
-## 1. 使用反馈期优先(影响日常使用的真欠账)
-
-| 条目 | 说明 | 来源 | 状态 |
-|---|---|---|---|
-| 启动流式开关漂移 | 模型流式只认 env `BOEN_MODEL_STREAM=1`,config/model.json 的 `"stream": true` 不生效(config_store 已解析该字段,但 boenmind-server.rs RuntimeConfig 组装处只读 env);重启漏带即失去流式 | 2026-09-02 重启轮 | OPEN(优先修) |
-| MCP 插件完整热插拔 | 现 mcp_reload 仅「新增」生效,条目修改/删除仍需重启;需实现 server 停止(JSON-RPC shutdown)+ Registry 摘除 + 重拉 | MCP 插件轮遗留 + 外部评审 §2.4 | OPEN |
-
-## 2. 已批新工批次(2026-09-02 用户裁决,新一轮对话按此推进)
+## 1. 新工进行与待审批次
 
 | 条目 | 范围与口径 | 状态 |
 |---|---|---|
-| Skill v0.2(已批) | **第一步**=合同 Minor:capability/skill 增 `version` 与 `references`(按需加载:入口指令常驻注入,分支文件回合内按需读取);**第二步**=scripts 执行面:运行时选型 **wasmtime(WASM 为主,Shell 为辅,不依赖 Python)**,动工前须先出「Broker 七步管线如何覆盖脚本执行」的设计并发 ADR,经用户确认再写码 | OPEN(分两步) |
-| 音乐播放器 App(已批,简单版) | 本地音乐库索引/搜索/播放列表 + 网页内播放;形态=apps/ 下 stdio MCP server(对齐 wiki/market 先例)+ 前端音乐页签;**开工先写实现规格入册 milestones/ 再写码**;App 产品面完整设计(ui_panels 动态导航/数据域隔离/生命周期)留远期候选,本 App 先行探路 | OPEN(先规格后码) |
-| 远程 MCP(已批,提前解除「使用一周」门槛) | 补传输层=SSE/Streamable HTTP + 每服务器可选访问令牌(Bearer);**协议版本靠 initialize 握手协商,不补全新特性**——tasks/elicitation/sampling/OAuth 一律留档按需(2026-09-02 用户问询裁决:不补全不影响互联) | OPEN |
+| Skill v0.2 第二步(scripts 执行面) | 第一步(合同 Minor: version + references)与 ADR-0016(Broker 七步管线覆盖脚本设计)已闭合交付;**第二步**:等待用户审阅确认 ADR-0016 后接入 wasmtime 执行引擎写代码 | OPEN(待 ADR-0016 确认后动工) |
 
-## 3. 流程收尾
+## 2. 流程收尾
 
 | 条目 | 来源 | 状态 |
 |---|---|---|
 | F-09 deepwiki S1/S2/S6/S7/S10 逐条裁决;S5 口径偏宽复核(t119b≠quarantined 分表) | AUDIT F-09 + FULL-REVIEW §2.4 | OPEN(随下一里程碑回看) |
 | W4 验收记录回填(按规格 §4 验收门补实测证据与截图) | W4-implementation-spec | OPEN |
 
-## 4. 技术债(缓办,均不影响日常使用)
+## 3. 技术债(缓办,均不影响日常使用)
 
-### 4.1 掉链项(前序回看承诺「随某里程碑补」未接住;来源 FULL-REVIEW §4)
+### 3.1 掉链项(前序回看承诺「随某里程碑补」未接住;来源 FULL-REVIEW §4)
 
 | 条目 | 来源 | 状态 |
 |---|---|---|
@@ -42,7 +33,7 @@
 | capability 操作不落 operations 表复核 | M4-review §6-4 | OPEN |
 | P-06 RSS 独立采样接入 perf 套件 | M1 §6-2 → M2 → M3 §6-4 后无接续 | OPEN |
 
-### 4.2 后端与前端重构债
+### 3.2 后端与前端重构债
 
 | 条目 | 说明 | 状态 |
 |---|---|---|
@@ -57,16 +48,15 @@
 | theme.css !important 收敛 | 玻璃段 4 处(毛玻璃化刻意选型,收敛须换实现手法) | OPEN(低) |
 | CustomEvent 类型化 | 5 文件发事件/12 文件监听,可随 ESLint 批次一并 | OPEN(低) |
 
-### 4.3 低优杂项
+### 3.3 低优杂项
 
 | 条目 | 说明 | 状态 |
 |---|---|---|
 | PENPOT-quickstart 过时 | 指向已删除的 runtime/web/tokens.css;已加过时标注,待归档或更新 | OPEN(低) |
 | MCP 子进程 stderr 采集 | 现为 `Stdio::inherit()` 直通 server.log(W2 刻意诊断选型);后续可管道采集入插件页 | OPEN(低) |
 | allowed_capabilities 措辞澄清 | 合同已注明「仅提示面数据」;角色编辑 UI 宜加一句「不构成权限控制」防误解 | OPEN(低) |
-| clippy --all-targets 存量警告 14 处 | about.rs 12 / webadmin.rs 2(needless_borrow 类,疑测试代码);CI 矩阵与 --all-targets 口径盲区 | OPEN(低) |
 
-## 5. 用户拍板后置(DEFERRED,裁决记录见 milestones/PENDING.md)
+## 4. 用户拍板后置(DEFERRED,裁决记录见 milestones/PENDING.md)
 
 | 条目 | 来源 | 状态 |
 |---|---|---|
@@ -75,12 +65,12 @@
 | 桌面安装包(`cargo tauri build` 出 .exe) | M3 §6-1 → M8 §6-1(D-M8-3) | DEFERRED(搁置不排期,骨架在 shell/tauri) |
 | memory 条目级删除所有权 | M9-review §6-2 | DEFERRED(演进项) |
 
-## 6. 候选队列(用户提过、未排期)
+## 5. 候选队列(用户提过、未排期)
 
 - 使用反馈轮:当前阶段,按「先真实使用一周」节奏收集反馈;
-- App 产品面完整设计(manifest ui_panels 自动导航/数据域隔离/生命周期):远期,音乐播放器 App 先行探路(见 §2)。
+- App 产品面完整设计(manifest ui_panels 自动导航/数据域隔离/生命周期):远期,音乐播放器 App 先行探路。
 
-## 7. 已闭合备忘(留出处,勿重开)
+## 6. 已闭合备忘(留出处,勿重开)
 
 - **内置能力全量 MCP 化 = 用户裁决不搞(2026-09-02)**;复核意见=同步 trait 快路径系刻意选型(零进程开销),全量子进程化对单用户场景属倒退;热插拔诉求由 §1「MCP 完整热插拔」承接。
 - 合同 Minor 三笔:tools maxItems 0→16 / finish_reason 加 tool_calls / invoke_response 加 tool_calls(commit 40988a7,W4)。

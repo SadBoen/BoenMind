@@ -143,6 +143,11 @@ pub(crate) enum Cmd {
         )>,
         resp: oneshot::Sender<CoreResult<Vec<String>>>,
     },
+    /// 热拔/重载摘除能力(MCP server 卸载或更新前摘除原能力)。
+    CapabilitiesUnregister {
+        capabilities: Vec<String>,
+        resp: oneshot::Sender<CoreResult<Vec<String>>>,
+    },
     Stop {
         reason: String,
         resp: oneshot::Sender<()>,
@@ -304,6 +309,9 @@ pub(crate) fn reply_unavailable(cmd: Cmd) {
         }
         // W2 热装载:停机态拒绝(能力注册只在运行态有意义)
         Cmd::CapabilitiesRegister { resp, .. } => {
+            let _ = resp.send(Err(err()));
+        }
+        Cmd::CapabilitiesUnregister { resp, .. } => {
             let _ = resp.send(Err(err()));
         }
         Cmd::CapabilityCancel { resp, .. } => {

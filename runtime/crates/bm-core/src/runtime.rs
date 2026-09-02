@@ -569,6 +569,9 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
             Cmd::CapabilitiesRegister { entries, resp } => {
                 let _ = resp.send(handle_capabilities_register(&mut world, entries));
             }
+            Cmd::CapabilitiesUnregister { capabilities, resp } => {
+                let _ = resp.send(handle_capabilities_unregister(&mut world, capabilities));
+            }
             Cmd::ProviderDelta {
                 operation_id,
                 delta,

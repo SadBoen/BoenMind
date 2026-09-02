@@ -60,6 +60,9 @@ type McpCandidatesResult = {
 
 type Draft = {
   name: string;
+  transport: "stdio" | "sse" | "http";
+  url: string;
+  bearer_token: string;
   command: string;
   args: string; // 空格分隔
   env: string; // 每行 KEY=secret:ref
@@ -69,6 +72,9 @@ type Draft = {
 
 const emptyDraft: Draft = {
   name: "",
+  transport: "stdio",
+  url: "",
+  bearer_token: "",
   command: "",
   args: "",
   env: "",
@@ -78,7 +84,10 @@ const emptyDraft: Draft = {
 function toDraft(s: McpServer): Draft {
   return {
     name: s.name,
-    command: s.command,
+    transport: s.transport === "http" || s.transport === "sse" ? s.transport : "stdio",
+    url: s.url ?? "",
+    bearer_token: s.bearer_token ?? "",
+    command: s.command ?? "",
     args: (s.args ?? []).join(" "),
     env: Object.entries(s.env ?? {})
       .map(([k, v]) => `${k}=${v}`)
@@ -97,13 +106,22 @@ function fromDraft(d: Draft): Partial<McpServer> {
     const v = line.slice(i + 1).trim();
     if (k && v) env[k] = v;
   }
-  return {
+  const base: Partial<McpServer> = {
     name: d.name.trim(),
-    command: d.command.trim(),
-    args: d.args.split(/\s+/).filter(Boolean),
+    transport: d.transport,
     env,
     ...(d.tool_timeout_ms ? { tool_timeout_ms: Number(d.tool_timeout_ms) } : {}),
   };
+  if (d.transport === "stdio") {
+    base.command = d.command.trim();
+    base.args = d.args.split(/\s+/).filter(Boolean);
+  } else {
+    base.url = d.url.trim();
+    if (d.bearer_token.trim()) {
+      base.bearer_token = d.bearer_token.trim();
+    }
+  }
+  return base;
 }
 
 export function McpPage({
@@ -199,12 +217,12 @@ export function McpPage({
   };
 
   const remove = async (name: string) => {
-    if (!window.confirm(`移除 MCP server「${name}」?(重启生效)`)) return;
+    if (!window.confirm(`移除 MCP server「${name}」?(落盘后点「重载 MCP」可免重启立即生效)`)) return;
     setBusy(true);
     try {
       await api.mcp.remove(name);
       await reload();
-      flash("已移除,重启服务器后生效");
+      flash("已从配置移除,点「重载 MCP」可免重启生效");
     } catch (e) {
       setError(String(e instanceof Error ? e.message : e));
     } finally {
@@ -222,7 +240,7 @@ export function McpPage({
         <div className="min-w-0">
           <h2 className="text-[15px] font-semibold">MCP 管理</h2>
           <p className="text-muted-foreground truncate text-[12.5px]">
-            {data ? `配置文件 ${data.file}` : "…"};增删改落盘后重启生效。
+            {data ? `配置文件 ${data.file}` : "…"};增删改落盘后点「重载 MCP」免重启生效。
           </p>
         </div>
         <span className="flex items-center gap-2">
@@ -248,11 +266,11 @@ export function McpPage({
               setReloading(true);
               try {
                 const r = await api.mcp.reload();
-                setNotice(
-                  r.registered.length
-                    ? "已装载新增: " + r.registered.join("、")
-                    : (r.note ?? "无新增"),
-                );
+                const parts: string[] = [];
+                if (r.registered?.length) parts.push("新增: " + r.registered.join("、"));
+                if (r.updated?.length) parts.push("更新: " + r.updated.join("、"));
+                if (r.uninstalled?.length) parts.push("卸载: " + r.uninstalled.join("、"));
+                setNotice(parts.length ? parts.join("; ") : (r.note ?? "无变更"));
                 await reload();
                 await refreshStatus();
               } catch (e) {
@@ -525,30 +543,77 @@ function McpDialog({
               id="mcp-name"
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
-              placeholder="wiki"
+              placeholder="wiki / remote_service"
               className="font-mono"
             />
           </div>
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="mcp-cmd">启动命令</Label>
-            <Input
-              id="mcp-cmd"
-              value={form.command}
-              onChange={(e) => setForm({ ...form, command: e.target.value })}
-              placeholder="uvx / node / npx …"
-              className="font-mono"
-            />
+            <Label htmlFor="mcp-transport">传输协议</Label>
+            <select
+              id="mcp-transport"
+              value={form.transport}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  transport: e.target.value as "stdio" | "sse" | "http",
+                })
+              }
+              className="border-input bg-background h-9 rounded-md border px-3 py-1 font-mono text-[13px] outline-none"
+            >
+              <option value="stdio">stdio (本地子进程)</option>
+              <option value="sse">sse (远程流式/Server-Sent Events)</option>
+              <option value="http">http (远程 Streamable HTTP)</option>
+            </select>
           </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="mcp-args">参数(空格分隔)</Label>
-            <Input
-              id="mcp-args"
-              value={form.args}
-              onChange={(e) => setForm({ ...form, args: e.target.value })}
-              placeholder="mcp-wiki --port 3000"
-              className="font-mono"
-            />
-          </div>
+
+          {form.transport === "stdio" ? (
+            <>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="mcp-cmd">启动命令</Label>
+                <Input
+                  id="mcp-cmd"
+                  value={form.command}
+                  onChange={(e) => setForm({ ...form, command: e.target.value })}
+                  placeholder="uvx / node / npx …"
+                  className="font-mono"
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="mcp-args">参数(空格分隔)</Label>
+                <Input
+                  id="mcp-args"
+                  value={form.args}
+                  onChange={(e) => setForm({ ...form, args: e.target.value })}
+                  placeholder="mcp-wiki --port 3000"
+                  className="font-mono"
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="mcp-url">远程服务 URL</Label>
+                <Input
+                  id="mcp-url"
+                  value={form.url}
+                  onChange={(e) => setForm({ ...form, url: e.target.value })}
+                  placeholder="https://api.example.com/mcp"
+                  className="font-mono"
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="mcp-bearer">访问令牌 (可选, 格式 secret:ref)</Label>
+                <Input
+                  id="mcp-bearer"
+                  value={form.bearer_token}
+                  onChange={(e) => setForm({ ...form, bearer_token: e.target.value })}
+                  placeholder="secret:remote-token"
+                  className="font-mono"
+                />
+              </div>
+            </>
+          )}
+
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="mcp-env">环境变量(每行 KEY=secret:引用)</Label>
             <textarea

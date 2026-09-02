@@ -590,6 +590,82 @@ impl McpTransport for StdioMcpTransport {
     }
 }
 
+// ---- HTTP / SSE 远程传输 (Remote HTTP/SSE Transport) -----------------------
+
+/// 远程 MCP HTTP/SSE 传输层 (单进程 HTTP POST + 可选 Bearer 鉴权).
+pub struct HttpMcpTransport {
+    url: String,
+    bearer_token: Option<String>,
+    client: reqwest::Client,
+    progress_rx: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<McpProgressNote>>>,
+}
+
+impl HttpMcpTransport {
+    pub fn new(url: &str, bearer_token: Option<String>) -> Arc<Self> {
+        Arc::new(Self {
+            url: url.to_string(),
+            bearer_token,
+            client: reqwest::Client::new(),
+            progress_rx: Mutex::new(None),
+        })
+    }
+}
+
+#[async_trait]
+impl McpTransport for HttpMcpTransport {
+    async fn request(&self, method: &str, params: Value) -> Result<Value, String> {
+        let msg = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": method,
+            "params": params,
+        });
+        let mut req = self.client.post(&self.url).json(&msg);
+        if let Some(token) = &self.bearer_token {
+            req = req.bearer_auth(token);
+        }
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| format!("远程 MCP 请求失败: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("远程 MCP HTTP 状态异常: {}", resp.status()));
+        }
+        let val: Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("远程 MCP 响应解析失败: {e}"))?;
+        if let Some(err) = val.get("error") {
+            let code = err.get("code").and_then(|c| c.as_i64()).unwrap_or(-1);
+            let msg = err.get("message").and_then(|m| m.as_str()).unwrap_or("");
+            return Err(format!("rpc-error:{code} {msg}"));
+        }
+        Ok(val.get("result").cloned().unwrap_or(json!({})))
+    }
+
+    async fn notify(&self, method: &str, params: Value) -> Result<(), String> {
+        let msg = json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+        });
+        let mut req = self.client.post(&self.url).json(&msg);
+        if let Some(token) = &self.bearer_token {
+            req = req.bearer_auth(token);
+        }
+        let _ = req.send().await;
+        Ok(())
+    }
+
+    fn subscribe_progress(&self) -> tokio::sync::mpsc::UnboundedReceiver<McpProgressNote> {
+        self.progress_rx
+            .lock()
+            .expect("锁未中毒")
+            .take()
+            .unwrap_or_else(dead_progress_rx)
+    }
+}
+
 // ---- Hub:握手/发现/路由/异步执行器 -----------------------------------------
 
 type ProgressSink = Box<dyn Fn(ProgressNotice) + Send + Sync>;
@@ -756,6 +832,33 @@ impl McpHub {
             })
             .collect()
     }
+
+    /// 热拔/重载摘除指定 server 的全部路由，并向 transport 发送 shutdown 通知。
+    /// 返回被摘除的能力列表(用于通知 Registry 和 Persist 摘除)。
+    pub async fn disconnect_server(&self, server: &str) -> Vec<String> {
+        let prefix = format!("mcp.{server}.");
+        let (removed_caps, transports) = {
+            let mut routes = self.routes.lock().expect("锁未中毒");
+            let mut caps = Vec::new();
+            let mut trans = Vec::new();
+            let keys: Vec<String> = routes.keys().cloned().collect();
+            for k in keys {
+                if k.starts_with(&prefix)
+                    && let Some(r) = routes.remove(&k)
+                {
+                    caps.push(k);
+                    trans.push(r.transport);
+                }
+            }
+            (caps, trans)
+        };
+        for t in transports {
+            // 尽力发送 shutdown / 退出通知
+            let _ = t.notify("shutdown", json!({})).await;
+            let _ = t.notify("exit", json!({})).await;
+        }
+        removed_caps
+    }
 }
 
 #[async_trait]
@@ -838,11 +941,14 @@ impl AsyncCapabilityExecutor for McpHub {
 
 // ---- 安装配置装载(M7.7)----------------------------------------------------
 
-/// 单个 MCP server 的运行解析结果(env 已从 Secret Store 解析;
-/// 明文只进子进程环境,不入日志/事件,INV-5)。
+/// 单个 MCP server 的运行解析结果(env/bearer_token 已从 Secret Store 解析;
+/// 明文只进子进程/请求环境,不入日志/事件,INV-5)。
 #[derive(Debug, Clone)]
 pub struct McpServerSetup {
     pub name: String,
+    pub transport: String,
+    pub url: Option<String>,
+    pub bearer_token: Option<String>,
     pub command: String,
     pub args: Vec<String>,
     pub env_resolved: HashMap<String, String>,
@@ -851,7 +957,7 @@ pub struct McpServerSetup {
 }
 
 /// 从配置文件装载 MCP server 安装清单(每项过 mcp-server.v0_1 合同校验)。
-/// 文件显式列出 = 用户安装批准;env 一律 secret: 引用(明文拒绝由合同承担)。
+/// 文件显式列出 = 用户安装批准;env/bearer_token 一律 secret: 引用(明文拒绝由合同承担)。
 pub fn load_mcp_setups(
     path: &std::path::Path,
     store: &dyn bm_core::ports::SecretStore,
@@ -871,6 +977,24 @@ pub fn load_mcp_setups(
             eprintln!("[MCP] 配置项 {name} 合同校验失败 (已跳过): {e}");
             continue;
         }
+
+        let transport = item
+            .get("transport")
+            .and_then(|v| v.as_str())
+            .unwrap_or("stdio")
+            .to_string();
+
+        let mut bearer_token = None;
+        if let Some(tok_ref) = item.get("bearer_token").and_then(|v| v.as_str()) {
+            match bm_core::ports::SecretStore::get(store, tok_ref) {
+                Ok(val) => bearer_token = Some(val),
+                Err(e) => {
+                    eprintln!("[MCP] 配置项 {name} bearer_token 引用 {tok_ref} 解析失败: {e:?}");
+                    continue;
+                }
+            }
+        }
+
         let mut env_resolved = HashMap::new();
         let mut env_err = false;
         if let Some(env) = item.get("env").and_then(|v| v.as_object()) {
@@ -899,6 +1023,9 @@ pub fn load_mcp_setups(
         }
         out.push(McpServerSetup {
             name: item["name"].as_str().unwrap_or_default().to_string(),
+            transport,
+            url: item["url"].as_str().map(String::from),
+            bearer_token,
             command: item["command"].as_str().unwrap_or_default().to_string(),
             args: item["args"]
                 .as_array()

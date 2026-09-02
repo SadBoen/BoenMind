@@ -89,8 +89,7 @@ test.describe("对话闭环", () => {
     await mockAdmin(page);
     await page.goto("/");
     await expect(page.getByRole("heading", { name: "个人生态的 AI Runtime" })).toBeVisible();
-    await expect(page.getByRole("combobox", { name: "切换当前会话角色" })).toBeVisible();
-    await expect(page.getByRole("option", { name: "通用助理" })).toBeAttached();
+    await expect(page.locator('[data-slot="role-select"]')).toBeVisible();
 
     const input = page.getByRole("textbox", { name: "Message BoenMind…" });
     await input.fill("你好");
@@ -139,7 +138,7 @@ test.describe("设置中心", () => {
     await page.locator('[data-slot="open-settings"]').evaluate((el: HTMLElement) => el.click());
     // 导航项可访问名含 W4 徽标文本,用前缀匹配
     await page.getByRole("button", { name: /^角色/ }).click();
-    await expect(page.getByRole("heading", { name: "角色管理" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "角色与技能" })).toBeVisible();
     await expect(page.getByText("通用助理")).toBeVisible();
     await expect(page.getByText("代码专家")).toBeVisible();
     await expect(page.getByText("全局默认")).toBeVisible();

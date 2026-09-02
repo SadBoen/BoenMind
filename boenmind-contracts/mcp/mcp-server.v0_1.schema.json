@@ -3,13 +3,11 @@
   "$id": "boenmind:mcp:mcp-server:v0.1",
   "x-frozen": "2026-08-30",
   "title": "MCP Server 接入配置 v0.1",
-  "description": "M7.2/M7.7:单个 MCP server 的安装声明。配置文件显式列出即视为用户安装批准(M7 规格 S6);env 一律 secret: 引用,明文不入配置(基线 4.6)。",
+  "description": "M7.2/M7.7:单个 MCP server 的安装声明。配置文件显式列出即视为用户安装批准(M7 规格 S6);env/bearer_token 一律 secret: 引用,明文不入配置(基线 4.6)。远程 MCP(SSE/HTTP) 传输层与访问令牌支持(Minor)。",
   "type": "object",
   "required": [
     "name",
-    "transport",
-    "command",
-    "args"
+    "transport"
   ],
   "additionalProperties": false,
   "properties": {
@@ -19,7 +17,16 @@
       "description": "server 名,参与能力命名空间 mcp.<name>.<tool>;字符集与能力名段一致"
     },
     "transport": {
-      "const": "stdio"
+      "enum": ["stdio", "sse", "http", "streamable-http"]
+    },
+    "url": {
+      "type": "string",
+      "description": "远程 MCP 服务 URL(SSE 或 Streamable HTTP 端点)"
+    },
+    "bearer_token": {
+      "type": "string",
+      "pattern": "^secret:[A-Za-z0-9_.-]{1,64}$",
+      "description": "远程 MCP 访问令牌,值必须是 Secret Store 引用"
     },
     "command": {
       "type": "string",

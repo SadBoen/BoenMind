@@ -566,6 +566,16 @@ impl StateDb {
         Ok(())
     }
 
+    /// 删除 capability binding(热拔/重载)。
+    pub fn delete_capability_binding(&self, capability: &str) -> StoreResult<()> {
+        let conn = self.conn.lock().expect("锁未中毒");
+        conn.execute(
+            "DELETE FROM capabilities WHERE capability = ?1",
+            rusqlite::params![capability],
+        )?;
+        Ok(())
+    }
+
     /// 恢复面:全部 binding 行。
     pub fn list_capability_bindings(&self) -> StoreResult<Vec<serde_json::Value>> {
         self.query_rows(

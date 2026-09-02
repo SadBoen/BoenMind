@@ -278,7 +278,7 @@ dependencies = [
 
 [[package]]
 name = "bm-cli"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "bm-contract",
  "clap",
@@ -290,7 +290,7 @@ dependencies = [
 
 [[package]]
 name = "bm-contract"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "chrono",
  "jsonschema",
@@ -302,7 +302,7 @@ dependencies = [
 
 [[package]]
 name = "bm-core"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "async-trait",
  "bm-contract",
@@ -321,7 +321,7 @@ dependencies = [
 
 [[package]]
 name = "bm-judge"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "bm-contract",
  "bm-persist",
@@ -333,7 +333,7 @@ dependencies = [
 
 [[package]]
 name = "bm-persist"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "bm-contract",
  "rusqlite",
@@ -347,7 +347,7 @@ dependencies = [
 
 [[package]]
 name = "bm-providers"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -366,7 +366,7 @@ dependencies = [
 
 [[package]]
 name = "bm-runtime"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "axum",
  "bm-cli",
@@ -385,7 +385,7 @@ dependencies = [
 
 [[package]]
 name = "bm-surface-http"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "async-stream",
  "axum",
@@ -409,7 +409,7 @@ dependencies = [
 
 [[package]]
 name = "bm-testkit"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "async-trait",
  "bm-contract",

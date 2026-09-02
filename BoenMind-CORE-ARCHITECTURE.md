@@ -1952,6 +1952,7 @@ Butler 向用户汇报，并保留可回放的工作记录
 | ADR-0013 | 弃用 dsh 复刻前端 | accepted |
 | ADR-0014 | W 序列 WEBUI：assistant-ui 自建壳 | accepted |
 | ADR-0015 | 文档体系整理：熔入式修订与三层附页 | accepted |
+| ADR-0016 | Skill v0.2 脚本执行架构与 Broker 管线覆盖 | accepted |
 
 ## 24. 架构模型即代码与外部实证验证
 

@@ -179,7 +179,7 @@ pub async fn apply_update(
     let current = env!("CARGO_PKG_VERSION");
     let info = match fetch_latest_release(&update_repo()).await {
         Ok(r) => r,
-        Err(e) => return admin_error(StatusCode::BAD_GATEWAY, &format!("检查更新失败: {e}")),
+        Err(e) => return admin_error(StatusCode::BAD_GATEWAY, format!("检查更新失败: {e}")),
     };
     match version_cmp(current, &info.tag) {
         Some(o) if o != std::cmp::Ordering::Less => {
@@ -189,14 +189,14 @@ pub async fn apply_update(
         None => {
             return admin_error(
                 StatusCode::BAD_REQUEST,
-                &format!("版本号不可比较(当前 {current} vs latest {})", info.tag),
+                format!("版本号不可比较(当前 {current} vs latest {})", info.tag),
             );
         }
     }
     let Some((asset_name, asset_url)) = info.asset() else {
         return admin_error(
             StatusCode::BAD_REQUEST,
-            &format!(
+            format!(
                 "发现新版本 {},但 latest release 缺少本平台资产({})",
                 info.tag,
                 platform_asset_suffix()
@@ -209,7 +209,7 @@ pub async fn apply_update(
     if let Err(e) = std::fs::create_dir_all(&work) {
         return admin_error(
             StatusCode::INTERNAL_SERVER_ERROR,
-            &format!("升级目录创建失败: {e}"),
+            format!("升级目录创建失败: {e}"),
         );
     }
 
@@ -222,17 +222,17 @@ pub async fn apply_update(
         Err(e) => {
             return admin_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("客户端构造失败: {e}"),
+                format!("客户端构造失败: {e}"),
             );
         }
     };
     let pkg_path = work.join(&asset_name);
     if let Err(e) = download_to(&client, &asset_url, &pkg_path).await {
-        return admin_error(StatusCode::BAD_GATEWAY, &format!("下载失败: {e}"));
+        return admin_error(StatusCode::BAD_GATEWAY, format!("下载失败: {e}"));
     }
-    let sha_path = work.join(format!("{}.sha256", &asset_name));
+    let sha_path = work.join(format!("{asset_name}.sha256"));
     if let Err(e) = download_to(&client, &sha_url, &sha_path).await {
-        return admin_error(StatusCode::BAD_GATEWAY, &format!("下载校验文件失败: {e}"));
+        return admin_error(StatusCode::BAD_GATEWAY, format!("下载校验文件失败: {e}"));
     }
 
     // 2. 校验和比对(期望格式:<hex>  <文件名>)
@@ -241,25 +241,32 @@ pub async fn apply_update(
         Err(e) => {
             return admin_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("读取包失败: {e}"),
+                format!("读取包失败: {e}"),
             );
         }
     };
     let mut hasher = Sha256::new();
     hasher.update(&bytes);
-    let out = hasher.finalize();
-    let got: String = out.iter().map(|b| format!("{b:02x}")).collect();
-    let expect = std::fs::read_to_string(&sha_path).unwrap_or_default();
-    let expect_hex = expect
+    let digest_bytes = hasher.finalize();
+    let digest = digest_bytes
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    let Ok(expected_sha) = std::fs::read_to_string(&sha_path) else {
+        return admin_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "读取 sha256 校验文件失败",
+        );
+    };
+    let expected = expected_sha
         .split_whitespace()
         .next()
-        .unwrap_or_default()
+        .unwrap_or("")
         .to_lowercase();
-    if expect_hex.len() != 64 || expect_hex != got {
-        let _ = std::fs::remove_file(&pkg_path);
+    if digest != expected {
         return admin_error(
-            StatusCode::BAD_REQUEST,
-            "校验和不匹配,已删除下载包(下载源异常?)",
+            StatusCode::BAD_GATEWAY,
+            format!("校验和不匹配: 计算值 {digest} vs 期望值 {expected}"),
         );
     }
 
@@ -269,7 +276,7 @@ pub async fn apply_update(
         let _ = std::fs::remove_dir_all(&staging);
     }
     if let Err(e) = unpack_tar_gz(&pkg_path, &staging) {
-        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("解包失败: {e}"));
+        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, format!("解包失败: {e}"));
     }
 
     // 4. 换装(staging 内有唯一顶层目录)
@@ -284,7 +291,7 @@ pub async fn apply_update(
         return admin_error(StatusCode::INTERNAL_SERVER_ERROR, "包结构异常:缺少顶层目录");
     };
     if let Err(e) = install(&cfg, &src) {
-        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("换装失败: {e}"));
+        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, format!("换装失败: {e}"));
     }
 
     // 5. 拉起子进程(原 args/env/cwd;BOEN_UPGRADE_CHILD=1 → 子进程容忍端口
@@ -292,7 +299,7 @@ pub async fn apply_update(
     let exe = std::env::current_exe().map_err(|e| format!("current_exe 失败: {e}"));
     let exe = match exe {
         Ok(p) => p,
-        Err(e) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, &e),
+        Err(e) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e),
     };
     let args: Vec<String> = std::env::args().skip(1).collect();
     let child = std::process::Command::new(&exe)
@@ -302,7 +309,7 @@ pub async fn apply_update(
     if let Err(e) = child {
         return admin_error(
             StatusCode::INTERNAL_SERVER_ERROR,
-            &format!("新进程拉起失败: {e}"),
+            format!("新进程拉起失败: {e}"),
         );
     }
     eprintln!("[W7] 在线升级:新版本 {} 已拉起,本进程排空退出", info.tag);

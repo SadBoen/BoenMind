@@ -140,16 +140,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Vec::new()
             });
         for setup in setups {
-            let transport = match bm_providers::mcp::StdioMcpTransport::spawn(
-                &setup.command,
-                &setup.args,
-                &setup.env_resolved,
-            ) {
-                Ok(t) => t,
-                Err(e) => {
-                    eprintln!("[MCP] 启动 MCP 服务「{}」失败 (已跳过): {e}", setup.name);
-                    continue;
+            let transport: Arc<dyn bm_providers::mcp::McpTransport> = match setup.transport.as_str()
+            {
+                "http" | "sse" | "streamable-http" => {
+                    let Some(url) = &setup.url else {
+                        eprintln!("[MCP] 远程 MCP 服务「{}」缺少 url (已跳过)", setup.name);
+                        continue;
+                    };
+                    bm_providers::mcp::HttpMcpTransport::new(url, setup.bearer_token.clone())
                 }
+                _ => match bm_providers::mcp::StdioMcpTransport::spawn(
+                    &setup.command,
+                    &setup.args,
+                    &setup.env_resolved,
+                ) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        eprintln!("[MCP] 启动 MCP 服务「{}」失败 (已跳过): {e}", setup.name);
+                        continue;
+                    }
+                },
             };
             let manifests = match hub
                 .connect(&setup.name, transport, setup.tool_timeout_ms)
@@ -192,8 +202,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         capabilities,
         async_executor: mcp_executor,
         model_streaming: {
-            let on = std::env::var("BOEN_MODEL_STREAM").as_deref() == Ok("1");
-            eprintln!("启动配置:模型流式 = {on}");
+            let on = eff.stream;
+            eprintln!("启动配置:模型流式 = {on} (来源: config/model.json stream 优先, BOEN_MODEL_STREAM 环境变量兜底)");
             on
         },
         version: format!("{}-server", env!("CARGO_PKG_VERSION")),

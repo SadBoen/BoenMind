@@ -5,6 +5,7 @@ import { BoenmindRuntimeProvider } from "./w1/runtime";
 import { Thread } from "./w1/thread";
 import { SettingsPage } from "./w2/SettingsPage";
 import { WorkspaceFiles } from "./w2/WorkspaceFiles";
+import { MusicPlayer } from "./w2/MusicPlayer";
 import { Petals } from "./w3/Petals";
 import {
   useThemeBoot,
@@ -24,6 +25,7 @@ import {
   Folder,
   ClipboardList,
   FileText,
+  Music,
   Settings,
   Plus,
   RefreshCw,
@@ -242,6 +244,15 @@ function Rail({
       <button className="rail-btn" title="文档(规划中)">
         <FileText size={18} />
       </button>
+      <button
+        className="rail-btn"
+        title="音乐播放器"
+        onClick={() => {
+          window.dispatchEvent(new CustomEvent("bm-open-music"));
+        }}
+      >
+        <Music size={18} />
+      </button>
       <div className="rail-spacer" />
       <button
         className={"rail-btn" + (settingsActive ? " active" : "")}
@@ -295,7 +306,14 @@ function SessionPanel({ collapsed }: { collapsed: boolean }) {
 }
 
 function WorkspacePanel({ collapsed }: { collapsed: boolean }) {
-  const [tab, setTab] = useState<"files" | "artifacts" | "todos">("files");
+  const [tab, setTab] = useState<"files" | "music" | "artifacts" | "todos">("files");
+
+  useEffect(() => {
+    const handleOpenMusic = () => setTab("music");
+    window.addEventListener("bm-open-music", handleOpenMusic);
+    return () => window.removeEventListener("bm-open-music", handleOpenMusic);
+  }, []);
+
   const emptyText: Record<"artifacts" | "todos", string> = {
     artifacts: "产物面随 W 后续接入。",
     todos: "此会话暂无活动任务列表。",
@@ -329,6 +347,7 @@ function WorkspacePanel({ collapsed }: { collapsed: boolean }) {
         {(
           [
             ["files", "文件"],
+            ["music", "音乐"],
             ["artifacts", "产物"],
             ["todos", "待办"],
           ] as const
@@ -344,6 +363,8 @@ function WorkspacePanel({ collapsed }: { collapsed: boolean }) {
       </div>
       {tab === "files" ? (
         <WorkspaceFiles />
+      ) : tab === "music" ? (
+        <MusicPlayer />
       ) : (
         <div className="ws-empty">{emptyText[tab]}</div>
       )}

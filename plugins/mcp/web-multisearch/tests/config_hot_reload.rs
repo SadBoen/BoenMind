@@ -9,21 +9,31 @@
 //!
 //! 断言只依赖 searxng mock(永远成功),不依赖 ddgs/marginalia 等外网源
 //! 的可用性——它们的成败不影响本测试成立。
+//! (2026-09-03 修正:热重载证据 = mock B 收到请求(hit 标志),不再断言
+//! MARKER-B 排在融合结果首位——ddgs 恢复可用后其真实结果与 mock 在 RRF
+//! 中同分,截断后幸存者取决于 HashMap 遍历序,属环境敏感断言。)
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 struct Mock {
     port: u16,
+    /// 该 mock 是否被请求过(热重载的确定性证据)。
+    hit: Arc<AtomicBool>,
 }
 
 /// 起一个假 SearXNG(JSON API 形状):回显查询词进标题,固定两条结果。
 fn start_mock(marker: &'static str) -> Mock {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("mock bind");
     let port = listener.local_addr().expect("addr").port();
+    let hit = Arc::new(AtomicBool::new(false));
+    let hit_flag = hit.clone();
     std::thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(stream) = stream else { continue };
+            hit_flag.store(true, Ordering::SeqCst);
             std::thread::spawn(move || {
                 let mut buf = String::new();
                 {
@@ -77,7 +87,7 @@ fn start_mock(marker: &'static str) -> Mock {
             });
         }
     });
-    Mock { port }
+    Mock { port, hit }
 }
 
 fn write_config(path: &std::path::Path, searxng_url: &str, default_limit: u32) {
@@ -157,7 +167,7 @@ fn declarative_config_drives_and_hot_reloads() {
         &format!("http://127.0.0.1:{}", mock_b.port),
         1,
     );
-    std::thread::sleep(std::time::Duration::from_millis(80)); // 确保 mtime 变化
+    std::thread::sleep(std::time::Duration::from_millis(500)); // 确保 mtime 变化
 
     // 不带 args limit → 配置 default_limit=1 生效(Python 同款语义:args 优先于配置,
     // 故此处必须省略 args limit 才能验证配置项)
@@ -167,11 +177,13 @@ fn declarative_config_drives_and_hot_reloads() {
     let resp = recv();
     let sc = &resp["result"]["structuredContent"];
     assert_eq!(sc["success"], true, "热改后 searxng(mock B)仍应命中: {sc}");
+    // 热重载的确定性证据 1:default_limit=1 已生效(截断到 1 条)
     let web = sc["data"]["web"].as_array().expect("web");
     assert_eq!(web.len(), 1, "default_limit=1 应生效: {web:?}");
+    // 热重载的确定性证据 2:searxng 实际打到了 mock B(新配置已被读入)
     assert!(
-        web[0]["title"].as_str().unwrap().contains("MARKER-B"),
-        "应命中 MARKER-B(证明热读新配置): {:?}",
+        mock_b.hit.load(Ordering::SeqCst),
+        "searxng 应已切换到 mock B(证明热读新配置): {:?}",
         sc["meta"]
     );
 

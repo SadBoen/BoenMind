@@ -919,6 +919,9 @@ impl bm_persist::EventStore for FailingStore {
     ) -> bm_persist::error::StoreResult<()> {
         Ok(())
     }
+    fn delete_capability_binding(&self, _c: &str) -> bm_persist::error::StoreResult<()> {
+        Ok(())
+    }
     fn list_capability_bindings(&self) -> bm_persist::error::StoreResult<Vec<serde_json::Value>> {
         Ok(vec![])
     }

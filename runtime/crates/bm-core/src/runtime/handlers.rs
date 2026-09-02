@@ -870,3 +870,26 @@ pub(crate) fn handle_capabilities_register(
     }
     Ok(registered)
 }
+
+/// 热拔能力:从逻辑目录和持久层同步摘除。
+pub(crate) fn handle_capabilities_unregister(
+    w: &mut World,
+    capabilities: Vec<String>,
+) -> CoreResult<Vec<String>> {
+    if w.draining || w.persist_poisoned {
+        return Err(CoreError::Semantic(
+            ErrorCode::Unavailable,
+            "Runtime 排空中或持久层故障,拒绝能力注销".into(),
+        ));
+    }
+    let mut removed: Vec<String> = Vec::new();
+    for cap in capabilities {
+        if w.registry.unregister(&cap) {
+            if let Some(store) = &w.store {
+                let _ = store.delete_capability_binding(&cap);
+            }
+            removed.push(cap);
+        }
+    }
+    Ok(removed)
+}

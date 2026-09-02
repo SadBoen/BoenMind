@@ -148,6 +148,15 @@ impl CapabilityRegistry {
         Ok(1)
     }
 
+    /// 注销能力(热拔/重载移除;从逻辑目录、bindings 与缓存中彻底摘除)。
+    pub fn unregister(&mut self, capability: &str) -> bool {
+        let removed_m = self.manifests.remove(capability).is_some();
+        self.bindings.remove(capability);
+        self.cache.remove(capability);
+        self.async_exec.remove(capability);
+        removed_m
+    }
+
     /// 热替换(基线 §13.1 的注册面半边):原子切换 instance,epoch+1。
     /// 在途调用的授权-执行-审计归属由调用凭证中的旧 epoch 保全(Broker 侧)。
     pub fn switch_binding(

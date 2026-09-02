@@ -729,6 +729,26 @@ impl RuntimeHandle {
         })?
     }
 
+    /// 热拔/重载能力注销:从核心注册表及持久层摘除。
+    pub async fn capabilities_unregister(
+        &self,
+        capabilities: Vec<String>,
+    ) -> CoreResult<Vec<String>> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.tx
+            .send(Cmd::CapabilitiesUnregister {
+                capabilities,
+                resp: tx,
+            })
+            .await
+            .map_err(|_| {
+                CoreError::Semantic(ErrorCode::Unavailable, "Runtime 核心循环已退出".into())
+            })?;
+        rx.await.map_err(|_| {
+            CoreError::Semantic(ErrorCode::Unavailable, "Runtime 核心循环丢弃应答".into())
+        })?
+    }
+
     pub async fn task_autorun(
         &self,
         request_id: BmId,

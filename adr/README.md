@@ -23,6 +23,7 @@
 | [ADR-0013](ADR-0013-dsh-frontend-abandoned.md) | 弃用 dsh 复刻前端 | accepted | dsh 复刻 Web 前端全量删除(归档分支),换新参考界面重做 |
 | [ADR-0014](ADR-0014-webui-w-series-assistant-ui.md) | W 序列 WEBUI 技术路线 | accepted | assistant-ui 组件库自建壳+OpenAI 兼容插座;W 序列独立编号 |
 | [ADR-0015](ADR-0015-doc-consolidation.md) | 文档体系整理:熔入式修订与三层附页 | accepted | 基线增补熔入正文不挂引注块;HISTORY/PLAYBOOK/BACKLOG 三附页;milestones/README 导航 |
+| [ADR-0016](ADR-0016-skill-v0.2-scripts-broker-pipeline.md) | Skill v0.2 脚本执行架构与 Broker 管线覆盖 | accepted | wasmtime 运行时沙箱+WASM 为主零 Python+全量纳入 Broker 七步管线 |
 
 > 编号说明:ADR-0012 于 2026-08-31 随 M10 dsh 前端线归档(见 ADR-0013 编号说明),编号不回收;主干引用配置管理口径时以 config_store 现状与 W2/W4 规格为准。
 > 文体注:0001-0009 状态用小写 accepted(-with-conditions),0010/0011 起用 Accepted(日期)/已裁决(用户,日期)——语义等价,统一以本表为准。

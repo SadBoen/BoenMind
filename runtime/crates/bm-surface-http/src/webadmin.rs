@@ -482,14 +482,30 @@ fn write_mcp_servers(path: &Path, servers: &[Value]) -> Result<(), String> {
     std::fs::write(path, text).map_err(|e| format!("MCP 配置写入失败: {e}"))
 }
 
-/// 单条过合同 schema(mcp-server.v0_1,x-frozen;v0 仅 stdio 传输)。
+/// 单条过合同 schema(mcp-server.v0_1;支持 stdio / sse / http 传输)。
 fn validated_mcp_entry(body: &Value) -> Result<Value, String> {
+    let transport = body["transport"].as_str().unwrap_or("stdio");
     let mut entry = json!({
         "name": body["name"].as_str().unwrap_or(""),
-        "transport": "stdio",
-        "command": body["command"].as_str().unwrap_or(""),
-        "args": body["args"].as_array().cloned().unwrap_or_default(),
+        "transport": transport,
     });
+    if transport == "stdio" {
+        entry["command"] = json!(body["command"].as_str().unwrap_or(""));
+        entry["args"] = json!(body["args"].as_array().cloned().unwrap_or_default());
+    } else {
+        if let Some(url) = body["url"].as_str() {
+            entry["url"] = json!(url);
+        }
+        if let Some(tok) = body["bearer_token"].as_str() {
+            entry["bearer_token"] = json!(tok);
+        }
+        if let Some(cmd) = body["command"].as_str() {
+            entry["command"] = json!(cmd);
+        }
+        if let Some(args) = body["args"].as_array() {
+            entry["args"] = json!(args);
+        }
+    }
     if let Some(env) = body["env"].as_object() {
         entry["env"] = json!(env);
     }
@@ -581,7 +597,7 @@ pub async fn mcp_create(State(cfg): State<AdminConfig>, Json(body): Json<Value>)
     if let Err(e) = write_mcp_servers(&path, &servers) {
         return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
     }
-    Json(json!({ "ok": true, "note": "已落盘,重启服务器后生效" })).into_response()
+    Json(json!({ "ok": true, "note": "已落盘,点「重载 MCP」可免重启生效" })).into_response()
 }
 
 pub async fn mcp_update(
@@ -608,7 +624,7 @@ pub async fn mcp_update(
     if let Err(e) = write_mcp_servers(&path, &servers) {
         return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
     }
-    Json(json!({ "ok": true, "note": "已落盘,重启服务器后生效" })).into_response()
+    Json(json!({ "ok": true, "note": "已落盘,点「重载 MCP」可免重启生效" })).into_response()
 }
 
 pub async fn mcp_delete(
@@ -631,7 +647,7 @@ pub async fn mcp_delete(
     if let Err(e) = write_mcp_servers(&path, &servers) {
         return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
     }
-    Json(json!({ "ok": true, "note": "已从配置移除,重启服务器后生效" })).into_response()
+    Json(json!({ "ok": true, "note": "已从配置移除,点「重载 MCP」可免重启生效" })).into_response()
 }
 
 // ---- handler:多角色管理(W4b;config/roles.json,ADR-0012 口径)---------
@@ -1368,7 +1384,7 @@ fn zip_dir(dir: &std::path::Path) -> Result<Vec<u8>, String> {
                     format!("{prefix}/{}", entry.file_name().to_string_lossy())
                 };
                 if path.is_dir() {
-                    zip.add_directory(rel.clone(), options.clone())
+                    zip.add_directory(rel.clone(), *options)
                         .map_err(|e| format!("{e}"))?;
                     walk(zip, options, &rel, &path, count, total)?;
                 } else {
@@ -1381,7 +1397,7 @@ fn zip_dir(dir: &std::path::Path) -> Result<Vec<u8>, String> {
                     if *total > FS_DOWNLOAD_LIMIT {
                         return Err("总量超过 256MB,拒绝打包".into());
                     }
-                    zip.start_file(rel.clone(), options.clone())
+                    zip.start_file(rel.clone(), *options)
                         .map_err(|e| format!("{e}"))?;
                     std::io::Write::write_all(zip, &data).map_err(|e| format!("{e}"))?;
                 }
@@ -1777,13 +1793,16 @@ pub fn admin_routes(cfg: AdminConfig) -> axum::Router {
         .with_state((*cfg).clone())
 }
 
-// ---- handler:MCP 热装载(v0 收敛:只装载新增 server,免重启)---------------
+// ---- handler:MCP 热装载(支持新增、修改与删除免重启)---------------
 
-/// 重载 MCP 配置:读 mcp.json 全量,对比已装载名单,**仅对新增条目**执行
-/// spawn+握手+运行期注册(修改/删除仍需重启,v0 收敛边界,UI 明示)。
-/// 装载成功后刷新 AdminConfig.mcp_servers 快照(插件清单页可见)。
+/// 重载 MCP 配置:读 mcp.json 全量,与已装载名单对比:
+/// - 已移除的 server:从 hub 摘除路由、发送 shutdown 通知,从 Registry/Persist 摘除能力
+/// - 修改/保留的 server (如配置变更):先热拔旧 server,再用新配置重新握手连接并更新能力
+/// - 新增的 server:spawn+握手+运行期注册
+///
+/// 装载完成后刷新 AdminConfig.mcp_servers 快照。
 pub async fn mcp_reload(State(cfg): State<AdminConfig>) -> Response {
-    use bm_providers::mcp::{McpHub, StdioMcpTransport};
+    use bm_providers::mcp::McpHub;
 
     let Some(path) = cfg.mcp_config.clone() else {
         return admin_error(
@@ -1805,37 +1824,46 @@ pub async fn mcp_reload(State(cfg): State<AdminConfig>) -> Response {
         Ok(servers) => servers,
         Err(e) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e),
     };
-    let loaded_names: Vec<String> = cfg
+
+    let loaded_servers: Vec<Value> = cfg
         .mcp_servers
         .read()
-        .map(|g| {
-            g.iter()
-                .filter_map(|s| s["name"].as_str().map(|n| n.to_string()))
-                .collect()
-        })
+        .map(|g| g.clone())
         .unwrap_or_default();
-    let fresh: Vec<Value> = servers
+    let loaded_names: Vec<String> = loaded_servers
         .iter()
-        .filter(|s| {
-            let n = s["name"].as_str().unwrap_or("");
-            !n.is_empty() && !loaded_names.iter().any(|l| l == n)
-        })
-        .cloned()
+        .filter_map(|s| s["name"].as_str().map(|n| n.to_string()))
         .collect();
-    if fresh.is_empty() {
-        return Json(json!({
-            "ok": true,
-            "registered": [],
-            "failed": [],
-            "note": "无新增 server(修改/删除条目仍需重启服务器)",
-        }))
-        .into_response();
+
+    let target_names: Vec<String> = servers
+        .iter()
+        .filter_map(|s| s["name"].as_str().map(|n| n.to_string()))
+        .filter(|n| !n.is_empty())
+        .collect();
+
+    // 1. 处理需要移除的 server (在 loaded 中但不在 target 中)
+    let mut uninstalled: Vec<String> = Vec::new();
+    for name in &loaded_names {
+        if !target_names.contains(name) {
+            let removed_caps = hub.disconnect_server(name).await;
+            if !removed_caps.is_empty() {
+                let _ = cfg.handle.capabilities_unregister(removed_caps).await;
+            }
+            uninstalled.push(name.clone());
+        }
     }
 
+    // 2. 重新扫描/连接 target 中的每一个 server (支持新增与修改更新)
     let mut registered: Vec<String> = Vec::new();
+    let mut updated: Vec<String> = Vec::new();
     let mut failed: Vec<Value> = Vec::new();
-    for item in &fresh {
+    let mut next_loaded_snapshot: Vec<Value> = Vec::new();
+
+    for item in &servers {
         let name = item["name"].as_str().unwrap_or("").to_string();
+        if name.is_empty() {
+            continue;
+        }
         let command = item["command"].as_str().unwrap_or("").to_string();
         let args: Vec<String> = item["args"]
             .as_array()
@@ -1846,7 +1874,16 @@ pub async fn mcp_reload(State(cfg): State<AdminConfig>) -> Response {
             })
             .unwrap_or_default();
         let timeout = item["tool_timeout_ms"].as_u64().unwrap_or(30_000);
-        // env 解析:配置文件里的 secret: 引用走与启动装载同一 SecretStore 链
+
+        // 如果是已存在的 server，先从 hub 摘除旧路由和注销旧能力
+        if loaded_names.contains(&name) {
+            let removed_caps = hub.disconnect_server(&name).await;
+            if !removed_caps.is_empty() {
+                let _ = cfg.handle.capabilities_unregister(removed_caps).await;
+            }
+        }
+
+        // env 解析:配置文件里的 secret: 引用走 SecretStore
         let setup = match bm_providers::mcp::load_mcp_setups(&path, secrets.as_ref()) {
             Ok(setups) => setups.into_iter().find(|s| s.name == name),
             Err(e) => {
@@ -1857,24 +1894,42 @@ pub async fn mcp_reload(State(cfg): State<AdminConfig>) -> Response {
         let Some(setup) = setup else {
             continue;
         };
+
         let loaded = async {
-            let transport = StdioMcpTransport::spawn(&command, &args, &setup.env_resolved)
-                .map_err(|e| e.to_string())?;
+            let transport: Arc<dyn bm_providers::mcp::McpTransport> = match setup.transport.as_str()
+            {
+                "http" | "sse" | "streamable-http" => {
+                    let url = setup
+                        .url
+                        .as_deref()
+                        .ok_or_else(|| "远程 MCP 缺少 url 字段".to_string())?;
+                    bm_providers::mcp::HttpMcpTransport::new(url, setup.bearer_token.clone())
+                }
+                _ => bm_providers::mcp::StdioMcpTransport::spawn(
+                    &command,
+                    &args,
+                    &setup.env_resolved,
+                )
+                .map_err(|e| e.to_string())?,
+            };
             hub.connect(&name, transport, timeout)
                 .await
                 .map_err(|e| e.to_string())
         }
         .await;
+
         match loaded {
             Ok(manifests) => {
                 let count = manifests.len();
                 let entries = McpHub::capability_entries(manifests);
                 match cfg.handle.capabilities_register(entries).await {
-                    Ok(names) => {
-                        registered.extend(names);
-                        if let Ok(mut g) = cfg.mcp_servers.write() {
-                            g.push(json!({"name": name, "tools": count}));
+                    Ok(_names) => {
+                        if loaded_names.contains(&name) {
+                            updated.push(name.clone());
+                        } else {
+                            registered.push(name.clone());
                         }
+                        next_loaded_snapshot.push(json!({"name": name, "tools": count}));
                     }
                     Err(e) => failed.push(json!({"name": name, "error": format!("{e}")})),
                 }
@@ -1882,11 +1937,18 @@ pub async fn mcp_reload(State(cfg): State<AdminConfig>) -> Response {
             Err(e) => failed.push(json!({"name": name, "error": e})),
         }
     }
+
+    if let Ok(mut g) = cfg.mcp_servers.write() {
+        *g = next_loaded_snapshot;
+    }
+
     Json(json!({
         "ok": failed.is_empty(),
         "registered": registered,
+        "updated": updated,
+        "uninstalled": uninstalled,
         "failed": failed,
-        "note": "新增已装载;修改/删除条目仍需重启服务器",
+        "note": "MCP 服务已完成热重载(支持新增、修改与卸载免重启)",
     }))
     .into_response()
 }

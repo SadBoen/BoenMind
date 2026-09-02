@@ -1,8 +1,6 @@
 name: release
 
-# W7 起(2026-09-02):linux + windows 双平台 .tar.gz(在线升级按平台选资产);
-# 统一由 release 作业收集建 Release。⚠ 铁规矩(用户 2026-09-02 明示):打 tag
-# 发布必须用户明确说,任何自动化/代理不得自行发版。
+# Linux 服务器发布线(Linux x86_64 .tar.gz)
 on:
   workflow_dispatch:
   push:
@@ -12,16 +10,8 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            name: linux-x86_64
-          - os: windows-latest
-            name: windows-x86_64
-    runs-on: ${{ matrix.os }}
+  build-linux:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.98.0
@@ -55,61 +45,36 @@ jobs:
         working-directory: plugins/mcp/web-multisearch
         run: cargo build --release
 
-      - name: 打包(Windows)
-        if: runner.os == 'Windows'
-        shell: bash
-        run: |
-          VER="${GITHUB_REF_NAME#v}"
-          PKG="boenmind-${VER}-windows-x86_64"
-          mkdir -p "${PKG}/webapp" "${PKG}/plugins"
-          cp runtime/target/release/boenmind-server.exe "${PKG}/"
-          cp -r runtime/webapp/dist "${PKG}/webapp/dist"
-          cp plugins/mcp/web-multisearch/target/release/web-multisearch.exe "${PKG}/plugins/"
-          cp plugins/mcp/web-multisearch/README.md "${PKG}/plugins/web-multisearch-README.md"
-          cp packaging/INSTALL.md "${PKG}/INSTALL.md"
-          tar czf "${PKG}.tar.gz" "${PKG}"
-          ls -la "${PKG}.tar.gz"
-
       - name: 打包(Linux)
-        if: runner.os == 'Linux'
         run: |
           VER="${GITHUB_REF_NAME#v}"
           PKG="boenmind-${VER}-linux-x86_64"
-          mkdir -p "${PKG}/webapp" "${PKG}/plugins"
+          mkdir -p "${PKG}/webapp" "${PKG}/plugins" "${PKG}/apps"
           cp runtime/target/release/boenmind-server "${PKG}/"
           cp -r runtime/webapp/dist "${PKG}/webapp/dist"
           cp plugins/mcp/web-multisearch/target/release/web-multisearch "${PKG}/plugins/"
           cp plugins/mcp/web-multisearch/README.md "${PKG}/plugins/web-multisearch-README.md"
-          cp packaging/INSTALL.md "${PKG}/INSTALL.md"
+          cp apps/*.py "${PKG}/apps/" 2>/dev/null || true
+          cp apps/mcp-config.example.json "${PKG}/apps/" 2>/dev/null || true
+          cp packaging/INSTALL.md "${PKG}/INSTALL.md" 2>/dev/null || true
           tar czf "${PKG}.tar.gz" "${PKG}"
           ls -la "${PKG}.tar.gz"
+          sha256sum "${PKG}.tar.gz" > SHA256SUMS.txt
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: pkg-${{ matrix.name }}
-          path: boenmind-*.tar.gz
-          if-no-files-found: error
-
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          merge-multiple: true
-      - name: 校验和 + 发布
+      - name: 创建 GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          sha256sum boenmind-*.tar.gz > SHA256SUMS.txt
           VER="${GITHUB_REF_NAME#v}"
           gh release create "${GITHUB_REF_NAME}" \
             boenmind-*.tar.gz SHA256SUMS.txt \
             --title "BoenMind ${GITHUB_REF_NAME}" \
-            --notes "BoenMind ${GITHUB_REF_NAME}(Linux x86_64 + Windows x86_64)。
+            --notes "BoenMind ${GITHUB_REF_NAME} (Linux x86_64).
 
-          包内:boenmind-server(AI Runtime 服务器+网页界面)、plugins/web-multisearch(官方自带聚合搜索 MCP 插件)、webapp/dist(预构建前端)、安装说明。
+          包含:
+          - boenmind-server: AI OS / Runtime 服务器核心
+          - webapp/dist: 最新 Web UI 预构建前端 (含音乐播放器、多角色管理、上下文透视、MCP 管理与完整热插拔等)
+          - plugins/web-multisearch: 官方自带聚合搜索 MCP 插件
+          - apps/: 包含音乐播放器 (music_server.py)、Wiki (wiki_server.py)、Market (market_server.py) 等首批真实 App
 
-          安装:解压后执行 boenmind-server,详见仓库 README「安装」一节;
-          已装用户可在 网页 → 设置 → 关于 一键在线升级到本版本。
-          需要 OpenSSL 3(Linux;Ubuntu 22.04+/Debian 12+ 默认自带),无需 Node/Python。"
+          支持在网页端 设置 -> 关于 中执行一键在线升级。"
