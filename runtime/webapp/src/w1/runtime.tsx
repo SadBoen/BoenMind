@@ -8,6 +8,7 @@ import {
 } from "@assistant-ui/react";
 import type { AppendMessage, ThreadMessageLike } from "@assistant-ui/react";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { storage, STORAGE_KEYS } from "@/lib/storage";
 
 type TextPart = { type: "text"; text: string };
 
@@ -129,16 +130,16 @@ export function BoenmindRuntimeProvider({
         const headers: Record<string, string> = {
           "Content-Type": "application/json",
         };
-        const sid = withSession ? localStorage.getItem("bm_session") : null;
+        const sid = withSession ? storage.get(STORAGE_KEYS.SESSION) : null;
         if (sid) headers["X-Bm-Session"] = sid;
-        const roleId = localStorage.getItem("bm_active_role");
+        const roleId = storage.get(STORAGE_KEYS.ACTIVE_ROLE);
         if (roleId) headers["X-Bm-Role"] = roleId;
         return fetch("/v1/chat/completions", {
           method: "POST",
           headers,
           body: JSON.stringify({
             // W6:随消息携带所选模型(localStorage 持久化;空 = "auto" = 服务器默认)
-            model: localStorage.getItem("bm_active_model") || "auto",
+            model: storage.get(STORAGE_KEYS.ACTIVE_MODEL) || "auto",
             stream: true,
             messages: [{ role: "user", content: text }],
           }),
@@ -148,7 +149,7 @@ export function BoenmindRuntimeProvider({
       let res = await doFetch(true);
       // 服务器重启会清空内存会话表:400「未知会话」→ 清记忆重开新会话重试一次
       if (res.status === 400) {
-        localStorage.removeItem("bm_session");
+        storage.remove(STORAGE_KEYS.SESSION);
         res = await doFetch(false);
       }
       if (!res.ok || !res.body) {
@@ -156,7 +157,7 @@ export function BoenmindRuntimeProvider({
         throw new Error(`HTTP ${res.status} ${detail.slice(0, 160)}`);
       }
       const newSid = res.headers.get("x-bm-session");
-      if (newSid) localStorage.setItem("bm_session", newSid);
+      if (newSid) storage.set(STORAGE_KEYS.SESSION, newSid);
 
       const reader = res.body.getReader();
       const dec = new TextDecoder();
@@ -215,7 +216,7 @@ export function BoenmindRuntimeProvider({
   useEffect(() => {
     const onNewChat = () => {
       abortRef.current?.abort();
-      localStorage.removeItem("bm_session");
+      storage.remove(STORAGE_KEYS.SESSION);
       setMessages([]);
     };
     window.addEventListener("bm-chat-new", onNewChat);

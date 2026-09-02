@@ -10,12 +10,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-
-const PIN_KEY = "bm_plugin_pins";
+import { storage, STORAGE_KEYS } from "@/lib/storage";
 
 export function readPins(): string[] {
   try {
-    const raw = localStorage.getItem(PIN_KEY);
+    const raw = storage.get(STORAGE_KEYS.PINS);
     return raw ? (JSON.parse(raw) as string[]) : [];
   } catch {
     return [];
@@ -23,7 +22,7 @@ export function readPins(): string[] {
 }
 
 export function writePins(pins: string[]) {
-  localStorage.setItem(PIN_KEY, JSON.stringify(pins));
+  storage.set(STORAGE_KEYS.PINS, JSON.stringify(pins));
 }
 
 export type PluginEntry = {

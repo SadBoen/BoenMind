@@ -5,6 +5,7 @@
 @import "tw-shimmer";
 
 :root {
+  /* 主设计令牌 (Tailwind / shadcn / W3 主题覆盖基线) */
   --background: #ffffff;
   --foreground: #171717;
   --card: #ffffff;
@@ -24,7 +25,20 @@
   --border: #e5e7eb;
   --input: #e5e7eb;
   --ring: #2563eb;
-  --radius: 0.5rem;
+  --radius: 8px;
+
+  /* W1 布局别名映射到统一主变量 (保障全站换肤连带生效) */
+  --bg-page: var(--background);
+  --bg-panel: #fafafa;
+  --bg-hover: var(--secondary);
+  --bg-select: var(--accent);
+  --fg-1: var(--foreground);
+  --fg-2: var(--muted-foreground);
+  --fg-3: #a3a3a3;
+  --accent-soft: #dbeafe;
+  --danger: var(--destructive);
+  --font-ui: system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, Consolas, "Cascadia Mono", monospace;
 
   /* 状态反馈语义变量(全主题自适应,杜绝页面内硬编码 bg-*-50) */
   --state-success-bg: #ecfdf5;
@@ -72,24 +86,6 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
-}
-
-:root {
-  --bg-page: #ffffff;
-  --bg-panel: #fafafa;
-  --bg-hover: #f4f4f5;
-  --bg-select: #eff6ff;
-  --border: #e5e7eb;
-  --fg-1: #171717;
-  --fg-2: #525252;
-  --fg-3: #a3a3a3;
-  --accent: #2563eb;
-  --accent-soft: #dbeafe;
-  --danger: #dc2626;
-  --radius: 8px;
-  --radius-sm: 6px;
-  --font-ui: system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
-  --font-mono: ui-monospace, Consolas, "Cascadia Mono", monospace;
 }
 
 * { box-sizing: border-box; }

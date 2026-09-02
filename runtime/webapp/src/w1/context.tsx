@@ -8,6 +8,7 @@ import { api, type CtxStep } from "../w2/api";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { storage, STORAGE_KEYS } from "@/lib/storage";
 
 const CATS = {
   system: { label: "系统提示词", color: "#6366f1" },
@@ -119,7 +120,7 @@ export function ContextView() {
     return () => clearInterval(t);
   }, [auto, refresh]);
 
-  const sid = localStorage.getItem("bm_session");
+  const sid = storage.get(STORAGE_KEYS.SESSION);
   // 时序新→旧;「仅当前会话」默认开(看别的会话可切)
   const visible = useMemo(() => {
     const list = onlyCurrent && sid ? steps.filter((s) => s.session_id === sid) : steps;

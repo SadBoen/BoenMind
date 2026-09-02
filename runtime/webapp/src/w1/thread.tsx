@@ -19,8 +19,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
 import { ContextView } from "./context";
 import { useBoenmindApprovals, type ApprovalRequest } from "./runtime";
+import { api } from "@/w2/api";
+import { storage, STORAGE_KEYS } from "@/lib/storage";
 
 export function Thread({
   sessionsCollapsed,
@@ -233,29 +236,6 @@ function ApprovalCard({
   );
 }
 
-// 小型本地 Button(避免从 w2 引入造成循环依赖;size/variant 仅作兼容占位)
-function Button({
-  children,
-  className = "",
-  ...rest
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & {
-  children: React.ReactNode;
-  size?: string;
-  variant?: string;
-}) {
-  return (
-    <button
-      className={
-        "bg-primary text-primary-foreground hover:bg-primary/90 inline-flex h-8 items-center justify-center gap-1.5 rounded-md px-3 text-[12.5px] font-medium transition-colors disabled:opacity-50 " +
-        className
-      }
-      {...rest}
-    >
-      {children}
-    </button>
-  );
-}
-
 function UserMessage() {
   return (
     <MessagePrimitive.Root className="msg user">
@@ -298,16 +278,15 @@ function Composer() {
   // 选择持久化 localStorage,随每条消息发给后端,中途切换下一条即生效。
   const [modelGroups, setModelGroups] = useState<Array<{ provider: string; models: string[] }>>([]);
   const [selModel, setSelModel] = useState<string>(
-    () => localStorage.getItem("bm_active_model") || "",
+    () => storage.get(STORAGE_KEYS.ACTIVE_MODEL) || "",
   );
   const [roles, setRoles] = useState<Array<{ id: string; name: string }>>([]);
   const [activeRole, setActiveRole] = useState<string>(
-    () => localStorage.getItem("bm_active_role") || "",
+    () => storage.get(STORAGE_KEYS.ACTIVE_ROLE) || "",
   );
 
   const loadModels = () => {
-    fetch("/admin/providers")
-      .then((r) => r.json())
+    api.providers.list()
       .then((d) => {
         const list: Array<{ provider: string; models: string[] }> = (d?.providers ?? [])
           .filter((p: any) => (p.modelsCommon ?? []).length > 0)
@@ -315,9 +294,9 @@ function Composer() {
         setModelGroups(list);
         // 已选模型不在候选集(被取消勾选/删除)→ 回落服务器默认
         const all = new Set(list.flatMap((g: any) => g.models));
-        const cur = localStorage.getItem("bm_active_model") || "";
+        const cur = storage.get(STORAGE_KEYS.ACTIVE_MODEL) || "";
         if (cur && !all.has(cur)) {
-          localStorage.removeItem("bm_active_model");
+          storage.remove(STORAGE_KEYS.ACTIVE_MODEL);
           setSelModel("");
         }
       })
@@ -325,16 +304,15 @@ function Composer() {
   };
 
   const loadRoles = () => {
-    fetch("/admin/roles")
-      .then((r) => r.json())
+    api.roles.get()
       .then((d) => {
         if (d.roles && Array.isArray(d.roles)) {
           setRoles(d.roles);
-          const current = localStorage.getItem("bm_active_role");
+          const current = storage.get(STORAGE_KEYS.ACTIVE_ROLE);
           if (!current || !d.roles.some((r: any) => r.id === current)) {
             const next = d.active_id || d.roles[0]?.id || "assistant";
             setActiveRole(next);
-            localStorage.setItem("bm_active_role", next);
+            storage.set(STORAGE_KEYS.ACTIVE_ROLE, next);
           } else {
             setActiveRole(current);
           }
@@ -361,7 +339,7 @@ function Composer() {
 
   const handleRoleChange = (newRoleId: string) => {
     setActiveRole(newRoleId);
-    localStorage.setItem("bm_active_role", newRoleId);
+    storage.set(STORAGE_KEYS.ACTIVE_ROLE, newRoleId);
     // 切换角色时清空旧会话并重开，使新角色的 system_prompt 立即绑定
     window.dispatchEvent(new CustomEvent("bm-chat-new"));
   };
@@ -403,8 +381,8 @@ function Composer() {
           onValueChange={(v) => {
             const val = v === "__default__" ? "" : v;
             setSelModel(val);
-            if (val) localStorage.setItem("bm_active_model", val);
-            else localStorage.removeItem("bm_active_model");
+            if (val) storage.set(STORAGE_KEYS.ACTIVE_MODEL, val);
+            else storage.remove(STORAGE_KEYS.ACTIVE_MODEL);
           }}
         >
           <SelectTrigger

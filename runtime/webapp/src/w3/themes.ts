@@ -6,6 +6,23 @@
 // 裁定(§4):文字大小属全局偏好不入主题(全局在 AppearancePage,存
 // bm_prefs);字体可入主题(卡通);背景图按主题开启(仅玻璃)。
 import { useEffect } from "react";
+import { storage, STORAGE_KEYS } from "@/lib/storage";
+
+// 安全清洗背景图 URL，严格杜绝 CSS url() 逃逸与 XSS 协议
+function sanitizeImageUrl(raw: unknown): string {
+  if (typeof raw !== "string" || !raw.trim()) return "/themes/sakura.jpg";
+  const trimmed = raw.trim();
+  // 仅允许内置相对路径、http(s) 协议及 base64 图片
+  const isSafe =
+    trimmed.startsWith("/themes/") ||
+    trimmed.startsWith("http://") ||
+    trimmed.startsWith("https://") ||
+    trimmed.startsWith("data:image/");
+  if (!isSafe) return "/themes/sakura.jpg";
+  // 严格过滤引号、反斜杠及换行符
+  const cleaned = trimmed.replace(/["'\\\r\n]/g, "");
+  return encodeURI(cleaned);
+}
 
 export type ThemeFieldValue =
   | string
@@ -283,10 +300,10 @@ export const THEMES: Record<ThemeDef["id"], ThemeDef> = {
         type: "image",
         default: "/themes/sakura.jpg",
         apply: (v, set) => {
-          const img = typeof v === "string" && v ? v : "/themes/sakura.jpg";
+          const img = sanitizeImageUrl(v);
           set(
             "--glass-bg-image",
-            `url("${img.replace(/"/g, "%22")}")`,
+            `url("${img}")`,
           );
         },
       },
@@ -312,8 +329,6 @@ export const THEME_ORDER: ThemeDef["id"][] = [
   "glass",
 ];
 
-const THEME_KEY = "bm_theme"; // { theme, settings: { [themeId]: {...} } }
-
 export type ThemeState = {
   theme: ThemeDef["id"];
   settings: Partial<Record<ThemeDef["id"], Record<string, ThemeFieldValue>>>;
@@ -321,7 +336,7 @@ export type ThemeState = {
 
 export function loadThemeState(): ThemeState {
   try {
-    const raw = localStorage.getItem(THEME_KEY);
+    const raw = storage.get(STORAGE_KEYS.THEME);
     if (raw) {
       const v = JSON.parse(raw) as ThemeState;
       if (v.theme && THEME_ORDER.includes(v.theme)) return v;
@@ -333,17 +348,17 @@ export function loadThemeState(): ThemeState {
 }
 
 export function saveThemeState(s: ThemeState) {
-  localStorage.setItem(THEME_KEY, JSON.stringify(s));
+  storage.set(STORAGE_KEYS.THEME, JSON.stringify(s));
 }
 
 /** 全局偏好(§4:文字大小与主题无关)。 */
 export function loadFontPref(): number {
-  const v = Number(localStorage.getItem("bm_font_size"));
+  const v = Number(storage.get(STORAGE_KEYS.FONT_SIZE));
   return v >= 11 && v <= 17 ? v : 13.5;
 }
 
 export function saveFontPref(px: number) {
-  localStorage.setItem("bm_font_size", String(px));
+  storage.set(STORAGE_KEYS.FONT_SIZE, String(px));
 }
 
 /** 把主题+设置项应用到 <html>(data-theme + inline 变量;先清后写防残留)。 */

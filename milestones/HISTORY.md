@@ -47,6 +47,7 @@
 | 修抽屉收放布局散架 | 2026-09-02 | (见 git) | 浏览器落位断言三态全过 | **用户截图报障**:收 SESSION 后聊天区整片空白、WORKSPACE 挤成细条——根因=收起时条件卸载分隔条,网格子元素数(5)与模板列数(6)不匹配,自动错位一格(聊天进 0px 列、WORKSPACE 落 5px 列);修=分隔条始终渲染,收起时仅 visibility:hidden+禁指针;教训=网格布局验收必须断言各面板落位(x/w),只量轨道宽/单面板宽会漏错位(本轮初验即栽在这) |
 | 界面反馈:上拉菜单+目录树右键 | 2026-09-02 | (见 git) | curl+浏览器实测 | ①输入框两下拉改上弹(side=top),去「默认」字样,Provider 名 12.5px/600 vs 模型名 12px 缩进,在用项打钩移到名字前;②目录树右键菜单=重命名(对话框)/复制绝对/相对路径/下载/文件夹打包下载 zip——后端新增 /admin/fs/rename + /admin/fs/download(safe_resolve 防逃逸,256MB/5000 条目守门,Content-Disposition 含 RFC5987 中文名);③rail 图标 fg-3→fg-2 加深;多选打包留候选(需先做树多选 UX) |
 | 前端美学设计系统全面整构与统一 | 2026-09-02 | (见 git) | build绿+contracts绿+291测试绿 | ①全域消除硬编码色彩补丁(建立 --state-success/warn/error 语义令牌及 .notice-* 全局类,替换 8 页面写死 Tailwind 色);②规范 Z-Index 标阶(--z-base/splitter/drawer/settings/dropdown/modal/popover/toast,修复 Dialog 与 SettingsPage 混乱);③玻璃主题弹层全面毛玻璃化(右键菜单/Dialog/审批卡片/文件预览加 backdrop-filter 与半透白底,消除实体色块遮挡);④特质化下潜(古典温润纸墨色/卡通底部色影/玻璃弹窗遮罩模糊);⑤字阶标尺收敛(消除任意小数点像素,统一 5 级阶梯)+ Button 微交互触感(active:scale-[0.97]) |
+| 前端工程架构与规范深度治理(评审闭环) | 2026-09-02 | (见 git) | build绿+contracts绿+291测试绿 | 采纳外部架构评审有效建议并闭环:①统一 CSS 变量源(消除 styles.css 中 --radius 与 :root 双重声明,让 shadcn/Tailwind 变量作为唯一基线);②移除 thread.tsx 中重复定义的 local Button,回归统一 @/components/ui/button;③加固 themes.ts 背景图 URL 白名单清洗(防范 CSS url() 逃逸与 XSS 注入);④抽象统一 storage.ts 常量定义与安全存取器,根治全站 7 处 localStorage 魔法字符串;⑤Composer 异步请求归入 api.ts;⑥清理 surfaces.tsx 死代码;远期项(McpPage 拆分/ESLint CI)登记 BACKLOG §7 |
 
 ## W 序列验收惯例
 

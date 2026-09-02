@@ -81,3 +81,11 @@
 - 合同 Minor 三笔:tools maxItems 0→16 / finish_reason 加 tool_calls / invoke_response 加 tool_calls(commit 40988a7,W4)。
 - PENDING.md 的 11 条 D-M 系列 user 裁决全部闭合(见 milestones/PENDING.md 表)。
 - S5(S4 部分实现)、S9(verification 三分法,M5/M7)裁决见 FULL-REVIEW §2.4。
+
+## 7. 前端架构演进与代码质量(2026-09-02 外部评审登记)
+
+| 条目 | 来源 | 状态 |
+|---|---|---|
+| McpPage.tsx 组件解耦(714 行拆分子表单/子对话框) | 前端外部评审 | OPEN |
+| 前端静态分析集成(ESLint + Stylelint 接入 CI) | 前端外部评审 | OPEN |
+

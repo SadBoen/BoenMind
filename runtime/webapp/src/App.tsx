@@ -13,6 +13,7 @@ import {
   type ThemeDef,
 } from "./w3/themes";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { storage, STORAGE_KEYS } from "@/lib/storage";
 
 type ThemeId = ThemeDef["id"];
 import {
@@ -29,7 +30,6 @@ import {
 } from "lucide-react";
 
 // 三栏宽度持久化(W2 验收门 4:刷新后布局保持);W7 反馈:左右栏抽屉收放状态同库持久化
-const LAYOUT_KEY = "bm_layout";
 type Layout = {
   sessions: number;
   workspace: number;
@@ -49,7 +49,7 @@ const LIMITS = {
 
 function loadLayout(): Layout {
   try {
-    const raw = localStorage.getItem(LAYOUT_KEY);
+    const raw = storage.get(STORAGE_KEYS.LAYOUT);
     if (!raw) return DEFAULT_LAYOUT;
     const v = JSON.parse(raw) as Partial<Layout>;
     return {
@@ -89,7 +89,7 @@ export default function App() {
 
   const saveLayout = useCallback((next: Layout) => {
     setLayout(next);
-    localStorage.setItem(LAYOUT_KEY, JSON.stringify(next));
+    storage.set(STORAGE_KEYS.LAYOUT, JSON.stringify(next));
   }, []);
 
   const togglePanel = useCallback(
@@ -97,7 +97,7 @@ export default function App() {
       setLayout((cur) => {
         const key = side === "sessions" ? "sessionsCollapsed" : "workspaceCollapsed";
         const next = { ...cur, [key]: !cur[key] } as Layout;
-        localStorage.setItem(LAYOUT_KEY, JSON.stringify(next));
+        storage.set(STORAGE_KEYS.LAYOUT, JSON.stringify(next));
         return next;
       });
     },
