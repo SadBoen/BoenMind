@@ -292,3 +292,62 @@ async fn t154_autorun_max_turns_blocks_task() {
     assert_eq!(evs.last().unwrap().1, 2, "恰好两轮");
     let _ = OperationState::Succeeded; // 保持导入(收据口径备注)
 }
+
+/// F-10(审计缺口)验收:继续推进时 send_input 失败(此处=会话被关闭,
+/// INV-6 关闭不取消在途回合)→ 自主环以 finished/send_failed 收口,不悬挂。
+#[tokio::test]
+async fn t155_autorun_send_failed_finishes_loop() {
+    let (handle, ids) = rig(vec![Step::ok_after("第一轮完成", 300)]).await;
+    let task_id = running_task(&handle, &ids).await;
+    let sessions_before = handle
+        .events_all()
+        .await
+        .iter()
+        .filter(|e| e.event_type == EventType::SessionCreated)
+        .count();
+    handle
+        .task_autorun(
+            ids.next_id("req"),
+            bm_contract::wire::TaskAutorunParams {
+                task_id: task_id.clone(),
+                max_turns: Some(3),
+            },
+        )
+        .await
+        .expect("受理");
+    // 找到自主环自建的会话(agent 名 = autorun-<task_id>)
+    let session_id: bm_contract::ids::BmId = handle
+        .events_all()
+        .await
+        .iter()
+        .filter(|e| e.event_type == EventType::SessionCreated)
+        .nth(sessions_before)
+        .map(|e| e.session_id.clone().expect("会话 id"))
+        .expect("自主环会话应创建");
+    // 回合仍在途时关闭会话(INV-6:close 不取消在途回合)→ 续推 send_input 必败
+    handle
+        .session_close(
+            ids.next_id("req"),
+            bm_contract::wire::SessionCloseParams {
+                session_id: session_id.clone(),
+                reason: Some("send_failed_test".into()),
+            },
+        )
+        .await
+        .expect("关闭");
+    let mut final_reason = None;
+    for _ in 0..300 {
+        let evs = autorun_events(&handle).await;
+        if evs.last().is_some_and(|(p, _, _)| p == "finished") {
+            final_reason = evs.last().unwrap().2.clone();
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(
+        final_reason.as_deref(),
+        Some("send_failed"),
+        "send_input 失败应使自主环以 send_failed 收口:{final_reason:?}"
+    );
+    let _ = OperationState::Succeeded; // 保持导入
+}

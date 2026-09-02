@@ -131,32 +131,20 @@ pub(crate) fn spawn_turn(w: &mut World, agent: &Agent, operation_id: &BmId, cont
     let op_id = operation_id.clone();
     let streaming = w.config.model_streaming;
     // W4b 对话工具闭环升级:全部 chat 能力(直通+审批类)均暴露给模型;
-    // W4b 角色 prompt 优先级:
-    // ① agent 自身绑定的 system_prompt(会话级指定);
-    // ② 若无,读 config/roles.json 激活角色的 system_prompt(设置页保存即热生效)。
+    // W4b 角色 prompt:会话级指定优先(会话创建时烤入的完整提示词,含技能);
+    // 否则每回合现读 roles.json+skills.json 组装(设置页保存即热生效)。
+    // 组装逻辑唯一入口 = bm-core::roles::compose_role_prompt(两条路径同口径)。
     let chat_tools: Vec<(String, serde_json::Value, bool)> = w.registry.chat_tools();
     let role_prompt: Option<String> = agent
         .system_prompt
         .clone()
+        .filter(|s| !s.is_empty())
         .or_else(|| {
-            let text =
-                w.config.data_dir.as_ref().and_then(|d| {
-                    std::fs::read_to_string(d.join("config").join("roles.json")).ok()
-                })?;
-            let v: serde_json::Value = serde_json::from_str(&text).ok()?;
-            // 兼容多角色结构 (roles + active_id) 与旧单角色结构
-            if let Some(roles) = v["roles"].as_array() {
-                let active_id = v["active_id"].as_str().unwrap_or("assistant");
-                roles
-                    .iter()
-                    .find(|r| r["id"].as_str() == Some(active_id))
-                    .or_else(|| roles.first())
-                    .and_then(|r| r["system_prompt"].as_str().map(|s| s.to_string()))
-            } else {
-                v["system_prompt"].as_str().map(|s| s.to_string())
-            }
-        })
-        .filter(|s| !s.is_empty());
+            w.config
+                .data_dir
+                .as_ref()
+                .and_then(|d| crate::roles::compose_role_prompt(d, None))
+        });
     let request_id = w.operations.get(operation_id).map(|o| o.request_id.clone());
     // W5:会话对话台账快照(历史回喂)+ 上下文快照日志句柄 + 回合序号。
     let session_id: Option<BmId> = w.operations.get(operation_id).map(|o| o.session_id.clone());
@@ -1080,7 +1068,11 @@ pub(crate) fn handle_provider_call(
             if let (Some(h), true) = (&meta.key_hash, meta.is_side_effect) {
                 w.idem_results.insert(h.clone(), value.clone());
                 if let Some(store) = &w.store {
-                    let _ = store.save_idem_receipt(h, &value.to_string(), &w.now_ts());
+                    // F-02(审计台账):投影写失败必须留痕——静默失败会使重启后
+                    // 幂等抑制失效(副作用可能重放)
+                    if let Err(e) = store.save_idem_receipt(h, &value.to_string(), &w.now_ts()) {
+                        eprintln!("[persist] 幂等收据落表失败 key={h}: {e:?}");
+                    }
                     let _ = store.outbox_upsert(
                         operation_id.as_str(),
                         "side_effect",
@@ -1493,8 +1485,11 @@ pub(crate) fn dispatch_capability(
             if let (Some(h), true) = (&key_hash, prepared.is_side_effect) {
                 w.idem_results.insert(h.clone(), result.clone());
                 // T6c 收紧(M5-T1):幂等收据落表,恢复期抑制判定不依赖内存
-                if let Some(store) = &w.store {
-                    let _ = store.save_idem_receipt(h, &result.to_string(), &w.now_ts());
+                // F-02(审计台账):落表失败必须留痕,不得静默
+                if let Some(store) = &w.store
+                    && let Err(e) = store.save_idem_receipt(h, &result.to_string(), &w.now_ts())
+                {
+                    eprintln!("[persist] 幂等收据落表失败 key={h}: {e:?}");
                 }
             }
             emit_capability_invoked(

@@ -35,7 +35,7 @@
 | ~~F-06 C4 模型回写(约 12+7 项模型-实现漂移;F-08 /admin 面一并)~~ **已回写(2026-09-02)**:boenmind.c4 回写完成——超前容器标注阶段归属(阶段一现役/阶段二规划/阶段一并入内核)、App=MCP 真实形态(Market/Wiki 标注 stdio MCP)、Web Surface 标注现役 assistant-ui 壳+管理面、补齐阶段一内核组件(watchdog/contextLog/bm-judge 核验/内建模型连接器);硬纪律 2 闭合 | FULL-REVIEW §2.2 + AUDIT F-06/F-08 | DONE(2026-09-02) |
 | F-09 deepwiki S1/S2/S6/S7/S10 逐条裁决;S5 口径偏宽复核(t119b≠quarantined 分表) | AUDIT F-09 + FULL-REVIEW §2.4 | OPEN(随下一里程碑回看) |
 | W4b:异步能力结果回流超时(60s 轮询未取到终态)——根因已修(turn.rs GetOpResult 轮询 `tx.send` 漏 `.await`,2026-09-01 代码审计轮);**已闭合**:2026-09-02 上下文透视面板真模型实测工具轮两步流水全通(MCP 工具调用→结果回喂→模型重调,快照与趋势可见) | W4 规格 §3 + 代码审计轮 | DONE(2026-09-02) |
-| ~~W4b:多角色与会话级角色选择;Skill 挂载(合同 Skill 实体未建)~~ **多角色与会话级选择已交付(2026-09-02)**:config/roles.json 扩展多角色模型 + /admin/roles 完整 CRUD + 设为默认;Agent 结构与 turn.rs 组装支持会话指定 system_prompt;Composer 工具栏集成角色下拉切换,发请求传 X-Bm-Role;真模型实测「代码架构师」角色答复符合设定且上下文透视面板中 System Prompt 验证生效(HISTORY W4b 角色行);Skill 挂载留待 Skill 实体规划 | W4 规格 §3 | DONE(2026-09-02) |
+| ~~W4b:多角色与会话级角色选择;Skill 挂载(合同 Skill 实体未建)~~ **全部交付(2026-09-02)**:①多角色 CRUD+会话级切换(详见上批);②Skill 挂载=合同 capability/skill.v0_1 新增(Minor)+ config/skills.json + /admin/skills CRUD + 角色编辑挂载勾选 + bm-core::roles::compose_role_prompt 统一组装(角色 prompt=基底+挂载技能指令,会话创建烤入/回合热读双口径一致);真模型实测「押韵诗人」技能挂载后回复严格遵循打油诗格式,透视面板核验技能指令已注入 system prompt(截图 shots-w5-context/08) | W4 规格 §3 | DONE(2026-09-02) |
 | ~~W4b:非直通工具的对话内审批联动~~ **已交付(2026-09-02)**:registry.chat_tools() 按 Broker 同口径(effect 可审批类或声明 required)暴露全部对话能力;turn.rs 审批等待流(CapabilityCall 返回 ApprovalRequired → 反查审批单 → BM_APPROVAL 标记随 SSE 上屏 → 轮询裁决+执行 300s);/admin/approvals/{id}/respond 免鉴权裁决端点;前端审批卡片(工具名+真实参数+批准/拒绝);顺带修三个真 bug:①幂等键纯 tc.id 跨回合碰撞致模型收到旧收据反复重调(改含 op_id);②内置工具 input_schema 空 schema 模型无法传参(补 properties);③工具结果回喂无引导致模型重复调用(加明确指令);真模型实测笔记写入审批全闭环(截图 shots-w5-context/06、07) | W4 规格 §3 | DONE(2026-09-02) |
 | W4 验收记录回填(按规格 §4 验收门补实测证据与截图) | W4-implementation-spec | OPEN |
 | ~~会话历史未回喂模型(多轮无记忆,P1 疑似)~~ **已确认并修复**:turn.rs 每回合 messages 从零组装属实;W5 修复=World.session_chats 台账(20 轮/24K 字符上限)+ spawn 时历史回喂 + 成功落定 Cmd::RememberTurn 回写;真模型实测两轮暗号往返+跨页面重载均答中(HISTORY W5 行) | W1 §4 vs turn.rs 代码对照 | DONE(2026-09-02) |
@@ -44,13 +44,13 @@
 
 | 条目 | 一句话 | 状态 |
 |---|---|---|
-| F-01 (P1) | exec_log I/O expect 可 panic | OPEN |
-| F-02 | 投影写 `let _=` 静默失败,待加失败日志钩子 | OPEN |
-| F-03 | glm_http SECRET_BRIDGE 死代码(删或接线) | OPEN |
-| F-04 | 位点 meta 损坏静默按 0 处理 | OPEN |
+| ~~F-01 (P1)~~ | ~~exec_log I/O expect 可 panic~~ **已修(2026-09-02)**:打开/追加/flush/重写四处全部降级为 stderr 告警+内存镜像兜底,外部条件不再 panic | DONE(2026-09-02) |
+| ~~F-02~~ | ~~投影写 `let _=` 静默失败~~ **已修(2026-09-02)**:save_idem_receipt 两处落表失败改 stderr 告警(重启后幂等抑制失效可被察觉) | DONE(2026-09-02) |
+| ~~F-03~~ | ~~glm_http SECRET_BRIDGE 死代码~~ **已修(2026-09-02)**:删除静态桥,凭据改构造注入(与 OpenAiConnector 同口径),GLM 连接器从"运行必败"变可用 | DONE(2026-09-02) |
+| ~~F-04~~ | ~~位点 meta 损坏静默按 0 处理~~ **已修(2026-09-02)**:统一 parse_meta_seq 解析助手,损坏值 stderr 告警后按缺失兜底(语义不变,损坏事实可见) | DONE(2026-09-02) |
 | F-05 | 200+ 行函数重构债(与 L-01/R-08 同批) | OPEN(缓办) |
 | F-07 | bm-surface-http → bm-persist 直依赖待裁决(收口或留档) | OPEN |
-| F-10 | autorun send_failed 等测试缺口 | OPEN |
+| ~~F-10~~ | ~~autorun send_failed 等测试缺口~~ **已补(2026-09-02)**:t155 自主环 send_failed 收口验收(会话关闭→INV-6 回合不取消→续推失败→finished/send_failed)+ exec_log 复扫降格分支验收(凭据=脱敏标记自替换构造) | DONE(2026-09-02) |
 | F-11 | memory_drawer_verdict 硬编码权限规则与 ADR-0006 张力(2026-09-02 已在 broker.rs 源码补注;合同化重构待排期) | OPEN |
 | P3 大文件拆分 | broker.rs(1657 行)/turn.rs(1694)/task_ops.rs(1710)/sqlite_state.rs(1205);bm-core 过重,与 F-05/L-01/R-08 同批缓办(2026-09-01 代码审计轮);broker 建议拆法(2026-09-02 审计第二轮)=mod+policy(GrantLedger)/credential/executor/audit | OPEN(缓办) |
 | P4 非测试 unwrap 甄别清理 | 全仓约 400 处 unwrap 需区分测试/非测试逐步替换;非测试 panic 10 处均系不变量断言,评估=维持现状(同审计轮) | OPEN(缓办) |

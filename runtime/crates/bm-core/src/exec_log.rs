@@ -118,13 +118,21 @@ impl ExecutionLog {
 
         inner.entries.push(entry.clone());
         if let Some(path) = &self.path {
-            let mut file = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(path)
-                .expect("Execution Log 文件可打开");
-            writeln!(file, "{line}").expect("Execution Log 追加写成功");
-            file.flush().expect("Execution Log flush 成功");
+            // F-01(审计台账)修复:磁盘满/权限/文件占用等外部条件不得 panic
+            // 整个 runtime——写失败降级为 stderr 告警,内存镜像仍完整(诊断
+            // 面少一行日志好过进程死亡);flush 错误同口径。
+            match OpenOptions::new().create(true).append(true).open(path) {
+                Ok(mut file) => {
+                    if let Err(e) = writeln!(file, "{line}") {
+                        eprintln!("[exec-log] 追加写失败(该条仅存内存镜像): {e}");
+                    } else if let Err(e) = file.flush() {
+                        eprintln!("[exec-log] flush 失败(该条仅存内存镜像): {e}");
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[exec-log] 日志文件打开失败(该条仅存内存镜像): {e}");
+                }
+            }
         }
         log_seq
     }
@@ -169,7 +177,10 @@ impl ExecutionLog {
                 out + "
 "
             };
-            std::fs::write(path, payload).expect("Execution Log 重写成功");
+            // F-01 同口径:重写失败不 panic(原文件保持未修剪态,下轮重试)
+            if let Err(e) = std::fs::write(path, payload) {
+                eprintln!("[exec-log] 修剪重写失败(内存镜像已修剪,文件待下轮): {e}");
+            }
         }
         removed
     }
@@ -214,5 +225,41 @@ mod m9_review_tests {
             serde_json::to_string(&SecretScan::Failed).unwrap(),
             "\"failed\""
         );
+    }
+
+    /// F-10(审计缺口)验收:复扫仍命中 → 整条降格为占位 + SecretScan::Failed
+    /// (fail-closed 分支此前无测试)。触发构造:凭据恰为脱敏标记本身——
+    /// 首轮替换是自替换(值不变),复扫必再命中,天然进入降格分支。
+    #[test]
+    fn recheck_hit_downgrades_entry_to_failed_placeholder() {
+        let log = ExecutionLog::new(None);
+        let marker_secret = "[REDACTED]";
+        log.register_scan_value(marker_secret);
+        log.record(LogRecord {
+            kind: LogKind::Error,
+            session_id: BmId::parse("sess_00000000000000000000000001").unwrap(),
+            agent_id: BmId::parse("agent_00000000000000000000000002").unwrap(),
+            operation_id: BmId::parse("op_00000000000000000000000003").unwrap(),
+            request_id: None,
+            agent_state: "running".into(),
+            detail: serde_json::json!({ "leak": format!("包含凭据形标记 {marker_secret}") }),
+            ts: "2026-08-30T00:00:00.000Z".into(),
+        });
+        let entries = log.entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].secret_scan,
+            Some(SecretScan::Failed),
+            "复扫未通过必须降格为 failed"
+        );
+        let serialized = serde_json::to_string(&entries[0]).unwrap();
+        assert!(
+            !serialized.contains(marker_secret),
+            "降格占位不得再含命中片段:{serialized}"
+        );
+        assert!(serialized.contains("redaction_failed"), "应有降格标记");
+        // 内存镜像同样不含明文
+        let mirrored = serde_json::to_string(&log.entries()[0].detail).unwrap();
+        assert!(!mirrored.contains(marker_secret));
     }
 }

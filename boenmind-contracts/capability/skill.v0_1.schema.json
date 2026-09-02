@@ -1,0 +1,41 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "boenmind:capability:skill:v0.1",
+  "x-frozen": "2026-09-02",
+  "title": "Skill 知识包 v0.1(W4b)",
+  "description": "Skill 是挂在角色/会话上的知识包:步骤/提示模板 + 允许使用的能力名单。只是数据,加载不改变权限(基线 Skill 定义):allowed_capabilities 仅作提示面与展示面数据,实际调用权限仍以 Capability Manifest 与审批面为准。挂载即把 instruction 注入对应回合的 system prompt(追加,不覆盖角色提示词)。",
+  "type": "object",
+  "required": ["skill_id", "name", "instruction"],
+  "additionalProperties": false,
+  "properties": {
+    "skill_id": {
+      "type": "string",
+      "pattern": "^skill_[a-z][a-z0-9_]{0,31}$",
+      "description": "技能稳定标识(挂载引用键)"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "展示名"
+    },
+    "description": {
+      "type": ["string", "null"],
+      "maxLength": 200,
+      "description": "一句话描述(列表展示面)"
+    },
+    "instruction": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8000,
+      "description": "步骤/提示模板:挂载后追加进 system prompt 的技能指令正文"
+    },
+    "allowed_capabilities": {
+      "type": "array",
+      "items": { "type": "string", "maxLength": 64 },
+      "maxItems": 16,
+      "default": [],
+      "description": "建议使用的能力名单(仅提示面数据;不改变权限,实际裁决以审批面为准)"
+    }
+  }
+}

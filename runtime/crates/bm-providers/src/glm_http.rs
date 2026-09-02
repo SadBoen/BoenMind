@@ -5,45 +5,35 @@
 use async_trait::async_trait;
 use bm_contract::connector::{FinishReason, InvokeRequest, InvokeResponse, Role, Usage};
 use bm_contract::error_codes::ErrorCode;
-use bm_core::ports::ModelConnector;
+use bm_core::ports::{ModelConnector, SecretStore};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
-/// 进程级 Secret Store 桥:组装方启动时调用 [`set_secret_bridge`]。
-/// (连接器自身构造时不持有 store,是为了让示例组装路径最短;M7 外置进程时
-/// 由 Provider handshake 注入,调用方无感。)
-static SECRET_BRIDGE: std::sync::OnceLock<std::sync::Arc<dyn bm_core::ports::SecretStore>> =
-    std::sync::OnceLock::new();
-
-pub fn set_secret_bridge(store: std::sync::Arc<dyn bm_core::ports::SecretStore>) {
-    let _ = SECRET_BRIDGE.set(store);
-}
-
-fn resolve_secret(secret_ref: &str) -> Result<String, bm_core::ports::SecretError> {
-    match SECRET_BRIDGE.get() {
-        Some(store) => bm_core::ports::SecretStore::get(store.as_ref(), secret_ref),
-        None => Err(bm_core::ports::SecretError::Backend(
-            "GLM Secret 桥未设置".into(),
-        )),
-    }
-}
-
 pub struct GlmConnector {
     endpoint: String,
+    store: Arc<dyn SecretStore>,
     http: reqwest::Client,
 }
 
 impl GlmConnector {
-    pub fn new(endpoint: impl Into<String>) -> Self {
+    /// F-03(审计台账)修复:凭据经构造注入(与 OpenAiConnector 同口径),
+    /// 移除"进程级 SECRET_BRIDGE 静态桥"——该桥从未被组装方接线,属死代码
+    /// 且使本连接器运行时必败(桥未设置即报错)。
+    pub fn new(endpoint: impl Into<String>, store: Arc<dyn SecretStore>) -> Self {
         Self {
             endpoint: endpoint.into(),
+            store,
             http: reqwest::Client::new(),
         }
     }
 
     /// 智谱默认端点。
-    pub fn zhipu() -> Self {
-        Self::new("https://open.bigmodel.cn/api/paas/v4/chat/completions")
+    pub fn zhipu(store: Arc<dyn SecretStore>) -> Self {
+        Self::new(
+            "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+            store,
+        )
     }
 }
 
@@ -102,7 +92,7 @@ impl ModelConnector for GlmConnector {
         let attempt = req.attempt;
         let model = req.model_id.clone();
 
-        let api_key = match resolve_secret(&req.secret_ref) {
+        let api_key = match SecretStore::get(self.store.as_ref(), &req.secret_ref) {
             Ok(k) => k,
             Err(_) => return failed(ErrorCode::Unavailable, true, attempt),
         };

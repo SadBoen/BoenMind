@@ -165,6 +165,22 @@ pub trait EventStore: Send + Sync {
 /// 默认压实触发间隔(条);ADR-0004 条件 2:压实是强制义务,不是可选项。
 pub const DEFAULT_COMPACTION_EVERY: u64 = 10_000;
 
+/// F-04(审计台账)修复:位点 meta 损坏时的统一解析——存在但解析失败
+/// 必须告警(stderr),不得静默吞掉损坏事实;按缺失(None/0)兜底的语义
+/// 保持不变(启动校验与修复路径自会处理)。
+fn parse_meta_seq(key: &str, raw: Option<String>) -> Option<u64> {
+    match raw {
+        None => None,
+        Some(v) => match v.parse::<u64>() {
+            Ok(n) => Some(n),
+            Err(e) => {
+                eprintln!("[persist] 位点 meta {key} 值损坏({v:?}),按缺失兜底: {e}");
+                None
+            }
+        },
+    }
+}
+
 /// 默认组合实现。
 pub struct PersistStore {
     log: JsonlEventLog,
@@ -179,10 +195,8 @@ impl PersistStore {
     pub fn open(dir: &Path) -> StoreResult<Self> {
         let log = JsonlEventLog::open(dir.join("events.jsonl"))?;
         let state = StateDb::open(&dir.join("state.db"))?;
-        let applied: u64 = state
-            .meta_get(META_LAST_APPLIED)?
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0);
+        let applied: u64 =
+            parse_meta_seq(META_LAST_APPLIED, state.meta_get(META_LAST_APPLIED)?).unwrap_or(0);
         let log_last = log.last_seq()?;
         if applied > log_last {
             return Err(StoreError::Corrupt {
@@ -364,11 +378,8 @@ impl PersistStore {
         let Some(every) = self.compaction_every else {
             return Ok(());
         };
-        let snap: u64 = self
-            .state
-            .meta_get(META_SNAPSHOT_SEQ)?
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0);
+        let snap: u64 =
+            parse_meta_seq(META_SNAPSHOT_SEQ, self.state.meta_get(META_SNAPSHOT_SEQ)?).unwrap_or(0);
         if seq.saturating_sub(snap) >= every {
             self.snapshot()?;
             self.compact(seq)?;
@@ -415,18 +426,14 @@ impl PersistStore {
 
     /// 当前快照位点(未快照过 = None)。
     pub fn snapshot_seq(&self) -> StoreResult<Option<u64>> {
-        Ok(self
-            .state
-            .meta_get(META_SNAPSHOT_SEQ)?
-            .and_then(|v| v.parse().ok()))
+        Ok(parse_meta_seq(
+            META_SNAPSHOT_SEQ,
+            self.state.meta_get(META_SNAPSHOT_SEQ)?,
+        ))
     }
 
     fn applied(&self) -> StoreResult<u64> {
-        Ok(self
-            .state
-            .meta_get(META_LAST_APPLIED)?
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0))
+        Ok(parse_meta_seq(META_LAST_APPLIED, self.state.meta_get(META_LAST_APPLIED)?).unwrap_or(0))
     }
 }
 
@@ -524,11 +531,8 @@ impl EventStore for PersistStore {
     }
 
     fn compact(&self, up_to_seq: u64) -> StoreResult<usize> {
-        let snap: u64 = self
-            .state
-            .meta_get(META_SNAPSHOT_SEQ)?
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0);
+        let snap: u64 =
+            parse_meta_seq(META_SNAPSHOT_SEQ, self.state.meta_get(META_SNAPSHOT_SEQ)?).unwrap_or(0);
         if up_to_seq > snap {
             return Err(StoreError::Corrupt {
                 seq: up_to_seq,

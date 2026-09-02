@@ -19,6 +19,7 @@ pub mod memory;
 pub mod observation;
 pub mod ports;
 pub mod registry;
+pub mod roles;
 pub mod runtime;
 pub mod state;
 pub mod task;

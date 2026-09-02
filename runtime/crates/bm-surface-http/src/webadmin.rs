@@ -571,6 +571,9 @@ pub struct RoleItem {
     #[serde(default)]
     pub description: Option<String>,
     pub system_prompt: String,
+    /// W4b:挂载的技能 skill_id 列表(只是数据;加载不改变权限)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skills: Option<Vec<String>>,
 }
 
 pub fn read_roles_doc(file: &std::path::Path) -> RoleConfigDoc {
@@ -595,6 +598,7 @@ pub fn read_roles_doc(file: &std::path::Path) -> RoleConfigDoc {
                     name,
                     description: Some("默认通用助理".into()),
                     system_prompt: sp.to_string(),
+                    skills: None,
                 }],
             };
         }
@@ -606,6 +610,7 @@ pub fn read_roles_doc(file: &std::path::Path) -> RoleConfigDoc {
             name: "assistant".into(),
             description: Some("默认通用助理".into()),
             system_prompt: "".into(),
+            skills: None,
         }],
     }
 }
@@ -669,12 +674,25 @@ pub async fn roles_set(State(cfg): State<AdminConfig>, Json(body): Json<Value>) 
             existing.name = name;
             existing.description = description;
             existing.system_prompt = system_prompt;
+            // W4b:技能挂载(传了才覆盖,保持既有挂载不丢)
+            if let Some(sk) = body["skills"].as_array() {
+                existing.skills = Some(
+                    sk.iter()
+                        .filter_map(|s| s.as_str().map(String::from))
+                        .collect(),
+                );
+            }
         } else {
             doc.roles.push(RoleItem {
                 id: id.clone(),
                 name,
                 description,
                 system_prompt,
+                skills: body["skills"].as_array().map(|a| {
+                    a.iter()
+                        .filter_map(|s| s.as_str().map(String::from))
+                        .collect()
+                }),
             });
         }
         if body["set_active"].as_bool().unwrap_or(false) {
@@ -733,6 +751,90 @@ pub async fn roles_set_active(
 
 fn roles_file(cfg: &AdminConfig) -> std::path::PathBuf {
     cfg.data_dir.join("config").join("roles.json")
+}
+
+// ---- handler:技能库(W4b;config/skills.json;合同 capability/skill.v0_1)--
+
+fn skills_file(cfg: &AdminConfig) -> std::path::PathBuf {
+    cfg.data_dir.join("config").join("skills.json")
+}
+
+/// 读技能库(缺文件 = 空库)。
+fn read_skills(file: &std::path::Path) -> Vec<Value> {
+    std::fs::read_to_string(file)
+        .ok()
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        .and_then(|v| v["skills"].as_array().cloned())
+        .unwrap_or_default()
+}
+
+/// GET /admin/skills:技能库清单(角色页挂载勾选 + 展示)。
+pub async fn skills_get(State(cfg): State<AdminConfig>) -> Response {
+    let skills = read_skills(&skills_file(&cfg));
+    Json(json!({ "ok": true, "skills": skills })).into_response()
+}
+
+/// POST /admin/skills:新建或更新技能(skill_id 同则覆盖)。
+/// 校验走合同 skill.v0_1——Skill 只是数据,加载不改变权限。
+pub async fn skills_set(State(cfg): State<AdminConfig>, Json(mut body): Json<Value>) -> Response {
+    if body["description"].is_null() {
+        body["description"] = json!(null);
+    }
+    if body["allowed_capabilities"].is_null() {
+        body["allowed_capabilities"] = json!([]);
+    }
+    if let Err(e) = bm_contract::schemas::validate(bm_contract::registries::SKILL_SCHEMA, &body) {
+        return admin_error(StatusCode::BAD_REQUEST, format!("技能不合规: {e}"));
+    }
+    let file = skills_file(&cfg);
+    let mut skills = read_skills(&file);
+    let id = body["skill_id"].as_str().unwrap_or_default().to_string();
+    if let Some(slot) = skills
+        .iter_mut()
+        .find(|s| s["skill_id"].as_str() == Some(&id))
+    {
+        *slot = body.clone();
+    } else {
+        skills.push(body.clone());
+    }
+    if let Some(dir) = file.parent()
+        && let Err(e) = std::fs::create_dir_all(dir)
+    {
+        return admin_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("目录创建失败: {e}"),
+        );
+    }
+    let text = match serde_json::to_string_pretty(&json!({ "skills": skills })) {
+        Ok(t) => crate::config_store::crlf(t),
+        Err(_) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, "序列化失败"),
+    };
+    if let Err(e) = std::fs::write(&file, text) {
+        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, format!("写入失败: {e}"));
+    }
+    Json(json!({ "ok": true, "note": "技能已保存,下一回合起生效" })).into_response()
+}
+
+/// DELETE /admin/skills/{id}:删除技能(已挂载角色在组装时自动跳过缺失技能)。
+pub async fn skills_delete(
+    State(cfg): State<AdminConfig>,
+    AxumPath(id): AxumPath<String>,
+) -> Response {
+    let file = skills_file(&cfg);
+    let mut skills = read_skills(&file);
+    let before = skills.len();
+    skills.retain(|s| s["skill_id"].as_str() != Some(&id));
+    if skills.len() == before {
+        return admin_error(StatusCode::NOT_FOUND, "技能不存在");
+    }
+    let text = match serde_json::to_string_pretty(&json!({ "skills": skills })) {
+        Ok(t) => crate::config_store::crlf(t),
+        Err(_) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, "序列化失败"),
+    };
+    if let Err(e) = std::fs::write(&file, text) {
+        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, format!("写入失败: {e}"));
+    }
+    Json(json!({ "ok": true, "note": "技能已删除" })).into_response()
 }
 
 // ---- handler:对话内审批裁决(W4b;与 /rpc/approval.respond 同一执行体,
@@ -1380,7 +1482,7 @@ fn read_context_tail(path: &Path, max_bytes: u64, limit: usize) -> Vec<Value> {
 
 /// 管理面子路由(挂载于 /admin;公开 = W1 同款已登记欠账)。
 pub fn admin_routes(cfg: AdminConfig) -> axum::Router {
-    use axum::routing::{get, post, put};
+    use axum::routing::{delete, get, post, put};
     let cfg = Arc::new(cfg);
     axum::Router::new()
         .route("/providers", get(providers_list).post(providers_create))
@@ -1406,6 +1508,8 @@ pub fn admin_routes(cfg: AdminConfig) -> axum::Router {
         .route("/roles/{id}", put(roles_set).delete(roles_delete))
         .route("/roles/active/{id}", put(roles_set_active))
         .route("/approvals/{id}/respond", post(approval_respond))
+        .route("/skills", get(skills_get).post(skills_set))
+        .route("/skills/{id}", delete(skills_delete))
         .route("/logs", get(logs_tail))
         .route("/context", get(context_tail))
         .route("/fs/list", get(fs_list))

@@ -85,6 +85,16 @@ export type RoleItem = {
   name: string;
   description?: string;
   system_prompt: string;
+  skills?: string[];
+};
+
+// W4b Skill 知识包(合同 capability/skill.v0_1;只是数据,加载不改变权限)
+export type SkillItem = {
+  skill_id: string;
+  name: string;
+  description?: string | null;
+  instruction: string;
+  allowed_capabilities?: string[];
 };
 
 export type RolesResponse = {
@@ -212,6 +222,16 @@ export const api = {
       req<{ ok: boolean; note: string; active_id: string }>(
         `/admin/roles/active/${encodeURIComponent(id)}`,
         { method: "PUT" },
+      ),
+  },
+  skills: {
+    list: () => req<{ ok: boolean; skills: SkillItem[] }>("/admin/skills"),
+    save: (skill: SkillItem) =>
+      req<{ ok: boolean; note: string }>("/admin/skills", json("POST", skill)),
+    remove: (id: string) =>
+      req<{ ok: boolean; note: string }>(
+        `/admin/skills/${encodeURIComponent(id)}`,
+        { method: "DELETE" },
       ),
   },
   logs: () =>

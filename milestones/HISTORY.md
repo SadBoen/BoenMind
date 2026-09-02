@@ -36,6 +36,8 @@
 | W4b 对话内审批联动 | 2026-09-02 | (见 git) | 289 | **写操作工具审批闭环交付**:chat_tools 按 Broker 同口径暴露审批类能力;turn.rs 审批等待流(BM_APPROVAL 标记随 SSE 上屏+轮询裁决 300s);/admin/approvals 免鉴权裁决端点;前端审批卡片(工具名+真实参数+批准/拒绝);顺带修三真 bug(幂等键跨回合碰撞/工具空 schema/结果回喂无引导);真模型实测笔记写入审批全闭环(卡片→批准→执行→结果回喂→收尾,截图 06、07) |
 | 健壮性:坏 MCP 条目容错 | 2026-09-02 | (见 git) | 289 | load_mcp_setups 条目级容错 + 服务器启动循环隔离——单条 MCP 配错不再拒绝整个服务启动;测试语义更新(坏条目跳过/混合装载) |
 | 前端自动化冒烟套件 | 2026-09-02 | (见 git) | 289+6 | Playwright 6 用例(对话闭环/新建清空/上下文页/角色页/插件页去重/日志页签);网络层 mock 确定性零 token;`npm run test:smoke` 全绿 4.4s;CI 接入留候选 |
+| 工程债批处理(F-01~F-04/F-10) | 2026-09-02 | (见 git) | 291 | F-01(P1)exec_log 四处 I/O expect 改告警+内存兜底(外部条件不再 panic);F-02 幂等收据落表失败留痕;F-03 glm_http 静态桥删除改构造注入(运行必败→可用);F-04 位点 meta 损坏统一告警;F-10 补 t155(send_failed 收口)与 exec_log 降格两测试 |
+| W4b Skill 挂载 | 2026-09-02 | (见 git) | 291 | **合同 Minor:capability/skill.v0_1 新增**(Skill=知识包,只是数据不改变权限);config/skills.json + /admin/skills CRUD + 角色编辑挂载勾选;bm-core::roles::compose_role_prompt 统一组装(基底 prompt+挂载技能指令;会话烤入/回合热读双口径一致);真模型实测「押韵诗人」挂载后回复严格遵循打油诗格式且透视面板核验指令已注入(截图 08);W4b 全部闭合 |
 | W4b 多角色管理与会话切换 | 2026-09-02 | (见 git) | 289 | **角色库 CRUD 与会话级选择交付**:config/roles.json 扩展多角色模型 + /admin/roles 增删改查及设为全局默认;Agent 结构与 turn.rs 组装支持会话级 system_prompt 覆盖;Composer 工具栏集成角色切换下拉,发请求传 X-Bm-Role;真模型实测「代码架构师」角色答复口吻精确匹配设定,上下文透视面板中 System Prompt 验证生效,截图 shots-w5-context/04 |
 
 ## W 序列验收惯例

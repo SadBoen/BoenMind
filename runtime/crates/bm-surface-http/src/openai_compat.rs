@@ -125,14 +125,12 @@ pub async fn chat_completions(
         },
         None => {
             let request_id = UlidIdGen.next_id("req");
-            // W4b: 允许通过 X-Bm-Role 传入角色 ID，若无则使用 roles.json 中 active_id 角色
+            // W4b:允许通过 X-Bm-Role 指定角色(缺省 = active 角色);
+            // system_prompt 由 bm-core::roles 统一组装(含挂载技能),
+            // 空提示词传 None——交由回合侧热读,保证技能/角色后续可生效。
             let initial_system_prompt = state.data_dir.as_ref().and_then(|d| {
-                let doc = crate::webadmin::read_roles_doc(&d.join("config").join("roles.json"));
-                let role_id = target_role_id.as_deref().unwrap_or(&doc.active_id);
-                doc.roles
-                    .iter()
-                    .find(|r| r.id == role_id)
-                    .map(|r| r.system_prompt.clone())
+                bm_core::roles::compose_role_prompt(d, target_role_id.as_deref())
+                    .filter(|s| !s.is_empty())
             });
             match state
                 .handle
