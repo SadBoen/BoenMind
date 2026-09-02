@@ -72,6 +72,6 @@ BOEN_WORKSPACE_DIR       工作区/文件浏览根,默认 <data-dir>/workspace
 
 ## 7. 仓外关联资产
 
-- `D:\96_CoderWorld\boenmind-mcp-servers`:MCP 插件独立仓(web_multisearch 等,Python PEP-723 自包含);安装/接线文档随该仓;
+- ~~`D:\96_CoderWorld\boenmind-mcp-servers` 独立仓~~ **已移入主仓**(2026-09-02):插件源码=`plugins/mcp/web-multisearch/`,外仓历史归档分支 `archive/boenmind-mcp-servers`,外仓目录已删;
 - `.tools/`:本机评估用 assistant-ui 上游克隆(不入 git);
 - MCP 插件探活:webadmin `/admin/mcp/status`、`/admin/mcp/reload`(新增免重启,修改/删除需重启)。

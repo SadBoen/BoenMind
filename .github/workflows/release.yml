@@ -1,53 +1,111 @@
 name: release
 
+# v0.0.1 起(2026-09-02 用户裁决):发布线收敛为 Linux x86_64(VPS 安装场景),
+# 服务器 + 官方自带 MCP 插件 web-multisearch 双制品同包;前端 dist 预构建入包,
+# 目标机无需 Node/Python。旧「三平台制品+Tauri 承诺」废止(见 BACKLOG §5 release.yml 条目)。
 on:
   workflow_dispatch:
   push:
-    tags: ["m*", "v*"]
+    tags: ["v*"]
+
+permissions:
+  contents: write
 
 jobs:
-  # M3.5:CLI(boenmind)+ server(boenmind-server)三平台制品;
-  # Tauri Windows 安装包随 T6/M8 加入本工作流。
-  binaries:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-          - os: macos-latest
-            target: aarch64-apple-darwin
-    runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        working-directory: runtime
+  linux:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.98.0
-        with:
-          targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: runtime
-      - run: cargo build --release --bin boenmind --bin boenmind-server
-      - name: Package
-        shell: bash
-        run: |
-          mkdir -p dist
-          for bin in boenmind boenmind-server; do
-            if [ -f "target/release/${bin}.exe" ]; then
-              cp "target/release/${bin}.exe" "dist/${bin}-${{ matrix.target }}.exe"
-            elif [ -f "target/release/${bin}" ]; then
-              cp "target/release/${bin}" "dist/${bin}-${{ matrix.target }}"
-            else
-              echo "未找到制品: ${bin}" && exit 1
-            fi
-          done
-          ls -la dist
-      - uses: actions/upload-artifact@v4
+          workspaces: |
+            runtime
+            plugins/mcp/web-multisearch
+      - uses: actions/setup-node@v4
         with:
-          name: boenmind-${{ matrix.target }}
-          path: runtime/dist/*
-          if-no-files-found: error
+          node-version: 24
+          cache: npm
+          cache-dependency-path: runtime/webapp/package-lock.json
+
+      - name: 前端构建(dist 入包)
+        working-directory: runtime/webapp
+        run: |
+          npm ci
+          npm run build
+
+      # 插件进发布包前先过全量测试(测试挂了不发版)
+      - name: 插件测试门禁
+        working-directory: plugins/mcp/web-multisearch
+        run: cargo test
+
+      - name: 服务器构建
+        working-directory: runtime
+        run: cargo build --release --bin boenmind-server
+
+      - name: 插件构建
+        working-directory: plugins/mcp/web-multisearch
+        run: cargo build --release
+
+      - name: 打包
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          PKG="boenmind-${VER}-linux-x86_64"
+          mkdir -p "${PKG}/webapp" "${PKG}/plugins"
+          cp runtime/target/release/boenmind-server "${PKG}/"
+          cp -r runtime/webapp/dist "${PKG}/webapp/dist"
+          cp plugins/mcp/web-multisearch/target/release/web-multisearch "${PKG}/plugins/"
+          cp plugins/mcp/web-multisearch/README.md "${PKG}/plugins/web-multisearch-README.md"
+          cat > "${PKG}/INSTALL-linux.md" <<'INSTALL'
+          # BoenMind Linux 安装(服务器/VPS)
+
+          前置:x86_64 Linux;OpenSSL 3 运行库(Ubuntu 22.04+/Debian 12+ 默认自带);
+          无需 Node/Python(界面已预构建,搜索插件是单文件可执行)。
+
+          ## 1. 解压
+              tar xzf boenmind-<版本>-linux-x86_64.tar.gz
+              cd boenmind-<版本>
+
+          ## 2. 环境变量(与启动命令写在同一条命令里)
+              export BOEN_SECRET_MASTER_KEY="<至少32字符随机串>"  # 加密密钥库主密钥,必带;丢失=已存凭据作废
+              export BOEN_MODEL_STREAM=1                         # 开模型流式(当前版本必带,配置文件流式字段尚未接线)
+
+              模型接线二选一:
+              A. BOEN_MODEL_BASE_URL / BOEN_MODEL_ID / BOEN_MODEL_API_KEY 三个环境变量;
+              B. 先不填,启动后进网页设置页新增模型提供商并「设为当前」(重启生效)。
+
+          ## 3. 首次启动
+              mkdir -p ~/.local/share/boenmind/mcp ~/.local/share/boenmind/config
+              echo '[]' > ~/.local/share/boenmind/mcp.json
+              BOEN_SECRET_MASTER_KEY="<同上>" BOEN_MODEL_STREAM=1 \
+                ./boenmind-server --web-dir webapp/dist --mcp-config ~/.local/share/boenmind/mcp.json
+
+          ## 4. 安装官方搜索插件(plugins/web-multisearch)
+              cp plugins/web-multisearch ~/.local/share/boenmind/mcp/
+              # 网页 → 设置 → 插件 → 「扫描插件」→ 「批准接入」(免重启)
+
+          ## 5. 访问
+              http://127.0.0.1:7531/
+              远程 VPS 建议 SSH 隧道:ssh -L 7531:127.0.0.1:7531 <你的VPS>
+
+          注意:数据目录默认 ~/.local/share/boenmind/(state.db、config/、mcp/、token);
+          同一数据目录禁止同时跑两个 boenmind-server 进程。
+          INSTALL
+          tar czf "${PKG}.tar.gz" "${PKG}"
+          sha256sum "${PKG}.tar.gz" > "${PKG}.tar.gz.sha256"
+          ls -la "${PKG}.tar.gz"*
+
+      - name: 发布 GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          PKG="boenmind-${VER}-linux-x86_64"
+          gh release create "${GITHUB_REF_NAME}" \
+            "${PKG}.tar.gz" "${PKG}.tar.gz.sha256" \
+            --title "BoenMind ${GITHUB_REF_NAME}" \
+            --notes "BoenMind 阶段一首个发布包(Linux x86_64)。
+
+          包内:boenmind-server(AI Runtime 服务器+网页界面)、plugins/web-multisearch(官方自带聚合搜索 MCP 插件)、webapp/dist(预构建前端)、INSTALL-linux.md(安装步骤)。
+
+          安装:解压后按包内 INSTALL-linux.md 执行;需要 OpenSSL 3(Ubuntu 22.04+/Debian 12+ 默认自带),无需 Node/Python。访问 http://127.0.0.1:7531/(远程建议 SSH 隧道)。"

@@ -62,7 +62,7 @@
 |---|---|---|
 | ~~api_dsh.rs 删除待追认~~ **已追认删除(2026-09-02)**:用户同意按计划推进;dsh 协议端点 `/api/*` 正式移除(前端已弃用 ADR-0013,归档分支保留历史),bm-surface-http/src/lib.rs 同步清理 | DONE(2026-09-02) |
 | MCP 示例配置启动命令不实 | `apps/mcp-config.example.json` 的 web_multisearch 原写 `python -m boenmind_mcp_servers.web_multisearch`(模块任何环境不可 import);2026-09-02 已改为 Rust 版 exe + `--config` 真实形态 | DONE(2026-09-02) |
-| release.yml 承诺未兑现 | `.github/workflows/release.yml` 注释称 Tauri Windows 安装包随 T6/M8 加入工作流,实际从未加入(或兑现或改注释) | OPEN |
+| ~~release.yml 承诺未兑现~~ **已兑现(改线)**:2026-09-02 用户裁决发布收敛为 Linux x86_64(VPS 安装场景,Tauri 桌面包承诺随之废止,桌面包本就 DEFERRED);release.yml 重写为 v* tag 触发的真实发布线=服务器+官方插件 web-multisearch 双制品+预构建前端 dist 同包+自动建 GitHub Release;v0.0.1 首发 | 文档对齐轮登记 + 2026-09-02 发布轮 | DONE(2026-09-02) |
 | 启动流式开关漂移:模型流式只认 env `BOEN_MODEL_STREAM=1`,config/model.json 的 `"stream": true` 不生效(config_store 已解析该字段但 boenmind-server.rs RuntimeConfig 组装处只读 env;2026-09-02 重启服务实测发现) | 2026-09-02 重启轮 | OPEN |
 | ~~webapp 无自动化测试~~ **已建冒烟套件(2026-09-02)**:runtime/webapp/e2e/smoke.spec.ts(6 用例:对话闭环/新建清空/上下文页渲染与逐项浏览器/角色列表/插件页去重断言/日志页签);网络层 mock(/v1 SSE + /admin)确定性零 token;`npm run test:smoke` 全绿 4.4s;CI 接入与真实模型路径覆盖留候选 | DONE(2026-09-02,CI 接入留候选) |
 | ~~坏 MCP 条目导致启动拒绝~~ **已修复(2026-09-02)**:load_mcp_setups 条目级容错(单条合同校验/env 解析失败跳过并告警,不再整体失败);boenmind-server 启动循环 spawn/握手失败隔离跳过;测试 t107 更新为「坏条目跳过+坏好混合只留好条目」新语义 | DONE(2026-09-02) |

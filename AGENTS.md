@@ -23,6 +23,7 @@ boenmind-contracts/             第 1 层  机器可读合同(v1.0 冻结)+ vali
 milestones/                     第 2 层  实现规格+回看(M1-M9、W1-W4)+ 台账四件:HISTORY(交付时间线)/BACKLOG(未结事项)/PENDING(待裁决,现清零)/AUDIT-2026-08-30(审计)
 runtime/                        第 3 层  Rust workspace 9 个 crate(bm-contract/core/persist/providers/cli/surface-http/runtime/judge/testkit)+ webapp(W 序列前端,Vite+React+TS)
 apps/                           第 3 层  真实 App:wiki_server/market_server(stdio MCP,Python)+ mcp-config.example.json
+plugins/                        第 3 层  官方自带 MCP 插件:mcp/web-multisearch(聚合搜索,单 exe 零 SDK;独立 Cargo 项目,不进主 workspace)
 shell/tauri/                    第 3 层  Windows 桌面壳(Tauri v2;frontendDist 指 runtime/webapp/dist,手工构建)
 scenarios/                      实测    CLI 场景实测清单(S1-S10 与 2026-08-30 实测记录)
 PLAYBOOK.md                     附页    实操备忘:启动与环境变量/前端四坑/浏览器自动化怪癖/废止速查——动手前先看
@@ -58,7 +59,7 @@ PLAYBOOK.md                     附页    实操备忘:启动与环境变量/前
 - 合同校验:`python boenmind-contracts/scripts/validate.py`(提交前置);
 - 性能测试命令、启动命令与 BOEN_* 环境变量表 → `PLAYBOOK.md` §1/§4;
 - context7 MCP 可用(库文档查询;真实 Provider/MCP 接入时优先用);
-- MCP 插件源码在独立仓 `D:\96_CoderWorld\boenmind-mcp-servers`(仓外);
+- 官方自带 MCP 插件源码在 `plugins/mcp/web-multisearch/`(2026-09-02 自独立仓移入,历史归档分支 archive/boenmind-mcp-servers;发布随 v* tag 走 release 工作流);
 - 运行时配置在**数据目录**(默认 `%APPDATA%\Roaming\boenmind\config\`),不在仓库;
 - 已确认:libsqlite3-sys bundled 默认启用 SQLITE_ENABLE_FTS5——M5 memory 检索 FTS5 实际生效,LIKE 仅兜底。
 

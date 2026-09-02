@@ -39,6 +39,7 @@
 | 工程债批处理(F-01~F-04/F-10) | 2026-09-02 | (见 git) | 291 | F-01(P1)exec_log 四处 I/O expect 改告警+内存兜底(外部条件不再 panic);F-02 幂等收据落表失败留痕;F-03 glm_http 静态桥删除改构造注入(运行必败→可用);F-04 位点 meta 损坏统一告警;F-10 补 t155(send_failed 收口)与 exec_log 降格两测试 |
 | W4b Skill 挂载 | 2026-09-02 | (见 git) | 291 | **合同 Minor:capability/skill.v0_1 新增**(Skill=知识包,只是数据不改变权限);config/skills.json + /admin/skills CRUD + 角色编辑挂载勾选;bm-core::roles::compose_role_prompt 统一组装(基底 prompt+挂载技能指令;会话烤入/回合热读双口径一致);真模型实测「押韵诗人」挂载后回复严格遵循打油诗格式且透视面板核验指令已注入(截图 08);W4b 全部闭合 |
 | W4b 多角色管理与会话切换 | 2026-09-02 | (见 git) | 289 | **角色库 CRUD 与会话级选择交付**:config/roles.json 扩展多角色模型 + /admin/roles 增删改查及设为全局默认;Agent 结构与 turn.rs 组装支持会话级 system_prompt 覆盖;Composer 工具栏集成角色切换下拉,发请求传 X-Bm-Role;真模型实测「代码架构师」角色答复口吻精确匹配设定,上下文透视面板中 System Prompt 验证生效,截图 shots-w5-context/04 |
+| v0.0.1 首发:官方插件移入+Linux 发布线 | 2026-09-02 | `v0.0.1` | 插件 27+1 | **web-multisearch 自独立仓移入 `plugins/mcp/web-multisearch/`**(官方自带插件;外仓历史归档分支 archive/boenmind-mcp-servers,外仓目录已清;--self-describe 紧凑单行修复随移入库);release.yml 重写为 v* tag 触发的 Linux x86_64 发布线(boenmind-server+插件+预构建 dist 同包,自动建 GitHub Release,含 INSTALL-linux.md);用户裁决只要 Linux(VPS 安装场景) |
 
 ## W 序列验收惯例
 

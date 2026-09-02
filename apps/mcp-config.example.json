@@ -20,7 +20,7 @@
   {
     "name": "web_multisearch",
     "transport": "stdio",
-    "command": "D:\\96_CoderWorld\\boenmind-mcp-servers\\web-multisearch-rs\\target\\release\\web-multisearch.exe",
+    "command": "plugins\\mcp\\web-multisearch\\target\\release\\web-multisearch.exe",
     "args": [
       "--config",
       "<数据目录>\\config\\mcp-web_multisearch.json"

@@ -26,3 +26,6 @@ server.log
 runtime/webapp/node_modules/
 runtime/webapp/dist/
 server-w.log
+
+# 官方插件构建产物(源码在 plugins/mcp/web-multisearch/src)
+plugins/mcp/web-multisearch/target/
