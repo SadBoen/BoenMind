@@ -43,7 +43,8 @@
 | W6 对话级模型选择 | 2026-09-02 | (见 git) | 全量绿+validate 绿 | **设置「模型提供商」改名「模型」+常用清单+输入框选模型三合一**:①providers.json 增 modelsCommon(⊂models,设置页多选勾选,卡片显「清单共 N 个 · 常用设置为:…」);②合同 **Minor**:agent.send_input 增可选 model_override(turn 降级链整体替换);③bm-providers 新增 RoutingConnector(按 model_id 分发,未命中回落默认,invoke_stream 透传保流式),World/回合循环零改动;④providers 写后免重启重建路由+密钥播种(secret:model.<id>,INV-5 不破);⑤输入框模型下拉(localStorage 持久化,刷新/新对话不变,**同会话中途切换下一条即生效**);⑥未知模型 400 带可用清单;真模型实测同会话 glm-5.3-flash→mimo-v2.5 热切换,快照证两 turn model_id 各归其位(VPS mock 根因=未配 provider,W6 后设置页配好免重启即真模型) |
 | W7 关于页+在线升级 | 2026-09-02 | (见 git) | 全量绿 | **设置左侧新增「关于」**:版本/平台/数据目录/更新源 + 检查更新(GitHub latest release 三段版本比较,按平台选资产)+一键升级(下载→sha256 校验→tar 解包→换装二进制/dist/plugins→BOEN_UPGRADE_CHILD 拉新进程+旧进程排空,子进程绑定重试 60s);apply 仅回环地址;workspace 版本对齐 release 线(0.1.0-m1→0.0.2);release.yml 补 windows 双平台包;**铁规矩立档:未经用户明示严禁发版(打 tag/发 release)**,在线升级只消费不发布;apply 全链待下次授权发版实战 |
 | 界面反馈:输入框下拉主题化 | 2026-09-02 | (见 git) | — | 用户反馈两则:①「角色:/模型:」文字标签删除只留下拉;②原生 select 弹出层直角不合皮肤——两下拉换 Radix 主题化组件(圆角+popover 配色+分组+勾标,跟主题走);升级按钮按检出结果条件显示(已是最新不显示,防呆设计,用户问询已答) |
-| 界面反馈:页签紧凑化+左右抽屉 | 2026-09-02 | (见 git) | tsc/构建绿+浏览器实测 | ①WORKSPACE 文件/产物/待办页签太厚重——降高降字号,active 去底色块只留 2px 细下划线;②SESSION/WORKSPACE 无收放——chat-head 两端加 PanelLeft/PanelRight 门型开关(lucide 同族),收起=列宽归 0+面板 padding 清零,180ms 过渡抽屉动画,状态入 bm_layout 刷新保持;⚠ IAB 隐藏页签冻结 CSS 过渡=自动化环境噪声,真实窗口正常 |
+| 界面反馈:页签紧凑化+左右抽屉 | 2026-09-02 | (见 git) | tsc/构建绿+浏览器实测 | ①WORKSPACE 文件/产物/待办页签太厚重——降高降字号,active 去底色块只留 2px 细下划线;②SESSION/WORKSPACE 无收放——chat-head 两端加 PanelLeft/PanelRight 门型开关(lucide 同族),收起=列宽归 0+面板 padding 清零,状态入 bm_layout 刷新保持;⚠ 列宽过渡动画移除(无头渲染环境冻结布局,即时收放更稳) |
+| 界面反馈:上拉菜单+目录树右键 | 2026-09-02 | (见 git) | curl+浏览器实测 | ①输入框两下拉改上弹(side=top),去「默认」字样,Provider 名 12.5px/600 vs 模型名 12px 缩进,在用项打钩移到名字前;②目录树右键菜单=重命名(对话框)/复制绝对/相对路径/下载/文件夹打包下载 zip——后端新增 /admin/fs/rename + /admin/fs/download(safe_resolve 防逃逸,256MB/5000 条目守门,Content-Disposition 含 RFC5987 中文名);③rail 图标 fg-3→fg-2 加深;多选打包留候选(需先做树多选 UX) |
 
 ## W 序列验收惯例
 
