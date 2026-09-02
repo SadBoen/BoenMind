@@ -54,7 +54,7 @@ async fn rig(script: Vec<Step>) -> Rig {
         None,
         Arc::new("mock-model".into()),
         None,
-    None,
+        None,
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -356,7 +356,7 @@ async fn t33_shutdown_endpoint_is_authed_and_notifies() {
         None,
         Arc::new("mock-model".into()),
         None,
-    None,
+        None,
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -445,7 +445,7 @@ async fn m4_rig(
         None,
         Arc::new("mock-model".into()),
         None,
-    None,
+        None,
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await

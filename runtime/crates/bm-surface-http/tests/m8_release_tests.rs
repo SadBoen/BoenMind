@@ -72,7 +72,7 @@ async fn rig_with_web() -> Rig {
         Some(web_dir()),
         Arc::new("mock-model".into()),
         None,
-    None,
+        None,
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await

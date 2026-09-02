@@ -64,7 +64,7 @@ async fn spawn_app(
         None,
         Arc::new("mock-model".into()),
         Some(admin),
-    None,
+        None,
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await

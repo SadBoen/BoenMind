@@ -192,12 +192,12 @@ pub fn rebuild_routes(cfg: &AdminConfig) {
                 continue;
             }
             let secret_ref = bm_core::runtime::default_secret_ref(&id);
-            if bm_core::ports::SecretStore::get(secrets.as_ref(), &secret_ref).is_err() {
-                if let Err(e) = bm_core::ports::SecretStore::put(secrets.as_ref(), &secret_ref, key)
-                {
-                    eprintln!("[W6] 模型「{id}」密钥播种失败(不入路由): {e:?}");
-                    continue;
-                }
+            if bm_core::ports::SecretStore::get(secrets.as_ref(), &secret_ref).is_err()
+                && let Err(e) =
+                    bm_core::ports::SecretStore::put(secrets.as_ref(), &secret_ref, key)
+            {
+                eprintln!("[W6] 模型「{id}」密钥播种失败(不入路由): {e:?}");
+                continue;
             }
             table.insert(id, connector.clone());
         }

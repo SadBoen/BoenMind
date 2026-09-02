@@ -1558,7 +1558,7 @@ pub(crate) fn handle_task_autorun_start(
             session_id: session_id.clone(),
             agent_id: agent_id.clone(),
             content: autorun_instruction(&goal, None),
-model_override: None,
+            model_override: None,
             input_trust: bm_contract::wire::InputTrust::Trusted,
         },
     )?;
@@ -1694,7 +1694,7 @@ pub(crate) fn autorun_pump(w: &mut World, op_id: &BmId) {
             session_id,
             agent_id,
             content: autorun_instruction(&goal, Some(&content)),
-model_override: None,
+            model_override: None,
             input_trust: bm_contract::wire::InputTrust::Trusted,
         },
     );

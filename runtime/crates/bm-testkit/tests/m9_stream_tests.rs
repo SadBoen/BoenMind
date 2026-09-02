@@ -124,7 +124,7 @@ async fn one_turn(handle: &RuntimeHandle, ids: &Arc<SeqIdGen>, model: &str) -> T
                 session_id: created.session_id.clone(),
                 agent_id: created.agent_id.clone(),
                 content: "你好".into(),
-model_override: None,
+                model_override: None,
                 input_trust: bm_contract::wire::InputTrust::Trusted,
             },
         )

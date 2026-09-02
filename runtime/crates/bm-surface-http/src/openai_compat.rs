@@ -83,16 +83,17 @@ pub async fn chat_completions(
         .map(|s| s.trim())
         .filter(|s| !s.is_empty() && *s != "auto")
         .map(|s| s.to_string());
-    if let (Some(m), Some(routes)) = (&requested_model, state.model_routes.as_ref()) {
-        if !routes.known_models().is_empty() && !routes.contains(m) {
-            return err_response(
-                StatusCode::BAD_REQUEST,
-                &format!(
-                    "模型「{m}」不在已配置清单(设置 → 模型 里核对 id 或勾选常用);可用: {}",
-                    routes.known_models().join(", ")
-                ),
-            );
-        }
+    if let (Some(m), Some(routes)) = (&requested_model, state.model_routes.as_ref())
+        && !routes.known_models().is_empty()
+        && !routes.contains(m)
+    {
+        return err_response(
+            StatusCode::BAD_REQUEST,
+            &format!(
+                "模型「{m}」不在已配置清单(设置 → 模型 里核对 id 或勾选常用);可用: {}",
+                routes.known_models().join(", ")
+            ),
+        );
     }
 
     // 取最后一条 user 消息文本(content 为字符串或多模态 parts 数组两种形状)
@@ -161,9 +162,11 @@ pub async fn chat_completions(
                             name: "webui".to_string(),
                             // W6:对话选择了模型则以其为初始链(后续回合仍可
                             // 随消息携带 model_override 热切换)。
-                            model_chain: vec![requested_model
-                                .clone()
-                                .unwrap_or_else(|| default_model.clone())],
+                            model_chain: vec![
+                                requested_model
+                                    .clone()
+                                    .unwrap_or_else(|| default_model.clone()),
+                            ],
                             budget: None,
                             system_prompt: initial_system_prompt,
                         },

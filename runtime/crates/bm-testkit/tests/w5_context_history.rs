@@ -121,7 +121,7 @@ async fn second_turn_request_carries_first_turn_history() {
                     session_id: sess.clone(),
                     agent_id: agent.clone(),
                     content: "第一轮".into(),
-model_override: None,
+                    model_override: None,
                     input_trust: InputTrust::Trusted,
                 },
             )
@@ -140,7 +140,7 @@ model_override: None,
                     session_id: sess.clone(),
                     agent_id: agent.clone(),
                     content: "第二轮".into(),
-model_override: None,
+                    model_override: None,
                     input_trust: InputTrust::Trusted,
                 },
             )

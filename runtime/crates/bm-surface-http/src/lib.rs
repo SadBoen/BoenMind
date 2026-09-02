@@ -40,6 +40,7 @@ pub struct AppState {
 /// 组装 Surface 路由。`token` 为已加载的访问令牌;/health 豁免鉴权,
 /// /rpc 与 /events 受 Bearer 保护。`admin` = W2 管理面配置(None = 不挂载,
 /// 管理面端点不存在)。`model_routes` = W6 对话模型路由表(None = 不校验)。
+#[allow(clippy::too_many_arguments)] // axum 装配函数,参数即装配面
 pub fn router(
     handle: RuntimeHandle,
     token: Arc<String>,

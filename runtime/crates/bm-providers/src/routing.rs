@@ -10,8 +10,8 @@
 //! 凭据不变:回合侧照常传 `secret_ref = secret:model.<model_id>`,各模型
 //! 的密钥由服务器启动/配置变更时播种进加密密钥库(见 boenmind-server)。
 
-use bm_core::ports::ModelConnector;
 use bm_contract::connector::{InvokeRequest, InvokeResponse};
+use bm_core::ports::ModelConnector;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -98,7 +98,7 @@ impl ModelConnector for RoutingConnector {
 mod tests {
     use super::*;
     use bm_contract::connector::{InvokeParams, InvokeResponse, Usage};
-        use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn req(model: &str) -> InvokeRequest {
         InvokeRequest {

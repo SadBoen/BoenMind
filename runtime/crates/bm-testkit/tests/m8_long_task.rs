@@ -133,7 +133,7 @@ async fn t116_live_long_task_stress() {
                     session_id: sess.clone(),
                     agent_id: agent.clone(),
                     content: p.to_string(),
-model_override: None,
+                    model_override: None,
                     input_trust: bm_contract::wire::InputTrust::Trusted,
                 },
             )
