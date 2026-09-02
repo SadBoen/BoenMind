@@ -82,6 +82,7 @@ async fn rig_with_slow_mcp() -> Rig {
         None,
         Arc::new("mock-model".into()),
         None,
+    None,
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await

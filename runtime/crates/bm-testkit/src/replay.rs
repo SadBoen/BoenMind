@@ -116,6 +116,7 @@ impl TestRig {
             session_id: session.clone(),
             agent_id: agent.clone(),
             content: content.into(),
+model_override: None,
             input_trust: bm_contract::wire::InputTrust::Trusted,
         }
     }

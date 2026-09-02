@@ -33,11 +33,13 @@ pub struct AppState {
     /// W1(ADR-0014):服务器默认模型(配置/env 驱动),/v1 插座与会话创建用。
     pub default_model: Arc<String>,
     pub data_dir: Option<std::path::PathBuf>,
+    /// W6:对话级模型路由表(body.model 校验用;None = 不校验,测试/mock 态)。
+    pub model_routes: Option<Arc<bm_providers::routing::RoutingConnector>>,
 }
 
 /// 组装 Surface 路由。`token` 为已加载的访问令牌;/health 豁免鉴权,
 /// /rpc 与 /events 受 Bearer 保护。`admin` = W2 管理面配置(None = 不挂载,
-/// 管理面端点不存在)。
+/// 管理面端点不存在)。`model_routes` = W6 对话模型路由表(None = 不校验)。
 pub fn router(
     handle: RuntimeHandle,
     token: Arc<String>,
@@ -46,6 +48,7 @@ pub fn router(
     web_dir: Option<std::path::PathBuf>,
     default_model: Arc<String>,
     admin: Option<webadmin::AdminConfig>,
+    model_routes: Option<Arc<bm_providers::routing::RoutingConnector>>,
 ) -> Router {
     let data_dir = admin.as_ref().map(|a| a.data_dir.clone());
     let state = AppState {
@@ -55,6 +58,7 @@ pub fn router(
         shutdown,
         default_model,
         data_dir,
+        model_routes,
     };
     let app = Router::new()
         .route("/rpc/{method}", post(rpc::rpc_endpoint))

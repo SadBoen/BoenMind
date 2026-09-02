@@ -46,6 +46,7 @@ async fn t34_web_root_served_without_auth_api_still_guarded() {
         Some(web_dir.path().to_path_buf()),
         Arc::new("mock-model".into()),
         None,
+    None,
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await

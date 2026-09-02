@@ -58,7 +58,7 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
             active={section === "providers"}
             onClick={() => setSection("providers")}
             icon={<SlidersHorizontalIcon className="size-4" />}
-            label="模型提供商"
+            label="模型"
           />
           <NavItem
             active={section === "plugins"}

@@ -182,6 +182,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(PathBuf::from)
         .unwrap_or_else(|| data_dir.join("workspace"));
     std::fs::create_dir_all(&workspace_root)?;
+    // W6:对话级模型路由——单连接器插槽装路由器(按 body.model/model_override
+    // 分发到各 provider 网关;未命中回落默认连接器)。启动即按 providers.json
+    // 建表+播种密钥;此后管理面增删改 provider 免重启热重建(webadmin rebuild)。
+    let model_routes = Arc::new(bm_providers::routing::RoutingConnector::new(
+        connector.clone(),
+    ));
     let handle = RuntimeHandle::start(RuntimeConfig {
         capabilities,
         async_executor: mcp_executor,
@@ -193,7 +199,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         version: format!("{}-server", env!("CARGO_PKG_VERSION")),
         data_dir: Some(data_dir.clone()),
         store: Some(store.clone()),
-        connector,
+        connector: model_routes.clone(),
         secret_store: secrets.clone(),
         id_gen,
         clock: Arc::new(SystemClock),
@@ -202,7 +208,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     })
     .await;
 
-    std::fs::create_dir_all(&workspace_root)?;
     // W2 管理面注入(handle 就绪后构造:热装载走 actor 命令)
     let admin = bm_surface_http::webadmin::AdminConfig {
         data_dir: data_dir.clone(),
@@ -213,7 +218,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         handle: handle.clone(),
         hub: hub.clone(),
         secrets: Some(secrets.clone()),
+        model_routes: Some(model_routes.clone()),
     };
+    bm_surface_http::webadmin::rebuild_routes(&admin);
 
     // P0(第四轮评审):INV-5 脱敏接线——把模型凭据明文注册进 Execution
     // Log 扫描面,此后任何日志条目命中即整条降格,密钥明文禁止落盘。
@@ -237,6 +244,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         web_dir.clone(),
         default_model.clone(),
         Some(admin),
+        Some(model_routes),
     );
     if let Some(w) = &web_dir {
         println!("Web Surface 目录 {w:?}(GET / 托管静态界面)");

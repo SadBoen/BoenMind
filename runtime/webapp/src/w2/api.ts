@@ -7,6 +7,8 @@ export type Provider = {
   name: string;
   baseUrl: string;
   models: string[];
+  /** W6 常用清单(对话输入框候选来源;⊂ models) */
+  modelsCommon?: string[];
   defaultModel?: string;
   secretSet: boolean;
 };
@@ -16,6 +18,7 @@ export type ProviderInput = {
   baseUrl: string;
   apiKey?: string;
   models?: string[];
+  modelsCommon?: string[];
   defaultModel?: string;
 };
 

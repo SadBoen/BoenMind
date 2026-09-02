@@ -40,6 +40,7 @@
 | W4b Skill 挂载 | 2026-09-02 | (见 git) | 291 | **合同 Minor:capability/skill.v0_1 新增**(Skill=知识包,只是数据不改变权限);config/skills.json + /admin/skills CRUD + 角色编辑挂载勾选;bm-core::roles::compose_role_prompt 统一组装(基底 prompt+挂载技能指令;会话烤入/回合热读双口径一致);真模型实测「押韵诗人」挂载后回复严格遵循打油诗格式且透视面板核验指令已注入(截图 08);W4b 全部闭合 |
 | W4b 多角色管理与会话切换 | 2026-09-02 | (见 git) | 289 | **角色库 CRUD 与会话级选择交付**:config/roles.json 扩展多角色模型 + /admin/roles 增删改查及设为全局默认;Agent 结构与 turn.rs 组装支持会话级 system_prompt 覆盖;Composer 工具栏集成角色切换下拉,发请求传 X-Bm-Role;真模型实测「代码架构师」角色答复口吻精确匹配设定,上下文透视面板中 System Prompt 验证生效,截图 shots-w5-context/04 |
 | v0.0.1 首发:官方插件移入+Linux 发布线 | 2026-09-02 | `v0.0.1` | 插件 27+1 | **web-multisearch 自独立仓移入 `plugins/mcp/web-multisearch/`**(官方自带插件;外仓历史归档分支 archive/boenmind-mcp-servers,外仓目录已清;--self-describe 紧凑单行修复随移入库);release.yml 重写为 v* tag 触发的 Linux x86_64 发布线(boenmind-server+插件+预构建 dist 同包,自动建 GitHub Release,含 INSTALL-linux.md);用户裁决只要 Linux(VPS 安装场景) |
+| W6 对话级模型选择 | 2026-09-02 | (见 git) | 全量绿+validate 绿 | **设置「模型提供商」改名「模型」+常用清单+输入框选模型三合一**:①providers.json 增 modelsCommon(⊂models,设置页多选勾选,卡片显「清单共 N 个 · 常用设置为:…」);②合同 **Minor**:agent.send_input 增可选 model_override(turn 降级链整体替换);③bm-providers 新增 RoutingConnector(按 model_id 分发,未命中回落默认,invoke_stream 透传保流式),World/回合循环零改动;④providers 写后免重启重建路由+密钥播种(secret:model.<id>,INV-5 不破);⑤输入框模型下拉(localStorage 持久化,刷新/新对话不变,**同会话中途切换下一条即生效**);⑥未知模型 400 带可用清单;真模型实测同会话 glm-5.3-flash→mimo-v2.5 热切换,快照证两 turn model_id 各归其位(VPS mock 根因=未配 provider,W6 后设置页配好免重启即真模型) |
 
 ## W 序列验收惯例
 

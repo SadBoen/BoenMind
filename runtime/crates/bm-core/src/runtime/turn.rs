@@ -36,7 +36,19 @@ pub(crate) struct PendingCapabilityCall {
     pub(crate) trust: DataTrust,
 }
 
-pub(crate) fn spawn_turn(w: &mut World, agent: &Agent, operation_id: &BmId, content: String) {
+pub(crate) fn spawn_turn(
+    w: &mut World,
+    agent: &Agent,
+    operation_id: &BmId,
+    content: String,
+    model_override: Option<String>,
+) {
+    // W6:回合级模型覆盖(对话热切换)优先——给出则本回合降级链整体
+    // 替换为单元素(工具轮/重试同回合同模型);缺省沿用 agent 烤入链。
+    let chain: Vec<String> = match model_override {
+        Some(m) if !m.trim().is_empty() => vec![m],
+        _ => agent.model_chain.clone(),
+    };
     // M7 S1:模型调用过 Broker(M4 §5.8 豁免撤销;ADR-0010)。
     // 授权走 Grant 台账:agent 创建即授 model.invoke 永续 Grant,可经
     // grant.revoke 收回(ADR-0006 权力显式化)。不走信任面——内容链构造层
@@ -59,7 +71,7 @@ pub(crate) fn spawn_turn(w: &mut World, agent: &Agent, operation_id: &BmId, cont
                 &ctx,
                 "model.invoke",
                 &serde_json::json!({
-                    "model_id": agent.model_chain.first().cloned().unwrap_or_default()
+                    "model_id": chain.first().cloned().unwrap_or_default()
                 }),
             )
         };
@@ -118,7 +130,6 @@ pub(crate) fn spawn_turn(w: &mut World, agent: &Agent, operation_id: &BmId, cont
 
     let connector = w.config.connector.clone();
     let clock = w.config.clock.clone();
-    let chain = agent.model_chain.clone();
     let agent_id = agent.id.clone();
     let remaining = agent.budget.remaining_tokens();
     let max_attempts = w
@@ -659,7 +670,7 @@ pub(crate) fn handle_recovery_settle(
             let a = w.agents.get_mut(&agent_id).expect("存在");
             a.transition(AgentState::WaitingModel);
         }
-        spawn_turn(w, &agent, &operation_id, content);
+        spawn_turn(w, &agent, &operation_id, content, None);
         Ok(w.receipt_of(&w.operations[&operation_id]))
     } else {
         let error = match target {

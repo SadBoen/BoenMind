@@ -75,6 +75,26 @@ pub async fn chat_completions(
 ) -> Response {
     let default_model = (*state.default_model).clone();
 
+    // W6 对话级模型选择:body.model = 所选模型;"auto"/缺省 = 服务器默认。
+    // 路由表非空且未知名 → 400(防静默落 mock/错网关);表空(mock 开发态)
+    // 不校验,W1 行为不破。
+    let requested_model: Option<String> = body["model"]
+        .as_str()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty() && *s != "auto")
+        .map(|s| s.to_string());
+    if let (Some(m), Some(routes)) = (&requested_model, state.model_routes.as_ref()) {
+        if !routes.known_models().is_empty() && !routes.contains(m) {
+            return err_response(
+                StatusCode::BAD_REQUEST,
+                &format!(
+                    "模型「{m}」不在已配置清单(设置 → 模型 里核对 id 或勾选常用);可用: {}",
+                    routes.known_models().join(", ")
+                ),
+            );
+        }
+    }
+
     // 取最后一条 user 消息文本(content 为字符串或多模态 parts 数组两种形状)
     let Some(messages) = body["messages"].as_array() else {
         return err_response(StatusCode::BAD_REQUEST, "缺少 messages 数组");
@@ -139,7 +159,11 @@ pub async fn chat_completions(
                     SessionCreateParams {
                         agent: AgentSpec {
                             name: "webui".to_string(),
-                            model_chain: vec![default_model.clone()],
+                            // W6:对话选择了模型则以其为初始链(后续回合仍可
+                            // 随消息携带 model_override 热切换)。
+                            model_chain: vec![requested_model
+                                .clone()
+                                .unwrap_or_else(|| default_model.clone())],
                             budget: None,
                             system_prompt: initial_system_prompt,
                         },
@@ -176,6 +200,8 @@ pub async fn chat_completions(
                 agent_id: rt_aid.clone(),
                 content: text,
                 input_trust: InputTrust::Trusted,
+                // W6:每条消息都携带当前所选模型 → 对话中途切换下一条即生效
+                model_override: requested_model,
             },
         )
         .await;

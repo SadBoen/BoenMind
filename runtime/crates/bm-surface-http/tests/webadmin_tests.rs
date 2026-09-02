@@ -54,6 +54,7 @@ async fn spawn_app(
         handle: handle.clone(),
         hub: None,
         secrets: Some(Arc::new(MemSecretStore::new()) as Arc<dyn bm_core::ports::SecretStore>),
+        model_routes: None,
     };
     let app = bm_surface_http::router(
         handle,
@@ -63,6 +64,7 @@ async fn spawn_app(
         None,
         Arc::new("mock-model".into()),
         Some(admin),
+    None,
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await

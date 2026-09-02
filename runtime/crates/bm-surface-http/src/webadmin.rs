@@ -50,6 +50,8 @@ pub struct AdminConfig {
     pub hub: Option<Arc<bm_providers::mcp::McpHub>>,
     /// MCP env secret: 引用解析用加密库(与启动装载同一实例)。
     pub secrets: Option<Arc<dyn bm_core::ports::SecretStore>>,
+    /// W6:对话级模型路由表(providers 写后重建;None = 未装配,如测试态)。
+    pub model_routes: Option<Arc<bm_providers::routing::RoutingConnector>>,
 }
 
 /// 文件预览大小上限(512KB;个人单机预览面,防整读大文件)。
@@ -105,6 +107,27 @@ fn validate_provider_input(body: &Value) -> Result<(), (StatusCode, String)> {
             }
         }
     }
+    // W6 常用清单:可选;给出时须为 models 子集(对话输入框的候选来源)
+    if let Some(common) = body["modelsCommon"].as_array() {
+        if common.len() > 50 {
+            return bad("modelsCommon 至多 50 个");
+        }
+        for m in common {
+            let id = m.as_str().unwrap_or("");
+            if id.is_empty() || id.len() > 200 {
+                return bad("modelsCommon 项必须是非空字符串(≤200 字符)");
+            }
+        }
+        if let Some(models) = body["models"].as_array() {
+            for c in common {
+                if !models.contains(c) {
+                    return bad(&format!(
+                        "modelsCommon 项「{c}」不在 models 清单内(须为子集)"
+                    ));
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -123,6 +146,7 @@ fn mask_provider(p: &Value) -> Value {
         "name": p["name"],
         "baseUrl": p["baseUrl"],
         "models": p["models"],
+        "modelsCommon": p["modelsCommon"].as_array().cloned().unwrap_or_default(),
         "defaultModel": p["defaultModel"],
         "secretSet": p["apiKey"].as_str().map(|s| !s.is_empty()).unwrap_or(false),
     })
@@ -136,6 +160,49 @@ fn new_provider_id() -> String {
         s.push_str(&format!("{b:02x}"));
     }
     s
+}
+
+/// W6:providers.json 变更后重建对话模型路由表 + 密钥播种(缺则种,INV-5:
+/// 明文仍只落盘 providers.json,密钥库只进加密副本)。
+/// 有密钥的 provider 才入路由;模型 id 跨 provider 重复 = 先到优先(告警);
+/// cfg.model_routes/secrets 缺省(测试态)为空操作。
+pub fn rebuild_routes(cfg: &AdminConfig) {
+    let (Some(rc), Some(secrets)) = (&cfg.model_routes, &cfg.secrets) else {
+        return;
+    };
+    let mut table: std::collections::HashMap<String, Arc<dyn bm_core::ports::ModelConnector>> =
+        std::collections::HashMap::new();
+    for p in read_providers(&cfg.data_dir) {
+        let (Some(base), Some(key)) = (
+            p["baseUrl"].as_str(),
+            p["apiKey"].as_str().filter(|s| !s.is_empty()),
+        ) else {
+            continue;
+        };
+        let connector: Arc<dyn bm_core::ports::ModelConnector> = Arc::new(
+            bm_providers::openai_http::OpenAiConnector::new(base.to_string(), secrets.clone()),
+        );
+        let models = p["models"].as_array().cloned().unwrap_or_default();
+        for m in models {
+            let Some(id) = m.as_str().map(|s| s.to_string()) else {
+                continue;
+            };
+            if table.contains_key(&id) {
+                eprintln!("[W6] 模型「{id}」在多个 provider 重复,路由保留先到者");
+                continue;
+            }
+            let secret_ref = bm_core::runtime::default_secret_ref(&id);
+            if bm_core::ports::SecretStore::get(secrets.as_ref(), &secret_ref).is_err() {
+                if let Err(e) = bm_core::ports::SecretStore::put(secrets.as_ref(), &secret_ref, key)
+                {
+                    eprintln!("[W6] 模型「{id}」密钥播种失败(不入路由): {e:?}");
+                    continue;
+                }
+            }
+            table.insert(id, connector.clone());
+        }
+    }
+    rc.replace_table(table);
 }
 
 // ---- 工作区文件浏览(X-01 先例:组件白名单 + 拒链 + realpath 包含)-----
@@ -198,12 +265,14 @@ pub async fn providers_create(State(cfg): State<AdminConfig>, Json(body): Json<V
         "baseUrl": body["baseUrl"],
         "apiKey": norm_key(&body),
         "models": body["models"].as_array().cloned().unwrap_or_default(),
+        "modelsCommon": body["modelsCommon"].as_array().cloned().unwrap_or_default(),
         "defaultModel": body["defaultModel"].as_str().unwrap_or(""),
     });
     list.push(record.clone());
     if let Err(e) = write_providers(&cfg.data_dir, &list) {
         return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
     }
+    rebuild_routes(&cfg);
     Json(json!({ "provider": mask_provider(&record) })).into_response()
 }
 
@@ -229,6 +298,10 @@ pub async fn providers_update(
     if let Some(models) = body["models"].as_array() {
         record["models"] = json!(models);
     }
+    // W6 常用清单:缺省 = 保持不变(与 models 同口径)
+    if let Some(mc) = body["modelsCommon"].as_array() {
+        record["modelsCommon"] = json!(mc);
+    }
     if let Some(dm) = body["defaultModel"].as_str() {
         record["defaultModel"] = json!(dm);
     }
@@ -236,6 +309,7 @@ pub async fn providers_update(
     if let Err(e) = write_providers(&cfg.data_dir, &list) {
         return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
     }
+    rebuild_routes(&cfg);
     Json(json!({ "provider": mask_provider(&record) })).into_response()
 }
 
@@ -253,6 +327,7 @@ pub async fn providers_delete(
     if let Err(e) = write_providers(&cfg.data_dir, &list) {
         return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
     }
+    rebuild_routes(&cfg);
     Json(json!({ "ok": true })).into_response()
 }
 

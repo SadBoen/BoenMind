@@ -186,6 +186,7 @@ mod bm_testkit_replay {
             session_id: session_id.clone(),
             agent_id: agent_id.clone(),
             content: content.into(),
+model_override: None,
             input_trust: bm_contract::wire::InputTrust::Trusted,
         }
     }

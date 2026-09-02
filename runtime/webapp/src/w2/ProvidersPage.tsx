@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   CheckCircle2Icon,
+  CheckIcon,
   Loader2Icon,
   PencilIcon,
   PlugZapIcon,
@@ -35,6 +36,7 @@ type Draft = {
   baseUrl: string;
   apiKey: string;
   models: string[];
+  modelsCommon: string[];
   defaultModel: string;
 };
 
@@ -43,6 +45,7 @@ const emptyDraft: Draft = {
   baseUrl: "",
   apiKey: "",
   models: [],
+  modelsCommon: [],
   defaultModel: "",
 };
 
@@ -119,9 +122,10 @@ export function ProvidersPage() {
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-[15px] font-semibold">模型提供商</h2>
+          <h2 className="text-[15px] font-semibold">模型</h2>
           <p className="text-muted-foreground text-[12.5px]">
-            OpenAI 兼容网关的增删改查;「设为当前」写入服务器配置,重启后生效。
+            OpenAI 兼容网关的增删改查;勾选「常用」= 对话输入框可选的模型子集;
+            「设为当前」= 服务器默认(重启生效)。
           </p>
         </div>
         <Button onClick={() => setDraft({ ...emptyDraft })} size="sm">
@@ -171,9 +175,13 @@ export function ProvidersPage() {
               <div className="text-muted-foreground truncate font-mono text-[11.5px]">
                 {p.baseUrl}
               </div>
-              <div className="text-muted-foreground text-[12px]">
-                模型清单 {p.models.length} 个
-                {p.defaultModel ? ` · 默认 ${p.defaultModel}` : ""}
+              <div className="text-muted-foreground text-[12px]" data-common-summary>
+                清单共 {p.models.length} 个
+                {(p.modelsCommon?.length ?? 0) > 0
+                  ? ` · 常用设置为:${p.modelsCommon!.join("、")}`
+                  : p.defaultModel
+                    ? ` · 默认 ${p.defaultModel}`
+                    : ""}
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
@@ -214,6 +222,7 @@ export function ProvidersPage() {
                       baseUrl: p.baseUrl,
                       apiKey: "",
                       models: p.models,
+                      modelsCommon: p.modelsCommon ?? [],
                       defaultModel: p.defaultModel ?? "",
                     })
                   }
@@ -266,6 +275,8 @@ export function ProvidersPage() {
         onSaved={async (msg) => {
           setDraft(null);
           await reload();
+          // W6:通知输入框模型下拉刷新(常用清单可能变了)
+          window.dispatchEvent(new CustomEvent("bm-providers-changed"));
           flash(msg);
         }}
       />
@@ -329,6 +340,7 @@ function ProviderDialog({
       baseUrl: form.baseUrl,
       apiKey: form.apiKey,
       models: form.models,
+      modelsCommon: form.modelsCommon,
       defaultModel: form.defaultModel,
     };
     try {
@@ -418,15 +430,55 @@ function ProviderDialog({
           </div>
 
           {form.models.length > 0 ? (
-            <div className="flex flex-col gap-1.5">
-              <Label>默认模型(点选)</Label>
-              <ModelPicker
-                models={pickable}
-                selectedId={form.defaultModel}
-                onSelect={(id) => setForm({ ...form, defaultModel: id })}
-                className="max-w-full"
-              />
-            </div>
+            <>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="common-picker">
+                  常用模型(可多选;对话输入框候选 = 各提供商常用并集)
+                </Label>
+                <div className="flex flex-wrap gap-1.5" data-slot="common-picker">
+                  {form.models.map((m) => {
+                    const on = form.modelsCommon.includes(m);
+                    return (
+                      <button
+                        key={m}
+                        id="common-picker"
+                        type="button"
+                        aria-pressed={on}
+                        onClick={() =>
+                          setForm({
+                            ...form,
+                            modelsCommon: on
+                              ? form.modelsCommon.filter((x) => x !== m)
+                              : [...form.modelsCommon, m],
+                          })
+                        }
+                        className={cn(
+                          "flex items-center gap-1 rounded-lg border px-2 py-1 font-mono text-[11.5px] transition-colors",
+                          on
+                            ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+                            : "text-muted-foreground hover:bg-muted",
+                        )}
+                      >
+                        {on ? <CheckIcon className="size-3" /> : <PlusIcon className="size-3" />}
+                        {m}
+                      </button>
+                    );
+                  })}
+                </div>
+                <span className="text-muted-foreground text-[11.5px]">
+                  已选 {form.modelsCommon.length} / {form.models.length}
+                </span>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label>默认模型(点选;「设为当前」用)</Label>
+                <ModelPicker
+                  models={pickable}
+                  selectedId={form.defaultModel}
+                  onSelect={(id) => setForm({ ...form, defaultModel: id })}
+                  className="max-w-full"
+                />
+              </div>
+            </>
           ) : null}
 
           {error ? (

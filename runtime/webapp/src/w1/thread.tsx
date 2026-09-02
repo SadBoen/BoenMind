@@ -232,10 +232,35 @@ function AssistantMessage() {
 function Composer() {
   const isRunning = useAuiState((s) => s.thread.isRunning);
   const [model, setModel] = useState("…");
+  // W6:对话级模型选择——候选 = 各提供商「常用」并集(设置→模型 勾选);
+  // 选择持久化 localStorage,随每条消息发给后端,中途切换下一条即生效。
+  const [modelGroups, setModelGroups] = useState<Array<{ provider: string; models: string[] }>>([]);
+  const [selModel, setSelModel] = useState<string>(
+    () => localStorage.getItem("bm_active_model") || "",
+  );
   const [roles, setRoles] = useState<Array<{ id: string; name: string }>>([]);
   const [activeRole, setActiveRole] = useState<string>(
     () => localStorage.getItem("bm_active_role") || "",
   );
+
+  const loadModels = () => {
+    fetch("/admin/providers")
+      .then((r) => r.json())
+      .then((d) => {
+        const list: Array<{ provider: string; models: string[] }> = (d?.providers ?? [])
+          .filter((p: any) => (p.modelsCommon ?? []).length > 0)
+          .map((p: any) => ({ provider: p.name, models: p.modelsCommon as string[] }));
+        setModelGroups(list);
+        // 已选模型不在候选集(被取消勾选/删除)→ 回落服务器默认
+        const all = new Set(list.flatMap((g: any) => g.models));
+        const cur = localStorage.getItem("bm_active_model") || "";
+        if (cur && !all.has(cur)) {
+          localStorage.removeItem("bm_active_model");
+          setSelModel("");
+        }
+      })
+      .catch(() => {});
+  };
 
   const loadRoles = () => {
     fetch("/admin/roles")
@@ -262,9 +287,14 @@ function Composer() {
       .then((v) => setModel(v?.data?.[0]?.id ?? "?"))
       .catch(() => setModel("?"));
 
+    loadModels();
     loadRoles();
     window.addEventListener("bm-roles-changed", loadRoles);
-    return () => window.removeEventListener("bm-roles-changed", loadRoles);
+    window.addEventListener("bm-providers-changed", loadModels);
+    return () => {
+      window.removeEventListener("bm-roles-changed", loadRoles);
+      window.removeEventListener("bm-providers-changed", loadModels);
+    };
   }, []);
 
   const handleRoleChange = (newRoleId: string) => {
@@ -302,9 +332,36 @@ function Composer() {
           </div>
         ) : null}
         <span className="tool-chip disabled">📎 附件</span>
-        <span className="tool-chip mono disabled" title="服务器配置模型(W1 固定)">
-          ⚙ {model}
-        </span>
+        <label className="flex items-center gap-1">
+          <span className="text-[12px] text-muted-foreground ml-1">模型:</span>
+          <select
+            value={selModel}
+            onChange={(e) => {
+              setSelModel(e.target.value);
+              if (e.target.value) localStorage.setItem("bm_active_model", e.target.value);
+              else localStorage.removeItem("bm_active_model");
+            }}
+            className="bg-muted/60 text-foreground hover:bg-muted focus:ring-ring h-7 rounded-md border px-2 text-[11.5px] font-medium outline-none transition-colors"
+            title="切换对话模型:下一条消息即生效,无需新开会话;候选在 设置→模型 勾选「常用」"
+            data-slot="model-select"
+          >
+            <option value="">⚙ 默认 {model}</option>
+            {modelGroups.map((g) => (
+              <optgroup key={g.provider} label={g.provider}>
+                {g.models.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+            {modelGroups.length === 0 ? (
+              <option value="" disabled>
+                未设置常用——去 设置→模型 勾选
+              </option>
+            ) : null}
+          </select>
+        </label>
         <span className="tool-chip disabled">🏠 Home</span>
         <span className="composer-spacer" />
         {isRunning ? (

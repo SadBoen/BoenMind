@@ -462,7 +462,7 @@ impl RuntimeHandle {
             world
                 .in_flight
                 .insert(op_id.clone(), CancellationToken::new());
-            spawn_turn(&mut world, &agent, &op_id, content);
+            spawn_turn(&mut world, &agent, &op_id, content, None);
         }
 
         if let Some(r) = report {

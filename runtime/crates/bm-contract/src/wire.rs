@@ -262,6 +262,10 @@ pub struct SendInputParams {
     pub agent_id: BmId,
     pub content: String,
     pub input_trust: InputTrust,
+    /// W6 Minor(只增):本回合模型覆盖(对话级热切换)。缺省不出字段 =
+    /// 用 agent.model_chain;给出则本回合降级链整体替换为 [model_override]。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_override: Option<String>,
 }
 
 /// 执行收据(agent #/definitions/receipt,基线 9.5)。

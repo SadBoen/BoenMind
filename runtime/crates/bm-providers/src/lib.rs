@@ -5,6 +5,7 @@ pub mod builtin;
 pub mod mcp;
 pub mod mock_model;
 pub mod openai_http;
+pub mod routing;
 pub mod secret;
 
 #[cfg(feature = "glm")]

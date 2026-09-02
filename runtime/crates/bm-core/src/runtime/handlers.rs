@@ -388,7 +388,7 @@ pub(crate) fn handle_send_input(
         ));
     }
 
-    spawn_turn(w, &agent, &operation_id, params.content);
+    spawn_turn(w, &agent, &operation_id, params.content, params.model_override);
 
     Ok(w.receipt_of(&w.operations[&operation_id]))
 }

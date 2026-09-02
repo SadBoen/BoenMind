@@ -137,7 +137,8 @@ export function BoenmindRuntimeProvider({
           method: "POST",
           headers,
           body: JSON.stringify({
-            model: "auto",
+            // W6:随消息携带所选模型(localStorage 持久化;空 = "auto" = 服务器默认)
+            model: localStorage.getItem("bm_active_model") || "auto",
             stream: true,
             messages: [{ role: "user", content: text }],
           }),
