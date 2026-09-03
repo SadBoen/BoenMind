@@ -177,9 +177,11 @@ mod tests {
             keys.iter().any(|(f, l)| f.ends_with("a.rs") && *l == 2),
             "a.rs 第 2 行应命中:{keys:?}"
         );
+        let src_b = std::path::Path::new("src").join("b.rs");
+        let src_b_str = src_b.to_str().unwrap();
         assert!(
             keys.iter()
-                .any(|(f, l)| f.ends_with(r"src\b.rs") && *l == 1),
+                .any(|(f, l)| f.ends_with(src_b_str) && *l == 1),
             "src/b.rs 第 1 行应命中:{keys:?}"
         );
     }

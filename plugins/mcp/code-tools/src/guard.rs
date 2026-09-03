@@ -5,6 +5,22 @@
 
 use std::path::{Path, PathBuf};
 
+/// 跨平台词法级别路径规范化(消除 `.` 与 `..`，跨平台识别 `/` 与 `\` 作为目录分隔符)
+pub fn normalize_lexical(p: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for comp in p.components() {
+        match comp {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            c => out.push(c.as_os_str()),
+        }
+    }
+    out
+}
+
 /// 剥离 Windows verbatim 前缀(`\\?\C:\..` → `C:\..`;`\\?\UNC\s\..` → `\\s\..`)
 fn strip_verbatim(p: &Path) -> PathBuf {
     let s = p.as_os_str().to_string_lossy();
@@ -61,10 +77,20 @@ impl Roots {
                     .into(),
             );
         }
-        let mut cand = strip_verbatim(Path::new(input));
+        // 跨平台统一分隔符:在非 Windows 系统上将 `\` 替换为 `/`，防止形如 `..\..\win.ini`
+        // 在 Linux 下被当作单个带反斜杠的文件名从而绕过父目录逃逸检查。
+        #[cfg(not(windows))]
+        let sanitized_input = input.replace('\\', "/");
+        #[cfg(windows)]
+        let sanitized_input = input.to_string();
+
+        let mut cand = strip_verbatim(Path::new(&sanitized_input));
         if !cand.is_absolute() {
             cand = self.roots[0].join(cand);
         }
+        // 先进行纯词法级别的归一化，消除 `./` 与 `../`
+        let cand = normalize_lexical(&cand);
+
         let mut base: Option<PathBuf> = None;
         for anc in cand.ancestors() {
             if anc.exists() {
@@ -88,6 +114,7 @@ impl Roots {
         } else {
             canonical_base.join(rest)
         };
+        let final_path = normalize_lexical(&final_path);
         for r in &self.roots {
             if final_path.starts_with(r) {
                 return Ok(final_path);
