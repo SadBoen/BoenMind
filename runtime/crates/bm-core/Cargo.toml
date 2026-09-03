@@ -16,7 +16,7 @@ thiserror = { workspace = true }
 chrono = { workspace = true }
 ulid = { workspace = true }
 tracing = { workspace = true }
-sha2 = "0.11.0"
+sha2 = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

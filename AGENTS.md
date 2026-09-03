@@ -7,20 +7,20 @@ BoenMind:个人生态的 AI Runtime / AI OS,当前为**阶段一(跨平台单软
 (Erlang/OTP、Kubernetes、VS Code,见 `architecture/deepwiki-validation.md`)。
 合同库冻结 v1.0(字段只增不破)。
 
-**当前状态(2026-09-03)**:v0.0.6 已发版;code-tools 随包官方插件交付(查/读/改工具面:search=rg 引擎内嵌直通、read 直通、write/edit 审批,allowed_roots 沙箱,单 exe 2.6MB;内核内置固化=仅 system.exec,ADR-0020);外部 LLM 架构评审 13 项复核后修复两 P1(门户墙公网收紧+插件 sha256 完整性校验,合同 Minor)。**下一步 = 待用户过目确认 ADR-0016 后推进 Skill v0.2 第二步 wasmtime 脚本执行面实现**。交付全史见 `milestones/HISTORY.md`;
+**当前状态(2026-09-04)**:v0.0.7 已发版;资深架构全面评审闭环(stdio 写限时守卫/core_loop 崩溃监控/配置读容错防丢/前端 streamable-http 修复/文档与 C4 拓扑对齐);code-tools 随包官方插件交付(查/读/改工具面:search=rg 引擎内嵌直通、read 直通、write/edit 审批,allowed_roots 沙箱,单 exe 2.6MB;内核内置固化=仅 system.exec,ADR-0020)。**下一步 = 待用户过目确认 ADR-0016 后推进 Skill v0.2 第二步 wasmtime 脚本执行面实现**。交付全史见 `milestones/HISTORY.md`;
 **欠账唯一入口 = `milestones/BACKLOG.md`**(已闭合条目自 2026-09-02 起移出台账)。
 
 ## 文件地图(规格分层)
 
 ```text
 BoenMind-CORE-ARCHITECTURE.md   第 0 层  架构基线:原则/边界/不变量;§17 裁决;§18 里程碑定义;§19 回看制度
-adr/                            第 0 层  架构决策记录 ADR-0001..0015(0012 随 M10 dsh 线归档、编号跳空;基线与 ADR 冲突时以更新的 ADR 为准)
+adr/                            第 0 层  架构决策记录 ADR-0001..0020(0012 随 M10 dsh 线归档、编号跳空;基线与 ADR 冲突时以更新的 ADR 为准)
 architecture/                   第 0 层  C4 模型 boenmind.c4(拓扑唯一权威)+ 辩论转录(debates/)+ 验证报告
 boenmind-contracts/             第 1 层  机器可读合同(v1.0 冻结)+ validate.py 校验器 + m0/(测试矩阵/威胁模型/perf-baseline)
 milestones/                     第 2 层  实现规格+回看(M1-M9、W1-W4)+ 台账四件:HISTORY(交付时间线)/BACKLOG(未结事项)/PENDING(待裁决,现清零)/AUDIT-2026-08-30(审计)
 runtime/                        第 3 层  Rust workspace 9 个 crate(bm-contract/core/persist/providers/cli/surface-http/runtime/judge/testkit)+ webapp(W 序列前端,Vite+React+TS)
-apps/                           第 3 层  真实 App:wiki_server/market_server(stdio MCP,Python)+ mcp-config.example.json
-plugins/                        第 3 层  官方自带 MCP 插件:mcp/web-multisearch(聚合搜索,单 exe 零 SDK;独立 Cargo 项目,不进主 workspace)
+apps/                           第 3 层  真实 App:wiki_server/market_server/music_server(stdio MCP,Python)+ mcp-config.example.json
+plugins/                        第 3 层  官方随包插件:mcp/web-multisearch(聚合搜索)、context-mode(上下文管理)、code-tools(查/读/改编码工具面)
 shell/tauri/                    第 3 层  Windows 桌面壳(Tauri v2;frontendDist 指 runtime/webapp/dist,手工构建)
 scenarios/                      实测    CLI 场景实测清单(S1-S10 与 2026-08-30 实测记录)
 PLAYBOOK.md                     附页    实操备忘:启动与环境变量/前端四坑/浏览器自动化怪癖/废止速查——动手前先看

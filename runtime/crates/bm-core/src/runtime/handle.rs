@@ -482,7 +482,17 @@ impl RuntimeHandle {
             );
         }
 
-        tokio::spawn(core_loop(world, rx));
+        let loop_handle = tokio::spawn(core_loop(world, rx));
+        // 核心单写者退出不可静默:panic/意外结束必须留有观测点,
+        // 否则内核回路死了而进程还活着,所有调用空等超时。
+        tokio::spawn(async move {
+            match loop_handle.await {
+                Ok(()) => tracing::error!("core_loop 意外退出,内核单写者回路已终止"),
+                Err(e) => {
+                    tracing::error!(error = %e, "core_loop 任务异常崩溃(panic/cancelled),内核回路已终止")
+                }
+            }
+        });
         Self {
             tx,
             exec_log,

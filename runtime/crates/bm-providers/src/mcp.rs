@@ -18,6 +18,25 @@ use std::time::Duration;
 
 pub const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
 pub const DEFAULT_TOOL_TIMEOUT_MS: u64 = 30_000;
+/// stdio 写管道限时:子进程挂起(非崩溃)时调用方持锁跨
+/// await,无超时则该域能力永久坏死(respawn 也拿不到锁)。
+const STDIO_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// 带限时的 stdio 帧写入(write_all + flush),所有持锁写管道路径的统一出口。
+async fn write_frame<W: tokio::io::AsyncWrite + Unpin>(
+    stdin: &mut W,
+    bytes: &[u8],
+) -> Result<(), String> {
+    use tokio::io::AsyncWriteExt;
+    tokio::time::timeout(STDIO_WRITE_TIMEOUT, stdin.write_all(bytes))
+        .await
+        .map_err(|_| "stdio 写超时(子进程 10s 未消费,判定挂起)".to_string())?
+        .map_err(|e| format!("stdio 写失败: {e}"))?;
+    stdin
+        .flush()
+        .await
+        .map_err(|e| format!("stdio 写失败: {e}"))
+}
 
 // ---- 数据形状 --------------------------------------------------------------
 
@@ -489,7 +508,6 @@ impl StdioMcpTransport {
 #[async_trait]
 impl McpTransport for StdioMcpTransport {
     async fn request(&self, method: &str, params: Value) -> Result<Value, String> {
-        use tokio::io::AsyncWriteExt;
         if !self.alive.load(std::sync::atomic::Ordering::Relaxed) {
             self.respawn().await?;
         }
@@ -510,19 +528,7 @@ impl McpTransport for StdioMcpTransport {
             let msg = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
             let mut bytes = serde_json::to_string(&msg).map_err(|e| e.to_string())?;
             bytes.push('\n');
-            // P1(第四轮评审):写管道限时——子进程挂起(非崩溃)时锁跨
-            // await 持有,无超时则该域能力永久坏死(respawn 也拿不到锁)。
-            tokio::time::timeout(
-                std::time::Duration::from_secs(10),
-                stdin.write_all(bytes.as_bytes()),
-            )
-            .await
-            .map_err(|_| "stdio 写超时(子进程 10s 未消费,判定挂起)".to_string())?
-            .map_err(|e| format!("stdio 写失败: {e}"))?;
-            stdin
-                .flush()
-                .await
-                .map_err(|e| format!("stdio 写失败: {e}"))?;
+            write_frame(stdin, bytes.as_bytes()).await?;
         }
         let out = match rx.await {
             Ok(r) => r,
@@ -542,20 +548,12 @@ impl McpTransport for StdioMcpTransport {
     }
 
     async fn notify(&self, method: &str, params: Value) -> Result<(), String> {
-        use tokio::io::AsyncWriteExt;
         let mut inner = self.inner.lock().await;
         let stdin = inner.stdin.as_mut().expect("stdin 在活着时存在");
         let msg = json!({"jsonrpc": "2.0", "method": method, "params": params});
         let mut bytes = serde_json::to_string(&msg).map_err(|e| e.to_string())?;
         bytes.push('\n');
-        stdin
-            .write_all(bytes.as_bytes())
-            .await
-            .map_err(|e| format!("stdio 写失败: {e}"))?;
-        stdin
-            .flush()
-            .await
-            .map_err(|e| format!("stdio 写失败: {e}"))
+        write_frame(stdin, bytes.as_bytes()).await
     }
 
     fn subscribe_progress(&self) -> tokio::sync::mpsc::UnboundedReceiver<McpProgressNote> {
@@ -567,7 +565,6 @@ impl McpTransport for StdioMcpTransport {
     }
 
     fn cancel_by_token(&self, token: &str) {
-        use tokio::io::AsyncWriteExt;
         let inner = self.inner.clone();
         let token = token.to_string();
         tokio::spawn(async move {
@@ -582,8 +579,7 @@ impl McpTransport for StdioMcpTransport {
                 });
                 if let Ok(mut bytes) = serde_json::to_vec(&msg) {
                     bytes.push(b'\n');
-                    let _ = stdin.write_all(&bytes).await;
-                    let _ = stdin.flush().await;
+                    let _ = write_frame(stdin, &bytes).await;
                 }
             }
         });

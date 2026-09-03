@@ -245,7 +245,9 @@ impl PersistStore {
             let data = std::fs::read(path).map_err(|e| {
                 StoreError::Io(std::io::Error::other(format!("hash 读取失败: {e}")))
             })?;
-            Ok(format!("sha256:{:x}", Sha256::digest(&data)))
+            let digest = Sha256::digest(&data);
+            let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+            Ok(format!("sha256:{hex}"))
         };
         let manifest = serde_json::json!({
             "kind": "boenmind-backup",
@@ -284,7 +286,9 @@ impl PersistStore {
                 seq: 0,
                 reason: format!("备份文件缺失: {e}"),
             })?;
-            Ok(format!("sha256:{:x}", Sha256::digest(&data)))
+            let digest = Sha256::digest(&data);
+            let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+            Ok(format!("sha256:{hex}"))
         };
         let state_sha = sha(&target_dir.join("state.db"))?;
         if state_sha != manifest["state_sha256"].as_str().unwrap_or("") {

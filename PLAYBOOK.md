@@ -67,7 +67,7 @@ BOEN_TURN_TIMEOUT_SECS   回合内每次模型调用 deadline(秒,默认 120;202
 |---|---|
 | BOEN_CLI_WEB、cli.html、/admin/cli | 已废止/删除(A-06~A-08 销账) |
 | dsh 复刻前端 runtime/web(137 文件) | 已删,归档分支 `archive/m10-dsh-frontend`;继任=runtime/webapp |
-| bm-surface-http/src/api_dsh.rs(dsh 宿主协议 /api/*) | 已删(待追认,见 BACKLOG §5) |
+| bm-surface-http/src/api_dsh.rs(dsh 宿主协议 /api/*) | 已删(已追认闭合) |
 | 桌面壳 web/src-tauri | 已迁 `shell/tauri/src-tauri`(frontendDist 指 runtime/webapp/dist) |
 | config_store(dsh 线归档) | W2 起按 ADR-0012 口径接回(config/model.json,文件>env) |
 | 天机阁/deepseek-v4-flash 中转 | 已清;现用 OpenCode Go mimo-v2.5(zen 网关) |

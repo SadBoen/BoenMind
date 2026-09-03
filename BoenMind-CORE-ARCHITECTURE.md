@@ -1486,7 +1486,7 @@ GUI 不可用             → CLI 继续提供用户操作和运行控制
 
 ## 15. 推荐核心拓扑
 
-拓扑唯一权威是 `architecture/boenmind.c4`（详见 §24，ADR-0008）。本节不再复制图形——2026-08-28 之前的 ASCII 文字拓扑已声明降级为非权威并移除；文字与模型不一致时，以模型为准。已裁决的形态增量（正文随 ADR 熔入）：部署形态 = 本机单进程或自管 VPS 托管（ADR-0009）；Web UI Surface = assistant-ui 自建壳 `runtime/webapp`（ADR-0013 弃 dsh 复刻、ADR-0014 定 assistant-ui 路线）；真实 App 与 MCP 工具以进程外 stdio server 接入（ADR-0011）。C4 模型与实现的已知漂移台账见 `milestones/BACKLOG.md`（F-06/F-08，模型回写列为下一批开工前置）。
+拓扑唯一权威是 `architecture/boenmind.c4`（详见 §24，ADR-0008）。本节不再复制图形——2026-08-28 之前的 ASCII 文字拓扑已声明降级为非权威并移除；文字与模型不一致时，以模型为准。已裁决的形态增量（正文随 ADR 熔入）：部署形态 = 本机单进程或自管 VPS 托管（ADR-0009）；Web UI Surface = assistant-ui 自建壳 `runtime/webapp`（ADR-0013 弃 dsh 复刻、ADR-0014 定 assistant-ui 路线）；真实 App 与 MCP 工具以进程外 stdio server 接入（ADR-0011）。C4 模型与实现的已知漂移台账见 `milestones/BACKLOG.md`。
 
 本节保留两条恒定规则：
 
@@ -1704,9 +1704,9 @@ M8.8 数据保留期、用户删除与墓碑回放验证
 
 整体回看门：四道门禁全绿（260 测试）；新发现 F-01..F-11 入审计台账；条件：C4 模型回写（F-06）列为阶段二下一批开工前置。记录：`milestones/FULL-REVIEW-2026-08-30.md`。
 
-### W 序列（WebUI，ADR-0014）：W1-W4
+### W 序列（WebUI，ADR-0014）：W1-W9
 
-以 assistant-ui 组件库自建 Web 壳（`runtime/webapp`，Vite+React+TS），后端 OpenAI 兼容插座 `/v1/chat/completions`（SSE 流式）；约束：每个组件组必须在 assistant-ui 找到原型（W1 规格 §5）。W1 = 壳与流式对话；W2 = 设置中心/provider 库/工作区/可拖布局 + webadmin 管理面（壳子私用，暂不入冻结合同，行为规格 = webadmin_tests）；W3 = 两级主题系统（四主题 + 每主题设置项）；W4 = 对话工具闭环（tools 合同启用 + 直通工具注入）与角色 system prompt。惯例：W 序列验收记录并入各规格的验收门小节，不另立 review 文件（ADR-0015）。
+以 assistant-ui 组件库自建 Web 壳（`runtime/webapp`，Vite+React+TS），后端 OpenAI 兼容插座 `/v1/chat/completions`（SSE 流式）；约束：每个组件组必须在 assistant-ui 找到原型（W1 规格 §5）。W1 = 壳与流式对话；W2 = 设置中心/provider 库/工作区/可拖布局 + webadmin 管理面（壳子私用，暂不入冻结合同，行为规格 = webadmin_tests）；W3 = 两级主题系统（四主题 + 每主题设置项）；W4 = 对话工具闭环（tools 合同启用 + 直通工具注入）与角色 system prompt；W5 = 会话记忆回喂与上下文透视面板；W6 = 对话级模型选择与常用清单；W7 = 关于页与在线升级通道；W8 = 常规设置与工作区绑定；W9 = 轨迹视图与跨会话检索。惯例：W 序列验收记录并入各规格的验收门小节，不另立 review 文件（ADR-0015）。
 
 ## 19. 每个里程碑都必须回看、测试和评估
 
@@ -1953,6 +1953,10 @@ Butler 向用户汇报，并保留可回放的工作记录
 | ADR-0014 | W 序列 WEBUI：assistant-ui 自建壳 | accepted |
 | ADR-0015 | 文档体系整理：熔入式修订与三层附页 | accepted |
 | ADR-0016 | Skill v0.2 脚本执行架构与 Broker 管线覆盖 | accepted |
+| ADR-0017 | context-mode Rust MCP 官方插件 | accepted |
+| ADR-0018 | 工作区注册表与会话级工作目录绑定 | accepted |
+| ADR-0019 | system.exec 内置命令执行工具(审批类) | accepted |
+| ADR-0020 | 内置能力封闭清单与例外裁决 | accepted |
 
 ## 24. 架构模型即代码与外部实证验证
 

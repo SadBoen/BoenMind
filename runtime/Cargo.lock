@@ -278,7 +278,7 @@ dependencies = [
 
 [[package]]
 name = "bm-cli"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "bm-contract",
  "clap",
@@ -290,7 +290,7 @@ dependencies = [
 
 [[package]]
 name = "bm-contract"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "chrono",
  "jsonschema",
@@ -302,7 +302,7 @@ dependencies = [
 
 [[package]]
 name = "bm-core"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "async-trait",
  "bm-contract",
@@ -310,7 +310,7 @@ dependencies = [
  "chrono",
  "serde",
  "serde_json",
- "sha2 0.11.0",
+ "sha2",
  "tempfile",
  "thiserror",
  "tokio",
@@ -321,7 +321,7 @@ dependencies = [
 
 [[package]]
 name = "bm-judge"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "bm-contract",
  "bm-persist",
@@ -333,13 +333,13 @@ dependencies = [
 
 [[package]]
 name = "bm-persist"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "bm-contract",
  "rusqlite",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2",
  "tempfile",
  "thiserror",
  "tracing",
@@ -347,7 +347,7 @@ dependencies = [
 
 [[package]]
 name = "bm-providers"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -358,7 +358,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "sha2 0.11.0",
+ "sha2",
  "tempfile",
  "thiserror",
  "tokio",
@@ -368,7 +368,7 @@ dependencies = [
 
 [[package]]
 name = "bm-runtime"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "axum",
  "bm-cli",
@@ -387,7 +387,7 @@ dependencies = [
 
 [[package]]
 name = "bm-surface-http"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "async-stream",
  "axum",
@@ -400,7 +400,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "sha2 0.11.0",
+ "sha2",
  "tar",
  "tempfile",
  "tokio",
@@ -411,7 +411,7 @@ dependencies = [
 
 [[package]]
 name = "bm-testkit"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "async-trait",
  "bm-contract",
@@ -2127,17 +2127,6 @@ name = "sha1"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a978451301f4db1d02937a4ab3ccce137717b81826e79b7d49ffe3244a13c3b8"
-dependencies = [
- "cfg-if",
- "cpufeatures 0.2.17",
- "digest 0.10.7",
-]
-
-[[package]]
-name = "sha2"
-version = "0.10.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.2.17",

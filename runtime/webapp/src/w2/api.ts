@@ -40,6 +40,8 @@ export type McpServer = {
   env?: Record<string, string>;
   tool_timeout_ms?: number;
   restart_limit?: number;
+  trust?: "explicit-config";
+  sha256?: string;
 };
 
 export type McpListResult = {
@@ -99,9 +101,11 @@ export type RoleItem = {
 export type SkillItem = {
   skill_id: string;
   name: string;
+  version?: string;
   description?: string | null;
   instruction: string;
   allowed_capabilities?: string[];
+  references?: { name: string; path: string }[];
 };
 
 export type RolesResponse = {

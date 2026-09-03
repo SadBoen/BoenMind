@@ -62,7 +62,7 @@ type McpCandidatesResult = {
 
 type Draft = {
   name: string;
-  transport: "stdio" | "sse" | "http";
+  transport: "stdio" | "sse" | "http" | "streamable-http";
   url: string;
   bearer_token: string;
   command: string;
@@ -84,9 +84,10 @@ const emptyDraft: Draft = {
 };
 
 function toDraft(s: McpServer): Draft {
+  const validTransports = ["http", "sse", "streamable-http"];
   return {
     name: s.name,
-    transport: s.transport === "http" || s.transport === "sse" ? s.transport : "stdio",
+    transport: validTransports.includes(s.transport) ? s.transport : "stdio",
     url: s.url ?? "",
     bearer_token: s.bearer_token ?? "",
     command: s.command ?? "",
@@ -564,14 +565,15 @@ function McpDialog({
               onChange={(e) =>
                 setForm({
                   ...form,
-                  transport: e.target.value as "stdio" | "sse" | "http",
+                  transport: e.target.value as "stdio" | "sse" | "http" | "streamable-http",
                 })
               }
               className="border-input bg-background h-9 rounded-md border px-3 py-1 font-mono text-[13px] outline-none"
             >
               <option value="stdio">stdio (本地子进程)</option>
               <option value="sse">sse (远程流式/Server-Sent Events)</option>
-              <option value="http">http (远程 Streamable HTTP)</option>
+              <option value="http">http (远程 HTTP)</option>
+              <option value="streamable-http">streamable-http (远程 Streamable HTTP)</option>
             </select>
           </div>
 

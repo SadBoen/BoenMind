@@ -71,12 +71,31 @@ fn providers_file(data_dir: &Path) -> PathBuf {
     data_dir.join("config/providers.json")
 }
 
-fn read_providers(data_dir: &Path) -> Vec<Value> {
-    std::fs::read_to_string(providers_file(data_dir))
-        .ok()
-        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
-        .and_then(|v| v["providers"].as_array().cloned())
-        .unwrap_or_default()
+fn read_providers(data_dir: &Path) -> Result<Vec<Value>, (StatusCode, String)> {
+    let path = providers_file(data_dir);
+    let s = match std::fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("读取 providers 配置文件失败: {e}"),
+            ));
+        }
+    };
+    let v: Value = serde_json::from_str(&s).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("providers 配置文件 JSON 格式已损坏,拒绝加载/覆写: {e}"),
+        )
+    })?;
+    let list = v["providers"].as_array().cloned().ok_or_else(|| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "providers.json 缺少合法的 providers 数组".to_string(),
+        )
+    })?;
+    Ok(list)
 }
 
 fn write_providers(data_dir: &Path, providers: &[Value]) -> Result<(), String> {
@@ -180,7 +199,14 @@ pub fn rebuild_routes(cfg: &AdminConfig) {
     };
     let mut table: std::collections::HashMap<String, Arc<dyn bm_core::ports::ModelConnector>> =
         std::collections::HashMap::new();
-    for p in read_providers(&cfg.data_dir) {
+    let list = match read_providers(&cfg.data_dir) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("[W6] 无法读取 providers 重建路由: {}", e.1);
+            return;
+        }
+    };
+    for p in list {
         let (Some(base), Some(key)) = (
             p["baseUrl"].as_str(),
             p["apiKey"].as_str().filter(|s| !s.is_empty()),
@@ -254,10 +280,11 @@ fn safe_resolve(root: &Path, rel: &str) -> Result<PathBuf, String> {
 // ---- handler:provider CRUD ---------------------------------------------
 
 pub async fn providers_list(State(cfg): State<AdminConfig>) -> Response {
-    let list = read_providers(&cfg.data_dir)
-        .iter()
-        .map(mask_provider)
-        .collect::<Vec<_>>();
+    let raw_list = match read_providers(&cfg.data_dir) {
+        Ok(l) => l,
+        Err(e) => return admin_error(e.0, e.1),
+    };
+    let list = raw_list.iter().map(mask_provider).collect::<Vec<_>>();
     Json(json!({ "providers": list })).into_response()
 }
 
@@ -265,7 +292,10 @@ pub async fn providers_create(State(cfg): State<AdminConfig>, Json(body): Json<V
     if let Err(e) = validate_provider_input(&body) {
         return admin_error(e.0, e.1);
     }
-    let mut list = read_providers(&cfg.data_dir);
+    let mut list = match read_providers(&cfg.data_dir) {
+        Ok(l) => l,
+        Err(e) => return admin_error(e.0, e.1),
+    };
     let record = json!({
         "id": new_provider_id(),
         "name": body["name"],
@@ -291,7 +321,10 @@ pub async fn providers_update(
     if let Err(e) = validate_provider_input(&body) {
         return admin_error(e.0, e.1);
     }
-    let mut list = read_providers(&cfg.data_dir);
+    let mut list = match read_providers(&cfg.data_dir) {
+        Ok(l) => l,
+        Err(e) => return admin_error(e.0, e.1),
+    };
     let Some(pos) = list.iter().position(|p| p["id"] == json!(id)) else {
         return admin_error(StatusCode::NOT_FOUND, format!("provider '{id}' 不存在"));
     };
@@ -324,7 +357,10 @@ pub async fn providers_delete(
     State(cfg): State<AdminConfig>,
     AxumPath(id): AxumPath<String>,
 ) -> Response {
-    let mut list = read_providers(&cfg.data_dir);
+    let mut list = match read_providers(&cfg.data_dir) {
+        Ok(l) => l,
+        Err(e) => return admin_error(e.0, e.1),
+    };
     let before = list.len();
     list.retain(|p| p["id"] != json!(id));
     if list.len() == before {
@@ -414,7 +450,10 @@ pub async fn model_active_set(State(cfg): State<AdminConfig>, Json(body): Json<V
     let Some(id) = body["providerId"].as_str() else {
         return admin_error(StatusCode::BAD_REQUEST, "providerId 必须是字符串");
     };
-    let list = read_providers(&cfg.data_dir);
+    let list = match read_providers(&cfg.data_dir) {
+        Ok(l) => l,
+        Err(e) => return admin_error(e.0, e.1),
+    };
     let Some(p) = list.iter().find(|p| p["id"] == json!(id)) else {
         return admin_error(StatusCode::NOT_FOUND, format!("provider '{id}' 不存在"));
     };

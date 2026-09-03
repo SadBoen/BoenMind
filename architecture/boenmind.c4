@@ -15,7 +15,7 @@ workspace "BoenMind" "面向个人软件生态的 AI Runtime/AI 操作系统—�
             butler = container "Butler App" "[阶段一已并入内核] 管家 App:接单、创建 Task、召集 Coordinator Agent、催办与汇报;只拥有系统协调权(task.create/agent.spawn/team.create 等),不默认拥有任何领域操作权。Orchestrator 的任务板是从事件重建的投影,不是第二事实源。" "Rust App(阶段一内建/阶段二独立进程)" "L4,App"
             mailApp = container "Mail App" "[阶段二规划] 邮件业务域:暴露 mail.search/mail.read/mail.create_draft/mail.send(external-side-effect)等 Capability 与领域 Agent;数据域 memory:app:mail。" "App(可独立进程)" "L4,App"
             stockApp = container "Market App" "[阶段一真实 App·ADR-0011] 行情/持仓业务域:apps/market_server.py(stdio MCP);暴露 quote.get/portfolio.add/portfolio.value。" "stdio MCP (Python)" "L4,App"
-            musicApp = container "Music App" "[阶段二规划] 音乐业务域:music.search/music.play/music.pause;音量控制不属于 Music App 而属于系统服务 Audio Provider。" "App(可独立进程)" "L4,App"
+            musicApp = container "Music App" "[阶段一真实 App·ADR-0011] 音乐业务域:apps/music_server.py(stdio MCP);暴露 music.search/music.list_tracks/music.play/music.pause。" "stdio MCP (Python)" "L4,App"
             wikiApp = container "Wiki App" "[阶段一真实 App·ADR-0011] 知识库业务域:apps/wiki_server.py(stdio MCP);暴露 page.read/page.write/page.list,真实写盘带摘要收据。" "stdio MCP (Python)" "L4,App"
 
             audio = container "Audio Provider (system.audio)" "[阶段二规划] 系统服务 Provider:audio.volume.get/set、audio.mute、audio.output.list;低风险确定性能力,支持 verification 事后核验钩子。" "系统服务(可独立进程)" "L3,Provider"
