@@ -1771,6 +1771,40 @@ pub async fn context_tail(State(cfg): State<AdminConfig>) -> Response {
     Json(json!({ "ok": true, "steps": steps })).into_response()
 }
 
+/// GET /admin/context/search?q=&limit=:跨会话全文检索(W9 二期)。
+/// 个人单机数据量下用整文件行级扫描(context-log.jsonl 任一行含 q 即命中,
+/// 大小写不敏感);数据量上来再换 FTS5 索引(规格 W9 二期备注)。
+pub async fn context_search(
+    State(cfg): State<AdminConfig>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let q = params.get("q").cloned().unwrap_or_default();
+    let limit: usize = params
+        .get("limit")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(50)
+        .clamp(1, 200);
+    if q.trim().is_empty() {
+        return admin_error(StatusCode::BAD_REQUEST, "缺少 q");
+    }
+    let path = cfg.data_dir.join("context-log.jsonl");
+    let needle = q.to_lowercase();
+    let mut hits: Vec<Value> = Vec::new();
+    if let Ok(text) = std::fs::read_to_string(&path) {
+        for line in text.lines().rev() {
+            if line.to_lowercase().contains(&needle)
+                && let Ok(v) = serde_json::from_str::<Value>(line)
+            {
+                hits.push(v);
+                if hits.len() >= limit {
+                    break;
+                }
+            }
+        }
+    }
+    Json(json!({ "ok": true, "q": q, "hits": hits, "total": hits.len() })).into_response()
+}
+
 /// context-log 尾部读取+逐行解析(只读诊断面;任何失败静默为空)。
 fn read_context_tail(path: &Path, max_bytes: u64, limit: usize) -> Vec<Value> {
     use std::io::{Read, Seek, SeekFrom};
@@ -1832,6 +1866,7 @@ pub fn admin_routes(cfg: AdminConfig) -> axum::Router {
         .route("/skills/{id}", delete(skills_delete))
         .route("/logs", get(logs_tail))
         .route("/context", get(context_tail))
+        .route("/context/search", get(context_search))
         .route("/fs/list", get(fs_list))
         .route("/fs/file", get(fs_file))
         // W7 目录树右键菜单:重命名 / 下载(文件)与打包下载(文件夹 zip)

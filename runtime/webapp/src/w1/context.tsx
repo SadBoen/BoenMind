@@ -91,6 +91,9 @@ const STATUS_LABEL: Record<CtxStep["status"], string> = {
 
 export function ContextView() {
   const [steps, setSteps] = useState<CtxStep[]>([]);
+  const [searchQ, setSearchQ] = useState("");
+  const [searchHits, setSearchHits] = useState<CtxStep[] | null>(null);
+  const [searching, setSearching] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [auto, setAuto] = useState(true);
@@ -127,6 +130,19 @@ export function ContextView() {
     return [...list].reverse();
   }, [steps, onlyCurrent, sid]);
 
+  const runSearch = async () => {
+    const q = searchQ.trim();
+    if (!q) return;
+    setSearching(true);
+    try {
+      const r = await api.contextSearch(q);
+      setSearchHits(r.hits ?? []);
+    } catch {
+      setSearchHits([]);
+    } finally {
+      setSearching(false);
+    }
+  };
   const latest = visible.find((x) => !x.kind);
   const latestCats = latest ? catSizes(latest) : null;
 
@@ -201,6 +217,50 @@ export function ContextView() {
               : "还没有快照——发一条消息后这里就能看到发给了模型什么"}
           </div>
         )}
+      </div>
+
+      {/* W9 二期:跨会话全文检索 */}
+      <div className="bg-card rounded-xl border p-3" data-slot="ctx-search">
+        <div className="mb-2 text-[13.5px] font-semibold">全文检索(跨会话,含工具回喂/终稿原文)</div>
+        <div className="flex gap-2">
+          <input
+            className="bg-background h-8 flex-1 rounded-md border px-2.5 text-[12.5px] outline-none focus:border-ring"
+            placeholder="搜关键词,如:集装箱 / system__echo / 错误码…"
+            value={searchQ}
+            onChange={(e) => setSearchQ(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void runSearch();
+            }}
+            data-slot="ctx-search-input"
+          />
+          <button
+            className="bg-primary text-primary-foreground h-8 rounded-md px-3 text-[12.5px] font-medium disabled:opacity-50"
+            disabled={searching || !searchQ.trim()}
+            onClick={() => void runSearch()}
+            data-slot="ctx-search-btn"
+          >
+            {searching ? "检索中…" : "检索"}
+          </button>
+        </div>
+        {searchHits ? (
+          <div className="mt-2 flex flex-col gap-1" data-slot="ctx-search-hits">
+            {searchHits.length === 0 ? (
+              <div className="text-muted-foreground text-[12px]">(无命中)</div>
+            ) : (
+              searchHits.map((h) => (
+                <div key={h.seq} className="rounded border px-2 py-1.5 text-[12px]">
+                  <span className="font-mono text-[11px]">#{h.seq}</span>{" "}
+                  <span className="text-muted-foreground">
+                    {h.kind ?? "快照"} · 第 {h.turn_index} 轮 · {h.session_id || "(系统)"}
+                  </span>
+                  <pre className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap font-mono text-[11px]">
+                    {JSON.stringify(h.data ?? h.messages ?? h, null, 0).slice(0, 400)}
+                  </pre>
+                </div>
+              ))
+            )}
+          </div>
+        ) : null}
       </div>
 
       {/* 趋势:每步一根堆叠迷你柱(左→右 = 时间旧→新) */}

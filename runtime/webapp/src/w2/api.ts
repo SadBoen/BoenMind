@@ -296,6 +296,10 @@ export const api = {
   },
   // W5 上下文透视:模型调用请求快照(context-log.jsonl 尾部,最旧在前)
   context: () => req<{ ok: boolean; steps: CtxStep[] }>("/admin/context"),
+    contextSearch: (q: string) =>
+      req<{ ok: boolean; hits: CtxStep[]; total: number }>(
+        `/admin/context/search?q=${encodeURIComponent(q)}&limit=50`,
+      ),
   capabilities: () =>
     req<{
       builtin: Capability[];
