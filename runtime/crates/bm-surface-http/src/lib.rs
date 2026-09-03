@@ -12,6 +12,7 @@ pub mod about;
 pub mod auth;
 pub mod config_store;
 pub mod openai_compat;
+pub mod portal;
 pub mod rpc;
 pub mod sse;
 pub mod token;
@@ -43,6 +44,10 @@ pub struct AppState {
     /// 静态 OnceLock(评审指出绕过 AppState),2026-09-02 归入共享状态:
     /// 随路由生灭、测试间隔离,语义不变(重启即失效由响应文案承接)。
     pub v1_sessions: Arc<Mutex<HashMap<BmId, BmId>>>,
+    /// 门户登录墙(2026-09-03 用户令;未设密码=不启用)。
+    pub portal: Arc<portal::PortalAuth>,
+    /// Web 静态目录(/login 登录页本体取此目录下 login.html)。
+    pub web_dir: Option<std::path::PathBuf>,
 }
 
 /// 组装 Surface 路由。`token` 为已加载的访问令牌;/health 豁免鉴权,
@@ -60,6 +65,11 @@ pub fn router(
     model_routes: Option<Arc<bm_providers::routing::RoutingConnector>>,
 ) -> Router {
     let data_dir = admin.as_ref().map(|a| a.data_dir.clone());
+    let portal = portal::PortalAuth::load(
+        data_dir
+            .clone()
+            .unwrap_or_else(|| std::env::temp_dir().join("boenmind-no-portal")),
+    );
     let state = AppState {
         handle,
         token,
@@ -69,6 +79,8 @@ pub fn router(
         data_dir,
         model_routes,
         v1_sessions: Arc::new(Mutex::new(HashMap::new())),
+        portal,
+        web_dir: web_dir.clone(),
     };
     let app = Router::new()
         .route("/rpc/{method}", post(rpc::rpc_endpoint))
@@ -85,7 +97,13 @@ pub fn router(
             post(openai_compat::chat_completions),
         )
         .route("/v1/models", get(openai_compat::models))
-        .with_state(state);
+        // 门户登录三口(公开;/login 页面本体见 portal::login_page)
+        .route("/login", get(portal::login_page))
+        .route("/api/portal/state", get(portal::portal_state))
+        .route("/api/portal/login", post(portal::portal_login))
+        .route("/api/portal/bootstrap", post(portal::portal_bootstrap))
+        .route("/api/portal/password", post(portal::portal_password))
+        .with_state(state.clone());
     // W2 管理面(公开挂载 = W1 同款已登记欠账;None = 不挂载)
     let app = match admin {
         Some(cfg) => app.nest("/admin", webadmin::admin_routes(cfg)),
@@ -93,8 +111,13 @@ pub fn router(
     };
     // Web Surface 静态托管(公开:界面壳不含数据;数据一律经鉴权 API):
     // 未匹配 API 的路径回落到静态文件
-    match web_dir {
+    let app = match web_dir {
         Some(dir) => app.fallback_service(tower_http::services::ServeDir::new(dir)),
         None => app,
-    }
+    };
+    // 门户登录墙挂最外层(含静态回落与 /admin;豁免清单见 require_portal)
+    app.layer(middleware::from_fn_with_state(
+        state,
+        portal::require_portal,
+    ))
 }

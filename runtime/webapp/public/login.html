@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>BoenMind · 登录</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body { height: 100%; }
+      body {
+        font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+        color: #e8eaf2;
+        display: flex; align-items: center; justify-content: center;
+        background:
+          radial-gradient(900px 500px at 12% -10%, rgba(99,102,241,.28), transparent 60%),
+          radial-gradient(800px 480px at 105% 110%, rgba(168,85,247,.20), transparent 60%),
+          linear-gradient(160deg, #0b0d18 0%, #101327 55%, #0b0d18 100%);
+      }
+      .card {
+        width: min(92vw, 380px);
+        padding: 40px 34px 34px;
+        border-radius: 20px;
+        background: rgba(255,255,255,.055);
+        border: 1px solid rgba(255,255,255,.12);
+        box-shadow: 0 24px 70px rgba(0,0,0,.45);
+        backdrop-filter: blur(18px) saturate(1.2);
+      }
+      .logo {
+        width: 46px; height: 46px; border-radius: 13px;
+        margin: 0 auto 16px;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 22px; font-weight: 700; color: #fff;
+        background: linear-gradient(135deg, #6366f1, #a855f7);
+        box-shadow: 0 8px 24px rgba(124,93,250,.45);
+      }
+      h1 { font-size: 20px; text-align: center; letter-spacing: .5px; }
+      .sub {
+        margin: 6px 0 26px; text-align: center;
+        font-size: 12.5px; color: rgba(232,234,242,.55);
+      }
+      label { display: block; font-size: 12.5px; color: rgba(232,234,242,.65); margin: 0 2px 7px; }
+      input {
+        width: 100%; height: 44px; padding: 0 14px;
+        border-radius: 11px; border: 1px solid rgba(255,255,255,.14);
+        background: rgba(255,255,255,.06); color: #e8eaf2;
+        font-size: 14px; outline: none; transition: border .15s, box-shadow .15s;
+      }
+      input:focus {
+        border-color: rgba(129,140,248,.85);
+        box-shadow: 0 0 0 3px rgba(99,102,241,.22);
+      }
+      button {
+        width: 100%; height: 44px; margin-top: 18px;
+        border: none; border-radius: 11px; cursor: pointer;
+        font-size: 14.5px; font-weight: 600; color: #fff;
+        background: linear-gradient(135deg, #6366f1, #8b5cf6);
+        transition: filter .15s, transform .05s;
+      }
+      button:hover { filter: brightness(1.12); }
+      button:active { transform: translateY(1px); }
+      button:disabled { filter: grayscale(.5) brightness(.7); cursor: wait; }
+      .msg {
+        min-height: 18px; margin-top: 14px; text-align: center;
+        font-size: 12.5px; color: #f87171;
+      }
+      .hint { margin-top: 20px; font-size: 11.5px; line-height: 1.7; color: rgba(232,234,242,.38); text-align: center; }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <div class="logo">B</div>
+      <h1>BoenMind</h1>
+      <p class="sub" id="sub">个人生态的 AI Runtime</p>
+      <form id="form" autocomplete="off">
+        <label for="pw" id="label">访问密码</label>
+        <input id="pw" type="password" placeholder="••••••••" autofocus />
+        <button id="btn" type="submit">进 入</button>
+        <p class="msg" id="msg"></p>
+      </form>
+      <p class="hint">本页面用于保护 BoenMind 网页界面;<br />程序化访问请继续使用访问令牌(Bearer)。</p>
+    </main>
+    <script>
+      var cfg = { configured: false };
+      function setBusy(b) { document.getElementById("btn").disabled = b; }
+      function fail(m) { document.getElementById("msg").textContent = m; setBusy(false); }
+      document.getElementById("form").addEventListener("submit", function (e) {
+        e.preventDefault();
+        var pw = document.getElementById("pw").value;
+        if (!pw) { fail("请输入密码"); return; }
+        setBusy(true);
+        document.getElementById("msg").textContent = "";
+        var url = cfg.configured ? "/api/portal/login" : "/api/portal/bootstrap";
+        fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password: pw })
+        }).then(function (r) {
+          if (r.ok) { location.href = "/"; return; }
+          return r.json().then(function (j) {
+            fail((j.error && j.error.message) || "失败,请重试");
+          });
+        }).catch(function () { fail("网络错误,请重试"); });
+      });
+      fetch("/api/portal/state").then(function (r) { return r.json(); }).then(function (s) {
+        if (s.authed) { location.href = "/"; return; }
+        cfg.configured = !!s.configured;
+        if (!s.configured) {
+          document.getElementById("label").textContent = "创建访问密码(首次使用,至少 6 位)";
+          document.getElementById("btn").textContent = "设置并进入";
+          document.getElementById("sub").textContent = "首次使用:设置一个访问密码,保护这台 BoenMind";
+        }
+      }).catch(function () {});
+    </script>
+  </body>
+</html>

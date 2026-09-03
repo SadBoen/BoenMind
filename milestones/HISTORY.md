@@ -59,6 +59,8 @@
 
 | VPS 实测 P1×2 修复:直通工具对话闭环 + 模型调用硬顶 | 2026-09-03 | (见 git) | 全仓测试绿(含新增对话工具轮回合级回归,0.02s)+clippy 零警告+contracts 绿 | ①turn.rs:同步收据 state=succeeded 且 result 内联时立即回喂 Tool 消息——同步直通结果从不写入 op_results(仅异步回单/审批重放入表),此前一律 GetOpResult 轮询=直通工具必现 60s 超时;新增 bm-testkit/tests/chat_direct_tool.rs(全仓首个 ToolCalls→回喂→终稿回合级测试)②DEFAULT_TURN_TIMEOUT_SECS 30→120 并开放 BOEN_TURN_TIMEOUT_SECS 覆盖(两服务端二进制接线;实测 mimo 常规调用 12~29s 必撞 30s 顶)③同轮把 VPS 的 web-multisearch 远程装好并批准(2 工具在役,/admin 面**无鉴权公网裸奔**=重大隐患已口头警示用户,代码侧鉴权与服务器侧改绑回环待裁决) |
 
+| v0.0.5 发版:门户登录墙 | 2026-09-03 | `v0.0.5` | 全仓 65 套测试绿 + portal 生命周期回归 + contracts 绿 + clippy 零警告 | 用户明示发版+用户令加登录:portal.rs 整站登录墙(静态页+全部 API 含 /admin 与 /v1,堵 VPS 实测暴露的无鉴权公网裸奔)——密码存 <data>/config/portal.json(salt$sha256),未配置=墙不启用(既有测试/本地开发零影响);/login 玻璃风登录页(首次=创建密码 bootstrap 一次,之后=登录);会话 Cookie HttpOnly 30 天(内存态,重启重登);Bearer 访问令牌继续全效;/health 豁免;改密作废全部会话;workspace 版本 0.0.4→0.0.5。包内含:直通工具对话闭环修复+模型调用硬顶 30s→120s(BOEN_TURN_TIMEOUT_SECS 可配)+随包插件直达扫描双目录 |
+
 ## W 序列验收惯例
 
 W 序列不另立 review 文件:验收门与实测证据并入各规格(W2 §7、W3 §6;W4 待回填,见 BACKLOG)。截图目录:shots-w2/、shots-w3/、shots-w5-context/。
