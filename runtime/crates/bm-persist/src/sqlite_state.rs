@@ -70,6 +70,10 @@ impl StateDb {
         let conn = Connection::open(path)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "FULL")?;
+        // WAL checkpoint 策略定标 (M2-review §6-3 / M3-review §6-5 承兑):
+        // 设置 wal_autocheckpoint 阈值为 1000 页 (约 4MB)，达到时自动触发 PASSIVE 检查点回写主库，
+        // 杜绝 WAL 日志无限增长并兼顾写吞吐与崩溃恢复窗口。
+        conn.pragma_update(None, "wal_autocheckpoint", 1000)?;
         let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         if version > SCHEMA_VERSION {
             return Err(StoreError::Corrupt {
@@ -679,6 +683,14 @@ impl StateDb {
 
         Ok(())
     }
+
+    /// WAL checkpoint 维护操作:主动将 WAL 日志刷入主数据库文件 (PASSIVE 模式)。
+    pub fn wal_checkpoint(&self) -> StoreResult<()> {
+        let conn = self.conn.lock().expect("锁未中毒");
+        conn.pragma_update(None, "wal_checkpoint", "PASSIVE")?;
+        Ok(())
+    }
+
     pub fn list_outbox_by_state(&self, state: &str) -> StoreResult<Vec<serde_json::Value>> {
         self.query_rows(
             "SELECT operation_id, kind, state, payload FROM outbox WHERE state = ?1",

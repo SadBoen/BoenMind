@@ -76,7 +76,7 @@ async fn rpc_inner(state: &AppState, method: Method, req: &RequestEnvelope) -> C
             let p: GetOperationParams = params(req)?;
             to_value(state.handle.operations_get(p).await)
         }
-        // M4:能力与审批三方法(T3b 起 Runtime 已接线)
+        // M4:能力与审批方法(T3b 起 Runtime 已接线)
         Method::CapabilityCall => {
             let p: bm_contract::wire::CapabilityCallParams = params(req)?;
             to_value(
@@ -85,6 +85,10 @@ async fn rpc_inner(state: &AppState, method: Method, req: &RequestEnvelope) -> C
                     .capability_call(req.request_id.clone(), p)
                     .await,
             )
+        }
+        Method::CapabilityList => {
+            let p: bm_contract::wire::CapabilityListParams = params(req)?;
+            to_value(state.handle.capability_list(p).await)
         }
         Method::ApprovalList => {
             let p: bm_contract::wire::ApprovalListParams = params(req)?;

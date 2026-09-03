@@ -1180,6 +1180,7 @@ pub async fn capabilities_list(State(cfg): State<AdminConfig>) -> Response {
     Json(json!({
         "builtin": cfg.builtin_caps.iter().cloned().collect::<Vec<_>>(),
         "mcp": mcp,
+        "note": "注意: allowed_capabilities 仅作为提示词注入与客户端提示面数据,不构成内核级权限控制(以 Broker 权限判定为唯一权威)"
     }))
     .into_response()
 }

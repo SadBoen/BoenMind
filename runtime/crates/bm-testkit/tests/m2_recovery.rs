@@ -249,6 +249,12 @@ async fn t21_interrupted_operation_recovered_with_audit() {
         recovered.payload["last_applied_seq"], 4,
         "修复窗口 = 崩溃前全部 4 条"
     );
+    // 验证 bus.resumed 发射
+    let bus_resumed = events
+        .iter()
+        .find(|e| e.event_type == EventType::BusResumed)
+        .expect("存在 bus.resumed");
+    assert_eq!(bus_resumed.payload["component"], "event_bus");
 
     // 恢复后:同一 agent 可接新单(claim 语义,M2.6 前半),收据仍可查询(INV-6)
     let old_receipt = rig

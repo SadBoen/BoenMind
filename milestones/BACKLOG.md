@@ -18,20 +18,13 @@
 
 | 条目 | 来源 | 状态 |
 |---|---|---|
-| F-09 deepwiki S1/S2/S6/S7/S10 逐条裁决;S5 口径偏宽复核(t119b≠quarantined 分表) | AUDIT F-09 + FULL-REVIEW §2.4 | OPEN(随下一里程碑回看) |
-| W4 验收记录回填(按规格 §4 验收门补实测证据与截图) | W4-implementation-spec | OPEN |
 
 ## 3. 技术债(缓办,均不影响日常使用)
-
-| 外部评审文档加固批:L0 豁免清单细化到能力级(ADR-0007)/恢复 RTO 目标(如「90 天历史冷启动 ≤30s」)/阶段二多进程形态编排空窗期孤儿 Agent 默认动作/MCP 只读注解信任(自报 readOnlyHint 即直通,考虑批准时快照注解+变更时提示) | 来源=外部 LLM 架构评审 2026-09-03(13 项逐条复核:属实 6/部分 3/不实或已闭合 3/已登记 2;复核记录见 git 与当批提交说明) | OPEN(归拢到下一文档批) |
 
 ### 3.1 掉链项(前序回看承诺「随某里程碑补」未接住;来源 FULL-REVIEW §4)
 
 | 条目 | 来源 | 状态 |
 |---|---|---|
-| WAL checkpoint 策略定标 | M2-review §6-3 → M3-review §6-5 | OPEN |
-| bus.resumed 发射点 | M4-review §6-2 | OPEN |
-| CLI capability list 命令 | M4-review §6-2 | OPEN |
 | Orchestrator 单进程等价映射复测(独立进程形态) | M5-review §6-1 | OPEN |
 | Task 级停滞窗口/并发上限配置字段 | M6-review §6-1(M5 部分闭合) | OPEN |
 | 成员级 max_concurrent_tools 定标 | M6-review §6-1 | OPEN |
@@ -60,7 +53,6 @@
 |---|---|---|
 | PENPOT-quickstart 过时 | 指向已删除的 runtime/web/tokens.css;已加过时标注,待归档或更新 | OPEN(低) |
 | MCP 子进程 stderr 采集 | 现为 `Stdio::inherit()` 直通 server.log(W2 刻意诊断选型);后续可管道采集入插件页 | OPEN(低) |
-| allowed_capabilities 措辞澄清 | 合同已注明「仅提示面数据」;角色编辑 UI 宜加一句「不构成权限控制」防误解 | OPEN(低) |
 
 ## 4. 用户拍板后置(DEFERRED,裁决记录见 milestones/PENDING.md)
 

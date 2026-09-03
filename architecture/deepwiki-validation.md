@@ -170,15 +170,25 @@
 以下均为建议,不构成结论;每条注明来源系统与证据。
 
 - **S1**:在 Plugin/Provider manifest 中引入显式 restart 类型与退出宽限期字段(对标 OTP child_spec 的 `permanent/transient/temporary` + shutdown timeout),替代单一"quarantined(崩溃过多)"模糊语义。(来源:dw-otp-design,supervisor.erl#L51-L55)
+  - **裁决结论 (2026-09-04 阶段一回看闭合)**: 采纳原则并保持极简。阶段一以进程退出与 Supervisor/Watchdog 探活为基线，manifest 扩展字段留阶段二，单机运行期暂不引入复杂的 restart-intensity 策略。
 - **S2**:把"升级迁移的回放测试"写进 M2/M8 验收:对标 release_handler_SUITE 对 appup/relup 语法与一致性的校验,为 generation 迁移脚本建立"输入版本→输出版本→失败清理"的机器校验用例。(来源:dw-otp-versions,release_handler_SUITE.erl#L68、#L104-L105)
+  - **裁决结论 (2026-09-04 阶段一回看闭合)**: 已完全采纳并在 M8/W7 落地。SQLite 规范库版本迁移 (`v1`..`v8`) 逐级 expand-contract、备份校验和与位点回放均已实现并常驻 CI 自动化测试套件。
 - **S3**:为 generation 升级事务增加 progress deadline 式停滞检测:validating/migrating 超时无进展即自动 abort 并保持旧代际(基线 §13.4 目前只有 failed 状态,无停滞判定)。(来源:dw-k8s-controller,deployment progress.go 机制存在;K8s 具体参数语义证据不足,建议只吸收"停滞检测"思想)
+  - **裁决结论 (2026-09-04 阶段一回看闭合)**: 已采纳。M5/W1 看门狗与 WatchdogState 机制已落地，超时无进展判定停滞并触发相应处置。
 - **S4**:把 C6 的 draining 细化为两步:先从 Registry 发现结果摘除旧 binding(调用方不再被路由),再等待排空并停进程;并对不可排空的长请求定义 deadline 取消(基线 §13.1 已有雏形,建议明确"摘除"与"终止"是两个动作)。(来源:dw-k8s-kubelet,prober→statusManager 就绪性摘除)
+  - **裁决结论 (2026-09-04 阶段一回看闭合)**: 采纳。M8 capability.cancel 与 handle_stop draining 逻辑已落地摘除与终止的分离。
 - **S5**:Registry 增加 manifest 前置校验阶段:manifest 解析失败、版本/引擎不兼容在**注册期**即拒绝并进 quarantined 分表,而不是推迟到 handshake 失败。(来源:dw-vscode-ext-system,AbstractExtensionService 在 Registration 阶段填充 ExtensionDescriptionRegistry)
+  - **裁决结论 (2026-09-04 阶段一回看闭合)**: 采纳。M4 注册期强制校验 input/output schema 与 manifest 字段，坏配置条目直接跳过并隔离留痕。
 - **S6**:为 Provider/App 增加懒启动扩展点(对标 activationEvents):低频 Provider 可声明由事件/首次调用触发启动,降低常驻进程数量;与 C8 的独立进程主张不冲突。(来源:dw-vscode-ext-system,Extension Lifecycle#Activation)
+  - **裁决结论 (2026-09-04 阶段一回看闭合)**: 阶段一不采纳，留阶段二。单机场景进程数量少，常驻拉起模型极简且确定性最高。
 - **S7**:L0 Supervisor 规则中允许按依赖顺序的级联重启策略(对标 OTP `rest_for_one`:失败子进程及其后启动的依赖一并重启),用于 App 内多 Provider 有启动依赖的场景;默认仍为 one_for_one。(来源:dw-otp-design,supervisor.erl#L74-L89)
+  - **裁决结论 (2026-09-04 阶段一回看闭合)**: 阶段一维持 one_for_one 独立重启，不引入级联重启复杂度。
 - **S8**:L1 Wire API 按"调用方向"拆分合同分表(对标 IMainContext/IExtHostContext 双向 RPC 契约),避免单一接口文件同时承载 Surface→Runtime 与 Runtime→Provider 两个方向导致膨胀。(来源:dw-vscode-ext-system,extHost.protocol.ts)
+  - **裁决结论 (2026-09-04 阶段一回看闭合)**: 已裁决闭合。Wire 合同独立分表（wire/capability, wire/task, wire/agent 等）。
 - **S9**:把基线 §5.2 的 verification 钩子分层对标 K8s 探针三分法:Liveness(该不该重启)/Readiness(该不该接流)/Startup(何时开始探测),分别映射到"崩溃处置、binding 摘除、启动宽限"三个不同动作,避免单一健康检查语义过载。(来源:dw-k8s-kubelet,probeManager 的 Liveness/Readiness/Startup 分离)
+  - **裁决结论 (2026-09-04 阶段一回看闭合)**: 已采纳并闭合。M7/M8 中 Provider 状态机已区分健康位与 Binding 状态。
 - **S10**:在 §13.5 Patch 级定义中显式承认"维护窗口重启切换"是合法机制(对标 ssl 应用大版本升级选择重启而非热迁移),避免把热升级当成所有 Patch 的默认要求。(来源:dw-otp-versions,ssl.appup.src#L9-L20)
+  - **裁决结论 (2026-09-04 阶段一回看闭合)**: 采纳并闭合。W7 在线升级与 ADR-0017 确立了准热升级（重启切换窗口）为合法且推荐的升级模式。
 
 **证据不足清单**(未纳入上述建议依据):K8s max surge/max unavailable 参数语义、K8s API 合同弃用/兼容策略原文、OTP gen_server code_change 回调细节与 restart intensity 参数、VS Code 扩展宿主崩溃后自动重启策略、VS Code 逐扩展热替换机制、"单写者租约/generation lease"在三系统中的对应物(全局检索无结果)。
 

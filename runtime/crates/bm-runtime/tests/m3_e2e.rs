@@ -207,6 +207,17 @@ fn t32_cross_process_kill_restart_resume_over_http() {
     assert!(!text.contains("cancelled"), "全事件流不得出现 cancelled");
     assert!(text.contains("agent.completed"));
 
+    // CLI/Surface 统一能力发现面:capability.list 验证
+    let cap_list = call(
+        &client2,
+        bm_contract::wire::Method::CapabilityList,
+        serde_json::json!({}),
+    );
+    assert!(
+        cap_list["capabilities"].is_array(),
+        "返回 capabilities 数组"
+    );
+
     srv2.hard_kill();
 
     // 客户端(≈CLI)进程早已不复存在,服务端状态完好——验收语义成立

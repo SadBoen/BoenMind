@@ -480,6 +480,18 @@ impl RuntimeHandle {
                     "interrupted_recovered": r.interrupted_recovered,
                 }),
             );
+            // M4 遗留掉链项闭环:恢复流程结束、事件总线与规范状态重新就位时，
+            // 派发 bus.resumed(M4-review §6-2 承兑)
+            world.emit(
+                EventType::BusResumed,
+                None,
+                None,
+                None,
+                serde_json::json!({
+                    "component": "event_bus",
+                    "degraded_ms": 0,
+                }),
+            );
         }
 
         let loop_handle = tokio::spawn(core_loop(world, rx));
@@ -641,6 +653,19 @@ impl RuntimeHandle {
                 params,
                 resp: tx,
             })
+            .await
+            .map_err(|_| CoreError::Internal)?;
+        rx.await.map_err(|_| CoreError::Internal)?
+    }
+
+    /// capability.list(M4.1):机器可读能力发现面。
+    pub async fn capability_list(
+        &self,
+        params: wire::CapabilityListParams,
+    ) -> CoreResult<wire::CapabilityListResult> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(Cmd::CapabilityList { params, resp: tx })
             .await
             .map_err(|_| CoreError::Internal)?;
         rx.await.map_err(|_| CoreError::Internal)?

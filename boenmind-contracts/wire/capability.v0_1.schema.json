@@ -110,5 +110,25 @@
         "grant_id": { "type": ["string", "null"], "description": "approved 时回填物化的 Grant id" }
       }
     }
+  },
+  "capability.list": {
+    "params": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "provider": { "type": ["string", "null"], "description": "可选按 Provider 过滤" }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": ["capabilities"],
+      "additionalProperties": false,
+      "properties": {
+        "capabilities": {
+          "type": "array",
+          "items": { "type": "object", "description": "机器可读发现结果 CapabilityDiscovery" }
+        }
+      }
+    }
   }
 }

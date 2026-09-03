@@ -43,6 +43,8 @@ wire_str_enum!(Method {
     CapabilityCancel => "capability.cancel",
     // M9 增发(2026-08-30,Minor:envelope method 枚举同步;worker 自主环 v0)
     TaskAutorun => "task.autorun",
+    // M4 补齐(2026-09-04,Minor:envelope method 枚举同步;发现面 Wire 暴露,闭合 M4 掉链项)
+    CapabilityList => "capability.list",
 });
 
 wire_str_enum!(InputTrust {
@@ -395,6 +397,17 @@ pub struct CapabilityCancelParams {
 pub struct CapabilityCancelResult {
     pub operation_id: BmId,
     pub state: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct CapabilityListParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CapabilityListResult {
+    pub capabilities: Vec<serde_json::Value>,
 }
 
 // ---- task.create / task.list / task.get / task.pause / task.resume /

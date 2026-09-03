@@ -53,6 +53,11 @@ pub(crate) enum Cmd {
         params: wire::CapabilityCallParams,
         resp: oneshot::Sender<CoreResult<serde_json::Value>>,
     },
+    /// capability.list(M4):能力发现面 Wire 暴露。
+    CapabilityList {
+        params: wire::CapabilityListParams,
+        resp: oneshot::Sender<CoreResult<wire::CapabilityListResult>>,
+    },
     /// approval.list(M4):待裁决审批列表。
     ApprovalList {
         params: wire::ApprovalListParams,
@@ -247,6 +252,9 @@ pub(crate) fn reply_unavailable(cmd: Cmd) {
         }
         // M4:裁决后的审批落地在停机态仍应可答;capability.call 是新业务命令
         Cmd::CapabilityCall { resp, .. } => {
+            let _ = resp.send(Err(err()));
+        }
+        Cmd::CapabilityList { resp, .. } => {
             let _ = resp.send(Err(err()));
         }
         Cmd::ApprovalList { resp, .. } => {

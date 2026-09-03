@@ -197,6 +197,11 @@ enum CapabilityCmd {
         #[arg(long)]
         deadline_ms: Option<u64>,
     },
+    /// 列出能力(经 Broker 统一注册面发现,可按 provider 过滤)
+    List {
+        #[arg(long)]
+        provider: Option<String>,
+    },
 }
 
 fn main() {
@@ -424,6 +429,12 @@ fn main() {
                     }),
                 )
             }
+            CapabilityCmd::List { provider } => client.call(
+                Method::CapabilityList,
+                serde_json::json!({
+                    "provider": provider
+                }),
+            ),
         },
     };
 

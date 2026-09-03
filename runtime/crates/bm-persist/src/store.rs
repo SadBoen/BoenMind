@@ -534,6 +534,8 @@ impl EventStore for PersistStore {
             expect.as_deref(),
             &applied.to_string(),
         )?;
+        // 快照时同步执行一次 WAL checkpoint，将事务日志合并入主库
+        let _ = self.state.wal_checkpoint();
         Ok(applied)
     }
 

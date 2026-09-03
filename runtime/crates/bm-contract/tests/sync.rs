@@ -282,6 +282,8 @@ fn wire_requests_validate_against_envelope() {
             "capability.cancel",
             json!({"operation_id": "op_01JAAAAAAAAAAAAAAAAAAAAAB2"}),
         ),
+        // M4 补齐:capability.list(能力发现)
+        ("capability.list", json!({"provider": null})),
     ];
     for (method, params) in cases {
         let req = sample_request(method, params);

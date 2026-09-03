@@ -605,7 +605,7 @@ async fn t35_builtin_capability_set_smoke() {
         .await;
     let approval_id = list["result"]["approvals"][0]["approval_id"]
         .as_str()
-        .expect("id")
+        .unwrap()
         .to_string();
     let (status, body) = rig
         .rpc(
@@ -616,6 +616,22 @@ async fn t35_builtin_capability_set_smoke() {
         .await;
     assert_eq!(status, 200);
     assert_eq!(body["result"]["state"], "approved");
+
+    // capability.list(M4 发现面):能够完整发现已注册能力列表
+    let (status, body) = rig
+        .rpc(&client, Method::CapabilityList, serde_json::json!({}))
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(body["ok"], true);
+    let caps = body["result"]["capabilities"]
+        .as_array()
+        .expect("capabilities 数组");
+    assert!(!caps.is_empty());
+    assert!(
+        caps.iter()
+            .any(|c| c["capability"] == "system.counter.bump")
+    );
+
     rig.handle.stop("test_done").await;
 }
 

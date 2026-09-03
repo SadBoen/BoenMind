@@ -456,6 +456,21 @@ pub(crate) fn handle_send_input(
     Ok(w.receipt_of(&w.operations[&operation_id]))
 }
 
+pub(crate) fn handle_capability_list(
+    w: &World,
+    params: wire::CapabilityListParams,
+) -> CoreResult<wire::CapabilityListResult> {
+    let mut discovered = w.registry.discover();
+    if let Some(ref provider) = params.provider {
+        discovered.retain(|c| &c.provider == provider);
+    }
+    let capabilities = discovered
+        .into_iter()
+        .map(|c| serde_json::to_value(c).unwrap_or(serde_json::Value::Null))
+        .collect();
+    Ok(wire::CapabilityListResult { capabilities })
+}
+
 pub(crate) fn handle_approval_list(
     w: &mut World,
     params: wire::ApprovalListParams,
