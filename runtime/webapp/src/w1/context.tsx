@@ -127,7 +127,7 @@ export function ContextView() {
     return [...list].reverse();
   }, [steps, onlyCurrent, sid]);
 
-  const latest = visible[0];
+  const latest = visible.find((x) => !x.kind);
   const latestCats = latest ? catSizes(latest) : null;
 
   return (
@@ -208,7 +208,7 @@ export function ContextView() {
         <div className="bg-card rounded-xl border p-3">
           <div className="mb-2 text-[13.5px] font-semibold">上下文趋势(每步一柱,左旧右新)</div>
           <div className="flex h-16 items-end gap-1 overflow-x-auto">
-            {[...visible].reverse().map((s) => {
+            {[...visible].reverse().filter((s) => !s.kind).map((s) => {
               const c = catSizes(s);
               const total = totalOf(c) || 1;
               return (
@@ -241,6 +241,66 @@ export function ContextView() {
           </div>
         ) : (
           visible.map((s) => {
+            // W9:轨迹事件卡(工具调用/回喂/终稿/回合边界)
+            if (s.kind) {
+              const d = (s.data ?? {}) as Record<string, unknown>;
+              const t = (() => {
+                const dd = new Date(s.ts);
+                return isNaN(dd.getTime()) ? s.ts : dd.toLocaleTimeString();
+              })();
+              const EV: Record<string, { icon: string; label: string; fg: string }> = {
+                tool_call: { icon: "🔧", label: "调用工具", fg: "#f59e0b" },
+                tool_result: { icon: "📥", label: "工具回喂", fg: "#38bdf8" },
+                assistant_final: { icon: "💬", label: "终稿", fg: "#a78bfa" },
+                turn_end: { icon: "🏁", label: "回合结束", fg: "#94a3b8" },
+              };
+              const ev = EV[s.kind] ?? { icon: "•", label: s.kind, fg: "#94a3b8" };
+              const failed = s.kind === "turn_end" && d.outcome !== "succeeded";
+              const body =
+                s.kind === "tool_call"
+                  ? `${String(d.tool ?? "")} · 参数 ${JSON.stringify(d.arguments ?? null)}`
+                  : s.kind === "tool_result"
+                    ? `${String(d.tool ?? "")} · 耗时 ${fmtDur(d.elapsed_ms as number)} · 回喂原文`
+                    : s.kind === "assistant_final"
+                      ? `in ${String(d.tokens_in ?? "—")} / out ${String(d.tokens_out ?? "—")} · 终稿全文`
+                      : s.kind === "turn_end"
+                        ? `${String(d.outcome ?? "")}${d.error_code ? " · " + String(d.error_code) : ""}${d.latency_ms ? " · " + fmtDur(d.latency_ms as number) : ""}`
+                        : "";
+              const full =
+                s.kind === "tool_result" || s.kind === "assistant_final"
+                  ? String(d.result ?? d.content ?? "")
+                  : body;
+              return (
+                <div key={s.seq} className="border-b last:border-b-0" style={failed ? { background: "rgba(239,68,68,.08)" } : undefined}>
+                  <button
+                    className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-left hover:bg-muted/50"
+                    onClick={() => setOpenSeq(openSeq === s.seq ? null : s.seq)}
+                    data-slot="ctx-event-head"
+                    data-kind={s.kind}
+                  >
+                    <span className="font-mono text-[12px]">#{s.seq}</span>
+                    <span>{ev.icon}</span>
+                    <span className="text-[12.5px] font-medium" style={{ color: ev.fg }}>{ev.label}</span>
+                    <span className="text-[12.5px] text-muted-foreground">第 {s.turn_index} 轮 · {t}</span>
+                    {failed ? (
+                      <span className="rounded border px-1.5 py-0.5 text-[11px]" style={{ background: "rgba(239,68,68,.15)", borderColor: "#ef4444", color: "#ef4444" }}>
+                        失败 {String(d.error_code ?? "")}
+                      </span>
+                    ) : null}
+                    <span className="flex-1" />
+                    <span className="max-w-[45%] truncate text-[12px] text-muted-foreground">{body}</span>
+                  </button>
+                  {openSeq === s.seq ? (
+                    <div className="bg-muted/30 px-3 pb-3 pt-1">
+                      <div className="mb-1.5 text-[12.5px] font-semibold">事件详情(回喂模型/落账原文)</div>
+                      <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded border bg-background/60 p-2 font-mono text-[11.5px]">
+                        {full || "(空)"}
+                      </pre>
+                    </div>
+                  ) : null}
+                </div>
+              );
+            }
             const c = catSizes(s);
             const open = openSeq === s.seq;
             const time = (() => {

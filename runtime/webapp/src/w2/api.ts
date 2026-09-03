@@ -131,6 +131,10 @@ export type RuntimeEnv = { python: RuntimeToolInfo; node: RuntimeToolInfo };
 // W5:一次模型调用的上下文快照(/admin/context 行;服务端已做凭据脱敏与
 // 单条内容 16K 字符截断)
 export type CtxStep = {
+  // W9:kind 存在 = 轨迹事件行(tool_call/tool_result/assistant_final/
+  // turn_end),data 携带事件载荷;kind 缺失 = W5 模型调用快照行。
+  kind?: string;
+  data?: Record<string, unknown>;
   seq: number;
   ts: string;
   session_id: string;

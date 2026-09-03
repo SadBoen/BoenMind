@@ -344,6 +344,19 @@ pub(crate) fn spawn_turn(
                                     .unwrap_or_else(|| tc.name.clone());
                                 let args: serde_json::Value = serde_json::from_str(&tc.arguments)
                                     .unwrap_or(serde_json::Value::Null);
+                                // W9:工具调用事件(轨迹视图数据源)
+                                let tool_started = std::time::Instant::now();
+                                ctx_log.record_event(
+                                    session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
+                                    op_id.as_str(),
+                                    turn_index,
+                                    "tool_call",
+                                    &format_ts(clock.now()),
+                                    serde_json::json!({
+                                        "tool": tc.name,
+                                        "arguments": args.clone(),
+                                    }),
+                                );
                                 let (rtx, rrx) = tokio::sync::oneshot::channel();
                                 let call_req = request_id.clone().unwrap_or_else(|| op_id.clone());
                                 let _ = tx
@@ -533,6 +546,19 @@ pub(crate) fn spawn_turn(
                                 } else if let Ok(Ok(receipt_value)) = call_resp {
                                     tool_result = receipt_value.to_string();
                                 }
+                                // W9:工具结果事件(回喂模型的原文+耗时)
+                                ctx_log.record_event(
+                                    session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
+                                    op_id.as_str(),
+                                    turn_index,
+                                    "tool_result",
+                                    &format_ts(clock.now()),
+                                    serde_json::json!({
+                                        "tool": capability,
+                                        "result": tool_result,
+                                        "elapsed_ms": tool_started.elapsed().as_millis() as u64,
+                                    }),
+                                );
                                 messages.push(Message {
                                     role: Role::Tool,
                                     content: tool_result,
@@ -541,6 +567,30 @@ pub(crate) fn spawn_turn(
                             // 结果回喂后重调模型(仍在同一 attempt 的降级链内)
                             continue;
                         }
+                        // W9:终稿与回合边界事件(轨迹视图数据源)
+                        ctx_log.record_event(
+                            session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
+                            op_id.as_str(),
+                            turn_index,
+                            "assistant_final",
+                            &format_ts(clock.now()),
+                            serde_json::json!({
+                                "content": content,
+                                "tokens_in": usage.tokens_in,
+                                "tokens_out": usage.tokens_out,
+                            }),
+                        );
+                        ctx_log.record_event(
+                            session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
+                            op_id.as_str(),
+                            turn_index,
+                            "turn_end",
+                            &format_ts(clock.now()),
+                            serde_json::json!({
+                                "outcome": "succeeded",
+                                "latency_ms": latency_ms,
+                            }),
+                        );
                         // W5:对话台账回写(仅终稿成功;工具轮中间态不入账)
                         if let Some(sid) = session_id.clone() {
                             let _ = tx
@@ -599,6 +649,17 @@ pub(crate) fn spawn_turn(
                         });
                         if error_code == ErrorCode::Cancelled {
                             // 显式取消:回合边界落定为 cancelled(INV-12 唯一入口)。
+                            ctx_log.record_event(
+                                session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
+                                op_id.as_str(),
+                                turn_index,
+                                "turn_end",
+                                &format_ts(clock.now()),
+                                serde_json::json!({
+                                    "outcome": "cancelled",
+                                    "error_code": error_code.as_str(),
+                                }),
+                            );
                             let _ = tx
                                 .send(Cmd::Turn(TurnEvent::Cancelled {
                                     operation_id: op_id.clone(),
@@ -615,6 +676,18 @@ pub(crate) fn spawn_turn(
                             }))
                             .await;
                         if !retryable || attempt == max_attempts {
+                            // W9:回合失败边界事件(轨迹视图失败红标数据源)
+                            ctx_log.record_event(
+                                session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
+                                op_id.as_str(),
+                                turn_index,
+                                "turn_end",
+                                &format_ts(clock.now()),
+                                serde_json::json!({
+                                    "outcome": "failed",
+                                    "error_code": error_code.as_str(),
+                                }),
+                            );
                             let _ = tx
                                 .send(Cmd::Turn(TurnEvent::ChainExhausted {
                                     operation_id: op_id,

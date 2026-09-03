@@ -150,6 +150,52 @@ impl ContextLog {
         seq
     }
 
+    /// W9 逐轮事件(tool_call/tool_result/assistant_final/turn_end,规格
+    /// milestones/W9-context-trajectory-spec.md):与模型调用快照同一 jsonl
+    /// 流,`kind` 字段区分(快照行无 kind,既有读取面不受影响)。脱敏与
+    /// 静默降级同 record。返回分配的 seq。
+    pub fn record_event(
+        &self,
+        session_id: &str,
+        operation_id: &str,
+        turn_index: u32,
+        kind: &str,
+        ts: &str,
+        mut data: serde_json::Value,
+    ) -> u64 {
+        if let Some(obj) = data.as_object_mut() {
+            obj.insert("kind".into(), serde_json::Value::String(kind.to_string()));
+        }
+        let mut inner = self.inner.lock().expect("锁未中毒");
+        let seq = inner.next_seq;
+        inner.next_seq += 1;
+        let value = serde_json::json!({
+            "seq": seq,
+            "ts": ts,
+            "session_id": session_id,
+            "operation_id": operation_id,
+            "turn_index": turn_index,
+            "kind": kind,
+            "data": data,
+        });
+        let mut serialized = serde_json::to_string(&value).unwrap_or_default();
+        for secret in &inner.scan_values {
+            if serialized.contains(secret.as_str()) {
+                serialized = serialized.replace(secret.as_str(), "[REDACTED]");
+            }
+        }
+        if let Some(p) = &self.path
+            && let Ok(mut f) = OpenOptions::new().create(true).append(true).open(p)
+        {
+            let _ = writeln!(f, "{serialized}");
+            let _ = f.flush();
+        }
+        inner
+            .entries
+            .push(serde_json::from_str(&serialized).unwrap_or(value));
+        seq
+    }
+
     /// 内存镜像尾部(测试断言用;新→旧次序与文件一致,即最旧在前)。
     pub fn tail(&self, n: usize) -> Vec<serde_json::Value> {
         let inner = self.inner.lock().expect("锁未中毒");

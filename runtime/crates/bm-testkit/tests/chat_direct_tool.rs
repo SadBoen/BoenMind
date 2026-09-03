@@ -173,4 +173,31 @@ async fn direct_tool_round_feeds_inline_result_without_poll_timeout() {
         "同步直通结果必须作为 Tool 消息回喂: {:?}",
         reqs[1].messages
     );
+
+    // W9:context-log 必须落轨迹事件流(tool_call→tool_result→
+    // assistant_final→turn_end),供「上下文」轨迹视图回放
+    let raw = std::fs::read_to_string(dir.path().join("context-log.jsonl"))
+        .expect("context-log.jsonl 必须存在");
+    let kinds: Vec<String> = raw
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter_map(|v| v["kind"].as_str().map(String::from))
+        .collect();
+    for want in ["tool_call", "tool_result", "assistant_final", "turn_end"] {
+        assert!(
+            kinds.iter().any(|k| k == want),
+            "缺 {want} 事件; 实际={kinds:?}"
+        );
+    }
+    let tool_result_line = raw
+        .lines()
+        .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap())
+        .find(|v| v["kind"] == serde_json::json!("tool_result"))
+        .expect("tool_result 行");
+    assert!(
+        tool_result_line["data"]["result"]
+            .to_string()
+            .contains("hi"),
+        "工具回喂原文必须入账: {tool_result_line}"
+    );
 }

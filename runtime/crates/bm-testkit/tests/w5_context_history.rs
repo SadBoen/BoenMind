@@ -167,19 +167,49 @@ async fn second_turn_request_carries_first_turn_history() {
     assert_eq!(reqs[1].messages[1].content, "第一轮答复");
     assert_eq!(reqs[1].messages[2].content, "第二轮");
 
-    // 上下文快照:每次调用一条(请求侧+结果侧)
+    // 上下文快照:每次调用一条(请求侧+结果侧);W9 起同流另有轨迹事件行
+    // (assistant_final/turn_end),快照断言只看无 kind 的行
     let raw = std::fs::read_to_string(dir.path().join("context-log.jsonl")).expect("快照文件存在");
     let lines: Vec<serde_json::Value> = raw
         .lines()
         .map(|l| serde_json::from_str(l).expect("快照行可解析"))
         .collect();
-    assert_eq!(lines.len(), 2);
-    assert_eq!(lines[0]["messages"].as_array().unwrap().len(), 1);
-    assert_eq!(lines[1]["messages"].as_array().unwrap().len(), 3);
-    assert_eq!(lines[1]["status"], serde_json::json!("ok"));
-    assert_eq!(lines[1]["tokens_in"], serde_json::json!(100));
-    assert_eq!(lines[1]["tokens_out"], serde_json::json!(10));
-    assert_eq!(lines[1]["session_id"], serde_json::json!(sess.as_str()));
-    assert_eq!(lines[1]["step"], serde_json::json!(1));
-    assert_eq!(lines[1]["attempt"], serde_json::json!(1));
+    let snaps: Vec<&serde_json::Value> = lines.iter().filter(|v| v.get("kind").is_none()).collect();
+    assert_eq!(snaps.len(), 2);
+    // W9 轨迹事件:每回合 assistant_final + turn_end(succeeded)
+    for want in ["assistant_final", "turn_end"] {
+        let n = lines
+            .iter()
+            .filter(|v| v["kind"] == serde_json::json!(want))
+            .count();
+        assert_eq!(n, 2, "应有两条 {want}(每回合一条)");
+    }
+    let finals: Vec<&serde_json::Value> = lines
+        .iter()
+        .filter(|v| v["kind"] == serde_json::json!("assistant_final"))
+        .collect();
+    // 连接器脚本恒定回复同一句,按回合序号区分两条终稿(0 与 1)
+    assert_eq!(
+        finals[0]["data"]["content"],
+        serde_json::json!("第一轮答复")
+    );
+    assert_eq!(
+        finals[1]["data"]["content"],
+        serde_json::json!("第一轮答复")
+    );
+    assert_eq!(finals[0]["turn_index"], serde_json::json!(1));
+    assert_eq!(finals[1]["turn_index"], serde_json::json!(2));
+    let te = lines
+        .iter()
+        .find(|v| v["kind"] == serde_json::json!("turn_end"))
+        .unwrap();
+    assert_eq!(te["data"]["outcome"], serde_json::json!("succeeded"));
+    assert_eq!(snaps[0]["messages"].as_array().unwrap().len(), 1);
+    assert_eq!(snaps[1]["messages"].as_array().unwrap().len(), 3);
+    assert_eq!(snaps[1]["status"], serde_json::json!("ok"));
+    assert_eq!(snaps[1]["tokens_in"], serde_json::json!(100));
+    assert_eq!(snaps[1]["tokens_out"], serde_json::json!(10));
+    assert_eq!(snaps[1]["session_id"], serde_json::json!(sess.as_str()));
+    assert_eq!(snaps[1]["step"], serde_json::json!(1));
+    assert_eq!(snaps[1]["attempt"], serde_json::json!(1));
 }
