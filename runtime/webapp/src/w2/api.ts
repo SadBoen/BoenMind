@@ -193,6 +193,16 @@ export const api = {
     req<{ values: Record<string, unknown>; secret_set: Record<string, boolean> }>(
       "/admin/model/active",
     ),
+  portal: {
+    state: () => req<{ configured: boolean; authed: boolean }>("/api/portal/state"),
+    login: (password: string) =>
+      req<{ ok: boolean }>("/api/portal/login", json("POST", { password })),
+    changePassword: (old: string, next: string) =>
+      req<{ ok: boolean; note?: string }>(
+        "/api/portal/password",
+        json("POST", { old, new: next }),
+      ),
+  },
   mcp: {
     list: () => req<McpListResult>("/admin/mcp"),
     create: (b: Partial<McpServer>) => req<{ ok: boolean }>("/admin/mcp", json("POST", b)),

@@ -297,6 +297,9 @@ export function GeneralPage() {
         </div>
       ) : null}
 
+      {/* W9:账号与安全(改登录密码) */}
+      <AccountSecurity />
+
       {/* 新增/编辑对话框 */}
       <Dialog open={draft !== null} onOpenChange={(o) => !o && setDraft(null)}>
         <DialogContent data-slot="workspace-dialog">
@@ -338,5 +341,85 @@ export function GeneralPage() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+
+// W9:账号与安全——修改网页登录密码(改后服务端作废全部会话,各端重登)
+function AccountSecurity() {
+  const [oldPw, setOldPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    if (newPw.length < 6) {
+      setMsg({ ok: false, text: "新密码至少 6 位" });
+      return;
+    }
+    setBusy(true);
+    try {
+      const r = await api.portal.changePassword(oldPw, newPw);
+      setMsg({ ok: true, text: r.note ?? "密码已更新,请重新登录" });
+      setOldPw("");
+      setNewPw("");
+    } catch (e) {
+      setMsg({ ok: false, text: e instanceof Error ? e.message : "修改失败" });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="flex flex-col gap-3" data-slot="account-security">
+      <div>
+        <h2 className="text-[15px] font-semibold">账号与安全</h2>
+        <p className="text-muted-foreground text-[12.5px]">
+          修改网页登录密码;修改后所有已登录设备需重新登录。
+        </p>
+      </div>
+      <div className="bg-card flex flex-col gap-3 rounded-xl border p-3">
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="pw-old">旧密码</Label>
+          <Input
+            id="pw-old"
+            type="password"
+            value={oldPw}
+            autoComplete="current-password"
+            onChange={(e) => setOldPw(e.target.value)}
+          />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="pw-new">新密码(至少 6 位)</Label>
+          <Input
+            id="pw-new"
+            type="password"
+            value={newPw}
+            autoComplete="new-password"
+            onChange={(e) => setNewPw(e.target.value)}
+          />
+        </div>
+        <Button
+          size="sm"
+          className="w-fit"
+          disabled={busy || !oldPw || !newPw}
+          data-slot="pw-save"
+          onClick={() => void save()}
+        >
+          修改密码
+        </Button>
+        {msg ? (
+          <div
+            className={cn(
+              "rounded-lg px-3 py-2 text-[12.5px]",
+              msg.ok
+                ? "bg-emerald-500/10 text-emerald-600"
+                : "bg-destructive/10 text-destructive",
+            )}
+            data-slot="pw-msg"
+          >
+            {msg.text}
+          </div>
+        ) : null}
+      </div>
+    </section>
   );
 }
