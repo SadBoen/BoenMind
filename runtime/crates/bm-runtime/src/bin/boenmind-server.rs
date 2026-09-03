@@ -52,6 +52,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     std::fs::create_dir_all(&data_dir)?;
     let token = bm_surface_http::token::load_or_create(&data_dir)?;
+    // W7 修复:升级子进程先等旧进程让出端口再开状态库——排空中的旧进程
+    // 仍持库,双开=事件位点错位,启动恢复拒开(2026-09-03 VPS 实测)。
+    if std::env::var("BOEN_UPGRADE_CHILD").as_deref() == Ok("1") {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        loop {
+            match tokio::net::TcpListener::bind(&bind).await {
+                Ok(probe) => {
+                    drop(probe);
+                    break;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+                    if std::time::Instant::now() >= deadline {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                }
+                _ => break,
+            }
+        }
+    }
     let (persist, rebuilt) = PersistStore::open_resilient(&data_dir)?;
     if rebuilt {
         eprintln!("警告:状态库损坏,已自事件日志重建投影(损坏文件已隔离)");

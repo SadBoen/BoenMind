@@ -294,8 +294,43 @@ pub async fn apply_update(
         return admin_error(StatusCode::INTERNAL_SERVER_ERROR, format!("换装失败: {e}"));
     }
 
-    // 5. 拉起子进程(原 args/env/cwd;BOEN_UPGRADE_CHILD=1 → 子进程容忍端口
-    //    被本进程暂时占用,重试绑定),随后本进程优雅排空退出。
+    // 5. 切换重启。W7 修复(2026-09-03 VPS 实测):systemd 环境下自拉起
+    //    子进程与单元管理冲突——旧进程排空属成功退出,Restart=on-failure
+    //    不触发,单元停死;且子进程与排空中的旧进程短暂双开状态库(位点
+    //    错位,启动恢复拒开)。常规解:systemd 环境换装后 systemctl restart
+    //    --no-block 交给单元管理;检测不到单元/非 systemd 回落原自拉起。
+    if std::path::Path::new("/run/systemd/system").exists()
+        && let Some(unit) = systemd_boenmind_unit()
+        && std::process::Command::new("systemctl")
+            .args(["restart", "--no-block", &unit])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    {
+        let ok = std::process::Command::new("systemctl")
+            .args(["restart", "--no-block", &unit])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if ok {
+            eprintln!(
+                "[W7] 在线升级:已换装 {},经 systemctl restart {unit} 切换",
+                info.tag
+            );
+            if let Some(shutdown) = &cfg.shutdown {
+                shutdown.notify_waiters();
+            }
+            return Json(json!({
+                "ok": true,
+                "restarting": true,
+                "note": format!("已换装 {} 并经 systemd 重启服务;页面将在服务就绪后自动刷新", info.tag),
+            }))
+            .into_response();
+        }
+        eprintln!("[W7] systemctl restart 失败,回落自拉起路径");
+    }
+    // 6. 回落:拉起子进程(原 args/env/cwd;BOEN_UPGRADE_CHILD=1 → 子进程
+    //    容忍端口被本进程暂时占用,重试绑定),随后本进程优雅排空退出。
     let exe = std::env::current_exe().map_err(|e| format!("current_exe 失败: {e}"));
     let exe = match exe {
         Ok(p) => p,
@@ -408,6 +443,31 @@ fn install(cfg: &AdminConfig, src: &std::path::Path) -> Result<(), String> {
         copy_dir_recursive(&new_plugins, &dst_plugins)?;
     }
     Ok(())
+}
+
+/// 探测 systemd 单元名:遍历 service 单元,取 ExecStart 引用当前 exe 的
+/// boenmind 单元(升级端点仅回环可调,探测成本可接受)。
+fn systemd_boenmind_unit() -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    let exe_text = exe.to_string_lossy().to_string();
+    let out = std::process::Command::new("systemctl")
+        .args(["list-units", "--type=service", "--all", "--no-legend"])
+        .output()
+        .ok()?;
+    for line in String::from_utf8_lossy(&out.stdout).lines() {
+        let unit = line.split_whitespace().next()?;
+        if !unit.ends_with(".service") {
+            continue;
+        }
+        if let Ok(show) = std::process::Command::new("systemctl")
+            .args(["cat", unit])
+            .output()
+            && String::from_utf8_lossy(&show.stdout).contains(exe_text.as_str())
+        {
+            return Some(unit.to_string());
+        }
+    }
+    None
 }
 
 fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String> {
