@@ -51,3 +51,18 @@ context-mode 提供 `ctx_index`、`ctx_search`、会话快照/恢复和受限执
 注意:数据目录默认 `~/.local/share/boenmind/`(state.db、config/、mcp/、token);
 Windows 默认 `%APPDATA%\Roaming\boenmind\`;
 **同一数据目录禁止同时跑两个 boenmind-server 进程**。
+
+## 7. systemd 常驻(推荐)与排障
+
+生产部署建议用 systemd 管理(开机自启+崩溃自动拉起+在线升级自动重启),完整单元文件
+模板见仓库 README「安装」一节;要点:`Restart=always`、真随机主密钥
+(`openssl rand -hex 24`,勿用弱串)、`ExecStart` 指向解压目录的 boenmind-server。
+
+排障速查:
+- 网页打不开/502:`systemctl status boenmind`;没起就 `systemctl restart boenmind`,
+  再看 `journalctl -u boenmind -n 50 --no-pager`;
+- 忘记网页密码:删除 `<数据目录>/config/portal.json` 并重启服务,登录页恢复「创建密码」;
+- 启动即退且日志见 Corrupt/位点:备份后移除 `<数据目录>/state.db*` 再重启
+  (投影库会从事件日志自动重建,对话记录不丢);
+- 在线升级:v0.0.6.1 起自动经 systemd 重启;更早版本升级后需手动
+  `systemctl restart boenmind`。
