@@ -2,16 +2,12 @@
 // 采用表格式呈现，顶部提供【全部 / 内置 / 外部】快速筛选，保留完整的扫描、配置与操作能力。
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  CogIcon,
   Loader2Icon,
-  PencilIcon,
   PlusIcon,
   RefreshCwIcon,
   ScanSearchIcon,
-  Trash2Icon,
   ShieldCheck,
   Globe,
-  SlidersHorizontal,
 } from "lucide-react";
 import {
   api,
@@ -137,11 +133,20 @@ export type TablePluginItem = {
   id: string;
   name: string;
   type: "builtin" | "external";
-  transport: string;
   detail: string;
   statusText?: string;
   isOnline?: boolean;
   serverRef?: McpServer;
+};
+
+// 内置能力白话说明(键=能力名;未命中回落 effect 文案)
+const BUILTIN_DESC: Record<string, string> = {
+  "model.invoke": "内核私有 · 模型调用通道(每次回复都走它,非对话工具)",
+  "system.exec": "系统终端:审批后执行命令(万能底牌)",
+  "fs.search": "工作区内容搜索(rg 引擎内嵌)· 免审批直通",
+  "fs.read": "读文件(带行号 + 分页)· 免审批直通",
+  "fs.write": "写文件(新建/整文覆盖)· 需审批",
+  "fs.edit": "精确字符串替换编辑 · 需审批",
 };
 
 export function PluginsPage({
@@ -184,9 +189,10 @@ export function PluginsPage({
 
   const refreshStatus = useCallback(async () => {
     try {
+      // /admin/mcp/status 返回形如 { status: [{name, ok, tools, error}] }
       const s = await api.mcp.status();
       const map: Record<string, { ok: boolean; tools?: number; error?: string }> = {};
-      for (const item of s.servers) {
+      for (const item of s.status ?? []) {
         map[item.name] = { ok: item.ok, tools: item.tools, error: item.error };
       }
       setStatusMap(map);
@@ -220,14 +226,19 @@ export function PluginsPage({
 
     // 1. 系统内置能力
     for (const b of builtinList) {
+      const effectText =
+        b.effect === "read-only"
+          ? "只读直通"
+          : b.effect != null && b.effect !== "read-only"
+            ? "需审批"
+            : "系统基础能力";
       list.push({
         id: `builtin:${b.name}`,
         name: b.name,
         type: "builtin",
-        transport: "内核内存通道 (In-Process)",
-        detail: `${b.effect ?? "系统基础能力"}${b.idempotent ? " · 幂等" : ""}${
-          b.approval && b.approval !== "not-required" ? " · 需审批" : ""
-        }`,
+        detail:
+          BUILTIN_DESC[b.name] ??
+          `${effectText}${b.idempotent ? " · 幂等" : ""}`,
         statusText: "就绪",
         isOnline: true,
       });
@@ -238,18 +249,14 @@ export function PluginsPage({
       for (const s of mcpData.servers) {
         const st = statusMap[s.name];
         const isOk = st?.ok ?? false;
-        let transportLabel = s.transport;
-        if (s.transport === "stdio") {
-          transportLabel = `stdio (${s.command || "本地进程"})`;
-        } else if (s.url) {
-          transportLabel = `${s.transport} (${s.url})`;
-        }
         list.push({
           id: `mcp:${s.name}`,
           name: s.name,
           type: "external",
-          transport: transportLabel,
-          detail: s.transport === "stdio" && s.args?.length ? `参数: ${s.args.join(" ")}` : "外部扩展服务",
+          detail:
+            s.transport === "stdio" && s.args?.length
+              ? `参数: ${s.args.join(" ")}`
+              : "外部扩展服务",
           statusText: isOk ? `联通 (${st?.tools ?? 0} 工具)` : "离线 / 未装载",
           isOnline: isOk,
           serverRef: s,
@@ -422,14 +429,13 @@ export function PluginsPage({
 
       {/* 核心展示区：表格式 (Table) 设计 */}
       <div className="overflow-hidden rounded-xl border bg-card/60 shadow-xs backdrop-blur-sm">
-        <table className="w-full text-left text-[12.5px]">
+        <table className="w-full text-left text-[12.5px] table-fixed">
           <thead className="border-b bg-muted/40 text-[11.5px] font-semibold text-muted-foreground uppercase">
             <tr>
               <th className="px-3.5 py-2.5">名称 / 标识</th>
-              <th className="px-3 py-2.5">类别</th>
-              <th className="px-3 py-2.5">通道 / 协议</th>
-              <th className="px-3 py-2.5">状态</th>
-              <th className="px-3.5 py-2.5 text-right">操作</th>
+              <th className="px-3 py-2.5 w-24 whitespace-nowrap">类别</th>
+              <th className="px-3 py-2.5 w-36 whitespace-nowrap">状态</th>
+              <th className="px-3.5 py-2.5 w-56 whitespace-nowrap">操作</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border/60">
@@ -455,7 +461,7 @@ export function PluginsPage({
                   </td>
 
                   {/* 类别徽标 */}
-                  <td className="px-3 py-2.5 align-middle">
+                  <td className="px-3 py-2.5 align-middle whitespace-nowrap">
                     {item.type === "builtin" ? (
                       <Badge variant="outline" className="gap-1 border-blue-500/30 bg-blue-500/10 font-mono text-[10.5px] text-blue-600 dark:text-blue-400">
                         <ShieldCheck className="size-3" /> 系统内置
@@ -467,18 +473,11 @@ export function PluginsPage({
                     )}
                   </td>
 
-                  {/* 协议 / 通道 */}
-                  <td className="px-3 py-2.5 align-middle font-mono text-[11.5px] text-muted-foreground">
-                    <span className="truncate max-w-[200px] block" title={item.transport}>
-                      {item.transport}
-                    </span>
-                  </td>
-
                   {/* 状态 */}
-                  <td className="px-3 py-2.5 align-middle">
+                  <td className="px-3 py-2.5 align-middle whitespace-nowrap">
                     <span
                       className={cn(
-                        "text-[12px] font-medium",
+                        "inline-block max-w-full overflow-hidden text-ellipsis align-middle text-[12px] font-medium",
                         item.isOnline ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground",
                       )}
                     >
@@ -487,16 +486,15 @@ export function PluginsPage({
                   </td>
 
                   {/* 操作按钮组 */}
-                  <td className="px-3.5 py-2.5 text-right align-middle">
+                  <td className="px-3.5 py-2.5 text-right align-middle whitespace-nowrap">
                     {item.type === "external" && item.serverRef ? (
-                      <div className="flex items-center justify-end gap-1">
+                      <div className="flex items-center justify-end gap-0.5">
                         <Button
                           variant="ghost"
                           size="sm"
                           className="h-7 px-2 text-[11.5px]"
                           onClick={() => setDraft(toDraft(item.serverRef!))}
                         >
-                          <PencilIcon className="size-3" />
                           编辑
                         </Button>
                         <Button
@@ -523,7 +521,6 @@ export function PluginsPage({
                               });
                             }}
                           >
-                            <CogIcon className="size-3" />
                             参数
                           </Button>
                         ) : null}
@@ -534,12 +531,11 @@ export function PluginsPage({
                           className="h-7 px-2 text-[11.5px] text-destructive hover:bg-destructive/10"
                           onClick={() => void handleRemove(item.name)}
                         >
-                          <Trash2Icon className="size-3" />
                           移除
                         </Button>
                       </div>
                     ) : (
-                      <span className="text-[11px] text-muted-foreground/60 pr-2 select-none">
+                      <span className="text-[11px] text-muted-foreground/60 select-none">
                         出厂固有 · 禁卸载
                       </span>
                     )}
@@ -550,7 +546,7 @@ export function PluginsPage({
 
             {filteredItems.length === 0 ? (
               <tr>
-                <td colSpan={5} className="py-8 text-center text-muted-foreground text-[12.5px]">
+                <td colSpan={4} className="py-8 text-center text-muted-foreground text-[12.5px]">
                   没有找到匹配的插件或能力条目。
                 </td>
               </tr>

@@ -7,6 +7,7 @@
 //! 执行体 spawn 宿主 shell:Windows=cmd /C,其余=sh -c;输出合并截断 16K;
 //! 超时杀进程(kill_on_drop)。
 
+use crate::fs_tools;
 use bm_contract::capability::CapabilityManifest;
 use bm_core::ports::{AsyncCallError, AsyncCapabilityExecutor};
 use bm_core::registry::CapabilityProvider;
@@ -125,8 +126,9 @@ impl AsyncCapabilityExecutor for ExecExecutor {
     }
 }
 
-/// 组合执行器:system.exec 走内置执行体,其余回落(如 MCP hub)。
+/// 组合执行器:system.exec / fs.* 走内置执行体,其余回落(如 MCP hub)。
 pub struct SplitExecutor {
+    pub fs: fs_tools::FsExecutor,
     pub fallback: Arc<dyn AsyncCapabilityExecutor>,
 }
 
@@ -143,6 +145,8 @@ impl AsyncCapabilityExecutor for SplitExecutor {
             ExecExecutor
                 .call(operation_id, capability, args, deadline)
                 .await
+        } else if capability.starts_with("fs.") {
+            self.fs.call(operation_id, capability, args, deadline).await
         } else {
             self.fallback
                 .call(operation_id, capability, args, deadline)

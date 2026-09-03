@@ -19,6 +19,10 @@ tokio-util.workspace = true
 serde.workspace = true
 getrandom = "0.4.3"
 sha2 = { workspace = true }
+grep-searcher = { workspace = true }
+grep-regex = { workspace = true }
+walkdir = { workspace = true }
+regex = { workspace = true }
 
 [features]
 glm = []

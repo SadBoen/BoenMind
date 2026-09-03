@@ -137,6 +137,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut capabilities = bm_providers::builtin::production_builtin_capability_set();
     // W9 日常可用批:system.exec 内置命令执行(审批类,常规 agent 设计)
     capabilities.extend([bm_providers::system_exec::exec_capability_entry()]);
+    // ADR-0021:fs.* 文件工具集内置(查/读直通,写/改审批;沙箱=工作区注册表)
+    capabilities.extend(bm_providers::fs_tools::fs_capability_entries());
     // W2 管理面注入面:内置能力摘要(= mcp 注入前的 capabilities)
     let builtin_caps: Vec<serde_json::Value> = capabilities
         .iter()
@@ -224,13 +226,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let handle = RuntimeHandle::start(RuntimeConfig {
         capabilities,
         async_executor: {
+            // ADR-0021:fs.* 与 system.exec 走内置异步执行体,其余回落 MCP hub
+            let fs = bm_providers::fs_tools::FsExecutor::new(
+                data_dir.clone(),
+                workspace_root.clone(),
+            );
+            let inner: Arc<dyn bm_core::ports::AsyncCapabilityExecutor> = match mcp_executor {
+                Some(hub) => hub,
+                None => Arc::new(bm_providers::system_exec::ExecExecutor),
+            };
             let exec: Arc<dyn bm_core::ports::AsyncCapabilityExecutor> =
-                Arc::new(bm_providers::system_exec::ExecExecutor);
-            match mcp_executor {
-                Some(hub) => Arc::new(bm_providers::system_exec::SplitExecutor { fallback: hub }),
-                None => exec,
-            }
-            .into()
+                Arc::new(bm_providers::system_exec::SplitExecutor {
+                    fs,
+                    fallback: inner,
+                });
+            exec.into()
         },
         model_streaming: {
             let on = eff.stream;

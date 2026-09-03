@@ -1,4 +1,4 @@
-//! 路径沙箱:allowed_roots 白名单 + 防逃逸。
+//! 路径沙箱:工作区注册表白名单 + 防逃逸(自 code-tools 插件移植,ADR-0021)。
 //! 校验策略:候选路径(绝对化后)取最深已存在祖先做 canonicalize(操作系统
 //! 侧吸收 `..`),余量按字面组件拼接回 canonical 基座,最后与各根做组件级
 //! 前缀比对(`BoenMind` 不会误放行 `BoenMind2` 同名前缀)。
@@ -44,14 +44,14 @@ pub struct Roots {
 
 impl Roots {
     /// 逐根 canonicalize(必须已存在);无效根剔除并告警,全无效 = 空沙箱
-    /// (工具调用时统一报错,不拒启——配置修好「重载 MCP」即恢复)。
+    /// (工具调用时统一报错;每调用重建,注册表修好即恢复)。
     pub fn new(raw: &[String]) -> Self {
         let mut roots = Vec::new();
         for r in raw {
             let cand = strip_verbatim(Path::new(r));
             match cand.canonicalize() {
                 Ok(p) if p.is_dir() => roots.push(strip_verbatim(&p)),
-                _ => eprintln!("[code-tools] allowed_root 无效(忽略):{r}"),
+                _ => eprintln!("[fs_tools] 工作区根无效(忽略):{r}"),
             }
         }
         Self { roots }
@@ -73,8 +73,7 @@ impl Roots {
         }
         if self.roots.is_empty() {
             return Err(
-                "未配置 allowed_roots(设置页本插件配置填根目录,分号分隔多个;改后「重载 MCP」)"
-                    .into(),
+                "工作区注册表为空:在设置「常规 → 工作区」登记至少一个目录后再用文件工具".into(),
             );
         }
         // 跨平台统一分隔符:在非 Windows 系统上将 `\` 替换为 `/`，防止形如 `..\..\win.ini`
@@ -121,7 +120,7 @@ impl Roots {
             }
         }
         Err(format!(
-            "路径越出 allowed_roots 白名单:{}(根:{})",
+            "路径越出工作区白名单:{}(根:{})",
             display_path(&final_path),
             self.roots
                 .iter()

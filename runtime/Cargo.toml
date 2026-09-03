@@ -40,6 +40,11 @@ async-stream = "0.3"
 getrandom = "0.4"
 dirs = "6"
 clap = { version = "4", features = ["derive"] }
+# fs_tools(ADR-0021):rg 同款引擎以库形式内嵌(ripgrep 本体同款核心 crate)
+grep-searcher = "0.1"
+grep-regex = "0.1"
+walkdir = "2"
+regex = "1"
 bm-surface-http = { path = "crates/bm-surface-http" }
 bm-cli = { path = "crates/bm-cli" }
 bm-persist = { path = "crates/bm-persist" }
