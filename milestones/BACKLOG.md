@@ -29,7 +29,6 @@
 | Task 级停滞窗口/并发上限配置字段 | M6-review §6-1(M5 部分闭合) | OPEN |
 | 成员级 max_concurrent_tools 定标 | M6-review §6-1 | OPEN |
 | 多代 stdio 进度聚合 | M7-review §6-5 | OPEN |
-| capability 操作不落 operations 表复核 | M4-review §6-4 | OPEN |
 | P-06 RSS 独立采样接入 perf 套件 | M1 §6-2 → M2 → M3 §6-4 后无接续 | OPEN |
 
 ### 3.2 后端与前端重构债
@@ -79,3 +78,4 @@
 - PENDING.md 的 11 条 D-M 系列 user 裁决全部闭合(见 milestones/PENDING.md 表)。
 - S5(S4 部分实现)、S9(verification 三分法,M5/M7)裁决见 FULL-REVIEW §2.4。
 - 其余已交付/已修复条目(审计 F-01~F-04/F-10、W4b 三件套、上下文透视面板、前端治理两轮、api_dsh 移除、release 线重写、坏 MCP 条目容错、冒烟套件等)已按 2026-09-02 维护口径移出台账,可溯 git 史与 HISTORY.md。
+- capability 操作不落 operations 表复核确认闭合(M4-review §6-4:纯内存系统容器态,规范状态由 approvals/grants/outbox 完整承载,行为正当)。
