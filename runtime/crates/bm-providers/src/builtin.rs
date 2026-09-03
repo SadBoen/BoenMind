@@ -206,6 +206,13 @@ pub fn builtin_capability_set() -> Vec<(CapabilityManifest, Arc<dyn CapabilityPr
     out
 }
 
+/// 生产环境纯净内置能力装配集：仅包含内核核心调度必须的能力（model.invoke），
+/// 杜绝早期单元测试桩（mock 邮件、计数器、purge 等）污染生产环境模型工具集。
+pub fn production_builtin_capability_set() -> Vec<(CapabilityManifest, Arc<dyn CapabilityProvider>)>
+{
+    vec![model_invoke_cap()]
+}
+
 /// M7 model.invoke:模型调用收编进 Capability 面(M7 规格 S1;M4 §5.8 豁免撤销)。
 /// 执行体 = turn 循环内的连接器(spawn 前 Broker 查表放行);Wire 直调在此拒绝,
 /// 防止绕过 turn 语义(预算记账/取消/审计)直接触模型。独立导出供最小装配

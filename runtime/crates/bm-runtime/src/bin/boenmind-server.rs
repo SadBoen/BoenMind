@@ -133,7 +133,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // M7.2/M7.7:--mcp-config 显式安装清单(= 用户批准)→ 握手发现 →
     // 动态注册 + 异步执行器装配;env 明文只进子进程(INV-5)
-    let mut capabilities = bm_providers::builtin::builtin_capability_set();
+    // 生产服务仅装载生产级内置能力，移除历史测试桩(mail.mock_send/notes等)防模型误判
+    let mut capabilities = bm_providers::builtin::production_builtin_capability_set();
     // W9 日常可用批:system.exec 内置命令执行(审批类,常规 agent 设计)
     capabilities.extend([bm_providers::system_exec::exec_capability_entry()]);
     // W2 管理面注入面:内置能力摘要(= mcp 注入前的 capabilities)

@@ -2,10 +2,11 @@
 // 导航:常规 / 模型提供商 / 插件 / MCP / 外观(W3 主题系统)+
 // 插件 PIN 快捷项(PIN 后在此显示,点击跳插件页并按名筛选)。
 import { useEffect, useState } from "react";
-import { BoxIcon, InfoIcon, PlugIcon, ScrollTextIcon, ServerIcon, SlidersHorizontalIcon, SparklesIcon, WrenchIcon } from "lucide-react";
+// 导航:常规 / 模型 / 插件 / 外观 / 角色 / 日志 / 关于
+import { useEffect, useState } from "react";
+import { BoxIcon, InfoIcon, PlugIcon, ScrollTextIcon, SlidersHorizontalIcon, SparklesIcon, WrenchIcon } from "lucide-react";
 import { ProvidersPage } from "./ProvidersPage";
-import { PluginsPage, readPins } from "./PluginsPage";
-import { McpPage } from "./McpPage";
+import { PluginsPage } from "./PluginsPage";
 import { RolesPage } from "./RolesPage";
 import { LogsPage } from "./LogsPage";
 import { AboutPage } from "./AboutPage";
@@ -13,19 +14,12 @@ import { GeneralPage } from "./GeneralPage";
 import { AppearancePage } from "@/w3/AppearancePage";
 import { cn } from "@/lib/utils";
 
-type Section = "general" | "providers" | "plugins" | "mcp" | "appearance" | "roles" | "logs" | "about";
+type Section = "general" | "providers" | "plugins" | "appearance" | "roles" | "logs" | "about";
 
 export function SettingsPage({ onClose }: { onClose: () => void }) {
   const [section, setSection] = useState<Section>("providers");
   const [pluginFilter, setPluginFilter] = useState<string | undefined>(undefined);
-  const [mcpEditTarget, setMcpEditTarget] = useState<string | null>(null);
-  // PIN 快捷项:监听插件页的 PIN 变更事件刷新
-  const [pins, setPins] = useState<string[]>(() => readPins());
-  useEffect(() => {
-    const refresh = () => setPins(readPins());
-    window.addEventListener("bm-pins-changed", refresh);
-    return () => window.removeEventListener("bm-pins-changed", refresh);
-  }, []);
+  const [pluginEditTarget, setPluginEditTarget] = useState<string | null>(null);
 
   const goPluginWithFilter = (name: string) => {
     setPluginFilter(name);
@@ -79,12 +73,6 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
             label="插件"
           />
           <NavItem
-            active={section === "mcp"}
-            onClick={() => setSection("mcp")}
-            icon={<ServerIcon className="size-4" />}
-            label="MCP"
-          />
-          <NavItem
             active={section === "appearance"}
             onClick={() => setSection("appearance")}
             icon={<SparklesIcon className="size-4" />}
@@ -110,46 +98,17 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
             icon={<InfoIcon className="size-4" />}
             label="关于"
           />
-          {pins.length > 0 ? (
-            <div className="mt-4 border-t pt-3">
-              <div className="text-muted-foreground px-2 pb-1.5 text-[11px] font-medium tracking-wide">
-                PIN 的插件
-              </div>
-              {pins.map((key) => {
-                const name = key.split(":")[1] ?? key;
-                // 2026-09-02 裁决:插件页只列系统内置;旧 mcp: 前缀 PIN
-                // (MCP 项已不在此页)点击改跳「MCP 管理」页
-                const toMcp = key.startsWith("mcp:");
-                return (
-                  <button
-                    key={key}
-                    className="hover:bg-accent flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] transition-colors"
-                    onClick={() =>
-                      toMcp
-                        ? (setMcpEditTarget(name), setSection("mcp"))
-                        : goPluginWithFilter(name)
-                    }
-                    data-slot="pin-item"
-                    data-name={name}
-                  >
-                    <BoxIcon className="text-muted-foreground size-3.5" />
-                    <span className="truncate font-mono text-[12.5px]">{name}</span>
-                  </button>
-                );
-              })}
-            </div>
-          ) : null}
         </nav>
 
         <main className="min-w-0 flex-1 overflow-y-auto p-6" data-slot="settings-content">
-          <div className="mx-auto max-w-2xl">
+          <div className="mx-auto max-w-4xl">
             {section === "general" ? <GeneralPage /> : null}
             {section === "providers" ? <ProvidersPage /> : null}
-            {section === "plugins" ? <PluginsPage initialFilter={pluginFilter} /> : null}
-            {section === "mcp" ? (
-              <McpPage
-                editTarget={mcpEditTarget}
-                onConsumedEditTarget={() => setMcpEditTarget(null)}
+            {section === "plugins" ? (
+              <PluginsPage
+                initialFilter={pluginFilter}
+                editTarget={pluginEditTarget}
+                onConsumedEditTarget={() => setPluginEditTarget(null)}
               />
             ) : null}
             {section === "appearance" ? <AppearancePage /> : null}

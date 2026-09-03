@@ -8,7 +8,18 @@ import {
   ThreadPrimitive,
   useAuiState,
 } from "@assistant-ui/react";
-import { FolderOpen, PanelLeft, PanelRight, Send, ShieldAlert, Square } from "lucide-react";
+import {
+  FolderOpen,
+  PanelLeft,
+  PanelRight,
+  Send,
+  ShieldAlert,
+  Square,
+  CheckCircle2,
+  XCircle,
+  Clock,
+  ChevronUp,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   Select,
@@ -20,6 +31,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { ContextView } from "./context";
 import { useBoenmindApprovals, type ApprovalRequest } from "./runtime";
 import { api, type WorkspaceEntry } from "@/w2/api";
@@ -158,78 +170,161 @@ function ApprovalCard({
   const argsText =
     req.args == null
       ? "(参数见上文模型调用)"
-      : JSON.stringify(req.args, null, 2).slice(0, 600);
+      : JSON.stringify(req.args, null, 2).slice(0, 800);
+
+  const handleAction = async (decision: "approve" | "deny") => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await onRespond(req.approval_id, decision);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div
-      className="notice-warn flex flex-col gap-2 shadow-sm"
-      style={{
-        background: "var(--state-warn-bg)",
-        borderColor: "var(--state-warn-border)",
-        color: "var(--state-warn-fg)",
-      }}
+      className="group relative my-3 flex flex-col gap-3 rounded-2xl border border-border/80 bg-card/75 p-4 shadow-lg backdrop-blur-xl transition-all hover:border-border"
       data-slot="approval-card"
       data-approval-id={req.approval_id}
       data-status={req.status}
     >
-      <div className="flex items-center gap-2">
-        <ShieldAlert className="size-4" style={{ color: "var(--state-warn-fg)" }} />
-        <span className="text-[13px] font-semibold" style={{ color: "var(--state-warn-fg)" }}>
-          工具调用审批
-        </span>
-        <span
-          className="rounded border px-1.5 py-0.5 font-mono text-[11px]"
-          style={{
-            borderColor: "var(--state-warn-border)",
-            background: "color-mix(in srgb, var(--state-warn-bg) 70%, #000)",
-            color: "var(--state-warn-fg)",
-          }}
-        >
-          {req.capability}
-        </span>
-        <span className="text-[11px] opacity-80">
-          风险:需审批 · 单据 {req.approval_id.slice(-6)}
-        </span>
+      {/* 头部：标题、能力名徽标、状态与单据号 */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2.5">
+          <div className="flex size-7 items-center justify-center rounded-lg bg-amber-500/15 text-amber-600 dark:text-amber-400">
+            <ShieldAlert className="size-4" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-[13.5px] font-semibold text-foreground tracking-tight">
+                权限与工具调用请求
+              </span>
+              <Badge variant="outline" className="border-amber-500/30 bg-amber-500/10 font-mono text-[11px] text-amber-700 dark:text-amber-300">
+                {req.capability}
+              </Badge>
+            </div>
+            <p className="text-[11.5px] text-muted-foreground mt-0.5">
+              该操作具有外部副作用或修改权限，需人工确认裁决 · 单据 #{req.approval_id.slice(-6)}
+            </p>
+          </div>
+        </div>
+
+        {req.status === "waiting" ? (
+          <Badge variant="secondary" className="flex items-center gap-1 font-mono text-[11px] text-muted-foreground">
+            <Clock className="size-3 animate-spin text-amber-500" />
+            等待裁决 (5m)
+          </Badge>
+        ) : null}
       </div>
+
+      {/* 参数预览区域：精致代码块卡片 */}
       {req.args != null ? (
-        <pre className="bg-card/70 mt-1 max-h-32 overflow-auto rounded-md border p-2 font-mono text-[11px] leading-relaxed text-foreground">
-          {argsText}
-        </pre>
+        <div className="relative overflow-hidden rounded-xl border border-border/60 bg-muted/40 p-2.5">
+          <div className="mb-1.5 flex items-center justify-between text-[10.5px] font-medium text-muted-foreground uppercase tracking-wider">
+            <span>调用参数 (Payload)</span>
+            <span className="font-mono text-[10px] opacity-70">JSON</span>
+          </div>
+          <pre className="max-h-36 overflow-auto font-mono text-[11.5px] leading-relaxed text-foreground/90 selection:bg-primary/20">
+            {argsText}
+          </pre>
+        </div>
       ) : null}
+
+      {/* 底部操作区：仿 ZCode 上拉选项菜单交互 */}
       {req.status === "waiting" ? (
-        <div className="mt-2 flex items-center gap-2">
-          <Button
-            size="sm"
-            disabled={busy}
-            data-slot="approval-approve"
-            onClick={() => {
-              setBusy(true);
-              void onRespond(req.approval_id, "approve");
-            }}
-          >
-            批准执行(单次)
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={busy}
-            data-slot="approval-deny"
-            className="text-destructive hover:bg-destructive/10"
-            onClick={() => {
-              setBusy(true);
-              void onRespond(req.approval_id, "deny");
-            }}
-          >
-            拒绝
-          </Button>
-          <span className="text-[11px] opacity-80">
-            批准后工具立即执行;5 分钟未裁决自动过期
-          </span>
+        <div className="mt-1 flex flex-wrap items-center justify-between gap-3 border-t border-border/40 pt-3">
+          {/* 左侧：直接主要操作 */}
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              disabled={busy}
+              className="h-8 rounded-lg px-3.5 text-[12.5px] font-medium shadow-sm transition-transform active:scale-95"
+              data-slot="approval-approve"
+              onClick={() => void handleAction("approve")}
+            >
+              ✓ 允许本次执行
+            </Button>
+
+            {/* 上拉操作菜单 */}
+            <Select
+              onValueChange={(val) => {
+                if (val === "approve") void handleAction("approve");
+                else if (val === "deny") void handleAction("deny");
+              }}
+            >
+              <SelectTrigger
+                size="sm"
+                disabled={busy}
+                className="h-8 gap-1.5 rounded-lg border-border/80 bg-background/60 px-2.5 text-[12px] font-medium hover:bg-accent"
+                title="选择裁决动作"
+              >
+                <span>更多选项</span>
+              </SelectTrigger>
+              <SelectContent side="top" align="start" className="rounded-xl border border-border/80 bg-popover/95 p-1 shadow-xl backdrop-blur-md">
+                <SelectLabel className="px-2 py-1 text-[11px] font-semibold text-muted-foreground">
+                  权限裁决策略
+                </SelectLabel>
+                <SelectItem
+                  value="approve"
+                  className="rounded-lg py-2 pl-2 text-[12px] font-medium focus:bg-primary/10 focus:text-primary"
+                >
+                  <div className="flex flex-col gap-0.5">
+                    <span className="font-semibold text-foreground">批准本次调用 (Allow)</span>
+                    <span className="text-[10.5px] text-muted-foreground">允许当前单据执行一次，随后继续对话</span>
+                  </div>
+                </SelectItem>
+                <SelectItem
+                  value="deny"
+                  className="rounded-lg py-2 pl-2 text-[12px] font-medium text-destructive focus:bg-destructive/10 focus:text-destructive"
+                >
+                  <div className="flex flex-col gap-0.5">
+                    <span className="font-semibold">拒绝本次调用 (Deny)</span>
+                    <span className="text-[10.5px] opacity-80">终止当前操作并告知模型调用已被用户取消</span>
+                  </div>
+                </SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={busy}
+              data-slot="approval-deny"
+              className="h-8 rounded-lg px-2.5 text-[12px] text-destructive hover:bg-destructive/10 hover:text-destructive"
+              onClick={() => void handleAction("deny")}
+            >
+              拒绝
+            </Button>
+          </div>
+
+          <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            <span>支持对话内热审批</span>
+            <span>·</span>
+            <span>超时自动回滚</span>
+          </div>
         </div>
       ) : (
-        <div className="mt-1 text-[12px] font-medium opacity-90">
-          {req.status === "approved"
-            ? "✓ 已批准——工具执行中/已完成,结果将回喂模型"
-            : "✕ 已拒绝——已告知模型本次调用被用户取消"}
+        /* 终态提示 */
+        <div
+          className={cn(
+            "flex items-center gap-2 rounded-xl border px-3 py-2 text-[12px] font-medium shadow-xs",
+            req.status === "approved"
+              ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+              : "border-destructive/20 bg-destructive/10 text-destructive",
+          )}
+        >
+          {req.status === "approved" ? (
+            <>
+              <CheckCircle2 className="size-4 shrink-0 text-emerald-500" />
+              <span>已批准执行 —— 工具结果已安全回喂给模型并归档</span>
+            </>
+          ) : (
+            <>
+              <XCircle className="size-4 shrink-0 text-destructive" />
+              <span>已拒绝本次调用 —— 已通知模型操作取消并释放执行锁</span>
+            </>
+          )}
         </div>
       )}
     </div>

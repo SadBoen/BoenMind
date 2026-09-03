@@ -81,6 +81,9 @@ async function mockAdmin(page: Page) {
   await page.route("**/admin/logs", (route) =>
     route.fulfill({ json: { ok: true, exec: [], events: [], context: [] } }),
   );
+  await page.route("**/admin/skills", (route) =>
+    route.fulfill({ json: { ok: true, skills: [] } }),
+  );
   // W8:工作区注册表(6 条 = 触发列表滚动)+ 运行环境探针
   await page.route("**/admin/workspaces", (route) =>
     route.fulfill({
