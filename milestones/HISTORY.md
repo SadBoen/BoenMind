@@ -63,6 +63,8 @@
 
 | system.exec 内置命令执行工具(ADR-0019)+ 回喂防重调 | 2026-09-03 | (见 git) | exec 执行器 3 测试绿 + 全仓 65 套绿 + contracts 绿 + clippy 零警告 | 用户令「按常规设计不用问,一次性到日常可用」:①内置 system.exec(对标 pi/Claude Code 的 shell,每条命令走审批卡;内置异步能力 provider=builtin.async 与 MCP 同管线,超时 60s 可调≤300s,输出截断 16K,kill_on_drop)②直通/异步工具成功回喂附带「不要再次调用」完成指令(实测 mimo 会重复调)③handle.rs 异步判定扩展 .async 后缀;真沙箱仍归 ADR-0016 |
 
+| v0.0.6 发版:日常可用批 | 2026-09-03 | `v0.0.6` | 65 套测试绿+contracts 绿+clippy 零警告 | 用户明示发版;包内含 system.exec 内置命令执行(ADR-0019,审批类)+工具回喂防重调+W9 轨迹视图与事件流+跨会话全文检索+改密页面「账号与安全」+门户登录墙(v0.0.5)+直通工具闭环修复+模型超时 30s→120s;workspace 版本 0.0.5→0.0.6 |
+
 ## W 序列验收惯例
 
 W 序列不另立 review 文件:验收门与实测证据并入各规格(W2 §7、W3 §6;W4 待回填,见 BACKLOG)。截图目录:shots-w2/、shots-w3/、shots-w5-context/。
