@@ -12,8 +12,8 @@
 
 到 [Releases](https://github.com/SadBoen/BoenMind/releases/latest) 下载最新
 `boenmind-<版本>-linux-x86_64.tar.gz`(校验和同名 `.sha256`),包内含:
-`boenmind-server`(服务器+网页界面)、`plugins/web-multisearch`(官方自带聚合搜索插件)、
-`webapp/dist`(预构建前端)、`INSTALL-linux.md`(同下文,离线版)。
+`boenmind-server`(服务器+网页界面)、`plugins/web-multisearch`(官方聚合搜索 MCP)、`plugins/context-mode`(官方可选 Rust 上下文 MCP，默认不启用)、
+`webapp/dist`(预构建前端)、`INSTALL.md`(离线安装说明)。
 
 前置:x86_64 Linux;OpenSSL 3 运行库(Ubuntu 22.04+ / Debian 12+ 默认自带);**无需** Node/Python。
 
@@ -29,9 +29,10 @@ echo '[]' > ~/.local/share/boenmind/mcp.json
 BOEN_SECRET_MASTER_KEY="<至少32字符随机串>" BOEN_MODEL_STREAM=1 \
   ./boenmind-server --web-dir webapp/dist --mcp-config ~/.local/share/boenmind/mcp.json
 
-# 4. 安装搜索插件:把 plugins/web-multisearch 拷进插件目录
+# 4. 安装官方插件（均为可选）
 cp plugins/web-multisearch ~/.local/share/boenmind/mcp/
-#   然后网页 → 设置 → 插件 → 「扫描插件」→ 「批准接入」(免重启)
+cp plugins/context-mode ~/.local/share/boenmind/mcp/
+# 然后网页 → 设置 → 插件 → 「扫描插件」→ 「批准接入」→ reload（免重启）
 ```
 
 打开 `http://127.0.0.1:7531/`;远程 VPS 建议 SSH 隧道:`ssh -L 7531:127.0.0.1:7531 <你的VPS>`。
@@ -53,6 +54,7 @@ cp plugins/web-multisearch ~/.local/share/boenmind/mcp/
 cd runtime/webapp && npm ci && npm run build && cd ../..     # 前端 dist
 cd runtime && cargo build --release --bin boenmind-server    # 服务器
 cd ../plugins/mcp/web-multisearch && cargo build --release   # 搜索插件(可选)
+cd ../context-mode && cargo build --release                    # 上下文插件(可选)
 ```
 
 发版:打 `v*` tag 推送即自动构建发布(Linux 包);开发规程见 [AGENTS.md](AGENTS.md)。

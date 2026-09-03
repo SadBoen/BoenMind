@@ -1,7 +1,7 @@
 # BoenMind 安装说明
 
 前置:64 位(x86_64);Linux 需 OpenSSL 3(Ubuntu 22.04+/Debian 12+ 默认自带);
-**无需 Node/Python**(界面已预构建,搜索插件是单文件可执行)。
+**无需 Node/Python**(界面已预构建，官方 MCP 插件是单文件可执行；context-mode 的执行工具只调用用户自行安装的宿主程序，不会自动下载运行时)。
 
 ## 1. 解压
 
@@ -24,10 +24,15 @@
     BOEN_SECRET_MASTER_KEY="<同上>" BOEN_MODEL_STREAM=1 \
       ./boenmind-server --web-dir webapp/dist --mcp-config ~/.local/share/boenmind/mcp.json
 
-## 4. 安装官方搜索插件(plugins/web-multisearch)
+## 4. 安装官方 MCP 插件
 
+    # 聚合搜索（可选）
     cp plugins/web-multisearch ~/.local/share/boenmind/mcp/
-    # 网页 → 设置 → 插件 → 「扫描插件」→ 「批准接入」(免重启)
+    # 上下文模式（可选，默认不启用）
+    cp plugins/context-mode ~/.local/share/boenmind/mcp/
+    # 网页 → 设置 → 插件 → 「扫描插件」→ 「批准接入」→ reload（免重启）
+
+context-mode 提供 `ctx_index`、`ctx_search`、会话快照/恢复和受限执行工具。索引/执行只能访问它配置的 `allowed_roots`；执行类工具仍由 Broker 审批，缺少用户本机运行时则返回 `runtime_unavailable`。
 
 ## 5. 访问
 

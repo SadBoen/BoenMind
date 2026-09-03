@@ -20,6 +20,7 @@ jobs:
           workspaces: |
             runtime
             plugins/mcp/web-multisearch
+            plugins/mcp/context-mode
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -37,12 +38,20 @@ jobs:
         working-directory: plugins/mcp/web-multisearch
         run: cargo test
 
+      - name: 插件测试门禁(context-mode)
+        working-directory: plugins/mcp/context-mode
+        run: cargo test
+
       - name: 服务器构建
         working-directory: runtime
         run: cargo build --release --bin boenmind-server
 
       - name: 插件构建
         working-directory: plugins/mcp/web-multisearch
+        run: cargo build --release
+
+      - name: 插件构建(context-mode)
+        working-directory: plugins/mcp/context-mode
         run: cargo build --release
 
       - name: 打包(Linux)
@@ -54,9 +63,14 @@ jobs:
           cp -r runtime/webapp/dist "${PKG}/webapp/dist"
           cp plugins/mcp/web-multisearch/target/release/web-multisearch "${PKG}/plugins/"
           cp plugins/mcp/web-multisearch/README.md "${PKG}/plugins/web-multisearch-README.md"
+          cp plugins/mcp/context-mode/target/release/context-mode "${PKG}/plugins/"
+          cp plugins/mcp/context-mode/README.md "${PKG}/plugins/context-mode-README.md"
+          cp -r plugins/mcp/context-mode/upstream-notices "${PKG}/plugins/context-mode-upstream-notices"
           cp apps/*.py "${PKG}/apps/" 2>/dev/null || true
           cp apps/mcp-config.example.json "${PKG}/apps/" 2>/dev/null || true
           cp packaging/INSTALL.md "${PKG}/INSTALL.md" 2>/dev/null || true
+          test -x "${PKG}/plugins/web-multisearch"
+          test -x "${PKG}/plugins/context-mode"
           tar czf "${PKG}.tar.gz" "${PKG}"
           ls -la "${PKG}.tar.gz"
           sha256sum "${PKG}.tar.gz" > SHA256SUMS.txt
@@ -75,6 +89,7 @@ jobs:
           - boenmind-server: AI OS / Runtime 服务器核心
           - webapp/dist: 最新 Web UI 预构建前端 (含音乐播放器、多角色管理、上下文透视、MCP 管理与完整热插拔等)
           - plugins/web-multisearch: 官方自带聚合搜索 MCP 插件
+          - plugins/context-mode: 官方可选上下文检索/会话连续性 Rust MCP 插件(默认不启用)
           - apps/: 包含音乐播放器 (music_server.py)、Wiki (wiki_server.py)、Market (market_server.py) 等首批真实 App
 
           支持在网页端 设置 -> 关于 中执行一键在线升级。"

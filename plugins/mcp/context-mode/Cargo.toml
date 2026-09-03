@@ -1,0 +1,22 @@
+[package]
+name = "context-mode-rs"
+version = "0.1.0"
+edition = "2021"
+description = "BoenMind context-mode MCP server: FTS5 context index, session continuity, and restricted execution"
+
+[[bin]]
+name = "context-mode"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "io-util", "time", "process"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+strip = true
+lto = true
