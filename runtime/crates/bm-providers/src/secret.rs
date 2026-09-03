@@ -37,6 +37,27 @@ fn ensure_valid_ref(secret_ref: &str) -> Result<(), SecretError> {
     bm_contract::connector::validate_secret_ref(secret_ref).map_err(SecretError::InvalidRef)
 }
 
+/// 密钥库原子写(同 bm_persist::atomic_write;本 crate 不依赖 persist,
+/// 故本地同款):临时文件 + flush + fsync + rename,断电不留半截密钥库。
+fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> Result<(), SecretError> {
+    use std::io::Write;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| SecretError::Backend(e.to_string()))?;
+    }
+    let mut tmp_name = path.as_os_str().to_owned();
+    tmp_name.push(".tmp");
+    let tmp = std::path::PathBuf::from(tmp_name);
+    {
+        let mut f = std::fs::File::create(&tmp).map_err(|e| SecretError::Backend(e.to_string()))?;
+        f.write_all(bytes)
+            .map_err(|e| SecretError::Backend(e.to_string()))?;
+        f.flush().map_err(|e| SecretError::Backend(e.to_string()))?;
+        f.sync_all()
+            .map_err(|e| SecretError::Backend(e.to_string()))?;
+    }
+    std::fs::rename(&tmp, path).map_err(|e| SecretError::Backend(e.to_string()))
+}
+
 #[derive(Default)]
 pub struct MemSecretStore {
     map: Mutex<BTreeMap<String, String>>,
@@ -172,7 +193,7 @@ impl FileSecretStore {
             let empty =
                 serde_json::to_vec(&BTreeMap::<String, String>::new()).expect("空映射可序列化");
             let enc = crypto::encrypt(&key, &empty)?;
-            std::fs::write(&path, enc).map_err(|e| SecretError::Backend(e.to_string()))?;
+            atomic_write(&path, &enc)?;
         }
         Ok(Self {
             path,
@@ -193,7 +214,7 @@ impl FileSecretStore {
     fn write_all(&self, map: &BTreeMap<String, String>) -> Result<(), SecretError> {
         let plain = serde_json::to_vec(map).map_err(|e| SecretError::Backend(e.to_string()))?;
         let enc = crate::secret::crypto::encrypt(&self.key, &plain)?;
-        std::fs::write(&self.path, enc).map_err(|e| SecretError::Backend(e.to_string()))
+        atomic_write(&self.path, &enc)
     }
 }
 

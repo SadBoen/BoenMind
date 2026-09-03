@@ -118,7 +118,8 @@ fn write_file(path: &Path, value: &Value) -> CoreResult<()> {
         std::fs::create_dir_all(dir).map_err(|e| validation(format!("配置目录创建失败: {e}")))?;
     }
     let text = crlf(serde_json::to_string_pretty(value).map_err(|_| CoreError::Internal)?);
-    std::fs::write(path, text).map_err(|e| validation(format!("配置文件写入失败: {e}")))
+    bm_persist::atomic_write(path, text.as_bytes())
+        .map_err(|e| validation(format!("配置文件写入失败: {e}")))
 }
 
 /// env 读取的纯函数内核(便于测试:env 值由调用方传入)。

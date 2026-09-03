@@ -28,7 +28,8 @@ fn write_registry(cfg: &AdminConfig, list: &[Value]) -> Result<(), String> {
     std::fs::create_dir_all(&dir).map_err(|e| format!("config 目录创建失败: {e}"))?;
     let text = serde_json::to_string_pretty(&json!({ "workspaces": list }))
         .map_err(|e| format!("序列化失败: {e}"))?;
-    std::fs::write(workspaces_file(cfg), text).map_err(|e| format!("写盘失败: {e}"))
+    bm_persist::atomic_write(&workspaces_file(cfg), text.as_bytes())
+        .map_err(|e| format!("写盘失败: {e}"))
 }
 
 fn new_workspace_id() -> String {

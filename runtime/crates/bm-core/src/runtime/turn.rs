@@ -578,6 +578,16 @@ pub(crate) fn spawn_turn(
                             // 结果回喂后重调模型(仍在同一 attempt 的降级链内)
                             continue;
                         }
+                        // 工具轮上限耗尽且本轮只回了工具调用(无文本):
+                        // 终稿给显式说明,避免空 content 落库(前端空气泡
+                        // 门控下用户看不到任何输出)
+                        let content = if !tool_calls.is_empty() && content.trim().is_empty() {
+                            format!(
+                                "(连续工具调用已达单回合上限 {MAX_TOOL_ROUNDS} 次,回合在此收束;请重发消息继续。)"
+                            )
+                        } else {
+                            content
+                        };
                         // W9:终稿与回合边界事件(轨迹视图数据源)
                         ctx_log.record_event(
                             session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),

@@ -88,35 +88,14 @@ async fn main() {
         }
         "verify" => {
             let handle = start_runtime(&dir, vec![Step::ok("续答", 10, 5)]).await;
-            // 恢复已在 start 内完成(含 claim 重驱);重开只读连接读行(WAL 并发读)
-            let store = PersistStore::open(&dir).expect("verify 打开持久层");
-            let sessions = store
-                .state()
-                .query_rows("SELECT id, state FROM sessions", &[])
-                .expect("读会话");
-            let ops = store
-                .state()
-                .query_rows("SELECT id, state FROM operations", &[])
-                .expect("读操作");
-            let log = store.replay_since(0).expect("读日志");
-            let recovered = log
-                .iter()
-                .find(|e| e.event_type == bm_contract::events::EventType::RuntimeRecovered)
-                .expect("恢复事件在场");
-            let interrupted_audit = log
-                .iter()
-                .any(|e| e.event_type == bm_contract::events::EventType::AgentInterrupted);
-
-            let session_state = sessions
-                .first()
-                .map(|s| s["state"].as_str().unwrap_or("?").to_string())
-                .unwrap_or_else(|| "NONE".into());
-
-            // claim 重驱:等被杀回合到达终态(最长 30s)
+            // 先等被杀回合到终态(actor 归于静默),再做持久层只读验收。
+            // actor 活跃时并发重开 events.jsonl 会踩「读半截文件 vs 位点
+            // 已推进」窗口(2026-09-03 内存化提速后实测踩中):验收必须
+            // 在静默后进行。op_id 取自 run 阶段落地的 marker,不依赖重开。
             let op_id: BmId = BmId::parse(
-                ops.first().expect("有 operation")["id"]
-                    .as_str()
-                    .expect("字符串"),
+                std::fs::read_to_string(dir.join("chaos_marker"))
+                    .expect("读 marker(run 阶段产物)")
+                    .trim(),
             )
             .expect("合法 op id");
             let mut final_state = "TIMEOUT".to_string();
@@ -133,6 +112,25 @@ async fn main() {
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             }
+
+            let store = PersistStore::open(&dir).expect("verify 打开持久层");
+            let sessions = store
+                .state()
+                .query_rows("SELECT id, state FROM sessions", &[])
+                .expect("读会话");
+            let log = store.replay_since(0).expect("读日志");
+            let recovered = log
+                .iter()
+                .find(|e| e.event_type == bm_contract::events::EventType::RuntimeRecovered)
+                .expect("恢复事件在场");
+            let interrupted_audit = log
+                .iter()
+                .any(|e| e.event_type == bm_contract::events::EventType::AgentInterrupted);
+
+            let session_state = sessions
+                .first()
+                .map(|s| s["state"].as_str().unwrap_or("?").to_string())
+                .unwrap_or_else(|| "NONE".into());
 
             println!(
                 "{}",

@@ -40,7 +40,7 @@
     },
     "agent": {
       "states": ["created", "starting", "running", "waiting_model", "paused", "stopping", "stopped", "failed", "cancelled", "interrupted", "resuming"],
-      "terminal": ["stopped", "failed", "cancelled"],
+      "terminal": ["stopped", "cancelled"],
       "m1_subset_note": "M5 已增发 paused（级联 task.pause/resume，规格 §5.5）；waiting_input/waiting_tool/waiting_approval 的 agent 侧状态仍随工具调用循环演进（审批等待当前由 operation.waiting_approval 承载），兑现顺序记入 M5 回看复核",
       "transitions": [
         { "from": "created",       "to": "starting",      "guard": "agent_start" },
@@ -64,7 +64,8 @@
         { "from": "waiting_model", "to": "interrupted",   "guard": "runtime_crash" },
         { "from": "interrupted",   "to": "resuming",      "guard": "restart_recovery" },
         { "from": "resuming",      "to": "running",       "guard": "replay_ok" },
-        { "from": "resuming",      "to": "stopped",       "guard": "replay_ok AND turn_was_stopping" }
+        { "from": "resuming",      "to": "stopped",       "guard": "replay_ok AND turn_was_stopping" },
+        { "from": "failed",        "to": "running",       "guard": "resend_after_failure", "note": "2026-09-03 增发：回合失败≠agent 死亡，用户同会话再次发消息即恢复接单（send_input 对 failed 自愈，发 agent.resumed）；failed 退出终态集" }
       ]
     },
     "task": {

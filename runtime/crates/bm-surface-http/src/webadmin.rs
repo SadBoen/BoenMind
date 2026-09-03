@@ -87,7 +87,7 @@ fn write_providers(data_dir: &Path, providers: &[Value]) -> Result<(), String> {
     let text = serde_json::to_string_pretty(&json!({ "providers": providers }))
         .map_err(|_| "序列化失败".to_string())?
         .replace('\n', "\r\n");
-    std::fs::write(&path, text).map_err(|e| format!("配置文件写入失败: {e}"))
+    bm_persist::atomic_write(&path, text.as_bytes()).map_err(|e| format!("配置文件写入失败: {e}"))
 }
 
 /// provider 条目字段校验;返回归一化后的错误消息。
@@ -483,7 +483,7 @@ fn write_mcp_servers(path: &Path, servers: &[Value]) -> Result<(), String> {
     let text = serde_json::to_string_pretty(servers)
         .map_err(|_| "序列化失败".to_string())?
         .replace('\n', "\r\n");
-    std::fs::write(path, text).map_err(|e| format!("MCP 配置写入失败: {e}"))
+    bm_persist::atomic_write(path, text.as_bytes()).map_err(|e| format!("MCP 配置写入失败: {e}"))
 }
 
 /// 单条过合同 schema(mcp-server.v0_1;支持 stdio / sse / http 传输)。
@@ -723,7 +723,7 @@ pub fn write_roles_doc(file: &std::path::Path, doc: &RoleConfigDoc) -> Result<()
         Ok(t) => crate::config_store::crlf(t),
         Err(e) => return Err(format!("序列化失败: {e}")),
     };
-    std::fs::write(file, text).map_err(|e| format!("写入失败: {e}"))
+    bm_persist::atomic_write(file, text.as_bytes()).map_err(|e| format!("写入失败: {e}"))
 }
 
 /// 读全部角色与激活角色 id(设置页与聊天页下拉)。
@@ -907,7 +907,7 @@ pub async fn skills_set(State(cfg): State<AdminConfig>, Json(mut body): Json<Val
         Ok(t) => crate::config_store::crlf(t),
         Err(_) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, "序列化失败"),
     };
-    if let Err(e) = std::fs::write(&file, text) {
+    if let Err(e) = bm_persist::atomic_write(&file, text.as_bytes()) {
         return admin_error(StatusCode::INTERNAL_SERVER_ERROR, format!("写入失败: {e}"));
     }
     Json(json!({ "ok": true, "note": "技能已保存,下一回合起生效" })).into_response()
@@ -929,7 +929,7 @@ pub async fn skills_delete(
         Ok(t) => crate::config_store::crlf(t),
         Err(_) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, "序列化失败"),
     };
-    if let Err(e) = std::fs::write(&file, text) {
+    if let Err(e) = bm_persist::atomic_write(&file, text.as_bytes()) {
         return admin_error(StatusCode::INTERNAL_SERVER_ERROR, format!("写入失败: {e}"));
     }
     Json(json!({ "ok": true, "note": "技能已删除" })).into_response()
@@ -1080,7 +1080,7 @@ pub async fn mcp_config_set(
         Ok(t) => crate::config_store::crlf(t),
         Err(_) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, "序列化失败"),
     };
-    if let Err(e) = std::fs::write(&file, text) {
+    if let Err(e) = bm_persist::atomic_write(&file, text.as_bytes()) {
         return admin_error(StatusCode::INTERNAL_SERVER_ERROR, format!("写入失败: {e}"));
     }
     Json(json!({
@@ -1715,7 +1715,10 @@ pub async fn mcp_approve(State(cfg): State<AdminConfig>, Json(body): Json<Value>
     if let Some(mdir) = path.parent().map(|d| d.join("manifests")) {
         let _ = std::fs::create_dir_all(&mdir);
         if let Ok(text) = serde_json::to_string_pretty(&manifest) {
-            let _ = std::fs::write(mdir.join(format!("{want_name}.manifest.json")), text);
+            let _ = bm_persist::atomic_write(
+                &mdir.join(format!("{want_name}.manifest.json")),
+                text.as_bytes(),
+            );
         }
     }
 

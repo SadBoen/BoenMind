@@ -194,13 +194,11 @@ pub const SESSION_TRANSITIONS: [Transition<SessionState>; 6] = [
     ),
 ];
 
-pub const AGENT_TERMINAL: [AgentState; 3] = [
-    AgentState::Stopped,
-    AgentState::Failed,
-    AgentState::Cancelled,
-];
+// 2026-09-03 增发:failed 退出终态集(回合失败≠agent 死亡,send_input 对
+// failed 自愈回 running,guard resend_after_failure;合同 Minor)
+pub const AGENT_TERMINAL: [AgentState; 2] = [AgentState::Stopped, AgentState::Cancelled];
 
-pub const AGENT_TRANSITIONS: [Transition<AgentState>; 22] = [
+pub const AGENT_TRANSITIONS: [Transition<AgentState>; 23] = [
     t(AgentState::Created, AgentState::Starting, "agent_start"),
     t(
         AgentState::Created,
@@ -288,6 +286,12 @@ pub const AGENT_TRANSITIONS: [Transition<AgentState>; 22] = [
         AgentState::Resuming,
         AgentState::Stopped,
         "replay_ok AND turn_was_stopping",
+    ),
+    // 2026-09-03 增发:失败后用户再次发消息,agent 恢复接单(同 json 增发注)
+    t(
+        AgentState::Failed,
+        AgentState::Running,
+        "resend_after_failure",
     ),
 ];
 

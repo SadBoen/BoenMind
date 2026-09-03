@@ -282,7 +282,26 @@ pub(crate) fn handle_send_input(
         return Err(CoreError::validation("agent 不属于该 session"));
     }
     if agent.state != AgentState::Running {
-        return Err(CoreError::validation("agent 不在可接单状态"));
+        // 失败自愈(合同增发 failed→running,resend_after_failure):回合失败
+        // ≠agent 死亡,同会话再次发消息即恢复接单;发 agent.resumed 同步投影。
+        // 其余状态(取消/停止/进行中)照旧拒绝。
+        if agent.state == AgentState::Failed {
+            if let Some(a) = w.agents.get_mut(&params.agent_id) {
+                a.transition(AgentState::Running);
+            }
+            w.emit(
+                EventType::AgentResumed,
+                Some(session.id.clone()),
+                Some(agent.id.clone()),
+                None,
+                serde_json::json!({
+                    "agent_id": agent.id.as_str(),
+                    "operation_id": serde_json::Value::Null,
+                }),
+            );
+        } else {
+            return Err(CoreError::validation("agent 不在可接单状态"));
+        }
     }
 
     // W8(ADR-0018):本回合工作区覆盖(对话级热切换,model_override 同款)。

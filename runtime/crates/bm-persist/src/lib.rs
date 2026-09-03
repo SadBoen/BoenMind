@@ -8,6 +8,7 @@ pub mod materialize;
 pub mod recovery;
 pub mod sqlite_state;
 pub mod store;
+pub mod util;
 
 pub use error::StoreError;
 pub use event_log::JsonlEventLog;
@@ -17,3 +18,4 @@ pub use recovery::{
 };
 pub use sqlite_state::StateDb;
 pub use store::{EventStore, META_LAST_APPLIED, META_SNAPSHOT_SEQ, PersistStore};
+pub use util::atomic_write;

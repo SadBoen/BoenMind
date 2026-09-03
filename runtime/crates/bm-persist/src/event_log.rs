@@ -13,16 +13,44 @@ use std::sync::Mutex;
 pub struct JsonlEventLog {
     path: PathBuf,
     file: Mutex<File>,
+    /// 内存镜像(追加序,与文件行序一致)。replay_since/last_seq/append 的
+    /// seq 单调检查全部走内存,消除逐次全量重读+重解析 JSONL 的 I/O(外部
+    /// 评审 2026-09-03:SSE 80ms 轮询路径每次全量扫盘)。文件仍是权威,
+    /// 写成功才入镜像;truncate_prefix 重建镜像。
+    cache: Mutex<Vec<EventEnvelope>>,
 }
 
 impl JsonlEventLog {
-    /// 打开(不存在则创建空日志)。
+    /// 打开(不存在则创建空日志)。既有文件全量加载进内存镜像一次。
     pub fn open(path: PathBuf) -> StoreResult<Self> {
         let file = OpenOptions::new().create(true).append(true).open(&path)?;
+        let cache = Self::load_from_disk(&path)?;
         Ok(Self {
             path,
             file: Mutex::new(file),
+            cache: Mutex::new(cache),
         })
+    }
+
+    fn load_from_disk(path: &Path) -> StoreResult<Vec<EventEnvelope>> {
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+        let file = File::open(path)?;
+        let mut out = Vec::new();
+        for (idx, line) in BufReader::new(file).lines().enumerate() {
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            let event: EventEnvelope =
+                serde_json::from_str(&line).map_err(|e| StoreError::Corrupt {
+                    seq: idx as u64 + 1,
+                    reason: format!("行解析失败: {e}"),
+                })?;
+            out.push(event);
+        }
+        Ok(out)
     }
 
     /// 追加一条事件并 flush。seq 单调性由调用方(单写者核心循环)保证;
@@ -40,53 +68,37 @@ impl JsonlEventLog {
             reason: format!("序列化失败: {e}"),
         })?;
         line.push('\n');
-        let mut f = self.file.lock().expect("锁未中毒");
-        f.write_all(line.as_bytes())?;
-        f.flush()?;
-        if fsync {
-            f.sync_all()?;
+        {
+            let mut f = self.file.lock().expect("锁未中毒");
+            f.write_all(line.as_bytes())?;
+            f.flush()?;
+            if fsync {
+                f.sync_all()?;
+            }
         }
+        self.cache.lock().expect("锁未中毒").push(event.clone());
         Ok(())
     }
 
-    /// seq > since 的事件(全量扫描;压实后即增量)。
+    /// seq > since 的事件(内存过滤;文件已由内存镜像承载)。
     pub fn replay_since(&self, since_seq: u64) -> StoreResult<Vec<EventEnvelope>> {
-        let file = File::open(&self.path)?;
-        let mut out = Vec::new();
-        for (idx, line) in BufReader::new(file).lines().enumerate() {
-            let line = line?;
-            if line.trim().is_empty() {
-                continue;
-            }
-            let event: EventEnvelope =
-                serde_json::from_str(&line).map_err(|e| StoreError::Corrupt {
-                    seq: idx as u64 + 1,
-                    reason: format!("行解析失败: {e}"),
-                })?;
-            if event.event_seq > since_seq {
-                out.push(event);
-            }
-        }
-        Ok(out)
+        let cache = self.cache.lock().expect("锁未中毒");
+        Ok(cache
+            .iter()
+            .filter(|e| e.event_seq > since_seq)
+            .cloned()
+            .collect())
     }
 
     /// 日志末尾 seq(空日志 = 0)。
     pub fn last_seq(&self) -> StoreResult<u64> {
-        let file = File::open(&self.path)?;
-        let mut last = 0u64;
-        for (idx, line) in BufReader::new(file).lines().enumerate() {
-            let line = line?;
-            if line.trim().is_empty() {
-                continue;
-            }
-            let event: EventEnvelope =
-                serde_json::from_str(&line).map_err(|e| StoreError::Corrupt {
-                    seq: idx as u64 + 1,
-                    reason: format!("行解析失败: {e}"),
-                })?;
-            last = last.max(event.event_seq);
-        }
-        Ok(last)
+        Ok(self
+            .cache
+            .lock()
+            .expect("锁未中毒")
+            .last()
+            .map(|e| e.event_seq)
+            .unwrap_or(0))
     }
 
     /// 压实:截断 seq ≤ up_to 的前缀。先快照成功后才允许调用(M2 规格 §2)。
@@ -94,45 +106,33 @@ impl JsonlEventLog {
     /// 外部审计 X-03(P1):日志首序号(空文件 = 0)。
     /// 恢复判据:首序号 > 1 表示前缀已压实,自动重建将丢失前缀事实。
     pub fn first_seq(&self) -> StoreResult<u64> {
-        let file = File::open(&self.path)?;
-        for (idx, line) in BufReader::new(file).lines().enumerate() {
-            let line = line?;
-            if line.trim().is_empty() {
-                continue;
-            }
-            let event: EventEnvelope =
-                serde_json::from_str(&line).map_err(|e| StoreError::Corrupt {
-                    seq: idx as u64 + 1,
-                    reason: format!("行解析失败: {e}"),
-                })?;
-            return Ok(event.event_seq);
-        }
-        Ok(0)
+        Ok(self
+            .cache
+            .lock()
+            .expect("锁未中毒")
+            .first()
+            .map(|e| e.event_seq)
+            .unwrap_or(0))
     }
 
     pub fn truncate_prefix(&self, up_to_seq: u64) -> StoreResult<usize> {
-        let file = File::open(&self.path)?;
-        let mut kept: Vec<String> = Vec::new();
-        let mut dropped = 0usize;
-        for (idx, line) in BufReader::new(file).lines().enumerate() {
-            let line = line?;
-            if line.trim().is_empty() {
-                continue;
+        let (dropped, kept): (usize, Vec<String>) = {
+            let cache = self.cache.lock().expect("锁未中毒");
+            let dropped = cache.iter().filter(|e| e.event_seq <= up_to_seq).count();
+            if dropped == 0 {
+                return Ok(0);
             }
-            let event: EventEnvelope =
-                serde_json::from_str(&line).map_err(|e| StoreError::Corrupt {
-                    seq: idx as u64 + 1,
-                    reason: format!("行解析失败: {e}"),
+            let kept = cache
+                .iter()
+                .filter(|e| e.event_seq > up_to_seq)
+                .map(serde_json::to_string)
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| StoreError::Corrupt {
+                    seq: 0,
+                    reason: format!("压实序列化失败: {e}"),
                 })?;
-            if event.event_seq <= up_to_seq {
-                dropped += 1;
-            } else {
-                kept.push(line);
-            }
-        }
-        if dropped == 0 {
-            return Ok(0);
-        }
+            (dropped, kept)
+        };
         let tmp = self.path.with_extension("jsonl.tmp");
         {
             let mut f = File::create(&tmp)?;
@@ -149,6 +149,8 @@ impl JsonlEventLog {
             .append(true)
             .open(&self.path)?;
         *self.file.lock().expect("锁未中毒") = new_file;
+        // 镜像同步重建(文件已权威落定)
+        *self.cache.lock().expect("锁未中毒") = Self::load_from_disk(&self.path)?;
         Ok(dropped)
     }
 

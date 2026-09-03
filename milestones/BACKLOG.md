@@ -8,7 +8,6 @@
 
 | 条目 | 范围与口径 | 状态 |
 |---|---|---|
-| 失败回合后 agent 卡死(实测 P2) | 同轮实测:回合失败后 agent 停留 Failed,同会话再发消息必 500「agent 不在可接单状态」,UI 无恢复路径只能新建对话。修向=失败落定回 Idle 或 send_input 对 Failed 自愈 | OPEN(待排期) |
 | 模型自编工具结果(mimo 质量备忘) | 同轮实测:问 counter.bump 时模型未发起调用直接编造「bumped successfully」(/admin/context 证实 0 工具轮);对话区无 [调用] 标记即可辨真伪,强提示词可压不断根;随模型侧观察,不立项 | OPEN(记录在案) |
 | Skill v0.2 第二步(scripts 执行面) | 第一步(合同 Minor: version + references)与 ADR-0016(Broker 七步管线覆盖脚本设计)已闭合交付;**第二步**:等待用户审阅确认 ADR-0016 后接入 wasmtime 执行引擎写代码 | OPEN(待 ADR-0016 确认后动工) |
 | VPS v0.0.5 发版后验证清单 | 随包扫描双目录已修+直通工具内联回喂已修+模型调用硬顶 30s→120s(BOEN_TURN_TIMEOUT_SECS 可配)均已落 main(f894663+本批);VPS 侧 web-multisearch 已远程装好并批准在役(2 工具)。待用户明示发版→VPS 升级后复测:①直通工具(echo/counter)对话秒回 ②真模型联网问答(web_search)全链路 ③关于页/常规设置不回归,闭合后移出 | OPEN(随下次发版) |
