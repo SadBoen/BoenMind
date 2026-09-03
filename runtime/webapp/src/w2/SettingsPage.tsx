@@ -1,5 +1,5 @@
 // W2 设置中心:整页式(左侧设置导航 + 右内容区),齿轮进入。
-// 导航:模型提供商 / 插件 / MCP 管理 / 外观(W3 主题系统)+
+// 导航:常规 / 模型提供商 / 插件 / MCP / 外观(W3 主题系统)+
 // 插件 PIN 快捷项(PIN 后在此显示,点击跳插件页并按名筛选)。
 import { useEffect, useState } from "react";
 import { BoxIcon, InfoIcon, PlugIcon, ScrollTextIcon, ServerIcon, SlidersHorizontalIcon, SparklesIcon, WrenchIcon } from "lucide-react";
@@ -82,7 +82,7 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
             active={section === "mcp"}
             onClick={() => setSection("mcp")}
             icon={<ServerIcon className="size-4" />}
-            label="MCP 管理"
+            label="MCP"
           />
           <NavItem
             active={section === "appearance"}
