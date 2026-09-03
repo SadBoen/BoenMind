@@ -7,6 +7,7 @@ pub mod mock_model;
 pub mod openai_http;
 pub mod routing;
 pub mod secret;
+pub mod system_exec;
 
 #[cfg(feature = "glm")]
 pub mod glm_http;

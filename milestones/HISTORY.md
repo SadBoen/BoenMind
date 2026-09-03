@@ -61,6 +61,8 @@
 
 | v0.0.5 发版:门户登录墙 | 2026-09-03 | `v0.0.5` | 全仓 65 套测试绿 + portal 生命周期回归 + contracts 绿 + clippy 零警告 | 用户明示发版+用户令加登录:portal.rs 整站登录墙(静态页+全部 API 含 /admin 与 /v1,堵 VPS 实测暴露的无鉴权公网裸奔)——密码存 <data>/config/portal.json(salt$sha256),未配置=墙不启用(既有测试/本地开发零影响);/login 玻璃风登录页(首次=创建密码 bootstrap 一次,之后=登录);会话 Cookie HttpOnly 30 天(内存态,重启重登);Bearer 访问令牌继续全效;/health 豁免;改密作废全部会话;workspace 版本 0.0.4→0.0.5。包内含:直通工具对话闭环修复+模型调用硬顶 30s→120s(BOEN_TURN_TIMEOUT_SECS 可配)+随包插件直达扫描双目录 |
 
+| system.exec 内置命令执行工具(ADR-0019)+ 回喂防重调 | 2026-09-03 | (见 git) | exec 执行器 3 测试绿 + 全仓 65 套绿 + contracts 绿 + clippy 零警告 | 用户令「按常规设计不用问,一次性到日常可用」:①内置 system.exec(对标 pi/Claude Code 的 shell,每条命令走审批卡;内置异步能力 provider=builtin.async 与 MCP 同管线,超时 60s 可调≤300s,输出截断 16K,kill_on_drop)②直通/异步工具成功回喂附带「不要再次调用」完成指令(实测 mimo 会重复调)③handle.rs 异步判定扩展 .async 后缀;真沙箱仍归 ADR-0016 |
+
 ## W 序列验收惯例
 
 W 序列不另立 review 文件:验收门与实测证据并入各规格(W2 §7、W3 §6;W4 待回填,见 BACKLOG)。截图目录:shots-w2/、shots-w3/、shots-w5-context/。

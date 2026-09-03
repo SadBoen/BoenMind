@@ -559,6 +559,17 @@ pub(crate) fn spawn_turn(
                                         "elapsed_ms": tool_started.elapsed().as_millis() as u64,
                                     }),
                                 );
+                                // W9 日常批:成功回喂附带完成指令(实测 mimo
+                                // 见到结果后会重复调用同一工具;审批路径同款
+                                // 指令已验证有效)。失败/超时/拒绝不加。
+                                let tool_failed = tool_result.contains("超时")
+                                    || tool_result.contains("无应答")
+                                    || tool_result.contains("拒绝");
+                                if !tool_failed {
+                                    tool_result = format!(
+                                        "{tool_result}\n(该调用已完成,请直接基于此结果回答用户,不要再次调用该工具。)"
+                                    );
+                                }
                                 messages.push(Message {
                                     role: Role::Tool,
                                     content: tool_result,

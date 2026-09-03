@@ -91,7 +91,10 @@ impl RuntimeHandle {
             let instance = format!("{}@{}", manifest.capability, manifest.version);
             let manifest_json = serde_json::to_string(&manifest).unwrap_or_default();
             let capability = manifest.capability.clone();
-            let is_async = manifest.provider.starts_with("mcp.");
+            // W9:MCP 之外,内置异步能力以 .async 结尾的 provider id 标记
+            // (如 system.exec 的 builtin.async)
+            let is_async =
+                manifest.provider.starts_with("mcp.") || manifest.provider.ends_with(".async");
             world
                 .registry
                 .register(manifest, &instance, provider.clone())

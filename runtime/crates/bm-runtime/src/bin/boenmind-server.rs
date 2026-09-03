@@ -114,6 +114,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // M7.2/M7.7:--mcp-config 显式安装清单(= 用户批准)→ 握手发现 →
     // 动态注册 + 异步执行器装配;env 明文只进子进程(INV-5)
     let mut capabilities = bm_providers::builtin::builtin_capability_set();
+    // W9 日常可用批:system.exec 内置命令执行(审批类,常规 agent 设计)
+    capabilities.extend([bm_providers::system_exec::exec_capability_entry()]);
     // W2 管理面注入面:内置能力摘要(= mcp 注入前的 capabilities)
     let builtin_caps: Vec<serde_json::Value> = capabilities
         .iter()
@@ -200,7 +202,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ));
     let handle = RuntimeHandle::start(RuntimeConfig {
         capabilities,
-        async_executor: mcp_executor,
+        async_executor: {
+            let exec: Arc<dyn bm_core::ports::AsyncCapabilityExecutor> =
+                Arc::new(bm_providers::system_exec::ExecExecutor);
+            match mcp_executor {
+                Some(hub) => Arc::new(bm_providers::system_exec::SplitExecutor { fallback: hub }),
+                None => exec,
+            }
+            .into()
+        },
         model_streaming: {
             let on = eff.stream;
             eprintln!("启动配置:模型流式 = {on} (来源: config/model.json stream 优先, BOEN_MODEL_STREAM 环境变量兜底)");
