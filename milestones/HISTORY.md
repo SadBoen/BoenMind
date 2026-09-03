@@ -64,6 +64,7 @@
 | system.exec 内置命令执行工具(ADR-0019)+ 回喂防重调 | 2026-09-03 | (见 git) | exec 执行器 3 测试绿 + 全仓 65 套绿 + contracts 绿 + clippy 零警告 | 用户令「按常规设计不用问,一次性到日常可用」:①内置 system.exec(对标 pi/Claude Code 的 shell,每条命令走审批卡;内置异步能力 provider=builtin.async 与 MCP 同管线,超时 60s 可调≤300s,输出截断 16K,kill_on_drop)②直通/异步工具成功回喂附带「不要再次调用」完成指令(实测 mimo 会重复调)③handle.rs 异步判定扩展 .async 后缀;真沙箱仍归 ADR-0016 |
 
 | v0.0.6 发版:日常可用批 | 2026-09-03 | `v0.0.6` | 65 套测试绿+contracts 绿+clippy 零警告 | 用户明示发版;包内含 system.exec 内置命令执行(ADR-0019,审批类)+工具回喂防重调+W9 轨迹视图与事件流+跨会话全文检索+改密页面「账号与安全」+门户登录墙(v0.0.5)+直通工具闭环修复+模型超时 30s→120s;workspace 版本 0.0.5→0.0.6 |
+| code-tools 随包官方插件(查/读/改工具面) | 2026-09-03 | 本批 commit | 插件 30 测(29 单测+1 进程级集成)全绿+clippy 零警告;真模型 E2E:模型自发调用 mcp__code_tools__search,367 文件实搜、结果回喂、终稿引用 | 用户裁决「内置固化=1」方案落地:内核只留 system.exec(强杀+万能底牌),编码三步查/读/改下沉为随包插件——search(rg 引擎 grep-searcher/regex 库内嵌,免装 grep,免审批直通)/read(带行号分页,直通)/write+edit(精确字符串替换,CRLF 兼容,审批卡);allowed_roots 白名单沙箱(组件级前缀比对防逃逸);单 exe 2.6MB;release.yml 随包;修复沙箱 join("")尾随分隔符坑;本机已批准接入(4 工具在役);context-mode 本机本就未接入=禁用态成立 |
 
 ## W 序列验收惯例
 
