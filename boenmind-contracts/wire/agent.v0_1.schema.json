@@ -43,7 +43,8 @@
         "agent_id": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/id" },
         "content": { "type": "string", "minLength": 1, "maxLength": 100000 },
         "input_trust": { "enum": ["trusted"], "description": "M1 只接受用户直接输入；untrusted 分级门控随 Capability 引入（基线 4.5），字段现在冻结" },
-        "model_override": { "type": "string", "minLength": 1, "maxLength": 200, "description": "W6 Minor（只增）：本回合模型覆盖（对话级热切换）。缺省/null 不出字段 = 用 agent.model_chain；给出则本回合降级链整体替换为 [model_override]，工具轮与重试同回合同模型" }
+        "model_override": { "type": "string", "minLength": 1, "maxLength": 200, "description": "W6 Minor（只增）：本回合模型覆盖（对话级热切换）。缺省/null 不出字段 = 用 agent.model_chain；给出则本回合降级链整体替换为 [model_override]，工具轮与重试同回合同模型" },
+        "workspace_override": { "type": "string", "minLength": 1, "maxLength": 100, "description": "W8 Minor（只增，ADR-0018）：本回合工作区覆盖（对话级热切换）。缺省/null 不出字段 = 沿用会话绑定；给出则校验工作区注册表并更新会话绑定，未登记 id 拒绝（validation_failed）" }
       }
     },
     "result": { "$ref": "#/definitions/receipt" }

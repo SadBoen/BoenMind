@@ -1528,6 +1528,7 @@ pub(crate) fn handle_task_autorun_start(
                 model_chain,
                 budget: None,
                 system_prompt: None,
+                workspace_id: None,
             },
         },
     )?;
@@ -1559,6 +1560,7 @@ pub(crate) fn handle_task_autorun_start(
             agent_id: agent_id.clone(),
             content: autorun_instruction(&goal, None),
             model_override: None,
+            workspace_override: None,
             input_trust: bm_contract::wire::InputTrust::Trusted,
         },
     )?;
@@ -1695,6 +1697,7 @@ pub(crate) fn autorun_pump(w: &mut World, op_id: &BmId) {
             agent_id,
             content: autorun_instruction(&goal, Some(&content)),
             model_override: None,
+            workspace_override: None,
             input_trust: bm_contract::wire::InputTrust::Trusted,
         },
     );

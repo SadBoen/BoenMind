@@ -25,6 +25,7 @@ pub mod state;
 pub mod task;
 pub mod team;
 pub mod watchdog;
+pub mod workspace;
 
 pub use approval::{ApprovalError, ApprovalManager, OpenApproval, RespondDecision};
 pub use broker::{

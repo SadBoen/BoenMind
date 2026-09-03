@@ -16,6 +16,7 @@ pub mod rpc;
 pub mod sse;
 pub mod token;
 pub mod webadmin;
+pub mod workspace_admin;
 
 use axum::Router;
 use axum::middleware;

@@ -168,6 +168,21 @@ pub(crate) fn spawn_turn(
         .as_ref()
         .and_then(|sid| w.session_chats.get(sid).cloned())
         .unwrap_or_default();
+    // W8(ADR-0018):会话绑定的工作目录回合级注入——追加到 system prompt,
+    // 切换工作区下一条消息即生效;注册表缺条目/目录被删时静默降级不注入。
+    let workspace_note: Option<String> = session_id.as_ref().and_then(|sid| {
+        let wid = w.sessions.get(sid)?.workspace_id.clone()?;
+        let ws = crate::workspace::resolve(w.config.data_dir.as_ref()?, &wid)?;
+        Some(format!(
+            "[工作目录] 本对话的工作目录:{}(用户提到的相对路径与文件均相对此目录)",
+            ws.path
+        ))
+    });
+    let role_prompt = match (role_prompt, workspace_note) {
+        (Some(sp), Some(note)) => Some(format!("{sp}\n\n{note}")),
+        (None, Some(note)) => Some(note),
+        (other, None) => other,
+    };
     let ctx_log = w.ctx_log.clone();
 
     tokio::spawn(async move {

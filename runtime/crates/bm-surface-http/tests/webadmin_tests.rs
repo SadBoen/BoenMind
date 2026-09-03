@@ -608,3 +608,114 @@ async fn t_w2_logs_tail_reads_data_dir_jsonl() {
     assert_eq!(r2["ok"], json!(true));
     assert_eq!(r2["exec"].as_array().unwrap().len(), 0);
 }
+
+// ---- W8:常规设置(工作区注册表 + 运行环境探针,ADR-0018)--------------------
+
+#[tokio::test]
+async fn t_w8_workspaces_seeded_crud_and_guards() {
+    let ws = tempfile::tempdir().unwrap();
+    let proj = tempfile::tempdir().unwrap(); // 另一个真实目录
+    let (base, data_dir) = spawn_app(ws.path().to_path_buf(), None).await;
+
+    // 首次 GET 播种 default = 文件浏览根
+    let (_, r) = get(&format!("{base}/admin/workspaces")).await;
+    let list = r["workspaces"].as_array().unwrap();
+    assert_eq!(list.len(), 1, "{r}");
+    assert_eq!(list[0]["id"], json!("default"));
+    assert_eq!(list[0]["isDefault"], json!(true));
+    assert_eq!(list[0]["exists"], json!(true));
+    // 播种已落盘
+    let raw = std::fs::read_to_string(data_dir.path().join("config/workspaces.json")).unwrap();
+    assert!(raw.contains("default"));
+
+    // 增:合法目录
+    let (st, r) = send_json(
+        reqwest::Method::POST,
+        &format!("{base}/admin/workspaces"),
+        json!({"name": "项目甲", "path": proj.path().display().to_string()}),
+    )
+    .await;
+    assert_eq!(st, 200, "{r}");
+    let wid = r["workspace"]["id"].as_str().unwrap().to_string();
+    assert!(wid.starts_with("ws_"));
+
+    // 增:重复路径拒;不存在路径拒;文件路径拒;空名称拒
+    let (st, _) = send_json(
+        reqwest::Method::POST,
+        &format!("{base}/admin/workspaces"),
+        json!({"name": "重复", "path": proj.path().display().to_string()}),
+    )
+    .await;
+    assert_eq!(st, 409);
+    let (st, _) = send_json(
+        reqwest::Method::POST,
+        &format!("{base}/admin/workspaces"),
+        json!({"name": "不存在", "path": "Z:/no/such/dir"}),
+    )
+    .await;
+    assert_eq!(st, 400);
+    let (st, _) = send_json(
+        reqwest::Method::POST,
+        &format!("{base}/admin/workspaces"),
+        json!({"name": "", "path": proj.path().display().to_string()}),
+    )
+    .await;
+    assert_eq!(st, 400);
+
+    // 改:改名生效
+    let (st, r) = send_json(
+        reqwest::Method::PUT,
+        &format!("{base}/admin/workspaces/{wid}"),
+        json!({"name": "项目甲·改名"}),
+    )
+    .await;
+    assert_eq!(st, 200, "{r}");
+    assert_eq!(r["workspace"]["name"], json!("项目甲·改名"));
+
+    // 检测:存在目录 ok
+    let (_, r) = send_json(
+        reqwest::Method::POST,
+        &format!("{base}/admin/workspaces/{wid}/check"),
+        json!({}),
+    )
+    .await;
+    assert_eq!(r["ok"], json!(true), "{r}");
+
+    // 删:default 拒;其他可删
+    let client = reqwest::Client::new();
+    let st = client
+        .delete(format!("{base}/admin/workspaces/default"))
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .as_u16();
+    assert_eq!(st, 400, "default 必须拒删");
+    let st = client
+        .delete(format!("{base}/admin/workspaces/{wid}"))
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .as_u16();
+    assert_eq!(st, 200);
+    let (_, r) = get(&format!("{base}/admin/workspaces")).await;
+    assert_eq!(r["workspaces"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn t_w8_runtime_env_shape() {
+    let ws = tempfile::tempdir().unwrap();
+    let (base, _dir) = spawn_app(ws.path().to_path_buf(), None).await;
+    let (_, r) = get(&format!("{base}/admin/runtime/env")).await;
+    // 形状断言(不假设测试机装没装 Python/Node):installed/version/program 键在
+    for key in ["python", "node"] {
+        assert!(r[key]["installed"].is_boolean(), "{r}");
+        if r[key]["installed"] == json!(true) {
+            assert!(r[key]["version"].is_string(), "{r}");
+            assert!(r[key]["program"].is_string(), "{r}");
+        } else {
+            assert!(r[key]["error"].is_string(), "{r}");
+        }
+    }
+}

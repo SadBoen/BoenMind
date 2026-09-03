@@ -16,7 +16,9 @@
           "minItems": 1, "maxItems": 4,
           "description": "降级链，按序尝试（基线 5.4 / M1.7）"
         },
-        "budget": { "$ref": "boenmind:budget:v0.1#/definitions/budget" }
+        "budget": { "$ref": "boenmind:budget:v0.1#/definitions/budget" },
+        "system_prompt": { "type": "string", "maxLength": 100000, "description": "W4 Minor（只增）：会话级 system prompt（None/缺省 = 角色装配）" },
+        "workspace_id": { "type": "string", "minLength": 1, "maxLength": 100, "description": "W8 Minor（只增，ADR-0018）：会话绑定的工作区注册表 id（不透明短 id）。缺省/null 不出字段 = 不绑定；给出则校验 config/workspaces.json，未登记 id 拒绝（validation_failed）。作用域为进程内会话（服务重启后由客户端重新绑定）" }
       }
     },
     "cursor": {

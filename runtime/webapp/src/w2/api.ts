@@ -110,6 +110,24 @@ export type RolesResponse = {
   roles: RoleItem[];
 };
 
+// W8 常规(ADR-0018):工作区注册表条目 + 运行环境探针结果
+export type WorkspaceEntry = {
+  id: string;
+  name: string;
+  path: string;
+  exists: boolean;
+  isDefault: boolean;
+};
+
+export type RuntimeToolInfo = {
+  installed: boolean;
+  version: string | null;
+  program: string | null;
+  error: string | null;
+};
+
+export type RuntimeEnv = { python: RuntimeToolInfo; node: RuntimeToolInfo };
+
 // W5:一次模型调用的上下文快照(/admin/context 行;服务端已做凭据脱敏与
 // 单条内容 16K 字符截断)
 export type CtxStep = {
@@ -285,4 +303,20 @@ export const api = {
       req<{ ok: boolean }>(`/admin/fs/rename`, json("POST", { path, name })),
     downloadUrl: (path: string) => `/admin/fs/download?path=${encodeURIComponent(path)}`,
   },
+  // W8 常规(ADR-0018):工作区注册表 + 运行环境探针
+  workspaces: {
+    list: () => req<{ workspaces: WorkspaceEntry[] }>("/admin/workspaces"),
+    create: (b: { name: string; path: string }) =>
+      req<{ workspace: WorkspaceEntry }>("/admin/workspaces", json("POST", b)),
+    update: (id: string, b: { name?: string; path?: string }) =>
+      req<{ workspace: WorkspaceEntry }>(`/admin/workspaces/${id}`, json("PUT", b)),
+    remove: (id: string) =>
+      req<{ ok: boolean }>(`/admin/workspaces/${id}`, { method: "DELETE" }),
+    check: (id: string) =>
+      req<{ ok: boolean; path?: string; error?: string }>(
+        `/admin/workspaces/${id}/check`,
+        json("POST", {}),
+      ),
+  },
+  runtimeEnv: () => req<RuntimeEnv>("/admin/runtime/env"),
 };

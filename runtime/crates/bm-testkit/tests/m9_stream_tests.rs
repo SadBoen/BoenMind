@@ -125,6 +125,7 @@ async fn one_turn(handle: &RuntimeHandle, ids: &Arc<SeqIdGen>, model: &str) -> T
                 agent_id: created.agent_id.clone(),
                 content: "你好".into(),
                 model_override: None,
+                workspace_override: None,
                 input_trust: bm_contract::wire::InputTrust::Trusted,
             },
         )
@@ -141,6 +142,7 @@ async fn one_turn(handle: &RuntimeHandle, ids: &Arc<SeqIdGen>, model: &str) -> T
 fn agent_spec(model: &str) -> bm_contract::wire::AgentSpec {
     bm_contract::wire::AgentSpec {
         system_prompt: None,
+        workspace_id: None,
         name: "tester".into(),
         model_chain: vec![model.to_string()],
         budget: None,

@@ -81,6 +81,39 @@ async function mockAdmin(page: Page) {
   await page.route("**/admin/logs", (route) =>
     route.fulfill({ json: { ok: true, exec: [], events: [], context: [] } }),
   );
+  // W8:工作区注册表(6 条 = 触发列表滚动)+ 运行环境探针
+  await page.route("**/admin/workspaces", (route) =>
+    route.fulfill({
+      json: {
+        workspaces: [
+          { id: "default", name: "默认工作区", path: "C:/ws", exists: true, isDefault: true },
+          { id: "ws_a", name: "项目甲", path: "D:/proj/a", exists: true, isDefault: false },
+          { id: "ws_b", name: "项目乙", path: "D:/proj/b", exists: true, isDefault: false },
+          { id: "ws_c", name: "项目丙", path: "D:/proj/c", exists: false, isDefault: false },
+          { id: "ws_d", name: "项目丁", path: "D:/proj/d", exists: true, isDefault: false },
+          { id: "ws_e", name: "项目戊", path: "D:/proj/e", exists: true, isDefault: false },
+        ],
+      },
+    }),
+  );
+  await page.route("**/admin/runtime/env", (route) =>
+    route.fulfill({
+      json: {
+        python: {
+          installed: true,
+          version: "Python 3.13.0",
+          program: "python --version",
+          error: null,
+        },
+        node: {
+          installed: false,
+          version: null,
+          program: null,
+          error: "未检测到可用的命令",
+        },
+      },
+    }),
+  );
 }
 
 test.describe("对话闭环", () => {
@@ -163,5 +196,108 @@ test.describe("设置中心", () => {
     await expect(page.locator('[data-slot="logs-tab"][data-tab="exec"]')).toBeAttached();
     await expect(page.locator('[data-slot="logs-tab"][data-tab="events"]')).toBeAttached();
     await expect(page.locator('[data-slot="logs-tab"][data-tab="ctx"]')).toBeAttached();
+  });
+});
+
+// ---- W8:常规设置(工作区 + 环境探针)、composer 工作区选择、空气泡修复 ----
+
+test.describe("常规设置页(W8)", () => {
+  test("导航、环境探针卡与工作目录五行滚动列表", async ({ page }) => {
+    await mockAdmin(page);
+    await page.goto("/");
+    await page.locator('[data-slot="open-settings"]').evaluate((el: HTMLElement) => el.click());
+    await page.getByRole("button", { name: /^常规/ }).click();
+    await expect(page.getByRole("heading", { name: "常规" })).toBeVisible();
+
+    // 环境探针:Python 已安装(带版本),Node 未检测到
+    const py = page.locator('[data-slot="runtime-tool"][data-tool="Python"]');
+    await expect(py).toContainText("已安装");
+    await expect(py).toContainText("Python 3.13.0");
+    const nd = page.locator('[data-slot="runtime-tool"][data-tool="Node.js"]');
+    await expect(nd).toContainText("未检测到");
+
+    // 工作目录列表:6 条目、固定五行高度、可滚动
+    const list = page.locator('[data-slot="workspace-list"]');
+    await expect(list.locator('[data-slot="workspace-row"]')).toHaveCount(6);
+    const box = await list.boundingBox();
+    expect(box).toBeTruthy();
+    expect(Math.round(box!.height)).toBe(285); // 5 行 × 57px
+    const scrollable = await list.evaluate(
+      (el) => el.scrollHeight > el.clientHeight,
+    );
+    expect(scrollable).toBe(true);
+    await expect(page.locator('[data-slot="workspace-row"][data-id="default"]')).toContainText("默认");
+  });
+});
+
+test.describe("composer 工作目录选择(W8)", () => {
+  test("选择后请求携带 workspace,默认不携带", async ({ page }) => {
+    await mockAdmin(page);
+    const bodies: Array<Record<string, unknown>> = [];
+    await page.route("**/v1/chat/completions", async (route) => {
+      bodies.push(route.request().postDataJSON() as Record<string, unknown>);
+      await route.fulfill({
+        status: 200,
+        headers: {
+          "Content-Type": "text/event-stream",
+          "x-bm-session": "sess_00000000000000000000000e2e",
+        },
+        body: [
+          `data: ${JSON.stringify({ choices: [{ delta: { content: "目录回复。" } }] })}`,
+          "",
+          "data: [DONE]",
+          "",
+        ].join("\n"),
+      });
+    });
+    await page.goto("/");
+    const input = page.getByRole("textbox", { name: "Message BoenMind…" });
+
+    // 第一条:未选择工作区 → 请求不带 workspace 字段
+    await input.fill("第一条");
+    await page.locator(".send-btn").evaluate((el: HTMLElement) => el.click());
+    await expect(page.getByText("目录回复。")).toBeVisible({ timeout: 8_000 });
+    expect(bodies[0].workspace).toBeUndefined();
+
+    // 打开上拉菜单,选「项目甲」
+    await page.locator('[data-slot="workspace-select"]').evaluate((el: HTMLElement) => el.click());
+    await page.getByRole("option", { name: /项目甲/ }).click();
+
+    // 第二条:请求携带 workspace id
+    await input.fill("第二条");
+    await page.locator(".send-btn").evaluate((el: HTMLElement) => el.click());
+    await expect(page.getByText("目录回复。").nth(1)).toBeVisible({ timeout: 8_000 });
+    expect(bodies[1].workspace).toBe("ws_a");
+  });
+});
+
+test.describe("空气泡修复(W8)", () => {
+  test("空正文回复不出现空气泡,tag 仍在", async ({ page }) => {
+    await mockAdmin(page);
+    await page.route("**/v1/chat/completions", (route) =>
+      route.fulfill({
+        status: 200,
+        headers: {
+          "Content-Type": "text/event-stream",
+          "x-bm-session": "sess_00000000000000000000000e2e",
+        },
+        body: [
+          `data: ${JSON.stringify({ choices: [{ delta: { role: "assistant", content: "" } }] })}`,
+          "",
+          `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] })}`,
+          "",
+          "data: [DONE]",
+          "",
+        ].join("\n"),
+      }),
+    );
+    await page.goto("/");
+    const input = page.getByRole("textbox", { name: "Message BoenMind…" });
+    await input.fill("空回复测试");
+    await page.locator(".send-btn").evaluate((el: HTMLElement) => el.click());
+    // 用户消息在,助手 tag 在,但空气泡被隐藏
+    await expect(page.getByText("空回复测试")).toBeVisible();
+    await expect(page.getByText("BoenMind Agent").first()).toBeVisible();
+    await expect(page.locator(".msg.assistant .text").first()).toBeHidden();
   });
 });

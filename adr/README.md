@@ -25,6 +25,7 @@
 | [ADR-0015](ADR-0015-doc-consolidation.md) | 文档体系整理:熔入式修订与三层附页 | accepted | 基线增补熔入正文不挂引注块;HISTORY/PLAYBOOK/BACKLOG 三附页;milestones/README 导航 |
 | [ADR-0016](ADR-0016-skill-v0.2-scripts-broker-pipeline.md) | Skill v0.2 脚本执行架构与 Broker 管线覆盖 | accepted | wasmtime 运行时沙箱+WASM 为主零 Python+全量纳入 Broker 七步管线 |
 | [ADR-0017](ADR-0017-context-mode-rust-mcp.md) | context-mode Rust MCP 官方插件 | accepted | 外部 MCP、官方随包但默认不启用、Linux 单 exe、显式批准与 Broker 风险边界 |
+| [ADR-0018](ADR-0018-workspace-registry-and-session-binding.md) | 工作区注册表与会话级工作目录绑定 | accepted | config/workspaces.json 项目注册;AgentSpec/SendInput 只增 workspace 字段;回合级 system prompt 注入;探针无 shell |
 
 > 编号说明:ADR-0012 于 2026-08-31 随 M10 dsh 前端线归档(见 ADR-0013 编号说明),编号不回收;主干引用配置管理口径时以 config_store 现状与 W2/W4 规格为准。
 > 文体注:0001-0009 状态用小写 accepted(-with-conditions),0010/0011 起用 Accepted(日期)/已裁决(用户,日期)——语义等价,统一以本表为准。

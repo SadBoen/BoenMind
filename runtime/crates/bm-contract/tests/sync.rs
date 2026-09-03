@@ -354,6 +354,7 @@ fn session_and_agent_payloads_validate() {
                 extra: Default::default(),
             }),
             system_prompt: None,
+            workspace_id: None,
         },
     })
     .unwrap();

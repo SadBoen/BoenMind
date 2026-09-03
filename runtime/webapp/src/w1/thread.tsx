@@ -8,7 +8,7 @@ import {
   ThreadPrimitive,
   useAuiState,
 } from "@assistant-ui/react";
-import { PanelLeft, PanelRight, Send, ShieldAlert, Square } from "lucide-react";
+import { FolderOpen, PanelLeft, PanelRight, Send, ShieldAlert, Square } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   Select,
@@ -22,7 +22,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { ContextView } from "./context";
 import { useBoenmindApprovals, type ApprovalRequest } from "./runtime";
-import { api } from "@/w2/api";
+import { api, type WorkspaceEntry } from "@/w2/api";
 import { storage, STORAGE_KEYS } from "@/lib/storage";
 
 export function Thread({
@@ -258,10 +258,12 @@ function AssistantMessage() {
   return (
     <MessagePrimitive.Root className="msg assistant">
       <div className="model-tag">BoenMind Agent{isRunning ? " · 生成中" : ""}</div>
+      {/* W8:空正文不出空气泡——text 为空返回 null,.text:empty 由 CSS 隐藏;
+          停止/连接失败文本非空,照常显示 */}
       <div className="text">
         <MessagePrimitive.Parts>
           {({ part }) =>
-            part.type === "text" ? (
+            part.type === "text" && part.text ? (
               <span key={part.text.length}>{part.text}</span>
             ) : null
           }
@@ -284,6 +286,28 @@ function Composer() {
   const [activeRole, setActiveRole] = useState<string>(
     () => storage.get(STORAGE_KEYS.ACTIVE_ROLE) || "",
   );
+  // W8:对话工作目录选择——候选 = 注册表(设置→常规 维护);选择持久化
+  // localStorage 并随每条消息发给后端,中途切换下一条即生效(模型同款)。
+  const [workspaces, setWorkspaces] = useState<Array<WorkspaceEntry>>([]);
+  const [selWorkspace, setSelWorkspace] = useState<string>(
+    () => storage.get(STORAGE_KEYS.ACTIVE_WORKSPACE) || "",
+  );
+
+  const loadWorkspaces = () => {
+    api.workspaces
+      .list()
+      .then((d) => {
+        const list = d?.workspaces ?? [];
+        setWorkspaces(list);
+        // 已选工作区被删除 → 回落默认(不绑定)
+        const cur = storage.get(STORAGE_KEYS.ACTIVE_WORKSPACE) || "";
+        if (cur && !list.some((w) => w.id === cur)) {
+          storage.remove(STORAGE_KEYS.ACTIVE_WORKSPACE);
+          setSelWorkspace("");
+        }
+      })
+      .catch(() => {});
+  };
 
   const loadModels = () => {
     api.providers.list()
@@ -329,11 +353,14 @@ function Composer() {
 
     loadModels();
     loadRoles();
+    loadWorkspaces();
     window.addEventListener("bm-roles-changed", loadRoles);
     window.addEventListener("bm-providers-changed", loadModels);
+    window.addEventListener("bm-workspaces-changed", loadWorkspaces);
     return () => {
       window.removeEventListener("bm-roles-changed", loadRoles);
       window.removeEventListener("bm-providers-changed", loadModels);
+      window.removeEventListener("bm-workspaces-changed", loadWorkspaces);
     };
   }, []);
 
@@ -429,7 +456,56 @@ function Composer() {
             ) : null}
           </SelectContent>
         </Select>
-        <span className="tool-chip disabled">🏠 Home</span>
+        {/* W8:工作目录选择(替换原 🏠 Home 占位)。上拉菜单排版参考用户样张:
+            条目两行 = 名称 + 路径;「跟随默认」= 不绑定(__auto__ 哨兵,Radix 禁空值) */}
+        <Select
+          value={selWorkspace || "__auto__"}
+          onValueChange={(v) => {
+            const val = v === "__auto__" ? "" : v;
+            setSelWorkspace(val);
+            if (val) storage.set(STORAGE_KEYS.ACTIVE_WORKSPACE, val);
+            else storage.remove(STORAGE_KEYS.ACTIVE_WORKSPACE);
+          }}
+        >
+          <SelectTrigger
+            size="sm"
+            className="bg-muted/60 h-7 max-w-44 rounded-lg border px-2 text-[11.5px] font-medium"
+            title="切换本对话工作目录:下一条消息即生效;目录在 设置→常规 维护"
+            data-slot="workspace-select"
+          >
+            <FolderOpen className="size-3.5 opacity-70" />
+            <span className="truncate">
+              {workspaces.find((w) => w.id === selWorkspace)?.name ?? "默认工作区"}
+            </span>
+          </SelectTrigger>
+          <SelectContent className="rounded-lg" side="top" position="popper">
+            <SelectItem
+              value="__auto__"
+              className="text-[12px] pl-2 [&_[data-slot=select-item-indicator]]:left-2 [&_[data-slot=select-item-indicator]]:right-auto"
+            >
+              默认(不绑定工作目录)
+            </SelectItem>
+            {workspaces.map((w) => (
+              <SelectItem
+                key={w.id}
+                value={w.id}
+                className="py-1.5 pl-2 [&_[data-slot=select-item-indicator]]:left-2 [&_[data-slot=select-item-indicator]]:right-auto"
+              >
+                <span className="flex flex-col">
+                  <span className="text-[12.5px] font-medium">{w.name}</span>
+                  <span className="text-muted-foreground font-mono text-[11px]">
+                    {w.path}
+                  </span>
+                </span>
+              </SelectItem>
+            ))}
+            {workspaces.length === 0 ? (
+              <SelectItem value="__none__" disabled>
+                暂无工作目录——去 设置→常规 添加
+              </SelectItem>
+            ) : null}
+          </SelectContent>
+        </Select>
         <span className="composer-spacer" />
         {isRunning ? (
           <ComposerPrimitive.Cancel className="send-btn stop" title="停止生成">

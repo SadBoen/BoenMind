@@ -60,6 +60,7 @@ async fn main() {
                     SessionCreateParams {
                         agent: AgentSpec {
                             system_prompt: None,
+                            workspace_id: None,
                             name: "assistant".into(),
                             model_chain: vec![bm_testkit_replay::MODEL_A.into()],
                             budget: Some(Budget {
@@ -162,6 +163,7 @@ mod bm_testkit_replay {
             agent_id: agent_id.clone(),
             content: content.into(),
             model_override: None,
+            workspace_override: None,
             input_trust: bm_contract::wire::InputTrust::Trusted,
         }
     }

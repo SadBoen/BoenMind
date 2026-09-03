@@ -199,6 +199,8 @@ impl World {
                     agent_id: BmId::parse(s.agent_id).expect("合法"),
                     state,
                     created_at: s.created_at,
+                    // W8:工作区绑定为进程内作用域(ADR-0018),恢复时不重建。
+                    workspace_id: None,
                 },
             );
         }

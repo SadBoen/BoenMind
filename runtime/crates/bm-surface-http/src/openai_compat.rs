@@ -119,6 +119,14 @@ pub async fn chat_completions(
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
 
+    // W8(ADR-0018):body 可选 workspace = 工作区注册表 id(与 model 同款
+    // 对话级选择口径;空/缺省 = 不绑定不覆盖)。校验在核心(登记表为准)。
+    let requested_workspace: Option<String> = body["workspace"]
+        .as_str()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+
     // 会话寻址:有 X-Bm-Session 续聊;无则新建(默认配置模型)
     let (rt_sid, rt_aid) = match headers
         .get("x-bm-session")
@@ -162,6 +170,9 @@ pub async fn chat_completions(
                             ],
                             budget: None,
                             system_prompt: initial_system_prompt,
+                            // W8:对话选择了工作区则随会话创建绑定(校验在核心;
+                            // 未登记 id 会话创建即 400,错误消息透出)。
+                            workspace_id: requested_workspace.clone(),
                         },
                     },
                 )
@@ -177,8 +188,8 @@ pub async fn chat_completions(
                 }
                 Err(e) => {
                     return err_response(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        &format!("会话创建失败: {e}"),
+                        StatusCode::BAD_REQUEST,
+                        &format!("会话创建失败: {}", e.to_wire().message),
                     );
                 }
             }
@@ -199,14 +210,20 @@ pub async fn chat_completions(
                 input_trust: InputTrust::Trusted,
                 // W6:每条消息都携带当前所选模型 → 对话中途切换下一条即生效
                 model_override: requested_model,
+                // W8:每条消息都携带当前所选工作区 → 中途切换下一条即生效
+                workspace_override: requested_workspace,
             },
         )
         .await;
     if let Err(e) = &sent {
-        return err_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            &format!("消息未受理: {e:?}"),
-        );
+        // W8:校验类失败(如工作区未登记)按 400 透出,便于壳子清理本地选择
+        let wire = e.to_wire();
+        let status = if wire.code.get() == bm_contract::error_codes::ErrorCode::ValidationFailed {
+            StatusCode::BAD_REQUEST
+        } else {
+            StatusCode::INTERNAL_SERVER_ERROR
+        };
+        return err_response(status, &wire.message);
     }
 
     let session_header =

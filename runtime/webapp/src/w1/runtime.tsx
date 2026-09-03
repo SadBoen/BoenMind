@@ -140,6 +140,10 @@ export function BoenmindRuntimeProvider({
           body: JSON.stringify({
             // W6:随消息携带所选模型(localStorage 持久化;空 = "auto" = 服务器默认)
             model: storage.get(STORAGE_KEYS.ACTIVE_MODEL) || "auto",
+            // W8:随消息携带所选工作目录(空 = 不绑定,服务器默认)
+            ...(storage.get(STORAGE_KEYS.ACTIVE_WORKSPACE)
+              ? { workspace: storage.get(STORAGE_KEYS.ACTIVE_WORKSPACE) }
+              : {}),
             stream: true,
             messages: [{ role: "user", content: text }],
           }),
@@ -147,8 +151,18 @@ export function BoenmindRuntimeProvider({
         });
       };
       let res = await doFetch(true);
-      // 服务器重启会清空内存会话表:400「未知会话」→ 清记忆重开新会话重试一次
       if (res.status === 400) {
+        const detail = await res.text().catch(() => "");
+        // W8:所选工作区未登记/已删除 → 清本地选择并给出可读提示
+        // (不与「未知会话」重试混淆:换会话救不了坏工作区)
+        if (detail.includes("工作区")) {
+          storage.remove(STORAGE_KEYS.ACTIVE_WORKSPACE);
+          window.dispatchEvent(new CustomEvent("bm-workspaces-changed"));
+          throw new Error(
+            "所选工作目录不可用(可能已被删除):请重新选择,或到 设置→常规 检查",
+          );
+        }
+        // 服务器重启会清空内存会话表:400「未知会话」→ 清记忆重开新会话重试一次
         storage.remove(STORAGE_KEYS.SESSION);
         res = await doFetch(false);
       }

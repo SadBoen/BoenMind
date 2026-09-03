@@ -1790,6 +1790,22 @@ pub fn admin_routes(cfg: AdminConfig) -> axum::Router {
         .route("/about", get(crate::about::about))
         .route("/about/check-update", post(crate::about::check_update))
         .route("/about/apply-update", post(crate::about::apply_update))
+        // W8 常规:工作区注册表 CRUD/探测 + 运行环境探针(ADR-0018)
+        .route(
+            "/workspaces",
+            get(crate::workspace_admin::workspaces_list)
+                .post(crate::workspace_admin::workspaces_create),
+        )
+        .route(
+            "/workspaces/{id}",
+            axum::routing::put(crate::workspace_admin::workspaces_update)
+                .delete(crate::workspace_admin::workspaces_delete),
+        )
+        .route(
+            "/workspaces/{id}/check",
+            post(crate::workspace_admin::workspaces_check),
+        )
+        .route("/runtime/env", get(crate::workspace_admin::runtime_env))
         .with_state((*cfg).clone())
 }
 

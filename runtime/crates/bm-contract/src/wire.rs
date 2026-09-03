@@ -181,6 +181,10 @@ pub struct AgentSpec {
     /// W4 角色:会话级 system prompt(设置页「角色」定义;None = 无)。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
+    /// W8 Minor(只增,ADR-0018):会话绑定的工作区注册表 id。None = 不绑定;
+    /// 给出则核心对 config/workspaces.json 校验,未登记 id 拒绝。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -266,6 +270,10 @@ pub struct SendInputParams {
     /// 用 agent.model_chain;给出则本回合降级链整体替换为 [model_override]。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_override: Option<String>,
+    /// W8 Minor(只增,ADR-0018):本回合工作区覆盖(对话级热切换)。缺省
+    /// 不出字段 = 沿用会话绑定;给出则校验注册表并更新会话绑定。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_override: Option<String>,
 }
 
 /// 执行收据(agent #/definitions/receipt,基线 9.5)。

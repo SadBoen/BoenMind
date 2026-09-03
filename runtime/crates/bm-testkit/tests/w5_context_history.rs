@@ -105,6 +105,7 @@ async fn second_turn_request_carries_first_turn_history() {
                     model_chain: vec!["mock.model".into()],
                     budget: None,
                     system_prompt: None,
+                    workspace_id: None,
                 },
             },
         )
@@ -122,6 +123,7 @@ async fn second_turn_request_carries_first_turn_history() {
                     agent_id: agent.clone(),
                     content: "第一轮".into(),
                     model_override: None,
+                    workspace_override: None,
                     input_trust: InputTrust::Trusted,
                 },
             )
@@ -141,6 +143,7 @@ async fn second_turn_request_carries_first_turn_history() {
                     agent_id: agent.clone(),
                     content: "第二轮".into(),
                     model_override: None,
+                    workspace_override: None,
                     input_trust: InputTrust::Trusted,
                 },
             )

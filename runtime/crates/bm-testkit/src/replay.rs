@@ -104,6 +104,7 @@ impl TestRig {
                             extra: Default::default(),
                         }),
                         system_prompt: None,
+                        workspace_id: None,
                     },
                 },
             )
@@ -117,6 +118,7 @@ impl TestRig {
             agent_id: agent.clone(),
             content: content.into(),
             model_override: None,
+            workspace_override: None,
             input_trust: bm_contract::wire::InputTrust::Trusted,
         }
     }

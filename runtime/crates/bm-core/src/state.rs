@@ -13,6 +13,9 @@ pub struct Session {
     pub agent_id: BmId,
     pub state: SessionState,
     pub created_at: BmTimestamp,
+    /// W8(ADR-0018):会话绑定的工作区注册表 id(None = 不绑定)。
+    /// 进程内作用域:Web 会话指针随重启失效,持久化无用户可见收益。
+    pub workspace_id: Option<String>,
 }
 
 impl Session {

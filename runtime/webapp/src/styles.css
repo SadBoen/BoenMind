@@ -227,6 +227,9 @@ body {
   border: 1px solid var(--border); border-radius: var(--radius);
   padding: 10px 14px; background: var(--bg-panel);
 }
+/* W8:LLM 无正文时不出空气泡——纯空 running/纯空 completed 的消息
+   Parts 回调返回 null,.text 无子节点,用 :empty 整体隐藏(保留 model-tag) */
+.msg.assistant .text:empty { display: none; }
 .msg .model-tag {
   font-family: var(--font-mono); font-size: 11px; color: var(--fg-3);
   margin-bottom: 4px;

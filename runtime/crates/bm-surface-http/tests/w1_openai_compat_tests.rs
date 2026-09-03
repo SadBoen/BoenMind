@@ -231,3 +231,81 @@ async fn t153_models_list() {
     let v: serde_json::Value = r.json().await.expect("JSON");
     assert_eq!(v["data"][0]["id"], serde_json::json!("mock-model"));
 }
+
+// ---- W8(ADR-0018):body.workspace 工作区字段 ------------------------------
+
+fn seed_workspaces(dir: &std::path::Path) {
+    let cfg = dir.join("config");
+    std::fs::create_dir_all(&cfg).expect("config 目录");
+    std::fs::write(
+        cfg.join("workspaces.json"),
+        serde_json::json!({
+            "workspaces": [
+                {"id": "ws_a", "name": "项目甲", "path": dir.join("a").display().to_string()}
+            ]
+        })
+        .to_string(),
+    )
+    .expect("写注册表");
+}
+
+#[tokio::test]
+async fn t_w8_v1_workspace_create_bind_and_unknown_rejected() {
+    let connector = Arc::new(MockConnector::repeating(
+        bm_providers::mock_model::Step::ok("回复", 10, 5),
+    ));
+    let (url, client, dir) = rig(connector).await;
+    seed_workspaces(dir.path());
+
+    // 未登记 id:会话创建即 400(错误消息透出,不再吞成 500)
+    let mut b = body("你好", false);
+    b["workspace"] = serde_json::json!("ws_ghost");
+    let r = client
+        .post(format!("{url}/v1/chat/completions"))
+        .json(&b)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 400);
+    let text = r.text().await.unwrap();
+    assert!(text.contains("ws_ghost"), "{text}");
+
+    // 已登记 id:创建成功,回 x-bm-session
+    let mut b = body("你好", false);
+    b["workspace"] = serde_json::json!("ws_a");
+    let r = client
+        .post(format!("{url}/v1/chat/completions"))
+        .json(&b)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200, "{}", r.text().await.unwrap());
+    let sid = r.headers().get("x-bm-session").unwrap().to_str().unwrap();
+
+    // 续聊携带 workspace_override:已登记 id 正常;未登记 id 拒绝
+    let mut cont = body("再来", false);
+    cont["workspace"] = serde_json::json!("ws_a");
+    let r = client
+        .post(format!("{url}/v1/chat/completions"))
+        .header("X-Bm-Session", sid)
+        .json(&cont)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200);
+
+    let mut bad = body("换目录", false);
+    bad["workspace"] = serde_json::json!("ws_ghost");
+    let r = client
+        .post(format!("{url}/v1/chat/completions"))
+        .header("X-Bm-Session", sid)
+        .json(&bad)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        r.status().as_u16(),
+        400,
+        "续聊覆盖未登记 = 校验失败按 400 透出"
+    );
+}

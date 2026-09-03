@@ -7,7 +7,7 @@ workspace "BoenMind" "面向个人软件生态的 AI Runtime/AI 操作系统—�
         boenmind = softwareSystem "BoenMind Runtime" "统一的 AI Runtime:Agent 生命周期、记忆与技能、能力注册、身份权限审批、App 间受控通信、多 Agent 协作、插件热替换与故障恢复;前端形态(Chat/CLI/语音/通知)全部解耦为可替换 Surface。" {
 
             chat = container "Tauri Chat Surface" "[阶段一桌面壳骨架] 图形交互界面:创建/接管 Task、提交审批决定;与 Web Surface 共用前端静态产物(ADR-0009);不拥有 Agent,可被 CLI 接管同一 Task。" "Tauri Desktop" "L5,Surface"
-            webui = container "Web Surface (assistant-ui 壳 + 管理面)" "[阶段一现役] 网页交互界面:对话闭环(/v1 OpenAI 插座)、上下文透视面板、设置中心(/admin 提供商/插件/MCP/角色/日志);经 TLS+令牌访问,不绕过 Broker。" "Web App (React + TypeScript)" "L5,Surface"
+            webui = container "Web Surface (assistant-ui 壳 + 管理面)" "[阶段一现役] 网页交互界面:对话闭环(/v1 OpenAI 插座)、上下文透视面板、设置中心(/admin 提供商/插件/MCP/角色/日志/常规=工作区注册与运行环境探针,ADR-0018);经 TLS+令牌访问,不绕过 Broker。" "Web App (React + TypeScript)" "L5,Surface"
             cli = container "CLI Surface" "[阶段一现役] 标准命令行 Surface(boenmind):用户操作面(task/agent/approval)+ 受限运行控制面(runtime status/upgrade/rollback);无 GUI 时的人类控制入口,不绕过 Broker。" "Rust CLI" "L5,Surface"
             voice = container "Voice Surface" "[阶段二规划] 语音交互适配器;与其他 Surface 共享同一 Surface Protocol。" "语音适配器" "L5,Surface"
             notif = container "Notification Surface" "[阶段二规划] 通知中心:审批提醒、异步结果推送;GUI 关闭时兜底。" "通知适配器" "L5,Surface"

@@ -22,6 +22,22 @@ pub(crate) fn handle_session_create(
     for m in &spec.model_chain {
         bm_contract::connector::validate_model_id(m).map_err(CoreError::validation)?;
     }
+    // W8(ADR-0018):会话绑定工作区必须已登记(注册表 = config/workspaces.json,
+    // 管理面写盘、核心只读)。未配置 data_dir(纯内存测试态)时登记表恒空,
+    // 显式绑定一律拒绝——绑定必须真实可解析,不做「看起来能选」的假接受。
+    if let Some(wid) = &spec.workspace_id {
+        let ok = w
+            .config
+            .data_dir
+            .as_ref()
+            .map(|d| crate::workspace::is_registered(d, wid))
+            .unwrap_or(false);
+        if !ok {
+            return Err(CoreError::validation(format!(
+                "工作区「{wid}」未登记或已删除(设置 → 常规 里维护)"
+            )));
+        }
+    }
 
     let now = w.now_ts();
     let session_id = w.config.id_gen.next_id("sess");
@@ -32,6 +48,7 @@ pub(crate) fn handle_session_create(
         agent_id: agent_id.clone(),
         state: SessionState::Created,
         created_at: now.clone(),
+        workspace_id: spec.workspace_id.clone(),
     };
     // created→active(surface_attached):M1 进程内直调即视为已挂接。
     session.transition(SessionState::Active);
@@ -266,6 +283,27 @@ pub(crate) fn handle_send_input(
     }
     if agent.state != AgentState::Running {
         return Err(CoreError::validation("agent 不在可接单状态"));
+    }
+
+    // W8(ADR-0018):本回合工作区覆盖(对话级热切换,model_override 同款)。
+    // 校验通过即更新会话绑定;未登记 id 拒绝,不静默沿用旧值。
+    if let Some(wid) = &params.workspace_override {
+        let ok = w
+            .config
+            .data_dir
+            .as_ref()
+            .map(|d| crate::workspace::is_registered(d, wid))
+            .unwrap_or(false);
+        if !ok {
+            return Err(CoreError::validation(format!(
+                "工作区「{wid}」未登记或已删除(设置 → 常规 里维护)"
+            )));
+        }
+        if session.workspace_id.as_deref() != Some(wid.as_str())
+            && let Some(s) = w.sessions.get_mut(&params.session_id)
+        {
+            s.workspace_id = Some(wid.clone());
+        }
     }
 
     // 强制点①(规格 §8.2):预算拒绝不创建 operation。

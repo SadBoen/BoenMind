@@ -84,6 +84,7 @@ async fn t116_live_long_task_stress() {
             SessionCreateParams {
                 agent: AgentSpec {
                     system_prompt: None,
+                    workspace_id: None,
                     name: "长任务助手".into(),
                     model_chain: vec![model.clone()],
                     budget: Some(Budget {
@@ -134,6 +135,7 @@ async fn t116_live_long_task_stress() {
                     agent_id: agent.clone(),
                     content: p.to_string(),
                     model_override: None,
+                    workspace_override: None,
                     input_trust: bm_contract::wire::InputTrust::Trusted,
                 },
             )

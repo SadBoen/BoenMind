@@ -2,17 +2,18 @@
 // 导航:模型提供商 / 插件 / MCP 管理 / 外观(W3 主题系统)+
 // 插件 PIN 快捷项(PIN 后在此显示,点击跳插件页并按名筛选)。
 import { useEffect, useState } from "react";
-import { BoxIcon, InfoIcon, PlugIcon, ScrollTextIcon, ServerIcon, SlidersHorizontalIcon, SparklesIcon } from "lucide-react";
+import { BoxIcon, InfoIcon, PlugIcon, ScrollTextIcon, ServerIcon, SlidersHorizontalIcon, SparklesIcon, WrenchIcon } from "lucide-react";
 import { ProvidersPage } from "./ProvidersPage";
 import { PluginsPage, readPins } from "./PluginsPage";
 import { McpPage } from "./McpPage";
 import { RolesPage } from "./RolesPage";
 import { LogsPage } from "./LogsPage";
 import { AboutPage } from "./AboutPage";
+import { GeneralPage } from "./GeneralPage";
 import { AppearancePage } from "@/w3/AppearancePage";
 import { cn } from "@/lib/utils";
 
-type Section = "providers" | "plugins" | "mcp" | "appearance" | "roles" | "logs" | "about";
+type Section = "general" | "providers" | "plugins" | "mcp" | "appearance" | "roles" | "logs" | "about";
 
 export function SettingsPage({ onClose }: { onClose: () => void }) {
   const [section, setSection] = useState<Section>("providers");
@@ -55,6 +56,13 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
 
       <div className="flex min-h-0 flex-1">
         <nav className="bg-panel w-56 shrink-0 overflow-y-auto border-r p-3">
+          <NavItem
+            active={section === "general"}
+            onClick={() => setSection("general")}
+            icon={<WrenchIcon className="size-4" />}
+            label="常规"
+            hint="W8"
+          />
           <NavItem
             active={section === "providers"}
             onClick={() => setSection("providers")}
@@ -135,6 +143,7 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
 
         <main className="min-w-0 flex-1 overflow-y-auto p-6" data-slot="settings-content">
           <div className="mx-auto max-w-2xl">
+            {section === "general" ? <GeneralPage /> : null}
             {section === "providers" ? <ProvidersPage /> : null}
             {section === "plugins" ? <PluginsPage initialFilter={pluginFilter} /> : null}
             {section === "mcp" ? (

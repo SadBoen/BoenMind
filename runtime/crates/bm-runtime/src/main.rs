@@ -57,6 +57,7 @@ async fn main() -> CoreResult<()> {
                         extra: Default::default(),
                     }),
                     system_prompt: None,
+                    workspace_id: None,
                 },
             },
         )
@@ -122,6 +123,7 @@ mod bm_testkit_replay {
             agent_id: agent_id.clone(),
             content: content.into(),
             model_override: None,
+            workspace_override: None,
             input_trust: bm_contract::wire::InputTrust::Trusted,
         }
     }
