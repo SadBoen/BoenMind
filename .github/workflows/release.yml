@@ -73,6 +73,8 @@ jobs:
           test -x "${PKG}/plugins/context-mode"
           tar czf "${PKG}.tar.gz" "${PKG}"
           ls -la "${PKG}.tar.gz"
+          # 升级客户端按 <资产名>.sha256 拉取校验文件(about.rs;首 token=hex)
+          sha256sum "${PKG}.tar.gz" > "${PKG}.tar.gz.sha256"
           sha256sum "${PKG}.tar.gz" > SHA256SUMS.txt
 
       - name: 创建 GitHub Release
@@ -81,7 +83,7 @@ jobs:
         run: |
           VER="${GITHUB_REF_NAME#v}"
           gh release create "${GITHUB_REF_NAME}" \
-            boenmind-*.tar.gz SHA256SUMS.txt \
+            boenmind-*.tar.gz boenmind-*.tar.gz.sha256 SHA256SUMS.txt \
             --title "BoenMind ${GITHUB_REF_NAME}" \
             --notes "BoenMind ${GITHUB_REF_NAME} (Linux x86_64).
 
