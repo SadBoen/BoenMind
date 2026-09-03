@@ -8,6 +8,10 @@
 
 | 条目 | 范围与口径 | 状态 |
 |---|---|---|
+| 直通工具对话链路断(实测 P1) | 2026-09-03 VPS 实测(bm.sadinsun.top v0.0.2):聊天内只读直通工具(system.echo/counter.bump)必现 60s「工具执行超时」→ 回合失败。根因=turn.rs 工具轮对直通调用只轮询 op_results,而同步直通结果内联在收据里、从不入该表(仅异步回单 turn.rs:1118 与审批重放 handlers.rs:641 两路写入;GetOpResult 只读 runtime.rs:705)。v0.0.2 与当前 HEAD 同病;审批类工具全链路实测正常。修向=收据 state=succeeded 时直取内联 result(或 capability_call_inner 同步入表)+补对话内直通工具 E2E(现测试全走 capability_call_inner 直调,恰绕过此断点) | OPEN(待排期) |
+| 模型调用 30 秒硬顶(实测 P1) | 同轮实测:DEFAULT_TURN_TIMEOUT_SECS=30(runtime.rs:40,两服务端二进制写死不可配)作每次模型调用 deadline;实测 mimo-v2.5 常规调用 12~29s,超 30s 即整回合失败(err internal/unavailable),用户自己 00:12 的纯聊天回合也中招。修向=默认值上调(≥120s)或出配置(env/设置页) | OPEN(待排期) |
+| 失败回合后 agent 卡死(实测 P2) | 同轮实测:回合失败后 agent 停留 Failed,同会话再发消息必 500「agent 不在可接单状态」,UI 无恢复路径只能新建对话。修向=失败落定回 Idle 或 send_input 对 Failed 自愈 | OPEN(待排期) |
+| 模型自编工具结果(mimo 质量备忘) | 同轮实测:问 counter.bump 时模型未发起调用直接编造「bumped successfully」(/admin/context 证实 0 工具轮);对话区无 [调用] 标记即可辨真伪,强提示词可压不断根;随模型侧观察,不立项 | OPEN(记录在案) |
 | Skill v0.2 第二步(scripts 执行面) | 第一步(合同 Minor: version + references)与 ADR-0016(Broker 七步管线覆盖脚本设计)已闭合交付;**第二步**:等待用户审阅确认 ADR-0016 后接入 wasmtime 执行引擎写代码 | OPEN(待 ADR-0016 确认后动工) |
 | W8 遗留:能力执行 cwd 注入 | ADR-0018 只做到回合 system prompt 注入;MCP/context-mode 等需要 cwd 的能力执行面尚未消费会话绑定工作区(该插件默认也未启用);与 Skill v0.2 执行线同批评估,继续经 Broker 管线、不新增特权通道 | OPEN(依 ADR-0016/0017 排期) |
 | W8 遗留:workspace_id 跨重启持久 | 现为进程内会话作用域(ADR-0018 决策 3:Web 会话指针重启即失效,持久化无用户可见收益);待会话列表真数据(W 后续)一并评估是否随会话恢复 | OPEN |
