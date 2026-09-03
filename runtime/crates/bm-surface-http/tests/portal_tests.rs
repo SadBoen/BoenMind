@@ -1,6 +1,7 @@
 //! 门户登录墙(2026-09-03 用户令)回归:未设密码=全放行(既有测试与
 //! 本地开发零影响);设密码后整站(含 /admin)必须持 Cookie/Bearer;
 //! bootstrap 仅首次可用;改密作废全部会话;/health 与 /login 豁免。
+//! 2026-09-03 评审 #9 收紧:公网绑定+未配置密码 → 仅健康/设置口可达。
 
 use bm_core::clock::SystemClock;
 use bm_core::ports::ModelConnector;
@@ -14,6 +15,15 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 
 async fn spawn(data_dir: std::path::PathBuf) -> String {
+    spawn_inner(data_dir, false).await.0
+}
+
+/// 公网面变体:返回 (base, Bearer 令牌)。
+async fn spawn_public(data_dir: std::path::PathBuf) -> (String, String) {
+    spawn_inner(data_dir, true).await
+}
+
+async fn spawn_inner(data_dir: std::path::PathBuf, public_bind: bool) -> (String, String) {
     let t = token::load_or_create(&data_dir).expect("令牌");
     let store: Arc<PersistStore> = Arc::new(PersistStore::open(&data_dir).expect("打开"));
     let connector: Arc<dyn ModelConnector> = Arc::new(MockConnector::new(vec![]));
@@ -48,20 +58,21 @@ async fn spawn(data_dir: std::path::PathBuf) -> String {
     };
     let app = bm_surface_http::router(
         handle,
-        Arc::new(t),
+        Arc::new(t.clone()),
         store,
         Arc::new(tokio::sync::Notify::new()),
         None,
         Arc::new("mock-model".into()),
         Some(admin),
         None,
+        public_bind,
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("绑定");
     let addr = listener.local_addr().expect("地址");
     tokio::spawn(async move { axum::serve(listener, app).await.expect("serve") });
-    format!("http://{addr}")
+    (format!("http://{addr}"), t)
 }
 
 fn client_no_redirect() -> reqwest::Client {
@@ -248,4 +259,77 @@ async fn portal_wall_lifecycle() {
     )
     .await;
     assert_eq!(st, 200, "新密码必须可登录");
+}
+
+/// 外部评审 2026-09-03 #9:公网绑定+未配置密码 → 仅健康/设置口可达,
+/// /v1、/admin 与静态一律拒绝;持 Bearer 令牌不受影响。
+#[tokio::test]
+async fn public_bind_unconfigured_denies_public_surface() {
+    let dir = tempfile::tempdir().unwrap();
+    let (base, bearer) = spawn_public(dir.path().to_path_buf()).await;
+    let c = client_no_redirect();
+
+    // 未认证:静态页 302 /login,API 面 401
+    let (st, _, _) = send(&c, reqwest::Method::GET, &format!("{base}/"), None, None).await;
+    assert_eq!(st, 302, "未认证 HTML 导航应 302 /login");
+    let (st, _, _) = send(
+        &c,
+        reqwest::Method::POST,
+        &format!("{base}/v1/chat/completions"),
+        None,
+        Some(json!({"model": "mock-model", "messages": []})),
+    )
+    .await;
+    assert_eq!(st, 401, "/v1 未认证必须 401");
+    let (st, _, _) = send(
+        &c,
+        reqwest::Method::GET,
+        &format!("{base}/admin/capabilities"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(st, 401, "/admin 未认证必须 401");
+
+    // 设置口与健康检查保持可达(首次使用流程不破)
+    let (st, _, _) = send(
+        &c,
+        reqwest::Method::GET,
+        &format!("{base}/login"),
+        None,
+        None,
+    )
+    .await;
+    // 测试台无 web_dir(login.html 不存在)时页面本体 404 属正常,可达性由豁免放行保证
+    assert!(
+        st == 200 || st == 404,
+        "/login 豁免放行,不应被墙拦成 401/302: {st}"
+    );
+    let (st, _, _) = send(
+        &c,
+        reqwest::Method::GET,
+        &format!("{base}/api/portal/state"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(st, 200);
+    let (st, _, _) = send(
+        &c,
+        reqwest::Method::GET,
+        &format!("{base}/health"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(st, 200);
+
+    // 持 Bearer 令牌:不受墙影响(本机 CLI/脚本场景)
+    let resp = c
+        .request(reqwest::Method::GET, format!("{base}/admin/capabilities"))
+        .header("Authorization", format!("Bearer {bearer}"))
+        .send()
+        .await
+        .expect("请求");
+    assert_eq!(resp.status().as_u16(), 200, "Bearer 令牌必须放行");
 }

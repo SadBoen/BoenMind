@@ -1665,9 +1665,19 @@ pub async fn mcp_approve(State(cfg): State<AdminConfig>, Json(body): Json<Value>
             None => a.clone(),
         })
         .collect();
+    let sha = match bm_providers::mcp::sha256_file(&file.display().to_string()) {
+        Ok(s) => s,
+        Err(e) => {
+            return admin_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("计算插件 SHA-256 失败: {e}"),
+            );
+        }
+    };
     let entry_body = json!({
         "name": want_name,
         "command": file.display().to_string(),
+        "sha256": sha,
         "args": args,
         "tool_timeout_ms": decl.pointer("/suggested_entry/tool_timeout_ms").cloned().unwrap_or(json!(30000)),
         "restart_limit": decl.pointer("/suggested_entry/restart_limit").cloned().unwrap_or(json!(3)),

@@ -1021,6 +1021,15 @@ pub fn load_mcp_setups(
         if env_err {
             continue;
         }
+        // 外部评审 2026-09-03 #2:完整性校验——条目带 sha256 时复验可执行
+        // 文件哈希,不符拒载(防安装后二进制被替换);无 sha256 的旧条目照常。
+        if let Some(expected) = item.get("sha256").and_then(|v| v.as_str()) {
+            let command = item["command"].as_str().unwrap_or_default();
+            if let Err(e) = verify_integrity(command, expected) {
+                eprintln!("[MCP] 配置项 {name} 完整性校验不符 (已跳过,疑似被替换): {e}");
+                continue;
+            }
+        }
         out.push(McpServerSetup {
             name: item["name"].as_str().unwrap_or_default().to_string(),
             transport,
@@ -1047,6 +1056,27 @@ pub fn load_mcp_setups(
         });
     }
     Ok(out)
+}
+
+/// 外部评审 2026-09-03 #2:插件文件 SHA-256(批准接入时记录)。
+pub fn sha256_file(path: &str) -> Result<String, String> {
+    use sha2::Digest;
+    let bytes = std::fs::read(path).map_err(|e| format!("读取 {path} 失败: {e}"))?;
+    let mut h = sha2::Sha256::new();
+    h.update(&bytes);
+    Ok(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// 装载/重载前复验:不符 = Err(调用方跳过该条目并告警)。
+pub fn verify_integrity(path: &str, expected: &str) -> Result<(), String> {
+    let actual = sha256_file(path)?;
+    if actual.eq_ignore_ascii_case(expected) {
+        Ok(())
+    } else {
+        Err(format!(
+            "SHA-256 不符(期望 {expected},实际 {actual};文件可能在安装后被替换)"
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -1146,5 +1176,73 @@ mod m9_review_env_tests {
                 "BOEN_* 变量(主密钥/开关)禁止下发: {k}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod integrity_tests {
+    use super::*;
+    use crate::secret::MemSecretStore;
+    use std::io::Write;
+
+    #[test]
+    fn sha256_matches_and_mismatch_is_detected() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let p = dir.path().join("plugin.exe");
+        std::fs::write(&p, b"binary-content").expect("写");
+        let path = p.display().to_string();
+        let good = sha256_file(&path).expect("哈希");
+        assert_eq!(good.len(), 64);
+        assert!(verify_integrity(&path, &good).is_ok());
+        let wrong = "0".repeat(64);
+        let err = verify_integrity(&path, &wrong).expect_err("不符必须报错");
+        assert!(err.contains("SHA-256 不符"));
+    }
+
+    #[test]
+    fn load_skips_entry_when_hash_mismatches() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let exe = dir.path().join("plugin.exe");
+        std::fs::write(&exe, b"payload").expect("写");
+        let cfg = dir.path().join("mcp.json");
+        let real = sha256_file(&exe.display().to_string()).expect("哈希");
+        let wrong = format!("{:0>64}", "ab");
+
+        // 篡改条目被跳过,未篡改条目保留
+        std::fs::write(
+            &cfg,
+            format!(
+                r#"[{{"name":"bad","transport":"stdio","command":"{cmd}","sha256":"{wrong}"}},
+                   {{"name":"good","transport":"stdio","command":"{cmd}","sha256":"{real}"}}]"#,
+                cmd = exe.display().to_string().replace('\\', "\\\\")
+            ),
+        )
+        .expect("写配置");
+        let store = MemSecretStore::new();
+        let setups = load_mcp_setups(&cfg, &store).expect("解析");
+        let names: Vec<&str> = setups.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["good"], "不符条目必须被跳过:{names:?}");
+
+        // 无 sha256 的旧条目照常兼容
+        std::fs::write(
+            &cfg,
+            format!(
+                r#"[{{"name":"legacy","transport":"stdio","command":"{cmd}"}}]"#,
+                cmd = exe.display().to_string().replace('\\', "\\\\")
+            ),
+        )
+        .expect("写配置");
+        let setups = load_mcp_setups(&cfg, &store).expect("解析");
+        assert_eq!(setups.len(), 1);
+        assert_eq!(setups[0].name, "legacy");
+    }
+
+    #[test]
+    fn sha256_file_missing_errors() {
+        assert!(
+            sha256_file("Z:/no/such/file.exe").is_err()
+                || sha256_file("/no/such/file.exe").is_err()
+        );
+        let _ = std::io::sink().write(&[]);
     }
 }

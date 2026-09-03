@@ -3,7 +3,7 @@
   "$id": "boenmind:mcp:mcp-server:v0.1",
   "x-frozen": "2026-08-30",
   "title": "MCP Server 接入配置 v0.1",
-  "description": "M7.2/M7.7:单个 MCP server 的安装声明。配置文件显式列出即视为用户安装批准(M7 规格 S6);env/bearer_token 一律 secret: 引用,明文不入配置(基线 4.6)。远程 MCP(SSE/HTTP) 传输层与访问令牌支持(Minor)。",
+  "description": "M7.2/M7.7:单个 MCP server 的安装声明。配置文件显式列出即视为用户安装批准(M7 规格 S6);env/bearer_token 一律 secret: 引用,明文不入配置(基线 4.6)。远程 MCP(SSE/HTTP) 传输层与访问令牌支持(Minor)。 sha256 为可选完整性校验字段(Minor 2026-09-03)。",
   "type": "object",
   "required": [
     "name",
@@ -17,7 +17,12 @@
       "description": "server 名,参与能力命名空间 mcp.<name>.<tool>;字符集与能力名段一致"
     },
     "transport": {
-      "enum": ["stdio", "sse", "http", "streamable-http"]
+      "enum": [
+        "stdio",
+        "sse",
+        "http",
+        "streamable-http"
+      ]
     },
     "url": {
       "type": "string",
@@ -62,6 +67,11 @@
         "explicit-config"
       ],
       "description": "M7 仅接受显式配置安装;运行期动态注册随 Wire 面增发(M8)"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "插件可执行/脚本文件的 SHA-256(十六进制)。批准接入时记录,装载/重载时复验,不符拒载(2026-09-03 Minor:外部评审完整性校验)"
     }
   }
 }

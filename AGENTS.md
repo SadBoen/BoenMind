@@ -7,7 +7,7 @@ BoenMind:个人生态的 AI Runtime / AI OS,当前为**阶段一(跨平台单软
 (Erlang/OTP、Kubernetes、VS Code,见 `architecture/deepwiki-validation.md`)。
 合同库冻结 v1.0(字段只增不破)。
 
-**当前状态(2026-09-03)**:v0.0.6 已发版;code-tools 随包官方插件交付(查/读/改工具面:search=rg 引擎内嵌直通、read 直通、write/edit 审批,allowed_roots 沙箱,单 exe 2.6MB;内核内置固化=仅 system.exec)。**下一步 = 待用户过目确认 ADR-0016 后推进 Skill v0.2 第二步 wasmtime 脚本执行面实现**。交付全史见 `milestones/HISTORY.md`;
+**当前状态(2026-09-03)**:v0.0.6 已发版;code-tools 随包官方插件交付(查/读/改工具面:search=rg 引擎内嵌直通、read 直通、write/edit 审批,allowed_roots 沙箱,单 exe 2.6MB;内核内置固化=仅 system.exec,ADR-0020);外部 LLM 架构评审 13 项复核后修复两 P1(门户墙公网收紧+插件 sha256 完整性校验,合同 Minor)。**下一步 = 待用户过目确认 ADR-0016 后推进 Skill v0.2 第二步 wasmtime 脚本执行面实现**。交付全史见 `milestones/HISTORY.md`;
 **欠账唯一入口 = `milestones/BACKLOG.md`**(已闭合条目自 2026-09-02 起移出台账)。
 
 ## 文件地图(规格分层)

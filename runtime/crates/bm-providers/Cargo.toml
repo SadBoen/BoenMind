@@ -18,12 +18,14 @@ aes-gcm = "0.11.1"
 tokio-util.workspace = true
 serde.workspace = true
 getrandom = "0.4.3"
+sha2 = "0.11.0"
 
 [features]
 glm = []
 
 [dev-dependencies]
 tokio = { workspace = true }
+tempfile = "3"
 
 [lints]
 workspace = true

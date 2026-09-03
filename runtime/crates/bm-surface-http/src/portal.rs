@@ -41,7 +41,7 @@ impl PortalAuth {
         })
     }
 
-    fn configured(&self) -> bool {
+    pub fn configured(&self) -> bool {
         self.password_hash.lock().expect("锁未中毒").is_some()
     }
 
@@ -117,12 +117,19 @@ pub async fn require_portal(
     next: Next,
 ) -> Response {
     let path = req.uri().path().to_string();
-    let open = !state.portal.configured()
-        || path == "/health"
+    let exempt = path == "/health"
         || path == "/login"
         || path == "/api/portal/state"
         || path == "/api/portal/login"
         || path == "/api/portal/bootstrap";
+    // 外部评审 2026-09-03 #9:未配置密码时,公网绑定不再全站放行——仅
+    // 健康检查与门户设置口可达(/v1、/admin、静态一律 401/302);回环
+    // 绑定(本机开发)维持零影响放行;持 Bearer 令牌者不受影响。
+    let open = if state.portal.configured() {
+        exempt
+    } else {
+        !state.public_bind || exempt
+    };
     if open || authed(&state, req.headers()) {
         return next.run(req).await;
     }

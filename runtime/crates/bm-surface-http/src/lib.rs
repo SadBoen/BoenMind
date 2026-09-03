@@ -46,6 +46,8 @@ pub struct AppState {
     pub v1_sessions: Arc<Mutex<HashMap<BmId, BmId>>>,
     /// 门户登录墙(2026-09-03 用户令;未设密码=不启用)。
     pub portal: Arc<portal::PortalAuth>,
+    /// 绑定是否为非回环(公网面):门户未配置时仅放行健康/设置口(评审 #9)。
+    pub public_bind: bool,
     /// Web 静态目录(/login 登录页本体取此目录下 login.html)。
     pub web_dir: Option<std::path::PathBuf>,
 }
@@ -63,6 +65,7 @@ pub fn router(
     default_model: Arc<String>,
     admin: Option<webadmin::AdminConfig>,
     model_routes: Option<Arc<bm_providers::routing::RoutingConnector>>,
+    public_bind: bool,
 ) -> Router {
     let data_dir = admin.as_ref().map(|a| a.data_dir.clone());
     let portal = portal::PortalAuth::load(
@@ -81,7 +84,13 @@ pub fn router(
         v1_sessions: Arc::new(Mutex::new(HashMap::new())),
         portal,
         web_dir: web_dir.clone(),
+        public_bind,
     };
+    if public_bind && !state.portal.configured() {
+        eprintln!(
+            "[安全] 监听非回环地址且门户密码未配置:公网请求仅放行 /health 与门户设置口,/v1、/admin 与静态页一律拒绝;请尽快配置门户密码(评审 2026-09-03 #9)"
+        );
+    }
     let app = Router::new()
         .route("/rpc/{method}", post(rpc::rpc_endpoint))
         .route("/events/{session_id}", get(sse::events_sse))
@@ -91,7 +100,8 @@ pub fn router(
             auth::require_bearer,
         ))
         .route("/health", get(rpc::health))
-        // W1(ADR-0014):OpenAI 兼容插座(公开挂载 = 已登记欠账,公网前补鉴权)
+        // W1(ADR-0014):OpenAI 兼容插座(原公开挂载欠账由门户墙收紧闭合,
+        // 评审 2026-09-03 #9:未配置密码+公网绑定 → 此路由一并 401)
         .route(
             "/v1/chat/completions",
             post(openai_compat::chat_completions),

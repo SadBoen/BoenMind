@@ -284,6 +284,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .clone()
             .unwrap_or_else(|| "zhipu.glm-4-flash".to_string()),
     );
+    // 绑定面判定:非回环 = 公网面(评审 2026-09-03 #9;反代同机回环 Scenario
+    // 需操作者自行配置门户密码,启动告警会持续提示)
+    let bind_host = bind
+        .rsplit_once(':')
+        .map(|(h, _)| h)
+        .unwrap_or(bind.as_str());
+    let public_bind = !matches!(bind_host, "127.0.0.1" | "localhost" | "::1" | "[::1]" | "");
     let app = bm_surface_http::router(
         handle.clone(),
         Arc::new(token.clone()),
@@ -293,6 +300,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         default_model.clone(),
         Some(admin),
         Some(model_routes),
+        public_bind,
     );
     if let Some(w) = &web_dir {
         println!("Web Surface 目录 {w:?}(GET / 托管静态界面)");
