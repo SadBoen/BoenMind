@@ -440,7 +440,20 @@ pub(crate) fn spawn_turn(
                                 // 轮询至审批裁决+执行终态(上限 300s)。
                                 let mut tool_result = String::from("工具执行无应答");
                                 let wait_secs = if approval_id.is_some() { 300 } else { 60 };
-                                if let Some(tool_op) = tool_op {
+                                // 直通修复(2026-09-03 VPS 实测 P1):同步收据
+                                // state=succeeded 且 result 内联时立即回喂——
+                                // 同步结果从不写入 op_results(仅异步回单/审批
+                                // 重放两路写入),此前一律进 GetOpResult 轮询=
+                                // 直通工具必现 60s「工具执行超时」。审批类与
+                                // MCP 异步(state=running)仍走轮询不变。
+                                let inline_sync = matches!(&call_resp, Ok(Ok(v))
+                                    if v["state"].as_str() == Some("succeeded")
+                                        && !v["result"].is_null());
+                                if inline_sync {
+                                    if let Ok(Ok(receipt_value)) = call_resp {
+                                        tool_result = receipt_value["result"].to_string();
+                                    }
+                                } else if let Some(tool_op) = tool_op {
                                     let deadline = std::time::Instant::now()
                                         + std::time::Duration::from_secs(wait_secs);
                                     loop {

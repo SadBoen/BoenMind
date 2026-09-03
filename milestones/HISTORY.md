@@ -57,6 +57,8 @@
 
 | 官方随包 MCP 插件直达扫描(修复) | 2026-09-03 | (见 git) | bm-surface-http 测试全绿 + clippy 零警告 + contracts 绿 | 根因(VPS 实测触发):release.yml 把双插件打进包内 plugins/,在线升级也只把它合并到 exe 同级,而扫描/批准只认数据目录 mcp/——「随包」对在线升级用户不可见(VPS 上 exe 同级躺着插件,MCP 页却报无可识别插件)。修复=AdminConfig.bundled_plugins_dir(=exe 同级 plugins/),扫描与批准双目录、同名候选数据目录优先、候选带 source 字段(前端「官方随包」徽标);install() 覆盖运行中插件先让位 .old(防 Linux ETXTBSY 升级失败);INSTALL/README 免手动拷贝口径;ADR-0017「随包+扫描→批准」模型不变 |
 
+| VPS 实测 P1×2 修复:直通工具对话闭环 + 模型调用硬顶 | 2026-09-03 | (见 git) | 全仓测试绿(含新增对话工具轮回合级回归,0.02s)+clippy 零警告+contracts 绿 | ①turn.rs:同步收据 state=succeeded 且 result 内联时立即回喂 Tool 消息——同步直通结果从不写入 op_results(仅异步回单/审批重放入表),此前一律 GetOpResult 轮询=直通工具必现 60s 超时;新增 bm-testkit/tests/chat_direct_tool.rs(全仓首个 ToolCalls→回喂→终稿回合级测试)②DEFAULT_TURN_TIMEOUT_SECS 30→120 并开放 BOEN_TURN_TIMEOUT_SECS 覆盖(两服务端二进制接线;实测 mimo 常规调用 12~29s 必撞 30s 顶)③同轮把 VPS 的 web-multisearch 远程装好并批准(2 工具在役,/admin 面**无鉴权公网裸奔**=重大隐患已口头警示用户,代码侧鉴权与服务器侧改绑回环待裁决) |
+
 ## W 序列验收惯例
 
 W 序列不另立 review 文件:验收门与实测证据并入各规格(W2 §7、W3 §6;W4 待回填,见 BACKLOG)。截图目录:shots-w2/、shots-w3/、shots-w5-context/。

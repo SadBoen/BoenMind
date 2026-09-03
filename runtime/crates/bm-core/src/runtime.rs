@@ -36,8 +36,20 @@ use std::time::Instant;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
-/// 回合默认超时(GT-A3:deadline = 发起 + 30s)。
-pub const DEFAULT_TURN_TIMEOUT_SECS: i64 = 30;
+/// 回合默认超时(每次模型调用的 deadline,秒)。GT-A3 原 30s——2026-09-03
+/// VPS 实测:mimo 等真实网关常规调用 12~29s,30s 必现撞顶整回合失败,
+/// 上调至 120;可用 BOEN_TURN_TIMEOUT_SECS(>0 整数秒)覆盖,两服务端
+/// 二进制启动经 turn_timeout_from_env() 装配。
+pub const DEFAULT_TURN_TIMEOUT_SECS: i64 = 120;
+
+/// BOEN_TURN_TIMEOUT_SECS 覆盖(非法/缺省回落 DEFAULT_TURN_TIMEOUT_SECS)。
+pub fn turn_timeout_from_env() -> i64 {
+    std::env::var("BOEN_TURN_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok())
+        .filter(|&s| s > 0)
+        .unwrap_or(DEFAULT_TURN_TIMEOUT_SECS)
+}
 
 /// 模型 → 凭据引用的默认映射(合同字符集内;实现可注入自己的映射)。
 pub fn default_secret_ref(model_id: &str) -> String {

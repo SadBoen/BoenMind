@@ -6,7 +6,7 @@ use bm_contract::wire::{AgentSpec, GetOperationParams, SessionCreateParams};
 use bm_core::CoreResult;
 use bm_core::clock::SystemClock;
 use bm_core::ports::ModelConnector;
-use bm_core::runtime::{DEFAULT_TURN_TIMEOUT_SECS, RuntimeConfig, RuntimeHandle};
+use bm_core::runtime::{RuntimeConfig, RuntimeHandle, turn_timeout_from_env};
 use bm_providers::mock_model::{MockConnector, Step};
 use bm_providers::secret::MemSecretStore;
 use std::sync::Arc;
@@ -39,7 +39,7 @@ async fn main() -> CoreResult<()> {
         secret_store: secrets,
         id_gen: Arc::new(SeqIdGen::new()),
         clock: Arc::new(SystemClock),
-        turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
+        turn_timeout_secs: turn_timeout_from_env(),
         max_attempts: None,
     })
     .await;

@@ -10,7 +10,7 @@
 use bm_contract::ids::SeqIdGen;
 use bm_core::clock::SystemClock;
 use bm_core::ports::ModelConnector;
-use bm_core::runtime::{DEFAULT_TURN_TIMEOUT_SECS, RuntimeConfig, RuntimeHandle};
+use bm_core::runtime::{RuntimeConfig, RuntimeHandle, turn_timeout_from_env};
 use bm_persist::PersistStore;
 use bm_providers::mock_model::{MockConnector, Step};
 use bm_providers::secret::MemSecretStore;
@@ -213,7 +213,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         secret_store: secrets.clone(),
         id_gen,
         clock: Arc::new(SystemClock),
-        turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
+        turn_timeout_secs: turn_timeout_from_env(),
         max_attempts: None,
     })
     .await;
