@@ -53,6 +53,7 @@
 | v0.0.3 发版:Linux 服务器单平台 | 2026-09-03 | `v0.0.3` | 插件 27+1 全绿 | 用户明示发版;release.yml 收敛为单 Linux x86_64 作业(去掉 Windows 矩阵,PLAYBOOK 口径同步),包内增补 apps/ 真实 App(wiki/market/music);workspace 版本 0.0.2→0.0.3(顺带修 getrandom 0→0.4 fill 缺失);发布前修复插件集成测试环境敏感断言(config_hot_reload 热重载证据改 mock B 命中标志——ddgs 外网源恢复可用后与 mock 在 RRF 同分,首位断言属硬币正反面);Release 资产:boenmind-0.0.3-linux-x86_64.tar.gz+SHA256SUMS |
 | context-mode Rust MCP 官方插件 | 2026-09-03 | (见 git) | 插件 10 全绿 + runtime workspace 全绿 + contracts 全绿 | 新增独立 `plugins/mcp/context-mode` 单文件 Rust MCP：SQLite bundled/FTS5/BM25 索引、会话追加/快照/恢复、受限宿主执行；实现 `--self-describe` 与 MCP 2024-11-05 stdio，接入 CI 与 Linux 发布包；默认不启用执行面，随包提供但仍须扫描→批准→reload；上游 hooks/skills/网络抓取与真正 WASM/OS 沙箱列入 BACKLOG，未宣称等价迁移 |
 | W8 常规设置+工作区会话绑定+空气泡修复 | 2026-09-03 | (见 git) | 304 Rust 全绿+9 冒烟全绿+contracts 绿+clippy 零警告 | **ADR-0018**:设置页新增「常规」(Python/Node 真实探针+工作区注册表 CRUD,default 播种/拒删,列表固定五行滚动);composer 🏠 占位升级为工作区上拉选择(两行条目,样张排版),选择随每条消息发送、按会话绑定;合同 Minor 只增 AgentSpec.workspace_id + SendInputParams.workspace_override,核心校验注册表+回合 system prompt 注入 `[工作目录]`;真模型精确回答绑定路径;空气泡修复=.text:empty 门控(首 token 前无空框,tag 保留);管理面 REST 沿 W2 口径不入合同;截图 shots-w8/ |
+| v0.0.4 发版:双官方 MCP 插件随包 | 2026-09-03 | `v0.0.4` | 插件测试门禁入工作流 | 用户明示发版;**搜索(web-multisearch)与上下文(context-mode)两个官方 MCP 插件随主程序同包发布**(release.yml 打包 plugins/+README+upstream-notices,发版前两插件 cargo test 门禁);包内含 W8 全部交付(设置「常规」+工作区会话绑定+空气泡修复);设置导航「MCP 管理」改名「MCP」;workspace 版本 0.0.3→0.0.4;同轮 VPS 实测四发现(直通工具链路断/30s 硬顶/失败回合卡死/模型自编结果)登记 BACKLOG 待下批修复,不阻塞本发版(MCP 工具走异步路径不受断点影响) |
 
 ## W 序列验收惯例
 
