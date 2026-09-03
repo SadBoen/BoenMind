@@ -13,6 +13,7 @@
 | 失败回合后 agent 卡死(实测 P2) | 同轮实测:回合失败后 agent 停留 Failed,同会话再发消息必 500「agent 不在可接单状态」,UI 无恢复路径只能新建对话。修向=失败落定回 Idle 或 send_input 对 Failed 自愈 | OPEN(待排期) |
 | 模型自编工具结果(mimo 质量备忘) | 同轮实测:问 counter.bump 时模型未发起调用直接编造「bumped successfully」(/admin/context 证实 0 工具轮);对话区无 [调用] 标记即可辨真伪,强提示词可压不断根;随模型侧观察,不立项 | OPEN(记录在案) |
 | Skill v0.2 第二步(scripts 执行面) | 第一步(合同 Minor: version + references)与 ADR-0016(Broker 七步管线覆盖脚本设计)已闭合交付;**第二步**:等待用户审阅确认 ADR-0016 后接入 wasmtime 执行引擎写代码 | OPEN(待 ADR-0016 确认后动工) |
+| 官方随包插件 VPS 端到端验证 | 随包不可见根因已修复(扫描/批准双目录:数据目录 mcp/ + exe 同级 plugins/,同名数据目录优先);但 VPS 现役 v0.0.4 仍无插件——待下次发版→VPS 在线升级→MCP 页扫描应见 web-multisearch(source=官方随包)→批准→重载→真模型联网问答实测,闭合后移出 | OPEN(随下次发版) |
 | W8 遗留:能力执行 cwd 注入 | ADR-0018 只做到回合 system prompt 注入;MCP/context-mode 等需要 cwd 的能力执行面尚未消费会话绑定工作区(该插件默认也未启用);与 Skill v0.2 执行线同批评估,继续经 Broker 管线、不新增特权通道 | OPEN(依 ADR-0016/0017 排期) |
 | W8 遗留:workspace_id 跨重启持久 | 现为进程内会话作用域(ADR-0018 决策 3:Web 会话指针重启即失效,持久化无用户可见收益);待会话列表真数据(W 后续)一并评估是否随会话恢复 | OPEN |
 

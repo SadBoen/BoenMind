@@ -24,13 +24,17 @@
     BOEN_SECRET_MASTER_KEY="<同上>" BOEN_MODEL_STREAM=1 \
       ./boenmind-server --web-dir webapp/dist --mcp-config ~/.local/share/boenmind/mcp.json
 
-## 4. 安装官方 MCP 插件
+## 4. 官方 MCP 插件(已随包,免手动拷贝)
 
-    # 聚合搜索（可选）
+官方插件就在安装目录的 `plugins/` 里(聚合搜索 `web-multisearch`、上下文模式
+`context-mode`),**无需手动拷贝**:解压后首次启动(以及后续在线升级)都能被
+插件扫描直接发现。
+
+    网页 → 设置 → MCP → 「扫描插件」→ 「批准接入」→ 「重载 MCP」(免重启)
+
+如偏好把插件收进数据目录统一管理,拷贝亦可(同名候选以数据目录优先):
+
     cp plugins/web-multisearch ~/.local/share/boenmind/mcp/
-    # 上下文模式（可选，默认不启用）
-    cp plugins/context-mode ~/.local/share/boenmind/mcp/
-    # 网页 → 设置 → 插件 → 「扫描插件」→ 「批准接入」→ reload（免重启）
 
 context-mode 提供 `ctx_index`、`ctx_search`、会话快照/恢复和受限执行工具。索引/执行只能访问它配置的 `allowed_roots`；执行类工具仍由 Broker 审批，缺少用户本机运行时则返回 `runtime_unavailable`。
 

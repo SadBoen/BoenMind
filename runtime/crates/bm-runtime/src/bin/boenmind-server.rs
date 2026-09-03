@@ -232,6 +232,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         model_routes: Some(model_routes.clone()),
         shutdown: Some(shutdown.clone()),
         web_dir: web_dir.clone(),
+        // 官方随包 MCP 插件(exe 同级 plugins/,v0.0.4 起随包发布;升级换装
+        // 会把包内 plugins/ 合并到这里)——扫描/批准与数据目录 mcp/ 同权,
+        // 修复「随包插件对在线升级用户不可见」(2026-09-03 VPS 实测触发)
+        bundled_plugins_dir: std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.join("plugins"))),
     };
     bm_surface_http::webadmin::rebuild_routes(&admin);
 

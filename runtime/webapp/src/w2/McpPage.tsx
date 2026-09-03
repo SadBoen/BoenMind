@@ -48,12 +48,14 @@ type ConfigTarget = {
 type McpCandidatesResult = {
   ok: boolean;
   dir: string;
+  bundled_dir?: string | null;
   candidates: {
     file: string;
     name: string;
     title: string;
     description: string;
     registered: boolean;
+    source?: string; // data=数据目录 mcp/ 手动放置;bundled=官方随包 plugins/
   }[];
   note: string;
 };
@@ -415,7 +417,11 @@ export function McpPage({
             <DialogHeader>
               <DialogTitle>插件目录扫描</DialogTitle>
               <DialogDescription>
-                扫描目录:{scanResult.dir}。把插件可执行文件放进来,点「扫描插件」发现候选;批准后才接入。
+                扫描目录:{scanResult.dir}
+                {scanResult.bundled_dir
+                  ? `;官方随包插件目录:${scanResult.bundled_dir}(随包插件免手动拷贝)`
+                  : ""}
+                。把插件可执行文件放进来,点「扫描插件」发现候选;批准后才接入。
               </DialogDescription>
             </DialogHeader>
             {scanResult.candidates.length ? (
@@ -428,6 +434,9 @@ export function McpPage({
                     <div className="min-w-0">
                       <div className="text-sm font-medium">
                         {c.title || c.name}{" "}
+                        {c.source === "bundled" ? (
+                          <span className="text-muted-foreground text-xs">(官方随包)</span>
+                        ) : null}
                         {c.registered ? (
                           <span className="text-muted-foreground text-xs">(已登记)</span>
                         ) : null}

@@ -419,6 +419,17 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<()
         if from.is_dir() {
             copy_dir_recursive(&from, &to)?;
         } else {
+            if to.exists() {
+                // 运行中的已批准插件二进制在 Linux 上不可直接覆盖(ETXTBSY):
+                // 先让位为 .old(rename 对运行中文件总允许),让位失败再试删除;
+                // 官方随包插件批准后子进程正从 exe 同级 plugins/ 运行,升级
+                // 覆盖必须走让位路径
+                let aside = to.with_extension("old");
+                let _ = std::fs::remove_file(&aside);
+                if std::fs::rename(&to, &aside).is_err() {
+                    let _ = std::fs::remove_file(&to);
+                }
+            }
             std::fs::copy(&from, &to).map_err(|e| format!("copy {}: {e}", from.display()))?;
         }
     }

@@ -29,10 +29,9 @@ echo '[]' > ~/.local/share/boenmind/mcp.json
 BOEN_SECRET_MASTER_KEY="<至少32字符随机串>" BOEN_MODEL_STREAM=1 \
   ./boenmind-server --web-dir webapp/dist --mcp-config ~/.local/share/boenmind/mcp.json
 
-# 4. 安装官方插件（均为可选）
-cp plugins/web-multisearch ~/.local/share/boenmind/mcp/
-cp plugins/context-mode ~/.local/share/boenmind/mcp/
-# 然后网页 → 设置 → 插件 → 「扫描插件」→ 「批准接入」→ reload（免重启）
+# 4. 官方插件已随包（plugins/ 目录,均为可选,免手动拷贝）
+# 网页 → 设置 → MCP → 「扫描插件」→ 「批准接入」→ 「重载 MCP」（免重启）
+# 如偏好收进数据目录:cp plugins/web-multisearch ~/.local/share/boenmind/mcp/
 ```
 
 打开 `http://127.0.0.1:7531/`;远程 VPS 建议 SSH 隧道:`ssh -L 7531:127.0.0.1:7531 <你的VPS>`。

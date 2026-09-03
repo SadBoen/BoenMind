@@ -22,6 +22,15 @@ async fn spawn_app(
     ws: std::path::PathBuf,
     mcp: Option<std::path::PathBuf>,
 ) -> (String, tempfile::TempDir) {
+    spawn_app_with(ws, mcp, None).await
+}
+
+/// 同上,可注入官方随包插件目录(bundled_plugins_dir,2026-09-03 随包修复)。
+async fn spawn_app_with(
+    ws: std::path::PathBuf,
+    mcp: Option<std::path::PathBuf>,
+    bundled: Option<std::path::PathBuf>,
+) -> (String, tempfile::TempDir) {
     let dir = tempfile::tempdir().expect("临时目录");
     let t = token::load_or_create(dir.path()).expect("令牌");
     let store: Arc<PersistStore> = Arc::new(PersistStore::open(dir.path()).expect("打开"));
@@ -57,6 +66,7 @@ async fn spawn_app(
         model_routes: None,
         shutdown: None,
         web_dir: None,
+        bundled_plugins_dir: bundled,
     };
     let app = bm_surface_http::router(
         handle,
@@ -577,6 +587,89 @@ async fn t_w2_mcp_scan_candidates_and_approve() {
 
     // 目录外的同声明文件不可被 approve(路径限定在插件目录)
     let _ = candidate; // 候选路径仅用于落盘条目;approve 只在插件目录内搜索
+}
+
+// 写一个 --self-describe 假候选(平台门控;声明用纯 ASCII,理由同上)
+fn write_fake_candidate(dir: &std::path::Path, name: &str) {
+    let decl = format!(
+        r#"{{"name":"{name}","title":"{name}","description":"candidate","suggested_entry":{{"transport":"stdio","args":["--config","{{config_file}}"]}}}}"#
+    );
+    #[cfg(windows)]
+    {
+        let p = dir.join(format!("{name}.cmd"));
+        std::fs::write(&p, format!("@echo {decl}")).unwrap();
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let p = dir.join(format!("{name}.sh"));
+        std::fs::write(&p, format!("#!/bin/sh\necho '{decl}'\n")).unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn t_w2_mcp_bundled_plugins_scan_approve_and_dedupe() {
+    // 官方随包目录(exe 同级 plugins/)候选可被扫描发现、可批准落盘;
+    // 同名候选以数据目录 mcp/ 优先(2026-09-03「随包不可见」修复)。
+    let ws = tempfile::tempdir().unwrap();
+    let mcfile = tempfile::tempdir().unwrap();
+    let mcp_path = mcfile.path().join("mcp.json");
+    let bundled = tempfile::tempdir().unwrap();
+    write_fake_candidate(bundled.path(), "bundled_plugin");
+    let (base, _dir) = spawn_app_with(
+        ws.path().to_path_buf(),
+        Some(mcp_path.clone()),
+        Some(bundled.path().to_path_buf()),
+    )
+    .await;
+
+    // 扫描:随包候选在场且 source=bundled;响应带 bundled_dir
+    let (st, r) = send_json(
+        reqwest::Method::POST,
+        &format!("{base}/admin/mcp/candidates"),
+        json!({}),
+    )
+    .await;
+    assert_eq!(st, 200, "{r}");
+    assert_eq!(r["candidates"].as_array().unwrap().len(), 1, "{r}");
+    assert_eq!(r["candidates"][0]["name"], json!("bundled_plugin"));
+    assert_eq!(r["candidates"][0]["source"], json!("bundled"));
+    assert!(r["bundled_dir"].as_str().is_some(), "{r}");
+
+    // 批准:command 落在随包目录(候选实际路径),条目照常落盘
+    let (st, r) = send_json(
+        reqwest::Method::POST,
+        &format!("{base}/admin/mcp/approve"),
+        json!({"name": "bundled_plugin"}),
+    )
+    .await;
+    assert_eq!(st, 200, "{r}");
+    let cmd = r["entry"]["command"].as_str().unwrap();
+    assert!(cmd.contains("bundled"), "command 应指向随包目录: {cmd}");
+    assert!(
+        std::fs::read_to_string(&mcp_path)
+            .unwrap()
+            .contains("bundled_plugin")
+    );
+
+    // 同名去重:数据目录再放同名候选,扫描只出一条且 source=data
+    let data_dir = mcfile.path().join("mcp");
+    std::fs::create_dir_all(&data_dir).unwrap();
+    write_fake_candidate(&data_dir, "bundled_plugin");
+    let (_, r) = send_json(
+        reqwest::Method::POST,
+        &format!("{base}/admin/mcp/candidates"),
+        json!({}),
+    )
+    .await;
+    let cands = r["candidates"].as_array().unwrap();
+    let rows: Vec<&Value> = cands
+        .iter()
+        .filter(|c| c["name"] == json!("bundled_plugin"))
+        .collect();
+    assert_eq!(rows.len(), 1, "同名候选必须去重: {r}");
+    assert_eq!(rows[0]["source"], json!("data"));
 }
 
 // ---- 运行日志查看(GET /admin/logs,2026-09-02 用户要求接入)----

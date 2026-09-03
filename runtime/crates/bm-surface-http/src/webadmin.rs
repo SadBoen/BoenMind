@@ -56,6 +56,10 @@ pub struct AdminConfig {
     pub shutdown: Option<Arc<tokio::sync::Notify>>,
     /// W7 在线升级:Web 静态目录(--web-dir,升级时覆盖 dist);None = 未挂载。
     pub web_dir: Option<PathBuf>,
+    /// 官方随包 MCP 插件目录(exe 同级 plugins/,v0.0.4 起随包发布)。扫描与
+    /// 批准同数据目录 mcp/ 对待,同名候选以数据目录优先;None = 测试态或
+    /// 无法定位(开发态 cargo run 无此目录,静默跳过)。
+    pub bundled_plugins_dir: Option<PathBuf>,
 }
 
 /// 文件预览大小上限(512KB;个人单机预览面,防整读大文件)。
@@ -1423,10 +1427,14 @@ pub(crate) fn admin_error(status: StatusCode, message: impl Into<String>) -> Res
 
 // ---- handler:MCP 插件目录扫描与批准接入(两段式,2026-09-02 用户批准)----
 //
-// 目录约定:MCP 插件(可执行文件)放 `<mcp.json 同级>/mcp/`。扫描只认该
-// 目录;候选以 `--self-describe` 参数打印声明 JSON 识别(识别过程会运行
-// 候选文件——用户手动放入即视为安装意图,正式激活仍以「批准接入」落盘
-// mcp.json 为准,显式批准=安装,ADR-0005/0006)。
+// 目录约定:MCP 插件(可执行文件)放 `<mcp.json 同级>/mcp/`;官方随包插件
+// 位于安装目录 `plugins/`(exe 同级,v0.0.4 起随包发布;升级链路把它装到
+// exe 同级而非数据目录——2026-09-03 修复:扫描/批准同样认该目录,否则
+// 「随包」对在线升级用户不可见)。两处候选均以 `--self-describe` 参数打印
+// 声明 JSON 识别(识别过程会运行候选文件——数据目录是用户手动放入=安装
+// 意图,随包目录随官方主程序一同安装=同等安装意图;正式激活仍以「批准
+// 接入」落盘 mcp.json 为准,显式批准=安装,ADR-0005/0006/0017)。
+// 同名候选以数据目录(用户手动放置)优先。
 
 fn mcp_plugins_dir(path: &Path) -> PathBuf {
     path.parent()
@@ -1544,13 +1552,46 @@ pub async fn mcp_candidates(State(cfg): State<AdminConfig>) -> Response {
             "title": decl.get("title").cloned().unwrap_or(json!("")),
             "description": decl.get("description").cloned().unwrap_or(json!("")),
             "registered": registered.iter().any(|r| r == &name),
+            "source": "data",
         }));
+    }
+    // 官方随包目录(exe 同级 plugins/):随包插件免手动拷贝即可被发现;
+    // 同名候选以数据目录优先(用户手动放置覆盖官方包)。
+    if let Some(bundled) = &cfg.bundled_plugins_dir
+        && let Ok(entries) = std::fs::read_dir(bundled)
+    {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if !p.is_file() || !candidate_is_executable(&p) {
+                continue;
+            }
+            let Some(decl) = self_describe(&p).await else {
+                continue;
+            };
+            let name = decl["name"].as_str().unwrap_or_default().to_string();
+            if name.is_empty() || candidates.iter().any(|c| c["name"] == json!(name)) {
+                continue;
+            }
+            candidates.push(json!({
+                "file": p.display().to_string(),
+                "name": name,
+                "title": decl.get("title").cloned().unwrap_or(json!("")),
+                "description": decl.get("description").cloned().unwrap_or(json!("")),
+                "registered": registered.iter().any(|r| r == &name),
+                "source": "bundled",
+            }));
+        }
     }
     Json(json!({
         "ok": true,
         "dir": dir.display().to_string(),
+        "bundled_dir": cfg
+            .bundled_plugins_dir
+            .as_ref()
+            .map(|d| json!(d.display().to_string()))
+            .unwrap_or(Value::Null),
         "candidates": candidates,
-        "note": "扫描会以 --self-describe 运行目录内可执行文件;批准后才落盘 mcp.json",
+        "note": "扫描会以 --self-describe 运行候选目录内可执行文件(数据目录 mcp/ 与官方随包 plugins/);批准后才落盘 mcp.json",
     }))
     .into_response()
 }
@@ -1569,28 +1610,38 @@ pub async fn mcp_approve(State(cfg): State<AdminConfig>, Json(body): Json<Value>
     if want_name.is_empty() {
         return admin_error(StatusCode::BAD_REQUEST, "缺少 name");
     }
-    // 在插件目录内找到声明 name 匹配的候选(目录限定,防路径逃逸)
+    // 在候选目录(数据目录 mcp/ 优先,官方随包 plugins/ 次之)内找到声明
+    // name 匹配的候选(目录限定,防路径逃逸)
     let mut target: Option<PathBuf> = None;
     let mut decl: Option<Value> = None;
-    if let Ok(entries) = std::fs::read_dir(&dir) {
-        for entry in entries.flatten() {
-            let p = entry.path();
-            if !p.is_file() || !candidate_is_executable(&p) {
-                continue;
+    let mut search_dirs: Vec<PathBuf> = vec![dir];
+    if let Some(bundled) = &cfg.bundled_plugins_dir {
+        search_dirs.push(bundled.clone());
+    }
+    for search_dir in &search_dirs {
+        if let Ok(entries) = std::fs::read_dir(search_dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if !p.is_file() || !candidate_is_executable(&p) {
+                    continue;
+                }
+                if let Some(d) = self_describe(&p).await
+                    && d["name"].as_str() == Some(want_name.as_str())
+                {
+                    target = Some(p);
+                    decl = Some(d);
+                    break;
+                }
             }
-            if let Some(d) = self_describe(&p).await
-                && d["name"].as_str() == Some(want_name.as_str())
-            {
-                target = Some(p);
-                decl = Some(d);
-                break;
-            }
+        }
+        if target.is_some() {
+            break;
         }
     }
     let (Some(file), Some(decl)) = (target, decl) else {
         return admin_error(
             StatusCode::NOT_FOUND,
-            format!("插件目录中没有自声明 name={want_name} 的候选"),
+            format!("候选目录中没有自声明 name={want_name} 的候选"),
         );
     };
 

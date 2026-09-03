@@ -55,6 +55,8 @@
 | W8 常规设置+工作区会话绑定+空气泡修复 | 2026-09-03 | (见 git) | 304 Rust 全绿+9 冒烟全绿+contracts 绿+clippy 零警告 | **ADR-0018**:设置页新增「常规」(Python/Node 真实探针+工作区注册表 CRUD,default 播种/拒删,列表固定五行滚动);composer 🏠 占位升级为工作区上拉选择(两行条目,样张排版),选择随每条消息发送、按会话绑定;合同 Minor 只增 AgentSpec.workspace_id + SendInputParams.workspace_override,核心校验注册表+回合 system prompt 注入 `[工作目录]`;真模型精确回答绑定路径;空气泡修复=.text:empty 门控(首 token 前无空框,tag 保留);管理面 REST 沿 W2 口径不入合同;截图 shots-w8/ |
 | v0.0.4 发版:双官方 MCP 插件随包 | 2026-09-03 | `v0.0.4` | 插件测试门禁入工作流 | 用户明示发版;**搜索(web-multisearch)与上下文(context-mode)两个官方 MCP 插件随主程序同包发布**(release.yml 打包 plugins/+README+upstream-notices,发版前两插件 cargo test 门禁);包内含 W8 全部交付(设置「常规」+工作区会话绑定+空气泡修复);设置导航「MCP 管理」改名「MCP」;workspace 版本 0.0.3→0.0.4;同轮 VPS 实测四发现(直通工具链路断/30s 硬顶/失败回合卡死/模型自编结果)登记 BACKLOG 待下批修复,不阻塞本发版(MCP 工具走异步路径不受断点影响) |
 
+| 官方随包 MCP 插件直达扫描(修复) | 2026-09-03 | (见 git) | bm-surface-http 测试全绿 + clippy 零警告 + contracts 绿 | 根因(VPS 实测触发):release.yml 把双插件打进包内 plugins/,在线升级也只把它合并到 exe 同级,而扫描/批准只认数据目录 mcp/——「随包」对在线升级用户不可见(VPS 上 exe 同级躺着插件,MCP 页却报无可识别插件)。修复=AdminConfig.bundled_plugins_dir(=exe 同级 plugins/),扫描与批准双目录、同名候选数据目录优先、候选带 source 字段(前端「官方随包」徽标);install() 覆盖运行中插件先让位 .old(防 Linux ETXTBSY 升级失败);INSTALL/README 免手动拷贝口径;ADR-0017「随包+扫描→批准」模型不变 |
+
 ## W 序列验收惯例
 
 W 序列不另立 review 文件:验收门与实测证据并入各规格(W2 §7、W3 §6;W4 待回填,见 BACKLOG)。截图目录:shots-w2/、shots-w3/、shots-w5-context/。
