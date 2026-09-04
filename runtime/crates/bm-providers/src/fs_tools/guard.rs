@@ -148,18 +148,15 @@ mod tests {
     fn inside_root_resolves_and_normalizes() {
         let dir = tempfile::tempdir().expect("tmp");
         let r = roots_of(&[dir.path()]);
+        // CI 的 tempdir 与 canonicalize 后不同形(macOS /var→/private/var 符号
+        // 链接、Windows 短名),前缀断言必须对生效根(已 canonicalize)做。
+        let root = r.roots()[0].to_path_buf();
         let p = r.resolve("sub/file.txt").expect("相对路径挂第一根");
-        assert!(p.starts_with(dir.path()));
+        assert!(p.starts_with(&root));
         assert!(p.ends_with("sub/file.txt"));
 
         let p2 = r
-            .resolve(
-                &(dir
-                    .path()
-                    .join("./sub/../sub/file.txt")
-                    .display()
-                    .to_string()),
-            )
+            .resolve(&(root.join("./sub/../sub/file.txt").display().to_string()))
             .expect("绝对路径 + 词法点");
         assert_eq!(p, p2);
     }
