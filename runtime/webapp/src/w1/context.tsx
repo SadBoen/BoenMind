@@ -1,28 +1,23 @@
 // context-inspector: 对话上下文透视与分析器
 // 纯展示与诊断分析，不修改数据，不执行压缩
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   RefreshCw,
   Loader2,
-  Search,
   User,
   Sparkles,
   FolderOpen,
   Wrench,
   MessageSquare,
   Scissors,
-  HelpCircle,
   Code2,
   CheckCircle2,
-  AlertCircle,
   Clock,
-  ChevronDown,
-  ChevronUp,
-  FileText,
   Activity,
   Layers,
-  ArrowRight,
   ShieldAlert,
+  Copy,
+  Check,
 } from "lucide-react";
 import { api, type CtxStep } from "../w2/api";
 import { Button } from "@/components/ui/button";
@@ -31,8 +26,7 @@ import { Label } from "@/components/ui/label";
 import { storage, STORAGE_KEYS } from "@/lib/storage";
 import { cn } from "@/lib/utils";
 
-// 估算中英文字数或 token (chars/3)
-const estWords = (s?: string | null) => Math.max(0, s?.length ?? 0);
+// 估算中英文字数或 token (约 chars/3)
 const estTokens = (s?: string | null) => Math.max(1, Math.ceil((s?.length ?? 0) / 3));
 
 const fmtDur = (ms?: number | null) =>
@@ -78,7 +72,6 @@ function parseStepRecipe(step: CtxStep): ParsedPromptRecipe {
     // 提取技能包：[附加技能 · 技能名]
     const skillRegex = /\[附加技能 · ([^\]]+)\]\n([\s\S]*?)(?=\n\n\[附加技能|\n\n$|$)/g;
     let match: RegExpExecArray | null;
-    let lastEnd = 0;
     const firstSkillIdx = raw.indexOf("[附加技能 · ");
 
     if (firstSkillIdx !== -1) {
@@ -95,13 +88,11 @@ function parseStepRecipe(step: CtxStep): ParsedPromptRecipe {
   }
 
   // 2. 解析历史与当前提问
-  // 除去开头的 system，后面的非 tool 消息中，最后一条 user 是当前提问，前面是历史
   const nonSys = messages.filter((m) => m.role === "user" || m.role === "assistant");
   if (nonSys.length > 0) {
     const last = nonSys[nonSys.length - 1];
     if (last.role === "user") {
       currentUserInput = last.content;
-      // 其余的配对成历史轮次
       const prev = nonSys.slice(0, nonSys.length - 1);
       for (let i = 0; i < prev.length; i += 2) {
         const u = prev[i]?.role === "user" ? prev[i].content : "";
@@ -149,10 +140,14 @@ export function ContextView() {
   const [auto, setAuto] = useState(true);
   const [onlyCurrent, setOnlyCurrent] = useState(true);
 
-  // 展开状态控制
-  const [openSeq, setOpenSeq] = useState<number | null>(null);
-  const [activeTab, setActiveTab] = useState<"recipe" | "tools" | "memory" | "trajectory" | "raw">("recipe");
+  // Tab 状态
+  const [activeTab, setActiveTab] = useState<"recipe" | "tools" | "memory" | "trajectory">("recipe");
   const [showRawJson, setShowRawJson] = useState(false);
+
+  // 工具双栏联动选中状态
+  const [selectedToolName, setSelectedToolName] = useState<string | null>(null);
+  const [copiedTool, setCopiedTool] = useState<string | null>(null);
+  const codeContainerRef = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(async () => {
     setBusy(true);
@@ -185,7 +180,7 @@ export function ContextView() {
     return [...list].reverse();
   }, [steps, onlyCurrent, sid]);
 
-  // 最近一次模型调用的快照 (无 kind 的行才是模型请求快照)
+  // 最近一次模型调用的快照
   const latestSnapshot = useMemo(() => {
     return visible.find((x) => !x.kind);
   }, [visible]);
@@ -196,7 +191,29 @@ export function ContextView() {
     return parseStepRecipe(latestSnapshot);
   }, [latestSnapshot]);
 
-  // 篇幅与百分比计算
+  // 默认选中第一个工具
+  useEffect(() => {
+    if (recipe?.toolList.length && !selectedToolName) {
+      setSelectedToolName(recipe.toolList[0].name);
+    }
+  }, [recipe, selectedToolName]);
+
+  // 工具卡片点击联动：平滑滚动到右侧对应的 JSON 代码块
+  const handleSelectTool = (name: string) => {
+    setSelectedToolName(name);
+    const el = document.getElementById(`tool-block-${name}`);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  };
+
+  const copyToolJson = (name: string, schema: any) => {
+    void navigator.clipboard.writeText(JSON.stringify(schema, null, 2));
+    setCopiedTool(name);
+    setTimeout(() => setCopiedTool(null), 2000);
+  };
+
+  // token 篇幅与百分比计算 (统一以 token 为单位)
   const stats = useMemo(() => {
     if (!recipe || !latestSnapshot) return null;
     const personaTokens = estTokens(recipe.personaText);
@@ -254,7 +271,7 @@ export function ContextView() {
           <Activity className="size-4 text-primary" />
           <span className="text-[13px] font-semibold text-foreground">大模型交互透视分析</span>
           <span className="rounded-md bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
-            只读透视 · 零压缩
+            context-inspector · 官方只读透视
           </span>
         </div>
 
@@ -312,7 +329,7 @@ export function ContextView() {
               </span>
               <span>·</span>
               <span>
-                本次提问篇幅: <strong className="text-foreground">{stats.realTokensIn}</strong> 字量 (Token)
+                输入消耗: <strong className="text-foreground">{stats.realTokensIn} token</strong>
               </span>
               <span>·</span>
               <span>模型: <strong className="text-foreground">{latestSnapshot.model_id}</strong></span>
@@ -325,81 +342,81 @@ export function ContextView() {
               <div
                 style={{ width: `${stats.pct.persona}%` }}
                 className="bg-indigo-500 transition-all hover:opacity-80"
-                title={`AI人设与规矩: 约 ${stats.personaTokens} 篇幅 (${stats.pct.persona}%)`}
+                title={`AI人设与规矩: 约 ${stats.personaTokens} token (${stats.pct.persona}%)`}
               />
             ) : null}
             {stats.pct.skills > 0 ? (
               <div
                 style={{ width: `${stats.pct.skills}%` }}
                 className="bg-purple-500 transition-all hover:opacity-80"
-                title={`携带特长技能: 约 ${stats.skillsTokens} 篇幅 (${stats.pct.skills}%)`}
+                title={`携带特长技能: 约 ${stats.skillsTokens} token (${stats.pct.skills}%)`}
               />
             ) : null}
             {stats.pct.tools > 0 ? (
               <div
                 style={{ width: `${stats.pct.tools}%` }}
                 className="bg-amber-500 transition-all hover:opacity-80"
-                title={`装备工具箱: 约 ${stats.toolsTokens} 篇幅 (${stats.pct.tools}%)`}
+                title={`装备工具箱: 约 ${stats.toolsTokens} token (${stats.pct.tools}%)`}
               />
             ) : null}
             {stats.pct.history > 0 ? (
               <div
                 style={{ width: `${stats.pct.history}%` }}
                 className="bg-sky-500 transition-all hover:opacity-80"
-                title={`之前聊天记忆: 约 ${stats.historyTokens} 篇幅 (${stats.pct.history}%)`}
+                title={`之前聊天记忆: 约 ${stats.historyTokens} token (${stats.pct.history}%)`}
               />
             ) : null}
             {stats.pct.ws > 0 ? (
               <div
                 style={{ width: `${stats.pct.ws}%` }}
                 className="bg-emerald-500 transition-all hover:opacity-80"
-                title={`工作区环境: 约 ${stats.wsTokens} 篇幅 (${stats.pct.ws}%)`}
+                title={`工作区环境: 约 ${stats.wsTokens} token (${stats.pct.ws}%)`}
               />
             ) : null}
             {stats.pct.input > 0 ? (
               <div
                 style={{ width: `${stats.pct.input}%` }}
                 className="bg-rose-500 transition-all hover:opacity-80"
-                title={`本次提问: 约 ${stats.inputTokens} 篇幅 (${stats.pct.input}%)`}
+                title={`本次提问: 约 ${stats.inputTokens} token (${stats.pct.input}%)`}
               />
             ) : null}
           </div>
 
-          {/* 图例大白话对照表 */}
+          {/* 图例对照表 (统一为 token 表达) */}
           <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11.5px]">
             <span className="flex items-center gap-1.5">
               <span className="size-2.5 rounded-full bg-indigo-500" />
               <span className="text-foreground">🎭 人设规矩:</span>
-              <span className="text-muted-foreground">{stats.pct.persona}%</span>
+              <span className="text-muted-foreground">{stats.pct.persona}% ({stats.personaTokens} token)</span>
             </span>
             {stats.skillsTokens > 0 ? (
               <span className="flex items-center gap-1.5">
                 <span className="size-2.5 rounded-full bg-purple-500" />
                 <span className="text-foreground">⚡ 特长技能:</span>
-                <span className="text-muted-foreground">{stats.pct.skills}%</span>
+                <span className="text-muted-foreground">{stats.pct.skills}% ({stats.skillsTokens} token)</span>
               </span>
             ) : null}
             <span className="flex items-center gap-1.5">
               <span className="size-2.5 rounded-full bg-amber-500" />
               <span className="text-foreground">🛠️ 工具背包:</span>
-              <span className="text-muted-foreground">{stats.pct.tools}%</span>
+              <span className="text-muted-foreground">{stats.pct.tools}% ({stats.toolsTokens} token)</span>
             </span>
             <span className="flex items-center gap-1.5">
               <span className="size-2.5 rounded-full bg-sky-500" />
               <span className="text-foreground">💬 聊天记忆:</span>
-              <span className="text-muted-foreground">{stats.pct.history}%</span>
+              <span className="text-muted-foreground">{stats.pct.history}% ({stats.historyTokens} token)</span>
             </span>
             {stats.wsTokens > 0 ? (
               <span className="flex items-center gap-1.5">
                 <span className="size-2.5 rounded-full bg-emerald-500" />
                 <span className="text-foreground">📁 电脑目录:</span>
-                <span className="text-muted-foreground">{stats.pct.ws}%</span>
+                <span className="text-muted-foreground">{stats.pct.ws}% ({stats.wsTokens} token)</span>
               </span>
             ) : null}
             <span className="flex items-center gap-1.5">
               <span className="size-2.5 rounded-full bg-rose-500" />
               <span className="text-foreground">❓ 您的问题:</span>
-              <span className="text-muted-foreground">{stats.pct.input}%</span>
+              <span className="text-muted-foreground">{stats.pct.input}% ({stats.inputTokens} token)</span>
             </span>
           </div>
         </div>
@@ -441,7 +458,7 @@ export function ContextView() {
                 )}
               >
                 <Wrench className="size-3.5" />
-                <span>工具背包 ({recipe.toolList.length})</span>
+                <span>工具背包双栏 ({recipe.toolList.length})</span>
               </button>
 
               <button
@@ -479,15 +496,15 @@ export function ContextView() {
                 variant={showRawJson ? "secondary" : "ghost"}
                 className="h-7 gap-1 px-2 text-[11.5px] text-muted-foreground"
                 onClick={() => setShowRawJson(!showRawJson)}
-                title="切换查看原始发给模型的 JSON 报文"
+                title="切换查看全部发给模型的原始 JSON 报文"
               >
                 <Code2 className="size-3.5" />
-                <span>{showRawJson ? "返回大白话" : "专家模式 (Raw)"}</span>
+                <span>{showRawJson ? "返回大白话" : "全局 Raw 报文"}</span>
               </Button>
             </div>
           </div>
 
-          {/* 专家模式直接展示 Raw JSON */}
+          {/* 全局专家模式展示 Raw JSON */}
           {showRawJson ? (
             <div className="min-h-0 flex-1 overflow-auto rounded-xl border bg-muted/20 p-3">
               <div className="mb-2 flex items-center justify-between text-[12px] font-medium">
@@ -521,7 +538,7 @@ export function ContextView() {
                         <span className="text-[13px] font-semibold">🎭 AI 的人设与根本规矩</span>
                       </div>
                       <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
-                        篇幅: 约 {estTokens(recipe.personaText)}
+                        约 {estTokens(recipe.personaText)} token
                       </span>
                     </div>
                     <div className="rounded-lg bg-muted/40 p-3 text-[12.5px] leading-relaxed text-foreground/90 whitespace-pre-wrap">
@@ -550,7 +567,7 @@ export function ContextView() {
                                 【{s.name}】
                               </span>
                               <span className="text-[11px] text-muted-foreground">
-                                约 {estTokens(s.instruction)} 篇幅
+                                约 {estTokens(s.instruction)} token
                               </span>
                             </div>
                             <div className="text-[12px] leading-relaxed text-muted-foreground whitespace-pre-wrap">
@@ -577,61 +594,146 @@ export function ContextView() {
                 </div>
               ) : null}
 
-              {/* TAB 2: 工具背包 */}
+              {/* TAB 2: 工具背包双栏联动 (左卡片 + 右专家代码) */}
               {activeTab === "tools" ? (
-                <div className="bg-card rounded-xl border p-3.5 shadow-2xs">
-                  <div className="mb-3 flex items-center justify-between border-b pb-2">
+                <div className="flex flex-col gap-2.5">
+                  <div className="flex flex-wrap items-center justify-between border-b pb-2 text-[12.5px]">
                     <div>
-                      <div className="text-[13px] font-semibold text-foreground">
-                        🛠️ AI 随身装备的工具箱
-                      </div>
-                      <div className="text-[11.5px] text-muted-foreground">
-                        这些是系统赋予 AI 的实际能力。工具的使用手册会占用背包空间，过多可能会让对话变慢。
-                      </div>
+                      <span className="font-semibold text-foreground">🛠️ 随身装备的工具箱 (双栏联动透视)</span>
+                      <span className="ml-2 text-[11.5px] text-muted-foreground">
+                        点击左侧卡片，右侧专家代码自动滚动并高亮定位
+                      </span>
                     </div>
-                    <div className="text-right text-[12px]">
-                      <div className="font-medium text-foreground">
-                        共装备 {recipe.toolList.length} 个工具
-                      </div>
-                      <div className="text-[11px] text-muted-foreground">
-                        背包占用 约 {stats?.toolsTokens ?? 0} 字量 ({stats?.pct.tools ?? 0}%)
-                      </div>
+                    <div className="text-[12px] text-muted-foreground">
+                      装备 <strong className="text-foreground">{recipe.toolList.length}</strong> 个工具 · 占用约{" "}
+                      <strong className="text-foreground">{stats?.toolsTokens ?? 0} token</strong> ({stats?.pct.tools ?? 0}%)
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    {recipe.toolList.map((t, idx) => (
-                      <div
-                        key={idx}
-                        className="flex flex-col justify-between rounded-lg border bg-muted/20 p-2.5 hover:bg-muted/40 transition-colors"
-                      >
-                        <div>
-                          <div className="flex items-center justify-between gap-1.5 mb-1">
-                            <span className="font-mono text-[12.5px] font-semibold text-foreground">
-                              {t.name}
-                            </span>
-                            {t.needsApproval ? (
-                              <span className="flex items-center gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-[10.5px] font-medium text-amber-600 dark:text-amber-400">
-                                <ShieldAlert className="size-3" />
-                                <span>需人工确认</span>
-                              </span>
-                            ) : (
-                              <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10.5px] font-medium text-emerald-600 dark:text-emerald-400">
-                                直通只读
-                              </span>
+                  <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-12 min-h-[440px]">
+                    {/* 左侧：工具大白话卡片列表 */}
+                    <div className="flex flex-col gap-2 overflow-y-auto pr-1 lg:col-span-5 max-h-[500px]">
+                      {recipe.toolList.map((t) => {
+                        const isSelected = selectedToolName === t.name;
+                        return (
+                          <div
+                            key={t.name}
+                            onClick={() => handleSelectTool(t.name)}
+                            className={cn(
+                              "cursor-pointer rounded-xl border p-3 transition-all duration-150 flex flex-col justify-between gap-1.5",
+                              isSelected
+                                ? "border-primary bg-primary/10 shadow-xs ring-1 ring-primary/40"
+                                : "bg-card hover:border-border hover:bg-muted/30 border-border/70",
                             )}
-                          </div>
-                          <div className="text-[11.5px] leading-snug text-muted-foreground">
-                            {t.description || "无详细描述"}
-                          </div>
-                        </div>
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <span className={cn("size-2 rounded-full shrink-0", isSelected ? "bg-primary" : "bg-muted-foreground/50")} />
+                                <span className="font-mono text-[13px] font-semibold text-foreground truncate">
+                                  {t.name}
+                                </span>
+                              </div>
+                              {t.needsApproval ? (
+                                <span className="flex items-center gap-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10.5px] font-medium text-amber-600 dark:text-amber-400 shrink-0">
+                                  <ShieldAlert className="size-3" />
+                                  <span>需审批</span>
+                                </span>
+                              ) : (
+                                <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10.5px] font-medium text-emerald-600 dark:text-emerald-400 shrink-0">
+                                  直通只读
+                                </span>
+                              )}
+                            </div>
 
-                        <div className="mt-2.5 flex items-center justify-between border-t pt-1.5 text-[10.5px] text-muted-foreground">
-                          <span>手册篇幅: 约 {t.paramTokens} 字</span>
-                          <span className="font-mono">OpenAI Function</span>
-                        </div>
+                            <div className="text-[11.5px] text-muted-foreground leading-snug line-clamp-2">
+                              {t.description || "无详细描述"}
+                            </div>
+
+                            <div className="flex items-center justify-between border-t border-border/40 pt-1.5 text-[11px] text-muted-foreground">
+                              <span>定义消耗: 约 {t.paramTokens} token</span>
+                              <span className={cn("text-[11px] font-medium", isSelected ? "text-primary" : "text-muted-foreground/60")}>
+                                {isSelected ? "✓ 正在右侧查看代码" : "点击查看代码"}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* 右侧：专家模式代码展示与定位加深 */}
+                    <div
+                      ref={codeContainerRef}
+                      className="flex flex-col gap-2.5 overflow-y-auto rounded-xl border bg-muted/20 p-3 lg:col-span-7 max-h-[500px]"
+                    >
+                      <div className="flex items-center justify-between border-b border-border/60 pb-1.5 text-[12px]">
+                        <span className="font-semibold text-foreground flex items-center gap-1.5">
+                          <Code2 className="size-3.5 text-primary" />
+                          <span>专家模式：OpenAI Function JSON 定义</span>
+                        </span>
+                        <span className="text-[11px] font-mono text-muted-foreground">
+                          当前选中: {selectedToolName || "全部"}
+                        </span>
                       </div>
-                    ))}
+
+                      <div className="flex flex-col gap-3">
+                        {recipe.toolList.map((t) => {
+                          const isSelected = selectedToolName === t.name;
+                          return (
+                            <div
+                              key={t.name}
+                              id={`tool-block-${t.name}`}
+                              className={cn(
+                                "rounded-lg border p-2.5 transition-all duration-200",
+                                isSelected
+                                  ? "border-primary bg-primary/10 shadow-sm ring-1 ring-primary/30"
+                                  : "border-border/60 bg-background/70 hover:border-border",
+                              )}
+                            >
+                              <div className="mb-1.5 flex items-center justify-between text-[11.5px]">
+                                <div className="flex items-center gap-1.5 font-mono font-medium">
+                                  <span className={cn("size-2 rounded-full", isSelected ? "bg-primary" : "bg-muted-foreground")} />
+                                  <span className="text-foreground">{t.name}</span>
+                                  <span className="text-muted-foreground text-[10.5px]">
+                                    (约 {t.paramTokens} token)
+                                  </span>
+                                </div>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-6 gap-1 px-1.5 text-[10.5px] text-muted-foreground hover:text-foreground"
+                                  onClick={() => copyToolJson(t.name, t.rawSchema)}
+                                  title="复制此工具的 JSON 定义"
+                                >
+                                  {copiedTool === t.name ? (
+                                    <>
+                                      <Check className="size-3 text-emerald-500" />
+                                      <span className="text-emerald-500">已复制</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Copy className="size-3" />
+                                      <span>复制代码</span>
+                                    </>
+                                  )}
+                                </Button>
+                              </div>
+
+                              <pre className="max-h-48 overflow-auto rounded bg-muted/40 p-2 font-mono text-[11px] leading-relaxed text-foreground/90 whitespace-pre-wrap break-all">
+                                {JSON.stringify(
+                                  {
+                                    name: t.name,
+                                    description: t.description,
+                                    parameters: t.rawSchema,
+                                  },
+                                  null,
+                                  2,
+                                )}
+                              </pre>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
                   </div>
                 </div>
               ) : null}
@@ -665,7 +767,7 @@ export function ContextView() {
                             <div className="mb-1 flex items-center justify-between text-[11px] text-muted-foreground">
                               <span>第 {idx + 1} 轮记忆</span>
                               <span>
-                                用户提问 约 {estTokens(h.user)} 字 · AI回答 约 {estTokens(h.assistant)} 字
+                                用户约 {estTokens(h.user)} token · AI约 {estTokens(h.assistant)} token
                               </span>
                             </div>
                             <div className="mb-1 text-[12px] text-foreground/90 font-medium">
@@ -727,7 +829,7 @@ export function ContextView() {
                           assistant_final: {
                             label: "AI 组织最终答复",
                             color: "text-purple-500 bg-purple-500/10 border-purple-500/20",
-                            desc: `生成了答复，消耗输出约 ${String(d.tokens_out ?? "—")} 字`,
+                            desc: `生成了答复，输出消耗约 ${String(d.tokens_out ?? "—")} token`,
                           },
                           turn_end: {
                             label: "交互完满结束",

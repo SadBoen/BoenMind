@@ -178,12 +178,14 @@ test.describe("上下文透视页", () => {
     // 验证第二层配方拆解：人设与根本规矩、工具背包
     await expect(page.getByText("🎭 AI 的人设与根本规矩")).toBeVisible();
     await expect(page.getByText("系统提示词内容")).toBeVisible();
-    // 切换至工具背包 Tab
+    // 切换至工具背包双栏 Tab
     await page.getByRole("tab", { name: /^工具背包/ }).click();
-    await expect(page.getByText("🛠️ AI 随身装备的工具箱")).toBeVisible();
-    await expect(page.getByText("demo.tool")).toBeVisible();
-    // 切换至专家模式 (Raw)
-    await page.getByTitle("切换查看原始发给模型的 JSON 报文").click();
+    await expect(page.getByText("🛠️ 随身装备的工具箱 (双栏联动透视)")).toBeVisible();
+    await expect(page.getByText("demo.tool").first()).toBeVisible();
+    // 验证右侧专家模式联动代码块存在
+    await expect(page.getByText("专家模式：OpenAI Function JSON 定义")).toBeVisible();
+    // 切换至全局专家模式 (Raw)
+    await page.getByTitle("切换查看全部发给模型的原始 JSON 报文").click();
     await expect(page.getByText("底层完整请求报文 (OpenAI API 格式)")).toBeVisible();
   });
 });

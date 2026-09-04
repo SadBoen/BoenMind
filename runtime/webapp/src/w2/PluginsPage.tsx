@@ -370,6 +370,21 @@ export function PluginsPage({
       });
     }
 
+    // 官方自带核心插件：上下文透视与分析器 (纯前端诊断与展示，不修改数据)
+    list.push({
+      id: "official:context-inspector",
+      name: "context-inspector",
+      type: "builtin",
+      detail: "官方诊断插件 · 大模型交互透视镜(对话配方拆解/容量看板/工具背包双栏/步骤流)",
+      tools: [
+        {
+          name: "context.inspect",
+          description: "对话上下文与 Prompt 配方只读透视分析",
+        },
+      ],
+      isOnline: true,
+    });
+
     // 2. 外部 MCP 插件
     if (mcpData?.servers) {
       for (const s of mcpData.servers) {
