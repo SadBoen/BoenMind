@@ -42,11 +42,11 @@ jobs:
       - run: cargo nextest run --workspace
 
   # 独立官方 MCP 插件：不进入 runtime workspace，但必须有自己的门禁
-  context-mode-plugin:
+  web-multisearch-plugin:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: plugins/mcp/context-mode
+        working-directory: plugins/mcp/web-multisearch
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.98.0
@@ -54,7 +54,25 @@ jobs:
           components: "rustfmt, clippy"
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: plugins/mcp/context-mode
+          workspaces: plugins/mcp/web-multisearch
+      - run: cargo fmt -- --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+      - run: cargo build --release
+
+  context-inspector-plugin:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugins/mcp/context-inspector
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: "rustfmt, clippy"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: plugins/mcp/context-inspector
       - run: cargo fmt -- --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test

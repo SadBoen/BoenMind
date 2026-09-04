@@ -449,7 +449,7 @@ export function ContextView() {
           <Activity className="size-4 text-primary" />
           <span className="text-[13px] font-semibold text-foreground">大模型交互透视分析</span>
           <span className="rounded-md bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
-            context-inspector · 官方独立扩展插件
+            交互透视大盘 · 只读诊断面
           </span>
         </div>
 

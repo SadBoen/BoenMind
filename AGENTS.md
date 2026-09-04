@@ -20,7 +20,7 @@ boenmind-contracts/             第 1 层  机器可读合同(v1.0 冻结)+ vali
 milestones/                     第 2 层  实现规格+回看(M1-M9、W1-W4)+ 台账四件:HISTORY(交付时间线)/BACKLOG(未结事项)/PENDING(待裁决,现清零)/AUDIT-2026-08-30(审计)
 runtime/                        第 3 层  Rust workspace 9 个 crate(bm-contract/core/persist/providers/cli/surface-http/runtime/judge/testkit)+ webapp(W 序列前端,Vite+React+TS)
 apps/                           第 3 层  真实 App:wiki_server/market_server/music_server(stdio MCP,Python)+ mcp-config.example.json
-plugins/                        第 3 层  官方随包插件:mcp/web-multisearch(聚合搜索)、context-mode(上下文管理)
+plugins/                        第 3 层  官方随包插件:mcp/web-multisearch(聚合搜索)、mcp/context-inspector(交互透视与诊断分析)
 shell/tauri/                    第 3 层  Windows 桌面壳(Tauri v2;frontendDist 指 runtime/webapp/dist,手工构建)
 scenarios/                      实测    CLI 场景实测清单(S1-S10 与 2026-08-30 实测记录)
 PLAYBOOK.md                     附页    实操备忘:启动与环境变量/前端四坑/浏览器自动化怪癖/废止速查——动手前先看

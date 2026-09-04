@@ -370,34 +370,7 @@ export function PluginsPage({
       });
     }
 
-    // 2. 官方透视插件(前端内建只读诊断面,主对话区「上下文」页签直达)
-    list.push({
-      id: "official:context-inspector",
-      name: "context-inspector",
-      type: "builtin",
-      detail: "官方透视插件 · 交互透视与诊断分析(只读快照/窗口水位/细分分账/副作用追踪/双栏联动)",
-      tools: [
-        {
-          name: "context.inspect",
-          description: "对话上下文全域双栏透视与真实快照(主界面「上下文」页签)",
-        },
-        {
-          name: "context.headroom",
-          description: "模型真实上下文窗口与余量实时监控(依设置中心登记值计算)",
-        },
-        {
-          name: "context.file_tracker",
-          description: "本地工程文件读写与副作用追踪",
-        },
-        {
-          name: "context.spike_diagnose",
-          description: "多轮历史 Token 异常暴增诊断",
-        },
-      ],
-      isOnline: true,
-    });
-
-    // 3. 外部 MCP 插件
+    // 2. 外部 MCP 插件 (通过 mcp.json 与真实后端探活驱动,绝无静态硬编码)
     if (mcpData?.servers) {
       for (const s of mcpData.servers) {
         const st = statusMap[s.name];
