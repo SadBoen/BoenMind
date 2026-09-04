@@ -124,6 +124,7 @@ impl ModelConnector for MockConnector {
                 usage: Usage {
                     tokens_in,
                     tokens_out,
+                    ..Default::default()
                 },
                 model_id: _req.model_id,
                 latency_ms,
@@ -144,6 +145,7 @@ impl ModelConnector for MockConnector {
                     usage: Usage {
                         tokens_in,
                         tokens_out,
+                        ..Default::default()
                     },
                     model_id,
                     latency_ms: delay_ms,

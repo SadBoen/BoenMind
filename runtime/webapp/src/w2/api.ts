@@ -9,6 +9,8 @@ export type Provider = {
   models: string[];
   /** W6 常用清单(对话输入框候选来源;⊂ models) */
   modelsCommon?: string[];
+  /** 模型窗口登记(模型 → 上下文窗口 token 数;context-inspector「真实水位」数据源,未登记 = 未知) */
+  modelWindows?: Record<string, number>;
   defaultModel?: string;
   secretSet: boolean;
 };
@@ -19,6 +21,7 @@ export type ProviderInput = {
   apiKey?: string;
   models?: string[];
   modelsCommon?: string[];
+  modelWindows?: Record<string, number>;
   defaultModel?: string;
 };
 
@@ -181,6 +184,14 @@ export type CtxStep = {
   error_code?: string | null;
   tokens_in?: number | null;
   tokens_out?: number | null;
+  /** 推理思考消耗(提供商如实上报才有,不报为 null——界面显示「未上报」,不估算冒充) */
+  tokens_reasoning?: number | null;
+  /** 提示词缓存命中(同上,提供商上报才有) */
+  tokens_cached?: number | null;
+  /** 首字延迟 ms(仅流式可测;非流式为 null) */
+  ttft_ms?: number | null;
+  /** 组装本次请求时已被双上限丢弃的历史轮数(0 = 无遗忘) */
+  evicted_turns?: number | null;
   latency_ms?: number | null;
 };
 

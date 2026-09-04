@@ -187,6 +187,10 @@ struct World {
     /// 寿命——会话本就不跨进程,openai_compat 重启即「未知会话」)。回合
     /// spawn 时回喂模型(修复「多轮无记忆」),成功落定时回写。
     session_chats: HashMap<BmId, Vec<(String, String)>>,
+    /// 会话累计成功回合计数(不裁剪)。台账受双上限裁剪,光靠存活条数
+    /// 无法区分「新会话」与「旧轮已被遗忘」——存活数与累计数之差即被
+    /// 遗忘轮数,context-inspector 的遗忘健康度以此为真实数据源。
+    session_turn_totals: HashMap<BmId, u64>,
     /// W5 上下文透视:每次模型调用请求快照(context-log.jsonl;/admin/context)。
     ctx_log: Arc<crate::context_log::ContextLog>,
 }

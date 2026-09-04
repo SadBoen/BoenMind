@@ -44,6 +44,7 @@ impl ModelConnector for CaptureConnector {
             usage: Usage {
                 tokens_in: 100,
                 tokens_out: 10,
+                ..Default::default()
             },
             model_id,
             latency_ms: 5,

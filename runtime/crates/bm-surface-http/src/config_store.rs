@@ -33,7 +33,7 @@ fn validation(msg: impl Into<String>) -> CoreError {
 fn known_field(name: &str) -> bool {
     matches!(
         name,
-        "baseUrl" | "apiKey" | "modelId" | "stream" | "displayName" | "models"
+        "baseUrl" | "apiKey" | "modelId" | "stream" | "displayName" | "models" | "contextWindows"
     )
 }
 
@@ -95,6 +95,29 @@ pub fn validate_field(name: &str, value: &Value) -> CoreResult<()> {
                 }
             }
         }
+        "contextWindows" => {
+            // 模型窗口登记表(model_id → 上下文窗口 token 数);透视面板
+            // 「真实水位」唯一数据源——未登记即如实显示「窗口未知」。
+            let obj = value
+                .as_object()
+                .ok_or_else(|| validation("contextWindows 必须是对象(模型 → 窗口 token 数)"))?;
+            if obj.len() > 50 {
+                return Err(validation("contextWindows 至多 50 条登记"));
+            }
+            for (k, v) in obj {
+                if k.is_empty() || k.len() > 200 {
+                    return Err(validation("contextWindows 的模型名不能为空且 ≤200 字符"));
+                }
+                let n = v
+                    .as_u64()
+                    .ok_or_else(|| validation("contextWindows 值必须是正整数(token 数)"))?;
+                if !(1..=4_000_000).contains(&n) {
+                    return Err(validation(
+                        "contextWindows 值超出合理区间(1..=4,000,000 token)",
+                    ));
+                }
+            }
+        }
         other => return Err(validation(format!("未知配置字段 '{other}'"))),
     }
     Ok(())
@@ -144,6 +167,7 @@ fn effective_from(
         "modelId": pick_str("modelId", env_model_id),
         "stream": file["stream"].as_bool().unwrap_or(env_stream),
         "displayName": pick_str("displayName", None),
+        "contextWindows": file.get("contextWindows").cloned().unwrap_or(Value::Null),
     })
 }
 
@@ -313,6 +337,28 @@ mod tests {
         assert!(s.set(&json!({"modelId": ""})).is_err());
         assert!(s.set(&json!({"stream": "yes"})).is_err());
         assert!(s.delete_field("arbitrary").is_err());
+    }
+
+    #[test]
+    fn t_cfg_context_windows_roundtrip_and_validation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let s = ModelConfigStore::new(tmp.path());
+        let r = s
+            .set(&json!({"contextWindows": {"mimo-v2.5": 128000, "glm-5.3": 200000}}))
+            .unwrap();
+        assert_eq!(r["values"]["contextWindows"]["mimo-v2.5"], json!(128000));
+        // 增量写不丢(另一字段更新后登记仍在)
+        s.set(&json!({"modelId": "mimo-v2.5"})).unwrap();
+        assert_eq!(
+            s.get()["values"]["contextWindows"]["glm-5.3"],
+            json!(200000)
+        );
+        // 非法形态一律拒收
+        assert!(s.set(&json!({"contextWindows": "big"})).is_err());
+        assert!(s.set(&json!({"contextWindows": {"m": 0}})).is_err());
+        assert!(s.set(&json!({"contextWindows": {"m": -1}})).is_err());
+        assert!(s.set(&json!({"contextWindows": {"": 128000}})).is_err());
+        assert!(s.set(&json!({"contextWindows": {"m": 5_000_000}})).is_err());
     }
 
     #[test]

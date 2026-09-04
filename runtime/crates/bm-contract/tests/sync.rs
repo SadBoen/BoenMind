@@ -570,6 +570,7 @@ fn connector_invoke_validates() {
         usage: Usage {
             tokens_in: 412,
             tokens_out: 58,
+            ..Default::default()
         },
         model_id: "zhipu.glm-4-flash".into(),
         latency_ms: 1873,

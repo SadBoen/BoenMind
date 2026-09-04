@@ -37,6 +37,14 @@ pub struct ContextRecord {
     pub error_code: Option<String>,
     pub tokens_in: Option<u64>,
     pub tokens_out: Option<u64>,
+    /// 推理思考消耗(提供商如实上报;不报 = None,前端显示「未上报」)。
+    pub tokens_reasoning: Option<u64>,
+    /// 提示词缓存命中(提供商如实上报;不报 = None)。
+    pub tokens_cached: Option<u64>,
+    /// 流式首包延迟(请求发出→首个增量到达;非流式调用无从测量 = None)。
+    pub ttft_ms: Option<u64>,
+    /// 组装本次请求时已被台账双上限丢弃的历史轮数(0 = 无遗忘)。
+    pub evicted_turns: Option<u64>,
     pub latency_ms: Option<u64>,
     pub ts: String,
 }
@@ -129,6 +137,10 @@ impl ContextLog {
             "error_code": rec.error_code,
             "tokens_in": rec.tokens_in,
             "tokens_out": rec.tokens_out,
+            "tokens_reasoning": rec.tokens_reasoning,
+            "tokens_cached": rec.tokens_cached,
+            "ttft_ms": rec.ttft_ms,
+            "evicted_turns": rec.evicted_turns,
             "latency_ms": rec.latency_ms,
         });
         // INV-5 同面:对整条序列化结果做明文扫描,命中即替换(写脱敏后的串)
@@ -224,6 +236,10 @@ mod tests {
             error_code: None,
             tokens_in: Some(412),
             tokens_out: Some(58),
+            tokens_reasoning: Some(20),
+            tokens_cached: Some(300),
+            ttft_ms: Some(320),
+            evicted_turns: Some(0),
             latency_ms: Some(1873),
             attempt: 1,
             ts: "2026-09-02T00:00:00Z".into(),
@@ -266,6 +282,10 @@ mod tests {
         assert!(!raw.contains("sk-very-secret-value"), "明文不得落快照");
         assert!(raw.contains("[REDACTED]"));
         assert_eq!(tail[0]["tokens_in"], serde_json::json!(412));
+        assert_eq!(tail[0]["tokens_reasoning"], serde_json::json!(20));
+        assert_eq!(tail[0]["tokens_cached"], serde_json::json!(300));
+        assert_eq!(tail[0]["ttft_ms"], serde_json::json!(320));
+        assert_eq!(tail[0]["evicted_turns"], serde_json::json!(0));
         assert_eq!(tail[0]["status"], serde_json::json!("ok"));
     }
 

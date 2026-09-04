@@ -37,6 +37,8 @@ type Draft = {
   apiKey: string;
   models: string[];
   modelsCommon: string[];
+  /** 窗口登记表(界面录入期用字符串,保存时转数字;空串 = 不登记) */
+  modelWindows: Record<string, string>;
   defaultModel: string;
 };
 
@@ -46,6 +48,7 @@ const emptyDraft: Draft = {
   apiKey: "",
   models: [],
   modelsCommon: [],
+  modelWindows: {},
   defaultModel: "",
 };
 
@@ -182,6 +185,9 @@ export function ProvidersPage() {
                   : p.defaultModel
                     ? ` · 默认 ${p.defaultModel}`
                     : ""}
+                {Object.keys(p.modelWindows ?? {}).length > 0
+                  ? ` · 已登记 ${Object.keys(p.modelWindows ?? {}).length} 个模型窗口容量`
+                  : ""}
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
@@ -223,6 +229,9 @@ export function ProvidersPage() {
                       apiKey: "",
                       models: p.models,
                       modelsCommon: p.modelsCommon ?? [],
+                      modelWindows: Object.fromEntries(
+                        Object.entries(p.modelWindows ?? {}).map(([k, v]) => [k, String(v)]),
+                      ),
                       defaultModel: p.defaultModel ?? "",
                     })
                   }
@@ -337,12 +346,18 @@ function ProviderDialog({
   const save = async () => {
     setBusy(true);
     setError(null);
+    const modelWindows: Record<string, number> = {};
+    for (const [k, v] of Object.entries(form.modelWindows)) {
+      const n = Number(v);
+      if (v.trim() !== "" && Number.isFinite(n) && n > 0) modelWindows[k] = Math.floor(n);
+    }
     const body = {
       name: form.name,
       baseUrl: form.baseUrl,
       apiKey: form.apiKey,
       models: form.models,
       modelsCommon: form.modelsCommon,
+      modelWindows,
       defaultModel: form.defaultModel,
     };
     try {
@@ -471,6 +486,57 @@ function ProviderDialog({
                   已选 {form.modelsCommon.length} / {form.models.length}
                 </span>
               </div>
+
+              <div className="flex flex-col gap-1.5">
+                <Label>
+                  上下文窗口容量登记(可选;单位 token,如 128000)
+                </Label>
+                <span className="text-muted-foreground text-[11.5px]">
+                  「上下文」透视面板的窗口水位只认这里的登记值,不做任何猜测;不登记就如实显示「未知」。**把模型勾入常用后即可在下方输入**。
+                </span>
+                {(() => {
+                  const rows = Array.from(
+                    new Set([...form.modelsCommon, ...Object.keys(form.modelWindows)]),
+                  );
+                  if (rows.length === 0) {
+                    return (
+                      <span className="text-muted-foreground text-[11.5px]">
+                        (把模型勾进上方「常用」后即可为它登记窗口容量)
+                      </span>
+                    );
+                  }
+                  return (
+                    <div className="flex flex-col gap-1.5">
+                      {rows.map((m) => (
+                        <div key={m} className="flex items-center gap-2">
+                          <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-foreground">
+                            {m}
+                          </span>
+                          <Input
+                            className="h-7 w-32 font-mono text-[11.5px]"
+                            inputMode="numeric"
+                            placeholder="如 128000"
+                            value={form.modelWindows[m] ?? ""}
+                            onChange={(e) =>
+                              setForm({
+                                ...form,
+                                modelWindows: {
+                                  ...form.modelWindows,
+                                  [m]: e.target.value.replace(/[^\d]/g, ""),
+                                },
+                              })
+                            }
+                          />
+                          <span className="text-[11px] text-muted-foreground">
+                            {form.modelWindows[m] ? "已登记" : "未登记"}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </div>
+
               <div className="flex flex-col gap-1.5">
                 <Label>默认模型(点选;「设为当前」用)</Label>
                 <ModelPicker

@@ -61,6 +61,7 @@ impl RuntimeHandle {
             cap_in_flight: HashMap::new(),
             model_call_audit: HashMap::new(),
             session_chats: HashMap::new(),
+            session_turn_totals: HashMap::new(),
             ctx_log: ctx_log.clone(),
             tx: tx.clone(),
             store: config.store.clone(),

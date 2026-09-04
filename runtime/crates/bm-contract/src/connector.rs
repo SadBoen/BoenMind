@@ -111,10 +111,19 @@ pub struct ToolCallPayload {
     pub arguments: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Usage {
     pub tokens_in: u64,
     pub tokens_out: u64,
+    /// 推理思考消耗(提供商 usage.completion_tokens_details.reasoning_tokens;
+    /// 提供商不细分上报则为 None——前端如实显示「未上报」,不得估算冒充)。
+    /// context-inspector 复习批(2026-09-05)新增,合同 Minor 只增。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokens_reasoning: Option<u64>,
+    /// 提示词缓存命中(提供商 usage.prompt_tokens_details.cached_tokens;
+    /// 提供商不报则为 None)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokens_cached: Option<u64>,
 }
 
 /// 调用结果:成败二选一,由 `ok` 字段判别。失败分支无自由文本字段——

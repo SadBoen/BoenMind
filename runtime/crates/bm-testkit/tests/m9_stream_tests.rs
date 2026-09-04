@@ -35,6 +35,7 @@ impl ModelConnector for ChunkedConnector {
             usage: Usage {
                 tokens_in: 1,
                 tokens_out: 2,
+                ..Default::default()
             },
             model_id: "m1".into(),
             latency_ms: 0,
@@ -70,6 +71,7 @@ impl ModelConnector for ChunkedConnector {
             usage: Usage {
                 tokens_in: 1,
                 tokens_out: 2,
+                ..Default::default()
             },
             model_id: "m1".into(),
             latency_ms: 0,

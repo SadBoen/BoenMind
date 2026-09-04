@@ -146,6 +146,7 @@ mod tests {
                 usage: Usage {
                     tokens_in: 0,
                     tokens_out: 0,
+                    ..Default::default()
                 },
                 model_id: req.model_id,
                 latency_ms: 0,
@@ -167,6 +168,7 @@ mod tests {
                 usage: Usage {
                     tokens_in: 0,
                     tokens_out: 0,
+                    ..Default::default()
                 },
                 model_id: req.model_id,
                 latency_ms: 0,
@@ -200,7 +202,8 @@ mod tests {
                 finish_reason: bm_contract::connector::FinishReason::Stop,
                 usage: Usage {
                     tokens_in: 0,
-                    tokens_out: 0
+                    tokens_out: 0,
+                    ..Default::default()
                 },
                 model_id: "model-b".into(),
                 latency_ms: 0,
@@ -246,7 +249,8 @@ mod tests {
                 finish_reason: bm_contract::connector::FinishReason::Stop,
                 usage: Usage {
                     tokens_in: 0,
-                    tokens_out: 0
+                    tokens_out: 0,
+                    ..Default::default()
                 },
                 model_id: "model-a".into(),
                 latency_ms: 0,

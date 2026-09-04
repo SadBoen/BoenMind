@@ -207,6 +207,7 @@ pub(crate) fn handle_session_close(
     // close 只关会话,不取消进行中的回合(INV-6);in_flight 不动。
     // W5:对话台账随会话关闭清退(历史回喂数据源,内存面随会话寿命)。
     w.session_chats.remove(&params.session_id);
+    w.session_turn_totals.remove(&params.session_id);
     let reason = params.reason.unwrap_or_else(|| "user_request".into());
     w.emit(
         EventType::SessionClosed,

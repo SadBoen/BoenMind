@@ -103,6 +103,36 @@ struct WireToolFn {
 struct WireUsage {
     prompt_tokens: Option<u64>,
     completion_tokens: Option<u64>,
+    /// OpenAI 兼容细分:提示词缓存命中(各家网关实现不一,缺省不报)。
+    #[serde(default)]
+    prompt_tokens_details: Option<WirePromptTokensDetails>,
+    /// 推理思考分账(推理模型;缺省不报)。
+    #[serde(default)]
+    completion_tokens_details: Option<WireCompletionTokensDetails>,
+}
+
+#[derive(serde::Deserialize)]
+struct WirePromptTokensDetails {
+    cached_tokens: Option<u64>,
+}
+
+#[derive(serde::Deserialize)]
+struct WireCompletionTokensDetails {
+    reasoning_tokens: Option<u64>,
+}
+
+impl WireUsage {
+    /// 网报 usage → 合同 Usage(细分字段缺省如实为 None,不估算冒充)。
+    fn into_usage(self) -> Usage {
+        Usage {
+            tokens_in: self.prompt_tokens.unwrap_or(0),
+            tokens_out: self.completion_tokens.unwrap_or(0),
+            tokens_reasoning: self
+                .completion_tokens_details
+                .and_then(|d| d.reasoning_tokens),
+            tokens_cached: self.prompt_tokens_details.and_then(|d| d.cached_tokens),
+        }
+    }
 }
 
 // ---- M9-S2 流式(SSE)线格式 --------------------------------------------
@@ -164,15 +194,7 @@ fn completed_stream(
         content,
         tool_calls,
         finish_reason,
-        usage: usage
-            .map(|u| Usage {
-                tokens_in: u.prompt_tokens.unwrap_or(0),
-                tokens_out: u.completion_tokens.unwrap_or(0),
-            })
-            .unwrap_or(Usage {
-                tokens_in: 0,
-                tokens_out: 0,
-            }),
+        usage: usage.map(WireUsage::into_usage).unwrap_or_default(),
         model_id: model.to_string(),
         latency_ms: 0,
         stream_interrupted: interrupted,
@@ -333,19 +355,13 @@ impl ModelConnector for OpenAiConnector {
             .first()
             .and_then(|c| c.message.content.clone())
             .unwrap_or_default();
-        let usage = wire.usage.map(|u| Usage {
-            tokens_in: u.prompt_tokens.unwrap_or(0),
-            tokens_out: u.completion_tokens.unwrap_or(0),
-        });
+        let usage = wire.usage.map(WireUsage::into_usage);
 
         InvokeResponse::Completed {
             content,
             tool_calls,
             finish_reason,
-            usage: usage.unwrap_or(Usage {
-                tokens_in: 0,
-                tokens_out: 0,
-            }),
+            usage: usage.unwrap_or_default(),
             model_id: model,
             // latency 由调用方(turn 循环)按真实钟测量;此处给 0 占位,
             // 与 MockConnector 的「声明值」口径一致(基线 9.7)。
@@ -585,6 +601,29 @@ mod m9_stream_tests {
             }
             _ => panic!("应为 Completed"),
         }
+    }
+
+    /// usage 细分字段透传:推理思考与缓存命中如实进合同 Usage;
+    /// 网关不报 → None(前端据此显示「未上报」,绝不估算冒充)。
+    #[test]
+    fn t_usage_details_reasoning_and_cached() {
+        let wire: WireUsage = serde_json::from_str(
+            r#"{"prompt_tokens":100,"completion_tokens":40,
+               "prompt_tokens_details":{"cached_tokens":60},
+               "completion_tokens_details":{"reasoning_tokens":25}}"#,
+        )
+        .expect("细分 usage 解析");
+        let u = wire.into_usage();
+        assert_eq!(u.tokens_in, 100);
+        assert_eq!(u.tokens_reasoning, Some(25));
+        assert_eq!(u.tokens_cached, Some(60));
+
+        // 网关口径欠缺(只有总量)→ 细分如实 None
+        let bare: WireUsage =
+            serde_json::from_str(r#"{"prompt_tokens":7,"completion_tokens":3}"#).unwrap();
+        let b = bare.into_usage();
+        assert_eq!(b.tokens_reasoning, None);
+        assert_eq!(b.tokens_cached, None);
     }
 }
 

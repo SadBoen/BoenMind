@@ -37,22 +37,15 @@ import { Label } from "@/components/ui/label";
 import { storage, STORAGE_KEYS } from "@/lib/storage";
 import { cn } from "@/lib/utils";
 
-// 估算中英文字数或 token (约 chars/3)
+// 估算中英文字数或 token (约 chars/3;仅用于各段不精确的构成占比,真实以提供商 usage 为准)
 const estTokens = (s?: string | null) => Math.max(1, Math.ceil((s?.length ?? 0) / 3));
 
 const fmtDur = (ms?: number | null) =>
   ms == null ? "—" : ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
 
-// 根据模型 ID 智能推断其真实最大上下文窗口容量 (Headroom)
-function getModelMaxWindow(modelId: string): number {
-  const m = modelId.toLowerCase();
-  if (m.includes("1m") || m.includes("kimi") || m.includes("gemini")) return 1_000_000;
-  if (m.includes("200k") || m.includes("claude-3") || m.includes("glm-5")) return 200_000;
-  if (m.includes("128k") || m.includes("mimo") || m.includes("deepseek") || m.includes("gpt-4o")) return 128_000;
-  if (m.includes("64k") || m.includes("qwen")) return 64_000;
-  if (m.includes("32k") || m.includes("glm-4")) return 32_000;
-  return 128_000; // 默认业界基线 128k
-}
+// 诚实原则:模型上下文窗口容量不做任何猜测——唯一数据源是用户在
+// 「设置 → 模型提供商」为模型登记的窗口值(model.json contextWindows);
+// 未登记就显示「未知」,绝不用名字匹配表冒充真实水位。
 
 // 被本轮操作影响的本地文件记录 (对标 Pi-Web File Tracking)
 interface FileSideEffect {
@@ -208,12 +201,20 @@ export function ContextView() {
   // 复制反馈状态
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
+  // 模型窗口登记表(用户在「设置 → 模型提供商」登记;唯一真实数据源)
+  const [contextWindows, setContextWindows] = useState<Record<string, number>>({});
+
   const refresh = useCallback(async () => {
     setBusy(true);
     setError(null);
     try {
-      const r = await api.context();
+      const [r, modelCfg] = await Promise.all([
+        api.context(),
+        api.activeModel().catch(() => null),
+      ]);
       setSteps(r.steps);
+      const w = (modelCfg?.values?.contextWindows ?? null) as Record<string, number> | null;
+      if (w && typeof w === "object") setContextWindows(w);
     } catch (e) {
       setError(String(e instanceof Error ? e.message : e));
     } finally {
@@ -258,14 +259,13 @@ export function ContextView() {
         const path = args.path || args.file || (args.command ? String(args.command).split(" ")[1] : null);
         if (path && typeof path === "string" && (path.includes("/") || path.includes("\\") || path.includes("."))) {
           const action = tool.includes("write") ? "write" : tool.includes("edit") ? "edit" : tool.includes("exec") ? "exec" : "read";
-          if (!filesMap.has(path)) {
-            filesMap.set(path, {
-              path,
-              action,
-              toolName: tool,
-              detail: JSON.stringify(args, null, 2),
-            });
-          }
+          // 同一文件多次操作:以最后一次为准(先读后写要如实显示为「写入」)
+          filesMap.set(path, {
+            path,
+            action,
+            toolName: tool,
+            detail: JSON.stringify(args, null, 2),
+          });
         }
       }
     }
@@ -308,6 +308,13 @@ export function ContextView() {
       session_id: latestSnapshot.session_id,
       model_id: latestSnapshot.model_id,
       token_metrics: stats,
+      telemetry: {
+        ttft_ms: latestSnapshot.ttft_ms ?? null,
+        tokens_reasoning: latestSnapshot.tokens_reasoning ?? null,
+        tokens_cached: latestSnapshot.tokens_cached ?? null,
+        evicted_turns: latestSnapshot.evicted_turns ?? 0,
+        window_registered: stats?.maxWindow ?? null,
+      },
       recipe_breakdown: {
         persona: recipe?.personaText,
         skills: recipe?.skills,
@@ -327,7 +334,9 @@ export function ContextView() {
     URL.revokeObjectURL(url);
   };
 
-  // token 篇幅、速率、水位与百分比计算 (统一以 token 为单位)
+  // token 篇幅、速率、水位与百分比计算 (统一以 token 为单位;
+  // 「真实值」只来自快照如实字段(提供商 usage / 实测计时 / 台账计数),
+  // 拿不到就如实显示「未上报 / 未知」,绝不编造)
   const stats = useMemo(() => {
     if (!recipe || !latestSnapshot) return null;
     const personaTokens = estTokens(recipe.personaText);
@@ -344,25 +353,27 @@ export function ContextView() {
     const realTokensIn = latestSnapshot.tokens_in ?? totalEst;
     const realTokensOut = latestSnapshot.tokens_out ?? 0;
 
-    // 模型真实窗口上限与安全余量倒计时
-    const maxWindow = getModelMaxWindow(latestSnapshot.model_id);
+    // 模型窗口:只认用户登记表(model.json contextWindows);未登记 = 未知
+    const maxWindow: number | null =
+      (latestSnapshot.model_id && contextWindows[latestSnapshot.model_id]) || null;
     const currentTotal = realTokensIn + realTokensOut;
-    const remainingHeadroom = Math.max(0, maxWindow - currentTotal);
-    const headroomPct = Math.min(100, Math.round((currentTotal / maxWindow) * 100));
+    const remainingHeadroom = maxWindow != null ? Math.max(0, maxWindow - currentTotal) : null;
+    const headroomPct =
+      maxWindow != null ? Math.min(100, Math.round((currentTotal / maxWindow) * 100)) : null;
 
-    // 生成速率计算 (Token/s)
+    // 生成速率 = 输出 token ÷ 全程耗时(含首字排队;TTFT 单列坦白口径)
     const latencySec = (latestSnapshot.latency_ms ?? 1000) / 1000;
     const speed = latencySec > 0 && realTokensOut > 0 ? (realTokensOut / latencySec).toFixed(1) : "—";
 
-    // 提取提供商返回的缓存 token
-    const cachedTokens =
-      (latestSnapshot as any).cached_tokens ??
-      (latestSnapshot as any).prompt_tokens_details?.cached_tokens ??
-      (latestSnapshot as any).prompt_cache_hit_tokens ??
-      0;
-
-    // 思考链估算 (如果有推理思考片段)
-    const reasoningTokens = recipe.reasoningSnippet ? estTokens(recipe.reasoningSnippet) : Math.max(0, Math.round(realTokensOut * 0.4));
+    // 真实字段直读:提供商不传就是 null → 界面显示「未上报」
+    const cachedTokens: number | null = latestSnapshot.tokens_cached ?? null;
+    const reasoningTokens: number | null = latestSnapshot.tokens_reasoning ?? null;
+    const ttftMs: number | null = latestSnapshot.ttft_ms ?? null;
+    const evictedTurns: number = latestSnapshot.evicted_turns ?? 0;
+    // 思考链正文片段(messages 里的 <think> 块,若有)+粗估值(标注口径)
+    const reasoningSnippetEstimated = recipe.reasoningSnippet
+      ? estTokens(recipe.reasoningSnippet)
+      : null;
 
     return {
       personaTokens,
@@ -379,7 +390,10 @@ export function ContextView() {
       headroomPct,
       speed,
       reasoningTokens,
-      cachedTokens: Number(cachedTokens) || 0,
+      reasoningSnippetEstimated,
+      cachedTokens,
+      ttftMs,
+      evictedTurns,
       pct: {
         persona: Math.round((personaTokens / (totalEst || 1)) * 100),
         skills: Math.round((skillsTokens / (totalEst || 1)) * 100),
@@ -389,7 +403,7 @@ export function ContextView() {
         input: Math.round((inputTokens / (totalEst || 1)) * 100),
       },
     };
-  }, [recipe, latestSnapshot]);
+  }, [recipe, latestSnapshot, contextWindows]);
 
   // 多轮历史 Token 暴增刺客诊断
   const spikeAnalysis = useMemo(() => {
@@ -486,35 +500,49 @@ export function ContextView() {
       {latestSnapshot && stats ? (
         <div className="bg-card rounded-xl border p-3.5 shadow-2xs flex flex-col gap-3">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2">
-            {/* 真实窗口水位与余量倒计时 */}
+            {/* 窗口水位:仅在用户登记过窗口容量时出真实进度;否则如实「未知」 */}
             <div className="flex items-center gap-2">
               <Gauge className="size-4 text-primary" />
               <span className="text-[13px] font-semibold text-foreground">
-                模型窗口真实水位 (Headroom)
+                模型窗口水位
               </span>
-              <span className="rounded-md bg-muted px-2 py-0.5 font-mono text-[11px] font-medium text-foreground">
-                {stats.realTokensIn + stats.realTokensOut} / {stats.maxWindow.toLocaleString()} token ({stats.headroomPct}%)
-              </span>
-              <span className={cn(
-                "flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium",
-                stats.headroomPct >= 80 ? "bg-rose-500/10 text-rose-600" : stats.headroomPct >= 50 ? "bg-amber-500/10 text-amber-600" : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-              )}>
-                <CheckCircle2 className="size-3" />
-                <span>剩余安全余量: {stats.remainingHeadroom.toLocaleString()} token</span>
-              </span>
+              {stats.maxWindow != null ? (
+                <>
+                  <span className="rounded-md bg-muted px-2 py-0.5 font-mono text-[11px] font-medium text-foreground">
+                    {stats.realTokensIn + stats.realTokensOut} / {stats.maxWindow.toLocaleString()} token ({stats.headroomPct}%)
+                  </span>
+                  <span className={cn(
+                    "flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium",
+                    (stats.headroomPct ?? 0) >= 80 ? "bg-rose-500/10 text-rose-600" : (stats.headroomPct ?? 0) >= 50 ? "bg-amber-500/10 text-amber-600" : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                  )}>
+                    <CheckCircle2 className="size-3" />
+                    <span>剩余安全余量: {stats.remainingHeadroom?.toLocaleString()} token</span>
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="rounded-md bg-muted px-2 py-0.5 font-mono text-[11px] font-medium text-foreground">
+                    本轮进出共 {stats.realTokensIn + stats.realTokensOut} token
+                  </span>
+                  <span className="flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400" title="未登记该模型的上下文窗口容量,无法计算水位占比;在「设置 → 模型提供商」模型清单里登记窗口 token 数后即可见血条">
+                    <AlertTriangle className="size-3" />
+                    <span>窗口容量未登记,无法计算水位(可在设置里补登记)</span>
+                  </span>
+                </>
+              )}
             </div>
 
-            {/* 输入、缓存、输出、生成速率与耗时 */}
+            {/* 输入、缓存、输出、生成速率与耗时(未上报如实标注) */}
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-muted-foreground">
               <span className="flex items-center gap-1">
                 <ArrowDownLeft className="size-3.5 text-sky-500" />
                 输入: <strong className="text-foreground">{stats.realTokensIn} token</strong>
               </span>
               <span>·</span>
-              <span className="flex items-center gap-1" title="Provider 服务端 KV Cache 提示词缓存命中">
+              <span className="flex items-center gap-1" title={stats.cachedTokens == null ? "提供商未上报提示词缓存命中明细" : "Provider 服务端提示词缓存命中"}>
                 <Zap className="size-3.5 text-amber-500" />
-                缓存: <strong className={stats.cachedTokens > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-foreground"}>
-                  {stats.cachedTokens > 0 ? `${stats.cachedTokens} token` : "0 (未命中)"}
+                缓存: <strong className={stats.cachedTokens != null && stats.cachedTokens > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-foreground"}>
+                  {stats.cachedTokens == null ? "未上报" : `${stats.cachedTokens} token`}
                 </strong>
               </span>
               <span>·</span>
@@ -523,10 +551,19 @@ export function ContextView() {
                 输出: <strong className="text-foreground">{stats.realTokensOut} token</strong>
               </span>
               <span>·</span>
-              <span className="flex items-center gap-1" title="输出生成速率">
+              <span className="flex items-center gap-1" title="输出 token ÷ 全程耗时(含首字排队等待)">
                 <TrendingUp className="size-3.5 text-emerald-500" />
                 速率: <strong className="text-foreground">{stats.speed} token/s</strong>
               </span>
+              {stats.ttftMs != null ? (
+                <>
+                  <span>·</span>
+                  <span className="flex items-center gap-1" title="请求发出到第一个字回来的时间(仅流式可测)">
+                    <Zap className="size-3.5 text-sky-500" />
+                    首字: <strong className="text-foreground">{fmtDur(stats.ttftMs)}</strong>
+                  </span>
+                </>
+              ) : null}
               <span>·</span>
               <span className="flex items-center gap-1">
                 <Clock className="size-3.5" />
@@ -539,7 +576,14 @@ export function ContextView() {
           <div>
             <div className="mb-1.5 flex items-center justify-between text-[11.5px] text-muted-foreground">
               <span>输入内容配方构成：</span>
-              <span>当前会话保留 {recipe?.historyTurns.length ?? 0}/20 轮记忆</span>
+              <span>
+                当前会话保留 {recipe?.historyTurns.length ?? 0}/20 轮记忆
+                {(stats?.evictedTurns ?? 0) > 0 ? (
+                  <span className="text-amber-600 dark:text-amber-400">
+                    （最早 {stats?.evictedTurns} 轮已被自动遗忘）
+                  </span>
+                ) : null}
+              </span>
             </div>
             <div className="flex h-3 w-full overflow-hidden rounded-full bg-muted/80">
               {stats.pct.persona > 0 ? (
@@ -1192,15 +1236,27 @@ export function ContextView() {
                         })
                       )}
 
-                      <div className="rounded-xl border border-dashed p-3 text-[11.5px] text-muted-foreground bg-muted/10 flex items-start gap-2.5">
-                        <Scissors className="size-4 mt-0.5 text-muted-foreground shrink-0" />
-                        <div>
-                          <span className="font-semibold text-foreground">关于对话遗忘的说明：</span>
-                          <span>
-                            当前系统硬上限为 20 轮或 24,000 字符。目前您的会话长度健康，没有任何历史对话被剪掉。
-                          </span>
+                      {(stats?.evictedTurns ?? 0) > 0 ? (
+                        <div className="rounded-xl border border-amber-500/40 p-3 text-[11.5px] bg-amber-500/10 flex items-start gap-2.5">
+                          <Scissors className="size-4 mt-0.5 text-amber-600 dark:text-amber-400 shrink-0" />
+                          <div>
+                            <span className="font-semibold text-amber-600 dark:text-amber-400">已经有对话被自动遗忘：</span>
+                            <span className="text-muted-foreground">
+                              台账上限为 20 轮或 24,000 字符，最早的 <strong className="text-foreground">{stats?.evictedTurns}</strong> 轮已从 AI 的记忆里裁掉。上面的卡片是它现在还真正记得的全部内容。
+                            </span>
+                          </div>
                         </div>
-                      </div>
+                      ) : (
+                        <div className="rounded-xl border border-dashed p-3 text-[11.5px] text-muted-foreground bg-muted/10 flex items-start gap-2.5">
+                          <Scissors className="size-4 mt-0.5 text-muted-foreground shrink-0" />
+                          <div>
+                            <span className="font-semibold text-foreground">关于对话遗忘的说明：</span>
+                            <span>
+                              系统上限为 20 轮或 24,000 字符。截至最近一次调用，本对话的所有历史轮次都还在，没有被剪掉。
+                            </span>
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     {/* 右侧：实际回喂给模型的历史报文块 */}
@@ -1470,13 +1526,22 @@ export function ContextView() {
                     </span>
                   </div>
 
-                  {/* 深度思考链透明卡片 (针对推理模型) */}
+                  {/* 深度思考链卡片:正文片段如实展示;token 分账只标提供商实报,
+                      未上报则标口径(条目内文本粗估,不冒充真实数) */}
                   {recipe.reasoningSnippet ? (
                     <div className="rounded-lg border border-purple-500/40 bg-purple-500/10 p-3">
                       <div className="mb-1 flex items-center justify-between text-[12px] font-semibold text-purple-600 dark:text-purple-400">
                         <span className="flex items-center gap-1.5">
                           <Brain className="size-4" />
-                          <span>🧠 模型深度思考链 (Reasoning Tokens 约 {stats?.reasoningTokens ?? 0} token)</span>
+                          <span>
+                            🧠 模型深度思考链 (
+                            {stats?.reasoningTokens != null
+                              ? `Reasoning Tokens ${stats.reasoningTokens} token·提供商实报`
+                              : stats?.reasoningSnippetEstimated != null
+                                ? `片段约 ${stats.reasoningSnippetEstimated} token·按文本粗估,提供商未上报分账`
+                                : "提供商未上报分账"}
+                            )
+                          </span>
                         </span>
                         <span className="text-[11px] font-mono text-muted-foreground">thinking_content</span>
                       </div>

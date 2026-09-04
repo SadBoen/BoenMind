@@ -52,6 +52,7 @@ impl ModelConnector for ToolLoopConnector {
                 usage: Usage {
                     tokens_in: 10,
                     tokens_out: 5,
+                    ..Default::default()
                 },
                 model_id,
                 latency_ms: 5,
@@ -65,6 +66,7 @@ impl ModelConnector for ToolLoopConnector {
                 usage: Usage {
                     tokens_in: 20,
                     tokens_out: 5,
+                    ..Default::default()
                 },
                 model_id,
                 latency_ms: 5,

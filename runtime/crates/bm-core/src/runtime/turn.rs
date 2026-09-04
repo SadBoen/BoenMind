@@ -168,6 +168,14 @@ pub(crate) fn spawn_turn(
         .as_ref()
         .and_then(|sid| w.session_chats.get(sid).cloned())
         .unwrap_or_default();
+    // 遗忘轮数 = 会话累计成功回合 − 台账现存活(台账受 20 轮/24K 字符双上限
+    // 裁剪)。0 = 历史完整;>0 = 最早若干轮已被丢弃,透视面板如实告警。
+    let alive = history.len() as u64;
+    let accounted = session_id
+        .as_ref()
+        .and_then(|sid| w.session_turn_totals.get(sid).copied())
+        .unwrap_or(0);
+    let evicted_turns: u64 = evicted_turns(accounted, alive);
     // W8(ADR-0018):会话绑定的工作目录回合级注入——追加到 system prompt,
     // 切换工作区下一条消息即生效;注册表缺条目/目录被删时静默降级不注入。
     let workspace_note: Option<String> = session_id.as_ref().and_then(|sid| {
@@ -269,10 +277,20 @@ pub(crate) fn spawn_turn(
                 // M9-S2:流式开关开启时走 invoke_stream,增量经 ProviderDelta
                 // 回核心循环(单写者落 model.content.delta 事件);通道满则丢弃
                 // 单个增量(事件面渐进性降级,不影响终态聚合)。
+                // 首字延迟(TTFT):首个增量到达时刻 − 请求发出时刻;仅流式
+                // 可测,非流式如实为 None(整响应延迟已测 latency)。
+                let first_delta_at: std::sync::Arc<std::sync::Mutex<Option<std::time::Instant>>> =
+                    std::sync::Arc::new(std::sync::Mutex::new(None));
                 let resp = if streaming {
                     let delta_tx = tx.clone();
                     let delta_op = op_id.clone();
+                    let delta_first = first_delta_at.clone();
                     let on_delta = Box::new(move |d: &str| {
+                        if let Ok(mut g) = delta_first.lock()
+                            && g.is_none()
+                        {
+                            *g = Some(std::time::Instant::now());
+                        }
                         let _ = delta_tx.try_send(Cmd::ProviderDelta {
                             operation_id: delta_op.clone(),
                             delta: d.to_string(),
@@ -291,6 +309,15 @@ pub(crate) fn spawn_turn(
                         },
                         r = connector.invoke(req, cancel.clone()) => r,
                     }
+                };
+                let ttft_ms: Option<u64> = if streaming {
+                    first_delta_at
+                        .lock()
+                        .ok()
+                        .and_then(|g| *g)
+                        .map(|t| t.duration_since(snap_start).as_millis() as u64)
+                } else {
+                    None
                 };
 
                 match resp {
@@ -322,6 +349,10 @@ pub(crate) fn spawn_turn(
                             error_code: None,
                             tokens_in: Some(usage.tokens_in),
                             tokens_out: Some(usage.tokens_out),
+                            tokens_reasoning: usage.tokens_reasoning,
+                            tokens_cached: usage.tokens_cached,
+                            ttft_ms,
+                            evicted_turns: Some(evicted_turns),
                             latency_ms: Some(snap_start.elapsed().as_millis() as u64),
                             ts: format_ts(clock.now()),
                         });
@@ -665,6 +696,10 @@ pub(crate) fn spawn_turn(
                             error_code: Some(error_code.as_str().to_string()),
                             tokens_in: None,
                             tokens_out: None,
+                            tokens_reasoning: None,
+                            tokens_cached: None,
+                            ttft_ms,
+                            evicted_turns: Some(evicted_turns),
                             latency_ms: Some(snap_start.elapsed().as_millis() as u64),
                             ts: format_ts(clock.now()),
                         });
@@ -2054,6 +2089,11 @@ pub(crate) fn handle_turn_event(w: &mut World, event: TurnEvent) {
 
 // ---- W5:会话对话台账(历史回喂数据源) ------------------------------------
 
+/// 被遗忘轮数(纯计算:累计成功回合 − 台账存活;防借位下溢)。
+pub(crate) fn evicted_turns(accounted: u64, alive: u64) -> u64 {
+    accounted.saturating_sub(alive)
+}
+
 /// 台账轮数上限(超出丢最旧;进程内启发式,不入冻结合同)。
 pub(crate) const HISTORY_MAX_TURNS: usize = 20;
 /// 台账字符总量上限(user+assistant 合计;防长会话上下文无界膨胀)。
@@ -2071,6 +2111,7 @@ pub(crate) fn remember_turn(w: &mut World, session_id: BmId, user: String, assis
     if !live {
         return;
     }
+    *w.session_turn_totals.entry(session_id.clone()).or_insert(0) += 1;
     push_capped(
         w.session_chats.entry(session_id).or_default(),
         user,
@@ -2128,5 +2169,16 @@ mod w5_history_tests {
         let big = "y".repeat(HISTORY_MAX_CHARS + 100);
         push_capped(&mut entry, big.clone(), big);
         assert_eq!(entry.len(), 1, "最新一条不因字符上限被丢");
+    }
+
+    #[test]
+    fn evicted_turns_arithmetic() {
+        // 新会话前 3 轮全存活:无遗忘
+        assert_eq!(evicted_turns(3, 3), 0);
+        // 25 轮历史进 20 轮上限:遗忘最早 5 轮
+        assert_eq!(evicted_turns(25, 20), 5);
+        // 防御:计数滞后(复活/回放场景)不得借位下溢
+        assert_eq!(evicted_turns(2, 5), 0);
+        assert_eq!(evicted_turns(0, 0), 0);
     }
 }

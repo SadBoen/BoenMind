@@ -370,16 +370,20 @@ export function PluginsPage({
       });
     }
 
-    // 2. 外部扩展插件 (含官方外置独立插件 context-inspector)
+    // 2. 官方透视插件(前端内建只读诊断面,主对话区「上下文」页签直达)
     list.push({
       id: "official:context-inspector",
       name: "context-inspector",
-      type: "external",
-      detail: "官方外置扩展插件 · 大模型交互透视镜(窗口水位/深度思考分账/文件副作用/多轮暴增诊断/双栏联动)",
+      type: "builtin",
+      detail: "官方透视插件 · 交互透视与诊断分析(只读快照/窗口水位/细分分账/副作用追踪/双栏联动)",
       tools: [
         {
+          name: "context.inspect",
+          description: "对话上下文全域双栏透视与真实快照(主界面「上下文」页签)",
+        },
+        {
           name: "context.headroom",
-          description: "模型真实上下文窗口与余量实时监控",
+          description: "模型真实上下文窗口与余量实时监控(依设置中心登记值计算)",
         },
         {
           name: "context.file_tracker",
@@ -391,14 +395,9 @@ export function PluginsPage({
         },
       ],
       isOnline: true,
-      serverRef: {
-        name: "context-inspector",
-        transport: "http",
-        url: "/inspector",
-      },
     });
 
-    // 2. 外部 MCP 插件
+    // 3. 外部 MCP 插件
     if (mcpData?.servers) {
       for (const s of mcpData.servers) {
         const st = statusMap[s.name];

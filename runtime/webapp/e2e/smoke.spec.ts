@@ -47,6 +47,17 @@ async function mockAdmin(page: Page) {
       },
     }),
   );
+  await page.route("**/admin/model/active", (route) =>
+    route.fulfill({
+      json: {
+        values: {
+          modelId: "mock.model",
+          contextWindows: { "mock.model": 128000 },
+        },
+        secret_set: { apiKey: true },
+      },
+    }),
+  );
   await page.route("**/admin/context", (route) =>
     route.fulfill({
       json: {
@@ -172,8 +183,8 @@ test.describe("上下文透视页", () => {
     await mockAdmin(page);
     await page.goto("/");
     await page.locator('[data-slot="tab-ctx"]').evaluate((el: HTMLElement) => el.click());
-    // 验证第一层看板：模型真实窗口水位与余量
-    await expect(page.getByText("模型窗口真实水位 (Headroom)")).toBeVisible();
+    // 验证第一层看板：模型窗口水位与余量
+    await expect(page.getByText("模型窗口水位")).toBeVisible();
     await expect(page.getByText(/剩余安全余量/)).toBeVisible();
     // 验证第二层配方拆解：人设与根本规矩双栏 (左卡片与右原文均存在)
     await expect(page.getByText("🎭 AI 的人设与根本规矩")).toBeVisible();

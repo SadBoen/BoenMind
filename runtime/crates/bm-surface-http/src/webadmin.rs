@@ -155,6 +155,25 @@ fn validate_provider_input(body: &Value) -> Result<(), (StatusCode, String)> {
             }
         }
     }
+    // 模型窗口登记(可选,context-inspector 的「真实水位」数据源):
+    // model_id → 上下文窗口 token 数。不猜不算,登记多少显示多少;
+    // 未登记的模型面板如实显示「窗口未知」。
+    if let Some(windows) = body["modelWindows"].as_object() {
+        if windows.len() > 50 {
+            return bad("modelWindows 至多 50 条登记");
+        }
+        for (k, v) in windows {
+            if k.is_empty() || k.len() > 200 {
+                return bad("modelWindows 的模型名必须是非空字符串(≤200 字符)");
+            }
+            let Some(n) = v.as_u64() else {
+                return bad("modelWindows 值必须是正整数(token 数)");
+            };
+            if !(1..=4_000_000).contains(&n) {
+                return bad("modelWindows 值超出合理区间(1..=4,000,000 token)");
+            }
+        }
+    }
     Ok(())
 }
 
@@ -174,6 +193,7 @@ fn mask_provider(p: &Value) -> Value {
         "baseUrl": p["baseUrl"],
         "models": p["models"],
         "modelsCommon": p["modelsCommon"].as_array().cloned().unwrap_or_default(),
+        "modelWindows": p["modelWindows"].as_object().cloned().unwrap_or_default(),
         "defaultModel": p["defaultModel"],
         "secretSet": p["apiKey"].as_str().map(|s| !s.is_empty()).unwrap_or(false),
     })
@@ -303,6 +323,7 @@ pub async fn providers_create(State(cfg): State<AdminConfig>, Json(body): Json<V
         "apiKey": norm_key(&body),
         "models": body["models"].as_array().cloned().unwrap_or_default(),
         "modelsCommon": body["modelsCommon"].as_array().cloned().unwrap_or_default(),
+        "modelWindows": body["modelWindows"].as_object().cloned().unwrap_or_default(),
         "defaultModel": body["defaultModel"].as_str().unwrap_or(""),
     });
     list.push(record.clone());
@@ -341,6 +362,10 @@ pub async fn providers_update(
     // W6 常用清单:缺省 = 保持不变(与 models 同口径)
     if let Some(mc) = body["modelsCommon"].as_array() {
         record["modelsCommon"] = json!(mc);
+    }
+    // 模型窗口登记:缺省 = 保持不变;显式给空对象 = 清空
+    if let Some(w) = body["modelWindows"].as_object() {
+        record["modelWindows"] = json!(w);
     }
     if let Some(dm) = body["defaultModel"].as_str() {
         record["defaultModel"] = json!(dm);
@@ -485,6 +510,20 @@ pub async fn model_active_set(State(cfg): State<AdminConfig>, Json(body): Json<V
     }
     if let Some(models) = p["models"].as_array() {
         values["models"] = json!(models);
+    }
+    // 模型窗口登记并入 model.json(透视面板「真实水位」数据源):
+    // 已登记的旧值保留(换 provider 不丢历史登记),provider 侧新值覆盖同名键。
+    let mut windows = store.get()["values"]["contextWindows"]
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
+    if let Some(pw) = p["modelWindows"].as_object() {
+        for (k, v) in pw {
+            windows.insert(k.clone(), v.clone());
+        }
+    }
+    if !windows.is_empty() {
+        values["contextWindows"] = json!(windows);
     }
     match store.set(&values) {
         Ok(_) => Json(json!({ "ok": true, "restartRequired": true, "note": "已写入 config/model.json,重启服务器后生效" })).into_response(),

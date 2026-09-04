@@ -75,6 +75,20 @@ struct WireMsg {
 struct WireUsage {
     prompt_tokens: Option<u64>,
     completion_tokens: Option<u64>,
+    #[serde(default)]
+    prompt_tokens_details: Option<WirePromptTokensDetails>,
+    #[serde(default)]
+    completion_tokens_details: Option<WireCompletionTokensDetails>,
+}
+
+#[derive(serde::Deserialize)]
+struct WirePromptTokensDetails {
+    cached_tokens: Option<u64>,
+}
+
+#[derive(serde::Deserialize)]
+struct WireCompletionTokensDetails {
+    reasoning_tokens: Option<u64>,
 }
 
 fn failed(code: ErrorCode, retryable: bool, attempt: u32) -> InvokeResponse {
@@ -162,6 +176,16 @@ impl ModelConnector for GlmConnector {
                             .as_ref()
                             .and_then(|u| u.completion_tokens)
                             .unwrap_or(0),
+                        tokens_reasoning: w
+                            .usage
+                            .as_ref()
+                            .and_then(|u| u.completion_tokens_details.as_ref())
+                            .and_then(|d| d.reasoning_tokens),
+                        tokens_cached: w
+                            .usage
+                            .as_ref()
+                            .and_then(|u| u.prompt_tokens_details.as_ref())
+                            .and_then(|d| d.cached_tokens),
                     },
                     model_id: model,
                     latency_ms: 0,
