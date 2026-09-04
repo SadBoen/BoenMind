@@ -368,36 +368,36 @@ export function ContextView() {
           {/* 图例大白话对照表 */}
           <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11.5px]">
             <span className="flex items-center gap-1.5">
-              <span className="size-2.5 rounded-xs bg-indigo-500" />
+              <span className="size-2.5 rounded-full bg-indigo-500" />
               <span className="text-foreground">🎭 人设规矩:</span>
               <span className="text-muted-foreground">{stats.pct.persona}%</span>
             </span>
             {stats.skillsTokens > 0 ? (
               <span className="flex items-center gap-1.5">
-                <span className="size-2.5 rounded-xs bg-purple-500" />
+                <span className="size-2.5 rounded-full bg-purple-500" />
                 <span className="text-foreground">⚡ 特长技能:</span>
                 <span className="text-muted-foreground">{stats.pct.skills}%</span>
               </span>
             ) : null}
             <span className="flex items-center gap-1.5">
-              <span className="size-2.5 rounded-xs bg-amber-500" />
+              <span className="size-2.5 rounded-full bg-amber-500" />
               <span className="text-foreground">🛠️ 工具背包:</span>
               <span className="text-muted-foreground">{stats.pct.tools}%</span>
             </span>
             <span className="flex items-center gap-1.5">
-              <span className="size-2.5 rounded-xs bg-sky-500" />
+              <span className="size-2.5 rounded-full bg-sky-500" />
               <span className="text-foreground">💬 聊天记忆:</span>
               <span className="text-muted-foreground">{stats.pct.history}%</span>
             </span>
             {stats.wsTokens > 0 ? (
               <span className="flex items-center gap-1.5">
-                <span className="size-2.5 rounded-xs bg-emerald-500" />
+                <span className="size-2.5 rounded-full bg-emerald-500" />
                 <span className="text-foreground">📁 电脑目录:</span>
                 <span className="text-muted-foreground">{stats.pct.ws}%</span>
               </span>
             ) : null}
             <span className="flex items-center gap-1.5">
-              <span className="size-2.5 rounded-xs bg-rose-500" />
+              <span className="size-2.5 rounded-full bg-rose-500" />
               <span className="text-foreground">❓ 您的问题:</span>
               <span className="text-muted-foreground">{stats.pct.input}%</span>
             </span>
