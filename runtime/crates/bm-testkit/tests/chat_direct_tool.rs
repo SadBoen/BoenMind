@@ -1,4 +1,4 @@
-//! 直通工具对话闭环(2026-09-03 VPS 实测 P1 回归):模型发起 system__echo
+//! 直通工具对话闭环(2026-09-03 VPS 实测 P1 回归):模型发起 system_echo
 //! 直通调用,同步收据 state=succeeded 且 result 内联——修复前该结果从不
 //! 写入 op_results(仅异步回单/审批重放两路写入),回合轮询必等满 60s
 //! 回喂「工具执行超时」;修复后立即回喂,整回合秒级落定。
@@ -20,7 +20,7 @@ use bm_providers::secret::MemSecretStore;
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
 
-/// 脚本连接器:第 1 次调用发起 system__echo 工具调用,第 2 次给终稿。
+/// 脚本连接器:第 1 次调用发起 system_echo 工具调用,第 2 次给终稿。
 struct ToolLoopConnector {
     requests: Mutex<Vec<InvokeRequest>>,
 }
@@ -45,7 +45,7 @@ impl ModelConnector for ToolLoopConnector {
                 content: String::new(),
                 tool_calls: vec![ToolCallPayload {
                     id: "call_1".into(),
-                    name: "system__echo".into(),
+                    name: "system_echo".into(),
                     arguments: r#"{"m":"hi"}"#.into(),
                 }],
                 finish_reason: FinishReason::ToolCalls,

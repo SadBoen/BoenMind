@@ -229,7 +229,10 @@ pub(crate) fn spawn_turn(
         let tools_json: Vec<serde_json::Value> = chat_tools
             .iter()
             .map(|(cap, schema, needs_approval)| {
-                let openai_name = cap.replace('.', "__");
+                // OpenAI function.name 规范要求 ^[a-zA-Z0-9_-]{1,64}$，不能有点号。
+                // 采用单下划线转义(fs.read -> fs_read; mcp.foo.bar -> mcp_foo_bar)，
+                // 彻底告别别扭的双下划线；调用返回时由 name_to_cap 原样映射回内核能力名。
+                let openai_name = cap.replace('.', "_");
                 name_to_cap.insert(openai_name.clone(), cap.clone());
                 let desc = if *needs_approval {
                     format!("{cap} — 需要用户审批的业务工具(调用后会弹出审批卡片)")

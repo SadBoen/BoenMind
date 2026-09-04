@@ -7,7 +7,7 @@
 //! search 走 walkdir 全树遍历,不得占死单写者循环。审批分级不变:
 //! fs.search / fs.read = read-only 直通;fs.write / fs.edit = 审批卡。
 //!
-//! 对话工具名:fs.search → fs__search(turn 侧 `.` → `__`)。
+//! 对话工具名:fs.search → fs_search(turn 侧 `.` → `_`)。
 
 mod guard;
 mod ops;

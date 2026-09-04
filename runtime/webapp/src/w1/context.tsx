@@ -1636,7 +1636,7 @@ export function ContextView() {
         <div className="flex gap-2">
           <input
             className="bg-background h-8 flex-1 rounded-md border px-2.5 text-[12px] outline-none focus:border-ring"
-            placeholder="输入关键词搜索（如：天气 / fs__read / 某个报错）"
+            placeholder="输入关键词搜索（如：天气 / fs_read / 某个报错）"
             value={searchQ}
             onChange={(e) => setSearchQ(e.target.value)}
             onKeyDown={(e) => {
