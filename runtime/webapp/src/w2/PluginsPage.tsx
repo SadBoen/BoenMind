@@ -370,19 +370,32 @@ export function PluginsPage({
       });
     }
 
-    // 官方自带核心插件：上下文透视与分析器 (纯前端诊断与展示，不修改数据)
+    // 2. 外部扩展插件 (含官方外置独立插件 context-inspector)
     list.push({
       id: "official:context-inspector",
       name: "context-inspector",
-      type: "builtin",
-      detail: "官方诊断插件 · 大模型交互透视镜(对话配方拆解/容量看板/工具背包双栏/步骤流)",
+      type: "external",
+      detail: "官方外置扩展插件 · 大模型交互透视镜(窗口水位/深度思考分账/文件副作用/多轮暴增诊断/双栏联动)",
       tools: [
         {
-          name: "context.inspect",
-          description: "对话上下文与 Prompt 配方只读透视分析",
+          name: "context.headroom",
+          description: "模型真实上下文窗口与余量实时监控",
+        },
+        {
+          name: "context.file_tracker",
+          description: "本地工程文件读写与副作用追踪",
+        },
+        {
+          name: "context.spike_diagnose",
+          description: "多轮历史 Token 异常暴增诊断",
         },
       ],
       isOnline: true,
+      serverRef: {
+        name: "context-inspector",
+        transport: "http",
+        url: "/inspector",
+      },
     });
 
     // 2. 外部 MCP 插件

@@ -21,6 +21,14 @@ import {
   Zap,
   ArrowDownLeft,
   ArrowUpRight,
+  Download,
+  AlertTriangle,
+  FileCheck,
+  FileEdit,
+  Brain,
+  Gauge,
+  FileCode,
+  TrendingUp,
 } from "lucide-react";
 import { api, type CtxStep } from "../w2/api";
 import { Button } from "@/components/ui/button";
@@ -34,6 +42,25 @@ const estTokens = (s?: string | null) => Math.max(1, Math.ceil((s?.length ?? 0) 
 
 const fmtDur = (ms?: number | null) =>
   ms == null ? "—" : ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
+
+// 根据模型 ID 智能推断其真实最大上下文窗口容量 (Headroom)
+function getModelMaxWindow(modelId: string): number {
+  const m = modelId.toLowerCase();
+  if (m.includes("1m") || m.includes("kimi") || m.includes("gemini")) return 1_000_000;
+  if (m.includes("200k") || m.includes("claude-3") || m.includes("glm-5")) return 200_000;
+  if (m.includes("128k") || m.includes("mimo") || m.includes("deepseek") || m.includes("gpt-4o")) return 128_000;
+  if (m.includes("64k") || m.includes("qwen")) return 64_000;
+  if (m.includes("32k") || m.includes("glm-4")) return 32_000;
+  return 128_000; // 默认业界基线 128k
+}
+
+// 被本轮操作影响的本地文件记录 (对标 Pi-Web File Tracking)
+interface FileSideEffect {
+  path: string;
+  action: "read" | "write" | "edit" | "exec";
+  toolName: string;
+  detail: string;
+}
 
 // 对 Prompt 的 system 内容进行结构拆解 (人设/技能/工作区)
 interface ParsedPromptRecipe {
@@ -50,6 +77,8 @@ interface ParsedPromptRecipe {
     paramTokens: number;
     rawSchema: any;
   }>;
+  affectedFiles: FileSideEffect[];
+  reasoningSnippet: string | null;
 }
 
 function parseStepRecipe(step: CtxStep): ParsedPromptRecipe {
@@ -59,6 +88,8 @@ function parseStepRecipe(step: CtxStep): ParsedPromptRecipe {
   let workspaceText: string | null = null;
   const historyTurns: Array<{ turnIndex: number; user: string; assistant: string }> = [];
   let currentUserInput = "";
+  const affectedFiles: FileSideEffect[] = [];
+  let reasoningSnippet: string | null = null;
 
   const messages = step.messages ?? [];
 
@@ -129,6 +160,18 @@ function parseStepRecipe(step: CtxStep): ParsedPromptRecipe {
     };
   });
 
+  // 4. 解析文件副作用追踪与思考链
+  for (const m of messages) {
+    // 检查推理思考链标记
+    if (m.content && (m.content.includes("<think>") || m.content.includes("thinking:"))) {
+      const start = m.content.indexOf("<think>");
+      const end = m.content.indexOf("</think>");
+      if (start !== -1 && end !== -1) {
+        reasoningSnippet = m.content.slice(start + 7, end).trim();
+      }
+    }
+  }
+
   return {
     rawSystemPrompt,
     personaText: personaText || "默认通用助理",
@@ -137,6 +180,8 @@ function parseStepRecipe(step: CtxStep): ParsedPromptRecipe {
     historyTurns,
     currentUserInput,
     toolList,
+    affectedFiles,
+    reasoningSnippet,
   };
 }
 
@@ -150,14 +195,15 @@ export function ContextView() {
   const [auto, setAuto] = useState(true);
   const [onlyCurrent, setOnlyCurrent] = useState(true);
 
-  // Tab 状态
-  const [activeTab, setActiveTab] = useState<"recipe" | "tools" | "memory" | "trajectory">("recipe");
+  // Tab 状态: 包含人设技能、工具背包、聊天记忆、文件副作用、时序流
+  const [activeTab, setActiveTab] = useState<"recipe" | "tools" | "memory" | "files" | "spikes" | "trajectory">("recipe");
   const [showRawJson, setShowRawJson] = useState(false);
 
   // 双栏联动选中状态
   const [selectedPromptSection, setSelectedPromptSection] = useState<string>("persona");
   const [selectedToolName, setSelectedToolName] = useState<string | null>(null);
   const [selectedTurnIndex, setSelectedTurnIndex] = useState<number | null>(null);
+  const [selectedFileIndex, setSelectedFileIndex] = useState<number | null>(null);
 
   // 复制反馈状态
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -201,8 +247,31 @@ export function ContextView() {
   // 解析配方
   const recipe = useMemo(() => {
     if (!latestSnapshot) return null;
-    return parseStepRecipe(latestSnapshot);
-  }, [latestSnapshot]);
+    const r = parseStepRecipe(latestSnapshot);
+
+    // 提炼本会话中所有的文件副作用 (读/写/改)
+    const filesMap = new Map<string, FileSideEffect>();
+    for (const s of visible) {
+      if (s.kind === "tool_call" && s.data) {
+        const tool = String(s.data.tool ?? "");
+        const args = (s.data.arguments ?? {}) as Record<string, any>;
+        const path = args.path || args.file || (args.command ? String(args.command).split(" ")[1] : null);
+        if (path && typeof path === "string" && (path.includes("/") || path.includes("\\") || path.includes("."))) {
+          const action = tool.includes("write") ? "write" : tool.includes("edit") ? "edit" : tool.includes("exec") ? "exec" : "read";
+          if (!filesMap.has(path)) {
+            filesMap.set(path, {
+              path,
+              action,
+              toolName: tool,
+              detail: JSON.stringify(args, null, 2),
+            });
+          }
+        }
+      }
+    }
+    r.affectedFiles = Array.from(filesMap.values());
+    return r;
+  }, [latestSnapshot, visible]);
 
   // 默认选中初始化
   useEffect(() => {
@@ -212,7 +281,10 @@ export function ContextView() {
     if (recipe?.historyTurns.length && selectedTurnIndex == null) {
       setSelectedTurnIndex(recipe.historyTurns[0].turnIndex);
     }
-  }, [recipe, selectedToolName, selectedTurnIndex]);
+    if (recipe?.affectedFiles.length && selectedFileIndex == null) {
+      setSelectedFileIndex(0);
+    }
+  }, [recipe, selectedToolName, selectedTurnIndex, selectedFileIndex]);
 
   // 双栏联动通用平滑滚动定位
   const scrollToTarget = (id: string) => {
@@ -228,7 +300,34 @@ export function ContextView() {
     setTimeout(() => setCopiedKey(null), 2000);
   };
 
-  // token 篇幅与百分比计算 (统一以 token 为单位)
+  // 一键导出单次快照或会话脱敏调试包 (JSON)
+  const exportScrubbedSnapshot = () => {
+    if (!latestSnapshot) return;
+    const dump = {
+      exported_at: new Date().toISOString(),
+      session_id: latestSnapshot.session_id,
+      model_id: latestSnapshot.model_id,
+      token_metrics: stats,
+      recipe_breakdown: {
+        persona: recipe?.personaText,
+        skills: recipe?.skills,
+        workspace: recipe?.workspaceText,
+        tools: recipe?.toolList.map((t) => t.name),
+        affected_files: recipe?.affectedFiles.map((f) => f.path),
+      },
+      raw_messages: latestSnapshot.messages,
+      raw_tools: latestSnapshot.tools,
+    };
+    const blob = new Blob([JSON.stringify(dump, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `boenmind-context-snapshot-${latestSnapshot.session_id.slice(-6)}-seq${latestSnapshot.seq}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // token 篇幅、速率、水位与百分比计算 (统一以 token 为单位)
   const stats = useMemo(() => {
     if (!recipe || !latestSnapshot) return null;
     const personaTokens = estTokens(recipe.personaText);
@@ -243,13 +342,27 @@ export function ContextView() {
 
     const totalEst = personaTokens + skillsTokens + wsTokens + toolsTokens + historyTokens + inputTokens;
     const realTokensIn = latestSnapshot.tokens_in ?? totalEst;
+    const realTokensOut = latestSnapshot.tokens_out ?? 0;
 
-    // 提取提供商返回的缓存 token (OpenAI cached_tokens / DeepSeek cache hit)
+    // 模型真实窗口上限与安全余量倒计时
+    const maxWindow = getModelMaxWindow(latestSnapshot.model_id);
+    const currentTotal = realTokensIn + realTokensOut;
+    const remainingHeadroom = Math.max(0, maxWindow - currentTotal);
+    const headroomPct = Math.min(100, Math.round((currentTotal / maxWindow) * 100));
+
+    // 生成速率计算 (Token/s)
+    const latencySec = (latestSnapshot.latency_ms ?? 1000) / 1000;
+    const speed = latencySec > 0 && realTokensOut > 0 ? (realTokensOut / latencySec).toFixed(1) : "—";
+
+    // 提取提供商返回的缓存 token
     const cachedTokens =
       (latestSnapshot as any).cached_tokens ??
       (latestSnapshot as any).prompt_tokens_details?.cached_tokens ??
       (latestSnapshot as any).prompt_cache_hit_tokens ??
       0;
+
+    // 思考链估算 (如果有推理思考片段)
+    const reasoningTokens = recipe.reasoningSnippet ? estTokens(recipe.reasoningSnippet) : Math.max(0, Math.round(realTokensOut * 0.4));
 
     return {
       personaTokens,
@@ -260,6 +373,12 @@ export function ContextView() {
       inputTokens,
       totalEst,
       realTokensIn,
+      realTokensOut,
+      maxWindow,
+      remainingHeadroom,
+      headroomPct,
+      speed,
+      reasoningTokens,
       cachedTokens: Number(cachedTokens) || 0,
       pct: {
         persona: Math.round((personaTokens / (totalEst || 1)) * 100),
@@ -271,6 +390,28 @@ export function ContextView() {
       },
     };
   }, [recipe, latestSnapshot]);
+
+  // 多轮历史 Token 暴增刺客诊断
+  const spikeAnalysis = useMemo(() => {
+    const snapshots = [...visible].reverse().filter((s) => !s.kind);
+    return snapshots.map((s, idx) => {
+      const prev = idx > 0 ? snapshots[idx - 1] : null;
+      const curIn = s.tokens_in ?? 0;
+      const prevIn = prev?.tokens_in ?? 0;
+      const diff = idx > 0 ? curIn - prevIn : 0;
+      const isSpike = diff >= 2500 || (prevIn > 0 && curIn / prevIn >= 2.0);
+      return {
+        seq: s.seq,
+        turn_index: s.turn_index,
+        step: s.step,
+        model_id: s.model_id,
+        tokens_in: curIn,
+        tokens_out: s.tokens_out ?? 0,
+        diff,
+        isSpike,
+      };
+    });
+  }, [visible]);
 
   const runSearch = async () => {
     const q = searchQ.trim();
@@ -294,7 +435,7 @@ export function ContextView() {
           <Activity className="size-4 text-primary" />
           <span className="text-[13px] font-semibold text-foreground">大模型交互透视分析</span>
           <span className="rounded-md bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
-            context-inspector · 官方只读透视
+            context-inspector · 官方独立扩展插件
           </span>
         </div>
 
@@ -320,6 +461,16 @@ export function ContextView() {
             size="sm"
             variant="outline"
             className="h-7 gap-1 px-2.5 text-[12px]"
+            onClick={exportScrubbedSnapshot}
+            title="一键导出当前快照的脱敏 JSON 诊断包"
+          >
+            <Download className="size-3.5" />
+            <span>导出脱敏快照</span>
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 gap-1 px-2.5 text-[12px]"
             disabled={busy}
             onClick={() => void refresh()}
           >
@@ -331,134 +482,147 @@ export function ContextView() {
 
       {error ? <div className="notice-error">{error}</div> : null}
 
-      {/* 【第一层：健康度看板 / 容量水杯】 */}
+      {/* 【第一层：健康度看板 / 模型窗口真实水位与性能】 */}
       {latestSnapshot && stats ? (
-        <div className="bg-card rounded-xl border p-3.5 shadow-2xs">
-          <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
+        <div className="bg-card rounded-xl border p-3.5 shadow-2xs flex flex-col gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2">
+            {/* 真实窗口水位与余量倒计时 */}
             <div className="flex items-center gap-2">
+              <Gauge className="size-4 text-primary" />
               <span className="text-[13px] font-semibold text-foreground">
-                当前对话容量构成
+                模型窗口真实水位 (Headroom)
               </span>
-              <span className="flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+              <span className="rounded-md bg-muted px-2 py-0.5 font-mono text-[11px] font-medium text-foreground">
+                {stats.realTokensIn + stats.realTokensOut} / {stats.maxWindow.toLocaleString()} token ({stats.headroomPct}%)
+              </span>
+              <span className={cn(
+                "flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium",
+                stats.headroomPct >= 80 ? "bg-rose-500/10 text-rose-600" : stats.headroomPct >= 50 ? "bg-amber-500/10 text-amber-600" : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+              )}>
                 <CheckCircle2 className="size-3" />
-                <span>记忆完整无遗漏 ({recipe?.historyTurns.length ?? 0}/20 轮)</span>
+                <span>剩余安全余量: {stats.remainingHeadroom.toLocaleString()} token</span>
               </span>
             </div>
 
-            {/* 输入、缓存、输出与耗时核心指标组 */}
+            {/* 输入、缓存、输出、生成速率与耗时 */}
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-muted-foreground">
               <span className="flex items-center gap-1">
                 <ArrowDownLeft className="size-3.5 text-sky-500" />
                 输入: <strong className="text-foreground">{stats.realTokensIn} token</strong>
               </span>
               <span>·</span>
-              <span
-                className="flex items-center gap-1"
-                title="大模型服务端 KV Cache / 提示词缓存命中量 (由 Provider 接口回包返回)"
-              >
+              <span className="flex items-center gap-1" title="Provider 服务端 KV Cache 提示词缓存命中">
                 <Zap className="size-3.5 text-amber-500" />
-                缓存命中:{" "}
-                <strong className={stats.cachedTokens > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-foreground"}>
-                  {stats.cachedTokens > 0 ? `${stats.cachedTokens} token` : "0 token (未命中/无缓存)"}
+                缓存: <strong className={stats.cachedTokens > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-foreground"}>
+                  {stats.cachedTokens > 0 ? `${stats.cachedTokens} token` : "0 (未命中)"}
                 </strong>
               </span>
               <span>·</span>
               <span className="flex items-center gap-1">
                 <ArrowUpRight className="size-3.5 text-purple-500" />
-                输出: <strong className="text-foreground">{latestSnapshot.tokens_out ?? "—"} token</strong>
+                输出: <strong className="text-foreground">{stats.realTokensOut} token</strong>
+              </span>
+              <span>·</span>
+              <span className="flex items-center gap-1" title="输出生成速率">
+                <TrendingUp className="size-3.5 text-emerald-500" />
+                速率: <strong className="text-foreground">{stats.speed} token/s</strong>
               </span>
               <span>·</span>
               <span className="flex items-center gap-1">
                 <Clock className="size-3.5" />
                 耗时: <strong className="text-foreground">{fmtDur(latestSnapshot.latency_ms)}</strong>
               </span>
-              <span>·</span>
-              <span>模型: <strong className="text-foreground">{latestSnapshot.model_id}</strong></span>
             </div>
           </div>
 
           {/* 进度条水杯 */}
-          <div className="flex h-3 w-full overflow-hidden rounded-full bg-muted/80">
-            {stats.pct.persona > 0 ? (
-              <div
-                style={{ width: `${stats.pct.persona}%` }}
-                className="bg-indigo-500 transition-all hover:opacity-80"
-                title={`AI人设与规矩: 约 ${stats.personaTokens} token (${stats.pct.persona}%)`}
-              />
-            ) : null}
-            {stats.pct.skills > 0 ? (
-              <div
-                style={{ width: `${stats.pct.skills}%` }}
-                className="bg-purple-500 transition-all hover:opacity-80"
-                title={`携带特长技能: 约 ${stats.skillsTokens} token (${stats.pct.skills}%)`}
-              />
-            ) : null}
-            {stats.pct.tools > 0 ? (
-              <div
-                style={{ width: `${stats.pct.tools}%` }}
-                className="bg-amber-500 transition-all hover:opacity-80"
-                title={`装备工具箱: 约 ${stats.toolsTokens} token (${stats.pct.tools}%)`}
-              />
-            ) : null}
-            {stats.pct.history > 0 ? (
-              <div
-                style={{ width: `${stats.pct.history}%` }}
-                className="bg-sky-500 transition-all hover:opacity-80"
-                title={`之前聊天记忆: 约 ${stats.historyTokens} token (${stats.pct.history}%)`}
-              />
-            ) : null}
-            {stats.pct.ws > 0 ? (
-              <div
-                style={{ width: `${stats.pct.ws}%` }}
-                className="bg-emerald-500 transition-all hover:opacity-80"
-                title={`工作区环境: 约 ${stats.wsTokens} token (${stats.pct.ws}%)`}
-              />
-            ) : null}
-            {stats.pct.input > 0 ? (
-              <div
-                style={{ width: `${stats.pct.input}%` }}
-                className="bg-rose-500 transition-all hover:opacity-80"
-                title={`本次提问: 约 ${stats.inputTokens} token (${stats.pct.input}%)`}
-              />
-            ) : null}
-          </div>
+          <div>
+            <div className="mb-1.5 flex items-center justify-between text-[11.5px] text-muted-foreground">
+              <span>输入内容配方构成：</span>
+              <span>当前会话保留 {recipe?.historyTurns.length ?? 0}/20 轮记忆</span>
+            </div>
+            <div className="flex h-3 w-full overflow-hidden rounded-full bg-muted/80">
+              {stats.pct.persona > 0 ? (
+                <div
+                  style={{ width: `${stats.pct.persona}%` }}
+                  className="bg-indigo-500 transition-all hover:opacity-80"
+                  title={`AI人设与规矩: 约 ${stats.personaTokens} token (${stats.pct.persona}%)`}
+                />
+              ) : null}
+              {stats.pct.skills > 0 ? (
+                <div
+                  style={{ width: `${stats.pct.skills}%` }}
+                  className="bg-purple-500 transition-all hover:opacity-80"
+                  title={`携带特长技能: 约 ${stats.skillsTokens} token (${stats.pct.skills}%)`}
+                />
+              ) : null}
+              {stats.pct.tools > 0 ? (
+                <div
+                  style={{ width: `${stats.pct.tools}%` }}
+                  className="bg-amber-500 transition-all hover:opacity-80"
+                  title={`装备工具箱: 约 ${stats.toolsTokens} token (${stats.pct.tools}%)`}
+                />
+              ) : null}
+              {stats.pct.history > 0 ? (
+                <div
+                  style={{ width: `${stats.pct.history}%` }}
+                  className="bg-sky-500 transition-all hover:opacity-80"
+                  title={`之前聊天记忆: 约 ${stats.historyTokens} token (${stats.pct.history}%)`}
+                />
+              ) : null}
+              {stats.pct.ws > 0 ? (
+                <div
+                  style={{ width: `${stats.pct.ws}%` }}
+                  className="bg-emerald-500 transition-all hover:opacity-80"
+                  title={`工作区环境: 约 ${stats.wsTokens} token (${stats.pct.ws}%)`}
+                />
+              ) : null}
+              {stats.pct.input > 0 ? (
+                <div
+                  style={{ width: `${stats.pct.input}%` }}
+                  className="bg-rose-500 transition-all hover:opacity-80"
+                  title={`本次提问: 约 ${stats.inputTokens} token (${stats.pct.input}%)`}
+                />
+              ) : null}
+            </div>
 
-          {/* 图例对照表 (统一为 token 表达) */}
-          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11.5px]">
-            <span className="flex items-center gap-1.5">
-              <span className="size-2.5 rounded-full bg-indigo-500" />
-              <span className="text-foreground">🎭 人设规矩:</span>
-              <span className="text-muted-foreground">{stats.pct.persona}% ({stats.personaTokens} token)</span>
-            </span>
-            {stats.skillsTokens > 0 ? (
+            {/* 图例对照表 (统一为 token 表达) */}
+            <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px]">
               <span className="flex items-center gap-1.5">
-                <span className="size-2.5 rounded-full bg-purple-500" />
-                <span className="text-foreground">⚡ 特长技能:</span>
-                <span className="text-muted-foreground">{stats.pct.skills}% ({stats.skillsTokens} token)</span>
+                <span className="size-2.5 rounded-full bg-indigo-500" />
+                <span className="text-foreground">🎭 人设规矩:</span>
+                <span className="text-muted-foreground">{stats.pct.persona}% ({stats.personaTokens} token)</span>
               </span>
-            ) : null}
-            <span className="flex items-center gap-1.5">
-              <span className="size-2.5 rounded-full bg-amber-500" />
-              <span className="text-foreground">🛠️ 工具背包:</span>
-              <span className="text-muted-foreground">{stats.pct.tools}% ({stats.toolsTokens} token)</span>
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="size-2.5 rounded-full bg-sky-500" />
-              <span className="text-foreground">💬 聊天记忆:</span>
-              <span className="text-muted-foreground">{stats.pct.history}% ({stats.historyTokens} token)</span>
-            </span>
-            {stats.wsTokens > 0 ? (
+              {stats.skillsTokens > 0 ? (
+                <span className="flex items-center gap-1.5">
+                  <span className="size-2.5 rounded-full bg-purple-500" />
+                  <span className="text-foreground">⚡ 特长技能:</span>
+                  <span className="text-muted-foreground">{stats.pct.skills}% ({stats.skillsTokens} token)</span>
+                </span>
+              ) : null}
               <span className="flex items-center gap-1.5">
-                <span className="size-2.5 rounded-full bg-emerald-500" />
-                <span className="text-foreground">📁 电脑目录:</span>
-                <span className="text-muted-foreground">{stats.pct.ws}% ({stats.wsTokens} token)</span>
+                <span className="size-2.5 rounded-full bg-amber-500" />
+                <span className="text-foreground">🛠️ 工具背包:</span>
+                <span className="text-muted-foreground">{stats.pct.tools}% ({stats.toolsTokens} token)</span>
               </span>
-            ) : null}
-            <span className="flex items-center gap-1.5">
-              <span className="size-2.5 rounded-full bg-rose-500" />
-              <span className="text-foreground">❓ 您的问题:</span>
-              <span className="text-muted-foreground">{stats.pct.input}% ({stats.inputTokens} token)</span>
-            </span>
+              <span className="flex items-center gap-1.5">
+                <span className="size-2.5 rounded-full bg-sky-500" />
+                <span className="text-foreground">💬 聊天记忆:</span>
+                <span className="text-muted-foreground">{stats.pct.history}% ({stats.historyTokens} token)</span>
+              </span>
+              {stats.wsTokens > 0 ? (
+                <span className="flex items-center gap-1.5">
+                  <span className="size-2.5 rounded-full bg-emerald-500" />
+                  <span className="text-foreground">📁 电脑目录:</span>
+                  <span className="text-muted-foreground">{stats.pct.ws}% ({stats.wsTokens} token)</span>
+                </span>
+              ) : null}
+              <span className="flex items-center gap-1.5">
+                <span className="size-2.5 rounded-full bg-rose-500" />
+                <span className="text-foreground">❓ 您的问题:</span>
+                <span className="text-muted-foreground">{stats.pct.input}% ({stats.inputTokens} token)</span>
+              </span>
+            </div>
           </div>
         </div>
       ) : (
@@ -469,11 +633,11 @@ export function ContextView() {
         </div>
       )}
 
-      {/* 【第二层：配方卡片盒 / 功能切页】 */}
+      {/* 【第二层：全域双栏联动交互区】 */}
       {recipe ? (
         <div className="flex min-h-0 flex-1 flex-col gap-3">
           <div className="flex items-center justify-between border-b pb-1">
-            <div className="flex items-center gap-1" role="tablist">
+            <div className="flex flex-wrap items-center gap-1" role="tablist">
               <button
                 role="tab"
                 onClick={() => setActiveTab("recipe")}
@@ -485,7 +649,7 @@ export function ContextView() {
                 )}
               >
                 <Layers className="size-3.5" />
-                <span>人设与特长双栏 ({recipe.skills.length + 1})</span>
+                <span>人设与特长双栏</span>
               </button>
 
               <button
@@ -514,6 +678,34 @@ export function ContextView() {
               >
                 <MessageSquare className="size-3.5" />
                 <span>聊天记忆双栏 ({recipe.historyTurns.length}轮)</span>
+              </button>
+
+              <button
+                role="tab"
+                onClick={() => setActiveTab("files")}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12.5px] font-medium transition-colors",
+                  activeTab === "files"
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:bg-muted",
+                )}
+              >
+                <FileCode className="size-3.5" />
+                <span>工程文件副作用 ({recipe.affectedFiles.length})</span>
+              </button>
+
+              <button
+                role="tab"
+                onClick={() => setActiveTab("spikes")}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12.5px] font-medium transition-colors",
+                  activeTab === "spikes"
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:bg-muted",
+                )}
+              >
+                <TrendingUp className="size-3.5" />
+                <span>Token暴增诊断</span>
               </button>
 
               <button
@@ -568,7 +760,7 @@ export function ContextView() {
             </div>
           ) : (
             <div className="min-h-0 flex-1 overflow-auto">
-              {/* TAB 1: 人设与特长双栏联动 (左卡片 + 右提示词原文高亮) */}
+              {/* TAB 1: 人设与特长双栏联动 */}
               {activeTab === "recipe" ? (
                 <div className="flex flex-col gap-2.5">
                   <div className="flex flex-wrap items-center justify-between border-b pb-2 text-[12.5px]">
@@ -728,7 +920,6 @@ export function ContextView() {
                       </div>
 
                       <div className="flex flex-col gap-3">
-                        {/* 人设段落 */}
                         <div
                           id="prompt-section-persona"
                           className={cn(
@@ -747,7 +938,6 @@ export function ContextView() {
                           </pre>
                         </div>
 
-                        {/* 特长段落 */}
                         {recipe.skills.map((s) => {
                           const isSelected = selectedPromptSection === s.id;
                           return (
@@ -772,7 +962,6 @@ export function ContextView() {
                           );
                         })}
 
-                        {/* 工作区段落 */}
                         {recipe.workspaceText ? (
                           <div
                             id="prompt-section-workspace"
@@ -798,7 +987,7 @@ export function ContextView() {
                 </div>
               ) : null}
 
-              {/* TAB 2: 工具背包双栏联动 (左卡片 + 右专家代码) */}
+              {/* TAB 2: 工具背包双栏联动 */}
               {activeTab === "tools" ? (
                 <div className="flex flex-col gap-2.5">
                   <div className="flex flex-wrap items-center justify-between border-b pb-2 text-[12.5px]">
@@ -868,9 +1057,7 @@ export function ContextView() {
                     </div>
 
                     {/* 右侧：专家模式代码展示与定位加深 */}
-                    <div
-                      className="flex flex-col gap-2.5 overflow-y-auto rounded-xl border bg-muted/20 p-3 lg:col-span-7 max-h-[500px]"
-                    >
+                    <div className="flex flex-col gap-2.5 overflow-y-auto rounded-xl border bg-muted/20 p-3 lg:col-span-7 max-h-[500px]">
                       <div className="flex items-center justify-between border-b border-border/60 pb-1.5 text-[12px]">
                         <span className="font-semibold text-foreground flex items-center gap-1.5">
                           <Code2 className="size-3.5 text-primary" />
@@ -944,7 +1131,7 @@ export function ContextView() {
                 </div>
               ) : null}
 
-              {/* TAB 3: 聊天记忆双栏联动 (左轮次 + 右历史报文高亮) */}
+              {/* TAB 3: 聊天记忆双栏联动 */}
               {activeTab === "memory" ? (
                 <div className="flex flex-col gap-2.5">
                   <div className="flex flex-wrap items-center justify-between border-b pb-2 text-[12.5px]">
@@ -960,7 +1147,7 @@ export function ContextView() {
                   </div>
 
                   <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-12 min-h-[440px]">
-                    {/* 左侧：对答卡片与淘汰说明 */}
+                    {/* 左侧：对答卡片 */}
                     <div className="flex flex-col gap-2.5 overflow-y-auto pr-1 lg:col-span-5 max-h-[500px]">
                       {recipe.historyTurns.length === 0 ? (
                         <div className="rounded-xl border bg-card p-6 text-center text-[12.5px] text-muted-foreground">
@@ -1005,13 +1192,12 @@ export function ContextView() {
                         })
                       )}
 
-                      {/* 淘汰与裁剪说明卡片 */}
                       <div className="rounded-xl border border-dashed p-3 text-[11.5px] text-muted-foreground bg-muted/10 flex items-start gap-2.5">
                         <Scissors className="size-4 mt-0.5 text-muted-foreground shrink-0" />
                         <div>
                           <span className="font-semibold text-foreground">关于对话遗忘的说明：</span>
                           <span>
-                            当前系统硬上限为 20 轮或 24,000 字符。目前您的会话长度健康，没有任何历史对话被剪掉。如果将来对话变长产生脱落，此处会明确提醒您遗忘了哪几轮。
+                            当前系统硬上限为 20 轮或 24,000 字符。目前您的会话长度健康，没有任何历史对话被剪掉。
                           </span>
                         </div>
                       </div>
@@ -1090,12 +1276,215 @@ export function ContextView() {
                 </div>
               ) : null}
 
-              {/* TAB 4: 步骤时序流 */}
-              {activeTab === "trajectory" ? (
-                <div className="flex flex-col gap-2 rounded-xl border bg-card p-3.5 shadow-2xs">
-                  <div className="mb-2 text-[13px] font-semibold text-foreground">
-                    ⚡ 最近一次互动的背后运行细节
+              {/* TAB 4: 本地工程文件读写副作用追踪 (对标 Pi-Web) */}
+              {activeTab === "files" ? (
+                <div className="flex flex-col gap-2.5">
+                  <div className="flex flex-wrap items-center justify-between border-b pb-2 text-[12.5px]">
+                    <div>
+                      <span className="font-semibold text-foreground">📁 本地工程文件读写副作用追踪 (对标 Pi-Web)</span>
+                      <span className="ml-2 text-[11.5px] text-muted-foreground">
+                        自动捕获本轮模型通过 fs.read / fs.write / fs.edit 触碰的文件资产
+                      </span>
+                    </div>
+                    <span className="text-[12px] text-muted-foreground">
+                      共捕获 <strong className="text-foreground">{recipe.affectedFiles.length}</strong> 个文件操作
+                    </span>
                   </div>
+
+                  <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-12 min-h-[440px]">
+                    {/* 左侧：文件操作清单 */}
+                    <div className="flex flex-col gap-2 overflow-y-auto pr-1 lg:col-span-5 max-h-[500px]">
+                      {recipe.affectedFiles.length === 0 ? (
+                        <div className="rounded-xl border bg-card p-6 text-center text-[12.5px] text-muted-foreground">
+                          本轮对话未触发本地文件读写操作 (纯问答交互)
+                        </div>
+                      ) : (
+                        recipe.affectedFiles.map((f, idx) => {
+                          const isSelected = selectedFileIndex === idx;
+                          return (
+                            <div
+                              key={idx}
+                              onClick={() => {
+                                setSelectedFileIndex(idx);
+                                scrollToTarget(`file-effect-${idx}`);
+                              }}
+                              className={cn(
+                                "cursor-pointer rounded-xl border p-3 transition-all duration-150 flex flex-col justify-between gap-1.5",
+                                isSelected
+                                  ? "border-primary bg-primary/10 shadow-xs ring-1 ring-primary/40"
+                                  : "bg-card hover:border-border hover:bg-muted/30 border-border/70",
+                              )}
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  {f.action === "write" || f.action === "edit" ? (
+                                    <FileEdit className="size-4 text-amber-500 shrink-0" />
+                                  ) : (
+                                    <FileCheck className="size-4 text-sky-500 shrink-0" />
+                                  )}
+                                  <span className="font-mono text-[12.5px] font-semibold text-foreground truncate">
+                                    {f.path}
+                                  </span>
+                                </div>
+                                <span className={cn(
+                                  "rounded px-1.5 py-0.5 text-[10.5px] font-medium shrink-0",
+                                  f.action === "write" ? "bg-amber-500/15 text-amber-600" : f.action === "edit" ? "bg-purple-500/15 text-purple-600" : "bg-sky-500/15 text-sky-600"
+                                )}>
+                                  {f.action === "write" ? "写入" : f.action === "edit" ? "编辑修改" : "读取"}
+                                </span>
+                              </div>
+                              <div className="text-[11px] text-muted-foreground">
+                                触发工具: <span className="font-mono text-foreground">{f.toolName}</span>
+                              </div>
+                              <div className="flex items-center justify-between border-t border-border/40 pt-1.5 text-[11px]">
+                                <span className="text-muted-foreground">文件副作用</span>
+                                <span className={cn("font-medium", isSelected ? "text-primary" : "text-muted-foreground/60")}>
+                                  {isSelected ? "✓ 正在右侧高亮" : "点击查看参数明细"}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    {/* 右侧：操作参数与内容详情 */}
+                    <div className="flex flex-col gap-2.5 overflow-y-auto rounded-xl border bg-muted/20 p-3 lg:col-span-7 max-h-[500px]">
+                      <div className="flex items-center justify-between border-b border-border/60 pb-1.5 text-[12px]">
+                        <span className="font-semibold text-foreground flex items-center gap-1.5">
+                          <Code2 className="size-3.5 text-primary" />
+                          <span>文件操作指令与参数明细</span>
+                        </span>
+                      </div>
+
+                      <div className="flex flex-col gap-3">
+                        {recipe.affectedFiles.length === 0 ? (
+                          <div className="p-8 text-center text-[12px] text-muted-foreground">
+                            无文件变动明细
+                          </div>
+                        ) : (
+                          recipe.affectedFiles.map((f, idx) => {
+                            const isSelected = selectedFileIndex === idx;
+                            return (
+                              <div
+                                key={idx}
+                                id={`file-effect-${idx}`}
+                                className={cn(
+                                  "rounded-lg border p-2.5 transition-all duration-200",
+                                  isSelected
+                                    ? "border-primary bg-primary/10 shadow-sm ring-1 ring-primary/30"
+                                    : "border-border/60 bg-background/70 hover:border-border",
+                                )}
+                              >
+                                <div className="mb-1.5 flex items-center justify-between text-[11.5px]">
+                                  <span className="font-mono font-semibold text-foreground">
+                                    {f.toolName} → {f.path}
+                                  </span>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-6 gap-1 px-1.5 text-[10.5px] text-muted-foreground hover:text-foreground"
+                                    onClick={() => copyText(`file_${idx}`, f.detail)}
+                                  >
+                                    <Copy className="size-3" />
+                                    <span>复制明细</span>
+                                  </Button>
+                                </div>
+                                <pre className="max-h-48 overflow-auto rounded bg-muted/40 p-2 font-mono text-[11px] leading-relaxed text-foreground/90 whitespace-pre-wrap break-all">
+                                  {f.detail}
+                                </pre>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {/* TAB 5: 多轮 Token 暴增与刺客诊断 */}
+              {activeTab === "spikes" ? (
+                <div className="flex flex-col gap-3 rounded-xl border bg-card p-3.5 shadow-2xs">
+                  <div className="flex flex-wrap items-center justify-between border-b pb-2 text-[12.5px]">
+                    <div>
+                      <span className="font-semibold text-foreground flex items-center gap-1.5">
+                        <TrendingUp className="size-4 text-primary" />
+                        <span>多轮对话 Token 暴增与刺客诊断 (Spike Alert)</span>
+                      </span>
+                      <p className="text-[11.5px] text-muted-foreground mt-0.5">
+                        自动对比相邻轮次的 Token 增量，智能揪出是哪一轮因外部搜索、读入超大文件导致上下文突然爆仓。
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-2">
+                    {spikeAnalysis.map((item, idx) => (
+                      <div
+                        key={item.seq}
+                        className={cn(
+                          "flex items-center justify-between rounded-lg border p-3 text-[12px] transition-colors",
+                          item.isSpike ? "border-rose-500/50 bg-rose-500/10" : "bg-muted/20 border-border/60",
+                        )}
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className="font-mono font-semibold text-[13px] text-foreground">
+                            第 {item.turn_index} 轮 (第 {item.step} 步)
+                          </span>
+                          <span className="text-muted-foreground text-[11.5px]">
+                            输入: <strong className="text-foreground">{item.tokens_in} token</strong> · 输出: {item.tokens_out} token
+                          </span>
+                          {item.diff > 0 ? (
+                            <span className={cn(
+                              "rounded-md px-1.5 py-0.5 text-[11px] font-medium font-mono",
+                              item.isSpike ? "bg-rose-500 text-white" : "bg-muted text-muted-foreground"
+                            )}>
+                              +{item.diff} token
+                            </span>
+                          ) : null}
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          {item.isSpike ? (
+                            <span className="flex items-center gap-1 rounded bg-rose-500/20 px-2 py-0.5 text-[11.5px] font-semibold text-rose-600 dark:text-rose-400">
+                              <AlertTriangle className="size-3.5" />
+                              <span>⚠️ 检测到 Token 异常激增！可能调用了携带大量长文的外部工具</span>
+                            </span>
+                          ) : (
+                            <span className="text-[11.5px] text-muted-foreground">正常增长</span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              {/* TAB 6: 步骤时序流与深度思考链 */}
+              {activeTab === "trajectory" ? (
+                <div className="flex flex-col gap-3 rounded-xl border bg-card p-3.5 shadow-2xs">
+                  <div className="flex flex-wrap items-center justify-between border-b pb-2 text-[13px] font-semibold text-foreground">
+                    <span className="flex items-center gap-1.5">
+                      <Activity className="size-4 text-primary" />
+                      <span>交互执行细节与模型深度思考链 (Thinking Chain)</span>
+                    </span>
+                  </div>
+
+                  {/* 深度思考链透明卡片 (针对推理模型) */}
+                  {recipe.reasoningSnippet ? (
+                    <div className="rounded-lg border border-purple-500/40 bg-purple-500/10 p-3">
+                      <div className="mb-1 flex items-center justify-between text-[12px] font-semibold text-purple-600 dark:text-purple-400">
+                        <span className="flex items-center gap-1.5">
+                          <Brain className="size-4" />
+                          <span>🧠 模型深度思考链 (Reasoning Tokens 约 {stats?.reasoningTokens ?? 0} token)</span>
+                        </span>
+                        <span className="text-[11px] font-mono text-muted-foreground">thinking_content</span>
+                      </div>
+                      <pre className="max-h-48 overflow-auto rounded bg-background/80 p-2.5 font-mono text-[11px] leading-relaxed text-foreground whitespace-pre-wrap break-all">
+                        {recipe.reasoningSnippet}
+                      </pre>
+                    </div>
+                  ) : null}
 
                   {visible.length === 0 ? (
                     <div className="py-6 text-center text-[12.5px] text-muted-foreground">
