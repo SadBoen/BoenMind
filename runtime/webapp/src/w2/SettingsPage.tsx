@@ -3,7 +3,6 @@
 // 插件 PIN 快捷项(PIN 后在此显示,点击跳插件页并按名筛选)。
 import { useEffect, useState } from "react";
 // 导航:常规 / 模型 / 插件 / 外观 / 角色 / 日志 / 关于
-import { useEffect, useState } from "react";
 import { BoxIcon, InfoIcon, PlugIcon, ScrollTextIcon, SlidersHorizontalIcon, SparklesIcon, WrenchIcon } from "lucide-react";
 import { ProvidersPage } from "./ProvidersPage";
 import { PluginsPage } from "./PluginsPage";
@@ -45,7 +44,6 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
         <span className="text-[15px] font-semibold">设置</span>
         <span className="text-muted-foreground text-[12px]">齿轮可开关 · Esc 关闭</span>
         <span className="flex-1" />
-        <span className="text-muted-foreground font-mono text-[11px]">BoenMind W2</span>
       </div>
 
       <div className="flex min-h-0 flex-1">
@@ -55,7 +53,6 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
             onClick={() => setSection("general")}
             icon={<WrenchIcon className="size-4" />}
             label="常规"
-            hint="W8"
           />
           <NavItem
             active={section === "providers"}
@@ -77,14 +74,12 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
             onClick={() => setSection("appearance")}
             icon={<SparklesIcon className="size-4" />}
             label="外观"
-            hint="W3"
           />
           <NavItem
             active={section === "roles"}
             onClick={() => setSection("roles")}
             icon={<BoxIcon className="size-4" />}
             label="角色"
-            hint="W4"
           />
           <NavItem
             active={section === "logs"}
@@ -127,13 +122,11 @@ function NavItem({
   onClick,
   icon,
   label,
-  hint,
 }: {
   active: boolean;
   onClick: () => void;
   icon: React.ReactNode;
   label: string;
-  hint?: string;
 }) {
   return (
     <button
@@ -145,11 +138,6 @@ function NavItem({
     >
       {icon}
       <span className="flex-1">{label}</span>
-      {hint ? (
-        <span className="text-muted-foreground rounded border px-1 font-mono text-[10px]">
-          {hint}
-        </span>
-      ) : null}
     </button>
   );
 }

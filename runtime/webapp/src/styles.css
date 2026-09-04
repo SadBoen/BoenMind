@@ -35,7 +35,6 @@
   --fg-1: var(--foreground);
   --fg-2: var(--muted-foreground);
   --fg-3: #a3a3a3;
-  --accent-soft: #dbeafe;
   --danger: var(--destructive);
   --font-ui: system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
   --font-mono: ui-monospace, Consolas, "Cascadia Mono", monospace;
@@ -82,6 +81,7 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-panel: var(--bg-panel);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -149,34 +149,19 @@ body {
   color: var(--fg-2); cursor: pointer; font-size: 15px;
 }
 .icon-chip:hover { background: var(--bg-hover); }
-.search {
-  border: 1px solid var(--border); border-radius: var(--radius);
-  background: #fff; color: var(--fg-3);
-  padding: 7px 10px; font-size: 12.5px; outline: none;
-  font-family: var(--font-ui);
-}
-.chips { display: flex; gap: 6px; }
-.chip {
-  border: 1px solid var(--border); background: #fff;
-  border-radius: 999px; padding: 4px 10px;
-  font-size: 12px; color: var(--fg-2); cursor: pointer;
-  font-family: var(--font-mono);
-}
-.chip.active { background: var(--bg-select); border-color: var(--accent); color: var(--accent); }
 .session-item {
   border-radius: var(--radius-sm);
   padding: 7px 10px;
   display: flex; flex-direction: row; align-items: baseline; gap: 8px;
   background: var(--bg-select);
-  border: 1px solid var(--accent-soft);
+  /* 跟随主配色派生淡边(换主色/换主题都自动跟随,不再写死色值) */
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
 }
 .session-item .name {
   font-family: var(--font-mono); font-size: 12.5px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   flex: 1; min-width: 0;
 }
-.session-item .meta { font-size: 11.5px; color: var(--fg-3); flex-shrink: 0; }
-.sessions-empty { color: var(--fg-3); font-size: 12.5px; padding: 4px 6px; }
 
 /* 对话区(assistant-ui 原语承载) */
 .chat {
@@ -244,7 +229,7 @@ body {
 .composer {
   max-width: 820px; margin: 0 auto;
   border: 1px solid var(--border); border-radius: 14px;
-  background: #fff;
+  background: var(--card);
   padding: 12px 14px 10px;
   display: flex; flex-direction: column; gap: 8px;
   box-shadow: 0 4px 18px rgba(0,0,0,.04);
@@ -262,7 +247,7 @@ body {
 .tool-chip {
   display: inline-flex; align-items: center; gap: 5px;
   border: 1px solid var(--border); border-radius: var(--radius-sm);
-  background: #fff; color: var(--fg-2);
+  background: var(--card); color: var(--fg-2);
   padding: 4px 9px; font-size: 12px; cursor: pointer;
 }
 .tool-chip:hover { background: var(--bg-hover); }
@@ -306,7 +291,6 @@ body {
   color: var(--fg-1); font-weight: 600;
   border-bottom-color: var(--accent);
 }
-.ws-empty { color: var(--fg-3); font-size: 12.5px; text-align: center; margin-top: 48px; }
 
 /* ---- 停止按钮 / 弹窗(W1.1 补) ---- */
 .send-btn.stop { background: var(--danger); }
@@ -315,7 +299,7 @@ body {
   z-index: 2147483647; display: flex; align-items: center; justify-content: center;
 }
 .dialog {
-  background: #fff; border: 1px solid var(--border); border-radius: 12px;
+  background: var(--card); border: 1px solid var(--border); border-radius: 12px;
   padding: 22px 24px; width: 460px; max-width: 92vw;
   box-shadow: 0 16px 48px rgba(0,0,0,.18);
 }
@@ -347,6 +331,39 @@ body {
   padding: 8px 12px;
   font-size: 12px;
 }
+
+/* ---- 表格列调整拖拽条 ---- */
+.col-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: -3px;
+  width: 7px;
+  cursor: col-resize;
+  z-index: 10;
+  user-select: none;
+  touch-action: none;
+}
+.col-resizer::after {
+  content: '';
+  position: absolute;
+  top: 25%;
+  bottom: 25%;
+  left: 3px;
+  width: 1px;
+  background: currentColor;
+  opacity: 0.3;
+  transition: opacity 0.15s, background-color 0.15s;
+}
+.col-resizer:hover::after,
+.col-resizer:active::after {
+  opacity: 1;
+  background: var(--accent, #3b82f6);
+  top: 10%;
+  bottom: 10%;
+  width: 2px;
+  left: 2px;
+}
 .notice-warn {
   background: var(--state-warn-bg);
   border: 1px solid var(--state-warn-border);
@@ -362,4 +379,33 @@ body {
   border-radius: var(--radius-sm, 6px);
   padding: 8px 12px;
   font-size: 12px;
+}
+/* 配置对话框最右滚动条:常驻 + 高度约 2/3 + 圆角(不顶圆角边框) */
+/* 配置对话框滚动条:整体隐藏(保留滚动功能,界面宽度/圆角零影响) */
+.bo-dialog-scroll {
+  scrollbar-width: none;         /* Firefox */
+  -ms-overflow-style: none;      /* 旧 Edge */
+}
+.bo-dialog-scroll::-webkit-scrollbar {
+  display: none;                 /* Chromium/WebKit */
+}
+
+.bo-select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 16 16' fill='%2380a0c0'%3E%3Cpath d='M4 6 L8 10 L12 6 Z' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 12px;
+}
+.bo-select::-ms-expand { display: none; }
+
+/* 隐藏滚动条但保留滚动(左右分栏内部滚动用) */
+.bo-scroll-hidden {
+  scrollbar-width: none;         /* Firefox */
+  -ms-overflow-style: none;      /* 旧 Edge */
+}
+.bo-scroll-hidden::-webkit-scrollbar {
+  display: none;                 /* Chromium/WebKit */
 }

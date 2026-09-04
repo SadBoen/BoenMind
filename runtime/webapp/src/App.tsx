@@ -19,12 +19,6 @@ import { storage, STORAGE_KEYS } from "@/lib/storage";
 type ThemeId = ThemeDef["id"];
 import {
   MessageCircle,
-  Calendar,
-  Layers,
-  Globe,
-  Folder,
-  ClipboardList,
-  FileText,
   Music,
   Settings,
   Plus,
@@ -129,6 +123,23 @@ export default function App() {
         <Rail
           settingsActive={settingsOpen}
           onSettings={() => setSettingsOpen((v) => !v)}
+          onNavigateChat={() => setSettingsOpen(false)}
+          onNavigateApp={(app) => {
+            setSettingsOpen(false);
+            if (app === "music") {
+              // 确保工作区面板展开，并切换至音乐播放器
+              if (layout.workspaceCollapsed) {
+                setLayout((cur) => {
+                  const next = { ...cur, workspaceCollapsed: false };
+                  storage.set(STORAGE_KEYS.LAYOUT, JSON.stringify(next));
+                  return next;
+                });
+              }
+              setTimeout(() => {
+                window.dispatchEvent(new CustomEvent("bm-open-music"));
+              }, 10);
+            }
+          }}
         />
         {settingsOpen ? (
           <SettingsPage onClose={() => setSettingsOpen(false)} />
@@ -216,40 +227,28 @@ function HSplitter({
 function Rail({
   settingsActive,
   onSettings,
+  onNavigateChat,
+  onNavigateApp,
 }: {
   settingsActive: boolean;
   onSettings: () => void;
+  onNavigateChat: () => void;
+  onNavigateApp: (app: "music") => void;
 }) {
-  // 图标:W1 为界面骨架占位(lucide 线性图标);聊天页可用,其余随后续 W 项启用
+  // 图标栏只放真实可用的入口;未实现的功能不挂占位图标(风格统一轮裁定)
   return (
     <div className="rail">
-      <button className="rail-btn active" title="聊天">
+      <button
+        className={"rail-btn" + (!settingsActive ? " active" : "")}
+        title="聊天"
+        onClick={onNavigateChat}
+      >
         <MessageCircle size={18} />
-      </button>
-      <button className="rail-btn" title="日程(规划中)">
-        <Calendar size={18} />
-      </button>
-      <button className="rail-btn" title="组件(规划中)">
-        <Layers size={18} />
-      </button>
-      <button className="rail-btn" title="浏览(规划中)">
-        <Globe size={18} />
-      </button>
-      <button className="rail-btn" title="文件(规划中)">
-        <Folder size={18} />
-      </button>
-      <button className="rail-btn" title="清单(规划中)">
-        <ClipboardList size={18} />
-      </button>
-      <button className="rail-btn" title="文档(规划中)">
-        <FileText size={18} />
       </button>
       <button
         className="rail-btn"
         title="音乐播放器"
-        onClick={() => {
-          window.dispatchEvent(new CustomEvent("bm-open-music"));
-        }}
+        onClick={() => onNavigateApp("music")}
       >
         <Music size={18} />
       </button>
@@ -290,23 +289,17 @@ function SessionPanel({ collapsed }: { collapsed: boolean }) {
           <Plus size={16} />
         </button>
       </div>
-      {/* 会话搜索框随会话列表真数据(W 后续)一起回来;禁用占位框会误导
-          「打不进字」,先移除 */}
-      <div className="chips">
-        <span className="chip active">全部</span>
-        <span className="chip">未分配</span>
-      </div>
+      {/* 当前活动会话卡:单会话口径(与对话区标题一致),真会话列表随后续里程碑 */}
       <div className="session-item">
         <span className="name">BoenMind 对话</span>
-        <span className="meta">刚刚</span>
       </div>
-      <div className="sessions-empty">会话列表真数据随 W 后续接入</div>
     </div>
   );
 }
 
 function WorkspacePanel({ collapsed }: { collapsed: boolean }) {
-  const [tab, setTab] = useState<"files" | "music" | "artifacts" | "todos">("files");
+  // 页签只放已交付能力(文件/音乐);产物/待办待实现后再上,不挂空占位
+  const [tab, setTab] = useState<"files" | "music">("files");
 
   useEffect(() => {
     const handleOpenMusic = () => setTab("music");
@@ -314,10 +307,6 @@ function WorkspacePanel({ collapsed }: { collapsed: boolean }) {
     return () => window.removeEventListener("bm-open-music", handleOpenMusic);
   }, []);
 
-  const emptyText: Record<"artifacts" | "todos", string> = {
-    artifacts: "产物面随 W 后续接入。",
-    todos: "此会话暂无活动任务列表。",
-  };
   return (
     <div
       className="workspace"
@@ -331,12 +320,7 @@ function WorkspacePanel({ collapsed }: { collapsed: boolean }) {
       <div className="workspace-head">
         <span className="title">WORKSPACE</span>
         <span className="actions">
-          <button className="icon-chip" title="新建(规划中)">
-            <Plus size={15} />
-          </button>
-          <button
-            className="icon-chip"
-            title="同步(重载目录树)"
+          <button className="icon-chip" title="同步(重载目录树)"
             onClick={() => window.dispatchEvent(new CustomEvent("bm-ws-refresh"))}
           >
             <RefreshCw size={14} />
@@ -348,8 +332,6 @@ function WorkspacePanel({ collapsed }: { collapsed: boolean }) {
           [
             ["files", "文件"],
             ["music", "音乐"],
-            ["artifacts", "产物"],
-            ["todos", "待办"],
           ] as const
         ).map(([key, label]) => (
           <button
@@ -361,13 +343,7 @@ function WorkspacePanel({ collapsed }: { collapsed: boolean }) {
           </button>
         ))}
       </div>
-      {tab === "files" ? (
-        <WorkspaceFiles />
-      ) : tab === "music" ? (
-        <MusicPlayer />
-      ) : (
-        <div className="ws-empty">{emptyText[tab]}</div>
-      )}
+      {tab === "files" ? <WorkspaceFiles /> : <MusicPlayer />}
     </div>
   );
 }

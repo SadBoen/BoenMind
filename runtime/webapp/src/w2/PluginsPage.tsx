@@ -1,6 +1,6 @@
 // 统一插件中心：整合「系统内置能力」与「外部 MCP 插件」
 // 采用表格式呈现，顶部提供【全部 / 内置 / 外部】快速筛选，保留完整的扫描、配置与操作能力。
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Loader2Icon,
   PlusIcon,
@@ -8,12 +8,16 @@ import {
   ScanSearchIcon,
   ShieldCheck,
   Globe,
+  Wrench,
+  PlayIcon,
+  XIcon,
 } from "lucide-react";
 import {
   api,
   type Capability,
   type McpListResult,
   type McpServer,
+  type ProviderManifestItem,
 } from "./api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -27,22 +31,39 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { STORAGE_KEYS, storage } from "@/lib/storage";
+import { Tooltip } from "radix-ui";
 
 type McpManifestSchemaItem = {
   key: string;
   label: string;
   hint?: string;
-  type: "string" | "secret" | "range" | "select";
+  type: "string" | "secret" | "range" | "select" | "providers";
   default?: string | number;
   min?: number;
   max?: number;
   unit?: string;
   options?: { value: string; label: string }[];
+  /** providers 类型专用:内置默认模板 */
+  items?: ProviderManifestItem[];
+};
+
+type ProviderEntry = ProviderManifestItem & {
+  /** 是否已在「已配置」列表中(用于下拉区分) */
+  present?: boolean;
 };
 
 type ConfigTarget = {
   name: string;
+  server?: McpServer;
   schema: McpManifestSchemaItem[];
   values: Record<string, unknown>;
 };
@@ -129,12 +150,17 @@ function fromDraft(d: Draft): Partial<McpServer> {
   return base;
 }
 
+export type ToolInfo = {
+  name: string;
+  description?: string;
+};
+
 export type TablePluginItem = {
   id: string;
   name: string;
   type: "builtin" | "external";
   detail: string;
-  statusText?: string;
+  tools: ToolInfo[];
   isOnline?: boolean;
   serverRef?: McpServer;
 };
@@ -149,6 +175,46 @@ const BUILTIN_DESC: Record<string, string> = {
   "fs.edit": "精确字符串替换编辑 · 需审批",
 };
 
+// 表格列定义与默认列宽(按用户反馈优化:名称标识适度收紧,类别与状态拉开,操作居中)
+type ColKey = "name" | "category" | "tools" | "actions";
+
+interface ColConfig {
+  key: ColKey;
+  label: string;
+  defaultWidth: number;
+  minWidth: number;
+  align?: "left" | "center" | "right";
+}
+
+const TABLE_COLUMNS: ColConfig[] = [
+  { key: "name", label: "名称 / 标识", defaultWidth: 220, minWidth: 160, align: "left" },
+  { key: "category", label: "类别", defaultWidth: 110, minWidth: 90, align: "left" },
+  { key: "tools", label: "提供工具", defaultWidth: 260, minWidth: 180, align: "left" },
+  { key: "actions", label: "操作", defaultWidth: 180, minWidth: 150, align: "center" },
+];
+
+function loadColWidths(): Record<ColKey, number> {
+  const defaults: Record<ColKey, number> = {
+    name: 220,
+    category: 110,
+    tools: 260,
+    actions: 180,
+  };
+  const raw = storage.get(STORAGE_KEYS.PLUGINS_TABLE_COLS);
+  if (!raw) return defaults;
+  try {
+    const parsed = JSON.parse(raw);
+    return {
+      name: typeof parsed.name === "number" ? Math.max(160, parsed.name) : defaults.name,
+      category: typeof parsed.category === "number" ? Math.max(90, parsed.category) : defaults.category,
+      tools: typeof parsed.tools === "number" ? Math.max(180, parsed.tools) : defaults.tools,
+      actions: typeof parsed.actions === "number" ? Math.max(150, parsed.actions) : defaults.actions,
+    };
+  } catch {
+    return defaults;
+  }
+}
+
 export function PluginsPage({
   initialFilter,
   editTarget,
@@ -162,7 +228,9 @@ export function PluginsPage({
   const [typeFilter, setTypeFilter] = useState<"all" | "builtin" | "external">("all");
   const [builtinList, setBuiltinList] = useState<Capability[]>([]);
   const [mcpData, setMcpData] = useState<McpListResult | null>(null);
-  const [statusMap, setStatusMap] = useState<Record<string, { ok: boolean; tools?: number; error?: string }>>({});
+  const [statusMap, setStatusMap] = useState<
+    Record<string, { ok: boolean; tools?: number; tool_list?: ToolInfo[]; error?: string }>
+  >({});
   
   const [draft, setDraft] = useState<Draft | null>(null);
   const [busy, setBusy] = useState(false);
@@ -173,6 +241,50 @@ export function PluginsPage({
   const [configTarget, setConfigTarget] = useState<ConfigTarget | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  // 表格列宽状态(支持记忆与拖动)
+  const [colWidths, setColWidths] = useState<Record<ColKey, number>>(loadColWidths);
+  const colWidthsRef = useRef(colWidths);
+  colWidthsRef.current = colWidths;
+
+  const handleResizeStart = useCallback(
+    (key: ColKey, e: React.PointerEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const startX = e.clientX;
+      const startWidth = colWidthsRef.current[key];
+      const col = TABLE_COLUMNS.find((c) => c.key === key);
+      const minW = col?.minWidth ?? 80;
+
+      const onPointerMove = (moveEvt: PointerEvent) => {
+        const deltaX = moveEvt.clientX - startX;
+        const newWidth = Math.max(minW, startWidth + deltaX);
+        setColWidths((prev) => {
+          const next = { ...prev, [key]: newWidth };
+          colWidthsRef.current = next;
+          return next;
+        });
+      };
+
+      const onPointerUp = () => {
+        window.removeEventListener("pointermove", onPointerMove);
+        window.removeEventListener("pointerup", onPointerUp);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+        // 持久化保存用户调节后的列宽
+        storage.set(
+          STORAGE_KEYS.PLUGINS_TABLE_COLS,
+          JSON.stringify(colWidthsRef.current),
+        );
+      };
+
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", onPointerUp);
+    },
+    [],
+  );
 
   const loadData = useCallback(async () => {
     try {
@@ -189,11 +301,19 @@ export function PluginsPage({
 
   const refreshStatus = useCallback(async () => {
     try {
-      // /admin/mcp/status 返回形如 { status: [{name, ok, tools, error}] }
+      // /admin/mcp/status 返回形如 { status: [{name, ok, tools, tool_list, error}] }
       const s = await api.mcp.status();
-      const map: Record<string, { ok: boolean; tools?: number; error?: string }> = {};
+      const map: Record<
+        string,
+        { ok: boolean; tools?: number; tool_list?: ToolInfo[]; error?: string }
+      > = {};
       for (const item of s.status ?? []) {
-        map[item.name] = { ok: item.ok, tools: item.tools, error: item.error };
+        map[item.name] = {
+          ok: item.ok,
+          tools: item.tools,
+          tool_list: item.tool_list,
+          error: item.error,
+        };
       }
       setStatusMap(map);
     } catch {
@@ -239,7 +359,12 @@ export function PluginsPage({
         detail:
           BUILTIN_DESC[b.name] ??
           `${effectText}${b.idempotent ? " · 幂等" : ""}`,
-        statusText: "就绪",
+        tools: [
+          {
+            name: b.name,
+            description: BUILTIN_DESC[b.name] ?? `${effectText}能力`,
+          },
+        ],
         isOnline: true,
       });
     }
@@ -249,6 +374,16 @@ export function PluginsPage({
       for (const s of mcpData.servers) {
         const st = statusMap[s.name];
         const isOk = st?.ok ?? false;
+        // 如果后端探活返回了具体的 tool_list 则优先使用；否则若有 tools 数量做保底
+        const tools: ToolInfo[] = (st?.tool_list && st.tool_list.length > 0)
+          ? st.tool_list
+          : (st?.tools ?? 0) > 0
+            ? Array.from({ length: st!.tools! }, (_, i) => ({
+                name: `tool_${i + 1}`,
+                description: "外部 MCP 工具",
+              }))
+            : [];
+
         list.push({
           id: `mcp:${s.name}`,
           name: s.name,
@@ -257,7 +392,7 @@ export function PluginsPage({
             s.transport === "stdio" && s.args?.length
               ? `参数: ${s.args.join(" ")}`
               : "外部扩展服务",
-          statusText: isOk ? `联通 (${st?.tools ?? 0} 工具)` : "离线 / 未装载",
+          tools,
           isOnline: isOk,
           serverRef: s,
         });
@@ -328,7 +463,7 @@ export function PluginsPage({
       const r = await api.mcp.test(name);
       setStatusMap((prev) => ({
         ...prev,
-        [name]: { ok: r.ok, tools: r.tools?.length, error: r.error },
+        [name]: { ok: r.ok, tools: r.tools, error: r.error },
       }));
       if (!r.ok) {
         alert(`测试「${name}」未通过: ${r.error || "服务无响应"}`);
@@ -345,7 +480,7 @@ export function PluginsPage({
         <div>
           <h2 className="text-[16px] font-semibold text-foreground">插件与能力中心</h2>
           <p className="text-muted-foreground text-[12.5px] mt-0.5">
-            查看系统内置基础手脚，管理外部扩展插件（MCP 工具、真实 App）与连通状态。
+            查看系统内置基础能力，管理外部扩展插件（MCP 工具、真实 App）与连通状态。
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -379,8 +514,8 @@ export function PluginsPage({
         </div>
       </div>
 
-      {/* 过滤栏：搜索框 + 快速筛选按钮 */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
+      {/* 过滤栏:搜索框 + 快速筛选按钮(表格卡片自带边框,不再加分隔线) */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <Input
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
@@ -417,25 +552,44 @@ export function PluginsPage({
       </div>
 
       {notice ? (
-        <div className="rounded-lg bg-emerald-500/10 px-3 py-2 text-[12.5px] text-emerald-600">
+        <div className="notice-success">
           {notice}
         </div>
       ) : null}
       {error ? (
-        <div className="rounded-lg bg-destructive/10 px-3 py-2 text-[12.5px] text-destructive">
+        <div className="notice-error">
           {error}
         </div>
       ) : null}
 
-      {/* 核心展示区：表格式 (Table) 设计 */}
-      <div className="overflow-hidden rounded-xl border bg-card/60 shadow-xs backdrop-blur-sm">
-        <table className="w-full text-left text-[12.5px] table-fixed">
-          <thead className="border-b bg-muted/40 text-[11.5px] font-semibold text-muted-foreground uppercase">
+      {/* 核心展示区：表格式 (Table) 设计 (支持列间分隔线与拖拽调整列宽) */}
+      <div className="overflow-x-auto rounded-xl border bg-card/60 shadow-xs backdrop-blur-sm">
+        <table className="w-full text-left text-[12.5px] table-fixed border-collapse">
+          <colgroup>
+            <col style={{ width: `${colWidths.name}px` }} />
+            <col style={{ width: `${colWidths.category}px` }} />
+            <col style={{ width: `${colWidths.tools}px` }} />
+            <col style={{ width: `${colWidths.actions}px` }} />
+          </colgroup>
+          <thead className="border-b bg-muted/40 text-[11.5px] font-semibold text-muted-foreground uppercase select-none">
             <tr>
-              <th className="px-3.5 py-2.5">名称 / 标识</th>
-              <th className="px-3 py-2.5 w-24 whitespace-nowrap">类别</th>
-              <th className="px-3 py-2.5 w-36 whitespace-nowrap">状态</th>
-              <th className="px-3.5 py-2.5 w-56 whitespace-nowrap">操作</th>
+              {TABLE_COLUMNS.map((col) => (
+                <th
+                  key={col.key}
+                  className={cn(
+                    "relative px-3.5 py-2.5 border-r border-border/50 last:border-r-0 whitespace-nowrap overflow-hidden text-ellipsis",
+                    col.align === "center" ? "text-center" : col.align === "right" ? "text-right" : "text-left",
+                  )}
+                >
+                  <span>{col.label}</span>
+                  {/* 可拖拽列边框 */}
+                  <div
+                    className="col-resizer"
+                    onPointerDown={(e) => handleResizeStart(col.key, e)}
+                    title="按住左右拖动调整列宽"
+                  />
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-border/60">
@@ -444,8 +598,8 @@ export function PluginsPage({
               return (
                 <tr key={item.id} className="transition-colors hover:bg-muted/30">
                   {/* 名称与描述 */}
-                  <td className="px-3.5 py-2.5 align-middle">
-                    <div className="flex items-center gap-2">
+                  <td className="px-3.5 py-2.5 align-middle border-r border-border/40 overflow-hidden">
+                    <div className="flex items-center gap-2 min-w-0">
                       <span
                         className={cn(
                           "size-2 shrink-0 rounded-full",
@@ -453,15 +607,15 @@ export function PluginsPage({
                         )}
                         title={item.isOnline ? "可用" : "未联通"}
                       />
-                      <span className="font-mono font-medium text-foreground">{item.name}</span>
+                      <span className="font-mono font-medium text-foreground truncate">{item.name}</span>
                     </div>
-                    <div className="text-muted-foreground mt-0.5 max-w-xs truncate text-[11.5px]">
+                    <div className="text-muted-foreground mt-0.5 truncate text-[11.5px]">
                       {item.detail}
                     </div>
                   </td>
 
                   {/* 类别徽标 */}
-                  <td className="px-3 py-2.5 align-middle whitespace-nowrap">
+                  <td className="px-4 py-2.5 align-middle whitespace-nowrap border-r border-border/40">
                     {item.type === "builtin" ? (
                       <Badge variant="outline" className="gap-1 border-blue-500/30 bg-blue-500/10 font-mono text-[10.5px] text-blue-600 dark:text-blue-400">
                         <ShieldCheck className="size-3" /> 系统内置
@@ -473,22 +627,104 @@ export function PluginsPage({
                     )}
                   </td>
 
-                  {/* 状态 */}
-                  <td className="px-3 py-2.5 align-middle whitespace-nowrap">
-                    <span
-                      className={cn(
-                        "inline-block max-w-full overflow-hidden text-ellipsis align-middle text-[12px] font-medium",
-                        item.isOnline ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground",
-                      )}
-                    >
-                      {item.statusText}
-                    </span>
+                  {/* 提供工具列表(标签 + 气泡防撑破) */}
+                  <td className="px-3.5 py-2.5 align-middle border-r border-border/40 overflow-hidden">
+                    <Tooltip.Provider delayDuration={200}>
+                      <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+                        {item.tools.slice(0, 2).map((t) => (
+                          <Tooltip.Root key={t.name}>
+                            <Tooltip.Trigger asChild>
+                              <span
+                                className={cn(
+                                  "inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-mono text-[11px] border max-w-[135px] truncate cursor-help transition-colors",
+                                  item.type === "builtin"
+                                    ? "bg-muted/50 border-border text-foreground hover:bg-muted"
+                                    : "bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20",
+                                )}
+                              >
+                                <Wrench className="size-2.5 shrink-0 opacity-70" />
+                                <span className="truncate">{t.name}</span>
+                              </span>
+                            </Tooltip.Trigger>
+                            <Tooltip.Portal>
+                              <Tooltip.Content
+                                side="top"
+                                align="start"
+                                sideOffset={5}
+                                className="z-50 max-w-xs rounded-lg border bg-popover p-2.5 text-[11.5px] text-popover-foreground shadow-md animate-in fade-in-0 zoom-in-95"
+                              >
+                                <div className="font-mono font-semibold text-foreground flex items-center gap-1">
+                                  <Wrench className="size-3 text-emerald-500" />
+                                  {t.name}
+                                </div>
+                                {t.description ? (
+                                  <div className="text-muted-foreground mt-1 text-[11px] leading-relaxed">
+                                    {t.description}
+                                  </div>
+                                ) : (
+                                  <div className="text-muted-foreground/60 mt-1 text-[10.5px]">
+                                    暂无工具详细描述
+                                  </div>
+                                )}
+                                <Tooltip.Arrow className="fill-popover" />
+                              </Tooltip.Content>
+                            </Tooltip.Portal>
+                          </Tooltip.Root>
+                        ))}
+
+                        {/* 超出 2 个工具时显示折叠徽标，鼠标悬浮气泡查看全部 */}
+                        {item.tools.length > 2 ? (
+                          <Tooltip.Root>
+                            <Tooltip.Trigger asChild>
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded-md font-mono text-[10.5px] font-semibold bg-muted text-muted-foreground border border-border cursor-help hover:text-foreground">
+                                +{item.tools.length - 2}
+                              </span>
+                            </Tooltip.Trigger>
+                            <Tooltip.Portal>
+                              <Tooltip.Content
+                                side="top"
+                                align="start"
+                                sideOffset={5}
+                                className="z-50 max-w-sm rounded-lg border bg-popover p-3 text-[11.5px] text-popover-foreground shadow-lg animate-in fade-in-0 zoom-in-95"
+                              >
+                                <div className="font-semibold text-foreground border-b pb-1.5 mb-2 flex items-center justify-between">
+                                  <span>全部可用工具清单</span>
+                                  <span className="text-[10.5px] font-mono text-muted-foreground">共 {item.tools.length} 个</span>
+                                </div>
+                                <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                                  {item.tools.map((t) => (
+                                    <div key={t.name} className="rounded bg-muted/40 p-1.5 border border-border/50">
+                                      <div className="font-mono font-medium text-foreground flex items-center gap-1">
+                                        <Wrench className="size-3 text-emerald-500 shrink-0" />
+                                        <span>{t.name}</span>
+                                      </div>
+                                      {t.description ? (
+                                        <div className="text-muted-foreground mt-0.5 text-[10.5px] leading-relaxed">
+                                          {t.description}
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                  ))}
+                                </div>
+                                <Tooltip.Arrow className="fill-popover" />
+                              </Tooltip.Content>
+                            </Tooltip.Portal>
+                          </Tooltip.Root>
+                        ) : null}
+
+                        {item.tools.length === 0 ? (
+                          <span className="text-[11px] text-muted-foreground/60 italic">
+                            未探测到可用工具
+                          </span>
+                        ) : null}
+                      </div>
+                    </Tooltip.Provider>
                   </td>
 
-                  {/* 操作按钮组 */}
-                  <td className="px-3.5 py-2.5 text-right align-middle whitespace-nowrap">
+                  {/* 操作按钮组 (水平中间对齐) */}
+                  <td className="px-3.5 py-2.5 text-center align-middle whitespace-nowrap">
                     {item.type === "external" && item.serverRef ? (
-                      <div className="flex items-center justify-end gap-0.5">
+                      <div className="flex items-center justify-center gap-1">
                         <Button
                           variant="ghost"
                           size="sm"
@@ -521,7 +757,7 @@ export function PluginsPage({
                               });
                             }}
                           >
-                            参数
+                            配置
                           </Button>
                         ) : null}
                         <Button
@@ -535,7 +771,7 @@ export function PluginsPage({
                         </Button>
                       </div>
                     ) : (
-                      <span className="text-[11px] text-muted-foreground/60 select-none">
+                      <span className="text-[11px] text-muted-foreground/60 select-none inline-block">
                         出厂固有 · 禁卸载
                       </span>
                     )}
@@ -555,7 +791,7 @@ export function PluginsPage({
         </table>
       </div>
 
-      {/* 参数配置抽屉对话框 */}
+      {/* 配置抽屉对话框 */}
       <ServerConfigDialog
         target={configTarget}
         onClose={() => setConfigTarget(null)}
@@ -643,7 +879,7 @@ export function PluginsPage({
               if (d._editing) {
                 await api.mcp.update(d.name, fromDraft(d));
               } else {
-                await api.mcp.add(fromDraft(d));
+                await api.mcp.create(fromDraft(d));
               }
               setDraft(null);
               await loadData();
@@ -660,7 +896,13 @@ export function PluginsPage({
   );
 }
 
-// 参数配置抽屉
+// 配置抽屉(2026-09-04 重写:支持 web_multisearch 的 providers 型配置
+// ——下拉式供应商列表 + 新增行 + 每家可编辑字段 + 左右分栏用量进度条 + 真搜索测试)
+//
+// 布局:
+//   概览(顶部标题)
+//   左: 用量进度条列表      右: 供应商下拉(顶行「新增 + 」)+ 选中家表单 + 测试按钮
+//   底部: 常规字段(default_limit)+ 保存/取消
 function ServerConfigDialog({
   target,
   onClose,
@@ -669,23 +911,209 @@ function ServerConfigDialog({
   onClose: () => void;
 }) {
   const [values, setValues] = useState<Record<string, unknown>>({});
+  const [providers, setProviders] = useState<ProviderEntry[]>([]);
+  const [selectedId, setSelectedId] = useState<string>("");
+  const [usage, setUsage] = useState<Record<string, number>>({});
+  const [usageMonth, setUsageMonth] = useState<string>("");
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testQuery, setTestQuery] = useState("");
+  const [testLimit, setTestLimit] = useState(5);
+  const [testResult, setTestResult] = useState<
+    { ok: boolean; title: string; body: string } | null
+  >(null);
   const [err, setErr] = useState<string | null>(null);
 
+  // 从 schema 里取 providers 描述(若无则非 providers 型,退回普通表单)
+  const providerSchema = useMemo(
+    () => target?.schema.find((s) => s.type === "providers") ?? null,
+    [target],
+  );
+  const isProviders = !!providerSchema;
+
+  // 初始化:合并已存 providers 值 + manifest 内置模板
   useEffect(() => {
-    if (target) {
-      setValues(target.values || {});
-      setErr(null);
+    if (!target) return;
+    setValues(target.values || {});
+    setErr(null);
+    setTestResult(null);
+
+    if (!providerSchema) {
+      setProviders([]);
+      setSelectedId("");
+      return;
     }
-  }, [target]);
+    const templates: ProviderManifestItem[] = providerSchema.items ?? [];
+    const stored: unknown[] = Array.isArray(target.values?.providers)
+      ? (target.values.providers as unknown[])
+      : [];
+    // 已存条目按 id 索引(自定义优先;内置若被改动则采用已存版)
+    const byId = new Map<string, ProviderEntry>();
+    for (const t of templates) {
+      byId.set(t.id, { ...t, present: false });
+    }
+    for (const s of stored) {
+      if (s && typeof s === "object") {
+        const obj = s as Record<string, unknown>;
+        const id = String(obj.id ?? "");
+        if (id) {
+          const base = byId.get(id) ?? ({} as ProviderEntry);
+          byId.set(id, { ...base, ...obj, id, present: true } as ProviderEntry);
+        }
+      }
+    }
+    // 已存里出现、但模板没有的自定义供应商(全新),补进去
+    for (const s of stored) {
+      if (s && typeof s === "object") {
+        const obj = s as Record<string, unknown>;
+        const id = String(obj.id ?? "");
+        if (id && !byId.has(id)) {
+          byId.set(id, { ...(obj as ProviderEntry), id, builtin: false });
+        }
+      }
+    }
+    const list = Array.from(byId.values());
+    setProviders(list);
+    finalizeSelection(list, target.values, usage);
+  }, [target, providerSchema]);
+
+  // 默认选中第一个内置/已存家
+  function finalizeSelection(
+    list: ProviderEntry[],
+    vals: Record<string, unknown>,
+    u: Record<string, number>,
+  ) {
+    if (list.length) {
+      const storedIds = new Set(
+        (Array.isArray(vals.providers) ? vals.providers : []).map(
+          (x: unknown) => (x as Record<string, unknown>).id as string,
+        ),
+      );
+      const firstStored = list.find((p) => storedIds.has(p.id)) ?? list[0];
+      setSelectedId(firstStored.id);
+    }
+  }
+
+  // 拉取用量(进度条)
+  useEffect(() => {
+    if (!target || !isProviders) return;
+    let alive = true;
+    api.mcp
+      .getUsage(target.name)
+      .then((r) => {
+        if (!alive) return;
+        setUsage(r.usage?.providers ?? {});
+        setUsageMonth(r.usage?.month ?? "");
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [target, isProviders]);
 
   if (!target) return null;
+
+  const selected = providers.find((p) => p.id === selectedId) ?? null;
+
+  const setField = (id: string, field: keyof ProviderManifestItem, val: string | boolean | number) =>
+    setProviders((prev) =>
+      prev.map((p) => (p.id === id ? { ...p, [field]: val } : p)),
+    );
+
+  // 新增家:生成随机 id,强制走通用引擎(std)
+  const handleAdd = () => {
+    const id = `custom_${Date.now().toString(36)}`;
+    const fresh: ProviderEntry = {
+      id,
+      name: "新供应商",
+      builtin: false,
+      endpoint: "",
+      method: "GET",
+      auth: "header",
+      auth_name: "X-API-KEY",
+      key: "",
+      query_param: "q",
+      limit_param: "",
+      results_path: "/results",
+      title_field: "title",
+      url_field: "url",
+      desc_field: "description",
+      parse: "std",
+      quota: 0,
+      present: true,
+    };
+    setProviders((prev) => [...prev, fresh]);
+    setSelectedId(id);
+  };
+
+  const handleTest = async () => {
+    if (!selected || !testQuery) return;
+    setTesting(true);
+    setTestResult(null);
+    setErr(null);
+    try {
+      const r = await api.mcp.testSearch(
+        target.name,
+        selected.id,
+        testQuery,
+        testLimit || 5,
+      );
+      if (!r.ok) {
+        setTestResult({ ok: false, title: "测试失败", body: r.error ?? "未知错误" });
+        return;
+      }
+      const res = r.result;
+      if (!res?.success) {
+        setTestResult({
+          ok: false,
+          title: `${selected.id} 测试失败`,
+          body: res?.error ?? "无返回",
+        });
+      } else {
+        const lines = (res.results ?? [])
+          .slice(0, 10)
+          .map((it, i) => `${i + 1}. ${it.title ?? ""}\n   ${it.url ?? ""}\n   ${it.description ?? ""}`)
+          .join("\n");
+        setTestResult({
+          ok: true,
+          title: `${selected.name} · ${res.count ?? 0} 条 · ${res.timing_ms ?? 0}ms`,
+          body: lines || "(无结果)",
+        });
+      }
+      // 测试成功会记一次用量,顺手刷新
+      if (res?.success) {
+        api.mcp.getUsage(target.name).then((qr) => {
+          if (qr.ok && qr.usage?.providers) setUsage(qr.usage.providers);
+        });
+      }
+    } catch (e) {
+      setTestResult({
+        ok: false,
+        title: "测试请求失败",
+        body: String(e instanceof Error ? e.message : e),
+      });
+    } finally {
+      setTesting(false);
+    }
+  };
 
   const handleSave = async () => {
     setSaving(true);
     setErr(null);
     try {
-      await api.mcp.setConfig(target.name, values);
+      if (isProviders) {
+        // 保存 providers 列表(过滤掉空 id)
+        setValues((prev) => ({
+          ...prev,
+          providers: providers.filter((p) => p.id),
+        }));
+        await api.mcp.saveConfig(target.name, {
+          ...values,
+          providers: providers.filter((p) => p.id),
+        });
+      } else {
+        await api.mcp.saveConfig(target.name, values);
+      }
       onClose();
     } catch (e) {
       setErr(String(e instanceof Error ? e.message : e));
@@ -694,14 +1122,364 @@ function ServerConfigDialog({
     }
   };
 
+  // 若 providers 型 → 左右分栏新布局
+  if (isProviders) {
+    return (
+      <Dialog open onOpenChange={(v) => !v && onClose()}>
+        <DialogContent className="flex h-[min(82vh,620px)] flex-col overflow-hidden sm:max-w-[798px]">
+          <DialogHeader className="shrink-0">
+            <div className="flex items-start justify-between gap-3 pr-4">
+              <div className="min-w-0">
+                <DialogTitle>配置 · {target.name}</DialogTitle>
+                <DialogDescription>
+                  左侧点选供应商编辑,「新增」接入全新搜索服务(通用引擎)。
+                </DialogDescription>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-0.5 shrink-0 gap-1"
+                onClick={handleAdd}
+                title="新增供应商(通用引擎)"
+                data-slot="provider-add"
+              >
+                <PlusIcon className="size-3.5" /> 新增
+              </Button>
+            </div>
+          </DialogHeader>
+
+          {/* 统一容器:固定高度 flex 列,左右在内部滚动,对话框高度恒定 */}
+          <div className="min-h-0 flex-1 overflow-hidden rounded-xl border">
+            <div className="grid h-full grid-cols-[minmax(0,210px)_minmax(0,1fr)]">
+              {/* ===== 左:用量进度条(内部滚动,滚动条隐藏) ===== */}
+              <div className="bo-scroll-hidden flex h-full min-h-0 flex-col overflow-y-auto border-r p-2.5">
+                <div className="flex shrink-0 items-center justify-between">
+                  <Label className="text-xs font-semibold">用量(本月)</Label>
+                  {usageMonth ? (
+                    <span className="text-muted-foreground text-[10.5px] font-mono">
+                      {usageMonth}
+                    </span>
+                  ) : null}
+                </div>
+                {/* 列表在左栏内部滚动 */}
+                <div className="mt-1.5 space-y-1.5">
+                {providers.map((p) => {
+                  const used = usage[p.id] ?? 0;
+                  const quota = p.quota ?? 0;
+                  const ratio = quota > 0 ? Math.min(1, used / quota) : 0;
+                  const pct = Math.round(ratio * 100);
+                  const color =
+                    ratio >= 1
+                      ? "bg-rose-500"
+                      : ratio >= 0.8
+                        ? "bg-amber-500"
+                        : "bg-emerald-500";
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => setSelectedId(p.id)}
+                      className={`w-full text-left rounded-md border px-2.5 py-1.5 transition-colors ${
+                        selected?.id === p.id
+                          ? "border-primary/60 bg-primary/5"
+                          : "border-border bg-card/40 hover:bg-muted/40"
+                      }`}
+                    >
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span className="truncate text-[12px] font-medium">
+                          {p.name || p.id}
+                        </span>
+                        <span className="text-muted-foreground shrink-0 text-[10.5px] font-mono">
+                          {quota > 0 ? `${used}/${quota}` : `${used} 次`}
+                          {quota > 0 ? ` · ${pct}%` : ""}
+                        </span>
+                      </div>
+                      <div className="mt-1 h-1 overflow-hidden rounded-full bg-muted">
+                        <div
+                          className={`h-full rounded-full transition-all ${color}`}
+                          style={{ width: `${quota > 0 ? pct : 0}%` }}
+                        />
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* ===== 右:供应商配置(内部滚动,滚动条隐藏) ===== */}
+            <div className="bo-scroll-hidden flex min-h-0 min-w-0 flex-col gap-2.5 overflow-y-auto p-2.5">
+              {/* 通用设置(全局,与供应商无关) */}
+              <div className="rounded-lg border p-2.5">
+                <div className="flex items-center justify-between">
+                  <Label className="text-[11px] font-semibold">通用设置</Label>
+                  <span className="text-muted-foreground text-[10.5px]">指最终返回,非每家条数</span>
+                </div>
+                <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1">
+                  {target.schema
+                    .filter((s) => s.type !== "providers")
+                    .map((item) => (
+                      <div key={item.key} className="space-y-0.5">
+                        <Label className="text-[11px] font-medium">
+                          {item.key === "default_limit"
+                            ? "最终返回条数"
+                            : item.label || item.key}
+                        </Label>
+                        <div className="h-7">
+                          <Input
+                            type={item.type === "range" ? "number" : "text"}
+                            value={String(values[item.key] ?? item.default ?? "")}
+                            onChange={(e) =>
+                              setValues((prev) => ({ ...prev, [item.key]: e.target.value }))
+                            }
+                            className="h-7 w-24 font-mono text-[12px]"
+                          />
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              </div>
+              {/* 选中家的可编辑字段 */}
+              {selected ? (
+                <div className="rounded-lg border p-3">
+                  <div className="mb-2.5 flex items-center justify-between">
+                    <Label className="text-xs font-semibold">
+                      {selected.builtin ? "编辑内置" : "编辑自定义"}:{" "}
+                      {selected.name || selected.id}
+                    </Label>
+                    {selected.builtin ? (
+                      <span className="text-muted-foreground text-[10.5px]">
+                        内置模板可改,不可删除
+                      </span>
+                    ) : (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive h-6 px-2 text-[11px]"
+                        onClick={() => {
+                          setProviders((prev) =>
+                            prev.filter((p) => p.id !== selected.id),
+                          );
+                          setSelectedId(providers[0]?.id ?? "");
+                        }}
+                      >
+                        移除
+                      </Button>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 text-[12px]">
+                    <FormField
+                      label="显示名"
+                      value={selected.name}
+                      onChange={(v) => setField(selected.id, "name", v)}
+                    />
+                    <FormField
+                      label="接口地址"
+                      value={selected.endpoint}
+                      mono
+                      placeholder="https://api.example.com/search"
+                      onChange={(v) => setField(selected.id, "endpoint", v)}
+                    />
+                    <div className="space-y-1">
+                      <Label className="text-[11px]">请求方式</Label>
+                      <Select
+                        value={selected.method}
+                        onValueChange={(v) => v && setField(selected.id, "method", v)}
+                      >
+                        <SelectTrigger size="sm" className="h-7 w-full text-[12px]">
+                          <SelectValue placeholder="方式" />
+                        </SelectTrigger>
+                        <SelectContent className="rounded-lg">
+                          <SelectItem value="GET">GET</SelectItem>
+                          <SelectItem value="POST">POST</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <FormField
+                      label="API Key(逗号多把)"
+                      value={selected.key ?? ""}
+                      password
+                      mono
+                      onChange={(v) => setField(selected.id, "key", v)}
+                    />
+                    <div className="space-y-1">
+                      <Label className="text-[11px]">Key 传法</Label>
+                      <Select
+                        value={selected.auth}
+                        onValueChange={(v) => v && setField(selected.id, "auth", v)}
+                      >
+                        <SelectTrigger size="sm" className="h-7 w-full text-[12px]">
+                          <SelectValue placeholder="传法" />
+                        </SelectTrigger>
+                        <SelectContent className="rounded-lg">
+                          <SelectItem value="header">请求头</SelectItem>
+                          <SelectItem value="bearer">Bearer Token</SelectItem>
+                          <SelectItem value="query">参数 (query/body)</SelectItem>
+                          <SelectItem value="none">无</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {selected.auth === "header" || selected.auth === "query" ? (
+                      <FormField
+                        label={selected.auth === "header" ? "请求头名" : "Key 参数名"}
+                        value={selected.auth_name}
+                        mono
+                        placeholder={selected.auth === "header" ? "X-API-KEY" : "api_key"}
+                        onChange={(v) => setField(selected.id, "auth_name", v)}
+                      />
+                    ) : null}
+                    <FormField
+                      label="query 参数名"
+                      value={selected.query_param}
+                      mono
+                      placeholder="q"
+                      onChange={(v) => setField(selected.id, "query_param", v)}
+                    />
+                    <FormField
+                      label="limit 参数名(可空)"
+                      value={selected.limit_param}
+                      mono
+                      placeholder="num / max_results"
+                      onChange={(v) => setField(selected.id, "limit_param", v)}
+                    />
+                    <FormField
+                      label="结果数组位置(JSON 路径)"
+                      value={selected.results_path}
+                      mono
+                      placeholder="/organic"
+                      onChange={(v) => setField(selected.id, "results_path", v)}
+                    />
+                    <div className="space-y-1">
+                      <Label className="text-[11px]">月度配额(0=不限)</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        value={String(selected.quota ?? 0)}
+                        onChange={(e) =>
+                          setField(selected.id, "quota", Number(e.target.value) || 0)
+                        }
+                        className="h-7 font-mono text-[12px]"
+                      />
+                    </div>
+                    <FormField
+                      label="标题字段"
+                      value={selected.title_field}
+                      mono
+                      placeholder="title"
+                      onChange={(v) => setField(selected.id, "title_field", v)}
+                    />
+                    <FormField
+                      label="链接字段"
+                      value={selected.url_field}
+                      mono
+                      placeholder="url"
+                      onChange={(v) => setField(selected.id, "url_field", v)}
+                    />
+                    <FormField
+                      label="摘要字段"
+                      value={selected.desc_field}
+                      mono
+                      placeholder="snippet"
+                      onChange={(v) => setField(selected.id, "desc_field", v)}
+                    />
+                  </div>
+
+                  {/* 测试按钮 */}
+                  <div className="mt-3 flex items-center gap-2 border-t pt-3">
+                    <Input
+                      value={testQuery}
+                      onChange={(e) => setTestQuery(e.target.value)}
+                      placeholder="输入测试关键词…"
+                      className="h-8 flex-1 text-[12px]"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") void handleTest();
+                      }}
+                    />
+                    <Input
+                      type="number"
+                      min={1}
+                      max={20}
+                      value={String(testLimit || 5)}
+                      onChange={(e) => setTestLimit(Number(e.target.value) || 5)}
+                      className="h-8 w-16 text-[12px]"
+                      title="返回条数"
+                    />
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="h-8 shrink-0 gap-1.5"
+                      onClick={() => void handleTest()}
+                      disabled={testing || !testQuery}
+                    >
+                      {testing ? (
+                        <Loader2Icon className="animate-spin size-3.5" />
+                      ) : (
+                        <PlayIcon className="size-3.5" />
+                      )}
+                      测试真搜
+                    </Button>
+                  </div>
+
+                  {testResult ? (
+                    <div
+                      className={`mt-2.5 rounded-md border p-2.5 text-[12px] ${
+                        testResult.ok
+                          ? "border-emerald-500/30 bg-emerald-500/5"
+                          : "border-rose-500/30 bg-rose-500/5"
+                      }`}
+                    >
+                      <div className="mb-1 flex items-center justify-between font-medium">
+                        <span
+                          className={
+                            testResult.ok ? "text-emerald-600" : "text-rose-600"
+                          }
+                        >
+                          {testResult.ok ? "✓ " : "✕ "}
+                          {testResult.title}
+                        </span>
+                        <button
+                          className="text-muted-foreground transition-colors hover:text-foreground"
+                          onClick={() => setTestResult(null)}
+                          title="收起结果"
+                        >
+                          <XIcon className="size-3.5" />
+                        </button>
+                      </div>
+                      <pre className="max-h-48 overflow-auto whitespace-pre-wrap font-mono text-[11px] leading-relaxed">
+                        {testResult.body}
+                      </pre>
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="text-muted-foreground rounded-lg border border-dashed p-6 text-center text-[12px]">
+                  点「新增」接入全新搜索供应商
+                </div>
+              )}
+            </div>
+            </div>
+          </div>
+
+          {err ? <div className="text-destructive text-xs">{err}</div> : null}
+          <DialogFooter className="shrink-0">
+            <Button variant="outline" onClick={onClose} disabled={saving}>
+              取消
+            </Button>
+            <Button onClick={() => void handleSave()} disabled={saving}>
+              {saving ? <Loader2Icon className="animate-spin" /> : null} 保存配置
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
+  // ===== 普通(非 providers)插件:保持原瀑布式表单 =====
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>配置参数 · {target.name}</DialogTitle>
-          <DialogDescription>
-            该插件声明了可调节的运行配置参数。
-          </DialogDescription>
+          <DialogTitle>配置 · {target.name}</DialogTitle>
+          <DialogDescription>该插件声明了可调节的运行配置。</DialogDescription>
         </DialogHeader>
         <div className="space-y-3 py-2">
           {target.schema.map((item) => (
@@ -730,11 +1508,41 @@ function ServerConfigDialog({
             取消
           </Button>
           <Button onClick={() => void handleSave()} disabled={saving}>
-            {saving ? <Loader2Icon className="animate-spin" /> : null} 保存参数
+            {saving ? <Loader2Icon className="animate-spin" /> : null} 保存配置
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// 一个小型表单字段(标签 + 单行输入),供 providers 编辑复用
+function FormField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  mono,
+  password,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  mono?: boolean;
+  password?: boolean;
+}) {
+  return (
+    <div className="space-y-1">
+      <Label className="text-[11px]">{label}</Label>
+      <Input
+        type={password ? "password" : "text"}
+        value={value}
+        placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value)}
+        className={`h-7 text-[12px] ${mono ? "font-mono" : ""}`}
+      />
+    </div>
   );
 }
 
@@ -779,7 +1587,7 @@ function McpDialog({
                   transport: e.target.value as Draft["transport"],
                 })
               }
-              className="border-input bg-background h-8 rounded-md border px-2 font-mono text-[12px] outline-none"
+              className="bo-select border-input bg-background h-8 rounded-lg border border-border bg-muted/40 px-2 font-mono text-[12px] text-foreground outline-none focus:ring-2 focus:ring-ring"
             >
               <option value="stdio">stdio (本地子进程)</option>
               <option value="sse">sse (远程流式 / Server-Sent Events)</option>

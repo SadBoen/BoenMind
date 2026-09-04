@@ -1021,7 +1021,63 @@ pub async fn mcp_test(
         );
     };
     match hub.probe_server(&name).await {
-        Ok(tools) => Json(json!({ "ok": true, "name": name, "tools": tools })).into_response(),
+        Ok((count, tool_list)) => Json(json!({ "ok": true, "name": name, "tools": count, "tool_list": tool_list })).into_response(),
+        Err(e) => Json(json!({ "ok": false, "name": name, "error": e })).into_response(),
+    }
+}
+
+/// 供应商真搜索测试:POST /admin/mcp/search-test/{name}
+/// 把 query + provider_id 转发给插件的 web_search_test(跑一次该家的真实搜索
+/// 并返回真结果),并把 structuredContent 原样回给前端。
+pub async fn mcp_search_test(
+    State(cfg): State<AdminConfig>,
+    AxumPath(name): AxumPath<String>,
+    Json(body): Json<Value>,
+) -> Response {
+    let Some(hub) = cfg.hub.clone() else {
+        return admin_error(
+            StatusCode::BAD_REQUEST,
+            "服务器未启用 MCP 接线(--mcp-config)",
+        );
+    };
+    let provider_id = body.get("provider_id").and_then(Value::as_str).unwrap_or_default().to_string();
+    let query = body.get("query").and_then(Value::as_str).unwrap_or_default().to_string();
+    if provider_id.is_empty() || query.is_empty() {
+        return Json(json!({
+            "success": false,
+            "error": "provider_id 与 query 均不能为空"
+        }))
+        .into_response();
+    }
+    let limit = body.get("limit").and_then(Value::as_i64).unwrap_or(5);
+    let params = json!({ "provider_id": provider_id, "query": query, "limit": limit });
+    match hub.raw_request(&name, "web_search_test", params).await {
+        Ok(resp) => {
+            // 插件返回的是 {content:[...], structuredContent:{...}} 的 JSON-RPC result
+            let sc = resp.get("structuredContent").cloned().unwrap_or(resp);
+            Json(json!({ "ok": true, "name": name, "result": sc })).into_response()
+        }
+        Err(e) => Json(json!({ "ok": false, "name": name, "error": e })).into_response(),
+    }
+}
+
+/// 读插件月度用量:GET /admin/mcp/usage/{name}
+/// 调 web_usage 拿 {month, providers:{id:used}},回给前端画进度条。
+pub async fn mcp_usage(
+    State(cfg): State<AdminConfig>,
+    AxumPath(name): AxumPath<String>,
+) -> Response {
+    let Some(hub) = cfg.hub.clone() else {
+        return admin_error(
+            StatusCode::BAD_REQUEST,
+            "服务器未启用 MCP 接线(--mcp-config)",
+        );
+    };
+    match hub.raw_request(&name, "web_usage", json!({})).await {
+        Ok(resp) => {
+            let usage = resp.get("structuredContent").cloned().unwrap_or(resp);
+            Json(json!({ "ok": true, "name": name, "usage": usage })).into_response()
+        }
         Err(e) => Json(json!({ "ok": false, "name": name, "error": e })).into_response(),
     }
 }
@@ -1043,7 +1099,7 @@ pub async fn mcp_status(State(cfg): State<AdminConfig>) -> Response {
     let mut status = Vec::new();
     for name in loaded {
         match hub.probe_server(&name).await {
-            Ok(tools) => status.push(json!({"name": name, "ok": true, "tools": tools})),
+            Ok((count, tool_list)) => status.push(json!({"name": name, "ok": true, "tools": count, "tool_list": tool_list})),
             Err(e) => status.push(json!({"name": name, "ok": false, "error": e})),
         }
     }
@@ -1904,6 +1960,8 @@ pub fn admin_routes(cfg: AdminConfig) -> axum::Router {
         .route("/mcp/candidates", post(mcp_candidates))
         .route("/mcp/approve", post(mcp_approve))
         .route("/mcp/test/{name}", post(mcp_test))
+        .route("/mcp/search-test/{name}", post(mcp_search_test))
+        .route("/mcp/usage/{name}", get(mcp_usage))
         .route("/mcp/status", get(mcp_status))
         .route(
             "/mcp-config/{name}",

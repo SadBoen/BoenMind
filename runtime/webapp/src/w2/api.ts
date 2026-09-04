@@ -44,6 +44,26 @@ export type McpServer = {
   sha256?: string;
 };
 
+/** web_multisearch providers 配置里单家的结构(manifest 模板/已存配置通用) */
+export type ProviderManifestItem = {
+  id: string;
+  name: string;
+  builtin?: boolean;
+  endpoint: string;
+  method: string;
+  auth: string;
+  auth_name: string;
+  key?: string;
+  query_param: string;
+  limit_param: string;
+  results_path: string;
+  title_field: string;
+  url_field: string;
+  desc_field: string;
+  parse?: string;
+  quota?: number;
+};
+
 export type McpListResult = {
   file: string;
   servers: McpServer[];
@@ -56,12 +76,14 @@ export type McpListResult = {
         key: string;
         label: string;
         hint?: string;
-        type: "string" | "secret" | "range" | "select";
+        type: "string" | "secret" | "range" | "select" | "providers";
         default?: string | number;
         min?: number;
         max?: number;
         unit?: string;
         options?: { value: string; label: string }[];
+        /** providers 类型专用:内置供应商默认模板(编辑时下拉展示+预填) */
+        items?: ProviderManifestItem[];
       }[];
     } | null;
     config?: Record<string, unknown>;
@@ -235,13 +257,22 @@ export const api = {
         json("POST", { name }),
       ),
     test: (name: string) =>
-      req<{ ok: boolean; name: string; tools?: number; error?: string }>(
-        `/admin/mcp/test/${name}`,
-        { method: "POST" },
-      ),
+      req<{
+        ok: boolean;
+        name: string;
+        tools?: number;
+        tool_list?: { name: string; description?: string }[];
+        error?: string;
+      }>(`/admin/mcp/test/${name}`, { method: "POST" }),
     status: () =>
       req<{
-        status: { name: string; ok: boolean; tools?: number; error?: string }[];
+        status: {
+          name: string;
+          ok: boolean;
+          tools?: number;
+          tool_list?: { name: string; description?: string }[];
+          error?: string;
+        }[];
       }>("/admin/mcp/status"),
     getConfig: (name: string) =>
       req<{ name: string; values: Record<string, unknown> }>(
@@ -252,6 +283,34 @@ export const api = {
         `/admin/mcp-config/${name}`,
         json("PUT", { values }),
       ),
+    // web_multisearch 扩展:真搜索测试(返回某家真实结果)
+    testSearch: (name: string, providerId: string, query: string, limit?: number) =>
+      req<{
+        ok: boolean;
+        name: string;
+        result?: {
+          success: boolean;
+          provider_id?: string;
+          provider_name?: string;
+          timing_ms?: number;
+          count?: number;
+          results?: { title?: string; url?: string; description?: string }[];
+          error?: string;
+        };
+        error?: string;
+      }>(`/admin/mcp/search-test/${encodeURIComponent(name)}`, json("POST", {
+        provider_id: providerId,
+        query,
+        limit: limit ?? 5,
+      })),
+    // web_multisearch 扩展:读月度用量(画进度条)
+    getUsage: (name: string) =>
+      req<{
+        ok: boolean;
+        name: string;
+        usage?: { month?: string; providers?: Record<string, number> };
+        error?: string;
+      }>(`/admin/mcp/usage/${encodeURIComponent(name)}`, { method: "GET" }),
   },
   roles: {
     get: () => req<RolesResponse>("/admin/roles"),

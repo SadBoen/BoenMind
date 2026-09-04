@@ -36,6 +36,7 @@ import { ContextView } from "./context";
 import { useBoenmindApprovals, type ApprovalRequest } from "./runtime";
 import { api, type WorkspaceEntry } from "@/w2/api";
 import { storage, STORAGE_KEYS } from "@/lib/storage";
+import { cn } from "@/lib/utils";
 
 export function Thread({
   sessionsCollapsed,
@@ -184,7 +185,7 @@ function ApprovalCard({
 
   return (
     <div
-      className="group relative my-3 flex flex-col gap-3 rounded-2xl border border-border/80 bg-card/75 p-4 shadow-lg backdrop-blur-xl transition-all hover:border-border"
+      className="group relative my-3 flex flex-col gap-3 rounded-xl border border-border/80 bg-card/75 p-4 shadow-lg backdrop-blur-xl transition-all hover:border-border"
       data-slot="approval-card"
       data-approval-id={req.approval_id}
       data-status={req.status}
@@ -192,7 +193,7 @@ function ApprovalCard({
       {/* 头部：标题、能力名徽标、状态与单据号 */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2.5">
-          <div className="flex size-7 items-center justify-center rounded-lg bg-amber-500/15 text-amber-600 dark:text-amber-400">
+          <div className="flex size-7 items-center justify-center rounded-lg bg-[var(--state-warn-bg)] text-[var(--state-warn-fg)]">
             <ShieldAlert className="size-4" />
           </div>
           <div>
@@ -200,7 +201,7 @@ function ApprovalCard({
               <span className="text-[13.5px] font-semibold text-foreground tracking-tight">
                 权限与工具调用请求
               </span>
-              <Badge variant="outline" className="border-amber-500/30 bg-amber-500/10 font-mono text-[11px] text-amber-700 dark:text-amber-300">
+              <Badge variant="outline" className="border-[var(--state-warn-border)] bg-[var(--state-warn-bg)] font-mono text-[11px] text-[var(--state-warn-fg)]">
                 {req.capability}
               </Badge>
             </div>
@@ -212,7 +213,7 @@ function ApprovalCard({
 
         {req.status === "waiting" ? (
           <Badge variant="secondary" className="flex items-center gap-1 font-mono text-[11px] text-muted-foreground">
-            <Clock className="size-3 animate-spin text-amber-500" />
+            <Clock className="size-3 animate-spin text-[var(--state-warn-fg)]" />
             等待裁决 (5m)
           </Badge>
         ) : null}
@@ -239,7 +240,7 @@ function ApprovalCard({
             <Button
               size="sm"
               disabled={busy}
-              className="h-8 rounded-lg px-3.5 text-[12.5px] font-medium shadow-sm transition-transform active:scale-95"
+              className="h-8 px-3.5 text-[12.5px] font-medium shadow-sm transition-transform active:scale-95"
               data-slot="approval-approve"
               onClick={() => void handleAction("approve")}
             >
@@ -256,18 +257,18 @@ function ApprovalCard({
               <SelectTrigger
                 size="sm"
                 disabled={busy}
-                className="h-8 gap-1.5 rounded-lg border-border/80 bg-background/60 px-2.5 text-[12px] font-medium hover:bg-accent"
+                className="h-8 gap-1.5 border-border/80 bg-background/60 px-2.5 text-[12px] font-medium hover:bg-accent"
                 title="选择裁决动作"
               >
                 <span>更多选项</span>
               </SelectTrigger>
-              <SelectContent side="top" align="start" className="rounded-xl border border-border/80 bg-popover/95 p-1 shadow-xl backdrop-blur-md">
+              <SelectContent side="top" align="start" className="rounded-lg border border-border/80 bg-popover/95 p-1 shadow-xl backdrop-blur-md">
                 <SelectLabel className="px-2 py-1 text-[11px] font-semibold text-muted-foreground">
                   权限裁决策略
                 </SelectLabel>
                 <SelectItem
                   value="approve"
-                  className="rounded-lg py-2 pl-2 text-[12px] font-medium focus:bg-primary/10 focus:text-primary"
+                  className="py-2 pl-2 text-[12px] font-medium focus:bg-primary/10 focus:text-primary"
                 >
                   <div className="flex flex-col gap-0.5">
                     <span className="font-semibold text-foreground">批准本次调用 (Allow)</span>
@@ -276,7 +277,7 @@ function ApprovalCard({
                 </SelectItem>
                 <SelectItem
                   value="deny"
-                  className="rounded-lg py-2 pl-2 text-[12px] font-medium text-destructive focus:bg-destructive/10 focus:text-destructive"
+                  className="py-2 pl-2 text-[12px] font-medium text-destructive focus:bg-destructive/10 focus:text-destructive"
                 >
                   <div className="flex flex-col gap-0.5">
                     <span className="font-semibold">拒绝本次调用 (Deny)</span>
@@ -291,7 +292,7 @@ function ApprovalCard({
               variant="ghost"
               disabled={busy}
               data-slot="approval-deny"
-              className="h-8 rounded-lg px-2.5 text-[12px] text-destructive hover:bg-destructive/10 hover:text-destructive"
+              className="h-8 px-2.5 text-[12px] text-destructive hover:bg-destructive/10 hover:text-destructive"
               onClick={() => void handleAction("deny")}
             >
               拒绝
@@ -305,23 +306,21 @@ function ApprovalCard({
           </div>
         </div>
       ) : (
-        /* 终态提示 */
+        /* 终态提示(状态语义走 --state-* 主题令牌,四主题自动跟随) */
         <div
           className={cn(
-            "flex items-center gap-2 rounded-xl border px-3 py-2 text-[12px] font-medium shadow-xs",
-            req.status === "approved"
-              ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-              : "border-destructive/20 bg-destructive/10 text-destructive",
+            "flex items-center gap-2 px-3 py-2 text-[12px] font-medium shadow-xs",
+            req.status === "approved" ? "notice-success" : "notice-error",
           )}
         >
           {req.status === "approved" ? (
             <>
-              <CheckCircle2 className="size-4 shrink-0 text-emerald-500" />
+              <CheckCircle2 className="size-4 shrink-0" />
               <span>已批准执行 —— 工具结果已安全回喂给模型并归档</span>
             </>
           ) : (
             <>
-              <XCircle className="size-4 shrink-0 text-destructive" />
+              <XCircle className="size-4 shrink-0" />
               <span>已拒绝本次调用 —— 已通知模型操作取消并释放执行锁</span>
             </>
           )}
@@ -480,7 +479,7 @@ function Composer() {
           <Select value={activeRole} onValueChange={handleRoleChange}>
             <SelectTrigger
               size="sm"
-              className="bg-muted/60 h-7 rounded-lg border px-2 text-[11.5px] font-medium"
+              className="bg-muted/60 h-7 border px-2 text-[12px] font-medium"
               title="切换当前会话角色"
               data-slot="role-select"
             >
@@ -509,7 +508,7 @@ function Composer() {
         >
           <SelectTrigger
             size="sm"
-            className="bg-muted/60 h-7 rounded-lg border px-2 text-[11.5px] font-medium"
+            className="bg-muted/60 h-7 border px-2 text-[12px] font-medium"
             title="切换对话模型:下一条消息即生效,无需新开会话;候选在 设置→模型 勾选「常用」"
             data-slot="model-select"
           >
@@ -564,7 +563,7 @@ function Composer() {
         >
           <SelectTrigger
             size="sm"
-            className="bg-muted/60 h-7 max-w-44 rounded-lg border px-2 text-[11.5px] font-medium"
+            className="bg-muted/60 h-7 max-w-44 border px-2 text-[12px] font-medium"
             title="切换本对话工作目录:下一条消息即生效;目录在 设置→常规 维护"
             data-slot="workspace-select"
           >

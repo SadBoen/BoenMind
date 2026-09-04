@@ -12,6 +12,7 @@ use std::time::SystemTime;
 
 /// 配置项 key → 环境变量兜底名(Python server.py _ENV_MAP 镜像)。
 const ENV_MAP: &[(&str, &str)] = &[
+    ("searxng_url", "WMS_SEARXNG_URL"),
     ("serper_api_key", "SERPER_API_KEY"),
     ("jina_api_key", "JINA_API_KEY"),
     ("tavily_api_key", "TAVILY_API_KEY"),
@@ -78,20 +79,12 @@ impl Config {
         String::new()
     }
 
-    /// SearXNG 实例地址:配置 searxng_url → 环境变量 WMS_SEARXNG_URL。
-    pub fn searxng_url(&mut self) -> String {
-        let from_file = self
-            .raw()
-            .get("searxng_url")
-            .and_then(|v| v.as_str())
-            .map(str::trim)
-            .unwrap_or_default()
-            .to_string();
-        if !from_file.is_empty() {
-            return from_file;
-        }
-        std::env::var("WMS_SEARXNG_URL")
-            .map(|v| v.trim().to_string())
+    /// 读 `providers` 数组(新版结构化配置)。无/缺 → 空 Vec(调用方回退内置)。
+    pub fn raw_providers(&mut self) -> Vec<serde_json::Value> {
+        self.raw()
+            .get("providers")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().cloned().collect::<Vec<_>>())
             .unwrap_or_default()
     }
 

@@ -67,6 +67,8 @@
 | 条目 | 范围与口径 | 状态 |
 |---|---|---|
 | context-mode Rust 后续安全执行面 | 将当前可选宿主执行替换/增强为真正的 wasmtime/WASI 或操作系统级沙箱；补齐上游客户端 hooks、skills、网络抓取的 BoenMind 适配（首版仅迁移 MCP 核心） | OPEN(依 ADR-0017 与 ADR-0016 后续排期) |
+| 前端跨模块通信收编(2026-09-04 风格统一轮遗留) | `bm-*` CustomEvent 广播(7 处:chat-new/open-music/ws-refresh/workspaces-changed/roles-changed/providers-changed)收编为带类型的统一事件表或轻量 store,消除字符串事件名散落 | OPEN(架构债,不影响功能) |
+| 弹窗表单容器模板统一 | 各设置子页 Dialog 表单间距/结构各异(space-y-4 vs grid gap-3),抽 FormDialog 模板统一留白与 footer 规范 | OPEN(低优先,随下次触及相关页面顺手做) |
 
 - 使用反馈轮:当前阶段,按「先真实使用一周」节奏收集反馈;
 - App 产品面完整设计(manifest ui_panels 自动导航/数据域隔离/生命周期):远期,音乐播放器 App 先行探路。

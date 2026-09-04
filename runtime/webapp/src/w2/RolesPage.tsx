@@ -348,7 +348,7 @@ export function RolesPage() {
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="size-8 p-0 text-red-600 hover:text-red-700"
+                  className="size-8 p-0 text-destructive hover:text-destructive/80"
                   disabled={roles.length <= 1}
                   title={roles.length <= 1 ? "至少保留一个角色" : "删除角色"}
                   onClick={() => void deleteRole(r.id)}
@@ -459,7 +459,7 @@ export function RolesPage() {
               <Button
                 variant="ghost"
                 size="sm"
-                className="size-8 p-0 text-red-600 hover:text-red-700"
+                className="size-8 p-0 text-destructive hover:text-destructive/80"
                 title="删除技能"
                 onClick={() => void deleteSkill(s.skill_id)}
               >

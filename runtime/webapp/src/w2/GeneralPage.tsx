@@ -287,12 +287,12 @@ export function GeneralPage() {
       </section>
 
       {notice ? (
-        <div className="bg-emerald-500/10 text-emerald-600 rounded-lg px-3 py-2 text-[12.5px]" data-slot="workspace-notice">
+        <div className="notice-success" data-slot="workspace-notice">
           {notice}
         </div>
       ) : null}
       {error ? (
-        <div className="bg-destructive/10 text-destructive rounded-lg px-3 py-2 text-[12.5px]" data-slot="workspace-error">
+        <div className="notice-error" data-slot="workspace-error">
           {error}
         </div>
       ) : null}
@@ -408,12 +408,7 @@ function AccountSecurity() {
         </Button>
         {msg ? (
           <div
-            className={cn(
-              "rounded-lg px-3 py-2 text-[12.5px]",
-              msg.ok
-                ? "bg-emerald-500/10 text-emerald-600"
-                : "bg-destructive/10 text-destructive",
-            )}
+            className={cn(msg.ok ? "notice-success" : "notice-error")}
             data-slot="pw-msg"
           >
             {msg.text}

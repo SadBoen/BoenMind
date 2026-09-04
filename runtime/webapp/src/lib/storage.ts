@@ -10,6 +10,8 @@ export const STORAGE_KEYS = {
   LAYOUT: "bm_layout",
   // W8:最近选择的对话工作区(工作区注册表 id;空 = 跟随服务器默认)
   ACTIVE_WORKSPACE: "bm_active_workspace",
+  // 插件中心表格列宽
+  PLUGINS_TABLE_COLS: "bm_plugins_table_cols",
 } as const;
 
 export type StorageKey = typeof STORAGE_KEYS[keyof typeof STORAGE_KEYS];

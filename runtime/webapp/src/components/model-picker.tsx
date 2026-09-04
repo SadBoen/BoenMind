@@ -35,7 +35,7 @@ export function ModelPicker({
       data-slot="model-picker"
       className={cn(
         paper,
-        "flex w-full max-w-sm flex-col gap-1 rounded-2xl p-2",
+        "flex w-full max-w-sm flex-col gap-1 rounded-xl p-2",
         className,
       )}
 
@@ -57,7 +57,7 @@ export function ModelPicker({
                   aria-pressed={selected}
                   onClick={() => onSelect?.(model.id)}
                   className={cn(
-                    "flex items-center gap-2.5 rounded-xl px-2 py-2 text-start transition-colors",
+                    "flex items-center gap-2.5 rounded-lg px-2 py-2 text-start transition-colors",
                     selected
                       ? "bg-foreground/[0.06]"
                       : "hover:bg-foreground/[0.035]",

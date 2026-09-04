@@ -153,8 +153,6 @@
   box-shadow: 0 3px 0 rgba(255, 107, 157, var(--cartoon-shadow-a, 0.18));
 }
 [data-emoji="1"] .welcome p::after { content: " 🐾"; }
-[data-emoji="1"] .ws-empty::after { content: " ✏️"; }
-[data-emoji="1"] .sessions-empty::after { content: " 💬"; }
 
 /* ---- 玻璃(已认可样张 §4.1:樱花照片底 + 花瓣 + 全面板毛玻璃 + 深墨文字)---- */
 [data-theme="glass"] {
@@ -244,8 +242,6 @@
 }
 [data-theme="glass"] .chat { background: transparent; }
 [data-theme="glass"] .composer,
-[data-theme="glass"] .search,
-[data-theme="glass"] .chip,
 [data-theme="glass"] .tool-chip,
 [data-theme="glass"] [data-slot="fs-context-menu"],
 [data-theme="glass"] [data-slot="dialog-content"],
@@ -268,9 +264,6 @@
 [data-theme="glass"] .session-item {
   background: rgba(255, 255, 255, 0.34);
   border-color: rgba(255, 255, 255, 0.5);
-}
-[data-theme="glass"] .chip.active {
-  background: rgba(255, 255, 255, 0.5);
 }
 [data-theme="glass"] .welcome .logo {
   background: rgba(255, 255, 255, 0.18);
@@ -296,9 +289,7 @@
 }
 /* 对比度微调(§4.1 授权):亮花枝上的弱文字加深一档 */
 [data-theme="glass"] .welcome p,
-[data-theme="glass"] .msg .model-tag,
-[data-theme="glass"] .ws-empty,
-[data-theme="glass"] .sessions-empty {
+[data-theme="glass"] .msg .model-tag {
   color: #3d4658;
 }
 

@@ -1,13 +1,17 @@
-//! 12 个搜索源适配 + 聚合器 — 与 Python 版 providers/{builtin,extra,jina,
-//! marginalia,serper,omni}.py 等价移植。
+//! 搜索源执行 + 聚合器 — 基于 cascade 的供应商注册表驱动。
 //!
-//! 约定(同 Python 版):单源失败返回 Err(错误摘要),绝不 panic 拖垮聚合;
-//! 聚合器每源取 limit+2 条,RRF 融合 + 镜像合并后截回 limit;全局 25s 兜底,
-//! 超时源直接丢弃;meta 带源耗时遥测。
+//! 每个执行源 = cascade::Provider 的一个可用实例:
+//! - `parse == "std"` → 通用 JSON 适配器(cascade::run_generic),覆盖 serper/
+//!   tavily/exa/brave/langsearch/linkup/you/websearchapi 与全部自定义供应商。
+//! - `parse` 为内置特例(searxng/ddg/jina/marginalia)→ 各自特殊解析(HTML/
+//!   markdown / SearXNG JSON),保留原实现。
 //!
-//! ddgs 说明:Python 版用 ddgs 库(自带后端选择/vqd 逻辑),Rust 无等价
-//! 库,此处手写 DuckDuckGo HTML 端点抓取(免 key;href 常为 /l/?uddg=
-//! 跳转,需解包)。单源失败不影响聚合整体。
+//! 聚合逻辑沿用原版:每源取 limit+2 条,RRF 融合 + CJK 同题镜像合并后截回
+//! limit;全局 25s 兜底,超时源直接丢弃;单源失败绝不拖垮聚合。meta 带
+//! 各源耗时遥测。
+//!
+//! ddgs 说明:走系统 curl 子进程抓 DDG HTML(免 key),reqwest 直连仅降级;
+//! 失败不影响聚合。与 Python 版 ddgs 库语义一致(指纹伪装层面本版为尽力而为)。
 
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
@@ -15,116 +19,49 @@ use std::time::{Duration, Instant};
 use futures::stream::{FuturesUnordered, StreamExt};
 use serde_json::{json, Value};
 
-use crate::config::Config;
+use crate::cascade::{self, Item, Provider};
 use crate::fusion::{annotate, merge_mirrors, rrf_fuse, RawItem, MIRROR_THRESHOLD, RRF_K};
-use crate::keys::{split_keys, with_key_rotation, HttpErr};
 
 /// 整体等待上限:各源内部已有 12-30s 超时,这里兜底,超时源直接丢弃。
 const GLOBAL_TIMEOUT: Duration = Duration::from_secs(25);
 
-pub const LITE_SOURCES: [&str; 4] = ["searxng", "ddgs", "jina", "marginalia"];
-pub const ALL_SOURCES: [&str; 12] = [
-    "searxng",
-    "ddgs",
-    "jina",
-    "marginalia",
-    "serper",
-    "tavily",
-    "exa",
-    "brave",
-    "langsearch",
-    "linkup",
-    "you",
-    "websearchapi",
-];
-
-/// 单条源结果。
-#[derive(Debug, Clone)]
-pub struct Item {
-    pub title: String,
-    pub url: String,
-    pub description: String,
-}
-
-/// 一次搜索前统一解析好的配置快照(并发源各自持有,不再碰 Config;
-/// 热改 Key 的粒度 = 下一次搜索调用)。
-#[derive(Debug, Default, Clone)]
-pub struct Resolved {
-    pub searxng_url: String,
-    pub serper: Vec<String>,
-    pub jina: Vec<String>,
-    pub tavily: Vec<String>,
-    pub exa: Vec<String>,
-    pub brave: Vec<String>,
-    pub langsearch: Vec<String>,
-    pub linkup: Vec<String>,
-    pub you: Vec<String>,
-    pub websearchapi: Vec<String>,
-}
-
-/// 聚合前一次性解析配置(Config 内部按 mtime 热读)。
-pub fn resolve(cfg: &mut Config) -> Resolved {
-    Resolved {
-        searxng_url: cfg.searxng_url(),
-        serper: split_keys(&cfg.get_str("serper_api_key")),
-        jina: split_keys(&cfg.get_str("jina_api_key")),
-        tavily: split_keys(&cfg.get_str("tavily_api_key")),
-        exa: split_keys(&cfg.get_str("exa_api_key")),
-        brave: split_keys(&cfg.get_str("brave_api_key")),
-        langsearch: split_keys(&cfg.get_str("langsearch_api_key")),
-        linkup: split_keys(&cfg.get_str("linkup_api_key")),
-        you: split_keys(&cfg.get_str("you_api_key")),
-        websearchapi: split_keys(&cfg.get_str("websearchapi_api_key")),
+/// 单源执行:按 parse 分派(特殊内置解析 vs 通用 JSON)。返回 Vec<Item>。
+pub async fn run_source(
+    client: &reqwest::Client,
+    p: &Provider,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<Item>, String> {
+    match p.parse.as_str() {
+        "searxng" => searxng(client, p, query, limit).await,
+        "ddg" => ddgs(client, query, limit).await,
+        "jina" => jina_search(client, p, query, limit).await,
+        "marginalia" => marginalia(client, query, limit).await,
+        _ => cascade::run_generic(client, p, query, limit).await,
     }
 }
 
-fn is_available(r: &Resolved, name: &str) -> bool {
-    match name {
-        "searxng" => !r.searxng_url.is_empty(),
-        "ddgs" | "marginalia" => true,
-        "serper" => !r.serper.is_empty(),
-        "jina" => !r.jina.is_empty(),
-        "tavily" => !r.tavily.is_empty(),
-        "exa" => !r.exa.is_empty(),
-        "brave" => !r.brave.is_empty(),
-        "langsearch" => !r.langsearch.is_empty(),
-        "linkup" => !r.linkup.is_empty(),
-        "you" => !r.you.is_empty(),
-        "websearchapi" => !r.websearchapi.is_empty(),
-        _ => false,
-    }
-}
-
-fn j(v: &Value, key: &str) -> String {
-    v.get(key)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string()
-}
-
 // ---------------------------------------------------------------------------
-// 聚合器(Python omni._AggregatorBase.search 等价)
+// 聚合器(原有语义保留;输入改为已解析的 provider 列表)
 // ---------------------------------------------------------------------------
 
+/// 聚合:source_names 是已解析的可用 provider id 列表,providers 是完整集。
 pub async fn aggregate(
     client: &reqwest::Client,
-    r: &Resolved,
+    providers: &[Provider],
     name: &str,
-    source_names: &[&str],
     query: &str,
     limit: usize,
 ) -> Value {
-    let available: Vec<&str> = source_names
+    let available: Vec<&Provider> = providers
         .iter()
-        .copied()
-        .filter(|n| is_available(r, n))
+        .filter(|p| cascade::is_available(p))
         .collect();
     if available.is_empty() {
         return json!({
             "success": false,
             "error": format!(
-                "{name}: no source available (configured sources: {}; check API keys and SearXNG URL)",
-                source_names.join(", ")
+                "{name}: no source available (configured sources); check API keys and endpoints"
             )
         });
     }
@@ -134,16 +71,16 @@ pub async fn aggregate(
     let deadline = tokio::time::Instant::now() + GLOBAL_TIMEOUT;
 
     let mut futs = FuturesUnordered::new();
-    for src in &available {
+    for p in &available {
         let client = client.clone();
-        let r = r.clone();
+        let p = (*p).clone();
         let query = query.to_string();
-        let src = *src;
+        let limit = per_source_limit;
         futs.push(async move {
             let started = Instant::now();
-            let out = run_source(&client, &r, src, &query, per_source_limit).await;
+            let out = run_source(&client, &p, &query, limit).await;
             let ms = started.elapsed().as_millis() as u64;
-            (src, ms, out)
+            (p.id.clone(), ms, out)
         });
     }
 
@@ -155,26 +92,26 @@ pub async fn aggregate(
     loop {
         tokio::select! {
             _ = &mut sleep => {
-                // 全局兜底到点:未完成的源标记超时丢弃(as_completed 同语义)
-                for src in &available {
-                    if !timings.contains_key(*src) {
-                        failed.push(((*src).to_string(), "global timeout".into()));
+                // 全局兜底到点:未完成的源标记超时丢弃
+                for p in &available {
+                    if !timings.contains_key(&p.id) {
+                        failed.push((p.id.clone(), "global timeout".into()));
                     }
                 }
                 break;
             }
             item = futs.next() => {
-                let Some((src, ms, out)) = item else { break; };
-                timings.insert(src.to_string(), ms);
+                let Some((id, ms, out)) = item else { break; };
+                timings.insert(id.clone(), ms);
                 match out {
                     Ok(items) if !items.is_empty() => {
                         per_source.push(items.into_iter().map(|it| RawItem {
                             title: it.title, url: it.url,
-                            description: it.description, source: src.to_string(),
+                            description: it.description, source: id.clone(),
                         }).collect());
                     }
-                    Ok(_) => failed.push((src.to_string(), "no results".into())),
-                    Err(e) => failed.push((src.to_string(), e)),
+                    Ok(_) => failed.push((id.clone(), "no results".into())),
+                    Err(e) => failed.push((id.clone(), e)),
                 }
             }
         }
@@ -196,11 +133,10 @@ pub async fn aggregate(
     let fused = merge_mirrors(fused, MIRROR_THRESHOLD);
     let unique = fused.len();
     let web = annotate(fused, limit);
-    // sources_ok = 完成且非空的源(与 Python per_source 口径一致)
-    let sources_ok: Vec<&str> = timings
+    let sources_ok: Vec<String> = timings
         .keys()
         .filter(|n| !failed.iter().any(|(f, _)| f.as_str() == n.as_str()))
-        .map(String::as_str)
+        .cloned()
         .collect();
     json!({
         "success": true,
@@ -208,7 +144,7 @@ pub async fn aggregate(
         "meta": {
             "mode": name,
             "sources_ok": sources_ok,
-            "sources_failed": failed.iter().map(|(n, _)| n).collect::<Vec<_>>(),
+            "sources_failed": failed.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>(),
             "timings_ms": timings,
             "unique": unique,
         },
@@ -216,307 +152,19 @@ pub async fn aggregate(
 }
 
 // ---------------------------------------------------------------------------
-// 单源执行
-// ---------------------------------------------------------------------------
-
-async fn run_source(
-    client: &reqwest::Client,
-    r: &Resolved,
-    name: &str,
-    query: &str,
-    limit: usize,
-) -> Result<Vec<Item>, String> {
-    match name {
-        "searxng" => searxng(client, r, query, limit).await,
-        "ddgs" => ddgs(client, query, limit).await,
-        "brave" => brave(client, r, query, limit).await,
-        "marginalia" => marginalia(client, query, limit).await,
-        "serper" => serper(client, r, query, limit).await,
-        "jina" => jina_search(client, r, query, limit).await,
-        "tavily" => keyed(
-            "tavily",
-            &r.tavily,
-            |key| {
-                client
-                    .post("https://api.tavily.com/search")
-                    .json(&json!({"api_key": key, "query": query, "max_results": limit}))
-                    .timeout(Duration::from_secs(20))
-            },
-            |data, limit| {
-                let results = data.get("results").and_then(Value::as_array);
-                Ok(to_items(
-                    results.map(|a| a.as_slice()).unwrap_or_default(),
-                    limit,
-                    ("title", "url", "content"),
-                ))
-            },
-            limit,
-        )
-        .await,
-        "exa" => keyed(
-            "exa",
-            &r.exa,
-            |key| {
-                client
-                    .post("https://api.exa.ai/search")
-                    .json(&json!({"query": query, "numResults": limit}))
-                    .header("x-api-key", key)
-                    .timeout(Duration::from_secs(20))
-            },
-            |data, _limit| {
-                let results = data.get("results").and_then(Value::as_array);
-                Ok(results
-                    .map(|a| a.as_slice())
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|it| Item {
-                        title: j(it, "title"),
-                        url: j(it, "url"),
-                        description: j(it, "text").chars().take(300).collect(),
-                    })
-                    .collect())
-            },
-            limit,
-        )
-        .await,
-        "langsearch" => keyed(
-            "langsearch",
-            &r.langsearch,
-            |key| {
-                client
-                    .post("https://api.langsearch.com/v1/web-search")
-                    .json(&json!({"query": query, "count": limit, "summary": false, "freshness": "noLimit"}))
-                    .header("Authorization", format!("Bearer {key}"))
-                    .header("Accept", "application/json")
-                    .timeout(Duration::from_secs(15))
-            },
-            |data, _limit| {
-                let value = data
-                    .pointer("/data/webPages/value")
-                    .and_then(Value::as_array);
-                let Some(items) = value else {
-                    return Err("unexpected LangSearch response".into());
-                };
-                Ok(items
-                    .iter()
-                    .filter(|it| !j(it, "url").is_empty())
-                    .map(|it| Item {
-                        title: {
-                            let n = j(it, "name");
-                            if n.is_empty() { j(it, "url") } else { n }
-                        },
-                        url: j(it, "url"),
-                        description: {
-                            let s = j(it, "snippet");
-                            if s.is_empty() { j(it, "summary") } else { s }
-                        },
-                    })
-                    .collect())
-            },
-            limit,
-        )
-        .await,
-        "linkup" => keyed(
-            "linkup",
-            &r.linkup,
-            |key| {
-                client
-                    .post("https://api.linkup.so/v1/search")
-                    .json(&json!({"q": query, "depth": "standard", "outputType": "sourcedAnswer"}))
-                    .header("Authorization", format!("Bearer {key}"))
-                    .header("Accept", "application/json")
-                    .timeout(Duration::from_secs(15))
-            },
-            |data, _limit| {
-                if data.get("results").is_none() && data.get("sources").is_none() {
-                    return Err("unexpected LinkUp response".into());
-                }
-                let mut raw: Vec<Value> = Vec::new();
-                for field in ["results", "sources"] {
-                    if let Some(a) = data.get(field).and_then(Value::as_array) {
-                        raw.extend(a.iter().cloned());
-                    }
-                }
-                Ok(raw
-                    .iter()
-                    .filter(|it| !j(it, "url").is_empty())
-                    .map(|it| Item {
-                        title: {
-                            let n = j(it, "name");
-                            if n.is_empty() { j(it, "url") } else { n }
-                        },
-                        url: j(it, "url"),
-                        description: {
-                            let c = j(it, "content");
-                            if c.is_empty() { j(it, "snippet") } else { c }
-                        },
-                    })
-                    .collect())
-            },
-            limit,
-        )
-        .await,
-        "you" => keyed(
-            "you",
-            &r.you,
-            |key| {
-                client
-                    .get("https://ydc-index.io/v1/search")
-                    .query(&[("query", query.to_string()), ("count", limit.to_string())])
-                    .header("x-api-key", key)
-                    .header("Accept", "application/json")
-                    .timeout(Duration::from_secs(15))
-            },
-            |data, _limit| {
-                // results 可能是列表,也可能是 {web: [...]};另有 hits.results 形态
-                let items = data
-                    .get("results")
-                    .cloned()
-                    .map(|res| match res {
-                        Value::Array(a) => a,
-                        other => other
-                            .get("web")
-                            .and_then(|w| w.as_array().cloned())
-                            .unwrap_or_default(),
-                    })
-                    .unwrap_or_default();
-                let items = if !items.is_empty() {
-                    items
-                } else if let Some(a) = data.pointer("/hits/results").and_then(Value::as_array) {
-                    a.clone()
-                } else if let Some(a) = data.pointer("/web/results").and_then(Value::as_array) {
-                    a.clone()
-                } else {
-                    return Err("unexpected You.com response".into());
-                };
-                Ok(items
-                    .iter()
-                    .filter(|it| !j(it, "url").is_empty())
-                    .map(|it| Item {
-                        title: {
-                            let t = j(it, "title");
-                            if t.is_empty() { j(it, "url") } else { t }
-                        },
-                        url: j(it, "url"),
-                        description: {
-                            let d = j(it, "description");
-                            if d.is_empty() { j(it, "snippet") } else { d }
-                        },
-                    })
-                    .collect())
-            },
-            limit,
-        )
-        .await,
-        "websearchapi" => keyed(
-            "websearchapi",
-            &r.websearchapi,
-            |key| {
-                client
-                    .post("https://api.websearchapi.ai/ai-search")
-                    .json(&json!({"query": query, "maxResults": limit, "includeContent": false, "country": "us", "language": "en"}))
-                    .header("Authorization", format!("Bearer {key}"))
-                    .header("Accept", "application/json")
-                    .timeout(Duration::from_secs(15))
-            },
-            |data, _limit| {
-                let organic = data.get("organic").and_then(Value::as_array);
-                let Some(items) = organic else {
-                    return Err("unexpected WebSearchAPI response".into());
-                };
-                Ok(items
-                    .iter()
-                    .filter(|it| !j(it, "url").is_empty())
-                    .map(|it| Item {
-                        title: {
-                            let t = j(it, "title");
-                            if t.is_empty() { j(it, "url") } else { t }
-                        },
-                        url: j(it, "url"),
-                        description: j(it, "description"),
-                    })
-                    .collect())
-            },
-            limit,
-        )
-        .await,
-        other => Err(format!("unknown source: {other}")),
-    }
-}
-
-fn to_items(arr: &[Value], limit: usize, fields: (&str, &str, &str)) -> Vec<Item> {
-    arr.iter()
-        .take(limit)
-        .filter(|it| !j(it, fields.1).is_empty())
-        .map(|it| Item {
-            title: j(it, fields.0),
-            url: j(it, fields.1),
-            description: j(it, fields.2),
-        })
-        .collect()
-}
-
-// ---------------------------------------------------------------------------
-// keyed 源通用骨架(Python _KeyedSearchProvider 等价):
-// build 按候选 key 造完整请求;401/403/429 轮换;parse 解析响应。
-// ---------------------------------------------------------------------------
-
-async fn keyed<B, P>(
-    source: &'static str,
-    candidates: &[String],
-    build: B,
-    parse: P,
-    limit: usize,
-) -> Result<Vec<Item>, String>
-where
-    B: Fn(&str) -> reqwest::RequestBuilder,
-    P: Fn(&Value, usize) -> Result<Vec<Item>, String>,
-{
-    if candidates.is_empty() {
-        return Err(format!("{source}: no key configured"));
-    }
-    let limit = limit.clamp(1, 50);
-    let resp = with_key_rotation(candidates, |key| {
-        let req = build(&key);
-        async move {
-            let r = req
-                .send()
-                .await
-                .map_err(|e| HttpErr::Other(format!("Could not reach {source}: {e}")))?;
-            check_status(r, source).await
-        }
-    })
-    .await?;
-    let data: Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("{source} response is not JSON: {e}"))?;
-    parse(&data, limit)
-}
-
-/// 非 2xx → HttpErr::Status(2xx 返回原 resp)。
-async fn check_status(resp: reqwest::Response, source: &str) -> Result<reqwest::Response, HttpErr> {
-    let status = resp.status();
-    if status.is_success() {
-        return Ok(resp);
-    }
-    Err(HttpErr::Status(
-        status.as_u16(),
-        format!("{source} returned HTTP {}", status.as_u16()),
-    ))
-}
-
-// ---------------------------------------------------------------------------
-// 各源实现(带自声明个性的源)
+// 内置特例解析器(保留原实现;入参改为 &Provider 以适配新模型)
 // ---------------------------------------------------------------------------
 
 async fn searxng(
     client: &reqwest::Client,
-    r: &Resolved,
+    p: &Provider,
     query: &str,
     limit: usize,
 ) -> Result<Vec<Item>, String> {
-    let base = r.searxng_url.trim_end_matches('/').to_string();
+    let base = p.endpoint.trim_end_matches('/').to_string();
+    if base.is_empty() {
+        return Err("searxng: endpoint 未配置".into());
+    }
     let resp = client
         .get(format!("{base}/search"))
         .query(&[("q", query), ("format", "json")])
@@ -538,10 +186,9 @@ async fn searxng(
 
 /// DuckDuckGo HTML 端点抓取(免 key;href 常为 /l/?uddg= 跳转,需解包)。
 ///
-/// 走**系统 curl 子进程**:reqwest(rustls/Schannel 指纹)会被 DDG 发
-/// 人机验证页(实测 14KB 挑战页),而系统 curl 的指纹可通过——Python 版
-/// ddgs 库同理靠 primp 浏览器指纹伪装过检。curl 于 Win10+/Linux/macOS
-/// 均为系统自带;无 curl 时降级回 reqwest 直连(可能被挑战,聚合器容错)。
+/// 走**系统 curl 子进程**:reqwest(rustls/Schannel 指纹)会被 DDG 发人机验证页,
+/// 系统 curl 指纹可通过——Python 版 ddgs 库同理靠 primp 伪装过检。curl 于
+/// Win10+/Linux/macOS 均为系统自带;无 curl 时降级回 reqwest 直连。
 async fn ddgs(_client: &reqwest::Client, query: &str, limit: usize) -> Result<Vec<Item>, String> {
     let html = match fetch_via_curl(query).await {
         Ok(h) => h,
@@ -708,145 +355,24 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-async fn brave(
-    client: &reqwest::Client,
-    r: &Resolved,
-    query: &str,
-    limit: usize,
-) -> Result<Vec<Item>, String> {
-    let Some(key) = r.brave.first() else {
-        return Err("BRAVE_SEARCH_API_KEY is not set".into());
-    };
-    let resp = client
-        .get("https://api.search.brave.com/res/v1/web/search")
-        .query(&[("q", query.to_string()), ("count", limit.to_string())])
-        .header("X-Subscription-Token", key)
-        .header("Accept", "application/json")
-        .timeout(Duration::from_secs(20))
-        .send()
-        .await
-        .map_err(|e| format!("Could not reach Brave: {e}"))?;
-    let resp = resp.error_for_status().map_err(|e| format!("brave: {e}"))?;
-    let data: Value = resp.json().await.map_err(|e| format!("brave: {e}"))?;
-    let results = data.pointer("/web/results").and_then(Value::as_array);
-    Ok(to_items(
-        results.map(|a| a.as_slice()).unwrap_or_default(),
-        limit,
-        ("title", "url", "description"),
-    ))
-}
-
-async fn marginalia(
-    client: &reqwest::Client,
-    query: &str,
-    limit: usize,
-) -> Result<Vec<Item>, String> {
-    let resp = client
-        .get("https://api2.marginalia-search.com/search")
-        .query(&[
-            ("query", query.to_string()),
-            ("count", limit.clamp(1, 50).to_string()),
-        ])
-        .header("api-key", "public")
-        .header("Accept", "application/json")
-        .timeout(Duration::from_secs(12))
-        .send()
-        .await
-        .map_err(|e| format!("Could not reach Marginalia: {e}"))?;
-    let status = resp.status();
-    let data: Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("Marginalia response is not JSON: {e}"))?;
-    if status.is_client_error() || status.is_server_error() {
-        return Err(format!("Marginalia returned HTTP {}", status.as_u16()));
-    }
-    let raw = data
-        .get("results")
-        .and_then(Value::as_array)
-        .ok_or("Unexpected Marginalia response shape")?;
-    let mut out = Vec::new();
-    for it in raw {
-        let url = j(it, "url").trim().to_string();
-        if url.is_empty() {
-            continue;
-        }
-        let title = {
-            let t = j(it, "title");
-            if t.is_empty() {
-                url.clone()
-            } else {
-                t
-            }
-        };
-        out.push(Item {
-            title,
-            url,
-            description: j(it, "description"),
-        });
-        if out.len() >= limit {
-            break;
-        }
-    }
-    Ok(out)
-}
-
-/// Serper:Google SERP(X-API-KEY 头;逗号多 Key 轮换)。
-async fn serper(
-    client: &reqwest::Client,
-    r: &Resolved,
-    query: &str,
-    limit: usize,
-) -> Result<Vec<Item>, String> {
-    if r.serper.is_empty() {
-        return Err("SERPER_API_KEY is not set".into());
-    }
-    let num = limit.clamp(1, 100);
-    let resp = with_key_rotation(&r.serper, |key| {
-        let client = client.clone();
-        let query = query.to_string();
-        async move {
-            let r = client
-                .post("https://google.serper.dev/search")
-                .json(&json!({"q": query, "num": num}))
-                .header("X-API-KEY", key)
-                .header("Content-Type", "application/json")
-                .timeout(Duration::from_secs(15))
-                .send()
-                .await
-                .map_err(|e| HttpErr::Other(format!("Could not reach Serper: {e}")))?;
-            check_status(r, "Serper").await
-        }
-    })
-    .await?;
-    let data: Value = resp
-        .json()
-        .await
-        .map_err(|_| "Could not parse Serper response as JSON".to_string())?;
-    let raw = data.get("organic").and_then(Value::as_array);
-    Ok(to_items(
-        raw.map(|a| a.as_slice()).unwrap_or_default(),
-        limit,
-        ("title", "link", "snippet"),
-    ))
-}
-
 /// Jina Search(s.jina.ai,markdown 输出解析;逗号多 Key 轮换)。
 async fn jina_search(
     client: &reqwest::Client,
-    r: &Resolved,
+    p: &Provider,
     query: &str,
     limit: usize,
 ) -> Result<Vec<Item>, String> {
-    if r.jina.is_empty() {
+    use crate::keys::{split_keys, with_key_rotation, HttpErr};
+    let keys = split_keys(&p.key);
+    if keys.is_empty() {
         return Err("JINA_API_KEY is not set".into());
     }
-    let resp = with_key_rotation(&r.jina, |key| {
+    let resp = with_key_rotation(&keys, |key| {
         let client = client.clone();
         let query = query.to_string();
         async move {
             let r = client
-                .get("https://s.jina.ai")
+                .get(p.endpoint.as_str())
                 .query(&[("q", query)])
                 .header("Authorization", format!("Bearer {key}"))
                 .header("Accept", "text/markdown")
@@ -858,12 +384,14 @@ async fn jina_search(
         }
     })
     .await?;
-    let text = resp.text().await.map_err(|e| format!("Jina Search: {e}"))?;
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("Jina Search: {e}"))?;
     Ok(parse_jina_markdown(&text, limit))
 }
 
-/// Jina markdown 输出的 best-effort 解析(Python _parse_search_markdown 移植):
-/// 形态 1 = `### Title` + 裸 URL 行 + 描述行;形态 2 = `[Title](url)` 链接行。
+/// Jina markdown 输出的 best-effort 解析(Python _parse_search_markdown 移植)。
 fn parse_jina_markdown(text: &str, limit: usize) -> Vec<Item> {
     use regex::Regex;
     static LINK_RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
@@ -930,6 +458,95 @@ fn parse_jina_markdown(text: &str, limit: usize) -> Vec<Item> {
     results
 }
 
+/// Marginalia(公共免 key;limit 用 count 参数)。
+async fn marginalia(
+    client: &reqwest::Client,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<Item>, String> {
+    let resp = client
+        .get("https://api2.marginalia-search.com/search")
+        .query(&[
+            ("query", query.to_string()),
+            ("count", limit.clamp(1, 50).to_string()),
+        ])
+        .header("api-key", "public")
+        .header("Accept", "application/json")
+        .timeout(Duration::from_secs(12))
+        .send()
+        .await
+        .map_err(|e| format!("Could not reach Marginalia: {e}"))?;
+    let status = resp.status();
+    let data: Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Marginalia response is not JSON: {e}"))?;
+    if status.is_client_error() || status.is_server_error() {
+        return Err(format!("Marginalia returned HTTP {}", status.as_u16()));
+    }
+    let raw = data
+        .get("results")
+        .and_then(Value::as_array)
+        .ok_or("Unexpected Marginalia response shape")?;
+    let mut out = Vec::new();
+    for it in raw {
+        let url = j(it, "url").trim().to_string();
+        if url.is_empty() {
+            continue;
+        }
+        let title = {
+            let t = j(it, "title");
+            if t.is_empty() {
+                url.clone()
+            } else {
+                t
+            }
+        };
+        out.push(Item {
+            title,
+            url,
+            description: j(it, "description"),
+        });
+        if out.len() >= limit {
+            break;
+        }
+    }
+    Ok(out)
+}
+
+fn to_items(arr: &[Value], limit: usize, fields: (&str, &str, &str)) -> Vec<Item> {
+    arr.iter()
+        .take(limit)
+        .filter(|it| !j(it, fields.1).is_empty())
+        .map(|it| Item {
+            title: j(it, fields.0),
+            url: j(it, fields.1),
+            description: j(it, fields.2),
+        })
+        .collect()
+}
+
+fn j(v: &Value, key: &str) -> String {
+    v.get(key)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// 非 2xx → HttpErr::Status(2xx 返回原 resp;供轮换识别 401/403/429)。
+async fn check_status(resp: reqwest::Response, name: &str) -> Result<reqwest::Response, HttpErr> {
+    let status = resp.status();
+    if status.is_success() {
+        return Ok(resp);
+    }
+    Err(HttpErr::Status(
+        status.as_u16(),
+        format!("{name} returned HTTP {}", status.as_u16()),
+    ))
+}
+
+use crate::keys::HttpErr;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -957,8 +574,6 @@ mod tests {
 
     #[test]
     fn jina_header_claims_following_bare_url() {
-        // ### 标题行 + 下一非空裸 URL 行 = 一条结果(Python 同款语义);
-        // 标题行后紧跟另一结果标记时该条 url 为空被跳过(畸形输入,Python 同样丢弃)
         let md = "### NoUrl\n### Real\nhttps://e.com/real\n描述\n";
         assert_eq!(parse_jina_markdown(md, 10).len(), 0);
         let md2 = "### Only\nhttps://e.com/only\n这是描述\n\n尾部\n";

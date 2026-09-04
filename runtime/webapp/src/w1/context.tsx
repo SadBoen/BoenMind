@@ -407,7 +407,7 @@ export function ContextView() {
                             <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: CATS[m.role === "system" ? "system" : m.role === "user" ? "user" : m.role === "assistant" ? "assistant" : "toolres"].color }} />
                             <span className="font-medium">{ROLE_LABEL[m.role] ?? m.role}</span>
                             <span className="text-muted-foreground">≈{est(m.content)} · {m.content?.length ?? 0} 字符</span>
-                            {m.content_truncated ? <span className="text-amber-600">(快照截断)</span> : null}
+                            {m.content_truncated ? <span className="text-[var(--state-warn-fg)]">(快照截断)</span> : null}
                           </summary>
                           <pre className="max-h-64 overflow-auto border-t px-2.5 py-2 font-mono text-[11.5px] leading-relaxed break-all whitespace-pre-wrap">
                             {m.content}

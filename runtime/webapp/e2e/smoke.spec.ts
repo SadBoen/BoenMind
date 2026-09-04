@@ -99,6 +99,26 @@ async function mockAdmin(page: Page) {
       },
     }),
   );
+  // 统一插件中心:外部 MCP 清单与探活
+  await page.route("**/admin/mcp", (route) =>
+    route.fulfill({
+      json: {
+        ok: true,
+        servers: [
+          { name: "demo_server", transport: "stdio", command: "demo", args: [] },
+        ],
+      },
+    }),
+  );
+  await page.route("**/admin/mcp/status", (route) =>
+    route.fulfill({
+      json: {
+        status: [
+          { name: "demo_server", ok: true, tools: 2, tool_list: [], error: null },
+        ],
+      },
+    }),
+  );
   await page.route("**/admin/runtime/env", (route) =>
     route.fulfill({
       json: {
@@ -180,15 +200,16 @@ test.describe("设置中心", () => {
     await expect(page.getByText("全局默认")).toBeVisible();
   });
 
-  test("插件页:仅系统内置(MCP 不重复展示)", async ({ page }) => {
+  test("插件页:统一插件中心(内置能力 + 外部插件同页)", async ({ page }) => {
     await mockAdmin(page);
     await page.goto("/");
     await page.locator('[data-slot="open-settings"]').evaluate((el: HTMLElement) => el.click());
     await page.getByRole("button", { name: "插件", exact: true }).click();
     await expect(page.getByRole("heading", { name: "插件" })).toBeVisible();
-    await expect(page.getByText("system.echo")).toBeVisible();
-    // MCP 服务器不在此页(统一归 MCP 管理)
-    await expect(page.getByText("demo_server")).toHaveCount(0);
+    // 内置能力列出(名称列 + 工具列各出现一次,取 first)
+    await expect(page.getByText("system.echo").first()).toBeVisible();
+    // 统一插件中心:外部 MCP 服务器同页呈现,不再与内置割裂
+    await expect(page.getByText("demo_server").first()).toBeVisible();
   });
 
   test("日志页:三个页签存在", async ({ page }) => {

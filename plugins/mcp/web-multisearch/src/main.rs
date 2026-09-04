@@ -1,64 +1,99 @@
 //! web-multisearch MCP server(Rust 版)—— 单 exe、零运行时依赖。
 //!
-//! 与 Python 版(BoenMind 仓外 boenmind-mcp-servers/web-multisearch)等价:
-//! 工具面 `web_search_lite`(免费四源)/ `web_search_all`(12 源),RRF 融合
-//! 排序 + CJK 镜像合并去重 + 逗号多 Key 401/403/429 轮换;manifest 标注
-//! readOnlyHint → BoenMind 侧 approval=not-required(默认直通)。
+//! 工具面 `web_search_lite`(免费四源)/ `web_search_all`(全部已配置源)。
+//! 2026-09-04 起供应商可扩展:内置 12 家默认模板预填,设置页可新增全新
+//! 供应商(接口地址 / 方式 / key 传法 / 参数名 / 结果路径 / 字段映射),
+//! 新增供应商走通用 JSON 适配器。月度用量按供应商记账(usage.json)。
 //!
 //! 协议:MCP 2024-11-05,JSON-RPC over stdio(逐行),手写零 SDK。
+//! 额外 JSON-RPC 方法(供 BoenMind 管理面用,非 MCP 标准):
+//! - `web_search_test`  params: { provider_id, query, limit? } → 单源真搜索
+//! - `web_usage`       params: {} → { month, providers: {id: used} }
+//!
 //! 配置:`--config <json>`(BoenMind 传 config/mcp-web_multisearch.json);
-//! 文件按 mtime 热读,设置页改 Key 下一次搜索立即生效,无需重启。
-//! env 兜底:SERPER_API_KEY / JINA_API_KEY / ... (同名大写)。
+//! 文件按 mtime 热读,设置页改动下一次搜索立即生效,无需重启。
 
+mod cascade;
 mod config;
 mod fusion;
 mod keys;
 mod sources;
+mod usage;
 
 use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
+use cascade::{is_available, resolve_providers, provider_keys};
 use config::Config;
-use sources::{aggregate, resolve, ALL_SOURCES, LITE_SOURCES};
+use sources::aggregate;
+use usage::UsageLedger;
 
 const PROTOCOL_VERSION: &str = "2024-11-05";
 const SERVER_NAME: &str = "web-multisearch";
-const SERVER_VERSION: &str = "0.2.0";
+const SERVER_VERSION: &str = "0.3.0";
+
+/// 免费四源(lite 工具专用;按内置 id 恒有)。
+const LITE_IDS: [&str; 4] = ["searxng", "ddgs", "jina", "marginalia"];
 
 struct Ctx {
     cfg: Mutex<Config>,
     client: reqwest::Client,
+    usage: Mutex<UsageLedger>,
 }
 
-/// 自描述声明:插件目录扫描的识别载体。name/标题/描述/config_schema 与
-/// Python 版 manifest.json 逐字对齐;`args` 模板中的 `{config_file}` 由
-/// 批准方(BoenMind webadmin)替换为实际数据目录配置路径。
+/// 自描述声明:插件目录扫描的识别载体。
+///
+/// config_schema 从「扁平 11 字段」改为新 `providers` 描述:
+/// 单条 `type:"providers"` 项,`items` 载内置 12 家默认模板(id/name/builtin/
+/// endpoint/method/auth/auth_name/query_param/limit_param/results_path/
+/// title_field/url_field/desc_field/parse/quota)。BoenMind 设置页据此渲染
+/// 下拉式供应商列表 + 每家可编辑字段 + 用量进度条。
 fn self_description() -> Value {
+    let templates: Vec<Value> = cascade::builtin_templates()
+        .iter()
+        .map(|p| {
+            json!({
+                "id": p.id,
+                "name": p.name,
+                "builtin": p.builtin,
+                "endpoint": p.endpoint,
+                "method": p.method,
+                "auth": p.auth,
+                "auth_name": p.auth_name,
+                "query_param": p.query_param,
+                "limit_param": p.limit_param,
+                "results_path": p.results_path,
+                "title_field": p.title_field,
+                "url_field": p.url_field,
+                "desc_field": p.desc_field,
+                "parse": p.parse,
+                "quota": p.quota,
+            })
+        })
+        .collect();
     let schema = json!([
-        {"key": "searxng_url", "label": "SearXNG 实例地址", "type": "string", "default": "",
-         "hint": "自托管 SearXNG 的地址(JSON API);留空则 searxng 源禁用"},
-        {"key": "serper_api_key", "label": "Serper API Key(Google SERP)", "type": "secret", "default": "",
-         "hint": "逗号分隔多把,401/403/429 自动轮换"},
-        {"key": "jina_api_key", "label": "Jina API Key", "type": "secret", "default": "",
-         "hint": "搜索+正文抓取(Reader);免费额度可用"},
-        {"key": "tavily_api_key", "label": "Tavily API Key", "type": "secret", "default": "",
-         "hint": "每月 1000 次免费"},
-        {"key": "exa_api_key", "label": "Exa API Key", "type": "secret", "default": "",
-         "hint": "语义搜索"},
-        {"key": "brave_api_key", "label": "Brave Search API Key", "type": "secret", "default": "",
-         "hint": "每月 2000 次免费"},
-        {"key": "langsearch_api_key", "label": "LangSearch API Key", "type": "secret", "default": "", "hint": ""},
-        {"key": "linkup_api_key", "label": "Linkup API Key", "type": "secret", "default": "", "hint": ""},
-        {"key": "you_api_key", "label": "You.com API Key", "type": "secret", "default": "", "hint": ""},
-        {"key": "websearchapi_api_key", "label": "WebSearchAPI Key", "type": "secret", "default": "", "hint": ""},
-        {"key": "default_limit", "label": "默认返回条数", "type": "range", "min": 1, "max": 20, "default": 5},
+        {
+            "key": "providers",
+            "label": "搜索供应商",
+            "type": "providers",
+            "items": templates,
+            "hint": "可选内置 12 家,或点「新增」接入全新搜索服务(通用引擎:接口地址/方式/key/参数名/结果字段)",
+        },
+        {
+            "key": "default_limit",
+            "label": "默认返回条数",
+            "type": "range",
+            "min": 1,
+            "max": 20,
+            "default": 5,
+        },
     ]);
     json!({
         "name": "web_multisearch",
-        "title": "聚合搜索(12 源)",
-        "description": "并行调用全部搜索源,RRF 融合排序+CJK 同题镜像合并去重,多 Key 自动轮换。工具:web_search_lite(免费四源)/web_search_all(全源)。",
+        "title": "聚合搜索(可扩展供应商)",
+        "description": "并行调用全部已配置搜索源,RRF 融合排序+CJK 同题镜像合并去重,多 Key 自动轮换。供应商可扩展:内置 12 家+自定义通用引擎。工具:web_search_lite(免费四源)/web_search_all(全源)。",
         "config_schema": schema,
         "suggested_entry": {
             "transport": "stdio",
@@ -78,11 +113,7 @@ async fn main() {
             "--config" => {
                 config_path = args.next().map(std::path::PathBuf::from);
             }
-            // 自描述(两段式接入的"扫描发现"基础,2026-09-02 用户批准):
-            // 打印声明 JSON 后退出——BoenMind 插件目录扫描据此识别候选,
-            // 用户在管理界面点「批准接入」后才落盘 mcp.json(显式批准=安装)。
             "--self-describe" => {
-                // 紧凑单行:扫描方按行解析 JSON,声明必须单行输出
                 let mut out = serde_json::to_string(&self_description()).expect("声明序列化");
                 out.push('\n');
                 print!("{out}");
@@ -103,12 +134,14 @@ async fn main() {
             .unwrap_or_else(|| "(未指定)".into())
     );
 
+    let usage = UsageLedger::from_config_path(config_path.as_deref());
     let ctx = Arc::new(Ctx {
         cfg: Mutex::new(Config::new(config_path)),
         client: reqwest::Client::builder()
             .user_agent(format!("{SERVER_NAME}/{SERVER_VERSION}"))
             .build()
             .expect("HTTP 客户端构造"),
+        usage: Mutex::new(usage),
     });
 
     let stdin = BufReader::new(tokio::io::stdin());
@@ -177,6 +210,35 @@ async fn handle_request(msg: &Value, ctx: &Ctx) -> Option<Value> {
                 }))
             }
         }
+        // 管理面扩展:单源真搜索测试(返回真实结果)
+        "web_search_test" => {
+            let params = msg.get("params").cloned().unwrap_or_else(|| json!({}));
+            let out = run_search_test(ctx, &params).await;
+            Ok(json!({
+                "content": [{"type": "text", "text": serde_json::to_string_pretty(&out).expect("结果序列化")}],
+                "structuredContent": out,
+                "isError": false,
+            }))
+        }
+        // 管理面扩展:读月度用量
+        "web_usage" => {
+            // 先解析全部 provider(内置+自定义),不持配置锁时再取用量,避免死锁
+            let ids: Vec<String> = {
+                let mut cfg = ctx.cfg.lock().expect("配置锁");
+                resolve_providers(&mut cfg).into_iter().map(|p| p.id).collect()
+            };
+            let usage = ctx.usage.lock().expect("用量锁");
+            let mut by_id = json!({});
+            if let Some(o) = by_id.as_object_mut() {
+                for id in &ids {
+                    o.insert(id.clone(), json!(usage.used(id)));
+                }
+            }
+            Ok(json!({
+                "month": usage.month(),
+                "providers": by_id,
+            }))
+        }
         other => Err((-32601, format!("方法不存在:{other}"))),
     };
     Some(match result {
@@ -188,6 +250,7 @@ async fn handle_request(msg: &Value, ctx: &Ctx) -> Option<Value> {
     })
 }
 
+/// web_search_lite / web_search_all:聚合全部已配置可用源。
 async fn run_tool(ctx: &Ctx, name: &str, arguments: &Value) -> Value {
     let query = arguments
         .get("query")
@@ -199,22 +262,118 @@ async fn run_tool(ctx: &Ctx, name: &str, arguments: &Value) -> Value {
         return json!({"success": false, "error": "query 参数不能为空"});
     }
     let args_limit = arguments.get("limit").and_then(Value::as_i64);
-    let (limit, resolved) = {
+    let (limit, providers) = {
         let mut cfg = ctx.cfg.lock().expect("配置锁");
         let limit = cfg.resolve_limit(args_limit);
-        (limit, resolve(&mut cfg))
-    };
-    let source_names: &[&str] = if name == "web_search_lite" {
-        &LITE_SOURCES
-    } else {
-        &ALL_SOURCES
+        let mut providers = resolve_providers(&mut cfg);
+        // lite 工具只保留免费四源
+        if name == "web_search_lite" {
+            providers.retain(|p| LITE_IDS.iter().any(|s| *s == p.id.as_str()));
+        }
+        (limit, providers)
     };
     let mode = if name == "web_search_lite" {
         "web-multisearch-lite"
     } else {
         "web-multisearch"
     };
-    aggregate(&ctx.client, &resolved, mode, source_names, &query, limit).await
+    let out = aggregate(&ctx.client, &providers, mode, &query, limit).await;
+    // 用量:success 且 sources_ok 里出现过的 provider 才记次数
+    if out.get("success").and_then(Value::as_bool) == Some(true) {
+        if let Some(ok) = out["meta"]["sources_ok"].as_array() {
+            let mut usage = ctx.usage.lock().expect("用量锁");
+            for id in ok {
+                if let Some(pid) = id.as_str() {
+                    usage.record(pid);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// 管理面:单源真搜索测试(测试按钮)。
+async fn run_search_test(ctx: &Ctx, params: &Value) -> Value {
+    let provider_id = params
+        .get("provider_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let query = params
+        .get("query")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if provider_id.is_empty() || query.is_empty() {
+        return json!({
+            "success": false,
+            "error": "provider_id 与 query 均不能为空"
+        });
+    }
+    let limit = params
+        .get("limit")
+        .and_then(Value::as_i64)
+        .and_then(|l| Some(l.clamp(1, 20) as usize))
+        .unwrap_or(5);
+
+    let provider = {
+        let mut cfg = ctx.cfg.lock().expect("配置锁");
+        resolve_providers(&mut cfg)
+            .into_iter()
+            .find(|p| p.id == provider_id)
+    };
+    let Some(provider) = provider else {
+        return json!({
+            "success": false,
+            "error": format!("未知供应商: {provider_id}")
+        });
+    };
+    if !is_available(&provider) {
+        let need = if provider.parse == "searxng" {
+            "需填写接口地址".to_string()
+        } else if provider_keys(&provider).is_empty() && provider.parse != "ddg" && provider.parse != "marginalia" {
+            "需填写 API Key".to_string()
+        } else {
+            "配置未就绪".to_string()
+        };
+        return json!({
+            "success": false,
+            "error": format!("{provider_id}: {need}")
+        });
+    }
+
+    let started = std::time::Instant::now();
+    let result = sources::run_source(&ctx.client, &provider, &query, limit).await;
+    let ms = started.elapsed().as_millis() as u64;
+    match result {
+        Ok(items) => {
+            {
+                let mut usage = ctx.usage.lock().expect("用量锁");
+                usage.record(&provider.id);
+            }
+            json!({
+                "success": true,
+                "provider_id": provider.id,
+                "provider_name": provider.name,
+                "timing_ms": ms,
+                "count": items.len(),
+                "results": items.iter().map(|it| json!({
+                    "title": it.title,
+                    "url": it.url,
+                    "description": it.description,
+                })).collect::<Vec<_>>(),
+            })
+        }
+        Err(e) => json!({
+            "success": false,
+            "provider_id": provider.id,
+            "provider_name": provider.name,
+            "timing_ms": ms,
+            "error": e,
+        }),
+    }
 }
 
 fn tool_defs() -> Vec<Value> {
@@ -235,7 +394,7 @@ fn tool_defs() -> Vec<Value> {
         }),
         json!({
             "name": "web_search_all",
-            "description": "全网搜:并行调用所有已配置搜索源(最多 12 家),RRF 融合排序+镜像合并,meta 带各源耗时遥测。用户要求「全网搜」、需要最大覆盖或交叉验证时使用。",
+            "description": "全网搜:并行调用所有已配置搜索源(内置+自定义),RRF 融合排序+镜像合并,meta 带各源耗时遥测。用户要求「全网搜」、需要最大覆盖或交叉验证时使用。",
             "inputSchema": schema,
             "annotations": {"readOnlyHint": true},
         }),
@@ -250,6 +409,7 @@ mod tests {
         Ctx {
             cfg: Mutex::new(Config::new(None)),
             client: reqwest::Client::new(),
+            usage: Mutex::new(UsageLedger::from_config_path(None)),
         }
     }
 
@@ -294,7 +454,6 @@ mod tests {
 
     #[tokio::test]
     async fn call_empty_query_returns_tool_json_error() {
-        // 工具约定:错误也返回 JSON 文本,不抛(与 Python 版一致)
         let resp = handle_request(
             &json!({"jsonrpc":"2.0","id":3,"method":"tools/call",
                     "params":{"name":"web_search_lite","arguments":{"query":"   "}}}),
@@ -332,6 +491,32 @@ mod tests {
         .expect("应答");
         assert_eq!(resp["error"]["code"], -32601);
     }
+
+    #[tokio::test]
+    async fn web_usage_returns_month_and_providers() {
+        let resp = handle_request(
+            &json!({"jsonrpc":"2.0","id":6,"method":"web_usage","params":{}}),
+            &ctx(),
+        )
+        .await
+        .expect("应答");
+        assert_eq!(resp["result"]["month"].as_str().unwrap().len(), 7);
+        assert!(resp["result"]["providers"]["serper"].is_u64());
+    }
+
+    #[tokio::test]
+    async fn web_search_test_unknown_provider() {
+        let resp = handle_request(
+            &json!({"jsonrpc":"2.0","id":7,"method":"web_search_test",
+                    "params":{"provider_id":"nope","query":"hi"}}),
+            &ctx(),
+        )
+        .await
+        .expect("应答");
+        let out = &resp["result"]["structuredContent"];
+        assert_eq!(out["success"], false);
+        assert!(out["error"].as_str().unwrap().contains("未知供应商"));
+    }
 }
 
 #[cfg(test)]
@@ -343,14 +528,30 @@ mod self_describe_tests {
         let d = self_description();
         assert_eq!(d["name"], "web_multisearch");
         assert!(!d["title"].as_str().unwrap().is_empty());
-        assert_eq!(d["config_schema"].as_array().unwrap().len(), 11);
-        assert_eq!(
-            d["suggested_entry"]["args"][0].as_str().unwrap(),
-            "--config"
-        );
+        // config_schema 现为 providers 类型 + default_limit
+        let schema = d["config_schema"].as_array().unwrap();
+        assert_eq!(schema.len(), 2);
+        assert_eq!(schema[0]["type"], "providers");
+        let items = schema[0]["items"].as_array().unwrap();
+        assert_eq!(items.len(), 12, "内置 12 家模板");
+        assert_eq!(d["suggested_entry"]["args"][0].as_str().unwrap(), "--config");
         assert!(d["suggested_entry"]["args"][1]
             .as_str()
             .unwrap()
             .contains("{config_file}"));
+    }
+
+    #[test]
+    fn provider_template_has_all_engine_fields() {
+        let d = self_description();
+        let items = d["config_schema"][0]["items"].as_array().unwrap();
+        let first = &items[0];
+        for k in [
+            "id", "name", "builtin", "endpoint", "method", "auth", "auth_name",
+            "query_param", "limit_param", "results_path", "title_field", "url_field",
+            "desc_field", "parse", "quota",
+        ] {
+            assert!(first.get(k).is_some(), "模板缺字段 {k}: {first}");
+        }
     }
 }

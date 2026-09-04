@@ -233,7 +233,7 @@ export function ProvidersPage() {
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="text-red-600 hover:text-red-700"
+                  className="text-destructive hover:text-destructive/80"
                   disabled={busy !== null}
                   onClick={() => void remove(p)}
                 >
@@ -249,7 +249,9 @@ export function ProvidersPage() {
                   <span
                     className={cn(
                       "flex items-center gap-1 text-[12px]",
-                      probeResult.ok ? "text-emerald-600" : "text-red-600",
+                      probeResult.ok
+                        ? "text-[var(--state-success-fg)]"
+                        : "text-destructive",
                     )}
                     data-probe={probeResult.ok ? "ok" : "fail"}
                   >
@@ -455,7 +457,7 @@ function ProviderDialog({
                         className={cn(
                           "flex items-center gap-1 rounded-lg border px-2 py-1 font-mono text-[11.5px] transition-colors",
                           on
-                            ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+                            ? "border-[var(--state-success-border)] bg-[var(--state-success-bg)] text-[var(--state-success-fg)]"
                             : "text-muted-foreground hover:bg-muted",
                         )}
                       >

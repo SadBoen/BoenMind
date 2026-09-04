@@ -794,8 +794,8 @@ impl McpHub {
 
     /// 装配 stub Provider 集:执行体即拒(Wire 直调不得绕过异步路径)。
     /// W2 管理面探活:对该 server 的任一路由发 tools/list(轻量、无副作用)。
-    /// 返回 Ok(工具数) = 联通;Err = 断连/超时摘要。
-    pub async fn probe_server(&self, server: &str) -> Result<usize, String> {
+    /// 返回 Ok((工具数, 工具简要信息列表)) = 联通;Err = 断连/超时摘要。
+    pub async fn probe_server(&self, server: &str) -> Result<(usize, Vec<Value>), String> {
         let prefix = format!("mcp.{server}.");
         let transport = {
             let routes = self.routes.lock().expect("锁未中毒");
@@ -808,11 +808,47 @@ impl McpHub {
             return Err("未连接".into());
         };
         let listed = transport.request("tools/list", json!({})).await?;
-        Ok(listed
+        let tools = listed
             .get("tools")
             .and_then(|v| v.as_array())
-            .map(|a| a.len())
-            .unwrap_or(0))
+            .cloned()
+            .unwrap_or_default();
+        let tool_summaries: Vec<Value> = tools
+            .iter()
+            .map(|t| {
+                json!({
+                    "name": t.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+                    "description": t.get("description").and_then(|v| v.as_str()).unwrap_or(""),
+                })
+            })
+            .collect();
+        Ok((tools.len(), tool_summaries))
+    }
+
+    /// 对指定 server 的任一路由发送任意 JSON-RPC 方法并返回原始结果。
+    ///
+    /// 与 probe_server 同款路由查找(按 `mcp.<server>.` 前缀),但可指定任意
+    /// method(如管理面对插件的 `web_search_test` / `web_usage` 扩展)。
+    /// 传输层 `McpTransport::request` 本就接受任意 method,这里把「按名称找
+    /// 到该 server 的 transport」暴露出来供 webadmin 使用。
+    pub async fn raw_request(
+        &self,
+        server: &str,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, String> {
+        let prefix = format!("mcp.{server}.");
+        let transport = {
+            let routes = self.routes.lock().expect("锁未中毒");
+            routes
+                .iter()
+                .find(|(k, _)| k.starts_with(&prefix))
+                .map(|(_, r)| r.transport.clone())
+        };
+        let Some(transport) = transport else {
+            return Err("未连接".into());
+        };
+        transport.request(method, params).await
     }
 
     pub fn capability_entries(
