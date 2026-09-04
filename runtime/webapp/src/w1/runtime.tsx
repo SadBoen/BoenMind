@@ -110,6 +110,22 @@ export function BoenmindRuntimeProvider({
       });
     };
     approvalHandlerRef.current = (req) => {
+      const permMode = storage.get(STORAGE_KEYS.PERMISSION_MODE) || "ask";
+      // 完全访问 (YOLO 模式): 自动放行批准，界面不弹卡片或抽屉
+      if (permMode === "yolo") {
+        void fetch(
+          `/admin/approvals/${encodeURIComponent(req.approval_id)}/respond`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              decision: "approve",
+              scope: "once",
+            }),
+          },
+        ).catch(() => {});
+        return;
+      }
       setPendingApprovals((cur) => {
         if (cur.some((a) => a.approval_id === req.approval_id)) return cur;
         return [...cur, req];
@@ -217,8 +233,41 @@ export function BoenmindRuntimeProvider({
 
   // E2E 钩子(W1 回归入口):?e2e=<文本> 装载后自动发送一次,供自动化
   // 浏览器测试(输入自动化不稳时的确定性通道);不影响手工使用
+  // ?mock_approval=1: 方便即时在浏览器中直观预览和调试审批抽屉悬浮条效果
   useEffect(() => {
-    const q = new URLSearchParams(window.location.search).get("e2e");
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("mock_approval") === "1") {
+      setMessages([
+        {
+          role: "user",
+          content: [{ type: "text", text: "请帮我检查项目根目录并编译构建" }],
+        },
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "text",
+              text: "好的，我需要先执行系统命令列出项目目录下的文件结构，以确认构建工具和配置环境：",
+            },
+          ],
+        },
+      ]);
+      setPendingApprovals([
+        {
+          approval_id: "appr_01MOCK999888",
+          capability: "system.exec",
+          args: {
+            command: "cargo build --release --workspace",
+            cwd: "D:\\96_CoderWorld\\BoenMind",
+          },
+          operation_id: "op_mock_123",
+          status: "waiting",
+        },
+      ]);
+      return;
+    }
+
+    const q = params.get("e2e");
     if (!q) return;
     const t = setTimeout(() => sendUserText(q), 800);
     return () => clearTimeout(t);
@@ -247,12 +296,9 @@ export function BoenmindRuntimeProvider({
     approvalId: string,
     decision: "approve" | "deny",
   ) => {
+    // 乐观从等待队列移除，悬浮抽屉即刻收起
     setPendingApprovals((cur) =>
-      cur.map((a) =>
-        a.approval_id === approvalId
-          ? { ...a, status: decision === "approve" ? "approved" : "denied" }
-          : a,
-      ),
+      cur.filter((a) => a.approval_id !== approvalId),
     );
     try {
       await fetch(
@@ -267,7 +313,7 @@ export function BoenmindRuntimeProvider({
         },
       );
     } catch {
-      // 裁决失败保持卡片状态,可重试(卡片仍显示)
+      // 裁决失败保持原样
     }
   };
 

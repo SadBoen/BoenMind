@@ -1,93 +1,143 @@
-// W5 上下文透视:对话区「上下文」页——每次模型调用发了什么、token 用量
-// 多少。数据 = /admin/context(context-log.jsonl 尾部,最旧在前);组成占比
-// 为前端估算(chars/3,仅量级感知;服务端不做估算),tokens_in/out 为
-// provider 真实回报。只看当前会话 = localStorage bm_session 过滤。
+// context-inspector: 对话上下文透视与分析器
+// 纯展示与诊断分析，不修改数据，不执行压缩
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { RefreshCwIcon, Loader2Icon } from "lucide-react";
+import {
+  RefreshCw,
+  Loader2,
+  Search,
+  User,
+  Sparkles,
+  FolderOpen,
+  Wrench,
+  MessageSquare,
+  Scissors,
+  HelpCircle,
+  Code2,
+  CheckCircle2,
+  AlertCircle,
+  Clock,
+  ChevronDown,
+  ChevronUp,
+  FileText,
+  Activity,
+  Layers,
+  ArrowRight,
+  ShieldAlert,
+} from "lucide-react";
 import { api, type CtxStep } from "../w2/api";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { storage, STORAGE_KEYS } from "@/lib/storage";
+import { cn } from "@/lib/utils";
 
-const CATS = {
-  system: { label: "系统提示词", color: "#6366f1" },
-  tools: { label: "工具定义", color: "#f59e0b" },
-  user: { label: "用户消息", color: "#10b981" },
-  assistant: { label: "助手消息", color: "#3b82f6" },
-  toolres: { label: "工具结果", color: "#14b8a6" },
-} as const;
-type CatKey = keyof typeof CATS;
-const CAT_KEYS = Object.keys(CATS) as CatKey[];
+// 估算中英文字数或 token (chars/3)
+const estWords = (s?: string | null) => Math.max(0, s?.length ?? 0);
+const estTokens = (s?: string | null) => Math.max(1, Math.ceil((s?.length ?? 0) / 3));
 
-const ROLE_LABEL: Record<string, string> = {
-  system: "系统提示词",
-  user: "用户消息",
-  assistant: "助手消息",
-  tool: "工具结果",
-};
-
-// 估算:chars/3(中英混合的粗密度;仅用于组成占比,真实值看 tokens_in/out)
-const est = (s: string) => Math.max(1, Math.ceil((s?.length ?? 0) / 3));
-// 耗时展示:≥1s 显秒,否则显毫秒
 const fmtDur = (ms?: number | null) =>
   ms == null ? "—" : ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
 
-function catSizes(s: CtxStep): Record<CatKey, number> {
-  const c: Record<CatKey, number> = { system: 0, tools: 0, user: 0, assistant: 0, toolres: 0 };
-  for (const m of s.messages ?? []) {
-    const k: CatKey =
-      m.role === "system" ? "system"
-      : m.role === "user" ? "user"
-      : m.role === "assistant" ? "assistant"
-      : "toolres";
-    c[k] += est(m.content);
+// 对 Prompt 的 system 内容进行结构拆解 (人设/技能/工作区)
+interface ParsedPromptRecipe {
+  personaText: string;
+  skills: Array<{ name: string; instruction: string }>;
+  workspaceText: string | null;
+  historyTurns: Array<{ user: string; assistant: string }>;
+  currentUserInput: string;
+  toolList: Array<{
+    name: string;
+    description: string;
+    needsApproval: boolean;
+    paramTokens: number;
+    rawSchema: any;
+  }>;
+}
+
+function parseStepRecipe(step: CtxStep): ParsedPromptRecipe {
+  let personaText = "";
+  const skills: Array<{ name: string; instruction: string }> = [];
+  let workspaceText: string | null = null;
+  const historyTurns: Array<{ user: string; assistant: string }> = [];
+  let currentUserInput = "";
+
+  const messages = step.messages ?? [];
+
+  // 1. 解析 System Prompt
+  const sysMsg = messages.find((m) => m.role === "system");
+  if (sysMsg && sysMsg.content) {
+    let raw = sysMsg.content;
+
+    // 提取工作区注入
+    const wsIdx = raw.indexOf("[工作目录]");
+    if (wsIdx !== -1) {
+      workspaceText = raw.substring(wsIdx).trim();
+      raw = raw.substring(0, wsIdx).trim();
+    }
+
+    // 提取技能包：[附加技能 · 技能名]
+    const skillRegex = /\[附加技能 · ([^\]]+)\]\n([\s\S]*?)(?=\n\n\[附加技能|\n\n$|$)/g;
+    let match: RegExpExecArray | null;
+    let lastEnd = 0;
+    const firstSkillIdx = raw.indexOf("[附加技能 · ");
+
+    if (firstSkillIdx !== -1) {
+      personaText = raw.substring(0, firstSkillIdx).trim();
+      while ((match = skillRegex.exec(raw)) !== null) {
+        skills.push({
+          name: match[1].trim(),
+          instruction: match[2].trim(),
+        });
+      }
+    } else {
+      personaText = raw.trim();
+    }
   }
-  c.tools = (s.tools ?? []).reduce((n, t) => n + est(JSON.stringify(t ?? {})), 0);
-  return c;
-}
-const totalOf = (c: Record<CatKey, number>) => Object.values(c).reduce((a, b) => a + b, 0);
 
-function CompBar({ c, h = 10 }: { c: Record<CatKey, number>; h?: number }) {
-  const total = totalOf(c);
-  if (!total) return <div className="text-muted-foreground text-[12.5px]">(暂无快照)</div>;
-  return (
-    <div className="flex w-full overflow-hidden rounded-full bg-muted" style={{ height: h }}>
-      {CAT_KEYS.map((k) =>
-        c[k] > 0 ? (
-          <div
-            key={k}
-            title={`${CATS[k].label} ≈${c[k]}`}
-            style={{ width: `${(c[k] / total) * 100}%`, background: CATS[k].color }}
-          />
-        ) : null,
-      )}
-    </div>
-  );
-}
+  // 2. 解析历史与当前提问
+  // 除去开头的 system，后面的非 tool 消息中，最后一条 user 是当前提问，前面是历史
+  const nonSys = messages.filter((m) => m.role === "user" || m.role === "assistant");
+  if (nonSys.length > 0) {
+    const last = nonSys[nonSys.length - 1];
+    if (last.role === "user") {
+      currentUserInput = last.content;
+      // 其余的配对成历史轮次
+      const prev = nonSys.slice(0, nonSys.length - 1);
+      for (let i = 0; i < prev.length; i += 2) {
+        const u = prev[i]?.role === "user" ? prev[i].content : "";
+        const a = prev[i + 1]?.role === "assistant" ? prev[i + 1].content : "";
+        if (u || a) {
+          historyTurns.push({ user: u, assistant: a });
+        }
+      }
+    }
+  }
 
-const STATUS_STYLE: Record<CtxStep["status"], { bg: string; border: string; fg: string }> = {
-  ok: {
-    bg: "var(--state-success-bg)",
-    border: "var(--state-success-border)",
-    fg: "var(--state-success-fg)",
-  },
-  error: {
-    bg: "var(--state-error-bg)",
-    border: "var(--state-error-border)",
-    fg: "var(--state-error-fg)",
-  },
-  cancelled: {
-    bg: "var(--state-warn-bg)",
-    border: "var(--state-warn-border)",
-    fg: "var(--state-warn-fg)",
-  },
-};
-const STATUS_LABEL: Record<CtxStep["status"], string> = {
-  ok: "成功",
-  error: `失败`,
-  cancelled: "已取消",
-};
+  // 3. 解析工具箱
+  const toolList = (step.tools ?? []).map((t: any) => {
+    const fn = t.function ?? {};
+    const name = fn.name ?? "未知工具";
+    const desc = fn.description ?? "";
+    const needsApproval = desc.includes("需要用户审批");
+    const paramStr = JSON.stringify(fn.parameters ?? {});
+    return {
+      name,
+      description: desc,
+      needsApproval,
+      paramTokens: estTokens(paramStr),
+      rawSchema: fn.parameters,
+    };
+  });
+
+  return {
+    personaText: personaText || "默认通用助理",
+    skills,
+    workspaceText,
+    historyTurns,
+    currentUserInput,
+    toolList,
+  };
+}
 
 export function ContextView() {
   const [steps, setSteps] = useState<CtxStep[]>([]);
@@ -98,7 +148,11 @@ export function ContextView() {
   const [error, setError] = useState<string | null>(null);
   const [auto, setAuto] = useState(true);
   const [onlyCurrent, setOnlyCurrent] = useState(true);
+
+  // 展开状态控制
   const [openSeq, setOpenSeq] = useState<number | null>(null);
+  const [activeTab, setActiveTab] = useState<"recipe" | "tools" | "memory" | "trajectory" | "raw">("recipe");
+  const [showRawJson, setShowRawJson] = useState(false);
 
   const refresh = useCallback(async () => {
     setBusy(true);
@@ -116,7 +170,7 @@ export function ContextView() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
-  // 自动刷新:8s 一轮(长对话挂着观察上下文增长)
+
   useEffect(() => {
     if (!auto) return;
     const t = setInterval(() => void refresh(), 8_000);
@@ -124,11 +178,59 @@ export function ContextView() {
   }, [auto, refresh]);
 
   const sid = storage.get(STORAGE_KEYS.SESSION);
-  // 时序新→旧;「仅当前会话」默认开(看别的会话可切)
+
+  // 过滤出当前会话并按时间由新到旧
   const visible = useMemo(() => {
     const list = onlyCurrent && sid ? steps.filter((s) => s.session_id === sid) : steps;
     return [...list].reverse();
   }, [steps, onlyCurrent, sid]);
+
+  // 最近一次模型调用的快照 (无 kind 的行才是模型请求快照)
+  const latestSnapshot = useMemo(() => {
+    return visible.find((x) => !x.kind);
+  }, [visible]);
+
+  // 解析配方
+  const recipe = useMemo(() => {
+    if (!latestSnapshot) return null;
+    return parseStepRecipe(latestSnapshot);
+  }, [latestSnapshot]);
+
+  // 篇幅与百分比计算
+  const stats = useMemo(() => {
+    if (!recipe || !latestSnapshot) return null;
+    const personaTokens = estTokens(recipe.personaText);
+    const skillsTokens = recipe.skills.reduce((sum, s) => sum + estTokens(s.instruction), 0);
+    const wsTokens = recipe.workspaceText ? estTokens(recipe.workspaceText) : 0;
+    const toolsTokens = recipe.toolList.reduce((sum, t) => sum + t.paramTokens, 0);
+    const historyTokens = recipe.historyTurns.reduce(
+      (sum, h) => sum + estTokens(h.user) + estTokens(h.assistant),
+      0,
+    );
+    const inputTokens = estTokens(recipe.currentUserInput);
+
+    const totalEst = personaTokens + skillsTokens + wsTokens + toolsTokens + historyTokens + inputTokens;
+    const realTokensIn = latestSnapshot.tokens_in ?? totalEst;
+
+    return {
+      personaTokens,
+      skillsTokens,
+      wsTokens,
+      toolsTokens,
+      historyTokens,
+      inputTokens,
+      totalEst,
+      realTokensIn,
+      pct: {
+        persona: Math.round((personaTokens / (totalEst || 1)) * 100),
+        skills: Math.round((skillsTokens / (totalEst || 1)) * 100),
+        ws: Math.round((wsTokens / (totalEst || 1)) * 100),
+        tools: Math.round((toolsTokens / (totalEst || 1)) * 100),
+        history: Math.round((historyTokens / (totalEst || 1)) * 100),
+        input: Math.round((inputTokens / (totalEst || 1)) * 100),
+      },
+    };
+  }, [recipe, latestSnapshot]);
 
   const runSearch = async () => {
     const q = searchQ.trim();
@@ -143,305 +245,582 @@ export function ContextView() {
       setSearching(false);
     }
   };
-  const latest = visible.find((x) => !x.kind);
-  const latestCats = latest ? catSizes(latest) : null;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3 px-4 pb-3">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        <span className="text-[12.5px] text-muted-foreground">
-          每次调用的请求快照与用量;组成占比为估算,真实值以 provider 回报为准
-        </span>
-        <span className="flex-1" />
-        <span className="flex items-center gap-1.5">
-          <Switch
-            id="ctx-only"
-            checked={onlyCurrent && !!sid}
-            onCheckedChange={setOnlyCurrent}
-            disabled={!sid}
-          />
-          <Label htmlFor="ctx-only" className="text-[12.5px]">仅当前会话</Label>
-        </span>
-        <span className="flex items-center gap-1.5">
-          <Switch id="ctx-auto" checked={auto} onCheckedChange={setAuto} />
-          <Label htmlFor="ctx-auto" className="text-[12.5px]">8s 自动刷新</Label>
-        </span>
-        <Button size="sm" variant="outline" disabled={busy} onClick={() => void refresh()} data-slot="ctx-refresh">
-          {busy ? <Loader2Icon className="animate-spin" /> : <RefreshCwIcon />}
-          刷新
-        </Button>
+    <div className="flex min-h-0 flex-1 flex-col gap-3.5 px-4 pb-4">
+      {/* 顶部控制栏 */}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2.5">
+        <div className="flex items-center gap-2">
+          <Activity className="size-4 text-primary" />
+          <span className="text-[13px] font-semibold text-foreground">大模型交互透视分析</span>
+          <span className="rounded-md bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
+            只读透视 · 零压缩
+          </span>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-1.5">
+            <Switch
+              id="ctx-only"
+              checked={onlyCurrent && !!sid}
+              onCheckedChange={setOnlyCurrent}
+              disabled={!sid}
+            />
+            <Label htmlFor="ctx-only" className="cursor-pointer text-[12px] text-muted-foreground">
+              仅看本会话
+            </Label>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <Switch id="ctx-auto" checked={auto} onCheckedChange={setAuto} />
+            <Label htmlFor="ctx-auto" className="cursor-pointer text-[12px] text-muted-foreground">
+              实时自动刷新
+            </Label>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 gap-1 px-2.5 text-[12px]"
+            disabled={busy}
+            onClick={() => void refresh()}
+          >
+            {busy ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+            <span>刷新</span>
+          </Button>
+        </div>
       </div>
 
-      {error ? (
-        <div className="notice-error">
-          {error}
+      {error ? <div className="notice-error">{error}</div> : null}
+
+      {/* 【第一层：健康度看板 / 容量水杯】 */}
+      {latestSnapshot && stats ? (
+        <div className="bg-card rounded-xl border p-3.5 shadow-2xs">
+          <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-[13px] font-semibold text-foreground">
+                当前对话容量构成
+              </span>
+              <span className="flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+                <CheckCircle2 className="size-3" />
+                <span>记忆完整无遗漏 ({recipe?.historyTurns.length ?? 0}/20 轮)</span>
+              </span>
+            </div>
+
+            <div className="flex items-center gap-3 text-[12px] text-muted-foreground">
+              <span className="flex items-center gap-1">
+                <Clock className="size-3.5" />
+                思考耗时: <strong className="text-foreground">{fmtDur(latestSnapshot.latency_ms)}</strong>
+              </span>
+              <span>·</span>
+              <span>
+                本次提问篇幅: <strong className="text-foreground">{stats.realTokensIn}</strong> 字量 (Token)
+              </span>
+              <span>·</span>
+              <span>模型: <strong className="text-foreground">{latestSnapshot.model_id}</strong></span>
+            </div>
+          </div>
+
+          {/* 进度条水杯 */}
+          <div className="flex h-3 w-full overflow-hidden rounded-full bg-muted/80">
+            {stats.pct.persona > 0 ? (
+              <div
+                style={{ width: `${stats.pct.persona}%` }}
+                className="bg-indigo-500 transition-all hover:opacity-80"
+                title={`AI人设与规矩: 约 ${stats.personaTokens} 篇幅 (${stats.pct.persona}%)`}
+              />
+            ) : null}
+            {stats.pct.skills > 0 ? (
+              <div
+                style={{ width: `${stats.pct.skills}%` }}
+                className="bg-purple-500 transition-all hover:opacity-80"
+                title={`携带特长技能: 约 ${stats.skillsTokens} 篇幅 (${stats.pct.skills}%)`}
+              />
+            ) : null}
+            {stats.pct.tools > 0 ? (
+              <div
+                style={{ width: `${stats.pct.tools}%` }}
+                className="bg-amber-500 transition-all hover:opacity-80"
+                title={`装备工具箱: 约 ${stats.toolsTokens} 篇幅 (${stats.pct.tools}%)`}
+              />
+            ) : null}
+            {stats.pct.history > 0 ? (
+              <div
+                style={{ width: `${stats.pct.history}%` }}
+                className="bg-sky-500 transition-all hover:opacity-80"
+                title={`之前聊天记忆: 约 ${stats.historyTokens} 篇幅 (${stats.pct.history}%)`}
+              />
+            ) : null}
+            {stats.pct.ws > 0 ? (
+              <div
+                style={{ width: `${stats.pct.ws}%` }}
+                className="bg-emerald-500 transition-all hover:opacity-80"
+                title={`工作区环境: 约 ${stats.wsTokens} 篇幅 (${stats.pct.ws}%)`}
+              />
+            ) : null}
+            {stats.pct.input > 0 ? (
+              <div
+                style={{ width: `${stats.pct.input}%` }}
+                className="bg-rose-500 transition-all hover:opacity-80"
+                title={`本次提问: 约 ${stats.inputTokens} 篇幅 (${stats.pct.input}%)`}
+              />
+            ) : null}
+          </div>
+
+          {/* 图例大白话对照表 */}
+          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11.5px]">
+            <span className="flex items-center gap-1.5">
+              <span className="size-2.5 rounded-xs bg-indigo-500" />
+              <span className="text-foreground">🎭 人设规矩:</span>
+              <span className="text-muted-foreground">{stats.pct.persona}%</span>
+            </span>
+            {stats.skillsTokens > 0 ? (
+              <span className="flex items-center gap-1.5">
+                <span className="size-2.5 rounded-xs bg-purple-500" />
+                <span className="text-foreground">⚡ 特长技能:</span>
+                <span className="text-muted-foreground">{stats.pct.skills}%</span>
+              </span>
+            ) : null}
+            <span className="flex items-center gap-1.5">
+              <span className="size-2.5 rounded-xs bg-amber-500" />
+              <span className="text-foreground">🛠️ 工具背包:</span>
+              <span className="text-muted-foreground">{stats.pct.tools}%</span>
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="size-2.5 rounded-xs bg-sky-500" />
+              <span className="text-foreground">💬 聊天记忆:</span>
+              <span className="text-muted-foreground">{stats.pct.history}%</span>
+            </span>
+            {stats.wsTokens > 0 ? (
+              <span className="flex items-center gap-1.5">
+                <span className="size-2.5 rounded-xs bg-emerald-500" />
+                <span className="text-foreground">📁 电脑目录:</span>
+                <span className="text-muted-foreground">{stats.pct.ws}%</span>
+              </span>
+            ) : null}
+            <span className="flex items-center gap-1.5">
+              <span className="size-2.5 rounded-xs bg-rose-500" />
+              <span className="text-foreground">❓ 您的问题:</span>
+              <span className="text-muted-foreground">{stats.pct.input}%</span>
+            </span>
+          </div>
+        </div>
+      ) : (
+        <div className="bg-card rounded-xl border p-6 text-center text-[12.5px] text-muted-foreground">
+          {steps.length > 0
+            ? "当前会话暂无调用记录，在左侧输入一句话发送后即可在此查看"
+            : "尚未产生模型交互数据"}
+        </div>
+      )}
+
+      {/* 【第二层：配方卡片盒 / 功能切页】 */}
+      {recipe ? (
+        <div className="flex min-h-0 flex-1 flex-col gap-3">
+          <div className="flex items-center justify-between border-b pb-1">
+            <div className="flex items-center gap-1" role="tablist">
+              <button
+                role="tab"
+                onClick={() => setActiveTab("recipe")}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12.5px] font-medium transition-colors",
+                  activeTab === "recipe"
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:bg-muted",
+                )}
+              >
+                <Layers className="size-3.5" />
+                <span>人设与技能 ({recipe.skills.length + 1})</span>
+              </button>
+
+              <button
+                role="tab"
+                onClick={() => setActiveTab("tools")}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12.5px] font-medium transition-colors",
+                  activeTab === "tools"
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:bg-muted",
+                )}
+              >
+                <Wrench className="size-3.5" />
+                <span>工具背包 ({recipe.toolList.length})</span>
+              </button>
+
+              <button
+                role="tab"
+                onClick={() => setActiveTab("memory")}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12.5px] font-medium transition-colors",
+                  activeTab === "memory"
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:bg-muted",
+                )}
+              >
+                <MessageSquare className="size-3.5" />
+                <span>聊天记忆 ({recipe.historyTurns.length}轮)</span>
+              </button>
+
+              <button
+                role="tab"
+                onClick={() => setActiveTab("trajectory")}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[12.5px] font-medium transition-colors",
+                  activeTab === "trajectory"
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:bg-muted",
+                )}
+              >
+                <Activity className="size-3.5" />
+                <span>步骤时序流</span>
+              </button>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <Button
+                size="sm"
+                variant={showRawJson ? "secondary" : "ghost"}
+                className="h-7 gap-1 px-2 text-[11.5px] text-muted-foreground"
+                onClick={() => setShowRawJson(!showRawJson)}
+                title="切换查看原始发给模型的 JSON 报文"
+              >
+                <Code2 className="size-3.5" />
+                <span>{showRawJson ? "返回大白话" : "专家模式 (Raw)"}</span>
+              </Button>
+            </div>
+          </div>
+
+          {/* 专家模式直接展示 Raw JSON */}
+          {showRawJson ? (
+            <div className="min-h-0 flex-1 overflow-auto rounded-xl border bg-muted/20 p-3">
+              <div className="mb-2 flex items-center justify-between text-[12px] font-medium">
+                <span>底层完整请求报文 (OpenAI API 格式)</span>
+                <span className="text-muted-foreground font-mono">
+                  {latestSnapshot?.messages?.length ?? 0} messages · {latestSnapshot?.tools?.length ?? 0} tools
+                </span>
+              </div>
+              <pre className="max-h-[500px] overflow-auto rounded-lg border bg-background/80 p-3 font-mono text-[11.5px] leading-relaxed break-all whitespace-pre-wrap">
+                {JSON.stringify(
+                  {
+                    model: latestSnapshot?.model_id,
+                    messages: latestSnapshot?.messages,
+                    tools: latestSnapshot?.tools,
+                  },
+                  null,
+                  2,
+                )}
+              </pre>
+            </div>
+          ) : (
+            <div className="min-h-0 flex-1 overflow-auto">
+              {/* TAB 1: 人设与技能 */}
+              {activeTab === "recipe" ? (
+                <div className="flex flex-col gap-3">
+                  {/* 人设卡片 */}
+                  <div className="bg-card rounded-xl border p-3.5 shadow-2xs">
+                    <div className="mb-2 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <User className="size-4 text-indigo-500" />
+                        <span className="text-[13px] font-semibold">🎭 AI 的人设与根本规矩</span>
+                      </div>
+                      <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                        篇幅: 约 {estTokens(recipe.personaText)}
+                      </span>
+                    </div>
+                    <div className="rounded-lg bg-muted/40 p-3 text-[12.5px] leading-relaxed text-foreground/90 whitespace-pre-wrap">
+                      {recipe.personaText || "无特殊规矩，默认以通用助手身份作答"}
+                    </div>
+                  </div>
+
+                  {/* 附加特长技能 */}
+                  {recipe.skills.length > 0 ? (
+                    <div className="bg-card rounded-xl border p-3.5 shadow-2xs">
+                      <div className="mb-2.5 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Sparkles className="size-4 text-purple-500" />
+                          <span className="text-[13px] font-semibold">⚡ 携带的特长技能知识包</span>
+                        </div>
+                        <span className="text-[11.5px] text-muted-foreground">
+                          共携带 {recipe.skills.length} 项附加特长
+                        </span>
+                      </div>
+
+                      <div className="flex flex-col gap-2.5">
+                        {recipe.skills.map((s, idx) => (
+                          <div key={idx} className="rounded-lg border bg-muted/20 p-2.5">
+                            <div className="mb-1 flex items-center justify-between">
+                              <span className="font-medium text-[12.5px] text-foreground">
+                                【{s.name}】
+                              </span>
+                              <span className="text-[11px] text-muted-foreground">
+                                约 {estTokens(s.instruction)} 篇幅
+                              </span>
+                            </div>
+                            <div className="text-[12px] leading-relaxed text-muted-foreground whitespace-pre-wrap">
+                              {s.instruction}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {/* 工作目录注入 */}
+                  {recipe.workspaceText ? (
+                    <div className="bg-card rounded-xl border p-3.5 shadow-2xs">
+                      <div className="mb-1.5 flex items-center gap-2">
+                        <FolderOpen className="size-4 text-emerald-500" />
+                        <span className="text-[13px] font-semibold">📁 允许查看与工作的电脑目录</span>
+                      </div>
+                      <div className="rounded-lg bg-muted/40 p-2.5 text-[12px] text-foreground/90">
+                        {recipe.workspaceText}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {/* TAB 2: 工具背包 */}
+              {activeTab === "tools" ? (
+                <div className="bg-card rounded-xl border p-3.5 shadow-2xs">
+                  <div className="mb-3 flex items-center justify-between border-b pb-2">
+                    <div>
+                      <div className="text-[13px] font-semibold text-foreground">
+                        🛠️ AI 随身装备的工具箱
+                      </div>
+                      <div className="text-[11.5px] text-muted-foreground">
+                        这些是系统赋予 AI 的实际能力。工具的使用手册会占用背包空间，过多可能会让对话变慢。
+                      </div>
+                    </div>
+                    <div className="text-right text-[12px]">
+                      <div className="font-medium text-foreground">
+                        共装备 {recipe.toolList.length} 个工具
+                      </div>
+                      <div className="text-[11px] text-muted-foreground">
+                        背包占用 约 {stats?.toolsTokens ?? 0} 字量 ({stats?.pct.tools ?? 0}%)
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {recipe.toolList.map((t, idx) => (
+                      <div
+                        key={idx}
+                        className="flex flex-col justify-between rounded-lg border bg-muted/20 p-2.5 hover:bg-muted/40 transition-colors"
+                      >
+                        <div>
+                          <div className="flex items-center justify-between gap-1.5 mb-1">
+                            <span className="font-mono text-[12.5px] font-semibold text-foreground">
+                              {t.name}
+                            </span>
+                            {t.needsApproval ? (
+                              <span className="flex items-center gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-[10.5px] font-medium text-amber-600 dark:text-amber-400">
+                                <ShieldAlert className="size-3" />
+                                <span>需人工确认</span>
+                              </span>
+                            ) : (
+                              <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10.5px] font-medium text-emerald-600 dark:text-emerald-400">
+                                直通只读
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[11.5px] leading-snug text-muted-foreground">
+                            {t.description || "无详细描述"}
+                          </div>
+                        </div>
+
+                        <div className="mt-2.5 flex items-center justify-between border-t pt-1.5 text-[10.5px] text-muted-foreground">
+                          <span>手册篇幅: 约 {t.paramTokens} 字</span>
+                          <span className="font-mono">OpenAI Function</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              {/* TAB 3: 聊天记忆 */}
+              {activeTab === "memory" ? (
+                <div className="flex flex-col gap-3">
+                  <div className="bg-card rounded-xl border p-3.5 shadow-2xs">
+                    <div className="mb-2 flex items-center justify-between">
+                      <div>
+                        <div className="text-[13px] font-semibold text-foreground">
+                          💬 AI 依然清晰保留的聊天记忆
+                        </div>
+                        <div className="text-[11.5px] text-muted-foreground">
+                          系统自动保留最近的对话内容。如果对话超长，较早的对话将被自然移出。
+                        </div>
+                      </div>
+                      <span className="rounded-md bg-sky-500/10 px-2 py-0.5 text-[11.5px] font-medium text-sky-600 dark:text-sky-400">
+                        当前存活 {recipe.historyTurns.length} 轮 (上限 20 轮)
+                      </span>
+                    </div>
+
+                    {recipe.historyTurns.length === 0 ? (
+                      <div className="py-6 text-center text-[12.5px] text-muted-foreground">
+                        这是新会话的第一轮对话，暂无前期记忆
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-2.5">
+                        {recipe.historyTurns.map((h, idx) => (
+                          <div key={idx} className="rounded-lg border bg-muted/20 p-2.5">
+                            <div className="mb-1 flex items-center justify-between text-[11px] text-muted-foreground">
+                              <span>第 {idx + 1} 轮记忆</span>
+                              <span>
+                                用户提问 约 {estTokens(h.user)} 字 · AI回答 约 {estTokens(h.assistant)} 字
+                              </span>
+                            </div>
+                            <div className="mb-1 text-[12px] text-foreground/90 font-medium">
+                              问: {h.user}
+                            </div>
+                            <div className="text-[11.5px] text-muted-foreground line-clamp-3">
+                              答: {h.assistant}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 淘汰与裁剪状态提示卡片 */}
+                  <div className="rounded-xl border border-dashed p-3 text-[12px] text-muted-foreground bg-muted/10 flex items-start gap-2.5">
+                    <Scissors className="size-4 mt-0.5 text-muted-foreground shrink-0" />
+                    <div>
+                      <span className="font-semibold text-foreground">关于对话遗忘的说明：</span>
+                      <span>
+                        当前系统硬上限为 20 轮或 24,000 字符。目前您的会话长度健康，没有任何历史对话被剪掉。如果将来对话变长产生脱落，此处会明确提醒您遗忘了哪几轮，让您不再感到莫名其妙。
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {/* TAB 4: 步骤时序流 */}
+              {activeTab === "trajectory" ? (
+                <div className="flex flex-col gap-2 rounded-xl border bg-card p-3.5 shadow-2xs">
+                  <div className="mb-2 text-[13px] font-semibold text-foreground">
+                    ⚡ 最近一次互动的背后运行细节
+                  </div>
+
+                  {visible.length === 0 ? (
+                    <div className="py-6 text-center text-[12.5px] text-muted-foreground">
+                      暂无步骤事件
+                    </div>
+                  ) : (
+                    visible.map((s) => {
+                      if (s.kind) {
+                        const d = (s.data ?? {}) as Record<string, unknown>;
+                        const t = (() => {
+                          const dd = new Date(s.ts);
+                          return isNaN(dd.getTime()) ? s.ts : dd.toLocaleTimeString();
+                        })();
+
+                        const evMap: Record<string, { label: string; color: string; desc: string }> = {
+                          tool_call: {
+                            label: "AI 决定使用工具",
+                            color: "text-amber-500 bg-amber-500/10 border-amber-500/20",
+                            desc: `调用了 ${String(d.tool ?? "")}，参数为 ${JSON.stringify(d.arguments ?? {})}`,
+                          },
+                          tool_result: {
+                            label: "工具完成并反馈",
+                            color: "text-sky-500 bg-sky-500/10 border-sky-500/20",
+                            desc: `耗时 ${fmtDur(d.elapsed_ms as number)}，返回结果已回喂给 AI`,
+                          },
+                          assistant_final: {
+                            label: "AI 组织最终答复",
+                            color: "text-purple-500 bg-purple-500/10 border-purple-500/20",
+                            desc: `生成了答复，消耗输出约 ${String(d.tokens_out ?? "—")} 字`,
+                          },
+                          turn_end: {
+                            label: "交互完满结束",
+                            color: "text-emerald-500 bg-emerald-500/10 border-emerald-500/20",
+                            desc: `本次对话顺利完成，总耗时 ${fmtDur(d.latency_ms as number)}`,
+                          },
+                        };
+
+                        const meta = evMap[s.kind] ?? {
+                          label: s.kind,
+                          color: "text-muted-foreground bg-muted border-border",
+                          desc: "",
+                        };
+
+                        return (
+                          <div
+                            key={s.seq}
+                            className="flex items-start gap-3 rounded-lg border p-2.5 bg-muted/20 text-[12px]"
+                          >
+                            <span className={cn("rounded-md px-2 py-0.5 text-[11px] font-medium border shrink-0", meta.color)}>
+                              {meta.label}
+                            </span>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-foreground font-medium">{meta.desc}</div>
+                              {d.result || d.content ? (
+                                <pre className="mt-1.5 max-h-32 overflow-auto rounded bg-background/80 p-2 font-mono text-[11px] text-muted-foreground whitespace-pre-wrap break-all">
+                                  {String(d.result ?? d.content ?? "")}
+                                </pre>
+                              ) : null}
+                            </div>
+                            <span className="text-[11px] text-muted-foreground font-mono shrink-0">
+                              {t}
+                            </span>
+                          </div>
+                        );
+                      }
+                      return null;
+                    })
+                  )}
+                </div>
+              ) : null}
+            </div>
+          )}
         </div>
       ) : null}
 
-      {/* 当前上下文(最近一次请求) */}
-      <div className="bg-card rounded-xl border p-3" data-slot="ctx-current">
-        <div className="mb-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <span className="text-[13.5px] font-semibold">当前上下文(下一次请求同款)</span>
-          {latest ? (
-            <>
-              <span className="text-[12.5px] text-muted-foreground">
-                估算合计 ≈{totalOf(latestCats!)} · 实际输入 {latest.tokens_in ?? "—"} / 输出{" "}
-                {latest.tokens_out ?? "—"} · 耗时 {fmtDur(latest.latency_ms)}
-              </span>
-              <span className="flex-1" />
-              <span className="text-[12.5px] text-muted-foreground">
-                {latest.model_id} · 第 {latest.turn_index} 轮 · 第 {latest.step} 步
-              </span>
-            </>
-          ) : null}
+      {/* 底部：跨会话搜索条 */}
+      <div className="bg-card rounded-xl border p-3 shadow-2xs">
+        <div className="mb-2 flex items-center justify-between text-[12.5px]">
+          <span className="font-semibold text-foreground">🔍 跨会话查找曾发送的上下文或工具结果</span>
+          <span className="text-[11.5px] text-muted-foreground">
+            可以在历史所有问答中搜索某段代码或某次搜索结果
+          </span>
         </div>
-        {latest && latestCats ? (
-          <>
-            <CompBar c={latestCats} h={12} />
-            <div className="mt-2 grid grid-cols-2 gap-x-6 gap-y-1 sm:grid-cols-3">
-              {CAT_KEYS.map((k) => (
-                <div key={k} className="flex items-center gap-1.5 text-[12px]">
-                  <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: CATS[k].color }} />
-                  <span>{CATS[k].label}</span>
-                  <span className="text-muted-foreground">
-                    ≈{latestCats[k]} · {totalOf(latestCats) ? Math.round((latestCats[k] / totalOf(latestCats)) * 100) : 0}%
-                  </span>
-                </div>
-              ))}
-            </div>
-          </>
-        ) : (
-          <div className="text-muted-foreground py-6 text-center text-[12.5px]" data-slot="ctx-empty">
-            {steps.length > 0
-              ? `当前会话还没有快照${onlyCurrent && sid ? `(库里有 ${steps.length} 条其他会话记录,可关闭「仅当前会话」查看)` : ""}——发一条消息后这里就能看到发给了模型什么`
-              : "还没有快照——发一条消息后这里就能看到发给了模型什么"}
-          </div>
-        )}
-      </div>
-
-      {/* W9 二期:跨会话全文检索 */}
-      <div className="bg-card rounded-xl border p-3" data-slot="ctx-search">
-        <div className="mb-2 text-[13.5px] font-semibold">全文检索(跨会话,含工具回喂/终稿原文)</div>
         <div className="flex gap-2">
           <input
-            className="bg-background h-8 flex-1 rounded-md border px-2.5 text-[12.5px] outline-none focus:border-ring"
-            placeholder="搜关键词,如:集装箱 / system__echo / 错误码…"
+            className="bg-background h-8 flex-1 rounded-md border px-2.5 text-[12px] outline-none focus:border-ring"
+            placeholder="输入关键词搜索（如：天气 / fs__read / 某个报错）"
             value={searchQ}
             onChange={(e) => setSearchQ(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter") void runSearch();
             }}
-            data-slot="ctx-search-input"
           />
-          <button
-            className="bg-primary text-primary-foreground h-8 rounded-md px-3 text-[12.5px] font-medium disabled:opacity-50"
+          <Button
+            size="sm"
+            className="h-8 px-3 text-[12px]"
             disabled={searching || !searchQ.trim()}
             onClick={() => void runSearch()}
-            data-slot="ctx-search-btn"
           >
-            {searching ? "检索中…" : "检索"}
-          </button>
+            {searching ? "查找中…" : "立即查找"}
+          </Button>
         </div>
+
         {searchHits ? (
-          <div className="mt-2 flex flex-col gap-1" data-slot="ctx-search-hits">
+          <div className="mt-2.5 flex flex-col gap-1.5">
             {searchHits.length === 0 ? (
-              <div className="text-muted-foreground text-[12px]">(无命中)</div>
+              <div className="text-[12px] text-muted-foreground py-1">(未找到匹配内容)</div>
             ) : (
               searchHits.map((h) => (
-                <div key={h.seq} className="rounded border px-2 py-1.5 text-[12px]">
-                  <span className="font-mono text-[11px]">#{h.seq}</span>{" "}
-                  <span className="text-muted-foreground">
-                    {h.kind ?? "快照"} · 第 {h.turn_index} 轮 · {h.session_id || "(系统)"}
-                  </span>
-                  <pre className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap font-mono text-[11px]">
-                    {JSON.stringify(h.data ?? h.messages ?? h, null, 0).slice(0, 400)}
+                <div key={h.seq} className="rounded-lg border bg-muted/20 px-2.5 py-1.5 text-[11.5px]">
+                  <div className="flex items-center justify-between text-muted-foreground">
+                    <span>记录 #{h.seq} · 第 {h.turn_index} 轮</span>
+                    <span>{h.session_id || "全局"}</span>
+                  </div>
+                  <pre className="mt-1 max-h-20 overflow-auto whitespace-pre-wrap font-mono text-[11px] text-foreground/80">
+                    {JSON.stringify(h.data ?? h.messages ?? h, null, 0).slice(0, 300)}
                   </pre>
                 </div>
               ))
             )}
           </div>
         ) : null}
-      </div>
-
-      {/* 趋势:每步一根堆叠迷你柱(左→右 = 时间旧→新) */}
-      {visible.length > 1 ? (
-        <div className="bg-card rounded-xl border p-3">
-          <div className="mb-2 text-[13.5px] font-semibold">上下文趋势(每步一柱,左旧右新)</div>
-          <div className="flex h-16 items-end gap-1 overflow-x-auto">
-            {[...visible].reverse().filter((s) => !s.kind).map((s) => {
-              const c = catSizes(s);
-              const total = totalOf(c) || 1;
-              return (
-                <div
-                  key={s.seq}
-                  className="flex h-full w-4 shrink-0 cursor-pointer flex-col justify-end overflow-hidden rounded-sm"
-                  title={`第${s.turn_index}轮·第${s.step}步 · ${s.model_id} · 估算≈${total} · in ${s.tokens_in ?? "—"}/out ${s.tokens_out ?? "—"}${s.status !== "ok" ? ` · ${STATUS_LABEL[s.status]}` : ""}`}
-                  onClick={() => setOpenSeq(s.seq)}
-                  data-slot="ctx-trend-bar"
-                >
-                  {CAT_KEYS.map((k) =>
-                    c[k] > 0 ? (
-                      <div key={k} style={{ height: `${(c[k] / total) * 100}%`, background: CATS[k].color, opacity: s.status === "ok" ? 1 : 0.45 }} />
-                    ) : null,
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      ) : null}
-
-      {/* 步骤明细(新→旧;点击展开逐项浏览器) */}
-      <div className="min-h-0 flex-1 overflow-auto rounded-xl border" data-slot="ctx-steps">
-        {visible.length === 0 ? (
-          <div className="text-muted-foreground p-6 text-center text-[12.5px]">
-            {steps.length > 0
-              ? `当前会话暂无快照(另有 ${steps.length} 条其他会话记录;可关闭「仅当前会话」查看)`
-              : "(无快照)"}
-          </div>
-        ) : (
-          visible.map((s) => {
-            // W9:轨迹事件卡(工具调用/回喂/终稿/回合边界)
-            if (s.kind) {
-              const d = (s.data ?? {}) as Record<string, unknown>;
-              const t = (() => {
-                const dd = new Date(s.ts);
-                return isNaN(dd.getTime()) ? s.ts : dd.toLocaleTimeString();
-              })();
-              const EV: Record<string, { icon: string; label: string; fg: string }> = {
-                tool_call: { icon: "🔧", label: "调用工具", fg: "#f59e0b" },
-                tool_result: { icon: "📥", label: "工具回喂", fg: "#38bdf8" },
-                assistant_final: { icon: "💬", label: "终稿", fg: "#a78bfa" },
-                turn_end: { icon: "🏁", label: "回合结束", fg: "#94a3b8" },
-              };
-              const ev = EV[s.kind] ?? { icon: "•", label: s.kind, fg: "#94a3b8" };
-              const failed = s.kind === "turn_end" && d.outcome !== "succeeded";
-              const body =
-                s.kind === "tool_call"
-                  ? `${String(d.tool ?? "")} · 参数 ${JSON.stringify(d.arguments ?? null)}`
-                  : s.kind === "tool_result"
-                    ? `${String(d.tool ?? "")} · 耗时 ${fmtDur(d.elapsed_ms as number)} · 回喂原文`
-                    : s.kind === "assistant_final"
-                      ? `in ${String(d.tokens_in ?? "—")} / out ${String(d.tokens_out ?? "—")} · 终稿全文`
-                      : s.kind === "turn_end"
-                        ? `${String(d.outcome ?? "")}${d.error_code ? " · " + String(d.error_code) : ""}${d.latency_ms ? " · " + fmtDur(d.latency_ms as number) : ""}`
-                        : "";
-              const full =
-                s.kind === "tool_result" || s.kind === "assistant_final"
-                  ? String(d.result ?? d.content ?? "")
-                  : body;
-              return (
-                <div key={s.seq} className="border-b last:border-b-0" style={failed ? { background: "rgba(239,68,68,.08)" } : undefined}>
-                  <button
-                    className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-left hover:bg-muted/50"
-                    onClick={() => setOpenSeq(openSeq === s.seq ? null : s.seq)}
-                    data-slot="ctx-event-head"
-                    data-kind={s.kind}
-                  >
-                    <span className="font-mono text-[12px]">#{s.seq}</span>
-                    <span>{ev.icon}</span>
-                    <span className="text-[12.5px] font-medium" style={{ color: ev.fg }}>{ev.label}</span>
-                    <span className="text-[12.5px] text-muted-foreground">第 {s.turn_index} 轮 · {t}</span>
-                    {failed ? (
-                      <span className="rounded border px-1.5 py-0.5 text-[11px]" style={{ background: "rgba(239,68,68,.15)", borderColor: "#ef4444", color: "#ef4444" }}>
-                        失败 {String(d.error_code ?? "")}
-                      </span>
-                    ) : null}
-                    <span className="flex-1" />
-                    <span className="max-w-[45%] truncate text-[12px] text-muted-foreground">{body}</span>
-                  </button>
-                  {openSeq === s.seq ? (
-                    <div className="bg-muted/30 px-3 pb-3 pt-1">
-                      <div className="mb-1.5 text-[12.5px] font-semibold">事件详情(回喂模型/落账原文)</div>
-                      <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded border bg-background/60 p-2 font-mono text-[11.5px]">
-                        {full || "(空)"}
-                      </pre>
-                    </div>
-                  ) : null}
-                </div>
-              );
-            }
-            const c = catSizes(s);
-            const open = openSeq === s.seq;
-            const time = (() => {
-              const d = new Date(s.ts);
-              return isNaN(d.getTime()) ? s.ts : d.toLocaleTimeString();
-            })();
-            return (
-              <div key={s.seq} className="border-b last:border-b-0">
-                <button
-                  className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-left hover:bg-muted/50"
-                  onClick={() => setOpenSeq(open ? null : s.seq)}
-                  data-slot="ctx-step-head"
-                  data-seq={s.seq}
-                >
-                  <span className="font-mono text-[12px]">#{s.seq}</span>
-                  <span className="text-[12.5px]">
-                    第 {s.turn_index} 轮 · 第 {s.step} 步
-                    {s.attempt && s.attempt > 1 ? ` · 尝试 ${s.attempt}` : ""}
-                  </span>
-                  <span className="text-[12.5px] text-muted-foreground">{time}</span>
-                  <span
-                    className="rounded border px-1.5 py-0.5 text-[11px]"
-                    style={{
-                      background: STATUS_STYLE[s.status].bg,
-                      borderColor: STATUS_STYLE[s.status].border,
-                      color: STATUS_STYLE[s.status].fg,
-                    }}
-                  >
-                    {s.status === "error" && s.error_code ? `${STATUS_LABEL[s.status]} ${s.error_code}` : STATUS_LABEL[s.status]}
-                  </span>
-                  <span className="flex-1" />
-                  <span className="text-[12px] text-muted-foreground">
-                    实际 in {s.tokens_in ?? "—"} / out {s.tokens_out ?? "—"} · 耗时 {fmtDur(s.latency_ms)} · 估算 ≈
-                    {totalOf(c)} · {s.model_id}
-                  </span>
-                </button>
-                {open ? (
-                  <div className="bg-muted/30 px-3 pb-3 pt-1">
-                    <div className="mb-1.5 text-[12.5px] font-semibold">请求组成(即模型实际收到的内容)</div>
-                    <div className="flex flex-col gap-1.5">
-                      {(s.messages ?? []).map((m, i) => (
-                        <details key={i} className="bg-card rounded-lg border">
-                          <summary className="flex cursor-pointer flex-wrap items-center gap-2 px-2.5 py-1.5 text-[12.5px]">
-                            <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: CATS[m.role === "system" ? "system" : m.role === "user" ? "user" : m.role === "assistant" ? "assistant" : "toolres"].color }} />
-                            <span className="font-medium">{ROLE_LABEL[m.role] ?? m.role}</span>
-                            <span className="text-muted-foreground">≈{est(m.content)} · {m.content?.length ?? 0} 字符</span>
-                            {m.content_truncated ? <span className="text-[var(--state-warn-fg)]">(快照截断)</span> : null}
-                          </summary>
-                          <pre className="max-h-64 overflow-auto border-t px-2.5 py-2 font-mono text-[11.5px] leading-relaxed break-all whitespace-pre-wrap">
-                            {m.content}
-                          </pre>
-                        </details>
-                      ))}
-                      {(s.tools ?? []).length > 0 ? (
-                        <details className="bg-card rounded-lg border">
-                          <summary className="cursor-pointer px-2.5 py-1.5 text-[12.5px]">
-                            <span className="font-medium">工具定义 × {s.tools.length}</span>
-                            <span className="text-muted-foreground"> ≈{c.tools}</span>
-                          </summary>
-                          <div className="border-t px-2.5 py-2">
-                            {(s.tools ?? []).map((t, i) => (
-                              <details key={i} className="mb-1">
-                                <summary className="cursor-pointer text-[12px]">
-                                  <span className="font-mono">{t.function?.name ?? `#${i + 1}`}</span>
-                                  <span className="text-muted-foreground">{t.function?.description ? ` — ${t.function.description}` : ""}</span>
-                                </summary>
-                                <pre className="bg-muted/40 mt-1 max-h-48 overflow-auto rounded p-2 font-mono text-[11px]">
-                                  {JSON.stringify(t, null, 2)}
-                                </pre>
-                              </details>
-                            ))}
-                          </div>
-                        </details>
-                      ) : null}
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            );
-          })
-        )}
       </div>
     </div>
   );

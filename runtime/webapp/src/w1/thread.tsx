@@ -14,11 +14,17 @@ import {
   PanelRight,
   Send,
   ShieldAlert,
+  ShieldCheck,
   Square,
   CheckCircle2,
   XCircle,
   Clock,
   ChevronUp,
+  ChevronDown,
+  Zap,
+  ListOrdered,
+  Code2,
+  X,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
@@ -35,7 +41,7 @@ import { Badge } from "@/components/ui/badge";
 import { ContextView } from "./context";
 import { useBoenmindApprovals, type ApprovalRequest } from "./runtime";
 import { api, type WorkspaceEntry } from "@/w2/api";
-import { storage, STORAGE_KEYS } from "@/lib/storage";
+import { storage, STORAGE_KEYS, type PermissionMode } from "@/lib/storage";
 import { cn } from "@/lib/utils";
 
 export function Thread({
@@ -133,9 +139,11 @@ export function Thread({
               </ThreadPrimitive.Messages>
             )}
           </ThreadPrimitive.Viewport>
-          <ApprovalCards />
           <div className="composer-dock">
-            <Composer />
+            <div className="relative mx-auto w-full max-w-[820px]">
+              <ApprovalDrawer />
+              <Composer />
+            </div>
           </div>
         </ThreadPrimitive.Root>
       )}
@@ -143,14 +151,14 @@ export function Thread({
   );
 }
 
-// W4b 对话内审批卡片:waiting 态可裁决;批准/拒绝后状态固化并回传 /rpc
-function ApprovalCards() {
+// 抽屉式超薄悬浮审批条:与输入框同宽、高度接近单行、支持展开代码/批准/驳回/关闭
+function ApprovalDrawer() {
   const { pendingApprovals, respondApproval } = useBoenmindApprovals();
   if (pendingApprovals.length === 0) return null;
   return (
-    <div className="flex flex-col gap-2 px-4 py-1" data-slot="approval-cards">
+    <div className="mb-2 flex flex-col gap-2" data-slot="approval-cards">
       {pendingApprovals.map((a) => (
-        <ApprovalCard
+        <ApprovalDrawerItem
           key={a.approval_id}
           req={a}
           onRespond={respondApproval}
@@ -160,7 +168,7 @@ function ApprovalCards() {
   );
 }
 
-function ApprovalCard({
+function ApprovalDrawerItem({
   req,
   onRespond,
 }: {
@@ -168,10 +176,15 @@ function ApprovalCard({
   onRespond: (id: string, d: "approve" | "deny") => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+
+  if (dismissed) return null;
+
   const argsText =
     req.args == null
-      ? "(参数见上文模型调用)"
-      : JSON.stringify(req.args, null, 2).slice(0, 800);
+      ? "(无调用参数)"
+      : JSON.stringify(req.args, null, 2);
 
   const handleAction = async (decision: "approve" | "deny") => {
     if (busy) return;
@@ -183,149 +196,124 @@ function ApprovalCard({
     }
   };
 
+  // 提炼简明高亮动作摘要
+  const summary = (() => {
+    const a = req.args as Record<string, unknown> | null;
+    if (req.capability === "system.exec" && a?.command) {
+      return {
+        label: "执行命令",
+        detail: typeof a.command === "string" ? a.command : JSON.stringify(a.command),
+      };
+    }
+    if ((req.capability === "fs.write" || req.capability === "fs.edit") && a?.path) {
+      return {
+        label: req.capability === "fs.write" ? "写入文件" : "编辑文件",
+        detail: String(a.path),
+      };
+    }
+    if (req.capability === "fs.read" && a?.path) {
+      return {
+        label: "读取文件",
+        detail: String(a.path),
+      };
+    }
+    return {
+      label: req.capability,
+      detail: a ? JSON.stringify(a) : "请求执行",
+    };
+  })();
+
   return (
     <div
-      className="group relative my-3 flex flex-col gap-3 rounded-xl border border-border/80 bg-card/75 p-4 shadow-lg backdrop-blur-xl transition-all hover:border-border"
+      className="animate-in fade-in slide-in-from-bottom-2 duration-200 group relative w-full overflow-hidden rounded-xl border border-border/80 bg-card/95 shadow-md backdrop-blur-md transition-all hover:border-border"
       data-slot="approval-card"
       data-approval-id={req.approval_id}
       data-status={req.status}
     >
-      {/* 头部：标题、能力名徽标、状态与单据号 */}
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2.5">
-          <div className="flex size-7 items-center justify-center rounded-lg bg-[var(--state-warn-bg)] text-[var(--state-warn-fg)]">
-            <ShieldAlert className="size-4" />
+      {/* 单行超薄主条：高度与单行输入框/工具条相当 (约 38px) */}
+      <div className="flex min-h-[38px] items-center justify-between gap-2 px-3 py-1.5">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <div className="flex size-5 shrink-0 items-center justify-center rounded-md bg-[var(--state-warn-bg)] text-[var(--state-warn-fg)]">
+            <ShieldAlert className="size-3.5 text-amber-500" />
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-[13.5px] font-semibold text-foreground tracking-tight">
-                权限与工具调用请求
-              </span>
-              <Badge variant="outline" className="border-[var(--state-warn-border)] bg-[var(--state-warn-bg)] font-mono text-[11px] text-[var(--state-warn-fg)]">
-                {req.capability}
-              </Badge>
-            </div>
-            <p className="text-[11.5px] text-muted-foreground mt-0.5">
-              该操作具有外部副作用或修改权限，需人工确认裁决 · 单据 #{req.approval_id.slice(-6)}
-            </p>
-          </div>
+          <span className="shrink-0 text-[12px] font-semibold text-foreground">
+            {summary.label}
+          </span>
+          <span
+            className="truncate font-mono text-[11.5px] text-muted-foreground"
+            title={summary.detail}
+          >
+            {summary.detail}
+          </span>
         </div>
 
-        {req.status === "waiting" ? (
-          <Badge variant="secondary" className="flex items-center gap-1 font-mono text-[11px] text-muted-foreground">
-            <Clock className="size-3 animate-spin text-[var(--state-warn-fg)]" />
-            等待裁决 (5m)
-          </Badge>
-        ) : null}
+        {/* 右侧紧凑操作按钮组 */}
+        <div className="flex shrink-0 items-center gap-1.5">
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 gap-1 px-2 text-[11.5px] text-muted-foreground hover:text-foreground"
+            data-slot="approval-expand"
+            onClick={() => setExpanded(!expanded)}
+            title={expanded ? "收起详细参数" : "展开查看详细代码/参数"}
+          >
+            <Code2 className="size-3.5" />
+            <span>{expanded ? "收起" : "展开"}</span>
+            {expanded ? (
+              <ChevronUp className="size-3" />
+            ) : (
+              <ChevronDown className="size-3" />
+            )}
+          </Button>
+
+          <Button
+            size="sm"
+            disabled={busy}
+            className="h-7 px-2.5 text-[11.5px] font-medium shadow-xs"
+            data-slot="approval-approve"
+            onClick={() => void handleAction("approve")}
+            title="允许本次工具调用执行"
+          >
+            ✓ 批准
+          </Button>
+
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={busy}
+            className="h-7 px-2 text-[11.5px] text-destructive hover:bg-destructive/10 hover:text-destructive"
+            data-slot="approval-deny"
+            onClick={() => void handleAction("deny")}
+            title="驳回本次工具调用"
+          >
+            驳回
+          </Button>
+
+          <Button
+            size="sm"
+            variant="ghost"
+            className="size-7 p-0 text-muted-foreground hover:text-foreground"
+            data-slot="approval-close"
+            onClick={() => setDismissed(true)}
+            title="关闭悬浮条"
+          >
+            <X className="size-3.5" />
+          </Button>
+        </div>
       </div>
 
-      {/* 参数预览区域：精致代码块卡片 */}
-      {req.args != null ? (
-        <div className="relative overflow-hidden rounded-xl border border-border/60 bg-muted/40 p-2.5">
-          <div className="mb-1.5 flex items-center justify-between text-[10.5px] font-medium text-muted-foreground uppercase tracking-wider">
-            <span>调用参数 (Payload)</span>
-            <span className="font-mono text-[10px] opacity-70">JSON</span>
+      {/* 展开区域：显示完整调用参数与代码详情 */}
+      {expanded ? (
+        <div className="border-t border-border/50 bg-muted/30 px-3 py-2">
+          <div className="mb-1 flex items-center justify-between text-[10.5px] font-medium text-muted-foreground uppercase tracking-wider">
+            <span>调用参数与代码详情 (Payload)</span>
+            <span className="font-mono text-[10px]">{req.capability}</span>
           </div>
-          <pre className="max-h-36 overflow-auto font-mono text-[11.5px] leading-relaxed text-foreground/90 selection:bg-primary/20">
+          <pre className="max-h-48 overflow-auto rounded-lg border border-border/60 bg-background/80 p-2.5 font-mono text-[11px] leading-relaxed text-foreground selection:bg-primary/20">
             {argsText}
           </pre>
         </div>
       ) : null}
-
-      {/* 底部操作区：仿 ZCode 上拉选项菜单交互 */}
-      {req.status === "waiting" ? (
-        <div className="mt-1 flex flex-wrap items-center justify-between gap-3 border-t border-border/40 pt-3">
-          {/* 左侧：直接主要操作 */}
-          <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              disabled={busy}
-              className="h-8 px-3.5 text-[12.5px] font-medium shadow-sm transition-transform active:scale-95"
-              data-slot="approval-approve"
-              onClick={() => void handleAction("approve")}
-            >
-              ✓ 允许本次执行
-            </Button>
-
-            {/* 上拉操作菜单 */}
-            <Select
-              onValueChange={(val) => {
-                if (val === "approve") void handleAction("approve");
-                else if (val === "deny") void handleAction("deny");
-              }}
-            >
-              <SelectTrigger
-                size="sm"
-                disabled={busy}
-                className="h-8 gap-1.5 border-border/80 bg-background/60 px-2.5 text-[12px] font-medium hover:bg-accent"
-                title="选择裁决动作"
-              >
-                <span>更多选项</span>
-              </SelectTrigger>
-              <SelectContent side="top" align="start" className="rounded-lg border border-border/80 bg-popover/95 p-1 shadow-xl backdrop-blur-md">
-                <SelectLabel className="px-2 py-1 text-[11px] font-semibold text-muted-foreground">
-                  权限裁决策略
-                </SelectLabel>
-                <SelectItem
-                  value="approve"
-                  className="py-2 pl-2 text-[12px] font-medium focus:bg-primary/10 focus:text-primary"
-                >
-                  <div className="flex flex-col gap-0.5">
-                    <span className="font-semibold text-foreground">批准本次调用 (Allow)</span>
-                    <span className="text-[10.5px] text-muted-foreground">允许当前单据执行一次，随后继续对话</span>
-                  </div>
-                </SelectItem>
-                <SelectItem
-                  value="deny"
-                  className="py-2 pl-2 text-[12px] font-medium text-destructive focus:bg-destructive/10 focus:text-destructive"
-                >
-                  <div className="flex flex-col gap-0.5">
-                    <span className="font-semibold">拒绝本次调用 (Deny)</span>
-                    <span className="text-[10.5px] opacity-80">终止当前操作并告知模型调用已被用户取消</span>
-                  </div>
-                </SelectItem>
-              </SelectContent>
-            </Select>
-
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={busy}
-              data-slot="approval-deny"
-              className="h-8 px-2.5 text-[12px] text-destructive hover:bg-destructive/10 hover:text-destructive"
-              onClick={() => void handleAction("deny")}
-            >
-              拒绝
-            </Button>
-          </div>
-
-          <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-            <span>支持对话内热审批</span>
-            <span>·</span>
-            <span>超时自动回滚</span>
-          </div>
-        </div>
-      ) : (
-        /* 终态提示(状态语义走 --state-* 主题令牌,四主题自动跟随) */
-        <div
-          className={cn(
-            "flex items-center gap-2 px-3 py-2 text-[12px] font-medium shadow-xs",
-            req.status === "approved" ? "notice-success" : "notice-error",
-          )}
-        >
-          {req.status === "approved" ? (
-            <>
-              <CheckCircle2 className="size-4 shrink-0" />
-              <span>已批准执行 —— 工具结果已安全回喂给模型并归档</span>
-            </>
-          ) : (
-            <>
-              <XCircle className="size-4 shrink-0" />
-              <span>已拒绝本次调用 —— 已通知模型操作取消并释放执行锁</span>
-            </>
-          )}
-        </div>
-      )}
     </div>
   );
 }
@@ -385,6 +373,10 @@ function Composer() {
   const [workspaces, setWorkspaces] = useState<Array<WorkspaceEntry>>([]);
   const [selWorkspace, setSelWorkspace] = useState<string>(
     () => storage.get(STORAGE_KEYS.ACTIVE_WORKSPACE) || "",
+  );
+  // 权限模式选择: ask(变更前确认)|plan(计划模式)|yolo(完全访问)
+  const [permMode, setPermMode] = useState<PermissionMode>(
+    () => (storage.get(STORAGE_KEYS.PERMISSION_MODE) as PermissionMode) || "ask",
   );
 
   const loadWorkspaces = () => {
@@ -598,6 +590,87 @@ function Composer() {
                 暂无工作目录——去 设置→常规 添加
               </SelectItem>
             ) : null}
+          </SelectContent>
+        </Select>
+
+        {/* 权限模式选择上拉菜单 (图 1 标杆交互):
+            变更前确认(默认) | 计划模式 | 完全访问(YOLO) */}
+        <Select
+          value={permMode}
+          onValueChange={(v) => {
+            const val = v as PermissionMode;
+            setPermMode(val);
+            storage.set(STORAGE_KEYS.PERMISSION_MODE, val);
+          }}
+        >
+          <SelectTrigger
+            size="sm"
+            className="bg-muted/60 h-7 border px-2 text-[12px] font-medium"
+            title="切换权限模式:变更前确认(默认) / 计划模式 / 完全访问(YOLO免审批)"
+            data-slot="permission-select"
+          >
+            {permMode === "yolo" ? (
+              <>
+                <Zap className="size-3.5 text-amber-500" />
+                <span>完全访问</span>
+              </>
+            ) : permMode === "plan" ? (
+              <>
+                <ListOrdered className="size-3.5 text-blue-500" />
+                <span>计划模式</span>
+              </>
+            ) : (
+              <>
+                <ShieldCheck className="size-3.5 text-emerald-500" />
+                <span>变更前确认</span>
+              </>
+            )}
+          </SelectTrigger>
+          <SelectContent className="w-60 rounded-xl p-1" side="top" position="popper">
+            <SelectItem
+              value="ask"
+              className="py-2 pl-2 text-[12px] [&_[data-slot=select-item-indicator]]:left-2 [&_[data-slot=select-item-indicator]]:right-auto"
+            >
+              <div className="flex flex-col pl-4 gap-0.5">
+                <div className="flex items-center gap-1.5 font-medium text-foreground">
+                  <ShieldCheck className="size-3.5 text-emerald-500" />
+                  <span>变更前确认</span>
+                </div>
+                <span className="text-muted-foreground text-[11px] leading-tight">
+                  修改文件与执行命令前先问我
+                </span>
+              </div>
+            </SelectItem>
+
+            <SelectItem
+              value="plan"
+              className="py-2 pl-2 text-[12px] [&_[data-slot=select-item-indicator]]:left-2 [&_[data-slot=select-item-indicator]]:right-auto"
+            >
+              <div className="flex flex-col pl-4 gap-0.5">
+                <div className="flex items-center gap-1.5 font-medium text-foreground">
+                  <ListOrdered className="size-3.5 text-blue-500" />
+                  <span>计划模式</span>
+                </div>
+                <span className="text-muted-foreground text-[11px] leading-tight">
+                  编辑与改动前先给出执行计划
+                </span>
+              </div>
+            </SelectItem>
+
+            <SelectItem
+              value="yolo"
+              className="py-2 pl-2 text-[12px] [&_[data-slot=select-item-indicator]]:left-2 [&_[data-slot=select-item-indicator]]:right-auto"
+            >
+              <div className="flex flex-col pl-4 gap-0.5">
+                <div className="flex items-center gap-1.5 font-medium text-foreground">
+                  <Zap className="size-3.5 text-amber-500" />
+                  <span>完全访问</span>
+                </div>
+                <span className="text-muted-foreground text-[11px] leading-tight">
+                  全自动放行执行，不弹确认抽屉
+                </span>
+              </div>
+            </SelectItem>
           </SelectContent>
         </Select>
         <span className="composer-spacer" />

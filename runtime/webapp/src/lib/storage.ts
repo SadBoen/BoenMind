@@ -12,7 +12,11 @@ export const STORAGE_KEYS = {
   ACTIVE_WORKSPACE: "bm_active_workspace",
   // 插件中心表格列宽
   PLUGINS_TABLE_COLS: "bm_plugins_table_cols",
+  // 权限模式:ask(变更前确认)|plan(计划模式)|yolo(完全访问)
+  PERMISSION_MODE: "bm_permission_mode",
 } as const;
+
+export type PermissionMode = "ask" | "plan" | "yolo";
 
 export type StorageKey = typeof STORAGE_KEYS[keyof typeof STORAGE_KEYS];
 
