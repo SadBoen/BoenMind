@@ -42,6 +42,7 @@
 | P4 非测试 unwrap 甄别清理 | 全仓约 400 处 unwrap 需区分测试/非测试逐步替换;非测试 panic 10 处均系不变量断言,评估=维持现状 | OPEN(缓办) |
 | P5 Capability 抽象演进 | 同步 invoke 无超时护栏(trait 注释已写明选型约束)/错误 String→结构化枚举/统一单 async trait 评估留 M 系列回看 | OPEN(缓办) |
 | McpPage.tsx 组件解耦 | 714 行拆子表单/子对话框 | OPEN |
+| web_multisearch 内置模板两处死路(2026-09-04 全量真连探针发现) | ①tavily 模板 `auth:"none"` 而通用适配器无 body 传 key 通道 → 配置的 Key 永不随请求发出,填真 Key 也 401,须改 `auth:"bearer"`(Tavily 新 API 支持);②linkup 模板 `limit_param:"depth"` → 插件恒发数字 `depth:3`,而 Linkup 只认 "standard"/"deep",Key 正确也 400,须清空 limit_param;随下批插件改动一并修模板默认值(存量配置文件同步迁移) | OPEN(缓办) |
 | 前端静态分析 | ESLint + Stylelint 接入 CI | OPEN |
 | theme.css !important 收敛 | 玻璃段 4 处(毛玻璃化刻意选型,收敛须换实现手法) | OPEN(低) |
 | CustomEvent 类型化 | 5 文件发事件/12 文件监听,可随 ESLint 批次一并 | OPEN(低) |
