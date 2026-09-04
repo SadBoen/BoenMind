@@ -88,7 +88,7 @@ jobs:
             --notes "BoenMind ${GITHUB_REF_NAME} (Linux x86_64).
 
           包含:
-          - boenmind-server: AI OS / Runtime 服务器核心
+          - boenmind-server: AI OS / Runtime 服务器核心(内置 fs.* 文件工具集:fs.search/fs.read 直通,fs.write/fs.edit 审批,rg 引擎内嵌)
           - webapp/dist: 最新 Web UI 预构建前端 (含音乐播放器、多角色管理、上下文透视、MCP 管理与完整热插拔等)
           - plugins/web-multisearch: 官方自带聚合搜索 MCP 插件
           - plugins/context-mode: 官方可选上下文检索/会话连续性 Rust MCP 插件(默认不启用)

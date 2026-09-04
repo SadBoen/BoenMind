@@ -7,7 +7,7 @@ BoenMind:个人生态的 AI Runtime / AI OS,当前为**阶段一(跨平台单软
 (Erlang/OTP、Kubernetes、VS Code,见 `architecture/deepwiki-validation.md`)。
 合同库冻结 v1.0(字段只增不破)。
 
-**当前状态(2026-09-04)**:v0.0.7 已发版;资深架构全面评审闭环(stdio 写限时守卫/core_loop 崩溃监控/配置读容错防丢/前端 streamable-http 修复/文档与 C4 拓扑对齐);**fs.* 文件工具集内置化**(ADR-0021,用户裁决修订 ADR-0020 冻结范围):查/读/改收编内核(fs.search/fs.read 直通、fs.write/fs.edit 审批,rg 引擎内嵌,沙箱=工作区注册表),code-tools 随包插件退役;生产内置清单=system.exec + fs.* 四件 + model.invoke(内核私有)。**下一步 = 待用户过目确认 ADR-0016 后推进 Skill v0.2 第二步 wasmtime 脚本执行面实现**。交付全史见 `milestones/HISTORY.md`;
+**当前状态(2026-09-04)**:v0.0.8 已发版;资深架构全面评审闭环(stdio 写限时守卫/core_loop 崩溃监控/配置读容错防丢/前端 streamable-http 修复/文档与 C4 拓扑对齐);**fs.* 文件工具集内置化**(ADR-0021,用户裁决修订 ADR-0020 冻结范围):查/读/改收编内核(fs.search/fs.read 直通、fs.write/fs.edit 审批,rg 引擎内嵌,沙箱=工作区注册表),code-tools 随包插件退役;生产内置清单=system.exec + fs.* 四件 + model.invoke(内核私有)。**下一步 = 待用户过目确认 ADR-0016 后推进 Skill v0.2 第二步 wasmtime 脚本执行面实现**。交付全史见 `milestones/HISTORY.md`;
 **欠账唯一入口 = `milestones/BACKLOG.md`**(已闭合条目自 2026-09-02 起移出台账)。
 
 ## 文件地图(规格分层)

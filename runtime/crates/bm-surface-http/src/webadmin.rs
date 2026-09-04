@@ -1021,7 +1021,10 @@ pub async fn mcp_test(
         );
     };
     match hub.probe_server(&name).await {
-        Ok((count, tool_list)) => Json(json!({ "ok": true, "name": name, "tools": count, "tool_list": tool_list })).into_response(),
+        Ok((count, tool_list)) => {
+            Json(json!({ "ok": true, "name": name, "tools": count, "tool_list": tool_list }))
+                .into_response()
+        }
         Err(e) => Json(json!({ "ok": false, "name": name, "error": e })).into_response(),
     }
 }
@@ -1040,8 +1043,16 @@ pub async fn mcp_search_test(
             "服务器未启用 MCP 接线(--mcp-config)",
         );
     };
-    let provider_id = body.get("provider_id").and_then(Value::as_str).unwrap_or_default().to_string();
-    let query = body.get("query").and_then(Value::as_str).unwrap_or_default().to_string();
+    let provider_id = body
+        .get("provider_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let query = body
+        .get("query")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
     if provider_id.is_empty() || query.is_empty() {
         return Json(json!({
             "success": false,
@@ -1099,7 +1110,8 @@ pub async fn mcp_status(State(cfg): State<AdminConfig>) -> Response {
     let mut status = Vec::new();
     for name in loaded {
         match hub.probe_server(&name).await {
-            Ok((count, tool_list)) => status.push(json!({"name": name, "ok": true, "tools": count, "tool_list": tool_list})),
+            Ok((count, tool_list)) => status
+                .push(json!({"name": name, "ok": true, "tools": count, "tool_list": tool_list})),
             Err(e) => status.push(json!({"name": name, "ok": false, "error": e})),
         }
     }
