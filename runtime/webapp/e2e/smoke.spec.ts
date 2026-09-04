@@ -175,9 +175,9 @@ test.describe("上下文透视页", () => {
     // 验证第一层看板：容量构成与状态徽标
     await expect(page.getByText("当前对话容量构成")).toBeVisible();
     await expect(page.getByText("记忆完整无遗漏")).toBeVisible();
-    // 验证第二层配方拆解：人设与根本规矩、工具背包
+    // 验证第二层配方拆解：人设与根本规矩双栏 (左卡片与右原文均存在)
     await expect(page.getByText("🎭 AI 的人设与根本规矩")).toBeVisible();
-    await expect(page.getByText("系统提示词内容")).toBeVisible();
+    await expect(page.getByText("系统提示词内容").first()).toBeVisible();
     // 切换至工具背包双栏 Tab
     await page.getByRole("tab", { name: /^工具背包/ }).click();
     await expect(page.getByText("🛠️ 随身装备的工具箱 (双栏联动透视)")).toBeVisible();

@@ -18,6 +18,9 @@ import {
   ShieldAlert,
   Copy,
   Check,
+  Zap,
+  ArrowDownLeft,
+  ArrowUpRight,
 } from "lucide-react";
 import { api, type CtxStep } from "../w2/api";
 import { Button } from "@/components/ui/button";
@@ -34,10 +37,11 @@ const fmtDur = (ms?: number | null) =>
 
 // 对 Prompt 的 system 内容进行结构拆解 (人设/技能/工作区)
 interface ParsedPromptRecipe {
+  rawSystemPrompt: string;
   personaText: string;
-  skills: Array<{ name: string; instruction: string }>;
+  skills: Array<{ id: string; name: string; instruction: string }>;
   workspaceText: string | null;
-  historyTurns: Array<{ user: string; assistant: string }>;
+  historyTurns: Array<{ turnIndex: number; user: string; assistant: string }>;
   currentUserInput: string;
   toolList: Array<{
     name: string;
@@ -49,10 +53,11 @@ interface ParsedPromptRecipe {
 }
 
 function parseStepRecipe(step: CtxStep): ParsedPromptRecipe {
+  let rawSystemPrompt = "";
   let personaText = "";
-  const skills: Array<{ name: string; instruction: string }> = [];
+  const skills: Array<{ id: string; name: string; instruction: string }> = [];
   let workspaceText: string | null = null;
-  const historyTurns: Array<{ user: string; assistant: string }> = [];
+  const historyTurns: Array<{ turnIndex: number; user: string; assistant: string }> = [];
   let currentUserInput = "";
 
   const messages = step.messages ?? [];
@@ -60,6 +65,7 @@ function parseStepRecipe(step: CtxStep): ParsedPromptRecipe {
   // 1. 解析 System Prompt
   const sysMsg = messages.find((m) => m.role === "system");
   if (sysMsg && sysMsg.content) {
+    rawSystemPrompt = sysMsg.content;
     let raw = sysMsg.content;
 
     // 提取工作区注入
@@ -76,8 +82,10 @@ function parseStepRecipe(step: CtxStep): ParsedPromptRecipe {
 
     if (firstSkillIdx !== -1) {
       personaText = raw.substring(0, firstSkillIdx).trim();
+      let sIdx = 0;
       while ((match = skillRegex.exec(raw)) !== null) {
         skills.push({
+          id: `skill_${sIdx++}`,
           name: match[1].trim(),
           instruction: match[2].trim(),
         });
@@ -94,11 +102,12 @@ function parseStepRecipe(step: CtxStep): ParsedPromptRecipe {
     if (last.role === "user") {
       currentUserInput = last.content;
       const prev = nonSys.slice(0, nonSys.length - 1);
+      let tCount = 1;
       for (let i = 0; i < prev.length; i += 2) {
         const u = prev[i]?.role === "user" ? prev[i].content : "";
         const a = prev[i + 1]?.role === "assistant" ? prev[i + 1].content : "";
         if (u || a) {
-          historyTurns.push({ user: u, assistant: a });
+          historyTurns.push({ turnIndex: tCount++, user: u, assistant: a });
         }
       }
     }
@@ -121,6 +130,7 @@ function parseStepRecipe(step: CtxStep): ParsedPromptRecipe {
   });
 
   return {
+    rawSystemPrompt,
     personaText: personaText || "默认通用助理",
     skills,
     workspaceText,
@@ -144,10 +154,13 @@ export function ContextView() {
   const [activeTab, setActiveTab] = useState<"recipe" | "tools" | "memory" | "trajectory">("recipe");
   const [showRawJson, setShowRawJson] = useState(false);
 
-  // 工具双栏联动选中状态
+  // 双栏联动选中状态
+  const [selectedPromptSection, setSelectedPromptSection] = useState<string>("persona");
   const [selectedToolName, setSelectedToolName] = useState<string | null>(null);
-  const [copiedTool, setCopiedTool] = useState<string | null>(null);
-  const codeContainerRef = useRef<HTMLDivElement>(null);
+  const [selectedTurnIndex, setSelectedTurnIndex] = useState<number | null>(null);
+
+  // 复制反馈状态
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setBusy(true);
@@ -191,26 +204,28 @@ export function ContextView() {
     return parseStepRecipe(latestSnapshot);
   }, [latestSnapshot]);
 
-  // 默认选中第一个工具
+  // 默认选中初始化
   useEffect(() => {
     if (recipe?.toolList.length && !selectedToolName) {
       setSelectedToolName(recipe.toolList[0].name);
     }
-  }, [recipe, selectedToolName]);
+    if (recipe?.historyTurns.length && selectedTurnIndex == null) {
+      setSelectedTurnIndex(recipe.historyTurns[0].turnIndex);
+    }
+  }, [recipe, selectedToolName, selectedTurnIndex]);
 
-  // 工具卡片点击联动：平滑滚动到右侧对应的 JSON 代码块
-  const handleSelectTool = (name: string) => {
-    setSelectedToolName(name);
-    const el = document.getElementById(`tool-block-${name}`);
+  // 双栏联动通用平滑滚动定位
+  const scrollToTarget = (id: string) => {
+    const el = document.getElementById(id);
     if (el) {
       el.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
   };
 
-  const copyToolJson = (name: string, schema: any) => {
-    void navigator.clipboard.writeText(JSON.stringify(schema, null, 2));
-    setCopiedTool(name);
-    setTimeout(() => setCopiedTool(null), 2000);
+  const copyText = (key: string, text: string) => {
+    void navigator.clipboard.writeText(text);
+    setCopiedKey(key);
+    setTimeout(() => setCopiedKey(null), 2000);
   };
 
   // token 篇幅与百分比计算 (统一以 token 为单位)
@@ -229,6 +244,13 @@ export function ContextView() {
     const totalEst = personaTokens + skillsTokens + wsTokens + toolsTokens + historyTokens + inputTokens;
     const realTokensIn = latestSnapshot.tokens_in ?? totalEst;
 
+    // 提取提供商返回的缓存 token (OpenAI cached_tokens / DeepSeek cache hit)
+    const cachedTokens =
+      (latestSnapshot as any).cached_tokens ??
+      (latestSnapshot as any).prompt_tokens_details?.cached_tokens ??
+      (latestSnapshot as any).prompt_cache_hit_tokens ??
+      0;
+
     return {
       personaTokens,
       skillsTokens,
@@ -238,12 +260,13 @@ export function ContextView() {
       inputTokens,
       totalEst,
       realTokensIn,
+      cachedTokens: Number(cachedTokens) || 0,
       pct: {
         persona: Math.round((personaTokens / (totalEst || 1)) * 100),
         skills: Math.round((skillsTokens / (totalEst || 1)) * 100),
         ws: Math.round((wsTokens / (totalEst || 1)) * 100),
         tools: Math.round((toolsTokens / (totalEst || 1)) * 100),
-        history: Math.round((historyTokens / (totalEst || 1)) * 100),
+        history: Math.round((recipe.historyTurns.length ? historyTokens : 0) / (totalEst || 1) * 100),
         input: Math.round((inputTokens / (totalEst || 1)) * 100),
       },
     };
@@ -322,14 +345,32 @@ export function ContextView() {
               </span>
             </div>
 
-            <div className="flex items-center gap-3 text-[12px] text-muted-foreground">
+            {/* 输入、缓存、输出与耗时核心指标组 */}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-muted-foreground">
               <span className="flex items-center gap-1">
-                <Clock className="size-3.5" />
-                思考耗时: <strong className="text-foreground">{fmtDur(latestSnapshot.latency_ms)}</strong>
+                <ArrowDownLeft className="size-3.5 text-sky-500" />
+                输入: <strong className="text-foreground">{stats.realTokensIn} token</strong>
               </span>
               <span>·</span>
-              <span>
-                输入消耗: <strong className="text-foreground">{stats.realTokensIn} token</strong>
+              <span
+                className="flex items-center gap-1"
+                title="大模型服务端 KV Cache / 提示词缓存命中量 (由 Provider 接口回包返回)"
+              >
+                <Zap className="size-3.5 text-amber-500" />
+                缓存命中:{" "}
+                <strong className={stats.cachedTokens > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-foreground"}>
+                  {stats.cachedTokens > 0 ? `${stats.cachedTokens} token` : "0 token (未命中/无缓存)"}
+                </strong>
+              </span>
+              <span>·</span>
+              <span className="flex items-center gap-1">
+                <ArrowUpRight className="size-3.5 text-purple-500" />
+                输出: <strong className="text-foreground">{latestSnapshot.tokens_out ?? "—"} token</strong>
+              </span>
+              <span>·</span>
+              <span className="flex items-center gap-1">
+                <Clock className="size-3.5" />
+                耗时: <strong className="text-foreground">{fmtDur(latestSnapshot.latency_ms)}</strong>
               </span>
               <span>·</span>
               <span>模型: <strong className="text-foreground">{latestSnapshot.model_id}</strong></span>
@@ -444,7 +485,7 @@ export function ContextView() {
                 )}
               >
                 <Layers className="size-3.5" />
-                <span>人设与技能 ({recipe.skills.length + 1})</span>
+                <span>人设与特长双栏 ({recipe.skills.length + 1})</span>
               </button>
 
               <button
@@ -472,7 +513,7 @@ export function ContextView() {
                 )}
               >
                 <MessageSquare className="size-3.5" />
-                <span>聊天记忆 ({recipe.historyTurns.length}轮)</span>
+                <span>聊天记忆双栏 ({recipe.historyTurns.length}轮)</span>
               </button>
 
               <button
@@ -527,70 +568,233 @@ export function ContextView() {
             </div>
           ) : (
             <div className="min-h-0 flex-1 overflow-auto">
-              {/* TAB 1: 人设与技能 */}
+              {/* TAB 1: 人设与特长双栏联动 (左卡片 + 右提示词原文高亮) */}
               {activeTab === "recipe" ? (
-                <div className="flex flex-col gap-3">
-                  {/* 人设卡片 */}
-                  <div className="bg-card rounded-xl border p-3.5 shadow-2xs">
-                    <div className="mb-2 flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <User className="size-4 text-indigo-500" />
-                        <span className="text-[13px] font-semibold">🎭 AI 的人设与根本规矩</span>
-                      </div>
-                      <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
-                        约 {estTokens(recipe.personaText)} token
+                <div className="flex flex-col gap-2.5">
+                  <div className="flex flex-wrap items-center justify-between border-b pb-2 text-[12.5px]">
+                    <div>
+                      <span className="font-semibold text-foreground">🎭 人设与特长技能 (双栏联动透视)</span>
+                      <span className="ml-2 text-[11.5px] text-muted-foreground">
+                        点击左侧人设或特长，右侧系统提示词原文自动平滑滚动并加深高亮
                       </span>
                     </div>
-                    <div className="rounded-lg bg-muted/40 p-3 text-[12.5px] leading-relaxed text-foreground/90 whitespace-pre-wrap">
-                      {recipe.personaText || "无特殊规矩，默认以通用助手身份作答"}
+                    <div className="text-[12px] text-muted-foreground">
+                      合计消耗约 <strong className="text-foreground">{(stats?.personaTokens ?? 0) + (stats?.skillsTokens ?? 0) + (stats?.wsTokens ?? 0)} token</strong>
                     </div>
                   </div>
 
-                  {/* 附加特长技能 */}
-                  {recipe.skills.length > 0 ? (
-                    <div className="bg-card rounded-xl border p-3.5 shadow-2xs">
-                      <div className="mb-2.5 flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <Sparkles className="size-4 text-purple-500" />
-                          <span className="text-[13px] font-semibold">⚡ 携带的特长技能知识包</span>
+                  <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-12 min-h-[440px]">
+                    {/* 左侧卡片列表 */}
+                    <div className="flex flex-col gap-2.5 overflow-y-auto pr-1 lg:col-span-5 max-h-[500px]">
+                      {/* 人设卡片 */}
+                      <div
+                        onClick={() => {
+                          setSelectedPromptSection("persona");
+                          scrollToTarget("prompt-section-persona");
+                        }}
+                        className={cn(
+                          "cursor-pointer rounded-xl border p-3 transition-all duration-150 flex flex-col justify-between gap-1.5",
+                          selectedPromptSection === "persona"
+                            ? "border-primary bg-primary/10 shadow-xs ring-1 ring-primary/40"
+                            : "bg-card hover:border-border hover:bg-muted/30 border-border/70",
+                        )}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <User className="size-4 text-indigo-500 shrink-0" />
+                            <span className="text-[13px] font-semibold text-foreground truncate">
+                              🎭 AI 的人设与根本规矩
+                            </span>
+                          </div>
+                          <span className="rounded bg-muted px-1.5 py-0.5 text-[10.5px] text-muted-foreground shrink-0">
+                            约 {estTokens(recipe.personaText)} token
+                          </span>
                         </div>
-                        <span className="text-[11.5px] text-muted-foreground">
-                          共携带 {recipe.skills.length} 项附加特长
-                        </span>
+                        <div className="text-[11.5px] text-muted-foreground leading-snug line-clamp-3">
+                          {recipe.personaText || "无特殊设定，默认以通用助手作答"}
+                        </div>
+                        <div className="flex items-center justify-between border-t border-border/40 pt-1.5 text-[11px]">
+                          <span className="text-muted-foreground">核心基底 Prompt</span>
+                          <span className={cn("font-medium", selectedPromptSection === "persona" ? "text-primary" : "text-muted-foreground/60")}>
+                            {selectedPromptSection === "persona" ? "✓ 正在右侧高亮" : "点击查看原文"}
+                          </span>
+                        </div>
                       </div>
 
-                      <div className="flex flex-col gap-2.5">
-                        {recipe.skills.map((s, idx) => (
-                          <div key={idx} className="rounded-lg border bg-muted/20 p-2.5">
-                            <div className="mb-1 flex items-center justify-between">
-                              <span className="font-medium text-[12.5px] text-foreground">
-                                【{s.name}】
-                              </span>
-                              <span className="text-[11px] text-muted-foreground">
+                      {/* 附加特长列表 */}
+                      {recipe.skills.map((s) => {
+                        const isSelected = selectedPromptSection === s.id;
+                        return (
+                          <div
+                            key={s.id}
+                            onClick={() => {
+                              setSelectedPromptSection(s.id);
+                              scrollToTarget(`prompt-section-${s.id}`);
+                            }}
+                            className={cn(
+                              "cursor-pointer rounded-xl border p-3 transition-all duration-150 flex flex-col justify-between gap-1.5",
+                              isSelected
+                                ? "border-primary bg-primary/10 shadow-xs ring-1 ring-primary/40"
+                                : "bg-card hover:border-border hover:bg-muted/30 border-border/70",
+                            )}
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <Sparkles className="size-4 text-purple-500 shrink-0" />
+                                <span className="text-[13px] font-semibold text-foreground truncate">
+                                  ⚡ 附加特长 · {s.name}
+                                </span>
+                              </div>
+                              <span className="rounded bg-muted px-1.5 py-0.5 text-[10.5px] text-muted-foreground shrink-0">
                                 约 {estTokens(s.instruction)} token
                               </span>
                             </div>
-                            <div className="text-[12px] leading-relaxed text-muted-foreground whitespace-pre-wrap">
+                            <div className="text-[11.5px] text-muted-foreground leading-snug line-clamp-3">
                               {s.instruction}
                             </div>
+                            <div className="flex items-center justify-between border-t border-border/40 pt-1.5 text-[11px]">
+                              <span className="text-muted-foreground">技能指令包</span>
+                              <span className={cn("font-medium", isSelected ? "text-primary" : "text-muted-foreground/60")}>
+                                {isSelected ? "✓ 正在右侧高亮" : "点击查看原文"}
+                              </span>
+                            </div>
                           </div>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
+                        );
+                      })}
 
-                  {/* 工作目录注入 */}
-                  {recipe.workspaceText ? (
-                    <div className="bg-card rounded-xl border p-3.5 shadow-2xs">
-                      <div className="mb-1.5 flex items-center gap-2">
-                        <FolderOpen className="size-4 text-emerald-500" />
-                        <span className="text-[13px] font-semibold">📁 允许查看与工作的电脑目录</span>
+                      {/* 工作目录卡片 */}
+                      {recipe.workspaceText ? (
+                        <div
+                          onClick={() => {
+                            setSelectedPromptSection("workspace");
+                            scrollToTarget("prompt-section-workspace");
+                          }}
+                          className={cn(
+                            "cursor-pointer rounded-xl border p-3 transition-all duration-150 flex flex-col justify-between gap-1.5",
+                            selectedPromptSection === "workspace"
+                              ? "border-primary bg-primary/10 shadow-xs ring-1 ring-primary/40"
+                              : "bg-card hover:border-border hover:bg-muted/30 border-border/70",
+                          )}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <FolderOpen className="size-4 text-emerald-500 shrink-0" />
+                              <span className="text-[13px] font-semibold text-foreground truncate">
+                                📁 工作区环境路径
+                              </span>
+                            </div>
+                            <span className="rounded bg-muted px-1.5 py-0.5 text-[10.5px] text-muted-foreground shrink-0">
+                              约 {estTokens(recipe.workspaceText)} token
+                            </span>
+                          </div>
+                          <div className="text-[11.5px] text-muted-foreground leading-snug line-clamp-2">
+                            {recipe.workspaceText}
+                          </div>
+                          <div className="flex items-center justify-between border-t border-border/40 pt-1.5 text-[11px]">
+                            <span className="text-muted-foreground">环境注入约束</span>
+                            <span className={cn("font-medium", selectedPromptSection === "workspace" ? "text-primary" : "text-muted-foreground/60")}>
+                              {selectedPromptSection === "workspace" ? "✓ 正在右侧高亮" : "点击查看原文"}
+                            </span>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+
+                    {/* 右侧：完整系统提示词原文段落展示与高亮 */}
+                    <div className="flex flex-col gap-2.5 overflow-y-auto rounded-xl border bg-muted/20 p-3 lg:col-span-7 max-h-[500px]">
+                      <div className="flex items-center justify-between border-b border-border/60 pb-1.5 text-[12px]">
+                        <span className="font-semibold text-foreground flex items-center gap-1.5">
+                          <Code2 className="size-3.5 text-primary" />
+                          <span>发给模型的 System Prompt 真实段落</span>
+                        </span>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 gap-1 px-1.5 text-[10.5px] text-muted-foreground hover:text-foreground"
+                          onClick={() => copyText("all_prompt", recipe.rawSystemPrompt)}
+                        >
+                          {copiedKey === "all_prompt" ? (
+                            <>
+                              <Check className="size-3 text-emerald-500" />
+                              <span className="text-emerald-500">已复制全文</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="size-3" />
+                              <span>复制提示词全文</span>
+                            </>
+                          )}
+                        </Button>
                       </div>
-                      <div className="rounded-lg bg-muted/40 p-2.5 text-[12px] text-foreground/90">
-                        {recipe.workspaceText}
+
+                      <div className="flex flex-col gap-3">
+                        {/* 人设段落 */}
+                        <div
+                          id="prompt-section-persona"
+                          className={cn(
+                            "rounded-lg border p-2.5 transition-all duration-200",
+                            selectedPromptSection === "persona"
+                              ? "border-primary bg-primary/10 shadow-sm ring-1 ring-primary/30"
+                              : "border-border/60 bg-background/70 hover:border-border",
+                          )}
+                        >
+                          <div className="mb-1 flex items-center justify-between text-[11.5px] font-medium text-foreground">
+                            <span>【人设根本规矩】</span>
+                            <span className="text-muted-foreground text-[10.5px]">约 {estTokens(recipe.personaText)} token</span>
+                          </div>
+                          <pre className="max-h-40 overflow-auto rounded bg-muted/40 p-2 font-mono text-[11px] leading-relaxed text-foreground/90 whitespace-pre-wrap break-all">
+                            {recipe.personaText || "无特殊设定，默认以通用助手作答"}
+                          </pre>
+                        </div>
+
+                        {/* 特长段落 */}
+                        {recipe.skills.map((s) => {
+                          const isSelected = selectedPromptSection === s.id;
+                          return (
+                            <div
+                              key={s.id}
+                              id={`prompt-section-${s.id}`}
+                              className={cn(
+                                "rounded-lg border p-2.5 transition-all duration-200",
+                                isSelected
+                                  ? "border-primary bg-primary/10 shadow-sm ring-1 ring-primary/30"
+                                  : "border-border/60 bg-background/70 hover:border-border",
+                              )}
+                            >
+                              <div className="mb-1 flex items-center justify-between text-[11.5px] font-medium text-foreground">
+                                <span>【附加技能 · {s.name}】</span>
+                                <span className="text-muted-foreground text-[10.5px]">约 {estTokens(s.instruction)} token</span>
+                              </div>
+                              <pre className="max-h-40 overflow-auto rounded bg-muted/40 p-2 font-mono text-[11px] leading-relaxed text-foreground/90 whitespace-pre-wrap break-all">
+                                {s.instruction}
+                              </pre>
+                            </div>
+                          );
+                        })}
+
+                        {/* 工作区段落 */}
+                        {recipe.workspaceText ? (
+                          <div
+                            id="prompt-section-workspace"
+                            className={cn(
+                              "rounded-lg border p-2.5 transition-all duration-200",
+                              selectedPromptSection === "workspace"
+                                ? "border-primary bg-primary/10 shadow-sm ring-1 ring-primary/30"
+                                : "border-border/60 bg-background/70 hover:border-border",
+                            )}
+                          >
+                            <div className="mb-1 flex items-center justify-between text-[11.5px] font-medium text-foreground">
+                              <span>【工作目录环境注入】</span>
+                              <span className="text-muted-foreground text-[10.5px]">约 {estTokens(recipe.workspaceText)} token</span>
+                            </div>
+                            <pre className="max-h-24 overflow-auto rounded bg-muted/40 p-2 font-mono text-[11px] leading-relaxed text-foreground/90 whitespace-pre-wrap break-all">
+                              {recipe.workspaceText}
+                            </pre>
+                          </div>
+                        ) : null}
                       </div>
                     </div>
-                  ) : null}
+                  </div>
                 </div>
               ) : null}
 
@@ -618,7 +822,10 @@ export function ContextView() {
                         return (
                           <div
                             key={t.name}
-                            onClick={() => handleSelectTool(t.name)}
+                            onClick={() => {
+                              setSelectedToolName(t.name);
+                              scrollToTarget(`tool-block-${t.name}`);
+                            }}
                             className={cn(
                               "cursor-pointer rounded-xl border p-3 transition-all duration-150 flex flex-col justify-between gap-1.5",
                               isSelected
@@ -662,7 +869,6 @@ export function ContextView() {
 
                     {/* 右侧：专家模式代码展示与定位加深 */}
                     <div
-                      ref={codeContainerRef}
                       className="flex flex-col gap-2.5 overflow-y-auto rounded-xl border bg-muted/20 p-3 lg:col-span-7 max-h-[500px]"
                     >
                       <div className="flex items-center justify-between border-b border-border/60 pb-1.5 text-[12px]">
@@ -701,10 +907,10 @@ export function ContextView() {
                                   size="sm"
                                   variant="ghost"
                                   className="h-6 gap-1 px-1.5 text-[10.5px] text-muted-foreground hover:text-foreground"
-                                  onClick={() => copyToolJson(t.name, t.rawSchema)}
+                                  onClick={() => copyText(`tool_${t.name}`, JSON.stringify(t.rawSchema, null, 2))}
                                   title="复制此工具的 JSON 定义"
                                 >
-                                  {copiedTool === t.name ? (
+                                  {copiedKey === `tool_${t.name}` ? (
                                     <>
                                       <Check className="size-3 text-emerald-500" />
                                       <span className="text-emerald-500">已复制</span>
@@ -738,58 +944,147 @@ export function ContextView() {
                 </div>
               ) : null}
 
-              {/* TAB 3: 聊天记忆 */}
+              {/* TAB 3: 聊天记忆双栏联动 (左轮次 + 右历史报文高亮) */}
               {activeTab === "memory" ? (
-                <div className="flex flex-col gap-3">
-                  <div className="bg-card rounded-xl border p-3.5 shadow-2xs">
-                    <div className="mb-2 flex items-center justify-between">
-                      <div>
-                        <div className="text-[13px] font-semibold text-foreground">
-                          💬 AI 依然清晰保留的聊天记忆
-                        </div>
-                        <div className="text-[11.5px] text-muted-foreground">
-                          系统自动保留最近的对话内容。如果对话超长，较早的对话将被自然移出。
-                        </div>
-                      </div>
-                      <span className="rounded-md bg-sky-500/10 px-2 py-0.5 text-[11.5px] font-medium text-sky-600 dark:text-sky-400">
-                        当前存活 {recipe.historyTurns.length} 轮 (上限 20 轮)
+                <div className="flex flex-col gap-2.5">
+                  <div className="flex flex-wrap items-center justify-between border-b pb-2 text-[12.5px]">
+                    <div>
+                      <span className="font-semibold text-foreground">💬 依然清晰保留的聊天记忆 (双栏联动透视)</span>
+                      <span className="ml-2 text-[11.5px] text-muted-foreground">
+                        点击左侧对答卡片，右侧历史消息报文自动滚动并加深高亮
                       </span>
                     </div>
-
-                    {recipe.historyTurns.length === 0 ? (
-                      <div className="py-6 text-center text-[12.5px] text-muted-foreground">
-                        这是新会话的第一轮对话，暂无前期记忆
-                      </div>
-                    ) : (
-                      <div className="flex flex-col gap-2.5">
-                        {recipe.historyTurns.map((h, idx) => (
-                          <div key={idx} className="rounded-lg border bg-muted/20 p-2.5">
-                            <div className="mb-1 flex items-center justify-between text-[11px] text-muted-foreground">
-                              <span>第 {idx + 1} 轮记忆</span>
-                              <span>
-                                用户约 {estTokens(h.user)} token · AI约 {estTokens(h.assistant)} token
-                              </span>
-                            </div>
-                            <div className="mb-1 text-[12px] text-foreground/90 font-medium">
-                              问: {h.user}
-                            </div>
-                            <div className="text-[11.5px] text-muted-foreground line-clamp-3">
-                              答: {h.assistant}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                    <span className="rounded-md bg-sky-500/10 px-2 py-0.5 text-[11.5px] font-medium text-sky-600 dark:text-sky-400">
+                      当前存活 {recipe.historyTurns.length} 轮 (上限 20 轮)
+                    </span>
                   </div>
 
-                  {/* 淘汰与裁剪状态提示卡片 */}
-                  <div className="rounded-xl border border-dashed p-3 text-[12px] text-muted-foreground bg-muted/10 flex items-start gap-2.5">
-                    <Scissors className="size-4 mt-0.5 text-muted-foreground shrink-0" />
-                    <div>
-                      <span className="font-semibold text-foreground">关于对话遗忘的说明：</span>
-                      <span>
-                        当前系统硬上限为 20 轮或 24,000 字符。目前您的会话长度健康，没有任何历史对话被剪掉。如果将来对话变长产生脱落，此处会明确提醒您遗忘了哪几轮，让您不再感到莫名其妙。
-                      </span>
+                  <div className="grid grid-cols-1 gap-3.5 lg:grid-cols-12 min-h-[440px]">
+                    {/* 左侧：对答卡片与淘汰说明 */}
+                    <div className="flex flex-col gap-2.5 overflow-y-auto pr-1 lg:col-span-5 max-h-[500px]">
+                      {recipe.historyTurns.length === 0 ? (
+                        <div className="rounded-xl border bg-card p-6 text-center text-[12.5px] text-muted-foreground">
+                          这是新会话的第一轮对话，暂无前期聊天记忆
+                        </div>
+                      ) : (
+                        recipe.historyTurns.map((h) => {
+                          const isSelected = selectedTurnIndex === h.turnIndex;
+                          const turnTokens = estTokens(h.user) + estTokens(h.assistant);
+                          return (
+                            <div
+                              key={h.turnIndex}
+                              onClick={() => {
+                                setSelectedTurnIndex(h.turnIndex);
+                                scrollToTarget(`history-turn-${h.turnIndex}`);
+                              }}
+                              className={cn(
+                                "cursor-pointer rounded-xl border p-3 transition-all duration-150 flex flex-col justify-between gap-1.5",
+                                isSelected
+                                  ? "border-primary bg-primary/10 shadow-xs ring-1 ring-primary/40"
+                                  : "bg-card hover:border-border hover:bg-muted/30 border-border/70",
+                              )}
+                            >
+                              <div className="flex items-center justify-between text-[11.5px]">
+                                <span className="font-semibold text-foreground">第 {h.turnIndex} 轮对答记忆</span>
+                                <span className="text-muted-foreground text-[10.5px]">约 {turnTokens} token</span>
+                              </div>
+                              <div className="text-[12px] font-medium text-foreground/90 line-clamp-2">
+                                问: {h.user}
+                              </div>
+                              <div className="text-[11.5px] text-muted-foreground line-clamp-3">
+                                答: {h.assistant}
+                              </div>
+                              <div className="flex items-center justify-between border-t border-border/40 pt-1.5 text-[11px]">
+                                <span className="text-muted-foreground">问 {estTokens(h.user)} · 答 {estTokens(h.assistant)} token</span>
+                                <span className={cn("font-medium", isSelected ? "text-primary" : "text-muted-foreground/60")}>
+                                  {isSelected ? "✓ 正在右侧高亮" : "点击查看报文"}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+
+                      {/* 淘汰与裁剪说明卡片 */}
+                      <div className="rounded-xl border border-dashed p-3 text-[11.5px] text-muted-foreground bg-muted/10 flex items-start gap-2.5">
+                        <Scissors className="size-4 mt-0.5 text-muted-foreground shrink-0" />
+                        <div>
+                          <span className="font-semibold text-foreground">关于对话遗忘的说明：</span>
+                          <span>
+                            当前系统硬上限为 20 轮或 24,000 字符。目前您的会话长度健康，没有任何历史对话被剪掉。如果将来对话变长产生脱落，此处会明确提醒您遗忘了哪几轮。
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 右侧：实际回喂给模型的历史报文块 */}
+                    <div className="flex flex-col gap-2.5 overflow-y-auto rounded-xl border bg-muted/20 p-3 lg:col-span-7 max-h-[500px]">
+                      <div className="flex items-center justify-between border-b border-border/60 pb-1.5 text-[12px]">
+                        <span className="font-semibold text-foreground flex items-center gap-1.5">
+                          <Code2 className="size-3.5 text-primary" />
+                          <span>历史消息原始报文 (OpenAI Messages 格式)</span>
+                        </span>
+                        <span className="text-[11px] font-mono text-muted-foreground">
+                          {recipe.historyTurns.length * 2} messages
+                        </span>
+                      </div>
+
+                      <div className="flex flex-col gap-3">
+                        {recipe.historyTurns.length === 0 ? (
+                          <div className="p-8 text-center text-[12px] text-muted-foreground">
+                            无历史报文
+                          </div>
+                        ) : (
+                          recipe.historyTurns.map((h) => {
+                            const isSelected = selectedTurnIndex === h.turnIndex;
+                            const turnJson = [
+                              { role: "user", content: h.user },
+                              { role: "assistant", content: h.assistant },
+                            ];
+                            return (
+                              <div
+                                key={h.turnIndex}
+                                id={`history-turn-${h.turnIndex}`}
+                                className={cn(
+                                  "rounded-lg border p-2.5 transition-all duration-200",
+                                  isSelected
+                                    ? "border-primary bg-primary/10 shadow-sm ring-1 ring-primary/30"
+                                    : "border-border/60 bg-background/70 hover:border-border",
+                                )}
+                              >
+                                <div className="mb-1.5 flex items-center justify-between text-[11.5px]">
+                                  <div className="flex items-center gap-1.5 font-mono font-medium">
+                                    <span className={cn("size-2 rounded-full", isSelected ? "bg-primary" : "bg-muted-foreground")} />
+                                    <span className="text-foreground">第 {h.turnIndex} 轮对答报文</span>
+                                  </div>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-6 gap-1 px-1.5 text-[10.5px] text-muted-foreground hover:text-foreground"
+                                    onClick={() => copyText(`turn_${h.turnIndex}`, JSON.stringify(turnJson, null, 2))}
+                                  >
+                                    {copiedKey === `turn_${h.turnIndex}` ? (
+                                      <>
+                                        <Check className="size-3 text-emerald-500" />
+                                        <span className="text-emerald-500">已复制</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Copy className="size-3" />
+                                        <span>复制此轮</span>
+                                      </>
+                                    )}
+                                  </Button>
+                                </div>
+
+                                <pre className="max-h-48 overflow-auto rounded bg-muted/40 p-2 font-mono text-[11px] leading-relaxed text-foreground/90 whitespace-pre-wrap break-all">
+                                  {JSON.stringify(turnJson, null, 2)}
+                                </pre>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
