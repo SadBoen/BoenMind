@@ -172,18 +172,19 @@ test.describe("上下文透视页", () => {
     await mockAdmin(page);
     await page.goto("/");
     await page.locator('[data-slot="tab-ctx"]').evaluate((el: HTMLElement) => el.click());
-    await expect(page.getByText("当前上下文(下一次请求同款)")).toBeVisible();
-    await expect(page.getByText("实际输入 120 / 输出 30")).toBeVisible();
-    // 展开步骤 → 消息逐项浏览器 + 工具定义清单
-    await page.locator('[data-slot="ctx-step-head"]').first().evaluate((el: HTMLElement) => el.click());
-    await expect(page.getByText("请求组成(即模型实际收到的内容)")).toBeVisible();
-    await expect(page.getByText("工具定义 × 1")).toBeVisible();
-    // 展开第一条消息的 details 后断言正文可见
-    await page
-      .locator('[data-slot="ctx-steps"] details summary')
-      .first()
-      .evaluate((el: HTMLElement) => el.click());
+    // 验证第一层看板：容量构成与状态徽标
+    await expect(page.getByText("当前对话容量构成")).toBeVisible();
+    await expect(page.getByText("记忆完整无遗漏")).toBeVisible();
+    // 验证第二层配方拆解：人设与根本规矩、工具背包
+    await expect(page.getByText("🎭 AI 的人设与根本规矩")).toBeVisible();
     await expect(page.getByText("系统提示词内容")).toBeVisible();
+    // 切换至工具背包 Tab
+    await page.getByRole("tab", { name: /^工具背包/ }).click();
+    await expect(page.getByText("🛠️ AI 随身装备的工具箱")).toBeVisible();
+    await expect(page.getByText("demo.tool")).toBeVisible();
+    // 切换至专家模式 (Raw)
+    await page.getByTitle("切换查看原始发给模型的 JSON 报文").click();
+    await expect(page.getByText("底层完整请求报文 (OpenAI API 格式)")).toBeVisible();
   });
 });
 
