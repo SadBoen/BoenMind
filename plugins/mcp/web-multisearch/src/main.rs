@@ -25,7 +25,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-use cascade::{is_available, resolve_providers, provider_keys};
+use cascade::{is_available, provider_keys, resolve_any, resolve_providers};
 use config::Config;
 use sources::aggregate;
 use usage::UsageLedger;
@@ -225,7 +225,10 @@ async fn handle_request(msg: &Value, ctx: &Ctx) -> Option<Value> {
             // 先解析全部 provider(内置+自定义),不持配置锁时再取用量,避免死锁
             let ids: Vec<String> = {
                 let mut cfg = ctx.cfg.lock().expect("配置锁");
-                resolve_providers(&mut cfg).into_iter().map(|p| p.id).collect()
+                resolve_providers(&mut cfg)
+                    .into_iter()
+                    .map(|p| p.id)
+                    .collect()
             };
             let usage = ctx.usage.lock().expect("用量锁");
             let mut by_id = json!({});
@@ -320,9 +323,8 @@ async fn run_search_test(ctx: &Ctx, params: &Value) -> Value {
 
     let provider = {
         let mut cfg = ctx.cfg.lock().expect("配置锁");
-        resolve_providers(&mut cfg)
-            .into_iter()
-            .find(|p| p.id == provider_id)
+        // 管理面单查:停用家也允许真搜测试;已删墓碑返回未知
+        resolve_any(&mut cfg, &provider_id)
     };
     let Some(provider) = provider else {
         return json!({
@@ -333,7 +335,10 @@ async fn run_search_test(ctx: &Ctx, params: &Value) -> Value {
     if !is_available(&provider) {
         let need = if provider.parse == "searxng" {
             "需填写接口地址".to_string()
-        } else if provider_keys(&provider).is_empty() && provider.parse != "ddg" && provider.parse != "marginalia" {
+        } else if provider_keys(&provider).is_empty()
+            && provider.parse != "ddg"
+            && provider.parse != "marginalia"
+        {
             "需填写 API Key".to_string()
         } else {
             "配置未就绪".to_string()
@@ -534,7 +539,10 @@ mod self_describe_tests {
         assert_eq!(schema[0]["type"], "providers");
         let items = schema[0]["items"].as_array().unwrap();
         assert_eq!(items.len(), 12, "内置 12 家模板");
-        assert_eq!(d["suggested_entry"]["args"][0].as_str().unwrap(), "--config");
+        assert_eq!(
+            d["suggested_entry"]["args"][0].as_str().unwrap(),
+            "--config"
+        );
         assert!(d["suggested_entry"]["args"][1]
             .as_str()
             .unwrap()
@@ -547,9 +555,21 @@ mod self_describe_tests {
         let items = d["config_schema"][0]["items"].as_array().unwrap();
         let first = &items[0];
         for k in [
-            "id", "name", "builtin", "endpoint", "method", "auth", "auth_name",
-            "query_param", "limit_param", "results_path", "title_field", "url_field",
-            "desc_field", "parse", "quota",
+            "id",
+            "name",
+            "builtin",
+            "endpoint",
+            "method",
+            "auth",
+            "auth_name",
+            "query_param",
+            "limit_param",
+            "results_path",
+            "title_field",
+            "url_field",
+            "desc_field",
+            "parse",
+            "quota",
         ] {
             assert!(first.get(k).is_some(), "模板缺字段 {k}: {first}");
         }

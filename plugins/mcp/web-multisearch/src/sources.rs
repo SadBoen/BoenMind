@@ -384,10 +384,7 @@ async fn jina_search(
         }
     })
     .await?;
-    let text = resp
-        .text()
-        .await
-        .map_err(|e| format!("Jina Search: {e}"))?;
+    let text = resp.text().await.map_err(|e| format!("Jina Search: {e}"))?;
     Ok(parse_jina_markdown(&text, limit))
 }
 

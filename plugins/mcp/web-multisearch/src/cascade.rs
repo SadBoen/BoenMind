@@ -64,95 +64,220 @@ pub struct Provider {
 pub fn builtin_templates() -> Vec<Provider> {
     vec![
         Provider {
-            id: "searxng".into(), name: "SearXNG".into(), builtin: true,
-            endpoint: "".into(), method: "GET".into(), auth: "none".into(), auth_name: "".into(),
-            key: "".into(), query_param: "q".into(), limit_param: "".into(),
-            results_path: "/results".into(), title_field: "title".into(), url_field: "url".into(),
-            desc_field: "content".into(), parse: "searxng".into(), quota: 0,
+            id: "searxng".into(),
+            name: "SearXNG".into(),
+            builtin: true,
+            endpoint: "".into(),
+            method: "GET".into(),
+            auth: "none".into(),
+            auth_name: "".into(),
+            key: "".into(),
+            query_param: "q".into(),
+            limit_param: "".into(),
+            results_path: "/results".into(),
+            title_field: "title".into(),
+            url_field: "url".into(),
+            desc_field: "content".into(),
+            parse: "searxng".into(),
+            quota: 0,
         },
         Provider {
-            id: "ddgs".into(), name: "DuckDuckGo".into(), builtin: true,
-            endpoint: "https://html.duckduckgo.com/html/".into(), method: "POST".into(),
-            auth: "none".into(), auth_name: "".into(), key: "".into(),
-            query_param: "q".into(), limit_param: "".into(), results_path: "/".into(),
-            title_field: "title".into(), url_field: "url".into(), desc_field: "description".into(),
-            parse: "ddg".into(), quota: 0,
+            id: "ddgs".into(),
+            name: "DuckDuckGo".into(),
+            builtin: true,
+            endpoint: "https://html.duckduckgo.com/html/".into(),
+            method: "POST".into(),
+            auth: "none".into(),
+            auth_name: "".into(),
+            key: "".into(),
+            query_param: "q".into(),
+            limit_param: "".into(),
+            results_path: "/".into(),
+            title_field: "title".into(),
+            url_field: "url".into(),
+            desc_field: "description".into(),
+            parse: "ddg".into(),
+            quota: 0,
         },
         Provider {
-            id: "jina".into(), name: "Jina".into(), builtin: true,
-            endpoint: "https://s.jina.ai".into(), method: "GET".into(), auth: "bearer".into(),
-            auth_name: "Authorization".into(), key: "".into(), query_param: "q".into(),
-            limit_param: "".into(), results_path: "/".into(), title_field: "title".into(),
-            url_field: "url".into(), desc_field: "description".into(), parse: "jina".into(), quota: 0,
+            id: "jina".into(),
+            name: "Jina".into(),
+            builtin: true,
+            endpoint: "https://s.jina.ai".into(),
+            method: "GET".into(),
+            auth: "bearer".into(),
+            auth_name: "Authorization".into(),
+            key: "".into(),
+            query_param: "q".into(),
+            limit_param: "".into(),
+            results_path: "/".into(),
+            title_field: "title".into(),
+            url_field: "url".into(),
+            desc_field: "description".into(),
+            parse: "jina".into(),
+            quota: 0,
         },
         Provider {
-            id: "marginalia".into(), name: "Marginalia".into(), builtin: true,
-            endpoint: "https://api2.marginalia-search.com/search".into(), method: "GET".into(),
-            auth: "none".into(), auth_name: "".into(), key: "".into(), query_param: "query".into(),
-            limit_param: "count".into(), results_path: "/results".into(), title_field: "title".into(),
-            url_field: "url".into(), desc_field: "description".into(), parse: "marginalia".into(), quota: 0,
+            id: "marginalia".into(),
+            name: "Marginalia".into(),
+            builtin: true,
+            endpoint: "https://api2.marginalia-search.com/search".into(),
+            method: "GET".into(),
+            auth: "none".into(),
+            auth_name: "".into(),
+            key: "".into(),
+            query_param: "query".into(),
+            limit_param: "count".into(),
+            results_path: "/results".into(),
+            title_field: "title".into(),
+            url_field: "url".into(),
+            desc_field: "description".into(),
+            parse: "marginalia".into(),
+            quota: 0,
         },
         Provider {
-            id: "serper".into(), name: "Serper".into(), builtin: true,
-            endpoint: "https://google.serper.dev/search".into(), method: "POST".into(),
-            auth: "header".into(), auth_name: "X-API-KEY".into(), key: "".into(),
-            query_param: "q".into(), limit_param: "num".into(), results_path: "/organic".into(),
-            title_field: "title".into(), url_field: "link".into(), desc_field: "snippet".into(),
-            parse: "std".into(), quota: 0,
+            id: "serper".into(),
+            name: "Serper".into(),
+            builtin: true,
+            endpoint: "https://google.serper.dev/search".into(),
+            method: "POST".into(),
+            auth: "header".into(),
+            auth_name: "X-API-KEY".into(),
+            key: "".into(),
+            query_param: "q".into(),
+            limit_param: "num".into(),
+            results_path: "/organic".into(),
+            title_field: "title".into(),
+            url_field: "link".into(),
+            desc_field: "snippet".into(),
+            parse: "std".into(),
+            quota: 0,
         },
         Provider {
-            id: "tavily".into(), name: "Tavily".into(), builtin: true,
-            endpoint: "https://api.tavily.com/search".into(), method: "POST".into(),
-            auth: "none".into(), auth_name: "".into(), key: "".into(), query_param: "query".into(),
-            limit_param: "max_results".into(), results_path: "/results".into(), title_field: "title".into(),
-            url_field: "url".into(), desc_field: "content".into(), parse: "tavily".into(), quota: 0,
+            id: "tavily".into(),
+            name: "Tavily".into(),
+            builtin: true,
+            endpoint: "https://api.tavily.com/search".into(),
+            method: "POST".into(),
+            auth: "none".into(),
+            auth_name: "".into(),
+            key: "".into(),
+            query_param: "query".into(),
+            limit_param: "max_results".into(),
+            results_path: "/results".into(),
+            title_field: "title".into(),
+            url_field: "url".into(),
+            desc_field: "content".into(),
+            parse: "tavily".into(),
+            quota: 0,
         },
         Provider {
-            id: "exa".into(), name: "Exa".into(), builtin: true,
-            endpoint: "https://api.exa.ai/search".into(), method: "POST".into(), auth: "header".into(),
-            auth_name: "x-api-key".into(), key: "".into(), query_param: "query".into(),
-            limit_param: "numResults".into(), results_path: "/results".into(), title_field: "title".into(),
-            url_field: "url".into(), desc_field: "text".into(), parse: "std".into(), quota: 0,
+            id: "exa".into(),
+            name: "Exa".into(),
+            builtin: true,
+            endpoint: "https://api.exa.ai/search".into(),
+            method: "POST".into(),
+            auth: "header".into(),
+            auth_name: "x-api-key".into(),
+            key: "".into(),
+            query_param: "query".into(),
+            limit_param: "numResults".into(),
+            results_path: "/results".into(),
+            title_field: "title".into(),
+            url_field: "url".into(),
+            desc_field: "text".into(),
+            parse: "std".into(),
+            quota: 0,
         },
         Provider {
-            id: "brave".into(), name: "Brave".into(), builtin: true,
-            endpoint: "https://api.search.brave.com/res/v1/web/search".into(), method: "GET".into(),
-            auth: "header".into(), auth_name: "X-Subscription-Token".into(), key: "".into(),
-            query_param: "q".into(), limit_param: "count".into(), results_path: "/web/results".into(),
-            title_field: "title".into(), url_field: "url".into(), desc_field: "description".into(),
-            parse: "std".into(), quota: 0,
+            id: "brave".into(),
+            name: "Brave".into(),
+            builtin: true,
+            endpoint: "https://api.search.brave.com/res/v1/web/search".into(),
+            method: "GET".into(),
+            auth: "header".into(),
+            auth_name: "X-Subscription-Token".into(),
+            key: "".into(),
+            query_param: "q".into(),
+            limit_param: "count".into(),
+            results_path: "/web/results".into(),
+            title_field: "title".into(),
+            url_field: "url".into(),
+            desc_field: "description".into(),
+            parse: "std".into(),
+            quota: 0,
         },
         Provider {
-            id: "langsearch".into(), name: "LangSearch".into(), builtin: true,
-            endpoint: "https://api.langsearch.com/v1/web-search".into(), method: "POST".into(),
-            auth: "bearer".into(), auth_name: "Authorization".into(), key: "".into(),
-            query_param: "query".into(), limit_param: "count".into(), results_path: "/data/webPages/value".into(),
-            title_field: "name".into(), url_field: "url".into(), desc_field: "snippet".into(),
-            parse: "std".into(), quota: 0,
+            id: "langsearch".into(),
+            name: "LangSearch".into(),
+            builtin: true,
+            endpoint: "https://api.langsearch.com/v1/web-search".into(),
+            method: "POST".into(),
+            auth: "bearer".into(),
+            auth_name: "Authorization".into(),
+            key: "".into(),
+            query_param: "query".into(),
+            limit_param: "count".into(),
+            results_path: "/data/webPages/value".into(),
+            title_field: "name".into(),
+            url_field: "url".into(),
+            desc_field: "snippet".into(),
+            parse: "std".into(),
+            quota: 0,
         },
         Provider {
-            id: "linkup".into(), name: "Linkup".into(), builtin: true,
-            endpoint: "https://api.linkup.so/v1/search".into(), method: "POST".into(),
-            auth: "bearer".into(), auth_name: "Authorization".into(), key: "".into(),
-            query_param: "q".into(), limit_param: "depth".into(), results_path: "/results".into(),
-            title_field: "name".into(), url_field: "url".into(), desc_field: "content".into(),
-            parse: "std".into(), quota: 0,
+            id: "linkup".into(),
+            name: "Linkup".into(),
+            builtin: true,
+            endpoint: "https://api.linkup.so/v1/search".into(),
+            method: "POST".into(),
+            auth: "bearer".into(),
+            auth_name: "Authorization".into(),
+            key: "".into(),
+            query_param: "q".into(),
+            limit_param: "depth".into(),
+            results_path: "/results".into(),
+            title_field: "name".into(),
+            url_field: "url".into(),
+            desc_field: "content".into(),
+            parse: "std".into(),
+            quota: 0,
         },
         Provider {
-            id: "you".into(), name: "You.com".into(), builtin: true,
-            endpoint: "https://ydc-index.io/v1/search".into(), method: "GET".into(),
-            auth: "header".into(), auth_name: "x-api-key".into(), key: "".into(),
-            query_param: "query".into(), limit_param: "count".into(), results_path: "/results".into(),
-            title_field: "title".into(), url_field: "url".into(), desc_field: "description".into(),
-            parse: "std".into(), quota: 0,
+            id: "you".into(),
+            name: "You.com".into(),
+            builtin: true,
+            endpoint: "https://ydc-index.io/v1/search".into(),
+            method: "GET".into(),
+            auth: "header".into(),
+            auth_name: "x-api-key".into(),
+            key: "".into(),
+            query_param: "query".into(),
+            limit_param: "count".into(),
+            results_path: "/results".into(),
+            title_field: "title".into(),
+            url_field: "url".into(),
+            desc_field: "description".into(),
+            parse: "std".into(),
+            quota: 0,
         },
         Provider {
-            id: "websearchapi".into(), name: "WebSearchAPI".into(), builtin: true,
-            endpoint: "https://api.websearchapi.ai/ai-search".into(), method: "POST".into(),
-            auth: "bearer".into(), auth_name: "Authorization".into(), key: "".into(),
-            query_param: "query".into(), limit_param: "maxResults".into(), results_path: "/organic".into(),
-            title_field: "title".into(), url_field: "url".into(), desc_field: "description".into(),
-            parse: "std".into(), quota: 0,
+            id: "websearchapi".into(),
+            name: "WebSearchAPI".into(),
+            builtin: true,
+            endpoint: "https://api.websearchapi.ai/ai-search".into(),
+            method: "POST".into(),
+            auth: "bearer".into(),
+            auth_name: "Authorization".into(),
+            key: "".into(),
+            query_param: "query".into(),
+            limit_param: "maxResults".into(),
+            results_path: "/organic".into(),
+            title_field: "title".into(),
+            url_field: "url".into(),
+            desc_field: "description".into(),
+            parse: "std".into(),
+            quota: 0,
         },
     ]
 }
@@ -161,7 +286,9 @@ pub fn builtin_templates() -> Vec<Provider> {
 ///
 /// - 配置里 id 与内置相同 → 用内置模板,再以配置中出现的字段覆盖;
 /// - 配置里 id 不在内置 → 新增供应商(parse 强制 "std");
-/// - 配置里没有 providers 数组 / 数组为空 → 回退到全部内置模板(向后兼容)。
+/// - 配置里没有 providers 数组 / 数组为空 → 回退到全部内置模板(向后兼容);
+/// - 条目 `enabled:false`(停用)或 `deleted:true`(删除内置的墓碑)→
+///   不进可用集;墓碑同时抑制下方「缺失内置回填」,否则删了又长回来。
 ///
 /// 旧的平铺 key(searxng_url / *_api_key)若存在且某家内置 key/endpoint 为空,
 /// 则以平铺值为该家兜底(平滑迁移,不破坏已填配置)。
@@ -182,26 +309,38 @@ pub fn resolve_providers(cfg: &mut Config) -> Vec<Provider> {
     let mut out: Vec<Provider> = Vec::new();
     let mut seen: Vec<String> = Vec::new();
     for entry in raw {
-        let id = entry.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
+        let id = entry
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
         if id.is_empty() {
             continue;
         }
         seen.push(id.clone());
+        // 停用/已删:先进 seen(抑制模板回填)再跳过,不进可用集
+        if entry_flag(&entry, "deleted") == Some(true)
+            || entry_flag(&entry, "enabled") == Some(false)
+        {
+            continue;
+        }
         let templ = templates.iter().find(|t| t.id.as_str() == id.as_str());
         let mut p = if let Some(t) = templ {
             t.clone()
         } else {
-            let mut base = Provider::default();
-            base.id = id.clone();
-            base.name = id.clone();
-            base.parse = "std".into();
-            base
+            Provider {
+                id: id.clone(),
+                name: id.clone(),
+                parse: "std".into(),
+                ..Provider::default()
+            }
         };
         apply_overrides(&mut p, &entry);
         apply_legacy_key(&mut p, cfg);
         out.push(p);
     }
-    // 内置但未出现在 providers 数组里的,补到末尾(避免误删内置)
+    // 内置但未出现在 providers 数组里的,补到末尾(避免误删内置;
+    // 墓碑/停用条目已占位 seen,不会被回填)
     for t in &templates {
         if !seen.iter().any(|s| s.as_str() == t.id.as_str()) {
             let mut p = t.clone();
@@ -210,6 +349,39 @@ pub fn resolve_providers(cfg: &mut Config) -> Vec<Provider> {
         }
     }
     out
+}
+
+/// 管理面单查(真搜测试用):含停用家,但已删墓碑不给测(UI 上删除态只提供恢复)。
+pub fn resolve_any(cfg: &mut Config, wanted: &str) -> Option<Provider> {
+    let templates = builtin_templates();
+    for entry in cfg.raw_providers() {
+        let id = entry.get("id").and_then(Value::as_str).unwrap_or_default();
+        if id != wanted {
+            continue;
+        }
+        if entry_flag(&entry, "deleted") == Some(true) {
+            return None;
+        }
+        let templ = templates.iter().find(|t| t.id.as_str() == id);
+        let mut p = if let Some(t) = templ {
+            t.clone()
+        } else {
+            Provider {
+                id: id.to_string(),
+                name: id.to_string(),
+                parse: "std".into(),
+                ..Provider::default()
+            }
+        };
+        apply_overrides(&mut p, &entry);
+        apply_legacy_key(&mut p, cfg);
+        return Some(p);
+    }
+    templates.iter().find(|t| t.id.as_str() == wanted).cloned()
+}
+
+fn entry_flag(entry: &Value, key: &str) -> Option<bool> {
+    entry.get(key).and_then(Value::as_bool)
 }
 
 /// 用配置条目覆盖模板字段(仅覆盖字符串/数字/布尔能表达的字段)。
@@ -294,12 +466,10 @@ pub async fn run_generic(
             .send()
             .await
             .map_err(|e| format!("Could not reach {}: {e}", p.name))?;
-        check_status(r, p.name.as_str())
-            .await
-            .map_err(|e| match e {
-                HttpErr::Status(_, m) => m,
-                HttpErr::Other(m) => m,
-            })
+        check_status(r, p.name.as_str()).await.map_err(|e| match e {
+            HttpErr::Status(_, m) => m,
+            HttpErr::Other(m) => m,
+        })
     } else {
         with_key_rotation(&keys, |key| {
             let client = client.clone();
@@ -426,16 +596,37 @@ mod tests {
         let ts = builtin_templates();
         assert_eq!(ts.len(), 12, "应恰好 12 内置");
         let ids: Vec<String> = ts.iter().map(|t| t.id.clone()).collect();
-        for want in ["searxng", "ddgs", "jina", "marginalia", "serper", "tavily",
-                      "exa", "brave", "langsearch", "linkup", "you", "websearchapi"] {
-            assert!(ids.iter().any(|s| s.as_str() == want), "缺内置 {want}: {ids:?}");
+        for want in [
+            "searxng",
+            "ddgs",
+            "jina",
+            "marginalia",
+            "serper",
+            "tavily",
+            "exa",
+            "brave",
+            "langsearch",
+            "linkup",
+            "you",
+            "websearchapi",
+        ] {
+            assert!(
+                ids.iter().any(|s| s.as_str() == want),
+                "缺内置 {want}: {ids:?}"
+            );
         }
     }
 
     #[test]
     fn provider_keys_splits_comma() {
-        let p = Provider { key: " a,b , c ".into(), ..Provider::default() };
-        assert_eq!(provider_keys(&p), ["a".to_string(), "b".to_string(), "c".to_string()]);
+        let p = Provider {
+            key: " a,b , c ".into(),
+            ..Provider::default()
+        };
+        assert_eq!(
+            provider_keys(&p),
+            ["a".to_string(), "b".to_string(), "c".to_string()]
+        );
     }
 
     #[test]
@@ -451,7 +642,10 @@ mod tests {
         sx.endpoint = "http://127.0.0.1:8080".into();
         assert!(is_available(&sx));
         // 需 key 的:无 key 不可用
-        let serper = Provider { parse: "std".into(), ..Provider::default() };
+        let serper = Provider {
+            parse: "std".into(),
+            ..Provider::default()
+        };
         assert!(!is_available(&serper));
     }
 
@@ -501,7 +695,10 @@ mod tests {
         assert_eq!(tav.endpoint, "https://api.tavily.com/search");
 
         // custom1:全新供应商,强制 std 解析
-        let c = providers.iter().find(|p| p.id == "custom1").expect("custom1");
+        let c = providers
+            .iter()
+            .find(|p| p.id == "custom1")
+            .expect("custom1");
         assert_eq!(c.name, "MySearch");
         assert_eq!(c.parse, "std");
         assert!(!c.builtin);
@@ -521,5 +718,68 @@ mod tests {
         let mut cfg = Config::new(Some(cfg_path));
         let providers = resolve_providers(&mut cfg);
         assert_eq!(providers.len(), 12);
+    }
+
+    #[test]
+    fn disabled_entry_skipped_and_not_refilled() {
+        // enabled:false → 不进可用集,且模板回填不得把它加回来
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cfg_path = dir.path().join("mcp.json");
+        std::fs::write(
+            &cfg_path,
+            serde_json::json!({ "providers": [ { "id": "serper", "enabled": false } ] })
+                .to_string(),
+        )
+        .unwrap();
+        let mut cfg = Config::new(Some(cfg_path));
+        let providers = resolve_providers(&mut cfg);
+        assert!(
+            !providers.iter().any(|p| p.id == "serper"),
+            "停用家不得出现"
+        );
+        assert_eq!(providers.len(), 11, "其余 11 家内置仍在");
+        // 管理面单查:停用家仍可测(真搜测试用)
+        assert!(resolve_any(&mut cfg, "serper").is_some());
+    }
+
+    #[test]
+    fn deleted_tombstone_suppresses_template_refill() {
+        // deleted:true 墓碑 → 删除内置生效,且不被「缺失内置回填」复活
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cfg_path = dir.path().join("mcp.json");
+        std::fs::write(
+            &cfg_path,
+            serde_json::json!({ "providers": [ { "id": "jina", "deleted": true } ] }).to_string(),
+        )
+        .unwrap();
+        let mut cfg = Config::new(Some(cfg_path));
+        let providers = resolve_providers(&mut cfg);
+        assert!(!providers.iter().any(|p| p.id == "jina"), "墓碑家不得复活");
+        assert_eq!(providers.len(), 11);
+        // 管理面单查:墓碑不给测
+        assert!(resolve_any(&mut cfg, "jina").is_none());
+        // 其余内置照常
+        assert!(providers.iter().any(|p| p.id == "serper"));
+    }
+
+    #[test]
+    fn resolve_any_finds_custom_without_polluting_active_set() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cfg_path = dir.path().join("mcp.json");
+        std::fs::write(
+            &cfg_path,
+            serde_json::json!({ "providers": [
+                { "id": "custom1", "name": "MySearch", "endpoint": "https://x.example/search" },
+            ] })
+            .to_string(),
+        )
+        .unwrap();
+        let mut cfg = Config::new(Some(cfg_path));
+        let p = resolve_any(&mut cfg, "custom1").expect("custom1");
+        assert_eq!(p.name, "MySearch");
+        assert_eq!(p.parse, "std");
+        // 主流程可用集不受影响:custom1 有效 + 12 内置
+        let active = resolve_providers(&mut cfg);
+        assert_eq!(active.len(), 13);
     }
 }

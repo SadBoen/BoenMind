@@ -40,6 +40,7 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { STORAGE_KEYS, storage } from "@/lib/storage";
+import { Switch } from "@/components/ui/switch";
 import { Tooltip } from "radix-ui";
 
 type McpManifestSchemaItem = {
@@ -950,7 +951,7 @@ function ServerConfigDialog({
     // 已存条目按 id 索引(自定义优先;内置若被改动则采用已存版)
     const byId = new Map<string, ProviderEntry>();
     for (const t of templates) {
-      byId.set(t.id, { ...t, present: false });
+      byId.set(t.id, { ...t, enabled: true, present: false });
     }
     for (const s of stored) {
       if (s && typeof s === "object") {
@@ -973,24 +974,27 @@ function ServerConfigDialog({
       }
     }
     const list = Array.from(byId.values());
+    // 已删墓碑排到最后,列表主序保持可用家在前
+    list.sort((a, b) => Number(!!a.deleted) - Number(!!b.deleted));
     setProviders(list);
     finalizeSelection(list, target.values, usage);
   }, [target, providerSchema]);
 
-  // 默认选中第一个内置/已存家
+  // 默认选中第一个可用(未删)家;停用家可选,已删家不默认选中
   function finalizeSelection(
     list: ProviderEntry[],
     vals: Record<string, unknown>,
     u: Record<string, number>,
   ) {
     if (list.length) {
+      const live = list.filter((p) => !p.deleted);
       const storedIds = new Set(
         (Array.isArray(vals.providers) ? vals.providers : []).map(
           (x: unknown) => (x as Record<string, unknown>).id as string,
         ),
       );
-      const firstStored = list.find((p) => storedIds.has(p.id)) ?? list[0];
-      setSelectedId(firstStored.id);
+      const firstStored = live.find((p) => storedIds.has(p.id)) ?? live[0];
+      if (firstStored) setSelectedId(firstStored.id);
     }
   }
 
@@ -1027,6 +1031,7 @@ function ServerConfigDialog({
       id,
       name: "新供应商",
       builtin: false,
+      enabled: true,
       endpoint: "",
       method: "GET",
       auth: "header",
@@ -1102,14 +1107,15 @@ function ServerConfigDialog({
     setErr(null);
     try {
       if (isProviders) {
-        // 保存 providers 列表(过滤掉空 id)
-        setValues((prev) => ({
-          ...prev,
-          providers: providers.filter((p) => p.id),
-        }));
+        // 保存 providers 列表(过滤掉空 id;present 是 UI 专用字段不落盘,
+        // enabled/deleted 墓碑保留——插件侧据此跳过停用家/抑制内置回填)
+        const persist = providers
+          .filter((p) => p.id)
+          .map(({ present: _present, ...rest }) => rest);
+        setValues((prev) => ({ ...prev, providers: persist }));
         await api.mcp.saveConfig(target.name, {
           ...values,
-          providers: providers.filter((p) => p.id),
+          providers: persist,
         });
       } else {
         await api.mcp.saveConfig(target.name, values);
@@ -1174,6 +1180,7 @@ function ServerConfigDialog({
                       : ratio >= 0.8
                         ? "bg-amber-500"
                         : "bg-emerald-500";
+                  const off = p.enabled === false || !!p.deleted;
                   return (
                     <button
                       key={p.id}
@@ -1183,10 +1190,10 @@ function ServerConfigDialog({
                         selected?.id === p.id
                           ? "border-primary/60 bg-primary/5"
                           : "border-border bg-card/40 hover:bg-muted/40"
-                      }`}
+                      } ${off ? "opacity-60" : ""}`}
                     >
                       <div className="flex items-baseline justify-between gap-2">
-                        <span className="truncate text-[12px] font-medium">
+                        <span className={`truncate text-[12px] font-medium ${off ? "text-muted-foreground line-through decoration-border" : ""}`}>
                           {p.name || p.id}
                         </span>
                         <span className="text-muted-foreground shrink-0 text-[10.5px] font-mono">
@@ -1194,11 +1201,22 @@ function ServerConfigDialog({
                           {quota > 0 ? ` · ${pct}%` : ""}
                         </span>
                       </div>
-                      <div className="mt-1 h-1 overflow-hidden rounded-full bg-muted">
-                        <div
-                          className={`h-full rounded-full transition-all ${color}`}
-                          style={{ width: `${quota > 0 ? pct : 0}%` }}
-                        />
+                      <div className="mt-1 flex items-center gap-1.5">
+                        {p.deleted ? (
+                          <span className="shrink-0 rounded border border-border px-1 font-mono text-[9.5px] text-muted-foreground">
+                            已删除
+                          </span>
+                        ) : p.enabled === false ? (
+                          <span className="shrink-0 rounded border border-[var(--state-warn-border)] bg-[var(--state-warn-bg)] px-1 font-mono text-[9.5px] text-[var(--state-warn-fg)]">
+                            已停用
+                          </span>
+                        ) : null}
+                        <div className="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-muted">
+                          <div
+                            className={`h-full rounded-full transition-all ${color}`}
+                            style={{ width: `${quota > 0 ? pct : 0}%` }}
+                          />
+                        </div>
                       </div>
                     </button>
                   );
@@ -1238,33 +1256,90 @@ function ServerConfigDialog({
                     ))}
                 </div>
               </div>
-              {/* 选中家的可编辑字段 */}
-              {selected ? (
+              {/* 选中家:已删 → 恢复卡;未删 → 生效开关 + 删除 + 编辑表单 */}
+              {selected && selected.deleted ? (
+                <div className="rounded-lg border border-dashed p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-[12.5px] font-medium">
+                        {selected.builtin ? "内置供应商" : "供应商"}「
+                        {selected.name || selected.id}」已删除
+                      </div>
+                      <div className="text-muted-foreground mt-0.5 text-[11px]">
+                        删除后不参与搜索轮转;历史用量保留,恢复后按原配置继续生效。
+                      </div>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 shrink-0 text-[12px]"
+                      onClick={() =>
+                        setProviders((prev) =>
+                          prev.map((p) =>
+                            p.id === selected.id
+                              ? { ...p, deleted: false, enabled: true }
+                              : p,
+                          ),
+                        )
+                      }
+                      data-slot="provider-restore"
+                    >
+                      恢复
+                    </Button>
+                  </div>
+                </div>
+              ) : selected ? (
                 <div className="rounded-lg border p-3">
-                  <div className="mb-2.5 flex items-center justify-between">
+                  <div className="mb-2.5 flex items-center justify-between gap-2">
                     <Label className="text-xs font-semibold">
                       {selected.builtin ? "编辑内置" : "编辑自定义"}:{" "}
                       {selected.name || selected.id}
                     </Label>
-                    {selected.builtin ? (
-                      <span className="text-muted-foreground text-[10.5px]">
-                        内置模板可改,不可删除
+                    <div className="flex shrink-0 items-center gap-2.5">
+                      <span className="text-muted-foreground flex items-center gap-1.5 text-[11px]">
+                        <Switch
+                          checked={selected.enabled !== false}
+                          onCheckedChange={(v) =>
+                            setField(selected.id, "enabled", v)
+                          }
+                          data-slot="provider-enabled"
+                        />
+                        {selected.enabled === false ? "已停用" : "生效中"}
                       </span>
-                    ) : (
                       <Button
                         variant="ghost"
                         size="sm"
                         className="text-destructive h-6 px-2 text-[11px]"
+                        title={
+                          selected.builtin
+                            ? "删除该内置供应商(存墓碑,可恢复)"
+                            : "移除该自定义供应商"
+                        }
+                        data-slot="provider-remove"
                         onClick={() => {
-                          setProviders((prev) =>
-                            prev.filter((p) => p.id !== selected.id),
+                          if (selected.builtin) {
+                            // 内置:存墓碑条目抑制插件「缺失内置回填」,可恢复
+                            setProviders((prev) =>
+                              prev.map((p) =>
+                                p.id === selected.id
+                                  ? { ...p, deleted: true }
+                                  : p,
+                              ),
+                            );
+                          } else {
+                            setProviders((prev) =>
+                              prev.filter((p) => p.id !== selected.id),
+                            );
+                          }
+                          const next = providers.find(
+                            (p) => p.id !== selected.id && !p.deleted,
                           );
-                          setSelectedId(providers[0]?.id ?? "");
+                          setSelectedId(next?.id ?? "");
                         }}
                       >
-                        移除
+                        {selected.builtin ? "删除" : "移除"}
                       </Button>
-                    )}
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 gap-3 text-[12px]">
                     <FormField
@@ -1421,16 +1496,19 @@ function ServerConfigDialog({
 
                   {testResult ? (
                     <div
-                      className={`mt-2.5 rounded-md border p-2.5 text-[12px] ${
+                      className={cn(
+                        "mt-2.5 rounded-md border p-2.5 text-[12px]",
                         testResult.ok
-                          ? "border-emerald-500/30 bg-emerald-500/5"
-                          : "border-rose-500/30 bg-rose-500/5"
-                      }`}
+                          ? "border-[var(--state-success-border)] bg-[var(--state-success-bg)]"
+                          : "border-[var(--state-error-border)] bg-[var(--state-error-bg)]",
+                      )}
                     >
                       <div className="mb-1 flex items-center justify-between font-medium">
                         <span
                           className={
-                            testResult.ok ? "text-emerald-600" : "text-rose-600"
+                            testResult.ok
+                              ? "text-[var(--state-success-fg)]"
+                              : "text-[var(--state-error-fg)]"
                           }
                         >
                           {testResult.ok ? "✓ " : "✕ "}

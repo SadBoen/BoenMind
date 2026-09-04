@@ -28,7 +28,11 @@ fn current_month() -> String {
         let mut y = 1970i64;
         let mut rem = days as i64;
         loop {
-            let dy = if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 { 366 } else { 365 };
+            let dy = if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 {
+                366
+            } else {
+                365
+            };
             if rem < dy {
                 break;
             }
@@ -36,7 +40,20 @@ fn current_month() -> String {
             y += 1;
         }
         let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
-        let mdays = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+        let mdays = [
+            31,
+            if leap { 29 } else { 28 },
+            31,
+            30,
+            31,
+            30,
+            31,
+            31,
+            30,
+            31,
+            30,
+            31,
+        ];
         let mut m = 0i64;
         for (i, d) in mdays.iter().enumerate() {
             if rem < *d {
@@ -108,10 +125,8 @@ impl UsageLedger {
             .get(provider_id)
             .and_then(Value::as_u64)
             .unwrap_or(0);
-        self.by_provider.insert(
-            provider_id.to_string(),
-            json!(cur.saturating_add(1)),
-        );
+        self.by_provider
+            .insert(provider_id.to_string(), json!(cur.saturating_add(1)));
         self.save();
     }
 

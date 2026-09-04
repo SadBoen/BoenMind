@@ -47,6 +47,10 @@ export type McpServer = {
 /** web_multisearch providers 配置里单家的结构(manifest 模板/已存配置通用) */
 export type ProviderManifestItem = {
   id: string;
+  /** 停用开关(缺省 = 生效);停用家不参与搜索轮转,真搜测试仍可用 */
+  enabled?: boolean;
+  /** 删除内置的墓碑标记(抑制插件「缺失内置回填」);自定义家删除即整条移除 */
+  deleted?: boolean;
   name: string;
   builtin?: boolean;
   endpoint: string;
