@@ -161,11 +161,24 @@ export function Thread({
                 <p>自研 Agent 已就绪——直接输入,流式回复。</p>
               </div>
             ) : (
-              <ThreadPrimitive.Messages>
-                {({ message }) =>
-                  message.role === "user" ? <UserMessage /> : <AssistantMessage />
-                }
-              </ThreadPrimitive.Messages>
+              <>
+                {history.hasMore && (
+                  <div className="flex justify-center py-2">
+                    <button
+                      onClick={history.loadOlder}
+                      disabled={history.loading}
+                      className="rounded-md border border-border/50 bg-background/70 px-3 py-1 text-[12px] text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground disabled:opacity-60"
+                    >
+                      {history.loading ? "加载中…" : "加载更早消息"}
+                    </button>
+                  </div>
+                )}
+                <ThreadPrimitive.Messages>
+                  {({ message }) =>
+                    message.role === "user" ? <UserMessage /> : <AssistantMessage />
+                  }
+                </ThreadPrimitive.Messages>
+              </>
             )}
           </ThreadPrimitive.Viewport>
           <div className="composer-dock">
@@ -182,7 +195,7 @@ export function Thread({
 
 // 抽屉式超薄悬浮审批条:与输入框同宽、高度接近单行、支持展开代码/批准/驳回/关闭
 function ApprovalDrawer() {
-  const { pendingApprovals, respondApproval } = useBoenmindApprovals();
+  const { pendingApprovals, respondApproval, history } = useBoenmindApprovals();
   if (pendingApprovals.length === 0) return null;
   return (
     <div className="mb-2 flex flex-col gap-2" data-slot="approval-cards">

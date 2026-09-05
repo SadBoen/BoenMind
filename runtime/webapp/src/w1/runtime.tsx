@@ -26,10 +26,17 @@ export type ApprovalRequest = {
 type ApprovalContextValue = {
   pendingApprovals: ApprovalRequest[];
   respondApproval: (id: string, decision: "approve" | "deny") => Promise<void>;
+  // 会话历史分页(2026-09-06):「加载更早消息」由 thread.tsx 顶部按钮触发
+  history: {
+    hasMore: boolean;
+    loading: boolean;
+    loadOlder: () => void;
+  };
 };
 const BoenmindRuntimeContext = createContext<ApprovalContextValue>({
   pendingApprovals: [],
   respondApproval: async () => {},
+  history: { hasMore: false, loading: false, loadOlder: () => {} },
 });
 export const useBoenmindApprovals = () => useContext(BoenmindRuntimeContext);
 
@@ -82,6 +89,16 @@ function createApprovalMarkerStream(
   return { feed, flush };
 }
 
+// 回放消息 → 线程消息形状(2026-09-06;切会话/刷新/加载更早三路共用)
+function toThreadMessages(
+  rows: { seq: number | null; role: "user" | "assistant"; content: string }[],
+): ThreadMessageLike[] {
+  return rows.map((m) => ({
+    role: m.role,
+    content: [{ type: "text", text: m.content }] as TextPart[],
+  }));
+}
+
 export function BoenmindRuntimeProvider({
   children,
 }: {
@@ -89,6 +106,12 @@ export function BoenmindRuntimeProvider({
 }) {
   const [messages, setMessages] = useState<ThreadMessageLike[]>([]);
   const [isRunning, setIsRunning] = useState(false);
+  // 历史回放分页:已加载的历史条数(= 从末尾 skip 的游标)+ 是否还有更早
+  // (每页 50,「加载更早」增量前插,防长会话一口气载入卡界面;游标不用
+  // seq——历史文件 seq 跨重启重数)
+  const HISTORY_PAGE = 50;
+  const historyCountRef = useRef(0);
+  const [historyMore, setHistoryMore] = useState({ hasMore: false, loading: false });
   const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequest[]>(
     [],
   );
@@ -328,13 +351,10 @@ export function BoenmindRuntimeProvider({
       const sid = storage.get(STORAGE_KEYS.SESSION);
       if (!sid) return;
       try {
-        const res = await api.sessionMessages(sid);
-        setMessages(
-          (res.messages ?? []).map((m) => ({
-            role: m.role,
-            content: [{ type: "text", text: m.content }] as TextPart[],
-          })),
-        );
+        const res = await api.sessionMessages(sid, { limit: HISTORY_PAGE });
+        setMessages(toThreadMessages(res.messages ?? []));
+        historyCountRef.current = (res.messages ?? []).length;
+        setHistoryMore({ hasMore: res.has_more ?? false, loading: false });
       } catch {
         // 回放失败(日志缺失/网络抖动)保持空视图,不打断用户输入
       }
@@ -350,15 +370,12 @@ export function BoenmindRuntimeProvider({
     if (!sid) return;
     let cancelled = false;
     void api
-      .sessionMessages(sid)
+      .sessionMessages(sid, { limit: HISTORY_PAGE })
       .then((res) => {
         if (cancelled) return;
-        setMessages(
-          (res.messages ?? []).map((m) => ({
-            role: m.role,
-            content: [{ type: "text", text: m.content }] as TextPart[],
-          })),
-        );
+        setMessages(toThreadMessages(res.messages ?? []));
+        historyCountRef.current = (res.messages ?? []).length;
+        setHistoryMore({ hasMore: res.has_more ?? false, loading: false });
       })
       .catch(() => {});
     return () => {
@@ -409,9 +426,36 @@ export function BoenmindRuntimeProvider({
     },
   });
 
+  // 「加载更早消息」:skip=已加载条数,取前一页并前插(2026-09-06)
+  const loadOlder = async () => {
+    const sid = storage.get(STORAGE_KEYS.SESSION);
+    if (!sid || historyMore.loading) return;
+    setHistoryMore((h) => ({ ...h, loading: true }));
+    try {
+      const res = await api.sessionMessages(sid, {
+        limit: HISTORY_PAGE,
+        skip: historyCountRef.current,
+      });
+      const older = toThreadMessages(res.messages ?? []);
+      setMessages((cur) => [...older, ...cur]);
+      historyCountRef.current += older.length;
+      setHistoryMore({ hasMore: res.has_more ?? false, loading: false });
+    } catch {
+      setHistoryMore((h) => ({ ...h, loading: false }));
+    }
+  };
+
   return (
     <BoenmindRuntimeContext.Provider
-      value={{ pendingApprovals, respondApproval }}
+      value={{
+        pendingApprovals,
+        respondApproval,
+        history: {
+          hasMore: historyMore.hasMore,
+          loading: historyMore.loading,
+          loadOlder: () => void loadOlder(),
+        },
+      }}
     >
       <AssistantRuntimeProvider runtime={runtime}>
         {children}

@@ -86,13 +86,43 @@ pub fn snapshot_messages(messages: &[bm_contract::connector::Message]) -> Vec<se
         .collect()
 }
 
+/// 文件尾最后一个合法 seq(续接用;只读尾部 64KB,不整文件扫)。
+fn last_log_seq(path: &Path) -> u64 {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return 0;
+    };
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    let start = len.saturating_sub(64 * 1024);
+    if f.seek(SeekFrom::Start(start)).is_err() {
+        return 0;
+    }
+    let mut buf = String::new();
+    if f.read_to_string(&mut buf).is_err() {
+        return 0;
+    }
+    buf.lines()
+        .rev()
+        .find_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .and_then(|v| v.get("seq").and_then(|s| s.as_u64()))
+        .unwrap_or(0)
+}
+
 impl ContextLog {
     /// `dir = None` 时仅内存记账(纯事件流测试)。
     pub fn new(dir: Option<&Path>) -> Self {
+        // seq 跨重启续接(2026-09-06):否则每次重启从 1 重数,历史回放
+        // 分页(before_seq)与透视器选中键都会被重复 seq 打穿
+        let path = dir.map(|d| d.join("context-log.jsonl"));
+        let next_seq = path
+            .as_deref()
+            .map(last_log_seq)
+            .unwrap_or(0)
+            .saturating_add(1);
         Self {
-            path: dir.map(|d| d.join("context-log.jsonl")),
+            path,
             inner: Mutex::new(Inner {
-                next_seq: 1,
+                next_seq,
                 scan_values: BTreeSet::new(),
                 entries: Vec::new(),
             }),
@@ -304,5 +334,43 @@ mod tests {
         let second: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
         assert_eq!(second["seq"], serde_json::json!(2));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn seq_resumes_from_file_tail_across_restarts() {
+        // 2026-09-06:seq 跨重启续接——否则回放分页 before_seq 被重复 seq 打穿
+        let dir = tempfile::tempdir().expect("临时目录");
+        let sid = "sess_resume";
+        {
+            let log = ContextLog::new(Some(dir.path()));
+            log.record_event(
+                sid,
+                "op_1",
+                1,
+                "user_message",
+                "T1",
+                serde_json::json!({"content":"一"}),
+            );
+            log.record_event(
+                sid,
+                "op_1",
+                1,
+                "assistant_final",
+                "T2",
+                serde_json::json!({"content":"二"}),
+            );
+            // drop = 模拟进程结束(落盘已完成)
+        }
+        // 新进程(新 ContextLog 实例)继续写:seq 必须接 3,而不是重头 1
+        let log2 = ContextLog::new(Some(dir.path()));
+        let seq = log2.record_event(
+            sid,
+            "op_2",
+            1,
+            "user_message",
+            "T3",
+            serde_json::json!({"content":"三"}),
+        );
+        assert_eq!(seq, 3, "seq 从文件尾续接");
     }
 }

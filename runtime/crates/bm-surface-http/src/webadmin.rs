@@ -1986,20 +1986,35 @@ pub async fn context_search(
     Json(json!({ "ok": true, "q": q, "hits": hits, "total": hits.len() })).into_response()
 }
 
-/// GET /admin/sessions/{session_id}/messages:会话历史回放(2026-09-06)。
-/// 从 context-log.jsonl 按 session 过滤 kind ∈ {user_message, assistant_final},
-/// 按 seq 升序映射为 {role, content, ts, seq}(最旧在前,最多回 200 条)。
-/// 个人单机规模整文件行级扫描(与 /admin/context/search 同口径),数据量
-/// 上来再换索引。坏行跳过。
+/// GET /admin/sessions/{session_id}/messages?limit=&skip=:
+/// 会话历史回放(2026-09-06;同日二改:分页+流式,防长会话一口气载入卡
+/// 界面)。从 context-log.jsonl 过滤 kind ∈ {user_message, assistant_final},
+/// 按文件序(=真实时序)返回第 skip 条之前的最近 limit 条;limit 默认 50
+/// 上限 200;has_more 指示是否还有更早。**分页游标用「从末尾跳过的条数」
+/// 而非 seq**——历史文件里 seq 曾跨重启重数,seq 游标在存量数据上必错页。
+/// BufReader 逐行流式,内存只留单页窗口(不整文件载入)。
 pub async fn session_messages(
     State(cfg): State<AdminConfig>,
     axum::extract::Path(session_id): axum::extract::Path<String>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Response {
-    let mut messages: Vec<Value> = Vec::new();
-    if let Ok(text) = std::fs::read_to_string(cfg.data_dir.join("context-log.jsonl")) {
-        for line in text.lines() {
-            let Ok(v) = serde_json::from_str::<Value>(line) else {
-                continue;
+    let limit: usize = params
+        .get("limit")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(50)
+        .clamp(1, 200);
+    let skip: usize = params.get("skip").and_then(|v| v.parse().ok()).unwrap_or(0);
+
+    use std::collections::VecDeque;
+    use std::io::BufRead;
+    // 双端队列只留最近 skip+limit 条匹配;文件序 = 落盘序 = 真实时序
+    let mut window: VecDeque<Value> = VecDeque::new();
+    let mut matched: usize = 0;
+    if let Ok(f) = std::fs::File::open(cfg.data_dir.join("context-log.jsonl")) {
+        for line in std::io::BufReader::new(f).lines() {
+            let Ok(line) = line else { break };
+            let Ok(v) = serde_json::from_str::<Value>(&line) else {
+                continue; // 坏行跳过
             };
             if v.get("session_id").and_then(|s| s.as_str()) != Some(session_id.as_str()) {
                 continue;
@@ -2013,20 +2028,28 @@ pub async fn session_messages(
             if content.is_empty() {
                 continue;
             }
-            messages.push(json!({
-                "seq": v.get("seq").cloned().unwrap_or(Value::Null),
+            matched += 1;
+            window.push_back(json!({
                 "ts": v.get("ts").cloned().unwrap_or(Value::Null),
                 "role": role,
                 "content": content,
             }));
+            if window.len() > skip + limit {
+                window.pop_front();
+            }
         }
     }
-    // 按 seq 升序(文件序 = 落盘序,正常一致;防御乱序)
-    messages.sort_by_key(|m| m["seq"].as_u64().unwrap_or(0));
-    if messages.len() > 200 {
-        messages = messages.split_off(messages.len() - 200);
-    }
-    Json(json!({ "ok": true, "session_id": session_id, "messages": messages })).into_response()
+    // 丢弃末尾 skip 条(那些已在前面的页面里),剩下的即本页(最旧在前)
+    let take = window.len().saturating_sub(skip);
+    let messages: Vec<Value> = window.into_iter().take(take).collect();
+    let has_more = matched > skip + messages.len();
+    Json(json!({
+        "ok": true,
+        "session_id": session_id,
+        "messages": messages,
+        "has_more": has_more,
+    }))
+    .into_response()
 }
 
 /// context-log 尾部读取+逐行解析(只读诊断面;任何失败静默为空)。

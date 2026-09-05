@@ -374,13 +374,25 @@ export const api = {
   },
   // W5 上下文透视:模型调用请求快照(context-log.jsonl 尾部,最旧在前)
   context: () => req<{ ok: boolean; steps: CtxStep[] }>("/admin/context"),
-  // 会话历史回放(2026-09-06):切会话/刷新后按 sid 拉历史消息(最旧在前)
-  sessionMessages: (sid: string) =>
-    req<{
+  // 会话历史回放(2026-09-06):切会话/刷新后按 sid 拉历史消息(最旧在前)。
+  // 分页(2026-09-06 二改):limit 默认 50 上限 200;skip = 从最新一条往回
+  // 跳过的条数(已加载越多 skip 越大);has_more 指示是否还有更早——
+  // 防长会话一口气载入卡界面。游标不用 seq(历史文件 seq 跨重启重数)
+  sessionMessages: (
+    sid: string,
+    opts?: { limit?: number; skip?: number },
+  ) => {
+    const p = new URLSearchParams();
+    if (opts?.limit) p.set("limit", String(opts.limit));
+    if (opts?.skip) p.set("skip", String(opts.skip));
+    const qs = p.toString();
+    return req<{
       ok: boolean;
       session_id: string;
+      has_more: boolean;
       messages: { seq: number | null; ts: string | null; role: "user" | "assistant"; content: string }[];
-    }>(`/admin/sessions/${encodeURIComponent(sid)}/messages`),
+    }>(`/admin/sessions/${encodeURIComponent(sid)}/messages${qs ? `?${qs}` : ""}`);
+  },
     contextSearch: (q: string) =>
       req<{ ok: boolean; hits: CtxStep[]; total: number }>(
         `/admin/context/search?q=${encodeURIComponent(q)}&limit=50`,
