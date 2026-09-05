@@ -184,7 +184,9 @@ async fn handle_request(msg: &Value, ctx: &Ctx) -> Option<Value> {
     let result: Result<Value, (i64, String)> = match method {
         "initialize" => Ok(json!({
             "protocolVersion": PROTOCOL_VERSION,
-            "capabilities": {},
+            // 对齐 MCP 发现规范:显式声明 tools 能力(严格客户端据此判定本服
+            // 务提供工具;context-inspector 与 apps/ 同款形态)
+            "capabilities": {"tools": {}},
             "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
         })),
         "ping" => Ok(json!({})),

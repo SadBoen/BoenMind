@@ -262,7 +262,7 @@ function ApprovalDrawerItem({
       <div className="flex min-h-[38px] items-center justify-between gap-2 px-3 py-1.5">
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <div className="flex size-5 shrink-0 items-center justify-center rounded-md bg-[var(--state-warn-bg)] text-[var(--state-warn-fg)]">
-            <ShieldAlert className="size-3.5 text-amber-500" />
+            <ShieldAlert className="size-3.5" />
           </div>
           <span className="shrink-0 text-[12px] font-semibold text-foreground">
             {summary.label}
@@ -783,7 +783,7 @@ function Composer() {
           >
             {permMode === "yolo" ? (
               <>
-                <Zap className="size-3.5 text-amber-500" />
+                <Zap className="size-3.5 text-[var(--state-warn-fg)]" />
                 <span>完全访问</span>
               </>
             ) : permMode === "plan" ? (
@@ -793,19 +793,19 @@ function Composer() {
               </>
             ) : (
               <>
-                <ShieldCheck className="size-3.5 text-emerald-500" />
+                <ShieldCheck className="size-3.5 text-[var(--state-success-fg)]" />
                 <span>变更前确认</span>
               </>
             )}
           </SelectTrigger>
-          <SelectContent className="w-60 rounded-xl p-1" side="top" position="popper">
+          <SelectContent className="w-60 rounded-lg p-1" side="top" position="popper">
             <SelectItem
               value="ask"
               className="py-2 pl-2 text-[12px] [&_[data-slot=select-item-indicator]]:left-2 [&_[data-slot=select-item-indicator]]:right-auto"
             >
               <div className="flex flex-col pl-4 gap-0.5">
                 <div className="flex items-center gap-1.5 font-medium text-foreground">
-                  <ShieldCheck className="size-3.5 text-emerald-500" />
+                  <ShieldCheck className="size-3.5 text-[var(--state-success-fg)]" />
                   <span>变更前确认</span>
                 </div>
                 <span className="text-muted-foreground text-[11px] leading-tight">
@@ -835,7 +835,7 @@ function Composer() {
             >
               <div className="flex flex-col pl-4 gap-0.5">
                 <div className="flex items-center gap-1.5 font-medium text-foreground">
-                  <Zap className="size-3.5 text-amber-500" />
+                  <Zap className="size-3.5 text-[var(--state-warn-fg)]" />
                   <span>完全访问</span>
                 </div>
                 <span className="text-muted-foreground text-[11px] leading-tight">

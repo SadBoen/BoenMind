@@ -14,6 +14,7 @@ import {
   Loader2Icon,
 } from "lucide-react";
 import { api, type FsEntry } from "./api";
+import { useTimedNotice } from "@/lib/use-timed-notice";
 import { FileTree, type FileTreeNode } from "@/components/file-tree";
 import { Button } from "@/components/ui/button";
 import {
@@ -47,12 +48,7 @@ export function WorkspaceFiles() {
   const [ctx, setCtx] = useState<CtxMenu>(null);
   const [renaming, setRenaming] = useState<FileTreeNode | null>(null);
   const [renameName, setRenameName] = useState("");
-  const [notice, setNotice] = useState<string | null>(null);
-
-  const flash = (msg: string) => {
-    setNotice(msg);
-    setTimeout(() => setNotice(null), 2500);
-  };
+  const { notice, flash } = useTimedNotice(2500);
 
   const loadDir = useCallback(async (path: string) => {
     setLoadingDir(path);

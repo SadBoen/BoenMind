@@ -16,9 +16,9 @@
 | 模型自编工具结果(mimo 质量备忘) | 同轮实测:问 counter.bump 时模型未发起调用直接编造「bumped successfully」(/admin/context 证实 0 工具轮);对话区无 [调用] 标记即可辨真伪,强提示词可压不断根;随模型侧观察,不立项 | OPEN(记录在案) |
 | Skill v0.2 第二步(scripts 执行面) | 第一步(合同 Minor: version + references)与 ADR-0016(Broker 七步管线覆盖脚本设计)已闭合交付;**第二步**:等待用户审阅确认 ADR-0016 后接入 wasmtime 执行引擎写代码 | OPEN(待 ADR-0016 确认后动工) |
 | VPS v0.0.5 发版后验证清单 | 随包扫描双目录已修+直通工具内联回喂已修+模型调用硬顶 30s→120s(BOEN_TURN_TIMEOUT_SECS 可配)均已落 main(f894663+本批);VPS 侧 web-multisearch 已远程装好并批准在役(2 工具)。待用户明示发版→VPS 升级后复测:①直通工具(echo/counter)对话秒回 ②真模型联网问答(web_search)全链路 ③关于页/常规设置不回归,闭合后移出 | OPEN(随下次发版) |
-| W8 遗留:能力执行 cwd 注入 | ADR-0018 只做到回合 system prompt 注入;MCP/context-mode 等需要 cwd 的能力执行面尚未消费会话绑定工作区(该插件默认也未启用);与 Skill v0.2 执行线同批评估,继续经 Broker 管线、不新增特权通道 | OPEN(依 ADR-0016/0017 排期) |
+| W8 遗留:能力执行 cwd 注入 | ADR-0018 只做到回合 system prompt 注入;MCP/context-mode 等需要 cwd 的能力执行面尚未消费会话绑定工作区(该插件默认也未启用);2026-09-05 回看补记:内置 fs.* 同族——fs 工具相对路径在多工作区场景回退注册表首个根而非会话绑定根(guard.rs roots[0]),能力调用在核心层系无会话设计(system_session),修需穿合同面;与 Skill v0.2 执行线同批评估,继续经 Broker 管线、不新增特权通道 | OPEN(依 ADR-0016/0017 排期) |
 | W8 遗留:workspace_id 跨重启持久 | 现为进程内会话作用域(ADR-0018 决策 3:Web 会话指针重启即失效,持久化无用户可见收益);待会话列表真数据(W 后续)一并评估是否随会话恢复 | OPEN |
-| web_multisearch:Parallel Search 接入 | 用户已供 Key(2026-09-04);其 `search_queries` 要求数组,通用 JSON 适配器只能发字符串(实测 422),需在插件加内置特例解析(仿 jina);与下方模板死路两处同批修 | OPEN(待排期) |
+| web_multisearch:Parallel Search 接入 | 用户已供 Key(2026-09-04);其 `search_queries` 要求数组,通用 JSON 适配器只能发字符串(实测 422),需在插件加内置特例解析(仿 jina);模板死路两处(tavily/linkup)已随 2026-09-05 回看批修复闭合 | OPEN(待排期) |
 
 ## 2. 流程收尾
 
@@ -42,13 +42,18 @@
 | 条目 | 说明 | 状态 |
 |---|---|---|
 | F-05 | 200+ 行函数重构债(与 L-01/R-08 同批) | OPEN(缓办) |
-| F-07 | bm-surface-http → bm-persist 直依赖待裁决(收口或留档) | OPEN |
+| F-07 | bm-surface-http → bm-persist 直依赖待裁决(收口或留档);2026-09-05 回看补记:webadmin.rs 还在 HTTP Handler 里直接 spawn MCP 进程/装配 StdioMcpTransport/管理 McpHub 连断与 Provider 密钥播种,装配职责宜下沉运行时,与本条同批收口 | OPEN |
 | F-11 | memory_drawer_verdict 硬编码权限规则与 ADR-0006 张力(broker.rs 已补注;合同化重构待排期) | OPEN |
-| P3 大文件拆分 | broker.rs(1657 行)/turn.rs(1694)/task_ops.rs(1710)/sqlite_state.rs(1205)/webadmin.rs(1882 行);broker 建议拆法=mod+policy(GrantLedger)/credential/executor/audit | OPEN(缓办) |
+| F-12 | bm-core → bm-persist 依赖倒置(2026-09-05 回看发现):内核 Cargo.toml 直依赖实现层,内核代码直接使用 sqlite_state 行 DTO(CapabilityRow/ApprovalRow/GrantRow 等);宜将端口 trait 与持久化入参 DTO 收归 bm-core::ports,投影转换归 bm-persist | OPEN(缓办) |
+| P3 大文件拆分 | broker.rs(1657 行)/turn.rs(1694)/task_ops.rs(1710)/sqlite_state.rs(1205)/webadmin.rs(1882 行);broker 建议拆法=mod+policy(GrantLedger)/credential/executor/audit;前端同族=context.tsx(2200+ 行,可拆 TrendChart/TokenWaterGauge/PromptRecipe/FileEffects 子模块)与 PluginsPage.tsx(1800+ 行) | OPEN(缓办) |
 | P4 非测试 unwrap 甄别清理 | 全仓约 400 处 unwrap 需区分测试/非测试逐步替换;非测试 panic 10 处均系不变量断言,评估=维持现状 | OPEN(缓办) |
 | P5 Capability 抽象演进 | 同步 invoke 无超时护栏(trait 注释已写明选型约束)/错误 String→结构化枚举/统一单 async trait 评估留 M 系列回看 | OPEN(缓办) |
-| McpPage.tsx 组件解耦 | 714 行拆子表单/子对话框 | OPEN |
-| web_multisearch 内置模板两处死路(2026-09-04 全量真连探针发现) | ①tavily 模板 `auth:"none"` 而通用适配器无 body 传 key 通道 → 配置的 Key 永不随请求发出,填真 Key 也 401,须改 `auth:"bearer"`(Tavily 新 API 支持);②linkup 模板 `limit_param:"depth"` → 插件恒发数字 `depth:3`,而 Linkup 只认 "standard"/"deep",Key 正确也 400,须清空 limit_param;随下批插件改动一并修模板默认值(存量配置文件同步迁移) | OPEN(缓办) |
+| /v1 错误信封结构化 | 前端靠 `detail.includes("工作区")` 识别工作区错误(runtime.tsx),文案一改即失效;根修=扩展错误码(如 webui.workspace_unavailable,注册表 extensions/*.json+CI R6 同步,合同 Minor 仪式)或 /v1 400 带 JSON code 字段,前端按码分支 | OPEN(待排期) |
+| session_chats 重启重建(重启续聊) | 多轮对话台账纯内存(runtime.rs 有意取舍注释),服务重启后会话在而记忆空;修=启动恢复阶段从事件流回放重建台账(注意 20 轮/24K 双上限裁剪口径) | OPEN(待排期) |
+| core_loop 崩溃处置升级待裁决 | 现状=panic 仅 error 日志观测(命令方即刻收到错误,无挂死,2026-09-05 复核证实);升级选项=崩溃即进程 exit(70) 交 systemd Restart=on-failure 拉起,属运维行为变更待用户拍板 | OPEN(待用户裁决) |
+| 前端会话历史回放端点 | 会话切换/页面刷新后消息列表无法恢复(现切会话即复位视图,bm-session-switched 已接线);需按 session_id 拉历史消息的端点(或 /admin/context 聚合)后前端回放 | OPEN(待排期) |
+| skill.v0_1 Rust 强类型投影 | 前端已有 SkillItem 类型,bm-contract 侧仅 JSON 常量无结构体;补 SkillDefinition+镜像测试(随 Skill v0.2 第二步动工前落) | OPEN(低) |
+| 审批等待轮询改推送 | 回合管线对审批/异步工具 400ms 轮询单写者通道(GetOperation/GetOpResult,上限 300s);可改 watch/oneshot 通知,降单写者拥塞 | OPEN(低) |
 | 前端静态分析 | ESLint + Stylelint 接入 CI | OPEN |
 | theme.css !important 收敛 | 玻璃段 4 处(毛玻璃化刻意选型,收敛须换实现手法) | OPEN(低) |
 | CustomEvent 类型化 | 5 文件发事件/12 文件监听,可随 ESLint 批次一并 | OPEN(低) |

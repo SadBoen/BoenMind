@@ -729,7 +729,7 @@ export function ContextView() {
                   </span>
                   <span className={cn(
                     "flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium",
-                    (stats.headroomPct ?? 0) >= 80 ? "bg-rose-500/10 text-rose-600" : (stats.headroomPct ?? 0) >= 50 ? "bg-amber-500/10 text-amber-600" : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                    (stats.headroomPct ?? 0) >= 80 ? "bg-[var(--state-error-bg)] text-[var(--state-error-fg)]" : (stats.headroomPct ?? 0) >= 50 ? "bg-[var(--state-warn-bg)] text-[var(--state-warn-fg)]" : "bg-[var(--state-success-bg)] text-[var(--state-success-fg)]"
                   )}>
                     <CheckCircle2 className="size-3" />
                     <span>剩余安全余量: {stats.remainingHeadroom?.toLocaleString()} token</span>
@@ -740,7 +740,7 @@ export function ContextView() {
                   <span className="rounded-md bg-muted px-2 py-0.5 font-mono text-[11px] font-medium text-foreground">
                     本轮进出共 {stats.realTokensIn + stats.realTokensOut} token
                   </span>
-                  <span className="flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400" title="未登记该模型的上下文窗口容量,无法计算水位占比;在「设置 → 模型提供商」模型清单里登记窗口 token 数后即可见血条">
+                  <span className="flex items-center gap-1 rounded-full bg-[var(--state-warn-bg)] px-2 py-0.5 text-[11px] font-medium text-[var(--state-warn-fg)]" title="未登记该模型的上下文窗口容量,无法计算水位占比;在「设置 → 模型提供商」模型清单里登记窗口 token 数后即可见血条">
                     <AlertTriangle className="size-3" />
                     <span>窗口容量未登记,无法计算水位(可在设置里补登记)</span>
                   </span>
@@ -795,7 +795,7 @@ export function ContextView() {
               <span>
                 当前会话保留 {recipe?.historyTurns.length ?? 0}/20 轮记忆
                 {(stats?.evictedTurns ?? 0) > 0 ? (
-                  <span className="text-amber-600 dark:text-amber-400">
+                  <span className="text-[var(--state-warn-fg)]">
                     （最早 {stats?.evictedTurns} 轮已被自动遗忘）
                   </span>
                 ) : null}
@@ -1366,7 +1366,7 @@ export function ContextView() {
                           scrollToTarget("prompt-section-persona");
                         }}
                         className={cn(
-                          "cursor-pointer rounded-xl border p-3 transition-all duration-150 flex flex-col justify-between gap-1.5",
+                          "cursor-pointer rounded-lg border p-3 transition-all duration-150 flex flex-col justify-between gap-1.5",
                           selectedPromptSection === "persona"
                             ? "border-primary bg-primary/10 shadow-xs ring-1 ring-primary/40"
                             : "bg-card hover:border-border hover:bg-muted/30 border-border/70",
@@ -1405,7 +1405,7 @@ export function ContextView() {
                               scrollToTarget(`prompt-section-${s.id}`);
                             }}
                             className={cn(
-                              "cursor-pointer rounded-xl border p-3 transition-all duration-150 flex flex-col justify-between gap-1.5",
+                              "cursor-pointer rounded-lg border p-3 transition-all duration-150 flex flex-col justify-between gap-1.5",
                               isSelected
                                 ? "border-primary bg-primary/10 shadow-xs ring-1 ring-primary/40"
                                 : "bg-card hover:border-border hover:bg-muted/30 border-border/70",
@@ -1443,7 +1443,7 @@ export function ContextView() {
                             scrollToTarget("prompt-section-workspace");
                           }}
                           className={cn(
-                            "cursor-pointer rounded-xl border p-3 transition-all duration-150 flex flex-col justify-between gap-1.5",
+                            "cursor-pointer rounded-lg border p-3 transition-all duration-150 flex flex-col justify-between gap-1.5",
                             selectedPromptSection === "workspace"
                               ? "border-primary bg-primary/10 shadow-xs ring-1 ring-primary/40"
                               : "bg-card hover:border-border hover:bg-muted/30 border-border/70",
@@ -1597,7 +1597,7 @@ export function ContextView() {
                               scrollToTarget(`tool-block-${t.name}`);
                             }}
                             className={cn(
-                              "cursor-pointer rounded-xl border p-3 transition-all duration-150 flex flex-col justify-between gap-1.5",
+                              "cursor-pointer rounded-lg border p-3 transition-all duration-150 flex flex-col justify-between gap-1.5",
                               isSelected
                                 ? "border-primary bg-primary/10 shadow-xs ring-1 ring-primary/40"
                                 : "bg-card hover:border-border hover:bg-muted/30 border-border/70",
@@ -1746,7 +1746,7 @@ export function ContextView() {
                                 scrollToTarget(`history-turn-${h.turnIndex}`);
                               }}
                               className={cn(
-                                "cursor-pointer rounded-xl border p-3 transition-all duration-150 flex flex-col justify-between gap-1.5",
+                                "cursor-pointer rounded-lg border p-3 transition-all duration-150 flex flex-col justify-between gap-1.5",
                                 isSelected
                                   ? "border-primary bg-primary/10 shadow-xs ring-1 ring-primary/40"
                                   : "bg-card hover:border-border hover:bg-muted/30 border-border/70",
@@ -1902,7 +1902,7 @@ export function ContextView() {
                                 scrollToTarget(`file-effect-${idx}`);
                               }}
                               className={cn(
-                                "cursor-pointer rounded-xl border p-3 transition-all duration-150 flex flex-col justify-between gap-1.5",
+                                "cursor-pointer rounded-lg border p-3 transition-all duration-150 flex flex-col justify-between gap-1.5",
                                 isSelected
                                   ? "border-primary bg-primary/10 shadow-xs ring-1 ring-primary/40"
                                   : "bg-card hover:border-border hover:bg-muted/30 border-border/70",

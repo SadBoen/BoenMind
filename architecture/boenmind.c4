@@ -15,7 +15,7 @@ workspace "BoenMind" "面向个人软件生态的 AI Runtime/AI 操作系统—�
             butler = container "Butler App" "[阶段一已并入内核] 管家 App:接单、创建 Task、召集 Coordinator Agent、催办与汇报;只拥有系统协调权(task.create/agent.spawn/team.create 等),不默认拥有任何领域操作权。Orchestrator 的任务板是从事件重建的投影,不是第二事实源。" "Rust App(阶段一内建/阶段二独立进程)" "L4,App"
             mailApp = container "Mail App" "[阶段二规划] 邮件业务域:暴露 mail.search/mail.read/mail.create_draft/mail.send(external-side-effect)等 Capability 与领域 Agent;数据域 memory:app:mail。" "App(可独立进程)" "L4,App"
             stockApp = container "Market App" "[阶段一真实 App·ADR-0011] 行情/持仓业务域:apps/market_server.py(stdio MCP);暴露 quote.get/portfolio.add/portfolio.value。" "stdio MCP (Python)" "L4,App"
-            musicApp = container "Music App" "[阶段一真实 App·ADR-0011] 音乐业务域:apps/music_server.py(stdio MCP);暴露 music.search/music.list_tracks/music.play/music.pause。" "stdio MCP (Python)" "L4,App"
+            musicApp = container "Music App" "[阶段一真实 App·ADR-0011] 音乐业务域:apps/music_server.py(stdio MCP);暴露 music.scan/music.search/music.list_tracks/music.playlist_get/music.playlist_add/music.playlist_clear(本地音乐库索引与歌单管理);播放由 Web 前端 MusicPlayer(HTML5 audio)承担。" "stdio MCP (Python)" "L4,App"
             wikiApp = container "Wiki App" "[阶段一真实 App·ADR-0011] 知识库业务域:apps/wiki_server.py(stdio MCP);暴露 page.read/page.write/page.list,真实写盘带摘要收据。" "stdio MCP (Python)" "L4,App"
 
             audio = container "Audio Provider (system.audio)" "[阶段二规划] 系统服务 Provider:audio.volume.get/set、audio.mute、audio.output.list;低风险确定性能力,支持 verification 事后核验钩子。" "系统服务(可独立进程)" "L3,Provider"
@@ -46,7 +46,6 @@ workspace "BoenMind" "面向个人软件生态的 AI Runtime/AI 操作系统—�
 
         mailsvc = softwareSystem "邮件服务" "用户的 IMAP/SMTP 或邮件服务商;mail.send 的外部副作用以 message-id 收据回流。" "External"
         stockserv = softwareSystem "行情/交易服务" "外部行情与交易 API;下单结果以订单号收据回流。" "External"
-        musicsvc = softwareSystem "音乐服务" "外部流媒体服务。" "External"
         llm = softwareSystem "LLM API" "云端/本地模型;经稳定模型合同接入,可替换;凭据由 Secret Store 注入,Agent 全程不可见。" "External"
         mcpext = softwareSystem "MCP 工具服务器" "第三方 MCP Server,提供 mcp:<server>.<tool> 工具;不可信外部内容来源。" "External"
         oskeychain = softwareSystem "OS Keychain" "Windows Credential Manager / macOS Keychain / libsecret;凭据本体优先存放地。" "External"
@@ -118,7 +117,6 @@ workspace "BoenMind" "面向个人软件生态的 AI Runtime/AI 操作系统—�
 
         mailApp -> mailsvc "IMAP/SMTP;副作用返回收据(message-id)入 result_reference"
         stockApp -> stockserv "行情查询/下单;下单 = high-risk-command + 审批 + 外部收据"
-        musicApp -> musicsvc "流媒体播放"
         mcp -> mcpext "MCP 协议;第三方返回值按 untrusted 信任级别处理"
         modelConnector -> llm "稳定模型合同:messages/tools/参数→增量结果/用量/结束原因;超时超限走降级链"
         secretStore -> oskeychain "OS keychain 优先,加密文件兜底"

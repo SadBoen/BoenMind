@@ -31,38 +31,53 @@ const BoenmindRuntimeContext = createContext<ApprovalContextValue>({
 });
 export const useBoenmindApprovals = () => useContext(BoenmindRuntimeContext);
 
-// 从 delta 中剥离审批标记;命中则回调 onApproval
-function extractApprovalMarker(
-  delta: string,
+// 从 delta 中剥离审批标记;命中则回调 onApproval。
+// W4b+ 加固:标记可能被代理/TCP 分包切开——发现 "[BM_APPROVAL:" 起暂存进
+// 缓冲,直到闭合 "]"+换行才解析剥离;未决期间正文不透传标记碎片,
+// 防止审批卡片丢失且裸 JSON 泄露进聊天气泡。
+function createApprovalMarkerStream(
   onApproval: (req: ApprovalRequest) => void,
-): string {
-  const start = delta.indexOf("[BM_APPROVAL:");
-  if (start === -1) return delta;
-  const before = delta.slice(0, start);
-  const objStart = delta.indexOf("{", start);
-  if (objStart === -1) return before;
-  // 找配对的右括号(标记为单行 JSON,取最后一个 } 直到 ])
-  const end = delta.indexOf("]\n", objStart);
-  const jsonText = end === -1 ? delta.slice(objStart) : delta.slice(objStart, end);
-  try {
-    const parsed = JSON.parse(jsonText.replace(/\]\s*$/, "")) as {
-      bm_approval_request?: {
-        approval_id: string;
-        capability: string;
-        args: unknown;
-        operation_id: string;
-      };
-    };
-    if (parsed.bm_approval_request) {
-      onApproval({
-        ...parsed.bm_approval_request,
-        status: "waiting",
-      });
+  pushText: (text: string) => void,
+) {
+  let buf = "";
+  const flush = () => {
+    if (buf) {
+      pushText(buf);
+      buf = "";
     }
-  } catch {
-    // 标记不完整(分块到达):忽略,后续完整块再解析
-  }
-  return before;
+  };
+  const feed = (delta: string) => {
+    let combined = buf + delta;
+    buf = "";
+    for (;;) {
+      const start = combined.indexOf("[BM_APPROVAL:");
+      if (start === -1) break;
+      pushText(combined.slice(0, start));
+      combined = combined.slice(start);
+      const end = combined.indexOf("]\n", 1);
+      if (end === -1) {
+        // 标记未闭合:整段暂存,等下一个 delta 再续
+        buf = combined;
+        return;
+      }
+      const objStart = combined.indexOf("{");
+      const jsonText = combined.slice(objStart === -1 ? 1 : objStart, end);
+      try {
+        const parsed = JSON.parse(jsonText) as {
+          bm_approval_request?: Omit<ApprovalRequest, "status">;
+        };
+        if (parsed.bm_approval_request) {
+          onApproval({ ...parsed.bm_approval_request, status: "waiting" });
+        }
+      } catch {
+        // 完整闭合仍解析失败:按丢弃处理(不放裸 JSON 进正文)
+        console.warn("[BM_APPROVAL] 标记解析失败,已丢弃");
+      }
+      combined = combined.slice(end + 2);
+    }
+    pushText(combined);
+  };
+  return { feed, flush };
 }
 
 export function BoenmindRuntimeProvider({
@@ -93,22 +108,24 @@ export function BoenmindRuntimeProvider({
       content: [{ type: "text", text: "" }] as TextPart[],
     };
     setMessages((cur) => [...cur, assistant]);
-    const appendDelta = (delta: string) => {
-      const cleaned = extractApprovalMarker(
-        delta,
-        (req) => approvalHandlerRef.current(req),
-      );
-      if (!cleaned) return;
+    const pushText = (text: string) => {
+      if (!text) return;
       setMessages((cur) => {
         if (cur.length === 0) return cur;
         const copy = [...cur];
         const last = copy[copy.length - 1];
         const parts = (last.content as TextPart[]).map((p) => ({ ...p }));
-        parts[0] = { ...parts[0], text: parts[0].text + cleaned };
+        parts[0] = { ...parts[0], text: parts[0].text + text };
         copy[copy.length - 1] = { ...last, content: parts };
         return copy;
       });
     };
+    // W4b+:审批标记流式缓冲(跨 chunk 粘包/分包安全)
+    const markerStream = createApprovalMarkerStream(
+      (req) => approvalHandlerRef.current(req),
+      pushText,
+    );
+    const appendDelta = (delta: string) => markerStream.feed(delta);
     approvalHandlerRef.current = (req) => {
       const permMode = storage.get(STORAGE_KEYS.PERMISSION_MODE) || "ask";
       // 完全访问 (YOLO 模式): 自动放行批准，界面不弹卡片或抽屉
@@ -216,7 +233,11 @@ export function BoenmindRuntimeProvider({
           if (typeof d === "string" && d) appendDelta(d);
         }
       }
+      // 流正常收尾:冲刷可能残留的未闭合标记缓冲(按原样上屏,不吞正文)
+      markerStream.flush();
     } catch (e) {
+      // 异常收尾:同样先冲刷缓冲再追加错误提示
+      markerStream.flush();
       const aborted = e instanceof DOMException && e.name === "AbortError";
       appendDelta(
         aborted
@@ -291,6 +312,21 @@ export function BoenmindRuntimeProvider({
     };
     window.addEventListener("bm-chat-new", onNewChat);
     return () => window.removeEventListener("bm-chat-new", onNewChat);
+  }, []);
+
+  // 「切换历史会话」(SessionPanel 派发 bm-session-switched,目标 sid 已由
+  // App.tsx 写入 storage):中止在途回合并复位消息视图与审批挂起。
+  // 历史消息回放需独立端点(未建,见 BACKLOG),复位保证至少不再串显旧会话内容。
+  useEffect(() => {
+    const onSessionSwitched = () => {
+      abortRef.current?.abort();
+      setIsRunning(false);
+      setMessages([]);
+      setPendingApprovals([]);
+    };
+    window.addEventListener("bm-session-switched", onSessionSwitched);
+    return () =>
+      window.removeEventListener("bm-session-switched", onSessionSwitched);
   }, []);
 
   useEffect(() => {

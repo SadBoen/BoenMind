@@ -1,6 +1,7 @@
 // W8 常规设置(ADR-0018):运行环境探针(Python/Node.js)+ 工作区注册表。
 // 工作目录列表固定五行高度、超出滚动(用户明示);增删改/检测走 /admin/workspaces。
 import { useCallback, useEffect, useState } from "react";
+import { useTimedNotice } from "@/lib/use-timed-notice";
 import {
   FolderOpenIcon,
   PencilIcon,
@@ -41,7 +42,7 @@ function ToolCard({
       <span
         className={cn(
           "flex size-9 shrink-0 items-center justify-center rounded-full text-white",
-          info.installed ? "bg-emerald-500" : "bg-muted-foreground/40",
+          info.installed ? "bg-[var(--state-success-fg)]" : "bg-muted-foreground/40",
         )}
       >
         <FolderOpenIcon className="size-4" />
@@ -75,13 +76,12 @@ export function GeneralPage() {
   const [workspaces, setWorkspaces] = useState<WorkspaceEntry[]>([]);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
+  const { notice, flash: flashNotice } = useTimedNotice(4000);
   const [error, setError] = useState<string | null>(null);
 
   const flash = (msg: string) => {
-    setNotice(msg);
+    flashNotice(msg);
     setError(null);
-    setTimeout(() => setNotice(null), 4000);
   };
 
   const loadEnv = useCallback(async () => {

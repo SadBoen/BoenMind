@@ -1,7 +1,7 @@
 # BoenMind 安装说明
 
 前置:64 位(x86_64);Linux 需 OpenSSL 3(Ubuntu 22.04+/Debian 12+ 默认自带);
-**无需 Node/Python**(界面已预构建，官方 MCP 插件是单文件可执行；context-mode 的执行工具只调用用户自行安装的宿主程序，不会自动下载运行时)。
+**无需 Node/Python**(界面已预构建，官方 MCP 插件是单文件可执行，零外部运行时依赖)。
 
 ## 1. 解压
 
@@ -26,8 +26,8 @@
 
 ## 4. 官方 MCP 插件(已随包,免手动拷贝)
 
-官方插件就在安装目录的 `plugins/` 里(聚合搜索 `web-multisearch`、上下文模式
-`context-mode`),**无需手动拷贝**:解压后首次启动(以及后续在线升级)都能被
+官方插件就在安装目录的 `plugins/` 里(聚合搜索 `web-multisearch`、上下文透视
+`context-inspector`),**无需手动拷贝**:解压后首次启动(以及后续在线升级)都能被
 插件扫描直接发现。
 
     网页 → 设置 → MCP → 「扫描插件」→ 「批准接入」→ 「重载 MCP」(免重启)
@@ -36,7 +36,7 @@
 
     cp plugins/web-multisearch ~/.local/share/boenmind/mcp/
 
-context-mode 提供 `ctx_index`、`ctx_search`、会话快照/恢复和受限执行工具。索引/执行只能访问它配置的 `allowed_roots`；执行类工具仍由 Broker 审批，缺少用户本机运行时则返回 `runtime_unavailable`。
+context-inspector 提供 `context_inspect_snapshot`、`context_diagnose_spikes`、`context_track_file_effects`、`context_search_history` 四只读透视工具:会话上下文结构快照、token 尖刺诊断、文件行数效应追踪、跨会话历史检索。纯只读诊断,不修改任何状态,不影响压缩与遗忘策略。
 
 ## 5. 访问
 

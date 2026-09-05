@@ -429,69 +429,25 @@ pub(crate) fn spawn_turn(
                                 let call_resp = rrx.await;
                                 let mut approval_id: Option<String> = None;
                                 let mut tool_op: Option<bm_contract::ids::BmId> = None;
-                                let cap_is_approval = chat_tools
-                                    .iter()
-                                    .find(|(c, _, _)| *c == capability)
-                                    .map(|(_, _, a)| *a)
-                                    .unwrap_or(false);
-                                if let Ok(Err(_)) = &call_resp {
-                                    if cap_is_approval {
-                                        // 优先按能力名 + 真实调用入参精确匹配本回合开立的待审批单
-                                        // 杜绝多会话/并发调用同能力时错配他人审批单(批准A执行B的缺陷)
-                                        let (ftx, frx) = tokio::sync::oneshot::channel();
-                                        let _ = tx
-                                            .send(Cmd::FindPendingApprovalForCall {
-                                                capability: capability.clone(),
-                                                args: args.clone(),
-                                                resp: ftx,
-                                            })
-                                            .await;
-                                        if let Ok(Some((appr, opid))) = frx.await {
-                                            approval_id = Some(appr);
-                                            tool_op = Some(opid);
-                                        } else {
-                                            // 兜底:回落至首条 waiting_user
-                                            let (ltx, lrx) = tokio::sync::oneshot::channel();
-                                            let _ = tx
-                                                .send(Cmd::ApprovalList {
-                                                    params: wire::ApprovalListParams {
-                                                        state_filter: Some("waiting_user".into()),
-                                                    },
-                                                    resp: ltx,
-                                                })
-                                                .await;
-                                            if let Ok(Ok(list)) = lrx.await
-                                                && let Some(items) = list["approvals"].as_array()
-                                            {
-                                                for it in items {
-                                                    if it["capability"].as_str()
-                                                        == Some(&capability)
-                                                    {
-                                                        approval_id = it["approval_id"]
-                                                            .as_str()
-                                                            .map(|s| s.to_string());
-                                                        break;
-                                                    }
-                                                }
-                                            }
-                                            if let Some(appr) = &approval_id {
-                                                let (ptx, prx) = tokio::sync::oneshot::channel();
-                                                let _ = tx
-                                                    .send(Cmd::GetApprovalOp {
-                                                        approval_id: appr.clone(),
-                                                        resp: ptx,
-                                                    })
-                                                    .await;
-                                                if let Ok(Some(opid)) = prx.await {
-                                                    tool_op = Some(opid);
-                                                }
-                                            }
-                                        }
+                                match &call_resp {
+                                    // W4b+ 加固:ApprovalRequired 错误自带开单点的
+                                    // approval_id/operation_id(CoreError::ApprovalNeeded),
+                                    // 回合侧零反查——杜绝多会话/并发调用同能力时
+                                    // 「批准 A 执行 B」的错配缺陷
+                                    Ok(Err(CoreError::ApprovalNeeded {
+                                        approval_id: aid,
+                                        operation_id: opid,
+                                        ..
+                                    })) => {
+                                        approval_id = Some(aid.clone());
+                                        tool_op = bm_contract::ids::BmId::parse(opid).ok();
                                     }
-                                } else if let Ok(Ok(receipt_value)) = &call_resp {
-                                    tool_op = receipt_value["operation_id"]
-                                        .as_str()
-                                        .and_then(|s| bm_contract::ids::BmId::parse(s).ok());
+                                    Ok(Ok(receipt_value)) => {
+                                        tool_op = receipt_value["operation_id"]
+                                            .as_str()
+                                            .and_then(|s| bm_contract::ids::BmId::parse(s).ok());
+                                    }
+                                    _ => {}
                                 }
 
                                 if let Some(appr_id) = approval_id.clone() {
@@ -1176,9 +1132,9 @@ pub(crate) fn capability_call_inner(
                 )),
             );
             w.cap_pending.insert(
-                approval_id,
+                approval_id.clone(),
                 PendingCapabilityCall {
-                    op_id,
+                    op_id: op_id.clone(),
                     capability: params.capability.clone(),
                     args: params.args.clone(),
                     idempotency_key: params.idempotency_key.clone(),
@@ -1187,11 +1143,13 @@ pub(crate) fn capability_call_inner(
                 },
             );
             // GT-02 场景 A2 形态:approval_required 错误信封;operation 停在
-            // waiting_approval,由 approval.respond 续行(基线 §9.6)
-            Err(CoreError::Semantic(
-                ErrorCode::ApprovalRequired,
-                format!("能力 {} 需要用户审批", params.capability),
-            ))
+            // waiting_approval,由 approval.respond 续行(基线 §9.6)。
+            // 结构化携带两 ID:回合管线免反查,凭此精确绑定审批卡片。
+            Err(CoreError::ApprovalNeeded {
+                message: format!("能力 {} 需要用户审批", params.capability),
+                approval_id: approval_id.as_str().to_string(),
+                operation_id: op_id.as_str().to_string(),
+            })
         }
         Decision::Denied { reason } => {
             let (msg, call_id) = match reason {

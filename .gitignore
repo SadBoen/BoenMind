@@ -27,8 +27,7 @@ runtime/webapp/node_modules/
 runtime/webapp/dist/
 server-w.log
 
-# 官方插件构建产物(源码在 plugins/mcp/web-multisearch/src)
+# 官方插件构建产物(源码在 plugins/mcp/*/src)
 plugins/mcp/web-multisearch/target/
-plugins/mcp/context-mode/target/
-plugins/mcp/code-tools/target/
+plugins/mcp/context-inspector/target/
 server-w8.log

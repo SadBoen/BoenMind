@@ -159,8 +159,10 @@ pub fn builtin_templates() -> Vec<Provider> {
             builtin: true,
             endpoint: "https://api.tavily.com/search".into(),
             method: "POST".into(),
-            auth: "none".into(),
-            auth_name: "".into(),
+            // 2026-09-05 修正:旧默认 "none" 走通用适配器时 Key 永不随请求
+            // 发出,填真 Key 也 401;Tavily 现行 API 支持 Bearer 头。
+            auth: "bearer".into(),
+            auth_name: "Authorization".into(),
             key: "".into(),
             query_param: "query".into(),
             limit_param: "max_results".into(),
@@ -235,7 +237,9 @@ pub fn builtin_templates() -> Vec<Provider> {
             auth_name: "Authorization".into(),
             key: "".into(),
             query_param: "q".into(),
-            limit_param: "depth".into(),
+            // 2026-09-05 修正:旧默认 "depth" 恒发数字 depth:3,上游只认
+            // "standard"/"deep" 必 400;清空则不发 limit。
+            limit_param: "".into(),
             results_path: "/results".into(),
             title_field: "name".into(),
             url_field: "url".into(),
@@ -337,6 +341,18 @@ pub fn resolve_providers(cfg: &mut Config) -> Vec<Provider> {
         };
         apply_overrides(&mut p, &entry);
         apply_legacy_key(&mut p, cfg);
+        // 存量配置迁移:配置里若固化着旧缺陷默认值(tavily auth:"none" /
+        // linkup limit_param:"depth",2026-09-04 全量真连探针发现),回退到
+        // 修正后的内置模板值;用户显式改过的其他取值不受影响。
+        if let Some(t) = templ {
+            if p.id == "tavily" && p.auth == "none" {
+                p.auth = t.auth.clone();
+                p.auth_name = t.auth_name.clone();
+            }
+            if p.id == "linkup" && p.limit_param == "depth" {
+                p.limit_param = t.limit_param.clone();
+            }
+        }
         out.push(p);
     }
     // 内置但未出现在 providers 数组里的,补到末尾(避免误删内置;

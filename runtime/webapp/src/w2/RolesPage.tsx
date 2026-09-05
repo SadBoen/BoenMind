@@ -15,6 +15,7 @@ import {
   BookOpenIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useTimedNotice } from "@/lib/use-timed-notice";
 
 export function RolesPage() {
   const [roles, setRoles] = useState<RoleItem[]>([]);
@@ -23,7 +24,7 @@ export function RolesPage() {
   const [editingRole, setEditingRole] = useState<RoleItem | null>(null);
   const [editingSkill, setEditingSkill] = useState<SkillItem | null>(null);
   const [saving, setSaving] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
+  const { notice, flash: flashNotice, clearNotice } = useTimedNotice(5000);
   const [error, setError] = useState<string | null>(null);
 
   const reload = async () => {
@@ -42,8 +43,8 @@ export function RolesPage() {
   }, []);
 
   const flash = (msg: string | null) => {
-    setNotice(msg);
-    if (msg) setTimeout(() => setNotice(null), 5000);
+    if (msg) flashNotice(msg);
+    else clearNotice();
   };
 
   // ---- 角色编辑 -----------------------------------------------------------

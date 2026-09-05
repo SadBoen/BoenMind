@@ -299,7 +299,7 @@ stock.quote.get
 stock.analyze
 stock.place_order
 music.search
-music.play
+music.playlist_add
 audio.volume.get
 audio.volume.set
 audio.mute
@@ -425,8 +425,8 @@ Audio System Service
 
 Music App
 ├── music.search
-├── music.play
-└── music.pause
+├── music.playlist_add
+└── music.playlist_clear
 ```
 
 因此系统允许两类 App：
@@ -497,10 +497,10 @@ high-risk-command
 
 ```text
 audio.volume.set       low-risk-command
-music.play              low-risk-command
-mail.create_draft       reversible-command
-mail.send               external-side-effect
-stock.place_order       high-risk-command
+music.playlist_add     low-risk-command
+mail.create_draft      reversible-command
+mail.send              external-side-effect
+stock.place_order      high-risk-command
 ```
 
 即使不需要用户弹窗，也必须经过 Broker 检查和审计。风险等级与 4.5 的信任分级正交组合：untrusted 来源把实际风险上提一级处理。

@@ -1564,7 +1564,14 @@ pub(crate) fn handle_task_autorun_start(
             input_trust: bm_contract::wire::InputTrust::Trusted,
         },
     )?;
-    let st = w.autorun.get_mut(&params.task_id).expect("存在");
+    // 防御化(原 expect):send_input 期间 autorun 态被并发清场的健壮性兜底
+    let Some(st) = w.autorun.get_mut(&params.task_id) else {
+        return Ok(bm_contract::wire::TaskAutorunResult {
+            session_id,
+            agent_id,
+            accepted: false,
+        });
+    };
     st.in_flight_op = Some(sent.operation_id);
     Ok(bm_contract::wire::TaskAutorunResult {
         session_id,
@@ -1649,16 +1656,16 @@ pub(crate) fn autorun_pump(w: &mut World, op_id: &BmId) {
         w.autorun.remove(&task_id);
         return;
     }
-    // 停滞:连续两轮完全相同输出
-    let same = w.autorun[&task_id].prev_content.as_deref() == Some(content.as_str());
-    {
-        let st = w.autorun.get_mut(&task_id).expect("存在");
-        if same {
-            st.repeats += 1;
-        } else {
-            st.repeats = 1;
-            st.prev_content = Some(content.clone());
-        }
+    // 停滞:连续两轮完全相同输出(防御化(原 expect):条目被并发清场则放弃推进)
+    let Some(st) = w.autorun.get_mut(&task_id) else {
+        return;
+    };
+    let same = st.prev_content.as_deref() == Some(content.as_str());
+    if same {
+        st.repeats += 1;
+    } else {
+        st.repeats = 1;
+        st.prev_content = Some(content.clone());
     }
     if w.autorun[&task_id].repeats >= 2 {
         autorun_block(w, &task_id, "stalled");
@@ -1704,8 +1711,10 @@ pub(crate) fn autorun_pump(w: &mut World, op_id: &BmId) {
     match sent {
         Ok(r) => {
             emit_autorun(w, &task_id, "turn_completed", turn, None);
-            let st = w.autorun.get_mut(&task_id).expect("存在");
-            st.in_flight_op = Some(r.operation_id);
+            // 防御化(原 expect):send_input 期间条目被并发清场则放弃回填
+            if let Some(st) = w.autorun.get_mut(&task_id) {
+                st.in_flight_op = Some(r.operation_id);
+            }
         }
         Err(_) => {
             emit_autorun(w, &task_id, "finished", turn, Some("send_failed"));

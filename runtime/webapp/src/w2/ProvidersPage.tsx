@@ -3,6 +3,7 @@
 // 组件映射:表单内模型选择 = 注册表 elements-model-picker(本体选装);
 // 对话框/按钮/输入 = shadcn 官方件。
 import { useCallback, useEffect, useState } from "react";
+import { useTimedNotice } from "@/lib/use-timed-notice";
 import {
   CheckCircle2Icon,
   CheckIcon,
@@ -57,7 +58,7 @@ export function ProvidersPage() {
   const [probes, setProbes] = useState<Record<string, ProbeResult>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const { notice, flash: flashNotice } = useTimedNotice(6000);
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
@@ -73,9 +74,8 @@ export function ProvidersPage() {
   }, [reload]);
 
   const flash = (msg: string) => {
-    setNotice(msg);
+    flashNotice(msg);
     setError(null);
-    setTimeout(() => setNotice(null), 6000);
   };
 
   const probe = async (p: Provider) => {
