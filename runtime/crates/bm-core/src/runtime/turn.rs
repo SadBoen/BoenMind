@@ -235,13 +235,34 @@ pub(crate) fn spawn_turn(
         });
         let mut name_to_cap: std::collections::HashMap<String, String> =
             std::collections::HashMap::new();
+        // ADR-0022 后续批(用户实测反馈「工具名没变」):内置能力出主流短名,
+        // 模型对 read/write/edit/search/exec 有训练亲和;合同能力名不动,
+        // 返回调用经 name_to_cap 映射回内核能力名。短名被占(理论边界)则
+        // 回落单下划线长名,保唯一性。
+        const SHORT_WIRE_NAMES: &[(&str, &str)] = &[
+            ("fs.read", "read"),
+            ("fs.write", "write"),
+            ("fs.edit", "edit"),
+            ("fs.search", "search"),
+            ("system.exec", "exec"),
+        ];
+        let taken: std::collections::HashSet<String> = chat_tools
+            .iter()
+            .map(|(cap, ..)| cap.replace('.', "_"))
+            .collect();
         let tools_json: Vec<serde_json::Value> = chat_tools
             .iter()
             .map(|(cap, schema, needs_approval, manifest_desc)| {
                 // OpenAI function.name 规范要求 ^[a-zA-Z0-9_-]{1,64}$，不能有点号。
-                // 采用单下划线转义(fs.read -> fs_read; mcp.foo.bar -> mcp_foo_bar)，
-                // 彻底告别别扭的双下划线；调用返回时由 name_to_cap 原样映射回内核能力名。
-                let openai_name = cap.replace('.', "_");
+                // 默认单下划线转义(fs.read -> fs_read; mcp.foo.bar -> mcp_foo_bar)；
+                // 内置五件走短名表；调用返回时由 name_to_cap 原样映射回内核能力名。
+                let default_name = cap.replace('.', "_");
+                let openai_name = SHORT_WIRE_NAMES
+                    .iter()
+                    .find(|(c, _)| c == cap)
+                    .map(|(_, short)| short.to_string())
+                    .filter(|short| !taken.contains(short))
+                    .unwrap_or(default_name);
                 name_to_cap.insert(openai_name.clone(), cap.clone());
                 // ADR-0022 描述治理:描述随 manifest 走(fs.*/system.exec 内置
                 // 能力与 MCP 工具均自描述);缺省按审批语义给最小兜底,不再

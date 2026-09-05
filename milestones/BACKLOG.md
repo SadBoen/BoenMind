@@ -15,6 +15,7 @@
 | 模型自编工具结果(mimo 质量备忘) | 同轮实测:问 counter.bump 时模型未发起调用直接编造「bumped successfully」(/admin/context 证实 0 工具轮);对话区无 [调用] 标记即可辨真伪,强提示词可压不断根;随模型侧观察,不立项 | OPEN(记录在案) |
 | Skill v0.2 第二步(scripts 执行面) | 第一步(合同 Minor: version + references)与 ADR-0016(Broker 七步管线覆盖脚本设计)已闭合交付;**第二步**:等待用户审阅确认 ADR-0016 后接入 wasmtime 执行引擎写代码 | OPEN(待 ADR-0016 确认后动工) |
 | Agent 工具面远期增强三件(ADR-0022 候补) | ①Code Mode 式多轮往返脚本合并(DSH 已验证 5 次往返并 1 次);②Hermes tool_search 渐进披露(工具清单超预算时降级网关元工具,防 MCP 树撑爆上下文);③按模型条件化工具 schema(对标 Hermes patch 的动态裁剪,实测省 148 tok/次);来源=ADR-0022 调研报告 §9 P2/远期,主批未含 | OPEN(待排期) |
+| context-inspector 插件工具名瘦身(插件侧) | 2026-09-06 用户实测:wire 名 mcp_context_inspector_context_inspect_snapshot 过长(插件工具 context_* 前缀与服务名重复);改插件 tools/list 的工具名(去 context_ 前缀)需重建 exe+重新批准接入;内核 wire 短名批(read/write/edit/search/exec)已落地不涉此 | OPEN(待排期) |
 | VPS v0.0.5 发版后验证清单 | 随包扫描双目录已修+直通工具内联回喂已修+模型调用硬顶 30s→120s(BOEN_TURN_TIMEOUT_SECS 可配)均已落 main(f894663+本批);VPS 侧 web-multisearch 已远程装好并批准在役(2 工具)。待用户明示发版→VPS 升级后复测:①直通工具(echo/counter)对话秒回 ②真模型联网问答(web_search)全链路 ③关于页/常规设置不回归,闭合后移出 | OPEN(随下次发版) |
 | W8 遗留:能力执行 cwd 注入 | ADR-0018 只做到回合 system prompt 注入;MCP/context-mode 等需要 cwd 的能力执行面尚未消费会话绑定工作区(该插件默认也未启用);2026-09-05 回看补记:内置 fs.* 同族——fs 工具相对路径在多工作区场景回退注册表首个根而非会话绑定根(guard.rs roots[0]),能力调用在核心层系无会话设计(system_session),修需穿合同面;与 Skill v0.2 执行线同批评估,继续经 Broker 管线、不新增特权通道 | OPEN(依 ADR-0016/0017 排期) |
 | web_multisearch:Parallel Search 接入 | 用户已供 Key(2026-09-04);其 `search_queries` 要求数组,通用 JSON 适配器只能发字符串(实测 422),需在插件加内置特例解析(仿 jina);模板死路两处(tavily/linkup)已随 2026-09-05 回看批修复闭合 | OPEN(待排期) |
