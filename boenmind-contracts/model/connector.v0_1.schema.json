@@ -93,7 +93,8 @@
                 "enum": [
                   "system",
                   "user",
-                  "assistant"
+                  "assistant",
+                  "tool"
                 ]
               },
               "content": {
@@ -187,8 +188,32 @@
             "finish_reason": {
               "enum": [
                 "stop",
-                "length"
+                "length",
+                "tool_calls"
               ]
+            },
+            "tool_calls": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "id",
+                  "name",
+                  "arguments"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "arguments": {
+                    "type": "string"
+                  }
+                }
+              }
             },
             "usage": {
               "type": "object",

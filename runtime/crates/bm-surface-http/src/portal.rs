@@ -94,11 +94,22 @@ fn cookie_session(headers: &HeaderMap) -> Option<String> {
     None
 }
 
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter()
+        .zip(b.iter())
+        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+        == 0
+}
+
 fn authed(state: &crate::AppState, headers: &HeaderMap) -> bool {
     let bearer_ok = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
-        .map(|v| v == format!("Bearer {}", state.token))
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(|given| constant_time_eq(given.as_bytes(), state.token.as_bytes()))
         .unwrap_or(false);
     if bearer_ok {
         return true;
@@ -222,7 +233,8 @@ pub async fn portal_login(
         .as_ref()
         .map(|h| {
             let (salt, expect) = h.split_once('$').unwrap_or(("", ""));
-            hash_password(body["password"].as_str().unwrap_or_default(), salt) == expect
+            let computed = hash_password(body["password"].as_str().unwrap_or_default(), salt);
+            constant_time_eq(computed.as_bytes(), expect.as_bytes())
         })
         .unwrap_or(false);
     if !ok {
@@ -260,7 +272,8 @@ pub async fn portal_password(
         .as_ref()
         .map(|h| {
             let (salt, expect) = h.split_once('$').unwrap_or(("", ""));
-            hash_password(body["old"].as_str().unwrap_or_default(), salt) == expect
+            let computed = hash_password(body["old"].as_str().unwrap_or_default(), salt);
+            constant_time_eq(computed.as_bytes(), expect.as_bytes())
         })
         .unwrap_or(false);
     if !old_ok {

@@ -19,8 +19,9 @@ workspace "BoenMind" "面向个人软件生态的 AI Runtime/AI 操作系统—�
             wikiApp = container "Wiki App" "[阶段一真实 App·ADR-0011] 知识库业务域:apps/wiki_server.py(stdio MCP);暴露 page.read/page.write/page.list,真实写盘带摘要收据。" "stdio MCP (Python)" "L4,App"
 
             audio = container "Audio Provider (system.audio)" "[阶段二规划] 系统服务 Provider:audio.volume.get/set、audio.mute、audio.output.list;低风险确定性能力,支持 verification 事后核验钩子。" "系统服务(可独立进程)" "L3,Provider"
-            fsProvider = container "File Provider" "[阶段二规划] 文件系统能力 Provider:文件读写、选择器、导出。" "系统服务(可独立进程)" "L3,Provider"
-            mcp = container "MCP Provider 接入" "[阶段一现役·两段式] 外部 MCP Server 作为普通 Provider 注册,扫描发现→显式批准落盘→热装载免重启;当前 web_multisearch 等现役。" "接入器(Rust StdioMcpTransport)" "L3,Provider"
+            fsProvider = container "File Provider (fs.*)" "[阶段一内建·ADR-0021] 文件系统能力 Provider:fs.search/fs.read(只读直通)、fs.write/fs.edit(审批类);rg 引擎内嵌,工作区沙箱隔离。" "内建模块 (bm-providers::fs_tools)" "L3,Provider"
+            systemExec = container "System Exec (system.exec)" "[阶段一内建·ADR-0019] 系统命令执行能力:命令审批类(approval:required),宿主 Shell 委托执行。" "内建模块 (bm-providers::system_exec)" "L3,Provider"
+            mcp = container "MCP Provider 接入" "[阶段一现役·两段式] 外部与随包 MCP Server 作为普通 Provider 注册,扫描发现→显式批准落盘→热装载免重启;当前 web_multisearch、context-inspector 等现役。" "接入器(Rust StdioMcpTransport)" "L3,Provider"
             timerProvider = container "Timer Provider" "[阶段二规划] 定时与自动化触发;只是普通调用方,定时能力本身是可替换的系统服务 Provider,内核不持有调度特权。" "系统服务(可独立进程)" "L3,Provider"
 
             l2core = container "L2 Runtime Core (active generation)" "可按代际升级的运行时内核:同一时刻只有一个 generation 对可写业务状态拥有写入权;持有 Task 规范状态、权限、事件规范序(event_seq 全局单调);重启或换代必须从持久状态恢复,不依赖旧进程内存。" "Rust 进程" "L2,RuntimeCore" {
@@ -75,6 +76,7 @@ workspace "BoenMind" "面向个人软件生态的 AI Runtime/AI 操作系统—�
         wikiApp -> broker "注册并暴露 wiki.* capability"
         audio -> broker "注册并暴露 audio.* capability"
         fsProvider -> broker "注册并暴露 fs.* capability"
+        systemExec -> broker "注册并暴露 system.exec capability"
         mcp -> broker "注册 mcp:<server>.<tool>;风险未知首次调用需审批"
         timerProvider -> broker "作为普通调用方触发 capability.call"
 
@@ -154,6 +156,7 @@ workspace "BoenMind" "面向个人软件生态的 AI Runtime/AI 操作系统—�
                 containerInstance wikiApp
                 containerInstance audio
                 containerInstance fsProvider
+                containerInstance systemExec
                 containerInstance mcp
                 containerInstance timerProvider
             }

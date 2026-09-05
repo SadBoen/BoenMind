@@ -57,7 +57,6 @@
 
 | 条目 | 说明 | 状态 |
 |---|---|---|
-| PENPOT-quickstart 过时 | 指向已删除的 runtime/web/tokens.css;已加过时标注,待归档或更新 | OPEN(低) |
 | MCP 子进程 stderr 采集 | 现为 `Stdio::inherit()` 直通 server.log(W2 刻意诊断选型);后续可管道采集入插件页 | OPEN(低) |
 
 ## 4. 用户拍板后置(DEFERRED,裁决记录见 milestones/PENDING.md)

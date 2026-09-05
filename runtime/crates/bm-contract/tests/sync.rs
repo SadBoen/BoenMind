@@ -6,9 +6,11 @@ use bm_contract::connector::{InvokeRequest, InvokeResponse, Message, Role, Usage
 use bm_contract::error_codes::{ErrorCode, Since, WIRE_CODES, WireErrorCode};
 use bm_contract::events::{EventEnvelope, EventType};
 use bm_contract::exec_log::LogEntry;
+use bm_contract::ids::BmId;
 use bm_contract::registries;
 use bm_contract::schemas::{validate, validate_by_pointer};
 use bm_contract::states::{AgentState, OperationState, SessionState, TaskState};
+use bm_contract::timestamp;
 use bm_contract::wire::{
     AgentSpec, CancelResult, EventsPollResult, GetOperationParams, Receipt, RequestEnvelope,
     ResponseEnvelope, SendInputParams, SessionCloseResult, SessionCreateParams,
@@ -583,6 +585,69 @@ fn connector_invoke_validates() {
         &ser,
     )
     .expect("invoke_response(ok) 应过 schema");
+
+    // W4 回归:finish_reason = tool_calls + 携带 tool_calls 必须合法过 schema
+    let tool_call_resp = InvokeResponse::Completed {
+        content: String::new(),
+        tool_calls: vec![bm_contract::connector::ToolCallPayload {
+            id: "call_123".into(),
+            name: "fs_search".into(),
+            arguments: r#"{"pattern":"test"}"#.into(),
+        }],
+        finish_reason: bm_contract::connector::FinishReason::ToolCalls,
+        usage: Usage {
+            tokens_in: 300,
+            tokens_out: 40,
+            tokens_reasoning: Some(10),
+            tokens_cached: Some(50),
+        },
+        model_id: "zhipu.glm-4-flash".into(),
+        latency_ms: 1200,
+        stream_interrupted: false,
+    };
+    let ser = serde_json::to_value(&tool_call_resp).unwrap();
+    validate_by_pointer(
+        registries::CONNECTOR_SCHEMA,
+        "#/definitions/invoke_response",
+        &ser,
+    )
+    .expect("invoke_response(tool_calls) 应过 schema");
+
+    // W4 回归:role = tool 消息必须合法过 invoke_request schema
+    let req_with_tool_msg = bm_contract::connector::InvokeRequest {
+        model_id: "zhipu.glm-4-flash".into(),
+        messages: vec![
+            bm_contract::connector::Message {
+                role: bm_contract::connector::Role::User,
+                content: "查一下文件".into(),
+            },
+            bm_contract::connector::Message {
+                role: bm_contract::connector::Role::Assistant,
+                content: "".into(),
+            },
+            bm_contract::connector::Message {
+                role: bm_contract::connector::Role::Tool,
+                content: "[]".into(),
+            },
+        ],
+        tools: vec![],
+        params: Default::default(),
+        secret_ref: "secret:zhipu-api-key".into(),
+        budget_ctx: bm_contract::connector::BudgetCtx {
+            operation_id: BmId::generate("op"),
+            agent_id: BmId::generate("agent"),
+            remaining_tokens: 10000,
+        },
+        deadline: timestamp::now(),
+        attempt: 1,
+    };
+    let ser = serde_json::to_value(&req_with_tool_msg).unwrap();
+    validate_by_pointer(
+        registries::CONNECTOR_SCHEMA,
+        "#/definitions/invoke_request",
+        &ser,
+    )
+    .expect("invoke_request(with role:tool) 应过 schema");
 
     let fail_resp = InvokeResponse::Failed {
         error_code: ErrorCode::Timeout,

@@ -306,11 +306,38 @@ mod tests {
             )
             .await
             .expect("read ok");
-        assert!(
-            out["content"]
-                .as_str()
-                .expect("content")
-                .contains("fallback")
+        assert!(out["content"].as_str().unwrap().contains("fallback"));
+    }
+
+    #[tokio::test]
+    async fn fs_write_and_edit_approval_manifest_shape() {
+        let entries = fs_capability_entries();
+        let write_manifest = entries
+            .iter()
+            .find(|(m, _)| m.capability == FS_WRITE)
+            .map(|(m, _)| m)
+            .expect("fs.write exists");
+        assert_eq!(
+            write_manifest.approval,
+            bm_contract::capability::ApprovalRequirement::Required
+        );
+        assert_eq!(
+            write_manifest.effect,
+            bm_contract::capability::RiskClass::ExternalSideEffect
+        );
+
+        let edit_manifest = entries
+            .iter()
+            .find(|(m, _)| m.capability == FS_EDIT)
+            .map(|(m, _)| m)
+            .expect("fs.edit exists");
+        assert_eq!(
+            edit_manifest.approval,
+            bm_contract::capability::ApprovalRequirement::Required
+        );
+        assert_eq!(
+            edit_manifest.effect,
+            bm_contract::capability::RiskClass::ExternalSideEffect
         );
     }
 }

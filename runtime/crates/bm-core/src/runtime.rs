@@ -794,6 +794,30 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
                 let _ =
                     resp.send(key.and_then(|k| world.cap_pending.get(&k).map(|p| p.op_id.clone())));
             }
+            // W4b:根据 capability 与 args 精确查找匹配的待审批单(避免多会话错配)
+            Cmd::FindPendingApprovalForCall {
+                capability,
+                args,
+                resp,
+            } => {
+                let found = world.cap_pending.iter().find_map(|(id, pending)| {
+                    if pending.capability == capability && pending.args == args {
+                        let is_waiting = world
+                            .approvals
+                            .get(id)
+                            .map(|a| a.state == bm_contract::capability::ApprovalState::WaitingUser)
+                            .unwrap_or(false);
+                        if is_waiting {
+                            Some((id.as_str().to_string(), pending.op_id.clone()))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                });
+                let _ = resp.send(found);
+            }
         }
         // M5-T7:Watchdog 节拍扫描(每条命令处理后检查是否到期;
         // 事实事件产出,不推断编排下一步)

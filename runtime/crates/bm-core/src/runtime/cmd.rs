@@ -211,6 +211,12 @@ pub(crate) enum Cmd {
         approval_id: String,
         resp: oneshot::Sender<Option<BmId>>,
     },
+    /// W4b 回合查找匹配本回合请求的待审批单(按 capability + 校验 args_digest 或 operation 归属)
+    FindPendingApprovalForCall {
+        capability: String,
+        args: serde_json::Value,
+        resp: oneshot::Sender<Option<(String, BmId)>>,
+    },
 }
 
 /// Task 生命周期动作(M5-T1;completed/failed 无 wire 入口——完成判定门禁
@@ -334,6 +340,9 @@ pub(crate) fn reply_unavailable(cmd: Cmd) {
         // W4b:排空期审批请求/反查按排空口径静默
         Cmd::ApprovalRequested { .. } => {}
         Cmd::GetApprovalOp { resp, .. } => {
+            let _ = resp.send(None);
+        }
+        Cmd::FindPendingApprovalForCall { resp, .. } => {
             let _ = resp.send(None);
         }
     }

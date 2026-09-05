@@ -252,6 +252,8 @@ pub fn rebuild_routes(cfg: &AdminConfig) {
                 eprintln!("[W6] 模型「{id}」密钥播种失败(不入路由): {e:?}");
                 continue;
             }
+            // INV-5:将播种的 provider API key 同步注册进脱敏扫描面
+            cfg.handle.register_redaction_value(key);
             table.insert(id, connector.clone());
         }
     }
@@ -1169,6 +1171,15 @@ pub async fn mcp_config_get(
     State(cfg): State<AdminConfig>,
     AxumPath(name): AxumPath<String>,
 ) -> Response {
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return admin_error(
+            StatusCode::BAD_REQUEST,
+            "非法配置名称(仅限英数字/下划线/连字符)",
+        );
+    }
     let Some(path) = cfg.mcp_config.clone() else {
         return admin_error(
             StatusCode::BAD_REQUEST,
@@ -1193,6 +1204,15 @@ pub async fn mcp_config_set(
     AxumPath(name): AxumPath<String>,
     Json(body): Json<McpConfigBody>,
 ) -> Response {
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return admin_error(
+            StatusCode::BAD_REQUEST,
+            "非法配置名称(仅限英数字/下划线/连字符)",
+        );
+    }
     let Some(path) = cfg.mcp_config.clone() else {
         return admin_error(
             StatusCode::BAD_REQUEST,
@@ -1528,13 +1548,18 @@ fn zip_dir(dir: &std::path::Path) -> Result<Vec<u8>, String> {
                 std::fs::read_dir(base).map_err(|e| format!("read_dir {}: {e}", base.display()))?
             {
                 let entry = entry.map_err(|e| format!("{e}"))?;
+                let file_type = entry.file_type().map_err(|e| format!("{e}"))?;
+                if file_type.is_symlink() {
+                    // 安全防护:工作区打包下载不跟随符号链接,防止链接到工作区外敏感文件
+                    continue;
+                }
                 let path = entry.path();
                 let rel = if prefix.is_empty() {
                     entry.file_name().to_string_lossy().to_string()
                 } else {
                     format!("{prefix}/{}", entry.file_name().to_string_lossy())
                 };
-                if path.is_dir() {
+                if file_type.is_dir() {
                     zip.add_directory(rel.clone(), *options)
                         .map_err(|e| format!("{e}"))?;
                     walk(zip, options, &rel, &path, count, total)?;

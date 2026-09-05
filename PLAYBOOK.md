@@ -71,6 +71,8 @@ BOEN_TURN_TIMEOUT_SECS   回合内每次模型调用 deadline(秒,默认 120;202
 | 桌面壳 web/src-tauri | 已迁 `shell/tauri/src-tauri`(frontendDist 指 runtime/webapp/dist) |
 | config_store(dsh 线归档) | W2 起按 ADR-0012 口径接回(config/model.json,文件>env) |
 | 天机阁/deepseek-v4-flash 中转 | 已清;现用 OpenCode Go mimo-v2.5(zen 网关) |
+| code-tools 随包插件 | 已退役(ADR-0021 内置化为内核 fs.* 工具集) |
+| context-mode 插件名 | 已更名为 context-inspector(独立 Rust MCP 项目) |
 
 ## 7. 仓外关联资产
 

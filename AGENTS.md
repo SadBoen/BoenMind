@@ -17,7 +17,7 @@ BoenMind-CORE-ARCHITECTURE.md   第 0 层  架构基线:原则/边界/不变量;
 adr/                            第 0 层  架构决策记录 ADR-0001..0021(0012 随 M10 dsh 线归档、编号跳空;基线与 ADR 冲突时以更新的 ADR 为准)
 architecture/                   第 0 层  C4 模型 boenmind.c4(拓扑唯一权威)+ 辩论转录(debates/)+ 验证报告
 boenmind-contracts/             第 1 层  机器可读合同(v1.0 冻结)+ validate.py 校验器 + m0/(测试矩阵/威胁模型/perf-baseline)
-milestones/                     第 2 层  实现规格+回看(M1-M9、W1-W4)+ 台账四件:HISTORY(交付时间线)/BACKLOG(未结事项)/PENDING(待裁决,现清零)/AUDIT-2026-08-30(审计)
+milestones/                     第 2 层  实现规格+回看(M1-M9、W1-W9)+ 台账四件:HISTORY(交付时间线)/BACKLOG(未结事项)/PENDING(待裁决,现清零)/AUDIT-2026-08-30(审计)
 runtime/                        第 3 层  Rust workspace 9 个 crate(bm-contract/core/persist/providers/cli/surface-http/runtime/judge/testkit)+ webapp(W 序列前端,Vite+React+TS)
 apps/                           第 3 层  真实 App:wiki_server/market_server/music_server(stdio MCP,Python)+ mcp-config.example.json
 plugins/                        第 3 层  官方随包插件:mcp/web-multisearch(聚合搜索)、mcp/context-inspector(交互透视与诊断分析)

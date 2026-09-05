@@ -12,7 +12,7 @@
 
 到 [Releases](https://github.com/SadBoen/BoenMind/releases/latest) 下载最新
 `boenmind-<版本>-linux-x86_64.tar.gz`(校验和同名 `.sha256`),包内含:
-`boenmind-server`(服务器+网页界面)、`plugins/web-multisearch`(官方聚合搜索 MCP)、`plugins/context-mode`(官方可选 Rust 上下文 MCP,默认不启用)、
+`boenmind-server`(服务器+网页界面)、`plugins/web-multisearch`(官方聚合搜索 MCP)、`plugins/context-inspector`(官方 Rust 上下文透视 MCP)、
 `webapp/dist`(预构建前端)、`INSTALL.md`(离线安装说明)。
 
 前置:x86_64 Linux;OpenSSL 3 运行库(Ubuntu 22.04+/Debian 12+ 默认自带);**无需** Node/Python。
@@ -115,7 +115,7 @@ BOEN_SECRET_MASTER_KEY="<主密钥>" BOEN_MODEL_STREAM=1   ./boenmind-server --w
 cd runtime/webapp && npm ci && npm run build && cd ../..     # 前端 dist
 cd runtime && cargo build --release --bin boenmind-server    # 服务器
 cd ../plugins/mcp/web-multisearch && cargo build --release   # 搜索插件(可选)
-cd ../context-mode && cargo build --release                    # 上下文插件(可选)
+cd ../context-inspector && cargo build --release              # 上下文透视插件(可选)
 ```
 
 发版:打 `v*` tag 推送即自动构建发布(Linux 包);开发规程见 [AGENTS.md](AGENTS.md)。

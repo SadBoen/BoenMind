@@ -195,7 +195,7 @@ pub(crate) fn spawn_turn(
 
     tokio::spawn(async move {
         // W4:messages 含角色 prompt + 历史回合 + 本轮输入;tools=直通工具
-        // (OpenAI function 格式,capability 名的点映射为双下划线);工具结果
+        // (OpenAI function 格式,capability 名的点映射为单下划线);工具结果
         // 经 CapabilityCall 回核心循环执行(Broker 裁决/审计管道原样),轮询
         // operations 至终态取结果回喂模型。工具轮上限 5,防循环失控。
         const MAX_TOOL_ROUNDS: u32 = 5;
@@ -436,37 +436,55 @@ pub(crate) fn spawn_turn(
                                     .unwrap_or(false);
                                 if let Ok(Err(_)) = &call_resp {
                                     if cap_is_approval {
-                                        let (ltx, lrx) = tokio::sync::oneshot::channel();
+                                        // 优先按能力名 + 真实调用入参精确匹配本回合开立的待审批单
+                                        // 杜绝多会话/并发调用同能力时错配他人审批单(批准A执行B的缺陷)
+                                        let (ftx, frx) = tokio::sync::oneshot::channel();
                                         let _ = tx
-                                            .send(Cmd::ApprovalList {
-                                                params: wire::ApprovalListParams {
-                                                    state_filter: Some("waiting_user".into()),
-                                                },
-                                                resp: ltx,
+                                            .send(Cmd::FindPendingApprovalForCall {
+                                                capability: capability.clone(),
+                                                args: args.clone(),
+                                                resp: ftx,
                                             })
                                             .await;
-                                        if let Ok(Ok(list)) = lrx.await
-                                            && let Some(items) = list["approvals"].as_array()
-                                        {
-                                            for it in items {
-                                                if it["capability"].as_str() == Some(&capability) {
-                                                    approval_id = it["approval_id"]
-                                                        .as_str()
-                                                        .map(|s| s.to_string());
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                        if let Some(appr) = &approval_id {
-                                            let (ptx, prx) = tokio::sync::oneshot::channel();
+                                        if let Ok(Some((appr, opid))) = frx.await {
+                                            approval_id = Some(appr);
+                                            tool_op = Some(opid);
+                                        } else {
+                                            // 兜底:回落至首条 waiting_user
+                                            let (ltx, lrx) = tokio::sync::oneshot::channel();
                                             let _ = tx
-                                                .send(Cmd::GetApprovalOp {
-                                                    approval_id: appr.clone(),
-                                                    resp: ptx,
+                                                .send(Cmd::ApprovalList {
+                                                    params: wire::ApprovalListParams {
+                                                        state_filter: Some("waiting_user".into()),
+                                                    },
+                                                    resp: ltx,
                                                 })
                                                 .await;
-                                            if let Ok(Some(opid)) = prx.await {
-                                                tool_op = Some(opid);
+                                            if let Ok(Ok(list)) = lrx.await
+                                                && let Some(items) = list["approvals"].as_array()
+                                            {
+                                                for it in items {
+                                                    if it["capability"].as_str()
+                                                        == Some(&capability)
+                                                    {
+                                                        approval_id = it["approval_id"]
+                                                            .as_str()
+                                                            .map(|s| s.to_string());
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                            if let Some(appr) = &approval_id {
+                                                let (ptx, prx) = tokio::sync::oneshot::channel();
+                                                let _ = tx
+                                                    .send(Cmd::GetApprovalOp {
+                                                        approval_id: appr.clone(),
+                                                        resp: ptx,
+                                                    })
+                                                    .await;
+                                                if let Ok(Some(opid)) = prx.await {
+                                                    tool_op = Some(opid);
+                                                }
                                             }
                                         }
                                     }

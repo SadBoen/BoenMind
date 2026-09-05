@@ -15,6 +15,8 @@ const MAX_RESULTS_DEFAULT: usize = 80;
 const MAX_RESULTS_CEILING: usize = 500;
 const MAX_OUTPUT_CHARS: usize = 16_000;
 const MAX_FILE_BYTES: u64 = 1_048_576;
+/// 单次读取文件大小上限:16MB(防超大文件全量入内存 DoS)
+const MAX_READ_BYTES: u64 = 16 * 1_048_576;
 const SKIP_DIRS: &[&str] = &[".git", "node_modules", "target", "dist", "build"];
 const LINE_CAP_CHARS: usize = 400;
 const READ_DEFAULT_LINES: usize = 2_000;
@@ -304,6 +306,15 @@ pub fn read(roots: &Roots, args: &Value) -> Value {
         Ok(p) => p,
         Err(e) => return tool_err(e),
     };
+    if let Ok(meta) = std::fs::metadata(&path)
+        && meta.len() > MAX_READ_BYTES
+    {
+        return tool_err(format!(
+            "文件过大({}MB > 上限 {}MB),请使用带行号/分片读取工具",
+            meta.len() / (1024 * 1024),
+            MAX_READ_BYTES / (1024 * 1024)
+        ));
+    }
     let raw = match std::fs::read(&path) {
         Ok(b) => b,
         Err(e) => return tool_err(format!("读取失败:{}({e})", display_path(&path))),

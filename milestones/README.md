@@ -41,7 +41,6 @@
 - `FULL-REVIEW-2026-08-30.md` — M1-M9 全面回看(ADR 兑现度、S1-S10 总表 §2.4、遗留 72 条总账 §4);
 - `M2-adr-settlement.md`、`M4-adr-settlement.md` — 开工前 ADR 条件结算表(已闭合);
 - `W-ui-inventory.md` — assistant-ui 官方资产盘点(W 序列选装参考);
-- `PENPOT-quickstart.md` — Penpot 上手(⚠ 2026-09-01 标注:令牌对接路径已随 dsh 前端失效);
 - `shots-w2/`、`shots-w3/` — 验收截图存档。
 
 ## 惯例
