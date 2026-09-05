@@ -84,6 +84,9 @@
 | lease 通道真实吞吐实测 | M4 §6-1 → M8 §6-4 | DEFERRED(留档后置) |
 | 桌面安装包(`cargo tauri build` 出 .exe) | M3 §6-1 → M8 §6-1(D-M8-3) | DEFERRED(搁置不排期,骨架在 shell/tauri) |
 | memory 条目级删除所有权 | M9-review §6-2 | DEFERRED(演进项) |
+| 空谓词子任务兼容期 | 来源 FULL-REVIEW-2026-09-05 §6-1:授权子集已按安全侧收紧(child 空谓词越出具体 parent=拒绝);若现网有以空谓词成功创建的子任务用法,升级后此类 spawn 将被拒——是否需要兼容期 UI 提示/存量豁免 | DEFERRED(待用户裁决) |
+| 失败调用 usage 接入 | 来源 FULL-REVIEW-2026-09-05 §6-2:失败回合已计入回合配额(token 记 0);若网关对失败调用回执部分 usage,是否按实际接入记账(需 provider 侧解析失败响应 usage,合同字段或需 Minor 增发) | DEFERRED(待用户裁决) |
+| 门户 logout 端点 + Cookie Secure 标志 | 来源 FULL-REVIEW-2026-09-05 §6-3:前端无退出按钮、后端无 logout 口;会话 Cookie 缺 `Secure` 标志(TLS 部署前置);建议随下次发版补齐,涉前端+portal 两面 | DEFERRED(待用户裁决,建议随发版) |
 
 ## 5. 候选队列(用户提过、未排期)
 
