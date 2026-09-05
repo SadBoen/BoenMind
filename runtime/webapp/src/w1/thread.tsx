@@ -461,10 +461,14 @@ function ToolGroupCard({
   const [open, setOpen] = useState(false);
   const count = group.tools.length;
 
-  // 统计工具类型
-  const searchCount = group.tools.filter((t) => t.name.includes("search") || t.name.includes("find")).length;
+  // 统计工具类型(rgrep=内容/文件名搜索;read 覆盖 read;exec/powershell/bash=终端)
+  const searchCount = group.tools.filter(
+    (t) => t.name.includes("search") || t.name.includes("grep") || t.name.includes("find"),
+  ).length;
   const readCount = group.tools.filter((t) => t.name.includes("read")).length;
-  const execCount = group.tools.filter((t) => t.name.includes("exec") || t.name.includes("bash")).length;
+  const execCount = group.tools.filter(
+    (t) => t.name.includes("exec") || t.name.includes("bash") || t.name.includes("powershell"),
+  ).length;
 
   const summaryParts: string[] = [];
   if (searchCount > 0) summaryParts.push(`${searchCount} 搜索`);

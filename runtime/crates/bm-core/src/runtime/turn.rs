@@ -235,16 +235,22 @@ pub(crate) fn spawn_turn(
         });
         let mut name_to_cap: std::collections::HashMap<String, String> =
             std::collections::HashMap::new();
-        // ADR-0022 后续批(用户实测反馈「工具名没变」):内置能力出主流短名,
-        // 模型对 read/write/edit/search/exec 有训练亲和;合同能力名不动,
+        // ADR-0022 后续批(用户实测反馈):内置能力出主流短名,模型对
+        // read/write/edit/rgrep/powershell/bash 有训练亲和;合同能力名不动,
         // 返回调用经 name_to_cap 映射回内核能力名。短名被占(理论边界)则
-        // 回落单下划线长名,保唯一性。
+        // 回落单下划线长名,保唯一性。search 命名用户裁决弃用(易误读为
+        // 网络查询)→ rgrep;exec 按平台呈现实际 shell 名(Windows=powershell,
+        // 其余=bash),模型见名即知语法。
+        #[cfg(windows)]
+        const EXEC_WIRE_NAME: &str = "powershell";
+        #[cfg(not(windows))]
+        const EXEC_WIRE_NAME: &str = "bash";
         const SHORT_WIRE_NAMES: &[(&str, &str)] = &[
             ("fs.read", "read"),
             ("fs.write", "write"),
             ("fs.edit", "edit"),
-            ("fs.search", "search"),
-            ("system.exec", "exec"),
+            ("fs.search", "rgrep"),
+            ("system.exec", EXEC_WIRE_NAME),
         ];
         let taken: std::collections::HashSet<String> = chat_tools
             .iter()

@@ -382,7 +382,8 @@ test.describe("空气泡修复(W8)", () => {
     await input.fill("空回复测试");
     await page.locator(".send-btn").evaluate((el: HTMLElement) => el.click());
     // 用户消息在,助手 tag 在,但空气泡被隐藏
-    await expect(page.getByText("空回复测试")).toBeVisible();
+    // (定位到消息气泡本身;会话列表的同名标题会让 getByText 撞严格模式)
+    await expect(page.locator(".msg.user").getByText("空回复测试")).toBeVisible();
     await expect(page.getByText("BoenMind Agent").first()).toBeVisible();
     await expect(page.locator(".msg.assistant .text").first()).toBeHidden();
   });

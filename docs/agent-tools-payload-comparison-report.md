@@ -241,3 +241,5 @@ bash.ts / powershell.ts(平台变体)、read.ts、write.ts、edit.ts、find.ts�
 - **未核事项清单**(后续 AI 勿当已证事实引用):DSH 会话原文未解包(本机无 zstd);Hermes patch 模糊匹配的具体策略数;Hermes providers 侧 role:"tool" 最终序列化未逐行核;Hermes 系统提示全文未逐字提取。
 - **本报告不修改任何产品代码**;改进项落地须走 BACKLOG 登记 → 合同 Minor 评审 → 里程碑实现的既有流程(AGENTS.md 硬纪律 1/5/8)。
 - 报告版本:v2(2026-09-06)。v1 为同日初版,其未核实表述已在本版 §0 逐条修正。
+
+> 附注(2026-09-06 午后反馈轮,落地后回写):BoenMind 列再进化——①wire 短名最终定为 read/write/edit/**rgrep**/powershell(Windows)或 bash(其他);`search` 因易误读为网络查询被用户裁决弃用;②执行器由「Windows=cmd /C、其余=sh -c」对齐 DSH/Pi 为「Windows=PowerShell(-NoProfile -NonInteractive,原生命令退出码经 $LASTEXITCODE 透传)、其余=bash -c」,模型见工具名即知该写什么语法(cmd 时代模型写 ls/rm 不认是别扭源之一);③图片查看与工具级辅助 LLM provider 已登记 BACKLOG。
