@@ -53,6 +53,10 @@ interface FileSideEffect {
   action: "read" | "write" | "edit" | "exec";
   toolName: string;
   detail: string;
+  /** 新增行数 (write=整文行数; edit=old_string/new_string 差量统计) */
+  linesAdded?: number;
+  /** 删除行数 (edit 替换掉的行数) */
+  linesRemoved?: number;
 }
 
 // 对 Prompt 的 system 内容进行结构拆解 (人设/技能/工作区)
@@ -200,7 +204,10 @@ export function ContextView() {
 
   // DSH 趋势图与速报状态 (阶段一)
   const [trendGranularity, setTrendGranularity] = useState<"step" | "turn">("step");
-  const [selectedStepSeq, setSelectedStepSeq] = useState<number | null>(null);
+  const [trendMode, setTrendMode] = useState<"total" | "delta">("total");
+  // 选中项复合键(session:seq)。seq 只在单服务生命周期内单调,跨会话重复,
+  // 必须与会话号联合定位唯一快照
+  const [selectedStepKey, setSelectedStepKey] = useState<string | null>(null);
   const [hoveredCategory, setHoveredCategory] = useState<string | null>(null);
 
   // 复制反馈状态
@@ -250,10 +257,22 @@ export function ContextView() {
     return visible.find((x) => !x.kind);
   }, [visible]);
 
-  // 解析配方
+  // DSH 时间旅行:趋势图选中的历史步骤快照(null = 跟随最新现场 Live)
+  const timeTravelSnapshot = useMemo(() => {
+    if (selectedStepKey == null) return null;
+    const [selSession, selSeq] = selectedStepKey.split(":");
+    const found = visible.find(
+      (x) => !x.kind && x.seq === Number(selSeq) && x.session_id === selSession,
+    );
+    return found ?? null;
+  }, [visible, selectedStepKey]);
+  const isTimeTraveling = timeTravelSnapshot != null && timeTravelSnapshot !== latestSnapshot;
+
+  // 解析配方(时间旅行时以选中的历史步骤为透视对象;Live 模式跟随最新)
   const recipe = useMemo(() => {
-    if (!latestSnapshot) return null;
-    const r = parseStepRecipe(latestSnapshot);
+    const focusSnapshot = timeTravelSnapshot ?? latestSnapshot;
+    if (!focusSnapshot) return null;
+    const r = parseStepRecipe(focusSnapshot);
 
     // 提炼本会话中所有的文件副作用 (读/写/改)
     const filesMap = new Map<string, FileSideEffect>();
@@ -264,19 +283,42 @@ export function ContextView() {
         const path = args.path || args.file || (args.command ? String(args.command).split(" ")[1] : null);
         if (path && typeof path === "string" && (path.includes("/") || path.includes("\\") || path.includes("."))) {
           const action = tool.includes("write") ? "write" : tool.includes("edit") ? "edit" : tool.includes("exec") ? "exec" : "read";
-          // 同一文件多次操作:以最后一次为准(先读后写要如实显示为「写入」)
+
+          // 代码行数净值统计 (对标 DSH FileCard +N/-M):
+          // write=整文行数全部计入新增;edit=old/new 字符串差量统计
+          let linesAdded: number | undefined;
+          let linesRemoved: number | undefined;
+          if (action === "write") {
+            const content = String(args.content ?? "");
+            if (content) linesAdded = content.split("\n").length;
+          } else if (action === "edit") {
+            const oldStr = String(args.old_string ?? "");
+            const newStr = String(args.new_string ?? "");
+            if (oldStr || newStr) {
+              linesAdded = newStr ? newStr.split("\n").length : 0;
+              linesRemoved = oldStr ? oldStr.split("\n").length : 0;
+            }
+          }
+
+          // 同一文件多次操作:以最后一次为准(先读后写要如实显示为「写入」),
+          // 行数净值同样取最近一次操作的差量
           filesMap.set(path, {
             path,
             action,
             toolName: tool,
             detail: JSON.stringify(args, null, 2),
+            linesAdded,
+            linesRemoved,
           });
         }
       }
     }
     r.affectedFiles = Array.from(filesMap.values());
     return r;
-  }, [latestSnapshot, visible]);
+  }, [timeTravelSnapshot, latestSnapshot, visible]);
+
+  // 退出时间旅行，回到最新现场
+  const exitTimeTravel = () => setSelectedStepKey(null);
 
   // 默认选中初始化
   useEffect(() => {
@@ -342,8 +384,10 @@ export function ContextView() {
   // token 篇幅、速率、水位与百分比计算 (统一以 token 为单位;
   // 「真实值」只来自快照如实字段(提供商 usage / 实测计时 / 台账计数),
   // 拿不到就如实显示「未上报 / 未知」,绝不编造)
+  // 时间旅行时以历史快照的实报为口径;Live 模式跟随最新
   const stats = useMemo(() => {
     if (!recipe || !latestSnapshot) return null;
+    const focusSnapshot = timeTravelSnapshot ?? latestSnapshot;
     const personaTokens = estTokens(recipe.personaText);
     const skillsTokens = recipe.skills.reduce((sum, s) => sum + estTokens(s.instruction), 0);
     const wsTokens = recipe.workspaceText ? estTokens(recipe.workspaceText) : 0;
@@ -355,25 +399,25 @@ export function ContextView() {
     const inputTokens = estTokens(recipe.currentUserInput);
 
     const totalEst = personaTokens + skillsTokens + wsTokens + toolsTokens + historyTokens + inputTokens;
-    const realTokensIn = latestSnapshot.tokens_in ?? totalEst;
-    const realTokensOut = latestSnapshot.tokens_out ?? 0;
+    const realTokensIn = focusSnapshot.tokens_in ?? totalEst;
+    const realTokensOut = focusSnapshot.tokens_out ?? 0;
 
     // 模型窗口:只认用户登记表(model.json contextWindows);未登记 = 未知
     const maxWindow: number | null =
-      (latestSnapshot.model_id && contextWindows[latestSnapshot.model_id]) || null;
+      (focusSnapshot.model_id && contextWindows[focusSnapshot.model_id]) || null;
     const currentTotal = realTokensIn + realTokensOut;
     const remainingHeadroom = maxWindow != null ? Math.max(0, maxWindow - currentTotal) : null;
     const headroomPct =
       maxWindow != null ? Math.min(100, Math.round((currentTotal / maxWindow) * 100)) : null;
 
     // 生成速率 = 输出 token ÷ 全程耗时(含首字排队;TTFT 单列坦白口径)
-    const latencySec = (latestSnapshot.latency_ms ?? 1000) / 1000;
+    const latencySec = (focusSnapshot.latency_ms ?? 1000) / 1000;
     const speed = latencySec > 0 && realTokensOut > 0 ? (realTokensOut / latencySec).toFixed(1) : "—";
 
     // 真实字段直读:提供商不传就是 null → 界面显示「未上报」
-    const cachedTokens: number | null = latestSnapshot.tokens_cached ?? null;
-    const reasoningTokens: number | null = latestSnapshot.tokens_reasoning ?? null;
-    const ttftMs: number | null = latestSnapshot.ttft_ms ?? null;
+    const cachedTokens: number | null = focusSnapshot.tokens_cached ?? null;
+    const reasoningTokens: number | null = focusSnapshot.tokens_reasoning ?? null;
+    const ttftMs: number | null = focusSnapshot.ttft_ms ?? null;
     const evictedTurns: number = latestSnapshot.evicted_turns ?? 0;
     // 思考链正文片段(messages 里的 <think> 块,若有)+粗估值(标注口径)
     const reasoningSnippetEstimated = recipe.reasoningSnippet
@@ -408,7 +452,7 @@ export function ContextView() {
         input: Math.round((inputTokens / (totalEst || 1)) * 100),
       },
     };
-  }, [recipe, latestSnapshot, contextWindows]);
+  }, [recipe, timeTravelSnapshot, latestSnapshot, contextWindows]);
 
   // DSH 时序趋势序列 (正序按时间排列，按步骤或按轮次)
   const trendItems = useMemo(() => {
@@ -434,7 +478,7 @@ export function ContextView() {
         const responseSummary = s.status === "error" ? `[失败: ${s.error_code ?? "未知错误"}]` : s.tokens_out ? `回复约 ${s.tokens_out} token` : "完成本次调用";
 
         return {
-          id: s.seq,
+          id: `${s.session_id}:${s.seq}`,
           label: `R${s.turn_index} S${s.step}`,
           turn_index: s.turn_index,
           step: s.step,
@@ -454,14 +498,15 @@ export function ContextView() {
         };
       });
     } else {
-      // 聚合按回合 (Turn)
-      const turnMap = new Map<number, CtxStep[]>();
+      // 聚合按回合 (Turn):键 = 会话 + 回合号(跨会话同号回合不合并)
+      const turnMap = new Map<string, CtxStep[]>();
       for (const s of snapshots) {
-        const arr = turnMap.get(s.turn_index) ?? [];
+        const key = `${s.session_id}:${s.turn_index}`;
+        const arr = turnMap.get(key) ?? [];
         arr.push(s);
-        turnMap.set(s.turn_index, arr);
+        turnMap.set(key, arr);
       }
-      return Array.from(turnMap.entries()).map(([turn, list]) => {
+      return Array.from(turnMap.entries()).map(([key, list]) => {
         const last = list[list.length - 1];
         const r = parseStepRecipe(last);
         const pTok = estTokens(r.personaText);
@@ -480,6 +525,7 @@ export function ContextView() {
 
         return {
           id: turn,
+          id: key,
           label: `第 ${turn} 轮`,
           turn_index: turn,
           step: list.length,
@@ -504,17 +550,40 @@ export function ContextView() {
   // 当前选中的步骤信息
   const activeTrendStep = useMemo(() => {
     if (!trendItems.length) return null;
-    if (selectedStepSeq != null) {
-      const found = trendItems.find((x) => x.id === selectedStepSeq);
+    if (selectedStepKey != null) {
+      const found = trendItems.find((x) => x.id === selectedStepKey);
       if (found) return found;
     }
     return trendItems[trendItems.length - 1];
-  }, [trendItems, selectedStepSeq]);
+  }, [trendItems, selectedStepKey]);
 
   // 最大高度缩放基准
   const maxTrendTokens = useMemo(() => {
     return Math.max(1, ...trendItems.map((x) => x.tokens_in + x.tokens_out));
   }, [trendItems]);
+
+  // Delta 增量模式:相邻步相对上一项的 token 差值(向上增长/向下释放)
+  const deltaTrendItems = useMemo(() => {
+    return trendItems.map((item, idx) => {
+      const prev = idx > 0 ? trendItems[idx - 1] : null;
+      const cur = item.tokens_in + item.tokens_out;
+      const prevTotal = prev ? prev.tokens_in + prev.tokens_out : 0;
+      const delta = cur - prevTotal;
+      return {
+        id: item.id,
+        label: item.label,
+        delta,
+        // 向下(负值=压缩/裁剪释放)取绝对值渲染下探柱
+        isNegative: delta < 0,
+        magnitude: Math.abs(delta),
+        tokens_in: item.tokens_in,
+        tokens_out: item.tokens_out,
+      };
+    });
+  }, [trendItems]);
+  const maxDeltaMagnitude = useMemo(() => {
+    return Math.max(1, ...deltaTrendItems.map((x) => x.magnitude));
+  }, [deltaTrendItems]);
 
   // 多轮历史 Token 暴增刺客诊断
   const spikeAnalysis = useMemo(() => {
@@ -610,6 +679,27 @@ export function ContextView() {
       {/* 【第一层：健康度看板 / 模型窗口真实水位与性能】 */}
       {latestSnapshot && stats ? (
         <div className="bg-card rounded-xl border p-3.5 shadow-2xs flex flex-col gap-3">
+          {/* DSH 时间旅行横幅:正浏览历史快照时明确提示,一键回到最新现场 */}
+          {isTimeTraveling && timeTravelSnapshot ? (
+            <div className="flex items-center justify-between rounded-lg border border-sky-500/40 bg-sky-500/10 px-3 py-1.5 text-[12px]">
+              <span className="flex items-center gap-1.5 font-medium text-sky-700 dark:text-sky-300">
+                <Clock className="size-3.5" />
+                <span>
+                  🕰️ 时间旅行中 · 正在回看第 {timeTravelSnapshot.turn_index} 轮 · 第 {timeTravelSnapshot.step} 步
+                  (seq {timeTravelSnapshot.seq}) 的历史快照,以下全部卡片均为当时的真实装配
+                </span>
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-6 gap-1 px-2 text-[11px]"
+                onClick={exitTimeTravel}
+              >
+                <Sparkles className="size-3" />
+                <span>回到最新现场 (Live)</span>
+              </Button>
+            </div>
+          ) : null}
           <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2">
             {/* 窗口水位:仅在用户登记过窗口容量时出真实进度;否则如实「未知」 */}
             <div className="flex items-center gap-2">
@@ -826,33 +916,65 @@ export function ContextView() {
               </span>
             </div>
 
-            <div className="flex items-center gap-1 bg-muted/60 p-0.5 rounded-lg border">
-              <button
-                type="button"
-                onClick={() => setTrendGranularity("step")}
-                className={cn(
-                  "rounded-md px-2 py-0.5 text-[11.5px] font-medium transition-colors",
-                  trendGranularity === "step" ? "bg-background shadow-xs text-foreground" : "text-muted-foreground hover:text-foreground"
-                )}
-              >
-                按单步 (Step)
-              </button>
-              <button
-                type="button"
-                onClick={() => setTrendGranularity("turn")}
-                className={cn(
-                  "rounded-md px-2 py-0.5 text-[11.5px] font-medium transition-colors",
-                  trendGranularity === "turn" ? "bg-background shadow-xs text-foreground" : "text-muted-foreground hover:text-foreground"
-                )}
-              >
-                按轮次 (Turn)
-              </button>
+            <div className="flex items-center gap-2">
+              {/* 总量/增量模式切换 (阶段三:Delta 模式) */}
+              <div className="flex items-center gap-1 bg-muted/60 p-0.5 rounded-lg border">
+                <button
+                  type="button"
+                  onClick={() => setTrendMode("total")}
+                  className={cn(
+                    "rounded-md px-2 py-0.5 text-[11.5px] font-medium transition-colors",
+                    trendMode === "total" ? "bg-background shadow-xs text-foreground" : "text-muted-foreground hover:text-foreground"
+                  )}
+                  title="全量模式:柱高 = 该步上下文总体积"
+                >
+                  全量 (Total)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTrendMode("delta")}
+                  className={cn(
+                    "rounded-md px-2 py-0.5 text-[11.5px] font-medium transition-colors",
+                    trendMode === "delta" ? "bg-background shadow-xs text-foreground" : "text-muted-foreground hover:text-foreground"
+                  )}
+                  title="增量模式:相对上一步的 Token 净变化;向下突破基准 = 压缩/裁剪释放"
+                >
+                  增量 (Delta)
+                </button>
+              </div>
+
+              <div className="flex items-center gap-1 bg-muted/60 p-0.5 rounded-lg border">
+                <button
+                  type="button"
+                  onClick={() => setTrendGranularity("step")}
+                  className={cn(
+                    "rounded-md px-2 py-0.5 text-[11.5px] font-medium transition-colors",
+                    trendGranularity === "step" ? "bg-background shadow-xs text-foreground" : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  按单步 (Step)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTrendGranularity("turn")}
+                  className={cn(
+                    "rounded-md px-2 py-0.5 text-[11.5px] font-medium transition-colors",
+                    trendGranularity === "turn" ? "bg-background shadow-xs text-foreground" : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  按轮次 (Turn)
+                </button>
+              </div>
             </div>
           </div>
 
           {/* 柱状演进图 */}
-          <div className="flex items-end gap-2.5 overflow-x-auto pb-1 pt-4 px-2 min-h-[140px]">
-            {trendItems.map((item) => {
+          <div className={cn(
+            "flex gap-2.5 overflow-x-auto px-2",
+            trendMode === "total" ? "items-end pb-1 pt-4 min-h-[140px]" : "items-center min-h-[160px]"
+          )}>
+            {trendMode === "total"
+              ? trendItems.map((item) => {
               const isSelected = activeTrendStep?.id === item.id;
               const heightPct = Math.max(15, Math.min(100, Math.round(((item.tokens_in + item.tokens_out) / maxTrendTokens) * 100)));
 
@@ -867,7 +989,7 @@ export function ContextView() {
               return (
                 <div
                   key={item.id}
-                  onClick={() => setSelectedStepSeq(item.id)}
+                  onClick={() => setSelectedStepKey(item.id)}
                   className="group flex flex-col items-center gap-1.5 cursor-pointer shrink-0"
                   style={{ width: trendItems.length <= 8 ? "64px" : "48px" }}
                 >
@@ -946,8 +1068,82 @@ export function ContextView() {
                   </span>
                 </div>
               );
-            })}
+            })
+              : deltaTrendItems.map((d) => {
+                  const meta = trendItems.find((x) => x.id === d.id);
+                  const isSelected = activeTrendStep?.id === d.id;
+                  const heightPct = Math.max(6, Math.round((d.magnitude / maxDeltaMagnitude) * 100));
+
+                  return (
+                    <div
+                      key={d.id}
+                      onClick={() => setSelectedStepKey(d.id)}
+                      className="group flex flex-col items-center gap-1.5 cursor-pointer shrink-0"
+                      style={{ width: deltaTrendItems.length <= 8 ? "64px" : "48px" }}
+                    >
+                      {/* 柱顶:数值(增长)或剪刀(释放) */}
+                      <div className="flex h-8 flex-col items-center justify-end gap-0.5">
+                        {d.isNegative ? (
+                          <>
+                            <span className="text-amber-500" title="此步相对上一步释放了上下文(压缩/裁剪)">
+                              <Scissors className="size-3" />
+                            </span>
+                            <span className="font-mono text-[10px] font-semibold text-amber-600 dark:text-amber-400">
+                              −{d.magnitude}
+                            </span>
+                          </>
+                        ) : (
+                          <span className={cn(
+                            "font-mono text-[10px] group-hover:text-foreground",
+                            d.delta > 0 ? "font-semibold text-rose-500" : "text-muted-foreground"
+                          )}>
+                            {d.delta > 0 ? `+${d.delta}` : "±0"}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* 相对基准线的柱体:增长向上(玫瑰),释放向下突破基准(琥珀) */}
+                      <div className="relative flex w-full items-center justify-center" style={{ height: "72px" }}>
+                        {/* 基准线 */}
+                        <div className="absolute inset-x-0 top-1/2 h-px bg-border" />
+                        {d.magnitude > 0 ? (
+                          <div
+                            style={{ height: `${heightPct}%` }}
+                            className={cn(
+                              "absolute inset-x-1 rounded-sm transition-all duration-200",
+                              d.isNegative ? "bottom-1/2 bg-amber-400" : "top-1/2 bg-rose-400",
+                              isSelected ? "ring-2 ring-primary" : "group-hover:opacity-80"
+                            )}
+                            title={d.isNegative ? `释放 ${d.magnitude} token` : `增长 +${d.magnitude} token`}
+                          />
+                        ) : null}
+                      </div>
+
+                      {/* 柱底标签 */}
+                      <span className={cn(
+                        "text-[10.5px] font-mono",
+                        isSelected ? "font-bold text-primary" : "text-muted-foreground"
+                      )}>
+                        {d.label}
+                      </span>
+                    </div>
+                  );
+                })}
           </div>
+
+          {/* Delta 模式图例说明 */}
+          {trendMode === "delta" ? (
+            <div className="flex flex-wrap items-center gap-x-4 text-[11px] text-muted-foreground">
+              <span className="flex items-center gap-1">
+                <span className="size-2.5 rounded-sm bg-rose-400" />
+                <span>向上 = 相对上一步增长</span>
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="size-2.5 rounded-sm bg-amber-400" />
+                <span>向下突破基准 = 压缩/裁剪释放(✂)</span>
+              </span>
+            </div>
+          ) : null}
 
           {/* 单步白话速报卡片 (对标 DSH RequestDetail) */}
           {activeTrendStep ? (
@@ -1762,15 +1958,33 @@ export function ContextView() {
                                   <span className="font-mono font-semibold text-foreground">
                                     {f.toolName} → {f.path}
                                   </span>
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    className="h-6 gap-1 px-1.5 text-[10.5px] text-muted-foreground hover:text-foreground"
-                                    onClick={() => copyText(`file_${idx}`, f.detail)}
-                                  >
-                                    <Copy className="size-3" />
-                                    <span>复制明细</span>
-                                  </Button>
+                                  <div className="flex items-center gap-1.5">
+                                    {/* 代码行数净值统计 (对标 DSH FileCard) */}
+                                    {f.linesAdded != null || f.linesRemoved != null ? (
+                                      <span className="flex items-center gap-1 font-mono text-[10.5px]">
+                                        {(f.linesAdded ?? 0) > 0 ? (
+                                          <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 font-semibold text-emerald-600 dark:text-emerald-400">
+                                            +{f.linesAdded}
+                                          </span>
+                                        ) : null}
+                                        {(f.linesRemoved ?? 0) > 0 ? (
+                                          <span className="rounded bg-rose-500/10 px-1.5 py-0.5 font-semibold text-rose-600 dark:text-rose-400">
+                                            −{f.linesRemoved}
+                                          </span>
+                                        ) : null}
+                                        <span className="text-muted-foreground">行</span>
+                                      </span>
+                                    ) : null}
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      className="h-6 gap-1 px-1.5 text-[10.5px] text-muted-foreground hover:text-foreground"
+                                      onClick={() => copyText(`file_${idx}`, f.detail)}
+                                    >
+                                      <Copy className="size-3" />
+                                      <span>复制明细</span>
+                                    </Button>
+                                  </div>
                                 </div>
                                 <pre className="max-h-48 overflow-auto rounded bg-muted/40 p-2 font-mono text-[11px] leading-relaxed text-foreground/90 whitespace-pre-wrap break-all">
                                   {f.detail}
