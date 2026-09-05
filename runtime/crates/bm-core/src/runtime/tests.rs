@@ -41,7 +41,11 @@ mod r2_tombstone_tests {
             "stub"
         }
 
-        async fn invoke(&self, _req: InvokeRequest, _c: tokio_util::sync::CancellationToken) -> InvokeResponse {
+        async fn invoke(
+            &self,
+            _req: InvokeRequest,
+            _c: tokio_util::sync::CancellationToken,
+        ) -> InvokeResponse {
             InvokeResponse::Failed {
                 error_code: ErrorCode::Internal,
                 retryable: false,
@@ -86,7 +90,6 @@ mod r2_tombstone_tests {
         let (tx, _rx) = mpsc::channel::<Cmd>(64);
         let store: Arc<dyn EventStore> =
             Arc::new(bm_persist::PersistStore::open(dir).expect("打开持久层"));
-        let config_store: Arc<dyn EventStore> = store.clone();
         World {
             bus: EventBus::new(),
             exec_log: Arc::new(ExecutionLog::new(None)),

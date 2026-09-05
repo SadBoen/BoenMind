@@ -316,6 +316,7 @@ async fn t104_mcp_stdio_real_subprocess() {
         "python",
         &[fixture.to_string_lossy().to_string()],
         &Default::default(),
+        3,
     )
     .expect("子进程启动");
     let hub = McpHub::new();

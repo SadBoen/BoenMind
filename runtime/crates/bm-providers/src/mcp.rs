@@ -355,6 +355,22 @@ pub struct StdioMcpTransport {
     inner: Arc<tokio::sync::Mutex<StdioInner>>,
     progress_rx: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<McpProgressNote>>>,
     alive: Arc<std::sync::atomic::AtomicBool>,
+    /// 现行代的终止开关(Drop = 杀子进程;换代 = 换灯)。
+    kill: Mutex<Option<ChildKill>>,
+    /// respawn 时间窗(60s 滑动),配合 restart_limit 限流。
+    respawn_times: Arc<Mutex<Vec<std::time::Instant>>>,
+    /// R3:此前解析后零消费的死配置;现为 respawn 窗口上限。
+    restart_limit: u32,
+}
+
+impl Drop for StdioMcpTransport {
+    fn drop(&mut self) {
+        // 闭灯 = 看护任务 start_kill:reload/换装/销毁不再留僵尸
+        // (此前只发 shutdown/exit 通知,插件不理会即悬挂)。
+        if let Some(kill) = self.kill.lock().expect("锁未中毒").take() {
+            drop(kill);
+        }
+    }
 }
 
 struct StdioInner {
@@ -373,9 +389,11 @@ impl StdioMcpTransport {
         command: &str,
         args: &[String],
         env: &HashMap<String, String>,
+        restart_limit: u32,
     ) -> Result<Arc<Self>, String> {
         let alive = Arc::new(std::sync::atomic::AtomicBool::new(true));
-        let (pending, stdin, progress_rx) = spawn_generation(command, args, env, alive.clone())?;
+        let (pending, stdin, progress_rx, kill) =
+            spawn_generation(command, args, env, alive.clone())?;
         Ok(Arc::new(Self {
             command: command.to_string(),
             args: args.to_vec(),
@@ -388,11 +406,19 @@ impl StdioMcpTransport {
             })),
             progress_rx: Mutex::new(Some(progress_rx)),
             alive,
+            kill: Mutex::new(Some(kill)),
+            respawn_times: Arc::new(Mutex::new(Vec::new())),
+            restart_limit: restart_limit.max(1),
         }))
     }
 }
 
-/// 拉起一代子进程:返回在途表 / stdin / 进度接收端。
+/// 子进程终止开关:持有方丢弃(或显式 drop)= 看护任务 start_kill 子进程。
+/// R3(FULL-REVIEW-2026-09-05 §7):此前看护任务独占 Child,kill_on_drop
+/// 永不触发,reload 只发 shutdown 通知 = 插件不理会就僵尸。
+pub type ChildKill = tokio::sync::oneshot::Sender<()>;
+
+/// 拉起一代子进程:返回在途表 / stdin / 进度接收端 / 终止开关。
 fn spawn_generation(
     command: &str,
     args: &[String],
@@ -403,6 +429,7 @@ fn spawn_generation(
         PendingMap,
         tokio::process::ChildStdin,
         tokio::sync::mpsc::UnboundedReceiver<McpProgressNote>,
+        ChildKill,
     ),
     String,
 > {
@@ -434,9 +461,19 @@ fn spawn_generation(
     // 立刻杀死子进程(热装载路径 spawn_generation 返回即 drop,连接器
     // 尚未建立路由,表现为 stdio-closed)。移入看护任务自然等待。
     let command_owned = command.to_string();
+    let (kill_tx, kill_rx) = tokio::sync::oneshot::channel::<()>();
     tokio::spawn(async move {
-        let status = child.wait().await;
-        eprintln!("MCP 子进程退出: command={command_owned} status={status:?}");
+        let mut child = child;
+        tokio::select! {
+            status = child.wait() => {
+                eprintln!("MCP 子进程退出: command={command_owned} status={status:?}");
+            }
+            _ = kill_rx => {
+                let _ = child.start_kill();
+                let _ = child.wait().await;
+                eprintln!("MCP 子进程被终止(reload/换装/销毁): command={command_owned}");
+            }
+        }
     });
 
     let (progress_tx, progress_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -487,13 +524,29 @@ fn spawn_generation(
         }
     });
 
-    Ok((pending, stdin, progress_rx))
+    Ok((pending, stdin, progress_rx, kill_tx))
 }
 
 impl StdioMcpTransport {
     /// 重生一代子进程(M7.4:下次调用重连)。旧代在途请求以
     /// stdio-closed 收场(内核侧计为一次失败/探针)。
     async fn respawn(&self) -> Result<(), String> {
+        // R3(FULL-REVIEW-2026-09-05 §7):respawn 去抖+上限——60s 滑动窗口
+        // 内重生次数达 restart_limit = 故障循环,拒绝再生如实报错(此前
+        // restart_limit 是解析后零消费的死配置)。
+        {
+            let mut times = self.respawn_times.lock().expect("锁未中毒");
+            let now = std::time::Instant::now();
+            times.retain(|t| now.duration_since(*t) < std::time::Duration::from_secs(60));
+            if times.len() >= self.restart_limit as usize {
+                return Err(format!(
+                    "MCP 子进程 60 秒内已重生 {} 次(上限 {}),疑似故障循环已熔断;请检查插件或经管理面重载",
+                    times.len(),
+                    self.restart_limit
+                ));
+            }
+            times.push(now);
+        }
         let mut inner = self.inner.lock().await;
         {
             let mut map = inner.pending.lock().expect("锁未中毒");
@@ -501,8 +554,13 @@ impl StdioMcpTransport {
                 let _ = tx.send(Err("stdio-closed".into()));
             }
         }
-        let (pending, stdin, progress_rx) =
+        // 换代前闭灯杀旧代(消灭僵尸窗口),再挂新开关
+        if let Some(old_kill) = self.kill.lock().expect("锁未中毒").take() {
+            drop(old_kill);
+        }
+        let (pending, stdin, progress_rx, kill) =
             spawn_generation(&self.command, &self.args, &self.env, self.alive.clone())?;
+        *self.kill.lock().expect("锁未中毒") = Some(kill);
         inner.pending = pending;
         inner.stdin = Some(stdin);
         let mut slot = self.progress_rx.lock().expect("锁未中毒");
@@ -645,9 +703,11 @@ impl McpTransport for HttpMcpTransport {
         if let Some(token) = &self.bearer_token {
             req = req.bearer_auth(token);
         }
-        let resp = req
-            .send()
+        // R3(FULL-REVIEW-2026-09-05 §7):裸 send 无超时 = 远端挂起即调用
+        // 悬挂;60s 硬顶(远端长任务应自行异步化,进度走通知)。
+        let resp = tokio::time::timeout(std::time::Duration::from_secs(60), req.send())
             .await
+            .map_err(|_| "远程 MCP 请求超时(60s)".to_string())?
             .map_err(|e| format!("远程 MCP 请求失败: {e}"))?;
         if !resp.status().is_success() {
             return Err(format!("远程 MCP HTTP 状态异常: {}", resp.status()));

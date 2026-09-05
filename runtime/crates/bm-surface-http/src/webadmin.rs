@@ -2298,6 +2298,7 @@ pub async fn mcp_reload(State(cfg): State<AdminConfig>) -> Response {
                     &command,
                     &args,
                     &setup.env_resolved,
+                    setup.restart_limit,
                 )
                 .map_err(|e| e.to_string())?,
             };

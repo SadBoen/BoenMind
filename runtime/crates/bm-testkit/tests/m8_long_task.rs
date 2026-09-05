@@ -55,6 +55,7 @@ async fn t116_live_long_task_stress() {
             wiki_dir.to_string_lossy().to_string(),
         ],
         &Default::default(),
+        3,
     )
     .expect("wiki 子进程");
     let manifests = hub.connect("wiki", transport, 30_000).await.expect("握手");

@@ -89,6 +89,7 @@ async fn rig_two_apps(wiki_dir: &std::path::Path) -> (TestRig, Arc<McpHub>) {
             wiki_dir.to_string_lossy().to_string(),
         ],
         &Default::default(),
+        3,
     )
     .expect("wiki 子进程启动");
     manifests.extend(
@@ -100,6 +101,7 @@ async fn rig_two_apps(wiki_dir: &std::path::Path) -> (TestRig, Arc<McpHub>) {
         "python",
         &[app_path("market_server.py").to_string_lossy().to_string()],
         &Default::default(),
+        3,
     )
     .expect("market 子进程启动");
     manifests.extend(
@@ -130,6 +132,7 @@ async fn t110_wiki_real_write_with_receipt() {
             wiki_dir.to_string_lossy().to_string(),
         ],
         &Default::default(),
+        3,
     )
     .expect("子进程启动");
     let manifests = hub.connect("wiki", transport, 30_000).await.expect("握手");
@@ -237,6 +240,7 @@ async fn t111_wiki_read_paths() {
             wiki_dir.to_string_lossy().to_string(),
         ],
         &Default::default(),
+        3,
     )
     .expect("子进程启动");
     let manifests = hub.connect("wiki", transport, 30_000).await.expect("握手");
@@ -285,6 +289,7 @@ async fn t112_market_determinism_and_portfolio() {
         "python",
         &[app_path("market_server.py").to_string_lossy().to_string()],
         &Default::default(),
+        3,
     )
     .expect("子进程启动");
     let manifests = hub
@@ -461,6 +466,7 @@ async fn t123_wiki_symlink_escape_rejected() {
             wiki_dir.to_string_lossy().to_string(),
         ],
         &Default::default(),
+        3,
     )
     .expect("子进程启动");
     let manifests = hub.connect("wiki", transport, 30_000).await.expect("握手");
@@ -535,6 +541,7 @@ async fn t124_market_rejects_bool_qty() {
         "python",
         &[app_path("market_server.py").to_string_lossy().to_string()],
         &Default::default(),
+        3,
     )
     .expect("子进程启动");
     let manifests = hub

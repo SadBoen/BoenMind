@@ -178,6 +178,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     &setup.command,
                     &setup.args,
                     &setup.env_resolved,
+                    setup.restart_limit,
                 ) {
                     Ok(t) => t,
                     Err(e) => {
