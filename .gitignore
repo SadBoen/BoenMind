@@ -36,3 +36,6 @@ server-w8.log
 
 # 过夜/评审回归隔离目标目录(CARGO_TARGET_DIR=target-regress)
 runtime/target-regress/
+
+# 运行日志(本地排查用,不入库)
+server-*.log
