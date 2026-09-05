@@ -401,6 +401,23 @@ pub(crate) fn handle_send_input(
             ts: now.clone(),
         });
     }
+    // 会话历史回放(2026-09-06):用户消息逐条入上下文日志(kind=user_message,
+    // 与 assistant_final 同流),供 /admin/sessions/{id}/messages 按 seq 重放。
+    // A4 口径不变:事件面仍只留摘要;诊断日志面按快照口径 16K 截断。
+    {
+        let truncated = crate::runtime::turn::content_trunc(&params.content);
+        w.ctx_log.record_event(
+            session.id.as_str(),
+            operation_id.as_str(),
+            turn_index,
+            "user_message",
+            &now,
+            serde_json::json!({
+                "content": truncated,
+                "content_truncated": truncated != params.content,
+            }),
+        );
+    }
 
     // 输入原文入受保护存储(A4:不进事件/日志),供崩溃后 claim 幂等续跑(M2.6)
     #[allow(clippy::collapsible_if)] // 与写穿主路径同构,保持三段式可读

@@ -374,6 +374,13 @@ export const api = {
   },
   // W5 上下文透视:模型调用请求快照(context-log.jsonl 尾部,最旧在前)
   context: () => req<{ ok: boolean; steps: CtxStep[] }>("/admin/context"),
+  // 会话历史回放(2026-09-06):切会话/刷新后按 sid 拉历史消息(最旧在前)
+  sessionMessages: (sid: string) =>
+    req<{
+      ok: boolean;
+      session_id: string;
+      messages: { seq: number | null; ts: string | null; role: "user" | "assistant"; content: string }[];
+    }>(`/admin/sessions/${encodeURIComponent(sid)}/messages`),
     contextSearch: (q: string) =>
       req<{ ok: boolean; hits: CtxStep[]; total: number }>(
         `/admin/context/search?q=${encodeURIComponent(q)}&limit=50`,

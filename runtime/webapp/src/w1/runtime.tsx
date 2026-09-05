@@ -10,6 +10,7 @@ import type { AppendMessage, ThreadMessageLike } from "@assistant-ui/react";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { storage, STORAGE_KEYS, sessionsStore } from "@/lib/storage";
 import { BM_EVENTS, emit } from "../lib/bus";
+import { api } from "../w2/api";
 
 type TextPart = { type: "text"; text: string };
 
@@ -316,18 +317,54 @@ export function BoenmindRuntimeProvider({
   }, []);
 
   // 「切换历史会话」(SessionPanel 派发 bm-session-switched,目标 sid 已由
-  // App.tsx 写入 storage):中止在途回合并复位消息视图与审批挂起。
-  // 历史消息回放需独立端点(未建,见 BACKLOG),复位保证至少不再串显旧会话内容。
+  // App.tsx 写入 storage):中止在途回合,拉取该会话历史消息回放(2026-09-06
+  // 落地,原 BACKLOG「会话历史回放端点」);拉取失败保持空视图不再串显。
   useEffect(() => {
-    const onSessionSwitched = () => {
+    const onSessionSwitched = async () => {
       abortRef.current?.abort();
       setIsRunning(false);
       setMessages([]);
       setPendingApprovals([]);
+      const sid = storage.get(STORAGE_KEYS.SESSION);
+      if (!sid) return;
+      try {
+        const res = await api.sessionMessages(sid);
+        setMessages(
+          (res.messages ?? []).map((m) => ({
+            role: m.role,
+            content: [{ type: "text", text: m.content }] as TextPart[],
+          })),
+        );
+      } catch {
+        // 回放失败(日志缺失/网络抖动)保持空视图,不打断用户输入
+      }
     };
     window.addEventListener(BM_EVENTS.sessionSwitched, onSessionSwitched);
     return () =>
       window.removeEventListener(BM_EVENTS.sessionSwitched, onSessionSwitched);
+  }, []);
+
+  // 页面刷新后:本地仍记着会话 id 时同样回放历史(否则刷新即空白)
+  useEffect(() => {
+    const sid = storage.get(STORAGE_KEYS.SESSION);
+    if (!sid) return;
+    let cancelled = false;
+    void api
+      .sessionMessages(sid)
+      .then((res) => {
+        if (cancelled) return;
+        setMessages(
+          (res.messages ?? []).map((m) => ({
+            role: m.role,
+            content: [{ type: "text", text: m.content }] as TextPart[],
+          })),
+        );
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+    // 仅挂载时执行一次
   }, []);
 
   useEffect(() => {

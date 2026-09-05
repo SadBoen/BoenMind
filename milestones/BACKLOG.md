@@ -51,7 +51,6 @@
 | /v1 错误信封结构化 | 前端靠 `detail.includes("工作区")` 识别工作区错误(runtime.tsx),文案一改即失效;根修=扩展错误码(如 webui.workspace_unavailable,注册表 extensions/*.json+CI R6 同步,合同 Minor 仪式)或 /v1 400 带 JSON code 字段,前端按码分支 | OPEN(待排期) |
 | session_chats 重启重建(重启续聊) | 多轮对话台账纯内存(runtime.rs 有意取舍注释),服务重启后会话在而记忆空;修=启动恢复阶段从事件流回放重建台账(注意 20 轮/24K 双上限裁剪口径) | OPEN(待排期) |
 | core_loop 崩溃处置升级待裁决 | 现状=panic 仅 error 日志观测(命令方即刻收到错误,无挂死,2026-09-05 复核证实);升级选项=崩溃即进程 exit(70) 交 systemd Restart=on-failure 拉起,属运维行为变更待用户拍板 | OPEN(待用户裁决) |
-| 前端会话历史回放端点 | 会话切换/页面刷新后消息列表无法恢复(现切会话即复位视图,bm-session-switched 已接线);需按 session_id 拉历史消息的端点(或 /admin/context 聚合)后前端回放 | OPEN(待排期) |
 | skill.v0_1 Rust 强类型投影 | 前端已有 SkillItem 类型,bm-contract 侧仅 JSON 常量无结构体;补 SkillDefinition+镜像测试(随 Skill v0.2 第二步动工前落) | OPEN(低) |
 | 审批等待轮询改推送 | 回合管线对审批/异步工具 400ms 轮询单写者通道(GetOperation/GetOpResult,上限 300s);可改 watch/oneshot 通知,降单写者拥塞 | OPEN(低) |
 | 前端静态分析 | ESLint + Stylelint 接入 CI | OPEN |

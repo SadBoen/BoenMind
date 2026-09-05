@@ -813,3 +813,77 @@ async fn t_w8_runtime_env_shape() {
         }
     }
 }
+
+/// 会话历史回放端点(2026-09-06):按 session 过滤 user_message/assistant_final,
+/// 按 seq 升序映射 role;坏行跳过;其他会话不串。
+#[tokio::test]
+async fn t_session_messages_replay_filters_and_orders() {
+    let ws = tempfile::tempdir().expect("工作区");
+    let (base, dir) = spawn_app(ws.path().to_path_buf(), None).await;
+
+    // 手工落 context-log.jsonl:目标会话 4 行(乱序 seq 验证排序)+ 其他会话 1 行 + 坏行
+    let log_path = dir.path().join("context-log.jsonl");
+    std::fs::write(
+        &log_path,
+        concat!(
+            r#"{"seq":3,"ts":"T3","session_id":"sess_A","operation_id":"op_1","turn_index":1,"kind":"assistant_final","data":{"content":"第二轮回复"}}"#,
+            "
+",
+            r#"{"seq":1,"ts":"T1","session_id":"sess_A","operation_id":"op_1","turn_index":1,"kind":"user_message","data":{"content":"第一问"}}"#,
+            "
+",
+            r#"{"seq":2,"ts":"T2","session_id":"sess_A","operation_id":"op_1","turn_index":1,"kind":"tool_call","data":{"tool":"fs_search"}}"#,
+            "
+",
+            r#"{"seq":4,"ts":"T4","session_id":"sess_B","operation_id":"op_9","turn_index":1,"kind":"user_message","data":{"content":"别的会话不串"}}"#,
+            "
+",
+            "not-a-json-line
+",
+            r#"{"seq":5,"ts":"T5","session_id":"sess_A","operation_id":"op_1","turn_index":2,"kind":"user_message","data":{"content":"第二问"}}"#,
+            "
+",
+            r#"{"seq":6,"ts":"T6","session_id":"sess_A","operation_id":"op_1","turn_index":2,"kind":"assistant_final","data":{"content":"第二轮回复2"}}"#,
+            "
+",
+        ),
+    )
+    .expect("写日志");
+
+    let (st, v) = get(&format!("{base}/admin/sessions/sess_A/messages")).await;
+    assert_eq!(st, 200);
+    assert_eq!(v["ok"], json!(true));
+    let msgs = v["messages"].as_array().expect("消息数组");
+    let roles: Vec<&str> = msgs
+        .iter()
+        .map(|m| m["role"].as_str().expect("role"))
+        .collect();
+    // seq 升序 = 对话时序交织:user(1) → assistant(3) → user(5) → assistant(6)
+    assert_eq!(
+        roles,
+        vec!["user", "assistant", "user", "assistant"],
+        "过滤+角色映射"
+    );
+    assert_eq!(msgs[0]["content"], json!("第一问"));
+    assert_eq!(msgs[1]["content"], json!("第二轮回复"));
+    assert_eq!(msgs[2]["content"], json!("第二问"));
+    assert_eq!(msgs[3]["content"], json!("第二轮回复2"));
+    // seq 升序
+    let seqs: Vec<i64> = msgs
+        .iter()
+        .map(|m| m["seq"].as_i64().expect("seq"))
+        .collect();
+    let mut sorted = seqs.clone();
+    sorted.sort();
+    assert_eq!(seqs, sorted, "按 seq 升序");
+
+    // 其他会话互不串
+    let (st2, v2) = get(&format!("{base}/admin/sessions/sess_B/messages")).await;
+    assert_eq!(st2, 200);
+    assert_eq!(v2["messages"].as_array().expect("数组").len(), 1);
+    assert_eq!(v2["messages"][0]["content"], json!("别的会话不串"));
+
+    // 不存在的会话 = 空数组(非错误)
+    let (_, v3) = get(&format!("{base}/admin/sessions/sess_X/messages")).await;
+    assert_eq!(v3["messages"].as_array().expect("数组").len(), 0);
+}

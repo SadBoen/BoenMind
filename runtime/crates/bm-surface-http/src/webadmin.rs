@@ -1986,6 +1986,49 @@ pub async fn context_search(
     Json(json!({ "ok": true, "q": q, "hits": hits, "total": hits.len() })).into_response()
 }
 
+/// GET /admin/sessions/{session_id}/messages:会话历史回放(2026-09-06)。
+/// 从 context-log.jsonl 按 session 过滤 kind ∈ {user_message, assistant_final},
+/// 按 seq 升序映射为 {role, content, ts, seq}(最旧在前,最多回 200 条)。
+/// 个人单机规模整文件行级扫描(与 /admin/context/search 同口径),数据量
+/// 上来再换索引。坏行跳过。
+pub async fn session_messages(
+    State(cfg): State<AdminConfig>,
+    axum::extract::Path(session_id): axum::extract::Path<String>,
+) -> Response {
+    let mut messages: Vec<Value> = Vec::new();
+    if let Ok(text) = std::fs::read_to_string(cfg.data_dir.join("context-log.jsonl")) {
+        for line in text.lines() {
+            let Ok(v) = serde_json::from_str::<Value>(line) else {
+                continue;
+            };
+            if v.get("session_id").and_then(|s| s.as_str()) != Some(session_id.as_str()) {
+                continue;
+            }
+            let role = match v.get("kind").and_then(|k| k.as_str()).unwrap_or("") {
+                "user_message" => "user",
+                "assistant_final" => "assistant",
+                _ => continue,
+            };
+            let content = v["data"]["content"].as_str().unwrap_or_default();
+            if content.is_empty() {
+                continue;
+            }
+            messages.push(json!({
+                "seq": v.get("seq").cloned().unwrap_or(Value::Null),
+                "ts": v.get("ts").cloned().unwrap_or(Value::Null),
+                "role": role,
+                "content": content,
+            }));
+        }
+    }
+    // 按 seq 升序(文件序 = 落盘序,正常一致;防御乱序)
+    messages.sort_by_key(|m| m["seq"].as_u64().unwrap_or(0));
+    if messages.len() > 200 {
+        messages = messages.split_off(messages.len() - 200);
+    }
+    Json(json!({ "ok": true, "session_id": session_id, "messages": messages })).into_response()
+}
+
 /// context-log 尾部读取+逐行解析(只读诊断面;任何失败静默为空)。
 fn read_context_tail(path: &Path, max_bytes: u64, limit: usize) -> Vec<Value> {
     use std::io::{Read, Seek, SeekFrom};
@@ -2050,6 +2093,8 @@ pub fn admin_routes(cfg: AdminConfig) -> axum::Router {
         .route("/logs", get(logs_tail))
         .route("/context", get(context_tail))
         .route("/context/search", get(context_search))
+        // 会话历史回放(2026-09-06):切会话/刷新后前端按此拉历史消息
+        .route("/sessions/{session_id}/messages", get(session_messages))
         .route("/fs/list", get(fs_list))
         .route("/fs/file", get(fs_file))
         // W7 目录树右键菜单:重命名 / 下载(文件)与打包下载(文件夹 zip)
