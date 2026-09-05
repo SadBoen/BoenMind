@@ -91,3 +91,4 @@
 ## W 序列验收惯例
 
 W 序列不另立 review 文件:验收门与实测证据并入各规格(W2 §7、W3 §6;W4 待回填,见 BACKLOG)。截图目录:shots-w2/、shots-w3/、shots-w5-context/。
+| 工具调用原生协议还原 + 描述治理 + fs_edit 批量编辑(ADR-0022) | 2026-09-06 | 0e2e809 | validate.py 全绿 + fmt/clippy --all-targets 零警告 + workspace ~364 测全绿(wire 形态 3 新测+批量编辑 5 新测)+ 真模型浏览器 E2E 验收 | **过夜批(用户全权委托):依 docs/agent-tools-payload-comparison-report.md v2 四家底层报文横评调研(DSH 本机源码/Pi GitHub/Hermes VPS 实机/自家源码)根治「工具调用别扭」**:①协议还原——Role::Tool 出原生 role:tool+tool_call_id(此前伪装 user),assistant 回喂携带 tool_calls(此前结构丢失=模型失忆),仅缺 id 历史消息回落 user 保兼容(合同 Minor:connector Message 增发 tool_call_id/tool_calls);②删「不要再次调用」成功禁令——链式调用不再被斩断,审批结论如实转述,死循环防线=MAX_TOOL_ROUNDS(2026-09-03 禁令系 user 伪装时代的重复诱因压制,随根因一并撤除);③描述治理——CapabilityManifest 增发 description(合同 Minor),fs.*/exec/MCP 全自描述经 chat_tools 带出,废除「只读直通工具/弹出审批卡片」套话与 UI 措辞入描述;④fs_edit 增 edits 数组批量原子替换(基于原文快照+区间不相交校验,对齐 Pi,单处向后兼容);⑤context-log 快照带因果链字段;远期候补(Code Mode 脚本合并/tool_search 渐进披露/按模型条件化 schema)登记 BACKLOG |
