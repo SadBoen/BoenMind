@@ -198,6 +198,11 @@ export function ContextView() {
   const [selectedTurnIndex, setSelectedTurnIndex] = useState<number | null>(null);
   const [selectedFileIndex, setSelectedFileIndex] = useState<number | null>(null);
 
+  // DSH 趋势图与速报状态 (阶段一)
+  const [trendGranularity, setTrendGranularity] = useState<"step" | "turn">("step");
+  const [selectedStepSeq, setSelectedStepSeq] = useState<number | null>(null);
+  const [hoveredCategory, setHoveredCategory] = useState<string | null>(null);
+
   // 复制反馈状态
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
@@ -405,6 +410,112 @@ export function ContextView() {
     };
   }, [recipe, latestSnapshot, contextWindows]);
 
+  // DSH 时序趋势序列 (正序按时间排列，按步骤或按轮次)
+  const trendItems = useMemo(() => {
+    const snapshots = [...visible].reverse().filter((s) => !s.kind);
+    if (trendGranularity === "step") {
+      return snapshots.map((s) => {
+        const r = parseStepRecipe(s);
+        const pTok = estTokens(r.personaText);
+        const skTok = r.skills.reduce((sum, sk) => sum + estTokens(sk.instruction), 0);
+        const wsTok = r.workspaceText ? estTokens(r.workspaceText) : 0;
+        const toolTok = r.toolList.reduce((sum, t) => sum + t.paramTokens, 0);
+        const histTok = r.historyTurns.reduce(
+          (sum, h) => sum + estTokens(h.user) + estTokens(h.assistant),
+          0,
+        );
+        const inTok = estTokens(r.currentUserInput);
+        const total = pTok + skTok + wsTok + toolTok + histTok + inTok || 1;
+
+        // 提炼三行速报
+        const question = r.currentUserInput || "(无显式用户输入)";
+        // 提取该步前最后一条非系统消息(作为进入内容)
+        const lastInput = r.historyTurns.length > 0 ? r.historyTurns[r.historyTurns.length - 1].assistant : "(首轮无前置输入)";
+        const responseSummary = s.status === "error" ? `[失败: ${s.error_code ?? "未知错误"}]` : s.tokens_out ? `回复约 ${s.tokens_out} token` : "完成本次调用";
+
+        return {
+          id: s.seq,
+          label: `R${s.turn_index} S${s.step}`,
+          turn_index: s.turn_index,
+          step: s.step,
+          tokens_in: s.tokens_in ?? total,
+          tokens_out: s.tokens_out ?? 0,
+          evicted_turns: s.evicted_turns ?? 0,
+          pTok,
+          skTok,
+          wsTok,
+          toolTok,
+          histTok,
+          inTok,
+          total,
+          question,
+          lastInput,
+          responseSummary,
+        };
+      });
+    } else {
+      // 聚合按回合 (Turn)
+      const turnMap = new Map<number, CtxStep[]>();
+      for (const s of snapshots) {
+        const arr = turnMap.get(s.turn_index) ?? [];
+        arr.push(s);
+        turnMap.set(s.turn_index, arr);
+      }
+      return Array.from(turnMap.entries()).map(([turn, list]) => {
+        const last = list[list.length - 1];
+        const r = parseStepRecipe(last);
+        const pTok = estTokens(r.personaText);
+        const skTok = r.skills.reduce((sum, sk) => sum + estTokens(sk.instruction), 0);
+        const wsTok = r.workspaceText ? estTokens(r.workspaceText) : 0;
+        const toolTok = r.toolList.reduce((sum, t) => sum + t.paramTokens, 0);
+        const histTok = r.historyTurns.reduce(
+          (sum, h) => sum + estTokens(h.user) + estTokens(h.assistant),
+          0,
+        );
+        const inTok = estTokens(r.currentUserInput);
+        const total = pTok + skTok + wsTok + toolTok + histTok + inTok || 1;
+
+        const maxIn = Math.max(...list.map((x) => x.tokens_in ?? 0));
+        const sumOut = list.reduce((sum, x) => sum + (x.tokens_out ?? 0), 0);
+
+        return {
+          id: turn,
+          label: `第 ${turn} 轮`,
+          turn_index: turn,
+          step: list.length,
+          tokens_in: maxIn || total,
+          tokens_out: sumOut,
+          evicted_turns: last.evicted_turns ?? 0,
+          pTok,
+          skTok,
+          wsTok,
+          toolTok,
+          histTok,
+          inTok,
+          total,
+          question: r.currentUserInput || "(无显式用户输入)",
+          lastInput: `本轮共执行 ${list.length} 个步骤`,
+          responseSummary: `累计生成 ${sumOut} token`,
+        };
+      });
+    }
+  }, [visible, trendGranularity]);
+
+  // 当前选中的步骤信息
+  const activeTrendStep = useMemo(() => {
+    if (!trendItems.length) return null;
+    if (selectedStepSeq != null) {
+      const found = trendItems.find((x) => x.id === selectedStepSeq);
+      if (found) return found;
+    }
+    return trendItems[trendItems.length - 1];
+  }, [trendItems, selectedStepSeq]);
+
+  // 最大高度缩放基准
+  const maxTrendTokens = useMemo(() => {
+    return Math.max(1, ...trendItems.map((x) => x.tokens_in + x.tokens_out));
+  }, [trendItems]);
+
   // 多轮历史 Token 暴增刺客诊断
   const spikeAnalysis = useMemo(() => {
     const snapshots = [...visible].reverse().filter((s) => !s.kind);
@@ -442,7 +553,7 @@ export function ContextView() {
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3.5 px-4 pb-4">
+    <div className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto px-4 pb-4">
       {/* 顶部控制栏 */}
       <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2.5">
         <div className="flex items-center gap-2">
@@ -630,38 +741,62 @@ export function ContextView() {
               ) : null}
             </div>
 
-            {/* 图例对照表 (统一为 token 表达) */}
+            {/* 图例对照表 (支持 Hover 联动高亮趋势图中的对应切片) */}
             <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px]">
-              <span className="flex items-center gap-1.5">
+              <span
+                onMouseEnter={() => setHoveredCategory("persona")}
+                onMouseLeave={() => setHoveredCategory(null)}
+                className={cn("flex items-center gap-1.5 cursor-pointer rounded px-1.5 py-0.5 transition-colors", hoveredCategory === "persona" ? "bg-indigo-500/15 ring-1 ring-indigo-500" : "hover:bg-muted")}
+              >
                 <span className="size-2.5 rounded-full bg-indigo-500" />
                 <span className="text-foreground">🎭 人设规矩:</span>
                 <span className="text-muted-foreground">{stats.pct.persona}% ({stats.personaTokens} token)</span>
               </span>
               {stats.skillsTokens > 0 ? (
-                <span className="flex items-center gap-1.5">
+                <span
+                  onMouseEnter={() => setHoveredCategory("skills")}
+                  onMouseLeave={() => setHoveredCategory(null)}
+                  className={cn("flex items-center gap-1.5 cursor-pointer rounded px-1.5 py-0.5 transition-colors", hoveredCategory === "skills" ? "bg-purple-500/15 ring-1 ring-purple-500" : "hover:bg-muted")}
+                >
                   <span className="size-2.5 rounded-full bg-purple-500" />
                   <span className="text-foreground">⚡ 特长技能:</span>
                   <span className="text-muted-foreground">{stats.pct.skills}% ({stats.skillsTokens} token)</span>
                 </span>
               ) : null}
-              <span className="flex items-center gap-1.5">
+              <span
+                onMouseEnter={() => setHoveredCategory("tools")}
+                onMouseLeave={() => setHoveredCategory(null)}
+                className={cn("flex items-center gap-1.5 cursor-pointer rounded px-1.5 py-0.5 transition-colors", hoveredCategory === "tools" ? "bg-amber-500/15 ring-1 ring-amber-500" : "hover:bg-muted")}
+              >
                 <span className="size-2.5 rounded-full bg-amber-500" />
                 <span className="text-foreground">🛠️ 工具背包:</span>
                 <span className="text-muted-foreground">{stats.pct.tools}% ({stats.toolsTokens} token)</span>
               </span>
-              <span className="flex items-center gap-1.5">
+              <span
+                onMouseEnter={() => setHoveredCategory("history")}
+                onMouseLeave={() => setHoveredCategory(null)}
+                className={cn("flex items-center gap-1.5 cursor-pointer rounded px-1.5 py-0.5 transition-colors", hoveredCategory === "history" ? "bg-sky-500/15 ring-1 ring-sky-500" : "hover:bg-muted")}
+              >
                 <span className="size-2.5 rounded-full bg-sky-500" />
                 <span className="text-foreground">💬 聊天记忆:</span>
                 <span className="text-muted-foreground">{stats.pct.history}% ({stats.historyTokens} token)</span>
               </span>
               {stats.wsTokens > 0 ? (
-                <span className="flex items-center gap-1.5">
+                <span
+                  onMouseEnter={() => setHoveredCategory("ws")}
+                  onMouseLeave={() => setHoveredCategory(null)}
+                  className={cn("flex items-center gap-1.5 cursor-pointer rounded px-1.5 py-0.5 transition-colors", hoveredCategory === "ws" ? "bg-emerald-500/15 ring-1 ring-emerald-500" : "hover:bg-muted")}
+                >
                   <span className="size-2.5 rounded-full bg-emerald-500" />
                   <span className="text-foreground">📁 电脑目录:</span>
                   <span className="text-muted-foreground">{stats.pct.ws}% ({stats.wsTokens} token)</span>
                 </span>
               ) : null}
-              <span className="flex items-center gap-1.5">
+              <span
+                onMouseEnter={() => setHoveredCategory("input")}
+                onMouseLeave={() => setHoveredCategory(null)}
+                className={cn("flex items-center gap-1.5 cursor-pointer rounded px-1.5 py-0.5 transition-colors", hoveredCategory === "input" ? "bg-rose-500/15 ring-1 ring-rose-500" : "hover:bg-muted")}
+              >
                 <span className="size-2.5 rounded-full bg-rose-500" />
                 <span className="text-foreground">❓ 您的问题:</span>
                 <span className="text-muted-foreground">{stats.pct.input}% ({stats.inputTokens} token)</span>
@@ -677,9 +812,200 @@ export function ContextView() {
         </div>
       )}
 
+      {/* 【DSH 视觉化吸收：时序堆叠演进趋势图 + 单步三行白话速报】 */}
+      {trendItems.length > 0 ? (
+        <div className="bg-card rounded-xl border p-3.5 shadow-2xs flex flex-col gap-3">
+          <div className="flex items-center justify-between border-b pb-2">
+            <div className="flex items-center gap-2">
+              <TrendingUp className="size-4 text-primary" />
+              <span className="text-[13px] font-semibold text-foreground">
+                上下文演进趋势图 (时序堆叠)
+              </span>
+              <span className="text-[11.5px] text-muted-foreground">
+                记录每一次调用时上下文体积的演进与构成膨胀
+              </span>
+            </div>
+
+            <div className="flex items-center gap-1 bg-muted/60 p-0.5 rounded-lg border">
+              <button
+                type="button"
+                onClick={() => setTrendGranularity("step")}
+                className={cn(
+                  "rounded-md px-2 py-0.5 text-[11.5px] font-medium transition-colors",
+                  trendGranularity === "step" ? "bg-background shadow-xs text-foreground" : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                按单步 (Step)
+              </button>
+              <button
+                type="button"
+                onClick={() => setTrendGranularity("turn")}
+                className={cn(
+                  "rounded-md px-2 py-0.5 text-[11.5px] font-medium transition-colors",
+                  trendGranularity === "turn" ? "bg-background shadow-xs text-foreground" : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                按轮次 (Turn)
+              </button>
+            </div>
+          </div>
+
+          {/* 柱状演进图 */}
+          <div className="flex items-end gap-2.5 overflow-x-auto pb-1 pt-4 px-2 min-h-[140px]">
+            {trendItems.map((item) => {
+              const isSelected = activeTrendStep?.id === item.id;
+              const heightPct = Math.max(15, Math.min(100, Math.round(((item.tokens_in + item.tokens_out) / maxTrendTokens) * 100)));
+
+              // 6 色高度细分
+              const pPct = (item.pTok / item.total) * 100;
+              const skPct = (item.skTok / item.total) * 100;
+              const wsPct = (item.wsTok / item.total) * 100;
+              const toolPct = (item.toolTok / item.total) * 100;
+              const histPct = (item.histTok / item.total) * 100;
+              const inPct = (item.inTok / item.total) * 100;
+
+              return (
+                <div
+                  key={item.id}
+                  onClick={() => setSelectedStepSeq(item.id)}
+                  className="group flex flex-col items-center gap-1.5 cursor-pointer shrink-0"
+                  style={{ width: trendItems.length <= 8 ? "64px" : "48px" }}
+                >
+                  {/* 柱顶：剪枝标记 / Token 标尺 */}
+                  <div className="flex flex-col items-center gap-0.5">
+                    {item.evicted_turns > 0 ? (
+                      <span className="text-amber-500" title={`此步已有 ${item.evicted_turns} 轮旧对话被裁剪`}>
+                        <Scissors className="size-3" />
+                      </span>
+                    ) : null}
+                    <span className="text-[10px] font-mono text-muted-foreground group-hover:text-foreground">
+                      {item.tokens_in}
+                    </span>
+                  </div>
+
+                  {/* 堆叠色彩柱 */}
+                  <div
+                    style={{ height: `${heightPct}px` }}
+                    className={cn(
+                      "w-full rounded-md overflow-hidden flex flex-col-reverse transition-all duration-200 border",
+                      isSelected
+                        ? "ring-2 ring-primary border-primary shadow-xs"
+                        : "border-border/80 group-hover:border-primary/50 group-hover:shadow-xs"
+                    )}
+                  >
+                    {/* 人设 */}
+                    <div
+                      style={{ height: `${pPct}%` }}
+                      className={cn("bg-indigo-500 transition-opacity", hoveredCategory && hoveredCategory !== "persona" ? "opacity-25" : "opacity-100")}
+                      title={`人设: 约 ${item.pTok} token`}
+                    />
+                    {/* 技能 */}
+                    {skPct > 0 ? (
+                      <div
+                        style={{ height: `${skPct}%` }}
+                        className={cn("bg-purple-500 transition-opacity", hoveredCategory && hoveredCategory !== "skills" ? "opacity-25" : "opacity-100")}
+                        title={`技能: 约 ${item.skTok} token`}
+                      />
+                    ) : null}
+                    {/* 工具 */}
+                    <div
+                      style={{ height: `${toolPct}%` }}
+                      className={cn("bg-amber-500 transition-opacity", hoveredCategory && hoveredCategory !== "tools" ? "opacity-25" : "opacity-100")}
+                      title={`工具: 约 ${item.toolTok} token`}
+                    />
+                    {/* 记忆 */}
+                    {histPct > 0 ? (
+                      <div
+                        style={{ height: `${histPct}%` }}
+                        className={cn("bg-sky-500 transition-opacity", hoveredCategory && hoveredCategory !== "history" ? "opacity-25" : "opacity-100")}
+                        title={`记忆: 约 ${item.histTok} token`}
+                      />
+                    ) : null}
+                    {/* 目录 */}
+                    {wsPct > 0 ? (
+                      <div
+                        style={{ height: `${wsPct}%` }}
+                        className={cn("bg-emerald-500 transition-opacity", hoveredCategory && hoveredCategory !== "ws" ? "opacity-25" : "opacity-100")}
+                        title={`目录: 约 ${item.wsTok} token`}
+                      />
+                    ) : null}
+                    {/* 问题 */}
+                    <div
+                      style={{ height: `${inPct}%` }}
+                      className={cn("bg-rose-500 transition-opacity", hoveredCategory && hoveredCategory !== "input" ? "opacity-25" : "opacity-100")}
+                      title={`输入: 约 ${item.inTok} token`}
+                    />
+                  </div>
+
+                  {/* 柱底标签 */}
+                  <span className={cn(
+                    "text-[10.5px] font-mono",
+                    isSelected ? "font-bold text-primary" : "text-muted-foreground"
+                  )}>
+                    {item.label}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* 单步白话速报卡片 (对标 DSH RequestDetail) */}
+          {activeTrendStep ? (
+            <div className="rounded-lg border bg-muted/20 p-2.5 flex flex-col gap-1.5 text-[12px]">
+              <div className="flex items-center justify-between border-b border-border/60 pb-1 text-[11.5px]">
+                <span className="font-semibold text-foreground flex items-center gap-1.5">
+                  <span>📌 单步速报 · {activeTrendStep.label}</span>
+                  <span className="rounded bg-muted px-1.5 py-0.2 font-mono text-[10.5px] text-muted-foreground">
+                    进 {activeTrendStep.tokens_in} · 出 {activeTrendStep.tokens_out} token
+                  </span>
+                </span>
+                <span className="text-muted-foreground text-[11px]">
+                  点击上方任意柱子可查看该步快照速报
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2 pt-0.5 text-[11.5px]">
+                {/* 1. 本轮提问 */}
+                <div className="flex flex-col gap-0.5 bg-background/70 border rounded p-2">
+                  <span className="text-muted-foreground font-medium text-[11px] flex items-center gap-1">
+                    <User className="size-3 text-rose-500" />
+                    <span>【本轮】用户原始提问</span>
+                  </span>
+                  <p className="text-foreground leading-snug line-clamp-2">
+                    {activeTrendStep.question}
+                  </p>
+                </div>
+
+                {/* 2. 新增输入 */}
+                <div className="flex flex-col gap-0.5 bg-background/70 border rounded p-2">
+                  <span className="text-muted-foreground font-medium text-[11px] flex items-center gap-1">
+                    <ArrowDownLeft className="size-3 text-sky-500" />
+                    <span>【输入】进入模型的内容</span>
+                  </span>
+                  <p className="text-muted-foreground leading-snug line-clamp-2">
+                    {activeTrendStep.lastInput}
+                  </p>
+                </div>
+
+                {/* 3. 本步回复 */}
+                <div className="flex flex-col gap-0.5 bg-background/70 border rounded p-2">
+                  <span className="text-muted-foreground font-medium text-[11px] flex items-center gap-1">
+                    <ArrowUpRight className="size-3 text-purple-500" />
+                    <span>【回复】模型生成行为</span>
+                  </span>
+                  <p className="text-foreground font-mono leading-snug line-clamp-2">
+                    {activeTrendStep.responseSummary}
+                  </p>
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       {/* 【第二层：全域双栏联动交互区】 */}
       {recipe ? (
-        <div className="flex min-h-0 flex-1 flex-col gap-3">
+        <div className="flex min-h-0 flex-1 flex-col gap-3 relative z-10">
           <div className="flex items-center justify-between border-b pb-1">
             <div className="flex flex-wrap items-center gap-1" role="tablist">
               <button

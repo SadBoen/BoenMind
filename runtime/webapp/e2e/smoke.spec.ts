@@ -186,6 +186,12 @@ test.describe("上下文透视页", () => {
     // 验证第一层看板：模型窗口水位与余量
     await expect(page.getByText("模型窗口水位")).toBeVisible();
     await expect(page.getByText(/剩余安全余量/)).toBeVisible();
+
+    // 验证 DSH 视觉化吸收 (阶段一)：时序演进趋势图与单步速报
+    await expect(page.getByText("上下文演进趋势图 (时序堆叠)")).toBeVisible();
+    await expect(page.getByText(/📌 单步速报/)).toBeVisible();
+    await expect(page.getByText("【本轮】用户原始提问")).toBeVisible();
+
     // 验证第二层配方拆解：人设与根本规矩双栏 (左卡片与右原文均存在)
     await expect(page.getByText("🎭 AI 的人设与根本规矩")).toBeVisible();
     await expect(page.getByText("系统提示词内容").first()).toBeVisible();
