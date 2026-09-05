@@ -108,8 +108,9 @@ pub struct CapabilityRegistry {
     manifests: HashMap<String, CapabilityManifest>,
     bindings: HashMap<String, Binding>,
     cache: HashMap<String, RuntimeCache>,
-    /// M7:异步执行标记(manifest.provider 以 "mcp." 开头注册时置位;
-    /// 可丢失缓存——每次启动随注册流程重建)。
+    /// M7:异步执行标记。注册本身不自动判定;由装载方按 manifest.provider
+    /// 显式 mark_async("mcp." 前缀或内置 ".async" 后缀,见 runtime/handle.rs)。
+    /// 可丢失缓存——每次启动随注册流程重建。
     async_exec: std::collections::HashSet<String>,
 }
 

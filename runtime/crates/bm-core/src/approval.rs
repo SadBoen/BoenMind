@@ -18,7 +18,6 @@ use bm_contract::capability::{
 };
 use bm_contract::ids::IdGen;
 use bm_contract::timestamp::format_ts;
-use sha2::{Digest, Sha256};
 
 /// 审批裁决(用户经 Wire approval.respond;GUI/CLI 同源)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,7 +71,7 @@ impl<'a> ApprovalManager<'a> {
         Approval {
             approval_id: self.ids.next_id("appr").to_string(),
             capability: p.capability.to_string(),
-            args_digest: sha256_hex(&serde_json::to_string(p.args).unwrap_or_default()),
+            args_digest: sha256_hex(serde_json::to_string(p.args).unwrap_or_default().as_bytes()),
             args_summary: p.args_summary.to_string(),
             principal: p.principal.to_string(),
             risk_class: p.risk_class,
@@ -121,7 +120,11 @@ impl<'a> ApprovalManager<'a> {
                     return Err(ApprovalError::ScopeNotAllowed);
                 }
                 // 父授权哈希 = 裁决前(waiting_user 形态)对象内容 SHA-256
-                let parent_hash = sha256_hex(&serde_json::to_string(approval).unwrap_or_default());
+                let parent_hash = sha256_hex(
+                    serde_json::to_string(approval)
+                        .unwrap_or_default()
+                        .as_bytes(),
+                );
                 approval.state = ApprovalState::Approved;
                 approval.resolved_at = Some(format_ts(now));
                 let grant = Grant {
@@ -181,16 +184,7 @@ impl<'a> ApprovalManager<'a> {
     }
 }
 
-fn sha256_hex(s: &str) -> String {
-    let mut h = Sha256::new();
-    h.update(s.as_bytes());
-    let out = h.finalize();
-    let mut hex = String::with_capacity(64);
-    for b in out {
-        hex.push_str(&format!("{b:02x}"));
-    }
-    hex
-}
+use bm_contract::hash::sha256_hex;
 
 #[cfg(test)]
 mod tests {
@@ -230,7 +224,7 @@ mod tests {
         assert_eq!(a.state, ApprovalState::WaitingUser);
         assert_eq!(
             a.args_digest,
-            sha256_hex(&serde_json::to_string(&args).unwrap()),
+            sha256_hex(serde_json::to_string(&args).unwrap().as_bytes()),
             "args 摘要 = 规范化 JSON 的 SHA-256"
         );
         assert_eq!(a.expires_at, "2026-08-29T10:45:00.000Z");
@@ -244,7 +238,7 @@ mod tests {
         let ids = SeqIdGen::new();
         let mut mgr = ApprovalManager::new(&mut ledger, &clock, &ids);
         let mut a = mgr.open(open_params(&json!({}), "写笔记"));
-        let parent_hash = sha256_hex(&serde_json::to_string(&a).unwrap());
+        let parent_hash = sha256_hex(serde_json::to_string(&a).unwrap().as_bytes());
         let resource = GrantResource {
             capability: "system.notes.write".into(),
             args_predicates: Default::default(),

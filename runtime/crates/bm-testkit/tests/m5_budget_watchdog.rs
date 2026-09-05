@@ -290,10 +290,7 @@ async fn t83_waiting_approval_exempt_from_stall() {
         )
         .await
         .expect_err("未授权能力升级审批");
-    assert!(matches!(
-        err,
-        CoreError::ApprovalNeeded { .. }
-    ));
+    assert!(matches!(err, CoreError::ApprovalNeeded { .. }));
 
     // 推进 16 分钟 → 扫描:审批挂起(waiting_approval)豁免,不判停滞
     clock.advance_ms(16 * 60 * 1000);

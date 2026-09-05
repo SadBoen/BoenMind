@@ -559,13 +559,10 @@ async fn t124_market_rejects_bool_qty() {
         )
         .await
         .expect_err("可逆写首调必须审批");
-    assert!(matches!(
-
-        err,
-
-        bm_core::CoreError::ApprovalNeeded { .. }
-
-    ), "应为审批升级(结构化 ApprovalNeeded)");
+    assert!(
+        matches!(err, bm_core::CoreError::ApprovalNeeded { .. }),
+        "应为审批升级(结构化 ApprovalNeeded)"
+    );
     let list = rig
         .handle
         .approval_list(bm_contract::wire::ApprovalListParams { state_filter: None })

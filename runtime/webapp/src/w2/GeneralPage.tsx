@@ -22,6 +22,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { BM_EVENTS, emit } from "../lib/bus";
 
 function ToolCard({
   title,
@@ -130,7 +131,7 @@ export function GeneralPage() {
       setDraft(null);
       await loadWorkspaces();
       // 通知输入框工作区候选刷新
-      window.dispatchEvent(new CustomEvent("bm-workspaces-changed"));
+      emit(BM_EVENTS.workspacesChanged);
     } catch (e) {
       setError(String(e instanceof Error ? e.message : e));
     } finally {
@@ -145,7 +146,7 @@ export function GeneralPage() {
       await api.workspaces.remove(w.id);
       flash(`已移除「${w.name}」`);
       await loadWorkspaces();
-      window.dispatchEvent(new CustomEvent("bm-workspaces-changed"));
+      emit(BM_EVENTS.workspacesChanged);
     } catch (e) {
       setError(String(e instanceof Error ? e.message : e));
     } finally {

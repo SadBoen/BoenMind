@@ -9,6 +9,7 @@ import {
 import type { AppendMessage, ThreadMessageLike } from "@assistant-ui/react";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { storage, STORAGE_KEYS, sessionsStore } from "@/lib/storage";
+import { BM_EVENTS, emit } from "../lib/bus";
 
 type TextPart = { type: "text"; text: string };
 
@@ -190,7 +191,7 @@ export function BoenmindRuntimeProvider({
         // (不与「未知会话」重试混淆:换会话救不了坏工作区)
         if (detail.includes("工作区")) {
           storage.remove(STORAGE_KEYS.ACTIVE_WORKSPACE);
-          window.dispatchEvent(new CustomEvent("bm-workspaces-changed"));
+          emit(BM_EVENTS.workspacesChanged);
           throw new Error(
             "所选工作目录不可用(可能已被删除):请重新选择,或到 设置→常规 检查",
           );
@@ -208,7 +209,7 @@ export function BoenmindRuntimeProvider({
         storage.set(STORAGE_KEYS.SESSION, newSid);
         const title = text.slice(0, 24) || "新对话";
         sessionsStore.upsert(newSid, title);
-        window.dispatchEvent(new CustomEvent("bm-sessions-updated"));
+        emit(BM_EVENTS.sessionsUpdated);
       }
 
       const reader = res.body.getReader();
@@ -310,8 +311,8 @@ export function BoenmindRuntimeProvider({
       setMessages([]);
       setPendingApprovals([]);
     };
-    window.addEventListener("bm-chat-new", onNewChat);
-    return () => window.removeEventListener("bm-chat-new", onNewChat);
+    window.addEventListener(BM_EVENTS.chatNew, onNewChat);
+    return () => window.removeEventListener(BM_EVENTS.chatNew, onNewChat);
   }, []);
 
   // 「切换历史会话」(SessionPanel 派发 bm-session-switched,目标 sid 已由
@@ -324,9 +325,9 @@ export function BoenmindRuntimeProvider({
       setMessages([]);
       setPendingApprovals([]);
     };
-    window.addEventListener("bm-session-switched", onSessionSwitched);
+    window.addEventListener(BM_EVENTS.sessionSwitched, onSessionSwitched);
     return () =>
-      window.removeEventListener("bm-session-switched", onSessionSwitched);
+      window.removeEventListener(BM_EVENTS.sessionSwitched, onSessionSwitched);
   }, []);
 
   useEffect(() => {

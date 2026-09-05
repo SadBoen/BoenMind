@@ -262,10 +262,7 @@ async fn t87_memory_capabilities_and_cascade() {
     )
     .await
     .expect_err("删除属可逆类,需审批");
-    assert!(matches!(
-        err,
-        CoreError::ApprovalNeeded { .. }
-    ));
+    assert!(matches!(err, CoreError::ApprovalNeeded { .. }));
     let list = handle
         .approval_list(bm_contract::wire::ApprovalListParams { state_filter: None })
         .await

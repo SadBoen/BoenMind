@@ -296,6 +296,7 @@ dependencies = [
  "jsonschema",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror",
  "ulid",
 ]
@@ -353,6 +354,7 @@ dependencies = [
  "async-trait",
  "bm-contract",
  "bm-core",
+ "bm-persist",
  "getrandom 0.4.3",
  "grep-regex",
  "grep-searcher",

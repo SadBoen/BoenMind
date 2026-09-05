@@ -28,6 +28,8 @@ runtime/webapp/dist/
 server-w.log
 
 # 官方插件构建产物(源码在 plugins/mcp/*/src)
+target/
+target-review/
 plugins/mcp/web-multisearch/target/
 plugins/mcp/context-inspector/target/
 server-w8.log

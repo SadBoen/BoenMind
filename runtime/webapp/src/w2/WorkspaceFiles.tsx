@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { BM_EVENTS } from "../lib/bus";
 
 type Preview = {
   path: string;
@@ -76,8 +77,8 @@ export function WorkspaceFiles() {
       setPreview(null);
       void loadDir("");
     };
-    window.addEventListener("bm-ws-refresh", refresh);
-    return () => window.removeEventListener("bm-ws-refresh", refresh);
+    window.addEventListener(BM_EVENTS.wsRefresh, refresh);
+    return () => window.removeEventListener(BM_EVENTS.wsRefresh, refresh);
   }, [loadDir]);
 
   const toggle = (path: string) => {

@@ -56,7 +56,19 @@
 | 审批等待轮询改推送 | 回合管线对审批/异步工具 400ms 轮询单写者通道(GetOperation/GetOpResult,上限 300s);可改 watch/oneshot 通知,降单写者拥塞 | OPEN(低) |
 | 前端静态分析 | ESLint + Stylelint 接入 CI | OPEN |
 | theme.css !important 收敛 | 玻璃段 4 处(毛玻璃化刻意选型,收敛须换实现手法) | OPEN(低) |
-| CustomEvent 类型化 | 5 文件发事件/12 文件监听,可随 ESLint 批次一并 | OPEN(低) |
+| 持久读错误折叠为空收口 | 来源 FULL-REVIEW-2026-09-05 §7:handle.rs 启动恢复 8 处与 events_for_session 等对 store 读错 `unwrap_or_default()` 折叠为空=故障消音成假数据,与「宁可拒开」相悖;损坏 grant 行被跳过会致 bootstrap 协调权重签发(安全侧,需故障注入端到端验证后按拒写口径统一) | OPEN(高优候选) |
+| emit 形状校验失败制造事件日志 seq 空洞 | 来源 FULL-REVIEW-2026-09-05 §7:runtime.rs emit 坏形状事件先占 seq 后拒写,后续落盘事件 seq 跳号,违反 INV-3(Judge contiguous 可检出,生产路径无保护);修=坏形状事件不占 seq 或占位补 tombstone | OPEN |
+| MCP 治理四件 | 来源 FULL-REVIEW-2026-09-05 §7:①reload 不强杀旧子进程(僵尸窗口);②respawn 无去抖/无上限;③`restart_limit` 配置解析后零消费(死配置,删或实施);④HttpMcpTransport 裸 send 无超时(远端挂起=调用悬挂) | OPEN |
+| fs.write/edit 原子写+大小上限 | 来源 FULL-REVIEW-2026-09-05 §7:fs.write/fs.edit 直接覆写原文件(进程崩溃留半截文件),同仓 atomic_write 标准未应用;且无大小上限(MAX_FILE_BYTES 只拦 search) | OPEN |
+| system.exec cwd 沙箱化 | 来源 FULL-REVIEW-2026-09-05 §7:cwd 参数未在 input_schema 声明即被消费(additionalProperties 默认放行),不经 fs_tools 工作区白名单;审批卡为主防线,补 schema 显式化+cwd 白名单校验 | OPEN |
+| FileSecretStore KDF 化 | 来源 FULL-REVIEW-2026-09-05 §7:主密钥 `&material[..32]` 截断非 KDF(HKDF/PBKDF2);get/put/delete 每次全量解密重加密 O(n);建议热路径 KDF+按需惰性 | OPEN |
+| 前端 context 面契约锚定与类型漂移 | 来源 FULL-REVIEW-2026-09-05 §7:①w1/context.tsx 手维护 evMap/kind 字符串无后端锚定,枚举改名即静默掉卡;②`McpCandidatesResult` 在 PluginsPage 本地与 api.ts 双声明已漂移(source/bundled_dir 缺失)——收敛到 api.ts 单源 | OPEN |
+| webapp 401 正向引导链路 | 来源 FULL-REVIEW-2026-09-05 §7:主 App 启动不查 /api/portal/state,门户会话过期(服务器重启即失效)后用户只见红条需自行猜 /login;启动查 state+401 统一跳登录 | OPEN |
+| glm_http 错误分类与单测 | 来源 FULL-REVIEW-2026-09-05 §7:非 2xx 一刀切 Unavailable(400/401/429 不分,4xx retryable 靠 is_server_error 巧合);feature 门控默认不编,零单测 | OPEN(低) |
+| 测试裸 sleep 收口 | 来源 FULL-REVIEW-2026-09-05 §7:m7_health 200ms/1000ms 裸等待依赖调度时序(断言「迟到完成不污染收据」),慢机器易撕破;改 wait-for 终态轮询 | OPEN(低) |
+| bm-cli 零单测 | 来源 FULL-REVIEW-2026-09-05 §7:CLI wire 调用错误码映射(ExitCode 表)无自动化回归 | OPEN(低) |
+| MCP 插件杂项 | 来源 FULL-REVIEW-2026-09-05 §7:web-multisearch usage.rs 手写历法推月(跨月边界±1 天乱)/aggregate 超时无优雅取消;context-inspector 全量读 context-log 进内存(大目录 OOM 面)+stdio 主循环同步阻塞;两插件与主仓 stdio 框架三份重抄(独立 exe 原则既知代价) | OPEN(低) |
+| openai_compat model 字段忠实性 | 来源 FULL-REVIEW-2026-09-05 §7:chunk/响应 model 恒回 default_model,W6 按条路由 requested_model 时回包撒谎(OpenAI 兼容面语义);恒 default_model 分支/非流式分支 webapp 永不消费(为第三方保留)一并评估 | OPEN(低) |
 
 ### 3.3 低优杂项
 

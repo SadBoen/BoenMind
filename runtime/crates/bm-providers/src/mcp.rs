@@ -539,9 +539,7 @@ impl McpTransport for StdioMcpTransport {
             if let Some(id) = registered_id {
                 let mut inner = self.inner.lock().await;
                 inner.pending.lock().expect("锁未中毒").remove(&id);
-                inner
-                    .token_to_id
-                    .retain(|_, v| *v != id);
+                inner.token_to_id.retain(|_, v| *v != id);
             }
             return Err(e);
         }
@@ -550,8 +548,10 @@ impl McpTransport for StdioMcpTransport {
             Ok(r) => r,
             Err(_) => Err("stdio-closed".into()),
         };
+        // 收尾清账:pending 常态由读取端按响应清理,此处 remove 幂等兜底
         {
             let mut inner = self.inner.lock().await;
+            inner.pending.lock().expect("锁未中毒").remove(&id);
             if let Some(tok) = params
                 .get("_meta")
                 .and_then(|m| m.get("progressToken"))
@@ -1108,11 +1108,8 @@ pub fn load_mcp_setups(
 
 /// 外部评审 2026-09-03 #2:插件文件 SHA-256(批准接入时记录)。
 pub fn sha256_file(path: &str) -> Result<String, String> {
-    use sha2::Digest;
     let bytes = std::fs::read(path).map_err(|e| format!("读取 {path} 失败: {e}"))?;
-    let mut h = sha2::Sha256::new();
-    h.update(&bytes);
-    Ok(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+    Ok(bm_contract::hash::sha256_hex(&bytes))
 }
 
 /// 装载/重载前复验:不符 = Err(调用方跳过该条目并告警)。

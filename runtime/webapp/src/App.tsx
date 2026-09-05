@@ -26,6 +26,7 @@ import {
   Trash2,
   MessageSquare,
 } from "lucide-react";
+import { BM_EVENTS, emit } from "./lib/bus";
 
 // 三栏宽度持久化(W2 验收门 4:刷新后布局保持);W7 反馈:左右栏抽屉收放状态同库持久化
 type Layout = {
@@ -138,7 +139,7 @@ export default function App() {
                 });
               }
               setTimeout(() => {
-                window.dispatchEvent(new CustomEvent("bm-open-music"));
+                emit(BM_EVENTS.openMusic);
               }, 10);
             }
           }}
@@ -286,18 +287,18 @@ function SessionPanel({ collapsed }: { collapsed: boolean }) {
       const timer = setTimeout(() => setFlash(false), 400);
       return () => clearTimeout(timer);
     };
-    window.addEventListener("bm-chat-new", handleNewChat);
-    window.addEventListener("bm-sessions-updated", loadSessions);
+    window.addEventListener(BM_EVENTS.chatNew, handleNewChat);
+    window.addEventListener(BM_EVENTS.sessionsUpdated, loadSessions);
     return () => {
-      window.removeEventListener("bm-chat-new", handleNewChat);
-      window.removeEventListener("bm-sessions-updated", loadSessions);
+      window.removeEventListener(BM_EVENTS.chatNew, handleNewChat);
+      window.removeEventListener(BM_EVENTS.sessionsUpdated, loadSessions);
     };
   }, [loadSessions]);
 
   const handleSelectSession = (sid: string) => {
     storage.set(STORAGE_KEYS.SESSION, sid);
     setActiveSid(sid);
-    window.dispatchEvent(new CustomEvent("bm-session-switched", { detail: { sid } }));
+    emit(BM_EVENTS.sessionSwitched, { sid });
   };
 
   const handleDeleteSession = (e: React.MouseEvent, sid: string) => {
@@ -306,7 +307,7 @@ function SessionPanel({ collapsed }: { collapsed: boolean }) {
     setSessions(next);
     if (activeSid === sid) {
       // 若删除的是当前会话，则开辟新对话
-      window.dispatchEvent(new CustomEvent("bm-chat-new"));
+      emit(BM_EVENTS.chatNew);
     }
   };
 
@@ -327,7 +328,7 @@ function SessionPanel({ collapsed }: { collapsed: boolean }) {
           className="icon-chip"
           title="新建对话"
           data-slot="new-chat"
-          onClick={() => window.dispatchEvent(new CustomEvent("bm-chat-new"))}
+          onClick={() => emit(BM_EVENTS.chatNew)}
         >
           <Plus size={16} />
         </button>
@@ -391,8 +392,8 @@ function WorkspacePanel({ collapsed }: { collapsed: boolean }) {
 
   useEffect(() => {
     const handleOpenMusic = () => setTab("music");
-    window.addEventListener("bm-open-music", handleOpenMusic);
-    return () => window.removeEventListener("bm-open-music", handleOpenMusic);
+    window.addEventListener(BM_EVENTS.openMusic, handleOpenMusic);
+    return () => window.removeEventListener(BM_EVENTS.openMusic, handleOpenMusic);
   }, []);
 
   return (
@@ -409,7 +410,7 @@ function WorkspacePanel({ collapsed }: { collapsed: boolean }) {
         <span className="title">WORKSPACE</span>
         <span className="actions">
           <button className="icon-chip" title="同步(重载目录树)"
-            onClick={() => window.dispatchEvent(new CustomEvent("bm-ws-refresh"))}
+            onClick={() => emit(BM_EVENTS.wsRefresh)}
           >
             <RefreshCw size={14} />
           </button>

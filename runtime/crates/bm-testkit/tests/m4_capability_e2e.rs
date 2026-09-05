@@ -330,10 +330,7 @@ async fn t42_approve_materializes_grant_and_completes() {
         )
         .await
         .expect_err("reversible 应升级审批");
-    assert!(matches!(
-        err,
-        CoreError::ApprovalNeeded { .. }
-    ));
+    assert!(matches!(err, CoreError::ApprovalNeeded { .. }));
 
     let list = handle
         .approval_list(bm_contract::wire::ApprovalListParams { state_filter: None })
@@ -396,10 +393,7 @@ async fn t42_approve_materializes_grant_and_completes() {
         .capability_call(req, call_params("system.danger.purge", json!({})))
         .await
         .expect_err("高危应升级审批");
-    assert!(matches!(
-        err,
-        CoreError::ApprovalNeeded { .. }
-    ));
+    assert!(matches!(err, CoreError::ApprovalNeeded { .. }));
     let list = handle
         .approval_list(bm_contract::wire::ApprovalListParams { state_filter: None })
         .await
@@ -442,10 +436,7 @@ async fn t43_approval_survives_restart() {
         )
         .await
         .expect_err("reversible 应升级审批");
-    assert!(matches!(
-        err,
-        CoreError::ApprovalNeeded { .. }
-    ));
+    assert!(matches!(err, CoreError::ApprovalNeeded { .. }));
     handle1.stop("crash-sim").await;
 
     // 第二次启动(同目录):审批对象恢复,waiting_user 仍可裁决
@@ -580,10 +571,7 @@ async fn t44_idempotency_suppression_and_intent_gate() {
     let err = call_once(&handle, req, "idem-1")
         .await
         .expect_err("external-side-effect 应升级审批");
-    assert!(matches!(
-        err,
-        CoreError::ApprovalNeeded { .. }
-    ));
+    assert!(matches!(err, CoreError::ApprovalNeeded { .. }));
     let list = handle
         .approval_list(bm_contract::wire::ApprovalListParams { state_filter: None })
         .await
@@ -610,10 +598,7 @@ async fn t44_idempotency_suppression_and_intent_gate() {
     let err = call_once(&handle, req, "idem-1")
         .await
         .expect_err("第二次调用仍需审批(Grant 已耗)");
-    assert!(matches!(
-        err,
-        CoreError::ApprovalNeeded { .. }
-    ));
+    assert!(matches!(err, CoreError::ApprovalNeeded { .. }));
     let list = handle
         .approval_list(bm_contract::wire::ApprovalListParams { state_filter: None })
         .await
@@ -786,6 +771,12 @@ impl bm_persist::EventStore for FailingStore {
     }
     fn op_input(&self, _o: &str) -> bm_persist::error::StoreResult<Option<String>> {
         Ok(None)
+    }
+    fn mark_op_cancelled(&self, _o: &str, _t: &str) -> bm_persist::error::StoreResult<()> {
+        Ok(())
+    }
+    fn op_cancel_requested(&self, _o: &str) -> bm_persist::error::StoreResult<bool> {
+        Ok(false)
     }
     fn save_task(
         &self,

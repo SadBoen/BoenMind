@@ -232,7 +232,6 @@ impl PersistStore {
     /// (完整事件日志拷贝)+ manifest.json(双方 sha256 与位点)。
     /// 运行中可取;写入顺序保证 manifest 最后落盘。
     pub fn backup_into(&self, target_dir: &Path) -> StoreResult<()> {
-        use sha2::{Digest, Sha256};
         use std::path::PathBuf;
 
         std::fs::create_dir_all(target_dir)
@@ -252,9 +251,7 @@ impl PersistStore {
             let data = std::fs::read(path).map_err(|e| {
                 StoreError::Io(std::io::Error::other(format!("hash 读取失败: {e}")))
             })?;
-            let digest = Sha256::digest(&data);
-            let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
-            Ok(format!("sha256:{hex}"))
+            Ok(format!("sha256:{}", bm_contract::hash::sha256_hex(&data)))
         };
         let manifest = serde_json::json!({
             "kind": "boenmind-backup",
@@ -277,7 +274,6 @@ impl PersistStore {
     /// 校验备份目录:manifest 完整、双 sha256 匹配、位点与日志末尾一致。
     /// 不匹配 = 拒绝恢复(审计 X-04 验收 3)。
     pub fn verify_backup(target_dir: &Path) -> StoreResult<()> {
-        use sha2::{Digest, Sha256};
         let manifest_path = target_dir.join("manifest.json");
         let raw = std::fs::read(&manifest_path).map_err(|e| StoreError::Corrupt {
             seq: 0,
@@ -293,9 +289,7 @@ impl PersistStore {
                 seq: 0,
                 reason: format!("备份文件缺失: {e}"),
             })?;
-            let digest = Sha256::digest(&data);
-            let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
-            Ok(format!("sha256:{hex}"))
+            Ok(format!("sha256:{}", bm_contract::hash::sha256_hex(&data)))
         };
         let state_sha = sha(&target_dir.join("state.db"))?;
         if state_sha != manifest["state_sha256"].as_str().unwrap_or("") {

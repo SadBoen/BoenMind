@@ -9,8 +9,6 @@
 //!
 //! 独立 Judge(M8.7 起)接口预留不实现;M5 判定全确定性。
 
-use sha2::{Digest, Sha256};
-
 /// expect 语义的确定性判定:
 /// - "exists"(或空串):查询结果非空、无 error 字段;
 /// - 其它:结果 JSON 的字符串形态包含 expect 子串。
@@ -82,14 +80,7 @@ impl ObservationEntry {
 
 /// 声称摘要哈希(证据链辅助;claim 原文入受保护引用)。
 pub fn claim_digest(claim: &str) -> String {
-    let mut h = Sha256::new();
-    h.update(claim.as_bytes());
-    let out = h.finalize();
-    let mut hex = String::with_capacity(64);
-    for b in out {
-        hex.push_str(&format!("{b:02x}"));
-    }
-    hex
+    bm_contract::hash::sha256_hex(claim.as_bytes())
 }
 
 #[cfg(test)]

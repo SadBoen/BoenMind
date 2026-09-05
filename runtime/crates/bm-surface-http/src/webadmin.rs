@@ -202,11 +202,7 @@ fn mask_provider(p: &Value) -> Value {
 fn new_provider_id() -> String {
     let mut bytes = [0u8; 8];
     getrandom::fill(&mut bytes).expect("系统熵源不可用");
-    let mut s = String::from("prov_");
-    for b in bytes {
-        s.push_str(&format!("{b:02x}"));
-    }
-    s
+    format!("prov_{}", bm_contract::hash::hex(&bytes))
 }
 
 /// W6:providers.json 变更后重建对话模型路由表 + 密钥播种(缺则种,INV-5:

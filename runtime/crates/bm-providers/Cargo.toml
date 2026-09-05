@@ -7,17 +7,18 @@ repository.workspace = true
 [dependencies]
 bm-contract = { workspace = true }
 bm-core = { workspace = true }
+bm-persist = { workspace = true }
 async-trait = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 keyring = { workspace = true }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+reqwest = { workspace = true, features = ["stream"] }
 tokio = { workspace = true }
 tracing = { workspace = true }
-aes-gcm = "0.11.1"
+aes-gcm = { workspace = true }
 tokio-util.workspace = true
 serde.workspace = true
-getrandom = "0.4.3"
+getrandom = { workspace = true }
 sha2 = { workspace = true }
 grep-searcher = { workspace = true }
 grep-regex = { workspace = true }

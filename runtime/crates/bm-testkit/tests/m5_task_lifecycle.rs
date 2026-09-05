@@ -264,9 +264,7 @@ async fn t52_count_grant_exhaustion_survives_restart() {
     let err = call(&handle, req).await.expect_err("首次应升级审批");
     let approval_id = match &err {
         // 2026-09-05 对齐 HEAD 审批错配根治:升级面为结构化 ApprovalNeeded
-        CoreError::ApprovalNeeded { .. } => {
-            approval_id_of(&handle).await.expect("审批对象在场")
-        }
+        CoreError::ApprovalNeeded { .. } => approval_id_of(&handle).await.expect("审批对象在场"),
         _ => panic!("应为审批语义错误"),
     };
     handle
@@ -401,9 +399,7 @@ async fn t53_idem_receipt_survives_restart() {
         .await
         .expect_err("首调应升级审批");
     let approval_id = match &err {
-        CoreError::ApprovalNeeded { .. } => {
-            approval_id_of(&handle).await.expect("审批在场")
-        }
+        CoreError::ApprovalNeeded { .. } => approval_id_of(&handle).await.expect("审批在场"),
         _ => panic!("应为审批语义错误"),
     };
     handle
@@ -442,10 +438,10 @@ async fn t53_idem_receipt_survives_restart() {
     let err = call_with_key(&handle2, ids2.next_id("req"), "idem-r1")
         .await
         .expect_err("Grant 耗尽应审批兜底");
-    assert!(matches!(
-        err,
-        CoreError::ApprovalNeeded { .. }
-    ), "Grant 耗尽应审批兜底(结构化 ApprovalNeeded)");
+    assert!(
+        matches!(err, CoreError::ApprovalNeeded { .. }),
+        "Grant 耗尽应审批兜底(结构化 ApprovalNeeded)"
+    );
     let approval_id = approval_id_of(&handle2).await.expect("审批在场");
     handle2
         .approval_respond(

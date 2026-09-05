@@ -205,6 +205,13 @@ fn check_side_effect_receipts(
 }
 
 fn check_latency(events: &[bm_contract::events::EventEnvelope]) -> Check {
+    // 2026-09-05 回看修复:延迟门与回合超时同源(BOEN_TURN_TIMEOUT_SECS,
+    // 默认 120s)——原固定 30s 会把「合法但慢」的回合误判 fail
+    let gate_ms: u64 = std::env::var("BOEN_TURN_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(120)
+        .saturating_mul(1000);
     let mut lat: Vec<u64> = events
         .iter()
         .filter(|e| e.event_type.as_str() == "model.invocation.completed")
@@ -220,10 +227,16 @@ fn check_latency(events: &[bm_contract::events::EventEnvelope]) -> Check {
     lat.sort_unstable();
     let max = lat[lat.len() - 1];
     let p50 = lat[lat.len() / 2];
-    let ok = max <= 30_000;
+    let ok = max <= gate_ms;
     Check {
         check_id: "latency.bucket",
         verdict: if ok { "pass" } else { "fail" },
-        evidence: format!("n={} p50={}ms max={}ms(门 30s)", lat.len(), p50, max),
+        evidence: format!(
+            "n={} p50={}ms max={}ms(门 {}ms)",
+            lat.len(),
+            p50,
+            max,
+            gate_ms
+        ),
     }
 }

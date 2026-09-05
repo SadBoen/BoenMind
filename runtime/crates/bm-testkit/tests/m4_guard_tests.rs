@@ -5,7 +5,6 @@
 //! G3 = 混层缓存超出「可丢失运行时缓存」范畴即失败(清空缓存后行为一致)。
 
 use bm_contract::capability::CapabilityManifest;
-use bm_contract::error_codes::ErrorCode;
 use bm_contract::ids::{IdGen, SeqIdGen};
 use bm_core::CoreError;
 use bm_core::broker::provider_fn;
@@ -73,10 +72,7 @@ async fn g2_approval_commands_never_appear_as_events() {
         )
         .await
         .expect_err("高危应升级审批");
-    assert!(matches!(
-        err,
-        CoreError::ApprovalNeeded { .. }
-    ));
+    assert!(matches!(err, CoreError::ApprovalNeeded { .. }));
     let list = handle
         .approval_list(bm_contract::wire::ApprovalListParams { state_filter: None })
         .await

@@ -72,9 +72,14 @@ pub fn authorization_subset(
                     return false;
                 }
             }
-            (None, _) => {}
-            // child 有资源而 parent 缺 resources 字段(parent 形态 = 动词级全参)
+            // child 谓词为空 = 动词级全参,parent 具体 → 视为放宽,拒绝
+            // (2026-09-05 回看收紧:与注释/M6「只减不增」承诺对齐,原实现
+            //  此臂放行 = 子任务可凭空谓词越出父授权的谓词集)
+            (None, Some(_)) => return false,
+            // child 具体而 parent 动词级全参 = 收窄,允许
             (Some(_), None) => {}
+            // 双方均动词级全参 = 同参,允许
+            (None, None) => {}
         }
     }
     // parent 的 mutation 动词可不在 child 中(只减不增);safe 同理
@@ -150,6 +155,36 @@ mod tests {
         assert!(authorization_subset(
             &auth(json!([{"verb": "agent.spawn", "klass": "mutation"}])),
             &parent
+        ));
+    }
+
+    #[test]
+    fn authorization_subset_rejects_predicate_widening() {
+        // 2026-09-05 回看收紧:child 谓词为空(动词级全参)而 parent 具体
+        // = 放宽,必须拒绝(与 41-45 行文档承诺对齐;原实现放行 = 越权面)
+        let parent = auth(json!([
+            {"verb": "capability.call", "klass": "mutation",
+             "resources": [{"capability": "system.notes.write"}]}
+        ]));
+        assert!(!authorization_subset(
+            &auth(json!([{"verb": "capability.call", "klass": "mutation"}])),
+            &parent
+        ));
+        // 反向:child 具体、parent 动词级全参 = 收窄,允许
+        let broad_parent = auth(json!([
+            {"verb": "capability.call", "klass": "mutation"}
+        ]));
+        assert!(authorization_subset(
+            &auth(json!([
+                {"verb": "capability.call", "klass": "mutation",
+                 "resources": [{"capability": "system.notes.write"}]}
+            ])),
+            &broad_parent
+        ));
+        // 双方均动词级 = 同参,允许
+        assert!(authorization_subset(
+            &auth(json!([{"verb": "capability.call", "klass": "mutation"}])),
+            &broad_parent
         ));
     }
 

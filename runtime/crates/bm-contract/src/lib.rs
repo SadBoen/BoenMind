@@ -13,6 +13,7 @@ pub mod connector;
 pub mod error_codes;
 pub mod events;
 pub mod exec_log;
+pub mod hash;
 pub mod ids;
 pub mod registries;
 pub mod schemas;

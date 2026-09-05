@@ -1,7 +1,6 @@
 //! 第四轮评审 P0 验收:t161 取消×审批竞态——取消等待审批的操作后批准,
 //! 不得触发表外迁移 panic(单写者死亡),且运行时保持可用。
 
-use bm_contract::error_codes::ErrorCode;
 use bm_contract::events::EventType;
 use bm_contract::ids::{IdGen, SeqIdGen};
 use bm_contract::wire::{
@@ -63,10 +62,7 @@ async fn t161_cancel_then_approve_no_panic_runtime_alive() {
         )
         .await
         .expect_err("高危调用应挂起等审批");
-    assert!(matches!(
-        err,
-        CoreError::ApprovalNeeded { .. }
-    ));
+    assert!(matches!(err, CoreError::ApprovalNeeded { .. }));
 
     // 找到审批 id
     let list = handle
@@ -126,10 +122,7 @@ async fn t161_cancel_then_approve_no_panic_runtime_alive() {
         )
         .await;
     assert!(
-        matches!(
-            alive,
-            Err(CoreError::ApprovalNeeded { .. })
-        ),
+        matches!(alive, Err(CoreError::ApprovalNeeded { .. })),
         "运行时必须仍然可用(新调用照常走审批):{alive:?}"
     );
 }

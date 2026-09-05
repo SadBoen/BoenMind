@@ -105,14 +105,19 @@ impl RuntimeHandle {
             }
             registered.push((capability.clone(), provider));
             if let Some(store) = &world.store {
-                let _ = store.save_capability_binding(bm_persist::sqlite_state::CapabilityRow {
-                    capability: &capability,
-                    provider_instance_id: &instance,
-                    epoch: 1,
-                    status: "active",
-                    manifest: &manifest_json,
-                    updated_at: &format_ts(world.started_at),
-                });
+                // 启动期:重启后 binding 随 --mcp-config 重装自然恢复,仅告警
+                if let Err(e) =
+                    store.save_capability_binding(bm_persist::sqlite_state::CapabilityRow {
+                        capability: &capability,
+                        provider_instance_id: &instance,
+                        epoch: 1,
+                        status: "active",
+                        manifest: &manifest_json,
+                        updated_at: &format_ts(world.started_at),
+                    })
+                {
+                    tracing::error!(error = %e, capability = %capability, "启动期 binding 落库失败(重启可自愈)");
+                }
             }
         }
         // M4 启动恢复:binding epoch 取持久 max(不回退,ADR-0001 条件 2);
@@ -298,7 +303,7 @@ impl RuntimeHandle {
                 &*world.config.clock,
             );
             for g in issued {
-                persist_grant(&world, &g.grant_id);
+                persist_grant(&mut world, &g.grant_id);
                 world.emit(
                     EventType::GrantCreated,
                     None,

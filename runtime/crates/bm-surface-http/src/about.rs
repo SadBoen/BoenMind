@@ -17,7 +17,6 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 
 const DEFAULT_REPO: &str = "SadBoen/BoenMind";
 
@@ -245,13 +244,7 @@ pub async fn apply_update(
             );
         }
     };
-    let mut hasher = Sha256::new();
-    hasher.update(&bytes);
-    let digest_bytes = hasher.finalize();
-    let digest = digest_bytes
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect::<String>();
+    let digest = bm_contract::hash::sha256_hex(&bytes);
     let Ok(expected_sha) = std::fs::read_to_string(&sha_path) else {
         return admin_error(
             StatusCode::INTERNAL_SERVER_ERROR,

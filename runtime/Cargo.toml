@@ -34,6 +34,9 @@ tracing = "0.1"
 keyring = "3"
 rusqlite = { version = "0", features = ["bundled", "backup"] }
 sha2 = "0.11.0"
+# HTTP 客户端单点收归(2026-09-05 回看:此前 4 个 crate 各自声明,feature 面漂移)
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+aes-gcm = "0.11.1"
 axum = { version = "0.8", features = ["ws"] }
 tower-http = { version = "0.6", features = ["fs"] }
 async-stream = "0.3"

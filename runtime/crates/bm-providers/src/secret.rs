@@ -39,23 +39,9 @@ fn ensure_valid_ref(secret_ref: &str) -> Result<(), SecretError> {
 
 /// 密钥库原子写(同 bm_persist::atomic_write;本 crate 不依赖 persist,
 /// 故本地同款):临时文件 + flush + fsync + rename,断电不留半截密钥库。
+// 2026-09-05 回看收归:与 bm_persist::util 同款实现,单点维护
 fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> Result<(), SecretError> {
-    use std::io::Write;
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| SecretError::Backend(e.to_string()))?;
-    }
-    let mut tmp_name = path.as_os_str().to_owned();
-    tmp_name.push(".tmp");
-    let tmp = std::path::PathBuf::from(tmp_name);
-    {
-        let mut f = std::fs::File::create(&tmp).map_err(|e| SecretError::Backend(e.to_string()))?;
-        f.write_all(bytes)
-            .map_err(|e| SecretError::Backend(e.to_string()))?;
-        f.flush().map_err(|e| SecretError::Backend(e.to_string()))?;
-        f.sync_all()
-            .map_err(|e| SecretError::Backend(e.to_string()))?;
-    }
-    std::fs::rename(&tmp, path).map_err(|e| SecretError::Backend(e.to_string()))
+    bm_persist::atomic_write(path, bytes).map_err(|e| SecretError::Backend(e.to_string()))
 }
 
 #[derive(Default)]

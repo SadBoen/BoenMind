@@ -19,23 +19,13 @@ use bm_contract::ids::IdGen;
 use bm_contract::timestamp::format_ts;
 use bm_contract::wire::TaskAuthorizationEntry;
 use chrono::DateTime;
-use sha2::{Digest, Sha256};
 
 /// Coordinator 的 M5 演示命名空间 principal(多 Team 隔离随 M6)。
 pub const COORDINATOR_PRINCIPAL: &str = "agent:coordinator";
 /// Worker 的 M5 演示命名空间 principal(GT-03 场景 A 同款)。
 pub const WORKER_PRINCIPAL: &str = "agent:worker";
 
-fn sha256_hex(s: &str) -> String {
-    let mut h = Sha256::new();
-    h.update(s.as_bytes());
-    let out = h.finalize();
-    let mut hex = String::with_capacity(64);
-    for b in out {
-        hex.push_str(&format!("{b:02x}"));
-    }
-    hex
-}
+use bm_contract::hash::sha256_hex;
 
 /// 签发一个 task:<id> 作用域 Grant(delegation_depth 恒 0)。
 /// #[allow]:参数与 Grant 冻结字段集一一对应,压缩反损可读性(emit 同款先例)。
@@ -120,7 +110,11 @@ pub fn intersection_grants(
                 coord_audience,
                 &entry.verb,
                 r.clone(),
-                sha256_hex(&serde_json::to_string(&parent).unwrap_or_default()),
+                sha256_hex(
+                    serde_json::to_string(&parent)
+                        .unwrap_or_default()
+                        .as_bytes(),
+                ),
                 crate::butler::BUTLER_PRINCIPAL,
                 now,
             );
@@ -142,7 +136,11 @@ pub fn intersection_grants(
                     worker_audience,
                     &capability,
                     r,
-                    sha256_hex(&serde_json::to_string(&parent_call).unwrap_or_default()),
+                    sha256_hex(
+                        serde_json::to_string(&parent_call)
+                            .unwrap_or_default()
+                            .as_bytes(),
+                    ),
                     COORDINATOR_PRINCIPAL,
                     now,
                 );
@@ -204,7 +202,7 @@ mod tests {
         let butler_spawn = butler_lookup("agent.spawn").unwrap();
         assert_eq!(
             spawn.parent_grant_hash,
-            sha256_hex(&serde_json::to_string(&butler_spawn).unwrap())
+            sha256_hex(serde_json::to_string(&butler_spawn).unwrap().as_bytes())
         );
         // Worker:恰 1 枚,action = 谓词能力,parent = Coordinator 的
         // capability.call Grant 内容哈希
@@ -220,7 +218,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             worker[0].parent_grant_hash,
-            sha256_hex(&serde_json::to_string(&parent_call).unwrap())
+            sha256_hex(serde_json::to_string(&parent_call).unwrap().as_bytes())
         );
         assert_eq!(worker[0].issued_by, COORDINATOR_PRINCIPAL);
     }

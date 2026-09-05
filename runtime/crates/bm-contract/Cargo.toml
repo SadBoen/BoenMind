@@ -11,6 +11,7 @@ thiserror = { workspace = true }
 chrono = { workspace = true }
 ulid = { workspace = true }
 jsonschema = { workspace = true }
+sha2 = { workspace = true }
 
 [lints]
 workspace = true

@@ -10,7 +10,8 @@ pub struct SpawnMemberParams {
     pub task_id: BmId,
 }
 
-/// 子任务委派入参(M6.3/M6.5;四门禁:深度/子集/预算/并发)。
+/// 子任务委派入参(M6.3/M6.5;门禁:深度/子集/预算——并发门禁未实现,
+// 本地 worker 不占异步并发位,如需并发上限随后续里程碑增补)。
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpawnSubtaskParams {
     pub parent_task_id: BmId,
@@ -41,21 +42,27 @@ pub struct WorkerCallParams {
 
 /// Task 行同步(M5-T1):完整合同载荷落 tasks 表;先于事件物化(与
 /// persist_approval 同款顺序,事件 INSERT OR IGNORE 不覆盖完整行)。
-pub(crate) fn persist_task(w: &World, task: &crate::task::Task) {
-    if let Some(store) = &w.store {
-        let payload = task_contract_json(task);
-        let _ = store.save_task(bm_persist::sqlite_state::TaskRow {
-            id: task.id.as_str(),
-            title: &task.title,
-            state: task.state.as_str(),
-            created_by: &task.created_by,
-            task_epoch: task.task_epoch,
-            payload: &payload,
-            created_at: task.created_at.as_str(),
-            updated_at: task.updated_at.as_str(),
-            parent_task_id: task.parent_task_id.as_ref().map(|p| p.as_str()),
-            delegation_depth: task.delegation_depth,
-        });
+/// 2026-09-05 口径统一:落库失败=重启后 Task 投影缺失(事件流声称存在),
+/// 进入拒写态,不再静默吞错。
+pub(crate) fn persist_task(w: &mut World, task: &crate::task::Task) {
+    let Some(store) = w.store.clone() else {
+        return;
+    };
+    let payload = task_contract_json(task);
+    if let Err(e) = store.save_task(bm_persist::sqlite_state::TaskRow {
+        id: task.id.as_str(),
+        title: &task.title,
+        state: task.state.as_str(),
+        created_by: &task.created_by,
+        task_epoch: task.task_epoch,
+        payload: &payload,
+        created_at: task.created_at.as_str(),
+        updated_at: task.updated_at.as_str(),
+        parent_task_id: task.parent_task_id.as_ref().map(|p| p.as_str()),
+        delegation_depth: task.delegation_depth,
+    }) {
+        tracing::error!(error = %e, task = %task.id.as_str(), "Task 行落库失败,进入拒写态");
+        w.persist_poisoned = true;
     }
 }
 
@@ -1305,8 +1312,14 @@ pub(crate) fn handle_worker_call(
     if outcome_str != "approval" {
         *w.task_tool_calls.entry(params.task_id.clone()).or_insert(0) += 1;
         let used_now = w.task_tool_calls[&params.task_id];
-        if let Some(store) = &w.store {
-            let _ = store.save_task_budget(params.task_id.as_str(), "", used_now, 0, &w.now_ts());
+        if let Some(store) = w.store.clone()
+            && let Err(e) =
+                store.save_task_budget(params.task_id.as_str(), "", used_now, 0, &w.now_ts())
+        {
+            // 2026-09-05 口径统一:包络计数落库失败=重启后预算计数回退
+            // (事实上的预算绕过),进入拒写态
+            tracing::error!(error = %e, task = %params.task_id.as_str(), "Task 预算行落库失败,进入拒写态");
+            w.persist_poisoned = true;
         }
         // M6.6:结果流水(来源/状态/关联 Operation;collect 聚合面)
         // 2026-09-05 回看修复:operation_id 必须是本次调用真实产物

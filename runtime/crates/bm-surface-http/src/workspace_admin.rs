@@ -35,11 +35,7 @@ fn write_registry(cfg: &AdminConfig, list: &[Value]) -> Result<(), String> {
 fn new_workspace_id() -> String {
     let mut bytes = [0u8; 6];
     getrandom::fill(&mut bytes).expect("系统熵源不可用");
-    let mut s = String::from("ws_");
-    for b in bytes {
-        s.push_str(&format!("{b:02x}"));
-    }
-    s
+    format!("ws_{}", bm_contract::hash::hex(&bytes))
 }
 
 /// 路径校验:存在、是目录、canonicalize(消解 .. 与符号链接目标)。

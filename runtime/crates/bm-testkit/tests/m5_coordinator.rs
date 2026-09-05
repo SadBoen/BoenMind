@@ -268,10 +268,7 @@ async fn t72_worker_unauthorized_capability_escalates() {
         )
         .await
         .expect_err("未授权能力必须升级审批");
-    assert!(
-        matches!(err, CoreError::ApprovalNeeded { .. }),
-        "{err:?}"
-    );
+    assert!(matches!(err, CoreError::ApprovalNeeded { .. }), "{err:?}");
     handle.stop("test_done").await;
 }
 
@@ -298,10 +295,7 @@ async fn t73_approval_task_scope_enabled() {
         )
         .await
         .expect_err("高危升级审批");
-    assert!(matches!(
-        err,
-        CoreError::ApprovalNeeded { .. }
-    ));
+    assert!(matches!(err, CoreError::ApprovalNeeded { .. }));
     let list = handle
         .approval_list(bm_contract::wire::ApprovalListParams { state_filter: None })
         .await
@@ -350,10 +344,7 @@ async fn t73_approval_task_scope_enabled() {
         )
         .await
         .expect_err("notes.write 无 Grant → 升级审批");
-    assert!(matches!(
-        err2,
-        CoreError::ApprovalNeeded { .. }
-    ));
+    assert!(matches!(err2, CoreError::ApprovalNeeded { .. }));
     let list2 = handle
         .approval_list(bm_contract::wire::ApprovalListParams { state_filter: None })
         .await

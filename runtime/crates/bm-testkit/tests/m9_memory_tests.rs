@@ -3,7 +3,6 @@
 //! 谓词**的 Grant,重调命中台账(t131/t132);跨 agent 抽屉升级(t133);
 //! search 对 user 抽屉放宽、他人抽屉升级(t135)。
 
-use bm_contract::error_codes::ErrorCode;
 use bm_contract::events::EventType;
 use bm_contract::ids::{IdGen, SeqIdGen};
 use bm_contract::wire::{ApprovalListParams, ApprovalRespondParams, TaskCreateParams};
@@ -102,10 +101,7 @@ async fn t131_132_escalate_approve_grant_predicate_then_retry_ok() {
         )
         .await
         .expect_err("越界必须升级");
-    assert!(
-        matches!(err, CoreError::ApprovalNeeded { .. }),
-        "{err:?}"
-    );
+    assert!(matches!(err, CoreError::ApprovalNeeded { .. }), "{err:?}");
 
     // 找到挂起审批并批准(forever)
     let list = handle
@@ -168,10 +164,7 @@ async fn t131_132_escalate_approve_grant_predicate_then_retry_ok() {
         )
         .await
         .expect_err("谓词未覆盖的抽屉仍须升级");
-    assert!(matches!(
-        err,
-        CoreError::ApprovalNeeded { .. }
-    ));
+    assert!(matches!(err, CoreError::ApprovalNeeded { .. }));
 }
 
 /// t133:worker 写他人 agent 抽屉 → 升级审批。
@@ -191,10 +184,7 @@ async fn t133_worker_cross_agent_drawer_escalates() {
         )
         .await
         .expect_err("跨主体抽屉必须升级");
-    assert!(matches!(
-        err,
-        CoreError::ApprovalNeeded { .. }
-    ));
+    assert!(matches!(err, CoreError::ApprovalNeeded { .. }));
 }
 
 /// t135:search 对 user 抽屉放宽(读不污染);他人 agent 抽屉仍升级。
@@ -222,8 +212,5 @@ async fn t135_worker_search_user_ok_cross_agent_escalates() {
         )
         .await
         .expect_err("他人抽屉检索须升级");
-    assert!(matches!(
-        err,
-        CoreError::ApprovalNeeded { .. }
-    ));
+    assert!(matches!(err, CoreError::ApprovalNeeded { .. }));
 }

@@ -67,6 +67,15 @@ impl BudgetState {
         // 超限那一刻 warning 与 exceeded 不重复发:直接 exceeded
         (ratio, warn && !exceeded, exceeded)
     }
+
+    /// 强制点③补充(2026-09-05 回看):失败回合也占回合配额。
+    /// 上游网关对失败/超时的模型调用同样可能计费,失败不能成为绕过
+    /// max_turns 的无限重试通道;token 侧网关未回执 usage,如实记 0。
+    /// 返回:回合配额是否已用尽(调用方据此发 budget.exceeded)。
+    pub fn account_failed_turn(&mut self) -> bool {
+        self.turns_used = self.turns_used.saturating_add(1);
+        self.turns_used >= self.max_turns
+    }
 }
 
 #[cfg(test)]
@@ -99,5 +108,18 @@ mod tests {
         b.account(10);
         assert_eq!(b.check(true), Verdict::ExceededTurns);
         assert_eq!(b.check(false), Verdict::Allow, "不检查回合数时放行");
+    }
+
+    #[test]
+    fn failed_turns_consume_turn_quota() {
+        // 2026-09-05 回看:失败回合占回合配额(网关对失败调用可能同样计费),
+        // token 未知如实记 0
+        let mut b = BudgetState::new(1_000, 2);
+        assert!(!b.account_failed_turn());
+        assert_eq!(b.used_tokens, 0, "失败回合 token 记 0");
+        assert_eq!(b.turns_used, 1);
+        assert!(b.account_failed_turn(), "第二次失败即回合配额用尽");
+        assert_eq!(b.check(true), Verdict::ExceededTurns);
+        assert_eq!(b.check(false), Verdict::Allow, "token 侧不受失败记账影响");
     }
 }

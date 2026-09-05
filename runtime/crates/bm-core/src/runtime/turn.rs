@@ -855,7 +855,7 @@ pub(crate) fn persist_approval(
                 "principal": principal, "trust": trust.as_str()
             });
         }
-        let _ = store.save_approval(bm_persist::sqlite_state::ApprovalRow {
+        if let Err(e) = store.save_approval(bm_persist::sqlite_state::ApprovalRow {
             id: approval.approval_id.as_str(),
             operation_id: op_id.as_str(),
             capability: approval.capability.as_str(),
@@ -864,27 +864,37 @@ pub(crate) fn persist_approval(
             payload: &wrap.to_string(),
             created_at: approval.requested_at.as_str(),
             resolved_at: approval.resolved_at.as_deref(),
-        });
+        }) {
+            // T6 outbox 收紧前维持「告警不阻断」口径,但不再静默
+            tracing::error!(error = %e, approval = %approval.approval_id.as_str(),
+                "审批行落库失败(当次内存可裁决;重启有丢失窗口,待 T6 outbox 收紧)");
+        }
     }
 }
 
 /// Grant 行同步(含消费态:Once 消费即 revoked 落行,T6c 起消费计数随行
-/// 持久,重启后 count 类余量不回满)。
-pub(crate) fn persist_grant(w: &World, grant_id: &str) {
-    if let Some(store) = &w.store
-        && let Some(grant) = w.grants.get(grant_id).cloned()
-    {
-        let (used, revoked) = w.grants.entry_state(grant_id).unwrap_or((0, false));
-        let _ = store.save_grant(bm_persist::sqlite_state::GrantRow {
-            id: grant.grant_id.as_str(),
-            audience: grant.audience.as_str(),
-            action: grant.action.as_str(),
-            revocation_version: grant.revocation_version,
-            revoked: revoked || used >= 1 && matches!(grant.scope, GrantScope::Once),
-            used_count: used,
-            payload: &serde_json::to_string(&grant).unwrap_or_default(),
-            created_at: grant.created_at.as_str(),
-        });
+/// 持久,重启后 count 类余量不回满)。2026-09-05 口径统一:落库失败=
+/// 重启后权限面漂移(Once 消费丢失=静默扩权),进入拒写态。
+pub(crate) fn persist_grant(w: &mut World, grant_id: &str) {
+    let Some(store) = w.store.clone() else {
+        return;
+    };
+    let Some(grant) = w.grants.get(grant_id).cloned() else {
+        return;
+    };
+    let (used, revoked) = w.grants.entry_state(grant_id).unwrap_or((0, false));
+    if let Err(e) = store.save_grant(bm_persist::sqlite_state::GrantRow {
+        id: grant.grant_id.as_str(),
+        audience: grant.audience.as_str(),
+        action: grant.action.as_str(),
+        revocation_version: grant.revocation_version,
+        revoked: revoked || used >= 1 && matches!(grant.scope, GrantScope::Once),
+        used_count: used,
+        payload: &serde_json::to_string(&grant).unwrap_or_default(),
+        created_at: grant.created_at.as_str(),
+    }) {
+        tracing::error!(error = %e, grant = %grant_id, "Grant 行落库失败,进入拒写态");
+        w.persist_poisoned = true;
     }
 }
 
@@ -1231,7 +1241,7 @@ pub(crate) fn handle_provider_call(
                     if let Err(e) = store.save_idem_receipt(h, &value.to_string(), &w.now_ts()) {
                         eprintln!("[persist] 幂等收据落表失败 key={h}: {e:?}");
                     }
-                    let _ = store.outbox_upsert(
+                    if let Err(e) = store.outbox_upsert(
                         operation_id.as_str(),
                         "side_effect",
                         "published",
@@ -1241,7 +1251,9 @@ pub(crate) fn handle_provider_call(
                         })
                         .to_string(),
                         &w.now_ts(),
-                    );
+                    ) {
+                        tracing::error!(error = %e, op = %operation_id.as_str(), "outbox published 落库失败(T6 收紧前仅告警)");
+                    }
                 }
             }
             if let Some(gid) = &meta.grant_id {
@@ -1542,8 +1554,8 @@ pub(crate) fn dispatch_capability(
             None,
             key_hash.as_deref(),
         );
-        if let Some(store) = &w.store {
-            let _ = store.outbox_upsert(
+        if let Some(store) = &w.store
+            && let Err(e) = store.outbox_upsert(
                 op_id.as_str(),
                 "side_effect",
                 "pending",
@@ -1553,7 +1565,9 @@ pub(crate) fn dispatch_capability(
                 })
                 .to_string(),
                 &w.now_ts(),
-            );
+            )
+        {
+            tracing::error!(error = %e, op = %op_id.as_str(), "outbox pending 落库失败(T6 收紧前仅告警)");
         }
     }
     // M7 S4:异步 Provider 路径——决策/校验/预扣/intent 门已过,执行交
@@ -1663,8 +1677,7 @@ pub(crate) fn dispatch_capability(
             );
             if prepared.is_side_effect
                 && let Some(store) = &w.store
-            {
-                let _ = store.outbox_upsert(
+                && let Err(e) = store.outbox_upsert(
                     op_id.as_str(),
                     "side_effect",
                     "published",
@@ -1674,7 +1687,9 @@ pub(crate) fn dispatch_capability(
                     })
                     .to_string(),
                     &w.now_ts(),
-                );
+                )
+            {
+                tracing::error!(error = %e, op = %op_id.as_str(), "outbox published 落库失败(T6 收紧前仅告警)");
             }
         }
         CallOutcome::Suppressed { .. } => unreachable!("抑制发生在 execute 前"),
@@ -1794,11 +1809,7 @@ pub(crate) fn error_code_of(outcome: &CallOutcome) -> ErrorCode {
 }
 
 pub(crate) fn sha256_hex(s: &str) -> String {
-    use sha2::Digest;
-    let mut h = Sha256::new();
-    h.update(s.as_bytes());
-    let out = h.finalize();
-    out.iter().map(|b| format!("{b:02x}")).collect()
+    bm_contract::hash::sha256_hex(s.as_bytes())
 }
 
 pub(crate) fn handle_turn_event(w: &mut World, event: TurnEvent) {

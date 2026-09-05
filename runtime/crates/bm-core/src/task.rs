@@ -158,9 +158,10 @@ impl Task {
     }
 
     /// 成员加入(调用方发 task.member.added 事件;jointed_seq 由事件 seq 回填)。
+    /// 2026-09-05 回看修复:updated_at 取当前墙钟(原为 no-op 自赋值)。
     pub fn add_member(&mut self, member: TaskMember) {
         self.members.push(member);
-        self.updated_at = self.updated_at.clone();
+        self.updated_at = bm_contract::timestamp::now();
     }
 }
 

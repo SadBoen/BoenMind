@@ -385,8 +385,7 @@ pub(crate) fn handle_send_input(
     );
     // Execution Log:agent.turn(输入只留摘要,基线 8.4;A4:载荷原文不入日志)
     {
-        let digest = Sha256::digest(params.content.as_bytes());
-        let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+        let digest_hex = bm_contract::hash::sha256_hex(params.content.as_bytes());
         w.exec_log.record(crate::exec_log::LogRecord {
             kind: LogKind::AgentTurn,
             session_id: session.id.clone(),
@@ -396,7 +395,7 @@ pub(crate) fn handle_send_input(
             agent_state: AgentState::Running.as_str().to_string(),
             detail: serde_json::json!({
                 "turn_index": turn_index,
-                "input_digest": format!("sha256:{hex}"),
+                "input_digest": format!("sha256:{digest_hex}"),
                 "input_bytes": params.content.len(),
             }),
             ts: now.clone(),
@@ -801,15 +800,15 @@ pub(crate) fn handle_cancel(w: &mut World, params: CancelParams) -> CoreResult<C
     // 取消意图持久化(2026-09-05 回看修复):显式取消若在回合边界落定前
     // 遇到崩溃,恢复端凭标记走 Resuming→Stopped(turn_was_stopping)边,
     // 不把已取消的回合复活重跑。写失败 = 拒写态(与 save_op_input 同纪律)。
-    if let Some(store) = &w.store {
-        if let Err(e) = store.mark_op_cancelled(params.operation_id.as_str(), &w.now_ts()) {
-            tracing::error!(error = %e, op = %params.operation_id.as_str(), "取消标记持久化失败,进入拒写态");
-            w.persist_poisoned = true;
-            return Err(CoreError::Semantic(
-                ErrorCode::Internal,
-                "取消标记持久化失败".into(),
-            ));
-        }
+    if let Some(store) = &w.store
+        && let Err(e) = store.mark_op_cancelled(params.operation_id.as_str(), &w.now_ts())
+    {
+        tracing::error!(error = %e, op = %params.operation_id.as_str(), "取消标记持久化失败,进入拒写态");
+        w.persist_poisoned = true;
+        return Err(CoreError::Semantic(
+            ErrorCode::Internal,
+            "取消标记持久化失败".into(),
+        ));
     }
     // 触发取消令牌;真实落定在 TurnEvent::Cancelled(回合边界)。
     if let Some(token) = w.in_flight.get(&params.operation_id) {
@@ -929,8 +928,8 @@ pub(crate) fn handle_capabilities_register(
                 if capability.starts_with("mcp.") {
                     w.registry.mark_async(&capability);
                 }
-                if let Some(store) = &w.store {
-                    let _ =
+                if let Some(store) = w.store.clone()
+                    && let Err(e) =
                         store.save_capability_binding(bm_persist::sqlite_state::CapabilityRow {
                             capability: &capability,
                             provider_instance_id: &instance,
@@ -938,7 +937,11 @@ pub(crate) fn handle_capabilities_register(
                             status: "active",
                             manifest: &manifest_json,
                             updated_at: &format_ts(w.started_at),
-                        });
+                        })
+                {
+                    // 2026-09-05 口径统一:binding 落库失败=重启后能力面漂移
+                    tracing::error!(error = %e, capability = %capability, "能力 binding 落库失败,进入拒写态");
+                    w.persist_poisoned = true;
                 }
                 registered.push(capability);
             }
@@ -971,8 +974,12 @@ pub(crate) fn handle_capabilities_unregister(
     let mut removed: Vec<String> = Vec::new();
     for cap in capabilities {
         if w.registry.unregister(&cap) {
-            if let Some(store) = &w.store {
-                let _ = store.delete_capability_binding(&cap);
+            if let Some(store) = w.store.clone()
+                && let Err(e) = store.delete_capability_binding(&cap)
+            {
+                // 2026-09-05 口径统一:binding 摘除失败=重启后能力面漂移
+                tracing::error!(error = %e, capability = %cap, "能力 binding 摘除失败,进入拒写态");
+                w.persist_poisoned = true;
             }
             removed.push(cap);
         }

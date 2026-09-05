@@ -29,7 +29,6 @@ use bm_contract::wire::{
     SessionResumeResult, TaskType, WireError,
 };
 use chrono::{DateTime, Duration, Utc};
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
@@ -390,8 +389,10 @@ impl World {
             );
             if let Some(store) = &self.store
                 && !self.persist_poisoned
+                && let Err(e) = store.record(&warn)
             {
-                let _ = store.record(&warn);
+                // 兜底审计事件自身写失败:事件已在内存总线,持久侧无路可走
+                tracing::error!(error = %e, seq = %warn_seq, "拒写审计事件落盘失败");
             }
             self.bus.append(warn);
             return event;
@@ -488,6 +489,30 @@ impl World {
         {
             let a = self.agents.get_mut(&agent_id).expect("存在");
             a.transition(AgentState::Failed);
+        }
+        // 强制点③补充(2026-09-05 回看):失败回合占回合配额,失败重试
+        // 不得绕过 max_turns 烧钱(网关对失败调用同样可能计费)
+        let turns_exhausted = {
+            let a = self.agents.get_mut(&agent_id).expect("存在");
+            a.budget.account_failed_turn()
+        };
+        if turns_exhausted {
+            let (used, limit) = {
+                let a = &self.agents[&agent_id];
+                (a.budget.used_tokens, a.budget.max_tokens)
+            };
+            self.emit(
+                EventType::BudgetExceeded,
+                Some(session_id.clone()),
+                Some(agent_id.clone()),
+                None,
+                serde_json::json!({
+                    "agent_id": agent_id.as_str(),
+                    "scope": BudgetScope::Agent.as_str(),
+                    "used_tokens": used,
+                    "limit_tokens": limit,
+                }),
+            );
         }
         let mut err = WireError::new(code, message);
         // 回合已收口,运行时不会再自动重发 → retryable=false(GT-B 信封语义)

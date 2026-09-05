@@ -30,6 +30,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import { BM_EVENTS, emit } from "../lib/bus";
 
 type Draft = {
   id?: string;
@@ -287,7 +288,7 @@ export function ProvidersPage() {
           setDraft(null);
           await reload();
           // W6:通知输入框模型下拉刷新(常用清单可能变了)
-          window.dispatchEvent(new CustomEvent("bm-providers-changed"));
+          emit(BM_EVENTS.providersChanged);
           flash(msg);
         }}
       />

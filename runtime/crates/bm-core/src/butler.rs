@@ -14,7 +14,6 @@ use crate::clock::Clock;
 use bm_contract::capability::{Grant, GrantResource, GrantScope};
 use bm_contract::ids::IdGen;
 use bm_contract::timestamp::format_ts;
-use sha2::{Digest, Sha256};
 
 /// Butler 的系统身份(principal)。
 pub const BUTLER_PRINCIPAL: &str = "butler:system";
@@ -57,14 +56,7 @@ pub fn verb_class(verb: &str) -> Option<CoordinationClass> {
 
 /// bootstrap 父授权哈希:固定引导标记的 SHA-256(无 Approval 父对象)。
 pub fn bootstrap_parent_hash() -> String {
-    let mut h = Sha256::new();
-    h.update(BOOTSTRAP_ISSUER.as_bytes());
-    let out = h.finalize();
-    let mut hex = String::with_capacity(64);
-    for b in out {
-        hex.push_str(&format!("{b:02x}"));
-    }
-    hex
+    bm_contract::hash::sha256_hex(BOOTSTRAP_ISSUER.as_bytes())
 }
 
 /// 构造一个 bootstrap 协调权 Grant(scope=forever,delegation_depth=0)。

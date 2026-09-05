@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTimedNotice } from "@/lib/use-timed-notice";
+import { BM_EVENTS, emit } from "../lib/bus";
 
 export function RolesPage() {
   const [roles, setRoles] = useState<RoleItem[]>([]);
@@ -75,7 +76,7 @@ export function RolesPage() {
       flash(res.note);
       setEditingRole(null);
       await reload();
-      window.dispatchEvent(new CustomEvent("bm-roles-changed"));
+      emit(BM_EVENTS.rolesChanged);
     } catch (e) {
       setError(String(e instanceof Error ? e.message : e));
     } finally {

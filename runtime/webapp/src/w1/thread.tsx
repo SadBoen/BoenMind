@@ -55,6 +55,7 @@ import { useBoenmindApprovals, type ApprovalRequest } from "./runtime";
 import { api, type WorkspaceEntry } from "@/w2/api";
 import { storage, STORAGE_KEYS, type PermissionMode } from "@/lib/storage";
 import { cn } from "@/lib/utils";
+import { BM_EVENTS, emit } from "../lib/bus";
 
 export function Thread({
   sessionsCollapsed,
@@ -83,8 +84,8 @@ export function Thread({
         }
       }, 0);
     };
-    window.addEventListener("bm-chat-new", onNewChat);
-    return () => window.removeEventListener("bm-chat-new", onNewChat);
+    window.addEventListener(BM_EVENTS.chatNew, onNewChat);
+    return () => window.removeEventListener(BM_EVENTS.chatNew, onNewChat);
   }, []);
   const tabCls = (active: boolean) =>
     "rounded-full px-2.5 py-0.5 text-[12px] transition-colors " +
@@ -612,13 +613,13 @@ function Composer() {
     loadModels();
     loadRoles();
     loadWorkspaces();
-    window.addEventListener("bm-roles-changed", loadRoles);
-    window.addEventListener("bm-providers-changed", loadModels);
-    window.addEventListener("bm-workspaces-changed", loadWorkspaces);
+    window.addEventListener(BM_EVENTS.rolesChanged, loadRoles);
+    window.addEventListener(BM_EVENTS.providersChanged, loadModels);
+    window.addEventListener(BM_EVENTS.workspacesChanged, loadWorkspaces);
     return () => {
-      window.removeEventListener("bm-roles-changed", loadRoles);
-      window.removeEventListener("bm-providers-changed", loadModels);
-      window.removeEventListener("bm-workspaces-changed", loadWorkspaces);
+      window.removeEventListener(BM_EVENTS.rolesChanged, loadRoles);
+      window.removeEventListener(BM_EVENTS.providersChanged, loadModels);
+      window.removeEventListener(BM_EVENTS.workspacesChanged, loadWorkspaces);
     };
   }, []);
 
@@ -626,7 +627,7 @@ function Composer() {
     setActiveRole(newRoleId);
     storage.set(STORAGE_KEYS.ACTIVE_ROLE, newRoleId);
     // 切换角色时清空旧会话并重开，使新角色的 system_prompt 立即绑定
-    window.dispatchEvent(new CustomEvent("bm-chat-new"));
+    emit(BM_EVENTS.chatNew);
   };
 
   return (

@@ -36,6 +36,7 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { storage, STORAGE_KEYS } from "@/lib/storage";
 import { cn } from "@/lib/utils";
+import { BM_EVENTS } from "../lib/bus";
 
 // 估算中英文字数或 token (约 chars/3;仅用于各段不精确的构成占比,真实以提供商 usage 为准)
 const estTokens = (s?: string | null) => Math.max(1, Math.ceil((s?.length ?? 0) / 3));
@@ -243,8 +244,8 @@ export function ContextView() {
       setSelectedStepKey(null);
       void refresh();
     };
-    window.addEventListener("bm-chat-new", handleNewChat);
-    return () => window.removeEventListener("bm-chat-new", handleNewChat);
+    window.addEventListener(BM_EVENTS.chatNew, handleNewChat);
+    return () => window.removeEventListener(BM_EVENTS.chatNew, handleNewChat);
   }, [refresh]);
 
   useEffect(() => {
