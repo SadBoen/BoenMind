@@ -621,7 +621,7 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
                 );
             }
             Cmd::Cancel { params, resp } => {
-                let _ = resp.send(handle_cancel(&world, params));
+                let _ = resp.send(handle_cancel(&mut world, params));
             }
             Cmd::RecoverySettle {
                 operation_id,

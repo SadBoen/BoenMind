@@ -299,13 +299,10 @@ pub async fn apply_update(
     //    不触发,单元停死;且子进程与排空中的旧进程短暂双开状态库(位点
     //    错位,启动恢复拒开)。常规解:systemd 环境换装后 systemctl restart
     //    --no-block 交给单元管理;检测不到单元/非 systemd 回落原自拉起。
+    //    (2026-09-05 回看修复:restart 只发一次——原 let-chain 条件里先
+    //    发了一次、进块后又发一次,双重重启叠出竞争窗口)
     if std::path::Path::new("/run/systemd/system").exists()
         && let Some(unit) = systemd_boenmind_unit()
-        && std::process::Command::new("systemctl")
-            .args(["restart", "--no-block", &unit])
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
     {
         let ok = std::process::Command::new("systemctl")
             .args(["restart", "--no-block", &unit])

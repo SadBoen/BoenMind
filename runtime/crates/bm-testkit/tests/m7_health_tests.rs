@@ -430,10 +430,8 @@ async fn t108_first_call_approval_and_grant_exhaustion() {
         .await
         .expect_err("首调必须审批");
     match &err {
-        bm_core::CoreError::Semantic(code, _) => {
-            assert_eq!(*code, ErrorCode::ApprovalRequired)
-        }
-        other => panic!("应为 approval_required,实际 {other:?}"),
+        bm_core::CoreError::ApprovalNeeded { .. } => {}
+        other => panic!("应为 approval_required(结构化 ApprovalNeeded),实际 {other:?}"),
     }
 
     // 批准 count:2 → 重放(消费 1)成功
@@ -474,10 +472,8 @@ async fn t108_first_call_approval_and_grant_exhaustion() {
         .await
         .expect_err("Grant 耗尽必须回到审批");
     match &err {
-        bm_core::CoreError::Semantic(code, _) => {
-            assert_eq!(*code, ErrorCode::ApprovalRequired)
-        }
-        other => panic!("应为 approval_required,实际 {other:?}"),
+        bm_core::CoreError::ApprovalNeeded { .. } => {}
+        other => panic!("应为 approval_required(结构化 ApprovalNeeded),实际 {other:?}"),
     }
     rig.stop().await;
 }

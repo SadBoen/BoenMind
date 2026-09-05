@@ -8,7 +8,7 @@ use rusqlite::Connection;
 use std::path::Path;
 use std::sync::Mutex;
 
-pub const SCHEMA_VERSION: i64 = 8;
+pub const SCHEMA_VERSION: i64 = 9;
 
 /// approvals 表行(载荷列 = Approval 合同 JSON 文本)。
 pub struct ApprovalRow<'a> {
@@ -104,6 +104,9 @@ impl StateDb {
         }
         if version < 8 {
             Self::migrate_v7_to_v8(&conn)?;
+        }
+        if version < 9 {
+            Self::migrate_v8_to_v9(&conn)?;
         }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(Self {
@@ -274,6 +277,22 @@ impl StateDb {
         Ok(())
     }
 
+    /// v8→v9(2026-09-05 回看修复,expand:纯新增一表):op_cancel_marks——
+    /// 取消意图持久标记。用户显式取消后、回合边界落定前若崩溃,恢复端凭此
+    /// 走 Resuming→Stopped(turn_was_stopping)契约边,不再把已取消的回合
+    /// 复活为 Running 重烧模型调用。
+    fn migrate_v8_to_v9(conn: &Connection) -> StoreResult<()> {
+        conn.execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS op_cancel_marks (
+                op_id     TEXT PRIMARY KEY,
+                marked_at TEXT NOT NULL
+            );
+            "#,
+        )?;
+        Ok(())
+    }
+
     /// v7→v8(M8.5/M8.7,expand:纯新增一表):evaluation_reports——
     /// 独立 Judge 的评估报告落库(报告 = 派生工件,不进事件日志)。
     fn migrate_v7_to_v8(conn: &Connection) -> StoreResult<()> {
@@ -375,6 +394,27 @@ impl StateDb {
         } else {
             Ok(None)
         }
+    }
+
+    /// 持久化取消意图标记(2026-09-05 回看修复:显式取消必须可跨崩溃存续)。
+    pub fn mark_op_cancelled(&self, operation_id: &str, marked_at: &str) -> StoreResult<()> {
+        let conn = self.conn.lock().expect("锁未中毒");
+        conn.execute(
+            "INSERT OR REPLACE INTO op_cancel_marks (op_id, marked_at) VALUES (?1, ?2)",
+            rusqlite::params![operation_id, marked_at],
+        )?;
+        Ok(())
+    }
+
+    /// 查询取消意图标记(恢复端判定 turn_was_stopping)。
+    pub fn op_cancel_requested(&self, operation_id: &str) -> StoreResult<bool> {
+        let conn = self.conn.lock().expect("锁未中毒");
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM op_cancel_marks WHERE op_id = ?1",
+            [operation_id],
+            |r| r.get(0),
+        )?;
+        Ok(n > 0)
     }
 
     /// 通用行查询(恢复与测试读取用;返回按列名的 JSON 对象数组)。

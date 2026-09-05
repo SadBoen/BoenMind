@@ -61,32 +61,12 @@ export function MusicPlayer() {
           };
         });
 
-      // 如果工作区暂无音频，提供内置示例曲目
-      if (audioFiles.length === 0) {
-        const demoTracks: Track[] = [
-          {
-            id: "demo-1",
-            title: "BoenMind Ambient Theme",
-            artist: "Runtime Acoustic",
-            path: "ambient.mp3",
-            size: 3450000,
-          },
-          {
-            id: "demo-2",
-            title: "Synthetic Focus (Lofi Flow)",
-            artist: "AI Soundscape",
-            path: "focus_lofi.mp3",
-            size: 4200000,
-          },
-        ];
-        setTracks(demoTracks);
-        setPlaylist(demoTracks);
-      } else {
-        setTracks(audioFiles);
-        setPlaylist(audioFiles);
-      }
+      // 2026-09-05 回看修复:移除虚构示例曲目——曲库必须忠实反映工作区
+      // 实际内容,空就是空(诚实空态由下方列表空态分支呈现)
+      setTracks(audioFiles);
+      setPlaylist(audioFiles);
     } catch {
-      // 容错处理
+      // 扫描失败保持空列表(不伪造数据)
     }
   }, []);
 

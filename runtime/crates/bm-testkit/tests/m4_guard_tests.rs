@@ -75,7 +75,7 @@ async fn g2_approval_commands_never_appear_as_events() {
         .expect_err("高危应升级审批");
     assert!(matches!(
         err,
-        CoreError::Semantic(ErrorCode::ApprovalRequired, _)
+        CoreError::ApprovalNeeded { .. }
     ));
     let list = handle
         .approval_list(bm_contract::wire::ApprovalListParams { state_filter: None })

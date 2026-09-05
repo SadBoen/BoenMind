@@ -152,10 +152,8 @@ async fn t110_wiki_real_write_with_receipt() {
         .await
         .expect_err("首调必须审批");
     match &err {
-        bm_core::CoreError::Semantic(code, _) => {
-            assert_eq!(*code, ErrorCode::ApprovalRequired)
-        }
-        other => panic!("应为 approval_required,实际 {other:?}"),
+        bm_core::CoreError::ApprovalNeeded { .. } => {}
+        other => panic!("应为 approval_required(结构化 ApprovalNeeded),实际 {other:?}"),
     }
 
     // 批准 once → 重放 → 真实写盘
@@ -347,10 +345,8 @@ async fn t112_market_determinism_and_portfolio() {
         .await
         .expect_err("可逆写首调必须审批");
     match &err {
-        bm_core::CoreError::Semantic(code, _) => {
-            assert_eq!(*code, ErrorCode::ApprovalRequired)
-        }
-        other => panic!("应为 approval_required,实际 {other:?}"),
+        bm_core::CoreError::ApprovalNeeded { .. } => {}
+        other => panic!("应为 approval_required(结构化 ApprovalNeeded),实际 {other:?}"),
     }
     let list = rig
         .handle
@@ -564,9 +560,12 @@ async fn t124_market_rejects_bool_qty() {
         .await
         .expect_err("可逆写首调必须审批");
     assert!(matches!(
+
         err,
-        bm_core::CoreError::Semantic(bm_contract::error_codes::ErrorCode::ApprovalRequired, _)
-    ));
+
+        bm_core::CoreError::ApprovalNeeded { .. }
+
+    ), "应为审批升级(结构化 ApprovalNeeded)");
     let list = rig
         .handle
         .approval_list(bm_contract::wire::ApprovalListParams { state_filter: None })

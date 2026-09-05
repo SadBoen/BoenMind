@@ -142,8 +142,8 @@ async fn t41_high_risk_approval_deny_cycle() {
         .await
         .expect_err("高风险必须审批");
     match &err {
-        CoreError::Semantic(code, _) => assert_eq!(*code, ErrorCode::ApprovalRequired),
-        other => panic!("应为 approval_required,实际 {other:?}"),
+        CoreError::ApprovalNeeded { .. } => {}
+        other => panic!("应为 approval_required(结构化 ApprovalNeeded),实际 {other:?}"),
     }
 
     // 审批对象可见,operation 停在 waiting_approval
@@ -332,7 +332,7 @@ async fn t42_approve_materializes_grant_and_completes() {
         .expect_err("reversible 应升级审批");
     assert!(matches!(
         err,
-        CoreError::Semantic(ErrorCode::ApprovalRequired, _)
+        CoreError::ApprovalNeeded { .. }
     ));
 
     let list = handle
@@ -398,7 +398,7 @@ async fn t42_approve_materializes_grant_and_completes() {
         .expect_err("高危应升级审批");
     assert!(matches!(
         err,
-        CoreError::Semantic(ErrorCode::ApprovalRequired, _)
+        CoreError::ApprovalNeeded { .. }
     ));
     let list = handle
         .approval_list(bm_contract::wire::ApprovalListParams { state_filter: None })
@@ -444,7 +444,7 @@ async fn t43_approval_survives_restart() {
         .expect_err("reversible 应升级审批");
     assert!(matches!(
         err,
-        CoreError::Semantic(ErrorCode::ApprovalRequired, _)
+        CoreError::ApprovalNeeded { .. }
     ));
     handle1.stop("crash-sim").await;
 
@@ -582,7 +582,7 @@ async fn t44_idempotency_suppression_and_intent_gate() {
         .expect_err("external-side-effect 应升级审批");
     assert!(matches!(
         err,
-        CoreError::Semantic(ErrorCode::ApprovalRequired, _)
+        CoreError::ApprovalNeeded { .. }
     ));
     let list = handle
         .approval_list(bm_contract::wire::ApprovalListParams { state_filter: None })
@@ -612,7 +612,7 @@ async fn t44_idempotency_suppression_and_intent_gate() {
         .expect_err("第二次调用仍需审批(Grant 已耗)");
     assert!(matches!(
         err,
-        CoreError::Semantic(ErrorCode::ApprovalRequired, _)
+        CoreError::ApprovalNeeded { .. }
     ));
     let list = handle
         .approval_list(bm_contract::wire::ApprovalListParams { state_filter: None })

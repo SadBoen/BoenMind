@@ -87,7 +87,12 @@ fn cookie_session(headers: &HeaderMap) -> Option<String> {
     let raw = headers.get(header::COOKIE)?.to_str().ok()?;
     for part in raw.split(';') {
         let p = part.trim();
-        if let Some(v) = p.strip_prefix(SESSION_COOKIE)?.strip_prefix('=') {
+        // 逐段局部匹配:非本会话名的 cookie(浏览器可能排在前)必须跳过
+        // 继续找,绝不能用 ? 让整个函数提前返回(2026-09-05 回看修复)。
+        let Some(rest) = p.strip_prefix(SESSION_COOKIE) else {
+            continue;
+        };
+        if let Some(v) = rest.strip_prefix('=') {
             return Some(v.to_string());
         }
     }
@@ -305,5 +310,42 @@ pub async fn login_page(State(state): State<crate::AppState>) -> Response {
             Err(_) => (StatusCode::NOT_FOUND, "login.html 缺失").into_response(),
         },
         None => (StatusCode::NOT_FOUND, "未挂载 Web 目录").into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cookie_map(value: &str) -> HeaderMap {
+        let mut m = HeaderMap::new();
+        m.insert(header::COOKIE, header::HeaderValue::from_str(value).expect("合法头"));
+        m
+    }
+
+    #[test]
+    fn cookie_session_skips_non_session_cookies_before_target() {
+        // 2026-09-05 回看修复:此前首个非 boen_session 的 cookie 会因 ? 短路
+        // 整个解析,合法会话被静默丢弃。回归锁死:目标 cookie 在任意位置都能取到。
+        assert_eq!(
+            cookie_session(&cookie_map("theme=dark; boen_session=abc123")),
+            Some("abc123".to_string())
+        );
+        assert_eq!(
+            cookie_session(&cookie_map("boen_session=xyz")),
+            Some("xyz".to_string())
+        );
+        assert_eq!(cookie_session(&cookie_map("theme=dark; a=b")), None);
+        assert_eq!(cookie_session(&HeaderMap::new()), None);
+        // 同名前缀 cookie 不得误匹配(boen_session_extra)
+        assert_eq!(
+            cookie_session(&cookie_map("boen_session_extra=evil; theme=dark")),
+            None
+        );
+        // 值中含 = 只切第一个
+        assert_eq!(
+            cookie_session(&cookie_map("boen_session=a=b")),
+            Some("a=b".to_string())
+        );
     }
 }

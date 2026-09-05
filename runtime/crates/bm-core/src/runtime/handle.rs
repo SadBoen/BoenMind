@@ -353,6 +353,13 @@ impl RuntimeHandle {
         // 无输入上下文或 outcome_unknown 者,留给裁定入口(recovery_settle)。
         let mut claim_redrive: Vec<(BmId, BmId, String)> = Vec::new();
         for (op_id, agent_id, op_state) in pending_interrupts.drain(..) {
+            // 取消意图在案?(2026-09-05 回看修复:显式取消后、回合边界落定前
+            // 崩溃 → 恢复必须尊重取消,不得复活接单/重驱回合烧模型调用)
+            let cancel_requested = world
+                .store
+                .as_ref()
+                .and_then(|s| s.op_cancel_requested(op_id.as_str()).ok())
+                .unwrap_or(false);
             if op_state == "running" {
                 world.settle_operation(&op_id, OperationState::Interrupted, None);
             }
@@ -367,6 +374,31 @@ impl RuntimeHandle {
                     "reason": "runtime_recovery",
                 }),
             );
+            if cancel_requested {
+                // turn_was_stopping 在案:operation 走 user_ruling(Interrupted/
+                // waiting 系 → cancelled),agent 走 Resuming→Stopped
+                // (replay_ok AND turn_was_stopping 契约边)。
+                world.settle_operation(&op_id, OperationState::Cancelled, None);
+                {
+                    let a = world.agents.get_mut(&agent_id).expect("恢复行必有 agent");
+                    if AgentState::can_transition(a.state, AgentState::Interrupted) {
+                        a.transition(AgentState::Interrupted);
+                    }
+                    a.transition(AgentState::Resuming);
+                    a.transition(AgentState::Stopped);
+                }
+                world.emit(
+                    EventType::AgentCancelled,
+                    None,
+                    Some(agent_id.clone()),
+                    Some(op_id.clone()),
+                    serde_json::json!({
+                        "agent_id": agent_id.as_str(),
+                        "operation_id": op_id.as_str(),
+                    }),
+                );
+                continue;
+            }
             {
                 let a = world.agents.get_mut(&agent_id).expect("恢复行必有 agent");
                 a.transition(AgentState::Interrupted);
@@ -397,8 +429,10 @@ impl RuntimeHandle {
         // 无 running op 但停在中间态的 agent:同样走中断恢复(outcome_unknown
         // 场景:op 留给裁定,agent 恢复可接单)
         for (agent_id, latest_op) in agents_to_resume.drain(..) {
-            // op 流可能已恢复该 agent:先查内存态,避免重复中断事件
-            if world.agents.get(&agent_id).map(|a| a.state) == Some(AgentState::Running) {
+            // op 流可能已恢复该 agent:先查内存态,避免重复中断事件;
+            // 终态(含取消标记恢复出的 stopped)同样不得再拉起
+            let st = world.agents.get(&agent_id).map(|a| a.state);
+            if st == Some(AgentState::Running) || st.is_some_and(|s| s.is_terminal()) {
                 continue;
             }
             let op_hint = latest_op.or_else(|| {

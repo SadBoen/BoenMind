@@ -65,7 +65,7 @@ async fn t161_cancel_then_approve_no_panic_runtime_alive() {
         .expect_err("高危调用应挂起等审批");
     assert!(matches!(
         err,
-        CoreError::Semantic(ErrorCode::ApprovalRequired, _)
+        CoreError::ApprovalNeeded { .. }
     ));
 
     // 找到审批 id
@@ -128,7 +128,7 @@ async fn t161_cancel_then_approve_no_panic_runtime_alive() {
     assert!(
         matches!(
             alive,
-            Err(CoreError::Semantic(ErrorCode::ApprovalRequired, _))
+            Err(CoreError::ApprovalNeeded { .. })
         ),
         "运行时必须仍然可用(新调用照常走审批):{alive:?}"
     );

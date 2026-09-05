@@ -512,11 +512,13 @@ impl McpTransport for StdioMcpTransport {
             self.respawn().await?;
         }
         let (tx, rx) = tokio::sync::oneshot::channel();
-        {
+        let mut registered_id: Option<u64> = None;
+        let write_result = (async {
             let mut inner = self.inner.lock().await;
             inner.next_id += 1;
             let id = inner.next_id;
             inner.pending.lock().expect("锁未中毒").insert(id, tx);
+            registered_id = Some(id);
             if let Some(tok) = params
                 .get("_meta")
                 .and_then(|m| m.get("progressToken"))
@@ -528,8 +530,22 @@ impl McpTransport for StdioMcpTransport {
             let msg = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
             let mut bytes = serde_json::to_string(&msg).map_err(|e| e.to_string())?;
             bytes.push('\n');
-            write_frame(stdin, bytes.as_bytes()).await?;
+            write_frame(stdin, bytes.as_bytes()).await
+        })
+        .await;
+        // 2026-09-05 回看修复:写失败必须在返回前清账,否则 pending/token
+        // 映射随失败累积泄漏(长跑守护进程内存无界上爬)。
+        if let Err(e) = write_result {
+            if let Some(id) = registered_id {
+                let mut inner = self.inner.lock().await;
+                inner.pending.lock().expect("锁未中毒").remove(&id);
+                inner
+                    .token_to_id
+                    .retain(|_, v| *v != id);
+            }
+            return Err(e);
         }
+        let id = registered_id.expect("写入成功必有 id");
         let out = match rx.await {
             Ok(r) => r,
             Err(_) => Err("stdio-closed".into()),

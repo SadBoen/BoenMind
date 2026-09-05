@@ -914,7 +914,7 @@ pub(crate) fn handle_capability_call(
     if let Some(k) = &params.idempotency_key {
         ctx = ctx.with_idempotency_key(k);
     }
-    capability_call_inner(w, request_id, ctx, params)
+    capability_call_inner(w, request_id, ctx, params).1
 }
 
 /// 统一执行体(M5 双路径同构):直路径 surface ctx / Agent 路径 worker ctx
@@ -925,7 +925,7 @@ pub(crate) fn capability_call_inner(
     request_id: BmId,
     ctx: CallContext,
     params: wire::CapabilityCallParams,
-) -> CoreResult<serde_json::Value> {
+) -> (BmId, CoreResult<serde_json::Value>) {
     // 步 1-4:查表裁决(Broker 为字段级临时借用,用后即还)
     let decision = {
         let broker = Broker::new(
@@ -957,7 +957,7 @@ pub(crate) fn capability_call_inner(
     };
     w.operations.insert(op_id.clone(), operation.dispatch());
 
-    match decision {
+    let outcome = match decision {
         Decision::Allowed { grant_id } => {
             // 统一执行助手:副作用前门禁(intent)+ 幂等抑制 + 结果事件
             let outcome =
@@ -1186,7 +1186,10 @@ pub(crate) fn capability_call_inner(
                 msg.to_string(),
             ))
         }
-    }
+    };
+    // 2026-09-05 回看修复:随收据/错误一并交还本次调用的真实 operation_id,
+    // 调用方(任务结果流水等)不得再从无序容器反查(H2 证据链错挂根因)。
+    (op_id, outcome)
 }
 
 /// M7 S4:异步能力调用完成落定(单写者内)。

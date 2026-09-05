@@ -33,6 +33,13 @@ pub trait EventStore: Send + Sync {
     /// 读回合输入原文(claim 续跑用)。
     fn op_input(&self, operation_id: &str) -> StoreResult<Option<String>>;
 
+    /// 持久化取消意图标记(显式取消后、回合边界前崩溃时,恢复端据此走
+    /// Resuming→Stopped(turn_was_stopping)边,不复活已取消回合)。
+    fn mark_op_cancelled(&self, operation_id: &str, marked_at: &str) -> StoreResult<()>;
+
+    /// 查询取消意图标记(恢复端判定 turn_was_stopping)。
+    fn op_cancel_requested(&self, operation_id: &str) -> StoreResult<bool>;
+
     /// ① 日志先行:追加事件并 flush。失败 = 本次命令失败(核心循环须拒绝,不可静默)。
     fn append(&self, event: &EventEnvelope) -> StoreResult<()>;
 
@@ -486,6 +493,14 @@ impl EventStore for PersistStore {
 
     fn op_input(&self, operation_id: &str) -> StoreResult<Option<String>> {
         self.state.op_input(operation_id)
+    }
+
+    fn mark_op_cancelled(&self, operation_id: &str, marked_at: &str) -> StoreResult<()> {
+        self.state.mark_op_cancelled(operation_id, marked_at)
+    }
+
+    fn op_cancel_requested(&self, operation_id: &str) -> StoreResult<bool> {
+        self.state.op_cancel_requested(operation_id)
     }
 
     fn append(&self, event: &EventEnvelope) -> StoreResult<()> {

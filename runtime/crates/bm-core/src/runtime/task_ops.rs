@@ -552,7 +552,8 @@ pub(crate) fn handle_task_report_completion(
                         idempotency_key: None,
                         deadline_ms: Some(2000),
                     },
-                );
+                )
+                .1;
                 match outcome {
                     Ok(result) => {
                         let satisfied = crate::observation::expect_satisfied(&result, &expect);
@@ -1273,7 +1274,7 @@ pub(crate) fn handle_worker_call(
         DataTrust::Untrusted,
     )
     .map_err(|_| CoreError::Internal)?;
-    let outcome = capability_call_inner(
+    let (call_op_id, outcome) = capability_call_inner(
         w,
         request_id,
         ctx,
@@ -1288,7 +1289,9 @@ pub(crate) fn handle_worker_call(
     // 时间不算停滞,进度随审批挂起刷新)
     let outcome_str = match &outcome {
         Ok(_) => "ok",
-        Err(CoreError::Semantic(ErrorCode::ApprovalRequired, _)) => "approval",
+        // 2026-09-05 对齐审批错配根治:升级面为结构化 ApprovalNeeded
+        // (wire 投影即 ApprovalRequired);等人的时间不算停滞
+        Err(CoreError::ApprovalNeeded { .. }) => "approval",
         Err(_) => "error",
     };
     let now = w.config.clock.now();
@@ -1306,6 +1309,8 @@ pub(crate) fn handle_worker_call(
             let _ = store.save_task_budget(params.task_id.as_str(), "", used_now, 0, &w.now_ts());
         }
         // M6.6:结果流水(来源/状态/关联 Operation;collect 聚合面)
+        // 2026-09-05 回看修复:operation_id 必须是本次调用真实产物
+        // (capability_call_inner 交还),此前取 op_capability 无序尾键=证据链错挂。
         let summary = match &outcome {
             Ok(r) => r["action_summary"].as_str().unwrap_or_default().to_string(),
             Err(_) => String::new(),
@@ -1315,7 +1320,7 @@ pub(crate) fn handle_worker_call(
             .or_default()
             .push(serde_json::json!({
                 "agent_id": crate::team::worker_principal(params.task_id.as_str()),
-                "operation_id": w.op_capability.keys().last().map(|k| k.as_str()).unwrap_or(""),
+                "operation_id": call_op_id.as_str(),
                 "capability": params.capability,
                 "state": if outcome.is_ok() { "succeeded" } else { "failed" },
                 "action_summary": summary,

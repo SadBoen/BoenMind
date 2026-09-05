@@ -375,15 +375,10 @@ export function PluginsPage({
       for (const s of mcpData.servers) {
         const st = statusMap[s.name];
         const isOk = st?.ok ?? false;
-        // 如果后端探活返回了具体的 tool_list 则优先使用；否则若有 tools 数量做保底
-        const tools: ToolInfo[] = (st?.tool_list && st.tool_list.length > 0)
-          ? st.tool_list
-          : (st?.tools ?? 0) > 0
-            ? Array.from({ length: st!.tools! }, (_, i) => ({
-                name: `tool_${i + 1}`,
-                description: "外部 MCP 工具",
-              }))
-            : [];
+        // 2026-09-05 回看修复:移除 tool_N 伪造清单——探活只报数量而未返回
+        // 清单时,不得编造工具名,如实显示数量、清单留空
+        const tools: ToolInfo[] =
+          st?.tool_list && st.tool_list.length > 0 ? st.tool_list : [];
 
         list.push({
           id: `mcp:${s.name}`,

@@ -405,3 +405,77 @@ async fn t26_outcome_unknown_requires_ruling_not_retry() {
 
     rig.handle.stop("test_done").await;
 }
+
+#[tokio::test]
+async fn t27_cancel_marked_before_crash_restores_stopped_not_running() {
+    // 2026-09-05 回看修复回归:用户显式取消后、回合边界落定前崩溃 →
+    // 恢复必须尊重取消意图(Resuming→Stopped,turn_was_stopping 契约边),
+    // 不得复活接单、不得凭输入原文重驱回合烧模型调用(修复前无条件 Running)。
+    let dir = tempfile::tempdir().expect("临时目录");
+    let ids = SeqIdGen::new();
+    let sess: BmId = ids.next_id("sess");
+    let agent: BmId = ids.next_id("agent");
+    let op: BmId = ids.next_id("op");
+
+    {
+        let store = PersistStore::open(dir.path()).expect("打开");
+        craft_crash_scene(&store, &sess, &agent, &op);
+        // 输入原文在场(若无视取消标记,claim 会自动重驱——正是要堵的路径)
+        store
+            .save_op_input(op.as_str(), "崩溃前用户已取消的问题")
+            .expect("保存输入");
+        // 用户取消请求已落标记(崩溃发生在回合边界落定前)
+        store
+            .mark_op_cancelled(op.as_str(), "2026-09-05T00:00:00Z")
+            .expect("写取消标记");
+        // drop = 模拟进程在此刻死亡
+    }
+
+    let rig = rig_on(dir.path(), vec![Step::ok("不该被调用", 30, 15)]).await;
+
+    let events = rig.all_events().await;
+    assert_event_stream_wellformed(&events);
+
+    // operation:running→interrupted(崩溃语义)→ cancelled(user_ruling)
+    let to_cancelled = events
+        .iter()
+        .find(|e| {
+            e.event_type == EventType::OperationStateChanged
+                && e.payload["operation_id"].as_str() == Some(op.as_str())
+                && e.payload["to"].as_str() == Some("cancelled")
+        })
+        .expect("取消标记使 op 落 cancelled");
+    assert_eq!(to_cancelled.payload["reason_code"], "user_ruling");
+
+    // agent:agent.cancelled 在案,且此后无 agent.resumed(不复活)
+    let cancelled = events
+        .iter()
+        .find(|e| e.event_type == EventType::AgentCancelled)
+        .expect("存在 agent.cancelled");
+    assert_eq!(cancelled.payload["operation_id"], op.as_str());
+    assert!(
+        !events
+            .iter()
+            .any(|e| e.event_type == EventType::AgentResumed),
+        "已取消的 agent 不得复活接单"
+    );
+
+    // 恢复后 agent 为 stopped:同会话发消息被拒(停止不可接单,取消是唯一入口语义)
+    let err = rig
+        .send(&sess, &agent, "取消后不应接单")
+        .await
+        .expect_err("stopped agent 不得接单");
+    assert!(matches!(err, bm_core::CoreError::Semantic(_, _)));
+
+    // 旧收据:终态 cancelled
+    let old_receipt = rig
+        .handle
+        .operations_get(GetOperationParams {
+            operation_id: op.clone(),
+        })
+        .await
+        .expect("旧收据可查询");
+    assert_eq!(old_receipt.state, OperationState::Cancelled);
+
+    rig.handle.stop("test_done").await;
+}

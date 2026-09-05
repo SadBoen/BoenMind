@@ -283,8 +283,8 @@ async fn t119c_user_deletion_tombstone_survives_replay() {
         .expect_err("删除需审批");
         assert!(matches!(
             err,
-            bm_core::CoreError::Semantic(bm_contract::error_codes::ErrorCode::ApprovalRequired, _)
-        ));
+            bm_core::CoreError::ApprovalNeeded { .. }
+        ), "删除需审批(结构化 ApprovalNeeded)");
         let list = handle
             .approval_list(bm_contract::wire::ApprovalListParams { state_filter: None })
             .await

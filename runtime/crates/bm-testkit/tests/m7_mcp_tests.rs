@@ -135,8 +135,8 @@ async fn t101_mcp_call_receipt_idempotency_outbox() {
         .await
         .expect_err("首调必须审批");
     match &err {
-        bm_core::CoreError::Semantic(code, _) => assert_eq!(*code, ErrorCode::ApprovalRequired),
-        other => panic!("应为 approval_required,实际 {other:?}"),
+        bm_core::CoreError::ApprovalNeeded { .. } => {}
+        other => panic!("应为 approval_required(结构化 ApprovalNeeded),实际 {other:?}"),
     }
 
     // 批准(scope=count:5,为幂等重放留余量)

@@ -103,7 +103,7 @@ async fn t131_132_escalate_approve_grant_predicate_then_retry_ok() {
         .await
         .expect_err("越界必须升级");
     assert!(
-        matches!(err, CoreError::Semantic(ErrorCode::ApprovalRequired, _)),
+        matches!(err, CoreError::ApprovalNeeded { .. }),
         "{err:?}"
     );
 
@@ -170,7 +170,7 @@ async fn t131_132_escalate_approve_grant_predicate_then_retry_ok() {
         .expect_err("谓词未覆盖的抽屉仍须升级");
     assert!(matches!(
         err,
-        CoreError::Semantic(ErrorCode::ApprovalRequired, _)
+        CoreError::ApprovalNeeded { .. }
     ));
 }
 
@@ -193,7 +193,7 @@ async fn t133_worker_cross_agent_drawer_escalates() {
         .expect_err("跨主体抽屉必须升级");
     assert!(matches!(
         err,
-        CoreError::Semantic(ErrorCode::ApprovalRequired, _)
+        CoreError::ApprovalNeeded { .. }
     ));
 }
 
@@ -224,6 +224,6 @@ async fn t135_worker_search_user_ok_cross_agent_escalates() {
         .expect_err("他人抽屉检索须升级");
     assert!(matches!(
         err,
-        CoreError::Semantic(ErrorCode::ApprovalRequired, _)
+        CoreError::ApprovalNeeded { .. }
     ));
 }

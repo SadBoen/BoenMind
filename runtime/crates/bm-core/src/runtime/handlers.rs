@@ -787,7 +787,7 @@ pub(crate) fn handle_approval_respond(
     }
 }
 
-pub(crate) fn handle_cancel(w: &World, params: CancelParams) -> CoreResult<CancelResult> {
+pub(crate) fn handle_cancel(w: &mut World, params: CancelParams) -> CoreResult<CancelResult> {
     let op = w
         .operations
         .get(&params.operation_id)
@@ -797,6 +797,19 @@ pub(crate) fn handle_cancel(w: &World, params: CancelParams) -> CoreResult<Cance
     }
     if op.is_terminal() {
         return Err(CoreError::validation("operation 已到终态,不可取消"));
+    }
+    // 取消意图持久化(2026-09-05 回看修复):显式取消若在回合边界落定前
+    // 遇到崩溃,恢复端凭标记走 Resuming→Stopped(turn_was_stopping)边,
+    // 不把已取消的回合复活重跑。写失败 = 拒写态(与 save_op_input 同纪律)。
+    if let Some(store) = &w.store {
+        if let Err(e) = store.mark_op_cancelled(params.operation_id.as_str(), &w.now_ts()) {
+            tracing::error!(error = %e, op = %params.operation_id.as_str(), "取消标记持久化失败,进入拒写态");
+            w.persist_poisoned = true;
+            return Err(CoreError::Semantic(
+                ErrorCode::Internal,
+                "取消标记持久化失败".into(),
+            ));
+        }
     }
     // 触发取消令牌;真实落定在 TurnEvent::Cancelled(回合边界)。
     if let Some(token) = w.in_flight.get(&params.operation_id) {
