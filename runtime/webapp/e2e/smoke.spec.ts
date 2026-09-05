@@ -164,7 +164,7 @@ test.describe("对话闭环", () => {
     await expect(page.getByText("这是流式回复的完整内容。")).toBeVisible({ timeout: 8_000 });
   });
 
-  test("新建对话清空聊天视图", async ({ page }) => {
+  test("新建对话清空聊天视图并聚焦输入框、若在上下文页自动切回对话页", async ({ page }) => {
     await mockChat(page, "回复内容。");
     await mockAdmin(page);
     await page.goto("/");
@@ -173,8 +173,48 @@ test.describe("对话闭环", () => {
     await page.locator(".send-btn").evaluate((el: HTMLElement) => el.click());
     await expect(page.getByText("回复内容。")).toBeVisible({ timeout: 8_000 });
 
+    // 切换至上下文透视页
+    await page.locator('[data-slot="tab-ctx"]').evaluate((el: HTMLElement) => el.click());
+    await expect(page.locator('[data-slot="tab-ctx"]')).toHaveAttribute("data-active", "true");
+
+    // 点击新建对话「+」号
     await page.locator('[data-slot="new-chat"]').evaluate((el: HTMLElement) => el.click());
+
+    // 1. 欢迎屏重新展示且消息视图已清空
     await expect(page.getByRole("heading", { name: "个人生态的 AI Runtime" })).toBeVisible();
+    // 2. 自动由上下文页切回至对话页
+    await expect(page.locator('[data-slot="tab-chat"]')).toHaveAttribute("data-active", "true");
+    // 3. 左侧栏显示新对话就绪卡片
+    await expect(page.locator('[data-slot="session-active-item"]')).toBeVisible();
+    await expect(page.locator('[data-slot="session-active-item"]')).toContainText("新对话");
+    // 4. 输入框被清空且重新获得焦点
+    await expect(input).toBeFocused();
+    await expect(input).toHaveValue("");
+  });
+
+  test("工具调用结构化折叠渲染与无气泡样式", async ({ page }) => {
+    // 模拟包含工具调用的助手流式回复
+    await mockChat(page, "开始处理：\n[调用 fs_search main.rs]\n[调用 fs_read runtime/src/main.rs]\n完成检索。");
+    await mockAdmin(page);
+    await page.goto("/");
+    const input = page.getByRole("textbox", { name: "Message BoenMind…" });
+    await input.fill("查找 main.rs");
+    await page.locator(".send-btn").evaluate((el: HTMLElement) => el.click());
+
+    // 验证助手与用户平铺排版（无气泡）
+    await expect(page.locator(".msg.user .msg-header")).toContainText("我");
+    await expect(page.locator(".msg.assistant .msg-header")).toContainText("BoenMind Agent");
+
+    // 验证折叠卡片渲染（聚合了 1 搜索，1 读取）
+    const group = page.locator('[data-slot="tool-group"]');
+    await expect(group).toBeVisible();
+    await expect(group).toContainText("查阅 · 1 搜索，1 读取");
+    await expect(page.getByText("完成检索。")).toBeVisible();
+
+    // 点击展开折叠详情
+    await group.locator(".tool-group-header").click();
+    await expect(group.locator(".tool-step-item").first()).toContainText("fs_search");
+    await expect(group.locator(".tool-step-item").nth(1)).toContainText("fs_read");
   });
 });
 
@@ -182,6 +222,8 @@ test.describe("上下文透视页", () => {
   test("组成条与步骤明细渲染", async ({ page }) => {
     await mockAdmin(page);
     await page.goto("/");
+    // 注入当前测试会话 id
+    await page.evaluate(() => localStorage.setItem("bm_session", "sess_e2e"));
     await page.locator('[data-slot="tab-ctx"]').evaluate((el: HTMLElement) => el.click());
     // 验证第一层看板：模型窗口水位与余量
     await expect(page.getByText("模型窗口水位")).toBeVisible();

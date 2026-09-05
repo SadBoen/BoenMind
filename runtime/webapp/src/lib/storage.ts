@@ -4,6 +4,7 @@ export const STORAGE_KEYS = {
   ACTIVE_MODEL: "bm_active_model",
   ACTIVE_ROLE: "bm_active_role",
   SESSION: "bm_session",
+  SESSIONS: "bm_sessions",
   PINS: "bm_pins",
   THEME: "bm_theme",
   FONT_SIZE: "bm_font_size",
@@ -17,6 +18,56 @@ export const STORAGE_KEYS = {
 } as const;
 
 export type PermissionMode = "ask" | "plan" | "yolo";
+
+export interface SessionItemMeta {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export const sessionsStore = {
+  list(): SessionItemMeta[] {
+    try {
+      const raw = storage.get(STORAGE_KEYS.SESSIONS);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  },
+  save(list: SessionItemMeta[]): void {
+    storage.set(STORAGE_KEYS.SESSIONS, JSON.stringify(list));
+  },
+  upsert(id: string, title?: string): SessionItemMeta[] {
+    const list = this.list();
+    const now = Date.now();
+    const existing = list.find((s) => s.id === id);
+    if (existing) {
+      if (title && (!existing.title || existing.title === "新对话")) {
+        existing.title = title;
+      }
+      existing.updatedAt = now;
+      this.save(list);
+      return list;
+    }
+    const newItem: SessionItemMeta = {
+      id,
+      title: title || "新对话",
+      createdAt: now,
+      updatedAt: now,
+    };
+    const next = [newItem, ...list];
+    this.save(next);
+    return next;
+  },
+  remove(id: string): SessionItemMeta[] {
+    const next = this.list().filter((s) => s.id !== id);
+    this.save(next);
+    return next;
+  },
+};
 
 export type StorageKey = typeof STORAGE_KEYS[keyof typeof STORAGE_KEYS];
 

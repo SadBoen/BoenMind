@@ -21,10 +21,22 @@ import {
   Clock,
   ChevronUp,
   ChevronDown,
+  ChevronRight,
   Zap,
   ListOrdered,
   Code2,
   X,
+  Search,
+  Terminal,
+  Brain,
+  FileText,
+  FileCode,
+  FileJson,
+  FileImage,
+  File,
+  Sparkles,
+  Bot,
+  User,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
@@ -58,6 +70,22 @@ export function Thread({
   const isEmpty = useAuiState((s) => s.thread.isEmpty);
   // W5 页签:对话 = 聊天;上下文 = 请求快照透视(dsh-context 同款布局理念)
   const [tab, setTab] = useState<"chat" | "ctx">("chat");
+
+  // 新建对话时:若在上下文透视页则自动切回对话页,并使输入框获得焦点
+  useEffect(() => {
+    const onNewChat = () => {
+      setTab("chat");
+      setTimeout(() => {
+        const input = document.querySelector<HTMLTextAreaElement>(".composer-input");
+        if (input) {
+          input.value = "";
+          input.focus();
+        }
+      }, 0);
+    };
+    window.addEventListener("bm-chat-new", onNewChat);
+    return () => window.removeEventListener("bm-chat-new", onNewChat);
+  }, []);
   const tabCls = (active: boolean) =>
     "rounded-full px-2.5 py-0.5 text-[12px] transition-colors " +
     (active
@@ -321,7 +349,11 @@ function ApprovalDrawerItem({
 function UserMessage() {
   return (
     <MessagePrimitive.Root className="msg user">
-      <div className="bubble">
+      <div className="msg-header">
+        <User size={13} className="text-primary" />
+        <span>我</span>
+      </div>
+      <div className="content">
         <MessagePrimitive.Parts>
           {({ part }) =>
             part.type === "text" ? (
@@ -334,21 +366,161 @@ function UserMessage() {
   );
 }
 
+// 根据文件名后缀返回对应的专属图标
+function getFileIcon(filename: string) {
+  const lower = filename.toLowerCase();
+  if (lower.endsWith(".ts") || lower.endsWith(".tsx") || lower.endsWith(".js") || lower.endsWith(".jsx") || lower.endsWith(".rs") || lower.endsWith(".py") || lower.endsWith(".go") || lower.endsWith(".c") || lower.endsWith(".cpp")) {
+    return <FileCode className="size-3.5 text-sky-500 shrink-0" />;
+  }
+  if (lower.endsWith(".json") || lower.endsWith(".yaml") || lower.endsWith(".yml") || lower.endsWith(".toml") || lower.endsWith(".xml")) {
+    return <FileJson className="size-3.5 text-amber-500 shrink-0" />;
+  }
+  if (lower.endsWith(".md") || lower.endsWith(".txt") || lower.endsWith(".doc") || lower.endsWith(".pdf")) {
+    return <FileText className="size-3.5 text-indigo-500 shrink-0" />;
+  }
+  if (lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".svg") || lower.endsWith(".webp") || lower.endsWith(".gif")) {
+    return <FileImage className="size-3.5 text-emerald-500 shrink-0" />;
+  }
+  if (lower.endsWith(".sh") || lower.endsWith(".bat") || lower.endsWith(".ps1")) {
+    return <Terminal className="size-3.5 text-rose-500 shrink-0" />;
+  }
+  return <File className="size-3.5 text-muted-foreground shrink-0" />;
+}
+
+// 解析助手消息中的工具调用与普通文本，并进行连续折叠聚合
+type ParsedBlock =
+  | { type: "text"; text: string }
+  | { type: "thinking"; text: string }
+  | { type: "tool_group"; tools: Array<{ raw: string; name: string; target?: string }> };
+
+function parseAssistantText(raw: string): ParsedBlock[] {
+  if (!raw) return [];
+
+  // 工具调用标记匹配: [调用 tool_name] 或类似格式
+  const lines = raw.split("\n");
+  const blocks: ParsedBlock[] = [];
+  let curText = "";
+  let curTools: Array<{ raw: string; name: string; target?: string }> = [];
+
+  const flushText = () => {
+    if (curText) {
+      blocks.push({ type: "text", text: curText });
+      curText = "";
+    }
+  };
+
+  const flushTools = () => {
+    if (curTools.length > 0) {
+      blocks.push({ type: "tool_group", tools: [...curTools] });
+      curTools = [];
+    }
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const toolMatch = line.match(/^\[调用\s+([a-zA-Z0-9_\-\.:]+)(?:\s*(.*?))?\]$/);
+    if (toolMatch) {
+      flushText();
+      const name = toolMatch[1];
+      const target = toolMatch[2] || "";
+      curTools.push({ raw: line, name, target });
+    } else {
+      flushTools();
+      curText += (curText ? "\n" : "") + line;
+    }
+  }
+
+  flushTools();
+  flushText();
+
+  return blocks;
+}
+
+function ToolGroupCard({
+  group,
+  isRunning,
+}: {
+  group: { tools: Array<{ raw: string; name: string; target?: string }> };
+  isRunning?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const count = group.tools.length;
+
+  // 统计工具类型
+  const searchCount = group.tools.filter((t) => t.name.includes("search") || t.name.includes("find")).length;
+  const readCount = group.tools.filter((t) => t.name.includes("read")).length;
+  const execCount = group.tools.filter((t) => t.name.includes("exec") || t.name.includes("bash")).length;
+
+  const summaryParts: string[] = [];
+  if (searchCount > 0) summaryParts.push(`${searchCount} 搜索`);
+  if (readCount > 0) summaryParts.push(`${readCount} 读取`);
+  if (execCount > 0) summaryParts.push(`${execCount} 终端`);
+  const summaryText = summaryParts.length > 0 ? summaryParts.join("，") : `${count} 个操作`;
+
+  return (
+    <div className="tool-group-card" data-slot="tool-group">
+      <div className="tool-group-header" onClick={() => setOpen(!open)}>
+        {open ? <ChevronDown size={14} className="text-muted-foreground" /> : <ChevronRight size={14} className="text-muted-foreground" />}
+        <div className="tool-group-title">
+          <Search size={14} className="text-blue-500" />
+          <span>查阅 · {summaryText}</span>
+        </div>
+        <span className="tool-group-summary">{open ? "收起" : "展开详情"}</span>
+      </div>
+      {open ? (
+        <div className="tool-group-body">
+          {group.tools.map((t, idx) => {
+            const isRead = t.name.includes("read");
+            const isExec = t.name.includes("exec");
+            return (
+              <div key={idx} className="tool-step-item">
+                {isExec ? (
+                  <Terminal size={13} className="text-emerald-500 shrink-0" />
+                ) : isRead ? (
+                  getFileIcon(t.target || t.name)
+                ) : (
+                  <Search size={13} className="text-blue-500 shrink-0" />
+                )}
+                <span className="font-semibold text-foreground">{t.name}</span>
+                {t.target ? <span className="tool-step-cmd">{t.target}</span> : null}
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function AssistantMessage() {
-  // 0.15:运行态在 thread 级(单会话口径,tag 显示全局即可)
   const isRunning = useAuiState((s) => s.thread.isRunning);
   return (
     <MessagePrimitive.Root className="msg assistant">
-      <div className="model-tag">BoenMind Agent{isRunning ? " · 生成中" : ""}</div>
-      {/* W8:空正文不出空气泡——text 为空返回 null,.text:empty 由 CSS 隐藏;
-          停止/连接失败文本非空,照常显示 */}
-      <div className="text">
+      <div className="msg-header">
+        <Bot size={13} className="text-accent" />
+        <span>BoenMind Agent</span>
+        {isRunning ? <span className="badge-tag">生成中…</span> : null}
+      </div>
+      <div className="content">
         <MessagePrimitive.Parts>
-          {({ part }) =>
-            part.type === "text" && part.text ? (
-              <span key={part.text.length}>{part.text}</span>
-            ) : null
-          }
+          {({ part }) => {
+            if (part.type !== "text" || !part.text) return null;
+            const blocks = parseAssistantText(part.text);
+            return (
+              <div className="flex flex-col gap-1.5" key={part.text.length}>
+                {blocks.map((b, idx) => {
+                  if (b.type === "tool_group") {
+                    return <ToolGroupCard key={idx} group={b} isRunning={isRunning} />;
+                  }
+                  return (
+                    <span key={idx} className="leading-relaxed text-[13.5px]">
+                      {b.text}
+                    </span>
+                  );
+                })}
+              </div>
+            );
+          }}
         </MessagePrimitive.Parts>
       </div>
     </MessagePrimitive.Root>

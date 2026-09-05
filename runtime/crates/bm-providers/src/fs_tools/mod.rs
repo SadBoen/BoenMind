@@ -40,7 +40,9 @@ pub fn fs_capability_entries() -> Vec<(CapabilityManifest, Arc<dyn CapabilityPro
             json!({
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "搜索内容(默认按正则解释;纯文本加 fixed=true)"},
+                    "query": {"type": "string", "description": "搜索内容或文件模式(默认按正则解释;纯文本加 fixed=true;查文件名时输入文件名字或通配符如 *README*)"},
+                    "mode": {"type": "string", "enum": ["content", "files"], "description": "搜索模式: 'content'(默认，类似 ripgrep 搜文件正文内容) 或 'files'(类似 find/glob，仅根据文件名和路径查找文件位置)"},
+                    "path_pattern": {"type": "string", "description": "路径过滤通配符(可选，如 '*.rs', '*.ts', '*doc*')，仅在匹配该路径模式的文件中搜索"},
                     "fixed": {"type": "boolean", "description": "true=按字面文本搜索(不做正则解释),默认 false"},
                     "case_sensitive": {"type": "boolean", "description": "大小写敏感,默认 false(忽略大小写)"},
                     "max_results": {"type": "integer", "description": "命中上限(可选,默认 80,封顶 500)"}

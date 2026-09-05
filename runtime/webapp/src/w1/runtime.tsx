@@ -8,7 +8,7 @@ import {
 } from "@assistant-ui/react";
 import type { AppendMessage, ThreadMessageLike } from "@assistant-ui/react";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
-import { storage, STORAGE_KEYS } from "@/lib/storage";
+import { storage, STORAGE_KEYS, sessionsStore } from "@/lib/storage";
 
 type TextPart = { type: "text"; text: string };
 
@@ -187,7 +187,12 @@ export function BoenmindRuntimeProvider({
         throw new Error(`HTTP ${res.status} ${detail.slice(0, 160)}`);
       }
       const newSid = res.headers.get("x-bm-session");
-      if (newSid) storage.set(STORAGE_KEYS.SESSION, newSid);
+      if (newSid) {
+        storage.set(STORAGE_KEYS.SESSION, newSid);
+        const title = text.slice(0, 24) || "新对话";
+        sessionsStore.upsert(newSid, title);
+        window.dispatchEvent(new CustomEvent("bm-sessions-updated"));
+      }
 
       const reader = res.body.getReader();
       const dec = new TextDecoder();
@@ -274,13 +279,15 @@ export function BoenmindRuntimeProvider({
   }, []);
 
   // 「新建对话」(SessionPanel 加号派发 bm-chat-new):中止在途回合、
-  // 丢弃会话号、清空消息视图;下一条消息即自动开新会话。appendDelta
+  // 丢弃会话号、清空消息视图与审批挂起;下一条消息即自动开新会话。appendDelta
   // 对空消息列表是安全空操作,中止回调不会把内容写回已清空的视图。
   useEffect(() => {
     const onNewChat = () => {
       abortRef.current?.abort();
+      setIsRunning(false);
       storage.remove(STORAGE_KEYS.SESSION);
       setMessages([]);
+      setPendingApprovals([]);
     };
     window.addEventListener("bm-chat-new", onNewChat);
     return () => window.removeEventListener("bm-chat-new", onNewChat);

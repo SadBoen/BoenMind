@@ -239,6 +239,15 @@ export function ContextView() {
   }, [refresh]);
 
   useEffect(() => {
+    const handleNewChat = () => {
+      setSelectedStepKey(null);
+      void refresh();
+    };
+    window.addEventListener("bm-chat-new", handleNewChat);
+    return () => window.removeEventListener("bm-chat-new", handleNewChat);
+  }, [refresh]);
+
+  useEffect(() => {
     if (!auto) return;
     const t = setInterval(() => void refresh(), 8_000);
     return () => clearInterval(t);
@@ -246,10 +255,16 @@ export function ContextView() {
 
   const sid = storage.get(STORAGE_KEYS.SESSION);
 
-  // 过滤出当前会话并按时间由新到旧
+  // 过滤出当前会话并按时间由新到旧:
+  // 当开启「仅当前会话」时:
+  // 1. 若当前尚未开启会话(新建对话尚未发第一条)或本地无 sid，则严格为空数组，绝不展示其他会话的历史穿透
+  // 2. 若有 sid 则严格过滤出匹配该 sid 的步骤
   const visible = useMemo(() => {
-    const list = onlyCurrent && sid ? steps.filter((s) => s.session_id === sid) : steps;
-    return [...list].reverse();
+    if (onlyCurrent) {
+      if (!sid) return [];
+      return [...steps.filter((s) => s.session_id === sid)].reverse();
+    }
+    return [...steps].reverse();
   }, [steps, onlyCurrent, sid]);
 
   // 最近一次模型调用的快照
@@ -522,9 +537,9 @@ export function ContextView() {
 
         const maxIn = Math.max(...list.map((x) => x.tokens_in ?? 0));
         const sumOut = list.reduce((sum, x) => sum + (x.tokens_out ?? 0), 0);
+        const turn = last.turn_index;
 
         return {
-          id: turn,
           id: key,
           label: `第 ${turn} 轮`,
           turn_index: turn,

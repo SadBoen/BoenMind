@@ -152,15 +152,50 @@ body {
 .session-item {
   border-radius: var(--radius-sm);
   padding: 7px 10px;
-  display: flex; flex-direction: row; align-items: baseline; gap: 8px;
+  display: flex; flex-direction: column; gap: 2px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.session-item:hover {
+  background: var(--bg-hover);
+}
+.session-item.active {
   background: var(--bg-select);
-  /* 跟随主配色派生淡边(换主色/换主题都自动跟随,不再写死色值) */
-  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+.session-item.flash {
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg-select));
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.session-item .session-item-row {
+  display: flex; flex-direction: row; align-items: center; gap: 6px;
+  width: 100%;
 }
 .session-item .name {
   font-family: var(--font-mono); font-size: 12.5px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   flex: 1; min-width: 0;
+  color: var(--fg-1);
+}
+.session-item .delete-btn {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.session-item:hover .delete-btn {
+  opacity: 0.7;
+}
+.session-item .delete-btn:hover {
+  opacity: 1;
+  color: var(--destructive, #ef4444);
+}
+.session-item .status-hint {
+  font-size: 10.5px;
+  color: var(--fg-3);
+  display: flex; align-items: center; justify-content: space-between;
+  padding-left: 19px;
 }
 
 /* 对话区(assistant-ui 原语承载) */
@@ -200,24 +235,115 @@ body {
 .welcome h1 { font-size: 17px; margin: 0; color: var(--fg-1); }
 .welcome p { margin: 0; font-size: 12.5px; }
 
-.msg { padding: calc(8px * var(--density, 1)) 0; max-width: 820px; width: 100%; margin: 0 auto; }
-.msg.user { display: flex; justify-content: flex-end; }
-.msg.user .bubble {
-  background: var(--accent); color: #fff;
-  border-radius: 12px; padding: 9px 14px;
-  max-width: 78%; white-space: pre-wrap; line-height: var(--leading, 1.55);
+/* 现代 ZCode 风格平铺流式对话(彻底去气泡) */
+.msg {
+  padding: calc(10px * var(--density, 1)) 0;
+  max-width: 820px;
+  width: 100%;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
-.msg.assistant .text {
-  white-space: pre-wrap; line-height: var(--leading, 1.65); color: var(--fg-1);
-  border: 1px solid var(--border); border-radius: var(--radius);
-  padding: 10px 14px; background: var(--bg-panel);
+.msg.user {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
 }
-/* W8:LLM 无正文时不出空气泡——纯空 running/纯空 completed 的消息
-   Parts 回调返回 null,.text 无子节点,用 :empty 整体隐藏(保留 model-tag) */
-.msg.assistant .text:empty { display: none; }
-.msg .model-tag {
-  font-family: var(--font-mono); font-size: 11px; color: var(--fg-3);
-  margin-bottom: 4px;
+.msg.user .msg-header {
+  flex-direction: row-reverse;
+}
+.msg.user .content {
+  width: auto;
+  max-width: 85%;
+  text-align: right;
+  white-space: pre-wrap;
+  line-height: var(--leading, 1.6);
+  color: var(--fg-1);
+  font-size: 14px;
+  padding: 2px 0 6px;
+}
+.msg.assistant .content {
+  width: 100%;
+  white-space: pre-wrap;
+  line-height: var(--leading, 1.65);
+  color: var(--fg-1);
+  font-size: 13.5px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.msg.assistant .content:empty { display: none; }
+
+/* 连续工具调用折叠卡片 (ZCode 标杆) */
+.tool-group-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg-panel) 65%, transparent);
+  overflow: hidden;
+  margin: 4px 0;
+  transition: border-color 0.15s ease;
+}
+.tool-group-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+}
+.tool-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+  color: var(--fg-2);
+}
+.tool-group-header:hover {
+  background: var(--bg-hover);
+}
+.tool-group-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+  flex: 1;
+}
+.tool-group-summary {
+  font-size: 11px;
+  color: var(--fg-3);
+}
+.tool-group-body {
+  border-top: 1px dashed var(--border);
+  padding: 6px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: color-mix(in srgb, var(--bg-page) 40%, transparent);
+}
+.tool-step-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--fg-2);
+  padding: 2px 0;
+}
+.tool-step-item .tool-step-cmd {
+  background: var(--bg-hover);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 11.5px;
+  color: var(--fg-1);
+}
+
+/* 思考与思维链折叠块 */
+.thinking-block {
+  border-left: 2px solid color-mix(in srgb, var(--accent) 50%, var(--border));
+  padding-left: 10px;
+  margin: 4px 0;
+  font-size: 12px;
+  color: var(--fg-3);
+  font-style: italic;
 }
 
 /* 输入区 */

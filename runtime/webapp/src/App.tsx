@@ -14,7 +14,7 @@ import {
   type ThemeDef,
 } from "./w3/themes";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { storage, STORAGE_KEYS } from "@/lib/storage";
+import { storage, STORAGE_KEYS, sessionsStore, type SessionItemMeta } from "@/lib/storage";
 
 type ThemeId = ThemeDef["id"];
 import {
@@ -23,6 +23,8 @@ import {
   Settings,
   Plus,
   RefreshCw,
+  Trash2,
+  MessageSquare,
 } from "lucide-react";
 
 // 三栏宽度持久化(W2 验收门 4:刷新后布局保持);W7 反馈:左右栏抽屉收放状态同库持久化
@@ -266,6 +268,48 @@ function Rail({
 }
 
 function SessionPanel({ collapsed }: { collapsed: boolean }) {
+  const [flash, setFlash] = useState(false);
+  const [sessions, setSessions] = useState<SessionItemMeta[]>(() => sessionsStore.list());
+  const [activeSid, setActiveSid] = useState<string | null>(() => storage.get(STORAGE_KEYS.SESSION));
+
+  const loadSessions = useCallback(() => {
+    const list = sessionsStore.list();
+    setSessions(list);
+    setActiveSid(storage.get(STORAGE_KEYS.SESSION));
+  }, []);
+
+  useEffect(() => {
+    loadSessions();
+    const handleNewChat = () => {
+      setFlash(true);
+      setActiveSid(null);
+      const timer = setTimeout(() => setFlash(false), 400);
+      return () => clearTimeout(timer);
+    };
+    window.addEventListener("bm-chat-new", handleNewChat);
+    window.addEventListener("bm-sessions-updated", loadSessions);
+    return () => {
+      window.removeEventListener("bm-chat-new", handleNewChat);
+      window.removeEventListener("bm-sessions-updated", loadSessions);
+    };
+  }, [loadSessions]);
+
+  const handleSelectSession = (sid: string) => {
+    storage.set(STORAGE_KEYS.SESSION, sid);
+    setActiveSid(sid);
+    window.dispatchEvent(new CustomEvent("bm-session-switched", { detail: { sid } }));
+  };
+
+  const handleDeleteSession = (e: React.MouseEvent, sid: string) => {
+    e.stopPropagation();
+    const next = sessionsStore.remove(sid);
+    setSessions(next);
+    if (activeSid === sid) {
+      // 若删除的是当前会话，则开辟新对话
+      window.dispatchEvent(new CustomEvent("bm-chat-new"));
+    }
+  };
+
   return (
     <div
       className="sessions"
@@ -278,8 +322,7 @@ function SessionPanel({ collapsed }: { collapsed: boolean }) {
     >
       <div className="sessions-head">
         <span className="title">聊天</span>
-        {/* 新建对话:清空聊天视图+丢弃会话号(下一条消息自动开新会话;
-            服务器侧旧会话随进程寿命留存,W1 口径)——事件由 w1/runtime 接 */}
+        {/* 新建对话:清空聊天视图+丢弃会话号(下一条消息自动开新会话) */}
         <button
           className="icon-chip"
           title="新建对话"
@@ -289,9 +332,54 @@ function SessionPanel({ collapsed }: { collapsed: boolean }) {
           <Plus size={16} />
         </button>
       </div>
-      {/* 当前活动会话卡:单会话口径(与对话区标题一致),真会话列表随后续里程碑 */}
-      <div className="session-item">
-        <span className="name">BoenMind 对话</span>
+
+      <div className="sessions-list" style={{ display: "flex", flexDirection: "column", gap: "6px", overflowY: "auto" }}>
+        {/* 若当前处于新建状态(无 activeSid)，或者列表为空，显示当前新对话就绪卡片 */}
+        {activeSid === null || sessions.length === 0 ? (
+          <div className={"session-item active" + (flash ? " flash" : "")} data-slot="session-active-item">
+            <div className="session-item-row">
+              <MessageSquare size={13} className="shrink-0 text-primary opacity-80" />
+              <span className="name">新对话</span>
+            </div>
+            <div className="status-hint">
+              <span>● 就绪 (发送首条消息建库)</span>
+            </div>
+          </div>
+        ) : null}
+
+        {/* 历史多会话列表 */}
+        {sessions.map((s) => {
+          const isActive = s.id === activeSid;
+          return (
+            <div
+              key={s.id}
+              className={"session-item" + (isActive ? " active" : "")}
+              onClick={() => handleSelectSession(s.id)}
+              title={s.title}
+              data-slot="session-item"
+              data-sid={s.id}
+            >
+              <div className="session-item-row">
+                <MessageSquare size={13} className="shrink-0 text-muted-foreground" />
+                <span className="name">{s.title || "BoenMind 对话"}</span>
+                <button
+                  className="icon-chip delete-btn"
+                  title="删除此会话"
+                  onClick={(e) => handleDeleteSession(e, s.id)}
+                  style={{ width: "20px", height: "20px", padding: 0 }}
+                >
+                  <Trash2 size={12} />
+                </button>
+              </div>
+              <div className="status-hint">
+                <span className="font-mono text-[10.5px] opacity-70">
+                  {new Date(s.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                </span>
+                {isActive ? <span className="text-primary font-medium">当前活动</span> : null}
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

@@ -11,7 +11,8 @@ use walkdir::WalkDir;
 use super::guard::{Roots, display_path};
 
 /// 限额(内核固定值;随包插件时代的 config 可调项收敛为常量)。
-const MAX_RESULTS: usize = 80;
+const MAX_RESULTS_DEFAULT: usize = 80;
+const MAX_RESULTS_CEILING: usize = 500;
 const MAX_OUTPUT_CHARS: usize = 16_000;
 const MAX_FILE_BYTES: u64 = 1_048_576;
 const SKIP_DIRS: &[&str] = &[".git", "node_modules", "target", "dist", "build"];
@@ -32,6 +33,23 @@ fn skipped_dir(e: &walkdir::DirEntry) -> bool {
     e.file_type().is_dir() && (name.starts_with('.') || SKIP_DIRS.contains(&name.as_ref()))
 }
 
+fn glob_to_regex(pat: &str) -> String {
+    let mut regex = String::from("^");
+    for c in pat.chars() {
+        match c {
+            '*' => regex.push_str(".*"),
+            '?' => regex.push('.'),
+            '.' | '(' | ')' | '[' | ']' | '{' | '}' | '+' | '^' | '$' | '|' | '\\' => {
+                regex.push('\\');
+                regex.push(c);
+            }
+            _ => regex.push(c),
+        }
+    }
+    regex.push('$');
+    regex
+}
+
 pub fn search(roots: &Roots, args: &Value) -> Value {
     if roots.is_empty() {
         return tool_err("工作区注册表为空:在设置「常规 → 工作区」登记至少一个目录后再用文件工具");
@@ -40,13 +58,116 @@ pub fn search(roots: &Roots, args: &Value) -> Value {
     if query.is_empty() {
         return tool_err("query 参数不能为空");
     }
+    let mode = args["mode"].as_str().unwrap_or("content");
     let fixed = args["fixed"].as_bool().unwrap_or(false);
     let case_sensitive = args["case_sensitive"].as_bool().unwrap_or(false);
-    let pattern = if fixed {
-        regex::escape(query)
+    let path_pattern = args["path_pattern"]
+        .as_str()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
+
+    let max_results = args["max_results"]
+        .as_u64()
+        .map(|m| (m as usize).clamp(1, MAX_RESULTS_CEILING))
+        .unwrap_or(MAX_RESULTS_DEFAULT);
+
+    // 路径过滤器 (如果有 path_pattern)
+    let path_filter = if let Some(pat) = path_pattern {
+        let pat_regex = glob_to_regex(pat);
+        regex::RegexBuilder::new(&pat_regex)
+            .case_insensitive(true)
+            .build()
+            .ok()
     } else {
-        query.to_string()
+        None
     };
+
+    // 模式一: 仅查找文件路径与名字 (类似 find / glob)
+    if mode == "files" {
+        let mut hits: Vec<Value> = Vec::new();
+        let mut files_searched: u64 = 0;
+        let mut total: u64 = 0;
+
+        // 文件名匹配正则: 如果包含 * 或 ? 则作为通配符，否则作为子串模糊搜索
+        let file_regex = if query.contains('*') || query.contains('?') {
+            glob_to_regex(query)
+        } else if fixed {
+            format!("(?i){}", regex::escape(query))
+        } else {
+            // 支持类似于 "README|readme" 这种正则模式
+            query.to_string()
+        };
+
+        let matcher = match regex::RegexBuilder::new(&file_regex)
+            .case_insensitive(!case_sensitive)
+            .build()
+        {
+            Ok(r) => r,
+            Err(_) => {
+                // 语法错误则退让为纯字面子串匹配
+                regex::RegexBuilder::new(&regex::escape(query))
+                    .case_insensitive(!case_sensitive)
+                    .build()
+                    .unwrap()
+            }
+        };
+
+        'roots_files: for root in roots.roots() {
+            for entry in WalkDir::new(root)
+                .max_depth(24)
+                .follow_links(false)
+                .into_iter()
+                .filter_entry(|e| !skipped_dir(e))
+            {
+                let Ok(entry) = entry else { continue };
+                files_searched += 1;
+                let rel_path = display_path(entry.path());
+                let file_name = entry.file_name().to_string_lossy();
+
+                if let Some(ref pf) = path_filter
+                    && !pf.is_match(&rel_path)
+                    && !pf.is_match(&file_name)
+                {
+                    continue;
+                }
+
+                if matcher.is_match(&file_name) || matcher.is_match(&rel_path) {
+                    total += 1;
+                    hits.push(json!({
+                        "file": rel_path,
+                        "is_dir": entry.file_type().is_dir(),
+                    }));
+                    if total >= max_results as u64 {
+                        break 'roots_files;
+                    }
+                }
+            }
+        }
+
+        return json!({
+            "ok": true,
+            "mode": "files",
+            "query": query,
+            "total_matches": total,
+            "truncated": total >= max_results as u64,
+            "files_searched": files_searched,
+            "matches": hits,
+        });
+    }
+
+    // 模式二: 内容搜索 (类似 ripgrep grep-searcher)
+    // 智能容错: 如果用户/模型误传了 fixed=true 但包含明显的正则操作符 '|'，且未找到结果，做自愈尝试
+    let (pattern, allow_fallback_regex) = if fixed {
+        if query.contains('|') && !query.contains(r"\|") {
+            // 带有未转义的竖线，保留原始 query 备用回退
+            (regex::escape(query), Some(query.to_string()))
+        } else {
+            (regex::escape(query), None)
+        }
+    } else {
+        (query.to_string(), None)
+    };
+
     let matcher = match RegexMatcherBuilder::new()
         .case_insensitive(!case_sensitive)
         .build(&pattern)
@@ -56,11 +177,6 @@ pub fn search(roots: &Roots, args: &Value) -> Value {
             return tool_err(format!("正则非法(fixed=true 可按字面搜索):{e}"));
         }
     };
-
-    let max_results = args["max_results"]
-        .as_u64()
-        .map(|m| (m as usize).min(MAX_RESULTS))
-        .unwrap_or(MAX_RESULTS);
 
     let mut hits: Vec<Value> = Vec::new();
     let mut total: u64 = 0;
@@ -76,6 +192,16 @@ pub fn search(roots: &Roots, args: &Value) -> Value {
             if !entry.file_type().is_file() {
                 continue;
             }
+            let file = display_path(entry.path());
+            let file_name = entry.file_name().to_string_lossy();
+
+            if let Some(ref pf) = path_filter
+                && !pf.is_match(&file)
+                && !pf.is_match(&file_name)
+            {
+                continue;
+            }
+
             let oversized = entry
                 .metadata()
                 .map(|md| md.len() > MAX_FILE_BYTES)
@@ -88,7 +214,6 @@ pub fn search(roots: &Roots, args: &Value) -> Value {
                 .binary_detection(BinaryDetection::quit(0))
                 .line_number(true)
                 .build();
-            let file = display_path(entry.path());
             let sink = sinks::UTF8(|line_no, line: &str| {
                 if total >= max_results as u64 {
                     return Ok(false);
@@ -110,6 +235,50 @@ pub fn search(roots: &Roots, args: &Value) -> Value {
             }
         }
     }
+
+    // 若 fixed=true + 包含 '|' 导致 0 命中，则以 regex fallback 自动拯救一次
+    if total == 0
+        && let Some(alt_pat) = allow_fallback_regex
+        && let Ok(alt_matcher) = RegexMatcherBuilder::new()
+            .case_insensitive(!case_sensitive)
+            .build(&alt_pat)
+    {
+        'roots_fallback: for root in roots.roots() {
+            for entry in WalkDir::new(root)
+                .max_depth(24)
+                .follow_links(false)
+                .into_iter()
+                .filter_entry(|e| !skipped_dir(e))
+            {
+                let Ok(entry) = entry else { continue };
+                if !entry.file_type().is_file() {
+                    continue;
+                }
+                let file = display_path(entry.path());
+                let mut searcher = SearcherBuilder::new()
+                    .binary_detection(BinaryDetection::quit(0))
+                    .line_number(true)
+                    .build();
+                let sink = sinks::UTF8(|line_no, line: &str| {
+                    if total >= max_results as u64 {
+                        return Ok(false);
+                    }
+                    total += 1;
+                    let mut text = line.trim_end_matches(['\r', '\n']).to_string();
+                    if text.chars().count() > LINE_CAP_CHARS {
+                        text = text.chars().take(LINE_CAP_CHARS).collect::<String>() + "…";
+                    }
+                    hits.push(json!({"file": file, "line": line_no, "text": text}));
+                    Ok(true)
+                });
+                let _ = searcher.search_path(&alt_matcher, entry.path(), sink);
+                if total >= max_results as u64 {
+                    break 'roots_fallback;
+                }
+            }
+        }
+    }
+
     let truncated = total >= max_results as u64;
     // 输出字符总量封顶:从尾部丢弃命中直至合规
     let mut out = json!({
@@ -404,5 +573,61 @@ mod tests {
         let r = roots_for(dir.path());
         let out = read(&r, &json!({"path": "../../etc/passwd"}));
         assert_eq!(out["ok"], false, "越界读取必须被拒:{out}");
+    }
+
+    #[test]
+    fn search_files_mode_finds_by_name_and_wildcard() {
+        let (d, r) = tree();
+        std::fs::write(d.path().join("README.md"), "# Hello BoenMind\n").expect("write");
+        // 1. 查找包含 README 的文件（类似 find / glob）
+        let out = search(&r, &json!({"query": "README", "mode": "files"}));
+        assert_eq!(out["ok"], true);
+        assert_eq!(out["mode"], "files");
+        assert_eq!(out["total_matches"], 1);
+        let matches = out["matches"].as_array().expect("matches array");
+        assert!(matches[0]["file"].as_str().unwrap().ends_with("README.md"));
+
+        // 2. 通配符模式查找
+        let out_glob = search(&r, &json!({"query": "*.rs", "mode": "files"}));
+        assert_eq!(out_glob["ok"], true);
+        let matches_glob = out_glob["matches"].as_array().expect("matches array");
+        assert!(
+            matches_glob
+                .iter()
+                .any(|m| m["file"].as_str().unwrap().ends_with("a.rs"))
+        );
+    }
+
+    #[test]
+    fn search_content_with_path_pattern_and_fallback_regex() {
+        let (_d, r) = tree();
+        // 1. 带 path_pattern 限制只查 a.rs(排除 src/b.rs)
+        let out = search(
+            &r,
+            &json!({
+                "query": "answer",
+                "path_pattern": "*a.rs",
+                "mode": "content"
+            }),
+        );
+        assert_eq!(out["ok"], true);
+        let matches = out["matches"].as_array().expect("matches array");
+        assert_eq!(matches.len(), 1);
+        assert!(matches[0]["file"].as_str().unwrap().ends_with("a.rs"));
+
+        // 2. 误传 fixed=true 但包含 '|' 且原字面搜索无结果时的自动回退拯救
+        let out_fixed_fallback = search(
+            &r,
+            &json!({
+                "query": "answer|something_nonexistent",
+                "fixed": true,
+                "mode": "content"
+            }),
+        );
+        assert_eq!(out_fixed_fallback["ok"], true);
+        assert!(
+            !out_fixed_fallback["matches"].as_array().unwrap().is_empty(),
+            "fallback 成功救回包含 | 的模式"
+        );
     }
 }

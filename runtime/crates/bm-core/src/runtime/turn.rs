@@ -234,10 +234,18 @@ pub(crate) fn spawn_turn(
                 // 彻底告别别扭的双下划线；调用返回时由 name_to_cap 原样映射回内核能力名。
                 let openai_name = cap.replace('.', "_");
                 name_to_cap.insert(openai_name.clone(), cap.clone());
-                let desc = if *needs_approval {
-                    format!("{cap} — 需要用户审批的业务工具(调用后会弹出审批卡片)")
-                } else {
-                    format!("{cap} — 只读直通工具")
+                let desc = match cap.as_str() {
+                    "fs.search" => "在工作区中搜索文件内容或文件路径。支持两种模式: 1) mode='content'(默认，类似 ripgrep/grep 在文件正文中检索代码或文本); 2) mode='files'(类似 find/glob，仅按文件名或路径通配符查找文件位置，如 query='*README*' 或 'README|readme')。可传 path_pattern 过滤待查文件(如 '*.rs')。".to_string(),
+                    "fs.read" => "读取工作区中指定文件的文本内容。返回带 1-based 行号的格式(类似 cat -n)，支持 offset 起始行与 limit 最大读取行数分页，并返回 total_lines 文件总行数。".to_string(),
+                    "fs.write" => "向工作区中的文件写入完整内容(需要用户审批)。若目标文件的父目录不存在会自动递归创建。".to_string(),
+                    "fs.edit" => "精确替换文件中的特定代码或文本片段(需要用户审批)。old_string 必须是在文件中唯一匹配的原文(含准确缩进)，new_string 为替换后的文本。若有多处相同匹配可设 replace_all=true。建议在修改前先用 fs.read 确认最新原文与缩进。".to_string(),
+                    _ => {
+                        if *needs_approval {
+                            format!("{cap} — 需要用户审批的业务工具(调用后会弹出审批卡片)")
+                        } else {
+                            format!("{cap} — 只读直通工具")
+                        }
+                    }
                 };
                 serde_json::json!({
                     "type": "function",
