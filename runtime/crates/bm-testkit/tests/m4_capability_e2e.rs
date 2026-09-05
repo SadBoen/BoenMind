@@ -778,6 +778,19 @@ impl bm_persist::EventStore for FailingStore {
     fn op_cancel_requested(&self, _o: &str) -> bm_persist::error::StoreResult<bool> {
         Ok(false)
     }
+    fn erase_session_contents(&self, _o: &str, _t: &str) -> bm_persist::error::StoreResult<()> {
+        Ok(())
+    }
+    fn delete_session_rows(&self, _o: &str) -> bm_persist::error::StoreResult<()> {
+        Ok(())
+    }
+    fn save_session_workspace(
+        &self,
+        _o: &str,
+        _w: Option<&str>,
+    ) -> bm_persist::error::StoreResult<()> {
+        Ok(())
+    }
     fn save_task(
         &self,
         _row: bm_persist::sqlite_state::TaskRow<'_>,

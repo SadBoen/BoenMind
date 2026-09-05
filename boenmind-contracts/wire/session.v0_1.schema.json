@@ -252,5 +252,38 @@
         }
       }
     }
+  },
+  "session.delete": {
+    "description": "Minor 增发(2026-09-06):会话删除 = 墓碑标记(tombstones)+ 对话原文擦除(context-log 过滤该会话行、operations.input_content 置空)。事件日志仅元数据、按 A4 不动;不可恢复。",
+    "params": {
+      "type": "object",
+      "required": [
+        "session_id"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "session_id": {
+          "$ref": "boenmind:wire:envelope:v0.1#/definitions/id"
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "deleted_at",
+        "purged_lines"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "deleted_at": {
+          "$ref": "boenmind:wire:envelope:v0.1#/definitions/timestamp"
+        },
+        "purged_lines": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "context-log 中擦除的行数"
+        }
+      }
+    }
   }
 }

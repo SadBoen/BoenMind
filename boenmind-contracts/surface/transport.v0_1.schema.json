@@ -11,6 +11,7 @@
         "/rpc/session.create",
         "/rpc/session.resume",
         "/rpc/session.close",
+        "/rpc/session.delete",
         "/rpc/events.poll",
         "/rpc/agent.send_input",
         "/rpc/agent.cancel",
@@ -23,12 +24,25 @@
     },
     "sse_frame": {
       "type": "object",
-      "required": ["event", "id", "data"],
+      "required": [
+        "event",
+        "id",
+        "data"
+      ],
       "additionalProperties": false,
       "properties": {
-        "event": { "const": "envelope" },
-        "id": { "type": "string", "pattern": "^[0-9]+$", "description": "该事件的 event_seq(十进制字符串);EventSource 自动重连时携带为 Last-Event-ID,语义等价 resume cursor" },
-        "data": { "type": "string", "description": "完整 event_envelope JSON(单行)" }
+        "event": {
+          "const": "envelope"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "该事件的 event_seq(十进制字符串);EventSource 自动重连时携带为 Last-Event-ID,语义等价 resume cursor"
+        },
+        "data": {
+          "type": "string",
+          "description": "完整 event_envelope JSON(单行)"
+        }
       },
       "description": "GET /events/{session_id}?since_seq=N 的 SSE 帧;心跳为注释行(:keepalive)"
     },
@@ -39,25 +53,58 @@
     },
     "health_response": {
       "type": "object",
-      "required": ["ok", "version", "state"],
+      "required": [
+        "ok",
+        "version",
+        "state"
+      ],
       "additionalProperties": false,
       "properties": {
-        "ok": { "const": true },
-        "version": { "type": "string" },
-        "state": { "enum": ["starting", "running", "draining", "stopped"] }
+        "ok": {
+          "const": true
+        },
+        "version": {
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "starting",
+            "running",
+            "draining",
+            "stopped"
+          ]
+        }
       },
       "description": "GET /health,无鉴权;供探活与 L0 形态预演"
     },
     "http_status_mapping": {
       "type": "object",
-      "required": ["business", "unauthorized", "unknown_path", "not_running", "malformed"],
+      "required": [
+        "business",
+        "unauthorized",
+        "unknown_path",
+        "not_running",
+        "malformed"
+      ],
       "additionalProperties": false,
       "properties": {
-        "business": { "const": 200, "description": "业务结果(含信封内 error)恒 200,语义在信封" },
-        "unauthorized": { "const": 401 },
-        "unknown_path": { "const": 404 },
-        "not_running": { "const": 503 },
-        "malformed": { "const": 400, "description": "请求体非合法信封(无法回信封)" }
+        "business": {
+          "const": 200,
+          "description": "业务结果(含信封内 error)恒 200,语义在信封"
+        },
+        "unauthorized": {
+          "const": 401
+        },
+        "unknown_path": {
+          "const": 404
+        },
+        "not_running": {
+          "const": 503
+        },
+        "malformed": {
+          "const": 400,
+          "description": "请求体非合法信封(无法回信封)"
+        }
       }
     },
     "shutdown_path": {

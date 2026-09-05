@@ -25,8 +25,8 @@ use bm_contract::timestamp::format_ts;
 use bm_contract::wire::{
     self, CancelParams, CancelResult, Cursor, EventsPollParams, EventsPollResult,
     GetOperationParams, Principal, Receipt, SendInputParams, SessionCloseParams,
-    SessionCloseResult, SessionCreateParams, SessionCreateResult, SessionResumeParams,
-    SessionResumeResult, TaskType, WireError,
+    SessionCloseResult, SessionCreateParams, SessionCreateResult, SessionDeleteParams,
+    SessionDeleteResult, SessionResumeParams, SessionResumeResult, TaskType, WireError,
 };
 use chrono::{DateTime, Duration, Utc};
 use std::collections::HashMap;
@@ -591,6 +591,13 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
                 resp,
             } => {
                 let _ = resp.send(handle_session_close(&mut world, request_id, params));
+            }
+            Cmd::SessionDelete {
+                request_id,
+                params,
+                resp,
+            } => {
+                let _ = resp.send(handle_session_delete(&mut world, request_id, params));
             }
             Cmd::EventsPoll { params, resp } => {
                 let _ = resp.send(handle_events_poll(&world, params));

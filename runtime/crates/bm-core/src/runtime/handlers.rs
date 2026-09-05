@@ -238,6 +238,87 @@ pub(crate) fn handle_session_close(
     })
 }
 
+/// session.delete(2026-09-06 A+B 一次落地):会话删除 = 墓碑 + 原文擦除。
+/// ①内存台账清场(sessions/chats/totals;live 会话直接移除,不设中间态);
+/// ②持久侧单事务:墓碑(防事件重放复活)+ operations.input_content 擦除
+/// (用户原文不留,操作元数据行保留供审计,对齐 A4 精神);
+/// ③context-log 流式过滤该会话行(临时文件+fsync+rename,内存 O(1))。
+/// events.jsonl 不动(仅元数据,seq 连续不变量);不可恢复。
+pub(crate) fn handle_session_delete(
+    w: &mut World,
+    request_id: BmId,
+    params: wire::SessionDeleteParams,
+) -> CoreResult<wire::SessionDeleteResult> {
+    if w.draining || w.persist_poisoned {
+        return Err(CoreError::Semantic(
+            ErrorCode::Unavailable,
+            "Runtime 排空中或持久层故障,拒绝删除".into(),
+        ));
+    }
+    let session_id = params.session_id.clone();
+    let Some(session) = w.sessions.remove(&session_id) else {
+        return Err(CoreError::validation("session 不存在"));
+    };
+    let _ = request_id;
+    // 会话内未终态 operation 一并清场(其收据随会话消失)
+    let session_ops: Vec<BmId> = w
+        .operations
+        .values()
+        .filter(|o| o.session_id == session_id)
+        .map(|o| o.id.clone())
+        .collect();
+    for op_id in &session_ops {
+        w.operations.remove(op_id);
+        w.op_capability.remove(op_id);
+        w.op_results.remove(op_id);
+        if let Some(token) = w.in_flight.remove(op_id) {
+            token.cancel(); // 在途回合:令牌取消,回合边界自会因载体消失而中止
+        }
+    }
+    w.session_chats.remove(&session_id);
+    w.session_turn_totals.remove(&session_id);
+
+    let now = w.now_ts();
+    // ①墓碑 + ②原文清空(单事务;失败入拒写态,防半删状态)
+    if let Some(store) = w.store.clone()
+        && let Err(e) = store.erase_session_contents(session_id.as_str(), &now)
+    {
+        tracing::error!(error = %e, session = %session_id.as_str(), "会话删除持久侧效失败,进入拒写态");
+        w.persist_poisoned = true;
+        return Err(CoreError::Semantic(
+            ErrorCode::Internal,
+            "会话删除持久侧效失败".into(),
+        ));
+    }
+    // ③context-log 过滤(会话已从内存移除;若会话行仍在持久层则 DELETE)
+    if let Some(store) = w.store.clone() {
+        let _ = store.delete_session_rows(session_id.as_str());
+    }
+    let purged = match &w.config.data_dir {
+        Some(dir) => bm_persist::filter_lines_atomic(&dir.join("context-log.jsonl"), |line| {
+            serde_json::from_str::<serde_json::Value>(line)
+                .map(|v| v.get("session_id").and_then(|s| s.as_str()) == Some(session_id.as_str()))
+                .unwrap_or(false)
+        })
+        .map_err(|e| {
+            tracing::error!(error = %e, session = %session_id.as_str(), "context-log 擦除失败");
+            w.persist_poisoned = true;
+            CoreError::Semantic(ErrorCode::Internal, "context-log 擦除失败".into())
+        })?,
+        None => 0,
+    };
+    // 持久层 sessions/agents 行删除(墓碑已在,事件重放亦不复活)
+    if let Some(store) = w.store.clone() {
+        let _ = store.delete_session_rows(session_id.as_str());
+    }
+    tracing::info!(session = %session_id.as_str(), purged, "会话已删除(墓碑+原文擦除)");
+    let _ = session;
+    Ok(wire::SessionDeleteResult {
+        deleted_at: now,
+        purged_lines: purged as u64,
+    })
+}
+
 pub(crate) fn handle_events_poll(
     w: &World,
     params: EventsPollParams,
@@ -340,10 +421,10 @@ pub(crate) fn handle_send_input(
             if let Some(store) = w.store.clone()
                 && let Err(e) =
                     store.save_session_workspace(params.session_id.as_str(), Some(wid.as_str()))
-                {
-                    tracing::error!(error = %e, session = %params.session_id.as_str(), "工作区绑定落库失败,进入拒写态");
-                    w.persist_poisoned = true;
-                }
+            {
+                tracing::error!(error = %e, session = %params.session_id.as_str(), "工作区绑定落库失败,进入拒写态");
+                w.persist_poisoned = true;
+            }
         }
     }
 

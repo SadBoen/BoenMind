@@ -188,12 +188,19 @@ pub fn id_counter_hint(state: &StateDb) -> StoreResult<u64> {
 
 /// ② 行装配。
 pub fn load_rows(state: &StateDb) -> StoreResult<WorldRows> {
+    // 2026-09-06 会话删除:墓碑会话不装载(事件重放复活兜底)
+    let tombstoned: std::collections::HashSet<String> = state
+        .query_rows("SELECT id FROM tombstones WHERE kind = 'session'", &[])?
+        .into_iter()
+        .filter_map(|v| v["id"].as_str().map(str::to_string))
+        .collect();
     let sessions = state
         .query_rows(
             "SELECT id, state, agent_id, created_at, workspace_id FROM sessions",
             &[],
         )?
         .into_iter()
+        .filter(|v| !v["id"].as_str().is_some_and(|id| tombstoned.contains(id)))
         .map(|v| serde_json::from_value(v).expect("行结构与 SessionRow 一致"))
         .collect();
     let agents = state

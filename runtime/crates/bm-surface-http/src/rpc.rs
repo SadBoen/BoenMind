@@ -8,7 +8,8 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use bm_contract::wire::{
     CancelParams, EventsPollParams, GetOperationParams, Method, RequestEnvelope, ResponseEnvelope,
-    SendInputParams, SessionCloseParams, SessionCreateParams, SessionResumeParams,
+    SendInputParams, SessionCloseParams, SessionCreateParams, SessionDeleteParams,
+    SessionResumeParams,
 };
 use bm_core::CoreResult;
 use serde_json::Value;
@@ -50,6 +51,10 @@ async fn rpc_inner(state: &AppState, method: Method, req: &RequestEnvelope) -> C
         Method::SessionClose => {
             let p: SessionCloseParams = params(req)?;
             to_value(state.handle.session_close(req.request_id.clone(), p).await)
+        }
+        Method::SessionDelete => {
+            let p: SessionDeleteParams = params(req)?;
+            to_value(state.handle.session_delete(req.request_id.clone(), p).await)
         }
         Method::EventsPoll => {
             let p: EventsPollParams = params(req)?;

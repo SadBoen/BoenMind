@@ -606,6 +606,24 @@ impl RuntimeHandle {
         rx.await.map_err(|_| CoreError::Internal)?
     }
 
+    /// session.delete(2026-09-06 A+B):墓碑 + 原文擦除,不可恢复。
+    pub async fn session_delete(
+        &self,
+        request_id: BmId,
+        params: SessionDeleteParams,
+    ) -> CoreResult<SessionDeleteResult> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(Cmd::SessionDelete {
+                request_id,
+                params,
+                resp: tx,
+            })
+            .await
+            .map_err(|_| CoreError::Internal)?;
+        rx.await.map_err(|_| CoreError::Internal)?
+    }
+
     pub async fn events_poll(&self, params: EventsPollParams) -> CoreResult<EventsPollResult> {
         let (tx, rx) = oneshot::channel();
         self.tx

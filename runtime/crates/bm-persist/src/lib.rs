@@ -18,4 +18,4 @@ pub use recovery::{
 };
 pub use sqlite_state::StateDb;
 pub use store::{EventStore, META_LAST_APPLIED, META_SNAPSHOT_SEQ, PersistStore};
-pub use util::atomic_write;
+pub use util::{atomic_write, filter_lines_atomic};

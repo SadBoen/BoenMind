@@ -25,6 +25,42 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     std::fs::rename(&tmp, path)
 }
 
+/// 流式过滤重写(2026-09-06 会话删除配套):逐行读源文件,`drop_line`
+/// 命中的行不写入临时文件,随后 fsync + rename 原子替换。内存只占缓冲,
+/// 不整文件载入;任意时刻盘上只有完整旧文件或完整新文件。
+/// 返回剔除的行数。源文件不存在 = Ok(0)(无记录可擦)。
+pub fn filter_lines_atomic<F>(path: &Path, drop_line: F) -> std::io::Result<usize>
+where
+    F: Fn(&str) -> bool,
+{
+    use std::io::{BufRead, BufReader};
+    let Ok(reader) = std::fs::File::open(path) else {
+        return Ok(0); // 文件不存在 = 无可擦
+    };
+    let mut tmp_name = path.as_os_str().to_owned();
+    tmp_name.push(".purge.tmp");
+    let tmp = PathBuf::from(tmp_name);
+    let mut out = std::fs::File::create(&tmp)?;
+    let mut dropped = 0usize;
+    for line in BufReader::new(reader).lines() {
+        let Ok(line) = line else { break };
+        if drop_line(&line) {
+            dropped += 1;
+            continue;
+        }
+        out.write_all(line.as_bytes())?;
+        out.write_all(
+            b"
+",
+        )?;
+    }
+    out.flush()?;
+    out.sync_all()?;
+    drop(out);
+    std::fs::rename(&tmp, path)?;
+    Ok(dropped)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -39,5 +75,31 @@ mod tests {
         assert_eq!(std::fs::read(&p).expect("读"), b"v2-longer-content");
         // 临时文件不留痕
         assert!(!dir.path().join("cfg").join("a.json.tmp").exists());
+    }
+
+    #[test]
+    fn filter_lines_atomic_drops_and_keeps_order() {
+        let dir = tempfile::tempdir().expect("临时目录");
+        let p = dir.path().join("log.jsonl");
+        std::fs::write(
+            &p, "a
+b
+c
+",
+        )
+        .expect("写");
+        let dropped = filter_lines_atomic(&p, |l| l.contains("b")).expect("过滤");
+        assert_eq!(dropped, 1);
+        assert_eq!(
+            std::fs::read(&p).expect("读"),
+            b"a
+c
+"
+        );
+        assert!(!dir.path().join("log.jsonl.purge.tmp").exists());
+        // 文件不存在 = 0
+        let dropped2 =
+            filter_lines_atomic(&dir.path().join("nope.jsonl"), |_| true).expect("不存在");
+        assert_eq!(dropped2, 0);
     }
 }

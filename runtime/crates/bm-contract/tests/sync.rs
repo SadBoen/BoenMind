@@ -14,7 +14,7 @@ use bm_contract::timestamp;
 use bm_contract::wire::{
     AgentSpec, CancelResult, EventsPollResult, GetOperationParams, Receipt, RequestEnvelope,
     ResponseEnvelope, SendInputParams, SessionCloseResult, SessionCreateParams,
-    SessionCreateResult, SessionResumeResult, WIRE_VERSION,
+    SessionCreateResult, SessionDeleteResult, SessionResumeResult, WIRE_VERSION,
 };
 use serde_json::json;
 
@@ -216,6 +216,10 @@ fn wire_requests_validate_against_envelope() {
         (
             "session.close",
             json!({"session_id": "sess_01J9Z8G4A1X7M4Q6B8WD5RQ2WX", "reason": "user_request"}),
+        ),
+        (
+            "session.delete",
+            json!({"session_id": "sess_01J9Z8G4A1X7M4Q6B8WD5RQ2WX"}),
         ),
         (
             "events.poll",
@@ -422,6 +426,18 @@ fn session_and_agent_payloads_validate() {
         &close_result,
     )
     .expect("session.close result 合法");
+
+    let delete_result = serde_json::to_value(SessionDeleteResult {
+        deleted_at: "2026-09-06T10:00:00.000Z".into(),
+        purged_lines: 6,
+    })
+    .unwrap();
+    validate_by_pointer(
+        registries::SESSION_SCHEMA,
+        "#/session.delete/result",
+        &delete_result,
+    )
+    .expect("session.delete result 合法");
 
     let cancel_result = serde_json::to_value(CancelResult {
         accepted: true,

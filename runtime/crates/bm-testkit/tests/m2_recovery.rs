@@ -561,3 +561,103 @@ async fn t28_session_chat_ledger_rebuilt_after_restart() {
     assert!(all.contains("问题三"), "当前轮用户消息在场");
     rig2.handle.stop("test_done").await;
 }
+
+#[tokio::test]
+async fn t29_session_delete_tombstone_and_erase() {
+    // 会话删除 A+B(2026-09-06):墓碑 + 对话原文擦除,一次落地。
+    let dir = tempfile::tempdir().expect("临时目录");
+    let rig1 = rig_on(
+        dir.path(),
+        vec![Step::ok("回答一", 30, 15), Step::ok("回答二", 30, 15)],
+    )
+    .await;
+    let (sess, agent) = rig1.create_session().await.expect("会话创建");
+    for q in ["要被删除的问题一", "要被删除的问题二"] {
+        let receipt = rig1.send(&sess, &agent, q).await.expect("发送");
+        loop {
+            let r = rig1
+                .handle
+                .operations_get(GetOperationParams {
+                    operation_id: receipt.operation_id.clone(),
+                })
+                .await
+                .expect("查询");
+            if r.state.is_terminal() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    }
+    // 前置:context-log 里有该会话的行
+    let log_path = dir.path().join("context-log.jsonl");
+    let before = std::fs::read_to_string(&log_path).expect("读日志");
+    assert!(before.contains(sess.as_str()) && before.contains("要被删除的问题一"));
+
+    // 删除
+    let result = rig1
+        .handle
+        .session_delete(
+            SeqIdGen::new().next_id("req"),
+            bm_contract::wire::SessionDeleteParams {
+                session_id: sess.clone(),
+            },
+        )
+        .await
+        .expect("删除成功");
+    assert!(
+        result.purged_lines >= 4,
+        "至少擦除两轮的 4 行,实际 {}",
+        result.purged_lines
+    );
+
+    // ① context-log 无该会话行
+    let after = std::fs::read_to_string(&log_path).expect("读日志");
+    assert!(!after.contains(sess.as_str()), "context-log 不得残留会话行");
+    // ② 持久侧:墓碑在场;input_content 全空;session 行已删
+    {
+        let store = bm_persist::PersistStore::open(dir.path()).expect("重开");
+        let tomb = store
+            .state()
+            .query_rows("SELECT id FROM tombstones WHERE kind='session'", &[])
+            .expect("读墓碑");
+        assert!(
+            tomb.iter().any(|v| v["id"].as_str() == Some(sess.as_str())),
+            "墓碑在场"
+        );
+        let ops = store
+            .state()
+            .query_rows(
+                "SELECT input_content FROM operations WHERE session_id = ?1",
+                &[&sess.as_str()],
+            )
+            .expect("读操作行");
+        assert!(ops.iter().all(|v| v["input_content"].is_null()), "原文已擦");
+        let sess_rows = store
+            .state()
+            .query_rows("SELECT id FROM sessions WHERE id = ?1", &[&sess.as_str()])
+            .expect("读会话行");
+        assert!(sess_rows.is_empty(), "会话行已删");
+    }
+    // ③ resume 拒绝(不可继续聊已删会话)
+    let err = rig1
+        .handle
+        .session_resume(
+            SeqIdGen::new().next_id("req"),
+            bm_contract::wire::SessionResumeParams {
+                session_id: sess.clone(),
+                since_seq: Some(u64::MAX),
+            },
+        )
+        .await
+        .expect_err("已删会话 resume 必须失败");
+    assert!(matches!(err, bm_core::CoreError::Semantic(_, _)));
+    // ④ 再发消息拒绝
+    assert!(rig1.send(&sess, &agent, "还收吗").await.is_err());
+    rig1.handle.stop("test_done").await;
+
+    // ⑤ 重启后:台账重建跳过墓碑(会话行已删,不会复活),回放端点无残留
+    let rig2 = rig_on(dir.path(), vec![Step::ok("新答", 10, 5)]).await;
+    let log_after_restart = std::fs::read_to_string(&log_path).expect("读日志");
+    assert!(!log_after_restart.contains(sess.as_str()));
+    rig2.handle.stop("test_done").await;
+}

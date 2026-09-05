@@ -1986,6 +1986,37 @@ pub async fn context_search(
     Json(json!({ "ok": true, "q": q, "hits": hits, "total": hits.len() })).into_response()
 }
 
+/// DELETE /admin/sessions/{session_id}:会话删除(2026-09-06 A+B)。
+/// 经核心单写者执行:墓碑 + operations 原文擦除 + context-log 流式过滤;
+/// events.jsonl 仅元数据不动(A4/审计口径)。不可恢复。
+async fn session_delete(
+    State(cfg): State<AdminConfig>,
+    axum::extract::Path(session_id): axum::extract::Path<String>,
+) -> Response {
+    match cfg
+        .handle
+        .session_delete(
+            UlidIdGen.next_id("req"),
+            bm_contract::wire::SessionDeleteParams {
+                session_id: match bm_contract::ids::BmId::parse(&session_id) {
+                    Ok(id) => id,
+                    Err(_) => return admin_error(StatusCode::BAD_REQUEST, "非法会话 id"),
+                },
+            },
+        )
+        .await
+    {
+        Ok(r) => Json(json!({
+            "ok": true,
+            "session_id": session_id,
+            "deleted_at": r.deleted_at.as_str(),
+            "purged_lines": r.purged_lines,
+        }))
+        .into_response(),
+        Err(e) => admin_error(StatusCode::BAD_REQUEST, e.to_wire().message),
+    }
+}
+
 /// GET /admin/sessions/{session_id}/messages?limit=&skip=:
 /// 会话历史回放(2026-09-06;同日二改:分页+流式,防长会话一口气载入卡
 /// 界面)。从 context-log.jsonl 过滤 kind ∈ {user_message, assistant_final},
@@ -2118,6 +2149,11 @@ pub fn admin_routes(cfg: AdminConfig) -> axum::Router {
         .route("/context/search", get(context_search))
         // 会话历史回放(2026-09-06):切会话/刷新后前端按此拉历史消息
         .route("/sessions/{session_id}/messages", get(session_messages))
+        // 会话删除(2026-09-06 A+B):墓碑+原文擦除,经核心单写者执行
+        .route(
+            "/sessions/{session_id}",
+            axum::routing::delete(session_delete),
+        )
         .route("/fs/list", get(fs_list))
         .route("/fs/file", get(fs_file))
         // W7 目录树右键菜单:重命名 / 下载(文件)与打包下载(文件夹 zip)

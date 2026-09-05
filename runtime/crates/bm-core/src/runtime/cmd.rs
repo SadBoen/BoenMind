@@ -20,6 +20,11 @@ pub(crate) enum Cmd {
         params: SessionCloseParams,
         resp: oneshot::Sender<CoreResult<SessionCloseResult>>,
     },
+    SessionDelete {
+        request_id: BmId,
+        params: SessionDeleteParams,
+        resp: oneshot::Sender<CoreResult<SessionDeleteResult>>,
+    },
     EventsPoll {
         params: EventsPollParams,
         resp: oneshot::Sender<CoreResult<EventsPollResult>>,
@@ -228,6 +233,9 @@ pub(crate) fn reply_unavailable(cmd: Cmd) {
             let _ = resp.send(Err(err()));
         }
         Cmd::SessionClose { resp, .. } => {
+            let _ = resp.send(Err(err()));
+        }
+        Cmd::SessionDelete { resp, .. } => {
             let _ = resp.send(Err(err()));
         }
         Cmd::EventsPoll { resp, .. } => {

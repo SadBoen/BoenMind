@@ -27,6 +27,7 @@ import {
   MessageSquare,
 } from "lucide-react";
 import { BM_EVENTS, emit } from "./lib/bus";
+import { api } from "./w2/api";
 
 // 三栏宽度持久化(W2 验收门 4:刷新后布局保持);W7 反馈:左右栏抽屉收放状态同库持久化
 type Layout = {
@@ -301,14 +302,29 @@ function SessionPanel({ collapsed }: { collapsed: boolean }) {
     emit(BM_EVENTS.sessionSwitched, { sid });
   };
 
+  // 删除 = 两步确认(2026-09-06 A+B):首点进入待确认态,3 秒内再点才真删;
+  // 服务端墓碑 + 对话原文擦除,不可恢复
+  const [armDeleteSid, setArmDeleteSid] = useState<string | null>(null);
+  const armTimerRef = useRef<number | null>(null);
   const handleDeleteSession = (e: React.MouseEvent, sid: string) => {
     e.stopPropagation();
-    const next = sessionsStore.remove(sid);
-    setSessions(next);
-    if (activeSid === sid) {
-      // 若删除的是当前会话，则开辟新对话
-      emit(BM_EVENTS.chatNew);
+    if (armDeleteSid !== sid) {
+      setArmDeleteSid(sid);
+      if (armTimerRef.current) window.clearTimeout(armTimerRef.current);
+      armTimerRef.current = window.setTimeout(() => setArmDeleteSid(null), 3000);
+      return;
     }
+    setArmDeleteSid(null);
+    void api.sessionDelete(sid)
+      .catch(() => {}) // 服务端已尽力擦除;本地列表无论如何移除
+      .finally(() => {
+        const next = sessionsStore.remove(sid);
+        setSessions(next);
+        if (activeSid === sid) {
+          // 若删除的是当前会话，则开辟新对话
+          emit(BM_EVENTS.chatNew);
+        }
+      });
   };
 
   return (
@@ -364,12 +380,13 @@ function SessionPanel({ collapsed }: { collapsed: boolean }) {
                 <MessageSquare size={13} className="shrink-0 text-muted-foreground" />
                 <span className="name">{s.title || "BoenMind 对话"}</span>
                 <button
-                  className="icon-chip delete-btn"
-                  title="删除此会话"
+                  className={`icon-chip delete-btn ${armDeleteSid === s.id ? "bg-red-500/20 text-red-500" : ""}`}
+                  title={armDeleteSid === s.id ? "再点一次确认删除(不可恢复)" : "删除此会话"}
+                  aria-label={armDeleteSid === s.id ? "确认删除此会话" : "删除此会话"}
                   onClick={(e) => handleDeleteSession(e, s.id)}
                   style={{ width: "20px", height: "20px", padding: 0 }}
                 >
-                  <Trash2 size={12} />
+                  {armDeleteSid === s.id ? <span className="text-[10px] font-bold">?</span> : <Trash2 size={12} />}
                 </button>
               </div>
               <div className="status-hint">

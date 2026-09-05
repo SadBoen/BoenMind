@@ -5,72 +5,207 @@
   "title": "Wire API 信封 v0.1",
   "description": "传输无关的请求/响应信封（基线 7 的关联字段由此承载）。M1 方法集合：session.create / session.resume / session.close / events.poll / agent.send_input / agent.cancel / operations.get。M4 增发：capability.call / approval.list / approval.respond（Minor，params/result 见 wire/capability.v0_1）。M5 增发：task.create / task.list / task.get / task.pause / task.resume / task.stop（Minor，params/result 见 wire/task.v0_1）。",
   "definitions": {
-    "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]{1,15}_[0-9A-HJKMNP-TV-Z]{26}$" },
-    "timestamp": { "type": "string", "format": "date-time" },
-    "error_code": { "type": "string", "description": "可用码见 registry/error-codes.v0_1.json（M1 七码 + M4 四码，available_since 标注）；本枚举随注册表同步（CI 规则 R6）", "enum": ["validation_failed", "unavailable", "timeout", "cancelled", "budget_exceeded", "outcome_unknown", "internal", "permission_denied", "approval_required", "approval_denied", "idempotency_conflict"] },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{1,15}_[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "error_code": {
+      "type": "string",
+      "description": "可用码见 registry/error-codes.v0_1.json（M1 七码 + M4 四码，available_since 标注）；本枚举随注册表同步（CI 规则 R6）",
+      "enum": [
+        "validation_failed",
+        "unavailable",
+        "timeout",
+        "cancelled",
+        "budget_exceeded",
+        "outcome_unknown",
+        "internal",
+        "permission_denied",
+        "approval_required",
+        "approval_denied",
+        "idempotency_conflict"
+      ]
+    },
     "error": {
       "type": "object",
-      "required": ["code", "message", "retryable"],
+      "required": [
+        "code",
+        "message",
+        "retryable"
+      ],
       "additionalProperties": false,
       "properties": {
-        "code": { "$ref": "#/definitions/error_code" },
-        "message": { "type": "string", "maxLength": 500, "description": "脱敏后的人类可读信息，禁止包含凭据与隐私原文（基线 8.4）" },
-        "retryable": { "type": "boolean" },
-        "retry_after_ms": { "type": ["integer", "null"], "minimum": 0 },
-        "detail_ref": { "type": ["string", "null"], "pattern": "^[a-z][a-z0-9_]{1,15}_[0-9A-HJKMNP-TV-Z]{26}$", "description": "结构化详情在受保护存储中的引用" }
+        "code": {
+          "$ref": "#/definitions/error_code"
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "脱敏后的人类可读信息，禁止包含凭据与隐私原文（基线 8.4）"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "retry_after_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "detail_ref": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-z][a-z0-9_]{1,15}_[0-9A-HJKMNP-TV-Z]{26}$",
+          "description": "结构化详情在受保护存储中的引用"
+        }
       }
     }
   },
   "request": {
     "type": "object",
-    "required": ["v", "method", "request_id", "params"],
+    "required": [
+      "v",
+      "method",
+      "request_id",
+      "params"
+    ],
     "additionalProperties": false,
     "properties": {
-      "v": { "const": "0.1" },
-      "method": { "enum": ["session.create", "session.resume", "session.close", "events.poll", "agent.send_input", "agent.cancel", "operations.get", "capability.call", "approval.list", "approval.respond", "task.create", "task.list", "task.get", "task.pause", "task.resume", "task.stop", "capability.cancel", "task.autorun", "capability.list"] },
-      "request_id": { "$ref": "#/definitions/id" },
-      "idempotency_key": { "type": ["string", "null"], "description": "M1 未使用，字段预留（M4 起用于副作用操作）" },
-      "params": { "type": "object" }
+      "v": {
+        "const": "0.1"
+      },
+      "method": {
+        "enum": [
+          "session.create",
+          "session.resume",
+          "session.close",
+          "session.delete",
+          "events.poll",
+          "agent.send_input",
+          "agent.cancel",
+          "operations.get",
+          "capability.call",
+          "approval.list",
+          "approval.respond",
+          "task.create",
+          "task.list",
+          "task.get",
+          "task.pause",
+          "task.resume",
+          "task.stop",
+          "capability.cancel",
+          "task.autorun",
+          "capability.list"
+        ]
+      },
+      "request_id": {
+        "$ref": "#/definitions/id"
+      },
+      "idempotency_key": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "M1 未使用，字段预留（M4 起用于副作用操作）"
+      },
+      "params": {
+        "type": "object"
+      }
     }
   },
   "response": {
     "oneOf": [
       {
         "type": "object",
-        "required": ["v", "request_id", "ok", "result"],
+        "required": [
+          "v",
+          "request_id",
+          "ok",
+          "result"
+        ],
         "additionalProperties": false,
         "properties": {
-          "v": { "const": "0.1" },
-          "request_id": { "$ref": "#/definitions/id" },
-          "ok": { "const": true },
-          "result": { "type": "object" }
+          "v": {
+            "const": "0.1"
+          },
+          "request_id": {
+            "$ref": "#/definitions/id"
+          },
+          "ok": {
+            "const": true
+          },
+          "result": {
+            "type": "object"
+          }
         }
       },
       {
         "type": "object",
-        "required": ["v", "request_id", "ok", "error"],
+        "required": [
+          "v",
+          "request_id",
+          "ok",
+          "error"
+        ],
         "additionalProperties": false,
         "properties": {
-          "v": { "const": "0.1" },
-          "request_id": { "$ref": "#/definitions/id" },
-          "ok": { "const": false },
-          "error": { "$ref": "#/definitions/error" }
+          "v": {
+            "const": "0.1"
+          },
+          "request_id": {
+            "$ref": "#/definitions/id"
+          },
+          "ok": {
+            "const": false
+          },
+          "error": {
+            "$ref": "#/definitions/error"
+          }
         }
       }
     ]
   },
   "event_envelope": {
     "type": "object",
-    "required": ["event_seq", "type", "occurred_at", "payload"],
+    "required": [
+      "event_seq",
+      "type",
+      "occurred_at",
+      "payload"
+    ],
     "additionalProperties": false,
     "properties": {
-      "event_seq": { "type": "integer", "minimum": 1, "description": "全局单调，由 Event Log 单写者分配（基线 8.3）" },
-      "type": { "type": "string", "description": "必须在 runtime-events 注册表内" },
-      "occurred_at": { "$ref": "#/definitions/timestamp" },
-      "session_id": { "$ref": "#/definitions/id" },
-      "agent_id": { "$ref": "#/definitions/id" },
-      "operation_id": { "$ref": "#/definitions/id" },
-      "payload": { "type": "object" }
+      "event_seq": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "全局单调，由 Event Log 单写者分配（基线 8.3）"
+      },
+      "type": {
+        "type": "string",
+        "description": "必须在 runtime-events 注册表内"
+      },
+      "occurred_at": {
+        "$ref": "#/definitions/timestamp"
+      },
+      "session_id": {
+        "$ref": "#/definitions/id"
+      },
+      "agent_id": {
+        "$ref": "#/definitions/id"
+      },
+      "operation_id": {
+        "$ref": "#/definitions/id"
+      },
+      "payload": {
+        "type": "object"
+      }
     }
   }
 }

@@ -437,6 +437,53 @@ impl StateDb {
         Ok(())
     }
 
+    /// 会话删除侧效(2026-09-06 A+B):单事务内 ①墓碑(tombstones 防事件
+    /// 重放复活)②该会话全部 operations.input_content 置空(用户消息原文
+    /// 擦除;操作元数据行保留供审计)。
+    pub fn erase_session_contents(&self, session_id: &str, at: &str) -> StoreResult<()> {
+        let conn = self.conn.lock().expect("锁未中毒");
+        conn.execute_batch("BEGIN")?;
+        let r: Result<(), rusqlite::Error> = (|| {
+            conn.execute(
+                "INSERT OR REPLACE INTO tombstones (kind, id, at) VALUES ('session', ?1, ?2)",
+                rusqlite::params![session_id, at],
+            )?;
+            conn.execute(
+                "UPDATE operations SET input_content = NULL WHERE session_id = ?1",
+                rusqlite::params![session_id],
+            )?;
+            Ok(())
+        })();
+        match r {
+            Ok(()) => conn.execute_batch("COMMIT")?,
+            Err(e) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                return Err(e.into());
+            }
+        }
+        Ok(())
+    }
+
+    /// 会话行与其 agent 行删除(墓碑已在,防复活靠 erase_session_contents;
+    /// 事件重放侧由 recovery::load_rows 跳过墓碑会话兜底)。
+    pub fn delete_session_rows(&self, session_id: &str) -> StoreResult<()> {
+        let conn = self.conn.lock().expect("锁未中毒");
+        conn.execute_batch("BEGIN")?;
+        let r: Result<(), rusqlite::Error> = (|| {
+            conn.execute("DELETE FROM sessions WHERE id = ?1", [session_id])?;
+            conn.execute("DELETE FROM agents WHERE session_id = ?1", [session_id])?;
+            Ok(())
+        })();
+        match r {
+            Ok(()) => conn.execute_batch("COMMIT")?,
+            Err(e) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                return Err(e.into());
+            }
+        }
+        Ok(())
+    }
+
     /// 查询取消意图标记(恢复端判定 turn_was_stopping)。
     pub fn op_cancel_requested(&self, operation_id: &str) -> StoreResult<bool> {
         let conn = self.conn.lock().expect("锁未中毒");

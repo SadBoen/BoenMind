@@ -47,6 +47,13 @@ pub trait EventStore: Send + Sync {
         workspace_id: Option<&str>,
     ) -> StoreResult<()>;
 
+    /// 会话删除侧效(2026-09-06 A+B):墓碑 + operations.input_content 擦除
+    /// (单事务);context-log 文件过滤由调用方配 filter_lines_atomic 做。
+    fn erase_session_contents(&self, session_id: &str, at: &str) -> StoreResult<()>;
+
+    /// 会话行与其 agent 行删除(墓碑已在;事件重放侧由 load_rows 跳墓碑兜底)。
+    fn delete_session_rows(&self, session_id: &str) -> StoreResult<()>;
+
     /// ① 日志先行:追加事件并 flush。失败 = 本次命令失败(核心循环须拒绝,不可静默)。
     fn append(&self, event: &EventEnvelope) -> StoreResult<()>;
 
@@ -510,6 +517,14 @@ impl EventStore for PersistStore {
         workspace_id: Option<&str>,
     ) -> StoreResult<()> {
         self.state.save_session_workspace(session_id, workspace_id)
+    }
+
+    fn erase_session_contents(&self, session_id: &str, at: &str) -> StoreResult<()> {
+        self.state.erase_session_contents(session_id, at)
+    }
+
+    fn delete_session_rows(&self, session_id: &str) -> StoreResult<()> {
+        self.state.delete_session_rows(session_id)
     }
 
     fn append(&self, event: &EventEnvelope) -> StoreResult<()> {

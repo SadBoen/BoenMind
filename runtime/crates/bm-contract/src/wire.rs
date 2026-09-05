@@ -22,6 +22,8 @@ wire_str_enum!(Method {
     SessionCreate => "session.create",
     SessionResume => "session.resume",
     SessionClose => "session.close",
+    // Minor 增发(2026-09-06 重启续聊配套):会话删除 = 墓碑 + 原文擦除
+    SessionDelete => "session.delete",
     EventsPoll => "events.poll",
     AgentSendInput => "agent.send_input",
     AgentCancel => "agent.cancel",
@@ -241,6 +243,20 @@ pub struct SessionCloseResult {
     pub closed_at: BmTimestamp,
     /// 进行中的回合不被取消,仅脱离(INV-6)。
     pub agent_final_state: String,
+}
+
+// ---- session.delete(Minor 增发,2026-09-06) -------------------------------
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionDeleteParams {
+    pub session_id: BmId,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionDeleteResult {
+    pub deleted_at: BmTimestamp,
+    /// context-log 中擦除的行数(0 = 本就无记录)。
+    pub purged_lines: u64,
 }
 
 // ---- events.poll ---------------------------------------------------------

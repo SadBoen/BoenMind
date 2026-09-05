@@ -69,6 +69,7 @@ export function Thread({
   onToggleWorkspace: () => void;
 }) {
   const isEmpty = useAuiState((s) => s.thread.isEmpty);
+  const { history } = useBoenmindApprovals();
   // W5 页签:对话 = 聊天;上下文 = 请求快照透视(dsh-context 同款布局理念)
   const [tab, setTab] = useState<"chat" | "ctx">("chat");
 
@@ -195,7 +196,7 @@ export function Thread({
 
 // 抽屉式超薄悬浮审批条:与输入框同宽、高度接近单行、支持展开代码/批准/驳回/关闭
 function ApprovalDrawer() {
-  const { pendingApprovals, respondApproval, history } = useBoenmindApprovals();
+  const { pendingApprovals, respondApproval } = useBoenmindApprovals();
   if (pendingApprovals.length === 0) return null;
   return (
     <div className="mb-2 flex flex-col gap-2" data-slot="approval-cards">

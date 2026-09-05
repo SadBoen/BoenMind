@@ -379,6 +379,12 @@ export const api = {
   },
   // W5 上下文透视:模型调用请求快照(context-log.jsonl 尾部,最旧在前)
   context: () => req<{ ok: boolean; steps: CtxStep[] }>("/admin/context"),
+  // 会话删除(2026-09-06 A+B):墓碑+对话原文擦除,不可恢复
+  sessionDelete: (sid: string) =>
+    req<{ ok: boolean; session_id: string; deleted_at: string; purged_lines: number }>(
+      `/admin/sessions/${encodeURIComponent(sid)}`,
+      { method: "DELETE" },
+    ),
   // 会话历史回放(2026-09-06):切会话/刷新后按 sid 拉历史消息(最旧在前)。
   // 分页(2026-09-06 二改):limit 默认 50 上限 200;skip = 从最新一条往回
   // 跳过的条数(已加载越多 skip 越大);has_more 指示是否还有更早——
