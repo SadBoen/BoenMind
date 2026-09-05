@@ -381,57 +381,137 @@ pub fn write(roots: &Roots, args: &Value) -> Value {
 }
 
 /// 统计 needle 在 haystack 中的出现次数
-fn count_occurrences(haystack: &str, needle: &str) -> usize {
-    haystack.match_indices(needle).count()
+/// 单条替换意图(edits 数组元素或单处字段的归一形态)。
+struct EditIntent {
+    old: String,
+    new: String,
+    replace_all: bool,
 }
 
+/// 在 content 中定位 old 的全部命中区间;0 命中且疑似 CRLF 差异时按
+/// \r\n 形态重试(模型侧常按 \n 给原文)。返回 (生效old, 生效new, 区间集)。
+fn locate(content: &str, intent: &EditIntent) -> (String, String, Vec<(usize, usize)>) {
+    let mut old_eff = intent.old.clone();
+    let mut new_eff = intent.new.clone();
+    let mut ranges: Vec<(usize, usize)> = content
+        .match_indices(&intent.old)
+        .map(|(i, s)| (i, i + s.len()))
+        .collect();
+    if ranges.is_empty() && content.contains("\r\n") && intent.old.contains('\n') {
+        old_eff = intent.old.replace('\n', "\r\n");
+        new_eff = intent.new.replace('\n', "\r\n");
+        ranges = content
+            .match_indices(&old_eff)
+            .map(|(i, s)| (i, i + s.len()))
+            .collect();
+    }
+    (old_eff, new_eff, ranges)
+}
+
+/// 一条编辑在原文快照上的定位结果:(生效old, 生效new, 命中区间集)。
+type LocatedEdit = (String, String, Vec<(usize, usize)>);
+
+/// fs.edit(ADR-0022 批量升级):单处 old_string/new_string 或 edits 数组
+/// 二选一。批量语义对齐 pi:全部编辑基于**文件当前原文**快照定位,区间
+/// 不得重叠,一次读-校-写原子提交——避免多轮往返与中间态漂移。
 pub fn edit(roots: &Roots, args: &Value) -> Value {
     let path = match roots.resolve(args["path"].as_str().unwrap_or_default()) {
         Ok(p) => p,
         Err(e) => return tool_err(e),
     };
-    let old = args["old_string"].as_str().unwrap_or("");
-    let new = args["new_string"].as_str().unwrap_or("");
-    let replace_all = args["replace_all"].as_bool().unwrap_or(false);
-    if old.is_empty() {
-        return tool_err("old_string 必填(要被替换的精确原文)");
-    }
+    // 归一两条入口:edits 数组(批量)/ 单处字段(向后兼容)
+    let intents: Vec<EditIntent> = if let Some(list) = args["edits"].as_array() {
+        if list.is_empty() {
+            return tool_err("edits 不能为空数组(单处改动请直接传 old_string/new_string)");
+        }
+        let mut v = Vec::with_capacity(list.len());
+        for (i, e) in list.iter().enumerate() {
+            let old = e["old_string"].as_str().unwrap_or_default().to_string();
+            let new = e["new_string"].as_str().unwrap_or_default().to_string();
+            if old.is_empty() {
+                return tool_err(format!("edits[{i}].old_string 必填(要被替换的精确原文)"));
+            }
+            v.push(EditIntent {
+                old,
+                new,
+                replace_all: e["replace_all"].as_bool().unwrap_or(false),
+            });
+        }
+        v
+    } else {
+        let old = args["old_string"].as_str().unwrap_or_default().to_string();
+        let new = args["new_string"].as_str().unwrap_or_default().to_string();
+        if old.is_empty() {
+            return tool_err("old_string 必填(要被替换的精确原文;或传 edits 数组批量替换)");
+        }
+        vec![EditIntent {
+            old,
+            new,
+            replace_all: args["replace_all"].as_bool().unwrap_or(false),
+        }]
+    };
+
     let raw = match std::fs::read(&path) {
         Ok(b) => b,
         Err(e) => return tool_err(format!("读取失败:{}({e})", display_path(&path))),
     };
-    let mut content = match String::from_utf8(raw) {
+    let content = match String::from_utf8(raw) {
         Ok(s) => s,
         Err(_) => {
             return tool_err("文件不是 UTF-8 编码,拒绝编辑(请人工处理或走 system.exec)");
         }
     };
-    let mut old_eff = old.to_string();
-    let mut new_eff = new.to_string();
-    let mut hits = count_occurrences(&content, old);
-    if hits == 0 && content.contains("\r\n") && old.contains('\n') {
-        // CRLF 兼容:模型侧原文按 \n 给出时,换 \r\n 形态重试
-        old_eff = old.replace('\n', "\r\n");
-        new_eff = new.replace('\n', "\r\n");
-        hits = count_occurrences(&content, &old_eff);
+
+    // 定位:全部意图都针对同一原文快照解析区间
+    let mut plan: Vec<LocatedEdit> = Vec::new();
+    for (i, intent) in intents.iter().enumerate() {
+        let (old_eff, new_eff, ranges) = locate(&content, intent);
+        if ranges.is_empty() {
+            return tool_err(format!(
+                "edits[{i}] 的 old_string 在 {} 中未找到(注意须与文件原文逐字一致,含缩进)",
+                display_path(&path)
+            ));
+        }
+        if ranges.len() > 1 && !intent.replace_all {
+            return tool_err(format!(
+                "edits[{i}] 的 old_string 命中 {} 处,要求唯一;请补充更多上下文收窄,或对该条传 replace_all=true",
+                ranges.len()
+            ));
+        }
+        plan.push((old_eff, new_eff, ranges));
     }
-    if hits == 0 {
-        return tool_err(format!(
-            "old_string 在 {} 中未找到(注意须与文件原文逐字一致,含缩进)",
-            display_path(&path)
-        ));
+
+    // 区间汇总 + 不相交校验(跨编辑重叠 = 语义冲突,拒执行)
+    let mut all: Vec<(usize, usize, &str)> = Vec::new();
+    for (_, new_eff, ranges) in &plan {
+        for (s, e) in ranges {
+            all.push((*s, *e, new_eff.as_str()));
+        }
     }
-    if hits > 1 && !replace_all {
-        return tool_err(format!(
-            "old_string 命中 {hits} 处,要求唯一;请补充更多上下文收窄,或传 replace_all=true 全部替换"
-        ));
+    all.sort_by_key(|(s, e, _)| (*s, *e));
+    for w in all.windows(2) {
+        if w[1].0 < w[0].1 {
+            return tool_err("多处编辑的匹配区间重叠,请拆分调用或调整 old_string 使其互不重叠");
+        }
     }
-    content = content.replace(&old_eff, &new_eff);
-    match std::fs::write(&path, content.as_bytes()) {
+
+    // 按区间重建(区间已升序且不相交)
+    let mut out = String::with_capacity(content.len());
+    let mut cursor = 0usize;
+    for (s, e, new_eff) in &all {
+        out.push_str(&content[cursor..*s]);
+        out.push_str(new_eff);
+        cursor = *e;
+    }
+    out.push_str(&content[cursor..]);
+
+    let replacements = all.len();
+    match std::fs::write(&path, out.as_bytes()) {
         Ok(()) => json!({
             "ok": true,
             "path": display_path(&path),
-            "replacements": hits,
+            "replacements": replacements,
+            "edits": plan.len(),
         }),
         Err(e) => tool_err(format!("写回失败:{}({e})", display_path(&path))),
     }
@@ -439,6 +519,110 @@ pub fn edit(roots: &Roots, args: &Value) -> Value {
 
 #[cfg(test)]
 mod tests {
+
+    // ---- ADR-0022:fs_edit 批量 edits 数组 ------------------------------
+
+    fn write_tmp(dir: &Path, name: &str, content: &str) -> std::path::PathBuf {
+        let p = dir.join(name);
+        std::fs::write(&p, content).expect("write tmp");
+        p
+    }
+
+    #[test]
+    fn edit_batch_applies_multiple_disjoint_edits_against_original_snapshot() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let roots = roots_for(dir.path());
+        let p = write_tmp(dir.path(), "b.txt", "alpha\nbeta\ngamma\n");
+        let out = edit(
+            &roots,
+            &serde_json::json!({
+                "path": p.display().to_string(),
+                "edits": [
+                    {"old_string": "gamma", "new_string": "GAMMA"},
+                    {"old_string": "alpha", "new_string": "ALPHA"}
+                ]
+            }),
+        );
+        assert_eq!(out["ok"], true, "{out}");
+        let content = std::fs::read_to_string(&p).expect("read");
+        assert_eq!(content, "ALPHA\nbeta\nGAMMA\n");
+        assert_eq!(out["edits"], serde_json::json!(2));
+        assert_eq!(out["replacements"], serde_json::json!(2));
+    }
+
+    #[test]
+    fn edit_batch_rejects_overlapping_ranges() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let roots = roots_for(dir.path());
+        let p = write_tmp(dir.path(), "c.txt", "hello world\n");
+        let out = edit(
+            &roots,
+            &serde_json::json!({
+                "path": p.display().to_string(),
+                "edits": [
+                    {"old_string": "hello world", "new_string": "X"},
+                    {"old_string": "world", "new_string": "Y"}
+                ]
+            }),
+        );
+        assert_eq!(out["ok"], false, "{out}");
+        assert!(out["error"].as_str().unwrap().contains("重叠"));
+    }
+
+    #[test]
+    fn edit_batch_second_edit_sees_original_not_intermediate() {
+        // Pi 语义:第二条 old_string 匹配的是原文件,不是第一条的结果
+        let dir = tempfile::tempdir().expect("tmp");
+        let roots = roots_for(dir.path());
+        let p = write_tmp(dir.path(), "d.txt", "foo bar\n");
+        let out = edit(
+            &roots,
+            &serde_json::json!({
+                "path": p.display().to_string(),
+                "edits": [
+                    {"old_string": "foo bar", "new_string": "foo baz"},
+                    {"old_string": "foo", "new_string": "qux"}
+                ]
+            }),
+        );
+        // "foo" 在原文只命中 1 处,且与第一条区间重叠 → 应拒重叠而非错改
+        assert_eq!(out["ok"], false, "{out}");
+    }
+
+    #[test]
+    fn edit_single_entry_still_works_backward_compatible() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let roots = roots_for(dir.path());
+        let p = write_tmp(dir.path(), "e.txt", "keep me\n");
+        let out = edit(
+            &roots,
+            &serde_json::json!({
+                "path": p.display().to_string(),
+                "old_string": "keep",
+                "new_string": "CHANGE"
+            }),
+        );
+        assert_eq!(out["ok"], true, "{out}");
+        assert!(std::fs::read_to_string(&p).unwrap().contains("CHANGE me"));
+    }
+
+    #[test]
+    fn edit_batch_replace_all_within_single_edit_item() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let roots = roots_for(dir.path());
+        let p = write_tmp(dir.path(), "f.txt", "a b a b a\n");
+        let out = edit(
+            &roots,
+            &serde_json::json!({
+                "path": p.display().to_string(),
+                "edits": [
+                    {"old_string": "a", "new_string": "Z", "replace_all": true}
+                ]
+            }),
+        );
+        assert_eq!(out["ok"], true, "{out}");
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "Z b Z b Z\n");
+    }
     use super::*;
     use std::path::Path;
 

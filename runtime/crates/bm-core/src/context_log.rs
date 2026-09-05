@@ -77,11 +77,19 @@ pub fn snapshot_messages(messages: &[bm_contract::connector::Message]) -> Vec<se
         .iter()
         .map(|m| {
             let (content, truncated) = snap_content(&m.content);
-            serde_json::json!({
+            // ADR-0022:工具因果链进快照(透视面板可见「调用→结果」对齐)
+            let mut o = serde_json::json!({
                 "role": m.role.as_str(),
                 "content": content,
                 "content_truncated": truncated,
-            })
+            });
+            if let Some(id) = &m.tool_call_id {
+                o["tool_call_id"] = serde_json::json!(id);
+            }
+            if let Some(tcs) = &m.tool_calls {
+                o["tool_calls"] = serde_json::json!(tcs);
+            }
+            o
         })
         .collect()
 }
@@ -282,6 +290,8 @@ mod tests {
         let msgs = vec![Message {
             role: Role::User,
             content: long,
+            tool_call_id: None,
+            tool_calls: None,
         }];
         let snap = snapshot_messages(&msgs);
         assert_eq!(snap[0]["content_truncated"], serde_json::json!(true));
@@ -292,6 +302,8 @@ mod tests {
         let short = vec![Message {
             role: Role::User,
             content: "你好".into(),
+            tool_call_id: None,
+            tool_calls: None,
         }];
         let snap = snapshot_messages(&short);
         assert_eq!(snap[0]["content_truncated"], serde_json::json!(false));
@@ -305,6 +317,8 @@ mod tests {
         let msgs = vec![Message {
             role: Role::User,
             content: "我的 key 是 sk-very-secret-value 别外传".into(),
+            tool_call_id: None,
+            tool_calls: None,
         }];
         log.record(rec(snapshot_messages(&msgs)));
         let tail = log.tail(10);

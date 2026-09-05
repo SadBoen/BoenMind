@@ -145,7 +145,8 @@ pub(crate) fn spawn_turn(
     // W4b 角色 prompt:会话级指定优先(会话创建时烤入的完整提示词,含技能);
     // 否则每回合现读 roles.json+skills.json 组装(设置页保存即热生效)。
     // 组装逻辑唯一入口 = bm-core::roles::compose_role_prompt(两条路径同口径)。
-    let chat_tools: Vec<(String, serde_json::Value, bool)> = w.registry.chat_tools();
+    let chat_tools: Vec<(String, serde_json::Value, bool, Option<String>)> =
+        w.registry.chat_tools();
     let role_prompt: Option<String> = agent
         .system_prompt
         .clone()
@@ -204,6 +205,8 @@ pub(crate) fn spawn_turn(
             messages.push(Message {
                 role: Role::System,
                 content: sp.clone(),
+                tool_call_id: None,
+                tool_calls: None,
             });
         }
         // W5(2026-09-02 用户反馈轮):历史回合回喂。此前每轮从零组装,
@@ -213,40 +216,47 @@ pub(crate) fn spawn_turn(
             messages.push(Message {
                 role: Role::User,
                 content: u.clone(),
+                tool_call_id: None,
+                tool_calls: None,
             });
             messages.push(Message {
                 role: Role::Assistant,
                 content: a.clone(),
+                tool_call_id: None,
+                tool_calls: None,
             });
         }
         let user_input = content.clone();
         messages.push(Message {
             role: Role::User,
             content: content.clone(),
+            tool_call_id: None,
+            tool_calls: None,
         });
         let mut name_to_cap: std::collections::HashMap<String, String> =
             std::collections::HashMap::new();
         let tools_json: Vec<serde_json::Value> = chat_tools
             .iter()
-            .map(|(cap, schema, needs_approval)| {
+            .map(|(cap, schema, needs_approval, manifest_desc)| {
                 // OpenAI function.name 规范要求 ^[a-zA-Z0-9_-]{1,64}$，不能有点号。
                 // 采用单下划线转义(fs.read -> fs_read; mcp.foo.bar -> mcp_foo_bar)，
                 // 彻底告别别扭的双下划线；调用返回时由 name_to_cap 原样映射回内核能力名。
                 let openai_name = cap.replace('.', "_");
                 name_to_cap.insert(openai_name.clone(), cap.clone());
-                let desc = match cap.as_str() {
-                    "fs.search" => "在工作区中搜索文件内容或文件路径。支持两种模式: 1) mode='content'(默认，类似 ripgrep/grep 在文件正文中检索代码或文本); 2) mode='files'(类似 find/glob，仅按文件名或路径通配符查找文件位置，如 query='*README*' 或 'README|readme')。可传 path_pattern 过滤待查文件(如 '*.rs')。".to_string(),
-                    "fs.read" => "读取工作区中指定文件的文本内容。返回带 1-based 行号的格式(类似 cat -n)，支持 offset 起始行与 limit 最大读取行数分页，并返回 total_lines 文件总行数。".to_string(),
-                    "fs.write" => "向工作区中的文件写入完整内容(需要用户审批)。若目标文件的父目录不存在会自动递归创建。".to_string(),
-                    "fs.edit" => "精确替换文件中的特定代码或文本片段(需要用户审批)。old_string 必须是在文件中唯一匹配的原文(含准确缩进)，new_string 为替换后的文本。若有多处相同匹配可设 replace_all=true。建议在修改前先用 fs.read 确认最新原文与缩进。".to_string(),
-                    _ => {
+                // ADR-0022 描述治理:描述随 manifest 走(fs.*/system.exec 内置
+                // 能力与 MCP 工具均自描述);缺省按审批语义给最小兜底,不再
+                // 把「弹出审批卡片」等前端 UI 行为写进模型视野。
+                let desc = manifest_desc
+                    .as_deref()
+                    .filter(|d| !d.trim().is_empty())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| {
                         if *needs_approval {
-                            format!("{cap} — 需要用户审批的业务工具(调用后会弹出审批卡片)")
+                            format!("{cap} — 该工具需用户批准后执行")
                         } else {
-                            format!("{cap} — 只读直通工具")
+                            format!("{cap} 工具")
                         }
-                    }
-                };
+                    });
                 serde_json::json!({
                     "type": "function",
                     "function": {
@@ -371,8 +381,13 @@ pub(crate) fn spawn_turn(
                         // 结果以 Tool 消息回喂 → 重调模型(上限 MAX_TOOL_ROUNDS)。
                         if !tool_calls.is_empty() && tool_rounds < MAX_TOOL_ROUNDS {
                             tool_rounds += 1;
+                            // ADR-0022:assistant 消息原样携带 tool_calls 回喂,
+                            // 模型才能把下一轮的工具结果对齐回自己发起的调用
+                            // (此前只回 content,调用结构丢失 = 模型「失忆」)。
                             messages.push(Message {
                                 role: Role::Assistant,
+                                tool_call_id: None,
+                                tool_calls: Some(tool_calls.clone()),
                                 content: content.clone(),
                             });
                             for tc in tool_calls {
@@ -519,21 +534,21 @@ pub(crate) fn spawn_turn(
                                                                 resp: rtx2,
                                                             })
                                                             .await;
-                                                        // 审批类工具回喂附带明确指令:
-                                                        // 防模型见到成功结果后重复
-                                                        // 发起同一调用(实测 mimo 会)
+                                                        // 审批类工具回喂如实转述审批
+                                                        // 结论(ADR-0022:不再附加
+                                                        // 「不要再次调用」类禁令)
                                                         let payload = match rrx2.await {
                                                             Ok(Ok(Some(v))) => v.to_string(),
                                                             _ => "{}".into(),
                                                         };
                                                         tool_result = format!(
-                                                            "用户已批准,工具执行成功。返回结果: {payload}。该调用已完成,请直接基于此结果回答用户,不要再次调用该工具。"
+                                                            "用户已批准,工具执行成功。返回结果: {payload}"
                                                         );
                                                         break;
                                                     }
                                                     bm_contract::states::OperationState::Cancelled => {
                                                         tool_result = format!(
-                                                            "用户拒绝了能力 {capability} 的本次审批请求,工具未执行。请直接向用户说明情况,不要再次调用该工具。"
+                                                            "用户拒绝了能力 {capability} 的本次审批请求,工具未执行。"
                                                         );
                                                         break;
                                                     }
@@ -575,20 +590,15 @@ pub(crate) fn spawn_turn(
                                         "elapsed_ms": tool_started.elapsed().as_millis() as u64,
                                     }),
                                 );
-                                // W9 日常批:成功回喂附带完成指令(实测 mimo
-                                // 见到结果后会重复调用同一工具;审批路径同款
-                                // 指令已验证有效)。失败/超时/拒绝不加。
-                                let tool_failed = tool_result.contains("超时")
-                                    || tool_result.contains("无应答")
-                                    || tool_result.contains("拒绝");
-                                if !tool_failed {
-                                    tool_result = format!(
-                                        "{tool_result}\n(该调用已完成,请直接基于此结果回答用户,不要再次调用该工具。)"
-                                    );
-                                }
+                                // ADR-0022:工具结果原生 role=tool + tool_call_id
+                                // 回喂,对齐模型因果链。不再强贴「不要再次调用」
+                                // 类负向禁令——链式调用(搜→读→改→测)是模型的
+                                // 正常工作方式;循环失控由 MAX_TOOL_ROUNDS 熔断。
                                 messages.push(Message {
                                     role: Role::Tool,
                                     content: tool_result,
+                                    tool_call_id: Some(tc.id.clone()),
+                                    tool_calls: None,
                                 });
                             }
                             // 结果回喂后重调模型(仍在同一 attempt 的降级链内)

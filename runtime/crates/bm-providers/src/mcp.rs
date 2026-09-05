@@ -44,7 +44,7 @@ async fn write_frame<W: tokio::io::AsyncWrite + Unpin>(
 #[derive(Debug, Clone)]
 pub struct McpToolDef {
     pub name: String,
-    #[allow(dead_code)]
+    /// 工具功能描述(ADR-0022:进 manifest.description 面向模型展示)。
     pub description: Option<String>,
     /// 工具 inputSchema(MCP JSON Schema;直通 manifest.input_schema)。
     pub input_schema: Value,
@@ -124,7 +124,8 @@ pub fn tool_manifest(
     } else {
         tool.input_schema.clone()
     };
-    serde_json::from_value(json!({
+    // ADR-0022:工具自描述进 manifest,对话工具清单不再丢描述。
+    let mut manifest_json = json!({
         "capability": format!("mcp.{server}.{tool_norm}"),
         "provider": format!("mcp.{server}"),
         "version": "0.1.0",
@@ -136,8 +137,16 @@ pub fn tool_manifest(
         "timeout_ms": timeout_ms,
         "approval": approval,
         "scopes": [format!("domain:mcp.{server}")],
-    }))
-    .ok()
+    });
+    if let Some(d) = tool
+        .description
+        .as_deref()
+        .map(str::trim)
+        .filter(|d| !d.is_empty())
+    {
+        manifest_json["description"] = json!(d);
+    }
+    serde_json::from_value(manifest_json).ok()
 }
 
 // ---- 传输端口 --------------------------------------------------------------

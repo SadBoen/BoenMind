@@ -25,6 +25,7 @@ pub fn exec_capability_entry() -> (CapabilityManifest, Arc<dyn CapabilityProvide
         "capability": EXEC_CAPABILITY,
         "provider": "builtin.async",
         "version": "0.1.0",
+        "description": "在宿主 shell 执行命令(Windows=cmd /C,其余=sh -c),返回合并后的 stdout/stderr(超 16K 截断)。适合跑构建/测试/进程管理等动态操作;纯文件查读优先用 fs_search/fs_read。可传 timeout_ms(默认 60000,上限 300000)。调用需用户批准后执行。",
         "input_schema": {
             "type": "object",
             "properties": {

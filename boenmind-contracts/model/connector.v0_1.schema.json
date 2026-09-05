@@ -99,6 +99,36 @@
               },
               "content": {
                 "type": "string"
+              },
+              "tool_call_id": {
+                "type": "string",
+                "description": "ADR-0022 增发(Minor):role=tool 时本结果对应的 tool_call id(OpenAI 兼容回喂对齐);其余角色不携带"
+              },
+              "tool_calls": {
+                "type": "array",
+                "maxItems": 16,
+                "description": "ADR-0022 增发(Minor):assistant 消息携带的模型工具调用清单(结果回喂时原样透传,保模型因果链)",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "name",
+                    "arguments"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "arguments": {
+                      "type": "string",
+                      "description": "JSON 字符串形式的参数(与 OpenAI arguments 一致)"
+                    }
+                  }
+                }
               }
             }
           }

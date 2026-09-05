@@ -182,6 +182,8 @@ mod tests {
             messages: vec![bm_contract::connector::Message {
                 role: bm_contract::connector::Role::User,
                 content: "hi".into(),
+                tool_call_id: None,
+                tool_calls: None,
             }],
             tools: vec![],
             params: InvokeParams::default(),

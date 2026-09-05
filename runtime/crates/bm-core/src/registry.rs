@@ -269,15 +269,24 @@ impl CapabilityRegistry {
     /// 排除内核私有能力(如 model.invoke)。
     /// needs_approval 与 Broker 步 5 判定同口径:effect 可审批类
     /// (reversible/external/high-risk)或 manifest 声明 required → true。
-    pub fn chat_tools(&self) -> Vec<(String, serde_json::Value, bool)> {
-        let mut out: Vec<(String, serde_json::Value, bool)> = self
+    /// 第 4 元 = manifest.description(ADR-0022 合同 Minor):面向模型的
+    /// 一句功能描述;fs.*/system.exec 内置能力与 MCP 工具自描述,缺省 None
+    /// 由 turn 侧兜底。此前 MCP 工具描述被整层丢弃,模型只见「只读直通
+    /// 工具」套话,是工具调用别扭的直接根因之一。
+    pub fn chat_tools(&self) -> Vec<(String, serde_json::Value, bool, Option<String>)> {
+        let mut out: Vec<(String, serde_json::Value, bool, Option<String>)> = self
             .manifests
             .iter()
             .filter(|(_, m)| m.capability != "model.invoke")
             .map(|(name, m)| {
                 let require_approval = m.effect.is_approval_bearing()
                     || m.approval == bm_contract::capability::ApprovalRequirement::Required;
-                (name.clone(), m.input_schema.clone(), require_approval)
+                (
+                    name.clone(),
+                    m.input_schema.clone(),
+                    require_approval,
+                    m.description.clone(),
+                )
             })
             .collect();
         out.sort_by(|a, b| a.0.cmp(&b.0));

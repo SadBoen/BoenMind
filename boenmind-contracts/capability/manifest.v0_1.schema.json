@@ -65,6 +65,7 @@
     "undo": { "type": ["object", "null"], "description": "可补偿性声明:reversible-command 鼓励声明逆操作(基线 §5.2);阶段一只要求可补偿性显式化,不要求自动事务" },
     "retry": { "type": ["object", "null"], "description": "自动重试策略,结构见 #/definitions/retry_policy;由 Broker 统一执行,仅 read-only 与 low-risk-command 允许自动重试" },
     "deprecated_by": { "type": ["string", "null"], "description": "能力废弃链,旧版本保留期与调用告警由此驱动;值 = 替代能力名" },
-    "mutation_class": { "enum": ["safe", "mutation"], "description": "M4 增发:safe/mutation 分级(ADR-0002 §11.2 增补);缺省由 effect 派生(read-only→safe,其余→mutation);M5 协调动词子树过滤消费" }
+    "mutation_class": { "enum": ["safe", "mutation"], "description": "M4 增发:safe/mutation 分级(ADR-0002 §11.2 增补);缺省由 effect 派生(read-only→safe,其余→mutation);M5 协调动词子树过滤消费" },
+    "description": { "type": ["string", "null"], "description": "ADR-0022 增发(Minor):面向模型的一句功能描述(对话工具清单展示用);缺省 = 消费方自行兜底,不影响审批语义" }
   }
 }

@@ -106,6 +106,10 @@ pub struct CapabilityManifest {
     /// M4 增发:safe/mutation 分级;缺省由 effect 派生(合同 description)。
     #[serde(default)]
     pub mutation_class: Option<MutationClass>,
+    /// ADR-0022 增发(合同 Minor):面向模型的一句功能描述;对话工具清单
+    /// 展示用,缺省 = turn 侧兜底,不影响审批语义。
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 impl CapabilityManifest {

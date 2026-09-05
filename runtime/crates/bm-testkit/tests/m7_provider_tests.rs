@@ -28,6 +28,8 @@ fn req(deadline_secs: i64) -> InvokeRequest {
         messages: vec![Message {
             role: Role::User,
             content: "ping".into(),
+            tool_call_id: None,
+            tool_calls: None,
         }],
         tools: vec![],
         params: Default::default(),
@@ -218,6 +220,8 @@ async fn t116_live_relay_chat_completion() {
         messages: vec![Message {
             role: Role::User,
             content: "请用一个短句确认连接成功。".into(),
+            tool_call_id: None,
+            tool_calls: None,
         }],
         tools: vec![],
         params: Default::default(),

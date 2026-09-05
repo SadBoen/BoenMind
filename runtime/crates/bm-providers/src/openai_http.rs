@@ -47,7 +47,90 @@ impl OpenAiConnector {
 #[derive(serde::Serialize)]
 struct WireMessage<'a> {
     role: &'a str,
-    content: &'a str,
+    // ADR-0022:assistant 携带 tool_calls 时 content 允许为 null(OpenAI
+    // 形态);其余角色恒 Some。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content: Option<&'a str>,
+    /// role="tool" 时本结果对应的 tool_call id(因果链对齐)。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_call_id: Option<&'a str>,
+    /// assistant 消息原样透传模型发起的工具调用。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<Vec<WireToolCallOut<'a>>>,
+}
+
+#[derive(serde::Serialize)]
+struct WireToolCallOut<'a> {
+    id: &'a str,
+    #[serde(rename = "type")]
+    kind: &'a str,
+    function: WireToolFnOut<'a>,
+}
+
+#[derive(serde::Serialize)]
+struct WireToolFnOut<'a> {
+    name: &'a str,
+    arguments: &'a str,
+}
+
+/// 合同 Message → OpenAI 兼容 wire 消息。
+///
+/// ADR-0022 协议还原:工具结果出原生 `role:"tool"` + `tool_call_id`;
+/// assistant 回喂携带 tool_calls。仅当 tool 结果缺 tool_call_id(修复前
+/// 的历史消息,正常路径不产生)才回落 user 伪装,保老网关兼容。
+fn to_wire_messages(messages: &[bm_contract::connector::Message]) -> Vec<WireMessage<'_>> {
+    messages
+        .iter()
+        .map(|m| match m.role {
+            Role::System => WireMessage {
+                role: "system",
+                content: Some(&m.content),
+                tool_call_id: None,
+                tool_calls: None,
+            },
+            Role::User => WireMessage {
+                role: "user",
+                content: Some(&m.content),
+                tool_call_id: None,
+                tool_calls: None,
+            },
+            Role::Assistant => WireMessage {
+                role: "assistant",
+                content: match m.tool_calls.as_ref() {
+                    // 纯工具调用无文本 → content 置 null(OpenAI 形态)
+                    Some(_) if m.content.is_empty() => None,
+                    _ => Some(&m.content),
+                },
+                tool_call_id: None,
+                tool_calls: m.tool_calls.as_ref().map(|tcs| {
+                    tcs.iter()
+                        .map(|tc| WireToolCallOut {
+                            id: &tc.id,
+                            kind: "function",
+                            function: WireToolFnOut {
+                                name: &tc.name,
+                                arguments: &tc.arguments,
+                            },
+                        })
+                        .collect()
+                }),
+            },
+            Role::Tool => match m.tool_call_id.as_deref() {
+                Some(id) => WireMessage {
+                    role: "tool",
+                    content: Some(&m.content),
+                    tool_call_id: Some(id),
+                    tool_calls: None,
+                },
+                None => WireMessage {
+                    role: "user",
+                    content: Some(&m.content),
+                    tool_call_id: None,
+                    tool_calls: None,
+                },
+            },
+        })
+        .collect()
 }
 
 #[derive(serde::Serialize)]
@@ -254,19 +337,7 @@ impl ModelConnector for OpenAiConnector {
         let has_tools = !req.tools.is_empty();
         let body = WireRequest {
             model: &model,
-            messages: req
-                .messages
-                .iter()
-                .map(|m| WireMessage {
-                    role: match m.role {
-                        Role::System => "system",
-                        Role::User => "user",
-                        Role::Assistant => "assistant",
-                        Role::Tool => "user",
-                    },
-                    content: &m.content,
-                })
-                .collect(),
+            messages: to_wire_messages(&req.messages),
             temperature: req.params.temperature,
             max_tokens: req.params.max_tokens,
             stream: false,
@@ -389,19 +460,7 @@ impl ModelConnector for OpenAiConnector {
         let has_tools = !req.tools.is_empty();
         let body = WireRequest {
             model: &model,
-            messages: req
-                .messages
-                .iter()
-                .map(|m| WireMessage {
-                    role: match m.role {
-                        Role::System => "system",
-                        Role::User => "user",
-                        Role::Assistant => "assistant",
-                        Role::Tool => "user",
-                    },
-                    content: &m.content,
-                })
-                .collect(),
+            messages: to_wire_messages(&req.messages),
             temperature: req.params.temperature,
             max_tokens: req.params.max_tokens,
             stream: true,
@@ -659,5 +718,84 @@ mod m9_review_status_tests {
             }
             _ => panic!("应为 Failed"),
         }
+    }
+
+    // ---- ADR-0022 协议还原:wire 形态验收 ------------------------------
+
+    use bm_contract::connector::{Message, ToolCallPayload};
+
+    #[test]
+    fn wire_tool_result_uses_native_role_with_call_id() {
+        let msgs = vec![
+            Message {
+                role: Role::User,
+                content: "查一下".into(),
+                tool_call_id: None,
+                tool_calls: None,
+            },
+            Message {
+                role: Role::Assistant,
+                content: String::new(),
+                tool_call_id: None,
+                tool_calls: Some(vec![ToolCallPayload {
+                    id: "call_1".into(),
+                    name: "fs_read".into(),
+                    arguments: "{\"path\":\"a.txt\"}".into(),
+                }]),
+            },
+            Message {
+                role: Role::Tool,
+                content: "文件内容".into(),
+                tool_call_id: Some("call_1".into()),
+                tool_calls: None,
+            },
+        ];
+        let wire = to_wire_messages(&msgs);
+        let json = serde_json::to_string(&wire).expect("序列化");
+        // 原生 tool 角色 + id 对齐
+        assert!(json.contains("\"role\":\"tool\""), "{json}");
+        assert!(json.contains("\"tool_call_id\":\"call_1\""), "{json}");
+        // assistant 透传 tool_calls;纯调用无文本 → content 缺省(null)
+        assert!(
+            json.contains("\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\""),
+            "{json}"
+        );
+        let assistant = &wire[1];
+        assert_eq!(assistant.role, "assistant");
+        assert!(
+            assistant.content.is_none(),
+            "纯工具调用消息 content 应为 null"
+        );
+    }
+
+    #[test]
+    fn wire_legacy_tool_without_id_falls_back_to_user() {
+        let msgs = vec![Message {
+            role: Role::Tool,
+            content: "旧消息".into(),
+            tool_call_id: None,
+            tool_calls: None,
+        }];
+        let wire = to_wire_messages(&msgs);
+        assert_eq!(
+            wire[0].role, "user",
+            "缺 id 的历史 tool 消息回落 user 保兼容"
+        );
+    }
+
+    #[test]
+    fn wire_assistant_text_with_tool_calls_keeps_content() {
+        let msgs = vec![Message {
+            role: Role::Assistant,
+            content: "我先读文件".into(),
+            tool_call_id: None,
+            tool_calls: Some(vec![ToolCallPayload {
+                id: "call_9".into(),
+                name: "fs_read".into(),
+                arguments: "{}".into(),
+            }]),
+        }];
+        let wire = to_wire_messages(&msgs);
+        assert_eq!(wire[0].content, Some("我先读文件"));
     }
 }

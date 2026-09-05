@@ -37,6 +37,7 @@ pub fn fs_capability_entries() -> Vec<(CapabilityManifest, Arc<dyn CapabilityPro
             true,
             true,
             30_000,
+            "在工作区中搜索文件内容或文件路径。mode='content'(默认)按正则检索文件正文(类似 ripgrep,纯文本加 fixed=true);mode='files' 按文件名通配符查找文件位置(类似 find/glob)。可传 path_pattern 过滤文件类型(如 '*.rs')。",
             json!({
                 "type": "object",
                 "properties": {
@@ -57,6 +58,7 @@ pub fn fs_capability_entries() -> Vec<(CapabilityManifest, Arc<dyn CapabilityPro
             true,
             true,
             10_000,
+            "读取工作区内文件的文本内容,返回带 1-based 行号的全文(类似 cat -n)。支持 offset/limit 分页,并返回 total_lines 总行数。看代码、读配置优先用本工具。",
             json!({
                 "type": "object",
                 "properties": {
@@ -74,6 +76,7 @@ pub fn fs_capability_entries() -> Vec<(CapabilityManifest, Arc<dyn CapabilityPro
             false,
             false,
             10_000,
+            "在工作区创建或整体覆写文本文件(UTF-8),父目录不存在会自动递归创建。适合写新文件;修改已有文件优先用 fs_edit。调用需用户批准后执行。",
             json!({
                 "type": "object",
                 "properties": {
@@ -90,15 +93,17 @@ pub fn fs_capability_entries() -> Vec<(CapabilityManifest, Arc<dyn CapabilityPro
             false,
             false,
             10_000,
+            "对工作区文件做精确查找替换。单处改动传 old_string/new_string(须与文件原文逐字一致,含缩进;多处命中可加 replace_all);同一文件多处改动一次传 edits 数组,全部基于当前文件原文匹配、一次原子提交。改前建议先 fs_read 确认原文。调用需用户批准后执行。",
             json!({
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "description": "目标文件路径(工作区内)"},
-                    "old_string": {"type": "string", "description": "要被替换的精确原文(逐字一致含缩进)"},
+                    "old_string": {"type": "string", "description": "要被替换的精确原文(逐字一致含缩进);与 edits 二选一"},
                     "new_string": {"type": "string", "description": "替换后的内容(删内容传空串)"},
-                    "replace_all": {"type": "boolean", "description": "多处命中时全部替换,默认 false"}
+                    "replace_all": {"type": "boolean", "description": "多处命中时全部替换,默认 false"},
+                    "edits": {"type": "array", "description": "批量模式:一次提交多处不重叠替换,每项 {old_string, new_string, replace_all?};全部基于文件当前原文匹配,与单处字段互斥", "items": {"type": "object", "properties": {"old_string": {"type": "string"}, "new_string": {"type": "string"}, "replace_all": {"type": "boolean"}}, "required": ["old_string", "new_string"]}}
                 },
-                "required": ["path", "old_string", "new_string"]
+                "required": ["path"]
             }),
         ),
     ]
@@ -112,12 +117,14 @@ fn entry(
     idempotent: bool,
     cancellable: bool,
     timeout_ms: u64,
+    description: &str,
     input_schema: Value,
 ) -> (CapabilityManifest, Arc<dyn CapabilityProvider>) {
     let manifest: CapabilityManifest = serde_json::from_value(json!({
         "capability": capability,
         "provider": "builtin.async",
         "version": "0.1.0",
+        "description": description,
         "input_schema": input_schema,
         "output_schema": {"type": "object"},
         "effect": effect,

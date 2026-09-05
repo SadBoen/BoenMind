@@ -562,6 +562,8 @@ fn connector_invoke_validates() {
         messages: vec![Message {
             role: Role::User,
             content: "用一句话解释什么是幂等性".into(),
+            tool_call_id: None,
+            tool_calls: None,
         }],
         tools: vec![],
         params: Default::default(),
@@ -637,14 +639,24 @@ fn connector_invoke_validates() {
             bm_contract::connector::Message {
                 role: bm_contract::connector::Role::User,
                 content: "查一下文件".into(),
+                tool_call_id: None,
+                tool_calls: None,
             },
             bm_contract::connector::Message {
                 role: bm_contract::connector::Role::Assistant,
                 content: "".into(),
+                tool_call_id: None,
+                tool_calls: Some(vec![bm_contract::connector::ToolCallPayload {
+                    id: "call_1".into(),
+                    name: "fs_read".into(),
+                    arguments: "{}".into(),
+                }]),
             },
             bm_contract::connector::Message {
                 role: bm_contract::connector::Role::Tool,
                 content: "[]".into(),
+                tool_call_id: Some("call_1".into()),
+                tool_calls: None,
             },
         ],
         tools: vec![],

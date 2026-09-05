@@ -62,6 +62,14 @@ wire_str_enum!(Role {
 pub struct Message {
     pub role: Role,
     pub content: String,
+    /// ADR-0022(合同 Minor):role=tool 时本结果对应的 tool_call id;
+    /// 其余角色不携带。连接器据此出原生 `role:"tool"` 回喂。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    /// ADR-0022(合同 Minor):assistant 消息携带的模型工具调用清单;
+    /// 工具轮回喂时原样透传,保「调用→结果」因果链不断。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCallPayload>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
