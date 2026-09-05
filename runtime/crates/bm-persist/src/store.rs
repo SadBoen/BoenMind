@@ -40,6 +40,13 @@ pub trait EventStore: Send + Sync {
     /// 查询取消意图标记(恢复端判定 turn_was_stopping)。
     fn op_cancel_requested(&self, operation_id: &str) -> StoreResult<bool>;
 
+    /// 会话绑定工作目录持久化(重启续聊配套;None = 解绑)。
+    fn save_session_workspace(
+        &self,
+        session_id: &str,
+        workspace_id: Option<&str>,
+    ) -> StoreResult<()>;
+
     /// ① 日志先行:追加事件并 flush。失败 = 本次命令失败(核心循环须拒绝,不可静默)。
     fn append(&self, event: &EventEnvelope) -> StoreResult<()>;
 
@@ -495,6 +502,14 @@ impl EventStore for PersistStore {
 
     fn op_cancel_requested(&self, operation_id: &str) -> StoreResult<bool> {
         self.state.op_cancel_requested(operation_id)
+    }
+
+    fn save_session_workspace(
+        &self,
+        session_id: &str,
+        workspace_id: Option<&str>,
+    ) -> StoreResult<()> {
+        self.state.save_session_workspace(session_id, workspace_id)
     }
 
     fn append(&self, event: &EventEnvelope) -> StoreResult<()> {

@@ -25,9 +25,11 @@ impl StateDb {
                 EventType::SessionCreated => {
                     let id = str_field(p, "session_id")?;
                     let agent = str_field(p, "agent_id")?;
+                    // 显式列名 + workspace_id 保 NULL:事件载荷不含绑定
+                    // (绑定走 save_session_workspace 投影),重放不得抹掉
                     conn.execute(
-                        "INSERT OR REPLACE INTO sessions(id, state, agent_id, created_at)
-                         VALUES(?1, 'active', ?2, ?3)",
+                        "INSERT OR REPLACE INTO sessions(id, state, agent_id, created_at, workspace_id)
+                         VALUES(?1, 'active', ?2, ?3, NULL)",
                         rusqlite::params![id, agent, ts],
                     )?;
                     Ok(1)

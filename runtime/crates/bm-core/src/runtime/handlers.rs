@@ -84,6 +84,18 @@ pub(crate) fn handle_session_create(
             "agent_id": agent_id.as_str(),
         }),
     );
+
+    // 重启续聊配套(2026-09-06):创建即绑定的工作目录落持久行
+    // (SessionCreated 事件载荷不含绑定,投影由本处直写)。
+    if w.sessions[&session_id].workspace_id.is_some()
+        && let Some(store) = w.store.clone()
+    {
+        let wid = w.sessions[&session_id].workspace_id.clone();
+        if let Err(e) = store.save_session_workspace(session_id.as_str(), wid.as_deref()) {
+            tracing::error!(error = %e, session = %session_id.as_str(), "创建期工作区绑定落库失败,进入拒写态");
+            w.persist_poisoned = true;
+        }
+    }
     let budget_limits = &w.agents[&agent_id].budget;
     w.emit(
         EventType::AgentCreated,
@@ -320,10 +332,18 @@ pub(crate) fn handle_send_input(
                 "工作区「{wid}」未登记或已删除(设置 → 常规 里维护)"
             )));
         }
-        if session.workspace_id.as_deref() != Some(wid.as_str())
-            && let Some(s) = w.sessions.get_mut(&params.session_id)
-        {
-            s.workspace_id = Some(wid.clone());
+        if session.workspace_id.as_deref() != Some(wid.as_str()) {
+            if let Some(s) = w.sessions.get_mut(&params.session_id) {
+                s.workspace_id = Some(wid.clone());
+            }
+            // 重启续聊配套(2026-09-06):绑定落持久行,失败入拒写态
+            if let Some(store) = w.store.clone()
+                && let Err(e) =
+                    store.save_session_workspace(params.session_id.as_str(), Some(wid.as_str()))
+                {
+                    tracing::error!(error = %e, session = %params.session_id.as_str(), "工作区绑定落库失败,进入拒写态");
+                    w.persist_poisoned = true;
+                }
         }
     }
 

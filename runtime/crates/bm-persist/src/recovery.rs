@@ -31,6 +31,8 @@ pub struct SessionRow {
     pub state: String,
     pub agent_id: String,
     pub created_at: String,
+    /// 重启续聊配套(2026-09-06):会话绑定工作目录(未绑定 = None)。
+    pub workspace_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -187,7 +189,10 @@ pub fn id_counter_hint(state: &StateDb) -> StoreResult<u64> {
 /// ② 行装配。
 pub fn load_rows(state: &StateDb) -> StoreResult<WorldRows> {
     let sessions = state
-        .query_rows("SELECT id, state, agent_id, created_at FROM sessions", &[])?
+        .query_rows(
+            "SELECT id, state, agent_id, created_at, workspace_id FROM sessions",
+            &[],
+        )?
         .into_iter()
         .map(|v| serde_json::from_value(v).expect("行结构与 SessionRow 一致"))
         .collect();

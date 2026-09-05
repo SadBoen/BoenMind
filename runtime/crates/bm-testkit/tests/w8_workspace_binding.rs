@@ -303,3 +303,94 @@ async fn unbound_session_has_no_workspace_injection() {
         "未绑定会话不得注入:{reqs:?}"
     );
 }
+
+/// ⑤ 重启续聊配套(2026-09-06):会话绑定工作目录跨重启持久——重启后
+/// 不带 override 的回合,system prompt 仍注入原绑定目录。
+#[tokio::test]
+async fn t_workspace_binding_persists_across_restart() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let proj = tempfile::tempdir().expect("项目目录");
+    seed_workspaces(dir.path(), proj.path().to_str().expect("路径"));
+
+    async fn run(d: &std::path::Path) -> (RuntimeHandle, Arc<CaptureConnector>) {
+        let connector = Arc::new(CaptureConnector::new());
+        let store: Arc<dyn bm_persist::EventStore> =
+            Arc::new(bm_persist::PersistStore::open(d).expect("打开持久层"));
+        let handle = RuntimeHandle::start(RuntimeConfig {
+            capabilities: vec![bm_providers::builtin::model_invoke_cap()],
+            version: "0.1.0-w8".into(),
+            data_dir: Some(d.to_path_buf()),
+            store: Some(store),
+            connector: connector.clone(),
+            secret_store: Arc::new(MemSecretStore::with("secret:mock.model", "sk-test-123456")),
+            id_gen: Arc::new(SeqIdGen::new()),
+            clock: Arc::new(SystemClock),
+            turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
+            max_attempts: None,
+            async_executor: None,
+            model_streaming: false,
+        })
+        .await;
+        (handle, connector)
+    }
+
+    // 第一程:创建即绑定 ws_proj,回合注入
+    let (handle1, conn1) = run(dir.path()).await;
+    let created = handle1
+        .session_create(SeqIdGen::new().next_id("req"), spec(Some("ws_proj")))
+        .await
+        .expect("会话创建");
+    let receipt = handle1
+        .send_input(
+            SeqIdGen::new().next_id("req"),
+            input(&created.session_id, &created.agent_id, "第一问", None),
+        )
+        .await
+        .expect("回合发起")
+        .operation_id;
+    wait_terminal(&handle1, &receipt).await;
+    assert!(
+        conn1.captured()[0].messages[0]
+            .content
+            .contains("[工作目录]")
+    );
+    handle1.stop("restart").await;
+
+    // 第二程:重启同目录,经 session.resume 恢复寻址(同 openai_compat 路径),
+    // 不带 override 的回合仍注入原绑定目录 = 绑定自持久行装载
+    let (handle2, conn2) = run(dir.path()).await;
+    let resumed = handle2
+        .session_resume(
+            SeqIdGen::new().next_id("req"),
+            bm_contract::wire::SessionResumeParams {
+                session_id: created.session_id.clone(),
+                since_seq: Some(u64::MAX),
+            },
+        )
+        .await
+        .expect("重启后 resume 成功");
+    let receipt = handle2
+        .send_input(
+            SeqIdGen::new().next_id("req"),
+            input(&created.session_id, &resumed.agent_id, "第二问", None),
+        )
+        .await
+        .expect("回合发起")
+        .operation_id;
+    wait_terminal(&handle2, &receipt).await;
+    assert!(
+        conn2.captured()[0].messages[0]
+            .content
+            .contains("[工作目录]"),
+        "重启后绑定必须恢复并注入:{:?}",
+        conn2.captured()[0].messages[0]
+    );
+    assert!(
+        conn2.captured()[0].messages[0].content.contains("项目甲")
+            || conn2.captured()[0].messages[0]
+                .content
+                .contains(proj.path().to_str().expect("路径")),
+        "注入的应是原绑定目录"
+    );
+    handle2.stop("test_done").await;
+}

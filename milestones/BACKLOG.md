@@ -10,14 +10,13 @@
 |---|---|---|
 | 对话意图门控与闲聊防乱调用工具纪律 | 用户提报(2026-09-05):打招呼/闲聊时模型自主触发全仓扫描等过度动作。目标:参考业界Agent设计,在底层意图识别与回合组装建立防线,禁止无明确指令时擅自执行文件与系统探测 | OPEN(待排期) |
 | 对话工具声明式按需挂载 (Role/Agent 工具白名单) | 用户架构既有规划(查案追记):当前 `turn.rs` 对 `chat_tools` 采取全量广播注入(所有注册能力全塞大模型背包),导致工具越多上下文背包膨胀越严重。目标:在 Role(角色)或 AgentSpec 中增加 `allowed_tools` / `allowed_capabilities` 声明式白名单(如日常助手仅挂载 fs.read/search/web_search,调试角色才挂载 context_inspector 等分析工具),实现按需动态装配与背包瘦身;暂不实现,排期待定 | OPEN(架构既有计划,待排期动工) |
-| 系统审计日志与对话上下文生命周期边界 | 2026-09-05 讨论:会话删除时 context-log.jsonl 联动清理策略,审计日志(events.jsonl)保留元数据范围 | OPEN(待后续讨论) |
+| 系统审计日志与对话上下文生命周期边界 | 2026-09-05 讨论:会话删除时 context-log.jsonl 联动清理策略。**待裁决选项**:A)仅前端删除=会话关闭+context-log 该会话行过滤清除(隐私优先,重写 jsonl);B)仅标记墓碑不物理删(可恢复,文件不瘦身);C)现状(仅本地列表移除,日志全留)。涉及审计日志保留范围,用户拍板后动 | OPEN(待用户拍板 A/B/C) |
 | 上下文压缩(Compression)独立 MCP 工具 | 2026-09-05 讨论:超长会话滚动摘要、折叠与智能裁剪,独立为后续专门 MCP 插件,不与透视器混淆 | OPEN(待后续讨论) |
 | 记忆(Memory)检索对话级自动注入 | 2026-09-05 讨论:turn.rs 回合组装时对接 SQLite FTS5 memory.search 自动召回相关记忆并注入提示词 | OPEN(待后续讨论) |
 | 模型自编工具结果(mimo 质量备忘) | 同轮实测:问 counter.bump 时模型未发起调用直接编造「bumped successfully」(/admin/context 证实 0 工具轮);对话区无 [调用] 标记即可辨真伪,强提示词可压不断根;随模型侧观察,不立项 | OPEN(记录在案) |
 | Skill v0.2 第二步(scripts 执行面) | 第一步(合同 Minor: version + references)与 ADR-0016(Broker 七步管线覆盖脚本设计)已闭合交付;**第二步**:等待用户审阅确认 ADR-0016 后接入 wasmtime 执行引擎写代码 | OPEN(待 ADR-0016 确认后动工) |
 | VPS v0.0.5 发版后验证清单 | 随包扫描双目录已修+直通工具内联回喂已修+模型调用硬顶 30s→120s(BOEN_TURN_TIMEOUT_SECS 可配)均已落 main(f894663+本批);VPS 侧 web-multisearch 已远程装好并批准在役(2 工具)。待用户明示发版→VPS 升级后复测:①直通工具(echo/counter)对话秒回 ②真模型联网问答(web_search)全链路 ③关于页/常规设置不回归,闭合后移出 | OPEN(随下次发版) |
 | W8 遗留:能力执行 cwd 注入 | ADR-0018 只做到回合 system prompt 注入;MCP/context-mode 等需要 cwd 的能力执行面尚未消费会话绑定工作区(该插件默认也未启用);2026-09-05 回看补记:内置 fs.* 同族——fs 工具相对路径在多工作区场景回退注册表首个根而非会话绑定根(guard.rs roots[0]),能力调用在核心层系无会话设计(system_session),修需穿合同面;与 Skill v0.2 执行线同批评估,继续经 Broker 管线、不新增特权通道 | OPEN(依 ADR-0016/0017 排期) |
-| W8 遗留:workspace_id 跨重启持久 | 现为进程内会话作用域(ADR-0018 决策 3:Web 会话指针重启即失效,持久化无用户可见收益);待会话列表真数据(W 后续)一并评估是否随会话恢复 | OPEN |
 | web_multisearch:Parallel Search 接入 | 用户已供 Key(2026-09-04);其 `search_queries` 要求数组,通用 JSON 适配器只能发字符串(实测 422),需在插件加内置特例解析(仿 jina);模板死路两处(tavily/linkup)已随 2026-09-05 回看批修复闭合 | OPEN(待排期) |
 
 ## 2. 流程收尾
@@ -61,7 +60,6 @@
 | system.exec cwd 沙箱化 | 来源 FULL-REVIEW-2026-09-05 §7:cwd 参数未在 input_schema 声明即被消费(additionalProperties 默认放行),不经 fs_tools 工作区白名单;审批卡为主防线,补 schema 显式化+cwd 白名单校验 | OPEN |
 | FileSecretStore KDF 化 | 来源 FULL-REVIEW-2026-09-05 §7:主密钥 `&material[..32]` 截断非 KDF(HKDF/PBKDF2);get/put/delete 每次全量解密重加密 O(n);建议热路径 KDF+按需惰性 | OPEN |
 | 前端 context 面契约锚定与类型漂移 | 来源 FULL-REVIEW-2026-09-05 §7:①w1/context.tsx 手维护 evMap/kind 字符串无后端锚定,枚举改名即静默掉卡;②`McpCandidatesResult` 在 PluginsPage 本地与 api.ts 双声明已漂移(source/bundled_dir 缺失)——收敛到 api.ts 单源 | OPEN |
-| webapp 401 正向引导链路 | 来源 FULL-REVIEW-2026-09-05 §7:主 App 启动不查 /api/portal/state,门户会话过期(服务器重启即失效)后用户只见红条需自行猜 /login;启动查 state+401 统一跳登录 | OPEN |
 | glm_http 错误分类与单测 | 来源 FULL-REVIEW-2026-09-05 §7:非 2xx 一刀切 Unavailable(400/401/429 不分,4xx retryable 靠 is_server_error 巧合);feature 门控默认不编,零单测 | OPEN(低) |
 | 测试裸 sleep 收口 | 来源 FULL-REVIEW-2026-09-05 §7:m7_health 200ms/1000ms 裸等待依赖调度时序(断言「迟到完成不污染收据」),慢机器易撕破;改 wait-for 终态轮询 | OPEN(低) |
 | bm-cli 零单测 | 来源 FULL-REVIEW-2026-09-05 §7:CLI wire 调用错误码映射(ExitCode 表)无自动化回归 | OPEN(低) |

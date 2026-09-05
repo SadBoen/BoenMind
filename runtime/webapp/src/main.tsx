@@ -10,3 +10,14 @@ createRoot(document.getElementById("root")!).render(
     <App />
   </StrictMode>,
 );
+
+// 门户正向引导(2026-09-06):配置了访问密码而本地会话失效(服务重启即
+// 失效)时,启动即跳登录页——不等用户撞上一串 401 红条再猜去 /login
+void fetch("/api/portal/state")
+  .then((r) => r.json())
+  .then((s: { configured?: boolean; authed?: boolean }) => {
+    if (s?.configured && !s?.authed) window.location.href = "/login";
+  })
+  .catch(() => {
+    // 门户态不可达(开发环境等)不拦截
+  });

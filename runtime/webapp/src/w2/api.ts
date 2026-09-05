@@ -198,6 +198,11 @@ export type CtxStep = {
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
   const body = await res.json().catch(() => null);
+  // 门户会话失效(2026-09-06):统一正向跳登录,门户口自身除外
+  if (res.status === 401 && !url.startsWith("/api/portal/")) {
+    window.location.href = "/login";
+    throw new Error("需要登录");
+  }
   if (!res.ok) {
     const msg =
       (body as { error?: { message?: string } } | null)?.error?.message ??

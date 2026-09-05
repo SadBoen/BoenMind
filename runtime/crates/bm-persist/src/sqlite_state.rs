@@ -8,7 +8,7 @@ use rusqlite::Connection;
 use std::path::Path;
 use std::sync::Mutex;
 
-pub const SCHEMA_VERSION: i64 = 9;
+pub const SCHEMA_VERSION: i64 = 10;
 
 /// approvals 表行(载荷列 = Approval 合同 JSON 文本)。
 pub struct ApprovalRow<'a> {
@@ -107,6 +107,9 @@ impl StateDb {
         }
         if version < 9 {
             Self::migrate_v8_to_v9(&conn)?;
+        }
+        if version < 10 {
+            Self::migrate_v9_to_v10(&conn)?;
         }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(Self {
@@ -277,6 +280,20 @@ impl StateDb {
         Ok(())
     }
 
+    /// v9→v10(2026-09-06 重启续聊配套,expand 加列):sessions.workspace_id
+    /// ——会话绑定工作目录跨重启持久(ADR-0018 决策 3 的修订:重启续聊
+    /// 落地后绑定丢失已有用户可见害处——模型接着聊而文件根静默回落)。
+    fn migrate_v9_to_v10(conn: &Connection) -> StoreResult<()> {
+        conn.execute_batch(
+            r#"
+            BEGIN;
+            ALTER TABLE sessions ADD COLUMN workspace_id TEXT;
+            COMMIT;
+            "#,
+        )?;
+        Ok(())
+    }
+
     /// v8→v9(2026-09-05 回看修复,expand:纯新增一表):op_cancel_marks——
     /// 取消意图持久标记。用户显式取消后、回合边界落定前若崩溃,恢复端凭此
     /// 走 Resuming→Stopped(turn_was_stopping)契约边,不再把已取消的回合
@@ -402,6 +419,20 @@ impl StateDb {
         conn.execute(
             "INSERT OR REPLACE INTO op_cancel_marks (op_id, marked_at) VALUES (?1, ?2)",
             rusqlite::params![operation_id, marked_at],
+        )?;
+        Ok(())
+    }
+
+    /// 会话绑定工作目录持久化(2026-09-06 重启续聊配套)。
+    pub fn save_session_workspace(
+        &self,
+        session_id: &str,
+        workspace_id: Option<&str>,
+    ) -> StoreResult<()> {
+        let conn = self.conn.lock().expect("锁未中毒");
+        conn.execute(
+            "UPDATE sessions SET workspace_id = ?2 WHERE id = ?1",
+            rusqlite::params![session_id, workspace_id],
         )?;
         Ok(())
     }
