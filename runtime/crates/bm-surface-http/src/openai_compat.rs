@@ -14,7 +14,9 @@ use axum::http::{HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use bm_contract::events::EventType;
 use bm_contract::ids::{BmId, IdGen, UlidIdGen};
-use bm_contract::wire::{AgentSpec, InputTrust, SendInputParams, SessionCreateParams};
+use bm_contract::wire::{
+    AgentSpec, InputTrust, SendInputParams, SessionCreateParams, SessionResumeParams,
+};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 fn unix_now() -> i64 {
@@ -134,15 +136,50 @@ pub async fn chat_completions(
         .map(|s| s.to_string())
     {
         Some(raw) => match BmId::parse(raw) {
-            Ok(sid) => match state.v1_sessions.lock().expect("锁未中毒").get(&sid) {
-                Some(aid) => (sid, aid.clone()),
-                None => {
-                    return err_response(
-                        StatusCode::BAD_REQUEST,
-                        "未知会话(可能服务已重启):请清除界面会话记忆后重新开始",
-                    );
+            Ok(sid) => {
+                // 先取克隆并让锁守卫出作用域(不得跨 await 持锁)
+                let cached = state
+                    .v1_sessions
+                    .lock()
+                    .expect("锁未中毒")
+                    .get(&sid)
+                    .cloned();
+                match cached {
+                    Some(aid) => (sid, aid),
+                    None => {
+                        // 重启续聊(2026-09-06):v1_sessions 是进程内寻址表,
+                        // 重启即空;会话本体自持久层装载并未丢——回源
+                        // session.resume 恢复寻址,旧会话继续聊,不再 400 逼重开。
+                        // since_seq=MAX:寻址回源不需要补发事件
+                        match state
+                            .handle
+                            .session_resume(
+                                UlidIdGen.next_id("req"),
+                                SessionResumeParams {
+                                    session_id: sid.clone(),
+                                    since_seq: Some(u64::MAX),
+                                },
+                            )
+                            .await
+                        {
+                            Ok(r) => {
+                                state
+                                    .v1_sessions
+                                    .lock()
+                                    .expect("锁未中毒")
+                                    .insert(sid.clone(), r.agent_id.clone());
+                                (sid, r.agent_id)
+                            }
+                            Err(_) => {
+                                return err_response(
+                                    StatusCode::BAD_REQUEST,
+                                    "未知会话:请清除界面会话记忆后重新开始",
+                                );
+                            }
+                        }
+                    }
                 }
-            },
+            }
             Err(_) => return err_response(StatusCode::BAD_REQUEST, "X-Bm-Session 不是合法会话 id"),
         },
         None => {

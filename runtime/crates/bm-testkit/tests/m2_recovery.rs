@@ -479,3 +479,85 @@ async fn t27_cancel_marked_before_crash_restores_stopped_not_running() {
 
     rig.handle.stop("test_done").await;
 }
+
+#[tokio::test]
+async fn t28_session_chat_ledger_rebuilt_after_restart() {
+    // 重启续聊(2026-09-06):重启后同会话再发消息,模型请求必须带上
+    // 重建的历史台账(修复前 session_chats 纯内存,重启即失忆)。
+    let dir = tempfile::tempdir().expect("临时目录");
+    let mut last_receipt = None;
+    {
+        let rig1 = rig_on(
+            dir.path(),
+            vec![Step::ok("回答一", 30, 15), Step::ok("回答二", 30, 15)],
+        )
+        .await;
+        let (sess, agent) = rig1.create_session().await.expect("会话创建");
+        for q in ["问题一", "问题二"] {
+            let receipt = rig1.send(&sess, &agent, q).await.expect("发送");
+            loop {
+                let r = rig1
+                    .handle
+                    .operations_get(GetOperationParams {
+                        operation_id: receipt.operation_id.clone(),
+                    })
+                    .await
+                    .expect("查询");
+                if r.state.is_terminal() {
+                    assert_eq!(r.state, OperationState::Succeeded, "{q} 应成功");
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+            last_receipt = Some((sess.clone(), agent.clone()));
+        }
+        rig1.handle.stop("restart").await;
+    }
+    let (sess, agent) = last_receipt.expect("会话信息");
+
+    // 重启:同目录,同会话继续
+    let rig2 = rig_on(dir.path(), vec![Step::ok("回答三", 30, 15)]).await;
+    let receipt = rig2
+        .send(&sess, &agent, "问题三")
+        .await
+        .expect("重启后同会话可继续(会话自持久层装载)");
+    loop {
+        let r = rig2
+            .handle
+            .operations_get(GetOperationParams {
+                operation_id: receipt.operation_id.clone(),
+            })
+            .await
+            .expect("查询");
+        if r.state.is_terminal() {
+            assert_eq!(r.state, OperationState::Succeeded);
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+
+    // 断言:第三轮的模型调用快照(无 kind 的行)里,请求 messages 含
+    // 重建出的前两轮历史
+    let text = std::fs::read_to_string(dir.path().join("context-log.jsonl")).expect("读日志");
+    let last_snapshot = text
+        .lines()
+        .rev()
+        .find(|l| {
+            serde_json::from_str::<serde_json::Value>(l)
+                .map(|v| v.get("kind").is_none())
+                .unwrap_or(false)
+        })
+        .expect("存在第三轮模型调用快照");
+    let v: serde_json::Value = serde_json::from_str(last_snapshot).expect("快照合法");
+    let msgs = v["messages"].as_array().expect("messages 数组");
+    let all: String = msgs
+        .iter()
+        .map(|m| m["content"].as_str().unwrap_or_default())
+        .collect();
+    assert!(
+        all.contains("问题一") && all.contains("回答一") && all.contains("问题二"),
+        "重启后模型请求必须重建历史,实际: {all}"
+    );
+    assert!(all.contains("问题三"), "当前轮用户消息在场");
+    rig2.handle.stop("test_done").await;
+}

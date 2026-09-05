@@ -7,99 +7,249 @@
   "definitions": {
     "agent_spec": {
       "type": "object",
-      "required": ["name", "model_chain"],
+      "required": [
+        "name",
+        "model_chain"
+      ],
       "additionalProperties": false,
       "properties": {
-        "name": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
         "model_chain": {
-          "type": "array", "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-_.]{0,62}$" },
-          "minItems": 1, "maxItems": 4,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-_.]{0,62}$"
+          },
+          "minItems": 1,
+          "maxItems": 4,
           "description": "降级链，按序尝试（基线 5.4 / M1.7）"
         },
-        "budget": { "$ref": "boenmind:budget:v0.1#/definitions/budget" },
-        "system_prompt": { "type": "string", "maxLength": 100000, "description": "W4 Minor（只增）：会话级 system prompt（None/缺省 = 角色装配）" },
-        "workspace_id": { "type": "string", "minLength": 1, "maxLength": 100, "description": "W8 Minor（只增，ADR-0018）：会话绑定的工作区注册表 id（不透明短 id）。缺省/null 不出字段 = 不绑定；给出则校验 config/workspaces.json，未登记 id 拒绝（validation_failed）。作用域为进程内会话（服务重启后由客户端重新绑定）" }
+        "budget": {
+          "$ref": "boenmind:budget:v0.1#/definitions/budget"
+        },
+        "system_prompt": {
+          "type": "string",
+          "maxLength": 100000,
+          "description": "W4 Minor（只增）：会话级 system prompt（None/缺省 = 角色装配）"
+        },
+        "workspace_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "W8 Minor（只增，ADR-0018）：会话绑定的工作区注册表 id（不透明短 id）。缺省/null 不出字段 = 不绑定；给出则校验 config/workspaces.json，未登记 id 拒绝（validation_failed）。作用域为进程内会话（服务重启后由客户端重新绑定）"
+        }
       }
     },
     "cursor": {
       "type": "object",
-      "required": ["event_seq"],
+      "required": [
+        "event_seq"
+      ],
       "additionalProperties": false,
-      "properties": { "event_seq": { "type": "integer", "minimum": 0 } }
+      "properties": {
+        "event_seq": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
     }
   },
   "session.create": {
-    "params": { "type": "object", "required": ["agent"], "additionalProperties": false, "properties": { "agent": { "$ref": "#/definitions/agent_spec" } } },
-    "result": {
+    "params": {
       "type": "object",
-      "required": ["session_id", "agent_id", "created_at", "resume_cursor"],
+      "required": [
+        "agent"
+      ],
       "additionalProperties": false,
       "properties": {
-        "session_id": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/id" },
-        "agent_id": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/id" },
-        "created_at": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/timestamp" },
-        "resume_cursor": { "$ref": "#/definitions/cursor" }
+        "agent": {
+          "$ref": "#/definitions/agent_spec"
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "session_id",
+        "agent_id",
+        "created_at",
+        "resume_cursor"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "session_id": {
+          "$ref": "boenmind:wire:envelope:v0.1#/definitions/id"
+        },
+        "agent_id": {
+          "$ref": "boenmind:wire:envelope:v0.1#/definitions/id"
+        },
+        "created_at": {
+          "$ref": "boenmind:wire:envelope:v0.1#/definitions/timestamp"
+        },
+        "resume_cursor": {
+          "$ref": "#/definitions/cursor"
+        }
       }
     }
   },
   "session.resume": {
     "description": "进程重启后按持久状态恢复会话；since_seq 之后的事件在 result.events 中补发（基线 14.2）。",
     "params": {
-      "type": "object", "required": ["session_id"], "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "session_id"
+      ],
+      "additionalProperties": false,
       "properties": {
-        "session_id": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/id" },
-        "since_seq": { "type": "integer", "minimum": 0 }
+        "session_id": {
+          "$ref": "boenmind:wire:envelope:v0.1#/definitions/id"
+        },
+        "since_seq": {
+          "type": "integer",
+          "minimum": 0
+        }
       }
     },
     "result": {
       "type": "object",
-      "required": ["session_state", "agent_state", "last_event_seq", "events"],
+      "required": [
+        "session_state",
+        "agent_state",
+        "last_event_seq",
+        "events",
+        "agent_id"
+      ],
       "additionalProperties": false,
       "properties": {
-        "session_state": { "enum": ["created", "active", "detached"] },
-        "agent_state": { "enum": ["created", "starting", "running", "waiting_model", "stopping", "stopped", "failed", "cancelled", "interrupted", "resuming"] },
-        "last_event_seq": { "type": "integer" },
-        "events": { "type": "array", "items": { "$ref": "boenmind:wire:envelope:v0.1#/event_envelope" } }
+        "agent_id": {
+          "$ref": "boenmind:wire:envelope:v0.1#/definitions/id"
+        },
+        "session_state": {
+          "enum": [
+            "created",
+            "active",
+            "detached"
+          ]
+        },
+        "agent_state": {
+          "enum": [
+            "created",
+            "starting",
+            "running",
+            "waiting_model",
+            "stopping",
+            "stopped",
+            "failed",
+            "cancelled",
+            "interrupted",
+            "resuming"
+          ]
+        },
+        "last_event_seq": {
+          "type": "integer"
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "boenmind:wire:envelope:v0.1#/event_envelope"
+          }
+        }
       }
     }
   },
   "session.close": {
     "params": {
-      "type": "object", "required": ["session_id"], "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "session_id"
+      ],
+      "additionalProperties": false,
       "properties": {
-        "session_id": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/id" },
-        "reason": { "type": "string", "maxLength": 200 }
+        "session_id": {
+          "$ref": "boenmind:wire:envelope:v0.1#/definitions/id"
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 200
+        }
       }
     },
     "result": {
       "type": "object",
-      "required": ["closed_at", "agent_final_state"],
+      "required": [
+        "closed_at",
+        "agent_final_state"
+      ],
       "additionalProperties": false,
       "properties": {
-        "closed_at": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/timestamp" },
-        "agent_final_state": { "type": "string", "description": "进行中的回合不被取消，仅脱离（INV-6）" }
+        "closed_at": {
+          "$ref": "boenmind:wire:envelope:v0.1#/definitions/timestamp"
+        },
+        "agent_final_state": {
+          "type": "string",
+          "description": "进行中的回合不被取消，仅脱离（INV-6）"
+        }
       }
     }
   },
   "events.poll": {
     "description": "M1 用拉取代替订阅流；消费位点 = event_seq，重复拉取由消费者去重（基线 8.3）。M5 增发可选 task_id 过滤（Task Board watch 观察面，M5 规格 §5.2；过滤在事件信封 payload.task_id 上执行）。",
     "params": {
-      "type": "object", "required": ["session_id", "since_seq"], "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "session_id",
+        "since_seq"
+      ],
+      "additionalProperties": false,
       "properties": {
-        "session_id": { "$ref": "boenmind:wire:envelope:v0.1#/definitions/id" },
-        "since_seq": { "type": "integer", "minimum": 0 },
-        "limit": { "type": "integer", "minimum": 1, "maximum": 1000, "default": 100 },
-        "task_id": { "type": ["string", "null"], "pattern": "^task_[0-9A-HJKMNP-TV-Z]{26}$", "description": "M5 增发：按 Task 过滤事件流（null/缺省 = 不过滤）" }
+        "session_id": {
+          "$ref": "boenmind:wire:envelope:v0.1#/definitions/id"
+        },
+        "since_seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000,
+          "default": 100
+        },
+        "task_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^task_[0-9A-HJKMNP-TV-Z]{26}$",
+          "description": "M5 增发：按 Task 过滤事件流（null/缺省 = 不过滤）"
+        }
       }
     },
     "result": {
       "type": "object",
-      "required": ["events", "last_seq", "has_more"],
+      "required": [
+        "events",
+        "last_seq",
+        "has_more"
+      ],
       "additionalProperties": false,
       "properties": {
-        "events": { "type": "array", "items": { "$ref": "boenmind:wire:envelope:v0.1#/event_envelope" } },
-        "last_seq": { "type": "integer" },
-        "has_more": { "type": "boolean" }
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "boenmind:wire:envelope:v0.1#/event_envelope"
+          }
+        },
+        "last_seq": {
+          "type": "integer"
+        },
+        "has_more": {
+          "type": "boolean"
+        }
       }
     }
   }

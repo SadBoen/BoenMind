@@ -2120,6 +2120,103 @@ pub(crate) fn remember_turn(w: &mut World, session_id: BmId, user: String, assis
     );
 }
 
+/// 重启续聊(2026-09-06):启动恢复阶段从 context-log 重建会话对话台账。
+/// 此前台账纯内存,重启后界面能回放历史而模型失忆,体验分裂。重建口径:
+/// - 按 (operation_id, turn_index) 配对 user_message/assistant_final;
+/// - 只有 assistant 的旧轮(用户消息入日志前的存量)以占位标注用户侧;
+/// - 累计成功回合 = assistant_final 条数(session_turn_totals 同源);
+/// - 双上限裁剪与 push_capped 同口径;live 守卫与 remember_turn 同款。
+pub(crate) fn rebuild_session_chats(w: &mut World) {
+    let Some(data_dir) = w.config.data_dir.clone() else {
+        return;
+    };
+    let Ok(f) = std::fs::File::open(data_dir.join("context-log.jsonl")) else {
+        return;
+    };
+    use std::io::BufRead;
+    // session → (operation_id, turn_index) → (user, assistant)
+    type TurnSlot = (Option<String>, Option<String>);
+    let mut turns: std::collections::HashMap<
+        BmId,
+        std::collections::HashMap<(String, u32), TurnSlot>,
+    > = std::collections::HashMap::new();
+    let mut totals: std::collections::HashMap<BmId, u64> = std::collections::HashMap::new();
+    for line in std::io::BufReader::new(f).lines() {
+        let Ok(line) = line else { break };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue; // 坏行跳过
+        };
+        let Some(session_id) = v
+            .get("session_id")
+            .and_then(|s| s.as_str())
+            .and_then(|s| BmId::parse(s).ok())
+        else {
+            continue;
+        };
+        let op = v
+            .get("operation_id")
+            .and_then(|s| s.as_str())
+            .unwrap_or("")
+            .to_string();
+        let turn_index = v.get("turn_index").and_then(|t| t.as_u64()).unwrap_or(0) as u32;
+        let content = v["data"]["content"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        if content.is_empty() {
+            continue;
+        }
+        let slot = turns
+            .entry(session_id.clone())
+            .or_default()
+            .entry((op, turn_index))
+            .or_default();
+        match v.get("kind").and_then(|k| k.as_str()).unwrap_or("") {
+            "user_message" => slot.0 = Some(content),
+            "assistant_final" => {
+                slot.1 = Some(content);
+                *totals.entry(session_id).or_insert(0) += 1;
+            }
+            _ => {}
+        }
+    }
+    for (session_id, mut pairs) in turns {
+        // live 守卫:会话不存在/已 Closed 不重建(与 remember_turn 同款)
+        let live = w
+            .sessions
+            .get(&session_id)
+            .map(|s| s.state != SessionState::Closed)
+            .unwrap_or(false);
+        if !live {
+            continue;
+        }
+        let mut entry: Vec<(String, String)> = Vec::new();
+        for (_k, (user, assistant)) in pairs.drain() {
+            if let Some(a) = assistant {
+                entry.push((
+                    user.unwrap_or_else(|| "(早期记录未含该轮用户消息)".into()),
+                    a,
+                ));
+            }
+        }
+        if entry.is_empty() {
+            continue;
+        }
+        // 双上限与 push_capped 同口径(台账形状与运行期写入完全一致)
+        while entry.len() > HISTORY_MAX_TURNS {
+            entry.remove(0);
+        }
+        let mut total: usize = entry.iter().map(|(u, a)| u.len() + a.len()).sum();
+        while total > HISTORY_MAX_CHARS && entry.len() > 1 {
+            total -= entry[0].0.len() + entry[0].1.len();
+            entry.remove(0);
+        }
+        w.session_turn_totals
+            .insert(session_id.clone(), totals.remove(&session_id).unwrap_or(0));
+        w.session_chats.insert(session_id, entry);
+    }
+}
+
 /// 入账并执行双上限:轮数超限丢最旧;字符总量超限从最旧丢到达标
 /// (至少保留 1 条——最新一条永不因字符上限被丢)。
 fn push_capped(entry: &mut Vec<(String, String)>, user: String, assistant: String) {

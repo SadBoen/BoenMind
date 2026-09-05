@@ -172,6 +172,7 @@ pub(crate) fn handle_session_resume(
     );
 
     Ok(SessionResumeResult {
+        agent_id: session.agent_id.clone(),
         // M1 无 detached 路径(M3 Surface 断连引入);保持当前态。
         session_state: SessionState::Active,
         agent_state,

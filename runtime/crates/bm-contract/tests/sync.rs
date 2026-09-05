@@ -384,6 +384,7 @@ fn session_and_agent_payloads_validate() {
     .expect("session.create result 合法");
 
     let resume_result = serde_json::to_value(SessionResumeResult {
+        agent_id: BmId::parse("agent_01JAAAAAAAAAAAAAAAAAAAAAAA").expect("合法 id"),
         session_state: SessionState::Active,
         agent_state: AgentState::Running,
         last_event_seq: 11,

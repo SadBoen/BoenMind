@@ -218,6 +218,9 @@ pub struct SessionResumeParams {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionResumeResult {
+    /// Minor 增发(2026-09-06 重启续聊):调用方(openai_compat 等)凭此
+    /// 恢复会话→agent 寻址,不必再持第二张纯内存映射表
+    pub agent_id: BmId,
     pub session_state: SessionState,
     pub agent_state: AgentState,
     pub last_event_seq: u64,
