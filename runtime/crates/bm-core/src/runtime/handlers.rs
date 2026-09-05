@@ -164,7 +164,7 @@ pub(crate) fn handle_session_resume(
         return Err(CoreError::validation("session 已关闭,不可 resume"));
     }
     let since = params.since_seq.unwrap_or(0);
-    let (events, _last, _) = w.events_for_session(&params.session_id, since, u32::MAX);
+    let (events, _last, _) = w.events_for_session(&params.session_id, since, u32::MAX)?;
     let agent_state = w
         .agents
         .get(&session.agent_id)
@@ -327,7 +327,7 @@ pub(crate) fn handle_events_poll(
     // M5 增发:task_id 过滤(watch 观察面;task 事件不携带 session 关联,
     // 过滤在事件信封 payload.task_id 上执行,wire/session 合同语义)
     if let Some(task_id) = &params.task_id {
-        let (events, last_seq, has_more) = w.events_for_task(task_id, params.since_seq, limit);
+        let (events, last_seq, has_more) = w.events_for_task(task_id, params.since_seq, limit)?;
         return Ok(EventsPollResult {
             events,
             last_seq,
@@ -335,7 +335,7 @@ pub(crate) fn handle_events_poll(
         });
     }
     let (events, last_seq, has_more) =
-        w.events_for_session(&params.session_id, params.since_seq, limit);
+        w.events_for_session(&params.session_id, params.since_seq, limit)?;
     Ok(EventsPollResult {
         events,
         last_seq,

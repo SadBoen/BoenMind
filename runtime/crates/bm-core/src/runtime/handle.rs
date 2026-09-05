@@ -4,6 +4,13 @@
 
 use super::*;
 
+/// R1 收口(FULL-REVIEW-2026-09-05 §7):持久读失败 = 拒绝启动。空数据假象
+/// 会让 grant 权重重签(安全侧)、事件投影缺块、幂等收据丢失——与「宁可拒开,
+/// 不带残缺状态服务」的既有启动口径(handle.rs 顶部 recover/load_rows 同款)一致。
+fn rows_or_die<T>(r: bm_persist::error::StoreResult<Vec<T>>, what: &str) -> Vec<T> {
+    r.unwrap_or_else(|e| panic!("持久层读失败({what}),拒绝启动(宁可拒开): {e}"))
+}
+
 /// 运行句柄:进程内 Wire API(M1 方法集合)。
 #[derive(Clone)]
 pub struct RuntimeHandle {
@@ -78,7 +85,11 @@ impl RuntimeHandle {
             let rows = store.load_rows().expect("规范状态行装配失败,拒绝启动");
             world.load_world_rows(rows, &mut pending_interrupts, &mut agents_to_resume);
             // seq 分配器重同步到持久日志末尾之后:跨重启 seq 连续(INV-3)
-            let log_last = r.last_applied_seq.max(store.last_log_seq().unwrap_or(0));
+            let log_last = r.last_applied_seq.max(
+                store
+                    .last_log_seq()
+                    .expect("持久日志末尾读取失败,拒绝启动(INV-3 seq 连续)"),
+            );
             world.bus.resync_to(log_last + 1);
             // 空库首启 = 新启动,不是恢复:不产生 runtime.recovered 噪音事件
             if log_last > 0 {
@@ -126,7 +137,7 @@ impl RuntimeHandle {
         // M4 启动恢复:binding epoch 取持久 max(不回退,ADR-0001 条件 2);
         // Grant 台账与审批对象重建——「审批中断后可以恢复」(基线 M4 通过条件)。
         if let Some(store) = &world.store {
-            for row in store.list_capability_bindings().unwrap_or_default() {
+            for row in rows_or_die(store.list_capability_bindings(), "capability_bindings") {
                 let cap = row["capability"].as_str().unwrap_or("");
                 let epoch = row["epoch"].as_u64().unwrap_or(0);
                 let instance = row["provider_instance_id"].as_str().unwrap_or("");
@@ -139,7 +150,7 @@ impl RuntimeHandle {
             for (cap, provider) in &registered {
                 let _ = world.registry.attach_handle(cap, provider.clone());
             }
-            for row in store.list_grants().unwrap_or_default() {
+            for row in rows_or_die(store.list_grants(), "grants(恢复)") {
                 let payload = row["payload"].as_str().unwrap_or("null");
                 let Ok(grant) = serde_json::from_str::<bm_contract::capability::Grant>(payload)
                 else {
@@ -151,7 +162,7 @@ impl RuntimeHandle {
                 world.grants.restore(grant, used, revoked);
             }
             // T6c 收紧(M5-T1):幂等收据仓自持久层装载
-            for row in store.list_idem_receipts().unwrap_or_default() {
+            for row in rows_or_die(store.list_idem_receipts(), "idem_receipts") {
                 if let (Some(h), Some(payload)) =
                     (row["key_hash"].as_str(), row["payload"].as_str())
                     && let Ok(v) = serde_json::from_str::<serde_json::Value>(payload)
@@ -160,7 +171,7 @@ impl RuntimeHandle {
                 }
             }
             // M5-T6:Task 包络记账恢复(聚合行 agent_id = "")
-            for row in store.list_task_budget().unwrap_or_default() {
+            for row in rows_or_die(store.list_task_budget(), "task_budget") {
                 if row["agent_id"].as_str() == Some("")
                     && let (Some(tid), Some(used)) =
                         (row["task_id"].as_str(), row["used_tool_calls"].as_u64())
@@ -171,9 +182,9 @@ impl RuntimeHandle {
             }
             // M5.4:Task Board 投影启动重建——重放事件日志折叠(ADR-0004 条件 1);
             // 已被压实的前缀自 L2 行补齐(行即同一事件流的快照态,键列确定性)
-            let events = store.replay_since(0).unwrap_or_default();
+            let events = rows_or_die(store.replay_since(0), "事件日志重放(task_board 重建)");
             world.task_board = crate::task::TaskBoard::rebuild(&events);
-            for row in store.list_tasks().unwrap_or_default() {
+            for row in rows_or_die(store.list_tasks(), "tasks") {
                 let id = row["id"].as_str().unwrap_or_default().to_string();
                 if world.task_board.entry(&id).is_none() {
                     world.task_board.restore_row(
@@ -184,7 +195,7 @@ impl RuntimeHandle {
                     );
                 }
             }
-            for row in store.list_approvals().unwrap_or_default() {
+            for row in rows_or_die(store.list_approvals(), "approvals") {
                 let payload = row["payload"].as_str().unwrap_or("null");
                 let Ok(wrap) = serde_json::from_str::<serde_json::Value>(payload) else {
                     continue;
@@ -252,7 +263,7 @@ impl RuntimeHandle {
             // 幂等查询属 M7(外部核验);M4 落地 = operation 重建为
             // outcome_unknown,等待裁定入口(recovery_settle:external_
             // verification OR user_ruling),禁止自动重放(ADR-0004)。
-            for row in store.list_outbox_by_state("pending").unwrap_or_default() {
+            for row in rows_or_die(store.list_outbox_by_state("pending"), "outbox_pending") {
                 let Ok(op_id) = BmId::parse(row["operation_id"].as_str().unwrap_or("")) else {
                     continue;
                 };
@@ -288,7 +299,7 @@ impl RuntimeHandle {
         {
             let mut existing_pairs: Vec<(String, String)> = Vec::new();
             if let Some(store) = &world.store {
-                for row in store.list_grants().unwrap_or_default() {
+                for row in rows_or_die(store.list_grants(), "grants(bootstrap 已有对账)") {
                     if row["audience"].as_str() == Some(crate::butler::BUTLER_PRINCIPAL)
                         && let Some(action) = row["action"].as_str()
                     {

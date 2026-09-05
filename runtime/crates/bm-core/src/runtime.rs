@@ -305,20 +305,30 @@ impl World {
         session_id: &BmId,
         since: u64,
         limit: u32,
-    ) -> (Vec<EventEnvelope>, u64, bool) {
+    ) -> CoreResult<(Vec<EventEnvelope>, u64, bool)> {
         if let Some(store) = &self.store {
-            let mut evs: Vec<EventEnvelope> = store
-                .replay_since(since)
-                .unwrap_or_default()
+            // R1 收口(FULL-REVIEW-2026-09-05 §7):持久读失败如实上抛——
+            // 此前折叠为空 = 回放假空历史,故障消音。
+            let evs_all = store.replay_since(since).map_err(|e| {
+                tracing::error!(error = %e, session = %session_id, "事件日志读取失败");
+                CoreError::Semantic(
+                    ErrorCode::Internal,
+                    "持久事件日志读取失败,请检查数据目录或重启".into(),
+                )
+            })?;
+            let last = store.last_log_seq().map_err(|e| {
+                tracing::error!(error = %e, "事件日志位点读取失败");
+                CoreError::Semantic(ErrorCode::Internal, "持久事件日志读取失败".into())
+            })?;
+            let mut evs: Vec<EventEnvelope> = evs_all
                 .into_iter()
                 .filter(|e| e.session_id.as_ref() == Some(session_id))
                 .collect();
-            let last = store.last_log_seq().unwrap_or(0);
             let has_more = evs.len() > limit as usize;
             evs.truncate(limit as usize);
-            (evs, last, has_more)
+            Ok((evs, last, has_more))
         } else {
-            self.bus.poll(session_id, since, limit)
+            Ok(self.bus.poll(session_id, since, limit))
         }
     }
 
@@ -328,20 +338,27 @@ impl World {
         task_id: &BmId,
         since: u64,
         limit: u32,
-    ) -> (Vec<EventEnvelope>, u64, bool) {
+    ) -> CoreResult<(Vec<EventEnvelope>, u64, bool)> {
         let mut evs: Vec<EventEnvelope> = if let Some(store) = &self.store {
-            store.replay_since(since).unwrap_or_default()
+            // R1 收口:持久读失败如实上抛(同 events_for_session)
+            store.replay_since(since).map_err(|e| {
+                tracing::error!(error = %e, "事件日志读取失败(task 流)");
+                CoreError::Semantic(ErrorCode::Internal, "持久事件日志读取失败".into())
+            })?
         } else {
             self.bus.events().to_vec()
         };
         let last = match &self.store {
-            Some(store) => store.last_log_seq().unwrap_or(0),
+            Some(store) => store.last_log_seq().map_err(|e| {
+                tracing::error!(error = %e, "事件日志位点读取失败(task 流)");
+                CoreError::Semantic(ErrorCode::Internal, "持久事件日志读取失败".into())
+            })?,
             None => self.bus.last_seq(),
         };
         evs.retain(|e| e.payload["task_id"].as_str() == Some(task_id.as_str()));
         let has_more = evs.len() > limit as usize;
         evs.truncate(limit as usize);
-        (evs, last, has_more)
+        Ok((evs, last, has_more))
     }
 
     fn now_ts(&self) -> bm_contract::BmTimestamp {
@@ -361,6 +378,36 @@ impl World {
         // 命令语义形状在持久化前拒绝并告警(store.write.rejected)。
         let shape_err = validate_event_shape(&ty, &payload);
         let seq = self.bus.next_seq();
+        if let Err(reason) = shape_err {
+            // R2(FULL-REVIEW-2026-09-05 §7,INV-3):坏形状事件此前「占 seq 但
+            // 只进内存总线不落盘」,存储侧自此永久跳号。改为 tombstone 占位:
+            // 原 seq 槽落 StoreWriteRejected(持久+总线),日志保持连续
+            // (Judge contiguous 可验);坏事件本体不再进总线(T7:非事实不分发)。
+            let tombstone = EventEnvelope::new(
+                seq,
+                EventType::StoreWriteRejected,
+                self.now_ts(),
+                None,
+                None,
+                None,
+                // 键集须与合同注册表精确一致(key/reason);类型信息已在
+                // reason 文案内(「事件 xxx 携带…」),不扩键
+                serde_json::json!({
+                    "key": seq.to_string(),
+                    "reason": reason,
+                }),
+            );
+            if let Some(store) = &self.store
+                && !self.persist_poisoned
+                && let Err(e) = store.record(&tombstone)
+            {
+                // tombstone 自身写失败:与正常事件写失败同口径处理(见下)
+                tracing::error!(error = %e, seq = %seq, "拒写 tombstone 落盘失败,Runtime 进入拒写态");
+                self.persist_poisoned = true;
+            }
+            self.bus.append(tombstone.clone());
+            return tombstone;
+        }
         let event = EventEnvelope::new(
             seq,
             ty,
@@ -370,33 +417,6 @@ impl World {
             operation_id,
             payload,
         );
-        if let Err(reason) = shape_err {
-            tracing::warn!(seq = %event.event_seq, %reason, "命令语义事件被拒绝持久化");
-            self.bus.append(event.clone());
-            // 告警事件(store.write.rejected 载荷形状本身不触发递归)
-            let warn_seq = self.bus.next_seq();
-            let warn = EventEnvelope::new(
-                warn_seq,
-                EventType::StoreWriteRejected,
-                self.now_ts(),
-                None,
-                None,
-                None,
-                serde_json::json!({
-                    "key": event.event_seq.to_string(),
-                    "reason": reason,
-                }),
-            );
-            if let Some(store) = &self.store
-                && !self.persist_poisoned
-                && let Err(e) = store.record(&warn)
-            {
-                // 兜底审计事件自身写失败:事件已在内存总线,持久侧无路可走
-                tracing::error!(error = %e, seq = %warn_seq, "拒写审计事件落盘失败");
-            }
-            self.bus.append(warn);
-            return event;
-        }
         // 写穿(M2 规格 §5.1):record 内部固定 ①日志+flush → ②物化 → ③位点。
         // 失败即进入拒写态:内存视图与持久层自此分叉,以持久层为准(重启重建)。
         #[allow(clippy::collapsible_if)] // 三重条件展平反而难读
