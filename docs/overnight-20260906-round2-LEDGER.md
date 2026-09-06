@@ -1,6 +1,6 @@
 # 过夜作战台账·第二轮 2026-09-06(用户令:不需要决策的任务全部处理)
 
-- **状态:进行中**(补充批次 批5-9 + 收官 未完,守卫继续巡查)
+- **状态:进行中**(仅剩 批9 续 6 函数 + 收官;守卫继续巡查)
 - **单写者锁**:本台账 mtime + `git log -1 --format='%ct'`;15 分钟内无活动才算主会话已死
 - 明确不做(需用户拍板,勿动):发版 tag、ADR-0016 确认→Skill v0.2 二步、VPS 密码自查、core_loop exit(70) 运维裁决、上下文压缩/记忆注入(标"待后续讨论")、theme 毛玻璃选型、F-05/F-07/F-11/F-12/P3 大重构(历史裁决缓办,夜袭硬改风险>收益)
 
@@ -9,12 +9,13 @@
 - [x] 已完成:R1/R2/R3 可靠性三件、F1 工具白名单、F2 意图软防线、F3 SkillDefinition、F4 插件名瘦身、F5 Parallel Search、Q1 ESLint(aa0f147/fe0c8e3/84d1bb0)
 - [x] 已完成:重构批1-4(broker/sqlite_state/task_ops/turn 拆目录,0c54b2c/ad9e561/7735970/2811900)
 - [x] 已完成:Skill S1-S3(scripts 合同 Minor + wasmtime 执行器 + 接线,5678a1f)
-- [ ] 批5|PluginsPage.tsx(1737 行)→ w2/plugins/{types,draft,columns,PluginsPage,ServerConfigDialog,McpDialog,FormField};SettingsPage 一处 import 同步;门禁=tsc+eslint+smoke+浏览器手测插件页
-- [ ] 批6|context.tsx(2234 行)→ w1/context/{utils,recipe,stats,TrendChart,TokenWaterGauge,PromptRecipeCard,FileEffectsList};stats/trend 先纯函数化,不改 hook 依赖数组;门禁同上+上下文页手测(含时间旅行)
-- [ ] 批7|F-12 依赖倒置(2 commits):EventStore trait+行 DTO+WorldRows 收归 bm_core::ports::persist;bm-persist 反向依赖并 pub use 保全部旧路径;bm-core 8 文件改 use;核对 C4 模型
-- [ ] 批8|F-07 MCP 装配下沉(3 commits):①先补 /admin/mcp/reload characterization 测试;②bm_providers::mcp::supervisor::sync_from_config + CapabilityRegistrar 端口(启动/热装载同调);③webadmin 瘦身+self_describe 迁移
-- [ ] 批9|F-05 长函数提子函数:spawn_turn/capability_call_inner/handle_turn_event/dispatch_capability/handle_task_create/spawn_subtask/worker_call;每函数 1 commit,语句顺序逐字保留
-- [ ] 收官|全量门禁+浏览器验收+HISTORY/BACKLOG 结转+推送
+- [x] 批5|PluginsPage.tsx 拆分(edcb08f;tsc/lint/build/smoke 绿+插件中心真机截图 08)
+- [x] 批6|context.tsx 拆分(d7111d8;utils/recipe 纯函数模块;上下文页真机验收截图 09)
+- [x] 批7|F-12 依赖倒置(36bcf64;bm_core::ports::persist 收口+bm-persist 反转 re-export;dev 依赖环→内存桩)
+- [x] 批8|F-07 MCP 装配下沉(1ff3da5 characterization + 17f9a2f supervisor,启动/热装载同调)
+- [x] 批9(首函数)|spawn_turn 提取 audit_model_invoke(0e44582;793→600 行)
+- [ ] 批9(续)|其余 6 长函数同款提取:capability_call_inner/handle_turn_event/dispatch_capability/handle_task_create/spawn_subtask/worker_call;每函数 1 commit;手法参照 spawn.rs 的 audit_model_invoke(段落整体搬移+块尾表达式直返)
+- [ ] 收官|Skill S5 残项(ADR-0016 状态更新/性能基线)+ HISTORY/BACKLOG 结转 + 最终推送
 
 ## 任务清单(按序执行)
 
