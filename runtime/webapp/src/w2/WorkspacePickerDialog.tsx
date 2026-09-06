@@ -1,15 +1,11 @@
-// 工作目录选择器(W8 增强):四区布局——顶=路径输入+跳转;中=左上级链/右当前级
-// 子目录;底=名称+保存。数据源 = GET /admin/fs/browse(全盘只读、仅目录名)。
+// 工作目录选择器(W8 增强;2026-09-07 目录树批次重构):顶=路径输入+跳转+
+// 新建文件夹;中=单棵懒加载目录树(与聊天文件树共用 FileTree/useLazyTree,
+// 根=「此电脑」列盘符,点行进入、点箭头展开);底=名称+保存。
+// 数据源 = GET /admin/fs/browse(全盘只读、仅目录名);新建目录 = /admin/fs/mkdir。
 // 布局与令牌对齐 plugins/ServerConfigDialog(容器 xl / 行 md / 控件 h-7·h-8)。
-import { useEffect, useRef, useState } from "react";
-import {
-  ArrowRightIcon,
-  ChevronRightIcon,
-  FolderIcon,
-  HardDriveIcon,
-  Loader2Icon,
-} from "lucide-react";
-import { api, type BrowseEntry, type WorkspaceEntry } from "./api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ArrowRightIcon, FolderPlusIcon, Loader2Icon } from "lucide-react";
+import { api, type WorkspaceEntry } from "./api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -21,29 +17,33 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { cn } from "@/lib/utils";
+import {
+  FileTree,
+  useLazyTree,
+  type FileTreeNode,
+  type LazyTreeEntry,
+} from "@/components/file-tree";
 
 export type WorkspaceDraft = { id: string | null; name: string; path: string };
 
-type Ancestor = { label: string; path: string };
-
-// 上级链(含「此电脑」根视图与当前目录自身,逐级可点)
-function ancestorsOf(p: string): Ancestor[] {
-  if (!p) return [{ label: "此电脑", path: "" }];
-  const out: Ancestor[] = [{ label: "此电脑", path: "" }];
+// 逐级展开定位链(与 browse 返回的规范路径同形:盘符带尾分隔,其余不带)
+function chainOf(p: string): string[] {
+  if (!p) return [];
+  const out: string[] = [];
   if (/^[a-zA-Z]:[\\/]/.test(p)) {
     const parts = p.split(/[\\/]+/).filter(Boolean);
-    let acc = "";
-    parts.forEach((seg, i) => {
-      acc = i === 0 ? `${seg}\\` : `${acc}${seg}\\`;
-      out.push({ label: i === 0 ? acc : seg, path: acc });
-    });
+    let acc = `${parts[0]}\\`;
+    out.push(acc);
+    for (let i = 1; i < parts.length; i++) {
+      if (!acc.endsWith("\\")) acc += "\\";
+      acc += parts[i];
+      out.push(acc);
+    }
   } else {
     let acc = "";
-    out.push({ label: "/", path: "/" });
     for (const seg of p.split("/").filter(Boolean)) {
       acc += `/${seg}`;
-      out.push({ label: seg, path: acc });
+      out.push(acc);
     }
   }
   return out;
@@ -81,56 +81,111 @@ export function WorkspacePickerDialog({
 }) {
   const [cur, setCur] = useState("");
   const [pathInput, setPathInput] = useState("");
-  const [entries, setEntries] = useState<BrowseEntry[]>([]);
-  const [loading, setLoading] = useState(true);
   const [jumpErr, setJumpErr] = useState<string | null>(null);
   const [hint, setHint] = useState("");
   const [name, setName] = useState(draft.name);
   // 名称自动跟随所选目录名;用户手改过即不再覆盖
   const nameTouchedRef = useRef(false);
+  // 新建文件夹:open = 行内输入行
+  const [mkdirOpen, setMkdirOpen] = useState(false);
+  const [mkdirName, setMkdirName] = useState("");
+  const [mkdirBusy, setMkdirBusy] = useState(false);
+  // 各目录的截断/不可读提示(browse note)
+  const notesRef = useRef<Record<string, string>>({});
 
-  const load = async (target: string) => {
-    setLoading(true);
-    setJumpErr(null);
+  const load = useCallback(async (path: string): Promise<LazyTreeEntry[]> => {
     try {
-      const r = await api.fs.browse(target);
-      setCur(r.path);
-      setPathInput(r.path);
-      setEntries(r.entries);
-      setHint(
-        [r.truncated ? `仅显示前 ${r.entries.length} 项` : "", r.note ?? ""]
-          .filter(Boolean)
-          .join(" · "),
-      );
-      return r;
+      const r = await api.fs.browse(path);
+      notesRef.current[path] = [
+        r.truncated ? `仅显示前 ${r.entries.length} 项` : "",
+        r.note ?? "",
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      return r.entries.map((e) => ({
+        path: e.path,
+        name: e.name,
+        kind: "folder" as const,
+        drive: path === "",
+      }));
     } catch (e) {
       setJumpErr(e instanceof Error ? e.message : String(e));
-      return null;
+      return [];
+    }
+  }, []);
+
+  const { nodes, expanded, loadingDir, loadDir, toggle, reveal } = useLazyTree({
+    load,
+    initialExpanded: [""],
+  });
+
+  // 进入目录 = 逐级展开定位 + 置当前 + 名称自动跟随(未手改时)
+  const treeBoxRef = useRef<HTMLDivElement>(null);
+  const navigate = async (target: string) => {
+    setJumpErr(null);
+    const chain = chainOf(target);
+    await reveal(chain);
+    const norm = chain.length ? chain[chain.length - 1] : "";
+    setCur(norm);
+    setPathInput(norm);
+    setHint(notesRef.current[norm] ?? "");
+    if (!nameTouchedRef.current) setName(baseNameOf(norm));
+    // 定位到当前目录行(深层跳转不滚动看不见)
+    requestAnimationFrame(() => {
+      treeBoxRef.current
+        ?.querySelector('[aria-selected="true"]')
+        ?.scrollIntoView({ block: "nearest" });
+    });
+  };
+
+  const doMkdir = async () => {
+    const nm = mkdirName.trim();
+    if (!nm || !cur || mkdirBusy) return;
+    setMkdirBusy(true);
+    setJumpErr(null);
+    try {
+      const r = await api.fs.mkdir(cur, nm);
+      setMkdirOpen(false);
+      setMkdirName("");
+      await loadDir(cur);
+      await navigate(r.path);
+    } catch (e) {
+      setJumpErr(e instanceof Error ? e.message : String(e));
     } finally {
-      setLoading(false);
+      setMkdirBusy(false);
     }
   };
 
-  // 进入目录 = 浏览 + 名称自动跟随(未手改时)
-  const navigate = async (target: string) => {
-    const r = await load(target);
-    if (r && !nameTouchedRef.current) setName(baseNameOf(r.path));
-  };
-
   useEffect(() => {
-    // 仅挂载时初始化一次(本组件按打开次数条件挂载,依赖故意为空)
-    void load(draft.path || "");
+    // 仅挂载时初始化一次(本组件按打开次数条件挂载,依赖故意为空);
+    // 编辑既有目录时直接定位到该目录
+    if (draft.path) void navigate(draft.path);
+    else void loadDir("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const duplicate = registered.some(
     (w) => w.id !== draft.id && samePath(w.path, cur),
   );
   const canSave = !!cur && !!name.trim() && !busy && !duplicate;
-  const ancestors = ancestorsOf(cur);
 
   const save = () => {
     if (canSave) onSave(name.trim(), cur);
   };
+
+  const treeNodes: FileTreeNode[] = [
+    {
+      path: "",
+      name: "此电脑",
+      depth: 0,
+      kind: "folder",
+      drive: true,
+      expanded: expanded.has(""),
+      loading: loadingDir === "",
+      selected: cur === "",
+    },
+    ...nodes.map((n) => ({ ...n, selected: samePath(n.path, cur) })),
+  ];
 
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
@@ -141,11 +196,11 @@ export function WorkspacePickerDialog({
         <DialogHeader className="shrink-0">
           <DialogTitle>{draft.id ? "编辑工作目录" : "添加工作目录"}</DialogTitle>
           <DialogDescription>
-            逐级点选进入目录;也可在顶部粘贴绝对路径后点「跳转」。
+            点目录名进入,点箭头展开;也可在顶部粘贴绝对路径后点「跳转」。
           </DialogDescription>
         </DialogHeader>
 
-        {/* 顶区:路径输入 + 跳转 */}
+        {/* 顶区:路径输入 + 跳转 + 新建文件夹 */}
         <div className="flex shrink-0 items-center gap-2">
           <Input
             id="ws-path"
@@ -161,102 +216,89 @@ export function WorkspacePickerDialog({
           <Button
             variant="secondary"
             className="h-8 shrink-0 gap-1 px-3 text-[12px]"
-            disabled={loading}
+            disabled={loadingDir !== null}
             data-slot="ws-picker-jump"
             onClick={() => void navigate(pathInput.trim())}
           >
             <ArrowRightIcon className="size-3.5" />
             跳转
           </Button>
+          <Button
+            variant="secondary"
+            className="h-8 shrink-0 gap-1 px-3 text-[12px]"
+            disabled={cur === "" || mkdirOpen}
+            title={cur === "" ? "先进入某个盘符或目录" : "在当前目录下新建文件夹"}
+            data-slot="ws-picker-mkdir"
+            onClick={() => {
+              setMkdirName("");
+              setMkdirOpen(true);
+            }}
+          >
+            <FolderPlusIcon className="size-3.5" />
+            新建文件夹
+          </Button>
         </div>
         {jumpErr ? (
           <div className="text-destructive shrink-0 text-[11.5px]">{jumpErr}</div>
         ) : null}
 
-        {/* 中区:左=上级链,右=当前级子目录 */}
-        <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,2fr)_minmax(0,3fr)] overflow-hidden rounded-xl border">
-          <div className="bo-scroll-hidden flex h-full min-h-0 flex-col overflow-y-auto border-r p-2.5">
-            <Label className="text-muted-foreground shrink-0 text-[10.5px] font-semibold">
-              上级位置
-            </Label>
-            <div className="mt-1.5 space-y-1">
-              {ancestors.map((a, i) => {
-                const isCur = i === ancestors.length - 1;
-                return (
-                  <button
-                    key={a.path || "__root"}
-                    type="button"
-                    data-slot="ws-picker-ancestor"
-                    onClick={() => void navigate(a.path)}
-                    title={a.path || "此电脑"}
-                    className={cn(
-                      "flex h-7 w-full items-center gap-1.5 rounded-md border px-2 text-left text-[12px] transition-colors",
-                      isCur
-                        ? "border-primary/60 bg-primary/5"
-                        : "border-transparent hover:bg-muted/40",
-                    )}
+        {/* 中区:单棵目录树(顶部可挂行内新建输入行) */}
+        <div className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-hidden">
+          {mkdirOpen ? (
+            <div className="flex shrink-0 items-center gap-1.5 rounded-lg border bg-muted/30 px-2 py-1.5">
+              <FolderPlusIcon className="text-muted-foreground size-3.5 shrink-0" />
+              <span className="text-muted-foreground shrink-0 text-[11.5px] whitespace-nowrap">
+                在 {baseNameOf(cur)} 下新建
+              </span>
+              <Input
+                autoFocus
+                data-slot="ws-picker-mkdir-input"
+                className="h-7 flex-1 text-[12px]"
+                value={mkdirName}
+                placeholder="新文件夹名称,回车确认"
+                onChange={(e) => setMkdirName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void doMkdir();
+                  if (e.key === "Escape") setMkdirOpen(false);
+                }}
+              />
+              <Button
+                size="sm"
+                className="h-7 shrink-0 px-3 text-[12px]"
+                disabled={!mkdirName.trim() || mkdirBusy}
+                data-slot="ws-picker-mkdir-confirm"
+                onClick={() => void doMkdir()}
+              >
+                {mkdirBusy ? <Loader2Icon className="size-3.5 animate-spin" /> : "创建"}
+              </Button>
+            </div>
+          ) : null}
+          <div
+            ref={treeBoxRef}
+            className="bo-scroll-hidden min-h-0 flex-1 overflow-y-auto rounded-xl border p-1.5"
+          >
+            <FileTree
+              nodes={treeNodes}
+              onNodeClick={(node) => void navigate(node.path)}
+              onNodeToggle={(node) => toggle(node.path)}
+              renderBadge={(node) =>
+                node.path !== "" &&
+                registered.some(
+                  (w) => w.id !== draft.id && samePath(w.path, node.path),
+                ) ? (
+                  <Badge
+                    variant="outline"
+                    className="h-5 shrink-0 px-1.5 text-[10.5px]"
                   >
-                    {a.path === "" ? (
-                      <HardDriveIcon className="text-muted-foreground size-3.5 shrink-0" />
-                    ) : (
-                      <FolderIcon className="text-muted-foreground size-3.5 shrink-0" />
-                    )}
-                    <span className="truncate">{a.label}</span>
-                  </button>
-                );
-              })}
-            </div>
+                    已登记
+                  </Badge>
+                ) : null
+              }
+            />
           </div>
-          <div className="bo-scroll-hidden flex h-full min-h-0 flex-col overflow-y-auto p-2.5">
-            <Label className="text-muted-foreground shrink-0 truncate text-[10.5px] font-semibold">
-              {cur === "" ? "此电脑(点盘符进入)" : `${baseNameOf(cur)} 的子目录`}
-            </Label>
-            <div className="mt-1.5 space-y-1">
-              {loading ? (
-                <div className="text-muted-foreground flex items-center gap-2 px-2 py-3 text-[12px]">
-                  <Loader2Icon className="size-3.5 animate-spin" />
-                  读取中…
-                </div>
-              ) : entries.length === 0 ? (
-                <div className="text-muted-foreground px-2 py-3 text-[12px]">
-                  {hint || "无子目录"}
-                </div>
-              ) : (
-                entries.map((e) => {
-                  const reg = registered.some(
-                    (w) => w.id !== draft.id && samePath(w.path, e.path),
-                  );
-                  return (
-                    <button
-                      key={e.path}
-                      type="button"
-                      data-slot="ws-picker-dir"
-                      onClick={() => void navigate(e.path)}
-                      title={e.path}
-                      className="flex h-7 w-full items-center gap-1.5 rounded-md border border-transparent px-2 text-left text-[12px] transition-colors hover:bg-muted/40"
-                    >
-                      {cur === "" ? (
-                        <HardDriveIcon className="text-muted-foreground size-3.5 shrink-0" />
-                      ) : (
-                        <FolderIcon className="text-muted-foreground size-3.5 shrink-0" />
-                      )}
-                      <span className="truncate">{e.name}</span>
-                      {reg ? (
-                        <Badge
-                          variant="outline"
-                          className="ml-auto h-5 shrink-0 px-1.5 text-[10.5px]"
-                        >
-                          已登记
-                        </Badge>
-                      ) : (
-                        <ChevronRightIcon className="text-muted-foreground ml-auto size-3.5 shrink-0" />
-                      )}
-                    </button>
-                  );
-                })
-              )}
-            </div>
-          </div>
+          {hint ? (
+            <div className="text-muted-foreground shrink-0 text-[11px]">{hint}</div>
+          ) : null}
         </div>
 
         {/* 底区:名称 + 取消/保存 */}

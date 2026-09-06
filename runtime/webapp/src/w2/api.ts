@@ -451,6 +451,15 @@ export const api = {
     rename: (path: string, name: string) =>
       req<{ ok: boolean }>(`/admin/fs/rename`, json("POST", { path, name })),
     downloadUrl: (path: string) => `/admin/fs/download?path=${encodeURIComponent(path)}`,
+    // 2026-09-07 目录树批次:新建目录(选择器全盘)与批量删除(工作区)
+    mkdir: (parent: string, name: string) =>
+      req<{ ok: boolean; path: string }>(`/admin/fs/mkdir`, json("POST", { parent, name })),
+    delete: (paths: string[]) =>
+      req<{
+        ok: boolean;
+        deleted: number;
+        results: { path: string | null; ok: boolean; error?: string }[];
+      }>(`/admin/fs/delete`, json("POST", { paths })),
   },
   // W8 常规(ADR-0018):工作区注册表 + 运行环境探针
   workspaces: {

@@ -554,6 +554,119 @@ async fn t_w2_fs_browse_lists_dirs_only() {
     assert_eq!(st, 400, "不存在的路径必须拒绝");
 }
 
+// ---- 新建目录(选择器「新建文件夹」配套;全盘、单级、重名 409)--------------
+
+#[tokio::test]
+async fn t_w9_fs_mkdir_creates_and_validates() {
+    let ws = tempfile::tempdir().unwrap();
+    let (base, _dir) = spawn_app(ws.path().to_path_buf(), None).await;
+    let canon = std::fs::canonicalize(ws.path()).unwrap();
+    let parent = {
+        let t = canon.display().to_string();
+        t.strip_prefix(r"\\?\").map(str::to_string).unwrap_or(t)
+    };
+    let url = format!("{base}/admin/fs/mkdir");
+
+    // 正常创建:返回剥前缀规范路径,磁盘真实可见
+    let (st, r) = send_json(
+        reqwest::Method::POST,
+        &url,
+        json!({ "parent": parent, "name": "新目录" }),
+    )
+    .await;
+    assert_eq!(st, 200, "{r}");
+    let expected = {
+        let t = canon.join("新目录").display().to_string();
+        t.strip_prefix(r"\\?\").map(str::to_string).unwrap_or(t)
+    };
+    assert_eq!(r["path"], json!(expected));
+    assert!(canon.join("新目录").is_dir());
+
+    // 重名 → 409
+    let (st, _) = send_json(
+        reqwest::Method::POST,
+        &url,
+        json!({ "parent": parent, "name": "新目录" }),
+    )
+    .await;
+    assert_eq!(st, 409);
+
+    // 非法 name(`..`/含分隔符/空)与坏 parent(空/不存在/是文件)→ 全 400
+    std::fs::write(canon.join("plain.txt"), "x").unwrap();
+    let file_parent = {
+        let t = canon.join("plain.txt").display().to_string();
+        t.strip_prefix(r"\\?\").map(str::to_string).unwrap_or(t)
+    };
+    let missing_parent = {
+        let t = canon.join("no_such").display().to_string();
+        t.strip_prefix(r"\\?\").map(str::to_string).unwrap_or(t)
+    };
+    for bad in [
+        json!({ "parent": parent, "name": ".." }),
+        json!({ "parent": parent, "name": "a/b" }),
+        json!({ "parent": parent, "name": "" }),
+        json!({ "parent": "", "name": "x" }),
+        json!({ "parent": missing_parent, "name": "x" }),
+        json!({ "parent": file_parent, "name": "x" }),
+    ] {
+        let (st, _) = send_json(reqwest::Method::POST, &url, bad).await;
+        assert_eq!(st, 400, "非法 body 必须拒绝");
+    }
+}
+
+// ---- 删除(工作区沙箱;多选批量/目录递归/防逃逸/部分失败逐条结果)----------
+
+#[tokio::test]
+async fn t_w9_fs_delete_multi_recursive_and_traversal() {
+    let ws = tempfile::tempdir().unwrap();
+    std::fs::write(ws.path().join("file.txt"), "x").unwrap();
+    std::fs::create_dir_all(ws.path().join("dir").join("inner")).unwrap();
+    std::fs::write(ws.path().join("dir").join("inner").join("n.txt"), "y").unwrap();
+    std::fs::create_dir_all(ws.path().join("dir2")).unwrap();
+    let (base, _dir) = spawn_app(ws.path().to_path_buf(), None).await;
+    let url = format!("{base}/admin/fs/delete");
+
+    // 多选批量:文件 + 空目录一起删
+    let (st, r) = send_json(
+        reqwest::Method::POST,
+        &url,
+        json!({ "paths": ["file.txt", "dir2"] }),
+    )
+    .await;
+    assert_eq!(st, 200, "{r}");
+    assert_eq!(r["ok"], json!(true));
+    assert_eq!(r["deleted"], json!(2));
+    assert!(!ws.path().join("file.txt").exists());
+    assert!(!ws.path().join("dir2").exists());
+
+    // 目录整棵递归删
+    let (st, r) = send_json(reqwest::Method::POST, &url, json!({ "paths": ["dir"] })).await;
+    assert_eq!(st, 200, "{r}");
+    assert!(!ws.path().join("dir").exists());
+
+    // 防逃逸与守门:`..`/绝对路径/空串(=根)/不存在 → 逐条报错不拖累其余;
+    // 部分失败整体 ok=false 但仍 200
+    let (st, r) = send_json(
+        reqwest::Method::POST,
+        &url,
+        json!({ "paths": ["..", "C:/Windows", "", "gone.txt"] }),
+    )
+    .await;
+    assert_eq!(st, 200, "{r}");
+    assert_eq!(r["ok"], json!(false));
+    assert_eq!(r["deleted"], json!(0));
+    let results = r["results"].as_array().unwrap();
+    assert_eq!(results.len(), 4);
+    assert!(results.iter().all(|x| x["ok"].as_bool() == Some(false)));
+    assert!(results[0]["error"].as_str().unwrap().contains("非法"));
+
+    // 坏 body:paths 缺失 / 空数组 → 400
+    let (st, _) = send_json(reqwest::Method::POST, &url, json!({ "paths": [] })).await;
+    assert_eq!(st, 400);
+    let (st, _) = send_json(reqwest::Method::POST, &url, json!({})).await;
+    assert_eq!(st, 400);
+}
+
 fn urlencode(s: &str) -> String {
     s.chars()
         .map(|c| match c {

@@ -1654,6 +1654,71 @@ fn utf8_percent_encode(s: &str) -> String {
     out
 }
 
+/// 2026-09-07 目录树批次:删除(工作区文件树右键,支持多选批量)。
+/// 仅工作区内:逐条 safe_resolve 防逃逸(天然拒 `..`/绝对路径/符号链接);
+/// 目录整棵递归删;永久删除不进回收站,防误删由前端确认弹窗承担。
+pub async fn fs_delete(State(cfg): State<AdminConfig>, Json(body): Json<Value>) -> Response {
+    const DELETE_PATH_LIMIT: usize = 100;
+    let Some(paths) = body["paths"].as_array() else {
+        return admin_error(StatusCode::BAD_REQUEST, "paths 必须是字符串数组");
+    };
+    if paths.is_empty() {
+        return admin_error(StatusCode::BAD_REQUEST, "paths 不能为空");
+    }
+    if paths.len() > DELETE_PATH_LIMIT {
+        return admin_error(
+            StatusCode::BAD_REQUEST,
+            format!("单次最多删除 {DELETE_PATH_LIMIT} 项"),
+        );
+    }
+    let mut results = Vec::new();
+    for p in paths {
+        let Some(rel) = p.as_str().map(|s| s.trim()) else {
+            results.push(json!({ "path": Value::Null, "ok": false, "error": "路径必须是字符串" }));
+            continue;
+        };
+        if rel.is_empty() {
+            results.push(json!({ "path": rel, "ok": false, "error": "拒绝删除工作区根" }));
+            continue;
+        }
+        let target = match safe_resolve(&cfg.workspace_root, rel) {
+            Ok(t) => t,
+            Err(e) => {
+                results.push(json!({ "path": rel, "ok": false, "error": e }));
+                continue;
+            }
+        };
+        let meta = match std::fs::symlink_metadata(&target) {
+            Ok(m) => m,
+            Err(_) => {
+                results.push(json!({ "path": rel, "ok": false, "error": "路径不存在" }));
+                continue;
+            }
+        };
+        let r = if meta.is_dir() {
+            std::fs::remove_dir_all(&target)
+        } else {
+            std::fs::remove_file(&target)
+        };
+        match r {
+            Ok(_) => results.push(json!({ "path": rel, "ok": true })),
+            Err(e) => results.push(json!({
+                "path": rel, "ok": false, "error": format!("删除失败: {e}")
+            })),
+        }
+    }
+    let deleted = results
+        .iter()
+        .filter(|r| r["ok"].as_bool() == Some(true))
+        .count();
+    Json(json!({
+        "ok": deleted == results.len(),
+        "deleted": deleted,
+        "results": results,
+    }))
+    .into_response()
+}
+
 // ---- handler:任意目录浏览(只读;设置页工作目录选择器专用)----------------
 // 与 /fs/list 的工作区沙箱浏览互补:「添加工作目录」的路径选择器需要覆盖
 // 全盘任意绝对路径。守门:只列目录、只报名字,零文件内容零大小;上限 1000 条。
@@ -1763,6 +1828,56 @@ fn parent_json(canon: &std::path::Path) -> Value {
             if t.is_empty() { Value::Null } else { json!(t) }
         })
         .unwrap_or(Value::Null)
+}
+
+/// 2026-09-07 目录树批次:新建目录(工作目录选择器「新建文件夹」配套)。
+/// 与 /fs/browse 同一全盘信任域:browse 全盘只读浏览,本端点是其唯一配套
+/// 写例外——只建空目录、单级、零内容;name 校验与 fs_rename 同规;门户墙保护。
+pub async fn fs_mkdir(State(_cfg): State<AdminConfig>, Json(body): Json<Value>) -> Response {
+    let Some(parent) = body["parent"].as_str().map(|s| s.trim()) else {
+        return admin_error(StatusCode::BAD_REQUEST, "parent 必须是字符串");
+    };
+    if parent.is_empty() {
+        return admin_error(StatusCode::BAD_REQUEST, "请先进入某个盘符或目录再新建");
+    }
+    let Some(name) = body["name"].as_str().map(|s| s.trim()) else {
+        return admin_error(StatusCode::BAD_REQUEST, "name 必须是字符串");
+    };
+    if name.is_empty() || name.len() > 200 || name == "." || name == ".." {
+        return admin_error(
+            StatusCode::BAD_REQUEST,
+            "name 必须是非空目录名(≤200 字符,不含路径分隔)",
+        );
+    }
+    if name.contains(['/', '\\']) {
+        return admin_error(StatusCode::BAD_REQUEST, "name 不允许包含路径分隔符");
+    }
+    let parent_path = std::path::Path::new(parent);
+    if !parent_path.exists() {
+        return admin_error(StatusCode::BAD_REQUEST, format!("父目录不存在: {parent}"));
+    }
+    let canon_parent = match std::fs::canonicalize(parent_path) {
+        Ok(c) => c,
+        Err(e) => return admin_error(StatusCode::BAD_REQUEST, format!("父目录解析失败: {e}")),
+    };
+    if !canon_parent.is_dir() {
+        return admin_error(StatusCode::BAD_REQUEST, "父路径不是目录");
+    }
+    let target = canon_parent.join(name);
+    if target.exists() {
+        return admin_error(StatusCode::CONFLICT, format!("「{name}」已存在"));
+    }
+    match std::fs::create_dir(&target) {
+        Ok(_) => Json(json!({
+            "ok": true,
+            "path": crate::workspace_admin::pretty_normalized(target.display().to_string()),
+        }))
+        .into_response(),
+        Err(e) => admin_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("新建目录失败: {e}"),
+        ),
+    }
 }
 
 /// 递归打包目录为 zip(内存;守门:≤5000 条目 / ≤256MB 解压总量)。
@@ -2386,6 +2501,9 @@ pub fn admin_routes(cfg: AdminConfig) -> axum::Router {
         // W7 目录树右键菜单:重命名 / 下载(文件)与打包下载(文件夹 zip)
         .route("/fs/rename", post(fs_rename))
         .route("/fs/download", get(fs_download))
+        // 2026-09-07 目录树批次:新建目录(选择器全盘)与删除(工作区多选)
+        .route("/fs/mkdir", post(fs_mkdir))
+        .route("/fs/delete", post(fs_delete))
         // W7 关于与在线升级(apply 仅回环;铁规矩:绝不由此触发发布)
         .route("/about", get(crate::about::about))
         .route("/about/check-update", post(crate::about::check_update))
