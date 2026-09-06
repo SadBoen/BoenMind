@@ -122,8 +122,11 @@ pub(crate) fn spawn_turn(
         // W4:messages 含角色 prompt + 历史回合 + 本轮输入;tools=直通工具
         // (OpenAI function 格式,capability 名的点映射为单下划线);工具结果
         // 经 CapabilityCall 回核心循环执行(Broker 裁决/审计管道原样),轮询
-        // operations 至终态取结果回喂模型。工具轮上限 5,防循环失控。
-        const MAX_TOOL_ROUNDS: u32 = 5;
+        // operations 至终态取结果回喂模型。
+        // 取消人工固定的轮数上限(不设 30 限制，交由真实业务完成自然收束);
+        // 专注防范同命令同参死循环：连续 5 次调用同工具且完全一致的入参即熔断。
+        let mut recent_tool_signatures: Vec<(String, String)> = Vec::new();
+        let mut loop_broken = false;
         let mut messages: Vec<Message> = Vec::new();
         if let Some(sp) = &role_prompt {
             messages.push(Message {
@@ -375,29 +378,69 @@ pub(crate) fn spawn_turn(
                             ts: format_ts(clock.now()),
                         });
                         // W4 工具轮:模型请求调用直通工具 → 回核心循环执行 →
-                        // 结果以 Tool 消息回喂 → 重调模型(上限 MAX_TOOL_ROUNDS)。
-                        if !tool_calls.is_empty() && tool_rounds < MAX_TOOL_ROUNDS {
+                        // 结果以 Tool 消息回喂 → 重调模型。
+                        if !tool_calls.is_empty() && !loop_broken {
                             tool_rounds += 1;
-                            // ADR-0022:assistant 消息原样携带 tool_calls 回喂,
-                            // 模型才能把下一轮的工具结果对齐回自己发起的调用
-                            // (此前只回 content,调用结构丢失 = 模型「失忆」)。
-                            messages.push(Message {
-                                role: Role::Assistant,
-                                tool_call_id: None,
-                                tool_calls: Some(tool_calls.clone()),
-                                content: content.clone(),
-                            });
-                            for tc in tool_calls {
+                            // 检测是否连续 5 次调用完全相同工具与参数
+                            for tc in &tool_calls {
+                                let sig = (tc.name.clone(), tc.arguments.clone());
+                                if recent_tool_signatures.len() >= 4
+                                    && recent_tool_signatures[recent_tool_signatures.len() - 1] == sig
+                                    && recent_tool_signatures[recent_tool_signatures.len() - 2] == sig
+                                    && recent_tool_signatures[recent_tool_signatures.len() - 3] == sig
+                                    && recent_tool_signatures[recent_tool_signatures.len() - 4] == sig
+                                {
+                                    loop_broken = true;
+                                    break;
+                                }
+                                recent_tool_signatures.push(sig);
+                                if recent_tool_signatures.len() > 20 {
+                                    recent_tool_signatures.remove(0);
+                                }
+                            }
+
+                            if loop_broken {
                                 let _ = tx.try_send(Cmd::ProviderDelta {
                                     operation_id: op_id.clone(),
-                                    delta: format!("\n[调用 {}]\n", tc.name),
+                                    delta: "\n(检测到连续 5 次调用相同工具与完全一致的入参，已触发防空转熔断保护。)\n".to_string(),
                                 });
-                                let capability = name_to_cap
-                                    .get(&tc.name)
-                                    .cloned()
-                                    .unwrap_or_else(|| tc.name.clone());
-                                let args: serde_json::Value = serde_json::from_str(&tc.arguments)
-                                    .unwrap_or(serde_json::Value::Null);
+                            } else {
+                                // ADR-0022:assistant 消息原样携带 tool_calls 回喂,
+                                // 模型才能把下一轮的工具结果对齐回自己发起的调用
+                                // (此前只回 content,调用结构丢失 = 模型「失忆」)。
+                                messages.push(Message {
+                                    role: Role::Assistant,
+                                    tool_call_id: None,
+                                    tool_calls: Some(tool_calls.clone()),
+                                    content: content.clone(),
+                                });
+                                for tc in tool_calls {
+                                    let args: serde_json::Value = serde_json::from_str(&tc.arguments)
+                                        .unwrap_or(serde_json::Value::Null);
+
+                                    // 提取核心目标参数(如 path, file_path, command, query)用于前端清晰呈现
+                                    let target_summary = args.get("path")
+                                        .or_else(|| args.get("file_path"))
+                                        .or_else(|| args.get("command"))
+                                        .or_else(|| args.get("query"))
+                                        .or_else(|| args.get("pattern"))
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("");
+
+                                    let target_display = if !target_summary.is_empty() {
+                                        format!(" {}", target_summary)
+                                    } else {
+                                        String::new()
+                                    };
+
+                                    let _ = tx.try_send(Cmd::ProviderDelta {
+                                        operation_id: op_id.clone(),
+                                        delta: format!("\n[调用 {}{}]\n", tc.name, target_display),
+                                    });
+                                    let capability = name_to_cap
+                                        .get(&tc.name)
+                                        .cloned()
+                                        .unwrap_or_else(|| tc.name.clone());
                                 // W9:工具调用事件(轨迹视图数据源)
                                 let tool_started = std::time::Instant::now();
                                 ctx_log.record_event(
@@ -574,43 +617,50 @@ pub(crate) fn spawn_turn(
                                 } else if let Ok(Ok(receipt_value)) = call_resp {
                                     tool_result = receipt_value.to_string();
                                 }
-                                // W9:工具结果事件(回喂模型的原文+耗时)
-                                ctx_log.record_event(
-                                    session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
-                                    op_id.as_str(),
-                                    turn_index,
-                                    "tool_result",
-                                    &format_ts(clock.now()),
-                                    serde_json::json!({
-                                        "tool": capability,
-                                        "result": tool_result,
-                                        "elapsed_ms": tool_started.elapsed().as_millis() as u64,
-                                    }),
-                                );
+	                                // W9:工具结果事件(回喂模型的原文+耗时)
+	                                let elapsed_ms = tool_started.elapsed().as_millis() as u64;
+	                                ctx_log.record_event(
+	                                    session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
+	                                    op_id.as_str(),
+	                                    turn_index,
+	                                    "tool_result",
+	                                    &format_ts(clock.now()),
+	                                    serde_json::json!({
+	                                        "tool": capability,
+	                                        "result": tool_result,
+	                                        "elapsed_ms": elapsed_ms,
+	                                    }),
+	                                );
+	                                // 前端轻量反馈:向前端推一条工具执行耗时与成败标记
+	                                let _ = tx.try_send(Cmd::ProviderDelta {
+	                                    operation_id: op_id.clone(),
+	                                    delta: format!("\n[工具完成 {} 耗时 {}ms]\n", tc.name, elapsed_ms),
+	                                });
                                 // ADR-0022:工具结果原生 role=tool + tool_call_id
                                 // 回喂,对齐模型因果链。不再强贴「不要再次调用」
                                 // 类负向禁令——链式调用(搜→读→改→测)是模型的
                                 // 正常工作方式;循环失控由 MAX_TOOL_ROUNDS 熔断。
-                                messages.push(Message {
-                                    role: Role::Tool,
-                                    content: tool_result,
-                                    tool_call_id: Some(tc.id.clone()),
-                                    tool_calls: None,
-                                });
+	                                messages.push(Message {
+	                                    role: Role::Tool,
+	                                    content: tool_result,
+	                                    tool_call_id: Some(tc.id.clone()),
+	                                    tool_calls: None,
+	                                });
+	                            }
                             }
-                            // 结果回喂后重调模型(仍在同一 attempt 的降级链内)
-                            continue;
-                        }
-                        // 工具轮上限耗尽且本轮只回了工具调用(无文本):
-                        // 终稿给显式说明,避免空 content 落库(前端空气泡
-                        // 门控下用户看不到任何输出)
-                        let content = if !tool_calls.is_empty() && content.trim().is_empty() {
-                            format!(
-                                "(连续工具调用已达单回合上限 {MAX_TOOL_ROUNDS} 次,回合在此收束;请重发消息继续。)"
-                            )
-                        } else {
-                            content
-                        };
+	                            // 结果回喂后重调模型(仍在同一 attempt 的降级链内)
+	                            continue;
+	                        }
+	                        // 熔断或工具轮只回了工具调用无文本时的兜底说明
+	                        let content = if !tool_calls.is_empty() && content.trim().is_empty() {
+	                            if loop_broken {
+	                                "(检测到连续 5 次调用相同工具与完全一致的入参，已触发防空转熔断保护。)".to_string()
+	                            } else {
+	                                "(工具调用已执行完成，回合在此收束。)".to_string()
+	                            }
+	                        } else {
+	                            content
+	                        };
                         // W9:终稿与回合边界事件(轨迹视图数据源)
                         ctx_log.record_event(
                             session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),

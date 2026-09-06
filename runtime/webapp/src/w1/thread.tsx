@@ -57,6 +57,11 @@ import { storage, STORAGE_KEYS, type PermissionMode, type ThinkingLevel } from "
 import { BM_EVENTS, emit } from "../lib/bus";
 import { DotScrollbar } from "./DotScrollbar";
 import { MarkdownRenderer } from "./MarkdownRenderer";
+import { parseAssistantContent, type ParsedContentBlock } from "./parser";
+import { ThinkingBlock } from "./components/ThinkingBlock";
+import { ToolTreeGroup } from "./components/ToolTreeGroup";
+import { TerminalBlock } from "./components/TerminalBlock";
+import { AgentStatusBar } from "./components/AgentStatusBar";
 
 export function Thread({
   sessionsCollapsed,
@@ -192,6 +197,7 @@ export function Thread({
           <DotScrollbar viewportRef={viewportRef} />
           <div className="composer-dock">
             <div className="relative mx-auto w-full max-w-[820px]">
+              <AgentStatusBar isRunning={useAuiState((s) => s.thread.isRunning)} activeModel={storage.get(STORAGE_KEYS.ACTIVE_MODEL) || ""} />
               <ApprovalDrawer />
               <Composer />
             </div>
@@ -602,12 +608,25 @@ function AssistantMessage() {
         <MessagePrimitive.Parts>
           {({ part }) => {
             if (part.type !== "text" || !part.text) return null;
-            const blocks = parseAssistantText(part.text);
+            const blocks = parseAssistantContent(part.text, isRunning);
             return (
               <div className="group/content flex flex-col gap-1.5" key={part.text.length}>
                 {blocks.map((b, idx) => {
-                  if (b.type === "tool_group") {
-                    return <ToolGroupCard key={idx} group={b} isRunning={isRunning} />;
+                  if (b.type === "thinking") {
+                    return (
+                      <ThinkingBlock
+                        key={idx}
+                        text={b.text}
+                        isStreaming={b.isStreaming}
+                        elapsedSeconds={b.elapsedSeconds}
+                      />
+                    );
+                  }
+                  if (b.type === "explore_group" || b.type === "changes_group" || b.type === "generic_tool_group") {
+                    return <ToolTreeGroup key={idx} block={b} isRunning={isRunning} />;
+                  }
+                  if (b.type === "terminal_block") {
+                    return <TerminalBlock key={idx} item={b.item} isRunning={isRunning} />;
                   }
                   return (
                     <MarkdownRenderer key={idx} content={b.text} />

@@ -7,7 +7,7 @@ BoenMind:个人生态的 AI Runtime / AI OS,当前为**阶段一(跨平台单软
 (Erlang/OTP、Kubernetes、VS Code,见 `architecture/deepwiki-validation.md`)。
 合同库冻结 v1.0(字段只增不破)。
 
-**当前状态(2026-09-06)**:v0.0.9 发版准备(代码/测试/文档/版本号均对齐);**工具调用原生协议还原落地**(ADR-0022,依四家底层报文横评调研 `docs/agent-tools-payload-comparison-report.md`):工具结果出原生 role:tool+tool_call_id、assistant 回喂携带 tool_calls、「不要再次调用」禁令废除、fs.*/exec/MCP 工具自描述(manifest.description,合同 Minor)、fs_edit 支持 edits 数组批量原子替换;**前端交互体验增强**(ReactMarkdown 渲染+User Turns 屏幕垂直居中正圆点发言导航 DotScrollbar 带左侧 Tooltip+消息编辑/重新生成分支+思考等级切换);此前:资深架构全面评审闭环(2026-09-04)、**fs.* 文件工具集内置化**(ADR-0021:fs.search/fs.read 直通、fs.write/fs.edit 审批,rg 引擎内嵌,沙箱=工作区注册表),生产内置清单=system.exec + fs.* 四件 + model.invoke(内核私有);**过夜二轮欠账清账**(2026-09-06:持久读拒开/emit tombstone/MCP 治理四件/工具白名单 allowed_tools/意图软防线/SkillDefinition 投影/插件双件/ESLint 本地集);**模块重构批**(broker/sqlite_state/task_ops/turn 拆目录,PluginsPage/context 拆分,F-12 依赖倒置,F-07 supervisor 装配下沉)。**下一步 = 待用户过目确认 ADR-0016 后推进 Skill v0.2 第二步 wasmtime 脚本执行面实现;远期候补(Code Mode 脚本合并/tool_search 渐进披露/按模型条件化 schema/意图硬门控设计)已登记 BACKLOG**。交付全史见 `milestones/HISTORY.md`;
+**当前状态(2026-09-06)**:v0.0.10 发版(代码/测试/文档/版本号均对齐);**任务执行呈现重构与同命令死循环治理**(ZCode 风格脑子图标思考卡/限高无滚动条平滑查看/同类操作目录树合并/彩色文件扩展名胶囊/吸底常驻 Ticker 状态条/取消人工固定 30 轮上限/连续 5 次同命令同参防空转熔断);此前:v0.0.9 原生工具协议还原+插件管控批(ADR-0023)+工作目录四区选择器;交付全史见 `milestones/HISTORY.md`;
 **欠账唯一入口 = `milestones/BACKLOG.md`**(已闭合条目自 2026-09-02 起移出台账)。
 
 ## 文件地图(规格分层)

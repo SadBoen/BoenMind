@@ -564,6 +564,41 @@ body {
   font-style: italic;
 }
 
+/* ZCode 风格流光文字与滚动遮罩无滚动条工具类 */
+.animated-gradient-text {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--fg-1) 100%, transparent) 0%,
+    color-mix(in srgb, var(--fg-1) 100%, transparent) 34%,
+    color-mix(in srgb, var(--fg-1) 35%, transparent) 50%,
+    color-mix(in srgb, var(--fg-1) 100%, transparent) 66%,
+    color-mix(in srgb, var(--fg-1) 100%, transparent) 100%
+  );
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  will-change: background-position;
+  backface-visibility: hidden;
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: 3.6s linear infinite gradient-flow;
+  display: inline-block;
+}
+
+@keyframes gradient-flow {
+  0% { background-position: 100% 0; }
+  50% { background-position: 0 0; }
+  100% { background-position: 0 0; }
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 /* 输入区 */
 .composer-dock {
   flex-shrink: 0;
