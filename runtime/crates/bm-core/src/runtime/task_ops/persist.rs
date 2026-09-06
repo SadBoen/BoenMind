@@ -28,7 +28,7 @@ pub(crate) fn persist_task(w: &mut World, task: &crate::task::Task) {
         return;
     };
     let payload = task_contract_json(task);
-    if let Err(e) = store.save_task(bm_persist::sqlite_state::TaskRow {
+    if let Err(e) = store.save_task(crate::ports::persist::TaskRow {
         id: task.id.as_str(),
         title: &task.title,
         state: task.state.as_str(),

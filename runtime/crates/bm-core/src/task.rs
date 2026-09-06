@@ -166,7 +166,7 @@ impl Task {
 }
 
 /// 恢复装载:行 → Task(载荷合同 JSON 优先,行级键列为兜底)。
-pub fn task_from_row(row: &bm_persist::recovery::TaskStateRow) -> Result<Task, String> {
+pub fn task_from_row(row: &crate::ports::persist::TaskStateRow) -> Result<Task, String> {
     #[derive(serde::Deserialize)]
     #[serde(rename_all = "snake_case")]
     struct Payload {
@@ -473,7 +473,7 @@ mod tests {
     #[test]
     fn task_from_row_roundtrips_payload_and_state() {
         let t = new_task();
-        let row = bm_persist::recovery::TaskStateRow {
+        let row = crate::ports::persist::TaskStateRow {
             id: t.id.as_str().to_string(),
             title: t.title.clone(),
             state: "paused".into(),

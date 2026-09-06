@@ -336,6 +336,7 @@ dependencies = [
  "bm-contract",
  "bm-persist",
  "chrono",
+ "rusqlite",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -364,6 +365,7 @@ name = "bm-persist"
 version = "0.0.8"
 dependencies = [
  "bm-contract",
+ "bm-core",
  "rusqlite",
  "serde",
  "serde_json",

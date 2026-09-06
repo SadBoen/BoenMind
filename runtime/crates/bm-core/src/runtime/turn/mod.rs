@@ -70,7 +70,7 @@ pub(crate) fn persist_approval(
                 "principal": principal, "trust": trust.as_str()
             });
         }
-        if let Err(e) = store.save_approval(bm_persist::sqlite_state::ApprovalRow {
+        if let Err(e) = store.save_approval(crate::ports::persist::ApprovalRow {
             id: approval.approval_id.as_str(),
             operation_id: op_id.as_str(),
             capability: approval.capability.as_str(),

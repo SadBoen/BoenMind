@@ -88,8 +88,9 @@ mod r2_tombstone_tests {
 
     fn test_world(dir: &std::path::Path) -> World {
         let (tx, _rx) = mpsc::channel::<Cmd>(64);
+        // F-12:内存桩(理由同 memory.rs 测试注释)
         let store: Arc<dyn EventStore> =
-            Arc::new(bm_persist::PersistStore::open(dir).expect("打开持久层"));
+            Arc::new(crate::ports::persist::test_support::MemEventStore::new());
         World {
             bus: EventBus::new(),
             exec_log: Arc::new(ExecutionLog::new(None)),

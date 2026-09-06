@@ -44,7 +44,7 @@ pub fn scope_ok(scope: &str) -> bool {
 /// 注册 memory.* 三能力(普通 Provider 身份;调用方把返回值并入
 /// RuntimeConfig.capabilities,store 与 Runtime 共享同一 EventStore)。
 pub fn memory_capabilities(
-    store: Arc<dyn bm_persist::EventStore>,
+    store: Arc<dyn crate::ports::persist::EventStore>,
     ids: Arc<dyn bm_contract::ids::IdGen>,
 ) -> Vec<(
     CapabilityManifest,
@@ -133,9 +133,10 @@ mod tests {
 
     #[test]
     fn manifests_register_under_memory_namespace() {
-        let dir = tempfile::tempdir().expect("临时目录");
-        let store: Arc<dyn bm_persist::EventStore> =
-            Arc::new(bm_persist::PersistStore::open(dir.path()).expect("打开"));
+        // F-12:bm-core 测试用内存桩(dev 依赖环会使 PersistStore 的 trait
+        // 身份分裂;真实库交互测试归 bm-persist/testkit)
+        let store: Arc<dyn crate::ports::persist::EventStore> =
+            Arc::new(crate::ports::persist::test_support::MemEventStore::new());
         let ids = Arc::new(bm_contract::ids::SeqIdGen::new());
         let caps = memory_capabilities(store, ids);
         let names: Vec<&str> = caps.iter().map(|(m, _)| m.capability.as_str()).collect();

@@ -9,7 +9,7 @@ pub(crate) fn persist_grant(w: &mut World, grant_id: &str) {
         return;
     };
     let (used, revoked) = w.grants.entry_state(grant_id).unwrap_or((0, false));
-    if let Err(e) = store.save_grant(bm_persist::sqlite_state::GrantRow {
+    if let Err(e) = store.save_grant(crate::ports::persist::GrantRow {
         id: grant.grant_id.as_str(),
         audience: grant.audience.as_str(),
         action: grant.action.as_str(),

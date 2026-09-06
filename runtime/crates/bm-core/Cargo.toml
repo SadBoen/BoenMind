@@ -6,7 +6,7 @@ repository.workspace = true
 
 [dependencies]
 bm-contract = { workspace = true }
-bm-persist = { workspace = true }
+# F-12:依赖倒置后 bm-core 不再依赖 bm-persist(测试走 dev-deps)
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 async-trait = { workspace = true }
@@ -18,7 +18,10 @@ ulid = { workspace = true }
 tracing = { workspace = true }
 sha2 = { workspace = true }
 
+rusqlite = { workspace = true }
+
 [dev-dependencies]
+bm-persist = { workspace = true }
 tempfile = { workspace = true }
 
 [lints]

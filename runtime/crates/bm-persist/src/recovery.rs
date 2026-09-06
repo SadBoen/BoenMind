@@ -11,84 +11,10 @@
 use crate::error::StoreResult;
 use crate::sqlite_state::StateDb;
 use crate::store::EventStore;
-use serde::Deserialize;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RecoveryReport {
-    /// 恢复完成后的状态位点。
-    pub last_applied_seq: u64,
-    /// 修复窗口内重放(补物化)的事件数。
-    pub replayed: usize,
-    /// 被标记 interrupted 的未终态 operation 数。
-    pub interrupted_recovered: usize,
-}
-
-/// 规范状态行(装配内存视图的载体)。
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct SessionRow {
-    pub id: String,
-    pub state: String,
-    pub agent_id: String,
-    pub created_at: String,
-    /// 重启续聊配套(2026-09-06):会话绑定工作目录(未绑定 = None)。
-    pub workspace_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct AgentRow {
-    pub id: String,
-    pub session_id: String,
-    pub name: String,
-    pub model_chain: String,
-    pub state: String,
-    pub budget_max_tokens: Option<i64>,
-    pub budget_max_turns: Option<i64>,
-    pub budget_used_tokens: i64,
-    pub budget_turns_used: i64,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct OperationRow {
-    pub id: String,
-    pub session_id: String,
-    pub agent_id: String,
-    pub request_id: Option<String>,
-    pub state: String,
-    pub turn_index: i64,
-    pub created_at: String,
-    pub completed_at: Option<String>,
-    pub action_summary: Option<String>,
-    pub result_reference: Option<String>,
-    pub error_code: Option<String>,
-    #[serde(default)]
-    pub error_message: Option<String>,
-    #[serde(default)]
-    pub input_content: Option<String>,
-}
-
-/// Task 规范状态行(M5-T1;payload = task/task.v0.1 合同 JSON)。
-#[derive(Debug, Clone, Deserialize)]
-pub struct TaskStateRow {
-    pub id: String,
-    pub title: String,
-    pub state: String,
-    pub created_by: String,
-    pub task_epoch: i64,
-    pub payload: String,
-    pub created_at: String,
-    pub updated_at: String,
-    pub parent_task_id: Option<String>,
-    pub delegation_depth: i64,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct WorldRows {
-    pub sessions: Vec<SessionRow>,
-    pub agents: Vec<AgentRow>,
-    pub operations: Vec<OperationRow>,
-    pub tasks: Vec<TaskStateRow>,
-}
+pub use bm_core::ports::persist::{
+    AgentRow, OperationRow, RecoveryReport, SessionRow, TaskStateRow, WorldRows,
+};
 
 /// ① 修复窗口:重放位点之后的日志尾部并补物化。返回补放条数。
 pub fn repair_tail(store: &dyn EventStore) -> StoreResult<usize> {

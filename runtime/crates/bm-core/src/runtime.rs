@@ -2,7 +2,7 @@
 //! 保证 event_seq/log_seq 的全局单调(INV-3/INV-4 的结构前提)。
 //! 回合任务只通过内部命令通道回报,不直接改状态。
 
-use bm_persist::EventStore;
+use crate::ports::persist::EventStore;
 
 use crate::approval::{ApprovalError, ApprovalManager, OpenApproval, RespondDecision};
 use crate::broker::{Broker, CallContext, CallOutcome, Decision, DenyReason, GrantLedger};
@@ -200,7 +200,7 @@ impl World {
     /// 保证恢复幂等;action_summary/result_reference 为非持久展示字段,恢复后为占位。
     pub fn load_world_rows(
         &mut self,
-        rows: bm_persist::WorldRows,
+        rows: crate::ports::persist::WorldRows,
         pending_interrupts: &mut Vec<(BmId, BmId, String)>,
         agents_to_resume: &mut Vec<(BmId, Option<BmId>)>,
     ) {

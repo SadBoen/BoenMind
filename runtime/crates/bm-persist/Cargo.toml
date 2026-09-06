@@ -5,6 +5,7 @@ edition.workspace = true
 repository.workspace = true
 
 [dependencies]
+bm-core = { path = "../bm-core" }
 bm-contract = { workspace = true }
 rusqlite = { workspace = true }
 sha2 = { workspace = true }

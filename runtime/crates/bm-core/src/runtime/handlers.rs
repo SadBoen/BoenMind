@@ -296,16 +296,20 @@ pub(crate) fn handle_session_delete(
         let _ = store.delete_session_rows(session_id.as_str());
     }
     let purged = match &w.config.data_dir {
-        Some(dir) => bm_persist::filter_lines_atomic(&dir.join("context-log.jsonl"), |line| {
-            serde_json::from_str::<serde_json::Value>(line)
-                .map(|v| v.get("session_id").and_then(|s| s.as_str()) == Some(session_id.as_str()))
-                .unwrap_or(false)
-        })
-        .map_err(|e| {
-            tracing::error!(error = %e, session = %session_id.as_str(), "context-log 擦除失败");
-            w.persist_poisoned = true;
-            CoreError::Semantic(ErrorCode::Internal, "context-log 擦除失败".into())
-        })?,
+        Some(dir) => {
+            crate::ports::persist::filter_lines_atomic(&dir.join("context-log.jsonl"), |line| {
+                serde_json::from_str::<serde_json::Value>(line)
+                    .map(|v| {
+                        v.get("session_id").and_then(|s| s.as_str()) == Some(session_id.as_str())
+                    })
+                    .unwrap_or(false)
+            })
+            .map_err(|e| {
+                tracing::error!(error = %e, session = %session_id.as_str(), "context-log 擦除失败");
+                w.persist_poisoned = true;
+                CoreError::Semantic(ErrorCode::Internal, "context-log 擦除失败".into())
+            })?
+        }
         None => 0,
     };
     // 持久层 sessions/agents 行删除(墓碑已在,事件重放亦不复活)
@@ -1050,7 +1054,7 @@ pub(crate) fn handle_capabilities_register(
                 }
                 if let Some(store) = w.store.clone()
                     && let Err(e) =
-                        store.save_capability_binding(bm_persist::sqlite_state::CapabilityRow {
+                        store.save_capability_binding(crate::ports::persist::CapabilityRow {
                             capability: &capability,
                             provider_instance_id: &instance,
                             epoch: 1,

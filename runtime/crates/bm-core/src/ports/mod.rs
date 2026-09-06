@@ -99,3 +99,5 @@ pub trait AsyncCapabilityExecutor: Send + Sync {
     /// 语义取消的传输层贯彻(尽力终止;M8.3)。缺省无操作。
     fn cancel_op(&self, _operation_id: &str) {}
 }
+
+pub mod persist;

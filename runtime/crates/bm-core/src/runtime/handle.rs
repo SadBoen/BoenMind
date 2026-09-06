@@ -7,7 +7,7 @@ use super::*;
 /// R1 收口(FULL-REVIEW-2026-09-05 §7):持久读失败 = 拒绝启动。空数据假象
 /// 会让 grant 权重重签(安全侧)、事件投影缺块、幂等收据丢失——与「宁可拒开,
 /// 不带残缺状态服务」的既有启动口径(handle.rs 顶部 recover/load_rows 同款)一致。
-fn rows_or_die<T>(r: bm_persist::error::StoreResult<Vec<T>>, what: &str) -> Vec<T> {
+fn rows_or_die<T>(r: crate::ports::persist::StoreResult<Vec<T>>, what: &str) -> Vec<T> {
     r.unwrap_or_else(|e| panic!("持久层读失败({what}),拒绝启动(宁可拒开): {e}"))
 }
 
@@ -121,7 +121,7 @@ impl RuntimeHandle {
             if let Some(store) = &world.store {
                 // 启动期:重启后 binding 随 --mcp-config 重装自然恢复,仅告警
                 if let Err(e) =
-                    store.save_capability_binding(bm_persist::sqlite_state::CapabilityRow {
+                    store.save_capability_binding(crate::ports::persist::CapabilityRow {
                         capability: &capability,
                         provider_instance_id: &instance,
                         epoch: 1,
