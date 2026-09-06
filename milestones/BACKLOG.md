@@ -18,6 +18,7 @@
 | 工具级辅助模型提供方(看图/TTS 等多模态手脚) | 用户提报(2026-09-06):允许给特定工具配置独立的 LLM provider——首个受益者=图片查看工具(工作区图片经视觉模型转文字描述回喂主模型,对标 DSH read_image/Pi read 视觉附件),同族还有 TTS 语音等;涉及 providers 注册表复用、能力 manifest 增发 provider_ref(合同 Minor)、turn 工具执行面外挂模型调用点 | OPEN(待排期) |
 | VPS v0.0.5 发版后验证清单 | 随包扫描双目录已修+直通工具内联回喂已修+模型调用硬顶 30s→120s(BOEN_TURN_TIMEOUT_SECS 可配)均已落 main(f894663+本批);VPS 侧 web-multisearch 已远程装好并批准在役(2 工具)。待用户明示发版→VPS 升级后复测:①直通工具(echo/counter)对话秒回 ②真模型联网问答(web_search)全链路 ③关于页/常规设置不回归,闭合后移出 | OPEN(随下次发版) |
 | W8 遗留:能力执行 cwd 注入 | ADR-0018 只做到回合 system prompt 注入;MCP/context-mode 等需要 cwd 的能力执行面尚未消费会话绑定工作区(该插件默认也未启用);2026-09-05 回看补记:内置 fs.* 同族——fs 工具相对路径在多工作区场景回退注册表首个根而非会话绑定根(guard.rs roots[0]),能力调用在核心层系无会话设计(system_session),修需穿合同面;与 Skill v0.2 执行线同批评估,继续经 Broker 管线、不新增特权通道 | OPEN(依 ADR-0016/0017 排期) |
+| exec 单命令 60s 铁顶(manifest 钳制) | 来源 2026-09-07 用户实测:VPS 让 AI 分析 GitHub 项目 clone 必报 60s 超时。链路=system.exec manifest timeout_ms=60000(system_exec.rs:42)→ 回合 deadline=manifest.timeout_ms.clamp(100ms,600s)(capability.rs:731)→ 执行体 min(模型自传,deadline)(system_exec.rs:80-84),模型自传 timeout_ms 上限 300s 也被钳回 60s;全量限制盘点见 docs/runtime-limits-inventory-20260907.md;修法候选=A)manifest 60000→300000(天花板 600s 内一行改动) B)BOEN_EXEC_TIMEOUT_MS 环境变量化装配覆盖 | OPEN(待修法裁决) |
 
 ## 2. 流程收尾
 
