@@ -65,6 +65,7 @@ pub(crate) fn handle_session_create(
             state: AgentState::Created,
             budget,
             system_prompt: spec.system_prompt.clone(),
+            allowed_tools: spec.allowed_tools.clone(),
         },
     );
     // created→starting→running(agent_start + model_binding_ready):无事件(规格 §8.6)。

@@ -1546,6 +1546,7 @@ pub(crate) fn handle_task_autorun_start(
                 model_chain,
                 budget: None,
                 system_prompt: None,
+                allowed_tools: None,
                 workspace_id: None,
             },
         },

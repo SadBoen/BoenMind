@@ -191,6 +191,12 @@ pub async fn chat_completions(
                 bm_core::roles::compose_role_prompt(d, target_role_id.as_deref())
                     .filter(|s| !s.is_empty())
             });
+            // F1(ADR-0022 后续批):角色工具白名单随角色烤入会话;未声明 =
+            // None(全量挂载,向后兼容)。
+            let initial_allowed_tools = state
+                .data_dir
+                .as_ref()
+                .and_then(|d| bm_core::roles::allowed_tools_for(d, target_role_id.as_deref()));
             match state
                 .handle
                 .session_create(
@@ -209,6 +215,7 @@ pub async fn chat_completions(
                             system_prompt: initial_system_prompt,
                             // W8:对话选择了工作区则随会话创建绑定(校验在核心;
                             // 未登记 id 会话创建即 400,错误消息透出)。
+                            allowed_tools: initial_allowed_tools,
                             workspace_id: requested_workspace.clone(),
                         },
                     },

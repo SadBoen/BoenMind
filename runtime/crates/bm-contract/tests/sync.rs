@@ -363,6 +363,7 @@ fn session_and_agent_payloads_validate() {
             }),
             system_prompt: None,
             workspace_id: None,
+            allowed_tools: None,
         },
     })
     .unwrap();

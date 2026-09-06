@@ -58,6 +58,7 @@ async fn main() -> CoreResult<()> {
                     }),
                     system_prompt: None,
                     workspace_id: None,
+                    allowed_tools: None,
                 },
             },
         )

@@ -131,6 +131,7 @@ async fn direct_tool_round_feeds_inline_result_without_poll_timeout() {
                     budget: None,
                     system_prompt: None,
                     workspace_id: None,
+                    allowed_tools: None,
                 },
             },
         )

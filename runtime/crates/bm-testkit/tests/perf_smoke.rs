@@ -47,6 +47,7 @@ fn session_params() -> SessionCreateParams {
         agent: AgentSpec {
             system_prompt: None,
             workspace_id: None,
+            allowed_tools: None,
             name: "assistant".into(),
             model_chain: vec![bm_testkit_replay::MODEL_A.into()],
             budget: Some(bm_contract::budget::Budget {

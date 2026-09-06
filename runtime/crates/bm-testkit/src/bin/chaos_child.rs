@@ -60,6 +60,7 @@ async fn main() {
                     SessionCreateParams {
                         agent: AgentSpec {
                             system_prompt: None,
+                            allowed_tools: None,
                             workspace_id: None,
                             name: "assistant".into(),
                             model_chain: vec![bm_testkit_replay::MODEL_A.into()],

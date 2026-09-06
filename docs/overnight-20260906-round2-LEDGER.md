@@ -33,6 +33,9 @@
 
 ## 过程记录
 
+- F1/F2:roles.json 角色可配 "allowed_tools";turn 过滤 tools_json+name_to_cap;测试/桩 11 文件构造点补齐(批量脚本两次误伤已逐一修复:Budget 嵌套误插/宏参数误插,教训=批量补构造点必须逐文件锚定);66 套件零失败
+## 过程记录(旧)
+
 - R1:handle.rs 启动面 10 处改 rows_or_die(含 last_log_seq expect 防 seq 回绕);events_for_session/task 改 CoreResult,handlers 两调用点透传 ?;EventsAll 诊断端口保留尽力语义(补注释)
 - R2:emit 坏形状事件改 tombstone 占位(StoreWriteRejected 落在原 seq 槽,持久+总线),坏事件本体不再进总线;新增世界级回归测试(tombstone 后 seq 连续+落盘断言),键集须守合同注册表(key/reason), rejected_type 扩键被注册表精确断言拦下已回退
 - bm-core 87 测全绿

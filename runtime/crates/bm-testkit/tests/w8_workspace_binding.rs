@@ -116,6 +116,7 @@ fn spec(workspace_id: Option<&str>) -> SessionCreateParams {
             budget: None,
             system_prompt: None,
             workspace_id: workspace_id.map(str::to_string),
+            allowed_tools: None,
         },
     }
 }

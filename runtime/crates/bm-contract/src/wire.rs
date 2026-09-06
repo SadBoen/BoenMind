@@ -189,6 +189,11 @@ pub struct AgentSpec {
     /// 给出则核心对 config/workspaces.json 校验,未登记 id 拒绝。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_id: Option<String>,
+    /// ADR-0022 后续批 Minor(只增):对话工具白名单。None/缺省 = 全量挂载
+    /// (向后兼容);Some(非空) = 仅挂清单内工具(能力名 fs.read / wire 名
+    /// read 等均认)。会话创建时自角色配置烤入(roles::allowed_tools_for)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_tools: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -145,6 +145,7 @@ fn agent_spec(model: &str) -> bm_contract::wire::AgentSpec {
     bm_contract::wire::AgentSpec {
         system_prompt: None,
         workspace_id: None,
+        allowed_tools: None,
         name: "tester".into(),
         model_chain: vec![model.to_string()],
         budget: None,

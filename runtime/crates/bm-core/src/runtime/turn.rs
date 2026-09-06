@@ -194,6 +194,7 @@ pub(crate) fn spawn_turn(
     };
     let ctx_log = w.ctx_log.clone();
 
+    let allowed_tools = agent.allowed_tools.clone();
     tokio::spawn(async move {
         // W4:messages 含角色 prompt + 历史回合 + 本轮输入;tools=直通工具
         // (OpenAI function 格式,capability 名的点映射为单下划线);工具结果
@@ -256,19 +257,22 @@ pub(crate) fn spawn_turn(
             .iter()
             .map(|(cap, ..)| cap.replace('.', "_"))
             .collect();
-        let tools_json: Vec<serde_json::Value> = chat_tools
+        let wire_name_of = |cap: &str| -> String {
+            // OpenAI function.name 规范要求 ^[a-zA-Z0-9_-]{1,64}$，不能有点号。
+            // 默认单下划线转义(fs.read -> fs_read; mcp.foo.bar -> mcp_foo_bar)；
+            // 内置五件走短名表；短名被占则回落长名,保唯一性。
+            let default_name = cap.replace('.', "_");
+            SHORT_WIRE_NAMES
+                .iter()
+                .find(|(c, _)| *c == cap)
+                .map(|(_, short)| short.to_string())
+                .filter(|short| !taken.contains(short))
+                .unwrap_or(default_name)
+        };
+        let mut tools_json: Vec<serde_json::Value> = chat_tools
             .iter()
             .map(|(cap, schema, needs_approval, manifest_desc)| {
-                // OpenAI function.name 规范要求 ^[a-zA-Z0-9_-]{1,64}$，不能有点号。
-                // 默认单下划线转义(fs.read -> fs_read; mcp.foo.bar -> mcp_foo_bar)；
-                // 内置五件走短名表；调用返回时由 name_to_cap 原样映射回内核能力名。
-                let default_name = cap.replace('.', "_");
-                let openai_name = SHORT_WIRE_NAMES
-                    .iter()
-                    .find(|(c, _)| c == cap)
-                    .map(|(_, short)| short.to_string())
-                    .filter(|short| !taken.contains(short))
-                    .unwrap_or(default_name);
+                let openai_name = wire_name_of(cap);
                 name_to_cap.insert(openai_name.clone(), cap.clone());
                 // ADR-0022 描述治理:描述随 manifest 走(fs.*/system.exec 内置
                 // 能力与 MCP 工具均自描述);缺省按审批语义给最小兜底,不再
@@ -294,6 +298,49 @@ pub(crate) fn spawn_turn(
                 })
             })
             .collect();
+
+        // F1(ADR-0022 后续批):工具白名单——Some(非空) 只挂清单内工具。
+        // 匹配口径:能力名 fs.read / 单下划线 fs_read / wire 短名 read 三种
+        // 写法均认;清单写了不存在的工具 = 忽略该项(白名单语义从宽)。
+        if let Some(allowed) = &allowed_tools {
+            let allow: std::collections::HashSet<&str> =
+                allowed.iter().map(String::as_str).collect();
+            tools_json.retain(|t| {
+                let wire = t["function"]["name"].as_str().unwrap_or("");
+                match name_to_cap.get(wire) {
+                    Some(cap) => {
+                        allow.contains(cap.as_str())
+                            || allow.contains(cap.replace('.', "_").as_str())
+                            || allow.contains(wire)
+                    }
+                    None => false,
+                }
+            });
+            let kept: std::collections::HashSet<String> = tools_json
+                .iter()
+                .filter_map(|t| t["function"]["name"].as_str().map(String::from))
+                .collect();
+            name_to_cap.retain(|wire, _| kept.contains(wire));
+        }
+
+        // F2(用户 2026-09-05 提报的意图门控软防线):挂载工具时注入工具纪律
+        // 独立 System 段——寒暄/纯问答不动用文件、命令与联网工具;代码层
+        // 硬门控涉及语义判定产品设计,另行排期。
+        if !tools_json.is_empty() {
+            messages.insert(
+                1,
+                Message {
+                    role: Role::System,
+                    content: "[工具纪律]
+1) 用户打招呼、寒暄、闲聊或纯知识问答时,直接回答,不要调用文件、命令执行或联网工具;
+2) 仅当用户明确要求查看/修改文件、执行命令或联网查资料时,才使用对应工具;
+3) 拿不准用户意图时先一句话确认,不要自行扫描文件或系统。"
+                        .into(),
+                    tool_call_id: None,
+                    tool_calls: None,
+                },
+            );
+        }
 
         for attempt in 1..=max_attempts {
             let model_id = chain[((attempt - 1) as usize) % chain.len()].clone();

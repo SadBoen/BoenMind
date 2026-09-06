@@ -41,6 +41,8 @@ pub struct Agent {
     pub budget: crate::budget::BudgetState,
     /// W4b: 会话级指定或创建时继承的角色 system prompt
     pub system_prompt: Option<String>,
+    /// ADR-0022 后续批:对话工具白名单(None=全量挂载;Some=仅挂清单内)。
+    pub allowed_tools: Option<Vec<String>>,
 }
 
 impl Agent {

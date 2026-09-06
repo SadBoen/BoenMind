@@ -41,6 +41,16 @@
           "minLength": 1,
           "maxLength": 100,
           "description": "W8 Minor（只增，ADR-0018）：会话绑定的工作区注册表 id（不透明短 id）。缺省/null 不出字段 = 不绑定；给出则校验 config/workspaces.json，未登记 id 拒绝（validation_failed）。作用域为进程内会话（服务重启后由客户端重新绑定）"
+        },
+        "allowed_tools": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "description": "ADR-0022 后续批 Minor（只增）：对话工具白名单（能力名 fs.read / wire 名 read 等均认）。缺省/null 不出字段 = 全量挂载（向后兼容）；非空数组 = 仅挂清单内工具。意图：按角色裁剪模型工具背包，防上下文膨胀与闲聊误调用"
         }
       }
     },

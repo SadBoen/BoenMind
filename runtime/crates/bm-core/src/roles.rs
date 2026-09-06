@@ -61,3 +61,25 @@ pub fn compose_role_prompt(data_dir: &Path, role_id: Option<&str>) -> Option<Str
         Some(format!("{base}\n\n{skill_text}"))
     }
 }
+
+/// 读角色的对话工具白名单(ADR-0022 后续批)。roles.json 角色对象可选
+/// `allowed_tools: ["fs.read", "read", "web_search_lite", ...]`(能力名 /
+/// 单下划线名 / wire 短名均认,turn 侧归一匹配)。返回:
+/// - `None` = 角色未声明白名单(全量挂载,缺省形态);
+/// - `Some(list)` = 仅挂清单内工具;空数组语义等同未声明(防手滑全禁)。
+pub fn allowed_tools_for(data_dir: &Path, role_id: Option<&str>) -> Option<Vec<String>> {
+    let text = std::fs::read_to_string(data_dir.join("config").join("roles.json")).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let roles = v["roles"].as_array()?;
+    let active = v["active_id"].as_str().unwrap_or("assistant");
+    let role = roles
+        .iter()
+        .find(|r| r["id"].as_str() == Some(role_id.unwrap_or(active)))
+        .or_else(|| roles.first())?;
+    let list: Vec<String> = role["allowed_tools"]
+        .as_array()?
+        .iter()
+        .filter_map(|t| t.as_str().map(String::from))
+        .collect();
+    if list.is_empty() { None } else { Some(list) }
+}

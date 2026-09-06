@@ -251,6 +251,8 @@ impl World {
                     state,
                     budget,
                     system_prompt: None,
+                    // 与 system_prompt 同语义:会话/角色进程内作用域,恢复为 None
+                    allowed_tools: None,
                 },
             );
         }

@@ -106,6 +106,7 @@ async fn second_turn_request_carries_first_turn_history() {
                     model_chain: vec!["mock.model".into()],
                     budget: None,
                     system_prompt: None,
+                    allowed_tools: None,
                     workspace_id: None,
                 },
             },
