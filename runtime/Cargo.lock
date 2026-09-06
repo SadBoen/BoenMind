@@ -407,6 +407,7 @@ dependencies = [
 name = "bm-runtime"
 version = "0.0.8"
 dependencies = [
+ "async-trait",
  "axum",
  "bm-cli",
  "bm-contract",
@@ -427,6 +428,7 @@ name = "bm-surface-http"
 version = "0.0.8"
 dependencies = [
  "async-stream",
+ "async-trait",
  "axum",
  "bm-contract",
  "bm-core",

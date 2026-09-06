@@ -5,6 +5,7 @@ edition.workspace = true
 repository.workspace = true
 
 [dependencies]
+async-trait = { workspace = true }
 bm-contract = { workspace = true }
 bm-core = { workspace = true }
 bm-providers = { workspace = true }

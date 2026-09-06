@@ -50,8 +50,9 @@ struct TestRegistrar<'a> {
     calls: &'a std::sync::Mutex<(usize, usize)>,
 }
 
+#[async_trait::async_trait]
 impl bm_providers::mcp::supervisor::CapabilityRegistrar for TestRegistrar<'_> {
-    fn register(
+    async fn register(
         &self,
         _entries: Vec<(
             CapabilityManifest,
@@ -61,7 +62,7 @@ impl bm_providers::mcp::supervisor::CapabilityRegistrar for TestRegistrar<'_> {
         self.calls.lock().expect("锁").0 += 1;
         Ok(())
     }
-    fn unregister(&self, _names: Vec<String>) -> Result<(), String> {
+    async fn unregister(&self, _names: Vec<String>) -> Result<(), String> {
         self.calls.lock().expect("锁").1 += 1;
         Ok(())
     }

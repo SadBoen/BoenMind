@@ -161,56 +161,54 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let hub: Option<Arc<bm_providers::mcp::McpHub>> = mcp_config
         .as_ref()
         .map(|_| bm_providers::mcp::McpHub::new());
-    if let Some(cfg) = &mcp_config {
-        let hub = hub.as_ref().expect("hub 已构造");
-        let setups =
-            bm_providers::mcp::load_mcp_setups(cfg, secrets.as_ref()).unwrap_or_else(|e| {
-                eprintln!("[MCP] 解析 MCP 配置文件失败: {e}");
-                Vec::new()
-            });
-        for setup in setups {
-            let transport: Arc<dyn bm_providers::mcp::McpTransport> = match setup.transport.as_str()
-            {
-                "http" | "sse" | "streamable-http" => {
-                    let Some(url) = &setup.url else {
-                        eprintln!("[MCP] 远程 MCP 服务「{}」缺少 url (已跳过)", setup.name);
-                        continue;
-                    };
-                    bm_providers::mcp::HttpMcpTransport::new(url, setup.bearer_token.clone())
-                }
-                _ => match bm_providers::mcp::StdioMcpTransport::spawn(
-                    &setup.command,
-                    &setup.args,
-                    &setup.env_resolved,
-                    setup.restart_limit,
-                ) {
-                    Ok(t) => t,
-                    Err(e) => {
-                        eprintln!("[MCP] 启动 MCP 服务「{}」失败 (已跳过): {e}", setup.name);
-                        continue;
-                    }
-                },
-            };
-            let manifests = match hub
-                .connect(&setup.name, transport, setup.tool_timeout_ms)
-                .await
-            {
-                Ok(m) => m,
-                Err(e) => {
-                    eprintln!(
-                        "[MCP] 接入 MCP 服务「{}」握手失败 (已跳过): {e}",
-                        setup.name
-                    );
-                    continue;
-                }
-            };
-            println!(
-                "MCP server {} 已接入:{} 个工具",
-                setup.name,
-                manifests.len()
+    if let (Some(cfg_path), Some(hub)) = (mcp_config.as_deref(), hub.as_ref()) {
+        // F-07:启动装载与热装载同调 supervisor(消除双写);
+        // 启动侧 registrar = 收集 entries 进 capabilities,无注销语义。
+        struct CollectRegistrar {
+            entries: std::sync::Mutex<
+                Vec<(
+                    bm_contract::capability::CapabilityManifest,
+                    Arc<dyn bm_core::registry::CapabilityProvider>,
+                )>,
+            >,
+        }
+        #[async_trait::async_trait]
+        impl bm_providers::mcp::supervisor::CapabilityRegistrar for CollectRegistrar {
+            async fn register(
+                &self,
+                entries: Vec<(
+                    bm_contract::capability::CapabilityManifest,
+                    Arc<dyn bm_core::registry::CapabilityProvider>,
+                )>,
+            ) -> Result<(), String> {
+                self.entries.lock().expect("锁").extend(entries);
+                Ok(())
+            }
+            async fn unregister(&self, _names: Vec<String>) -> Result<(), String> {
+                Ok(()) // 启动时无已装载,不触达
+            }
+        }
+
+        let secrets: Arc<dyn bm_core::ports::SecretStore> = secrets.clone();
+        let registrar = CollectRegistrar {
+            entries: std::sync::Mutex::new(Vec::new()),
+        };
+        let outcome = bm_providers::mcp::supervisor::sync_from_config(
+            hub,
+            cfg_path,
+            secrets,
+            Vec::new(),
+            &registrar,
+        )
+        .await;
+        let collected = registrar.entries.lock().expect("锁").clone();
+        capabilities.extend(collected);
+        mcp_loaded = outcome.note_loaded;
+        for f in &outcome.failed {
+            eprintln!(
+                "[MCP] 装载失败 (已跳过): {}",
+                f["error"].as_str().unwrap_or("")
             );
-            mcp_loaded.push(json!({ "name": setup.name, "tools": manifests.len() }));
-            capabilities.extend(bm_providers::mcp::McpHub::capability_entries(manifests));
         }
         mcp_executor = Some(hub.clone() as Arc<dyn bm_core::ports::AsyncCapabilityExecutor>);
     }

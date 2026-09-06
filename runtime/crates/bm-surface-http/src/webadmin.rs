@@ -2191,7 +2191,7 @@ pub fn admin_routes(cfg: AdminConfig) -> axum::Router {
 ///
 /// 装载完成后刷新 AdminConfig.mcp_servers 快照。
 pub async fn mcp_reload(State(cfg): State<AdminConfig>) -> Response {
-    use bm_providers::mcp::McpHub;
+    use bm_providers::mcp::supervisor::{CapabilityRegistrar, sync_from_config};
 
     let Some(path) = cfg.mcp_config.clone() else {
         return admin_error(
@@ -2209,11 +2209,6 @@ pub async fn mcp_reload(State(cfg): State<AdminConfig>) -> Response {
         return admin_error(StatusCode::INTERNAL_SERVER_ERROR, "Secret Store 未就绪");
     };
 
-    let servers = match read_mcp_servers(&path) {
-        Ok(servers) => servers,
-        Err(e) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e),
-    };
-
     let loaded_servers: Vec<Value> = cfg
         .mcp_servers
         .read()
@@ -2224,120 +2219,56 @@ pub async fn mcp_reload(State(cfg): State<AdminConfig>) -> Response {
         .filter_map(|s| s["name"].as_str().map(|n| n.to_string()))
         .collect();
 
-    let target_names: Vec<String> = servers
-        .iter()
-        .filter_map(|s| s["name"].as_str().map(|n| n.to_string()))
-        .filter(|n| !n.is_empty())
-        .collect();
-
-    // 1. 处理需要移除的 server (在 loaded 中但不在 target 中)
-    let mut uninstalled: Vec<String> = Vec::new();
-    for name in &loaded_names {
-        if !target_names.contains(name) {
-            let removed_caps = hub.disconnect_server(name).await;
-            if !removed_caps.is_empty() {
-                let _ = cfg.handle.capabilities_unregister(removed_caps).await;
-            }
-            uninstalled.push(name.clone());
-        }
+    // F-07:装配逻辑收口 supervisor(启动/热装载同调),本 handler 仅壳。
+    struct CoreRegistrar {
+        handle: bm_core::runtime::RuntimeHandle,
     }
-
-    // 2. 重新扫描/连接 target 中的每一个 server (支持新增与修改更新)
-    let mut registered: Vec<String> = Vec::new();
-    let mut updated: Vec<String> = Vec::new();
-    let mut failed: Vec<Value> = Vec::new();
-    let mut next_loaded_snapshot: Vec<Value> = Vec::new();
-
-    for item in &servers {
-        let name = item["name"].as_str().unwrap_or("").to_string();
-        if name.is_empty() {
-            continue;
-        }
-        let command = item["command"].as_str().unwrap_or("").to_string();
-        let args: Vec<String> = item["args"]
-            .as_array()
-            .map(|a| {
-                a.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let timeout = item["tool_timeout_ms"].as_u64().unwrap_or(30_000);
-
-        // 如果是已存在的 server，先从 hub 摘除旧路由和注销旧能力
-        if loaded_names.contains(&name) {
-            let removed_caps = hub.disconnect_server(&name).await;
-            if !removed_caps.is_empty() {
-                let _ = cfg.handle.capabilities_unregister(removed_caps).await;
-            }
-        }
-
-        // env 解析:配置文件里的 secret: 引用走 SecretStore
-        let setup = match bm_providers::mcp::load_mcp_setups(&path, secrets.as_ref()) {
-            Ok(setups) => setups.into_iter().find(|s| s.name == name),
-            Err(e) => {
-                failed.push(json!({"name": name, "error": format!("配置解析失败: {e}")}));
-                continue;
-            }
-        };
-        let Some(setup) = setup else {
-            continue;
-        };
-
-        let loaded = async {
-            let transport: Arc<dyn bm_providers::mcp::McpTransport> = match setup.transport.as_str()
-            {
-                "http" | "sse" | "streamable-http" => {
-                    let url = setup
-                        .url
-                        .as_deref()
-                        .ok_or_else(|| "远程 MCP 缺少 url 字段".to_string())?;
-                    bm_providers::mcp::HttpMcpTransport::new(url, setup.bearer_token.clone())
-                }
-                _ => bm_providers::mcp::StdioMcpTransport::spawn(
-                    &command,
-                    &args,
-                    &setup.env_resolved,
-                    setup.restart_limit,
-                )
-                .map_err(|e| e.to_string())?,
-            };
-            hub.connect(&name, transport, timeout)
+    #[async_trait::async_trait]
+    impl CapabilityRegistrar for CoreRegistrar {
+        async fn register(
+            &self,
+            entries: Vec<(
+                bm_contract::capability::CapabilityManifest,
+                Arc<dyn bm_core::registry::CapabilityProvider>,
+            )>,
+        ) -> Result<(), String> {
+            self.handle
+                .capabilities_register(entries)
                 .await
-                .map_err(|e| e.to_string())
+                .map(|_| ())
+                .map_err(|e| format!("{e}"))
         }
-        .await;
-
-        match loaded {
-            Ok(manifests) => {
-                let count = manifests.len();
-                let entries = McpHub::capability_entries(manifests);
-                match cfg.handle.capabilities_register(entries).await {
-                    Ok(_names) => {
-                        if loaded_names.contains(&name) {
-                            updated.push(name.clone());
-                        } else {
-                            registered.push(name.clone());
-                        }
-                        next_loaded_snapshot.push(json!({"name": name, "tools": count}));
-                    }
-                    Err(e) => failed.push(json!({"name": name, "error": format!("{e}")})),
-                }
-            }
-            Err(e) => failed.push(json!({"name": name, "error": e})),
+        async fn unregister(&self, names: Vec<String>) -> Result<(), String> {
+            // 与既有行为一致:注销经核心命令;错误走 failed 通道
+            self.handle
+                .capabilities_unregister(names)
+                .await
+                .map(|_| ())
+                .map_err(|e| format!("{e}"))
         }
     }
+
+    let outcome = sync_from_config(
+        &hub,
+        &path,
+        secrets,
+        loaded_names,
+        &CoreRegistrar {
+            handle: cfg.handle.clone(),
+        },
+    )
+    .await;
 
     if let Ok(mut g) = cfg.mcp_servers.write() {
-        *g = next_loaded_snapshot;
+        *g = outcome.note_loaded;
     }
 
     Json(json!({
-        "ok": failed.is_empty(),
-        "registered": registered,
-        "updated": updated,
-        "uninstalled": uninstalled,
-        "failed": failed,
+        "ok": outcome.failed.is_empty(),
+        "registered": outcome.registered,
+        "updated": outcome.updated,
+        "uninstalled": outcome.uninstalled,
+        "failed": outcome.failed,
         "note": "MCP 服务已完成热重载(支持新增、修改与卸载免重启)",
     }))
     .into_response()

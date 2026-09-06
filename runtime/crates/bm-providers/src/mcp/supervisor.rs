@@ -3,10 +3,10 @@
 //! 本模块将其收口为单一入口,两处调用点同调。registrar 抽象由调用方注入
 //! (启动=直接收集,热装载=capabilities_register/unregister + 快照写回)。
 
-use crate::mcp::{McpHub, McpTransport, StdioMcpTransport, HttpMcpTransport, load_mcp_setups};
+use crate::mcp::{HttpMcpTransport, McpHub, McpTransport, StdioMcpTransport, load_mcp_setups};
 use bm_contract::capability::CapabilityManifest;
 use bm_core::ports::SecretStore;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -22,12 +22,16 @@ pub struct SyncOutcome {
 }
 
 /// 能力注册/注销回调(启动=收集;热装载=转核心命令)。
-pub trait CapabilityRegistrar {
-    fn register(
+#[async_trait::async_trait]
+pub trait CapabilityRegistrar: Send + Sync {
+    async fn register(
         &self,
-        entries: Vec<(CapabilityManifest, Arc<dyn bm_core::registry::CapabilityProvider>)>,
+        entries: Vec<(
+            CapabilityManifest,
+            Arc<dyn bm_core::registry::CapabilityProvider>,
+        )>,
     ) -> Result<(), String>;
-    fn unregister(&self, names: Vec<String>) -> Result<(), String>;
+    async fn unregister(&self, names: Vec<String>) -> Result<(), String>;
 }
 
 /// 从配置读 server 清单(文件不存在 = 空清单)。
@@ -74,7 +78,7 @@ pub async fn sync_from_config(
         if !target_names.contains(name) {
             let removed_caps = hub.disconnect_server(name).await;
             if !removed_caps.is_empty()
-                && let Err(e) = registrar.unregister(removed_caps)
+                && let Err(e) = registrar.unregister(removed_caps).await
             {
                 outcome.failed.push(json!({"name": name, "error": e}));
             } else {
@@ -104,7 +108,7 @@ pub async fn sync_from_config(
         if loaded_names.contains(&name) {
             let removed_caps = hub.disconnect_server(&name).await;
             if !removed_caps.is_empty()
-                && let Err(e) = registrar.unregister(removed_caps)
+                && let Err(e) = registrar.unregister(removed_caps).await
             {
                 outcome.failed.push(json!({"name": name, "error": e}));
                 continue;
@@ -151,7 +155,7 @@ pub async fn sync_from_config(
             Ok(manifests) => {
                 let count = manifests.len();
                 let entries = McpHub::capability_entries(manifests);
-                match registrar.register(entries) {
+                match registrar.register(entries).await {
                     Ok(()) => {
                         if loaded_names.contains(&name) {
                             outcome.updated.push(name.clone());
@@ -170,4 +174,3 @@ pub async fn sync_from_config(
     }
     outcome
 }
-
