@@ -1,6 +1,6 @@
 // W2 设置中心 · 模型提供商页(provider 库 CRUD + 连通探针 + 模型清单拉取
 // + 设为当前)。后端 = /admin/providers + /admin/model/active(webadmin.rs)。
-// 组件映射:表单内模型选择 = 注册表 elements-model-picker(本体选装);
+// 组件映射:表单内模型选择 = 内联 chip 标签(点中泛绿);
 // 对话框/按钮/输入 = shadcn 官方件。
 import { useCallback, useEffect, useState } from "react";
 import { useTimedNotice } from "@/lib/use-timed-notice";
@@ -16,7 +16,6 @@ import {
   XCircleIcon,
 } from "lucide-react";
 import { api, type ProbeResult, type Provider } from "./api";
-import { ModelPicker, type PickableModel } from "@/components/model-picker";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -376,15 +375,6 @@ function ProviderDialog({
     }
   };
 
-  const pickable: PickableModel[] = form.models.map((m) => ({
-    id: m,
-    name: m,
-    family: "已拉取的模型清单",
-    context: "",
-    price: "",
-    capabilities: [],
-  }));
-
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
@@ -536,16 +526,6 @@ function ProviderDialog({
                     </div>
                   );
                 })()}
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <Label>默认模型(点选;「设为当前」用)</Label>
-                <ModelPicker
-                  models={pickable}
-                  selectedId={form.defaultModel}
-                  onSelect={(id) => setForm({ ...form, defaultModel: id })}
-                  className="max-w-full"
-                />
               </div>
             </>
           ) : null}

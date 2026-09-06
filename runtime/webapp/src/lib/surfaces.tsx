@@ -1,6 +1,6 @@
 "use client";
 
-// 选装组件适配共享样式层 (保留正在被 file-tree 与 model-picker 引用的基础令牌)
+// 选装组件适配共享样式层 (保留正在被 file-tree 引用的基础令牌)
 
 export const paper = "bg-background border border-border/60 dark:bg-popover";
 
