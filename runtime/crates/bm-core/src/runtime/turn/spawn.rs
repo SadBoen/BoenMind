@@ -14,50 +14,8 @@ pub(crate) fn spawn_turn(
         Some(m) if !m.trim().is_empty() => vec![m],
         _ => agent.model_chain.clone(),
     };
-    // M7 S1:模型调用过 Broker(M4 §5.8 豁免撤销;ADR-0010)。
-    // 授权走 Grant 台账:agent 创建即授 model.invoke 永续 Grant,可经
-    // grant.revoke 收回(ADR-0006 权力显式化)。不走信任面——内容链构造层
-    // 拒绝 trusted(基线 §4.5),而模型调用是回合机器的固定动作。
-    let model_call_audit = {
-        let ctx = CallContext::content_chain(
-            &format!("agent:{}", agent.id.as_str()),
-            DataTrust::Untrusted,
-        )
-        .expect("内容链不得声称 trusted(此处传 untrusted,构造恒成功)");
-        let principal = ctx.principal.clone();
-        let decision = {
-            let broker = Broker::new(
-                &w.registry,
-                &mut w.grants,
-                &*w.config.clock,
-                &*w.config.id_gen,
-            );
-            broker.decide(
-                &ctx,
-                "model.invoke",
-                &serde_json::json!({
-                    "model_id": chain.first().cloned().unwrap_or_default()
-                }),
-            )
-        };
-        match decision {
-            Decision::Allowed { .. } => {
-                let (epoch, instance_id) = w
-                    .registry
-                    .binding_of("model.invoke")
-                    .map(|b| (b.epoch, b.provider_instance_id.clone()))
-                    .unwrap_or((0, "n/a".to_string()));
-                Some(ModelCallAudit {
-                    call_id: w.config.id_gen.next_id("call"),
-                    epoch,
-                    instance_id,
-                    principal,
-                })
-            }
-            _ => None,
-        }
-    };
-    let Some(model_call_audit) = model_call_audit else {
+    // M7 S1:模型调用权裁决(批9 F-05:提取为 audit_model_invoke)
+    let Some(model_call_audit) = audit_model_invoke(w, agent, &chain) else {
         w.fail_turn(
             operation_id,
             ErrorCode::Internal,
@@ -793,4 +751,47 @@ pub(crate) fn spawn_turn(
             }
         }
     });
+}
+
+/// M7 S1:模型调用权裁决(批9 F-05:自 spawn_turn 提取,语句逐字保留)。
+fn audit_model_invoke(w: &mut World, agent: &Agent, chain: &[String]) -> Option<ModelCallAudit> {
+    {
+        let ctx = CallContext::content_chain(
+            &format!("agent:{}", agent.id.as_str()),
+            DataTrust::Untrusted,
+        )
+        .expect("内容链不得声称 trusted(此处传 untrusted,构造恒成功)");
+        let principal = ctx.principal.clone();
+        let decision = {
+            let broker = Broker::new(
+                &w.registry,
+                &mut w.grants,
+                &*w.config.clock,
+                &*w.config.id_gen,
+            );
+            broker.decide(
+                &ctx,
+                "model.invoke",
+                &serde_json::json!({
+                    "model_id": chain.first().cloned().unwrap_or_default()
+                }),
+            )
+        };
+        match decision {
+            Decision::Allowed { .. } => {
+                let (epoch, instance_id) = w
+                    .registry
+                    .binding_of("model.invoke")
+                    .map(|b| (b.epoch, b.provider_instance_id.clone()))
+                    .unwrap_or((0, "n/a".to_string()));
+                Some(ModelCallAudit {
+                    call_id: w.config.id_gen.next_id("call"),
+                    epoch,
+                    instance_id,
+                    principal,
+                })
+            }
+            _ => None,
+        }
+    }
 }
