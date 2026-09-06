@@ -125,6 +125,69 @@ export function BoenmindRuntimeProvider({
   // 服务器侧该回合仍会后台完成并落库(W1 口径,不丢)
   const abortRef = useRef<AbortController | null>(null);
   const approvalHandlerRef = useRef<(req: ApprovalRequest) => void>(() => {});
+  // 批准可达性轮询去重集(2026-09-07):已处理过(已批准/已入抽屉)的审批 id
+  const handledApprovalsRef = useRef<Set<string>>(new Set());
+
+  // 批准可达性轮询(2026-09-07 审批卡死根治):审批标记仅随回合 /v1 流下发,
+  // 流到期或后台续跑回合无主流时,审批单永远无人可批,任务卡死在审批轮询。
+  // 此通道每 2.5s 拉一次待裁决队列:YOLO 自动批准,ask 进抽屉(与流内标记
+  // 按 approval_id 去重,双通道互为兜底)。
+  useEffect(() => {
+    const tick = async () => {
+      try {
+        const res = await fetch("/admin/approvals");
+        if (!res.ok) return;
+        const data = (await res.json()) as {
+          approvals?: Array<{
+            approval_id: string;
+            capability?: string;
+            args_summary?: string;
+          }>;
+        };
+        for (const a of data.approvals ?? []) {
+          if (handledApprovalsRef.current.has(a.approval_id)) continue;
+          handledApprovalsRef.current.add(a.approval_id);
+          const permMode = storage.get(STORAGE_KEYS.PERMISSION_MODE) || "ask";
+          if (permMode === "yolo") {
+            const post = fetch(
+              `/admin/approvals/${encodeURIComponent(a.approval_id)}/respond`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ decision: "approve", scope: "once" }),
+              },
+            );
+            void post
+              .then((r) => {
+                // 批准失败(过期/非等待态)不重试;网络抖动则下一轮询重试
+                if (!r.ok && r.status >= 500)
+                  handledApprovalsRef.current.delete(a.approval_id);
+              })
+              .catch(() => handledApprovalsRef.current.delete(a.approval_id));
+          } else {
+            setPendingApprovals((cur) =>
+              cur.some((p) => p.approval_id === a.approval_id)
+                ? cur
+                : [
+                    ...cur,
+                    {
+                      approval_id: a.approval_id,
+                      capability: a.capability ?? "unknown",
+                      args: { summary: a.args_summary ?? "" },
+                      operation_id: "",
+                      status: "waiting" as const,
+                    },
+                  ],
+            );
+          }
+        }
+      } catch {
+        // 服务未起/重启窗口:静默,下一 tick 重试
+      }
+    };
+    const iv = setInterval(tick, 2500);
+    return () => clearInterval(iv);
+  }, []);
 
   const sendUserText = async (text: string) => {
     setIsRunning(true);

@@ -51,6 +51,8 @@
 | core_loop 崩溃处置升级待裁决 | 现状=panic 仅 error 日志观测(命令方即刻收到错误,无挂死,2026-09-05 复核证实);升级选项=崩溃即进程 exit(70) 交 systemd Restart=on-failure 拉起,属运维行为变更待用户拍板 | OPEN(待用户裁决) |
 | skill.v0_1 Rust 强类型投影 | 前端已有 SkillItem 类型,bm-contract 侧仅 JSON 常量无结构体;补 SkillDefinition+镜像测试(随 Skill v0.2 第二步动工前落) | OPEN(低) |
 | 审批等待轮询改推送 | 回合管线对审批/异步工具 400ms 轮询单写者通道(GetOperation/GetOpResult,上限 300s);可改 watch/oneshot 通知,降单写者拥塞 | OPEN(低) |
+| 异步执行器并发排队致工具假性超时 | 来源 2026-09-07 实战复现:fs.read 等异步能力共用执行通道,并发流洪峰下排队 >60s 即被回合侧判「工具执行超时」(操作本身最终 succeeded,独立调用毫秒级);评估=本地快路径(fs.*)改直通同步执行,或执行器多通道化 | OPEN(排障实录见 PLAYBOOK §3) |
+| 新建对话按钮 1280×720 视口被顶栏覆盖 | 来源 2026-09-07 IAB 实测:小视口下 `button[title=新建对话]`(y≈9px)被 chat-head 层盖住,鼠标不可点(JS 直击可触发);桌面常规分辨率待复测,修=调层叠或按钮挪位 | OPEN(P3 UI) |
 | 前端静态分析 | ESLint + Stylelint 接入 CI | OPEN |
 | theme.css !important 收敛 | 玻璃段 4 处(毛玻璃化刻意选型,收敛须换实现手法) | OPEN(低) |
 | fs.write/edit 原子写+大小上限 | 来源 FULL-REVIEW-2026-09-05 §7:fs.write/fs.edit 直接覆写原文件(进程崩溃留半截文件),同仓 atomic_write 标准未应用;且无大小上限(MAX_FILE_BYTES 只拦 search) | OPEN |

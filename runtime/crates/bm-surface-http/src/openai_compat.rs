@@ -352,7 +352,11 @@ pub async fn chat_completions(
         );
 
         let mut emitted: usize = 0; // 已按 delta 下发的字符数(补 completion 余量用)
-        let deadline = Instant::now() + Duration::from_secs(180);
+        // 流生命周期与回合解耦(2026-09-07 审批卡死根治):原 180s 硬顶会在
+        // 长工具阶段中途掐断交互流——此后审批标记再无下发通道(YOLO 失效、
+        // ask 无卡片),界面误显「完成」而后端仍在跑。改 900s;keepalive
+        // 每 10s 保活前端看门狗,空闲不中断。
+        let deadline = Instant::now() + Duration::from_secs(900);
         // 静默保活(2026-09-02 修「工具调用卡死」):工具轮执行期间事件面
         // 可静默 25s+,前端看门狗(60s 无任何字节即中止)会被误杀。空闲超
         // 10s 下发一行 SSE 注释——前端按任意字节重置看门狗,注释行被解析

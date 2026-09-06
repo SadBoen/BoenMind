@@ -26,6 +26,16 @@ fn default_data_dir() -> PathBuf {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // 可观测性(2026-09-07 双开毒化排障):此前 main 未装 subscriber,持久层
+    // 进入拒写态等 tracing::error! 全部静默蒸发,故障可见性为零。默认 info,
+    // 可用 RUST_LOG 覆盖(如 RUST_LOG=info,bm_core=debug)。
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .with_writer(std::io::stderr)
+        .init();
     let mut data_dir = default_data_dir();
     let mut bind = "127.0.0.1:7531".to_string();
     let mut web_dir: Option<PathBuf> = None;
@@ -52,26 +62,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     std::fs::create_dir_all(&data_dir)?;
     let token = bm_surface_http::token::load_or_create(&data_dir)?;
-    // W7 修复:升级子进程先等旧进程让出端口再开状态库——排空中的旧进程
-    // 仍持库,双开=事件位点错位,启动恢复拒开(2026-09-03 VPS 实测)。
-    if std::env::var("BOEN_UPGRADE_CHILD").as_deref() == Ok("1") {
+    // 双开毒化根治(2026-09-07 本机实测;扩展 W7 2026-09-03 VPS 修复):
+    // 绑定必须先于状态库打开——抢端口失败的实例若先开库,会在死前完成
+    // 恢复重放+中断回合重驱(含模型调用),与赢家并发写同一状态库(事件
+    // 序号撞车+SQLite 写竞争),把赢家推入粘性拒写态,界面表现=「Runtime
+    // 排空中或持久层故障,拒绝新会话」且日志零痕迹。升级子进程保留 ≤60s
+    // 等待重试;常规启动占用即退(单进程铁律)。
+    let listener = if std::env::var("BOEN_UPGRADE_CHILD").as_deref() == Ok("1") {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
         loop {
             match tokio::net::TcpListener::bind(&bind).await {
-                Ok(probe) => {
-                    drop(probe);
-                    break;
-                }
+                Ok(l) => break l,
                 Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
                     if std::time::Instant::now() >= deadline {
-                        break;
+                        return Err(e.into());
                     }
+                    eprintln!("[W7] 等待旧实例退出(端口占用中)……");
                     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 }
-                _ => break,
+                Err(e) => return Err(e.into()),
             }
         }
-    }
+    } else {
+        tokio::net::TcpListener::bind(&bind).await.map_err(|e| {
+            eprintln!(
+                "端口 {bind} 绑定失败: {e}(同数据目录仅允许一个实例;端口被占=已有实例或守护残留)"
+            );
+            e
+        })?
+    };
     let (persist, rebuilt) = PersistStore::open_resilient(&data_dir)?;
     if rebuilt {
         eprintln!("警告:状态库损坏,已自事件日志重建投影(损坏文件已隔离)");
@@ -338,26 +357,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(w) = &web_dir {
         println!("Web Surface 目录 {w:?}(GET / 托管静态界面)");
     }
-    // W7:在线升级子进程(BOEN_UPGRADE_CHILD=1)容忍旧实例尚未让出端口,
-    // 重试绑定 ≤60s;常规启动仍一次失败即退(单进程铁律)。
-    let listener = if std::env::var("BOEN_UPGRADE_CHILD").as_deref() == Ok("1") {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-        loop {
-            match tokio::net::TcpListener::bind(&bind).await {
-                Ok(l) => break l,
-                Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
-                    if std::time::Instant::now() >= deadline {
-                        return Err(e.into());
-                    }
-                    eprintln!("[W7] 等待旧实例退出(端口占用中)……");
-                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                }
-                Err(e) => return Err(e.into()),
-            }
-        }
-    } else {
-        tokio::net::TcpListener::bind(&bind).await?
-    };
+    // 绑定已在最前完成(先于状态库打开,双开毒化根治):升级子进程的
+    // ≤60s 重试同样发生在彼处,此处直接复用已持有的 listener。
     let actual = listener.local_addr()?;
     println!(
         "boenmind-server v{} 监听 http://{actual}",

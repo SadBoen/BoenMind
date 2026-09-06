@@ -1160,6 +1160,21 @@ pub async fn approval_respond(
     }
 }
 
+/// GET /admin/approvals:待裁决审批单列表(前端轮询面)。2026-09-07 批准
+/// 可达性修复:审批标记此前仅随回合 /v1 流下发,流到期或后台续跑回合
+/// 无主流时,审批单永远无人可批,任务一律卡死在审批轮询。本查询同时
+/// 触发到期清扫,滞留单不占待决队列。
+pub async fn approvals_list(State(cfg): State<AdminConfig>) -> Response {
+    match cfg
+        .handle
+        .approval_list(bm_contract::wire::ApprovalListParams { state_filter: None })
+        .await
+    {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => admin_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_wire().message),
+    }
+}
+
 // ---- handler:MCP 探活(主动测试 + 被动轮询共用 hub.probe_server)-------
 
 /// 主动探活单条:POST /admin/mcp/test/{name}
@@ -2350,6 +2365,7 @@ pub fn admin_routes(cfg: AdminConfig) -> axum::Router {
         .route("/roles", get(roles_get).post(roles_set).put(roles_set))
         .route("/roles/{id}", put(roles_set).delete(roles_delete))
         .route("/roles/active/{id}", put(roles_set_active))
+        .route("/approvals", get(approvals_list))
         .route("/approvals/{id}/respond", post(approval_respond))
         .route("/skills", get(skills_get).post(skills_set))
         .route("/skills/{id}", delete(skills_delete))
