@@ -273,7 +273,7 @@ async fn run_tool(ctx: &Ctx, name: &str, arguments: &Value) -> Value {
         let mut providers = resolve_providers(&mut cfg);
         // lite 工具只保留免费四源
         if name == "web_search_lite" {
-            providers.retain(|p| LITE_IDS.iter().any(|s| *s == p.id.as_str()));
+            providers.retain(|p| LITE_IDS.contains(&p.id.as_str()));
         }
         (limit, providers)
     };
@@ -320,7 +320,7 @@ async fn run_search_test(ctx: &Ctx, params: &Value) -> Value {
     let limit = params
         .get("limit")
         .and_then(Value::as_i64)
-        .and_then(|l| Some(l.clamp(1, 20) as usize))
+        .map(|l| l.clamp(1, 20) as usize)
         .unwrap_or(5);
 
     let provider = {

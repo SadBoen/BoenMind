@@ -84,7 +84,7 @@ impl Config {
         self.raw()
             .get("providers")
             .and_then(|v| v.as_array())
-            .map(|a| a.iter().cloned().collect::<Vec<_>>())
+            .map(|a| a.to_vec())
             .unwrap_or_default()
     }
 

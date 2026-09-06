@@ -669,12 +669,16 @@ mod tests {
     #[test]
     fn availability_rules() {
         // 免 key 内置恒可用
-        let mut ddg = Provider::default();
-        ddg.parse = "ddg".into();
+        let ddg = Provider {
+            parse: "ddg".into(),
+            ..Provider::default()
+        };
         assert!(is_available(&ddg));
         // searxng 须有 endpoint
-        let mut sx = Provider::default();
-        sx.parse = "searxng".into();
+        let mut sx = Provider {
+            parse: "searxng".into(),
+            ..Provider::default()
+        };
         assert!(!is_available(&sx));
         sx.endpoint = "http://127.0.0.1:8080".into();
         assert!(is_available(&sx));

@@ -113,7 +113,7 @@ impl UsageLedger {
             "month": self.month,
             "by_provider": self.by_provider,
         });
-        if let Some(text) = serde_json::to_string(&root).ok() {
+        if let Ok(text) = serde_json::to_string(&root) {
             let _ = atomic_write(&self.path, text.as_bytes());
         }
     }
