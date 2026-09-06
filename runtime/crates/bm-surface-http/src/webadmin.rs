@@ -636,10 +636,19 @@ pub async fn mcp_list(State(cfg): State<AdminConfig>) -> Response {
                         })
                         .and_then(|t| serde_json::from_str::<Value>(&t).ok())
                         .unwrap_or_else(|| json!({}));
+                    // ADR-0023:来源与弃用标记——bundled 来源但不在官方随包
+                    // 清单(.official.json)=最新官方版本已不携带,建议删除
+                    let origin = server_origin(&cfg, srv, &path);
+                    let deprecated = origin == "bundled"
+                        && official_plugin_list(&cfg)
+                            .map(|l| !l.iter().any(|n| n == name))
+                            .unwrap_or(false);
                     json!({
                         "server": srv,
                         "manifest": manifest,
                         "config": config,
+                        "origin": origin,
+                        "deprecated": deprecated,
                     })
                 })
                 .collect();
@@ -719,15 +728,122 @@ pub async fn mcp_delete(
         Ok(s) => s,
         Err(e) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e),
     };
-    let before = servers.len();
-    servers.retain(|s| s["name"] != json!(name));
-    if servers.len() == before {
+    let Some(pos) = servers.iter().position(|s| s["name"] == json!(name)) else {
         return admin_error(StatusCode::NOT_FOUND, format!("MCP server '{name}' 不存在"));
-    }
+    };
+    let origin = server_origin(&cfg, &servers[pos], &path);
+    servers.remove(pos);
     if let Err(e) = write_mcp_servers(&path, &servers) {
         return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
     }
-    Json(json!({ "ok": true, "note": "已从配置移除,点「重载 MCP」可免重启生效" })).into_response()
+    // ADR-0023:bundled 来源写墓碑——官方随包默认安装(启动播种)永不复活;
+    // 数据目录来源不写(用户手动放置=安装意图,重启后扫描仍会作为候选出现)。
+    let mut tombstoned = false;
+    if origin == "bundled" {
+        tombstoned = upsert_tombstone(&cfg.data_dir, &name).is_ok();
+    }
+    // 卸载即时下线:全量同步把摘除项 disconnect+unregister(失败不回滚配置)
+    let (sync_ok, sync_detail) = match run_mcp_sync(&cfg).await {
+        Ok(o) => (true, json!({ "uninstalled": o.uninstalled })),
+        Err((_, m)) => (false, json!({ "skipped": m })),
+    };
+    let note = if sync_ok {
+        "已卸载并即时下线".to_string()
+    } else {
+        format!(
+            "已从配置移除;进程下线未完成:{};可点「重载 MCP」收尾",
+            sync_detail["skipped"].as_str().unwrap_or("")
+        )
+    };
+    Json(json!({
+        "ok": true,
+        "origin": origin,
+        "tombstoned": tombstoned,
+        "sync": sync_detail,
+        "note": note,
+    }))
+    .into_response()
+}
+
+/// POST /admin/mcp/{name}/purge:卸载并物理删除插件文件(ADR-0023)。
+/// 顺序=摘配置 → 全量同步停进程(摘除项 disconnect+unregister,ChildKill
+/// 兜底杀子进程)→ 删文件(exe 删不掉走 rename-aside 让位,Windows 允许
+/// 改名运行中的 exe,about.rs 同款)→ 写墓碑(将来升级若带回官方文件,
+/// 默认安装仍保持停用)。
+pub async fn mcp_purge(
+    State(cfg): State<AdminConfig>,
+    AxumPath(name): AxumPath<String>,
+) -> Response {
+    let path = match mcp_file_or_error(&cfg) {
+        Ok(p) => p,
+        Err((s, m)) => return admin_error(s, m),
+    };
+    let mut servers = match read_mcp_servers(&path) {
+        Ok(s) => s,
+        Err(e) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e),
+    };
+    let Some(pos) = servers.iter().position(|s| s["name"] == json!(name)) else {
+        return admin_error(
+            StatusCode::NOT_FOUND,
+            format!("MCP server '{name}' 不存在(未登记的插件无从定位其文件)"),
+        );
+    };
+    let exe = servers[pos]["command"].as_str().map(String::from);
+    servers.remove(pos);
+    if let Err(e) = write_mcp_servers(&path, &servers) {
+        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
+    }
+    // 停进程 + 注销能力(必须在删 exe 之前,否则 Windows 文件锁挡路)
+    let sync_detail = match run_mcp_sync(&cfg).await {
+        Ok(o) => json!({ "ok": true, "uninstalled": o.uninstalled }),
+        Err((_, m)) => json!({ "ok": false, "skipped": m }),
+    };
+    let mut deleted = Vec::new();
+    let mut renamed_aside = Vec::new();
+    let mut errors = Vec::new();
+    if let Some(exe) = &exe {
+        let p = std::path::Path::new(exe);
+        if p.exists() {
+            match std::fs::remove_file(p) {
+                Ok(_) => deleted.push(exe.clone()),
+                Err(e) => {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    let aside = p.with_extension(format!("old-{now}"));
+                    match std::fs::rename(p, &aside) {
+                        Ok(_) => renamed_aside.push(aside.display().to_string()),
+                        Err(_) => errors.push(format!("{}: {e}", exe)),
+                    }
+                }
+            }
+        }
+    }
+    if let Some(parent) = path.parent() {
+        let manifest = parent
+            .join("manifests")
+            .join(format!("{name}.manifest.json"));
+        if manifest.exists() && std::fs::remove_file(&manifest).is_ok() {
+            deleted.push(manifest.display().to_string());
+        }
+        let config = parent.join("config").join(format!("mcp-{name}.json"));
+        if config.exists() && std::fs::remove_file(&config).is_ok() {
+            deleted.push(config.display().to_string());
+        }
+    }
+    if let Err(e) = upsert_tombstone(&cfg.data_dir, &name) {
+        errors.push(format!("墓碑写盘失败: {e}"));
+    }
+    Json(json!({
+        "ok": errors.is_empty(),
+        "deleted": deleted,
+        "renamed_aside": renamed_aside,
+        "errors": errors,
+        "sync": sync_detail,
+        "note": "已卸载并物理删除插件文件;官方随包插件将来升级可能重新出现文件,但保持停用(墓碑)",
+    }))
+    .into_response()
 }
 
 // ---- handler:多角色管理(W4b;config/roles.json,ADR-0012 口径)---------
@@ -1803,6 +1919,8 @@ pub async fn mcp_candidates(State(cfg): State<AdminConfig>) -> Response {
         .iter()
         .filter_map(|s| s["name"].as_str().map(String::from))
         .collect();
+    // ADR-0023 墓碑名单:候选若在册,前端提示「批准即恢复」
+    let tombstones = read_tombstones(&cfg.data_dir);
     let mut candidates: Vec<Value> = Vec::new();
     let entries = match std::fs::read_dir(&dir) {
         Ok(e) => e,
@@ -1831,6 +1949,7 @@ pub async fn mcp_candidates(State(cfg): State<AdminConfig>) -> Response {
             "title": decl.get("title").cloned().unwrap_or(json!("")),
             "description": decl.get("description").cloned().unwrap_or(json!("")),
             "registered": registered.iter().any(|r| r == &name),
+            "tombstoned": tombstones.iter().any(|t| t == &name),
             "source": "data",
         }));
     }
@@ -1857,6 +1976,7 @@ pub async fn mcp_candidates(State(cfg): State<AdminConfig>) -> Response {
                 "title": decl.get("title").cloned().unwrap_or(json!("")),
                 "description": decl.get("description").cloned().unwrap_or(json!("")),
                 "registered": registered.iter().any(|r| r == &name),
+                "tombstoned": tombstones.iter().any(|t| t == &name),
                 "source": "bundled",
             }));
         }
@@ -1878,7 +1998,8 @@ pub async fn mcp_candidates(State(cfg): State<AdminConfig>) -> Response {
 /// POST /admin/mcp/approve:批准候选接入。body {"name": "..."}。
 /// 落盘两处:mcp.json 条目(command=候选路径,args 用声明模板替换
 /// {config_file} 为数据目录配置路径)+ manifests/<name>.manifest.json
-/// (设置页配置表单的声明来源)。新增条目随后「重载 MCP」免重启上线。
+/// (设置页配置表单的声明来源);随后自动热重载上线(ADR-0023,热重载
+/// 按钮保留作手动保险),并清除该名墓碑(被卸载/删除过的官方插件由此恢复)。
 pub async fn mcp_approve(State(cfg): State<AdminConfig>, Json(body): Json<Value>) -> Response {
     let path = match mcp_file_or_error(&cfg) {
         Ok(p) => p,
@@ -1924,44 +2045,8 @@ pub async fn mcp_approve(State(cfg): State<AdminConfig>, Json(body): Json<Value>
         );
     };
 
-    // args 模板:{config_file} → 数据目录 config/mcp-<name>.json
-    let config_dir = path
-        .parent()
-        .map(|d| d.join("config"))
-        .unwrap_or_else(|| path.clone());
-    let config_file = config_dir.join(format!("mcp-{want_name}.json"));
-    let placeholder = "{config_file}".to_string();
-    let default_args = vec![Value::String("--config".into()), Value::String(placeholder)];
-    let template = decl
-        .pointer("/suggested_entry/args")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or(default_args);
-    let args: Vec<Value> = template
-        .iter()
-        .map(|a| match a.as_str() {
-            Some(s) => json!(s.replace("{config_file}", &config_file.display().to_string())),
-            None => a.clone(),
-        })
-        .collect();
-    let sha = match bm_providers::mcp::sha256_file(&file.display().to_string()) {
-        Ok(s) => s,
-        Err(e) => {
-            return admin_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("计算插件 SHA-256 失败: {e}"),
-            );
-        }
-    };
-    let entry_body = json!({
-        "name": want_name,
-        "command": file.display().to_string(),
-        "sha256": sha,
-        "args": args,
-        "tool_timeout_ms": decl.pointer("/suggested_entry/tool_timeout_ms").cloned().unwrap_or(json!(30000)),
-        "restart_limit": decl.pointer("/suggested_entry/restart_limit").cloned().unwrap_or(json!(3)),
-    });
-    let entry = match validated_mcp_entry(&entry_body) {
+    // 条目构造+manifest 双写(与启动播种同一 helper,形状天然一致)
+    let entry = match build_candidate_entry(&path, &file, &decl, &want_name) {
         Ok(e) => e,
         Err(e) => return admin_error(StatusCode::BAD_REQUEST, e),
     };
@@ -1983,28 +2068,39 @@ pub async fn mcp_approve(State(cfg): State<AdminConfig>, Json(body): Json<Value>
     if let Err(e) = write_mcp_servers(&path, &servers) {
         return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
     }
+    write_plugin_manifest(&path, &want_name, &decl);
 
-    // 双写 manifests/<name>.manifest.json(设置页「配置」表单的声明来源)
-    let manifest = json!({
-        "name": want_name,
-        "title": decl.get("title").cloned().unwrap_or(json!("")),
-        "description": decl.get("description").cloned().unwrap_or(json!("")),
-        "config_schema": decl.get("config_schema").cloned().unwrap_or(json!([])),
-    });
-    if let Some(mdir) = path.parent().map(|d| d.join("manifests")) {
-        let _ = std::fs::create_dir_all(&mdir);
-        if let Ok(text) = serde_json::to_string_pretty(&manifest) {
-            let _ = bm_persist::atomic_write(
-                &mdir.join(format!("{want_name}.manifest.json")),
-                text.as_bytes(),
-            );
+    // ADR-0023:显式批准=安装意图最高级——清墓碑(被卸载/删除过的官方
+    // 插件由此恢复)+ 立即热重载上线;失败不回滚落盘,可手动重试
+    remove_tombstone(&cfg.data_dir, &want_name);
+    let (reload_ok, reload_payload) = match run_mcp_sync(&cfg).await {
+        Ok(o) => {
+            let tools = o
+                .note_loaded
+                .iter()
+                .find(|s| s["name"].as_str() == Some(want_name.as_str()))
+                .and_then(|s| s.get("tools").cloned())
+                .unwrap_or(Value::Null);
+            (
+                true,
+                json!({ "ok": true, "tools": tools, "failed": o.failed }),
+            )
         }
-    }
-
+        Err((_, m)) => (false, json!({ "ok": false, "skipped": m })),
+    };
+    let note = if reload_ok {
+        "已批准并自动上线;「重载 MCP」按钮保留作手动保险".to_string()
+    } else {
+        format!(
+            "已落盘,但自动上线未完成:{};可点「重载 MCP」重试",
+            reload_payload["skipped"].as_str().unwrap_or("未知")
+        )
+    };
     Json(json!({
         "ok": true,
         "entry": entry,
-        "note": "已落盘(mcp.json + manifest);点「重载 MCP」免重启上线",
+        "reload": reload_payload,
+        "note": note,
     }))
     .into_response()
 }
@@ -2248,6 +2344,8 @@ pub fn admin_routes(cfg: AdminConfig) -> axum::Router {
             get(mcp_config_get).put(mcp_config_set),
         )
         .route("/mcp/{name}", put(mcp_update).delete(mcp_delete))
+        // ADR-0023:卸载并物理删除插件文件(警告栏确认后调用)
+        .route("/mcp/{name}/purge", post(mcp_purge))
         .route("/capabilities", get(capabilities_list))
         .route("/roles", get(roles_get).post(roles_set).put(roles_set))
         .route("/roles/{id}", put(roles_set).delete(roles_delete))
@@ -2297,70 +2395,71 @@ pub fn admin_routes(cfg: AdminConfig) -> axum::Router {
 
 // ---- handler:MCP 热装载(支持新增、修改与删除免重启)---------------
 
-/// 重载 MCP 配置:读 mcp.json 全量,与已装载名单对比:
-/// - 已移除的 server:从 hub 摘除路由、发送 shutdown 通知,从 Registry/Persist 摘除能力
-/// - 修改/保留的 server (如配置变更):先热拔旧 server,再用新配置重新握手连接并更新能力
-/// - 新增的 server:spawn+握手+运行期注册
-///
-/// 装载完成后刷新 AdminConfig.mcp_servers 快照。
-pub async fn mcp_reload(State(cfg): State<AdminConfig>) -> Response {
-    use bm_providers::mcp::supervisor::{CapabilityRegistrar, sync_from_config};
+/// F-07 同款收口:热装载装配段(reload/批准上线/卸载下线/purge 共用)。
+/// 全量同步 mcp.json 与已装载名单:新增 spawn+握手+注册、修改先拔后插、
+/// 摘除 disconnect+unregister(ChildKill 兜底杀子进程)。
+struct CoreRegistrar {
+    handle: bm_core::runtime::RuntimeHandle,
+}
 
-    let Some(path) = cfg.mcp_config.clone() else {
-        return admin_error(
-            StatusCode::BAD_REQUEST,
-            "服务器未启用 MCP 配置文件(--mcp-config)",
-        );
-    };
-    let Some(hub) = cfg.hub.clone() else {
-        return admin_error(
-            StatusCode::BAD_REQUEST,
-            "启动时未完成 MCP 接线(检查启动日志的 MCP server 装载行)",
-        );
-    };
-    let Some(secrets) = cfg.secrets.clone() else {
-        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, "Secret Store 未就绪");
-    };
+#[async_trait::async_trait]
+impl bm_providers::mcp::supervisor::CapabilityRegistrar for CoreRegistrar {
+    async fn register(
+        &self,
+        entries: Vec<(
+            bm_contract::capability::CapabilityManifest,
+            Arc<dyn bm_core::registry::CapabilityProvider>,
+        )>,
+    ) -> Result<(), String> {
+        self.handle
+            .capabilities_register(entries)
+            .await
+            .map(|_| ())
+            .map_err(|e| format!("{e}"))
+    }
+    async fn unregister(&self, names: Vec<String>) -> Result<(), String> {
+        // 与既有行为一致:注销经核心命令;错误走 failed 通道
+        self.handle
+            .capabilities_unregister(names)
+            .await
+            .map(|_| ())
+            .map_err(|e| format!("{e}"))
+    }
+}
 
-    let loaded_servers: Vec<Value> = cfg
+/// 全量热同步;完成后写回 AdminConfig.mcp_servers 快照。测试态/未接线
+/// (无 mcp_config 或 hub)返回 Err,调用方自行降级。
+async fn run_mcp_sync(
+    cfg: &AdminConfig,
+) -> Result<bm_providers::mcp::supervisor::SyncOutcome, (StatusCode, String)> {
+    use bm_providers::mcp::supervisor::sync_from_config;
+    let path = cfg.mcp_config.clone().ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            "服务器未启用 MCP 配置文件(--mcp-config)".to_string(),
+        )
+    })?;
+    let hub = cfg.hub.clone().ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            "启动时未完成 MCP 接线(检查启动日志的 MCP server 装载行)".to_string(),
+        )
+    })?;
+    let secrets = cfg.secrets.clone().ok_or_else(|| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Secret Store 未就绪".to_string(),
+        )
+    })?;
+    let loaded_names: Vec<String> = cfg
         .mcp_servers
         .read()
-        .map(|g| g.clone())
+        .map(|g| {
+            g.iter()
+                .filter_map(|s| s["name"].as_str().map(|n| n.to_string()))
+                .collect()
+        })
         .unwrap_or_default();
-    let loaded_names: Vec<String> = loaded_servers
-        .iter()
-        .filter_map(|s| s["name"].as_str().map(|n| n.to_string()))
-        .collect();
-
-    // F-07:装配逻辑收口 supervisor(启动/热装载同调),本 handler 仅壳。
-    struct CoreRegistrar {
-        handle: bm_core::runtime::RuntimeHandle,
-    }
-    #[async_trait::async_trait]
-    impl CapabilityRegistrar for CoreRegistrar {
-        async fn register(
-            &self,
-            entries: Vec<(
-                bm_contract::capability::CapabilityManifest,
-                Arc<dyn bm_core::registry::CapabilityProvider>,
-            )>,
-        ) -> Result<(), String> {
-            self.handle
-                .capabilities_register(entries)
-                .await
-                .map(|_| ())
-                .map_err(|e| format!("{e}"))
-        }
-        async fn unregister(&self, names: Vec<String>) -> Result<(), String> {
-            // 与既有行为一致:注销经核心命令;错误走 failed 通道
-            self.handle
-                .capabilities_unregister(names)
-                .await
-                .map(|_| ())
-                .map_err(|e| format!("{e}"))
-        }
-    }
-
     let outcome = sync_from_config(
         &hub,
         &path,
@@ -2371,18 +2470,258 @@ pub async fn mcp_reload(State(cfg): State<AdminConfig>) -> Response {
         },
     )
     .await;
-
     if let Ok(mut g) = cfg.mcp_servers.write() {
-        *g = outcome.note_loaded;
+        *g = outcome.note_loaded.clone();
     }
+    Ok(outcome)
+}
 
-    Json(json!({
-        "ok": outcome.failed.is_empty(),
-        "registered": outcome.registered,
-        "updated": outcome.updated,
-        "uninstalled": outcome.uninstalled,
-        "failed": outcome.failed,
-        "note": "MCP 服务已完成热重载(支持新增、修改与卸载免重启)",
+// ---- MCP 插件生命周期:墓碑 + 来源推断 + 候选条目构造(ADR-0023)----
+
+/// 墓碑文件(<data>/config/mcp-removed.json,私有管理文件不入合同):
+/// 用户明确不要的插件名册。官方随包默认安装(启动播种)跳过墓碑名单;
+/// 显式批准接入即除名(恢复安装的唯一正路)。
+fn tombstone_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("config").join("mcp-removed.json")
+}
+
+fn read_tombstones(data_dir: &Path) -> Vec<String> {
+    std::fs::read_to_string(tombstone_path(data_dir))
+        .ok()
+        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+        .and_then(|v| v["removed"].as_array().cloned())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|e| e["name"].as_str().map(String::from))
+        .collect()
+}
+
+fn write_tombstones(data_dir: &Path, list: Vec<Value>) -> Result<(), String> {
+    let dir = data_dir.join("config");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("config 目录创建失败: {e}"))?;
+    let text = serde_json::to_string_pretty(&json!({
+        "removed": list,
+        "note": "ADR-0023 墓碑:官方随包默认安装跳过本名单;显式批准接入即除名",
     }))
-    .into_response()
+    .map_err(|e| format!("序列化失败: {e}"))?;
+    bm_persist::atomic_write(&tombstone_path(data_dir), text.as_bytes())
+        .map_err(|e| format!("墓碑写盘失败: {e}"))
+}
+
+fn upsert_tombstone(data_dir: &Path, name: &str) -> Result<(), String> {
+    let existing = std::fs::read_to_string(tombstone_path(data_dir))
+        .ok()
+        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+        .and_then(|v| v["removed"].as_array().cloned())
+        .unwrap_or_default();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let mut list: Vec<Value> = existing
+        .into_iter()
+        .filter(|e| e["name"].as_str() != Some(name))
+        .collect();
+    list.push(json!({ "name": name, "removed_at": now }));
+    write_tombstones(data_dir, list)
+}
+
+fn remove_tombstone(data_dir: &Path, name: &str) {
+    let Some(v) = std::fs::read_to_string(tombstone_path(data_dir))
+        .ok()
+        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+    else {
+        return;
+    };
+    let Some(arr) = v["removed"].as_array() else {
+        return;
+    };
+    let filtered: Vec<Value> = arr
+        .iter()
+        .filter(|e| e["name"].as_str() != Some(name))
+        .cloned()
+        .collect();
+    if filtered.len() == arr.len() {
+        return;
+    }
+    let _ = write_tombstones(data_dir, filtered);
+}
+
+/// 官方随包清单(plugins/.official.json,release 打包写入);缺失=未知,
+/// 弃用标记优雅降级(旧版安装/本地开发)。
+fn official_plugin_list(cfg: &AdminConfig) -> Option<Vec<String>> {
+    let bundled = cfg.bundled_plugins_dir.as_ref()?;
+    let text = std::fs::read_to_string(bundled.join(".official.json")).ok()?;
+    let v: Value = serde_json::from_str(&text).ok()?;
+    Some(
+        v["plugins"]
+            .as_array()?
+            .iter()
+            .filter_map(|p| p.as_str().map(String::from))
+            .collect(),
+    )
+}
+
+/// 插件来源推断(合同不动,mcp.json 无 source 字段):command 落在
+/// 官方随包目录=bundled;落在 mcp.json 同级 mcp/=用户手动放置(data)。
+fn server_origin(cfg: &AdminConfig, srv: &Value, mcp_json_path: &Path) -> &'static str {
+    let command = srv["command"].as_str().unwrap_or("");
+    if command.is_empty() {
+        return "unknown";
+    }
+    let p = std::path::Path::new(command);
+    if let Some(b) = &cfg.bundled_plugins_dir
+        && p.starts_with(b)
+    {
+        return "bundled";
+    }
+    if let Some(parent) = mcp_json_path.parent()
+        && p.starts_with(parent.join("mcp"))
+    {
+        return "data";
+    }
+    "unknown"
+}
+
+/// 批准/播种共用:候选声明 → 合规 mcp.json 条目(args 模板把 {config_file}
+/// 替换为数据目录配置路径;过合同 schema)。
+fn build_candidate_entry(
+    mcp_json_path: &Path,
+    file: &Path,
+    decl: &Value,
+    name: &str,
+) -> Result<Value, String> {
+    let config_dir = mcp_json_path
+        .parent()
+        .map(|d| d.join("config"))
+        .unwrap_or_else(|| mcp_json_path.to_path_buf());
+    let config_file = config_dir.join(format!("mcp-{name}.json"));
+    let placeholder = "{config_file}".to_string();
+    let default_args = vec![Value::String("--config".into()), Value::String(placeholder)];
+    let template = decl
+        .pointer("/suggested_entry/args")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or(default_args);
+    let args: Vec<Value> = template
+        .iter()
+        .map(|a| match a.as_str() {
+            Some(s) => json!(s.replace("{config_file}", &config_file.display().to_string())),
+            None => a.clone(),
+        })
+        .collect();
+    let sha = bm_providers::mcp::sha256_file(&file.display().to_string())?;
+    let entry_body = json!({
+        "name": name,
+        "command": file.display().to_string(),
+        "sha256": sha,
+        "args": args,
+        "tool_timeout_ms": decl.pointer("/suggested_entry/tool_timeout_ms").cloned().unwrap_or(json!(30000)),
+        "restart_limit": decl.pointer("/suggested_entry/restart_limit").cloned().unwrap_or(json!(3)),
+    });
+    validated_mcp_entry(&entry_body)
+}
+
+/// manifest 双写(批准/播种共用):manifests/<name>.manifest.json,
+/// 设置页「配置」表单的声明来源。
+fn write_plugin_manifest(mcp_json_path: &Path, name: &str, decl: &Value) {
+    let manifest = json!({
+        "name": name,
+        "title": decl.get("title").cloned().unwrap_or(json!("")),
+        "description": decl.get("description").cloned().unwrap_or(json!("")),
+        "config_schema": decl.get("config_schema").cloned().unwrap_or(json!([])),
+    });
+    if let Some(mdir) = mcp_json_path.parent().map(|d| d.join("manifests")) {
+        let _ = std::fs::create_dir_all(&mdir);
+        if let Ok(text) = serde_json::to_string_pretty(&manifest) {
+            let _ = bm_persist::atomic_write(
+                &mdir.join(format!("{name}.manifest.json")),
+                text.as_bytes(),
+            );
+        }
+    }
+}
+
+/// ADR-0023:官方随包插件默认安装(启动播种)。扫描 bundled 目录候选,
+/// 「mcp.json 未登记 且 不在墓碑」的按批准同款形状落盘 mcp.json + manifest,
+/// 返回播种名册(启动日志用)。注意:识别 name 需运行 --self-describe,
+/// 已登记插件每次启动约花亚秒级自述(量小可接受)。任何失败只记日志,
+/// 绝不阻启动;mcp.json 损坏(读失败)时整体放弃播种防覆盖。
+pub async fn seed_bundled_plugins(
+    mcp_config_path: &Path,
+    bundled_dir: &Path,
+    data_dir: &Path,
+) -> Vec<String> {
+    let mut seeded = Vec::new();
+    let Ok(mut servers) = read_mcp_servers(mcp_config_path) else {
+        eprintln!("[mcp-seed] mcp.json 读取失败,跳过官方插件默认安装");
+        return seeded;
+    };
+    // 已见名册 = 现有条目 + 本次已播种(防同声明名的多个文件重复落盘)
+    let mut seen: Vec<String> = servers
+        .iter()
+        .filter_map(|s| s["name"].as_str().map(String::from))
+        .collect();
+    let tombstones = read_tombstones(data_dir);
+    let Ok(entries) = std::fs::read_dir(bundled_dir) else {
+        return seeded;
+    };
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if !p.is_file() || !candidate_is_executable(&p) {
+            continue;
+        }
+        let Some(decl) = self_describe(&p).await else {
+            continue;
+        };
+        let Some(name) = decl["name"].as_str().map(String::from) else {
+            continue;
+        };
+        if name.is_empty()
+            || seen.iter().any(|r| r == &name)
+            || tombstones.iter().any(|t| t == &name)
+        {
+            continue;
+        }
+        match build_candidate_entry(mcp_config_path, &p, &decl, &name) {
+            Ok(entry) => {
+                write_plugin_manifest(mcp_config_path, &name, &decl);
+                servers.push(entry);
+                seen.push(name.clone());
+                seeded.push(name);
+            }
+            Err(e) => eprintln!("[mcp-seed] 候选 {} 条目构造失败: {e}", p.display()),
+        }
+    }
+    if !seeded.is_empty() {
+        match write_mcp_servers(mcp_config_path, &servers) {
+            Ok(_) => eprintln!("[mcp-seed] 官方随包插件默认安装: {}", seeded.join(", ")),
+            Err(e) => {
+                eprintln!("[mcp-seed] mcp.json 写盘失败,播种放弃: {e}");
+                return Vec::new();
+            }
+        }
+    }
+    seeded
+}
+
+/// 重载 MCP 配置:读 mcp.json 全量,与已装载名单对比:
+/// - 已移除的 server:从 hub 摘除路由、发送 shutdown 通知,从 Registry/Persist 摘除能力
+/// - 修改/保留的 server (如配置变更):先热拔旧 server,再用新配置重新握手连接并更新能力
+/// - 新增的 server:spawn+握手+运行期注册
+///
+/// 装载完成后刷新 AdminConfig.mcp_servers 快照。
+pub async fn mcp_reload(State(cfg): State<AdminConfig>) -> Response {
+    match run_mcp_sync(&cfg).await {
+        Ok(outcome) => Json(json!({
+            "ok": outcome.failed.is_empty(),
+            "registered": outcome.registered,
+            "updated": outcome.updated,
+            "uninstalled": outcome.uninstalled,
+            "failed": outcome.failed,
+            "note": "MCP 服务已完成热重载(支持新增、修改与卸载免重启)",
+        }))
+        .into_response(),
+        Err((s, m)) => admin_error(s, m),
+    }
 }

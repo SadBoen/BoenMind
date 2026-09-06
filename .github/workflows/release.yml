@@ -65,6 +65,9 @@ jobs:
           cp plugins/mcp/web-multisearch/README.md "${PKG}/plugins/web-multisearch-README.md"
           cp plugins/mcp/context-inspector/target/release/context-inspector "${PKG}/plugins/"
           cp plugins/mcp/context-inspector/README.md "${PKG}/plugins/context-inspector-README.md"
+          # ADR-0023:官方随包清单(声明名)——升级换装后服务端据此标记
+          # 「官方最新版已不随包」的存量插件(建议删除)
+          cp plugins/official-plugins.json "${PKG}/plugins/.official.json"
           cp apps/*.py "${PKG}/apps/" 2>/dev/null || true
           cp apps/mcp-config.example.json "${PKG}/apps/" 2>/dev/null || true
           cp packaging/INSTALL.md "${PKG}/INSTALL.md" 2>/dev/null || true

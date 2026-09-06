@@ -971,3 +971,193 @@ async fn t_session_messages_replay_filters_and_orders() {
     let (_, v5) = get(&format!("{base}/admin/sessions/sess_X/messages")).await;
     assert_eq!(v5["messages"].as_array().expect("数组").len(), 0);
 }
+
+// ---- ADR-0023:官方默认安装 / 墓碑 / purge / 弃用标记 ---------------------
+
+#[tokio::test]
+async fn t_w2_mcp_bundled_seeding_tombstone_and_approve_revival() {
+    let ws = tempfile::tempdir().unwrap();
+    let mcfile = tempfile::tempdir().unwrap();
+    let mcp_path = mcfile.path().join("mcp.json");
+    let bundled = tempfile::tempdir().unwrap();
+    write_fake_candidate(bundled.path(), "official_plugin");
+    // 同声明名的第二个文件(换装拷贝场景)不得重复播种
+    #[cfg(windows)]
+    std::fs::copy(
+        bundled.path().join("official_plugin.cmd"),
+        bundled.path().join("official_plugin_copy.cmd"),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    std::fs::copy(
+        bundled.path().join("official_plugin.sh"),
+        bundled.path().join("official_plugin_copy.sh"),
+    )
+    .unwrap();
+    let (base, dir) = spawn_app_with(
+        ws.path().to_path_buf(),
+        Some(mcp_path.clone()),
+        Some(bundled.path().to_path_buf()),
+    )
+    .await;
+    let data_dir = dir.path().to_path_buf();
+
+    // 播种:未登记+无墓碑 → 默认安装(mcp.json + manifest 双写)
+    let seeded =
+        bm_surface_http::webadmin::seed_bundled_plugins(&mcp_path, bundled.path(), &data_dir).await;
+    assert_eq!(
+        seeded,
+        vec!["official_plugin".to_string()],
+        "应播种官方插件"
+    );
+    assert!(
+        std::fs::read_to_string(&mcp_path)
+            .unwrap()
+            .contains("official_plugin")
+    );
+    assert!(
+        mcfile
+            .path()
+            .join("manifests/official_plugin.manifest.json")
+            .exists(),
+        "manifest 应双写"
+    );
+
+    // 卸载(bundled 来源)→ 墓碑在册 → 再播种不复活
+    let (st, r) = send_json(
+        reqwest::Method::DELETE,
+        &format!("{base}/admin/mcp/official_plugin"),
+        json!({}),
+    )
+    .await;
+    assert_eq!(st, 200, "{r}");
+    assert_eq!(r["origin"], json!("bundled"), "{r}");
+    assert_eq!(r["tombstoned"], json!(true), "{r}");
+    let seeded2 =
+        bm_surface_http::webadmin::seed_bundled_plugins(&mcp_path, bundled.path(), &data_dir).await;
+    assert!(seeded2.is_empty(), "墓碑在册不得复活: {seeded2:?}");
+    assert!(
+        !std::fs::read_to_string(&mcp_path)
+            .unwrap()
+            .contains("official_plugin")
+    );
+
+    // 显式批准 → 清墓碑 + 恢复安装(恢复唯一正路)
+    let (st, r) = send_json(
+        reqwest::Method::POST,
+        &format!("{base}/admin/mcp/approve"),
+        json!({"name": "official_plugin"}),
+    )
+    .await;
+    assert_eq!(st, 200, "{r}");
+    assert!(
+        std::fs::read_to_string(&mcp_path)
+            .unwrap()
+            .contains("official_plugin")
+    );
+    let tomb = std::fs::read_to_string(data_dir.join("config/mcp-removed.json")).unwrap();
+    assert!(!tomb.contains("official_plugin"), "墓碑应已清除: {tomb}");
+}
+
+#[tokio::test]
+async fn t_w2_mcp_purge_deletes_files_and_tombstones() {
+    let ws = tempfile::tempdir().unwrap();
+    let mcfile = tempfile::tempdir().unwrap();
+    let mcp_path = mcfile.path().join("mcp.json");
+    let (base, dir) = spawn_app(ws.path().to_path_buf(), Some(mcp_path.clone())).await;
+    // 手工登记一个数据目录来源插件:exe/manifest/config 三件齐全
+    let plugins_dir = mcfile.path().join("mcp");
+    std::fs::create_dir_all(&plugins_dir).unwrap();
+    let exe = plugins_dir.join("purge-me.bin");
+    std::fs::write(&exe, b"fake exe bytes").unwrap();
+    let config_dir = mcfile.path().join("config");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    let config_file = config_dir.join("mcp-purge_me.json");
+    std::fs::write(&config_file, "{}").unwrap();
+    let manifests_dir = mcfile.path().join("manifests");
+    std::fs::create_dir_all(&manifests_dir).unwrap();
+    let manifest_file = manifests_dir.join("purge_me.manifest.json");
+    std::fs::write(&manifest_file, "{}").unwrap();
+    std::fs::write(
+        &mcp_path,
+        format!(
+            r#"[{{"name":"purge_me","transport":"stdio","command":"{}","args":["--config","{}"]}}]"#,
+            exe.display().to_string().replace('\\', "\\\\"),
+            config_file.display().to_string().replace('\\', "\\\\"),
+        ),
+    )
+    .unwrap();
+
+    let (st, r) = send_json(
+        reqwest::Method::POST,
+        &format!("{base}/admin/mcp/purge_me/purge"),
+        json!({}),
+    )
+    .await;
+    assert_eq!(st, 200, "{r}");
+    assert_eq!(r["ok"], json!(true), "{r}");
+    assert_eq!(r["deleted"].as_array().unwrap().len(), 3, "{r}");
+    assert!(!exe.exists(), "exe 应被物理删除");
+    assert!(!config_file.exists(), "每插件配置应被删除");
+    assert!(!manifest_file.exists(), "manifest 应被删除");
+    assert!(
+        !std::fs::read_to_string(&mcp_path)
+            .unwrap()
+            .contains("purge_me"),
+        "mcp.json 条目应摘除"
+    );
+    let tomb = std::fs::read_to_string(dir.path().join("config/mcp-removed.json")).unwrap();
+    assert!(tomb.contains("purge_me"), "应写墓碑: {tomb}");
+
+    // 再 purge → 404(未登记无从定位文件)
+    let (st, _) = send_json(
+        reqwest::Method::POST,
+        &format!("{base}/admin/mcp/purge_me/purge"),
+        json!({}),
+    )
+    .await;
+    assert_eq!(st, 404);
+}
+
+#[tokio::test]
+async fn t_w2_mcp_list_marks_bundled_deprecated() {
+    let ws = tempfile::tempdir().unwrap();
+    let mcfile = tempfile::tempdir().unwrap();
+    let mcp_path = mcfile.path().join("mcp.json");
+    let bundled = tempfile::tempdir().unwrap();
+    // 登记一个 command 指向随包目录的插件
+    let cmd = bundled.path().join("retired-plugin.exe");
+    std::fs::write(&cmd, b"fake").unwrap();
+    std::fs::write(
+        &mcp_path,
+        format!(
+            r#"[{{"name":"retired_plugin","transport":"stdio","command":"{}","args":[]}}]"#,
+            cmd.display().to_string().replace('\\', "\\\\")
+        ),
+    )
+    .unwrap();
+    // 官方清单不含它 → deprecated=true;含 → false;清单缺失 → 不标记
+    let official = bundled.path().join(".official.json");
+    std::fs::write(&official, r#"{"plugins":["other_plugin"]}"#).unwrap();
+    let (base, _dir) = spawn_app_with(
+        ws.path().to_path_buf(),
+        Some(mcp_path.clone()),
+        Some(bundled.path().to_path_buf()),
+    )
+    .await;
+    let (_, r) = get(&format!("{base}/admin/mcp")).await;
+    assert_eq!(r["entries"][0]["origin"], json!("bundled"), "{r}");
+    assert_eq!(r["entries"][0]["deprecated"], json!(true), "{r}");
+
+    std::fs::write(&official, r#"{"plugins":["retired_plugin"]}"#).unwrap();
+    let (_, r) = get(&format!("{base}/admin/mcp")).await;
+    assert_eq!(r["entries"][0]["deprecated"], json!(false), "{r}");
+
+    std::fs::remove_file(&official).unwrap();
+    let (_, r) = get(&format!("{base}/admin/mcp")).await;
+    assert_eq!(
+        r["entries"][0]["deprecated"],
+        json!(false),
+        "清单缺失=不标记"
+    );
+}

@@ -51,6 +51,8 @@ export type TablePluginItem = {
   tools: ToolInfo[];
   isOnline?: boolean;
   serverRef?: McpServer;
+  /** ADR-0023:官方随包来源但最新官方清单已不含 → 建议删除 */
+  deprecated?: boolean;
 };
 
 // 内置能力白话说明(键=能力名;未命中回落 effect 文案)
@@ -87,6 +89,8 @@ export function PluginsPage({
   const [scanResult, setScanResult] = useState<McpCandidatesResult | null>(null);
   const [approving, setApproving] = useState<string | null>(null);
   const [configTarget, setConfigTarget] = useState<ConfigTarget | null>(null);
+  // ADR-0023:物理删除确认弹窗目标
+  const [purgeTarget, setPurgeTarget] = useState<{ name: string; command?: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -226,6 +230,7 @@ export function PluginsPage({
         // 清单时,不得编造工具名,如实显示数量、清单留空
         const tools: ToolInfo[] =
           st?.tool_list && st.tool_list.length > 0 ? st.tool_list : [];
+        const entry = mcpData.entries?.find((e) => e.server.name === s.name);
 
         list.push({
           id: `mcp:${s.name}`,
@@ -238,6 +243,7 @@ export function PluginsPage({
           tools,
           isOnline: isOk,
           serverRef: s,
+          deprecated: entry?.deprecated ?? false,
         });
       }
     }
@@ -288,7 +294,12 @@ export function PluginsPage({
   };
 
   const handleRemove = async (name: string) => {
-    if (!confirm(`确定移除 MCP 服务「${name}」？此操作将从配置中删除。`)) return;
+    if (
+      !confirm(
+        `确定卸载 MCP 插件「${name}」？配置将移除并即时下线(文件保留);官方随包插件重启后也不会被自动重新安装。`,
+      )
+    )
+      return;
     setBusy(true);
     try {
       await api.mcp.remove(name);
@@ -301,18 +312,27 @@ export function PluginsPage({
     }
   };
 
-  const handleTest = async (name: string) => {
+  // ADR-0023:卸载并物理删除插件文件(警告弹窗确认后)
+  const handlePurge = async (name: string) => {
+    setBusy(true);
+    setError(null);
     try {
-      const r = await api.mcp.test(name);
-      setStatusMap((prev) => ({
-        ...prev,
-        [name]: { ok: r.ok, tools: r.tools, error: r.error },
-      }));
-      if (!r.ok) {
-        alert(`测试「${name}」未通过: ${r.error || "服务无响应"}`);
+      const r = await api.mcp.purge(name);
+      setPurgeTarget(null);
+      if (r.ok) {
+        const aside = r.renamed_aside.length
+          ? `;${r.renamed_aside.length} 个运行中的文件已让位改名`
+          : "";
+        setNotice(`已删除「${name}」:${r.deleted.length} 个文件${aside}`);
+      } else {
+        setError(`删除「${name}」部分失败:${r.errors.join(";")}`);
       }
+      await loadData();
+      await refreshStatus();
     } catch (e) {
-      alert(`测试「${name}」失败: ${e}`);
+      setError(String(e instanceof Error ? e.message : e));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -451,6 +471,14 @@ export function PluginsPage({
                         title={item.isOnline ? "可用" : "未联通"}
                       />
                       <span className="font-mono font-medium text-foreground truncate">{item.name}</span>
+                      {item.deprecated ? (
+                        <span
+                          className="shrink-0 rounded border border-[var(--state-warn-border)] bg-[var(--state-warn-bg)] px-1 font-mono text-[9.5px] text-[var(--state-warn-fg)]"
+                          title="最新官方版本已不包含此插件,建议用「删除」清理"
+                        >
+                          已不随包
+                        </span>
+                      ) : null}
                     </div>
                     <div className="text-muted-foreground mt-0.5 truncate text-[11.5px]">
                       {item.detail}
@@ -576,15 +604,6 @@ export function PluginsPage({
                         >
                           编辑
                         </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 px-2 text-[11.5px]"
-                          onClick={() => void handleTest(item.name)}
-                          title="主动探活 (tools/list)"
-                        >
-                          测试
-                        </Button>
                         {mcpEntry?.manifest?.config_schema?.length ? (
                           <Button
                             variant="ghost"
@@ -607,10 +626,26 @@ export function PluginsPage({
                           variant="ghost"
                           size="sm"
                           disabled={busy}
-                          className="h-7 px-2 text-[11.5px] text-destructive hover:bg-destructive/10"
+                          className="h-7 px-2 text-[11.5px]"
                           onClick={() => void handleRemove(item.name)}
                         >
-                          移除
+                          卸载
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={busy}
+                          className="h-7 px-2 text-[11.5px] text-destructive hover:bg-destructive/10"
+                          title="卸载并物理删除插件文件(含警告确认)"
+                          data-slot="mcp-purge"
+                          onClick={() =>
+                            setPurgeTarget({
+                              name: item.name,
+                              command: item.serverRef?.command,
+                            })
+                          }
+                        >
+                          删除
                         </Button>
                       </div>
                     ) : (
@@ -667,6 +702,11 @@ export function PluginsPage({
                         {c.registered ? (
                           <span className="text-emerald-600 text-xs ml-1">(已登记)</span>
                         ) : null}
+                        {c.tombstoned && !c.registered ? (
+                          <span className="text-muted-foreground text-xs ml-1">
+                            (删除名单中,批准即恢复)
+                          </span>
+                        ) : null}
                       </div>
                       <div className="text-muted-foreground truncate text-xs mt-0.5">
                         {c.description || c.file}
@@ -678,10 +718,17 @@ export function PluginsPage({
                       disabled={c.registered || approving === c.name}
                       onClick={async () => {
                         setApproving(c.name);
+                        setError(null);
                         try {
-                          await api.mcp.approve(c.name);
+                          // ADR-0023:批准即自动上线(后端热重载),前端只刷新
+                          const r = await api.mcp.approve(c.name);
                           setScanResult(null);
-                          await api.mcp.reload();
+                          const tools = r.reload?.tools;
+                          setNotice(
+                            typeof tools === "number"
+                              ? `「${c.name}」已批准并自动上线 · ${tools} 个工具`
+                              : (r.note ?? `「${c.name}」已批准`),
+                          );
                           await loadData();
                           await refreshStatus();
                         } catch (e) {
@@ -691,7 +738,11 @@ export function PluginsPage({
                         }
                       }}
                     >
-                      {c.registered ? "已批准" : "批准接入"}
+                      {c.registered
+                        ? "已批准"
+                        : c.tombstoned
+                          ? "批准恢复"
+                          : "批准接入"}
                     </Button>
                   </div>
                 ))}
@@ -704,6 +755,45 @@ export function PluginsPage({
             <DialogFooter>
               <Button variant="outline" onClick={() => setScanResult(null)}>
                 关闭
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      ) : null}
+
+      {/* ADR-0023:物理删除警告栏(卸载 + 删原文件,不可撤销) */}
+      {purgeTarget ? (
+        <Dialog open onOpenChange={(v) => !v && setPurgeTarget(null)}>
+          <DialogContent className="sm:max-w-md" data-slot="mcp-purge-dialog">
+            <DialogHeader>
+              <DialogTitle className="text-destructive">
+                删除插件「{purgeTarget.name}」
+              </DialogTitle>
+              <DialogDescription>
+                此操作会物理删除插件文件,不可撤销:
+              </DialogDescription>
+            </DialogHeader>
+            <ul className="text-muted-foreground list-disc space-y-1 pl-4 text-[12px]">
+              <li className="font-mono break-all">
+                {purgeTarget.command || "插件可执行文件(未登记路径则仅清理声明)"}
+              </li>
+              <li>
+                声明清单 manifests/{purgeTarget.name}.manifest.json 与每插件配置
+                config/mcp-{purgeTarget.name}.json(如存在)
+              </li>
+              <li>写入删除名单:官方随包插件将来升级即使重新出现文件,也保持停用</li>
+            </ul>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setPurgeTarget(null)}>
+                取消
+              </Button>
+              <Button
+                variant="destructive"
+                disabled={busy}
+                data-slot="mcp-purge-confirm"
+                onClick={() => void handlePurge(purgeTarget.name)}
+              >
+                {busy ? "删除中…" : "确认删除"}
               </Button>
             </DialogFooter>
           </DialogContent>

@@ -14,7 +14,7 @@ BoenMind:个人生态的 AI Runtime / AI OS,当前为**阶段一(跨平台单软
 
 ```text
 BoenMind-CORE-ARCHITECTURE.md   第 0 层  架构基线:原则/边界/不变量;§17 裁决;§18 里程碑定义;§19 回看制度
-adr/                            第 0 层  架构决策记录 ADR-0001..0021(0012 随 M10 dsh 线归档、编号跳空;基线与 ADR 冲突时以更新的 ADR 为准)
+adr/                            第 0 层  架构决策记录 ADR-0001..0023(0012 随 M10 dsh 线归档、编号跳空;基线与 ADR 冲突时以更新的 ADR 为准)
 architecture/                   第 0 层  C4 模型 boenmind.c4(拓扑唯一权威)+ 辩论转录(debates/)+ 验证报告
 boenmind-contracts/             第 1 层  机器可读合同(v1.0 冻结)+ validate.py 校验器 + m0/(测试矩阵/威胁模型/perf-baseline)
 milestones/                     第 2 层  实现规格+回看(M1-M9、W1-W9)+ 台账四件:HISTORY(交付时间线)/BACKLOG(未结事项)/PENDING(待裁决,现清零)/AUDIT-2026-08-30(审计)

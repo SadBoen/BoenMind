@@ -118,9 +118,8 @@ export function WorkspacePickerDialog({
   };
 
   useEffect(() => {
+    // 仅挂载时初始化一次(本组件按打开次数条件挂载,依赖故意为空)
     void load(draft.path || "");
-    // 仅挂载时初始化一次(本组件按打开次数条件挂载)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const duplicate = registered.some(

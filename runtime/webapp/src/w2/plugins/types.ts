@@ -38,6 +38,8 @@ export type McpCandidatesResult = {
     description: string;
     registered: boolean;
     source?: string;
+    /** 在删除名单(墓碑)中:批准接入即恢复 */
+    tombstoned?: boolean;
   }[];
   note: string;
 };

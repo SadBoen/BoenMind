@@ -161,6 +161,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let hub: Option<Arc<bm_providers::mcp::McpHub>> = mcp_config
         .as_ref()
         .map(|_| bm_providers::mcp::McpHub::new());
+    // ADR-0023:官方随包插件默认安装——bundled 目录候选(未登记且不在
+    // 墓碑)先按批准同款形状落盘 mcp.json + manifest,再走下方统一装载
+    // 一次上线;用户卸载/删除过的官方插件经墓碑永不复活,显式批准即除名。
+    if let (Some(cfg_path), Some(exe_dir)) = (
+        mcp_config.as_deref(),
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf())),
+    ) {
+        let bundled = exe_dir.join("plugins");
+        if bundled.is_dir() {
+            let _seeded =
+                bm_surface_http::webadmin::seed_bundled_plugins(cfg_path, &bundled, &data_dir)
+                    .await;
+        }
+    }
     if let (Some(cfg_path), Some(hub)) = (mcp_config.as_deref(), hub.as_ref()) {
         // F-07:启动装载与热装载同调 supervisor(消除双写);
         // 启动侧 registrar = 收集 entries 进 capabilities,无注销语义。

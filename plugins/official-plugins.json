@@ -1,0 +1,7 @@
+{
+  "plugins": [
+    "web_multisearch",
+    "context_inspector"
+  ],
+  "note": "官方随包 MCP 插件声明名清单(ADR-0023):release.yml 把本文件复制进包内 plugins/.official.json;升级换装后服务端据此判定「官方最新版已不随包」的存量插件(建议删除标记)。注意此处是插件 --self-describe 的声明名,不是 exe 文件名。增删随包插件时同步维护本清单。"
+}

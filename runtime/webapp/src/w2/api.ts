@@ -94,6 +94,10 @@ export type McpListResult = {
       }[];
     } | null;
     config?: Record<string, unknown>;
+    /** ADR-0023:来源(bundled=官方随包;data=数据目录手动放置) */
+    origin?: "bundled" | "data" | "unknown";
+    /** 官方随包来源但最新官方清单已不含 → 建议删除 */
+    deprecated?: boolean;
   }[];
   loadedAtBoot: string[];
   note: string;
@@ -271,22 +275,29 @@ export const api = {
           title: string;
           description: string;
           registered: boolean;
+          /** bundled=官方随包;data=数据目录手动放置 */
+          source?: string;
+          /** 在删除名单(墓碑)中:批准接入即恢复 */
+          tombstoned?: boolean;
         }[];
         note: string;
       }>("/admin/mcp/candidates", { method: "POST" }),
     approve: (name: string) =>
-      req<{ ok: boolean; note: string }>(
-        "/admin/mcp/approve",
-        json("POST", { name }),
-      ),
-    test: (name: string) =>
       req<{
         ok: boolean;
-        name: string;
-        tools?: number;
-        tool_list?: { name: string; description?: string }[];
-        error?: string;
-      }>(`/admin/mcp/test/${name}`, { method: "POST" }),
+        note: string;
+        /** ADR-0023:批准即自动热重载;ok=false 时 skipped 说明原因(如测试态) */
+        reload?: { ok: boolean; tools?: number | null; failed?: unknown[]; skipped?: string };
+      }>("/admin/mcp/approve", json("POST", { name })),
+    // ADR-0023:卸载并物理删除插件文件(警告栏确认后调用)
+    purge: (name: string) =>
+      req<{
+        ok: boolean;
+        deleted: string[];
+        renamed_aside: string[];
+        errors: string[];
+        note: string;
+      }>(`/admin/mcp/${name}/purge`, { method: "POST" }),
     status: () =>
       req<{
         status: {
