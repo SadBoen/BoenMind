@@ -17,6 +17,9 @@ const MAX_OUTPUT_CHARS: usize = 16_000;
 const MAX_FILE_BYTES: u64 = 1_048_576;
 /// 单次读取文件大小上限:16MB(防超大文件全量入内存 DoS)
 const MAX_READ_BYTES: u64 = 16 * 1_048_576;
+/// 单次写入大小上限:16MB(2026-09 审计补,防模型误写超大文件撑爆磁盘;
+/// 与 MAX_READ_BYTES 对等,read/write 极限一致)
+const MAX_WRITE_BYTES: usize = 16 * 1_048_576;
 const SKIP_DIRS: &[&str] = &[".git", "node_modules", "target", "dist", "build"];
 const LINE_CAP_CHARS: usize = 400;
 const READ_DEFAULT_LINES: usize = 2_000;
@@ -370,7 +373,17 @@ pub fn write(roots: &Roots, args: &Value) -> Value {
     {
         return tool_err(format!("建父目录失败:{e}"));
     }
-    match std::fs::write(&path, content.as_bytes()) {
+    // 原子写(2026-09 审计收口 BACKLOG「fs.write/edit 原子写+大小上限」):
+    // 与全仓标准 atomic_write 同款语义——临时文件 + fsync + rename,崩溃不
+    // 留半截文件;同时给写入带上限防护(防模型误写超大文件撑爆磁盘)。
+    if content.len() > MAX_WRITE_BYTES {
+        return tool_err(format!(
+            "写入内容过大({} bytes > 上限 {} bytes),请分片写入",
+            content.len(),
+            MAX_WRITE_BYTES
+        ));
+    }
+    match bm_persist::atomic_write(&path, content.as_bytes()) {
         Ok(()) => json!({
             "ok": true,
             "path": display_path(&path),
@@ -506,7 +519,9 @@ pub fn edit(roots: &Roots, args: &Value) -> Value {
     out.push_str(&content[cursor..]);
 
     let replacements = all.len();
-    match std::fs::write(&path, out.as_bytes()) {
+    // 原子写(2026-09 审计收口 BACKLOG「fs.write/edit 原子写+大小上限」,
+    // 与 fs.write 同批):编辑结果经 atomic_write 落盘,崩溃不留半截文件。
+    match bm_persist::atomic_write(&path, out.as_bytes()) {
         Ok(()) => json!({
             "ok": true,
             "path": display_path(&path),
