@@ -24,6 +24,8 @@ grep-searcher = { workspace = true }
 grep-regex = { workspace = true }
 walkdir = { workspace = true }
 regex = { workspace = true }
+wasmtime = { version = "48.0.1", default-features = false, features = ["runtime", "cranelift", "wat"] }
+wasmtime-wasi = "48.0.1"
 
 [features]
 glm = []

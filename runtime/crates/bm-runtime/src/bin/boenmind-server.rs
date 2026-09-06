@@ -139,6 +139,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     capabilities.extend([bm_providers::system_exec::exec_capability_entry()]);
     // ADR-0021:fs.* 文件工具集内置(查/读直通,写/改审批;沙箱=工作区注册表)
     capabilities.extend(bm_providers::fs_tools::fs_capability_entries());
+    // Skill v0.2(ADR-0016 第二步):skills.json 声明 scripts 的技能 →
+    // wasmtime 执行面(manifests 进能力面,执行体挂 skill 分道)。
+    let (skills, skill_entries) = load_skill_scripts(&data_dir);
+    capabilities.extend(skill_entries);
     // W2 管理面注入面:内置能力摘要(= mcp 注入前的 capabilities)
     let builtin_caps: Vec<serde_json::Value> = capabilities
         .iter()
@@ -236,9 +240,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Some(hub) => hub,
                 None => Arc::new(bm_providers::system_exec::ExecExecutor),
             };
+            // Skill v0.2(ADR-0016 第二步):装载 skills.json 中带 scripts 的
+            // 技能 → 编译 wasm 合成 manifests 注册进能力面;执行体挂 skill 分道。
             let exec: Arc<dyn bm_core::ports::AsyncCapabilityExecutor> =
                 Arc::new(bm_providers::system_exec::SplitExecutor {
                     fs,
+                    skills,
                     fallback: inner,
                 });
             exec.into()
@@ -383,4 +390,68 @@ async fn shutdown_signal(handle: RuntimeHandle, shutdown: Arc<tokio::sync::Notif
     println!("排空进行中回合(不被取消,INV-12)……");
     handle.stop("server_shutdown").await;
     println!("排空完成");
+}
+
+/// 脚本装载结果:执行器(None=初始化失败)+ 待注册能力对。
+type SkillScriptLoad = (
+    Option<Arc<bm_providers::skill_wasm::SkillScriptManager>>,
+    Vec<(
+        bm_contract::capability::CapabilityManifest,
+        Arc<dyn bm_core::registry::CapabilityProvider>,
+    )>,
+);
+
+/// Skill v0.2(ADR-0016 第二步):扫描 <data>/skills/<skill_id>/ 与
+/// config/skills.json——声明 scripts 的技能编译注册(wasm → manifests);
+/// 纯知识包跳过。失败仅告警不阻断启动。
+fn load_skill_scripts(data_dir: &std::path::Path) -> SkillScriptLoad {
+    let manager = match bm_providers::skill_wasm::SkillScriptManager::new() {
+        Ok(m) => Arc::new(m),
+        Err(e) => {
+            eprintln!("[Skill] 执行面初始化失败(已跳过): {e}");
+            return (None, Vec::new());
+        }
+    };
+    let cfg = data_dir.join("config").join("skills.json");
+    let Ok(text) = std::fs::read_to_string(&cfg) else {
+        return (Some(manager), Vec::new());
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+        eprintln!("[Skill] skills.json 解析失败(已跳过脚本装载)");
+        return (Some(manager), Vec::new());
+    };
+    let Some(list) = v["skills"].as_array() else {
+        return (Some(manager), Vec::new());
+    };
+    let mut entries: Vec<(
+        bm_contract::capability::CapabilityManifest,
+        Arc<dyn bm_core::registry::CapabilityProvider>,
+    )> = Vec::new();
+    for sk in list {
+        let Some(id) = sk["skill_id"].as_str() else {
+            continue;
+        };
+        if sk.get("scripts").is_none() {
+            continue;
+        }
+        let Ok(def) = serde_json::from_value::<bm_contract::skill::SkillDefinition>(sk.clone())
+        else {
+            eprintln!("[Skill] 技能 {id} 的 scripts 载荷非法(已跳过)");
+            continue;
+        };
+        let root = data_dir.join("skills").join(id);
+        match manager.register_skill(id, &def, &root) {
+            Ok(manifests) => {
+                eprintln!("[Skill] 技能 {id} 已装载 {} 个脚本", manifests.len());
+                entries.extend(
+                    bm_providers::skill_wasm::SkillScriptManager::capability_entries(manifests),
+                );
+            }
+            Err(e) => eprintln!("[Skill] 技能 {id} 装载失败(已跳过): {e}"),
+        }
+    }
+    if !entries.is_empty() {
+        eprintln!("[Skill] 共注册 {} 个技能脚本能力", entries.len());
+    }
+    (Some(manager), entries)
 }

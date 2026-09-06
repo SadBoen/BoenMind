@@ -138,9 +138,11 @@ impl AsyncCapabilityExecutor for ExecExecutor {
     }
 }
 
-/// 组合执行器:system.exec / fs.* 走内置执行体,其余回落(如 MCP hub)。
+/// 组合执行器:system.exec / fs.* / skill.* 走内置执行体,其余回落(如 MCP hub)。
 pub struct SplitExecutor {
     pub fs: fs_tools::FsExecutor,
+    /// Skill v0.2(ADR-0016 第二步):wasmtime 技能脚本执行面。
+    pub skills: Option<Arc<crate::skill_wasm::SkillScriptManager>>,
     pub fallback: Arc<dyn AsyncCapabilityExecutor>,
 }
 
@@ -159,6 +161,13 @@ impl AsyncCapabilityExecutor for SplitExecutor {
                 .await
         } else if capability.starts_with("fs.") {
             self.fs.call(operation_id, capability, args, deadline).await
+        } else if capability.starts_with("skill.") {
+            match &self.skills {
+                Some(m) => m.call(operation_id, capability, args, deadline).await,
+                None => Err(AsyncCallError::Transport(
+                    "skill 脚本执行面未启用".to_string(),
+                )),
+            }
         } else {
             self.fallback
                 .call(operation_id, capability, args, deadline)
