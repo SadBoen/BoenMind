@@ -106,26 +106,20 @@ export function ServerConfigDialog({
     // 已删墓碑排到最后,列表主序保持可用家在前
     list.sort((a, b) => Number(!!a.deleted) - Number(!!b.deleted));
     setProviders(list);
-    finalizeSelection(list, target.values, usage);
-  }, [target, providerSchema]);
-
-  // 默认选中第一个可用(未删)家;停用家可选,已删家不默认选中
-  function finalizeSelection(
-    list: ProviderEntry[],
-    vals: Record<string, unknown>,
-    _u: Record<string, number>,
-  ) {
+    // 默认选中第一个可用(未删)家;停用家可选,已删家不默认选中
+    // (2026-09 审计:原为 effect 之后声明的 function,React Compiler immutability
+    //  不认可「effect 访问后声明函数」的顺序——内联消除声明序问题)
     if (list.length) {
       const live = list.filter((p) => !p.deleted);
       const storedIds = new Set(
-        (Array.isArray(vals.providers) ? vals.providers : []).map(
+        (Array.isArray(target.values?.providers) ? target.values.providers : []).map(
           (x: unknown) => (x as Record<string, unknown>).id as string,
         ),
       );
       const firstStored = live.find((p) => storedIds.has(p.id)) ?? live[0];
       if (firstStored) setSelectedId(firstStored.id);
     }
-  }
+  }, [target, providerSchema]);
 
   // 拉取用量(进度条)
   useEffect(() => {

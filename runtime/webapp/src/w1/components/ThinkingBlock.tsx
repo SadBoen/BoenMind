@@ -38,7 +38,7 @@ export function ThinkingBlock({ text, isStreaming = false, elapsedSeconds }: Thi
     else setScrollMask("none");
   };
 
-  const handleScroll = (e: UIEvent<HTMLDivElement>) => {
+  const handleScroll = (_e: UIEvent<HTMLDivElement>) => {
     updateMask();
   };
 

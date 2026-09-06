@@ -18,18 +18,10 @@ import {
   Square,
   ChevronUp,
   ChevronDown,
-  ChevronRight,
   Zap,
   ListOrdered,
   Code2,
   X,
-  Search,
-  Terminal,
-  FileText,
-  FileCode,
-  FileJson,
-  FileImage,
-  File,
   Bot,
   User,
   Pencil,
@@ -57,7 +49,7 @@ import { storage, STORAGE_KEYS, type PermissionMode, type ThinkingLevel } from "
 import { BM_EVENTS, emit } from "../lib/bus";
 import { DotScrollbar } from "./DotScrollbar";
 import { MarkdownRenderer } from "./MarkdownRenderer";
-import { parseAssistantContent, type ParsedContentBlock } from "./parser";
+import { parseAssistantContent } from "./parser";
 import { ThinkingBlock } from "./components/ThinkingBlock";
 import { ToolTreeGroup } from "./components/ToolTreeGroup";
 import { TerminalBlock } from "./components/TerminalBlock";
@@ -107,6 +99,10 @@ export function Thread({
     (collapsed
       ? "bg-muted text-foreground"
       : "text-muted-foreground hover:bg-muted");
+  // 2026-09 审计修复:Hook 调用不得出现在 JSX/条件分支内(rules-of-hooks 违规,
+  // 会话切换时可能触发「Rendered more hooks than during the previous render」)。
+  // 提取到组件顶层,保证每次渲染钩子调用顺序恒定。
+  const agentRunning = useAuiState((s) => s.thread.isRunning);
   return (
     <div className="chat">
       <div className="chat-head">
@@ -197,7 +193,7 @@ export function Thread({
           <DotScrollbar viewportRef={viewportRef} />
           <div className="composer-dock">
             <div className="relative mx-auto w-full max-w-[820px]">
-              <AgentStatusBar isRunning={useAuiState((s) => s.thread.isRunning)} activeModel={storage.get(STORAGE_KEYS.ACTIVE_MODEL) || ""} />
+              <AgentStatusBar isRunning={agentRunning} activeModel={storage.get(STORAGE_KEYS.ACTIVE_MODEL) || ""} />
               <ApprovalDrawer />
               <Composer />
             </div>
@@ -463,133 +459,8 @@ function UserMessage() {
 }
 
 // 根据文件名后缀返回对应的专属图标
-function getFileIcon(filename: string) {
-  const lower = filename.toLowerCase();
-  if (lower.endsWith(".ts") || lower.endsWith(".tsx") || lower.endsWith(".js") || lower.endsWith(".jsx") || lower.endsWith(".rs") || lower.endsWith(".py") || lower.endsWith(".go") || lower.endsWith(".c") || lower.endsWith(".cpp")) {
-    return <FileCode className="size-3.5 text-sky-500 shrink-0" />;
-  }
-  if (lower.endsWith(".json") || lower.endsWith(".yaml") || lower.endsWith(".yml") || lower.endsWith(".toml") || lower.endsWith(".xml")) {
-    return <FileJson className="size-3.5 text-amber-500 shrink-0" />;
-  }
-  if (lower.endsWith(".md") || lower.endsWith(".txt") || lower.endsWith(".doc") || lower.endsWith(".pdf")) {
-    return <FileText className="size-3.5 text-indigo-500 shrink-0" />;
-  }
-  if (lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".svg") || lower.endsWith(".webp") || lower.endsWith(".gif")) {
-    return <FileImage className="size-3.5 text-emerald-500 shrink-0" />;
-  }
-  if (lower.endsWith(".sh") || lower.endsWith(".bat") || lower.endsWith(".ps1")) {
-    return <Terminal className="size-3.5 text-rose-500 shrink-0" />;
-  }
-  return <File className="size-3.5 text-muted-foreground shrink-0" />;
-}
-
-// 解析助手消息中的工具调用与普通文本，并进行连续折叠聚合
-type ParsedBlock =
-  | { type: "text"; text: string }
-  | { type: "thinking"; text: string }
-  | { type: "tool_group"; tools: Array<{ raw: string; name: string; target?: string }> };
-
-function parseAssistantText(raw: string): ParsedBlock[] {
-  if (!raw) return [];
-
-  // 工具调用标记匹配: [调用 tool_name] 或类似格式
-  const lines = raw.split("\n");
-  const blocks: ParsedBlock[] = [];
-  let curText = "";
-  let curTools: Array<{ raw: string; name: string; target?: string }> = [];
-
-  const flushText = () => {
-    if (curText) {
-      blocks.push({ type: "text", text: curText });
-      curText = "";
-    }
-  };
-
-  const flushTools = () => {
-    if (curTools.length > 0) {
-      blocks.push({ type: "tool_group", tools: [...curTools] });
-      curTools = [];
-    }
-  };
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const toolMatch = line.match(/^\[调用\s+([a-zA-Z0-9_.:-]+)(?:\s*(.*?))?\]$/);
-    if (toolMatch) {
-      flushText();
-      const name = toolMatch[1];
-      const target = toolMatch[2] || "";
-      curTools.push({ raw: line, name, target });
-    } else {
-      flushTools();
-      curText += (curText ? "\n" : "") + line;
-    }
-  }
-
-  flushTools();
-  flushText();
-
-  return blocks;
-}
-
-function ToolGroupCard({
-  group,
-}: {
-  group: { tools: Array<{ raw: string; name: string; target?: string }> };
-  isRunning?: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const count = group.tools.length;
-
-  // 统计工具类型(rgrep=内容/文件名搜索;read 覆盖 read;exec/powershell/bash=终端)
-  const searchCount = group.tools.filter(
-    (t) => t.name.includes("search") || t.name.includes("grep") || t.name.includes("find"),
-  ).length;
-  const readCount = group.tools.filter((t) => t.name.includes("read")).length;
-  const execCount = group.tools.filter(
-    (t) => t.name.includes("exec") || t.name.includes("bash") || t.name.includes("powershell"),
-  ).length;
-
-  const summaryParts: string[] = [];
-  if (searchCount > 0) summaryParts.push(`${searchCount} 搜索`);
-  if (readCount > 0) summaryParts.push(`${readCount} 读取`);
-  if (execCount > 0) summaryParts.push(`${execCount} 终端`);
-  const summaryText = summaryParts.length > 0 ? summaryParts.join("，") : `${count} 个操作`;
-
-  return (
-    <div className="tool-group-card" data-slot="tool-group">
-      <div className="tool-group-header" onClick={() => setOpen(!open)}>
-        {open ? <ChevronDown size={14} className="text-muted-foreground" /> : <ChevronRight size={14} className="text-muted-foreground" />}
-        <div className="tool-group-title">
-          <Search size={14} className="text-blue-500" />
-          <span>查阅 · {summaryText}</span>
-        </div>
-        <span className="tool-group-summary">{open ? "收起" : "展开详情"}</span>
-      </div>
-      {open ? (
-        <div className="tool-group-body">
-          {group.tools.map((t, idx) => {
-            const isRead = t.name.includes("read");
-            const isExec = t.name.includes("exec");
-            return (
-              <div key={idx} className="tool-step-item">
-                {isExec ? (
-                  <Terminal size={13} className="text-emerald-500 shrink-0" />
-                ) : isRead ? (
-                  getFileIcon(t.target || t.name)
-                ) : (
-                  <Search size={13} className="text-blue-500 shrink-0" />
-                )}
-                <span className="font-semibold text-foreground">{t.name}</span>
-                {t.target ? <span className="tool-step-cmd">{t.target}</span> : null}
-              </div>
-            );
-          })}
-        </div>
-      ) : null}
-    </div>
-  );
-}
+// (已由 FileBadge 组件统一承载:getFileConfig + FileBadge 胶囊;本函数为历史
+//  双份实现,于 2026-09 审计清理,见 thread.tsx 死代码删除)
 
 function AssistantMessage() {
   const isRunning = useAuiState((s) => s.thread.isRunning);

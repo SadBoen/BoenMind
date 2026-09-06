@@ -84,7 +84,6 @@ export function WorkspaceFiles() {
   }, []);
 
   const {
-    expanded,
     loadingDir,
     nodes,
     loadDir,

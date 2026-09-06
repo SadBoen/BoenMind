@@ -102,7 +102,10 @@ export function PluginsPage({
   // 表格列宽状态(支持记忆与拖动)
   const [colWidths, setColWidths] = useState<Record<ColKey, number>>(loadColWidths);
   const colWidthsRef = useRef(colWidths);
-  colWidthsRef.current = colWidths;
+  // 镜像同步放 effect(React Compiler 规则:渲染期不可写 ref;拖拽读取最新列宽)
+  useEffect(() => {
+    colWidthsRef.current = colWidths;
+  }, [colWidths]);
 
   const handleResizeStart = useCallback(
     (key: ColKey, e: React.PointerEvent) => {

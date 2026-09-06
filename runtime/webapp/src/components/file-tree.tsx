@@ -4,7 +4,7 @@
 // 2026-09-07 目录树批次升级为两处共用:懒加载状态抽 useLazyTree +
 // flattenTree 拍平(工作区文件树 / 设置页全盘目录选择器同源),
 // FileTree 增 selected 高亮 / drive 图标 / 行尾徽标 / chevron 独立点击区。
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ComponentProps, ReactNode } from "react";
 import {
   ChevronDownIcon,
@@ -51,7 +51,11 @@ export function useLazyTree(opts: {
   );
   const [loadingDir, setLoadingDir] = useState<string | null>(null);
   const childrenRef = useRef(children);
-  childrenRef.current = children;
+  // 镜像同步放 effect 中(React Compiler 规则:渲染期不可写 ref;事件处理器
+  // toggle/reveal 读到的 childrenRef 需是最新 children,effect 同步即可)
+  useEffect(() => {
+    childrenRef.current = children;
+  }, [children]);
 
   const loadDir = useCallback(
     async (path: string) => {

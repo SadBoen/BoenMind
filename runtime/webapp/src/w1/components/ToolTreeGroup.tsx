@@ -1,10 +1,9 @@
-import { useState, useRef, useEffect, UIEvent } from "react";
+import { useState } from "react";
 import {
   Search,
   ChevronDown,
   ChevronRight,
   Pencil,
-  FileCode,
   CheckCircle2,
   FolderGit2,
   Maximize2,
@@ -25,7 +24,7 @@ interface ToolTreeGroupProps {
  * 3. 展开呈现类似目录树的左侧垂直细引导线
  * 4. 每个子项拥有独立的状态和彩色文件图标，支持展开限高与无滚动条查看
  */
-export function ToolTreeGroup({ block, isRunning = false }: ToolTreeGroupProps) {
+export function ToolTreeGroup({ block, isRunning: _isRunning = false }: ToolTreeGroupProps) {
   const [open, setOpen] = useState(false);
 
   // 1. 查阅类聚合 (ExploreGroup)
@@ -138,7 +137,6 @@ function TreeSubItem({ item }: { item: ToolActionItem }) {
   const [subOpen, setSubOpen] = useState(false);
   const [fullyExpanded, setFullyExpanded] = useState(false);
   const isRead = item.category === "read";
-  const isSearch = item.category === "search";
   const target = item.target || "";
 
   return (

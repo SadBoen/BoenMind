@@ -205,16 +205,17 @@ test.describe("对话闭环", () => {
     await expect(page.locator(".msg.user .msg-header")).toContainText("我");
     await expect(page.locator(".msg.assistant .msg-header")).toContainText("BoenMind Agent");
 
-    // 验证折叠卡片渲染（聚合了 1 搜索，1 读取）
-    const group = page.locator('[data-slot="tool-group"]');
-    await expect(group).toBeVisible();
-    await expect(group).toContainText("查阅 · 1 搜索，1 读取");
+    // 验证折叠卡片渲染（聚合了 1 搜索, 1 读取;ToolTreeGroup 聚合形态）
+    // 2026-09-07 审计对齐:旧断言锚 data-slot="tool-group"(已删死的 ToolGroupCard),
+    // 当前组件 = ToolTreeGroup,无该标记;按文本与结构断言
+    await expect(page.getByText(/查阅 · 1 文件，1 搜索/)).toBeVisible();
     await expect(page.getByText("完成检索。")).toBeVisible();
 
-    // 点击展开折叠详情
-    await group.locator(".tool-group-header").click();
-    await expect(group.locator(".tool-step-item").first()).toContainText("fs_search");
-    await expect(group.locator(".tool-step-item").nth(1)).toContainText("fs_read");
+    // 点击展开聚合卡片(flex 头部行,与 TreeSubItem 树形子项)
+    // read 分类渲染 FileBadge(显示文件路径),search 分类显示工具名;分别断言
+    await page.getByText(/查阅 · 1 文件，1 搜索/).click();
+    await expect(page.getByText("fs_search").first()).toBeVisible();
+    await expect(page.getByText("src/main.rs").first()).toBeVisible();
   });
 });
 

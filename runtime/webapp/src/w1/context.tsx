@@ -259,6 +259,9 @@ export function ContextView() {
   // 「真实值」只来自快照如实字段(提供商 usage / 实测计时 / 台账计数),
   // 拿不到就如实显示「未上报 / 未知」,绝不编造)
   // 时间旅行时以历史快照的实报为口径;Live 模式跟随最新
+  // React Compiler 无法自动保留该复杂派生 memo(引用多快照分支 + 循环派生),
+  // 手写 useMemo 为既有正确形态——保留手工 memo 是刻意选型,不是编译器可替代。
+  // eslint-disable-next-line react-hooks/preserve-manual-memoization
   const stats = useMemo(() => {
     if (!recipe || !latestSnapshot) return null;
     const focusSnapshot = timeTravelSnapshot ?? latestSnapshot;

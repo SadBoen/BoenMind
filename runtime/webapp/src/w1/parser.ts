@@ -108,7 +108,6 @@ export function parseAssistantContent(raw: string, isMessageRunning: boolean = f
         text: thinkText,
         isStreaming: isMessageRunning,
       });
-      cursor = raw.length;
       break;
     }
   }

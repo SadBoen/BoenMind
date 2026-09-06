@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from "react";
-import { Loader2, Sparkles, Brain, Terminal, Search, FileEdit, CheckCircle2 } from "lucide-react";
+import { Loader2, Sparkles, Brain, Terminal, Search, FileEdit } from "lucide-react";
 
 interface AgentStatusBarProps {
   isRunning: boolean;
