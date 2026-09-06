@@ -424,7 +424,10 @@ async fn parallel_search(
         }
     })
     .await?;
-    let data: serde_json::Value = resp.json().await.map_err(|e| format!("Parallel Search: {e}"))?;
+    let data: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Parallel Search: {e}"))?;
     let results = data
         .pointer(&p.results_path)
         .and_then(|v| v.as_array())

@@ -128,13 +128,9 @@ fn test_mcp_protocol_roundtrip() {
         .as_array()
         .expect("tools array");
     assert_eq!(tools.len(), 4);
-    assert!(tools
-        .iter()
-        .any(|t| t["name"] == "inspect_snapshot"));
+    assert!(tools.iter().any(|t| t["name"] == "inspect_snapshot"));
     assert!(tools.iter().any(|t| t["name"] == "diagnose_spikes"));
-    assert!(tools
-        .iter()
-        .any(|t| t["name"] == "track_file_effects"));
+    assert!(tools.iter().any(|t| t["name"] == "track_file_effects"));
     assert!(tools.iter().any(|t| t["name"] == "search_history"));
 
     // 3. 测试 tools/call: inspect_snapshot

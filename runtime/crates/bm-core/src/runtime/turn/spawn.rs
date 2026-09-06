@@ -385,10 +385,14 @@ pub(crate) fn spawn_turn(
                             for tc in &tool_calls {
                                 let sig = (tc.name.clone(), tc.arguments.clone());
                                 if recent_tool_signatures.len() >= 4
-                                    && recent_tool_signatures[recent_tool_signatures.len() - 1] == sig
-                                    && recent_tool_signatures[recent_tool_signatures.len() - 2] == sig
-                                    && recent_tool_signatures[recent_tool_signatures.len() - 3] == sig
-                                    && recent_tool_signatures[recent_tool_signatures.len() - 4] == sig
+                                    && recent_tool_signatures[recent_tool_signatures.len() - 1]
+                                        == sig
+                                    && recent_tool_signatures[recent_tool_signatures.len() - 2]
+                                        == sig
+                                    && recent_tool_signatures[recent_tool_signatures.len() - 3]
+                                        == sig
+                                    && recent_tool_signatures[recent_tool_signatures.len() - 4]
+                                        == sig
                                 {
                                     loop_broken = true;
                                     break;
@@ -415,11 +419,13 @@ pub(crate) fn spawn_turn(
                                     content: content.clone(),
                                 });
                                 for tc in tool_calls {
-                                    let args: serde_json::Value = serde_json::from_str(&tc.arguments)
-                                        .unwrap_or(serde_json::Value::Null);
+                                    let args: serde_json::Value =
+                                        serde_json::from_str(&tc.arguments)
+                                            .unwrap_or(serde_json::Value::Null);
 
                                     // 提取核心目标参数(如 path, file_path, command, query)用于前端清晰呈现
-                                    let target_summary = args.get("path")
+                                    let target_summary = args
+                                        .get("path")
                                         .or_else(|| args.get("file_path"))
                                         .or_else(|| args.get("command"))
                                         .or_else(|| args.get("query"))
@@ -441,130 +447,135 @@ pub(crate) fn spawn_turn(
                                         .get(&tc.name)
                                         .cloned()
                                         .unwrap_or_else(|| tc.name.clone());
-                                // W9:工具调用事件(轨迹视图数据源)
-                                let tool_started = std::time::Instant::now();
-                                ctx_log.record_event(
-                                    session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
-                                    op_id.as_str(),
-                                    turn_index,
-                                    "tool_call",
-                                    &format_ts(clock.now()),
-                                    serde_json::json!({
-                                        "tool": tc.name,
-                                        "arguments": args.clone(),
-                                    }),
-                                );
-                                let (rtx, rrx) = tokio::sync::oneshot::channel();
-                                let call_req = request_id.clone().unwrap_or_else(|| op_id.clone());
-                                let _ = tx
-                                    .send(Cmd::CapabilityCall {
-                                        request_id: call_req,
-                                        params: wire::CapabilityCallParams {
-                                            capability: capability.clone(),
-                                            args: args.clone(),
-                                            // W4b 修复:幂等键必须含回合操作 id——
-                                            // 模型不同回合的 tool_call id 会重复,
-                                            // 纯 tc.id 会让幂等抑制返回上一回合的
-                                            // 旧收据(模型看到旧结果反复重试)
-                                            idempotency_key: Some(format!(
-                                                "{}:{}",
-                                                op_id.as_str(),
-                                                tc.id
-                                            )),
-                                            deadline_ms: None,
-                                        },
-                                        resp: rtx,
-                                    })
-                                    .await;
-                                // W4b 对话内审批:需审批能力调用返回
-                                // ApprovalRequired 错误(审批单已开,operation
-                                // 停在 waiting_approval)。此时反查审批单,
-                                // 推送审批卡片标记随 SSE 流上屏,并轮询等待
-                                // 用户裁决+执行落定(上限 300s=审批 TTL)。
-                                let call_resp = rrx.await;
-                                let mut approval_id: Option<String> = None;
-                                let mut tool_op: Option<bm_contract::ids::BmId> = None;
-                                match &call_resp {
-                                    // W4b+ 加固:ApprovalRequired 错误自带开单点的
-                                    // approval_id/operation_id(CoreError::ApprovalNeeded),
-                                    // 回合侧零反查——杜绝多会话/并发调用同能力时
-                                    // 「批准 A 执行 B」的错配缺陷
-                                    Ok(Err(CoreError::ApprovalNeeded {
-                                        approval_id: aid,
-                                        operation_id: opid,
-                                        ..
-                                    })) => {
-                                        approval_id = Some(aid.clone());
-                                        tool_op = bm_contract::ids::BmId::parse(opid).ok();
-                                    }
-                                    Ok(Ok(receipt_value)) => {
-                                        tool_op = receipt_value["operation_id"]
-                                            .as_str()
-                                            .and_then(|s| bm_contract::ids::BmId::parse(s).ok());
-                                    }
-                                    _ => {}
-                                }
-
-                                if let Some(appr_id) = approval_id.clone() {
-                                    // 审批卡片标记:随 ProviderDelta 上屏,
-                                    // 前端识别 bm_approval_request 渲染卡片
-                                    // (args = 模型本次调用的真实参数,卡片展示用)
+                                    // W9:工具调用事件(轨迹视图数据源)
+                                    let tool_started = std::time::Instant::now();
+                                    ctx_log.record_event(
+                                        session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
+                                        op_id.as_str(),
+                                        turn_index,
+                                        "tool_call",
+                                        &format_ts(clock.now()),
+                                        serde_json::json!({
+                                            "tool": tc.name,
+                                            "arguments": args.clone(),
+                                        }),
+                                    );
+                                    let (rtx, rrx) = tokio::sync::oneshot::channel();
+                                    let call_req =
+                                        request_id.clone().unwrap_or_else(|| op_id.clone());
                                     let _ = tx
-                                        .send(Cmd::ApprovalRequested {
-                                            approval_id: appr_id.clone(),
-                                            capability: capability.clone(),
-                                            args: args.clone(),
-                                            operation_id: op_id.clone(),
+                                        .send(Cmd::CapabilityCall {
+                                            request_id: call_req,
+                                            params: wire::CapabilityCallParams {
+                                                capability: capability.clone(),
+                                                args: args.clone(),
+                                                // W4b 修复:幂等键必须含回合操作 id——
+                                                // 模型不同回合的 tool_call id 会重复,
+                                                // 纯 tc.id 会让幂等抑制返回上一回合的
+                                                // 旧收据(模型看到旧结果反复重试)
+                                                idempotency_key: Some(format!(
+                                                    "{}:{}",
+                                                    op_id.as_str(),
+                                                    tc.id
+                                                )),
+                                                deadline_ms: None,
+                                            },
+                                            resp: rtx,
                                         })
                                         .await;
-                                }
+                                    // W4b 对话内审批:需审批能力调用返回
+                                    // ApprovalRequired 错误(审批单已开,operation
+                                    // 停在 waiting_approval)。此时反查审批单,
+                                    // 推送审批卡片标记随 SSE 流上屏,并轮询等待
+                                    // 用户裁决+执行落定(上限 300s=审批 TTL)。
+                                    let call_resp = rrx.await;
+                                    let mut approval_id: Option<String> = None;
+                                    let mut tool_op: Option<bm_contract::ids::BmId> = None;
+                                    match &call_resp {
+                                        // W4b+ 加固:ApprovalRequired 错误自带开单点的
+                                        // approval_id/operation_id(CoreError::ApprovalNeeded),
+                                        // 回合侧零反查——杜绝多会话/并发调用同能力时
+                                        // 「批准 A 执行 B」的错配缺陷
+                                        Ok(Err(CoreError::ApprovalNeeded {
+                                            approval_id: aid,
+                                            operation_id: opid,
+                                            ..
+                                        })) => {
+                                            approval_id = Some(aid.clone());
+                                            tool_op = bm_contract::ids::BmId::parse(opid).ok();
+                                        }
+                                        Ok(Ok(receipt_value)) => {
+                                            tool_op =
+                                                receipt_value["operation_id"].as_str().and_then(
+                                                    |s| bm_contract::ids::BmId::parse(s).ok(),
+                                                );
+                                        }
+                                        _ => {}
+                                    }
 
-                                // 受理/结果:直通能力同步出结果;MCP 异步能力经
-                                // operations 轮询至终态(上限 60s);需审批能力
-                                // 轮询至审批裁决+执行终态(上限 300s)。
-                                let mut tool_result = String::from("工具执行无应答");
-                                let wait_secs = if approval_id.is_some() { 300 } else { 60 };
-                                // 直通修复(2026-09-03 VPS 实测 P1):同步收据
-                                // state=succeeded 且 result 内联时立即回喂——
-                                // 同步结果从不写入 op_results(仅异步回单/审批
-                                // 重放两路写入),此前一律进 GetOpResult 轮询=
-                                // 直通工具必现 60s「工具执行超时」。审批类与
-                                // MCP 异步(state=running)仍走轮询不变。
-                                let inline_sync = matches!(&call_resp, Ok(Ok(v))
+                                    if let Some(appr_id) = approval_id.clone() {
+                                        // 审批卡片标记:随 ProviderDelta 上屏,
+                                        // 前端识别 bm_approval_request 渲染卡片
+                                        // (args = 模型本次调用的真实参数,卡片展示用)
+                                        let _ = tx
+                                            .send(Cmd::ApprovalRequested {
+                                                approval_id: appr_id.clone(),
+                                                capability: capability.clone(),
+                                                args: args.clone(),
+                                                operation_id: op_id.clone(),
+                                            })
+                                            .await;
+                                    }
+
+                                    // 受理/结果:直通能力同步出结果;MCP 异步能力经
+                                    // operations 轮询至终态(上限 60s);需审批能力
+                                    // 轮询至审批裁决+执行终态(上限 300s)。
+                                    let mut tool_result = String::from("工具执行无应答");
+                                    let wait_secs = if approval_id.is_some() { 300 } else { 60 };
+                                    // 直通修复(2026-09-03 VPS 实测 P1):同步收据
+                                    // state=succeeded 且 result 内联时立即回喂——
+                                    // 同步结果从不写入 op_results(仅异步回单/审批
+                                    // 重放两路写入),此前一律进 GetOpResult 轮询=
+                                    // 直通工具必现 60s「工具执行超时」。审批类与
+                                    // MCP 异步(state=running)仍走轮询不变。
+                                    let inline_sync = matches!(&call_resp, Ok(Ok(v))
                                     if v["state"].as_str() == Some("succeeded")
                                         && !v["result"].is_null());
-                                if inline_sync {
-                                    if let Ok(Ok(receipt_value)) = call_resp {
-                                        tool_result = receipt_value["result"].to_string();
-                                    }
-                                } else if let Some(tool_op) = tool_op {
-                                    let deadline = std::time::Instant::now()
-                                        + std::time::Duration::from_secs(wait_secs);
-                                    loop {
-                                        if std::time::Instant::now() > deadline {
-                                            tool_result = if approval_id.is_some() {
-                                                "审批等待超时(用户未及时裁决,审批单已过期)".into()
-                                            } else {
-                                                "工具执行超时".into()
-                                            };
-                                            break;
+                                    if inline_sync {
+                                        if let Ok(Ok(receipt_value)) = call_resp {
+                                            tool_result = receipt_value["result"].to_string();
                                         }
-                                        tokio::time::sleep(std::time::Duration::from_millis(400))
+                                    } else if let Some(tool_op) = tool_op {
+                                        let deadline = std::time::Instant::now()
+                                            + std::time::Duration::from_secs(wait_secs);
+                                        loop {
+                                            if std::time::Instant::now() > deadline {
+                                                tool_result = if approval_id.is_some() {
+                                                    "审批等待超时(用户未及时裁决,审批单已过期)"
+                                                        .into()
+                                                } else {
+                                                    "工具执行超时".into()
+                                                };
+                                                break;
+                                            }
+                                            tokio::time::sleep(std::time::Duration::from_millis(
+                                                400,
+                                            ))
                                             .await;
-                                        // 审批路径先查操作状态(批准→succeeded /
-                                        // 拒绝→cancelled),再取结果载荷
-                                        if approval_id.is_some() {
-                                            let (stx, srx) = tokio::sync::oneshot::channel();
-                                            let _ = tx
-                                                .send(Cmd::GetOperation {
-                                                    params: wire::GetOperationParams {
-                                                        operation_id: tool_op.clone(),
-                                                    },
-                                                    resp: stx,
-                                                })
-                                                .await;
-                                            if let Ok(Ok(receipt)) = srx.await {
-                                                match receipt.state {
+                                            // 审批路径先查操作状态(批准→succeeded /
+                                            // 拒绝→cancelled),再取结果载荷
+                                            if approval_id.is_some() {
+                                                let (stx, srx) = tokio::sync::oneshot::channel();
+                                                let _ = tx
+                                                    .send(Cmd::GetOperation {
+                                                        params: wire::GetOperationParams {
+                                                            operation_id: tool_op.clone(),
+                                                        },
+                                                        resp: stx,
+                                                    })
+                                                    .await;
+                                                if let Ok(Ok(receipt)) = srx.await {
+                                                    match receipt.state {
                                                     bm_contract::states::OperationState::Succeeded => {
                                                         let (rtx2, rrx2) =
                                                             tokio::sync::oneshot::channel();
@@ -599,68 +610,71 @@ pub(crate) fn spawn_turn(
                                                     }
                                                     _ => {}
                                                 }
-                                            }
-                                        } else {
-                                            let (otx, orx) = tokio::sync::oneshot::channel();
-                                            let _ = tx
-                                                .send(Cmd::GetOpResult {
-                                                    operation_id: tool_op.clone(),
-                                                    resp: otx,
-                                                })
-                                                .await;
-                                            if let Ok(Ok(Some(v))) = orx.await {
-                                                tool_result = v.to_string();
-                                                break;
+                                                }
+                                            } else {
+                                                let (otx, orx) = tokio::sync::oneshot::channel();
+                                                let _ = tx
+                                                    .send(Cmd::GetOpResult {
+                                                        operation_id: tool_op.clone(),
+                                                        resp: otx,
+                                                    })
+                                                    .await;
+                                                if let Ok(Ok(Some(v))) = orx.await {
+                                                    tool_result = v.to_string();
+                                                    break;
+                                                }
                                             }
                                         }
+                                    } else if let Ok(Ok(receipt_value)) = call_resp {
+                                        tool_result = receipt_value.to_string();
                                     }
-                                } else if let Ok(Ok(receipt_value)) = call_resp {
-                                    tool_result = receipt_value.to_string();
+                                    // W9:工具结果事件(回喂模型的原文+耗时)
+                                    let elapsed_ms = tool_started.elapsed().as_millis() as u64;
+                                    ctx_log.record_event(
+                                        session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
+                                        op_id.as_str(),
+                                        turn_index,
+                                        "tool_result",
+                                        &format_ts(clock.now()),
+                                        serde_json::json!({
+                                            "tool": capability,
+                                            "result": tool_result,
+                                            "elapsed_ms": elapsed_ms,
+                                        }),
+                                    );
+                                    // 前端轻量反馈:向前端推一条工具执行耗时与成败标记
+                                    let _ = tx.try_send(Cmd::ProviderDelta {
+                                        operation_id: op_id.clone(),
+                                        delta: format!(
+                                            "\n[工具完成 {} 耗时 {}ms]\n",
+                                            tc.name, elapsed_ms
+                                        ),
+                                    });
+                                    // ADR-0022:工具结果原生 role=tool + tool_call_id
+                                    // 回喂,对齐模型因果链。不再强贴「不要再次调用」
+                                    // 类负向禁令——链式调用(搜→读→改→测)是模型的
+                                    // 正常工作方式;循环失控由 MAX_TOOL_ROUNDS 熔断。
+                                    messages.push(Message {
+                                        role: Role::Tool,
+                                        content: tool_result,
+                                        tool_call_id: Some(tc.id.clone()),
+                                        tool_calls: None,
+                                    });
                                 }
-	                                // W9:工具结果事件(回喂模型的原文+耗时)
-	                                let elapsed_ms = tool_started.elapsed().as_millis() as u64;
-	                                ctx_log.record_event(
-	                                    session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
-	                                    op_id.as_str(),
-	                                    turn_index,
-	                                    "tool_result",
-	                                    &format_ts(clock.now()),
-	                                    serde_json::json!({
-	                                        "tool": capability,
-	                                        "result": tool_result,
-	                                        "elapsed_ms": elapsed_ms,
-	                                    }),
-	                                );
-	                                // 前端轻量反馈:向前端推一条工具执行耗时与成败标记
-	                                let _ = tx.try_send(Cmd::ProviderDelta {
-	                                    operation_id: op_id.clone(),
-	                                    delta: format!("\n[工具完成 {} 耗时 {}ms]\n", tc.name, elapsed_ms),
-	                                });
-                                // ADR-0022:工具结果原生 role=tool + tool_call_id
-                                // 回喂,对齐模型因果链。不再强贴「不要再次调用」
-                                // 类负向禁令——链式调用(搜→读→改→测)是模型的
-                                // 正常工作方式;循环失控由 MAX_TOOL_ROUNDS 熔断。
-	                                messages.push(Message {
-	                                    role: Role::Tool,
-	                                    content: tool_result,
-	                                    tool_call_id: Some(tc.id.clone()),
-	                                    tool_calls: None,
-	                                });
-	                            }
                             }
-	                            // 结果回喂后重调模型(仍在同一 attempt 的降级链内)
-	                            continue;
-	                        }
-	                        // 熔断或工具轮只回了工具调用无文本时的兜底说明
-	                        let content = if !tool_calls.is_empty() && content.trim().is_empty() {
-	                            if loop_broken {
-	                                "(检测到连续 5 次调用相同工具与完全一致的入参，已触发防空转熔断保护。)".to_string()
-	                            } else {
-	                                "(工具调用已执行完成，回合在此收束。)".to_string()
-	                            }
-	                        } else {
-	                            content
-	                        };
+                            // 结果回喂后重调模型(仍在同一 attempt 的降级链内)
+                            continue;
+                        }
+                        // 熔断或工具轮只回了工具调用无文本时的兜底说明
+                        let content = if !tool_calls.is_empty() && content.trim().is_empty() {
+                            if loop_broken {
+                                "(检测到连续 5 次调用相同工具与完全一致的入参，已触发防空转熔断保护。)".to_string()
+                            } else {
+                                "(工具调用已执行完成，回合在此收束。)".to_string()
+                            }
+                        } else {
+                            content
+                        };
                         // W9:终稿与回合边界事件(轨迹视图数据源)
                         ctx_log.record_event(
                             session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
