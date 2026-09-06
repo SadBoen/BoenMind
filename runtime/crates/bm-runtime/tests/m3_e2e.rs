@@ -28,9 +28,22 @@ impl Drop for Server {
     }
 }
 
+/// 子进程环境白名单:剔除会影响 server 行为的 BOEN_* 配置变量,防宿主
+/// 环境(如 BOEN_MODEL_STREAM=1)污染测试确定性——断言的事件数/流式开关
+/// 必须以本测试的显式配置为准,不得继承外部环境(2026-09 审计修复)。
+fn sanitized_env() -> std::process::Command {
+    let mut cmd = Command::new(server_exe());
+    for (k, _) in std::env::vars() {
+        if k.starts_with("BOEN_") {
+            cmd.env_remove(k);
+        }
+    }
+    cmd
+}
+
 /// 拉起 server 子进程并自 stdout 解析实际绑定地址。
 fn spawn_server(dir: &std::path::Path) -> Server {
-    let mut child = Command::new(server_exe())
+    let mut child = sanitized_env()
         .arg("--data-dir")
         .arg(dir)
         .arg("--bind")
