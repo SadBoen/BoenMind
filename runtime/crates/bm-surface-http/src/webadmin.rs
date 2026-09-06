@@ -1523,6 +1523,117 @@ fn utf8_percent_encode(s: &str) -> String {
     out
 }
 
+// ---- handler:任意目录浏览(只读;设置页工作目录选择器专用)----------------
+// 与 /fs/list 的工作区沙箱浏览互补:「添加工作目录」的路径选择器需要覆盖
+// 全盘任意绝对路径。守门:只列目录、只报名字,零文件内容零大小;上限 1000 条。
+
+const BROWSE_ENTRY_LIMIT: usize = 1000;
+
+/// GET /admin/fs/browse?path=<绝对路径;空 = 根视图(Windows 盘符 / Unix /)>
+pub async fn fs_browse(Query(p): Query<FsPathParams>) -> Response {
+    let raw = p.path.trim().to_string();
+    if raw.is_empty() {
+        return Json(json!({
+            "path": "",
+            "parent": Value::Null,
+            "entries": browse_roots(),
+            "truncated": false,
+        }))
+        .into_response();
+    }
+    let path = std::path::Path::new(&raw);
+    if !path.exists() {
+        return admin_error(StatusCode::BAD_REQUEST, format!("路径不存在: {raw}"));
+    }
+    let canon = match std::fs::canonicalize(path) {
+        Ok(c) => c,
+        Err(e) => return admin_error(StatusCode::BAD_REQUEST, format!("路径解析失败: {e}")),
+    };
+    if !canon.is_dir() {
+        return admin_error(StatusCode::BAD_REQUEST, "目标不是目录");
+    }
+    let pretty =
+        |p: &std::path::Path| crate::workspace_admin::pretty_normalized(p.display().to_string());
+    let mut entries = Vec::new();
+    let mut truncated = false;
+    let mut unreadable = false;
+    match std::fs::read_dir(&canon) {
+        Ok(rd) => {
+            for entry in rd.flatten() {
+                if entries.len() >= BROWSE_ENTRY_LIMIT {
+                    truncated = true;
+                    break;
+                }
+                // 只收目录:实体目录直收;符号链接/junction 跟随判一次
+                // (选择器允许经由链接进入目录;文件一律不出现)
+                let Ok(ft) = entry.file_type() else { continue };
+                let is_dir = if ft.is_dir() {
+                    true
+                } else if ft.is_symlink() {
+                    std::fs::metadata(entry.path())
+                        .map(|m| m.is_dir())
+                        .unwrap_or(false)
+                } else {
+                    false
+                };
+                if !is_dir {
+                    continue;
+                }
+                entries.push(json!({
+                    "name": entry.file_name().to_string_lossy(),
+                    "path": pretty(&entry.path()),
+                }));
+            }
+        }
+        Err(_) => {
+            // 无权限等读取失败:返回空列表而非 500,用户可回上级继续浏览
+            unreadable = true;
+        }
+    }
+    entries.sort_by(|a, b| {
+        a["name"]
+            .as_str()
+            .unwrap_or("")
+            .to_lowercase()
+            .cmp(&b["name"].as_str().unwrap_or("").to_lowercase())
+    });
+    Json(json!({
+        "path": pretty(&canon),
+        "parent": parent_json(&canon),
+        "entries": entries,
+        "truncated": truncated,
+        "note": if unreadable { "目录不可读或为空" } else { "" },
+    }))
+    .into_response()
+}
+
+/// 根视图条目:Windows 枚举现存盘符;Unix 统一一条 /。
+fn browse_roots() -> Vec<Value> {
+    #[cfg(windows)]
+    {
+        (b'A'..=b'Z')
+            .map(|c| format!("{}:\\", c as char))
+            .filter(|d| std::path::Path::new(d).is_dir())
+            .map(|d| json!({ "name": d, "path": d }))
+            .collect()
+    }
+    #[cfg(not(windows))]
+    {
+        vec![json!({ "name": "/", "path": "/" })]
+    }
+}
+
+/// 上级目录;盘符根/文件系统根无上级,返回 null。
+fn parent_json(canon: &std::path::Path) -> Value {
+    canon
+        .parent()
+        .map(|p| {
+            let t = crate::workspace_admin::pretty_normalized(p.display().to_string());
+            if t.is_empty() { Value::Null } else { json!(t) }
+        })
+        .unwrap_or(Value::Null)
+}
+
 /// 递归打包目录为 zip(内存;守门:≤5000 条目 / ≤256MB 解压总量)。
 fn zip_dir(dir: &std::path::Path) -> Result<Vec<u8>, String> {
     let mut buf = std::io::Cursor::new(Vec::new());
@@ -2155,6 +2266,8 @@ pub fn admin_routes(cfg: AdminConfig) -> axum::Router {
             axum::routing::delete(session_delete),
         )
         .route("/fs/list", get(fs_list))
+        // 工作目录选择器:全盘只读目录浏览(仅目录名,零内容)
+        .route("/fs/browse", get(fs_browse))
         .route("/fs/file", get(fs_file))
         // W7 目录树右键菜单:重命名 / 下载(文件)与打包下载(文件夹 zip)
         .route("/fs/rename", post(fs_rename))

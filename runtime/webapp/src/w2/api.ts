@@ -118,6 +118,9 @@ export type Capability = {
 
 export type FsEntry = { name: string; kind: "dir" | "file"; size: number | null };
 
+// 任意目录浏览(工作目录选择器专用;只读、仅目录、只报名字)
+export type BrowseEntry = { name: string; path: string };
+
 export type RoleItem = {
   id: string;
   name: string;
@@ -420,6 +423,15 @@ export const api = {
       req<{ path: string; entries: FsEntry[]; root: string }>(
         `/admin/fs/list?path=${encodeURIComponent(path)}`,
       ),
+    // 工作目录选择器:全盘只读目录浏览(空 path = 根视图,Windows 盘符)
+    browse: (path: string) =>
+      req<{
+        path: string;
+        parent: string | null;
+        entries: BrowseEntry[];
+        truncated: boolean;
+        note?: string;
+      }>(`/admin/fs/browse?path=${encodeURIComponent(path)}`),
     file: (path: string) =>
       req<{ path: string; name: string; size: number; content: string }>(
         `/admin/fs/file?path=${encodeURIComponent(path)}`,

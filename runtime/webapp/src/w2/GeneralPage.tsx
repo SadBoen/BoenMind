@@ -14,15 +14,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { BM_EVENTS, emit } from "../lib/bus";
+import { WorkspacePickerDialog } from "./WorkspacePickerDialog";
 
 function ToolCard({
   title,
@@ -109,9 +103,9 @@ export function GeneralPage() {
     void loadWorkspaces();
   }, [loadEnv, loadWorkspaces]);
 
-  const saveDraft = async () => {
+  const saveDraft = async (payload: { name: string; path: string }) => {
     if (!draft) return;
-    if (!draft.name.trim()) {
+    if (!payload.name.trim()) {
       setError("名称不能为空");
       return;
     }
@@ -120,12 +114,12 @@ export function GeneralPage() {
     try {
       if (draft.id) {
         await api.workspaces.update(draft.id, {
-          name: draft.name,
-          path: draft.path,
+          name: payload.name,
+          path: payload.path,
         });
         flash("已保存");
       } else {
-        await api.workspaces.create({ name: draft.name, path: draft.path });
+        await api.workspaces.create({ name: payload.name, path: payload.path });
         flash("已添加工作目录");
       }
       setDraft(null);
@@ -292,7 +286,7 @@ export function GeneralPage() {
           {notice}
         </div>
       ) : null}
-      {error ? (
+      {error && !draft ? (
         <div className="notice-error" data-slot="workspace-error">
           {error}
         </div>
@@ -301,46 +295,20 @@ export function GeneralPage() {
       {/* W9:账号与安全(改登录密码) */}
       <AccountSecurity />
 
-      {/* 新增/编辑对话框 */}
-      <Dialog open={draft !== null} onOpenChange={(o) => !o && setDraft(null)}>
-        <DialogContent data-slot="workspace-dialog">
-          <DialogHeader>
-            <DialogTitle>{draft?.id ? "编辑工作目录" : "添加工作目录"}</DialogTitle>
-          </DialogHeader>
-          <div className="flex flex-col gap-3">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="ws-name">名称</Label>
-              <Input
-                id="ws-name"
-                value={draft?.name ?? ""}
-                placeholder="如:BoenMind 项目"
-                onChange={(e) =>
-                  setDraft((d) => (d ? { ...d, name: e.target.value } : d))
-                }
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="ws-path">路径</Label>
-              <Input
-                id="ws-path"
-                value={draft?.path ?? ""}
-                placeholder="本机绝对路径,如 D:\projects\demo"
-                onChange={(e) =>
-                  setDraft((d) => (d ? { ...d, path: e.target.value } : d))
-                }
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDraft(null)}>
-              取消
-            </Button>
-            <Button disabled={busy} data-slot="workspace-save" onClick={() => void saveDraft()}>
-              保存
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* 新增/编辑:四区目录选择器(条件挂载,每次打开重置浏览状态) */}
+      {draft ? (
+        <WorkspacePickerDialog
+          draft={draft}
+          registered={workspaces}
+          busy={busy}
+          error={error}
+          onClose={() => {
+            setDraft(null);
+            setError(null);
+          }}
+          onSave={(name, path) => void saveDraft({ name, path })}
+        />
+      ) : null}
     </div>
   );
 }

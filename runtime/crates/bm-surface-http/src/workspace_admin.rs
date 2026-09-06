@@ -57,7 +57,7 @@ fn validate_dir(path_text: &str) -> Result<String, String> {
 
 /// Windows canonicalize 产出 `\\?\D:\...` 扩展前缀;常规路径剥掉,
 /// 入库/显示/模型注入都用人话形态。
-fn pretty_normalized(path: String) -> String {
+pub(crate) fn pretty_normalized(path: String) -> String {
     path.strip_prefix(r"\\?\")
         .map(str::to_string)
         .unwrap_or(path)

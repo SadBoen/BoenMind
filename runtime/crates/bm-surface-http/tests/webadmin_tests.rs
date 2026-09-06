@@ -486,6 +486,74 @@ async fn t_w2_fs_blocks_traversal_and_absolute_and_symlink() {
     assert_eq!(r["content"], json!("safe"));
 }
 
+// ---- 任意目录浏览(工作目录选择器;只读、仅目录名、绝对路径)--------------
+
+#[tokio::test]
+async fn t_w2_fs_browse_lists_dirs_only() {
+    let ws = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(ws.path().join("beta")).unwrap();
+    std::fs::create_dir_all(ws.path().join("alpha")).unwrap();
+    std::fs::write(ws.path().join("plain.txt"), "x").unwrap();
+    let (base, _dir) = spawn_app(ws.path().to_path_buf(), None).await;
+
+    // 断言对 canonicalize 后(剥 \\?\ 前缀)的形态做:tempdir 平台形差异见 CI 坑
+    let canon = std::fs::canonicalize(ws.path()).unwrap();
+    let canon_text = {
+        let t = canon.display().to_string();
+        t.strip_prefix(r"\\?\").map(str::to_string).unwrap_or(t)
+    };
+
+    // 根视图:path 为空 → 盘符/根条目非空
+    let (_, r) = get(&format!("{base}/admin/fs/browse?path=")).await;
+    assert!(
+        !r["entries"].as_array().unwrap().is_empty(),
+        "根视图必须非空"
+    );
+
+    // 目录浏览:仅目录、按名排序;文件不出现;返回规范路径与上级
+    let (_, r) = get(&format!(
+        "{base}/admin/fs/browse?path={}",
+        urlencode(&canon_text)
+    ))
+    .await;
+    assert_eq!(r["path"], json!(canon_text));
+    assert!(r["parent"].is_string(), "非根目录必须有上级");
+    let entries = r["entries"].as_array().unwrap();
+    let names: Vec<&str> = entries
+        .iter()
+        .map(|e| e["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, vec!["alpha", "beta"], "仅目录且按名排序: {names:?}");
+    assert!(
+        entries
+            .iter()
+            .all(|e| e["path"].as_str().unwrap().starts_with(&canon_text)),
+        "条目路径必须是绝对路径"
+    );
+
+    // 文件当目录浏览 → 400;不存在的路径 → 400
+    let file_text = {
+        let t = canon.join("plain.txt").display().to_string();
+        t.strip_prefix(r"\\?\").map(str::to_string).unwrap_or(t)
+    };
+    let (st, _) = get(&format!(
+        "{base}/admin/fs/browse?path={}",
+        urlencode(&file_text)
+    ))
+    .await;
+    assert_eq!(st, 400, "文件路径必须拒绝");
+    let missing = {
+        let t = canon.join("no_such_dir_42").display().to_string();
+        t.strip_prefix(r"\\?\").map(str::to_string).unwrap_or(t)
+    };
+    let (st, _) = get(&format!(
+        "{base}/admin/fs/browse?path={}",
+        urlencode(&missing)
+    ))
+    .await;
+    assert_eq!(st, 400, "不存在的路径必须拒绝");
+}
+
 fn urlencode(s: &str) -> String {
     s.chars()
         .map(|c| match c {
