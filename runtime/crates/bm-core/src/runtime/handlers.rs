@@ -26,17 +26,7 @@ pub(crate) fn handle_session_create(
     // 管理面写盘、核心只读)。未配置 data_dir(纯内存测试态)时登记表恒空,
     // 显式绑定一律拒绝——绑定必须真实可解析,不做「看起来能选」的假接受。
     if let Some(wid) = &spec.workspace_id {
-        let ok = w
-            .config
-            .data_dir
-            .as_ref()
-            .map(|d| crate::workspace::is_registered(d, wid))
-            .unwrap_or(false);
-        if !ok {
-            return Err(CoreError::validation(format!(
-                "工作区「{wid}」未登记或已删除(设置 → 常规 里维护)"
-            )));
-        }
+        w.validate_workspace(wid)?;
     }
 
     let now = w.now_ts();
@@ -291,10 +281,7 @@ pub(crate) fn handle_session_delete(
             "会话删除持久侧效失败".into(),
         ));
     }
-    // ③context-log 过滤(会话已从内存移除;若会话行仍在持久层则 DELETE)
-    if let Some(store) = w.store.clone() {
-        let _ = store.delete_session_rows(session_id.as_str());
-    }
+    // ③context-log 过滤(会话已从内存移除)
     let purged = match &w.config.data_dir {
         Some(dir) => {
             crate::ports::persist::filter_lines_atomic(&dir.join("context-log.jsonl"), |line| {
@@ -312,7 +299,7 @@ pub(crate) fn handle_session_delete(
         }
         None => 0,
     };
-    // 持久层 sessions/agents 行删除(墓碑已在,事件重放亦不复活)
+    // 持久层 sessions/agents 行删除(墓碑已在,事件重放亦不复活;若会话行仍在持久层则 DELETE)
     if let Some(store) = w.store.clone() {
         let _ = store.delete_session_rows(session_id.as_str());
     }
@@ -407,17 +394,7 @@ pub(crate) fn handle_send_input(
     // W8(ADR-0018):本回合工作区覆盖(对话级热切换,model_override 同款)。
     // 校验通过即更新会话绑定;未登记 id 拒绝,不静默沿用旧值。
     if let Some(wid) = &params.workspace_override {
-        let ok = w
-            .config
-            .data_dir
-            .as_ref()
-            .map(|d| crate::workspace::is_registered(d, wid))
-            .unwrap_or(false);
-        if !ok {
-            return Err(CoreError::validation(format!(
-                "工作区「{wid}」未登记或已删除(设置 → 常规 里维护)"
-            )));
-        }
+        w.validate_workspace(wid)?;
         if session.workspace_id.as_deref() != Some(wid.as_str()) {
             if let Some(s) = w.sessions.get_mut(&params.session_id) {
                 s.workspace_id = Some(wid.clone());

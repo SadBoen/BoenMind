@@ -367,6 +367,22 @@ impl World {
         format_ts(self.config.clock.now())
     }
 
+    /// 校验工作区是否已登记(W8 ADR-0018:注册表 = config/workspaces.json)
+    pub(crate) fn validate_workspace(&self, wid: &str) -> CoreResult<()> {
+        let ok = self
+            .config
+            .data_dir
+            .as_ref()
+            .map(|d| crate::workspace::is_registered(d, wid))
+            .unwrap_or(false);
+        if !ok {
+            return Err(CoreError::validation(format!(
+                "工作区「{wid}」未登记或已删除(设置 → 常规 里维护)"
+            )));
+        }
+        Ok(())
+    }
+
     /// 唯一的事件发射口:event_seq 分配 + 写穿持久 + 总线追加。
     fn emit(
         &mut self,

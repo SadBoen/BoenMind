@@ -89,8 +89,13 @@ export function PluginsPage({
   const [scanResult, setScanResult] = useState<McpCandidatesResult | null>(null);
   const [approving, setApproving] = useState<string | null>(null);
   const [configTarget, setConfigTarget] = useState<ConfigTarget | null>(null);
-  // ADR-0023:物理删除确认弹窗目标
-  const [purgeTarget, setPurgeTarget] = useState<{ name: string; command?: string } | null>(null);
+  // ADR-0023:物理删除确认弹窗目标(包含来源与是否废弃，便于精准提示)
+  const [purgeTarget, setPurgeTarget] = useState<{
+    name: string;
+    command?: string;
+    origin?: "bundled" | "data" | "unknown";
+    deprecated?: boolean;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -296,7 +301,7 @@ export function PluginsPage({
   const handleRemove = async (name: string) => {
     if (
       !confirm(
-        `确定卸载 MCP 插件「${name}」？配置将移除并即时下线(文件保留);官方随包插件重启后也不会被自动重新安装。`,
+        `确定卸载 MCP 插件「${name}」？配置将移除并即时下线(本地文件保留)。系统不会在重启或升级时自动静默启用该插件，您随时可在「扫描插件」中重新接入。`,
       )
     )
       return;
@@ -642,6 +647,8 @@ export function PluginsPage({
                             setPurgeTarget({
                               name: item.name,
                               command: item.serverRef?.command,
+                              origin: mcpEntry?.origin,
+                              deprecated: mcpEntry?.deprecated,
                             })
                           }
                         >
@@ -704,7 +711,9 @@ export function PluginsPage({
                         ) : null}
                         {c.tombstoned && !c.registered ? (
                           <span className="text-muted-foreground text-xs ml-1">
-                            (删除名单中,批准即恢复)
+                            {c.source === "bundled"
+                              ? "(未自动启用 · 可重新接入)"
+                              : "(已移除 · 可恢复接入)"}
                           </span>
                         ) : null}
                       </div>
@@ -741,7 +750,9 @@ export function PluginsPage({
                       {c.registered
                         ? "已批准"
                         : c.tombstoned
-                          ? "批准恢复"
+                          ? c.source === "bundled"
+                            ? "批准接入"
+                            : "批准恢复"
                           : "批准接入"}
                     </Button>
                   </div>
@@ -781,7 +792,19 @@ export function PluginsPage({
                 声明清单 manifests/{purgeTarget.name}.manifest.json 与每插件配置
                 config/mcp-{purgeTarget.name}.json(如存在)
               </li>
-              <li>写入删除名单:官方随包插件将来升级即使重新出现文件,也保持停用</li>
+              {purgeTarget.deprecated ? (
+                <li>
+                  彻底移除：官方最新版本已不再随包此插件，本地文件将全部清除；若未来官方重新引入同名插件，系统不会静默自启，您可在「扫描插件」中按需重新接入
+                </li>
+              ) : purgeTarget.origin === "bundled" ? (
+                <li>
+                  防静默自启：记录不自动启用状态；后续系统版本更新即使覆盖带来新文件，也不会擅自静默启动，您随时可在「扫描插件」中主动重新批准接入
+                </li>
+              ) : (
+                <li>
+                  完全抹除：彻底清理此插件的可执行文件及本地配置文件
+                </li>
+              )}
             </ul>
             <DialogFooter>
               <Button variant="outline" onClick={() => setPurgeTarget(null)}>
