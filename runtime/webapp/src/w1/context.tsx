@@ -39,7 +39,7 @@ import { cn } from "@/lib/utils";
 import { BM_EVENTS } from "../lib/bus";
 
 // 估算中英文字数或 token (约 chars/3;仅用于各段不精确的构成占比,真实以提供商 usage 为准)
-import { estTokens, fmtDur, type FileSideEffect, type ParsedPromptRecipe } from "./context/utils";
+import { estTokens, fmtDur, type FileSideEffect } from "./context/utils";
 import { parseStepRecipe } from "./context/recipe";
 export function ContextView() {
   const [steps, setSteps] = useState<CtxStep[]>([]);

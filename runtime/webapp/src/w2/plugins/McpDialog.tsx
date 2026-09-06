@@ -1,5 +1,5 @@
 //! MCP 信息弹窗(自 PluginsPage.tsx 机械移入)。
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useState } from "react";
 import {
   Loader2Icon,
 
@@ -14,7 +14,6 @@ import {
 import {
   
 } from "../api";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -26,11 +25,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { cn } from "@/lib/utils";
-import { STORAGE_KEYS, storage } from "@/lib/storage";
-import { Switch } from "@/components/ui/switch";
-import { Tooltip } from "radix-ui";
-import { FormField } from "./FormField";
 import { type Draft } from "./types";
 
 export function McpDialog({

@@ -15,9 +15,12 @@ export const STORAGE_KEYS = {
   PLUGINS_TABLE_COLS: "bm_plugins_table_cols",
   // 权限模式:ask(变更前确认)|plan(计划模式)|yolo(完全访问)
   PERMISSION_MODE: "bm_permission_mode",
+  // 思考等级:off(关闭)|low(轻度)|medium(中度)|high(深度)
+  THINKING_LEVEL: "bm_thinking_level",
 } as const;
 
 export type PermissionMode = "ask" | "plan" | "yolo";
+export type ThinkingLevel = "off" | "low" | "medium" | "high";
 
 export interface SessionItemMeta {
   id: string;

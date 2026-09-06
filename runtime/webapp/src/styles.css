@@ -50,6 +50,10 @@
   --state-error-border: #fecaca;
   --state-error-fg: #b91c1c;
 
+  /* 聊天区小圆点滚动条变量基线 */
+  --scrollbar-dot: rgba(0, 0, 0, 0.28);
+  --scrollbar-dot-hover: var(--primary);
+
   /* Z-Index 层级标阶规范 */
   --z-base: 1;
   --z-splitter: 5;
@@ -216,11 +220,128 @@ body {
   font-family: var(--font-mono);
 }
 
-.thread { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.thread {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  position: relative;
+}
 .thread-viewport {
-  flex: 1; overflow-y: auto;
+  flex: 1;
+  overflow-y: auto;
   padding: 20px 26px 0;
-  display: flex; flex-direction: column;
+  display: flex;
+  flex-direction: column;
+  /* 隐藏原生滚动条，由悬浮小圆点 (DotScrollbar) 接管视觉指示 */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.thread-viewport::-webkit-scrollbar {
+  display: none;
+}
+
+/* 屏幕高度中间固定的用户发言导航小圆点 (User Turns Dot Navigator) */
+.dot-scrollbar-fixed-nav {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: auto;
+  user-select: none;
+}
+
+.dot-scrollbar-cluster {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 4px;
+}
+
+.dot-nav-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 实体正圆点 */
+.dot-nav-bullet {
+  width: 7px;
+  height: 7px;
+  border-radius: 9999px;
+  border: none;
+  background-color: var(--scrollbar-dot, var(--muted-foreground));
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1),
+              opacity 0.2s ease,
+              background-color 0.2s ease,
+              box-shadow 0.2s ease;
+}
+
+.dot-nav-bullet.hovered {
+  background-color: var(--scrollbar-dot-hover, var(--primary));
+  box-shadow: 0 0 8px color-mix(in srgb, var(--primary) 50%, transparent);
+}
+
+.dot-nav-bullet.active {
+  background-color: var(--scrollbar-dot-hover, var(--primary));
+  box-shadow: 0 0 5px color-mix(in srgb, var(--primary) 35%, transparent);
+}
+
+/* 悬浮发言卡片 Tooltip (左侧向外展开) */
+.dot-nav-tooltip {
+  position: absolute;
+  right: 18px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: max-content;
+  max-width: 240px;
+  padding: 8px 12px;
+  background: var(--popover);
+  color: var(--popover-foreground);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 8px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  z-index: 50;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.dot-nav-tooltip-arrow {
+  position: absolute;
+  right: -5px;
+  top: 50%;
+  transform: translateY(-50%) rotate(45deg);
+  width: 8px;
+  height: 8px;
+  background: var(--popover);
+  border-right: 1px solid var(--border);
+  border-top: 1px solid var(--border);
+}
+
+.dot-nav-tooltip-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--primary);
+}
+
+.dot-nav-tooltip-body {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--fg-1);
+  word-break: break-word;
 }
 .welcome {
   margin: auto; text-align: center; color: var(--fg-3);
@@ -243,7 +364,16 @@ body {
   margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
+}
+.msg-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--fg-2);
+  user-select: none;
 }
 .msg.user {
   display: flex;
@@ -257,23 +387,111 @@ body {
   width: auto;
   max-width: 85%;
   text-align: right;
-  white-space: pre-wrap;
   line-height: var(--leading, 1.6);
   color: var(--fg-1);
-  font-size: 14px;
+  font-size: 13.5px;
   padding: 2px 0 6px;
+  background: transparent;
+  border-radius: 0;
+  border: none;
 }
 .msg.assistant .content {
   width: 100%;
-  white-space: pre-wrap;
   line-height: var(--leading, 1.65);
   color: var(--fg-1);
   font-size: 13.5px;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  padding: 2px 0 6px;
 }
 .msg.assistant .content:empty { display: none; }
+
+/* 消息悬浮操作栏（编辑、分支、复制） */
+.msg-action-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.msg:hover .msg-action-bar {
+  opacity: 1;
+}
+.msg-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm, 6px);
+  border: none;
+  background: transparent;
+  color: var(--fg-3);
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+.msg-action-btn:hover {
+  background: var(--bg-hover);
+  color: var(--fg-1);
+}
+
+/* 消息行内编辑器 */
+.msg-inline-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: 820px;
+}
+.msg-inline-textarea {
+  width: 100%;
+  min-height: 72px;
+  padding: 10px 12px;
+  font-family: inherit;
+  font-size: 13.5px;
+  line-height: 1.6;
+  border-radius: var(--radius-sm, 8px);
+  border: 1px solid var(--primary);
+  background: var(--card);
+  color: var(--fg-1);
+  outline: none;
+  resize: vertical;
+}
+
+/* Markdown 样式容器 */
+.markdown-body {
+  font-size: 13.5px;
+  line-height: var(--leading, 1.65);
+  color: var(--fg-1);
+  word-break: break-word;
+}
+.markdown-body p {
+  margin: 0.4em 0;
+}
+.markdown-body p:first-child {
+  margin-top: 0;
+}
+.markdown-body p:last-child {
+  margin-bottom: 0;
+}
+.markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4 {
+  font-weight: 600;
+  color: var(--fg-1);
+  margin: 0.8em 0 0.3em;
+}
+.markdown-body h1 { font-size: 1.35em; }
+.markdown-body h2 { font-size: 1.2em; }
+.markdown-body h3 { font-size: 1.1em; }
+.markdown-body .inline-code {
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--accent-foreground, var(--primary));
+}
 
 /* 连续工具调用折叠卡片 (ZCode 标杆) */
 .tool-group-card {

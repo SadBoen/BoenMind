@@ -40,6 +40,8 @@
   --state-error-bg: #fef2f2;
   --state-error-border: #fecaca;
   --state-error-fg: #b91c1c;
+  --scrollbar-dot: rgba(0, 0, 0, 0.28);
+  --scrollbar-dot-hover: #2563eb;
 }
 
 /* ---- 古典:纸墨暖调 + 衬线 + 书房纹理 + 双线框 + 印章 logo ---- */
@@ -80,6 +82,8 @@
   --state-error-bg: #fae8e6;
   --state-error-border: #e6b3af;
   --state-error-fg: #9e2b25;
+  --scrollbar-dot: rgba(162, 144, 109, 0.45);
+  --scrollbar-dot-hover: #9e2b25;
 }
 [data-theme="classic"] body::before {
   content: "";
@@ -144,6 +148,8 @@
   --state-error-bg: #fff1f2;
   --state-error-border: #fecdd3;
   --state-error-fg: #be123c;
+  --scrollbar-dot: rgba(255, 107, 157, 0.45);
+  --scrollbar-dot-hover: #ff6b9d;
 }
 [data-theme="cartoon"] .msg.assistant .text,
 [data-theme="cartoon"] .session-item,
@@ -194,6 +200,8 @@
   --state-error-bg: rgba(254, 226, 226, 0.65);
   --state-error-border: rgba(254, 202, 202, 0.85);
   --state-error-fg: #991b1b;
+  --scrollbar-dot: rgba(255, 255, 255, 0.55);
+  --scrollbar-dot-hover: #5b78a6;
 }
 /* 页底 = 樱花照片(背景自定义入口)+ 暗化层;规则仅此一处(§4.1) */
 [data-theme="glass"] body {

@@ -30,14 +30,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { STORAGE_KEYS, storage } from "@/lib/storage";
-import { Switch } from "@/components/ui/switch";
 import { Tooltip } from "radix-ui";
 import { ServerConfigDialog } from "./ServerConfigDialog";
 import { McpDialog } from "./McpDialog";
-import { type ProviderEntry, type ConfigTarget, type McpCandidatesResult, type Draft, emptyDraft, toDraft, fromDraft } from "./types";
+import { type ConfigTarget, type McpCandidatesResult, type Draft, emptyDraft, toDraft, fromDraft } from "./types";
 import { type ColKey, TABLE_COLUMNS, loadColWidths } from "./columns";
 
 export type ToolInfo = {

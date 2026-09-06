@@ -1,5 +1,4 @@
 //! 上下文页工具与类型(自 context.tsx 机械移入)。
-import type { CtxStep } from "../../w2/api";
 
 // 诚实原则:模型上下文窗口容量不做任何猜测——唯一数据源是用户在
 // 「设置 → 模型提供商」为模型登记的窗口值(model.json contextWindows);

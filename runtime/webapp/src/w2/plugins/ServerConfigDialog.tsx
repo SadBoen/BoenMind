@@ -1,13 +1,8 @@
 //! MCP server 配置弹窗(自 PluginsPage.tsx 机械移入)。
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Loader2Icon,
   PlusIcon,
-
-
-
-
-
   PlayIcon,
   XIcon,
 } from "lucide-react";
@@ -15,7 +10,6 @@ import {
   api,
   type ProviderManifestItem,
 } from "../api";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -35,11 +29,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { STORAGE_KEYS, storage } from "@/lib/storage";
 import { Switch } from "@/components/ui/switch";
-import { Tooltip } from "radix-ui";
 import { FormField } from "./FormField";
-import { type Draft, type ProviderEntry, type McpManifestSchemaItem, type ConfigTarget } from "./types";
+import { type ProviderEntry, type ConfigTarget } from "./types";
 
 export function ServerConfigDialog({
   target,

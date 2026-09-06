@@ -26,6 +26,10 @@ export type ApprovalRequest = {
 type ApprovalContextValue = {
   pendingApprovals: ApprovalRequest[];
   respondApproval: (id: string, decision: "approve" | "deny") => Promise<void>;
+  // 编辑历史消息并从该处重新生成（分支功能）
+  editAndBranchMessage: (messageIndex: number, newText: string) => Promise<void>;
+  // 重新生成最后一条回复（分支功能）
+  regenerateMessage: (messageIndex: number) => Promise<void>;
   // 会话历史分页(2026-09-06):「加载更早消息」由 thread.tsx 顶部按钮触发
   history: {
     hasMore: boolean;
@@ -36,6 +40,8 @@ type ApprovalContextValue = {
 const BoenmindRuntimeContext = createContext<ApprovalContextValue>({
   pendingApprovals: [],
   respondApproval: async () => {},
+  editAndBranchMessage: async () => {},
+  regenerateMessage: async () => {},
   history: { hasMore: false, loading: false, loadOlder: () => {} },
 });
 export const useBoenmindApprovals = () => useContext(BoenmindRuntimeContext);
@@ -420,6 +426,46 @@ export function BoenmindRuntimeProvider({
     }
   };
 
+  // 编辑历史消息并从该点开辟新分支
+  const editAndBranchMessage = async (messageIndex: number, newText: string) => {
+    if (isRunning) {
+      abortRef.current?.abort();
+      setIsRunning(false);
+    }
+    // 截断该消息之后的所有消息，并更新当前消息文本
+    setMessages((cur) => {
+      const truncated = cur.slice(0, messageIndex);
+      return truncated;
+    });
+    // 以新文本重新发送
+    await sendUserText(newText);
+  };
+
+  // 重新生成指定消息之后的内容（分支）
+  const regenerateMessage = async (messageIndex: number) => {
+    if (isRunning) {
+      abortRef.current?.abort();
+      setIsRunning(false);
+    }
+    // 找到上一条用户消息
+    let userText = "";
+    setMessages((cur) => {
+      const target = cur[messageIndex];
+      if (target?.role === "user") {
+        userText = (target.content[0] as TextPart)?.text || "";
+        return cur.slice(0, messageIndex);
+      } else {
+        const prevUser = cur.slice(0, messageIndex).reverse().find((m) => m.role === "user");
+        userText = (prevUser?.content[0] as TextPart)?.text || "";
+        const prevIndex = cur.slice(0, messageIndex).lastIndexOf(prevUser!);
+        return prevIndex >= 0 ? cur.slice(0, prevIndex) : cur.slice(0, messageIndex);
+      }
+    });
+    if (userText) {
+      await sendUserText(userText);
+    }
+  };
+
   const runtime = useExternalStoreRuntime({
     messages,
     setMessages: (m) => setMessages([...m]),
@@ -455,6 +501,8 @@ export function BoenmindRuntimeProvider({
       value={{
         pendingApprovals,
         respondApproval,
+        editAndBranchMessage,
+        regenerateMessage,
         history: {
           hasMore: historyMore.hasMore,
           loading: historyMore.loading,

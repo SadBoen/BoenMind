@@ -32,8 +32,15 @@ import {
   File,
   Bot,
   User,
+  Pencil,
+  RotateCcw,
+  Copy,
+  Check,
+  Brain,
+  Paperclip,
+  Cpu,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Select,
   SelectContent,
@@ -41,14 +48,15 @@ import {
   SelectItem,
   SelectLabel,
   SelectTrigger,
-  SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { ContextView } from "./context";
 import { useBoenmindApprovals, type ApprovalRequest } from "./runtime";
 import { api, type WorkspaceEntry } from "@/w2/api";
-import { storage, STORAGE_KEYS, type PermissionMode } from "@/lib/storage";
+import { storage, STORAGE_KEYS, type PermissionMode, type ThinkingLevel } from "@/lib/storage";
 import { BM_EVENTS, emit } from "../lib/bus";
+import { DotScrollbar } from "./DotScrollbar";
+import { MarkdownRenderer } from "./MarkdownRenderer";
 
 export function Thread({
   sessionsCollapsed,
@@ -65,6 +73,8 @@ export function Thread({
   const { history } = useBoenmindApprovals();
   // W5 页签:对话 = 聊天;上下文 = 请求快照透视(dsh-context 同款布局理念)
   const [tab, setTab] = useState<"chat" | "ctx">("chat");
+
+  const viewportRef = useRef<HTMLDivElement | null>(null);
 
   // 新建对话时:若在上下文透视页则自动切回对话页,并使输入框获得焦点
   useEffect(() => {
@@ -147,7 +157,7 @@ export function Thread({
         <ContextView />
       ) : (
         <ThreadPrimitive.Root className="thread">
-          <ThreadPrimitive.Viewport className="thread-viewport">
+          <ThreadPrimitive.Viewport className="thread-viewport" ref={viewportRef}>
             {isEmpty ? (
               <div className="welcome">
                 <div className="logo">B</div>
@@ -169,12 +179,17 @@ export function Thread({
                 )}
                 <ThreadPrimitive.Messages>
                   {({ message }) =>
-                    message.role === "user" ? <UserMessage /> : <AssistantMessage />
+                    message.role === "user" ? (
+                      <UserMessage />
+                    ) : (
+                      <AssistantMessage />
+                    )
                   }
                 </ThreadPrimitive.Messages>
               </>
             )}
           </ThreadPrimitive.Viewport>
+          <DotScrollbar viewportRef={viewportRef} />
           <div className="composer-dock">
             <div className="relative mx-auto w-full max-w-[820px]">
               <ApprovalDrawer />
@@ -355,6 +370,12 @@ function ApprovalDrawerItem({
 }
 
 function UserMessage() {
+  const messageIndex = useAuiState((s) => s.message.index);
+  const { editAndBranchMessage } = useBoenmindApprovals();
+  const [isEditing, setIsEditing] = useState(false);
+  const [editText, setEditText] = useState("");
+  const [copied, setCopied] = useState(false);
+
   return (
     <MessagePrimitive.Root className="msg user">
       <div className="msg-header">
@@ -363,11 +384,72 @@ function UserMessage() {
       </div>
       <div className="content">
         <MessagePrimitive.Parts>
-          {({ part }) =>
-            part.type === "text" ? (
-              <span key={part.text.length}>{part.text}</span>
-            ) : null
-          }
+          {({ part }) => {
+            if (part.type !== "text") return null;
+            if (isEditing) {
+              return (
+                <div className="msg-inline-editor">
+                  <textarea
+                    className="msg-inline-textarea"
+                    value={editText}
+                    onChange={(e) => setEditText(e.target.value)}
+                    autoFocus
+                    rows={3}
+                  />
+                  <div className="flex items-center justify-end gap-2">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 px-2 text-[12px]"
+                      onClick={() => setIsEditing(false)}
+                    >
+                      取消
+                    </Button>
+                    <Button
+                      size="sm"
+                      className="h-7 px-3 text-[12px]"
+                      onClick={async () => {
+                        setIsEditing(false);
+                        if (messageIndex !== undefined && editText.trim()) {
+                          await editAndBranchMessage(messageIndex, editText.trim());
+                        }
+                      }}
+                    >
+                      提交并生成分支
+                    </Button>
+                  </div>
+                </div>
+              );
+            }
+            return (
+              <div className="group/content relative flex flex-col gap-1">
+                <span className="select-text whitespace-pre-wrap">{part.text}</span>
+                <div className="msg-action-bar justify-end pt-1">
+                  <button
+                    className="msg-action-btn"
+                    title="编辑本条消息并开辟分支"
+                    onClick={() => {
+                      setEditText(part.text);
+                      setIsEditing(true);
+                    }}
+                  >
+                    <Pencil size={12} />
+                  </button>
+                  <button
+                    className="msg-action-btn"
+                    title="复制消息"
+                    onClick={async () => {
+                      await navigator.clipboard.writeText(part.text);
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 1500);
+                    }}
+                  >
+                    {copied ? <Check size={12} className="text-emerald-500" /> : <Copy size={12} />}
+                  </button>
+                </div>
+              </div>
+            );
+          }}
         </MessagePrimitive.Parts>
       </div>
     </MessagePrimitive.Root>
@@ -505,6 +587,10 @@ function ToolGroupCard({
 
 function AssistantMessage() {
   const isRunning = useAuiState((s) => s.thread.isRunning);
+  const messageIndex = useAuiState((s) => s.message.index);
+  const { regenerateMessage } = useBoenmindApprovals();
+  const [copied, setCopied] = useState(false);
+
   return (
     <MessagePrimitive.Root className="msg assistant">
       <div className="msg-header">
@@ -518,17 +604,39 @@ function AssistantMessage() {
             if (part.type !== "text" || !part.text) return null;
             const blocks = parseAssistantText(part.text);
             return (
-              <div className="flex flex-col gap-1.5" key={part.text.length}>
+              <div className="group/content flex flex-col gap-1.5" key={part.text.length}>
                 {blocks.map((b, idx) => {
                   if (b.type === "tool_group") {
                     return <ToolGroupCard key={idx} group={b} isRunning={isRunning} />;
                   }
                   return (
-                    <span key={idx} className="leading-relaxed text-[13.5px]">
-                      {b.text}
-                    </span>
+                    <MarkdownRenderer key={idx} content={b.text} />
                   );
                 })}
+                <div className="msg-action-bar justify-start pt-1">
+                  <button
+                    className="msg-action-btn"
+                    title="重新生成本条回复（分支）"
+                    onClick={() => {
+                      if (messageIndex !== undefined) {
+                        void regenerateMessage(messageIndex);
+                      }
+                    }}
+                  >
+                    <RotateCcw size={12} />
+                  </button>
+                  <button
+                    className="msg-action-btn"
+                    title="复制回复"
+                    onClick={async () => {
+                      await navigator.clipboard.writeText(part.text);
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 1500);
+                    }}
+                  >
+                    {copied ? <Check size={12} className="text-emerald-500" /> : <Copy size={12} />}
+                  </button>
+                </div>
               </div>
             );
           }}
@@ -560,6 +668,10 @@ function Composer() {
   // 权限模式选择: ask(变更前确认)|plan(计划模式)|yolo(完全访问)
   const [permMode, setPermMode] = useState<PermissionMode>(
     () => (storage.get(STORAGE_KEYS.PERMISSION_MODE) as PermissionMode) || "ask",
+  );
+  // 思考等级选择: off(关闭)|low(轻度)|medium(中度)|high(深度)
+  const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>(
+    () => (storage.get(STORAGE_KEYS.THINKING_LEVEL) as ThinkingLevel) || "medium",
   );
 
   const loadWorkspaces = () => {
@@ -649,16 +761,17 @@ function Composer() {
         autoFocus
       />
       <div className="composer-toolbar">
+        {/* 1. 角色选择图标触发器 */}
         {roles.length > 0 ? (
-          // W6 反馈:去「角色:」文字标签;W7 反馈:换主题化下拉(弹出层跟皮肤走,不再是直角原生框)
           <Select value={activeRole} onValueChange={handleRoleChange}>
             <SelectTrigger
-              size="sm"
-              className="bg-muted/60 h-7 border px-2 text-[12px] font-medium"
-              title="切换当前会话角色"
+              size="icon"
+              hideArrow
+              className="bg-muted/60 h-7 w-7 border text-[13px] hover:bg-muted"
+              title={`当前角色: ${roles.find((r) => r.id === activeRole)?.name || "默认"} (点击切换)`}
               data-slot="role-select"
             >
-              <SelectValue />
+              <span>🎭</span>
             </SelectTrigger>
             <SelectContent className="rounded-lg" side="top" position="popper">
               {roles.map((r) => (
@@ -669,9 +782,17 @@ function Composer() {
             </SelectContent>
           </Select>
         ) : null}
-        <span className="tool-chip disabled">📎 附件</span>
-        {/* W6 对话级模型选择:候选 = 各提供商「常用」并集;中途切换下一条生效。
-            Radix 不允许空值 item,服务器默认用哨兵 __default__ 表示(=不传 model) */}
+
+        {/* 2. 附件图标 */}
+        <button
+          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-input bg-muted/40 text-muted-foreground opacity-60 cursor-not-allowed"
+          title="附件 (开发中)"
+          disabled
+        >
+          <Paperclip size={14} />
+        </button>
+
+        {/* 3. 模型选择图标触发器 */}
         <Select
           value={selModel || "__default__"}
           onValueChange={(v) => {
@@ -682,25 +803,24 @@ function Composer() {
           }}
         >
           <SelectTrigger
-            size="sm"
-            className="bg-muted/60 h-7 border px-2 text-[12px] font-medium"
-            title="切换对话模型:下一条消息即生效,无需新开会话;候选在 设置→模型 勾选「常用」"
+            size="icon"
+            hideArrow
+            className="bg-muted/60 h-7 w-7 border text-muted-foreground hover:text-foreground hover:bg-muted"
+            title={`当前模型: ${selModel || model} (点击切换)`}
             data-slot="model-select"
           >
-            <SelectValue />
+            <Cpu size={14} />
           </SelectTrigger>
           <SelectContent
-            className="rounded-lg"
+            className="rounded-lg max-w-xs"
             side="top"
             position="popper"
           >
-            {/* W7 反馈:上拉;去掉「默认」字样;Provider 名大一号、模型名小一号
-                且缩进;在用项打钩(钩移到名字前面) */}
             <SelectItem
               value="__default__"
               className="text-[12px] pl-2 [&_[data-slot=select-item-indicator]]:left-2 [&_[data-slot=select-item-indicator]]:right-auto"
             >
-              ⚙ {model}
+              ⚙ 默认: {model}
             </SelectItem>
             {modelGroups.map((g) => (
               <SelectGroup key={g.provider}>
@@ -725,8 +845,8 @@ function Composer() {
             ) : null}
           </SelectContent>
         </Select>
-        {/* W8:工作目录选择(替换原 🏠 Home 占位)。上拉菜单排版参考用户样张:
-            条目两行 = 名称 + 路径;「跟随默认」= 不绑定(__auto__ 哨兵,Radix 禁空值) */}
+
+        {/* 4. 工作目录选择图标触发器 */}
         <Select
           value={selWorkspace || "__auto__"}
           onValueChange={(v) => {
@@ -737,22 +857,20 @@ function Composer() {
           }}
         >
           <SelectTrigger
-            size="sm"
-            className="bg-muted/60 h-7 max-w-44 border px-2 text-[12px] font-medium"
-            title="切换本对话工作目录:下一条消息即生效;目录在 设置→常规 维护"
+            size="icon"
+            hideArrow
+            className="bg-muted/60 h-7 w-7 border text-muted-foreground hover:text-foreground hover:bg-muted"
+            title={`当前工作区: ${workspaces.find((w) => w.id === selWorkspace)?.name ?? "默认 (不绑定)"} (点击切换)`}
             data-slot="workspace-select"
           >
-            <FolderOpen className="size-3.5 opacity-70" />
-            <span className="truncate">
-              {workspaces.find((w) => w.id === selWorkspace)?.name ?? "默认工作区"}
-            </span>
+            <FolderOpen size={14} />
           </SelectTrigger>
           <SelectContent className="rounded-lg" side="top" position="popper">
             <SelectItem
               value="__auto__"
               className="text-[12px] pl-2 [&_[data-slot=select-item-indicator]]:left-2 [&_[data-slot=select-item-indicator]]:right-auto"
             >
-              默认(不绑定工作目录)
+              默认 (不绑定工作目录)
             </SelectItem>
             {workspaces.map((w) => (
               <SelectItem
@@ -776,8 +894,64 @@ function Composer() {
           </SelectContent>
         </Select>
 
-        {/* 权限模式选择上拉菜单 (图 1 标杆交互):
-            变更前确认(默认) | 计划模式 | 完全访问(YOLO) */}
+        {/* 5. 思考等级选择图标触发器 (第2条遗漏补全) */}
+        <Select
+          value={thinkingLevel}
+          onValueChange={(v) => {
+            const val = v as ThinkingLevel;
+            setThinkingLevel(val);
+            storage.set(STORAGE_KEYS.THINKING_LEVEL, val);
+          }}
+        >
+          <SelectTrigger
+            size="icon"
+            hideArrow
+            className="bg-muted/60 h-7 w-7 border text-muted-foreground hover:text-foreground hover:bg-muted"
+            title={`思考等级: ${{ off: "关闭", low: "轻度", medium: "中度", high: "深度" }[thinkingLevel]} (点击切换)`}
+            data-slot="thinking-select"
+          >
+            <Brain
+              size={14}
+              className={
+                thinkingLevel === "high"
+                  ? "text-purple-500"
+                  : thinkingLevel === "medium"
+                  ? "text-blue-500"
+                  : thinkingLevel === "low"
+                  ? "text-emerald-500"
+                  : "text-muted-foreground opacity-50"
+              }
+            />
+          </SelectTrigger>
+          <SelectContent className="w-48 rounded-lg p-1" side="top" position="popper">
+            <SelectItem value="off" className="text-[12px]">
+              <div className="flex flex-col">
+                <span className="font-medium text-foreground">关闭思考</span>
+                <span className="text-muted-foreground text-[10.5px]">仅快速流式直出回复</span>
+              </div>
+            </SelectItem>
+            <SelectItem value="low" className="text-[12px]">
+              <div className="flex flex-col">
+                <span className="font-medium text-emerald-600">轻度思考 (Low)</span>
+                <span className="text-muted-foreground text-[10.5px]">针对简单问答进行轻量推演</span>
+              </div>
+            </SelectItem>
+            <SelectItem value="medium" className="text-[12px]">
+              <div className="flex flex-col">
+                <span className="font-medium text-blue-600">中度思考 (Medium)</span>
+                <span className="text-muted-foreground text-[10.5px]">平衡的思考过程与输出速度</span>
+              </div>
+            </SelectItem>
+            <SelectItem value="high" className="text-[12px]">
+              <div className="flex flex-col">
+                <span className="font-medium text-purple-600">深度思考 (High)</span>
+                <span className="text-muted-foreground text-[10.5px]">充分展示详细推理步骤与细节</span>
+              </div>
+            </SelectItem>
+          </SelectContent>
+        </Select>
+
+        {/* 6. 权限模式选择图标触发器 */}
         <Select
           value={permMode}
           onValueChange={(v) => {
@@ -787,26 +961,18 @@ function Composer() {
           }}
         >
           <SelectTrigger
-            size="sm"
-            className="bg-muted/60 h-7 border px-2 text-[12px] font-medium"
-            title="切换权限模式:变更前确认(默认) / 计划模式 / 完全访问(YOLO免审批)"
+            size="icon"
+            hideArrow
+            className="bg-muted/60 h-7 w-7 border text-muted-foreground hover:text-foreground hover:bg-muted"
+            title={`权限模式: ${{ ask: "变更前确认", plan: "计划模式", yolo: "完全访问(免弹窗)" }[permMode]} (点击切换)`}
             data-slot="permission-select"
           >
             {permMode === "yolo" ? (
-              <>
-                <Zap className="size-3.5 text-[var(--state-warn-fg)]" />
-                <span>完全访问</span>
-              </>
+              <Zap size={14} className="text-[var(--state-warn-fg)]" />
             ) : permMode === "plan" ? (
-              <>
-                <ListOrdered className="size-3.5 text-blue-500" />
-                <span>计划模式</span>
-              </>
+              <ListOrdered size={14} className="text-blue-500" />
             ) : (
-              <>
-                <ShieldCheck className="size-3.5 text-[var(--state-success-fg)]" />
-                <span>变更前确认</span>
-              </>
+              <ShieldCheck size={14} className="text-[var(--state-success-fg)]" />
             )}
           </SelectTrigger>
           <SelectContent className="w-60 rounded-lg p-1" side="top" position="popper">
