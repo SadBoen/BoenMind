@@ -1360,3 +1360,5 @@ mod integrity_tests {
         let _ = std::io::sink().write(&[]);
     }
 }
+
+pub mod supervisor;
