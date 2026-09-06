@@ -14,6 +14,29 @@ pub struct SkillReference {
     pub description: Option<String>,
 }
 
+/// ADR-0016 第二步:技能脚本条目(scripts[];wasm 执行面)。
+/// 注册时合成 CapabilityManifest(capability = skill.<skill_id>.<name>),
+/// 经 Broker 七步管线裁决执行,与内置/MCP 能力完全平权(零特权降级)。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SkillScript {
+    /// capability 尾段名(`^[a-z][a-z0-9_]{0,31}$`)。
+    pub name: String,
+    /// wasm 模块路径(相对技能根目录)。
+    pub path: String,
+    /// 面向模型的一句功能描述(manifest.description)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// 风险等级(high-risk 不对技能开放)。
+    pub effect: String,
+    /// 入参 JSON Schema(Broker 步 4 校验)。
+    pub input_schema: serde_json::Value,
+    /// 出参 JSON Schema(Broker 步 7 校验)。
+    pub output_schema: serde_json::Value,
+    /// 执行超时毫秒(默认 10000;wasmtime epoch/fuel 双限)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
+}
+
 /// skill.v0_1 技能知识包(合同 capability/skill.v0_1.schema.json 镜像;
 /// 只是数据:挂载后 instruction 追加进 system prompt,不改变权限)。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -37,6 +60,9 @@ pub struct SkillDefinition {
     /// 参考文档(references[];Skill v0.2 第一步增发)。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub references: Option<Vec<SkillReference>>,
+    /// 技能脚本(scripts[];ADR-0016 第二步增发;缺省 = 纯知识包)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scripts: Option<Vec<SkillScript>>,
 }
 
 #[cfg(test)]
@@ -80,5 +106,50 @@ mod tests {
         let v = serde_json::to_value(&def).expect("序列化");
         assert!(v.get("version").is_none());
         assert!(v.get("references").is_none());
+    }
+    /// ADR-0016 第二步:scripts 字段合同镜像(wasm 执行面)。
+    #[test]
+    fn skill_scripts_roundtrip() {
+        let raw = serde_json::json!({
+            "skill_id": "skill_units",
+            "name": "单位换算",
+            "instruction": "需要换算时调用脚本。",
+            "scripts": [
+                {
+                    "name": "convert",
+                    "path": "scripts/convert.wasm",
+                    "description": "长度/重量单位换算",
+                    "effect": "read-only",
+                    "input_schema": {"type": "object"},
+                    "output_schema": {"type": "object"},
+                    "timeout_ms": 5000
+                }
+            ]
+        });
+        let def: SkillDefinition = serde_json::from_value(raw.clone()).expect("合法");
+        let scripts = def.scripts.as_ref().expect("scripts 在场");
+        assert_eq!(scripts.len(), 1);
+        assert_eq!(scripts[0].name, "convert");
+        assert_eq!(scripts[0].effect, "read-only");
+        assert_eq!(scripts[0].timeout_ms, Some(5000));
+        assert_eq!(
+            serde_json::to_value(&def).expect("序列化"),
+            raw,
+            "往返零漂移"
+        );
+    }
+
+    /// 纯知识包兼容:无 scripts 字段 = None(落盘不出字段)。
+    #[test]
+    fn skill_without_scripts_is_pure_knowledge_pack() {
+        let def: SkillDefinition = serde_json::from_value(serde_json::json!({
+            "skill_id": "skill_plain",
+            "name": "纯知识",
+            "instruction": "只给知识。"
+        }))
+        .expect("合法");
+        assert_eq!(def.scripts, None);
+        let v = serde_json::to_value(&def).expect("序列化");
+        assert!(v.get("scripts").is_none(), "缺省不出字段");
     }
 }

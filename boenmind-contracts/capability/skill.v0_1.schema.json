@@ -5,7 +5,11 @@
   "title": "Skill 知识包 v0.1(W4b/Skill v0.2)",
   "description": "Skill 是挂在角色/会话上的知识包:步骤/提示模板 + 允许使用的能力名单。只是数据,加载不改变权限(基线 Skill 定义):allowed_capabilities 仅作提示面与展示面数据,实际调用权限仍以 Capability Manifest 与审批面为准。挂载即把 instruction 注入对应回合的 system prompt(追加,不覆盖角色提示词)。v0.2 增发 version 与 references(按需加载分支文档清单)。",
   "type": "object",
-  "required": ["skill_id", "name", "instruction"],
+  "required": [
+    "skill_id",
+    "name",
+    "instruction"
+  ],
   "additionalProperties": false,
   "properties": {
     "skill_id": {
@@ -25,7 +29,10 @@
       "description": "技能版本号(如 0.2 或 0.2.0;Minor 纯增)"
     },
     "description": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "maxLength": 200,
       "description": "一句话描述(列表展示面)"
     },
@@ -39,12 +46,30 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["name", "path"],
+        "required": [
+          "name",
+          "path"
+        ],
         "additionalProperties": false,
         "properties": {
-          "name": { "type": "string", "maxLength": 64, "description": "参考文档标识或标题" },
-          "path": { "type": "string", "maxLength": 256, "description": "相对技能根目录或工作区的路径" },
-          "description": { "type": ["string", "null"], "maxLength": 200, "description": "参考内容简介(按需引导)" }
+          "name": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "参考文档标识或标题"
+          },
+          "path": {
+            "type": "string",
+            "maxLength": 256,
+            "description": "相对技能根目录或工作区的路径"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200,
+            "description": "参考内容简介(按需引导)"
+          }
         }
       },
       "maxItems": 32,
@@ -53,10 +78,70 @@
     },
     "allowed_capabilities": {
       "type": "array",
-      "items": { "type": "string", "maxLength": 64 },
+      "items": {
+        "type": "string",
+        "maxLength": 64
+      },
       "maxItems": 16,
       "default": [],
       "description": "建议使用的能力名单(仅提示面数据;不改变权限,实际裁决以审批面为准)"
+    },
+    "scripts": {
+      "type": "array",
+      "maxItems": 8,
+      "description": "ADR-0016 第二步 Minor(只增):技能脚本清单(wasm 执行面)。缺省/null 不出字段 = 纯知识包(完全向后兼容);给出则逐项合成 CapabilityManifest(capability = skill.<skill_id>.<name>),经 Broker 七步管线裁决执行,与内置/MCP 能力完全平权(零特权降级)",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "path",
+          "effect",
+          "input_schema",
+          "output_schema"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,31}$",
+            "description": "capability 尾段名(skill.<skill_id>.<name>)"
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "description": "wasm 模块路径(相对技能根目录)"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "面向模型的一句功能描述(manifest.description)"
+          },
+          "effect": {
+            "enum": [
+              "read-only",
+              "low-risk-command",
+              "reversible-command",
+              "external-side-effect"
+            ],
+            "description": "风险等级(对齐 capability manifest.risk_class;high-risk 不对技能开放)"
+          },
+          "input_schema": {
+            "type": "object",
+            "description": "入参 JSON Schema(Broker 步 4 校验)"
+          },
+          "output_schema": {
+            "type": "object",
+            "description": "出参 JSON Schema(Broker 步 7 校验)"
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "minimum": 100,
+            "maximum": 60000,
+            "description": "执行超时毫秒(默认 10000;wasmtime epoch/fuel 双限)"
+          }
+        }
+      }
     }
   }
 }
