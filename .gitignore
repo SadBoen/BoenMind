@@ -40,6 +40,12 @@ runtime/target-regress/
 # 运行日志(本地排查用,不入库)
 server-*.log
 
+# 运行实测截图与浏览器档案(本地验收证据,不入库)
+runtime/shots_*.png
+runtime/shots-*/
+runtime/playwright_profile/
+runtime/server_*.log
+
 # web-multisearch 隔离构建产物
 target-wms/
 plugins/mcp/web-multisearch/target-wms/
