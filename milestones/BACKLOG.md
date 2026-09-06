@@ -13,7 +13,7 @@
 | 记忆(Memory)检索对话级自动注入 | 2026-09-05 讨论:turn.rs 回合组装时对接 SQLite FTS5 memory.search 自动召回相关记忆并注入提示词 | OPEN(待后续讨论) |
 | 模型自编工具结果(mimo 质量备忘) | 同轮实测:问 counter.bump 时模型未发起调用直接编造「bumped successfully」(/admin/context 证实 0 工具轮);对话区无 [调用] 标记即可辨真伪,强提示词可压不断根;随模型侧观察,不立项 | OPEN(记录在案) |
 | Skill v0.2 第二步(scripts 执行面) | 第一步(合同 Minor: version + references)与 ADR-0016(Broker 七步管线覆盖脚本设计)已闭合交付;**第二步**:等待用户审阅确认 ADR-0016 后接入 wasmtime 执行引擎写代码 | OPEN(待 ADR-0016 确认后动工) |
-| ESLint 接入 CI 步骤 | 2026-09-06 二轮已落本地最小集(eslint.config.js + npm run lint,src 全绿,tsc/build 绿,84d1bb0 后续批);剩=CI workflow 增 lint 门禁 | OPEN(低) |
+| ESLint 接入 CI 步骤 | 2026-09-06 二轮已落本地最小集(eslint.config.js + npm run lint,src 全绿,tsc/build 绿,84d1bb0 后续批);2026-09-07 审计批:eslint-plugin-react-hooks 已装并真启用(此前 disable 注释引用未加载规则=静默失效),rules-of-hooks/exhaustive-deps=error 级把关,暴露 30 处已修(thread.tsx hooks 违规为崩溃级,FULL-REVIEW-2026-09-07);剩=CI workflow 增 lint 门禁 | OPEN(低) |
 | Agent 工具面远期增强三件(ADR-0022 候补) | ①Code Mode 式多轮往返脚本合并(DSH 已验证 5 次往返并 1 次);②Hermes tool_search 渐进披露(工具清单超预算时降级网关元工具,防 MCP 树撑爆上下文);③按模型条件化工具 schema(对标 Hermes patch 的动态裁剪,实测省 148 tok/次);来源=ADR-0022 调研报告 §9 P2/远期,主批未含 | OPEN(待排期) |
 | 工具级辅助模型提供方(看图/TTS 等多模态手脚) | 用户提报(2026-09-06):允许给特定工具配置独立的 LLM provider——首个受益者=图片查看工具(工作区图片经视觉模型转文字描述回喂主模型,对标 DSH read_image/Pi read 视觉附件),同族还有 TTS 语音等;涉及 providers 注册表复用、能力 manifest 增发 provider_ref(合同 Minor)、turn 工具执行面外挂模型调用点 | OPEN(待排期) |
 | VPS v0.0.5 发版后验证清单 | 随包扫描双目录已修+直通工具内联回喂已修+模型调用硬顶 30s→120s(BOEN_TURN_TIMEOUT_SECS 可配)均已落 main(f894663+本批);VPS 侧 web-multisearch 已远程装好并批准在役(2 工具)。待用户明示发版→VPS 升级后复测:①直通工具(echo/counter)对话秒回 ②真模型联网问答(web_search)全链路 ③关于页/常规设置不回归,闭合后移出 | OPEN(随下次发版) |
@@ -55,7 +55,6 @@
 | 新建对话按钮 1280×720 视口被顶栏覆盖 | 来源 2026-09-07 IAB 实测:小视口下 `button[title=新建对话]`(y≈9px)被 chat-head 层盖住,鼠标不可点(JS 直击可触发);桌面常规分辨率待复测,修=调层叠或按钮挪位 | OPEN(P3 UI) |
 | 前端静态分析 | ESLint + Stylelint 接入 CI | OPEN |
 | theme.css !important 收敛 | 玻璃段 4 处(毛玻璃化刻意选型,收敛须换实现手法) | OPEN(低) |
-| fs.write/edit 原子写+大小上限 | 来源 FULL-REVIEW-2026-09-05 §7:fs.write/fs.edit 直接覆写原文件(进程崩溃留半截文件),同仓 atomic_write 标准未应用;且无大小上限(MAX_FILE_BYTES 只拦 search) | OPEN |
 | system.exec cwd 沙箱化 | 来源 FULL-REVIEW-2026-09-05 §7:cwd 参数未在 input_schema 声明即被消费(additionalProperties 默认放行),不经 fs_tools 工作区白名单;审批卡为主防线,补 schema 显式化+cwd 白名单校验 | OPEN |
 | FileSecretStore KDF 化 | 来源 FULL-REVIEW-2026-09-05 §7:主密钥 `&material[..32]` 截断非 KDF(HKDF/PBKDF2);get/put/delete 每次全量解密重加密 O(n);建议热路径 KDF+按需惰性 | OPEN |
 | 前端 context 面契约锚定与类型漂移 | 来源 FULL-REVIEW-2026-09-05 §7:①w1/context.tsx 手维护 evMap/kind 字符串无后端锚定,枚举改名即静默掉卡;②`McpCandidatesResult` 在 PluginsPage 本地与 api.ts 双声明已漂移(source/bundled_dir 缺失)——收敛到 api.ts 单源 | OPEN |
