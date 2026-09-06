@@ -540,7 +540,7 @@ mod self_describe_tests {
         assert_eq!(schema.len(), 2);
         assert_eq!(schema[0]["type"], "providers");
         let items = schema[0]["items"].as_array().unwrap();
-        assert_eq!(items.len(), 12, "内置 12 家模板");
+        assert_eq!(items.len(), 13, "内置 13 家模板");
         assert_eq!(
             d["suggested_entry"]["args"][0].as_str().unwrap(),
             "--config"

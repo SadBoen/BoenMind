@@ -1,6 +1,6 @@
 // context-inspector: 对话上下文透视与分析器
 // 纯展示与诊断分析，不修改数据，不执行压缩
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   RefreshCw,
   Loader2,
@@ -1086,7 +1086,7 @@ export function ContextView() {
               );
             })
               : deltaTrendItems.map((d) => {
-                  const meta = trendItems.find((x) => x.id === d.id);
+                  const _meta = trendItems.find((x) => x.id === d.id);
                   const isSelected = activeTrendStep?.id === d.id;
                   const heightPct = Math.max(6, Math.round((d.magnitude / maxDeltaMagnitude) * 100));
 
@@ -2031,7 +2031,7 @@ export function ContextView() {
                   </div>
 
                   <div className="flex flex-col gap-2">
-                    {spikeAnalysis.map((item, idx) => (
+                    {spikeAnalysis.map((item, _idx) => (
                       <div
                         key={item.seq}
                         className={cn(

@@ -16,6 +16,7 @@ pub mod exec_log;
 pub mod hash;
 pub mod ids;
 pub mod registries;
+pub mod skill;
 pub mod schemas;
 pub mod states;
 pub mod timestamp;

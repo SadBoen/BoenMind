@@ -979,7 +979,7 @@ function ServerConfigDialog({
   function finalizeSelection(
     list: ProviderEntry[],
     vals: Record<string, unknown>,
-    u: Record<string, number>,
+    _u: Record<string, number>,
   ) {
     if (list.length) {
       const live = list.filter((p) => !p.deleted);

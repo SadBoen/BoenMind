@@ -136,6 +136,26 @@ pub fn builtin_templates() -> Vec<Provider> {
             quota: 0,
         },
         Provider {
+            id: "parallel".into(),
+            name: "Parallel".into(),
+            builtin: true,
+            endpoint: "https://api.parallel.ai/v1beta/search".into(),
+            method: "POST".into(),
+            auth: "bearer".into(),
+            auth_name: "Authorization".into(),
+            key: "".into(),
+            query_param: "".into(),
+            limit_param: "".into(),
+            results_path: "/results".into(),
+            title_field: "title".into(),
+            url_field: "url".into(),
+            desc_field: "excerpt".into(),
+            // F5(BACKLOG):search_queries 要求数组,通用 JSON 适配器只能发
+            // 字符串(实测 422)→ 内置特例 parallel_search。
+            parse: "parallel".into(),
+            quota: 0,
+        },
+        Provider {
             id: "serper".into(),
             name: "Serper".into(),
             builtin: true,
@@ -608,15 +628,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn builtin_templates_cover_all_twelve() {
+    fn builtin_templates_cover_all_thirteen() {
         let ts = builtin_templates();
-        assert_eq!(ts.len(), 12, "应恰好 12 内置");
+        assert_eq!(ts.len(), 13, "应恰好 13 内置");
         let ids: Vec<String> = ts.iter().map(|t| t.id.clone()).collect();
         for want in [
             "searxng",
             "ddgs",
             "jina",
             "marginalia",
+            "parallel",
             "serper",
             "tavily",
             "exa",
@@ -722,8 +743,8 @@ mod tests {
 
         // 未列出的内置(serper)仍在末尾
         assert!(providers.iter().any(|p| p.id == "serper"));
-        // 总数 = 12 内置 + 1 自定义
-        assert_eq!(providers.len(), 13);
+        // 总数 = 13 内置 + 1 自定义
+        assert_eq!(providers.len(), 14);
     }
 
     #[test]
@@ -733,7 +754,7 @@ mod tests {
         std::fs::write(&cfg_path, r#"{}"#).unwrap();
         let mut cfg = Config::new(Some(cfg_path));
         let providers = resolve_providers(&mut cfg);
-        assert_eq!(providers.len(), 12);
+        assert_eq!(providers.len(), 13);
     }
 
     #[test]
@@ -753,7 +774,7 @@ mod tests {
             !providers.iter().any(|p| p.id == "serper"),
             "停用家不得出现"
         );
-        assert_eq!(providers.len(), 11, "其余 11 家内置仍在");
+        assert_eq!(providers.len(), 12, "其余 12 家内置仍在");
         // 管理面单查:停用家仍可测(真搜测试用)
         assert!(resolve_any(&mut cfg, "serper").is_some());
     }
@@ -771,7 +792,7 @@ mod tests {
         let mut cfg = Config::new(Some(cfg_path));
         let providers = resolve_providers(&mut cfg);
         assert!(!providers.iter().any(|p| p.id == "jina"), "墓碑家不得复活");
-        assert_eq!(providers.len(), 11);
+        assert_eq!(providers.len(), 12);
         // 管理面单查:墓碑不给测
         assert!(resolve_any(&mut cfg, "jina").is_none());
         // 其余内置照常
@@ -794,8 +815,8 @@ mod tests {
         let p = resolve_any(&mut cfg, "custom1").expect("custom1");
         assert_eq!(p.name, "MySearch");
         assert_eq!(p.parse, "std");
-        // 主流程可用集不受影响:custom1 有效 + 12 内置
+        // 主流程可用集不受影响:custom1 有效 + 13 内置
         let active = resolve_providers(&mut cfg);
-        assert_eq!(active.len(), 13);
+        assert_eq!(active.len(), 14);
     }
 }

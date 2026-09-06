@@ -10,7 +10,6 @@ import { Petals } from "./w3/Petals";
 import {
   useThemeBoot,
   loadThemeState,
-  applyTheme,
   type ThemeDef,
 } from "./w3/themes";
 import { useCallback, useEffect, useRef, useState } from "react";

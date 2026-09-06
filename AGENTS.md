@@ -7,7 +7,7 @@ BoenMind:个人生态的 AI Runtime / AI OS,当前为**阶段一(跨平台单软
 (Erlang/OTP、Kubernetes、VS Code,见 `architecture/deepwiki-validation.md`)。
 合同库冻结 v1.0(字段只增不破)。
 
-**当前状态(2026-09-06)**:v0.0.8 已发版;**工具调用原生协议还原落地**(ADR-0022,依四家底层报文横评调研 `docs/agent-tools-payload-comparison-report.md`):工具结果出原生 role:tool+tool_call_id、assistant 回喂携带 tool_calls、「不要再次调用」禁令废除、fs.*/exec/MCP 工具自描述(manifest.description,合同 Minor)、fs_edit 支持 edits 数组批量原子替换;此前:资深架构全面评审闭环(2026-09-04)、**fs.* 文件工具集内置化**(ADR-0021:fs.search/fs.read 直通、fs.write/fs.edit 审批,rg 引擎内嵌,沙箱=工作区注册表),生产内置清单=system.exec + fs.* 四件 + model.invoke(内核私有)。**下一步 = 待用户过目确认 ADR-0016 后推进 Skill v0.2 第二步 wasmtime 脚本执行面实现;工具面远期候补(Code Mode 脚本合并/tool_search 渐进披露/按模型条件化 schema)已登记 BACKLOG**。交付全史见 `milestones/HISTORY.md`;
+**当前状态(2026-09-06)**:v0.0.8 已发版;**工具调用原生协议还原落地**(ADR-0022,依四家底层报文横评调研 `docs/agent-tools-payload-comparison-report.md`):工具结果出原生 role:tool+tool_call_id、assistant 回喂携带 tool_calls、「不要再次调用」禁令废除、fs.*/exec/MCP 工具自描述(manifest.description,合同 Minor)、fs_edit 支持 edits 数组批量原子替换;此前:资深架构全面评审闭环(2026-09-04)、**fs.* 文件工具集内置化**(ADR-0021:fs.search/fs.read 直通、fs.write/fs.edit 审批,rg 引擎内嵌,沙箱=工作区注册表),生产内置清单=system.exec + fs.* 四件 + model.invoke(内核私有)。**工具调用原生协议还原落地**(ADR-0022,依四家底层报文横评调研 `docs/agent-tools-payload-comparison-report.md`):工具结果出原生 role:tool+tool_call_id、assistant 回喂携带 tool_calls、「不要再次调用」禁令废除、fs.*/exec/MCP 工具自描述(manifest.description,合同 Minor)、fs_edit 支持 edits 数组批量原子替换;**过夜二轮欠账清账**(2026-09-06:持久读拒开/emit tombstone/MCP 治理四件/工具白名单 allowed_tools/意图软防线/SkillDefinition 投影/插件双件/ESLint 本地集)。**下一步 = 待用户过目确认 ADR-0016 后推进 Skill v0.2 第二步 wasmtime 脚本执行面实现;远期候补(Code Mode 脚本合并/tool_search 渐进披露/按模型条件化 schema/意图硬门控设计)已登记 BACKLOG**。交付全史见 `milestones/HISTORY.md`;
 **欠账唯一入口 = `milestones/BACKLOG.md`**(已闭合条目自 2026-09-02 起移出台账)。
 
 ## 文件地图(规格分层)

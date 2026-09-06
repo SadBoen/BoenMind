@@ -20,7 +20,7 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
   const [pluginFilter, setPluginFilter] = useState<string | undefined>(undefined);
   const [pluginEditTarget, setPluginEditTarget] = useState<string | null>(null);
 
-  const goPluginWithFilter = (name: string) => {
+  const _goPluginWithFilter = (name: string) => {
     setPluginFilter(name);
     setSection("plugins");
   };

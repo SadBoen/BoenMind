@@ -40,7 +40,7 @@ fn tools_list() -> Value {
     json!({
         "tools": [
             {
-                "name": "context_inspect_snapshot",
+                "name": "inspect_snapshot",
                 "description": "深度拆解大模型调用的 Prompt 配方（人设/技能/目录/工具箱/历史轮次）与真实 Token 水位",
                 "annotations": {
                     "readOnlyHint": true
@@ -60,7 +60,7 @@ fn tools_list() -> Value {
                 }
             },
             {
-                "name": "context_diagnose_spikes",
+                "name": "diagnose_spikes",
                 "description": "多轮历史 Token 暴增与刺客诊断：智能比对相邻轮次增量，揪出引起上下文激增的轮次",
                 "annotations": {
                     "readOnlyHint": true
@@ -85,7 +85,7 @@ fn tools_list() -> Value {
                 }
             },
             {
-                "name": "context_track_file_effects",
+                "name": "track_file_effects",
                 "description": "本地工程文件副作用追踪：提取当前会话触发的全部 fs.* 与 system.exec 文件读写操作",
                 "annotations": {
                     "readOnlyHint": true
@@ -102,7 +102,7 @@ fn tools_list() -> Value {
                 }
             },
             {
-                "name": "context_search_history",
+                "name": "search_history",
                 "description": "跨会话搜索历史上下文快照与交互记录",
                 "annotations": {
                     "readOnlyHint": true
@@ -167,22 +167,22 @@ fn handle_rpc(cfg: &Config, req: &Value) -> Option<Value> {
             let args = params.get("arguments").cloned().unwrap_or(json!({}));
 
             let result_data = match tool_name {
-                "context_inspect_snapshot" => {
+                "inspect_snapshot" => {
                     let sid = args.get("session_id").and_then(Value::as_str);
                     let seq = args.get("seq").and_then(Value::as_u64);
                     inspector::inspect_snapshot(cfg, sid, seq)
                 }
-                "context_diagnose_spikes" => {
+                "diagnose_spikes" => {
                     let sid = args.get("session_id").and_then(Value::as_str).unwrap_or("");
                     let diff = args.get("threshold_diff").and_then(Value::as_u64);
                     let ratio = args.get("threshold_ratio").and_then(Value::as_f64);
                     inspector::diagnose_spikes(cfg, sid, diff, ratio)
                 }
-                "context_track_file_effects" => {
+                "track_file_effects" => {
                     let sid = args.get("session_id").and_then(Value::as_str).unwrap_or("");
                     inspector::track_file_effects(cfg, sid)
                 }
-                "context_search_history" => {
+                "search_history" => {
                     let query = args.get("query").and_then(Value::as_str).unwrap_or("");
                     let limit = args
                         .get("limit")

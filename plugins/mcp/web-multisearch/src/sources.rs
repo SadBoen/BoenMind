@@ -37,6 +37,7 @@ pub async fn run_source(
         "ddg" => ddgs(client, query, limit).await,
         "jina" => jina_search(client, p, query, limit).await,
         "marginalia" => marginalia(client, query, limit).await,
+        "parallel" => parallel_search(client, p, query, limit).await,
         _ => cascade::run_generic(client, p, query, limit).await,
     }
 }
@@ -386,6 +387,71 @@ async fn jina_search(
     .await?;
     let text = resp.text().await.map_err(|e| format!("Jina Search: {e}"))?;
     Ok(parse_jina_markdown(&text, limit))
+}
+
+/// F5(BACKLOG):Parallel Search(https://api.parallel.ai/v1beta/search)。
+/// `search_queries` 要求数组,通用 JSON 适配器只能发字符串(实测 422)→
+/// 内置特例:请求体 {search_queries:[q], max_results:n},Bearer 轮换,
+/// 响应 results[].{title,url,excerpt}。
+async fn parallel_search(
+    client: &reqwest::Client,
+    p: &Provider,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<Item>, String> {
+    use crate::keys::{split_keys, with_key_rotation, HttpErr};
+    let keys = split_keys(&p.key);
+    if keys.is_empty() {
+        return Err("PARALLEL_API_KEY is not set".into());
+    }
+    let limit = limit.clamp(1, 10);
+    let resp = with_key_rotation(&keys, |key| {
+        let client = client.clone();
+        let query = query.to_string();
+        async move {
+            let r = client
+                .post(p.endpoint.as_str())
+                .json(&serde_json::json!({
+                    "search_queries": [query],
+                    "max_results": limit
+                }))
+                .header("Authorization", format!("Bearer {key}"))
+                .timeout(Duration::from_secs(30))
+                .send()
+                .await
+                .map_err(|e| HttpErr::Other(format!("Could not reach Parallel Search: {e}")))?;
+            check_status(r, "Parallel Search").await
+        }
+    })
+    .await?;
+    let data: serde_json::Value = resp.json().await.map_err(|e| format!("Parallel Search: {e}"))?;
+    let results = data
+        .pointer(&p.results_path)
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    Ok(results
+        .iter()
+        .take(limit)
+        .map(|it| Item {
+            title: it
+                .get(&p.title_field)
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            url: it
+                .get(&p.url_field)
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            description: it
+                .get(&p.desc_field)
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+        })
+        .filter(|it| !it.url.is_empty())
+        .collect())
 }
 
 /// Jina markdown 输出的 best-effort 解析(Python _parse_search_markdown 移植)。

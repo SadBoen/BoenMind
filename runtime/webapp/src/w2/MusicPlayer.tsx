@@ -1,18 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Folder,
-  ListMusic,
   Music,
   Pause,
   Play,
-  RotateCcw,
   Search,
   SkipBack,
   SkipForward,
   Volume2,
   VolumeX,
 } from "lucide-react";
-import { api, type FsEntry } from "./api";
+import { api } from "./api";
 
 type Track = {
   id: string;

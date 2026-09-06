@@ -130,20 +130,20 @@ fn test_mcp_protocol_roundtrip() {
     assert_eq!(tools.len(), 4);
     assert!(tools
         .iter()
-        .any(|t| t["name"] == "context_inspect_snapshot"));
-    assert!(tools.iter().any(|t| t["name"] == "context_diagnose_spikes"));
+        .any(|t| t["name"] == "inspect_snapshot"));
+    assert!(tools.iter().any(|t| t["name"] == "diagnose_spikes"));
     assert!(tools
         .iter()
-        .any(|t| t["name"] == "context_track_file_effects"));
-    assert!(tools.iter().any(|t| t["name"] == "context_search_history"));
+        .any(|t| t["name"] == "track_file_effects"));
+    assert!(tools.iter().any(|t| t["name"] == "search_history"));
 
-    // 3. 测试 tools/call: context_inspect_snapshot
+    // 3. 测试 tools/call: inspect_snapshot
     let call_req = json!({
         "jsonrpc": "2.0",
         "id": 3,
         "method": "tools/call",
         "params": {
-            "name": "context_inspect_snapshot",
+            "name": "inspect_snapshot",
             "arguments": {
                 "session_id": "sess_test"
             }

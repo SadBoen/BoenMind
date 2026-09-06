@@ -24,10 +24,10 @@
 
 | 工具名称 | 作用说明 | 关键入参 | 关键出参 |
 |:---|:---|:---|:---|
-| `context_inspect_snapshot` | 深度拆解单次模型调用的 Prompt 配方与真实 Token 水位 | `session_id` (可选), `seq` (可选) | `metrics` (进出/思考/缓存/TTFT/窗口余量), `recipe` (人设/技能/目录/工具/历史轮次/当前输入) |
-| `context_diagnose_spikes` | 多轮历史 Token 暴增与刺客诊断 | `session_id` (必填), `threshold_diff`, `threshold_ratio` | `timeline` (各轮次 Token 增量比对与异常标记) |
-| `context_track_file_effects` | 本地工程文件副作用追踪 | `session_id` (必填) | `files` (文件路径、最终操作行为 read/write/edit/exec 与调用详情) |
-| `context_search_history` | 跨会话搜索历史上下文快照与交互记录 | `query` (必填), `limit` (默认 20) | `hits` (匹配的快照与事件记录) |
+| `inspect_snapshot` | 深度拆解单次模型调用的 Prompt 配方与真实 Token 水位 | `session_id` (可选), `seq` (可选) | `metrics` (进出/思考/缓存/TTFT/窗口余量), `recipe` (人设/技能/目录/工具/历史轮次/当前输入) |
+| `diagnose_spikes` | 多轮历史 Token 暴增与刺客诊断 | `session_id` (必填), `threshold_diff`, `threshold_ratio` | `timeline` (各轮次 Token 增量比对与异常标记) |
+| `track_file_effects` | 本地工程文件副作用追踪 | `session_id` (必填) | `files` (文件路径、最终操作行为 read/write/edit/exec 与调用详情) |
+| `search_history` | 跨会话搜索历史上下文快照与交互记录 | `query` (必填), `limit` (默认 20) | `hits` (匹配的快照与事件记录) |
 
 ---
 

@@ -16,9 +16,6 @@ import {
   ShieldAlert,
   ShieldCheck,
   Square,
-  CheckCircle2,
-  XCircle,
-  Clock,
   ChevronUp,
   ChevronDown,
   ChevronRight,
@@ -28,13 +25,11 @@ import {
   X,
   Search,
   Terminal,
-  Brain,
   FileText,
   FileCode,
   FileJson,
   FileImage,
   File,
-  Sparkles,
   Bot,
   User,
 } from "lucide-react";
@@ -49,12 +44,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { ContextView } from "./context";
 import { useBoenmindApprovals, type ApprovalRequest } from "./runtime";
 import { api, type WorkspaceEntry } from "@/w2/api";
 import { storage, STORAGE_KEYS, type PermissionMode } from "@/lib/storage";
-import { cn } from "@/lib/utils";
 import { BM_EVENTS, emit } from "../lib/bus";
 
 export function Thread({
@@ -433,7 +426,7 @@ function parseAssistantText(raw: string): ParsedBlock[] {
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const toolMatch = line.match(/^\[调用\s+([a-zA-Z0-9_\-\.:]+)(?:\s*(.*?))?\]$/);
+    const toolMatch = line.match(/^\[调用\s+([a-zA-Z0-9_.:-]+)(?:\s*(.*?))?\]$/);
     if (toolMatch) {
       flushText();
       const name = toolMatch[1];
@@ -453,7 +446,6 @@ function parseAssistantText(raw: string): ParsedBlock[] {
 
 function ToolGroupCard({
   group,
-  isRunning,
 }: {
   group: { tools: Array<{ raw: string; name: string; target?: string }> };
   isRunning?: boolean;

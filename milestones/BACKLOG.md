@@ -8,18 +8,16 @@
 
 | 条目 | 范围与口径 | 状态 |
 |---|---|---|
-| 对话意图门控与闲聊防乱调用工具纪律 | 用户提报(2026-09-05):打招呼/闲聊时模型自主触发全仓扫描等过度动作。目标:参考业界Agent设计,在底层意图识别与回合组装建立防线,禁止无明确指令时擅自执行文件与系统探测 | OPEN(待排期) |
-| 对话工具声明式按需挂载 (Role/Agent 工具白名单) | 用户架构既有规划(查案追记):当前 `turn.rs` 对 `chat_tools` 采取全量广播注入(所有注册能力全塞大模型背包),导致工具越多上下文背包膨胀越严重。目标:在 Role(角色)或 AgentSpec 中增加 `allowed_tools` / `allowed_capabilities` 声明式白名单(如日常助手仅挂载 fs.read/search/web_search,调试角色才挂载 context_inspector 等分析工具),实现按需动态装配与背包瘦身;暂不实现,排期待定 | OPEN(架构既有计划,待排期动工) |
+| 对话意图门控·硬门控设计 | 用户提报(2026-09-05):闲聊误触发工具。2026-09-06 二轮已落软防线(turn 挂工具时注入「工具纪律」System 段,84d1bb0);本条收窄为代码层硬门控(意图识别语义判定)的产品设计裁决 | OPEN(待设计裁决) |
 | 上下文压缩(Compression)独立 MCP 工具 | 2026-09-05 讨论:超长会话滚动摘要、折叠与智能裁剪,独立为后续专门 MCP 插件,不与透视器混淆 | OPEN(待后续讨论) |
 | 记忆(Memory)检索对话级自动注入 | 2026-09-05 讨论:turn.rs 回合组装时对接 SQLite FTS5 memory.search 自动召回相关记忆并注入提示词 | OPEN(待后续讨论) |
 | 模型自编工具结果(mimo 质量备忘) | 同轮实测:问 counter.bump 时模型未发起调用直接编造「bumped successfully」(/admin/context 证实 0 工具轮);对话区无 [调用] 标记即可辨真伪,强提示词可压不断根;随模型侧观察,不立项 | OPEN(记录在案) |
 | Skill v0.2 第二步(scripts 执行面) | 第一步(合同 Minor: version + references)与 ADR-0016(Broker 七步管线覆盖脚本设计)已闭合交付;**第二步**:等待用户审阅确认 ADR-0016 后接入 wasmtime 执行引擎写代码 | OPEN(待 ADR-0016 确认后动工) |
+| ESLint 接入 CI 步骤 | 2026-09-06 二轮已落本地最小集(eslint.config.js + npm run lint,src 全绿,tsc/build 绿,84d1bb0 后续批);剩=CI workflow 增 lint 门禁 | OPEN(低) |
 | Agent 工具面远期增强三件(ADR-0022 候补) | ①Code Mode 式多轮往返脚本合并(DSH 已验证 5 次往返并 1 次);②Hermes tool_search 渐进披露(工具清单超预算时降级网关元工具,防 MCP 树撑爆上下文);③按模型条件化工具 schema(对标 Hermes patch 的动态裁剪,实测省 148 tok/次);来源=ADR-0022 调研报告 §9 P2/远期,主批未含 | OPEN(待排期) |
-| context-inspector 插件工具名瘦身(插件侧) | 2026-09-06 用户实测:wire 名 mcp_context_inspector_context_inspect_snapshot 过长(插件工具 context_* 前缀与服务名重复);改插件 tools/list 的工具名(去 context_ 前缀)需重建 exe+重新批准接入;内核 wire 短名批(read/write/edit/search/exec)已落地不涉此 | OPEN(待排期) |
 | 工具级辅助模型提供方(看图/TTS 等多模态手脚) | 用户提报(2026-09-06):允许给特定工具配置独立的 LLM provider——首个受益者=图片查看工具(工作区图片经视觉模型转文字描述回喂主模型,对标 DSH read_image/Pi read 视觉附件),同族还有 TTS 语音等;涉及 providers 注册表复用、能力 manifest 增发 provider_ref(合同 Minor)、turn 工具执行面外挂模型调用点 | OPEN(待排期) |
 | VPS v0.0.5 发版后验证清单 | 随包扫描双目录已修+直通工具内联回喂已修+模型调用硬顶 30s→120s(BOEN_TURN_TIMEOUT_SECS 可配)均已落 main(f894663+本批);VPS 侧 web-multisearch 已远程装好并批准在役(2 工具)。待用户明示发版→VPS 升级后复测:①直通工具(echo/counter)对话秒回 ②真模型联网问答(web_search)全链路 ③关于页/常规设置不回归,闭合后移出 | OPEN(随下次发版) |
 | W8 遗留:能力执行 cwd 注入 | ADR-0018 只做到回合 system prompt 注入;MCP/context-mode 等需要 cwd 的能力执行面尚未消费会话绑定工作区(该插件默认也未启用);2026-09-05 回看补记:内置 fs.* 同族——fs 工具相对路径在多工作区场景回退注册表首个根而非会话绑定根(guard.rs roots[0]),能力调用在核心层系无会话设计(system_session),修需穿合同面;与 Skill v0.2 执行线同批评估,继续经 Broker 管线、不新增特权通道 | OPEN(依 ADR-0016/0017 排期) |
-| web_multisearch:Parallel Search 接入 | 用户已供 Key(2026-09-04);其 `search_queries` 要求数组,通用 JSON 适配器只能发字符串(实测 422),需在插件加内置特例解析(仿 jina);模板死路两处(tavily/linkup)已随 2026-09-05 回看批修复闭合 | OPEN(待排期) |
 
 ## 2. 流程收尾
 
@@ -55,9 +53,6 @@
 | 审批等待轮询改推送 | 回合管线对审批/异步工具 400ms 轮询单写者通道(GetOperation/GetOpResult,上限 300s);可改 watch/oneshot 通知,降单写者拥塞 | OPEN(低) |
 | 前端静态分析 | ESLint + Stylelint 接入 CI | OPEN |
 | theme.css !important 收敛 | 玻璃段 4 处(毛玻璃化刻意选型,收敛须换实现手法) | OPEN(低) |
-| 持久读错误折叠为空收口 | 来源 FULL-REVIEW-2026-09-05 §7:handle.rs 启动恢复 8 处与 events_for_session 等对 store 读错 `unwrap_or_default()` 折叠为空=故障消音成假数据,与「宁可拒开」相悖;损坏 grant 行被跳过会致 bootstrap 协调权重签发(安全侧,需故障注入端到端验证后按拒写口径统一) | OPEN(高优候选) |
-| emit 形状校验失败制造事件日志 seq 空洞 | 来源 FULL-REVIEW-2026-09-05 §7:runtime.rs emit 坏形状事件先占 seq 后拒写,后续落盘事件 seq 跳号,违反 INV-3(Judge contiguous 可检出,生产路径无保护);修=坏形状事件不占 seq 或占位补 tombstone | OPEN |
-| MCP 治理四件 | 来源 FULL-REVIEW-2026-09-05 §7:①reload 不强杀旧子进程(僵尸窗口);②respawn 无去抖/无上限;③`restart_limit` 配置解析后零消费(死配置,删或实施);④HttpMcpTransport 裸 send 无超时(远端挂起=调用悬挂) | OPEN |
 | fs.write/edit 原子写+大小上限 | 来源 FULL-REVIEW-2026-09-05 §7:fs.write/fs.edit 直接覆写原文件(进程崩溃留半截文件),同仓 atomic_write 标准未应用;且无大小上限(MAX_FILE_BYTES 只拦 search) | OPEN |
 | system.exec cwd 沙箱化 | 来源 FULL-REVIEW-2026-09-05 §7:cwd 参数未在 input_schema 声明即被消费(additionalProperties 默认放行),不经 fs_tools 工作区白名单;审批卡为主防线,补 schema 显式化+cwd 白名单校验 | OPEN |
 | FileSecretStore KDF 化 | 来源 FULL-REVIEW-2026-09-05 §7:主密钥 `&material[..32]` 截断非 KDF(HKDF/PBKDF2);get/put/delete 每次全量解密重加密 O(n);建议热路径 KDF+按需惰性 | OPEN |

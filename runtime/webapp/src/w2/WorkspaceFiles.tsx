@@ -8,7 +8,6 @@ import {
   ArrowLeftIcon,
   CopyIcon,
   DownloadIcon,
-  FileTextIcon,
   FolderDownIcon,
   PencilIcon,
   Loader2Icon,
