@@ -1,5 +1,7 @@
-//! bm-runtime:进程内组装入口(M1)。无 CLI、无网络监听(M3 起);
-//! 本二进制演示一次完整的单 Agent 回合(mock 模型),作为可运行冒烟。
+//! 单 Agent 回合闭环演示(M1,可运行冒烟):mock 模型走一次完整回合。
+//! 放在 examples/ 而非 src/main.rs:演示代码不进 release bin 集
+//! (`cargo build --release` 只产出 boenmind-server);运行方式:
+//! `cargo run -p bm-runtime --example single_agent_demo`。
 
 use bm_contract::ids::SeqIdGen;
 use bm_contract::wire::{AgentSpec, GetOperationParams, SessionCreateParams};

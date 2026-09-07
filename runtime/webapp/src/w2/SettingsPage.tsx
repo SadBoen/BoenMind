@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 // 导航:常规 / 模型 / 插件 / 外观 / 角色 / 日志 / 关于
 import { BoxIcon, GaugeIcon, InfoIcon, PlugIcon, ScrollTextIcon, SlidersHorizontalIcon, SparklesIcon, WrenchIcon } from "lucide-react";
 import { ProvidersPage } from "./ProvidersPage";
-import { PluginsPage } from "./PluginsPage";
+import { PluginsPage } from "./plugins/PluginsPage";
 import { RolesPage } from "./RolesPage";
 import { LogsPage } from "./LogsPage";
 import { AboutPage } from "./AboutPage";
