@@ -21,6 +21,12 @@ pub struct OpenAiConnector {
     base_url: String,
     store: Arc<dyn SecretStore>,
     http: reqwest::Client,
+    /// OpenCode Go 网关要求的稳定会话标识(请求头 `x-opencode-session`;
+    /// 2026-09-07 起缺失即 400「cannot be routed efficiently」)。语义 =
+    /// 每个对话一个稳定 id,供网关做路由优化与 prompt 缓存亲和;本实现给
+    /// 连接器实例级稳定 id(env BOEN_OPENCODE_SESSION_ID 可固定,缺省进程
+    /// 内随机),网关侧仅缓存亲和损失,无功能影响。
+    session_tag: String,
 }
 
 impl OpenAiConnector {
@@ -31,10 +37,16 @@ impl OpenAiConnector {
             .user_agent(concat!("boenmind-server/", env!("CARGO_PKG_VERSION")))
             .build()
             .expect("reqwest Client 构造失败");
+        let session_tag = std::env::var("BOEN_OPENCODE_SESSION_ID").unwrap_or_else(|_| {
+            let mut bytes = [0u8; 16];
+            getrandom::fill(&mut bytes).expect("系统熵源不可用");
+            format!("boenmind-{}", bm_contract::hash::hex(&bytes))
+        });
         Self {
             base_url: base_url.into(),
             store,
             http,
+            session_tag,
         }
     }
 
@@ -354,6 +366,7 @@ impl ModelConnector for OpenAiConnector {
             .http
             .post(self.endpoint())
             .bearer_auth(api_key)
+            .header("x-opencode-session", &self.session_tag)
             .json(&body)
             .timeout(budget);
 
@@ -476,6 +489,7 @@ impl ModelConnector for OpenAiConnector {
             .http
             .post(self.endpoint())
             .bearer_auth(api_key)
+            .header("x-opencode-session", &self.session_tag)
             .json(&body)
             .timeout(budget);
         let open = async {
