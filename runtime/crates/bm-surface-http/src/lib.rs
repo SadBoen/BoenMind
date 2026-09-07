@@ -71,10 +71,7 @@ pub fn router(
 ) -> Router {
     let data_dir = admin.as_ref().map(|a| a.data_dir.clone());
     // W10:limits 单元随 AdminConfig 流入 /v1 与门户面(测试态无 admin = 默认)。
-    let limits = admin
-        .as_ref()
-        .map(|a| a.limits.clone())
-        .unwrap_or_default();
+    let limits = admin.as_ref().map(|a| a.limits.clone()).unwrap_or_default();
     let portal = portal::PortalAuth::load_with_limits(
         data_dir
             .clone()

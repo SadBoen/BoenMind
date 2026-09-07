@@ -680,7 +680,10 @@ pub(crate) fn dispatch_capability(
         let blocked = w
             .provider_health
             .get(&provider)
-            .map(|h| h.status == "unavailable" && h.reconnect_attempts >= w.config.limits.get().mcp_reconnect_limit)
+            .map(|h| {
+                h.status == "unavailable"
+                    && h.reconnect_attempts >= w.config.limits.get().mcp_reconnect_limit
+            })
             .unwrap_or(false);
         if blocked {
             emit_capability_invoked(

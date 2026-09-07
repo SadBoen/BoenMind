@@ -63,7 +63,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&data_dir)?;
     // W10(ADR-0024):运行时限制 = config/limits.json(缺省=代码默认);
     // env BOEN_TURN_TIMEOUT_SECS 优先级保留(load 内折算并记来源)。
-    let (limits_cell, limits_sources) = bm_core::limits::load_limits(&data_dir.join("config").join("limits.json"));
+    let (limits_cell, limits_sources) =
+        bm_core::limits::load_limits(&data_dir.join("config").join("limits.json"));
     // W10(ADR-0025):后台作业台账(日志落 <data>/jobs/)。
     let job_table = bm_providers::jobs::JobTable::new(&data_dir, limits_cell.clone());
     let token = bm_surface_http::token::load_or_create(&data_dir)?;

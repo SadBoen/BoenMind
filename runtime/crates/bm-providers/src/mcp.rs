@@ -18,10 +18,9 @@ use std::time::Duration;
 
 pub const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
 pub const DEFAULT_TOOL_TIMEOUT_MS: u64 = 30_000;
-/// stdio 写管道限时:子进程挂起(非崩溃)时调用方持锁跨
-/// await,无超时则该域能力永久坏死(respawn 也拿不到锁)。
-
-/// 带限时的 stdio 帧写入(write_all + flush),所有持锁写管道路径的统一出口。
+/// 带限时的 stdio 帧写入(write_all + flush),所有持锁写管道路径的统一出口
+/// (限时走 limits:子进程挂起(非崩溃)时调用方持锁跨 await,无超时则该
+/// 域能力永久坏死,respawn 也拿不到锁)。
 async fn write_frame<W: tokio::io::AsyncWrite + Unpin>(
     stdin: &mut W,
     bytes: &[u8],
@@ -739,9 +738,8 @@ impl McpTransport for HttpMcpTransport {
         }
         // R3(FULL-REVIEW-2026-09-05 §7):裸 send 无超时 = 远端挂起即调用
         // 悬挂;默认 60s 硬顶(W10 走 limits),远端长任务应自行异步化。
-        let remote_timeout = std::time::Duration::from_millis(
-            self.limits.get().mcp_remote_timeout_ms,
-        );
+        let remote_timeout =
+            std::time::Duration::from_millis(self.limits.get().mcp_remote_timeout_ms);
         let resp = tokio::time::timeout(remote_timeout, req.send())
             .await
             .map_err(|_| "远程 MCP 请求超时(60s)".to_string())?

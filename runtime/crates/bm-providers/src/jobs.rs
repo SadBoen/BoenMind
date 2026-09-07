@@ -113,9 +113,7 @@ impl JobTable {
         if let Some(cwd) = cwd.filter(|s| !s.is_empty()) {
             cmd.current_dir(cwd);
         }
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| format!("后台进程启动失败: {e}"))?;
+        let mut child = cmd.spawn().map_err(|e| format!("后台进程启动失败: {e}"))?;
         let out = child.stdout.take();
         let err = child.stderr.take();
         let log = std::fs::File::create(&log_path).map_err(|e| format!("建日志失败: {e}"))?;
@@ -177,9 +175,7 @@ impl JobTable {
         };
         loop {
             let status = entry.status();
-            if status != JobStatus::Running
-                || wait == 0
-                || tokio::time::Instant::now() >= deadline
+            if status != JobStatus::Running || wait == 0 || tokio::time::Instant::now() >= deadline
             {
                 return json!({
                     "job_id": entry.id,
@@ -234,10 +230,10 @@ impl JobTable {
         }
         let mut text = String::from_utf8_lossy(&buf).to_string();
         // 截断起点可能落在多字节字符中间:丢首行残段。
-        if start > 0 {
-            if let Some(pos) = text.find('\n') {
-                text = text[pos + 1..].to_string();
-            }
+        if start > 0
+            && let Some(pos) = text.find('\n')
+        {
+            text = text[pos + 1..].to_string();
         }
         text
     }
@@ -298,10 +294,7 @@ impl JobBoard for JobTable {
     }
 }
 
-async fn pump_to_file(
-    src: Option<impl tokio::io::AsyncRead + Unpin>,
-    mut dst: std::fs::File,
-) {
+async fn pump_to_file(src: Option<impl tokio::io::AsyncRead + Unpin>, mut dst: std::fs::File) {
     use std::io::Write;
     let mut src = match src {
         Some(s) => s,
@@ -335,9 +328,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn spawn_runs_to_completion_and_output_reports_terminal() {
         let t = table();
-        let (id, log) = t
-            .spawn("job1", "echo bm-job-ok", None)
-            .expect("拉起");
+        let (id, log) = t.spawn("job1", "echo bm-job-ok", None).expect("拉起");
         assert_eq!(id, "job1");
         assert!(log.ends_with("job1.log"));
         let v = t.output("job1", 10_000).await;

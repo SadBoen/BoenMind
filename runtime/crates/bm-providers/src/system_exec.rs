@@ -231,7 +231,9 @@ impl AsyncCapabilityExecutor for SplitExecutor {
         deadline: Duration,
     ) -> Result<Value, AsyncCallError> {
         if capability == EXEC_CAPABILITY || capability == JOB_OUTPUT_CAPABILITY {
-            self.exec.call(operation_id, capability, args, deadline).await
+            self.exec
+                .call(operation_id, capability, args, deadline)
+                .await
         } else if capability.starts_with("fs.") {
             self.fs.call(operation_id, capability, args, deadline).await
         } else if capability.starts_with("skill.") {
@@ -330,7 +332,12 @@ mod tests {
         #[cfg(not(windows))]
         let args = json!({"command": "sleep 30", "timeout_ms": 1500});
         let err = exec
-            .call("op", EXEC_CAPABILITY, args, std::time::Duration::from_secs(600))
+            .call(
+                "op",
+                EXEC_CAPABILITY,
+                args,
+                std::time::Duration::from_secs(600),
+            )
             .await;
         assert!(matches!(err, Err(AsyncCallError::Timeout)), "{err:?}");
     }
@@ -344,7 +351,12 @@ mod tests {
         #[cfg(not(windows))]
         let args = json!({"command": "echo bm-bg-done", "run_in_background": true});
         let receipt = exec
-            .call("op-bg", EXEC_CAPABILITY, args, std::time::Duration::from_secs(30))
+            .call(
+                "op-bg",
+                EXEC_CAPABILITY,
+                args,
+                std::time::Duration::from_secs(30),
+            )
             .await
             .expect("转后台回执");
         assert_eq!(receipt["backgrounded"], json!(true), "{receipt}");
@@ -368,7 +380,12 @@ mod tests {
         let (exec, _dir) = executor();
         let args = json!({"command": "echo bm-promoted", "timeout_ms": 999_999});
         let receipt = exec
-            .call("op-auto", EXEC_CAPABILITY, args, std::time::Duration::from_secs(30))
+            .call(
+                "op-auto",
+                EXEC_CAPABILITY,
+                args,
+                std::time::Duration::from_secs(30),
+            )
             .await
             .expect("自动转轨回执");
         assert_eq!(receipt["backgrounded"], json!(true), "{receipt}");
@@ -380,8 +397,10 @@ mod tests {
     async fn limits_hot_reload_changes_truncation() {
         let (exec, dir) = executor();
         let cell = exec.limits.clone();
-        let mut l = Limits::default();
-        l.exec_output_max_chars = 1000;
+        let l = Limits {
+            exec_output_max_chars: 1000,
+            ..Limits::default()
+        };
         cell.set(l);
         #[cfg(windows)]
         let args = json!({"command": "Write-Output ('a' * 1500)"});

@@ -149,62 +149,363 @@ pub struct KeyMeta {
 
 macro_rules! meta {
     ($key:literal, $group:literal, $label:literal, $min:literal, $max:literal) => {
-        KeyMeta { key: $key, group: $group, label: $label, min: $min, max: $max, editable: true }
+        KeyMeta {
+            key: $key,
+            group: $group,
+            label: $label,
+            min: $min,
+            max: $max,
+            editable: true,
+        }
     };
 }
 
 /// 键元数据表(顺序 = 设置页展示序)。新增限制键必须在此登记,否则
 /// 管理面不可见(结构体字段允许存在但视为内部项)。
 pub const KEY_META: &[KeyMeta] = &[
-    meta!("exec_default_ms", "命令执行", "单条命令默认超时(毫秒)", 1_000.0, 600_000.0),
-    meta!("exec_max_ms", "命令执行", "单条命令最长超时/前台硬顶(毫秒)", 60_000.0, 600_000.0),
-    meta!("exec_output_max_chars", "命令执行", "命令输出保留字符数", 1_000.0, 200_000.0),
-    meta!("job_retention_max", "命令执行", "后台作业保留个数", 1.0, 500.0),
-    meta!("job_retention_max_bytes", "命令执行", "后台作业日志总量上限(字节)", 1_048_576.0, 1_073_741_824.0),
-    meta!("tool_wait_ms", "工具轮", "免审批工具等待结果(毫秒)", 5_000.0, 600_000.0),
-    meta!("approval_wait_ms", "工具轮", "等用户审批时限(毫秒)", 10_000.0, 1_800_000.0),
-    meta!("loop_breaker_consecutive", "工具轮", "防空转熔断:同命令同参连续几次(0=关)", 0.0, 50.0),
-    meta!("loop_breaker_window", "工具轮", "防空转熔断:记忆窗口条数", 5.0, 100.0),
-    meta!("model_call_timeout_secs", "模型调用", "每次模型调用超时(秒)", 10.0, 3_600.0),
-    meta!("model_max_attempts", "模型调用", "模型降级链重试次数", 1.0, 3.0),
-    meta!("stream_hard_cap_ms", "流式应答", "流式回答总时长硬顶(毫秒)", 60_000.0, 7_200_000.0),
-    meta!("nonstream_wait_ms", "流式应答", "非流式回答等待(毫秒)", 30_000.0, 3_600_000.0),
-    meta!("stream_keepalive_ms", "流式应答", "流式保活间隔(毫秒)", 1_000.0, 60_000.0),
-    meta!("mcp_default_tool_timeout_ms", "MCP 与通道健康", "MCP 工具默认超时(毫秒)", 1_000.0, 600_000.0),
-    meta!("mcp_remote_timeout_ms", "MCP 与通道健康", "远程 MCP 请求超时(毫秒)", 5_000.0, 600_000.0),
-    meta!("mcp_stdio_write_timeout_ms", "MCP 与通道健康", "MCP 本地管道写入超时(毫秒)", 1_000.0, 60_000.0),
-    meta!("mcp_respawn_window_ms", "MCP 与通道健康", "插件崩溃重生熔断窗口(毫秒)", 10_000.0, 600_000.0),
-    meta!("mcp_restart_limit", "MCP 与通道健康", "窗口内允许重生次数", 1.0, 20.0),
-    meta!("mcp_reconnect_limit", "MCP 与通道健康", "重连探针封禁次数", 1.0, 20.0),
-    meta!("provider_fail_threshold", "MCP 与通道健康", "模型通道连续失败熔断次数", 2.0, 20.0),
-    meta!("provider_cooldown_ms", "MCP 与通道健康", "模型通道熔断冷却(毫秒)", 5_000.0, 600_000.0),
-    meta!("history_max_turns", "上下文与记忆", "喂给模型的最近对话轮数", 1.0, 200.0),
-    meta!("history_max_chars", "上下文与记忆", "喂给模型的对话总字数", 1_000.0, 200_000.0),
-    meta!("audit_entry_max_chars", "上下文与记忆", "单条审计记录截断字符数", 1_000.0, 1_000_000.0),
-    meta!("context_tail_max_bytes", "上下文与记忆", "上下文页尾读字节上限", 65_536.0, 67_108_864.0),
-    meta!("context_tail_entries", "上下文与记忆", "上下文页返回条数", 10.0, 1_000.0),
-    meta!("context_search_max_limit", "上下文与记忆", "跨会话检索单次上限条数", 10.0, 1_000.0),
-    meta!("watchdog_stall_after_ms", "任务监护", "任务无进展判停滞(毫秒)", 60_000.0, 86_400_000.0),
-    meta!("watchdog_hard_limit_ms", "任务监护", "任务累计硬顶转 blocked(毫秒)", 300_000.0, 604_800_000.0),
-    meta!("watchdog_tick_ms", "任务监护", "监护扫描节拍(毫秒)", 10_000.0, 600_000.0),
-    meta!("autorun_default_max_turns", "任务监护", "自动驾驶默认轮数", 1.0, 50.0),
-    meta!("fs_rw_max_bytes", "文件工具与技能", "文件读写大小上限(字节)", 1_024.0, 268_435_456.0),
-    meta!("fs_search_default_results", "文件工具与技能", "搜索默认返回条数", 1.0, 500.0),
-    meta!("fs_search_max_results", "文件工具与技能", "搜索返回条数硬顶", 10.0, 10_000.0),
-    meta!("fs_output_max_chars", "文件工具与技能", "搜索/读取输出字符上限", 1_000.0, 1_000_000.0),
-    meta!("fs_skip_file_bytes", "文件工具与技能", "搜索跳过大于此大小的文件(字节)", 1_024.0, 1_073_741_824.0),
-    meta!("fs_read_max_lines", "文件工具与技能", "单次读取行数上限", 100.0, 200_000.0),
-    meta!("skill_default_timeout_ms", "文件工具与技能", "技能脚本默认超时(毫秒)", 100.0, 600_000.0),
-    meta!("login_max_failures", "门户与管理面", "登录失败锁定次数", 3.0, 50.0),
-    meta!("login_lockout_secs", "门户与管理面", "登录锁定时长(秒)", 60.0, 86_400.0),
-    meta!("portal_cookie_max_age_secs", "门户与管理面", "登录 Cookie 有效期(秒)", 3_600.0, 31_536_000.0),
-    meta!("fs_preview_max_bytes", "门户与管理面", "文件预览大小上限(字节)", 1_024.0, 67_108_864.0),
-    meta!("fs_download_max_bytes", "门户与管理面", "打包下载总量上限(字节)", 1_048_576.0, 10_737_418_240.0),
-    meta!("fs_download_max_entries", "门户与管理面", "打包下载条目上限", 100.0, 100_000.0),
-    meta!("fs_delete_batch_max", "门户与管理面", "单次批量删除上限", 1.0, 1_000.0),
-    meta!("fs_browse_max_entries", "门户与管理面", "目录浏览单层条数上限", 10.0, 100_000.0),
-    meta!("update_check_timeout_secs", "门户与管理面", "检查更新超时(秒)", 5.0, 120.0),
-    meta!("upgrade_download_timeout_secs", "门户与管理面", "升级包下载超时(秒)", 60.0, 7_200.0),
+    meta!(
+        "exec_default_ms",
+        "命令执行",
+        "单条命令默认超时(毫秒)",
+        1_000.0,
+        600_000.0
+    ),
+    meta!(
+        "exec_max_ms",
+        "命令执行",
+        "单条命令最长超时/前台硬顶(毫秒)",
+        60_000.0,
+        600_000.0
+    ),
+    meta!(
+        "exec_output_max_chars",
+        "命令执行",
+        "命令输出保留字符数",
+        1_000.0,
+        200_000.0
+    ),
+    meta!(
+        "job_retention_max",
+        "命令执行",
+        "后台作业保留个数",
+        1.0,
+        500.0
+    ),
+    meta!(
+        "job_retention_max_bytes",
+        "命令执行",
+        "后台作业日志总量上限(字节)",
+        1_048_576.0,
+        1_073_741_824.0
+    ),
+    meta!(
+        "tool_wait_ms",
+        "工具轮",
+        "免审批工具等待结果(毫秒)",
+        5_000.0,
+        600_000.0
+    ),
+    meta!(
+        "approval_wait_ms",
+        "工具轮",
+        "等用户审批时限(毫秒)",
+        10_000.0,
+        1_800_000.0
+    ),
+    meta!(
+        "loop_breaker_consecutive",
+        "工具轮",
+        "防空转熔断:同命令同参连续几次(0=关)",
+        0.0,
+        50.0
+    ),
+    meta!(
+        "loop_breaker_window",
+        "工具轮",
+        "防空转熔断:记忆窗口条数",
+        5.0,
+        100.0
+    ),
+    meta!(
+        "model_call_timeout_secs",
+        "模型调用",
+        "每次模型调用超时(秒)",
+        10.0,
+        3_600.0
+    ),
+    meta!(
+        "model_max_attempts",
+        "模型调用",
+        "模型降级链重试次数",
+        1.0,
+        3.0
+    ),
+    meta!(
+        "stream_hard_cap_ms",
+        "流式应答",
+        "流式回答总时长硬顶(毫秒)",
+        60_000.0,
+        7_200_000.0
+    ),
+    meta!(
+        "nonstream_wait_ms",
+        "流式应答",
+        "非流式回答等待(毫秒)",
+        30_000.0,
+        3_600_000.0
+    ),
+    meta!(
+        "stream_keepalive_ms",
+        "流式应答",
+        "流式保活间隔(毫秒)",
+        1_000.0,
+        60_000.0
+    ),
+    meta!(
+        "mcp_default_tool_timeout_ms",
+        "MCP 与通道健康",
+        "MCP 工具默认超时(毫秒)",
+        1_000.0,
+        600_000.0
+    ),
+    meta!(
+        "mcp_remote_timeout_ms",
+        "MCP 与通道健康",
+        "远程 MCP 请求超时(毫秒)",
+        5_000.0,
+        600_000.0
+    ),
+    meta!(
+        "mcp_stdio_write_timeout_ms",
+        "MCP 与通道健康",
+        "MCP 本地管道写入超时(毫秒)",
+        1_000.0,
+        60_000.0
+    ),
+    meta!(
+        "mcp_respawn_window_ms",
+        "MCP 与通道健康",
+        "插件崩溃重生熔断窗口(毫秒)",
+        10_000.0,
+        600_000.0
+    ),
+    meta!(
+        "mcp_restart_limit",
+        "MCP 与通道健康",
+        "窗口内允许重生次数",
+        1.0,
+        20.0
+    ),
+    meta!(
+        "mcp_reconnect_limit",
+        "MCP 与通道健康",
+        "重连探针封禁次数",
+        1.0,
+        20.0
+    ),
+    meta!(
+        "provider_fail_threshold",
+        "MCP 与通道健康",
+        "模型通道连续失败熔断次数",
+        2.0,
+        20.0
+    ),
+    meta!(
+        "provider_cooldown_ms",
+        "MCP 与通道健康",
+        "模型通道熔断冷却(毫秒)",
+        5_000.0,
+        600_000.0
+    ),
+    meta!(
+        "history_max_turns",
+        "上下文与记忆",
+        "喂给模型的最近对话轮数",
+        1.0,
+        200.0
+    ),
+    meta!(
+        "history_max_chars",
+        "上下文与记忆",
+        "喂给模型的对话总字数",
+        1_000.0,
+        200_000.0
+    ),
+    meta!(
+        "audit_entry_max_chars",
+        "上下文与记忆",
+        "单条审计记录截断字符数",
+        1_000.0,
+        1_000_000.0
+    ),
+    meta!(
+        "context_tail_max_bytes",
+        "上下文与记忆",
+        "上下文页尾读字节上限",
+        65_536.0,
+        67_108_864.0
+    ),
+    meta!(
+        "context_tail_entries",
+        "上下文与记忆",
+        "上下文页返回条数",
+        10.0,
+        1_000.0
+    ),
+    meta!(
+        "context_search_max_limit",
+        "上下文与记忆",
+        "跨会话检索单次上限条数",
+        10.0,
+        1_000.0
+    ),
+    meta!(
+        "watchdog_stall_after_ms",
+        "任务监护",
+        "任务无进展判停滞(毫秒)",
+        60_000.0,
+        86_400_000.0
+    ),
+    meta!(
+        "watchdog_hard_limit_ms",
+        "任务监护",
+        "任务累计硬顶转 blocked(毫秒)",
+        300_000.0,
+        604_800_000.0
+    ),
+    meta!(
+        "watchdog_tick_ms",
+        "任务监护",
+        "监护扫描节拍(毫秒)",
+        10_000.0,
+        600_000.0
+    ),
+    meta!(
+        "autorun_default_max_turns",
+        "任务监护",
+        "自动驾驶默认轮数",
+        1.0,
+        50.0
+    ),
+    meta!(
+        "fs_rw_max_bytes",
+        "文件工具与技能",
+        "文件读写大小上限(字节)",
+        1_024.0,
+        268_435_456.0
+    ),
+    meta!(
+        "fs_search_default_results",
+        "文件工具与技能",
+        "搜索默认返回条数",
+        1.0,
+        500.0
+    ),
+    meta!(
+        "fs_search_max_results",
+        "文件工具与技能",
+        "搜索返回条数硬顶",
+        10.0,
+        10_000.0
+    ),
+    meta!(
+        "fs_output_max_chars",
+        "文件工具与技能",
+        "搜索/读取输出字符上限",
+        1_000.0,
+        1_000_000.0
+    ),
+    meta!(
+        "fs_skip_file_bytes",
+        "文件工具与技能",
+        "搜索跳过大于此大小的文件(字节)",
+        1_024.0,
+        1_073_741_824.0
+    ),
+    meta!(
+        "fs_read_max_lines",
+        "文件工具与技能",
+        "单次读取行数上限",
+        100.0,
+        200_000.0
+    ),
+    meta!(
+        "skill_default_timeout_ms",
+        "文件工具与技能",
+        "技能脚本默认超时(毫秒)",
+        100.0,
+        600_000.0
+    ),
+    meta!(
+        "login_max_failures",
+        "门户与管理面",
+        "登录失败锁定次数",
+        3.0,
+        50.0
+    ),
+    meta!(
+        "login_lockout_secs",
+        "门户与管理面",
+        "登录锁定时长(秒)",
+        60.0,
+        86_400.0
+    ),
+    meta!(
+        "portal_cookie_max_age_secs",
+        "门户与管理面",
+        "登录 Cookie 有效期(秒)",
+        3_600.0,
+        31_536_000.0
+    ),
+    meta!(
+        "fs_preview_max_bytes",
+        "门户与管理面",
+        "文件预览大小上限(字节)",
+        1_024.0,
+        67_108_864.0
+    ),
+    meta!(
+        "fs_download_max_bytes",
+        "门户与管理面",
+        "打包下载总量上限(字节)",
+        1_048_576.0,
+        10_737_418_240.0
+    ),
+    meta!(
+        "fs_download_max_entries",
+        "门户与管理面",
+        "打包下载条目上限",
+        100.0,
+        100_000.0
+    ),
+    meta!(
+        "fs_delete_batch_max",
+        "门户与管理面",
+        "单次批量删除上限",
+        1.0,
+        1_000.0
+    ),
+    meta!(
+        "fs_browse_max_entries",
+        "门户与管理面",
+        "目录浏览单层条数上限",
+        10.0,
+        100_000.0
+    ),
+    meta!(
+        "update_check_timeout_secs",
+        "门户与管理面",
+        "检查更新超时(秒)",
+        5.0,
+        120.0
+    ),
+    meta!(
+        "upgrade_download_timeout_secs",
+        "门户与管理面",
+        "升级包下载超时(秒)",
+        60.0,
+        7_200.0
+    ),
 ];
 
 impl Limits {
@@ -219,10 +520,12 @@ impl Limits {
                 obj.insert(
                     m.key.to_string(),
                     serde_json::Number::from_f64(c)
-                        .map(|n| if n.is_f64() && c.fract() == 0.0 {
-                            serde_json::Value::Number(serde_json::Number::from(c as i64))
-                        } else {
-                            serde_json::Value::Number(n)
+                        .map(|n| {
+                            if n.is_f64() && c.fract() == 0.0 {
+                                serde_json::Value::Number(serde_json::Number::from(c as i64))
+                            } else {
+                                serde_json::Value::Number(n)
+                            }
                         })
                         .unwrap_or(serde_json::Value::Null),
                 );
@@ -303,12 +606,7 @@ impl LimitsSources {
     pub fn source_of(&self, key: &str) -> &'static str {
         if self.env_keys.iter().any(|k| k == key) {
             "env"
-        } else if self
-            .file_raw
-            .as_ref()
-            .and_then(|v| v.get(key))
-            .is_some()
-        {
+        } else if self.file_raw.as_ref().and_then(|v| v.get(key)).is_some() {
             "file"
         } else {
             "default"
@@ -321,21 +619,20 @@ impl LimitsSources {
 pub fn load_limits(path: &std::path::Path) -> (LimitsCell, LimitsSources) {
     let mut sources = LimitsSources::default();
     let mut limits = Limits::default();
-    if let Ok(text) = std::fs::read_to_string(path) {
-        if let Ok(raw) = serde_json::from_str::<serde_json::Value>(&text) {
-            limits = Limits::from_file_value(&raw);
-            sources.file_raw = Some(raw);
-        }
+    if let Ok(text) = std::fs::read_to_string(path)
+        && let Ok(raw) = serde_json::from_str::<serde_json::Value>(&text)
+    {
+        limits = Limits::from_file_value(&raw);
+        sources.file_raw = Some(raw);
     }
     // 存量 env 语义(ADR-0024 §1):env > 文件。非法/缺省时
     // turn_timeout_from_env() 已回落默认——与默认相等则视为未设。
-    if let Ok(v) = std::env::var("BOEN_TURN_TIMEOUT_SECS") {
-        if let Ok(secs) = v.parse::<i64>() {
-            if secs > 0 {
-                limits.model_call_timeout_secs = secs as u64;
-                sources.env_keys.push("model_call_timeout_secs".to_string());
-            }
-        }
+    if let Ok(v) = std::env::var("BOEN_TURN_TIMEOUT_SECS")
+        && let Ok(secs) = v.parse::<i64>()
+        && secs > 0
+    {
+        limits.model_call_timeout_secs = secs as u64;
+        sources.env_keys.push("model_call_timeout_secs".to_string());
     }
     (LimitsCell::new(limits), sources)
 }
@@ -389,8 +686,10 @@ mod tests {
     #[test]
     fn cell_set_get_roundtrip_and_clamp() {
         let cell = LimitsCell::with_default();
-        let mut l = Limits::default();
-        l.exec_default_ms = 999_999_999; // 超 600k 天花板
+        let l = Limits {
+            exec_default_ms: 999_999_999, // 超 600k 天花板
+            ..Limits::default()
+        };
         cell.set(l);
         assert_eq!(cell.get().exec_default_ms, 600_000);
     }
@@ -410,7 +709,10 @@ mod tests {
             .keys()
             .cloned()
             .collect::<std::collections::BTreeSet<_>>();
-        let meta = KEY_META.iter().map(|m| m.key.to_string()).collect::<std::collections::BTreeSet<_>>();
+        let meta = KEY_META
+            .iter()
+            .map(|m| m.key.to_string())
+            .collect::<std::collections::BTreeSet<_>>();
         assert_eq!(obj, meta, "Limits 字段与 KEY_META 必须一一对应");
     }
 }

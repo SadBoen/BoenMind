@@ -59,7 +59,9 @@ pub(crate) fn spawn_turn(
         .config
         .max_attempts
         .unwrap_or_else(|| {
-            (chain.len().min(w.config.limits.get().model_max_attempts as usize)) as u32
+            (chain
+                .len()
+                .min(w.config.limits.get().model_max_attempts as usize)) as u32
         })
         .clamp(1, 3);
     // W10(ADR-0024):模型调用超时走 limits 热生效(env 覆盖已由装配方
@@ -130,9 +132,15 @@ pub(crate) fn spawn_turn(
         if !jobs_note.is_empty() {
             parts.push(jobs_note);
         }
-        if parts.is_empty() { None } else { Some(parts.join("
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join(
+                "
 
-")) }
+",
+            ))
+        }
     };
     let role_prompt = match (role_prompt, notes) {
         (Some(sp), Some(note)) => Some(format!("{sp}\n\n{note}")),
@@ -703,8 +711,7 @@ pub(crate) fn spawn_turn(
                         // 熔断或工具轮只回了工具调用无文本时的兜底说明
                         let content = if !tool_calls.is_empty() && content.trim().is_empty() {
                             if loop_broken {
-                                let breaker_n =
-                                    limits_cell.get().loop_breaker_consecutive as usize;
+                                let breaker_n = limits_cell.get().loop_breaker_consecutive as usize;
                                 format!(
                                     "(检测到连续 {breaker_n} 次调用相同工具与完全一致的入参，已触发防空转熔断保护。)"
                                 )

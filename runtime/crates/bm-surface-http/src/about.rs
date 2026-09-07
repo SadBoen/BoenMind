@@ -132,12 +132,7 @@ async fn fetch_latest_release(repo: &str, timeout_secs: u64) -> Result<ReleaseIn
 /// 不算错误——真有更新但无本平台资产时以 note 提示。
 pub async fn check_update(State(cfg): State<AdminConfig>) -> Response {
     let current = env!("CARGO_PKG_VERSION");
-    match fetch_latest_release(
-        &update_repo(),
-        cfg.limits.get().update_check_timeout_secs,
-    )
-    .await
-    {
+    match fetch_latest_release(&update_repo(), cfg.limits.get().update_check_timeout_secs).await {
         Ok(r) => {
             let update_available = version_cmp(current, &r.tag)
                 .map(|o| o == std::cmp::Ordering::Less)

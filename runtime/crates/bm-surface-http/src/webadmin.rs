@@ -63,14 +63,13 @@ pub struct AdminConfig {
     /// W10(ADR-0024):运行时限制共享单元(缺省 = 代码默认;测试态零变化)。
     pub limits: bm_core::limits::LimitsCell,
     /// W10:来源追踪(env/file 徽标;PUT 后随写更新)。
-    pub limits_sources:
-        Arc<std::sync::Mutex<bm_core::limits::LimitsSources>>,
+    pub limits_sources: Arc<std::sync::Mutex<bm_core::limits::LimitsSources>>,
     /// W10(ADR-0025):后台作业台账(/admin/jobs;None = 未装配,测试态)。
     pub jobs: Option<Arc<bm_providers::jobs::JobTable>>,
 }
 
-/// 文件预览大小上限(512KB;个人单机预览面,防整读大文件)。
-// W10:预览/下载/删除/浏览上限走 cfg.limits(FILE_PREVIEW_LIMIT 等常量已收编)。
+// W10:预览/下载/删除/浏览上限走 cfg.limits
+// (原 FILE_PREVIEW_LIMIT=512KB 等常量已收编进 limits,默认值同前)。
 
 // ---- provider 库(config/providers.json)--------------------------------
 
@@ -1577,7 +1576,6 @@ pub async fn fs_rename(State(cfg): State<AdminConfig>, Json(body): Json<Value>) 
     }
 }
 
-
 /// W7 反馈:目录树右键菜单——下载(单文件原样)与打包下载(文件夹 zip)。
 /// 仅工作区内(safe_resolve 防逃逸);总量守门 256MB / 5000 条目。
 pub async fn fs_download(
@@ -1671,7 +1669,6 @@ fn utf8_percent_encode(s: &str) -> String {
 /// 仅工作区内:逐条 safe_resolve 防逃逸(天然拒 `..`/绝对路径/符号链接);
 /// 目录整棵递归删;永久删除不进回收站,防误删由前端确认弹窗承担。
 pub async fn fs_delete(State(cfg): State<AdminConfig>, Json(body): Json<Value>) -> Response {
-    
     let Some(paths) = body["paths"].as_array() else {
         return admin_error(StatusCode::BAD_REQUEST, "paths 必须是字符串数组");
     };
@@ -1736,13 +1733,8 @@ pub async fn fs_delete(State(cfg): State<AdminConfig>, Json(body): Json<Value>) 
 // 与 /fs/list 的工作区沙箱浏览互补:「添加工作目录」的路径选择器需要覆盖
 // 全盘任意绝对路径。守门:只列目录、只报名字,零文件内容零大小;上限 1000 条。
 
-
-
 /// GET /admin/fs/browse?path=<绝对路径;空 = 根视图(Windows 盘符 / Unix /)>
-pub async fn fs_browse(
-    State(cfg): State<AdminConfig>,
-    Query(p): Query<FsPathParams>,
-) -> Response {
+pub async fn fs_browse(State(cfg): State<AdminConfig>, Query(p): Query<FsPathParams>) -> Response {
     let raw = p.path.trim().to_string();
     if raw.is_empty() {
         return Json(json!({
@@ -1897,11 +1889,7 @@ pub async fn fs_mkdir(State(_cfg): State<AdminConfig>, Json(body): Json<Value>) 
 }
 
 /// 递归打包目录为 zip(内存;守门条目/总量上限走 limits,W10)。
-fn zip_dir(
-    dir: &std::path::Path,
-    max_entries: usize,
-    max_bytes: u64,
-) -> Result<Vec<u8>, String> {
+fn zip_dir(dir: &std::path::Path, max_entries: usize, max_bytes: u64) -> Result<Vec<u8>, String> {
     let mut buf = std::io::Cursor::new(Vec::new());
     {
         let mut zip = zip::ZipWriter::new(&mut buf);
@@ -1909,6 +1897,7 @@ fn zip_dir(
             zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
         let mut count = 0usize;
         let mut total = 0u64;
+        #[allow(clippy::too_many_arguments)] // zip 递归走签名面,钳制值不私挂全局
         fn walk(
             zip: &mut zip::ZipWriter<&mut std::io::Cursor<Vec<u8>>>,
             options: &zip::write::FileOptions,
@@ -1937,7 +1926,16 @@ fn zip_dir(
                 if file_type.is_dir() {
                     zip.add_directory(rel.clone(), *options)
                         .map_err(|e| format!("{e}"))?;
-                    walk(zip, options, &rel, &path, count, total, max_entries, max_bytes)?;
+                    walk(
+                        zip,
+                        options,
+                        &rel,
+                        &path,
+                        count,
+                        total,
+                        max_entries,
+                        max_bytes,
+                    )?;
                 } else {
                     *count += 1;
                     if *count > max_entries {
@@ -2335,10 +2333,7 @@ pub async fn limits_get(State(cfg): State<AdminConfig>) -> Response {
 
 /// PUT /admin/limits(W10/ADR-0024):全量快照写——body {values: {key: value}},
 /// 仅接受已登记键;钳制→原子写 config/limits.json→更新 Cell(热生效)。
-pub async fn limits_put(
-    State(cfg): State<AdminConfig>,
-    Json(body): Json<Value>,
-) -> Response {
+pub async fn limits_put(State(cfg): State<AdminConfig>, Json(body): Json<Value>) -> Response {
     let incoming = body
         .get("values")
         .and_then(|v| v.as_object())
@@ -2367,16 +2362,15 @@ pub async fn limits_put(
     let new_limits = bm_core::limits::Limits::from_file_value(&Value::Object(merged.clone()));
     // 原子写(与 fs.write/配置面同款语义:临时文件+rename,崩溃不留半截)
     let path = cfg.data_dir.join("config").join("limits.json");
-    if let Some(parent) = path.parent() {
-        if let Err(e) = std::fs::create_dir_all(parent) {
-            return admin_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("建配置目录失败: {e}"),
-            );
-        }
+    if let Some(parent) = path.parent()
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        return admin_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("建配置目录失败: {e}"),
+        );
     }
-    let pretty = serde_json::to_string_pretty(&new_limits.to_file_value())
-        .unwrap_or_default();
+    let pretty = serde_json::to_string_pretty(&new_limits.to_file_value()).unwrap_or_default();
     if let Err(e) = bm_persist::atomic_write(&path, pretty.as_bytes()) {
         return admin_error(
             StatusCode::INTERNAL_SERVER_ERROR,

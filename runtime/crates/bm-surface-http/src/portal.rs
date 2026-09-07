@@ -291,9 +291,7 @@ pub async fn require_portal(
 }
 
 fn session_cookie(value: &str, max_age_secs: u64) -> String {
-    format!(
-        "{SESSION_COOKIE}={value}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age_secs}"
-    )
+    format!("{SESSION_COOKIE}={value}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age_secs}")
 }
 
 fn unauthorized(msg: &str) -> Response {
@@ -342,7 +340,13 @@ pub async fn portal_bootstrap(
         .expect("锁未中毒")
         .insert(session.clone());
     (
-        [(header::SET_COOKIE, session_cookie(&session, state.portal.limits.get().portal_cookie_max_age_secs))],
+        [(
+            header::SET_COOKIE,
+            session_cookie(
+                &session,
+                state.portal.limits.get().portal_cookie_max_age_secs,
+            ),
+        )],
         Json(json!({"ok": true})),
     )
         .into_response()
@@ -392,7 +396,13 @@ pub async fn portal_login(
         .expect("锁未中毒")
         .insert(session.clone());
     (
-        [(header::SET_COOKIE, session_cookie(&session, state.portal.limits.get().portal_cookie_max_age_secs))],
+        [(
+            header::SET_COOKIE,
+            session_cookie(
+                &session,
+                state.portal.limits.get().portal_cookie_max_age_secs,
+            ),
+        )],
         Json(json!({"ok": true})),
     )
         .into_response()

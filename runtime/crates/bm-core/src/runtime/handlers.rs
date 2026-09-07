@@ -489,7 +489,10 @@ pub(crate) fn handle_send_input(
     // 与 assistant_final 同流),供 /admin/sessions/{id}/messages 按 seq 重放。
     // A4 口径不变:事件面仍只留摘要;诊断日志面按快照口径 16K 截断。
     {
-        let truncated = crate::runtime::turn::content_trunc_with(&params.content, w.config.limits.get().audit_entry_max_chars);
+        let truncated = crate::runtime::turn::content_trunc_with(
+            &params.content,
+            w.config.limits.get().audit_entry_max_chars,
+        );
         w.ctx_log.record_event(
             session.id.as_str(),
             operation_id.as_str(),
