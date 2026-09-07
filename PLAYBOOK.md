@@ -17,7 +17,9 @@ BOEN_MODEL_BASE_URL / BOEN_MODEL_ID / BOEN_MODEL_STREAM / BOEN_MODEL_API_KEY
     模型接线兜底(config/model.json 优先;STREAM=1 开流式;key 首启播种加密密钥库)
 BOEN_SECRET_MASTER_KEY   加密 FileSecretStore 主密钥(≥32 字符),真实网关模式必需
 BOEN_WORKSPACE_DIR       工作区/文件浏览根,默认 <data-dir>/workspace
-BOEN_TURN_TIMEOUT_SECS   回合内每次模型调用 deadline(秒,默认 120;2026-09-03 VPS 实测 mimo 常规调用 12~29s,原 30s 必撞顶,已上调并开放此变量)
+BOEN_TURN_TIMEOUT_SECS   回合内每次模型调用 deadline(秒,默认 120;W10 起与 config/limits.json 同源,env 优先级更高)
+    限制总旋钮 = <data>/config/limits.json(设置页「限制与超时」全量可改,保存即热生效;
+    exec 命令默认 120s/前台硬顶 600s;超限自动转后台,system.job_output 收取)
 测试门控(非启动):BOEN_LIVE(+_BASE_URL/_MODEL/_API_KEY)、BOEN_RELEASE、
     BOEN_MCP_STDIO_TEST、BOEN_APPS_E2E
 反向纪律:BOEN_* 前缀变量禁止下发给 MCP 子进程(INV-5)
