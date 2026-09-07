@@ -1,7 +1,7 @@
 //! StateDb 域方法(自 sqlite_state.rs 机械移入;内容零改动)。
 use super::StateDb;
 use super::rows::CapabilityRow;
-use crate::error::StoreResult;
+use crate::error::{SqlResultExt, StoreResult};
 
 impl StateDb {
     /// 写入/更新 capability binding(epoch 单调由调用方保证,恢复时取 max)。
@@ -23,7 +23,8 @@ impl StateDb {
                 row.manifest,
                 row.updated_at
             ],
-        )?;
+        )
+        .sql()?;
         Ok(())
     }
 
@@ -33,7 +34,8 @@ impl StateDb {
         conn.execute(
             "DELETE FROM capabilities WHERE capability = ?1",
             rusqlite::params![capability],
-        )?;
+        )
+        .sql()?;
         Ok(())
     }
 

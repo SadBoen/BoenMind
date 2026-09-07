@@ -7,8 +7,10 @@ use std::path::{Path, PathBuf};
 pub enum StoreError {
     #[error("事件日志 IO 失败: {0}")]
     Io(#[from] std::io::Error),
+    /// SQLite 后端错误(F-12 依赖倒置:内核端口层不再依赖 rusqlite,
+    /// 实现方 bm-persist 把 rusqlite::Error 转成携带消息的本变体)。
     #[error("SQLite 失败: {0}")]
-    Sql(#[from] rusqlite::Error),
+    Sql(String),
     #[error("事件日志损坏于 seq {seq}: {reason}")]
     Corrupt { seq: u64, reason: String },
     #[error("CAS 不匹配: key={key} expect={expect}")]

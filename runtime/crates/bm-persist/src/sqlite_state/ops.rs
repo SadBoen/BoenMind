@@ -1,6 +1,6 @@
 //! StateDb 域方法(自 sqlite_state.rs 机械移入;内容零改动)。
 use super::StateDb;
-use crate::error::StoreResult;
+use crate::error::{SqlResultExt, StoreError, StoreResult};
 
 impl StateDb {
     /// 保存回合输入原文(受保护存储;A4:原文不进事件/日志)。
@@ -9,17 +9,20 @@ impl StateDb {
         conn.execute(
             "UPDATE operations SET input_content = ?2 WHERE id = ?1",
             rusqlite::params![operation_id, content],
-        )?;
+        )
+        .sql()?;
         Ok(())
     }
 
     /// 读回合输入原文(claim 续跑用)。
     pub fn op_input(&self, operation_id: &str) -> StoreResult<Option<String>> {
         let conn = self.conn.lock().expect("锁未中毒");
-        let mut stmt = conn.prepare("SELECT input_content FROM operations WHERE id = ?1")?;
-        let mut rows = stmt.query([operation_id])?;
-        if let Some(row) = rows.next()? {
-            Ok(row.get(0)?)
+        let mut stmt = conn
+            .prepare("SELECT input_content FROM operations WHERE id = ?1")
+            .sql()?;
+        let mut rows = stmt.query([operation_id]).sql()?;
+        if let Some(row) = rows.next().sql()? {
+            Ok(row.get(0).sql()?)
         } else {
             Ok(None)
         }
@@ -31,7 +34,8 @@ impl StateDb {
         conn.execute(
             "INSERT OR REPLACE INTO op_cancel_marks (op_id, marked_at) VALUES (?1, ?2)",
             rusqlite::params![operation_id, marked_at],
-        )?;
+        )
+        .sql()?;
         Ok(())
     }
 
@@ -45,7 +49,8 @@ impl StateDb {
         conn.execute(
             "UPDATE sessions SET workspace_id = ?2 WHERE id = ?1",
             rusqlite::params![session_id, workspace_id],
-        )?;
+        )
+        .sql()?;
         Ok(())
     }
 
@@ -54,7 +59,7 @@ impl StateDb {
     /// 擦除;操作元数据行保留供审计)。
     pub fn erase_session_contents(&self, session_id: &str, at: &str) -> StoreResult<()> {
         let conn = self.conn.lock().expect("锁未中毒");
-        conn.execute_batch("BEGIN")?;
+        conn.execute_batch("BEGIN").sql()?;
         let r: Result<(), rusqlite::Error> = (|| {
             conn.execute(
                 "INSERT OR REPLACE INTO tombstones (kind, id, at) VALUES ('session', ?1, ?2)",
@@ -67,10 +72,10 @@ impl StateDb {
             Ok(())
         })();
         match r {
-            Ok(()) => conn.execute_batch("COMMIT")?,
+            Ok(()) => conn.execute_batch("COMMIT").sql()?,
             Err(e) => {
                 let _ = conn.execute_batch("ROLLBACK");
-                return Err(e.into());
+                return Err(StoreError::Sql(e.to_string()));
             }
         }
         Ok(())
@@ -80,17 +85,17 @@ impl StateDb {
     /// 事件重放侧由 recovery::load_rows 跳过墓碑会话兜底)。
     pub fn delete_session_rows(&self, session_id: &str) -> StoreResult<()> {
         let conn = self.conn.lock().expect("锁未中毒");
-        conn.execute_batch("BEGIN")?;
+        conn.execute_batch("BEGIN").sql()?;
         let r: Result<(), rusqlite::Error> = (|| {
             conn.execute("DELETE FROM sessions WHERE id = ?1", [session_id])?;
             conn.execute("DELETE FROM agents WHERE session_id = ?1", [session_id])?;
             Ok(())
         })();
         match r {
-            Ok(()) => conn.execute_batch("COMMIT")?,
+            Ok(()) => conn.execute_batch("COMMIT").sql()?,
             Err(e) => {
                 let _ = conn.execute_batch("ROLLBACK");
-                return Err(e.into());
+                return Err(StoreError::Sql(e.to_string()));
             }
         }
         Ok(())
@@ -99,11 +104,13 @@ impl StateDb {
     /// 查询取消意图标记(恢复端判定 turn_was_stopping)。
     pub fn op_cancel_requested(&self, operation_id: &str) -> StoreResult<bool> {
         let conn = self.conn.lock().expect("锁未中毒");
-        let n: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM op_cancel_marks WHERE op_id = ?1",
-            [operation_id],
-            |r| r.get(0),
-        )?;
+        let n: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM op_cancel_marks WHERE op_id = ?1",
+                [operation_id],
+                |r| r.get(0),
+            )
+            .sql()?;
         Ok(n > 0)
     }
 
@@ -114,14 +121,14 @@ impl StateDb {
         params: &[&dyn rusqlite::ToSql],
     ) -> StoreResult<Vec<serde_json::Value>> {
         let conn = self.conn.lock().expect("锁未中毒");
-        let mut stmt = conn.prepare(sql)?;
+        let mut stmt = conn.prepare(sql).sql()?;
         let names: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
-        let mut rows = stmt.query(params)?;
+        let mut rows = stmt.query(params).sql()?;
         let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
+        while let Some(row) = rows.next().sql()? {
             let mut obj = serde_json::Map::new();
             for (i, name) in names.iter().enumerate() {
-                let v: serde_json::Value = match row.get_ref(i)? {
+                let v: serde_json::Value = match row.get_ref(i).sql()? {
                     rusqlite::types::ValueRef::Null => serde_json::Value::Null,
                     rusqlite::types::ValueRef::Integer(n) => n.into(),
                     rusqlite::types::ValueRef::Real(f) => f.into(),

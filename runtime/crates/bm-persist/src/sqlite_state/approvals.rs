@@ -1,7 +1,7 @@
 //! StateDb 域方法(自 sqlite_state.rs 机械移入;内容零改动)。
 use super::StateDb;
 use super::rows::ApprovalRow;
-use crate::error::StoreResult;
+use crate::error::{SqlResultExt, StoreResult};
 
 impl StateDb {
     // ---- v3:approvals / grants / capabilities / outbox(M4)------------------
@@ -26,16 +26,19 @@ impl StateDb {
                 row.created_at,
                 row.resolved_at
             ],
-        )?;
+        )
+        .sql()?;
         Ok(())
     }
 
     pub fn approval_payload(&self, id: &str) -> StoreResult<Option<String>> {
         let conn = self.conn.lock().expect("锁未中毒");
-        let mut stmt = conn.prepare("SELECT payload FROM approvals WHERE id = ?1")?;
-        let mut rows = stmt.query([id])?;
-        if let Some(row) = rows.next()? {
-            Ok(Some(row.get(0)?))
+        let mut stmt = conn
+            .prepare("SELECT payload FROM approvals WHERE id = ?1")
+            .sql()?;
+        let mut rows = stmt.query([id]).sql()?;
+        if let Some(row) = rows.next().sql()? {
+            Ok(Some(row.get(0).sql()?))
         } else {
             Ok(None)
         }
@@ -43,12 +46,13 @@ impl StateDb {
 
     pub fn list_approvals_by_state(&self, state: &str) -> StoreResult<Vec<String>> {
         let conn = self.conn.lock().expect("锁未中毒");
-        let mut stmt =
-            conn.prepare("SELECT payload FROM approvals WHERE state = ?1 ORDER BY created_at")?;
-        let mut rows = stmt.query([state])?;
+        let mut stmt = conn
+            .prepare("SELECT payload FROM approvals WHERE state = ?1 ORDER BY created_at")
+            .sql()?;
+        let mut rows = stmt.query([state]).sql()?;
         let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            out.push(row.get(0)?);
+        while let Some(row) = rows.next().sql()? {
+            out.push(row.get(0).sql()?);
         }
         Ok(out)
     }

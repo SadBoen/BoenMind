@@ -1,6 +1,6 @@
 //! StateDb 域方法(自 sqlite_state.rs 机械移入;内容零改动)。
 use super::StateDb;
-use crate::error::{StoreError, StoreResult};
+use crate::error::{SqlResultExt, StoreResult};
 
 impl StateDb {
     /// Observation Log 条目落表(log_seq 自 MAX+1 单调分配),返回 seq。
@@ -13,17 +13,20 @@ impl StateDb {
         observed_at: &str,
     ) -> StoreResult<u64> {
         let conn = self.conn.lock().expect("锁未中毒");
-        let next: i64 = conn.query_row(
-            "SELECT COALESCE(MAX(log_seq), 0) + 1 FROM observations",
-            [],
-            |r| r.get(0),
-        )?;
+        let next: i64 = conn
+            .query_row(
+                "SELECT COALESCE(MAX(log_seq), 0) + 1 FROM observations",
+                [],
+                |r| r.get(0),
+            )
+            .sql()?;
         conn.execute(
             "INSERT INTO observations(log_seq, task_id, verdict, guard_state, payload,
                                       observed_at)
              VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
             rusqlite::params![next, task_id, verdict, guard_state, payload, observed_at],
-        )?;
+        )
+        .sql()?;
         Ok(next as u64)
     }
 
@@ -45,7 +48,7 @@ impl StateDb {
         created_at: &str,
     ) -> StoreResult<()> {
         let conn = self.conn.lock().expect("锁未中毒");
-        let tx = conn.unchecked_transaction()?;
+        let tx = conn.unchecked_transaction().sql()?;
         tx.execute(
             "INSERT INTO memories(id, scope, tombstoned, content_preview, source_ref,
                                   correction_of, payload, created_at)
@@ -60,14 +63,15 @@ impl StateDb {
                 payload,
                 created_at
             ],
-        )?;
+        )
+        .sql()?;
         // 用户纠正:被纠正条目立即墓碑化(覆盖而非追加,基线 §4.1)
         if let Some(target) = correction_of {
             tx.execute(
                 "UPDATE memories SET tombstoned = 1 WHERE id = ?1",
                 rusqlite::params![target],
             )
-            .map_err(StoreError::Sql)?;
+            .sql()?;
         }
         // FTS5 索引(失败不阻断写入:LIKE 兜底,但必须可观测)
         if let Some(preview) = content_preview
@@ -79,7 +83,7 @@ impl StateDb {
         {
             tracing::warn!(entry = %entry_id, error = %e, "memory FTS 索引写入失败(检索退化为 LIKE 兜底)");
         }
-        tx.commit()?;
+        tx.commit().sql()?;
         Ok(())
     }
 
@@ -108,12 +112,15 @@ impl StateDb {
         conn.execute(
             "UPDATE memories SET tombstoned = 1 WHERE id = ?1",
             [entry_id],
-        )?;
-        let cascaded = conn.execute(
-            "UPDATE memories SET tombstoned = 1
+        )
+        .sql()?;
+        let cascaded = conn
+            .execute(
+                "UPDATE memories SET tombstoned = 1
              WHERE source_ref = ?1 AND tombstoned = 0",
-            [entry_id],
-        )?;
+                [entry_id],
+            )
+            .sql()?;
         Ok(cascaded)
     }
 }

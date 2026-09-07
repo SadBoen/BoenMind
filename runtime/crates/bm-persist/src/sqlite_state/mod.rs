@@ -19,7 +19,7 @@ mod tests;
 
 pub use rows::{ApprovalRow, CapabilityRow, GrantRow, TaskRow};
 
-use crate::error::{StoreError, StoreResult};
+use crate::error::{SqlResultExt, StoreError, StoreResult};
 use rusqlite::Connection;
 use std::path::Path;
 use std::sync::Mutex;
@@ -34,14 +34,16 @@ impl StateDb {
     /// 打开并迁移到最新 schema。链式 expand-contract 迁移(ADR-0003 对偶:
     /// 只加列不删列,数据一致性不押注任何回滚)。
     pub fn open(path: &Path) -> StoreResult<Self> {
-        let conn = Connection::open(path)?;
-        conn.pragma_update(None, "journal_mode", "WAL")?;
-        conn.pragma_update(None, "synchronous", "FULL")?;
+        let conn = Connection::open(path).sql()?;
+        conn.pragma_update(None, "journal_mode", "WAL").sql()?;
+        conn.pragma_update(None, "synchronous", "FULL").sql()?;
         // WAL checkpoint 策略定标 (M2-review §6-3 / M3-review §6-5 承兑):
         // 设置 wal_autocheckpoint 阈值为 1000 页 (约 4MB)，达到时自动触发 PASSIVE 检查点回写主库，
         // 杜绝 WAL 日志无限增长并兼顾写吞吐与崩溃恢复窗口。
-        conn.pragma_update(None, "wal_autocheckpoint", 1000)?;
-        let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        conn.pragma_update(None, "wal_autocheckpoint", 1000).sql()?;
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .sql()?;
         if version > SCHEMA_VERSION {
             return Err(StoreError::Corrupt {
                 seq: 0,
@@ -78,7 +80,8 @@ impl StateDb {
         if version < 10 {
             Self::migrate_v9_to_v10(&conn)?;
         }
-        conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        conn.pragma_update(None, "user_version", SCHEMA_VERSION)
+            .sql()?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -134,7 +137,8 @@ impl StateDb {
             );
             COMMIT;
             "#,
-        )?;
+        )
+        .sql()?;
         Ok(())
     }
 
@@ -198,7 +202,8 @@ impl StateDb {
             );
             COMMIT;
             "#,
-        )?;
+        )
+        .sql()?;
         Ok(())
     }
 
@@ -211,7 +216,8 @@ impl StateDb {
             ALTER TABLE task_budget_ledger ADD COLUMN used_tool_calls INTEGER NOT NULL DEFAULT 0;
             COMMIT;
             "#,
-        )?;
+        )
+        .sql()?;
         Ok(())
     }
 
@@ -226,7 +232,8 @@ impl StateDb {
             ALTER TABLE memories ADD COLUMN correction_of TEXT;
             COMMIT;
             "#,
-        )?;
+        )
+        .sql()?;
         // FTS5 索引失败不阻塞迁移(LIKE 兜底),但降级必须可观测
         if let Err(e) = conn
             .execute_batch("CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(content);")
@@ -246,7 +253,8 @@ impl StateDb {
             ALTER TABLE tasks ADD COLUMN delegation_depth INTEGER NOT NULL DEFAULT 0;
             COMMIT;
             "#,
-        )?;
+        )
+        .sql()?;
         Ok(())
     }
 
@@ -260,7 +268,8 @@ impl StateDb {
             ALTER TABLE sessions ADD COLUMN workspace_id TEXT;
             COMMIT;
             "#,
-        )?;
+        )
+        .sql()?;
         Ok(())
     }
 
@@ -276,7 +285,8 @@ impl StateDb {
                 marked_at TEXT NOT NULL
             );
             "#,
-        )?;
+        )
+        .sql()?;
         Ok(())
     }
 
@@ -293,7 +303,8 @@ impl StateDb {
                 created_at TEXT NOT NULL
             );
             "#,
-        )?;
+        )
+        .sql()?;
         Ok(())
     }
 
@@ -306,7 +317,8 @@ impl StateDb {
             ALTER TABLE operations ADD COLUMN input_content TEXT;
             COMMIT;
             "#,
-        )?;
+        )
+        .sql()?;
         Ok(())
     }
 
@@ -357,7 +369,8 @@ impl StateDb {
             );
             COMMIT;
             "#,
-        )?;
+        )
+        .sql()?;
         Ok(())
     }
 }
@@ -366,10 +379,12 @@ impl StateDb {
     /// meta 读。
     pub fn meta_get(&self, key: &str) -> StoreResult<Option<String>> {
         let conn = self.conn.lock().expect("锁未中毒");
-        let mut stmt = conn.prepare("SELECT value FROM meta WHERE key = ?1")?;
-        let mut rows = stmt.query([key])?;
-        if let Some(row) = rows.next()? {
-            Ok(Some(row.get(0)?))
+        let mut stmt = conn
+            .prepare("SELECT value FROM meta WHERE key = ?1")
+            .sql()?;
+        let mut rows = stmt.query([key]).sql()?;
+        if let Some(row) = rows.next().sql()? {
+            Ok(Some(row.get(0).sql()?))
         } else {
             Ok(None)
         }
@@ -382,7 +397,8 @@ impl StateDb {
             "INSERT INTO meta(key, value) VALUES(?1, ?2)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             [key, value],
-        )?;
+        )
+        .sql()?;
         Ok(())
     }
 
@@ -396,9 +412,11 @@ impl StateDb {
     ) -> StoreResult<()> {
         let conn = self.conn.lock().expect("锁未中毒");
         let current: Option<String> = {
-            let mut stmt = conn.prepare("SELECT value FROM meta WHERE key = ?1")?;
-            let mut rows = stmt.query([key])?;
-            rows.next()?.map(|r| r.get(0)).transpose()?
+            let mut stmt = conn
+                .prepare("SELECT value FROM meta WHERE key = ?1")
+                .sql()?;
+            let mut rows = stmt.query([key]).sql()?;
+            rows.next().sql()?.map(|r| r.get(0)).transpose().sql()?
         };
         if current.as_deref() != expect {
             return Err(StoreError::CasMismatch {
@@ -410,7 +428,8 @@ impl StateDb {
             "INSERT INTO meta(key, value) VALUES(?1, ?2)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             [key, new],
-        )?;
+        )
+        .sql()?;
         Ok(())
     }
 }

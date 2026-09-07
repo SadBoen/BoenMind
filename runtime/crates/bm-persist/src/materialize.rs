@@ -8,6 +8,7 @@
 //! 且无中间事件——物化按此直接落 running;预算计数自事件可导出:
 //! used_tokens = Σ(model.invocation.completed.usage),turns_used = Σ(agent.completed)。
 
+use crate::error::SqlResultExt;
 use crate::error::StoreResult;
 use crate::sqlite_state::StateDb;
 use bm_contract::budget::Budget;
@@ -21,7 +22,7 @@ impl StateDb {
         let p = &event.payload;
         let ts = event.occurred_at.as_str();
         let conn = self.conn.lock().expect("锁未中毒");
-        let tx = conn.unchecked_transaction()?;
+        let tx = conn.unchecked_transaction().sql()?;
         // 语句仍走 conn(事务以 BEGIN 落在连接上,tx 只承载 COMMIT/ROLLBACK)。
         let result: rusqlite::Result<usize> = (|| {
             match event.event_type {
@@ -221,10 +222,10 @@ impl StateDb {
             }
         })();
         match result {
-            Ok(_) => tx.commit()?,
+            Ok(_) => tx.commit().sql()?,
             Err(e) => {
                 // 事务守卫 Drop 兜底 ROLLBACK;错误以原始语句错误回传。
-                return Err(crate::error::StoreError::Sql(e));
+                return Err(crate::error::StoreError::Sql(e.to_string()));
             }
         }
         Ok(())

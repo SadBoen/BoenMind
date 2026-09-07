@@ -1,6 +1,6 @@
 //! StateDb 域方法(自 sqlite_state.rs 机械移入;内容零改动)。
 use super::StateDb;
-use crate::error::StoreResult;
+use crate::error::{SqlResultExt, StoreResult};
 
 impl StateDb {
     /// M8.7:评估报告写入(同 report_id 覆盖;报告为派生工件)。
@@ -24,26 +24,31 @@ impl StateDb {
                     payload,
                     created_at
                 ],
-            )?;
+            )
+            .sql()?;
         Ok(())
     }
 
     /// M8.7:评估报告列表(按创建时间)。
     pub fn list_evaluation_reports(&self) -> StoreResult<Vec<serde_json::Value>> {
         let conn = self.conn.lock().expect("锁未中毒");
-        let mut stmt = conn.prepare(
-            "SELECT report_id, payload, created_at FROM evaluation_reports ORDER BY created_at",
-        )?;
-        let rows = stmt.query_map([], |r| {
-            Ok(serde_json::json!({
-                "report_id": r.get::<_, String>(0)?,
-                "payload": r.get::<_, String>(1)?,
-                "created_at": r.get::<_, String>(2)?,
-            }))
-        })?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT report_id, payload, created_at FROM evaluation_reports ORDER BY created_at",
+            )
+            .sql()?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(serde_json::json!({
+                    "report_id": r.get::<_, String>(0)?,
+                    "payload": r.get::<_, String>(1)?,
+                    "created_at": r.get::<_, String>(2)?,
+                }))
+            })
+            .sql()?;
         let mut out = Vec::new();
         for r in rows {
-            out.push(r?);
+            out.push(r.sql()?);
         }
         Ok(out)
     }

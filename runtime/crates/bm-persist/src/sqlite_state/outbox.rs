@@ -1,6 +1,6 @@
 //! StateDb 域方法(自 sqlite_state.rs 机械移入;内容零改动)。
 use super::StateDb;
-use crate::error::StoreResult;
+use crate::error::{SqlResultExt, StoreResult};
 
 impl StateDb {
     /// outbox 记录 upsert(T6 副作用对账底座;状态 pending→published→verified)。
@@ -19,7 +19,8 @@ impl StateDb {
              ON CONFLICT(operation_id, kind) DO UPDATE SET state = excluded.state,
                  payload = excluded.payload, updated_at = excluded.updated_at",
             rusqlite::params![operation_id, kind, state, payload, now],
-        )?;
+        )
+        .sql()?;
         Ok(())
     }
 

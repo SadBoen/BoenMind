@@ -1,7 +1,6 @@
 //! StateDb 域方法(自 sqlite_state.rs 机械移入;内容零改动)。
 use super::StateDb;
-use crate::error::StoreError;
-use crate::error::StoreResult;
+use crate::error::{SqlResultExt, StoreError, StoreResult};
 
 impl StateDb {
     /// M8.5:在线备份(VACUUM INTO;目标文件必须不存在)。运行中可取,
@@ -16,14 +15,14 @@ impl StateDb {
                 StoreError::Io(std::io::Error::other(format!("备份目录创建失败: {e}")))
             })?;
         }
-        let mut dst = rusqlite::Connection::open(target)?;
+        let mut dst = rusqlite::Connection::open(target).sql()?;
         {
             let src = self.conn.lock().expect("锁未中毒");
-            let b = Backup::new(&src, &mut dst)?;
+            let b = Backup::new(&src, &mut dst).sql()?;
             // step 返回 StepResult(Done/More);Done 即完成
             use rusqlite::backup::StepResult;
             loop {
-                match b.step(64)? {
+                match b.step(64).sql()? {
                     StepResult::Done => break,
                     _ => continue,
                 }
@@ -36,7 +35,8 @@ impl StateDb {
     /// WAL checkpoint 维护操作:主动将 WAL 日志刷入主数据库文件 (PASSIVE 模式)。
     pub fn wal_checkpoint(&self) -> StoreResult<()> {
         let conn = self.conn.lock().expect("锁未中毒");
-        conn.pragma_update(None, "wal_checkpoint", "PASSIVE")?;
+        conn.pragma_update(None, "wal_checkpoint", "PASSIVE")
+            .sql()?;
         Ok(())
     }
 }
