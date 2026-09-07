@@ -1,0 +1,186 @@
+//! 上下文透视/检索与会话历史回放/删除(W5 透视 + W9 检索 + 2026-09-06
+//! 会话管理批;数据源 context-log.jsonl)。
+
+use super::{AdminConfig, admin_error};
+use axum::Json;
+use axum::extract::{Query, State};
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use bm_contract::ids::{IdGen, UlidIdGen};
+use serde_json::{Value, json};
+use std::path::Path;
+
+/// GET /admin/context:context-log.jsonl 尾部解析为结构化数组(W5 上下文
+/// 透视页直用)。每行 = 一次模型调用的请求快照(messages/tools)+ 结果
+/// (status/usage/耗时);坏行跳过;最多回读 2MB、默认 120 条(新→旧即
+/// 最旧在前,与文件时序一致)。
+pub async fn context_tail(State(cfg): State<AdminConfig>) -> Response {
+    // W10:尾读字节/条数上限走 limits。
+    let lim = cfg.limits.get();
+    let steps = read_context_tail(
+        &cfg.data_dir.join("context-log.jsonl"),
+        lim.context_tail_max_bytes,
+        lim.context_tail_entries,
+    );
+    Json(json!({ "ok": true, "steps": steps })).into_response()
+}
+
+/// GET /admin/context/search?q=&limit=:跨会话全文检索(W9 二期)。
+/// 个人单机数据量下用整文件行级扫描(context-log.jsonl 任一行含 q 即命中,
+/// 大小写不敏感);数据量上来再换 FTS5 索引(规格 W9 二期备注)。
+pub async fn context_search(
+    State(cfg): State<AdminConfig>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let q = params.get("q").cloned().unwrap_or_default();
+    let limit: usize = params
+        .get("limit")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(50)
+        .clamp(1, cfg.limits.get().context_search_max_limit);
+    if q.trim().is_empty() {
+        return admin_error(StatusCode::BAD_REQUEST, "缺少 q");
+    }
+    let path = cfg.data_dir.join("context-log.jsonl");
+    let needle = q.to_lowercase();
+    let mut hits: Vec<Value> = Vec::new();
+    if let Ok(text) = std::fs::read_to_string(&path) {
+        for line in text.lines().rev() {
+            if line.to_lowercase().contains(&needle)
+                && let Ok(v) = serde_json::from_str::<Value>(line)
+            {
+                hits.push(v);
+                if hits.len() >= limit {
+                    break;
+                }
+            }
+        }
+    }
+    Json(json!({ "ok": true, "q": q, "hits": hits, "total": hits.len() })).into_response()
+}
+
+/// DELETE /admin/sessions/{session_id}:会话删除(2026-09-06 A+B)。
+/// 经核心单写者执行:墓碑 + operations 原文擦除 + context-log 流式过滤;
+/// events.jsonl 仅元数据不动(A4/审计口径)。不可恢复。
+pub(crate) async fn session_delete(
+    State(cfg): State<AdminConfig>,
+    axum::extract::Path(session_id): axum::extract::Path<String>,
+) -> Response {
+    match cfg
+        .handle
+        .session_delete(
+            UlidIdGen.next_id("req"),
+            bm_contract::wire::SessionDeleteParams {
+                session_id: match bm_contract::ids::BmId::parse(&session_id) {
+                    Ok(id) => id,
+                    Err(_) => return admin_error(StatusCode::BAD_REQUEST, "非法会话 id"),
+                },
+            },
+        )
+        .await
+    {
+        Ok(r) => Json(json!({
+            "ok": true,
+            "session_id": session_id,
+            "deleted_at": r.deleted_at.as_str(),
+            "purged_lines": r.purged_lines,
+        }))
+        .into_response(),
+        Err(e) => admin_error(StatusCode::BAD_REQUEST, e.to_wire().message),
+    }
+}
+
+/// GET /admin/sessions/{session_id}/messages?limit=&skip=:
+/// 会话历史回放(2026-09-06;同日二改:分页+流式,防长会话一口气载入卡
+/// 界面)。从 context-log.jsonl 过滤 kind ∈ {user_message, assistant_final},
+/// 按文件序(=真实时序)返回第 skip 条之前的最近 limit 条;limit 默认 50
+/// 上限 200;has_more 指示是否还有更早。**分页游标用「从末尾跳过的条数」
+/// 而非 seq**——历史文件里 seq 曾跨重启重数,seq 游标在存量数据上必错页。
+/// BufReader 逐行流式,内存只留单页窗口(不整文件载入)。
+pub async fn session_messages(
+    State(cfg): State<AdminConfig>,
+    axum::extract::Path(session_id): axum::extract::Path<String>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let limit: usize = params
+        .get("limit")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(50)
+        .clamp(1, cfg.limits.get().context_search_max_limit);
+    let skip: usize = params.get("skip").and_then(|v| v.parse().ok()).unwrap_or(0);
+
+    use std::collections::VecDeque;
+    use std::io::BufRead;
+    // 双端队列只留最近 skip+limit 条匹配;文件序 = 落盘序 = 真实时序
+    let mut window: VecDeque<Value> = VecDeque::new();
+    let mut matched: usize = 0;
+    if let Ok(f) = std::fs::File::open(cfg.data_dir.join("context-log.jsonl")) {
+        for line in std::io::BufReader::new(f).lines() {
+            let Ok(line) = line else { break };
+            let Ok(v) = serde_json::from_str::<Value>(&line) else {
+                continue; // 坏行跳过
+            };
+            if v.get("session_id").and_then(|s| s.as_str()) != Some(session_id.as_str()) {
+                continue;
+            }
+            let role = match v.get("kind").and_then(|k| k.as_str()).unwrap_or("") {
+                "user_message" => "user",
+                "assistant_final" => "assistant",
+                _ => continue,
+            };
+            let content = v["data"]["content"].as_str().unwrap_or_default();
+            if content.is_empty() {
+                continue;
+            }
+            matched += 1;
+            window.push_back(json!({
+                "ts": v.get("ts").cloned().unwrap_or(Value::Null),
+                "role": role,
+                "content": content,
+            }));
+            if window.len() > skip + limit {
+                window.pop_front();
+            }
+        }
+    }
+    // 丢弃末尾 skip 条(那些已在前面的页面里),剩下的即本页(最旧在前)
+    let take = window.len().saturating_sub(skip);
+    let messages: Vec<Value> = window.into_iter().take(take).collect();
+    let has_more = matched > skip + messages.len();
+    Json(json!({
+        "ok": true,
+        "session_id": session_id,
+        "messages": messages,
+        "has_more": has_more,
+    }))
+    .into_response()
+}
+
+/// context-log 尾部读取+逐行解析(只读诊断面;任何失败静默为空)。
+fn read_context_tail(path: &Path, max_bytes: u64, limit: usize) -> Vec<Value> {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return vec![];
+    };
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    let start = len.saturating_sub(max_bytes);
+    if f.seek(SeekFrom::Start(start)).is_err() {
+        return vec![];
+    }
+    let mut buf = String::new();
+    if f.read_to_string(&mut buf).is_err() {
+        return vec![];
+    }
+    let mut lines: Vec<&str> = buf.lines().collect();
+    if start > 0 && !lines.is_empty() {
+        lines.remove(0); // 截断边界上的半行不可信
+    }
+    let mut steps: Vec<Value> = lines
+        .iter()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect();
+    if steps.len() > limit {
+        steps = steps.split_off(steps.len() - limit);
+    }
+    steps
+}
