@@ -7,24 +7,25 @@ BoenMind:个人生态的 AI Runtime / AI OS,当前为**阶段一(跨平台单软
 (Erlang/OTP、Kubernetes、VS Code,见 `architecture/deepwiki-validation.md`)。
 合同库冻结 v1.0(字段只增不破)。
 
-**当前状态(2026-09-07)**:v0.0.13 已发版;此后五批已落 main 未打 tag——①v0.0.13 后外部复盘复核(修 skills/roles 损坏静默覆写清盘隐患,误报八项驳回)②架构回头看评审复核(6 路评审报告逐项验证:修 4 P0+26 P1+约 20 P2,含工具轮总数安全网/settle Result 化/exec 剥离 BOEN_*/SSE 真实结局分路/apps 冒烟+CI 门禁/插件 CI 三平台;v0.0.13 批=webadmin 拆 11 子模块+x-opencode-session 头+Git 历史瘦身 456MB **历史已重写=既有 clone 须重拉**)③第三方评审报告复核(F-12 彻底解耦=内核去 rusqlite 化+前端 mock 桩/假按钮清理,8 项误报驳回,BACKLOG 新登记 4 项)④一次性评审/审计报告全仓清理+ESLint 接入 CI 门禁(webapp-lint job)⑤文档清理审计核实批(README/INSTALL 收敛单源,归档建议 24 条驳回);**评审/审计类一次性报告文档已按用户令全仓清理(2026-09-07),各批复核结论以 HISTORY/BACKLOG 行为准,报告原文溯 git 史**;
-**欠账唯一入口 = `milestones/BACKLOG.md`**(已闭合条目自 2026-09-02 起移出台账);
-**交付全史唯一入口 = `milestones/HISTORY.md`**。
+**当前版本 = v0.0.13(已发版)**,此后批次落 main 未打 tag。进度只认 git:
+交付全史唯一入口 = `milestones/HISTORY.md`(看表尾);欠账唯一入口 = `milestones/BACKLOG.md`;
+已裁决/驳回勿再翻案唯一清单 = `milestones/SETTLED.md`(ADR-0026)。
+⚠ Git 历史已于 2026-09-07 重写(filter-repo 清构建产物),v0.0.9/11/12 tag 哈希全变,既有 clone 须重拉;GitHub Release 资产不受影响。
 
 ## 文件地图(规格分层)
 
 ```text
 BoenMind-CORE-ARCHITECTURE.md   第 0 层  架构基线:原则/边界/不变量;§17 裁决;§18 里程碑定义;§19 回看制度
-adr/                            第 0 层  架构决策记录 ADR-0001..0025(0012 随 M10 dsh 线归档、编号跳空;基线与 ADR 冲突时以更新的 ADR 为准)
-architecture/                   第 0 层  C4 模型 boenmind.c4(拓扑唯一权威)+ 辩论转录(debates/)+ 验证报告
+adr/                            第 0 层  架构决策记录 ADR-0001..0026(0012 随 M10 dsh 线归档、编号跳空;基线与 ADR 冲突时以更新的 ADR 为准)
+architecture/                   第 0 层  C4 模型 boenmind.c4(拓扑唯一权威)+ 辩论转录(debates/,证据底稿非评审对象)+ 验证报告
 boenmind-contracts/             第 1 层  机器可读合同(v1.0 冻结)+ validate.py 校验器 + m0/(测试矩阵/威胁模型/perf-baseline)
-milestones/                     第 2 层  实现规格+回看(M1-M9、W1-W10、MUSIC-APP)+ 台账三件:HISTORY(交付时间线)/BACKLOG(未结事项)/PENDING(待裁决,现清零);外部评审/审计类一次性报告已按用户令清理(2026-09-07),结论沉淀在 HISTORY/BACKLOG,原文可溯 git 史
+milestones/                     第 2 层  实现规格+回看(M1-M9、W1-W10、MUSIC-APP)+ 台账四件:HISTORY(交付时间线)/BACKLOG(未结)/PENDING(待裁决,已清零)/SETTLED(已裁决与驳回查重清单);评审类一次性报告不入库(2026-09-07),结论沉淀台账,原文溯 git 史
 runtime/                        第 3 层  Rust workspace 9 个 crate(bm-contract/core/persist/providers/cli/surface-http/runtime/judge/testkit)+ webapp(W 序列前端,Vite+React+TS)
 apps/                           第 3 层  真实 App:wiki_server/market_server/music_server(stdio MCP,Python)+ smoke_test.py(CI 冒烟)+ mcp-config.example.json
 plugins/                        第 3 层  官方随包插件:mcp/web-multisearch(聚合搜索)、mcp/context-inspector(交互透视与诊断分析)
 shell/tauri/                    第 3 层  Windows 桌面壳(Tauri v2;frontendDist 指 runtime/webapp/dist,手工构建)
 scenarios/                      实测    CLI 场景实测清单(S1-S10 与 2026-08-30 实测记录)
-PLAYBOOK.md                     附页    实操备忘:启动与环境变量/前端四坑/浏览器自动化怪癖/废止速查——动手前先看
+PLAYBOOK.md                     附页    实操备忘+高频坑唯一源:启动与环境变量/前端四坑/浏览器自动化怪癖/废止速查——动手前先看
 .agents/skills/boenmind-dev/    技能    按任务类型的操作清单(动合同/发 ADR/实现里程碑必加载)
 .github/                        CI      contracts-validate + apps 冒烟 + webapp lint + Rust 三平台矩阵(fmt/clippy/nextest)+ 双插件 CI 三平台 + release
 ```
@@ -32,7 +33,7 @@ PLAYBOOK.md                     附页    实操备忘:启动与环境变量/前
 ## 新会话工作流
 
 1. 读本文件 → 2. 按手头任务读对应层文件(任务-文件对照见 boenmind-dev 技能)→
-3. 动工前看 BACKLOG 确认没有已登记的相关欠账 → 4. 产出后自检
+3. 动工前看 BACKLOG 确认没有已登记的相关欠账、查 SETTLED 确认不是已裁决事项 → 4. 产出后自检
 (合同有变更必跑 `python boenmind-contracts/scripts/validate.py`,须全绿)。
 
 ## 硬纪律(违反 = 返工)
@@ -44,12 +45,23 @@ PLAYBOOK.md                     附页    实操备忘:启动与环境变量/前
 5. **里程碑 = 可运行检查点**(§18/§19):P0 测试套件全绿才算完成;完成后按 §19 回看再进下一个;交付状态登记 HISTORY,遗留登记 BACKLOG。
 6. **真实进度只认 git**:主干应始终可校验(validate.py 全绿);提交说明写清动机。
 7. **用户可见面必须真实浏览器手测**(2026-09-01 用户明示):以页面可见内容/截图为证;接口测试全绿 ≠ 界面交付。
+8. **规范与叙事分离**(ADR-0026):规范文档只写当前有效的规则与事实;历史叙事只进 git 提交说明与 HISTORY 单行;已裁决事项以 SETTLED.md 为唯一清单,向评审翻旧账 = 返工。
 
 ## 工作方法(已固化,每轮沿用)
 
 1. 强耦合任务合批,一轮交付、共享全量回归,依赖链顺序不变;
 2. 文档类产物(与代码文件零相交)派后台子代理并行起草,主代理收圈时随手提交;
 3. **不做同仓多代理并行写代码**(runtime.rs 单点合并成本 > 收益;Rust target 目录锁/冷编译),防冲突规程与单写者纪律不破。
+
+## 评审纪律(外部评审/回头看/审计任务必读)
+
+**必读清单(按序,勿全仓通读)**:①本文件 → ②基线对应章节(架构=§1-§17,流程/里程碑=§18-§19)→
+③`milestones/BACKLOG.md` 未结项 → ④`milestones/SETTLED.md` 逐条查重。
+
+1. 台账(HISTORY/PENDING)与辩论转录是**记录不是评审对象**,不主动通读;
+2. 新意见提出前先查 SETTLED:已有结论不得重提;翻案须 SETTLED 无此条**且**带新证据;
+3. 属实才修,误报必驳;每驳回一条当场补 SETTLED 行(一行一条,含证据与出处);
+4. 评审类一次性报告不入库(2026-09-07 用户令):结论写 HISTORY 行,驳回写 SETTLED 行,原文留 git 史。
 
 ## 环境与工具
 
@@ -58,11 +70,8 @@ PLAYBOOK.md                     附页    实操备忘:启动与环境变量/前
 - 性能测试命令、启动命令与 BOEN_* 环境变量表 → `PLAYBOOK.md` §1/§4;
 - context7 MCP 可用(库文档查询;真实 Provider/MCP 接入时优先用);
 - 官方自带 MCP 插件源码在 `plugins/mcp/web-multisearch/`(2026-09-02 自独立仓移入,历史归档分支 archive/boenmind-mcp-servers;发布随 v* tag 走 release 工作流);
-- 运行时配置在**数据目录**(默认 `%APPDATA%\Roaming\boenmind\config\`),不在仓库;
-- 已确认:libsqlite3-sys bundled 默认启用 SQLITE_ENABLE_FTS5——M5 memory 检索 FTS5 实际生效,LIKE 仅兜底。
+- 运行时配置在**数据目录**(默认 `%APPDATA%\Roaming\boenmind\config\`),不在仓库。
 
-## 最高频坑(全表见 PLAYBOOK)
+## 高频坑
 
-1. 事件信封 JSON 字段名是 `type`(serde rename),不是 `event_type`;
-2. 静态页无缓存头,发版后 Ctrl+F5;内联脚本语法错误整页静默失效——改完必须 `node --check`;
-3. 大段内联脚本(python heredoc)写文件易静默失败——先 Write 成文件再执行。
+唯一源 = `PLAYBOOK.md`(动手前先看);本文件不再复制坑条目(ADR-0026 去重纪律)。

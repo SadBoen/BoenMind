@@ -86,6 +86,7 @@
 | 审批无人在线时的通知机制 | 来源 2026-09-07 外部审查复核:审批可达性已修(/admin/approvals 轮询+YOLO),但前端未连接时审批仍会长时间挂起;可加系统通知/声音/轮询提示等 | OPEN(低) |
 | 同批 tool_calls 拒绝联动(产品语义) | 来源 2026-09-07 外部复盘复核(REVIEW-2026-09-07-v0.0.13-external §三):单回合多 tool_calls 顺序串行执行系单写者刻意语义不动;但用户拒绝其中之一后,同批其余工具仍各自独立过 Broker 审批并执行——是否改「拒绝即取消同批余下」属产品设计裁决 | OPEN(低,待裁决) |
 | 前端长会话渲染性能 | 来源 2026-09-07 外部复盘复核:ThreadPrimitive.Messages 无虚拟滚动(多次「加载更早消息」后 DOM 全量堆积,大代码块/密集表格掉帧,可评估 @tanstack/react-virtual);流式期间逐 token 全文正则重扫+ReactMarkdown 全树重建(可加渲染节流);与 P3 context.tsx/thread.tsx 拆分同族 | OPEN(低) |
+| 旧规格/回看文件收档候选 | 来源 2026-09-08 文档重组批(用户批准方案的 P2 候选项):M*-review 与 M2/M4-settlement 等过程文档移 milestones/archive/ 子目录,仅动位置不动内容;注意 2026-09-07 文档审计曾裁「M-reviews 系 ADR-0015 决策 6 不动之物」(SETTLED §4-7),重开动议依据=用户 2026-09-08 明示文档膨胀拖累评审;动工前须逐文件核活锚点并经用户最终拍板 | OPEN(低,待用户拍板) |
 
 ## 4. 用户拍板后置(DEFERRED,裁决记录见 milestones/PENDING.md)
 

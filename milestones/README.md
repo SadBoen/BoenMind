@@ -1,7 +1,8 @@
 # milestones/ — 里程碑规格、回看与台账
 
 > 第 2 层:开工时写实现规格,收官时写回看;W 序列(ADR-0014)验收入规格不另立 review(ADR-0015)。
-> 交付时间线看 `HISTORY.md`;未结事项看 `BACKLOG.md`;待用户裁决看 `PENDING.md`。
+> 交付时间线看 `HISTORY.md`;未结事项看 `BACKLOG.md`;待用户裁决看 `PENDING.md`;
+> 评审/回头看出新意见前先查 `SETTLED.md`(已裁决与驳回唯一查重清单,ADR-0026)。
 
 ## M 序列(阶段一 M0-M8 + 阶段二 M9,spec+review 成对)
 
@@ -38,6 +39,7 @@
 - `HISTORY.md` — 交付时间线(append-only,唯一进度真源);
 - `BACKLOG.md` — 未结事项总台账(掉链项/后置项/前置项/审计 F 系/文档欠账);
 - `PENDING.md` — 待用户裁决队列(2026-09-01 起清零,11 条历史裁决见表);
+- `SETTLED.md` — 已裁决/已驳回/引文纠错唯一查重清单(ADR-0026;一行一条带出处,评审出新意见前先查重,驳回当场补行);
 - `M2-adr-settlement.md`、`M4-adr-settlement.md` — 开工前 ADR 条件结算表(已闭合);
 - `W-ui-inventory.md` — assistant-ui 官方资产盘点(W 序列选装参考);
 - `MUSIC-APP-implementation-spec.md` — 音乐播放器 App 实现规格(已交付,随 v0.0.3 入包);
