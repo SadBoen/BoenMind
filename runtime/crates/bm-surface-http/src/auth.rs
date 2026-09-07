@@ -29,7 +29,8 @@ pub async fn require_bearer(
 }
 
 /// 常数时间比较(避免时序侧信道;令牌为高熵随机值,此处为纵深防御)。
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+/// P2(2026-09-07 架构评审):portal.rs 同款实现已收口到本函数。
+pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }

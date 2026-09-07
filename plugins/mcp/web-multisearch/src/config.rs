@@ -22,6 +22,9 @@ const ENV_MAP: &[(&str, &str)] = &[
     ("linkup_api_key", "LINKUP_API_KEY"),
     ("you_api_key", "YOU_API_KEY"),
     ("websearchapi_api_key", "WEBSEARCHAPI_API_KEY"),
+    // P1-37 同族(2026-09-07 架构评审):parallel 亦有 key 但此前漏出 env
+    // 兜底口径,与 cascade.rs apply_legacy_key 脱节
+    ("parallel_api_key", "PARALLEL_API_KEY"),
 ];
 
 const DEFAULT_LIMIT: i64 = 5;

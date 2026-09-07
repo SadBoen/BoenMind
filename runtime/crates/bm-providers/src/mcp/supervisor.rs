@@ -35,6 +35,9 @@ pub trait CapabilityRegistrar: Send + Sync {
 }
 
 /// 从配置读 server 清单(文件不存在 = 空清单)。
+/// P1-9(2026-09-07 架构评审):仅 NotFound 视为空清单;其他 IO 错误(权限/
+/// 瞬时故障)上抛——吞成空清单会让热重载把全部 MCP 能力静默卸载,甚至被
+/// mcp_add 整表回写覆盖丢配置。
 pub fn read_mcp_servers(path: &Path) -> Result<Vec<Value>, String> {
     match std::fs::read_to_string(path) {
         Ok(text) => {
@@ -42,7 +45,8 @@ pub fn read_mcp_servers(path: &Path) -> Result<Vec<Value>, String> {
                 serde_json::from_str(&text).map_err(|e| format!("MCP 配置不是 JSON 数组: {e}"))?;
             Ok(arr)
         }
-        Err(_) => Ok(vec![]),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(vec![]),
+        Err(e) => Err(format!("MCP 配置读取失败: {e}")),
     }
 }
 

@@ -183,11 +183,11 @@ fn verify_password(stored: &str, password: &str) -> bool {
             return false;
         };
         let dk = pbkdf2_hmac_sha256(password.as_bytes(), salt.as_bytes(), iters);
-        constant_time_eq(hex(&dk).as_bytes(), expect.as_bytes())
+        crate::auth::constant_time_eq(hex(&dk).as_bytes(), expect.as_bytes())
     } else {
         let (salt, expect) = stored.split_once('$').unwrap_or(("", ""));
         let computed = hash_password(password, salt);
-        constant_time_eq(computed.as_bytes(), expect.as_bytes())
+        crate::auth::constant_time_eq(computed.as_bytes(), expect.as_bytes())
     }
 }
 
@@ -223,22 +223,13 @@ fn cookie_session(headers: &HeaderMap) -> Option<String> {
     None
 }
 
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    a.iter()
-        .zip(b.iter())
-        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
-        == 0
-}
-
 fn authed(state: &crate::AppState, headers: &HeaderMap) -> bool {
+    // P2(2026-09-07 架构评审):常数时间比较收口 auth.rs 单一实现。
     let bearer_ok = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
-        .map(|given| constant_time_eq(given.as_bytes(), state.token.as_bytes()))
+        .map(|given| crate::auth::constant_time_eq(given.as_bytes(), state.token.as_bytes()))
         .unwrap_or(false);
     if bearer_ok {
         return true;
@@ -312,10 +303,23 @@ pub async fn portal_state(State(state): State<crate::AppState>, headers: HeaderM
 }
 
 /// POST /api/portal/bootstrap {password}:仅未设密码时可用一次;设置并登录。
+/// P1-3(2026-09-07 架构评审):补登录同款限速门——未配置密码的窗口期内,
+/// 抢注尝试按对端 IP 计入 login_gate,失败过多即锁。
 pub async fn portal_bootstrap(
     State(state): State<crate::AppState>,
+    peer: Option<axum::Extension<ConnectInfo<SocketAddr>>>,
     Json(body): Json<serde_json::Value>,
 ) -> Response {
+    let gate_key = peer
+        .map(|c| c.0.ip().to_string())
+        .unwrap_or_else(|| "global".to_string());
+    if state.portal.login_locked(&gate_key) {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(json!({"error": {"message": "尝试次数过多,请稍后再试"}})),
+        )
+            .into_response();
+    }
     if state.portal.configured() {
         return (
             StatusCode::CONFLICT,
@@ -325,6 +329,7 @@ pub async fn portal_bootstrap(
     }
     let pw = body["password"].as_str().unwrap_or_default();
     if pw.chars().count() < 6 {
+        state.portal.note_login_failure(&gate_key);
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({"error": {"message": "密码至少 6 位"}})),
@@ -332,6 +337,7 @@ pub async fn portal_bootstrap(
             .into_response();
     }
     state.portal.save(&store_password(pw));
+    state.portal.note_login_success(&gate_key);
     let session = new_session();
     state
         .portal

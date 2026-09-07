@@ -121,7 +121,7 @@ fn agent_derived_requires_grant_and_predicate_must_match() {
     grants.record(g);
     let broker = Broker::new(&reg, &mut grants, &clock, &ids);
     let ctx = CallContext::content_chain("agent:bot", DataTrust::AgentDerived).expect("内容链构造");
-    // 谓词命中 → Allowed{grant_id}
+    // 谓词命中(子集匹配:已列键相等;未列键不受约束)→ Allowed{grant_id}
     assert_eq!(
         broker.decide(
             &ctx,

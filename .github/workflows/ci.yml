@@ -16,6 +16,18 @@ jobs:
           python-version: "3.12"
       - run: python boenmind-contracts/scripts/validate.py
 
+  # P1-38(2026-09-07 架构评审):apps 三个 Python MCP server 是发布面交付物
+  # (release 随包),此前零测试零门禁——冒烟=真实 stdio 管道全协议往返
+  apps-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m py_compile apps/wiki_server.py apps/market_server.py apps/music_server.py
+      - run: python apps/smoke_test.py
+
   # S1 unit + S3 golden-trace + S5 log-redaction 随测试套件执行;三平台矩阵 = M0.3
   rust:
     strategy:
@@ -42,8 +54,14 @@ jobs:
       - run: cargo nextest run --workspace
 
   # 独立官方 MCP 插件：不进入 runtime workspace，但必须有自己的门禁
+  # P1-40(2026-09-07 架构评审):插件有 native-tls / cfg(target_os="windows")
+  # 分支,单 ubuntu 从未验证——矩阵对齐主 rust 三平台
   web-multisearch-plugin:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     defaults:
       run:
         working-directory: plugins/mcp/web-multisearch
@@ -61,7 +79,11 @@ jobs:
       - run: cargo build --release
 
   context-inspector-plugin:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     defaults:
       run:
         working-directory: plugins/mcp/context-inspector

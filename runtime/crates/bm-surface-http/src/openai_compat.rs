@@ -364,8 +364,12 @@ pub async fn chat_completions(
         // 10s 下发一行 SSE 注释——前端按任意字节重置看门狗,注释行被解析
         // 器忽略,不污染内容。
         let mut last_byte = Instant::now();
+        // P1-11(2026-09-07 架构评审):流的真实结局——此前四种出口一律发
+        // finish_reason:stop + [DONE],硬顶超时/失败被客户端误认为正常完成。
+        let mut outcome = "finished";
         loop {
             if Instant::now() > deadline {
+                outcome = "timeout";
                 break;
             }
             tokio::time::sleep(Duration::from_millis(80)).await;
@@ -407,10 +411,16 @@ pub async fn chat_completions(
                     EventType::AgentFailed | EventType::AgentCancelled => {
                         yield Ok(chunk(&sid, &default_model,
                             serde_json::json!({ "content": "\n[回合失败或已取消]" }), None));
+                        outcome = if e.event_type == EventType::AgentCancelled {
+                            "cancelled"
+                        } else {
+                            "failed"
+                        };
                         finished = true;
                         break;
                     }
                     EventType::AgentInterrupted => {
+                        outcome = "interrupted";
                         finished = true;
                         break;
                     }
@@ -421,10 +431,39 @@ pub async fn chat_completions(
                 break;
             }
         }
-        yield Ok(Bytes::from(
-            "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
-        ));
-        yield Ok(Bytes::from("data: [DONE]\n\n"));
+        // 收尾按真实结局分路:仅正常完成才发 stop + [DONE];失败/取消/中断/
+        // 超时发 OpenAI 兼容错误帧后原样断流(不发 [DONE] 谎报完成)。
+        if outcome == "finished" {
+            yield Ok(Bytes::from(
+                "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            ));
+            yield Ok(Bytes::from("data: [DONE]\n\n"));
+        } else {
+            let (message, code) = match outcome {
+                "cancelled" => ("回合已被用户取消".to_string(), "turn_cancelled".to_string()),
+                "failed" => ("回合执行失败".to_string(), "turn_failed".to_string()),
+                "interrupted" => (
+                    "回合被中断(服务重启恢复边界)".to_string(),
+                    "turn_interrupted".to_string(),
+                ),
+                _ => (
+                    format!(
+                        "流式硬顶({}ms)到时断流,回合可能仍在后台执行",
+                        state.limits.get().stream_hard_cap_ms
+                    ),
+                    "stream_hard_cap_exceeded".to_string(),
+                ),
+            };
+            let err = serde_json::json!({
+                "error": {
+                    "message": message,
+                    "type": "server_error",
+                    "param": serde_json::Value::Null,
+                    "code": code,
+                }
+            });
+            yield Ok(Bytes::from(format!("data: {err}\n\n")));
+        }
     };
 
     let mut response = Response::new(Body::from_stream(body_stream));

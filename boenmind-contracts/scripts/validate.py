@@ -38,6 +38,98 @@ for rel, d in docs.items():
         store[d["$id"]] = d
 
 
+# ---------- R1b: schema 自检(P1-42,2026-09-07 架构评审)----------
+# 此前 *.schema.json 仅做「JSON 可解析」——schema 本身写坏(类型拼写错、
+# required 引用不存在的属性、用到子集校验器不支持的关键字而被静默忽略)
+# 无人知晓。本节对每份 schema 做结构自检。
+SUPPORTED_KEYWORDS = {
+    "$id", "$schema", "title", "description", "definitions",
+    "type", "enum", "const", "required", "properties",
+    "additionalProperties", "items", "oneOf", "$ref", "pattern",
+    "minimum", "maximum", "minLength", "maxLength", "minItems",
+    "maxItems", "format",
+}
+_VALID_TYPES = {"object", "array", "string", "integer", "number", "boolean", "null"}
+
+
+def schema_lint(name, schema, path="$", lax=False):
+    if schema is True or schema is False:
+        return
+    if not isinstance(schema, dict):
+        fail("R1b", f"{name}{path}: schema 片段不是对象: {schema!r}")
+        return
+    for k in schema:
+        if k in SUPPORTED_KEYWORDS:
+            continue
+        # 注解类关键字:刻意的惰性元数据,不参与校验
+        if k.startswith("x-") or k in ("default", "const_note"):
+            continue
+        if lax:
+            continue
+        if path == "$":
+            # 文档级锚点(envelope 的 request/response、wire 的方法名等):
+            # 本库惯用的自描述结构,不视为错误;其值仍做宽松自检
+            continue
+        fail("R1b", f"{name}{path}: 子集校验器不支持的关键字 '{k}'(校验时会被静默忽略)")
+    t = schema.get("type")
+    if t is not None:
+        for x in (t if isinstance(t, list) else [t]):
+            if x not in _VALID_TYPES:
+                fail("R1b", f"{name}{path}: 未知类型 '{x}'")
+    req = schema.get("required")
+    if req is not None:
+        if not isinstance(req, list) or not all(isinstance(x, str) for x in req):
+            fail("R1b", f"{name}{path}: required 必须是字符串数组")
+        elif isinstance(schema.get("properties"), dict):
+            missing = [k for k in req if k not in schema["properties"]]
+            if missing:
+                fail("R1b", f"{name}{path}: required 引用未定义属性 {missing}")
+    props = schema.get("properties")
+    if props is not None:
+        if not isinstance(props, dict):
+            fail("R1b", f"{name}{path}: properties 必须是对象")
+        else:
+            for k, v in props.items():
+                schema_lint(name, v, f"{path}/properties/{k}")
+    items = schema.get("items")
+    if items is not None:
+        if not isinstance(items, (dict, bool)):
+            fail("R1b", f"{name}{path}: items 必须是对象或布尔")
+        elif isinstance(items, dict):
+            schema_lint(name, items, f"{path}/items")
+    for kw in ("oneOf", "enum"):
+        v = schema.get(kw)
+        if v is not None and (not isinstance(v, list) or not v):
+            fail("R1b", f"{name}{path}: {kw} 必须是非空数组")
+    for sub in schema.get("oneOf") or []:
+        schema_lint(name, sub, f"{path}/oneOf", lax=lax)
+    for k, v in (schema.get("definitions") or {}).items():
+        schema_lint(name, v, f"{path}/definitions/{k}", lax=lax)
+    # 文档级锚点值做宽松自检(内部同样允许注解/锚点键)
+    for k, v in schema.items():
+        if k not in SUPPORTED_KEYWORDS and isinstance(v, dict) and path == "$":
+            schema_lint(name, v, f"{path}/{k}", lax=True)
+    for k in ("minLength", "maxLength", "minItems", "maxItems"):
+        if k in schema and not isinstance(schema[k], int):
+            fail("R1b", f"{name}{path}: {k} 必须是整数")
+    for k in ("minimum", "maximum"):
+        if k in schema and not isinstance(schema[k], (int, float)):
+            fail("R1b", f"{name}{path}: {k} 必须是数值")
+    if "pattern" in schema:
+        try:
+            re.compile(schema["pattern"])
+        except re.error as e:  # noqa: BLE001
+            fail("R1b", f"{name}{path}: pattern 编译失败: {e}")
+
+
+_linted = 0
+for rel, d in docs.items():
+    if rel.name.endswith(".schema.json") and isinstance(d, dict):
+        schema_lint(str(rel), d)
+        _linted += 1
+print(f"R1b schema 自检        : {_linted} 份 schema，{sum(1 for x in problems if x.startswith('[R1b'))} 个失败")
+
+
 # ---------- 内置 draft-07 子集校验器 ----------
 def _frag(doc, frag):
     cur = doc
@@ -119,10 +211,12 @@ def validate(inst, schema, root, path="$", debug=False):
         if "pattern" in schema and not re.search(schema["pattern"], inst):
             errs.append(f"{path}: 不匹配 pattern {schema['pattern']}")
         if schema.get("format") == "date-time" and inst is not None:
+            # P1-43(2026-09-07 架构评审):按 RFC3339 接受 Z 或 ±HH:MM 偏移
+            # ——此前只认 Z 结尾,合法的 +00:00 被误报
             if not isinstance(inst, str) or not re.fullmatch(
-                r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z", inst
+                r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})", inst
             ):
-                errs.append(f"{path}: 非法 date-time（要求 ISO-8601 UTC）: {inst!r}")
+                errs.append(f"{path}: 非法 date-time（要求 RFC3339:UTC 'Z' 或时区偏移）: {inst!r}")
     if isinstance(inst, (int, float)) and not isinstance(inst, bool):
         if "minimum" in schema and inst < schema["minimum"]:
             errs.append(f"{path}: < minimum {schema['minimum']}")

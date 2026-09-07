@@ -1,19 +1,6 @@
 //! MCP 信息弹窗(自 PluginsPage.tsx 机械移入)。
 import { useState } from "react";
-import {
-  Loader2Icon,
-
-
-
-
-
-
-
-
-} from "lucide-react";
-import {
-  
-} from "../api";
+import { Loader2Icon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {

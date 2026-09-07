@@ -19,6 +19,8 @@ export const BM_EVENTS = {
   openMusic: "bm-open-music",
   /** 请求刷新工作区文件 */
   wsRefresh: "bm-ws-refresh",
+  /** 对话级所选模型已变化(Composer 写入,状态栏订阅;P1-32 去 localStorage 渲染期直读) */
+  activeModelChanged: "bm-active-model-changed",
 } as const;
 
 export type BmEventName = (typeof BM_EVENTS)[keyof typeof BM_EVENTS];

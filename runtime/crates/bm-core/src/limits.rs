@@ -26,6 +26,7 @@ pub struct Limits {
     // 【工具轮】
     pub tool_wait_ms: u64,
     pub approval_wait_ms: u64,
+    pub tool_rounds_max: u32,
     pub loop_breaker_consecutive: u32,
     pub loop_breaker_window: usize,
     // 【模型调用】
@@ -51,6 +52,7 @@ pub struct Limits {
     pub context_tail_max_bytes: u64,
     pub context_tail_entries: usize,
     pub context_search_max_limit: usize,
+    pub session_messages_max_limit: usize,
     // 【任务监护】
     pub watchdog_stall_after_ms: i64,
     pub watchdog_hard_limit_ms: i64,
@@ -87,6 +89,10 @@ impl Default for Limits {
             job_retention_max_bytes: 100 * 1024 * 1024,
             tool_wait_ms: 60_000,
             approval_wait_ms: 300_000,
+            // 2026-09-07 架构评审 P0-1:总轮数安全网(变参轮转此前无界烧钱;
+            // v0.0.10 刻意不设 30 上限的口径由「64 的宽松安全网 + 0=关」承接——
+            // 正常链式工具调用远达不到,熔断只拦失控)。
+            tool_rounds_max: 64,
             loop_breaker_consecutive: 5,
             loop_breaker_window: 20,
             model_call_timeout_secs: 120,
@@ -108,6 +114,7 @@ impl Default for Limits {
             context_tail_max_bytes: 2 * 1024 * 1024,
             context_tail_entries: 120,
             context_search_max_limit: 200,
+            session_messages_max_limit: 200,
             watchdog_stall_after_ms: 15 * 60 * 1000,
             watchdog_hard_limit_ms: 24 * 60 * 60 * 1000,
             watchdog_tick_ms: 60 * 1000,
@@ -211,6 +218,13 @@ pub const KEY_META: &[KeyMeta] = &[
         "等用户审批时限(毫秒)",
         10_000.0,
         1_800_000.0
+    ),
+    meta!(
+        "tool_rounds_max",
+        "工具轮",
+        "单回合工具调用总轮数上限(0=不设上限)",
+        0.0,
+        1_000.0
     ),
     meta!(
         "loop_breaker_consecutive",
@@ -356,6 +370,13 @@ pub const KEY_META: &[KeyMeta] = &[
         "context_search_max_limit",
         "上下文与记忆",
         "跨会话检索单次上限条数",
+        10.0,
+        1_000.0
+    ),
+    meta!(
+        "session_messages_max_limit",
+        "上下文与记忆",
+        "会话消息分页单页上限条数",
         10.0,
         1_000.0
     ),
@@ -625,8 +646,8 @@ pub fn load_limits(path: &std::path::Path) -> (LimitsCell, LimitsSources) {
         limits = Limits::from_file_value(&raw);
         sources.file_raw = Some(raw);
     }
-    // 存量 env 语义(ADR-0024 §1):env > 文件。非法/缺省时
-    // turn_timeout_from_env() 已回落默认——与默认相等则视为未设。
+    // 存量 env 语义(ADR-0024 §1):env > 文件。非法/缺省时回落默认
+    // ——与默认相等则视为未设。
     if let Ok(v) = std::env::var("BOEN_TURN_TIMEOUT_SECS")
         && let Ok(secs) = v.parse::<i64>()
         && secs > 0
@@ -714,5 +735,24 @@ mod tests {
             .map(|m| m.key.to_string())
             .collect::<std::collections::BTreeSet<_>>();
         assert_eq!(obj, meta, "Limits 字段与 KEY_META 必须一一对应");
+    }
+
+    // 2026-09-07 架构评审(P2):此前只断言键名一一对应,不校验区间与默认值
+    // 一致性——钳制表与默认值漂移(默认越界=加载期被静默改写)无人知晓。
+    #[test]
+    fn key_meta_ranges_cover_defaults() {
+        let defaults = serde_json::to_value(Limits::default()).unwrap();
+        for m in KEY_META {
+            let d = defaults[m.key]
+                .as_f64()
+                .unwrap_or_else(|| panic!("KEY_META {} 在 Limits 默认值中缺失或非数值", m.key));
+            assert!(
+                d >= m.min && d <= m.max,
+                "KEY_META {} 默认值 {d} 越出钳制区间 [{}, {}]",
+                m.key,
+                m.min,
+                m.max
+            );
+        }
     }
 }

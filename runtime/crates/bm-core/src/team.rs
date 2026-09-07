@@ -50,12 +50,10 @@ pub fn authorization_subset(
     let parent_verbs: std::collections::BTreeSet<&str> =
         parent.iter().map(|e| e.verb.as_str()).collect();
     // child 每个动词必须在 parent 中,且能力资源 ⊆
-    let mut child_verbs: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
     for c in child {
         if !parent_verbs.contains(c.verb.as_str()) {
             return false;
         }
-        child_verbs.insert(c.verb.as_str());
         let caps = |e: &TaskAuthorizationEntry| -> Option<std::collections::BTreeSet<String>> {
             e.resources.as_ref().and_then(|r| r.as_array()).map(|a| {
                 a.iter()
@@ -83,7 +81,6 @@ pub fn authorization_subset(
         }
     }
     // parent 的 mutation 动词可不在 child 中(只减不增);safe 同理
-    let _ = child_verbs;
     true
 }
 

@@ -126,7 +126,11 @@ export function BoenmindRuntimeProvider({
   const abortRef = useRef<AbortController | null>(null);
   const approvalHandlerRef = useRef<(req: ApprovalRequest) => void>(() => {});
   // 批准可达性轮询去重集(2026-09-07):已处理过(已批准/已入抽屉)的审批 id
+  // (P1-26 收口:流内标记入抽屉时同样登记,轮询不再重复入队)
   const handledApprovalsRef = useRef<Set<string>>(new Set());
+  // 会话视图代(P1-28):切会话/加载更早的自回放请求带代数,在途响应返回时
+  // 代数不符即丢弃——旧会话迟到响应不再前插到新会话消息上
+  const sessionEpochRef = useRef(0);
 
   // 批准可达性轮询(2026-09-07 审批卡死根治):审批标记仅随回合 /v1 流下发,
   // 流到期或后台续跑回合无主流时,审批单永远无人可批,任务卡死在审批轮询。
@@ -189,6 +193,37 @@ export function BoenmindRuntimeProvider({
     return () => clearInterval(iv);
   }, []);
 
+  // 审批裁决 POST 公共实现(P1-2/P1-26 收口):检查 res.ok、失败回滚入队
+  // 并从去重集摘除(下一轮询兜底重试),不再静默吞错
+  const postApprovalRespond = async (
+    approvalId: string,
+    decision: "approve" | "deny",
+  ): Promise<boolean> => {
+    try {
+      const r = await fetch(
+        `/admin/approvals/${encodeURIComponent(approvalId)}/respond`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            decision,
+            scope: decision === "approve" ? "once" : undefined,
+          }),
+        },
+      );
+      if (!r.ok) {
+        console.warn(
+          `审批裁决失败(HTTP ${r.status}): ${approvalId} ${decision}`,
+        );
+        return false;
+      }
+      return true;
+    } catch (e) {
+      console.warn(`审批裁决请求失败: ${approvalId}`, e);
+      return false;
+    }
+  };
+
   const sendUserText = async (text: string) => {
     setIsRunning(true);
     setMessages((cur) => [
@@ -221,20 +256,15 @@ export function BoenmindRuntimeProvider({
     );
     const appendDelta = (delta: string) => markerStream.feed(delta);
     approvalHandlerRef.current = (req) => {
+      // P1-26:流内到达即登记去重集,轮询通道不再重复入队
+      handledApprovalsRef.current.add(req.approval_id);
       const permMode = storage.get(STORAGE_KEYS.PERMISSION_MODE) || "ask";
       // 完全访问 (YOLO 模式): 自动放行批准，界面不弹卡片或抽屉
       if (permMode === "yolo") {
-        void fetch(
-          `/admin/approvals/${encodeURIComponent(req.approval_id)}/respond`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              decision: "approve",
-              scope: "once",
-            }),
-          },
-        ).catch(() => {});
+        void postApprovalRespond(req.approval_id, "approve").then((ok) => {
+          // 失败从去重集摘除:轮询通道下一 tick 兜底重试
+          if (!ok) handledApprovalsRef.current.delete(req.approval_id);
+        });
         return;
       }
       setPendingApprovals((cur) => {
@@ -327,9 +357,15 @@ export function BoenmindRuntimeProvider({
           if (data === "[DONE]") break stream;
           const v = JSON.parse(data) as {
             choices?: Array<{ delta?: { content?: string } }>;
+            error?: { message?: string; code?: string };
           };
           const d = v.choices?.[0]?.delta?.content;
           if (typeof d === "string" && d) appendDelta(d);
+          // P1-11 配套(2026-09-07 架构评审):服务器失败/超时/中断不再谎报
+          // finish stop+[DONE],改发 OpenAI 兼容错误帧——上屏告知用户
+          else if (v.error?.message) {
+            appendDelta(`\n[流式错误: ${v.error.message}]`);
+          }
         }
       }
       // 流正常收尾:冲刷可能残留的未闭合标记缓冲(按原样上屏,不吞正文)
@@ -406,6 +442,7 @@ export function BoenmindRuntimeProvider({
       abortRef.current?.abort();
       setIsRunning(false);
       storage.remove(STORAGE_KEYS.SESSION);
+      sessionEpochRef.current += 1; // P1-28:作废在途回放响应
       setMessages([]);
       setPendingApprovals([]);
     };
@@ -416,16 +453,19 @@ export function BoenmindRuntimeProvider({
   // 「切换历史会话」(SessionPanel 派发 bm-session-switched,目标 sid 已由
   // App.tsx 写入 storage):中止在途回合,拉取该会话历史消息回放(2026-09-06
   // 落地,原 BACKLOG「会话历史回放端点」);拉取失败保持空视图不再串显。
+  // P1-28:自增会话视图代,在途回放响应返回时代数不符即丢弃。
   useEffect(() => {
     const onSessionSwitched = async () => {
       abortRef.current?.abort();
       setIsRunning(false);
       setMessages([]);
       setPendingApprovals([]);
+      const epoch = ++sessionEpochRef.current;
       const sid = storage.get(STORAGE_KEYS.SESSION);
       if (!sid) return;
       try {
         const res = await api.sessionMessages(sid, { limit: HISTORY_PAGE });
+        if (sessionEpochRef.current !== epoch) return; // 已切走,丢弃迟到响应
         setMessages(toThreadMessages(res.messages ?? []));
         historyCountRef.current = (res.messages ?? []).length;
         setHistoryMore({ hasMore: res.has_more ?? false, loading: false });
@@ -442,11 +482,13 @@ export function BoenmindRuntimeProvider({
   useEffect(() => {
     const sid = storage.get(STORAGE_KEYS.SESSION);
     if (!sid) return;
+    // P1-28:与切会话共用视图代——刷新回放在途时用户切走,响应作废
+    const epoch = sessionEpochRef.current;
     let cancelled = false;
     void api
       .sessionMessages(sid, { limit: HISTORY_PAGE })
       .then((res) => {
-        if (cancelled) return;
+        if (cancelled || sessionEpochRef.current !== epoch) return;
         setMessages(toThreadMessages(res.messages ?? []));
         historyCountRef.current = (res.messages ?? []).length;
         setHistoryMore({ hasMore: res.has_more ?? false, loading: false });
@@ -464,28 +506,36 @@ export function BoenmindRuntimeProvider({
 
   // W4b:审批裁决(前端卡片按钮)→ /admin/approvals/{id}/respond
   // (与 /rpc 同一执行体,走 /admin 免鉴权口径——前端无令牌可带)
+  // P1-2(2026-09-07 架构评审):检查 res.ok;失败把审批单放回抽屉
+  // (乐观移除回滚)并从去重集摘除,不再静默吞错让审批单凭空消失
   const respondApproval = async (
     approvalId: string,
     decision: "approve" | "deny",
   ) => {
+    // 先留底(失败回滚时原样放回 capability/args)
+    const original = pendingApprovals.find((a) => a.approval_id === approvalId);
     // 乐观从等待队列移除，悬浮抽屉即刻收起
     setPendingApprovals((cur) =>
       cur.filter((a) => a.approval_id !== approvalId),
     );
-    try {
-      await fetch(
-        `/admin/approvals/${encodeURIComponent(approvalId)}/respond`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            decision,
-            scope: decision === "approve" ? "once" : undefined,
-          }),
-        },
+    const ok = await postApprovalRespond(approvalId, decision);
+    if (!ok) {
+      // 回滚:重新入抽屉等待用户重试(服务端已翻单则 400,重试无害)
+      handledApprovalsRef.current.delete(approvalId);
+      setPendingApprovals((cur) =>
+        cur.some((a) => a.approval_id === approvalId)
+          ? cur
+          : [
+              ...cur,
+              original ?? {
+                approval_id: approvalId,
+                capability: "unknown",
+                args: {},
+                operation_id: "",
+                status: "waiting" as const,
+              },
+            ],
       );
-    } catch {
-      // 裁决失败保持原样
     }
   };
 
@@ -541,15 +591,18 @@ export function BoenmindRuntimeProvider({
   });
 
   // 「加载更早消息」:skip=已加载条数,取前一页并前插(2026-09-06)
+  // P1-28:在途期间切会话则丢弃响应(视图代守卫),不再前插到新会话上
   const loadOlder = async () => {
     const sid = storage.get(STORAGE_KEYS.SESSION);
     if (!sid || historyMore.loading) return;
+    const epoch = sessionEpochRef.current;
     setHistoryMore((h) => ({ ...h, loading: true }));
     try {
       const res = await api.sessionMessages(sid, {
         limit: HISTORY_PAGE,
         skip: historyCountRef.current,
       });
+      if (sessionEpochRef.current !== epoch) return; // 已切走,丢弃
       const older = toThreadMessages(res.messages ?? []);
       setMessages((cur) => [...older, ...cur]);
       historyCountRef.current += older.length;

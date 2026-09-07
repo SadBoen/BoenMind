@@ -156,10 +156,12 @@ pub(crate) fn spawn_turn(
         // (OpenAI function 格式,capability 名的点映射为单下划线);工具结果
         // 经 CapabilityCall 回核心循环执行(Broker 裁决/审计管道原样),轮询
         // operations 至终态取结果回喂模型。
-        // 取消人工固定的轮数上限(不设 30 限制，交由真实业务完成自然收束);
-        // 专注防范同命令同参死循环：连续 5 次调用同工具且完全一致的入参即熔断。
+        // 轮数防线上说明:同命令同参死循环由 loop_breaker 熔断(v0.0.10);
+        // 2026-09-07 架构评审 P0-1 补总轮数安全网(limits.tool_rounds_max,
+        // 默认 64、0=关)——变参/换工具式轮转此前无界,烧 token 无收敛点。
         let mut recent_tool_signatures: Vec<(String, String)> = Vec::new();
         let mut loop_broken = false;
+        let mut round_cap_hit = false;
         let mut messages: Vec<Message> = Vec::new();
         if let Some(sp) = &role_prompt {
             messages.push(Message {
@@ -412,8 +414,20 @@ pub(crate) fn spawn_turn(
                         });
                         // W4 工具轮:模型请求调用直通工具 → 回核心循环执行 →
                         // 结果以 Tool 消息回喂 → 重调模型。
-                        if !tool_calls.is_empty() && !loop_broken {
+                        if !tool_calls.is_empty() && !loop_broken && !round_cap_hit {
                             tool_rounds += 1;
+                            // P0-1 总轮数安全网(limits 热生效,0=关):
+                            // 超限不再执行工具,回合就地收束并告知用户。
+                            let cap = limits_cell.get().tool_rounds_max;
+                            if cap > 0 && tool_rounds > cap {
+                                round_cap_hit = true;
+                                let _ = tx.try_send(Cmd::ProviderDelta {
+                                    operation_id: op_id.clone(),
+                                    delta: format!(
+                                        "\n(本回合工具调用已达 {cap} 轮上限,为防失控烧钱在此收束;如需继续请发新消息。)\n"
+                                    ),
+                                });
+                            }
                             // W10:防空转熔断阈值/窗口走 limits(0=关闭)。
                             // 检测是否连续 N 次调用完全相同工具与参数(N=limits)。
                             let lim = limits_cell.get();
@@ -696,7 +710,8 @@ pub(crate) fn spawn_turn(
                                     // ADR-0022:工具结果原生 role=tool + tool_call_id
                                     // 回喂,对齐模型因果链。不再强贴「不要再次调用」
                                     // 类负向禁令——链式调用(搜→读→改→测)是模型的
-                                    // 正常工作方式;循环失控由 MAX_TOOL_ROUNDS 熔断。
+                                    // 正常工作方式;失控防线=同参熔断 + limits.
+                                    // tool_rounds_max 总轮数安全网(本文件上方)。
                                     messages.push(Message {
                                         role: Role::Tool,
                                         content: tool_result,
@@ -714,6 +729,11 @@ pub(crate) fn spawn_turn(
                                 let breaker_n = limits_cell.get().loop_breaker_consecutive as usize;
                                 format!(
                                     "(检测到连续 {breaker_n} 次调用相同工具与完全一致的入参，已触发防空转熔断保护。)"
+                                )
+                            } else if round_cap_hit {
+                                format!(
+                                    "(本回合工具调用已达 {} 轮上限,回合在此收束;如需继续请发新消息。)",
+                                    limits_cell.get().tool_rounds_max
                                 )
                             } else {
                                 "(工具调用已执行完成，回合在此收束。)".to_string()

@@ -43,7 +43,9 @@ pub struct AppState {
     /// W1:OpenAI 兼容插座会话寻址表(web 会话 id → agent id)。原为进程级
     /// 静态 OnceLock(评审指出绕过 AppState),2026-09-02 归入共享状态:
     /// 随路由生灭、测试间隔离,语义不变(重启即失效由响应文案承接)。
-    pub v1_sessions: Arc<Mutex<HashMap<BmId, BmId>>>,
+    /// P1-14(2026-09-07 架构评审):有界化——容量 1024,超出按插入序逐出
+    /// 最旧;被逐出的会话下次请求走 session_resume 回源恢复,无用户可见损失。
+    pub v1_sessions: Arc<Mutex<V1SessionMap>>,
     /// 门户登录墙(2026-09-03 用户令;未设密码=不启用)。
     pub portal: Arc<portal::PortalAuth>,
     /// 绑定是否为非回环(公网面):门户未配置时仅放行健康/设置口(评审 #9)。
@@ -52,6 +54,35 @@ pub struct AppState {
     pub web_dir: Option<std::path::PathBuf>,
     /// W10(ADR-0024):运行时限制共享单元(/v1 流式硬顶/保活等热读)。
     pub limits: bm_core::limits::LimitsCell,
+}
+
+/// W1 会话寻址表(有界,P1-14):HashMap + 插入序队列;超容量逐出最旧。
+#[derive(Default)]
+pub struct V1SessionMap {
+    map: HashMap<BmId, BmId>,
+    order: std::collections::VecDeque<BmId>,
+}
+
+impl V1SessionMap {
+    const CAP: usize = 1024;
+
+    pub fn get(&self, sid: &BmId) -> Option<&BmId> {
+        self.map.get(sid)
+    }
+
+    pub fn insert(&mut self, sid: BmId, agent_id: BmId) {
+        if !self.map.contains_key(&sid) && self.map.len() >= Self::CAP {
+            // 逐出最旧(跳过已不在表内的陈旧队列项)
+            while let Some(old) = self.order.pop_front() {
+                if self.map.remove(&old).is_some() {
+                    break;
+                }
+            }
+        }
+        if self.map.insert(sid.clone(), agent_id).is_none() {
+            self.order.push_back(sid);
+        }
+    }
 }
 
 /// 组装 Surface 路由。`token` 为已加载的访问令牌;/health 豁免鉴权,
@@ -86,7 +117,7 @@ pub fn router(
         default_model,
         data_dir,
         model_routes,
-        v1_sessions: Arc::new(Mutex::new(HashMap::new())),
+        v1_sessions: Arc::new(Mutex::new(V1SessionMap::default())),
         portal,
         web_dir: web_dir.clone(),
         public_bind,

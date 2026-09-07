@@ -14,7 +14,8 @@ import { useTimedNotice } from "@/lib/use-timed-notice";
 type Draft = Record<string, string>;
 
 function fmtNum(n: number): string {
-  return Number.isInteger(n) ? String(n) : String(n);
+  // P1-36(2026-09-07 架构评审):原两分支逐字相同,收敛为单语句
+  return String(n);
 }
 
 function humanRange(min: number, max: number): string {

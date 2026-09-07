@@ -522,7 +522,12 @@ pub(crate) fn handle_send_input(
     // running→waiting_model(model_invoke_issued)
     {
         let a = w.agents.get_mut(&agent.id).expect("存在");
-        a.transition(AgentState::WaitingModel);
+        // P1-19(2026-09-07 架构评审):边守卫——表外迁移记日志不 panic。
+        if AgentState::can_transition(a.state, AgentState::WaitingModel) {
+            a.transition(AgentState::WaitingModel);
+        } else {
+            tracing::warn!(agent = %agent.id.as_str(), state = ?a.state, "发模型前 agent 状态异常,未迁移 waiting_model");
+        }
     }
     w.emit(
         EventType::AgentWaitingModel,

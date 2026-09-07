@@ -1,7 +1,7 @@
 //! web-multisearch MCP server(Rust 版)—— 单 exe、零运行时依赖。
 //!
 //! 工具面 `web_search_lite`(免费四源)/ `web_search_all`(全部已配置源)。
-//! 2026-09-04 起供应商可扩展:内置 12 家默认模板预填,设置页可新增全新
+//! 2026-09-04 起供应商可扩展:内置 13 家默认模板预填,设置页可新增全新
 //! 供应商(接口地址 / 方式 / key 传法 / 参数名 / 结果路径 / 字段映射),
 //! 新增供应商走通用 JSON 适配器。月度用量按供应商记账(usage.json)。
 //!
@@ -46,7 +46,7 @@ struct Ctx {
 /// 自描述声明:插件目录扫描的识别载体。
 ///
 /// config_schema 从「扁平 11 字段」改为新 `providers` 描述:
-/// 单条 `type:"providers"` 项,`items` 载内置 12 家默认模板(id/name/builtin/
+/// 单条 `type:"providers"` 项,`items` 载内置 13 家默认模板(id/name/builtin/
 /// endpoint/method/auth/auth_name/query_param/limit_param/results_path/
 /// title_field/url_field/desc_field/parse/quota)。BoenMind 设置页据此渲染
 /// 下拉式供应商列表 + 每家可编辑字段 + 用量进度条。
@@ -79,7 +79,7 @@ fn self_description() -> Value {
             "label": "搜索供应商",
             "type": "providers",
             "items": templates,
-            "hint": "可选内置 12 家,或点「新增」接入全新搜索服务(通用引擎:接口地址/方式/key/参数名/结果字段)",
+            "hint": "可选内置 13 家,或点「新增」接入全新搜索服务(通用引擎:接口地址/方式/key/参数名/结果字段)",
         },
         {
             "key": "default_limit",
@@ -93,7 +93,7 @@ fn self_description() -> Value {
     json!({
         "name": "web_multisearch",
         "title": "聚合搜索(可扩展供应商)",
-        "description": "并行调用全部已配置搜索源,RRF 融合排序+CJK 同题镜像合并去重,多 Key 自动轮换。供应商可扩展:内置 12 家+自定义通用引擎。工具:web_search_lite(免费四源)/web_search_all(全源)。",
+        "description": "并行调用全部已配置搜索源,RRF 融合排序+CJK 同题镜像合并去重,多 Key 自动轮换。供应商可扩展:内置 13 家+自定义通用引擎。工具:web_search_lite(免费四源)/web_search_all(全源)。",
         "config_schema": schema,
         "suggested_entry": {
             "transport": "stdio",

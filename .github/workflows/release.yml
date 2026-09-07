@@ -11,6 +11,10 @@ permissions:
 
 jobs:
   build-linux:
+    # P1-41(2026-09-07 架构评审):仅 v* tag 触发才打包发版——手动
+    # workflow_dispatch 时 GITHUB_REF_NAME=main,曾会产出 boenmind-main-*
+    # 包并以 main 为 tag 建 Release
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5

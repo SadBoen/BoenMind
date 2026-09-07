@@ -5,7 +5,6 @@ export const STORAGE_KEYS = {
   ACTIVE_ROLE: "bm_active_role",
   SESSION: "bm_session",
   SESSIONS: "bm_sessions",
-  PINS: "bm_pins",
   THEME: "bm_theme",
   FONT_SIZE: "bm_font_size",
   LAYOUT: "bm_layout",

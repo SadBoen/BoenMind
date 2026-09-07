@@ -42,6 +42,7 @@ mod mcp;
 mod providers;
 mod roles;
 mod skills;
+mod tail;
 
 pub use mcp::seed_bundled_plugins;
 pub use providers::rebuild_routes;

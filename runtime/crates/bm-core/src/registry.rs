@@ -249,22 +249,6 @@ impl CapabilityRegistry {
         effective
     }
 
-    /// W4 对话工具闭环:枚举全部「免审批直通」能力(只读类)。
-    /// 返回 (capability 名, input_schema);调用方据此构造模型侧 tools。
-    pub fn direct_tools(&self) -> Vec<(String, serde_json::Value)> {
-        let mut out: Vec<(String, serde_json::Value)> = self
-            .manifests
-            .iter()
-            .filter(|(_, m)| {
-                m.approval == bm_contract::capability::ApprovalRequirement::NotRequired
-                    && m.capability != "model.invoke"
-            })
-            .map(|(name, m)| (name.clone(), m.input_schema.clone()))
-            .collect();
-        out.sort_by(|a, b| a.0.cmp(&b.0));
-        out
-    }
-
     /// W4b 对话工具闭环:枚举供对话 Agent 使用的全部能力(含直通与需审批的业务能力)。
     /// 排除内核私有能力(如 model.invoke)。
     /// needs_approval 与 Broker 步 5 判定同口径:effect 可审批类
@@ -273,6 +257,9 @@ impl CapabilityRegistry {
     /// 一句功能描述;fs.*/system.exec 内置能力与 MCP 工具自描述,缺省 None
     /// 由 turn 侧兜底。此前 MCP 工具描述被整层丢弃,模型只见「只读直通
     /// 工具」套话,是工具调用别扭的直接根因之一。
+    /// (P1-47,2026-09-07 架构评审:同族死代码 direct_tools 已删——零调用;
+    ///  审批语义的权威判定在 Broker,本方法只是面向模型 tools 表的投影,
+    ///  改判定先改 broker/mod.rs 步 5,此处随之。)
     pub fn chat_tools(&self) -> Vec<(String, serde_json::Value, bool, Option<String>)> {
         let mut out: Vec<(String, serde_json::Value, bool, Option<String>)> = self
             .manifests

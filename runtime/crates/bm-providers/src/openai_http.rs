@@ -320,7 +320,7 @@ fn failed(code: ErrorCode, retryable: bool, attempt: u32) -> InvokeResponse {
 }
 
 /// HTTP 状态 → 合同错误码。429/5xx/传输故障可重试;4xx(鉴权/参数)不可重试。
-fn map_status(status: u16, attempt: u32) -> InvokeResponse {
+pub(crate) fn map_status(status: u16, attempt: u32) -> InvokeResponse {
     match status {
         429 | 500..=599 => failed(ErrorCode::Unavailable, true, attempt),
         // P1(第四轮评审):4xx(鉴权/参数错)归非故障类——不再计入 provider
@@ -585,7 +585,21 @@ impl ModelConnector for OpenAiConnector {
                         }
                         if let Some(tcs) = &d.tool_calls {
                             for tc in tcs {
-                                let idx = tc.index.unwrap_or(0);
+                                // P1-20(2026-09-07 架构评审):缺 index 时按
+                                // id 归槽——同块多个缺 index 的 tool_calls 不再
+                                // 全部挤进 0 号槽互相拼接成畸形调用;id 亦缺
+                                // 则退回 0(单工具调用的常见网关形态)。
+                                let idx = match tc.index {
+                                    Some(i) => i,
+                                    None => {
+                                        let id = tc.id.as_deref().unwrap_or_default();
+                                        let matched = tc_parts
+                                            .iter()
+                                            .find(|(_, (sid, _, _))| !sid.is_empty() && sid == id)
+                                            .map(|(k, _)| *k);
+                                        matched.unwrap_or(0)
+                                    }
+                                };
                                 let slot = tc_parts.entry(idx).or_insert_with(|| {
                                     (
                                         tc.id.clone().unwrap_or_default(),
@@ -614,7 +628,7 @@ impl ModelConnector for OpenAiConnector {
             .values()
             .map(|(id, _n, ar)| ToolCallPayload {
                 id: id.clone(),
-                name: String::new(),
+                name: _n.clone(),
                 arguments: ar.clone(),
             })
             .collect();

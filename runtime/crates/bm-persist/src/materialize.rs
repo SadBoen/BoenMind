@@ -15,11 +15,14 @@ use bm_contract::events::{EventEnvelope, EventType};
 
 impl StateDb {
     /// 物化一条事件(单事务)。非状态类事件是合法 no-op。
+    /// P0-4(2026-09-07 架构评审):手工 BEGIN/COMMIT 换 rusqlite 事务守卫——
+    /// COMMIT 失败/提前返回时 Drop 兜底 ROLLBACK,不留悬置事务与库锁。
     pub fn materialize(&self, event: &EventEnvelope) -> StoreResult<()> {
         let p = &event.payload;
         let ts = event.occurred_at.as_str();
         let conn = self.conn.lock().expect("锁未中毒");
-        conn.execute_batch("BEGIN")?;
+        let tx = conn.unchecked_transaction()?;
+        // 语句仍走 conn(事务以 BEGIN 落在连接上,tx 只承载 COMMIT/ROLLBACK)。
         let result: rusqlite::Result<usize> = (|| {
             match event.event_type {
                 EventType::SessionCreated => {
@@ -218,9 +221,9 @@ impl StateDb {
             }
         })();
         match result {
-            Ok(_) => conn.execute_batch("COMMIT")?,
+            Ok(_) => tx.commit()?,
             Err(e) => {
-                let _ = conn.execute_batch("ROLLBACK");
+                // 事务守卫 Drop 兜底 ROLLBACK;错误以原始语句错误回传。
                 return Err(crate::error::StoreError::Sql(e));
             }
         }

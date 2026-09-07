@@ -49,9 +49,11 @@ fn write_providers(data_dir: &Path, providers: &[Value]) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("配置目录创建失败: {e}"))?;
     }
-    let text = serde_json::to_string_pretty(&json!({ "providers": providers }))
-        .map_err(|_| "序列化失败".to_string())?
-        .replace('\n', "\r\n");
+    // P2(2026-09-07 架构评审):CRLF 收口 config_store::crlf 单一实现。
+    let text = crate::config_store::crlf(
+        serde_json::to_string_pretty(&json!({ "providers": providers }))
+            .map_err(|_| "序列化失败".to_string())?,
+    );
     bm_persist::atomic_write(&path, text.as_bytes()).map_err(|e| format!("配置文件写入失败: {e}"))
 }
 

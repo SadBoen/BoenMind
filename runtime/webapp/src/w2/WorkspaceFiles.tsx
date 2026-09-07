@@ -137,7 +137,14 @@ export function WorkspaceFiles() {
   };
 
   // ---- W7 右键菜单动作 ----------------------------------------------------
-  const absPath = (rel: string) => (root ? `${root}/${rel}` : rel);
+  // P1-33(2026-09-07 架构评审):统一正斜杠——root 来自后端 display()
+  // (Windows 反斜杠形),与 rel 的正斜杠混拼出混合分隔符路径;归一为 /,
+  // Windows API 与剪贴板均接受
+  const absPath = (rel: string) => {
+    if (!root) return rel;
+    const norm = (s: string) => s.replace(/\\/g, "/");
+    return `${norm(root).replace(/\/+$/, "")}/${norm(rel)}`;
+  };
 
   const copyText = async (text: string, label: string) => {
     try {

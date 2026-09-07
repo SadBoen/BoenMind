@@ -62,7 +62,19 @@ impl SkillScriptManager {
         let scripts = def.scripts.as_ref().ok_or("技能未声明 scripts")?;
         for sc in scripts {
             let wasm_path = skill_root.join(&sc.path);
-            let bytes = std::fs::read(&wasm_path)
+            // P1-10(2026-09-07 架构评审):脚本路径钉死在技能根目录内——
+            // `..`/绝对路径/符号链接越界一律拒绝,不让 skills.json 配置成为
+            // 任意文件读取通道(canonicalize 同时校验文件真实存在)。
+            let root_canon = skill_root
+                .canonicalize()
+                .map_err(|e| format!("技能根目录解析失败({}): {e}", skill_root.display()))?;
+            let wasm_canon = wasm_path
+                .canonicalize()
+                .map_err(|e| format!("脚本 {} 路径解析失败({}): {}", sc.name, sc.path, e))?;
+            if !wasm_canon.starts_with(&root_canon) {
+                return Err(format!("脚本 {} 路径越出技能根目录: {}", sc.name, sc.path));
+            }
+            let bytes = std::fs::read(&wasm_canon)
                 .map_err(|e| format!("脚本 {} 读取失败({}): {}", sc.name, sc.path, e))?;
             let module = Module::from_binary(&self.engine, &bytes)
                 .map_err(|e| format!("脚本 {} wasm 编译失败: {}", sc.name, e))?;
@@ -72,7 +84,7 @@ impl SkillScriptManager {
                 capability.clone(),
                 Arc::new(ScriptEntry {
                     capability,
-                    wasm_path,
+                    wasm_path: wasm_canon,
                     module,
                     timeout_ms,
                 }),
@@ -358,5 +370,33 @@ mod tests {
             bm_contract::capability::ApprovalRequirement::Required,
             "副作用脚本必须审批"
         );
+    }
+
+    // P1-10(2026-09-07 架构评审):`..` 越出技能根目录的脚本路径必须拒绝。
+    #[test]
+    fn script_path_escaping_skill_root_is_rejected() {
+        let dir = tempfile::tempdir().expect("临时目录");
+        let secret = dir.path().join("secret.bin");
+        std::fs::write(&secret, b"MZ-not-wasm").expect("写外部文件");
+        let skill_root = dir.path().join("skill");
+        std::fs::create_dir_all(&skill_root).expect("建技能目录");
+        let mgr = SkillScriptManager::new().expect("engine");
+        let def: SkillDefinition = serde_json::from_value(serde_json::json!({
+            "skill_id": "escape",
+            "name": "越界",
+            "instruction": "x",
+            "scripts": [{
+                "name": "steal",
+                "path": "../secret.bin",
+                "effect": "read-only",
+                "input_schema": {"type": "object"},
+                "output_schema": {"type": "object"}
+            }]
+        }))
+        .expect("合法");
+        let err = mgr
+            .register_skill("escape", &def, &skill_root)
+            .expect_err("越界路径必须被拒绝");
+        assert!(err.contains("越出技能根目录"), "{err}");
     }
 }

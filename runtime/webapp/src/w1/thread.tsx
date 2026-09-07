@@ -47,7 +47,7 @@ import { useBoenmindApprovals, type ApprovalRequest } from "./runtime";
 import { api, type WorkspaceEntry } from "@/w2/api";
 import { JobsBadge } from "./components/JobsBadge";
 import { storage, STORAGE_KEYS, type PermissionMode, type ThinkingLevel } from "@/lib/storage";
-import { BM_EVENTS, emit } from "../lib/bus";
+import { BM_EVENTS, emit, on } from "../lib/bus";
 import { DotScrollbar } from "./DotScrollbar";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { parseAssistantContent } from "./parser";
@@ -104,6 +104,18 @@ export function Thread({
   // 会话切换时可能触发「Rendered more hooks than during the previous render」)。
   // 提取到组件顶层,保证每次渲染钩子调用顺序恒定。
   const agentRunning = useAuiState((s) => s.thread.isRunning);
+  // P1-32(2026-09-07 架构评审):渲染期不再直读 localStorage——改 state +
+  // 事件订阅(Composer 切模型时 emit bm-active-model-changed)
+  const [activeModel, setActiveModel] = useState(
+    () => storage.get(STORAGE_KEYS.ACTIVE_MODEL) || "",
+  );
+  useEffect(
+    () =>
+      on(BM_EVENTS.activeModelChanged, () => {
+        setActiveModel(storage.get(STORAGE_KEYS.ACTIVE_MODEL) || "");
+      }),
+    [],
+  );
   return (
     <div className="chat">
       <div className="chat-head">
@@ -195,7 +207,7 @@ export function Thread({
           <DotScrollbar viewportRef={viewportRef} />
           <div className="composer-dock">
             <div className="relative mx-auto w-full max-w-[820px]">
-              <AgentStatusBar isRunning={agentRunning} activeModel={storage.get(STORAGE_KEYS.ACTIVE_MODEL) || ""} />
+              <AgentStatusBar isRunning={agentRunning} activeModel={activeModel} />
               <ApprovalDrawer />
               <Composer />
             </div>
@@ -460,10 +472,6 @@ function UserMessage() {
   );
 }
 
-// 根据文件名后缀返回对应的专属图标
-// (已由 FileBadge 组件统一承载:getFileConfig + FileBadge 胶囊;本函数为历史
-//  双份实现,于 2026-09 审计清理,见 thread.tsx 死代码删除)
-
 function AssistantMessage() {
   const isRunning = useAuiState((s) => s.thread.isRunning);
   const messageIndex = useAuiState((s) => s.message.index);
@@ -483,7 +491,10 @@ function AssistantMessage() {
             if (part.type !== "text" || !part.text) return null;
             const blocks = parseAssistantContent(part.text, isRunning);
             return (
-              <div className="group/content flex flex-col gap-1.5" key={part.text.length}>
+              // P1-29(2026-09-07 架构评审):key 用索引而非文本长度——
+              // 长度作 key 会在流式期间每个 delta 都重挂载整棵子树,
+              // ThinkingBlock 展开态/滚动位置被反复清零
+              <div className="group/content flex flex-col gap-1.5" key="content">
                 {blocks.map((b, idx) => {
                   if (b.type === "thinking") {
                     return (
@@ -579,7 +590,8 @@ function Composer() {
           setSelWorkspace("");
         }
       })
-      .catch(() => {});
+      // P1-30(2026-09-07 架构评审):下拉加载失败不再静默,console 告警
+      .catch((e) => console.warn("工作目录列表加载失败", e));
   };
 
   const loadModels = () => {
@@ -595,9 +607,10 @@ function Composer() {
         if (cur && !all.has(cur)) {
           storage.remove(STORAGE_KEYS.ACTIVE_MODEL);
           setSelModel("");
+          emit(BM_EVENTS.activeModelChanged);
         }
       })
-      .catch(() => {});
+      .catch((e) => console.warn("模型候选列表加载失败", e));
   };
 
   const loadRoles = () => {
@@ -615,12 +628,19 @@ function Composer() {
           }
         }
       })
-      .catch(() => {});
+      .catch((e) => console.warn("角色列表加载失败", e));
   };
 
   useEffect(() => {
+    // P1-30:401 时正向跳登录(与 runtime.tsx 主流同口径),不再只显示 "?"
     fetch("/v1/models")
-      .then((r) => r.json())
+      .then((r) => {
+        if (r.status === 401) {
+          window.location.href = "/login";
+          throw new Error("需要登录");
+        }
+        return r.json();
+      })
       .then((v) => setModel(v?.data?.[0]?.id ?? "?"))
       .catch(() => setModel("?"));
 
@@ -692,6 +712,7 @@ function Composer() {
             setSelModel(val);
             if (val) storage.set(STORAGE_KEYS.ACTIVE_MODEL, val);
             else storage.remove(STORAGE_KEYS.ACTIVE_MODEL);
+            emit(BM_EVENTS.activeModelChanged);
           }}
         >
           <SelectTrigger

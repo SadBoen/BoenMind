@@ -72,6 +72,8 @@ enum SessionCmd {
     Create {
         #[arg(long, default_value = "assistant")]
         name: String,
+        /// 缺省模型与 bm_core::runtime::DEFAULT_MODEL_ID 同源(cli 不依赖
+        /// bm-core,字面量双写;改名须两处同步)。
         #[arg(long, default_value = "zhipu.glm-4-flash")]
         model: String,
         #[arg(long, default_value_t = 100_000)]

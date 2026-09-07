@@ -184,11 +184,15 @@ fn non_empty_env(key: &str) -> Option<String> {
     std::env::var(key).ok().filter(|s| !s.is_empty())
 }
 
-/// 用户可改配置存储。无锁:每次操作独立读写文件,个人单机形态无并发竞争;
-/// 文件为权威,进程内不缓存(重启生效语义天然一致)。
+/// 用户可改配置存储。进程级写序化(P1-15,2026-09-07 架构评审):
+/// set/delete_field 是读-改-写,axum 并发下两请求互相覆盖会丢更新——
+/// 配置写低频,全进程一把锁足够;读路径无锁。文件为权威,进程内不缓存。
 pub struct ModelConfigStore {
     data_dir: PathBuf,
 }
+
+/// 配置 RMW 序列化锁(进程级;配合 bm_persist::atomic_write 的唯一 tmp 名)。
+static CONFIG_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 impl ModelConfigStore {
     pub fn new(data_dir: impl Into<PathBuf>) -> Self {
@@ -213,6 +217,7 @@ impl ModelConfigStore {
 
     /// 增量合并写入;secret 留空(null/空串/缺省)= 保持不变(ADR-0012 口径)。
     pub fn set(&self, values: &Value) -> CoreResult<Value> {
+        let _guard = CONFIG_WRITE_LOCK.lock().expect("锁未中毒");
         let map = values
             .as_object()
             .ok_or_else(|| validation("values 必须是对象"))?;
@@ -232,6 +237,7 @@ impl ModelConfigStore {
 
     /// 删字段(回落 env/默认);字段名必须已知(防误删任意键)。
     pub fn delete_field(&self, field: &str) -> CoreResult<Value> {
+        let _guard = CONFIG_WRITE_LOCK.lock().expect("锁未中毒");
         if !known_field(field) {
             return Err(validation(format!("未知配置字段 '{field}'")));
         }

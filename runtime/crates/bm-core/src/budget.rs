@@ -49,8 +49,12 @@ impl BudgetState {
         Verdict::Allow
     }
 
+    /// 剩余 token(P1-24,2026-09-07 架构评审:饱和减法——u64::MAX 的
+    /// 「无限预算」经裸 as i64 会溢出为 -1;钳到 i64 域内饱和相减)。
     pub fn remaining_tokens(&self) -> i64 {
-        self.max_tokens as i64 - self.used_tokens as i64
+        let max = i64::try_from(self.max_tokens).unwrap_or(i64::MAX);
+        let used = i64::try_from(self.used_tokens).unwrap_or(i64::MAX);
+        max.saturating_sub(used)
     }
 
     pub fn ratio(&self) -> f64 {
@@ -121,5 +125,16 @@ mod tests {
         assert!(b.account_failed_turn(), "第二次失败即回合配额用尽");
         assert_eq!(b.check(true), Verdict::ExceededTurns);
         assert_eq!(b.check(false), Verdict::Allow, "token 侧不受失败记账影响");
+    }
+
+    // P1-24(2026-09-07 架构评审):u64::MAX 无限预算的剩余量不再溢出为 -1。
+    #[test]
+    fn unlimited_budget_remaining_is_saturated_not_negative() {
+        let b = BudgetState::new(u64::MAX, u32::MAX);
+        assert_eq!(
+            b.remaining_tokens(),
+            i64::MAX,
+            "无限预算剩余量钳到 i64 上界"
+        );
     }
 }

@@ -210,6 +210,10 @@ def main():
         try:
             req = json.loads(line)
         except Exception:
+            # P1-39(2026-09-07 架构评审):坏 JSON 回 JSON-RPC parse error,
+            # 不再静默吞掉让调用方悬挂
+            sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}}) + "\n")
+            sys.stdout.flush()
             continue
 
         method = req.get("method")
@@ -254,6 +258,22 @@ def main():
                 sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": msg_id, "result": None}) + "\n")
                 sys.stdout.flush()
             break
+        else:
+            # P1-39(2026-09-07 架构评审):未知 method 回 method not found
+            # (此前无任何响应 = 客户端悬挂,比错误响应更糟)
+            if msg_id is not None:
+                sys.stdout.write(
+                    json.dumps(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": msg_id,
+                            "error": {"code": -32601, "message": "method not found"},
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                )
+                sys.stdout.flush()
 
 
 if __name__ == "__main__":

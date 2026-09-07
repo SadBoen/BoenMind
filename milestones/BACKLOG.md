@@ -44,7 +44,7 @@
 | F-07 | bm-surface-http → bm-persist 直依赖待裁决(收口或留档);2026-09-05 回看补记:webadmin.rs 还在 HTTP Handler 里直接 spawn MCP 进程/装配 StdioMcpTransport/管理 McpHub 连断与 Provider 密钥播种,装配职责宜下沉运行时,与本条同批收口 | OPEN |
 | F-11 | memory_drawer_verdict 硬编码权限规则与 ADR-0006 张力(broker.rs 已补注;合同化重构待排期) | OPEN |
 | F-12 | bm-core → bm-persist 依赖倒置(2026-09-05 回看发现):内核 Cargo.toml 直依赖实现层,内核代码直接使用 sqlite_state 行 DTO(CapabilityRow/ApprovalRow/GrantRow 等);宜将端口 trait 与持久化入参 DTO 收归 bm-core::ports,投影转换归 bm-persist | OPEN(缓办) |
-| P3 大文件拆分 | broker.rs(1657 行)/turn.rs(1694)/task_ops.rs(1710)/sqlite_state.rs(1205);broker 建议拆法=mod+policy(GrantLedger)/credential/executor/audit;前端同族=context.tsx(2200+ 行,可拆 TrendChart/TokenWaterGauge/PromptRecipe/FileEffects 子模块)、PluginsPage.tsx(1800+ 行)与 thread.tsx(930 行,可拆 ApprovalDrawer/UserMessage/AssistantMessage/Composer);**webadmin.rs 已拆毕移出**(2026-09-07,11 子模块按域,commit 见 HISTORY) | OPEN(缓办) |
+| P3 大文件拆分 | broker.rs(1657 行)/turn.rs(1694)/task_ops.rs(1710)/sqlite_state.rs(1205);broker 建议拆法=mod+policy(GrantLedger)/credential/executor/audit;前端同族=context.tsx(2200+ 行,可拆 TrendChart/TokenWaterGauge/PromptRecipe/FileEffects 子模块)、PluginsPage.tsx(1800+ 行)与 thread.tsx(930 行,可拆 ApprovalDrawer/UserMessage/AssistantMessage/Composer);**webadmin.rs 已拆毕移出**(2026-09-07,11 子模块按域,commit 见 HISTORY);2026-09-07 架构评审扩口径:mcp.rs 1399 行(三种传输+McpHub+装载)/handle.rs 1119 行(start() 545 行含恢复+清点+bootstrap)/runtime.tsx 581 行/openai_http 与 glm_http 62% 重复抽公共客户端 | OPEN(缓办) |
 | P4 非测试 unwrap 甄别清理 | 全仓约 400 处 unwrap 需区分测试/非测试逐步替换;非测试 panic 10 处均系不变量断言,评估=维持现状;2026-09-07 外部审查复核补记:load_world_rows(runtime.rs:208-309)expect×14 属同族——「恢复失败=拒开」是 handle.rs:81-94 明示设计决策,维持 fail-fast,可选小改=错误信息可读化(数据损坏时报「哪个 id 不合法」而非裸 expect) | OPEN(缓办) |
 | 配置域读写样板收口(JsonStore) | 来源 2026-09-07 外部审查复核:providers/skills/roles/mcp 四组各一套 file→read_to_string→from_str→atomic_write 样板;skills 缺 write helper(写盘内联重复两处 skills_set/skills_delete);损坏口径已统一(2026-09-07 复盘复核批:skills/roles 改 Result 化=损坏拒绝覆写,与 providers/mcp 同口径,回归测试在 webadmin_tests);剩=泛型 JsonStore 收口与 write helper 补齐 | OPEN(低) |
 | 前端 API 层收敛 | 来源 2026-09-07 外部审查复核:api.ts(508 行)只覆盖 W2 管理面;W1 运行时侧 8 处裸 fetch 绕过(main.tsx:16 / runtime.tsx×5 / thread.tsx:622 / AboutPage.tsx:65),收敛到 api/ 单源、类型与后端 schema 对齐 | OPEN(低) |
@@ -60,11 +60,18 @@
 | system.exec cwd 沙箱化 | 来源 FULL-REVIEW-2026-09-05 §7:cwd 参数未在 input_schema 声明即被消费(additionalProperties 默认放行),不经 fs_tools 工作区白名单;审批卡为主防线,补 schema 显式化+cwd 白名单校验 | OPEN |
 | FileSecretStore KDF 化 | 来源 FULL-REVIEW-2026-09-05 §7:主密钥 `&material[..32]` 截断非 KDF(HKDF/PBKDF2);get/put/delete 每次全量解密重加密 O(n);建议热路径 KDF+按需惰性 | OPEN |
 | 前端 context 面契约锚定与类型漂移 | 来源 FULL-REVIEW-2026-09-05 §7:①w1/context.tsx 手维护 evMap/kind 字符串无后端锚定,枚举改名即静默掉卡;②`McpCandidatesResult` 在 PluginsPage 本地与 api.ts 双声明已漂移(source/bundled_dir 缺失)——收敛到 api.ts 单源 | OPEN |
-| glm_http 错误分类与单测 | 来源 FULL-REVIEW-2026-09-05 §7:非 2xx 一刀切 Unavailable(400/401/429 不分,4xx retryable 靠 is_server_error 巧合);feature 门控默认不编,零单测 | OPEN(低) |
+| glm_http 错误分类与单测 | 来源 FULL-REVIEW-2026-09-05 §7:非 2xx 一刀切 Unavailable(400/401/429 不分,4xx retryable 靠 is_server_error 巧合);feature 门控默认不编,零单测;**错误分类已对齐 openai 口径**(2026-09-07 架构评审 P1-22:改用 openai_http::map_status),剩=补 feature 门控单测 | OPEN(低) |
 | 测试裸 sleep 收口 | 来源 FULL-REVIEW-2026-09-05 §7:m7_health 200ms/1000ms 裸等待依赖调度时序(断言「迟到完成不污染收据」),慢机器易撕破;改 wait-for 终态轮询 | OPEN(低) |
 | bm-cli 零单测 | 来源 FULL-REVIEW-2026-09-05 §7:CLI wire 调用错误码映射(ExitCode 表)无自动化回归 | OPEN(低) |
 | MCP 插件杂项 | 来源 FULL-REVIEW-2026-09-05 §7:web-multisearch usage.rs 手写历法推月(跨月边界±1 天乱)/aggregate 超时无优雅取消;context-inspector 全量读 context-log 进内存(大目录 OOM 面)+stdio 主循环同步阻塞;两插件与主仓 stdio 框架三份重抄(独立 exe 原则既知代价) | OPEN(低) |
 | openai_compat model 字段忠实性 | 来源 FULL-REVIEW-2026-09-05 §7:chunk/响应 model 恒回 default_model,W6 按条路由 requested_model 时回包撒谎(OpenAI 兼容面语义);恒 default_model 分支/非流式分支 webapp 永不消费(为第三方保留)一并评估 | OPEN(低) |
+| /admin 面 Bearer 鉴权 | 来源 REVIEW-2026-09-07-architecture §3.1(P1-1/P1-2 后端半边):此前只登记在 W1/W2 规格,BACKLOG 无条目=跟踪断链,本次补立;现状=公网靠门户墙+portal 密码(VPS 已设),回环未配置密码时管理面裸奔;修=admin 中间件纳入 require_bearer+前端 admin fetch 全量带令牌 | OPEN |
+| Grant 谓词精确模式设计裁决 | 来源 REVIEW-2026-09-07-architecture(P1-5 复核残留):审批抽屉刻意只授抽屉谓词(子集匹配是审批主路径),但委派 args_eq 全参快照场景下「已列键相等+额外键放行」存在超批准参数面;收紧需区分授权来源,涉 Grant 字段增发(合同 Minor),待设计裁决 | OPEN(待裁决) |
+| fs_download 流式化 | 来源 REVIEW-2026-09-07-architecture(P1-16):256MB 上限内整读内存(zip 缓冲即响应体,单份);改流式 zip 低优 | OPEN(低) |
+| skill_wasm 超时硬杀边界 | 来源 REVIEW-2026-09-07-architecture(P1-21):spawn_blocking 阻塞线程不可硬杀,现有 fuel 2e9 指令硬顶+tokio timeout 双限兜底;如需更紧可按 timeout 折算 fuel,涉脚本兼容评估 | OPEN(低) |
+| 日期注释迁移 | 来源 REVIEW-2026-09-07-architecture(P2):bm-core 36 处「2026-09-0x 回看收紧」式变更记录注释应迁 commit message/ADR 源码不留;批量低优 | OPEN(低) |
+| 日志风格统一 | 来源 REVIEW-2026-09-07-architecture(P2):boenmind-server/webadmin eprintln/println 与 tracing 两套并存,收敛为 tracing 单口径 | OPEN(低) |
+| 轮询游标样板收口 | 来源 REVIEW-2026-09-07-architecture(P2):openai_compat 阻塞/流式两处+sse.rs 的 cursor+replay_since 循环抽公共迭代器 | OPEN(低) |
 
 ### 3.3 低优杂项
 

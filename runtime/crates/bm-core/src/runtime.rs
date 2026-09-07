@@ -38,18 +38,13 @@ use tokio_util::sync::CancellationToken;
 
 /// 回合默认超时(每次模型调用的 deadline,秒)。GT-A3 原 30s——2026-09-03
 /// VPS 实测:mimo 等真实网关常规调用 12~29s,30s 必现撞顶整回合失败,
-/// 上调至 120;可用 BOEN_TURN_TIMEOUT_SECS(>0 整数秒)覆盖,两服务端
-/// 二进制启动经 turn_timeout_from_env() 装配。
+/// 上调至 120;可用 BOEN_TURN_TIMEOUT_SECS(>0 整数秒)覆盖,由装配方
+/// 经 limits 折算进 Cell(W10;此常量现为测试装配口径)。
 pub const DEFAULT_TURN_TIMEOUT_SECS: i64 = 120;
 
-/// BOEN_TURN_TIMEOUT_SECS 覆盖(非法/缺省回落 DEFAULT_TURN_TIMEOUT_SECS)。
-pub fn turn_timeout_from_env() -> i64 {
-    std::env::var("BOEN_TURN_TIMEOUT_SECS")
-        .ok()
-        .and_then(|v| v.parse::<i64>().ok())
-        .filter(|&s| s > 0)
-        .unwrap_or(DEFAULT_TURN_TIMEOUT_SECS)
-}
+/// 缺省模型 id(P2,2026-09-07 架构评审:此前 server/cli 三处魔法串散落)。
+/// 语义 = 零配置时的模型标识占位;真实接入以 model.json/env 为准。
+pub const DEFAULT_MODEL_ID: &str = "zhipu.glm-4-flash";
 
 /// 模型 → 凭据引用的默认映射(合同字符集内;实现可注入自己的映射)。
 pub fn default_secret_ref(model_id: &str) -> String {
@@ -487,11 +482,38 @@ impl World {
     }
 
     /// operation 终态落定 + operation.state.changed 事件(reason_code = guard 名)。
+    /// P0(2026-09-07 架构评审):表外迁移收敛为可观测错误——记 exec_log 后
+    /// 原样返回,不再 panic 打崩进程(状态保持原样,终态由已落定的一方为准)。
     fn settle_operation(&mut self, op_id: &BmId, to: OperationState, error: Option<WireError>) {
         let now = self.now_ts();
         let (session_id, agent_id, from, to, reason) = {
             let op = self.operations.get_mut(op_id).expect("operation 必然存在");
-            let (from, to, reason) = op.settle(to, error, now);
+            let (from, to, reason) = match op.settle(to, error, now.clone()) {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::error!(
+                        operation = %op_id.as_str(),
+                        from = ?e.from,
+                        to = ?e.to,
+                        "表外迁移被拒绝(不落定,保持原状态)"
+                    );
+                    self.exec_log.record(crate::exec_log::LogRecord {
+                        kind: LogKind::Error,
+                        session_id: op.session_id.clone(),
+                        agent_id: op.agent_id.clone(),
+                        operation_id: op_id.clone(),
+                        request_id: Some(op.request_id.clone()),
+                        agent_state: "n/a".into(),
+                        detail: serde_json::json!({
+                            "message": "表外迁移被拒绝",
+                            "from": e.from.as_str(),
+                            "to": e.to.as_str(),
+                        }),
+                        ts: now,
+                    });
+                    return;
+                }
+            };
             (op.session_id.clone(), op.agent_id.clone(), from, to, reason)
         };
         self.emit(

@@ -14,6 +14,16 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tokio::io::AsyncReadExt;
 
+/// P0-3(2026-09-07 架构评审,INV-5 对齐):剥离 BOEN_* 内部变量再继承——
+/// 主密钥/模型令牌等内部命名空间不外泄给子进程;其余用户环境(PATH/HOME/
+/// venv 等)原样保留,因为 exec 是审批闸后的任意命令执行,11 项白名单会
+/// 破坏常规用法且挡不住有完整文件系统访问权的命令,真正的边界=内部密钥面。
+pub(crate) fn strip_internal_env(
+    vars: impl Iterator<Item = (String, String)>,
+) -> Vec<(String, String)> {
+    vars.filter(|(k, _)| !k.starts_with("BOEN_")).collect()
+}
+
 /// 平台 shell 命令构造(system.exec 与后台作业同款;Windows=PowerShell,
 /// 其余=bash;原生命令失败退出码经 $LASTEXITCODE 透传——ADR-0022 后续批)。
 pub(crate) fn platform_shell(command: &str) -> tokio::process::Command {
@@ -28,12 +38,16 @@ pub(crate) fn platform_shell(command: &str) -> tokio::process::Command {
                 "{command}\nif ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}"
             ),
         ]);
+        c.env_clear();
+        c.envs(strip_internal_env(std::env::vars()));
         c
     }
     #[cfg(not(windows))]
     {
         let mut c = tokio::process::Command::new("bash");
         c.arg("-c").arg(command);
+        c.env_clear();
+        c.envs(strip_internal_env(std::env::vars()));
         c
     }
 }
@@ -348,5 +362,25 @@ mod tests {
     async fn summary_empty_when_no_running() {
         let t = table();
         assert_eq!(t.summary(), "");
+    }
+
+    // P0-3(2026-09-07 架构评审):BOEN_* 内部命名空间不得随 exec 子进程外泄。
+    #[test]
+    fn strip_internal_env_drops_boen_namespace_only() {
+        let vars = [
+            ("BOEN_SECRET_MASTER_KEY".to_string(), "x".to_string()),
+            ("BOEN_MODEL_API_KEY".to_string(), "y".to_string()),
+            ("PATH".to_string(), "/bin".to_string()),
+            ("HOME".to_string(), "/home/u".to_string()),
+        ]
+        .into_iter();
+        let kept = strip_internal_env(vars);
+        assert_eq!(
+            kept,
+            vec![
+                ("PATH".to_string(), "/bin".to_string()),
+                ("HOME".to_string(), "/home/u".to_string())
+            ]
+        );
     }
 }

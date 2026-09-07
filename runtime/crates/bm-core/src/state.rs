@@ -87,29 +87,40 @@ impl Operation {
 
     /// 终态落定:校验边合法性,发 operation.state.changed 事件的调用方
     /// 以返回的 (from, to, reason_code) 为准。
+    /// P0(2026-09-07 架构评审):表外迁移不再 panic——返回 Err 交调用方
+    /// 收敛为可观测错误(来源可能是恢复/裁决等边界路径,打崩进程不成比例)。
     pub fn settle(
         &mut self,
         to: OperationState,
         error: Option<WireError>,
         now: BmTimestamp,
-    ) -> (OperationState, OperationState, &'static str) {
+    ) -> Result<(OperationState, OperationState, &'static str), IllegalTransition> {
         let from = self.state;
-        let guard = OperationState::transitions()
+        let Some(guard) = OperationState::transitions()
             .iter()
             .find(|t| t.from == from && t.to == to)
             .map(|t| t.guard)
-            .unwrap_or_else(|| panic!("表外迁移: operation {from:?} -> {to:?}"));
+        else {
+            return Err(IllegalTransition { from, to });
+        };
         self.state = to;
         if to.is_terminal() {
             self.completed_at = Some(now);
         }
         self.error = error;
-        (from, to, guard)
+        Ok((from, to, guard))
     }
 
     pub fn is_terminal(&self) -> bool {
         self.state.is_terminal()
     }
+}
+
+/// 表外迁移(状态机不存在的边)。携带迁移两端供调用方记日志。
+#[derive(Debug, Clone, Copy)]
+pub struct IllegalTransition {
+    pub from: OperationState,
+    pub to: OperationState,
 }
 
 /// 由 AgentSpec 构造预算账本。

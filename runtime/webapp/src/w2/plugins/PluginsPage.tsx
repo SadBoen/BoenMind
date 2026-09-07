@@ -10,8 +10,6 @@ import {
   ShieldCheck,
   Globe,
   Wrench,
-
-
 } from "lucide-react";
 import {
   api,
@@ -67,13 +65,11 @@ const BUILTIN_DESC: Record<string, string> = {
 
 export function PluginsPage({
   initialFilter,
-  editTarget,
-  onConsumedEditTarget,
 }: {
   initialFilter?: string;
-  editTarget?: string | null;
-  onConsumedEditTarget?: () => void;
 }) {
+  // P1-34(2026-09-07 架构评审):editTarget 死参数链移除(上游 SettingsPage
+  // 从未设置过非 null 值,消费 effect 永不触发)。
   const [filter, setFilter] = useState(initialFilter ?? "");
   const [typeFilter, setTypeFilter] = useState<"all" | "builtin" | "external">("all");
   const [builtinList, setBuiltinList] = useState<Capability[]>([]);
@@ -189,16 +185,6 @@ export function PluginsPage({
     }, 30000);
     return () => clearInterval(timer);
   }, [loadData, refreshStatus]);
-
-  useEffect(() => {
-    if (editTarget && mcpData?.servers) {
-      const found = mcpData.servers.find((s) => s.name === editTarget);
-      if (found) {
-        setDraft(toDraft(found));
-        onConsumedEditTarget?.();
-      }
-    }
-  }, [editTarget, mcpData, onConsumedEditTarget]);
 
   // 统一列表聚合
   const tableItems: TablePluginItem[] = useMemo(() => {

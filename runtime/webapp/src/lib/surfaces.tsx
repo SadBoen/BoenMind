@@ -1,9 +1,6 @@
 "use client";
 
-// 选装组件适配共享样式层 (保留正在被 file-tree 引用的基础令牌)
-
-export const paper = "bg-background border border-border/60 dark:bg-popover";
-
-export const field = "bg-foreground/[0.04] dark:bg-foreground/[0.06]";
+// 选装组件适配共享样式层(P1-35,2026-09-07 架构评审:paper/field 死导出
+// 已删,仅存 file-tree 引用的 mono)
 
 export const mono = "font-mono text-[11px] tracking-tight";

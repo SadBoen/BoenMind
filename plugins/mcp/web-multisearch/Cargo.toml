@@ -1,6 +1,6 @@
 [package]
 name = "web-multisearch-rs"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "web-multisearch MCP server(Rust 版):聚合搜索,协议手写零 SDK,单 exe 零运行时依赖"
 

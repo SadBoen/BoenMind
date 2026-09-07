@@ -78,8 +78,12 @@ pub(crate) fn handle_turn_event(w: &mut World, event: TurnEvent) {
             {
                 let a = w.agents.get_mut(&agent_id).expect("存在");
                 // waiting_model→stopping(explicit_cancel)→stopped(turn_boundary_reached)
-                a.transition(AgentState::Stopping);
-                a.transition(AgentState::Stopped);
+                // P1-19(2026-09-07 架构评审):先查边再迁移——迟到取消不得
+                // assert 打崩进程(恢复/并发边界由 handle.rs 同款守卫兜底)。
+                if AgentState::can_transition(a.state, AgentState::Stopping) {
+                    a.transition(AgentState::Stopping);
+                    a.transition(AgentState::Stopped);
+                }
             }
             w.settle_operation(
                 &operation_id,
@@ -183,7 +187,12 @@ pub(crate) fn handle_turn_event(w: &mut World, event: TurnEvent) {
             // waiting_model→running(model_response_ok)
             {
                 let a = w.agents.get_mut(&agent_id).expect("存在");
-                a.transition(AgentState::Running);
+                // P1-19:边守卫(终止态回 Running 的迟到事件只记日志不崩进程)
+                if AgentState::can_transition(a.state, AgentState::Running) {
+                    a.transition(AgentState::Running);
+                } else {
+                    tracing::warn!(agent = %agent_id.as_str(), state = ?a.state, "回合完成事件迟到,agent 状态未迁移");
+                }
             }
 
             // 强制点③(post_invoke_accounting)

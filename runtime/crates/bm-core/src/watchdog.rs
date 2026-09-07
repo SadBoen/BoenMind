@@ -12,7 +12,6 @@
 //! waiting_approval 豁免:等的是人,不是机器——成员调用停在审批时刷新
 //! 进度信号(不判停滞)。
 
-use bm_contract::ids::BmId;
 use chrono::DateTime;
 use std::collections::HashMap;
 
@@ -247,11 +246,6 @@ pub fn call_sig(capability: &str, args: &serde_json::Value, outcome: &str) -> u6
 /// 供测试与运行时共用的安全时间解析(失败按 created_at 兜底)。
 pub fn parse_or(ts: &str, fallback: DateTime<chrono::Utc>) -> DateTime<chrono::Utc> {
     bm_contract::timestamp::parse_ts(ts).unwrap_or(fallback)
-}
-
-/// 观测:任务 id 引用(避免 runtime 之外的 BmId 构造)。
-pub fn task_ref(id: &BmId) -> &str {
-    id.as_str()
 }
 
 #[cfg(test)]

@@ -73,9 +73,11 @@ pub fn memory_capabilities(
         }
         let entry_id = ids.next_id("mem").to_string();
         let preview = args["content_preview"].as_str().map(|s| s.to_string());
+        // P1-7(2026-09-07 架构评审):缺省 untrusted(安全默认)——与模块
+        // 「无特权通道/来源链」声明一致;声称 trusted 须调用方显式声明。
         let trust = args["source_trust"]
             .as_str()
-            .unwrap_or("trusted")
+            .unwrap_or("untrusted")
             .to_string();
         let source_ref = args["source_ref"].as_str().map(|s| s.to_string());
         let correction_of = args["correction_of"].as_str().map(|s| s.to_string());

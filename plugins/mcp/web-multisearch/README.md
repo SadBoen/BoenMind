@@ -7,7 +7,7 @@
 | 工具 | 源 | 说明 |
 |---|---|---|
 | `web_search_lite` | searxng + ddgs + jina + marginalia(全免费源) | 日常搜索优先 |
-| `web_search_all` | 全部 12 源 | 最大覆盖/交叉验证 |
+| `web_search_all` | 全部 13 源 | 最大覆盖/交叉验证 |
 
 核心算法逐行对齐 Python 版:RRF 融合(k=60)+ CJK 二字 bigram 镜像合并(Jaccard≥0.9)+ URL 规范化去跟踪参数 + 逗号多 Key 401/403/429 自动轮换 + 每源 limit+2 / 全局 25s 兜底丢慢源 / 源耗时遥测。工具结果同时给 `content[].text`(pretty JSON,任何 MCP 客户端可用)与 `structuredContent`(BoenMind 客户端直读对象)。
 
@@ -25,7 +25,7 @@
 web-multisearch.exe --config <path-to-json>
 ```
 
-配置文件即 BoenMind 的 `config/mcp-web_multisearch.json`(设置页「MCP 配置」表单写入)。**按 mtime 热读**:改 Key 下一次搜索立即生效,无需重启。可配置项与 Python 版 manifest.json 的 config_schema 一致(searxng_url、9 家 API Key、default_limit)。Key 也可用同名环境变量兜底(SERPER_API_KEY 等)。
+配置文件即 BoenMind 的 `config/mcp-web_multisearch.json`(设置页「MCP 配置」表单写入)。**按 mtime 热读**:改 Key 下一次搜索立即生效,无需重启。可配置项与 Python 版 manifest.json 的 config_schema 一致(searxng_url、10 家 API Key(含 parallel)、default_limit)。Key 也可用同名环境变量兜底(SERPER_API_KEY 等)。
 
 ## 构建
 
@@ -40,7 +40,7 @@ cargo test              # 26 个单测(融合/轮换/协议/解析)
 {
   "name": "web_multisearch",
   "transport": "stdio",
-  "command": "D:\\96_CoderWorld\\boenmind-mcp-servers\\web-multisearch-rs\\target\\release\\web-multisearch.exe",
+  "command": "<插件目录>\web-multisearch.exe(随包插件位于 <数据目录>\mcp\;或自主仓 plugins/mcp/web-multisearch 构建)",
   "args": ["--config", "C:\\Users\\Boen\\AppData\\Roaming\\boenmind\\config\\mcp-web_multisearch.json"],
   "trust": "explicit-config",
   "tool_timeout_ms": 30000,

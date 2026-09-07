@@ -148,7 +148,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 40,
             )));
             let secrets = Arc::new(MemSecretStore::with(
-                &bm_core::runtime::default_secret_ref("zhipu.glm-4-flash"),
+                &bm_core::runtime::default_secret_ref(bm_core::runtime::DEFAULT_MODEL_ID),
                 "sk-demo-zhipu-secret-value-001",
             ));
             (connector, secrets)
@@ -355,7 +355,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let default_model = Arc::new(
         eff.model_id
             .clone()
-            .unwrap_or_else(|| "zhipu.glm-4-flash".to_string()),
+            .unwrap_or_else(|| bm_core::runtime::DEFAULT_MODEL_ID.to_string()),
     );
     // 绑定面判定:非回环 = 公网面(评审 2026-09-03 #9;反代同机回环 Scenario
     // 需操作者自行配置门户密码,启动告警会持续提示)

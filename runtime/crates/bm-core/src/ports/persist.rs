@@ -323,11 +323,17 @@ where
     F: Fn(&str) -> bool,
 {
     use std::io::{BufRead, BufReader, Write};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
     let Ok(reader) = std::fs::File::open(path) else {
         return Ok(0); // 文件不存在 = 无可擦
     };
+    // 序号唯一化临时名(P1-15 同族:防并发写互踩同一 tmp)。
     let mut tmp_name = path.as_os_str().to_owned();
-    tmp_name.push(".purge.tmp");
+    tmp_name.push(format!(
+        ".purge.tmp{}",
+        TMP_SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
     let tmp = PathBuf::from(tmp_name);
     let mut out = std::fs::File::create(&tmp)?;
     let mut dropped = 0usize;

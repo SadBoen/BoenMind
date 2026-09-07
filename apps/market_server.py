@@ -109,6 +109,14 @@ def main():
         try:
             msg = json.loads(line)
         except ValueError:
+            # P1-39(2026-09-07 架构评审):坏 JSON 回 JSON-RPC parse error
+            print(
+                json.dumps(
+                    {"jsonrpc": "2.0", "id": None,
+                     "error": {"code": -32700, "message": "parse error"}},
+                ),
+                flush=True,
+            )
             continue
         if "id" not in msg:
             continue

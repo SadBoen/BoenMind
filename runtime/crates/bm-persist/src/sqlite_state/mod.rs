@@ -227,9 +227,12 @@ impl StateDb {
             COMMIT;
             "#,
         )?;
-        // FTS5 索引失败不阻塞迁移(LIKE 兜底)
-        let _ = conn
-            .execute_batch("CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(content);");
+        // FTS5 索引失败不阻塞迁移(LIKE 兜底),但降级必须可观测
+        if let Err(e) = conn
+            .execute_batch("CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(content);")
+        {
+            tracing::warn!(error = %e, "FTS5 虚表创建失败,memory 检索退化为 LIKE 兜底");
+        }
         Ok(())
     }
 

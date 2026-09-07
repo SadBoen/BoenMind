@@ -153,11 +153,10 @@ impl ModelConnector for GlmConnector {
             Err(_) => return failed(ErrorCode::Unavailable, true, attempt),
         };
         if !resp.status().is_success() {
-            return failed(
-                ErrorCode::Unavailable,
-                resp.status().is_server_error(),
-                attempt,
-            );
+            // P1-22(2026-09-07 架构评审):与 openai_http 同一状态码口径——
+            // 401/403 归 PermissionDenied、其余 4xx 归 ValidationFailed(均
+            // 不可重试不烧熔断),429/5xx 才是可重试 Unavailable。
+            return crate::openai_http::map_status(resp.status().as_u16(), attempt);
         }
         let parsed: Result<WireResponse, _> = resp.json().await;
         match parsed {

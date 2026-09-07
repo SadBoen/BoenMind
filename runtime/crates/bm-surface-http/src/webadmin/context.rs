@@ -26,8 +26,11 @@ pub async fn context_tail(State(cfg): State<AdminConfig>) -> Response {
 }
 
 /// GET /admin/context/search?q=&limit=:跨会话全文检索(W9 二期)。
-/// 个人单机数据量下用整文件行级扫描(context-log.jsonl 任一行含 q 即命中,
+/// 个人单机数据量下行级扫描(context-log.jsonl 任一行含 q 即命中,
 /// 大小写不敏感);数据量上来再换 FTS5 索引(规格 W9 二期备注)。
+/// P1-12(2026-09-07 架构评审):BufReader 流式逐行——不再整文件载入内存
+/// (context-log 无轮转机制,长会话可达 GB 级);滑动窗口只留最新 limit 条
+/// 命中,输出序仍为新→旧。
 pub async fn context_search(
     State(cfg): State<AdminConfig>,
     Query(params): Query<std::collections::HashMap<String, String>>,
@@ -43,19 +46,22 @@ pub async fn context_search(
     }
     let path = cfg.data_dir.join("context-log.jsonl");
     let needle = q.to_lowercase();
-    let mut hits: Vec<Value> = Vec::new();
-    if let Ok(text) = std::fs::read_to_string(&path) {
-        for line in text.lines().rev() {
+    let mut window: std::collections::VecDeque<Value> = std::collections::VecDeque::new();
+    if let Ok(f) = std::fs::File::open(&path) {
+        use std::io::BufRead;
+        for line in std::io::BufReader::new(f).lines() {
+            let Ok(line) = line else { break };
             if line.to_lowercase().contains(&needle)
-                && let Ok(v) = serde_json::from_str::<Value>(line)
+                && let Ok(v) = serde_json::from_str::<Value>(&line)
             {
-                hits.push(v);
-                if hits.len() >= limit {
-                    break;
+                window.push_back(v);
+                if window.len() > limit {
+                    window.pop_front();
                 }
             }
         }
     }
+    let hits: Vec<Value> = window.into_iter().rev().collect();
     Json(json!({ "ok": true, "q": q, "hits": hits, "total": hits.len() })).into_response()
 }
 
@@ -102,11 +108,13 @@ pub async fn session_messages(
     axum::extract::Path(session_id): axum::extract::Path<String>,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Response {
+    // P1-13(2026-09-07 架构评审):分页页大小用独立旋钮,不再借用检索
+    // 上限(context_search_max_limit)——语义解耦,默认同为 200 行为零变化。
     let limit: usize = params
         .get("limit")
         .and_then(|v| v.parse().ok())
         .unwrap_or(50)
-        .clamp(1, cfg.limits.get().context_search_max_limit);
+        .clamp(1, cfg.limits.get().session_messages_max_limit);
     let skip: usize = params.get("skip").and_then(|v| v.parse().ok()).unwrap_or(0);
 
     use std::collections::VecDeque;
@@ -157,24 +165,9 @@ pub async fn session_messages(
 }
 
 /// context-log 尾部读取+逐行解析(只读诊断面;任何失败静默为空)。
+/// P2(2026-09-07 架构评审):尾读逻辑与 logs.rs 收口为 tail::read_tail。
 fn read_context_tail(path: &Path, max_bytes: u64, limit: usize) -> Vec<Value> {
-    use std::io::{Read, Seek, SeekFrom};
-    let Ok(mut f) = std::fs::File::open(path) else {
-        return vec![];
-    };
-    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
-    let start = len.saturating_sub(max_bytes);
-    if f.seek(SeekFrom::Start(start)).is_err() {
-        return vec![];
-    }
-    let mut buf = String::new();
-    if f.read_to_string(&mut buf).is_err() {
-        return vec![];
-    }
-    let mut lines: Vec<&str> = buf.lines().collect();
-    if start > 0 && !lines.is_empty() {
-        lines.remove(0); // 截断边界上的半行不可信
-    }
+    let lines = super::tail::read_tail(path, max_bytes);
     let mut steps: Vec<Value> = lines
         .iter()
         .filter_map(|l| serde_json::from_str(l).ok())

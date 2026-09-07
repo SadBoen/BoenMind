@@ -1,6 +1,6 @@
 // context-inspector: 对话上下文透视与分析器
 // 纯展示与诊断分析，不修改数据，不执行压缩
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   RefreshCw,
   Loader2,
@@ -75,7 +75,13 @@ export function ContextView() {
   // 模型窗口登记表(用户在「设置 → 模型提供商」登记;唯一真实数据源)
   const [contextWindows, setContextWindows] = useState<Record<string, number>>({});
 
+  // P1-31(2026-09-07 架构评审):在途守卫——慢响应期间不再重入,防止
+  // 先发后至的 setSteps 用旧数据覆盖新数据(下一 tick 自愈的乱序问题根除)
+  const refreshInFlightRef = useRef(false);
+
   const refresh = useCallback(async () => {
+    if (refreshInFlightRef.current) return;
+    refreshInFlightRef.current = true;
     setBusy(true);
     setError(null);
     try {
@@ -89,6 +95,7 @@ export function ContextView() {
     } catch (e) {
       setError(String(e instanceof Error ? e.message : e));
     } finally {
+      refreshInFlightRef.current = false;
       setBusy(false);
     }
   }, []);
@@ -112,7 +119,18 @@ export function ContextView() {
     return () => clearInterval(t);
   }, [auto, refresh]);
 
-  const sid = storage.get(STORAGE_KEYS.SESSION);
+  // P1-32(2026-09-07 架构评审):渲染期不直读 localStorage——首帧惰性
+  // 初始化 + 会话切换事件时同步
+  const [sid, setSid] = useState(() => storage.get(STORAGE_KEYS.SESSION));
+  useEffect(() => {
+    const sync = () => setSid(storage.get(STORAGE_KEYS.SESSION));
+    window.addEventListener(BM_EVENTS.sessionSwitched, sync);
+    window.addEventListener(BM_EVENTS.chatNew, sync);
+    return () => {
+      window.removeEventListener(BM_EVENTS.sessionSwitched, sync);
+      window.removeEventListener(BM_EVENTS.chatNew, sync);
+    };
+  }, []);
 
   // 过滤出当前会话并按时间由新到旧:
   // 当开启「仅当前会话」时:

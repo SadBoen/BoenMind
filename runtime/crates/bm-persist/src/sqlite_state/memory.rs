@@ -1,6 +1,6 @@
 //! StateDb 域方法(自 sqlite_state.rs 机械移入;内容零改动)。
 use super::StateDb;
-use crate::error::StoreResult;
+use crate::error::{StoreError, StoreResult};
 
 impl StateDb {
     /// Observation Log 条目落表(log_seq 自 MAX+1 单调分配),返回 seq。
@@ -28,7 +28,9 @@ impl StateDb {
     }
 
     /// 记忆写入(墓碑语义见 delete),返回 entry_id(id 由调用方给定)。
-    /// #[allow]:参数与 memory-entry 合同字段一一对应(压缩反损可读性)。
+    /// P0-4(2026-09-07 架构评审):写入/纠正墓碑/FTS 索引并入单事务——
+    /// 此前各自独立提交,崩溃窗口内 DER 与 LIKE 兜底两面数据不一致;
+    /// 吞错改结构化日志(此前 `let _` 静默,检索质量降级无人知晓)。
     #[allow(clippy::too_many_arguments)]
     pub fn memory_put(
         &self,
@@ -43,7 +45,8 @@ impl StateDb {
         created_at: &str,
     ) -> StoreResult<()> {
         let conn = self.conn.lock().expect("锁未中毒");
-        conn.execute(
+        let tx = conn.unchecked_transaction()?;
+        tx.execute(
             "INSERT INTO memories(id, scope, tombstoned, content_preview, source_ref,
                                   correction_of, payload, created_at)
              VALUES(?1, ?2, 0, ?3, ?4, ?5, ?6, ?7)
@@ -60,19 +63,23 @@ impl StateDb {
         )?;
         // 用户纠正:被纠正条目立即墓碑化(覆盖而非追加,基线 §4.1)
         if let Some(target) = correction_of {
-            let _ = conn.execute(
+            tx.execute(
                 "UPDATE memories SET tombstoned = 1 WHERE id = ?1",
                 rusqlite::params![target],
-            );
+            )
+            .map_err(StoreError::Sql)?;
         }
-        // FTS5 索引(失败静默:LIKE 兜底)
-        if let Some(preview) = content_preview {
-            let _ = conn.execute(
+        // FTS5 索引(失败不阻断写入:LIKE 兜底,但必须可观测)
+        if let Some(preview) = content_preview
+            && let Err(e) = tx.execute(
                 "INSERT INTO memories_fts(rowid, content)
                  VALUES((SELECT rowid FROM memories WHERE id = ?1), ?2)",
                 rusqlite::params![entry_id, preview],
-            );
+            )
+        {
+            tracing::warn!(entry = %entry_id, error = %e, "memory FTS 索引写入失败(检索退化为 LIKE 兜底)");
         }
+        tx.commit()?;
         Ok(())
     }
 

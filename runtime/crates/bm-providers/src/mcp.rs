@@ -474,7 +474,7 @@ fn spawn_generation(
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("MCP 子进程启动失败: {e}"))?;
-    eprintln!("MCP 子进程已拉起 pid={:?} command={}", child.id(), command);
+    tracing::info!(pid = ?child.id(), command = %command, "MCP 子进程已拉起");
     let stdin = child.stdin.take().ok_or("MCP 子进程 stdin 不可用")?;
     let stdout = child.stdout.take().ok_or("MCP 子进程 stdout 不可用")?;
     // W2 修复:Child 必须有人持有并 wait——kill_on_drop(true) 下被丢弃会
@@ -486,12 +486,12 @@ fn spawn_generation(
         let mut child = child;
         tokio::select! {
             status = child.wait() => {
-                eprintln!("MCP 子进程退出: command={command_owned} status={status:?}");
+                tracing::info!(command = %command_owned, status = ?status, "MCP 子进程退出");
             }
             _ = kill_rx => {
                 let _ = child.start_kill();
                 let _ = child.wait().await;
-                eprintln!("MCP 子进程被终止(reload/换装/销毁): command={command_owned}");
+                tracing::info!(command = %command_owned, "MCP 子进程被终止(reload/换装/销毁)");
             }
         }
     });
@@ -560,8 +560,10 @@ impl StdioMcpTransport {
             let window = self.respawn_window();
             times.retain(|t| now.duration_since(*t) < window);
             if times.len() >= self.restart_limit as usize {
+                // P2(2026-09-07 架构评审):窗口秒数随 limits 热值,不再写死 60。
                 return Err(format!(
-                    "MCP 子进程 60 秒内已重生 {} 次(上限 {}),疑似故障循环已熔断;请检查插件或经管理面重载",
+                    "MCP 子进程 {} 秒内已重生 {} 次(上限 {}),疑似故障循环已熔断;请检查插件或经管理面重载",
+                    window.as_secs(),
                     times.len(),
                     self.restart_limit
                 ));
@@ -742,7 +744,13 @@ impl McpTransport for HttpMcpTransport {
             std::time::Duration::from_millis(self.limits.get().mcp_remote_timeout_ms);
         let resp = tokio::time::timeout(remote_timeout, req.send())
             .await
-            .map_err(|_| "远程 MCP 请求超时(60s)".to_string())?
+            // P2(2026-09-07 架构评审):秒数随 limits 热值,不再写死 60。
+            .map_err(|_| {
+                format!(
+                    "远程 MCP 请求超时({}ms)",
+                    self.limits.get().mcp_remote_timeout_ms
+                )
+            })?
             .map_err(|e| format!("远程 MCP 请求失败: {e}"))?;
         if !resp.status().is_success() {
             return Err(format!("远程 MCP HTTP 状态异常: {}", resp.status()));
@@ -792,8 +800,6 @@ type PendingMap = Arc<Mutex<HashMap<u64, tokio::sync::oneshot::Sender<Result<Val
 struct Route {
     transport: Arc<dyn McpTransport>,
     tool: String,
-    #[allow(dead_code)]
-    server: String,
 }
 
 /// MCP Hub:多 server 路由 + `AsyncCapabilityExecutor` 端口实现。
@@ -883,7 +889,6 @@ impl McpHub {
                             Route {
                                 transport: transport.clone(),
                                 tool: name,
-                                server: server.to_string(),
                             },
                         );
                         manifests.push(m);
