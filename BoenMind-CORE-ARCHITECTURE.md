@@ -1958,6 +1958,10 @@ Butler 向用户汇报，并保留可回放的工作记录
 | ADR-0019 | system.exec 内置命令执行工具(审批类) | accepted |
 | ADR-0020 | 内置能力封闭清单与例外裁决 | accepted |
 | ADR-0021 | fs.* 文件操作工具集内置化(收编 code-tools,沙箱=工作区注册表) | accepted |
+| ADR-0022 | 工具调用原生协议还原与工具描述治理(role:tool+tool_call_id) | accepted |
+| ADR-0023 | 官方随包插件默认安装与生命周期管控 | accepted |
+| ADR-0024 | 运行时限制集中配置面(limits.json) | accepted |
+| ADR-0025 | 长命令后台转轨(run_in_background 与超限自动转轨) | accepted |
 
 ## 24. 架构模型即代码与外部实证验证
 

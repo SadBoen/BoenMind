@@ -4,7 +4,7 @@
 > 地位在基线(第 0 层)与合同库(第 1 层)之下;冲突以上两层为准。
 > 上游输入:`milestones/M2-adr-settlement.md`(ADR-0003/0004 结算,含 7 条硬约束)
 > 与 `milestones/PENDING.md`(D-M2-1/D-M2-2 默认路径)。
-> 状态:**草案**——用户评审冻结为 v1.0 后开工;自主推进期间按 §9 默认路径先行。
+> 状态:已交付(2026-08-29,tag m2-persist-recovery;回看见 M2-review.md,见 HISTORY M2 行)。
 
 ## 1. 范围
 

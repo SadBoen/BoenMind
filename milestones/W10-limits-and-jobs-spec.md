@@ -4,6 +4,7 @@
 (pi/pi_agent_rust/Hermes/DSH/ZCode,报告 `docs/agent-limits-timeout-comparison-20260907.md`)后用户
 三裁决:①一批全做(报告+配置面+设置页+后台转轨)②设置页全部可编辑 ③默认值一步到位最优。
 治理:ADR-0024(limits 配置面)+ ADR-0025(后台转轨)。
+- 状态:已交付(2026-09-07 随 v0.0.12;见 HISTORY v0.0.12 行)
 
 ## 一、limits 配置面(ADR-0024)
 

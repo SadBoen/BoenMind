@@ -6,7 +6,7 @@
 >
 > **这不是项目源代码，也不只是校验器。**本目录是规格层：源代码在 `../runtime/`
 > （Rust workspace），由 AI 实现者按本目录的 schema、迁移表、黄金轨迹和不变量
-> 编写并接受验收。validate.py 只是本目录（40+ 文件，22 个冻结 JSON）中的 1 个——
+> 编写并接受验收。validate.py 只是本目录（36 个文件，23 个冻结 JSON）中的 1 个——
 > 它校验合同自身的一致性（R1-R4）；R5（不变量↔测试同名）与 R6（错误码枚举同步）
 > 由 `bm-contract`/`bm-testkit` 的 Rust 同步测试在 `cargo test` 中代偿执行。
 > 当前合同域：surface/wire/registry/state-machines/capability/task/mcp/memory/

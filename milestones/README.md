@@ -25,12 +25,13 @@
 | W1 壳+OpenAI 插座流式 | W1-implementation-spec.md | 规格 §(真浏览器实测) |
 | W2 设置中心/工作区/可拖布局 | W2-implementation-spec.md | 规格 §7 + shots-w2/ |
 | W3 两级主题系统 | W3-implementation-spec.md | 规格 §6 + shots-w3/ |
-| W4 对话工具闭环+角色 | W4-implementation-spec.md | 待回填(见 BACKLOG §3) |
-| W5 会话记忆+上下文透视 | (见 HISTORY W5 与 turn.rs 提交) | shots-w5-context/ |
+| W4 对话工具闭环+角色 | W4-implementation-spec.md | 规格 §4.1(已回填) |
+| W5 会话记忆+上下文透视 | (见 HISTORY W5 与 bm-core/src/runtime/turn/ 提交) | shots-w5-context/ |
 | W6 对话级模型选择 | W6-implementation-spec.md | HISTORY W6 交付行 |
 | W7 关于页+在线升级 | W7-implementation-spec.md | HISTORY W7 交付行 |
 | W8 常规设置+工作区绑定 | W8-implementation-spec.md | HISTORY W8 交付行 |
-| W9 轨迹视图与跨会话检索 | W9-implementation-spec.md | HISTORY W9 交付行 |
+| W9 轨迹视图与跨会话检索 | W9-context-trajectory-spec.md | HISTORY W9 交付行 |
+| W10 限制配置面+长命令后台转轨 | W10-limits-and-jobs-spec.md | HISTORY v0.0.12 交付行 |
 
 ## 台账与横切文件
 
@@ -39,7 +40,8 @@
 - `PENDING.md` — 待用户裁决队列(2026-09-01 起清零,11 条历史裁决见表);
 - `M2-adr-settlement.md`、`M4-adr-settlement.md` — 开工前 ADR 条件结算表(已闭合);
 - `W-ui-inventory.md` — assistant-ui 官方资产盘点(W 序列选装参考);
-- `shots-w2/`、`shots-w3/` — 验收截图存档。
+- `MUSIC-APP-implementation-spec.md` — 音乐播放器 App 实现规格(已交付,随 v0.0.3 入包);
+- `shots-*/` — 各批验收截图存档。
 
 ## 惯例
 

@@ -3,6 +3,7 @@
 来源:2026-09-03 用户裁决「加强日志工具,去看 dsh 的聊天记录」;调研=deepseek-harness
 会话子系统(session.md/persistence.md/ui-trajectory,报告已归档对话)。
 对标:DSH 事件溯源会话日志 + ui-trajectory 轨迹视图。
+- 状态:已交付(2026-09-03 随 v0.0.6;见 HISTORY W9 交付行)
 
 ## 一期(本批)
 
