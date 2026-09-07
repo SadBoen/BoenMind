@@ -28,6 +28,24 @@ jobs:
       - run: python -m py_compile apps/wiki_server.py apps/market_server.py apps/music_server.py
       - run: python apps/smoke_test.py
 
+  # BACKLOG 行16 收尾(2026-09-07):ESLint 前端体检接入 CI——本地每批必跑
+  # (react-hooks rules-of-hooks/exhaustive-deps=error 级)此前 CI 不拦不合格前端代码
+  webapp-lint:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: runtime/webapp
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: runtime/webapp/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+
+
   # S1 unit + S3 golden-trace + S5 log-redaction 随测试套件执行;三平台矩阵 = M0.3
   rust:
     strategy:
