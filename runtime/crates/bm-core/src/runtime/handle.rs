@@ -74,6 +74,9 @@ impl RuntimeHandle {
             store: config.store.clone(),
             config,
         };
+        // W10(ADR-0024):监护节拍/停滞阈值注入生效 limits(读 Cell,热更新
+        // 由 PUT /admin/limits 触发同款调用)。
+        world.watchdog.apply_limits(&world.config.limits.get());
 
         // T3 启动恢复:修复窗口 → 行装配 → 中断清点。恢复失败 = 拒绝启动
         // (宁可拒开,不带残缺状态服务)。

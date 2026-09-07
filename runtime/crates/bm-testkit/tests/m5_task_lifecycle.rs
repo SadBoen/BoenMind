@@ -43,6 +43,8 @@ async fn task_rig(dir: Option<&std::path::Path>) -> (RuntimeHandle, Arc<SeqIdGen
         max_attempts: None,
         async_executor: None,
         model_streaming: false,
+        limits: bm_core::LimitsCell::with_default(),
+        job_board: None,
     };
     (RuntimeHandle::start(config).await, ids)
 }
@@ -241,6 +243,8 @@ async fn t52_count_grant_exhaustion_survives_restart() {
         max_attempts: None,
         async_executor: None,
         model_streaming: false,
+        limits: bm_core::LimitsCell::with_default(),
+        job_board: None,
     };
     let handle = RuntimeHandle::start(config).await;
     let call = |h: &RuntimeHandle, r: bm_contract::ids::BmId| {
@@ -310,6 +314,8 @@ async fn t52_count_grant_exhaustion_survives_restart() {
         max_attempts: None,
         async_executor: None,
         model_streaming: false,
+        limits: bm_core::LimitsCell::with_default(),
+        job_board: None,
     };
     let handle2 = RuntimeHandle::start(config2).await;
     let err = call(&handle2, ids2.next_id("req"))
@@ -370,6 +376,8 @@ async fn t53_idem_receipt_survives_restart() {
             max_attempts: None,
             async_executor: None,
             model_streaming: false,
+            limits: bm_core::LimitsCell::with_default(),
+            job_board: None,
         }
     };
 

@@ -100,4 +100,13 @@ pub trait AsyncCapabilityExecutor: Send + Sync {
     fn cancel_op(&self, _operation_id: &str) {}
 }
 
+// ---- W10(ADR-0025):后台作业台账端口 --------------------------------------
+
+/// 后台作业台账门面(providers `JobTable` 实现;核心回合只读摘要注入
+/// system prompt,bm-core 不反向依赖 bm-providers)。
+pub trait JobBoard: Send + Sync {
+    /// 在跑/近期完成作业的一句话摘要;空作业返回空串(调用方不注入)。
+    fn summary(&self) -> String;
+}
+
 pub mod persist;

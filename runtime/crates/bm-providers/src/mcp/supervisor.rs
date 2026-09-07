@@ -54,6 +54,7 @@ pub async fn sync_from_config(
     secrets: Arc<dyn SecretStore>,
     loaded_names: Vec<String>,
     registrar: &dyn CapabilityRegistrar,
+    limits: &bm_core::limits::LimitsCell,
 ) -> SyncOutcome {
     let mut outcome = SyncOutcome::default();
 
@@ -102,7 +103,10 @@ pub async fn sync_from_config(
                     .collect()
             })
             .unwrap_or_default();
-        let timeout = item["tool_timeout_ms"].as_u64().unwrap_or(30_000);
+        // W10:缺省工具超时走 limits(mcp.json 条目级 tool_timeout_ms 仍优先)。
+        let timeout = item["tool_timeout_ms"]
+            .as_u64()
+            .unwrap_or(limits.get().mcp_default_tool_timeout_ms);
 
         // 已存在的 server:先摘除旧路由与注销旧能力(修改更新语义)
         if loaded_names.contains(&name) {
@@ -136,14 +140,15 @@ pub async fn sync_from_config(
                         .as_deref()
                         .ok_or_else(|| "远程 MCP 缺少 url 字段".to_string())?;
                     HttpMcpTransport::new(url, setup.bearer_token.clone())
+                        .with_limits(limits.clone())
                 }
                 _ => StdioMcpTransport::spawn(
                     &command,
                     &args,
                     &setup.env_resolved,
                     setup.restart_limit,
-                )
-                .map_err(|e| e.to_string())?,
+                )?
+                .with_limits(limits.clone()),
             };
             hub.connect(&name, transport, timeout)
                 .await

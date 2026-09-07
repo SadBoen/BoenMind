@@ -31,6 +31,8 @@ async fn spawn_inner(data_dir: std::path::PathBuf, public_bind: bool) -> (String
         capabilities: bm_providers::builtin::builtin_capability_set(),
         async_executor: None,
         model_streaming: false,
+        limits: bm_core::LimitsCell::with_default(),
+        job_board: None,
         version: "0.1.0-portal".into(),
         data_dir: Some(data_dir.clone()),
         store: Some(store.clone()),
@@ -55,6 +57,9 @@ async fn spawn_inner(data_dir: std::path::PathBuf, public_bind: bool) -> (String
         shutdown: None,
         web_dir: None,
         bundled_plugins_dir: None,
+        limits: Default::default(),
+        limits_sources: Default::default(),
+        jobs: None,
     };
     let app = bm_surface_http::router(
         handle,

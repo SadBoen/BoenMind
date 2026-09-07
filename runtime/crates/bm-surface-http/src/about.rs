@@ -89,7 +89,7 @@ impl ReleaseInfo {
     }
 }
 
-async fn fetch_latest_release(repo: &str) -> Result<ReleaseInfo, String> {
+async fn fetch_latest_release(repo: &str, timeout_secs: u64) -> Result<ReleaseInfo, String> {
     let url = format!("https://api.github.com/repos/{repo}/releases/latest");
     let client = reqwest::Client::builder()
         .user_agent(concat!("boenmind-server/", env!("CARGO_PKG_VERSION")))
@@ -98,7 +98,7 @@ async fn fetch_latest_release(repo: &str) -> Result<ReleaseInfo, String> {
     let resp = client
         .get(&url)
         .header("Accept", "application/vnd.github+json")
-        .timeout(std::time::Duration::from_secs(20))
+        .timeout(std::time::Duration::from_secs(timeout_secs))
         .send()
         .await
         .map_err(|e| format!("访问 GitHub 失败: {e}"))?
@@ -130,9 +130,14 @@ async fn fetch_latest_release(repo: &str) -> Result<ReleaseInfo, String> {
 
 /// POST /admin/about/check-update(只读)。是否可升由版本比较决定;资产缺失
 /// 不算错误——真有更新但无本平台资产时以 note 提示。
-pub async fn check_update(State(_cfg): State<AdminConfig>) -> Response {
+pub async fn check_update(State(cfg): State<AdminConfig>) -> Response {
     let current = env!("CARGO_PKG_VERSION");
-    match fetch_latest_release(&update_repo()).await {
+    match fetch_latest_release(
+        &update_repo(),
+        cfg.limits.get().update_check_timeout_secs,
+    )
+    .await
+    {
         Ok(r) => {
             let update_available = version_cmp(current, &r.tag)
                 .map(|o| o == std::cmp::Ordering::Less)
@@ -176,7 +181,12 @@ pub async fn apply_update(
         );
     }
     let current = env!("CARGO_PKG_VERSION");
-    let info = match fetch_latest_release(&update_repo()).await {
+    let info = match fetch_latest_release(
+        &update_repo(),
+        cfg.limits.get().update_check_timeout_secs,
+    )
+    .await
+    {
         Ok(r) => r,
         Err(e) => return admin_error(StatusCode::BAD_GATEWAY, format!("检查更新失败: {e}")),
     };
@@ -226,11 +236,25 @@ pub async fn apply_update(
         }
     };
     let pkg_path = work.join(&asset_name);
-    if let Err(e) = download_to(&client, &asset_url, &pkg_path).await {
+    if let Err(e) = download_to(
+        &client,
+        &asset_url,
+        &pkg_path,
+        cfg.limits.get().upgrade_download_timeout_secs,
+    )
+    .await
+    {
         return admin_error(StatusCode::BAD_GATEWAY, format!("下载失败: {e}"));
     }
     let sha_path = work.join(format!("{asset_name}.sha256"));
-    if let Err(e) = download_to(&client, &sha_url, &sha_path).await {
+    if let Err(e) = download_to(
+        &client,
+        &sha_url,
+        &sha_path,
+        cfg.limits.get().upgrade_download_timeout_secs,
+    )
+    .await
+    {
         return admin_error(StatusCode::BAD_GATEWAY, format!("下载校验文件失败: {e}"));
     }
 
@@ -353,10 +377,11 @@ async fn download_to(
     client: &reqwest::Client,
     url: &str,
     path: &std::path::Path,
+    timeout_secs: u64,
 ) -> Result<(), String> {
     let resp = client
         .get(url)
-        .timeout(std::time::Duration::from_secs(600))
+        .timeout(std::time::Duration::from_secs(timeout_secs))
         .send()
         .await
         .map_err(|e| format!("{e}"))?

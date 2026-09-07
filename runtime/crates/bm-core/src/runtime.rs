@@ -9,6 +9,7 @@ use crate::broker::{Broker, CallContext, CallOutcome, Decision, DenyReason, Gran
 use crate::bus::EventBus;
 use crate::clock::Clock;
 use crate::exec_log::ExecutionLog;
+use crate::limits::LimitsCell;
 use crate::ports::{ModelConnector, SecretStore};
 use crate::registry::{CapabilityProvider, CapabilityRegistry};
 use crate::state::{Agent, Operation, Session, budget_from_spec};
@@ -91,6 +92,12 @@ pub struct RuntimeConfig {
     /// M9-S2:模型真流式开关(默认关——既有测试/黄金轨迹零变化;
     /// 开启时回合模型输出以 model.content.delta 逐块入事件流)。
     pub model_streaming: bool,
+    /// W10(ADR-0024):运行时限制配置面。共享快照单元,消费点读时取值
+    /// (热生效);env 覆盖由装配方在启动期折算进 Cell。
+    pub limits: LimitsCell,
+    /// W10(ADR-0025):后台作业台账门面(providers JobTable 实现);
+    /// None = 无作业面(既有测试/纯内存形态零变化)。
+    pub job_board: Option<Arc<dyn crate::ports::JobBoard>>,
 }
 
 /// 回合任务向核心循环回报的内部消息。
@@ -686,7 +693,7 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
                     serde_json::json!({
                         "operation_id": operation_id.as_str(),
                         "index": idx,
-                        "delta": content_trunc(&delta),
+                        "delta": content_trunc_with(&delta, world.config.limits.get().audit_entry_max_chars),
                     }),
                 );
             }

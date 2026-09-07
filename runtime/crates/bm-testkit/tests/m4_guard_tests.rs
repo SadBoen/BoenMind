@@ -46,6 +46,8 @@ async fn guard_rig() -> (RuntimeHandle, Arc<SeqIdGen>) {
         max_attempts: None,
         async_executor: None,
         model_streaming: false,
+        limits: bm_core::LimitsCell::with_default(),
+        job_board: None,
     })
     .await;
     (handle, Arc::new(SeqIdGen::new()))

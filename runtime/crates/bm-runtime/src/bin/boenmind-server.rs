@@ -10,7 +10,7 @@
 use bm_contract::ids::SeqIdGen;
 use bm_core::clock::SystemClock;
 use bm_core::ports::ModelConnector;
-use bm_core::runtime::{RuntimeConfig, RuntimeHandle, turn_timeout_from_env};
+use bm_core::runtime::{RuntimeConfig, RuntimeHandle};
 use bm_persist::PersistStore;
 use bm_providers::mock_model::{MockConnector, Step};
 use bm_providers::secret::MemSecretStore;
@@ -61,6 +61,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     std::fs::create_dir_all(&data_dir)?;
+    // W10(ADR-0024):运行时限制 = config/limits.json(缺省=代码默认);
+    // env BOEN_TURN_TIMEOUT_SECS 优先级保留(load 内折算并记来源)。
+    let (limits_cell, limits_sources) = bm_core::limits::load_limits(&data_dir.join("config").join("limits.json"));
+    // W10(ADR-0025):后台作业台账(日志落 <data>/jobs/)。
+    let job_table = bm_providers::jobs::JobTable::new(&data_dir, limits_cell.clone());
     let token = bm_surface_http::token::load_or_create(&data_dir)?;
     // 双开毒化根治(2026-09-07 本机实测;扩展 W7 2026-09-03 VPS 修复):
     // 绑定必须先于状态库打开——抢端口失败的实例若先开库,会在死前完成
@@ -155,7 +160,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 生产服务仅装载生产级内置能力，移除历史测试桩(mail.mock_send/notes等)防模型误判
     let mut capabilities = bm_providers::builtin::production_builtin_capability_set();
     // W9 日常可用批:system.exec 内置命令执行(审批类,常规 agent 设计)
-    capabilities.extend([bm_providers::system_exec::exec_capability_entry()]);
+    capabilities.extend([
+        bm_providers::system_exec::exec_capability_entry(),
+        bm_providers::system_exec::job_output_capability_entry(),
+    ]);
     // ADR-0021:fs.* 文件工具集内置(查/读直通,写/改审批;沙箱=工作区注册表)
     capabilities.extend(bm_providers::fs_tools::fs_capability_entries());
     // Skill v0.2(ADR-0016 第二步):skills.json 声明 scripts 的技能 →
@@ -234,6 +242,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             secrets,
             Vec::new(),
             &registrar,
+            &limits_cell,
         )
         .await;
         let collected = registrar.entries.lock().expect("锁").clone();
@@ -265,18 +274,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         capabilities,
         async_executor: {
             // ADR-0021:fs.* 与 system.exec 走内置异步执行体,其余回落 MCP hub
-            let fs = bm_providers::fs_tools::FsExecutor::new(
+            let fs = bm_providers::fs_tools::FsExecutor::with_limits(
                 data_dir.clone(),
                 workspace_root.clone(),
+                limits_cell.clone(),
             );
+            let exec_inner = Arc::new(bm_providers::system_exec::ExecExecutor::new(
+                limits_cell.clone(),
+                job_table.clone(),
+            ));
             let inner: Arc<dyn bm_core::ports::AsyncCapabilityExecutor> = match mcp_executor {
                 Some(hub) => hub,
-                None => Arc::new(bm_providers::system_exec::ExecExecutor),
+                None => exec_inner.clone(),
             };
             // Skill v0.2(ADR-0016 第二步):装载 skills.json 中带 scripts 的
             // 技能 → 编译 wasm 合成 manifests 注册进能力面;执行体挂 skill 分道。
             let exec: Arc<dyn bm_core::ports::AsyncCapabilityExecutor> =
                 Arc::new(bm_providers::system_exec::SplitExecutor {
+                    exec: exec_inner,
                     fs,
                     skills,
                     fallback: inner,
@@ -288,6 +303,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("启动配置:模型流式 = {on} (来源: config/model.json stream 优先, BOEN_MODEL_STREAM 环境变量兜底)");
             on
         },
+        limits: limits_cell.clone(),
+        job_board: Some(job_table.clone()),
         version: format!("{}-server", env!("CARGO_PKG_VERSION")),
         data_dir: Some(data_dir.clone()),
         store: Some(store.clone()),
@@ -295,7 +312,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         secret_store: secrets.clone(),
         id_gen,
         clock: Arc::new(SystemClock),
-        turn_timeout_secs: turn_timeout_from_env(),
+        turn_timeout_secs: limits_cell.get().model_call_timeout_secs as i64,
         max_attempts: None,
     })
     .await;
@@ -320,6 +337,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         bundled_plugins_dir: std::env::current_exe()
             .ok()
             .and_then(|p| p.parent().map(|d| d.join("plugins"))),
+        limits: limits_cell.clone(),
+        limits_sources: Arc::new(std::sync::Mutex::new(limits_sources)),
+        jobs: Some(job_table.clone()),
     };
     bm_surface_http::webadmin::rebuild_routes(&admin);
 

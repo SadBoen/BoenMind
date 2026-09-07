@@ -97,6 +97,8 @@ async fn p02_session_resume_with_10k_events() {
         max_attempts: None,
         async_executor: None,
         model_streaming: false,
+        limits: bm_core::LimitsCell::with_default(),
+        job_board: None,
     })
     .await;
 

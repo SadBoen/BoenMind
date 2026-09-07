@@ -136,10 +136,14 @@ pub(crate) fn handle_turn_event(w: &mut World, event: TurnEvent) {
                     "usage_out": usage_out,
                     "latency_ms": latency_ms,
                     "stream_interrupted": stream_interrupted,
-                    // M8.1 修复:回答正文入事件(截断 16KB,防日志膨胀;
+                    // M8.1 修复:回答正文入事件(截断走 limits,防日志膨胀;
                     // 截断标记如实)——正文此前无处落地,用户面不可见
-                    "content": content_trunc(&content),
-                    "content_truncated": content.len() > 16 * 1024,
+                    "content": content_trunc_with(
+                        &content,
+                        w.config.limits.get().audit_entry_max_chars,
+                    ),
+                    "content_truncated": content.len()
+                        > w.config.limits.get().audit_entry_max_chars,
                 }),
             );
             // M7 S5:成功回账(清计数/半开恢复 healthy)

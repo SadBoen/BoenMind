@@ -72,6 +72,8 @@ async fn rig(dir: &std::path::Path) -> (RuntimeHandle, Arc<CaptureConnector>) {
         max_attempts: None,
         async_executor: None,
         model_streaming: false,
+        limits: bm_core::LimitsCell::with_default(),
+        job_board: None,
     })
     .await;
     (handle, connector)

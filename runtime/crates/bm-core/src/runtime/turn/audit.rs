@@ -1,12 +1,12 @@
 //! 自 turn.rs 机械移入(内容零改动)。
 use super::*;
 
-pub(crate) fn content_trunc(content: &str) -> String {
-    const LIMIT: usize = 16 * 1024;
-    if content.len() <= LIMIT {
+/// W10(ADR-0024):上限可配形态(事件轨迹快照截断;调用方读 limits)。
+pub(crate) fn content_trunc_with(content: &str, limit: usize) -> String {
+    if content.len() <= limit {
         content.to_string()
     } else {
-        let mut end = LIMIT;
+        let mut end = limit;
         while !content.is_char_boundary(end) {
             end -= 1;
         }

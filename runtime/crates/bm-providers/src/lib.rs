@@ -3,6 +3,7 @@
 
 pub mod builtin;
 pub mod fs_tools;
+pub mod jobs;
 pub mod mcp;
 pub mod mock_model;
 pub mod openai_http;

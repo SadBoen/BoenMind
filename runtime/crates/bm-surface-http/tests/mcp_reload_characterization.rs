@@ -34,6 +34,7 @@ async fn mcp_reload_response_shape_is_stable() {
         secrets,
         Vec::new(),
         &registrar,
+        &bm_core::limits::LimitsCell::with_default(),
     )
     .await;
     // 现有实现:loaded_names 空 → 无卸载;ghost spawn 失败 → failed 通道

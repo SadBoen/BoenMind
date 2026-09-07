@@ -60,10 +60,17 @@ pub struct AdminConfig {
     /// 批准同数据目录 mcp/ 对待,同名候选以数据目录优先;None = 测试态或
     /// 无法定位(开发态 cargo run 无此目录,静默跳过)。
     pub bundled_plugins_dir: Option<PathBuf>,
+    /// W10(ADR-0024):运行时限制共享单元(缺省 = 代码默认;测试态零变化)。
+    pub limits: bm_core::limits::LimitsCell,
+    /// W10:来源追踪(env/file 徽标;PUT 后随写更新)。
+    pub limits_sources:
+        Arc<std::sync::Mutex<bm_core::limits::LimitsSources>>,
+    /// W10(ADR-0025):后台作业台账(/admin/jobs;None = 未装配,测试态)。
+    pub jobs: Option<Arc<bm_providers::jobs::JobTable>>,
 }
 
 /// 文件预览大小上限(512KB;个人单机预览面,防整读大文件)。
-const FILE_PREVIEW_LIMIT: u64 = 512 * 1024;
+// W10:预览/下载/删除/浏览上限走 cfg.limits(FILE_PREVIEW_LIMIT 等常量已收编)。
 
 // ---- provider 库(config/providers.json)--------------------------------
 
@@ -1505,13 +1512,13 @@ pub async fn fs_file(State(cfg): State<AdminConfig>, Query(p): Query<FsPathParam
     if meta.is_dir() {
         return admin_error(StatusCode::BAD_REQUEST, "目标是目录,请先展开目录树");
     }
-    if meta.len() > FILE_PREVIEW_LIMIT {
+    if meta.len() > cfg.limits.get().fs_preview_max_bytes {
         return admin_error(
             StatusCode::PAYLOAD_TOO_LARGE,
             format!(
                 "文件超过预览上限({}KB > {}KB)",
                 meta.len() / 1024,
-                FILE_PREVIEW_LIMIT / 1024
+                cfg.limits.get().fs_preview_max_bytes / 1024
             ),
         );
     }
@@ -1570,7 +1577,6 @@ pub async fn fs_rename(State(cfg): State<AdminConfig>, Json(body): Json<Value>) 
     }
 }
 
-const FS_DOWNLOAD_LIMIT: u64 = 256 * 1024 * 1024;
 
 /// W7 反馈:目录树右键菜单——下载(单文件原样)与打包下载(文件夹 zip)。
 /// 仅工作区内(safe_resolve 防逃逸);总量守门 256MB / 5000 条目。
@@ -1602,17 +1608,24 @@ pub async fn fs_download(
         "application/octet-stream"
     };
     let bytes = if meta.is_dir() {
-        match zip_dir(&target) {
+        match zip_dir(
+            &target,
+            cfg.limits.get().fs_download_max_entries,
+            cfg.limits.get().fs_download_max_bytes,
+        ) {
             Ok(b) => b,
             Err(e) => {
                 return admin_error(StatusCode::INTERNAL_SERVER_ERROR, format!("打包失败: {e}"));
             }
         }
     } else {
-        if meta.len() > FS_DOWNLOAD_LIMIT {
+        if meta.len() > cfg.limits.get().fs_download_max_bytes {
             return admin_error(
                 StatusCode::PAYLOAD_TOO_LARGE,
-                format!("文件超过下载上限({}MB)", FS_DOWNLOAD_LIMIT / 1024 / 1024),
+                format!(
+                    "文件超过下载上限({}MB)",
+                    cfg.limits.get().fs_download_max_bytes / 1024 / 1024
+                ),
             );
         }
         match std::fs::read(&target) {
@@ -1658,17 +1671,17 @@ fn utf8_percent_encode(s: &str) -> String {
 /// 仅工作区内:逐条 safe_resolve 防逃逸(天然拒 `..`/绝对路径/符号链接);
 /// 目录整棵递归删;永久删除不进回收站,防误删由前端确认弹窗承担。
 pub async fn fs_delete(State(cfg): State<AdminConfig>, Json(body): Json<Value>) -> Response {
-    const DELETE_PATH_LIMIT: usize = 100;
+    
     let Some(paths) = body["paths"].as_array() else {
         return admin_error(StatusCode::BAD_REQUEST, "paths 必须是字符串数组");
     };
     if paths.is_empty() {
         return admin_error(StatusCode::BAD_REQUEST, "paths 不能为空");
     }
-    if paths.len() > DELETE_PATH_LIMIT {
+    if paths.len() > cfg.limits.get().fs_delete_batch_max {
         return admin_error(
             StatusCode::BAD_REQUEST,
-            format!("单次最多删除 {DELETE_PATH_LIMIT} 项"),
+            format!("单次最多删除 {} 项", cfg.limits.get().fs_delete_batch_max),
         );
     }
     let mut results = Vec::new();
@@ -1723,10 +1736,13 @@ pub async fn fs_delete(State(cfg): State<AdminConfig>, Json(body): Json<Value>) 
 // 与 /fs/list 的工作区沙箱浏览互补:「添加工作目录」的路径选择器需要覆盖
 // 全盘任意绝对路径。守门:只列目录、只报名字,零文件内容零大小;上限 1000 条。
 
-const BROWSE_ENTRY_LIMIT: usize = 1000;
+
 
 /// GET /admin/fs/browse?path=<绝对路径;空 = 根视图(Windows 盘符 / Unix /)>
-pub async fn fs_browse(Query(p): Query<FsPathParams>) -> Response {
+pub async fn fs_browse(
+    State(cfg): State<AdminConfig>,
+    Query(p): Query<FsPathParams>,
+) -> Response {
     let raw = p.path.trim().to_string();
     if raw.is_empty() {
         return Json(json!({
@@ -1756,7 +1772,7 @@ pub async fn fs_browse(Query(p): Query<FsPathParams>) -> Response {
     match std::fs::read_dir(&canon) {
         Ok(rd) => {
             for entry in rd.flatten() {
-                if entries.len() >= BROWSE_ENTRY_LIMIT {
+                if entries.len() >= cfg.limits.get().fs_browse_max_entries {
                     truncated = true;
                     break;
                 }
@@ -1880,8 +1896,12 @@ pub async fn fs_mkdir(State(_cfg): State<AdminConfig>, Json(body): Json<Value>) 
     }
 }
 
-/// 递归打包目录为 zip(内存;守门:≤5000 条目 / ≤256MB 解压总量)。
-fn zip_dir(dir: &std::path::Path) -> Result<Vec<u8>, String> {
+/// 递归打包目录为 zip(内存;守门条目/总量上限走 limits,W10)。
+fn zip_dir(
+    dir: &std::path::Path,
+    max_entries: usize,
+    max_bytes: u64,
+) -> Result<Vec<u8>, String> {
     let mut buf = std::io::Cursor::new(Vec::new());
     {
         let mut zip = zip::ZipWriter::new(&mut buf);
@@ -1896,6 +1916,8 @@ fn zip_dir(dir: &std::path::Path) -> Result<Vec<u8>, String> {
             base: &std::path::Path,
             count: &mut usize,
             total: &mut u64,
+            max_entries: usize,
+            max_bytes: u64,
         ) -> Result<(), String> {
             for entry in
                 std::fs::read_dir(base).map_err(|e| format!("read_dir {}: {e}", base.display()))?
@@ -1915,16 +1937,16 @@ fn zip_dir(dir: &std::path::Path) -> Result<Vec<u8>, String> {
                 if file_type.is_dir() {
                     zip.add_directory(rel.clone(), *options)
                         .map_err(|e| format!("{e}"))?;
-                    walk(zip, options, &rel, &path, count, total)?;
+                    walk(zip, options, &rel, &path, count, total, max_entries, max_bytes)?;
                 } else {
                     *count += 1;
-                    if *count > 5000 {
-                        return Err("条目超过 5000,拒绝打包".into());
+                    if *count > max_entries {
+                        return Err(format!("条目超过 {max_entries},拒绝打包"));
                     }
                     let data = std::fs::read(&path).map_err(|e| format!("read {rel}: {e}"))?;
                     *total += data.len() as u64;
-                    if *total > FS_DOWNLOAD_LIMIT {
-                        return Err("总量超过 256MB,拒绝打包".into());
+                    if *total > max_bytes {
+                        return Err("总量超过下载上限,拒绝打包".into());
                     }
                     zip.start_file(rel.clone(), *options)
                         .map_err(|e| format!("{e}"))?;
@@ -1933,7 +1955,16 @@ fn zip_dir(dir: &std::path::Path) -> Result<Vec<u8>, String> {
             }
             Ok(())
         }
-        walk(&mut zip, &options, "", dir, &mut count, &mut total)?;
+        walk(
+            &mut zip,
+            &options,
+            "",
+            dir,
+            &mut count,
+            &mut total,
+            max_entries,
+            max_bytes,
+        )?;
         zip.finish().map_err(|e| format!("{e}"))?;
     }
     Ok(buf.into_inner())
@@ -2276,15 +2307,110 @@ pub async fn logs_tail(State(cfg): State<AdminConfig>) -> Response {
     .into_response()
 }
 
+/// GET /admin/limits(W10/ADR-0024):逐键返回 当前值/默认值/区间/来源。
+pub async fn limits_get(State(cfg): State<AdminConfig>) -> Response {
+    let limits = cfg.limits.get();
+    let defaults = bm_core::limits::Limits::default();
+    let source_of = |k: &str| cfg.limits_sources.lock().expect("锁未中毒").source_of(k);
+    let all: Value = serde_json::to_value(&limits).unwrap_or(json!({}));
+    let dfl: Value = serde_json::to_value(&defaults).unwrap_or(json!({}));
+    let keys: Vec<Value> = bm_core::limits::KEY_META
+        .iter()
+        .map(|m| {
+            json!({
+                "key": m.key,
+                "group": m.group,
+                "label": m.label,
+                "min": m.min,
+                "max": m.max,
+                "editable": m.editable,
+                "value": all.get(m.key).cloned().unwrap_or(Value::Null),
+                "default": dfl.get(m.key).cloned().unwrap_or(Value::Null),
+                "source": source_of(m.key),
+            })
+        })
+        .collect();
+    Json(json!({ "ok": true, "keys": keys })).into_response()
+}
+
+/// PUT /admin/limits(W10/ADR-0024):全量快照写——body {values: {key: value}},
+/// 仅接受已登记键;钳制→原子写 config/limits.json→更新 Cell(热生效)。
+pub async fn limits_put(
+    State(cfg): State<AdminConfig>,
+    Json(body): Json<Value>,
+) -> Response {
+    let incoming = body
+        .get("values")
+        .and_then(|v| v.as_object())
+        .cloned()
+        .unwrap_or_default();
+    let editable: std::collections::HashSet<&str> = bm_core::limits::KEY_META
+        .iter()
+        .filter(|m| m.editable)
+        .map(|m| m.key)
+        .collect();
+    // 以默认值为底、只叠加登记键(整数化浮点,避免 u64 反序列化拒 5.0)
+    let mut merged = match serde_json::to_value(bm_core::limits::Limits::default()) {
+        Ok(Value::Object(m)) => m,
+        _ => Default::default(),
+    };
+    for (k, v) in incoming {
+        if !editable.contains(k.as_str()) {
+            continue;
+        }
+        let v = match v.as_f64() {
+            Some(f) if f.fract() == 0.0 => json!(f as i64),
+            _ => v,
+        };
+        merged.insert(k, v);
+    }
+    let new_limits = bm_core::limits::Limits::from_file_value(&Value::Object(merged.clone()));
+    // 原子写(与 fs.write/配置面同款语义:临时文件+rename,崩溃不留半截)
+    let path = cfg.data_dir.join("config").join("limits.json");
+    if let Some(parent) = path.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            return admin_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("建配置目录失败: {e}"),
+            );
+        }
+    }
+    let pretty = serde_json::to_string_pretty(&new_limits.to_file_value())
+        .unwrap_or_default();
+    if let Err(e) = bm_persist::atomic_write(&path, pretty.as_bytes()) {
+        return admin_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("写 limits.json 失败: {e}"),
+        );
+    }
+    cfg.limits.set(new_limits);
+    if let Ok(mut src) = cfg.limits_sources.lock() {
+        src.file_raw = Some(Value::Object(merged));
+    }
+    Json(json!({
+        "ok": true,
+        "note": "已保存并热生效:命令/工具下一条、回合下一回合、流式下一条起生效",
+    }))
+    .into_response()
+}
+
+/// GET /admin/jobs(W10/ADR-0025):后台作业列表(新→旧)。
+pub async fn jobs_list(State(cfg): State<AdminConfig>) -> Response {
+    let jobs = cfg.jobs.as_ref().map(|j| j.list()).unwrap_or_default();
+    Json(json!({ "ok": true, "jobs": jobs })).into_response()
+}
+
 /// GET /admin/context:context-log.jsonl 尾部解析为结构化数组(W5 上下文
 /// 透视页直用)。每行 = 一次模型调用的请求快照(messages/tools)+ 结果
 /// (status/usage/耗时);坏行跳过;最多回读 2MB、默认 120 条(新→旧即
 /// 最旧在前,与文件时序一致)。
 pub async fn context_tail(State(cfg): State<AdminConfig>) -> Response {
+    // W10:尾读字节/条数上限走 limits。
+    let lim = cfg.limits.get();
     let steps = read_context_tail(
         &cfg.data_dir.join("context-log.jsonl"),
-        2 * 1024 * 1024,
-        120,
+        lim.context_tail_max_bytes,
+        lim.context_tail_entries,
     );
     Json(json!({ "ok": true, "steps": steps })).into_response()
 }
@@ -2301,7 +2427,7 @@ pub async fn context_search(
         .get("limit")
         .and_then(|v| v.parse().ok())
         .unwrap_or(50)
-        .clamp(1, 200);
+        .clamp(1, cfg.limits.get().context_search_max_limit);
     if q.trim().is_empty() {
         return admin_error(StatusCode::BAD_REQUEST, "缺少 q");
     }
@@ -2370,7 +2496,7 @@ pub async fn session_messages(
         .get("limit")
         .and_then(|v| v.parse().ok())
         .unwrap_or(50)
-        .clamp(1, 200);
+        .clamp(1, cfg.limits.get().context_search_max_limit);
     let skip: usize = params.get("skip").and_then(|v| v.parse().ok()).unwrap_or(0);
 
     use std::collections::VecDeque;
@@ -2487,6 +2613,9 @@ pub fn admin_routes(cfg: AdminConfig) -> axum::Router {
         .route("/logs", get(logs_tail))
         .route("/context", get(context_tail))
         .route("/context/search", get(context_search))
+        // W10(ADR-0024/0025):限制配置面 + 后台作业列表
+        .route("/limits", get(limits_get).put(limits_put))
+        .route("/jobs", get(jobs_list))
         // 会话历史回放(2026-09-06):切会话/刷新后前端按此拉历史消息
         .route("/sessions/{session_id}/messages", get(session_messages))
         // 会话删除(2026-09-06 A+B):墓碑+原文擦除,经核心单写者执行
@@ -2602,6 +2731,7 @@ async fn run_mcp_sync(
         &CoreRegistrar {
             handle: cfg.handle.clone(),
         },
+        &cfg.limits,
     )
     .await;
     if let Ok(mut g) = cfg.mcp_servers.write() {

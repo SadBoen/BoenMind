@@ -48,6 +48,8 @@ async fn rig_with_web() -> Rig {
         capabilities: builtin_capability_set(),
         async_executor: None,
         model_streaming: false,
+        limits: bm_core::LimitsCell::with_default(),
+        job_board: None,
         version: "0.1.0-m8".into(),
         data_dir: Some(dir.path().to_path_buf()),
         store: Some(store.clone()),

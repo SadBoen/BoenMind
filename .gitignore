@@ -49,3 +49,4 @@ runtime/server_*.log
 # web-multisearch 隔离构建产物
 target-wms/
 plugins/mcp/web-multisearch/target-wms/
+runtime/webapp/tsconfig.tsbuildinfo

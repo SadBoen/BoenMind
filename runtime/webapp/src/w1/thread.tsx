@@ -45,6 +45,7 @@ import { Button } from "@/components/ui/button";
 import { ContextView } from "./context";
 import { useBoenmindApprovals, type ApprovalRequest } from "./runtime";
 import { api, type WorkspaceEntry } from "@/w2/api";
+import { JobsBadge } from "./components/JobsBadge";
 import { storage, STORAGE_KEYS, type PermissionMode, type ThinkingLevel } from "@/lib/storage";
 import { BM_EVENTS, emit } from "../lib/bus";
 import { DotScrollbar } from "./DotScrollbar";
@@ -142,6 +143,7 @@ export function Thread({
         </div>
         <span style={{ flex: 1 }} />
         <span className="badge">self-hosted</span>
+        <JobsBadge />
         <button
           className={drawerCls(workspaceCollapsed)}
           aria-pressed={workspaceCollapsed}

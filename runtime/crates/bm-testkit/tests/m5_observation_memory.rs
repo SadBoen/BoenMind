@@ -64,6 +64,8 @@ async fn om_rig() -> (RuntimeHandle, Arc<SeqIdGen>) {
         max_attempts: None,
         async_executor: None,
         model_streaming: false,
+        limits: bm_core::LimitsCell::with_default(),
+        job_board: None,
     };
     (RuntimeHandle::start(config).await, ids)
 }

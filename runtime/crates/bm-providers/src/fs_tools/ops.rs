@@ -3,6 +3,7 @@
 //! write/edit 审批类,edit 走精确字符串替换(不走 sed 躲转义地狱),
 //! CRLF 文件自动兼容;非 UTF-8 拒改。
 
+use bm_core::limits::Limits;
 use grep_regex::RegexMatcherBuilder;
 use grep_searcher::{BinaryDetection, SearcherBuilder, sinks};
 use serde_json::{Value, json};
@@ -10,20 +11,10 @@ use walkdir::WalkDir;
 
 use super::guard::{Roots, display_path};
 
-/// 限额(内核固定值;随包插件时代的 config 可调项收敛为常量)。
-const MAX_RESULTS_DEFAULT: usize = 80;
-const MAX_RESULTS_CEILING: usize = 500;
-const MAX_OUTPUT_CHARS: usize = 16_000;
-const MAX_FILE_BYTES: u64 = 1_048_576;
-/// 单次读取文件大小上限:16MB(防超大文件全量入内存 DoS)
-const MAX_READ_BYTES: u64 = 16 * 1_048_576;
-/// 单次写入大小上限:16MB(2026-09 审计补,防模型误写超大文件撑爆磁盘;
-/// 与 MAX_READ_BYTES 对等,read/write 极限一致)
-const MAX_WRITE_BYTES: usize = 16 * 1_048_576;
+/// 限额走 limits(W10/ADR-0024,热生效);下列为非限制类固定排版常量。
 const SKIP_DIRS: &[&str] = &[".git", "node_modules", "target", "dist", "build"];
 const LINE_CAP_CHARS: usize = 400;
 const READ_DEFAULT_LINES: usize = 2_000;
-const READ_MAX_LINES: usize = 10_000;
 const LINE_CAP_CHARS_FALLBACK: usize = 500;
 
 fn tool_err(msg: impl Into<String>) -> Value {
@@ -55,7 +46,7 @@ fn glob_to_regex(pat: &str) -> String {
     regex
 }
 
-pub fn search(roots: &Roots, args: &Value) -> Value {
+pub fn search(roots: &Roots, args: &Value, limits: &Limits) -> Value {
     if roots.is_empty() {
         return tool_err("工作区注册表为空:在设置「常规 → 工作区」登记至少一个目录后再用文件工具");
     }
@@ -73,8 +64,8 @@ pub fn search(roots: &Roots, args: &Value) -> Value {
 
     let max_results = args["max_results"]
         .as_u64()
-        .map(|m| (m as usize).clamp(1, MAX_RESULTS_CEILING))
-        .unwrap_or(MAX_RESULTS_DEFAULT);
+        .map(|m| (m as usize).clamp(1, limits.fs_search_max_results))
+        .unwrap_or(limits.fs_search_default_results);
 
     // 路径过滤器 (如果有 path_pattern)
     let path_filter = if let Some(pat) = path_pattern {
@@ -209,7 +200,7 @@ pub fn search(roots: &Roots, args: &Value) -> Value {
 
             let oversized = entry
                 .metadata()
-                .map(|md| md.len() > MAX_FILE_BYTES)
+                .map(|md| md.len() > limits.fs_skip_file_bytes)
                 .unwrap_or(false);
             if oversized {
                 continue;
@@ -294,7 +285,7 @@ pub fn search(roots: &Roots, args: &Value) -> Value {
     while serde_json::to_string(&out)
         .map(|s| s.chars().count())
         .unwrap_or(0)
-        > MAX_OUTPUT_CHARS
+        > limits.fs_output_max_chars
         && hits.len() > 1
     {
         hits.pop();
@@ -304,18 +295,18 @@ pub fn search(roots: &Roots, args: &Value) -> Value {
     out
 }
 
-pub fn read(roots: &Roots, args: &Value) -> Value {
+pub fn read(roots: &Roots, args: &Value, limits: &Limits) -> Value {
     let path = match roots.resolve(args["path"].as_str().unwrap_or_default()) {
         Ok(p) => p,
         Err(e) => return tool_err(e),
     };
     if let Ok(meta) = std::fs::metadata(&path)
-        && meta.len() > MAX_READ_BYTES
+        && meta.len() > limits.fs_rw_max_bytes
     {
         return tool_err(format!(
             "文件过大({}MB > 上限 {}MB),请使用带行号/分片读取工具",
             meta.len() / (1024 * 1024),
-            MAX_READ_BYTES / (1024 * 1024)
+            limits.fs_rw_max_bytes / (1024 * 1024)
         ));
     }
     let raw = match std::fs::read(&path) {
@@ -327,7 +318,7 @@ pub fn read(roots: &Roots, args: &Value) -> Value {
     let offset = args["offset"].as_u64().unwrap_or(1).max(1);
     let limit = args["limit"]
         .as_u64()
-        .map(|l| (l as usize).clamp(1, READ_MAX_LINES))
+        .map(|l| (l as usize).clamp(1, limits.fs_read_max_lines))
         .unwrap_or(READ_DEFAULT_LINES);
 
     let mut body = String::new();
@@ -342,7 +333,7 @@ pub fn read(roots: &Roots, args: &Value) -> Value {
             l = l.chars().take(LINE_CAP_CHARS_FALLBACK).collect::<String>() + "…";
         }
         let rendered = format!("{:>6}\t{}", idx as u64 + 1, l);
-        if body.chars().count() + rendered.chars().count() > MAX_OUTPUT_CHARS {
+        if body.chars().count() + rendered.chars().count() > limits.fs_output_max_chars {
             cap_hit = true;
             break;
         }
@@ -362,7 +353,7 @@ pub fn read(roots: &Roots, args: &Value) -> Value {
     })
 }
 
-pub fn write(roots: &Roots, args: &Value) -> Value {
+pub fn write(roots: &Roots, args: &Value, limits: &Limits) -> Value {
     let path = match roots.resolve(args["path"].as_str().unwrap_or_default()) {
         Ok(p) => p,
         Err(e) => return tool_err(e),
@@ -376,11 +367,11 @@ pub fn write(roots: &Roots, args: &Value) -> Value {
     // 原子写(2026-09 审计收口 BACKLOG「fs.write/edit 原子写+大小上限」):
     // 与全仓标准 atomic_write 同款语义——临时文件 + fsync + rename,崩溃不
     // 留半截文件;同时给写入带上限防护(防模型误写超大文件撑爆磁盘)。
-    if content.len() > MAX_WRITE_BYTES {
+    if content.len() as u64 > limits.fs_rw_max_bytes {
         return tool_err(format!(
             "写入内容过大({} bytes > 上限 {} bytes),请分片写入",
             content.len(),
-            MAX_WRITE_BYTES
+            limits.fs_rw_max_bytes
         ));
     }
     match bm_persist::atomic_write(&path, content.as_bytes()) {
@@ -427,7 +418,7 @@ type LocatedEdit = (String, String, Vec<(usize, usize)>);
 /// fs.edit(ADR-0022 批量升级):单处 old_string/new_string 或 edits 数组
 /// 二选一。批量语义对齐 pi:全部编辑基于**文件当前原文**快照定位,区间
 /// 不得重叠,一次读-校-写原子提交——避免多轮往返与中间态漂移。
-pub fn edit(roots: &Roots, args: &Value) -> Value {
+pub fn edit(roots: &Roots, args: &Value, limits: &Limits) -> Value {
     let path = match roots.resolve(args["path"].as_str().unwrap_or_default()) {
         Ok(p) => p,
         Err(e) => return tool_err(e),
@@ -519,6 +510,14 @@ pub fn edit(roots: &Roots, args: &Value) -> Value {
     out.push_str(&content[cursor..]);
 
     let replacements = all.len();
+    // 写回与 fs.write 同上限(W10:走 limits;防模型误改超大文件撑爆磁盘)
+    if out.len() as u64 > limits.fs_rw_max_bytes {
+        return tool_err(format!(
+            "编辑结果过大({} bytes > 上限 {} bytes),请分片编辑",
+            out.len(),
+            limits.fs_rw_max_bytes
+        ));
+    }
     // 原子写(2026-09 审计收口 BACKLOG「fs.write/edit 原子写+大小上限」,
     // 与 fs.write 同批):编辑结果经 atomic_write 落盘,崩溃不留半截文件。
     match bm_persist::atomic_write(&path, out.as_bytes()) {
@@ -534,6 +533,22 @@ pub fn edit(roots: &Roots, args: &Value) -> Value {
 
 #[cfg(test)]
 mod tests {
+    use bm_core::limits::Limits as _LimitsReal;
+
+    // W10:包装函数保持旧三参签名(Limits 默认),既有用例零改动;
+    // 需要自定义限额的用例直接调 super::search(..., &limits)。
+    fn search(roots: &Roots, args: &Value) -> Value {
+        super::search(roots, args, &_LimitsReal::default())
+    }
+    fn read(roots: &Roots, args: &Value) -> Value {
+        super::read(roots, args, &_LimitsReal::default())
+    }
+    fn write(roots: &Roots, args: &Value) -> Value {
+        super::write(roots, args, &_LimitsReal::default())
+    }
+    fn edit(roots: &Roots, args: &Value) -> Value {
+        super::edit(roots, args, &_LimitsReal::default())
+    }
 
     // ---- ADR-0022:fs_edit 批量 edits 数组 ------------------------------
 

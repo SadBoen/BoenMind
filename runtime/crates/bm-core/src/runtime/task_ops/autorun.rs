@@ -75,7 +75,10 @@ pub(crate) fn handle_task_autorun_start(
             },
         },
     )?;
-    let max_turns = params.max_turns.unwrap_or(6).clamp(1, 50);
+    let max_turns = params
+        .max_turns
+        .unwrap_or(w.config.limits.get().autorun_default_max_turns as u64)
+        .clamp(1, 50);
     w.autorun.insert(
         params.task_id.clone(),
         AutorunState {

@@ -30,6 +30,8 @@ async fn rig(script: Vec<Step>) -> Rig {
         capabilities: bm_providers::builtin::builtin_capability_set(),
         async_executor: None,
         model_streaming: false,
+        limits: bm_core::LimitsCell::with_default(),
+        job_board: None,
         version: "0.1.0-m1".into(),
         data_dir: Some(dir.path().to_path_buf()),
         store: Some(store.clone()),
@@ -335,6 +337,8 @@ async fn t33_shutdown_endpoint_is_authed_and_notifies() {
         capabilities: bm_providers::builtin::builtin_capability_set(),
         async_executor: None,
         model_streaming: false,
+        limits: bm_core::LimitsCell::with_default(),
+        job_board: None,
         version: "0.1.0-m1".into(),
         data_dir: Some(dir.path().to_path_buf()),
         store: Some(store.clone()),
@@ -435,6 +439,8 @@ async fn m4_rig(
         max_attempts: None,
         async_executor: executor,
         model_streaming: false,
+        limits: bm_core::LimitsCell::with_default(),
+        job_board: None,
     })
     .await;
 

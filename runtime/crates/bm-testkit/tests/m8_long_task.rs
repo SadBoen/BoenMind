@@ -66,6 +66,8 @@ async fn t116_live_long_task_stress() {
         capabilities: [vec![bm_providers::builtin::model_invoke_cap()], entries].concat(),
         async_executor: Some(hub),
         model_streaming: false,
+        limits: bm_core::LimitsCell::with_default(),
+        job_board: None,
         version: "0.1.0-m8-live".into(),
         data_dir: Some(dir.path().to_path_buf()),
         store: Some(store.clone()),

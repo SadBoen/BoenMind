@@ -141,6 +141,8 @@ mod r2_tombstone_tests {
                 capabilities: vec![],
                 async_executor: None,
                 model_streaming: false,
+                limits: LimitsCell::with_default(),
+                job_board: None,
             },
         }
     }

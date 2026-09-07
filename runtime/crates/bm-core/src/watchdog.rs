@@ -37,10 +37,37 @@ pub struct TaskWatch {
 }
 
 /// 监护状态(Task → Watch)。
-#[derive(Debug, Default)]
+///
+/// W10(ADR-0024):三个节拍值走 limits 热生效;`Default` = 既有合同默认
+/// (15min/24h/60s),装配方经 `apply_limits` 注入生效值。
+#[derive(Debug, Clone)]
 pub struct WatchdogState {
     pub watches: HashMap<String, TaskWatch>,
     pub next_scan_at: Option<DateTime<chrono::Utc>>,
+    pub stall_after_ms: i64,
+    pub hard_limit_ms: i64,
+    pub tick_ms: i64,
+}
+
+impl Default for WatchdogState {
+    fn default() -> Self {
+        Self {
+            watches: HashMap::new(),
+            next_scan_at: None,
+            stall_after_ms: STALL_AFTER_MS,
+            hard_limit_ms: STALL_HARD_LIMIT_MS,
+            tick_ms: WATCHDOG_TICK_MS,
+        }
+    }
+}
+
+impl WatchdogState {
+    /// W10:装配方注入 limits 生效值(热更新同一实例字段)。
+    pub fn apply_limits(&mut self, limits: &crate::limits::Limits) {
+        self.stall_after_ms = limits.watchdog_stall_after_ms;
+        self.hard_limit_ms = limits.watchdog_hard_limit_ms;
+        self.tick_ms = limits.watchdog_tick_ms;
+    }
 }
 
 /// 扫描判定(事实产出,不做状态变更——变更由运行时执行)。
@@ -127,10 +154,10 @@ impl WatchdogState {
             return None;
         }
         let elapsed_ms = (now - w.last_progress_at).num_milliseconds();
-        if elapsed_ms > STALL_HARD_LIMIT_MS {
+        if elapsed_ms > self.hard_limit_ms {
             return Some(ScanDecision::HardLimit);
         }
-        if elapsed_ms > STALL_AFTER_MS && !w.stall_notified {
+        if elapsed_ms > self.stall_after_ms && !w.stall_notified {
             return Some(ScanDecision::Stall);
         }
         None
@@ -172,7 +199,7 @@ impl WatchdogState {
 
     pub fn schedule_next(&mut self, now: DateTime<chrono::Utc>) {
         use chrono::Duration;
-        self.next_scan_at = Some(now + Duration::milliseconds(WATCHDOG_TICK_MS));
+        self.next_scan_at = Some(now + Duration::milliseconds(self.tick_ms));
     }
 
     /// 任务移除(终态清场)。

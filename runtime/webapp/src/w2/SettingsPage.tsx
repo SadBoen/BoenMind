@@ -3,17 +3,26 @@
 // 插件 PIN 快捷项(PIN 后在此显示,点击跳插件页并按名筛选)。
 import { useEffect, useState } from "react";
 // 导航:常规 / 模型 / 插件 / 外观 / 角色 / 日志 / 关于
-import { BoxIcon, InfoIcon, PlugIcon, ScrollTextIcon, SlidersHorizontalIcon, SparklesIcon, WrenchIcon } from "lucide-react";
+import { BoxIcon, GaugeIcon, InfoIcon, PlugIcon, ScrollTextIcon, SlidersHorizontalIcon, SparklesIcon, WrenchIcon } from "lucide-react";
 import { ProvidersPage } from "./ProvidersPage";
 import { PluginsPage } from "./PluginsPage";
 import { RolesPage } from "./RolesPage";
 import { LogsPage } from "./LogsPage";
 import { AboutPage } from "./AboutPage";
 import { GeneralPage } from "./GeneralPage";
+import { LimitsPage } from "./LimitsPage";
 import { AppearancePage } from "@/w3/AppearancePage";
 import { cn } from "@/lib/utils";
 
-type Section = "general" | "providers" | "plugins" | "appearance" | "roles" | "logs" | "about";
+type Section =
+  | "general"
+  | "providers"
+  | "plugins"
+  | "limits"
+  | "appearance"
+  | "roles"
+  | "logs"
+  | "about";
 
 export function SettingsPage({ onClose }: { onClose: () => void }) {
   const [section, setSection] = useState<Section>("providers");
@@ -70,6 +79,12 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
             label="插件"
           />
           <NavItem
+            active={section === "limits"}
+            onClick={() => setSection("limits")}
+            icon={<GaugeIcon className="size-4" />}
+            label="限制与超时"
+          />
+          <NavItem
             active={section === "appearance"}
             onClick={() => setSection("appearance")}
             icon={<SparklesIcon className="size-4" />}
@@ -98,6 +113,7 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
         <main className="min-w-0 flex-1 overflow-y-auto p-6" data-slot="settings-content">
           <div className="mx-auto max-w-4xl">
             {section === "general" ? <GeneralPage /> : null}
+            {section === "limits" ? <LimitsPage /> : null}
             {section === "providers" ? <ProvidersPage /> : null}
             {section === "plugins" ? (
               <PluginsPage

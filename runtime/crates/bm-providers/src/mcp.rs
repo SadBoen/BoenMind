@@ -20,17 +20,17 @@ pub const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
 pub const DEFAULT_TOOL_TIMEOUT_MS: u64 = 30_000;
 /// stdio 写管道限时:子进程挂起(非崩溃)时调用方持锁跨
 /// await,无超时则该域能力永久坏死(respawn 也拿不到锁)。
-const STDIO_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// 带限时的 stdio 帧写入(write_all + flush),所有持锁写管道路径的统一出口。
 async fn write_frame<W: tokio::io::AsyncWrite + Unpin>(
     stdin: &mut W,
     bytes: &[u8],
+    timeout: Duration,
 ) -> Result<(), String> {
     use tokio::io::AsyncWriteExt;
-    tokio::time::timeout(STDIO_WRITE_TIMEOUT, stdin.write_all(bytes))
+    tokio::time::timeout(timeout, stdin.write_all(bytes))
         .await
-        .map_err(|_| "stdio 写超时(子进程 10s 未消费,判定挂起)".to_string())?
+        .map_err(|_| "stdio 写超时(子进程未消费,判定挂起)".to_string())?
         .map_err(|e| format!("stdio 写失败: {e}"))?;
     stdin
         .flush()
@@ -357,10 +357,12 @@ pub struct StdioMcpTransport {
     alive: Arc<std::sync::atomic::AtomicBool>,
     /// 现行代的终止开关(Drop = 杀子进程;换代 = 换灯)。
     kill: Mutex<Option<ChildKill>>,
-    /// respawn 时间窗(60s 滑动),配合 restart_limit 限流。
+    /// respawn 时间窗(limits 默认 60s 滑动),配合 restart_limit 限流。
     respawn_times: Arc<Mutex<Vec<std::time::Instant>>>,
     /// R3:此前解析后零消费的死配置;现为 respawn 窗口上限。
     restart_limit: u32,
+    /// W10(ADR-0024):窗口/写超时热读单元(缺省 = 代码默认)。
+    limits: bm_core::limits::LimitsCell,
 }
 
 impl Drop for StdioMcpTransport {
@@ -409,7 +411,26 @@ impl StdioMcpTransport {
             kill: Mutex::new(Some(kill)),
             respawn_times: Arc::new(Mutex::new(Vec::new())),
             restart_limit: restart_limit.max(1),
+            limits: bm_core::limits::LimitsCell::with_default(),
         }))
+    }
+
+    /// W10:注入共享 limits 单元(重生窗口/写超时随之;supervisor 装配用)。
+    pub fn with_limits(mut self: Arc<Self>, limits: bm_core::limits::LimitsCell) -> Arc<Self> {
+        // Arc 内不可变字段:借 Cell 共享即可,无需可变——字段本身是 Cell。
+        let _ = &mut self;
+        let s = Arc::into_inner(self).expect("supervisor 装配期独占");
+        let mut s = s;
+        s.limits = limits;
+        Arc::new(s)
+    }
+
+    fn respawn_window(&self) -> Duration {
+        Duration::from_millis(self.limits.get().mcp_respawn_window_ms)
+    }
+
+    fn write_timeout(&self) -> Duration {
+        Duration::from_millis(self.limits.get().mcp_stdio_write_timeout_ms)
     }
 }
 
@@ -537,7 +558,8 @@ impl StdioMcpTransport {
         {
             let mut times = self.respawn_times.lock().expect("锁未中毒");
             let now = std::time::Instant::now();
-            times.retain(|t| now.duration_since(*t) < std::time::Duration::from_secs(60));
+            let window = self.respawn_window();
+            times.retain(|t| now.duration_since(*t) < window);
             if times.len() >= self.restart_limit as usize {
                 return Err(format!(
                     "MCP 子进程 60 秒内已重生 {} 次(上限 {}),疑似故障循环已熔断;请检查插件或经管理面重载",
@@ -597,7 +619,7 @@ impl McpTransport for StdioMcpTransport {
             let msg = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
             let mut bytes = serde_json::to_string(&msg).map_err(|e| e.to_string())?;
             bytes.push('\n');
-            write_frame(stdin, bytes.as_bytes()).await
+            write_frame(stdin, bytes.as_bytes(), self.write_timeout()).await
         })
         .await;
         // 2026-09-05 回看修复:写失败必须在返回前清账,否则 pending/token
@@ -636,7 +658,7 @@ impl McpTransport for StdioMcpTransport {
         let msg = json!({"jsonrpc": "2.0", "method": method, "params": params});
         let mut bytes = serde_json::to_string(&msg).map_err(|e| e.to_string())?;
         bytes.push('\n');
-        write_frame(stdin, bytes.as_bytes()).await
+        write_frame(stdin, bytes.as_bytes(), self.write_timeout()).await
     }
 
     fn subscribe_progress(&self) -> tokio::sync::mpsc::UnboundedReceiver<McpProgressNote> {
@@ -650,6 +672,7 @@ impl McpTransport for StdioMcpTransport {
     fn cancel_by_token(&self, token: &str) {
         let inner = self.inner.clone();
         let token = token.to_string();
+        let write_timeout = self.write_timeout();
         tokio::spawn(async move {
             let mut guard = inner.lock().await;
             if let Some(id) = guard.token_to_id.remove(&token)
@@ -662,7 +685,7 @@ impl McpTransport for StdioMcpTransport {
                 });
                 if let Ok(mut bytes) = serde_json::to_vec(&msg) {
                     bytes.push(b'\n');
-                    let _ = write_frame(stdin, &bytes).await;
+                    let _ = write_frame(stdin, &bytes, write_timeout).await;
                 }
             }
         });
@@ -677,6 +700,8 @@ pub struct HttpMcpTransport {
     bearer_token: Option<String>,
     client: reqwest::Client,
     progress_rx: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<McpProgressNote>>>,
+    /// W10(ADR-0024):单请求超时热读单元(缺省 60s)。
+    limits: bm_core::limits::LimitsCell,
 }
 
 impl HttpMcpTransport {
@@ -686,7 +711,16 @@ impl HttpMcpTransport {
             bearer_token,
             client: reqwest::Client::new(),
             progress_rx: Mutex::new(None),
+            limits: bm_core::limits::LimitsCell::with_default(),
         })
+    }
+
+    /// W10:注入共享 limits 单元(supervisor 装配用)。
+    pub fn with_limits(self: Arc<Self>, limits: bm_core::limits::LimitsCell) -> Arc<Self> {
+        let s = Arc::into_inner(self).expect("supervisor 装配期独占");
+        let mut s = s;
+        s.limits = limits;
+        Arc::new(s)
     }
 }
 
@@ -704,8 +738,11 @@ impl McpTransport for HttpMcpTransport {
             req = req.bearer_auth(token);
         }
         // R3(FULL-REVIEW-2026-09-05 §7):裸 send 无超时 = 远端挂起即调用
-        // 悬挂;60s 硬顶(远端长任务应自行异步化,进度走通知)。
-        let resp = tokio::time::timeout(std::time::Duration::from_secs(60), req.send())
+        // 悬挂;默认 60s 硬顶(W10 走 limits),远端长任务应自行异步化。
+        let remote_timeout = std::time::Duration::from_millis(
+            self.limits.get().mcp_remote_timeout_ms,
+        );
+        let resp = tokio::time::timeout(remote_timeout, req.send())
             .await
             .map_err(|_| "远程 MCP 请求超时(60s)".to_string())?
             .map_err(|e| format!("远程 MCP 请求失败: {e}"))?;

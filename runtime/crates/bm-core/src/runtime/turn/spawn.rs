@@ -58,9 +58,13 @@ pub(crate) fn spawn_turn(
     let max_attempts = w
         .config
         .max_attempts
-        .unwrap_or_else(|| chain.len().min(3) as u32)
+        .unwrap_or_else(|| {
+            (chain.len().min(w.config.limits.get().model_max_attempts as usize)) as u32
+        })
         .clamp(1, 3);
-    let timeout_secs = w.config.turn_timeout_secs;
+    // W10(ADR-0024):模型调用超时走 limits 热生效(env 覆盖已由装配方
+    // 折算进 Cell;RuntimeConfig.turn_timeout_secs 保留为兼容字段不再读)。
+    let timeout_secs = w.config.limits.get().model_call_timeout_secs as i64;
     let tx = w.tx.clone();
     let op_id = operation_id.clone();
     let streaming = w.config.model_streaming;
@@ -110,12 +114,33 @@ pub(crate) fn spawn_turn(
             ws.path
         ))
     });
-    let role_prompt = match (role_prompt, workspace_note) {
+    // W10(ADR-0025):在跑后台作业摘要回合级注入——模型据此知道该用
+    // system.job_output 收哪个 job(不做完成主动推注入,见 ADR-0025 §3)。
+    let jobs_note = w
+        .config
+        .job_board
+        .as_ref()
+        .map(|b| b.summary())
+        .unwrap_or_default();
+    let notes: Option<String> = {
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(n) = workspace_note {
+            parts.push(n);
+        }
+        if !jobs_note.is_empty() {
+            parts.push(jobs_note);
+        }
+        if parts.is_empty() { None } else { Some(parts.join("
+
+")) }
+    };
+    let role_prompt = match (role_prompt, notes) {
         (Some(sp), Some(note)) => Some(format!("{sp}\n\n{note}")),
         (None, Some(note)) => Some(note),
         (other, None) => other,
     };
     let ctx_log = w.ctx_log.clone();
+    let limits_cell = w.config.limits.clone();
 
     let allowed_tools = agent.allowed_tools.clone();
     tokio::spawn(async move {
@@ -381,32 +406,36 @@ pub(crate) fn spawn_turn(
                         // 结果以 Tool 消息回喂 → 重调模型。
                         if !tool_calls.is_empty() && !loop_broken {
                             tool_rounds += 1;
-                            // 检测是否连续 5 次调用完全相同工具与参数
-                            for tc in &tool_calls {
-                                let sig = (tc.name.clone(), tc.arguments.clone());
-                                if recent_tool_signatures.len() >= 4
-                                    && recent_tool_signatures[recent_tool_signatures.len() - 1]
-                                        == sig
-                                    && recent_tool_signatures[recent_tool_signatures.len() - 2]
-                                        == sig
-                                    && recent_tool_signatures[recent_tool_signatures.len() - 3]
-                                        == sig
-                                    && recent_tool_signatures[recent_tool_signatures.len() - 4]
-                                        == sig
-                                {
-                                    loop_broken = true;
-                                    break;
-                                }
-                                recent_tool_signatures.push(sig);
-                                if recent_tool_signatures.len() > 20 {
-                                    recent_tool_signatures.remove(0);
+                            // W10:防空转熔断阈值/窗口走 limits(0=关闭)。
+                            // 检测是否连续 N 次调用完全相同工具与参数(N=limits)。
+                            let lim = limits_cell.get();
+                            let breaker_n = lim.loop_breaker_consecutive as usize;
+                            let breaker_window = lim.loop_breaker_window;
+                            if breaker_n >= 2 {
+                                for tc in &tool_calls {
+                                    let sig = (tc.name.clone(), tc.arguments.clone());
+                                    if recent_tool_signatures.len() >= breaker_n - 1
+                                        && recent_tool_signatures
+                                            [recent_tool_signatures.len() - (breaker_n - 1)..]
+                                            .iter()
+                                            .all(|s| *s == sig)
+                                    {
+                                        loop_broken = true;
+                                        break;
+                                    }
+                                    recent_tool_signatures.push(sig);
+                                    if recent_tool_signatures.len() > breaker_window {
+                                        recent_tool_signatures.remove(0);
+                                    }
                                 }
                             }
 
                             if loop_broken {
                                 let _ = tx.try_send(Cmd::ProviderDelta {
                                     operation_id: op_id.clone(),
-                                    delta: "\n(检测到连续 5 次调用相同工具与完全一致的入参，已触发防空转熔断保护。)\n".to_string(),
+                                    delta: format!(
+                                        "\n(检测到连续 {breaker_n} 次调用相同工具与完全一致的入参，已触发防空转熔断保护。)\n"
+                                    ),
                                 });
                             } else {
                                 // ADR-0022:assistant 消息原样携带 tool_calls 回喂,
@@ -531,7 +560,13 @@ pub(crate) fn spawn_turn(
                                     // operations 轮询至终态(上限 60s);需审批能力
                                     // 轮询至审批裁决+执行终态(上限 300s)。
                                     let mut tool_result = String::from("工具执行无应答");
-                                    let wait_secs = if approval_id.is_some() { 300 } else { 60 };
+                                    // W10:等待时限走 limits(审批 300s/普通 60s 默认)。
+                                    let lim_wait = limits_cell.get();
+                                    let wait_secs: u64 = if approval_id.is_some() {
+                                        (lim_wait.approval_wait_ms / 1000).max(1)
+                                    } else {
+                                        (lim_wait.tool_wait_ms / 1000).max(1)
+                                    };
                                     // 直通修复(2026-09-03 VPS 实测 P1):同步收据
                                     // state=succeeded 且 result 内联时立即回喂——
                                     // 同步结果从不写入 op_results(仅异步回单/审批
@@ -668,7 +703,11 @@ pub(crate) fn spawn_turn(
                         // 熔断或工具轮只回了工具调用无文本时的兜底说明
                         let content = if !tool_calls.is_empty() && content.trim().is_empty() {
                             if loop_broken {
-                                "(检测到连续 5 次调用相同工具与完全一致的入参，已触发防空转熔断保护。)".to_string()
+                                let breaker_n =
+                                    limits_cell.get().loop_breaker_consecutive as usize;
+                                format!(
+                                    "(检测到连续 {breaker_n} 次调用相同工具与完全一致的入参，已触发防空转熔断保护。)"
+                                )
                             } else {
                                 "(工具调用已执行完成，回合在此收束。)".to_string()
                             }

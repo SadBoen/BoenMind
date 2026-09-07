@@ -277,7 +277,8 @@ pub async fn chat_completions(
     if !stream {
         // 非流式:轮询聚合到终态一次返回
         let store = state.store.clone();
-        let deadline = Instant::now() + Duration::from_secs(180);
+        // W10(ADR-0024):非流式聚合等待走 limits。
+        let deadline = Instant::now() + Duration::from_millis(state.limits.get().nonstream_wait_ms);
         loop {
             if Instant::now() > deadline {
                 return err_response(StatusCode::INTERNAL_SERVER_ERROR, "回合超时");
@@ -356,7 +357,8 @@ pub async fn chat_completions(
         // 长工具阶段中途掐断交互流——此后审批标记再无下发通道(YOLO 失效、
         // ask 无卡片),界面误显「完成」而后端仍在跑。改 900s;keepalive
         // 每 10s 保活前端看门狗,空闲不中断。
-        let deadline = Instant::now() + Duration::from_secs(900);
+        // W10(ADR-0024):流式硬顶走 limits(v0.0.11 起 900s 默认)。
+        let deadline = Instant::now() + Duration::from_millis(state.limits.get().stream_hard_cap_ms);
         // 静默保活(2026-09-02 修「工具调用卡死」):工具轮执行期间事件面
         // 可静默 25s+,前端看门狗(60s 无任何字节即中止)会被误杀。空闲超
         // 10s 下发一行 SSE 注释——前端按任意字节重置看门狗,注释行被解析
@@ -367,7 +369,7 @@ pub async fn chat_completions(
                 break;
             }
             tokio::time::sleep(Duration::from_millis(80)).await;
-            if last_byte.elapsed() > Duration::from_secs(10) {
+            if last_byte.elapsed() > Duration::from_millis(state.limits.get().stream_keepalive_ms) {
                 last_byte = Instant::now();
                 yield Ok::<Bytes, std::io::Error>(Bytes::from(": keepalive\n\n"));
             }

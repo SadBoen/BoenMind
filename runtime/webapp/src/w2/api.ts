@@ -2,6 +2,28 @@
 // 暂不入冻结合同,行为规格 = bm-surface-http tests/webadmin_tests.rs)。
 // 错误形状统一 {error:{message}};探针/连通类结果走 200 + ok 布尔。
 
+// W10(ADR-0024/0025):运行时限制配置 + 后台作业
+export type LimitKey = {
+  key: string;
+  group: string;
+  label: string;
+  min: number;
+  max: number;
+  editable: boolean;
+  value: number;
+  default: number;
+  source: "default" | "file" | "env";
+};
+
+export type JobInfo = {
+  id: string;
+  command: string;
+  status: "running" | "succeeded" | "failed";
+  exit_code: number | null;
+  elapsed_ms: number;
+  log_path: string;
+};
+
 export type Provider = {
   id: string;
   name: string;
@@ -226,6 +248,12 @@ const json = (method: string, body: unknown): RequestInit => ({
 });
 
 export const api = {
+  limits: {
+    get: () => req<{ ok: boolean; keys: LimitKey[] }>("/admin/limits"),
+    put: (values: Record<string, number>) =>
+      req<{ ok: boolean; note: string }>("/admin/limits", json("PUT", { values })),
+  },
+  jobs: () => req<{ ok: boolean; jobs: JobInfo[] }>("/admin/jobs"),
   providers: {
     list: () => req<{ providers: Provider[] }>("/admin/providers"),
     create: (b: ProviderInput) =>

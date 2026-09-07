@@ -99,6 +99,8 @@ async fn rig_streaming(
         max_attempts: None,
         async_executor: None,
         model_streaming: on,
+        limits: bm_core::LimitsCell::with_default(),
+        job_board: None,
     };
     (RuntimeHandle::start(config).await, ids)
 }
@@ -290,6 +292,8 @@ async fn t144_live_streaming_one_turn() {
         max_attempts: None,
         async_executor: None,
         model_streaming: true,
+        limits: bm_core::LimitsCell::with_default(),
+        job_board: None,
     };
     let handle = RuntimeHandle::start(config).await;
     let ctx = one_turn(&handle, &ids, &model).await;

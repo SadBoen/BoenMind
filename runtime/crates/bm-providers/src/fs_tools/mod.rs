@@ -150,6 +150,8 @@ impl CapabilityProvider for FsPlaceholder {
 pub struct FsExecutor {
     pub data_dir: PathBuf,
     pub fallback_root: PathBuf,
+    /// W10(ADR-0024):限额热生效单元(缺省 = 代码默认)。
+    pub limits: bm_core::limits::LimitsCell,
 }
 
 impl FsExecutor {
@@ -157,6 +159,20 @@ impl FsExecutor {
         Self {
             data_dir: data_dir.into(),
             fallback_root: fallback_root.into(),
+            limits: bm_core::limits::LimitsCell::with_default(),
+        }
+    }
+
+    /// W10:装配方注入共享 limits 单元(设置页改值即刻生效)。
+    pub fn with_limits(
+        data_dir: impl Into<PathBuf>,
+        fallback_root: impl Into<PathBuf>,
+        limits: bm_core::limits::LimitsCell,
+    ) -> Self {
+        Self {
+            data_dir: data_dir.into(),
+            fallback_root: fallback_root.into(),
+            limits,
         }
     }
 
@@ -183,13 +199,14 @@ impl AsyncCapabilityExecutor for FsExecutor {
         _deadline: std::time::Duration,
     ) -> Result<Value, AsyncCallError> {
         let roots = self.roots();
+        let limits = self.limits.get();
         let capability = capability.to_string();
         // 阻塞面(树遍历/磁盘 IO)挪出单写者循环
         let out = tokio::task::spawn_blocking(move || match capability.as_str() {
-            FS_SEARCH => ops::search(&roots, &args),
-            FS_READ => ops::read(&roots, &args),
-            FS_WRITE => ops::write(&roots, &args),
-            FS_EDIT => ops::edit(&roots, &args),
+            FS_SEARCH => ops::search(&roots, &args, &limits),
+            FS_READ => ops::read(&roots, &args, &limits),
+            FS_WRITE => ops::write(&roots, &args, &limits),
+            FS_EDIT => ops::edit(&roots, &args, &limits),
             other => json!({"ok": false, "error": format!("fs 执行器不认识能力 {other}")}),
         })
         .await

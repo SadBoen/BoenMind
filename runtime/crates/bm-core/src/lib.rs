@@ -15,6 +15,7 @@ pub mod context_log;
 pub mod coordinator;
 pub mod error;
 pub mod exec_log;
+pub mod limits;
 pub mod memory;
 pub mod observation;
 pub mod ports;
@@ -40,6 +41,7 @@ pub use butler::{
 pub use clock::{Clock, MockClock, SystemClock};
 pub use coordinator::{COORDINATOR_PRINCIPAL, WORKER_PRINCIPAL, intersection_grants};
 pub use error::{CoreError, CoreResult};
+pub use limits::{Limits, LimitsCell, KEY_META};
 pub use memory::memory_capabilities;
 pub use observation::{ObservationEntry, expect_satisfied};
 pub use registry::{BindingStatus, CapabilityDiscovery, CapabilityProvider, CapabilityRegistry};

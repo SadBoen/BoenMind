@@ -16,9 +16,8 @@ pub struct ProviderHealth {
     pub cooldown_until: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-pub(crate) const PROVIDER_FAIL_THRESHOLD: u32 = 3;
-pub(crate) const PROVIDER_COOLDOWN_MS: i64 = 30_000;
-pub(crate) const MCP_RECONNECT_LIMIT: u32 = 3;
+// W10(ADR-0024):健康面阈值/冷却走 limits 热生效(默认值见 Limits::default:
+// 3 次/30s/重连 3 次);常量已收编,消费点读 w.config.limits。
 
 /// "mcp.<server>.<tool>" -> "mcp.<server>"(健康面主体;其余原样)。
 pub(crate) fn mcp_provider_of(capability: &str) -> String {
@@ -57,14 +56,17 @@ pub(crate) fn note_provider_failure(w: &mut World, provider: &str, reason: &str)
     let now = w.config.clock.now();
     let entry = w.provider_health.entry(provider.to_string()).or_default();
     entry.fail_streak += 1;
-    if entry.status != "unavailable" && entry.fail_streak >= PROVIDER_FAIL_THRESHOLD {
+    let lim = w.config.limits.get();
+    if entry.status != "unavailable" && entry.fail_streak >= lim.provider_fail_threshold {
         entry.status = "unavailable";
-        entry.cooldown_until = Some(now + chrono::Duration::milliseconds(PROVIDER_COOLDOWN_MS));
+        entry.cooldown_until =
+            Some(now + chrono::Duration::milliseconds(lim.provider_cooldown_ms as i64));
         emit_provider_health(w, provider, "healthy", "unavailable", reason);
     } else if entry.status == "unavailable" {
         // P1(第四轮评审):半开探测失败必须重开冷却——否则冷却过期后每个
         // 请求都穿透打到死 provider,熔断器只挡前 30 秒。
-        entry.cooldown_until = Some(now + chrono::Duration::milliseconds(PROVIDER_COOLDOWN_MS));
+        entry.cooldown_until =
+            Some(now + chrono::Duration::milliseconds(lim.provider_cooldown_ms as i64));
     }
 }
 

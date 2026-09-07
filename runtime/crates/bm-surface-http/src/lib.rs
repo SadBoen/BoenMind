@@ -50,6 +50,8 @@ pub struct AppState {
     pub public_bind: bool,
     /// Web 静态目录(/login 登录页本体取此目录下 login.html)。
     pub web_dir: Option<std::path::PathBuf>,
+    /// W10(ADR-0024):运行时限制共享单元(/v1 流式硬顶/保活等热读)。
+    pub limits: bm_core::limits::LimitsCell,
 }
 
 /// 组装 Surface 路由。`token` 为已加载的访问令牌;/health 豁免鉴权,
@@ -68,10 +70,16 @@ pub fn router(
     public_bind: bool,
 ) -> Router {
     let data_dir = admin.as_ref().map(|a| a.data_dir.clone());
-    let portal = portal::PortalAuth::load(
+    // W10:limits 单元随 AdminConfig 流入 /v1 与门户面(测试态无 admin = 默认)。
+    let limits = admin
+        .as_ref()
+        .map(|a| a.limits.clone())
+        .unwrap_or_default();
+    let portal = portal::PortalAuth::load_with_limits(
         data_dir
             .clone()
             .unwrap_or_else(|| std::env::temp_dir().join("boenmind-no-portal")),
+        limits.clone(),
     );
     let state = AppState {
         handle,
@@ -85,6 +93,7 @@ pub fn router(
         portal,
         web_dir: web_dir.clone(),
         public_bind,
+        limits,
     };
     if public_bind && !state.portal.configured() {
         eprintln!(

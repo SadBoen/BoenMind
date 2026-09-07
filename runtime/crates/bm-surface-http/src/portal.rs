@@ -25,14 +25,16 @@ pub const SESSION_COOKIE: &str = "boen_session";
 
 /// 登录失败限速(ADR-0009 决策 4 承兑,2026-09-05):同一来源 5 次失败
 /// 锁定 15 分钟。取不到对端地址(测试 oneshot 等)时退化为全局门。
-const LOGIN_MAX_FAILURES: u32 = 5;
-const LOGIN_LOCKOUT: Duration = Duration::from_secs(15 * 60);
+// W10(ADR-0024):失败次数/锁定时长/Cookie 有效期走 self.limits
+// (代码默认:5 次 / 15 分钟 / 30 天,见 Limits::default)。
 /// PBKDF2-HMAC-SHA256 迭代次数(2026-09-05 起;旧单层 SHA-256 条目在
 /// 登录成功时透明升级,离线爆破成本从 10⁹/秒 量级降至 10⁵/秒 以下)
 const PBKDF2_ITERS: u32 = 100_000;
 
 pub struct PortalAuth {
     pub data_dir: PathBuf,
+    /// W10(ADR-0024):锁定阈值/时长/Cookie 有效期热读单元。
+    pub limits: bm_core::limits::LimitsCell,
     /// `salt$sha256hex`(legacy)或 `pbkdf2$<iters>$<salt>$<hash>`;None = 未设密码。
     pub password_hash: Mutex<Option<String>>,
     pub sessions: Mutex<HashSet<String>>,
@@ -41,6 +43,14 @@ pub struct PortalAuth {
 }
 
 impl PortalAuth {
+    pub fn load_with_limits(data_dir: PathBuf, limits: bm_core::limits::LimitsCell) -> Arc<Self> {
+        let auth = Self::load(data_dir);
+        let a = Arc::into_inner(auth).expect("装配方独占");
+        let mut a = a;
+        a.limits = limits;
+        Arc::new(a)
+    }
+
     pub fn load(data_dir: PathBuf) -> Arc<Self> {
         let hash = std::fs::read_to_string(data_dir.join("config/portal.json"))
             .ok()
@@ -48,6 +58,7 @@ impl PortalAuth {
             .and_then(|v| v["password_hash"].as_str().map(String::from));
         Arc::new(Self {
             data_dir,
+            limits: bm_core::limits::LimitsCell::with_default(),
             password_hash: Mutex::new(hash),
             sessions: Mutex::new(HashSet::new()),
             login_gate: Mutex::new(HashMap::new()),
@@ -60,26 +71,30 @@ impl PortalAuth {
 
     /// 该来源是否处于登录锁定中。
     fn login_locked(&self, key: &str) -> bool {
+        let max_failures = self.limits.get().login_max_failures;
         self.login_gate
             .lock()
             .expect("锁未中毒")
             .get(key)
             .is_some_and(|(n, until)| {
-                *n >= LOGIN_MAX_FAILURES && until.is_some_and(|t| Instant::now() < t)
+                *n >= max_failures && until.is_some_and(|t| Instant::now() < t)
             })
     }
 
     fn note_login_failure(&self, key: &str) {
+        let lim = self.limits.get();
+        let max_failures = lim.login_max_failures;
+        let lockout = Duration::from_secs(lim.login_lockout_secs);
         let mut gate = self.login_gate.lock().expect("锁未中毒");
         let e = gate.entry(key.to_string()).or_insert((0, None));
         e.0 = e.0.saturating_add(1);
-        if e.0 >= LOGIN_MAX_FAILURES {
-            e.1 = Some(Instant::now() + LOGIN_LOCKOUT);
+        if e.0 >= max_failures {
+            e.1 = Some(Instant::now() + lockout);
         }
         // 台账 GC:条目过多时清掉不在锁定期的旧项(防无界增长)
         if gate.len() > 1024 {
             gate.retain(|_, (n, until)| {
-                *n < LOGIN_MAX_FAILURES || until.is_some_and(|t| Instant::now() < t)
+                *n < max_failures || until.is_some_and(|t| Instant::now() < t)
             });
         }
     }
@@ -275,8 +290,10 @@ pub async fn require_portal(
         .into_response()
 }
 
-fn session_cookie(value: &str) -> String {
-    format!("{SESSION_COOKIE}={value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000")
+fn session_cookie(value: &str, max_age_secs: u64) -> String {
+    format!(
+        "{SESSION_COOKIE}={value}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age_secs}"
+    )
 }
 
 fn unauthorized(msg: &str) -> Response {
@@ -325,7 +342,7 @@ pub async fn portal_bootstrap(
         .expect("锁未中毒")
         .insert(session.clone());
     (
-        [(header::SET_COOKIE, session_cookie(&session))],
+        [(header::SET_COOKIE, session_cookie(&session, state.portal.limits.get().portal_cookie_max_age_secs))],
         Json(json!({"ok": true})),
     )
         .into_response()
@@ -375,7 +392,7 @@ pub async fn portal_login(
         .expect("锁未中毒")
         .insert(session.clone());
     (
-        [(header::SET_COOKIE, session_cookie(&session))],
+        [(header::SET_COOKIE, session_cookie(&session, state.portal.limits.get().portal_cookie_max_age_secs))],
         Json(json!({"ok": true})),
     )
         .into_response()
@@ -504,7 +521,7 @@ mod tests {
         let auth = PortalAuth::load(dir.path().to_path_buf());
         let key = "1.2.3.4";
         assert!(!auth.login_locked(key));
-        for _ in 0..LOGIN_MAX_FAILURES {
+        for _ in 0..bm_core::limits::Limits::default().login_max_failures {
             auth.note_login_failure(key);
         }
         assert!(auth.login_locked(key), "达上限即锁定");

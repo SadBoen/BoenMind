@@ -31,6 +31,8 @@
 | [ADR-0021](ADR-0021-fs-tools-internalization.md) | 文件工具集内置化(fs.*)与 code-tools 插件退役 | accepted | 查/读/改收编内核(修订单 ADR-0020 清单范围,用户裁决);沙箱=工作区注册表;审批分级不变 |
 | [ADR-0022](ADR-0022-native-tool-protocol-and-description-governance.md) | 工具调用原生协议还原与描述治理 | accepted | role:tool+tool_call_id/tool_calls 回喂/删防复读禁令/manifest.description 自描述/fs_edit edits 数组(2026-09-06) |
 | [ADR-0023](ADR-0023-bundled-plugin-default-install-and-lifecycle.md) | 官方随包插件默认安装与生命周期管控 | accepted | 启动播种默认安装(修订 0005/0006/0017 对官方件的显式批准要求)/墓碑防复活/批准即上线卸载即下线/purge 物理删除/弃用标记(2026-09-06) |
+| [ADR-0024](ADR-0024-limits-config-surface.md) | 运行时限制集中配置面(limits.json) | accepted | ~40 项硬编码限制收敛单文件+安全钳制+env>文件>代码默认+LimitsCell 热生效;设置页全量可编辑;exec 默认 120s/上限 600s 对齐业界(2026-09-07) |
+| [ADR-0025](ADR-0025-background-command-promotion.md) | 长命令后台转轨 | accepted | exec 增 run_in_background+超限自动转轨(Hermes 式);system.job_output 轮询收取(DSH 式);回合 prompt 注入作业摘要;不做主动推注入(2026-09-07) |
 
 > 编号说明:ADR-0012 于 2026-08-31 随 M10 dsh 前端线归档(见 ADR-0013 编号说明),编号不回收;主干引用配置管理口径时以 config_store 现状与 W2/W4 规格为准。
 > 文体注:0001-0009 状态用小写 accepted(-with-conditions),0010/0011 起用 Accepted(日期)/已裁决(用户,日期)——语义等价,统一以本表为准。

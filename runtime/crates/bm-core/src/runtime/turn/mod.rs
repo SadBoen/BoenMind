@@ -12,7 +12,7 @@ mod recovery;
 mod spawn;
 
 pub(super) use audit::{
-    content_trunc, emit_capability_invoked, emit_capability_invoked_with,
+    content_trunc_with, emit_capability_invoked, emit_capability_invoked_with,
     emit_model_call_error_audit, error_code_of, sha256_hex,
 };
 pub(super) use capability::{
