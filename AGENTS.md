@@ -7,7 +7,7 @@ BoenMind:个人生态的 AI Runtime / AI OS,当前为**阶段一(跨平台单软
 (Erlang/OTP、Kubernetes、VS Code,见 `architecture/deepwiki-validation.md`)。
 合同库冻结 v1.0(字段只增不破)。
 
-**当前状态(2026-09-07)**:v0.0.13 已发版;此后两批复核批已落 main 未打 tag——①v0.0.13 后外部复盘复核(修 skills/roles 损坏静默覆写清盘隐患,误报八项驳回)②架构回头看评审复核(6 路评审报告逐项验证:修 4 P0+26 P1+约 20 P2,含工具轮总数安全网/settle Result 化/exec 剥离 BOEN_*/SSE 真实结局分路/apps 冒烟+CI 门禁/插件 CI 三平台;v0.0.13 批=webadmin 拆 11 子模块+x-opencode-session 头+Git 历史瘦身 456MB **历史已重写=既有 clone 须重拉**);**评审/审计类一次性报告文档已按用户令全仓清理(2026-09-07),各批复核结论以 HISTORY/BACKLOG 行为准,报告原文溯 git 史**;
+**当前状态(2026-09-07)**:v0.0.13 已发版;此后三批复核批已落 main 未打 tag——①v0.0.13 后外部复盘复核(修 skills/roles 损坏静默覆写清盘隐患,误报八项驳回)②架构回头看评审复核(6 路评审报告逐项验证:修 4 P0+26 P1+约 20 P2,含工具轮总数安全网/settle Result 化/exec 剥离 BOEN_*/SSE 真实结局分路/apps 冒烟+CI 门禁/插件 CI 三平台;v0.0.13 批=webadmin 拆 11 子模块+x-opencode-session 头+Git 历史瘦身 456MB **历史已重写=既有 clone 须重拉**)③第三方评审报告复核(F-12 彻底解耦=内核去 rusqlite 化+前端 mock 桩/假按钮清理,8 项误报驳回,BACKLOG 新登记 4 项);**评审/审计类一次性报告文档已按用户令全仓清理(2026-09-07),各批复核结论以 HISTORY/BACKLOG 行为准,报告原文溯 git 史**;
 **欠账唯一入口 = `milestones/BACKLOG.md`**(已闭合条目自 2026-09-02 起移出台账);
 **交付全史唯一入口 = `milestones/HISTORY.md`**。
 
@@ -15,7 +15,7 @@ BoenMind:个人生态的 AI Runtime / AI OS,当前为**阶段一(跨平台单软
 
 ```text
 BoenMind-CORE-ARCHITECTURE.md   第 0 层  架构基线:原则/边界/不变量;§17 裁决;§18 里程碑定义;§19 回看制度
-adr/                            第 0 层  架构决策记录 ADR-0001..0023(0012 随 M10 dsh 线归档、编号跳空;基线与 ADR 冲突时以更新的 ADR 为准)
+adr/                            第 0 层  架构决策记录 ADR-0001..0025(0012 随 M10 dsh 线归档、编号跳空;基线与 ADR 冲突时以更新的 ADR 为准)
 architecture/                   第 0 层  C4 模型 boenmind.c4(拓扑唯一权威)+ 辩论转录(debates/)+ 验证报告
 boenmind-contracts/             第 1 层  机器可读合同(v1.0 冻结)+ validate.py 校验器 + m0/(测试矩阵/威胁模型/perf-baseline)
 milestones/                     第 2 层  实现规格+回看(M1-M9、W1-W9)+ 台账三件:HISTORY(交付时间线)/BACKLOG(未结事项)/PENDING(待裁决,现清零);外部评审/审计类一次性报告已按用户令清理(2026-09-07),结论沉淀在 HISTORY/BACKLOG,原文可溯 git 史

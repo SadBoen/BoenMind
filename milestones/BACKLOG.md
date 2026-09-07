@@ -10,7 +10,7 @@
 |---|---|---|
 | 对话意图门控·硬门控设计 | 用户提报(2026-09-05):闲聊误触发工具。2026-09-06 二轮已落软防线(turn 挂工具时注入「工具纪律」System 段,84d1bb0);本条收窄为代码层硬门控(意图识别语义判定)的产品设计裁决 | OPEN(待设计裁决) |
 | 上下文压缩(Compression)独立 MCP 工具 | 2026-09-05 讨论:超长会话滚动摘要、折叠与智能裁剪,独立为后续专门 MCP 插件,不与透视器混淆 | OPEN(待后续讨论) |
-| 记忆(Memory)检索对话级自动注入 | 2026-09-05 讨论:turn.rs 回合组装时对接 SQLite FTS5 memory.search 自动召回相关记忆并注入提示词;2026-09-07 外部复盘复核扩口径:生产 server 装配面=model.invoke+exec/job_output+fs.*+skill scripts,`memory_capabilities()` 全仓零装配(仅 bm-testkit 测试引用),M5 记忆 CRUD/FTS5 实际只在测试台存活——「能力挂载+检索注入」一并待设计裁决(复核存档 REVIEW-2026-09-07-v0.0.13-external §三) | OPEN(待后续讨论) |
+| 记忆(Memory)检索对话级自动注入 | 2026-09-05 讨论:turn.rs 回合组装时对接 SQLite FTS5 memory.search 自动召回相关记忆并注入提示词;2026-09-07 外部复盘复核扩口径:生产 server 装配面=model.invoke+exec/job_output+fs.*+skill scripts,`memory_capabilities()` 全仓零装配(仅 bm-testkit 测试引用),M5 记忆 CRUD/FTS5 实际只在测试台存活——「能力挂载+检索注入」一并待设计裁决(复核存档 REVIEW-2026-09-07-v0.0.13-external §三);2026-09-07 第三方评审复核补记:memory_search 的 LIKE 兜底对检索词长度/频次无限制(长词全表扫理论面,生产零装配下暂无实害),随本条一并设计 | OPEN(待后续讨论) |
 | 模型自编工具结果(mimo 质量备忘) | 同轮实测:问 counter.bump 时模型未发起调用直接编造「bumped successfully」(/admin/context 证实 0 工具轮);对话区无 [调用] 标记即可辨真伪,强提示词可压不断根;随模型侧观察,不立项 | OPEN(记录在案) |
 | Skill v0.2 第二步(scripts 执行面) | 第一步(合同 Minor: version + references)与 ADR-0016(Broker 七步管线覆盖脚本设计)已闭合交付;**第二步**:等待用户审阅确认 ADR-0016 后接入 wasmtime 执行引擎写代码 | OPEN(待 ADR-0016 确认后动工) |
 | ESLint 接入 CI 步骤 | 2026-09-06 二轮已落本地最小集(eslint.config.js + npm run lint,src 全绿,tsc/build 绿,84d1bb0 后续批);2026-09-07 审计批:eslint-plugin-react-hooks 已装并真启用(此前 disable 注释引用未加载规则=静默失效),rules-of-hooks/exhaustive-deps=error 级把关,暴露 30 处已修(thread.tsx hooks 违规为崩溃级,FULL-REVIEW-2026-09-07);剩=CI workflow 增 lint 门禁 | OPEN(低) |
@@ -43,12 +43,11 @@
 | F-05 | 200+ 行函数重构债(与 L-01/R-08 同批) | OPEN(缓办) |
 | F-07 | bm-surface-http → bm-persist 直依赖待裁决(收口或留档);2026-09-05 回看补记:webadmin.rs 还在 HTTP Handler 里直接 spawn MCP 进程/装配 StdioMcpTransport/管理 McpHub 连断与 Provider 密钥播种,装配职责宜下沉运行时,与本条同批收口 | OPEN |
 | F-11 | memory_drawer_verdict 硬编码权限规则与 ADR-0006 张力(broker.rs 已补注;合同化重构待排期) | OPEN |
-| F-12 | bm-core → bm-persist 依赖倒置(2026-09-05 回看发现):内核 Cargo.toml 直依赖实现层,内核代码直接使用 sqlite_state 行 DTO(CapabilityRow/ApprovalRow/GrantRow 等);宜将端口 trait 与持久化入参 DTO 收归 bm-core::ports,投影转换归 bm-persist | OPEN(缓办) |
 | P3 大文件拆分 | broker.rs(1657 行)/turn.rs(1694)/task_ops.rs(1710)/sqlite_state.rs(1205);broker 建议拆法=mod+policy(GrantLedger)/credential/executor/audit;前端同族=context.tsx(2200+ 行,可拆 TrendChart/TokenWaterGauge/PromptRecipe/FileEffects 子模块)、PluginsPage.tsx(1800+ 行)与 thread.tsx(930 行,可拆 ApprovalDrawer/UserMessage/AssistantMessage/Composer);**webadmin.rs 已拆毕移出**(2026-09-07,11 子模块按域,commit 见 HISTORY);2026-09-07 架构评审扩口径:mcp.rs 1399 行(三种传输+McpHub+装载)/handle.rs 1119 行(start() 545 行含恢复+清点+bootstrap)/runtime.tsx 581 行/openai_http 与 glm_http 62% 重复抽公共客户端 | OPEN(缓办) |
 | P4 非测试 unwrap 甄别清理 | 全仓约 400 处 unwrap 需区分测试/非测试逐步替换;非测试 panic 10 处均系不变量断言,评估=维持现状;2026-09-07 外部审查复核补记:load_world_rows(runtime.rs:208-309)expect×14 属同族——「恢复失败=拒开」是 handle.rs:81-94 明示设计决策,维持 fail-fast,可选小改=错误信息可读化(数据损坏时报「哪个 id 不合法」而非裸 expect) | OPEN(缓办) |
 | 配置域读写样板收口(JsonStore) | 来源 2026-09-07 外部审查复核:providers/skills/roles/mcp 四组各一套 file→read_to_string→from_str→atomic_write 样板;skills 缺 write helper(写盘内联重复两处 skills_set/skills_delete);损坏口径已统一(2026-09-07 复盘复核批:skills/roles 改 Result 化=损坏拒绝覆写,与 providers/mcp 同口径,回归测试在 webadmin_tests);剩=泛型 JsonStore 收口与 write helper 补齐 | OPEN(低) |
 | 前端 API 层收敛 | 来源 2026-09-07 外部审查复核:api.ts(508 行)只覆盖 W2 管理面;W1 运行时侧 8 处裸 fetch 绕过(main.tsx:16 / runtime.tsx×5 / thread.tsx:622 / AboutPage.tsx:65),收敛到 api/ 单源、类型与后端 schema 对齐 | OPEN(低) |
-| P5 Capability 抽象演进 | 同步 invoke 无超时护栏(trait 注释已写明选型约束)/错误 String→结构化枚举/统一单 async trait 评估留 M 系列回看 | OPEN(缓办) |
+| P5 Capability 抽象演进 | 同步 invoke 无超时护栏(trait 注释已写明选型约束)/错误 String→结构化枚举/统一单 async trait 评估留 M 系列回看;2026-09-07 第三方评审复核补记:直通工具同步收据现走 spawn.rs inline_sync 特判分支(09-03 真实 P1 修复,有专项测试),收据 Sync/Async 两变体合同化属同族演进 | OPEN(缓办) |
 | /v1 错误信封结构化 | 前端靠 `detail.includes("工作区")` 识别工作区错误(runtime.tsx),文案一改即失效;根修=扩展错误码(如 webui.workspace_unavailable,注册表 extensions/*.json+CI R6 同步,合同 Minor 仪式)或 /v1 400 带 JSON code 字段,前端按码分支 | OPEN(待排期) |
 | core_loop 崩溃处置升级待裁决 | 现状=panic 仅 error 日志观测(命令方即刻收到错误,无挂死,2026-09-05 复核证实);升级选项=崩溃即进程 exit(70) 交 systemd Restart=on-failure 拉起,属运维行为变更待用户拍板 | OPEN(待用户裁决) |
 | skill.v0_1 Rust 强类型投影 | 前端已有 SkillItem 类型,bm-contract 侧仅 JSON 常量无结构体;补 SkillDefinition+镜像测试(随 Skill v0.2 第二步动工前落) | OPEN(低) |
@@ -72,6 +71,10 @@
 | 日期注释迁移 | 来源 REVIEW-2026-09-07-architecture(P2):bm-core 36 处「2026-09-0x 回看收紧」式变更记录注释应迁 commit message/ADR 源码不留;批量低优 | OPEN(低) |
 | 日志风格统一 | 来源 REVIEW-2026-09-07-architecture(P2):boenmind-server/webadmin eprintln/println 与 tracing 两套并存,收敛为 tracing 单口径 | OPEN(低) |
 | 轮询游标样板收口 | 来源 REVIEW-2026-09-07-architecture(P2):openai_compat 阻塞/流式两处+sse.rs 的 cursor+replay_since 循环抽公共迭代器 | OPEN(低) |
+| manifest wire_name 自描述(工具短名演进) | 来源 2026-09-07 第三方评审报告复核(短名硬编码属实,系 2026-09-06 刻意交付勿擅动):spawn.rs 的 SHORT_WIRE_NAMES 硬编码表+system.exec→powershell/bash 平台分支,可下沉为 CapabilityManifest 可选字段 wire_name 自描述(manifest schema additionalProperties=true,增发=合同 Minor),内核注册表自动派生替代硬编码 | OPEN(低,待裁决) |
+| Autorun 结构化终态判定 | 来源 2026-09-07 第三方评审报告复核(属实):autorun 完成哨兵纯靠模型自然语言输出 `[[AUTORUN_DONE]]` 前缀匹配(autorun.rs),弱模型吞标记即无法主动收束(停滞检测/max_turns 为兜底);评估=增结构化路径(哨兵工具调用/JSON 契约) | OPEN(低) |
+| session_chats 规范化落盘 | 来源 2026-09-07 第三方评审报告复核:重启续聊现由 context-log.jsonl 逆向重建(history.rs rebuild_session_chats,W5 已验收刻意设计,勿修清单在册勿擅动);报告「诊断日志数据流倒挂」定性被驳回(context-log 系 A4 决策下对话正文唯一落盘),但 SQLite 表/事件增发规范化承载属合理演进方向,涉合同 Minor | OPEN(低,待裁决) |
+| webadmin 管理操作事件审计 | 来源 2026-09-07 第三方评审报告复核(报告称「第二权力中心」):/admin 面直接磁盘/进程/配置操作不经 EventBus 审计属实,但管理面不入冻结合同系基线既有决策,单写者纪律管核心状态机;收敛提案=管理意图走核心管理命令入审计流,涉新 ADR | OPEN(低,待裁决) |
 
 ### 3.3 低优杂项
 

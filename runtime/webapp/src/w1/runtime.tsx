@@ -394,40 +394,8 @@ export function BoenmindRuntimeProvider({
 
   // E2E 钩子(W1 回归入口):?e2e=<文本> 装载后自动发送一次,供自动化
   // 浏览器测试(输入自动化不稳时的确定性通道);不影响手工使用
-  // ?mock_approval=1: 方便即时在浏览器中直观预览和调试审批抽屉悬浮条效果
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get("mock_approval") === "1") {
-      setMessages([
-        {
-          role: "user",
-          content: [{ type: "text", text: "请帮我检查项目根目录并编译构建" }],
-        },
-        {
-          role: "assistant",
-          content: [
-            {
-              type: "text",
-              text: "好的，我需要先执行系统命令列出项目目录下的文件结构，以确认构建工具和配置环境：",
-            },
-          ],
-        },
-      ]);
-      setPendingApprovals([
-        {
-          approval_id: "appr_01MOCK999888",
-          capability: "system.exec",
-          args: {
-            command: "cargo build --release --workspace",
-            cwd: "D:\\96_CoderWorld\\BoenMind",
-          },
-          operation_id: "op_mock_123",
-          status: "waiting",
-        },
-      ]);
-      return;
-    }
-
     const q = params.get("e2e");
     if (!q) return;
     const t = setTimeout(() => sendUserText(q), 800);

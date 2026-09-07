@@ -29,7 +29,6 @@ import {
   Copy,
   Check,
   Brain,
-  Paperclip,
   Cpu,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -695,16 +694,7 @@ function Composer() {
           </Select>
         ) : null}
 
-        {/* 2. 附件图标 */}
-        <button
-          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-input bg-muted/40 text-muted-foreground opacity-60 cursor-not-allowed"
-          title="附件 (开发中)"
-          disabled
-        >
-          <Paperclip size={14} />
-        </button>
-
-        {/* 3. 模型选择图标触发器 */}
+        {/* 模型选择图标触发器 */}
         <Select
           value={selModel || "__default__"}
           onValueChange={(v) => {
