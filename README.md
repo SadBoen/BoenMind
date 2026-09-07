@@ -13,9 +13,9 @@
 到 [Releases](https://github.com/SadBoen/BoenMind/releases/latest) 下载最新
 `boenmind-<版本>-linux-x86_64.tar.gz`(校验和同名 `.sha256`),包内含:
 `boenmind-server`(服务器+网页界面)、`plugins/web-multisearch`(官方聚合搜索 MCP)、`plugins/context-inspector`(官方 Rust 上下文透视 MCP)、
-`webapp/dist`(预构建前端)、`INSTALL.md`(离线安装说明)。
+`webapp/dist`(预构建前端)、`INSTALL.md`(离线安装说明)、`apps/`(可选独立演示 App,Python 脚本,需自备 Python 3,核心运行不依赖)。
 
-前置:x86_64 Linux;OpenSSL 3 运行库(Ubuntu 22.04+/Debian 12+ 默认自带);**无需** Node/Python。
+前置:x86_64 Linux;OpenSSL 3 运行库(Ubuntu 22.04+/Debian 12+ 默认自带);**无需** Node/Python(`apps/` 演示 App 除外,不用 Python 可无视)。
 
 ### 1. 解压到固定目录
 

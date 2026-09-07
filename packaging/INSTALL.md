@@ -1,7 +1,8 @@
 # BoenMind 安装说明
 
 前置:64 位(x86_64);Linux 需 OpenSSL 3(Ubuntu 22.04+/Debian 12+ 默认自带);
-**无需 Node/Python**(界面已预构建，官方 MCP 插件是单文件可执行，零外部运行时依赖)。
+**无需 Node/Python**(界面已预构建，官方 MCP 插件是单文件可执行，零外部运行时依赖;
+`apps/` 目录是可选的独立演示 App,Python 脚本需自备 Python 3,核心运行不依赖,可无视)。
 
 ## 1. 解压
 
@@ -11,7 +12,7 @@
 ## 2. 环境变量(与启动命令写在同一条命令里)
 
     export BOEN_SECRET_MASTER_KEY="<至少32字符随机串>"  # 加密密钥库主密钥,必带;丢失=已存凭据作废
-    export BOEN_MODEL_STREAM=1                         # 开模型流式(当前版本必带,配置文件流式字段尚未接线)
+    # export BOEN_MODEL_STREAM=1                       # 可选:开模型流式;config/model.json 的 stream 字段优先(设置页保存即写),env 仅兜底
 
     模型接线二选一:
     A. BOEN_MODEL_BASE_URL / BOEN_MODEL_ID / BOEN_MODEL_API_KEY 三个环境变量;
@@ -21,16 +22,16 @@
 
     mkdir -p ~/.local/share/boenmind/mcp ~/.local/share/boenmind/config
     echo '[]' > ~/.local/share/boenmind/mcp.json
-    BOEN_SECRET_MASTER_KEY="<同上>" BOEN_MODEL_STREAM=1 \
+    BOEN_SECRET_MASTER_KEY="<同上>" \
       ./boenmind-server --web-dir webapp/dist --mcp-config ~/.local/share/boenmind/mcp.json
 
-## 4. 官方 MCP 插件(已随包,免手动拷贝)
+## 4. 官方 MCP 插件(已随包,开箱即用)
 
 官方插件就在安装目录的 `plugins/` 里(聚合搜索 `web-multisearch`、上下文透视
-`context-inspector`),**无需手动拷贝**:解压后首次启动(以及后续在线升级)都能被
-插件扫描直接发现。
-
-    网页 → 设置 → MCP → 「扫描插件」→ 「批准接入」→ 「重载 MCP」(免重启)
+`context-inspector`),**免手动操作**(ADR-0023):首次启动(以及后续在线升级)
+会自动把未登记的随包插件按「批准接入」同款落盘并装载上线。你卸载/删除过的
+官方插件经墓碑记录永不复活;想恢复=设置 → MCP → 「扫描插件」→ 「批准接入」
+→ 「重载 MCP」(免重启)。
 
 如偏好把插件收进数据目录统一管理,拷贝亦可(同名候选以数据目录优先):
 

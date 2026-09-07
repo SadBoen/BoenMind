@@ -10,7 +10,7 @@
 |---|---|---|
 | 对话意图门控·硬门控设计 | 用户提报(2026-09-05):闲聊误触发工具。2026-09-06 二轮已落软防线(turn 挂工具时注入「工具纪律」System 段,84d1bb0);本条收窄为代码层硬门控(意图识别语义判定)的产品设计裁决 | OPEN(待设计裁决) |
 | 上下文压缩(Compression)独立 MCP 工具 | 2026-09-05 讨论:超长会话滚动摘要、折叠与智能裁剪,独立为后续专门 MCP 插件,不与透视器混淆 | OPEN(待后续讨论) |
-| 记忆(Memory)检索对话级自动注入 | 2026-09-05 讨论:turn.rs 回合组装时对接 SQLite FTS5 memory.search 自动召回相关记忆并注入提示词 | OPEN(待后续讨论) |
+| 记忆(Memory)检索对话级自动注入 | 2026-09-05 讨论:turn.rs 回合组装时对接 SQLite FTS5 memory.search 自动召回相关记忆并注入提示词;2026-09-07 外部复盘复核扩口径:生产 server 装配面=model.invoke+exec/job_output+fs.*+skill scripts,`memory_capabilities()` 全仓零装配(仅 bm-testkit 测试引用),M5 记忆 CRUD/FTS5 实际只在测试台存活——「能力挂载+检索注入」一并待设计裁决(复核存档 REVIEW-2026-09-07-v0.0.13-external §三) | OPEN(待后续讨论) |
 | 模型自编工具结果(mimo 质量备忘) | 同轮实测:问 counter.bump 时模型未发起调用直接编造「bumped successfully」(/admin/context 证实 0 工具轮);对话区无 [调用] 标记即可辨真伪,强提示词可压不断根;随模型侧观察,不立项 | OPEN(记录在案) |
 | Skill v0.2 第二步(scripts 执行面) | 第一步(合同 Minor: version + references)与 ADR-0016(Broker 七步管线覆盖脚本设计)已闭合交付;**第二步**:等待用户审阅确认 ADR-0016 后接入 wasmtime 执行引擎写代码 | OPEN(待 ADR-0016 确认后动工) |
 | ESLint 接入 CI 步骤 | 2026-09-06 二轮已落本地最小集(eslint.config.js + npm run lint,src 全绿,tsc/build 绿,84d1bb0 后续批);2026-09-07 审计批:eslint-plugin-react-hooks 已装并真启用(此前 disable 注释引用未加载规则=静默失效),rules-of-hooks/exhaustive-deps=error 级把关,暴露 30 处已修(thread.tsx hooks 违规为崩溃级,FULL-REVIEW-2026-09-07);剩=CI workflow 增 lint 门禁 | OPEN(低) |
@@ -46,7 +46,7 @@
 | F-12 | bm-core → bm-persist 依赖倒置(2026-09-05 回看发现):内核 Cargo.toml 直依赖实现层,内核代码直接使用 sqlite_state 行 DTO(CapabilityRow/ApprovalRow/GrantRow 等);宜将端口 trait 与持久化入参 DTO 收归 bm-core::ports,投影转换归 bm-persist | OPEN(缓办) |
 | P3 大文件拆分 | broker.rs(1657 行)/turn.rs(1694)/task_ops.rs(1710)/sqlite_state.rs(1205);broker 建议拆法=mod+policy(GrantLedger)/credential/executor/audit;前端同族=context.tsx(2200+ 行,可拆 TrendChart/TokenWaterGauge/PromptRecipe/FileEffects 子模块)、PluginsPage.tsx(1800+ 行)与 thread.tsx(930 行,可拆 ApprovalDrawer/UserMessage/AssistantMessage/Composer);**webadmin.rs 已拆毕移出**(2026-09-07,11 子模块按域,commit 见 HISTORY) | OPEN(缓办) |
 | P4 非测试 unwrap 甄别清理 | 全仓约 400 处 unwrap 需区分测试/非测试逐步替换;非测试 panic 10 处均系不变量断言,评估=维持现状;2026-09-07 外部审查复核补记:load_world_rows(runtime.rs:208-309)expect×14 属同族——「恢复失败=拒开」是 handle.rs:81-94 明示设计决策,维持 fail-fast,可选小改=错误信息可读化(数据损坏时报「哪个 id 不合法」而非裸 expect) | OPEN(缓办) |
-| 配置域读写样板收口(JsonStore) | 来源 2026-09-07 外部审查复核:providers/skills/roles/mcp 四组各一套 file→read_to_string→from_str→atomic_write 样板;skills 缺 write helper(写盘内联重复两处 skills_set/skills_delete);providers 读取 Result 化(损坏拒绝)vs skills 静默回落空 Vec(口径不一);收口=泛型 JsonStore 或至少补 skills write helper+统一损坏口径 | OPEN(低) |
+| 配置域读写样板收口(JsonStore) | 来源 2026-09-07 外部审查复核:providers/skills/roles/mcp 四组各一套 file→read_to_string→from_str→atomic_write 样板;skills 缺 write helper(写盘内联重复两处 skills_set/skills_delete);损坏口径已统一(2026-09-07 复盘复核批:skills/roles 改 Result 化=损坏拒绝覆写,与 providers/mcp 同口径,回归测试在 webadmin_tests);剩=泛型 JsonStore 收口与 write helper 补齐 | OPEN(低) |
 | 前端 API 层收敛 | 来源 2026-09-07 外部审查复核:api.ts(508 行)只覆盖 W2 管理面;W1 运行时侧 8 处裸 fetch 绕过(main.tsx:16 / runtime.tsx×5 / thread.tsx:622 / AboutPage.tsx:65),收敛到 api/ 单源、类型与后端 schema 对齐 | OPEN(低) |
 | P5 Capability 抽象演进 | 同步 invoke 无超时护栏(trait 注释已写明选型约束)/错误 String→结构化枚举/统一单 async trait 评估留 M 系列回看 | OPEN(缓办) |
 | /v1 错误信封结构化 | 前端靠 `detail.includes("工作区")` 识别工作区错误(runtime.tsx),文案一改即失效;根修=扩展错误码(如 webui.workspace_unavailable,注册表 extensions/*.json+CI R6 同步,合同 Minor 仪式)或 /v1 400 带 JSON code 字段,前端按码分支 | OPEN(待排期) |
@@ -74,6 +74,8 @@
 | webapp 版本号 CI 自动对齐 | 来源 2026-09-07 外部审查复核:workspace Cargo.toml 与 webapp/package.json 手动同步(现 0.0.12 已对齐);可 release 流程 cargo metadata 提取写入或 CI 校验步防脱步 | OPEN(低) |
 | bm-testkit 测试文件命名统一 | 来源 2026-09-07 外部审查复核:34 个文件 m1-m9/w5/w8/gt01/perf/无前缀混用;统一为 {category}_{feature} 纯机械改名,破坏 git blame,缓办 | OPEN(低) |
 | 审批无人在线时的通知机制 | 来源 2026-09-07 外部审查复核:审批可达性已修(/admin/approvals 轮询+YOLO),但前端未连接时审批仍会长时间挂起;可加系统通知/声音/轮询提示等 | OPEN(低) |
+| 同批 tool_calls 拒绝联动(产品语义) | 来源 2026-09-07 外部复盘复核(REVIEW-2026-09-07-v0.0.13-external §三):单回合多 tool_calls 顺序串行执行系单写者刻意语义不动;但用户拒绝其中之一后,同批其余工具仍各自独立过 Broker 审批并执行——是否改「拒绝即取消同批余下」属产品设计裁决 | OPEN(低,待裁决) |
+| 前端长会话渲染性能 | 来源 2026-09-07 外部复盘复核:ThreadPrimitive.Messages 无虚拟滚动(多次「加载更早消息」后 DOM 全量堆积,大代码块/密集表格掉帧,可评估 @tanstack/react-virtual);流式期间逐 token 全文正则重扫+ReactMarkdown 全树重建(可加渲染节流);与 P3 context.tsx/thread.tsx 拆分同族 | OPEN(低) |
 
 ## 4. 用户拍板后置(DEFERRED,裁决记录见 milestones/PENDING.md)
 

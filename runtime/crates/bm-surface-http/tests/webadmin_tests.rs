@@ -1279,3 +1279,79 @@ async fn t_w2_mcp_list_marks_bundled_deprecated() {
         "清单缺失=不标记"
     );
 }
+
+// ---- 配置损坏防护(2026-09-07 外部复盘复核批)------------------------------
+// skills/roles 损坏 JSON 必须拒绝加载与覆写(500),不得静默回落空库/默认
+// 文档后被下一次保存整库覆写清盘(与 providers 同口径)。
+
+#[tokio::test]
+async fn t_w2_skills_roundtrip_and_corrupt_rejects_overwrite() {
+    let ws = tempfile::tempdir().unwrap();
+    let (base, dir) = spawn_app(ws.path().to_path_buf(), None).await;
+    // 新库:空清单可读
+    let (st, r) = get(&format!("{base}/admin/skills")).await;
+    assert_eq!(st, 200, "{r}");
+    assert_eq!(r["skills"], json!([]), "{r}");
+    // 正常写入→读回
+    let (st, r) = send_json(
+        reqwest::Method::POST,
+        &format!("{base}/admin/skills"),
+        json!({"skill_id": "skill_t1", "name": "T1", "instruction": "do"}),
+    )
+    .await;
+    assert_eq!(st, 200, "{r}");
+    let (_, r) = get(&format!("{base}/admin/skills")).await;
+    assert_eq!(r["skills"][0]["skill_id"], json!("skill_t1"), "{r}");
+    // 人为写坏后:读取拒绝(500)
+    let skills_file = dir.path().join("config").join("skills.json");
+    let corrupt = r#"{"skills": [{"skill_id": "keep", "name": "K""#; // 半截 JSON
+    std::fs::write(&skills_file, corrupt).unwrap();
+    let (st, r) = get(&format!("{base}/admin/skills")).await;
+    assert_eq!(st, 500, "{r}");
+    // 删除同样拒绝(先于 NOT_FOUND 语义触达读取)
+    let client = reqwest::Client::new();
+    let resp = client
+        .delete(format!("{base}/admin/skills/keep"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 500);
+    // 盘上损坏文件原样保留(未被覆写清盘)
+    assert_eq!(
+        std::fs::read_to_string(&skills_file).unwrap(),
+        corrupt,
+        "盘上损坏文件不得被覆写"
+    );
+}
+
+#[tokio::test]
+async fn t_w2_corrupt_roles_json_rejects_load_and_overwrite() {
+    let ws = tempfile::tempdir().unwrap();
+    let (base, dir) = spawn_app(ws.path().to_path_buf(), None).await;
+    let roles_file = dir.path().join("config").join("roles.json");
+    std::fs::create_dir_all(roles_file.parent().unwrap()).unwrap();
+    let corrupt = r#"{"roles": [{"id": "keep""#; // 半截 JSON
+    std::fs::write(&roles_file, corrupt).unwrap();
+
+    // 读:损坏拒绝(500)
+    let (st, r) = get(&format!("{base}/admin/roles")).await;
+    assert_eq!(st, 500, "{r}");
+    // 保存(单角色形态)同样拒绝
+    let (st, r) = send_json(
+        reqwest::Method::POST,
+        &format!("{base}/admin/roles"),
+        json!({"id": "x", "name": "X", "system_prompt": "p"}),
+    )
+    .await;
+    assert_eq!(st, 500, "{r}");
+    // 盘上损坏文件原样保留
+    assert_eq!(
+        std::fs::read_to_string(&roles_file).unwrap(),
+        corrupt,
+        "盘上损坏文件不得被覆写"
+    );
+    // 合法 JSON 但缺 roles 数组(且非旧版单 system_prompt 形态)同属损坏口径
+    std::fs::write(&roles_file, r#"{"foo": 1}"#).unwrap();
+    let (st, _) = get(&format!("{base}/admin/roles")).await;
+    assert_eq!(st, 500);
+}

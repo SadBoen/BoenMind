@@ -7,6 +7,7 @@ use axum::Json;
 use axum::extract::{Path as AxumPath, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use bm_providers::mcp::supervisor::read_mcp_servers;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -23,16 +24,8 @@ fn mcp_file_or_error(cfg: &AdminConfig) -> Result<PathBuf, (StatusCode, String)>
     }
 }
 
-fn read_mcp_servers(path: &Path) -> Result<Vec<Value>, String> {
-    match std::fs::read_to_string(path) {
-        Ok(text) => {
-            let arr: Vec<Value> =
-                serde_json::from_str(&text).map_err(|e| format!("MCP 配置不是 JSON 数组: {e}"))?;
-            Ok(arr)
-        }
-        Err(_) => Ok(vec![]), // 文件不存在 = 空清单(首条新增时创建)
-    }
-}
+// read_mcp_servers 复用 bm_providers::mcp::supervisor 同名实现(2026-09-07
+// 复核批:此前两处逐字重复,启动装载与管理面读取口径有漂移风险)。
 
 fn write_mcp_servers(path: &Path, servers: &[Value]) -> Result<(), String> {
     if let Some(dir) = path.parent() {

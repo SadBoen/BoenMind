@@ -11,18 +11,29 @@ fn skills_file(cfg: &AdminConfig) -> std::path::PathBuf {
     cfg.data_dir.join("config").join("skills.json")
 }
 
-/// 读技能库(缺文件 = 空库)。
-fn read_skills(file: &std::path::Path) -> Vec<Value> {
-    std::fs::read_to_string(file)
-        .ok()
-        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
-        .and_then(|v| v["skills"].as_array().cloned())
-        .unwrap_or_default()
+/// 读技能库。缺文件 = 空库;JSON 损坏或缺 skills 数组 = 拒绝(2026-09-07
+/// 复核批:此前静默回落空 Vec,盘上文件半损坏时下一次保存会把整库覆写清空,
+/// 与 providers 同口径=损坏拒绝加载/覆写)。
+fn read_skills(file: &std::path::Path) -> Result<Vec<Value>, String> {
+    let text = match std::fs::read_to_string(file) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(format!("读取技能库失败: {e}")),
+    };
+    let v: Value = serde_json::from_str(&text)
+        .map_err(|e| format!("skills.json JSON 格式已损坏,拒绝加载/覆写: {e}"))?;
+    v["skills"]
+        .as_array()
+        .cloned()
+        .ok_or_else(|| "skills.json 缺少合法的 skills 数组".to_string())
 }
 
 /// GET /admin/skills:技能库清单(角色页挂载勾选 + 展示)。
 pub async fn skills_get(State(cfg): State<AdminConfig>) -> Response {
-    let skills = read_skills(&skills_file(&cfg));
+    let skills = match read_skills(&skills_file(&cfg)) {
+        Ok(s) => s,
+        Err(e) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e),
+    };
     Json(json!({ "ok": true, "skills": skills })).into_response()
 }
 
@@ -39,7 +50,10 @@ pub async fn skills_set(State(cfg): State<AdminConfig>, Json(mut body): Json<Val
         return admin_error(StatusCode::BAD_REQUEST, format!("技能不合规: {e}"));
     }
     let file = skills_file(&cfg);
-    let mut skills = read_skills(&file);
+    let mut skills = match read_skills(&file) {
+        Ok(s) => s,
+        Err(e) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e),
+    };
     let id = body["skill_id"].as_str().unwrap_or_default().to_string();
     if let Some(slot) = skills
         .iter_mut()
@@ -73,7 +87,10 @@ pub async fn skills_delete(
     AxumPath(id): AxumPath<String>,
 ) -> Response {
     let file = skills_file(&cfg);
-    let mut skills = read_skills(&file);
+    let mut skills = match read_skills(&file) {
+        Ok(s) => s,
+        Err(e) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e),
+    };
     let before = skills.len();
     skills.retain(|s| s["skill_id"].as_str() != Some(&id));
     if skills.len() == before {
