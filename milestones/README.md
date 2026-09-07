@@ -37,8 +37,6 @@
 - `HISTORY.md` — 交付时间线(append-only,唯一进度真源);
 - `BACKLOG.md` — 未结事项总台账(掉链项/后置项/前置项/审计 F 系/文档欠账);
 - `PENDING.md` — 待用户裁决队列(2026-09-01 起清零,11 条历史裁决见表);
-- `AUDIT-2026-08-30.md` — 审计台账(只记录不修改;A/R/F 系条目);
-- `FULL-REVIEW-2026-08-30.md` — M1-M9 全面回看(ADR 兑现度、S1-S10 总表 §2.4、遗留 72 条总账 §4);
 - `M2-adr-settlement.md`、`M4-adr-settlement.md` — 开工前 ADR 条件结算表(已闭合);
 - `W-ui-inventory.md` — assistant-ui 官方资产盘点(W 序列选装参考);
 - `shots-w2/`、`shots-w3/` — 验收截图存档。
@@ -48,3 +46,6 @@
 1. 里程碑范围定义与通过条件的规范文本在基线 §18;本目录规格是落地细化。
 2. 收官动作:全量测试+validate.py 全绿 → 回看门(基线 §19)→ HISTORY 加行 → BACKLOG 登记遗留 → git tag。
 3. 规格与回看是历史记录,不回头改写(状态行除外);新事实进台账或 ADR。
+4. 外部评审/审计/复盘类一次性报告(AUDIT/FULL-REVIEW/REVIEW-*-external)已按用户令
+   全仓清理(2026-09-07);其结论与遗留早已沉淀进 HISTORY/BACKLOG,报告原文溯 git 史;
+   此类文档今后不再入库——复核结论直接写 HISTORY 行,误报驳回写 BACKLOG 行内注记。
