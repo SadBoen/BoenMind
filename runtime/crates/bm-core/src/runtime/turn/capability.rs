@@ -217,6 +217,7 @@ pub(crate) fn capability_call_inner(
             effective_risk,
         } => {
             let mut mgr = ApprovalManager::new(&mut w.grants, &*w.config.clock, &*w.config.id_gen);
+            let ttl_ms = w.config.limits.get().approval_wait_ms.max(10_000);
             let mut approval = mgr.open(OpenApproval {
                 capability: &params.capability,
                 principal: &ctx.principal,
@@ -226,7 +227,7 @@ pub(crate) fn capability_call_inner(
                 args: &params.args,
                 args_summary: &format!("能力 {} 调用", params.capability),
                 scope_choices: capability_scope_choices(),
-                ttl_ms: 300_000,
+                ttl_ms,
             });
             let approval_id = BmId::parse(approval.approval_id.clone()).expect("appr_ 前缀合法");
             w.settle_operation(&op_id, OperationState::WaitingApproval, None);

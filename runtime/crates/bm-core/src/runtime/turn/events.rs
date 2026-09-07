@@ -12,8 +12,16 @@ pub(crate) fn handle_turn_event(w: &mut World, event: TurnEvent) {
             error_code,
         } => {
             let (session_id, agent_id, request_id, agent_state) = {
-                let op = &w.operations[&operation_id];
-                let a = &w.agents[&op.agent_id];
+                let Some(op) = w.operations.get(&operation_id) else {
+                    tracing::warn!(operation = %operation_id.as_str(), "AttemptFailed: operation 已不存在,忽略事件");
+                    w.in_flight.remove(&operation_id);
+                    return;
+                };
+                let Some(a) = w.agents.get(&op.agent_id) else {
+                    tracing::warn!(operation = %operation_id.as_str(), agent = %op.agent_id.as_str(), "AttemptFailed: agent 已不存在,忽略事件");
+                    w.in_flight.remove(&operation_id);
+                    return;
+                };
                 (
                     op.session_id.clone(),
                     op.agent_id.clone(),
@@ -72,17 +80,22 @@ pub(crate) fn handle_turn_event(w: &mut World, event: TurnEvent) {
             emit_model_call_error_audit(w, &operation_id, ErrorCode::Cancelled);
             // operation: running→cancelled(唯一合法入口 = 显式取消,INV-12)
             let (session_id, agent_id) = {
-                let op = &w.operations[&operation_id];
+                let Some(op) = w.operations.get(&operation_id) else {
+                    tracing::warn!(operation = %operation_id.as_str(), "Cancelled: operation 已不存在,忽略事件");
+                    w.in_flight.remove(&operation_id);
+                    return;
+                };
                 (op.session_id.clone(), op.agent_id.clone())
             };
             {
-                let a = w.agents.get_mut(&agent_id).expect("存在");
-                // waiting_model→stopping(explicit_cancel)→stopped(turn_boundary_reached)
-                // P1-19(2026-09-07 架构评审):先查边再迁移——迟到取消不得
-                // assert 打崩进程(恢复/并发边界由 handle.rs 同款守卫兜底)。
-                if AgentState::can_transition(a.state, AgentState::Stopping) {
-                    a.transition(AgentState::Stopping);
-                    a.transition(AgentState::Stopped);
+                if let Some(a) = w.agents.get_mut(&agent_id) {
+                    // waiting_model→stopping(explicit_cancel)→stopped(turn_boundary_reached)
+                    // P1-19(2026-09-07 架构评审):先查边再迁移——迟到取消不得
+                    // assert 打崩进程(恢复/并发边界由 handle.rs 同款守卫兜底)。
+                    if AgentState::can_transition(a.state, AgentState::Stopping) {
+                        a.transition(AgentState::Stopping);
+                        a.transition(AgentState::Stopped);
+                    }
                 }
             }
             w.settle_operation(
@@ -117,8 +130,16 @@ pub(crate) fn handle_turn_event(w: &mut World, event: TurnEvent) {
         } => {
             autorun_note_completed(w, &operation_id, &content);
             let (session_id, agent_id, request_id, agent_state) = {
-                let op = &w.operations[&operation_id];
-                let a = &w.agents[&op.agent_id];
+                let Some(op) = w.operations.get(&operation_id) else {
+                    tracing::warn!(operation = %operation_id.as_str(), "Completed: operation 已不存在,忽略事件");
+                    w.in_flight.remove(&operation_id);
+                    return;
+                };
+                let Some(a) = w.agents.get(&op.agent_id) else {
+                    tracing::warn!(operation = %operation_id.as_str(), agent = %op.agent_id.as_str(), "Completed: agent 已不存在,忽略事件");
+                    w.in_flight.remove(&operation_id);
+                    return;
+                };
                 (
                     op.session_id.clone(),
                     op.agent_id.clone(),
@@ -186,23 +207,35 @@ pub(crate) fn handle_turn_event(w: &mut World, event: TurnEvent) {
 
             // waiting_model→running(model_response_ok)
             {
-                let a = w.agents.get_mut(&agent_id).expect("存在");
-                // P1-19:边守卫(终止态回 Running 的迟到事件只记日志不崩进程)
-                if AgentState::can_transition(a.state, AgentState::Running) {
-                    a.transition(AgentState::Running);
-                } else {
-                    tracing::warn!(agent = %agent_id.as_str(), state = ?a.state, "回合完成事件迟到,agent 状态未迁移");
+                if let Some(a) = w.agents.get_mut(&agent_id) {
+                    // P1-19:边守卫(终止态回 Running 的迟到事件只记日志不崩进程)
+                    if AgentState::can_transition(a.state, AgentState::Running) {
+                        a.transition(AgentState::Running);
+                    } else {
+                        tracing::warn!(agent = %agent_id.as_str(), state = ?a.state, "回合完成事件迟到,agent 状态未迁移");
+                    }
                 }
             }
 
             // 强制点③(post_invoke_accounting)
-            let turn_index = w.operations[&operation_id].turn_index;
+            let turn_index = match w.operations.get(&operation_id) {
+                Some(op) => op.turn_index,
+                None => {
+                    w.in_flight.remove(&operation_id);
+                    return;
+                }
+            };
             let (ratio, warn, exceeded) = {
-                let a = w.agents.get_mut(&agent_id).expect("存在");
+                let Some(a) = w.agents.get_mut(&agent_id) else {
+                    w.in_flight.remove(&operation_id);
+                    return;
+                };
                 a.budget.account(usage_in.saturating_add(usage_out))
             };
-            let used = w.agents[&agent_id].budget.used_tokens;
-            let limit = w.agents[&agent_id].budget.max_tokens;
+            let (used, limit) = match w.agents.get(&agent_id) {
+                Some(a) => (a.budget.used_tokens, a.budget.max_tokens),
+                None => (0, 0),
+            };
             w.exec_log.record(crate::exec_log::LogRecord {
                 kind: LogKind::BudgetCheck,
                 session_id: session_id.clone(),
@@ -251,13 +284,14 @@ pub(crate) fn handle_turn_event(w: &mut World, event: TurnEvent) {
             // running→succeeded(result_recorded)+ agent.completed
             {
                 let now = w.now_ts();
-                let op = w.operations.get_mut(&operation_id).expect("存在");
-                op.action_summary =
-                    format!("回合 {turn_index} 完成({usage_in} 入 / {usage_out} 出 token)");
-                op.result_reference = Some(wire::ResultReference {
-                    kind: wire::ResultRefKind::ExecutionLog,
-                    r#ref: format!("log:{operation_id}"),
-                });
+                if let Some(op) = w.operations.get_mut(&operation_id) {
+                    op.action_summary =
+                        format!("回合 {turn_index} 完成({usage_in} 入 / {usage_out} 出 token)");
+                    op.result_reference = Some(wire::ResultReference {
+                        kind: wire::ResultRefKind::ExecutionLog,
+                        r#ref: format!("log:{operation_id}"),
+                    });
+                }
                 let _ = now;
             }
             w.settle_operation(&operation_id, OperationState::Succeeded, None);

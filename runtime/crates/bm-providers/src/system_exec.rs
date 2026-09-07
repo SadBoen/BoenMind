@@ -156,15 +156,48 @@ impl ExecExecutor {
         if !cwd.is_empty() {
             cmd.current_dir(&cwd);
         }
-        let child = cmd
+        let mut child = cmd
             .spawn()
             .map_err(|e| AsyncCallError::Transport(format!("进程启动失败: {e}")))?;
-        let out = tokio::time::timeout(dur, child.wait_with_output())
+
+        // P1-14: 流式截断读取,避免巨量输出(GB级)在 wait_with_output 中先打爆内存
+        let max_bytes = (limits.exec_output_max_chars.saturating_mul(4)).max(64 * 1024);
+        let mut stdout = child.stdout.take();
+        let mut stderr = child.stderr.take();
+
+        async fn read_pipe_capped<R: tokio::io::AsyncRead + Unpin>(
+            pipe: Option<R>,
+            cap: usize,
+        ) -> Vec<u8> {
+            use tokio::io::AsyncReadExt;
+            let mut buf = Vec::new();
+            if let Some(mut p) = pipe {
+                let mut chunk = [0u8; 8192];
+                while buf.len() < cap {
+                    let to_read = (cap - buf.len()).min(chunk.len());
+                    match p.read(&mut chunk[..to_read]).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                    }
+                }
+            }
+            buf
+        }
+
+        let read_task = async {
+            let out_bytes = read_pipe_capped(stdout.as_mut(), max_bytes).await;
+            let err_bytes = read_pipe_capped(stderr.as_mut(), max_bytes).await;
+            let status = child.wait().await;
+            (status, out_bytes, err_bytes)
+        };
+
+        let (status, stdout_bytes, stderr_bytes) = tokio::time::timeout(dur, read_task)
             .await
-            .map_err(|_| AsyncCallError::Timeout)?
-            .map_err(|e| AsyncCallError::Transport(format!("等待退出失败: {e}")))?;
-        let mut text = String::from_utf8_lossy(&out.stdout).to_string();
-        let err_text = String::from_utf8_lossy(&out.stderr);
+            .map_err(|_| AsyncCallError::Timeout)?;
+        let status = status.map_err(|e| AsyncCallError::Transport(format!("等待退出失败: {e}")))?;
+
+        let mut text = String::from_utf8_lossy(&stdout_bytes).to_string();
+        let err_text = String::from_utf8_lossy(&stderr_bytes);
         if !err_text.trim().is_empty() {
             text.push_str("\n[stderr]\n");
             text.push_str(&err_text);
@@ -174,7 +207,7 @@ impl ExecExecutor {
             text = text.chars().take(limits.exec_output_max_chars).collect();
         }
         Ok(json!({
-            "exit_code": out.status.code(),
+            "exit_code": status.code(),
             "output": text,
             "truncated": truncated,
         }))

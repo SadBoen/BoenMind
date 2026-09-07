@@ -96,6 +96,27 @@ pub(crate) async fn session_delete(
     }
 }
 
+/// POST /admin/operations/{operation_id}/cancel
+/// P1-5: 服务端管理面取消在途 operation 端点
+pub(crate) async fn operation_cancel(
+    State(cfg): State<AdminConfig>,
+    axum::extract::Path(operation_id): axum::extract::Path<String>,
+) -> Response {
+    let op_id = match bm_contract::ids::BmId::parse(&operation_id) {
+        Ok(id) => id,
+        Err(_) => return admin_error(StatusCode::BAD_REQUEST, "非法 operation_id"),
+    };
+    match cfg.handle.operation_cancel(op_id).await {
+        Ok(r) => Json(json!({
+            "ok": true,
+            "accepted": r.accepted,
+            "operation_id": r.operation_id.as_str(),
+        }))
+        .into_response(),
+        Err(e) => admin_error(StatusCode::BAD_REQUEST, e.to_wire().message),
+    }
+}
+
 /// GET /admin/sessions/{session_id}/messages?limit=&skip=:
 /// 会话历史回放(2026-09-06;同日二改:分页+流式,防长会话一口气载入卡
 /// 界面)。从 context-log.jsonl 过滤 kind ∈ {user_message, assistant_final},

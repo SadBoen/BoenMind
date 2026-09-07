@@ -15,12 +15,19 @@ fn workspaces_file(cfg: &AdminConfig) -> std::path::PathBuf {
     cfg.data_dir.join("config").join("workspaces.json")
 }
 
-fn read_registry(cfg: &AdminConfig) -> Vec<Value> {
-    std::fs::read_to_string(workspaces_file(cfg))
-        .ok()
-        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
-        .and_then(|v| v["workspaces"].as_array().cloned())
-        .unwrap_or_default()
+fn read_registry(cfg: &AdminConfig) -> Result<Vec<Value>, String> {
+    let path = workspaces_file(cfg);
+    let raw = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(format!("读取工作区注册表失败: {e}")),
+    };
+    let v: Value = serde_json::from_str(&raw)
+        .map_err(|e| format!("workspaces.json 格式损坏,拒绝加载/覆写: {e}"))?;
+    v["workspaces"]
+        .as_array()
+        .cloned()
+        .ok_or_else(|| "workspaces.json 缺少合法的 workspaces 数组,拒绝加载/覆写".into())
 }
 
 fn write_registry(cfg: &AdminConfig, list: &[Value]) -> Result<(), String> {
@@ -76,25 +83,32 @@ fn entry_with_status(entry: &Value) -> Value {
 }
 
 /// 首次读取播种:注册表为空时以现役文件浏览根建 default 条目
-/// (旧文件树/旧用法零破坏;ADR-0018 决策 1)。
-fn ensure_seeded(cfg: &AdminConfig) {
-    if !read_registry(cfg).is_empty() {
-        return;
+/// (旧文件树/旧用法零破坏;ADR-0018 决策 1)。文件损坏时直接拒绝覆写。
+fn ensure_seeded(cfg: &AdminConfig) -> Result<(), String> {
+    let list = read_registry(cfg)?;
+    if !list.is_empty() {
+        return Ok(());
     }
-    let _ = write_registry(
+    write_registry(
         cfg,
         &[json!({
             "id": bm_core::workspace::DEFAULT_WORKSPACE_ID,
             "name": "默认工作区",
             "path": cfg.workspace_root.display().to_string(),
         })],
-    );
+    )
 }
 
 /// GET /admin/workspaces
 pub async fn workspaces_list(State(cfg): State<AdminConfig>) -> Response {
-    ensure_seeded(&cfg);
-    let list: Vec<Value> = read_registry(&cfg).iter().map(entry_with_status).collect();
+    if let Err(e) = ensure_seeded(&cfg) {
+        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
+    }
+    let list = match read_registry(&cfg) {
+        Ok(l) => l,
+        Err(e) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e),
+    };
+    let list: Vec<Value> = list.iter().map(entry_with_status).collect();
     Json(json!({ "workspaces": list })).into_response()
 }
 
@@ -103,7 +117,9 @@ pub async fn workspaces_create(
     State(cfg): State<AdminConfig>,
     Json(body): Json<Value>,
 ) -> Response {
-    ensure_seeded(&cfg);
+    if let Err(e) = ensure_seeded(&cfg) {
+        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
+    }
     let name = body["name"].as_str().unwrap_or("").trim().to_string();
     if name.is_empty() || name.len() > 100 {
         return admin_error(StatusCode::BAD_REQUEST, "名称必填且 ≤100 字符");
@@ -112,7 +128,10 @@ pub async fn workspaces_create(
         Ok(p) => p,
         Err(e) => return admin_error(StatusCode::BAD_REQUEST, e),
     };
-    let mut list = read_registry(&cfg);
+    let mut list = match read_registry(&cfg) {
+        Ok(l) => l,
+        Err(e) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e),
+    };
     if list
         .iter()
         .any(|e| e["path"].as_str() == Some(path.as_str()))
@@ -133,7 +152,10 @@ pub async fn workspaces_update(
     AxumPath(id): AxumPath<String>,
     Json(body): Json<Value>,
 ) -> Response {
-    let mut list = read_registry(&cfg);
+    let mut list = match read_registry(&cfg) {
+        Ok(l) => l,
+        Err(e) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e),
+    };
     let Some(pos) = list.iter().position(|e| e["id"] == json!(id)) else {
         return admin_error(StatusCode::NOT_FOUND, format!("工作区「{id}」不存在"));
     };
@@ -174,7 +196,10 @@ pub async fn workspaces_delete(
     if id == bm_core::workspace::DEFAULT_WORKSPACE_ID {
         return admin_error(StatusCode::BAD_REQUEST, "默认工作区不可删除");
     }
-    let mut list = read_registry(&cfg);
+    let mut list = match read_registry(&cfg) {
+        Ok(l) => l,
+        Err(e) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e),
+    };
     let before = list.len();
     list.retain(|e| e["id"] != json!(id));
     if list.len() == before {
@@ -192,7 +217,10 @@ pub async fn workspaces_check(
     State(cfg): State<AdminConfig>,
     AxumPath(id): AxumPath<String>,
 ) -> Response {
-    let list = read_registry(&cfg);
+    let list = match read_registry(&cfg) {
+        Ok(l) => l,
+        Err(e) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e),
+    };
     let Some(entry) = list.iter().find(|e| e["id"] == json!(id)) else {
         return admin_error(StatusCode::NOT_FOUND, format!("工作区「{id}」不存在"));
     };

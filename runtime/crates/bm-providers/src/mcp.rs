@@ -777,7 +777,8 @@ impl McpTransport for HttpMcpTransport {
         if let Some(token) = &self.bearer_token {
             req = req.bearer_auth(token);
         }
-        let _ = req.send().await;
+        // P1-9: notify 加上 10s 超时,防止半开远端挂死卸载/重载/关闭请求
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(10), req.send()).await;
         Ok(())
     }
 
@@ -831,33 +832,43 @@ impl McpHub {
 
     /// 握手 + 发现:initialize → initialized → tools/list → 生成 manifests
     /// 并建立路由。不合规工具名跳过(拒注册,tracing 留痕)。
+    /// P1-10: 整体握手包 15s 超时守卫,防止异常插件挂死热重载或服务启动
     pub async fn connect(
         self: &Arc<Self>,
         server: &str,
         transport: Arc<dyn McpTransport>,
         tool_timeout_ms: u64,
     ) -> Result<Vec<CapabilityManifest>, String> {
-        let init = transport
-            .request(
-                "initialize",
-                json!({
-                    "protocolVersion": MCP_PROTOCOL_VERSION,
-                    "capabilities": {},
-                    "clientInfo": {"name": "boenmind", "version": "0.1"}
-                }),
-            )
-            .await?;
-        if init
-            .get("protocolVersion")
-            .and_then(|v| v.as_str())
-            .is_none()
-        {
-            return Err("initialize 响应缺 protocolVersion".into());
-        }
-        transport
-            .notify("notifications/initialized", json!({}))
-            .await?;
-        let listed = transport.request("tools/list", json!({})).await?;
+        let handshake = async {
+            let init = transport
+                .request(
+                    "initialize",
+                    json!({
+                        "protocolVersion": MCP_PROTOCOL_VERSION,
+                        "capabilities": {},
+                        "clientInfo": {"name": "boenmind", "version": "0.1"}
+                    }),
+                )
+                .await?;
+            if init
+                .get("protocolVersion")
+                .and_then(|v| v.as_str())
+                .is_none()
+            {
+                return Err("initialize 响应缺 protocolVersion".into());
+            }
+            transport
+                .notify("notifications/initialized", json!({}))
+                .await?;
+            let listed = transport.request("tools/list", json!({})).await?;
+            Ok(listed)
+        };
+
+        let listed: Value = tokio::time::timeout(std::time::Duration::from_secs(15), handshake)
+            .await
+            .map_err(|_| format!("MCP 插件 {server} 握手或 tools/list 超时(15s)"))?
+            .map_err(|e: String| format!("MCP 插件 {server} 握手失败: {e}"))?;
+
         let tools = listed
             .get("tools")
             .and_then(|v| v.as_array())

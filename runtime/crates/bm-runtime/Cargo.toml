@@ -21,7 +21,6 @@ serde_json = { workspace = true }
 [dev-dependencies]
 bm-cli = { workspace = true }
 tempfile = { workspace = true }
-serde_json = { workspace = true }
 reqwest = { workspace = true }
 
 [lints]

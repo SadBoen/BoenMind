@@ -296,3 +296,42 @@ async fn t06_receipt_idempotent_after_terminal() {
 
     rig.stop().await;
 }
+
+#[tokio::test]
+async fn t07_session_delete_during_in_flight_does_not_panic_core() {
+    // P0-1 竞态防御验证: 在途回合期间删除会话, 核心循环不 panic, 回流事件安全忽略
+    let rig = TestRig::standard(vec![Step::ok_after("迟到的回答", 150)]).await;
+    let (sess, agent) = rig.create_session().await.expect("会话创建成功");
+    let _receipt = rig
+        .send(&sess, &agent, "测试并发删除")
+        .await
+        .expect("回合发起");
+
+    // 稍等 20ms 确保回合已进入 in_flight/waiting_model
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+    // 此时删除会话(清除会话与操作行并触发取消)
+    let del = rig
+        .handle
+        .session_delete(
+            rig.ids.next_id("req"),
+            bm_contract::wire::SessionDeleteParams {
+                session_id: sess.clone(),
+            },
+        )
+        .await;
+    assert!(del.is_ok(), "会话删除接受");
+
+    // 等待在途回合任务产出事件并回流核心循环(150ms 延时)
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    // 验证核心循环仍然健康活着(能响应新的会话创建与执行)
+    let (new_sess, new_agent) = rig
+        .create_session()
+        .await
+        .expect("核心循环依然可用,新会话创建成功");
+    let new_rec = rig.send(&new_sess, &new_agent, "健康探测").await;
+    assert!(new_rec.is_ok(), "核心循环正常处理后续回合");
+
+    rig.stop().await;
+}

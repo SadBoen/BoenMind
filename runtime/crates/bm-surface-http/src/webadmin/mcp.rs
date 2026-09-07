@@ -464,10 +464,24 @@ pub async fn mcp_config_get(
         .parent()
         .map(|d| d.join("config").join(format!("mcp-{name}.json")))
         .unwrap_or_else(|| path.clone());
-    let values = std::fs::read_to_string(&file)
-        .ok()
-        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
-        .unwrap_or_else(|| json!({}));
+    let values = match std::fs::read_to_string(&file) {
+        Ok(t) => match serde_json::from_str::<Value>(&t) {
+            Ok(v) => v,
+            Err(e) => {
+                return admin_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("配置文件 mcp-{name}.json 格式损坏: {e}"),
+                );
+            }
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => json!({}),
+        Err(e) => {
+            return admin_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("读取配置文件失败: {e}"),
+            );
+        }
+    };
     Json(json!({ "name": name, "values": values })).into_response()
 }
 
@@ -506,10 +520,24 @@ pub async fn mcp_config_set(
         );
     }
     let file = dir.join(format!("mcp-{name}.json"));
-    let mut current: Value = std::fs::read_to_string(&file)
-        .ok()
-        .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_else(|| json!({}));
+    let mut current: Value = match std::fs::read_to_string(&file) {
+        Ok(t) => match serde_json::from_str(&t) {
+            Ok(v) => v,
+            Err(e) => {
+                return admin_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("mcp-{name}.json 格式损坏,拒绝合并覆写: {e}"),
+                );
+            }
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => json!({}),
+        Err(e) => {
+            return admin_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("读取配置文件失败: {e}"),
+            );
+        }
+    };
     if let Some(obj) = current.as_object_mut() {
         for (k, v) in values {
             obj.insert(k.clone(), v.clone());
@@ -611,6 +639,7 @@ async fn self_describe(path: &Path) -> Option<Value> {
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
         .spawn();
     let mut child = match spawn_result {
         Ok(c) => c,

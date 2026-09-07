@@ -334,7 +334,6 @@ version = "0.0.13"
 dependencies = [
  "async-trait",
  "bm-contract",
- "bm-persist",
  "chrono",
  "serde",
  "serde_json",

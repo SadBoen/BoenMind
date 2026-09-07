@@ -63,14 +63,8 @@ const BUILTIN_DESC: Record<string, string> = {
   "fs.edit": "精确字符串替换编辑 · 需审批",
 };
 
-export function PluginsPage({
-  initialFilter,
-}: {
-  initialFilter?: string;
-}) {
-  // P1-34(2026-09-07 架构评审):editTarget 死参数链移除(上游 SettingsPage
-  // 从未设置过非 null 值,消费 effect 永不触发)。
-  const [filter, setFilter] = useState(initialFilter ?? "");
+export function PluginsPage() {
+  const [filter, setFilter] = useState("");
   const [typeFilter, setTypeFilter] = useState<"all" | "builtin" | "external">("all");
   const [builtinList, setBuiltinList] = useState<Capability[]>([]);
   const [mcpData, setMcpData] = useState<McpListResult | null>(null);

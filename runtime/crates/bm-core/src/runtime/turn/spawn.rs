@@ -607,8 +607,29 @@ pub(crate) fn spawn_turn(
                                             + std::time::Duration::from_secs(wait_secs);
                                         loop {
                                             if std::time::Instant::now() > deadline {
+                                                if let Some(appr_id) = &approval_id {
+                                                    // P1-3: 审批等待超时后主动发送 Withdraw 撤销审批单,
+                                                    // 防止后续用户迟到点击批准引发无主的真实副作用执行
+                                                    if let Ok(appr_bm_id) = BmId::parse(appr_id) {
+                                                        let (wtx, _wrx) =
+                                                            tokio::sync::oneshot::channel();
+                                                        let _ = tx
+                                                            .send(Cmd::ApprovalRespond {
+                                                                request_id: BmId::generate("req"),
+                                                                params:
+                                                                    wire::ApprovalRespondParams {
+                                                                        approval_id: appr_bm_id,
+                                                                        decision: "withdraw"
+                                                                            .to_string(),
+                                                                        scope: None,
+                                                                    },
+                                                                resp: wtx,
+                                                            })
+                                                            .await;
+                                                    }
+                                                }
                                                 tool_result = if approval_id.is_some() {
-                                                    "审批等待超时(用户未及时裁决,审批单已过期)"
+                                                    "审批等待超时(用户未及时裁决,审批单已撤销过期)"
                                                         .into()
                                                 } else {
                                                     "工具执行超时".into()

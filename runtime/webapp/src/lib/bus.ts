@@ -25,11 +25,6 @@ export const BM_EVENTS = {
 
 export type BmEventName = (typeof BM_EVENTS)[keyof typeof BM_EVENTS];
 
-/** 会话切换事件的载荷。 */
-export interface SessionSwitchedDetail {
-  sid: string;
-}
-
 export function emit(name: BmEventName, detail?: unknown): void {
   window.dispatchEvent(new CustomEvent(name, { detail }));
 }

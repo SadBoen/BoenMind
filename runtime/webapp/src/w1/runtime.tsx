@@ -282,6 +282,7 @@ export function BoenmindRuntimeProvider({
       watchdog = setTimeout(() => controller.abort(), 60_000);
     };
 
+    const requestEpoch = sessionEpochRef.current;
     try {
       const doFetch = (withSession: boolean) => {
         const headers: Record<string, string> = {
@@ -324,16 +325,21 @@ export function BoenmindRuntimeProvider({
             "所选工作目录不可用(可能已被删除):请重新选择,或到 设置→常规 检查",
           );
         }
-        // 服务器重启会清空内存会话表:400「未知会话」→ 清记忆重开新会话重试一次
-        storage.remove(STORAGE_KEYS.SESSION);
-        res = await doFetch(false);
+        // P1-6: 仅当服务端明确返回「未知会话」时才清空记忆重试,其余 400 原样上屏
+        if (detail.includes("未知会话") || detail.includes("session")) {
+          storage.remove(STORAGE_KEYS.SESSION);
+          res = await doFetch(false);
+        } else {
+          throw new Error(`HTTP 400 ${detail.slice(0, 160)}`);
+        }
       }
       if (!res.ok || !res.body) {
         const detail = await res.text().catch(() => "");
         throw new Error(`HTTP ${res.status} ${detail.slice(0, 160)}`);
       }
+      // P1-7: 代数守卫——如果网络在途期间用户切走了会话或清空了会话,丢弃迟到的头部写回
       const newSid = res.headers.get("x-bm-session");
-      if (newSid) {
+      if (newSid && sessionEpochRef.current === requestEpoch) {
         storage.set(STORAGE_KEYS.SESSION, newSid);
         const title = text.slice(0, 24) || "新对话";
         sessionsStore.upsert(newSid, title);
@@ -467,10 +473,6 @@ export function BoenmindRuntimeProvider({
     };
     // 仅挂载时执行一次
   }, []);
-
-  useEffect(() => {
-    document.title = "BM n=" + messages.length + " run=" + isRunning;
-  }, [messages, isRunning]);
 
   // W4b:审批裁决(前端卡片按钮)→ /admin/approvals/{id}/respond
   // (与 /rpc 同一执行体,走 /admin 免鉴权口径——前端无令牌可带)

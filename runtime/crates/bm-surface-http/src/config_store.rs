@@ -123,12 +123,20 @@ pub fn validate_field(name: &str, value: &Value) -> CoreResult<()> {
     Ok(())
 }
 
-/// 读配置文件;缺失/损坏 → 空对象(损坏文件不阻塞服务,下次 set 覆盖)。
+/// 读配置文件(严格版:损坏拒绝覆盖,缺失返回空对象)。
+fn read_file_strict(path: &Path) -> CoreResult<Value> {
+    let raw = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(json!({})),
+        Err(e) => return Err(validation(format!("读取配置文件失败: {e}"))),
+    };
+    serde_json::from_str(&raw)
+        .map_err(|e| validation(format!("model.json 格式已损坏,拒绝覆盖: {e}")))
+}
+
+/// 读配置文件(宽容版:用于只读回显与兜底启动)。
 fn read_file(path: &Path) -> Value {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| json!({}))
+    read_file_strict(path).unwrap_or_else(|_| json!({}))
 }
 
 /// pretty JSON → CRLF 文本(Windows 人可读口径;webadmin 配置写入共用)。
@@ -222,7 +230,7 @@ impl ModelConfigStore {
             .as_object()
             .ok_or_else(|| validation("values 必须是对象"))?;
         let path = section_file(&self.data_dir);
-        let mut file = read_file(&path);
+        let mut file = read_file_strict(&path)?;
         let obj = file.as_object_mut().ok_or(CoreError::Internal)?;
         for (key, value) in map {
             if key == "apiKey" && (value.is_null() || value.as_str() == Some("")) {
@@ -242,7 +250,7 @@ impl ModelConfigStore {
             return Err(validation(format!("未知配置字段 '{field}'")));
         }
         let path = section_file(&self.data_dir);
-        let mut file = read_file(&path);
+        let mut file = read_file_strict(&path)?;
         if let Some(obj) = file.as_object_mut() {
             obj.remove(field);
         }

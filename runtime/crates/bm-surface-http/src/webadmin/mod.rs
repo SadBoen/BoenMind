@@ -162,6 +162,11 @@ pub fn admin_routes(cfg: AdminConfig) -> axum::Router {
             "/sessions/{session_id}",
             axum::routing::delete(session_delete),
         )
+        // P1-5: 取消在途操作
+        .route(
+            "/operations/{operation_id}/cancel",
+            post(context::operation_cancel),
+        )
         .route("/fs/list", get(fs_list))
         // 工作目录选择器:全盘只读目录浏览(仅目录名,零内容)
         .route("/fs/browse", get(fs_browse))

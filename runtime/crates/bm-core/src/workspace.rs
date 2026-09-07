@@ -20,7 +20,7 @@ fn workspaces_file(data_dir: &Path) -> std::path::PathBuf {
     data_dir.join("config").join("workspaces.json")
 }
 
-/// 读注册表(缺文件/坏文件 = 空表,不阻断;与 roles.json 同款宽容读)。
+/// 读注册表(缺文件/坏文件 = 空表,只读解析场景宽容回退;管理面变更走 Result 防坏文件被覆写)。
 pub fn read_workspaces(data_dir: &Path) -> Vec<WorkspaceEntry> {
     let Ok(text) = std::fs::read_to_string(workspaces_file(data_dir)) else {
         return Vec::new();

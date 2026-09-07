@@ -38,6 +38,11 @@ pub(crate) enum Cmd {
         params: CancelParams,
         resp: oneshot::Sender<CoreResult<CancelResult>>,
     },
+    /// 管理面按 operation_id 直接取消(无需前台凑齐 session_id/agent_id)
+    OperationCancel {
+        operation_id: BmId,
+        resp: oneshot::Sender<CoreResult<CancelResult>>,
+    },
     /// 恢复裁定(M2.6 内部命令,M4 起升级为合同方法;INV-10/11 的用户入口)
     RecoverySettle {
         operation_id: BmId,
@@ -245,6 +250,9 @@ pub(crate) fn reply_unavailable(cmd: Cmd) {
             let _ = resp.send(Err(err()));
         }
         Cmd::Cancel { resp, .. } => {
+            let _ = resp.send(Err(err()));
+        }
+        Cmd::OperationCancel { resp, .. } => {
             let _ = resp.send(Err(err()));
         }
         Cmd::GetOperation { resp, .. } => {

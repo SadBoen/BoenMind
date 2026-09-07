@@ -929,6 +929,22 @@ pub(crate) fn handle_cancel(w: &mut World, params: CancelParams) -> CoreResult<C
     })
 }
 
+pub(crate) fn handle_operation_cancel(
+    w: &mut World,
+    operation_id: BmId,
+) -> CoreResult<CancelResult> {
+    let op = w
+        .operations
+        .get(&operation_id)
+        .ok_or_else(|| CoreError::validation("operation 不存在"))?;
+    let params = CancelParams {
+        session_id: op.session_id.clone(),
+        agent_id: op.agent_id.clone(),
+        operation_id,
+    };
+    handle_cancel(w, params)
+}
+
 pub(crate) fn handle_get_operation(w: &World, params: GetOperationParams) -> CoreResult<Receipt> {
     let op = w
         .operations
@@ -950,10 +966,55 @@ pub(crate) async fn handle_stop(
         None,
         serde_json::json!({ "reason": reason }),
     );
-    // 排空:不取消进行中回合(INV-12),等它们自然落定。
+    // 排空:等在途回合自然落定,但设硬顶超时(默认10s),防坏任务永久挂死停机/升级回路
     w.draining = true;
+    let drain_deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while !w.in_flight.is_empty() {
-        match rx.recv().await {
+        let remaining_time = drain_deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining_time.is_zero() {
+            tracing::warn!(
+                in_flight_count = w.in_flight.len(),
+                "Runtime handle_stop 排空超时(10s),强制取消在途回合并结束"
+            );
+            let in_flight_items: Vec<_> = w.in_flight.drain().collect();
+            for (op_id, token) in in_flight_items {
+                token.cancel();
+                w.settle_operation(
+                    &op_id,
+                    OperationState::Cancelled,
+                    Some(WireError::new(
+                        ErrorCode::Cancelled,
+                        "Runtime 停机排空超时,强制取消",
+                    )),
+                );
+            }
+            break;
+        }
+
+        let cmd_opt = match tokio::time::timeout(remaining_time, rx.recv()).await {
+            Ok(cmd) => cmd,
+            Err(_) => {
+                tracing::warn!(
+                    in_flight_count = w.in_flight.len(),
+                    "Runtime handle_stop 排空等待超时,强制清理剩余在途回合"
+                );
+                let in_flight_items: Vec<_> = w.in_flight.drain().collect();
+                for (op_id, token) in in_flight_items {
+                    token.cancel();
+                    w.settle_operation(
+                        &op_id,
+                        OperationState::Cancelled,
+                        Some(WireError::new(
+                            ErrorCode::Cancelled,
+                            "Runtime 停机排空超时,强制取消",
+                        )),
+                    );
+                }
+                break;
+            }
+        };
+
+        match cmd_opt {
             Some(Cmd::Turn(event)) => handle_turn_event(w, event),
             // W5:排空期回落中的台账回写照常应用(与 Turn 同口径)
             Some(Cmd::RememberTurn {

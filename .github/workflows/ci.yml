@@ -44,6 +44,7 @@ jobs:
           cache-dependency-path: runtime/webapp/package-lock.json
       - run: npm ci
       - run: npm run lint
+      - run: npm run build
 
 
   # S1 unit + S3 golden-trace + S5 log-redaction 随测试套件执行;三平台矩阵 = M0.3

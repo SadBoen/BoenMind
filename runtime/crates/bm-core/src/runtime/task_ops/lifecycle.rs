@@ -88,6 +88,9 @@ pub(crate) fn handle_task_lifecycle(
     Ok(state_result)
 }
 pub(crate) fn watchdog_scan_run(w: &mut World) -> usize {
+    // P1-4: 看门狗每拍同步扫描并清理已过期审批,杜绝滞留单与惰性过期脱节
+    crate::runtime::handlers::expire_due_approvals(w);
+
     let now = w.config.clock.now();
     let mut events = 0;
     // 分阶段作用域:先收集 Running 任务与判定,再逐个变更

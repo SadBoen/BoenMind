@@ -423,8 +423,14 @@ fn install(cfg: &AdminConfig, src: &std::path::Path) -> Result<(), String> {
         "old-{ts}{}",
         if cfg!(windows) { "exe" } else { "" }
     ));
-    let _ = std::fs::rename(&exe, &old); // 改名失败(个别 FS)则尝试直接覆盖
-    std::fs::copy(&new_bin, &exe).map_err(|e| format!("新二进制落位失败: {e}"))?;
+    let renamed_old = std::fs::rename(&exe, &old).is_ok();
+    if let Err(e) = std::fs::copy(&new_bin, &exe) {
+        // P1-12: 新二进制拷贝失败时回滚恢复原旧文件
+        if renamed_old {
+            let _ = std::fs::rename(&old, &exe);
+        }
+        return Err(format!("新二进制落位失败: {e}"));
+    }
 
     // 前端 dist(覆盖 web_dir)
     if let Some(web_dir) = &cfg.web_dir {
@@ -437,11 +443,21 @@ fn install(cfg: &AdminConfig, src: &std::path::Path) -> Result<(), String> {
         };
         let new_dist = src.join("webapp/dist");
         if new_dist.exists() {
-            if web_dir.exists() {
-                std::fs::remove_dir_all(&web_dir).map_err(|e| format!("清理旧 dist 失败: {e}"))?;
+            let dist_old = web_dir.with_extension(format!("old-{ts}"));
+            let had_old = web_dir.exists() && std::fs::rename(&web_dir, &dist_old).is_ok();
+            if let Err(e) = std::fs::create_dir_all(&web_dir).and_then(|_| {
+                copy_dir_recursive(&new_dist, &web_dir).map_err(std::io::Error::other)
+            }) {
+                // 回滚恢复旧 dist
+                if had_old {
+                    let _ = std::fs::remove_dir_all(&web_dir);
+                    let _ = std::fs::rename(&dist_old, &web_dir);
+                }
+                return Err(format!("dist 部署失败: {e}"));
             }
-            std::fs::create_dir_all(&web_dir).map_err(|e| format!("dist 目录创建失败: {e}"))?;
-            copy_dir_recursive(&new_dist, &web_dir)?;
+            if had_old {
+                let _ = std::fs::remove_dir_all(&dist_old);
+            }
         }
     }
 

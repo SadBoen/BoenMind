@@ -26,11 +26,6 @@ type Section =
 
 export function SettingsPage({ onClose }: { onClose: () => void }) {
   const [section, setSection] = useState<Section>("providers");
-  const [pluginFilter, setPluginFilter] = useState<string | undefined>(undefined);
-  // P1-34(2026-09-07 架构评审):原 editTarget 死参数链已拆——
-  // _goPluginWithFilter 全仓零调用、editTarget 恒 null,PluginsPage 的
-  // 消费 effect 永不触发;随死代码一并移除(需要时按「带编辑目标跳插件页」
-  // 新需求重设)。
 
   // 图标栏常驻,齿轮即开关;Esc 也可关闭(用户裁定:返回按钮不再需要)
   useEffect(() => {
@@ -69,10 +64,7 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
           />
           <NavItem
             active={section === "plugins"}
-            onClick={() => {
-              setPluginFilter(undefined);
-              setSection("plugins");
-            }}
+            onClick={() => setSection("plugins")}
             icon={<PlugIcon className="size-4" />}
             label="插件"
           />
@@ -113,9 +105,7 @@ export function SettingsPage({ onClose }: { onClose: () => void }) {
             {section === "general" ? <GeneralPage /> : null}
             {section === "limits" ? <LimitsPage /> : null}
             {section === "providers" ? <ProvidersPage /> : null}
-            {section === "plugins" ? (
-              <PluginsPage initialFilter={pluginFilter} />
-            ) : null}
+            {section === "plugins" ? <PluginsPage /> : null}
             {section === "appearance" ? <AppearancePage /> : null}
             {section === "roles" ? <RolesPage /> : null}
             {section === "logs" ? <LogsPage /> : null}

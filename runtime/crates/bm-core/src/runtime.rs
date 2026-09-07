@@ -487,7 +487,10 @@ impl World {
     fn settle_operation(&mut self, op_id: &BmId, to: OperationState, error: Option<WireError>) {
         let now = self.now_ts();
         let (session_id, agent_id, from, to, reason) = {
-            let op = self.operations.get_mut(op_id).expect("operation 必然存在");
+            let Some(op) = self.operations.get_mut(op_id) else {
+                tracing::warn!(operation = %op_id.as_str(), "settle_operation: operation 已不存在(可能随会话删除被清理),跳过");
+                return;
+            };
             let (from, to, reason) = match op.settle(to, error, now.clone()) {
                 Ok(t) => t,
                 Err(e) => {
@@ -534,8 +537,14 @@ impl World {
     fn fail_turn(&mut self, operation_id: &BmId, code: ErrorCode, message: String) {
         let now = self.now_ts();
         let (session_id, agent_id, request_id, agent_state) = {
-            let op = &self.operations[operation_id];
-            let a = &self.agents[&op.agent_id];
+            let Some(op) = self.operations.get(operation_id) else {
+                tracing::warn!(operation = %operation_id.as_str(), "fail_turn: operation 已不存在,跳过");
+                return;
+            };
+            let Some(a) = self.agents.get(&op.agent_id) else {
+                tracing::warn!(operation = %operation_id.as_str(), agent = %op.agent_id.as_str(), "fail_turn: agent 已不存在,跳过");
+                return;
+            };
             (
                 op.session_id.clone(),
                 op.agent_id.clone(),
@@ -554,14 +563,22 @@ impl World {
             ts: now,
         });
         {
-            let a = self.agents.get_mut(&agent_id).expect("存在");
-            a.transition(AgentState::Failed);
+            if let Some(a) = self.agents.get_mut(&agent_id) {
+                if AgentState::can_transition(a.state, AgentState::Failed) {
+                    a.transition(AgentState::Failed);
+                } else {
+                    tracing::warn!(agent = %agent_id.as_str(), state = ?a.state, "fail_turn: agent 无法迁移至 Failed,跳过");
+                }
+            }
         }
         // 强制点③补充(2026-09-05 回看):失败回合占回合配额,失败重试
         // 不得绕过 max_turns 烧钱(网关对失败调用同样可能计费)
         let turns_exhausted = {
-            let a = self.agents.get_mut(&agent_id).expect("存在");
-            a.budget.account_failed_turn()
+            if let Some(a) = self.agents.get_mut(&agent_id) {
+                a.budget.account_failed_turn()
+            } else {
+                false
+            }
         };
         if turns_exhausted {
             let (used, limit) = {
@@ -721,6 +738,9 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
             }
             Cmd::Cancel { params, resp } => {
                 let _ = resp.send(handle_cancel(&mut world, params));
+            }
+            Cmd::OperationCancel { operation_id, resp } => {
+                let _ = resp.send(handle_operation_cancel(&mut world, operation_id));
             }
             Cmd::RecoverySettle {
                 operation_id,

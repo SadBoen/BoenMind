@@ -673,6 +673,19 @@ impl RuntimeHandle {
         rx.await.map_err(|_| CoreError::Internal)?
     }
 
+    /// 管理面按 operation_id 直接取消
+    pub async fn operation_cancel(&self, operation_id: BmId) -> CoreResult<CancelResult> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(Cmd::OperationCancel {
+                operation_id,
+                resp: tx,
+            })
+            .await
+            .map_err(|_| CoreError::Internal)?;
+        rx.await.map_err(|_| CoreError::Internal)?
+    }
+
     /// 收据查询幂等(INV-9):终态后任意多次调用结果一致。
     pub async fn operations_get(&self, params: GetOperationParams) -> CoreResult<Receipt> {
         let (tx, rx) = oneshot::channel();
