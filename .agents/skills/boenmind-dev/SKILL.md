@@ -33,11 +33,11 @@ description: BoenMind 仓库的开发规程技能,把 AGENTS.md 硬纪律转成�
 
 1. 先改 `architecture/boenmind.c4`,再改基线文字;两者不一致时以模型为准。
 2. 决策本身发新 ADR(`adr/ADR-000N-<slug>.md`);把结论并入基线正文时**熔入对应段落并标注 ADR 编号**(ADR-0015:不再挂追加式引注块)。
-3. `architecture/deepwiki-validation.md` 的 S1–S10 是 proposed:只在里程碑回看时逐条裁决,不得自动采纳。
+3. S1–S10 是 proposed(结论速览见 `architecture/README.md`,原验证报告已溯 git 史,ADR-0027):只在里程碑回看时逐条裁决,不得自动采纳。
 
 ## 清单 C:实现里程碑(`runtime/` 代码)
 
-1. 开工先写《M 实现规格》进 `milestones/`(技术栈、crate 划分、CI);规格属第 2 层,开工时写,不预写。
+1. 开工先写《M 实现规格》进 `milestones/`(技术栈、crate 划分、CI);规格属第 2 层,开工时写,不预写;规格是**临时工件**——收官回看结论入台账后删除(ADR-0027)。
 2. 实现中:出入参必须过对应 JSON Schema;事件类型/错误码必须在注册表内;状态迁移只能沿 `core-transitions` 的边,表外迁移即 bug。
 3. 不变量测试以 INV id 命名(INV-1..INV-12),与 `invariants/M1-invariants.md` 一一对应(CI 规则 R5)。
 4. 通过条件 = P0 测试套件全绿 + 黄金轨迹可回放;做完走清单 D,不要跳过回看直接开下一个里程碑。
@@ -46,7 +46,7 @@ description: BoenMind 仓库的开发规程技能,把 AGENTS.md 硬纪律转成�
 
 1. 全量测试 + `validate.py` 全绿 + 黄金轨迹回放通过。
 2. 按基线 §19 过回看门;逐条裁决本里程碑相关的 ADR 验收条件与 S1–S10 中相关项。
-3. 进度只认 git:`milestones/HISTORY.md` 加交付行、遗留入 `milestones/BACKLOG.md`、AGENTS.md 顶部当前状态一行 → 打 tag → 提交说明写清动机。
+3. 进度只认 git:交付信息进 tag+提交说明(ADR-0027,不另立时间线文件)、裁决/驳回入 `milestones/SETTLED.md`、遗留入 `milestones/BACKLOG.md`、AGENTS.md 顶部当前状态一行 → 删规格与回看文件 → 打 tag。
 
 ## 提交纪律
 

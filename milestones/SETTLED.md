@@ -4,6 +4,7 @@
 > 评审/回头看/审计出新意见前,先在此查重:**已有条目不得重提**;翻案须本清单无此条**且**带新证据。
 > 主代理每驳回一条,当场补一行;结论被后续决策推翻时加「已废止」标注并写新行,不删旧行。
 > 行格式:一行一条 = 结论(含一句依据)|出处|日期。来源=各批复核在 HISTORY/BACKLOG 行内注记与历次评审台账(原文溯 git 史)。
+> 出处文件已按 ADR-0027(2026-09-08)移出仓者(规格/回看/结算/HISTORY/PENDING/debates/验证报告),均溯 git 史,结论本身仍然有效。
 
 ## 1. 产品与流程裁决(用户拍板,勿重提)
 
@@ -72,10 +73,11 @@
 3. 合同版本=v1.0 冻结(字段只增不破);「v0.1」系 skill.v0_1 等文件名谱系后缀误读 | HISTORY 第三方评审复核行 | 2026-09-07
 4. Git 历史已重写(2026-09-07 filter-repo 清 target-inspector 121MB+target-wms 335MB):main 与 v0.0.9/11/12 tag 哈希全变,既有 clone 须重拉;GitHub Release 资产不受影响 | HISTORY webadmin 拆分+历史瘦身行 | 2026-09-07
 5. 磁盘 target-inspector/target-wms 残留=被忽略的本地构建产物,git 全历史已清(b13f531/38b0cb5),「仓库里有 456MB 构建产物」=引旧 clone | HISTORY 第三方评审复核行 | 2026-09-07
-6. 辩论转录(architecture/debates/ 六份)=基线 §17.1/§24 证据底稿,不归档(2026-09-07 审计裁决;收档动议重开须用户拍板,见 BACKLOG §3.3) | HISTORY 文档清理审计核实批行 | 2026-09-07
-7. M-reviews/M2/M4-settlement=ADR-0015 决策 6 明列不动之物+HISTORY/BACKLOG/源码注释多处活锚点,不归档(收档动议同上在 BACKLOG §3.3) | HISTORY 文档清理审计核实批行 | 2026-09-07
+6. 【已废止 2026-09-08:用户重裁升级为删除,见下行 13】辩论转录(debates/ 六份)=基线 §17.1/§24 证据底稿,不归档 | HISTORY 文档清理审计核实批行(溯 git 史) | 2026-09-07
+7. 【已废止 2026-09-08:用户重裁升级为删除,见下行 13】M-reviews/M2/M4-settlement=ADR-0015 决策 6 明列不动之物+多处活锚点,不归档 | HISTORY 文档清理审计核实批行(溯 git 史) | 2026-09-07
 8. .tools/=本机工作台不入 git,其内 STATE/LEDGER/LOCK 非丢失文档 | PLAYBOOK §7+HISTORY 文档清理行 | 2026-09-07
 9. W-ui-inventory 导航已在 milestones/README,删除反致 W2 规格 §5.1 活引用悬空 | HISTORY 文档清理审计核实批行 | 2026-09-07
 10. INSTALL「重启生效」经 providers.rs 代码核实为真(设为当前=改默认须重启;增删改 provider 本身免重启热重建) | HISTORY 文档内容级体检批行 | 2026-09-07
 11. docs/ 目录已清空:引用 docs/*.md 前先核存在性,报告原文溯 git 史 | HISTORY 一次性报告清理行 | 2026-09-07
 12. server*.log 已在 .gitignore,非敏感泄露 | HISTORY v0.0.13 后复盘复核行 | 2026-09-07
+13. 过程文档已全量删除(2026-09-08 用户裁决「仓库只存当前框架/功能、未来方向、欠账;ADR-0027」):M1-M9 规格+回看 18 份、M2/M4 结算表、W1-W10+MUSIC-APP 规格 10 份、HISTORY、PENDING、debates 转录 6 份、deepwiki 验证报告,共 39 份——旧文档指向它们的注记均溯 git 史;辩论与验证结论仍可查 architecture/README 速览与基线 §17/§24;2026-09-07 审计的留档取舍由本条取代 | ADR-0027 | 2026-09-08

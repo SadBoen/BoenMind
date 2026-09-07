@@ -1020,7 +1020,7 @@ Butler App
 
 L2 持有 Task 的规范状态、成员关系、预算、截止时间和生命周期事件。Orchestrator 可以持有 Task Board、编队策略和任务卡片投影，但不能以自己的数据库代替 L2 的规范状态。Orchestrator 崩溃时，Task 和 Agent 会话继续由 Runtime 监督；Orchestrator 恢复后从持久状态和事件日志重建投影。
 
-恢复语义（ADR-0004；条件 6 于 M5 结算）：Orchestrator 恢复 = 先结算未决意图，再从最近一致的持久状态与决策事件重新推理下一步；明确声明不重放 LLM 内部推理过程；Runtime 仅承担会话监督。编排重启的触发者恰为二者：①用户显式 resume（任意 Surface 的 task.resume）；②Watchdog 自动触发——监护判定停滞成立后持久发布事实事件 `watchdog.reorchestration.triggered`，由编排器消费后重新推理；Watchdog 与 Runtime 监督层均不推断编排下一步。停滞窗口：无进展信号（无新事件/无心跳更新/无 Operation 状态变化）持续超停滞阈值（默认 15 分钟，Task 可配置）判定 stalled 并触发自动重启；自最近进展累计超硬顶（默认 24 小时）不再自动重启，Task 转 blocked 等待用户裁定；waiting_approval 态豁免自动重启。数值与机制详见 `milestones/M5-implementation-spec.md` §5.2。
+恢复语义（ADR-0004；条件 6 于 M5 结算）：Orchestrator 恢复 = 先结算未决意图，再从最近一致的持久状态与决策事件重新推理下一步；明确声明不重放 LLM 内部推理过程；Runtime 仅承担会话监督。编排重启的触发者恰为二者：①用户显式 resume（任意 Surface 的 task.resume）；②Watchdog 自动触发——监护判定停滞成立后持久发布事实事件 `watchdog.reorchestration.triggered`，由编排器消费后重新推理；Watchdog 与 Runtime 监督层均不推断编排下一步。停滞窗口：无进展信号（无新事件/无心跳更新/无 Operation 状态变化）持续超停滞阈值（默认 15 分钟，Task 可配置）判定 stalled 并触发自动重启；自最近进展累计超硬顶（默认 24 小时）不再自动重启，Task 转 blocked 等待用户裁定；waiting_approval 态豁免自动重启。数值与机制详见实现细节（原 `milestones/M5-implementation-spec.md` §5.2，已按 ADR-0027 移出仓溯 git 史）。
 
 ## 11. Agent Team 与 Coordinator Agent
 
@@ -1558,7 +1558,7 @@ Runtime generation、状态迁移与回滚
 
 ### 17.1 裁决复核（2026-08-28）与增补熔入
 
-五条核心裁决（R1-R5）经 Zen consensus 三模型辩论复核：glm-5-turbo、gpt-5.6-luna、gemini-3.7-flash 三个模型家族分任架构师（钢人论证）、挑战者（安全与可靠性反驳）、实证研究者（以真实系统证据裁决），角色跨裁决轮换，两轮辩论（独立立场→交叉质证）+逐裁决合成。结论：R1 三权分立有条件维持，R2-R5 修订，无一条被推翻；辩论新增两条裁决——**ADR-0006 权限以合同显式化（元原则）**与 **ADR-0007 L0 自举豁免与升级信任链**。逐裁决结论、共识比分与条件见 `adr/README.md` 索引与各 ADR 文件；全程转录见 `architecture/debates/`。
+五条核心裁决（R1-R5）经 Zen consensus 三模型辩论复核：glm-5-turbo、gpt-5.6-luna、gemini-3.7-flash 三个模型家族分任架构师（钢人论证）、挑战者（安全与可靠性反驳）、实证研究者（以真实系统证据裁决），角色跨裁决轮换，两轮辩论（独立立场→交叉质证）+逐裁决合成。结论：R1 三权分立有条件维持，R2-R5 修订，无一条被推翻；辩论新增两条裁决——**ADR-0006 权限以合同显式化（元原则）**与 **ADR-0007 L0 自举豁免与升级信任链**。逐裁决结论、共识比分与条件见 `adr/README.md` 索引与各 ADR 文件；全程转录与终局合成已按 ADR-0027 移出仓（溯 git 史），结论速览存 `architecture/README.md`。
 
 三大结构性张力如实记录，供后续里程碑回看时优先审视：①权力分立与协调效率互斥；②极简内核与治理完备互斥；③唯一真源与投影时效互斥。
 
@@ -1566,7 +1566,7 @@ Runtime generation、状态迁移与回滚
 
 ## 18. 里程碑：阶段一 M0-M8 与阶段二批次
 
-必须按可运行检查点推进，而不是按“模块写完”推进。每个里程碑完成后，都要回头评估此前的设计和实现，再决定是否进入下一个里程碑。阶段二批次（M9 起）与 W 序列（WebUI）同样按可运行检查点推进；本节只保留各里程碑的范围定义与通过条件，交付状态（日期/tag/测试数/结论/遗留）统一记录于 `milestones/HISTORY.md`，未结事项统一记录于 `milestones/BACKLOG.md`。
+必须按可运行检查点推进，而不是按“模块写完”推进。每个里程碑完成后，都要回头评估此前的设计和实现，再决定是否进入下一个里程碑。阶段二批次（M9 起）与 W 序列（WebUI）同样按可运行检查点推进；本节只保留各里程碑的范围定义与通过条件，交付状态（日期/tag/测试数/结论/遗留）由 git tag 与提交说明承载（ADR-0027），未结事项统一记录于 `milestones/BACKLOG.md`。
 
 ### M0：范围、合同和测试基线
 
@@ -1698,11 +1698,11 @@ M8.8 数据保留期、用户删除与墓碑回放验证
 
 ### M9：阶段二第一批——记忆抽屉授权、模型真流式、worker 自主环 v0
 
-范围：memory:user 显式授权执行面（Broker 裁决步升级审批 + Grant scope 谓词）；模型连接器真流式（SSE 打字机）；autorun worker 自主环初级版。通过条件：实网流式联通；真实浏览器端到端手测通过；授权与抽屉隔离有可证伪测试。规格与回看：`milestones/M9-implementation-spec.md`、`milestones/M9-review.md`。
+范围：memory:user 显式授权执行面（Broker 裁决步升级审批 + Grant scope 谓词）；模型连接器真流式（SSE 打字机）；autorun worker 自主环初级版。通过条件：实网流式联通；真实浏览器端到端手测通过；授权与抽屉隔离有可证伪测试。规格与回看已随交付移出仓（溯 git 史，ADR-0027）。
 
 ### 全面回看 M1-M9
 
-整体回看门：四道门禁全绿（260 测试）；新发现 F-01..F-11 入审计台账；条件：C4 模型回写（F-06）列为阶段二下一批开工前置。记录：`milestones/FULL-REVIEW-2026-08-30.md`。
+整体回看门：四道门禁全绿（260 测试）；新发现 F-01..F-11 入审计台账；条件：C4 模型回写（F-06）列为阶段二下一批开工前置。记录溯 git 史（ADR-0027）。
 
 ### W 序列（WebUI，ADR-0014）：W1-W9
 
@@ -1963,9 +1963,10 @@ Butler 向用户汇报，并保留可回放的工作记录
 | ADR-0024 | 运行时限制集中配置面(limits.json) | accepted |
 | ADR-0025 | 长命令后台转轨(run_in_background 与超限自动转轨) | accepted |
 | ADR-0026 | 文档纪律:规范与叙事分离(HISTORY 单行制、SETTLED 查重清单、评审必读入口) | accepted |
+| ADR-0027 | 文档极简纪律:仓库只存规范、方向与欠账(过程文档交付即删,交付全史=git) | accepted |
 
 ## 24. 架构模型即代码与外部实证验证
 
 - **模型即代码**：全文架构图以 Structurizr C4 DSL 维护于 `architecture/boenmind.c4`（structurizr-dsl 4.1.0 解析验证通过；冻结时点 66 元素/111 关系/11 视图，ADR-0009 后演进出 85 元素/128 关系/12 视图，演进口径以 `architecture/README.md` 为准：SystemContext／Container／L2Components＋六个动态视图＋三个部署环境）。任何 Structurizr 兼容渲染器导入即可出图；修改架构先改模型（ADR-0008；VPS 部署环境自 ADR-0009 起）。
-- **外部实证验证**：以 DeepWiki 对照 Erlang/OTP、Kubernetes、VS Code 三个真实 runtime 系统验证 L0-L5 分层与插件热替换设计，报告见 `architecture/deepwiki-validation.md`——C1-C8 逐条裁决：热替换与崩溃隔离（C7/C8）确认，分层与合同化（C1-C6）部分确认，无偏差；单写者租约与验证期禁副作用为本设计独有加强。修订建议 S1-S10 逐条裁决状态（S5/S9 已闭合，S3/S4/S8 部分采纳，余 proposed）以 `milestones/BACKLOG.md` 台账为准，只在里程碑回看时裁决，不自动采纳。
-- **辩论记录**：`architecture/debates/` 存有五条核心裁决的完整辩论转录（三方两轮+逐裁决合成）与跨裁决终局合成，是 §17.1 与全部 ADR 的证据底稿。
+- **外部实证验证**：以 DeepWiki 对照 Erlang/OTP、Kubernetes、VS Code 三个真实 runtime 系统验证 L0-L5 分层与插件热替换设计（验证报告已按 ADR-0027 移出仓溯 git 史）——C1-C8 逐条裁决：热替换与崩溃隔离（C7/C8）确认，分层与合同化（C1-C6）部分确认，无偏差；单写者租约与验证期禁副作用为本设计独有加强。修订建议 S1-S10 逐条裁决状态（S5/S9 已闭合，S3/S4/S8 部分采纳，余 proposed）以 `milestones/BACKLOG.md` 台账为准，只在里程碑回看时裁决，不自动采纳。
+- **辩论记录**：五条核心裁决的多模型辩论转录与跨裁决终局合成曾存 `architecture/debates/`，已按 ADR-0027 移出仓（溯 git 史）；裁决结论沉淀于 §17.1、`architecture/README.md` 速览与 `adr/` 各文件。

@@ -2,7 +2,7 @@
 
 > 层级:第 0 层(架构基线)的决策日志。基线正文只保留稳定结论;增量裁决、修订与条件全部在这里。两者冲突时以更新的 ADR 为准。
 > 生成:2026-08-28,§17 五条核心裁决的 Zen consensus 多模型辩论(glm-5-turbo / gpt-5.6-luna / gemini-3.7-flash 三模型家族,角色跨裁决轮换,两轮质证+逐裁决合成)+ DeepWiki 三系统对照验证。
-> 辩论全程转录:`architecture/debates/`;外部验证报告:`architecture/deepwiki-validation.md`。
+> 辩论全程转录与验证报告已按 ADR-0027(2026-09-08)移出仓溯 git 史;结论速览见 `../architecture/README.md`。
 >
 > **协议说明(角色轮换的精确语义)**:三方 persona(架构师/挑战者/实证者)与三个模型家族绑定后跨裁决轮换,保证每个模型都体验过不同立场;位置标签(FOR/AGAINST/EMPIRICAL)在各记录中固定。标签与「persona@模型」的实际对应:R1、R4 = FOR=架构师@glm-5-turbo,AGAINST=挑战者@gpt-5.6-luna,EMPIRICAL=实证者@gemini-3.7-flash;R2、R5 = FOR=挑战者@gpt-5.6-luna,AGAINST=实证者@gemini-3.7-flash,EMPIRICAL=架构师@glm-5-turbo;R3 = FOR=实证者@gemini-3.7-flash,AGAINST=架构师@glm-5-turbo,EMPIRICAL=挑战者@gpt-5.6-luna。每场辩论中三种 persona 与三个模型家族均完整在场。
 
@@ -34,6 +34,7 @@
 | [ADR-0024](ADR-0024-limits-config-surface.md) | 运行时限制集中配置面(limits.json) | accepted | ~40 项硬编码限制收敛单文件+安全钳制+env>文件>代码默认+LimitsCell 热生效;设置页全量可编辑;exec 默认 120s/上限 600s 对齐业界(2026-09-07) |
 | [ADR-0025](ADR-0025-background-command-promotion.md) | 长命令后台转轨 | accepted | exec 增 run_in_background+超限自动转轨(Hermes 式);system.job_output 轮询收取(DSH 式);回合 prompt 注入作业摘要;不做主动推注入(2026-09-07) |
 | [ADR-0026](ADR-0026-doc-discipline-normative-narrative-separation.md) | 文档纪律:规范与叙事分离 | accepted | 规范文档零编年史/HISTORY 单行制/SETTLED.md 唯一查重清单/评审必读入口收窄(2026-09-08) |
+| [ADR-0027](ADR-0027-docs-minimalism-delete-after-delivery.md) | 文档极简纪律:仓库只存规范、方向与欠账 | accepted | 过程文档(规格/回看/转录/时间线)交付即删;交付全史=git;入库白名单四类(2026-09-08) |
 
 > 编号说明:ADR-0012 于 2026-08-31 随 M10 dsh 前端线归档(见 ADR-0013 编号说明),编号不回收;主干引用配置管理口径时以 config_store 现状与 W2/W4 规格为准。
 > 文体注:0001-0009 状态用小写 accepted(-with-conditions),0010/0011 起用 Accepted(日期)/已裁决(用户,日期)——语义等价,统一以本表为准。

@@ -65,7 +65,7 @@ BOEN_OPENCODE_SESSION_ID OpenCode Go 网关 x-opencode-session 头的固定值(�
 - 大段内联脚本(python heredoc)写文件易**静默失败**——先 Write 成文件再执行;
 - 基线 §1-§24 编号是被 adr/、milestones/ 大量引用的**硬锚点**(§13.5/§17/§18/§19 最密)——重排基线前先 `grep -rn "基线 §" adr/ milestones/`;
 - 给基线增补:**熔入正文+标注 ADR 编号**,不挂追加式引注块(ADR-0015);补丁里不要写行号引用(必然漂移);
-- 里程碑/合同文件是历史记录,不回头改写;新事实进 HISTORY/BACKLOG/新 ADR。
+- 里程碑/合同文件是历史记录,不回头改写;新事实进 BACKLOG/SETTLED/新 ADR,交付全史=git tag+提交说明(ADR-0027)。
 
 ## 6. 已废止/已迁移速查(查旧资料前先看这里)
 

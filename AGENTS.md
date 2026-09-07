@@ -4,11 +4,11 @@
 
 BoenMind:个人生态的 AI Runtime / AI OS,当前为**阶段一(跨平台单软件)**。
 设计已定稿,经三模型辩论复核(`adr/`)与三真实系统对照验证
-(Erlang/OTP、Kubernetes、VS Code,见 `architecture/deepwiki-validation.md`)。
+(Erlang/OTP、Kubernetes、VS Code;转录与验证报告已删溯 git 史,ADR-0027)。
 合同库冻结 v1.0(字段只增不破)。
 
 **当前版本 = v0.0.13(已发版)**,此后批次落 main 未打 tag。进度只认 git:
-交付全史唯一入口 = `milestones/HISTORY.md`(看表尾);欠账唯一入口 = `milestones/BACKLOG.md`;
+交付全史 = git tag+提交说明(ADR-0027,不另立时间线文件);欠账唯一入口 = `milestones/BACKLOG.md`;
 已裁决/驳回勿再翻案唯一清单 = `milestones/SETTLED.md`(ADR-0026)。
 ⚠ Git 历史已于 2026-09-07 重写(filter-repo 清构建产物),v0.0.9/11/12 tag 哈希全变,既有 clone 须重拉;GitHub Release 资产不受影响。
 
@@ -16,10 +16,10 @@ BoenMind:个人生态的 AI Runtime / AI OS,当前为**阶段一(跨平台单软
 
 ```text
 BoenMind-CORE-ARCHITECTURE.md   第 0 层  架构基线:原则/边界/不变量;§17 裁决;§18 里程碑定义;§19 回看制度
-adr/                            第 0 层  架构决策记录 ADR-0001..0026(0012 随 M10 dsh 线归档、编号跳空;基线与 ADR 冲突时以更新的 ADR 为准)
-architecture/                   第 0 层  C4 模型 boenmind.c4(拓扑唯一权威)+ 辩论转录(debates/,证据底稿非评审对象)+ 验证报告
+adr/                            第 0 层  架构决策记录 ADR-0001..0027(0012 随 M10 dsh 线归档、编号跳空;基线与 ADR 冲突时以更新的 ADR 为准)
+architecture/                   第 0 层  C4 模型 boenmind.c4(拓扑唯一权威)+ 验证渲染说明;辩论转录与验证报告已删溯 git 史(ADR-0027)
 boenmind-contracts/             第 1 层  机器可读合同(v1.0 冻结)+ validate.py 校验器 + m0/(测试矩阵/威胁模型/perf-baseline)
-milestones/                     第 2 层  实现规格+回看(M1-M9、W1-W10、MUSIC-APP)+ 台账四件:HISTORY(交付时间线)/BACKLOG(未结)/PENDING(待裁决,已清零)/SETTLED(已裁决与驳回查重清单);评审类一次性报告不入库(2026-09-07),结论沉淀台账,原文溯 git 史
+milestones/                     第 2 层  台账二件:BACKLOG(未结)/SETTLED(已裁决查重)+ W-ui-inventory(选装参考)+ shots-* 验收截图;规格=开工时写的临时工件,收官即删(ADR-0027),交付全史=git
 runtime/                        第 3 层  Rust workspace 9 个 crate(bm-contract/core/persist/providers/cli/surface-http/runtime/judge/testkit)+ webapp(W 序列前端,Vite+React+TS)
 apps/                           第 3 层  真实 App:wiki_server/market_server/music_server(stdio MCP,Python)+ smoke_test.py(CI 冒烟)+ mcp-config.example.json
 plugins/                        第 3 层  官方随包插件:mcp/web-multisearch(聚合搜索)、mcp/context-inspector(交互透视与诊断分析)
@@ -42,7 +42,7 @@ PLAYBOOK.md                     附页    实操备忘+高频坑唯一源:启动
 2. **先改模型再改文字**:架构变更先改 `architecture/boenmind.c4`;文字图与模型不一致以模型为准。
 3. **决策写 ADR**:新决策在 adr/ 发新文件(编号递增),不修改既有 ADR 的语义;对基线的增补**熔入正文并标注 ADR 编号**,不挂追加式引注块(ADR-0015)。
 4. **权限以合同显式化**(ADR-0006):未列入注册合同的权力视为不存在。
-5. **里程碑 = 可运行检查点**(§18/§19):P0 测试套件全绿才算完成;完成后按 §19 回看再进下一个;交付状态登记 HISTORY,遗留登记 BACKLOG。
+5. **里程碑 = 可运行检查点**(§18/§19):P0 测试套件全绿才算完成;完成后按 §19 回看再进下一个;交付状态=git tag+提交说明(ADR-0027),遗留登记 BACKLOG。
 6. **真实进度只认 git**:主干应始终可校验(validate.py 全绿);提交说明写清动机。
 7. **用户可见面必须真实浏览器手测**(2026-09-01 用户明示):以页面可见内容/截图为证;接口测试全绿 ≠ 界面交付。
 8. **规范与叙事分离**(ADR-0026):规范文档只写当前有效的规则与事实;历史叙事只进 git 提交说明与 HISTORY 单行;已裁决事项以 SETTLED.md 为唯一清单,向评审翻旧账 = 返工。
@@ -58,7 +58,7 @@ PLAYBOOK.md                     附页    实操备忘+高频坑唯一源:启动
 **必读清单(按序,勿全仓通读)**:①本文件 → ②基线对应章节(架构=§1-§17,流程/里程碑=§18-§19)→
 ③`milestones/BACKLOG.md` 未结项 → ④`milestones/SETTLED.md` 逐条查重。
 
-1. 台账(HISTORY/PENDING)与辩论转录是**记录不是评审对象**,不主动通读;
+1. 过程文档(规格/回看/转录/时间线)一律不入仓(ADR-0027),污染源物理不存在;评审对象只有白名单规范文档与台账二件;
 2. 新意见提出前先查 SETTLED:已有结论不得重提;翻案须 SETTLED 无此条**且**带新证据;
 3. 属实才修,误报必驳;每驳回一条当场补 SETTLED 行(一行一条,含证据与出处);
 4. 评审类一次性报告不入库(2026-09-07 用户令):结论写 HISTORY 行,驳回写 SETTLED 行,原文留 git 史。

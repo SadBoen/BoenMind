@@ -2,7 +2,8 @@
 //!
 //! 原则:合同文件是唯一真源。本 crate 内嵌全部冻结 schema/注册表文本,
 //! 类型只做「方便实现」的镜像;同步测试保证镜像与合同文本不漂移。
-//! 合同语义的解读条款见 milestones/M1-implementation-spec.md §8。
+//! 合同语义的解读条款:原 milestones/M1-implementation-spec.md §8(已溯 git 史,
+//! ADR-0027);现行口径以本 crate 与 boenmind-contracts/README.md 为准。
 
 #[macro_use]
 mod wirestr;

@@ -200,8 +200,8 @@ impl ContextLog {
         seq
     }
 
-    /// W9 逐轮事件(tool_call/tool_result/assistant_final/turn_end,规格
-    /// milestones/W9-context-trajectory-spec.md):与模型调用快照同一 jsonl
+    /// W9 逐轮事件(tool_call/tool_result/assistant_final/turn_end,原 W9
+    /// 规格溯 git 史 ADR-0027):与模型调用快照同一 jsonl
     /// 流,`kind` 字段区分(快照行无 kind,既有读取面不受影响)。脱敏与
     /// 静默降级同 record。返回分配的 seq。
     pub fn record_event(

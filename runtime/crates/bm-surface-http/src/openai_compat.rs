@@ -3,7 +3,7 @@
 //! 对话层行业标准接口:任何 OpenAI 兼容前端(含 W 系列壳子)即插即用接
 //! BoenMind 自研 Agent。会话由 runtime 持有,壳子经 `X-Bm-Session` 请求头
 //! 寻址续聊;历史由 runtime 侧维护,壳子只需传增量最后一条 user 消息
-//! (W1 合同口径,见 milestones/W1-implementation-spec.md §4)。
+//! (W1 合同口径;原 W1 规格 §4 溯 git 史,ADR-0027)。
 //! 免鉴权 = 已登记欠账(公网部署前必须补 Bearer,沿 ADR-0009 T-13/T-14)。
 
 use crate::AppState;

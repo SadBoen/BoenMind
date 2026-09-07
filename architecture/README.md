@@ -1,16 +1,13 @@
 # BoenMind 架构工件目录
 
-> 本目录是《BoenMind 核心架构基线》(../BoenMind-CORE-ARCHITECTURE.md)的配套工件:
-> 架构模型即代码、多模型辩论记录、外部系统对照验证报告。
+> 本目录是《BoenMind 核心架构基线》(../BoenMind-CORE-ARCHITECTURE.md)的配套工件:架构模型即代码。
 > 层级:第 0 层(架构基线)的支撑物;机器可读合同在第 1 层(../boenmind-contracts/),与本目录互不依赖。
+> 注:辩论转录(debates/)与外部验证报告(deepwiki-validation.md)已按 ADR-0027(2026-09-08)移出仓溯 git 史;其结论速览保留在本 README 末节与基线 §17/§24。
 
 ## 文件清单
 
 ```text
 boenmind.c4                    Structurizr C4 DSL 工作区(架构模型唯一权威载体)
-debates/R1..R5-*-transcript.md §17 五条核心裁决的 Zen consensus 多模型辩论全程转录
-debates/zen-consensus-final.md 跨裁决终局合成(三大张力 + ADR 计划)
-deepwiki-validation.md         Erlang/OTP、Kubernetes、VS Code 三系统对照验证报告
 ```
 
 ## boenmind.c4 视图 ↔ 基线章节映射

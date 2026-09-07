@@ -1,8 +1,9 @@
 # 未结事项总台账(BACKLOG)
 
 > 定位:全仓「还欠什么」的**唯一入口**(ADR-0015 确立)。
-> **维护口径(2026-09-02 用户裁决更新)**:已闭合条目**移出台账不再留行**,闭合史可溯 git 提交史与 `milestones/HISTORY.md`;台账只留未结项,每项须有来源与状态;裁决「不做」的进 §7 备忘防重开。
+> **维护口径(2026-09-02 用户裁决更新)**:已闭合条目**移出台账不再留行**,闭合史可溯 git 提交史;台账只留未结项,每项须有来源与状态;裁决「不做」的进 §7 备忘防重开。
 > 状态口径:OPEN=未动工 / DEFERRED=用户拍板后置 / INPROGRESS=进行中。
+> 出处注记指向的规格/回看/结算/时间线文件已按 ADR-0027(2026-09-08)移出仓,均溯 git 史。
 
 ## 1. 新工进行与待审批次
 
@@ -86,9 +87,8 @@
 | 审批无人在线时的通知机制 | 来源 2026-09-07 外部审查复核:审批可达性已修(/admin/approvals 轮询+YOLO),但前端未连接时审批仍会长时间挂起;可加系统通知/声音/轮询提示等 | OPEN(低) |
 | 同批 tool_calls 拒绝联动(产品语义) | 来源 2026-09-07 外部复盘复核(REVIEW-2026-09-07-v0.0.13-external §三):单回合多 tool_calls 顺序串行执行系单写者刻意语义不动;但用户拒绝其中之一后,同批其余工具仍各自独立过 Broker 审批并执行——是否改「拒绝即取消同批余下」属产品设计裁决 | OPEN(低,待裁决) |
 | 前端长会话渲染性能 | 来源 2026-09-07 外部复盘复核:ThreadPrimitive.Messages 无虚拟滚动(多次「加载更早消息」后 DOM 全量堆积,大代码块/密集表格掉帧,可评估 @tanstack/react-virtual);流式期间逐 token 全文正则重扫+ReactMarkdown 全树重建(可加渲染节流);与 P3 context.tsx/thread.tsx 拆分同族 | OPEN(低) |
-| 旧规格/回看文件收档候选 | 来源 2026-09-08 文档重组批(用户批准方案的 P2 候选项):M*-review 与 M2/M4-settlement 等过程文档移 milestones/archive/ 子目录,仅动位置不动内容;注意 2026-09-07 文档审计曾裁「M-reviews 系 ADR-0015 决策 6 不动之物」(SETTLED §4-7),重开动议依据=用户 2026-09-08 明示文档膨胀拖累评审;动工前须逐文件核活锚点并经用户最终拍板 | OPEN(低,待用户拍板) |
 
-## 4. 用户拍板后置(DEFERRED,裁决记录见 milestones/PENDING.md)
+## 4. 用户拍板后置(DEFERRED,历史裁决溯 git 史)
 
 | 条目 | 来源 | 状态 |
 |---|---|---|
@@ -115,7 +115,7 @@
 
 - **内置能力全量 MCP 化 = 用户裁决不搞(2026-09-02)**;复核意见=同步 trait 快路径系刻意选型(零进程开销),全量子进程化对单用户场景属倒退;热插拔诉求由 §1「MCP 完整热插拔」承接。
 - 合同 Minor 三笔:tools maxItems 0→16 / finish_reason 加 tool_calls / invoke_response 加 tool_calls(commit 40988a7,W4)。
-- PENDING.md 的 11 条 D-M 系列 user 裁决全部闭合(见 milestones/PENDING.md 表)。
-- S5(S4 部分实现)、S9(verification 三分法,M5/M7)裁决见 FULL-REVIEW §2.4。
-- 其余已交付/已修复条目(审计 F-01~F-04/F-10、W4b 三件套、上下文透视面板、前端治理两轮、api_dsh 移除、release 线重写、坏 MCP 条目容错、冒烟套件等)已按 2026-09-02 维护口径移出台账,可溯 git 史与 HISTORY.md。
+- PENDING.md 的 11 条 D-M 系列 user 裁决全部闭合(原表已随 ADR-0027 删除,溯 git 史)。
+- S5(S4 部分实现)、S9(verification 三分法,M5/M7)裁决见 FULL-REVIEW §2.4(溯 git 史)。
+- 其余已交付/已修复条目(审计 F-01~F-04/F-10、W4b 三件套、上下文透视面板、前端治理两轮、api_dsh 移除、release 线重写、坏 MCP 条目容错、冒烟套件等)已按 2026-09-02 维护口径移出台账,可溯 git 史。
 - capability 操作不落 operations 表复核确认闭合(M4-review §6-4:纯内存系统容器态,规范状态由 approvals/grants/outbox 完整承载,行为正当)。
