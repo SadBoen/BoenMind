@@ -44,7 +44,7 @@
 | F-07 | bm-surface-http → bm-persist 直依赖待裁决(收口或留档);2026-09-05 回看补记:webadmin.rs 还在 HTTP Handler 里直接 spawn MCP 进程/装配 StdioMcpTransport/管理 McpHub 连断与 Provider 密钥播种,装配职责宜下沉运行时,与本条同批收口 | OPEN |
 | F-11 | memory_drawer_verdict 硬编码权限规则与 ADR-0006 张力(broker.rs 已补注;合同化重构待排期) | OPEN |
 | F-12 | bm-core → bm-persist 依赖倒置(2026-09-05 回看发现):内核 Cargo.toml 直依赖实现层,内核代码直接使用 sqlite_state 行 DTO(CapabilityRow/ApprovalRow/GrantRow 等);宜将端口 trait 与持久化入参 DTO 收归 bm-core::ports,投影转换归 bm-persist | OPEN(缓办) |
-| P3 大文件拆分 | broker.rs(1657 行)/turn.rs(1694)/task_ops.rs(1710)/sqlite_state.rs(1205)/webadmin.rs(**2985 行**,2026-09-07 外部审查复核更新;约 90 函数/10 业务域单文件,升级 handler 例外在 about.rs;建议拆法=mod.rs 路由+providers/mcp/skills/roles/fs/limits/jobs/context/approvals 按域子模块,与 round2 重构批 5-9 合流);broker 建议拆法=mod+policy(GrantLedger)/credential/executor/audit;前端同族=context.tsx(2200+ 行,可拆 TrendChart/TokenWaterGauge/PromptRecipe/FileEffects 子模块)、PluginsPage.tsx(1800+ 行)与 thread.tsx(930 行,可拆 ApprovalDrawer/UserMessage/AssistantMessage/Composer) | OPEN(缓办) |
+| P3 大文件拆分 | broker.rs(1657 行)/turn.rs(1694)/task_ops.rs(1710)/sqlite_state.rs(1205);broker 建议拆法=mod+policy(GrantLedger)/credential/executor/audit;前端同族=context.tsx(2200+ 行,可拆 TrendChart/TokenWaterGauge/PromptRecipe/FileEffects 子模块)、PluginsPage.tsx(1800+ 行)与 thread.tsx(930 行,可拆 ApprovalDrawer/UserMessage/AssistantMessage/Composer);**webadmin.rs 已拆毕移出**(2026-09-07,11 子模块按域,commit 见 HISTORY) | OPEN(缓办) |
 | P4 非测试 unwrap 甄别清理 | 全仓约 400 处 unwrap 需区分测试/非测试逐步替换;非测试 panic 10 处均系不变量断言,评估=维持现状;2026-09-07 外部审查复核补记:load_world_rows(runtime.rs:208-309)expect×14 属同族——「恢复失败=拒开」是 handle.rs:81-94 明示设计决策,维持 fail-fast,可选小改=错误信息可读化(数据损坏时报「哪个 id 不合法」而非裸 expect) | OPEN(缓办) |
 | 配置域读写样板收口(JsonStore) | 来源 2026-09-07 外部审查复核:providers/skills/roles/mcp 四组各一套 file→read_to_string→from_str→atomic_write 样板;skills 缺 write helper(写盘内联重复两处 skills_set/skills_delete);providers 读取 Result 化(损坏拒绝)vs skills 静默回落空 Vec(口径不一);收口=泛型 JsonStore 或至少补 skills write helper+统一损坏口径 | OPEN(低) |
 | 前端 API 层收敛 | 来源 2026-09-07 外部审查复核:api.ts(508 行)只覆盖 W2 管理面;W1 运行时侧 8 处裸 fetch 绕过(main.tsx:16 / runtime.tsx×5 / thread.tsx:622 / AboutPage.tsx:65),收敛到 api/ 单源、类型与后端 schema 对齐 | OPEN(低) |
@@ -71,7 +71,6 @@
 | 条目 | 说明 | 状态 |
 |---|---|---|
 | MCP 子进程 stderr 采集 | 现为 `Stdio::inherit()` 直通 server.log(W2 刻意诊断选型);后续可管道采集入插件页 | OPEN(低) |
-| Git 历史瘦身(filter-repo)待裁决 | 来源 2026-09-07 外部审查复核:target-inspector 121MB 已前进清理出库(d521999),历史中仍占;彻底清除=git filter-repo 改写历史+main 强推+全部 tag 哈希重写+既有 clone 全失效(VPS 若有 clone 须重拉);收益仅未来新 clone 提速,无明示不做 | OPEN(待用户裁决) |
 | webapp 版本号 CI 自动对齐 | 来源 2026-09-07 外部审查复核:workspace Cargo.toml 与 webapp/package.json 手动同步(现 0.0.12 已对齐);可 release 流程 cargo metadata 提取写入或 CI 校验步防脱步 | OPEN(低) |
 | bm-testkit 测试文件命名统一 | 来源 2026-09-07 外部审查复核:34 个文件 m1-m9/w5/w8/gt01/perf/无前缀混用;统一为 {category}_{feature} 纯机械改名,破坏 git blame,缓办 | OPEN(低) |
 | 审批无人在线时的通知机制 | 来源 2026-09-07 外部审查复核:审批可达性已修(/admin/approvals 轮询+YOLO),但前端未连接时审批仍会长时间挂起;可加系统通知/声音/轮询提示等 | OPEN(低) |
