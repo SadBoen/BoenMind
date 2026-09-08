@@ -394,6 +394,12 @@ mod tests {
         let eff = effective_from(&json!({}), None, None, false);
         assert_eq!(eff["baseUrl"], Value::Null);
         assert_eq!(eff["stream"], json!(false));
+        // issue #7 漂移方向锁死:文件缺省 stream → BOEN_MODEL_STREAM=1 必须
+        // 兜底生效(漂移 complaint 的正向路径);文件显式 false 压过 env=1。
+        let eff = effective_from(&json!({}), None, None, true);
+        assert_eq!(eff["stream"], json!(true), "文件缺省 → env=1 兜底生效");
+        let eff = effective_from(&json!({"stream": false}), None, None, true);
+        assert_eq!(eff["stream"], json!(false), "文件显式值压过 env=1");
     }
 
     #[test]
