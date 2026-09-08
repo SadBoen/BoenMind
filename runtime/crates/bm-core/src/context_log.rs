@@ -199,8 +199,13 @@ impl ContextLog {
             "evicted_turns": rec.evicted_turns,
             "latency_ms": rec.latency_ms,
         });
-        // INV-5 同面:对整条序列化结果做明文扫描,命中即替换(写脱敏后的串)
-        let mut serialized = serde_json::to_string(&value).unwrap_or_default();
+        // INV-5 同面:对整条序列化结果做明文扫描,命中即替换(写脱敏后的串)。
+        // to_string 对 Value 实际不可失败;万一失败落一条合法 JSON 占位行并
+        // 留痕——jsonl 空行会让下游逐行解析断掉。
+        let mut serialized = serde_json::to_string(&value).unwrap_or_else(|e| {
+            tracing::error!("context_log 快照序列化失败(不应发生),落占位行: {e}");
+            serde_json::json!({"seq": seq, "serialize_error": e.to_string()}).to_string()
+        });
         for secret in &inner.scan_values {
             if serialized.contains(secret.as_str()) {
                 serialized = serialized.replace(secret.as_str(), "[REDACTED]");
@@ -243,7 +248,12 @@ impl ContextLog {
             "kind": kind,
             "data": data,
         });
-        let mut serialized = serde_json::to_string(&value).unwrap_or_default();
+        // 同 record:序列化失败落合法 JSON 占位行(jsonl 不允许空行)。
+        let mut serialized = serde_json::to_string(&value).unwrap_or_else(|e| {
+            tracing::error!("context_log 事件行序列化失败(不应发生),落占位行: {e}");
+            serde_json::json!({"seq": seq, "kind": "serialize_error", "error": e.to_string()})
+                .to_string()
+        });
         for secret in &inner.scan_values {
             if serialized.contains(secret.as_str()) {
                 serialized = serialized.replace(secret.as_str(), "[REDACTED]");

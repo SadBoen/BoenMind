@@ -46,6 +46,26 @@ fn glob_to_regex(pat: &str) -> String {
     regex
 }
 
+/// files 模式的名称匹配器。query 是模型可控入参:超长正则或极端大小写
+/// 折叠会超出 regex 引擎编译大小上限,此时退让为字面子串匹配——搜索
+/// 降级返回部分结果可以接受,生产链路不允许 panic。
+enum NameMatcher {
+    Regex(regex::Regex),
+    /// needle 已按需做大小写折叠;匹配时对 hay 同样折叠后子串比较
+    LiteralFolded(String),
+    Literal(String),
+}
+
+impl NameMatcher {
+    fn is_match(&self, hay: &str) -> bool {
+        match self {
+            Self::Regex(re) => re.is_match(hay),
+            Self::LiteralFolded(needle) => hay.to_lowercase().contains(needle),
+            Self::Literal(needle) => hay.contains(needle),
+        }
+    }
+}
+
 /// deadline 熔断(2026-09-08 审计修复):capability 层传下的预算此前被忽略,
 /// 超大目录/网络盘会把执行通道占死;现在遍历与逐文件搜索每步检查,到点即
 /// 返回部分结果(timed_out=true)。deadline 由调用方按 Instant::now()+剩余时长 构造。
@@ -101,13 +121,14 @@ pub fn search(roots: &Roots, args: &Value, limits: &Limits, deadline: std::time:
             .case_insensitive(!case_sensitive)
             .build()
         {
-            Ok(r) => r,
+            Ok(r) => NameMatcher::Regex(r),
             Err(_) => {
-                // 语法错误则退让为纯字面子串匹配
-                regex::RegexBuilder::new(&regex::escape(query))
-                    .case_insensitive(!case_sensitive)
-                    .build()
-                    .unwrap()
+                // 语法错误或超编译上限则退让为纯字面子串匹配
+                if !case_sensitive {
+                    NameMatcher::LiteralFolded(query.to_lowercase())
+                } else {
+                    NameMatcher::Literal(query.to_string())
+                }
             }
         };
 
@@ -880,6 +901,30 @@ mod tests {
                 .iter()
                 .any(|m| m["file"].as_str().unwrap().ends_with("a.rs"))
         );
+    }
+
+    // 2026-09-09 审计修复:非法正则退让字面匹配。退让分支不允许 panic
+    // (超长 query 可达 regex 编译大小上限,旧实现退让构建失败即 unwrap 崩)。
+    #[test]
+    fn name_matcher_literal_fallback_semantics() {
+        let folded = NameMatcher::LiteralFolded("readme".into());
+        assert!(folded.is_match("src/README.md"), "默认大小写不敏感");
+        assert!(folded.is_match("readme.txt"));
+        assert!(!folded.is_match("notes.md"));
+        let exact = NameMatcher::Literal("README".into());
+        assert!(exact.is_match("x/README.md"));
+        assert!(!exact.is_match("x/readme.md"), "case_sensitive 下字面精确");
+    }
+
+    #[test]
+    fn search_files_mode_bad_regex_returns_ok_without_panic() {
+        let (d, r) = tree();
+        std::fs::write(d.path().join("README.md"), "x").expect("write");
+        // "((" 非法正则 → 退让字面子串:无文件名含 "((",但结构完整不 panic
+        let out = search(&r, &json!({"query": "((", "mode": "files"}));
+        assert_eq!(out["ok"], true, "{out}");
+        assert_eq!(out["mode"], "files");
+        assert_eq!(out["total_matches"], 0, "{out}");
     }
 
     #[test]

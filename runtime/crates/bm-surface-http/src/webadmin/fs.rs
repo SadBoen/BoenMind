@@ -280,7 +280,37 @@ pub async fn fs_delete(State(cfg): State<AdminConfig>, Json(body): Json<Value>) 
             format!("单次最多删除 {} 项", cfg.limits.get().fs_delete_batch_max),
         );
     }
+    // 规范化去重 + 祖孙归并:多选可能同时含目录与其子项(如 ["a","a/b.txt"]),
+    // 父目录整棵删后子项必然 NotFound;先剔除被父路径覆盖的冗余条目并合并
+    // 重复项,批量结果才不会混入必然失败的记录。
+    let norm = |s: &str| -> String {
+        s.trim()
+            .trim_start_matches(['/', '\\'])
+            .trim_end_matches('/')
+            .to_string()
+    };
+    let mut uniq: Vec<String> = Vec::new();
+    for p in paths {
+        if let Some(raw) = p.as_str() {
+            let s = norm(raw);
+            if !s.is_empty() && !uniq.contains(&s) {
+                uniq.push(s);
+            }
+        }
+    }
+    let rels: Vec<String> = uniq
+        .iter()
+        .filter(|s| {
+            !uniq
+                .iter()
+                .any(|r| r != *s && s.starts_with(format!("{r}/").as_str()))
+        })
+        .cloned()
+        .collect();
+    let rel_set: std::collections::HashSet<&str> = rels.iter().map(|s| s.as_str()).collect();
     let mut results = Vec::new();
+    // 本批已实际处理(或被吸收)的条目:保证重复项只删一次、结果按入参序
+    let mut done: std::collections::HashSet<String> = std::collections::HashSet::new();
     for p in paths {
         let Some(rel) = p.as_str().map(|s| s.trim()) else {
             results.push(json!({ "path": Value::Null, "ok": false, "error": "路径必须是字符串" }));
@@ -290,17 +320,22 @@ pub async fn fs_delete(State(cfg): State<AdminConfig>, Json(body): Json<Value>) 
             results.push(json!({ "path": rel, "ok": false, "error": "拒绝删除工作区根" }));
             continue;
         }
-        let target = match safe_resolve(&cfg.workspace_root, rel) {
+        let reln = norm(rel);
+        if !rel_set.contains(reln.as_str()) || !done.insert(reln.clone()) {
+            // 被父目录条目吸收,或本批重复出现:随父目录/首次删除收口,不再单列
+            continue;
+        }
+        let target = match safe_resolve(&cfg.workspace_root, &reln) {
             Ok(t) => t,
             Err(e) => {
-                results.push(json!({ "path": rel, "ok": false, "error": e }));
+                results.push(json!({ "path": reln, "ok": false, "error": e }));
                 continue;
             }
         };
         let meta = match std::fs::symlink_metadata(&target) {
             Ok(m) => m,
             Err(_) => {
-                results.push(json!({ "path": rel, "ok": false, "error": "路径不存在" }));
+                results.push(json!({ "path": reln, "ok": false, "error": "路径不存在" }));
                 continue;
             }
         };
@@ -310,9 +345,9 @@ pub async fn fs_delete(State(cfg): State<AdminConfig>, Json(body): Json<Value>) 
             std::fs::remove_file(&target)
         };
         match r {
-            Ok(_) => results.push(json!({ "path": rel, "ok": true })),
+            Ok(_) => results.push(json!({ "path": reln, "ok": true })),
             Err(e) => results.push(json!({
-                "path": rel, "ok": false, "error": format!("删除失败: {e}")
+                "path": reln, "ok": false, "error": format!("删除失败: {e}")
             })),
         }
     }

@@ -672,6 +672,44 @@ async fn t_w9_fs_delete_multi_recursive_and_traversal() {
     assert_eq!(st, 400);
 }
 
+// 2026-09-09 审计修复:批量删除前置祖孙归并与去重——父目录 + 其子项同批
+// 只删一次,结果不混入必然失败的 NotFound;完全重复项同理收口。
+#[tokio::test]
+async fn t_fs_delete_merges_ancestors_and_duplicates() {
+    let ws = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(ws.path().join("dirA").join("sub")).unwrap();
+    std::fs::write(ws.path().join("dirA").join("sub").join("n.txt"), "y").unwrap();
+    std::fs::write(ws.path().join("dup.txt"), "x").unwrap();
+    let (base, _dir) = spawn_app(ws.path().to_path_buf(), None).await;
+    let url = format!("{base}/admin/fs/delete");
+
+    // 祖孙同批(子项在前、父目录在后):归并后只剩父目录一条删除记录
+    let (st, r) = send_json(
+        reqwest::Method::POST,
+        &url,
+        json!({ "paths": ["dirA/sub/n.txt", "dirA"] }),
+    )
+    .await;
+    assert_eq!(st, 200, "{r}");
+    assert_eq!(r["ok"], json!(true), "{r}");
+    assert_eq!(r["deleted"], json!(1), "{r}");
+    assert_eq!(r["results"].as_array().unwrap().len(), 1, "{r}");
+    assert!(!ws.path().join("dirA").exists());
+
+    // 完全重复项:只删一次,单条成功记录
+    let (st, r) = send_json(
+        reqwest::Method::POST,
+        &url,
+        json!({ "paths": ["dup.txt", "dup.txt"] }),
+    )
+    .await;
+    assert_eq!(st, 200, "{r}");
+    assert_eq!(r["ok"], json!(true), "{r}");
+    assert_eq!(r["deleted"], json!(1), "{r}");
+    assert_eq!(r["results"].as_array().unwrap().len(), 1, "{r}");
+    assert!(!ws.path().join("dup.txt").exists());
+}
+
 fn urlencode(s: &str) -> String {
     s.chars()
         .map(|c| match c {

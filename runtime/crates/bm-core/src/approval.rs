@@ -27,6 +27,17 @@ pub enum RespondDecision {
     Withdraw,
 }
 
+/// 审批链哈希锚定的序列化输入。args_digest / parent_grant_hash 是
+/// 「父授权 → 子授权」的安全锚点:to_string 对 Value/Approval 实际不可
+/// 失败,但万一失败退让为 Debug 表示并 tracing 留痕,绝不落入空串
+/// (空串哈希会让所有失败审批共享同一 digest,锚定失效)。
+fn digest_input<T: serde::Serialize + std::fmt::Debug>(v: &T) -> String {
+    serde_json::to_string(v).unwrap_or_else(|e| {
+        tracing::warn!("审批对象序列化失败,退让 Debug 表示作 digest 输入: {e}");
+        format!("{v:?}")
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApprovalError {
     /// 对象已终态(approved/denied/expired/withdrawn),不可再裁决。
@@ -71,7 +82,7 @@ impl<'a> ApprovalManager<'a> {
         Approval {
             approval_id: self.ids.next_id("appr").to_string(),
             capability: p.capability.to_string(),
-            args_digest: sha256_hex(serde_json::to_string(p.args).unwrap_or_default().as_bytes()),
+            args_digest: sha256_hex(digest_input(p.args).as_bytes()),
             args_summary: p.args_summary.to_string(),
             principal: p.principal.to_string(),
             risk_class: p.risk_class,
@@ -120,11 +131,7 @@ impl<'a> ApprovalManager<'a> {
                     return Err(ApprovalError::ScopeNotAllowed);
                 }
                 // 父授权哈希 = 裁决前(waiting_user 形态)对象内容 SHA-256
-                let parent_hash = sha256_hex(
-                    serde_json::to_string(approval)
-                        .unwrap_or_default()
-                        .as_bytes(),
-                );
+                let parent_hash = sha256_hex(digest_input(approval).as_bytes());
                 approval.state = ApprovalState::Approved;
                 approval.resolved_at = Some(format_ts(now));
                 let grant = Grant {
