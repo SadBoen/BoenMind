@@ -625,9 +625,6 @@ pub(crate) fn spawn_turn(
                                             std::time::Instant::now()
                                                 + std::time::Duration::from_secs(s)
                                         });
-                                        // 成功但载荷迟到/缺失的保底:连续 10 拍
-                                        // (约 4s)仍无载荷即如实回报,不无限等。
-                                        let mut ok_ticks: u32 = 0;
                                         loop {
                                             if deadline
                                                 .is_some_and(|dl| std::time::Instant::now() > dl)
@@ -719,23 +716,14 @@ pub(crate) fn spawn_turn(
                                                 // 本循环必须对终态失败/取消即时脱身——
                                                 // 失败操作从不写 op_results,只查
                                                 // GetOpResult 会无限空转挂死回合。
+                                                // 每拍先查状态:内核单写者循环保证
+                                                // settle(Succeeded) 与载荷写入同一
+                                                // 命令处理器内完成,观测到成功后单次
+                                                // GetOpResult 即是结论——有则取结果,
+                                                // 无则如实回报,零宽限零竞态。
                                                 // 回喂纪律(ADR-0022 同源,2026-09-08
                                                 // 用户重申):只如实转述事实,不附加
                                                 // 任何「该怎么办」的教练话术。
-                                                // 顺序:先查结果载荷(成功路径,兼容
-                                                // 载荷晚于状态翻转的落盘节拍),再查
-                                                // 操作是否终态失败/取消。
-                                                let (otx, orx) = tokio::sync::oneshot::channel();
-                                                let _ = tx
-                                                    .send(Cmd::GetOpResult {
-                                                        operation_id: tool_op.clone(),
-                                                        resp: otx,
-                                                    })
-                                                    .await;
-                                                if let Ok(Ok(Some(v))) = orx.await {
-                                                    tool_result = v.to_string();
-                                                    break;
-                                                }
                                                 let (stx, srx) = tokio::sync::oneshot::channel();
                                                 let _ = tx
                                                     .send(Cmd::GetOperation {
@@ -745,8 +733,26 @@ pub(crate) fn spawn_turn(
                                                         resp: stx,
                                                     })
                                                     .await;
-                                                if let Ok(Ok(receipt)) = srx.await {
-                                                    match receipt.state {
+                                                let Ok(Ok(receipt)) = srx.await else {
+                                                    continue;
+                                                };
+                                                match receipt.state {
+                                                    bm_contract::states::OperationState::Succeeded => {
+                                                        let (rtx2, rrx2) =
+                                                            tokio::sync::oneshot::channel();
+                                                        let _ = tx
+                                                            .send(Cmd::GetOpResult {
+                                                                operation_id: tool_op.clone(),
+                                                                resp: rtx2,
+                                                            })
+                                                            .await;
+                                                        tool_result = match rrx2.await {
+                                                            Ok(Ok(Some(v))) => v.to_string(),
+                                                            _ => "工具执行成功,但无返回结果载荷"
+                                                                .into(),
+                                                        };
+                                                        break;
+                                                    }
                                                     bm_contract::states::OperationState::Failed => {
                                                         let mut detail = receipt
                                                             .error
@@ -772,16 +778,7 @@ pub(crate) fn spawn_turn(
                                                         tool_result = "工具执行已取消。".into();
                                                         break;
                                                     }
-                                                    bm_contract::states::OperationState::Succeeded => {
-                                                        ok_ticks += 1;
-                                                        if ok_ticks >= 10 {
-                                                            tool_result =
-                                                                "工具执行成功,但无返回结果载荷".into();
-                                                            break;
-                                                        }
-                                                    }
                                                     _ => {}
-                                                }
                                                 }
                                             }
                                         }
