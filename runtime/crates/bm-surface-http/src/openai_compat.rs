@@ -129,146 +129,181 @@ pub async fn chat_completions(
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string());
 
-    // 会话寻址:有 X-Bm-Session 续聊;无则新建(默认配置模型)
-    let (rt_sid, rt_aid) = match headers
-        .get("x-bm-session")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string())
-    {
-        Some(raw) => match BmId::parse(raw) {
-            Ok(sid) => {
-                // 先取克隆并让锁守卫出作用域(不得跨 await 持锁)
-                let cached = state
-                    .v1_sessions
-                    .lock()
-                    .expect("锁未中毒")
-                    .get(&sid)
-                    .cloned();
-                match cached {
-                    Some(aid) => (sid, aid),
-                    None => {
-                        // 重启续聊(2026-09-06):v1_sessions 是进程内寻址表,
-                        // 重启即空;会话本体自持久层装载并未丢——回源
-                        // session.resume 恢复寻址,旧会话继续聊,不再 400 逼重开。
-                        // since_seq=MAX:寻址回源不需要补发事件
-                        match state
-                            .handle
-                            .session_resume(
-                                UlidIdGen.next_id("req"),
-                                SessionResumeParams {
-                                    session_id: sid.clone(),
-                                    since_seq: Some(u64::MAX),
-                                },
-                            )
-                            .await
-                        {
-                            Ok(r) => {
-                                state
-                                    .v1_sessions
-                                    .lock()
-                                    .expect("锁未中毒")
-                                    .insert(sid.clone(), r.agent_id.clone());
-                                (sid, r.agent_id)
-                            }
-                            Err(_) => {
-                                return err_response(
-                                    StatusCode::BAD_REQUEST,
-                                    "未知会话:请清除界面会话记忆后重新开始",
-                                );
+    // 断连免疫(2026-09-08 三点会话语义,用户裁决「对话与前端页面是否开启无关」):
+    // 「会话寻址/建会话 + 消息派发」放进独立任务——此前处理器在等核心回传途中
+    // 遇客户端掉线(axum 掐掉 handler future),会话已建而 send_input 再未发出,
+    // 用户刚发出的消息被静默吞掉(实测复现)。任务化后掉线只丢响应,回合照常
+    // 诞生、照常完成、落历史。
+    enum Prepared {
+        Ok { sid: BmId, aid: BmId, cursor: u64 },
+        Err(Response),
+    }
+    let prepared = {
+        let handle = state.handle.clone();
+        let v1_sessions = state.v1_sessions.clone();
+        let store = state.store.clone();
+        let data_dir = state.data_dir.clone();
+        let default_model = default_model.clone();
+        let requested_model = requested_model.clone();
+        let requested_workspace = requested_workspace.clone();
+        let target_role_id = target_role_id.clone();
+        let text = text.clone();
+        let headers = headers.clone();
+        tokio::spawn(async move {
+            // 会话寻址:有 X-Bm-Session 续聊;无则新建(默认配置模型)
+            let resolved: Result<(BmId, BmId), Response> = match headers
+                .get("x-bm-session")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string())
+            {
+                Some(raw) => match BmId::parse(raw) {
+                    Ok(sid) => {
+                        // 先取克隆并让锁守卫出作用域(不得跨 await 持锁)
+                        let cached = v1_sessions.lock().expect("锁未中毒").get(&sid).cloned();
+                        match cached {
+                            Some(aid) => Ok((sid, aid)),
+                            None => {
+                                // 重启续聊(2026-09-06):v1_sessions 是进程内寻址表,
+                                // 重启即空;会话本体自持久层装载并未丢——回源
+                                // session.resume 恢复寻址,旧会话继续聊,不再 400 逼重开。
+                                // since_seq=MAX:寻址回源不需要补发事件
+                                match handle
+                                    .session_resume(
+                                        UlidIdGen.next_id("req"),
+                                        SessionResumeParams {
+                                            session_id: sid.clone(),
+                                            since_seq: Some(u64::MAX),
+                                        },
+                                    )
+                                    .await
+                                {
+                                    Ok(r) => {
+                                        v1_sessions
+                                            .lock()
+                                            .expect("锁未中毒")
+                                            .insert(sid.clone(), r.agent_id.clone());
+                                        Ok((sid, r.agent_id))
+                                    }
+                                    Err(_) => Err(err_response(
+                                        StatusCode::BAD_REQUEST,
+                                        "未知会话:请清除界面会话记忆后重新开始",
+                                    )),
+                                }
                             }
                         }
                     }
+                    Err(_) => Err(err_response(
+                        StatusCode::BAD_REQUEST,
+                        "X-Bm-Session 不是合法会话 id",
+                    )),
+                },
+                None => {
+                    let request_id = UlidIdGen.next_id("req");
+                    // W4b:允许通过 X-Bm-Role 指定角色(缺省 = active 角色);
+                    // system_prompt 由 bm-core::roles 统一组装(含挂载技能),
+                    // 空提示词传 None——交由回合侧热读,保证技能/角色后续可生效。
+                    let initial_system_prompt = data_dir.as_ref().and_then(|d| {
+                        bm_core::roles::compose_role_prompt(d, target_role_id.as_deref())
+                            .filter(|s| !s.is_empty())
+                    });
+                    // F1(ADR-0022 后续批):角色工具白名单随角色烤入会话;未声明 =
+                    // None(全量挂载,向后兼容)。
+                    let initial_allowed_tools = data_dir.as_ref().and_then(|d| {
+                        bm_core::roles::allowed_tools_for(d, target_role_id.as_deref())
+                    });
+                    match handle
+                        .session_create(
+                            request_id,
+                            SessionCreateParams {
+                                agent: AgentSpec {
+                                    name: "webui".to_string(),
+                                    // W6:对话选择了模型则以其为初始链(后续回合仍可
+                                    // 随消息携带 model_override 热切换)。
+                                    model_chain: vec![
+                                        requested_model
+                                            .clone()
+                                            .unwrap_or_else(|| default_model.clone()),
+                                    ],
+                                    budget: None,
+                                    system_prompt: initial_system_prompt,
+                                    // W8:对话选择了工作区则随会话创建绑定(校验在核心;
+                                    // 未登记 id 会话创建即 400,错误消息透出)。
+                                    allowed_tools: initial_allowed_tools,
+                                    workspace_id: requested_workspace.clone(),
+                                },
+                            },
+                        )
+                        .await
+                    {
+                        Ok(r) => {
+                            v1_sessions
+                                .lock()
+                                .expect("锁未中毒")
+                                .insert(r.session_id.clone(), r.agent_id.clone());
+                            Ok((r.session_id, r.agent_id))
+                        }
+                        Err(e) => Err(err_response(
+                            StatusCode::BAD_REQUEST,
+                            &format!("会话创建失败: {}", e.to_wire().message),
+                        )),
+                    }
                 }
-            }
-            Err(_) => return err_response(StatusCode::BAD_REQUEST, "X-Bm-Session 不是合法会话 id"),
-        },
-        None => {
+            };
+            let (rt_sid, rt_aid) = match resolved {
+                Ok(pair) => pair,
+                Err(resp) => return Prepared::Err(resp),
+            };
+
+            // 发送前取日志末位,作为本回合的事件轮询游标(空日志/首启文件未建 = 0)
+            let cursor = store.last_log_seq().unwrap_or(0);
             let request_id = UlidIdGen.next_id("req");
-            // W4b:允许通过 X-Bm-Role 指定角色(缺省 = active 角色);
-            // system_prompt 由 bm-core::roles 统一组装(含挂载技能),
-            // 空提示词传 None——交由回合侧热读,保证技能/角色后续可生效。
-            let initial_system_prompt = state.data_dir.as_ref().and_then(|d| {
-                bm_core::roles::compose_role_prompt(d, target_role_id.as_deref())
-                    .filter(|s| !s.is_empty())
-            });
-            // F1(ADR-0022 后续批):角色工具白名单随角色烤入会话;未声明 =
-            // None(全量挂载,向后兼容)。
-            let initial_allowed_tools = state
-                .data_dir
-                .as_ref()
-                .and_then(|d| bm_core::roles::allowed_tools_for(d, target_role_id.as_deref()));
-            match state
-                .handle
-                .session_create(
+            let sent = handle
+                .send_input(
                     request_id,
-                    SessionCreateParams {
-                        agent: AgentSpec {
-                            name: "webui".to_string(),
-                            // W6:对话选择了模型则以其为初始链(后续回合仍可
-                            // 随消息携带 model_override 热切换)。
-                            model_chain: vec![
-                                requested_model
-                                    .clone()
-                                    .unwrap_or_else(|| default_model.clone()),
-                            ],
-                            budget: None,
-                            system_prompt: initial_system_prompt,
-                            // W8:对话选择了工作区则随会话创建绑定(校验在核心;
-                            // 未登记 id 会话创建即 400,错误消息透出)。
-                            allowed_tools: initial_allowed_tools,
-                            workspace_id: requested_workspace.clone(),
-                        },
+                    SendInputParams {
+                        session_id: rt_sid.clone(),
+                        agent_id: rt_aid.clone(),
+                        content: text,
+                        input_trust: InputTrust::Trusted,
+                        // W6:每条消息都携带当前所选模型 → 对话中途切换下一条即生效
+                        model_override: requested_model,
+                        // W8:每条消息都携带当前所选工作区 → 中途切换下一条即生效
+                        workspace_override: requested_workspace,
                     },
                 )
-                .await
-            {
-                Ok(r) => {
-                    state
-                        .v1_sessions
-                        .lock()
-                        .expect("锁未中毒")
-                        .insert(r.session_id.clone(), r.agent_id.clone());
-                    (r.session_id, r.agent_id)
-                }
+                .await;
+            match sent {
+                Ok(_) => Prepared::Ok {
+                    sid: rt_sid,
+                    aid: rt_aid,
+                    cursor,
+                },
+                // W8:校验类失败(如工作区未登记)按 400 透出,便于壳子清理本地选择
                 Err(e) => {
-                    return err_response(
-                        StatusCode::BAD_REQUEST,
-                        &format!("会话创建失败: {}", e.to_wire().message),
-                    );
+                    let wire = e.to_wire();
+                    let status = if wire.code.get()
+                        == bm_contract::error_codes::ErrorCode::ValidationFailed
+                    {
+                        StatusCode::BAD_REQUEST
+                    } else {
+                        StatusCode::INTERNAL_SERVER_ERROR
+                    };
+                    Prepared::Err(err_response(status, &wire.message))
                 }
             }
+        })
+    };
+    // rt_aid 已随派发写进 v1_sessions 寻址表,响应面只用 sid
+    let (rt_sid, _rt_aid, mut cursor) = match prepared.await {
+        Ok(Prepared::Ok { sid, aid, cursor }) => (sid, aid, cursor),
+        Ok(Prepared::Err(resp)) => return resp,
+        Err(join_err) => {
+            return err_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &format!("回合派发任务失败: {join_err}"),
+            );
         }
     };
-
-    // 发送前取日志末位,作为本回合的事件轮询游标(空日志/首启文件未建 = 0)
-    let mut cursor = state.store.last_log_seq().unwrap_or(0);
-    let request_id = UlidIdGen.next_id("req");
-    let sent = state
-        .handle
-        .send_input(
-            request_id,
-            SendInputParams {
-                session_id: rt_sid.clone(),
-                agent_id: rt_aid.clone(),
-                content: text,
-                input_trust: InputTrust::Trusted,
-                // W6:每条消息都携带当前所选模型 → 对话中途切换下一条即生效
-                model_override: requested_model,
-                // W8:每条消息都携带当前所选工作区 → 中途切换下一条即生效
-                workspace_override: requested_workspace,
-            },
-        )
-        .await;
-    if let Err(e) = &sent {
-        // W8:校验类失败(如工作区未登记)按 400 透出,便于壳子清理本地选择
-        let wire = e.to_wire();
-        let status = if wire.code.get() == bm_contract::error_codes::ErrorCode::ValidationFailed {
-            StatusCode::BAD_REQUEST
-        } else {
-            StatusCode::INTERNAL_SERVER_ERROR
-        };
-        return err_response(status, &wire.message);
-    }
 
     let session_header =
         HeaderValue::from_str(rt_sid.as_str()).unwrap_or(HeaderValue::from_static("invalid"));

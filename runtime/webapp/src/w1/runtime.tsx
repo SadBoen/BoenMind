@@ -468,43 +468,9 @@ export function BoenmindRuntimeProvider({
       window.removeEventListener(BM_EVENTS.sessionSwitched, onSessionSwitched);
   }, []);
 
-  // 页面刷新后:本地仍记着会话 id 时同样回放历史(否则刷新即空白)
-  useEffect(() => {
-    const sid = storage.get(STORAGE_KEYS.SESSION);
-    if (!sid) return;
-    // P1-28:与切会话共用视图代——刷新回放在途时用户切走,响应作废
-    const epoch = sessionEpochRef.current;
-    let cancelled = false;
-    void api
-      .sessionMessages(sid, { limit: HISTORY_PAGE })
-      .then((res) => {
-        if (cancelled || sessionEpochRef.current !== epoch) return;
-        setMessages(toThreadMessages(res.messages ?? []));
-        historyCountRef.current = (res.messages ?? []).length;
-        setHistoryMore({ hasMore: res.has_more ?? false, loading: false });
-      })
-      .catch((e: unknown) => {
-        // 2026-09-08 审计修复:刷新恢复失败不再静默空白,同样上屏提示
-        console.error("历史消息加载失败", e);
-        if (cancelled || sessionEpochRef.current !== epoch) return;
-        setMessages([
-          {
-            role: "assistant",
-            content: [
-              {
-                type: "text",
-                text: `[历史消息加载失败: ${e instanceof Error ? e.message : String(e)};可刷新重试]`,
-              },
-            ],
-          } as ThreadMessageLike,
-        ]);
-      });
-    return () => {
-      cancelled = true;
-    };
-    // 仅挂载时执行一次
-  }, []);
-
+  // 「打开/刷新 = 全新临时会话」(2026-09-08 三点会话语义,用户裁决):
+  // 页面挂载不再恢复上次会话视图(storage 模块装载时已清会话指针),
+  // 首条消息发出时才真正建服务端会话;历史回放统一走左侧列表切会话。
   // W4b:审批裁决(前端卡片按钮)→ /admin/approvals/{id}/respond
   // (与 /rpc 同一执行体,走 /admin 免鉴权口径——前端无令牌可带)
   // P1-2(2026-09-07 架构评审):检查 res.ok;失败把审批单放回抽屉

@@ -8,6 +8,16 @@ try {
   /* ignore */
 }
 
+// 会话指针随页面寿命(2026-09-08 三点会话语义,用户裁决):打开网址/刷新
+// = 全新临时会话,不恢复上次会话视图(要回历史点左侧列表);临时会话在
+// 首条消息发出前服务端不存在,未发消息即关页/切走 = 什么都不留。
+// 指针仅在页面存活期内使用(首发消息/切会话时写入)。
+try {
+  localStorage.removeItem("bm_session");
+} catch {
+  /* ignore */
+}
+
 export const STORAGE_KEYS = {
   ACTIVE_MODEL: "bm_active_model",
   ACTIVE_ROLE: "bm_active_role",
