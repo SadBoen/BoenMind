@@ -3,75 +3,50 @@
 ## 这是什么
 
 BoenMind:个人生态的 AI Runtime / AI OS,当前为**阶段一(跨平台单软件)**。
-设计已定稿,经三模型辩论复核(`adr/`)与三真实系统对照验证
-(Erlang/OTP、Kubernetes、VS Code;转录与验证报告已删溯 git 史,ADR-0027)。
 合同库冻结 v1.0(字段只增不破)。
 
-**当前版本 = v0.0.14(已发版,2026-09-08 审计核实修复批)**,此后批次落 main 未打 tag。进度只认 git:
-交付全史 = git tag+提交说明(ADR-0027,不另立时间线文件);欠账唯一入口 = `milestones/BACKLOG.md`;
-已裁决/驳回勿再翻案唯一清单 = `milestones/SETTLED.md`(ADR-0026)。
-⚠ Git 历史已于 2026-09-07 重写(filter-repo 清构建产物),v0.0.9/11/12 tag 哈希全变,既有 clone 须重拉;GitHub Release 资产不受影响。
+**当前版本 = v0.0.14(已发版)**,此后批次落 main 未打 tag。进度只认 git:
+交付全史 = git tag+提交说明(ADR-0027,不另立时间线文件);
+欠账唯一入口 = **GitHub Issues**(标签 P0/P1/P2/tech-debt/deferred);
+架构铁律唯一查重清单 = `docs/architecture/decisions.md`。
 
 ## 文件地图(规格分层)
 
 ```text
 BoenMind-CORE-ARCHITECTURE.md   第 0 层  架构基线:原则/边界/不变量;§17 裁决;§18 里程碑定义;§19 回看制度
-adr/                            第 0 层  架构决策记录 ADR-0001..0029(0012 随 M10 dsh 线归档、编号跳空;基线与 ADR 冲突时以更新的 ADR 为准)
-architecture/                   第 0 层  C4 模型 boenmind.c4(拓扑唯一权威)+ 验证渲染说明;辩论转录与验证报告已删溯 git 史(ADR-0027)
-boenmind-contracts/             第 1 层  机器可读合同(v1.0 冻结)+ validate.py 校验器 + m0/(测试矩阵/威胁模型/perf-baseline)
-milestones/                     第 2 层  台账二件:BACKLOG(未结)/SETTLED(已裁决查重)+ W-ui-inventory(选装参考)+ shots-* 验收截图;规格=开工时写的临时工件,收官即删(ADR-0027),交付全史=git
-runtime/                        第 3 层  Rust workspace 9 个 crate(bm-contract/core/persist/providers/cli/surface-http/runtime/judge/testkit)+ webapp(W 序列前端,Vite+React+TS)
-apps/                           第 3 层  真实 App:wiki_server/market_server/music_server(stdio MCP,Python)+ smoke_test.py(CI 冒烟)+ mcp-config.example.json
-plugins/                        第 3 层  官方随包插件:mcp/web-multisearch(聚合搜索)、mcp/context-inspector(交互透视与诊断分析)
-shell/tauri/                    第 3 层  Windows 桌面壳(Tauri v2;frontendDist 指 runtime/webapp/dist,手工构建)
-scenarios/                      实测    CLI 场景实测清单(S1-S10 与 2026-08-30 实测记录)
-PLAYBOOK.md                     附页    实操备忘+高频坑唯一源:启动与环境变量/前端四坑/浏览器自动化怪癖/废止速查——动手前先看
-.agents/skills/boenmind-dev/    技能    按任务类型的操作清单(动合同/发 ADR/实现里程碑必加载)
-.github/                        CI      contracts-validate + apps 冒烟 + webapp lint + Rust 三平台矩阵(fmt/clippy/nextest)+ 双插件 CI 三平台 + release
+adr/                            第 0 层  架构决策记录 ADR-0001..0029(基线与 ADR 冲突时以更新的 ADR 为准)
+architecture/                   第 0 层  C4 模型 boenmind.c4(拓扑唯一权威)
+boenmind-contracts/             第 1 层  机器可读合同(v1.0 冻结)+ validate.py 校验器
+docs/architecture/decisions.md  第 0 层  架构铁律唯一查重清单(15条,评审/审计前必读)
+docs/development/PITFALLS.md    附页    实操备忘+高频坑唯一源(启动/前端四坑/浏览器自动化怪癖)
+.ai/context.md                  附页    AI 协作核心纪律+回归清单
+GitHub Issues                   台账    未结任务/技术债唯一入口(P0/P1/P2/tech-debt/deferred标签)
+runtime/                        第 3 层  Rust workspace 9 个 crate + webapp(Vite+React+TS)
+apps/                           第 3 层  真实 App:wiki_server/market_server/music_server(stdio MCP)
+plugins/                        第 3 层  官方随包插件:web-multisearch、context-inspector
+shell/tauri/                    第 3 层  Windows 桌面壳(手工构建)
+.agents/skills/boenmind-dev/    技能    按任务类型的操作清单
+.github/                        CI      contracts-validate + apps 冒烟 + webapp lint + Rust 三平台矩阵 + release
 ```
 
 ## 新会话工作流
 
-1. 读本文件 → 2. 按手头任务读对应层文件(任务-文件对照见 boenmind-dev 技能)→
-3. 动工前看 BACKLOG 确认没有已登记的相关欠账、查 SETTLED 确认不是已裁决事项 → 4. 产出后自检
-(合同有变更必跑 `python boenmind-contracts/scripts/validate.py`,须全绿)。
+1. 读本文件 → 2. 读 `.ai/context.md`(硬纪律+回归清单)→
+3. 动工前查 `docs/architecture/decisions.md` 避免重复踩已裁决问题、`gh issue list` 确认没有已登记的相关欠账 →
+4. 产出后自检(合同有变更必跑 `python boenmind-contracts/scripts/validate.py`,须全绿)。
 
 ## 硬纪律(违反 = 返工)
 
-1. **合同冻结**:boenmind-contracts/ 字段只增不破;删字段/改名/改语义 = Major,走基线 §13.5。
-2. **先改模型再改文字**:架构变更先改 `architecture/boenmind.c4`;文字图与模型不一致以模型为准。
-3. **决策写 ADR**:新决策在 adr/ 发新文件(编号递增),不修改既有 ADR 的语义;对基线的增补**熔入正文并标注 ADR 编号**,不挂追加式引注块(ADR-0015)。
-4. **权限以合同显式化**(ADR-0006):未列入注册合同的权力视为不存在。
-5. **里程碑 = 可运行检查点**(§18/§19):P0 测试套件全绿才算完成;完成后按 §19 回看再进下一个;交付状态=git tag+提交说明(ADR-0027),遗留登记 BACKLOG。
-6. **真实进度只认 git**:主干应始终可校验(validate.py 全绿);提交说明写清动机。
-7. **用户可见面必须真实浏览器手测**(2026-09-01 用户明示):以页面可见内容/截图为证;接口测试全绿 ≠ 界面交付。
-8. **规范与叙事分离**(ADR-0026):规范文档只写当前有效的规则与事实;历史叙事只进 git 提交说明与 HISTORY 单行;已裁决事项以 SETTLED.md 为唯一清单,向评审翻旧账 = 返工。
-
-## 工作方法(已固化,每轮沿用)
-
-1. 强耦合任务合批,一轮交付、共享全量回归,依赖链顺序不变;
-2. 文档类产物(与代码文件零相交)派后台子代理并行起草,主代理收圈时随手提交;
-3. **不做同仓多代理并行写代码**(runtime.rs 单点合并成本 > 收益;Rust target 目录锁/冷编译),防冲突规程与单写者纪律不破。
+见 `.ai/context.md`(合同冻结/决策写ADR/权限显式化/里程碑=可运行检查点/真实进度只认git/用户可见面真实浏览器手测/规范与叙事分离)。
 
 ## 评审纪律(外部评审/回头看/审计任务必读)
 
-**必读清单(按序,勿全仓通读)**:①本文件 → ②基线对应章节(架构=§1-§17,流程/里程碑=§18-§19)→
-③`milestones/BACKLOG.md` 未结项 → ④`milestones/SETTLED.md` 逐条查重。
+**必读清单**:①本文件 → ②`docs/architecture/decisions.md`(架构铁律,勿重复报误报区)→ ③`gh issue list` 查未结项。
 
-1. 过程文档(规格/回看/转录/时间线)一律不入仓(ADR-0027),污染源物理不存在;评审对象只有白名单规范文档与台账二件;
-2. 新意见提出前先查 SETTLED:已有结论不得重提;翻案须 SETTLED 无此条**且**带新证据;
-3. 属实才修,误报必驳;每驳回一条当场补 SETTLED 行(一行一条,含证据与出处);
-4. 评审类一次性报告不入库(2026-09-07 用户令):结论写 HISTORY 行,驳回写 SETTLED 行,原文留 git 史。
+1. 新意见提出前先查 `decisions.md`:已有结论不得重提;翻案须带新证据并发新 ADR。
+2. 属实才修,误报必驳;每驳回一条视情况补入 `decisions.md`(15条上限,超出淘汰最久未被撞到的)。
+3. 评审类一次性报告不入库:结论进 `gh issue` 或 commit message,原文留 git 史。
 
 ## 环境与工具
 
-- Rust 1.98 / Node 24 / Python 3.12;gh CLI 已装;tauri-cli 未装(桌面壳 = `shell/tauri` 手工构建,见其 README);
-- 合同校验:`python boenmind-contracts/scripts/validate.py`(提交前置);
-- 性能测试命令、启动命令与 BOEN_* 环境变量表 → `PLAYBOOK.md` §1/§4;
-- context7 MCP 可用(库文档查询;真实 Provider/MCP 接入时优先用);
-- 官方自带 MCP 插件源码在 `plugins/mcp/web-multisearch/`(2026-09-02 自独立仓移入,历史归档分支 archive/boenmind-mcp-servers;发布随 v* tag 走 release 工作流);
-- 运行时配置在**数据目录**(默认 `%APPDATA%\Roaming\boenmind\config\`),不在仓库。
-
-## 高频坑
-
-唯一源 = `PLAYBOOK.md`(动手前先看);本文件不再复制坑条目(ADR-0026 去重纪律)。
+见 `.ai/context.md`。

@@ -5,7 +5,7 @@
 > 实测请直接在本机终端逐条输入。场景命令本身仍可与 `boenmind --help` 对照使用。
 
 - 目的:以真实用户视角,经 `boenmind` CLI 走通常见场景;发现的问题
-  一律记入 `milestones/BACKLOG.md` 台账(来源标注「 scenarios 实测」),
+  一律记入 `GitHub Issues (gh issue list)` 台账(来源标注「 scenarios 实测」),
   **只记录不修改**(原 AUDIT-2026-08-30.md 台账已随 2026-09-07 报告清理入 git 史)。
 - 前置:boenmind-server 运行中(本机 7531);`boenmind` CLI 在同目录。
 

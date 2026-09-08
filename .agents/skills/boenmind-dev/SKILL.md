@@ -16,8 +16,8 @@ description: BoenMind 仓库的开发规程技能,把 AGENTS.md 硬纪律转成�
 | 架构变更 | `architecture/boenmind.c4`(先改)+ 相关 ADR |
 | 实现里程碑 | 基线 `BoenMind-CORE-ARCHITECTURE.md` §18 对应小节 + `milestones/` 既有规格 |
 | 任何新决策 | `adr/README.md`(新文件、编号递增,不改既有 ADR 语义) |
-| 查还欠什么 / 收官登记遗留 | `milestones/BACKLOG.md`(唯一台账) |
-| 环境/命令/踩坑 | 根目录 `PLAYBOOK.md` |
+| 查还欠什么 / 收官登记遗留 | GitHub Issues (`gh issue list --label P0/P1/P2/tech-debt`) |
+| 环境/命令/踩坑 | `docs/development/PITFALLS.md` |
 
 补充纪律(ADR-0015):给基线增补=熔入正文并标注 ADR 编号,不挂追加式引注块;
 基线 §1-§24 编号是硬锚点,重排前先 `grep -rn "基线 §" adr/ milestones/`。
@@ -46,7 +46,7 @@ description: BoenMind 仓库的开发规程技能,把 AGENTS.md 硬纪律转成�
 
 1. 全量测试 + `validate.py` 全绿 + 黄金轨迹回放通过。
 2. 按基线 §19 过回看门;逐条裁决本里程碑相关的 ADR 验收条件与 S1–S10 中相关项。
-3. 进度只认 git:交付信息进 tag+提交说明(ADR-0027,不另立时间线文件)、裁决/驳回入 `milestones/SETTLED.md`、遗留入 `milestones/BACKLOG.md`、AGENTS.md 顶部当前状态一行 → 删规格与回看文件 → 打 tag。
+3. 进度只认 git:交付信息进 tag+提交说明(ADR-0027,不另立时间线文件)、裁决/驳回入 `docs/architecture/decisions.md`、遗留入 GitHub Issues、AGENTS.md 顶部当前状态一行 → 删规格与回看文件 → 打 tag。
 
 ## 提交纪律
 

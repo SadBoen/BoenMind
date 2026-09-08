@@ -1,0 +1,28 @@
+name: 新功能
+description: 功能需求或增强建议
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: 功能描述
+      description: 需要什么功能,解决什么问题
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: 背景与动机
+      description: 来源、ADR引用、用户需求等
+    validations:
+      required: false
+  - type: dropdown
+    id: priority
+    attributes:
+      label: 优先级
+      options:
+        - P1(本版本)
+        - P2(下版本)
+        - 候选(待评审)
+    validations:
+      required: true

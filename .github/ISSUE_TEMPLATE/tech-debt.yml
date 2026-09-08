@@ -1,0 +1,28 @@
+name: 技术债
+description: 代码质量改进、重构、优化
+labels: ["tech-debt"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: 技术债描述
+      description: 什么代码需要改进,为什么
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 出处
+      description: 文件路径:行号,审计报告引用等
+    validations:
+      required: false
+  - type: dropdown
+    id: urgency
+    attributes:
+      label: 紧迫度
+      options:
+        - P1(影响开发效率)
+        - P2(低优/缓办)
+        - 候选(可以不修)
+    validations:
+      required: true

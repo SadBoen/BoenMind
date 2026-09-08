@@ -1,0 +1,28 @@
+name: Bug 报告
+description: 功能不符合预期,或代码存在缺陷
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述
+      description: 发生了什么,预期是什么
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 出处
+      description: 文件路径:行号,或复现步骤
+    validations:
+      required: false
+  - type: dropdown
+    id: priority
+    attributes:
+      label: 优先级
+      options:
+        - P0(阻塞发布)
+        - P1(本版本必修)
+        - P2(下版本/技术债)
+    validations:
+      required: true
