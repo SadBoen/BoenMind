@@ -393,12 +393,10 @@ async fn t35c_admin_provider_health_snapshot() {
     let store: Arc<PersistStore> = Arc::new(PersistStore::open(dir.path()).expect("打开"));
     // 熔断只计 Unavailable 类失败(内部错/鉴权错是配置错,不烧熔断器);
     // retryable=false 保证每次 /v1 调用恰好一次 attempt(不进重试循环)。
-    let connector: Arc<dyn ModelConnector> = Arc::new(MockConnector::repeating(
-        Step::Fail {
-            error_code: bm_contract::error_codes::ErrorCode::Unavailable,
-            retryable: false,
-        },
-    ));
+    let connector: Arc<dyn ModelConnector> = Arc::new(MockConnector::repeating(Step::Fail {
+        error_code: bm_contract::error_codes::ErrorCode::Unavailable,
+        retryable: false,
+    }));
     let handle = RuntimeHandle::start(RuntimeConfig {
         capabilities: bm_providers::builtin::builtin_capability_set(),
         async_executor: None,

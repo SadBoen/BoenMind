@@ -200,6 +200,18 @@ struct World {
 }
 
 impl World {
+    /// 库内行不变量断言(issue #37 可选小改):fail-fast 语义不变,报错从
+    /// 裸 expect 升级为「哪类行 + 哪个 id + 什么错」——恢复失败拒开时的
+    /// 第一现场即可定位坏行,无需再开库排查。
+    fn inv<T, E: std::fmt::Display>(kind: &str, id: &str, r: Result<T, E>) -> T {
+        r.unwrap_or_else(|e| panic!("load_world_rows: 库内{kind}行不合法(id={id}): {e}"))
+    }
+
+    /// 同上,适配 from_wire 返回 Option 的形态。
+    fn inv_opt<T>(kind: &str, id: &str, r: Option<T>) -> T {
+        r.unwrap_or_else(|| panic!("load_world_rows: 库内{kind}行不合法(id={id})"))
+    }
+
     /// 自规范状态行装配内存视图(M2 启动恢复,任务 T3)。
     /// request_id 未持久化(事件流不承载):以 op 的 ULID 段确定性合成 req_ 前缀 ID,
     /// 保证恢复幂等;action_summary/result_reference 为非持久展示字段,恢复后为占位。
@@ -210,13 +222,13 @@ impl World {
         agents_to_resume: &mut Vec<(BmId, Option<BmId>)>,
     ) {
         for s in rows.sessions {
-            let id = BmId::parse(s.id).expect("库内 session id 合法");
-            let state = SessionState::from_wire(&s.state).expect("库内 session 状态合法");
+            let id = Self::inv("session", &s.id, BmId::parse(&s.id));
+            let state = Self::inv_opt("session", &s.id, SessionState::from_wire(&s.state));
             self.sessions.insert(
                 id.clone(),
                 Session {
                     id: id.clone(),
-                    agent_id: BmId::parse(s.agent_id).expect("合法"),
+                    agent_id: Self::inv("session→agent", &s.id, BmId::parse(&s.agent_id)),
                     state,
                     created_at: s.created_at,
                     // W8+重启续聊(2026-09-06):绑定随行持久装载
@@ -229,8 +241,8 @@ impl World {
             );
         }
         for a in rows.agents {
-            let id = BmId::parse(a.id).expect("库内 agent id 合法");
-            let state = AgentState::from_wire(&a.state).expect("库内 agent 状态合法");
+            let id = Self::inv("agent", &a.id, BmId::parse(&a.id));
+            let state = Self::inv_opt("agent", &a.id, AgentState::from_wire(&a.state));
             // 崩溃时停在非运行中间态的 agent(starting/waiting_model/stopping/resuming)
             // 需要走 interrupted→resuming→running 恢复(ADR-0003 决策要点 8)
             if matches!(
@@ -243,7 +255,7 @@ impl World {
                 agents_to_resume.push((id.clone(), None));
             }
             let chain: Vec<String> =
-                serde_json::from_str(&a.model_chain).expect("model_chain 为 JSON 数组");
+                Self::inv("agent", &a.id, serde_json::from_str(&a.model_chain));
             let mut budget = crate::budget::BudgetState::new(
                 a.budget_max_tokens.map(|v| v as u64).unwrap_or(u64::MAX),
                 a.budget_max_turns.map(|v| v as u32).unwrap_or(u32::MAX),
@@ -254,7 +266,7 @@ impl World {
                 id.clone(),
                 Agent {
                     id: id.clone(),
-                    session_id: BmId::parse(a.session_id).expect("合法"),
+                    session_id: Self::inv("agent→session", &a.id, BmId::parse(&a.session_id)),
                     name: a.name,
                     model_chain: chain,
                     state,
@@ -266,11 +278,15 @@ impl World {
             );
         }
         for o in rows.operations {
-            let id = BmId::parse(o.id).expect("库内 operation id 合法");
-            let state = OperationState::from_wire(&o.state).expect("库内 operation 状态合法");
+            let id = Self::inv("operation", &o.id, BmId::parse(&o.id));
+            let state = Self::inv_opt("operation", &o.id, OperationState::from_wire(&o.state));
             let request_id = match &o.request_id {
-                Some(r) => BmId::parse(r).expect("合法"),
-                None => BmId::from_parts("req", id.ulid_part()).expect("同段合成合法"),
+                Some(r) => Self::inv("operation→request", &o.id, BmId::parse(r)),
+                None => Self::inv(
+                    "operation→request 合成",
+                    &o.id,
+                    BmId::from_parts("req", id.ulid_part()),
+                ),
             };
             let error = o.error_code.as_ref().map(|code| {
                 let code = ErrorCode::from_wire(code).unwrap_or(ErrorCode::Internal);
@@ -284,8 +300,8 @@ impl World {
                 Operation {
                     id: id.clone(),
                     request_id,
-                    session_id: BmId::parse(o.session_id).expect("合法"),
-                    agent_id: BmId::parse(o.agent_id).expect("合法"),
+                    session_id: Self::inv("operation→session", &o.id, BmId::parse(&o.session_id)),
+                    agent_id: Self::inv("operation→agent", &o.id, BmId::parse(&o.agent_id)),
                     state,
                     turn_index: o.turn_index as u32,
                     created_at: o.created_at,
@@ -305,7 +321,11 @@ impl World {
         }
         // M5:Task 规范状态装载(tasks 表;成员事实由 task_members 自事件承载)
         for t in rows.tasks {
-            let task = crate::task::task_from_row(&t).expect("库内 task 行合法");
+            let task = Self::inv(
+                "task",
+                &t.id,
+                crate::task::task_from_row(&t).map_err(|e| e.to_string()),
+            );
             self.tasks.insert(task.id.clone(), task);
         }
     }
