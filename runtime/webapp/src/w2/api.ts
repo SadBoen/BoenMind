@@ -442,6 +442,10 @@ export const api = {
   sessionList: () =>
     req<{
       ok: boolean;
+      /** 目录总会话数(服务端权威;分页后 sessions 只是其中一页) */
+      total: number;
+      /** 当前页之后还有更多会话 */
+      truncated: boolean;
       sessions: {
         id: string;
         state: string;

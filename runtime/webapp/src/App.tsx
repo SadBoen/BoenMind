@@ -297,6 +297,9 @@ function SessionPanel({ collapsed }: { collapsed: boolean }) {
   // 各设备同源一致;原浏览器本地老账 bm_sessions 已退役
   const [sessions, setSessions] = useState<SessionItemMeta[]>([]);
   const [listError, setListError] = useState<string | null>(null);
+  // 服务端分页(issue #15):目录超过单页上限时可见提示,不做静默截断
+  const [sessionTotal, setSessionTotal] = useState(0);
+  const [truncated, setTruncated] = useState(false);
   const [activeSid, setActiveSid] = useState<string | null>(() => storage.get(STORAGE_KEYS.SESSION));
 
   const loadSessions = useCallback(async () => {
@@ -310,6 +313,8 @@ function SessionPanel({ collapsed }: { collapsed: boolean }) {
           updatedAt: Date.parse(s.updated_at ?? s.created_at) || 0,
         })),
       );
+      setSessionTotal(r.total ?? r.sessions.length);
+      setTruncated(r.truncated === true);
       setListError(null);
     } catch (err: unknown) {
       // 不静默回退本地账:列表失败必须可见可重试(空列表假象=丢历史错觉)
@@ -463,6 +468,16 @@ function SessionPanel({ collapsed }: { collapsed: boolean }) {
           );
         })}
       </div>
+
+        {/* 分页截断可见提示(issue #15):目录超出单页时不静默丢历史感 */}
+        {truncated ? (
+          <div
+            className="status-hint text-center opacity-70"
+            data-slot="session-list-truncated"
+          >
+            已显示最近 {sessions.length} 个,共 {sessionTotal} 个会话
+          </div>
+        ) : null}
 
       {/* 删除失败提示(2026-09-08 审计修复):6 秒自动消退,主题令牌着色 */}
       {deleteNotice ? (

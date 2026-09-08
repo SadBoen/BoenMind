@@ -65,13 +65,37 @@ pub async fn context_search(
     Json(json!({ "ok": true, "q": q, "hits": hits, "total": hits.len() })).into_response()
 }
 
-/// GET /admin/sessions:会话目录(2026-09-08 三端一致批)。此前「有哪些
-/// 会话」只存浏览器 localStorage(bm_sessions,每设备各记各账,三端列表
-/// 不一致的根因);目录收归服务端单一权威,前端启动即拉本端点(管理面
-/// 不入合同)。按最近活跃倒序,内存视图投影(经核心单写者)。
-pub(crate) async fn session_list(State(cfg): State<AdminConfig>) -> Response {
+/// GET /admin/sessions?limit=&skip=:会话目录(2026-09-08 三端一致批)。
+/// 此前「有哪些会话」只存浏览器 localStorage(bm_sessions,每设备各记各账,
+/// 三端列表不一致的根因);目录收归服务端单一权威,前端启动即拉本端点
+/// (管理面不入合同)。按最近活跃倒序,内存视图投影(经核心单写者)。
+/// 分页(issue #15):limit 默认 500 硬顶 1000,skip = 从最新跳过条数
+/// (与 session_messages 同款游标口径);响应增 total/limit/skip/truncated
+/// 增量字段。核心仍全量投影 SessionSummary(行小、单写者内存视图),
+/// 裁剪在 HTTP 面——载荷与前端渲染有界;核心侧分页待真实规模需要再做。
+pub(crate) async fn session_list(
+    State(cfg): State<AdminConfig>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Response {
     let sessions = cfg.handle.session_list().await;
-    Json(json!({ "ok": true, "sessions": sessions })).into_response()
+    let total = sessions.len();
+    let limit: usize = params
+        .get("limit")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(500)
+        .clamp(1, 1000);
+    let skip: usize = params.get("skip").and_then(|v| v.parse().ok()).unwrap_or(0);
+    let page: Vec<_> = sessions.iter().skip(skip).take(limit).collect();
+    let truncated = skip + page.len() < total;
+    Json(json!({
+        "ok": true,
+        "total": total,
+        "limit": limit,
+        "skip": skip,
+        "truncated": truncated,
+        "sessions": page,
+    }))
+    .into_response()
 }
 
 /// DELETE /admin/sessions/{session_id}:会话删除(2026-09-06 A+B)。
