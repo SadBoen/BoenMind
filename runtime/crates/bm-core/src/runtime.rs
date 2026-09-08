@@ -108,6 +108,10 @@ enum TurnEvent {
     ChainExhausted {
         operation_id: BmId,
         error_code: ErrorCode,
+        /// ADR-0029:脱敏后的 provider 错误原文(可空)——用户与日志
+        /// 终于能看到「回合执行失败」背后的真实死因。
+        #[allow(dead_code)]
+        detail: Option<String>,
     },
     /// 显式取消落定(回合边界)。
     Cancelled { operation_id: BmId },

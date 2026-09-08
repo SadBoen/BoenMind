@@ -56,7 +56,7 @@ impl ModelConnector for ChunkedConnector {
                         error_code: ErrorCode::Cancelled,
                         retryable: false,
                         attempt: 1,
-                        detail_ref: None,
+                        detail_ref: None, detail: None,
                     };
                 }
                 _ = tokio::time::sleep(Duration::from_millis(self.delay_ms)) => {

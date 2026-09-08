@@ -51,6 +51,7 @@ mod r2_tombstone_tests {
                 retryable: false,
                 attempt: 1,
                 detail_ref: None,
+                detail: None,
             }
         }
         async fn invoke_stream(

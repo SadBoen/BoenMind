@@ -154,6 +154,9 @@ pub enum InvokeResponse {
         retryable: bool,
         attempt: u32,
         detail_ref: Option<String>,
+        /// ADR-0029:脱敏后的事实性错误细节(provider 响应体等原文),
+        /// 凭据脱敏在构造点完成;序列化非空才出字段。
+        detail: Option<String>,
     },
 }
 
@@ -187,6 +190,7 @@ impl Serialize for InvokeResponse {
                 retryable,
                 attempt,
                 detail_ref,
+                detail,
             } => {
                 map.serialize_entry("ok", &false)?;
                 map.serialize_entry("error_code", &WireCode(error_code.as_str()))?;
@@ -194,6 +198,9 @@ impl Serialize for InvokeResponse {
                 map.serialize_entry("attempt", attempt)?;
                 if let Some(d) = detail_ref {
                     map.serialize_entry("detail_ref", d)?;
+                }
+                if let Some(d) = detail {
+                    map.serialize_entry("detail", d)?;
                 }
             }
         }
@@ -236,6 +243,8 @@ impl<'de> Deserialize<'de> for InvokeResponse {
             attempt: Option<u32>,
             #[serde(default)]
             detail_ref: Option<String>,
+            #[serde(default)]
+            detail: Option<String>,
         }
         let raw = Raw::deserialize(deserializer)?;
         if raw.ok {
@@ -269,6 +278,7 @@ impl<'de> Deserialize<'de> for InvokeResponse {
                 retryable: raw.retryable.unwrap_or(false),
                 attempt: raw.attempt.unwrap_or(1),
                 detail_ref: raw.detail_ref,
+                detail: raw.detail,
             })
         }
     }
@@ -291,5 +301,49 @@ mod tests {
     fn model_id_charset() {
         assert!(validate_model_id("zhipu.glm-4-flash").is_ok());
         assert!(validate_model_id("-zhipu").is_err());
+    }
+}
+// ADR-0029 / INV-13:detail 只在非空时序列化,反序列化缺省为 None。
+#[cfg(test)]
+mod inv13_detail_serde_tests {
+    use super::*;
+
+    #[test]
+    fn inv13_failed_detail_absent_when_none() {
+        let resp = InvokeResponse::Failed {
+            error_code: ErrorCode::Unavailable,
+            retryable: true,
+            attempt: 1,
+            detail_ref: None,
+            detail: None,
+        };
+        let v = serde_json::to_value(&resp).unwrap();
+        assert!(
+            v.get("detail").is_none(),
+            "detail=None 不得出现在序列化输出"
+        );
+    }
+
+    #[test]
+    fn inv13_failed_detail_roundtrip_when_present() {
+        let resp = InvokeResponse::Failed {
+            error_code: ErrorCode::ValidationFailed,
+            retryable: false,
+            attempt: 1,
+            detail_ref: None,
+            detail: Some("model not found: gpt-x".into()),
+        };
+        let v = serde_json::to_value(&resp).unwrap();
+        assert_eq!(
+            v["detail"], "model not found: gpt-x",
+            "脱敏原文必须原样随信封传输"
+        );
+        let back: InvokeResponse = serde_json::from_value(v).unwrap();
+        match back {
+            InvokeResponse::Failed { detail, .. } => {
+                assert_eq!(detail.as_deref(), Some("model not found: gpt-x"));
+            }
+            _ => panic!("应为 Failed 变体"),
+        }
     }
 }

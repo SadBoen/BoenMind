@@ -684,6 +684,7 @@ fn connector_invoke_validates() {
         retryable: true,
         attempt: 1,
         detail_ref: None,
+        detail: None,
     };
     let ser = serde_json::to_value(&fail_resp).unwrap();
     validate_by_pointer(

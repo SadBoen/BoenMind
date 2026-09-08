@@ -316,6 +316,45 @@ fn failed(code: ErrorCode, retryable: bool, attempt: u32) -> InvokeResponse {
         retryable,
         attempt,
         detail_ref: None,
+        detail: None,
+    }
+}
+
+/// ADR-0029(用户裁决「错误原文保真」):HTTP 错误响应体经凭据脱敏与
+/// 2000 字符截断后随 Failed.detail 透传——模型与用户终于能看到网关的
+/// 真实死因。INV-5 纪律不变:凭据明文在构造点替换为 [REDACTED]。
+fn sanitize_detail(body: &str, secret: &str) -> String {
+    let mut s = if secret.is_empty() {
+        body.trim().to_string()
+    } else {
+        body.trim().replace(secret, "[REDACTED]")
+    };
+    if s.chars().count() > 2000 {
+        s = s.chars().take(2000).collect();
+    }
+    s
+}
+
+fn with_detail(mut resp: InvokeResponse, detail: String) -> InvokeResponse {
+    if let InvokeResponse::Failed { detail: d, .. } = &mut resp {
+        *d = Some(detail);
+    }
+    resp
+}
+
+fn map_status_body(status: u16, attempt: u32, body: &str, secret: &str) -> InvokeResponse {
+    with_detail(map_status(status, attempt), sanitize_detail(body, secret))
+}
+
+/// send 阶段错误:HTTP 错误状态携带响应体(供脱敏透传),其余复用 reqwest 语义。
+pub(crate) enum OpenAiErr {
+    Status { status: u16, body: String },
+    Http(reqwest::Error),
+}
+
+impl From<reqwest::Error> for OpenAiErr {
+    fn from(e: reqwest::Error) -> Self {
+        OpenAiErr::Http(e)
     }
 }
 
@@ -365,15 +404,23 @@ impl ModelConnector for OpenAiConnector {
         let request = self
             .http
             .post(self.endpoint())
-            .bearer_auth(api_key)
+            .bearer_auth(api_key.clone())
             .header("x-opencode-session", &self.session_tag)
             .json(&body)
             .timeout(budget);
 
         let respond = async {
-            let resp = request.send().await?.error_for_status()?;
+            let resp = request.send().await?;
+            let status = resp.status();
+            if status.is_client_error() || status.is_server_error() {
+                let body = resp.text().await.unwrap_or_default();
+                return Err(OpenAiErr::Status {
+                    status: status.as_u16(),
+                    body,
+                });
+            }
             let wire: WireResponse = resp.json().await?;
-            Ok::<WireResponse, reqwest::Error>(wire)
+            Ok::<WireResponse, OpenAiErr>(wire)
         };
 
         let wire = tokio::select! {
@@ -384,6 +431,13 @@ impl ModelConnector for OpenAiConnector {
         let wire = match wire {
             Ok(w) => w,
             Err(e) => {
+                if let OpenAiErr::Status { status, body } = e {
+                    return map_status_body(status, attempt, &body, &api_key);
+                }
+                let e = match e {
+                    OpenAiErr::Http(e) => e,
+                    OpenAiErr::Status { .. } => unreachable!("上方已拦截"),
+                };
                 // 解码失败 = 网关响应不兼容(内部问题,不盲重试);
                 // 超时/传输故障 = 可重试不可用;HTTP 状态另行映射。
                 if e.is_decode() {
@@ -488,19 +542,32 @@ impl ModelConnector for OpenAiConnector {
         let request = self
             .http
             .post(self.endpoint())
-            .bearer_auth(api_key)
+            .bearer_auth(api_key.clone())
             .header("x-opencode-session", &self.session_tag)
             .json(&body)
             .timeout(budget);
         let open = async {
-            let resp = request.send().await?.error_for_status()?;
-            Ok::<reqwest::Response, reqwest::Error>(resp)
+            let resp = request.send().await?;
+            let status = resp.status();
+            if status.is_client_error() || status.is_server_error() {
+                let body = resp.text().await.unwrap_or_default();
+                return Err(OpenAiErr::Status {
+                    status: status.as_u16(),
+                    body,
+                });
+            }
+            Ok::<reqwest::Response, OpenAiErr>(resp)
         };
         let mut resp = tokio::select! {
             _ = cancel.cancelled() => return failed(ErrorCode::Cancelled, false, attempt),
             r = open => match r {
                 Ok(resp) => resp,
-                Err(e) => return transport_failed(&e, attempt),
+                Err(e) => return match e {
+                    OpenAiErr::Status { status, body } => {
+                        map_status_body(status, attempt, &body, &api_key)
+                    }
+                    OpenAiErr::Http(e) => transport_failed(&e, attempt),
+                },
             },
         };
         let mut buf: Vec<u8> = Vec::new();
@@ -825,5 +892,33 @@ mod m9_review_status_tests {
         }];
         let wire = to_wire_messages(&msgs);
         assert_eq!(wire[0].content, Some("我先读文件"));
+    }
+}
+
+// ADR-0029 / INV-13:错误原文保真的脱敏与边界纪律。
+#[cfg(test)]
+mod inv13_error_detail_tests {
+    use super::sanitize_detail;
+
+    #[test]
+    fn inv13_detail_redacts_credential_and_bounded() {
+        let secret = "sk-abcdef1234567890XYZ";
+        let body = format!(
+            "{{\"error\":{{\"message\":\"invalid api key {secret} provided\",\"type\":\"invalid_request_error\"}}}}"
+        );
+        let d = sanitize_detail(&body, secret);
+        assert!(!d.contains(secret), "凭据明文必须被替换(INV-5)");
+        assert!(d.contains("[REDACTED]"), "脱敏标记必须存在");
+        assert!(
+            d.contains("invalid api key"),
+            "事实文本必须保留(错误原文保真)"
+        );
+    }
+
+    #[test]
+    fn inv13_detail_truncated_to_2000_chars() {
+        let body = "x".repeat(5000);
+        let d = sanitize_detail(&body, "no-secret");
+        assert_eq!(d.chars().count(), 2000, "detail 必须截断到 2000 字符");
     }
 }

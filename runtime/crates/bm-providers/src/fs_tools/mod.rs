@@ -58,7 +58,7 @@ pub fn fs_capability_entries() -> Vec<(CapabilityManifest, Arc<dyn CapabilityPro
             true,
             true,
             10_000,
-            "读取工作区内文件的文本内容,返回带 1-based 行号的全文(类似 cat -n)。支持 offset/limit 分页,并返回 total_lines 总行数。看代码、读配置优先用本工具。",
+            "读取工作区内文件的文本内容,返回带 1-based 行号的全文(类似 cat -n)。支持 offset/limit 分页,并返回 total_lines 总行数。",
             json!({
                 "type": "object",
                 "properties": {
@@ -76,7 +76,7 @@ pub fn fs_capability_entries() -> Vec<(CapabilityManifest, Arc<dyn CapabilityPro
             false,
             false,
             10_000,
-            "在工作区创建或整体覆写文本文件(UTF-8),父目录不存在会自动递归创建。适合写新文件;修改已有文件优先用 fs_edit。调用需用户批准后执行。",
+            "在工作区创建或整体覆写文本文件(UTF-8),父目录不存在会自动递归创建。调用需用户批准后执行。",
             json!({
                 "type": "object",
                 "properties": {
@@ -93,7 +93,7 @@ pub fn fs_capability_entries() -> Vec<(CapabilityManifest, Arc<dyn CapabilityPro
             false,
             false,
             10_000,
-            "对工作区文件做精确查找替换。单处改动传 old_string/new_string(须与文件原文逐字一致,含缩进;多处命中可加 replace_all);同一文件多处改动一次传 edits 数组,全部基于当前文件原文匹配、一次原子提交。改前建议先 fs_read 确认原文。调用需用户批准后执行。",
+            "对工作区文件做精确查找替换。单处改动传 old_string/new_string(须与文件原文逐字一致,含缩进;多处命中可加 replace_all);同一文件多处改动一次传 edits 数组,全部基于当前文件原文匹配、一次原子提交。调用需用户批准后执行。",
             json!({
                 "type": "object",
                 "properties": {

@@ -160,6 +160,7 @@ impl ModelConnector for MockConnector {
                 retryable,
                 attempt: _req.attempt,
                 detail_ref: None,
+                detail: None,
             },
         }
     }

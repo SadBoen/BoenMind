@@ -292,24 +292,9 @@ pub(crate) fn spawn_turn(
             name_to_cap.retain(|wire, _| kept.contains(wire));
         }
 
-        // F2(用户 2026-09-05 提报的意图门控软防线):挂载工具时注入工具纪律
-        // 独立 System 段——寒暄/纯问答不动用文件、命令与联网工具;代码层
-        // 硬门控涉及语义判定产品设计,另行排期。
-        if !tools_json.is_empty() {
-            messages.insert(
-                1,
-                Message {
-                    role: Role::System,
-                    content: "[工具纪律]
-1) 用户打招呼、寒暄、闲聊或纯知识问答时,直接回答,不要调用文件、命令执行或联网工具;
-2) 仅当用户明确要求查看/修改文件、执行命令或联网查资料时,才使用对应工具;
-3) 拿不准用户意图时先一句话确认,不要自行扫描文件或系统。"
-                        .into(),
-                    tool_call_id: None,
-                    tool_calls: None,
-                },
-            );
-        }
+        // (2026-09-08 用户裁决,ADR-0029:内核不在系统提示里硬编码任何行为
+        // 指导——原「工具纪律」软防线段已删,同类话术如需存在只能经内/外置
+        // 插件通道以可区分方式注入,SETTLED §2-10 口径由本条取代。)
 
         let mut attempt: u32 = 0;
         loop {
@@ -370,14 +355,14 @@ pub(crate) fn spawn_turn(
                     });
                     tokio::select! {
                         _ = cancel.cancelled() => InvokeResponse::Failed {
-                            error_code: ErrorCode::Cancelled, retryable: false, attempt, detail_ref: None,
+                            error_code: ErrorCode::Cancelled, retryable: false, attempt, detail_ref: None, detail: None,
                         },
                         r = connector.invoke_stream(req, cancel.clone(), on_delta) => r,
                     }
                 } else {
                     tokio::select! {
                         _ = cancel.cancelled() => InvokeResponse::Failed {
-                            error_code: ErrorCode::Cancelled, retryable: false, attempt, detail_ref: None,
+                            error_code: ErrorCode::Cancelled, retryable: false, attempt, detail_ref: None, detail: None,
                         },
                         r = connector.invoke(req, cancel.clone()) => r,
                     }
@@ -595,9 +580,19 @@ pub(crate) fn spawn_turn(
                                     }
 
                                     // 受理/结果:直通能力同步出结果;MCP 异步能力经
-                                    // operations 轮询至终态(上限 60s);需审批能力
-                                    // 轮询至审批裁决+执行终态(上限 300s)。
+                                    // operations 轮询至终态;需审批能力轮询至审批
+                                    // 裁决+执行终态。
                                     let mut tool_result = String::from("工具执行无应答");
+                                    // ADR-0029:调用层直接失败(如能力校验拒绝)
+                                    // 如实回喂真实死因,不以占位文案掩盖。
+                                    if let Ok(Err(e)) = &call_resp {
+                                        tool_result = match e {
+                                            CoreError::Semantic(code, msg) => {
+                                                format!("工具调用失败({}): {}", code.as_str(), msg)
+                                            }
+                                            other => format!("工具调用失败: {other}"),
+                                        };
+                                    }
                                     // W10:等待时限走 limits;ADR-0028:0 = 不限时(None)。
                                     let lim_wait = limits_cell.get();
                                     let wait_secs: Option<u64> = if approval_id.is_some() {
@@ -618,7 +613,20 @@ pub(crate) fn spawn_turn(
                                         && !v["result"].is_null());
                                     if inline_sync {
                                         if let Ok(Ok(receipt_value)) = call_resp {
-                                            tool_result = receipt_value["result"].to_string();
+                                            // ADR-0029:幂等抑制如实告知——等价请求
+                                            // 返回的是旧结果,模型必须知道本次没有
+                                            // 真实执行。
+                                            let suppressed = receipt_value["action_summary"]
+                                                .as_str()
+                                                .is_some_and(|s| s.contains("幂等抑制"));
+                                            tool_result = if suppressed {
+                                                format!(
+                                                    "本次未重复执行(等价请求幂等返回原结果): {}",
+                                                    receipt_value["result"]
+                                                )
+                                            } else {
+                                                receipt_value["result"].to_string()
+                                            };
                                         }
                                     } else if let Some(tool_op) = tool_op {
                                         let deadline = wait_secs.map(|s| {
@@ -651,10 +659,13 @@ pub(crate) fn spawn_turn(
                                                     }
                                                 }
                                                 tool_result = if approval_id.is_some() {
-                                                    "审批等待超时(用户未及时裁决,审批单已撤销过期)"
+                                                    "审批等待超时:用户未在等待期内裁决,审批单已撤销过期,工具未执行"
                                                         .into()
                                                 } else {
-                                                    "工具执行超时".into()
+                                                    format!(
+                                                        "工具执行超时:等待 {} 秒未收到执行结果,工具未执行",
+                                                        wait_secs.unwrap_or(0)
+                                                    )
                                                 };
                                                 break;
                                             }
@@ -704,8 +715,22 @@ pub(crate) fn spawn_turn(
                                                         break;
                                                     }
                                                     bm_contract::states::OperationState::Failed => {
-                                                        tool_result =
-                                                            "用户已批准,但工具执行失败,请向用户说明。".into();
+                                                        // ADR-0029:如实回喂,不带「请向
+                                                        // 用户说明」类教练话术。
+                                                        let detail = receipt
+                                                            .error
+                                                            .as_ref()
+                                                            .map(|e| {
+                                                                format!(
+                                                                    "(error_code={:?}) {}",
+                                                                    e.code.get(),
+                                                                    e.message
+                                                                )
+                                                            })
+                                                            .unwrap_or_default();
+                                                        tool_result = format!(
+                                                            "用户已批准,但工具执行失败{detail}"
+                                                        );
                                                         break;
                                                     }
                                                     _ => {}
@@ -823,37 +848,46 @@ pub(crate) fn spawn_turn(
                             // 结果回喂后重调模型(仍在同一 attempt 的降级链内)
                             continue;
                         }
-                        // 熔断或工具轮只回了工具调用无文本时的兜底说明
-                        let content = if !tool_calls.is_empty() && content.trim().is_empty() {
-                            if loop_broken {
-                                let breaker_n = limits_cell.get().loop_breaker_consecutive as usize;
-                                format!(
-                                    "(检测到连续 {breaker_n} 次调用相同工具与完全一致的入参，已触发防空转熔断保护。)"
-                                )
+                        // ADR-0029(2026-09-08 用户裁决):熔断/触顶拦截的调用
+                        // 不再凭空蒸发——逐个回喂事实性结果(未执行+原因),
+                        // 因果链对模型与日志完整;回合就此收束,不再重调模型。
+                        // 原内核代写的 assistant 终稿废除:收束原因只在触发点
+                        // 经 ProviderDelta 上屏(UI-only),不入台账、不冒充
+                        // 模型发言;content 保持模型原文(可能为空)。
+                        if !tool_calls.is_empty() {
+                            let reason = if loop_broken {
+                                "已触发防空转熔断(连续相同命令与入参)"
                             } else if round_cap_hit {
-                                format!(
-                                    "(本回合工具调用已达 {} 轮上限,回合在此收束;如需继续请发新消息。)",
-                                    limits_cell.get().tool_rounds_max
-                                )
+                                "单回合工具轮数已达上限"
                             } else {
-                                "(工具调用已执行完成，回合在此收束。)".to_string()
+                                "回合收束"
+                            };
+                            for tc in &tool_calls {
+                                messages.push(Message {
+                                    role: Role::Tool,
+                                    content: format!("本调用未执行:{reason}。"),
+                                    tool_call_id: Some(tc.id.clone()),
+                                    tool_calls: None,
+                                });
                             }
-                        } else {
-                            content
-                        };
-                        // W9:终稿与回合边界事件(轨迹视图数据源)
-                        ctx_log.record_event(
-                            session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
-                            op_id.as_str(),
-                            turn_index,
-                            "assistant_final",
-                            &format_ts(clock.now()),
-                            serde_json::json!({
-                                "content": content,
-                                "tokens_in": usage.tokens_in,
-                                "tokens_out": usage.tokens_out,
-                            }),
-                        );
+                        }
+                        // W9:终稿与回合边界事件(轨迹视图数据源)。
+                        // ADR-0029:assistant_final 只在模型真有话时记录——
+                        // 内核不再生产终稿内容,空终稿不落轨迹。
+                        if !content.trim().is_empty() {
+                            ctx_log.record_event(
+                                session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
+                                op_id.as_str(),
+                                turn_index,
+                                "assistant_final",
+                                &format_ts(clock.now()),
+                                serde_json::json!({
+                                    "content": content,
+                                    "tokens_in": usage.tokens_in,
+                                    "tokens_out": usage.tokens_out,
+                                }),
+                            );
+                        }
                         ctx_log.record_event(
                             session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
                             op_id.as_str(),
@@ -894,6 +928,7 @@ pub(crate) fn spawn_turn(
                         retryable,
                         attempt,
                         detail_ref: _,
+                        detail,
                     } => {
                         // W5:失败/取消同样落快照(诊断「报错」「卡死」场景)
                         ctx_log.record(crate::context_log::ContextRecord {
@@ -971,6 +1006,7 @@ pub(crate) fn spawn_turn(
                                 .send(Cmd::Turn(TurnEvent::ChainExhausted {
                                     operation_id: op_id,
                                     error_code,
+                                    detail,
                                 }))
                                 .await;
                             return;

@@ -86,6 +86,11 @@ pub struct WireError {
     pub retry_after_ms: Option<u64>,
     #[serde(default)]
     pub detail_ref: Option<BmId>,
+    /// ADR-0029(用户 2026-09-08 裁决「错误原文保真」):脱敏后的事实性细节
+    /// (如 provider 错误响应体原文)。只承载事实,禁止任何指导性话术;
+    /// 凭据明文必须在构造点完成脱敏(INV-5 纪律不变)。
+    #[serde(default)]
+    pub detail: Option<String>,
 }
 
 impl WireError {
@@ -97,6 +102,7 @@ impl WireError {
             retryable,
             retry_after_ms: None,
             detail_ref: None,
+            detail: None,
         }
     }
 }

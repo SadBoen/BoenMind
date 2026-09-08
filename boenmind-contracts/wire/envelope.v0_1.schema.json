@@ -64,6 +64,14 @@
           ],
           "pattern": "^[a-z][a-z0-9_]{1,15}_[0-9A-HJKMNP-TV-Z]{26}$",
           "description": "结构化详情在受保护存储中的引用"
+        },
+        "detail": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 2000,
+          "description": "ADR-0029:脱敏后的事实性错误细节(如 provider 错误响应体原文);只承载事实,禁止指导性话术,凭据明文必须在构造点脱敏(INV-5)"
         }
       }
     }

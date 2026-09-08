@@ -290,9 +290,7 @@ impl JobBoard for JobTable {
         if running.is_empty() {
             return String::new();
         }
-        let mut s = String::from(
-            "\n[后台作业] 以下命令在后台执行中(不受前台超时限制),完成后用 system.job_output(job_id=…) 收取结果:\n",
-        );
+        let mut s = String::from("\n[后台作业] 以下命令在后台执行中(不受前台超时限制):\n");
         for e in running.iter().take(5) {
             s.push_str(&format!(
                 "- {}(已运行 {} 秒):{}\n",

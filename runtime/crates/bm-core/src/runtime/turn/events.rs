@@ -67,13 +67,17 @@ pub(crate) fn handle_turn_event(w: &mut World, event: TurnEvent) {
         TurnEvent::ChainExhausted {
             operation_id,
             error_code,
+            detail,
         } => {
             emit_model_call_error_audit(w, &operation_id, error_code);
-            w.fail_turn(
-                &operation_id,
-                error_code,
-                format!("模型降级链耗尽({error_code})"),
-            );
+            // ADR-0029:真实死因进用户可见消息(message 上限 500,截断合规)
+            let mut message = format!("模型降级链耗尽({error_code})");
+            if let Some(d) = detail.as_deref().filter(|s| !s.trim().is_empty()) {
+                message.push_str(": ");
+                let remain = 480usize.saturating_sub(message.chars().count());
+                message.push_str(&d.chars().take(remain).collect::<String>());
+            }
+            w.fail_turn(&operation_id, error_code, message);
             w.in_flight.remove(&operation_id);
         }
         TurnEvent::Cancelled { operation_id } => {

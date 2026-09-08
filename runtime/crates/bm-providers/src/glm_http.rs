@@ -97,6 +97,7 @@ fn failed(code: ErrorCode, retryable: bool, attempt: u32) -> InvokeResponse {
         retryable,
         attempt,
         detail_ref: None,
+        detail: None,
     }
 }
 
