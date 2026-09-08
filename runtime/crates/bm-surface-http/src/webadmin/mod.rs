@@ -37,6 +37,7 @@ mod approvals;
 mod context;
 mod fs;
 mod jobs;
+mod json_store;
 mod limits;
 mod logs;
 mod mcp;

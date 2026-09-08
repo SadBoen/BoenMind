@@ -19,22 +19,15 @@ fn providers_file(data_dir: &Path) -> PathBuf {
 
 fn read_providers(data_dir: &Path) -> Result<Vec<Value>, (StatusCode, String)> {
     let path = providers_file(data_dir);
-    let s = match std::fs::read_to_string(&path) {
-        Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => {
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("读取 providers 配置文件失败: {e}"),
-            ));
-        }
+    let v = match super::json_store::read_json_file(
+        &path,
+        "读取 providers 配置文件失败",
+        "providers 配置文件 JSON 格式已损坏,拒绝加载/覆写",
+    ) {
+        Ok(super::json_store::JsonRead::Value(v)) => v,
+        Ok(super::json_store::JsonRead::Missing) => return Ok(Vec::new()),
+        Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, e)),
     };
-    let v: Value = serde_json::from_str(&s).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("providers 配置文件 JSON 格式已损坏,拒绝加载/覆写: {e}"),
-        )
-    })?;
     let list = v["providers"].as_array().cloned().ok_or_else(|| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -46,15 +39,12 @@ fn read_providers(data_dir: &Path) -> Result<Vec<Value>, (StatusCode, String)> {
 
 fn write_providers(data_dir: &Path, providers: &[Value]) -> Result<(), String> {
     let path = providers_file(data_dir);
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| format!("配置目录创建失败: {e}"))?;
-    }
     // P2(2026-09-07 架构评审):CRLF 收口 config_store::crlf 单一实现。
-    let text = crate::config_store::crlf(
-        serde_json::to_string_pretty(&json!({ "providers": providers }))
-            .map_err(|_| "序列化失败".to_string())?,
-    );
-    bm_persist::atomic_write(&path, text.as_bytes()).map_err(|e| format!("配置文件写入失败: {e}"))
+    super::json_store::write_json_file(
+        &path,
+        &json!({ "providers": providers }),
+        "配置文件写入失败",
+    )
 }
 
 /// provider 条目字段校验;返回归一化后的错误消息。

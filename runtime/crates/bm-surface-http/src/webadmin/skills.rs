@@ -15,17 +15,23 @@ fn skills_file(cfg: &AdminConfig) -> std::path::PathBuf {
 /// 复核批:此前静默回落空 Vec,盘上文件半损坏时下一次保存会把整库覆写清空,
 /// 与 providers 同口径=损坏拒绝加载/覆写)。
 fn read_skills(file: &std::path::Path) -> Result<Vec<Value>, String> {
-    let text = match std::fs::read_to_string(file) {
-        Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(format!("读取技能库失败: {e}")),
+    let v = match super::json_store::read_json_file(
+        file,
+        "读取技能库失败",
+        "skills.json JSON 格式已损坏,拒绝加载/覆写",
+    )? {
+        super::json_store::JsonRead::Value(v) => v,
+        super::json_store::JsonRead::Missing => return Ok(Vec::new()),
     };
-    let v: Value = serde_json::from_str(&text)
-        .map_err(|e| format!("skills.json JSON 格式已损坏,拒绝加载/覆写: {e}"))?;
     v["skills"]
         .as_array()
         .cloned()
         .ok_or_else(|| "skills.json 缺少合法的 skills 数组".to_string())
+}
+
+/// 写技能库(issue #38 收口:原 set/delete 两处内联样板,统一走原语)。
+fn write_skills(file: &std::path::Path, skills: &[Value]) -> Result<(), String> {
+    super::json_store::write_json_file(file, &json!({ "skills": skills }), "写入失败")
 }
 
 /// GET /admin/skills:技能库清单(角色页挂载勾选 + 展示)。
@@ -63,20 +69,8 @@ pub async fn skills_set(State(cfg): State<AdminConfig>, Json(mut body): Json<Val
     } else {
         skills.push(body.clone());
     }
-    if let Some(dir) = file.parent()
-        && let Err(e) = std::fs::create_dir_all(dir)
-    {
-        return admin_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("目录创建失败: {e}"),
-        );
-    }
-    let text = match serde_json::to_string_pretty(&json!({ "skills": skills })) {
-        Ok(t) => crate::config_store::crlf(t),
-        Err(_) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, "序列化失败"),
-    };
-    if let Err(e) = bm_persist::atomic_write(&file, text.as_bytes()) {
-        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, format!("写入失败: {e}"));
+    if let Err(e) = write_skills(&file, &skills) {
+        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
     }
     Json(json!({ "ok": true, "note": "技能已保存,下一回合起生效" })).into_response()
 }
@@ -96,12 +90,8 @@ pub async fn skills_delete(
     if skills.len() == before {
         return admin_error(StatusCode::NOT_FOUND, "技能不存在");
     }
-    let text = match serde_json::to_string_pretty(&json!({ "skills": skills })) {
-        Ok(t) => crate::config_store::crlf(t),
-        Err(_) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, "序列化失败"),
-    };
-    if let Err(e) = bm_persist::atomic_write(&file, text.as_bytes()) {
-        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, format!("写入失败: {e}"));
+    if let Err(e) = write_skills(&file, &skills) {
+        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
     }
     Json(json!({ "ok": true, "note": "技能已删除" })).into_response()
 }

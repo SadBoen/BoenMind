@@ -31,13 +31,14 @@ pub struct RoleItem {
 /// 复核批:此前一律静默回退默认文档,盘上文件损坏时下一次保存会把用户角色
 /// 整库覆写,与 providers/skills 同口径=损坏拒绝加载/覆写)。
 pub fn read_roles_doc(file: &std::path::Path) -> Result<RoleConfigDoc, String> {
-    let raw = match std::fs::read_to_string(file) {
-        Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(default_doc()),
-        Err(e) => return Err(format!("读取角色库失败: {e}")),
+    let v = match super::json_store::read_json_file(
+        file,
+        "读取角色库失败",
+        "roles.json JSON 格式已损坏,拒绝加载/覆写",
+    )? {
+        super::json_store::JsonRead::Value(v) => v,
+        super::json_store::JsonRead::Missing => return Ok(default_doc()),
     };
-    let v: Value = serde_json::from_str(&raw)
-        .map_err(|e| format!("roles.json JSON 格式已损坏,拒绝加载/覆写: {e}"))?;
     if let Some(roles_arr) = v["roles"].as_array() {
         let active_id = v["active_id"].as_str().unwrap_or("assistant").to_string();
         let roles: Vec<RoleItem> = roles_arr
@@ -78,16 +79,8 @@ fn default_doc() -> RoleConfigDoc {
 }
 
 pub fn write_roles_doc(file: &std::path::Path, doc: &RoleConfigDoc) -> Result<(), String> {
-    if let Some(dir) = file.parent()
-        && let Err(e) = std::fs::create_dir_all(dir)
-    {
-        return Err(format!("目录创建失败: {e}"));
-    }
-    let text = match serde_json::to_string_pretty(doc) {
-        Ok(t) => crate::config_store::crlf(t),
-        Err(e) => return Err(format!("序列化失败: {e}")),
-    };
-    bm_persist::atomic_write(file, text.as_bytes()).map_err(|e| format!("写入失败: {e}"))
+    let value = serde_json::to_value(doc).map_err(|e| format!("序列化失败: {e}"))?;
+    super::json_store::write_json_file(file, &value, "写入失败")
 }
 
 /// 读全部角色与激活角色 id(设置页与聊天页下拉)。

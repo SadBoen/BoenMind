@@ -28,14 +28,9 @@ fn mcp_file_or_error(cfg: &AdminConfig) -> Result<PathBuf, (StatusCode, String)>
 // 复核批:此前两处逐字重复,启动装载与管理面读取口径有漂移风险)。
 
 fn write_mcp_servers(path: &Path, servers: &[Value]) -> Result<(), String> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| format!("配置目录创建失败: {e}"))?;
-    }
     // P2(2026-09-07 架构评审):CRLF 收口 config_store::crlf 单一实现。
-    let text = crate::config_store::crlf(
-        serde_json::to_string_pretty(servers).map_err(|_| "序列化失败".to_string())?,
-    );
-    bm_persist::atomic_write(path, text.as_bytes()).map_err(|e| format!("MCP 配置写入失败: {e}"))
+    // 注意:mcp.json 顶层即数组(与 providers/skills 的 {域: [...]} 包裹不同)。
+    super::json_store::write_json_file(path, &Value::Array(servers.to_vec()), "MCP 配置写入失败")
 }
 
 /// 单条过合同 schema(mcp-server.v0_1;支持 stdio / sse / http 传输)。
