@@ -47,6 +47,90 @@ async fn mcp_reload_response_shape_is_stable() {
     assert_eq!(calls.lock().expect("锁").1, 0, "loaded 为空 = 无注销调用");
 }
 
+/// issue #6 卸载下线通道端到端(此前 characterization 仅覆盖 0-server 与
+/// spawn 失败通道):已装载 server 从 mcp.json 摘除后,sync 必须
+/// ① hub 断连(路由摘除 + 子进程 shutdown/exit 通知)② 能力注销回传
+/// registrar ③ uninstalled 通道上报。任何一环缺失 = 「卸载未立即下线」。
+#[tokio::test]
+async fn sync_uninstalls_removed_server_offline() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cfg = dir.path().join("mcp.json");
+    // 目标态:alpha 已被用户卸载(配置里不再存在)
+    fs::write(&cfg, "[]").expect("写空 mcp.json");
+
+    let secrets: Arc<dyn bm_core::ports::SecretStore> = Arc::new(MemSecretStore);
+    let hub = bm_providers::mcp::McpHub::new();
+    // 预置「已装载」形态:alpha 经进程内 MCP 伪实现真实握手入 hub,
+    // 产生合规工具路由 mcp.alpha.echo(与 stdio 装载同一条 connect 路径)
+    let tools = vec![bm_providers::mcp::McpToolDef {
+        name: "echo".into(),
+        description: None,
+        input_schema: serde_json::json!({"type": "object", "properties": {}}),
+        annotations: serde_json::json!({}),
+    }];
+    hub.connect(
+        "alpha",
+        bm_providers::mcp::InProcMcpServer::new(tools),
+        5_000,
+    )
+    .await
+    .expect("预置装载 alpha");
+
+    let unregistered: std::sync::Mutex<Vec<Vec<String>>> = std::sync::Mutex::new(Vec::new());
+    let registrar = RecordingRegistrar {
+        unregistered: &unregistered,
+    };
+    let outcome = bm_providers::mcp::supervisor::sync_from_config(
+        &hub,
+        &cfg,
+        secrets,
+        vec!["alpha".into()],
+        &registrar,
+        &bm_core::limits::LimitsCell::with_default(),
+    )
+    .await;
+
+    // ① uninstalled 通道上报;其余通道必须全空
+    assert_eq!(
+        outcome.uninstalled,
+        vec!["alpha".to_string()],
+        "{:?}",
+        outcome
+    );
+    assert!(outcome.registered.is_empty());
+    assert!(outcome.updated.is_empty());
+    assert!(outcome.failed.is_empty(), "{:?}", outcome.failed);
+    // ② 能力注销以 FQ 名回传 registrar(核对面 Registry 据此摘除)
+    assert_eq!(
+        unregistered.lock().expect("锁").as_slice(),
+        [vec!["mcp.alpha.echo".to_string()]]
+    );
+    // ③ hub 路由已摘:二次断连零残留(子进程通道同样关闭)
+    assert!(hub.disconnect_server("alpha").await.is_empty());
+}
+
+/// 捕获注销调用名的 registrar(区别于 TestRegistrar 的纯计数)。
+struct RecordingRegistrar<'a> {
+    unregistered: &'a std::sync::Mutex<Vec<Vec<String>>>,
+}
+
+#[async_trait::async_trait]
+impl bm_providers::mcp::supervisor::CapabilityRegistrar for RecordingRegistrar<'_> {
+    async fn register(
+        &self,
+        _entries: Vec<(
+            CapabilityManifest,
+            Arc<dyn bm_core::registry::CapabilityProvider>,
+        )>,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+    async fn unregister(&self, names: Vec<String>) -> Result<(), String> {
+        self.unregistered.lock().expect("锁").push(names);
+        Ok(())
+    }
+}
+
 struct TestRegistrar<'a> {
     calls: &'a std::sync::Mutex<(usize, usize)>,
 }
