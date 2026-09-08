@@ -625,6 +625,9 @@ pub(crate) fn spawn_turn(
                                             std::time::Instant::now()
                                                 + std::time::Duration::from_secs(s)
                                         });
+                                        // 成功但载荷迟到/缺失的保底:连续 10 拍
+                                        // (约 4s)仍无载荷即如实回报,不无限等。
+                                        let mut ok_ticks: u32 = 0;
                                         loop {
                                             if deadline
                                                 .is_some_and(|dl| std::time::Instant::now() > dl)
@@ -716,6 +719,9 @@ pub(crate) fn spawn_turn(
                                                 // 本循环必须对终态失败/取消即时脱身——
                                                 // 失败操作从不写 op_results,只查
                                                 // GetOpResult 会无限空转挂死回合。
+                                                // 回喂纪律(ADR-0022 同源,2026-09-08
+                                                // 用户重申):只如实转述事实,不附加
+                                                // 任何「该怎么办」的教练话术。
                                                 // 顺序:先查结果载荷(成功路径,兼容
                                                 // 载荷晚于状态翻转的落盘节拍),再查
                                                 // 操作是否终态失败/取消。
@@ -742,21 +748,37 @@ pub(crate) fn spawn_turn(
                                                 if let Ok(Ok(receipt)) = srx.await {
                                                     match receipt.state {
                                                     bm_contract::states::OperationState::Failed => {
-                                                        let detail = receipt
+                                                        let mut detail = receipt
                                                             .error
                                                             .as_ref()
                                                             .map(|e| {
-                                                                format!("(error_code={:?})", e.code.get())
+                                                                format!(
+                                                                    "(error_code={:?})",
+                                                                    e.code.get()
+                                                                )
                                                             })
                                                             .unwrap_or_default();
-                                                        tool_result = format!(
-                                                            "工具执行失败{detail},请按失败原因调整入参重试或改走其他路径。"
-                                                        );
+                                                        if let Some(e) = receipt.error.as_ref() {
+                                                            detail.push_str(&format!(
+                                                                " {}",
+                                                                e.message
+                                                            ));
+                                                        }
+                                                        tool_result =
+                                                            format!("工具执行失败{detail}");
                                                         break;
                                                     }
                                                     bm_contract::states::OperationState::Cancelled => {
                                                         tool_result = "工具执行已取消。".into();
                                                         break;
+                                                    }
+                                                    bm_contract::states::OperationState::Succeeded => {
+                                                        ok_ticks += 1;
+                                                        if ok_ticks >= 10 {
+                                                            tool_result =
+                                                                "工具执行成功,但无返回结果载荷".into();
+                                                            break;
+                                                        }
                                                     }
                                                     _ => {}
                                                 }
