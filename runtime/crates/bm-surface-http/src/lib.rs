@@ -85,8 +85,10 @@ impl V1SessionMap {
     }
 }
 
-/// 组装 Surface 路由。`token` 为已加载的访问令牌;/health 豁免鉴权,
-/// /rpc 与 /events 受 Bearer 保护。`admin` = W2 管理面配置(None = 不挂载,
+/// 组装 Surface 路由。`token` 为已加载的访问令牌;/health 豁免鉴权;
+/// /rpc 与 /events 受严格 Bearer 保护;/admin 与 /v1 受 require_api_auth
+/// 保护(Bearer/Cookie/本机未设墙,issue #10 断链补立);最外层门户墙
+/// 兜整站(含静态回落)。`admin` = W2 管理面配置(None = 不挂载,
 /// 管理面端点不存在)。`model_routes` = W6 对话模型路由表(None = 不校验)。
 #[allow(clippy::too_many_arguments)] // axum 装配函数,参数即装配面
 pub fn router(
@@ -137,13 +139,22 @@ pub fn router(
             auth::require_bearer,
         ))
         .route("/health", get(rpc::health))
-        // W1(ADR-0014):OpenAI 兼容插座(原公开挂载欠账由门户墙收紧闭合,
-        // 评审 2026-09-03 #9:未配置密码+公网绑定 → 此路由一并 401)
-        .route(
-            "/v1/chat/completions",
-            post(openai_compat::chat_completions),
+        // W1(ADR-0014):OpenAI 兼容插座。鉴权 = auth::require_api_auth
+        // (issue #10 断链补立:Bearer 严格/Cookie/本机未设墙放行)。
+        // 2026-09-03 评审 #9 的公网裸绑拒绝现由该层独立兜住。
+        .merge(
+            Router::new()
+                .route(
+                    "/v1/chat/completions",
+                    post(openai_compat::chat_completions),
+                )
+                .route("/v1/models", get(openai_compat::models))
+                .route_layer(middleware::from_fn_with_state(
+                    state.clone(),
+                    auth::require_api_auth,
+                ))
+                .with_state(state.clone()),
         )
-        .route("/v1/models", get(openai_compat::models))
         // 门户登录三口(公开;/login 页面本体见 portal::login_page)
         .route("/login", get(portal::login_page))
         .route("/api/portal/state", get(portal::portal_state))
@@ -151,9 +162,16 @@ pub fn router(
         .route("/api/portal/bootstrap", post(portal::portal_bootstrap))
         .route("/api/portal/password", post(portal::portal_password))
         .with_state(state.clone());
-    // W2 管理面(公开挂载 = W1 同款已登记欠账;None = 不挂载)
+    // W2 管理面:同一 require_api_auth 口径(issue #10 补立后不再是
+    // 「公开挂载欠账」,外层门户墙继续作为整站第二道收口)
     let app = match admin {
-        Some(cfg) => app.nest("/admin", webadmin::admin_routes(cfg)),
+        Some(cfg) => app.nest(
+            "/admin",
+            webadmin::admin_routes(cfg).route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                auth::require_api_auth,
+            )),
+        ),
         None => app,
     };
     // Web Surface 静态托管(公开:界面壳不含数据;数据一律经鉴权 API):

@@ -472,7 +472,8 @@ export function BoenmindRuntimeProvider({
   // 页面挂载不再恢复上次会话视图(storage 模块装载时已清会话指针),
   // 首条消息发出时才真正建服务端会话;历史回放统一走左侧列表切会话。
   // W4b:审批裁决(前端卡片按钮)→ /admin/approvals/{id}/respond
-  // (与 /rpc 同一执行体,走 /admin 免鉴权口径——前端无令牌可带)
+  // (与 /rpc 同一执行体;走 /admin 门户口径——已登录浏览器凭门户 Cookie,
+  // 本机未设墙开放;后端鉴权见 auth::require_api_auth,issue #10)
   // P1-2(2026-09-07 架构评审):检查 res.ok;失败把审批单放回抽屉
   // (乐观移除回滚)并从去重集摘除,不再静默吞错让审批单凭空消失
   const respondApproval = async (

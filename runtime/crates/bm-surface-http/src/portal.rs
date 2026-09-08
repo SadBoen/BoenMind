@@ -223,6 +223,14 @@ fn cookie_session(headers: &HeaderMap) -> Option<String> {
     None
 }
 
+/// 仅校验门户会话 Cookie(不含 Bearer;Bearer 判定在 auth.rs 严格先行)。
+pub(crate) fn cookie_authed(state: &crate::AppState, headers: &HeaderMap) -> bool {
+    match cookie_session(headers) {
+        Some(s) => state.portal.sessions.lock().expect("锁未中毒").contains(&s),
+        None => false,
+    }
+}
+
 fn authed(state: &crate::AppState, headers: &HeaderMap) -> bool {
     // P2(2026-09-07 架构评审):常数时间比较收口 auth.rs 单一实现。
     let bearer_ok = headers
@@ -231,13 +239,7 @@ fn authed(state: &crate::AppState, headers: &HeaderMap) -> bool {
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(|given| crate::auth::constant_time_eq(given.as_bytes(), state.token.as_bytes()))
         .unwrap_or(false);
-    if bearer_ok {
-        return true;
-    }
-    match cookie_session(headers) {
-        Some(s) => state.portal.sessions.lock().expect("锁未中毒").contains(&s),
-        None => false,
-    }
+    bearer_ok || cookie_authed(state, headers)
 }
 
 /// 门户中间件:墙未启用→放行;Bearer/Cookie 通过→放行;豁免路径放行;
