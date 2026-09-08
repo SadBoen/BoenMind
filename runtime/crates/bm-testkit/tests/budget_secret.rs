@@ -5,29 +5,12 @@ use bm_contract::error_codes::ErrorCode;
 use bm_contract::events::EventType;
 use bm_contract::ids::IdGen;
 use bm_contract::states::OperationState;
-use bm_contract::wire::GetOperationParams;
 use bm_core::CoreError;
 use bm_core::ports::SecretStore;
 use bm_providers::mock_model::Step;
 use bm_providers::secret::FileSecretStore;
 use bm_testkit::invariants::{assert_event_stream_wellformed, leak_scan, read_exec_log};
 use bm_testkit::replay::TestRig;
-
-async fn wait_terminal(rig: &TestRig, op: &bm_contract::ids::BmId) -> bm_contract::wire::Receipt {
-    loop {
-        let r = rig
-            .handle
-            .operations_get(GetOperationParams {
-                operation_id: op.clone(),
-            })
-            .await
-            .expect("收据查询");
-        if r.state.is_terminal() {
-            return r;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-    }
-}
 
 #[tokio::test]
 async fn t12_budget_warning_at_80_percent() {
@@ -36,7 +19,7 @@ async fn t12_budget_warning_at_80_percent() {
     let (sess, agent) = rig.create_session_budget(1000, 10).await.expect("会话创建");
 
     let receipt = rig.send(&sess, &agent, "问题1").await.expect("回合发起");
-    let r = wait_terminal(&rig, &receipt.operation_id).await;
+    let r = rig.wait_terminal(&receipt.operation_id).await;
     assert_eq!(r.state, OperationState::Succeeded);
 
     let events = rig.all_events().await;
@@ -59,7 +42,7 @@ async fn t12_budget_warning_at_80_percent() {
         .send(&sess, &agent, "问题2")
         .await
         .expect("第二回合可发起(强制点①:900<1000)");
-    let r2 = wait_terminal(&rig, &receipt2.operation_id).await;
+    let r2 = rig.wait_terminal(&receipt2.operation_id).await;
     assert_eq!(r2.state, OperationState::Succeeded);
 
     let events = rig.all_events().await;
@@ -104,7 +87,7 @@ async fn t13_budget_turn_limit_enforced() {
         .send(&sess, &agent, "唯一回合")
         .await
         .expect("第一回合发起");
-    let r = wait_terminal(&rig, &receipt.operation_id).await;
+    let r = rig.wait_terminal(&receipt.operation_id).await;
     assert_eq!(r.state, OperationState::Succeeded);
 
     let err = rig
@@ -132,7 +115,7 @@ async fn t14_leak_scan_zero_hits() {
         .send(&sess, &agent, "涉及 secret:model.zhipu 的问题")
         .await
         .expect("回合发起");
-    let r = wait_terminal(&rig, &receipt.operation_id).await;
+    let r = rig.wait_terminal(&receipt.operation_id).await;
     assert_eq!(r.state, OperationState::Succeeded);
 
     let events = rig.all_events().await;
@@ -192,7 +175,7 @@ async fn t15_prompt_injection_m1_subset() {
             .send(&sess, &agent, &content)
             .await
             .unwrap_or_else(|e| panic!("{id} 不应被拒绝: {e:?}"));
-        let r = wait_terminal(&rig, &receipt.operation_id).await;
+        let r = rig.wait_terminal(&receipt.operation_id).await;
         assert_eq!(
             r.state,
             OperationState::Succeeded,
@@ -284,7 +267,7 @@ async fn t17_execution_log_entries_match_contract_schema() {
     let rig = TestRig::standard(vec![Step::ok("答", 412, 58)]).await;
     let (sess, agent) = rig.create_session().await.expect("会话创建");
     let receipt = rig.send(&sess, &agent, "问题").await.expect("回合发起");
-    wait_terminal(&rig, &receipt.operation_id).await;
+    rig.wait_terminal(&receipt.operation_id).await;
 
     let log_text = rig
         .data_dir

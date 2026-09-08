@@ -301,8 +301,7 @@ function SessionPanel({ collapsed }: { collapsed: boolean }) {
     const handleNewChat = () => {
       setFlash(true);
       setActiveSid(null);
-      const timer = setTimeout(() => setFlash(false), 400);
-      return () => clearTimeout(timer);
+      setTimeout(() => setFlash(false), 400);
     };
     const onSessionsUpdated = () => void loadSessions();
     window.addEventListener(BM_EVENTS.chatNew, handleNewChat);

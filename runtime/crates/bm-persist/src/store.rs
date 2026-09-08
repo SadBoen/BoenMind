@@ -410,7 +410,9 @@ impl EventStore for PersistStore {
             &applied.to_string(),
         )?;
         // 快照时同步执行一次 WAL checkpoint，将事务日志合并入主库
-        let _ = self.state.wal_checkpoint();
+        if let Err(e) = self.state.wal_checkpoint() {
+            tracing::warn!(error = %e, "快照后 WAL checkpoint 失败(WAL 可能持续累积)");
+        }
         Ok(applied)
     }
 

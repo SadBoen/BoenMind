@@ -9,6 +9,7 @@ import {
 import type { AppendMessage, ThreadMessageLike } from "@assistant-ui/react";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { storage, STORAGE_KEYS } from "@/lib/storage";
+import { redirectToLogin } from "@/lib/utils";
 import { BM_EVENTS, emit } from "../lib/bus";
 import { api } from "../w2/api";
 
@@ -311,8 +312,7 @@ export function BoenmindRuntimeProvider({
       let res = await doFetch(true);
       // 门户会话失效(2026-09-06):正向跳登录,不再让用户对着红条猜
       if (res.status === 401) {
-        window.location.href = "/login";
-        throw new Error("需要登录");
+        redirectToLogin();
       }
       if (res.status === 400) {
         const detail = await res.text().catch(() => "");

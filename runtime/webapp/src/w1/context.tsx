@@ -965,7 +965,6 @@ export function ContextView() {
               );
             })
               : deltaTrendItems.map((d) => {
-                  const _meta = trendItems.find((x) => x.id === d.id);
                   const isSelected = activeTrendStep?.id === d.id;
                   const heightPct = Math.max(6, Math.round((d.magnitude / maxDeltaMagnitude) * 100));
 

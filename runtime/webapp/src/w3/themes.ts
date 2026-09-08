@@ -71,7 +71,6 @@ const accentField = (def: string): ThemeField => ({
   apply: (v, set) => {
     const c = typeof v === "string" && v.startsWith("#") ? v : def;
     set("--accent", c);
-    set("--accent-raw", c);
     set("--primary", c);
     set("--ring", c);
   },
@@ -229,15 +228,6 @@ export const THEMES: Record<ThemeDef["id"], ThemeDef> = {
           // 活泼度也控制底部色影浓度(卡通专属样式,theme.css 消费)
           set("--cartoon-shadow-a", String(v) === "soft" ? "0.10" : String(v) === "wild" ? "0.26" : "0.18");
         },
-      },
-      {
-        key: "emojiDecor",
-        label: "表情装饰",
-        hint: "空态与欢迎语带可爱表情",
-        type: "toggle",
-        default: true,
-        apply: (v, set) =>
-          set("--emoji-decor", v ? "1" : "0"),
       },
       {
         key: "fontFace",

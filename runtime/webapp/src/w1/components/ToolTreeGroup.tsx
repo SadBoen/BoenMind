@@ -14,7 +14,6 @@ import { FileBadge } from "./FileBadge";
 
 interface ToolTreeGroupProps {
   block: ExploreGroupBlock | ChangesGroupBlock | { type: "generic_tool_group"; items: ToolActionItem[] };
-  isRunning?: boolean;
 }
 
 /**
@@ -24,7 +23,7 @@ interface ToolTreeGroupProps {
  * 3. 展开呈现类似目录树的左侧垂直细引导线
  * 4. 每个子项拥有独立的状态和彩色文件图标，支持展开限高与无滚动条查看
  */
-export function ToolTreeGroup({ block, isRunning: _isRunning = false }: ToolTreeGroupProps) {
+export function ToolTreeGroup({ block }: ToolTreeGroupProps) {
   const [open, setOpen] = useState(false);
 
   // 1. 查阅类聚合 (ExploreGroup)

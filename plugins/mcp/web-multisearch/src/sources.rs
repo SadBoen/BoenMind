@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 use futures::stream::{FuturesUnordered, StreamExt};
 use serde_json::{json, Value};
 
-use crate::cascade::{self, Item, Provider};
+use crate::cascade::{self, check_status, j, Item, Provider};
 use crate::fusion::{annotate, merge_mirrors, rrf_fuse, RawItem, MIRROR_THRESHOLD, RRF_K};
 
 /// 整体等待上限:各源内部已有 12-30s 超时,这里兜底,超时源直接丢弃。
@@ -34,7 +34,7 @@ pub async fn run_source(
 ) -> Result<Vec<Item>, String> {
     match p.parse.as_str() {
         "searxng" => searxng(client, p, query, limit).await,
-        "ddg" => ddgs(client, query, limit).await,
+        "ddg" => ddgs(query, limit).await,
         "jina" => jina_search(client, p, query, limit).await,
         "marginalia" => marginalia(client, query, limit).await,
         "parallel" => parallel_search(client, p, query, limit).await,
@@ -190,7 +190,7 @@ async fn searxng(
 /// 走**系统 curl 子进程**:reqwest(rustls/Schannel 指纹)会被 DDG 发人机验证页,
 /// 系统 curl 指纹可通过——Python 版 ddgs 库同理靠 primp 伪装过检。curl 于
 /// Win10+/Linux/macOS 均为系统自带;无 curl 时降级回 reqwest 直连。
-async fn ddgs(_client: &reqwest::Client, query: &str, limit: usize) -> Result<Vec<Item>, String> {
+async fn ddgs(query: &str, limit: usize) -> Result<Vec<Item>, String> {
     let html = match fetch_via_curl(query).await {
         Ok(h) => h,
         Err(e) => {
@@ -591,27 +591,6 @@ fn to_items(arr: &[Value], limit: usize, fields: (&str, &str, &str)) -> Vec<Item
         })
         .collect()
 }
-
-fn j(v: &Value, key: &str) -> String {
-    v.get(key)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string()
-}
-
-/// 非 2xx → HttpErr::Status(2xx 返回原 resp;供轮换识别 401/403/429)。
-async fn check_status(resp: reqwest::Response, name: &str) -> Result<reqwest::Response, HttpErr> {
-    let status = resp.status();
-    if status.is_success() {
-        return Ok(resp);
-    }
-    Err(HttpErr::Status(
-        status.as_u16(),
-        format!("{name} returned HTTP {}", status.as_u16()),
-    ))
-}
-
-use crate::keys::HttpErr;
 
 #[cfg(test)]
 mod tests {

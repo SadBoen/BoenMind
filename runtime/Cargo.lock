@@ -458,7 +458,6 @@ dependencies = [
  "bm-persist",
  "bm-providers",
  "chrono",
- "jsonschema",
  "proptest",
  "rusqlite",
  "serde_json",

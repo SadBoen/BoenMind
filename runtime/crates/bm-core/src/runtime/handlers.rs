@@ -1095,7 +1095,13 @@ pub(crate) async fn handle_stop(
             }
             Some(Cmd::EventsAll { resp }) => {
                 let events = match &w.store {
-                    Some(store) => store.replay_since(0).unwrap_or_default(),
+                    Some(store) => match store.replay_since(0) {
+                        Ok(events) => events,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "事件流重放失败,轨迹视图降级为空");
+                            Vec::new()
+                        }
+                    },
                     None => w.bus.events().to_vec(),
                 };
                 let _ = resp.send(events);

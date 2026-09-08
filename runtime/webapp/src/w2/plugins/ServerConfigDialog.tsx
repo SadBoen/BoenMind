@@ -132,7 +132,9 @@ export function ServerConfigDialog({
         setUsage(r.usage?.providers ?? {});
         setUsageMonth(r.usage?.month ?? "");
       })
-      .catch(() => {});
+      .catch((e) => {
+        console.warn("[mcp] 用量拉取失败", e);
+      });
     return () => {
       alive = false;
     };
@@ -717,4 +719,3 @@ export function ServerConfigDialog({
   );
 }
 
-// 一个小型表单字段(标签 + 单行输入),供 providers 编辑复用

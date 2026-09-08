@@ -47,6 +47,7 @@ import { api, type WorkspaceEntry } from "@/w2/api";
 import { JobsBadge } from "./components/JobsBadge";
 import { storage, STORAGE_KEYS, type PermissionMode, type ThinkingLevel } from "@/lib/storage";
 import { BM_EVENTS, emit, on } from "../lib/bus";
+import { redirectToLogin } from "@/lib/utils";
 import { DotScrollbar } from "./DotScrollbar";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { parseAssistantContent } from "./parser";
@@ -523,10 +524,10 @@ function AssistantMessage() {
                     );
                   }
                   if (b.type === "explore_group" || b.type === "changes_group" || b.type === "generic_tool_group") {
-                    return <ToolTreeGroup key={idx} block={b} isRunning={isRunning} />;
+                    return <ToolTreeGroup key={idx} block={b} />;
                   }
                   if (b.type === "terminal_block") {
-                    return <TerminalBlock key={idx} item={b.item} isRunning={isRunning} />;
+                    return <TerminalBlock key={idx} item={b.item} />;
                   }
                   return (
                     <MarkdownRenderer key={idx} content={b.text} />
@@ -652,8 +653,7 @@ function Composer() {
     fetch("/v1/models")
       .then((r) => {
         if (r.status === 401) {
-          window.location.href = "/login";
-          throw new Error("需要登录");
+          redirectToLogin();
         }
         return r.json();
       })

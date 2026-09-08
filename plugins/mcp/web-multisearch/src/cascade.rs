@@ -1,7 +1,7 @@
 //! 供应商注册表 + 通用搜索引擎 — web_multisearch 的「可扩展供应商」底座。
 //!
 //! 设计目标(2026-09-04 用户裁决):不再把供应商写死在代码里,而是把每家
-//! 「怎么发请求、怎么拆结果」变成一份可编辑的 Provider 模板。内置 12 家
+//! 「怎么发请求、怎么拆结果」变成一份可编辑的 Provider 模板。内置 13 家
 //! 默认预填好(值沿用原 sources.rs 各家的正确默认);用户可在设置页新增
 //! 全新供应商(接口地址 / 方式 / key 传法 / 参数名 / 结果路径 / 字段映射)。
 //!
@@ -604,7 +604,7 @@ fn build_generic(
     builder
 }
 
-fn j(v: &Value, key: &str) -> String {
+pub(crate) fn j(v: &Value, key: &str) -> String {
     v.get(key)
         .and_then(Value::as_str)
         .unwrap_or_default()
@@ -612,7 +612,7 @@ fn j(v: &Value, key: &str) -> String {
 }
 
 /// 非 2xx → HttpErr::Status(2xx 返回原 resp;供轮换识别 401/403/429)。
-async fn check_status(resp: reqwest::Response, name: &str) -> Result<reqwest::Response, HttpErr> {
+pub(crate) async fn check_status(resp: reqwest::Response, name: &str) -> Result<reqwest::Response, HttpErr> {
     let status = resp.status();
     if status.is_success() {
         return Ok(resp);

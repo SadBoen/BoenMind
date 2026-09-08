@@ -41,27 +41,6 @@ async fn rig_with_server(server: Arc<InProcMcpServer>) -> (TestRig, Arc<McpHub>)
     (rig, hub)
 }
 
-async fn wait_terminal(rig: &TestRig, op_id: &BmId) -> bm_contract::wire::Receipt {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    loop {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "异步调用 10s 未终态"
-        );
-        let r = rig
-            .handle
-            .operations_get(bm_contract::wire::GetOperationParams {
-                operation_id: op_id.clone(),
-            })
-            .await
-            .expect("收据查询");
-        if r.state.is_terminal() {
-            return r;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-}
-
 fn call_params(capability: &str, key: Option<&str>) -> CapabilityCallParams {
     CapabilityCallParams {
         capability: capability.to_string(),
@@ -83,7 +62,7 @@ async fn call_and_settle(
         .await
         .expect("派发成功");
     let op_id = BmId::parse(receipt["operation_id"].as_str().expect("op")).expect("BmId");
-    wait_terminal(rig, &op_id).await
+    rig.wait_terminal(&op_id).await
 }
 
 /// t105:HTTP 模型连接器熔断——连续 3 次失败开闸,冷却期内快速失败
@@ -464,7 +443,7 @@ async fn t108_first_call_approval_and_grant_exhaustion() {
         .find(|e| e.event_type == EventType::ApprovalRequested)
         .expect("approval.requested");
     let op_id = BmId::parse(requested.payload["operation_id"].as_str().unwrap()).unwrap();
-    let done = wait_terminal(&rig, &op_id).await;
+    let done = rig.wait_terminal(&op_id).await;
     assert_eq!(done.state, bm_contract::states::OperationState::Succeeded);
 
     // once Grant 已被重放消费 → 同键/新键再调都回到审批(不静默放行)

@@ -26,7 +26,6 @@
   --popover: #ffffff;
   --secondary: #f4f4f5;
   --muted: #f4f4f5;
-  --accent-hover: #eff6ff;
   --accent-foreground: #171717;
   --input: #e5e7eb;
   --density: 1;
@@ -68,7 +67,6 @@
   --secondary-foreground: #2b2118;
   --muted: #e7dcc2;
   --muted-foreground: #5a4a33;
-  --accent-hover: #e8d9b4;
   --accent-foreground: #2b2118;
   --primary-foreground: #f6f1e7;
   --input: #c9b98f;
@@ -98,11 +96,6 @@
 }
 [data-theme="classic"] .app { position: relative; z-index: 1; }
 [data-theme="classic"] .chat-head { border-bottom: 3px double #c9b98f; }
-[data-theme="classic"] .msg.assistant .text {
-  border: 1px solid #c9b98f;
-  outline: 1px solid rgba(201, 185, 143, 0.45);
-  outline-offset: 2px;
-}
 [data-theme="classic"] .welcome .logo {
   background: var(--seal);
   border-radius: 4px;
@@ -132,7 +125,6 @@
   --secondary-foreground: #4a2c3f;
   --muted: #ffe9dc;
   --muted-foreground: #8a5f78;
-  --accent-hover: #ffe0ee;
   --accent-foreground: #4a2c3f;
   --primary-foreground: #ffffff;
   --input: #ffc9df;
@@ -151,7 +143,6 @@
   --scrollbar-dot: rgba(255, 107, 157, 0.45);
   --scrollbar-dot-hover: #ff6b9d;
 }
-[data-theme="cartoon"] .msg.assistant .text,
 [data-theme="cartoon"] .session-item,
 [data-theme="cartoon"] .composer,
 [data-theme="cartoon"] [data-slot="dialog-content"],
@@ -182,7 +173,6 @@
   --secondary-foreground: #232a37;
   --muted: rgba(255, 255, 255, 0.35);
   --muted-foreground: #414b60;
-  --accent-hover: rgba(255, 255, 255, 0.45);
   --accent-foreground: #232a37;
   --input: rgba(255, 255, 255, 0.45);
   --glass-alpha: 0.42;
@@ -250,7 +240,6 @@
 }
 [data-theme="glass"] .chat { background: transparent; }
 [data-theme="glass"] .composer,
-[data-theme="glass"] .tool-chip,
 [data-theme="glass"] [data-slot="fs-context-menu"],
 [data-theme="glass"] [data-slot="dialog-content"],
 [data-theme="glass"] [data-slot="approval-card"],
@@ -263,12 +252,6 @@
 [data-theme="glass"] .composer-dock {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.18) 26px);
 }
-[data-theme="glass"] .msg.assistant .text {
-  background: rgba(255, 255, 255, 0.30);
-  backdrop-filter: blur(var(--glass-blur, 16px));
-  -webkit-backdrop-filter: blur(var(--glass-blur, 16px));
-  border: 1px solid rgba(255, 255, 255, 0.55);
-}
 [data-theme="glass"] .session-item {
   background: rgba(255, 255, 255, 0.34);
   border-color: rgba(255, 255, 255, 0.5);
@@ -278,11 +261,6 @@
   border: 1px solid rgba(255, 255, 255, 0.45);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-}
-[data-theme="glass"] .msg.user .bubble {
-  background: var(--accent);
-  color: #ffffff;
-  text-shadow: 0 1px 2px rgba(30, 40, 60, 0.25);
 }
 /* 设置页:整体一块统一毛玻璃(受透明度/模糊滑杆调控),导航与内容区
    不再各自为政;页面下方只有樱花背景,无界面元素透出 */
@@ -296,8 +274,7 @@
   background: transparent;
 }
 /* 对比度微调(§4.1 授权):亮花枝上的弱文字加深一档 */
-[data-theme="glass"] .welcome p,
-[data-theme="glass"] .msg .model-tag {
+[data-theme="glass"] .welcome p {
   color: #3d4658;
 }
 

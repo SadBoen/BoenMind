@@ -83,17 +83,6 @@ impl ErrorCode {
     ];
 }
 
-/// M1 可用码(M1 时期信封枚举的 7 项,顺序一致;保留作历史对照)。
-pub const M1_WIRE_CODES: [ErrorCode; 7] = [
-    ErrorCode::ValidationFailed,
-    ErrorCode::Unavailable,
-    ErrorCode::Timeout,
-    ErrorCode::Cancelled,
-    ErrorCode::BudgetExceeded,
-    ErrorCode::OutcomeUnknown,
-    ErrorCode::Internal,
-];
-
 /// Wire 信封可用码全量(M4 起 = M1 ∪ M4,与 envelope schema error_code 枚举
 /// 11 项逐位一致,CI 规则 R6)。
 pub const WIRE_CODES: [ErrorCode; 11] = ErrorCode::ALL;

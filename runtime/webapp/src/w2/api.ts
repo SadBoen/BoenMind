@@ -24,6 +24,8 @@ export type JobInfo = {
   log_path: string;
 };
 
+import { redirectToLogin } from "@/lib/utils";
+
 export type Provider = {
   id: string;
   name: string;
@@ -164,6 +166,8 @@ export type SkillItem = {
   instruction: string;
   allowed_capabilities?: string[];
   references?: { name: string; path: string }[];
+  /** 合同 v0_1 scripts 清单(Skill v0.2 执行面预留);后端原样透传技能文件 */
+  scripts?: unknown[];
 };
 
 export type RolesResponse = {
@@ -185,6 +189,8 @@ export type RuntimeToolInfo = {
   installed: boolean;
   version: string | null;
   program: string | null;
+  /** 探测命中候选的参数列表(与 program 拼成完整命令;两分支恒写入) */
+  argv: string[];
   error: string | null;
 };
 
@@ -229,8 +235,7 @@ async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const body = await res.json().catch(() => null);
   // 门户会话失效(2026-09-06):统一正向跳登录,门户口自身除外
   if (res.status === 401 && !url.startsWith("/api/portal/")) {
-    window.location.href = "/login";
-    throw new Error("需要登录");
+    redirectToLogin();
   }
   if (!res.ok) {
     const msg =
@@ -297,14 +302,16 @@ export const api = {
       req<{
         ok: boolean;
         dir: string;
+        /** 官方随包插件目录;null = 未检出(cfg.bundled_plugins_dir 缺省) */
+        bundled_dir: string | null;
         candidates: {
           file: string;
           name: string;
           title: string;
           description: string;
           registered: boolean;
-          /** bundled=官方随包;data=数据目录手动放置 */
-          source?: string;
+          /** bundled=官方随包;data=数据目录手动放置(后端恒写入) */
+          source: string;
           /** 在删除名单(墓碑)中:批准接入即恢复 */
           tombstoned?: boolean;
         }[];
@@ -411,6 +418,8 @@ export const api = {
         latest?: string;
         updateAvailable?: boolean;
         asset?: { name: string; url: string };
+        /** 有更新但缺本平台资产的提示语(勿与发布说明 notes 混淆) */
+        note?: string | null;
         notes?: string;
         error?: string;
       }>("/admin/about/check-update", { method: "POST" }),

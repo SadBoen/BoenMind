@@ -4,7 +4,6 @@ import { ToolActionItem } from "../parser";
 
 interface TerminalBlockProps {
   item: ToolActionItem;
-  isRunning?: boolean;
 }
 
 /**
@@ -13,7 +12,7 @@ interface TerminalBlockProps {
  * 2. 默认折叠展示命令单行，点击可展开日志
  * 3. 限高 2~3 行，支持滚动查看且隐藏原生滚动条，采用渐变羽化遮罩
  */
-export function TerminalBlock({ item, isRunning: _isRunning = false }: TerminalBlockProps) {
+export function TerminalBlock({ item }: TerminalBlockProps) {
   const [open, setOpen] = useState(false);
   const [fullyExpanded, setFullyExpanded] = useState(false);
   const [scrollMask, setScrollMask] = useState<"both" | "top" | "bottom" | "none">("none");

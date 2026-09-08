@@ -10,22 +10,6 @@ use bm_providers::mock_model::Step;
 use bm_testkit::invariants::{assert_event_stream_wellformed, assert_single_terminal};
 use bm_testkit::replay::TestRig;
 
-async fn wait_terminal(rig: &TestRig, op: &bm_contract::ids::BmId) -> bm_contract::wire::Receipt {
-    loop {
-        let r = rig
-            .handle
-            .operations_get(GetOperationParams {
-                operation_id: op.clone(),
-            })
-            .await
-            .expect("收据查询");
-        if r.state.is_terminal() {
-            return r;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-    }
-}
-
 #[tokio::test]
 async fn t07_single_turn_success_event_shape() {
     // GT 场景 A 的前 8 条事件形态
@@ -36,7 +20,7 @@ async fn t07_single_turn_success_event_shape() {
         .await
         .expect("回合发起");
 
-    let final_receipt = wait_terminal(&rig, &receipt.operation_id).await;
+    let final_receipt = rig.wait_terminal(&receipt.operation_id).await;
     assert_eq!(final_receipt.state, OperationState::Succeeded);
     assert!(final_receipt.completed_at.is_some());
     let result_ref = final_receipt.result_reference.expect("成功收据带结果引用");
@@ -95,7 +79,7 @@ async fn t08_chain_exhausted_maps_to_failed_not_outcome_unknown() {
         .await
         .expect("回合发起");
 
-    let final_receipt = wait_terminal(&rig, &receipt.operation_id).await;
+    let final_receipt = rig.wait_terminal(&receipt.operation_id).await;
     assert_eq!(
         final_receipt.state,
         OperationState::Failed,
@@ -182,7 +166,7 @@ async fn t09_explicit_cancel_lands_cancelled() {
         .expect("取消受理");
     assert!(cancel.accepted);
 
-    let final_receipt = wait_terminal(&rig, &receipt.operation_id).await;
+    let final_receipt = rig.wait_terminal(&receipt.operation_id).await;
     assert_eq!(final_receipt.state, OperationState::Cancelled);
     assert_eq!(
         final_receipt
@@ -221,7 +205,7 @@ async fn t10_cancel_on_terminal_operation_rejected() {
     let rig = TestRig::standard(vec![Step::ok("快答", 10, 5)]).await;
     let (sess, agent) = rig.create_session().await.expect("会话创建成功");
     let receipt = rig.send(&sess, &agent, "取消我").await.expect("回合发起");
-    let final_receipt = wait_terminal(&rig, &receipt.operation_id).await;
+    let final_receipt = rig.wait_terminal(&receipt.operation_id).await;
     assert_eq!(final_receipt.state, OperationState::Succeeded);
 
     let err = rig
@@ -254,7 +238,7 @@ async fn t11_multi_turn_sequence_keeps_invariants() {
             .await
             .expect("回合发起");
         let turn_index = i as i64;
-        let r = wait_terminal(&rig, &receipt.operation_id).await;
+        let r = rig.wait_terminal(&receipt.operation_id).await;
         assert_eq!(r.state, OperationState::Succeeded, "回合 {i} 成功");
         op_ids.push(receipt.operation_id.clone());
         // turn_index 递增

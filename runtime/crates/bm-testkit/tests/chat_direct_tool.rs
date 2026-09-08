@@ -8,15 +8,14 @@
 use bm_contract::connector::{
     FinishReason, InvokeRequest, InvokeResponse, Role, ToolCallPayload, Usage,
 };
-use bm_contract::ids::{BmId, IdGen, SeqIdGen};
+use bm_contract::ids::{IdGen, SeqIdGen};
 use bm_contract::states::OperationState;
-use bm_contract::wire::{
-    AgentSpec, GetOperationParams, InputTrust, SendInputParams, SessionCreateParams,
-};
+use bm_contract::wire::{AgentSpec, InputTrust, SendInputParams, SessionCreateParams};
 use bm_core::clock::SystemClock;
 use bm_core::ports::ModelConnector;
 use bm_core::runtime::{DEFAULT_TURN_TIMEOUT_SECS, RuntimeConfig, RuntimeHandle};
 use bm_providers::secret::MemSecretStore;
+use bm_testkit::wait_terminal_handle;
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
 
@@ -103,21 +102,6 @@ async fn rig(dir: &std::path::Path) -> (RuntimeHandle, Arc<ToolLoopConnector>) {
     (handle, connector)
 }
 
-async fn wait_terminal(handle: &RuntimeHandle, op: &BmId) -> bm_contract::wire::Receipt {
-    loop {
-        let r = handle
-            .operations_get(GetOperationParams {
-                operation_id: op.clone(),
-            })
-            .await
-            .expect("收据查询");
-        if r.state.is_terminal() {
-            return r;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-    }
-}
-
 #[tokio::test]
 async fn direct_tool_round_feeds_inline_result_without_poll_timeout() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -149,7 +133,7 @@ async fn direct_tool_round_feeds_inline_result_without_poll_timeout() {
     };
 
     let started = std::time::Instant::now();
-    let receipt = wait_terminal(
+    let receipt = wait_terminal_handle(
         &handle,
         &handle
             .send_input(ids.next_id("req"), input)

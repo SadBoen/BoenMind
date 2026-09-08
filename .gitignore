@@ -25,6 +25,9 @@ server.log
 # W 系列 WebUI 壳子构建产物(源码在 runtime/webapp/src,构建入 dist)
 runtime/webapp/node_modules/
 runtime/webapp/dist/
+# 包管理器唯一权威 = npm(package-lock.json);pnpm 误装残留防复发
+runtime/webapp/pnpm-lock.yaml
+runtime/webapp/pnpm-workspace.yaml
 server-w.log
 
 # 官方插件构建产物(源码在 plugins/mcp/*/src)

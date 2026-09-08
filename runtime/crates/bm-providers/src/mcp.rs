@@ -489,8 +489,12 @@ fn spawn_generation(
                 tracing::info!(command = %command_owned, status = ?status, "MCP 子进程退出");
             }
             _ = kill_rx => {
-                let _ = child.start_kill();
-                let _ = child.wait().await;
+                if let Err(e) = child.start_kill() {
+                    tracing::warn!(command = %command_owned, error = %e, "MCP 子进程 kill 失败");
+                }
+                if let Err(e) = child.wait().await {
+                    tracing::warn!(command = %command_owned, error = %e, "MCP 子进程 wait 失败(疑似残留)");
+                }
                 tracing::info!(command = %command_owned, "MCP 子进程被终止(reload/换装/销毁)");
             }
         }

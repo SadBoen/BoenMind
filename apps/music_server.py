@@ -8,7 +8,6 @@ import argparse
 import hashlib
 import json
 import os
-import re
 import sys
 
 AUDIO_EXTENSIONS = {".mp3", ".wav", ".ogg", ".flac", ".m4a", ".aac"}

@@ -164,6 +164,27 @@ impl TestRig {
     pub async fn stop(self) {
         self.handle.stop("test_done").await;
     }
+
+    /// 轮询等待指定操作落定为终态收据
+    pub async fn wait_terminal(&self, op: &BmId) -> bm_contract::wire::Receipt {
+        wait_terminal_handle(&self.handle, op).await
+    }
+}
+
+/// 轮询等待 RuntimeHandle 的指定操作落定为终态收据
+pub async fn wait_terminal_handle(handle: &RuntimeHandle, op: &BmId) -> bm_contract::wire::Receipt {
+    loop {
+        let r = handle
+            .operations_get(bm_contract::wire::GetOperationParams {
+                operation_id: op.clone(),
+            })
+            .await
+            .expect("收据查询");
+        if r.state.is_terminal() {
+            return r;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
 }
 
 /// 在给定目录上启动 Runtime(不清理目录):跨进程恢复测试用。

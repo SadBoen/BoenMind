@@ -1,8 +1,6 @@
 // W2 设置中心:整页式(左侧设置导航 + 右内容区),齿轮进入。
-// 导航:常规 / 模型提供商 / 插件 / MCP / 外观(W3 主题系统)+
-// 插件 PIN 快捷项(PIN 后在此显示,点击跳插件页并按名筛选)。
+// 导航:常规 / 模型提供商 / 插件 / 限制与超时 / 外观 / 角色 / 日志 / 关于
 import { useEffect, useState } from "react";
-// 导航:常规 / 模型 / 插件 / 外观 / 角色 / 日志 / 关于
 import { BoxIcon, GaugeIcon, InfoIcon, PlugIcon, ScrollTextIcon, SlidersHorizontalIcon, SparklesIcon, WrenchIcon } from "lucide-react";
 import { ProvidersPage } from "./ProvidersPage";
 import { PluginsPage } from "./plugins/PluginsPage";

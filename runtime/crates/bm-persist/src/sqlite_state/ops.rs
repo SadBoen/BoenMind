@@ -94,7 +94,9 @@ impl StateDb {
         match r {
             Ok(()) => conn.execute_batch("COMMIT").sql()?,
             Err(e) => {
-                let _ = conn.execute_batch("ROLLBACK");
+                if let Err(rb) = conn.execute_batch("ROLLBACK") {
+                    tracing::error!(error = %rb, "会话内容擦除回滚失败(库可能损坏)");
+                }
                 return Err(StoreError::Sql(e.to_string()));
             }
         }
@@ -114,7 +116,9 @@ impl StateDb {
         match r {
             Ok(()) => conn.execute_batch("COMMIT").sql()?,
             Err(e) => {
-                let _ = conn.execute_batch("ROLLBACK");
+                if let Err(rb) = conn.execute_batch("ROLLBACK") {
+                    tracing::error!(error = %rb, "会话行删除回滚失败(库可能损坏)");
+                }
                 return Err(StoreError::Sql(e.to_string()));
             }
         }

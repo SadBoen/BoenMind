@@ -45,8 +45,6 @@ export function getFileConfig(filePath: string): FileTypeConfig {
     case "js":
     case "jsx":
       return { icon: FileCode, colorClass: "text-yellow-500", badgeBg: "bg-yellow-500/10" };
-    case "rs":
-      return { icon: FileCode, colorClass: "text-amber-600 dark:text-orange-400", badgeBg: "bg-orange-500/10" };
     case "py":
       return { icon: FileCode, colorClass: "text-emerald-600 dark:text-emerald-400", badgeBg: "bg-emerald-500/10" };
     case "go":

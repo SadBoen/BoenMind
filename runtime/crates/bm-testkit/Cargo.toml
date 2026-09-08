@@ -3,6 +3,8 @@ name = "bm-testkit"
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+# 测试专用 crate,不进发布面(生产 crate 零依赖本库)
+publish = false
 
 [dependencies]
 bm-contract = { workspace = true }
@@ -14,7 +16,6 @@ tokio = { workspace = true }
 tokio-util = { workspace = true }
 chrono = { workspace = true }
 serde_json = { workspace = true }
-jsonschema = { workspace = true }
 tempfile = { workspace = true }
 
 [dev-dependencies]

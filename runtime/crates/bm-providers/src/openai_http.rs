@@ -413,7 +413,10 @@ impl ModelConnector for OpenAiConnector {
             let resp = request.send().await?;
             let status = resp.status();
             if status.is_client_error() || status.is_server_error() {
-                let body = resp.text().await.unwrap_or_default();
+                let body = resp
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "[响应体不可读]".into());
                 return Err(OpenAiErr::Status {
                     status: status.as_u16(),
                     body,
@@ -550,7 +553,10 @@ impl ModelConnector for OpenAiConnector {
             let resp = request.send().await?;
             let status = resp.status();
             if status.is_client_error() || status.is_server_error() {
-                let body = resp.text().await.unwrap_or_default();
+                let body = resp
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "[响应体不可读]".into());
                 return Err(OpenAiErr::Status {
                     status: status.as_u16(),
                     body,

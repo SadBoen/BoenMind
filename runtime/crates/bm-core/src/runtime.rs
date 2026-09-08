@@ -110,7 +110,6 @@ enum TurnEvent {
         error_code: ErrorCode,
         /// ADR-0029:脱敏后的 provider 错误原文(可空)——用户与日志
         /// 终于能看到「回合执行失败」背后的真实死因。
-        #[allow(dead_code)]
         detail: Option<String>,
     },
     /// 显式取消落定(回合边界)。
@@ -653,7 +652,13 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
             match cmd {
                 Cmd::EventsAll { resp } => {
                     let events = match &world.store {
-                        Some(store) => store.replay_since(0).unwrap_or_default(),
+                        Some(store) => match store.replay_since(0) {
+                            Ok(events) => events,
+                            Err(e) => {
+                                tracing::warn!(error = %e, "事件流重放失败,轨迹视图降级为空");
+                                Vec::new()
+                            }
+                        },
                         None => world.bus.events().to_vec(),
                     };
                     let _ = resp.send(events);
@@ -893,7 +898,13 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
             }
             Cmd::EventsAll { resp } => {
                 let events = match &world.store {
-                    Some(store) => store.replay_since(0).unwrap_or_default(),
+                    Some(store) => match store.replay_since(0) {
+                        Ok(events) => events,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "事件流重放失败,轨迹视图降级为空");
+                            Vec::new()
+                        }
+                    },
                     None => world.bus.events().to_vec(),
                 };
                 let _ = resp.send(events);

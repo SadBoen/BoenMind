@@ -71,6 +71,24 @@ fn snap_content(s: &str) -> (String, bool) {
     }
 }
 
+/// 追加一行到 jsonl:失败不阻断回合(诊断面降级语义),但必须 tracing
+/// 留痕——审计流缺失若无痕迹,「上下文不完整」将无从排查。
+fn append_line(path: &Path, line: &str) {
+    match OpenOptions::new().create(true).append(true).open(path) {
+        Ok(mut f) => {
+            if let Err(e) = writeln!(f, "{line}") {
+                tracing::warn!(error = %e, path = %path.display(), "context_log 写入失败(审计流可能缺失)");
+            }
+            if let Err(e) = f.flush() {
+                tracing::warn!(error = %e, path = %path.display(), "context_log flush 失败");
+            }
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, path = %path.display(), "context_log 打开失败(审计流可能缺失)");
+        }
+    }
+}
+
 /// 消息序列入快照形状([{role, content, content_truncated}])。
 pub fn snapshot_messages(messages: &[bm_contract::connector::Message]) -> Vec<serde_json::Value> {
     messages
@@ -152,8 +170,8 @@ impl ContextLog {
         }
     }
 
-    /// 记录一次模型调用快照:扫描→脱敏→落盘。失败静默降级(诊断面
-    /// 不反压业务回合);返回分配的 seq。
+    /// 记录一次模型调用快照:扫描→脱敏→落盘。失败降级不反压业务回合
+    /// (tracing 留痕);返回分配的 seq。
     pub fn record(&self, rec: ContextRecord) -> u64 {
         let mut inner = self.inner.lock().expect("锁未中毒");
         let seq = inner.next_seq;
@@ -188,11 +206,8 @@ impl ContextLog {
                 serialized = serialized.replace(secret.as_str(), "[REDACTED]");
             }
         }
-        if let Some(p) = &self.path
-            && let Ok(mut f) = OpenOptions::new().create(true).append(true).open(p)
-        {
-            let _ = writeln!(f, "{serialized}");
-            let _ = f.flush();
+        if let Some(p) = &self.path {
+            append_line(p, &serialized);
         }
         inner
             .entries
@@ -203,7 +218,7 @@ impl ContextLog {
     /// W9 逐轮事件(tool_call/tool_result/assistant_final/turn_end,原 W9
     /// 规格溯 git 史 ADR-0027):与模型调用快照同一 jsonl
     /// 流,`kind` 字段区分(快照行无 kind,既有读取面不受影响)。脱敏与
-    /// 静默降级同 record。返回分配的 seq。
+    /// 失败降级同 record(落盘失败 tracing 留痕,不阻断回合)。返回分配的 seq。
     pub fn record_event(
         &self,
         session_id: &str,
@@ -234,11 +249,8 @@ impl ContextLog {
                 serialized = serialized.replace(secret.as_str(), "[REDACTED]");
             }
         }
-        if let Some(p) = &self.path
-            && let Ok(mut f) = OpenOptions::new().create(true).append(true).open(p)
-        {
-            let _ = writeln!(f, "{serialized}");
-            let _ = f.flush();
+        if let Some(p) = &self.path {
+            append_line(p, &serialized);
         }
         inner
             .entries

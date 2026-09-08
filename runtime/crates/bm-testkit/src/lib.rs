@@ -3,4 +3,4 @@
 pub mod invariants;
 pub mod replay;
 
-pub use replay::{Expected, PVal, TestRig, rig};
+pub use replay::{Expected, PVal, TestRig, rig, wait_terminal_handle};
