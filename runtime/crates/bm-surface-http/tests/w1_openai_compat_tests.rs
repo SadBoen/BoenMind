@@ -312,3 +312,66 @@ async fn t_w8_v1_workspace_create_bind_and_unknown_rejected() {
         "续聊覆盖未登记 = 校验失败按 400 透出"
     );
 }
+
+/// issue #40 断链补立:工作区错误带结构化扩展码(webui.workspace_unavailable),
+/// 前端按 error.code 分支,不再串匹配文案「工作区」。创建与续聊覆盖两条路径
+/// 都必须携带;错误其余形状(message/type)不变。
+#[tokio::test]
+async fn t_w8b_v1_workspace_error_carries_extension_code() {
+    let connector = Arc::new(MockConnector::repeating(
+        bm_providers::mock_model::Step::ok("回复", 10, 5),
+    ));
+    let (url, client, dir) = rig(connector).await;
+    seed_workspaces(dir.path());
+
+    // 路径一:会话创建即失败 → 400 + error.code
+    let mut b = body("你好", false);
+    b["workspace"] = serde_json::json!("ws_ghost");
+    let r = client
+        .post(format!("{url}/v1/chat/completions"))
+        .json(&b)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 400);
+    let v: serde_json::Value = r.json().await.unwrap();
+    assert_eq!(
+        v["error"]["code"],
+        serde_json::json!("webui.workspace_unavailable"),
+        "{v}"
+    );
+    assert!(v["error"]["message"].as_str().unwrap().contains("ws_ghost"));
+    assert_eq!(
+        v["error"]["type"],
+        serde_json::json!("invalid_request_error")
+    );
+
+    // 路径二:先正常建会话,续聊覆盖未登记 id → 400 + 同款 code
+    let mut ok = body("你好", false);
+    ok["workspace"] = serde_json::json!("ws_a");
+    let r = client
+        .post(format!("{url}/v1/chat/completions"))
+        .json(&ok)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 200, "{}", r.text().await.unwrap());
+    let sid = r.headers().get("x-bm-session").unwrap().to_str().unwrap();
+
+    let mut bad = body("换目录", false);
+    bad["workspace"] = serde_json::json!("ws_ghost");
+    let r = client
+        .post(format!("{url}/v1/chat/completions"))
+        .header("X-Bm-Session", sid)
+        .json(&bad)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status().as_u16(), 400);
+    let v: serde_json::Value = r.json().await.unwrap();
+    assert_eq!(
+        v["error"]["code"],
+        serde_json::json!("webui.workspace_unavailable"),
+        "{v}"
+    );
+}

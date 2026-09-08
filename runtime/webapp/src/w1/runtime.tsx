@@ -316,9 +316,22 @@ export function BoenmindRuntimeProvider({
       }
       if (res.status === 400) {
         const detail = await res.text().catch(() => "");
+        // 结构化分支(issue #40):error.code 优先(webui.* 扩展码,见
+        // boenmind-contracts/registry/extensions/webui.json);文案串匹配
+        // 仅作旧服务端响应兜底,形状 = {"error":{message,type,code?}}
+        let code = "";
+        try {
+          const parsed: { error?: { code?: string } } = JSON.parse(detail);
+          code = parsed.error?.code ?? "";
+        } catch {
+          // 非 JSON 错误体:保持文本兜底
+        }
         // W8:所选工作区未登记/已删除 → 清本地选择并给出可读提示
         // (不与「未知会话」重试混淆:换会话救不了坏工作区)
-        if (detail.includes("工作区")) {
+        if (
+          code === "webui.workspace_unavailable" ||
+          (!code && detail.includes("工作区"))
+        ) {
           storage.remove(STORAGE_KEYS.ACTIVE_WORKSPACE);
           emit(BM_EVENTS.workspacesChanged);
           throw new Error(
@@ -326,7 +339,10 @@ export function BoenmindRuntimeProvider({
           );
         }
         // P1-6: 仅当服务端明确返回「未知会话」时才清空记忆重试,其余 400 原样上屏
-        if (detail.includes("未知会话") || detail.includes("session")) {
+        if (
+          code === "webui.session_unknown" ||
+          (!code && (detail.includes("未知会话") || detail.includes("session")))
+        ) {
           storage.remove(STORAGE_KEYS.SESSION);
           res = await doFetch(false);
         } else {

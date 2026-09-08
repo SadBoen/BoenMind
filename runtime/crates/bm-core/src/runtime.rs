@@ -385,9 +385,12 @@ impl World {
             .map(|d| crate::workspace::is_registered(d, wid))
             .unwrap_or(false);
         if !ok {
-            return Err(CoreError::validation(format!(
-                "工作区「{wid}」未登记或已删除(设置 → 常规 里维护)"
-            )));
+            // 扩展码结构化(issue #40):前端按 code 分支,不再串匹配文案
+            return Err(CoreError::Extension {
+                message: format!("工作区「{wid}」未登记或已删除(设置 → 常规 里维护)"),
+                ext_code: "webui.workspace_unavailable",
+                base: ErrorCode::ValidationFailed,
+            });
         }
         Ok(())
     }

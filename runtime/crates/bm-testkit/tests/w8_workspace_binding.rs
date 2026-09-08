@@ -144,11 +144,17 @@ async fn unregistered_workspace_rejects_session_create() {
         .await
         .expect_err("未登记工作区必须拒绝");
     match err {
-        bm_core::CoreError::Semantic(code, msg) => {
-            assert_eq!(code.as_str(), "validation_failed");
+        // issue #40 结构化:Extension 变体携带扩展码,信封映射仍是 validation_failed
+        bm_core::CoreError::Extension {
+            ext_code,
+            base,
+            message: msg,
+        } => {
+            assert_eq!(ext_code, "webui.workspace_unavailable");
+            assert_eq!(base.as_str(), "validation_failed");
             assert!(msg.contains("ws_ghost"), "{msg}");
         }
-        other => panic!("期望语义错误,得到 {other:?}"),
+        other => panic!("期望结构化扩展错误,得到 {other:?}"),
     }
 }
 
@@ -238,7 +244,13 @@ async fn workspace_override_switches_directory_next_turn() {
         )
         .await
         .expect_err("未登记覆盖必须拒绝");
-    assert!(matches!(err, bm_core::CoreError::Semantic(..)));
+    assert!(matches!(
+        err,
+        bm_core::CoreError::Extension {
+            ext_code: "webui.workspace_unavailable",
+            ..
+        }
+    ));
     // 换到项目乙:下一条即生效
     wait_terminal(
         &handle,

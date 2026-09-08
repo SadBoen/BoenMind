@@ -28,13 +28,18 @@ fn unix_now() -> i64 {
 }
 
 fn err_response(status: StatusCode, message: &str) -> Response {
-    (
-        status,
-        Json(serde_json::json!({
-            "error": { "message": message, "type": "invalid_request_error" }
-        })),
-    )
-        .into_response()
+    err_response_ext(status, None, message)
+}
+
+/// 结构化错误响应(issue #40):code 携带扩展码
+/// (registry/extensions/webui.json 命名空间),前端按码分支,不再串
+/// 匹配文案;None = 无扩展码,形状与旧响应逐位一致。
+fn err_response_ext(status: StatusCode, code: Option<&str>, message: &str) -> Response {
+    let mut err = serde_json::json!({ "message": message, "type": "invalid_request_error" });
+    if let Some(code) = code {
+        err["code"] = serde_json::json!(code);
+    }
+    (status, Json(serde_json::json!({ "error": err }))).into_response()
 }
 
 /// GET /v1/models:服务器当前配置的模型(单配置模型,W1 口径)。
@@ -185,8 +190,9 @@ pub async fn chat_completions(
                                             .insert(sid.clone(), r.agent_id.clone());
                                         Ok((sid, r.agent_id))
                                     }
-                                    Err(_) => Err(err_response(
+                                    Err(_) => Err(err_response_ext(
                                         StatusCode::BAD_REQUEST,
+                                        Some("webui.session_unknown"),
                                         "未知会话:请清除界面会话记忆后重新开始",
                                     )),
                                 }
@@ -243,8 +249,9 @@ pub async fn chat_completions(
                                 .insert(r.session_id.clone(), r.agent_id.clone());
                             Ok((r.session_id, r.agent_id))
                         }
-                        Err(e) => Err(err_response(
+                        Err(e) => Err(err_response_ext(
                             StatusCode::BAD_REQUEST,
+                            e.ext_code(),
                             &format!("会话创建失败: {}", e.to_wire().message),
                         )),
                     }
@@ -279,7 +286,8 @@ pub async fn chat_completions(
                     aid: rt_aid,
                     cursor,
                 },
-                // W8:校验类失败(如工作区未登记)按 400 透出,便于壳子清理本地选择
+                // W8:校验类失败(如工作区未登记)按 400 透出,便于壳子清理本地选择;
+                // 扩展码(issue #40)随 error.code 透出,前端按码精确分支
                 Err(e) => {
                     let wire = e.to_wire();
                     let status = if wire.code.get()
@@ -289,7 +297,7 @@ pub async fn chat_completions(
                     } else {
                         StatusCode::INTERNAL_SERVER_ERROR
                     };
-                    Prepared::Err(err_response(status, &wire.message))
+                    Prepared::Err(err_response_ext(status, e.ext_code(), &wire.message))
                 }
             }
         })

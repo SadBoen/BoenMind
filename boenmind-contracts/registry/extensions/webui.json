@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "boenmind:registry:error-code-extensions:webui:v0.1",
+  "title": "WebUI /v1 面扩展错误码",
+  "description": "OpenAI 兼容插座(/v1,非 Wire 信封)错误响应 code 字段的扩展码命名空间。核心码封闭(基线 9.8),本文件不改动 error-codes.v0_1.json 的 11 核心码,信封可用码不变;扩展码仅出现在 /v1 错误响应的 error.code 字段,供前端按码分支(issue #40)。格式符合 error-codes 注册表 extension_rule。",
+  "codes": [
+    { "code": "webui.workspace_unavailable", "default_retryable": false, "available_since": "W8",
+      "description": "会话创建/回合覆盖所引工作区 id 未登记或已删除;前端应清除本地工作区选择并引导重选。" },
+    { "code": "webui.session_unknown", "default_retryable": false, "available_since": "W1",
+      "description": "X-Bm-Session 引用的会话不存在(服务端已无此会话);前端应清除本地会话指针以新会话重试。" }
+  ]
+}
