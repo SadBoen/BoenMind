@@ -14,7 +14,7 @@
 | P-03 | 单 Agent 回合延迟 | send_input → 执行收据落盘；mock 模型固定注入 200ms 延迟 | N=100 回合，取 p50 / p99 | **p50=223.1 / p99=236.9 ms**（M1 回填①；注入 200ms,自身开销≈23ms,含 2ms 收据轮询量化） |
 | P-04 | 事件追加吞吐 | 持久事件日志单写者追加速率（含落盘） | 批量 1 万事件计时 | **106 条/s**（M2 回填②;每条 fsync+物化+位点 CAS,Windows fsync 昂贵,如实记录） |
 | P-05 | 事件回放速率 | 从空库重放到 1 万事件完成 | 计时 | **580,245 条/s**（M2 回填②,内存速度:重放不含 fsync） |
-| P-06 | 稳态 RSS | M1 进程 100 回合后常驻内存 | OS 采样取稳态中位数 | 待 M2 回看补测（进程内嵌于测试宿主,独立进程采样自 M3 守护形态起才有意义） |
+| P-06 | 稳态 RSS | M1 进程 100 回合后常驻内存 | OS 采样取稳态中位数 | **≈38.7 MB 中位数**（2026-09-09 回填:boenmind-server 守护进程 100 回合 mock 模型,tasklist 外部采样 12 点取后半中位;test build 口径,release 精测待跑。采样器 = runtime/tests/p06_rss_sampling.rs,#[ignore] 默认不跑,`cargo test --release -p bm-runtime --test p06_rss_sampling -- --ignored --nocapture`） |
 | P-07 | 磁盘增量 | 每千条事件的磁盘增量（状态库+事件日志+Execution Log） | 差分 | **4,172 KB/千条**（M2 回填②;口径含未检查点 WAL,定期 checkpoint 后显著缩小,见记录②注） |
 | P-08 | 脱敏扫描开销 | 每条日志记录的脱敏扫描平均耗时 | 微基准 N=10 万条 | **2.715 µs/条**（M1 回填①,内存模式） |
 | P-09 | Broker 授权决策开销 | 单次 capability 调用的授权决策(查表+凭证校验,不含 Provider 执行)p99 | 微基准 N=10 万次(M4 规格 §5.1 证伪测试①) | **release p99 ≈ 0.2 µs**(M4 回填③;门槛 10 µs,余量 50×;test build < 200 µs 门同过) |
