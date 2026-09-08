@@ -57,7 +57,7 @@ BOEN_OPENCODE_SESSION_ID OpenCode Go 网关 x-opencode-session 头的固定值(�
 - 跨字段借用冲突:分阶段作用域解决;
 - 时间基准:对照 MockClock 实际基准值换算,别拿直觉时间写断言;
 - libsqlite3-sys bundled 默认启用 SQLITE_ENABLE_FTS5——M5 memory 检索 FTS5 实际生效,LIKE 仅兜底;
-- 规模参考(2026-09-02):9 个 crate 共约 291 个测试定义(含少量 gated),文档说「280+ 全绿」即指默认套件;
+- 规模参考:9 个 crate 测试覆盖各里程碑,全量回归以 `cargo test` 全绿为准;
 - `unsafe_code = "forbid"` 只约束 workspace 自有 crate([lints] workspace = true),**不覆盖依赖内部**(如 libsqlite3-sys bundled 编译的 SQLite C 代码)——这是 lint 机制事实,信任边界=依赖供给链(bundled SQLite 于 M2/M8 验收,FTS5 启用);
 - Provider 两条执行通道:同步 `CapabilityProvider`(进程内快路径,内联执行+panic 收容)与异步 `AsyncCapabilityExecutor`(MCP 等慢外部,spawn+超时钳制+可取消)共用 Broker 决策管线,`registry.is_async()` 分道——耗时能力必须注册为异步,否则占死单写者循环。
 

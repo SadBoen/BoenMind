@@ -16,7 +16,7 @@ BoenMind:个人生态的 AI Runtime / AI OS,当前为**阶段一(跨平台单软
 
 ```text
 BoenMind-CORE-ARCHITECTURE.md   第 0 层  架构基线:原则/边界/不变量;§17 裁决;§18 里程碑定义;§19 回看制度
-adr/                            第 0 层  架构决策记录 ADR-0001..0027(0012 随 M10 dsh 线归档、编号跳空;基线与 ADR 冲突时以更新的 ADR 为准)
+adr/                            第 0 层  架构决策记录 ADR-0001..0029(0012 随 M10 dsh 线归档、编号跳空;基线与 ADR 冲突时以更新的 ADR 为准)
 architecture/                   第 0 层  C4 模型 boenmind.c4(拓扑唯一权威)+ 验证渲染说明;辩论转录与验证报告已删溯 git 史(ADR-0027)
 boenmind-contracts/             第 1 层  机器可读合同(v1.0 冻结)+ validate.py 校验器 + m0/(测试矩阵/威胁模型/perf-baseline)
 milestones/                     第 2 层  台账二件:BACKLOG(未结)/SETTLED(已裁决查重)+ W-ui-inventory(选装参考)+ shots-* 验收截图;规格=开工时写的临时工件,收官即删(ADR-0027),交付全史=git
@@ -65,7 +65,7 @@ PLAYBOOK.md                     附页    实操备忘+高频坑唯一源:启动
 
 ## 环境与工具
 
-- Rust 1.98 / Node 24 / Python 3.13;gh CLI 已装;tauri-cli 未装(桌面壳 = `shell/tauri` 手工构建,见其 README);
+- Rust 1.98 / Node 24 / Python 3.12;gh CLI 已装;tauri-cli 未装(桌面壳 = `shell/tauri` 手工构建,见其 README);
 - 合同校验:`python boenmind-contracts/scripts/validate.py`(提交前置);
 - 性能测试命令、启动命令与 BOEN_* 环境变量表 → `PLAYBOOK.md` §1/§4;
 - context7 MCP 可用(库文档查询;真实 Provider/MCP 接入时优先用);

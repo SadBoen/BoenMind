@@ -48,7 +48,7 @@
 
     cp plugins/web-multisearch ~/.local/share/boenmind/mcp/
 
-context-inspector 提供 `context_inspect_snapshot`、`context_diagnose_spikes`、`context_track_file_effects`、`context_search_history` 四只读透视工具:会话上下文结构快照、token 尖刺诊断、文件行数效应追踪、跨会话历史检索。纯只读诊断,不修改任何状态,不影响压缩与遗忘策略。
+context-inspector 提供 `inspect_snapshot`、`diagnose_spikes`、`track_file_effects`、`search_history` 四只读透视工具:会话上下文结构快照、token 尖刺诊断、文件行数效应追踪、跨会话历史检索。纯只读诊断,不修改任何状态,不影响压缩与遗忘策略。
 
 ## 5. 访问
 

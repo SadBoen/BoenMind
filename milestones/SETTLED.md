@@ -45,11 +45,11 @@
 20. 前端门禁=tsc --noEmit 固化进 build+ESLint CI 门禁(react-hooks error 级,ef40c34);「前端无静态检查」过时 | HISTORY 会话删除行+ESLint CI 行 | 2026-09-06/09-07
 21. 【现状变更】对话链路限制默认全零=不限制(用户 2026-09-08 裁决,ADR-0028;0 语义消费点全适配):tool_rounds_max/模型单呼超时/降级链重试/流式硬顶/非流式等待/工具与审批等待/历史回喂双上限/autorun 轮数;唯一保留硬停止=同命令同参连续 10 次熔断(5→10)——§2-5「64 轮安全网」与 §2-12「900s 硬顶」的默认值口径自此过时(机制仍在,可设置页调回) | ADR-0028 | 2026-09-08
 22. 【现状变更】回喂忠实性(用户 2026-09-08 裁决,ADR-0029):内核回喂只承载事实——失败/超时附真实错误与未执行原因、幂等抑制如实告知、熔断/触顶调用不再蒸发、内核代写 assistant 终稿废除、硬编码话术全清(含 §2-10 工具纪律段的硬编码形态废止,可经插件通道回归);detail_ref 恒 None 系对 INV-5 过度解读,脱敏后 detail 字段为合法承载 | ADR-0029 | 2026-09-08
-21. workspace_id 会话绑定已跨重启持久(schema v10);「不持久」说法过时(进程内作用域部分=刻意) | HISTORY 会话基础欠账清零批行 | 2026-09-06
-22. webadmin.rs 上帝文件已拆 11 子模块(2026-09-07);引用「webadmin.rs 2985 行」=过时快照 | HISTORY v0.0.13 行 | 2026-09-07
-23. MCP 官方插件启动播种+墓碑防复活+批准即上线=ADR-0023 既定;播种重名 panic 已修(seen 去重) | HISTORY 插件管控批行 | 2026-09-06
-24. 内置冻结清单=system.exec(过渡态例外)+fs.* 四件+model.invoke 内核私有(ADR-0020/0021);「内置该迁移 MCP」类提案勿再提(见 §1-4) | ADR-0020/0021 | 2026-09-04
-25. OpenCode Go 网关 2026-09-07 起强制 x-opencode-session 头,openai_http 已默认带(BOEN_OPENCODE_SESSION_ID 可固定);「缺头 400」=网关新要求已适配 | HISTORY v0.0.13 行 | 2026-09-07
+23. workspace_id 会话绑定已跨重启持久(schema v10);「不持久」说法过时(进程内作用域部分=刻意) | HISTORY 会话基础欠账清零批行 | 2026-09-06
+24. webadmin.rs 上帝文件已拆 11 子模块(2026-09-07);引用「webadmin.rs 2985 行」=过时快照 | HISTORY v0.0.13 行 | 2026-09-07
+25. MCP 官方插件启动播种+墓碑防复活+批准即上线=ADR-0023 既定;播种重名 panic 已修(seen 去重) | HISTORY 插件管控批行 | 2026-09-06
+26. 内置冻结清单=system.exec(过渡态例外)+fs.* 四件+model.invoke 内核私有(ADR-0020/0021);「内置该迁移 MCP」类提案勿再提(见 §1-4) | ADR-0020/0021 | 2026-09-04
+27. OpenCode Go 网关 2026-09-07 起强制 x-opencode-session 头,openai_http 已默认带(BOEN_OPENCODE_SESSION_ID 可固定);「缺头 400」=网关新要求已适配 | HISTORY v0.0.13 行 | 2026-09-07
 
 ## 3. 已驳回评审意见(逐案带证据,勿重查)
 
@@ -72,6 +72,11 @@
 17. 「前后端命名风格撕裂」非同层混用:camelCase 忠实映射 providers/probe 的 json! 字面量家族,snake_case 忠实映射 bm_contract/context-log wire 家族,前端未自创第三套 | bm-surface-http/webadmin/providers.rs+webapp api.ts | 2026-09-08
 18. /admin/mcp/search-test/{name}=管理面对插件扩展方法(web_search_test)的测试通道,前端 ServerConfigDialog「测试搜索」在用,刻意交付非 OCP 破坏 | bm-surface-http/webadmin/mcp.rs+webapp ServerConfigDialog.tsx | 2026-09-08
 19. 「withdraw 魔法字符串」系审批裁决 wire 字面量(admin respond 端点解析),与事件信封 `type` 字段同口径(§2-15),非坏味道 | bm-core/handlers.rs+approval.rs | 2026-09-08
+20. 「MCP manifest 解析 unwrap_or_default 静默接受畸形 JSON」定性不实:876 行系对**已成功** tools/list 响应的 tools 数组提取降级(缺数组=插件贡献零工具);无名工具已被 tool_manifest 里 normalize_tool_name 的 `?` 丢弃,无「错误工具被注册」面 | bm-providers/mcp.rs:872-895+tool_manifest:89 | 2026-09-09
+21. 「LimitKey.value/default 前端应声明 number|null」=不可达:KEY_META 键与 Limits 结构体字段对齐,serde 序列化必产全字段,`unwrap_or(Value::Null)` 仅守卫性兜底;若真漂移页面立现 null 即可见缺陷 | bm-surface-http/webadmin/limits.rs:19-31 | 2026-09-09
+22. 「App.tsx handleNewChat 删 setTimeout 清理=回归」不实:该函数系 CustomEvent 监听回调,返回值从不被消费,原 `return () => clearTimeout(timer)` 本为死代码,删除系正确清理 | runtime/webapp/src/App.tsx:301-305 | 2026-09-09
+23. 「FileBadge 删 case "rs"=行为变化」不实:`.rs` 已被特殊文件名段 `fileName.endsWith(".rs")` 拦截且配色逐字相同,switch 内 case 系不可达重复,删除系正确去重 | runtime/webapp/src/w1/components/FileBadge.tsx:30-31 | 2026-09-09
+24. 「webapp build 未接 lint=质量关卡缺项」已覆盖:ci.yml webapp-lint job 显式先 `npm run lint` 再 build,本地 build 不接 lint 系取舍非缺口 | .github/workflows/ci.yml | 2026-09-09
 
 ## 4. 引文纠错(常见编造/误引,引用前先核)
 

@@ -84,7 +84,7 @@
 | 条目 | 说明 | 状态 |
 |---|---|---|
 | MCP 子进程 stderr 采集 | 现为 `Stdio::inherit()` 直通 server.log(W2 刻意诊断选型);后续可管道采集入插件页 | OPEN(低) |
-| webapp 版本号 CI 自动对齐 | 来源 2026-09-07 外部审查复核:workspace Cargo.toml 与 webapp/package.json 手动同步(现 0.0.12 已对齐);可 release 流程 cargo metadata 提取写入或 CI 校验步防脱步 | OPEN(低) |
+| webapp 版本号 CI 自动对齐 | 来源 2026-09-07 外部审查复核:workspace Cargo.toml 与 webapp/package.json 手动同步;可 release 流程 cargo metadata 提取写入或 CI 校验步防脱步 | OPEN(低) |
 | bm-testkit 测试文件命名统一 | 来源 2026-09-07 外部审查复核:34 个文件 m1-m9/w5/w8/gt01/perf/无前缀混用;统一为 {category}_{feature} 纯机械改名,破坏 git blame,缓办 | OPEN(低) |
 | 审批无人在线时的通知机制 | 来源 2026-09-07 外部审查复核:审批可达性已修(/admin/approvals 轮询+YOLO),但前端未连接时审批仍会长时间挂起;可加系统通知/声音/轮询提示等 | OPEN(低) |
 | 同批 tool_calls 拒绝联动(产品语义) | 来源 2026-09-07 外部复盘复核(REVIEW-2026-09-07-v0.0.13-external §三):单回合多 tool_calls 顺序串行执行系单写者刻意语义不动;但用户拒绝其中之一后,同批其余工具仍各自独立过 Broker 审批并执行——是否改「拒绝即取消同批余下」属产品设计裁决 | OPEN(低,待裁决) |

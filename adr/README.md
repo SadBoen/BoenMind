@@ -35,6 +35,8 @@
 | [ADR-0025](ADR-0025-background-command-promotion.md) | 长命令后台转轨 | accepted | exec 增 run_in_background+超限自动转轨(Hermes 式);system.job_output 轮询收取(DSH 式);回合 prompt 注入作业摘要;不做主动推注入(2026-09-07) |
 | [ADR-0026](ADR-0026-doc-discipline-normative-narrative-separation.md) | 文档纪律:规范与叙事分离 | accepted | 规范文档零编年史/HISTORY 单行制/SETTLED.md 唯一查重清单/评审必读入口收窄(2026-09-08) |
 | [ADR-0027](ADR-0027-docs-minimalism-delete-after-delivery.md) | 文档极简纪律:仓库只存规范、方向与欠账 | accepted | 过程文档(规格/回看/转录/时间线)交付即删;交付全史=git;入库白名单四类(2026-09-08) |
+| [ADR-0028](ADR-0028-conversation-limits-default-zero.md) | 对话链路限制默认全零(0=不限制) | accepted | 十项限制默认归零(0=不限)+0 语义显式实现+熔断只拦同命令同参 10 次(2026-09-08) |
+| [ADR-0029](ADR-0029-feed-fidelity-no-kernel-coaching.md) | 回喂忠实性原则:内核只回事实,话术出内核 | accepted | 回喂只承载事实+错误原文保真(detail)+去内核指导性教练话术(2026-09-08) |
 
 > 编号说明:ADR-0012 于 2026-08-31 随 M10 dsh 前端线归档(见 ADR-0013 编号说明),编号不回收;主干引用配置管理口径时以 config_store 现状与 W2/W4 规格为准。
 > 文体注:0001-0009 状态用小写 accepted(-with-conditions),0010/0011 起用 Accepted(日期)/已裁决(用户,日期)——语义等价,统一以本表为准。
