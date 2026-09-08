@@ -73,10 +73,10 @@ export function TerminalBlock({ item, isRunning: _isRunning = false }: TerminalB
   const command = item.target || item.name;
 
   return (
-    <div className="my-1.5 rounded-lg border border-border/40 bg-card/60 overflow-hidden transition-all duration-200">
+    <div className="rounded-lg border border-border/40 bg-card/60 overflow-hidden transition-all duration-200">
       {/* 头部单行 */}
       <div
-        className="flex items-center gap-2 px-2.5 py-1.5 cursor-pointer select-none text-xs hover:bg-muted/40 transition-colors"
+        className="flex items-center gap-2 px-2.5 py-1 cursor-pointer select-none text-xs hover:bg-muted/40 transition-colors"
         onClick={() => setOpen(!open)}
       >
         {open ? <ChevronDown size={13} className="shrink-0 text-muted-foreground" /> : <ChevronRight size={13} className="shrink-0 text-muted-foreground" />}

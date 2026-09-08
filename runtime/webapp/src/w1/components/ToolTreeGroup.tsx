@@ -36,10 +36,10 @@ export function ToolTreeGroup({ block, isRunning: _isRunning = false }: ToolTree
     const titleText = summaryParts.length > 0 ? summaryParts.join("，") : `${items.length} 个操作`;
 
     return (
-      <div className="my-1.5 rounded-lg border border-border/40 bg-card/60 overflow-hidden transition-all duration-200">
+      <div className="rounded-lg border border-border/40 bg-card/60 overflow-hidden transition-all duration-200">
         {/* 母卡片头部 */}
         <div
-          className="flex items-center gap-2 px-2.5 py-1.5 cursor-pointer select-none text-xs hover:bg-muted/40 transition-colors"
+          className="flex items-center gap-2 px-2.5 py-1 cursor-pointer select-none text-xs hover:bg-muted/40 transition-colors"
           onClick={() => setOpen(!open)}
         >
           {open ? <ChevronDown size={13} className="shrink-0 text-muted-foreground" /> : <ChevronRight size={13} className="shrink-0 text-muted-foreground" />}
@@ -51,7 +51,7 @@ export function ToolTreeGroup({ block, isRunning: _isRunning = false }: ToolTree
         {/* 树状子项列表 */}
         {open ? (
           <div className="border-t border-dashed border-border/60 bg-muted/20 px-3 py-2">
-            <div className="ml-2 pl-3.5 border-l border-border/60 space-y-2">
+            <div className="ml-2 pl-3.5 border-l border-border/60 space-y-1">
               {items.map((it, idx) => (
                 <TreeSubItem key={idx} item={it} />
               ))}
@@ -66,9 +66,9 @@ export function ToolTreeGroup({ block, isRunning: _isRunning = false }: ToolTree
   if (block.type === "changes_group") {
     const { items, fileCount } = block;
     return (
-      <div className="my-1.5 rounded-lg border border-border/40 bg-card/60 overflow-hidden transition-all duration-200">
+      <div className="rounded-lg border border-border/40 bg-card/60 overflow-hidden transition-all duration-200">
         <div
-          className="flex items-center gap-2 px-2.5 py-1.5 cursor-pointer select-none text-xs hover:bg-muted/40 transition-colors"
+          className="flex items-center gap-2 px-2.5 py-1 cursor-pointer select-none text-xs hover:bg-muted/40 transition-colors"
           onClick={() => setOpen(!open)}
         >
           {open ? <ChevronDown size={13} className="shrink-0 text-muted-foreground" /> : <ChevronRight size={13} className="shrink-0 text-muted-foreground" />}
@@ -90,7 +90,7 @@ export function ToolTreeGroup({ block, isRunning: _isRunning = false }: ToolTree
 
         {open ? (
           <div className="border-t border-dashed border-border/60 bg-muted/20 px-3 py-2">
-            <div className="ml-2 pl-3.5 border-l border-border/60 space-y-2">
+            <div className="ml-2 pl-3.5 border-l border-border/60 space-y-1">
               {items.map((it, idx) => (
                 <div key={idx} className="flex items-center justify-between text-xs py-1">
                   <div className="flex items-center gap-2 min-w-0">
@@ -111,9 +111,9 @@ export function ToolTreeGroup({ block, isRunning: _isRunning = false }: ToolTree
 
   // 3. 通用工具聚合
   return (
-    <div className="my-1.5 rounded-lg border border-border/40 bg-card/60 overflow-hidden">
+    <div className="rounded-lg border border-border/40 bg-card/60 overflow-hidden">
       <div
-        className="flex items-center gap-2 px-2.5 py-1.5 cursor-pointer text-xs hover:bg-muted/40"
+        className="flex items-center gap-2 px-2.5 py-1 cursor-pointer text-xs hover:bg-muted/40"
         onClick={() => setOpen(!open)}
       >
         {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
@@ -122,7 +122,7 @@ export function ToolTreeGroup({ block, isRunning: _isRunning = false }: ToolTree
         <span className="text-[11px] text-muted-foreground/60 ml-auto">{open ? "收起" : "展开"}</span>
       </div>
       {open ? (
-        <div className="border-t border-dashed border-border/60 bg-muted/20 p-2 space-y-1.5">
+        <div className="border-t border-dashed border-border/60 bg-muted/20 p-2 space-y-1">
           {block.items.map((it, idx) => (
             <TreeSubItem key={idx} item={it} />
           ))}

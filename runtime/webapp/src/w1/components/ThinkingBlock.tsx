@@ -85,10 +85,10 @@ export function ThinkingBlock({ text, isStreaming = false, elapsedSeconds }: Thi
   };
 
   return (
-    <div className="my-1.5 rounded-lg border border-border/40 bg-card/60 overflow-hidden transition-all duration-200">
+    <div className="rounded-lg border border-border/40 bg-card/60 overflow-hidden transition-all duration-200">
       {/* 头部点击折叠/展开 */}
       <div
-        className="flex items-center gap-2 px-2.5 py-1.5 cursor-pointer select-none text-xs text-muted-foreground hover:bg-muted/40 transition-colors"
+        className="flex items-center gap-2 px-2.5 py-1 cursor-pointer select-none text-xs text-muted-foreground hover:bg-muted/40 transition-colors"
         onClick={() => setOpen(!open)}
       >
         {open ? <ChevronDown size={13} className="shrink-0" /> : <ChevronRight size={13} className="shrink-0" />}
