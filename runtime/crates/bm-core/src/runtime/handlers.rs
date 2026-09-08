@@ -230,7 +230,7 @@ pub(crate) fn handle_session_close(
 }
 
 /// session.delete(2026-09-06 A+B 一次落地):会话删除 = 墓碑 + 原文擦除。
-/// ①内存台账清场(sessions/chats/totals;live 会话直接移除,不设中间态);
+/// ①内存台账清场(sessions/agents/chats/totals;live 会话直接移除,不设中间态);
 /// ②持久侧单事务:墓碑(防事件重放复活)+ operations.input_content 擦除
 /// (用户原文不留,操作元数据行保留供审计,对齐 A4 精神);
 /// ③context-log 流式过滤该会话行(临时文件+fsync+rename,内存 O(1))。
@@ -268,6 +268,9 @@ pub(crate) fn handle_session_delete(
     }
     w.session_chats.remove(&session_id);
     w.session_turn_totals.remove(&session_id);
+    // Agent 实体一并清场(2026-09-08 审计修复):SQLite 侧 agents 行已随会话
+    // 删除,内存遗留即幽灵 Agent——常驻增长,且按 agent_id 查询会误判其活跃。
+    w.agents.remove(&session.agent_id);
 
     let now = w.now_ts();
     // ①墓碑 + ②原文清空(单事务;失败入拒写态,防半删状态)
@@ -300,11 +303,13 @@ pub(crate) fn handle_session_delete(
         None => 0,
     };
     // 持久层 sessions/agents 行删除(墓碑已在,事件重放亦不复活;若会话行仍在持久层则 DELETE)
-    if let Some(store) = w.store.clone() {
-        let _ = store.delete_session_rows(session_id.as_str());
+    if let Some(store) = w.store.clone()
+        && let Err(e) = store.delete_session_rows(session_id.as_str())
+    {
+        // 墓碑已在事务1落定,残留行重启不复活;此处失败须留观测点不可静默
+        tracing::warn!(error = %e, session = %session_id.as_str(), "会话行删除失败(墓碑在,重启不复活)");
     }
     tracing::info!(session = %session_id.as_str(), purged, "会话已删除(墓碑+原文擦除)");
-    let _ = session;
     Ok(wire::SessionDeleteResult {
         deleted_at: now,
         purged_lines: purged as u64,

@@ -46,7 +46,10 @@ fn glob_to_regex(pat: &str) -> String {
     regex
 }
 
-pub fn search(roots: &Roots, args: &Value, limits: &Limits) -> Value {
+/// deadline 熔断(2026-09-08 审计修复):capability 层传下的预算此前被忽略,
+/// 超大目录/网络盘会把执行通道占死;现在遍历与逐文件搜索每步检查,到点即
+/// 返回部分结果(timed_out=true)。deadline 由调用方按 Instant::now()+剩余时长 构造。
+pub fn search(roots: &Roots, args: &Value, limits: &Limits, deadline: std::time::Instant) -> Value {
     if roots.is_empty() {
         return tool_err("工作区注册表为空:在设置「常规 → 工作区」登记至少一个目录后再用文件工具");
     }
@@ -108,6 +111,7 @@ pub fn search(roots: &Roots, args: &Value, limits: &Limits) -> Value {
             }
         };
 
+        let mut timed_out = false;
         'roots_files: for root in roots.roots() {
             for entry in WalkDir::new(root)
                 .max_depth(24)
@@ -115,6 +119,10 @@ pub fn search(roots: &Roots, args: &Value, limits: &Limits) -> Value {
                 .into_iter()
                 .filter_entry(|e| !skipped_dir(e))
             {
+                if std::time::Instant::now() >= deadline {
+                    timed_out = true;
+                    break 'roots_files;
+                }
                 let Ok(entry) = entry else { continue };
                 files_searched += 1;
                 let rel_path = display_path(entry.path());
@@ -140,15 +148,21 @@ pub fn search(roots: &Roots, args: &Value, limits: &Limits) -> Value {
             }
         }
 
-        return json!({
+        let mut out = json!({
             "ok": true,
             "mode": "files",
             "query": query,
             "total_matches": total,
             "truncated": total >= max_results as u64,
+            "timed_out": timed_out,
             "files_searched": files_searched,
             "matches": hits,
         });
+        if timed_out {
+            out["note"] =
+                json!("搜索因超时熔断提前结束,以上为部分结果(可缩小范围/加 path_pattern 重试)");
+        }
+        return out;
     }
 
     // 模式二: 内容搜索 (类似 ripgrep grep-searcher)
@@ -177,6 +191,7 @@ pub fn search(roots: &Roots, args: &Value, limits: &Limits) -> Value {
     let mut hits: Vec<Value> = Vec::new();
     let mut total: u64 = 0;
     let mut files_searched: u64 = 0;
+    let mut timed_out = false;
     'roots: for root in roots.roots() {
         for entry in WalkDir::new(root)
             .max_depth(24)
@@ -184,6 +199,10 @@ pub fn search(roots: &Roots, args: &Value, limits: &Limits) -> Value {
             .into_iter()
             .filter_entry(|e| !skipped_dir(e))
         {
+            if std::time::Instant::now() >= deadline {
+                timed_out = true;
+                break 'roots;
+            }
             let Ok(entry) = entry else { continue };
             if !entry.file_type().is_file() {
                 continue;
@@ -233,7 +252,9 @@ pub fn search(roots: &Roots, args: &Value, limits: &Limits) -> Value {
     }
 
     // 若 fixed=true + 包含 '|' 导致 0 命中，则以 regex fallback 自动拯救一次
+    // (已超时的场次不再拯救:熔断优先于自愈)
     if total == 0
+        && !timed_out
         && let Some(alt_pat) = allow_fallback_regex
         && let Ok(alt_matcher) = RegexMatcherBuilder::new()
             .case_insensitive(!case_sensitive)
@@ -246,6 +267,10 @@ pub fn search(roots: &Roots, args: &Value, limits: &Limits) -> Value {
                 .into_iter()
                 .filter_entry(|e| !skipped_dir(e))
             {
+                if std::time::Instant::now() >= deadline {
+                    timed_out = true;
+                    break 'roots_fallback;
+                }
                 let Ok(entry) = entry else { continue };
                 if !entry.file_type().is_file() {
                     continue;
@@ -279,9 +304,14 @@ pub fn search(roots: &Roots, args: &Value, limits: &Limits) -> Value {
     // 输出字符总量封顶:从尾部丢弃命中直至合规
     let mut out = json!({
         "ok": true, "query": query, "total_matches": total,
-        "truncated": truncated, "files_searched": files_searched,
+        "truncated": truncated, "timed_out": timed_out,
+        "files_searched": files_searched,
         "matches": hits,
     });
+    if timed_out {
+        out["note"] =
+            json!("搜索因超时熔断提前结束,以上为部分结果(可缩小范围/加 path_pattern 重试)");
+    }
     while serde_json::to_string(&out)
         .map(|s| s.chars().count())
         .unwrap_or(0)
@@ -538,7 +568,13 @@ mod tests {
     // W10:包装函数保持旧三参签名(Limits 默认),既有用例零改动;
     // 需要自定义限额的用例直接调 super::search(..., &limits)。
     fn search(roots: &Roots, args: &Value) -> Value {
-        super::search(roots, args, &_LimitsReal::default())
+        // 包装默认给足 30s 预算(与 fs.search manifest timeout 一致)
+        super::search(
+            roots,
+            args,
+            &_LimitsReal::default(),
+            std::time::Instant::now() + std::time::Duration::from_secs(30),
+        )
     }
     fn read(roots: &Roots, args: &Value) -> Value {
         super::read(roots, args, &_LimitsReal::default())
@@ -798,6 +834,30 @@ mod tests {
         let r = roots_for(dir.path());
         let out = read(&r, &json!({"path": "../../etc/passwd"}));
         assert_eq!(out["ok"], false, "越界读取必须被拒:{out}");
+    }
+
+    // 2026-09-08 审计修复:deadline 熔断——预算耗尽立即返回部分结果并标记
+    // timed_out(此前核心层传下的 deadline 被忽略,超大目录可无限占用通道)。
+    #[test]
+    fn search_deadline_exhausted_returns_partial_with_timed_out() {
+        let dir = tempfile::tempdir().expect("tmp");
+        std::fs::write(dir.path().join("needle.txt"), "find me\n").expect("write");
+        let r = roots_for(dir.path());
+        // 已到点的 deadline:首个条目前即熔断(>= 判定,同一时刻即触发)
+        let out = super::search(
+            &r,
+            &json!({"query": "find", "mode": "files"}),
+            &_LimitsReal::default(),
+            std::time::Instant::now(),
+        );
+        assert_eq!(out["ok"], true, "熔断仍返回 ok(部分结果):{out}");
+        assert_eq!(out["timed_out"], true, "{out}");
+        assert!(out["note"].is_string(), "熔断须带说明:{out}");
+        // 正常预算:timed_out=false 且功能不受影响(files 模式按文件名匹配)
+        let ok_out = search(&r, &json!({"query": "needle", "mode": "files"}));
+        assert_eq!(ok_out["ok"], true, "{ok_out}");
+        assert_eq!(ok_out["timed_out"], false, "{ok_out}");
+        assert_eq!(ok_out["total_matches"], 1, "{ok_out}");
     }
 
     #[test]

@@ -443,8 +443,23 @@ export function BoenmindRuntimeProvider({
         setMessages(toThreadMessages(res.messages ?? []));
         historyCountRef.current = (res.messages ?? []).length;
         setHistoryMore({ hasMore: res.has_more ?? false, loading: false });
-      } catch {
-        // 回放失败(日志缺失/网络抖动)保持空视图,不打断用户输入
+      } catch (e) {
+        // 回放失败(日志缺失/网络抖动):2026-09-08 审计修复——不再静默空白,
+        // 上屏失败提示(与流内 [连接失败: …] 同款口径),不打断用户输入
+        console.error("历史消息加载失败", e);
+        if (sessionEpochRef.current === epoch) {
+          setMessages([
+            {
+              role: "assistant",
+              content: [
+                {
+                  type: "text",
+                  text: `[历史消息加载失败: ${e instanceof Error ? e.message : String(e)};可重新切换会话或刷新重试]`,
+                },
+              ],
+            } as ThreadMessageLike,
+          ]);
+        }
       }
     };
     window.addEventListener(BM_EVENTS.sessionSwitched, onSessionSwitched);
@@ -467,7 +482,22 @@ export function BoenmindRuntimeProvider({
         historyCountRef.current = (res.messages ?? []).length;
         setHistoryMore({ hasMore: res.has_more ?? false, loading: false });
       })
-      .catch(() => {});
+      .catch((e: unknown) => {
+        // 2026-09-08 审计修复:刷新恢复失败不再静默空白,同样上屏提示
+        console.error("历史消息加载失败", e);
+        if (cancelled || sessionEpochRef.current !== epoch) return;
+        setMessages([
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "text",
+                text: `[历史消息加载失败: ${e instanceof Error ? e.message : String(e)};可刷新重试]`,
+              },
+            ],
+          } as ThreadMessageLike,
+        ]);
+      });
     return () => {
       cancelled = true;
     };

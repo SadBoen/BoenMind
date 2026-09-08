@@ -867,7 +867,7 @@ pub async fn mcp_approve(State(cfg): State<AdminConfig>, Json(body): Json<Value>
 
     // ADR-0023:显式批准=安装意图最高级——清墓碑(被卸载/删除过的官方
     // 插件由此恢复)+ 立即热重载上线;失败不回滚落盘,可手动重试
-    remove_tombstone(&cfg.data_dir, &want_name);
+    let tombstone_warn = remove_tombstone(&cfg.data_dir, &want_name).err();
     let (reload_ok, reload_payload) = match run_mcp_sync(&cfg).await {
         Ok(o) => {
             let tools = o
@@ -890,6 +890,10 @@ pub async fn mcp_approve(State(cfg): State<AdminConfig>, Json(body): Json<Value>
             "已落盘,但自动上线未完成:{};可点「重载 MCP」重试",
             reload_payload["skipped"].as_str().unwrap_or("未知")
         )
+    };
+    let note = match &tombstone_warn {
+        Some(w) => format!("{note};⚠ 墓碑清除失败:{w}(重启后该官方插件可能再次被移除,请重试批准)"),
+        None => note,
     };
     Json(json!({
         "ok": true,
@@ -1034,15 +1038,17 @@ fn upsert_tombstone(data_dir: &Path, name: &str) -> Result<(), String> {
     write_tombstones(data_dir, list)
 }
 
-fn remove_tombstone(data_dir: &Path, name: &str) {
+/// 清墓碑(显式批准安装时调用)。2026-09-08 审计修复:失败不再静默——
+/// 墓碑残留会导致该官方插件重启后被再次自动移除,必须让调用方可见。
+fn remove_tombstone(data_dir: &Path, name: &str) -> Result<(), String> {
     let Some(v) = std::fs::read_to_string(tombstone_path(data_dir))
         .ok()
         .and_then(|s| serde_json::from_str::<Value>(&s).ok())
     else {
-        return;
+        return Ok(());
     };
     let Some(arr) = v["removed"].as_array() else {
-        return;
+        return Ok(());
     };
     let filtered: Vec<Value> = arr
         .iter()
@@ -1050,9 +1056,9 @@ fn remove_tombstone(data_dir: &Path, name: &str) {
         .cloned()
         .collect();
     if filtered.len() == arr.len() {
-        return;
+        return Ok(());
     }
-    let _ = write_tombstones(data_dir, filtered);
+    write_tombstones(data_dir, filtered)
 }
 
 /// 官方随包清单(plugins/.official.json,release 打包写入);缺失=未知,

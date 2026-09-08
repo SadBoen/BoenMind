@@ -154,6 +154,20 @@ pub struct FsExecutor {
     pub limits: bm_core::limits::LimitsCell,
 }
 
+/// 工作区沙箱根(注册表 + 空表回落浏览根)。fs.* 与 system.exec cwd 白名单
+/// 同源共用(2026-09-08 审计修复:cwd 不得绕开 fs 工具的沙箱口径)。
+pub fn workspace_roots(data_dir: &std::path::Path, fallback_root: &std::path::Path) -> Roots {
+    let mut raw: Vec<String> = bm_core::workspace::read_workspaces(data_dir)
+        .into_iter()
+        .map(|w| w.path)
+        .filter(|p| !p.is_empty())
+        .collect();
+    if raw.is_empty() {
+        raw.push(fallback_root.display().to_string());
+    }
+    Roots::new(&raw)
+}
+
 impl FsExecutor {
     pub fn new(data_dir: impl Into<PathBuf>, fallback_root: impl Into<PathBuf>) -> Self {
         Self {
@@ -177,15 +191,7 @@ impl FsExecutor {
     }
 
     fn roots(&self) -> Roots {
-        let mut raw: Vec<String> = bm_core::workspace::read_workspaces(&self.data_dir)
-            .into_iter()
-            .map(|w| w.path)
-            .filter(|p| !p.is_empty())
-            .collect();
-        if raw.is_empty() {
-            raw.push(self.fallback_root.display().to_string());
-        }
-        Roots::new(&raw)
+        workspace_roots(&self.data_dir, &self.fallback_root)
     }
 }
 
@@ -196,14 +202,17 @@ impl AsyncCapabilityExecutor for FsExecutor {
         _operation_id: &str,
         capability: &str,
         args: Value,
-        _deadline: std::time::Duration,
+        deadline: std::time::Duration,
     ) -> Result<Value, AsyncCallError> {
         let roots = self.roots();
         let limits = self.limits.get();
         let capability = capability.to_string();
+        // 搜索预算(2026-09-08 审计修复):manifest/core 层的 deadline 此前被
+        // 忽略,超大目录可无限占用阻塞池;现在换算成 Instant 传入并强制生效。
+        let deadline_at = std::time::Instant::now() + deadline;
         // 阻塞面(树遍历/磁盘 IO)挪出单写者循环
         let out = tokio::task::spawn_blocking(move || match capability.as_str() {
-            FS_SEARCH => ops::search(&roots, &args, &limits),
+            FS_SEARCH => ops::search(&roots, &args, &limits, deadline_at),
             FS_READ => ops::read(&roots, &args, &limits),
             FS_WRITE => ops::write(&roots, &args, &limits),
             FS_EDIT => ops::edit(&roots, &args, &limits),

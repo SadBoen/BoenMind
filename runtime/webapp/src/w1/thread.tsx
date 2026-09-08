@@ -289,6 +289,14 @@ function ApprovalDrawerItem({
     };
   })();
 
+  // 审计修复(2026-09-08):exec 显式 cwd 在折叠态也要可见——审批时用户往往
+  // 只看命令文本, cwd 是同等重要的执行边界信息(后端越界会拒绝)。
+  const execCwd = (() => {
+    if (req.capability !== "system.exec" || req.args == null) return null;
+    const v = (req.args as Record<string, unknown>).cwd;
+    return typeof v === "string" && v.trim() ? v : null;
+  })();
+
   return (
     <div
       className="animate-in fade-in slide-in-from-bottom-2 duration-200 group relative w-full overflow-hidden rounded-xl border border-border/80 bg-card/95 shadow-md backdrop-blur-md transition-all hover:border-border"
@@ -311,6 +319,15 @@ function ApprovalDrawerItem({
           >
             {summary.detail}
           </span>
+          {execCwd && (
+            <span
+              className="flex min-w-0 max-w-[45%] shrink-0 items-center gap-1 rounded-md bg-destructive/10 px-1.5 py-0.5 font-mono text-[11px] text-destructive"
+              title={`工作目录:${execCwd}(超出工作区白名单会被拒绝)`}
+            >
+              <span className="shrink-0 opacity-80">cwd:</span>
+              <span className="truncate">{execCwd}</span>
+            </span>
+          )}
         </div>
 
         {/* 右侧紧凑操作按钮组 */}

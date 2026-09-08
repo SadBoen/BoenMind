@@ -317,9 +317,15 @@ async fn pump_to_file(src: Option<impl tokio::io::AsyncRead + Unpin>, mut dst: s
     let mut buf = [0u8; 8192];
     loop {
         match src.read(&mut buf).await {
-            Ok(0) | Err(_) => break,
+            Ok(0) => break,
+            // 2026-09-08 审计修复:管道/写盘失败不再静默——作业日志中断须留观测点
+            Err(e) => {
+                tracing::warn!(error = %e, "后台作业日志泵读端失败,输出落盘中止");
+                break;
+            }
             Ok(n) => {
-                if dst.write_all(&buf[..n]).is_err() {
+                if let Err(e) = dst.write_all(&buf[..n]) {
+                    tracing::warn!(error = %e, "后台作业日志泵写端失败,输出落盘中止");
                     break;
                 }
             }

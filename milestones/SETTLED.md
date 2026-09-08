@@ -65,6 +65,11 @@
 12. capability 操作不落 operations 表=正当(纯内存系统容器态,approvals/grants/outbox 完整承载规范状态) | BACKLOG §6/M4-review §6-4 | 2026-09-04
 13. load_world_rows expect×14「恢复失败=拒开」=handle.rs 明示设计决策(fail-fast),维持;可选小改仅错误信息可读化 | BACKLOG §3.2(P4 行) | 2026-09-07
 14. rebuild_session_chats/工具纪律/记忆 LIKE 兜底三项「报告指瑕」均系刻意设计或已在册(分见 §2-4/§2-10/§2-14) | HISTORY 第三方评审复核行 | 2026-09-07
+15. 「后台作业孤儿进程泄漏」不实:服务退出=进程级退出→tokio runtime drop→kill_on_drop 兜底杀作业子进程(单宿主形态);ADR-0025 已裁决台账/日志边界——审计 P1 驳回 | bm-providers/jobs.rs+ADR-0025 | 2026-09-08
+16. 「tsconfig 缺 exclude 致 e2e/scripts 混入生产类型树」后果误报:tsconfig include=["src"] 已收拢,build(eslint+tsc)均不扫测试目录 | runtime/webapp/tsconfig.json+package.json scripts | 2026-09-08
+17. 「前后端命名风格撕裂」非同层混用:camelCase 忠实映射 providers/probe 的 json! 字面量家族,snake_case 忠实映射 bm_contract/context-log wire 家族,前端未自创第三套 | bm-surface-http/webadmin/providers.rs+webapp api.ts | 2026-09-08
+18. /admin/mcp/search-test/{name}=管理面对插件扩展方法(web_search_test)的测试通道,前端 ServerConfigDialog「测试搜索」在用,刻意交付非 OCP 破坏 | bm-surface-http/webadmin/mcp.rs+webapp ServerConfigDialog.tsx | 2026-09-08
+19. 「withdraw 魔法字符串」系审批裁决 wire 字面量(admin respond 端点解析),与事件信封 `type` 字段同口径(§2-15),非坏味道 | bm-core/handlers.rs+approval.rs | 2026-09-08
 
 ## 4. 引文纠错(常见编造/误引,引用前先核)
 

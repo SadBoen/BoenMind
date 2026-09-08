@@ -302,9 +302,19 @@ function SessionPanel({ collapsed }: { collapsed: boolean }) {
   };
 
   // 删除 = 两步确认(2026-09-06 A+B):首点进入待确认态,3 秒内再点才真删;
-  // 服务端墓碑 + 对话原文擦除,不可恢复
+  // 服务端墓碑 + 对话原文擦除,不可恢复。
+  // 审计修复(2026-09-08):①确认即切新对话——请求在途时 activeSid 不再指向
+  // 被删会话,发消息竞态窗口消灭;②失败不再静默吞——列表项保留并弹提示,
+  // 仅「会话不存在」(已被别处删除)才照常移除,防幽灵重试死循环。
   const [armDeleteSid, setArmDeleteSid] = useState<string | null>(null);
   const armTimerRef = useRef<number | null>(null);
+  const [deleteNotice, setDeleteNotice] = useState<string | null>(null);
+  const noticeTimerRef = useRef<number | null>(null);
+  const flashDeleteNotice = (msg: string) => {
+    setDeleteNotice(msg);
+    if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current);
+    noticeTimerRef.current = window.setTimeout(() => setDeleteNotice(null), 6000);
+  };
   const handleDeleteSession = (e: React.MouseEvent, sid: string) => {
     e.stopPropagation();
     if (armDeleteSid !== sid) {
@@ -314,14 +324,17 @@ function SessionPanel({ collapsed }: { collapsed: boolean }) {
       return;
     }
     setArmDeleteSid(null);
+    if (activeSid === sid) emit(BM_EVENTS.chatNew);
     void api.sessionDelete(sid)
-      .catch(() => {}) // 服务端已尽力擦除;本地列表无论如何移除
-      .finally(() => {
-        const next = sessionsStore.remove(sid);
-        setSessions(next);
-        if (activeSid === sid) {
-          // 若删除的是当前会话，则开辟新对话
-          emit(BM_EVENTS.chatNew);
+      .then(() => {
+        setSessions(sessionsStore.remove(sid));
+      })
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err ?? "");
+        if (/不存在/.test(msg)) {
+          setSessions(sessionsStore.remove(sid));
+        } else {
+          flashDeleteNotice(`会话删除失败:${msg || "网络异常"};列表已保留,可重试`);
         }
       });
   };
@@ -398,6 +411,18 @@ function SessionPanel({ collapsed }: { collapsed: boolean }) {
           );
         })}
       </div>
+
+      {/* 删除失败提示(2026-09-08 审计修复):6 秒自动消退,主题令牌着色 */}
+      {deleteNotice ? (
+        <div
+          className="fixed bottom-16 left-1/2 -translate-x-1/2 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-2 text-[12.5px] text-destructive shadow-md backdrop-blur-md"
+          style={{ zIndex: "var(--z-toast)" }}
+          data-slot="session-delete-notice"
+          role="alert"
+        >
+          {deleteNotice}
+        </div>
+      ) : null}
     </div>
   );
 }

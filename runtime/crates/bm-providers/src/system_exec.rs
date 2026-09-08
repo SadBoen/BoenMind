@@ -36,11 +36,12 @@ pub fn exec_capability_entry() -> (CapabilityManifest, Arc<dyn CapabilityProvide
         "capability": EXEC_CAPABILITY,
         "provider": "builtin.async",
         "version": "0.2.0",
-        "description": "在宿主 shell 执行命令:Windows 以 PowerShell(-NoProfile -NonInteractive)执行,其余以 bash -c 执行;返回 exit_code 与合并后的 stdout/stderr(超限截断)。适合跑构建/测试/进程管理等动态操作;纯文件查读优先用 fs_search/fs_read。可传 timeout_ms 毫秒(默认约 120 秒,前台最长 10 分钟,管理端「限制与超时」可调)。长任务(下载/clone/冷编译)传 run_in_background=true 立即返回作业号,或 timeout_ms 超前台上限时自动转后台执行;之后用 system.job_output 按作业号收取结果。调用需用户批准后执行。",
+        "description": "在宿主 shell 执行命令:Windows 以 PowerShell(-NoProfile -NonInteractive)执行,其余以 bash -c 执行;返回 exit_code 与合并后的 stdout/stderr(超限截断)。适合跑构建/测试/进程管理等动态操作;纯文件查读优先用 fs_search/fs_read。可传 timeout_ms 毫秒(默认约 120 秒,前台最长 10 分钟,管理端「限制与超时」可调)。长任务(下载/clone/冷编译)传 run_in_background=true 立即返回作业号,或 timeout_ms 超前台上限时自动转后台执行;之后用 system.job_output 按作业号收取结果。可传 cwd 指定工作目录(限已登记工作区内,越界拒绝)。调用需用户批准后执行。",
         "input_schema": {
             "type": "object",
             "properties": {
                 "command": {"type": "string", "description": "要执行的命令行(交由宿主 shell 解释)"},
+                "cwd": {"type": "string", "description": "工作目录(可选;须在已登记工作区白名单内,越界拒绝;缺省=服务进程工作目录)"},
                 "timeout_ms": {"type": "integer", "description": "前台超时毫秒(可选,默认约 120000,上限 600000;超上限自动转后台)"},
                 "run_in_background": {"type": "boolean", "description": "true=转后台执行:立即返回 job_id 不等完成,稍后用 system.job_output 收取(适合下载、clone、长构建)"}
             },
@@ -97,11 +98,28 @@ impl CapabilityProvider for ExecPlaceholder {
 pub struct ExecExecutor {
     pub limits: LimitsCell,
     pub jobs: Arc<JobTable>,
+    /// cwd 白名单数据源(2026-09-08 审计修复,与 fs.* 同源沙箱)。
+    pub data_dir: std::path::PathBuf,
+    pub fallback_root: std::path::PathBuf,
 }
 
 impl ExecExecutor {
-    pub fn new(limits: LimitsCell, jobs: Arc<JobTable>) -> Self {
-        Self { limits, jobs }
+    pub fn new(
+        limits: LimitsCell,
+        jobs: Arc<JobTable>,
+        data_dir: impl Into<std::path::PathBuf>,
+        fallback_root: impl Into<std::path::PathBuf>,
+    ) -> Self {
+        Self {
+            limits,
+            jobs,
+            data_dir: data_dir.into(),
+            fallback_root: fallback_root.into(),
+        }
+    }
+
+    fn roots(&self) -> fs_tools::Roots {
+        fs_tools::workspace_roots(&self.data_dir, &self.fallback_root)
     }
 
     async fn exec_command(
@@ -117,11 +135,20 @@ impl ExecExecutor {
                 "缺必填参数 command(字符串)".into(),
             ))?
             .to_string();
-        let cwd = args["cwd"]
-            .as_str()
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string())
-            .unwrap_or_default();
+        // cwd 沙箱(2026-09-08 审计修复):显式 cwd 经 fs.* 同款工作区白名单
+        // 解析(组件级前缀比对,防 .. 逃逸/同名前缀混淆),越界拒绝;未传保持
+        // 既有语义(继承宿主进程工作目录,由装配方决定)。校验在转轨分支之前,
+        // 前台与后台作业一次覆盖。
+        let cwd_raw = args["cwd"].as_str().unwrap_or_default().trim().to_string();
+        let cwd = if cwd_raw.is_empty() {
+            String::new()
+        } else {
+            self.roots()
+                .resolve(&cwd_raw)
+                .map_err(AsyncCallError::Transport)?
+                .display()
+                .to_string()
+        };
         let limits = self.limits.get();
         let requested = args["timeout_ms"].as_u64();
         let wants_background = args["run_in_background"].as_bool().unwrap_or(false);
@@ -293,7 +320,8 @@ mod tests {
         let dir = tempfile::tempdir().expect("临时目录");
         let cell = LimitsCell::with_default();
         let jobs = JobTable::new(dir.path(), cell.clone());
-        (ExecExecutor::new(cell, jobs), dir)
+        // 注册表空 → 回落根 = 同一临时目录:界内 cwd 须放行,界外须拒绝。
+        (ExecExecutor::new(cell, jobs, dir.path(), dir.path()), dir)
     }
 
     #[tokio::test]
@@ -422,6 +450,64 @@ mod tests {
             .await
             .expect("自动转轨回执");
         assert_eq!(receipt["backgrounded"], json!(true), "{receipt}");
+    }
+
+    // 2026-09-08 审计修复:显式 cwd 必须过 fs.* 同源工作区白名单——
+    // 越界目录(哪怕真实存在)拒绝,白名单内(含相对路径)放行;转后台同受此闸。
+    #[tokio::test]
+    async fn exec_cwd_whitelist_rejects_outside_and_allows_inside() {
+        let (exec, dir) = executor();
+        let outside = tempfile::tempdir().expect("外部目录");
+        // 越界绝对路径 → 拒绝
+        let err = exec
+            .call(
+                "op",
+                EXEC_CAPABILITY,
+                json!({"command": "echo x", "cwd": outside.path().display().to_string()}),
+                std::time::Duration::from_secs(30),
+            )
+            .await;
+        assert!(
+            matches!(err, Err(AsyncCallError::Transport(ref m)) if m.contains("白名单") || m.contains("注册表")),
+            "越界 cwd 必须被拒:{err:?}"
+        );
+        // 转后台路径同受闸
+        let err = exec
+            .call(
+                "op-bg",
+                EXEC_CAPABILITY,
+                json!({"command": "echo x", "cwd": outside.path().display().to_string(), "run_in_background": true}),
+                std::time::Duration::from_secs(30),
+            )
+            .await;
+        assert!(err.is_err(), "转后台 cwd 越界同样必须被拒:{err:?}");
+        // 白名单内相对路径 → 放行,且实际工作目录即回落根(canonical 形)
+        // (guard.rs 的 Roots 会剥 `\\?\` verbatim 前缀,比对前同步剥除)
+        let root = dir.path().canonicalize().expect("canonical");
+        let root_s = root
+            .display()
+            .to_string()
+            .to_lowercase()
+            .trim_start_matches(r"\\?\")
+            .to_string();
+        #[cfg(windows)]
+        let cmd_str = "(Get-Location).Path";
+        #[cfg(not(windows))]
+        let cmd_str = "pwd";
+        let out = exec
+            .call(
+                "op",
+                EXEC_CAPABILITY,
+                json!({"command": cmd_str, "cwd": "."}),
+                std::time::Duration::from_secs(30),
+            )
+            .await
+            .expect("界内 cwd 应放行");
+        let out_l = out["output"].as_str().unwrap_or("").to_lowercase();
+        assert!(
+            out_l.contains(&root_s),
+            "实际 cwd 应为工作区根 {root_s}:{out}"
+        );
     }
 
     // ADR-0024:limits 热生效——改 Cell 后下一条命令截断上限随之变化。

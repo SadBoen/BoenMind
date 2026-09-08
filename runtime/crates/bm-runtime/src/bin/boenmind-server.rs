@@ -283,6 +283,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let exec_inner = Arc::new(bm_providers::system_exec::ExecExecutor::new(
                 limits_cell.clone(),
                 job_table.clone(),
+                data_dir.clone(),
+                workspace_root.clone(),
             ));
             let inner: Arc<dyn bm_core::ports::AsyncCapabilityExecutor> = match mcp_executor {
                 Some(hub) => hub,

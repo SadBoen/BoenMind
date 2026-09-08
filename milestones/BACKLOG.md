@@ -43,7 +43,7 @@
 | F-05 | 200+ 行函数重构债(与 L-01/R-08 同批) | OPEN(缓办) |
 | F-07 | bm-surface-http → bm-persist 直依赖待裁决(收口或留档);2026-09-05 回看补记:webadmin.rs 还在 HTTP Handler 里直接 spawn MCP 进程/装配 StdioMcpTransport/管理 McpHub 连断与 Provider 密钥播种,装配职责宜下沉运行时,与本条同批收口 | OPEN |
 | F-11 | memory_drawer_verdict 硬编码权限规则与 ADR-0006 张力(broker.rs 已补注;合同化重构待排期) | OPEN |
-| P3 大文件拆分 | broker.rs(1657 行)/turn.rs(1694)/task_ops.rs(1710)/sqlite_state.rs(1205);broker 建议拆法=mod+policy(GrantLedger)/credential/executor/audit;前端同族=context.tsx(2200+ 行,可拆 TrendChart/TokenWaterGauge/PromptRecipe/FileEffects 子模块)、PluginsPage.tsx(1800+ 行)与 thread.tsx(930 行,可拆 ApprovalDrawer/UserMessage/AssistantMessage/Composer);**webadmin.rs 已拆毕移出**(2026-09-07,11 子模块按域,commit 见 HISTORY);2026-09-07 架构评审扩口径:mcp.rs 1399 行(三种传输+McpHub+装载)/handle.rs 1119 行(start() 545 行含恢复+清点+bootstrap)/runtime.tsx 581 行/openai_http 与 glm_http 62% 重复抽公共客户端 | OPEN(缓办) |
+| P3 大文件拆分 | broker.rs(1657 行)/turn.rs(1694)/task_ops.rs(1710)/sqlite_state.rs(1205);broker 建议拆法=mod+policy(GrantLedger)/credential/executor/audit;前端同族=context.tsx(2200+ 行,可拆 TrendChart/TokenWaterGauge/PromptRecipe/FileEffects 子模块)、PluginsPage.tsx(1800+ 行)与 thread.tsx(930 行,可拆 ApprovalDrawer/UserMessage/AssistantMessage/Composer);**webadmin.rs 已拆毕移出**(2026-09-07,11 子模块按域,commit 见 HISTORY);2026-09-07 架构评审扩口径:mcp.rs 1399 行(三种传输+McpHub+装载)/handle.rs 1119 行(start() 545 行含恢复+清点+bootstrap)/runtime.tsx 581 行/openai_http 与 glm_http 62% 重复抽公共客户端;2026-09-08 审计复核补记:runtime/handlers.rs 1158 行(会话/审批/操作/任务域混杂)、webadmin/mcp.rs 1235 行(随包插件编排面,与 JsonStore 收口同批评估为宜) | OPEN(缓办) |
 | P4 非测试 unwrap 甄别清理 | 全仓约 400 处 unwrap 需区分测试/非测试逐步替换;非测试 panic 10 处均系不变量断言,评估=维持现状;2026-09-07 外部审查复核补记:load_world_rows(runtime.rs:208-309)expect×14 属同族——「恢复失败=拒开」是 handle.rs:81-94 明示设计决策,维持 fail-fast,可选小改=错误信息可读化(数据损坏时报「哪个 id 不合法」而非裸 expect) | OPEN(缓办) |
 | 配置域读写样板收口(JsonStore) | 来源 2026-09-07 外部审查复核:providers/skills/roles/mcp 四组各一套 file→read_to_string→from_str→atomic_write 样板;skills 缺 write helper(写盘内联重复两处 skills_set/skills_delete);损坏口径已统一(2026-09-07 复盘复核批:skills/roles 改 Result 化=损坏拒绝覆写,与 providers/mcp 同口径,回归测试在 webadmin_tests);剩=泛型 JsonStore 收口与 write helper 补齐 | OPEN(低) |
 | 前端 API 层收敛 | 来源 2026-09-07 外部审查复核:api.ts(508 行)只覆盖 W2 管理面;W1 运行时侧 8 处裸 fetch 绕过(main.tsx:16 / runtime.tsx×5 / thread.tsx:622 / AboutPage.tsx:65),收敛到 api/ 单源、类型与后端 schema 对齐 | OPEN(低) |
@@ -57,7 +57,6 @@
 | 基线正文熔入欠账(ADR-0022..0025/§18 W10) | 来源 2026-09-07 文档内容级体检批:基线 §23 索引缺 ADR-0022..0025(本批已补行),正文未熔入四决策(原生工具协议/随包插件生命周期/limits 配置面/后台转轨,全文 grep 0 命中);§18 W 序列止于 W9(无 W10);§2.3「任何功能都不允许成为内核特权」未就地标注 ADR-0020 封闭清单例外按语(封闭清单正文已另处熔入)。按硬纪律 3「增补熔入正文」待下批回看统一处理 | OPEN(低) |
 | 前端静态分析 | ESLint + Stylelint 接入 CI | OPEN |
 | theme.css !important 收敛 | 玻璃段 4 处(毛玻璃化刻意选型,收敛须换实现手法) | OPEN(低) |
-| system.exec cwd 沙箱化 | 来源 FULL-REVIEW-2026-09-05 §7:cwd 参数未在 input_schema 声明即被消费(additionalProperties 默认放行),不经 fs_tools 工作区白名单;审批卡为主防线,补 schema 显式化+cwd 白名单校验 | OPEN |
 | FileSecretStore KDF 化 | 来源 FULL-REVIEW-2026-09-05 §7:主密钥 `&material[..32]` 截断非 KDF(HKDF/PBKDF2);get/put/delete 每次全量解密重加密 O(n);建议热路径 KDF+按需惰性 | OPEN |
 | 前端 context 面契约锚定与类型漂移 | 来源 FULL-REVIEW-2026-09-05 §7:①w1/context.tsx 手维护 evMap/kind 字符串无后端锚定,枚举改名即静默掉卡;②`McpCandidatesResult` 在 PluginsPage 本地与 api.ts 双声明已漂移(source/bundled_dir 缺失)——收敛到 api.ts 单源 | OPEN |
 | glm_http 错误分类与单测 | 来源 FULL-REVIEW-2026-09-05 §7:非 2xx 一刀切 Unavailable(400/401/429 不分,4xx retryable 靠 is_server_error 巧合);feature 门控默认不编,零单测;**错误分类已对齐 openai 口径**(2026-09-07 架构评审 P1-22:改用 openai_http::map_status),剩=补 feature 门控单测 | OPEN(低) |
@@ -86,7 +85,7 @@
 | bm-testkit 测试文件命名统一 | 来源 2026-09-07 外部审查复核:34 个文件 m1-m9/w5/w8/gt01/perf/无前缀混用;统一为 {category}_{feature} 纯机械改名,破坏 git blame,缓办 | OPEN(低) |
 | 审批无人在线时的通知机制 | 来源 2026-09-07 外部审查复核:审批可达性已修(/admin/approvals 轮询+YOLO),但前端未连接时审批仍会长时间挂起;可加系统通知/声音/轮询提示等 | OPEN(低) |
 | 同批 tool_calls 拒绝联动(产品语义) | 来源 2026-09-07 外部复盘复核(REVIEW-2026-09-07-v0.0.13-external §三):单回合多 tool_calls 顺序串行执行系单写者刻意语义不动;但用户拒绝其中之一后,同批其余工具仍各自独立过 Broker 审批并执行——是否改「拒绝即取消同批余下」属产品设计裁决 | OPEN(低,待裁决) |
-| 前端长会话渲染性能 | 来源 2026-09-07 外部复盘复核:ThreadPrimitive.Messages 无虚拟滚动(多次「加载更早消息」后 DOM 全量堆积,大代码块/密集表格掉帧,可评估 @tanstack/react-virtual);流式期间逐 token 全文正则重扫+ReactMarkdown 全树重建(可加渲染节流);与 P3 context.tsx/thread.tsx 拆分同族 | OPEN(低) |
+| 前端长会话渲染性能 | 来源 2026-09-07 外部复盘复核:ThreadPrimitive.Messages 无虚拟滚动(多次「加载更早消息」后 DOM 全量堆积,大代码块/密集表格掉帧,可评估 @tanstack/react-virtual);流式期间逐 token 全文正则重扫+ReactMarkdown 全树重建(可加渲染节流);2026-09-08 审计复核补记:loadOlder 游标只增无累计上限(连点可无限前插),初始载入已有 50 条/页分页防护;与 P3 context.tsx/thread.tsx 拆分同族 | OPEN(低) |
 
 ## 4. 用户拍板后置(DEFERRED,历史裁决溯 git 史)
 

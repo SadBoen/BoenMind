@@ -202,4 +202,64 @@ mod r2_tombstone_tests {
             "tombstone 必须落在坏事件的原 seq 槽"
         );
     }
+
+    /// 2026-09-08 审计 P0 回归:删会话必须连带清内存 agents 实体——持久侧
+    /// agents 行已随会话删除,内存遗留即幽灵 Agent(常驻增长,且按 agent_id
+    /// 查询会误判其活跃)。
+    #[test]
+    fn session_delete_also_removes_agent_from_memory() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let mut world = test_world(dir.path());
+        // 纯内存口径:store/data_dir 置空跳过持久侧效(MemEventStore 桩未覆盖
+        // erase 路径),被测对象=删除的内存台账清理本身
+        world.store = None;
+        world.config.data_dir = None;
+
+        // 直接装配 Session+Agent(被测对象是删除清理;handle_session_create
+        // 会持久化 Grant,MemEventStore 桩未覆盖该路径)
+        let sid = world.config.id_gen.next_id("sess");
+        let aid = world.config.id_gen.next_id("agent");
+        let mut session = Session {
+            id: sid.clone(),
+            agent_id: aid.clone(),
+            state: SessionState::Created,
+            created_at: world.now_ts(),
+            workspace_id: None,
+        };
+        session.transition(SessionState::Active);
+        world.sessions.insert(sid.clone(), session);
+        world.agents.insert(
+            aid.clone(),
+            Agent {
+                id: aid.clone(),
+                session_id: sid.clone(),
+                name: "回归".into(),
+                model_chain: vec!["stub.model".into()],
+                state: AgentState::Created,
+                budget: crate::state::budget_from_spec(None),
+                system_prompt: None,
+                allowed_tools: None,
+            },
+        );
+        assert!(world.agents.contains_key(&aid), "前置:agent 已在内存台账");
+
+        let req = world.config.id_gen.next_id("req");
+        handle_session_delete(
+            &mut world,
+            req,
+            SessionDeleteParams {
+                session_id: sid.clone(),
+            },
+        )
+        .expect("删会话成功");
+
+        assert!(
+            !world.agents.contains_key(&aid),
+            "删会话后内存不得遗留幽灵 Agent"
+        );
+        assert!(
+            !world.sessions.contains_key(&sid),
+            "会话本身必须已从内存移除"
+        );
+    }
 }
