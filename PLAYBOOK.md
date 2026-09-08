@@ -17,7 +17,7 @@ BOEN_MODEL_BASE_URL / BOEN_MODEL_ID / BOEN_MODEL_STREAM / BOEN_MODEL_API_KEY
     模型接线兜底(config/model.json 优先;STREAM=1 开流式;key 首启播种加密密钥库)
 BOEN_SECRET_MASTER_KEY   加密 FileSecretStore 主密钥(≥32 字符),真实网关模式必需
 BOEN_WORKSPACE_DIR       工作区/文件浏览根,默认 <data-dir>/workspace
-BOEN_TURN_TIMEOUT_SECS   回合内每次模型调用 deadline(秒,默认 120;W10 起与 config/limits.json 同源,env 优先级更高)
+BOEN_TURN_TIMEOUT_SECS   回合内每次模型调用 deadline(秒;ADR-0028 起默认 0=不限时;与 config/limits.json 同源,env 设置 >0 时优先级更高)
 BOEN_OPENCODE_SESSION_ID OpenCode Go 网关 x-opencode-session 头的固定值(可选;缺省进程内随机;
     2026-09-07 起网关缺失该头即 400「cannot be routed efficiently」,openai_http 已默认带)
     限制总旋钮 = <data>/config/limits.json(设置页「限制与超时」全量可改,保存即热生效;
@@ -43,6 +43,7 @@ BOEN_OPENCODE_SESSION_ID OpenCode Go 网关 x-opencode-session 头的固定值(�
 
 - **指令口径(2026-09-07 用户裁定)**:用户说「仿真模拟/模拟操作/实测」且涉及网页 UI = 一律开真实浏览器(browser-use 内置面板或 computer-use)可视化点击输入+截图为证;接口调用/脚本/隐身浏览器截图不算"仿真",须用户明示「脚本模拟就行」才允许走快路;
 - **「任务没跑成功」排障三坑(2026-09-07 全夜实战)**:①同数据目录幽灵双开会把赢家推入粘性拒写态(界面报「Runtime 排空中或持久层故障」),修复=绑定前置到开库前,排障先查 `Get-Process boenmind-server` 是否多只+events.jsonl 序号是否撞车;②旧会话遗留 bash 守护循环会延迟 2~3 分钟重生 server,杀后必须观察 ≥150s;③审批标记只随回合 /v1 流下发,后台续跑回合无流=审批永远无人批——已补 GET /admin/approvals 轮询通道+前端 2.5s 轮询(YOLO 自批/ask 进抽屉);
+- **server 挂在 ZCode 后台任务下会被静默带走**(2026-09-07 06:57 与 2026-09-08 08:2x 两次同签名:无 panic、日志无收尾行、任务退出码 1;第二次死于会话中途且当时无任何操作)。排障=发现 /health 失联先看进程在不在,重启即可;**长驻运行须独立于 ZCode 会话启动**(用户自开终端/计划任务),AI 会话内 run_in_background 拉起的实例只当临时测试态,重要时段前先探活;
 - evaluate/截图会话级坏死:用 title 探针+快照代替;受控输入=点击+逐字+双击发送,中文进不去;
 - **CDP press 的字符注入在内置面板失效**(原生框也收不到)——真键盘路径只能 playwright-core+真实浏览器或交用户实测,注入旁路全是假阴性;
 - 旧 tab id 会彻底 unavailable,须重新 list;确定性 E2E 用 `?e2e=` 钩子;界面别依赖原生 modal;
