@@ -4,6 +4,28 @@
 
 use super::*;
 
+/// 会话目录列表(2026-09-08 三端一致批):内存视图投影,最近活跃在前;
+/// updated_at 缺失时回落创建时间。管理面读模型,不入合同。
+pub(crate) fn handle_session_list(w: &World) -> Vec<crate::state::SessionSummary> {
+    let mut items: Vec<crate::state::SessionSummary> = w
+        .sessions
+        .values()
+        .map(|s| crate::state::SessionSummary {
+            id: s.id.as_str().to_string(),
+            state: s.state.as_str().to_string(),
+            title: s.title.clone(),
+            created_at: s.created_at.clone(),
+            updated_at: Some(s.updated_at.clone().unwrap_or_else(|| s.created_at.clone())),
+        })
+        .collect();
+    items.sort_unstable_by(|a, b| {
+        b.updated_at
+            .cmp(&a.updated_at)
+            .then_with(|| b.created_at.cmp(&a.created_at))
+    });
+    items
+}
+
 pub(crate) fn handle_session_create(
     w: &mut World,
     _request_id: BmId,
@@ -39,6 +61,10 @@ pub(crate) fn handle_session_create(
         state: SessionState::Created,
         created_at: now.clone(),
         workspace_id: spec.workspace_id.clone(),
+        // 会话目录(2026-09-08 三端一致批):初值 updated_at = created_at;
+        // 标题待首条用户消息回填(内容不在事件面,core 直写)
+        title: None,
+        updated_at: Some(now.clone()),
     };
     // created→active(surface_attached):M1 进程内直调即视为已挂接。
     session.transition(SessionState::Active);
@@ -509,6 +535,22 @@ pub(crate) fn handle_send_input(
                 "content_truncated": truncated != params.content,
             }),
         );
+    }
+
+    // 会话目录标题回填(2026-09-08 三端一致批):首条用户消息即标题(截断),
+    // 只在尚无标题时生效(内存守卫 + SQL COALESCE 双重幂等);失败入拒写态
+    //(sessions 表 = 规范状态,静默内存-库漂移即破坏投影纪律)。
+    if session.title.is_none() {
+        let title = crate::runtime::turn::session_title_from(&params.content);
+        if let Some(s) = w.sessions.get_mut(&params.session_id) {
+            s.title = Some(title.clone());
+        }
+        if let Some(store) = w.store.clone()
+            && let Err(e) = store.backfill_session_meta(session.id.as_str(), Some(&title), None)
+        {
+            tracing::error!(error = %e, session = %session.id.as_str(), "会话标题回填落库失败,进入拒写态");
+            w.persist_poisoned = true;
+        }
     }
 
     // 输入原文入受保护存储(A4:不进事件/日志),供崩溃后 claim 幂等续跑(M2.6)

@@ -345,6 +345,16 @@ impl EventStore for PersistStore {
         self.state.save_session_workspace(session_id, workspace_id)
     }
 
+    fn backfill_session_meta(
+        &self,
+        session_id: &str,
+        title: Option<&str>,
+        updated_at: Option<&str>,
+    ) -> StoreResult<()> {
+        self.state
+            .backfill_session_meta(session_id, title, updated_at)
+    }
+
     fn erase_session_contents(&self, session_id: &str, at: &str) -> StoreResult<()> {
         self.state.erase_session_contents(session_id, at)
     }

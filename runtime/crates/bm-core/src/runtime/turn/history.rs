@@ -25,6 +25,20 @@ pub(crate) fn remember_turn(w: &mut World, session_id: BmId, user: String, assis
         &limits,
     );
 }
+/// 会话目录标题(2026-09-08 三端一致批):首条用户消息首行截断 40 字符
+/// (字符安全);空消息回落占位。服务端为唯一权威口径。
+pub(crate) fn session_title_from(content: &str) -> String {
+    let first_line = content.lines().next().unwrap_or("").trim();
+    let mut title: String = first_line.chars().take(40).collect();
+    if first_line.chars().count() > 40 {
+        title.push('…');
+    }
+    if title.is_empty() {
+        title = "新对话".into();
+    }
+    title
+}
+
 pub(crate) fn rebuild_session_chats(w: &mut World) {
     let Some(data_dir) = w.config.data_dir.clone() else {
         return;
@@ -40,6 +54,10 @@ pub(crate) fn rebuild_session_chats(w: &mut World) {
         std::collections::HashMap<(String, u32), TurnSlot>,
     > = std::collections::HashMap::new();
     let mut totals: std::collections::HashMap<BmId, u64> = std::collections::HashMap::new();
+    // 会话目录回填源(2026-09-08 三端一致批):(首条 user_message 截断标题,
+    // 最后一条相关行 ts);与台账重建搭同一次扫描,不二次读盘。
+    let mut meta: std::collections::HashMap<BmId, (Option<String>, Option<String>)> =
+        std::collections::HashMap::new();
     for line in std::io::BufReader::new(f).lines() {
         let Ok(line) = line else { break };
         let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else {
@@ -65,14 +83,28 @@ pub(crate) fn rebuild_session_chats(w: &mut World) {
         if content.is_empty() {
             continue;
         }
+        let ts = v.get("ts").and_then(|t| t.as_str()).map(str::to_string);
         let slot = turns
             .entry(session_id.clone())
             .or_default()
             .entry((op, turn_index))
             .or_default();
         match v.get("kind").and_then(|k| k.as_str()).unwrap_or("") {
-            "user_message" => slot.0 = Some(content),
+            "user_message" => {
+                let m = meta.entry(session_id.clone()).or_default();
+                if m.0.is_none() {
+                    m.0 = Some(session_title_from(&content));
+                }
+                if ts.is_some() {
+                    m.1 = ts;
+                }
+                slot.0 = Some(content);
+            }
             "assistant_final" => {
+                let m = meta.entry(session_id.clone()).or_default();
+                if ts.is_some() {
+                    m.1 = ts;
+                }
                 slot.1 = Some(content);
                 *totals.entry(session_id).or_insert(0) += 1;
             }
@@ -114,6 +146,38 @@ pub(crate) fn rebuild_session_chats(w: &mut World) {
         w.session_turn_totals
             .insert(session_id.clone(), totals.remove(&session_id).unwrap_or(0));
         w.session_chats.insert(session_id, entry);
+    }
+    // 会话目录回填(2026-09-08 三端一致批):存量行 title/updated_at 为 NULL
+    // 时写平(内存 None ⇔ 行 NULL,dirty 即需落库);失败只告警——目录列非
+    // 规范判定位,下次启动可重入补齐。已删/墓碑会话不在 sessions 映射,自然跳过。
+    let store = w.store.clone();
+    for (session_id, (title, last_ts)) in &meta {
+        let Some(s) = w.sessions.get_mut(session_id) else {
+            continue;
+        };
+        let mut dirty = false;
+        if s.title.is_none() {
+            s.title = title.clone();
+            dirty = true;
+        }
+        if s.updated_at.is_none() {
+            s.updated_at = last_ts.clone();
+            dirty = true;
+        }
+        if dirty
+            && let Some(store) = store.as_ref()
+            && let Err(e) = store.backfill_session_meta(
+                session_id.as_str(),
+                s.title.as_deref(),
+                s.updated_at.as_deref(),
+            )
+        {
+            tracing::warn!(
+                error = %e,
+                session = %session_id.as_str(),
+                "会话目录回填落库失败(下次启动重试)"
+            );
+        }
     }
 }
 pub(crate) fn push_capped(
@@ -187,5 +251,20 @@ mod w5_history_tests {
         // 防御:计数滞后(复活/回放场景)不得借位下溢
         assert_eq!(evicted_turns(2, 5), 0);
         assert_eq!(evicted_turns(0, 0), 0);
+    }
+
+    // ---- 会话目录标题(2026-09-08 三端一致批)----
+
+    #[test]
+    fn session_title_takes_first_line_truncated() {
+        assert_eq!(
+            session_title_from("帮我总结这份文档\n第二行不该出现"),
+            "帮我总结这份文档"
+        );
+        let long = "长".repeat(60);
+        let t = session_title_from(&long);
+        assert_eq!(t.chars().count(), 41, "40 字截断 + 省略号");
+        assert!(t.ends_with('…'));
+        assert_eq!(session_title_from("   "), "新对话", "空白消息回落占位");
     }
 }

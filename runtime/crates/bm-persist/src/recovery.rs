@@ -122,7 +122,8 @@ pub fn load_rows(state: &StateDb) -> StoreResult<WorldRows> {
         .collect();
     let sessions = state
         .query_rows(
-            "SELECT id, state, agent_id, created_at, workspace_id FROM sessions",
+            "SELECT id, state, agent_id, created_at, workspace_id, title, updated_at
+             FROM sessions",
             &[],
         )?
         .into_iter()

@@ -24,7 +24,7 @@ use rusqlite::Connection;
 use std::path::Path;
 use std::sync::Mutex;
 
-pub const SCHEMA_VERSION: i64 = 10;
+pub const SCHEMA_VERSION: i64 = 11;
 
 pub struct StateDb {
     pub(crate) conn: Mutex<Connection>,
@@ -79,6 +79,9 @@ impl StateDb {
         }
         if version < 10 {
             Self::migrate_v9_to_v10(&conn)?;
+        }
+        if version < 11 {
+            Self::migrate_v10_to_v11(&conn)?;
         }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)
             .sql()?;
@@ -251,6 +254,24 @@ impl StateDb {
             BEGIN;
             ALTER TABLE tasks ADD COLUMN parent_task_id TEXT;
             ALTER TABLE tasks ADD COLUMN delegation_depth INTEGER NOT NULL DEFAULT 0;
+            COMMIT;
+            "#,
+        )
+        .sql()?;
+        Ok(())
+    }
+
+    /// v10→v11(2026-09-08 会话目录服务端化,expand 加列):sessions.title/updated_at
+    /// ——会话列表此前只存浏览器 localStorage(每设备各记各账,三端不一致的
+    /// 根因);目录收归服务端单一权威(基线「访问端无状态」回归)。
+    /// title = 首条用户消息截断(内容不在事件面,core 直写保护,同
+    /// input_content 先例);updated_at = 最近回合边界(事件物化派生,重放确定)。
+    fn migrate_v10_to_v11(conn: &Connection) -> StoreResult<()> {
+        conn.execute_batch(
+            r#"
+            BEGIN;
+            ALTER TABLE sessions ADD COLUMN title TEXT;
+            ALTER TABLE sessions ADD COLUMN updated_at TEXT;
             COMMIT;
             "#,
         )

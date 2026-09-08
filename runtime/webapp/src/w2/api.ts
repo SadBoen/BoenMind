@@ -427,6 +427,20 @@ export const api = {
       `/admin/sessions/${encodeURIComponent(sid)}`,
       { method: "DELETE" },
     ),
+  // 会话目录(2026-09-08 三端一致批):服务端权威列表,SessionPanel 唯一
+  // 数据源(此前 bm_sessions 存浏览器本地,三设备各记各账不一致的根因)。
+  // 按最近活跃倒序
+  sessionList: () =>
+    req<{
+      ok: boolean;
+      sessions: {
+        id: string;
+        state: string;
+        title: string | null;
+        created_at: string;
+        updated_at: string | null;
+      }[];
+    }>("/admin/sessions"),
   // 会话历史回放(2026-09-06):切会话/刷新后按 sid 拉历史消息(最旧在前)。
   // 分页(2026-09-06 二改):limit 默认 50 上限 200;skip = 从最新一条往回
   // 跳过的条数(已加载越多 skip 越大);has_more 指示是否还有更早——

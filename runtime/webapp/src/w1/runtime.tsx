@@ -8,7 +8,7 @@ import {
 } from "@assistant-ui/react";
 import type { AppendMessage, ThreadMessageLike } from "@assistant-ui/react";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
-import { storage, STORAGE_KEYS, sessionsStore } from "@/lib/storage";
+import { storage, STORAGE_KEYS } from "@/lib/storage";
 import { BM_EVENTS, emit } from "../lib/bus";
 import { api } from "../w2/api";
 
@@ -341,8 +341,9 @@ export function BoenmindRuntimeProvider({
       const newSid = res.headers.get("x-bm-session");
       if (newSid && sessionEpochRef.current === requestEpoch) {
         storage.set(STORAGE_KEYS.SESSION, newSid);
-        const title = text.slice(0, 24) || "新对话";
-        sessionsStore.upsert(newSid, title);
+        // 会话目录已收归服务端(2026-09-08 三端一致批):标题由服务端在首条
+        // user_message 落日志时回填(先于本响应头返回),前端只发刷新信号
+        // 拉权威列表,不再本地记 bm_sessions 账
         emit(BM_EVENTS.sessionsUpdated);
       }
 

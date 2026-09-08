@@ -20,7 +20,7 @@ pub(super) use capability::{
     handle_capability_cancel, handle_provider_call, handle_provider_progress, persist_grant,
 };
 pub(super) use events::handle_turn_event;
-pub(super) use history::{rebuild_session_chats, remember_turn};
+pub(super) use history::{rebuild_session_chats, remember_turn, session_title_from};
 pub(super) use recovery::handle_recovery_settle;
 pub(super) use spawn::spawn_turn;
 

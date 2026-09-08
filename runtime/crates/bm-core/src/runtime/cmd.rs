@@ -25,6 +25,11 @@ pub(crate) enum Cmd {
         params: SessionDeleteParams,
         resp: oneshot::Sender<CoreResult<SessionDeleteResult>>,
     },
+    /// 会话目录列表(2026-09-08 三端一致批;GET /admin/sessions 读模型;
+    /// 只读查询,停机/排空态照常应答,同 EventsAll 口径)。
+    SessionList {
+        resp: oneshot::Sender<Vec<crate::state::SessionSummary>>,
+    },
     EventsPoll {
         params: EventsPollParams,
         resp: oneshot::Sender<CoreResult<EventsPollResult>>,
@@ -344,5 +349,10 @@ pub(crate) fn reply_unavailable(cmd: Cmd) {
         Cmd::RememberTurn { .. } => {}
         // W4b:排空期审批请求按排空口径静默
         Cmd::ApprovalRequested { .. } => {}
+        // 会话目录只读查询:不可用态应答空列表(不悬挂调用方;现行主循环
+        // 停机分支已有真数据臂,此处仅为穷尽性兜底)
+        Cmd::SessionList { resp } => {
+            let _ = resp.send(Vec::new());
+        }
     }
 }

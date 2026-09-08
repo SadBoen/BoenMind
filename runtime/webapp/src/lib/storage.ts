@@ -1,10 +1,17 @@
 // 统一前端 localStorage 键常量与安全存取器(消除散落的魔法字符串与拼写错误)
 
+// 一次性退役清理(2026-09-08 三端一致批):会话目录已收归服务端
+// (GET /admin/sessions),本地老账 bm_sessions 不再读取,清掉残留
+try {
+  localStorage.removeItem("bm_sessions");
+} catch {
+  /* ignore */
+}
+
 export const STORAGE_KEYS = {
   ACTIVE_MODEL: "bm_active_model",
   ACTIVE_ROLE: "bm_active_role",
   SESSION: "bm_session",
-  SESSIONS: "bm_sessions",
   THEME: "bm_theme",
   FONT_SIZE: "bm_font_size",
   LAYOUT: "bm_layout",
@@ -21,55 +28,14 @@ export const STORAGE_KEYS = {
 export type PermissionMode = "ask" | "plan" | "yolo";
 export type ThinkingLevel = "off" | "low" | "medium" | "high";
 
+// 会话目录条目形态(2026-09-08 三端一致批起:数据源 = GET /admin/sessions,
+// 服务端权威;此类型仅作面板渲染视图)。时间已折算为 epoch ms。
 export interface SessionItemMeta {
   id: string;
   title: string;
   createdAt: number;
   updatedAt: number;
 }
-
-export const sessionsStore = {
-  list(): SessionItemMeta[] {
-    try {
-      const raw = storage.get(STORAGE_KEYS.SESSIONS);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  },
-  save(list: SessionItemMeta[]): void {
-    storage.set(STORAGE_KEYS.SESSIONS, JSON.stringify(list));
-  },
-  upsert(id: string, title?: string): SessionItemMeta[] {
-    const list = this.list();
-    const now = Date.now();
-    const existing = list.find((s) => s.id === id);
-    if (existing) {
-      if (title && (!existing.title || existing.title === "新对话")) {
-        existing.title = title;
-      }
-      existing.updatedAt = now;
-      this.save(list);
-      return list;
-    }
-    const newItem: SessionItemMeta = {
-      id,
-      title: title || "新对话",
-      createdAt: now,
-      updatedAt: now,
-    };
-    const next = [newItem, ...list];
-    this.save(next);
-    return next;
-  },
-  remove(id: string): SessionItemMeta[] {
-    const next = this.list().filter((s) => s.id !== id);
-    this.save(next);
-    return next;
-  },
-};
 
 export type StorageKey = typeof STORAGE_KEYS[keyof typeof STORAGE_KEYS];
 

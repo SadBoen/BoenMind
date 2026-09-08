@@ -54,6 +54,26 @@ impl StateDb {
         Ok(())
     }
 
+    /// 会话目录回填(2026-09-08 三端一致批):title/updated_at 只填空不覆盖
+    /// (COALESCE 幂等,启动期重扫可重入;None 参数该列保持原值)。
+    pub fn backfill_session_meta(
+        &self,
+        session_id: &str,
+        title: Option<&str>,
+        updated_at: Option<&str>,
+    ) -> StoreResult<()> {
+        let conn = self.conn.lock().expect("锁未中毒");
+        conn.execute(
+            "UPDATE sessions SET
+                title = COALESCE(title, ?2),
+                updated_at = COALESCE(updated_at, ?3)
+             WHERE id = ?1",
+            rusqlite::params![session_id, title, updated_at],
+        )
+        .sql()?;
+        Ok(())
+    }
+
     /// 会话删除侧效(2026-09-06 A+B):单事务内 ①墓碑(tombstones 防事件
     /// 重放复活)②该会话全部 operations.input_content 置空(用户消息原文
     /// 擦除;操作元数据行保留供审计)。

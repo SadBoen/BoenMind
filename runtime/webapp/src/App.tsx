@@ -13,7 +13,7 @@ import {
   type ThemeDef,
 } from "./w3/themes";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { storage, STORAGE_KEYS, sessionsStore, type SessionItemMeta } from "@/lib/storage";
+import { storage, STORAGE_KEYS, type SessionItemMeta } from "@/lib/storage";
 
 type ThemeId = ThemeDef["id"];
 import {
@@ -270,28 +270,46 @@ function Rail({
 
 function SessionPanel({ collapsed }: { collapsed: boolean }) {
   const [flash, setFlash] = useState(false);
-  const [sessions, setSessions] = useState<SessionItemMeta[]>(() => sessionsStore.list());
+  // 会话目录(2026-09-08 三端一致批):服务端权威列表(GET /admin/sessions),
+  // 各设备同源一致;原浏览器本地老账 bm_sessions 已退役
+  const [sessions, setSessions] = useState<SessionItemMeta[]>([]);
+  const [listError, setListError] = useState<string | null>(null);
   const [activeSid, setActiveSid] = useState<string | null>(() => storage.get(STORAGE_KEYS.SESSION));
 
-  const loadSessions = useCallback(() => {
-    const list = sessionsStore.list();
-    setSessions(list);
-    setActiveSid(storage.get(STORAGE_KEYS.SESSION));
+  const loadSessions = useCallback(async () => {
+    try {
+      const r = await api.sessionList();
+      setSessions(
+        r.sessions.map((s) => ({
+          id: s.id,
+          title: s.title || "",
+          createdAt: Date.parse(s.created_at) || 0,
+          updatedAt: Date.parse(s.updated_at ?? s.created_at) || 0,
+        })),
+      );
+      setListError(null);
+    } catch (err: unknown) {
+      // 不静默回退本地账:列表失败必须可见可重试(空列表假象=丢历史错觉)
+      setListError(err instanceof Error ? err.message : String(err ?? ""));
+    } finally {
+      setActiveSid(storage.get(STORAGE_KEYS.SESSION));
+    }
   }, []);
 
   useEffect(() => {
-    loadSessions();
+    void loadSessions();
     const handleNewChat = () => {
       setFlash(true);
       setActiveSid(null);
       const timer = setTimeout(() => setFlash(false), 400);
       return () => clearTimeout(timer);
     };
+    const onSessionsUpdated = () => void loadSessions();
     window.addEventListener(BM_EVENTS.chatNew, handleNewChat);
-    window.addEventListener(BM_EVENTS.sessionsUpdated, loadSessions);
+    window.addEventListener(BM_EVENTS.sessionsUpdated, onSessionsUpdated);
     return () => {
       window.removeEventListener(BM_EVENTS.chatNew, handleNewChat);
-      window.removeEventListener(BM_EVENTS.sessionsUpdated, loadSessions);
+      window.removeEventListener(BM_EVENTS.sessionsUpdated, onSessionsUpdated);
     };
   }, [loadSessions]);
 
@@ -326,13 +344,12 @@ function SessionPanel({ collapsed }: { collapsed: boolean }) {
     setArmDeleteSid(null);
     if (activeSid === sid) emit(BM_EVENTS.chatNew);
     void api.sessionDelete(sid)
-      .then(() => {
-        setSessions(sessionsStore.remove(sid));
-      })
+      .then(() => loadSessions())
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err ?? "");
         if (/不存在/.test(msg)) {
-          setSessions(sessionsStore.remove(sid));
+          // 已被别处删除:重拉服务端权威列表即消失
+          void loadSessions();
         } else {
           flashDeleteNotice(`会话删除失败:${msg || "网络异常"};列表已保留,可重试`);
         }
@@ -363,6 +380,19 @@ function SessionPanel({ collapsed }: { collapsed: boolean }) {
       </div>
 
       <div className="sessions-list" style={{ display: "flex", flexDirection: "column", gap: "6px", overflowY: "auto" }}>
+        {/* 列表加载失败(2026-09-08 三端一致批):可见可重试,不静默假空 */}
+        {listError ? (
+          <button
+            className="session-item text-left"
+            onClick={() => void loadSessions()}
+            title="点击重试"
+            data-slot="session-list-error"
+          >
+            <div className="status-hint text-destructive">
+              列表加载失败:{listError}(点此重试)
+            </div>
+          </button>
+        ) : null}
         {/* 若当前处于新建状态(无 activeSid)，或者列表为空，显示当前新对话就绪卡片 */}
         {activeSid === null || sessions.length === 0 ? (
           <div className={"session-item active" + (flash ? " flash" : "")} data-slot="session-active-item">

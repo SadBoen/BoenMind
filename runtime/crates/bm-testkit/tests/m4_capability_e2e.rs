@@ -799,6 +799,14 @@ impl bm_persist::EventStore for FailingStore {
     ) -> bm_persist::error::StoreResult<()> {
         Ok(())
     }
+    fn backfill_session_meta(
+        &self,
+        _session_id: &str,
+        _title: Option<&str>,
+        _updated_at: Option<&str>,
+    ) -> bm_persist::error::StoreResult<()> {
+        Ok(())
+    }
     fn save_task(
         &self,
         _row: bm_persist::sqlite_state::TaskRow<'_>,

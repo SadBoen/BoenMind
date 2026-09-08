@@ -586,6 +586,16 @@ impl RuntimeHandle {
         rx.await.map_err(|_| CoreError::Internal)?
     }
 
+    /// 会话目录列表(GET /admin/sessions;2026-09-08 三端一致批)。
+    /// 只读查询,停机/排空态照常应答;句柄失联时返回空列表。
+    pub async fn session_list(&self) -> Vec<crate::state::SessionSummary> {
+        let (tx, rx) = oneshot::channel();
+        if self.tx.send(Cmd::SessionList { resp: tx }).await.is_err() {
+            return Vec::new();
+        }
+        rx.await.unwrap_or_default()
+    }
+
     pub async fn session_resume(
         &self,
         request_id: BmId,

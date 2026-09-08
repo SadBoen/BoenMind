@@ -29,11 +29,12 @@ impl StateDb {
                 EventType::SessionCreated => {
                     let id = str_field(p, "session_id")?;
                     let agent = str_field(p, "agent_id")?;
-                    // 显式列名 + workspace_id 保 NULL:事件载荷不含绑定
-                    // (绑定走 save_session_workspace 投影),重放不得抹掉
+                    // 显式列名 + workspace_id/title 保 NULL:事件载荷不含绑定
+                    // 与标题(绑定/标题走 core 直写投影),重放不得抹掉;
+                    // updated_at 初值 = 创建时间(事件可导出,重放确定)
                     conn.execute(
-                        "INSERT OR REPLACE INTO sessions(id, state, agent_id, created_at, workspace_id)
-                         VALUES(?1, 'active', ?2, ?3, NULL)",
+                        "INSERT OR REPLACE INTO sessions(id, state, agent_id, created_at, workspace_id, title, updated_at)
+                         VALUES(?1, 'active', ?2, ?3, NULL, NULL, ?3)",
                         rusqlite::params![id, agent, ts],
                     )?;
                     Ok(1)
@@ -160,6 +161,14 @@ impl StateDb {
                             completed_at = CASE WHEN ?3 THEN ?4 ELSE completed_at END
                          WHERE id=?1",
                         rusqlite::params![str_field(p, "operation_id")?, to, terminal, ts,],
+                    )?;
+                    // 会话目录 updated_at(2026-09-08 三端一致批):最近回合
+                    // 边界 = operation 状态迁移时刻,自事件派生(重放确定);
+                    // 系统容器操作无 session 行,子查询为 NULL = 空 no-op
+                    conn.execute(
+                        "UPDATE sessions SET updated_at=?2
+                         WHERE id=(SELECT session_id FROM operations WHERE id=?1)",
+                        rusqlite::params![str_field(p, "operation_id")?, ts],
                     )?;
                     Ok(1)
                 }

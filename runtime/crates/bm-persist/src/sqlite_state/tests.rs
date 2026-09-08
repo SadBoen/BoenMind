@@ -300,3 +300,73 @@ fn v4_tasks_and_idem_receipts_roundtrip() {
     assert_eq!(db.list_idem_receipts().unwrap().len(), 1);
     assert_eq!(db.idem_receipt("sha256:absent").unwrap(), None);
 }
+
+/// v10→v11(2026-09-08 会话目录服务端化):存量 v10 库打开自动加
+/// title/updated_at 两列(NULL),既有行保留;backfill_session_meta 只填空
+/// 不覆盖(COALESCE 幂等,重入不改已有值)。
+#[test]
+fn v10_database_upgrades_to_v11_and_backfill_is_fill_if_null() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let path = dir.path().join("state.db");
+    {
+        let conn = rusqlite::Connection::open(&path).expect("建 v10 库");
+        conn.execute_batch(
+            r#"
+            CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY, state TEXT NOT NULL,
+                agent_id TEXT NOT NULL, created_at TEXT NOT NULL,
+                workspace_id TEXT);
+            INSERT INTO sessions VALUES('sess_01JAAAAAAAAAAAAAAAAAAAAA0B',
+                'active', 'agent_01JAAAAAAAAAAAAAAAAAAAAA0C',
+                '2026-09-08T10:00:00.000Z', NULL);
+            PRAGMA user_version = 10;
+            "#,
+        )
+        .expect("v10 schema");
+    }
+    let db = StateDb::open(&path).expect("打开 v10 库(自动迁移)");
+    let rows = db
+        .query_rows(
+            "SELECT title, updated_at FROM sessions WHERE id = 'sess_01JAAAAAAAAAAAAAAAAAAAAA0B'",
+            &[],
+        )
+        .expect("读迁移后行");
+    assert_eq!(rows.len(), 1, "存量行保留");
+    assert!(rows[0]["title"].is_null(), "title 新列为 NULL");
+    assert!(rows[0]["updated_at"].is_null(), "updated_at 新列为 NULL");
+
+    // 回填:只填空
+    db.backfill_session_meta(
+        "sess_01JAAAAAAAAAAAAAAAAAAAAA0B",
+        Some("帮我总结这份文档"),
+        Some("2026-09-08T10:05:00.000Z"),
+    )
+    .expect("回填目录");
+    // 重入:已有值不被覆盖(None 参数同样保持原值)
+    db.backfill_session_meta(
+        "sess_01JAAAAAAAAAAAAAAAAAAAAA0B",
+        Some("后来的一条消息"),
+        None,
+    )
+    .expect("重入回填为 no-op");
+    let rows = db
+        .query_rows(
+            "SELECT title, updated_at FROM sessions WHERE id = 'sess_01JAAAAAAAAAAAAAAAAAAAAA0B'",
+            &[],
+        )
+        .expect("读回填后行");
+    assert_eq!(
+        rows[0]["title"],
+        serde_json::json!("帮我总结这份文档"),
+        "已有标题不被重入覆盖"
+    );
+    assert_eq!(
+        rows[0]["updated_at"],
+        serde_json::json!("2026-09-08T10:05:00.000Z"),
+        "updated_at 已填平"
+    );
+    // 不存在的会话 = 空 no-op 不报错
+    db.backfill_session_meta("sess_absent", Some("x"), Some("y"))
+        .expect("不存在的会话 no-op");
+}

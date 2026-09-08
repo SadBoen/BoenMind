@@ -90,6 +90,11 @@ pub struct SessionRow {
     pub created_at: String,
     /// 重启续聊配套(2026-09-06):会话绑定工作目录(未绑定 = None)。
     pub workspace_id: Option<String>,
+    /// 会话目录(2026-09-08 三端一致批):标题 = 首条用户消息截断
+    /// (未命名/存量旧行 = None,启动回填写平)。
+    pub title: Option<String>,
+    /// 会话目录:最近回合边界时间(事件物化派生;存量旧行 = None)。
+    pub updated_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -182,6 +187,15 @@ pub trait EventStore: Send + Sync {
         &self,
         session_id: &str,
         workspace_id: Option<&str>,
+    ) -> StoreResult<()>;
+
+    /// 会话目录回填(2026-09-08 三端一致批):title/updated_at 只填空不覆盖
+    /// (幂等可重入;None 参数该列保持原值)。
+    fn backfill_session_meta(
+        &self,
+        session_id: &str,
+        title: Option<&str>,
+        updated_at: Option<&str>,
     ) -> StoreResult<()>;
 
     /// 会话删除侧效(2026-09-06 A+B):墓碑 + operations.input_content 擦除
@@ -408,6 +422,16 @@ pub mod test_support {
             _workspace_id: Option<&str>,
         ) -> StoreResult<()> {
             unimplemented!("MemEventStore: save_session_workspace 未在测试中触达")
+        }
+        fn backfill_session_meta(
+            &self,
+            _session_id: &str,
+            _title: Option<&str>,
+            _updated_at: Option<&str>,
+        ) -> StoreResult<()> {
+            // 内存形态无行可落;目录字段由 World 内存视图承载(标题回填路径
+            // 会触达本方法,不能再以 unimplemented 打崩带 store 的测试装配)
+            Ok(())
         }
         fn erase_session_contents(&self, _session_id: &str, _at: &str) -> StoreResult<()> {
             unimplemented!("MemEventStore: erase_session_contents 未在测试中触达")

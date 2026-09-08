@@ -16,6 +16,22 @@ pub struct Session {
     /// W8(ADR-0018):会话绑定的工作区注册表 id(None = 不绑定)。
     /// 进程内作用域:Web 会话指针随重启失效,持久化无用户可见收益。
     pub workspace_id: Option<String>,
+    /// 会话目录(2026-09-08 三端一致批):标题 = 首条用户消息首行截断
+    /// (None = 未命名/存量待回填)。内容不在事件面(A4),走 core 直写保护。
+    pub title: Option<String>,
+    /// 会话目录:最近回合边界时间(与 sessions.updated_at 列同源:事件
+    /// 物化落库,settle_operation 同步内存投影;None = 旧数据待启动回填)。
+    pub updated_at: Option<String>,
+}
+
+/// 会话目录条目(GET /admin/sessions 读模型;管理面不入合同)。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SessionSummary {
+    pub id: String,
+    pub state: String,
+    pub title: Option<String>,
+    pub created_at: String,
+    pub updated_at: Option<String>,
 }
 
 impl Session {

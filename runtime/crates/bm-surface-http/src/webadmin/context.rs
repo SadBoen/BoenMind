@@ -65,6 +65,15 @@ pub async fn context_search(
     Json(json!({ "ok": true, "q": q, "hits": hits, "total": hits.len() })).into_response()
 }
 
+/// GET /admin/sessions:会话目录(2026-09-08 三端一致批)。此前「有哪些
+/// 会话」只存浏览器 localStorage(bm_sessions,每设备各记各账,三端列表
+/// 不一致的根因);目录收归服务端单一权威,前端启动即拉本端点(管理面
+/// 不入合同)。按最近活跃倒序,内存视图投影(经核心单写者)。
+pub(crate) async fn session_list(State(cfg): State<AdminConfig>) -> Response {
+    let sessions = cfg.handle.session_list().await;
+    Json(json!({ "ok": true, "sessions": sessions })).into_response()
+}
+
 /// DELETE /admin/sessions/{session_id}:会话删除(2026-09-06 A+B)。
 /// 经核心单写者执行:墓碑 + operations 原文擦除 + context-log 流式过滤;
 /// events.jsonl 仅元数据不动(A4/审计口径)。不可恢复。

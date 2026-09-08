@@ -218,6 +218,10 @@ impl World {
                     created_at: s.created_at,
                     // W8+重启续聊(2026-09-06):绑定随行持久装载
                     workspace_id: s.workspace_id,
+                    // 会话目录(2026-09-08 三端一致批):标题/活跃时间随行装载
+                    //(旧行为 None,启动期自 context-log 回填写平)
+                    title: s.title,
+                    updated_at: s.updated_at,
                 },
             );
         }
@@ -519,6 +523,12 @@ impl World {
             };
             (op.session_id.clone(), op.agent_id.clone(), from, to, reason)
         };
+        // 会话目录 updated_at 内存投影(2026-09-08 三端一致批):与
+        // materialize 对本事件的 sessions.updated_at 物化同源同刻;系统容器
+        // 操作无 session 行,get_mut 为 None 自然跳过
+        if let Some(s) = self.sessions.get_mut(&session_id) {
+            s.updated_at = Some(now.clone());
+        }
         self.emit(
             EventType::OperationStateChanged,
             Some(session_id),
@@ -647,6 +657,10 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
                 Cmd::GetOperation { params, resp } => {
                     let _ = resp.send(handle_get_operation(&world, params));
                 }
+                // 会话目录只读查询(2026-09-08):停机残存态照常应答
+                Cmd::SessionList { resp } => {
+                    let _ = resp.send(handle_session_list(&world));
+                }
                 Cmd::Stop { resp, .. } => {
                     let _ = resp.send(());
                 }
@@ -661,6 +675,10 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
                 resp,
             } => {
                 let _ = resp.send(handle_session_create(&mut world, request_id, params));
+            }
+            // 会话目录列表(2026-09-08 三端一致批;GET /admin/sessions)
+            Cmd::SessionList { resp } => {
+                let _ = resp.send(handle_session_list(&world));
             }
             Cmd::SessionResume {
                 request_id,

@@ -225,6 +225,8 @@ mod r2_tombstone_tests {
             state: SessionState::Created,
             created_at: world.now_ts(),
             workspace_id: None,
+            title: None,
+            updated_at: None,
         };
         session.transition(SessionState::Active);
         world.sessions.insert(sid.clone(), session);
@@ -261,5 +263,51 @@ mod r2_tombstone_tests {
             !world.sessions.contains_key(&sid),
             "会话本身必须已从内存移除"
         );
+    }
+
+    // ---- 会话目录(2026-09-08 三端一致批;/admin/sessions 读模型)----
+
+    fn catalog_session(world: &World, updated_at: Option<String>) -> Session {
+        Session {
+            id: world.config.id_gen.next_id("sess"),
+            agent_id: world.config.id_gen.next_id("agent"),
+            state: SessionState::Active,
+            created_at: "2026-09-08T08:00:00.000Z".into(),
+            workspace_id: None,
+            title: None,
+            updated_at,
+        }
+    }
+
+    #[test]
+    fn session_list_orders_by_recent_activity() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let mut world = test_world(dir.path());
+        world.store = None;
+        world.config.data_dir = None;
+
+        let mut early = catalog_session(&world, Some("2026-09-08T09:00:00.000Z".into()));
+        early.title = Some("早".into());
+        let late = catalog_session(&world, Some("2026-09-08T11:00:00.000Z".into()));
+        // updated_at 缺失(存量旧行):读模型回落 created_at
+        let legacy = catalog_session(&world, None);
+        for s in [early, late, legacy] {
+            world.sessions.insert(s.id.clone(), s);
+        }
+
+        let items = handle_session_list(&world);
+        assert_eq!(items.len(), 3);
+        assert_eq!(
+            items[0].updated_at.as_deref(),
+            Some("2026-09-08T11:00:00.000Z"),
+            "最近活跃在前"
+        );
+        assert_eq!(items[1].title.as_deref(), Some("早"));
+        assert_eq!(
+            items[2].updated_at.as_deref(),
+            Some("2026-09-08T08:00:00.000Z"),
+            "缺 updated_at 的旧行回落 created_at 排末位"
+        );
+        assert_eq!(items[2].title, None, "未命名会话标题为 null 交前端回落");
     }
 }

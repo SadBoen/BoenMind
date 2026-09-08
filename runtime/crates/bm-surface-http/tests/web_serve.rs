@@ -74,3 +74,142 @@ async fn t34_web_root_served_without_auth_api_still_guarded() {
 
     let _ = handle;
 }
+
+/// 会话目录(2026-09-08 三端一致批):GET /admin/sessions 返回服务端权威
+/// 列表——建会话即出现,删除即消失;三端一致的根本,此前只有浏览器
+/// localStorage 各记各账。注:harness 未配门户墙,/admin 面免 Bearer
+/// (与 webadmin_tests 同口径);/rpc 仍须 Bearer。
+#[tokio::test]
+async fn t35_admin_session_list_is_server_authoritative() {
+    use bm_contract::ids::{IdGen, SeqIdGen};
+    use bm_surface_http::webadmin::AdminConfig;
+
+    let dir = tempfile::tempdir().expect("临时目录");
+    let ws = tempfile::tempdir().expect("工作区目录");
+    let t = token::load_or_create(dir.path()).expect("令牌");
+    let store: Arc<PersistStore> = Arc::new(PersistStore::open(dir.path()).expect("打开"));
+    let connector: Arc<dyn ModelConnector> = Arc::new(MockConnector::new(vec![]));
+    let handle = RuntimeHandle::start(RuntimeConfig {
+        capabilities: bm_providers::builtin::builtin_capability_set(),
+        async_executor: None,
+        model_streaming: false,
+        limits: bm_core::LimitsCell::with_default(),
+        job_board: None,
+        version: "0.1.0-m1".into(),
+        data_dir: Some(dir.path().to_path_buf()),
+        store: Some(store.clone()),
+        connector,
+        secret_store: Arc::new(MemSecretStore::new()),
+        id_gen: Arc::new(SeqIdGen::new()),
+        clock: Arc::new(SystemClock),
+        turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
+        max_attempts: None,
+    })
+    .await;
+
+    let admin = AdminConfig {
+        data_dir: dir.path().to_path_buf(),
+        workspace_root: ws.path().to_path_buf(),
+        mcp_config: None,
+        builtin_caps: Arc::new(vec![]),
+        mcp_servers: Arc::new(std::sync::RwLock::new(vec![])),
+        handle: handle.clone(),
+        hub: None,
+        secrets: Some(Arc::new(MemSecretStore::new()) as Arc<dyn bm_core::ports::SecretStore>),
+        model_routes: None,
+        shutdown: None,
+        web_dir: None,
+        bundled_plugins_dir: None,
+        limits: Default::default(),
+        limits_sources: Default::default(),
+        jobs: None,
+    };
+    let app = bm_surface_http::router(
+        handle.clone(),
+        Arc::new(t.clone()),
+        store.clone(),
+        Arc::new(tokio::sync::Notify::new()),
+        None,
+        Arc::new("mock-model".into()),
+        Some(admin),
+        None,
+        false,
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("绑定");
+    let addr = listener.local_addr().expect("地址");
+    tokio::spawn(async move { axum::serve(listener, app).await.expect("serve") });
+    let base = format!("http://{addr}");
+    let client = reqwest::Client::new();
+
+    // 未建会话:空目录
+    let r = client
+        .get(format!("{base}/admin/sessions"))
+        .send()
+        .await
+        .expect("GET");
+    assert_eq!(r.status().as_u16(), 200);
+    let body: serde_json::Value = r.json().await.expect("信封");
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["sessions"].as_array().unwrap().len(), 0);
+
+    // 建会话(/rpc 须 Bearer)→ 目录出现该会话
+    let req_id = IdGen::next_id(&SeqIdGen::new(), "req");
+    let envelope = serde_json::json!({
+        "v": "0.1",
+        "method": "session.create",
+        "request_id": req_id.as_str(),
+        "params": {"agent": {"name": "assistant", "model_chain": ["mock-model"]}},
+    });
+    let r = client
+        .post(format!("{base}/rpc/session.create"))
+        .header("Authorization", format!("Bearer {t}"))
+        .json(&envelope)
+        .send()
+        .await
+        .expect("session.create");
+    let body: serde_json::Value = r.json().await.expect("信封");
+    assert_eq!(body["ok"], true, "{body}");
+    let sess = body["result"]["session_id"]
+        .as_str()
+        .expect("session_id")
+        .to_string();
+
+    let r = client
+        .get(format!("{base}/admin/sessions"))
+        .send()
+        .await
+        .expect("GET");
+    let body: serde_json::Value = r.json().await.expect("信封");
+    let items = body["sessions"].as_array().expect("数组");
+    assert_eq!(items.len(), 1, "建会话即入目录");
+    assert_eq!(items[0]["id"], serde_json::json!(sess));
+    assert_eq!(items[0]["state"], serde_json::json!("active"));
+    assert!(items[0]["created_at"].is_string());
+    assert!(
+        items[0]["updated_at"].is_string(),
+        "新建会话 updated_at = created_at"
+    );
+
+    // 删除 → 目录同步消失
+    let r = client
+        .delete(format!("{base}/admin/sessions/{sess}"))
+        .send()
+        .await
+        .expect("DELETE 会话");
+    assert_eq!(r.status().as_u16(), 200);
+    let r = client
+        .get(format!("{base}/admin/sessions"))
+        .send()
+        .await
+        .expect("GET");
+    let body: serde_json::Value = r.json().await.expect("信封");
+    assert_eq!(
+        body["sessions"].as_array().unwrap().len(),
+        0,
+        "删除即出目录"
+    );
+
+    let _ = handle;
+}
