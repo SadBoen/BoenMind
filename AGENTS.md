@@ -7,7 +7,7 @@ BoenMind:个人生态的 AI Runtime / AI OS,当前为**阶段一(跨平台单软
 (Erlang/OTP、Kubernetes、VS Code;转录与验证报告已删溯 git 史,ADR-0027)。
 合同库冻结 v1.0(字段只增不破)。
 
-**当前版本 = v0.0.13(已发版)**,此后批次落 main 未打 tag。进度只认 git:
+**当前版本 = v0.0.14(已发版,2026-09-08 审计核实修复批)**,此后批次落 main 未打 tag。进度只认 git:
 交付全史 = git tag+提交说明(ADR-0027,不另立时间线文件);欠账唯一入口 = `milestones/BACKLOG.md`;
 已裁决/驳回勿再翻案唯一清单 = `milestones/SETTLED.md`(ADR-0026)。
 ⚠ Git 历史已于 2026-09-07 重写(filter-repo 清构建产物),v0.0.9/11/12 tag 哈希全变,既有 clone 须重拉;GitHub Release 资产不受影响。
