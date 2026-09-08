@@ -123,6 +123,8 @@ pub fn admin_routes(cfg: AdminConfig) -> axum::Router {
     axum::Router::new()
         .route("/providers", get(providers_list).post(providers_create))
         .route("/providers/probe", post(providers_probe))
+        // issue #12:熔断健康快照(只读)
+        .route("/providers/health", get(providers_health))
         .route(
             "/providers/{id}",
             put(providers_update).delete(providers_delete),

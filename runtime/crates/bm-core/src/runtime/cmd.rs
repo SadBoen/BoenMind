@@ -30,6 +30,11 @@ pub(crate) enum Cmd {
     SessionList {
         resp: oneshot::Sender<Vec<crate::state::SessionSummary>>,
     },
+    /// Provider 熔断健康快照(issue #12;GET /admin/providers/health 读模型;
+    /// 只读查询,停机/排空态照常应答,同 SessionList 口径)。
+    ProviderHealth {
+        resp: oneshot::Sender<Vec<(String, crate::runtime::ProviderHealth)>>,
+    },
     EventsPoll {
         params: EventsPollParams,
         resp: oneshot::Sender<CoreResult<EventsPollResult>>,
@@ -352,6 +357,11 @@ pub(crate) fn reply_unavailable(cmd: Cmd) {
         // 会话目录只读查询:不可用态应答空列表(不悬挂调用方;现行主循环
         // 停机分支已有真数据臂,此处仅为穷尽性兜底)
         Cmd::SessionList { resp } => {
+            let _ = resp.send(Vec::new());
+        }
+        // Provider 健康只读查询:不可用态应答空快照(不悬挂调用方;主循环
+        // 停机分支已有真数据臂,此处仅为穷尽性兜底)
+        Cmd::ProviderHealth { resp } => {
             let _ = resp.send(Vec::new());
         }
     }

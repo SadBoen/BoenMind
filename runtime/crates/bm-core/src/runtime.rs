@@ -673,6 +673,10 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
                 Cmd::SessionList { resp } => {
                     let _ = resp.send(handle_session_list(&world));
                 }
+                // Provider 健康只读查询(issue #12):停机残存态照常应答
+                Cmd::ProviderHealth { resp } => {
+                    let _ = resp.send(handle_provider_health(&world));
+                }
                 Cmd::Stop { resp, .. } => {
                     let _ = resp.send(());
                 }
@@ -691,6 +695,10 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
             // 会话目录列表(2026-09-08 三端一致批;GET /admin/sessions)
             Cmd::SessionList { resp } => {
                 let _ = resp.send(handle_session_list(&world));
+            }
+            // Provider 健康快照(issue #12;GET /admin/providers/health)
+            Cmd::ProviderHealth { resp } => {
+                let _ = resp.send(handle_provider_health(&world));
             }
             Cmd::SessionResume {
                 request_id,

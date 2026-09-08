@@ -4,6 +4,19 @@
 
 use super::*;
 
+/// Provider 熔断健康快照(issue #12):内存视图投影,按 provider 名排序
+/// (稳定输出);仅含已发生调用失败的 provider(健康态不建条目)。
+/// 管理面读模型,不入合同。
+pub(crate) fn handle_provider_health(w: &World) -> Vec<(String, super::ProviderHealth)> {
+    let mut items: Vec<(String, super::ProviderHealth)> = w
+        .provider_health
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    items.sort_by(|a, b| a.0.cmp(&b.0));
+    items
+}
+
 /// 会话目录列表(2026-09-08 三端一致批):内存视图投影,最近活跃在前;
 /// updated_at 缺失时回落创建时间。管理面读模型,不入合同。
 pub(crate) fn handle_session_list(w: &World) -> Vec<crate::state::SessionSummary> {

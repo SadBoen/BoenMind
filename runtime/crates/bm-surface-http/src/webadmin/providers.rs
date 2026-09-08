@@ -47,6 +47,25 @@ fn write_providers(data_dir: &Path, providers: &[Value]) -> Result<(), String> {
     )
 }
 
+/// GET /admin/providers/health:熔断健康快照(issue #12)。数据 = 核心单写者
+/// 内存视图(只读命令),仅含已发生过调用失败的 provider——「提前发现」=
+/// 本端点看当前熔断态 + /admin/providers/probe 按需主动探针,二者组合。
+pub async fn providers_health(State(cfg): State<AdminConfig>) -> Response {
+    let health = cfg.handle.provider_health().await;
+    let entries: Vec<Value> = health
+        .into_iter()
+        .map(|(name, h)| {
+            json!({
+                "provider": name,
+                "status": h.status,
+                "fail_streak": h.fail_streak,
+                "cooldown_until": h.cooldown_until.map(|t| t.to_rfc3339()),
+            })
+        })
+        .collect();
+    Json(json!({ "ok": true, "health": entries })).into_response()
+}
+
 /// provider 条目字段校验;返回归一化后的错误消息。
 fn validate_provider_input(body: &Value) -> Result<(), (StatusCode, String)> {
     let bad = |m: &str| Err((StatusCode::BAD_REQUEST, m.to_string()));

@@ -596,6 +596,21 @@ impl RuntimeHandle {
         rx.await.unwrap_or_default()
     }
 
+    /// Provider 熔断健康快照(GET /admin/providers/health;issue #12)。
+    /// 只读查询,停机/排空态照常应答;句柄失联时返回空列表。
+    pub async fn provider_health(&self) -> Vec<(String, ProviderHealth)> {
+        let (tx, rx) = oneshot::channel();
+        if self
+            .tx
+            .send(Cmd::ProviderHealth { resp: tx })
+            .await
+            .is_err()
+        {
+            return Vec::new();
+        }
+        rx.await.unwrap_or_default()
+    }
+
     pub async fn session_resume(
         &self,
         request_id: BmId,
