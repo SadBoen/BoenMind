@@ -3,17 +3,34 @@
 // W3:主题系统启动恢复(useThemeBoot)+ 玻璃主题花瓣层(Petals)。
 import { BoenmindRuntimeProvider } from "./w1/runtime";
 import { Thread } from "./w1/thread";
-import { SettingsPage } from "./w2/SettingsPage";
 import { WorkspaceFiles } from "./w2/WorkspaceFiles";
-import { MusicPlayer } from "./w2/MusicPlayer";
-import { Petals } from "./w3/Petals";
 import {
   useThemeBoot,
   loadThemeState,
   type ThemeDef,
 } from "./w3/themes";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { storage, STORAGE_KEYS, type SessionItemMeta } from "@/lib/storage";
+
+// 非首屏必需面按需分包(2026-09-09 审计代码拆分项):设置中心(整棵 w2+w3
+// 管理页树)/音乐播放器/花瓣层只在对应入口触发时才拉取 chunk,首屏 JS
+// 显著瘦身。本地 dist 加载为亚秒级,Suspense 空兜底即可。
+const SettingsPage = lazy(() =>
+  import("./w2/SettingsPage").then((m) => ({ default: m.SettingsPage })),
+);
+const MusicPlayer = lazy(() =>
+  import("./w2/MusicPlayer").then((m) => ({ default: m.MusicPlayer })),
+);
+const GlassPetals = lazy(() =>
+  import("./w3/Petals").then((m) => ({ default: m.Petals })),
+);
 
 type ThemeId = ThemeDef["id"];
 import {
@@ -122,7 +139,11 @@ export default function App() {
             : `52px ${s} ${ss} minmax(0, 1fr) ${ws} ${w}`,
         }}
       >
-        {theme === "glass" ? <Petals /> : null}
+        {theme === "glass" ? (
+          <Suspense fallback={null}>
+            <GlassPetals />
+          </Suspense>
+        ) : null}
         <Rail
           settingsActive={settingsOpen}
           onSettings={() => setSettingsOpen((v) => !v)}
@@ -145,7 +166,9 @@ export default function App() {
           }}
         />
         {settingsOpen ? (
-          <SettingsPage onClose={() => setSettingsOpen(false)} />
+          <Suspense fallback={null}>
+            <SettingsPage onClose={() => setSettingsOpen(false)} />
+          </Suspense>
         ) : (
           <>
             <SessionPanel collapsed={layout.sessionsCollapsed} />
@@ -502,7 +525,13 @@ function WorkspacePanel({ collapsed }: { collapsed: boolean }) {
           </button>
         ))}
       </div>
-      {tab === "files" ? <WorkspaceFiles /> : <MusicPlayer />}
+      {tab === "files" ? (
+        <WorkspaceFiles />
+      ) : (
+        <Suspense fallback={null}>
+          <MusicPlayer />
+        </Suspense>
+      )}
     </div>
   );
 }
