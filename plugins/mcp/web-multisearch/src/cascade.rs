@@ -612,7 +612,10 @@ pub(crate) fn j(v: &Value, key: &str) -> String {
 }
 
 /// 非 2xx → HttpErr::Status(2xx 返回原 resp;供轮换识别 401/403/429)。
-pub(crate) async fn check_status(resp: reqwest::Response, name: &str) -> Result<reqwest::Response, HttpErr> {
+pub(crate) async fn check_status(
+    resp: reqwest::Response,
+    name: &str,
+) -> Result<reqwest::Response, HttpErr> {
     let status = resp.status();
     if status.is_success() {
         return Ok(resp);

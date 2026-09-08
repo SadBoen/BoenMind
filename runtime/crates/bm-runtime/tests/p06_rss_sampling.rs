@@ -7,8 +7,6 @@
 //! (默认 #[ignore],与 perf_m2 家族同口径;采样走 OS 工具,Windows =
 //! tasklist,Unix = /proc/<pid>/status VmRSS)
 
-use std::io::Read;
-use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
