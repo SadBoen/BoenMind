@@ -133,15 +133,20 @@ pub(crate) fn rebuild_session_chats(w: &mut World) {
         if entry.is_empty() {
             continue;
         }
-        // 双上限与 push_capped 同口径(台账形状与运行期写入完全一致)
+        // 双上限与 push_capped 同口径(台账形状与运行期写入完全一致;
+        // ADR-0028:0 = 不裁剪)
         let limits = w.config.limits.get();
-        while entry.len() > limits.history_max_turns {
-            entry.remove(0);
+        if limits.history_max_turns > 0 {
+            while entry.len() > limits.history_max_turns {
+                entry.remove(0);
+            }
         }
-        let mut total: usize = entry.iter().map(|(u, a)| u.len() + a.len()).sum();
-        while total > limits.history_max_chars && entry.len() > 1 {
-            total -= entry[0].0.len() + entry[0].1.len();
-            entry.remove(0);
+        if limits.history_max_chars > 0 {
+            let mut total: usize = entry.iter().map(|(u, a)| u.len() + a.len()).sum();
+            while total > limits.history_max_chars && entry.len() > 1 {
+                total -= entry[0].0.len() + entry[0].1.len();
+                entry.remove(0);
+            }
         }
         w.session_turn_totals
             .insert(session_id.clone(), totals.remove(&session_id).unwrap_or(0));
@@ -187,13 +192,18 @@ pub(crate) fn push_capped(
     limits: &crate::limits::Limits,
 ) {
     entry.push((user, assistant));
-    while entry.len() > limits.history_max_turns {
-        entry.remove(0);
+    // ADR-0028:上限 0 = 不限制(全量回喂),缺省默认即 0。
+    if limits.history_max_turns > 0 {
+        while entry.len() > limits.history_max_turns {
+            entry.remove(0);
+        }
     }
-    let mut total: usize = entry.iter().map(|(u, a)| u.len() + a.len()).sum();
-    while total > limits.history_max_chars && entry.len() > 1 {
-        total -= entry[0].0.len() + entry[0].1.len();
-        entry.remove(0);
+    if limits.history_max_chars > 0 {
+        let mut total: usize = entry.iter().map(|(u, a)| u.len() + a.len()).sum();
+        while total > limits.history_max_chars && entry.len() > 1 {
+            total -= entry[0].0.len() + entry[0].1.len();
+            entry.remove(0);
+        }
     }
 }
 #[allow(dead_code)] // 测试助手在 lib 构建下天然未用(同模块既有 allow 惯例)
@@ -203,7 +213,13 @@ mod w5_history_tests {
     use crate::limits::Limits;
 
     fn push(entry: &mut Vec<(String, String)>, u: String, a: String) {
-        push_capped(entry, u, a, &Limits::default());
+        // ADR-0028 起默认 0=不限;裁剪行为测试显式构造旧双上限(20 轮/24K)。
+        let limits = Limits {
+            history_max_turns: HISTORY_MAX_TURNS,
+            history_max_chars: HISTORY_MAX_CHARS,
+            ..Limits::default()
+        };
+        push_capped(entry, u, a, &limits);
     }
     const HISTORY_MAX_TURNS: usize = 20;
     const HISTORY_MAX_CHARS: usize = 24_000;
@@ -240,6 +256,20 @@ mod w5_history_tests {
         let big = "y".repeat(HISTORY_MAX_CHARS + 100);
         push(&mut entry, big.clone(), big);
         assert_eq!(entry.len(), 1, "最新一条不因字符上限被丢");
+    }
+
+    // ADR-0028:双上限 0 = 不限制(全量回喂),默认即 0。
+    #[test]
+    fn zero_limits_mean_unlimited() {
+        let limits = Limits::default();
+        assert_eq!(limits.history_max_turns, 0);
+        assert_eq!(limits.history_max_chars, 0);
+        let mut entry = Vec::new();
+        for i in 0..30 {
+            push_capped(&mut entry, format!("u{i}"), format!("a{i}"), &limits);
+        }
+        assert_eq!(entry.len(), 30, "0 上限不得裁掉任何轮次");
+        assert_eq!(entry[0].0, "u0", "最早一轮必须仍在");
     }
 
     #[test]

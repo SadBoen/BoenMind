@@ -75,6 +75,7 @@
 | Autorun 结构化终态判定 | 来源 2026-09-07 第三方评审报告复核(属实):autorun 完成哨兵纯靠模型自然语言输出 `[[AUTORUN_DONE]]` 前缀匹配(autorun.rs),弱模型吞标记即无法主动收束(停滞检测/max_turns 为兜底);评估=增结构化路径(哨兵工具调用/JSON 契约) | OPEN(低) |
 | session_chats 规范化落盘 | 来源 2026-09-07 第三方评审报告复核:重启续聊现由 context-log.jsonl 逆向重建(history.rs rebuild_session_chats,W5 已验收刻意设计,勿修清单在册勿擅动);报告「诊断日志数据流倒挂」定性被驳回(context-log 系 A4 决策下对话正文唯一落盘),但 SQLite 表/事件增发规范化承载属合理演进方向,涉合同 Minor | OPEN(低,待裁决) |
 | webadmin 管理操作事件审计 | 来源 2026-09-07 第三方评审报告复核(报告称「第二权力中心」):/admin 面直接磁盘/进程/配置操作不经 EventBus 审计属实,但管理面不入冻结合同系基线既有决策,单写者纪律管核心状态机;收敛提案=管理意图走核心管理命令入审计流,涉新 ADR | OPEN(低,待裁决) |
+| provider/网关报错原文透传 | 来源 2026-09-08 限制归零批取证:模型网关 4xx 报错原文在 openai_http map_status 处被丢(detail_ref=None),用户只见「模型降级链耗尽/回合执行失败」,「命令总运行数量大于60」类真实死因查无现场;修法=错误原文进错误信封+context-log 快照(注意凭据脱敏边界,exec_log fail-closed 先例) | OPEN |
 
 ### 3.3 低优杂项
 

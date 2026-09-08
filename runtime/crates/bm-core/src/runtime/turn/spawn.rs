@@ -55,18 +55,26 @@ pub(crate) fn spawn_turn(
     let clock = w.config.clock.clone();
     let agent_id = agent.id.clone();
     let remaining = agent.budget.remaining_tokens();
-    let max_attempts = w
-        .config
-        .max_attempts
-        .unwrap_or_else(|| {
-            (chain
-                .len()
-                .min(w.config.limits.get().model_max_attempts as usize)) as u32
-        })
-        .clamp(1, 3);
+    // ADR-0028:model_max_attempts=0 = 不限重试(None,链内按序循环);
+    // 显式 RuntimeConfig.max_attempts 兼容保留(仍钳 1..=3)。
+    let max_attempts: Option<u32> = match w.config.max_attempts {
+        Some(n) => Some(n.clamp(1, 3)),
+        None => {
+            let lim = w.config.limits.get().model_max_attempts;
+            if lim == 0 {
+                None
+            } else {
+                Some((chain.len().min(lim as usize) as u32).clamp(1, 3))
+            }
+        }
+    };
     // W10(ADR-0024):模型调用超时走 limits 热生效(env 覆盖已由装配方
     // 折算进 Cell;RuntimeConfig.turn_timeout_secs 保留为兼容字段不再读)。
+    // ADR-0028:0 = 不限时——合同 InvokeRequest.deadline 为必填时间戳,
+    // 以 100 年远期哨兵表达「无 deadline」(remaining_until 折出巨大预算)。
     let timeout_secs = w.config.limits.get().model_call_timeout_secs as i64;
+    let unlimited_deadline = (timeout_secs <= 0)
+        .then(|| format_ts(clock.now() + Duration::seconds(100 * 365 * 24 * 3600)));
     let tx = w.tx.clone();
     let op_id = operation_id.clone();
     let streaming = w.config.model_streaming;
@@ -303,7 +311,12 @@ pub(crate) fn spawn_turn(
             );
         }
 
-        for attempt in 1..=max_attempts {
+        let mut attempt: u32 = 0;
+        loop {
+            attempt += 1;
+            if max_attempts.is_some_and(|m| attempt > m) {
+                break;
+            }
             let model_id = chain[((attempt - 1) as usize) % chain.len()].clone();
             let mut tool_rounds: u32 = 0;
             loop {
@@ -318,7 +331,10 @@ pub(crate) fn spawn_turn(
                         agent_id: agent_id.clone(),
                         remaining_tokens: remaining,
                     },
-                    deadline: format_ts(clock.now() + Duration::seconds(timeout_secs)),
+                    deadline: match &unlimited_deadline {
+                        Some(ts) => ts.clone(),
+                        None => format_ts(clock.now() + Duration::seconds(timeout_secs)),
+                    },
                     attempt,
                 };
 
@@ -582,12 +598,14 @@ pub(crate) fn spawn_turn(
                                     // operations 轮询至终态(上限 60s);需审批能力
                                     // 轮询至审批裁决+执行终态(上限 300s)。
                                     let mut tool_result = String::from("工具执行无应答");
-                                    // W10:等待时限走 limits(审批 300s/普通 60s 默认)。
+                                    // W10:等待时限走 limits;ADR-0028:0 = 不限时(None)。
                                     let lim_wait = limits_cell.get();
-                                    let wait_secs: u64 = if approval_id.is_some() {
-                                        (lim_wait.approval_wait_ms / 1000).max(1)
+                                    let wait_secs: Option<u64> = if approval_id.is_some() {
+                                        (lim_wait.approval_wait_ms > 0)
+                                            .then(|| (lim_wait.approval_wait_ms / 1000).max(1))
                                     } else {
-                                        (lim_wait.tool_wait_ms / 1000).max(1)
+                                        (lim_wait.tool_wait_ms > 0)
+                                            .then(|| (lim_wait.tool_wait_ms / 1000).max(1))
                                     };
                                     // 直通修复(2026-09-03 VPS 实测 P1):同步收据
                                     // state=succeeded 且 result 内联时立即回喂——
@@ -603,10 +621,14 @@ pub(crate) fn spawn_turn(
                                             tool_result = receipt_value["result"].to_string();
                                         }
                                     } else if let Some(tool_op) = tool_op {
-                                        let deadline = std::time::Instant::now()
-                                            + std::time::Duration::from_secs(wait_secs);
+                                        let deadline = wait_secs.map(|s| {
+                                            std::time::Instant::now()
+                                                + std::time::Duration::from_secs(s)
+                                        });
                                         loop {
-                                            if std::time::Instant::now() > deadline {
+                                            if deadline
+                                                .is_some_and(|dl| std::time::Instant::now() > dl)
+                                            {
                                                 if let Some(appr_id) = &approval_id {
                                                     // P1-3: 审批等待超时后主动发送 Withdraw 撤销审批单,
                                                     // 防止后续用户迟到点击批准引发无主的真实副作用执行
@@ -690,6 +712,13 @@ pub(crate) fn spawn_turn(
                                                 }
                                                 }
                                             } else {
+                                                // ADR-0028 修复:等待时限 0=不限时后,
+                                                // 本循环必须对终态失败/取消即时脱身——
+                                                // 失败操作从不写 op_results,只查
+                                                // GetOpResult 会无限空转挂死回合。
+                                                // 顺序:先查结果载荷(成功路径,兼容
+                                                // 载荷晚于状态翻转的落盘节拍),再查
+                                                // 操作是否终态失败/取消。
                                                 let (otx, orx) = tokio::sync::oneshot::channel();
                                                 let _ = tx
                                                     .send(Cmd::GetOpResult {
@@ -700,6 +729,37 @@ pub(crate) fn spawn_turn(
                                                 if let Ok(Ok(Some(v))) = orx.await {
                                                     tool_result = v.to_string();
                                                     break;
+                                                }
+                                                let (stx, srx) = tokio::sync::oneshot::channel();
+                                                let _ = tx
+                                                    .send(Cmd::GetOperation {
+                                                        params: wire::GetOperationParams {
+                                                            operation_id: tool_op.clone(),
+                                                        },
+                                                        resp: stx,
+                                                    })
+                                                    .await;
+                                                if let Ok(Ok(receipt)) = srx.await {
+                                                    match receipt.state {
+                                                    bm_contract::states::OperationState::Failed => {
+                                                        let detail = receipt
+                                                            .error
+                                                            .as_ref()
+                                                            .map(|e| {
+                                                                format!("(error_code={:?})", e.code.get())
+                                                            })
+                                                            .unwrap_or_default();
+                                                        tool_result = format!(
+                                                            "工具执行失败{detail},请按失败原因调整入参重试或改走其他路径。"
+                                                        );
+                                                        break;
+                                                    }
+                                                    bm_contract::states::OperationState::Cancelled => {
+                                                        tool_result = "工具执行已取消。".into();
+                                                        break;
+                                                    }
+                                                    _ => {}
+                                                }
                                                 }
                                             }
                                         }
@@ -874,7 +934,8 @@ pub(crate) fn spawn_turn(
                                 error_code,
                             }))
                             .await;
-                        if !retryable || attempt == max_attempts {
+                        let exhausted = max_attempts.is_some_and(|m| attempt >= m);
+                        if !retryable || exhausted {
                             // W9:回合失败边界事件(轨迹视图失败红标数据源)
                             ctx_log.record_event(
                                 session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
@@ -894,6 +955,10 @@ pub(crate) fn spawn_turn(
                                 }))
                                 .await;
                             return;
+                        }
+                        // ADR-0028:不限重试时加 1s 退避,防对僵死网关热循环打点
+                        if max_attempts.is_none() {
+                            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                         }
                         // 降级链下一 attempt(退出工具轮)
                         break;

@@ -57,7 +57,10 @@ async fn m4_rig() -> (RuntimeHandle, Arc<SeqIdGen>, Arc<bm_core::clock::MockCloc
         max_attempts: None,
         async_executor: None,
         model_streaming: false,
-        limits: bm_core::LimitsCell::with_default(),
+        limits: bm_core::LimitsCell::new(bm_core::Limits {
+            approval_wait_ms: 300_000,
+            ..bm_core::Limits::default()
+        }),
         job_board: None,
     };
     (RuntimeHandle::start(config).await, ids, clock)
@@ -503,7 +506,10 @@ async fn m4_rig_at(
         max_attempts: None,
         async_executor: None,
         model_streaming: false,
-        limits: bm_core::LimitsCell::with_default(),
+        limits: bm_core::LimitsCell::new(bm_core::Limits {
+            approval_wait_ms: 300_000,
+            ..bm_core::Limits::default()
+        }),
         job_board: None,
     };
     RuntimeHandle::start(config).await
@@ -549,7 +555,10 @@ async fn t44_idempotency_suppression_and_intent_gate() {
         max_attempts: None,
         async_executor: None,
         model_streaming: false,
-        limits: bm_core::LimitsCell::with_default(),
+        limits: bm_core::LimitsCell::new(bm_core::Limits {
+            approval_wait_ms: 300_000,
+            ..bm_core::Limits::default()
+        }),
         job_board: None,
     })
     .await;
@@ -709,7 +718,10 @@ async fn t45_outbox_pending_recovers_to_outcome_unknown() {
         max_attempts: None,
         async_executor: None,
         model_streaming: false,
-        limits: bm_core::LimitsCell::with_default(),
+        limits: bm_core::LimitsCell::new(bm_core::Limits {
+            approval_wait_ms: 300_000,
+            ..bm_core::Limits::default()
+        }),
         job_board: None,
     })
     .await;
@@ -1007,7 +1019,10 @@ async fn t46_persist_failure_degrades_safely() {
         max_attempts: None,
         async_executor: None,
         model_streaming: false,
-        limits: bm_core::LimitsCell::with_default(),
+        limits: bm_core::LimitsCell::new(bm_core::Limits {
+            approval_wait_ms: 300_000,
+            ..bm_core::Limits::default()
+        }),
         job_board: None,
     })
     .await;

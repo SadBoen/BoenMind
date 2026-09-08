@@ -217,7 +217,15 @@ pub(crate) fn capability_call_inner(
             effective_risk,
         } => {
             let mut mgr = ApprovalManager::new(&mut w.grants, &*w.config.clock, &*w.config.id_gen);
-            let ttl_ms = w.config.limits.get().approval_wait_ms.max(10_000);
+            // ADR-0028:approval_wait_ms=0 = 审批永不过期——Approval.expires_at
+            // 为合同必填时间戳,以 100 年远期哨兵表达「无 TTL」(仍默认拒绝,
+            // 只是不再定时撤销;超时语义见基线 §9.6 不变)。
+            let raw_wait = w.config.limits.get().approval_wait_ms;
+            let ttl_ms = if raw_wait == 0 {
+                100 * 365 * 24 * 3600 * 1000u64
+            } else {
+                raw_wait
+            };
             let mut approval = mgr.open(OpenApproval {
                 capability: &params.capability,
                 principal: &ctx.principal,

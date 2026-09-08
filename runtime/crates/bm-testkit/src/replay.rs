@@ -18,6 +18,27 @@ pub const MODEL_B: &str = "openai.gpt-4o-mini";
 pub const STANDARD_BUDGET_TOKENS: u64 = 50_000;
 pub const STANDARD_BUDGET_TURNS: u32 = 10;
 
+/// 台架限制:黄金轨迹录制时的有界口径(ADR-0028 前的旧默认值)。
+/// 生产默认已归零(0=不限制,见 ADR-0028);台架必须钉住有界值——
+/// 轨迹场景与脚本步数/降级链长耦合(如 GT-B 两次超时后按链长收束),
+/// 吃生产默认会让脚本越界步返回 Internal 而非 Timeout。
+pub fn test_limits() -> bm_core::LimitsCell {
+    bm_core::LimitsCell::new(bm_core::Limits {
+        model_call_timeout_secs: 120,
+        model_max_attempts: 3,
+        tool_wait_ms: 60_000,
+        approval_wait_ms: 300_000,
+        tool_rounds_max: 64,
+        loop_breaker_consecutive: 5,
+        history_max_turns: 20,
+        history_max_chars: 24_000,
+        stream_hard_cap_ms: 900_000,
+        nonstream_wait_ms: 180_000,
+        autorun_default_max_turns: 6,
+        ..bm_core::Limits::default()
+    })
+}
+
 pub struct TestRig {
     pub handle: RuntimeHandle,
     pub ids: Arc<SeqIdGen>,
@@ -169,7 +190,7 @@ pub async fn rig_on(dir: &std::path::Path, script: Vec<Step>) -> TestRig {
         capabilities: vec![bm_providers::builtin::model_invoke_cap()],
         async_executor: None,
         model_streaming: false,
-        limits: bm_core::LimitsCell::with_default(),
+        limits: test_limits(),
         job_board: None,
         version: "0.1.0-m1".into(),
         data_dir: Some(dir.to_path_buf()),
@@ -240,7 +261,7 @@ pub async fn rig(
         capabilities: [vec![bm_providers::builtin::model_invoke_cap()], extra_caps].concat(),
         async_executor: executor,
         model_streaming: false,
-        limits: bm_core::LimitsCell::with_default(),
+        limits: test_limits(),
         job_board: None,
         version: "0.1.0-m1".into(),
         data_dir: data_dir.clone(),

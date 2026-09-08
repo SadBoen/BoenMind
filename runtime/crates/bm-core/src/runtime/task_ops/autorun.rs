@@ -75,10 +75,15 @@ pub(crate) fn handle_task_autorun_start(
             },
         },
     )?;
+    // ADR-0028:0 = 不限轮数(用户显式 0 与默认 0 同义);非零仍钳 1..=50。
     let max_turns = params
         .max_turns
-        .unwrap_or(w.config.limits.get().autorun_default_max_turns as u64)
-        .clamp(1, 50);
+        .unwrap_or(w.config.limits.get().autorun_default_max_turns as u64);
+    let max_turns = if max_turns == 0 {
+        u64::MAX
+    } else {
+        max_turns.clamp(1, 50)
+    };
     w.autorun.insert(
         params.task_id.clone(),
         AutorunState {

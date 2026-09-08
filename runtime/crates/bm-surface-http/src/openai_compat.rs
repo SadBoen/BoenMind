@@ -312,10 +312,11 @@ pub async fn chat_completions(
     if !stream {
         // 非流式:轮询聚合到终态一次返回
         let store = state.store.clone();
-        // W10(ADR-0024):非流式聚合等待走 limits。
-        let deadline = Instant::now() + Duration::from_millis(state.limits.get().nonstream_wait_ms);
+        // W10(ADR-0024):非流式聚合等待走 limits;ADR-0028:0 = 不限时。
+        let wait_ms = state.limits.get().nonstream_wait_ms;
+        let deadline = (wait_ms > 0).then(|| Instant::now() + Duration::from_millis(wait_ms));
         loop {
-            if Instant::now() > deadline {
+            if deadline.is_some_and(|dl| Instant::now() > dl) {
                 return err_response(StatusCode::INTERNAL_SERVER_ERROR, "回合超时");
             }
             tokio::time::sleep(Duration::from_millis(80)).await;
@@ -392,8 +393,10 @@ pub async fn chat_completions(
         // 长工具阶段中途掐断交互流——此后审批标记再无下发通道(YOLO 失效、
         // ask 无卡片),界面误显「完成」而后端仍在跑。改 900s;keepalive
         // 每 10s 保活前端看门狗,空闲不中断。
-        // W10(ADR-0024):流式硬顶走 limits(v0.0.11 起 900s 默认)。
-        let deadline = Instant::now() + Duration::from_millis(state.limits.get().stream_hard_cap_ms);
+        // W10(ADR-0024):流式硬顶走 limits(v0.0.11 起 900s 默认);
+        // ADR-0028:0 = 不设硬顶,流与回合同寿。
+        let hard_cap_ms = state.limits.get().stream_hard_cap_ms;
+        let deadline = (hard_cap_ms > 0).then(|| Instant::now() + Duration::from_millis(hard_cap_ms));
         // 静默保活(2026-09-02 修「工具调用卡死」):工具轮执行期间事件面
         // 可静默 25s+,前端看门狗(60s 无任何字节即中止)会被误杀。空闲超
         // 10s 下发一行 SSE 注释——前端按任意字节重置看门狗,注释行被解析
@@ -403,7 +406,7 @@ pub async fn chat_completions(
         // finish_reason:stop + [DONE],硬顶超时/失败被客户端误认为正常完成。
         let mut outcome = "finished";
         loop {
-            if Instant::now() > deadline {
+            if deadline.is_some_and(|dl| Instant::now() > dl) {
                 outcome = "timeout";
                 break;
             }

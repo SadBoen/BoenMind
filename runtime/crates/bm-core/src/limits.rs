@@ -87,18 +87,19 @@ impl Default for Limits {
             exec_output_max_chars: 16_000,
             job_retention_max: 50,
             job_retention_max_bytes: 100 * 1024 * 1024,
-            tool_wait_ms: 60_000,
-            approval_wait_ms: 300_000,
-            // 2026-09-07 架构评审 P0-1:总轮数安全网(变参轮转此前无界烧钱;
-            // v0.0.10 刻意不设 30 上限的口径由「64 的宽松安全网 + 0=关」承接——
-            // 正常链式工具调用远达不到,熔断只拦失控)。
-            tool_rounds_max: 64,
-            loop_breaker_consecutive: 5,
+            // 2026-09-08 用户裁决(ADR-0028):对话链路限制默认全零(0=不限制),
+            // 长程任务不设人工栅栏;唯一保留的硬停止 = 防空转熔断(同命令同参
+            // 连续 10 次)。0 语义由各消费点显式实现(spawn/capability/history/
+            // autorun/openai_compat);旧默认(64 轮/120s/900s 等)仍可在设置页调回。
+            tool_wait_ms: 0,
+            approval_wait_ms: 0,
+            tool_rounds_max: 0,
+            loop_breaker_consecutive: 10,
             loop_breaker_window: 20,
-            model_call_timeout_secs: 120,
-            model_max_attempts: 3,
-            stream_hard_cap_ms: 900_000,
-            nonstream_wait_ms: 180_000,
+            model_call_timeout_secs: 0,
+            model_max_attempts: 0,
+            stream_hard_cap_ms: 0,
+            nonstream_wait_ms: 0,
             stream_keepalive_ms: 10_000,
             mcp_default_tool_timeout_ms: 30_000,
             mcp_remote_timeout_ms: 60_000,
@@ -108,8 +109,8 @@ impl Default for Limits {
             mcp_reconnect_limit: 3,
             provider_fail_threshold: 3,
             provider_cooldown_ms: 30_000,
-            history_max_turns: 20,
-            history_max_chars: 24_000,
+            history_max_turns: 0,
+            history_max_chars: 0,
             audit_entry_max_chars: 16 * 1024,
             context_tail_max_bytes: 2 * 1024 * 1024,
             context_tail_entries: 120,
@@ -118,7 +119,7 @@ impl Default for Limits {
             watchdog_stall_after_ms: 15 * 60 * 1000,
             watchdog_hard_limit_ms: 24 * 60 * 60 * 1000,
             watchdog_tick_ms: 60 * 1000,
-            autorun_default_max_turns: 6,
+            autorun_default_max_turns: 0,
             fs_rw_max_bytes: 16 * 1024 * 1024,
             fs_search_default_results: 80,
             fs_search_max_results: 500,
@@ -208,15 +209,15 @@ pub const KEY_META: &[KeyMeta] = &[
     meta!(
         "tool_wait_ms",
         "工具轮",
-        "免审批工具等待结果(毫秒)",
-        5_000.0,
+        "免审批工具等待结果(毫秒,0=不限)",
+        0.0,
         600_000.0
     ),
     meta!(
         "approval_wait_ms",
         "工具轮",
-        "等用户审批时限(毫秒)",
-        10_000.0,
+        "等用户审批时限(毫秒,0=不限)",
+        0.0,
         1_800_000.0
     ),
     meta!(
@@ -243,29 +244,29 @@ pub const KEY_META: &[KeyMeta] = &[
     meta!(
         "model_call_timeout_secs",
         "模型调用",
-        "每次模型调用超时(秒)",
-        10.0,
+        "每次模型调用超时(秒,0=不限)",
+        0.0,
         3_600.0
     ),
     meta!(
         "model_max_attempts",
         "模型调用",
-        "模型降级链重试次数",
-        1.0,
+        "模型降级链重试次数(0=不限)",
+        0.0,
         3.0
     ),
     meta!(
         "stream_hard_cap_ms",
         "流式应答",
-        "流式回答总时长硬顶(毫秒)",
-        60_000.0,
+        "流式回答总时长硬顶(毫秒,0=不限)",
+        0.0,
         7_200_000.0
     ),
     meta!(
         "nonstream_wait_ms",
         "流式应答",
-        "非流式回答等待(毫秒)",
-        30_000.0,
+        "非流式回答等待(毫秒,0=不限)",
+        0.0,
         3_600_000.0
     ),
     meta!(
@@ -334,15 +335,15 @@ pub const KEY_META: &[KeyMeta] = &[
     meta!(
         "history_max_turns",
         "上下文与记忆",
-        "喂给模型的最近对话轮数",
-        1.0,
+        "喂给模型的最近对话轮数(0=不限)",
+        0.0,
         200.0
     ),
     meta!(
         "history_max_chars",
         "上下文与记忆",
-        "喂给模型的对话总字数",
-        1_000.0,
+        "喂给模型的对话总字数(0=不限)",
+        0.0,
         200_000.0
     ),
     meta!(
@@ -404,8 +405,8 @@ pub const KEY_META: &[KeyMeta] = &[
     meta!(
         "autorun_default_max_turns",
         "任务监护",
-        "自动驾驶默认轮数",
-        1.0,
+        "自动驾驶默认轮数(0=不限)",
+        0.0,
         50.0
     ),
     meta!(
@@ -667,9 +668,26 @@ mod tests {
         let l = Limits::default();
         assert_eq!(l.exec_default_ms, 120_000);
         assert_eq!(l.exec_max_ms, 600_000);
-        assert_eq!(l.model_call_timeout_secs, 120);
-        assert_eq!(l.history_max_turns, 20);
-        assert_eq!(l.loop_breaker_consecutive, 5);
+        assert_eq!(l.model_call_timeout_secs, 0);
+        assert_eq!(l.history_max_turns, 0);
+        assert_eq!(l.loop_breaker_consecutive, 10);
+    }
+
+    // 2026-09-08 用户裁决(ADR-0028):对话链路限制默认全零=不限制,
+    // 唯一硬停止 = 同命令同参连续 10 次熔断。漂移即测试红。
+    #[test]
+    fn conversation_limits_default_to_unlimited() {
+        let l = Limits::default();
+        assert_eq!(l.tool_rounds_max, 0);
+        assert_eq!(l.tool_wait_ms, 0);
+        assert_eq!(l.approval_wait_ms, 0);
+        assert_eq!(l.model_max_attempts, 0);
+        assert_eq!(l.stream_hard_cap_ms, 0);
+        assert_eq!(l.nonstream_wait_ms, 0);
+        assert_eq!(l.history_max_turns, 0);
+        assert_eq!(l.history_max_chars, 0);
+        assert_eq!(l.autorun_default_max_turns, 0);
+        assert_eq!(l.loop_breaker_consecutive, 10);
     }
 
     #[test]
