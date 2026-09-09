@@ -142,7 +142,9 @@ export function Composer() {
       if (pending) {
         storage.remove(STORAGE_KEYS.PERMISSION_MODE);
         setPermMode(pending);
-        api.sessionModeSet(sid, pending).catch(() => {});
+        api
+          .sessionModeSet(sid, pending)
+          .catch((e) => console.warn("权限模式暂存上报失败", e));
         return;
       }
       api
@@ -150,7 +152,7 @@ export function Composer() {
         .then((d) => {
           if (d?.permission_mode) setPermMode(d.permission_mode);
         })
-        .catch(() => {});
+        .catch((e) => console.warn("权限模式拉取失败", e));
     };
     syncFromServer();
     const offSwitched = on(BM_EVENTS.sessionSwitched, syncFromServer);
@@ -372,8 +374,10 @@ export function Composer() {
               return;
             }
             // ADR-0030:切换 = 发指令改服务端会话状态(落事实事件并持久);
-            // 失败静默,下次进入会话时以服务端值为准
-            api.sessionModeSet(sid, val).catch(() => {});
+            // 失败仅留告警,下次进入会话时以服务端值为准
+            api
+              .sessionModeSet(sid, val)
+              .catch((e) => console.warn("权限模式切换上报失败", e));
           }}
         >
           <SelectTrigger

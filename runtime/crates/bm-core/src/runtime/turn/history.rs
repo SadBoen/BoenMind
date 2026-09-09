@@ -206,7 +206,7 @@ pub(crate) fn push_capped(
         }
     }
 }
-#[allow(dead_code)] // 测试助手在 lib 构建下天然未用(同模块既有 allow 惯例)
+#[cfg(test)] // 门控剥除:测试模块不进生产 lib(同步全仓 mod tests 惯例)
 mod w5_history_tests {
     #[allow(unused_imports)] // lib 构建下 cfg(test) 剥离产生假性未用
     use super::*;

@@ -88,8 +88,8 @@ impl PortalAuth {
             .and_then(|v| v["password_hash"].as_str().map(String::from));
         let oauth = cfg
             .as_ref()
-            .and_then(|v| v["oauth"].as_object())
-            .and_then(|_| serde_json::from_value(cfg.as_ref().unwrap()["oauth"].clone()).ok());
+            .and_then(|v| v.get("oauth"))
+            .and_then(|val| serde_json::from_value(val.clone()).ok());
         Arc::new(Self {
             data_dir,
             limits: bm_core::limits::LimitsCell::with_default(),
