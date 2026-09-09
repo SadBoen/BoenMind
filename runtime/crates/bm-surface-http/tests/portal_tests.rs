@@ -338,3 +338,179 @@ async fn public_bind_unconfigured_denies_public_surface() {
         .expect("请求");
     assert_eq!(resp.status().as_u16(), 200, "Bearer 令牌必须放行");
 }
+
+/// issue #47:OIDC 登录全链路(mock IdP)+ state 一次性防伪。
+#[tokio::test]
+async fn oidc_login_full_flow_and_state_replay_rejected() {
+    // --- mock IdP:token 端点回固定 id_token(背通道直取,签名不校验形态) ---
+    fn b64url(bytes: &[u8]) -> String {
+        const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+        let mut out = String::new();
+        for chunk in bytes.chunks(3) {
+            let b = [
+                chunk[0],
+                *chunk.get(1).unwrap_or(&0),
+                *chunk.get(2).unwrap_or(&0),
+            ];
+            let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
+            out.push(T[(n >> 18) as usize & 63] as char);
+            out.push(T[(n >> 12) as usize & 63] as char);
+            if chunk.len() > 1 {
+                out.push(T[(n >> 6) as usize & 63] as char);
+            }
+            if chunk.len() > 2 {
+                out.push(T[n as usize & 63] as char);
+            }
+        }
+        out
+    }
+    let seg = |v: serde_json::Value| b64url(v.to_string().as_bytes());
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let id_token = format!(
+        "{}.{}.{}",
+        seg(json!({"alg": "HS256", "typ": "JWT"})),
+        seg(json!({"iss": "https://mock-idp", "aud": "boenmind-web",
+                    "sub": "user-1", "email": "u@example.com", "exp": now + 300})),
+        seg(json!({"sig": "mock"}))
+    );
+    let app = axum::Router::new()
+        .route(
+            "/authorize",
+            axum::routing::get(
+                |axum::extract::Query(q): axum::extract::Query<
+                    std::collections::HashMap<String, String>,
+                >| async move {
+                    let st = q.get("state").cloned().unwrap_or_default();
+                    axum::response::Response::builder()
+                        .status(302)
+                        .header(
+                            "Location",
+                            format!("/api/portal/oauth/callback?code=the-code&state={st}"),
+                        )
+                        .body(axum::body::Body::empty())
+                        .unwrap()
+                },
+            ),
+        )
+        .route(
+            "/token",
+            axum::routing::post(move || {
+                let body = axum::Json(json!({
+                    "access_token": "at-1", "token_type": "Bearer",
+                    "id_token": id_token,
+                }));
+                async move { body }
+            }),
+        );
+    let idp = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let idp_base = format!("http://{}", idp.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(idp, app).await.unwrap() });
+
+    // --- portal.json:密码 + oauth 指向 mock IdP ---
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("config")).unwrap();
+    std::fs::write(
+        dir.path().join("config/portal.json"),
+        json!({
+            "password_hash": format!("s1${}", bm_surface_http::portal::hash_password("secret1", "s1")),
+            "oauth": {
+                "issuer": "https://mock-idp",
+                "authorization_endpoint": format!("{idp_base}/authorize"),
+                "token_endpoint": format!("{idp_base}/token"),
+                "client_id": "boenmind-web",
+                "client_secret": "sec-1",
+                "scopes": ["openid", "email"]
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let base = spawn(dir.path().to_path_buf()).await;
+    let c = client_no_redirect();
+
+    // ① state 端点暴露 oauth 可用
+    let (st, body, _) = send(
+        &c,
+        reqwest::Method::GET,
+        &format!("{base}/api/portal/state"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(st, 200);
+    assert_eq!(body["oauth"], json!(true), "{body}");
+
+    // ② 登录入口 302 到 IdP(带 state)
+    let resp = c
+        .get(format!("{base}/api/portal/oauth/login"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 302);
+    let loc = resp
+        .headers()
+        .get("location")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    assert!(loc.starts_with(&format!("{idp_base}/authorize?")), "{loc}");
+    let state = loc.split("state=").nth(1).unwrap_or_default().to_string();
+    assert!(!state.is_empty());
+
+    // ③ IdP 回跳 callback(带 code+state)→ 换 token → 签发会话
+    let resp = c
+        .get(format!(
+            "{base}/api/portal/oauth/callback?code=the-code&state={state}"
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 302, "成功后回首页");
+    assert_eq!(resp.headers().get("location").unwrap(), "/");
+    let cookie = resp
+        .headers()
+        .get("set-cookie")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .to_string();
+    assert!(cookie.starts_with("boen_session="), "{cookie}");
+
+    // ④ 会话 cookie 有效:state 端点 authed=true
+    let (st, body, _) = send(
+        &c,
+        reqwest::Method::GET,
+        &format!("{base}/api/portal/state"),
+        Some(cookie.clone()),
+        None,
+    )
+    .await;
+    assert_eq!(st, 200);
+    assert_eq!(body["authed"], json!(true), "{body}");
+
+    // ⑤ state 重放 = 拒(一次性)
+    let resp = c
+        .get(format!(
+            "{base}/api/portal/oauth/callback?code=the-code&state={state}"
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 401, "state 重放必须拒绝");
+
+    // ⑥ 密码路径回归:oauth 开启不破坏密码登录
+    let (st, _body, _) = send(
+        &c,
+        reqwest::Method::POST,
+        &format!("{base}/api/portal/login"),
+        None,
+        Some(json!({"password": "wrong"})),
+    )
+    .await;
+    assert_eq!(st, 401);
+}

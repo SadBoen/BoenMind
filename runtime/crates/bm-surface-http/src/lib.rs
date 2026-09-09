@@ -161,6 +161,12 @@ pub fn router(
         .route("/api/portal/login", post(portal::portal_login))
         .route("/api/portal/bootstrap", post(portal::portal_bootstrap))
         .route("/api/portal/password", post(portal::portal_password))
+        // issue #47:OIDC 登录(未配置 oauth 时两路均报未配置)
+        .route("/api/portal/oauth/login", get(portal::portal_oauth_login))
+        .route(
+            "/api/portal/oauth/callback",
+            get(portal::portal_oauth_callback),
+        )
         .with_state(state.clone());
     // W2 管理面:同一 require_api_auth 口径(issue #10 补立后不再是
     // 「公开挂载欠账」,外层门户墙继续作为整站第二道收口)

@@ -65,6 +65,11 @@
         font-size: 12.5px; color: #f87171;
       }
       .hint { margin-top: 20px; font-size: 11.5px; line-height: 1.7; color: rgba(232,234,242,.38); text-align: center; }
+      #sso {
+        display: block; margin-top: 14px; text-align: center;
+        font-size: 13px; color: rgba(165,180,252,.9); text-decoration: none;
+      }
+      #sso:hover { text-decoration: underline; }
     </style>
   </head>
   <body>
@@ -78,6 +83,8 @@
         <button id="btn" type="submit">进 入</button>
         <p class="msg" id="msg"></p>
       </form>
+      <a id="sso" href="/api/portal/oauth/login" style="display:none"
+         data-slot="sso-login">或使用 SSO(OIDC)登录 →</a>
       <p class="hint">本页面用于保护 BoenMind 网页界面;<br />程序化访问请继续使用访问令牌(Bearer)。</p>
     </main>
     <script>
@@ -110,6 +117,7 @@
           document.getElementById("btn").textContent = "设置并进入";
           document.getElementById("sub").textContent = "首次使用:设置一个访问密码,保护这台 BoenMind";
         }
+        if (s.oauth) { document.getElementById("sso").style.display = "block"; }
       }).catch(function () {});
     </script>
   </body>

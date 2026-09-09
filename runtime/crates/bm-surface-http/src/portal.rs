@@ -31,6 +31,27 @@ pub const SESSION_COOKIE: &str = "boen_session";
 /// 登录成功时透明升级,离线爆破成本从 10⁹/秒 量级降至 10⁵/秒 以下)
 const PBKDF2_ITERS: u32 = 100_000;
 
+/// issue #47:OIDC/OAuth2 配置(portal.json 的可选 `oauth` 节;未配置 =
+/// 门户墙行为与现状完全一致)。手动端点声明(不做 .well-known 发现,
+/// 私有部署 IdP 语义最少);client_secret = confidential client 背通道交换。
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct OidcConfig {
+    /// 可选:校验 id_token.iss(未配则跳过 iss 校验)。
+    pub issuer: Option<String>,
+    pub authorization_endpoint: String,
+    pub token_endpoint: String,
+    pub client_id: String,
+    pub client_secret: String,
+    #[serde(default = "default_oidc_scopes")]
+    pub scopes: Vec<String>,
+    /// 可选:回调地址覆盖(缺省由请求 Host 推导 http://{host}/api/portal/oauth/callback)。
+    pub redirect_uri: Option<String>,
+}
+
+fn default_oidc_scopes() -> Vec<String> {
+    vec!["openid".into(), "email".into(), "profile".into()]
+}
+
 pub struct PortalAuth {
     pub data_dir: PathBuf,
     /// W10(ADR-0024):锁定阈值/时长/Cookie 有效期热读单元。
@@ -40,7 +61,14 @@ pub struct PortalAuth {
     pub sessions: Mutex<HashSet<String>>,
     /// 登录失败限速台账:来源 → (连续失败次数, 锁定到期时刻)。
     login_gate: Mutex<HashMap<String, (u32, Option<Instant>)>>,
+    /// #47:OIDC 配置(None = 未启用)。
+    pub oauth: Option<OidcConfig>,
+    /// #47:OAuth 流程防伪状态:state → 创建时刻(TTL 内一次性)。
+    oauth_states: Mutex<HashMap<String, Instant>>,
 }
+
+/// OAuth state 有效期。
+const OAUTH_STATE_TTL: Duration = Duration::from_secs(600);
 
 impl PortalAuth {
     pub fn load_with_limits(data_dir: PathBuf, limits: bm_core::limits::LimitsCell) -> Arc<Self> {
@@ -52,17 +80,30 @@ impl PortalAuth {
     }
 
     pub fn load(data_dir: PathBuf) -> Arc<Self> {
-        let hash = std::fs::read_to_string(data_dir.join("config/portal.json"))
+        let cfg = std::fs::read_to_string(data_dir.join("config/portal.json"))
             .ok()
-            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
+        let hash = cfg
+            .as_ref()
             .and_then(|v| v["password_hash"].as_str().map(String::from));
+        let oauth = cfg
+            .as_ref()
+            .and_then(|v| v["oauth"].as_object())
+            .and_then(|_| serde_json::from_value(cfg.as_ref().unwrap()["oauth"].clone()).ok());
         Arc::new(Self {
             data_dir,
             limits: bm_core::limits::LimitsCell::with_default(),
             password_hash: Mutex::new(hash),
             sessions: Mutex::new(HashSet::new()),
             login_gate: Mutex::new(HashMap::new()),
+            oauth,
+            oauth_states: Mutex::new(HashMap::new()),
         })
+    }
+
+    /// #47:OAuth 是否已配置(登录页据此显示 SSO 入口)。
+    pub fn oauth_configured(&self) -> bool {
+        self.oauth.is_some()
     }
 
     pub fn configured(&self) -> bool {
@@ -254,7 +295,11 @@ pub async fn require_portal(
         || path == "/login"
         || path == "/api/portal/state"
         || path == "/api/portal/login"
-        || path == "/api/portal/bootstrap";
+        || path == "/api/portal/bootstrap"
+        // issue #47:OIDC 登录入口与回跳必须是免墙路径(否则未认证用户
+        // 永远到不了 IdP;callback 自带 state 防伪,安全性不降)
+        || path == "/api/portal/oauth/login"
+        || path == "/api/portal/oauth/callback";
     // 外部评审 2026-09-03 #9:未配置密码时,公网绑定不再全站放行——仅
     // 健康检查与门户设置口可达(/v1、/admin、静态一律 401/302);回环
     // 绑定(本机开发)维持零影响放行;持 Bearer 令牌者不受影响。
@@ -300,6 +345,8 @@ pub async fn portal_state(State(state): State<crate::AppState>, headers: HeaderM
     Json(json!({
         "configured": state.portal.configured(),
         "authed": authed(&state, &headers),
+        // #47:登录页据此显示 SSO 入口
+        "oauth": state.portal.oauth_configured(),
     }))
     .into_response()
 }
@@ -451,6 +498,197 @@ pub async fn portal_password(
 }
 
 /// GET /login:登录页(web_dir 下 login.html)。
+/// base64url 解码(JWT payload 提取用;无填充,容忍填充)。
+fn b64url_decode(s: &str) -> Option<Vec<u8>> {
+    let s = s.trim_end_matches('=');
+    let mut out = Vec::new();
+    let mut buf: u32 = 0;
+    let mut bits: u32 = 0;
+    for ch in s.chars() {
+        let v = match ch {
+            'A'..='Z' => ch as u32 - 'A' as u32,
+            'a'..='z' => ch as u32 - 'a' as u32 + 26,
+            '0'..='9' => ch as u32 - '0' as u32 + 52,
+            '-' | '+' => 62,
+            '_' | '/' => 63,
+            _ => return None,
+        };
+        buf = (buf << 6) | v;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push(((buf >> bits) & 0xFF) as u8);
+        }
+    }
+    Some(out)
+}
+
+/// #47:GET /api/portal/oauth/login——302 到 IdP 授权端点(response_type=code
+/// + state 防伪)。未配置 oauth = 404。
+pub async fn portal_oauth_login(
+    State(state): State<crate::AppState>,
+    headers: HeaderMap,
+) -> Response {
+    let Some(cfg) = state.portal.oauth.clone() else {
+        return unauthorized("OAuth 未配置");
+    };
+    let host = headers
+        .get(header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("127.0.0.1");
+    let redirect_uri = cfg
+        .redirect_uri
+        .clone()
+        .unwrap_or_else(|| format!("http://{host}/api/portal/oauth/callback"));
+    let st = new_session();
+    {
+        let mut states = state.portal.oauth_states.lock().expect("锁未中毒");
+        states.retain(|_, t| t.elapsed() < OAUTH_STATE_TTL);
+        states.insert(st.clone(), Instant::now());
+    }
+    let enc = |s: &str| {
+        let mut out = String::new();
+        for b in s.bytes() {
+            match b {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                    out.push(b as char)
+                }
+                _ => out.push_str(&format!("%{b:02X}")),
+            }
+        }
+        out
+    };
+    let loc = format!(
+        "{}?response_type=code&client_id={}&redirect_uri={}&scope={}&state={}",
+        cfg.authorization_endpoint,
+        enc(&cfg.client_id),
+        enc(&redirect_uri),
+        enc(&cfg.scopes.join(" ")),
+        enc(&st),
+    );
+    ([(header::LOCATION, loc)], StatusCode::FOUND).into_response()
+}
+
+/// #47:GET /api/portal/oauth/callback?code=&state=——code 换 token(背通道),
+/// 校验 id_token(iss/aud/exp)后签发 boen_session 并回首页。
+pub async fn portal_oauth_callback(
+    State(state): State<crate::AppState>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let Some(cfg) = state.portal.oauth.clone() else {
+        return unauthorized("OAuth 未配置");
+    };
+    let Some(code) = q.get("code").cloned() else {
+        return unauthorized("回调缺 code");
+    };
+    // state 一次性校验:取出即删(TTL 外/不存在 = 拒)
+    let st_ok = q
+        .get("state")
+        .and_then(|st| {
+            state
+                .portal
+                .oauth_states
+                .lock()
+                .expect("锁未中毒")
+                .remove(st)
+        })
+        .is_some_and(|t| t.elapsed() < OAUTH_STATE_TTL);
+    if !st_ok {
+        return unauthorized("OAuth state 无效或已过期");
+    }
+
+    let host = headers
+        .get(header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("127.0.0.1");
+    let redirect_uri = cfg
+        .redirect_uri
+        .clone()
+        .unwrap_or_else(|| format!("http://{host}/api/portal/oauth/callback"));
+    // 背通道 code 换 token(form 形态,兼容面最广)
+    let token_resp = match reqwest::Client::new()
+        .post(&cfg.token_endpoint)
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("code", code.as_str()),
+            ("redirect_uri", redirect_uri.as_str()),
+            ("client_id", cfg.client_id.as_str()),
+            ("client_secret", cfg.client_secret.as_str()),
+        ])
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => return unauthorized(&format!("token 端点请求失败: {e}")),
+    };
+    if !token_resp.status().is_success() {
+        return unauthorized("token 端点返回非 2xx");
+    }
+    let tv: serde_json::Value = match token_resp.json().await {
+        Ok(v) => v,
+        Err(_) => return unauthorized("token 响应解析失败"),
+    };
+    let Some(id_token) = tv["id_token"].as_str() else {
+        return unauthorized("token 响应缺 id_token");
+    };
+    // JWT payload 校验:iss/aud/exp(TLS 背通道直取,id_token 签名校验按
+    // OIDC 规格在此形态下可省;本地生态不引 JWKS 依赖)
+    let parts: Vec<&str> = id_token.split('.').collect();
+    let claims = parts
+        .get(1)
+        .and_then(|pl| b64url_decode(pl))
+        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok());
+    let Some(claims) = claims else {
+        return unauthorized("id_token 解析失败");
+    };
+    if let Some(want) = cfg.issuer.as_ref()
+        && claims["iss"].as_str() != Some(want.as_str())
+    {
+        return unauthorized("id_token iss 不匹配");
+    }
+    let aud_ok = match &claims["aud"] {
+        serde_json::Value::String(s) => s == &cfg.client_id,
+        serde_json::Value::Array(a) => a.iter().any(|x| x.as_str() == Some(cfg.client_id.as_str())),
+        _ => false,
+    };
+    if !aud_ok {
+        return unauthorized("id_token aud 不匹配");
+    }
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    if let Some(exp) = claims["exp"].as_i64()
+        && now_secs > exp + 60
+    {
+        return unauthorized("id_token 已过期");
+    }
+
+    let session = new_session();
+    state
+        .portal
+        .sessions
+        .lock()
+        .expect("锁未中毒")
+        .insert(session.clone());
+    (
+        [
+            (
+                header::SET_COOKIE,
+                session_cookie(
+                    &session,
+                    state.portal.limits.get().portal_cookie_max_age_secs,
+                ),
+            ),
+            (header::LOCATION, "/".to_string()),
+        ],
+        StatusCode::FOUND,
+    )
+        .into_response()
+}
+
 pub async fn login_page(State(state): State<crate::AppState>) -> Response {
     match state.web_dir.as_ref() {
         Some(dir) => match std::fs::read_to_string(dir.join("login.html")) {
