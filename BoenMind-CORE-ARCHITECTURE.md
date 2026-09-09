@@ -886,6 +886,8 @@ GUI 关闭时经 Notification Surface 提醒，CLI 可 list / approve；
 等待审批的 Operation 处于 waiting_approval，denied → cancelled。
 ```
 
+权限模式（ask / plan / yolo）是服务端会话状态，按对话各记各的（新会话默认 ask），模式变更经单写者通道执行并落审计；审批裁决在服务端执行——ask 照旧等待人工，yolo 由服务端自动放行 Broker 裁决为 RequireApproval 的全体调用（收据与审计标注 `auto`，与人工可区分），plan 一并收编服务端（行为等同 ask）。硬拒绝（UnknownCapability / NoGrant）无审批出口、不因 yolo 放行；熔断与预算硬限、意图硬门控不变。前端只是模式选择器，不承载任何自动批准逻辑（ADR-0030）。
+
 ### 9.7 Budget 对象
 
 预算是挂在 Agent 和 Task 上的合同对象，维度开放，以键值对扩展、老版本忽略未知键：

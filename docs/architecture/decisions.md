@@ -22,8 +22,8 @@
 11. **回喂忠实性**：内核回喂只承载事实，不代写 assistant 终稿、不硬编码教练话术（ADR-0029，INV-13）。
 12. **内置能力冻结清单**：system.exec（过渡态例外）+ fs.* 四件 + model.invoke 内核私有（ADR-0020/0021），不再全量转 MCP。
 13. **事件信封 JSON 字段名 = `type`**（serde rename），不是 `event_type`。
-14. **apps/ 三个生产 demo server 随发布包**（release.yml 白名单 cp），仅 `smoke_test.py` 不随包（CI 门禁用）。
-15. **单写者纪律**为核心状态机根基；管理面（/admin）不入冻结合同，系基线既有决策。
+14. **单写者纪律**为核心状态机根基；管理面（/admin）不入冻结合同，系基线既有决策。
+15. **审批裁决权在服务端**：权限模式（ask/plan/yolo）按对话记于服务端会话；yolo 由服务端仅对 Broker `RequireApproval` 全体自动放行并审计标注 auto；硬拒绝（UnknownCapability/NoGrant）、熔断与预算硬限不因 yolo 放行；前端只是模式选择器（ADR-0030）。
 
 ---
 
