@@ -520,16 +520,18 @@ pub mod test_support {
             unimplemented!("MemEventStore: compact 未在测试中触达")
         }
         fn save_approval(&self, _row: ApprovalRow<'_>) -> StoreResult<()> {
-            unimplemented!("MemEventStore: save_approval 未在测试中触达")
+            // 按需补齐(M11):能力调用路径的审批/Grant 记账会触达,内存态即可
+            Ok(())
         }
         fn list_approvals(&self) -> StoreResult<Vec<serde_json::Value>> {
-            unimplemented!("MemEventStore: list_approvals 未在测试中触达")
+            Ok(vec![])
         }
         fn save_grant(&self, _row: GrantRow<'_>) -> StoreResult<()> {
-            unimplemented!("MemEventStore: save_grant 未在测试中触达")
+            // 按需补齐(M11):Grant 消费态落行触达,内存态即可
+            Ok(())
         }
         fn list_grants(&self) -> StoreResult<Vec<serde_json::Value>> {
-            unimplemented!("MemEventStore: list_grants 未在测试中触达")
+            Ok(vec![])
         }
         fn save_capability_binding(&self, _row: CapabilityRow<'_>) -> StoreResult<()> {
             unimplemented!("MemEventStore: save_capability_binding 未在测试中触达")

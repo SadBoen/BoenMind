@@ -64,6 +64,8 @@ wire_str_enum!(EventType {
     // M9 增发(2026-08-30,Minor:纯追加,M9 规格 §二-S2/§三-S3)
     ModelContentDelta => "model.content.delta",
     TaskAutorunStateChanged => "task.autorun.state.changed",
+    // M11 增发(2026-09-10,Minor:纯追加,ADR-0031/M11 规格:Task 公告栏)
+    SharePublished => "share.published",
 });
 
 impl EventType {
@@ -193,6 +195,7 @@ impl EventType {
             EventType::ProviderHealthChanged => &["provider", "from", "to", "reason"],
             EventType::ModelContentDelta => &["operation_id", "index", "delta"],
             EventType::TaskAutorunStateChanged => &["task_id", "phase", "turn", "reason"],
+            EventType::SharePublished => &["task_id", "principal", "title", "content"],
             EventType::ObservationRecorded => &["task_id", "log_seq", "verdict", "guard_state"],
         }
     }

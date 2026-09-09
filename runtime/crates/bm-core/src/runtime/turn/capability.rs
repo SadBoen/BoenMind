@@ -709,6 +709,11 @@ pub(crate) fn dispatch_capability(
             }
         }
     };
+    // M11/ADR-0031:task.share.* 内核内联执行(Task 公告栏=事件投影,无
+    // 外部副作用,不触 Provider 通道);Broker 裁决/审计照常。
+    if capability.starts_with(crate::share::CAPABILITY_PREFIX) {
+        return dispatch_share(w, ctx, capability, args, op_id, prepared);
+    }
     let key_hash: Option<String> = ctx.idempotency_key.as_ref().map(|k| {
         sha256_hex(&format!(
             "{k}:{}",

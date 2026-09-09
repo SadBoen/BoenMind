@@ -9,6 +9,7 @@ mod capability;
 mod events;
 mod history;
 mod recovery;
+mod share;
 mod spawn;
 
 pub(super) use audit::{
@@ -22,6 +23,7 @@ pub(super) use capability::{
 pub(super) use events::handle_turn_event;
 pub(super) use history::{rebuild_session_chats, remember_turn, session_title_from};
 pub(super) use recovery::handle_recovery_settle;
+pub(super) use share::dispatch_share;
 pub(super) use spawn::spawn_turn;
 
 pub(crate) struct ModelCallAudit {

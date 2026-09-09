@@ -61,6 +61,7 @@ impl RuntimeHandle {
             system_agent,
             tasks: HashMap::new(),
             task_board: crate::task::TaskBoard::default(),
+            share_board: crate::share::TaskShareBoard::default(),
             task_tool_calls: HashMap::new(),
             watchdog: crate::watchdog::WatchdogState::default(),
             op_capability: HashMap::new(),
@@ -193,6 +194,8 @@ impl RuntimeHandle {
             // 已被压实的前缀自 L2 行补齐(行即同一事件流的快照态,键列确定性)
             let events = rows_or_die(store.replay_since(0), "事件日志重放(task_board 重建)");
             world.task_board = crate::task::TaskBoard::rebuild(&events);
+            // M11/ADR-0031:公告栏投影启动重建(纯事件派生,无 L2 行兜底)
+            world.share_board = crate::share::TaskShareBoard::rebuild(&events);
             for row in rows_or_die(store.list_tasks(), "tasks") {
                 let id = row["id"].as_str().unwrap_or_default().to_string();
                 if world.task_board.entry(&id).is_none() {

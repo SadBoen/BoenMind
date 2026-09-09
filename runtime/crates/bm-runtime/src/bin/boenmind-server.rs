@@ -167,6 +167,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ]);
     // ADR-0021:fs.* 文件工具集内置(查/读直通,写/改审批;沙箱=工作区注册表)
     capabilities.extend(bm_providers::fs_tools::fs_capability_entries());
+    // ADR-0031/M11 批次1:task.share.* 共享面(公告栏,内核内联执行)
+    capabilities.extend(bm_core::share::share_capability_entries());
     // issue #2:上下文压缩独立工具(确定性抽取摘要落盘,回合组装面注入前缀)
     capabilities.extend(bm_providers::context_compress::capability_entries(
         data_dir.clone(),

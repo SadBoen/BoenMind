@@ -87,7 +87,7 @@ mod r2_tombstone_tests {
         }
     }
 
-    fn test_world(dir: &std::path::Path) -> World {
+    pub(super) fn test_world(dir: &std::path::Path) -> World {
         let (tx, _rx) = mpsc::channel::<Cmd>(64);
         // F-12:内存桩(理由同 memory.rs 测试注释)
         let store: Arc<dyn EventStore> =
@@ -113,6 +113,7 @@ mod r2_tombstone_tests {
             system_agent: UlidIdGen.next_id("agent"),
             tasks: HashMap::new(),
             task_board: crate::task::TaskBoard::default(),
+            share_board: crate::share::TaskShareBoard::default(),
             task_tool_calls: HashMap::new(),
             watchdog: crate::watchdog::WatchdogState::default(),
             op_capability: HashMap::new(),
@@ -313,5 +314,235 @@ mod r2_tombstone_tests {
             "缺 updated_at 的旧行回落 created_at 排末位"
         );
         assert_eq!(items[2].title, None, "未命名会话标题为 null 交前端回落");
+    }
+}
+
+#[cfg(test)]
+mod m11_share_tests {
+    use super::super::*;
+    use super::r2_tombstone_tests::test_world;
+    use crate::broker::CallContext;
+    use bm_contract::capability::{DataTrust, Grant, GrantScope};
+    use bm_contract::ids::{IdGen, UlidIdGen};
+
+    const T1: &str = "task_01JAAAAAAAAAAAAAAAAAAAAA0C";
+    const T2: &str = "task_01JAAAAAAAAAAAAAAAAAAAAA0D";
+
+    fn share_world() -> World {
+        let dir = tempfile::tempdir().expect("tmp");
+        let mut w = test_world(dir.path());
+        for (m, p) in crate::share::share_capability_entries() {
+            w.registry.register(m, "builtin.core", p).expect("注册");
+        }
+        // 投影存在性 = Task 存在口径(dispatch_share 查 task_board)
+        w.task_board.restore_row(T1, "任务一", "running", 1);
+        w.task_board.restore_row(T2, "任务二", "running", 1);
+        w
+    }
+
+    fn worker_ctx(task: &str) -> CallContext {
+        CallContext::content_chain(
+            crate::team::worker_principal(task).as_str(),
+            DataTrust::Untrusted,
+        )
+        .expect("worker ctx")
+    }
+
+    fn seed_grant(w: &mut World, audience: &str, action: &str, task: &str) {
+        let scope = serde_json::to_value(GrantScope::Task(task.to_string())).expect("scope");
+        let grant: Grant = serde_json::from_value(serde_json::json!({
+            "grant_id": if action == crate::share::SHARE_PUBLISH {
+                "grant_01JAAAAAAAAAAAAAAAAAAAAA0C"
+            } else {
+                "grant_01JAAAAAAAAAAAAAAAAAAAAA0D"
+            },
+            "audience": audience,
+            "action": action,
+            "resource": {"capability": action, "args_predicates": {}},
+            "scope": scope,
+            "delegation_depth": 0,
+            "expires_at": null,
+            "revocation_version": 0,
+            "parent_grant_hash": "9b1dec3f2a6c47d5b8e0f1a2c3d4e5f60718293a4b5c6d7e8f9a0b1c2d3e4f5a",
+            "issued_by": "surface:user",
+            "created_at": "2026-09-10T00:00:00.000Z"
+        }))
+        .expect("grant 合法");
+        w.grants.record(grant);
+    }
+
+    fn call(
+        w: &mut World,
+        ctx: CallContext,
+        capability: &str,
+        args: serde_json::Value,
+    ) -> crate::CoreResult<serde_json::Value> {
+        let req = UlidIdGen.next_id("req");
+        let (_, r) = capability_call_inner(
+            w,
+            req,
+            ctx,
+            wire::CapabilityCallParams {
+                capability: capability.into(),
+                args,
+                idempotency_key: None,
+                deadline_ms: None,
+            },
+        );
+        r
+    }
+
+    /// 验收门 1/3/5:A 发布 → B 可见;审计双落盘;增量投影 == 重放重建。
+    #[test]
+    fn publish_then_cross_member_list_with_audit() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let mut w = test_world(dir.path());
+        for (m, p) in crate::share::share_capability_entries() {
+            w.registry.register(m, "builtin.core", p).expect("注册");
+        }
+        w.task_board.restore_row(T1, "任务一", "running", 1);
+        let wa = worker_ctx(T1);
+        let wb = worker_ctx(T1);
+        seed_grant(
+            &mut w,
+            wa.principal.as_str(),
+            crate::share::SHARE_PUBLISH,
+            T1,
+        );
+        seed_grant(&mut w, wb.principal.as_str(), crate::share::SHARE_LIST, T1);
+
+        let r = call(
+            &mut w,
+            wa,
+            crate::share::SHARE_PUBLISH,
+            serde_json::json!({"title": "wiki 查到 X", "content": "X 的出处已核实"}),
+        );
+        let res = r.expect("publish 应成功");
+        assert_eq!(res["result"]["published"], true);
+        let seq = res["result"]["share_seq"].as_u64().expect("share_seq");
+
+        let r = call(&mut w, wb, crate::share::SHARE_LIST, serde_json::json!({}));
+        let res = r.expect("list 应成功");
+        assert_eq!(res["result"]["total"], 1);
+        assert_eq!(res["result"]["shares"][0]["title"], "wiki 查到 X");
+        assert_eq!(res["result"]["shares"][0]["seq"], seq);
+
+        // 审计双落盘:share.published 事实 + capability.invoked 收据
+        let events = w
+            .store
+            .as_ref()
+            .expect("store")
+            .replay_since(0)
+            .expect("replay");
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e.event_type, EventType::SharePublished))
+        );
+        assert!(events.iter().any(|e| {
+            matches!(e.event_type, EventType::CapabilityInvoked)
+                && e.payload["outcome"] == "succeeded"
+                && e.payload["capability"] == crate::share::SHARE_PUBLISH
+        }));
+        // 增量投影 == 重放重建(ADR-0004 条件 1)
+        assert_eq!(
+            crate::share::TaskShareBoard::rebuild(&events),
+            w.share_board
+        );
+    }
+
+    /// 验收门 2:跨 Task 结构性隔离;args 里的 task_id 不可伪造归属。
+    #[test]
+    fn cross_task_isolation_and_args_spoof_ignored() {
+        let mut w = share_world();
+        let w2 = worker_ctx(T2);
+        seed_grant(
+            &mut w,
+            w2.principal.as_str(),
+            crate::share::SHARE_PUBLISH,
+            T2,
+        );
+        seed_grant(&mut w, w2.principal.as_str(), crate::share::SHARE_LIST, T2);
+
+        // args 里指定 task_id = T1:归属仍按 principal 落 T2,不落 T1
+        let r = call(
+            &mut w,
+            w2.clone(),
+            crate::share::SHARE_PUBLISH,
+            serde_json::json!({"task_id": T1, "title": "越界?", "content": "c"}),
+        );
+        r.expect("publish 应成功");
+        assert_eq!(w.share_board.list(T1, 0).len(), 0, "T1 不得被越界写入");
+        assert_eq!(w.share_board.list(T2, 0).len(), 1);
+
+        // list 同理:只回自己的公告栏
+        let r = call(
+            &mut w,
+            w2,
+            crate::share::SHARE_LIST,
+            serde_json::json!({"task_id": T1}),
+        );
+        let res = r.expect("list 应成功");
+        assert_eq!(res["result"]["task_id"], T2);
+        assert_eq!(res["result"]["total"], 1);
+    }
+
+    /// 验收门 4:非 Task 域主体无公告栏(直通裁决通过、内核执行层拒绝——纵深)。
+    #[test]
+    fn non_task_principal_is_rejected() {
+        let mut w = share_world();
+        let r = call(
+            &mut w,
+            CallContext::surface("surface:user"),
+            crate::share::SHARE_PUBLISH,
+            serde_json::json!({"title": "t", "content": "c"}),
+        );
+        match r {
+            Err(crate::CoreError::Semantic(code, _)) => {
+                assert_eq!(code, ErrorCode::ValidationFailed);
+            }
+            other => panic!("应 ValidationFailed,实际 {other:?}"),
+        }
+    }
+
+    /// 权限三层:无 Grant 的 untrusted publish 升级审批(Reversible 生效);
+    /// list 默认拒绝(ADR-0006);不存在的 Task 拒绝。
+    #[test]
+    fn ungranted_worker_escalates_and_unknown_task_rejected() {
+        let mut w = share_world();
+        let r = call(
+            &mut w,
+            worker_ctx(T1),
+            crate::share::SHARE_PUBLISH,
+            serde_json::json!({"title": "t", "content": "c"}),
+        );
+        assert!(
+            matches!(r, Err(crate::CoreError::ApprovalNeeded { .. })),
+            "无 Grant publish 应升级审批"
+        );
+        let r = call(
+            &mut w,
+            worker_ctx(T1),
+            crate::share::SHARE_LIST,
+            serde_json::json!({}),
+        );
+        assert!(r.is_err(), "无 Grant list 应默认拒绝");
+
+        // Task 不存在(投影无此任务)→ 拒绝
+        const T3: &str = "task_01JAAAAAAAAAAAAAAAAAAAAA0E";
+        let w3 = worker_ctx(T3);
+        seed_grant(
+            &mut w,
+            w3.principal.as_str(),
+            crate::share::SHARE_PUBLISH,
+            T3,
+        );
+        let r = call(
+            &mut w,
+            w3,
+            crate::share::SHARE_PUBLISH,
+            serde_json::json!({"title": "t", "content": "c"}),
+        );
+        assert!(r.is_err(), "不存在的 Task 应拒绝");
     }
 }

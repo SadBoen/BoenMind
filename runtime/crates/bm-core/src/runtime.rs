@@ -165,6 +165,8 @@ struct World {
     tasks: HashMap<BmId, crate::task::Task>,
     /// M5.4:Task Board 投影(可弃可重建;emit 钩子增量维护)。
     task_board: crate::task::TaskBoard,
+    /// M11/ADR-0031:Task 公告栏投影(share.published 事件增量维护;可重建)。
+    share_board: crate::share::TaskShareBoard,
     /// M5-T6:Task 包络工具调用记账(task_id → 已用次数;持久于
     /// task_budget_ledger 聚合行,agent_id = "")。
     task_tool_calls: HashMap<BmId, u64>,
@@ -506,6 +508,9 @@ impl World {
         // M5.4:task.* 事件增量入 Task Board 投影(与持久化同一单写者时点,
         // 投影永远可丢弃后自事件日志重建——增量与重建两条路径等价有测试)
         self.task_board.apply(&event);
+        // M11/ADR-0031:share.published 事件增量入公告栏投影(与 task_board
+        // 同一单写者时点;增量与重建两条路径等价有测试)
+        self.share_board.apply(&event);
         // M5-T7:任务相关事实事件刷新停滞检测的进度信号
         if matches!(
             event.event_type,
