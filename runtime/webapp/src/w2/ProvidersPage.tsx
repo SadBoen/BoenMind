@@ -60,6 +60,12 @@ export function ProvidersPage() {
   const [draft, setDraft] = useState<Draft | null>(null);
   const { notice, flash: flashNotice } = useTimedNotice(6000);
   const [error, setError] = useState<string | null>(null);
+  // issue #13:软删除历史抽屉(null = 关闭)
+  const [historyList, setHistoryList] = useState<
+    | { id: string; name: string; baseUrl: string; deleted_at: number; secretSet: boolean }[]
+    | null
+  >(null);
+  const [historyBusy, setHistoryBusy] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     try {
@@ -108,16 +114,43 @@ export function ProvidersPage() {
   };
 
   const remove = async (p: Provider) => {
-    if (!window.confirm(`删除 provider「${p.name}」?其密钥将一并清除。`)) return;
+    if (!window.confirm(`删除 provider「${p.name}」?条目将移入历史,可在「历史」中恢复。`)) return;
     setBusy(`del:${p.id}`);
     try {
       await api.providers.remove(p.id);
       await reload();
-      flash("已删除");
+      flash("已移入历史(可在「历史」中恢复)");
     } catch (e) {
       setError(String(e instanceof Error ? e.message : e));
     } finally {
       setBusy(null);
+    }
+  };
+
+  const openHistory = async () => {
+    setHistoryBusy("list");
+    try {
+      const r = await api.providers.history();
+      setHistoryList(r.history);
+    } catch (e) {
+      setError(String(e instanceof Error ? e.message : e));
+    } finally {
+      setHistoryBusy(null);
+    }
+  };
+
+  const restore = async (id: string) => {
+    setHistoryBusy(`restore:${id}`);
+    try {
+      await api.providers.restore(id);
+      await reload();
+      const r = await api.providers.history();
+      setHistoryList(r.history);
+      flash("已恢复到活跃列表");
+    } catch (e) {
+      setError(String(e instanceof Error ? e.message : e));
+    } finally {
+      setHistoryBusy(null);
     }
   };
 
@@ -131,9 +164,19 @@ export function ProvidersPage() {
             「设为当前」= 服务器默认(重启生效)。
           </p>
         </div>
-        <Button onClick={() => setDraft({ ...emptyDraft })} size="sm">
-          <PlusIcon /> 新增
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            data-slot="providers-history"
+            onClick={() => void openHistory()}
+          >
+            <RefreshCwIcon /> 历史
+          </Button>
+          <Button onClick={() => setDraft({ ...emptyDraft })} size="sm">
+            <PlusIcon /> 新增
+          </Button>
+        </div>
       </div>
 
       {notice ? (
@@ -291,6 +334,56 @@ export function ProvidersPage() {
           flash(msg);
         }}
       />
+
+      {/* issue #13:软删除历史抽屉 */}
+      {historyList ? (
+        <Dialog open onOpenChange={(v) => !v && setHistoryList(null)}>
+          <DialogContent className="sm:max-w-lg" data-slot="providers-history-dialog">
+            <DialogHeader>
+              <DialogTitle>已删除 provider 历史</DialogTitle>
+              <DialogDescription>
+                删除的条目在此留档;「恢复」移回活跃列表(密钥随条目保留,恢复即全功能)。
+              </DialogDescription>
+            </DialogHeader>
+            {historyList.length === 0 ? (
+              <div className="text-muted-foreground py-6 text-center text-[12.5px]">
+                暂无删除记录。
+              </div>
+            ) : (
+              <div className="flex max-h-72 flex-col gap-2 overflow-auto pr-1">
+                {historyList.map((h) => (
+                  <div
+                    key={h.id}
+                    className="flex items-center justify-between gap-3 rounded-lg border p-2.5"
+                    data-provider-history={h.name}
+                  >
+                    <div className="min-w-0">
+                      <div className="truncate text-[13px] font-medium">{h.name}</div>
+                      <div className="text-muted-foreground truncate text-[11.5px]">
+                        {h.baseUrl} · 删除于{" "}
+                        {new Date(h.deleted_at * 1000).toLocaleString()}
+                        {h.secretSet ? " · 含密钥" : ""}
+                      </div>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={historyBusy !== null}
+                      data-slot="providers-restore"
+                      onClick={() => void restore(h.id)}
+                    >
+                      {historyBusy === `restore:${h.id}` ? (
+                        <Loader2Icon className="size-3.5 animate-spin" />
+                      ) : null}
+                      恢复
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+      ) : null}
     </div>
   );
 }

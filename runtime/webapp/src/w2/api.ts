@@ -273,6 +273,25 @@ export const api = {
       req<{ provider: Provider }>(`/admin/providers/${id}`, json("PUT", b)),
     remove: (id: string) =>
       req<{ ok: boolean }>(`/admin/providers/${id}`, { method: "DELETE" }),
+    /** issue #13:软删除历史(墓碑清单 + 恢复) */
+    history: () =>
+      req<{
+        ok: boolean;
+        history: {
+          id: string;
+          name: string;
+          baseUrl: string;
+          models: string[];
+          defaultModel: string;
+          secretSet: boolean;
+          deleted_at: number;
+        }[];
+      }>("/admin/providers/history"),
+    restore: (id: string) =>
+      req<{ ok: boolean; provider: Provider }>(
+        "/admin/providers/history/restore",
+        json("POST", { id }),
+      ),
     probe: (baseUrl: string, apiKey?: string) =>
       req<ProbeResult>("/admin/providers/probe", json("POST", { baseUrl, apiKey })),
     /** issue #12:熔断健康快照(healthy/unavailable + 连败/冷却) */

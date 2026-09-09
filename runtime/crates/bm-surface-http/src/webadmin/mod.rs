@@ -125,6 +125,9 @@ pub fn admin_routes(cfg: AdminConfig) -> axum::Router {
         .route("/providers/probe", post(providers_probe))
         // issue #12:熔断健康快照(只读)
         .route("/providers/health", get(providers_health))
+        // issue #13:软删除历史(墓碑清单 + 恢复)
+        .route("/providers/history", get(providers_history_list))
+        .route("/providers/history/restore", post(providers_restore))
         .route(
             "/providers/{id}",
             put(providers_update).delete(providers_delete),

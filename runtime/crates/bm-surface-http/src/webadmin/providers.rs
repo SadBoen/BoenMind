@@ -47,6 +47,110 @@ fn write_providers(data_dir: &Path, providers: &[Value]) -> Result<(), String> {
     )
 }
 
+// ---- 软删除历史(issue #13)------------------------------------------------
+// 删除 provider = 条目移入 providers.history.json(带 deleted_at 墓碑),
+// 活跃文件保持干净(所有现有消费方零感知);恢复 = 移回并摘墓碑。
+// 历史条目保留原 apiKey(与 providers.json 同一落盘信任模型),恢复即全功能。
+
+fn providers_history_file(data_dir: &Path) -> PathBuf {
+    data_dir.join("config/providers.history.json")
+}
+
+/// 历史墓碑读取:文件缺失 = 空历史;损坏 = 报错拒绝(与 providers.json 同口径,
+/// 防静默清盘)。
+fn read_history(data_dir: &Path) -> Result<Vec<Value>, (StatusCode, String)> {
+    let path = providers_history_file(data_dir);
+    let v = match super::json_store::read_json_file(
+        &path,
+        "读取 providers 历史文件失败",
+        "providers 历史文件 JSON 格式已损坏,拒绝加载/覆写",
+    ) {
+        Ok(super::json_store::JsonRead::Value(v)) => v,
+        Ok(super::json_store::JsonRead::Missing) => return Ok(Vec::new()),
+        Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, e)),
+    };
+    let list = v["history"].as_array().cloned().ok_or_else(|| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "providers.history.json 缺少合法的 history 数组".to_string(),
+        )
+    })?;
+    Ok(list)
+}
+
+fn write_history(data_dir: &Path, history: &[Value]) -> Result<(), String> {
+    super::json_store::write_json_file(
+        &providers_history_file(data_dir),
+        &json!({ "history": history }),
+        "providers 历史文件写入失败",
+    )
+}
+
+fn now_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// GET /admin/providers/history:软删除墓碑清单(打码投影 + deleted_at)。
+pub async fn providers_history_list(State(cfg): State<AdminConfig>) -> Response {
+    match read_history(&cfg.data_dir) {
+        Ok(list) => {
+            let entries: Vec<Value> = list
+                .iter()
+                .map(|p| {
+                    let mut m = mask_provider(p);
+                    m["deleted_at"] = p["deleted_at"].clone();
+                    m
+                })
+                .collect();
+            Json(json!({ "ok": true, "history": entries })).into_response()
+        }
+        Err(e) => admin_error(e.0, e.1),
+    }
+}
+
+/// POST /admin/providers/history/restore {id}:墓碑移回活跃库并重建路由。
+pub async fn providers_restore(
+    State(cfg): State<AdminConfig>,
+    Json(body): Json<Value>,
+) -> Response {
+    let Some(id) = body["id"].as_str() else {
+        return admin_error(StatusCode::BAD_REQUEST, "id 必须是字符串");
+    };
+    let mut history = match read_history(&cfg.data_dir) {
+        Ok(h) => h,
+        Err(e) => return admin_error(e.0, e.1),
+    };
+    let Some(mut record) = history
+        .iter()
+        .position(|p| p["id"] == json!(id))
+        .map(|pos| history.remove(pos))
+    else {
+        return admin_error(
+            StatusCode::NOT_FOUND,
+            format!("历史中不存在 provider '{id}'"),
+        );
+    };
+    if let Some(obj) = record.as_object_mut() {
+        obj.remove("deleted_at"); // 墓碑摘除 = 活跃条目
+    }
+    let mut list = match read_providers(&cfg.data_dir) {
+        Ok(l) => l,
+        Err(e) => return admin_error(e.0, e.1),
+    };
+    list.push(record.clone());
+    if let Err(e) = write_providers(&cfg.data_dir, &list) {
+        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
+    }
+    if let Err(e) = write_history(&cfg.data_dir, &history) {
+        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
+    }
+    rebuild_routes(&cfg);
+    Json(json!({ "ok": true, "provider": mask_provider(&record) })).into_response()
+}
+
 /// GET /admin/providers/health:熔断健康快照(issue #12)。数据 = 核心单写者
 /// 内存视图(只读命令),仅含已发生过调用失败的 provider——「提前发现」=
 /// 本端点看当前熔断态 + /admin/providers/probe 按需主动探针,二者组合。
@@ -302,13 +406,32 @@ pub async fn providers_delete(
         Ok(l) => l,
         Err(e) => return admin_error(e.0, e.1),
     };
+    // issue #13:软删除——被删条目打 deleted_at 墓碑移入历史文件,可查可恢复
+    let removed: Vec<Value> = list
+        .iter()
+        .filter(|p| p["id"] == json!(id))
+        .map(|p| {
+            let mut r = p.clone();
+            r["deleted_at"] = json!(now_unix_secs());
+            r
+        })
+        .collect();
     let before = list.len();
     list.retain(|p| p["id"] != json!(id));
     if list.len() == before {
         return admin_error(StatusCode::NOT_FOUND, format!("provider '{id}' 不存在"));
     }
-    // 删除 provider = 其密钥一并清除(明文只在该条目内,条目移除即没)
     if let Err(e) = write_providers(&cfg.data_dir, &list) {
+        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
+    }
+    // 活跃文件已写成功后再动历史:历史失败只报错不回滚(下次删除续写,
+    // 墓碑丢失 = 退化为旧日硬删除,不比现状差)
+    let mut history = match read_history(&cfg.data_dir) {
+        Ok(h) => h,
+        Err(e) => return admin_error(e.0, e.1),
+    };
+    history.extend(removed);
+    if let Err(e) = write_history(&cfg.data_dir, &history) {
         return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
     }
     rebuild_routes(&cfg);

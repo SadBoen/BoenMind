@@ -169,6 +169,67 @@ async fn t_w2_provider_crud_roundtrip_masking_and_delete() {
     assert!(!raw.contains("sk-live-1"), "删 provider = 密钥一并清除");
 }
 
+/// issue #13:软删除——删除条目移入历史墓碑(deleted_at),可查可恢复。
+#[tokio::test]
+async fn t_w2b_provider_soft_delete_history_and_restore() {
+    let ws = tempfile::tempdir().unwrap();
+    let (base, _dir) = spawn_app(ws.path().to_path_buf(), None).await;
+
+    let (_, r) = send_json(
+        reqwest::Method::POST,
+        &format!("{base}/admin/providers"),
+        json!({"name": "gw-a", "baseUrl": "https://a.example.com/v1", "apiKey": "sk-live-1", "models": ["m1"], "defaultModel": "m1"}),
+    )
+    .await;
+    let id = r["provider"]["id"].as_str().unwrap().to_string();
+
+    // 删:活跃清单空,历史 1 条(打码 + 墓碑),明文随条目入历史文件
+    let (st, _) = send_json(
+        reqwest::Method::DELETE,
+        &format!("{base}/admin/providers/{id}"),
+        json!({}),
+    )
+    .await;
+    assert_eq!(st, 200);
+    let (_, list) = get(&format!("{base}/admin/providers")).await;
+    assert_eq!(list["providers"].as_array().unwrap().len(), 0);
+    let (_, hist) = get(&format!("{base}/admin/providers/history")).await;
+    let entries = hist["history"].as_array().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["id"], json!(id));
+    assert!(entries[0]["deleted_at"].is_u64(), "墓碑时刻必须存在");
+    assert!(entries[0]["apiKey"].is_null(), "历史回显同样打码");
+    assert_eq!(entries[0]["secretSet"], json!(true));
+    let raw = std::fs::read_to_string(_dir.path().join("config/providers.history.json")).unwrap();
+    assert!(raw.contains("sk-live-1"), "历史条目保留原文(恢复即全功能)");
+
+    // 恢复:移回活跃库,墓碑摘除,历史清空
+    let (st, r) = send_json(
+        reqwest::Method::POST,
+        &format!("{base}/admin/providers/history/restore"),
+        json!({"id": id}),
+    )
+    .await;
+    assert_eq!(st, 200, "{r}");
+    assert_eq!(r["provider"]["id"], json!(id));
+    let (_, list) = get(&format!("{base}/admin/providers")).await;
+    assert_eq!(list["providers"].as_array().unwrap().len(), 1);
+    assert_eq!(list["providers"][0]["id"], json!(id));
+    let (_, hist) = get(&format!("{base}/admin/providers/history")).await;
+    assert_eq!(hist["history"].as_array().unwrap().len(), 0);
+
+    // 再恢复 = 404;活跃清单确有原文
+    let (st, _) = send_json(
+        reqwest::Method::POST,
+        &format!("{base}/admin/providers/history/restore"),
+        json!({"id": id}),
+    )
+    .await;
+    assert_eq!(st, 404);
+    let raw = std::fs::read_to_string(_dir.path().join("config/providers.json")).unwrap();
+    assert!(raw.contains("sk-live-1"));
+}
+
 #[tokio::test]
 async fn t_w2_provider_validation_and_404() {
     let ws = tempfile::tempdir().unwrap();
