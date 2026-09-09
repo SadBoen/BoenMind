@@ -136,6 +136,8 @@ impl ModelConnector for GlmConnector {
         // (悬挂会让 stop() 排空永不返回)。
         let budget = bm_contract::timestamp::remaining_until(&req.deadline)
             .unwrap_or(Duration::from_secs(120));
+        // issue #11:错误体透传需对密钥脱敏,先留副本(bearer_auth 会移动)
+        let api_key_for_sanitize = api_key.clone();
         let fut = self
             .http
             .post(&self.endpoint)
@@ -157,7 +159,18 @@ impl ModelConnector for GlmConnector {
             // P1-22(2026-09-07 架构评审):与 openai_http 同一状态码口径——
             // 401/403 归 PermissionDenied、其余 4xx 归 ValidationFailed(均
             // 不可重试不烧熔断),429/5xx 才是可重试 Unavailable。
-            return crate::openai_http::map_status(resp.status().as_u16(), attempt);
+            // issue #11:网关原文随 detail 脱敏透传(ADR-0029 错误原文保真)。
+            let status = resp.status();
+            let body = resp
+                .text()
+                .await
+                .unwrap_or_else(|_| "[响应体不可读]".into());
+            return crate::openai_http::map_status_body(
+                status.as_u16(),
+                attempt,
+                &body,
+                &api_key_for_sanitize,
+            );
         }
         let parsed: Result<WireResponse, _> = resp.json().await;
         match parsed {
