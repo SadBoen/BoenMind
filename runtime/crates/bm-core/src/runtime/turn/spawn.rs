@@ -160,6 +160,8 @@ pub(crate) fn spawn_turn(
     let turn_debug = w.turn_debug.clone();
     // #2:会话压缩摘要注入(存在即读;无 data_dir 的纯内存测试不触达)
     let compress_data_dir = w.config.data_dir.clone();
+    // #1:意图硬门控参数(0=关)——触发输入过短的回合禁用一切工具派发
+    let intent_gate_min = w.config.limits.get().intent_gate_min_chars;
     let limits_cell = w.config.limits.clone();
 
     let allowed_tools = agent.allowed_tools.clone();
@@ -529,6 +531,31 @@ pub(crate) fn spawn_turn(
                                 // 余下调用不再派发(策略开关走 limits,0=回退独立执行)
                                 let mut batch_denied = false;
                                 for tc in tool_calls {
+                                    // #1:意图硬门控——触发输入过短的回合禁用一切工具
+                                    // 派发(如实回喂;0=关)。在 #26 联动判定之前,
+                                    // 被门控拦截的调用不产生审批单/不触达提供者
+                                    if intent_gate_min > 0
+                                        && (user_input.chars().count() as u32) < intent_gate_min
+                                    {
+                                        messages.push(Message {
+                                            role: Role::Tool,
+                                            content: "本调用未执行:意图门控——本轮触发输入过短,无操作意图,工具已禁用;请直接以文字回应用户或请用户补充需求。".into(),
+                                            tool_call_id: Some(tc.id.clone()),
+                                            tool_calls: None,
+                                        });
+                                        turn_debug.record(
+                                            "tool_cancelled",
+                                            session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
+                                            agent_id.as_str(),
+                                            op_id.as_str(),
+                                            serde_json::json!({
+                                                "tool": tc.name,
+                                                "reason": "intent_gate",
+                                                "input_chars": user_input.chars().count(),
+                                            }),
+                                        );
+                                        continue;
+                                    }
                                     if batch_denied
                                         && limits_cell.get().tool_batch_cancel_on_deny == 1
                                     {

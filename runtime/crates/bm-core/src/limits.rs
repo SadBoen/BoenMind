@@ -29,6 +29,9 @@ pub struct Limits {
     pub tool_rounds_max: u32,
     /// #26:用户驳回同批 tool_call 时联动取消余下(1=开,0=回退独立执行)。
     pub tool_batch_cancel_on_deny: u32,
+    /// #1:意图硬门控——触发输入少于此字符数的回合禁用一切工具派发
+    /// (0=关,默认关;推荐 4 覆盖「你好/在吗/谢谢」类闲聊)。
+    pub intent_gate_min_chars: u32,
     pub loop_breaker_consecutive: u32,
     pub loop_breaker_window: usize,
     // 【模型调用】
@@ -98,6 +101,8 @@ impl Default for Limits {
             tool_rounds_max: 0,
             // #26 默认开:驳回即联动取消同批余下(保守 fail-closed;0 可回退)
             tool_batch_cancel_on_deny: 1,
+            // #1 默认关:开启后短输入回合禁用工具(软防线 84d1bb0 的硬补充)
+            intent_gate_min_chars: 0,
             loop_breaker_consecutive: 10,
             loop_breaker_window: 20,
             model_call_timeout_secs: 0,
@@ -237,6 +242,13 @@ pub const KEY_META: &[KeyMeta] = &[
         "用户驳回同批 tool_call 时联动取消余下(1=开,0=独立执行)",
         0.0,
         1.0
+    ),
+    meta!(
+        "intent_gate_min_chars",
+        "意图门控",
+        "触发输入少于此字符数的回合禁用工具派发(0=关)",
+        0.0,
+        100.0
     ),
     meta!(
         "loop_breaker_consecutive",
