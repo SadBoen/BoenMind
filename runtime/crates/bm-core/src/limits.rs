@@ -27,6 +27,8 @@ pub struct Limits {
     pub tool_wait_ms: u64,
     pub approval_wait_ms: u64,
     pub tool_rounds_max: u32,
+    /// #26:用户驳回同批 tool_call 时联动取消余下(1=开,0=回退独立执行)。
+    pub tool_batch_cancel_on_deny: u32,
     pub loop_breaker_consecutive: u32,
     pub loop_breaker_window: usize,
     // 【模型调用】
@@ -94,6 +96,8 @@ impl Default for Limits {
             tool_wait_ms: 0,
             approval_wait_ms: 0,
             tool_rounds_max: 0,
+            // #26 默认开:驳回即联动取消同批余下(保守 fail-closed;0 可回退)
+            tool_batch_cancel_on_deny: 1,
             loop_breaker_consecutive: 10,
             loop_breaker_window: 20,
             model_call_timeout_secs: 0,
@@ -226,6 +230,13 @@ pub const KEY_META: &[KeyMeta] = &[
         "单回合工具调用总轮数上限(0=不设上限)",
         0.0,
         1_000.0
+    ),
+    meta!(
+        "tool_batch_cancel_on_deny",
+        "工具轮",
+        "用户驳回同批 tool_call 时联动取消余下(1=开,0=独立执行)",
+        0.0,
+        1.0
     ),
     meta!(
         "loop_breaker_consecutive",

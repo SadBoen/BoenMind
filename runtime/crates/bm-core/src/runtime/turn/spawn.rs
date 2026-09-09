@@ -525,7 +525,31 @@ pub(crate) fn spawn_turn(
                                     tool_calls: Some(tool_calls.clone()),
                                     content: content.clone(),
                                 });
+                                // #26:同批拒绝联动——本批任一调用被用户驳回后,
+                                // 余下调用不再派发(策略开关走 limits,0=回退独立执行)
+                                let mut batch_denied = false;
                                 for tc in tool_calls {
+                                    if batch_denied
+                                        && limits_cell.get().tool_batch_cancel_on_deny == 1
+                                    {
+                                        messages.push(Message {
+                                            role: Role::Tool,
+                                            content: "本调用未执行:同批已有调用被用户驳回,按策略联动取消余下调用。".into(),
+                                            tool_call_id: Some(tc.id.clone()),
+                                            tool_calls: None,
+                                        });
+                                        turn_debug.record(
+                                            "tool_cancelled",
+                                            session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
+                                            agent_id.as_str(),
+                                            op_id.as_str(),
+                                            serde_json::json!({
+                                                "tool": tc.name,
+                                                "reason": "batch_deny_linkage"
+                                            }),
+                                        );
+                                        continue;
+                                    }
                                     let args: serde_json::Value =
                                         serde_json::from_str(&tc.arguments)
                                             .unwrap_or(serde_json::Value::Null);
@@ -780,6 +804,8 @@ pub(crate) fn spawn_turn(
                                                         tool_result = format!(
                                                             "用户拒绝了能力 {capability} 的本次审批请求,工具未执行。"
                                                         );
+                                                        // #26:用户驳回 → 同批余下联动取消
+                                                        batch_denied = true;
                                                         break;
                                                     }
                                                     bm_contract::states::OperationState::Failed => {
