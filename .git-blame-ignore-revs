@@ -1,0 +1,10 @@
+# .git-blame-ignore-revs — git blame 大规模机械变更降噪清单
+#
+# 用途:下列 commit 是纯机械改名/格式化,行内容无语义变化。
+# GitHub 网页 blame 自动忽略本清单;本地生效执行一次:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+# 追加规则:只收录"零语义变更"的大批量 commit,每条附一句动机。
+
+# 6c7184b (2026-09-09) issue#24: bm-testkit 28 个测试文件 {category}_{feature} 统一改名,
+# 语义零变化(455 测试全绿)。
+6c7184bebab8919780f6b3a3f32d74f7197b5c94
