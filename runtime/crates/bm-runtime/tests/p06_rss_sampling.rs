@@ -4,7 +4,7 @@
 //! 常驻内存,进程内嵌偏差归零。
 //!
 //! 运行:`cargo test --release -p bm-runtime --test p06_rss_sampling -- --ignored --nocapture`
-//! (默认 #[ignore],与 perf_m2 家族同口径;采样走 OS 工具,Windows =
+//! (默认 #[ignore],与 perf_persist 家族同口径;采样走 OS 工具,Windows =
 //! tasklist,Unix = /proc/<pid>/status VmRSS)
 
 use std::process::{Child, Command, Stdio};

@@ -187,7 +187,7 @@ impl ExecutionLog {
 }
 
 #[cfg(test)]
-mod m9_review_tests {
+mod redaction_tests {
     use super::*;
     use bm_contract::exec_log::LogKind;
 

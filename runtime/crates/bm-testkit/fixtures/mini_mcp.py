@@ -2,7 +2,7 @@
 """最小 MCP stdio server 测试夹具(newline-delimited JSON-RPC 2.0)。
 
 零外部依赖、零密钥:仅实现 initialize / notifications/initialized /
-tools/list / tools/call(ping 工具)。供 m7_mcp_tests t104 使用。
+tools/list / tools/call(ping 工具)。供 mcp_transport t104 使用。
 
 注意:管道读必须用 readline() 循环——`for line in sys.stdin` 在
 Windows 管道上受内部缓冲影响,会等到缓冲满才返回(挂起陷阱)。

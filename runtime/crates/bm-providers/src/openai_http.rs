@@ -710,7 +710,7 @@ impl ModelConnector for OpenAiConnector {
 }
 
 #[cfg(test)]
-mod m9_stream_tests {
+mod stream_decode_tests {
     use super::*;
 
     /// t143:流式线格式——多块解析、finish_reason 收敛、损坏行容错(跳过不致命)。

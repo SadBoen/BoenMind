@@ -29,7 +29,7 @@ fn manifest(name: &str, effect: &str) -> CapabilityManifest {
     .unwrap()
 }
 
-async fn m4_rig() -> (RuntimeHandle, Arc<SeqIdGen>, Arc<bm_core::clock::MockClock>) {
+async fn capability_rig() -> (RuntimeHandle, Arc<SeqIdGen>, Arc<bm_core::clock::MockClock>) {
     let connector = Arc::new(MockConnector::new(vec![]));
     let secrets = Arc::new(MemSecretStore::with("secret:model.x", "sk-demo"));
     let ids = Arc::new(SeqIdGen::new());
@@ -80,7 +80,7 @@ fn call_params(
 
 #[tokio::test]
 async fn t40_direct_call_and_unknown_capability_denied() {
-    let (handle, ids, _clock) = m4_rig().await;
+    let (handle, ids, _clock) = capability_rig().await;
 
     // 直通:trusted × read-only × not-required → 执行成功
     let req = ids.next_id("req");
@@ -138,7 +138,7 @@ async fn t40_direct_call_and_unknown_capability_denied() {
 
 #[tokio::test]
 async fn t41_high_risk_approval_deny_cycle() {
-    let (handle, ids, _clock) = m4_rig().await;
+    let (handle, ids, _clock) = capability_rig().await;
 
     // 高风险恒审批(manifest 即使 not-required,双保险兜住)
     let req = ids.next_id("req");
@@ -237,7 +237,7 @@ impl BmIdErr {
 // 关联 operation 连带取消,approval.expired 事件在案,过期后不可再裁决。
 #[tokio::test]
 async fn t41b_expired_approval_swept_from_waiting_list() {
-    let (handle, ids, clock) = m4_rig().await;
+    let (handle, ids, clock) = capability_rig().await;
 
     // 高风险调用 → waiting_user 审批(TTL 300_000ms,审批窗口)
     let req = ids.next_id("req");
@@ -324,7 +324,7 @@ async fn t41b_expired_approval_swept_from_waiting_list() {
 
 #[tokio::test]
 async fn t42_approve_materializes_grant_and_completes() {
-    let (handle, ids, _clock) = m4_rig().await;
+    let (handle, ids, _clock) = capability_rig().await;
 
     // reversible → 审批(trusted 直调 reversible+ 亦审批,规格 §5.4)
     let req = ids.next_id("req");
@@ -432,7 +432,7 @@ async fn t43_approval_survives_restart() {
     std::fs::create_dir_all(dir.path().join("data")).expect("建数据目录");
     let store =
         Arc::new(bm_persist::PersistStore::open(&dir.path().join("data")).expect("打开持久层"));
-    let handle1 = m4_rig_at(dir.path().join("data"), store.clone()).await;
+    let handle1 = capability_rig_at(dir.path().join("data"), store.clone()).await;
     let req = bm_contract::ids::BmId::parse("req_01JAAAAAAAAAAAAAAAAAAAAA90").unwrap();
     let err = handle1
         .capability_call(
@@ -445,7 +445,7 @@ async fn t43_approval_survives_restart() {
     handle1.stop("crash-sim").await;
 
     // 第二次启动(同目录):审批对象恢复,waiting_user 仍可裁决
-    let handle2 = m4_rig_at(dir.path().join("data"), store).await;
+    let handle2 = capability_rig_at(dir.path().join("data"), store).await;
     let list = handle2
         .approval_list(bm_contract::wire::ApprovalListParams { state_filter: None })
         .await
@@ -482,8 +482,8 @@ async fn t43_approval_survives_restart() {
     ));
 }
 
-/// 带持久层的 M4 装配(恢复测试用;clock 基准与 m4_rig 一致)。
-async fn m4_rig_at(
+/// 带持久层的 M4 装配(恢复测试用;clock 基准与 capability_rig 一致)。
+async fn capability_rig_at(
     data_dir: std::path::PathBuf,
     store: Arc<dyn bm_persist::EventStore>,
 ) -> RuntimeHandle {

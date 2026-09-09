@@ -42,7 +42,7 @@
 口径:  P-04 每条事件 fsync+物化+位点 CAS(最保守口径);P-05 重放无 fsync;
        P-07 含未检查点 WAL(SQLite 默认约 1000 页自动 checkpoint,
        稳态显著小于该口径;checkpoint 策略随 M3 守护形态定标)
-方法:  runtime/crates/bm-testkit/tests/perf_m2.rs(#[ignore],--release 手动运行)
+方法:  runtime/crates/bm-testkit/tests/perf_persist.rs(#[ignore],--release 手动运行)
 ```
 
 ### 1.3 M4 回填记录③（2026-08-29,提交号见 M4 回看记录）
@@ -52,8 +52,8 @@
 负载:  MockConnector 脚本化(无外网);builtin system.* 能力集经 Broker 全链路
 口径:  P-09/10 为决策路径纯查表计时(catch_unwind 收容与凭证签发含内);
        P-01..P-08 复跑口径与记录①②一致
-方法:  m4_falsification_tests.rs(P-09/10,常驻 CI)与
-       perf_smoke / perf_m2(--ignored,--release)
+方法:  capability_falsification.rs(P-09/10,常驻 CI)与
+       perf_smoke / perf_persist(--ignored,--release)
 复跑(vs M3 基线,劣化门 25%):
   P-01  p50=0.107 / p95=0.133 ms   (基线 0.090/0.114,+18.9%/+16.7%,门内)
   P-02  p50=25.77 / p95=27.70 ms   (基线 23.78/25.73,+1.2%/+7.7%,门内)
@@ -76,8 +76,8 @@
 负载:  MockConnector 脚本化(无外网);memory.*/task.*/watchdog 全链路经 Broker
 口径:  P-11 为纯内存折叠计时(BTreeMap 键序 + 单调 seq);P-01..P-10 复跑
        口径与记录①②③一致
-方法:  m5_task_lifecycle.rs t57(P-11,常驻 CI)与
-       perf_smoke / perf_m2(--ignored,--release)
+方法:  task_lifecycle.rs t57(P-11,常驻 CI)与
+       perf_smoke / perf_persist(--ignored,--release)
 复跑(vs M4 回填,劣化门 25%):
   P-01  p50=0.160 / p95=0.203 ms   (M4 0.107/0.133,+49%/+53%——触门,判解释)
   P-02  p50=25.66 / p95=27.89 ms   (M4 25.77/27.70,门内)

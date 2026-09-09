@@ -1,6 +1,6 @@
 //! M2 性能定标:P-02(Session 恢复)/ P-04(事件追加吞吐)/ P-05(事件回放)/
 //! P-07(磁盘增量)。默认 #[ignore];回填时
-//! `cargo test --release -p bm-testkit --test perf_m2 -- --ignored --nocapture`。
+//! `cargo test --release -p bm-testkit --test perf_persist -- --ignored --nocapture`。
 
 use bm_contract::events::{EventEnvelope, EventType};
 use bm_contract::ids::IdGen;
