@@ -7,7 +7,7 @@ workspace "BoenMind" "面向个人软件生态的 AI Runtime/AI 操作系统—�
         boenmind = softwareSystem "BoenMind Runtime" "统一的 AI Runtime:Agent 生命周期、记忆与技能、能力注册、身份权限审批、App 间受控通信、多 Agent 协作、插件热替换与故障恢复;前端形态(Chat/CLI/语音/通知)全部解耦为可替换 Surface。" {
 
             chat = container "Tauri Chat Surface" "[阶段一桌面壳骨架] 图形交互界面:创建/接管 Task、提交审批决定;与 Web Surface 共用前端静态产物(ADR-0009);不拥有 Agent,可被 CLI 接管同一 Task。" "Tauri Desktop" "L5,Surface"
-            webui = container "Web Surface (assistant-ui 壳 + 管理面)" "[阶段一现役] 网页交互界面:对话闭环(/v1 OpenAI 插座)、上下文透视面板、设置中心(/admin 提供商/插件/MCP/角色/日志/常规=工作区注册与运行环境探针,ADR-0018);经 TLS+令牌访问,不绕过 Broker。" "Web App (React + TypeScript)" "L5,Surface"
+            webui = container "Web Surface (assistant-ui 壳 + 管理面)" "[阶段一现役] 网页交互界面:对话闭环(/v1 OpenAI 插座)、上下文透视面板、设置中心(/admin 提供商/插件/MCP/角色/日志/常规=工作区注册与运行环境探针,ADR-0018);门户墙保护:访问密码(PBKDF2,失败限速)与可选 OIDC SSO(issue #47),程序化访问走 Bearer 令牌;不绕过 Broker。" "Web App (React + TypeScript)" "L5,Surface"
             cli = container "CLI Surface" "[阶段一现役] 标准命令行 Surface(boenmind):用户操作面(task/agent/approval)+ 受限运行控制面(runtime status/upgrade/rollback);无 GUI 时的人类控制入口,不绕过 Broker。" "Rust CLI" "L5,Surface"
             voice = container "Voice Surface" "[阶段二规划] 语音交互适配器;与其他 Surface 共享同一 Surface Protocol。" "语音适配器" "L5,Surface"
             notif = container "Notification Surface" "[阶段二规划] 通知中心:审批提醒、异步结果推送;GUI 关闭时兜底。" "通知适配器" "L5,Surface"
@@ -21,19 +21,19 @@ workspace "BoenMind" "面向个人软件生态的 AI Runtime/AI 操作系统—�
             audio = container "Audio Provider (system.audio)" "[阶段二规划] 系统服务 Provider:audio.volume.get/set、audio.mute、audio.output.list;低风险确定性能力,支持 verification 事后核验钩子。" "系统服务(可独立进程)" "L3,Provider"
             fsProvider = container "File Provider (fs.*)" "[阶段一内建·ADR-0021] 文件系统能力 Provider:fs.search/fs.read(只读直通)、fs.write/fs.edit(审批类);rg 引擎内嵌,工作区沙箱隔离。" "内建模块 (bm-providers::fs_tools)" "L3,Provider"
             systemExec = container "System Exec (system.exec)" "[阶段一内建·ADR-0019] 系统命令执行能力:命令审批类(approval:required),宿主 Shell 委托执行。" "内建模块 (bm-providers::system_exec)" "L3,Provider"
-            mcp = container "MCP Provider 接入" "[阶段一现役·两段式] 外部与随包 MCP Server 作为普通 Provider 注册,扫描发现→显式批准落盘→热装载免重启;当前 web_multisearch、context-inspector 等现役。" "接入器(Rust StdioMcpTransport)" "L3,Provider"
+            mcp = container "MCP Provider 接入" "[阶段一现役·两段式] 外部与随包 MCP Server 作为普通 Provider 注册,扫描发现→显式批准落盘→热装载免重启;当前 web_multisearch、context-inspector 等现役;stdio 子进程 stderr 管道采集(环形缓冲按代标记,issue #28),远程 MCP 走 Streamable HTTP 完整握手(Mcp-Session-Id 会话/版本协商/SSE 响应解析,issue #3)。" "接入器(Rust StdioMcpTransport + HttpMcpTransport)" "L3,Provider"
             timerProvider = container "Timer Provider" "[阶段二规划] 定时与自动化触发;只是普通调用方,定时能力本身是可替换的系统服务 Provider,内核不持有调度特权。" "系统服务(可独立进程)" "L3,Provider"
 
             l2core = container "L2 Runtime Core (active generation)" "可按代际升级的运行时内核:同一时刻只有一个 generation 对可写业务状态拥有写入权;持有 Task 规范状态、权限、事件规范序(event_seq 全局单调);重启或换代必须从持久状态恢复,不依赖旧进程内存。" "Rust 进程" "L2,RuntimeCore" {
                 registry = component "Runtime Registry" "统一注册中心,内部按对象类型分表:App/Plugin/Capability/Agent/Task-Team/Surface/Provider Binding;分表是开放集合。持久化逻辑目录 + 可重建的运行时缓存两层。" "Rust 模块"
                 broker = component "Capability Broker" "所有跨域调用统一入口:身份/权限/Task scope 检查 → 参数校验 → Provider Binding → 执行转发 → 超时/取消/重试(manifest 声明,Broker 唯一执行者)→ 审计与事件发布。调用方覆盖 Agent、按钮、语音、自动化规则、Timer、其他 App。" "Rust 模块"
                 bus = component "Event Bus" "持久事实源 + 内存分发层两级:需恢复/重放/跨代际交接的事件先进持久事件日志(单写者追加);token 增量等瞬态事件默认不落盘。事件表达「发生了什么」,不是「请做什么」。" "Rust 模块"
-                executor = component "Agent/Task Executor" "Agent 生命周期状态机(created→starting→running⇄waiting⇄paused→stopping→stopped/failed/cancelled,迁移携带原因码)、Task/Team 编排、Operation 状态机与执行收据;上下文压缩写 Execution Log。" "Rust 模块"
+                executor = component "Agent/Task Executor" "Agent 生命周期状态机(created→starting→running⇄waiting⇄paused→stopping→stopped/failed/cancelled,迁移携带原因码)、Task/Team 编排、Operation 状态机与执行收据;回合装配注入会话压缩摘要(context.compress 派生工件,不改写对话正文,issue #2);意图门控/同批驳回联动/防空转熔断等工具轮防线在此层。" "Rust 模块"
                 approval = component "Approval & Budget" "持久化审批对象(默认拒绝:超时即 denied);授权范围 once/task/count/ttl/forever;预算三层强制点(回合前预估/工具调用前/返回后记账),软限 80% 告警、硬限暂停。" "Rust 模块"
                 observation = component "Observation & Evaluation" "对照「Agent 声称完成」与「系统实际观察到」:执行 Capability manifest 的 verification 钩子;独立 Judge(bm-judge,确定性断言)辅助核验;外部系统查询与确定性断言优先于模型自述。" "Rust 模块"
                 watchdog = component "Watchdog" "[阶段一新增] 监护节拍扫描器:监督停滞/死循环/预算异动,产出 watchdog.* 事实事件,不推断编排下一步。" "Rust 模块"
                 persistence = component "Persistence & Recovery" "SQLite 规范状态 + Append-only Event Log + Snapshot + Event Replay;outcome_unknown 只能经外部核验/用户裁定/明确恢复流程结束;删除=状态删除+墓碑+投影重建+记忆级联失效。" "Rust + SQLite"
-                memory = component "Memory & Skill" "按域隔离的记忆(memory:app|task|agent|user,地址即权限边界;FTS 检索,向量引擎可替换)+ Skill 知识包(步骤/提示模板 + allowed_capabilities,只是数据,加载不改变权限)。" "Rust 模块"
+                memory = component "Memory & Skill" "按域隔离的记忆(memory:app|task|agent|user,地址即权限边界;FTS 检索,向量引擎可替换)+ Skill 知识包(步骤/提示模板 + allowed_capabilities;v0.2 起可携带 scripts,wasmtime 沙箱执行——fuel+超时双限,WASI 仅挂技能自身目录,合成 manifest 与其他能力平权过 Broker,ADR-0016)。" "Rust 模块"
                 modelConnector = component "Model Connector" "模型连接器——普通 Provider 而非内核特权:稳定模型合同(messages/tools/参数→结果/用量/结束原因)、调用账本、降级链;阶段一内建(OpenAI兼容网关/GLM/Mock)。" "Provider 合同实现"
                 contextLog = component "Context Log" "[阶段一新增·W5] 模型调用上下文透视快照:每次调用截取 messages+tools+用量+耗时,INV-5 脱敏+16K 截断落 context-log.jsonl,供 /admin/context 读出。" "Rust 模块"
                 secretStore = component "Secret Store" "凭据本体唯一存放地(加密文件 FileSecretStore 或 MemSecretStore),本身是可替换 Provider;上下文/日志/事件只出现 Secret Ref;录入轮换删除属 high-risk-command 需审批。" "Provider 合同实现"
@@ -111,7 +111,7 @@ workspace "BoenMind" "面向个人软件生态的 AI Runtime/AI 操作系统—�
         l0 -> registry "Supervisor 通告 Provider/Generation 状态变更(如标记 unavailable)"
         registry -> bus "在状态提交点发布 provider.changed / provider.crashed"
         l0 -> cli "L0 Control Protocol 响应(status/doctor/upgrade/rollback 结果)"
-        browser -> webui "HTTPS(TLS) + SSE;单用户令牌鉴权(ADR-0009);/v1 对话闭环 + /admin 管理面"
+        browser -> webui "门户墙(访问密码/OIDC SSO)后经 TLS 访问;/v1 对话闭环 + /admin 管理面;程序化访问以 Bearer 令牌(ADR-0009)"
         webui -> l1 "OpenAI 兼容插座(/v1)与管理面(/admin),经 RuntimeHandle 直连"
         user -> browser "经浏览器访问本地或自管 VPS 上的 Runtime;访问端无状态"
 
