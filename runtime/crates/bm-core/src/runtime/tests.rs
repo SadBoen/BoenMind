@@ -127,6 +127,7 @@ mod r2_tombstone_tests {
             session_chats: HashMap::new(),
             session_turn_totals: HashMap::new(),
             ctx_log: Arc::new(crate::context_log::ContextLog::new(None)),
+            turn_debug: Arc::new(crate::turn_debug::TurnDebugLog::new(None)),
             tx,
             store: Some(store.clone()),
             config: RuntimeConfig {

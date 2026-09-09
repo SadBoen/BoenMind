@@ -156,6 +156,8 @@ pub(crate) fn spawn_turn(
         (other, None) => other,
     };
     let ctx_log = w.ctx_log.clone();
+    // #14:Turn 内调试日志(默认关;管理面热开关)
+    let turn_debug = w.turn_debug.clone();
     let limits_cell = w.config.limits.clone();
 
     let allowed_tools = agent.allowed_tools.clone();
@@ -330,6 +332,21 @@ pub(crate) fn spawn_turn(
                 let snap_step = tool_rounds + 1;
                 let snap_model = model_id.clone();
                 let snap_start = std::time::Instant::now();
+                // #14:调试面——请求侧全量(消息序列+工具数;开关关时零成本)
+                turn_debug.record(
+                    "model_request",
+                    session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
+                    agent_id.as_str(),
+                    op_id.as_str(),
+                    serde_json::json!({
+                        "step": snap_step,
+                        "attempt": attempt,
+                        "model_id": snap_model.clone(),
+                        "streaming": streaming,
+                        "messages": snap_msgs,
+                        "tools_count": tools_json.len(),
+                    }),
+                );
 
                 // M9-S2:流式开关开启时走 invoke_stream,增量经 ProviderDelta
                 // 回核心循环(单写者落 model.content.delta 事件);通道满则丢弃
@@ -381,7 +398,7 @@ pub(crate) fn spawn_turn(
                     InvokeResponse::Completed {
                         content,
                         tool_calls,
-                        finish_reason: _,
+                        finish_reason,
                         usage,
                         model_id: mid,
                         latency_ms,
@@ -398,7 +415,7 @@ pub(crate) fn spawn_turn(
                             turn_index,
                             step: snap_step,
                             attempt,
-                            model_id: snap_model,
+                            model_id: snap_model.clone(),
                             streaming,
                             messages: snap_msgs,
                             tools: tools_json.clone(),
@@ -413,6 +430,27 @@ pub(crate) fn spawn_turn(
                             latency_ms: Some(snap_start.elapsed().as_millis() as u64),
                             ts: format_ts(clock.now()),
                         });
+                        // #14:调试面——模型响应原文(比 context-log 厚:含回复
+                        // 内容、finish_reason 与工具调用全参;开关关时零成本)
+                        turn_debug.record(
+                            "model_response",
+                            session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
+                            agent_id.as_str(),
+                            op_id.as_str(),
+                            serde_json::json!({
+                                "step": snap_step,
+                                "attempt": attempt,
+                                "model_id": snap_model.clone(),
+                                "streaming": streaming,
+                                "content": content,
+                                "finish_reason": finish_reason,
+                                "tool_calls": tool_calls,
+                                "tokens_in": usage.tokens_in,
+                                "tokens_out": usage.tokens_out,
+                                "ttft_ms": ttft_ms,
+                                "latency_ms": snap_start.elapsed().as_millis() as u64,
+                            }),
+                        );
                         // W4 工具轮:模型请求调用直通工具 → 回核心循环执行 →
                         // 结果以 Tool 消息回喂 → 重调模型。
                         if !tool_calls.is_empty() && !loop_broken && !round_cap_hit {
@@ -509,6 +547,19 @@ pub(crate) fn spawn_turn(
                                         &format_ts(clock.now()),
                                         serde_json::json!({
                                             "tool": tc.name,
+                                            "arguments": args.clone(),
+                                        }),
+                                    );
+                                    // #14:调试面——工具调用全参
+                                    turn_debug.record(
+                                        "tool_call",
+                                        session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
+                                        agent_id.as_str(),
+                                        op_id.as_str(),
+                                        serde_json::json!({
+                                            "step": snap_step,
+                                            "tool": tc.name,
+                                            "capability": capability,
                                             "arguments": args.clone(),
                                         }),
                                     );
@@ -824,6 +875,20 @@ pub(crate) fn spawn_turn(
                                             "elapsed_ms": elapsed_ms,
                                         }),
                                     );
+                                    // #14:调试面——工具结果全文(与回喂同文)
+                                    turn_debug.record(
+                                        "tool_result",
+                                        session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
+                                        agent_id.as_str(),
+                                        op_id.as_str(),
+                                        serde_json::json!({
+                                            "step": snap_step,
+                                            "tool": tc.name,
+                                            "capability": capability,
+                                            "result": tool_result,
+                                            "elapsed_ms": elapsed_ms,
+                                        }),
+                                    );
                                     // 前端轻量反馈:向前端推一条工具执行耗时与成败标记
                                     let _ = tx.try_send(Cmd::ProviderDelta {
                                         operation_id: op_id.clone(),
@@ -899,6 +964,19 @@ pub(crate) fn spawn_turn(
                                 "latency_ms": latency_ms,
                             }),
                         );
+                        // #14:调试面——回合终态(成功)
+                        turn_debug.record(
+                            "turn_end",
+                            session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
+                            agent_id.as_str(),
+                            op_id.as_str(),
+                            serde_json::json!({
+                                "outcome": "succeeded",
+                                "attempt": attempt,
+                                "tool_rounds": tool_rounds,
+                                "latency_ms": latency_ms,
+                            }),
+                        );
                         // W5:对话台账回写(仅终稿成功;工具轮中间态不入账)
                         if let Some(sid) = session_id.clone() {
                             let _ = tx
@@ -941,7 +1019,7 @@ pub(crate) fn spawn_turn(
                             turn_index,
                             step: snap_step,
                             attempt,
-                            model_id: snap_model,
+                            model_id: snap_model.clone(),
                             streaming,
                             messages: snap_msgs,
                             tools: tools_json.clone(),
@@ -960,6 +1038,21 @@ pub(crate) fn spawn_turn(
                             latency_ms: Some(snap_start.elapsed().as_millis() as u64),
                             ts: format_ts(clock.now()),
                         });
+                        // #14:调试面——模型调用失败(含脱敏后细节)
+                        turn_debug.record(
+                            "model_failed",
+                            session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
+                            agent_id.as_str(),
+                            op_id.as_str(),
+                            serde_json::json!({
+                                "step": snap_step,
+                                "attempt": attempt,
+                                "model_id": snap_model.clone(),
+                                "error_code": error_code.as_str(),
+                                "retryable": retryable,
+                                "detail": detail,
+                            }),
+                        );
                         if error_code == ErrorCode::Cancelled {
                             // 显式取消:回合边界落定为 cancelled(INV-12 唯一入口)。
                             ctx_log.record_event(

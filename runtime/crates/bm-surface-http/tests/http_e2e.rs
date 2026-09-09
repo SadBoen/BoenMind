@@ -724,3 +724,79 @@ async fn t58_task_methods_via_http() {
         serde_json::json!("validation_failed")
     );
 }
+
+/// issue #14:Turn 内调试日志——默认关(不落文件),开启后回合细节落
+/// turn-debug.jsonl(模型响应原文/回合终态;与 context-log 分离)。
+#[tokio::test]
+async fn t48_turn_debug_log_toggle_and_capture() {
+    let rig = rig(bm_testkit_style_repeat(Step::ok("调试答", 100, 20), 10)).await;
+    let authed = rig.client(Some(&rig.token));
+
+    // 建会话 + 跑第一回合(开关默认关)
+    let (_, body) = rig
+        .rpc(
+            &authed,
+            Method::SessionCreate,
+            serde_json::json!({"agent": {"name": "assistant",
+                "model_chain": [bm_testkit_replay::MODEL_A],
+                "budget": {"max_tokens": 100000, "max_turns": 10}}}),
+        )
+        .await;
+    let sess = body["result"]["session_id"]
+        .as_str()
+        .expect("sess")
+        .to_string();
+    let agent = body["result"]["agent_id"]
+        .as_str()
+        .expect("agent")
+        .to_string();
+
+    async fn run_turn(rig: &Rig, authed: &reqwest::Client, sess: &str, agent: &str, content: &str) {
+        let (status, body) = rig
+            .rpc(
+                authed,
+                Method::AgentSendInput,
+                serde_json::json!({"session_id": sess, "agent_id": agent,
+                    "content": content, "input_trust": "trusted"}),
+            )
+            .await;
+        assert_eq!(status, 200, "{body}");
+        let op = body["result"]["operation_id"]
+            .as_str()
+            .expect("op")
+            .to_string();
+        loop {
+            let (_, body) = rig
+                .rpc(
+                    authed,
+                    Method::OperationsGet,
+                    serde_json::json!({"operation_id": op}),
+                )
+                .await;
+            if body["result"]["state"].as_str() == Some("succeeded") {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    run_turn(&rig, &authed, &sess, &agent, "第一问").await;
+    assert!(!rig.handle.turn_debug_enabled(), "默认必须关");
+    let debug_path = rig._dir.path().join("turn-debug.jsonl");
+    assert!(!debug_path.exists(), "默认关 = 不落盘");
+
+    // 开关打开 → 第二回合 → model_response/turn_end 落 turn-debug.jsonl
+    rig.handle.set_turn_debug(true);
+    assert!(rig.handle.turn_debug_enabled());
+    run_turn(&rig, &authed, &sess, &agent, "第二问").await;
+    let raw = std::fs::read_to_string(&debug_path).expect("调试日志已落盘");
+    assert!(raw.contains("\"model_response\""), "含模型响应记录: {raw}");
+    assert!(raw.contains("\"turn_end\""), "含回合终态记录");
+    assert!(raw.contains("调试答"), "含响应原文");
+    assert!(raw.contains("第二问"), "请求侧内容随响应侧可对账");
+    // context-log 不受影响(对话正文唯一落盘语义不混入调试载荷)
+    let ctx_raw = std::fs::read_to_string(rig._dir.path().join("context-log.jsonl")).unwrap();
+    assert!(!ctx_raw.contains("model_response"));
+
+    rig.handle.stop("test_done").await;
+}

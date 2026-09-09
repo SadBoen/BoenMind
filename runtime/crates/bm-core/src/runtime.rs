@@ -197,6 +197,8 @@ struct World {
     session_turn_totals: HashMap<BmId, u64>,
     /// W5 上下文透视:每次模型调用请求快照(context-log.jsonl;/admin/context)。
     ctx_log: Arc<crate::context_log::ContextLog>,
+    /// #14 Turn 内调试日志(turn-debug.jsonl;默认关,管理面热开关)。
+    turn_debug: Arc<crate::turn_debug::TurnDebugLog>,
 }
 
 impl World {

@@ -19,6 +19,8 @@ pub struct RuntimeHandle {
     exec_log: Arc<ExecutionLog>,
     /// W5:上下文快照日志(INV-5 同一扫描面)。
     ctx_log: Arc<crate::context_log::ContextLog>,
+    /// #14:Turn 内调试日志(INV-5 同一扫描面;默认关)。
+    turn_debug: Arc<crate::turn_debug::TurnDebugLog>,
 }
 
 impl RuntimeHandle {
@@ -28,6 +30,9 @@ impl RuntimeHandle {
         let (tx, rx) = mpsc::channel::<Cmd>(1024);
         let exec_log = Arc::new(ExecutionLog::new(config.data_dir.as_deref()));
         let ctx_log = Arc::new(crate::context_log::ContextLog::new(
+            config.data_dir.as_deref(),
+        ));
+        let turn_debug = Arc::new(crate::turn_debug::TurnDebugLog::new(
             config.data_dir.as_deref(),
         ));
         let started_at = config.clock.now();
@@ -70,6 +75,7 @@ impl RuntimeHandle {
             session_chats: HashMap::new(),
             session_turn_totals: HashMap::new(),
             ctx_log: ctx_log.clone(),
+            turn_debug: turn_debug.clone(),
             tx: tx.clone(),
             store: config.store.clone(),
             config,
@@ -566,7 +572,23 @@ impl RuntimeHandle {
             tx,
             exec_log,
             ctx_log,
+            turn_debug,
         }
+    }
+
+    /// #14:Turn 内调试日志开关(热生效;下一条记录起采样)。
+    pub fn set_turn_debug(&self, on: bool) {
+        self.turn_debug.set_enabled(on);
+    }
+
+    /// #14:当前开关态。
+    pub fn turn_debug_enabled(&self) -> bool {
+        self.turn_debug.enabled()
+    }
+
+    /// #14:调试日志尾读(内存镜像,与文件一致)。
+    pub fn turn_debug_tail(&self, n: usize) -> Vec<serde_json::Value> {
+        self.turn_debug.tail(n)
     }
 
     pub async fn session_create(
@@ -857,6 +879,7 @@ impl RuntimeHandle {
         self.exec_log.register_scan_value(value);
         // W5:上下文快照同面脱敏(会话原文可能误带凭据,同批登记)
         self.ctx_log.register_scan_value(value);
+        self.turn_debug.register_scan_value(value);
     }
 
     /// W2 热装载:运行期追加注册能力(MCP 管理面重载;只增,不改/删仍走重启)。

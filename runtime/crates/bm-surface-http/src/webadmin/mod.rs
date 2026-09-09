@@ -159,6 +159,8 @@ pub fn admin_routes(cfg: AdminConfig) -> axum::Router {
         .route("/skills", get(skills_get).post(skills_set))
         .route("/skills/{id}", delete(skills_delete))
         .route("/logs", get(logs_tail))
+        // issue #14:Turn 内调试日志开关 + 尾读(默认关)
+        .route("/debug/turns", get(debug_turns_get).post(debug_turns_set))
         .route("/context", get(context_tail))
         .route("/context/search", get(context_search))
         // W10(ADR-0024/0025):限制配置面 + 后台作业列表

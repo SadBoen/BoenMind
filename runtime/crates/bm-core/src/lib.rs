@@ -25,6 +25,7 @@ pub mod runtime;
 pub mod state;
 pub mod task;
 pub mod team;
+pub mod turn_debug;
 pub mod watchdog;
 pub mod workspace;
 

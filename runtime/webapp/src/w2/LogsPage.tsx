@@ -9,12 +9,13 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 
-type Which = "exec" | "events" | "ctx";
+type Which = "exec" | "events" | "ctx" | "turndbg";
 
 const TABS: { key: Which; label: string; hint: string }[] = [
   { key: "exec", label: "执行日志", hint: "回合/工具调用明细" },
   { key: "events", label: "事件流", hint: "含 capability.invoked 状态" },
   { key: "ctx", label: "上下文快照", hint: "每次模型调用的请求原文(W5)" },
+  { key: "turndbg", label: "Turn 调试", hint: "回合全量细节(响应原文/工具全参);默认关,#14" },
 ];
 
 export function LogsPage() {
@@ -23,14 +24,21 @@ export function LogsPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [auto, setAuto] = useState(true);
+  const [dbgOn, setDbgOn] = useState(false);
   const boxRef = useRef<HTMLPreElement>(null);
 
   const refresh = useCallback(async () => {
     setBusy(true);
     setError(null);
     try {
-      const r = await api.logs();
-      setLines(which === "exec" ? r.exec : which === "events" ? r.events : (r.context ?? []));
+      if (which === "turndbg") {
+        const r = await api.debugTurns();
+        setDbgOn(r.enabled);
+        setLines(r.lines ?? []);
+      } else {
+        const r = await api.logs();
+        setLines(which === "exec" ? r.exec : which === "events" ? r.events : (r.context ?? []));
+      }
     } catch (e) {
       setError(String(e instanceof Error ? e.message : e));
     } finally {
@@ -80,6 +88,21 @@ export function LogsPage() {
           </Button>
         ))}
         <span className="flex-1" />
+        {which === "turndbg" ? (
+          <span className="flex items-center gap-1.5" data-slot="logs-dbg-toggle">
+            <Switch
+              id="logs-dbg"
+              checked={dbgOn}
+              onCheckedChange={(v) => {
+                setDbgOn(v);
+                void api.setDebugTurns(v).then(() => void refresh());
+              }}
+            />
+            <Label htmlFor="logs-dbg" className="text-[12.5px]">
+              {dbgOn ? "采集中(新回合落 turn-debug.jsonl)" : "已关闭(打开后新回合开始采集)"}
+            </Label>
+          </span>
+        ) : null}
         <span className="flex items-center gap-1.5">
           <Switch id="logs-auto" checked={auto} onCheckedChange={setAuto} />
           <Label htmlFor="logs-auto" className="text-[12.5px]">

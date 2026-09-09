@@ -454,6 +454,11 @@ export const api = {
   },
   logs: () =>
     req<{ ok: boolean; exec: string[]; events: string[]; context: string[] }>("/admin/logs"),
+  // issue #14:Turn 内调试日志(状态+尾读 / 热开关)
+  debugTurns: () =>
+    req<{ ok: boolean; enabled: boolean; lines: string[] }>("/admin/debug/turns"),
+  setDebugTurns: (enabled: boolean) =>
+    req<{ ok: boolean; enabled: boolean }>("/admin/debug/turns", json("POST", { enabled })),
   // W7 关于与在线升级(apply 仅回环;发新版本必须用户明说,此处只消费)
   about: {
     get: () =>

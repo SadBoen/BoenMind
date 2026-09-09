@@ -31,3 +31,30 @@ pub async fn logs_tail(State(cfg): State<AdminConfig>) -> Response {
     }))
     .into_response()
 }
+
+/// GET /admin/debug/turns:Turn 调试日志状态 + 尾读(issue #14)。
+/// 开关态来自核心句柄(进程内 AtomicBool),行 = turn-debug.jsonl 尾部直读。
+pub async fn debug_turns_get(State(cfg): State<AdminConfig>) -> Response {
+    let enabled = cfg.handle.turn_debug_enabled();
+    let lines = super::tail::read_tail(&cfg.data_dir.join("turn-debug.jsonl"), 512 * 1024);
+    let skip = lines.len().saturating_sub(200);
+    Json(json!({
+        "ok": true,
+        "enabled": enabled,
+        "lines": lines.into_iter().skip(skip).collect::<Vec<_>>(),
+    }))
+    .into_response()
+}
+
+/// POST /admin/debug/turns {enabled}:热开关(issue #14)。默认关,开启后
+/// 新回合的模型响应原文/工具全量出入参/回合终态写入 turn-debug.jsonl。
+pub async fn debug_turns_set(
+    State(cfg): State<AdminConfig>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let Some(on) = body["enabled"].as_bool() else {
+        return super::admin_error(axum::http::StatusCode::BAD_REQUEST, "enabled 必须是布尔值");
+    };
+    cfg.handle.set_turn_debug(on);
+    Json(json!({ "ok": true, "enabled": on })).into_response()
+}
