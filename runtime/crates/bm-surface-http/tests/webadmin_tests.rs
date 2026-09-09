@@ -1393,3 +1393,59 @@ async fn t_w2_corrupt_roles_json_rejects_load_and_overwrite() {
     let (st, _) = get(&format!("{base}/admin/roles")).await;
     assert_eq!(st, 500);
 }
+
+// ---- issue #18 裁决:管理面响应形状夹具 ----
+// 前端 w2/api.ts 的类型是手抄的,本组夹具锁住各 GET 端点的顶层键集:
+// 后端改动任何顶层字段,此处先红 = w2/api.ts 必须显式同步。
+// 新增顶层字段 = 有意变更:更新期望值 + 同步 api.ts 类型 + 本注释。
+
+async fn top_keys(c: &reqwest::Client, url: &str) -> Vec<String> {
+    let body: serde_json::Value = c
+        .get(url)
+        .send()
+        .await
+        .expect("GET")
+        .json()
+        .await
+        .expect("JSON body");
+    let mut keys: Vec<String> = body
+        .as_object()
+        .expect("顶层必须是对象")
+        .keys()
+        .cloned()
+        .collect();
+    keys.sort();
+    keys
+}
+
+#[tokio::test]
+async fn t_admin_response_shape_anchors() {
+    let ws = tempfile::tempdir().unwrap();
+    let (base, _dir) = spawn_app(ws.path().to_path_buf(), None).await;
+    let c = reqwest::Client::new();
+    let cases: &[(&str, &[&str])] = &[
+        (
+            "/admin/sessions",
+            &["limit", "ok", "sessions", "skip", "total", "truncated"],
+        ),
+        ("/admin/skills", &["ok", "skills"]),
+        ("/admin/roles", &["active_id", "ok", "roles"]),
+        ("/admin/limits", &["keys", "ok"]),
+        ("/admin/jobs", &["jobs", "ok"]),
+        // /admin/mcp 不入夹具:rig 未接 --mcp-config,该端点在 rig 下走
+        // error 降级形状;成功形状待 MCP e2e rig 就绪后补锁。
+        ("/admin/workspaces", &["workspaces"]),
+        ("/admin/context", &["ok", "steps"]),
+        ("/admin/providers/health", &["health", "ok"]),
+        ("/admin/logs", &["context", "events", "exec", "ok"]),
+        ("/admin/capabilities", &["builtin", "mcp", "note"]),
+        ("/admin/approvals", &["approvals"]),
+    ];
+    for (path, want) in cases {
+        let got = top_keys(&c, &format!("{base}{path}")).await;
+        assert_eq!(
+            &got, want,
+            "{path} 顶层键漂移——若为有意变更:同步 w2/api.ts 类型 + 本夹具期望值"
+        );
+    }
+}

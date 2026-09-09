@@ -1,6 +1,12 @@
 // W2 管理面 REST 客户端(壳子私用;/admin/* 见后端 webadmin.rs 模块注释:
 // 暂不入冻结合同,行为规格 = bm-surface-http tests/webadmin_tests.rs)。
 // 错误形状统一 {error:{message}};探针/连通类结果走 200 + ok 布尔。
+//
+// 类型漂移锚定(issue #18 裁决:先夹具后生成):本文件类型为手写,与
+// 后端实际响应的顶层字段集由 webadmin_tests.rs 的
+// t_admin_response_shape_anchors 夹具锁定——后端改任何顶层字段,CI 先红;
+// 同步顺序 = 后端有意变更 → 更新夹具期望 → 改本文件类型。
+// 后续路线:管理面稳定入册后再评估 Rust 类型自动生成。
 
 // W10(ADR-0024/0025):运行时限制配置 + 后台作业
 export type LimitKey = {
