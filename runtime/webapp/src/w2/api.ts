@@ -21,6 +21,9 @@ export type LimitKey = {
   source: "default" | "file" | "env";
 };
 
+/** 会话权限模式(ADR-0030):状态权威在服务端会话,前端仅为选择器 */
+export type PermissionMode = "ask" | "plan" | "yolo";
+
 export type JobInfo = {
   id: string;
   command: string;
@@ -487,6 +490,22 @@ export const api = {
     req<{ ok: boolean; session_id: string; deleted_at: string; purged_lines: number }>(
       `/admin/sessions/${encodeURIComponent(sid)}`,
       { method: "DELETE" },
+    ),
+  // 会话权限模式读取(ADR-0030):服务端权威,前端仅选择器显示面
+  sessionMode: (sid: string) =>
+    req<{ ok: boolean; session_id: string; permission_mode: PermissionMode }>(
+      `/admin/sessions/${encodeURIComponent(sid)}/mode`,
+    ),
+  // 会话权限模式变更(ADR-0030):发指令改服务端会话状态并落事实事件;
+  // 裁决在服务端——关闭网页/换设备不影响在跑任务,审批自动放行可审计
+  sessionModeSet: (sid: string, mode: PermissionMode) =>
+    req<{ ok: boolean; session_id: string; permission_mode: PermissionMode }>(
+      `/admin/sessions/${encodeURIComponent(sid)}/mode`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode }),
+      },
     ),
   // 会话目录(2026-09-08 三端一致批):服务端权威列表,SessionPanel 唯一
   // 数据源(此前 bm_sessions 存浏览器本地,三设备各记各账不一致的根因)。

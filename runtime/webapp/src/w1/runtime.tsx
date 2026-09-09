@@ -217,7 +217,7 @@ export function BoenmindRuntimeProvider({
 
   // 批准可达性轮询(2026-09-07 审批卡死根治):审批标记仅随回合 /v1 流下发,
   // 流到期或后台续跑回合无主流时,审批单永远无人可批,任务卡死在审批轮询。
-  // 此通道每 2.5s 拉一次待裁决队列:YOLO 自动批准,ask 进抽屉(与流内标记
+  // 此通道每 2.5s 拉一次待裁决队列进抽屉(与流内标记
   // 按 approval_id 去重,双通道互为兜底)。
   useEffect(() => {
     const tick = async () => {
@@ -234,40 +234,24 @@ export function BoenmindRuntimeProvider({
         for (const a of data.approvals ?? []) {
           if (handledApprovalsRef.current.has(a.approval_id)) continue;
           handledApprovalsRef.current.add(a.approval_id);
-          const permMode = storage.get(STORAGE_KEYS.PERMISSION_MODE) || "ask";
-          if (permMode === "yolo") {
-            const post = fetch(
-              `/admin/approvals/${encodeURIComponent(a.approval_id)}/respond`,
-              {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ decision: "approve", scope: "once" }),
-              },
-            );
-            void post
-              .then((r) => {
-                // 批准失败(过期/非等待态)不重试;网络抖动则下一轮询重试
-                if (!r.ok && r.status >= 500)
-                  handledApprovalsRef.current.delete(a.approval_id);
-              })
-              .catch(() => handledApprovalsRef.current.delete(a.approval_id));
-          } else {
-            notifyNewApproval(a);
-            setPendingApprovals((cur) =>
-              cur.some((p) => p.approval_id === a.approval_id)
-                ? cur
-                : [
-                    ...cur,
-                    {
-                      approval_id: a.approval_id,
-                      capability: a.capability ?? "unknown",
-                      args: { summary: a.args_summary ?? "" },
-                      operation_id: "",
-                      status: "waiting" as const,
-                    },
-                  ],
-            );
-          }
+          // ADR-0030:裁决权在服务端——yolo 会话的审批由服务器在裁决点
+          // 自动放行(审计 source=mode_auto),前端只呈现需要人工裁决的
+          // 卡片(ask/plan);前端不再是裁决者
+          notifyNewApproval(a);
+          setPendingApprovals((cur) =>
+            cur.some((p) => p.approval_id === a.approval_id)
+              ? cur
+              : [
+                  ...cur,
+                  {
+                    approval_id: a.approval_id,
+                    capability: a.capability ?? "unknown",
+                    args: { summary: a.args_summary ?? "" },
+                    operation_id: "",
+                    status: "waiting" as const,
+                  },
+                ],
+          );
         }
       } catch {
         // 服务未起/重启窗口:静默,下一 tick 重试
@@ -343,15 +327,8 @@ export function BoenmindRuntimeProvider({
     approvalHandlerRef.current = (req) => {
       // P1-26:流内到达即登记去重集,轮询通道不再重复入队
       handledApprovalsRef.current.add(req.approval_id);
-      const permMode = storage.get(STORAGE_KEYS.PERMISSION_MODE) || "ask";
-      // 完全访问 (YOLO 模式): 自动放行批准，界面不弹卡片或抽屉
-      if (permMode === "yolo") {
-        void postApprovalRespond(req.approval_id, "approve").then((ok) => {
-          // 失败从去重集摘除:轮询通道下一 tick 兜底重试
-          if (!ok) handledApprovalsRef.current.delete(req.approval_id);
-        });
-        return;
-      }
+      // ADR-0030:裁决权在服务端——yolo 会话的审批由服务器自动放行,
+      // 流内到达的标记只做人工裁决呈现(ask/plan),前端不再代批
       notifyNewApproval(req);
       setPendingApprovals((cur) => {
         if (cur.some((a) => a.approval_id === req.approval_id)) return cur;

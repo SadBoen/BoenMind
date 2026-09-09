@@ -29,7 +29,8 @@ export const STORAGE_KEYS = {
   ACTIVE_WORKSPACE: "bm_active_workspace",
   // 插件中心表格列宽
   PLUGINS_TABLE_COLS: "bm_plugins_table_cols",
-  // 权限模式:ask(变更前确认)|plan(计划模式)|yolo(完全访问)
+  // 权限模式(ADR-0030):状态权威在服务端会话;此键仅存"新对话尚未
+  // 创建时"的暂存意向,会话创建后上报服务端一次即清除,不作裁决依据
   PERMISSION_MODE: "bm_permission_mode",
   // 思考等级:off(关闭)|low(轻度)|medium(中度)|high(深度)
   THINKING_LEVEL: "bm_thinking_level",

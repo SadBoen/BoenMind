@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/select";
 import { api, type WorkspaceEntry } from "@/w2/api";
 import { storage, STORAGE_KEYS, type PermissionMode, type ThinkingLevel } from "@/lib/storage";
-import { BM_EVENTS, emit } from "../../lib/bus";
+import { BM_EVENTS, emit, on } from "../../lib/bus";
 import { redirectToLogin } from "@/lib/utils";
 
 export function Composer() {
@@ -44,10 +44,10 @@ export function Composer() {
   const [selWorkspace, setSelWorkspace] = useState<string>(
     () => storage.get(STORAGE_KEYS.ACTIVE_WORKSPACE) || "",
   );
-  // 权限模式选择: ask(变更前确认)|plan(计划模式)|yolo(完全访问)
-  const [permMode, setPermMode] = useState<PermissionMode>(
-    () => (storage.get(STORAGE_KEYS.PERMISSION_MODE) as PermissionMode) || "ask",
-  );
+  // 权限模式(ADR-0030):状态权威在服务端会话,本组件只是选择器。
+  // 新对话(会话尚未创建)时选值暂存本地作"新会话意向",会话创建后自动
+  // 上报一次;有会话后切换即发指令改服务端状态,裁决在服务端执行。
+  const [permMode, setPermMode] = useState<PermissionMode>("ask");
   // 思考等级选择: off(关闭)|low(轻度)|medium(中度)|high(深度)
   const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>(
     () => (storage.get(STORAGE_KEYS.THINKING_LEVEL) as ThinkingLevel) || "medium",
@@ -129,6 +129,35 @@ export function Composer() {
       window.removeEventListener(BM_EVENTS.rolesChanged, loadRoles);
       window.removeEventListener(BM_EVENTS.providersChanged, loadModels);
       window.removeEventListener(BM_EVENTS.workspacesChanged, loadWorkspaces);
+    };
+  }, []);
+
+  useEffect(() => {
+    // ADR-0030:模式以服务端为准——进入/切换会话时拉取;会话刚创建时
+    // (sessionsUpdated)若本地有暂存意向则上报一次后清除,防跨会话串味
+    const syncFromServer = () => {
+      const sid = storage.get(STORAGE_KEYS.SESSION);
+      if (!sid) return;
+      const pending = storage.get(STORAGE_KEYS.PERMISSION_MODE) as PermissionMode | null;
+      if (pending) {
+        storage.remove(STORAGE_KEYS.PERMISSION_MODE);
+        setPermMode(pending);
+        api.sessionModeSet(sid, pending).catch(() => {});
+        return;
+      }
+      api
+        .sessionMode(sid)
+        .then((d) => {
+          if (d?.permission_mode) setPermMode(d.permission_mode);
+        })
+        .catch(() => {});
+    };
+    syncFromServer();
+    const offSwitched = on(BM_EVENTS.sessionSwitched, syncFromServer);
+    const offUpdated = on(BM_EVENTS.sessionsUpdated, syncFromServer);
+    return () => {
+      offSwitched();
+      offUpdated();
     };
   }, []);
 
@@ -336,7 +365,15 @@ export function Composer() {
           onValueChange={(v) => {
             const val = v as PermissionMode;
             setPermMode(val);
-            storage.set(STORAGE_KEYS.PERMISSION_MODE, val);
+            const sid = storage.get(STORAGE_KEYS.SESSION);
+            if (!sid) {
+              // 会话未创建:暂存意向,首条消息创建会话后自动上报服务端
+              storage.set(STORAGE_KEYS.PERMISSION_MODE, val);
+              return;
+            }
+            // ADR-0030:切换 = 发指令改服务端会话状态(落事实事件并持久);
+            // 失败静默,下次进入会话时以服务端值为准
+            api.sessionModeSet(sid, val).catch(() => {});
           }}
         >
           <SelectTrigger
