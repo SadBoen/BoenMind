@@ -15,6 +15,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: python boenmind-contracts/scripts/validate.py
+      # issue #23:版本号三处同步(Cargo.toml/package.json/AGENTS.md/Cargo.lock)CI 门
+      - run: python scripts/check_version_sync.py
 
   # P1-38(2026-09-07 架构评审):apps 三个 Python MCP server 是发布面交付物
   # (release 随包),此前零测试零门禁——冒烟=真实 stdio 管道全协议往返
