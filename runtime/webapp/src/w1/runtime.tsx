@@ -36,6 +36,11 @@ type ApprovalContextValue = {
     hasMore: boolean;
     loading: boolean;
     loadOlder: () => void;
+    // #27 窗口化渲染:DOM 只挂最近 windowSize 条;expandOlder 即时扩窗(不取数)
+    windowSize: number;
+    expandOlder: () => void;
+    // 已加载条数达 HISTORY_TOTAL_CAP,不再向服务端取更早
+    capped: boolean;
   };
 };
 const BoenmindRuntimeContext = createContext<ApprovalContextValue>({
@@ -43,7 +48,14 @@ const BoenmindRuntimeContext = createContext<ApprovalContextValue>({
   respondApproval: async () => {},
   editAndBranchMessage: async () => {},
   regenerateMessage: async () => {},
-  history: { hasMore: false, loading: false, loadOlder: () => {} },
+  history: {
+    hasMore: false,
+    loading: false,
+    loadOlder: () => {},
+    windowSize: 0,
+    expandOlder: () => {},
+    capped: false,
+  },
 });
 export const useBoenmindApprovals = () => useContext(BoenmindRuntimeContext);
 
@@ -117,8 +129,18 @@ export function BoenmindRuntimeProvider({
   // (每页 50,「加载更早」增量前插,防长会话一口气载入卡界面;游标不用
   // seq——历史文件 seq 跨重启重数)
   const HISTORY_PAGE = 50;
+  // #27 长会话窗口化:DOM 只挂最近 MSG_WINDOW_DEFAULT 条;扩窗步进
+  // MSG_WINDOW_STEP;累计加载上限 HISTORY_TOTAL_CAP(防无限堆积拖爆内存)
+  const MSG_WINDOW_DEFAULT = 120;
+  const MSG_WINDOW_STEP = 200;
+  const HISTORY_TOTAL_CAP = 1000;
   const historyCountRef = useRef(0);
-  const [historyMore, setHistoryMore] = useState({ hasMore: false, loading: false });
+  const [historyMore, setHistoryMore] = useState({
+    hasMore: false,
+    loading: false,
+    capped: false,
+  });
+  const [msgWindow, setMsgWindow] = useState(MSG_WINDOW_DEFAULT);
   const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequest[]>(
     [],
   );
@@ -451,6 +473,7 @@ export function BoenmindRuntimeProvider({
       setIsRunning(false);
       setMessages([]);
       setPendingApprovals([]);
+      setMsgWindow(MSG_WINDOW_DEFAULT);
       const epoch = ++sessionEpochRef.current;
       const sid = storage.get(STORAGE_KEYS.SESSION);
       if (!sid) return;
@@ -459,7 +482,11 @@ export function BoenmindRuntimeProvider({
         if (sessionEpochRef.current !== epoch) return; // 已切走,丢弃迟到响应
         setMessages(toThreadMessages(res.messages ?? []));
         historyCountRef.current = (res.messages ?? []).length;
-        setHistoryMore({ hasMore: res.has_more ?? false, loading: false });
+        setHistoryMore({
+          hasMore: res.has_more ?? false,
+          loading: false,
+          capped: false,
+        });
       } catch (e) {
         // 回放失败(日志缺失/网络抖动):2026-09-08 审计修复——不再静默空白,
         // 上屏失败提示(与流内 [连接失败: …] 同款口径),不打断用户输入
@@ -579,6 +606,11 @@ export function BoenmindRuntimeProvider({
   const loadOlder = async () => {
     const sid = storage.get(STORAGE_KEYS.SESSION);
     if (!sid || historyMore.loading) return;
+    // #27:累计加载上限——到顶不再取,前端如实标 capped
+    if (historyCountRef.current >= HISTORY_TOTAL_CAP) {
+      setHistoryMore({ hasMore: false, loading: false, capped: true });
+      return;
+    }
     const epoch = sessionEpochRef.current;
     setHistoryMore((h) => ({ ...h, loading: true }));
     try {
@@ -590,7 +622,14 @@ export function BoenmindRuntimeProvider({
       const older = toThreadMessages(res.messages ?? []);
       setMessages((cur) => [...older, ...cur]);
       historyCountRef.current += older.length;
-      setHistoryMore({ hasMore: res.has_more ?? false, loading: false });
+      // #27:新取回的页即时入窗(否则用户要点两次才能看到)
+      setMsgWindow((w) => w + older.length);
+      setHistoryMore({
+        hasMore: res.has_more ?? false,
+        loading: false,
+        // #27:取回后已达累计上限 = 本会话历史已取尽
+        capped: res.has_more !== true && historyCountRef.current >= HISTORY_TOTAL_CAP,
+      });
     } catch {
       setHistoryMore((h) => ({ ...h, loading: false }));
     }
@@ -607,6 +646,9 @@ export function BoenmindRuntimeProvider({
           hasMore: historyMore.hasMore,
           loading: historyMore.loading,
           loadOlder: () => void loadOlder(),
+          windowSize: msgWindow,
+          expandOlder: () => setMsgWindow((w) => w + MSG_WINDOW_STEP),
+          capped: historyMore.capped,
         },
       }}
     >

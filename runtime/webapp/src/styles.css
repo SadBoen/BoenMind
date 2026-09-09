@@ -363,6 +363,11 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  /* #27 长会话性能:CSS 原生虚拟化——离屏消息跳过布局与绘制,帧率不再随
+     消息数线性劣化(大代码块/密集表格是主源);contain-intrinsic-size 给
+     离屏占位估高(经验值),滚动到视口时按真实内容替换 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 120px;
 }
 .msg-header {
   display: flex;
