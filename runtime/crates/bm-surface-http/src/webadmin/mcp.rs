@@ -573,7 +573,7 @@ pub async fn mcp_config_set(
         Ok(t) => crate::config_store::crlf(t),
         Err(_) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, "序列化失败"),
     };
-    if let Err(e) = bm_persist::atomic_write(&file, text.as_bytes()) {
+    if let Err(e) = bm_core::ports::persist::atomic_write(&file, text.as_bytes()) {
         return admin_error(StatusCode::INTERNAL_SERVER_ERROR, format!("写入失败: {e}"));
     }
     Json(json!({
@@ -1041,7 +1041,7 @@ fn write_tombstones(data_dir: &Path, list: Vec<Value>) -> Result<(), String> {
         "note": "ADR-0023 墓碑:官方随包默认安装跳过本名单;显式批准接入即除名",
     }))
     .map_err(|e| format!("序列化失败: {e}"))?;
-    bm_persist::atomic_write(&tombstone_path(data_dir), text.as_bytes())
+    bm_core::ports::persist::atomic_write(&tombstone_path(data_dir), text.as_bytes())
         .map_err(|e| format!("墓碑写盘失败: {e}"))
 }
 
@@ -1173,7 +1173,7 @@ fn write_plugin_manifest(mcp_json_path: &Path, name: &str, decl: &Value) {
     if let Some(mdir) = mcp_json_path.parent().map(|d| d.join("manifests")) {
         let _ = std::fs::create_dir_all(&mdir);
         if let Ok(text) = serde_json::to_string_pretty(&manifest) {
-            let _ = bm_persist::atomic_write(
+            let _ = bm_core::ports::persist::atomic_write(
                 &mdir.join(format!("{name}.manifest.json")),
                 text.as_bytes(),
             );

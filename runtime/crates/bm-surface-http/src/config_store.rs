@@ -149,7 +149,7 @@ fn write_file(path: &Path, value: &Value) -> CoreResult<()> {
         std::fs::create_dir_all(dir).map_err(|e| validation(format!("配置目录创建失败: {e}")))?;
     }
     let text = crlf(serde_json::to_string_pretty(value).map_err(|_| CoreError::Internal)?);
-    bm_persist::atomic_write(path, text.as_bytes())
+    bm_core::ports::persist::atomic_write(path, text.as_bytes())
         .map_err(|e| validation(format!("配置文件写入失败: {e}")))
 }
 
@@ -199,7 +199,7 @@ pub struct ModelConfigStore {
     data_dir: PathBuf,
 }
 
-/// 配置 RMW 序列化锁(进程级;配合 bm_persist::atomic_write 的唯一 tmp 名)。
+/// 配置 RMW 序列化锁(进程级;配合 bm_core::ports::persist::atomic_write 的唯一 tmp 名)。
 static CONFIG_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 impl ModelConfigStore {

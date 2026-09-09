@@ -48,5 +48,6 @@ pub(crate) fn write_json_file(
     let text = crate::config_store::crlf(
         serde_json::to_string_pretty(value).map_err(|e| format!("序列化失败: {e}"))?,
     );
-    bm_persist::atomic_write(path, text.as_bytes()).map_err(|e| format!("{write_err_prefix}: {e}"))
+    bm_core::ports::persist::atomic_write(path, text.as_bytes())
+        .map_err(|e| format!("{write_err_prefix}: {e}"))
 }

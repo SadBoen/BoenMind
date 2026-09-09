@@ -151,7 +151,9 @@ impl PortalAuth {
             return;
         }
         let text = serde_json::to_string_pretty(&json!({ "password_hash": hash })).expect("序列化");
-        if let Err(e) = bm_persist::atomic_write(&cfg.join("portal.json"), text.as_bytes()) {
+        if let Err(e) =
+            bm_core::ports::persist::atomic_write(&cfg.join("portal.json"), text.as_bytes())
+        {
             eprintln!("[portal] 密码落盘失败: {e}");
         }
         *self.password_hash.lock().expect("锁未中毒") = Some(hash.to_string());

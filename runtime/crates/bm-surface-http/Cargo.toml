@@ -9,7 +9,6 @@ bm-contract = { workspace = true }
 async-trait = { workspace = true }
 bm-providers = { workspace = true }
 bm-core = { workspace = true }
-bm-persist = { workspace = true }
 axum = { workspace = true }
 tower-http = { workspace = true }
 async-stream = { workspace = true }
@@ -28,6 +27,9 @@ zip = { version = "0.6", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+# #35:本体零依赖持久层(落盘小工具/EventStore 端口均走 bm-core);集成测试
+# 装配 PersistStore 实现件属组合根,合法使用 dev-dependency。
+bm-persist = { workspace = true }
 
 [lints]
 workspace = true

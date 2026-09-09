@@ -32,7 +32,7 @@ use std::sync::{Arc, Mutex};
 pub struct AppState {
     pub handle: RuntimeHandle,
     pub token: Arc<String>,
-    pub store: Arc<dyn bm_persist::EventStore>,
+    pub store: Arc<dyn bm_core::ports::persist::EventStore>,
     /// 应用层停机信号(M3.6:/shutdown 触发;服务宿主 await 它以退出)。
     pub shutdown: Arc<tokio::sync::Notify>,
     /// W1(ADR-0014):服务器默认模型(配置/env 驱动),/v1 插座与会话创建用。
@@ -94,7 +94,7 @@ impl V1SessionMap {
 pub fn router(
     handle: RuntimeHandle,
     token: Arc<String>,
-    store: Arc<dyn bm_persist::EventStore>,
+    store: Arc<dyn bm_core::ports::persist::EventStore>,
     shutdown: Arc<tokio::sync::Notify>,
     web_dir: Option<std::path::PathBuf>,
     default_model: Arc<String>,

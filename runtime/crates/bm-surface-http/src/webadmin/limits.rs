@@ -73,7 +73,7 @@ pub async fn limits_put(State(cfg): State<AdminConfig>, Json(body): Json<Value>)
         );
     }
     let pretty = serde_json::to_string_pretty(&new_limits.to_file_value()).unwrap_or_default();
-    if let Err(e) = bm_persist::atomic_write(&path, pretty.as_bytes()) {
+    if let Err(e) = bm_core::ports::persist::atomic_write(&path, pretty.as_bytes()) {
         return admin_error(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("写 limits.json 失败: {e}"),
