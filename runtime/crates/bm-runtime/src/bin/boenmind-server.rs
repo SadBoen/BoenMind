@@ -167,6 +167,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ]);
     // ADR-0021:fs.* 文件工具集内置(查/读直通,写/改审批;沙箱=工作区注册表)
     capabilities.extend(bm_providers::fs_tools::fs_capability_entries());
+    // issue #2:上下文压缩独立工具(确定性抽取摘要落盘,回合组装面注入前缀)
+    capabilities.extend(bm_providers::context_compress::capability_entries(
+        data_dir.clone(),
+    ));
     // Skill v0.2(ADR-0016 第二步):skills.json 声明 scripts 的技能 →
     // wasmtime 执行面(manifests 进能力面,执行体挂 skill 分道)。
     let (skills, skill_entries) = load_skill_scripts(&data_dir);

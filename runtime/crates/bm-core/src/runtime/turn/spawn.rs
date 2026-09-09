@@ -158,6 +158,8 @@ pub(crate) fn spawn_turn(
     let ctx_log = w.ctx_log.clone();
     // #14:Turn 内调试日志(默认关;管理面热开关)
     let turn_debug = w.turn_debug.clone();
+    // #2:会话压缩摘要注入(存在即读;无 data_dir 的纯内存测试不触达)
+    let compress_data_dir = w.config.data_dir.clone();
     let limits_cell = w.config.limits.clone();
 
     let allowed_tools = agent.allowed_tools.clone();
@@ -177,6 +179,21 @@ pub(crate) fn spawn_turn(
             messages.push(Message {
                 role: Role::System,
                 content: sp.clone(),
+                tool_call_id: None,
+                tool_calls: None,
+            });
+        }
+        // #2:会话压缩摘要注入——context.compress 的产物文件存在即前置
+        // (System 消息;历史原文不改写,删除文件即回退)
+        if let (Some(sid), Some(ddir)) = (session_id.as_ref(), compress_data_dir.as_deref())
+            && let Some(summary) = crate::context_log::load_compress_summary(ddir, sid.as_str())
+        {
+            messages.push(Message {
+                role: Role::System,
+                content: format!(
+                    "【会话压缩摘要(context.compress 生成;历史原文未改写,以下摘要把关前情)】
+{summary}"
+                ),
                 tool_call_id: None,
                 tool_calls: None,
             });

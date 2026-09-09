@@ -800,3 +800,183 @@ async fn t48_turn_debug_log_toggle_and_capture() {
 
     rig.handle.stop("test_done").await;
 }
+
+/// issue #2:上下文压缩独立工具——capability 注册进 rig(带 data_dir),
+/// 两轮后调用 context.compress,下一回合的请求快照(context-log)中
+/// 出现压缩摘要 System 消息。
+#[tokio::test]
+async fn t49_context_compress_capability_and_injection() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let token = Arc::new(token::load_or_create(dir.path()).expect("令牌"));
+    let store: Arc<PersistStore> = Arc::new(PersistStore::open(dir.path()).expect("打开"));
+    let connector: Arc<dyn ModelConnector> = Arc::new(MockConnector::new(bm_testkit_style_repeat(
+        Step::ok("压缩答", 100, 20),
+        10,
+    )));
+    let mut caps = bm_providers::builtin::builtin_capability_set();
+    caps.extend(bm_providers::context_compress::capability_entries(
+        dir.path().to_path_buf(),
+    ));
+    let handle = RuntimeHandle::start(RuntimeConfig {
+        capabilities: caps,
+        async_executor: None,
+        model_streaming: false,
+        limits: bm_core::LimitsCell::with_default(),
+        job_board: None,
+        version: "0.1.0-m1".into(),
+        data_dir: Some(dir.path().to_path_buf()),
+        store: Some(store.clone()),
+        connector,
+        secret_store: Arc::new(MemSecretStore::with(
+            &bm_core::runtime::default_secret_ref(bm_testkit_replay::MODEL_A),
+            "sk-demo-zhipu-secret-value-001",
+        )),
+        id_gen: Arc::new(SeqIdGen::new()),
+        clock: Arc::new(SystemClock),
+        turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
+        max_attempts: None,
+    })
+    .await;
+    let app = bm_surface_http::router(
+        handle.clone(),
+        token.clone(),
+        store.clone(),
+        Arc::new(tokio::sync::Notify::new()),
+        None,
+        Arc::new("mock-model".into()),
+        None,
+        None,
+        false,
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("绑定");
+    let addr = listener.local_addr().expect("地址");
+    tokio::spawn(async move { axum::serve(listener, app).await.expect("serve") });
+    let url = format!("http://{addr}");
+    let authed = {
+        let mut b = reqwest::Client::builder();
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::AUTHORIZATION,
+            format!("Bearer {}", token).parse().expect("头"),
+        );
+        b = b.default_headers(headers);
+        b.build().expect("客户端")
+    };
+    let ids = Arc::new(SeqIdGen::new());
+    async fn rpc(
+        client: &reqwest::Client,
+        url: &str,
+        ids: &SeqIdGen,
+        method: &str,
+        params: serde_json::Value,
+    ) -> (u16, serde_json::Value) {
+        let request_id = IdGen::next_id(ids, "req");
+        let envelope = serde_json::json!({
+            "v": "0.1", "method": method,
+            "request_id": request_id.as_str(),
+            "params": params,
+        });
+        let r = client
+            .post(format!("{url}/rpc/{method}"))
+            .json(&envelope)
+            .send()
+            .await
+            .expect("请求");
+        (
+            r.status().as_u16(),
+            r.json::<serde_json::Value>().await.expect("信封"),
+        )
+    }
+
+    // 建会话 + 两轮(产生 user_message/assistant_final 事件)
+    let (_, body) = rpc(
+        &authed,
+        &url,
+        ids.as_ref(),
+        "session.create",
+        serde_json::json!({"agent": {"name": "assistant",
+            "model_chain": [bm_testkit_replay::MODEL_A],
+            "budget": {"max_tokens": 100000, "max_turns": 10}}}),
+    )
+    .await;
+    let sess = body["result"]["session_id"].as_str().unwrap().to_string();
+    let agent = body["result"]["agent_id"].as_str().unwrap().to_string();
+    for content in ["第一问:项目目标是什么", "第二问:依赖清单"] {
+        let (_, body) = rpc(
+            &authed,
+            &url,
+            ids.as_ref(),
+            "agent.send_input",
+            serde_json::json!({"session_id": sess, "agent_id": agent,
+                "content": content, "input_trust": "trusted"}),
+        )
+        .await;
+        let op = body["result"]["operation_id"].as_str().unwrap().to_string();
+        loop {
+            let (_, b) = rpc(
+                &authed,
+                &url,
+                ids.as_ref(),
+                "operations.get",
+                serde_json::json!({"operation_id": op}),
+            )
+            .await;
+            if b["result"]["state"].as_str() == Some("succeeded") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    // 调用 context.compress
+    let (st, body) = rpc(
+        &authed,
+        &url,
+        ids.as_ref(),
+        "capability.call",
+        serde_json::json!({"capability": "context.compress",
+            "args": {"session_id": sess, "keep_recent": 1}}),
+    )
+    .await;
+    assert_eq!(st, 200, "{body}");
+    assert_eq!(body["result"]["state"], "succeeded", "{body}");
+    // 压缩产物落盘
+    let summary =
+        bm_core::context_log::load_compress_summary(dir.path(), &sess).expect("摘要工件已写入");
+    assert!(summary.contains("第一问"), "摘要含会话脉络");
+
+    // 第三轮:请求快照(context-log)须含压缩摘要 System 消息
+    let (_, body) = rpc(
+        &authed,
+        &url,
+        ids.as_ref(),
+        "agent.send_input",
+        serde_json::json!({"session_id": sess, "agent_id": agent,
+            "content": "第三问:基于摘要继续", "input_trust": "trusted"}),
+    )
+    .await;
+    let op = body["result"]["operation_id"].as_str().unwrap().to_string();
+    loop {
+        let (_, b) = rpc(
+            &authed,
+            &url,
+            ids.as_ref(),
+            "operations.get",
+            serde_json::json!({"operation_id": op}),
+        )
+        .await;
+        if b["result"]["state"].as_str() == Some("succeeded") {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let raw = std::fs::read_to_string(dir.path().join("context-log.jsonl")).unwrap();
+    assert!(
+        raw.contains("【会话压缩摘要"),
+        "第三轮请求快照须注入压缩摘要"
+    );
+
+    handle.stop("test_done").await;
+}

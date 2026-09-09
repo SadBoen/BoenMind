@@ -15,6 +15,22 @@ use std::sync::Mutex;
 /// 单条消息内容入快照的截断上限(字符;与事件面 16KB 口径同量级)。
 const SNAPSHOT_CONTENT_CAP_CHARS: usize = 16_000;
 
+/// issue #2:会话压缩摘要工件路径(<data>/compress/{sid}.json)。
+/// 写入方 = bm-providers context.compress(确定性抽取);本模块只持路径
+/// 与读取口(依赖方向:providers → core 单向)。
+pub fn compress_summary_path(data_dir: &std::path::Path, session_id: &str) -> std::path::PathBuf {
+    data_dir.join("compress").join(format!("{session_id}.json"))
+}
+
+/// 回合组装面读取口:摘要存在则返回文本(无文件/解析失败 = None)。
+pub fn load_compress_summary(data_dir: &std::path::Path, session_id: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(compress_summary_path(data_dir, session_id)).ok()?,
+    )
+    .ok()?;
+    v["summary"].as_str().map(String::from)
+}
+
 /// 一次模型调用的快照记录(调用结束落一行;status/error/usage 为结果侧)。
 pub struct ContextRecord {
     pub session_id: String,

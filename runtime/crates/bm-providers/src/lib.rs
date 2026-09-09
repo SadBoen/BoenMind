@@ -2,6 +2,7 @@
 //! 默认交付以确定性 mock 为主(规格 §4.3),真实 GLM 适配器 feature 门控。
 
 pub mod builtin;
+pub mod context_compress;
 pub mod fs_tools;
 pub mod jobs;
 pub mod mcp;
