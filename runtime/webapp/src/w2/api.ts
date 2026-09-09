@@ -275,6 +275,17 @@ export const api = {
       req<{ ok: boolean }>(`/admin/providers/${id}`, { method: "DELETE" }),
     probe: (baseUrl: string, apiKey?: string) =>
       req<ProbeResult>("/admin/providers/probe", json("POST", { baseUrl, apiKey })),
+    /** issue #12:熔断健康快照(healthy/unavailable + 连败/冷却) */
+    health: () =>
+      req<{
+        ok: boolean;
+        health: {
+          provider: string;
+          status: string;
+          fail_streak: number;
+          cooldown_until: string | null;
+        }[];
+      }>("/admin/providers/health"),
     setActive: (providerId: string, modelId?: string) =>
       req<{ ok: boolean; restartRequired: boolean; note: string }>(
         "/admin/model/active",

@@ -45,6 +45,7 @@ import { ContextView } from "./context";
 import { useBoenmindApprovals, type ApprovalRequest } from "./runtime";
 import { api, type WorkspaceEntry } from "@/w2/api";
 import { JobsBadge } from "./components/JobsBadge";
+import { ProviderHealthBadge } from "./components/ProviderHealthBadge";
 import { storage, STORAGE_KEYS, type PermissionMode, type ThinkingLevel } from "@/lib/storage";
 import { BM_EVENTS, emit, on } from "../lib/bus";
 import { redirectToLogin } from "@/lib/utils";
@@ -156,6 +157,7 @@ export function Thread({
         <span style={{ flex: 1 }} />
         <span className="badge">self-hosted</span>
         <JobsBadge />
+        <ProviderHealthBadge />
         <button
           className={drawerCls(workspaceCollapsed)}
           aria-pressed={workspaceCollapsed}
