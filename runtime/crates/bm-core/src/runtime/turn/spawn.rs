@@ -1,6 +1,40 @@
 //! 自 turn.rs 机械移入(内容零改动)。
 use super::*;
 
+/// OpenAI function.name 规范要求 ^[a-zA-Z0-9_-]{1,64}$,不能有点号。
+/// 默认单下划线转义(fs.read -> fs_read; mcp.foo.bar -> mcp_foo_bar);
+/// 内置五件走短名表;短名被占则回落长名,保唯一性。(#19 拆分:纯逻辑出回合体)
+fn wire_name_of(cap: &str, taken: &std::collections::HashSet<String>) -> String {
+    #[cfg(windows)]
+    const EXEC_WIRE_NAME: &str = "powershell";
+    #[cfg(not(windows))]
+    const EXEC_WIRE_NAME: &str = "bash";
+    const SHORT_WIRE_NAMES: &[(&str, &str)] = &[
+        ("fs.read", "read"),
+        ("fs.write", "write"),
+        ("fs.edit", "edit"),
+        ("fs.search", "rgrep"),
+        ("system.exec", EXEC_WIRE_NAME),
+    ];
+    let default_name = cap.replace('.', "_");
+    SHORT_WIRE_NAMES
+        .iter()
+        .find(|(c, _)| *c == cap)
+        .map(|(_, short)| short.to_string())
+        .filter(|short| !taken.contains(short))
+        .unwrap_or(default_name)
+}
+
+/// 防空转熔断判定(#19 拆分:纯函数,单测直测)——窗口内已有连续 n-1 个
+/// 与 sig 相同的签名(加上本次恰好 n 次)= 熔断命中。
+fn breaker_hit(recent: &[(String, String)], sig: &(String, String), n: usize) -> bool {
+    if n < 2 {
+        return false;
+    }
+    let w = n - 1;
+    recent.len() >= w && recent[recent.len() - w..].iter().all(|s| s == sig)
+}
+
 pub(crate) fn spawn_turn(
     w: &mut World,
     agent: &Agent,
@@ -232,37 +266,14 @@ pub(crate) fn spawn_turn(
         // 回落单下划线长名,保唯一性。search 命名用户裁决弃用(易误读为
         // 网络查询)→ rgrep;exec 按平台呈现实际 shell 名(Windows=powershell,
         // 其余=bash),模型见名即知语法。
-        #[cfg(windows)]
-        const EXEC_WIRE_NAME: &str = "powershell";
-        #[cfg(not(windows))]
-        const EXEC_WIRE_NAME: &str = "bash";
-        const SHORT_WIRE_NAMES: &[(&str, &str)] = &[
-            ("fs.read", "read"),
-            ("fs.write", "write"),
-            ("fs.edit", "edit"),
-            ("fs.search", "rgrep"),
-            ("system.exec", EXEC_WIRE_NAME),
-        ];
         let taken: std::collections::HashSet<String> = chat_tools
             .iter()
             .map(|(cap, ..)| cap.replace('.', "_"))
             .collect();
-        let wire_name_of = |cap: &str| -> String {
-            // OpenAI function.name 规范要求 ^[a-zA-Z0-9_-]{1,64}$，不能有点号。
-            // 默认单下划线转义(fs.read -> fs_read; mcp.foo.bar -> mcp_foo_bar)；
-            // 内置五件走短名表；短名被占则回落长名,保唯一性。
-            let default_name = cap.replace('.', "_");
-            SHORT_WIRE_NAMES
-                .iter()
-                .find(|(c, _)| *c == cap)
-                .map(|(_, short)| short.to_string())
-                .filter(|short| !taken.contains(short))
-                .unwrap_or(default_name)
-        };
         let mut tools_json: Vec<serde_json::Value> = chat_tools
             .iter()
             .map(|(cap, schema, needs_approval, manifest_desc)| {
-                let openai_name = wire_name_of(cap);
+                let openai_name = wire_name_of(cap, &taken);
                 name_to_cap.insert(openai_name.clone(), cap.clone());
                 // ADR-0022 描述治理:描述随 manifest 走(fs.*/system.exec 内置
                 // 能力与 MCP 工具均自描述);缺省按审批语义给最小兜底,不再
@@ -494,12 +505,7 @@ pub(crate) fn spawn_turn(
                             if breaker_n >= 2 {
                                 for tc in &tool_calls {
                                     let sig = (tc.name.clone(), tc.arguments.clone());
-                                    if recent_tool_signatures.len() >= breaker_n - 1
-                                        && recent_tool_signatures
-                                            [recent_tool_signatures.len() - (breaker_n - 1)..]
-                                            .iter()
-                                            .all(|s| *s == sig)
-                                    {
+                                    if breaker_hit(&recent_tool_signatures, &sig, breaker_n) {
                                         loop_broken = true;
                                         break;
                                     }
@@ -1227,5 +1233,56 @@ fn audit_model_invoke(w: &mut World, agent: &Agent, chain: &[String]) -> Option<
             }
             _ => None,
         }
+    }
+}
+
+/// #19 拆分第一步:回合体纯逻辑外置后的直测(防空转熔断判定 + wire 名映射)。
+#[cfg(test)]
+mod pure_helpers_tests {
+    use super::breaker_hit;
+    use super::wire_name_of;
+
+    fn sig(a: &str, b: &str) -> (String, String) {
+        (a.to_string(), b.to_string())
+    }
+
+    #[test]
+    fn breaker_hits_only_after_n_consecutive_same() {
+        let n = 3;
+        let window: Vec<(String, String)> = vec![sig("a", "1"), sig("a", "1")];
+        assert!(
+            breaker_hit(&window, &sig("a", "1"), n),
+            "窗口已有 n-1=2 个同签名 → 本次命中"
+        );
+        let mixed: Vec<(String, String)> = vec![sig("a", "1"), sig("b", "2")];
+        assert!(!breaker_hit(&mixed, &sig("a", "1"), n), "签名不同不命中");
+        let short: Vec<(String, String)> = vec![sig("a", "1")];
+        assert!(
+            !breaker_hit(&short, &sig("a", "1"), n),
+            "窗口不足 n-1 不命中"
+        );
+        assert!(!breaker_hit(&[], &sig("a", "1"), n), "空窗口不命中");
+        // n<2 = 熔断关闭
+        assert!(!breaker_hit(&window, &sig("a", "1"), 1));
+        assert!(!breaker_hit(&window, &sig("a", "1"), 0));
+    }
+
+    #[test]
+    fn wire_names_escape_dots_and_prefer_free_short_names() {
+        let taken: std::collections::HashSet<String> =
+            ["mcp_x_y".to_string()].into_iter().collect();
+        assert_eq!(wire_name_of("fs.read", &taken), "read", "内置五件走短名");
+        assert_eq!(
+            wire_name_of("system.exec", &taken),
+            if cfg!(windows) { "powershell" } else { "bash" }
+        );
+        assert_eq!(wire_name_of("mcp.x.y", &taken), "mcp_x_y", "点转单下划线");
+        // 短名被占 → 回落长名
+        let taken2: std::collections::HashSet<String> = ["read".to_string()].into_iter().collect();
+        assert_eq!(
+            wire_name_of("fs.read", &taken2),
+            "fs_read",
+            "短名被占回落长名"
+        );
     }
 }
