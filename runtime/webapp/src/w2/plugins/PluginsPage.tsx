@@ -1,5 +1,8 @@
 // 统一插件中心：整合「系统内置能力」与「外部 MCP 插件」
 // 采用表格式呈现，顶部提供【全部 / 内置 / 外部】快速筛选，保留完整的扫描、配置与操作能力。
+// #22 拆分:本文件为数据与装配层;表格行(PluginTableRow)、扫描候选对话框
+// (ScanCandidatesDialog)、stderr 弹窗(StderrDialog)、ServerConfigDialog/
+// McpDialog 各自成文件;行为回调在此统一驱动 API。
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -7,17 +10,12 @@ import {
   PlusIcon,
   RefreshCwIcon,
   ScanSearchIcon,
-  ShieldCheck,
-  Globe,
-  Wrench,
 } from "lucide-react";
 import {
   api,
   type Capability,
   type McpListResult,
-  type McpServer,
 } from "../api";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -30,38 +28,23 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { STORAGE_KEYS, storage } from "@/lib/storage";
-import { Tooltip } from "radix-ui";
 import { ServerConfigDialog } from "./ServerConfigDialog";
 import { McpDialog } from "./McpDialog";
-import { type ConfigTarget, type McpCandidatesResult, type Draft, emptyDraft, toDraft, fromDraft } from "./types";
+import { PluginTableRow } from "./PluginTableRow";
+import { ScanCandidatesDialog } from "./ScanCandidatesDialog";
+import { StderrDialog, type StderrViewState } from "./StderrDialog";
+import {
+  type ConfigTarget,
+  type McpCandidatesResult,
+  type Draft,
+  type ToolInfo,
+  type TablePluginItem,
+  BUILTIN_DESC,
+  emptyDraft,
+  toDraft,
+  fromDraft,
+} from "./types";
 import { type ColKey, TABLE_COLUMNS, loadColWidths } from "./columns";
-
-export type ToolInfo = {
-  name: string;
-  description?: string;
-};
-
-export type TablePluginItem = {
-  id: string;
-  name: string;
-  type: "builtin" | "external";
-  detail: string;
-  tools: ToolInfo[];
-  isOnline?: boolean;
-  serverRef?: McpServer;
-  /** ADR-0023:官方随包来源但最新官方清单已不含 → 建议删除 */
-  deprecated?: boolean;
-};
-
-// 内置能力白话说明(键=能力名;未命中回落 effect 文案)
-const BUILTIN_DESC: Record<string, string> = {
-  "model.invoke": "内核私有 · 模型调用通道(每次回复都走它,非对话工具)",
-  "system.exec": "系统终端:审批后执行命令(万能底牌)",
-  "fs.search": "工作区内容搜索(rg 引擎内嵌)· 免审批直通",
-  "fs.read": "读文件(带行号 + 分页)· 免审批直通",
-  "fs.write": "写文件(新建/整文覆盖)· 需审批",
-  "fs.edit": "精确字符串替换编辑 · 需审批",
-};
 
 export function PluginsPage() {
   const [filter, setFilter] = useState("");
@@ -71,7 +54,7 @@ export function PluginsPage() {
   const [statusMap, setStatusMap] = useState<
     Record<string, { ok: boolean; tools?: number; tool_list?: ToolInfo[]; error?: string }>
   >({});
-  
+
   const [draft, setDraft] = useState<Draft | null>(null);
   const [busy, setBusy] = useState(false);
   const [scanning, setScanning] = useState(false);
@@ -80,12 +63,7 @@ export function PluginsPage() {
   const [approving, setApproving] = useState<string | null>(null);
   const [configTarget, setConfigTarget] = useState<ConfigTarget | null>(null);
   // issue #28:子进程 stderr 回看弹窗
-  const [stderrView, setStderrView] = useState<{
-    name: string;
-    loading: boolean;
-    lines: { generation: number; text: string }[];
-    error?: string;
-  } | null>(null);
+  const [stderrView, setStderrView] = useState<StderrViewState | null>(null);
   // ADR-0023:物理删除确认弹窗目标(包含来源与是否废弃，便于精准提示)
   const [purgeTarget, setPurgeTarget] = useState<{
     name: string;
@@ -331,13 +309,88 @@ export function PluginsPage() {
     }
   };
 
+  // 扫描候选批准:ADR-0023 批准即自动上线(后端热重载),前端只刷新
+  const handleApproveCandidate = async (c: McpCandidatesResult["candidates"][number]) => {
+    setApproving(c.name);
+    setError(null);
+    try {
+      const r = await api.mcp.approve(c.name);
+      setScanResult(null);
+      const tools = r.reload?.tools;
+      setNotice(
+        typeof tools === "number"
+          ? `「${c.name}」已批准并自动上线 · ${tools} 个工具`
+          : (r.note ?? `「${c.name}」已批准`),
+      );
+      await loadData();
+      await refreshStatus();
+    } catch (e) {
+      setError(String(e instanceof Error ? e.message : e));
+    } finally {
+      setApproving(null);
+    }
+  };
+
+  // 行为回调:表格行动作(数据面仍以本页 mcpData 为唯一来源)
+  const findEntry = (name: string) => mcpData?.entries?.find((e) => e.server.name === name);
+
+  const handleRowEdit = (item: TablePluginItem) => {
+    setDraft(toDraft(item.serverRef!));
+  };
+
+  const handleRowConfig = (item: TablePluginItem) => {
+    const mcpEntry = findEntry(item.name);
+    api.mcp.getConfig(item.name).then((cfg) => {
+      setConfigTarget({
+        name: item.name,
+        schema: mcpEntry?.manifest?.config_schema ?? [],
+        values: cfg.values,
+      });
+    });
+  };
+
+  const handleRowStderr = (name: string) => {
+    setStderrView({ name, loading: true, lines: [] });
+    api.mcp.getStderr(name, 200).then((r) => {
+      setStderrView({
+        name,
+        loading: false,
+        lines: r.lines ?? [],
+        error: r.ok ? undefined : r.error,
+      });
+    });
+  };
+
+  const handleStderrRefresh = () => {
+    if (!stderrView) return;
+    setStderrView({ ...stderrView, loading: true });
+    api.mcp.getStderr(stderrView.name, 200).then((r) => {
+      setStderrView({
+        name: stderrView.name,
+        loading: false,
+        lines: r.lines ?? [],
+        error: r.ok ? undefined : r.error,
+      });
+    });
+  };
+
+  const handleRowPurge = (item: TablePluginItem) => {
+    const mcpEntry = findEntry(item.name);
+    setPurgeTarget({
+      name: item.name,
+      command: item.serverRef?.command,
+      origin: mcpEntry?.origin,
+      deprecated: mcpEntry?.deprecated,
+    });
+  };
+
   return (
     <div className="flex flex-col gap-4">
       {/* 顶部标题与操作栏 */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-[16px] font-semibold text-foreground">插件与能力中心</h2>
-          <p className="text-muted-foreground text-[12.5px] mt-0.5">
+          <p className="text-muted-foreground mt-0.5 text-[12.5px]">
             查看系统内置基础能力，管理外部扩展插件（MCP 工具、真实 App）与连通状态。
           </p>
         </div>
@@ -451,229 +504,19 @@ export function PluginsPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-border/60">
-            {filteredItems.map((item) => {
-              const mcpEntry = mcpData?.entries?.find((e) => e.server.name === item.name);
-              return (
-                <tr key={item.id} className="transition-colors hover:bg-muted/30">
-                  {/* 名称与描述 */}
-                  <td className="px-3.5 py-2.5 align-middle border-r border-border/40 overflow-hidden">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span
-                        className={cn(
-                          "size-2 shrink-0 rounded-full",
-                          item.isOnline ? "bg-emerald-500" : "bg-zinc-400",
-                        )}
-                        title={item.isOnline ? "可用" : "未联通"}
-                      />
-                      <span className="font-mono font-medium text-foreground truncate">{item.name}</span>
-                      {item.deprecated ? (
-                        <span
-                          className="shrink-0 rounded border border-[var(--state-warn-border)] bg-[var(--state-warn-bg)] px-1 font-mono text-[9.5px] text-[var(--state-warn-fg)]"
-                          title="最新官方版本已不包含此插件,建议用「删除」清理"
-                        >
-                          已不随包
-                        </span>
-                      ) : null}
-                    </div>
-                    <div className="text-muted-foreground mt-0.5 truncate text-[11.5px]">
-                      {item.detail}
-                    </div>
-                  </td>
-
-                  {/* 类别徽标 */}
-                  <td className="px-4 py-2.5 align-middle whitespace-nowrap border-r border-border/40">
-                    {item.type === "builtin" ? (
-                      <Badge variant="outline" className="gap-1 border-blue-500/30 bg-blue-500/10 font-mono text-[10.5px] text-blue-600 dark:text-blue-400">
-                        <ShieldCheck className="size-3" /> 系统内置
-                      </Badge>
-                    ) : (
-                      <Badge variant="secondary" className="gap-1 font-mono text-[10.5px]">
-                        <Globe className="size-3 opacity-70" /> 外部 MCP
-                      </Badge>
-                    )}
-                  </td>
-
-                  {/* 提供工具列表(标签 + 气泡防撑破) */}
-                  <td className="px-3.5 py-2.5 align-middle border-r border-border/40 overflow-hidden">
-                    <Tooltip.Provider delayDuration={200}>
-                      <div className="flex flex-wrap items-center gap-1.5 min-w-0">
-                        {item.tools.slice(0, 2).map((t) => (
-                          <Tooltip.Root key={t.name}>
-                            <Tooltip.Trigger asChild>
-                              <span
-                                className={cn(
-                                  "inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-mono text-[11px] border max-w-[135px] truncate cursor-help transition-colors",
-                                  item.type === "builtin"
-                                    ? "bg-muted/50 border-border text-foreground hover:bg-muted"
-                                    : "bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20",
-                                )}
-                              >
-                                <Wrench className="size-2.5 shrink-0 opacity-70" />
-                                <span className="truncate">{t.name}</span>
-                              </span>
-                            </Tooltip.Trigger>
-                            <Tooltip.Portal>
-                              <Tooltip.Content
-                                side="top"
-                                align="start"
-                                sideOffset={5}
-                                className="z-50 max-w-xs rounded-lg border bg-popover p-2.5 text-[11.5px] text-popover-foreground shadow-md animate-in fade-in-0 zoom-in-95"
-                              >
-                                <div className="font-mono font-semibold text-foreground flex items-center gap-1">
-                                  <Wrench className="size-3 text-emerald-500" />
-                                  {t.name}
-                                </div>
-                                {t.description ? (
-                                  <div className="text-muted-foreground mt-1 text-[11px] leading-relaxed">
-                                    {t.description}
-                                  </div>
-                                ) : (
-                                  <div className="text-muted-foreground/60 mt-1 text-[10.5px]">
-                                    暂无工具详细描述
-                                  </div>
-                                )}
-                                <Tooltip.Arrow className="fill-popover" />
-                              </Tooltip.Content>
-                            </Tooltip.Portal>
-                          </Tooltip.Root>
-                        ))}
-
-                        {/* 超出 2 个工具时显示折叠徽标，鼠标悬浮气泡查看全部 */}
-                        {item.tools.length > 2 ? (
-                          <Tooltip.Root>
-                            <Tooltip.Trigger asChild>
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded-md font-mono text-[10.5px] font-semibold bg-muted text-muted-foreground border border-border cursor-help hover:text-foreground">
-                                +{item.tools.length - 2}
-                              </span>
-                            </Tooltip.Trigger>
-                            <Tooltip.Portal>
-                              <Tooltip.Content
-                                side="top"
-                                align="start"
-                                sideOffset={5}
-                                className="z-50 max-w-sm rounded-lg border bg-popover p-3 text-[11.5px] text-popover-foreground shadow-lg animate-in fade-in-0 zoom-in-95"
-                              >
-                                <div className="font-semibold text-foreground border-b pb-1.5 mb-2 flex items-center justify-between">
-                                  <span>全部可用工具清单</span>
-                                  <span className="text-[10.5px] font-mono text-muted-foreground">共 {item.tools.length} 个</span>
-                                </div>
-                                <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                                  {item.tools.map((t) => (
-                                    <div key={t.name} className="rounded bg-muted/40 p-1.5 border border-border/50">
-                                      <div className="font-mono font-medium text-foreground flex items-center gap-1">
-                                        <Wrench className="size-3 text-emerald-500 shrink-0" />
-                                        <span>{t.name}</span>
-                                      </div>
-                                      {t.description ? (
-                                        <div className="text-muted-foreground mt-0.5 text-[10.5px] leading-relaxed">
-                                          {t.description}
-                                        </div>
-                                      ) : null}
-                                    </div>
-                                  ))}
-                                </div>
-                                <Tooltip.Arrow className="fill-popover" />
-                              </Tooltip.Content>
-                            </Tooltip.Portal>
-                          </Tooltip.Root>
-                        ) : null}
-
-                        {item.tools.length === 0 ? (
-                          <span className="text-[11px] text-muted-foreground/60 italic">
-                            未探测到可用工具
-                          </span>
-                        ) : null}
-                      </div>
-                    </Tooltip.Provider>
-                  </td>
-
-                  {/* 操作按钮组 (水平中间对齐) */}
-                  <td className="px-3.5 py-2.5 text-center align-middle whitespace-nowrap">
-                    {item.type === "external" && item.serverRef ? (
-                      <div className="flex items-center justify-center gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 px-2 text-[11.5px]"
-                          onClick={() => setDraft(toDraft(item.serverRef!))}
-                        >
-                          编辑
-                        </Button>
-                        {mcpEntry?.manifest?.config_schema?.length ? (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 px-2 text-[11.5px]"
-                            onClick={() => {
-                              api.mcp.getConfig(item.name).then((cfg) => {
-                                setConfigTarget({
-                                  name: item.name,
-                                  schema: mcpEntry.manifest?.config_schema ?? [],
-                                  values: cfg.values,
-                                });
-                              });
-                            }}
-                          >
-                            配置
-                          </Button>
-                        ) : null}
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 px-2 text-[11.5px]"
-                          title="子进程 stderr 尾部(环形缓冲,跨重启带代标记)"
-                          data-slot="mcp-stderr"
-                          onClick={() => {
-                            setStderrView({ name: item.name, loading: true, lines: [] });
-                            api.mcp.getStderr(item.name, 200).then((r) => {
-                              setStderrView({
-                                name: item.name,
-                                loading: false,
-                                lines: r.lines ?? [],
-                                error: r.ok ? undefined : r.error,
-                              });
-                            });
-                          }}
-                        >
-                          日志
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          disabled={busy}
-                          className="h-7 px-2 text-[11.5px]"
-                          onClick={() => void handleRemove(item.name)}
-                        >
-                          卸载
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          disabled={busy}
-                          className="h-7 px-2 text-[11.5px] text-destructive hover:bg-destructive/10"
-                          title="卸载并物理删除插件文件(含警告确认)"
-                          data-slot="mcp-purge"
-                          onClick={() =>
-                            setPurgeTarget({
-                              name: item.name,
-                              command: item.serverRef?.command,
-                              origin: mcpEntry?.origin,
-                              deprecated: mcpEntry?.deprecated,
-                            })
-                          }
-                        >
-                          删除
-                        </Button>
-                      </div>
-                    ) : (
-                      <span className="text-[11px] text-muted-foreground/60 select-none inline-block">
-                        出厂固有 · 禁卸载
-                      </span>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
+            {filteredItems.map((item) => (
+              <PluginTableRow
+                key={item.id}
+                item={item}
+                mcpEntry={findEntry(item.name)}
+                busy={busy}
+                onEdit={handleRowEdit}
+                onConfig={handleRowConfig}
+                onStderr={handleRowStderr}
+                onRemove={(name) => void handleRemove(name)}
+                onPurge={handleRowPurge}
+              />
+            ))}
 
             {filteredItems.length === 0 ? (
               <tr>
@@ -694,150 +537,21 @@ export function PluginsPage() {
 
       {/* issue #28:子进程 stderr 回看 */}
       {stderrView ? (
-        <Dialog open onOpenChange={(v) => !v && setStderrView(null)}>
-          <DialogContent className="sm:max-w-2xl" data-slot="mcp-stderr-dialog">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
-                stderr · {stderrView.name}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 px-2 text-[11px]"
-                  disabled={stderrView.loading}
-                  onClick={() => {
-                    setStderrView({ ...stderrView, loading: true });
-                    api.mcp.getStderr(stderrView.name, 200).then((r) => {
-                      setStderrView({
-                        name: stderrView.name,
-                        loading: false,
-                        lines: r.lines ?? [],
-                        error: r.ok ? undefined : r.error,
-                      });
-                    });
-                  }}
-                >
-                  <RefreshCwIcon className="size-3" />
-                  刷新
-                </Button>
-              </DialogTitle>
-              <DialogDescription>
-                子进程 stderr 尾部(最近 200 行,环形缓冲;「第 N 代」= 重启代数)
-              </DialogDescription>
-            </DialogHeader>
-            {stderrView.loading ? (
-              <div className="flex items-center gap-2 py-6 justify-center text-muted-foreground text-sm">
-                <Loader2Icon className="size-4 animate-spin" /> 读取中…
-              </div>
-            ) : stderrView.error ? (
-              <div className="rounded-md border border-destructive/30 bg-destructive/10 text-destructive text-[12.5px] p-3">
-                {stderrView.error}
-              </div>
-            ) : stderrView.lines.length === 0 ? (
-              <div className="py-6 text-center text-muted-foreground text-[12.5px]">
-                暂无 stderr 输出(子进程安静 = 好事)
-              </div>
-            ) : (
-              <pre
-                className="max-h-80 overflow-auto rounded-md bg-muted/40 border p-3 font-mono text-[11.5px] leading-relaxed whitespace-pre-wrap break-all"
-                data-slot="mcp-stderr-body"
-              >
-                {stderrView.lines
-                  .map((l) => `[g${l.generation}] ${l.text}`)
-                  .join("\n")}
-              </pre>
-            )}
-          </DialogContent>
-        </Dialog>
+        <StderrDialog
+          view={stderrView}
+          onClose={() => setStderrView(null)}
+          onRefresh={handleStderrRefresh}
+        />
       ) : null}
 
       {/* 插件扫描发现对话框 */}
       {scanResult ? (
-        <Dialog open onOpenChange={(v) => !v && setScanResult(null)}>
-          <DialogContent className="sm:max-w-lg">
-            <DialogHeader>
-              <DialogTitle>插件目录扫描</DialogTitle>
-              <DialogDescription>
-                扫描路径: {scanResult.dir}
-                {scanResult.bundled_dir ? ` · 随包目录: ${scanResult.bundled_dir}` : ""}
-              </DialogDescription>
-            </DialogHeader>
-            {scanResult.candidates.length ? (
-              <div className="max-h-72 space-y-2 overflow-auto">
-                {scanResult.candidates.map((c) => (
-                  <div
-                    key={c.name}
-                    className="flex items-start justify-between gap-3 rounded-lg border p-2.5"
-                  >
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium">
-                        {c.title || c.name}{" "}
-                        {c.source === "bundled" ? (
-                          <span className="text-muted-foreground text-xs">(官方随包)</span>
-                        ) : null}
-                        {c.registered ? (
-                          <span className="text-emerald-600 text-xs ml-1">(已登记)</span>
-                        ) : null}
-                        {c.tombstoned && !c.registered ? (
-                          <span className="text-muted-foreground text-xs ml-1">
-                            {c.source === "bundled"
-                              ? "(未自动启用 · 可重新接入)"
-                              : "(已移除 · 可恢复接入)"}
-                          </span>
-                        ) : null}
-                      </div>
-                      <div className="text-muted-foreground truncate text-xs mt-0.5">
-                        {c.description || c.file}
-                      </div>
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={c.registered || approving === c.name}
-                      onClick={async () => {
-                        setApproving(c.name);
-                        setError(null);
-                        try {
-                          // ADR-0023:批准即自动上线(后端热重载),前端只刷新
-                          const r = await api.mcp.approve(c.name);
-                          setScanResult(null);
-                          const tools = r.reload?.tools;
-                          setNotice(
-                            typeof tools === "number"
-                              ? `「${c.name}」已批准并自动上线 · ${tools} 个工具`
-                              : (r.note ?? `「${c.name}」已批准`),
-                          );
-                          await loadData();
-                          await refreshStatus();
-                        } catch (e) {
-                          setError(String(e instanceof Error ? e.message : e));
-                        } finally {
-                          setApproving(null);
-                        }
-                      }}
-                    >
-                      {c.registered
-                        ? "已批准"
-                        : c.tombstoned
-                          ? c.source === "bundled"
-                            ? "批准接入"
-                            : "批准恢复"
-                          : "批准接入"}
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-muted-foreground py-6 text-center text-[12.5px]">
-                未在扫描路径中发现新的插件可执行文件。
-              </div>
-            )}
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setScanResult(null)}>
-                关闭
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+        <ScanCandidatesDialog
+          result={scanResult}
+          approving={approving}
+          onClose={() => setScanResult(null)}
+          onApprove={(c) => void handleApproveCandidate(c)}
+        />
       ) : null}
 
       {/* ADR-0023:物理删除警告栏(卸载 + 删原文件,不可撤销) */}
@@ -854,7 +568,7 @@ export function PluginsPage() {
             </DialogHeader>
             <ul className="text-muted-foreground list-disc space-y-1 pl-4 text-[12px]">
               <li className="font-mono break-all">
-                {purgeTarget.command || "插件可执行文件(未登记路径则仅清理声明)"}
+                {purgeTarget.command || "插件可执行文件(未登记路径则按扫描路径定位)"}
               </li>
               <li>
                 声明清单 manifests/{purgeTarget.name}.manifest.json 与每插件配置
@@ -919,4 +633,3 @@ export function PluginsPage() {
     </div>
   );
 }
-

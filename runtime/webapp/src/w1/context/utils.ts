@@ -9,6 +9,14 @@ export const fmtDur = (ms?: number | null) =>
 
 export const estTokens = (s?: string | null) => Math.max(1, Math.ceil((s?.length ?? 0) / 3));
 
+/** 双栏联动通用平滑滚动定位(#22 拆分:自 context.tsx 外置,各 Tab 共用) */
+export const scrollToId = (id: string) => {
+  const el = document.getElementById(id);
+  if (el) {
+    el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+};
+
 
 // 被本轮操作影响的本地文件记录 (对标 Pi-Web File Tracking)
 export interface FileSideEffect {

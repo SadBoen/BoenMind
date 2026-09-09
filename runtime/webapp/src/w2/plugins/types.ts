@@ -1,6 +1,33 @@
 //! 插件中心共享类型与 Draft 转换(自 PluginsPage.tsx 机械移入)。
 import { type McpServer, type ProviderManifestItem } from "../api";
 
+export type ToolInfo = {
+  name: string;
+  description?: string;
+};
+
+export type TablePluginItem = {
+  id: string;
+  name: string;
+  type: "builtin" | "external";
+  detail: string;
+  tools: ToolInfo[];
+  isOnline?: boolean;
+  serverRef?: McpServer;
+  /** ADR-0023:官方随包来源但最新官方清单已不含 → 建议删除 */
+  deprecated?: boolean;
+};
+
+// 内置能力白话说明(键=能力名;未命中回落 effect 文案)
+export const BUILTIN_DESC: Record<string, string> = {
+  "model.invoke": "内核私有 · 模型调用通道(每次回复都走它,非对话工具)",
+  "system.exec": "系统终端:审批后执行命令(万能底牌)",
+  "fs.search": "工作区内容搜索(rg 引擎内嵌)· 免审批直通",
+  "fs.read": "读文件(带行号 + 分页)· 免审批直通",
+  "fs.write": "写文件(新建/整文覆盖)· 需审批",
+  "fs.edit": "精确字符串替换编辑 · 需审批",
+};
+
 export type McpManifestSchemaItem = {
   key: string;
   label: string;

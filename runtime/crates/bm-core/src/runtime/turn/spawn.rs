@@ -1,4 +1,10 @@
-//! 自 turn.rs 机械移入(内容零改动)。
+//! spawn_turn:回合发起与工具闭环(自 turn.rs 机械移入;#19 深度拆分批次)。
+//!
+//! 本文件结构(自上而下):纯函数(wire 名映射/防空转熔断判定,#34 一批)→
+//! 工具目录组装 build_tool_catalog(纯逻辑,#19 二批外置)→ 回合状态体
+//! TurnState(#19 二批打包)→ 审批/异步工具等待环 await_tool_settlement
+//! (#19 二批外置独立 async fn)→ 装配主循环 spawn_turn → 直测单测。
+//! 降级链阶段函数化仍留 #19 跟踪。
 use super::*;
 
 /// OpenAI function.name 规范要求 ^[a-zA-Z0-9_-]{1,64}$,不能有点号。
@@ -33,6 +39,374 @@ fn breaker_hit(recent: &[(String, String)], sig: &(String, String), n: usize) ->
     }
     let w = n - 1;
     recent.len() >= w && recent[recent.len() - w..].iter().all(|s| s == sig)
+}
+
+/// #19 拆分第二批:工具目录组装(纯逻辑自异步块外置,语句逐字保留,直测)。
+/// 输入 registry.chat_tools() 快照与 agent 工具白名单;输出 wire 名→能力名
+/// 映射与 OpenAI function 格式工具清单。
+fn build_tool_catalog(
+    chat_tools: &[(String, serde_json::Value, bool, Option<String>)],
+    allowed_tools: Option<&[String]>,
+) -> (
+    std::collections::HashMap<String, String>,
+    Vec<serde_json::Value>,
+) {
+    let mut name_to_cap: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    // ADR-0022 后续批(用户实测反馈):内置能力出主流短名,模型对
+    // read/write/edit/rgrep/powershell/bash 有训练亲和;合同能力名不动,
+    // 返回调用经 name_to_cap 映射回内核能力名。短名被占(理论边界)则
+    // 回落单下划线长名,保唯一性。search 命名用户裁决弃用(易误读为
+    // 网络查询)→ rgrep;exec 按平台呈现实际 shell 名(Windows=powershell,
+    // 其余=bash),模型见名即知语法。
+    let taken: std::collections::HashSet<String> = chat_tools
+        .iter()
+        .map(|(cap, ..)| cap.replace('.', "_"))
+        .collect();
+    let mut tools_json: Vec<serde_json::Value> = chat_tools
+        .iter()
+        .map(|(cap, schema, needs_approval, manifest_desc)| {
+            let openai_name = wire_name_of(cap, &taken);
+            name_to_cap.insert(openai_name.clone(), cap.clone());
+            // ADR-0022 描述治理:描述随 manifest 走(fs.*/system.exec 内置
+            // 能力与 MCP 工具均自描述);缺省按审批语义给最小兜底,不再
+            // 把「弹出审批卡片」等前端 UI 行为写进模型视野。
+            let desc = manifest_desc
+                .as_deref()
+                .filter(|d| !d.trim().is_empty())
+                .map(str::to_string)
+                .unwrap_or_else(|| {
+                    if *needs_approval {
+                        format!("{cap} — 该工具需用户批准后执行")
+                    } else {
+                        format!("{cap} 工具")
+                    }
+                });
+            serde_json::json!({
+                "type": "function",
+                "function": {
+                    "name": openai_name,
+                    "description": desc,
+                    "parameters": schema,
+                },
+            })
+        })
+        .collect();
+
+    // F1(ADR-0022 后续批):工具白名单——Some(非空) 只挂清单内工具。
+    // 匹配口径:能力名 fs.read / 单下划线 fs_read / wire 短名 read 三种
+    // 写法均认;清单写了不存在的工具 = 忽略该项(白名单语义从宽)。
+    if let Some(allowed) = allowed_tools {
+        let allow: std::collections::HashSet<&str> = allowed.iter().map(String::as_str).collect();
+        tools_json.retain(|t| {
+            let wire = t["function"]["name"].as_str().unwrap_or("");
+            match name_to_cap.get(wire) {
+                Some(cap) => {
+                    allow.contains(cap.as_str())
+                        || allow.contains(cap.replace('.', "_").as_str())
+                        || allow.contains(wire)
+                }
+                None => false,
+            }
+        });
+        let kept: std::collections::HashSet<String> = tools_json
+            .iter()
+            .filter_map(|t| t["function"]["name"].as_str().map(String::from))
+            .collect();
+        name_to_cap.retain(|wire, _| kept.contains(wire));
+    }
+    (name_to_cap, tools_json)
+}
+
+/// #19 拆分第二批:回合状态体打包——异步块内散落的回合级可变状态集中成
+/// 结构体,审批/取消/熔断状态机的状态面显式化。只收全回合生命周期的状态;
+/// 批次作用域的 batch_denied(#26 同批拒绝联动)与每 attempt 清零的
+/// tool_rounds 留在装配层/reset 就地处,语义就地可见。
+struct TurnState {
+    /// 模型消息序列(system/压缩摘要/历史回合/本轮输入/工具闭环追加)。
+    messages: Vec<Message>,
+    /// 防空转熔断窗口:最近工具签名 (name, arguments),超窗裁最旧。
+    recent_tool_signatures: Vec<(String, String)>,
+    /// 当前 attempt 内已发生的工具轮数(每批 tool_calls 记 1 轮)。
+    tool_rounds: u32,
+    /// 防空转熔断命中(同命令同参连续 N 次)→ 本回合不再执行工具。
+    loop_broken: bool,
+    /// 总轮数安全网(limits.tool_rounds_max)触发 → 本回合不再执行工具。
+    round_cap_hit: bool,
+}
+
+impl TurnState {
+    /// 起始消息序列:角色 prompt → 压缩摘要(#2)→ 历史回合回喂(W5)→ 本轮
+    /// 输入。语句逐字保留自原异步块装配段。
+    fn init(
+        role_prompt: Option<&str>,
+        compress_summary: Option<String>,
+        history: &[(String, String)],
+        user_input: &str,
+    ) -> Self {
+        let mut messages: Vec<Message> = Vec::new();
+        if let Some(sp) = role_prompt {
+            messages.push(Message {
+                role: Role::System,
+                content: sp.to_string(),
+                tool_call_id: None,
+                tool_calls: None,
+            });
+        }
+        // #2:会话压缩摘要注入——context.compress 的产物文件存在即前置
+        // (System 消息;历史原文不改写,删除文件即回退)
+        if let Some(summary) = compress_summary {
+            messages.push(Message {
+                role: Role::System,
+                content: format!(
+                    "【会话压缩摘要(context.compress 生成;历史原文未改写,以下摘要把关前情)】
+{summary}"
+                ),
+                tool_call_id: None,
+                tool_calls: None,
+            });
+        }
+        // W5(2026-09-02 用户反馈轮):历史回合回喂。此前每轮从零组装,
+        // 模型对同会话前情失忆(W1 合同口径「历史由 runtime 侧维护」的实现
+        // 缺口);台账在回合成功落定时经 Cmd::RememberTurn 回写。
+        for (u, a) in history {
+            messages.push(Message {
+                role: Role::User,
+                content: u.clone(),
+                tool_call_id: None,
+                tool_calls: None,
+            });
+            messages.push(Message {
+                role: Role::Assistant,
+                content: a.clone(),
+                tool_call_id: None,
+                tool_calls: None,
+            });
+        }
+        messages.push(Message {
+            role: Role::User,
+            content: user_input.to_string(),
+            tool_call_id: None,
+            tool_calls: None,
+        });
+        Self {
+            messages,
+            recent_tool_signatures: Vec::new(),
+            tool_rounds: 0,
+            loop_broken: false,
+            round_cap_hit: false,
+        }
+    }
+
+    /// 防空转熔断窗口扫描(W10):逐个记录本批工具签名,任一签名使窗口内
+    /// 连续同参次数达标即置 loop_broken;breaker_n<2 = 熔断关闭不扫描。
+    fn sweep_breaker(
+        &mut self,
+        tool_calls: &[ToolCallPayload],
+        breaker_n: usize,
+        breaker_window: usize,
+    ) {
+        if breaker_n < 2 {
+            return;
+        }
+        for tc in tool_calls {
+            let sig = (tc.name.clone(), tc.arguments.clone());
+            if breaker_hit(&self.recent_tool_signatures, &sig, breaker_n) {
+                self.loop_broken = true;
+                break;
+            }
+            self.recent_tool_signatures.push(sig);
+            if self.recent_tool_signatures.len() > breaker_window {
+                self.recent_tool_signatures.remove(0);
+            }
+        }
+    }
+
+    /// ADR-0029(2026-09-08 用户裁决):熔断/触顶拦截的调用不凭空蒸发——
+    /// 逐个回喂事实性结果(未执行+原因),因果链对模型与日志完整。
+    fn feed_unexecuted(&mut self, tool_calls: &[ToolCallPayload]) {
+        if tool_calls.is_empty() {
+            return;
+        }
+        let reason = if self.loop_broken {
+            "已触发防空转熔断(连续相同命令与入参)"
+        } else if self.round_cap_hit {
+            "单回合工具轮数已达上限"
+        } else {
+            "回合收束"
+        };
+        for tc in tool_calls {
+            self.messages.push(Message {
+                role: Role::Tool,
+                content: format!("本调用未执行:{reason}。"),
+                tool_call_id: Some(tc.id.clone()),
+                tool_calls: None,
+            });
+        }
+    }
+}
+
+/// #19 拆分第二批:审批/异步工具等待环外置为独立 async fn(语句逐字保留,
+/// 行为零变化)。直通同步收据不进本环(inline_sync 特判在装配层);此处只
+/// 轮询 operations 至终态:需审批能力等到审批裁决+执行终态,MCP 异步能力
+/// 等到执行终态。超时:审批单主动 Withdraw 撤销(P1-3,防迟到批准执行无主
+/// 副作用),普通工具如实回报超时。返回 (tool_result, batch_denied)——
+/// 后者仅「用户拒绝」路径置 true(#26 同批联动)。
+async fn await_tool_settlement(
+    tx: &tokio::sync::mpsc::Sender<Cmd>,
+    wait_secs: Option<u64>,
+    approval_id: Option<String>,
+    tool_op: BmId,
+    capability: &str,
+    mut batch_denied: bool,
+) -> (String, bool) {
+    let deadline = wait_secs.map(|s| std::time::Instant::now() + std::time::Duration::from_secs(s));
+    // 延迟初始化:环内每条 break 边都先赋 tool_result,初始占位值已无读点。
+    let tool_result;
+    loop {
+        if deadline.is_some_and(|dl| std::time::Instant::now() > dl) {
+            if let Some(appr_id) = &approval_id {
+                // P1-3: 审批等待超时后主动发送 Withdraw 撤销审批单,
+                // 防止后续用户迟到点击批准引发无主的真实副作用执行
+                if let Ok(appr_bm_id) = BmId::parse(appr_id) {
+                    let (wtx, _wrx) = tokio::sync::oneshot::channel();
+                    let _ = tx
+                        .send(Cmd::ApprovalRespond {
+                            request_id: BmId::generate("req"),
+                            params: wire::ApprovalRespondParams {
+                                approval_id: appr_bm_id,
+                                decision: "withdraw".to_string(),
+                                scope: None,
+                            },
+                            resp: wtx,
+                        })
+                        .await;
+                }
+            }
+            tool_result = if approval_id.is_some() {
+                "审批等待超时:用户未在等待期内裁决,审批单已撤销过期,工具未执行".into()
+            } else {
+                format!(
+                    "工具执行超时:等待 {} 秒未收到执行结果,工具未执行",
+                    wait_secs.unwrap_or(0)
+                )
+            };
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        // 审批路径先查操作状态(批准→succeeded / 拒绝→cancelled),再取结果载荷
+        if approval_id.is_some() {
+            let (stx, srx) = tokio::sync::oneshot::channel();
+            let _ = tx
+                .send(Cmd::GetOperation {
+                    params: wire::GetOperationParams {
+                        operation_id: tool_op.clone(),
+                    },
+                    resp: stx,
+                })
+                .await;
+            if let Ok(Ok(receipt)) = srx.await {
+                match receipt.state {
+                    bm_contract::states::OperationState::Succeeded => {
+                        let (rtx2, rrx2) = tokio::sync::oneshot::channel();
+                        let _ = tx
+                            .send(Cmd::GetOpResult {
+                                operation_id: tool_op.clone(),
+                                resp: rtx2,
+                            })
+                            .await;
+                        // 审批类工具回喂如实转述审批
+                        // 结论(ADR-0022:不再附加
+                        // 「不要再次调用」类禁令)
+                        let payload = match rrx2.await {
+                            Ok(Ok(Some(v))) => v.to_string(),
+                            _ => "{}".into(),
+                        };
+                        tool_result = format!("用户已批准,工具执行成功。返回结果: {payload}");
+                        break;
+                    }
+                    bm_contract::states::OperationState::Cancelled => {
+                        tool_result =
+                            format!("用户拒绝了能力 {capability} 的本次审批请求,工具未执行。");
+                        // #26:用户驳回 → 同批余下联动取消
+                        batch_denied = true;
+                        break;
+                    }
+                    bm_contract::states::OperationState::Failed => {
+                        // ADR-0029:如实回喂,不带「请向
+                        // 用户说明」类教练话术。
+                        let detail = receipt
+                            .error
+                            .as_ref()
+                            .map(|e| format!("(error_code={:?}) {}", e.code.get(), e.message))
+                            .unwrap_or_default();
+                        tool_result = format!("用户已批准,但工具执行失败{detail}");
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        } else {
+            // ADR-0028 修复:等待时限 0=不限时后,
+            // 本循环必须对终态失败/取消即时脱身——
+            // 失败操作从不写 op_results,只查
+            // GetOpResult 会无限空转挂死回合。
+            // 每拍先查状态:内核单写者循环保证
+            // settle(Succeeded) 与载荷写入同一
+            // 命令处理器内完成,观测到成功后单次
+            // GetOpResult 即是结论——有则取结果,
+            // 无则如实回报,零宽限零竞态。
+            // 回喂纪律(ADR-0022 同源,2026-09-08
+            // 用户重申):只如实转述事实,不附加
+            // 任何「该怎么办」的教练话术。
+            let (stx, srx) = tokio::sync::oneshot::channel();
+            let _ = tx
+                .send(Cmd::GetOperation {
+                    params: wire::GetOperationParams {
+                        operation_id: tool_op.clone(),
+                    },
+                    resp: stx,
+                })
+                .await;
+            let Ok(Ok(receipt)) = srx.await else {
+                continue;
+            };
+            match receipt.state {
+                bm_contract::states::OperationState::Succeeded => {
+                    let (rtx2, rrx2) = tokio::sync::oneshot::channel();
+                    let _ = tx
+                        .send(Cmd::GetOpResult {
+                            operation_id: tool_op.clone(),
+                            resp: rtx2,
+                        })
+                        .await;
+                    tool_result = match rrx2.await {
+                        Ok(Ok(Some(v))) => v.to_string(),
+                        _ => "工具执行成功,但无返回结果载荷".into(),
+                    };
+                    break;
+                }
+                bm_contract::states::OperationState::Failed => {
+                    let mut detail = receipt
+                        .error
+                        .as_ref()
+                        .map(|e| format!("(error_code={:?})", e.code.get()))
+                        .unwrap_or_default();
+                    if let Some(e) = receipt.error.as_ref() {
+                        detail.push_str(&format!(" {}", e.message));
+                    }
+                    tool_result = format!("工具执行失败{detail}");
+                    break;
+                }
+                bm_contract::states::OperationState::Cancelled => {
+                    tool_result = "工具执行已取消。".into();
+                    break;
+                }
+                _ => {}
+            }
+        }
+    }
+    (tool_result, batch_denied)
 }
 
 pub(crate) fn spawn_turn(
@@ -207,122 +581,24 @@ pub(crate) fn spawn_turn(
         // 轮数防线上说明:同命令同参死循环由 loop_breaker 熔断(v0.0.10);
         // 2026-09-07 架构评审 P0-1 补总轮数安全网(limits.tool_rounds_max,
         // 默认 64、0=关)——变参/换工具式轮转此前无界,烧 token 无收敛点。
-        let mut recent_tool_signatures: Vec<(String, String)> = Vec::new();
-        let mut loop_broken = false;
-        let mut round_cap_hit = false;
-        let mut messages: Vec<Message> = Vec::new();
-        if let Some(sp) = &role_prompt {
-            messages.push(Message {
-                role: Role::System,
-                content: sp.clone(),
-                tool_call_id: None,
-                tool_calls: None,
-            });
-        }
-        // #2:会话压缩摘要注入——context.compress 的产物文件存在即前置
-        // (System 消息;历史原文不改写,删除文件即回退)
-        if let (Some(sid), Some(ddir)) = (session_id.as_ref(), compress_data_dir.as_deref())
-            && let Some(summary) = crate::context_log::load_compress_summary(ddir, sid.as_str())
-        {
-            messages.push(Message {
-                role: Role::System,
-                content: format!(
-                    "【会话压缩摘要(context.compress 生成;历史原文未改写,以下摘要把关前情)】
-{summary}"
-                ),
-                tool_call_id: None,
-                tool_calls: None,
-            });
-        }
-        // W5(2026-09-02 用户反馈轮):历史回合回喂。此前每轮从零组装,
-        // 模型对同会话前情失忆(W1 合同口径「历史由 runtime 侧维护」的实现
-        // 缺口);台账在回合成功落定时经 Cmd::RememberTurn 回写。
-        for (u, a) in &history {
-            messages.push(Message {
-                role: Role::User,
-                content: u.clone(),
-                tool_call_id: None,
-                tool_calls: None,
-            });
-            messages.push(Message {
-                role: Role::Assistant,
-                content: a.clone(),
-                tool_call_id: None,
-                tool_calls: None,
-            });
-        }
+        // #19 拆分第二批:起始消息序列与工具目录组装外置(纯逻辑+直测),
+        // 回合级可变状态集中进 TurnState(见本文件上方结构体注释)。
         let user_input = content.clone();
-        messages.push(Message {
-            role: Role::User,
-            content: content.clone(),
-            tool_call_id: None,
-            tool_calls: None,
-        });
-        let mut name_to_cap: std::collections::HashMap<String, String> =
-            std::collections::HashMap::new();
-        // ADR-0022 后续批(用户实测反馈):内置能力出主流短名,模型对
-        // read/write/edit/rgrep/powershell/bash 有训练亲和;合同能力名不动,
-        // 返回调用经 name_to_cap 映射回内核能力名。短名被占(理论边界)则
-        // 回落单下划线长名,保唯一性。search 命名用户裁决弃用(易误读为
-        // 网络查询)→ rgrep;exec 按平台呈现实际 shell 名(Windows=powershell,
-        // 其余=bash),模型见名即知语法。
-        let taken: std::collections::HashSet<String> = chat_tools
-            .iter()
-            .map(|(cap, ..)| cap.replace('.', "_"))
-            .collect();
-        let mut tools_json: Vec<serde_json::Value> = chat_tools
-            .iter()
-            .map(|(cap, schema, needs_approval, manifest_desc)| {
-                let openai_name = wire_name_of(cap, &taken);
-                name_to_cap.insert(openai_name.clone(), cap.clone());
-                // ADR-0022 描述治理:描述随 manifest 走(fs.*/system.exec 内置
-                // 能力与 MCP 工具均自描述);缺省按审批语义给最小兜底,不再
-                // 把「弹出审批卡片」等前端 UI 行为写进模型视野。
-                let desc = manifest_desc
-                    .as_deref()
-                    .filter(|d| !d.trim().is_empty())
-                    .map(str::to_string)
-                    .unwrap_or_else(|| {
-                        if *needs_approval {
-                            format!("{cap} — 该工具需用户批准后执行")
-                        } else {
-                            format!("{cap} 工具")
-                        }
-                    });
-                serde_json::json!({
-                    "type": "function",
-                    "function": {
-                        "name": openai_name,
-                        "description": desc,
-                        "parameters": schema,
-                    },
-                })
-            })
-            .collect();
-
-        // F1(ADR-0022 后续批):工具白名单——Some(非空) 只挂清单内工具。
-        // 匹配口径:能力名 fs.read / 单下划线 fs_read / wire 短名 read 三种
-        // 写法均认;清单写了不存在的工具 = 忽略该项(白名单语义从宽)。
-        if let Some(allowed) = &allowed_tools {
-            let allow: std::collections::HashSet<&str> =
-                allowed.iter().map(String::as_str).collect();
-            tools_json.retain(|t| {
-                let wire = t["function"]["name"].as_str().unwrap_or("");
-                match name_to_cap.get(wire) {
-                    Some(cap) => {
-                        allow.contains(cap.as_str())
-                            || allow.contains(cap.replace('.', "_").as_str())
-                            || allow.contains(wire)
-                    }
-                    None => false,
-                }
-            });
-            let kept: std::collections::HashSet<String> = tools_json
-                .iter()
-                .filter_map(|t| t["function"]["name"].as_str().map(String::from))
-                .collect();
-            name_to_cap.retain(|wire, _| kept.contains(wire));
-        }
+        // #2:会话压缩摘要注入(context.compress 的产物文件存在即前置;
+        // 无 data_dir 的纯内存测试不触达)
+        let compress_summary: Option<String> =
+            if let (Some(sid), Some(ddir)) = (session_id.as_ref(), compress_data_dir.as_deref()) {
+                crate::context_log::load_compress_summary(ddir, sid.as_str())
+            } else {
+                None
+            };
+        let mut st = TurnState::init(
+            role_prompt.as_deref(),
+            compress_summary,
+            &history,
+            &user_input,
+        );
+        let (name_to_cap, tools_json) = build_tool_catalog(&chat_tools, allowed_tools.as_deref());
 
         // (2026-09-08 用户裁决,ADR-0029:内核不在系统提示里硬编码任何行为
         // 指导——原「工具纪律」软防线段已删,同类话术如需存在只能经内/外置
@@ -335,11 +611,13 @@ pub(crate) fn spawn_turn(
                 break;
             }
             let model_id = chain[((attempt - 1) as usize) % chain.len()].clone();
-            let mut tool_rounds: u32 = 0;
+            // 工具轮数按 attempt 清零(原装配段局部变量语义,现落在状态体上
+            // 显式 reset——降级链切模型后重新计轮)。
+            st.tool_rounds = 0;
             loop {
                 let req = InvokeRequest {
                     model_id: model_id.clone(),
-                    messages: messages.clone(),
+                    messages: st.messages.clone(),
                     tools: tools_json.clone(),
                     params: Default::default(),
                     secret_ref: default_secret_ref(&model_id),
@@ -359,7 +637,7 @@ pub(crate) fn spawn_turn(
                 // latency 口径:connector 返回 0 占位(基线 9.7),由调用方按
                 // 真实钟测量——此处记墙钟起点,成败两路均落实测耗时。
                 let snap_msgs = crate::context_log::snapshot_messages(&req.messages);
-                let snap_step = tool_rounds + 1;
+                let snap_step = st.tool_rounds + 1;
                 let snap_model = model_id.clone();
                 let snap_start = std::time::Instant::now();
                 // #14:调试面——请求侧全量(消息序列+工具数;开关关时零成本)
@@ -483,13 +761,13 @@ pub(crate) fn spawn_turn(
                         );
                         // W4 工具轮:模型请求调用直通工具 → 回核心循环执行 →
                         // 结果以 Tool 消息回喂 → 重调模型。
-                        if !tool_calls.is_empty() && !loop_broken && !round_cap_hit {
-                            tool_rounds += 1;
+                        if !tool_calls.is_empty() && !st.loop_broken && !st.round_cap_hit {
+                            st.tool_rounds += 1;
                             // P0-1 总轮数安全网(limits 热生效,0=关):
                             // 超限不再执行工具,回合就地收束并告知用户。
                             let cap = limits_cell.get().tool_rounds_max;
-                            if cap > 0 && tool_rounds > cap {
-                                round_cap_hit = true;
+                            if cap > 0 && st.tool_rounds > cap {
+                                st.round_cap_hit = true;
                                 let _ = tx.try_send(Cmd::ProviderDelta {
                                     operation_id: op_id.clone(),
                                     delta: format!(
@@ -502,21 +780,9 @@ pub(crate) fn spawn_turn(
                             let lim = limits_cell.get();
                             let breaker_n = lim.loop_breaker_consecutive as usize;
                             let breaker_window = lim.loop_breaker_window;
-                            if breaker_n >= 2 {
-                                for tc in &tool_calls {
-                                    let sig = (tc.name.clone(), tc.arguments.clone());
-                                    if breaker_hit(&recent_tool_signatures, &sig, breaker_n) {
-                                        loop_broken = true;
-                                        break;
-                                    }
-                                    recent_tool_signatures.push(sig);
-                                    if recent_tool_signatures.len() > breaker_window {
-                                        recent_tool_signatures.remove(0);
-                                    }
-                                }
-                            }
+                            st.sweep_breaker(&tool_calls, breaker_n, breaker_window);
 
-                            if loop_broken {
+                            if st.loop_broken {
                                 let _ = tx.try_send(Cmd::ProviderDelta {
                                     operation_id: op_id.clone(),
                                     delta: format!(
@@ -527,7 +793,7 @@ pub(crate) fn spawn_turn(
                                 // ADR-0022:assistant 消息原样携带 tool_calls 回喂,
                                 // 模型才能把下一轮的工具结果对齐回自己发起的调用
                                 // (此前只回 content,调用结构丢失 = 模型「失忆」)。
-                                messages.push(Message {
+                                st.messages.push(Message {
                                     role: Role::Assistant,
                                     tool_call_id: None,
                                     tool_calls: Some(tool_calls.clone()),
@@ -543,7 +809,7 @@ pub(crate) fn spawn_turn(
                                     if intent_gate_min > 0
                                         && (user_input.chars().count() as u32) < intent_gate_min
                                     {
-                                        messages.push(Message {
+                                        st.messages.push(Message {
                                             role: Role::Tool,
                                             content: "本调用未执行:意图门控——本轮触发输入过短,无操作意图,工具已禁用;请直接以文字回应用户或请用户补充需求。".into(),
                                             tool_call_id: Some(tc.id.clone()),
@@ -565,7 +831,7 @@ pub(crate) fn spawn_turn(
                                     if batch_denied
                                         && limits_cell.get().tool_batch_cancel_on_deny == 1
                                     {
-                                        messages.push(Message {
+                                        st.messages.push(Message {
                                             role: Role::Tool,
                                             content: "本调用未执行:同批已有调用被用户驳回,按策略联动取消余下调用。".into(),
                                             tool_call_id: Some(tc.id.clone()),
@@ -754,186 +1020,21 @@ pub(crate) fn spawn_turn(
                                             };
                                         }
                                     } else if let Some(tool_op) = tool_op {
-                                        let deadline = wait_secs.map(|s| {
-                                            std::time::Instant::now()
-                                                + std::time::Duration::from_secs(s)
-                                        });
-                                        loop {
-                                            if deadline
-                                                .is_some_and(|dl| std::time::Instant::now() > dl)
-                                            {
-                                                if let Some(appr_id) = &approval_id {
-                                                    // P1-3: 审批等待超时后主动发送 Withdraw 撤销审批单,
-                                                    // 防止后续用户迟到点击批准引发无主的真实副作用执行
-                                                    if let Ok(appr_bm_id) = BmId::parse(appr_id) {
-                                                        let (wtx, _wrx) =
-                                                            tokio::sync::oneshot::channel();
-                                                        let _ = tx
-                                                            .send(Cmd::ApprovalRespond {
-                                                                request_id: BmId::generate("req"),
-                                                                params:
-                                                                    wire::ApprovalRespondParams {
-                                                                        approval_id: appr_bm_id,
-                                                                        decision: "withdraw"
-                                                                            .to_string(),
-                                                                        scope: None,
-                                                                    },
-                                                                resp: wtx,
-                                                            })
-                                                            .await;
-                                                    }
-                                                }
-                                                tool_result = if approval_id.is_some() {
-                                                    "审批等待超时:用户未在等待期内裁决,审批单已撤销过期,工具未执行"
-                                                        .into()
-                                                } else {
-                                                    format!(
-                                                        "工具执行超时:等待 {} 秒未收到执行结果,工具未执行",
-                                                        wait_secs.unwrap_or(0)
-                                                    )
-                                                };
-                                                break;
-                                            }
-                                            tokio::time::sleep(std::time::Duration::from_millis(
-                                                400,
-                                            ))
-                                            .await;
-                                            // 审批路径先查操作状态(批准→succeeded /
-                                            // 拒绝→cancelled),再取结果载荷
-                                            if approval_id.is_some() {
-                                                let (stx, srx) = tokio::sync::oneshot::channel();
-                                                let _ = tx
-                                                    .send(Cmd::GetOperation {
-                                                        params: wire::GetOperationParams {
-                                                            operation_id: tool_op.clone(),
-                                                        },
-                                                        resp: stx,
-                                                    })
-                                                    .await;
-                                                if let Ok(Ok(receipt)) = srx.await {
-                                                    match receipt.state {
-                                                    bm_contract::states::OperationState::Succeeded => {
-                                                        let (rtx2, rrx2) =
-                                                            tokio::sync::oneshot::channel();
-                                                        let _ = tx
-                                                            .send(Cmd::GetOpResult {
-                                                                operation_id: tool_op.clone(),
-                                                                resp: rtx2,
-                                                            })
-                                                            .await;
-                                                        // 审批类工具回喂如实转述审批
-                                                        // 结论(ADR-0022:不再附加
-                                                        // 「不要再次调用」类禁令)
-                                                        let payload = match rrx2.await {
-                                                            Ok(Ok(Some(v))) => v.to_string(),
-                                                            _ => "{}".into(),
-                                                        };
-                                                        tool_result = format!(
-                                                            "用户已批准,工具执行成功。返回结果: {payload}"
-                                                        );
-                                                        break;
-                                                    }
-                                                    bm_contract::states::OperationState::Cancelled => {
-                                                        tool_result = format!(
-                                                            "用户拒绝了能力 {capability} 的本次审批请求,工具未执行。"
-                                                        );
-                                                        // #26:用户驳回 → 同批余下联动取消
-                                                        batch_denied = true;
-                                                        break;
-                                                    }
-                                                    bm_contract::states::OperationState::Failed => {
-                                                        // ADR-0029:如实回喂,不带「请向
-                                                        // 用户说明」类教练话术。
-                                                        let detail = receipt
-                                                            .error
-                                                            .as_ref()
-                                                            .map(|e| {
-                                                                format!(
-                                                                    "(error_code={:?}) {}",
-                                                                    e.code.get(),
-                                                                    e.message
-                                                                )
-                                                            })
-                                                            .unwrap_or_default();
-                                                        tool_result = format!(
-                                                            "用户已批准,但工具执行失败{detail}"
-                                                        );
-                                                        break;
-                                                    }
-                                                    _ => {}
-                                                }
-                                                }
-                                            } else {
-                                                // ADR-0028 修复:等待时限 0=不限时后,
-                                                // 本循环必须对终态失败/取消即时脱身——
-                                                // 失败操作从不写 op_results,只查
-                                                // GetOpResult 会无限空转挂死回合。
-                                                // 每拍先查状态:内核单写者循环保证
-                                                // settle(Succeeded) 与载荷写入同一
-                                                // 命令处理器内完成,观测到成功后单次
-                                                // GetOpResult 即是结论——有则取结果,
-                                                // 无则如实回报,零宽限零竞态。
-                                                // 回喂纪律(ADR-0022 同源,2026-09-08
-                                                // 用户重申):只如实转述事实,不附加
-                                                // 任何「该怎么办」的教练话术。
-                                                let (stx, srx) = tokio::sync::oneshot::channel();
-                                                let _ = tx
-                                                    .send(Cmd::GetOperation {
-                                                        params: wire::GetOperationParams {
-                                                            operation_id: tool_op.clone(),
-                                                        },
-                                                        resp: stx,
-                                                    })
-                                                    .await;
-                                                let Ok(Ok(receipt)) = srx.await else {
-                                                    continue;
-                                                };
-                                                match receipt.state {
-                                                    bm_contract::states::OperationState::Succeeded => {
-                                                        let (rtx2, rrx2) =
-                                                            tokio::sync::oneshot::channel();
-                                                        let _ = tx
-                                                            .send(Cmd::GetOpResult {
-                                                                operation_id: tool_op.clone(),
-                                                                resp: rtx2,
-                                                            })
-                                                            .await;
-                                                        tool_result = match rrx2.await {
-                                                            Ok(Ok(Some(v))) => v.to_string(),
-                                                            _ => "工具执行成功,但无返回结果载荷"
-                                                                .into(),
-                                                        };
-                                                        break;
-                                                    }
-                                                    bm_contract::states::OperationState::Failed => {
-                                                        let mut detail = receipt
-                                                            .error
-                                                            .as_ref()
-                                                            .map(|e| {
-                                                                format!(
-                                                                    "(error_code={:?})",
-                                                                    e.code.get()
-                                                                )
-                                                            })
-                                                            .unwrap_or_default();
-                                                        if let Some(e) = receipt.error.as_ref() {
-                                                            detail.push_str(&format!(
-                                                                " {}",
-                                                                e.message
-                                                            ));
-                                                        }
-                                                        tool_result =
-                                                            format!("工具执行失败{detail}");
-                                                        break;
-                                                    }
-                                                    bm_contract::states::OperationState::Cancelled => {
-                                                        tool_result = "工具执行已取消。".into();
-                                                        break;
-                                                    }
-                                                    _ => {}
-                                                }
-                                            }
-                                        }
+                                        // #19 拆分第二批:审批/异步工具等待环
+                                        // 外置为独立 async fn(本文件上方)——
+                                        // 轮询 operations 至终态,审批超时撤单
+                                        // (P1-3),用户拒绝联动 batch_denied(#26)。
+                                        let (result, denied) = await_tool_settlement(
+                                            &tx,
+                                            wait_secs,
+                                            approval_id,
+                                            tool_op,
+                                            &capability,
+                                            batch_denied,
+                                        )
+                                        .await;
+                                        tool_result = result;
+                                        batch_denied = denied;
                                     } else if let Ok(Ok(receipt_value)) = call_resp {
                                         tool_result = receipt_value.to_string();
                                     }
@@ -978,7 +1079,7 @@ pub(crate) fn spawn_turn(
                                     // 类负向禁令——链式调用(搜→读→改→测)是模型的
                                     // 正常工作方式;失控防线=同参熔断 + limits.
                                     // tool_rounds_max 总轮数安全网(本文件上方)。
-                                    messages.push(Message {
+                                    st.messages.push(Message {
                                         role: Role::Tool,
                                         content: tool_result,
                                         tool_call_id: Some(tc.id.clone()),
@@ -995,23 +1096,7 @@ pub(crate) fn spawn_turn(
                         // 原内核代写的 assistant 终稿废除:收束原因只在触发点
                         // 经 ProviderDelta 上屏(UI-only),不入台账、不冒充
                         // 模型发言;content 保持模型原文(可能为空)。
-                        if !tool_calls.is_empty() {
-                            let reason = if loop_broken {
-                                "已触发防空转熔断(连续相同命令与入参)"
-                            } else if round_cap_hit {
-                                "单回合工具轮数已达上限"
-                            } else {
-                                "回合收束"
-                            };
-                            for tc in &tool_calls {
-                                messages.push(Message {
-                                    role: Role::Tool,
-                                    content: format!("本调用未执行:{reason}。"),
-                                    tool_call_id: Some(tc.id.clone()),
-                                    tool_calls: None,
-                                });
-                            }
-                        }
+                        st.feed_unexecuted(&tool_calls);
                         // W9:终稿与回合边界事件(轨迹视图数据源)。
                         // ADR-0029:assistant_final 只在模型真有话时记录——
                         // 内核不再生产终稿内容,空终稿不落轨迹。
@@ -1049,7 +1134,7 @@ pub(crate) fn spawn_turn(
                             serde_json::json!({
                                 "outcome": "succeeded",
                                 "attempt": attempt,
-                                "tool_rounds": tool_rounds,
+                                "tool_rounds": st.tool_rounds,
                                 "latency_ms": latency_ms,
                             }),
                         );
@@ -1233,6 +1318,137 @@ fn audit_model_invoke(w: &mut World, agent: &Agent, chain: &[String]) -> Option<
             }
             _ => None,
         }
+    }
+}
+
+/// #19 拆分第二批直测:工具目录组装 / 回合状态体(TurnState init/熔断扫描/
+/// 未执行回喂)。等待环 await_tool_settlement 需活体命令回路,由 chat 系列
+/// 集成测试(chat_batch_deny/chat_direct_tool/chat_intent_gate)与黄金轨迹护航。
+#[cfg(test)]
+mod turn_state_tests {
+    use super::TurnState;
+    use super::build_tool_catalog;
+    use bm_contract::connector::{Role, ToolCallPayload};
+
+    fn tc(id: &str, name: &str, arguments: &str) -> ToolCallPayload {
+        ToolCallPayload {
+            id: id.to_string(),
+            name: name.to_string(),
+            arguments: arguments.to_string(),
+        }
+    }
+
+    #[test]
+    fn init_seeds_history_and_user_without_extras() {
+        let st = TurnState::init(None, None, &[("问".into(), "答".into())], "你好");
+        assert_eq!(st.messages.len(), 3, "历史 user+assistant + 本轮 user");
+        assert!(matches!(st.messages[0].role, Role::User));
+        assert!(matches!(st.messages[1].role, Role::Assistant));
+        assert_eq!(st.messages[2].content, "你好");
+        assert!(
+            st.messages
+                .iter()
+                .all(|m| m.tool_call_id.is_none() && m.tool_calls.is_none())
+        );
+        assert_eq!(st.tool_rounds, 0);
+        assert!(!st.loop_broken && !st.round_cap_hit);
+        assert!(st.recent_tool_signatures.is_empty());
+    }
+
+    #[test]
+    fn init_prepends_role_prompt_and_compress_summary() {
+        let st = TurnState::init(Some("系统提示"), Some("前情摘要".into()), &[], "hi");
+        assert_eq!(st.messages.len(), 3);
+        assert!(matches!(st.messages[0].role, Role::System));
+        assert_eq!(st.messages[0].content, "系统提示");
+        assert!(matches!(st.messages[1].role, Role::System));
+        assert!(
+            st.messages[1].content.contains("会话压缩摘要")
+                && st.messages[1].content.contains("前情摘要")
+        );
+    }
+
+    #[test]
+    fn sweep_breaker_trips_only_after_n_consecutive_same() {
+        let batch = [tc("1", "fs.read", r#"{"path":"a"}"#)];
+        let mut st = TurnState::init(None, None, &[], "x");
+        st.sweep_breaker(&batch, 3, 10);
+        st.sweep_breaker(&batch, 3, 10);
+        assert!(!st.loop_broken, "前 n-1 次不命中");
+        st.sweep_breaker(&batch, 3, 10);
+        assert!(st.loop_broken, "第 n 次同签名命中");
+
+        // 穿插不同签名打断连续性
+        let other = [tc("2", "fs.read", r#"{"path":"b"}"#)];
+        let mut st2 = TurnState::init(None, None, &[], "x");
+        st2.sweep_breaker(&batch, 3, 10);
+        st2.sweep_breaker(&other, 3, 10);
+        st2.sweep_breaker(&batch, 3, 10);
+        assert!(!st2.loop_broken, "同签名连续性被打断后不命中");
+
+        // breaker_n<2 = 熔断关闭不扫描
+        let mut st3 = TurnState::init(None, None, &[], "x");
+        for _ in 0..5 {
+            st3.sweep_breaker(&batch, 1, 10);
+        }
+        assert!(!st3.loop_broken);
+        assert!(st3.recent_tool_signatures.is_empty(), "关闭时不记签名");
+    }
+
+    #[test]
+    fn feed_unexecuted_replies_every_call_with_reason() {
+        let batch = [tc("1", "fs.read", "{}"), tc("2", "mcp.x.y", "{}")];
+        let mut st = TurnState::init(None, None, &[], "x");
+        st.loop_broken = true;
+        st.feed_unexecuted(&batch);
+        assert_eq!(st.messages.len(), 3, "起始 user 输入 + 2 条未执行回喂");
+        assert!(st.messages[1].content.contains("防空转熔断"));
+        assert_eq!(st.messages[1].tool_call_id.as_deref(), Some("1"));
+        assert_eq!(st.messages[2].tool_call_id.as_deref(), Some("2"));
+        // 空批次零回喂
+        let mut st2 = TurnState::init(None, None, &[], "x");
+        st2.feed_unexecuted(&[]);
+        assert_eq!(st2.messages.len(), 1, "空批次零回喂,只剩起始 user 输入");
+    }
+
+    #[test]
+    fn tool_catalog_maps_wire_names_and_honors_allowlist() {
+        let chat_tools = vec![
+            (
+                "fs.read".to_string(),
+                serde_json::json!({"type": "object"}),
+                false,
+                Some("读文件".to_string()),
+            ),
+            (
+                "mcp.srv.tool".to_string(),
+                serde_json::json!({}),
+                true,
+                None,
+            ),
+        ];
+        let (name_to_cap, tools_json) = build_tool_catalog(&chat_tools, None);
+        assert_eq!(name_to_cap["read"], "fs.read", "内置五件出 wire 短名");
+        assert_eq!(name_to_cap["mcp_srv_tool"], "mcp.srv.tool", "点转单下划线");
+        assert_eq!(tools_json.len(), 2);
+        assert_eq!(tools_json[0]["function"]["description"], "读文件");
+        assert_eq!(
+            tools_json[1]["function"]["description"], "mcp.srv.tool — 该工具需用户批准后执行",
+            "无 manifest 描述按审批语义兜底"
+        );
+
+        // 白名单:wire 短名写法命中;清单外工具忽略;映射同步裁剪
+        let allow = vec!["read".to_string(), "nonexistent".to_string()];
+        let (n2c, tj) = build_tool_catalog(&chat_tools, Some(&allow));
+        assert_eq!(tj.len(), 1, "白名单外(mcp.srv.tool)被过滤");
+        assert_eq!(tj[0]["function"]["name"], "read");
+        assert_eq!(n2c.len(), 1, "name_to_cap 与保留工具同步");
+        assert_eq!(n2c["read"], "fs.read");
+
+        // 能力名写法亦认(从宽口径)
+        let (n2c2, tj2) = build_tool_catalog(&chat_tools, Some(&["fs.read".to_string()]));
+        assert_eq!(tj2.len(), 1);
+        assert_eq!(n2c2["read"], "fs.read");
     }
 }
 

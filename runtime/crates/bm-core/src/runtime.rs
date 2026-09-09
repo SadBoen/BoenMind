@@ -16,7 +16,9 @@ use crate::state::{Agent, Operation, Session, budget_from_spec};
 use crate::{CoreError, CoreResult};
 use bm_contract::budget::BudgetScope;
 use bm_contract::capability::{Approval, DataTrust, GrantScope};
-use bm_contract::connector::{BudgetCtx, InvokeRequest, InvokeResponse, Message, Role};
+use bm_contract::connector::{
+    BudgetCtx, InvokeRequest, InvokeResponse, Message, Role, ToolCallPayload,
+};
 use bm_contract::error_codes::ErrorCode;
 use bm_contract::events::{EventEnvelope, EventType};
 use bm_contract::exec_log::LogKind;
