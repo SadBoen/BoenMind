@@ -7,7 +7,14 @@ import {
   useExternalStoreRuntime,
 } from "@assistant-ui/react";
 import type { AppendMessage, ThreadMessageLike } from "@assistant-ui/react";
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { storage, STORAGE_KEYS } from "@/lib/storage";
 import { redirectToLogin } from "@/lib/utils";
 import { BM_EVENTS, emit } from "../lib/bus";
@@ -155,6 +162,59 @@ export function BoenmindRuntimeProvider({
   // 代数不符即丢弃——旧会话迟到响应不再前插到新会话消息上
   const sessionEpochRef = useRef(0);
 
+  // #25:审批无人在线提醒——页面隐藏时浏览器通知 + 标题闪烁,回到前台即停。
+  // 通知权限惰性请求(首个隐藏期审批触发);双通道(流内/轮询)入队点共用。
+  const titleFlashRef = useRef<number | null>(null);
+  const stopTitleFlash = useCallback(() => {
+    if (titleFlashRef.current !== null) {
+      window.clearInterval(titleFlashRef.current);
+      titleFlashRef.current = null;
+      document.title = "BoenMind";
+    }
+  }, []);
+  const startTitleFlash = useCallback(() => {
+    if (titleFlashRef.current !== null) return;
+    const orig = document.title;
+    let on = false;
+    titleFlashRef.current = window.setInterval(() => {
+      on = !on;
+      document.title = on ? "⚠ 待审批 — BoenMind" : orig;
+    }, 1200);
+  }, []);
+  useEffect(() => {
+    const onVisible = () => {
+      if (!document.hidden) stopTitleFlash();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", stopTitleFlash);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", stopTitleFlash);
+      stopTitleFlash();
+    };
+  }, [stopTitleFlash]);
+  const notifyNewApproval = useCallback(
+    (req: { approval_id: string; capability?: string }) => {
+      if (!document.hidden) return;
+      startTitleFlash();
+      if ("Notification" in window) {
+        if (Notification.permission === "granted") {
+          const n = new Notification("BoenMind 等待审批", {
+            body: `${req.capability ?? "工具调用"} 请求你的裁决`,
+            tag: req.approval_id,
+          });
+          n.onclick = () => {
+            window.focus();
+            n.close();
+          };
+        } else if (Notification.permission === "default") {
+          void Notification.requestPermission();
+        }
+      }
+    },
+    [startTitleFlash],
+  );
+
   // 批准可达性轮询(2026-09-07 审批卡死根治):审批标记仅随回合 /v1 流下发,
   // 流到期或后台续跑回合无主流时,审批单永远无人可批,任务卡死在审批轮询。
   // 此通道每 2.5s 拉一次待裁决队列:YOLO 自动批准,ask 进抽屉(与流内标记
@@ -192,6 +252,7 @@ export function BoenmindRuntimeProvider({
               })
               .catch(() => handledApprovalsRef.current.delete(a.approval_id));
           } else {
+            notifyNewApproval(a);
             setPendingApprovals((cur) =>
               cur.some((p) => p.approval_id === a.approval_id)
                 ? cur
@@ -214,7 +275,8 @@ export function BoenmindRuntimeProvider({
     };
     const iv = setInterval(tick, 2500);
     return () => clearInterval(iv);
-  }, []);
+    // notifyNewApproval 为稳定 useCallback(#25):加入依赖仅为本规检查
+  }, [notifyNewApproval]);
 
   // 审批裁决 POST 公共实现(P1-2/P1-26 收口):检查 res.ok、失败回滚入队
   // 并从去重集摘除(下一轮询兜底重试),不再静默吞错
@@ -290,6 +352,7 @@ export function BoenmindRuntimeProvider({
         });
         return;
       }
+      notifyNewApproval(req);
       setPendingApprovals((cur) => {
         if (cur.some((a) => a.approval_id === req.approval_id)) return cur;
         return [...cur, req];
