@@ -386,6 +386,17 @@ export const api = {
         usage?: { month?: string; providers?: Record<string, number> };
         error?: string;
       }>(`/admin/mcp/usage/${encodeURIComponent(name)}`, { method: "GET" }),
+    // issue #28:子进程 stderr 环形缓冲尾部(跨 respawn 带代标记)
+    getStderr: (name: string, lines = 100) =>
+      req<{
+        ok: boolean;
+        name: string;
+        lines?: { generation: number; text: string }[];
+        error?: string;
+      }>(
+        `/admin/mcp/stderr/${encodeURIComponent(name)}?lines=${lines}`,
+        { method: "GET" },
+      ),
   },
   roles: {
     get: () => req<RolesResponse>("/admin/roles"),

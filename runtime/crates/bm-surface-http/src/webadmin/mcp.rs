@@ -4,7 +4,7 @@
 
 use super::{AdminConfig, admin_error};
 use axum::Json;
-use axum::extract::{Path as AxumPath, State};
+use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use bm_providers::mcp::supervisor::read_mcp_servers;
@@ -399,6 +399,30 @@ pub async fn mcp_usage(
             let usage = resp.get("structuredContent").cloned().unwrap_or(resp);
             Json(json!({ "ok": true, "name": name, "usage": usage })).into_response()
         }
+        Err(e) => Json(json!({ "ok": false, "name": name, "error": e })).into_response(),
+    }
+}
+
+/// 读子进程 stderr 尾部:GET /admin/mcp/stderr/{name}?lines=N(issue #28)
+/// 管道采集的环形缓冲回看(跨 respawn 带代标记);远程传输/未连接报错。
+pub async fn mcp_stderr(
+    State(cfg): State<AdminConfig>,
+    AxumPath(name): AxumPath<String>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let Some(hub) = cfg.hub.clone() else {
+        return admin_error(
+            StatusCode::BAD_REQUEST,
+            "服务器未启用 MCP 接线(--mcp-config)",
+        );
+    };
+    let lines = params
+        .get("lines")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(100)
+        .clamp(1, 400);
+    match hub.stderr_tail(&name, lines) {
+        Ok(lines) => Json(json!({ "ok": true, "name": name, "lines": lines })).into_response(),
         Err(e) => Json(json!({ "ok": false, "name": name, "error": e })).into_response(),
     }
 }

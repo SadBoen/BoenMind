@@ -137,6 +137,8 @@ pub fn admin_routes(cfg: AdminConfig) -> axum::Router {
         .route("/mcp/test/{name}", post(mcp_test))
         .route("/mcp/search-test/{name}", post(mcp_search_test))
         .route("/mcp/usage/{name}", get(mcp_usage))
+        // issue #28:子进程 stderr 环形缓冲回看(跨 respawn 带代标记)
+        .route("/mcp/stderr/{name}", get(mcp_stderr))
         .route("/mcp/status", get(mcp_status))
         .route(
             "/mcp-config/{name}",

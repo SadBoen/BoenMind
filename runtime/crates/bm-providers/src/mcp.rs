@@ -37,6 +37,58 @@ async fn write_frame<W: tokio::io::AsyncWrite + Unpin>(
         .map_err(|e| format!("stdio 写失败: {e}"))
 }
 
+// ---- stderr 采集(issue #28)--------------------------------------------------
+
+/// 子进程 stderr 环形缓冲容量(行)。跨 respawn 共享,足够排障又不无限膨胀。
+pub const MCP_STDERR_CAPACITY: usize = 400;
+
+/// 一行子进程 stderr:`gen` = 子进程代数(1 起,respawn 递增)。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StderrLine {
+    pub generation: u64,
+    pub text: String,
+}
+
+/// stdio 子进程 stderr 环形缓冲:管道采集替代 `Stdio::inherit()` 直通,
+/// 跨 respawn 保留最近 [`MCP_STDERR_CAPACITY`] 行并按代标记,供管理面回看。
+#[derive(Default)]
+pub struct StderrBuffer {
+    lines: Mutex<std::collections::VecDeque<StderrLine>>,
+    capacity: usize,
+}
+
+impl StderrBuffer {
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            lines: Mutex::new(std::collections::VecDeque::with_capacity(capacity)),
+            capacity,
+        }
+    }
+
+    fn push(&self, generation: u64, text: String) {
+        let mut q = self.lines.lock().expect("锁未中毒");
+        if q.len() >= self.capacity {
+            q.pop_front();
+        }
+        q.push_back(StderrLine { generation, text });
+    }
+
+    /// 取最近 n 行(旧→新)。
+    pub fn tail(&self, n: usize) -> Vec<StderrLine> {
+        let q = self.lines.lock().expect("锁未中毒");
+        let skip = q.len().saturating_sub(n);
+        q.iter().skip(skip).cloned().collect()
+    }
+
+    pub fn len(&self) -> usize {
+        self.lines.lock().expect("锁未中毒").len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
 // ---- 数据形状 --------------------------------------------------------------
 
 /// tools/list 条目(发现面)。
@@ -161,6 +213,11 @@ pub trait McpTransport: Send + Sync {
 
     /// 按进度令牌取消在途请求(MCP notifications/cancelled;尽力终止)。
     fn cancel_by_token(&self, _token: &str) {}
+
+    /// 子进程 stderr 环形缓冲(issue #28;stdio 专属,远程传输恒 None)。
+    fn stderr_buffer(&self) -> Option<Arc<StderrBuffer>> {
+        None
+    }
 }
 
 fn dead_progress_rx() -> tokio::sync::mpsc::UnboundedReceiver<McpProgressNote> {
@@ -362,6 +419,10 @@ pub struct StdioMcpTransport {
     restart_limit: u32,
     /// W10(ADR-0024):窗口/写超时热读单元(缺省 = 代码默认)。
     limits: bm_core::limits::LimitsCell,
+    /// 子进程 stderr 环形缓冲(issue #28):跨 respawn 共享,按代标记。
+    stderr: Arc<StderrBuffer>,
+    /// 当前子进程代数(1 起;respawn 递增,stderr 行随代标记)。
+    generation: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl Drop for StdioMcpTransport {
@@ -393,8 +454,16 @@ impl StdioMcpTransport {
         restart_limit: u32,
     ) -> Result<Arc<Self>, String> {
         let alive = Arc::new(std::sync::atomic::AtomicBool::new(true));
-        let (pending, stdin, progress_rx, kill) =
-            spawn_generation(command, args, env, alive.clone())?;
+        let stderr = Arc::new(StderrBuffer::with_capacity(MCP_STDERR_CAPACITY));
+        let generation = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let (pending, stdin, progress_rx, kill) = spawn_generation(
+            command,
+            args,
+            env,
+            alive.clone(),
+            stderr.clone(),
+            generation.clone(),
+        )?;
         Ok(Arc::new(Self {
             command: command.to_string(),
             args: args.to_vec(),
@@ -411,6 +480,8 @@ impl StdioMcpTransport {
             respawn_times: Arc::new(Mutex::new(Vec::new())),
             restart_limit: restart_limit.max(1),
             limits: bm_core::limits::LimitsCell::with_default(),
+            stderr,
+            generation,
         }))
     }
 
@@ -431,6 +502,11 @@ impl StdioMcpTransport {
     fn write_timeout(&self) -> Duration {
         Duration::from_millis(self.limits.get().mcp_stdio_write_timeout_ms)
     }
+
+    /// 子进程 stderr 尾部(旧→新,带代标记;issue #28)。
+    pub fn stderr_tail(&self, lines: usize) -> Vec<StderrLine> {
+        self.stderr.tail(lines)
+    }
 }
 
 /// 子进程终止开关:持有方丢弃(或显式 drop)= 看护任务 start_kill 子进程。
@@ -439,11 +515,14 @@ impl StdioMcpTransport {
 pub type ChildKill = tokio::sync::oneshot::Sender<()>;
 
 /// 拉起一代子进程:返回在途表 / stdin / 进度接收端 / 终止开关。
+/// `stderr`/`generation` 跨代共享:代数递增写入缓冲行标记(issue #28)。
 fn spawn_generation(
     command: &str,
     args: &[String],
     env: &HashMap<String, String>,
     alive: Arc<std::sync::atomic::AtomicBool>,
+    stderr_buf: Arc<StderrBuffer>,
+    generation: Arc<std::sync::atomic::AtomicU64>,
 ) -> Result<
     (
         PendingMap,
@@ -456,6 +535,7 @@ fn spawn_generation(
     use tokio::io::{AsyncBufReadExt, BufReader};
     use tokio::process::Command;
 
+    let no = generation.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     let mut cmd = Command::new(command);
     // P0(第四轮评审):子进程默认继承父进程全部环境 = 主密钥/令牌外泄
     // (INV-5)。清空后仅放行运行所需白名单,再加各 server 显式配置的 env。
@@ -467,16 +547,19 @@ fn spawn_generation(
         .envs(env)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::inherit()); // W2 诊断:子进程报错直通 server.log
+        // issue #28:stderr 由 inherit 直通改为管道采集入环形缓冲
+        // (此前子进程报错混入 server.log,无按插件回看通道)。
+        .stderr(std::process::Stdio::piped());
     // 外部审计:kill_on_drop 绑定子进程生命周期——连接器对象被丢弃时
     // 子进程随之终止,防止服务端异常退出后 Python App 成为孤儿进程。
     cmd.kill_on_drop(true);
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("MCP 子进程启动失败: {e}"))?;
-    tracing::info!(pid = ?child.id(), command = %command, "MCP 子进程已拉起");
+    tracing::info!(pid = ?child.id(), command = %command, generation = no, "MCP 子进程已拉起");
     let stdin = child.stdin.take().ok_or("MCP 子进程 stdin 不可用")?;
     let stdout = child.stdout.take().ok_or("MCP 子进程 stdout 不可用")?;
+    let stderr_pipe = child.stderr.take().ok_or("MCP 子进程 stderr 不可用")?;
     // W2 修复:Child 必须有人持有并 wait——kill_on_drop(true) 下被丢弃会
     // 立刻杀死子进程(热装载路径 spawn_generation 返回即 drop,连接器
     // 尚未建立路由,表现为 stdio-closed)。移入看护任务自然等待。
@@ -499,6 +582,20 @@ fn spawn_generation(
             }
         }
     });
+
+    // stderr 泵:本代子进程 stderr → 环形缓冲(带代标记;起止哨兵行助读)
+    {
+        let buf = stderr_buf.clone();
+        tokio::spawn(async move {
+            buf.push(no, format!("── 第 {no} 代子进程启动 ──"));
+            let reader = BufReader::new(stderr_pipe);
+            let mut lines = reader.lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                buf.push(no, line);
+            }
+            buf.push(no, format!("── 第 {no} 代子进程 stderr 关闭 ──"));
+        });
+    }
 
     let (progress_tx, progress_rx) = tokio::sync::mpsc::unbounded_channel();
     let pending: PendingMap = Arc::new(Mutex::new(HashMap::new()));
@@ -585,8 +682,14 @@ impl StdioMcpTransport {
         if let Some(old_kill) = self.kill.lock().expect("锁未中毒").take() {
             drop(old_kill);
         }
-        let (pending, stdin, progress_rx, kill) =
-            spawn_generation(&self.command, &self.args, &self.env, self.alive.clone())?;
+        let (pending, stdin, progress_rx, kill) = spawn_generation(
+            &self.command,
+            &self.args,
+            &self.env,
+            self.alive.clone(),
+            self.stderr.clone(),
+            self.generation.clone(),
+        )?;
         *self.kill.lock().expect("锁未中毒") = Some(kill);
         inner.pending = pending;
         inner.stdin = Some(stdin);
@@ -694,6 +797,10 @@ impl McpTransport for StdioMcpTransport {
                 }
             }
         });
+    }
+
+    fn stderr_buffer(&self) -> Option<Arc<StderrBuffer>> {
+        Some(self.stderr.clone())
     }
 }
 
@@ -989,6 +1096,27 @@ impl McpHub {
             return Err("未连接".into());
         };
         transport.request(method, params).await
+    }
+
+    /// 采集指定 server 的子进程 stderr 尾部(issue #28)。
+    /// 路由按能力名组织,取该 server 任一路由的 transport;未连接或远程
+    /// 传输(无子进程)= Err。工具名全被拒注册的 server 无路由,同样报未连接。
+    pub fn stderr_tail(&self, server: &str, lines: usize) -> Result<Vec<StderrLine>, String> {
+        let prefix = format!("mcp.{server}.");
+        let transport = {
+            let routes = self.routes.lock().expect("锁未中毒");
+            routes
+                .iter()
+                .find(|(k, _)| k.starts_with(&prefix))
+                .map(|(_, r)| r.transport.clone())
+        };
+        let Some(transport) = transport else {
+            return Err("未连接".into());
+        };
+        let Some(buf) = transport.stderr_buffer() else {
+            return Err("该 server 无 stderr 采集(远程传输无子进程)".into());
+        };
+        Ok(buf.tail(lines))
     }
 
     pub fn capability_entries(
@@ -1413,6 +1541,63 @@ mod integrity_tests {
                 || sha256_file("/no/such/file.exe").is_err()
         );
         let _ = std::io::sink().write(&[]);
+    }
+}
+
+/// issue #28:stderr 管道采集入环形缓冲。真子进程测试沿用 t104 惯例
+/// (#[ignore] + BOEN_MCP_STDIO_TEST=1;CI 三平台 ubuntu 无 `python` 别名)。
+#[cfg(test)]
+mod stderr_tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[tokio::test]
+    #[ignore = "stdio 子进程测试:BOEN_MCP_STDIO_TEST=1 启用"]
+    async fn stderr_piped_into_ring_buffer_with_generation() {
+        let code = "import sys, time; sys.stderr.write('boom-diagnostic-line\\n'); sys.stderr.flush(); time.sleep(30)";
+        let transport = StdioMcpTransport::spawn(
+            "python",
+            &["-c".to_string(), code.to_string()],
+            &Default::default(),
+            3,
+        )
+        .expect("子进程启动");
+
+        // 泵是异步的:轮询至目标行出现(最多 5s)
+        let mut hit = false;
+        for _ in 0..50 {
+            let tail = transport.stderr_tail(50);
+            if tail
+                .iter()
+                .any(|l| l.generation == 1 && l.text.contains("boom-diagnostic-line"))
+            {
+                hit = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(hit, "stderr 行未入缓冲: {:?}", transport.stderr_tail(50));
+
+        // 起止哨兵行:第 1 代启动标记在缓冲里
+        assert!(
+            transport
+                .stderr_tail(50)
+                .iter()
+                .any(|l| l.text.contains("第 1 代子进程启动")),
+            "缺启动哨兵行"
+        );
+    }
+
+    #[test]
+    fn stderr_ring_capacity_bounded() {
+        let buf = StderrBuffer::with_capacity(5);
+        for i in 0..20 {
+            buf.push(1, format!("line-{i}"));
+        }
+        let tail = buf.tail(100);
+        assert_eq!(tail.len(), 5, "环形缓冲必须封顶");
+        assert_eq!(tail[0].text, "line-15", "最老的被挤出");
+        assert_eq!(tail[4].text, "line-19");
     }
 }
 

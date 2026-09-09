@@ -79,6 +79,13 @@ export function PluginsPage() {
   const [scanResult, setScanResult] = useState<McpCandidatesResult | null>(null);
   const [approving, setApproving] = useState<string | null>(null);
   const [configTarget, setConfigTarget] = useState<ConfigTarget | null>(null);
+  // issue #28:子进程 stderr 回看弹窗
+  const [stderrView, setStderrView] = useState<{
+    name: string;
+    loading: boolean;
+    lines: { generation: number; text: string }[];
+    error?: string;
+  } | null>(null);
   // ADR-0023:物理删除确认弹窗目标(包含来源与是否废弃，便于精准提示)
   const [purgeTarget, setPurgeTarget] = useState<{
     name: string;
@@ -613,6 +620,26 @@ export function PluginsPage() {
                         <Button
                           variant="ghost"
                           size="sm"
+                          className="h-7 px-2 text-[11.5px]"
+                          title="子进程 stderr 尾部(环形缓冲,跨重启带代标记)"
+                          data-slot="mcp-stderr"
+                          onClick={() => {
+                            setStderrView({ name: item.name, loading: true, lines: [] });
+                            api.mcp.getStderr(item.name, 200).then((r) => {
+                              setStderrView({
+                                name: item.name,
+                                loading: false,
+                                lines: r.lines ?? [],
+                                error: r.ok ? undefined : r.error,
+                              });
+                            });
+                          }}
+                        >
+                          日志
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
                           disabled={busy}
                           className="h-7 px-2 text-[11.5px]"
                           onClick={() => void handleRemove(item.name)}
@@ -664,6 +691,64 @@ export function PluginsPage() {
         target={configTarget}
         onClose={() => setConfigTarget(null)}
       />
+
+      {/* issue #28:子进程 stderr 回看 */}
+      {stderrView ? (
+        <Dialog open onOpenChange={(v) => !v && setStderrView(null)}>
+          <DialogContent className="sm:max-w-2xl" data-slot="mcp-stderr-dialog">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                stderr · {stderrView.name}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 text-[11px]"
+                  disabled={stderrView.loading}
+                  onClick={() => {
+                    setStderrView({ ...stderrView, loading: true });
+                    api.mcp.getStderr(stderrView.name, 200).then((r) => {
+                      setStderrView({
+                        name: stderrView.name,
+                        loading: false,
+                        lines: r.lines ?? [],
+                        error: r.ok ? undefined : r.error,
+                      });
+                    });
+                  }}
+                >
+                  <RefreshCwIcon className="size-3" />
+                  刷新
+                </Button>
+              </DialogTitle>
+              <DialogDescription>
+                子进程 stderr 尾部(最近 200 行,环形缓冲;「第 N 代」= 重启代数)
+              </DialogDescription>
+            </DialogHeader>
+            {stderrView.loading ? (
+              <div className="flex items-center gap-2 py-6 justify-center text-muted-foreground text-sm">
+                <Loader2Icon className="size-4 animate-spin" /> 读取中…
+              </div>
+            ) : stderrView.error ? (
+              <div className="rounded-md border border-destructive/30 bg-destructive/10 text-destructive text-[12.5px] p-3">
+                {stderrView.error}
+              </div>
+            ) : stderrView.lines.length === 0 ? (
+              <div className="py-6 text-center text-muted-foreground text-[12.5px]">
+                暂无 stderr 输出(子进程安静 = 好事)
+              </div>
+            ) : (
+              <pre
+                className="max-h-80 overflow-auto rounded-md bg-muted/40 border p-3 font-mono text-[11.5px] leading-relaxed whitespace-pre-wrap break-all"
+                data-slot="mcp-stderr-body"
+              >
+                {stderrView.lines
+                  .map((l) => `[g${l.generation}] ${l.text}`)
+                  .join("\n")}
+              </pre>
+            )}
+          </DialogContent>
+        </Dialog>
+      ) : null}
 
       {/* 插件扫描发现对话框 */}
       {scanResult ? (
