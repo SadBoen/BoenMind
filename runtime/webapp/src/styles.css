@@ -400,9 +400,10 @@ body {
 }
 .msg.assistant .content {
   width: 100%;
-  line-height: var(--leading, 1.65);
-  color: var(--fg-1);
-  font-size: 13.5px;
+  /* 2026-09-10 对齐 ZCode 输出排版:正文 14.5px/1.8 近黑(蓝本复刻页实测 token) */
+  line-height: 1.8;
+  color: var(--zc-ink);
+  font-size: 14.5px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -464,7 +465,7 @@ body {
 
 /* Markdown 样式容器 */
 .markdown-body {
-  font-size: 13.5px;
+  font-size: inherit; /* 2026-09-10 跟随助手正文字号,不再自定 13.5px */
   line-height: var(--leading, 1.65);
   color: var(--fg-1);
   word-break: break-word;
@@ -487,13 +488,14 @@ body {
 .markdown-body h2 { font-size: 1.2em; }
 .markdown-body h3 { font-size: 1.1em; }
 .markdown-body .inline-code {
-  background: var(--bg-hover);
-  border: 1px solid var(--border);
-  padding: 1px 5px;
+  /* 2026-09-10 对齐 ZCode 行内代码:灰底无边框、继承字色 */
+  background: var(--zc-chip);
+  border: none;
+  padding: 1.5px 5px;
   border-radius: 4px;
   font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--accent-foreground, var(--primary));
+  font-size: 0.85em;
+  color: inherit;
 }
 
 /* ZCode 风格流光文字与滚动遮罩无滚动条工具类 */
@@ -676,4 +678,148 @@ body {
 }
 .bo-scroll-hidden::-webkit-scrollbar {
   display: none;                 /* Chromium/WebKit */
+}
+
+/* ---- ZCode 同款流式输出(2026-09-10)----
+   蓝本 = ZCode 桌面端截图像素复刻页(.zcode/zcode-chat-replica.html,离线留档):
+   扁平灰字工具行 + 左细线缩进展开 + 近黑正文,废除思考/工具的卡片与彩色态。
+   token 为浅色主题定值;W3 主题层接管时按 --background 明暗重映射。 */
+:root {
+  --zc-ink: #212429;     /* 正文近黑 */
+  --zc-dim: #8b919c;     /* 工具行/思考 灰字 */
+  --zc-dim-hover: #6d7380;
+  --zc-ghost: #b8bdc6;   /* 流式幽灵预览 */
+  --zc-rule: #e7e9ed;    /* 展开块左细线 */
+  --zc-hair: #f1f2f5;    /* 回合头发丝分隔线 */
+  --zc-chip: #eef0f3;    /* 行内代码底 */
+}
+.zc-run-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 2px 0 12px;
+  border-bottom: 1px solid var(--zc-hair);
+  user-select: none;
+}
+.zc-run-head.done {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--zc-ink);
+  cursor: pointer;
+}
+.zc-run-head.running {
+  font-size: 13.5px;
+  color: var(--zc-dim);
+}
+.zc-chev {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  margin-left: 2px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.zc-run-head:hover .zc-chev,
+.zc-t:hover .zc-chev,
+.zc-chev.open {
+  opacity: 1;
+}
+/* 工具行:思考 / 查阅 / 终端 / 更改了 N 个文件 */
+.zc-t {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 20px 0 6px;
+  font-size: 12px;
+  color: var(--zc-dim);
+  user-select: none;
+}
+.zc-t svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+.zc-t.clickable {
+  cursor: pointer;
+}
+.zc-t.clickable:hover {
+  color: var(--zc-dim-hover);
+}
+/* 展开内容:左细线缩进(与图标列对齐) */
+.zc-sub {
+  margin: 2px 0 6px 13px;
+  padding-left: 7px;
+  border-left: 2px solid var(--zc-rule);
+}
+.zc-think {
+  font-size: 13.5px;
+  line-height: 1.75;
+  color: var(--zc-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+/* 流式幽灵预览:取思考尾部单行硬切,无省略号(与 ZCode 一致) */
+.zc-ghost {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  color: var(--zc-ghost);
+}
+.zc-ghost .sep {
+  margin-right: 7px;
+}
+.zc-chev-r {
+  width: 12px;
+  height: 12px;
+  flex: none;
+}
+.zc-spin {
+  width: 14px;
+  height: 14px;
+  color: var(--zc-dim);
+  animation: zc-rotate 1s linear infinite;
+}
+@keyframes zc-rotate {
+  to { transform: rotate(360deg); }
+}
+/* 终端行:"终端 <命令>" 通栏灰字,超宽截断出省略号 */
+.zc-term {
+  margin: 8px 0 4px;
+}
+.zc-term .lbl {
+  flex: none;
+  margin-right: 10px;
+}
+.zc-term-cmd {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.zc-subitem {
+  font-size: 12px;
+  line-height: 1.9;
+  color: var(--zc-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.zc-subitem:hover {
+  color: var(--zc-dim-hover);
+}
+.zc-term-out {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--zc-dim);
+  background: var(--bg-hover);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+.zc-term-out-note {
+  color: var(--zc-ghost);
+  margin-top: 2px;
 }

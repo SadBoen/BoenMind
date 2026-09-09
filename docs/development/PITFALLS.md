@@ -17,6 +17,8 @@
 2. **EventSource 无 Auth 头**：SSE 无法携带 Authorization → `/events` 被 401 拒绝，前端改用 `events.poll` 轮询（1.5s）。
 3. **静态页缓存**：浏览器缓存旧页，发版后必须 Ctrl+F5 或带查询串强刷。
 4. **内联脚本语法错误静默失效**：整页按钮无反应且无报错，改完必须 `node --check` 验证。
+5. **Playwright chromium CDN 装不上**：本机跑 `npm run test:smoke` 报 Executable doesn't exist、`npx playwright install` 下载失败时，改用本机 Edge 通道：`npx playwright test --config playwright.smoke.local.config.ts`（旁路配置已入库）。CI 正常装浏览器，不受影响。
+6. **content-visibility 虚拟化干扰 Playwright 点击**：`.msg` 开了 CSS 虚拟化后，assistant 消息内元素的 locator click 会卡 actionability 超时——测试里点这类元素改走坐标路径（`cua.click`）或先断言文本即可。
 
 **教训**：229 个测试全绿测不出这 4 个 bug——用户可见面必须真实浏览器手测（硬纪律 7）。
 

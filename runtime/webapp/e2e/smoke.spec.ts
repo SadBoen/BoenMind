@@ -201,21 +201,21 @@ test.describe("对话闭环", () => {
     await input.fill("查找 main.rs");
     await page.locator(".send-btn").evaluate((el: HTMLElement) => el.click());
 
-    // 验证助手与用户平铺排版（无气泡）
+    // 验证助手与用户平铺排版（无气泡）;2026-09-10 ZCode 化改版后助手侧无
+    // per-message 头,回合头只在有计时的实况回合出现,这里只断言用户头
     await expect(page.locator(".msg.user .msg-header")).toContainText("我");
-    await expect(page.locator(".msg.assistant .msg-header")).toContainText("BoenMind Agent");
 
-    // 验证折叠卡片渲染（聚合了 1 搜索, 1 读取;ToolTreeGroup 聚合形态）
+    // 验证扁平聚合行(口径对齐 ZCode:「查阅 · 1 搜索, 1 文件」,搜索在前)
     // 2026-09-07 审计对齐:旧断言锚 data-slot="tool-group"(已删死的 ToolGroupCard),
     // 当前组件 = ToolTreeGroup,无该标记;按文本与结构断言
-    await expect(page.getByText(/查阅 · 1 文件，1 搜索/)).toBeVisible();
+    await expect(page.getByText(/查阅 · 1 搜索, 1 文件/)).toBeVisible();
     await expect(page.getByText("完成检索。")).toBeVisible();
 
-    // 点击展开聚合卡片(flex 头部行,与 TreeSubItem 树形子项)
-    // read 分类渲染 FileBadge(显示文件路径),search 分类显示工具名;分别断言
-    await page.getByText(/查阅 · 1 文件，1 搜索/).click();
-    await expect(page.getByText("fs_search").first()).toBeVisible();
-    await expect(page.getByText("src/main.rs").first()).toBeVisible();
+    // 点击展开聚合行:子项 = 通栏灰字单行(target 优先于工具名)
+    await page.getByText(/查阅 · 1 搜索, 1 文件/).click();
+    const subs = page.locator(".zc-subitem");
+    await expect(subs).toHaveCount(2);
+    await expect(subs.nth(1)).toContainText("runtime/src/main.rs");
   });
 });
 
@@ -382,10 +382,11 @@ test.describe("空气泡修复(W8)", () => {
     const input = page.getByRole("textbox", { name: "Message BoenMind…" });
     await input.fill("空回复测试");
     await page.locator(".send-btn").evaluate((el: HTMLElement) => el.click());
-    // 用户消息在,助手 tag 在,但空气泡被隐藏
-    // (定位到消息气泡本身;会话列表的同名标题会让 getByText 撞严格模式)
+    // 用户消息在,空气泡被隐藏,回合头(已工作)仍在
+    // (2026-09-10 ZCode 化改版:助手侧 per-message 头已废,计时回合头取而代之;
+    // 定位到消息气泡本身;会话列表的同名标题会让 getByText 撞严格模式)
     await expect(page.locator(".msg.user").getByText("空回复测试")).toBeVisible();
-    await expect(page.getByText("BoenMind Agent").first()).toBeVisible();
+    await expect(page.locator(".zc-run-head").first()).toContainText("已工作");
     await expect(page.locator(".msg.assistant .text").first()).toBeHidden();
   });
 });
