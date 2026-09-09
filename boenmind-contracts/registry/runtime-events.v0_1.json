@@ -48,6 +48,14 @@
       }
     },
     {
+      "type": "session.mode.changed",
+      "payload": {
+        "session_id": "id",
+        "from": "string",
+        "to": "string"
+      }
+    },
+    {
       "type": "agent.created",
       "payload": {
         "agent_id": "id",
@@ -205,7 +213,8 @@
         "operation_id": "id",
         "outcome": "string",
         "scope": "string|null",
-        "grant_id": "id|null"
+        "grant_id": "id|null",
+        "source": "string|null"
       }
     },
     {

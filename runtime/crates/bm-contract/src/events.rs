@@ -1,5 +1,6 @@
-//! 运行时事件注册表镜像(registry/runtime-events.v0_1.json,43 类,封闭集合:
-//! M1 20 + M2 增发 2 + M4 增发 10 + M5 增发 8 + M6 增发 1 + M7 增发 2 + M9 增发 2)。
+//! 运行时事件注册表镜像(registry/runtime-events.v0_1.json,46 类,封闭集合:
+//! M1 20 + M2 增发 2 + M4 增发 10 + M5 增发 8 + M6 增发 1 + M7 增发 2 + M9 增发 2
+//! + ADR-0030 增发 1)。
 //!
 //! 注册表是「允许发射」的封闭集,不是「必须发射」集;哪些流程发射哪些事件
 //! 以黄金轨迹与迁移表为准(规格 §8.6)。`payload_keys` 是注册表声明的 payload
@@ -16,6 +17,8 @@ wire_str_enum!(EventType {
     SessionCreated => "session.created",
     SessionResumed => "session.resumed",
     SessionClosed => "session.closed",
+    // ADR-0030 增发(2026-09-09,Minor:纯追加;审批裁决后台化)
+    SessionModeChanged => "session.mode.changed",
     AgentCreated => "agent.created",
     AgentStarted => "agent.started",
     AgentTurnStarted => "agent.turn.started",
@@ -126,8 +129,10 @@ impl EventType {
                 "outcome",
                 "scope",
                 "grant_id",
+                "source",
             ],
             EventType::ApprovalExpired => &["approval_id", "operation_id", "expired_at"],
+            EventType::SessionModeChanged => &["session_id", "from", "to"],
             EventType::GrantCreated => &[
                 "grant_id",
                 "approval_id",

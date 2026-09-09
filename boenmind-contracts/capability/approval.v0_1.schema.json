@@ -57,6 +57,7 @@
     "requested_at": { "type": "string", "format": "date-time" },
     "expires_at": { "type": "string", "format": "date-time", "description": "等待用户裁决的截止时间;到期 → expired(等价 denied)" },
     "resolved_at": { "type": ["string", "null"], "format": "date-time" },
-    "grant_id": { "type": ["string", "null"], "pattern": "^grant_[0-9A-HJKMNP-TV-Z]{26}$", "description": "批准后物化的 Grant 回填;其余状态为 null" }
+    "grant_id": { "type": ["string", "null"], "pattern": "^grant_[0-9A-HJKMNP-TV-Z]{26}$", "description": "批准后物化的 Grant 回填;其余状态为 null" },
+    "resolved_source": { "type": ["string", "null"], "enum": ["user", "mode_auto", "system"], "description": "裁决来源(ADR-0030,Minor 只增):user=人工裁决;mode_auto=会话 yolo 模式服务端自动放行;system=系统自裁(如审批等待超时撤销)。等待裁决中缺省/null" }
   }
 }
