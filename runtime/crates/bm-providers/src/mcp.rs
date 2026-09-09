@@ -417,7 +417,10 @@ pub struct StdioMcpTransport {
     args: Vec<String>,
     env: HashMap<String, String>,
     inner: Arc<tokio::sync::Mutex<StdioInner>>,
+    /// #32:进度聚合通道接收端(订阅一次,跨 respawn 代不断线)。
     progress_rx: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<McpProgressNote>>>,
+    /// #32:进度聚合通道发送端(每次 spawn_generation 转发汇入)。
+    progress_agg_tx: tokio::sync::mpsc::UnboundedSender<McpProgressNote>,
     alive: Arc<std::sync::atomic::AtomicBool>,
     /// 现行代的终止开关(Drop = 杀子进程;换代 = 换灯)。
     kill: Mutex<Option<ChildKill>>,
@@ -464,13 +467,16 @@ impl StdioMcpTransport {
         let alive = Arc::new(std::sync::atomic::AtomicBool::new(true));
         let stderr = Arc::new(StderrBuffer::with_capacity(MCP_STDERR_CAPACITY));
         let generation = Arc::new(std::sync::atomic::AtomicU64::new(0));
-        let (pending, stdin, progress_rx, kill) = spawn_generation(
+        // #32:聚合通道 = 订阅端唯一数据源,跨代不断线
+        let (agg_tx, agg_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (pending, stdin, kill) = spawn_generation(
             command,
             args,
             env,
             alive.clone(),
             stderr.clone(),
             generation.clone(),
+            agg_tx.clone(),
         )?;
         Ok(Arc::new(Self {
             command: command.to_string(),
@@ -482,7 +488,8 @@ impl StdioMcpTransport {
                 stdin: Some(stdin),
                 token_to_id: HashMap::new(),
             })),
-            progress_rx: Mutex::new(Some(progress_rx)),
+            progress_rx: Mutex::new(Some(agg_rx)),
+            progress_agg_tx: agg_tx,
             alive,
             kill: Mutex::new(Some(kill)),
             respawn_times: Arc::new(Mutex::new(Vec::new())),
@@ -531,15 +538,9 @@ fn spawn_generation(
     alive: Arc<std::sync::atomic::AtomicBool>,
     stderr_buf: Arc<StderrBuffer>,
     generation: Arc<std::sync::atomic::AtomicU64>,
-) -> Result<
-    (
-        PendingMap,
-        tokio::process::ChildStdin,
-        tokio::sync::mpsc::UnboundedReceiver<McpProgressNote>,
-        ChildKill,
-    ),
-    String,
-> {
+    // #32:各代进度统一汇入同一聚合通道(订阅端跨代不断线)
+    progress_agg: tokio::sync::mpsc::UnboundedSender<McpProgressNote>,
+) -> Result<(PendingMap, tokio::process::ChildStdin, ChildKill), String> {
     use tokio::io::{AsyncBufReadExt, BufReader};
     use tokio::process::Command;
 
@@ -605,7 +606,17 @@ fn spawn_generation(
         });
     }
 
-    let (progress_tx, progress_rx) = tokio::sync::mpsc::unbounded_channel();
+    // #32:每代独立 channel 经转发任务汇入聚合通道——上一代关闭不影响
+    // 聚合端,重生代进度自动续流(修复单代订阅:重生后进度静默丢失)
+    let (progress_tx, mut progress_rx) = tokio::sync::mpsc::unbounded_channel();
+    {
+        let progress_agg = progress_agg.clone();
+        tokio::spawn(async move {
+            while let Some(note) = progress_rx.recv().await {
+                let _ = progress_agg.send(note);
+            }
+        });
+    }
     let pending: PendingMap = Arc::new(Mutex::new(HashMap::new()));
 
     // 读取泵:响应按 id 配对;通知解析进度;通道关闭 = 子进程退出
@@ -653,66 +664,11 @@ fn spawn_generation(
         }
     });
 
-    Ok((pending, stdin, progress_rx, kill_tx))
+    Ok((pending, stdin, kill_tx))
 }
 
 impl StdioMcpTransport {
-    /// 重生一代子进程(M7.4:下次调用重连)。旧代在途请求以
-    /// stdio-closed 收场(内核侧计为一次失败/探针)。
-    async fn respawn(&self) -> Result<(), String> {
-        // R3(FULL-REVIEW-2026-09-05 §7):respawn 去抖+上限——60s 滑动窗口
-        // 内重生次数达 restart_limit = 故障循环,拒绝再生如实报错(此前
-        // restart_limit 是解析后零消费的死配置)。
-        {
-            let mut times = self.respawn_times.lock().expect("锁未中毒");
-            let now = std::time::Instant::now();
-            let window = self.respawn_window();
-            times.retain(|t| now.duration_since(*t) < window);
-            if times.len() >= self.restart_limit as usize {
-                // P2(2026-09-07 架构评审):窗口秒数随 limits 热值,不再写死 60。
-                return Err(format!(
-                    "MCP 子进程 {} 秒内已重生 {} 次(上限 {}),疑似故障循环已熔断;请检查插件或经管理面重载",
-                    window.as_secs(),
-                    times.len(),
-                    self.restart_limit
-                ));
-            }
-            times.push(now);
-        }
-        let mut inner = self.inner.lock().await;
-        {
-            let mut map = inner.pending.lock().expect("锁未中毒");
-            for (_, tx) in map.drain() {
-                let _ = tx.send(Err("stdio-closed".into()));
-            }
-        }
-        // 换代前闭灯杀旧代(消灭僵尸窗口),再挂新开关
-        if let Some(old_kill) = self.kill.lock().expect("锁未中毒").take() {
-            drop(old_kill);
-        }
-        let (pending, stdin, progress_rx, kill) = spawn_generation(
-            &self.command,
-            &self.args,
-            &self.env,
-            self.alive.clone(),
-            self.stderr.clone(),
-            self.generation.clone(),
-        )?;
-        *self.kill.lock().expect("锁未中毒") = Some(kill);
-        inner.pending = pending;
-        inner.stdin = Some(stdin);
-        let mut slot = self.progress_rx.lock().expect("锁未中毒");
-        if slot.is_none() {
-            *slot = Some(progress_rx); // 首代订阅位空缺时续上重生代进度
-        }
-        self.alive.store(true, std::sync::atomic::Ordering::Relaxed);
-        Ok(())
-    }
-}
-
-#[async_trait]
-impl McpTransport for StdioMcpTransport {
-    async fn request(&self, method: &str, params: Value) -> Result<Value, String> {
+    async fn request_once(&self, method: &str, params: Value) -> Result<Value, String> {
         if !self.alive.load(std::sync::atomic::Ordering::Relaxed) {
             self.respawn().await?;
         }
@@ -766,6 +722,74 @@ impl McpTransport for StdioMcpTransport {
             }
         }
         out
+    }
+
+    /// 重生一代子进程(M7.4:下次调用重连)。旧代在途请求以
+    /// stdio-closed 收场(内核侧计为一次失败/探针)。
+    async fn respawn(&self) -> Result<(), String> {
+        // R3(FULL-REVIEW-2026-09-05 §7):respawn 去抖+上限——60s 滑动窗口
+        // 内重生次数达 restart_limit = 故障循环,拒绝再生如实报错(此前
+        // restart_limit 是解析后零消费的死配置)。
+        {
+            let mut times = self.respawn_times.lock().expect("锁未中毒");
+            let now = std::time::Instant::now();
+            let window = self.respawn_window();
+            times.retain(|t| now.duration_since(*t) < window);
+            if times.len() >= self.restart_limit as usize {
+                // P2(2026-09-07 架构评审):窗口秒数随 limits 热值,不再写死 60。
+                return Err(format!(
+                    "MCP 子进程 {} 秒内已重生 {} 次(上限 {}),疑似故障循环已熔断;请检查插件或经管理面重载",
+                    window.as_secs(),
+                    times.len(),
+                    self.restart_limit
+                ));
+            }
+            times.push(now);
+        }
+        let mut inner = self.inner.lock().await;
+        {
+            let mut map = inner.pending.lock().expect("锁未中毒");
+            for (_, tx) in map.drain() {
+                let _ = tx.send(Err("stdio-closed".into()));
+            }
+        }
+        // 换代前闭灯杀旧代(消灭僵尸窗口),再挂新开关
+        if let Some(old_kill) = self.kill.lock().expect("锁未中毒").take() {
+            drop(old_kill);
+        }
+        let (pending, stdin, kill) = spawn_generation(
+            &self.command,
+            &self.args,
+            &self.env,
+            self.alive.clone(),
+            self.stderr.clone(),
+            self.generation.clone(),
+            self.progress_agg_tx.clone(),
+        )?;
+        *self.kill.lock().expect("锁未中毒") = Some(kill);
+        inner.pending = pending;
+        inner.stdin = Some(stdin);
+        // #32:进度经聚合通道自动续流,订阅位无需重生代回填
+        self.alive.store(true, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl McpTransport for StdioMcpTransport {
+    async fn request(&self, method: &str, params: Value) -> Result<Value, String> {
+        // #32:命中「子进程已死但 alive 未及置否」窗口的请求以 stdio-closed
+        // 收场——此时强制重生一代并重试一次(restart_limit 去抖仍然生效),
+        // 让 M7.4「下次调用重连」语义覆盖死亡窗口内的在途请求。
+        match self.request_once(method, params.clone()).await {
+            Err(e) if e == "stdio-closed" => {
+                self.alive
+                    .store(false, std::sync::atomic::Ordering::Relaxed);
+                self.respawn().await?;
+                self.request_once(method, params).await
+            }
+            out => out,
+        }
     }
 
     async fn notify(&self, method: &str, params: Value) -> Result<(), String> {
@@ -1835,5 +1859,148 @@ data: {{\"jsonrpc\":\"2.0\",\"id\":{},\"result\":{{\"content\":[{{\"type\":\"tex
     async fn t_remote_unknown_protocol_version_tolerated() {
         let url = spawn_mock(true).await;
         handshake(&url, true).await;
+    }
+}
+
+/// issue #32:多代 stdio 进度聚合——重生后进度经聚合通道续流到原订阅。
+/// 夹具 DIE_AFTER=3:第 1 代答完 initialize/tools/list/tools/call 后退出;
+/// 第 2 次调用触发 respawn,新代进度必须流入 connect 期取走的同一订阅
+/// (修复前:单代订阅位,重生代进度静默丢失)。真子进程测试沿用
+/// #[ignore] + BOEN_MCP_STDIO_TEST=1 惯例。
+#[cfg(test)]
+mod progress_gen_tests {
+    use super::*;
+    use std::time::Duration;
+
+    const FIXTURE: &str = r#"import json, sys, os
+die_after = int(os.environ.get("DIE_AFTER", "0") or 0)
+answered = 0
+def send(obj):
+    sys.stdout.write(json.dumps(obj) + chr(10))
+    sys.stdout.flush()
+while True:
+    line = sys.stdin.readline()
+    if not line:
+        break
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        msg = json.loads(line)
+    except ValueError:
+        continue
+    method = msg.get("method", "")
+    mid = msg.get("id")
+    if mid is None:
+        continue
+    params = msg.get("params", {}) or {}
+    if method == "initialize":
+        send({"jsonrpc": "2.0", "id": mid, "result": {"protocolVersion": "2024-11-05", "capabilities": {}, "serverInfo": {"name": "progress-mcp"}}})
+    elif method == "tools/list":
+        send({"jsonrpc": "2.0", "id": mid, "result": {"tools": [{"name": "ping", "inputSchema": {"type": "object"}}]}})
+    elif method == "tools/call":
+        token = (params.get("_meta") or {}).get("progressToken", "t")
+        send({"jsonrpc": "2.0", "method": "notifications/progress", "params": {"progressToken": token, "progress": 1, "message": "half"}})
+        send({"jsonrpc": "2.0", "method": "notifications/progress", "params": {"progressToken": token, "progress": 2, "message": "done"}})
+        send({"jsonrpc": "2.0", "id": mid, "result": {"content": [{"type": "text", "text": "pong"}]}})
+    else:
+        send({"jsonrpc": "2.0", "id": mid, "result": {}})
+    answered += 1
+    if die_after and answered >= die_after:
+        sys.exit(0)
+"#;
+
+    /// 轮询 sink 收集面至攒够 want 条(异步到达;上限 5s)。
+    async fn wait_notes(
+        collected: &Arc<Mutex<Vec<ProgressNotice>>>,
+        want: usize,
+    ) -> Vec<ProgressNotice> {
+        for _ in 0..50 {
+            let cur = collected.lock().expect("锁未中毒").len();
+            if cur >= want {
+                break;
+            }
+            tokio::time::timeout(Duration::from_millis(100), async {})
+                .await
+                .ok();
+        }
+        collected.lock().expect("锁未中毒").clone()
+    }
+
+    #[tokio::test]
+    #[ignore = "stdio 子进程测试:BOEN_MCP_STDIO_TEST=1 启用"]
+    async fn progress_flows_across_respawn_generations() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let fixture = dir.path().join("progress_mcp.py");
+        std::fs::write(&fixture, FIXTURE).expect("写夹具");
+        let env: HashMap<String, String> = [("DIE_AFTER".to_string(), "3".to_string())]
+            .into_iter()
+            .collect();
+        let transport =
+            StdioMcpTransport::spawn("python", &[fixture.to_string_lossy().to_string()], &env, 5)
+                .expect("子进程启动");
+        let hub = McpHub::new();
+        let manifests = tokio::time::timeout(
+            Duration::from_secs(15),
+            hub.connect("genx", transport.clone(), 10_000),
+        )
+        .await
+        .expect("握手超时")
+        .map_err(|e| format!("握手失败: {e}; stderr={:?}", transport.stderr_tail(30)))
+        .expect("握手成功");
+        assert_eq!(manifests.len(), 1);
+
+        // 进度经 hub 泵(订阅在 connect 期完成)汇入 sink;测试用 sink 收集
+        let collected: Arc<Mutex<Vec<ProgressNotice>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink_view = collected.clone();
+        hub.set_progress_sink(Box::new(move |n| {
+            sink_view.lock().expect("锁未中毒").push(n);
+        }));
+
+        // 第 1 代调用:进度 2 条
+        let r1 = bm_core::ports::AsyncCapabilityExecutor::call(
+            hub.as_ref(),
+            "op_g1",
+            "mcp.genx.ping",
+            json!({"_meta": {"progressToken": "tok-g1"}}),
+            Duration::from_secs(10),
+        )
+        .await
+        .expect("第 1 代调用成功");
+        assert!(r1.to_string().contains("pong"));
+        let notes1 = wait_notes(&collected, 2).await;
+        assert_eq!(notes1.len(), 2, "第 1 代应收到 2 条进度");
+        assert_eq!(notes1[0].message.as_deref(), Some("half"));
+        assert_eq!(notes1[1].progress, 2);
+        assert_eq!(notes1[1].message.as_deref(), Some("done"));
+
+        // DIE_AFTER=3:第 1 代已退出;本调用触发 respawn → 第 2 代
+        let r2 = bm_core::ports::AsyncCapabilityExecutor::call(
+            hub.as_ref(),
+            "op_g2",
+            "mcp.genx.ping",
+            json!({"_meta": {"progressToken": "tok-g2"}}),
+            Duration::from_secs(10),
+        )
+        .await
+        .map_err(|e| {
+            format!(
+                "gen2 失败: {e:?}; alive={}; stderr={:?}",
+                transport.alive.load(std::sync::atomic::Ordering::Relaxed),
+                transport.stderr_tail(40)
+            )
+        })
+        .expect("第 2 代调用成功");
+        assert!(r2.to_string().contains("pong"));
+        let before = notes1.len();
+        let notes2 = wait_notes(&collected, before + 2).await[before..].to_vec();
+        assert_eq!(
+            notes2.len(),
+            2,
+            "重生代进度必须续流到原订阅(修复单代订阅缺陷)"
+        );
+        assert_eq!(notes2[0].message.as_deref(), Some("half"));
+        assert_eq!(notes2[1].progress, 2);
+        assert_eq!(notes2[1].message.as_deref(), Some("done"));
     }
 }
