@@ -30,14 +30,13 @@ pub(crate) fn handle_task_spawn_member(
             .iter()
             .filter(|m| m.role == crate::task::MemberRole::Worker)
             .count() as u64;
-        if alive_workers >= crate::team::MAX_CONCURRENT_WORKERS {
+        // #30:Task 级并发上限覆盖(Budget 开放键),None = 合同默认 5
+        let worker_cap = crate::team::max_concurrent_workers_of(task.budget.as_ref())
+            .unwrap_or(crate::team::MAX_CONCURRENT_WORKERS);
+        if alive_workers >= worker_cap {
             return Err(CoreError::Semantic(
                 ErrorCode::ValidationFailed,
-                format!(
-                    "并发上限:存活 worker {} 已达 {}",
-                    alive_workers,
-                    crate::team::MAX_CONCURRENT_WORKERS
-                ),
+                format!("并发上限:存活 worker {} 已达 {}", alive_workers, worker_cap),
             ));
         }
         (

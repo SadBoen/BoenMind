@@ -137,6 +137,20 @@ impl WatchdogState {
         created_at: DateTime<chrono::Utc>,
         now: DateTime<chrono::Utc>,
     ) -> Option<ScanDecision> {
+        self.decide_with(task_id, created_at, now, None, None)
+    }
+
+    /// #30:带 Task 级覆盖的扫描判定——`stall_override_ms`/`hard_override_ms`
+    /// 来自 Task 预算开放键(stall_after_ms / stall_hard_limit_ms),None =
+    /// 用全局 limits 生效值。
+    pub fn decide_with(
+        &mut self,
+        task_id: &str,
+        created_at: DateTime<chrono::Utc>,
+        now: DateTime<chrono::Utc>,
+        stall_override_ms: Option<i64>,
+        hard_override_ms: Option<i64>,
+    ) -> Option<ScanDecision> {
         let w = self
             .watches
             .entry(task_id.to_string())
@@ -152,11 +166,13 @@ impl WatchdogState {
         if w.waiting_approval {
             return None;
         }
+        let stall_ms = stall_override_ms.unwrap_or(self.stall_after_ms);
+        let hard_ms = hard_override_ms.unwrap_or(self.hard_limit_ms);
         let elapsed_ms = (now - w.last_progress_at).num_milliseconds();
-        if elapsed_ms > self.hard_limit_ms {
+        if elapsed_ms > hard_ms {
             return Some(ScanDecision::HardLimit);
         }
-        if elapsed_ms > self.stall_after_ms && !w.stall_notified {
+        if elapsed_ms > stall_ms && !w.stall_notified {
             return Some(ScanDecision::Stall);
         }
         None
@@ -281,6 +297,40 @@ mod tests {
         assert_eq!(
             wd.decide("t1", t0, t0 + chrono::Duration::hours(25)),
             Some(ScanDecision::HardLimit)
+        );
+    }
+
+    #[test]
+    fn task_level_window_overrides_beat_globals() {
+        let clock = MockClock::at_ms(BASE_MS);
+        let mut wd = WatchdogState::default();
+        let t0 = clock.now();
+        // Task 级 5 分钟窗口:10 分钟即判停滞(全局 15 分钟未到)
+        assert_eq!(
+            wd.decide_with(
+                "t1",
+                t0,
+                t0 + chrono::Duration::minutes(10),
+                Some(5 * 60 * 1000),
+                None
+            ),
+            Some(ScanDecision::Stall)
+        );
+        // Task 级硬顶 30 分钟:40 分钟直接 HardLimit(越过全局 24h)
+        assert_eq!(
+            wd.decide_with(
+                "t2",
+                t0,
+                t0 + chrono::Duration::minutes(40),
+                None,
+                Some(30 * 60 * 1000)
+            ),
+            Some(ScanDecision::HardLimit)
+        );
+        // None = 全局:10 分钟不判
+        assert_eq!(
+            wd.decide_with("t3", t0, t0 + chrono::Duration::minutes(10), None, None),
+            None
         );
     }
 

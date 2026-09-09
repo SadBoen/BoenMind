@@ -132,6 +132,69 @@ async fn t90_multi_member_spawn_and_task_isolation() {
     handle.stop("test_done").await;
 }
 
+/// t91b:#30 Task 级并发上限覆盖——Budget 开放键 max_concurrent_workers=1
+/// 时,第二名 worker 即拒(合同默认 5 被覆盖)。
+#[tokio::test]
+async fn t91b_task_level_worker_cap_override() {
+    let (handle, ids) = m6_rig(false).await;
+    let created = handle
+        .task_create(
+            ids.next_id("req"),
+            TaskCreateParams {
+                title: "紧并发任务".into(),
+                goal: "g".into(),
+                authorization: serde_json::from_value(json!([
+                    {"verb": "capability.call", "klass": "mutation",
+                     "resources": [{"capability": "system.notes.write"}]},
+                    {"verb": "agent.spawn", "klass": "mutation"}
+                ]))
+                .unwrap(),
+                budget: serde_json::from_value(json!(
+                    {"max_tokens": 1000000, "max_turns": 1000, "max_concurrent_workers": 1}
+                ))
+                .unwrap(),
+                deadline: None,
+            },
+        )
+        .await
+        .expect("建单");
+
+    // 并发覆盖 = 1:task_create 自带 1 worker,追加即拒
+    let err = handle
+        .task_spawn_member(created.task_id.clone())
+        .await
+        .expect_err("覆盖上限 1 必须拒绝追加");
+    assert!(matches!(
+        err,
+        CoreError::Semantic(ErrorCode::ValidationFailed, _)
+    ));
+
+    // 对照:未配置覆盖的默认 5 仍放行(同 rig 新任务)
+    let plain = handle
+        .task_create(
+            ids.next_id("req"),
+            TaskCreateParams {
+                title: "默认并发任务".into(),
+                goal: "g".into(),
+                authorization: serde_json::from_value(json!([
+                    {"verb": "capability.call", "klass": "mutation",
+                     "resources": [{"capability": "system.notes.write"}]},
+                    {"verb": "agent.spawn", "klass": "mutation"}
+                ]))
+                .unwrap(),
+                budget: None,
+                deadline: None,
+            },
+        )
+        .await
+        .expect("建对照单");
+    handle
+        .task_spawn_member(plain.task_id.clone())
+        .await
+        .expect("默认上限 5,追加放行");
+    handle.stop("test_done").await;
+}
+
 /// t91:委派四门禁——深度/授权子集/预算/并发(只减不增)。
 #[tokio::test]
 async fn t91_subtask_delegation_gates() {

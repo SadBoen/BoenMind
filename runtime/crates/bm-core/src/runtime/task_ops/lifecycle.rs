@@ -100,7 +100,14 @@ pub(crate) fn watchdog_scan_run(w: &mut World) -> usize {
             continue;
         }
         let created = crate::watchdog::parse_or(t.created_at.as_str(), now);
-        if let Some(d) = w.watchdog.decide(t.id.as_str(), created, now) {
+        // #30:Task 级停滞窗口/硬顶覆盖(Budget 开放键),None = 全局 limits
+        let budget = t.budget.as_ref();
+        let stall_override = crate::team::stall_after_ms_of(budget);
+        let hard_override = crate::team::stall_hard_limit_ms_of(budget);
+        if let Some(d) =
+            w.watchdog
+                .decide_with(t.id.as_str(), created, now, stall_override, hard_override)
+        {
             decisions.push((t.id.clone(), d));
         }
     }
