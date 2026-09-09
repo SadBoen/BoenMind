@@ -443,9 +443,15 @@ pub async fn mcp_status(State(cfg): State<AdminConfig>) -> Response {
         .unwrap_or_default();
     let mut status = Vec::new();
     for name in loaded {
+        // issue #3:握手协商结果(协议版本/capabilities)一并露出;无记录
+        // (stdio 或未完成握手)时缺省省略,前端如实不显示
+        let caps = hub.server_capabilities(&name).ok();
         match hub.probe_server(&name).await {
-            Ok((count, tool_list)) => status
-                .push(json!({"name": name, "ok": true, "tools": count, "tool_list": tool_list})),
+            Ok((count, tool_list)) => status.push(json!({
+                "name": name, "ok": true, "tools": count, "tool_list": tool_list,
+                "protocol_version": caps.as_ref().and_then(|c| c["protocolVersion"].as_str()),
+                "capabilities": caps.as_ref().map(|c| c["capabilities"].clone()),
+            })),
             Err(e) => status.push(json!({"name": name, "ok": false, "error": e})),
         }
     }

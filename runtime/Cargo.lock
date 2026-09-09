@@ -379,6 +379,7 @@ version = "0.0.15"
 dependencies = [
  "aes-gcm",
  "async-trait",
+ "axum",
  "bm-contract",
  "bm-core",
  "bm-persist",

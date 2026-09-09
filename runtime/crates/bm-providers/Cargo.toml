@@ -33,6 +33,8 @@ glm = []
 [dev-dependencies]
 tokio = { workspace = true }
 tempfile = "3"
+# #3 mock 远程 MCP server(本仓 axum workspace 版本)
+axum = { workspace = true }
 
 [lints]
 workspace = true

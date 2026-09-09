@@ -218,6 +218,14 @@ pub trait McpTransport: Send + Sync {
     fn stderr_buffer(&self) -> Option<Arc<StderrBuffer>> {
         None
     }
+
+    /// #3:握手期记录 initialize 结果(默认忽略;远程传输记录供管理面露出)。
+    fn remember_init(&self, _v: Value) {}
+
+    /// #3:读取记录的 initialize 结果(默认 None)。
+    fn init_snapshot(&self) -> Option<Value> {
+        None
+    }
 }
 
 fn dead_progress_rx() -> tokio::sync::mpsc::UnboundedReceiver<McpProgressNote> {
@@ -806,7 +814,8 @@ impl McpTransport for StdioMcpTransport {
 
 // ---- HTTP / SSE 远程传输 (Remote HTTP/SSE Transport) -----------------------
 
-/// 远程 MCP HTTP/SSE 传输层 (单进程 HTTP POST + 可选 Bearer 鉴权).
+/// 远程 MCP HTTP/SSE 传输层(Streamable HTTP:单 POST + 可选 Bearer +
+/// Mcp-Session-Id 会话管理 + SSE 响应流解析;issue #3 完整握手)。
 pub struct HttpMcpTransport {
     url: String,
     bearer_token: Option<String>,
@@ -814,6 +823,10 @@ pub struct HttpMcpTransport {
     progress_rx: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<McpProgressNote>>>,
     /// W10(ADR-0024):单请求超时热读单元(缺省 60s)。
     limits: bm_core::limits::LimitsCell,
+    /// #3:服务器下发的会话 id(Mcp-Session-Id 响应头),后续请求回带。
+    session_id: Mutex<Option<String>>,
+    /// #3:initialize 结果(协议版本/capabilities/serverInfo),管理面露出。
+    init_result: Mutex<Option<Value>>,
 }
 
 impl HttpMcpTransport {
@@ -824,6 +837,8 @@ impl HttpMcpTransport {
             client: reqwest::Client::new(),
             progress_rx: Mutex::new(None),
             limits: bm_core::limits::LimitsCell::with_default(),
+            session_id: Mutex::new(None),
+            init_result: Mutex::new(None),
         })
     }
 
@@ -834,6 +849,39 @@ impl HttpMcpTransport {
         s.limits = limits;
         Arc::new(s)
     }
+}
+
+/// SSE 解析已知协议版本(spec 2024-11-05/2025-03-26/2025-06-18);未知版本
+/// 告警不拒——工具调用面在版本间兼容,拒了反断可用网关(#3 协商口径)。
+const KNOWN_PROTOCOL_VERSIONS: [&str; 3] = ["2024-11-05", "2025-03-26", "2025-06-18"];
+
+/// 从 SSE 文本(text/event-stream)提取 id 匹配的 JSON-RPC 响应:以空行分块,
+/// `data:` 行拼合为一条 JSON(#3;POST 作用域的响应流,服务器发完即关)。
+fn parse_sse_response(body: &str, id: u64) -> Result<Value, String> {
+    for block in body.split(
+        "
+
+",
+    ) {
+        let data: Vec<&str> = block
+            .lines()
+            .filter(|l| l.starts_with("data:"))
+            .map(|l| l.trim_start_matches("data:").trim_start_matches(' '))
+            .collect();
+        if data.is_empty() {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<Value>(&data.join(
+            "
+",
+        )) else {
+            continue;
+        };
+        if v.get("id").and_then(|i| i.as_u64()) == Some(id) {
+            return Ok(v);
+        }
+    }
+    Err("SSE 流中未找到匹配 id 的响应".to_string())
 }
 
 #[async_trait]
@@ -849,6 +897,12 @@ impl McpTransport for HttpMcpTransport {
         if let Some(token) = &self.bearer_token {
             req = req.bearer_auth(token);
         }
+        // #3:完整握手——Accept 双类型(spec 要求,服务端可回 SSE 流),
+        // 会话头回带(initialize 后服务器下发 Mcp-Session-Id)
+        req = req.header("Accept", "application/json, text/event-stream");
+        if let Some(sid) = self.session_id.lock().expect("锁未中毒").clone() {
+            req = req.header("Mcp-Session-Id", sid);
+        }
         // R3(FULL-REVIEW-2026-09-05 §7):裸 send 无超时 = 远端挂起即调用
         // 悬挂;默认 60s 硬顶(W10 走 limits),远端长任务应自行异步化。
         let remote_timeout =
@@ -863,13 +917,38 @@ impl McpTransport for HttpMcpTransport {
                 )
             })?
             .map_err(|e| format!("远程 MCP 请求失败: {e}"))?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND
+            && self.session_id.lock().expect("锁未中毒").is_some()
+        {
+            return Err("远程 MCP 会话已失效(HTTP 404),请重载该 server".to_string());
+        }
         if !resp.status().is_success() {
             return Err(format!("远程 MCP HTTP 状态异常: {}", resp.status()));
         }
-        let val: Value = resp
-            .json()
-            .await
-            .map_err(|e| format!("远程 MCP 响应解析失败: {e}"))?;
+        // #3:会话头记录(initialize 响应下发;后续请求回带)
+        if let Some(sid) = resp
+            .headers()
+            .get("Mcp-Session-Id")
+            .and_then(|v| v.to_str().ok())
+        {
+            *self.session_id.lock().expect("锁未中毒") = Some(sid.to_string());
+        }
+        let is_sse = resp
+            .headers()
+            .get("Content-Type")
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|ct| ct.contains("text/event-stream"));
+        let val: Value = if is_sse {
+            let body = resp
+                .text()
+                .await
+                .map_err(|e| format!("远程 MCP SSE 流读取失败: {e}"))?;
+            parse_sse_response(&body, 1)?
+        } else {
+            resp.json()
+                .await
+                .map_err(|e| format!("远程 MCP 响应解析失败: {e}"))?
+        };
         if let Some(err) = val.get("error") {
             let code = err.get("code").and_then(|c| c.as_i64()).unwrap_or(-1);
             let msg = err.get("message").and_then(|m| m.as_str()).unwrap_or("");
@@ -888,6 +967,10 @@ impl McpTransport for HttpMcpTransport {
         if let Some(token) = &self.bearer_token {
             req = req.bearer_auth(token);
         }
+        req = req.header("Accept", "application/json, text/event-stream");
+        if let Some(sid) = self.session_id.lock().expect("锁未中毒").clone() {
+            req = req.header("Mcp-Session-Id", sid);
+        }
         // P1-9: notify 加上 10s 超时,防止半开远端挂死卸载/重载/关闭请求
         let _ = tokio::time::timeout(std::time::Duration::from_secs(10), req.send()).await;
         Ok(())
@@ -899,6 +982,14 @@ impl McpTransport for HttpMcpTransport {
             .expect("锁未中毒")
             .take()
             .unwrap_or_else(dead_progress_rx)
+    }
+
+    fn remember_init(&self, v: Value) {
+        *self.init_result.lock().expect("锁未中毒") = Some(v);
+    }
+
+    fn init_snapshot(&self) -> Option<Value> {
+        self.init_result.lock().expect("锁未中毒").clone()
     }
 }
 
@@ -961,13 +1052,19 @@ impl McpHub {
                     }),
                 )
                 .await?;
-            if init
+            let version = init
                 .get("protocolVersion")
                 .and_then(|v| v.as_str())
-                .is_none()
-            {
+                .unwrap_or_default()
+                .to_string();
+            if version.is_empty() {
                 return Err("initialize 响应缺 protocolVersion".into());
             }
+            // #3:协商——响应版本不在已知集则告警不拒(工具调用面版本间兼容)
+            if !KNOWN_PROTOCOL_VERSIONS.contains(&version.as_str()) {
+                tracing::warn!(server, version = %version, "MCP server 响应未知协议版本,按兼容继续");
+            }
+            transport.remember_init(init.clone());
             transport
                 .notify("notifications/initialized", json!({}))
                 .await?;
@@ -1117,6 +1214,25 @@ impl McpHub {
             return Err("该 server 无 stderr 采集(远程传输无子进程)".into());
         };
         Ok(buf.tail(lines))
+    }
+
+    /// #3:读取指定 server 的 initialize 结果(协议版本/capabilities/
+    /// serverInfo;握手时记录)。未连接 = Err。
+    pub fn server_capabilities(&self, server: &str) -> Result<Value, String> {
+        let prefix = format!("mcp.{server}.");
+        let transport = {
+            let routes = self.routes.lock().expect("锁未中毒");
+            routes
+                .iter()
+                .find(|(k, _)| k.starts_with(&prefix))
+                .map(|(_, r)| r.transport.clone())
+        };
+        let Some(transport) = transport else {
+            return Err("未连接".into());
+        };
+        transport
+            .init_snapshot()
+            .ok_or_else(|| "该 server 无握手记录(旧版传输或未完成 initialize)".to_string())
     }
 
     pub fn capability_entries(
@@ -1602,3 +1718,122 @@ mod stderr_tests {
 }
 
 pub mod supervisor;
+
+/// issue #3:远程 MCP 完整握手协商——本地 axum mock Streamable HTTP server。
+/// t1 握手:initialize 记录 session id/capabilities/版本,tools/list 回带
+/// Mcp-Session-Id;t2 tools/call 走 SSE 流响应可解析;t3 未知协议版本容忍。
+#[cfg(test)]
+mod remote_http_tests {
+    use super::*;
+    use axum::extract::Request;
+    use axum::http::HeaderMap;
+    use axum::response::IntoResponse;
+
+    /// 起一个极简 Streamable HTTP MCP mock:initialize 下发会话头,
+    /// tools/list 校验会话头,tools/call 以 SSE 流回响应。
+    async fn spawn_mock(unknown_version: bool) -> String {
+        let app = axum::Router::new().route(
+            "/mcp",
+            axum::routing::post(move |headers: HeaderMap, req: Request| async move {
+                let bytes = axum::body::to_bytes(req.into_body(), 1 << 20)
+                    .await
+                    .unwrap();
+                let msg: Value = serde_json::from_slice(&bytes).unwrap();
+                let id = msg.get("id").and_then(|v| v.as_u64());
+                let method = msg["method"].as_str().unwrap_or("");
+                let session = headers
+                    .get("Mcp-Session-Id")
+                    .and_then(|v| v.to_str().ok())
+                    .map(|s| s.to_string());
+                let result = match method {
+                    "initialize" => {
+                        let version = if unknown_version {
+                            "1999-01-01"
+                        } else {
+                            "2025-03-26"
+                        };
+                        json!({
+                            "protocolVersion": version,
+                            "capabilities": {"tools": {"listChanged": false}},
+                            "serverInfo": {"name": "mock-remote", "version": "0.1"}
+                        })
+                    }
+                    "tools/list" => {
+                        assert_eq!(session.as_deref(), Some("mock-session-1"), "tools/list 必须回带会话头");
+                        json!({"tools": [{"name": "echo", "inputSchema": {"type": "object"}}]})
+                    }
+                    "tools/call" => {
+                        assert_eq!(session.as_deref(), Some("mock-session-1"));
+                        return (
+                            axum::http::StatusCode::OK,
+                            [("Content-Type", "text/event-stream"), ("Mcp-Session-Id", "mock-session-1")],
+                            format!(
+                                "event: message
+data: {{\"jsonrpc\":\"2.0\",\"id\":{},\"result\":{{\"content\":[{{\"type\":\"text\",\"text\":\"sse-pong\"}}]}}}}
+
+",
+                                id.unwrap_or(1)
+                            ),
+                        )
+                            .into_response();
+                    }
+                    _ => json!({}),
+                };
+                let body = json!({"jsonrpc": "2.0", "id": id, "result": result});
+                (
+                    axum::http::StatusCode::OK,
+                    [("Mcp-Session-Id", "mock-session-1")],
+                    axum::Json(body),
+                )
+                    .into_response()
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        format!("http://{addr}/mcp")
+    }
+
+    async fn handshake(url: &str, unknown_version: bool) -> Arc<McpHub> {
+        let transport = HttpMcpTransport::new(url, None);
+        let hub = McpHub::new();
+        let manifests = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            hub.connect("remote", transport, 5_000),
+        )
+        .await
+        .expect("握手超时")
+        .expect("握手成功");
+        assert_eq!(manifests.len(), 1, "tools/list 应发现 1 工具");
+        let caps = hub.server_capabilities("remote").expect("握手记录存在");
+        assert_eq!(caps["serverInfo"]["name"], "mock-remote");
+        let _ = unknown_version;
+        hub
+    }
+
+    #[tokio::test]
+    async fn t_remote_handshake_session_and_capabilities() {
+        let url = spawn_mock(false).await;
+        let hub = handshake(&url, false).await;
+        let caps = hub.server_capabilities("remote").unwrap();
+        assert_eq!(caps["protocolVersion"], "2025-03-26", "协商记录响应版本");
+        assert_eq!(caps["capabilities"]["tools"]["listChanged"], false);
+        // tools/call 全链路:SSE 响应流解析 + 会话头回带
+        let out = bm_core::ports::AsyncCapabilityExecutor::call(
+            hub.as_ref(),
+            "op_remote",
+            "mcp.remote.echo",
+            json!({"text": "x"}),
+            std::time::Duration::from_secs(5),
+        )
+        .await
+        .expect("远程调用成功");
+        assert!(out.to_string().contains("sse-pong"), "{out}");
+    }
+
+    #[tokio::test]
+    async fn t_remote_unknown_protocol_version_tolerated() {
+        let url = spawn_mock(true).await;
+        handshake(&url, true).await;
+    }
+}
