@@ -34,6 +34,7 @@ pub(crate) fn handle_capability_call(
     w: &mut World,
     request_id: BmId,
     params: wire::CapabilityCallParams,
+    session_id: Option<BmId>,
 ) -> CoreResult<serde_json::Value> {
     if w.draining || w.persist_poisoned {
         return Err(CoreError::Semantic(
@@ -46,6 +47,10 @@ pub(crate) fn handle_capability_call(
     let mut ctx = CallContext::surface(CAPABILITY_CALLER);
     if let Some(k) = &params.idempotency_key {
         ctx = ctx.with_idempotency_key(k);
+    }
+    // ADR-0030:回合层模型工具调用携带来源会话,裁决点读取其权限模式
+    if let Some(sid) = session_id {
+        ctx = ctx.with_session(sid);
     }
     capability_call_inner(w, request_id, ctx, params).1
 }
@@ -280,6 +285,85 @@ pub(crate) fn capability_call_inner(
                     trust: ctx.trust,
                 },
             );
+            // ADR-0030 决策 2/3:会话 yolo 模式 → 服务端在裁决点自动批准
+            //(scope=once 最小授权,审计 source=mode_auto 与人工可区分),
+            // 复用既有批准重放路径执行。Decision::Denied 两类
+            //(UnknownCapability/NoGrant)无审批出口到不了本分支,硬拒绝与
+            // 熔断/预算硬限等外圈闸门语义全部不变。
+            let session_is_yolo = ctx
+                .session_id
+                .as_ref()
+                .and_then(|sid| w.sessions.get(sid))
+                .is_some_and(|s| s.permission_mode == PermissionMode::Yolo);
+            if session_is_yolo {
+                let respond = crate::runtime::handlers::handle_approval_respond(
+                    w,
+                    request_id.clone(),
+                    wire::ApprovalRespondParams {
+                        approval_id: approval_id.clone(),
+                        decision: "approve".to_string(),
+                        scope: Some("once".to_string()),
+                    },
+                    crate::approval::ResolvedSource::ModeAuto,
+                );
+                return match respond {
+                    Err(e) => (op_id, Err(e)),
+                    Ok(v) => {
+                        let state = w.operations.get(&op_id).map(|o| o.state);
+                        match state {
+                            Some(OperationState::Succeeded) => {
+                                let result = w
+                                    .op_results
+                                    .get(&op_id)
+                                    .cloned()
+                                    .unwrap_or_else(|| serde_json::json!({}));
+                                let completed_at = w.now_ts();
+                                let value = serde_json::json!({
+                                    "operation_id": op_id.as_str(),
+                                    "request_id": request_id.as_str(),
+                                    "principal": ctx.principal.clone(),
+                                    "capability": params.capability,
+                                    "state": "succeeded",
+                                    "created_at": created_at,
+                                    "completed_at": completed_at,
+                                    "action_summary": format!("能力 {} 执行完成", params.capability),
+                                    "result_reference": null,
+                                    "error": null,
+                                    "grant_used": v["grant_id"],
+                                    "result": result,
+                                });
+                                (op_id, Ok(value))
+                            }
+                            // M7 异步能力:已派发,调用方经 operations 轮询终态
+                            Some(OperationState::Running | OperationState::NotStarted) => {
+                                let value = serde_json::json!({
+                                    "operation_id": op_id.as_str(),
+                                    "request_id": request_id.as_str(),
+                                    "principal": ctx.principal.clone(),
+                                    "capability": params.capability,
+                                    "state": "running",
+                                    "created_at": created_at,
+                                    "completed_at": null,
+                                    "action_summary": format!("能力 {} 异步执行中", params.capability),
+                                    "result_reference": null,
+                                    "error": null,
+                                    "grant_used": v["grant_id"],
+                                    "result": null,
+                                });
+                                (op_id, Ok(value))
+                            }
+                            Some(OperationState::Cancelled) => (
+                                op_id,
+                                Err(CoreError::Semantic(
+                                    ErrorCode::Unavailable,
+                                    "审批重放前操作已取消".into(),
+                                )),
+                            ),
+                            _ => (op_id, Err(CoreError::Internal)),
+                        }
+                    }
+                };
+            }
             // GT-02 场景 A2 形态:approval_required 错误信封;operation 停在
             // waiting_approval,由 approval.respond 续行(基线 §9.6)。
             // 结构化携带两 ID:回合管线免反查,凭此精确绑定审批卡片。

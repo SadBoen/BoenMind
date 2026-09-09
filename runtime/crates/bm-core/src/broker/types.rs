@@ -1,6 +1,7 @@
 //! Broker 决策与执行的公共类型(自 broker.rs 机械移入;条目与行序原样)。
 use crate::registry::CapabilityProvider;
 use bm_contract::capability::{CapabilityManifest, DataTrust, RiskClass};
+use bm_contract::ids::BmId;
 use std::sync::Arc;
 
 /// 调用上下文:身份与信任级别随内容来源链传递(M4 规格 §5.4;
@@ -16,6 +17,10 @@ pub struct CallContext {
     pub principal: String,
     pub trust: DataTrust,
     pub idempotency_key: Option<String>,
+    /// 发起调用的会话(ADR-0030):回合层模型工具调用携带,供裁决点读取
+    /// 会话权限模式;None = 无会话上下文(wire 直调/worker 路径,恒按 ask)。
+    /// 仅路由信息,不参与信任归因——提升权限的决定永远不在调用方。
+    pub session_id: Option<BmId>,
 }
 
 /// 内容链构造声称 trusted 的编程错误。
@@ -36,6 +41,7 @@ impl CallContext {
             principal: principal.to_string(),
             trust: DataTrust::Trusted,
             idempotency_key: None,
+            session_id: None,
         }
     }
 
@@ -47,6 +53,7 @@ impl CallContext {
                 principal: principal.to_string(),
                 trust: t,
                 idempotency_key: None,
+                session_id: None,
             }),
         }
     }
@@ -54,6 +61,13 @@ impl CallContext {
     /// 附幂等键(副作用操作必备,基线 §9.5)。
     pub fn with_idempotency_key(mut self, key: impl Into<String>) -> Self {
         self.idempotency_key = Some(key.into());
+        self
+    }
+
+    /// 附会话归属(ADR-0030):回合层模型工具调用标注来源会话,裁决点
+    /// 据此读取该会话的权限模式。仅路由信息,不改信任。
+    pub fn with_session(mut self, session_id: BmId) -> Self {
+        self.session_id = Some(session_id);
         self
     }
 }

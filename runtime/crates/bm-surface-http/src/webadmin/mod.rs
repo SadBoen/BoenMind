@@ -175,6 +175,11 @@ pub fn admin_routes(cfg: AdminConfig) -> axum::Router {
             "/sessions/{session_id}",
             axum::routing::delete(session_delete),
         )
+        // ADR-0030:会话权限模式——服务端权威,前端仅为选择器
+        .route(
+            "/sessions/{session_id}/mode",
+            get(session_mode_get).post(session_mode_set),
+        )
         // P1-5: 取消在途操作
         .route(
             "/operations/{operation_id}/cancel",

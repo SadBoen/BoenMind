@@ -229,6 +229,7 @@ mod r2_tombstone_tests {
             workspace_id: None,
             title: None,
             updated_at: None,
+            permission_mode: bm_contract::wire::PermissionMode::Ask,
         };
         session.transition(SessionState::Active);
         world.sessions.insert(sid.clone(), session);
@@ -278,6 +279,7 @@ mod r2_tombstone_tests {
             workspace_id: None,
             title: None,
             updated_at,
+            permission_mode: bm_contract::wire::PermissionMode::Ask,
         }
     }
 

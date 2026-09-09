@@ -278,6 +278,8 @@ async fn await_tool_settlement(
                                 decision: "withdraw".to_string(),
                                 scope: None,
                             },
+                            // ADR-0030:超时撤销 = 系统自裁,审计与人工裁决区分
+                            source: crate::approval::ResolvedSource::System,
                             resp: wtx,
                         })
                         .await;
@@ -923,6 +925,9 @@ pub(crate) fn spawn_turn(
                                                 )),
                                                 deadline_ms: None,
                                             },
+                                            // ADR-0030:工具调用标注来源会话,裁决点
+                                            // 据此读取会话权限模式(路由信息,非信任)
+                                            session_id: session_id.clone(),
                                             resp: rtx,
                                         })
                                         .await;

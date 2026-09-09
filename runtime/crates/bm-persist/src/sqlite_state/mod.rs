@@ -24,7 +24,7 @@ use rusqlite::Connection;
 use std::path::Path;
 use std::sync::Mutex;
 
-pub const SCHEMA_VERSION: i64 = 11;
+pub const SCHEMA_VERSION: i64 = 12;
 
 pub struct StateDb {
     pub(crate) conn: Mutex<Connection>,
@@ -83,11 +83,30 @@ impl StateDb {
         if version < 11 {
             Self::migrate_v10_to_v11(&conn)?;
         }
+        if version < 12 {
+            Self::migrate_v11_to_v12(&conn)?;
+        }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)
             .sql()?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
+    }
+
+    /// v11→v12(ADR-0030,expand 加列):sessions.permission_mode——会话
+    /// 权限模式服务端化(前端 localStorage 权威废弃);存量行默认 'ask'
+    /// (ADR-0030 决策 1:新会话默认审批)。变更经 session.mode.changed
+    /// 事件物化(重放确定),本列随恢复装载进内存会话状态。
+    fn migrate_v11_to_v12(conn: &Connection) -> StoreResult<()> {
+        conn.execute_batch(
+            r#"
+            BEGIN;
+            ALTER TABLE sessions ADD COLUMN permission_mode TEXT NOT NULL DEFAULT 'ask';
+            COMMIT;
+            "#,
+        )
+        .sql()?;
+        Ok(())
     }
 
     /// v2→v3(M4-T3,expand:纯新增四表,不动既有行):

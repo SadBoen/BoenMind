@@ -248,6 +248,10 @@ pub struct Approval {
     /// 批准后物化的 Grant 回填;其余状态为 null。
     #[serde(default)]
     pub grant_id: Option<String>,
+    /// 裁决来源(ADR-0030,Minor 只增):user=人工裁决;mode_auto=会话 yolo
+    /// 模式服务端自动放行;system=系统自裁(审批等待超时撤销)。等待中缺省。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_source: Option<String>,
 }
 
 #[cfg(test)]

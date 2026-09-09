@@ -181,6 +181,39 @@ impl<'de> Deserialize<'de> for ResponseEnvelope {
 
 // ---- session.create ------------------------------------------------------
 
+/// 会话权限模式(ADR-0030):ask=变更前确认(新会话默认)|plan=计划模式
+/// (现状无独立语义,审批行为同 ask)|yolo=完全访问(审批类调用由服务端
+/// 在裁决点自动放行,审计标注 mode_auto)。状态权威在服务端会话,前端
+/// 仅为选择器;变更经管理面指令进入单写者通道并落 session.mode.changed。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PermissionMode {
+    #[serde(rename = "ask")]
+    Ask,
+    #[serde(rename = "plan")]
+    Plan,
+    #[serde(rename = "yolo")]
+    Yolo,
+}
+
+impl PermissionMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PermissionMode::Ask => "ask",
+            PermissionMode::Plan => "plan",
+            PermissionMode::Yolo => "yolo",
+        }
+    }
+
+    pub fn from_wire(s: &str) -> Option<Self> {
+        match s {
+            "ask" => Some(PermissionMode::Ask),
+            "plan" => Some(PermissionMode::Plan),
+            "yolo" => Some(PermissionMode::Yolo),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AgentSpec {
     pub name: String,

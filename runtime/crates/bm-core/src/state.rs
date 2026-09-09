@@ -5,7 +5,7 @@ use bm_contract::BmTimestamp;
 use bm_contract::budget::Budget;
 use bm_contract::ids::BmId;
 use bm_contract::states::{AgentState, OperationState, SessionState};
-use bm_contract::wire::{ResultReference, WireError};
+use bm_contract::wire::{PermissionMode, ResultReference, WireError};
 
 #[derive(Debug, Clone)]
 pub struct Session {
@@ -22,6 +22,10 @@ pub struct Session {
     /// 会话目录:最近回合边界时间(与 sessions.updated_at 列同源:事件
     /// 物化落库,settle_operation 同步内存投影;None = 旧数据待启动回填)。
     pub updated_at: Option<String>,
+    /// 权限模式(ADR-0030):服务端会话状态,权威在此;ask=审批(默认),
+    /// yolo=审批类调用服务端自动放行。变更经 SessionSetMode 命令并落
+    /// session.mode.changed 事件(物化投影持久)。
+    pub permission_mode: PermissionMode,
 }
 
 /// 会话目录条目(GET /admin/sessions 读模型;管理面不入合同)。
@@ -32,6 +36,8 @@ pub struct SessionSummary {
     pub title: Option<String>,
     pub created_at: String,
     pub updated_at: Option<String>,
+    /// ADR-0030:会话权限模式(ask/plan/yolo),服务端权威。
+    pub permission_mode: String,
 }
 
 impl Session {

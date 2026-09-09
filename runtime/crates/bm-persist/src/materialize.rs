@@ -53,6 +53,14 @@ impl StateDb {
                     )?;
                     Ok(1)
                 }
+                // ADR-0030:权限模式变更事实落列(事件物化,重放确定)。
+                EventType::SessionModeChanged => {
+                    conn.execute(
+                        "UPDATE sessions SET permission_mode=?2 WHERE id=?1",
+                        [str_field(p, "session_id")?, str_field(p, "to")?],
+                    )?;
+                    Ok(1)
+                }
                 EventType::AgentCreated => {
                     let model_chain = p["model_chain"].clone();
                     let budget: Option<Budget> =

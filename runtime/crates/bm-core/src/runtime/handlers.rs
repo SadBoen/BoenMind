@@ -29,6 +29,7 @@ pub(crate) fn handle_session_list(w: &World) -> Vec<crate::state::SessionSummary
             title: s.title.clone(),
             created_at: s.created_at.clone(),
             updated_at: Some(s.updated_at.clone().unwrap_or_else(|| s.created_at.clone())),
+            permission_mode: s.permission_mode.as_str().to_string(),
         })
         .collect();
     items.sort_unstable_by(|a, b| {
@@ -37,6 +38,46 @@ pub(crate) fn handle_session_list(w: &World) -> Vec<crate::state::SessionSummary
             .then_with(|| b.created_at.cmp(&a.created_at))
     });
     items
+}
+
+/// 会话权限模式变更(ADR-0030 决策 1/2):更新服务端会话状态并落
+/// session.mode.changed 事实事件(物化投影持久,重启装载)。会话不存在
+/// 或模式非法由调用方/解析层拒绝;单写者通道内执行。
+pub(crate) fn handle_session_set_mode(
+    w: &mut World,
+    session_id: BmId,
+    mode: PermissionMode,
+) -> CoreResult<serde_json::Value> {
+    let session = w
+        .sessions
+        .get_mut(&session_id)
+        .ok_or_else(|| CoreError::validation(format!("未知会话: {}", session_id.as_str())))?;
+    let from = session.permission_mode;
+    if from == mode {
+        // 幂等:同值设置不发事件不落审计噪音,直接确认
+        return Ok(serde_json::json!({
+            "session_id": session_id.as_str(),
+            "permission_mode": mode.as_str(),
+            "changed": false,
+        }));
+    }
+    session.permission_mode = mode;
+    w.emit(
+        EventType::SessionModeChanged,
+        Some(session_id.clone()),
+        None,
+        None,
+        serde_json::json!({
+            "session_id": session_id.as_str(),
+            "from": from.as_str(),
+            "to": mode.as_str(),
+        }),
+    );
+    Ok(serde_json::json!({
+        "session_id": session_id.as_str(),
+        "permission_mode": mode.as_str(),
+        "changed": true,
+    }))
 }
 
 pub(crate) fn handle_session_create(
@@ -78,6 +119,8 @@ pub(crate) fn handle_session_create(
         // 标题待首条用户消息回填(内容不在事件面,core 直写)
         title: None,
         updated_at: Some(now.clone()),
+        // ADR-0030 决策 1:新会话默认 ask(变更前确认),服务端权威
+        permission_mode: PermissionMode::Ask,
     };
     // created→active(surface_attached):M1 进程内直调即视为已挂接。
     session.transition(SessionState::Active);
@@ -715,6 +758,7 @@ pub(crate) fn handle_approval_respond(
     w: &mut World,
     request_id: BmId,
     params: wire::ApprovalRespondParams,
+    source: crate::approval::ResolvedSource,
 ) -> CoreResult<serde_json::Value> {
     let decision = match params.decision.as_str() {
         "approve" => RespondDecision::Approve,
@@ -777,6 +821,10 @@ pub(crate) fn handle_approval_respond(
         let mut mgr = ApprovalManager::new(&mut w.grants, &*w.config.clock, &*w.config.id_gen);
         mgr.respond(approval, decision, scope, resource, CAPABILITY_CALLER)
     };
+    // ADR-0030:裁决来源落审计(对象字段 + resolved 事件 source 键)
+    if let Some(a) = w.approvals.get_mut(&params.approval_id) {
+        a.resolved_source = Some(source.as_str().to_string());
+    }
     // 裁决后同步审批行(非 waiting 态剥离重放载荷)
     let op_row_id = pending.as_ref().map(|(op_id, ..)| op_id.clone());
     if let (Some(a), Some(op_id)) = (w.approvals.get(&params.approval_id), op_row_id.as_ref()) {
@@ -803,7 +851,7 @@ pub(crate) fn handle_approval_respond(
                     "resource": serde_json::to_value(&grant.resource).expect("resource 序列化"),
                 }),
             );
-            // approval.resolved 键集:[approval_id, operation_id, outcome, scope, grant_id]
+            // approval.resolved 键集:[approval_id, operation_id, outcome, scope, grant_id, source]
             w.emit(
                 EventType::ApprovalResolved,
                 None,
@@ -815,6 +863,7 @@ pub(crate) fn handle_approval_respond(
                     "outcome": "approved",
                     "scope": grant.scope.to_wire(),
                     "grant_id": grant.grant_id,
+                    "source": source.as_str(),
                 }),
             );
             // 批准:operation 续行(waiting_approval→running→统一执行助手)
@@ -915,6 +964,7 @@ pub(crate) fn handle_approval_respond(
                     "outcome": outcome_str,
                     "scope": null,
                     "grant_id": null,
+                    "source": source.as_str(),
                 }),
             );
             // denied/expired/withdrawn → operation cancelled(基线 §9.6)

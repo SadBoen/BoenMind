@@ -126,7 +126,7 @@ async fn t119a_migration_v7_to_v8_data_intact() {
         )
         .expect("写 grant");
     }
-    // 降形模拟旧库:user_version=7 + 删新表 + 删 v10 新列(忠实还原 v7 形态)
+    // 降形模拟旧库:user_version=7 + 删新表 + 删 v10/v12 新列(忠实还原 v7 形态)
     {
         let conn = rusqlite::Connection::open(dir.path().join("state.db")).expect("打开");
         conn.execute_batch(
@@ -135,6 +135,7 @@ async fn t119a_migration_v7_to_v8_data_intact() {
              DROP TABLE IF EXISTS op_cancel_marks;
              ALTER TABLE sessions DROP COLUMN title;
              ALTER TABLE sessions DROP COLUMN updated_at;
+             ALTER TABLE sessions DROP COLUMN permission_mode;
              PRAGMA user_version = 7;",
         )
         .expect("降形");

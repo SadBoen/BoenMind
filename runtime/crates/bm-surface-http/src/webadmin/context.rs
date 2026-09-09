@@ -129,6 +129,55 @@ pub(crate) async fn session_delete(
     }
 }
 
+/// GET /admin/sessions/{session_id}/mode:会话权限模式读取(ADR-0030)。
+/// 服务端权威,前端仅为选择器显示面;经核心单写者读模型(session_list)。
+pub(crate) async fn session_mode_get(
+    State(cfg): State<AdminConfig>,
+    axum::extract::Path(session_id): axum::extract::Path<String>,
+) -> Response {
+    let sessions = cfg.handle.session_list().await;
+    match sessions.iter().find(|s| s.id == session_id) {
+        Some(s) => Json(json!({
+            "ok": true,
+            "session_id": session_id,
+            "permission_mode": s.permission_mode,
+        }))
+        .into_response(),
+        None => admin_error(StatusCode::NOT_FOUND, "未知会话"),
+    }
+}
+
+/// POST /admin/sessions/{session_id}/mode  body: {"mode":"ask"|"plan"|"yolo"}
+/// 会话权限模式变更(ADR-0030):经核心单写者通道更新服务端会话状态,
+/// 落 session.mode.changed 事实事件(物化投影持久,重启装载)。模式在
+/// 裁决点读取——变更不影响已开出的等待中审批单(那些仍走人工)。
+pub(crate) async fn session_mode_set(
+    State(cfg): State<AdminConfig>,
+    axum::extract::Path(session_id): axum::extract::Path<String>,
+    Json(body): Json<Value>,
+) -> Response {
+    let mode =
+        match bm_contract::wire::PermissionMode::from_wire(body["mode"].as_str().unwrap_or("")) {
+            Some(m) => m,
+            None => {
+                return admin_error(StatusCode::BAD_REQUEST, "非法 mode:必须为 ask|plan|yolo");
+            }
+        };
+    let sid = match bm_contract::ids::BmId::parse(&session_id) {
+        Ok(id) => id,
+        Err(_) => return admin_error(StatusCode::BAD_REQUEST, "非法会话 id"),
+    };
+    match cfg.handle.session_set_mode(sid, mode).await {
+        Ok(_) => Json(json!({
+            "ok": true,
+            "session_id": session_id,
+            "permission_mode": mode.as_str(),
+        }))
+        .into_response(),
+        Err(e) => admin_error(StatusCode::BAD_REQUEST, e.to_wire().message),
+    }
+}
+
 /// POST /admin/operations/{operation_id}/cancel
 /// P1-5: 服务端管理面取消在途 operation 端点
 pub(crate) async fn operation_cancel(

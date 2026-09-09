@@ -776,6 +776,8 @@ impl RuntimeHandle {
 
     /// capability.call(M4.2):统一入口;需审批时返回 approval_required 错误,
     /// operation 停在 waiting_approval,经 approval.respond 续行。
+    /// session_id(ADR-0030):回合层调用标注来源会话(读模式用);wire
+    /// 直调恒 None(无会话上下文,恒按 ask——信任决定不在调用方)。
     pub async fn capability_call(
         &self,
         request_id: BmId,
@@ -786,6 +788,7 @@ impl RuntimeHandle {
             .send(Cmd::CapabilityCall {
                 request_id,
                 params,
+                session_id: None,
                 resp: tx,
             })
             .await
@@ -864,6 +867,29 @@ impl RuntimeHandle {
             .send(Cmd::ApprovalRespond {
                 request_id,
                 params,
+                // ADR-0030:wire 面到达即人工裁决(来源由服务端派生,非客户端自报)
+                source: crate::approval::ResolvedSource::User,
+                resp: tx,
+            })
+            .await
+            .map_err(|_| CoreError::Internal)?;
+        rx.await.map_err(|_| CoreError::Internal)?
+    }
+
+    /// 会话权限模式变更(ADR-0030;POST /admin/sessions/{sid}/mode):
+    /// 服务端会话状态更新 + session.mode.changed 事实事件。
+    pub async fn session_set_mode(
+        &self,
+        session_id: BmId,
+        mode: wire::PermissionMode,
+    ) -> CoreResult<serde_json::Value> {
+        let request_id = BmId::generate("req");
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(Cmd::SessionSetMode {
+                request_id,
+                session_id,
+                mode,
                 resp: tx,
             })
             .await

@@ -27,7 +27,7 @@ use bm_contract::states::{AgentState, OperationState, SessionState};
 use bm_contract::timestamp::format_ts;
 use bm_contract::wire::{
     self, CancelParams, CancelResult, Cursor, EventsPollParams, EventsPollResult,
-    GetOperationParams, Principal, Receipt, SendInputParams, SessionCloseParams,
+    GetOperationParams, PermissionMode, Principal, Receipt, SendInputParams, SessionCloseParams,
     SessionCloseResult, SessionCreateParams, SessionCreateResult, SessionDeleteParams,
     SessionDeleteResult, SessionResumeParams, SessionResumeResult, TaskType, WireError,
 };
@@ -241,6 +241,12 @@ impl World {
                     //(旧行为 None,启动期自 context-log 回填写平)
                     title: s.title,
                     updated_at: s.updated_at,
+                    // ADR-0030:权限模式随行装载(迁移前旧行 None → ask)
+                    permission_mode: s
+                        .permission_mode
+                        .as_deref()
+                        .and_then(PermissionMode::from_wire)
+                        .unwrap_or(PermissionMode::Ask),
                 },
             );
         }
@@ -720,6 +726,15 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
             Cmd::SessionList { resp } => {
                 let _ = resp.send(handle_session_list(&world));
             }
+            // 会话权限模式变更(ADR-0030;POST /admin/sessions/{sid}/mode)
+            Cmd::SessionSetMode {
+                request_id: _request_id, // 审计以 session.mode.changed 事件为准
+                session_id,
+                mode,
+                resp,
+            } => {
+                let _ = resp.send(handle_session_set_mode(&mut world, session_id, mode));
+            }
             // Provider 健康快照(issue #12;GET /admin/providers/health)
             Cmd::ProviderHealth { resp } => {
                 let _ = resp.send(handle_provider_health(&world));
@@ -814,9 +829,12 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
             Cmd::CapabilityCall {
                 request_id,
                 params,
+                session_id,
                 resp,
             } => {
-                let _ = resp.send(handle_capability_call(&mut world, request_id, params));
+                let _ = resp.send(handle_capability_call(
+                    &mut world, request_id, params, session_id,
+                ));
             }
             Cmd::CapabilityList { params, resp } => {
                 let _ = resp.send(handle_capability_list(&world, params));
@@ -827,9 +845,12 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
             Cmd::ApprovalRespond {
                 request_id,
                 params,
+                source,
                 resp,
             } => {
-                let _ = resp.send(handle_approval_respond(&mut world, request_id, params));
+                let _ = resp.send(handle_approval_respond(
+                    &mut world, request_id, params, source,
+                ));
             }
             Cmd::TaskCreate {
                 request_id,

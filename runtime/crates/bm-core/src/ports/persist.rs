@@ -95,6 +95,9 @@ pub struct SessionRow {
     pub title: Option<String>,
     /// 会话目录:最近回合边界时间(事件物化派生;存量旧行 = None)。
     pub updated_at: Option<String>,
+    /// 权限模式(ADR-0030,事件物化派生;迁移前旧行 = None → 装载按 ask)。
+    #[serde(default)]
+    pub permission_mode: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

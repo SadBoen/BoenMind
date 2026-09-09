@@ -27,6 +27,28 @@ pub enum RespondDecision {
     Withdraw,
 }
 
+/// 审批裁决来源(ADR-0030):落 Approval.resolved_source 与
+/// approval.resolved 事件的 source 键,审计可区分人工与自动。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResolvedSource {
+    /// 人工裁决(Wire approval.respond / 管理面审批端点)。
+    User,
+    /// 会话 yolo 模式服务端自动放行(ADR-0030 决策 2/3)。
+    ModeAuto,
+    /// 系统自裁(审批等待超时主动撤销,spawn_turn P1-3)。
+    System,
+}
+
+impl ResolvedSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ResolvedSource::User => "user",
+            ResolvedSource::ModeAuto => "mode_auto",
+            ResolvedSource::System => "system",
+        }
+    }
+}
+
 /// 审批链哈希锚定的序列化输入。args_digest / parent_grant_hash 是
 /// 「父授权 → 子授权」的安全锚点:to_string 对 Value/Approval 实际不可
 /// 失败,但万一失败退让为 Debug 表示并 tracing 留痕,绝不落入空串
@@ -94,6 +116,7 @@ impl<'a> ApprovalManager<'a> {
             expires_at: format_ts(now + chrono::Duration::milliseconds(p.ttl_ms as i64)),
             resolved_at: None,
             grant_id: None,
+            resolved_source: None,
         }
     }
 

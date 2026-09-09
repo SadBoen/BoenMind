@@ -30,6 +30,14 @@ pub(crate) enum Cmd {
     SessionList {
         resp: oneshot::Sender<Vec<crate::state::SessionSummary>>,
     },
+    /// 会话权限模式变更(ADR-0030;POST /admin/sessions/{sid}/mode):
+    /// 服务端会话状态更新 + session.mode.changed 事实事件。
+    SessionSetMode {
+        request_id: BmId,
+        session_id: BmId,
+        mode: wire::PermissionMode,
+        resp: oneshot::Sender<CoreResult<serde_json::Value>>,
+    },
     /// Provider 熔断健康快照(issue #12;GET /admin/providers/health 读模型;
     /// 只读查询,停机/排空态照常应答,同 SessionList 口径)。
     ProviderHealth {
@@ -68,9 +76,12 @@ pub(crate) enum Cmd {
         resp: oneshot::Sender<Vec<EventEnvelope>>,
     },
     /// capability.call(M4):统一入口裁决 + 执行;需审批时停在 waiting_approval。
+    /// session_id(ADR-0030):回合层模型工具调用标注来源会话,裁决点据此
+    /// 读取会话权限模式;None = 无会话上下文(恒按 ask)。
     CapabilityCall {
         request_id: BmId,
         params: wire::CapabilityCallParams,
+        session_id: Option<BmId>,
         resp: oneshot::Sender<CoreResult<serde_json::Value>>,
     },
     /// capability.list(M4):能力发现面 Wire 暴露。
@@ -84,9 +95,11 @@ pub(crate) enum Cmd {
         resp: oneshot::Sender<CoreResult<serde_json::Value>>,
     },
     /// approval.respond(M4):批准(物化 Grant 并重放执行)/拒绝/取消。
+    /// source(ADR-0030):裁决来源审计标注,由服务端派生,不信客户端。
     ApprovalRespond {
         request_id: BmId,
         params: wire::ApprovalRespondParams,
+        source: crate::approval::ResolvedSource,
         resp: oneshot::Sender<CoreResult<serde_json::Value>>,
     },
     /// task.create(M5):Task 创建并启动(created→running)。
@@ -282,6 +295,10 @@ pub(crate) fn reply_unavailable(cmd: Cmd) {
             let _ = resp.send(Err(err()));
         }
         Cmd::ApprovalRespond { resp, .. } => {
+            let _ = resp.send(Err(err()));
+        }
+        // ADR-0030:会话权限模式变更是写命令,排空期拒绝
+        Cmd::SessionSetMode { resp, .. } => {
             let _ = resp.send(Err(err()));
         }
         // M5:task 命令组(停机态一律拒绝;查询面随 M8 只读残存评估)
