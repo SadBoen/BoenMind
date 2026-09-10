@@ -2141,9 +2141,7 @@ mod lock_poison_recovery_tests {
             let _g = rw.read().unwrap();
             panic!("故意毒化读锁");
         }));
-        let g = rw
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let g = rw.read().unwrap_or_else(std::sync::PoisonError::into_inner);
         assert_eq!(g[0], 1);
     }
 }

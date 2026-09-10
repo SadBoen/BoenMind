@@ -133,21 +133,9 @@ pub(crate) fn rebuild_session_chats(w: &mut World) {
         if entry.is_empty() {
             continue;
         }
-        // 双上限与 push_capped 同口径(台账形状与运行期写入完全一致;
-        // ADR-0028:0 = 不裁剪)
+        // 双上限与 push_capped 同口径(台账形状与运行期写入完全一致)
         let limits = w.config.limits.get();
-        if limits.history_max_turns > 0 {
-            while entry.len() > limits.history_max_turns {
-                entry.remove(0);
-            }
-        }
-        if limits.history_max_chars > 0 {
-            let mut total: usize = entry.iter().map(|(u, a)| u.len() + a.len()).sum();
-            while total > limits.history_max_chars && entry.len() > 1 {
-                total -= entry[0].0.len() + entry[0].1.len();
-                entry.remove(0);
-            }
-        }
+        trim_capped(&mut entry, &limits);
         w.session_turn_totals
             .insert(session_id.clone(), totals.remove(&session_id).unwrap_or(0));
         w.session_chats.insert(session_id, entry);
@@ -185,14 +173,9 @@ pub(crate) fn rebuild_session_chats(w: &mut World) {
         }
     }
 }
-pub(crate) fn push_capped(
-    entry: &mut Vec<(String, String)>,
-    user: String,
-    assistant: String,
-    limits: &crate::limits::Limits,
-) {
-    entry.push((user, assistant));
-    // ADR-0028:上限 0 = 不限制(全量回喂),缺省默认即 0。
+/// 双上限裁剪(ADR-0028:上限 0 = 不限制,缺省默认即 0)。运行期写入与
+/// 重启重建共用同一口径。
+fn trim_capped(entry: &mut Vec<(String, String)>, limits: &crate::limits::Limits) {
     if limits.history_max_turns > 0 {
         while entry.len() > limits.history_max_turns {
             entry.remove(0);
@@ -205,6 +188,15 @@ pub(crate) fn push_capped(
             entry.remove(0);
         }
     }
+}
+pub(crate) fn push_capped(
+    entry: &mut Vec<(String, String)>,
+    user: String,
+    assistant: String,
+    limits: &crate::limits::Limits,
+) {
+    entry.push((user, assistant));
+    trim_capped(entry, limits);
 }
 #[cfg(test)] // 门控剥除:测试模块不进生产 lib(同步全仓 mod tests 惯例)
 mod w5_history_tests {

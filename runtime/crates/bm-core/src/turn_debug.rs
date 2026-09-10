@@ -75,7 +75,7 @@ impl TurnDebugLog {
         session_id: &str,
         agent_id: &str,
         operation_id: &str,
-        mut payload: serde_json::Value,
+        payload: serde_json::Value,
     ) {
         if !self.enabled() {
             return;
@@ -118,8 +118,6 @@ impl TurnDebugLog {
             });
             let _ = writeln!(file, "{text}");
         }
-        // 静默载荷标记:吞掉借用,避免调用方为 move 语义额外 clone
-        let _ = &mut payload;
     }
 
     /// 尾读(旧→新):内存镜像(与文件内容一致)。

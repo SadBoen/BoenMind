@@ -3,7 +3,7 @@
 //! operation 永停 running,回合等待环在限制全零(不限时)下永久挂死。
 
 use bm_contract::capability::CapabilityManifest;
-use bm_contract::ids::{BmId, IdGen, SeqIdGen};
+use bm_contract::ids::{BmId, IdGen};
 use bm_contract::states::OperationState;
 use bm_contract::wire::{CapabilityCallParams, GetOperationParams};
 use bm_core::broker::provider_fn;

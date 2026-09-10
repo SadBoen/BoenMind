@@ -287,7 +287,6 @@ pub(crate) fn handle_turn_event(w: &mut World, event: TurnEvent) {
 
             // running→succeeded(result_recorded)+ agent.completed
             {
-                let now = w.now_ts();
                 if let Some(op) = w.operations.get_mut(&operation_id) {
                     op.action_summary =
                         format!("回合 {turn_index} 完成({usage_in} 入 / {usage_out} 出 token)");
@@ -296,7 +295,6 @@ pub(crate) fn handle_turn_event(w: &mut World, event: TurnEvent) {
                         r#ref: format!("log:{operation_id}"),
                     });
                 }
-                let _ = now;
             }
             w.settle_operation(&operation_id, OperationState::Succeeded, None);
             w.emit(

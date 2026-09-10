@@ -27,12 +27,7 @@ pub(crate) fn handle_task_autorun_start(
     request_id: BmId,
     params: bm_contract::wire::TaskAutorunParams,
 ) -> CoreResult<bm_contract::wire::TaskAutorunResult> {
-    if w.draining || w.persist_poisoned {
-        return Err(CoreError::Semantic(
-            ErrorCode::Unavailable,
-            "Runtime 排空中或持久层故障,拒绝自主环受理".into(),
-        ));
-    }
+    w.gate_writes("自主环受理")?;
     let task_state = {
         let Some(task) = w.tasks.get(&params.task_id) else {
             return Err(CoreError::Semantic(

@@ -404,6 +404,62 @@ impl World {
         Ok((evs, last, has_more))
     }
 
+    /// 写命令统一门禁:排空中或持久层故障时拒绝业务写命令(`what` 为"拒绝"的宾语)。
+    fn gate_writes(&self, what: &str) -> CoreResult<()> {
+        if self.draining || self.persist_poisoned {
+            return Err(CoreError::Semantic(
+                ErrorCode::Unavailable,
+                format!("Runtime 排空中或持久层故障,拒绝{what}"),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Grant 签发事实事件:各签发路径共用的 GrantCreated 载荷。
+    /// `approval_id` None → null;`expires_at` 取 Grant 自身(签发路径均为永不过期 → null)。
+    fn emit_grant_created(
+        &mut self,
+        g: &bm_contract::capability::Grant,
+        approval_id: Option<&str>,
+        operation_id: Option<BmId>,
+    ) -> EventEnvelope {
+        self.emit(
+            EventType::GrantCreated,
+            None,
+            None,
+            operation_id,
+            serde_json::json!({
+                "grant_id": g.grant_id,
+                "approval_id": approval_id,
+                "audience": g.audience,
+                "action": g.action,
+                "scope": g.scope.to_wire(),
+                "delegation_depth": g.delegation_depth,
+                "expires_at": g.expires_at,
+                "parent_hash": g.parent_grant_hash,
+                "resource": serde_json::to_value(&g.resource).expect("resource 序列化"),
+            }),
+        )
+    }
+
+    /// 撤销单条 Grant 三件套:台账 revoke + GrantRevoked 事件 + 持久行。
+    fn revoke_grant_and_emit(&mut self, gid: &str, reason: &str) -> CoreResult<()> {
+        let version = self.grants.revoke(gid).map_err(|_| CoreError::Internal)?;
+        self.emit(
+            EventType::GrantRevoked,
+            None,
+            None,
+            None,
+            serde_json::json!({
+                "grant_id": gid,
+                "revocation_version": version,
+                "reason": reason,
+            }),
+        );
+        turn::persist_grant(self, gid);
+        Ok(())
+    }
+
     fn now_ts(&self) -> bm_contract::BmTimestamp {
         format_ts(self.config.clock.now())
     }

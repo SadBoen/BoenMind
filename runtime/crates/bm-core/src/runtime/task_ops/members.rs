@@ -5,12 +5,7 @@ pub(crate) fn handle_task_spawn_member(
     w: &mut World,
     task_id: BmId,
 ) -> CoreResult<serde_json::Value> {
-    if w.draining || w.persist_poisoned {
-        return Err(CoreError::Semantic(
-            ErrorCode::Unavailable,
-            "Runtime 排空中或持久层故障,拒绝成员追加".into(),
-        ));
-    }
+    w.gate_writes("成员追加")?;
     // 分阶段作用域:读任务与并发计数,门禁通过后即释放借用
     let (coord_aud, worker_aud, authorization) = {
         let Some(task) = w.tasks.get(&task_id) else {
@@ -66,23 +61,7 @@ pub(crate) fn handle_task_spawn_member(
     for g in worker_grants.iter() {
         w.grants.record(g.clone());
         persist_grant(w, &g.grant_id);
-        w.emit(
-            EventType::GrantCreated,
-            None,
-            None,
-            None,
-            serde_json::json!({
-                "grant_id": g.grant_id,
-                "approval_id": null,
-                "audience": g.audience,
-                "action": g.action,
-                "scope": g.scope.to_wire(),
-                "delegation_depth": g.delegation_depth,
-                "expires_at": null,
-                "parent_hash": g.parent_grant_hash,
-                "resource": serde_json::to_value(&g.resource).expect("resource 序列化"),
-            }),
-        );
+        w.emit_grant_created(g, None, None);
     }
     let member_id = w.config.id_gen.next_id("agent");
     let grant_id = worker_grants.first().map(|g| g.grant_id.clone());
@@ -121,12 +100,7 @@ pub(crate) fn handle_task_spawn_subtask(
     w: &mut World,
     params: SpawnSubtaskParams,
 ) -> CoreResult<serde_json::Value> {
-    if w.draining || w.persist_poisoned {
-        return Err(CoreError::Semantic(
-            ErrorCode::Unavailable,
-            "Runtime 排空中或持久层故障,拒绝委派".into(),
-        ));
-    }
+    w.gate_writes("委派")?;
     // 门禁(分阶段作用域:校验后即释放借用)
     let (parent_snapshot, coord_aud, _worker_aud, child_authorization) = {
         let Some(parent) = w.tasks.get(&params.parent_task_id) else {
@@ -234,23 +208,7 @@ pub(crate) fn handle_task_spawn_subtask(
     for g in coord_grants.iter().chain(worker_grants.iter()) {
         w.grants.record(g.clone());
         persist_grant(w, &g.grant_id);
-        w.emit(
-            EventType::GrantCreated,
-            None,
-            None,
-            None,
-            serde_json::json!({
-                "grant_id": g.grant_id,
-                "approval_id": null,
-                "audience": g.audience,
-                "action": g.action,
-                "scope": g.scope.to_wire(),
-                "delegation_depth": g.delegation_depth,
-                "expires_at": null,
-                "parent_hash": g.parent_grant_hash,
-                "resource": serde_json::to_value(&g.resource).expect("resource 序列化"),
-            }),
-        );
+        w.emit_grant_created(g, None, None);
     }
     let coord_member_id = w.config.id_gen.next_id("agent");
     let coord_grant_id = coord_grants.first().map(|g| g.grant_id.clone());
@@ -308,12 +266,7 @@ pub(crate) fn handle_task_remove_member(
     w: &mut World,
     params: RemoveMemberParams,
 ) -> CoreResult<serde_json::Value> {
-    if w.draining || w.persist_poisoned {
-        return Err(CoreError::Semantic(
-            ErrorCode::Unavailable,
-            "Runtime 排空中或持久层故障,拒绝成员移除".into(),
-        ));
-    }
+    w.gate_writes("成员移除")?;
     let removed = {
         let Some(task) = w.tasks.get_mut(&params.task_id) else {
             return Err(CoreError::Semantic(
@@ -384,12 +337,7 @@ pub(crate) fn handle_worker_call(
     request_id: BmId,
     params: WorkerCallParams,
 ) -> CoreResult<serde_json::Value> {
-    if w.draining || w.persist_poisoned {
-        return Err(CoreError::Semantic(
-            ErrorCode::Unavailable,
-            "Runtime 排空中或持久层故障,拒绝成员调用".into(),
-        ));
-    }
+    w.gate_writes("成员调用")?;
     // 分阶段作用域:状态检查完成后即释放 task 借用
     let state = {
         let Some(task) = w.tasks.get(&params.task_id) else {
@@ -426,13 +374,7 @@ pub(crate) fn handle_worker_call(
     let max_tool_calls = w
         .tasks
         .get(&params.task_id)
-        .and_then(|t| t.budget.as_ref())
-        .and_then(|b| b.extra.get("max_tool_calls"))
-        .and_then(|v| match v {
-            bm_contract::budget::ExtraValue::Int(n) => u64::try_from(*n).ok(),
-            bm_contract::budget::ExtraValue::Float(f) => u64::try_from(*f as i64).ok(),
-            _ => None,
-        });
+        .and_then(|t| crate::team::max_tool_calls_of(t.budget.as_ref()));
     let used = *w.task_tool_calls.entry(params.task_id.clone()).or_insert(0);
     if let Some(max) = max_tool_calls {
         // 软限 80%:budget.warning(基线 §9.7;逐次逼近即告警)
@@ -583,12 +525,7 @@ pub(crate) fn handle_worker_call(
     outcome
 }
 pub(crate) fn handle_butler_revoke(w: &mut World, reason: String) -> CoreResult<usize> {
-    if w.draining || w.persist_poisoned {
-        return Err(CoreError::Semantic(
-            ErrorCode::Unavailable,
-            "Runtime 排空中或持久层故障,拒绝撤销操作".into(),
-        ));
-    }
+    w.gate_writes("撤销操作")?;
     let mut revoked = 0;
     for (verb, _) in crate::butler::COORDINATION_VERBS {
         // 分阶段作用域:收集后逐个撤销(避免跨字段借用)
@@ -599,19 +536,7 @@ pub(crate) fn handle_butler_revoke(w: &mut World, reason: String) -> CoreResult<
             .map(|g| g.grant_id)
             .collect();
         for gid in gids {
-            let version = w.grants.revoke(&gid).map_err(|_| CoreError::Internal)?;
-            w.emit(
-                EventType::GrantRevoked,
-                None,
-                None,
-                None,
-                serde_json::json!({
-                    "grant_id": gid,
-                    "revocation_version": version,
-                    "reason": reason,
-                }),
-            );
-            persist_grant(w, &gid);
+            w.revoke_grant_and_emit(&gid, &reason)?;
             revoked += 1;
         }
     }

@@ -7,12 +7,7 @@ pub(crate) fn handle_task_lifecycle(
     action: TaskAction,
     params: wire::TaskLifecycleParams,
 ) -> CoreResult<wire::TaskStateResult> {
-    if w.draining || w.persist_poisoned {
-        return Err(CoreError::Semantic(
-            ErrorCode::Unavailable,
-            "Runtime 排空中或持久层故障,拒绝 Task 生命周期命令".into(),
-        ));
-    }
+    w.gate_writes("Task 生命周期命令")?;
     let Some(task) = w.tasks.get_mut(&params.task_id) else {
         return Err(CoreError::Semantic(
             ErrorCode::ValidationFailed,
@@ -70,19 +65,7 @@ pub(crate) fn handle_task_lifecycle(
             .map(|g| g.grant_id)
             .collect();
         for gid in gids {
-            let version = w.grants.revoke(&gid).map_err(|_| CoreError::Internal)?;
-            w.emit(
-                EventType::GrantRevoked,
-                None,
-                None,
-                None,
-                serde_json::json!({
-                    "grant_id": gid,
-                    "revocation_version": version,
-                    "reason": "task_cancelled",
-                }),
-            );
-            persist_grant(w, &gid);
+            w.revoke_grant_and_emit(&gid, "task_cancelled")?;
         }
     }
     Ok(state_result)
@@ -188,12 +171,7 @@ pub(crate) fn handle_task_report_completion(
     claim_summary: String,
     operation_id: Option<BmId>,
 ) -> CoreResult<serde_json::Value> {
-    if w.draining || w.persist_poisoned {
-        return Err(CoreError::Semantic(
-            ErrorCode::Unavailable,
-            "Runtime 排空中或持久层故障,拒绝完成报告".into(),
-        ));
-    }
+    w.gate_writes("完成报告")?;
     let Some(task) = w.tasks.get(&task_id) else {
         return Err(CoreError::Semantic(
             ErrorCode::ValidationFailed,
@@ -345,12 +323,7 @@ pub(crate) fn handle_task_budget_increase(
     task_id: BmId,
     max_tool_calls: u64,
 ) -> CoreResult<serde_json::Value> {
-    if w.draining || w.persist_poisoned {
-        return Err(CoreError::Semantic(
-            ErrorCode::Unavailable,
-            "Runtime 排空中或持久层故障,拒绝扩容".into(),
-        ));
-    }
+    w.gate_writes("扩容")?;
     // 分阶段作用域:包络更新与迁移完成后即释放 task 借用
     let (old_limit, snapshot, transition) = {
         let Some(task) = w.tasks.get_mut(&task_id) else {
@@ -365,15 +338,7 @@ pub(crate) fn handle_task_budget_increase(
                 "终态 Task 不可扩容".into(),
             ));
         }
-        let old_limit = task
-            .budget
-            .as_ref()
-            .and_then(|b| b.extra.get("max_tool_calls"))
-            .and_then(|v| match v {
-                bm_contract::budget::ExtraValue::Int(n) => u64::try_from(*n).ok(),
-                _ => None,
-            })
-            .unwrap_or(0);
+        let old_limit = crate::team::max_tool_calls_of(task.budget.as_ref()).unwrap_or(0);
         let budget = task
             .budget
             .get_or_insert_with(|| bm_contract::budget::Budget {

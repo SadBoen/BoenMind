@@ -330,23 +330,7 @@ impl RuntimeHandle {
             );
             for g in issued {
                 persist_grant(&mut world, &g.grant_id);
-                world.emit(
-                    EventType::GrantCreated,
-                    None,
-                    None,
-                    None,
-                    serde_json::json!({
-                        "grant_id": g.grant_id,
-                        "approval_id": null,
-                        "audience": g.audience,
-                        "action": g.action,
-                        "scope": g.scope.to_wire(),
-                        "delegation_depth": g.delegation_depth,
-                        "expires_at": null,
-                        "parent_hash": g.parent_grant_hash,
-                        "resource": serde_json::to_value(&g.resource).expect("resource 序列化"),
-                    }),
-                );
+                world.emit_grant_created(&g, None, None);
             }
         }
 
@@ -587,11 +571,6 @@ impl RuntimeHandle {
     /// #14:当前开关态。
     pub fn turn_debug_enabled(&self) -> bool {
         self.turn_debug.enabled()
-    }
-
-    /// #14:调试日志尾读(内存镜像,与文件一致)。
-    pub fn turn_debug_tail(&self, n: usize) -> Vec<serde_json::Value> {
-        self.turn_debug.tail(n)
     }
 
     pub async fn session_create(

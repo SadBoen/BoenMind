@@ -76,23 +76,7 @@ pub(crate) fn dispatch_share(
                 "task_id": task_id,
                 "share_seq": env.event_seq,
             });
-            emit_capability_invoked(
-                w,
-                op_id,
-                capability,
-                &ctx.principal,
-                Some(prepared.credential.binding_epoch),
-                Some(&prepared.credential.provider_instance_id),
-                "succeeded",
-                None,
-                None,
-            );
-            CallOutcome::Completed {
-                call_id: prepared.credential.call_id.clone(),
-                grant_id: prepared.grant_id.clone(),
-                credential: prepared.credential.clone(),
-                result,
-            }
+            complete_share_call(w, op_id, capability, &ctx.principal, &prepared, result)
         }
         SHARE_LIST => {
             let since = args["since_seq"].as_u64().unwrap_or(0);
@@ -115,26 +99,38 @@ pub(crate) fn dispatch_share(
                 "total": total,
                 "shares": items,
             });
-            emit_capability_invoked(
-                w,
-                op_id,
-                capability,
-                &ctx.principal,
-                Some(prepared.credential.binding_epoch),
-                Some(&prepared.credential.provider_instance_id),
-                "succeeded",
-                None,
-                None,
-            );
-            CallOutcome::Completed {
-                call_id: prepared.credential.call_id.clone(),
-                grant_id: prepared.grant_id.clone(),
-                credential: prepared.credential.clone(),
-                result,
-            }
+            complete_share_call(w, op_id, capability, &ctx.principal, &prepared, result)
         }
         _ => CallOutcome::InvalidArgs {
             message: format!("未知 task.share 能力: {capability}"),
         },
+    }
+}
+
+/// 两个 share 动作的公共收尾:审计事件 + Completed 收据组装。
+fn complete_share_call(
+    w: &mut World,
+    op_id: &BmId,
+    capability: &str,
+    principal: &str,
+    prepared: &crate::broker::PreparedCall,
+    result: serde_json::Value,
+) -> CallOutcome {
+    emit_capability_invoked(
+        w,
+        op_id,
+        capability,
+        principal,
+        Some(prepared.credential.binding_epoch),
+        Some(&prepared.credential.provider_instance_id),
+        "succeeded",
+        None,
+        None,
+    );
+    CallOutcome::Completed {
+        call_id: prepared.credential.call_id.clone(),
+        grant_id: prepared.grant_id.clone(),
+        credential: prepared.credential.clone(),
+        result,
     }
 }

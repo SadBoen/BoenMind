@@ -85,12 +85,7 @@ pub(crate) fn handle_session_create(
     _request_id: BmId,
     params: SessionCreateParams,
 ) -> CoreResult<SessionCreateResult> {
-    if w.draining || w.persist_poisoned {
-        return Err(CoreError::Semantic(
-            ErrorCode::Unavailable,
-            "Runtime 排空中或持久层故障,拒绝新会话".into(),
-        ));
-    }
+    w.gate_writes("新会话")?;
     let spec = &params.agent;
     if spec.name.is_empty() || spec.name.len() > 64 || spec.model_chain.is_empty() {
         return Err(CoreError::validation("agent 描述不完整"));
@@ -189,23 +184,7 @@ pub(crate) fn handle_session_create(
         crate::butler::model_grant_for(&*w.config.id_gen, agent_id.as_str(), w.config.clock.now());
     w.grants.record(mg.clone());
     persist_grant(w, &mg.grant_id);
-    w.emit(
-        EventType::GrantCreated,
-        None,
-        None,
-        None,
-        serde_json::json!({
-            "grant_id": mg.grant_id,
-            "approval_id": null,
-            "audience": mg.audience,
-            "action": mg.action,
-            "scope": mg.scope.to_wire(),
-            "delegation_depth": mg.delegation_depth,
-            "expires_at": null,
-            "parent_hash": mg.parent_grant_hash,
-            "resource": serde_json::to_value(&mg.resource).expect("resource 序列化"),
-        }),
-    );
+    w.emit_grant_created(&mg, None, None);
 
     Ok(SessionCreateResult {
         session_id,
@@ -322,12 +301,7 @@ pub(crate) fn handle_session_delete(
     request_id: BmId,
     params: wire::SessionDeleteParams,
 ) -> CoreResult<wire::SessionDeleteResult> {
-    if w.draining || w.persist_poisoned {
-        return Err(CoreError::Semantic(
-            ErrorCode::Unavailable,
-            "Runtime 排空中或持久层故障,拒绝删除".into(),
-        ));
-    }
+    w.gate_writes("删除")?;
     let session_id = params.session_id.clone();
     let Some(session) = w.sessions.remove(&session_id) else {
         return Err(CoreError::validation("session 不存在"));
@@ -834,23 +808,7 @@ pub(crate) fn handle_approval_respond(
     match respond_result {
         Ok(Some(grant)) => {
             let op_key = op.as_ref().map(|(op_id, ..)| op_id.clone());
-            w.emit(
-                EventType::GrantCreated,
-                None,
-                None,
-                op_key.clone(),
-                serde_json::json!({
-                    "grant_id": grant.grant_id,
-                    "approval_id": params.approval_id.as_str(),
-                    "audience": grant.audience,
-                    "action": grant.action,
-                    "scope": grant.scope.to_wire(),
-                    "delegation_depth": grant.delegation_depth,
-                    "expires_at": grant.expires_at,
-                    "parent_hash": grant.parent_grant_hash,
-                    "resource": serde_json::to_value(&grant.resource).expect("resource 序列化"),
-                }),
-            );
+            w.emit_grant_created(&grant, Some(params.approval_id.as_str()), op_key.clone());
             // approval.resolved 键集:[approval_id, operation_id, outcome, scope, grant_id, source]
             w.emit(
                 EventType::ApprovalResolved,
@@ -1005,6 +963,23 @@ pub(crate) fn handle_approval_respond(
     }
 }
 
+/// 排空超时的强制收尾:取消全部在途回合并落 Cancelled(`why` 进告警日志)。
+fn force_cancel_in_flight(w: &mut World, why: &str) {
+    tracing::warn!(in_flight_count = w.in_flight.len(), "{why}");
+    let in_flight_items: Vec<_> = w.in_flight.drain().collect();
+    for (op_id, token) in in_flight_items {
+        token.cancel();
+        w.settle_operation(
+            &op_id,
+            OperationState::Cancelled,
+            Some(WireError::new(
+                ErrorCode::Cancelled,
+                "Runtime 停机排空超时,强制取消",
+            )),
+        );
+    }
+}
+
 pub(crate) fn handle_cancel(w: &mut World, params: CancelParams) -> CoreResult<CancelResult> {
     let op = w
         .operations
@@ -1082,44 +1057,17 @@ pub(crate) async fn handle_stop(
     while !w.in_flight.is_empty() {
         let remaining_time = drain_deadline.saturating_duration_since(std::time::Instant::now());
         if remaining_time.is_zero() {
-            tracing::warn!(
-                in_flight_count = w.in_flight.len(),
-                "Runtime handle_stop 排空超时(10s),强制取消在途回合并结束"
+            force_cancel_in_flight(
+                w,
+                "Runtime handle_stop 排空超时(10s),强制取消在途回合并结束",
             );
-            let in_flight_items: Vec<_> = w.in_flight.drain().collect();
-            for (op_id, token) in in_flight_items {
-                token.cancel();
-                w.settle_operation(
-                    &op_id,
-                    OperationState::Cancelled,
-                    Some(WireError::new(
-                        ErrorCode::Cancelled,
-                        "Runtime 停机排空超时,强制取消",
-                    )),
-                );
-            }
             break;
         }
 
         let cmd_opt = match tokio::time::timeout(remaining_time, rx.recv()).await {
             Ok(cmd) => cmd,
             Err(_) => {
-                tracing::warn!(
-                    in_flight_count = w.in_flight.len(),
-                    "Runtime handle_stop 排空等待超时,强制清理剩余在途回合"
-                );
-                let in_flight_items: Vec<_> = w.in_flight.drain().collect();
-                for (op_id, token) in in_flight_items {
-                    token.cancel();
-                    w.settle_operation(
-                        &op_id,
-                        OperationState::Cancelled,
-                        Some(WireError::new(
-                            ErrorCode::Cancelled,
-                            "Runtime 停机排空超时,强制取消",
-                        )),
-                    );
-                }
+                force_cancel_in_flight(w, "Runtime handle_stop 排空等待超时,强制清理剩余在途回合");
                 break;
             }
         };
@@ -1197,12 +1145,7 @@ pub(crate) fn handle_capabilities_register(
         std::sync::Arc<dyn crate::registry::CapabilityProvider>,
     )>,
 ) -> CoreResult<Vec<String>> {
-    if w.draining || w.persist_poisoned {
-        return Err(CoreError::Semantic(
-            ErrorCode::Unavailable,
-            "Runtime 排空中或持久层故障,拒绝能力注册".into(),
-        ));
-    }
+    w.gate_writes("能力注册")?;
     let mut registered: Vec<String> = Vec::new();
     let mut errors: Vec<String> = Vec::new();
     for (manifest, provider) in entries {
@@ -1251,12 +1194,7 @@ pub(crate) fn handle_capabilities_unregister(
     w: &mut World,
     capabilities: Vec<String>,
 ) -> CoreResult<Vec<String>> {
-    if w.draining || w.persist_poisoned {
-        return Err(CoreError::Semantic(
-            ErrorCode::Unavailable,
-            "Runtime 排空中或持久层故障,拒绝能力注销".into(),
-        ));
-    }
+    w.gate_writes("能力注销")?;
     let mut removed: Vec<String> = Vec::new();
     for cap in capabilities {
         if w.registry.unregister(&cap) {

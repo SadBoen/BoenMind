@@ -6,12 +6,7 @@ pub(crate) fn handle_task_create(
     _request_id: BmId,
     params: wire::TaskCreateParams,
 ) -> CoreResult<wire::TaskCreateResult> {
-    if w.draining || w.persist_poisoned {
-        return Err(CoreError::Semantic(
-            ErrorCode::Unavailable,
-            "Runtime 排空中或持久层故障,拒绝创建 Task".into(),
-        ));
-    }
+    w.gate_writes("创建 Task")?;
     // 协调权门禁(M5.1):task.create 是 Butler 的 mutation 协调动词——
     // bootstrap Grant 被撤销后此命令拒绝(重授走审批,撤销不影响既有 Task)
     if w.grants
@@ -126,23 +121,7 @@ pub(crate) fn handle_task_create(
         for g in coord_grants.iter().chain(worker_grants.iter()) {
             w.grants.record(g.clone());
             persist_grant(w, &g.grant_id);
-            w.emit(
-                EventType::GrantCreated,
-                None,
-                None,
-                None,
-                serde_json::json!({
-                    "grant_id": g.grant_id,
-                    "approval_id": null,
-                    "audience": g.audience,
-                    "action": g.action,
-                    "scope": g.scope.to_wire(),
-                    "delegation_depth": g.delegation_depth,
-                    "expires_at": null,
-                    "parent_hash": g.parent_grant_hash,
-                    "resource": serde_json::to_value(&g.resource).expect("resource 序列化"),
-                }),
-            );
+            w.emit_grant_created(g, None, None);
         }
         // 成员事实:Coordinator(必有)+ Worker(仅当任务声明了能力资源)
         let member_event = |w: &mut World, agent_id: &str, role: &str, grant_id: Option<&str>| {

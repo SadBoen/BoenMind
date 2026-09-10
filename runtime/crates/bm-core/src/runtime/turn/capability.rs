@@ -30,18 +30,44 @@ pub(crate) fn capability_scope_choices() -> Vec<GrantScope> {
         GrantScope::Ttl(3_600_000),
     ]
 }
+/// 能力调用收据统一 12 键形态(result_reference/error 恒 null;幂等收据落
+/// idem_results,键序与取值形状即事实标准,改一处 = 五处同改)。
+#[allow(clippy::too_many_arguments)]
+fn receipt_json(
+    op_id: &BmId,
+    request_id: &BmId,
+    principal: &str,
+    capability: &str,
+    created_at: &bm_contract::BmTimestamp,
+    state: &str,
+    completed_at: serde_json::Value,
+    action_summary: String,
+    grant_used: serde_json::Value,
+    result: serde_json::Value,
+) -> serde_json::Value {
+    serde_json::json!({
+        "operation_id": op_id.as_str(),
+        "request_id": request_id.as_str(),
+        "principal": principal,
+        "capability": capability,
+        "state": state,
+        "created_at": created_at,
+        "completed_at": completed_at,
+        "action_summary": action_summary,
+        "result_reference": null,
+        "error": null,
+        "grant_used": grant_used,
+        "result": result,
+    })
+}
+
 pub(crate) fn handle_capability_call(
     w: &mut World,
     request_id: BmId,
     params: wire::CapabilityCallParams,
     session_id: Option<BmId>,
 ) -> CoreResult<serde_json::Value> {
-    if w.draining || w.persist_poisoned {
-        return Err(CoreError::Semantic(
-            ErrorCode::Unavailable,
-            "Runtime 排空中或持久层故障,拒绝能力调用".into(),
-        ));
-    }
+    w.gate_writes("能力调用")?;
     // 直路径(Wire Surface):trusted 直调;幂等键随合同参数面挂链
     // (M7-T3 修复:此前仅 worker 路径挂键,Wire 直调的 idempotency_key 被忽略)
     let mut ctx = CallContext::surface(CAPABILITY_CALLER);
@@ -110,20 +136,18 @@ pub(crate) fn capability_call_inner(
                         persist_grant(w, gid);
                     }
                     let _ = (call_id, credential);
-                    Ok(serde_json::json!({
-                        "operation_id": op_id.as_str(),
-                        "request_id": request_id.as_str(),
-                        "principal": ctx.principal.clone(),
-                        "capability": params.capability,
-                        "state": "succeeded",
-                        "created_at": created_at,
-                        "completed_at": completed_at,
-                        "action_summary": format!("能力 {} 执行完成", params.capability),
-                        "result_reference": null,
-                        "error": null,
-                        "grant_used": grant_id,
-                        "result": result,
-                    }))
+                    Ok(receipt_json(
+                        &op_id,
+                        &request_id,
+                        ctx.principal.as_str(),
+                        &params.capability,
+                        &created_at,
+                        "succeeded",
+                        serde_json::json!(completed_at),
+                        format!("能力 {} 执行完成", params.capability),
+                        serde_json::json!(grant_id),
+                        result,
+                    ))
                 }
                 CallOutcome::InvalidArgs { message } => {
                     fail_capability_call(
@@ -180,37 +204,33 @@ pub(crate) fn capability_call_inner(
                     if let Some(gid) = &grant_id {
                         persist_grant(w, gid);
                     }
-                    Ok(serde_json::json!({
-                        "operation_id": op_id.as_str(),
-                        "request_id": request_id.as_str(),
-                        "principal": ctx.principal.clone(),
-                        "capability": params.capability,
-                        "state": "succeeded",
-                        "created_at": created_at,
-                        "completed_at": completed_at,
-                        "action_summary": "幂等抑制:等价请求返回原收据",
-                        "result_reference": null,
-                        "error": null,
-                        "grant_used": grant_id,
-                        "result": original_result,
-                    }))
+                    Ok(receipt_json(
+                        &op_id,
+                        &request_id,
+                        ctx.principal.as_str(),
+                        &params.capability,
+                        &created_at,
+                        "succeeded",
+                        serde_json::json!(completed_at),
+                        "幂等抑制:等价请求返回原收据".to_string(),
+                        serde_json::json!(grant_id),
+                        original_result,
+                    ))
                 }
                 CallOutcome::DispatchedAsync => {
                     // M7 S4:已派发异步执行;调用方经 operations.get 轮询终态
-                    Ok(serde_json::json!({
-                        "operation_id": op_id.as_str(),
-                        "request_id": request_id.as_str(),
-                        "principal": ctx.principal.clone(),
-                        "capability": params.capability,
-                        "state": "running",
-                        "created_at": created_at,
-                        "completed_at": null,
-                        "action_summary": format!("能力 {} 异步执行中", params.capability),
-                        "result_reference": null,
-                        "error": null,
-                        "grant_used": grant_id,
-                        "result": null,
-                    }))
+                    Ok(receipt_json(
+                        &op_id,
+                        &request_id,
+                        ctx.principal.as_str(),
+                        &params.capability,
+                        &created_at,
+                        "running",
+                        serde_json::Value::Null,
+                        format!("能力 {} 异步执行中", params.capability),
+                        serde_json::json!(grant_id),
+                        serde_json::Value::Null,
+                    ))
                 }
                 CallOutcome::Rejected { .. } => {
                     unreachable!("Allowed 分支不会再被拒绝")
@@ -318,38 +338,34 @@ pub(crate) fn capability_call_inner(
                                     .cloned()
                                     .unwrap_or_else(|| serde_json::json!({}));
                                 let completed_at = w.now_ts();
-                                let value = serde_json::json!({
-                                    "operation_id": op_id.as_str(),
-                                    "request_id": request_id.as_str(),
-                                    "principal": ctx.principal.clone(),
-                                    "capability": params.capability,
-                                    "state": "succeeded",
-                                    "created_at": created_at,
-                                    "completed_at": completed_at,
-                                    "action_summary": format!("能力 {} 执行完成", params.capability),
-                                    "result_reference": null,
-                                    "error": null,
-                                    "grant_used": v["grant_id"],
-                                    "result": result,
-                                });
+                                let value = receipt_json(
+                                    &op_id,
+                                    &request_id,
+                                    ctx.principal.as_str(),
+                                    &params.capability,
+                                    &created_at,
+                                    "succeeded",
+                                    serde_json::json!(completed_at),
+                                    format!("能力 {} 执行完成", params.capability),
+                                    v["grant_id"].clone(),
+                                    result,
+                                );
                                 (op_id, Ok(value))
                             }
                             // M7 异步能力:已派发,调用方经 operations 轮询终态
                             Some(OperationState::Running | OperationState::NotStarted) => {
-                                let value = serde_json::json!({
-                                    "operation_id": op_id.as_str(),
-                                    "request_id": request_id.as_str(),
-                                    "principal": ctx.principal.clone(),
-                                    "capability": params.capability,
-                                    "state": "running",
-                                    "created_at": created_at,
-                                    "completed_at": null,
-                                    "action_summary": format!("能力 {} 异步执行中", params.capability),
-                                    "result_reference": null,
-                                    "error": null,
-                                    "grant_used": v["grant_id"],
-                                    "result": null,
-                                });
+                                let value = receipt_json(
+                                    &op_id,
+                                    &request_id,
+                                    ctx.principal.as_str(),
+                                    &params.capability,
+                                    &created_at,
+                                    "running",
+                                    serde_json::Value::Null,
+                                    format!("能力 {} 异步执行中", params.capability),
+                                    v["grant_id"].clone(),
+                                    serde_json::Value::Null,
+                                );
                                 (op_id, Ok(value))
                             }
                             Some(OperationState::Cancelled) => (
@@ -664,22 +680,17 @@ pub(crate) fn fail_capability_call(
         OperationState::Failed,
         Some(WireError::new(code, message.to_string())),
     );
-    w.emit(
-        EventType::CapabilityInvoked,
+    // 失败态审计与成功路径同源(epoch=0/instance="n/a" 即 unwrap_or 兜底)
+    super::audit::emit_capability_invoked(
+        w,
+        op_id,
+        capability,
+        principal,
         None,
         None,
-        Some(op_id.clone()),
-        serde_json::json!({
-            "call_id": w.config.id_gen.next_id("call").as_str(),
-            "operation_id": op_id.as_str(),
-            "capability": capability,
-            "principal": principal,
-            "binding_epoch": 0,
-            "provider_instance_id": "n/a",
-            "outcome": "error",
-            "error_code": code.as_str(),
-            "idempotency_key_hash": null,
-        }),
+        "error",
+        Some(code),
+        None,
     );
 }
 pub(crate) fn dispatch_capability(
