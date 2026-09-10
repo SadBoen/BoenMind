@@ -1,14 +1,17 @@
 //! GLM HTTP 适配器(feature = "glm",默认关;规格 §4.3/D1)。
 //! 走智谱 chat/completions 端点,非流式。验收不依赖本模块;
 //! 仅作为真实传输的存在性证明与联调工具。
+//! 线格式与 openai_http 同源复用(OpenAI 兼容协议,单源防漂移)。
 
 use async_trait::async_trait;
-use bm_contract::connector::{FinishReason, InvokeRequest, InvokeResponse, Role, Usage};
+use bm_contract::connector::{FinishReason, InvokeRequest, InvokeResponse, Role};
 use bm_contract::error_codes::ErrorCode;
 use bm_core::ports::{ModelConnector, SecretStore};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
+
+use crate::openai_http::{WireMessage, WireRequest, WireResponse, WireUsage, failed};
 
 pub struct GlmConnector {
     endpoint: String,
@@ -37,70 +40,6 @@ impl GlmConnector {
     }
 }
 
-#[derive(serde::Serialize)]
-struct WireMessage<'a> {
-    role: &'a str,
-    content: &'a str,
-}
-
-#[derive(serde::Serialize)]
-struct WireRequest<'a> {
-    model: &'a str,
-    messages: Vec<WireMessage<'a>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    temperature: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    max_tokens: Option<u32>,
-    stream: bool,
-}
-
-#[derive(serde::Deserialize)]
-struct WireResponse {
-    choices: Vec<WireChoice>,
-    usage: Option<WireUsage>,
-}
-
-#[derive(serde::Deserialize)]
-struct WireChoice {
-    finish_reason: Option<String>,
-    message: WireMsg,
-}
-
-#[derive(serde::Deserialize)]
-struct WireMsg {
-    content: Option<String>,
-}
-
-#[derive(serde::Deserialize)]
-struct WireUsage {
-    prompt_tokens: Option<u64>,
-    completion_tokens: Option<u64>,
-    #[serde(default)]
-    prompt_tokens_details: Option<WirePromptTokensDetails>,
-    #[serde(default)]
-    completion_tokens_details: Option<WireCompletionTokensDetails>,
-}
-
-#[derive(serde::Deserialize)]
-struct WirePromptTokensDetails {
-    cached_tokens: Option<u64>,
-}
-
-#[derive(serde::Deserialize)]
-struct WireCompletionTokensDetails {
-    reasoning_tokens: Option<u64>,
-}
-
-fn failed(code: ErrorCode, retryable: bool, attempt: u32) -> InvokeResponse {
-    InvokeResponse::Failed {
-        error_code: code,
-        retryable,
-        attempt,
-        detail_ref: None,
-        detail: None,
-    }
-}
-
 #[async_trait]
 impl ModelConnector for GlmConnector {
     async fn invoke(&self, req: InvokeRequest, cancel: CancellationToken) -> InvokeResponse {
@@ -124,12 +63,16 @@ impl ModelConnector for GlmConnector {
                         Role::Assistant => "assistant",
                         Role::Tool => "tool",
                     },
-                    content: &m.content,
+                    content: Some(&m.content),
+                    tool_call_id: None,
+                    tool_calls: None,
                 })
                 .collect(),
             temperature: req.params.temperature,
             max_tokens: req.params.max_tokens,
             stream: false,
+            tools: None,
+            tool_choice: None,
         };
 
         // P1(第四轮评审):对齐 openai 连接器,预算超时防网络悬挂
@@ -182,24 +125,7 @@ impl ModelConnector for GlmConnector {
                         Some("length") => FinishReason::Length,
                         _ => FinishReason::Stop,
                     },
-                    usage: Usage {
-                        tokens_in: w.usage.as_ref().and_then(|u| u.prompt_tokens).unwrap_or(0),
-                        tokens_out: w
-                            .usage
-                            .as_ref()
-                            .and_then(|u| u.completion_tokens)
-                            .unwrap_or(0),
-                        tokens_reasoning: w
-                            .usage
-                            .as_ref()
-                            .and_then(|u| u.completion_tokens_details.as_ref())
-                            .and_then(|d| d.reasoning_tokens),
-                        tokens_cached: w
-                            .usage
-                            .as_ref()
-                            .and_then(|u| u.prompt_tokens_details.as_ref())
-                            .and_then(|d| d.cached_tokens),
-                    },
+                    usage: w.usage.map(WireUsage::into_usage).unwrap_or_default(),
                     model_id: model,
                     latency_ms: 0,
                     stream_interrupted: false,

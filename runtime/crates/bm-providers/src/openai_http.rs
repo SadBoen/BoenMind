@@ -56,23 +56,25 @@ impl OpenAiConnector {
     }
 }
 
+// ---- OpenAI 兼容线格式(glm_http 复用同一套,单源防协议漂移)--------------
+
 #[derive(serde::Serialize)]
-struct WireMessage<'a> {
-    role: &'a str,
+pub(crate) struct WireMessage<'a> {
+    pub(crate) role: &'a str,
     // ADR-0022:assistant 携带 tool_calls 时 content 允许为 null(OpenAI
     // 形态);其余角色恒 Some。
     #[serde(skip_serializing_if = "Option::is_none")]
-    content: Option<&'a str>,
+    pub(crate) content: Option<&'a str>,
     /// role="tool" 时本结果对应的 tool_call id(因果链对齐)。
     #[serde(skip_serializing_if = "Option::is_none")]
-    tool_call_id: Option<&'a str>,
+    pub(crate) tool_call_id: Option<&'a str>,
     /// assistant 消息原样透传模型发起的工具调用。
     #[serde(skip_serializing_if = "Option::is_none")]
-    tool_calls: Option<Vec<WireToolCallOut<'a>>>,
+    pub(crate) tool_calls: Option<Vec<WireToolCallOut<'a>>>,
 }
 
 #[derive(serde::Serialize)]
-struct WireToolCallOut<'a> {
+pub(crate) struct WireToolCallOut<'a> {
     id: &'a str,
     #[serde(rename = "type")]
     kind: &'a str,
@@ -146,36 +148,36 @@ fn to_wire_messages(messages: &[bm_contract::connector::Message]) -> Vec<WireMes
 }
 
 #[derive(serde::Serialize)]
-struct WireRequest<'a> {
-    model: &'a str,
-    messages: Vec<WireMessage<'a>>,
+pub(crate) struct WireRequest<'a> {
+    pub(crate) model: &'a str,
+    pub(crate) messages: Vec<WireMessage<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    temperature: Option<f64>,
+    pub(crate) temperature: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    max_tokens: Option<u32>,
-    stream: bool,
+    pub(crate) max_tokens: Option<u32>,
+    pub(crate) stream: bool,
     /// W4 对话工具闭环:直通工具(OpenAI function 格式)透传。
     #[serde(skip_serializing_if = "Option::is_none")]
-    tools: Option<serde_json::Value>,
+    pub(crate) tools: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    tool_choice: Option<&'a str>,
+    pub(crate) tool_choice: Option<&'a str>,
 }
 
 #[derive(serde::Deserialize)]
-struct WireResponse {
-    choices: Vec<WireChoice>,
-    usage: Option<WireUsage>,
+pub(crate) struct WireResponse {
+    pub(crate) choices: Vec<WireChoice>,
+    pub(crate) usage: Option<WireUsage>,
 }
 
 #[derive(serde::Deserialize)]
-struct WireChoice {
-    finish_reason: Option<String>,
-    message: WireMsg,
+pub(crate) struct WireChoice {
+    pub(crate) finish_reason: Option<String>,
+    pub(crate) message: WireMsg,
 }
 
 #[derive(serde::Deserialize)]
-struct WireMsg {
-    content: Option<String>,
+pub(crate) struct WireMsg {
+    pub(crate) content: Option<String>,
     #[serde(default)]
     tool_calls: Option<Vec<WireToolCall>>,
 }
@@ -195,7 +197,7 @@ struct WireToolFn {
 }
 
 #[derive(serde::Deserialize)]
-struct WireUsage {
+pub(crate) struct WireUsage {
     prompt_tokens: Option<u64>,
     completion_tokens: Option<u64>,
     /// OpenAI 兼容细分:提示词缓存命中(各家网关实现不一,缺省不报)。
@@ -218,7 +220,7 @@ struct WireCompletionTokensDetails {
 
 impl WireUsage {
     /// 网报 usage → 合同 Usage(细分字段缺省如实为 None,不估算冒充)。
-    fn into_usage(self) -> Usage {
+    pub(crate) fn into_usage(self) -> Usage {
         Usage {
             tokens_in: self.prompt_tokens.unwrap_or(0),
             tokens_out: self.completion_tokens.unwrap_or(0),
@@ -310,7 +312,7 @@ fn transport_failed(e: &reqwest::Error, attempt: u32) -> InvokeResponse {
     failed(ErrorCode::Unavailable, true, attempt)
 }
 
-fn failed(code: ErrorCode, retryable: bool, attempt: u32) -> InvokeResponse {
+pub(crate) fn failed(code: ErrorCode, retryable: bool, attempt: u32) -> InvokeResponse {
     InvokeResponse::Failed {
         error_code: code,
         retryable,
@@ -342,7 +344,12 @@ fn with_detail(mut resp: InvokeResponse, detail: String) -> InvokeResponse {
     resp
 }
 
-fn map_status_body(status: u16, attempt: u32, body: &str, secret: &str) -> InvokeResponse {
+pub(crate) fn map_status_body(
+    status: u16,
+    attempt: u32,
+    body: &str,
+    secret: &str,
+) -> InvokeResponse {
     with_detail(map_status(status, attempt), sanitize_detail(body, secret))
 }
 
@@ -370,6 +377,58 @@ pub(crate) fn map_status(status: u16, attempt: u32) -> InvokeResponse {
     }
 }
 
+/// wire 请求体组装(工具透传三元),invoke 与 invoke_stream 共用。
+fn build_body<'a>(req: &'a InvokeRequest, model: &'a str, stream: bool) -> WireRequest<'a> {
+    let has_tools = !req.tools.is_empty();
+    WireRequest {
+        model,
+        messages: to_wire_messages(&req.messages),
+        temperature: req.params.temperature,
+        max_tokens: req.params.max_tokens,
+        stream,
+        tools: if has_tools {
+            Some(serde_json::Value::Array(req.tools.clone()))
+        } else {
+            None
+        },
+        tool_choice: if has_tools { Some("auto") } else { None },
+    }
+}
+
+impl OpenAiConnector {
+    /// POST 链(预算超时防悬挂;会话标签头),两个入口共用。
+    fn build_request(
+        &self,
+        body: &WireRequest<'_>,
+        api_key: &str,
+        budget: Duration,
+    ) -> reqwest::RequestBuilder {
+        self.http
+            .post(self.endpoint())
+            .bearer_auth(api_key)
+            .header("x-opencode-session", &self.session_tag)
+            .json(body)
+            .timeout(budget)
+    }
+}
+
+/// send + HTTP 状态预检:4xx/5xx → Status 错误携响应体(供脱敏透传)。
+async fn send_and_check(request: reqwest::RequestBuilder) -> Result<reqwest::Response, OpenAiErr> {
+    let resp = request.send().await?;
+    let status = resp.status();
+    if status.is_client_error() || status.is_server_error() {
+        let body = resp
+            .text()
+            .await
+            .unwrap_or_else(|_| "[响应体不可读]".into());
+        return Err(OpenAiErr::Status {
+            status: status.as_u16(),
+            body,
+        });
+    }
+    Ok(resp)
+}
+
 #[async_trait]
 impl ModelConnector for OpenAiConnector {
     fn provider(&self) -> &'static str {
@@ -385,44 +444,12 @@ impl ModelConnector for OpenAiConnector {
             Err(_) => return failed(ErrorCode::Unavailable, true, attempt),
         };
 
-        let has_tools = !req.tools.is_empty();
-        let body = WireRequest {
-            model: &model,
-            messages: to_wire_messages(&req.messages),
-            temperature: req.params.temperature,
-            max_tokens: req.params.max_tokens,
-            stream: false,
-            tools: if has_tools {
-                Some(serde_json::Value::Array(req.tools.clone()))
-            } else {
-                None
-            },
-            tool_choice: if has_tools { Some("auto") } else { None },
-        };
-
+        let body = build_body(&req, &model, false);
         let budget = timestamp::remaining_until(&req.deadline).unwrap_or(Duration::from_secs(120));
-        let request = self
-            .http
-            .post(self.endpoint())
-            .bearer_auth(api_key.clone())
-            .header("x-opencode-session", &self.session_tag)
-            .json(&body)
-            .timeout(budget);
+        let request = self.build_request(&body, &api_key, budget);
 
         let respond = async {
-            let resp = request.send().await?;
-            let status = resp.status();
-            if status.is_client_error() || status.is_server_error() {
-                let body = resp
-                    .text()
-                    .await
-                    .unwrap_or_else(|_| "[响应体不可读]".into());
-                return Err(OpenAiErr::Status {
-                    status: status.as_u16(),
-                    body,
-                });
-            }
-            let wire: WireResponse = resp.json().await?;
+            let wire: WireResponse = send_and_check(request).await?.json().await?;
             Ok::<WireResponse, OpenAiErr>(wire)
         };
 
@@ -527,43 +554,10 @@ impl ModelConnector for OpenAiConnector {
             Ok(k) => k,
             Err(_) => return failed(ErrorCode::Unavailable, true, attempt),
         };
-        let has_tools = !req.tools.is_empty();
-        let body = WireRequest {
-            model: &model,
-            messages: to_wire_messages(&req.messages),
-            temperature: req.params.temperature,
-            max_tokens: req.params.max_tokens,
-            stream: true,
-            tools: if has_tools {
-                Some(serde_json::Value::Array(req.tools.clone()))
-            } else {
-                None
-            },
-            tool_choice: if has_tools { Some("auto") } else { None },
-        };
+        let body = build_body(&req, &model, true);
         let budget = timestamp::remaining_until(&req.deadline).unwrap_or(Duration::from_secs(120));
-        let request = self
-            .http
-            .post(self.endpoint())
-            .bearer_auth(api_key.clone())
-            .header("x-opencode-session", &self.session_tag)
-            .json(&body)
-            .timeout(budget);
-        let open = async {
-            let resp = request.send().await?;
-            let status = resp.status();
-            if status.is_client_error() || status.is_server_error() {
-                let body = resp
-                    .text()
-                    .await
-                    .unwrap_or_else(|_| "[响应体不可读]".into());
-                return Err(OpenAiErr::Status {
-                    status: status.as_u16(),
-                    body,
-                });
-            }
-            Ok::<reqwest::Response, OpenAiErr>(resp)
-        };
+        let request = self.build_request(&body, &api_key, budget);
+        let open = send_and_check(request);
         let mut resp = tokio::select! {
             _ = cancel.cancelled() => return failed(ErrorCode::Cancelled, false, attempt),
             r = open => match r {

@@ -21,6 +21,27 @@ fn tool_err(msg: impl Into<String>) -> Value {
     json!({"ok": false, "error": msg.into()})
 }
 
+/// 命中收集 sink(两遍内容搜索共用):行号 + 截断文本,达上限即停。
+fn utf8_line_sink<'h>(
+    hits: &'h mut Vec<Value>,
+    total: &'h mut u64,
+    max_results: usize,
+    file: &'h str,
+) -> impl FnMut(u64, &str) -> Result<bool, std::io::Error> + 'h {
+    move |line_no, line: &str| {
+        if *total >= max_results as u64 {
+            return Ok(false);
+        }
+        *total += 1;
+        let mut text = line.trim_end_matches(['\r', '\n']).to_string();
+        if text.chars().count() > LINE_CAP_CHARS {
+            text = text.chars().take(LINE_CAP_CHARS).collect::<String>() + "…";
+        }
+        hits.push(json!({"file": file, "line": line_no, "text": text}));
+        Ok(true)
+    }
+}
+
 fn skipped_dir(e: &walkdir::DirEntry) -> bool {
     if e.depth() == 0 {
         return false;
@@ -249,18 +270,7 @@ pub fn search(roots: &Roots, args: &Value, limits: &Limits, deadline: std::time:
                 .binary_detection(BinaryDetection::quit(0))
                 .line_number(true)
                 .build();
-            let sink = sinks::UTF8(|line_no, line: &str| {
-                if total >= max_results as u64 {
-                    return Ok(false);
-                }
-                total += 1;
-                let mut text = line.trim_end_matches(['\r', '\n']).to_string();
-                if text.chars().count() > LINE_CAP_CHARS {
-                    text = text.chars().take(LINE_CAP_CHARS).collect::<String>() + "…";
-                }
-                hits.push(json!({"file": file, "line": line_no, "text": text}));
-                Ok(true)
-            });
+            let sink = sinks::UTF8(utf8_line_sink(&mut hits, &mut total, max_results, &file));
             if searcher.search_path(&matcher, entry.path(), sink).is_err() {
                 // 单文件失败(权限/编码)跳过,不中断整场搜索
                 continue;
@@ -300,18 +310,7 @@ pub fn search(roots: &Roots, args: &Value, limits: &Limits, deadline: std::time:
                     .binary_detection(BinaryDetection::quit(0))
                     .line_number(true)
                     .build();
-                let sink = sinks::UTF8(|line_no, line: &str| {
-                    if total >= max_results as u64 {
-                        return Ok(false);
-                    }
-                    total += 1;
-                    let mut text = line.trim_end_matches(['\r', '\n']).to_string();
-                    if text.chars().count() > LINE_CAP_CHARS {
-                        text = text.chars().take(LINE_CAP_CHARS).collect::<String>() + "…";
-                    }
-                    hits.push(json!({"file": file, "line": line_no, "text": text}));
-                    Ok(true)
-                });
+                let sink = sinks::UTF8(utf8_line_sink(&mut hits, &mut total, max_results, &file));
                 let _ = searcher.search_path(&alt_matcher, entry.path(), sink);
                 if total >= max_results as u64 {
                     break 'roots_fallback;

@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 
 /// 跨平台词法级别路径规范化(消除 `.` 与 `..`，跨平台识别 `/` 与 `\` 作为目录分隔符)
-pub fn normalize_lexical(p: &Path) -> PathBuf {
+fn normalize_lexical(p: &Path) -> PathBuf {
     use std::path::Component;
     let mut out = PathBuf::new();
     for comp in p.components() {

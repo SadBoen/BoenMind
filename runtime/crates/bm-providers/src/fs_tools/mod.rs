@@ -12,7 +12,7 @@
 mod guard;
 mod ops;
 
-pub use guard::{Roots, display_path, normalize_lexical};
+pub use guard::{Roots, display_path};
 
 use bm_contract::capability::CapabilityManifest;
 use bm_core::ports::{AsyncCallError, AsyncCapabilityExecutor};

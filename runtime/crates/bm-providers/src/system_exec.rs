@@ -198,15 +198,9 @@ impl ExecExecutor {
         ) -> Vec<u8> {
             use tokio::io::AsyncReadExt;
             let mut buf = Vec::new();
-            if let Some(mut p) = pipe {
-                let mut chunk = [0u8; 8192];
-                while buf.len() < cap {
-                    let to_read = (cap - buf.len()).min(chunk.len());
-                    match p.read(&mut chunk[..to_read]).await {
-                        Ok(0) | Err(_) => break,
-                        Ok(n) => buf.extend_from_slice(&chunk[..n]),
-                    }
-                }
+            if let Some(p) = pipe {
+                // 至多 cap 字节(超出不读);读错误按 EOF 处理(保留部分结果)
+                let _ = p.take(cap as u64).read_to_end(&mut buf).await;
             }
             buf
         }

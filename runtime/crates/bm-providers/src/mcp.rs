@@ -16,8 +16,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-pub const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
-pub const DEFAULT_TOOL_TIMEOUT_MS: u64 = 30_000;
+const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
+const DEFAULT_TOOL_TIMEOUT_MS: u64 = 30_000;
 /// 带限时的 stdio 帧写入(write_all + flush),所有持锁写管道路径的统一出口
 /// (限时走 limits:子进程挂起(非崩溃)时调用方持锁跨 await,无超时则该
 /// 域能力永久坏死,respawn 也拿不到锁)。
@@ -40,7 +40,7 @@ async fn write_frame<W: tokio::io::AsyncWrite + Unpin>(
 // ---- stderr 采集(issue #28)--------------------------------------------------
 
 /// 子进程 stderr 环形缓冲容量(行)。跨 respawn 共享,足够排障又不无限膨胀。
-pub const MCP_STDERR_CAPACITY: usize = 400;
+const MCP_STDERR_CAPACITY: usize = 400;
 
 /// 一行子进程 stderr:`gen` = 子进程代数(1 起,respawn 递增)。
 #[derive(Debug, Clone, serde::Serialize)]
@@ -84,17 +84,6 @@ impl StderrBuffer {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let skip = q.len().saturating_sub(n);
         q.iter().skip(skip).cloned().collect()
-    }
-
-    pub fn len(&self) -> usize {
-        self.lines
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
     }
 }
 
@@ -962,21 +951,14 @@ fn parse_sse_response(body: &str, id: u64) -> Result<Value, String> {
     Err("SSE 流中未找到匹配 id 的响应".to_string())
 }
 
-#[async_trait]
-impl McpTransport for HttpMcpTransport {
-    async fn request(&self, method: &str, params: Value) -> Result<Value, String> {
-        let msg = json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": method,
-            "params": params,
-        });
+impl HttpMcpTransport {
+    /// request/notify 共用的 POST 组装:bearer + Accept 双类型(spec 要求,
+    /// 服务端可回 SSE 流)+ 会话头回带(initialize 后服务器下发 Mcp-Session-Id)。
+    fn post_rpc(&self, msg: Value) -> reqwest::RequestBuilder {
         let mut req = self.client.post(&self.url).json(&msg);
         if let Some(token) = &self.bearer_token {
             req = req.bearer_auth(token);
         }
-        // #3:完整握手——Accept 双类型(spec 要求,服务端可回 SSE 流),
-        // 会话头回带(initialize 后服务器下发 Mcp-Session-Id)
         req = req.header("Accept", "application/json, text/event-stream");
         if let Some(sid) = self
             .session_id
@@ -986,6 +968,20 @@ impl McpTransport for HttpMcpTransport {
         {
             req = req.header("Mcp-Session-Id", sid);
         }
+        req
+    }
+}
+
+#[async_trait]
+impl McpTransport for HttpMcpTransport {
+    async fn request(&self, method: &str, params: Value) -> Result<Value, String> {
+        let msg = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": method,
+            "params": params,
+        });
+        let req = self.post_rpc(msg);
         // R3(FULL-REVIEW-2026-09-05 §7):裸 send 无超时 = 远端挂起即调用
         // 悬挂;默认 60s 硬顶(W10 走 limits),远端长任务应自行异步化。
         let remote_timeout =
@@ -1053,19 +1049,7 @@ impl McpTransport for HttpMcpTransport {
             "method": method,
             "params": params,
         });
-        let mut req = self.client.post(&self.url).json(&msg);
-        if let Some(token) = &self.bearer_token {
-            req = req.bearer_auth(token);
-        }
-        req = req.header("Accept", "application/json, text/event-stream");
-        if let Some(sid) = self
-            .session_id
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
-        {
-            req = req.header("Mcp-Session-Id", sid);
-        }
+        let req = self.post_rpc(msg);
         // P1-9: notify 加上 10s 超时,防止半开远端挂死卸载/重载/关闭请求
         let _ = tokio::time::timeout(std::time::Duration::from_secs(10), req.send()).await;
         Ok(())
@@ -1112,12 +1096,6 @@ pub struct McpHub {
     sink: Arc<Mutex<Option<ProgressSink>>>,
     /// 在途调用:operation_id → 传输(取消通知定位)。
     inflight: Mutex<HashMap<String, Arc<dyn McpTransport>>>,
-}
-
-impl Default for McpHub {
-    fn default() -> Self {
-        Self::new_inner()
-    }
 }
 
 impl McpHub {
@@ -1246,20 +1224,7 @@ impl McpHub {
     /// W2 管理面探活:对该 server 的任一路由发 tools/list(轻量、无副作用)。
     /// 返回 Ok((工具数, 工具简要信息列表)) = 联通;Err = 断连/超时摘要。
     pub async fn probe_server(&self, server: &str) -> Result<(usize, Vec<Value>), String> {
-        let prefix = format!("mcp.{server}.");
-        let transport = {
-            let routes = self
-                .routes
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            routes
-                .iter()
-                .find(|(k, _)| k.starts_with(&prefix))
-                .map(|(_, r)| r.transport.clone())
-        };
-        let Some(transport) = transport else {
-            return Err("未连接".into());
-        };
+        let transport = self.transport_for(server)?;
         let listed = transport.request("tools/list", json!({})).await?;
         let tools = listed
             .get("tools")
@@ -1290,20 +1255,7 @@ impl McpHub {
         method: &str,
         params: Value,
     ) -> Result<Value, String> {
-        let prefix = format!("mcp.{server}.");
-        let transport = {
-            let routes = self
-                .routes
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            routes
-                .iter()
-                .find(|(k, _)| k.starts_with(&prefix))
-                .map(|(_, r)| r.transport.clone())
-        };
-        let Some(transport) = transport else {
-            return Err("未连接".into());
-        };
+        let transport = self.transport_for(server)?;
         transport.request(method, params).await
     }
 
@@ -1311,20 +1263,7 @@ impl McpHub {
     /// 路由按能力名组织,取该 server 任一路由的 transport;未连接或远程
     /// 传输(无子进程)= Err。工具名全被拒注册的 server 无路由,同样报未连接。
     pub fn stderr_tail(&self, server: &str, lines: usize) -> Result<Vec<StderrLine>, String> {
-        let prefix = format!("mcp.{server}.");
-        let transport = {
-            let routes = self
-                .routes
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            routes
-                .iter()
-                .find(|(k, _)| k.starts_with(&prefix))
-                .map(|(_, r)| r.transport.clone())
-        };
-        let Some(transport) = transport else {
-            return Err("未连接".into());
-        };
+        let transport = self.transport_for(server)?;
         let Some(buf) = transport.stderr_buffer() else {
             return Err("该 server 无 stderr 采集(远程传输无子进程)".into());
         };
@@ -1334,23 +1273,24 @@ impl McpHub {
     /// #3:读取指定 server 的 initialize 结果(协议版本/capabilities/
     /// serverInfo;握手时记录)。未连接 = Err。
     pub fn server_capabilities(&self, server: &str) -> Result<Value, String> {
-        let prefix = format!("mcp.{server}.");
-        let transport = {
-            let routes = self
-                .routes
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            routes
-                .iter()
-                .find(|(k, _)| k.starts_with(&prefix))
-                .map(|(_, r)| r.transport.clone())
-        };
-        let Some(transport) = transport else {
-            return Err("未连接".into());
-        };
+        let transport = self.transport_for(server)?;
         transport
             .init_snapshot()
             .ok_or_else(|| "该 server 无握手记录(旧版传输或未完成 initialize)".to_string())
+    }
+
+    /// 按 `mcp.<server>.` 前缀取该 server 任一路由的 transport;未连接 = Err。
+    fn transport_for(&self, server: &str) -> Result<Arc<dyn McpTransport>, String> {
+        let prefix = format!("mcp.{server}.");
+        let routes = self
+            .routes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        routes
+            .iter()
+            .find(|(k, _)| k.starts_with(&prefix))
+            .map(|(_, r)| r.transport.clone())
+            .ok_or_else(|| "未连接".into())
     }
 
     pub fn capability_entries(
@@ -1447,17 +1387,18 @@ impl AsyncCapabilityExecutor for McpHub {
         if is_err {
             return Err(AsyncCallError::ToolError);
         }
-        let mut text = String::new();
-        if let Some(items) = resp.get("content").and_then(|v| v.as_array()) {
-            for it in items {
-                if it.get("type").and_then(|v| v.as_str()) == Some("text") {
-                    if !text.is_empty() {
-                        text.push('\n');
-                    }
-                    text.push_str(it.get("text").and_then(|v| v.as_str()).unwrap_or_default());
-                }
-            }
-        }
+        let text = resp
+            .get("content")
+            .and_then(|v| v.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter(|it| it.get("type").and_then(|v| v.as_str()) == Some("text"))
+                    .map(|it| it.get("text").and_then(|v| v.as_str()).unwrap_or_default())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .unwrap_or_default();
         let out = match resp.get("structuredContent") {
             Some(v @ Value::Object(_)) => v.clone(),
             _ => json!({"text": text}),
