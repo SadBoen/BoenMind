@@ -47,7 +47,7 @@ async fn om_rig() -> (RuntimeHandle, Arc<SeqIdGen>) {
             bm_core::broker::provider_fn(|args| Ok(json!({"echo": args, "exists": true}))),
         ),
     ];
-    caps.extend(bm_core::memory::memory_capabilities(
+    caps.extend(bm_testkit::memory_fixtures::memory_capabilities(
         store.clone(),
         ids.clone(),
     ));

@@ -1,14 +1,12 @@
-//! memory.* 能力(M5.7,基线 §4.1;ADR-0002 条件 5 余项)。
+//! memory.* 能力测具(原 bm-core/src/memory.rs,2026-09-11 归位)。
 //!
-//! Memory 是一等合同对象:作用域即权限边界(memory:app:<app> / task:<id> /
-//! agent:<id> / user)。读写检索删除都以普通 Capability Provider 身份注册
-//! (memory.write / memory.search / memory.delete),全部经 Broker 统一裁决
-//! ——无特权通道。阶段一检索 FTS5(libsqlite3-sys bundled 缺 FTS5 编译特性
-//! 时自动 LIKE 兜底,接口可替换);默认不自动写长期记忆;用户纠正覆盖而非
-//! 追加(correction_of 即时墓碑化);来源被删除时记忆级联失效(墓碑)。
+//! 归位理由(#59 残余-4):`memory_capabilities` 生产组合根零调用(server/CLI/
+//! surface 均不装配),全仓仅测试引用。ADR-0020 条款 3 四判据要求内置能力必须
+//! 有生产消费方——既然没有,就不该占内核内置面;作为测试夹具放这里最贴合。
+//! 若将来 memory.* 真进生产,须先过 ADR-0020 条款 3 四判据再迁回内核。
 //!
-//! memory:user 的「显式授权」执行面(区分 Surface 直写与 Agent 写)随 M7
-//! principal-aware Provider;M5 面:scope 形态校验 + Broker 信任分级适用。
+//! Memory 作用域即权限边界(memory:app:<app> / task:<id> / agent:<id> / user);
+//! 三能力(write/search/delete)以普通 Provider 身份注册,经 Broker 统一裁决。
 
 use bm_contract::capability::CapabilityManifest;
 use serde_json::json;
@@ -16,7 +14,7 @@ use std::sync::Arc;
 
 /// scope 形态校验(与 memory/memory-entry.v0.1 合同 pattern 同源):
 /// memory:app:<name> | memory:task:<id> | memory:agent:<ulid26> | memory:user。
-/// 作用域即权限边界——形态外的域一律拒绝(测试 t88)。
+/// 作用域即权限边界——形态外的域一律拒绝。
 pub fn scope_ok(scope: &str) -> bool {
     let Some(rest) = scope.strip_prefix("memory:") else {
         return false;
@@ -44,11 +42,11 @@ pub fn scope_ok(scope: &str) -> bool {
 /// 注册 memory.* 三能力(普通 Provider 身份;调用方把返回值并入
 /// RuntimeConfig.capabilities,store 与 Runtime 共享同一 EventStore)。
 pub fn memory_capabilities(
-    store: Arc<dyn crate::ports::persist::EventStore>,
+    store: Arc<dyn bm_core::ports::persist::EventStore>,
     ids: Arc<dyn bm_contract::ids::IdGen>,
 ) -> Vec<(
     CapabilityManifest,
-    Arc<dyn crate::registry::CapabilityProvider>,
+    Arc<dyn bm_core::registry::CapabilityProvider>,
 )> {
     fn manifest(name: &str, effect: &str) -> CapabilityManifest {
         serde_json::from_value(json!({
@@ -62,7 +60,7 @@ pub fn memory_capabilities(
     }
 
     let write_store = store.clone();
-    let write = crate::broker::provider_fn(move |args: serde_json::Value| {
+    let write = bm_core::broker::provider_fn(move |args: serde_json::Value| {
         let scope = args["scope"].as_str().unwrap_or_default().to_string();
         let content_ref = args["content_ref"].as_str().unwrap_or_default().to_string();
         if !scope_ok(&scope) {
@@ -98,7 +96,7 @@ pub fn memory_capabilities(
     });
 
     let search_store = store.clone();
-    let search = crate::broker::provider_fn(move |args: serde_json::Value| {
+    let search = bm_core::broker::provider_fn(move |args: serde_json::Value| {
         let scope = args["scope"].as_str().unwrap_or_default().to_string();
         if !scope_ok(&scope) {
             return Err(format!("非法记忆作用域: {scope}"));
@@ -111,7 +109,7 @@ pub fn memory_capabilities(
     });
 
     let delete_store = store;
-    let delete = crate::broker::provider_fn(move |args: serde_json::Value| {
+    let delete = bm_core::broker::provider_fn(move |args: serde_json::Value| {
         let entry_id = args["entry_id"].as_str().unwrap_or_default().to_string();
         if entry_id.is_empty() {
             return Err("entry_id 必填".into());
@@ -135,13 +133,22 @@ mod tests {
 
     #[test]
     fn manifests_register_under_memory_namespace() {
-        // F-12:bm-core 测试用内存桩(dev 依赖环会使 PersistStore 的 trait
-        // 身份分裂;真实库交互测试归 bm-persist/testkit)
-        let store: Arc<dyn crate::ports::persist::EventStore> =
-            Arc::new(crate::ports::persist::test_support::MemEventStore::new());
+        let dir = tempfile::tempdir().expect("临时目录");
+        let store: Arc<dyn bm_core::ports::persist::EventStore> =
+            Arc::new(bm_persist::PersistStore::open(dir.path()).expect("打开持久层"));
         let ids = Arc::new(bm_contract::ids::SeqIdGen::new());
         let caps = memory_capabilities(store, ids);
         let names: Vec<&str> = caps.iter().map(|(m, _)| m.capability.as_str()).collect();
         assert_eq!(names, ["memory.write", "memory.search", "memory.delete"]);
+    }
+
+    #[test]
+    fn scope_form_check_rejects_malformed() {
+        assert!(scope_ok("memory:user"));
+        assert!(scope_ok("memory:app:wiki"));
+        assert!(scope_ok("memory:task:t1"));
+        assert!(!scope_ok("memory:app:"));
+        assert!(!scope_ok("memory:agent:short"));
+        assert!(!scope_ok("other:user"));
     }
 }

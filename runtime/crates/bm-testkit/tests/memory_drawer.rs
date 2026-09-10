@@ -19,7 +19,7 @@ async fn rig() -> (RuntimeHandle, Arc<SeqIdGen>) {
         Arc::new(bm_persist::PersistStore::open(dir.path()).expect("打开"));
     let ids = Arc::new(SeqIdGen::new());
     let config = RuntimeConfig {
-        capabilities: bm_core::memory::memory_capabilities(store, ids.clone()),
+        capabilities: bm_testkit::memory_fixtures::memory_capabilities(store, ids.clone()),
         version: "0.1.0-m9".into(),
         data_dir: None,
         store: None,

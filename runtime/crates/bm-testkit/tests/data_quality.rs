@@ -226,7 +226,7 @@ async fn t119c_user_deletion_tombstone_survives_replay() {
             Arc::new(bm_persist::PersistStore::open(&dir_path).expect("打开"));
         let connector = Arc::new(MockConnector::new(vec![]));
         let mut caps = Vec::new();
-        caps.extend(bm_core::memory::memory_capabilities(
+        caps.extend(bm_testkit::memory_fixtures::memory_capabilities(
             store.clone(),
             ids.clone(),
         ));
@@ -323,7 +323,7 @@ async fn t119c_user_deletion_tombstone_survives_replay() {
             Arc::new(bm_persist::PersistStore::open(&dir_path).expect("重开"));
         let connector = Arc::new(MockConnector::new(vec![]));
         let mut caps = Vec::new();
-        caps.extend(bm_core::memory::memory_capabilities(
+        caps.extend(bm_testkit::memory_fixtures::memory_capabilities(
             store.clone(),
             ids.clone(),
         ));
