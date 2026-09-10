@@ -1,10 +1,9 @@
 //! 对话内审批裁决(W4b;与 /rpc/approval.respond 同一执行体,
 //! 走 /admin 免鉴权口径——W1 同款已登记欠账;前端审批卡片无令牌可带)。
 
-use super::{AdminConfig, admin_error};
+use super::{AdminConfig, bad_request, internal, respond_or_fail};
 use axum::Json;
 use axum::extract::{Path as AxumPath, State};
-use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use bm_contract::ids::{IdGen, UlidIdGen};
 use serde_json::Value;
@@ -19,9 +18,9 @@ pub async fn approval_respond(
     let decision = body["decision"].as_str().unwrap_or("").to_string();
     let scope = body["scope"].as_str().map(|s| s.to_string());
     let request_id = UlidIdGen.next_id("req");
-    let Ok(appr_id) = bm_contract::ids::BmId::parse(&id) else {
-        return admin_error(StatusCode::BAD_REQUEST, "非法审批单 id");
-    };
+    let appr_id = respond_or_fail!(bm_contract::ids::BmId::parse(&id), |_| bad_request(
+        "非法审批单 id"
+    ));
     match cfg
         .handle
         .approval_respond(
@@ -35,7 +34,7 @@ pub async fn approval_respond(
         .await
     {
         Ok(v) => Json(v).into_response(),
-        Err(e) => admin_error(StatusCode::BAD_REQUEST, format!("审批裁决失败: {e}")),
+        Err(e) => bad_request(format!("审批裁决失败: {e}")),
     }
 }
 
@@ -50,6 +49,6 @@ pub async fn approvals_list(State(cfg): State<AdminConfig>) -> Response {
         .await
     {
         Ok(v) => Json(v).into_response(),
-        Err(e) => admin_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_wire().message),
+        Err(e) => internal(e.to_wire().message),
     }
 }

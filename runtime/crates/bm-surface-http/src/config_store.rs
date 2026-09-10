@@ -37,6 +37,24 @@ fn known_field(name: &str) -> bool {
     )
 }
 
+// ---- 登记类规则谓词(providers.rs 管理面与本 validate_field 唯一源;-----
+// 文案两侧各自保留,数值边界/形状只此一份)
+
+/// baseUrl:http(s) 且 ≤500 字符(空串因非 http(s) 开头而被拒)。
+pub(crate) fn valid_base_url(s: &str) -> bool {
+    s.len() <= 500 && (s.starts_with("http://") || s.starts_with("https://"))
+}
+
+/// 模型 id / 登记键:非空且 ≤200 字符。
+pub(crate) fn valid_model_key(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 200
+}
+
+/// 上下文窗口登记值(窗口 token 数)的合理区间。
+pub(crate) fn valid_window_tokens(n: u64) -> bool {
+    (1..=4_000_000).contains(&n)
+}
+
 /// 字段校验与类型约束(未知字段拒绝)。
 pub fn validate_field(name: &str, value: &Value) -> CoreResult<()> {
     match name {
@@ -44,7 +62,7 @@ pub fn validate_field(name: &str, value: &Value) -> CoreResult<()> {
             let s = value
                 .as_str()
                 .ok_or_else(|| validation("baseUrl 必须是字符串"))?;
-            if !(s.len() <= 500 && (s.starts_with("http://") || s.starts_with("https://"))) {
+            if !valid_base_url(s) {
                 return Err(validation(
                     "baseUrl 必须以 http:// 或 https:// 开头(≤500 字符)",
                 ));
@@ -62,7 +80,7 @@ pub fn validate_field(name: &str, value: &Value) -> CoreResult<()> {
             let s = value
                 .as_str()
                 .ok_or_else(|| validation("modelId 必须是字符串"))?;
-            if s.is_empty() || s.len() > 200 {
+            if !valid_model_key(s) {
                 return Err(validation("modelId 不能为空且 ≤200 字符"));
             }
         }
@@ -90,7 +108,7 @@ pub fn validate_field(name: &str, value: &Value) -> CoreResult<()> {
                 let id = m
                     .as_str()
                     .ok_or_else(|| validation("models 项必须是字符串"))?;
-                if id.is_empty() || id.len() > 200 {
+                if !valid_model_key(id) {
                     return Err(validation("models 项不能为空且 ≤200 字符"));
                 }
             }
@@ -105,13 +123,13 @@ pub fn validate_field(name: &str, value: &Value) -> CoreResult<()> {
                 return Err(validation("contextWindows 至多 50 条登记"));
             }
             for (k, v) in obj {
-                if k.is_empty() || k.len() > 200 {
+                if !valid_model_key(k) {
                     return Err(validation("contextWindows 的模型名不能为空且 ≤200 字符"));
                 }
                 let n = v
                     .as_u64()
                     .ok_or_else(|| validation("contextWindows 值必须是正整数(token 数)"))?;
-                if !(1..=4_000_000).contains(&n) {
+                if !valid_window_tokens(n) {
                     return Err(validation(
                         "contextWindows 值超出合理区间(1..=4,000,000 token)",
                     ));

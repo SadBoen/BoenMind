@@ -2,7 +2,9 @@
 //! 候选扫描与批准接入(两段式)/墓碑与来源推断(ADR-0023)/启动播种/
 //! 全量热同步。
 
-use super::{AdminConfig, admin_error};
+use super::{
+    AdminConfig, admin_error, bad_request, conflict, internal, not_found, respond_or_fail,
+};
 use axum::Json;
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
@@ -14,14 +16,12 @@ use std::sync::Arc;
 
 // ---- handler:MCP 配置管理(落盘重启生效)--------------------------------
 
-fn mcp_file_or_error(cfg: &AdminConfig) -> Result<PathBuf, (StatusCode, String)> {
-    match &cfg.mcp_config {
-        Some(p) => Ok(p.clone()),
-        None => Err((
-            StatusCode::BAD_REQUEST,
-            "服务器未启用 MCP 配置文件(--mcp-config),无法管理".to_string(),
-        )),
-    }
+/// 管理端点必备:mcp.json 路径(未启用 = 400 直回)。
+#[allow(clippy::result_large_err)] // Err 即响应体(冷路径),不值得装箱
+fn mcp_file_or_error(cfg: &AdminConfig) -> Result<PathBuf, Response> {
+    cfg.mcp_config
+        .clone()
+        .ok_or_else(|| bad_request("服务器未启用 MCP 配置文件(--mcp-config),无法管理"))
 }
 
 // read_mcp_servers 复用 bm_providers::mcp::supervisor 同名实现(2026-09-07
@@ -72,10 +72,7 @@ fn validated_mcp_entry(body: &Value) -> Result<Value, String> {
 }
 
 pub async fn mcp_list(State(cfg): State<AdminConfig>) -> Response {
-    let path = match mcp_file_or_error(&cfg) {
-        Ok(p) => p,
-        Err((s, m)) => return admin_error(s, m),
-    };
+    let path = respond_or_fail!(mcp_file_or_error(&cfg));
     match read_mcp_servers(&path) {
         Ok(servers) => {
             let loaded: Vec<String> = cfg
@@ -132,31 +129,26 @@ pub async fn mcp_list(State(cfg): State<AdminConfig>) -> Response {
             }))
             .into_response()
         }
-        Err(e) => admin_error(StatusCode::INTERNAL_SERVER_ERROR, e),
+        Err(e) => internal(e),
     }
 }
 
 pub async fn mcp_create(State(cfg): State<AdminConfig>, Json(body): Json<Value>) -> Response {
-    let path = match mcp_file_or_error(&cfg) {
-        Ok(p) => p,
-        Err((s, m)) => return admin_error(s, m),
-    };
+    let path = respond_or_fail!(mcp_file_or_error(&cfg));
     let entry = match validated_mcp_entry(&body) {
         Ok(e) => e,
-        Err(e) => return admin_error(StatusCode::BAD_REQUEST, e),
+        Err(e) => return bad_request(e),
     };
     let mut servers = match read_mcp_servers(&path) {
         Ok(s) => s,
-        Err(e) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e),
+        Err(e) => return internal(e),
     };
     let name = entry["name"].as_str().unwrap_or("").to_string();
     if servers.iter().any(|s| s["name"] == json!(name)) {
-        return admin_error(StatusCode::CONFLICT, format!("MCP server '{name}' 已存在"));
+        return conflict(format!("MCP server '{name}' 已存在"));
     }
     servers.push(entry);
-    if let Err(e) = write_mcp_servers(&path, &servers) {
-        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
-    }
+    respond_or_fail!(write_mcp_servers(&path, &servers), internal);
     Json(json!({ "ok": true, "note": "已落盘,点「重载 MCP」可免重启生效" })).into_response()
 }
 
@@ -165,25 +157,14 @@ pub async fn mcp_update(
     AxumPath(name): AxumPath<String>,
     Json(body): Json<Value>,
 ) -> Response {
-    let path = match mcp_file_or_error(&cfg) {
-        Ok(p) => p,
-        Err((s, m)) => return admin_error(s, m),
-    };
-    let entry = match validated_mcp_entry(&body) {
-        Ok(e) => e,
-        Err(e) => return admin_error(StatusCode::BAD_REQUEST, e),
-    };
-    let mut servers = match read_mcp_servers(&path) {
-        Ok(s) => s,
-        Err(e) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e),
-    };
+    let path = respond_or_fail!(mcp_file_or_error(&cfg));
+    let entry = respond_or_fail!(validated_mcp_entry(&body), bad_request);
+    let mut servers = respond_or_fail!(read_mcp_servers(&path), internal);
     let Some(pos) = servers.iter().position(|s| s["name"] == json!(name)) else {
-        return admin_error(StatusCode::NOT_FOUND, format!("MCP server '{name}' 不存在"));
+        return not_found(format!("MCP server '{name}' 不存在"));
     };
     servers[pos] = entry;
-    if let Err(e) = write_mcp_servers(&path, &servers) {
-        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
-    }
+    respond_or_fail!(write_mcp_servers(&path, &servers), internal);
     Json(json!({ "ok": true, "note": "已落盘,点「重载 MCP」可免重启生效" })).into_response()
 }
 
@@ -191,22 +172,14 @@ pub async fn mcp_delete(
     State(cfg): State<AdminConfig>,
     AxumPath(name): AxumPath<String>,
 ) -> Response {
-    let path = match mcp_file_or_error(&cfg) {
-        Ok(p) => p,
-        Err((s, m)) => return admin_error(s, m),
-    };
-    let mut servers = match read_mcp_servers(&path) {
-        Ok(s) => s,
-        Err(e) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e),
-    };
+    let path = respond_or_fail!(mcp_file_or_error(&cfg));
+    let mut servers = respond_or_fail!(read_mcp_servers(&path), internal);
     let Some(pos) = servers.iter().position(|s| s["name"] == json!(name)) else {
-        return admin_error(StatusCode::NOT_FOUND, format!("MCP server '{name}' 不存在"));
+        return not_found(format!("MCP server '{name}' 不存在"));
     };
     let origin = server_origin(&cfg, &servers[pos], &path);
     servers.remove(pos);
-    if let Err(e) = write_mcp_servers(&path, &servers) {
-        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
-    }
+    respond_or_fail!(write_mcp_servers(&path, &servers), internal);
     // ADR-0023:bundled 来源写墓碑——官方随包默认安装(启动播种)永不复活;
     // 数据目录来源不写(用户手动放置=安装意图,重启后扫描仍会作为候选出现)。
     let mut tombstoned = false;
@@ -245,25 +218,16 @@ pub async fn mcp_purge(
     State(cfg): State<AdminConfig>,
     AxumPath(name): AxumPath<String>,
 ) -> Response {
-    let path = match mcp_file_or_error(&cfg) {
-        Ok(p) => p,
-        Err((s, m)) => return admin_error(s, m),
-    };
-    let mut servers = match read_mcp_servers(&path) {
-        Ok(s) => s,
-        Err(e) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e),
-    };
+    let path = respond_or_fail!(mcp_file_or_error(&cfg));
+    let mut servers = respond_or_fail!(read_mcp_servers(&path), internal);
     let Some(pos) = servers.iter().position(|s| s["name"] == json!(name)) else {
-        return admin_error(
-            StatusCode::NOT_FOUND,
-            format!("MCP server '{name}' 不存在(未登记的插件无从定位其文件)"),
-        );
+        return not_found(format!(
+            "MCP server '{name}' 不存在(未登记的插件无从定位其文件)"
+        ));
     };
     let exe = servers[pos]["command"].as_str().map(String::from);
     servers.remove(pos);
-    if let Err(e) = write_mcp_servers(&path, &servers) {
-        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
-    }
+    respond_or_fail!(write_mcp_servers(&path, &servers), internal);
     // 停进程 + 注销能力(必须在删 exe 之前,否则 Windows 文件锁挡路)
     let sync_detail = match run_mcp_sync(&cfg).await {
         Ok(o) => json!({ "ok": true, "uninstalled": o.uninstalled }),
@@ -321,12 +285,11 @@ pub async fn mcp_test(
     State(cfg): State<AdminConfig>,
     AxumPath(name): AxumPath<String>,
 ) -> Response {
-    let Some(hub) = cfg.hub.clone() else {
-        return admin_error(
-            StatusCode::BAD_REQUEST,
-            "服务器未启用 MCP 接线(--mcp-config)",
-        );
-    };
+    let hub = respond_or_fail!(
+        cfg.hub
+            .clone()
+            .ok_or_else(|| bad_request("服务器未启用 MCP 接线(--mcp-config)"))
+    );
     match hub.probe_server(&name).await {
         Ok((count, tool_list)) => {
             Json(json!({ "ok": true, "name": name, "tools": count, "tool_list": tool_list }))
@@ -344,12 +307,11 @@ pub async fn mcp_search_test(
     AxumPath(name): AxumPath<String>,
     Json(body): Json<Value>,
 ) -> Response {
-    let Some(hub) = cfg.hub.clone() else {
-        return admin_error(
-            StatusCode::BAD_REQUEST,
-            "服务器未启用 MCP 接线(--mcp-config)",
-        );
-    };
+    let hub = respond_or_fail!(
+        cfg.hub
+            .clone()
+            .ok_or_else(|| bad_request("服务器未启用 MCP 接线(--mcp-config)"))
+    );
     let provider_id = body
         .get("provider_id")
         .and_then(Value::as_str)
@@ -385,12 +347,11 @@ pub async fn mcp_usage(
     State(cfg): State<AdminConfig>,
     AxumPath(name): AxumPath<String>,
 ) -> Response {
-    let Some(hub) = cfg.hub.clone() else {
-        return admin_error(
-            StatusCode::BAD_REQUEST,
-            "服务器未启用 MCP 接线(--mcp-config)",
-        );
-    };
+    let hub = respond_or_fail!(
+        cfg.hub
+            .clone()
+            .ok_or_else(|| bad_request("服务器未启用 MCP 接线(--mcp-config)"))
+    );
     match hub.raw_request(&name, "web_usage", json!({})).await {
         Ok(resp) => {
             let usage = resp.get("structuredContent").cloned().unwrap_or(resp);
@@ -407,12 +368,11 @@ pub async fn mcp_stderr(
     AxumPath(name): AxumPath<String>,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Response {
-    let Some(hub) = cfg.hub.clone() else {
-        return admin_error(
-            StatusCode::BAD_REQUEST,
-            "服务器未启用 MCP 接线(--mcp-config)",
-        );
-    };
+    let hub = respond_or_fail!(
+        cfg.hub
+            .clone()
+            .ok_or_else(|| bad_request("服务器未启用 MCP 接线(--mcp-config)"))
+    );
     let lines = params
         .get("lines")
         .and_then(|v| v.parse::<usize>().ok())
@@ -462,48 +422,49 @@ pub struct McpConfigBody {
     pub values: Value,
 }
 
+/// 自声明配置名校验(文件名拼接防注入;get/set 同规)。
+#[allow(clippy::result_large_err)] // Err 即响应体(冷路径),不值得装箱
+fn valid_config_name(name: &str) -> Result<(), Response> {
+    if name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        Ok(())
+    } else {
+        Err(bad_request("非法配置名称(仅限英数字/下划线/连字符)"))
+    }
+}
+
+/// 读 config/mcp-<name>.json 配置值:缺文件=空对象;读失败/损坏=500
+/// (损坏前缀文案由调用方给,get/set 各有口径)。
+#[allow(clippy::result_large_err)] // Err 即响应体(冷路径),不值得装箱
+fn read_server_config(file: &Path, corrupt_prefix: String) -> Result<Value, Response> {
+    match std::fs::read_to_string(file) {
+        Ok(t) => serde_json::from_str(&t).map_err(|e| internal(format!("{corrupt_prefix}: {e}"))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(json!({})),
+        Err(e) => Err(internal(format!("读取配置文件失败: {e}"))),
+    }
+}
+
 /// 读某 server 当前配置值(供设置页表单回显)。
 pub async fn mcp_config_get(
     State(cfg): State<AdminConfig>,
     AxumPath(name): AxumPath<String>,
 ) -> Response {
-    if !name
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-    {
-        return admin_error(
-            StatusCode::BAD_REQUEST,
-            "非法配置名称(仅限英数字/下划线/连字符)",
-        );
-    }
-    let Some(path) = cfg.mcp_config.clone() else {
-        return admin_error(
-            StatusCode::BAD_REQUEST,
-            "服务器未启用 MCP 配置文件(--mcp-config)",
-        );
-    };
+    respond_or_fail!(valid_config_name(&name));
+    let path = respond_or_fail!(
+        cfg.mcp_config
+            .clone()
+            .ok_or_else(|| bad_request("服务器未启用 MCP 配置文件(--mcp-config)"))
+    );
     let file = path
         .parent()
         .map(|d| d.join("config").join(format!("mcp-{name}.json")))
         .unwrap_or_else(|| path.clone());
-    let values = match std::fs::read_to_string(&file) {
-        Ok(t) => match serde_json::from_str::<Value>(&t) {
-            Ok(v) => v,
-            Err(e) => {
-                return admin_error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("配置文件 mcp-{name}.json 格式损坏: {e}"),
-                );
-            }
-        },
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => json!({}),
-        Err(e) => {
-            return admin_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("读取配置文件失败: {e}"),
-            );
-        }
-    };
+    let values = respond_or_fail!(read_server_config(
+        &file,
+        format!("配置文件 mcp-{name}.json 格式损坏")
+    ));
     Json(json!({ "name": name, "values": values })).into_response()
 }
 
@@ -514,65 +475,45 @@ pub async fn mcp_config_set(
     AxumPath(name): AxumPath<String>,
     Json(body): Json<McpConfigBody>,
 ) -> Response {
-    if !name
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-    {
-        return admin_error(
-            StatusCode::BAD_REQUEST,
-            "非法配置名称(仅限英数字/下划线/连字符)",
-        );
-    }
-    let Some(path) = cfg.mcp_config.clone() else {
-        return admin_error(
-            StatusCode::BAD_REQUEST,
-            "服务器未启用 MCP 配置文件(--mcp-config)",
-        );
-    };
-    let Some(dir) = path.parent().map(|d| d.join("config")) else {
-        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, "配置目录解析失败");
-    };
-    let Some(values) = body.values.as_object() else {
-        return admin_error(StatusCode::BAD_REQUEST, "values 必须是对象");
-    };
-    if let Err(e) = std::fs::create_dir_all(&dir) {
-        return admin_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("配置目录创建失败: {e}"),
-        );
-    }
+    respond_or_fail!(valid_config_name(&name));
+    let path = respond_or_fail!(
+        cfg.mcp_config
+            .clone()
+            .ok_or_else(|| bad_request("服务器未启用 MCP 配置文件(--mcp-config)"))
+    );
+    let dir = respond_or_fail!(
+        path.parent()
+            .map(|d| d.join("config"))
+            .ok_or_else(|| internal("配置目录解析失败"))
+    );
+    let values = respond_or_fail!(
+        body.values
+            .as_object()
+            .ok_or_else(|| bad_request("values 必须是对象"))
+    );
+    respond_or_fail!(
+        std::fs::create_dir_all(&dir).map_err(|e| internal(format!("配置目录创建失败: {e}")))
+    );
     let file = dir.join(format!("mcp-{name}.json"));
-    let mut current: Value = match std::fs::read_to_string(&file) {
-        Ok(t) => match serde_json::from_str(&t) {
-            Ok(v) => v,
-            Err(e) => {
-                return admin_error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("mcp-{name}.json 格式损坏,拒绝合并覆写: {e}"),
-                );
-            }
-        },
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => json!({}),
-        Err(e) => {
-            return admin_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("读取配置文件失败: {e}"),
-            );
-        }
-    };
+    let mut current = respond_or_fail!(read_server_config(
+        &file,
+        format!("mcp-{name}.json 格式损坏,拒绝合并覆写")
+    ));
     if let Some(obj) = current.as_object_mut() {
         for (k, v) in values {
             obj.insert(k.clone(), v.clone());
         }
     }
     // CRLF 统一:与 config_store.write_file 同款(pretty 后按平台换行)
-    let text = match serde_json::to_string_pretty(&current) {
-        Ok(t) => crate::config_store::crlf(t),
-        Err(_) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, "序列化失败"),
-    };
-    if let Err(e) = bm_core::ports::persist::atomic_write(&file, text.as_bytes()) {
-        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, format!("写入失败: {e}"));
-    }
+    let text = respond_or_fail!(
+        serde_json::to_string_pretty(&current)
+            .map(crate::config_store::crlf)
+            .map_err(|_| internal("序列化失败"))
+    );
+    respond_or_fail!(
+        bm_core::ports::persist::atomic_write(&file, text.as_bytes())
+            .map_err(|e| internal(format!("写入失败: {e}")))
+    );
     Json(json!({
         "ok": true,
         "file": file.display().to_string(),
@@ -717,20 +658,52 @@ fn candidate_is_executable(path: &Path) -> bool {
     }
 }
 
+/// 扫一个候选目录:可执行文件 × --self-describe 成功(声明须带非空 name)
+/// → (路径, 声明)。扫描/批准/播种三处共用同一读目录-筛文件-自述骨架。
+async fn scan_candidates(dir: &Path) -> std::io::Result<Vec<(PathBuf, Value)>> {
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(dir)?.flatten() {
+        let p = entry.path();
+        if !p.is_file() || !candidate_is_executable(&p) {
+            continue;
+        }
+        if let Some(decl) = self_describe(&p).await
+            && decl["name"].as_str().is_some_and(|n| !n.is_empty())
+        {
+            out.push((p, decl));
+        }
+    }
+    Ok(out)
+}
+
+/// 候选清单条目 JSON(数据目录/随包两源共用形状)。
+fn candidate_json(
+    p: &Path,
+    decl: &Value,
+    registered: &[String],
+    tombstones: &[String],
+    source: &str,
+) -> Value {
+    let name = decl["name"].as_str().unwrap_or_default();
+    json!({
+        "file": p.display().to_string(),
+        "name": name,
+        "title": decl.get("title").cloned().unwrap_or(json!("")),
+        "description": decl.get("description").cloned().unwrap_or(json!("")),
+        "registered": registered.iter().any(|r| r == name),
+        "tombstoned": tombstones.iter().any(|t| t == name),
+        "source": source,
+    })
+}
+
 /// POST /admin/mcp/candidates:扫描插件目录,返回可批准接入的候选清单
 /// (含已在 mcp.json 中的标记,便于前端过滤)。
 pub async fn mcp_candidates(State(cfg): State<AdminConfig>) -> Response {
-    let path = match mcp_file_or_error(&cfg) {
-        Ok(p) => p,
-        Err((s, m)) => return admin_error(s, m),
-    };
+    let path = respond_or_fail!(mcp_file_or_error(&cfg));
     let dir = mcp_plugins_dir(&path);
-    if let Err(e) = std::fs::create_dir_all(&dir) {
-        return admin_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("插件目录创建失败: {e}"),
-        );
-    }
+    respond_or_fail!(
+        std::fs::create_dir_all(&dir).map_err(|e| internal(format!("插件目录创建失败: {e}")))
+    );
     let registered: Vec<String> = read_mcp_servers(&path)
         .unwrap_or_default()
         .iter()
@@ -739,63 +712,28 @@ pub async fn mcp_candidates(State(cfg): State<AdminConfig>) -> Response {
     // ADR-0023 墓碑名单:候选若在册,前端提示「批准即恢复」
     let tombstones = read_tombstones(&cfg.data_dir);
     let mut candidates: Vec<Value> = Vec::new();
-    let entries = match std::fs::read_dir(&dir) {
-        Ok(e) => e,
-        Err(e) => {
-            return admin_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("插件目录读取失败: {e}"),
-            );
-        }
-    };
-    for entry in entries.flatten() {
-        let p = entry.path();
-        if !p.is_file() || !candidate_is_executable(&p) {
-            continue;
-        }
-        let Some(decl) = self_describe(&p).await else {
-            continue;
-        };
-        let name = decl["name"].as_str().unwrap_or_default().to_string();
-        if name.is_empty() {
-            continue;
-        }
-        candidates.push(json!({
-            "file": p.display().to_string(),
-            "name": name,
-            "title": decl.get("title").cloned().unwrap_or(json!("")),
-            "description": decl.get("description").cloned().unwrap_or(json!("")),
-            "registered": registered.iter().any(|r| r == &name),
-            "tombstoned": tombstones.iter().any(|t| t == &name),
-            "source": "data",
-        }));
+    for (p, decl) in respond_or_fail!(
+        scan_candidates(&dir)
+            .await
+            .map_err(|e| internal(format!("插件目录读取失败: {e}")))
+    ) {
+        candidates.push(candidate_json(&p, &decl, &registered, &tombstones, "data"));
     }
     // 官方随包目录(exe 同级 plugins/):随包插件免手动拷贝即可被发现;
     // 同名候选以数据目录优先(用户手动放置覆盖官方包)。
-    if let Some(bundled) = &cfg.bundled_plugins_dir
-        && let Ok(entries) = std::fs::read_dir(bundled)
-    {
-        for entry in entries.flatten() {
-            let p = entry.path();
-            if !p.is_file() || !candidate_is_executable(&p) {
+    if let Some(bundled) = &cfg.bundled_plugins_dir {
+        for (p, decl) in scan_candidates(bundled).await.unwrap_or_default() {
+            let name = decl["name"].as_str().unwrap_or_default();
+            if candidates.iter().any(|c| c["name"] == json!(name)) {
                 continue;
             }
-            let Some(decl) = self_describe(&p).await else {
-                continue;
-            };
-            let name = decl["name"].as_str().unwrap_or_default().to_string();
-            if name.is_empty() || candidates.iter().any(|c| c["name"] == json!(name)) {
-                continue;
-            }
-            candidates.push(json!({
-                "file": p.display().to_string(),
-                "name": name,
-                "title": decl.get("title").cloned().unwrap_or(json!("")),
-                "description": decl.get("description").cloned().unwrap_or(json!("")),
-                "registered": registered.iter().any(|r| r == &name),
-                "tombstoned": tombstones.iter().any(|t| t == &name),
-                "source": "bundled",
-            }));
+            candidates.push(candidate_json(
+                &p,
+                &decl,
+                &registered,
+                &tombstones,
+                "bundled",
+            ));
         }
     }
     Json(json!({
@@ -818,73 +756,48 @@ pub async fn mcp_candidates(State(cfg): State<AdminConfig>) -> Response {
 /// (设置页配置表单的声明来源);随后自动热重载上线(ADR-0023,热重载
 /// 按钮保留作手动保险),并清除该名墓碑(被卸载/删除过的官方插件由此恢复)。
 pub async fn mcp_approve(State(cfg): State<AdminConfig>, Json(body): Json<Value>) -> Response {
-    let path = match mcp_file_or_error(&cfg) {
-        Ok(p) => p,
-        Err((s, m)) => return admin_error(s, m),
-    };
+    let path = respond_or_fail!(mcp_file_or_error(&cfg));
     let dir = mcp_plugins_dir(&path);
     let want_name = body["name"].as_str().unwrap_or_default().to_string();
     if want_name.is_empty() {
-        return admin_error(StatusCode::BAD_REQUEST, "缺少 name");
+        return bad_request("缺少 name");
     }
     // 在候选目录(数据目录 mcp/ 优先,官方随包 plugins/ 次之)内找到声明
     // name 匹配的候选(目录限定,防路径逃逸)
-    let mut target: Option<PathBuf> = None;
-    let mut decl: Option<Value> = None;
     let mut search_dirs: Vec<PathBuf> = vec![dir];
     if let Some(bundled) = &cfg.bundled_plugins_dir {
         search_dirs.push(bundled.clone());
     }
+    let mut found: Option<(PathBuf, Value)> = None;
     for search_dir in &search_dirs {
-        if let Ok(entries) = std::fs::read_dir(search_dir) {
-            for entry in entries.flatten() {
-                let p = entry.path();
-                if !p.is_file() || !candidate_is_executable(&p) {
-                    continue;
-                }
-                if let Some(d) = self_describe(&p).await
-                    && d["name"].as_str() == Some(want_name.as_str())
-                {
-                    target = Some(p);
-                    decl = Some(d);
-                    break;
-                }
-            }
-        }
-        if target.is_some() {
+        found = scan_candidates(search_dir)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .find(|(_, d)| d["name"].as_str() == Some(want_name.as_str()));
+        if found.is_some() {
             break;
         }
     }
-    let (Some(file), Some(decl)) = (target, decl) else {
-        return admin_error(
-            StatusCode::NOT_FOUND,
-            format!("候选目录中没有自声明 name={want_name} 的候选"),
-        );
+    let Some((file, decl)) = found else {
+        return not_found(format!("候选目录中没有自声明 name={want_name} 的候选"));
     };
 
     // 条目构造+manifest 双写(与启动播种同一 helper,形状天然一致)
-    let entry = match build_candidate_entry(&path, &file, &decl, &want_name) {
-        Ok(e) => e,
-        Err(e) => return admin_error(StatusCode::BAD_REQUEST, e),
-    };
+    let entry = respond_or_fail!(
+        build_candidate_entry(&path, &file, &decl, &want_name),
+        bad_request
+    );
 
-    let mut servers = match read_mcp_servers(&path) {
-        Ok(s) => s,
-        Err(e) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e),
-    };
+    let mut servers = respond_or_fail!(read_mcp_servers(&path), internal);
     if servers
         .iter()
         .any(|s| s["name"].as_str() == Some(want_name.as_str()))
     {
-        return admin_error(
-            StatusCode::CONFLICT,
-            format!("MCP server '{want_name}' 已存在"),
-        );
+        return conflict(format!("MCP server '{want_name}' 已存在"));
     }
     servers.push(entry.clone());
-    if let Err(e) = write_mcp_servers(&path, &servers) {
-        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
-    }
+    respond_or_fail!(write_mcp_servers(&path, &servers), internal);
     write_plugin_manifest(&path, &want_name, &decl);
 
     // ADR-0023:显式批准=安装意图最高级——清墓碑(被卸载/删除过的官方
@@ -1196,24 +1109,9 @@ pub async fn seed_bundled_plugins(
         .filter_map(|s| s["name"].as_str().map(String::from))
         .collect();
     let tombstones = read_tombstones(data_dir);
-    let Ok(entries) = std::fs::read_dir(bundled_dir) else {
-        return seeded;
-    };
-    for entry in entries.flatten() {
-        let p = entry.path();
-        if !p.is_file() || !candidate_is_executable(&p) {
-            continue;
-        }
-        let Some(decl) = self_describe(&p).await else {
-            continue;
-        };
-        let Some(name) = decl["name"].as_str().map(String::from) else {
-            continue;
-        };
-        if name.is_empty()
-            || seen.iter().any(|r| r == &name)
-            || tombstones.iter().any(|t| t == &name)
-        {
+    for (p, decl) in scan_candidates(bundled_dir).await.unwrap_or_default() {
+        let name = decl["name"].as_str().unwrap_or_default().to_string();
+        if seen.iter().any(|r| r == &name) || tombstones.iter().any(|t| t == &name) {
             continue;
         }
         match build_candidate_entry(mcp_config_path, &p, &decl, &name) {

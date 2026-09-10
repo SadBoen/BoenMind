@@ -9,7 +9,9 @@
 //! 铁规矩(2026-09-02 用户明示):发新版本必须用户明说;本模块只消费已发布的
 //! release,绝不触发发布。
 
-use crate::webadmin::{AdminConfig, admin_error};
+use crate::webadmin::{
+    AdminConfig, admin_error, bad_gateway, bad_request, internal, respond_or_fail,
+};
 use axum::{
     Json,
     extract::State,
@@ -176,110 +178,84 @@ pub async fn apply_update(
         );
     }
     let current = env!("CARGO_PKG_VERSION");
-    let info = match fetch_latest_release(
-        &update_repo(),
-        cfg.limits.get().update_check_timeout_secs,
-    )
-    .await
-    {
-        Ok(r) => r,
-        Err(e) => return admin_error(StatusCode::BAD_GATEWAY, format!("检查更新失败: {e}")),
-    };
+    let info = respond_or_fail!(
+        fetch_latest_release(&update_repo(), cfg.limits.get().update_check_timeout_secs)
+            .await
+            .map_err(|e| bad_gateway(format!("检查更新失败: {e}")))
+    );
     match version_cmp(current, &info.tag) {
         Some(o) if o != std::cmp::Ordering::Less => {
-            return admin_error(StatusCode::BAD_REQUEST, "已是最新版本,无需升级");
+            return bad_request("已是最新版本,无需升级");
         }
         Some(_) => {}
         None => {
-            return admin_error(
-                StatusCode::BAD_REQUEST,
-                format!("版本号不可比较(当前 {current} vs latest {})", info.tag),
-            );
+            return bad_request(format!(
+                "版本号不可比较(当前 {current} vs latest {})",
+                info.tag
+            ));
         }
     }
     let Some((asset_name, asset_url)) = info.asset() else {
-        return admin_error(
-            StatusCode::BAD_REQUEST,
-            format!(
-                "发现新版本 {},但 latest release 缺少本平台资产({})",
-                info.tag,
-                platform_asset_suffix()
-            ),
-        );
+        return bad_request(format!(
+            "发现新版本 {},但 latest release 缺少本平台资产({})",
+            info.tag,
+            platform_asset_suffix()
+        ));
     };
     let sha_url = format!("{asset_url}.sha256");
 
     let work = cfg.data_dir.join("upgrade");
-    if let Err(e) = std::fs::create_dir_all(&work) {
-        return admin_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("升级目录创建失败: {e}"),
-        );
-    }
+    respond_or_fail!(
+        std::fs::create_dir_all(&work).map_err(|e| internal(format!("升级目录创建失败: {e}")))
+    );
 
     // 1. 下载资产与校验和
-    let client = match reqwest::Client::builder()
-        .user_agent(concat!("boenmind-server/", env!("CARGO_PKG_VERSION")))
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            return admin_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("客户端构造失败: {e}"),
-            );
-        }
-    };
+    let client = respond_or_fail!(
+        reqwest::Client::builder()
+            .user_agent(concat!("boenmind-server/", env!("CARGO_PKG_VERSION")))
+            .build()
+            .map_err(|e| internal(format!("客户端构造失败: {e}")))
+    );
     let pkg_path = work.join(&asset_name);
-    if let Err(e) = download_to(
-        &client,
-        &asset_url,
-        &pkg_path,
-        cfg.limits.get().upgrade_download_timeout_secs,
-    )
-    .await
-    {
-        return admin_error(StatusCode::BAD_GATEWAY, format!("下载失败: {e}"));
-    }
+    respond_or_fail!(
+        download_to(
+            &client,
+            &asset_url,
+            &pkg_path,
+            cfg.limits.get().upgrade_download_timeout_secs,
+        )
+        .await
+        .map_err(|e| bad_gateway(format!("下载失败: {e}")))
+    );
     let sha_path = work.join(format!("{asset_name}.sha256"));
-    if let Err(e) = download_to(
-        &client,
-        &sha_url,
-        &sha_path,
-        cfg.limits.get().upgrade_download_timeout_secs,
-    )
-    .await
-    {
-        return admin_error(StatusCode::BAD_GATEWAY, format!("下载校验文件失败: {e}"));
-    }
+    respond_or_fail!(
+        download_to(
+            &client,
+            &sha_url,
+            &sha_path,
+            cfg.limits.get().upgrade_download_timeout_secs,
+        )
+        .await
+        .map_err(|e| bad_gateway(format!("下载校验文件失败: {e}")))
+    );
 
     // 2. 校验和比对(期望格式:<hex>  <文件名>)
-    let bytes = match std::fs::read(&pkg_path) {
-        Ok(b) => b,
-        Err(e) => {
-            return admin_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("读取包失败: {e}"),
-            );
-        }
-    };
+    let bytes = respond_or_fail!(
+        std::fs::read(&pkg_path).map_err(|e| internal(format!("读取包失败: {e}")))
+    );
     let digest = bm_contract::hash::sha256_hex(&bytes);
-    let Ok(expected_sha) = std::fs::read_to_string(&sha_path) else {
-        return admin_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "读取 sha256 校验文件失败",
-        );
-    };
+    let expected_sha = respond_or_fail!(
+        std::fs::read_to_string(&sha_path).map_err(|_| internal("读取 sha256 校验文件失败"))
+    );
     let expected = expected_sha
         .split_whitespace()
         .next()
         .unwrap_or("")
         .to_lowercase();
     if digest != expected {
-        return admin_error(
-            StatusCode::BAD_GATEWAY,
-            format!("校验和不匹配: 计算值 {digest} vs 期望值 {expected}"),
-        );
+        return bad_gateway(format!(
+            "校验和不匹配: 计算值 {digest} vs 期望值 {expected}"
+        ));
     }
 
     // 3. 解包到 staging
@@ -287,24 +263,18 @@ pub async fn apply_update(
     if staging.exists() {
         let _ = std::fs::remove_dir_all(&staging);
     }
-    if let Err(e) = unpack_tar_gz(&pkg_path, &staging) {
-        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, format!("解包失败: {e}"));
-    }
+    respond_or_fail!(unpack_tar_gz(&pkg_path, &staging), |e| internal(format!(
+        "解包失败: {e}"
+    )));
 
     // 4. 换装(staging 内有唯一顶层目录)
-    let inner = match std::fs::read_dir(&staging) {
-        Ok(rd) => rd
-            .filter_map(|e| e.ok())
+    let inner = std::fs::read_dir(&staging).ok().and_then(|rd| {
+        rd.filter_map(|e| e.ok())
             .find(|e| e.path().is_dir())
-            .map(|e| e.path()),
-        Err(_) => None,
-    };
-    let Some(src) = inner else {
-        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, "包结构异常:缺少顶层目录");
-    };
-    if let Err(e) = install(&cfg, &src) {
-        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, format!("换装失败: {e}"));
-    }
+            .map(|e| e.path())
+    });
+    let src = respond_or_fail!(inner.ok_or_else(|| internal("包结构异常:缺少顶层目录")));
+    respond_or_fail!(install(&cfg, &src), |e| internal(format!("换装失败: {e}")));
 
     // 5. 切换重启。W7 修复(2026-09-03 VPS 实测):systemd 环境下自拉起
     //    子进程与单元管理冲突——旧进程排空属成功退出,Restart=on-failure
@@ -340,22 +310,17 @@ pub async fn apply_update(
     }
     // 6. 回落:拉起子进程(原 args/env/cwd;BOEN_UPGRADE_CHILD=1 → 子进程
     //    容忍端口被本进程暂时占用,重试绑定),随后本进程优雅排空退出。
-    let exe = std::env::current_exe().map_err(|e| format!("current_exe 失败: {e}"));
-    let exe = match exe {
-        Ok(p) => p,
-        Err(e) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e),
-    };
+    let exe = respond_or_fail!(
+        std::env::current_exe().map_err(|e| internal(format!("current_exe 失败: {e}")))
+    );
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let child = std::process::Command::new(&exe)
-        .args(&args)
-        .env("BOEN_UPGRADE_CHILD", "1")
-        .spawn();
-    if let Err(e) = child {
-        return admin_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("新进程拉起失败: {e}"),
-        );
-    }
+    respond_or_fail!(
+        std::process::Command::new(&exe)
+            .args(&args)
+            .env("BOEN_UPGRADE_CHILD", "1")
+            .spawn()
+            .map_err(|e| internal(format!("新进程拉起失败: {e}")))
+    );
     eprintln!("[W7] 在线升级:新版本 {} 已拉起,本进程排空退出", info.tag);
     if let Some(shutdown) = &cfg.shutdown {
         shutdown.notify_waiters();

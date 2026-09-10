@@ -303,12 +303,34 @@ fn session_cookie(value: &str, max_age_secs: u64) -> String {
     format!("{SESSION_COOKIE}={value}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age_secs}")
 }
 
-fn unauthorized(msg: &str) -> Response {
-    (
-        StatusCode::UNAUTHORIZED,
-        Json(json!({"error": {"message": msg}})),
+/// 签发新会话并登记;返回 Set-Cookie 值(bootstrap/login/oauth 三处同款)。
+fn issue_session(state: &crate::AppState) -> String {
+    let session = new_session();
+    state
+        .portal
+        .sessions
+        .lock()
+        .expect("锁未中毒")
+        .insert(session.clone());
+    session_cookie(
+        &session,
+        state.portal.limits.get().portal_cookie_max_age_secs,
     )
-        .into_response()
+}
+
+/// 限速门 key:对端 IP;测试 oneshot 等无 connect-info 场景退化为全局门。
+fn gate_key_of(peer: Option<&axum::Extension<ConnectInfo<SocketAddr>>>) -> String {
+    peer.map(|c| c.0.ip().to_string())
+        .unwrap_or_else(|| "global".to_string())
+}
+
+/// 与本模块错误 JSON 形状一致的 401/429([`crate::webadmin::admin_error`] 同口径)。
+fn unauthorized(msg: &str) -> Response {
+    crate::webadmin::admin_error(StatusCode::UNAUTHORIZED, msg)
+}
+
+fn too_many(msg: &str) -> Response {
+    crate::webadmin::admin_error(StatusCode::TOO_MANY_REQUESTS, msg)
 }
 
 /// GET /api/portal/state:登录页据此显示「创建访问密码」或「登录」。
@@ -330,49 +352,22 @@ pub async fn portal_bootstrap(
     peer: Option<axum::Extension<ConnectInfo<SocketAddr>>>,
     Json(body): Json<serde_json::Value>,
 ) -> Response {
-    let gate_key = peer
-        .map(|c| c.0.ip().to_string())
-        .unwrap_or_else(|| "global".to_string());
+    let gate_key = gate_key_of(peer.as_ref());
     if state.portal.login_locked(&gate_key) {
-        return (
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(json!({"error": {"message": "尝试次数过多,请稍后再试"}})),
-        )
-            .into_response();
+        return too_many("尝试次数过多,请稍后再试");
     }
     if state.portal.configured() {
-        return (
-            StatusCode::CONFLICT,
-            Json(json!({"error": {"message": "访问密码已设置,请直接登录"}})),
-        )
-            .into_response();
+        return crate::webadmin::conflict("访问密码已设置,请直接登录");
     }
     let pw = body["password"].as_str().unwrap_or_default();
     if pw.chars().count() < 6 {
         state.portal.note_login_failure(&gate_key);
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": {"message": "密码至少 6 位"}})),
-        )
-            .into_response();
+        return crate::webadmin::bad_request("密码至少 6 位");
     }
     state.portal.save(&store_password(pw));
     state.portal.note_login_success(&gate_key);
-    let session = new_session();
-    state
-        .portal
-        .sessions
-        .lock()
-        .expect("锁未中毒")
-        .insert(session.clone());
     (
-        [(
-            header::SET_COOKIE,
-            session_cookie(
-                &session,
-                state.portal.limits.get().portal_cookie_max_age_secs,
-            ),
-        )],
+        [(header::SET_COOKIE, issue_session(&state))],
         Json(json!({"ok": true})),
     )
         .into_response()
@@ -382,22 +377,12 @@ pub async fn portal_bootstrap(
 /// 2026-09-05 回看加固:失败限速(ADR-0009 决策 4)+ PBKDF2 透明升级。
 pub async fn portal_login(
     State(state): State<crate::AppState>,
-    // ConnectInfo 由 into_make_service_with_connect_info 注入(本质是
-    // Extension);Option 形态让 oneshot 测试等无 connect-info 场景自动
-    // 退化为全局限速门
     peer: Option<axum::Extension<ConnectInfo<SocketAddr>>>,
     Json(body): Json<serde_json::Value>,
 ) -> Response {
-    // 限速门:按对端 IP;取不到对端地址(测试 oneshot)时退化为全局门
-    let gate_key = peer
-        .map(|c| c.0.ip().to_string())
-        .unwrap_or_else(|| "global".to_string());
+    let gate_key = gate_key_of(peer.as_ref());
     if state.portal.login_locked(&gate_key) {
-        return (
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(json!({"error": {"message": "登录失败次数过多,请 15 分钟后再试"}})),
-        )
-            .into_response();
+        return too_many("登录失败次数过多,请 15 分钟后再试");
     }
     let pw = body["password"].as_str().unwrap_or_default();
     let stored = state.portal.password_hash.lock().expect("锁未中毒").clone();
@@ -414,21 +399,8 @@ pub async fn portal_login(
     if stored.as_ref().is_some_and(|h| !h.starts_with("pbkdf2$")) {
         state.portal.save(&store_password(pw));
     }
-    let session = new_session();
-    state
-        .portal
-        .sessions
-        .lock()
-        .expect("锁未中毒")
-        .insert(session.clone());
     (
-        [(
-            header::SET_COOKIE,
-            session_cookie(
-                &session,
-                state.portal.limits.get().portal_cookie_max_age_secs,
-            ),
-        )],
+        [(header::SET_COOKIE, issue_session(&state))],
         Json(json!({"ok": true})),
     )
         .into_response()
@@ -457,11 +429,7 @@ pub async fn portal_password(
     }
     let pw = body["new"].as_str().unwrap_or_default();
     if pw.chars().count() < 6 {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": {"message": "新密码至少 6 位"}})),
-        )
-            .into_response();
+        return crate::webadmin::bad_request("新密码至少 6 位");
     }
     state.portal.save(&store_password(pw));
     state.portal.sessions.lock().expect("锁未中毒").clear();
@@ -502,25 +470,13 @@ pub async fn portal_oauth_login(
         states.retain(|_, t| t.elapsed() < OAUTH_STATE_TTL);
         states.insert(st.clone(), Instant::now());
     }
-    let enc = |s: &str| {
-        let mut out = String::new();
-        for b in s.bytes() {
-            match b {
-                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                    out.push(b as char)
-                }
-                _ => out.push_str(&format!("%{b:02X}")),
-            }
-        }
-        out
-    };
     let loc = format!(
         "{}?response_type=code&client_id={}&redirect_uri={}&scope={}&state={}",
         cfg.authorization_endpoint,
-        enc(&cfg.client_id),
-        enc(&redirect_uri),
-        enc(&cfg.scopes.join(" ")),
-        enc(&st),
+        crate::percent_encode(&cfg.client_id),
+        crate::percent_encode(&redirect_uri),
+        crate::percent_encode(&cfg.scopes.join(" ")),
+        crate::percent_encode(&st),
     );
     ([(header::LOCATION, loc)], StatusCode::FOUND).into_response()
 }
@@ -619,22 +575,10 @@ pub async fn portal_oauth_callback(
         return unauthorized("id_token 已过期");
     }
 
-    let session = new_session();
-    state
-        .portal
-        .sessions
-        .lock()
-        .expect("锁未中毒")
-        .insert(session.clone());
+    let session_cookie = issue_session(&state);
     (
         [
-            (
-                header::SET_COOKIE,
-                session_cookie(
-                    &session,
-                    state.portal.limits.get().portal_cookie_max_age_secs,
-                ),
-            ),
+            (header::SET_COOKIE, session_cookie),
             (header::LOCATION, "/".to_string()),
         ],
         StatusCode::FOUND,

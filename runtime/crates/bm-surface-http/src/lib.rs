@@ -35,6 +35,20 @@ pub(crate) fn unix_now() -> u64 {
         .unwrap_or(0)
 }
 
+/// RFC 3986 unreserved 集合外的字节 %XX 转义(fs 下载文件名 UTF-8 名与
+/// portal OAuth 参数拼装共用;字节级,UTF-8 安全)。
+pub(crate) fn percent_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for &b in s.as_bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
 /// 共享应用状态。
 #[derive(Clone)]
 pub struct AppState {

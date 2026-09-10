@@ -1,9 +1,8 @@
 //! 技能库(W4b;config/skills.json;合同 capability/skill.v0_1)。
 
-use super::{AdminConfig, admin_error};
+use super::{AdminConfig, bad_request, internal, not_found, respond_or_fail};
 use axum::Json;
 use axum::extract::{Path as AxumPath, State};
-use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
 
@@ -36,10 +35,7 @@ fn write_skills(file: &std::path::Path, skills: &[Value]) -> Result<(), String> 
 
 /// GET /admin/skills:技能库清单(角色页挂载勾选 + 展示)。
 pub async fn skills_get(State(cfg): State<AdminConfig>) -> Response {
-    let skills = match read_skills(&skills_file(&cfg)) {
-        Ok(s) => s,
-        Err(e) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e),
-    };
+    let skills = respond_or_fail!(read_skills(&skills_file(&cfg)), internal);
     Json(json!({ "ok": true, "skills": skills })).into_response()
 }
 
@@ -53,13 +49,10 @@ pub async fn skills_set(State(cfg): State<AdminConfig>, Json(mut body): Json<Val
         body["allowed_capabilities"] = json!([]);
     }
     if let Err(e) = bm_contract::schemas::validate(bm_contract::registries::SKILL_SCHEMA, &body) {
-        return admin_error(StatusCode::BAD_REQUEST, format!("技能不合规: {e}"));
+        return bad_request(format!("技能不合规: {e}"));
     }
     let file = skills_file(&cfg);
-    let mut skills = match read_skills(&file) {
-        Ok(s) => s,
-        Err(e) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e),
-    };
+    let mut skills = respond_or_fail!(read_skills(&file), internal);
     let id = body["skill_id"].as_str().unwrap_or_default().to_string();
     if let Some(slot) = skills
         .iter_mut()
@@ -69,9 +62,7 @@ pub async fn skills_set(State(cfg): State<AdminConfig>, Json(mut body): Json<Val
     } else {
         skills.push(body.clone());
     }
-    if let Err(e) = write_skills(&file, &skills) {
-        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
-    }
+    respond_or_fail!(write_skills(&file, &skills), internal);
     Json(json!({ "ok": true, "note": "技能已保存,下一回合起生效" })).into_response()
 }
 
@@ -81,17 +72,12 @@ pub async fn skills_delete(
     AxumPath(id): AxumPath<String>,
 ) -> Response {
     let file = skills_file(&cfg);
-    let mut skills = match read_skills(&file) {
-        Ok(s) => s,
-        Err(e) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e),
-    };
+    let mut skills = respond_or_fail!(read_skills(&file), internal);
     let before = skills.len();
     skills.retain(|s| s["skill_id"].as_str() != Some(&id));
     if skills.len() == before {
-        return admin_error(StatusCode::NOT_FOUND, "技能不存在");
+        return not_found("技能不存在");
     }
-    if let Err(e) = write_skills(&file, &skills) {
-        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
-    }
+    respond_or_fail!(write_skills(&file, &skills), internal);
     Json(json!({ "ok": true, "note": "技能已删除" })).into_response()
 }

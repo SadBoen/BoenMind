@@ -308,10 +308,13 @@ name = "bm-cli"
 version = "0.0.16"
 dependencies = [
  "bm-contract",
+ "bm-judge",
+ "bm-persist",
  "clap",
  "dirs",
  "reqwest",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.20",
 ]
 

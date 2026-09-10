@@ -53,7 +53,7 @@ pub async fn debug_turns_set(
     Json(body): Json<serde_json::Value>,
 ) -> Response {
     let Some(on) = body["enabled"].as_bool() else {
-        return super::admin_error(axum::http::StatusCode::BAD_REQUEST, "enabled 必须是布尔值");
+        return super::bad_request("enabled 必须是布尔值");
     };
     cfg.handle.set_turn_debug(on);
     Json(json!({ "ok": true, "enabled": on })).into_response()

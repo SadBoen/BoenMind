@@ -1,8 +1,8 @@
 //! provider 库(config/providers.json):CRUD/连通探针/模型清单 + 当前生效
 //! 模型(config/model.json)+ W6 对话级模型路由重建。
 
-use super::{AdminConfig, admin_error};
-use crate::config_store::ModelConfigStore;
+use super::{AdminConfig, bad_request, by_status, internal, not_found, respond_or_fail};
+use crate::config_store::{ModelConfigStore, valid_base_url, valid_model_key, valid_window_tokens};
 use axum::Json;
 use axum::extract::{Path as AxumPath, State};
 use axum::http::StatusCode;
@@ -92,20 +92,16 @@ fn now_unix_secs() -> u64 {
 
 /// GET /admin/providers/history:软删除墓碑清单(打码投影 + deleted_at)。
 pub async fn providers_history_list(State(cfg): State<AdminConfig>) -> Response {
-    match read_history(&cfg.data_dir) {
-        Ok(list) => {
-            let entries: Vec<Value> = list
-                .iter()
-                .map(|p| {
-                    let mut m = mask_provider(p);
-                    m["deleted_at"] = p["deleted_at"].clone();
-                    m
-                })
-                .collect();
-            Json(json!({ "ok": true, "history": entries })).into_response()
-        }
-        Err(e) => admin_error(e.0, e.1),
-    }
+    let list = respond_or_fail!(read_history(&cfg.data_dir), by_status);
+    let entries: Vec<Value> = list
+        .iter()
+        .map(|p| {
+            let mut m = mask_provider(p);
+            m["deleted_at"] = p["deleted_at"].clone();
+            m
+        })
+        .collect();
+    Json(json!({ "ok": true, "history": entries })).into_response()
 }
 
 /// POST /admin/providers/history/restore {id}:墓碑移回活跃库并重建路由。
@@ -114,36 +110,23 @@ pub async fn providers_restore(
     Json(body): Json<Value>,
 ) -> Response {
     let Some(id) = body["id"].as_str() else {
-        return admin_error(StatusCode::BAD_REQUEST, "id 必须是字符串");
+        return bad_request("id 必须是字符串");
     };
-    let mut history = match read_history(&cfg.data_dir) {
-        Ok(h) => h,
-        Err(e) => return admin_error(e.0, e.1),
-    };
+    let mut history = respond_or_fail!(read_history(&cfg.data_dir), by_status);
     let Some(mut record) = history
         .iter()
         .position(|p| p["id"] == json!(id))
         .map(|pos| history.remove(pos))
     else {
-        return admin_error(
-            StatusCode::NOT_FOUND,
-            format!("历史中不存在 provider '{id}'"),
-        );
+        return not_found(format!("历史中不存在 provider '{id}'"));
     };
     if let Some(obj) = record.as_object_mut() {
         obj.remove("deleted_at"); // 墓碑摘除 = 活跃条目
     }
-    let mut list = match read_providers(&cfg.data_dir) {
-        Ok(l) => l,
-        Err(e) => return admin_error(e.0, e.1),
-    };
+    let mut list = respond_or_fail!(read_providers(&cfg.data_dir), by_status);
     list.push(record.clone());
-    if let Err(e) = write_providers(&cfg.data_dir, &list) {
-        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
-    }
-    if let Err(e) = write_history(&cfg.data_dir, &history) {
-        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
-    }
+    respond_or_fail!(write_providers(&cfg.data_dir, &list), internal);
+    respond_or_fail!(write_history(&cfg.data_dir, &history), internal);
     rebuild_routes(&cfg);
     Json(json!({ "ok": true, "provider": mask_provider(&record) })).into_response()
 }
@@ -174,8 +157,7 @@ fn validate_provider_input(body: &Value) -> Result<(), (StatusCode, String)> {
     if name.is_empty() || name.len() > 100 {
         return bad("name 必须是非空字符串(≤100 字符)");
     }
-    let base = body["baseUrl"].as_str().unwrap_or("");
-    if !(base.len() <= 500 && (base.starts_with("http://") || base.starts_with("https://"))) {
+    if !valid_base_url(body["baseUrl"].as_str().unwrap_or("")) {
         return bad("baseUrl 必须以 http:// 或 https:// 开头(≤500 字符)");
     }
     if body["apiKey"].as_str().is_some_and(|k| k.len() > 4096) {
@@ -186,8 +168,7 @@ fn validate_provider_input(body: &Value) -> Result<(), (StatusCode, String)> {
             return bad("models 至多 50 个");
         }
         for m in models {
-            let id = m.as_str().unwrap_or("");
-            if id.is_empty() || id.len() > 200 {
+            if !valid_model_key(m.as_str().unwrap_or("")) {
                 return bad("models 项必须是非空字符串(≤200 字符)");
             }
         }
@@ -198,8 +179,7 @@ fn validate_provider_input(body: &Value) -> Result<(), (StatusCode, String)> {
             return bad("modelsCommon 至多 50 个");
         }
         for m in common {
-            let id = m.as_str().unwrap_or("");
-            if id.is_empty() || id.len() > 200 {
+            if !valid_model_key(m.as_str().unwrap_or("")) {
                 return bad("modelsCommon 项必须是非空字符串(≤200 字符)");
             }
         }
@@ -221,13 +201,13 @@ fn validate_provider_input(body: &Value) -> Result<(), (StatusCode, String)> {
             return bad("modelWindows 至多 50 条登记");
         }
         for (k, v) in windows {
-            if k.is_empty() || k.len() > 200 {
+            if !valid_model_key(k) {
                 return bad("modelWindows 的模型名必须是非空字符串(≤200 字符)");
             }
             let Some(n) = v.as_u64() else {
                 return bad("modelWindows 值必须是正整数(token 数)");
             };
-            if !(1..=4_000_000).contains(&n) {
+            if !valid_window_tokens(n) {
                 return bad("modelWindows 值超出合理区间(1..=4,000,000 token)");
             }
         }
@@ -317,22 +297,16 @@ pub fn rebuild_routes(cfg: &AdminConfig) {
 // ---- handler:provider CRUD ---------------------------------------------
 
 pub async fn providers_list(State(cfg): State<AdminConfig>) -> Response {
-    let raw_list = match read_providers(&cfg.data_dir) {
-        Ok(l) => l,
-        Err(e) => return admin_error(e.0, e.1),
-    };
+    let raw_list = respond_or_fail!(read_providers(&cfg.data_dir), by_status);
     let list = raw_list.iter().map(mask_provider).collect::<Vec<_>>();
     Json(json!({ "providers": list })).into_response()
 }
 
 pub async fn providers_create(State(cfg): State<AdminConfig>, Json(body): Json<Value>) -> Response {
     if let Err(e) = validate_provider_input(&body) {
-        return admin_error(e.0, e.1);
+        return by_status(e);
     }
-    let mut list = match read_providers(&cfg.data_dir) {
-        Ok(l) => l,
-        Err(e) => return admin_error(e.0, e.1),
-    };
+    let mut list = respond_or_fail!(read_providers(&cfg.data_dir), by_status);
     let record = json!({
         "id": new_provider_id(),
         "name": body["name"],
@@ -344,9 +318,7 @@ pub async fn providers_create(State(cfg): State<AdminConfig>, Json(body): Json<V
         "defaultModel": body["defaultModel"].as_str().unwrap_or(""),
     });
     list.push(record.clone());
-    if let Err(e) = write_providers(&cfg.data_dir, &list) {
-        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
-    }
+    respond_or_fail!(write_providers(&cfg.data_dir, &list), internal);
     rebuild_routes(&cfg);
     Json(json!({ "provider": mask_provider(&record) })).into_response()
 }
@@ -357,14 +329,11 @@ pub async fn providers_update(
     Json(body): Json<Value>,
 ) -> Response {
     if let Err(e) = validate_provider_input(&body) {
-        return admin_error(e.0, e.1);
+        return by_status(e);
     }
-    let mut list = match read_providers(&cfg.data_dir) {
-        Ok(l) => l,
-        Err(e) => return admin_error(e.0, e.1),
-    };
+    let mut list = respond_or_fail!(read_providers(&cfg.data_dir), by_status);
     let Some(pos) = list.iter().position(|p| p["id"] == json!(id)) else {
-        return admin_error(StatusCode::NOT_FOUND, format!("provider '{id}' 不存在"));
+        return not_found(format!("provider '{id}' 不存在"));
     };
     let mut record = list[pos].clone();
     record["name"] = body["name"].clone();
@@ -388,9 +357,7 @@ pub async fn providers_update(
         record["defaultModel"] = json!(dm);
     }
     list[pos] = record.clone();
-    if let Err(e) = write_providers(&cfg.data_dir, &list) {
-        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
-    }
+    respond_or_fail!(write_providers(&cfg.data_dir, &list), internal);
     rebuild_routes(&cfg);
     Json(json!({ "provider": mask_provider(&record) })).into_response()
 }
@@ -399,10 +366,7 @@ pub async fn providers_delete(
     State(cfg): State<AdminConfig>,
     AxumPath(id): AxumPath<String>,
 ) -> Response {
-    let mut list = match read_providers(&cfg.data_dir) {
-        Ok(l) => l,
-        Err(e) => return admin_error(e.0, e.1),
-    };
+    let mut list = respond_or_fail!(read_providers(&cfg.data_dir), by_status);
     // issue #13:软删除——被删条目打 deleted_at 墓碑移入历史文件,可查可恢复
     let removed: Vec<Value> = list
         .iter()
@@ -416,21 +380,14 @@ pub async fn providers_delete(
     let before = list.len();
     list.retain(|p| p["id"] != json!(id));
     if list.len() == before {
-        return admin_error(StatusCode::NOT_FOUND, format!("provider '{id}' 不存在"));
+        return not_found(format!("provider '{id}' 不存在"));
     }
-    if let Err(e) = write_providers(&cfg.data_dir, &list) {
-        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
-    }
+    respond_or_fail!(write_providers(&cfg.data_dir, &list), internal);
     // 活跃文件已写成功后再动历史:历史失败只报错不回滚(下次删除续写,
     // 墓碑丢失 = 退化为旧日硬删除,不比现状差)
-    let mut history = match read_history(&cfg.data_dir) {
-        Ok(h) => h,
-        Err(e) => return admin_error(e.0, e.1),
-    };
+    let mut history = respond_or_fail!(read_history(&cfg.data_dir), by_status);
     history.extend(removed);
-    if let Err(e) = write_history(&cfg.data_dir, &history) {
-        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
-    }
+    respond_or_fail!(write_history(&cfg.data_dir, &history), internal);
     rebuild_routes(&cfg);
     Json(json!({ "ok": true })).into_response()
 }
@@ -440,27 +397,18 @@ pub async fn providers_delete(
 /// UA 自报(opencode zen 网关套 Cloudflare,无 UA 拒收——W1 已踩实)。
 pub async fn providers_probe(State(_cfg): State<AdminConfig>, Json(body): Json<Value>) -> Response {
     let Some(base) = body["baseUrl"].as_str().map(|s| s.trim_end_matches('/')) else {
-        return admin_error(StatusCode::BAD_REQUEST, "baseUrl 必须是字符串");
+        return bad_request("baseUrl 必须是字符串");
     };
-    if !(base.len() <= 500 && (base.starts_with("http://") || base.starts_with("https://"))) {
-        return admin_error(
-            StatusCode::BAD_REQUEST,
-            "baseUrl 必须以 http:// 或 https:// 开头",
-        );
+    if !valid_base_url(base) {
+        return bad_request("baseUrl 必须以 http:// 或 https:// 开头");
     }
-    let client = match reqwest::Client::builder()
-        .user_agent(concat!("boenmind-server/", env!("CARGO_PKG_VERSION")))
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            return admin_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("HTTP 客户端构建失败: {e}"),
-            );
-        }
-    };
+    let client = respond_or_fail!(
+        reqwest::Client::builder()
+            .user_agent(concat!("boenmind-server/", env!("CARGO_PKG_VERSION")))
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .map_err(|e| internal(format!("HTTP 客户端构建失败: {e}")))
+    );
     let mut req = client.get(format!("{base}/models"));
     if let Some(k) = body["apiKey"].as_str().filter(|s| !s.is_empty()) {
         req = req.bearer_auth(k);
@@ -509,14 +457,11 @@ pub async fn model_active_get(State(cfg): State<AdminConfig>) -> Response {
 /// 「设为当前」:把选中 provider 落入 config/model.json(重启生效)。
 pub async fn model_active_set(State(cfg): State<AdminConfig>, Json(body): Json<Value>) -> Response {
     let Some(id) = body["providerId"].as_str() else {
-        return admin_error(StatusCode::BAD_REQUEST, "providerId 必须是字符串");
+        return bad_request("providerId 必须是字符串");
     };
-    let list = match read_providers(&cfg.data_dir) {
-        Ok(l) => l,
-        Err(e) => return admin_error(e.0, e.1),
-    };
+    let list = respond_or_fail!(read_providers(&cfg.data_dir), by_status);
     let Some(p) = list.iter().find(|p| p["id"] == json!(id)) else {
-        return admin_error(StatusCode::NOT_FOUND, format!("provider '{id}' 不存在"));
+        return not_found(format!("provider '{id}' 不存在"));
     };
     let model_id = body["modelId"]
         .as_str()
@@ -530,10 +475,7 @@ pub async fn model_active_set(State(cfg): State<AdminConfig>, Json(body): Json<V
                 .map(|s| s.to_string())
         });
     let Some(model_id) = model_id else {
-        return admin_error(
-            StatusCode::BAD_REQUEST,
-            "该 provider 没有可用模型(先拉取模型清单)",
-        );
+        return bad_request("该 provider 没有可用模型(先拉取模型清单)");
     };
     let store = ModelConfigStore::new(&cfg.data_dir);
     let mut values = json!({
@@ -563,6 +505,6 @@ pub async fn model_active_set(State(cfg): State<AdminConfig>, Json(body): Json<V
     }
     match store.set(&values) {
         Ok(_) => Json(json!({ "ok": true, "restartRequired": true, "note": "已写入 config/model.json,重启服务器后生效" })).into_response(),
-        Err(e) => admin_error(StatusCode::BAD_REQUEST, format!("{e}")),
+        Err(e) => bad_request(format!("{e}")),
     }
 }

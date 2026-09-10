@@ -4,11 +4,10 @@
 
 use axum::Json;
 use axum::extract::{Path as AxumPath, State};
-use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
 
-use crate::webadmin::{AdminConfig, admin_error};
+use crate::webadmin::{AdminConfig, bad_request, conflict, internal, not_found, respond_or_fail};
 
 /// 工作区注册表文件(config/workspaces.json)。
 fn workspaces_file(cfg: &AdminConfig) -> std::path::PathBuf {
@@ -101,13 +100,8 @@ fn ensure_seeded(cfg: &AdminConfig) -> Result<(), String> {
 
 /// GET /admin/workspaces
 pub async fn workspaces_list(State(cfg): State<AdminConfig>) -> Response {
-    if let Err(e) = ensure_seeded(&cfg) {
-        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
-    }
-    let list = match read_registry(&cfg) {
-        Ok(l) => l,
-        Err(e) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e),
-    };
+    respond_or_fail!(ensure_seeded(&cfg), internal);
+    let list = respond_or_fail!(read_registry(&cfg), internal);
     let list: Vec<Value> = list.iter().map(entry_with_status).collect();
     Json(json!({ "workspaces": list })).into_response()
 }
@@ -117,32 +111,25 @@ pub async fn workspaces_create(
     State(cfg): State<AdminConfig>,
     Json(body): Json<Value>,
 ) -> Response {
-    if let Err(e) = ensure_seeded(&cfg) {
-        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
-    }
+    respond_or_fail!(ensure_seeded(&cfg), internal);
     let name = body["name"].as_str().unwrap_or("").trim().to_string();
     if name.is_empty() || name.len() > 100 {
-        return admin_error(StatusCode::BAD_REQUEST, "名称必填且 ≤100 字符");
+        return bad_request("名称必填且 ≤100 字符");
     }
-    let path = match validate_dir(body["path"].as_str().unwrap_or("")) {
-        Ok(p) => p,
-        Err(e) => return admin_error(StatusCode::BAD_REQUEST, e),
-    };
-    let mut list = match read_registry(&cfg) {
-        Ok(l) => l,
-        Err(e) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e),
-    };
+    let path = respond_or_fail!(
+        validate_dir(body["path"].as_str().unwrap_or("")),
+        bad_request
+    );
+    let mut list = respond_or_fail!(read_registry(&cfg), internal);
     if list
         .iter()
         .any(|e| e["path"].as_str() == Some(path.as_str()))
     {
-        return admin_error(StatusCode::CONFLICT, "该路径已登记");
+        return conflict("该路径已登记");
     }
     let entry = json!({ "id": new_workspace_id(), "name": name, "path": path });
     list.push(entry.clone());
-    if let Err(e) = write_registry(&cfg, &list) {
-        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
-    }
+    respond_or_fail!(write_registry(&cfg, &list), internal);
     Json(json!({ "workspace": entry_with_status(&entry) })).into_response()
 }
 
@@ -152,39 +139,31 @@ pub async fn workspaces_update(
     AxumPath(id): AxumPath<String>,
     Json(body): Json<Value>,
 ) -> Response {
-    let mut list = match read_registry(&cfg) {
-        Ok(l) => l,
-        Err(e) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e),
-    };
+    let mut list = respond_or_fail!(read_registry(&cfg), internal);
     let Some(pos) = list.iter().position(|e| e["id"] == json!(id)) else {
-        return admin_error(StatusCode::NOT_FOUND, format!("工作区「{id}」不存在"));
+        return not_found(format!("工作区「{id}」不存在"));
     };
     let mut entry = list[pos].clone();
     if let Some(n) = body["name"].as_str() {
         let n = n.trim();
         if n.is_empty() || n.len() > 100 {
-            return admin_error(StatusCode::BAD_REQUEST, "名称必填且 ≤100 字符");
+            return bad_request("名称必填且 ≤100 字符");
         }
         entry["name"] = json!(n);
     }
     if let Some(p) = body["path"].as_str() {
-        let canon = match validate_dir(p) {
-            Ok(c) => c,
-            Err(e) => return admin_error(StatusCode::BAD_REQUEST, e),
-        };
+        let canon = respond_or_fail!(validate_dir(p), bad_request);
         if list
             .iter()
             .enumerate()
             .any(|(i, e)| i != pos && e["path"].as_str() == Some(canon.as_str()))
         {
-            return admin_error(StatusCode::CONFLICT, "该路径已登记");
+            return conflict("该路径已登记");
         }
         entry["path"] = json!(canon);
     }
     list[pos] = entry.clone();
-    if let Err(e) = write_registry(&cfg, &list) {
-        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
-    }
+    respond_or_fail!(write_registry(&cfg, &list), internal);
     Json(json!({ "workspace": entry_with_status(&entry) })).into_response()
 }
 
@@ -194,20 +173,15 @@ pub async fn workspaces_delete(
     AxumPath(id): AxumPath<String>,
 ) -> Response {
     if id == bm_core::workspace::DEFAULT_WORKSPACE_ID {
-        return admin_error(StatusCode::BAD_REQUEST, "默认工作区不可删除");
+        return bad_request("默认工作区不可删除");
     }
-    let mut list = match read_registry(&cfg) {
-        Ok(l) => l,
-        Err(e) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e),
-    };
+    let mut list = respond_or_fail!(read_registry(&cfg), internal);
     let before = list.len();
     list.retain(|e| e["id"] != json!(id));
     if list.len() == before {
-        return admin_error(StatusCode::NOT_FOUND, format!("工作区「{id}」不存在"));
+        return not_found(format!("工作区「{id}」不存在"));
     }
-    if let Err(e) = write_registry(&cfg, &list) {
-        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
-    }
+    respond_or_fail!(write_registry(&cfg, &list), internal);
     Json(json!({ "ok": true })).into_response()
 }
 
@@ -217,12 +191,9 @@ pub async fn workspaces_check(
     State(cfg): State<AdminConfig>,
     AxumPath(id): AxumPath<String>,
 ) -> Response {
-    let list = match read_registry(&cfg) {
-        Ok(l) => l,
-        Err(e) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e),
-    };
+    let list = respond_or_fail!(read_registry(&cfg), internal);
     let Some(entry) = list.iter().find(|e| e["id"] == json!(id)) else {
-        return admin_error(StatusCode::NOT_FOUND, format!("工作区「{id}」不存在"));
+        return not_found(format!("工作区「{id}」不存在"));
     };
     match validate_dir(entry["path"].as_str().unwrap_or("")) {
         Ok(canon) => Json(json!({ "ok": true, "path": canon })).into_response(),

@@ -1,7 +1,10 @@
 //! 工作区文件浏览(X-01 先例:组件白名单 + 拒链 + realpath 包含)与
 //! 全盘目录浏览(工作目录选择器)/改名/下载/删除/新建目录。
 
-use super::{AdminConfig, admin_error};
+use super::{
+    AdminConfig, admin_error, bad_request, by_status, conflict, internal, not_found,
+    respond_or_fail,
+};
 use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
@@ -53,23 +56,14 @@ pub struct FsPathParams {
 }
 
 pub async fn fs_list(State(cfg): State<AdminConfig>, Query(p): Query<FsPathParams>) -> Response {
-    let dir = match safe_resolve(&cfg.workspace_root, &p.path) {
-        Ok(d) => d,
-        Err(e) => return admin_error(StatusCode::BAD_REQUEST, e),
-    };
+    let dir = respond_or_fail!(safe_resolve(&cfg.workspace_root, &p.path), bad_request);
     if !dir.is_dir() {
-        return admin_error(StatusCode::BAD_REQUEST, "目标不是目录");
+        return bad_request("目标不是目录");
     }
     let mut entries = Vec::new();
-    let rd = match std::fs::read_dir(&dir) {
-        Ok(rd) => rd,
-        Err(e) => {
-            return admin_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("读取目录失败: {e}"),
-            );
-        }
-    };
+    let rd = respond_or_fail!(
+        std::fs::read_dir(&dir).map_err(|e| internal(format!("读取目录失败: {e}")))
+    );
     for entry in rd.flatten() {
         let Ok(meta) = entry.metadata() else { continue };
         // 目录内容里的符号链接不跟随:显示为 file 但不带 size(读取会被拒链)
@@ -100,15 +94,12 @@ pub async fn fs_list(State(cfg): State<AdminConfig>, Query(p): Query<FsPathParam
 }
 
 pub async fn fs_file(State(cfg): State<AdminConfig>, Query(p): Query<FsPathParams>) -> Response {
-    let file = match safe_resolve(&cfg.workspace_root, &p.path) {
-        Ok(f) => f,
-        Err(e) => return admin_error(StatusCode::BAD_REQUEST, e),
-    };
+    let file = respond_or_fail!(safe_resolve(&cfg.workspace_root, &p.path), bad_request);
     let Ok(meta) = std::fs::metadata(&file) else {
-        return admin_error(StatusCode::NOT_FOUND, "文件不存在");
+        return not_found("文件不存在");
     };
     if meta.is_dir() {
-        return admin_error(StatusCode::BAD_REQUEST, "目标是目录,请先展开目录树");
+        return bad_request("目标是目录,请先展开目录树");
     }
     if meta.len() > cfg.limits.get().fs_preview_max_bytes {
         return admin_error(
@@ -134,7 +125,7 @@ pub async fn fs_file(State(cfg): State<AdminConfig>, Query(p): Query<FsPathParam
                 "二进制文件不支持预览(仅 UTF-8 文本)",
             ),
         },
-        Err(e) => admin_error(StatusCode::INTERNAL_SERVER_ERROR, format!("读取失败: {e}")),
+        Err(e) => internal(format!("读取失败: {e}")),
     }
 }
 
@@ -162,29 +153,20 @@ fn validate_entry_name(
 
 pub async fn fs_rename(State(cfg): State<AdminConfig>, Json(body): Json<Value>) -> Response {
     let Some(path) = body["path"].as_str() else {
-        return admin_error(StatusCode::BAD_REQUEST, "path 必须是字符串");
+        return bad_request("path 必须是字符串");
     };
-    let target = match safe_resolve(&cfg.workspace_root, path) {
-        Ok(t) => t,
-        Err(e) => return admin_error(StatusCode::BAD_REQUEST, e),
-    };
-    let new_name = match validate_entry_name(&body, "文件") {
-        Ok(n) => n,
-        Err((code, msg)) => return admin_error(code, msg),
-    };
+    let target = respond_or_fail!(safe_resolve(&cfg.workspace_root, path), bad_request);
+    let new_name = respond_or_fail!(validate_entry_name(&body, "文件"), by_status);
     let Some(parent) = target.parent() else {
-        return admin_error(StatusCode::BAD_REQUEST, "目标无父目录");
+        return bad_request("目标无父目录");
     };
     let new_path = parent.join(&new_name);
     if new_path.exists() {
-        return admin_error(StatusCode::CONFLICT, format!("「{new_name}」已存在"));
+        return conflict(format!("「{new_name}」已存在"));
     }
     match std::fs::rename(&target, &new_path) {
         Ok(_) => Json(json!({ "ok": true })).into_response(),
-        Err(e) => admin_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("重命名失败: {e}"),
-        ),
+        Err(e) => internal(format!("重命名失败: {e}")),
     }
 }
 
@@ -194,12 +176,9 @@ pub async fn fs_download(
     State(cfg): State<AdminConfig>,
     Query(p): Query<FsPathParams>,
 ) -> Response {
-    let target = match safe_resolve(&cfg.workspace_root, &p.path) {
-        Ok(t) => t,
-        Err(e) => return admin_error(StatusCode::BAD_REQUEST, e),
-    };
+    let target = respond_or_fail!(safe_resolve(&cfg.workspace_root, &p.path), bad_request);
     let Ok(meta) = std::fs::metadata(&target) else {
-        return admin_error(StatusCode::NOT_FOUND, "路径不存在");
+        return not_found("路径不存在");
     };
     let download_name = if meta.is_dir() {
         target
@@ -218,16 +197,14 @@ pub async fn fs_download(
         "application/octet-stream"
     };
     let bytes = if meta.is_dir() {
-        match zip_dir(
-            &target,
-            cfg.limits.get().fs_download_max_entries,
-            cfg.limits.get().fs_download_max_bytes,
-        ) {
-            Ok(b) => b,
-            Err(e) => {
-                return admin_error(StatusCode::INTERNAL_SERVER_ERROR, format!("打包失败: {e}"));
-            }
-        }
+        respond_or_fail!(
+            zip_dir(
+                &target,
+                cfg.limits.get().fs_download_max_entries,
+                cfg.limits.get().fs_download_max_bytes,
+            ),
+            |e| internal(format!("打包失败: {e}"))
+        )
     } else {
         if meta.len() > cfg.limits.get().fs_download_max_bytes {
             return admin_error(
@@ -238,12 +215,7 @@ pub async fn fs_download(
                 ),
             );
         }
-        match std::fs::read(&target) {
-            Ok(b) => b,
-            Err(e) => {
-                return admin_error(StatusCode::INTERNAL_SERVER_ERROR, format!("读取失败: {e}"));
-            }
-        }
+        respond_or_fail!(std::fs::read(&target).map_err(|e| internal(format!("读取失败: {e}"))))
     };
     // Content-Disposition:ASCII 兜底 + RFC 5987 UTF-8(中文文件名)
     let ascii_name: String = download_name
@@ -253,7 +225,7 @@ pub async fn fs_download(
     let mut resp = (StatusCode::OK, bytes).into_response();
     if let Ok(v) = axum::http::HeaderValue::from_str(&format!(
         "attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{}",
-        utf8_percent_encode(&download_name)
+        crate::percent_encode(&download_name)
     )) {
         resp.headers_mut()
             .insert(axum::http::header::CONTENT_DISPOSITION, v);
@@ -265,33 +237,21 @@ pub async fn fs_download(
     resp
 }
 
-fn utf8_percent_encode(s: &str) -> String {
-    let mut out = String::new();
-    for b in s.as_bytes() {
-        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
-            out.push(*b as char);
-        } else {
-            out.push_str(&format!("%{b:02X}"));
-        }
-    }
-    out
-}
-
 /// 2026-09-07 目录树批次:删除(工作区文件树右键,支持多选批量)。
 /// 仅工作区内:逐条 safe_resolve 防逃逸(天然拒 `..`/绝对路径/符号链接);
 /// 目录整棵递归删;永久删除不进回收站,防误删由前端确认弹窗承担。
 pub async fn fs_delete(State(cfg): State<AdminConfig>, Json(body): Json<Value>) -> Response {
     let Some(paths) = body["paths"].as_array() else {
-        return admin_error(StatusCode::BAD_REQUEST, "paths 必须是字符串数组");
+        return bad_request("paths 必须是字符串数组");
     };
     if paths.is_empty() {
-        return admin_error(StatusCode::BAD_REQUEST, "paths 不能为空");
+        return bad_request("paths 不能为空");
     }
     if paths.len() > cfg.limits.get().fs_delete_batch_max {
-        return admin_error(
-            StatusCode::BAD_REQUEST,
-            format!("单次最多删除 {} 项", cfg.limits.get().fs_delete_batch_max),
-        );
+        return bad_request(format!(
+            "单次最多删除 {} 项",
+            cfg.limits.get().fs_delete_batch_max
+        ));
     }
     // 规范化去重 + 祖孙归并:多选可能同时含目录与其子项(如 ["a","a/b.txt"]),
     // 父目录整棵删后子项必然 NotFound;先剔除被父路径覆盖的冗余条目并合并
@@ -394,14 +354,13 @@ pub async fn fs_browse(State(cfg): State<AdminConfig>, Query(p): Query<FsPathPar
     }
     let path = std::path::Path::new(&raw);
     if !path.exists() {
-        return admin_error(StatusCode::BAD_REQUEST, format!("路径不存在: {raw}"));
+        return bad_request(format!("路径不存在: {raw}"));
     }
-    let canon = match std::fs::canonicalize(path) {
-        Ok(c) => c,
-        Err(e) => return admin_error(StatusCode::BAD_REQUEST, format!("路径解析失败: {e}")),
-    };
+    let canon = respond_or_fail!(
+        std::fs::canonicalize(path).map_err(|e| bad_request(format!("路径解析失败: {e}")))
+    );
     if !canon.is_dir() {
-        return admin_error(StatusCode::BAD_REQUEST, "目标不是目录");
+        return bad_request("目标不是目录");
     }
     let pretty =
         |p: &std::path::Path| crate::workspace_admin::pretty_normalized(p.display().to_string());
@@ -490,29 +449,25 @@ fn parent_json(canon: &std::path::Path) -> Value {
 /// 写例外——只建空目录、单级、零内容;name 校验与 fs_rename 同规;门户墙保护。
 pub async fn fs_mkdir(State(_cfg): State<AdminConfig>, Json(body): Json<Value>) -> Response {
     let Some(parent) = body["parent"].as_str().map(|s| s.trim()) else {
-        return admin_error(StatusCode::BAD_REQUEST, "parent 必须是字符串");
+        return bad_request("parent 必须是字符串");
     };
     if parent.is_empty() {
-        return admin_error(StatusCode::BAD_REQUEST, "请先进入某个盘符或目录再新建");
+        return bad_request("请先进入某个盘符或目录再新建");
     }
-    let name = match validate_entry_name(&body, "目录") {
-        Ok(n) => n,
-        Err((code, msg)) => return admin_error(code, msg),
-    };
+    let name = respond_or_fail!(validate_entry_name(&body, "目录"), by_status);
     let parent_path = std::path::Path::new(parent);
     if !parent_path.exists() {
-        return admin_error(StatusCode::BAD_REQUEST, format!("父目录不存在: {parent}"));
+        return bad_request(format!("父目录不存在: {parent}"));
     }
-    let canon_parent = match std::fs::canonicalize(parent_path) {
-        Ok(c) => c,
-        Err(e) => return admin_error(StatusCode::BAD_REQUEST, format!("父目录解析失败: {e}")),
-    };
+    let canon_parent = respond_or_fail!(
+        std::fs::canonicalize(parent_path).map_err(|e| bad_request(format!("父目录解析失败: {e}")))
+    );
     if !canon_parent.is_dir() {
-        return admin_error(StatusCode::BAD_REQUEST, "父路径不是目录");
+        return bad_request("父路径不是目录");
     }
     let target = canon_parent.join(&name);
     if target.exists() {
-        return admin_error(StatusCode::CONFLICT, format!("「{name}」已存在"));
+        return conflict(format!("「{name}」已存在"));
     }
     match std::fs::create_dir(&target) {
         Ok(_) => Json(json!({
@@ -520,10 +475,7 @@ pub async fn fs_mkdir(State(_cfg): State<AdminConfig>, Json(body): Json<Value>) 
             "path": crate::workspace_admin::pretty_normalized(target.display().to_string()),
         }))
         .into_response(),
-        Err(e) => admin_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("新建目录失败: {e}"),
-        ),
+        Err(e) => internal(format!("新建目录失败: {e}")),
     }
 }
 

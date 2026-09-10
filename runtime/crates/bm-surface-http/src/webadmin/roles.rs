@@ -1,9 +1,8 @@
 //! 多角色管理(W4b;config/roles.json,ADR-0012 口径)。
 
-use super::{AdminConfig, admin_error};
+use super::{AdminConfig, bad_request, internal, not_found, respond_or_fail};
 use axum::Json;
 use axum::extract::{Path as AxumPath, State};
-use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -86,10 +85,7 @@ pub fn write_roles_doc(file: &std::path::Path, doc: &RoleConfigDoc) -> Result<()
 /// 读全部角色与激活角色 id(设置页与聊天页下拉)。
 pub async fn roles_get(State(cfg): State<AdminConfig>) -> Response {
     let file = roles_file(&cfg);
-    let doc = match read_roles_doc(&file) {
-        Ok(d) => d,
-        Err(e) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e),
-    };
+    let doc = respond_or_fail!(read_roles_doc(&file), internal);
     Json(json!({
         "ok": true,
         "active_id": doc.active_id,
@@ -101,10 +97,7 @@ pub async fn roles_get(State(cfg): State<AdminConfig>) -> Response {
 /// 保存单角色(创建或更新,向后兼容 roles_set 以及多角色编辑)。
 pub async fn roles_set(State(cfg): State<AdminConfig>, Json(body): Json<Value>) -> Response {
     let file = roles_file(&cfg);
-    let mut doc = match read_roles_doc(&file) {
-        Ok(d) => d,
-        Err(e) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e),
-    };
+    let mut doc = respond_or_fail!(read_roles_doc(&file), internal);
 
     // 如果传递了全量 roles 数组，则全量更新
     if let Some(roles_arr) = body["roles"].as_array() {
@@ -113,7 +106,7 @@ pub async fn roles_set(State(cfg): State<AdminConfig>, Json(body): Json<Value>) 
             .filter_map(|r| serde_json::from_value(r.clone()).ok())
             .collect();
         if roles.is_empty() {
-            return admin_error(StatusCode::BAD_REQUEST, "角色列表不能为空");
+            return bad_request("角色列表不能为空");
         }
         let active_id = body["active_id"]
             .as_str()
@@ -161,9 +154,7 @@ pub async fn roles_set(State(cfg): State<AdminConfig>, Json(body): Json<Value>) 
         }
     }
 
-    if let Err(e) = write_roles_doc(&file, &doc) {
-        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
-    }
+    respond_or_fail!(write_roles_doc(&file, &doc), internal);
     Json(json!({ "ok": true, "note": "已保存,下一回合起生效", "active_id": doc.active_id }))
         .into_response()
 }
@@ -174,24 +165,19 @@ pub async fn roles_delete(
     AxumPath(id): AxumPath<String>,
 ) -> Response {
     let file = roles_file(&cfg);
-    let mut doc = match read_roles_doc(&file) {
-        Ok(d) => d,
-        Err(e) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e),
-    };
+    let mut doc = respond_or_fail!(read_roles_doc(&file), internal);
     if doc.roles.len() <= 1 {
-        return admin_error(StatusCode::BAD_REQUEST, "至少需要保留一个角色");
+        return bad_request("至少需要保留一个角色");
     }
     let orig_len = doc.roles.len();
     doc.roles.retain(|r| r.id != id);
     if doc.roles.len() == orig_len {
-        return admin_error(StatusCode::NOT_FOUND, "指定角色不存在");
+        return not_found("指定角色不存在");
     }
     if doc.active_id == id {
         doc.active_id = doc.roles[0].id.clone();
     }
-    if let Err(e) = write_roles_doc(&file, &doc) {
-        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
-    }
+    respond_or_fail!(write_roles_doc(&file, &doc), internal);
     Json(json!({ "ok": true, "note": "角色已删除", "active_id": doc.active_id })).into_response()
 }
 
@@ -201,17 +187,12 @@ pub async fn roles_set_active(
     AxumPath(id): AxumPath<String>,
 ) -> Response {
     let file = roles_file(&cfg);
-    let mut doc = match read_roles_doc(&file) {
-        Ok(d) => d,
-        Err(e) => return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e),
-    };
+    let mut doc = respond_or_fail!(read_roles_doc(&file), internal);
     if !doc.roles.iter().any(|r| r.id == id) {
-        return admin_error(StatusCode::NOT_FOUND, "指定角色不存在");
+        return not_found("指定角色不存在");
     }
     doc.active_id = id;
-    if let Err(e) = write_roles_doc(&file, &doc) {
-        return admin_error(StatusCode::INTERNAL_SERVER_ERROR, e);
-    }
+    respond_or_fail!(write_roles_doc(&file, &doc), internal);
     Json(json!({ "ok": true, "note": "已设为默认角色", "active_id": doc.active_id }))
         .into_response()
 }

@@ -1,10 +1,9 @@
 //! 上下文透视/检索与会话历史回放/删除(W5 透视 + W9 检索 + 2026-09-06
 //! 会话管理批;数据源 context-log.jsonl)。
 
-use super::{AdminConfig, admin_error};
+use super::{AdminConfig, bad_request, not_found, respond_or_fail};
 use axum::Json;
 use axum::extract::{Query, State};
-use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use bm_contract::ids::{IdGen, UlidIdGen};
 use serde_json::{Value, json};
@@ -42,7 +41,7 @@ pub async fn context_search(
         .unwrap_or(50)
         .clamp(1, cfg.limits.get().context_search_max_limit);
     if q.trim().is_empty() {
-        return admin_error(StatusCode::BAD_REQUEST, "缺少 q");
+        return bad_request("缺少 q");
     }
     let path = cfg.data_dir.join("context-log.jsonl");
     let needle = q.to_lowercase();
@@ -110,10 +109,9 @@ pub(crate) async fn session_delete(
         .session_delete(
             UlidIdGen.next_id("req"),
             bm_contract::wire::SessionDeleteParams {
-                session_id: match bm_contract::ids::BmId::parse(&session_id) {
-                    Ok(id) => id,
-                    Err(_) => return admin_error(StatusCode::BAD_REQUEST, "非法会话 id"),
-                },
+                session_id: respond_or_fail!(bm_contract::ids::BmId::parse(&session_id), |_| {
+                    bad_request("非法会话 id")
+                }),
             },
         )
         .await
@@ -125,7 +123,7 @@ pub(crate) async fn session_delete(
             "purged_lines": r.purged_lines,
         }))
         .into_response(),
-        Err(e) => admin_error(StatusCode::BAD_REQUEST, e.to_wire().message),
+        Err(e) => bad_request(e.to_wire().message),
     }
 }
 
@@ -143,7 +141,7 @@ pub(crate) async fn session_mode_get(
             "permission_mode": s.permission_mode,
         }))
         .into_response(),
-        None => admin_error(StatusCode::NOT_FOUND, "未知会话"),
+        None => not_found("未知会话"),
     }
 }
 
@@ -156,17 +154,13 @@ pub(crate) async fn session_mode_set(
     axum::extract::Path(session_id): axum::extract::Path<String>,
     Json(body): Json<Value>,
 ) -> Response {
-    let mode =
-        match bm_contract::wire::PermissionMode::from_wire(body["mode"].as_str().unwrap_or("")) {
-            Some(m) => m,
-            None => {
-                return admin_error(StatusCode::BAD_REQUEST, "非法 mode:必须为 ask|plan|yolo");
-            }
-        };
-    let sid = match bm_contract::ids::BmId::parse(&session_id) {
-        Ok(id) => id,
-        Err(_) => return admin_error(StatusCode::BAD_REQUEST, "非法会话 id"),
-    };
+    let mode = respond_or_fail!(
+        bm_contract::wire::PermissionMode::from_wire(body["mode"].as_str().unwrap_or(""))
+            .ok_or_else(|| bad_request("非法 mode:必须为 ask|plan|yolo"))
+    );
+    let sid = respond_or_fail!(bm_contract::ids::BmId::parse(&session_id), |_| bad_request(
+        "非法会话 id"
+    ));
     match cfg.handle.session_set_mode(sid, mode).await {
         Ok(_) => Json(json!({
             "ok": true,
@@ -174,7 +168,7 @@ pub(crate) async fn session_mode_set(
             "permission_mode": mode.as_str(),
         }))
         .into_response(),
-        Err(e) => admin_error(StatusCode::BAD_REQUEST, e.to_wire().message),
+        Err(e) => bad_request(e.to_wire().message),
     }
 }
 
@@ -184,10 +178,9 @@ pub(crate) async fn operation_cancel(
     State(cfg): State<AdminConfig>,
     axum::extract::Path(operation_id): axum::extract::Path<String>,
 ) -> Response {
-    let op_id = match bm_contract::ids::BmId::parse(&operation_id) {
-        Ok(id) => id,
-        Err(_) => return admin_error(StatusCode::BAD_REQUEST, "非法 operation_id"),
-    };
+    let op_id = respond_or_fail!(bm_contract::ids::BmId::parse(&operation_id), |_| {
+        bad_request("非法 operation_id")
+    });
     match cfg.handle.operation_cancel(op_id).await {
         Ok(r) => Json(json!({
             "ok": true,
@@ -195,7 +188,7 @@ pub(crate) async fn operation_cancel(
             "operation_id": r.operation_id.as_str(),
         }))
         .into_response(),
-        Err(e) => admin_error(StatusCode::BAD_REQUEST, e.to_wire().message),
+        Err(e) => bad_request(e.to_wire().message),
     }
 }
 

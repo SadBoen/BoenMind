@@ -108,6 +108,53 @@ pub(crate) fn admin_error(status: StatusCode, message: impl Into<String>) -> Res
         .into_response()
 }
 
+// 常见状态的快捷构造:handler 里把「match {Ok.., Err(e) => return admin_error(..)}
+// 四行舞步」塌缩成 `f().map_err(internal_z)?`(? 靠 Response: From<Response> 直达)。
+pub(crate) fn bad_request(msg: impl Into<String>) -> Response {
+    admin_error(StatusCode::BAD_REQUEST, msg)
+}
+
+pub(crate) fn not_found(msg: impl Into<String>) -> Response {
+    admin_error(StatusCode::NOT_FOUND, msg)
+}
+
+pub(crate) fn conflict(msg: impl Into<String>) -> Response {
+    admin_error(StatusCode::CONFLICT, msg)
+}
+
+pub(crate) fn internal(msg: impl Into<String>) -> Response {
+    admin_error(StatusCode::INTERNAL_SERVER_ERROR, msg)
+}
+
+pub(crate) fn bad_gateway(msg: impl Into<String>) -> Response {
+    admin_error(StatusCode::BAD_GATEWAY, msg)
+}
+
+/// (StatusCode, String) 元组错误的展开伙伴(读库类 helper 的错误形态)。
+pub(crate) fn by_status((status, msg): (StatusCode, String)) -> Response {
+    admin_error(status, msg)
+}
+
+/// `?` 在返回 `Response` 的 handler 里不可用(Response 无 FromResidual);
+/// 本宏是其等值物:`Ok(v) => v`,`Err(e) => return $f(e)`(省 $f 时 = 原样返回
+/// Err 里的 Response)。用于把「match {Ok.., Err(e) => return ..} 四行舞步」
+/// 塌缩成一行。
+macro_rules! respond_or_fail {
+    ($e:expr) => {
+        match $e {
+            Ok(v) => v,
+            Err(e) => return e,
+        }
+    };
+    ($e:expr, $f:expr) => {
+        match $e {
+            Ok(v) => v,
+            Err(e) => return $f(e),
+        }
+    };
+}
+pub(crate) use respond_or_fail;
+
 /// 管理面子路由(挂载于 /admin;公开 = W1 同款已登记欠账)。
 pub fn admin_routes(cfg: AdminConfig) -> axum::Router {
     use approvals::*;

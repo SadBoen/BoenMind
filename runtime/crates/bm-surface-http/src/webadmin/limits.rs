@@ -1,9 +1,8 @@
 //! W10 运行时限制面(ADR-0024):逐键读 + 全量快照写(热生效)。
 
-use super::{AdminConfig, admin_error};
+use super::{AdminConfig, internal, respond_or_fail};
 use axum::Json;
 use axum::extract::State;
-use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
 
@@ -64,21 +63,16 @@ pub async fn limits_put(State(cfg): State<AdminConfig>, Json(body): Json<Value>)
     let new_limits = bm_core::limits::Limits::from_file_value(&Value::Object(merged.clone()));
     // 原子写(与 fs.write/配置面同款语义:临时文件+rename,崩溃不留半截)
     let path = cfg.data_dir.join("config").join("limits.json");
-    if let Some(parent) = path.parent()
-        && let Err(e) = std::fs::create_dir_all(parent)
-    {
-        return admin_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("建配置目录失败: {e}"),
+    if let Some(parent) = path.parent() {
+        respond_or_fail!(
+            std::fs::create_dir_all(parent).map_err(|e| internal(format!("建配置目录失败: {e}")))
         );
     }
     let pretty = serde_json::to_string_pretty(&new_limits.to_file_value()).unwrap_or_default();
-    if let Err(e) = bm_core::ports::persist::atomic_write(&path, pretty.as_bytes()) {
-        return admin_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("写 limits.json 失败: {e}"),
-        );
-    }
+    respond_or_fail!(
+        bm_core::ports::persist::atomic_write(&path, pretty.as_bytes())
+            .map_err(|e| internal(format!("写 limits.json 失败: {e}")))
+    );
     cfg.limits.set(new_limits);
     if let Ok(mut src) = cfg.limits_sources.lock() {
         src.file_raw = Some(Value::Object(merged));
