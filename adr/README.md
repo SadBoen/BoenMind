@@ -39,6 +39,7 @@
 | [ADR-0029](ADR-0029-feed-fidelity-no-kernel-coaching.md) | 回喂忠实性原则:内核只回事实,话术出内核 | accepted | 回喂只承载事实+错误原文保真(detail)+去内核指导性教练话术(2026-09-08) |
 | [ADR-0030](ADR-0030-server-side-approval-adjudication.md) | 审批裁决后台化:权限模式为服务端会话状态 | accepted | 模式按对话记于服务端(默认ask)+yolo由服务端裁决放行并审计标注auto+前端降级选择器+硬拒绝/熔断不动(2026-09-09) |
 | [ADR-0031](ADR-0031-agent-v02-comm-plane.md) | Agent v0.2 通信面:消息语义+进程内总线+成员级身份 | accepted | 信件语义走单写者总线不破INV+成员级工牌(与#31合并)+共享面先行/点名与身份随批次2/远程网格留阶段二(2026-09-09) |
+| [ADR-0032](ADR-0032-binding-epoch-continuity.md) | binding_epoch 代际连续性与 manifest 注册期冻结校验 | accepted | 注销墓碑化+注册按持久max+1续代+快照先行于落库+删物理删除端口+注册过冻结门禁+scope_label放行冒号分层(2026-09-11) |
 
 > 编号说明:ADR-0012 于 2026-08-31 随 M10 dsh 前端线归档(见 ADR-0013 编号说明),编号不回收;主干引用配置管理口径时以 config_store 现状与 W2/W4 规格为准。
 > 文体注:0001-0009 状态用小写 accepted(-with-conditions),0010/0011 起用 Accepted(日期)/已裁决(用户,日期)——语义等价,统一以本表为准。

@@ -17,8 +17,8 @@
     },
     "scope_label": {
       "type": "string",
-      "pattern": "^[a-z][a-z0-9_.-]{1,31}$",
-      "description": "权限范围标签,授权与审计以 scope 为粒度(基线 §5.2)"
+      "pattern": "^[a-z][a-z0-9_.-]{0,30}(:[a-z0-9_.-]{1,47})?$",
+      "description": "权限范围标签,授权与审计以 scope 为粒度(基线 §5.2)。2026-09-11 放宽(Minor,只增不破):允许一次冒号分层(如 domain:fs、domain:mcp.<server>)——该形态自 M4 起即为各生产 manifest 的实际出线值,旧 pattern 禁冒号是注册期零校验掩盖下的合同漂移。"
     },
     "retry_policy": {
       "type": "object",

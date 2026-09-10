@@ -243,11 +243,9 @@ pub trait EventStore: Send + Sync {
     /// 恢复面:全部 Grant 行。
     fn list_grants(&self) -> StoreResult<Vec<serde_json::Value>>;
 
-    /// 写入/更新 capability binding(epoch 持久计数)。
+    /// 写入/更新 capability binding(epoch 持久计数)。注销是墓碑化
+    /// (status=unavailable),不提供物理删除——行是代际连续性的载体。
     fn save_capability_binding(&self, row: CapabilityRow<'_>) -> StoreResult<()>;
-
-    /// 删除 capability binding。
-    fn delete_capability_binding(&self, capability: &str) -> StoreResult<()>;
 
     /// 恢复面:全部 binding 行。
     fn list_capability_bindings(&self) -> StoreResult<Vec<serde_json::Value>>;
@@ -535,9 +533,6 @@ pub mod test_support {
         }
         fn save_capability_binding(&self, _row: CapabilityRow<'_>) -> StoreResult<()> {
             unimplemented!("MemEventStore: save_capability_binding 未在测试中触达")
-        }
-        fn delete_capability_binding(&self, _capability: &str) -> StoreResult<()> {
-            unimplemented!("MemEventStore: delete_capability_binding 未在测试中触达")
         }
         fn list_capability_bindings(&self) -> StoreResult<Vec<serde_json::Value>> {
             unimplemented!("MemEventStore: list_capability_bindings 未在测试中触达")

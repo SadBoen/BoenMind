@@ -132,6 +132,14 @@ pub fn normalize_tool_name(tool: &str) -> Option<String> {
     Some(out)
 }
 
+/// server 名归一(冻结能力名段字符集):「mcp.<server>」前缀组合的唯一真源,
+/// capability/provider/路由前缀三处同用——连字符等非法字符原样拼进能力名,
+/// 会撞冻结合同的 capability pattern(注册期门禁会拒)。不合法 → None,
+/// 与工具名非法同口径(跳过/未连接)。
+pub fn normalize_server_name(server: &str) -> Option<String> {
+    normalize_tool_name(server)
+}
+
 /// annotations → effect/approval 映射(M7 规格 S3;GT-05 形态):
 /// readOnlyHint → read-only + not-required;destructiveHint →
 /// external-side-effect + required;缺省 reversible-command + required
@@ -141,6 +149,7 @@ pub fn tool_manifest(
     tool: &McpToolDef,
     timeout_ms: u64,
 ) -> Option<CapabilityManifest> {
+    let server_norm = normalize_server_name(server)?;
     let tool_norm = normalize_tool_name(&tool.name)?;
     let read_only = tool
         .annotations
@@ -175,8 +184,8 @@ pub fn tool_manifest(
     };
     // ADR-0022:工具自描述进 manifest,对话工具清单不再丢描述。
     let mut manifest_json = json!({
-        "capability": format!("mcp.{server}.{tool_norm}"),
-        "provider": format!("mcp.{server}"),
+        "capability": format!("mcp.{server_norm}.{tool_norm}"),
+        "provider": format!("mcp.{server_norm}"),
         "version": "0.1.0",
         "input_schema": input_schema,
         "output_schema": {"type": "object"},
@@ -185,7 +194,7 @@ pub fn tool_manifest(
         "cancellable": true,
         "timeout_ms": timeout_ms,
         "approval": approval,
-        "scopes": [format!("domain:mcp.{server}")],
+        "scopes": [format!("domain:mcp.{server_norm}")],
     });
     if let Some(d) = tool
         .description
@@ -1281,7 +1290,10 @@ impl McpHub {
 
     /// 按 `mcp.<server>.` 前缀取该 server 任一路由的 transport;未连接 = Err。
     fn transport_for(&self, server: &str) -> Result<Arc<dyn McpTransport>, String> {
-        let prefix = format!("mcp.{server}.");
+        let prefix = format!(
+            "mcp.{}.",
+            normalize_server_name(server).ok_or_else(|| "未连接".to_string())?
+        );
         let routes = self
             .routes
             .lock()
@@ -1310,7 +1322,10 @@ impl McpHub {
     /// 热拔/重载摘除指定 server 的全部路由，并向 transport 发送 shutdown 通知。
     /// 返回被摘除的能力列表(用于通知 Registry 和 Persist 摘除)。
     pub async fn disconnect_server(&self, server: &str) -> Vec<String> {
-        let prefix = format!("mcp.{server}.");
+        let Some(server_norm) = normalize_server_name(server) else {
+            return Vec::new();
+        };
+        let prefix = format!("mcp.{server_norm}.");
         let (removed_caps, transports) = {
             let mut routes = self
                 .routes

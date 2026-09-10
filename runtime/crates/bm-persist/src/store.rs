@@ -451,10 +451,6 @@ impl EventStore for PersistStore {
         self.state.save_capability_binding(row)
     }
 
-    fn delete_capability_binding(&self, capability: &str) -> StoreResult<()> {
-        self.state.delete_capability_binding(capability)
-    }
-
     fn list_capability_bindings(&self) -> StoreResult<Vec<serde_json::Value>> {
         self.state.list_capability_bindings()
     }

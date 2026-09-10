@@ -7,9 +7,12 @@
 //! - 可丢失运行时缓存:Provider 实例句柄 + 健康位,重启重建(`clear_runtime_cache`
 //!   演示可丢失性:清空后行为不变,重新 attach 即恢复)。
 //!
-//! binding_epoch 在每次 binding 生命周期事件(首次注册/热替换/恢复)时单调 +1,
-//! 是授权-执行-审计三方一致性的根基(ADR-0001 条件 2);重启恢复不得使 epoch
-//! 回退(Runtime generation 变更不改变已签发在途调用的归属)。
+//! binding_epoch 只增不回退(ADR-0001 条件 2):register 起步 1;此后每次
+//! 重新注册(热重载/重启装载)由注册方以「持久行 max+1」抬升后再落库——
+//! 物理删行会让重注册归零,故注销只留墓碑(status=unavailable),行随代际
+//! 存续。恢复语义见 `restore_binding`(取 max,不回退);进程内热替换原语
+//! `switch_binding` 做 +1。同代内已签发在途调用的 (epoch, instance) 归属
+//! 不被重注册覆盖,授权-执行-审计三方可按代际对账。
 //!
 //! 注册面只回答「谁提供什么」;能不能调用是 Broker 的裁决(基线 §7)——
 //! 本模块不持有任何策略。
@@ -72,6 +75,10 @@ pub enum RegistryError {
     UnknownCapability,
     /// Provider 无故报告恢复(未处于 Unavailable)。
     InvalidTransition,
+    /// manifest 未过冻结合同(capability/manifest.v0_1)——pattern/枚举级
+    /// 约束 serde 兜不住,注册期必须拦(2026-09-11 评审:此前注册路径零校验,
+    /// 冻结 schema 只在 bm-contract 测试里被消费)。
+    InvalidManifest(String),
 }
 
 impl std::fmt::Display for RegistryError {
@@ -80,8 +87,36 @@ impl std::fmt::Display for RegistryError {
             RegistryError::AlreadyRegistered => write!(f, "capability 已注册"),
             RegistryError::UnknownCapability => write!(f, "未知 capability"),
             RegistryError::InvalidTransition => write!(f, "非法 binding 状态迁移"),
+            RegistryError::InvalidManifest(e) => write!(f, "manifest 未过冻结合同: {e}"),
         }
     }
+}
+
+/// 注册期冻结合同门禁。Option 字段 None 序列化为 null,而 mutation_class
+/// (纯 enum、不接受 null)等可选字段在合同中按「缺省即缺席」表述——
+/// 校验前剥除 null 值可选键,得到与合同表述同形的实例。
+fn validate_frozen_manifest(manifest: &CapabilityManifest) -> Result<(), RegistryError> {
+    let mut value = serde_json::to_value(manifest)
+        .map_err(|e| RegistryError::InvalidManifest(format!("manifest 序列化失败: {e}")))?;
+    if let Some(obj) = value.as_object_mut() {
+        for key in [
+            "verification",
+            "undo",
+            "retry",
+            "deprecated_by",
+            "mutation_class",
+            "description",
+        ] {
+            if obj.get(key).is_some_and(|v| v.is_null()) {
+                obj.remove(key);
+            }
+        }
+    }
+    bm_contract::schemas::validate(
+        bm_contract::registries::CAPABILITY_MANIFEST_SCHEMA,
+        &value,
+    )
+    .map_err(RegistryError::InvalidManifest)
 }
 
 /// 机器可读发现结果(基线 §6.4:CLI/Surface 的发现面由此生成,不另维护定义)。
@@ -119,13 +154,16 @@ impl CapabilityRegistry {
         Self::default()
     }
 
-    /// 首次注册:manifest 进逻辑目录,binding 建立并分配 epoch=1。
+    /// 首次注册:manifest 过冻结合同门禁后进逻辑目录,binding 建立并分配
+    /// epoch=1。重注册(热重载/重启装载)的代际抬升由注册方在调用后按
+    /// 「持久行 max+1」走 `restore_binding` 完成——registry 自身不见持久层。
     pub fn register(
         &mut self,
         manifest: CapabilityManifest,
         provider_instance_id: &str,
         handle: Arc<dyn CapabilityProvider>,
     ) -> Result<u64, RegistryError> {
+        validate_frozen_manifest(&manifest)?;
         let name = manifest.capability.clone();
         if self.manifests.contains_key(&name) {
             return Err(RegistryError::AlreadyRegistered);
@@ -389,6 +427,36 @@ mod tests {
         fn invoke(&self, args: serde_json::Value) -> Result<serde_json::Value, String> {
             Ok(args)
         }
+    }
+
+    #[test]
+    fn manifest_must_pass_frozen_schema_at_registration() {
+        let mut reg = CapabilityRegistry::new();
+        // serde 形状合法但违冻结 pattern(大写能力名段)→ 注册期必须拦
+        let bad: CapabilityManifest = serde_json::from_value(serde_json::json!({
+            "capability": "Bad.Name", "provider": "bad.name", "version": "0.1.0",
+            "input_schema": {"type": "object"}, "output_schema": {"type": "object"},
+            "effect": "read-only", "idempotent": true, "cancellable": true,
+            "timeout_ms": 1000, "approval": "not-required"
+        }))
+        .unwrap();
+        assert!(matches!(
+            reg.register(bad, "bad.name@0.1.0", Arc::new(Echo)),
+            Err(RegistryError::InvalidManifest(_))
+        ));
+        assert!(reg.manifest_of("Bad.Name").is_none(), "拒注后不留痕");
+
+        // 冒号分层 scope(生产实况:domain:fs / domain:mcp.<server>)必须过
+        let scoped: CapabilityManifest = serde_json::from_value(serde_json::json!({
+            "capability": "system.scoped", "provider": "system.scoped", "version": "0.1.0",
+            "input_schema": {"type": "object"}, "output_schema": {"type": "object"},
+            "effect": "read-only", "idempotent": true, "cancellable": true,
+            "timeout_ms": 1000, "approval": "not-required",
+            "scopes": ["domain:fs"]
+        }))
+        .unwrap();
+        reg.register(scoped, "system.scoped@0.1.0", Arc::new(Echo))
+            .expect("domain:fs 形态 scope 必须过冻结合同");
     }
 
     #[test]

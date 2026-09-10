@@ -112,6 +112,20 @@ impl RuntimeHandle {
         // M4:内置能力注册(启动面)+ 持久 binding/审批/授权恢复
         let caps = std::mem::take(&mut world.config.capabilities);
         let mut registered: Vec<(String, Arc<dyn CapabilityProvider>)> = Vec::new();
+        // binding 代际快照必须先于注册落库(2026-09-11 评审修复):此前先落
+        // epoch=1 再读表恢复,历史 epoch 已被覆盖——重启代际永远停在 1。
+        let persisted_epochs: std::collections::HashMap<String, u64> = match &world.store {
+            Some(store) => rows_or_die(store.list_capability_bindings(), "capability_bindings")
+                .iter()
+                .filter_map(|row| {
+                    Some((
+                        row["capability"].as_str()?.to_string(),
+                        row["epoch"].as_u64()?,
+                    ))
+                })
+                .collect(),
+            None => Default::default(),
+        };
         for (manifest, provider) in caps {
             let instance = format!("{}@{}", manifest.capability, manifest.version);
             let manifest_json = serde_json::to_string(&manifest).unwrap_or_default();
@@ -122,11 +136,19 @@ impl RuntimeHandle {
                 manifest.provider.starts_with("mcp.") || manifest.provider.ends_with(".async");
             world
                 .registry
-                .register(manifest, &instance, provider.clone())
+                .register(manifest.clone(), &instance, provider.clone())
                 .expect("内置能力首次注册不得冲突");
             if is_async {
                 world.registry.mark_async(&capability);
             }
+            // 代际抬升(ADR-0001 条件 2):已有持久行(含注销墓碑)= max+1,
+            // 全新能力 = 1——重启/重载不串代,在途凭证的 (epoch, instance)
+            // 归属保持可对账。
+            let target = persisted_epochs
+                .get(&capability)
+                .map(|e| e.saturating_add(1))
+                .unwrap_or(1);
+            let effective = world.registry.restore_binding(manifest, &instance, target);
             registered.push((capability.clone(), provider));
             if let Some(store) = &world.store {
                 // 启动期:重启后 binding 随 --mcp-config 重装自然恢复,仅告警
@@ -134,7 +156,7 @@ impl RuntimeHandle {
                     store.save_capability_binding(crate::ports::persist::CapabilityRow {
                         capability: &capability,
                         provider_instance_id: &instance,
-                        epoch: 1,
+                        epoch: effective,
                         status: "active",
                         manifest: &manifest_json,
                         updated_at: &format_ts(world.started_at),
@@ -144,22 +166,14 @@ impl RuntimeHandle {
                 }
             }
         }
-        // M4 启动恢复:binding epoch 取持久 max(不回退,ADR-0001 条件 2);
-        // Grant 台账与审批对象重建——「审批中断后可以恢复」(基线 M4 通过条件)。
+        // M4 启动恢复:Grant 台账与审批对象重建——「审批中断后可以恢复」
+        // (基线 M4 通过条件)。binding 恢复已在上面的注册循环内按代际完成。
+        // restore_binding 清空可丢失运行时缓存(T1 语义):句柄由注册流程
+        // 重新 attach——否则执行入口拿不到 Provider(无 store 形态也必须挂回)。
+        for (cap, provider) in &registered {
+            let _ = world.registry.attach_handle(cap, provider.clone());
+        }
         if let Some(store) = &world.store {
-            for row in rows_or_die(store.list_capability_bindings(), "capability_bindings") {
-                let cap = row["capability"].as_str().unwrap_or("");
-                let epoch = row["epoch"].as_u64().unwrap_or(0);
-                let instance = row["provider_instance_id"].as_str().unwrap_or("");
-                if let Some(m) = world.registry.manifest_of(cap).cloned() {
-                    world.registry.restore_binding(m, instance, epoch);
-                }
-            }
-            // restore_binding 清空可丢失运行时缓存(T1 语义):句柄由注册流程
-            // 重新 attach——否则恢复后执行入口拿不到 Provider。
-            for (cap, provider) in &registered {
-                let _ = world.registry.attach_handle(cap, provider.clone());
-            }
             for row in rows_or_die(store.list_grants(), "grants(恢复)") {
                 let payload = row["payload"].as_str().unwrap_or("null");
                 let Ok(grant) = serde_json::from_str::<bm_contract::capability::Grant>(payload)
@@ -547,11 +561,20 @@ impl RuntimeHandle {
         let loop_handle = tokio::spawn(core_loop(world, rx));
         // 核心单写者退出不可静默:panic/意外结束必须留有观测点,
         // 否则内核回路死了而进程还活着,所有调用空等超时。
+        // 2026-09-11 评审修复(风险3 余项):panic 不得留「活着但已死」的
+        // 僵尸进程——观测后有意停机,交外部壳/服务管理器判别重启,而不是
+        // 继续接客再逐条失败。正常结束(全部句柄 drop,进程收尾路径)与
+        // cancelled 仅记录,不自杀——测试进程内 RuntimeHandle 析构走这条。
         tokio::spawn(async move {
             match loop_handle.await {
                 Ok(()) => tracing::error!("core_loop 意外退出,内核单写者回路已终止"),
                 Err(e) => {
-                    tracing::error!(error = %e, "core_loop 任务异常崩溃(panic/cancelled),内核回路已终止")
+                    tracing::error!(error = %e, "core_loop 任务异常崩溃(panic/cancelled),内核回路已终止");
+                    if e.is_panic() {
+                        // 给异步日志一个落盘窗口再退出;exit 不走析构是刻意的。
+                        std::thread::sleep(std::time::Duration::from_millis(200));
+                        std::process::exit(101);
+                    }
                 }
             }
         });

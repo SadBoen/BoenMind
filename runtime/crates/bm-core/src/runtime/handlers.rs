@@ -1138,6 +1138,9 @@ pub(crate) async fn handle_stop(
 /// 语义收敛:只增——新 capability 逐条注册(binding 落持久,重启后随
 /// --mcp-config 装载自然恢复);同名已存在/注册失败逐条记错,不拖垮批量;
 /// 全部失败才整体报错。修改/删除仍走重启(v0 收敛,UI 明示)。
+///
+/// binding_epoch 连续性(2026-09-11 评审修复):重新注册以「持久行 max+1」
+/// 抬升代际——注销侧只留墓碑行,重载前后 (epoch, instance) 可对账。
 pub(crate) fn handle_capabilities_register(
     w: &mut World,
     entries: Vec<(
@@ -1146,14 +1149,46 @@ pub(crate) fn handle_capabilities_register(
     )>,
 ) -> CoreResult<Vec<String>> {
     w.gate_writes("能力注册")?;
+    // 持久 epoch 快照先行:逐条查库是 N+1,且落库后的行会污染后续代际基线。
+    // 读取失败不得静默继续——会把代际重置回 1(与落库失败同口径置毒拒绝)。
+    let persisted_epochs: std::collections::HashMap<String, u64> = match &w.store {
+        Some(store) => match store.list_capability_bindings() {
+            Ok(rows) => rows
+                .iter()
+                .filter_map(|row| {
+                    Some((
+                        row["capability"].as_str()?.to_string(),
+                        row["epoch"].as_u64()?,
+                    ))
+                })
+                .collect(),
+            Err(e) => {
+                tracing::error!(error = %e, "capability binding 快照读取失败,进入拒写态");
+                w.persist_poisoned = true;
+                return Err(CoreError::Internal);
+            }
+        },
+        None => Default::default(),
+    };
     let mut registered: Vec<String> = Vec::new();
     let mut errors: Vec<String> = Vec::new();
     for (manifest, provider) in entries {
         let instance = format!("{}@{}", manifest.capability, manifest.version);
         let manifest_json = serde_json::to_string(&manifest).unwrap_or_default();
         let capability = manifest.capability.clone();
-        match w.registry.register(manifest, &instance, provider) {
+        match w
+            .registry
+            .register(manifest.clone(), &instance, provider.clone())
+        {
             Ok(_) => {
+                // 代际抬升:已有持久行(含注销墓碑)= max+1;全新能力 = 1。
+                let target = persisted_epochs
+                    .get(&capability)
+                    .map(|e| e.saturating_add(1))
+                    .unwrap_or(1);
+                let effective = w.registry.restore_binding(manifest, &instance, target);
+                // restore_binding 按「可丢失缓存」语义清空句柄,重新 attach。
+                let _ = w.registry.attach_handle(&capability, provider);
                 if capability.starts_with("mcp.") {
                     w.registry.mark_async(&capability);
                 }
@@ -1162,7 +1197,7 @@ pub(crate) fn handle_capabilities_register(
                         store.save_capability_binding(crate::ports::persist::CapabilityRow {
                             capability: &capability,
                             provider_instance_id: &instance,
-                            epoch: 1,
+                            epoch: effective,
                             status: "active",
                             manifest: &manifest_json,
                             updated_at: &format_ts(w.started_at),
@@ -1189,7 +1224,9 @@ pub(crate) fn handle_capabilities_register(
     Ok(registered)
 }
 
-/// 热拔能力:从逻辑目录和持久层同步摘除。
+/// 热拔能力:内存面摘除;持久行墓碑化(status=unavailable)而非物理删除——
+/// 行是 binding_epoch 代际连续性的唯一跨重启载体(2026-09-11 评审修复;
+/// 此前物理 DELETE 导致重注册 epoch 归零、审计归属断链)。
 pub(crate) fn handle_capabilities_unregister(
     w: &mut World,
     capabilities: Vec<String>,
@@ -1197,12 +1234,24 @@ pub(crate) fn handle_capabilities_unregister(
     w.gate_writes("能力注销")?;
     let mut removed: Vec<String> = Vec::new();
     for cap in capabilities {
+        let prior_binding = w.registry.binding_of(&cap).cloned();
+        let prior_manifest = w
+            .registry
+            .manifest_of(&cap)
+            .map(|m| serde_json::to_string(m).unwrap_or_default());
         if w.registry.unregister(&cap) {
-            if let Some(store) = w.store.clone()
-                && let Err(e) = store.delete_capability_binding(&cap)
+            if let (Some(store), Some(binding)) = (w.store.clone(), prior_binding)
+                && let Err(e) = store.save_capability_binding(crate::ports::persist::CapabilityRow {
+                    capability: &cap,
+                    provider_instance_id: &binding.provider_instance_id,
+                    epoch: binding.epoch,
+                    status: "unavailable",
+                    manifest: &prior_manifest.unwrap_or_default(),
+                    updated_at: &format_ts(w.started_at),
+                })
             {
                 // 2026-09-05 口径统一:binding 摘除失败=重启后能力面漂移
-                tracing::error!(error = %e, capability = %cap, "能力 binding 摘除失败,进入拒写态");
+                tracing::error!(error = %e, capability = %cap, "能力 binding 墓碑落库失败,进入拒写态");
                 w.persist_poisoned = true;
             }
             removed.push(cap);
