@@ -48,6 +48,17 @@ pub async fn models(State(state): State<AppState>) -> Response {
     .into_response()
 }
 
+/// completion 载荷正文的补发判定(非流式连接器收尾)。
+///
+/// 同一回合里 `model.content.delta` 既承载连接器的流式正文,也承载内核注入的
+/// `[调用 …]`/`[工具完成 …]` 标记。据此:正文若已随 delta 下发(流式),
+/// 则不再补发(防重复);未出现(非流式连接器只在 completion 带全文),
+/// 则补发全文。早年以「已下发字符数」做 `skip`,标记会撑大计数而把真正文
+/// 整段丢弃——凡非流式上游 + 工具调用的回合终稿消失。
+fn should_backfill_content(sent: &str, content: &str) -> bool {
+    !content.is_empty() && !sent.contains(content)
+}
+
 fn chunk(sid: &str, model: &str, delta: serde_json::Value, finish: Option<&str>) -> Bytes {
     Bytes::from(format!(
         "data: {}\n\n",
@@ -394,7 +405,12 @@ pub async fn chat_completions(
             Bytes::from(format!("data: {first}\n\n")),
         );
 
-        let mut emitted: usize = 0; // 已按 delta 下发的字符数(补 completion 余量用)
+        // 已按 delta 下发的文本(判定 completion 余量用)。此前用字符数计数并
+        // `content.chars().skip(emitted)`:内核注入的 `[调用 …]`/`[工具完成 …]`
+        // 标记也走 model.content.delta,会把计数撑大,而 completion 载荷的
+        // content 只含正文——凡非流式上游 + 工具调用的回合,最终正文被整段
+        // skip 丢弃。改按「已下发文本是否已含全文」判定,不依赖字符计数。
+        let mut sent = String::new();
         // 流生命周期与回合解耦(2026-09-07 审批卡死根治):原 180s 硬顶会在
         // 长工具阶段中途掐断交互流——此后审批标记再无下发通道(YOLO 失效、
         // ask 无卡片),界面误显「完成」而后端仍在跑。改 900s;keepalive
@@ -436,18 +452,20 @@ pub async fn chat_completions(
                         if delta.is_empty() {
                             continue;
                         }
-                        emitted += delta.chars().count();
+                        sent.push_str(delta);
                         last_byte = Instant::now();
                         yield Ok(chunk(&sid, &default_model,
                             serde_json::json!({ "content": delta }), None));
                     }
                     EventType::ModelInvocationCompleted => {
-                        // 非 / 断续流连接器:completion 载荷含全文,补发未下发余量
+                        // 连接器分两态:流式连接器已把正文按 delta 下发(标记也
+                        // 混在同流中);非流式连接器只在 completion 载荷带全文,
+                        // 正文从未走过 delta。以「已下发文本是否已含全文」判定:
+                        // 已含则正文已送达,不补发(流式);未含则补发全文(非流式)。
                         let content = e.payload["content"].as_str().unwrap_or_default();
-                        let remaining: String = content.chars().skip(emitted).collect();
-                        if !remaining.is_empty() {
+                        if should_backfill_content(&sent, content) {
                             yield Ok(chunk(&sid, &default_model,
-                                serde_json::json!({ "content": remaining }), None));
+                                serde_json::json!({ "content": content }), None));
                         }
                         finished = true;
                         break;
@@ -519,4 +537,25 @@ pub async fn chat_completions(
         .headers_mut()
         .insert("x-bm-session", session_header);
     response
+}
+
+#[cfg(test)]
+mod backfill_tests {
+    use super::should_backfill_content;
+
+    #[test]
+    fn backfill_only_when_content_not_yet_sent() {
+        // 流式:正文已随 delta 下发(标记混在同流)→ 不补发,防重复
+        assert!(!should_backfill_content(
+            "\n[调用 fs.read a.txt]\n正文一\n正文二",
+            "正文一\n正文二"
+        ));
+        // 非流式 + 工具回合:已下发仅标记,正文未出现 → 补发(修复前被整段丢弃)
+        assert!(should_backfill_content(
+            "\n[调用 skill.skill_demo.echo]\n\n[工具完成 skill.skill_demo.echo 耗时 430ms]\n",
+            "技能执行完成(e2e 验收)。"
+        ));
+        // 空正文不补发
+        assert!(!should_backfill_content("任意已下发", ""));
+    }
 }
