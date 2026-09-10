@@ -52,25 +52,7 @@ pub struct TestRig {
 impl TestRig {
     /// GT 场景 A 同款装配:双模型链 + 标准 50000/10 预算 + 凭据已入库。
     pub async fn standard(script: Vec<Step>) -> Self {
-        rig(
-            script,
-            Some((STANDARD_BUDGET_TOKENS, STANDARD_BUDGET_TURNS)),
-            true,
-            Vec::new(),
-            None,
-        )
-        .await
-    }
-
-    pub async fn new(script: Vec<Step>) -> Self {
-        rig(
-            script,
-            Some((STANDARD_BUDGET_TOKENS, STANDARD_BUDGET_TURNS)),
-            false,
-            Vec::new(),
-            None,
-        )
-        .await
+        rig(script, true, Vec::new(), None).await
     }
 
     /// M7:带额外能力(如 MCP stub 集)与异步执行器的标准装配。
@@ -82,14 +64,7 @@ impl TestRig {
         )>,
         executor: Option<Arc<dyn bm_core::ports::AsyncCapabilityExecutor>>,
     ) -> Self {
-        rig(
-            script,
-            Some((STANDARD_BUDGET_TOKENS, STANDARD_BUDGET_TURNS)),
-            true,
-            extra_caps,
-            executor,
-        )
-        .await
+        rig(script, true, extra_caps, executor).await
     }
 
     pub fn budget(&self) -> Option<Budget> {
@@ -171,8 +146,16 @@ impl TestRig {
     }
 }
 
-/// 轮询等待 RuntimeHandle 的指定操作落定为终态收据
-pub async fn wait_terminal_handle(handle: &RuntimeHandle, op: &BmId) -> bm_contract::wire::Receipt {
+/// 轮询等待指定操作落定为终态收据。
+/// `timeout` = None 不设限(沿用 `wait_terminal_handle` 旧语义);
+/// `interval` 为轮询间隔,按场景时长取舍。
+pub async fn wait_terminal_within(
+    handle: &RuntimeHandle,
+    op: &BmId,
+    timeout: Option<std::time::Duration>,
+    interval: std::time::Duration,
+) -> bm_contract::wire::Receipt {
+    let deadline = timeout.map(|t| tokio::time::Instant::now() + t);
     loop {
         let r = handle
             .operations_get(bm_contract::wire::GetOperationParams {
@@ -183,77 +166,29 @@ pub async fn wait_terminal_handle(handle: &RuntimeHandle, op: &BmId) -> bm_contr
         if r.state.is_terminal() {
             return r;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        if let Some(d) = deadline {
+            assert!(tokio::time::Instant::now() < d, "操作未在时限内落定");
+        }
+        tokio::time::sleep(interval).await;
     }
 }
 
-/// 在给定目录上启动 Runtime(不清理目录):跨进程恢复测试用。
-pub async fn rig_on(dir: &std::path::Path, script: Vec<Step>) -> TestRig {
-    let connector = Arc::new(MockConnector::new(script));
-    let secrets = Arc::new(MemSecretStore::with(
-        &bm_core::runtime::default_secret_ref(MODEL_A),
-        "sk-demo-zhipu-secret-value-001",
-    ));
-    secrets
-        .put(
-            &bm_core::runtime::default_secret_ref(MODEL_B),
-            "sk-demo-openai-secret-value-002",
-        )
-        .expect("内存存储写入成功");
-
-    let clock = Arc::new(MockClock::at_ms(1_787_952_900_098));
-    let ids = Arc::new(SeqIdGen::new());
-    let store: Arc<dyn bm_persist::EventStore> =
-        Arc::new(bm_persist::PersistStore::open(dir).expect("打开持久层"));
-
-    let config = RuntimeConfig {
-        // M7 S1:turn 依赖 model.invoke 能力面;标准装配只带模型能力,不带演示能力
-        capabilities: vec![bm_providers::builtin::model_invoke_cap()],
-        async_executor: None,
-        model_streaming: false,
-        limits: test_limits(),
-        job_board: None,
-        version: "0.1.0-m1".into(),
-        data_dir: Some(dir.to_path_buf()),
-        store: Some(store),
-        connector: connector.clone(),
-        secret_store: secrets.clone(),
-        id_gen: ids.clone(),
-        clock: clock.clone(),
-        turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
-        max_attempts: None,
-    };
-    let handle = RuntimeHandle::start(config).await;
-    TestRig {
-        handle,
-        ids,
-        clock,
-        connector,
-        secrets,
-        _dir: None,
-        data_dir: Some(dir.to_path_buf()),
-    }
+/// 轮询等待 RuntimeHandle 的指定操作落定为终态收据(不设时限)。
+pub async fn wait_terminal_handle(handle: &RuntimeHandle, op: &BmId) -> bm_contract::wire::Receipt {
+    wait_terminal_within(handle, op, None, std::time::Duration::from_millis(5)).await
 }
 
-/// 组装一台确定性 Runtime(固定时钟起点、确定性 ID、脚本化模型)。
-pub async fn rig(
+/// 装配核心:rig(临时目录自持有)与 rig_on(外部目录)共用。
+async fn start_rig(
+    dir: Option<std::path::PathBuf>,
+    dir_guard: Option<tempfile::TempDir>,
     script: Vec<Step>,
-    budget: Option<(u64, u32)>,
-    with_dir: bool,
     extra_caps: Vec<(
         bm_contract::capability::CapabilityManifest,
         Arc<dyn bm_core::registry::CapabilityProvider>,
     )>,
     executor: Option<Arc<dyn bm_core::ports::AsyncCapabilityExecutor>>,
 ) -> TestRig {
-    let _ = budget; // 预算在 create_session 时给定;保留参数给未来变体
-    let dir = if with_dir {
-        Some(tempfile::tempdir().expect("临时目录可建"))
-    } else {
-        None
-    };
-    let data_dir = dir.as_ref().map(|d| d.path().to_path_buf());
-
     let connector = Arc::new(MockConnector::new(script));
     let secrets = Arc::new(MemSecretStore::with(
         &bm_core::runtime::default_secret_ref(MODEL_A),
@@ -270,7 +205,7 @@ pub async fn rig(
     let ids = Arc::new(SeqIdGen::new());
 
     // 有落盘目录即启用写穿持久层(所有标准测试装配自动走 M2 路径)
-    let store: Option<Arc<dyn bm_persist::EventStore>> = match &data_dir {
+    let store: Option<Arc<dyn bm_persist::EventStore>> = match &dir {
         Some(d) => Some(Arc::new(
             bm_persist::PersistStore::open(d).expect("打开持久层"),
         )),
@@ -285,7 +220,7 @@ pub async fn rig(
         limits: test_limits(),
         job_board: None,
         version: "0.1.0-m1".into(),
-        data_dir: data_dir.clone(),
+        data_dir: dir.clone(),
         store,
         connector: connector.clone(),
         secret_store: secrets.clone(),
@@ -302,9 +237,33 @@ pub async fn rig(
         clock,
         connector,
         secrets,
-        _dir: dir,
-        data_dir,
+        _dir: dir_guard,
+        data_dir: dir,
     }
+}
+
+/// 在给定目录上启动 Runtime(不清理目录):跨进程恢复测试用。
+pub async fn rig_on(dir: &std::path::Path, script: Vec<Step>) -> TestRig {
+    start_rig(Some(dir.to_path_buf()), None, script, Vec::new(), None).await
+}
+
+/// 组装一台确定性 Runtime(固定时钟起点、确定性 ID、脚本化模型)。
+pub async fn rig(
+    script: Vec<Step>,
+    with_dir: bool,
+    extra_caps: Vec<(
+        bm_contract::capability::CapabilityManifest,
+        Arc<dyn bm_core::registry::CapabilityProvider>,
+    )>,
+    executor: Option<Arc<dyn bm_core::ports::AsyncCapabilityExecutor>>,
+) -> TestRig {
+    let dir_guard = if with_dir {
+        Some(tempfile::tempdir().expect("临时目录可建"))
+    } else {
+        None
+    };
+    let dir = dir_guard.as_ref().map(|d| d.path().to_path_buf());
+    start_rig(dir, dir_guard, script, extra_caps, executor).await
 }
 
 /// 轮询直到条件成立或超时(测试辅助,默认 5s)。
@@ -341,6 +300,13 @@ pub fn id(s: impl Into<String>) -> PVal {
 /// 同一步骤重复 n 次(多回合脚本)。
 pub fn repeat(step: Step, n: usize) -> Vec<Step> {
     vec![step; n]
+}
+
+/// 排序后取分位值(性能冒烟/持久化基准共用)。
+pub fn percentile(sorted: &mut [u128], p: f64) -> u128 {
+    sorted.sort_unstable();
+    let idx = ((sorted.len() as f64 - 1.0) * p).round() as usize;
+    sorted[idx]
 }
 
 /// 期望事件:类型 + 指定字段的值断言(未列字段不检查)。

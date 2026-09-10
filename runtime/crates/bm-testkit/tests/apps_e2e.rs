@@ -8,7 +8,7 @@ use bm_contract::ids::{BmId, IdGen};
 use bm_contract::states::OperationState;
 use bm_contract::wire::{ApprovalListParams, ApprovalRespondParams, CapabilityCallParams};
 use bm_providers::mcp::{McpHub, StdioMcpTransport};
-use bm_testkit::replay::TestRig;
+use bm_testkit::replay::{TestRig, wait_terminal_within};
 use serde_json::json;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -36,21 +36,13 @@ fn gated() -> bool {
 }
 
 async fn wait_terminal(rig: &TestRig, op_id: &BmId) -> bm_contract::wire::Receipt {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
-    loop {
-        assert!(tokio::time::Instant::now() < deadline, "调用 15s 未终态");
-        let r = rig
-            .handle
-            .operations_get(bm_contract::wire::GetOperationParams {
-                operation_id: op_id.clone(),
-            })
-            .await
-            .expect("收据查询");
-        if r.state.is_terminal() {
-            return r;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    wait_terminal_within(
+        &rig.handle,
+        op_id,
+        Some(Duration::from_secs(15)),
+        Duration::from_millis(10),
+    )
+    .await
 }
 
 async fn call_and_settle(

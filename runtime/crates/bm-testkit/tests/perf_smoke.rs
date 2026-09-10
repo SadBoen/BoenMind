@@ -12,11 +12,7 @@ use bm_providers::secret::MemSecretStore;
 use std::sync::Arc;
 use std::time::Instant;
 
-fn percentile(sorted: &mut [u128], p: f64) -> u128 {
-    sorted.sort_unstable();
-    let idx = ((sorted.len() as f64 - 1.0) * p).round() as usize;
-    sorted[idx]
-}
+use bm_testkit::replay::percentile;
 
 async fn start_runtime(
     connector: Arc<dyn ModelConnector>,

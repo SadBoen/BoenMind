@@ -22,11 +22,7 @@ fn runtime_ev(seq: u64) -> EventEnvelope {
     )
 }
 
-fn percentile(sorted: &mut [u128], p: f64) -> u128 {
-    sorted.sort_unstable();
-    let idx = ((sorted.len() as f64 - 1.0) * p).round() as usize;
-    sorted[idx]
-}
+use bm_testkit::replay::percentile;
 
 /// 预置 1 万条持久事件(含一个真实会话,使 resume 有对象)。
 fn seed_10k(dir: &std::path::Path) -> PersistStore {

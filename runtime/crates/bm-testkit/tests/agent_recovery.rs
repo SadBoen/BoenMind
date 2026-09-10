@@ -7,27 +7,19 @@ use bm_contract::error_codes::ErrorCode;
 use bm_contract::events::EventType;
 use bm_contract::ids::{BmId, IdGen};
 use bm_contract::states::{AgentState, OperationState};
-use bm_contract::wire::GetOperationParams;
 use bm_providers::mock_model::Step;
-use bm_testkit::replay::TestRig;
+use bm_testkit::replay::{TestRig, wait_terminal_within};
 use std::time::Duration;
 
 async fn wait_terminal(rig: &TestRig, operation_id: &BmId) -> OperationState {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    loop {
-        let r = rig
-            .handle
-            .operations_get(GetOperationParams {
-                operation_id: operation_id.clone(),
-            })
-            .await
-            .expect("查询操作");
-        if r.state.is_terminal() {
-            return r.state;
-        }
-        assert!(tokio::time::Instant::now() < deadline, "回合未在时限内落定");
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
+    wait_terminal_within(
+        &rig.handle,
+        operation_id,
+        Some(Duration::from_secs(5)),
+        Duration::from_millis(5),
+    )
+    .await
+    .state
 }
 
 #[tokio::test]

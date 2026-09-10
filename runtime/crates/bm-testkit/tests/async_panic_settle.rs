@@ -42,7 +42,6 @@ async fn executor_panic_settles_operation_failed() {
 
     let rig = rig(
         vec![],
-        None,
         true,
         vec![(manifest, provider_fn(|_| Err("异步能力不走同步桩".into())))],
         Some(Arc::new(PanickyExecutor)),

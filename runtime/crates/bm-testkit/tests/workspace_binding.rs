@@ -8,7 +8,7 @@ use bm_contract::connector::{FinishReason, InvokeRequest, InvokeResponse, Role, 
 use bm_contract::ids::{BmId, IdGen, SeqIdGen};
 use bm_contract::states::OperationState;
 use bm_contract::wire::{
-    AgentSpec, GetOperationParams, InputTrust, SendInputParams, SessionCreateParams,
+    AgentSpec, InputTrust, SendInputParams, SessionCreateParams,
 };
 use bm_core::clock::SystemClock;
 use bm_core::ports::ModelConnector;
@@ -96,18 +96,7 @@ fn seed_workspaces(dir: &std::path::Path, proj_path: &str) {
 }
 
 async fn wait_terminal(handle: &RuntimeHandle, op: &BmId) -> bm_contract::wire::Receipt {
-    loop {
-        let r = handle
-            .operations_get(GetOperationParams {
-                operation_id: op.clone(),
-            })
-            .await
-            .expect("收据查询");
-        if r.state.is_terminal() {
-            return r;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-    }
+    bm_testkit::replay::wait_terminal_handle(handle, op).await
 }
 
 fn spec(workspace_id: Option<&str>) -> SessionCreateParams {

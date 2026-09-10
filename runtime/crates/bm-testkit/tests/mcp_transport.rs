@@ -6,7 +6,7 @@ use bm_contract::events::EventType;
 use bm_contract::ids::{BmId, IdGen};
 use bm_contract::states::OperationState;
 use bm_contract::wire::{
-    ApprovalListParams, ApprovalRespondParams, CapabilityCallParams, GetOperationParams,
+    ApprovalListParams, ApprovalRespondParams, CapabilityCallParams,
 };
 use bm_providers::mcp::{Behavior, InProcMcpServer, McpHub, McpToolDef};
 use bm_testkit::replay::TestRig;
@@ -45,24 +45,13 @@ async fn rig_with_server(server: Arc<InProcMcpServer>) -> (TestRig, Arc<McpHub>)
 }
 
 async fn wait_terminal(rig: &TestRig, op_id: &BmId) -> bm_contract::wire::Receipt {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    loop {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "异步调用 10s 未终态"
-        );
-        let r = rig
-            .handle
-            .operations_get(GetOperationParams {
-                operation_id: op_id.clone(),
-            })
-            .await
-            .expect("收据查询");
-        if r.state.is_terminal() {
-            return r;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    bm_testkit::replay::wait_terminal_within(
+        &rig.handle,
+        op_id,
+        Some(Duration::from_secs(10)),
+        Duration::from_millis(10),
+    )
+    .await
 }
 
 fn call_params(capability: &str, args: serde_json::Value) -> CapabilityCallParams {

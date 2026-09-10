@@ -7,7 +7,7 @@ use bm_contract::budget::Budget;
 use bm_contract::ids::{BmId, IdGen, SeqIdGen};
 use bm_contract::states::OperationState;
 use bm_contract::wire::AgentSpec;
-use bm_contract::wire::{GetOperationParams, SendInputParams, SessionCreateParams};
+use bm_contract::wire::{SendInputParams, SessionCreateParams};
 use bm_core::clock::SystemClock;
 use bm_core::ports::ModelConnector;
 use bm_core::runtime::{DEFAULT_TURN_TIMEOUT_SECS, RuntimeConfig, RuntimeHandle};
@@ -186,18 +186,11 @@ async fn t116_live_long_task_stress() {
 }
 
 async fn wait_terminal(handle: &RuntimeHandle, op_id: &BmId) -> bm_contract::wire::Receipt {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(180);
-    loop {
-        assert!(tokio::time::Instant::now() < deadline, "180s 未终态");
-        let r = handle
-            .operations_get(GetOperationParams {
-                operation_id: op_id.clone(),
-            })
-            .await
-            .expect("查询");
-        if r.state.is_terminal() {
-            return r;
-        }
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    }
+    bm_testkit::replay::wait_terminal_within(
+        handle,
+        op_id,
+        Some(Duration::from_secs(180)),
+        Duration::from_millis(200),
+    )
+    .await
 }
