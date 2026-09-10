@@ -130,17 +130,15 @@ impl RuntimeHandle {
             let instance = format!("{}@{}", manifest.capability, manifest.version);
             let manifest_json = serde_json::to_string(&manifest).unwrap_or_default();
             let capability = manifest.capability.clone();
-            // W9:MCP 之外,内置异步能力以 .async 结尾的 provider id 标记
-            // (如 system.exec 的 builtin.async)
-            let is_async =
-                manifest.provider.starts_with("mcp.") || manifest.provider.ends_with(".async");
             world
                 .registry
                 .register(manifest.clone(), &instance, provider.clone())
                 .expect("内置能力首次注册不得冲突");
-            if is_async {
-                world.registry.mark_async(&capability);
-            }
+            // W9/M7 异步分道:provider 命名约定唯一真源(registry),启动注册与
+            // 热注册共用——skill.* 归位异步分道(ADR-0033)。
+            world
+                .registry
+                .mark_async_for(&capability, &manifest.provider);
             // 代际抬升(ADR-0001 条件 2):已有持久行(含注销墓碑)= max+1,
             // 全新能力 = 1——重启/重载不串代,在途凭证的 (epoch, instance)
             // 归属保持可对账。

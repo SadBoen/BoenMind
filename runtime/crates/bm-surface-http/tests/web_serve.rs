@@ -123,6 +123,7 @@ async fn t35_admin_session_list_is_server_authoritative() {
         limits: Default::default(),
         limits_sources: Default::default(),
         jobs: None,
+        skills: None,
     };
     let app = bm_surface_http::router(
         handle.clone(),
@@ -260,6 +261,7 @@ async fn t35b_admin_session_list_paging() {
         limits: Default::default(),
         limits_sources: Default::default(),
         jobs: None,
+        skills: None,
     };
     let app = bm_surface_http::router(
         handle.clone(),
@@ -431,6 +433,7 @@ async fn t35c_admin_provider_health_snapshot() {
         limits: Default::default(),
         limits_sources: Default::default(),
         jobs: None,
+        skills: None,
     };
     let app = bm_surface_http::router(
         handle.clone(),

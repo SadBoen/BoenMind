@@ -30,6 +30,8 @@ jsonschema = { version = "0", default-features = false, features = ["resolve-fil
 async-trait = "0.1"
 proptest = "1"
 tempfile = "3"
+# 测试夹具:WAT 文本 → wasm 字节(wasmtime 已传递依赖,提为直接依赖免装外部工具)
+wat = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 keyring = "3"

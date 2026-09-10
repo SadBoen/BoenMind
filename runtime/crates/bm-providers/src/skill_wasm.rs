@@ -96,6 +96,26 @@ impl SkillScriptManager {
         self.manifests_for(skill_id, scripts)
     }
 
+    /// 注销一个技能的全部脚本:按 `skill.<id>.` 前缀从编译缓存摘除,返回被
+    /// 摘除的 capability 名(供热重载侧 `capabilities_unregister` 墓碑化)。
+    /// 未装载的 id 返回空表——幂等,可安全重复调用(ADR-0033)。
+    pub fn unregister_skill(&self, skill_id: &str) -> Vec<String> {
+        let prefix = format!("skill.{}.", skill_id);
+        let mut entries = self
+            .entries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let removed: Vec<String> = entries
+            .keys()
+            .filter(|k| k.starts_with(&prefix))
+            .cloned()
+            .collect();
+        for k in &removed {
+            entries.remove(k);
+        }
+        removed
+    }
+
     /// scripts[] → CapabilityManifest 列表(effect 直映 RiskClass;
     /// approval 语义交由 manifest.effect + Broker 统一裁决)。
     fn manifests_for(

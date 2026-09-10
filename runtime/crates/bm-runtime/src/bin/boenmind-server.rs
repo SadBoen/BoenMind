@@ -176,6 +176,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Skill v0.2(ADR-0016 第二步):skills.json 声明 scripts 的技能 →
     // wasmtime 执行面(manifests 进能力面,执行体挂 skill 分道)。
     let (skills, skill_entries) = load_skill_scripts(&data_dir);
+    // ADR-0033:管理器与 SplitExecutor 共用同一实例并注入管理面——/admin/skills
+    // 热重载必须改这个实例的编译缓存,注册才与执行体同源。
+    let skill_manager = skills.clone();
     capabilities.extend(skill_entries);
     // W2 管理面注入面:内置能力摘要(= mcp 注入前的 capabilities)
     let builtin_caps: Vec<serde_json::Value> = capabilities
@@ -349,6 +352,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         limits: limits_cell.clone(),
         limits_sources: Arc::new(std::sync::Mutex::new(limits_sources)),
         jobs: Some(job_table.clone()),
+        skills: skill_manager,
     };
     bm_surface_http::webadmin::rebuild_routes(&admin);
 
@@ -436,7 +440,7 @@ async fn shutdown_signal(handle: RuntimeHandle, shutdown: Arc<tokio::sync::Notif
     println!("排空完成");
 }
 
-/// 脚本装载结果:执行器(None=初始化失败)+ 待注册能力对。
+/// 脚本装载结果:执行器(None=初始化失败;保留供管理面热重载共用)+ 待注册能力对。
 type SkillScriptLoad = (
     Option<Arc<bm_providers::skill_wasm::SkillScriptManager>>,
     Vec<(
@@ -445,27 +449,26 @@ type SkillScriptLoad = (
     )>,
 );
 
-/// Skill v0.2(ADR-0016 第二步):扫描 <data>/skills/<skill_id>/ 与
-/// config/skills.json——声明 scripts 的技能编译注册(wasm → manifests);
-/// 纯知识包跳过。失败仅告警不阻断启动。
-fn load_skill_scripts(data_dir: &std::path::Path) -> SkillScriptLoad {
-    let manager = match bm_providers::skill_wasm::SkillScriptManager::new() {
-        Ok(m) => Arc::new(m),
-        Err(e) => {
-            eprintln!("[Skill] 执行面初始化失败(已跳过): {e}");
-            return (None, Vec::new());
-        }
-    };
+/// 扫描 config/skills.json 中声明 scripts 的技能并注册进管理器 → 合成能力对。
+/// 纯知识包(无 scripts)跳过;单技能失败仅告警不阻断。启动装载与
+/// /admin/skills 热重载共用同一函数(ADR-0033),歧义面收敛为一处。
+fn register_skill_scripts(
+    manager: &bm_providers::skill_wasm::SkillScriptManager,
+    data_dir: &std::path::Path,
+) -> Vec<(
+    bm_contract::capability::CapabilityManifest,
+    Arc<dyn bm_core::registry::CapabilityProvider>,
+)> {
     let cfg = data_dir.join("config").join("skills.json");
     let Ok(text) = std::fs::read_to_string(&cfg) else {
-        return (Some(manager), Vec::new());
+        return Vec::new();
     };
     let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
         eprintln!("[Skill] skills.json 解析失败(已跳过脚本装载)");
-        return (Some(manager), Vec::new());
+        return Vec::new();
     };
     let Some(list) = v["skills"].as_array() else {
-        return (Some(manager), Vec::new());
+        return Vec::new();
     };
     let mut entries: Vec<(
         bm_contract::capability::CapabilityManifest,
@@ -494,6 +497,20 @@ fn load_skill_scripts(data_dir: &std::path::Path) -> SkillScriptLoad {
             Err(e) => eprintln!("[Skill] 技能 {id} 装载失败(已跳过): {e}"),
         }
     }
+    entries
+}
+
+/// Skill v0.2(ADR-0016 第二步):启动期装载技能脚本 → 管理器 + 待注册能力对。
+/// 失败仅告警不阻断启动。
+fn load_skill_scripts(data_dir: &std::path::Path) -> SkillScriptLoad {
+    let manager = match bm_providers::skill_wasm::SkillScriptManager::new() {
+        Ok(m) => Arc::new(m),
+        Err(e) => {
+            eprintln!("[Skill] 执行面初始化失败(已跳过): {e}");
+            return (None, Vec::new());
+        }
+    };
+    let entries = register_skill_scripts(&manager, data_dir);
     if !entries.is_empty() {
         eprintln!("[Skill] 共注册 {} 个技能脚本能力", entries.len());
     }

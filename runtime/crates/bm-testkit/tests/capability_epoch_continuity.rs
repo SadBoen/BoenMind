@@ -29,10 +29,7 @@ async fn rig(dir: &std::path::Path) -> RuntimeHandle {
     let store: Arc<dyn bm_persist::EventStore> =
         Arc::new(bm_persist::PersistStore::open(dir).expect("打开持久层"));
     RuntimeHandle::start(RuntimeConfig {
-        capabilities: vec![(
-            manifest("system.echo", "system.echo"),
-            provider_fn(Ok),
-        )],
+        capabilities: vec![(manifest("system.echo", "system.echo"), provider_fn(Ok))],
         version: "0.1.0-epoch".into(),
         data_dir: Some(dir.to_path_buf()),
         store: Some(store),
@@ -81,7 +78,11 @@ async fn binding_epoch_never_regresses_across_reload_and_restart() {
         .await
         .expect("热注销");
     assert_eq!(removed, vec!["mcp.fake.echo".to_string()]);
-    assert_eq!(epoch_of(&handle, "mcp.fake.echo").await, None, "注销即从发现面摘除");
+    assert_eq!(
+        epoch_of(&handle, "mcp.fake.echo").await,
+        None,
+        "注销即从发现面摘除"
+    );
 
     handle
         .capabilities_register(vec![(fake.clone(), provider_fn(Ok))])

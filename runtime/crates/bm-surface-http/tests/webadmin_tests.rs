@@ -72,6 +72,7 @@ async fn spawn_app_with(
         limits: Default::default(),
         limits_sources: Default::default(),
         jobs: None,
+        skills: None,
     };
     let app = bm_surface_http::router(
         handle,

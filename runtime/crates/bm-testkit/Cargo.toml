@@ -22,6 +22,7 @@ tempfile = { workspace = true }
 async-trait = { workspace = true }
 rusqlite = { workspace = true }
 proptest = { workspace = true }
+wat = { workspace = true }
 
 [[bin]]
 name = "chaos-child"

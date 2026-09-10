@@ -94,6 +94,10 @@ pub struct AdminConfig {
     pub limits_sources: Arc<std::sync::Mutex<bm_core::limits::LimitsSources>>,
     /// W10(ADR-0025):后台作业台账(/admin/jobs;None = 未装配,测试态)。
     pub jobs: Option<Arc<bm_providers::jobs::JobTable>>,
+    /// Skill v0.2 脚本执行面(与启动装载共用同一实例;None = 未装配/初始化失败)。
+    /// 供 /admin/skills 热重载:摘除旧脚本能力并按最新 skills.json 重编译注册
+    /// (ADR-0033)。
+    pub skills: Option<Arc<bm_providers::skill_wasm::SkillScriptManager>>,
 }
 
 // W10:预览/下载/删除/浏览上限走 cfg.limits

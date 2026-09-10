@@ -112,11 +112,8 @@ fn validate_frozen_manifest(manifest: &CapabilityManifest) -> Result<(), Registr
             }
         }
     }
-    bm_contract::schemas::validate(
-        bm_contract::registries::CAPABILITY_MANIFEST_SCHEMA,
-        &value,
-    )
-    .map_err(RegistryError::InvalidManifest)
+    bm_contract::schemas::validate(bm_contract::registries::CAPABILITY_MANIFEST_SCHEMA, &value)
+        .map_err(RegistryError::InvalidManifest)
 }
 
 /// 机器可读发现结果(基线 §6.4:CLI/Surface 的发现面由此生成,不另维护定义)。
@@ -329,6 +326,28 @@ impl CapabilityRegistry {
     /// M7:标记该能力走异步执行路径(dispatch 不再同步等 Provider)。
     pub fn mark_async(&mut self, capability: &str) {
         self.async_exec.insert(capability.to_string());
+    }
+
+    /// 异步分道判定的唯一真源(ADR-0033):按 `manifest.provider` 命名约定判定——
+    /// - `mcp.*`   外部 MCP 子进程(启动装载与热装载同判);
+    /// - `*.async` 内置异步执行体(如 `system.exec` 的 `builtin.async`);
+    /// - `skill.*` wasm 脚本执行面(ADR-0016 第二步)。
+    ///
+    /// 此前启动注册只认前两条、热注册只认 `mcp.` 前缀,`skill.*` 从未进异步
+    /// 分道,实际落到同步占位 provider 报错;本谓词收口两处调用点。
+    pub fn provider_is_async(provider: &str) -> bool {
+        provider.starts_with("mcp.")
+            || provider.ends_with(".async")
+            || provider.starts_with("skill.")
+    }
+
+    /// 依 [`Self::provider_is_async`] 自动标记异步;返回是否异步。
+    pub fn mark_async_for(&mut self, capability: &str, provider: &str) -> bool {
+        let is_async = Self::provider_is_async(provider);
+        if is_async {
+            self.mark_async(capability);
+        }
+        is_async
     }
 
     pub fn is_async(&self, capability: &str) -> bool {

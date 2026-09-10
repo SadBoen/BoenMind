@@ -1176,6 +1176,7 @@ pub(crate) fn handle_capabilities_register(
         let instance = format!("{}@{}", manifest.capability, manifest.version);
         let manifest_json = serde_json::to_string(&manifest).unwrap_or_default();
         let capability = manifest.capability.clone();
+        let provider_id = manifest.provider.clone();
         match w
             .registry
             .register(manifest.clone(), &instance, provider.clone())
@@ -1189,9 +1190,8 @@ pub(crate) fn handle_capabilities_register(
                 let effective = w.registry.restore_binding(manifest, &instance, target);
                 // restore_binding 按「可丢失缓存」语义清空句柄,重新 attach。
                 let _ = w.registry.attach_handle(&capability, provider);
-                if capability.starts_with("mcp.") {
-                    w.registry.mark_async(&capability);
-                }
+                // 异步分道判定与启动注册同源(ADR-0033):mcp.* / *.async / skill.*。
+                w.registry.mark_async_for(&capability, &provider_id);
                 if let Some(store) = w.store.clone()
                     && let Err(e) =
                         store.save_capability_binding(crate::ports::persist::CapabilityRow {
@@ -1241,14 +1241,15 @@ pub(crate) fn handle_capabilities_unregister(
             .map(|m| serde_json::to_string(m).unwrap_or_default());
         if w.registry.unregister(&cap) {
             if let (Some(store), Some(binding)) = (w.store.clone(), prior_binding)
-                && let Err(e) = store.save_capability_binding(crate::ports::persist::CapabilityRow {
-                    capability: &cap,
-                    provider_instance_id: &binding.provider_instance_id,
-                    epoch: binding.epoch,
-                    status: "unavailable",
-                    manifest: &prior_manifest.unwrap_or_default(),
-                    updated_at: &format_ts(w.started_at),
-                })
+                && let Err(e) =
+                    store.save_capability_binding(crate::ports::persist::CapabilityRow {
+                        capability: &cap,
+                        provider_instance_id: &binding.provider_instance_id,
+                        epoch: binding.epoch,
+                        status: "unavailable",
+                        manifest: &prior_manifest.unwrap_or_default(),
+                        updated_at: &format_ts(w.started_at),
+                    })
             {
                 // 2026-09-05 口径统一:binding 摘除失败=重启后能力面漂移
                 tracing::error!(error = %e, capability = %cap, "能力 binding 墓碑落库失败,进入拒写态");

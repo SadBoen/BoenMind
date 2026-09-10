@@ -60,6 +60,7 @@ async fn spawn_inner(data_dir: std::path::PathBuf, public_bind: bool) -> (String
         limits: Default::default(),
         limits_sources: Default::default(),
         jobs: None,
+        skills: None,
     };
     let app = bm_surface_http::router(
         handle,

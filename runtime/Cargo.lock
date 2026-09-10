@@ -468,6 +468,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-util",
+ "wat",
 ]
 
 [[package]]
