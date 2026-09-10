@@ -250,8 +250,24 @@ async fn main() {
             continue;
         }
 
-        if let Ok(req) = serde_json::from_str::<Value>(trimmed) {
-            if let Some(resp) = handle_rpc(&cfg, &req) {
+        match serde_json::from_str::<Value>(trimmed) {
+            Ok(req) => {
+                if let Some(resp) = handle_rpc(&cfg, &req) {
+                    let serialized = serde_json::to_string(&resp).unwrap();
+                    let _ = stdout.write_all(serialized.as_bytes()).await;
+                    let _ = stdout.write_all(b"\n").await;
+                    let _ = stdout.flush().await;
+                }
+            }
+            Err(e) => {
+                // JSON-RPC 2.0 强制:无法解析的请求回 -32700 Parse error。
+                // 此前静默丢弃该行——与 apps/ 三个 server(P1-39 已修)及协议
+                // 规范不一致,插件协议一致性测试(#56)据此坐实。
+                eprintln!("[{SERVER_NAME}] 无法解析的输入行:{e}");
+                let resp = json!({
+                    "jsonrpc": "2.0", "id": Value::Null,
+                    "error": {"code": -32700, "message": "JSON 解析失败"},
+                });
                 let serialized = serde_json::to_string(&resp).unwrap();
                 let _ = stdout.write_all(serialized.as_bytes()).await;
                 let _ = stdout.write_all(b"\n").await;

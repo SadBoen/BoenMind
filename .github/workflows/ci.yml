@@ -98,6 +98,8 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
       - run: cargo build --release
+      # issue #56:插件协议一致性冒烟(initialize/tools.list/未知工具/未知方法/坏JSON)
+      - run: python ../../../plugins/smoke_test.py --plugin web-multisearch
 
   context-inspector-plugin:
     strategy:
@@ -120,3 +122,5 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
       - run: cargo build --release
+      # issue #56:插件协议一致性冒烟(同 web-multisearch)
+      - run: python ../../../plugins/smoke_test.py --plugin context-inspector

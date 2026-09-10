@@ -155,7 +155,18 @@ async fn main() {
         let msg: Value = match serde_json::from_str(trimmed) {
             Ok(v) => v,
             Err(e) => {
+                // JSON-RPC 2.0 强制:无法解析的请求回 -32700 Parse error。
+                // 此前静默丢弃该行——与 apps/ 三个 server(P1-39 已修)及协议
+                // 规范不一致,插件协议一致性测试(#56)据此坐实。
                 eprintln!("[{SERVER_NAME}] 无法解析的输入行:{e}");
+                let resp = json!({
+                    "jsonrpc": "2.0", "id": Value::Null,
+                    "error": {"code": -32700, "message": "JSON 解析失败"},
+                });
+                let mut out = serde_json::to_string(&resp).expect("响应序列化");
+                out.push('\n');
+                let _ = stdout.write_all(out.as_bytes()).await;
+                let _ = stdout.flush().await;
                 continue;
             }
         };
