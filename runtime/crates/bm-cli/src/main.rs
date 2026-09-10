@@ -1,7 +1,8 @@
 //! boenmind:Surface CLI(M3.2)。薄壳——协议逻辑在 bm-cli 库。
 //!
 //! 命令组:session / agent / operations / events 全量;approval / capability
-//! 自 M4 兑现(经同一 Wire API);task 随 M5 增发。
+//! 自 M4 兑现(经同一 Wire API);task 随 M5 增发;judge 为离线自检
+//! (M8.7,读本地数据目录,不经 Wire API,#57)。
 
 use bm_cli::EnvelopeClient;
 use bm_contract::wire::Method;
@@ -63,6 +64,21 @@ enum Cmd {
     Capability {
         #[command(subcommand)]
         cmd: CapabilityCmd,
+    },
+    /// 离线自检(M8.7):对本地事件日志跑独立 Judge 评估(不经 server,无需令牌)
+    Judge {
+        /// 数据目录(与 boenmind-server --data-dir 同源)
+        #[arg(long, default_value_t = bm_cli::default_data_dir().display().to_string())]
+        data_dir: String,
+        /// 起始 seq(含;缺省 1 = 从头)
+        #[arg(long)]
+        from: Option<u64>,
+        /// 结束 seq(含;缺省 = 日志末尾)
+        #[arg(long)]
+        to: Option<u64>,
+        /// 输出合同形态报告 JSON(缺省为人读摘要)
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -208,6 +224,17 @@ enum CapabilityCmd {
 
 fn main() {
     let cli = Cli::parse();
+    // judge 是离线自检:读本地数据目录,不经 server 也无需令牌(其余命令
+    // 均为 Wire API 客户端,须先构造 EnvelopeClient)
+    let cmd = match cli.command {
+        Cmd::Judge {
+            data_dir,
+            from,
+            to,
+            json,
+        } => return cmd_judge(&data_dir, from, to, json),
+        cmd => cmd,
+    };
     // 令牌优先级:--token 显式 > --token-file > 默认路径(库内处理)
     let token: Option<String> = match cli.token {
         Some(t) => Some(t),
@@ -217,7 +244,9 @@ fn main() {
     };
     let client = EnvelopeClient::new(&cli.url, token.as_deref()).unwrap_or_else(|e| fail(&e, 2));
 
-    let out: Result<serde_json::Value, bm_cli::CallError> = match cli.command {
+    let out: Result<serde_json::Value, bm_cli::CallError> = match cmd {
+        // judge 已在函数开头提前返回;此臂仅为匹配完备
+        Cmd::Judge { .. } => unreachable!("judge 在函数开头已处理"),
         Cmd::Session { cmd } => match cmd {
             SessionCmd::Create {
                 name,
@@ -441,6 +470,49 @@ fn main() {
     };
 
     print_result(&out, "rpc");
+}
+
+/// `boenmind judge`:人读摘要(缺省)或合同 JSON(--json);
+/// 有 fail 项退出码 1(脚本可判),其余非零退出 = 环境错误。
+fn cmd_judge(data_dir: &str, from: Option<u64>, to: Option<u64>, json: bool) {
+    let report = match bm_cli::run_judge(std::path::Path::new(data_dir), from, to) {
+        Ok(r) => r,
+        Err(e) => fail(&e, 2),
+    };
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report).expect("序列化"));
+    } else {
+        let s = &report["summary"];
+        println!(
+            "Judge 评估报告(区间 {}..={}):{} 过 / {} 挂 / {} 跳过",
+            report["range"]["from_seq"],
+            report["range"]["to_seq"],
+            s["passed"],
+            s["failed"],
+            s["skipped"]
+        );
+        for c in report["checks"].as_array().expect("checks 数组") {
+            let mark = match c["verdict"].as_str() {
+                Some("pass") => "✓",
+                Some("fail") => "✗",
+                _ => "-",
+            };
+            println!(
+                "  {mark} {}: {}",
+                c["check_id"].as_str().unwrap_or_default(),
+                c["evidence"].as_str().unwrap_or_default()
+            );
+        }
+        if s["failed"] != 0 {
+            println!(
+                "\n报告 JSON:\n{}",
+                serde_json::to_string_pretty(&report).expect("序列化")
+            );
+        }
+    }
+    if report["summary"]["failed"] != 0 {
+        std::process::exit(1);
+    }
 }
 
 fn print_result(out: &Result<serde_json::Value, bm_cli::CallError>, _ctx: &str) {

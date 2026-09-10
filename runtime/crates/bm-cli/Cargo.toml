@@ -6,11 +6,16 @@ repository.workspace = true
 
 [dependencies]
 bm-contract = { workspace = true }
+bm-judge = { workspace = true }
+bm-persist = { workspace = true }
 clap = { workspace = true }
 dirs = { workspace = true }
 reqwest = { workspace = true, features = ["blocking"] }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
 
 [[bin]]
 name = "boenmind"

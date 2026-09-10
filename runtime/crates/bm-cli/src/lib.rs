@@ -128,3 +128,74 @@ impl EnvelopeClient {
         Ok(())
     }
 }
+
+// ---- 离线自检:独立 Judge 评估(M8.7;#57 裁决=CLI 装开关)------------------
+
+/// 缺省数据目录(与 boenmind-server `--data-dir` 缺省同源)。
+pub fn default_data_dir() -> std::path::PathBuf {
+    dirs::data_dir()
+        .map(|d| d.join("boenmind"))
+        .unwrap_or_else(|| std::path::PathBuf::from("boenmind-data"))
+}
+
+/// 对 `<data-dir>` 的事件日志跑独立评估器(离线只读,不经 server;
+/// 评估器为确定性:同区间恒同报告)。`from_seq`/`to_seq` 缺省 = 全量区间。
+/// 返回合同形态 evaluation-report.v0_1;打开失败/空日志/区间非法 = Err(用户可读)。
+pub fn run_judge(
+    data_dir: &std::path::Path,
+    from_seq: Option<u64>,
+    to_seq: Option<u64>,
+) -> Result<serde_json::Value, String> {
+    use bm_persist::EventStore as _;
+    let store = bm_persist::PersistStore::open(data_dir)
+        .map_err(|e| format!("打开持久层失败({}): {e}", data_dir.display()))?;
+    let last = store
+        .last_log_seq()
+        .map_err(|e| format!("读取日志末尾失败: {e}"))?;
+    if last == 0 {
+        return Err("事件日志为空,无账可查".into());
+    }
+    let from = from_seq.unwrap_or(1);
+    let to = to_seq.unwrap_or(last);
+    if from == 0 || from > to {
+        return Err(format!(
+            "区间非法: [{from},{to}](须 1 ≤ from ≤ to ≤ {last})"
+        ));
+    }
+    bm_judge::evaluate(&store, from, to).map_err(|e| e.to_string())
+}
+
+#[cfg(test)] // 门控剥除:测试模块不进生产 lib(同步全仓 mod tests 惯例)
+mod judge_tests {
+    use super::*;
+
+    /// 空日志 → 用户可读文案,而非裸错误(新装/未跑过的数据目录是常态)。
+    #[test]
+    fn judge_on_empty_log_is_friendly_error() {
+        let dir = tempfile::tempdir().expect("临时目录");
+        let err = run_judge(dir.path(), None, None).expect_err("空日志必须报错");
+        assert!(err.contains("事件日志为空"), "文案须可读: {err}");
+    }
+
+    /// 区间非法(或被 --from/--to 钳出界)→ 带日志末尾的可读提示。
+    #[test]
+    fn judge_rejects_inverted_range() {
+        use bm_contract::events::{EventEnvelope, EventType};
+        use bm_persist::EventStore as _;
+        let dir = tempfile::tempdir().expect("临时目录");
+        let store = bm_persist::PersistStore::open(dir.path()).expect("打开");
+        store
+            .record(&EventEnvelope::new(
+                1,
+                EventType::RuntimeStarted,
+                "2026-08-30T12:00:00.000Z".into(),
+                None,
+                None,
+                None,
+                serde_json::json!({"pid": 1, "version": "test", "started_at": "2026-08-30T12:00:00.000Z"}),
+            ))
+            .expect("写事件");
+        let err = run_judge(dir.path(), Some(9), Some(3)).expect_err("倒序区间必须报错");
+        assert!(err.contains("区间非法"), "文案须可读: {err}");
+    }
+}
