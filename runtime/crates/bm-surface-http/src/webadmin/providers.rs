@@ -87,10 +87,7 @@ fn write_history(data_dir: &Path, history: &[Value]) -> Result<(), String> {
 }
 
 fn now_unix_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    crate::unix_now()
 }
 
 /// GET /admin/providers/history:软删除墓碑清单(打码投影 + deleted_at)。

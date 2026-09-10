@@ -6,9 +6,7 @@
 use bm_contract::connector::{FinishReason, InvokeRequest, InvokeResponse, Role, Usage};
 use bm_contract::ids::{BmId, IdGen, SeqIdGen};
 use bm_contract::states::OperationState;
-use bm_contract::wire::{
-    AgentSpec, InputTrust, SendInputParams, SessionCreateParams,
-};
+use bm_contract::wire::{AgentSpec, InputTrust, SendInputParams, SessionCreateParams};
 use bm_core::clock::SystemClock;
 use bm_core::ports::ModelConnector;
 use bm_core::runtime::{DEFAULT_TURN_TIMEOUT_SECS, RuntimeConfig, RuntimeHandle};

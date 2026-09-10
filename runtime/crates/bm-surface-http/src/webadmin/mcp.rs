@@ -278,10 +278,7 @@ pub async fn mcp_purge(
             match std::fs::remove_file(p) {
                 Ok(_) => deleted.push(exe.clone()),
                 Err(e) => {
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0);
+                    let now = crate::unix_now();
                     let aside = p.with_extension(format!("old-{now}"));
                     match std::fs::rename(p, &aside) {
                         Ok(_) => renamed_aside.push(aside.display().to_string()),
@@ -1051,10 +1048,7 @@ fn upsert_tombstone(data_dir: &Path, name: &str) -> Result<(), String> {
         .and_then(|s| serde_json::from_str::<Value>(&s).ok())
         .and_then(|v| v["removed"].as_array().cloned())
         .unwrap_or_default();
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let now = crate::unix_now();
     let mut list: Vec<Value> = existing
         .into_iter()
         .filter(|e| e["name"].as_str() != Some(name))

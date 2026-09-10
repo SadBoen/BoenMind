@@ -168,42 +168,11 @@ pub fn hash_password(password: &str, salt: &str) -> String {
     hex(&h.finalize())
 }
 
-/// HMAC-SHA256(RFC 2104;key 长度 > 64 字节时先压缩)。
-fn hmac_sha256(key: &[u8], msg: &[u8]) -> [u8; 32] {
-    const BLOCK: usize = 64;
-    let mut k = [0u8; BLOCK];
-    if key.len() > BLOCK {
-        let mut h = Sha256::new();
-        h.update(key);
-        k[..32].copy_from_slice(&h.finalize());
-    } else {
-        k[..key.len()].copy_from_slice(key);
-    }
-    let ipad: Vec<u8> = k.iter().map(|b| b ^ 0x36).collect();
-    let opad: Vec<u8> = k.iter().map(|b| b ^ 0x5c).collect();
-    let mut inner = Sha256::new();
-    inner.update(&ipad);
-    inner.update(msg);
-    let ih = inner.finalize();
-    let mut outer = Sha256::new();
-    outer.update(&opad);
-    outer.update(ih);
-    outer.finalize().into()
-}
-
-/// PBKDF2-HMAC-SHA256(RFC 2898;dkLen = 32 字节 = 单块输出)。
+/// PBKDF2-HMAC-SHA256(RustCrypto 实现,符合 RFC 2898;dkLen = 32 字节)。
 fn pbkdf2_hmac_sha256(password: &[u8], salt: &[u8], iters: u32) -> [u8; 32] {
-    let mut salt_block = salt.to_vec();
-    salt_block.extend_from_slice(&1u32.to_be_bytes());
-    let mut u = hmac_sha256(password, &salt_block);
-    let mut acc = u;
-    for _ in 1..iters.max(1) {
-        u = hmac_sha256(password, &u);
-        for (a, b) in acc.iter_mut().zip(u.iter()) {
-            *a ^= *b;
-        }
-    }
-    acc
+    let mut dk = [0u8; 32];
+    pbkdf2::pbkdf2_hmac::<Sha256>(password, salt, iters.max(1), &mut dk);
+    dk
 }
 
 /// 存储新密码:`pbkdf2$<iters>$<salt>$<hash>`。
@@ -500,29 +469,14 @@ pub async fn portal_password(
 }
 
 /// GET /login:登录页(web_dir 下 login.html)。
-/// base64url 解码(JWT payload 提取用;无填充,容忍填充)。
+/// base64url 解码(JWT payload 提取用;无填充,容忍标准字母表变体)。
 fn b64url_decode(s: &str) -> Option<Vec<u8>> {
+    use base64::Engine as _;
     let s = s.trim_end_matches('=');
-    let mut out = Vec::new();
-    let mut buf: u32 = 0;
-    let mut bits: u32 = 0;
-    for ch in s.chars() {
-        let v = match ch {
-            'A'..='Z' => ch as u32 - 'A' as u32,
-            'a'..='z' => ch as u32 - 'a' as u32 + 26,
-            '0'..='9' => ch as u32 - '0' as u32 + 52,
-            '-' | '+' => 62,
-            '_' | '/' => 63,
-            _ => return None,
-        };
-        buf = (buf << 6) | v;
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push(((buf >> bits) & 0xFF) as u8);
-        }
-    }
-    Some(out)
+    base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(s)
+        .or_else(|_| base64::engine::general_purpose::STANDARD_NO_PAD.decode(s))
+        .ok()
 }
 
 /// #47:GET /api/portal/oauth/login——302 到 IdP 授权端点(response_type=code
@@ -658,10 +612,7 @@ pub async fn portal_oauth_callback(
     if !aud_ok {
         return unauthorized("id_token aud 不匹配");
     }
-    let now_secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let now_secs = crate::unix_now() as i64;
     if let Some(exp) = claims["exp"].as_i64()
         && now_secs > exp + 60
     {

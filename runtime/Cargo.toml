@@ -35,6 +35,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 keyring = "3"
 rusqlite = { version = "0", features = ["bundled", "backup"] }
 sha2 = "0.11.0"
+# base64url(JWT/令牌)与 PBKDF2-HMAC-SHA256(portal 口令)统一走成熟实现
+base64 = "0.22.1"
+pbkdf2 = "0.13"
 # HTTP 客户端单点收归(2026-09-05 回看:此前 4 个 crate 各自声明,feature 面漂移)
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 aes-gcm = "0.11.1"

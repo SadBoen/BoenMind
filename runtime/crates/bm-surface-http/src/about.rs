@@ -415,10 +415,7 @@ fn install(cfg: &AdminConfig, src: &std::path::Path) -> Result<(), String> {
     if !new_bin.exists() {
         return Err("包内缺少 boenmind-server".into());
     }
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let ts = crate::unix_now();
     let old = exe.with_extension(format!(
         "old-{ts}{}",
         if cfg!(windows) { "exe" } else { "" }

@@ -343,27 +343,8 @@ async fn public_bind_unconfigured_denies_public_surface() {
 #[tokio::test]
 async fn oidc_login_full_flow_and_state_replay_rejected() {
     // --- mock IdP:token 端点回固定 id_token(背通道直取,签名不校验形态) ---
-    fn b64url(bytes: &[u8]) -> String {
-        const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-        let mut out = String::new();
-        for chunk in bytes.chunks(3) {
-            let b = [
-                chunk[0],
-                *chunk.get(1).unwrap_or(&0),
-                *chunk.get(2).unwrap_or(&0),
-            ];
-            let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
-            out.push(T[(n >> 18) as usize & 63] as char);
-            out.push(T[(n >> 12) as usize & 63] as char);
-            if chunk.len() > 1 {
-                out.push(T[(n >> 6) as usize & 63] as char);
-            }
-            if chunk.len() > 2 {
-                out.push(T[n as usize & 63] as char);
-            }
-        }
-        out
-    }
+    use base64::Engine as _;
+    let b64url = |bytes: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
     let seg = |v: serde_json::Value| b64url(v.to_string().as_bytes());
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

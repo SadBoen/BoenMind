@@ -5,9 +5,7 @@ use bm_contract::error_codes::ErrorCode;
 use bm_contract::events::EventType;
 use bm_contract::ids::{BmId, IdGen};
 use bm_contract::states::OperationState;
-use bm_contract::wire::{
-    ApprovalListParams, ApprovalRespondParams, CapabilityCallParams,
-};
+use bm_contract::wire::{ApprovalListParams, ApprovalRespondParams, CapabilityCallParams};
 use bm_providers::mcp::{Behavior, InProcMcpServer, McpHub, McpToolDef};
 use bm_testkit::replay::TestRig;
 use serde_json::json;

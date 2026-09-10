@@ -15,11 +15,13 @@ fn open_migrates_and_sets_version() {
 }
 
 #[test]
-fn meta_set_and_cas() {
+fn meta_cas() {
     let dir = tempfile::tempdir().expect("临时目录");
     let db = StateDb::open(&dir.path().join("state.db")).expect("打开");
 
-    db.meta_set("last_applied_seq", "5").expect("写");
+    // 初始写入经 CAS(expect = None → 不存在时插入)
+    db.meta_compare_and_set("last_applied_seq", None, "5")
+        .expect("插入");
     assert_eq!(
         db.meta_get("last_applied_seq").expect("读"),
         Some("5".into())

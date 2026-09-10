@@ -2,7 +2,7 @@
 //! 供端到端测试(M3 规格 T5)与未来脚本化复用。
 
 use bm_contract::error_codes::ErrorCode;
-use bm_contract::ids::{BmId, IdGen};
+use bm_contract::ids::IdGen;
 use bm_contract::wire::{Method, RequestEnvelope, ResponseEnvelope};
 use serde_json::Value;
 
@@ -33,13 +33,11 @@ impl CallError {
     }
 }
 
-type IdGenBox = Box<dyn Fn(&str) -> BmId + Send>;
-
 /// Wire API 客户端(bearer 令牌在构造时注入)。
 pub struct EnvelopeClient {
     url: String,
     http: reqwest::blocking::Client,
-    id_gen: IdGenBox,
+    id_gen: bm_contract::ids::UlidIdGen,
 }
 
 pub fn default_token_path() -> std::path::PathBuf {
@@ -73,17 +71,16 @@ impl EnvelopeClient {
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .map_err(|e| format!("客户端构建失败: {e}"))?;
-        let generator = bm_contract::ids::UlidIdGen;
         Ok(Self {
             url: url.trim_end_matches('/').to_string(),
             http,
-            id_gen: Box::new(move |prefix| IdGen::next_id(&generator, prefix)),
+            id_gen: bm_contract::ids::UlidIdGen,
         })
     }
 
     /// 调用一个 Wire 方法:信封逐字节,ok=true 返回 result,ok=false 返回 Envelope 错误。
     pub fn call(&self, method: Method, params: Value) -> Result<Value, CallError> {
-        let envelope = RequestEnvelope::new(method, (self.id_gen)("req"), params);
+        let envelope = RequestEnvelope::new(method, self.id_gen.next_id("req"), params);
         let r = self
             .http
             .post(format!("{}/rpc/{}", self.url, method.as_str()))

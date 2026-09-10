@@ -430,18 +430,6 @@ impl StateDb {
         }
     }
 
-    /// meta 无条件写。
-    pub fn meta_set(&self, key: &str, value: &str) -> StoreResult<()> {
-        let conn = self.conn.lock().expect("锁未中毒");
-        conn.execute(
-            "INSERT INTO meta(key, value) VALUES(?1, ?2)
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            [key, value],
-        )
-        .sql()?;
-        Ok(())
-    }
-
     /// meta CAS:仅当现值等于 expect 时写入。返回是否成功;
     /// 不匹配返回 CasMismatch(调用方据此产生 store.write.rejected 审计事件)。
     pub fn meta_compare_and_set(

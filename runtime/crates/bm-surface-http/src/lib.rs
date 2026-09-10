@@ -27,6 +27,14 @@ use bm_core::runtime::RuntimeHandle;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+/// 当前 Unix 秒(时钟回拨兜底 0;多个模块共用同一口径)。
+pub(crate) fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 /// 共享应用状态。
 #[derive(Clone)]
 pub struct AppState {

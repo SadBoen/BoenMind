@@ -38,6 +38,8 @@ mod context;
 mod fs;
 mod jobs;
 mod json_store;
+// crate 根的 workspace_admin(W8)也走同一收口原语
+pub(crate) use json_store::{JsonRead, read_json_file, write_json_file};
 mod limits;
 mod logs;
 mod mcp;

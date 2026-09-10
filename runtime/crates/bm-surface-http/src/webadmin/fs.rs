@@ -139,6 +139,27 @@ pub async fn fs_file(State(cfg): State<AdminConfig>, Query(p): Query<FsPathParam
 }
 
 /// W7 反馈:目录树右键菜单——重命名(路径防护同 X-01;新名校验)。
+/// 新条目名校验(rename/mkdir 共用):非空、≤200、拒 `.`/`..`、拒路径分隔。
+/// `kind` =「文件」/「目录」,进错误文案。
+fn validate_entry_name(
+    body: &serde_json::Value,
+    kind: &str,
+) -> Result<String, (StatusCode, String)> {
+    let Some(name) = body["name"].as_str().map(|s| s.trim()) else {
+        return Err((StatusCode::BAD_REQUEST, "name 必须是字符串".into()));
+    };
+    if name.is_empty() || name.len() > 200 || name == "." || name == ".." {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("name 必须是非空{kind}名(≤200 字符,不含路径分隔)"),
+        ));
+    }
+    if name.contains(['/', '\\']) {
+        return Err((StatusCode::BAD_REQUEST, "name 不允许包含路径分隔符".into()));
+    }
+    Ok(name.to_string())
+}
+
 pub async fn fs_rename(State(cfg): State<AdminConfig>, Json(body): Json<Value>) -> Response {
     let Some(path) = body["path"].as_str() else {
         return admin_error(StatusCode::BAD_REQUEST, "path 必须是字符串");
@@ -147,22 +168,14 @@ pub async fn fs_rename(State(cfg): State<AdminConfig>, Json(body): Json<Value>) 
         Ok(t) => t,
         Err(e) => return admin_error(StatusCode::BAD_REQUEST, e),
     };
-    let Some(new_name) = body["name"].as_str().map(|s| s.trim()) else {
-        return admin_error(StatusCode::BAD_REQUEST, "name 必须是字符串");
+    let new_name = match validate_entry_name(&body, "文件") {
+        Ok(n) => n,
+        Err((code, msg)) => return admin_error(code, msg),
     };
-    if new_name.is_empty() || new_name.len() > 200 || new_name == "." || new_name == ".." {
-        return admin_error(
-            StatusCode::BAD_REQUEST,
-            "name 必须是非空文件名(≤200 字符,不含路径分隔)",
-        );
-    }
-    if new_name.contains(['/', '\\']) {
-        return admin_error(StatusCode::BAD_REQUEST, "name 不允许包含路径分隔符");
-    }
     let Some(parent) = target.parent() else {
         return admin_error(StatusCode::BAD_REQUEST, "目标无父目录");
     };
-    let new_path = parent.join(new_name);
+    let new_path = parent.join(&new_name);
     if new_path.exists() {
         return admin_error(StatusCode::CONFLICT, format!("「{new_name}」已存在"));
     }
@@ -482,18 +495,10 @@ pub async fn fs_mkdir(State(_cfg): State<AdminConfig>, Json(body): Json<Value>) 
     if parent.is_empty() {
         return admin_error(StatusCode::BAD_REQUEST, "请先进入某个盘符或目录再新建");
     }
-    let Some(name) = body["name"].as_str().map(|s| s.trim()) else {
-        return admin_error(StatusCode::BAD_REQUEST, "name 必须是字符串");
+    let name = match validate_entry_name(&body, "目录") {
+        Ok(n) => n,
+        Err((code, msg)) => return admin_error(code, msg),
     };
-    if name.is_empty() || name.len() > 200 || name == "." || name == ".." {
-        return admin_error(
-            StatusCode::BAD_REQUEST,
-            "name 必须是非空目录名(≤200 字符,不含路径分隔)",
-        );
-    }
-    if name.contains(['/', '\\']) {
-        return admin_error(StatusCode::BAD_REQUEST, "name 不允许包含路径分隔符");
-    }
     let parent_path = std::path::Path::new(parent);
     if !parent_path.exists() {
         return admin_error(StatusCode::BAD_REQUEST, format!("父目录不存在: {parent}"));
@@ -505,7 +510,7 @@ pub async fn fs_mkdir(State(_cfg): State<AdminConfig>, Json(body): Json<Value>) 
     if !canon_parent.is_dir() {
         return admin_error(StatusCode::BAD_REQUEST, "父路径不是目录");
     }
-    let target = canon_parent.join(name);
+    let target = canon_parent.join(&name);
     if target.exists() {
         return admin_error(StatusCode::CONFLICT, format!("「{name}」已存在"));
     }

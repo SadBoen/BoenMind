@@ -18,13 +18,10 @@ use bm_contract::ids::{BmId, IdGen, UlidIdGen};
 use bm_contract::wire::{
     AgentSpec, InputTrust, SendInputParams, SessionCreateParams, SessionResumeParams,
 };
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 fn unix_now() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+    crate::unix_now() as i64
 }
 
 fn err_response(status: StatusCode, message: &str) -> Response {

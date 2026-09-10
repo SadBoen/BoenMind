@@ -16,14 +16,15 @@ fn workspaces_file(cfg: &AdminConfig) -> std::path::PathBuf {
 }
 
 fn read_registry(cfg: &AdminConfig) -> Result<Vec<Value>, String> {
-    let path = workspaces_file(cfg);
-    let raw = match std::fs::read_to_string(&path) {
-        Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(format!("读取工作区注册表失败: {e}")),
+    let v = match crate::webadmin::read_json_file(
+        &workspaces_file(cfg),
+        "读取工作区注册表失败",
+        "workspaces.json 格式损坏,拒绝加载/覆写",
+    ) {
+        Ok(crate::webadmin::JsonRead::Value(v)) => v,
+        Ok(crate::webadmin::JsonRead::Missing) => return Ok(Vec::new()),
+        Err(e) => return Err(e),
     };
-    let v: Value = serde_json::from_str(&raw)
-        .map_err(|e| format!("workspaces.json 格式损坏,拒绝加载/覆写: {e}"))?;
     v["workspaces"]
         .as_array()
         .cloned()
@@ -31,12 +32,11 @@ fn read_registry(cfg: &AdminConfig) -> Result<Vec<Value>, String> {
 }
 
 fn write_registry(cfg: &AdminConfig, list: &[Value]) -> Result<(), String> {
-    let dir = cfg.data_dir.join("config");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("config 目录创建失败: {e}"))?;
-    let text = serde_json::to_string_pretty(&json!({ "workspaces": list }))
-        .map_err(|e| format!("序列化失败: {e}"))?;
-    bm_core::ports::persist::atomic_write(&workspaces_file(cfg), text.as_bytes())
-        .map_err(|e| format!("写盘失败: {e}"))
+    crate::webadmin::write_json_file(
+        &workspaces_file(cfg),
+        &json!({ "workspaces": list }),
+        "写盘失败",
+    )
 }
 
 fn new_workspace_id() -> String {
