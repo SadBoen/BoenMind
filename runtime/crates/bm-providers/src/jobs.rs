@@ -80,7 +80,10 @@ pub struct JobEntry {
 
 impl JobEntry {
     fn status(&self) -> JobStatus {
-        *self.status.lock().expect("锁未中毒")
+        *self
+            .status
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 
@@ -143,7 +146,10 @@ impl JobTable {
             exit_code: Mutex::new(None),
         });
         {
-            let mut q = self.jobs.lock().expect("锁未中毒");
+            let mut q = self
+                .jobs
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             q.push_back(entry.clone());
         }
         tokio::spawn(pump_to_file(out, log));
@@ -156,12 +162,18 @@ impl JobTable {
                 Ok(s) => s.code().unwrap_or(-1),
                 Err(_) => -1,
             };
-            *watcher_entry.status.lock().expect("锁未中毒") = if code == 0 {
+            *watcher_entry
+                .status
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = if code == 0 {
                 JobStatus::Succeeded
             } else {
                 JobStatus::Failed
             };
-            *watcher_entry.exit_code.lock().expect("锁未中毒") = Some(code);
+            *watcher_entry
+                .exit_code
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(code);
             table.enforce_retention();
         });
         self.enforce_retention();
@@ -176,7 +188,7 @@ impl JobTable {
         let entry = self
             .jobs
             .lock()
-            .expect("锁未中毒")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .iter()
             .find(|e| e.id == job_id)
             .cloned();
@@ -194,7 +206,7 @@ impl JobTable {
                 return json!({
                     "job_id": entry.id,
                     "status": status.as_str(),
-                    "exit_code": *entry.exit_code.lock().expect("锁未中毒"),
+                    "exit_code": *entry.exit_code.lock().unwrap_or_else(std::sync::PoisonError::into_inner),
                     "elapsed_ms": now_ms().saturating_sub(entry.started_at_ms),
                     "output_tail": self.tail(&entry.log_path),
                     "log_path": entry.log_path.display().to_string(),
@@ -207,8 +219,7 @@ impl JobTable {
     /// 管理面列表(/admin/jobs;新→旧)。
     pub fn list(&self) -> Vec<Value> {
         self.jobs
-            .lock()
-            .expect("锁未中毒")
+            .lock().unwrap_or_else(std::sync::PoisonError::into_inner)
             .iter()
             .rev()
             .map(|e| {
@@ -216,7 +227,7 @@ impl JobTable {
                     "id": e.id,
                     "command": e.command.chars().take(200).collect::<String>(),
                     "status": e.status().as_str(),
-                    "exit_code": *e.exit_code.lock().expect("锁未中毒"),
+                    "exit_code": *e.exit_code.lock().unwrap_or_else(std::sync::PoisonError::into_inner),
                     "elapsed_ms": now_ms().saturating_sub(e.started_at_ms),
                     "log_path": e.log_path.display().to_string(),
                 })
@@ -255,7 +266,10 @@ impl JobTable {
     /// LRU 清理:先按个数、再按日志总字节;只驱逐已终态作业(连同其日志)。
     fn enforce_retention(&self) {
         let l = self.limits.get();
-        let mut q = self.jobs.lock().expect("锁未中毒");
+        let mut q = self
+            .jobs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let evict = |q: &mut VecDeque<Arc<JobEntry>>| -> u64 {
             let mut total: u64 = q
                 .iter()
@@ -282,7 +296,10 @@ impl JobTable {
 
 impl JobBoard for JobTable {
     fn summary(&self) -> String {
-        let q = self.jobs.lock().expect("锁未中毒");
+        let q = self
+            .jobs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let running: Vec<&Arc<JobEntry>> = q
             .iter()
             .filter(|e| e.status() == JobStatus::Running)

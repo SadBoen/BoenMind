@@ -69,7 +69,10 @@ pub fn builtin_capability_set() -> Vec<(CapabilityManifest, Arc<dyn CapabilityPr
                 .as_str()
                 .ok_or("缺必填参数 key(字符串)")?
                 .to_string();
-            let mut counters = st.counters.lock().expect("锁未中毒");
+            let mut counters = st
+                .counters
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let count = counters.entry(key.clone()).or_insert(0);
             *count += 1;
             Ok(json!({"key": key, "count": *count}))
@@ -109,7 +112,7 @@ pub fn builtin_capability_set() -> Vec<(CapabilityManifest, Arc<dyn CapabilityPr
                 .to_string();
             st.notes
                 .lock()
-                .expect("锁未中毒")
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .insert(path.clone(), content);
             Ok(json!({"written": true, "path": path}))
         }),
@@ -137,7 +140,12 @@ pub fn builtin_capability_set() -> Vec<(CapabilityManifest, Arc<dyn CapabilityPr
                 .as_str()
                 .ok_or("缺必填参数 path(字符串)")?
                 .to_string();
-            let removed = st.notes.lock().expect("锁未中毒").remove(&path).is_some();
+            let removed = st
+                .notes
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(&path)
+                .is_some();
             Ok(json!({"deleted": removed, "path": path}))
         }),
     ));
@@ -170,14 +178,19 @@ pub fn builtin_capability_set() -> Vec<(CapabilityManifest, Arc<dyn CapabilityPr
                 .ok_or("缺必填参数 to(字符串)")?
                 .to_string();
             let subject = args["subject"].as_str().unwrap_or("").to_string();
-            let receipt_no = st.outbox.lock().expect("锁未中毒").len() + 1;
+            let receipt_no = st
+                .outbox
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .len()
+                + 1;
             let receipt = json!({
                 "message_id": format!("mock-{receipt_no:06}"),
                 "queued": true,
             });
             st.outbox
                 .lock()
-                .expect("锁未中毒")
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .push(json!({"to": to, "subject": subject, "receipt": receipt}));
             Ok(receipt)
         }),
@@ -193,9 +206,16 @@ pub fn builtin_capability_set() -> Vec<(CapabilityManifest, Arc<dyn CapabilityPr
         ),
         provider_fn(move |args| {
             let target = args["target"].as_str().unwrap_or("all").to_string();
-            let notes = st.notes.lock().expect("锁未中毒").len();
+            let notes = st
+                .notes
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .len();
             if target == "all" || target == "notes" {
-                st.notes.lock().expect("锁未中毒").clear();
+                st.notes
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clear();
             }
             Ok(json!({"purged": target, "notes_removed": notes}))
         }),

@@ -501,13 +501,18 @@ pub(crate) fn handle_provider_call(
                     emit_provider_health(w, &provider, "healthy", "unavailable", "子进程/通道故障");
                 }
             }
-            let (code, msg) = match e {
+            let (code, msg): (ErrorCode, String) = match e {
                 AsyncCallError::Timeout => (
                     ErrorCode::Timeout,
-                    "异步调用超时(结果未知,对账由 outbox 承载)",
+                    "异步调用超时(结果未知,对账由 outbox 承载)".into(),
                 ),
-                AsyncCallError::Transport(_) => (ErrorCode::Unavailable, "Provider 传输故障"),
-                AsyncCallError::ToolError => (ErrorCode::Internal, "工具报告执行失败"),
+                // 评审修复(2026-09-10):传输故障细节(含执行器恐慌死因)进收据,
+                // 不再以静态文案掩盖真实原因(ADR-0029 如实回喂同源口径)。
+                AsyncCallError::Transport(detail) => (
+                    ErrorCode::Unavailable,
+                    format!("Provider 传输故障: {detail}"),
+                ),
+                AsyncCallError::ToolError => (ErrorCode::Internal, "工具报告执行失败".into()),
             };
             fail_capability_call(
                 w,
@@ -515,7 +520,7 @@ pub(crate) fn handle_provider_call(
                 &meta.capability,
                 &meta.principal,
                 code,
-                msg,
+                &msg,
             );
             if let Some(gid) = &meta.grant_id {
                 persist_grant(w, gid);
@@ -828,7 +833,14 @@ pub(crate) fn dispatch_capability(
         let op = op_id.clone();
         let cap = capability.to_string();
         let exec_args = args.clone();
-        tokio::spawn(async move {
+        // 评审修复(2026-09-10):执行器任务恐慌必须回账。原实现 spawn 后只靠
+        // 任务自身回发 ProviderCall,任务 panic 即静默死亡——operation 永停
+        // running,回合等待环在限制全零(不限时)下永久挂死。监视任务对
+        // JoinError(is_panic) 合成 Transport 失败回单写者回路,复用
+        // handle_provider_call 的既有结算与 cap_in_flight 清理。
+        let panic_tx = tx.clone();
+        let panic_op = op_id.clone();
+        let exec_join = tokio::spawn(async move {
             let result = executor
                 .call(
                     op.as_str(),
@@ -843,6 +855,28 @@ pub(crate) fn dispatch_capability(
                     result,
                 })
                 .await;
+        });
+        tokio::spawn(async move {
+            if let Err(join_err) = exec_join.await {
+                let detail = match join_err.try_into_panic() {
+                    Ok(payload) => {
+                        let msg = payload
+                            .downcast_ref::<&str>()
+                            .map(|s| (*s).to_string())
+                            .or_else(|| payload.downcast_ref::<String>().cloned())
+                            .unwrap_or_else(|| "非字符串恐慌载荷".to_string());
+                        format!("异步执行器任务恐慌(已收容): {msg}")
+                    }
+                    Err(_) => "异步执行器任务被取消".to_string(),
+                };
+                tracing::error!(op = %panic_op.as_str(), "{detail}");
+                let _ = panic_tx
+                    .send(Cmd::ProviderCall {
+                        operation_id: panic_op,
+                        result: Err(crate::ports::AsyncCallError::Transport(detail)),
+                    })
+                    .await;
+            }
         });
         return CallOutcome::DispatchedAsync;
     }

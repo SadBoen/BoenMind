@@ -6,6 +6,8 @@
 //! `#/definitions/...`,得到等价的单文档 schema 再编译。
 
 use serde_json::{Value, json};
+use std::cell::RefCell;
+use std::collections::HashMap;
 
 const ENVELOPE_ID: &str = "boenmind:wire:envelope:v0.1#";
 const BUDGET_ID: &str = "boenmind:budget:v0.1#";
@@ -127,10 +129,31 @@ fn rewrite_refs(v: &mut Value) {
     }
 }
 
-/// 编译 + 校验。返回全部校验错误的拼接文本(测试断言用)。
+thread_local! {
+    /// 评审修复(2026-09-10):编译产物缓存。此前每次 validate 都做 $ref 合并
+    /// 闭包扫描 + validator 重编译,而 Broker 出入参校验是每次能力调用必经的
+    /// 热路径。key = schema 全文(manifest schema 与注册表常量均为有限集合,
+    /// 不会无界增长)。thread_local 规避对 Validator Send/Sync 的版本依赖。
+    static VALIDATOR_CACHE: RefCell<HashMap<String, jsonschema::Validator>> =
+        RefCell::new(HashMap::new());
+    /// (schema 全文, pointer) → 子树包裹后的编译产物。
+    static POINTER_VALIDATOR_CACHE: RefCell<HashMap<(String, String), jsonschema::Validator>> =
+        RefCell::new(HashMap::new());
+}
+
+/// 编译 + 校验(编译产物按 schema 全文缓存)。返回全部校验错误的拼接文本(测试断言用)。
 pub fn validate(schema_text: &str, instance: &Value) -> Result<(), String> {
-    let doc = combine(schema_text);
-    let validator = jsonschema::validator_for(&doc).map_err(|e| format!("schema 编译失败: {e}"))?;
+    let key = schema_text.to_string();
+    let cached = VALIDATOR_CACHE.with(|c| c.borrow().get(&key).cloned());
+    let validator = match cached {
+        Some(v) => v,
+        None => {
+            let validator = jsonschema::validator_for(&combine(schema_text))
+                .map_err(|e| format!("schema 编译失败: {e}"))?;
+            VALIDATOR_CACHE.with(|c| c.borrow_mut().insert(key, validator.clone()));
+            validator
+        }
+    };
     validator
         .validate(instance)
         .map_err(|error| format!("schema 校验失败: {error}"))
@@ -144,16 +167,27 @@ pub fn validate_by_pointer(
     pointer: &str,
     instance: &Value,
 ) -> Result<(), String> {
-    let doc = combine(schema_text);
-    let pointer = pointer.strip_prefix('#').unwrap_or(pointer);
-    let sub = doc
-        .pointer(pointer)
-        .ok_or_else(|| format!("schema 无此指针: {pointer}"))?
-        .clone();
-    let defs = doc.get("definitions").cloned().unwrap_or(json!({}));
-    let wrapper = json!({ "definitions": defs, "allOf": [sub] });
-    let validator =
-        jsonschema::validator_for(&wrapper).map_err(|e| format!("schema 编译失败: {e}"))?;
+    let key = (
+        schema_text.to_string(),
+        pointer.strip_prefix('#').unwrap_or(pointer).to_string(),
+    );
+    let cached = POINTER_VALIDATOR_CACHE.with(|c| c.borrow().get(&key).cloned());
+    let validator = match cached {
+        Some(v) => v,
+        None => {
+            let doc = combine(schema_text);
+            let sub = doc
+                .pointer(&key.1)
+                .ok_or_else(|| format!("schema 无此指针: {}", key.1))?
+                .clone();
+            let defs = doc.get("definitions").cloned().unwrap_or(json!({}));
+            let wrapper = json!({ "definitions": defs, "allOf": [sub] });
+            let validator =
+                jsonschema::validator_for(&wrapper).map_err(|e| format!("schema 编译失败: {e}"))?;
+            POINTER_VALIDATOR_CACHE.with(|c| c.borrow_mut().insert(key, validator.clone()));
+            validator
+        }
+    };
     validator
         .validate(instance)
         .map_err(|e| format!("schema 校验失败: {e}"))
@@ -200,5 +234,50 @@ mod tests {
             &create,
         )
         .expect("session.create params 合法");
+    }
+
+    #[test]
+    fn cached_validators_keep_semantics() {
+        // 评审修复回归:缓存命中路径(第二次起)与首译语义一致——合法仍过,非法仍拒。
+        let schema_text = r#"{"type":"object"}"#;
+        assert!(validate(schema_text, &json!({"k": 1})).is_ok());
+        assert!(
+            validate(schema_text, &json!({"k": 1})).is_ok(),
+            "缓存命中语义不变"
+        );
+        assert!(validate(schema_text, &json!("str")).is_err());
+        assert!(
+            validate(schema_text, &json!("str")).is_err(),
+            "缓存命中拒判不变"
+        );
+
+        let good = json!({
+            "event_seq": 1,
+            "type": "runtime.started",
+            "occurred_at": "2026-08-29T09:30:00.100Z",
+            "payload": {"pid": 1, "version": "0.1.0-m1", "started_at": "2026-08-29T09:30:00.098Z"}
+        });
+        let bad = json!({
+            "event_seq": 0,
+            "type": "runtime.started",
+            "occurred_at": "nope",
+            "payload": {}
+        });
+        for call in 0..2 {
+            assert!(
+                validate_by_pointer(
+                    crate::registries::ENVELOPE_SCHEMA,
+                    "#/event_envelope",
+                    &good
+                )
+                .is_ok(),
+                "第{call}次(缓存态)合法事件必须通过"
+            );
+            assert!(
+                validate_by_pointer(crate::registries::ENVELOPE_SCHEMA, "#/event_envelope", &bad)
+                    .is_err(),
+                "第{call}次(缓存态)非法事件必须被拒"
+            );
+        }
     }
 }

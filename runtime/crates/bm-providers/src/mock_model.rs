@@ -77,7 +77,10 @@ pub struct MockConnector {
 impl MockConnector {
     /// 取下一步(同步,锁不跨 await)。
     fn next_step(&self) -> Step {
-        let mut inner = self.inner.lock().expect("锁未中毒");
+        let mut inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let step: Option<Step> = match inner.script.get(inner.cursor) {
             Some(s) => Some(s.clone()),
             None if self.loop_last => inner.script.last().cloned(),

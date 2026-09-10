@@ -63,13 +63,19 @@ impl MemSecretStore {
 
 impl SecretStore for MemSecretStore {
     fn get(&self, secret_ref: &str) -> Result<String, SecretError> {
-        let map = self.map.lock().expect("锁未中毒");
+        let map = self
+            .map
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let v = map
             .get(secret_ref)
             .cloned()
             .ok_or_else(|| SecretError::NotFound(secret_ref.to_string()))?;
         drop(map);
-        self.ledger.lock().expect("锁未中毒").note(&v);
+        self.ledger
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .note(&v);
         Ok(v)
     }
 
@@ -77,22 +83,36 @@ impl SecretStore for MemSecretStore {
         ensure_valid_ref(secret_ref)?;
         self.map
             .lock()
-            .expect("锁未中毒")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(secret_ref.to_string(), value.to_string());
-        self.ledger.lock().expect("锁未中毒").note(value);
+        self.ledger
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .note(value);
         Ok(())
     }
 
     fn delete(&self, secret_ref: &str) -> Result<(), SecretError> {
-        self.map.lock().expect("锁未中毒").remove(secret_ref);
+        self.map
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(secret_ref);
         Ok(())
     }
 
     fn expose_for_scan(&self) -> Vec<String> {
         // 测试存储:全量(即便未被 get 过)
-        let map = self.map.lock().expect("锁未中毒");
+        let map = self
+            .map
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut all: Vec<String> = map.values().cloned().collect();
-        all.extend(self.ledger.lock().expect("锁未中毒").expose());
+        all.extend(
+            self.ledger
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .expose(),
+        );
         all
     }
 }
@@ -128,7 +148,10 @@ impl SecretStore for KeyringSecretStore {
                 keyring::Error::NoEntry => SecretError::NotFound(secret_ref.to_string()),
                 other => SecretError::Backend(other.to_string()),
             })?;
-        self.ledger.lock().expect("锁未中毒").note(&v);
+        self.ledger
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .note(&v);
         Ok(v)
     }
 
@@ -138,7 +161,10 @@ impl SecretStore for KeyringSecretStore {
         self.entry(secret_ref)?
             .set_password(value)
             .map_err(|e| SecretError::Backend(e.to_string()))?;
-        self.ledger.lock().expect("锁未中毒").note(value);
+        self.ledger
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .note(value);
         Ok(())
     }
 
@@ -150,7 +176,10 @@ impl SecretStore for KeyringSecretStore {
     }
 
     fn expose_for_scan(&self) -> Vec<String> {
-        self.ledger.lock().expect("锁未中毒").expose()
+        self.ledger
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .expose()
     }
 }
 
@@ -209,7 +238,10 @@ impl SecretStore for FileSecretStore {
             .read_all()?
             .remove(secret_ref)
             .ok_or_else(|| SecretError::NotFound(secret_ref.to_string()))?;
-        self.ledger.lock().expect("锁未中毒").note(&v);
+        self.ledger
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .note(&v);
         Ok(v)
     }
 
@@ -218,7 +250,10 @@ impl SecretStore for FileSecretStore {
         let mut map = self.read_all()?;
         map.insert(secret_ref.to_string(), value.to_string());
         self.write_all(&map)?;
-        self.ledger.lock().expect("锁未中毒").note(value);
+        self.ledger
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .note(value);
         Ok(())
     }
 
@@ -229,7 +264,10 @@ impl SecretStore for FileSecretStore {
     }
 
     fn expose_for_scan(&self) -> Vec<String> {
-        self.ledger.lock().expect("锁未中毒").expose()
+        self.ledger
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .expose()
     }
 }
 

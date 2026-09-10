@@ -39,13 +39,19 @@ impl RoutingConnector {
 
     /// 原子换表(默认连接器保留)。provider 配置写后由管理面调用,免重启。
     pub fn replace_table(&self, table: HashMap<String, Arc<dyn ModelConnector>>) {
-        let mut g = self.inner.write().expect("路由表锁未中毒");
+        let mut g = self
+            .inner
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         g.table = table;
     }
 
     /// 已路由的模型 id 清单(/v1 校验与观测面用)。
     pub fn known_models(&self) -> Vec<String> {
-        let g = self.inner.read().expect("路由表锁未中毒");
+        let g = self
+            .inner
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut v: Vec<String> = g.table.keys().cloned().collect();
         v.sort();
         v
@@ -54,13 +60,16 @@ impl RoutingConnector {
     pub fn contains(&self, model_id: &str) -> bool {
         self.inner
             .read()
-            .expect("路由表锁未中毒")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .table
             .contains_key(model_id)
     }
 
     fn route(&self, model_id: &str) -> Arc<dyn ModelConnector> {
-        let g = self.inner.read().expect("路由表锁未中毒");
+        let g = self
+            .inner
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         g.table
             .get(model_id)
             .cloned()
@@ -238,7 +247,11 @@ mod tests {
                     ..req("model-a")
                 },
                 cancel,
-                Box::new(move |s: &str| sink.lock().expect("锁未中毒").push_str(s)),
+                Box::new(move |s: &str| {
+                    sink.lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .push_str(s)
+                }),
             )
             .await;
         // 流式必须走到目标连接器的 invoke_stream(而非退化),内容即增量
@@ -258,7 +271,11 @@ mod tests {
                 tool_calls: vec![]
             }
         );
-        assert_eq!(*got.lock().expect("锁未中毒"), "model-a");
+        assert_eq!(
+            *got.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+            "model-a"
+        );
         assert_eq!(a.stream_invocations.load(Ordering::SeqCst), 1);
         assert_eq!(default.stream_invocations.load(Ordering::SeqCst), 0);
     }

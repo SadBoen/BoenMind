@@ -80,15 +80,18 @@ impl SkillScriptManager {
                 .map_err(|e| format!("脚本 {} wasm 编译失败: {}", sc.name, e))?;
             let timeout_ms = sc.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
             let capability = format!("skill.{}.{}", skill_id, sc.name);
-            self.entries.lock().expect("锁未中毒").insert(
-                capability.clone(),
-                Arc::new(ScriptEntry {
-                    capability,
-                    wasm_path: wasm_canon,
-                    module,
-                    timeout_ms,
-                }),
-            );
+            self.entries
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(
+                    capability.clone(),
+                    Arc::new(ScriptEntry {
+                        capability,
+                        wasm_path: wasm_canon,
+                        module,
+                        timeout_ms,
+                    }),
+                );
         }
         self.manifests_for(skill_id, scripts)
     }
@@ -126,7 +129,7 @@ impl SkillScriptManager {
         let entry: Arc<ScriptEntry> = self
             .entries
             .lock()
-            .expect("锁未中毒")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(capability)
             .cloned()
             .ok_or_else(|| AsyncCallError::Transport(format!("skill 脚本未注册: {capability}")))?;
@@ -294,15 +297,18 @@ mod tests {
         let engine = mgr.engine.clone();
         let module = Module::new(&engine, wat).expect("wat 编译");
         let cap = "skill.demo.convert".to_string();
-        mgr.entries.lock().expect("锁").insert(
-            cap.clone(),
-            Arc::new(ScriptEntry {
-                capability: cap.clone(),
-                wasm_path: PathBuf::from("demo.wat"),
-                module,
-                timeout_ms: 5_000,
-            }),
-        );
+        mgr.entries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(
+                cap.clone(),
+                Arc::new(ScriptEntry {
+                    capability: cap.clone(),
+                    wasm_path: PathBuf::from("demo.wat"),
+                    module,
+                    timeout_ms: 5_000,
+                }),
+            );
         (mgr, cap)
     }
 

@@ -66,7 +66,10 @@ impl StderrBuffer {
     }
 
     fn push(&self, generation: u64, text: String) {
-        let mut q = self.lines.lock().expect("锁未中毒");
+        let mut q = self
+            .lines
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if q.len() >= self.capacity {
             q.pop_front();
         }
@@ -75,13 +78,19 @@ impl StderrBuffer {
 
     /// 取最近 n 行(旧→新)。
     pub fn tail(&self, n: usize) -> Vec<StderrLine> {
-        let q = self.lines.lock().expect("锁未中毒");
+        let q = self
+            .lines
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let skip = q.len().saturating_sub(n);
         q.iter().skip(skip).cloned().collect()
     }
 
     pub fn len(&self) -> usize {
-        self.lines.lock().expect("锁未中毒").len()
+        self.lines
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -284,7 +293,7 @@ impl InProcMcpServer {
     pub fn set_behavior(&self, tool: &str, behavior: Behavior) {
         self.behaviors
             .lock()
-            .expect("锁未中毒")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(tool.to_string(), behavior);
     }
 
@@ -292,7 +301,7 @@ impl InProcMcpServer {
     pub fn call_count(&self, tool: &str) -> u32 {
         self.calls
             .lock()
-            .expect("锁未中毒")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(tool)
             .copied()
             .unwrap_or(0)
@@ -309,7 +318,11 @@ impl McpTransport for InProcMcpServer {
                 "serverInfo": {"name": "inproc", "version": "0.0.1"}
             })),
             "tools/list" => {
-                let tools = self.tools.lock().expect("锁未中毒").clone();
+                let tools = self
+                    .tools
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone();
                 Ok(json!({"tools": tools.iter().map(|t| json!({
                     "name": t.name,
                     "inputSchema": t.input_schema,
@@ -331,20 +344,20 @@ impl McpTransport for InProcMcpServer {
                 *self
                     .calls
                     .lock()
-                    .expect("锁未中毒")
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .entry(name.clone())
                     .or_insert(0) += 1;
                 if !token.is_empty() {
                     self.cancel_flags
                         .lock()
-                        .expect("锁未中毒")
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .entry(token.clone())
                         .or_insert_with(|| Arc::new(std::sync::atomic::AtomicBool::new(false)));
                 }
                 let behavior = self
                     .behaviors
                     .lock()
-                    .expect("锁未中毒")
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .get(&name)
                     .cloned()
                     .unwrap_or_default();
@@ -360,7 +373,7 @@ impl McpTransport for InProcMcpServer {
                     let flag = self
                         .cancel_flags
                         .lock()
-                        .expect("锁未中毒")
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .get(&token)
                         .cloned();
                     let stop_at =
@@ -395,13 +408,18 @@ impl McpTransport for InProcMcpServer {
     fn subscribe_progress(&self) -> tokio::sync::mpsc::UnboundedReceiver<McpProgressNote> {
         self.progress_rx
             .lock()
-            .expect("锁未中毒")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take()
             .unwrap_or_else(dead_progress_rx)
     }
 
     fn cancel_by_token(&self, token: &str) {
-        if let Some(f) = self.cancel_flags.lock().expect("锁未中毒").get(token) {
+        if let Some(f) = self
+            .cancel_flags
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(token)
+        {
             f.store(true, std::sync::atomic::Ordering::Relaxed);
         }
     }
@@ -440,7 +458,12 @@ impl Drop for StdioMcpTransport {
     fn drop(&mut self) {
         // 闭灯 = 看护任务 start_kill:reload/换装/销毁不再留僵尸
         // (此前只发 shutdown/exit 通知,插件不理会即悬挂)。
-        if let Some(kill) = self.kill.lock().expect("锁未中毒").take() {
+        if let Some(kill) = self
+            .kill
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+        {
             drop(kill);
         }
     }
@@ -629,7 +652,10 @@ fn spawn_generation(
                 continue;
             };
             if let Some(id) = msg.get("id").and_then(|v| v.as_u64()) {
-                let slot = pending_reader.lock().expect("锁未中毒").remove(&id);
+                let slot = pending_reader
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .remove(&id);
                 if let Some(tx) = slot {
                     match msg.get("error") {
                         Some(err) => {
@@ -658,7 +684,9 @@ fn spawn_generation(
             }
         }
         alive.store(false, std::sync::atomic::Ordering::Relaxed);
-        let mut map = pending_reader.lock().expect("锁未中毒");
+        let mut map = pending_reader
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         for (_, tx) in map.drain() {
             let _ = tx.send(Err("stdio-closed".into()));
         }
@@ -678,7 +706,11 @@ impl StdioMcpTransport {
             let mut inner = self.inner.lock().await;
             inner.next_id += 1;
             let id = inner.next_id;
-            inner.pending.lock().expect("锁未中毒").insert(id, tx);
+            inner
+                .pending
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(id, tx);
             registered_id = Some(id);
             if let Some(tok) = params
                 .get("_meta")
@@ -699,7 +731,11 @@ impl StdioMcpTransport {
         if let Err(e) = write_result {
             if let Some(id) = registered_id {
                 let mut inner = self.inner.lock().await;
-                inner.pending.lock().expect("锁未中毒").remove(&id);
+                inner
+                    .pending
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .remove(&id);
                 inner.token_to_id.retain(|_, v| *v != id);
             }
             return Err(e);
@@ -712,7 +748,11 @@ impl StdioMcpTransport {
         // 收尾清账:pending 常态由读取端按响应清理,此处 remove 幂等兜底
         {
             let mut inner = self.inner.lock().await;
-            inner.pending.lock().expect("锁未中毒").remove(&id);
+            inner
+                .pending
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(&id);
             if let Some(tok) = params
                 .get("_meta")
                 .and_then(|m| m.get("progressToken"))
@@ -731,7 +771,10 @@ impl StdioMcpTransport {
         // 内重生次数达 restart_limit = 故障循环,拒绝再生如实报错(此前
         // restart_limit 是解析后零消费的死配置)。
         {
-            let mut times = self.respawn_times.lock().expect("锁未中毒");
+            let mut times = self
+                .respawn_times
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let now = std::time::Instant::now();
             let window = self.respawn_window();
             times.retain(|t| now.duration_since(*t) < window);
@@ -748,13 +791,21 @@ impl StdioMcpTransport {
         }
         let mut inner = self.inner.lock().await;
         {
-            let mut map = inner.pending.lock().expect("锁未中毒");
+            let mut map = inner
+                .pending
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             for (_, tx) in map.drain() {
                 let _ = tx.send(Err("stdio-closed".into()));
             }
         }
         // 换代前闭灯杀旧代(消灭僵尸窗口),再挂新开关
-        if let Some(old_kill) = self.kill.lock().expect("锁未中毒").take() {
+        if let Some(old_kill) = self
+            .kill
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+        {
             drop(old_kill);
         }
         let (pending, stdin, kill) = spawn_generation(
@@ -766,7 +817,10 @@ impl StdioMcpTransport {
             self.generation.clone(),
             self.progress_agg_tx.clone(),
         )?;
-        *self.kill.lock().expect("锁未中毒") = Some(kill);
+        *self
+            .kill
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(kill);
         inner.pending = pending;
         inner.stdin = Some(stdin);
         // #32:进度经聚合通道自动续流,订阅位无需重生代回填
@@ -804,7 +858,7 @@ impl McpTransport for StdioMcpTransport {
     fn subscribe_progress(&self) -> tokio::sync::mpsc::UnboundedReceiver<McpProgressNote> {
         self.progress_rx
             .lock()
-            .expect("锁未中毒")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take()
             .unwrap_or_else(dead_progress_rx)
     }
@@ -924,7 +978,12 @@ impl McpTransport for HttpMcpTransport {
         // #3:完整握手——Accept 双类型(spec 要求,服务端可回 SSE 流),
         // 会话头回带(initialize 后服务器下发 Mcp-Session-Id)
         req = req.header("Accept", "application/json, text/event-stream");
-        if let Some(sid) = self.session_id.lock().expect("锁未中毒").clone() {
+        if let Some(sid) = self
+            .session_id
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+        {
             req = req.header("Mcp-Session-Id", sid);
         }
         // R3(FULL-REVIEW-2026-09-05 §7):裸 send 无超时 = 远端挂起即调用
@@ -942,7 +1001,11 @@ impl McpTransport for HttpMcpTransport {
             })?
             .map_err(|e| format!("远程 MCP 请求失败: {e}"))?;
         if resp.status() == reqwest::StatusCode::NOT_FOUND
-            && self.session_id.lock().expect("锁未中毒").is_some()
+            && self
+                .session_id
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_some()
         {
             return Err("远程 MCP 会话已失效(HTTP 404),请重载该 server".to_string());
         }
@@ -955,7 +1018,10 @@ impl McpTransport for HttpMcpTransport {
             .get("Mcp-Session-Id")
             .and_then(|v| v.to_str().ok())
         {
-            *self.session_id.lock().expect("锁未中毒") = Some(sid.to_string());
+            *self
+                .session_id
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(sid.to_string());
         }
         let is_sse = resp
             .headers()
@@ -992,7 +1058,12 @@ impl McpTransport for HttpMcpTransport {
             req = req.bearer_auth(token);
         }
         req = req.header("Accept", "application/json, text/event-stream");
-        if let Some(sid) = self.session_id.lock().expect("锁未中毒").clone() {
+        if let Some(sid) = self
+            .session_id
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+        {
             req = req.header("Mcp-Session-Id", sid);
         }
         // P1-9: notify 加上 10s 超时,防止半开远端挂死卸载/重载/关闭请求
@@ -1003,17 +1074,23 @@ impl McpTransport for HttpMcpTransport {
     fn subscribe_progress(&self) -> tokio::sync::mpsc::UnboundedReceiver<McpProgressNote> {
         self.progress_rx
             .lock()
-            .expect("锁未中毒")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take()
             .unwrap_or_else(dead_progress_rx)
     }
 
     fn remember_init(&self, v: Value) {
-        *self.init_result.lock().expect("锁未中毒") = Some(v);
+        *self
+            .init_result
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(v);
     }
 
     fn init_snapshot(&self) -> Option<Value> {
-        self.init_result.lock().expect("锁未中毒").clone()
+        self.init_result
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 }
 
@@ -1109,7 +1186,10 @@ impl McpHub {
 
         let mut manifests = Vec::new();
         {
-            let mut routes = self.routes.lock().expect("锁未中毒");
+            let mut routes = self
+                .routes
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             for t in tools {
                 let name = t
                     .get("name")
@@ -1146,7 +1226,9 @@ impl McpHub {
         let sink = self.sink.clone();
         tokio::spawn(async move {
             while let Some(note) = rx.recv().await {
-                let guard = sink.lock().expect("锁未中毒");
+                let guard = sink
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 if let Some(f) = guard.as_ref() {
                     f(ProgressNotice {
                         operation_id: note.progress_token,
@@ -1166,7 +1248,10 @@ impl McpHub {
     pub async fn probe_server(&self, server: &str) -> Result<(usize, Vec<Value>), String> {
         let prefix = format!("mcp.{server}.");
         let transport = {
-            let routes = self.routes.lock().expect("锁未中毒");
+            let routes = self
+                .routes
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             routes
                 .iter()
                 .find(|(k, _)| k.starts_with(&prefix))
@@ -1207,7 +1292,10 @@ impl McpHub {
     ) -> Result<Value, String> {
         let prefix = format!("mcp.{server}.");
         let transport = {
-            let routes = self.routes.lock().expect("锁未中毒");
+            let routes = self
+                .routes
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             routes
                 .iter()
                 .find(|(k, _)| k.starts_with(&prefix))
@@ -1225,7 +1313,10 @@ impl McpHub {
     pub fn stderr_tail(&self, server: &str, lines: usize) -> Result<Vec<StderrLine>, String> {
         let prefix = format!("mcp.{server}.");
         let transport = {
-            let routes = self.routes.lock().expect("锁未中毒");
+            let routes = self
+                .routes
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             routes
                 .iter()
                 .find(|(k, _)| k.starts_with(&prefix))
@@ -1245,7 +1336,10 @@ impl McpHub {
     pub fn server_capabilities(&self, server: &str) -> Result<Value, String> {
         let prefix = format!("mcp.{server}.");
         let transport = {
-            let routes = self.routes.lock().expect("锁未中毒");
+            let routes = self
+                .routes
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             routes
                 .iter()
                 .find(|(k, _)| k.starts_with(&prefix))
@@ -1278,7 +1372,10 @@ impl McpHub {
     pub async fn disconnect_server(&self, server: &str) -> Vec<String> {
         let prefix = format!("mcp.{server}.");
         let (removed_caps, transports) = {
-            let mut routes = self.routes.lock().expect("锁未中毒");
+            let mut routes = self
+                .routes
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let mut caps = Vec::new();
             let mut trans = Vec::new();
             let keys: Vec<String> = routes.keys().cloned().collect();
@@ -1311,7 +1408,10 @@ impl AsyncCapabilityExecutor for McpHub {
         deadline: Duration,
     ) -> Result<Value, AsyncCallError> {
         let route = {
-            let routes = self.routes.lock().expect("锁未中毒");
+            let routes = self
+                .routes
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             routes
                 .get(capability)
                 .map(|r| (r.transport.clone(), r.tool.clone()))
@@ -1324,20 +1424,18 @@ impl AsyncCapabilityExecutor for McpHub {
         });
         self.inflight
             .lock()
-            .expect("锁未中毒")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(operation_id.to_string(), route.0.clone());
         let resp = tokio::select! {
             _ = tokio::time::sleep(deadline) => {
                 self.inflight
-                    .lock()
-                    .expect("锁未中毒")
+                    .lock().unwrap_or_else(std::sync::PoisonError::into_inner)
                     .remove(operation_id);
                 return Err(AsyncCallError::Timeout);
             }
             r = route.0.request("tools/call", req) => {
                 self.inflight
-                    .lock()
-                    .expect("锁未中毒")
+                    .lock().unwrap_or_else(std::sync::PoisonError::into_inner)
                     .remove(operation_id);
                 r.map_err(AsyncCallError::Transport)?
             }
@@ -1368,11 +1466,18 @@ impl AsyncCapabilityExecutor for McpHub {
     }
 
     fn set_progress_sink(&self, sink: ProgressSink) {
-        *self.sink.lock().expect("锁未中毒") = Some(sink);
+        *self
+            .sink
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(sink);
     }
 
     fn cancel_op(&self, operation_id: &str) {
-        let transport = self.inflight.lock().expect("锁未中毒").remove(operation_id);
+        let transport = self
+            .inflight
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(operation_id);
         if let Some(t) = transport {
             t.cancel_by_token(operation_id);
         }
@@ -1916,7 +2021,10 @@ while True:
         want: usize,
     ) -> Vec<ProgressNotice> {
         for _ in 0..50 {
-            let cur = collected.lock().expect("锁未中毒").len();
+            let cur = collected
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .len();
             if cur >= want {
                 break;
             }
@@ -1924,7 +2032,10 @@ while True:
                 .await
                 .ok();
         }
-        collected.lock().expect("锁未中毒").clone()
+        collected
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     #[tokio::test]
@@ -1954,7 +2065,10 @@ while True:
         let collected: Arc<Mutex<Vec<ProgressNotice>>> = Arc::new(Mutex::new(Vec::new()));
         let sink_view = collected.clone();
         hub.set_progress_sink(Box::new(move |n| {
-            sink_view.lock().expect("锁未中毒").push(n);
+            sink_view
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(n);
         }));
 
         // 第 1 代调用:进度 2 条
@@ -2002,5 +2116,34 @@ while True:
         assert_eq!(notes2[0].message.as_deref(), Some("half"));
         assert_eq!(notes2[1].progress, 2);
         assert_eq!(notes2[1].message.as_deref(), Some("done"));
+    }
+}
+
+/// 评审修复(2026-09-10)回归:锁中毒必须自恢复,不得让一次 panic 把传输层
+/// 永久毒化(此前 `.expect("锁未中毒")` 会在锁中毒后对每次调用逐次放大 panic)。
+#[cfg(test)]
+mod lock_poison_recovery_tests {
+    #[test]
+    fn poisoned_lock_recovers_via_into_inner() {
+        let m = std::sync::Mutex::new(0u32);
+        // 制造毒化:持锁 panic
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _g = m.lock().unwrap();
+            panic!("故意毒化");
+        }));
+        // 与 bm-providers 各文件一致的恢复语义:毒化后仍可取锁并修正状态
+        let mut g = m.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        *g += 1;
+        assert_eq!(*g, 1);
+
+        let rw = std::sync::RwLock::new(vec![1u8]);
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _g = rw.read().unwrap();
+            panic!("故意毒化读锁");
+        }));
+        let g = rw
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(g[0], 1);
     }
 }
