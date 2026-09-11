@@ -41,6 +41,7 @@
 | [ADR-0031](ADR-0031-agent-v02-comm-plane.md) | Agent v0.2 通信面:消息语义+进程内总线+成员级身份 | accepted | 信件语义走单写者总线不破INV+成员级工牌(与#31合并)+共享面先行/点名与身份随批次2/远程网格留阶段二(2026-09-09) |
 | [ADR-0032](ADR-0032-binding-epoch-continuity.md) | binding_epoch 代际连续性与 manifest 注册期冻结校验 | accepted | 注销墓碑化+注册按持久max+1续代+快照先行于落库+删物理删除端口+注册过冻结门禁+scope_label放行冒号分层(2026-09-11) |
 | [ADR-0033](ADR-0033-skill-script-lifecycle-hot-reload.md) | 技能脚本生命周期:skill.* 异步分道归位与热重载 | accepted | provider 命名约定单源判定(mcp./.async/skill.)+unregister_skill+管理面热重载走墓碑续代+共享管理器实例(2026-09-11) |
+| [ADR-0034](ADR-0034-plugin-protocol-sdk.md) | 插件协议最小 SDK:双语言收口与未知工具口径统一 | accepted | Rust(plugins/mcp/sdk)+Python(apps/mcp_sdk.py)最小 SDK 单源化协议循环+未知工具统一 -32602/--self-describe 独立合同化(2026-09-11) |
 
 > 编号说明:ADR-0012 于 2026-08-31 随 M10 dsh 前端线归档(见 ADR-0013 编号说明),编号不回收;主干引用配置管理口径时以 config_store 现状与 W2/W4 规格为准。
 > 文体注:0001-0009 状态用小写 accepted(-with-conditions),0010/0011 起用 Accepted(日期)/已裁决(用户,日期)——语义等价,统一以本表为准。

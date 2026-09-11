@@ -1,0 +1,71 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "boenmind:mcp:mcp-self-describe:v0.1",
+  "x-frozen": "2026-09-11",
+  "title": "MCP 插件自描述 v0.1",
+  "description": "issue #56(2026-09-11 Minor):插件以 `--self-describe` 单次输出的发现声明。此前为约定俗成(ADR-0023 扫描面按 name/title/description/config_schema/suggested_entry 消费),本schema 将其冻结为合同。与 mcp-server.v0_1(安装配置合同)分离:本schema 描述「插件自报是什么」,mcp-server 描述「用户如何安装它」。",
+  "type": "object",
+  "required": [
+    "name",
+    "title",
+    "description",
+    "suggested_entry"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,31}$",
+      "description": "插件声明名,须与 plugins/official-plugins.json 及 mcp-server.v0_1.name 一致;字符集与能力名段一致(下划线,不含连字符)"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "description": "面向用户的可读名称(管理面插件列表展示)"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "description": "功能与工具面简述(管理面详情与工具发现说明)"
+    },
+    "config_schema": {
+      "type": "array",
+      "description": "配置项描述数组。每项为插件自定义字段对象(key/label/type/hint 等),属实例数据,不在本合同约束形状——合同只钉「它是一个数组」。管理面据此渲染配置表单。"
+    },
+    "suggested_entry": {
+      "type": "object",
+      "required": [
+        "transport",
+        "args"
+      ],
+      "additionalProperties": false,
+      "description": "建议的接入条目:管理面扫描后据此预填 mcp-server.v0_1 的 transport/args/tool_timeout_ms/restart_limit",
+      "properties": {
+        "transport": {
+          "enum": [
+            "stdio"
+          ],
+          "description": "自描述发现面当前仅支持 stdio;远程传输不下发本声明"
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32,
+          "description": "建议启动参数,可用 {config_file}/{data_dir} 等占位符由管理面替换"
+        },
+        "tool_timeout_ms": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 600000
+        },
+        "restart_limit": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10
+        }
+      }
+    }
+  }
+}

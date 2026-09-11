@@ -46,6 +46,9 @@ pub const OBSERVATION_LOG_SCHEMA: &str =
 // M7 增发(2026-08-30,Minor):MCP server 接入配置合同。
 pub const MCP_SERVER_SCHEMA: &str =
     include_str!("../../../../boenmind-contracts/mcp/mcp-server.v0_1.schema.json");
+// ADR-0034(2026-09-11,Minor,issue #56):MCP 插件自描述(--self-describe)发现合同。
+pub const MCP_SELF_DESCRIBE_SCHEMA: &str =
+    include_str!("../../../../boenmind-contracts/mcp/mcp-self-describe.v0_1.schema.json");
 // M8 增发(2026-08-30,Minor):独立 Judge 评估报告合同。
 pub const EVALUATION_REPORT_SCHEMA: &str =
     include_str!("../../../../boenmind-contracts/evaluation/evaluation-report.v0_1.schema.json");
@@ -142,6 +145,8 @@ mod tests {
             ("wire-task", WIRE_TASK_SCHEMA),
             ("memory-entry", MEMORY_ENTRY_SCHEMA),
             ("observation-log", OBSERVATION_LOG_SCHEMA),
+            ("mcp-server", MCP_SERVER_SCHEMA),
+            ("mcp-self-describe", MCP_SELF_DESCRIBE_SCHEMA),
         ] {
             let v: serde_json::Value =
                 serde_json::from_str(text).unwrap_or_else(|e| panic!("{name}: {e}"));
