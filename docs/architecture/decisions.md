@@ -9,23 +9,25 @@
 1. **合同冻结**：`boenmind-contracts/` v1.0 冻结，字段只增不破，删字段/改名/改语义 = Major（ADR-0006）。
 2. **Broker 唯一入口**：所有能力调用必经 Broker 裁决，无第二条绕行通道（基线 §15）。
 3. **测试即检查点**：里程碑完成 = P0 测试套件全绿；主干任何提交点校验 `validate.py` 全绿。
-4. **权限以合同显式化**：未列入注册合同的权力视为不存在，越权由 Broker 统一拒绝并审计（ADR-0006）。
+4. **权限以合同显式化**：未列入注册合同的权力视为不存在，越权由 Broker 统一拒绝并审计（ADR-0006）。per-capability 授权规则（如记忆抽屉的主体系留/读放宽）以 `manifest.authorization` 声明为真源，Broker 只做解释，不再硬编码（ADR-0038）。
 
 ## 当前生效的设计取舍（评审高频误报区，勿当缺陷报）
 
-5. **门户/admin 无 Bearer 鉴权**：现状靠门户墙，未配置密码=墙不启用零影响；Bearer 断链补立见 issue，非遗漏。
-6. **context-log.jsonl = 对话正文唯一落盘**（A4 决策）；events.jsonl 只留摘要；重启续聊靠 context-log 逆向重建，非数据流倒挂。
+5. **管理面（/admin）与门户不入冻结合同**：admin 无 Bearer 鉴权，现状靠门户墙（未配置密码=墙不启用零影响）；`/admin` 系基线既有决策（ADR-0026/0030）。Bearer 断链补立见 issue，非遗漏。
+6. **对话数据流与回喂忠实性**：`context-log.jsonl` = 对话正文唯一落盘（A4 决策），`events.jsonl` 只留摘要；重启续聊靠 context-log 逆向重建，非数据流倒挂。内核回喂只承载事实，不代写 assistant 终稿、不硬编码教练话术（ADR-0029，INV-13）。
 7. **对话链路限制默认全零 = 不限制**（用户 2026-09-08 裁决，ADR-0028）：总轮数安全网 `limits.tool_rounds_max`（默认 0=不限制，可调）+ 同命令同参连续 10 次熔断，唯一硬停止。
-8. **审批/异步工具 400ms 轮询单写者通道**：刻意语义，非性能缺陷（改推送已登记 issue，低优）。
-9. **直通工具 inline_sync 同步收据特判**：真实修复（60s 超时根因），调用本体仍走 Broker 审计。
-10. **回喂忠实性**：内核回喂只承载事实，不代写 assistant 终稿、不硬编码教练话术（ADR-0029，INV-13）。
-11. **执行分道与流式补发须配单源判定与测试**：新增执行分道（如 wasm 脚本）必须给判定谓词并落集成测试，勿只注册 manifest（`skill.*` 曾因异步判定漏前缀而结构不可达，ADR-0033）；`model.content.delta` 混有内核注入的 `[调用…]` 标记，终稿补发按「已下发文本是否已含正文」判，勿用字符数 `skip`（非流式上游+工具回合曾致终稿整段丢失，2026-09-11）。
-12. **内置能力冻结清单**：system.exec（过渡态例外）+ fs.* 四件 + model.invoke 内核私有（ADR-0020/0021），不再全量转 MCP。
-13. **事件信封 JSON 字段名 = `type`**（serde rename），不是 `event_type`。
-14. **单写者纪律**为核心状态机根基；管理面（/admin）不入冻结合同，系基线既有决策。
-15. **审批裁决权在服务端**：权限模式（ask/plan/yolo）按对话记于服务端会话；yolo 由服务端仅对 Broker `RequireApproval` 全体自动放行并审计标注 auto；硬拒绝（UnknownCapability/NoGrant）、熔断与预算硬限不因 yolo 放行；前端只是模式选择器（ADR-0030）。
+8. **审批/异步链路刻意语义**：审批/异步工具 400ms 轮询单写者通道（改推送已登记 issue，低优）；直通工具 `inline_sync` 同步收据特判为真实修复（60s 超时根因），调用本体仍走 Broker 审计。两者非性能缺陷。
+9. **执行分道以合同声明为唯一真源**：`manifest.execution_mode`（sync|async）为准，未声明才回退 provider 命名约定（mcp./skill./*.async）；新增执行族只声明不动前缀表（ADR-0036）。流式补发按「已下发文本是否已含正文」判，勿用字符数 `skip`（非流式上游+工具回合曾致终稿整段丢失，2026-09-11）。
+10. **权限模式（ask/plan/yolo）按对话记于服务端**：yolo 由服务端仅对 Broker `RequireApproval` 全体自动放行并审计标注 auto；硬拒绝（UnknownCapability/NoGrant）、熔断与预算硬限不因 yolo 放行；前端只是模式选择器（ADR-0030）。
+11. **内置能力冻结清单**：system.exec（过渡态例外）+ fs.* 四件 + model.invoke 内核私有（ADR-0020/0021），不再全量转 MCP。
+12. **事件信封 JSON 字段名 = `type`**（serde rename），不是 `event_type`。
+13. **单写者纪律**为核心状态机根基；通信面（如公告栏）走单写者总线，不新增旁路（ADR-0031/0032）。
+14. **MCP 插件信任链显式消费**：`trust` 字段被装载器消费（缺省 explicit-config）、`sha256` 校验目标 = `payload`（若声明）否则 `command`——解释器型条目未声明 payload 语义歧义即 fail-closed 拒载；扫描以 `--self-describe` 运行候选文件属「识别即执行」，已在管理 UI 显式披露（ADR-0035）。子进程 OS 级资源上限（Job Object/rlimit）为尽力而为，施加失败 fail-open。
+15. **生命周期门与健康门分工，勿合并**：`BindingStatus`（持久，按 capability，注册-切换-下线+代际，含 Draining 排空）与 `World.provider_health`（进程内，按 provider，失败计数-重连-冷却）是两个不同关注点，非同一状态机的两份；dispatch 生命周期门读前者，健康门读后者（ADR-0037）。
 
 ---
 
 **维护规则**：审计/评审前先查此清单，已有条目不得重提；翻案须带新证据并发新 ADR。
+本次（2026-09-11）新增条目 4 尾句、9、14、15（ADR-0035/0036/0037/0038），合并旧「400ms 轮询」与「inline_sync 特判」为条目 8、
+合并旧「context-log」与「回喂忠实性」为条目 6、旧门户墙条目并入条目 5；被淘汰条目的历史结论溯 git 史（ADR-0027）。
 超出 15 条时，淘汰"最久未被审计撞到"的一条，移入对应 ADR 的历史记录（git 可溯）。

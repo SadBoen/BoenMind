@@ -21,7 +21,7 @@ docs/architecture/decisions.md  第 0 层  架构铁律唯一查重清单(15条,
 docs/development/PITFALLS.md    附页    实操备忘+高频坑唯一源(启动/前端四坑/浏览器自动化怪癖)
 .ai/context.md                  附页    AI 协作核心纪律+回归清单
 GitHub Issues                   台账    未结任务/技术债唯一入口(P0/P1/P2/tech-debt/deferred标签)
-runtime/                        第 3 层  Rust workspace 9 个 crate + webapp(Vite+React+TS)
+runtime/                        第 3 层  Rust workspace 10 个 crate + webapp(Vite+React+TS)
 apps/                           第 3 层  真实 App:wiki_server/market_server/music_server(stdio MCP)
 plugins/                        第 3 层  官方随包插件:web-multisearch、context-inspector
 shell/tauri/                    第 3 层  Windows 桌面壳(手工构建)

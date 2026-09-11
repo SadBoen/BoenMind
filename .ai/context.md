@@ -16,9 +16,9 @@
 
 ## 环境与工具
 
-- **Rust**: 1.83, edition 2021, workspace 统一依赖（`Cargo.toml` workspace 根）
-- **Node.js**: v23.7.0（探测 `node`/`node.exe` 候选）
-- **Python**: 3.12.8（探测 `python`/`python3`/`py` 候选）
+- **Rust**: 1.98.0（`runtime/rust-toolchain.toml`；edition 2024；workspace 统一依赖 `runtime/Cargo.toml`）
+- **Node.js**: v24（webapp 构建；fnm 管理）
+- **Python**: 3.13（探测 `python`/`python3`/`py` 候选）
 - **包管理器**: webapp 用 npm（唯一权威），勿用 pnpm（已入 `.gitignore` 防残留）
 
 ## 回归清单（提交前必跑）

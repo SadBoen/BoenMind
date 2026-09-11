@@ -284,6 +284,8 @@ memory:user           用户级偏好与事实，写入需显式授权
 用户纠正优先级最高，覆盖而非追加；来源被删除时记忆级联失效。
 ```
 
+主体维度的抽屉授权（谁可写哪个抽屉）以能力 manifest 的 `authorization` 声明为真源，Broker 只做解释：主体对自己的抽屉常量放行，越界一律升级审批（不静默拒绝，批准即签发带 scope 谓词的 Grant）；`read-only` 能力可对声明内的 scope 额外放宽（读不产生内容污染）（ADR-0038，M9-S1 执行面）。
+
 Skill 是注入给 Agent 的知识包（步骤或提示模板 + allowed_capabilities），永远只是数据：加载 Skill 不改变权限，执行仍走 Agent 与 Broker。三者区分：Capability 是可执行的确定性动作，Skill 是怎么做的知识，Plugin 是打包与生命周期单元。Skill v0.2 第一步已增发合同 Minor 字段 `version`（版本号）与 `references`（按需加载引用分支文件清单）（ADR-0016）；同一 ADR 定义的 scripts 可执行脚本执行面，待 wasmtime 管线接入实施时另行增发合同，实施前 Skill 仍只是数据。
 
 ### 4.2 能力隔离
