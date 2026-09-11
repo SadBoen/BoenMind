@@ -4,14 +4,17 @@
 //! 错误码与 `--self-describe` 声明。插件只需实现 [`McpService`](工具表 + 调用)
 //! 并调用 [`run_stdio`],协议不变量由本 crate 单处守门。
 //!
-//! 边界:本 SDK 只收协议,不收业务与宿主。宿主客户端(HTTP/SSE 传输、能力注册)
-//! 不在本 SDK 范围。
+//! 边界:本 SDK 只收协议,不收业务与宿主。宿主客户端的传输(stdio/HTTP/SSE)、
+//! 重试与能力注册不在本 SDK 范围;其**信封构造与响应解析**共用 [`client`]
+//! 模块(#60),使请求方与响应方的协议常量单源。
 
 use std::future::Future;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+pub mod client;
 
 /// JSON-RPC 版本号。
 pub const JSONRPC_VERSION: &str = "2.0";

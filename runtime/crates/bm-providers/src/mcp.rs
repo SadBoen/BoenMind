@@ -16,8 +16,12 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
 const DEFAULT_TOOL_TIMEOUT_MS: u64 = 30_000;
+/// 宿主客户端协议 codec(#60,ADR-0034 §4):信封构造/响应解析与插件 SDK
+/// 单源,消除 JSON-RPC 字面量与错误码在此模块的多处手拼。
+use boenmind_plugin_sdk::client as rpc;
+/// MCP 协议版本(与 SDK 单源);握手 `initialize` 用。
+const MCP_PROTOCOL_VERSION: &str = boenmind_plugin_sdk::MCP_PROTOCOL_VERSION;
 /// 带限时的 stdio 帧写入(write_all + flush),所有持锁写管道路径的统一出口
 /// (限时走 limits:子进程挂起(非崩溃)时调用方持锁跨 await,无超时则该
 /// 域能力永久坏死,respawn 也拿不到锁)。
@@ -657,14 +661,14 @@ fn spawn_generation(
                     .remove(&id);
                 if let Some(tx) = slot {
                     match msg.get("error") {
-                        Some(err) => {
+                        Some(_) => {
                             let _ = tx.send(Err(format!(
                                 "rpc-error:{}",
-                                err.get("code").and_then(|c| c.as_i64()).unwrap_or(-1)
+                                rpc::error_code(&msg).unwrap_or(-1)
                             )));
                         }
                         None => {
-                            let _ = tx.send(Ok(msg.get("result").cloned().unwrap_or(json!({}))));
+                            let _ = tx.send(Ok(rpc::take_result(&msg)));
                         }
                     }
                 }
@@ -719,7 +723,8 @@ impl StdioMcpTransport {
                 inner.token_to_id.insert(tok.to_string(), id);
             }
             let stdin = inner.stdin.as_mut().expect("stdin 在活着时存在");
-            let msg = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
+            // params 其后仍用于 token 映射清理(codec 取所有权),此处克隆。
+            let msg = rpc::request(id, method, params.clone());
             let mut bytes = serde_json::to_string(&msg).map_err(|e| e.to_string())?;
             bytes.push('\n');
             write_frame(stdin, bytes.as_bytes(), self.write_timeout()).await
@@ -848,7 +853,7 @@ impl McpTransport for StdioMcpTransport {
     async fn notify(&self, method: &str, params: Value) -> Result<(), String> {
         let mut inner = self.inner.lock().await;
         let stdin = inner.stdin.as_mut().expect("stdin 在活着时存在");
-        let msg = json!({"jsonrpc": "2.0", "method": method, "params": params});
+        let msg = rpc::notification(method, params);
         let mut bytes = serde_json::to_string(&msg).map_err(|e| e.to_string())?;
         bytes.push('\n');
         write_frame(stdin, bytes.as_bytes(), self.write_timeout()).await
@@ -871,11 +876,7 @@ impl McpTransport for StdioMcpTransport {
             if let Some(id) = guard.token_to_id.remove(&token)
                 && let Some(stdin) = guard.stdin.as_mut()
             {
-                let msg = json!({
-                    "jsonrpc": "2.0",
-                    "method": "notifications/cancelled",
-                    "params": {"requestId": id}
-                });
+                let msg = rpc::notification("notifications/cancelled", json!({"requestId": id}));
                 if let Ok(mut bytes) = serde_json::to_vec(&msg) {
                     bytes.push(b'\n');
                     let _ = write_frame(stdin, &bytes, write_timeout).await;
@@ -985,12 +986,7 @@ impl HttpMcpTransport {
 #[async_trait]
 impl McpTransport for HttpMcpTransport {
     async fn request(&self, method: &str, params: Value) -> Result<Value, String> {
-        let msg = json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": method,
-            "params": params,
-        });
+        let msg = rpc::request(1, method, params);
         let req = self.post_rpc(msg);
         // R3(FULL-REVIEW-2026-09-05 §7):裸 send 无超时 = 远端挂起即调用
         // 悬挂;默认 60s 硬顶(W10 走 limits),远端长任务应自行异步化。
@@ -1045,20 +1041,16 @@ impl McpTransport for HttpMcpTransport {
                 .await
                 .map_err(|e| format!("远程 MCP 响应解析失败: {e}"))?
         };
-        if let Some(err) = val.get("error") {
-            let code = err.get("code").and_then(|c| c.as_i64()).unwrap_or(-1);
-            let msg = err.get("message").and_then(|m| m.as_str()).unwrap_or("");
+        if val.get("error").is_some() {
+            let code = rpc::error_code(&val).unwrap_or(-1);
+            let msg = rpc::error_message(&val).unwrap_or("");
             return Err(format!("rpc-error:{code} {msg}"));
         }
-        Ok(val.get("result").cloned().unwrap_or(json!({})))
+        Ok(rpc::take_result(&val))
     }
 
     async fn notify(&self, method: &str, params: Value) -> Result<(), String> {
-        let msg = json!({
-            "jsonrpc": "2.0",
-            "method": method,
-            "params": params,
-        });
+        let msg = rpc::notification(method, params);
         let req = self.post_rpc(msg);
         // P1-9: notify 加上 10s 超时,防止半开远端挂死卸载/重载/关闭请求
         let _ = tokio::time::timeout(std::time::Duration::from_secs(10), req.send()).await;
@@ -1132,14 +1124,7 @@ impl McpHub {
     ) -> Result<Vec<CapabilityManifest>, String> {
         let handshake = async {
             let init = transport
-                .request(
-                    "initialize",
-                    json!({
-                        "protocolVersion": MCP_PROTOCOL_VERSION,
-                        "capabilities": {},
-                        "clientInfo": {"name": "boenmind", "version": "0.1"}
-                    }),
-                )
+                .request("initialize", rpc::initialize_params("boenmind", "0.1"))
                 .await?;
             let version = init
                 .get("protocolVersion")
