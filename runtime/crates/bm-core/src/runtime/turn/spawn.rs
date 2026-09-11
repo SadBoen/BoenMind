@@ -411,6 +411,712 @@ async fn await_tool_settlement(
     (tool_result, batch_denied)
 }
 
+/// 回合环境句柄束(2026-09-12 拆分批):spawn_turn 装配段产物中全回合
+/// 生命周期不变的句柄/身份/口径,分段函数的公共入参(Arc/小值克隆,句柄
+/// 语义与原异步块捕获变量一致)。
+struct TurnEnv {
+    tx: tokio::sync::mpsc::Sender<Cmd>,
+    ctx_log: Arc<crate::context_log::ContextLog>,
+    turn_debug: Arc<crate::turn_debug::TurnDebugLog>,
+    clock: Arc<dyn Clock>,
+    limits_cell: LimitsCell,
+    request_id: Option<BmId>,
+    session_id: Option<BmId>,
+    op_id: BmId,
+    agent_id: BmId,
+    turn_index: u32,
+    evicted_turns: u64,
+    streaming: bool,
+    intent_gate_min: u32,
+    user_input: String,
+}
+
+/// 一次模型调用的请求侧快照(发送前截取;结果侧落盘复用。原装配段局部
+/// 变量 snap_msgs/snap_step/snap_model/snap_start 的显式化)。
+struct RequestSnap {
+    msgs: Vec<serde_json::Value>,
+    step: u32,
+    model: String,
+    start: std::time::Instant,
+}
+
+/// 失败 attempt 的去向:Terminal = 回合已收束(取消/不可重试/链尽),
+/// NextAttempt = 降级链下一次尝试(退出工具轮)。
+enum TurnFailedVerdict {
+    Terminal,
+    NextAttempt,
+}
+
+/// 模型调用单次(原装配段逐字迁入):请求侧快照截取 + 调试记录 +
+/// 流式/非流式 invoke(与取消令牌竞速)→ TTFT 测量。
+/// 返回 (响应, 请求侧快照, TTFT 毫秒——非流式恒 None)。
+async fn invoke_model_once(
+    env: &TurnEnv,
+    connector: &Arc<dyn ModelConnector>,
+    cancel: &CancellationToken,
+    req: InvokeRequest,
+    attempt: u32,
+    snap_step: u32,
+    tools_count: usize,
+) -> (InvokeResponse, RequestSnap, Option<u64>) {
+    let snap_msgs = crate::context_log::snapshot_messages(&req.messages);
+    let snap_model = req.model_id.clone();
+    let snap_start = std::time::Instant::now();
+    // #14:调试面——请求侧全量(消息序列+工具数;开关关时零成本)
+    env.turn_debug.record(
+        "model_request",
+        env.session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
+        env.agent_id.as_str(),
+        env.op_id.as_str(),
+        serde_json::json!({
+            "step": snap_step,
+            "attempt": attempt,
+            "model_id": snap_model.clone(),
+            "streaming": env.streaming,
+            "messages": snap_msgs,
+            "tools_count": tools_count,
+        }),
+    );
+
+    // M9-S2:流式开关开启时走 invoke_stream,增量经 ProviderDelta
+    // 回核心循环(单写者落 model.content.delta 事件);通道满则丢弃
+    // 单个增量(事件面渐进性降级,不影响终态聚合)。
+    // 首字延迟(TTFT):首个增量到达时刻 − 请求发出时刻;仅流式
+    // 可测,非流式如实为 None(整响应延迟已测 latency)。
+    let first_delta_at: std::sync::Arc<std::sync::Mutex<Option<std::time::Instant>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(None));
+    let resp = if env.streaming {
+        let delta_tx = env.tx.clone();
+        let delta_op = env.op_id.clone();
+        let delta_first = first_delta_at.clone();
+        let on_delta = Box::new(move |d: &str| {
+            if let Ok(mut g) = delta_first.lock()
+                && g.is_none()
+            {
+                *g = Some(std::time::Instant::now());
+            }
+            let _ = delta_tx.try_send(Cmd::ProviderDelta {
+                operation_id: delta_op.clone(),
+                delta: d.to_string(),
+            });
+        });
+        tokio::select! {
+            _ = cancel.cancelled() => InvokeResponse::Failed {
+                error_code: ErrorCode::Cancelled, retryable: false, attempt, detail_ref: None, detail: None,
+            },
+            r = connector.invoke_stream(req, cancel.clone(), on_delta) => r,
+        }
+    } else {
+        tokio::select! {
+            _ = cancel.cancelled() => InvokeResponse::Failed {
+                error_code: ErrorCode::Cancelled, retryable: false, attempt, detail_ref: None, detail: None,
+            },
+            r = connector.invoke(req, cancel.clone()) => r,
+        }
+    };
+    let ttft_ms: Option<u64> = if env.streaming {
+        first_delta_at
+            .lock()
+            .ok()
+            .and_then(|g| *g)
+            .map(|t| t.duration_since(snap_start).as_millis() as u64)
+    } else {
+        None
+    };
+
+    (
+        resp,
+        RequestSnap {
+            msgs: snap_msgs,
+            step: snap_step,
+            model: snap_model,
+            start: snap_start,
+        },
+        ttft_ms,
+    )
+}
+
+/// W5:上下文快照落盘单点(原成功/失败两路 29 行同构 ContextRecord 构造
+/// 收拢;status/error/tokens 是两侧仅有的差异,latency 由快照起点实测)。
+#[allow(clippy::too_many_arguments)]
+fn record_ctx_snapshot(
+    env: &TurnEnv,
+    snap: &RequestSnap,
+    attempt: u32,
+    tools: &[serde_json::Value],
+    status: &'static str,
+    error_code: Option<String>,
+    tokens: Option<(u64, u64, Option<u64>, Option<u64>)>,
+    ttft_ms: Option<u64>,
+) {
+    let (tokens_in, tokens_out, tokens_reasoning, tokens_cached) = tokens
+        .map(|(a, b, c, d)| (Some(a), Some(b), c, d))
+        .unwrap_or((None, None, None, None));
+    env.ctx_log.record(crate::context_log::ContextRecord {
+        session_id: env
+            .session_id
+            .as_ref()
+            .map(|s| s.as_str().to_string())
+            .unwrap_or_default(),
+        agent_id: env.agent_id.as_str().to_string(),
+        operation_id: env.op_id.as_str().to_string(),
+        turn_index: env.turn_index,
+        step: snap.step,
+        attempt,
+        model_id: snap.model.clone(),
+        streaming: env.streaming,
+        messages: snap.msgs.clone(),
+        tools: tools.to_vec(),
+        status,
+        error_code,
+        tokens_in,
+        tokens_out,
+        tokens_reasoning,
+        tokens_cached,
+        ttft_ms,
+        evicted_turns: Some(env.evicted_turns),
+        latency_ms: Some(snap.start.elapsed().as_millis() as u64),
+        ts: format_ts(env.clock.now()),
+    });
+}
+
+/// 工具轮整段(原装配段逐字迁入):轮数安全网 → 防空转熔断 → 逐个派发
+/// (意图门控/#26 同批联动/审批卡片/直通与轮询收据)→ 结果回喂。
+/// 调用方守卫「有 tool_calls 且未熔断/未触顶」;返回后由调用方重调模型。
+async fn run_tool_round(
+    env: &TurnEnv,
+    st: &mut TurnState,
+    content: &str,
+    tool_calls: Vec<ToolCallPayload>,
+    name_to_cap: &std::collections::HashMap<String, String>,
+    snap_step: u32,
+) {
+    st.tool_rounds += 1;
+    // P0-1 总轮数安全网(limits 热生效,0=关):
+    // 超限不再执行工具,回合就地收束并告知用户。
+    let cap = env.limits_cell.get().tool_rounds_max;
+    if cap > 0 && st.tool_rounds > cap {
+        st.round_cap_hit = true;
+        let _ = env.tx.try_send(Cmd::ProviderDelta {
+            operation_id: env.op_id.clone(),
+            delta: format!(
+                "\n(本回合工具调用已达 {cap} 轮上限,为防失控烧钱在此收束;如需继续请发新消息。)\n"
+            ),
+        });
+    }
+    // W10:防空转熔断阈值/窗口走 limits(0=关闭)。
+    // 检测是否连续 N 次调用完全相同工具与参数(N=limits)。
+    let lim = env.limits_cell.get();
+    let breaker_n = lim.loop_breaker_consecutive as usize;
+    let breaker_window = lim.loop_breaker_window;
+    st.sweep_breaker(&tool_calls, breaker_n, breaker_window);
+
+    if st.loop_broken {
+        let _ = env.tx.try_send(Cmd::ProviderDelta {
+            operation_id: env.op_id.clone(),
+            delta: format!(
+                "\n(检测到连续 {breaker_n} 次调用相同工具与完全一致的入参，已触发防空转熔断保护。)\n"
+            ),
+        });
+    } else {
+        // ADR-0022:assistant 消息原样携带 tool_calls 回喂,
+        // 模型才能把下一轮的工具结果对齐回自己发起的调用
+        // (此前只回 content,调用结构丢失 = 模型「失忆」)。
+        st.messages.push(Message {
+            role: Role::Assistant,
+            tool_call_id: None,
+            tool_calls: Some(tool_calls.clone()),
+            content: content.to_string(),
+        });
+        // #26:同批拒绝联动——本批任一调用被用户驳回后,
+        // 余下调用不再派发(策略开关走 limits,0=回退独立执行)
+        let mut batch_denied = false;
+        for tc in tool_calls {
+            dispatch_one_tool_call(env, st, tc, name_to_cap, snap_step, &mut batch_denied).await;
+        }
+    }
+}
+
+/// 单个工具调用的派发与收据回喂(原 for 循环体逐字迁入):意图门控 →
+/// #26 同批联动 → 调用事件/调试面 → CapabilityCall → 审批卡片 → 直通
+/// inline_sync 特判/轮询收据/失败如实回喂 → 结果事件 → Tool 消息回喂。
+#[allow(clippy::too_many_arguments)]
+async fn dispatch_one_tool_call(
+    env: &TurnEnv,
+    st: &mut TurnState,
+    tc: ToolCallPayload,
+    name_to_cap: &std::collections::HashMap<String, String>,
+    snap_step: u32,
+    batch_denied: &mut bool,
+) {
+    // #1:意图硬门控——触发输入过短的回合禁用一切工具
+    // 派发(如实回喂;0=关)。在 #26 联动判定之前,
+    // 被门控拦截的调用不产生审批单/不触达提供者
+    if env.intent_gate_min > 0 && (env.user_input.chars().count() as u32) < env.intent_gate_min {
+        st.messages.push(Message {
+            role: Role::Tool,
+            content: "本调用未执行:意图门控——本轮触发输入过短,无操作意图,工具已禁用;请直接以文字回应用户或请用户补充需求。".into(),
+            tool_call_id: Some(tc.id.clone()),
+            tool_calls: None,
+        });
+        env.turn_debug.record(
+            "tool_cancelled",
+            env.session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
+            env.agent_id.as_str(),
+            env.op_id.as_str(),
+            serde_json::json!({
+                "tool": tc.name,
+                "reason": "intent_gate",
+                "input_chars": env.user_input.chars().count(),
+            }),
+        );
+        return;
+    }
+    if *batch_denied && env.limits_cell.get().tool_batch_cancel_on_deny == 1 {
+        st.messages.push(Message {
+            role: Role::Tool,
+            content: "本调用未执行:同批已有调用被用户驳回,按策略联动取消余下调用。".into(),
+            tool_call_id: Some(tc.id.clone()),
+            tool_calls: None,
+        });
+        env.turn_debug.record(
+            "tool_cancelled",
+            env.session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
+            env.agent_id.as_str(),
+            env.op_id.as_str(),
+            serde_json::json!({
+                "tool": tc.name,
+                "reason": "batch_deny_linkage"
+            }),
+        );
+        return;
+    }
+    let args: serde_json::Value =
+        serde_json::from_str(&tc.arguments).unwrap_or(serde_json::Value::Null);
+
+    // 提取核心目标参数(如 path, file_path, command, query)用于前端清晰呈现
+    let target_summary = args
+        .get("path")
+        .or_else(|| args.get("file_path"))
+        .or_else(|| args.get("command"))
+        .or_else(|| args.get("query"))
+        .or_else(|| args.get("pattern"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    let target_display = if !target_summary.is_empty() {
+        format!(" {}", target_summary)
+    } else {
+        String::new()
+    };
+
+    let _ = env.tx.try_send(Cmd::ProviderDelta {
+        operation_id: env.op_id.clone(),
+        delta: format!("\n[调用 {}{}]\n", tc.name, target_display),
+    });
+    let capability = name_to_cap
+        .get(&tc.name)
+        .cloned()
+        .unwrap_or_else(|| tc.name.clone());
+    // W9:工具调用事件(轨迹视图数据源)
+    let tool_started = std::time::Instant::now();
+    env.ctx_log.record_event(
+        env.session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
+        env.op_id.as_str(),
+        env.turn_index,
+        "tool_call",
+        &format_ts(env.clock.now()),
+        serde_json::json!({
+            "tool": tc.name,
+            "arguments": args.clone(),
+        }),
+    );
+    // #14:调试面——工具调用全参
+    env.turn_debug.record(
+        "tool_call",
+        env.session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
+        env.agent_id.as_str(),
+        env.op_id.as_str(),
+        serde_json::json!({
+            "step": snap_step,
+            "tool": tc.name,
+            "capability": capability,
+            "arguments": args.clone(),
+        }),
+    );
+    let (rtx, rrx) = tokio::sync::oneshot::channel();
+    let call_req = env.request_id.clone().unwrap_or_else(|| env.op_id.clone());
+    let _ = env
+        .tx
+        .send(Cmd::CapabilityCall {
+            request_id: call_req,
+            params: wire::CapabilityCallParams {
+                capability: capability.clone(),
+                args: args.clone(),
+                // W4b 修复:幂等键必须含回合操作 id——
+                // 模型不同回合的 tool_call id 会重复,
+                // 纯 tc.id 会让幂等抑制返回上一回合的
+                // 旧收据(模型看到旧结果反复重试)
+                idempotency_key: Some(format!("{}:{}", env.op_id.as_str(), tc.id)),
+                deadline_ms: None,
+            },
+            // ADR-0030:工具调用标注来源会话,裁决点
+            // 据此读取会话权限模式(路由信息,非信任)
+            session_id: env.session_id.clone(),
+            resp: rtx,
+        })
+        .await;
+    // W4b 对话内审批:需审批能力调用返回
+    // ApprovalRequired 错误(审批单已开,operation
+    // 停在 waiting_approval)。此时反查审批单,
+    // 推送审批卡片标记随 SSE 流上屏,并轮询等待
+    // 用户裁决+执行落定(上限 300s=审批 TTL)。
+    let call_resp = rrx.await;
+    let mut approval_id: Option<String> = None;
+    let mut tool_op: Option<bm_contract::ids::BmId> = None;
+    match &call_resp {
+        // W4b+ 加固:ApprovalRequired 错误自带开单点的
+        // approval_id/operation_id(CoreError::ApprovalNeeded),
+        // 回合侧零反查——杜绝多会话/并发调用同能力时
+        // 「批准 A 执行 B」的错配缺陷
+        Ok(Err(CoreError::ApprovalNeeded {
+            approval_id: aid,
+            operation_id: opid,
+            ..
+        })) => {
+            approval_id = Some(aid.clone());
+            tool_op = bm_contract::ids::BmId::parse(opid).ok();
+        }
+        Ok(Ok(receipt_value)) => {
+            tool_op = receipt_value["operation_id"]
+                .as_str()
+                .and_then(|s| bm_contract::ids::BmId::parse(s).ok());
+        }
+        _ => {}
+    }
+
+    if let Some(appr_id) = approval_id.clone() {
+        // 审批卡片标记:随 ProviderDelta 上屏,
+        // 前端识别 bm_approval_request 渲染卡片
+        // (args = 模型本次调用的真实参数,卡片展示用)
+        let _ = env
+            .tx
+            .send(Cmd::ApprovalRequested {
+                approval_id: appr_id.clone(),
+                capability: capability.clone(),
+                args: args.clone(),
+                operation_id: env.op_id.clone(),
+            })
+            .await;
+    }
+
+    // 受理/结果:直通能力同步出结果;MCP 异步能力经
+    // operations 轮询至终态;需审批能力轮询至审批
+    // 裁决+执行终态。
+    let mut tool_result = String::from("工具执行无应答");
+    // ADR-0029:调用层直接失败(如能力校验拒绝)
+    // 如实回喂真实死因,不以占位文案掩盖。
+    if let Ok(Err(e)) = &call_resp {
+        tool_result = match e {
+            CoreError::Semantic(code, msg) => {
+                format!("工具调用失败({}): {}", code.as_str(), msg)
+            }
+            other => format!("工具调用失败: {other}"),
+        };
+    }
+    // W10:等待时限走 limits;ADR-0028:0 = 不限时(None)。
+    let lim_wait = env.limits_cell.get();
+    let wait_secs: Option<u64> = if approval_id.is_some() {
+        (lim_wait.approval_wait_ms > 0).then(|| (lim_wait.approval_wait_ms / 1000).max(1))
+    } else {
+        (lim_wait.tool_wait_ms > 0).then(|| (lim_wait.tool_wait_ms / 1000).max(1))
+    };
+    // 直通修复(2026-09-03 VPS 实测 P1):同步收据
+    // state=succeeded 且 result 内联时立即回喂——
+    // 同步结果从不写入 op_results(仅异步回单/审批
+    // 重放两路写入),此前一律进 GetOpResult 轮询=
+    // 直通工具必现 60s「工具执行超时」。审批类与
+    // MCP 异步(state=running)仍走轮询不变。
+    let inline_sync = matches!(&call_resp, Ok(Ok(v))
+        if v["state"].as_str() == Some("succeeded")
+            && !v["result"].is_null());
+    if inline_sync {
+        if let Ok(Ok(receipt_value)) = call_resp {
+            // ADR-0029:幂等抑制如实告知——等价请求
+            // 返回的是旧结果,模型必须知道本次没有
+            // 真实执行。
+            let suppressed = receipt_value["action_summary"]
+                .as_str()
+                .is_some_and(|s| s.contains("幂等抑制"));
+            tool_result = if suppressed {
+                format!(
+                    "本次未重复执行(等价请求幂等返回原结果): {}",
+                    receipt_value["result"]
+                )
+            } else {
+                receipt_value["result"].to_string()
+            };
+        }
+    } else if let Some(tool_op) = tool_op {
+        // #19 拆分第二批:审批/异步工具等待环
+        // 外置为独立 async fn(本文件上方)——
+        // 轮询 operations 至终态,审批超时撤单
+        // (P1-3),用户拒绝联动 batch_denied(#26)。
+        let (result, denied) = await_tool_settlement(
+            &env.tx,
+            wait_secs,
+            approval_id,
+            tool_op,
+            &capability,
+            *batch_denied,
+        )
+        .await;
+        tool_result = result;
+        *batch_denied = denied;
+    } else if let Ok(Ok(receipt_value)) = call_resp {
+        tool_result = receipt_value.to_string();
+    }
+    // W9:工具结果事件(回喂模型的原文+耗时)
+    let elapsed_ms = tool_started.elapsed().as_millis() as u64;
+    env.ctx_log.record_event(
+        env.session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
+        env.op_id.as_str(),
+        env.turn_index,
+        "tool_result",
+        &format_ts(env.clock.now()),
+        serde_json::json!({
+            "tool": capability,
+            "result": tool_result,
+            "elapsed_ms": elapsed_ms,
+        }),
+    );
+    // #14:调试面——工具结果全文(与回喂同文)
+    env.turn_debug.record(
+        "tool_result",
+        env.session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
+        env.agent_id.as_str(),
+        env.op_id.as_str(),
+        serde_json::json!({
+            "step": snap_step,
+            "tool": tc.name,
+            "capability": capability,
+            "result": tool_result,
+            "elapsed_ms": elapsed_ms,
+        }),
+    );
+    // 前端轻量反馈:向前端推一条工具执行耗时与成败标记
+    let _ = env.tx.try_send(Cmd::ProviderDelta {
+        operation_id: env.op_id.clone(),
+        delta: format!("\n[工具完成 {} 耗时 {}ms]\n", tc.name, elapsed_ms),
+    });
+    // ADR-0022:工具结果原生 role=tool + tool_call_id
+    // 回喂,对齐模型因果链。不再强贴「不要再次调用」
+    // 类负向禁令——链式调用(搜→读→改→测)是模型的
+    // 正常工作方式;失控防线=同参熔断 + limits.
+    // tool_rounds_max 总轮数安全网(本文件上方)。
+    st.messages.push(Message {
+        role: Role::Tool,
+        content: tool_result,
+        tool_call_id: Some(tc.id.clone()),
+        tool_calls: None,
+    });
+}
+
+/// 成功终态收尾(原装配段逐字迁入):被拦截调用回喂事实性结果 →
+/// 终稿/回合边界事件(轨迹视图)→ 调试面 → 对话台账回写 → Turn Completed。
+#[allow(clippy::too_many_arguments)]
+async fn settle_turn_completed(
+    env: &TurnEnv,
+    st: &mut TurnState,
+    tool_calls: &[ToolCallPayload],
+    content: String,
+    usage: &bm_contract::connector::Usage,
+    attempt: u32,
+    latency_ms: u64,
+    mid: String,
+    stream_interrupted: bool,
+) {
+    // ADR-0029(2026-09-08 用户裁决):熔断/触顶拦截的调用
+    // 不再凭空蒸发——逐个回喂事实性结果(未执行+原因),
+    // 因果链对模型与日志完整;回合就此收束,不再重调模型。
+    // 原内核代写的 assistant 终稿废除:收束原因只在触发点
+    // 经 ProviderDelta 上屏(UI-only),不入台账、不冒充
+    // 模型发言;content 保持模型原文(可能为空)。
+    st.feed_unexecuted(tool_calls);
+    // W9:终稿与回合边界事件(轨迹视图数据源)。
+    // ADR-0029:assistant_final 只在模型真有话时记录——
+    // 内核不再生产终稿内容,空终稿不落轨迹。
+    if !content.trim().is_empty() {
+        env.ctx_log.record_event(
+            env.session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
+            env.op_id.as_str(),
+            env.turn_index,
+            "assistant_final",
+            &format_ts(env.clock.now()),
+            serde_json::json!({
+                "content": content,
+                "tokens_in": usage.tokens_in,
+                "tokens_out": usage.tokens_out,
+            }),
+        );
+    }
+    env.ctx_log.record_event(
+        env.session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
+        env.op_id.as_str(),
+        env.turn_index,
+        "turn_end",
+        &format_ts(env.clock.now()),
+        serde_json::json!({
+            "outcome": "succeeded",
+            "latency_ms": latency_ms,
+        }),
+    );
+    // #14:调试面——回合终态(成功)
+    env.turn_debug.record(
+        "turn_end",
+        env.session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
+        env.agent_id.as_str(),
+        env.op_id.as_str(),
+        serde_json::json!({
+            "outcome": "succeeded",
+            "attempt": attempt,
+            "tool_rounds": st.tool_rounds,
+            "latency_ms": latency_ms,
+        }),
+    );
+    // W5:对话台账回写(仅终稿成功;工具轮中间态不入账)
+    if let Some(sid) = env.session_id.clone() {
+        let _ = env
+            .tx
+            .send(Cmd::RememberTurn {
+                session_id: sid,
+                user: env.user_input.clone(),
+                assistant: content.clone(),
+            })
+            .await;
+    }
+    let _ = env
+        .tx
+        .send(Cmd::Turn(TurnEvent::Completed {
+            operation_id: env.op_id.clone(),
+            model_id: mid,
+            attempt,
+            content,
+            usage_in: usage.tokens_in,
+            usage_out: usage.tokens_out,
+            latency_ms,
+            stream_interrupted,
+        }))
+        .await;
+}
+
+/// 失败/取消终态收尾(原装配段逐字迁入):快照+调试落盘 → 取消边界
+/// (INV-12 唯一入口)/失败收束(轨迹红标)→ 不可重试或链尽即 Terminal,
+/// 否则不限重试态加 1s 退避后 NextAttempt(降级链下一 attempt)。
+#[allow(clippy::too_many_arguments)]
+async fn settle_turn_failed(
+    env: &TurnEnv,
+    snap: &RequestSnap,
+    ttft_ms: Option<u64>,
+    tools: &[serde_json::Value],
+    attempt: u32,
+    error_code: ErrorCode,
+    retryable: bool,
+    detail: Option<String>,
+    max_attempts: Option<u32>,
+) -> TurnFailedVerdict {
+    // W5:失败/取消同样落快照(诊断「报错」「卡死」场景)
+    record_ctx_snapshot(
+        env,
+        snap,
+        attempt,
+        tools,
+        if error_code == ErrorCode::Cancelled {
+            "cancelled"
+        } else {
+            "error"
+        },
+        Some(error_code.as_str().to_string()),
+        None,
+        ttft_ms,
+    );
+    // #14:调试面——模型调用失败(含脱敏后细节)
+    env.turn_debug.record(
+        "model_failed",
+        env.session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
+        env.agent_id.as_str(),
+        env.op_id.as_str(),
+        serde_json::json!({
+            "step": snap.step,
+            "attempt": attempt,
+            "model_id": snap.model,
+            "error_code": error_code.as_str(),
+            "retryable": retryable,
+            "detail": detail,
+        }),
+    );
+    if error_code == ErrorCode::Cancelled {
+        // 显式取消:回合边界落定为 cancelled(INV-12 唯一入口)。
+        env.ctx_log.record_event(
+            env.session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
+            env.op_id.as_str(),
+            env.turn_index,
+            "turn_end",
+            &format_ts(env.clock.now()),
+            serde_json::json!({
+                "outcome": "cancelled",
+                "error_code": error_code.as_str(),
+            }),
+        );
+        let _ = env
+            .tx
+            .send(Cmd::Turn(TurnEvent::Cancelled {
+                operation_id: env.op_id.clone(),
+            }))
+            .await;
+        return TurnFailedVerdict::Terminal;
+    }
+    let _ = env
+        .tx
+        .send(Cmd::Turn(TurnEvent::AttemptFailed {
+            operation_id: env.op_id.clone(),
+            model_id: snap.model.clone(),
+            attempt,
+            error_code,
+        }))
+        .await;
+    let exhausted = max_attempts.is_some_and(|m| attempt >= m);
+    if !retryable || exhausted {
+        // W9:回合失败边界事件(轨迹视图失败红标数据源)
+        env.ctx_log.record_event(
+            env.session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
+            env.op_id.as_str(),
+            env.turn_index,
+            "turn_end",
+            &format_ts(env.clock.now()),
+            serde_json::json!({
+                "outcome": "failed",
+                "error_code": error_code.as_str(),
+            }),
+        );
+        let _ = env
+            .tx
+            .send(Cmd::Turn(TurnEvent::ChainExhausted {
+                operation_id: env.op_id.clone(),
+                error_code,
+                detail,
+            }))
+            .await;
+        return TurnFailedVerdict::Terminal;
+    }
+    // ADR-0028:不限重试时加 1s 退避,防对僵死网关热循环打点
+    if max_attempts.is_none() {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+    // 降级链下一 attempt(退出工具轮)
+    TurnFailedVerdict::NextAttempt
+}
+
 pub(crate) fn spawn_turn(
     w: &mut World,
     agent: &Agent,
@@ -597,6 +1303,24 @@ pub(crate) fn spawn_turn(
         );
         let (name_to_cap, tools_json) = build_tool_catalog(&chat_tools, allowed_tools.as_deref());
 
+        // 回合环境句柄束(分段函数公共入参;Arc/小值克隆,句柄语义不变)
+        let env = TurnEnv {
+            tx: tx.clone(),
+            ctx_log: ctx_log.clone(),
+            turn_debug: turn_debug.clone(),
+            clock: clock.clone(),
+            limits_cell: limits_cell.clone(),
+            request_id: request_id.clone(),
+            session_id: session_id.clone(),
+            op_id: op_id.clone(),
+            agent_id: agent_id.clone(),
+            turn_index,
+            evicted_turns,
+            streaming,
+            intent_gate_min,
+            user_input: user_input.clone(),
+        };
+
         // (2026-09-08 用户裁决,ADR-0029:内核不在系统提示里硬编码任何行为
         // 指导——原「工具纪律」软防线段已删,同类话术如需存在只能经内/外置
         // 插件通道以可区分方式注入,SETTLED §2-10 口径由本条取代。)
@@ -630,74 +1354,20 @@ pub(crate) fn spawn_turn(
                     attempt,
                 };
 
-                // W5:请求侧快照(发送前截取;结果侧在 resp 落定后随行落盘)。
+                // 模型调用单次(请求侧快照+调试记录+流式/非流式 invoke+TTFT):
                 // latency 口径:connector 返回 0 占位(基线 9.7),由调用方按
-                // 真实钟测量——此处记墙钟起点,成败两路均落实测耗时。
-                let snap_msgs = crate::context_log::snapshot_messages(&req.messages);
+                // 真实钟测量——成败两路均落实测耗时。
                 let snap_step = st.tool_rounds + 1;
-                let snap_model = model_id.clone();
-                let snap_start = std::time::Instant::now();
-                // #14:调试面——请求侧全量(消息序列+工具数;开关关时零成本)
-                turn_debug.record(
-                    "model_request",
-                    session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
-                    agent_id.as_str(),
-                    op_id.as_str(),
-                    serde_json::json!({
-                        "step": snap_step,
-                        "attempt": attempt,
-                        "model_id": snap_model.clone(),
-                        "streaming": streaming,
-                        "messages": snap_msgs,
-                        "tools_count": tools_json.len(),
-                    }),
-                );
-
-                // M9-S2:流式开关开启时走 invoke_stream,增量经 ProviderDelta
-                // 回核心循环(单写者落 model.content.delta 事件);通道满则丢弃
-                // 单个增量(事件面渐进性降级,不影响终态聚合)。
-                // 首字延迟(TTFT):首个增量到达时刻 − 请求发出时刻;仅流式
-                // 可测,非流式如实为 None(整响应延迟已测 latency)。
-                let first_delta_at: std::sync::Arc<std::sync::Mutex<Option<std::time::Instant>>> =
-                    std::sync::Arc::new(std::sync::Mutex::new(None));
-                let resp = if streaming {
-                    let delta_tx = tx.clone();
-                    let delta_op = op_id.clone();
-                    let delta_first = first_delta_at.clone();
-                    let on_delta = Box::new(move |d: &str| {
-                        if let Ok(mut g) = delta_first.lock()
-                            && g.is_none()
-                        {
-                            *g = Some(std::time::Instant::now());
-                        }
-                        let _ = delta_tx.try_send(Cmd::ProviderDelta {
-                            operation_id: delta_op.clone(),
-                            delta: d.to_string(),
-                        });
-                    });
-                    tokio::select! {
-                        _ = cancel.cancelled() => InvokeResponse::Failed {
-                            error_code: ErrorCode::Cancelled, retryable: false, attempt, detail_ref: None, detail: None,
-                        },
-                        r = connector.invoke_stream(req, cancel.clone(), on_delta) => r,
-                    }
-                } else {
-                    tokio::select! {
-                        _ = cancel.cancelled() => InvokeResponse::Failed {
-                            error_code: ErrorCode::Cancelled, retryable: false, attempt, detail_ref: None, detail: None,
-                        },
-                        r = connector.invoke(req, cancel.clone()) => r,
-                    }
-                };
-                let ttft_ms: Option<u64> = if streaming {
-                    first_delta_at
-                        .lock()
-                        .ok()
-                        .and_then(|g| *g)
-                        .map(|t| t.duration_since(snap_start).as_millis() as u64)
-                } else {
-                    None
-                };
+                let (resp, snap, ttft_ms) = invoke_model_once(
+                    &env,
+                    &connector,
+                    &cancel,
+                    req,
+                    attempt,
+                    snap_step,
+                    tools_json.len(),
+                )
+                .await;
 
                 match resp {
                     InvokeResponse::Completed {
@@ -709,457 +1379,74 @@ pub(crate) fn spawn_turn(
                         latency_ms,
                         stream_interrupted,
                     } => {
-                        // W5:上下文快照落盘(请求侧+结果侧;诊断面失败静默)
-                        ctx_log.record(crate::context_log::ContextRecord {
-                            session_id: session_id
-                                .as_ref()
-                                .map(|s| s.as_str().to_string())
-                                .unwrap_or_default(),
-                            agent_id: agent_id.as_str().to_string(),
-                            operation_id: op_id.as_str().to_string(),
-                            turn_index,
-                            step: snap_step,
+                        // W5:上下文快照落盘(成功侧;诊断面失败静默)
+                        record_ctx_snapshot(
+                            &env,
+                            &snap,
                             attempt,
-                            model_id: snap_model.clone(),
-                            streaming,
-                            messages: snap_msgs,
-                            tools: tools_json.clone(),
-                            status: "ok",
-                            error_code: None,
-                            tokens_in: Some(usage.tokens_in),
-                            tokens_out: Some(usage.tokens_out),
-                            tokens_reasoning: usage.tokens_reasoning,
-                            tokens_cached: usage.tokens_cached,
+                            &tools_json,
+                            "ok",
+                            None,
+                            Some((
+                                usage.tokens_in,
+                                usage.tokens_out,
+                                usage.tokens_reasoning,
+                                usage.tokens_cached,
+                            )),
                             ttft_ms,
-                            evicted_turns: Some(evicted_turns),
-                            latency_ms: Some(snap_start.elapsed().as_millis() as u64),
-                            ts: format_ts(clock.now()),
-                        });
+                        );
                         // #14:调试面——模型响应原文(比 context-log 厚:含回复
                         // 内容、finish_reason 与工具调用全参;开关关时零成本)
-                        turn_debug.record(
+                        env.turn_debug.record(
                             "model_response",
-                            session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
-                            agent_id.as_str(),
-                            op_id.as_str(),
+                            env.session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
+                            env.agent_id.as_str(),
+                            env.op_id.as_str(),
                             serde_json::json!({
                                 "step": snap_step,
                                 "attempt": attempt,
-                                "model_id": snap_model.clone(),
-                                "streaming": streaming,
+                                "model_id": snap.model,
+                                "streaming": env.streaming,
                                 "content": content,
                                 "finish_reason": finish_reason,
                                 "tool_calls": tool_calls,
                                 "tokens_in": usage.tokens_in,
                                 "tokens_out": usage.tokens_out,
                                 "ttft_ms": ttft_ms,
-                                "latency_ms": snap_start.elapsed().as_millis() as u64,
+                                "latency_ms": snap.start.elapsed().as_millis() as u64,
                             }),
                         );
                         // W4 工具轮:模型请求调用直通工具 → 回核心循环执行 →
                         // 结果以 Tool 消息回喂 → 重调模型。
                         if !tool_calls.is_empty() && !st.loop_broken && !st.round_cap_hit {
-                            st.tool_rounds += 1;
-                            // P0-1 总轮数安全网(limits 热生效,0=关):
-                            // 超限不再执行工具,回合就地收束并告知用户。
-                            let cap = limits_cell.get().tool_rounds_max;
-                            if cap > 0 && st.tool_rounds > cap {
-                                st.round_cap_hit = true;
-                                let _ = tx.try_send(Cmd::ProviderDelta {
-                                    operation_id: op_id.clone(),
-                                    delta: format!(
-                                        "\n(本回合工具调用已达 {cap} 轮上限,为防失控烧钱在此收束;如需继续请发新消息。)\n"
-                                    ),
-                                });
-                            }
-                            // W10:防空转熔断阈值/窗口走 limits(0=关闭)。
-                            // 检测是否连续 N 次调用完全相同工具与参数(N=limits)。
-                            let lim = limits_cell.get();
-                            let breaker_n = lim.loop_breaker_consecutive as usize;
-                            let breaker_window = lim.loop_breaker_window;
-                            st.sweep_breaker(&tool_calls, breaker_n, breaker_window);
-
-                            if st.loop_broken {
-                                let _ = tx.try_send(Cmd::ProviderDelta {
-                                    operation_id: op_id.clone(),
-                                    delta: format!(
-                                        "\n(检测到连续 {breaker_n} 次调用相同工具与完全一致的入参，已触发防空转熔断保护。)\n"
-                                    ),
-                                });
-                            } else {
-                                // ADR-0022:assistant 消息原样携带 tool_calls 回喂,
-                                // 模型才能把下一轮的工具结果对齐回自己发起的调用
-                                // (此前只回 content,调用结构丢失 = 模型「失忆」)。
-                                st.messages.push(Message {
-                                    role: Role::Assistant,
-                                    tool_call_id: None,
-                                    tool_calls: Some(tool_calls.clone()),
-                                    content: content.clone(),
-                                });
-                                // #26:同批拒绝联动——本批任一调用被用户驳回后,
-                                // 余下调用不再派发(策略开关走 limits,0=回退独立执行)
-                                let mut batch_denied = false;
-                                for tc in tool_calls {
-                                    // #1:意图硬门控——触发输入过短的回合禁用一切工具
-                                    // 派发(如实回喂;0=关)。在 #26 联动判定之前,
-                                    // 被门控拦截的调用不产生审批单/不触达提供者
-                                    if intent_gate_min > 0
-                                        && (user_input.chars().count() as u32) < intent_gate_min
-                                    {
-                                        st.messages.push(Message {
-                                            role: Role::Tool,
-                                            content: "本调用未执行:意图门控——本轮触发输入过短,无操作意图,工具已禁用;请直接以文字回应用户或请用户补充需求。".into(),
-                                            tool_call_id: Some(tc.id.clone()),
-                                            tool_calls: None,
-                                        });
-                                        turn_debug.record(
-                                            "tool_cancelled",
-                                            session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
-                                            agent_id.as_str(),
-                                            op_id.as_str(),
-                                            serde_json::json!({
-                                                "tool": tc.name,
-                                                "reason": "intent_gate",
-                                                "input_chars": user_input.chars().count(),
-                                            }),
-                                        );
-                                        continue;
-                                    }
-                                    if batch_denied
-                                        && limits_cell.get().tool_batch_cancel_on_deny == 1
-                                    {
-                                        st.messages.push(Message {
-                                            role: Role::Tool,
-                                            content: "本调用未执行:同批已有调用被用户驳回,按策略联动取消余下调用。".into(),
-                                            tool_call_id: Some(tc.id.clone()),
-                                            tool_calls: None,
-                                        });
-                                        turn_debug.record(
-                                            "tool_cancelled",
-                                            session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
-                                            agent_id.as_str(),
-                                            op_id.as_str(),
-                                            serde_json::json!({
-                                                "tool": tc.name,
-                                                "reason": "batch_deny_linkage"
-                                            }),
-                                        );
-                                        continue;
-                                    }
-                                    let args: serde_json::Value =
-                                        serde_json::from_str(&tc.arguments)
-                                            .unwrap_or(serde_json::Value::Null);
-
-                                    // 提取核心目标参数(如 path, file_path, command, query)用于前端清晰呈现
-                                    let target_summary = args
-                                        .get("path")
-                                        .or_else(|| args.get("file_path"))
-                                        .or_else(|| args.get("command"))
-                                        .or_else(|| args.get("query"))
-                                        .or_else(|| args.get("pattern"))
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("");
-
-                                    let target_display = if !target_summary.is_empty() {
-                                        format!(" {}", target_summary)
-                                    } else {
-                                        String::new()
-                                    };
-
-                                    let _ = tx.try_send(Cmd::ProviderDelta {
-                                        operation_id: op_id.clone(),
-                                        delta: format!("\n[调用 {}{}]\n", tc.name, target_display),
-                                    });
-                                    let capability = name_to_cap
-                                        .get(&tc.name)
-                                        .cloned()
-                                        .unwrap_or_else(|| tc.name.clone());
-                                    // W9:工具调用事件(轨迹视图数据源)
-                                    let tool_started = std::time::Instant::now();
-                                    ctx_log.record_event(
-                                        session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
-                                        op_id.as_str(),
-                                        turn_index,
-                                        "tool_call",
-                                        &format_ts(clock.now()),
-                                        serde_json::json!({
-                                            "tool": tc.name,
-                                            "arguments": args.clone(),
-                                        }),
-                                    );
-                                    // #14:调试面——工具调用全参
-                                    turn_debug.record(
-                                        "tool_call",
-                                        session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
-                                        agent_id.as_str(),
-                                        op_id.as_str(),
-                                        serde_json::json!({
-                                            "step": snap_step,
-                                            "tool": tc.name,
-                                            "capability": capability,
-                                            "arguments": args.clone(),
-                                        }),
-                                    );
-                                    let (rtx, rrx) = tokio::sync::oneshot::channel();
-                                    let call_req =
-                                        request_id.clone().unwrap_or_else(|| op_id.clone());
-                                    let _ = tx
-                                        .send(Cmd::CapabilityCall {
-                                            request_id: call_req,
-                                            params: wire::CapabilityCallParams {
-                                                capability: capability.clone(),
-                                                args: args.clone(),
-                                                // W4b 修复:幂等键必须含回合操作 id——
-                                                // 模型不同回合的 tool_call id 会重复,
-                                                // 纯 tc.id 会让幂等抑制返回上一回合的
-                                                // 旧收据(模型看到旧结果反复重试)
-                                                idempotency_key: Some(format!(
-                                                    "{}:{}",
-                                                    op_id.as_str(),
-                                                    tc.id
-                                                )),
-                                                deadline_ms: None,
-                                            },
-                                            // ADR-0030:工具调用标注来源会话,裁决点
-                                            // 据此读取会话权限模式(路由信息,非信任)
-                                            session_id: session_id.clone(),
-                                            resp: rtx,
-                                        })
-                                        .await;
-                                    // W4b 对话内审批:需审批能力调用返回
-                                    // ApprovalRequired 错误(审批单已开,operation
-                                    // 停在 waiting_approval)。此时反查审批单,
-                                    // 推送审批卡片标记随 SSE 流上屏,并轮询等待
-                                    // 用户裁决+执行落定(上限 300s=审批 TTL)。
-                                    let call_resp = rrx.await;
-                                    let mut approval_id: Option<String> = None;
-                                    let mut tool_op: Option<bm_contract::ids::BmId> = None;
-                                    match &call_resp {
-                                        // W4b+ 加固:ApprovalRequired 错误自带开单点的
-                                        // approval_id/operation_id(CoreError::ApprovalNeeded),
-                                        // 回合侧零反查——杜绝多会话/并发调用同能力时
-                                        // 「批准 A 执行 B」的错配缺陷
-                                        Ok(Err(CoreError::ApprovalNeeded {
-                                            approval_id: aid,
-                                            operation_id: opid,
-                                            ..
-                                        })) => {
-                                            approval_id = Some(aid.clone());
-                                            tool_op = bm_contract::ids::BmId::parse(opid).ok();
-                                        }
-                                        Ok(Ok(receipt_value)) => {
-                                            tool_op =
-                                                receipt_value["operation_id"].as_str().and_then(
-                                                    |s| bm_contract::ids::BmId::parse(s).ok(),
-                                                );
-                                        }
-                                        _ => {}
-                                    }
-
-                                    if let Some(appr_id) = approval_id.clone() {
-                                        // 审批卡片标记:随 ProviderDelta 上屏,
-                                        // 前端识别 bm_approval_request 渲染卡片
-                                        // (args = 模型本次调用的真实参数,卡片展示用)
-                                        let _ = tx
-                                            .send(Cmd::ApprovalRequested {
-                                                approval_id: appr_id.clone(),
-                                                capability: capability.clone(),
-                                                args: args.clone(),
-                                                operation_id: op_id.clone(),
-                                            })
-                                            .await;
-                                    }
-
-                                    // 受理/结果:直通能力同步出结果;MCP 异步能力经
-                                    // operations 轮询至终态;需审批能力轮询至审批
-                                    // 裁决+执行终态。
-                                    let mut tool_result = String::from("工具执行无应答");
-                                    // ADR-0029:调用层直接失败(如能力校验拒绝)
-                                    // 如实回喂真实死因,不以占位文案掩盖。
-                                    if let Ok(Err(e)) = &call_resp {
-                                        tool_result = match e {
-                                            CoreError::Semantic(code, msg) => {
-                                                format!("工具调用失败({}): {}", code.as_str(), msg)
-                                            }
-                                            other => format!("工具调用失败: {other}"),
-                                        };
-                                    }
-                                    // W10:等待时限走 limits;ADR-0028:0 = 不限时(None)。
-                                    let lim_wait = limits_cell.get();
-                                    let wait_secs: Option<u64> = if approval_id.is_some() {
-                                        (lim_wait.approval_wait_ms > 0)
-                                            .then(|| (lim_wait.approval_wait_ms / 1000).max(1))
-                                    } else {
-                                        (lim_wait.tool_wait_ms > 0)
-                                            .then(|| (lim_wait.tool_wait_ms / 1000).max(1))
-                                    };
-                                    // 直通修复(2026-09-03 VPS 实测 P1):同步收据
-                                    // state=succeeded 且 result 内联时立即回喂——
-                                    // 同步结果从不写入 op_results(仅异步回单/审批
-                                    // 重放两路写入),此前一律进 GetOpResult 轮询=
-                                    // 直通工具必现 60s「工具执行超时」。审批类与
-                                    // MCP 异步(state=running)仍走轮询不变。
-                                    let inline_sync = matches!(&call_resp, Ok(Ok(v))
-                                    if v["state"].as_str() == Some("succeeded")
-                                        && !v["result"].is_null());
-                                    if inline_sync {
-                                        if let Ok(Ok(receipt_value)) = call_resp {
-                                            // ADR-0029:幂等抑制如实告知——等价请求
-                                            // 返回的是旧结果,模型必须知道本次没有
-                                            // 真实执行。
-                                            let suppressed = receipt_value["action_summary"]
-                                                .as_str()
-                                                .is_some_and(|s| s.contains("幂等抑制"));
-                                            tool_result = if suppressed {
-                                                format!(
-                                                    "本次未重复执行(等价请求幂等返回原结果): {}",
-                                                    receipt_value["result"]
-                                                )
-                                            } else {
-                                                receipt_value["result"].to_string()
-                                            };
-                                        }
-                                    } else if let Some(tool_op) = tool_op {
-                                        // #19 拆分第二批:审批/异步工具等待环
-                                        // 外置为独立 async fn(本文件上方)——
-                                        // 轮询 operations 至终态,审批超时撤单
-                                        // (P1-3),用户拒绝联动 batch_denied(#26)。
-                                        let (result, denied) = await_tool_settlement(
-                                            &tx,
-                                            wait_secs,
-                                            approval_id,
-                                            tool_op,
-                                            &capability,
-                                            batch_denied,
-                                        )
-                                        .await;
-                                        tool_result = result;
-                                        batch_denied = denied;
-                                    } else if let Ok(Ok(receipt_value)) = call_resp {
-                                        tool_result = receipt_value.to_string();
-                                    }
-                                    // W9:工具结果事件(回喂模型的原文+耗时)
-                                    let elapsed_ms = tool_started.elapsed().as_millis() as u64;
-                                    ctx_log.record_event(
-                                        session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
-                                        op_id.as_str(),
-                                        turn_index,
-                                        "tool_result",
-                                        &format_ts(clock.now()),
-                                        serde_json::json!({
-                                            "tool": capability,
-                                            "result": tool_result,
-                                            "elapsed_ms": elapsed_ms,
-                                        }),
-                                    );
-                                    // #14:调试面——工具结果全文(与回喂同文)
-                                    turn_debug.record(
-                                        "tool_result",
-                                        session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
-                                        agent_id.as_str(),
-                                        op_id.as_str(),
-                                        serde_json::json!({
-                                            "step": snap_step,
-                                            "tool": tc.name,
-                                            "capability": capability,
-                                            "result": tool_result,
-                                            "elapsed_ms": elapsed_ms,
-                                        }),
-                                    );
-                                    // 前端轻量反馈:向前端推一条工具执行耗时与成败标记
-                                    let _ = tx.try_send(Cmd::ProviderDelta {
-                                        operation_id: op_id.clone(),
-                                        delta: format!(
-                                            "\n[工具完成 {} 耗时 {}ms]\n",
-                                            tc.name, elapsed_ms
-                                        ),
-                                    });
-                                    // ADR-0022:工具结果原生 role=tool + tool_call_id
-                                    // 回喂,对齐模型因果链。不再强贴「不要再次调用」
-                                    // 类负向禁令——链式调用(搜→读→改→测)是模型的
-                                    // 正常工作方式;失控防线=同参熔断 + limits.
-                                    // tool_rounds_max 总轮数安全网(本文件上方)。
-                                    st.messages.push(Message {
-                                        role: Role::Tool,
-                                        content: tool_result,
-                                        tool_call_id: Some(tc.id.clone()),
-                                        tool_calls: None,
-                                    });
-                                }
-                            }
+                            // 工具派发与结果回喂整段(轮数安全网/防空转熔断/
+                            // 逐个派发/收据回喂)外置为独立 async fn
+                            run_tool_round(
+                                &env,
+                                &mut st,
+                                &content,
+                                tool_calls,
+                                &name_to_cap,
+                                snap_step,
+                            )
+                            .await;
                             // 结果回喂后重调模型(仍在同一 attempt 的降级链内)
                             continue;
                         }
-                        // ADR-0029(2026-09-08 用户裁决):熔断/触顶拦截的调用
-                        // 不再凭空蒸发——逐个回喂事实性结果(未执行+原因),
-                        // 因果链对模型与日志完整;回合就此收束,不再重调模型。
-                        // 原内核代写的 assistant 终稿废除:收束原因只在触发点
-                        // 经 ProviderDelta 上屏(UI-only),不入台账、不冒充
-                        // 模型发言;content 保持模型原文(可能为空)。
-                        st.feed_unexecuted(&tool_calls);
-                        // W9:终稿与回合边界事件(轨迹视图数据源)。
-                        // ADR-0029:assistant_final 只在模型真有话时记录——
-                        // 内核不再生产终稿内容,空终稿不落轨迹。
-                        if !content.trim().is_empty() {
-                            ctx_log.record_event(
-                                session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
-                                op_id.as_str(),
-                                turn_index,
-                                "assistant_final",
-                                &format_ts(clock.now()),
-                                serde_json::json!({
-                                    "content": content,
-                                    "tokens_in": usage.tokens_in,
-                                    "tokens_out": usage.tokens_out,
-                                }),
-                            );
-                        }
-                        ctx_log.record_event(
-                            session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
-                            op_id.as_str(),
-                            turn_index,
-                            "turn_end",
-                            &format_ts(clock.now()),
-                            serde_json::json!({
-                                "outcome": "succeeded",
-                                "latency_ms": latency_ms,
-                            }),
-                        );
-                        // #14:调试面——回合终态(成功)
-                        turn_debug.record(
-                            "turn_end",
-                            session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
-                            agent_id.as_str(),
-                            op_id.as_str(),
-                            serde_json::json!({
-                                "outcome": "succeeded",
-                                "attempt": attempt,
-                                "tool_rounds": st.tool_rounds,
-                                "latency_ms": latency_ms,
-                            }),
-                        );
-                        // W5:对话台账回写(仅终稿成功;工具轮中间态不入账)
-                        if let Some(sid) = session_id.clone() {
-                            let _ = tx
-                                .send(Cmd::RememberTurn {
-                                    session_id: sid,
-                                    user: user_input,
-                                    assistant: content.clone(),
-                                })
-                                .await;
-                        }
-                        let _ = tx
-                            .send(Cmd::Turn(TurnEvent::Completed {
-                                operation_id: op_id.clone(),
-                                model_id: mid,
-                                attempt,
-                                content,
-                                usage_in: usage.tokens_in,
-                                usage_out: usage.tokens_out,
-                                latency_ms,
-                                stream_interrupted,
-                            }))
-                            .await;
+                        // 成功终态收尾(未执行调用回喂/终稿与回合边界事件/
+                        // 台账回写/Turn Completed)
+                        settle_turn_completed(
+                            &env,
+                            &mut st,
+                            &tool_calls,
+                            content,
+                            &usage,
+                            attempt,
+                            latency_ms,
+                            mid,
+                            stream_interrupted,
+                        )
+                        .await;
                         return;
                     }
                     InvokeResponse::Failed {
@@ -1169,108 +1456,24 @@ pub(crate) fn spawn_turn(
                         detail_ref: _,
                         detail,
                     } => {
-                        // W5:失败/取消同样落快照(诊断「报错」「卡死」场景)
-                        ctx_log.record(crate::context_log::ContextRecord {
-                            session_id: session_id
-                                .as_ref()
-                                .map(|s| s.as_str().to_string())
-                                .unwrap_or_default(),
-                            agent_id: agent_id.as_str().to_string(),
-                            operation_id: op_id.as_str().to_string(),
-                            turn_index,
-                            step: snap_step,
-                            attempt,
-                            model_id: snap_model.clone(),
-                            streaming,
-                            messages: snap_msgs,
-                            tools: tools_json.clone(),
-                            status: if error_code == ErrorCode::Cancelled {
-                                "cancelled"
-                            } else {
-                                "error"
-                            },
-                            error_code: Some(error_code.as_str().to_string()),
-                            tokens_in: None,
-                            tokens_out: None,
-                            tokens_reasoning: None,
-                            tokens_cached: None,
+                        // 失败/取消终态收尾(快照+调试落盘 → 取消边界/失败
+                        // 收束/退避降级);Terminal = 回合已收束
+                        match settle_turn_failed(
+                            &env,
+                            &snap,
                             ttft_ms,
-                            evicted_turns: Some(evicted_turns),
-                            latency_ms: Some(snap_start.elapsed().as_millis() as u64),
-                            ts: format_ts(clock.now()),
-                        });
-                        // #14:调试面——模型调用失败(含脱敏后细节)
-                        turn_debug.record(
-                            "model_failed",
-                            session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
-                            agent_id.as_str(),
-                            op_id.as_str(),
-                            serde_json::json!({
-                                "step": snap_step,
-                                "attempt": attempt,
-                                "model_id": snap_model.clone(),
-                                "error_code": error_code.as_str(),
-                                "retryable": retryable,
-                                "detail": detail,
-                            }),
-                        );
-                        if error_code == ErrorCode::Cancelled {
-                            // 显式取消:回合边界落定为 cancelled(INV-12 唯一入口)。
-                            ctx_log.record_event(
-                                session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
-                                op_id.as_str(),
-                                turn_index,
-                                "turn_end",
-                                &format_ts(clock.now()),
-                                serde_json::json!({
-                                    "outcome": "cancelled",
-                                    "error_code": error_code.as_str(),
-                                }),
-                            );
-                            let _ = tx
-                                .send(Cmd::Turn(TurnEvent::Cancelled {
-                                    operation_id: op_id.clone(),
-                                }))
-                                .await;
-                            return;
+                            &tools_json,
+                            attempt,
+                            error_code,
+                            retryable,
+                            detail,
+                            max_attempts,
+                        )
+                        .await
+                        {
+                            TurnFailedVerdict::Terminal => return,
+                            TurnFailedVerdict::NextAttempt => break,
                         }
-                        let _ = tx
-                            .send(Cmd::Turn(TurnEvent::AttemptFailed {
-                                operation_id: op_id.clone(),
-                                model_id,
-                                attempt,
-                                error_code,
-                            }))
-                            .await;
-                        let exhausted = max_attempts.is_some_and(|m| attempt >= m);
-                        if !retryable || exhausted {
-                            // W9:回合失败边界事件(轨迹视图失败红标数据源)
-                            ctx_log.record_event(
-                                session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
-                                op_id.as_str(),
-                                turn_index,
-                                "turn_end",
-                                &format_ts(clock.now()),
-                                serde_json::json!({
-                                    "outcome": "failed",
-                                    "error_code": error_code.as_str(),
-                                }),
-                            );
-                            let _ = tx
-                                .send(Cmd::Turn(TurnEvent::ChainExhausted {
-                                    operation_id: op_id,
-                                    error_code,
-                                    detail,
-                                }))
-                                .await;
-                            return;
-                        }
-                        // ADR-0028:不限重试时加 1s 退避,防对僵死网关热循环打点
-                        if max_attempts.is_none() {
-                            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                        }
-                        // 降级链下一 attempt(退出工具轮)
-                        break;
                     }
                 }
             }
