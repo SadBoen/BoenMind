@@ -24,6 +24,18 @@ export type LimitKey = {
 /** 会话权限模式(ADR-0030):状态权威在服务端会话,前端仅为选择器 */
 export type PermissionMode = "ask" | "plan" | "yolo";
 
+/**
+ * 待裁决审批单(GET /admin/approvals;后端 serialized `Approval`,顶层夹具
+ * 锚定 webadmin_tests.rs::t_admin_response_shape_anchors)。前端只用
+ * approval_id/capability/args_summary 三个字段,其余随对话面需要再补。
+ */
+export type ApprovalEntry = {
+  approval_id: string;
+  capability: string;
+  args_summary: string;
+  state: string;
+};
+
 export type JobInfo = {
   id: string;
   command: string;
@@ -326,6 +338,22 @@ export const api = {
       req<{ ok: boolean; note?: string }>(
         "/api/portal/password",
         json("POST", { old, new: next }),
+      ),
+  },
+  // 无鉴权探针(GET /health;门户墙与就绪轮询共用)。不触发 401 跳登录。
+  health: () => req<{ ok: boolean; version: string; state: string }>("/health"),
+  // W1 对话面模型标签(GET /v1/models):仅取默认模型 id。
+  models: () =>
+    req<{ object: string; data: { id: string; object: string }[] }>("/v1/models"),
+  // 待裁决审批队列轮询面(W4b;POST /admin/approvals/{id}/respond 与 /rpc 同执行体)。
+  // 裁决权在服务端(ADR-0030),前端只呈现与转发。
+  approvals: {
+    list: () =>
+      req<{ approvals: ApprovalEntry[] }>("/admin/approvals"),
+    respond: (id: string, decision: "approve" | "deny") =>
+      req<{ ok: boolean }>(
+        `/admin/approvals/${encodeURIComponent(id)}/respond`,
+        json("POST", { decision, scope: decision === "approve" ? "once" : undefined }),
       ),
   },
   mcp: {

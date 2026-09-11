@@ -62,7 +62,7 @@ export function AboutPage() {
       const deadline = Date.now() + 120_000;
       const poll = async () => {
         try {
-          const h = await fetch("/health").then((x) => x.json());
+          const h = await api.health();
           if (h?.ok) {
             window.location.href = "/?upgrade=" + Date.now();
             return;

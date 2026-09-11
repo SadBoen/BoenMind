@@ -29,7 +29,6 @@ import {
 import { api, type WorkspaceEntry } from "@/w2/api";
 import { storage, STORAGE_KEYS, type PermissionMode, type ThinkingLevel } from "@/lib/storage";
 import { BM_EVENTS, emit, on } from "../../lib/bus";
-import { redirectToLogin } from "@/lib/utils";
 
 /** 新建对话等场景的命令式入口(thread.tsx 持 ref 调用,替代跨文件 DOM 扒取) */
 export interface ComposerHandle {
@@ -133,14 +132,8 @@ export const Composer = forwardRef<ComposerHandle>(function Composer(_props, ref
   };
 
   useEffect(() => {
-    // P1-30:401 时正向跳登录(与 runtime.tsx 主流同口径),不再只显示 "?"
-    fetch("/v1/models")
-      .then((r) => {
-        if (r.status === 401) {
-          redirectToLogin();
-        }
-        return r.json();
-      })
+    // P1-30:401 时正向跳登录由统一 client 处理(与 runtime.tsx 主流同口径)
+    api.models()
       .then((v) => setModel(v?.data?.[0]?.id ?? "?"))
       .catch(() => setModel("?"));
 

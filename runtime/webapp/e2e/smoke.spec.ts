@@ -148,6 +148,22 @@ async function mockAdmin(page: Page) {
       },
     }),
   );
+  // 以下四端点经统一 client(w2/api.ts)请求:mock 以确定性覆盖,
+  // 避免落到 vite preview 的 SPA 兜底(返回 HTML 非 JSON)。
+  await page.route("**/admin/approvals", (route) =>
+    route.fulfill({ json: { approvals: [] } }),
+  );
+  await page.route("**/v1/models", (route) =>
+    route.fulfill({
+      json: { object: "list", data: [{ id: "mock.model", object: "model" }] },
+    }),
+  );
+  await page.route("**/health", (route) =>
+    route.fulfill({ json: { ok: true, version: "0.0.17", state: "running" } }),
+  );
+  await page.route("**/api/portal/state", (route) =>
+    route.fulfill({ json: { configured: false, authed: true } }),
+  );
 }
 
 test.describe("对话闭环", () => {

@@ -222,15 +222,7 @@ export function BoenmindRuntimeProvider({
   useEffect(() => {
     const tick = async () => {
       try {
-        const res = await fetch("/admin/approvals");
-        if (!res.ok) return;
-        const data = (await res.json()) as {
-          approvals?: Array<{
-            approval_id: string;
-            capability?: string;
-            args_summary?: string;
-          }>;
-        };
+        const data = await api.approvals.list();
         for (const a of data.approvals ?? []) {
           if (handledApprovalsRef.current.has(a.approval_id)) continue;
           handledApprovalsRef.current.add(a.approval_id);
@@ -262,33 +254,18 @@ export function BoenmindRuntimeProvider({
     // notifyNewApproval 为稳定 useCallback(#25):加入依赖仅为本规检查
   }, [notifyNewApproval]);
 
-  // 审批裁决 POST 公共实现(P1-2/P1-26 收口):检查 res.ok、失败回滚入队
-  // 并从去重集摘除(下一轮询兜底重试),不再静默吞错
+  // 审批裁决 POST 公共实现(P1-2/P1-26 收口):失败回滚入队并从去重集摘除
+  // (下一轮询兜底重试),不再静默吞错。走统一 client——非 2xx 由 req 抛错,
+  // 401 由 client 统一跳登录(与主流同口径)。
   const postApprovalRespond = async (
     approvalId: string,
     decision: "approve" | "deny",
   ): Promise<boolean> => {
     try {
-      const r = await fetch(
-        `/admin/approvals/${encodeURIComponent(approvalId)}/respond`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            decision,
-            scope: decision === "approve" ? "once" : undefined,
-          }),
-        },
-      );
-      if (!r.ok) {
-        console.warn(
-          `审批裁决失败(HTTP ${r.status}): ${approvalId} ${decision}`,
-        );
-        return false;
-      }
+      await api.approvals.respond(approvalId, decision);
       return true;
     } catch (e) {
-      console.warn(`审批裁决请求失败: ${approvalId}`, e);
+      console.warn(`审批裁决失败: ${approvalId} ${decision}`, e);
       return false;
     }
   };
