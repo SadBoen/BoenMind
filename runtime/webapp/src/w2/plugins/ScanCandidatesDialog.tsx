@@ -26,6 +26,9 @@ export function ScanCandidatesDialog({
             {result.bundled_dir ? ` · 随包目录: ${result.bundled_dir}` : ""}
           </DialogDescription>
         </DialogHeader>
+        <div className="bg-muted/60 text-muted-foreground rounded-md border px-3 py-2 text-xs leading-relaxed">
+          扫描已以 <code className="font-mono">--self-describe</code> 参数运行下列候选可执行文件以读取其自报声明(识别插件身份的唯一方式)。文件在「批准接入」前不会写入配置或上线。
+        </div>
         {result.candidates.length ? (
           <div className="max-h-72 space-y-2 overflow-auto">
             {result.candidates.map((c) => (

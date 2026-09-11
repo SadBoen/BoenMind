@@ -68,10 +68,15 @@
       ],
       "description": "M7 仅接受显式配置安装;运行期动态注册随 Wire 面增发(M8)"
     },
+    "payload": {
+      "type": "string",
+      "minLength": 1,
+      "description": "完整性校验的目标文件(ADR-0035,Minor 2026-09-11)。解释器型条目(command=python + args=[脚本])须以此声明真实载荷;存在 payload 时 sha256 一律哈希 payload。管理面托管条目恒写候选文件路径。"
+    },
     "sha256": {
       "type": "string",
       "pattern": "^[0-9a-f]{64}$",
-      "description": "插件可执行/脚本文件的 SHA-256(十六进制)。批准接入时记录,装载/重载时复验,不符拒载(2026-09-03 Minor:外部评审完整性校验)"
+      "description": "完整性校验目标的 SHA-256(十六进制)。目标 = payload(若声明)否则 command;解释器型条目必须声明 payload,否则装载期 fail-closed 拒载(ADR-0035)。批准接入时记录,装载/重载时复验,不符拒载(2026-09-03 Minor:外部评审完整性校验)"
     }
   }
 }

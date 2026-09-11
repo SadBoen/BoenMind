@@ -1455,6 +1455,13 @@ pub struct McpServerSetup {
     pub env_resolved: HashMap<String, String>,
     pub tool_timeout_ms: u64,
     pub restart_limit: u32,
+    /// ADR-0035:合同 trust 字段的解析值。缺省 `explicit-config`(配置显式
+    /// 列出即安装批准,M7 既有语义);显式给出非枚举值在合同校验步即被拒。
+    /// 消费点=装载日志留痕,使来源可见。
+    pub trust: String,
+    /// ADR-0035:完整性校验目标(可选)。解释器型条目(command=解释器,
+    /// args=脚本)须以此声明真实载荷;存在时 sha256 一律哈希 payload。
+    pub payload: Option<String>,
 }
 
 /// 从配置文件装载 MCP server 安装清单(每项过 mcp-server.v0_1 合同校验)。
@@ -1522,13 +1529,34 @@ pub fn load_mcp_setups(
         if env_err {
             continue;
         }
-        // 外部评审 2026-09-03 #2:完整性校验——条目带 sha256 时复验可执行
-        // 文件哈希,不符拒载(防安装后二进制被替换);无 sha256 的旧条目照常。
+        // ADR-0035:trust 显式消费(缺省 explicit-config,即「配置显式列出=
+        // 安装批准」;非枚举值已在上面合同校验步被拒)。解析值随条目留痕,
+        // 使来源在装载日志可见。
+        let trust = item
+            .get("trust")
+            .and_then(|v| v.as_str())
+            .unwrap_or("explicit-config");
+        eprintln!("[MCP] 配置项 {name} trust={trust}(来源显式配置)");
+
+        // 外部评审 2026-09-03 #2 + ADR-0035:完整性校验——条目带 sha256 时复验
+        // 「校验目标」哈希,不符拒载(防安装后被替换)。校验目标 = payload(若
+        // 声明)否则 command;解释器型条目(command 非本地文件、args 指向本地
+        // 脚本)未声明 payload 时语义歧义,fail-closed 拒载,杜绝「哈希解释器
+        // 却宣称校验了插件」的假保证。
         if let Some(expected) = item.get("sha256").and_then(|v| v.as_str()) {
-            let command = item["command"].as_str().unwrap_or_default();
-            if let Err(e) = verify_integrity(command, expected) {
-                eprintln!("[MCP] 配置项 {name} 完整性校验不符 (已跳过,疑似被替换): {e}");
-                continue;
+            match resolve_integrity_target(item) {
+                Ok(target) => {
+                    if let Err(e) = verify_integrity(&target, expected) {
+                        eprintln!(
+                            "[MCP] 配置项 {name} 完整性校验不符 (已跳过,疑似被替换;目标 {target}): {e}"
+                        );
+                        continue;
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[MCP] 配置项 {name} 完整性校验目标不明确 (已跳过): {e}");
+                    continue;
+                }
             }
         }
         out.push(McpServerSetup {
@@ -1554,6 +1582,11 @@ pub fn load_mcp_setups(
                 .get("restart_limit")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(3) as u32,
+            trust: trust.to_string(),
+            payload: item
+                .get("payload")
+                .and_then(|v| v.as_str())
+                .map(String::from),
         });
     }
     Ok(out)
@@ -1563,6 +1596,33 @@ pub fn load_mcp_setups(
 pub fn sha256_file(path: &str) -> Result<String, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("读取 {path} 失败: {e}"))?;
     Ok(bm_contract::hash::sha256_hex(&bytes))
+}
+
+/// ADR-0035:依条目解析完整性校验目标。
+///
+/// 目标 = `payload`(若声明)否则 `command`。解释器型条目(`command` 非本地
+/// 常规文件,而 `args` 指向本地脚本)未声明 `payload` 时,**目标语义歧义**——
+/// 此时哈希 `command` 会校验解释器而非脚本,给出假保证;故返回 Err 由调用方
+/// fail-closed 拒载。裸解释器名(如 `python`)且 args 无本地文件时回退
+/// `command`,读取失败即拒载(既有行为)。
+fn resolve_integrity_target(item: &Value) -> Result<String, String> {
+    if let Some(p) = item.get("payload").and_then(|v| v.as_str()) {
+        return Ok(p.to_string());
+    }
+    let command = item["command"].as_str().unwrap_or_default();
+    if std::path::Path::new(command).is_file() {
+        return Ok(command.to_string());
+    }
+    if let Some(arg) = item.get("args").and_then(|v| v.as_array()).and_then(|a| {
+        a.iter()
+            .filter_map(|v| v.as_str())
+            .find(|s| std::path::Path::new(s).is_file())
+    }) {
+        return Err(format!(
+            "解释器型条目 command='{command}' 非本地文件而 args 指向本地文件 '{arg}';哈希目标歧义,请在条目声明 payload"
+        ));
+    }
+    Ok(command.to_string())
 }
 
 /// 装载/重载前复验:不符 = Err(调用方跳过该条目并告警)。
@@ -1742,6 +1802,91 @@ mod integrity_tests {
                 || sha256_file("/no/such/file.exe").is_err()
         );
         let _ = std::io::sink().write(&[]);
+    }
+
+    /// ADR-0035:解释器型条目(command=解释器名)声明 payload 时,哈希目标
+    /// = 脚本载荷(而非解释器);篡改脚本被检出。
+    #[test]
+    fn interpreter_entry_hashes_payload_not_launcher() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let script = dir.path().join("server.py");
+        std::fs::write(&script, b"print('v1')").expect("写脚本");
+        let cfg = dir.path().join("mcp.json");
+        let good = sha256_file(&script.display().to_string()).expect("哈希脚本");
+        std::fs::write(
+            &cfg,
+            format!(
+                r#"[{{"name":"py","transport":"stdio","command":"python",
+                    "args":["{s}"],"payload":"{s}","sha256":"{good}"}}]"#,
+                s = script.display().to_string().replace('\\', "\\\\")
+            ),
+        )
+        .expect("写配置");
+        let store = MemSecretStore::new();
+        let setups = load_mcp_setups(&cfg, &store).expect("解析");
+        assert_eq!(setups.len(), 1);
+        assert_eq!(
+            setups[0].payload.as_deref(),
+            Some(script.display().to_string().as_str())
+        );
+
+        // 脚本被替换 -> 哈希不符 -> 拒载(即使解释器本身未变)
+        std::fs::write(&script, b"print('v2-evil')").expect("改脚本");
+        let setups = load_mcp_setups(&cfg, &store).expect("解析");
+        assert!(setups.is_empty(), "payload 被替换必须拒载");
+    }
+
+    /// ADR-0035:解释器型条目(非本地 command + args 指向本地脚本)未声明
+    /// payload 时语义歧义 -> fail-closed 拒载,不给「哈希解释器」的假保证。
+    #[test]
+    fn interpreter_entry_without_payload_fails_closed() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let script = dir.path().join("server.py");
+        std::fs::write(&script, b"print('x')").expect("写脚本");
+        let cfg = dir.path().join("mcp.json");
+        std::fs::write(
+            &cfg,
+            format!(
+                r#"[{{"name":"amb","transport":"stdio","command":"python",
+                    "args":["{s}"],"sha256":"{h}"}}]"#,
+                s = script.display().to_string().replace('\\', "\\\\"),
+                h = "a".repeat(64)
+            ),
+        )
+        .expect("写配置");
+        let store = MemSecretStore::new();
+        let setups = load_mcp_setups(&cfg, &store).expect("解析");
+        assert!(setups.is_empty(), "目标歧义必须拒载(fail-closed)");
+    }
+
+    /// ADR-0035:trust 缺省解析为 explicit-config;非枚举值在合同校验步被拒。
+    #[test]
+    fn trust_defaults_and_invalid_value_rejected() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let exe = dir.path().join("plugin.exe");
+        std::fs::write(&exe, b"bin").expect("写");
+        let cfg = dir.path().join("mcp.json");
+        let cmd = exe.display().to_string().replace('\\', "\\\\");
+        // 缺省 -> explicit-config
+        std::fs::write(
+            &cfg,
+            format!(r#"[{{"name":"a","transport":"stdio","command":"{cmd}"}}]"#),
+        )
+        .expect("写配置");
+        let store = MemSecretStore::new();
+        let setups = load_mcp_setups(&cfg, &store).expect("解析");
+        assert_eq!(setups.len(), 1);
+        assert_eq!(setups[0].trust, "explicit-config");
+        // 非枚举值 -> 合同校验拒 -> 跳过
+        std::fs::write(
+            &cfg,
+            format!(
+                r#"[{{"name":"b","transport":"stdio","command":"{cmd}","trust":"agent-registered"}}]"#
+            ),
+        )
+        .expect("写配置");
+        let setups = load_mcp_setups(&cfg, &store).expect("解析");
+        assert!(setups.is_empty(), "非枚举 trust 必须被合同校验拒");
     }
 }
 

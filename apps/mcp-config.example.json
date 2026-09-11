@@ -4,6 +4,7 @@
     "transport": "stdio",
     "command": "python",
     "args": ["apps/wiki_server.py", "--dir", "<wiki 数据目录>"],
+    "payload": "apps/wiki_server.py",
     "trust": "explicit-config",
     "tool_timeout_ms": 30000,
     "restart_limit": 3
@@ -13,6 +14,7 @@
     "transport": "stdio",
     "command": "python",
     "args": ["apps/market_server.py"],
+    "payload": "apps/market_server.py",
     "trust": "explicit-config",
     "tool_timeout_ms": 15000,
     "restart_limit": 3
@@ -22,6 +24,7 @@
     "transport": "stdio",
     "command": "python",
     "args": ["apps/music_server.py", "--dir", "<音乐文件目录>"],
+    "payload": "apps/music_server.py",
     "trust": "explicit-config",
     "tool_timeout_ms": 15000,
     "restart_limit": 3

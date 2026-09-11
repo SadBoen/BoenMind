@@ -586,6 +586,8 @@ pub async fn capabilities_list(State(cfg): State<AdminConfig>) -> Response {
 // 声明 JSON 识别(识别过程会运行候选文件——数据目录是用户手动放入=安装
 // 意图,随包目录随官方主程序一同安装=同等安装意图;正式激活仍以「批准
 // 接入」落盘 mcp.json 为准,显式批准=安装,ADR-0005/0006/0017)。
+// ADR-0035:该「识别即执行」面在管理 UI 显式披露——扫描前一次性确认 +
+// 结果对话框常驻说明;服务端响应 note 保留同款措辞。
 // 同名候选以数据目录(用户手动放置)优先。
 
 fn mcp_plugins_dir(path: &Path) -> PathBuf {
@@ -745,7 +747,7 @@ pub async fn mcp_candidates(State(cfg): State<AdminConfig>) -> Response {
             .map(|d| json!(d.display().to_string()))
             .unwrap_or(Value::Null),
         "candidates": candidates,
-        "note": "扫描会以 --self-describe 运行候选目录内可执行文件(数据目录 mcp/ 与官方随包 plugins/);批准后才落盘 mcp.json",
+        "note": "扫描会以 --self-describe 运行候选目录内可执行文件(数据目录 mcp/ 与官方随包 plugins/)以读取自报声明;批准后才落盘 mcp.json 并上线",
     }))
     .into_response()
 }
@@ -1060,7 +1062,11 @@ fn build_candidate_entry(
     let entry_body = json!({
         "name": name,
         "command": file.display().to_string(),
+        // ADR-0035:托管条目恒声明 payload=候选文件,使完整性校验目标无歧义
+        // (哈希对象 = 真实载荷,而非可能的启动器);trust 显式落盘。
+        "payload": file.display().to_string(),
         "sha256": sha,
+        "trust": "explicit-config",
         "args": args,
         "tool_timeout_ms": decl.pointer("/suggested_entry/tool_timeout_ms").cloned().unwrap_or(json!(30000)),
         "restart_limit": decl.pointer("/suggested_entry/restart_limit").cloned().unwrap_or(json!(3)),

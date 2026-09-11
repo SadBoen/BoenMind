@@ -1181,6 +1181,23 @@ fn mcp_server_config_schema_accepts_minimal_and_rejects_bad() {
     });
     validate(registries::MCP_SERVER_SCHEMA, &ok).expect("mcp 配置合法");
 
+    // ADR-0035:payload(完整性校验目标)为可选 Minor 新增字段,解释器型
+    // 条目据此声明真实载荷。
+    let with_payload = json!({
+        "name": "notes", "transport": "stdio",
+        "command": "python", "args": ["apps/notes_server.py"],
+        "payload": "apps/notes_server.py",
+        "sha256": "a".repeat(64),
+        "trust": "explicit-config"
+    });
+    validate(registries::MCP_SERVER_SCHEMA, &with_payload).expect("payload 字段合法");
+
+    let bad_trust = json!({
+        "name": "notes", "transport": "stdio",
+        "command": "x", "args": [], "trust": "agent-registered"
+    });
+    validate(registries::MCP_SERVER_SCHEMA, &bad_trust).expect_err("非枚举 trust 必须拒");
+
     let bad = json!({
         "name": "Bad-Name", "transport": "stdio",
         "command": "x", "args": []

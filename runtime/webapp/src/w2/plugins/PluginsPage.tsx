@@ -58,6 +58,7 @@ export function PluginsPage() {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [busy, setBusy] = useState(false);
   const [scanning, setScanning] = useState(false);
+  const [scanDisclosed, setScanDisclosed] = useState(false);
   const [reloading, setReloading] = useState(false);
   const [scanResult, setScanResult] = useState<McpCandidatesResult | null>(null);
   const [approving, setApproving] = useState<string | null>(null);
@@ -237,6 +238,17 @@ export function PluginsPage() {
   }, [tableItems, typeFilter, filter]);
 
   const scanPlugins = async () => {
+    // ADR-0035:扫描会以 --self-describe 运行候选目录内的可执行文件。
+    // 首次扫描前显式披露该执行面(利用候选必须被运行才能自报 name)。
+    if (
+      !scanDisclosed &&
+      !confirm(
+        "扫描需要以 --self-describe 参数运行插件目录内的可执行文件,以读取其自报声明(识别插件身份的唯一方式)。\n\n仅「批准接入」后才写入配置并上线。是否继续扫描?",
+      )
+    ) {
+      return;
+    }
+    setScanDisclosed(true);
     setScanning(true);
     setError(null);
     try {
