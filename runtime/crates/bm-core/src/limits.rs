@@ -48,6 +48,13 @@ pub struct Limits {
     pub mcp_respawn_window_ms: u64,
     pub mcp_restart_limit: u32,
     pub mcp_reconnect_limit: u32,
+    /// ADR-0035 §4:MCP stdio 子进程资源上限(尽力而为,OS 级)。
+    /// memory_mb=进程内存上限(Windows Job Object / Unix RLIMIT_AS);
+    /// max_procs=活动进程数上限(Windows);cpu_secs=累计 CPU 秒(Unix RLIMIT_CPU,
+    /// 默认关——累计语义会误杀长驻 server)。0 = 该项不限。
+    pub mcp_subprocess_memory_mb: u64,
+    pub mcp_subprocess_cpu_secs: u64,
+    pub mcp_subprocess_max_procs: u32,
     pub provider_fail_threshold: u32,
     pub provider_cooldown_ms: u64,
     // 【上下文 / 记忆】
@@ -116,6 +123,11 @@ impl Default for Limits {
             mcp_respawn_window_ms: 60_000,
             mcp_restart_limit: 3,
             mcp_reconnect_limit: 3,
+            // ADR-0035:内存 2GB / 活动进程 64;CPU 累计上限默认关(RLIMIT_CPU
+            // 为累计语义,会误杀长驻 server)。0 = 不限。
+            mcp_subprocess_memory_mb: 2048,
+            mcp_subprocess_cpu_secs: 0,
+            mcp_subprocess_max_procs: 64,
             provider_fail_threshold: 3,
             provider_cooldown_ms: 30_000,
             history_max_turns: 0,
@@ -340,6 +352,27 @@ pub const KEY_META: &[KeyMeta] = &[
         "重连探针封禁次数",
         1.0,
         20.0
+    ),
+    meta!(
+        "mcp_subprocess_memory_mb",
+        "MCP 与通道健康",
+        "MCP 子进程内存上限(MB,0=不限;Windows Job Object / Unix RLIMIT_AS)",
+        0.0,
+        65_536.0
+    ),
+    meta!(
+        "mcp_subprocess_cpu_secs",
+        "MCP 与通道健康",
+        "MCP 子进程累计 CPU 上限(秒,0=不限;Unix RLIMIT_CPU,长驻 server 慎用)",
+        0.0,
+        86_400.0
+    ),
+    meta!(
+        "mcp_subprocess_max_procs",
+        "MCP 与通道健康",
+        "MCP 子进程活动进程数上限(0=不限;仅 Windows Job Object)",
+        0.0,
+        1_024.0
     ),
     meta!(
         "provider_fail_threshold",

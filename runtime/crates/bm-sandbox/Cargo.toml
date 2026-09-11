@@ -1,0 +1,27 @@
+[package]
+name = "bm-sandbox"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+description = "MCP 子进程 OS 级资源上限(Windows Job Object / Unix rlimit),ADR-0035"
+license = "Apache-2.0"
+
+[dependencies]
+# pre_spawn 签名在各平台引用 tokio::process::Command(spawn 后 Windows 才实际使用)。
+tokio = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", default-features = false, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# ADR-0035:平台原语刻意隔离在本 crate——unsafe 只允许出现在这里,
+# 其余 crate 维持 workspace 的 unsafe_code = "forbid"。工作区策略不动。
+[lints.rust]
+unsafe_code = "deny"

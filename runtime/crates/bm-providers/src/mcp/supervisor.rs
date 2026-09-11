@@ -34,6 +34,16 @@ pub trait CapabilityRegistrar: Send + Sync {
     async fn unregister(&self, names: Vec<String>) -> Result<(), String>;
 }
 
+/// ADR-0035 §4:把 limits 的 MB/秒/进程数折算为 [`bm_sandbox::SandboxLimits`]。
+/// 独立成函数以便单测(避免 spawn 真实子进程)。
+pub fn sandbox_from_limits(l: &bm_core::limits::Limits) -> bm_sandbox::SandboxLimits {
+    bm_sandbox::SandboxLimits {
+        memory_bytes: l.mcp_subprocess_memory_mb.saturating_mul(1024 * 1024),
+        cpu_seconds: l.mcp_subprocess_cpu_secs,
+        active_processes: l.mcp_subprocess_max_procs,
+    }
+}
+
 /// 从配置读 server 清单(文件不存在 = 空清单)。
 /// P1-9(2026-09-07 架构评审):仅 NotFound 视为空清单;其他 IO 错误(权限/
 /// 瞬时故障)上抛——吞成空清单会让热重载把全部 MCP 能力静默卸载,甚至被
@@ -146,13 +156,18 @@ pub async fn sync_from_config(
                     HttpMcpTransport::new(url, setup.bearer_token.clone())
                         .with_limits(limits.clone())
                 }
-                _ => StdioMcpTransport::spawn(
-                    &command,
-                    &args,
-                    &setup.env_resolved,
-                    setup.restart_limit,
-                )?
-                .with_limits(limits.clone()),
+                _ => {
+                    // ADR-0035 §4:从 limits 折算 OS 级资源上限,随 spawn 施加。
+                    let sandbox = sandbox_from_limits(&limits.get());
+                    StdioMcpTransport::spawn_with_sandbox(
+                        &command,
+                        &args,
+                        &setup.env_resolved,
+                        setup.restart_limit,
+                        sandbox,
+                    )?
+                    .with_limits(limits.clone())
+                }
             };
             hub.connect(&name, transport, timeout)
                 .await
@@ -182,4 +197,34 @@ pub async fn sync_from_config(
         }
     }
     outcome
+}
+
+#[cfg(test)]
+mod sandbox_tests {
+    use super::sandbox_from_limits;
+
+    /// ADR-0035 §4:limits(MB/秒/进程数)折算为 OS 上限(字节)。
+    #[test]
+    fn limits_map_to_sandbox_bytes() {
+        let l = bm_core::limits::Limits {
+            mcp_subprocess_memory_mb: 512,
+            mcp_subprocess_cpu_secs: 30,
+            mcp_subprocess_max_procs: 8,
+            ..Default::default()
+        };
+        let s = sandbox_from_limits(&l);
+        assert_eq!(s.memory_bytes, 512 * 1024 * 1024);
+        assert_eq!(s.cpu_seconds, 30);
+        assert_eq!(s.active_processes, 8);
+        assert!(!s.is_noop());
+
+        // 全零 = 空操作(不施加)
+        let z = bm_core::limits::Limits {
+            mcp_subprocess_memory_mb: 0,
+            mcp_subprocess_cpu_secs: 0,
+            mcp_subprocess_max_procs: 0,
+            ..Default::default()
+        };
+        assert!(sandbox_from_limits(&z).is_noop());
+    }
 }

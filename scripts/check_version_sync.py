@@ -5,7 +5,7 @@
   1. runtime/Cargo.toml          [workspace.package] version(权威源)
   2. runtime/webapp/package.json "version"
   3. AGENTS.md                   「当前版本 = vX.Y.Z」状态行
-  4. runtime/Cargo.lock          九个 workspace 成员包版本(锁文件随仓)
+  4. runtime/Cargo.lock          十个 workspace 成员包版本(锁文件随仓)
 
 用法:
   python scripts/check_version_sync.py            # 全绿退出 0,不一致退出 1
@@ -32,6 +32,7 @@ WORKSPACE_MEMBERS = [
     "bm-persist",
     "bm-providers",
     "bm-runtime",
+    "bm-sandbox",
     "bm-surface-http",
     "bm-testkit",
 ]

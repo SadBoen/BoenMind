@@ -455,6 +455,8 @@ pub struct StdioMcpTransport {
     stderr: Arc<StderrBuffer>,
     /// 当前子进程代数(1 起;respawn 递增,stderr 行随代标记)。
     generation: Arc<std::sync::atomic::AtomicU64>,
+    /// ADR-0035 §4:各代子进程 OS 级资源上限(respawn 沿用)。
+    sandbox: bm_sandbox::SandboxLimits,
 }
 
 impl Drop for StdioMcpTransport {
@@ -490,6 +492,24 @@ impl StdioMcpTransport {
         env: &HashMap<String, String>,
         restart_limit: u32,
     ) -> Result<Arc<Self>, String> {
+        // 无显式上限(测试/直接调用):空操作,行为与既有完全一致。
+        Self::spawn_with_sandbox(
+            command,
+            args,
+            env,
+            restart_limit,
+            bm_sandbox::SandboxLimits::default(),
+        )
+    }
+
+    /// ADR-0035 §4:带 OS 级资源上限的 spawn(生产装配走此入口)。
+    pub fn spawn_with_sandbox(
+        command: &str,
+        args: &[String],
+        env: &HashMap<String, String>,
+        restart_limit: u32,
+        sandbox: bm_sandbox::SandboxLimits,
+    ) -> Result<Arc<Self>, String> {
         let alive = Arc::new(std::sync::atomic::AtomicBool::new(true));
         let stderr = Arc::new(StderrBuffer::with_capacity(MCP_STDERR_CAPACITY));
         let generation = Arc::new(std::sync::atomic::AtomicU64::new(0));
@@ -499,10 +519,13 @@ impl StdioMcpTransport {
             command,
             args,
             env,
-            alive.clone(),
-            stderr.clone(),
-            generation.clone(),
-            agg_tx.clone(),
+            SpawnCtx {
+                alive: alive.clone(),
+                stderr_buf: stderr.clone(),
+                generation: generation.clone(),
+                progress_agg: agg_tx.clone(),
+                sandbox,
+            },
         )?;
         Ok(Arc::new(Self {
             command: command.to_string(),
@@ -523,6 +546,7 @@ impl StdioMcpTransport {
             limits: bm_core::limits::LimitsCell::with_default(),
             stderr,
             generation,
+            sandbox,
         }))
     }
 
@@ -555,21 +579,35 @@ impl StdioMcpTransport {
 /// 永不触发,reload 只发 shutdown 通知 = 插件不理会就僵尸。
 pub type ChildKill = tokio::sync::oneshot::Sender<()>;
 
-/// 拉起一代子进程:返回在途表 / stdin / 进度接收端 / 终止开关。
-/// `stderr`/`generation` 跨代共享:代数递增写入缓冲行标记(issue #28)。
+/// 跨代共享的 spawn 上下文(存活标志/代数/进度聚合/OS 上限)。
+struct SpawnCtx {
+    alive: Arc<std::sync::atomic::AtomicBool>,
+    stderr_buf: Arc<StderrBuffer>,
+    generation: Arc<std::sync::atomic::AtomicU64>,
+    /// #32:各代进度统一汇入同一聚合通道(订阅端跨代不断线)。
+    progress_agg: tokio::sync::mpsc::UnboundedSender<McpProgressNote>,
+    /// ADR-0035 §4:OS 级资源上限(尽力而为;空操作时跳过)。
+    sandbox: bm_sandbox::SandboxLimits,
+}
+
+/// 拉起一代子进程:返回在途表 / stdin / 终止开关。
+/// `ctx.stderr_buf`/`ctx.generation` 跨代共享:代数递增写入缓冲行标记(issue #28)。
 fn spawn_generation(
     command: &str,
     args: &[String],
     env: &HashMap<String, String>,
-    alive: Arc<std::sync::atomic::AtomicBool>,
-    stderr_buf: Arc<StderrBuffer>,
-    generation: Arc<std::sync::atomic::AtomicU64>,
-    // #32:各代进度统一汇入同一聚合通道(订阅端跨代不断线)
-    progress_agg: tokio::sync::mpsc::UnboundedSender<McpProgressNote>,
+    ctx: SpawnCtx,
 ) -> Result<(PendingMap, tokio::process::ChildStdin, ChildKill), String> {
     use tokio::io::{AsyncBufReadExt, BufReader};
     use tokio::process::Command;
 
+    let SpawnCtx {
+        alive,
+        stderr_buf,
+        generation,
+        progress_agg,
+        sandbox,
+    } = ctx;
     let no = generation.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     let mut cmd = Command::new(command);
     // P0(第四轮评审):子进程默认继承父进程全部环境 = 主密钥/令牌外泄
@@ -588,10 +626,23 @@ fn spawn_generation(
     // 外部审计:kill_on_drop 绑定子进程生命周期——连接器对象被丢弃时
     // 子进程随之终止,防止服务端异常退出后 Python App 成为孤儿进程。
     cmd.kill_on_drop(true);
+    // ADR-0035 §4:Unix 在 exec 前经 pre_exec 施加 rlimit(fork 后仅
+    // async-signal-safe 操作)。失败只告警不阻断(fail-open,与「单插件
+    // 失败不中止装载」一致);Windows 的 Job Object 需 pid,spawn 后施加。
+    if let Err(e) = bm_sandbox::pre_spawn(&mut cmd, &sandbox) {
+        tracing::warn!(command = %command, error = %e, "MCP 子进程 rlimit 施加失败(继续,不加限)");
+    }
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("MCP 子进程启动失败: {e}"))?;
     tracing::info!(pid = ?child.id(), command = %command, generation = no, "MCP 子进程已拉起");
+    // ADR-0035 §4:Windows 对已 spawn 的子进程纳入 Job Object(内存/活动进程
+    // 上限 + KILL_ON_JOB_CLOSE)。守卫随本代子进程看护任务同寿命。
+    let sandbox_guard = child.id().map(|pid| {
+        let g = bm_sandbox::post_spawn(pid, &sandbox);
+        tracing::info!(pid, command = %command, "MCP 子进程资源上限已施加");
+        g
+    });
     let stdin = child.stdin.take().ok_or("MCP 子进程 stdin 不可用")?;
     let stdout = child.stdout.take().ok_or("MCP 子进程 stdout 不可用")?;
     let stderr_pipe = child.stderr.take().ok_or("MCP 子进程 stderr 不可用")?;
@@ -602,6 +653,9 @@ fn spawn_generation(
     let (kill_tx, kill_rx) = tokio::sync::oneshot::channel::<()>();
     tokio::spawn(async move {
         let mut child = child;
+        // ADR-0035:Job Object 守卫随看护任务同寿命——任务退出(子进程已死
+        // 或被 kill)方 drop 守卫,避免 KILL_ON_JOB_CLOSE 过早杀子进程。
+        let _sandbox_guard = sandbox_guard;
         tokio::select! {
             status = child.wait() => {
                 tracing::info!(command = %command_owned, status = ?status, "MCP 子进程退出");
@@ -816,10 +870,13 @@ impl StdioMcpTransport {
             &self.command,
             &self.args,
             &self.env,
-            self.alive.clone(),
-            self.stderr.clone(),
-            self.generation.clone(),
-            self.progress_agg_tx.clone(),
+            SpawnCtx {
+                alive: self.alive.clone(),
+                stderr_buf: self.stderr.clone(),
+                generation: self.generation.clone(),
+                progress_agg: self.progress_agg_tx.clone(),
+                sandbox: self.sandbox,
+            },
         )?;
         *self
             .kill

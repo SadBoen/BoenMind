@@ -384,6 +384,7 @@ dependencies = [
  "bm-contract",
  "bm-core",
  "bm-persist",
+ "bm-sandbox",
  "boenmind-plugin-sdk",
  "getrandom 0.4.3",
  "grep-regex",
@@ -423,6 +424,15 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "bm-sandbox"
+version = "0.0.17"
+dependencies = [
+ "libc",
+ "tokio",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

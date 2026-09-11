@@ -10,6 +10,8 @@ members = [
     "crates/bm-testkit",
     "crates/bm-runtime",
     "crates/bm-judge",
+    # ADR-0035:平台原语(Job Object/rlimit)隔离 crate,unsafe 只在此处。
+    "crates/bm-sandbox",
 ]
 
 [workspace.package]

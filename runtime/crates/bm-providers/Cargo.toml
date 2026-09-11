@@ -27,6 +27,8 @@ regex = { workspace = true }
 # ADR-0034 §4 / #60:宿主客户端共用插件 SDK 的协议 codec(常量+信封+响应解析),
 # 消除 JSON-RPC 信封与错误码多处手拼。SDK 仍非 workspace 成员,以 path 依赖编译。
 boenmind-plugin-sdk = { path = "../../../plugins/mcp/sdk" }
+# ADR-0035 §4 / #55:MCP 子进程 OS 级资源上限(Job Object/rlimit)。
+bm-sandbox = { path = "../bm-sandbox" }
 wasmtime = { version = "48.0.1", default-features = false, features = ["runtime", "cranelift", "wat"] }
 wasmtime-wasi = "48.0.1"
 
