@@ -84,10 +84,14 @@ TOOLS = [
 def scan_directory(base_dir, sub_dir=""):
     global tracks_index
     target_dir = os.path.normpath(os.path.join(base_dir, sub_dir)) if sub_dir else base_dir
-    target_real = os.path.realpath(target_dir)
     base_real = os.path.realpath(base_dir)
 
-    # 路径穿越防护
+    # 路径穿越防护:域内守卫单源 mcp_sdk.guard_subpath(含拒链——此前仅
+    # realpath 包含校验,子目录指向符号链接的防线弱于 wiki,2026-09-12 补齐)
+    if sub_dir and mcp_sdk.guard_subpath(base_real, target_dir) is None:
+        return {"error": "路径越界或含符号链接, 必须在音乐目录内"}
+
+    target_real = os.path.realpath(target_dir)
     if not (target_real == base_real or target_real.startswith(base_real + os.sep)):
         return {"error": "路径越界, 必须在音乐目录内"}
 

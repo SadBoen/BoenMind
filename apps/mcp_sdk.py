@@ -9,6 +9,7 @@
 管道上受内部缓冲影响会挂起(见 bm-testkit/fixtures/mini_mcp.py 的同款说明)。
 """
 import json
+import os
 import sys
 
 JSONRPC_VERSION = "2.0"
@@ -48,6 +49,24 @@ def _err(rid, code, message):
         "id": rid,
         "error": {"code": code, "message": message},
     }
+
+
+def guard_subpath(base_real, target):
+    """域内路径守卫(单源,2026-09-12 自 wiki_server 收口;music 同享):
+    拒绝符号链接(lstat)与 realpath 越出 base 的目标——外部审计 X-01(P1):
+    open/walk 会跟随链接越出数据域;realpath 包含校验同时防父级目录被
+    替换为链接。越界/拒链/OS 错误返回 None,否则返回 realpath 解析值。
+    残余 TOCTOU 竞态如实留档(纯 Python 无 openat;后续可换目录 fd +
+    O_NOFOLLOW 实现)。"""
+    try:
+        if os.path.islink(target):
+            return None
+        real = os.path.realpath(target)
+    except OSError:
+        return None
+    if real != target and not real.startswith(base_real + os.sep):
+        return None
+    return real
 
 
 def run_stdio(server_info, tools, call_tool, custom=None):

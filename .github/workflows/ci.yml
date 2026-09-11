@@ -30,7 +30,7 @@ jobs:
       - run: python -m py_compile apps/wiki_server.py apps/market_server.py apps/music_server.py apps/mcp_sdk.py
       # ADR-0034(issue #56):Python 插件协议 SDK 单测(进程内驱动 run_stdio)
       - run: python apps/mcp_sdk_test.py
-      - run: python apps/smoke_test.py
+      - run: python scripts/mcp_smoke.py
 
   # BACKLOG 行16 收尾(2026-09-07):ESLint 前端体检接入 CI——本地每批必跑
   # (react-hooks rules-of-hooks/exhaustive-deps=error 级)此前 CI 不拦不合格前端代码
@@ -97,16 +97,18 @@ jobs:
 
   # 独立官方 MCP 插件：不进入 runtime workspace，但必须有自己的门禁
   # P1-40(2026-09-07 架构评审):插件有 native-tls / cfg(target_os="windows")
-  # 分支,单 ubuntu 从未验证——矩阵对齐主 rust 三平台
-  web-multisearch-plugin:
+  # 分支,单 ubuntu 从未验证——矩阵对齐主 rust 三平台。
+  # 2026-09-12:两插件 job 原逐字重复,合并为 {plugin × os} 矩阵(腿数不变)。
+  official-plugin:
     strategy:
       fail-fast: false
       matrix:
+        plugin: [web-multisearch, context-inspector]
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     defaults:
       run:
-        working-directory: plugins/mcp/web-multisearch
+        working-directory: plugins/mcp/${{ matrix.plugin }}
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.98.0
@@ -114,34 +116,10 @@ jobs:
           components: "rustfmt, clippy"
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: plugins/mcp/web-multisearch
+          workspaces: plugins/mcp/${{ matrix.plugin }}
       - run: cargo fmt -- --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
       - run: cargo build --release
       # issue #56:插件协议一致性冒烟(initialize/tools.list/未知工具/未知方法/坏JSON)
-      - run: python ../../../plugins/smoke_test.py --plugin web-multisearch
-
-  context-inspector-plugin:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        working-directory: plugins/mcp/context-inspector
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@1.98.0
-        with:
-          components: "rustfmt, clippy"
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: plugins/mcp/context-inspector
-      - run: cargo fmt -- --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test
-      - run: cargo build --release
-      # issue #56:插件协议一致性冒烟(同 web-multisearch)
-      - run: python ../../../plugins/smoke_test.py --plugin context-inspector
+      - run: python ../../../scripts/mcp_smoke.py --plugin ${{ matrix.plugin }}

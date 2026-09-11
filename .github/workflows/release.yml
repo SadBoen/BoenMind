@@ -1,8 +1,9 @@
 name: release
 
-# Linux 服务器发布线(Linux x86_64 .tar.gz)
+# Linux 服务器发布线(Linux x86_64 .tar.gz)。仅 v* tag 触发——原
+# workflow_dispatch 手动触发曾产出 boenmind-main-* 包(P1-41 已修,
+# 触发器随之删除:手动点跑只会全 job 跳过,留之误导)。
 on:
-  workflow_dispatch:
   push:
     tags: ["v*"]
 
