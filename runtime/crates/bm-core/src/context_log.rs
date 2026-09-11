@@ -173,17 +173,8 @@ impl ContextLog {
 
     /// 注册凭据明文进扫描面(Secret Store put/get 后调用,与执行日志同批)。
     pub fn register_scan_value(&self, value: &str) {
-        if value.len() >= 6 {
-            // 过短的值误报率高,不进扫描面(ExecutionLog 同口径)
-            let mut inner = self.inner.lock().expect("锁未中毒");
-            inner.scan_values.insert(value.to_string());
-            if let Ok(esc) = serde_json::to_string(value) {
-                let trimmed = esc.trim_matches('"').to_string();
-                if trimmed != value {
-                    inner.scan_values.insert(trimmed);
-                }
-            }
-        }
+        let mut inner = self.inner.lock().expect("锁未中毒");
+        crate::redaction::register(&mut inner.scan_values, value);
     }
 
     /// 记录一次模型调用快照:扫描→脱敏→落盘。失败降级不反压业务回合
@@ -218,15 +209,11 @@ impl ContextLog {
         // INV-5 同面:对整条序列化结果做明文扫描,命中即替换(写脱敏后的串)。
         // to_string 对 Value 实际不可失败;万一失败落一条合法 JSON 占位行并
         // 留痕——jsonl 空行会让下游逐行解析断掉。
-        let mut serialized = serde_json::to_string(&value).unwrap_or_else(|e| {
+        let serialized = serde_json::to_string(&value).unwrap_or_else(|e| {
             tracing::error!("context_log 快照序列化失败(不应发生),落占位行: {e}");
             serde_json::json!({"seq": seq, "serialize_error": e.to_string()}).to_string()
         });
-        for secret in &inner.scan_values {
-            if serialized.contains(secret.as_str()) {
-                serialized = serialized.replace(secret.as_str(), "[REDACTED]");
-            }
-        }
+        let serialized = crate::redaction::redact(&inner.scan_values, &serialized);
         if let Some(p) = &self.path {
             append_line(p, &serialized);
         }
@@ -265,16 +252,12 @@ impl ContextLog {
             "data": data,
         });
         // 同 record:序列化失败落合法 JSON 占位行(jsonl 不允许空行)。
-        let mut serialized = serde_json::to_string(&value).unwrap_or_else(|e| {
+        let serialized = serde_json::to_string(&value).unwrap_or_else(|e| {
             tracing::error!("context_log 事件行序列化失败(不应发生),落占位行: {e}");
             serde_json::json!({"seq": seq, "kind": "serialize_error", "error": e.to_string()})
                 .to_string()
         });
-        for secret in &inner.scan_values {
-            if serialized.contains(secret.as_str()) {
-                serialized = serialized.replace(secret.as_str(), "[REDACTED]");
-            }
-        }
+        let serialized = crate::redaction::redact(&inner.scan_values, &serialized);
         if let Some(p) = &self.path {
             append_line(p, &serialized);
         }

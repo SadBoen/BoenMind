@@ -51,19 +51,8 @@ impl ExecutionLog {
 
     /// 注册凭据明文进扫描面(Secret Store put/get 后调用)。
     pub fn register_scan_value(&self, value: &str) {
-        if value.len() >= 6 {
-            // 过短的值误报率高,不进扫描面
-            let mut inner = self.inner.lock().expect("锁未中毒");
-            inner.scan_values.insert(value.to_string());
-            // P0(第四轮评审):序列化后凭据里的 "\|\" 等字符会转义,纯明文
-            // contains 永不命中——同步注册 JSON 转义形态。
-            if let Ok(esc) = serde_json::to_string(value) {
-                let trimmed = esc.trim_matches('"').to_string();
-                if trimmed != value {
-                    inner.scan_values.insert(trimmed);
-                }
-            }
-        }
+        let mut inner = self.inner.lock().expect("锁未中毒");
+        crate::redaction::register(&mut inner.scan_values, value);
     }
 
     /// 记录一条日志:扫描→脱敏→落盘。返回分配的 log_seq。
@@ -87,23 +76,15 @@ impl ExecutionLog {
 
         // INV-5:对整条序列化结果做明文扫描,命中即脱敏。
         let mut serialized = serde_json::to_string(&entry).expect("日志条目可序列化");
-        for secret in &inner.scan_values {
-            if serialized.contains(secret.as_str()) {
-                serialized = serialized.replace(secret.as_str(), "[REDACTED]");
-                entry.detail = serde_json::from_str(&serialized).unwrap_or(entry.detail);
-            }
+        if crate::redaction::contains_any(&inner.scan_values, &serialized) {
+            serialized = crate::redaction::redact(&inner.scan_values, &serialized);
+            entry.detail = serde_json::from_str(&serialized).unwrap_or(entry.detail);
         }
         // 复扫:脱敏后必须 0 命中。P0(第四轮评审)修复:原先 debug_assert
         // 在 release 不执行,fail-open;现改为 release 级 fail-closed——
         // 仍命中则整条降格为占位(禁止明文落盘),扫描态如实记 failed。
         let recheck = serde_json::to_string(&entry).expect("日志条目可序列化");
-        let mut hit = false;
-        for secret in &inner.scan_values {
-            if recheck.contains(secret.as_str()) {
-                hit = true;
-                break;
-            }
-        }
+        let hit = crate::redaction::contains_any(&inner.scan_values, &recheck);
         let line = if hit {
             entry.secret_scan = Some(SecretScan::Failed);
             entry.detail = serde_json::json!({

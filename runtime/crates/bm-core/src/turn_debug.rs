@@ -56,16 +56,8 @@ impl TurnDebugLog {
 
     /// INV-5 扫描面注册(与 ContextLog/ExecutionLog 同批登记)。
     pub fn register_scan_value(&self, value: &str) {
-        if value.len() >= 6 {
-            let mut inner = self.inner.lock().expect("锁未中毒");
-            inner.scan_values.insert(value.to_string());
-            if let Ok(esc) = serde_json::to_string(value) {
-                let trimmed = esc.trim_matches('"').to_string();
-                if trimmed != value {
-                    inner.scan_values.insert(trimmed);
-                }
-            }
-        }
+        let mut inner = self.inner.lock().expect("锁未中毒");
+        crate::redaction::register(&mut inner.scan_values, value);
     }
 
     /// 记录一条调试事件:关 = 直接跳过;开 = 脱敏 → 文件追加 + 内存镜像。
@@ -94,11 +86,7 @@ impl TurnDebugLog {
             text.push_str("\"}");
         }
         let mut inner = self.inner.lock().expect("锁未中毒");
-        for secret in &inner.scan_values {
-            if text.contains(secret.as_str()) {
-                text = text.replace(secret.as_str(), "[REDACTED]");
-            }
-        }
+        let text = crate::redaction::redact(&inner.scan_values, &text);
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
             inner.mirror.push(v);
             if inner.mirror.len() > MIRROR_CAP {

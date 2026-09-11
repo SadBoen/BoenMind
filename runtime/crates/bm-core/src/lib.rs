@@ -18,6 +18,7 @@ pub mod exec_log;
 pub mod limits;
 pub mod observation;
 pub mod ports;
+mod redaction;
 pub mod registry;
 pub mod roles;
 pub mod runtime;

@@ -245,6 +245,17 @@ fn dead_progress_rx() -> tokio::sync::mpsc::UnboundedReceiver<McpProgressNote> {
     rx
 }
 
+/// 进度订阅单次取走(stdio/http 两传输同实现):首次调用返回真实通道,
+/// 之后恒返回已关闭的哑通道(take 后为 None)。
+fn take_progress_rx(
+    cell: &Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<McpProgressNote>>>,
+) -> tokio::sync::mpsc::UnboundedReceiver<McpProgressNote> {
+    cell.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take()
+        .unwrap_or_else(dead_progress_rx)
+}
+
 // ---- stdio 传输 ------------------------------------------------------------
 
 /// stdio 子进程传输(newline-delimited JSON-RPC 2.0)。
@@ -734,11 +745,7 @@ impl McpTransport for StdioMcpTransport {
     }
 
     fn subscribe_progress(&self) -> tokio::sync::mpsc::UnboundedReceiver<McpProgressNote> {
-        self.progress_rx
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take()
-            .unwrap_or_else(dead_progress_rx)
+        take_progress_rx(&self.progress_rx)
     }
 
     fn cancel_by_token(&self, token: &str) {
@@ -932,11 +939,7 @@ impl McpTransport for HttpMcpTransport {
     }
 
     fn subscribe_progress(&self) -> tokio::sync::mpsc::UnboundedReceiver<McpProgressNote> {
-        self.progress_rx
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take()
-            .unwrap_or_else(dead_progress_rx)
+        take_progress_rx(&self.progress_rx)
     }
 
     fn remember_init(&self, v: Value) {
