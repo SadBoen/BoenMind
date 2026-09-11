@@ -42,6 +42,11 @@
 | [ADR-0032](ADR-0032-binding-epoch-continuity.md) | binding_epoch 代际连续性与 manifest 注册期冻结校验 | accepted | 注销墓碑化+注册按持久max+1续代+快照先行于落库+删物理删除端口+注册过冻结门禁+scope_label放行冒号分层(2026-09-11) |
 | [ADR-0033](ADR-0033-skill-script-lifecycle-hot-reload.md) | 技能脚本生命周期:skill.* 异步分道归位与热重载 | accepted | provider 命名约定单源判定(mcp./.async/skill.)+unregister_skill+管理面热重载走墓碑续代+共享管理器实例(2026-09-11) |
 | [ADR-0034](ADR-0034-plugin-protocol-sdk.md) | 插件协议最小 SDK:双语言收口与未知工具口径统一 | accepted | Rust(plugins/mcp/sdk)+Python(apps/mcp_sdk.py)最小 SDK 单源化协议循环+未知工具统一 -32602/--self-describe 独立合同化(2026-09-11) |
+| [ADR-0035](ADR-0035-mcp-trust-chain-and-subprocess-limits.md) | MCP 插件信任链收口与子进程资源上限 | accepted | trust 显式消费+payload 合同字段令 sha256 指向真实载荷(解释器条目 fail-closed)+扫描执行面 UI 显式化+子进程 Job Object/rlimit(2026-09-11) |
+| [ADR-0036](ADR-0036-execution-mode-contract-sourced.md) | 能力执行分道以合同声明为唯一真源 | accepted | manifest.execution_mode 落声明(缺省回退旧约定)+删前缀猜法+同步无 deadline 为显式非目标+CallContext 入端口记为方向不实施(2026-09-11) |
+| [ADR-0037](ADR-0037-provider-health-binding-split.md) | Provider 健康与 Binding 状态的分工收口 | accepted | BindingStatus=生命周期/代际持久门,provider_health=运行期健康进程内门,不合并+卸载走 Draining 排空+dispatch 查 binding+restore 保真(2026-09-11) |
+| [ADR-0038](ADR-0038-memory-drawer-rule-contractized.md) | memory 抽屉授权规则合同化 | accepted | manifest 增 authorization 声明(主体系留+读放宽),Broker 步 4.5 变解释器删硬编码规则;memory 仍不生产可达(2026-09-11) |
+| [ADR-0039](ADR-0039-stage2-candidates-disposition.md) | 阶段二候选产品面处置 | accepted | #43 维持 deferred/#45 批次2 待并发夹具/#46 产品级 OPEN/#53 路由后关账/#59-5 远期不立项(2026-09-11) |
 
 > 编号说明:ADR-0012 于 2026-08-31 随 M10 dsh 前端线归档(见 ADR-0013 编号说明),编号不回收;主干引用配置管理口径时以 config_store 现状与 W2/W4 规格为准。
 > 文体注:0001-0009 状态用小写 accepted(-with-conditions),0010/0011 起用 Accepted(日期)/已裁决(用户,日期)——语义等价,统一以本表为准。

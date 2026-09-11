@@ -1,0 +1,29 @@
+# ADR-0035: MCP 插件信任链收口与子进程资源上限
+
+- 状态: Accepted（2026-09-11，issue #59 残余-3 与 issue #55 裁决）
+- 日期: 2026-09-11
+- 关联: ADR-0005（万物皆插件）、ADR-0006（权限以合同显式化）、ADR-0017（官方随包插件信任边界）、ADR-0023（随包插件默认安装与生命周期）、ADR-0034（插件协议 SDK）、issue #59（残余-3 信任链）、issue #55（MCP 子进程无 OS 级沙箱）
+
+## 背景
+
+2026-09-11 代码评审坐实信任链三处「合同有、实现不消费」与一处结构性缺失：
+
+1. **`trust` 字段零消费**。`boenmind-contracts/mcp/mcp-server.v0_1.schema.json` 定义 `trust`（当前单值枚举 `explicit-config`），`load_mcp_setups` 只过 schema 校验，从不读取该字段；合同声明与实现无对应消费点。
+2. **`sha256` 校验对象错位**。装载期 `verify_integrity(command, expected)` 只哈希 `command`。解释器型条目（`command`=解释器路径、`args[0]`=脚本）下，被哈希的是解释器本身，脚本 payload 可被替换而不被察觉——给出**假完整性保证**。裸解释器名（`command="python"`）时读取失败而拒载（fail-closed，但把「该哈希哪个文件」的语义真空暴露为拒载）。
+3. **扫描先执行**。`/admin/mcp/candidates` 与批准/播种路径均以 `--self-describe` **运行候选文件**以识别声明，早于用户批准（现有响应 note 与代码注释已自述）。识别 name 需要执行，该执行面在管理 UI 未显式呈现。
+4. **无 OS 级资源限制**（#55）。MCP 子进程隔离杠杆仅 env 白名单 + `kill_on_drop` + 可选 sha256 + Broker 审批门；恶意/失控插件可无限占 CPU/内存/网络，仅能靠 kill 兜底。wasmtime fuel/timeout 只覆盖技能 wasm 分道。
+
+## 决策
+
+1. **`trust` 显式消费，不改为必填**。装载器读取 `trust`：缺省视为 `explicit-config`（配置文件显式列出即安装批准，M7 既有语义），显式给出非枚举值则在装载层拒绝（schema 之上的纵深防御）。解析值进入 `McpServerSetup.trust` 并落入装载日志，使来源可见。不将字段升为 `required`——那会破既有缺省条目，违反合同只增不破。
+2. **新增可选合同字段 `payload`，`sha256` 校验对象改为 payload**（Minor，只增）。完整性目标 = 存在 `payload` 时哈希 `payload`，否则哈希 `command`。解释器型条目（`command` 非现存常规文件）必须声明 `payload` 指向脚本；**存在 `payload` 时一律以 payload 为准**。当 `sha256` 存在、无 `payload`、且 `args` 中任一项指向现存常规文件时，**跳过该条目并告警**（fail-closed：拒绝提供假保证）。管理面 `build_candidate_entry` 恒写 `payload=候选文件`，托管条目哈希对象无歧义。
+3. **扫描执行面在管理 UI 显式化**。保留 `--self-describe` 识别（name 只能由执行得到），但把「扫描会运行候选文件」从响应 note 提升为插件页可见警示：扫描动作前呈现一次性说明，服务端响应 note 保留并加日志行。属用户可见面，须真实浏览器手测。
+4. **MCP stdio 子进程施加 OS 级资源上限**（#55）。Windows 以 Job Object 限内存与活动进程数，Unix 以 `setrlimit`（`RLIMIT_AS`/`RLIMIT_CPU`）在 `pre_exec` 施加。默认对**非随包来源**（data 目录手动放置）子进程生效，随包官方插件沿用既有信任；上限值由 `limits.json` 集中配置（对齐 ADR-0024）。平台原语隔离于单 cfg 门控模块（`unsafe` 限定于该模块，不放宽 workspace `unsafe_code=forbid`）。施加为**尽力而为**：失败只告警不阻启动（fail-open），与「加载不因单插件失败而中止」既有语义一致。
+
+## 后果
+
+- 信任链三类偏差各有单处消费点与守护测试：`trust` 解析（缺省/非法值）、payload 哈希目标（解释器条目、缺失 payload fail-closed）、扫描警示（服务端 note + 前端可见）。
+- `mcp-server.v0_1` 新增 `payload` 为 Minor：旧条目（无 payload）照常，`sha256` 语义收窄为「payload 优先」；合同描述同步改写，消歧「哈希哪个文件」。
+- 子进程上限不改变握手/重载/取消语义，只在 spawn 处附加平台约束；`windows-sys`/`libc` 首次进入 bm-providers 直接依赖，须过 3 平台 CI 矩阵。
+- 与 #43（权限分级）、#55 分缘：#43 是审批粒度产品面，维持 deferred；本 ADR 只收资源上限与完整性语义，不动审批模型。
+- `decisions.md` 增条：信任链显式消费 + payload 语义收窄（15 条上限，届时淘汰最久未被审计撞到者）。
