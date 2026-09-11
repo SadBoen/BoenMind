@@ -20,7 +20,7 @@
 5. **Playwright chromium CDN 装不上**：本机跑 `npm run test:smoke` 报 Executable doesn't exist、`npx playwright install` 下载失败时，改用本机 Edge 通道：`npx playwright test --config playwright.smoke.local.config.ts`（旁路配置已入库）。CI 正常装浏览器，不受影响。
 6. **content-visibility 虚拟化干扰 Playwright 点击**：`.msg` 开了 CSS 虚拟化后，assistant 消息内元素的 locator click 会卡 actionability 超时——测试里点这类元素改走坐标路径（`cua.click`）或先断言文本即可。
 
-**教训**：229 个测试全绿测不出这 4 个 bug——用户可见面必须真实浏览器手测（硬纪律 7）。
+**教训**：229 个测试全绿测不出这类用户可见面 bug——用户可见面必须真实浏览器手测（硬纪律 7）。
 
 ## 内置浏览器面板（IAB）怪癖
 

@@ -558,6 +558,8 @@ Runtime Registry
 
 分表是开放集合：新对象类型（模型、技能、审批、产物等）按同一模式增设分表，不修改内核结构。
 
+> 实现现状（2026-09-12 校准，随 C4 模型同步）：阶段一落地为**单一 Capability Registry**（§6.2 能力七问 + §6.4 Provider Binding + Binding 生命周期门，ADR-0037）——App/Agent/Task-Team 等对象的规范状态由 SQLite 规范状态与事件投影承载（§2.2），未设独立注册分表；「分表是开放集合」保留为增表模式，新对象类型真实出现时按同一模式增设。
+
 ### 6.1 App Registry
 
 记录：
@@ -1708,9 +1710,13 @@ M8.8 数据保留期、用户删除与墓碑回放验证
 
 整体回看门：四道门禁全绿（260 测试）；新发现 F-01..F-11 入审计台账；条件：C4 模型回写（F-06）列为阶段二下一批开工前置。记录溯 git 史（ADR-0027）。
 
-### W 序列（WebUI，ADR-0014）：W1-W9
+### M11：Agent v0.2 通信面批次 1——Task 公告栏（ADR-0031）
 
-以 assistant-ui 组件库自建 Web 壳（`runtime/webapp`，Vite+React+TS），后端 OpenAI 兼容插座 `/v1/chat/completions`（SSE 流式）；约束：每个组件组必须在 assistant-ui 找到原型（W1 规格 §5）。W1 = 壳与流式对话；W2 = 设置中心/provider 库/工作区/可拖布局 + webadmin 管理面（壳子私用，暂不入冻结合同，行为规格 = webadmin_tests）；W3 = 两级主题系统（四主题 + 每主题设置项）；W4 = 对话工具闭环（tools 合同启用 + 直通工具注入）与角色 system prompt；W5 = 会话记忆回喂与上下文透视面板；W6 = 对话级模型选择与常用清单；W7 = 关于页与在线升级通道；W8 = 常规设置与工作区绑定；W9 = 轨迹视图与跨会话检索。惯例：W 序列验收记录并入各规格的验收门小节，不另立 review 文件（ADR-0015）。
+范围：`task.share.publish` / `task.share.list` 与 `share.published` 事件（合同 Minor）；权限走既有 Broker 三层（trusted 直通 + Task 授权 Grant + 无 Grant 审批升级），task_id 由 principal 结构推导、args 不可指定（防伪逃逸）。通过条件：跨成员可见、跨 Task 隔离、审计双落盘（capability.invoked + share.published）、重启后增量投影 == 事件重放重建，均有可证伪测试；validate.py 全绿。批次 2（点名消息 + 成员身份面，含 #31）另排，挂 issue #45。（M10 为已废止的 dsh 前端线，溯 git 史与 PITFALLS 已废止速查。）实现规格已随交付移出仓（ADR-0027）。
+
+### W 序列（WebUI，ADR-0014）：W1-W10
+
+以 assistant-ui 组件库自建 Web 壳（`runtime/webapp`，Vite+React+TS），后端 OpenAI 兼容插座 `/v1/chat/completions`（SSE 流式）；约束：每个组件组必须在 assistant-ui 找到原型（W1 规格 §5）。W1 = 壳与流式对话；W2 = 设置中心/provider 库/工作区/可拖布局 + webadmin 管理面（壳子私用，暂不入冻结合同，行为规格 = webadmin_tests）；W3 = 两级主题系统（四主题 + 每主题设置项）；W4 = 对话工具闭环（tools 合同启用 + 直通工具注入）与角色 system prompt；W5 = 会话记忆回喂与上下文透视面板；W6 = 对话级模型选择与常用清单；W7 = 关于页与在线升级通道；W8 = 常规设置与工作区绑定；W9 = 轨迹视图与跨会话检索；W10 = 限制配置面 + 长命令后台转轨（limits 配置、JobBoard 台账、system.job_output 收取、/admin/jobs 呈现，ADR-0024/0025）。惯例：W 序列验收记录并入各规格的验收门小节，不另立 review 文件（ADR-0015）。
 
 ## 19. 每个里程碑都必须回看、测试和评估
 

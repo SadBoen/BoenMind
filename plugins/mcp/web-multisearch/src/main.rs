@@ -5,7 +5,7 @@
 //! 供应商(接口地址 / 方式 / key 传法 / 参数名 / 结果路径 / 字段映射),
 //! 新增供应商走通用 JSON 适配器。月度用量按供应商记账(usage.json)。
 //!
-//! 协议:MCP 2024-11-05,JSON-RPC over stdio(逐行),手写零 SDK。
+//! 协议:MCP 2024-11-05,JSON-RPC over stdio,协议循环经 boenmind-plugin-sdk 单源(#56)。
 //! 额外 JSON-RPC 方法(供 BoenMind 管理面用,非 MCP 标准):
 //! - `web_search_test`  params: { provider_id, query, limit? } → 单源真搜索
 //! - `web_usage`       params: {} → { month, providers: {id: used} }
