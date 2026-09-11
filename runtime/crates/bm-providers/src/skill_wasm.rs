@@ -138,6 +138,7 @@ impl SkillScriptManager {
                     "timeout_ms": sc.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS),
                     "approval": if sc.effect == "read-only" { "not-required" } else { "required" },
                     "scopes": [format!("domain:skill.{}", skill_id)],
+                    "execution_mode": "async",
                 }))
                 .map_err(|e| format!("脚本 {} manifest 非法: {}", sc.name, e))
             })

@@ -814,9 +814,18 @@ fn capability_manifest_validates() {
         "undo": null,
         "retry": {"max_attempts": 1, "backoff_ms": 100, "retry_on": []},
         "deprecated_by": null,
-        "mutation_class": "safe"
+        "mutation_class": "safe",
+        "execution_mode": "sync"
     });
     validate(registries::CAPABILITY_MANIFEST_SCHEMA, &m).expect("manifest 合法");
+
+    // ADR-0036:execution_mode 为可选 Minor 枚举(sync/async);非法值必拒
+    let mut bad_mode = m.clone();
+    bad_mode["execution_mode"] = json!("parallel");
+    assert!(
+        validate(registries::CAPABILITY_MANIFEST_SCHEMA, &bad_mode).is_err(),
+        "未知执行模式必须被拒"
+    );
 
     let mut bad = m.clone();
     bad["effect"] = json!("ultra-risky");

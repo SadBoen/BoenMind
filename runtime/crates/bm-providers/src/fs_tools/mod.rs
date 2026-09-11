@@ -132,7 +132,8 @@ fn entry(
         "cancellable": cancellable,
         "timeout_ms": timeout_ms,
         "approval": approval,
-        "scopes": ["domain:fs"]
+        "scopes": ["domain:fs"],
+        "execution_mode": "async"
     }))
     .expect("fs manifest 合法");
     (manifest, Arc::new(FsPlaceholder))

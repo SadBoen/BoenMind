@@ -80,6 +80,15 @@ pub struct RetryPolicy {
     pub retry_on: Vec<RetryableError>,
 }
 
+/// ADR-0036:执行分道声明(合同 Minor)。`async` = 慢外部/沙箱执行体,
+/// 由运行期异步执行器承载;`sync` = 进程内快能力。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ExecutionMode {
+    Sync,
+    Async,
+}
+
 /// Capability Manifest(基线 §5.2 十必填全量 + M4 增发 mutation_class)。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CapabilityManifest {
@@ -110,6 +119,10 @@ pub struct CapabilityManifest {
     /// 展示用,缺省 = turn 侧兜底,不影响审批语义。
     #[serde(default)]
     pub description: Option<String>,
+    /// ADR-0036 增发(合同 Minor):执行分道声明,唯一真源;缺省 = 回退
+    /// provider 命名约定(mcp./skill./*.async)兼容旧 manifest。
+    #[serde(default)]
+    pub execution_mode: Option<ExecutionMode>,
 }
 
 impl CapabilityManifest {

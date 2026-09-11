@@ -106,6 +106,7 @@ fn validate_frozen_manifest(manifest: &CapabilityManifest) -> Result<(), Registr
             "deprecated_by",
             "mutation_class",
             "description",
+            "execution_mode",
         ] {
             if obj.get(key).is_some_and(|v| v.is_null()) {
                 obj.remove(key);
@@ -164,6 +165,17 @@ impl CapabilityRegistry {
         let name = manifest.capability.clone();
         if self.manifests.contains_key(&name) {
             return Err(RegistryError::AlreadyRegistered);
+        }
+        // ADR-0036:执行分道以合同声明为真源——显式声明即落定,未声明留待
+        // mark_async_for 走 provider 命名约定回退。
+        match manifest.execution_mode {
+            Some(bm_contract::capability::ExecutionMode::Async) => {
+                self.async_exec.insert(name.clone());
+            }
+            Some(bm_contract::capability::ExecutionMode::Sync) => {
+                self.async_exec.remove(&name);
+            }
+            None => {}
         }
         self.manifests.insert(name.clone(), manifest);
         self.bindings.insert(
@@ -378,7 +390,16 @@ impl CapabilityRegistry {
     }
 
     /// 依 [`Self::provider_is_async`] 自动标记异步;返回是否异步。
+    /// ADR-0036:manifest 已显式声明 `execution_mode` 时以声明为准(register
+    /// 已落定),命名约定只作未声明条目的兼容回退。
     pub fn mark_async_for(&mut self, capability: &str, provider: &str) -> bool {
+        if let Some(mode) = self
+            .manifests
+            .get(capability)
+            .and_then(|m| m.execution_mode)
+        {
+            return matches!(mode, bm_contract::capability::ExecutionMode::Async);
+        }
         let is_async = Self::provider_is_async(provider);
         if is_async {
             self.mark_async(capability);
@@ -669,6 +690,56 @@ mod tests {
             reg.begin_drain("system.nope"),
             Err(RegistryError::UnknownCapability)
         );
+    }
+
+    /// ADR-0036:执行分道以 manifest.execution_mode 声明为唯一真源;
+    /// 未声明才回退 provider 命名约定。声明可覆盖约定(双向)。
+    #[test]
+    fn execution_mode_declaration_is_source_of_truth() {
+        let mut reg = CapabilityRegistry::new();
+        // 声明 async 但 provider 名不符约定 -> 仍进异步(声明优先)
+        let async_declared: CapabilityManifest = serde_json::from_value(serde_json::json!({
+            "capability": "custom.slow", "provider": "custom.slow", "version": "0.1.0",
+            "input_schema": {"type": "object"}, "output_schema": {"type": "object"},
+            "effect": "read-only", "idempotent": true, "cancellable": true,
+            "timeout_ms": 1000, "approval": "not-required", "execution_mode": "async"
+        }))
+        .unwrap();
+        reg.register(async_declared, "custom.slow@0.1.0", Arc::new(Echo))
+            .unwrap();
+        assert!(
+            reg.is_async("custom.slow"),
+            "显式 async 声明必须进异步分道,与 provider 名无关"
+        );
+
+        // 声明 sync 但 provider 名符合 async 约定 -> 不进异步(声明优先)
+        let sync_declared: CapabilityManifest = serde_json::from_value(serde_json::json!({
+            "capability": "mcp.srv.fast", "provider": "mcp.srv", "version": "0.1.0",
+            "input_schema": {"type": "object"}, "output_schema": {"type": "object"},
+            "effect": "read-only", "idempotent": true, "cancellable": true,
+            "timeout_ms": 1000, "approval": "not-required", "execution_mode": "sync"
+        }))
+        .unwrap();
+        reg.register(sync_declared, "mcp.srv@0.1.0", Arc::new(Echo))
+            .unwrap();
+        reg.mark_async_for("mcp.srv.fast", "mcp.srv");
+        assert!(
+            !reg.is_async("mcp.srv.fast"),
+            "显式 sync 声明必须压过 mcp.* 命名约定"
+        );
+
+        // 未声明 -> 回退命名约定
+        let undeclared: CapabilityManifest = serde_json::from_value(serde_json::json!({
+            "capability": "mcp.legacy.tool", "provider": "mcp.legacy", "version": "0.1.0",
+            "input_schema": {"type": "object"}, "output_schema": {"type": "object"},
+            "effect": "read-only", "idempotent": true, "cancellable": true,
+            "timeout_ms": 1000, "approval": "not-required"
+        }))
+        .unwrap();
+        reg.register(undeclared, "mcp.legacy@0.1.0", Arc::new(Echo))
+            .unwrap();
+        reg.mark_async_for("mcp.legacy.tool", "mcp.legacy");
+        assert!(reg.is_async("mcp.legacy.tool"), "未声明回退 mcp.* 约定");
     }
 
     #[test]

@@ -54,7 +54,7 @@ pub fn memory_capabilities(
             "input_schema": {"type": "object"},
             "output_schema": {"type": "object"},
             "effect": effect, "idempotent": true, "cancellable": true,
-            "timeout_ms": 1000, "approval": "not-required"
+            "timeout_ms": 1000, "approval": "not-required", "execution_mode": "sync"
         }))
         .expect("memory manifest 合法")
     }

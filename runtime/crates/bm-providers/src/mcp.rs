@@ -195,6 +195,7 @@ pub fn tool_manifest(
         "timeout_ms": timeout_ms,
         "approval": approval,
         "scopes": [format!("domain:mcp.{server_norm}")],
+        "execution_mode": "async",
     });
     if let Some(d) = tool
         .description

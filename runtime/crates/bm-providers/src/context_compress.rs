@@ -183,6 +183,7 @@ fn manifest() -> CapabilityManifest {
         "timeout_ms": 5000,
         "approval": "not-required",
         "scopes": [],
+        "execution_mode": "sync",
         "description": "上下文压缩:抽取会话历史生成人类可读摘要并落盘(不改写原文);此后每回合自动注入摘要前缀,删除摘要文件即回退"
     }))
     .expect("context.compress manifest 合法")

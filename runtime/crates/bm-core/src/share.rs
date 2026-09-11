@@ -113,7 +113,8 @@ fn share_entry(
         "cancellable": false,
         "timeout_ms": 5_000,
         "approval": "not-required",
-        "scopes": ["domain:task"]
+        "scopes": ["domain:task"],
+        "execution_mode": "sync"
     }))
     .expect("task.share manifest 合法");
     (manifest, Arc::new(SharePlaceholder))

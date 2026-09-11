@@ -31,7 +31,7 @@ fn manifest(name: &str, effect: &str, extra: Value) -> CapabilityManifest {
         "input_schema": {"type": "object"},
         "output_schema": {"type": "object"},
         "effect": effect, "idempotent": true, "cancellable": true,
-        "timeout_ms": 1000, "approval": "not-required"
+        "timeout_ms": 1000, "approval": "not-required", "execution_mode": "sync"
     });
     if let (Some(base_obj), Some(extra_obj)) = (base.as_object_mut(), extra.as_object()) {
         for (k, v) in extra_obj {

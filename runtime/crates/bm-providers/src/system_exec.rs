@@ -53,7 +53,8 @@ pub fn exec_capability_entry() -> (CapabilityManifest, Arc<dyn CapabilityProvide
         "cancellable": true,
         "timeout_ms": 600_000,
         "approval": "required",
-        "scopes": ["system.exec"]
+        "scopes": ["system.exec"],
+        "execution_mode": "async"
     }))
     .expect("exec manifest 合法");
     (manifest, Arc::new(ExecPlaceholder))
@@ -81,7 +82,8 @@ pub fn job_output_capability_entry() -> (CapabilityManifest, Arc<dyn CapabilityP
         "cancellable": true,
         "timeout_ms": 70_000,
         "approval": "not-required",
-        "scopes": ["system.exec"]
+        "scopes": ["system.exec"],
+        "execution_mode": "async"
     }))
     .expect("job_output manifest 合法");
     (manifest, Arc::new(ExecPlaceholder))
