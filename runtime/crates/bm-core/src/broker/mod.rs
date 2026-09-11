@@ -92,16 +92,12 @@ impl<'a> Broker<'a> {
                 };
             }
         }
-        // 步 4.5(M9 S1):记忆抽屉在主体维度的权限边界——「作用域即权限
-        // 边界」(基线 §4.1)落到「谁可写哪个抽屉」。agent/task 族主体对
-        // 自己的抽屉常量放行(agent 本体 ↔ memory:agent:<id>;coord/worker
-        // ↔ memory:task:<id>);search 对 memory:user 放行(读不产生内容
-        // 污染);越界抽屉一律升级审批——不静默拒绝,产出可审批事实,
-        // 批准即签发带 scope 谓词的 Grant(资源谓词捕获见 handlers)。
-        // App 主体不享抽屉直通(M7.6 延续:跨域一律显式 Grant);user
-        // Surface 与系统主体按既有流。memory.delete 按条目 ID 定位、args
-        // 不含 scope,主体维度执行面随条目所有权列(留档演进)。
-        if let Some(v) = Self::memory_drawer_verdict(ctx, capability, args, manifest, effective) {
+        // 步 4.5(ADR-0038):per-capability 授权规则由 manifest 声明,Broker
+        // 只做解释——不再硬编码能力名/主体前缀(ADR-0006)。当前唯一消费形态
+        // 是记忆抽屉:主体对自己的抽屉常量放行,越界升级审批(不静默拒绝,
+        // 产出可审批事实,批准即签发带 scope 谓词的 Grant)。未声明 = 本步不
+        // 适用,走既有审批/直通流。
+        if let Some(v) = Self::authorization_verdict(ctx, args, manifest, effective) {
             return v;
         }
         // 步 5:审批判定——high-risk 恒审批(双保险,无视声明);
@@ -137,34 +133,30 @@ impl<'a> Broker<'a> {
 
     // ---- 步 5:参数校验(M4.3)---------------------------------------------
 
-    /// 步 4.5 的记忆抽屉裁决(None = 本步不适用,继续既有流)。
+    /// 步 4.5 的声明式授权裁决(None = 本步不适用,继续既有流)。
     ///
-    /// 注意:本裁决步以硬编码 Rust 逻辑定义权限规则(agent 主体自抽屉常量放行、
-    /// search 对 user 抽屉放宽),与 ADR-0006「权力以合同显式化」存在张力:
-    /// 理想形态应为合同可配置的抽屉授权规则(审计台账 F-11,2026-08-30)。
-    /// M9-S1 已实现 Broker 裁决步执行面,但规则本身仍为硬编码,待后续里程碑
-    /// 回看时以合同化方式重构。
-    fn memory_drawer_verdict(
+    /// ADR-0038:规则本体在 manifest.authorization(合同),此处只是解释器。
+    /// 抽屉语义:按 `self_drawers` 依序匹配主体前缀,命中即得「主体自有抽屉
+    /// 标签」;`scope` 与之相等 → 常量放行;`read_allow_scopes` 内的 scope 对
+    /// read-only 能力额外放行;其余越界 → 升级审批。
+    fn authorization_verdict(
         ctx: &CallContext,
-        capability: &str,
         args: &serde_json::Value,
         manifest: &CapabilityManifest,
         effective: RiskClass,
     ) -> Option<Decision> {
-        if capability != "memory.write" && capability != "memory.search" {
-            return None;
-        }
+        let drawer = manifest.authorization.as_ref()?.drawer.as_ref()?;
         let scope = args["scope"].as_str()?; // 缺 scope 由 Provider 形态校验拒
-        let own = ctx.principal.strip_prefix("agent:").map(|rest| {
-            // 任务族成员(coord:/worker: 前缀)的抽屉按 task 维度;
-            // 其余即 agent 本体(M6 per-task principal 命名空间)。
-            rest.strip_prefix("coord:")
-                .or_else(|| rest.strip_prefix("worker:"))
-                .map(|tid| format!("memory:task:{tid}"))
-                .unwrap_or_else(|| format!("memory:agent:{rest}"))
-        });
-        let own = own?; // surface:user / 系统主体 / App:本步不适用
-        if scope == own || (capability == "memory.search" && scope == "memory:user") {
+        // 主体自有抽屉:取首个命中前缀,其余段拼入 drawer_prefix。
+        let own = drawer.self_drawers.iter().find_map(|r| {
+            ctx.principal
+                .strip_prefix(&r.principal_prefix)
+                .map(|rest| format!("{}{rest}", r.drawer_prefix))
+        })?; // 无命中(surface:user / 系统主体 / App):本步不适用
+        if scope == own
+            || (manifest.effect == RiskClass::ReadOnly
+                && drawer.read_allow_scopes.iter().any(|s| s == scope))
+        {
             return Some(Decision::Allowed { grant_id: None });
         }
         Some(Decision::RequireApproval {

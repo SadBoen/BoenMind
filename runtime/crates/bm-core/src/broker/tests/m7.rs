@@ -74,12 +74,24 @@ fn memory_registry() -> CapabilityRegistry {
         ("memory.write", "low-risk-command"),
         ("memory.search", "read-only"),
     ] {
+        // ADR-0038:抽屉规则由 manifest 声明(测试夹具显式携带),Broker 只解释。
+        // self_drawers 依序:具体前缀(coord/worker)在前,泛用前缀(agent)在后。
         let m: CapabilityManifest = serde_json::from_value(json!({
             "capability": name, "provider": "memory", "version": "0.1.0",
             "input_schema": {"type": "object"},
             "output_schema": {"type": "object"},
             "effect": effect, "idempotent": true, "cancellable": true,
-            "timeout_ms": 1000, "approval": "not-required"
+            "timeout_ms": 1000, "approval": "not-required",
+            "authorization": {
+                "drawer": {
+                    "self_drawers": [
+                        {"principal_prefix": "agent:coord:", "drawer_prefix": "memory:task:"},
+                        {"principal_prefix": "agent:worker:", "drawer_prefix": "memory:task:"},
+                        {"principal_prefix": "agent:", "drawer_prefix": "memory:agent:"}
+                    ],
+                    "read_allow_scopes": ["memory:user"]
+                }
+            }
         }))
         .unwrap();
         reg.register(m, &format!("{name}@0.1.0"), provider_fn(|_| Ok(json!({}))))
@@ -244,4 +256,74 @@ fn drawer_surface_user_unchanged() {
         broker.decide(&ctx, "memory.search", &json!({"scope": "memory:user"})),
         Decision::Allowed { .. }
     ));
+}
+
+/// ADR-0038:抽屉规则由合同声明驱动,与能力名解耦——
+/// ① 名字酷似 memory 但未声明 authorization 的能力,步 4.5 不适用;
+/// ② 任意名字的能力声明了 authorization,即获得抽屉裁决。
+#[test]
+fn drawer_rule_is_declaration_driven_not_name_driven() {
+    // ① 未声明:同名 memory.write 不走抽屉步(untested 主体自抽屉也会升级)
+    let mut reg = CapabilityRegistry::new();
+    let undeclared: CapabilityManifest = serde_json::from_value(json!({
+        "capability": "memory.write", "provider": "memory", "version": "0.1.0",
+        "input_schema": {"type": "object"}, "output_schema": {"type": "object"},
+        "effect": "read-only", "idempotent": true, "cancellable": true,
+        "timeout_ms": 1000, "approval": "not-required"
+    }))
+    .unwrap();
+    reg.register(
+        undeclared,
+        "memory.write@0.1.0",
+        provider_fn(|_| Ok(json!({}))),
+    )
+    .unwrap();
+    let mut grants = GrantLedger::new();
+    // read-only + untrusted -> escalated low-risk -> 审批;但关键是未被抽屉步
+    // 常量放行(若规则仍硬编码按能力名,这里会放行)。
+    let d = drawer_call(
+        &reg,
+        &mut grants,
+        "agent:AGENTAGENTAGENTAGENTAG1",
+        "memory.write",
+        "memory:agent:AGENTAGENTAGENTAGENTAG1",
+    );
+    assert!(
+        !matches!(d, Decision::Allowed { grant_id: None }),
+        "未声明 authorization 不得走抽屉常量放行: {d:?}"
+    );
+
+    // ② 任意能力名声明 authorization 即获抽屉裁决
+    let mut reg2 = CapabilityRegistry::new();
+    let declared: CapabilityManifest = serde_json::from_value(json!({
+        "capability": "custom.notes.write", "provider": "custom", "version": "0.1.0",
+        "input_schema": {"type": "object"}, "output_schema": {"type": "object"},
+        "effect": "low-risk-command", "idempotent": true, "cancellable": true,
+        "timeout_ms": 1000, "approval": "not-required",
+        "authorization": {"drawer": {
+            "self_drawers": [{"principal_prefix": "agent:", "drawer_prefix": "memory:agent:"}],
+            "read_allow_scopes": []
+        }}
+    }))
+    .unwrap();
+    reg2.register(
+        declared,
+        "custom.notes.write@0.1.0",
+        provider_fn(|_| Ok(json!({}))),
+    )
+    .unwrap();
+    let mut grants2 = GrantLedger::new();
+    assert!(
+        matches!(
+            drawer_call(
+                &reg2,
+                &mut grants2,
+                "agent:AGENTAGENTAGENTAGENTAG1",
+                "custom.notes.write",
+                "memory:agent:AGENTAGENTAGENTAGENTAG1"
+            ),
+            Decision::Allowed { grant_id: None }
+        ),
+        "声明 authorization 的能力应获抽屉常量放行(与名字无关)"
+    );
 }

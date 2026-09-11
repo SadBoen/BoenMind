@@ -54,7 +54,19 @@ pub fn memory_capabilities(
             "input_schema": {"type": "object"},
             "output_schema": {"type": "object"},
             "effect": effect, "idempotent": true, "cancellable": true,
-            "timeout_ms": 1000, "approval": "not-required", "execution_mode": "sync"
+            "timeout_ms": 1000, "approval": "not-required", "execution_mode": "sync",
+            // ADR-0038:抽屉规则由 manifest 声明(Broker 只解释)。memory.delete
+            // 按条目 ID 定位、args 不含 scope,不参与抽屉步,故用同一声明亦不命中。
+            "authorization": {
+                "drawer": {
+                    "self_drawers": [
+                        {"principal_prefix": "agent:coord:", "drawer_prefix": "memory:task:"},
+                        {"principal_prefix": "agent:worker:", "drawer_prefix": "memory:task:"},
+                        {"principal_prefix": "agent:", "drawer_prefix": "memory:agent:"}
+                    ],
+                    "read_allow_scopes": ["memory:user"]
+                }
+            }
         }))
         .expect("memory manifest 合法")
     }

@@ -89,6 +89,32 @@ pub enum ExecutionMode {
     Async,
 }
 
+/// ADR-0038:单条主体系留规则(合同 Minor)。命中 `principal_prefix` 后,取
+/// 其余段按 `drawer_prefix` 拼出主体自有抽屉标签。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DrawerRule {
+    pub principal_prefix: String,
+    pub drawer_prefix: String,
+}
+
+/// ADR-0038:记忆抽屉式授权声明(`authorization.drawer`)。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DrawerAuthorization {
+    /// 按序匹配(具体前缀在前);命中即得主体自有抽屉标签。
+    #[serde(default)]
+    pub self_drawers: Vec<DrawerRule>,
+    /// read-only 能力可额外放行的 scope(读不产生内容污染)。
+    #[serde(default)]
+    pub read_allow_scopes: Vec<String>,
+}
+
+/// ADR-0038:per-capability 授权规则声明(Broker 只做解释,ADR-0006)。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthorizationRule {
+    #[serde(default)]
+    pub drawer: Option<DrawerAuthorization>,
+}
+
 /// Capability Manifest(基线 §5.2 十必填全量 + M4 增发 mutation_class)。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CapabilityManifest {
@@ -123,6 +149,10 @@ pub struct CapabilityManifest {
     /// provider 命名约定(mcp./skill./*.async)兼容旧 manifest。
     #[serde(default)]
     pub execution_mode: Option<ExecutionMode>,
+    /// ADR-0038 增发(合同 Minor):授权规则声明(Broker 只解释);缺省 =
+    /// 该步不适用,走既有审批/直通流。
+    #[serde(default)]
+    pub authorization: Option<AuthorizationRule>,
 }
 
 impl CapabilityManifest {

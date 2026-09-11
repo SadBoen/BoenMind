@@ -827,6 +827,26 @@ fn capability_manifest_validates() {
         "未知执行模式必须被拒"
     );
 
+    // ADR-0038:authorization(抽屉规则声明)为可选 Minor 结构;形状非法必拒
+    let mut with_auth = m.clone();
+    with_auth["authorization"] = json!({
+        "drawer": {
+            "self_drawers": [
+                {"principal_prefix": "agent:coord:", "drawer_prefix": "memory:task:"},
+                {"principal_prefix": "agent:", "drawer_prefix": "memory:agent:"}
+            ],
+            "read_allow_scopes": ["memory:user"]
+        }
+    });
+    validate(registries::CAPABILITY_MANIFEST_SCHEMA, &with_auth).expect("authorization 声明合法");
+    let mut bad_auth = m.clone();
+    bad_auth["authorization"] =
+        json!({"drawer": {"self_drawers": [{"principal_prefix": "agent:"}]}});
+    assert!(
+        validate(registries::CAPABILITY_MANIFEST_SCHEMA, &bad_auth).is_err(),
+        "抽屉规则缺 drawer_prefix 必须被拒"
+    );
+
     let mut bad = m.clone();
     bad["effect"] = json!("ultra-risky");
     assert!(

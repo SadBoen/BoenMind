@@ -107,6 +107,7 @@ fn validate_frozen_manifest(manifest: &CapabilityManifest) -> Result<(), Registr
             "mutation_class",
             "description",
             "execution_mode",
+            "authorization",
         ] {
             if obj.get(key).is_some_and(|v| v.is_null()) {
                 obj.remove(key);
