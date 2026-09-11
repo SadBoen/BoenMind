@@ -73,7 +73,7 @@ pub struct JobEntry {
     pub id: String,
     pub command: String,
     pub log_path: PathBuf,
-    pub started_at_ms: u128,
+    pub started_at_ms: u64,
     pub status: Mutex<JobStatus>,
     pub exit_code: Mutex<Option<i32>>,
 }
@@ -91,13 +91,6 @@ pub struct JobTable {
     dir: PathBuf,
     limits: LimitsCell,
     jobs: Mutex<VecDeque<Arc<JobEntry>>>,
-}
-
-fn now_ms() -> u128 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0)
 }
 
 impl JobTable {
@@ -141,7 +134,7 @@ impl JobTable {
             id: id.to_string(),
             command: command.to_string(),
             log_path: log_path.clone(),
-            started_at_ms: now_ms(),
+            started_at_ms: bm_contract::timestamp::unix_now_ms(),
             status: Mutex::new(JobStatus::Running),
             exit_code: Mutex::new(None),
         });
@@ -207,7 +200,7 @@ impl JobTable {
                     "job_id": entry.id,
                     "status": status.as_str(),
                     "exit_code": *entry.exit_code.lock().unwrap_or_else(std::sync::PoisonError::into_inner),
-                    "elapsed_ms": now_ms().saturating_sub(entry.started_at_ms),
+                    "elapsed_ms": bm_contract::timestamp::unix_now_ms().saturating_sub(entry.started_at_ms),
                     "output_tail": self.tail(&entry.log_path),
                     "log_path": entry.log_path.display().to_string(),
                 });
@@ -228,7 +221,7 @@ impl JobTable {
                     "command": e.command.chars().take(200).collect::<String>(),
                     "status": e.status().as_str(),
                     "exit_code": *e.exit_code.lock().unwrap_or_else(std::sync::PoisonError::into_inner),
-                    "elapsed_ms": now_ms().saturating_sub(e.started_at_ms),
+                    "elapsed_ms": bm_contract::timestamp::unix_now_ms().saturating_sub(e.started_at_ms),
                     "log_path": e.log_path.display().to_string(),
                 })
             })
@@ -312,7 +305,7 @@ impl JobBoard for JobTable {
             s.push_str(&format!(
                 "- {}(已运行 {} 秒):{}\n",
                 e.id,
-                now_ms().saturating_sub(e.started_at_ms) / 1000,
+                bm_contract::timestamp::unix_now_ms().saturating_sub(e.started_at_ms) / 1000,
                 e.command.chars().take(120).collect::<String>()
             ));
         }

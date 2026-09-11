@@ -12,7 +12,7 @@ use bm_core::CoreError;
 use bm_core::broker::provider_fn;
 use bm_core::clock::SystemClock;
 use bm_core::ports::ModelConnector;
-use bm_core::runtime::{DEFAULT_TURN_TIMEOUT_SECS, RuntimeConfig, RuntimeHandle};
+use bm_core::runtime::{RuntimeConfig, RuntimeHandle};
 use bm_providers::mock_model::MockConnector;
 use bm_providers::secret::MemSecretStore;
 use serde_json::json;
@@ -53,8 +53,6 @@ async fn capability_rig() -> (RuntimeHandle, Arc<SeqIdGen>, Arc<bm_core::clock::
         secret_store: secrets,
         id_gen: ids.clone(),
         clock: clock.clone(),
-        turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
-        max_attempts: None,
         async_executor: None,
         model_streaming: false,
         limits: bm_core::LimitsCell::new(bm_core::Limits {
@@ -502,8 +500,6 @@ async fn capability_rig_at(
         secret_store: secrets,
         id_gen: ids,
         clock: Arc::new(bm_core::clock::MockClock::at_ms(1_788_000_000_000)),
-        turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
-        max_attempts: None,
         async_executor: None,
         model_streaming: false,
         limits: bm_core::LimitsCell::new(bm_core::Limits {
@@ -551,8 +547,6 @@ async fn t44_idempotency_suppression_and_intent_gate() {
         secret_store: Arc::new(MemSecretStore::with("secret:model.x", "sk")),
         id_gen: Arc::new(SeqIdGen::new()),
         clock: Arc::new(SystemClock),
-        turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
-        max_attempts: None,
         async_executor: None,
         model_streaming: false,
         limits: bm_core::LimitsCell::new(bm_core::Limits {
@@ -714,8 +708,6 @@ async fn t45_outbox_pending_recovers_to_outcome_unknown() {
         secret_store: Arc::new(MemSecretStore::with("secret:model.x", "sk")),
         id_gen: Arc::new(SeqIdGen::new()),
         clock: Arc::new(SystemClock),
-        turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
-        max_attempts: None,
         async_executor: None,
         model_streaming: false,
         limits: bm_core::LimitsCell::new(bm_core::Limits {
@@ -1012,8 +1004,6 @@ async fn t46_persist_failure_degrades_safely() {
         secret_store: Arc::new(MemSecretStore::with("secret:model.x", "sk")),
         id_gen: Arc::new(SeqIdGen::new()),
         clock: Arc::new(SystemClock),
-        turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
-        max_attempts: None,
         async_executor: None,
         model_streaming: false,
         limits: bm_core::LimitsCell::new(bm_core::Limits {

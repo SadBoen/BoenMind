@@ -13,7 +13,7 @@ use bm_contract::states::OperationState;
 use bm_contract::wire::{AgentSpec, InputTrust, SendInputParams, SessionCreateParams};
 use bm_core::clock::SystemClock;
 use bm_core::ports::ModelConnector;
-use bm_core::runtime::{DEFAULT_TURN_TIMEOUT_SECS, RuntimeConfig, RuntimeHandle};
+use bm_core::runtime::{RuntimeConfig, RuntimeHandle};
 use bm_providers::secret::MemSecretStore;
 use bm_testkit::wait_terminal_handle;
 use std::sync::{Arc, Mutex};
@@ -95,8 +95,6 @@ async fn rig(dir: &std::path::Path) -> (RuntimeHandle, Arc<ToolLoopConnector>) {
         secret_store: Arc::new(MemSecretStore::with("secret:mock.model", "sk-test-123456")),
         id_gen: Arc::new(SeqIdGen::new()),
         clock: Arc::new(SystemClock),
-        turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
-        max_attempts: None,
     })
     .await;
     (handle, connector)

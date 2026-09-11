@@ -27,12 +27,10 @@ use bm_core::runtime::RuntimeHandle;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-/// 当前 Unix 秒(时钟回拨兜底 0;多个模块共用同一口径)。
+/// 当前 Unix 秒(时钟回拨兜底 0;实现单点 = bm-contract::timestamp,
+/// 多个模块共用同一口径)。
 pub(crate) fn unix_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    bm_contract::timestamp::unix_now_secs()
 }
 
 /// RFC 3986 unreserved 集合外的字节 %XX 转义(fs 下载文件名 UTF-8 名与

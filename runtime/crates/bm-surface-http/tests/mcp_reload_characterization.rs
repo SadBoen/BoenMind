@@ -68,13 +68,9 @@ async fn sync_uninstalls_removed_server_offline() {
         input_schema: serde_json::json!({"type": "object", "properties": {}}),
         annotations: serde_json::json!({}),
     }];
-    hub.connect(
-        "alpha",
-        bm_providers::mcp::InProcMcpServer::new(tools),
-        5_000,
-    )
-    .await
-    .expect("预置装载 alpha");
+    hub.connect("alpha", bm_testkit::InProcMcpServer::new(tools), 5_000)
+        .await
+        .expect("预置装载 alpha");
 
     let unregistered: std::sync::Mutex<Vec<Vec<String>>> = std::sync::Mutex::new(Vec::new());
     let registrar = RecordingRegistrar {

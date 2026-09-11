@@ -324,8 +324,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         secret_store: secrets.clone(),
         id_gen,
         clock: Arc::new(SystemClock),
-        turn_timeout_secs: limits_cell.get().model_call_timeout_secs as i64,
-        max_attempts: None,
     })
     .await;
 

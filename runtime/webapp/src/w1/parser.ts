@@ -36,19 +36,20 @@ export type ParsedContentBlock =
   | TerminalBlockItem
   | { type: "generic_tool_group"; items: ToolActionItem[] };
 
-// 工具名称到大类的映射
+// 工具名称到大类的映射(includes 即覆盖 fs.read/fs.search/fs.write/fs.edit/
+// system.exec 前缀——前缀名含关键词,无需另立 startsWith 分支)
 export function classifyTool(toolName: string): ToolActionItem["category"] {
   const lower = toolName.toLowerCase();
-  if (lower.includes("read") || lower.startsWith("fs.read")) {
+  if (lower.includes("read")) {
     return "read";
   }
-  if (lower.includes("search") || lower.includes("grep") || lower.includes("find") || lower.startsWith("fs.search")) {
+  if (lower.includes("search") || lower.includes("grep") || lower.includes("find")) {
     return "search";
   }
-  if (lower.includes("write") || lower.includes("edit") || lower.startsWith("fs.write") || lower.startsWith("fs.edit")) {
+  if (lower.includes("write") || lower.includes("edit")) {
     return "edit";
   }
-  if (lower.includes("exec") || lower.includes("bash") || lower.includes("terminal") || lower.includes("powershell") || lower.startsWith("system.exec")) {
+  if (lower.includes("exec") || lower.includes("bash") || lower.includes("terminal") || lower.includes("powershell")) {
     return "exec";
   }
   return "other";

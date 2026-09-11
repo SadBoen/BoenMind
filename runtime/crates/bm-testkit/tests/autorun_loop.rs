@@ -7,7 +7,7 @@ use bm_contract::events::EventType;
 use bm_contract::ids::{IdGen, SeqIdGen};
 use bm_contract::states::OperationState;
 use bm_contract::wire::{TaskCreateParams, TaskLifecycleParams};
-use bm_core::runtime::{DEFAULT_TURN_TIMEOUT_SECS, RuntimeConfig, RuntimeHandle};
+use bm_core::runtime::{RuntimeConfig, RuntimeHandle};
 use bm_providers::mock_model::{MockConnector, Step};
 use serde_json::json;
 use std::sync::Arc;
@@ -32,8 +32,6 @@ async fn rig(script: Vec<Step>) -> (RuntimeHandle, Arc<SeqIdGen>) {
         )),
         id_gen: ids.clone(),
         clock: Arc::new(bm_core::clock::MockClock::at_ms(1_788_000_000_000)),
-        turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
-        max_attempts: None,
         async_executor: None,
         model_streaming: false,
         limits: bm_core::LimitsCell::with_default(),

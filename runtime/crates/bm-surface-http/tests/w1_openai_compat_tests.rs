@@ -4,7 +4,7 @@
 use bm_contract::ids::SeqIdGen;
 use bm_core::clock::SystemClock;
 use bm_core::ports::ModelConnector;
-use bm_core::runtime::{DEFAULT_TURN_TIMEOUT_SECS, RuntimeConfig, RuntimeHandle};
+use bm_core::runtime::{RuntimeConfig, RuntimeHandle};
 use bm_persist::PersistStore;
 use bm_providers::mock_model::MockConnector;
 use bm_providers::secret::MemSecretStore;
@@ -32,8 +32,6 @@ async fn rig(connector: Arc<dyn ModelConnector>) -> (String, reqwest::Client, te
         )),
         id_gen: ids,
         clock: Arc::new(SystemClock),
-        turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
-        max_attempts: None,
     };
     let shutdown = Arc::new(tokio::sync::Notify::new());
     let app = bm_surface_http::router(

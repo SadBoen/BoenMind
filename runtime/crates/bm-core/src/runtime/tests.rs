@@ -140,8 +140,6 @@ mod r2_tombstone_tests {
                 secret_store: Arc::new(StubSecrets),
                 id_gen: Arc::new(UlidIdGen),
                 clock: Arc::new(FixedClock),
-                turn_timeout_secs: 30,
-                max_attempts: None,
                 capabilities: vec![],
                 async_executor: None,
                 model_streaming: false,

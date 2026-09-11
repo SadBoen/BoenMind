@@ -38,12 +38,6 @@ use std::time::Instant;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
-/// 回合默认超时(每次模型调用的 deadline,秒)。GT-A3 原 30s——2026-09-03
-/// VPS 实测:mimo 等真实网关常规调用 12~29s,30s 必现撞顶整回合失败,
-/// 上调至 120;可用 BOEN_TURN_TIMEOUT_SECS(>0 整数秒)覆盖,由装配方
-/// 经 limits 折算进 Cell(W10;此常量现为测试装配口径)。
-pub const DEFAULT_TURN_TIMEOUT_SECS: i64 = 120;
-
 /// 缺省模型 id(P2,2026-09-07 架构评审:此前 server/cli 三处魔法串散落)。
 /// 语义 = 零配置时的模型标识占位;真实接入以 model.json/env 为准。
 pub const DEFAULT_MODEL_ID: &str = "zhipu.glm-4-flash";
@@ -74,9 +68,6 @@ pub struct RuntimeConfig {
     pub secret_store: Arc<dyn SecretStore>,
     pub id_gen: Arc<dyn IdGen>,
     pub clock: Arc<dyn Clock>,
-    pub turn_timeout_secs: i64,
-    /// 降级链最大尝试次数;None = 取链长(合同上限 3)。
-    pub max_attempts: Option<u32>,
     /// 内置能力集(M4):启动时注册进 Capability Registry;
     /// 空集 = 无能力面(等价 M3 形态)。
     pub capabilities: Vec<(

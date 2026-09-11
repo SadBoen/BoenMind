@@ -22,7 +22,7 @@ import { DotScrollbar } from "./DotScrollbar";
 import { AgentStatusBar } from "./components/AgentStatusBar";
 import { WindowedMessages } from "./thread/WindowedMessages";
 import { ApprovalDrawer } from "./thread/ApprovalDrawer";
-import { Composer } from "./thread/Composer";
+import { Composer, type ComposerHandle } from "./thread/Composer";
 
 export function Thread({
   sessionsCollapsed,
@@ -40,18 +40,14 @@ export function Thread({
   const [tab, setTab] = useState<"chat" | "ctx">("chat");
 
   const viewportRef = useRef<HTMLDivElement | null>(null);
+  const composerRef = useRef<ComposerHandle | null>(null);
 
   // 新建对话时:若在上下文透视页则自动切回对话页,并使输入框获得焦点
+  // (经 Composer 命令式 ref;0ms 延时等页签切回后组件挂载完成)
   useEffect(() => {
     const onNewChat = () => {
       setTab("chat");
-      setTimeout(() => {
-        const input = document.querySelector<HTMLTextAreaElement>(".composer-input");
-        if (input) {
-          input.value = "";
-          input.focus();
-        }
-      }, 0);
+      setTimeout(() => composerRef.current?.focusAndClear(), 0);
     };
     window.addEventListener(BM_EVENTS.chatNew, onNewChat);
     return () => window.removeEventListener(BM_EVENTS.chatNew, onNewChat);
@@ -158,7 +154,7 @@ export function Thread({
             <div className="relative mx-auto w-full max-w-[820px]">
               <AgentStatusBar isRunning={agentRunning} activeModel={activeModel} />
               <ApprovalDrawer />
-              <Composer />
+              <Composer ref={composerRef} />
             </div>
           </div>
         </ThreadPrimitive.Root>

@@ -43,14 +43,6 @@ async fn main() -> CoreResult<()> {
         secret_store: secrets,
         id_gen: Arc::new(SeqIdGen::new()),
         clock: Arc::new(SystemClock),
-        // BOEN_TURN_TIMEOUT_SECS 内联读取(原 turn_timeout_from_env 已删,
-        // 生产行为归 limits 折算;demo 仅保留旧 env 语义作冒烟口径)。
-        turn_timeout_secs: std::env::var("BOEN_TURN_TIMEOUT_SECS")
-            .ok()
-            .and_then(|v| v.parse::<i64>().ok())
-            .filter(|s| *s > 0)
-            .unwrap_or(120),
-        max_attempts: None,
     })
     .await;
 

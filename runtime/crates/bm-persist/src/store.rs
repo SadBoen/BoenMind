@@ -189,10 +189,7 @@ impl PersistStore {
                         });
                     }
                 }
-                let stamp = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_millis())
-                    .unwrap_or(0);
+                let stamp = bm_contract::timestamp::unix_now_ms();
                 for name in ["state.db", "state.db-wal", "state.db-shm"] {
                     let p = dir.join(name);
                     if p.exists() {

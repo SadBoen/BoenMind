@@ -5,7 +5,7 @@ use bm_contract::ids::{IdGen, SeqIdGen};
 use bm_contract::wire::Method;
 use bm_core::clock::SystemClock;
 use bm_core::ports::ModelConnector;
-use bm_core::runtime::{DEFAULT_TURN_TIMEOUT_SECS, RuntimeConfig, RuntimeHandle};
+use bm_core::runtime::{RuntimeConfig, RuntimeHandle};
 use bm_persist::PersistStore;
 use bm_providers::mock_model::{MockConnector, Step};
 use bm_providers::secret::MemSecretStore;
@@ -42,8 +42,6 @@ async fn rig(script: Vec<Step>) -> Rig {
         )),
         id_gen: Arc::new(SeqIdGen::new()),
         clock: Arc::new(SystemClock),
-        turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
-        max_attempts: None,
     })
     .await;
 
@@ -346,8 +344,6 @@ async fn t33_shutdown_endpoint_is_authed_and_notifies() {
         secret_store: Arc::new(MemSecretStore::new()),
         id_gen: Arc::new(SeqIdGen::new()),
         clock: Arc::new(SystemClock),
-        turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
-        max_attempts: None,
     })
     .await;
 
@@ -435,8 +431,6 @@ async fn m4_rig(
         )),
         id_gen: Arc::new(SeqIdGen::new()),
         clock: Arc::new(SystemClock),
-        turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
-        max_attempts: None,
         async_executor: executor,
         model_streaming: false,
         limits: bm_core::LimitsCell::with_default(),
@@ -833,8 +827,6 @@ async fn t49_context_compress_capability_and_injection() {
         )),
         id_gen: Arc::new(SeqIdGen::new()),
         clock: Arc::new(SystemClock),
-        turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
-        max_attempts: None,
     })
     .await;
     let app = bm_surface_http::router(

@@ -11,7 +11,13 @@ import {
   Brain,
   Cpu,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react";
 import {
   Select,
   SelectContent,
@@ -25,8 +31,27 @@ import { storage, STORAGE_KEYS, type PermissionMode, type ThinkingLevel } from "
 import { BM_EVENTS, emit, on } from "../../lib/bus";
 import { redirectToLogin } from "@/lib/utils";
 
-export function Composer() {
+/** 新建对话等场景的命令式入口(thread.tsx 持 ref 调用,替代跨文件 DOM 扒取) */
+export interface ComposerHandle {
+  focusAndClear: () => void;
+}
+
+export const Composer = forwardRef<ComposerHandle>(function Composer(_props, ref) {
   const isRunning = useAuiState((s) => s.thread.isRunning);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  useImperativeHandle(
+    ref,
+    () => ({
+      focusAndClear: () => {
+        const el = inputRef.current;
+        if (el) {
+          el.value = "";
+          el.focus();
+        }
+      },
+    }),
+    [],
+  );
   const [model, setModel] = useState("…");
   // W6:对话级模型选择——候选 = 各提供商「常用」并集(设置→模型 勾选);
   // 选择持久化 localStorage,随每条消息发给后端,中途切换下一条即生效。
@@ -173,6 +198,7 @@ export function Composer() {
   return (
     <ComposerPrimitive.Root className="composer">
       <ComposerPrimitive.Input
+        ref={inputRef}
         className="composer-input"
         placeholder="Message BoenMind…"
         rows={2}
@@ -455,4 +481,4 @@ export function Composer() {
       </div>
     </ComposerPrimitive.Root>
   );
-}
+});

@@ -10,7 +10,7 @@ use bm_contract::states::OperationState;
 use bm_contract::wire::{AgentSpec, InputTrust, SendInputParams, SessionCreateParams};
 use bm_core::clock::SystemClock;
 use bm_core::ports::ModelConnector;
-use bm_core::runtime::{DEFAULT_TURN_TIMEOUT_SECS, RuntimeConfig, RuntimeHandle};
+use bm_core::runtime::{RuntimeConfig, RuntimeHandle};
 use bm_persist::EventStore as _;
 use bm_providers::secret::MemSecretStore;
 use bm_testkit::wait_terminal_handle;
@@ -106,8 +106,6 @@ async fn rig(dir: &std::path::Path) -> (RuntimeHandle, CallLog) {
         secret_store: Arc::new(MemSecretStore::with("secret:mock.model", "sk-test-123456")),
         id_gen: Arc::new(SeqIdGen::new()),
         clock: Arc::new(SystemClock),
-        turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
-        max_attempts: None,
         async_executor: None,
         model_streaming: false,
         limits: bm_core::LimitsCell::with_default(),
@@ -308,8 +306,6 @@ async fn mode_change_persists_via_materialized_row_and_restarts() {
         secret_store: Arc::new(MemSecretStore::with("secret:mock.model", "sk-test-123456")),
         id_gen: Arc::new(SeqIdGen::new()),
         clock: Arc::new(SystemClock),
-        turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
-        max_attempts: None,
         async_executor: None,
         model_streaming: false,
         limits: bm_core::LimitsCell::with_default(),

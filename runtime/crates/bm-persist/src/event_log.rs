@@ -133,16 +133,14 @@ impl JsonlEventLog {
                 })?;
             (dropped, kept)
         };
-        let tmp = self.path.with_extension("jsonl.tmp");
-        {
-            let mut f = File::create(&tmp)?;
-            for line in &kept {
-                writeln!(f, "{line}")?;
-            }
-            f.flush()?;
-            f.sync_all()?;
+        // P1-15:临时名带序号的 atomic_write 统一收口(此前内联固定名
+        // .jsonl.tmp,同族并发压实时会互踩同一 tmp)。
+        let mut bytes = Vec::new();
+        for line in &kept {
+            bytes.extend_from_slice(line.as_bytes());
+            bytes.push(b'\n');
         }
-        std::fs::rename(&tmp, &self.path)?;
+        bm_core::ports::persist::atomic_write(&self.path, &bytes)?;
         // 重打开句柄(旧句柄指向已被改名的文件)
         let new_file = OpenOptions::new()
             .create(true)

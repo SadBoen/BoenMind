@@ -12,6 +12,8 @@ bm-core = { workspace = true }
 bm-persist = { workspace = true }
 bm-providers = { workspace = true }
 bm-judge = { workspace = true }
+# mcp_fixture(InProc 测试替身)实现 McpTransport 需要
+async-trait = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 chrono = { workspace = true }
@@ -19,7 +21,6 @@ serde_json = { workspace = true }
 tempfile = { workspace = true }
 
 [dev-dependencies]
-async-trait = { workspace = true }
 rusqlite = { workspace = true }
 proptest = { workspace = true }
 wat = { workspace = true }

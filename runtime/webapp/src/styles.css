@@ -525,14 +525,6 @@ body {
   100% { background-position: 0 0; }
 }
 
-.no-scrollbar {
-  -ms-overflow-style: none;
-  scrollbar-width: none;
-}
-.no-scrollbar::-webkit-scrollbar {
-  display: none;
-}
-
 /* 输入区 */
 .composer-dock {
   flex-shrink: 0;

@@ -10,7 +10,7 @@ use bm_contract::wire::AgentSpec;
 use bm_contract::wire::{SendInputParams, SessionCreateParams};
 use bm_core::clock::SystemClock;
 use bm_core::ports::ModelConnector;
-use bm_core::runtime::{DEFAULT_TURN_TIMEOUT_SECS, RuntimeConfig, RuntimeHandle};
+use bm_core::runtime::{RuntimeConfig, RuntimeHandle};
 use bm_judge::evaluate;
 use bm_persist::{EventStore, PersistStore};
 use bm_providers::mcp::{McpHub, StdioMcpTransport};
@@ -75,8 +75,6 @@ async fn t116_live_long_task_stress() {
         secret_store: secrets,
         id_gen: ids.clone(),
         clock: Arc::new(SystemClock),
-        turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
-        max_attempts: None,
     })
     .await;
 

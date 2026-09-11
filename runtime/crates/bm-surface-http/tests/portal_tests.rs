@@ -40,8 +40,6 @@ async fn spawn_inner(data_dir: std::path::PathBuf, public_bind: bool) -> (String
         secret_store: Arc::new(MemSecretStore::new()),
         id_gen: Arc::new(bm_contract::ids::SeqIdGen::new()),
         clock: Arc::new(SystemClock),
-        turn_timeout_secs: 120,
-        max_attempts: None,
     })
     .await;
     let admin = AdminConfig {

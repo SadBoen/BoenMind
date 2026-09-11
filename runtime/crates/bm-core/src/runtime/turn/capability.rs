@@ -149,53 +149,40 @@ pub(crate) fn capability_call_inner(
                         result,
                     ))
                 }
-                CallOutcome::InvalidArgs { message } => {
-                    fail_capability_call(
-                        w,
-                        &op_id,
-                        &params.capability,
-                        ctx.principal.as_str(),
-                        ErrorCode::ValidationFailed,
-                        &message,
-                    );
-                    Err(CoreError::Semantic(ErrorCode::ValidationFailed, message))
-                }
-                CallOutcome::StaleBinding { expected_epoch, .. } => {
-                    fail_capability_call(
-                        w,
-                        &op_id,
-                        &params.capability,
-                        ctx.principal.as_str(),
-                        ErrorCode::Unavailable,
-                        &format!("binding 已切换(凭证 epoch {expected_epoch}),请重试"),
-                    );
-                    Err(CoreError::Semantic(
-                        ErrorCode::Unavailable,
-                        "Provider binding 已切换,请重试".into(),
-                    ))
-                }
+                CallOutcome::InvalidArgs { message } => Err(fail_call_receipt(
+                    w,
+                    &op_id,
+                    &params.capability,
+                    ctx.principal.as_str(),
+                    ErrorCode::ValidationFailed,
+                    &message,
+                )),
+                CallOutcome::StaleBinding { expected_epoch, .. } => Err(fail_call_receipt(
+                    w,
+                    &op_id,
+                    &params.capability,
+                    ctx.principal.as_str(),
+                    ErrorCode::Unavailable,
+                    &format!("binding 已切换(凭证 epoch {expected_epoch}),请重试"),
+                )),
                 CallOutcome::ProviderError { message } | CallOutcome::InvalidOutput { message } => {
-                    fail_capability_call(
+                    Err(fail_call_receipt(
                         w,
                         &op_id,
                         &params.capability,
                         ctx.principal.as_str(),
                         ErrorCode::Internal,
                         &message,
-                    );
-                    Err(CoreError::Internal)
+                    ))
                 }
-                CallOutcome::ProviderUnavailable { message } => {
-                    fail_capability_call(
-                        w,
-                        &op_id,
-                        &params.capability,
-                        ctx.principal.as_str(),
-                        ErrorCode::Unavailable,
-                        &message,
-                    );
-                    Err(CoreError::Semantic(ErrorCode::Unavailable, message))
-                }
+                CallOutcome::ProviderUnavailable { message } => Err(fail_call_receipt(
+                    w,
+                    &op_id,
+                    &params.capability,
+                    ctx.principal.as_str(),
+                    ErrorCode::Unavailable,
+                    &message,
+                )),
                 CallOutcome::Suppressed { original_result } => {
                     // 幂等抑制:不重复执行,返回原收据(审计已由助手落
                     // outcome=suppressed;ADR-0002 条件 6)
@@ -736,6 +723,22 @@ pub(crate) fn fail_capability_call(
         Some(code),
         None,
     );
+}
+/// 失败收据统一落点:审计终态(fail_capability_call)与调用方错误一并产出,
+/// 五类失败臂共用;Internal 折算为无细节错误,其余错误文本与审计收据同源。
+fn fail_call_receipt(
+    w: &mut World,
+    op_id: &BmId,
+    capability: &str,
+    principal: &str,
+    code: ErrorCode,
+    message: &str,
+) -> CoreError {
+    fail_capability_call(w, op_id, capability, principal, code, message);
+    match code {
+        ErrorCode::Internal => CoreError::Internal,
+        _ => CoreError::Semantic(code, message.to_string()),
+    }
 }
 pub(crate) fn dispatch_capability(
     w: &mut World,

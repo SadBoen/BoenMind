@@ -32,6 +32,8 @@ tempfile = { workspace = true }
 # #35:本体零依赖持久层(落盘小工具/EventStore 端口均走 bm-core);集成测试
 # 装配 PersistStore 实现件属组合根,合法使用 dev-dependency。
 bm-persist = { workspace = true }
+# mcp reload 特征化测试用 InProcMcpServer 测试替身(住测试装配层)
+bm-testkit = { workspace = true }
 
 [lints]
 workspace = true

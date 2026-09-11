@@ -8,7 +8,7 @@ use bm_contract::ids::{IdGen, SeqIdGen};
 use bm_contract::wire::{TaskCreateParams, TaskLifecycleParams};
 use bm_core::CoreError;
 use bm_core::clock::SystemClock;
-use bm_core::runtime::{DEFAULT_TURN_TIMEOUT_SECS, RuntimeConfig, RuntimeHandle};
+use bm_core::runtime::{RuntimeConfig, RuntimeHandle};
 use bm_providers::mock_model::MockConnector;
 use bm_providers::secret::MemSecretStore;
 use serde_json::json;
@@ -39,8 +39,6 @@ async fn task_rig(dir: Option<&std::path::Path>) -> (RuntimeHandle, Arc<SeqIdGen
         secret_store: Arc::new(MemSecretStore::with("secret:model.x", "sk-demo")),
         id_gen: ids.clone(),
         clock: Arc::new(bm_core::clock::MockClock::at_ms(1_788_000_000_000)),
-        turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
-        max_attempts: None,
         async_executor: None,
         model_streaming: false,
         limits: bm_core::LimitsCell::with_default(),
@@ -239,8 +237,6 @@ async fn t52_count_grant_exhaustion_survives_restart() {
         secret_store: Arc::new(MemSecretStore::with("secret:model.x", "sk")),
         id_gen: ids.clone(),
         clock: Arc::new(SystemClock),
-        turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
-        max_attempts: None,
         async_executor: None,
         model_streaming: false,
         limits: bm_core::LimitsCell::with_default(),
@@ -310,8 +306,6 @@ async fn t52_count_grant_exhaustion_survives_restart() {
         secret_store: Arc::new(MemSecretStore::with("secret:model.x", "sk")),
         id_gen: ids2.clone(),
         clock: Arc::new(SystemClock),
-        turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
-        max_attempts: None,
         async_executor: None,
         model_streaming: false,
         limits: bm_core::LimitsCell::with_default(),
@@ -372,8 +366,6 @@ async fn t53_idem_receipt_survives_restart() {
             secret_store: Arc::new(MemSecretStore::with("secret:model.x", "sk")),
             id_gen: ids,
             clock: Arc::new(SystemClock),
-            turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
-            max_attempts: None,
             async_executor: None,
             model_streaming: false,
             limits: bm_core::LimitsCell::with_default(),

@@ -6,7 +6,7 @@ use bm_contract::ids::{IdGen, SeqIdGen};
 use bm_contract::wire::{AgentSpec, GetOperationParams, SessionCreateParams};
 use bm_core::clock::SystemClock;
 use bm_core::ports::ModelConnector;
-use bm_core::runtime::{DEFAULT_TURN_TIMEOUT_SECS, RuntimeConfig, RuntimeHandle};
+use bm_core::runtime::{RuntimeConfig, RuntimeHandle};
 use bm_providers::mock_model::{MockConnector, Step};
 use bm_providers::secret::MemSecretStore;
 use std::sync::Arc;
@@ -30,8 +30,6 @@ async fn start_runtime(
         )),
         id_gen: Arc::new(SeqIdGen::new()),
         clock: Arc::new(SystemClock),
-        turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
-        max_attempts: None,
         async_executor: None,
         model_streaming: false,
         limits: bm_core::LimitsCell::with_default(),

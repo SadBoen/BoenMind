@@ -89,8 +89,6 @@ async fn p02_session_resume_with_10k_events() {
         secret_store: Arc::new(bm_providers::secret::MemSecretStore::new()),
         id_gen: Arc::new(bm_contract::ids::SeqIdGen::new()),
         clock: Arc::new(bm_core::clock::SystemClock),
-        turn_timeout_secs: bm_core::runtime::DEFAULT_TURN_TIMEOUT_SECS,
-        max_attempts: None,
         async_executor: None,
         model_streaming: false,
         limits: bm_core::LimitsCell::with_default(),

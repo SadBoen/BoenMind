@@ -4,7 +4,7 @@
 use bm_contract::ids::{BmId, IdGen, SeqIdGen};
 use bm_contract::states::OperationState;
 use bm_contract::wire::{CapabilityCallParams, GetOperationParams};
-use bm_core::runtime::{DEFAULT_TURN_TIMEOUT_SECS, RuntimeConfig, RuntimeHandle};
+use bm_core::runtime::{RuntimeConfig, RuntimeHandle};
 use bm_providers::mock_model::{MockConnector, Step};
 use bm_testkit::replay::rig_on;
 use serde_json::json;
@@ -246,8 +246,6 @@ async fn t119c_user_deletion_tombstone_survives_replay() {
             )),
             id_gen: ids.clone(),
             clock: Arc::new(bm_core::clock::SystemClock),
-            turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
-            max_attempts: None,
         })
         .await;
         let call = |r: BmId, cap: &str, args: serde_json::Value| {
@@ -343,8 +341,6 @@ async fn t119c_user_deletion_tombstone_survives_replay() {
             )),
             id_gen: ids.clone(),
             clock: Arc::new(bm_core::clock::SystemClock),
-            turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
-            max_attempts: None,
         })
         .await;
         let call = |r: BmId, cap: &str, args: serde_json::Value| {

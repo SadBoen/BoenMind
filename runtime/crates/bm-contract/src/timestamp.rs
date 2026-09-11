@@ -29,6 +29,24 @@ pub fn remaining_until(ts: &str) -> Option<std::time::Duration> {
     remaining.to_std().ok()
 }
 
+/// 当前 Unix 毫秒(时钟回拨兜底 0)。进程内诊断/台账/文件名时间戳的单点
+/// (2026-09-12 收口:此前 5 处各自手搓 duration_since,秒/毫秒口径已漂移);
+/// 合同态时间仍走 ISO-8601(now/format_ts)。
+pub fn unix_now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// 当前 Unix 秒(OpenAI 兼容插座 created 字段语义即秒)。
+pub fn unix_now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

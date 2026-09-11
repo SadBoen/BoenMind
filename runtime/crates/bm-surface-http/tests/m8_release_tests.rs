@@ -6,7 +6,7 @@ use bm_contract::ids::{IdGen, SeqIdGen};
 use bm_contract::wire::Method;
 use bm_core::clock::SystemClock;
 use bm_core::ports::ModelConnector;
-use bm_core::runtime::{DEFAULT_TURN_TIMEOUT_SECS, RuntimeConfig, RuntimeHandle};
+use bm_core::runtime::{RuntimeConfig, RuntimeHandle};
 use bm_persist::PersistStore;
 use bm_providers::builtin::builtin_capability_set;
 use bm_providers::mock_model::MockConnector;
@@ -60,8 +60,6 @@ async fn rig_with_web() -> Rig {
         )),
         id_gen: Arc::new(SeqIdGen::new()),
         clock: Arc::new(SystemClock),
-        turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
-        max_attempts: None,
     })
     .await;
 

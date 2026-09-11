@@ -7,7 +7,7 @@ use bm_contract::wire::{
     ApprovalListParams, ApprovalRespondParams, CapabilityCallParams, CapabilityCancelParams,
 };
 use bm_core::CoreError;
-use bm_core::runtime::{DEFAULT_TURN_TIMEOUT_SECS, RuntimeConfig, RuntimeHandle};
+use bm_core::runtime::{RuntimeConfig, RuntimeHandle};
 use bm_providers::mock_model::MockConnector;
 use bm_providers::secret::MemSecretStore;
 use serde_json::json;
@@ -35,8 +35,6 @@ async fn rig() -> (RuntimeHandle, Arc<SeqIdGen>) {
         secret_store: Arc::new(MemSecretStore::with("secret:model.x", "sk")),
         id_gen: ids.clone(),
         clock: Arc::new(bm_core::clock::MockClock::at_ms(1_788_000_000_000)),
-        turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
-        max_attempts: None,
         async_executor: None,
         model_streaming: false,
         limits: bm_core::LimitsCell::with_default(),

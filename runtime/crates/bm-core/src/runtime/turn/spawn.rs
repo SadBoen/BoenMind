@@ -465,21 +465,16 @@ pub(crate) fn spawn_turn(
     let clock = w.config.clock.clone();
     let agent_id = agent.id.clone();
     let remaining = agent.budget.remaining_tokens();
-    // ADR-0028:model_max_attempts=0 = 不限重试(None,链内按序循环);
-    // 显式 RuntimeConfig.max_attempts 兼容保留(仍钳 1..=3)。
-    let max_attempts: Option<u32> = match w.config.max_attempts {
-        Some(n) => Some(n.clamp(1, 3)),
-        None => {
-            let lim = w.config.limits.get().model_max_attempts;
-            if lim == 0 {
-                None
-            } else {
-                Some((chain.len().min(lim as usize) as u32).clamp(1, 3))
-            }
+    // ADR-0028:model_max_attempts=0 = 不限重试(None,链内按序循环)。
+    let max_attempts: Option<u32> = {
+        let lim = w.config.limits.get().model_max_attempts;
+        if lim == 0 {
+            None
+        } else {
+            Some((chain.len().min(lim as usize) as u32).clamp(1, 3))
         }
     };
-    // W10(ADR-0024):模型调用超时走 limits 热生效(env 覆盖已由装配方
-    // 折算进 Cell;RuntimeConfig.turn_timeout_secs 保留为兼容字段不再读)。
+    // W10(ADR-0024):模型调用超时走 limits 热生效(env 覆盖已由装配方折算进 Cell)。
     // ADR-0028:0 = 不限时——合同 InvokeRequest.deadline 为必填时间戳,
     // 以 100 年远期哨兵表达「无 deadline」(remaining_until 折出巨大预算)。
     let timeout_secs = w.config.limits.get().model_call_timeout_secs as i64;

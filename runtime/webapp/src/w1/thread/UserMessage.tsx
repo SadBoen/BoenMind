@@ -8,13 +8,15 @@ import { useBoenmindApprovals } from "../runtime";
 
 export function UserMessage() {
   const messageIndex = useAuiState((s) => s.message.index);
+  // DotScrollbar 导航锚点:按消息 id 定位元素(数据驱动列表的 DOM 对应物)
+  const messageId = useAuiState((s) => s.message.id);
   const { editAndBranchMessage } = useBoenmindApprovals();
   const [isEditing, setIsEditing] = useState(false);
   const [editText, setEditText] = useState("");
   const [copied, setCopied] = useState(false);
 
   return (
-    <MessagePrimitive.Root className="msg user">
+    <MessagePrimitive.Root className="msg user" data-msg-id={messageId}>
       <div className="msg-header">
         <User size={13} className="text-primary" />
         <span>我</span>

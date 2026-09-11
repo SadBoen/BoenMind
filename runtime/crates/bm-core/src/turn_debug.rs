@@ -81,10 +81,7 @@ impl TurnDebugLog {
             return;
         }
         let line = serde_json::json!({
-            "ts_ms": std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0),
+            "ts_ms": bm_contract::timestamp::unix_now_ms(),
             "kind": kind,
             "session_id": session_id,
             "agent_id": agent_id,

@@ -71,8 +71,11 @@ wire_str_enum!(RetryableError {
     Unavailable => "unavailable",
 });
 
-/// 自动重试策略(manifest #/definitions/retry_policy):由 Broker 统一执行;
-/// 仅 read-only 与 low-risk-command 允许自动重试(基线 §5.2)。
+/// 自动重试策略(manifest #/definitions/retry_policy)。【诚实化 2026-09-12:
+/// 预留字段,Broker 当前不消费——全仓零读取点,真实重试走回合层
+/// limits.model_max_attempts 模型降级链(ADR-0028);兑现或移除待拍板
+/// (GitHub issue)。设计意向仍是仅 read-only 与 low-risk-command 允许
+/// 自动重试(基线 §5.2)。】
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RetryPolicy {
     pub max_attempts: u32,

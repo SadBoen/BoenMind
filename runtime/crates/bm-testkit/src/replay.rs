@@ -7,7 +7,7 @@ use bm_contract::wire::{AgentSpec, SendInputParams, SessionCreateParams};
 use bm_core::CoreResult;
 use bm_core::clock::MockClock;
 use bm_core::ports::SecretStore;
-use bm_core::runtime::{DEFAULT_TURN_TIMEOUT_SECS, RuntimeConfig, RuntimeHandle};
+use bm_core::runtime::{RuntimeConfig, RuntimeHandle};
 use bm_providers::mock_model::{MockConnector, Step};
 use bm_providers::secret::MemSecretStore;
 use std::sync::Arc;
@@ -226,8 +226,6 @@ async fn start_rig(
         secret_store: secrets.clone(),
         id_gen: ids.clone(),
         clock: clock.clone(),
-        turn_timeout_secs: DEFAULT_TURN_TIMEOUT_SECS,
-        max_attempts: None,
     };
     let handle = RuntimeHandle::start(config).await;
 
