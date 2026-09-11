@@ -8,7 +8,8 @@ import argparse
 import hashlib
 import json
 import os
-import sys
+
+import mcp_sdk
 
 AUDIO_EXTENSIONS = {".mp3", ".wav", ".ogg", ".flac", ".m4a", ".aac"}
 
@@ -202,77 +203,11 @@ def main():
     # 首次启动自动扫描根目录
     scan_directory(music_dir)
 
-    for line in sys.stdin:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            req = json.loads(line)
-        except Exception:
-            # P1-39(2026-09-07 架构评审):坏 JSON 回 JSON-RPC parse error,
-            # 不再静默吞掉让调用方悬挂
-            sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}}) + "\n")
-            sys.stdout.flush()
-            continue
-
-        method = req.get("method")
-        msg_id = req.get("id")
-
-        if method == "initialize":
-            res = {
-                "jsonrpc": "2.0",
-                "id": msg_id,
-                "result": {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "music-player", "version": "0.1.0"},
-                },
-            }
-            sys.stdout.write(json.dumps(res, ensure_ascii=False) + "\n")
-            sys.stdout.flush()
-        elif method == "notifications/initialized":
-            continue
-        elif method == "tools/list":
-            res = {
-                "jsonrpc": "2.0",
-                "id": msg_id,
-                "result": {"tools": TOOLS},
-            }
-            sys.stdout.write(json.dumps(res, ensure_ascii=False) + "\n")
-            sys.stdout.flush()
-        elif method == "tools/call":
-            params = req.get("params", {})
-            name = params.get("name", "")
-            args = params.get("arguments", {})
-            result = handle_tool_call(name, args, music_dir)
-            res = {
-                "jsonrpc": "2.0",
-                "id": msg_id,
-                "result": result,
-            }
-            sys.stdout.write(json.dumps(res, ensure_ascii=False) + "\n")
-            sys.stdout.flush()
-        elif method in ("shutdown", "exit"):
-            if msg_id is not None:
-                sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": msg_id, "result": None}) + "\n")
-                sys.stdout.flush()
-            break
-        else:
-            # P1-39(2026-09-07 架构评审):未知 method 回 method not found
-            # (此前无任何响应 = 客户端悬挂,比错误响应更糟)
-            if msg_id is not None:
-                sys.stdout.write(
-                    json.dumps(
-                        {
-                            "jsonrpc": "2.0",
-                            "id": msg_id,
-                            "error": {"code": -32601, "message": "method not found"},
-                        },
-                        ensure_ascii=False,
-                    )
-                    + "\n"
-                )
-                sys.stdout.flush()
+    mcp_sdk.run_stdio(
+        server_info={"name": "music-player", "version": "0.1.0"},
+        tools=TOOLS,
+        call_tool=lambda name, args: handle_tool_call(name, args, music_dir),
+    )
 
 
 if __name__ == "__main__":

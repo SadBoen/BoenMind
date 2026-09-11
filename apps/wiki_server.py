@@ -13,7 +13,8 @@ import hashlib
 import json
 import os
 import re
-import sys
+
+import mcp_sdk
 
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 
@@ -122,54 +123,11 @@ def main():
             }
         return {"isError": True, "content": [{"type": "text", "text": "unknown tool"}]}
 
-    while True:
-        line = sys.stdin.readline()
-        if not line:
-            break
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            msg = json.loads(line)
-        except ValueError:
-            # P1-39(2026-09-07 架构评审):坏 JSON 回 JSON-RPC parse error,
-            # 不再静默吞掉让调用方悬挂
-            print(
-                json.dumps(
-                    {"jsonrpc": "2.0", "id": None,
-                     "error": {"code": -32700, "message": "parse error"}},
-                ),
-                flush=True,
-            )
-            continue
-        if "id" not in msg:
-            continue
-        rid = msg["id"]
-        method = msg.get("method")
-        if method == "initialize":
-            result = {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {"tools": {}},
-                "serverInfo": {"name": "wiki", "version": "0.1.0"},
-            }
-        elif method == "tools/list":
-            result = {"tools": TOOLS}
-        elif method == "tools/call":
-            a = msg.get("params", {}).get("arguments", {})
-            result = tool_call(msg.get("params", {}).get("name", ""), a)
-        else:
-            print(
-                json.dumps(
-                    {
-                        "jsonrpc": "2.0",
-                        "id": rid,
-                        "error": {"code": -32601, "message": "method not found"},
-                    }
-                ),
-                flush=True,
-            )
-            continue
-        print(json.dumps({"jsonrpc": "2.0", "id": rid, "result": result}), flush=True)
+    mcp_sdk.run_stdio(
+        server_info={"name": "wiki", "version": "0.1.0"},
+        tools=TOOLS,
+        call_tool=tool_call,
+    )
 
 
 if __name__ == "__main__":

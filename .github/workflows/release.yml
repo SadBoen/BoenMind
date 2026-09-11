@@ -72,8 +72,10 @@ jobs:
           # ADR-0023:官方随包清单(声明名)——升级换装后服务端据此标记
           # 「官方最新版已不随包」的存量插件(建议删除)
           cp plugins/official-plugins.json "${PKG}/plugins/.official.json"
-          # 官方随包 App:只打包三个生产 demo server,排除 CI 门禁 smoke_test.py
+          # 官方随包 App:只打包三个生产 demo server + 协议 SDK,排除 CI 门禁
+          # smoke_test.py / mcp_sdk_test.py(mcp_sdk.py 是三 server 的运行期依赖)
           cp apps/wiki_server.py apps/market_server.py apps/music_server.py "${PKG}/apps/" 2>/dev/null || true
+          cp apps/mcp_sdk.py "${PKG}/apps/" 2>/dev/null || true
           cp apps/mcp-config.example.json "${PKG}/apps/" 2>/dev/null || true
           cp packaging/INSTALL.md "${PKG}/INSTALL.md" 2>/dev/null || true
           test -x "${PKG}/plugins/web-multisearch"

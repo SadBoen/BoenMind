@@ -7,7 +7,8 @@ stdio MCP server(python 标准库):内嵌 fixture 行情(价格以「分」记�
 用法:python market_server.py
 """
 import json
-import sys
+
+import mcp_sdk
 
 MARKET_DATA_VERSION = "2026.08.0"
 
@@ -99,57 +100,15 @@ def tool_call(name, a):
 
 
 def main():
-    while True:
-        line = sys.stdin.readline()
-        if not line:
-            break
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            msg = json.loads(line)
-        except ValueError:
-            # P1-39(2026-09-07 架构评审):坏 JSON 回 JSON-RPC parse error
-            print(
-                json.dumps(
-                    {"jsonrpc": "2.0", "id": None,
-                     "error": {"code": -32700, "message": "parse error"}},
-                ),
-                flush=True,
-            )
-            continue
-        if "id" not in msg:
-            continue
-        rid = msg["id"]
-        method = msg.get("method")
-        if method == "initialize":
-            result = {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {"tools": {}},
-                "serverInfo": {
-                    "name": "market",
-                    "version": "0.1.0",
-                    "marketDataVersion": MARKET_DATA_VERSION,
-                },
-            }
-        elif method == "tools/list":
-            result = {"tools": TOOLS}
-        elif method == "tools/call":
-            a = msg.get("params", {}).get("arguments", {})
-            result = tool_call(msg.get("params", {}).get("name", ""), a)
-        else:
-            print(
-                json.dumps(
-                    {
-                        "jsonrpc": "2.0",
-                        "id": rid,
-                        "error": {"code": -32601, "message": "method not found"},
-                    }
-                ),
-                flush=True,
-            )
-            continue
-        print(json.dumps({"jsonrpc": "2.0", "id": rid, "result": result}), flush=True)
+    mcp_sdk.run_stdio(
+        server_info={
+            "name": "market",
+            "version": "0.1.0",
+            "marketDataVersion": MARKET_DATA_VERSION,
+        },
+        tools=TOOLS,
+        call_tool=tool_call,
+    )
 
 
 if __name__ == "__main__":

@@ -1,7 +1,9 @@
 # P1-38(2026-09-07 架构评审):apps 三个 stdio MCP server 的协议冒烟门禁。
 # 此前零测试零 CI,发布包直接打包未测脚本。本测试拉起每个 server 走真实
-# stdio 管道:initialize 握手 → tools/list → tools/call 未知工具(应用层
-# isError)→ 未知 method(-32601)→ 坏 JSON(-32700)。
+# stdio 管道:initialize 握手 → tools/list → tools/call 未知工具(-32602)
+# → 未知 method(-32601)→ 坏 JSON(-32700)。
+# ADR-0034(issue #56):未知工具口径统一为协议错误 -32602(对齐 MCP
+# 2024-11-05 规范示例),此前 app 侧回应用层 isError:true,两族分歧已消除。
 import json
 import os
 import subprocess
@@ -38,7 +40,7 @@ def smoke(script: str, extra_args: list[str]) -> None:
         listed = tools["result"]["tools"]
         assert isinstance(listed, list) and listed, tools
 
-        # MCP 规范口径:未知工具 = 应用层错误(isError:true),非协议错误
+        # ADR-0034:MCP 规范口径:未知工具 = 协议错误 -32602(非应用层 isError)
         unk = rpc(
             proc,
             {
@@ -48,7 +50,7 @@ def smoke(script: str, extra_args: list[str]) -> None:
                 "params": {"name": "no_such_tool", "arguments": {}},
             },
         )
-        assert unk["result"].get("isError") is True, unk
+        assert unk.get("error", {}).get("code") == -32602, unk
 
         # 未知 method = -32601 method not found
         nf = rpc(proc, {"jsonrpc": "2.0", "id": 4, "method": "no/such"})
