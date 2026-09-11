@@ -1195,6 +1195,44 @@ fn mcp_server_config_schema_accepts_minimal_and_rejects_bad() {
     validate(registries::MCP_SERVER_SCHEMA, &leak).expect_err("env 明文必须拒绝,只收 secret: 引用");
 }
 
+// ---- ADR-0034(issue #56):MCP 插件自描述(--self-describe)合同 -------------
+
+#[test]
+fn mcp_self_describe_schema_accepts_minimal_and_rejects_bad() {
+    let ok = json!({
+        "name": "web_multisearch",
+        "title": "聚合搜索",
+        "description": "并行多源聚合",
+        "config_schema": [{"key": "default_limit", "type": "range"}],
+        "suggested_entry": {
+            "transport": "stdio",
+            "args": ["--config", "{config_file}"],
+            "tool_timeout_ms": 30000,
+            "restart_limit": 3
+        }
+    });
+    validate(registries::MCP_SELF_DESCRIBE_SCHEMA, &ok).expect("自描述声明合法");
+
+    // 连字符名必须被拒(字符集与 mcp-server.name 一致,只收下划线)
+    let bad_name = json!({
+        "name": "web-multisearch", "title": "t", "description": "d",
+        "suggested_entry": {"transport": "stdio", "args": []}
+    });
+    validate(registries::MCP_SELF_DESCRIBE_SCHEMA, &bad_name).expect_err("声明名不得用连字符");
+
+    // suggested_entry 是必填,且 transport 仅 stdio
+    let missing_entry = json!({"name": "p", "title": "t", "description": "d"});
+    validate(registries::MCP_SELF_DESCRIBE_SCHEMA, &missing_entry)
+        .expect_err("suggested_entry 必填");
+
+    let bad_transport = json!({
+        "name": "p", "title": "t", "description": "d",
+        "suggested_entry": {"transport": "sse", "args": []}
+    });
+    validate(registries::MCP_SELF_DESCRIBE_SCHEMA, &bad_transport)
+        .expect_err("自描述发现面仅 stdio");
+}
+
 // ---- M8:评估报告合同 -------------------------------------------------------
 
 #[test]

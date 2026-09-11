@@ -74,6 +74,25 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo nextest run --workspace
 
+  # ADR-0034(issue #56):插件协议最小 SDK。两插件以 path 依赖引入,
+  # 本 job 单独门禁 SDK 自身的 fmt/clippy/test(插件 job 经 path dep 覆盖集成)。
+  plugin-sdk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugins/mcp/sdk
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: "rustfmt, clippy"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: plugins/mcp/sdk
+      - run: cargo fmt -- --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+
   # 独立官方 MCP 插件：不进入 runtime workspace，但必须有自己的门禁
   # P1-40(2026-09-07 架构评审):插件有 native-tls / cfg(target_os="windows")
   # 分支,单 ubuntu 从未验证——矩阵对齐主 rust 三平台

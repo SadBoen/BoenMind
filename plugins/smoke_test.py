@@ -1,15 +1,16 @@
-# issue #56(子集,非决策项):Rust 官方插件的 MCP/JSON-RPC 协议一致性冒烟。
+# issue #56:官方插件的 MCP/JSON-RPC 协议一致性冒烟。
 #
-# 缺口:apps/ 三个 Python server 已有 apps/smoke_test.py(P1-38)做协议门禁,
-# 但 2 个 Rust 插件(web-multisearch / context-inspector)各自手写 stdio
-# JSON-RPC 循环,零跨实现一致性测试——协议演进(N 处手写)时漂移无门可拦。
+# 历史缺口:apps/ 三个 Python server 已有 apps/smoke_test.py(P1-38)做协议门禁,
+# 但 2 个 Rust 插件(web-multisearch / context-inspector)曾各自手写 stdio
+# JSON-RPC 循环,零跨实现一致性测试。ADR-0034 后两插件协议面收口到
+# boenmind-plugin-sdk,本冒烟作为端到端门禁保留(真 stdio 管道,覆盖 SDK 集成)。
 #
 # 本测试对每个插件走真实 stdio 管道,断言与 apps/ 同族的协议不变量:
 #   initialize 握手(protocolVersion=2024-11-05 + serverInfo.name 自报)
-#   → tools/list 非空 → 未知工具(插件族口径 -32602)→ 未知 method(-32601)
-#   → 坏 JSON(-32700,JSON-RPC 2.0 强制;本批修复前插件静默丢弃该行)。
-# 已知分歧(记录不强制统一,归 #56 SDK 化时一并裁决):未知工具口径——
-# apps/ 回应用层 isError:true,插件回 -32602;两者皆协议可接受。
+#   → tools/list 非空 → 未知工具(统一规范口径 -32602)→ 未知 method(-32601)
+#   → 坏 JSON(-32700,JSON-RPC 2.0 强制)。
+# ADR-0034:未知工具口径已统一为 -32602(协议错误,对齐 MCP 2024-11-05 规范示例);
+# app 侧原 isError:true 一并改齐,两族断言不再分歧。
 import argparse
 import json
 import os
@@ -56,7 +57,7 @@ def smoke(plugin: str, server_name: str) -> None:
         listed = tools["result"]["tools"]
         assert isinstance(listed, list) and listed, tools
 
-        # 未知工具:插件族口径 = -32602 Invalid params(与 apps 的 isError 并存)
+        # 未知工具:统一规范口径 = -32602 Invalid params(MCP 2024-11-05 规范示例)
         unk = rpc(
             proc,
             {
@@ -82,10 +83,10 @@ def smoke(plugin: str, server_name: str) -> None:
         proc.wait()
 
 
-# (cargo bin 名, serverInfo.name 自报值)
+# (cargo bin 名, serverInfo.name 自报值;自报值 = 自描述声明名,下划线字符集)
 PLUGINS = {
     "context-inspector": "context_inspector",
-    "web-multisearch": "web-multisearch",
+    "web-multisearch": "web_multisearch",
 }
 
 

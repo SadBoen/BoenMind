@@ -12,6 +12,7 @@ path = "src/main.rs"
 ddg_debug_dump = []
 
 [dependencies]
+boenmind-plugin-sdk = { path = "../sdk" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "time", "sync", "process"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "native-tls", "gzip"] }
 serde = { version = "1", features = ["derive"] }
