@@ -8,7 +8,6 @@
 //! 不在本 SDK 范围。
 
 use std::future::Future;
-use std::pin::Pin;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -323,13 +322,9 @@ async fn write_line(stdout: &mut tokio::io::Stdout, value: &Value) -> std::io::R
     stdout.flush().await
 }
 
-/// SDK 内部用于跨 `.await` 持有的装箱 future 别名(仅供实现方在需要时引用)。
-pub type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
 
     struct Fake {
         fail: bool,
@@ -490,12 +485,5 @@ mod tests {
         assert_eq!(v["jsonrpc"], JSONRPC_VERSION);
         assert_eq!(v["id"], Value::Null);
         assert_eq!(v["error"]["code"], PARSE_ERROR);
-    }
-
-    /// 编译期佐证:装箱 future 别名可用于实现方的跨 await 持有。
-    #[allow(dead_code)]
-    fn _boxed_is_usable() -> BoxFuture<Value> {
-        let _shared = Arc::new(1u8);
-        Box::pin(async { json!({}) })
     }
 }
