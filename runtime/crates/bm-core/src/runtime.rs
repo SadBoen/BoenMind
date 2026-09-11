@@ -188,6 +188,9 @@ struct World {
     provider_health: HashMap<String, ProviderHealth>,
     /// M8.3:在途异步能力调用的取消令牌(operation_id → token)。
     cap_in_flight: HashMap<BmId, CancellationToken>,
+    /// ADR-0037:能力排空台账(capability → 在途 operation 集合)。卸载时
+    /// binding 进 Draining、拒绝新调用,待集合清空后 finish_drain 摘除。
+    draining_caps: HashMap<String, std::collections::HashSet<BmId>>,
     /// M7 S1:turn 模型调用 Broker 凭证留档(operation_id 索引;
     /// 授权点在 spawn,审计点在回合模型阶段终态——两段由 call_id 缝合)。
     model_call_audit: HashMap<BmId, ModelCallAudit>,

@@ -226,6 +226,19 @@ impl<'a> Broker<'a> {
         capability: &str,
         args: serde_json::Value,
     ) -> Result<PreparedCall, CallOutcome> {
+        // ADR-0037 生命周期门:binding 非 Active(排空/不可用)一律拒绝新调用。
+        // 与运行期健康门(World.provider_health,进程内按 provider 记)分工:
+        // 此处是「注册-切换-下线」的生命周期真相,持久且带代际。
+        if let Some(b) = self.registry.binding_of(capability)
+            && b.status != BindingStatus::Active
+        {
+            return Err(CallOutcome::ProviderUnavailable {
+                message: format!(
+                    "能力 {capability} 处于 {:?} 生命周期态(排空/不可用),拒绝新调用",
+                    b.status
+                ),
+            });
+        }
         let decision = self.decide(ctx, capability, &args);
         let grant_id = match &decision {
             Decision::Allowed { grant_id } => grant_id.clone(),

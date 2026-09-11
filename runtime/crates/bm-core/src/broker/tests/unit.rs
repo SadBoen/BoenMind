@@ -364,3 +364,35 @@ fn unknown_capability_is_denied_without_approval_exit() {
         CallOutcome::Rejected { .. }
     ));
 }
+
+/// ADR-0037 生命周期门:binding 进 Draining/Unavailable 后,prepare 拒绝
+/// 新调用(ProviderUnavailable),即使权限本身允许。
+#[test]
+fn lifecycle_gate_rejects_draining_binding() {
+    let (mut reg, mut grants, clock, ids) = harness();
+    let ctx = CallContext::surface("surface:user");
+    // 基线:Active 可调用
+    {
+        let mut broker = Broker::new(&reg, &mut grants, &clock, &ids);
+        assert!(matches!(
+            broker.call(&ctx, "system.ro", json!({})),
+            CallOutcome::Completed { .. }
+        ));
+    }
+    // 排空后拒绝新调用
+    reg.begin_drain("system.ro").unwrap();
+    {
+        let mut broker = Broker::new(&reg, &mut grants, &clock, &ids);
+        assert!(matches!(
+            broker.call(&ctx, "system.ro", json!({})),
+            CallOutcome::ProviderUnavailable { .. }
+        ));
+    }
+    // 排空完成 -> Unavailable 同样拒绝
+    reg.finish_drain("system.ro").unwrap();
+    let mut broker = Broker::new(&reg, &mut grants, &clock, &ids);
+    assert!(matches!(
+        broker.call(&ctx, "system.ro", json!({})),
+        CallOutcome::ProviderUnavailable { .. }
+    ));
+}

@@ -124,6 +124,7 @@ mod r2_tombstone_tests {
             op_results: HashMap::new(),
             provider_health: HashMap::new(),
             cap_in_flight: HashMap::new(),
+            draining_caps: HashMap::new(),
             model_call_audit: HashMap::new(),
             session_chats: HashMap::new(),
             session_turn_totals: HashMap::new(),

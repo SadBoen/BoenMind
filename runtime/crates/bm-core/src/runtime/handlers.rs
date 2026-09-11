@@ -1187,7 +1187,12 @@ pub(crate) fn handle_capabilities_register(
                     .get(&capability)
                     .map(|e| e.saturating_add(1))
                     .unwrap_or(1);
-                let effective = w.registry.restore_binding(manifest, &instance, target);
+                let effective = w.registry.restore_binding(
+                    manifest,
+                    &instance,
+                    target,
+                    crate::registry::BindingStatus::Active,
+                );
                 // restore_binding 按「可丢失缓存」语义清空句柄,重新 attach。
                 let _ = w.registry.attach_handle(&capability, provider);
                 // 异步分道判定与启动注册同源(ADR-0033):mcp.* / *.async / skill.*。
@@ -1234,27 +1239,23 @@ pub(crate) fn handle_capabilities_unregister(
     w.gate_writes("能力注销")?;
     let mut removed: Vec<String> = Vec::new();
     for cap in capabilities {
-        let prior_binding = w.registry.binding_of(&cap).cloned();
-        let prior_manifest = w
-            .registry
-            .manifest_of(&cap)
-            .map(|m| serde_json::to_string(m).unwrap_or_default());
-        if w.registry.unregister(&cap) {
-            if let (Some(store), Some(binding)) = (w.store.clone(), prior_binding)
-                && let Err(e) =
-                    store.save_capability_binding(crate::ports::persist::CapabilityRow {
-                        capability: &cap,
-                        provider_instance_id: &binding.provider_instance_id,
-                        epoch: binding.epoch,
-                        status: "unavailable",
-                        manifest: &prior_manifest.unwrap_or_default(),
-                        updated_at: &format_ts(w.started_at),
-                    })
-            {
-                // 2026-09-05 口径统一:binding 摘除失败=重启后能力面漂移
-                tracing::error!(error = %e, capability = %cap, "能力 binding 墓碑落库失败,进入拒写态");
-                w.persist_poisoned = true;
+        // ADR-0037:有在途异步调用 -> 进排空(拒新调用,待全部落定后摘除),
+        // 不在在途调用中途拔路由;无在途 -> 直接摘除(现状)。
+        let in_flight: std::collections::HashSet<BmId> = w
+            .op_async_meta
+            .iter()
+            .filter(|(_, m)| m.capability == cap)
+            .map(|(id, _)| id.clone())
+            .collect();
+        if !in_flight.is_empty() {
+            if w.registry.begin_drain(&cap).is_ok() {
+                w.draining_caps.insert(cap.clone(), in_flight);
+                removed.push(cap);
             }
+            continue;
+        }
+        if w.registry.binding_of(&cap).is_some() {
+            crate::runtime::turn::remove_capability_binding(w, &cap);
             removed.push(cap);
         }
     }

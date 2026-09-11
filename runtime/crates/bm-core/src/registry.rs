@@ -256,14 +256,50 @@ impl CapabilityRegistry {
         Ok(binding.epoch)
     }
 
+    /// ADR-0037:进入排空(卸载前置)。`Active`→`Draining`;此后 dispatch 生命
+    /// 周期门拒绝新调用,在途调用继续至落定,完成后再摘除——卸载不再在在途
+    /// 调用中途拔路由。非 `Active` 迁移非法。
+    pub fn begin_drain(&mut self, capability: &str) -> Result<(), RegistryError> {
+        let binding = self
+            .bindings
+            .get_mut(capability)
+            .ok_or(RegistryError::UnknownCapability)?;
+        if binding.status != BindingStatus::Active {
+            return Err(RegistryError::InvalidTransition);
+        }
+        binding.status = BindingStatus::Draining;
+        // 排空期句柄保留至摘除,但标记不健康——dispatch 生命周期门已拒新调用。
+        if let Some(c) = self.cache.get_mut(capability) {
+            c.healthy = false;
+        }
+        Ok(())
+    }
+
+    /// ADR-0037:排空完成。`Draining`→`Unavailable`(binding 行留墓碑,
+    /// epoch 不变——摘除由 `unregister` / 持久层完成,代际不回退)。
+    pub fn finish_drain(&mut self, capability: &str) -> Result<(), RegistryError> {
+        let binding = self
+            .bindings
+            .get_mut(capability)
+            .ok_or(RegistryError::UnknownCapability)?;
+        if binding.status != BindingStatus::Draining {
+            return Err(RegistryError::InvalidTransition);
+        }
+        binding.status = BindingStatus::Unavailable;
+        Ok(())
+    }
+
     /// 重启恢复入口(T3 由 SQLite capabilities 表驱动):以持久值恢复逻辑
     /// 目录;epoch 取 max(现值, 持久值)——不回退(ADR-0001 条件 2)。
+    /// ADR-0037:状态同样以持久值恢复(不再硬编码 `Active`),使重启后
+    /// `discover()` 的 status 与实际一致(unavailable 墓碑不误回升)。
     /// 返回生效 epoch。
     pub fn restore_binding(
         &mut self,
         manifest: CapabilityManifest,
         provider_instance_id: &str,
         epoch: u64,
+        status: BindingStatus,
     ) -> u64 {
         let name = manifest.capability.clone();
         let effective = match self.bindings.get(&name) {
@@ -276,7 +312,7 @@ impl CapabilityRegistry {
             Binding {
                 provider_instance_id: provider_instance_id.to_string(),
                 epoch: effective,
-                status: BindingStatus::Active,
+                status,
             },
         );
         // 运行时缓存不在恢复范围:句柄由注册流程重新 attach(可丢失语义)。
@@ -559,16 +595,80 @@ mod tests {
     fn restore_never_decreases_epoch() {
         let mut reg = CapabilityRegistry::new();
         // 持久层记录 epoch=7,运行时为空 → 恢复 7
-        let e = reg.restore_binding(manifest("system.echo"), "system.echo@0.1.0", 7);
+        let e = reg.restore_binding(
+            manifest("system.echo"),
+            "system.echo@0.1.0",
+            7,
+            BindingStatus::Active,
+        );
         assert_eq!(e, 7);
         // 运行时已有 epoch=2,持久值 7 → 生效 7(不回退)
-        let e = reg.restore_binding(manifest("system.echo"), "system.echo@0.1.0", 2);
+        let e = reg.restore_binding(
+            manifest("system.echo"),
+            "system.echo@0.1.0",
+            2,
+            BindingStatus::Active,
+        );
         assert_eq!(e, 7);
         // 之后再热替换 → 8(单调)
         let e = reg
             .switch_binding("system.echo", "system.echo@0.2.0", Arc::new(Echo))
             .unwrap();
         assert_eq!(e, 8);
+    }
+
+    /// ADR-0037:恢复携带持久状态——unavailable 墓碑不误回升为 Active。
+    #[test]
+    fn restore_preserves_persisted_status() {
+        let mut reg = CapabilityRegistry::new();
+        reg.restore_binding(
+            manifest("system.echo"),
+            "system.echo@0.1.0",
+            3,
+            BindingStatus::Unavailable,
+        );
+        assert_eq!(
+            reg.binding_of("system.echo").unwrap().status,
+            BindingStatus::Unavailable
+        );
+    }
+
+    /// ADR-0037:排空生命周期 Active→Draining→finish_drain 可达;排空期不可用;
+    /// 迁移非法性(非 Active 不得进 Draining,非 Draining 不得完成)。
+    #[test]
+    fn drain_lifecycle_is_reachable_and_guarded() {
+        let mut reg = CapabilityRegistry::new();
+        reg.register(manifest("system.echo"), "system.echo@0.1.0", Arc::new(Echo))
+            .unwrap();
+        assert!(reg.is_available("system.echo"));
+
+        reg.begin_drain("system.echo").unwrap();
+        assert_eq!(
+            reg.binding_of("system.echo").unwrap().status,
+            BindingStatus::Draining
+        );
+        assert!(!reg.is_available("system.echo"), "排空期不再可用");
+        // Draining 不得再次 begin_drain(迁移非法)
+        assert_eq!(
+            reg.begin_drain("system.echo"),
+            Err(RegistryError::InvalidTransition)
+        );
+
+        reg.finish_drain("system.echo").unwrap();
+        assert_eq!(
+            reg.binding_of("system.echo").unwrap().status,
+            BindingStatus::Unavailable
+        );
+        // 非 Draining 不得 finish_drain
+        assert_eq!(
+            reg.finish_drain("system.echo"),
+            Err(RegistryError::InvalidTransition)
+        );
+        // 未知能力
+        assert_eq!(
+            reg.begin_drain("system.nope"),
+            Err(RegistryError::UnknownCapability)
+        );
     }
 
     #[test]

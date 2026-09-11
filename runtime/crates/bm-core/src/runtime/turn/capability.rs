@@ -429,6 +429,46 @@ pub(crate) fn capability_call_inner(
     // 调用方(任务结果流水等)不得再从无序容器反查(H2 证据链错挂根因)。
     (op_id, outcome)
 }
+/// ADR-0037:排空收敛。在途集合已清空的能力完成摘除(Draining→摘除+墓碑)。
+/// 单写者回路上调用,与结算同序。
+pub(crate) fn settle_draining_caps(w: &mut World) {
+    let done: Vec<String> = w
+        .draining_caps
+        .iter()
+        .filter(|(_, ops)| !ops.iter().any(|id| w.op_async_meta.contains_key(id)))
+        .map(|(cap, _)| cap.clone())
+        .collect();
+    for cap in done {
+        w.draining_caps.remove(&cap);
+        let _ = w.registry.finish_drain(&cap);
+        remove_capability_binding(w, &cap);
+    }
+}
+
+/// 摘除 binding 并落 unavailable 墓碑(ADR-0032 注销墓碑化)。调用前须已
+/// 从 registry 逻辑目录可摘;prior 值在摘除前捕获。
+pub(crate) fn remove_capability_binding(w: &mut World, cap: &str) {
+    let prior_binding = w.registry.binding_of(cap).cloned();
+    let prior_manifest = w
+        .registry
+        .manifest_of(cap)
+        .map(|m| serde_json::to_string(m).unwrap_or_default());
+    if w.registry.unregister(cap)
+        && let (Some(store), Some(binding)) = (w.store.clone(), prior_binding)
+        && let Err(e) = store.save_capability_binding(crate::ports::persist::CapabilityRow {
+            capability: cap,
+            provider_instance_id: &binding.provider_instance_id,
+            epoch: binding.epoch,
+            status: "unavailable",
+            manifest: &prior_manifest.unwrap_or_default(),
+            updated_at: &format_ts(w.started_at),
+        })
+    {
+        tracing::error!(error = %e, capability = %cap, "能力 binding 墓碑落库失败,进入拒写态");
+        w.persist_poisoned = true;
+    }
+}
+
 pub(crate) fn handle_provider_call(
     w: &mut World,
     operation_id: BmId,
@@ -543,6 +583,8 @@ pub(crate) fn handle_provider_call(
             }
         }
     }
+    // ADR-0037:本次结算可能清空排空能力的在途集合 -> 收敛摘除。
+    settle_draining_caps(w);
 }
 pub(crate) fn handle_capability_cancel(
     w: &mut World,
@@ -633,6 +675,8 @@ pub(crate) fn handle_capability_cancel(
         Some(ErrorCode::Cancelled),
         None,
     );
+    // ADR-0037:取消即结算,排空能力可能在途集合清空 -> 收敛摘除。
+    settle_draining_caps(w);
     Ok(wire::CapabilityCancelResult {
         operation_id: params.operation_id,
         state: "cancelled".into(),

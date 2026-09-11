@@ -16,6 +16,7 @@ pub(super) use audit::{
     content_trunc_with, emit_capability_invoked, emit_capability_invoked_with,
     emit_model_call_error_audit, error_code_of, sha256_hex,
 };
+pub(crate) use capability::remove_capability_binding;
 pub(super) use capability::{
     capability_call_inner, dispatch_capability, fail_capability_call, handle_capability_call,
     handle_capability_cancel, handle_provider_call, handle_provider_progress, persist_grant,

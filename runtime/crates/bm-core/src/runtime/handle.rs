@@ -72,6 +72,7 @@ impl RuntimeHandle {
             op_results: HashMap::new(),
             provider_health: HashMap::new(),
             cap_in_flight: HashMap::new(),
+            draining_caps: HashMap::new(),
             model_call_audit: HashMap::new(),
             session_chats: HashMap::new(),
             session_turn_totals: HashMap::new(),
@@ -146,7 +147,14 @@ impl RuntimeHandle {
                 .get(&capability)
                 .map(|e| e.saturating_add(1))
                 .unwrap_or(1);
-            let effective = world.registry.restore_binding(manifest, &instance, target);
+            // ADR-0037:启动重装 = 新实例上线,重置为 Active(持久墓碑在注册
+            // 装载路径表示「上次是运行时摘除」,而本路径正以新实例重新装配)。
+            let effective = world.registry.restore_binding(
+                manifest,
+                &instance,
+                target,
+                crate::registry::BindingStatus::Active,
+            );
             registered.push((capability.clone(), provider));
             if let Some(store) = &world.store {
                 // 启动期:重启后 binding 随 --mcp-config 重装自然恢复,仅告警
