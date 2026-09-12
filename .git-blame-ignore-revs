@@ -8,3 +8,7 @@
 # 6c7184b (2026-09-09) issue#24: bm-testkit 28 个测试文件 {category}_{feature} 统一改名,
 # 语义零变化(455 测试全绿)。
 6c7184bebab8919780f6b3a3f32d74f7197b5c94
+
+# d012f3f (2026-09-13) cargo fmt 全量补格式 + doc 注释续行缩进,
+# 语义零变化(修复 CI fmt/clippy 门红;语义修复在 c07b1a4 分离提交)。
+d012f3f8b4ec600adcca9e824d8b0e3737796b1f
