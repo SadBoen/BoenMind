@@ -262,9 +262,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         capabilities.extend(collected);
         mcp_loaded = outcome.note_loaded;
         for f in &outcome.failed {
-            eprintln!(
-                "[MCP] 装载失败 (已跳过): {}",
-                f["error"].as_str().unwrap_or("")
+            // issue #81:插件装载失败统一 target:"plugin"(与 bm-providers 装载面同口径),
+            // RUST_LOG=plugin=info 一条命令即可看全插件装载/卸载/失败。
+            tracing::warn!(
+                target: "plugin",
+                server = f["name"].as_str().unwrap_or(""),
+                error = f["error"].as_str().unwrap_or(""),
+                "MCP 装载失败(已跳过)"
             );
         }
         mcp_executor = Some(hub.clone() as Arc<dyn bm_core::ports::AsyncCapabilityExecutor>);
@@ -461,7 +465,7 @@ fn load_skill_scripts(
     let manager = match bm_providers::skill_wasm::SkillScriptManager::new(limits.clone()) {
         Ok(m) => Arc::new(m),
         Err(e) => {
-            eprintln!("[Skill] 执行面初始化失败(已跳过): {e}");
+            tracing::warn!(target: "plugin", error = %e, "wasm 执行面初始化失败(已跳过)");
             return (None, Vec::new());
         }
     };

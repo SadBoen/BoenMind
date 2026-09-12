@@ -205,17 +205,17 @@ fn spawn_generation(
  // async-signal-safe 操作)。失败只告警不阻断(fail-open,与「单插件
  // 失败不中止装载」一致);Windows 的 Job Object 需 pid,spawn 后施加。
     if let Err(e) = bm_sandbox::pre_spawn(&mut cmd, &sandbox) {
-        tracing::warn!(command = %command, error = %e, "MCP 子进程 rlimit 施加失败(继续,不加限)");
+        tracing::warn!(target: "plugin", command = %command, error = %e, "MCP 子进程 rlimit 施加失败(继续,不加限)");
     }
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("MCP 子进程启动失败: {e}"))?;
-    tracing::info!(pid = ?child.id(), command = %command, generation = no, "MCP 子进程已拉起");
+    tracing::info!(target: "plugin", pid = ?child.id(), command = %command, generation = no, "MCP 子进程已拉起");
  // ADR-0035 §4:Windows 对已 spawn 的子进程纳入 Job Object(内存/活动进程
  // 上限 + KILL_ON_JOB_CLOSE)。守卫随本代子进程看护任务同寿命。
     let sandbox_guard = child.id().map(|pid| {
         let g = bm_sandbox::post_spawn(pid, &sandbox);
-        tracing::info!(pid, command = %command, "MCP 子进程资源上限已施加");
+        tracing::info!(target: "plugin", pid, command = %command, "MCP 子进程资源上限已施加");
         g
     });
     let stdin = child.stdin.take().ok_or("MCP 子进程 stdin 不可用")?;
@@ -233,16 +233,16 @@ fn spawn_generation(
         let _sandbox_guard = sandbox_guard;
         tokio::select! {
             status = child.wait() => {
-                tracing::info!(command = %command_owned, status = ?status, "MCP 子进程退出");
+                tracing::info!(target: "plugin", command = %command_owned, status = ?status, "MCP 子进程退出");
             }
             _ = kill_rx => {
                 if let Err(e) = child.start_kill() {
-                    tracing::warn!(command = %command_owned, error = %e, "MCP 子进程 kill 失败");
+                    tracing::warn!(target: "plugin", command = %command_owned, error = %e, "MCP 子进程 kill 失败");
                 }
                 if let Err(e) = child.wait().await {
-                    tracing::warn!(command = %command_owned, error = %e, "MCP 子进程 wait 失败(疑似残留)");
+                    tracing::warn!(target: "plugin", command = %command_owned, error = %e, "MCP 子进程 wait 失败(疑似残留)");
                 }
-                tracing::info!(command = %command_owned, "MCP 子进程被终止(reload/换装/销毁)");
+                tracing::info!(target: "plugin", command = %command_owned, "MCP 子进程被终止(reload/换装/销毁)");
             }
         }
     });

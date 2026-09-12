@@ -159,7 +159,7 @@ impl SkillScriptManager {
             return Vec::new();
         };
         let Ok(items) = serde_json::from_str::<Value>(&text) else {
-            tracing::warn!(path = %decl_path.display(), "wasm 插件声明解析失败(已跳过)");
+            tracing::warn!(target: "plugin", path = %decl_path.display(), "wasm 插件声明解析失败(已跳过)");
             return Vec::new();
         };
  // ADR-0042:装载前过冻结 schema 门(与
@@ -167,7 +167,7 @@ impl SkillScriptManager {
         if let Err(e) =
             bm_contract::schemas::validate(bm_contract::registries::WASM_PLUGIN_SCHEMA, &items)
         {
-            tracing::warn!(path = %decl_path.display(), error = %e,
+            tracing::warn!(target: "plugin", path = %decl_path.display(), error = %e,
                 "wasm 插件声明违反合同(拒绝装载)");
             return Vec::new();
         }
@@ -184,14 +184,14 @@ impl SkillScriptManager {
             };
             let provider = it["provider"].as_str().unwrap_or(capability);
             let Some(wasm_rel) = it["wasm"].as_str() else {
-                tracing::warn!(capability = %capability, "wasm 插件未声明 wasm 字段(已跳过)");
+                tracing::warn!(target: "plugin", capability = %capability, "wasm 插件未声明 wasm 字段(已跳过)");
                 continue;
             };
             let timeout_ms = it["timeout_ms"].as_u64().unwrap_or(self.default_timeout_ms);
             if let Err(e) =
                 self.register_wasm(provider, capability, &root.join(wasm_rel), root, timeout_ms)
             {
-                tracing::warn!(capability = %capability, error = %e, "wasm 插件装载失败(已跳过)");
+                tracing::warn!(target: "plugin", capability = %capability, error = %e, "wasm 插件装载失败(已跳过)");
                 continue;
             }
             let decl = WasmDecl {
@@ -230,11 +230,11 @@ impl SkillScriptManager {
             };
             match decl.synthesize() {
                 Ok(m) => {
-                    tracing::info!(capability = %capability, provider = %provider, "wasm 插件已装载");
+                    tracing::info!(target: "plugin", capability = %capability, provider = %provider, "wasm 插件已装载");
                     out.push(m);
                 }
                 Err(e) => {
-                    tracing::warn!(capability = %capability, error = %e, "wasm 插件 manifest 非法(已跳过)");
+                    tracing::warn!(target: "plugin", capability = %capability, error = %e, "wasm 插件 manifest 非法(已跳过)");
                 }
             }
         }

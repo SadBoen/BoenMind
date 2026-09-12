@@ -191,7 +191,7 @@ impl McpHub {
             }
  // #3:协商——响应版本不在已知集则告警不拒(工具调用面版本间兼容)
             if !KNOWN_PROTOCOL_VERSIONS.contains(&version.as_str()) {
-                tracing::warn!(server, version = %version, "MCP server 响应未知协议版本,按兼容继续");
+                tracing::warn!(target: "plugin", server, version = %version, "MCP server 响应未知协议版本,按兼容继续");
             }
             transport.remember_init(init.clone());
             transport
@@ -244,7 +244,7 @@ impl McpHub {
                         );
                         manifests.push(m);
                     }
-                    None => tracing::warn!(server, tool = %name, "MCP 工具名不合规,拒注册"),
+                    None => tracing::warn!(target: "plugin", server, tool = %name, "MCP 工具名不合规,拒注册"),
                 }
             }
         }
@@ -600,7 +600,7 @@ pub fn load_mcp_setups(
         if let Err(e) =
             bm_contract::schemas::validate(bm_contract::registries::MCP_SERVER_SCHEMA, item)
         {
-            tracing::warn!(server = %name, error = %e, "MCP 配置项合同校验失败(已跳过)");
+            tracing::warn!(target: "plugin", server = %name, error = %e, "MCP 配置项合同校验失败(已跳过)");
             continue;
         }
 
@@ -615,7 +615,7 @@ pub fn load_mcp_setups(
             match bm_core::ports::SecretStore::get(store, tok_ref) {
                 Ok(val) => bearer_token = Some(val),
                 Err(e) => {
-                    tracing::warn!(server = %name, secret_ref = %tok_ref, error = ?e, "MCP bearer_token 解析失败(已跳过)");
+                    tracing::warn!(target: "plugin", server = %name, secret_ref = %tok_ref, error = ?e, "MCP bearer_token 解析失败(已跳过)");
                     continue;
                 }
             }
@@ -626,7 +626,7 @@ pub fn load_mcp_setups(
         if let Some(env) = item.get("env").and_then(|v| v.as_object()) {
             for (k, v) in env {
                 let Some(ref_) = v.as_str() else {
-                    tracing::warn!(server = %name, key = %k, "MCP env 值不是字符串(已跳过该服务)");
+                    tracing::warn!(target: "plugin", server = %name, key = %k, "MCP env 值不是字符串(已跳过该服务)");
                     env_err = true;
                     break;
                 };
@@ -635,7 +635,7 @@ pub fn load_mcp_setups(
                         env_resolved.insert(k.clone(), value);
                     }
                     Err(e) => {
-                        tracing::warn!(server = %name, key = %k, secret_ref = %ref_, error = ?e,
+                        tracing::warn!(target: "plugin", server = %name, key = %k, secret_ref = %ref_, error = ?e,
                             "MCP env 密钥引用解析失败(已跳过该服务)");
                         env_err = true;
                         break;
@@ -653,7 +653,7 @@ pub fn load_mcp_setups(
             .get("trust")
             .and_then(|v| v.as_str())
             .unwrap_or("explicit-config");
-        tracing::info!(server = %name, trust = %trust, "MCP 装载 trust(来源显式配置)");
+        tracing::info!(target: "plugin", server = %name, trust = %trust, "MCP 装载 trust(来源显式配置)");
 
  // 外部评审
  // 「校验目标」哈希,不符拒载(防安装后被替换)。校验目标 = payload(若
@@ -664,13 +664,13 @@ pub fn load_mcp_setups(
             match resolve_integrity_target(item) {
                 Ok(target) => {
                     if let Err(e) = verify_integrity(&target, expected) {
-                        tracing::warn!(server = %name, target = %target, error = %e,
+                        tracing::warn!(target: "plugin", server = %name, target = %target, error = %e,
                             "MCP 完整性校验不符(已跳过,疑似被替换)");
                         continue;
                     }
                 }
                 Err(e) => {
-                    tracing::warn!(server = %name, error = %e, "MCP 完整性校验目标不明确(已跳过)");
+                    tracing::warn!(target: "plugin", server = %name, error = %e, "MCP 完整性校验目标不明确(已跳过)");
                     continue;
                 }
             }
