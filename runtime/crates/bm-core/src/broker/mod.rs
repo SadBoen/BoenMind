@@ -28,7 +28,7 @@ mod predicate;
 mod types;
 
 pub use ledger::GrantLedger;
-pub use predicate::provider_fn;
+pub use predicate::{provider_fn, provider_fn_with_meta};
 pub use types::{
     CallContext, CallCredential, CallOutcome, Decision, DenyReason, Lease, LeaseError,
     PreparedCall, TrustViolation,

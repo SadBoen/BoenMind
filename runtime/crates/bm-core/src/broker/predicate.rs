@@ -38,6 +38,31 @@ pub fn provider_fn(
     Arc::new(F(Box::new(f)))
 }
 
+/// 同 [`provider_fn`],但**声明插件身份**(ADR-0041):让内置/装配型 provider
+/// 也能回答「这是什么类型的扩展」。闭包型 provider 无自有状态可释放,故不暴露
+/// `shutdown`(缺省空实现即为正确语义)。
+pub fn provider_fn_with_meta(
+    meta: bm_contract::plugin::PluginMeta,
+    f: impl Fn(serde_json::Value) -> Result<serde_json::Value, String> + Send + Sync + 'static,
+) -> Arc<dyn crate::registry::CapabilityProvider> {
+    struct F {
+        meta: bm_contract::plugin::PluginMeta,
+        f: Box<dyn Fn(serde_json::Value) -> Result<serde_json::Value, String> + Send + Sync>,
+    }
+    impl crate::registry::CapabilityProvider for F {
+        fn invoke(&self, args: serde_json::Value) -> Result<serde_json::Value, String> {
+            (self.f)(args)
+        }
+        fn plugin_meta(&self) -> Option<bm_contract::plugin::PluginMeta> {
+            Some(self.meta.clone())
+        }
+    }
+    Arc::new(F {
+        meta,
+        f: Box::new(f),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

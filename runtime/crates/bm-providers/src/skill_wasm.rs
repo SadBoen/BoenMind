@@ -252,6 +252,9 @@ fn run_wasi(
 
 impl SkillScriptManager {
     /// manifests → 注册对(占位 Provider;真正执行走本管理器异步分道)。
+    ///
+    /// ADR-0041:每个 wasm 插件以 `PluginKind::Tool` 声明身份,id 取 manifest
+    /// 的 provider 字段(即 `skill.<skill_id>`),使内核能回答「这是谁提供的扩展」。
     pub fn capability_entries(
         manifests: Vec<CapabilityManifest>,
     ) -> Vec<(
@@ -261,10 +264,15 @@ impl SkillScriptManager {
         manifests
             .into_iter()
             .map(|m| {
-                (
-                    m,
-                    bm_core::broker::provider_fn(|_| Err("skill 能力仅限异步路径".into())),
-                )
+                let meta = bm_contract::plugin::PluginMeta::new(
+                    m.provider.clone(),
+                    m.version.clone(),
+                    bm_contract::plugin::PluginKind::Tool,
+                );
+                let handle = bm_core::broker::provider_fn_with_meta(meta, |_| {
+                    Err("skill 能力仅限异步路径".into())
+                });
+                (m, handle)
             })
             .collect()
     }
@@ -429,6 +437,32 @@ mod tests {
             bm_contract::capability::ApprovalRequirement::Required,
             "副作用脚本必须审批"
         );
+    }
+
+    // ADR-0041:wasm 插件以 Tool 身份注册,内核可读到「谁提供」。
+    #[test]
+    fn capability_entries_declare_plugin_identity() {
+        let mgr = SkillScriptManager::new().expect("engine");
+        let def: SkillDefinition = serde_json::from_value(serde_json::json!({
+            "skill_id": "units",
+            "name": "换算",
+            "instruction": "x",
+            "scripts": [{
+                "name": "convert",
+                "path": "scripts/convert.wasm",
+                "effect": "read-only",
+                "input_schema": {"type": "object"},
+                "output_schema": {"type": "object"}
+            }]
+        }))
+        .expect("合法");
+        let manifests = mgr
+            .manifests_for("units", def.scripts.as_ref().unwrap())
+            .expect("manifests");
+        let entries = SkillScriptManager::capability_entries(manifests);
+        let meta = entries[0].1.plugin_meta().expect("wasm 插件必须有身份");
+        assert_eq!(meta.id, "skill.units");
+        assert_eq!(meta.kind, bm_contract::plugin::PluginKind::Tool);
     }
 
     // P1-10(2026-09-07 架构评审):`..` 越出技能根目录的脚本路径必须拒绝。

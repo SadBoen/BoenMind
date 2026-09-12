@@ -94,6 +94,14 @@ impl CapabilityProvider for ExecPlaceholder {
     fn invoke(&self, _args: Value) -> Result<Value, String> {
         Err("system.exec/job_output 仅限运行时 turn 循环经审批后调用".into())
     }
+    /// ADR-0041:声明插件身份(执行体异步在 ExecExecutor,此处为同步占位)。
+    fn plugin_meta(&self) -> Option<bm_contract::plugin::PluginMeta> {
+        Some(bm_contract::plugin::PluginMeta::new(
+            "kernel.exec",
+            env!("CARGO_PKG_VERSION"),
+            bm_contract::plugin::PluginKind::Tool,
+        ))
+    }
 }
 
 /// 异步执行体:spawn 宿主 shell 跑命令(前台)+ 后台作业收取(system.job_output)。

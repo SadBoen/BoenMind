@@ -144,6 +144,14 @@ impl CapabilityProvider for FsPlaceholder {
     fn invoke(&self, _args: Value) -> Result<Value, String> {
         Err("fs.* 仅限运行时 turn 循环经异步路径调用".into())
     }
+    /// ADR-0041:声明插件身份(执行体异步在 FsExecutor,此处为同步占位)。
+    fn plugin_meta(&self) -> Option<bm_contract::plugin::PluginMeta> {
+        Some(bm_contract::plugin::PluginMeta::new(
+            "kernel.fs",
+            env!("CARGO_PKG_VERSION"),
+            bm_contract::plugin::PluginKind::Tool,
+        ))
+    }
 }
 
 /// 异步执行体:每次调用从工作区注册表重建沙箱根(增删工作区免重启),

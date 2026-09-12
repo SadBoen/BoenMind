@@ -11,7 +11,7 @@
 //! - system.danger.purge   high-risk-command    恒审批(Broker 双保险兜住)
 
 use bm_contract::capability::CapabilityManifest;
-use bm_core::broker::provider_fn;
+use bm_core::broker::{provider_fn, provider_fn_with_meta};
 use bm_core::registry::CapabilityProvider;
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -253,7 +253,14 @@ pub fn model_invoke_cap() -> (CapabilityManifest, Arc<dyn CapabilityProvider>) {
                 }
             }),
         ),
-        provider_fn(|_args| Err("model.invoke 仅限运行时 turn 循环调用".to_string())),
+        provider_fn_with_meta(
+            bm_contract::plugin::PluginMeta::new(
+                "kernel.model.invoke",
+                env!("CARGO_PKG_VERSION"),
+                bm_contract::plugin::PluginKind::Connector,
+            ),
+            |_args| Err("model.invoke 仅限运行时 turn 循环调用".to_string()),
+        ),
     )
 }
 

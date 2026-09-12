@@ -161,6 +161,14 @@ impl CapabilityProvider for ContextCompressProvider {
     fn invoke(&self, args: Value) -> Result<Value, String> {
         self.compress(&args)
     }
+    /// ADR-0041:声明插件身份(内核内置的同步工具型能力)。
+    fn plugin_meta(&self) -> Option<bm_contract::plugin::PluginMeta> {
+        Some(bm_contract::plugin::PluginMeta::new(
+            "kernel.context-compress",
+            env!("CARGO_PKG_VERSION"),
+            bm_contract::plugin::PluginKind::Tool,
+        ))
+    }
 }
 
 fn manifest() -> CapabilityManifest {
