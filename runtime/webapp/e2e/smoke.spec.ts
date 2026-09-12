@@ -319,6 +319,40 @@ test.describe("设置中心", () => {
     await expect(page.getByText("demo_server").first()).toBeVisible();
   });
 
+  test("插件页:描述直读后端 manifest(ADR-0055 去镜像)", async ({ page }) => {
+    // 后端在 /admin/capabilities 给出 description → 页面据实渲染,而非前端
+    // 硬编码镜像表(该表已删)。锚定后端描述原文以证直读。
+    // 注:mockAdmin 亦注册 /admin/capabilities;Playwright 后注册者优先,
+    // 故本覆盖必须在 mockAdmin 之后注册。
+    await mockAdmin(page);
+    await page.route("**/admin/capabilities", (route) =>
+      route.fulfill({
+        json: {
+          builtin: [
+            {
+              name: "fs.read",
+              effect: "read-only",
+              idempotent: true,
+              approval: "not-required",
+              description: "后端声明:读取工作区文件(直读自 manifest)",
+              plugin_kind: "tool",
+              plugin_id: "kernel.fs",
+              plugin_version: "0.0.17",
+            },
+          ],
+          mcp: [],
+        },
+      }),
+    );
+    await page.goto("/");
+    await page.locator('[data-slot="open-settings"]').evaluate((el: HTMLElement) => el.click());
+    await page.getByRole("button", { name: "插件", exact: true }).click();
+    await expect(page.getByText("fs.read").first()).toBeVisible();
+    await expect(
+      page.getByText("后端声明:读取工作区文件(直读自 manifest)").first(),
+    ).toBeVisible();
+  });
+
   test("日志页:三个页签存在", async ({ page }) => {
     await mockAdmin(page);
     await page.goto("/");

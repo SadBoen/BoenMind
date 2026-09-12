@@ -180,8 +180,14 @@ export function PluginsPage() {
  // 1. 系统内置能力(排除 wasm 插件能力,避免重复与错标「禁卸载」)
     for (const b of builtinList) {
       if (wasmNames.has(b.name)) continue;
-      // ADR-0055:描述直接来自后端 manifest(不再前端硬编码 BUILTIN_DESC 镜像);
-      // 缺省按 effect/审批语义兜底。
+      // ADR-0055:描述直接来自后端 manifest(不再前端硬编码 BUILTIN_DESC 镜像)。
+      // detail 展示后端 description(与模型所见同源);缺省按审批/effect 兜底。
+      const effectLabel =
+        b.approval === "required"
+          ? "需审批"
+          : b.effect === "read-only"
+            ? "只读直通"
+            : b.effect ?? "系统基础能力";
       const desc =
         b.description ??
         (b.approval === "required"
@@ -189,17 +195,11 @@ export function PluginsPage() {
           : b.effect === "read-only"
             ? "只读直通能力"
             : "系统基础能力");
-      const effectLabel =
-        b.approval === "required"
-          ? "需审批"
-          : b.effect === "read-only"
-            ? "只读直通"
-            : b.effect ?? "系统基础能力";
       list.push({
         id: `builtin:${b.name}`,
         name: b.name,
         type: "builtin",
-        detail: `${effectLabel}${b.idempotent ? " · 幂等" : ""}`,
+        detail: `${desc} · ${effectLabel}${b.idempotent ? " · 幂等" : ""}`,
         tools: [{ name: b.name, description: desc }],
         isOnline: true,
         pluginKind: b.plugin_kind,
