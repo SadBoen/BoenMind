@@ -1,3 +1,11 @@
+---
+status: accepted
+date: 2026-09-03
+summary: 内置能力严格封闭(仅保留系统内置命令执行 system.exec 作为过渡态例外)
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0020: 内置能力冻结与执行载荷纪律
 
 - 状态: Accepted(用户 2026-09-03 复核裁决)

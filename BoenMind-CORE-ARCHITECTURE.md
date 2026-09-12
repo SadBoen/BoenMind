@@ -1562,13 +1562,13 @@ Runtime generation、状态迁移与回滚
 
 > **总线负责“发生了什么”和异步协作；注册表负责“谁提供什么”；Broker 负责“能不能调用以及调用谁”；Agent 只在需要理解和规划时介入；低风险、确定性的公开能力直接走 Capability Broker。**
 
-### 17.1 裁决复核（2026-08-28）与增补熔入
+### 17.1 裁决复核与增补熔入
 
-五条核心裁决（R1-R5）经 Zen consensus 三模型辩论复核：glm-5-turbo、gpt-5.6-luna、gemini-3.7-flash 三个模型家族分任架构师（钢人论证）、挑战者（安全与可靠性反驳）、实证研究者（以真实系统证据裁决），角色跨裁决轮换，两轮辩论（独立立场→交叉质证）+逐裁决合成。结论：R1 三权分立有条件维持，R2-R5 修订，无一条被推翻；辩论新增两条裁决——**ADR-0006 权限以合同显式化（元原则）**与 **ADR-0007 L0 自举豁免与升级信任链**。逐裁决结论、共识比分与条件见 `adr/README.md` 索引与各 ADR 文件；全程转录与终局合成已按 ADR-0027 移出仓（溯 git 史），结论速览存 `architecture/README.md`。
+R1-R5 五条核心裁决的复核结论：R1 三权分立**有条件维持**，R2-R5 **修订**，无一条被推翻；另增两条元裁决——**ADR-0006 权限以合同显式化**、**ADR-0007 L0 自举豁免与升级信任链**。逐条结论与现行状态以 `adr/README.md` 为准。
 
-三大结构性张力如实记录，供后续里程碑回看时优先审视：①权力分立与协调效率互斥；②极简内核与治理完备互斥；③唯一真源与投影时效互斥。
+三大结构性张力（回看时优先审视）：①权力分立与协调效率互斥；②极简内核与治理完备互斥；③唯一真源与投影时效互斥。
 
-各 ADR 对基线的修订（涉及 §2.2／§6.4／§7／§8.4／§9.5／§9.7／§10.1／§10.3／§11.2／§11.3／§13.4／§13.5／§13.7／§14.2）已熔入对应正文并标注 ADR 编号；ADR-0015 起这是对基线增补的唯一维护方式（不再使用追加式引注块）。外部系统对照验证结论与 S1-S10 修订建议见 §24 及 ADR-0008；S1-S10 的裁决状态台账见 `GitHub Issues (gh issue list)`。
+各 ADR 对基线的修订已熔入对应正文并标注 ADR 编号（ADR-0015 起为唯一维护方式，不再使用追加式引注块）；外部系统对照验证结论见 §24 与 ADR-0008，S1-S10 裁决状态以 GitHub Issues 台账为准。
 
 ## 18. 里程碑：阶段一 M0-M8 与阶段二批次
 
@@ -1586,8 +1586,6 @@ M0.6 性能与资源基线定标
 ```
 
 通过条件：合同可机器校验，日志可以读取和回放，且至少有一条端到端轨迹作为后续回归基线；扩展点六问与非目标清单生效，成为此后每个新功能的准入检查。
-
-交付记录（2026-08-28，tag `m0.2-contracts-frozen`）：M0.1-M0.6 全部交付——§1.1 非目标清单与 §2.3 扩展点六问即此后每个新功能的准入检查；合同库冻结 v1.0（`boenmind-contracts`，彼时 9 个 JSON 带 `x-frozen` 注解，随后续里程碑只增）；M0.3-M0.6 工件在 `boenmind-contracts/m0/`——三平台测试矩阵、提示注入用例集（PI-01..12）、威胁模型与数据信任分级（T-01..12）、性能与资源基线定标（P-01..08，数值由 M1 以 mock 模型回填）。
 
 ### M1：最小 Runtime 与单 Agent 闭环
 
@@ -1945,38 +1943,9 @@ Butler 向用户汇报，并保留可回放的工作记录
 
 所有架构裁决的增量（新裁决、修订、条件与验收）以 ADR 记录于 `adr/`；本文档正文只保留稳定结论，两者冲突时以更新的 ADR 为准。
 
-| ADR | 标题 | 状态 |
-|---|---|---|
-| ADR-0001 | Registry/Broker/Bus 三权分立 | accepted-with-conditions |
-| ADR-0002 | Butler 仅持协调权，Coordinator 为受限队长 | accepted-with-conditions |
-| ADR-0003 | L0 独立控制面与 Runtime generation 升级回滚 | accepted-with-conditions |
-| ADR-0004 | Task 规范状态归 L2，任务板仅为投影 | accepted-with-conditions |
-| ADR-0005 | 万物皆插件：内核只含合同与最小机制 | accepted-with-conditions |
-| ADR-0006 | 权限以合同显式化（元原则） | accepted |
-| ADR-0007 | L0 自举豁免与升级信任链 | accepted-with-conditions |
-| ADR-0008 | 架构即代码与外部实证验证 | accepted |
-| ADR-0009 | 部署形态与 Surface 策略：VPS 托管／Web＋TUI Surface／Windows 桌面壳 | accepted-with-conditions |
-| ADR-0010 | 第三方模型网关信任边界 | accepted-with-conditions |
-| ADR-0011 | 首批真实 App 以 MCP Server 形态接入 | accepted |
-| ADR-0012 | 配置管理 API（随 M10 dsh 线未提交工作归档） | archived（编号永久跳空，存 `archive/m10-dsh-frontend` 分支，见 ADR-0013 编号说明） |
-| ADR-0013 | 弃用 dsh 复刻前端 | accepted |
-| ADR-0014 | W 序列 WEBUI：assistant-ui 自建壳 | accepted |
-| ADR-0015 | 文档体系整理：熔入式修订与三层附页 | accepted |
-| ADR-0016 | Skill v0.2 脚本执行架构与 Broker 管线覆盖 | accepted |
-| ADR-0017 | context-mode Rust MCP 官方插件 | accepted |
-| ADR-0018 | 工作区注册表与会话级工作目录绑定 | accepted |
-| ADR-0019 | system.exec 内置命令执行工具(审批类) | accepted |
-| ADR-0020 | 内置能力封闭清单与例外裁决 | accepted |
-| ADR-0021 | fs.* 文件操作工具集内置化(收编 code-tools,沙箱=工作区注册表) | accepted |
-| ADR-0022 | 工具调用原生协议还原与工具描述治理(role:tool+tool_call_id) | accepted |
-| ADR-0023 | 官方随包插件默认安装与生命周期管控 | accepted |
-| ADR-0024 | 运行时限制集中配置面(limits.json) | accepted |
-| ADR-0025 | 长命令后台转轨(run_in_background 与超限自动转轨) | accepted |
-| ADR-0026 | 文档纪律:规范与叙事分离(HISTORY 单行制、SETTLED 查重清单、评审必读入口) | accepted |
-| ADR-0027 | 文档极简纪律:仓库只存规范、方向与欠账(过程文档交付即删,交付全史=git) | accepted |
+ADR 索引、状态与一句话决策以 **`adr/README.md` 为唯一权威**；本节不复制该表（复制即漂移源）。现行 = accepted 且未被取代；终态归档于 `adr/archive/`（ADR-0040）。
 
 ## 24. 架构模型即代码与外部实证验证
 
 - **模型即代码**：全文架构图以 Structurizr C4 DSL 维护于 `architecture/boenmind.c4`（structurizr-dsl 4.1.0 解析验证通过；冻结时点 66 元素/111 关系/11 视图，ADR-0009 后演进出 85 元素/128 关系/12 视图，演进口径以 `architecture/README.md` 为准：SystemContext／Container／L2Components＋六个动态视图＋三个部署环境）。任何 Structurizr 兼容渲染器导入即可出图；修改架构先改模型（ADR-0008；VPS 部署环境自 ADR-0009 起）。
-- **外部实证验证**：以 DeepWiki 对照 Erlang/OTP、Kubernetes、VS Code 三个真实 runtime 系统验证 L0-L5 分层与插件热替换设计（验证报告已按 ADR-0027 移出仓溯 git 史）——C1-C8 逐条裁决：热替换与崩溃隔离（C7/C8）确认，分层与合同化（C1-C6）部分确认，无偏差；单写者租约与验证期禁副作用为本设计独有加强。修订建议 S1-S10 逐条裁决状态（S5/S9 已闭合，S3/S4/S8 部分采纳，余 proposed）以 `GitHub Issues (gh issue list)` 台账为准，只在里程碑回看时裁决，不自动采纳。
-- **辩论记录**：五条核心裁决的多模型辩论转录与跨裁决终局合成曾存 `architecture/debates/`，已按 ADR-0027 移出仓（溯 git 史）；裁决结论沉淀于 §17.1、`architecture/README.md` 速览与 `adr/` 各文件。
+- **外部实证验证**：以 DeepWiki 对照 Erlang/OTP、Kubernetes、VS Code 三个真实 runtime 系统验证 L0-L5 分层与插件热替换设计（验证报告已按 ADR-0027 移出仓溯 git 史）——C1-C8 逐条裁决：热替换与崩溃隔离（C7/C8）确认，分层与合同化（C1-C6）部分确认，无偏差；单写者租约与验证期禁副作用为本设计独有加强。修订建议 S1-S10 逐条裁决状态（S5/S9 已闭合，S3/S4/S8 部分采纳，余 proposed）以 GitHub Issues 台账为准，只在里程碑回看时裁决，不自动采纳。

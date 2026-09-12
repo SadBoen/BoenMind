@@ -1,3 +1,11 @@
+---
+status: accepted
+date: 2026-08-29
+summary: VPS 托管+Web/交互式 TUI Surface+Windows 壳;受限解除「无远程访问」
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0009 部署形态与 Surface 策略:VPS 托管、Web/TUI Surface、Windows 桌面壳
 
 - 状态: accepted-with-conditions

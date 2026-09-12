@@ -1,0 +1,43 @@
+# 白名单:仓库可提交面内允许存在的 .md 清单(ADR-0040)
+#
+# 规则:任何不在本清单、且可提交的 .md 会让 CI 的 doc-gate 红灯。
+#      新增文档 = 一次显式决策:先在本文件登记,再提交——文档增长不再默认发生。
+# 语法:精确路径,或 glob(`adr/ADR-*.md`);目录前缀用 `dir/**`。
+#
+# 四类权威(ADR-0040):规范 / 决策 / 进行中(Issues)/ 历史(git)。
+# 过程笔记一律落 .work/(gitignore),不入此清单。
+
+# ── 根与协作规范
+AGENTS.md
+README.md
+BoenMind-CORE-ARCHITECTURE.md
+.ai/context.md
+.ai/memory-policy.md
+.agents/skills/boenmind-dev/SKILL.md
+
+# ── 决策记录:新增 ADR 自动准入(glob);归档区为终态存档
+adr/README.md
+adr/ADR-*.md
+adr/archive/**
+
+# ── 架构与机器合同
+architecture/README.md
+boenmind-contracts/README.md
+boenmind-contracts/golden-traces/*.md
+boenmind-contracts/invariants/*.md
+boenmind-contracts/m0/*.md
+
+# ── 规范索引与实操备忘
+docs/architecture/decisions.md
+docs/development/PITFALLS.md
+
+# ── 里程碑导航(截图本体为 png,不在本清单)
+milestones/README.md
+milestones/W-ui-inventory.md
+
+# ── 交付面文档
+packaging/INSTALL.md
+scenarios/README.md
+shell/tauri/README.md
+plugins/mcp/web-multisearch/README.md
+plugins/mcp/context-inspector/README.md

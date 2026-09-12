@@ -1,3 +1,11 @@
+---
+status: superseded
+date: 2026-09-01
+summary: 基线增补熔入正文不挂引注块;HISTORY/PLAYBOOK/BACKLOG 三附页;milestones/README 导航
+supersedes: []
+superseded_by: [ADR-0040]
+---
+
 # ADR-0015: 文档体系整理——熔入式修订与三层附页
 
 - 状态: Accepted(2026-09-01,用户委托的文档整理轮)

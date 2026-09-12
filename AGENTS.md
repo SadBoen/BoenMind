@@ -14,7 +14,7 @@ BoenMind:个人生态的 AI Runtime / AI OS,当前为**阶段一(跨平台单软
 
 ```text
 BoenMind-CORE-ARCHITECTURE.md   第 0 层  架构基线:原则/边界/不变量;§17 裁决;§18 里程碑定义;§19 回看制度
-adr/                            第 0 层  架构决策记录 ADR-0001..0029(基线与 ADR 冲突时以更新的 ADR 为准)
+adr/                            第 0 层  架构决策记录 ADR-0001..0040(现行/已取代状态以 adr/README.md 为准;与基线冲突时以更新的 ADR 为准)
 architecture/                   第 0 层  C4 模型 boenmind.c4(拓扑唯一权威)
 boenmind-contracts/             第 1 层  机器可读合同(v1.0 冻结)+ validate.py 校验器
 docs/architecture/decisions.md  第 0 层  架构铁律唯一查重清单(15条,评审/审计前必读)
@@ -26,7 +26,7 @@ apps/                           第 3 层  真实 App:wiki_server/market_server/
 plugins/                        第 3 层  官方随包插件:web-multisearch、context-inspector
 shell/tauri/                    第 3 层  Windows 桌面壳(手工构建)
 .agents/skills/boenmind-dev/    技能    按任务类型的操作清单
-.github/                        CI      contracts-validate + apps 冒烟 + webapp lint + Rust 三平台矩阵 + release
+.github/                        CI      doc-gate + contracts-validate + apps 冒烟 + webapp lint + Rust 三平台矩阵 + release
 ```
 
 ## 新会话工作流

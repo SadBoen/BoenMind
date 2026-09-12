@@ -6,6 +6,20 @@ on:
   pull_request:
 
 jobs:
+  # ADR-0040:文档治理门——ADR 状态机 + 取代双向一致 + 归档一致 + 追踪白名单 + 治理自检。
+  # 此前四套文档治理全是纸面规则、零机器门,故必然被下一套推翻;本 job 把可机器
+  # 验证的部分固化为硬门(规则不再依赖自觉),并阻止治理门本身被静默摘除。
+  doc-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python scripts/doc_gate.py
+
   # S2: 合同库自身校验(R1-R4 全绿门)
   contracts-validate:
     runs-on: ubuntu-latest

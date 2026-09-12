@@ -1,3 +1,11 @@
+---
+status: accepted
+date: 2026-09-11
+summary: 注销墓碑化+注册按持久max+1续代+快照先行于落库+删物理删除端口+注册过冻结门禁+scope_label放行冒号分层(2026-09-11)
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0032: binding_epoch 代际连续性修复与 manifest 注册期冻结校验
 
 - 状态: Accepted（2026-09-11 架构评审报告风险 5/缺口①的属实项修复落地）

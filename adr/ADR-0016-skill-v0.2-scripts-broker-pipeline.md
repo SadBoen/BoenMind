@@ -1,3 +1,11 @@
+---
+status: accepted
+date: 2026-09-02
+summary: wasmtime 运行时沙箱+WASM 为主零 Python+全量纳入 Broker 七步管线
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0016: Skill v0.2 脚本执行架构与 Broker 管线覆盖
 
 - 状态: Accepted (用户 2026-09-02 裁决, 待实施前确认)

@@ -4,7 +4,7 @@
 
 - **AI / 新会话入口**:[AGENTS.md](AGENTS.md) —— 工作规程、文件地图、硬纪律
 - **人类阅读入口**:[BoenMind-CORE-ARCHITECTURE.md](BoenMind-CORE-ARCHITECTURE.md) —— 架构基线(§22 是大白话版)
-- 进度与欠账:交付史 = git tag/提交说明 · [GitHub Issues (gh issue list)](GitHub Issues (gh issue list)) —— 未结事项总台账 · [docs/architecture/decisions.md](docs/architecture/decisions.md) —— 已裁决查重清单
+- 进度与欠账:交付史 = git tag/提交说明 · GitHub Issues(`gh issue list`)—— 未结事项总台账 · [docs/architecture/decisions.md](docs/architecture/decisions.md) —— 已裁决查重清单
 - 实操备忘:[docs/development/PITFALLS.md](docs/development/PITFALLS.md) —— 启动命令、环境变量、踩坑清单
 - 快速导览:[adr/README.md](adr/README.md) · [architecture/README.md](architecture/README.md) · [boenmind-contracts/README.md](boenmind-contracts/README.md) · [milestones/README.md](milestones/README.md)
 

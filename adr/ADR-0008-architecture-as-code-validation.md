@@ -1,3 +1,11 @@
+---
+status: accepted
+date: 2026-08-28
+summary: C4 DSL 为唯一权威;C1-C8 验证成立;S1-S10 proposed
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0008 架构即代码与外部实证验证
 
 - 状态: accepted

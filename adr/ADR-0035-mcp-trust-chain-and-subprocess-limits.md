@@ -1,3 +1,11 @@
+---
+status: accepted
+date: 2026-09-11
+summary: trust 显式消费+payload 合同字段令 sha256 指向真实载荷(解释器条目 fail-closed)+扫描执行面 UI 显式化+子进程 Job Object/rlimit(2026-09-11)
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0035: MCP 插件信任链收口与子进程资源上限
 
 - 状态: Accepted（2026-09-11，issue #59 残余-3 与 issue #55 裁决）

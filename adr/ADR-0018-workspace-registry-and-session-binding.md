@@ -1,3 +1,11 @@
+---
+status: accepted
+date: 2026-09-03
+summary: config/workspaces.json 项目注册;AgentSpec/SendInput 只增 workspace 字段;回合级 system prompt 注入;探针无 shell
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0018: 工作区注册表与会话级工作目录绑定
 
 - 状态: Accepted（用户 2026-09-03 需求口述授权实施）

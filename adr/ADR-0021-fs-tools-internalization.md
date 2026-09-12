@@ -1,3 +1,11 @@
+---
+status: accepted
+date: 2026-09-04
+summary: 查/读/改收编内核(修订单 ADR-0020 清单范围,用户裁决);沙箱=工作区注册表;审批分级不变
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0021: 文件工具集内置化(fs.*)与 code-tools 插件退役
 
 - 状态: Accepted(用户 2026-09-04 复核裁决)

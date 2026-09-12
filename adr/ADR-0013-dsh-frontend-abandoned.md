@@ -1,3 +1,11 @@
+---
+status: accepted
+date: 2026-08-31
+summary: dsh 复刻 Web 前端全量删除(归档分支),换新参考界面重做
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0013:弃用 dsh 复刻 Web 前端,换新参考界面重做
 
 - 状态:已裁决(用户 2026-08-31);新参考界面待用户指定后另行入册

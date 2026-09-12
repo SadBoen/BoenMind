@@ -1,3 +1,11 @@
+---
+status: accepted
+date: 2026-09-11
+summary: manifest.execution_mode 落声明(缺省回退旧约定)+删前缀猜法+同步无 deadline 为显式非目标+CallContext 入端口记为方向不实施(2026-09-11)
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0036: 能力执行分道以合同声明为唯一真源
 
 - 状态: Accepted（2026-09-11，issue #39 与 issue #59 残余-1 的裁决与分期）

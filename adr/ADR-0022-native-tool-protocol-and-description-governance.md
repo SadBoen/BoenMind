@@ -1,3 +1,11 @@
+---
+status: accepted
+date: 2026-09-06
+summary: role:tool+tool_call_id/tool_calls 回喂/删防复读禁令/manifest.description 自描述/fs_edit edits 数组(2026-09-06)
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0022: 工具调用原生协议还原与工具描述治理
 
 - 状态: Accepted(用户 2026-09-06 明示「把修复与改进全都做完」,全权委托过夜交付)

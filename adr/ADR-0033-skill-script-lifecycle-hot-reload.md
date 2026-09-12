@@ -1,3 +1,11 @@
+---
+status: accepted
+date: 2026-09-11
+summary: provider 命名约定单源判定(mcp./.async/skill.)+unregister_skill+管理面热重载走墓碑续代+共享管理器实例(2026-09-11)
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0033: 技能脚本生命周期——skill.* 异步分道归位与热重载
 
 - 状态: Accepted（2026-09-11，issue #54 实施 + ADR-0016 第二步补正）

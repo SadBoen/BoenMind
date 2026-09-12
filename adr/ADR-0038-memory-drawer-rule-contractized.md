@@ -1,3 +1,11 @@
+---
+status: accepted
+date: 2026-09-11
+summary: manifest 增 authorization 声明(主体系留+读放宽),Broker 步 4.5 变解释器删硬编码规则;memory 仍不生产可达(2026-09-11)
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0038: memory 抽屉授权规则合同化
 
 - 状态: Accepted（2026-09-11，issue #36 / 审计台账 F-11 裁决）

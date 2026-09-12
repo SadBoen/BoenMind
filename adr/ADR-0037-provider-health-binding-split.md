@@ -1,3 +1,11 @@
+---
+status: accepted
+date: 2026-09-11
+summary: BindingStatus=生命周期/代际持久门,provider_health=运行期健康进程内门,不合并+卸载走 Draining 排空+dispatch 查 binding+restore 保真(2026-09-11)
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0037: Provider 健康与 Binding 状态的分工收口
 
 - 状态: Accepted（2026-09-11，issue #59 残余-2 裁决）

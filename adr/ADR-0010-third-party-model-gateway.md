@@ -1,3 +1,11 @@
+---
+status: accepted
+date: 2026-08-30
+summary: 接受 NewAPI 型网关为真实模型通道;内容视同对网关可见,不改 input_trust 语义
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0010:第三方中转网关作为模型 Provider
 
 - 状态:Accepted(2026-08-30)

@@ -1,3 +1,11 @@
+---
+status: accepted
+date: 2026-09-07
+summary: ~40 项硬编码限制收敛单文件+安全钳制+env>文件>代码默认+LimitsCell 热生效;设置页全量可编辑;exec 默认 120s/上限 600s 对齐业界(2026-09-07)
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0024: 运行时限制集中配置面(limits.json)
 
 - 状态: Accepted(用户 2026-09-07 裁决:一批交付、全部可编辑、默认值一步到位最优)

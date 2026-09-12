@@ -1,3 +1,11 @@
+---
+status: superseded
+date: 2026-09-08
+summary: 规范文档零编年史/HISTORY 单行制/SETTLED.md 唯一查重清单/评审必读入口收窄(2026-09-08)
+supersedes: []
+superseded_by: [ADR-0040]
+---
+
 # ADR-0026: 文档纪律——规范与叙事分离(评审上下文减负)
 
 - 状态: Accepted(用户 2026-09-08 裁决「文档不组织好,项目走不动」并批准重组方案)

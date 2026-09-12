@@ -1,3 +1,11 @@
+---
+status: accepted
+date: 2026-09-11
+summary: #43 维持 deferred/#45 批次2 待并发夹具/#46 产品级 OPEN/#53 路由后关账/#59-5 远期不立项(2026-09-11)
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0039: 阶段二候选产品面处置（壳扩展 / 协作网格 / 权限分级 / Surface 插件化）
 
 - 状态: Accepted（2026-09-11，一次性处置余下候选与远期项）

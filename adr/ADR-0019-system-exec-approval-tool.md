@@ -1,3 +1,11 @@
+---
+status: accepted
+date: 2026-09-03
+summary: 常规 shell 能力+每条命令审批卡;内置异步能力(.async);真沙箱仍归 ADR-0016
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0019: system.exec 内置命令执行工具(审批类)
 
 状态:accepted(2026-09-03,用户令「按常规设计,不用问我,一次性做到日常可用」)

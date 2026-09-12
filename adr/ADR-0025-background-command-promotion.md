@@ -1,3 +1,11 @@
+---
+status: accepted
+date: 2026-09-07
+summary: exec 增 run_in_background+超限自动转轨(Hermes 式);system.job_output 轮询收取(DSH 式);回合 prompt 注入作业摘要;不做主动推注入(2026-09-07)
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0025: 长命令后台转轨(run_in_background 与超限自动转轨)
 
 - 状态: Accepted(用户 2026-09-07 裁决「一批全含后台转轨」)

@@ -1,3 +1,11 @@
+---
+status: accepted
+date: 2026-08-30
+summary: App 以进程外 MCP stdio server 接入,不新增内核「App 对象」合同
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0011:首批真实 App 以 MCP Server 形态接入
 
 - 状态:Accepted(2026-08-30)

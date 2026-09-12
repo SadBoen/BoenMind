@@ -22,6 +22,10 @@ server.log
 # 本机浏览器调试工件(Edge profile / playwright),不入库
 .tools/
 
+# 过程笔记暂存区(评审报告/对比/会话草稿等),交付即清——见 scripts/work_clean.sh
+# 与 docs/doc-whitelist.txt:正式文档不落此处,此处内容随时可删,溯源 git 史
+.work/
+
 # W 系列 WebUI 壳子构建产物(源码在 runtime/webapp/src,构建入 dist)
 runtime/webapp/node_modules/
 runtime/webapp/dist/
