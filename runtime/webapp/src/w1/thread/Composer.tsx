@@ -90,7 +90,7 @@ export const Composer = forwardRef<ComposerHandle>(function Composer(_props, ref
           setSelWorkspace("");
         }
       })
-      // P1-30(2026-09-07 架构评审):下拉加载失败不再静默,console 告警
+      // P1-30:下拉加载失败不再静默,console 告警
       .catch((e) => console.warn("工作目录列表加载失败", e));
   };
 

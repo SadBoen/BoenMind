@@ -107,13 +107,13 @@ impl RuntimeHandle {
                 report = Some(r);
             }
         }
-        // 重启续聊(2026-09-06):会话对话台账自 context-log 重建——否则服务
+        // 重启续聊:会话对话台账自 context-log 重建——否则服务
         // 重启后界面能回放历史而模型失忆,体验分裂(台账纯内存的既知取舍闭环)
         crate::runtime::turn::rebuild_session_chats(&mut world);
         // M4:内置能力注册(启动面)+ 持久 binding/审批/授权恢复
         let caps = std::mem::take(&mut world.config.capabilities);
         let mut registered: Vec<(String, Arc<dyn CapabilityProvider>)> = Vec::new();
-        // binding 代际快照必须先于注册落库(2026-09-11 评审修复):此前先落
+        // binding 代际快照必须先于注册落库:此前先落
         // epoch=1 再读表恢复,历史 epoch 已被覆盖——重启代际永远停在 1。
         let persisted_epochs: std::collections::HashMap<String, u64> = match &world.store {
             Some(store) => rows_or_die(store.list_capability_bindings(), "capability_bindings")

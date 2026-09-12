@@ -304,7 +304,7 @@ async fn unbound_session_has_no_workspace_injection() {
     );
 }
 
-/// ⑤ 重启续聊配套(2026-09-06):会话绑定工作目录跨重启持久——重启后
+/// ⑤ 重启续聊配套:会话绑定工作目录跨重启持久——重启后
 /// 不带 override 的回合,system prompt 仍注入原绑定目录。
 #[tokio::test]
 async fn t_workspace_binding_persists_across_restart() {

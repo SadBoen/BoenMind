@@ -125,7 +125,7 @@ pub struct Usage {
     pub tokens_out: u64,
     /// 推理思考消耗(提供商 usage.completion_tokens_details.reasoning_tokens;
     /// 提供商不细分上报则为 None——前端如实显示「未上报」,不得估算冒充)。
-    /// context-inspector 复习批(2026-09-05)新增,合同 Minor 只增。
+    /// context-inspector 复习批新增,合同 Minor 只增。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tokens_reasoning: Option<u64>,
     /// 提示词缓存命中(提供商 usage.prompt_tokens_details.cached_tokens;

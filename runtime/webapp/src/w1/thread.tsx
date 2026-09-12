@@ -67,7 +67,7 @@ export function Thread({
   // 会话切换时可能触发「Rendered more hooks than during the previous render」)。
   // 提取到组件顶层,保证每次渲染钩子调用顺序恒定。
   const agentRunning = useAuiState((s) => s.thread.isRunning);
-  // P1-32(2026-09-07 架构评审):渲染期不再直读 localStorage——改 state +
+  // P1-32:渲染期不再直读 localStorage——改 state +
   // 事件订阅(Composer 切模型时 emit bm-active-model-changed)
   const [activeModel, setActiveModel] = useState(
     () => storage.get(STORAGE_KEYS.ACTIVE_MODEL) || "",

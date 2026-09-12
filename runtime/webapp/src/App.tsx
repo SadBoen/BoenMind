@@ -348,7 +348,7 @@ function SessionPanel({ collapsed }: { collapsed: boolean }) {
 
   // 删除 = 两步确认(2026-09-06 A+B):首点进入待确认态,3 秒内再点才真删;
   // 服务端墓碑 + 对话原文擦除,不可恢复。
-  // 审计修复(2026-09-08):①确认即切新对话——请求在途时 activeSid 不再指向
+  // 审计修复:①确认即切新对话——请求在途时 activeSid 不再指向
   // 被删会话,发消息竞态窗口消灭;②失败不再静默吞——列表项保留并弹提示,
   // 仅「会话不存在」(已被别处删除)才照常移除,防幽灵重试死循环。
   const [armDeleteSid, setArmDeleteSid] = useState<string | null>(null);

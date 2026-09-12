@@ -240,7 +240,7 @@ pub fn admin_routes(cfg: AdminConfig) -> axum::Router {
         .route("/jobs", get(jobs_list))
         // 会话目录(2026-09-08 三端一致批):服务端权威列表,前端启动即拉
         .route("/sessions", get(session_list))
-        // 会话历史回放(2026-09-06):切会话/刷新后前端按此拉历史消息
+        // 会话历史回放:切会话/刷新后前端按此拉历史消息
         .route("/sessions/{session_id}/messages", get(session_messages))
         // 会话删除(2026-09-06 A+B):墓碑+原文擦除,经核心单写者执行
         .route(

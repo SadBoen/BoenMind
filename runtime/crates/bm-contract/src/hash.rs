@@ -1,4 +1,4 @@
-//! 通用哈希工具(2026-09-05 回看收归):sha256→hex 转换此前在
+//! 通用哈希工具:sha256→hex 转换此前在
 //! bm-core/bm-persist/bm-providers/bm-surface-http 各自复制十余处,
 //! 统一单点提供,消费方一律走本模块。
 

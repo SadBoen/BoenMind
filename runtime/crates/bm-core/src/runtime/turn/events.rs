@@ -94,7 +94,7 @@ pub(crate) fn handle_turn_event(w: &mut World, event: TurnEvent) {
             {
                 if let Some(a) = w.agents.get_mut(&agent_id) {
                     // waiting_model→stopping(explicit_cancel)→stopped(turn_boundary_reached)
-                    // P1-19(2026-09-07 架构评审):先查边再迁移——迟到取消不得
+                    // P1-19:先查边再迁移——迟到取消不得
                     // assert 打崩进程(恢复/并发边界由 handle.rs 同款守卫兜底)。
                     if AgentState::can_transition(a.state, AgentState::Stopping) {
                         a.transition(AgentState::Stopping);

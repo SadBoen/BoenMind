@@ -102,7 +102,7 @@ impl McpTransport for HttpMcpTransport {
             std::time::Duration::from_millis(self.limits.get().mcp_remote_timeout_ms);
         let resp = tokio::time::timeout(remote_timeout, req.send())
             .await
-            // P2(2026-09-07 架构评审):秒数随 limits 热值,不再写死 60。
+            // P2:秒数随 limits 热值,不再写死 60。
             .map_err(|_| {
                 format!(
                     "远程 MCP 请求超时({}ms)",

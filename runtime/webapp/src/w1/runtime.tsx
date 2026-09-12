@@ -55,7 +55,7 @@ type ApprovalContextValue = {
   editAndBranchMessage: (messageIndex: number, newText: string) => Promise<void>;
   // 重新生成最后一条回复（分支功能）
   regenerateMessage: (messageIndex: number) => Promise<void>;
-  // 会话历史分页(2026-09-06):「加载更早消息」由 thread.tsx 顶部按钮触发
+  // 会话历史分页:「加载更早消息」由 thread.tsx 顶部按钮触发
   history: {
     hasMore: boolean;
     loading: boolean;
@@ -162,7 +162,7 @@ export function BoenmindRuntimeProvider({
   // 服务器侧该回合仍会后台完成并落库(W1 口径,不丢)
   const abortRef = useRef<AbortController | null>(null);
   const approvalHandlerRef = useRef<(req: ApprovalRequest) => void>(() => {});
-  // 批准可达性轮询去重集(2026-09-07):已处理过(已批准/已入抽屉)的审批 id
+  // 批准可达性轮询去重集:已处理过(已批准/已入抽屉)的审批 id
   // (P1-26 收口:流内标记入抽屉时同样登记,轮询不再重复入队)
   const handledApprovalsRef = useRef<Set<string>>(new Set());
   // 会话视图代(P1-28):切会话/加载更早的自回放请求带代数,在途响应返回时
@@ -366,7 +366,7 @@ export function BoenmindRuntimeProvider({
         });
       };
       let res = await doFetch(true);
-      // 门户会话失效(2026-09-06):正向跳登录,不再让用户对着红条猜
+      // 门户会话失效:正向跳登录,不再让用户对着红条猜
       if (res.status === 401) {
         redirectToLogin();
       }
@@ -447,7 +447,7 @@ export function BoenmindRuntimeProvider({
           }
           const d = v.choices?.[0]?.delta?.content;
           if (typeof d === "string" && d) pushText(d);
-          // P1-11 配套(2026-09-07 架构评审):服务器失败/超时/中断不再谎报
+          // P1-11 配套:服务器失败/超时/中断不再谎报
           // finish stop+[DONE],改发 OpenAI 兼容错误帧——上屏告知用户
           else if (v.error?.message) {
             pushText(`\n[流式错误: ${v.error.message}]`);
@@ -554,7 +554,7 @@ export function BoenmindRuntimeProvider({
   // W4b:审批裁决(前端卡片按钮)→ /admin/approvals/{id}/respond
   // (与 /rpc 同一执行体;走 /admin 门户口径——已登录浏览器凭门户 Cookie,
   // 本机未设墙开放;后端鉴权见 auth::require_api_auth,issue #10)
-  // P1-2(2026-09-07 架构评审):检查 res.ok;失败把审批单放回抽屉
+  // P1-2:检查 res.ok;失败把审批单放回抽屉
   // (乐观移除回滚)并从去重集摘除,不再静默吞错让审批单凭空消失
   const respondApproval = async (
     approvalId: string,
@@ -638,7 +638,7 @@ export function BoenmindRuntimeProvider({
     },
   });
 
-  // 「加载更早消息」:skip=已加载条数,取前一页并前插(2026-09-06)
+  // 「加载更早消息」:skip=已加载条数,取前一页并前插
   // P1-28:在途期间切会话则丢弃响应(视图代守卫),不再前插到新会话上
   const loadOlder = async () => {
     const sid = storage.get(STORAGE_KEYS.SESSION);

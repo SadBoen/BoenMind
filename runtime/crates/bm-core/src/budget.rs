@@ -127,7 +127,7 @@ mod tests {
         assert_eq!(b.check(false), Verdict::Allow, "token 侧不受失败记账影响");
     }
 
-    // P1-24(2026-09-07 架构评审):u64::MAX 无限预算的剩余量不再溢出为 -1。
+    // P1-24:u64::MAX 无限预算的剩余量不再溢出为 -1。
     #[test]
     fn unlimited_budget_remaining_is_saturated_not_negative() {
         let b = BudgetState::new(u64::MAX, u32::MAX);

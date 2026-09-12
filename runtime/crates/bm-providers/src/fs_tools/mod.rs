@@ -227,7 +227,7 @@ impl AsyncCapabilityExecutor for FsExecutor {
         let roots = self.roots();
         let limits = self.limits.get();
         let capability = capability.to_string();
-        // 搜索预算(2026-09-08 审计修复):manifest/core 层的 deadline 此前被
+        // 搜索预算:manifest/core 层的 deadline 此前被
         // 忽略,超大目录可无限占用阻塞池;现在换算成 Instant 传入并强制生效。
         let deadline_at = std::time::Instant::now() + deadline;
         // 阻塞面(树遍历/磁盘 IO)挪出单写者循环

@@ -12,7 +12,7 @@ createRoot(document.getElementById("root")!).render(
   </StrictMode>,
 );
 
-// 门户正向引导(2026-09-06):配置了访问密码而本地会话失效(服务重启即
+// 门户正向引导:配置了访问密码而本地会话失效(服务重启即
 // 失效)时,启动即跳登录页——不等用户撞上一串 401 红条再猜去 /login
 void api.portal
   .state()

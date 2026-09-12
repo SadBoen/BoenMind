@@ -16,7 +16,7 @@ use bm_contract::events::{EventEnvelope, EventType};
 
 impl StateDb {
     /// 物化一条事件(单事务)。非状态类事件是合法 no-op。
-    /// P0-4(2026-09-07 架构评审):手工 BEGIN/COMMIT 换 rusqlite 事务守卫——
+    /// P0-4:手工 BEGIN/COMMIT 换 rusqlite 事务守卫——
     /// COMMIT 失败/提前返回时 Drop 兜底 ROLLBACK,不留悬置事务与库锁。
     pub fn materialize(&self, event: &EventEnvelope) -> StoreResult<()> {
         let p = &event.payload;

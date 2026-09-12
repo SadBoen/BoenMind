@@ -9,7 +9,7 @@ use serde_json::json;
 use std::path::Path;
 
 /// 从文件尾部读最多 `max_bytes` 字节,返回最后 `n` 行(首行可能被截断则丢弃)。
-/// P2(2026-09-07 架构评审):尾读逻辑与 context.rs 收口为 tail::read_tail。
+/// P2:尾读逻辑与 context.rs 收口为 tail::read_tail。
 fn tail_lines(path: &Path, max_bytes: u64, n: usize) -> Vec<String> {
     let lines = read_tail(path, max_bytes);
     let skip = lines.len().saturating_sub(n);

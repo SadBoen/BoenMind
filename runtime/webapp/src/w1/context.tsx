@@ -54,7 +54,7 @@ export function ContextView() {
   // 模型窗口登记表(用户在「设置 → 模型提供商」登记;唯一真实数据源)
   const [contextWindows, setContextWindows] = useState<Record<string, number>>({});
 
-  // P1-31(2026-09-07 架构评审):在途守卫——慢响应期间不再重入,防止
+  // P1-31:在途守卫——慢响应期间不再重入,防止
   // 先发后至的 setSteps 用旧数据覆盖新数据(下一 tick 自愈的乱序问题根除)
   const refreshInFlightRef = useRef(false);
 
@@ -98,7 +98,7 @@ export function ContextView() {
     return () => clearInterval(t);
   }, [auto, refresh]);
 
-  // P1-32(2026-09-07 架构评审):渲染期不直读 localStorage——首帧惰性
+  // P1-32:渲染期不直读 localStorage——首帧惰性
   // 初始化 + 会话切换事件时同步
   const [sid, setSid] = useState(() => storage.get(STORAGE_KEYS.SESSION));
   useEffect(() => {

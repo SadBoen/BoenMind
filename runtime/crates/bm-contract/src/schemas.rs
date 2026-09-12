@@ -130,7 +130,7 @@ fn rewrite_refs(v: &mut Value) {
 }
 
 thread_local! {
-    /// 评审修复(2026-09-10):编译产物缓存。此前每次 validate 都做 $ref 合并
+    /// 评审修复:编译产物缓存。此前每次 validate 都做 $ref 合并
     /// 闭包扫描 + validator 重编译,而 Broker 出入参校验是每次能力调用必经的
     /// 热路径。key = schema 全文(manifest schema 与注册表常量均为有限集合,
     /// 不会无界增长)。thread_local 规避对 Validator Send/Sync 的版本依赖。

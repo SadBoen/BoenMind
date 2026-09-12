@@ -88,7 +88,7 @@ pub struct SessionRow {
     pub state: String,
     pub agent_id: String,
     pub created_at: String,
-    /// 重启续聊配套(2026-09-06):会话绑定工作目录(未绑定 = None)。
+    /// 重启续聊配套:会话绑定工作目录(未绑定 = None)。
     pub workspace_id: Option<String>,
     /// 会话目录(2026-09-08 三端一致批):标题 = 首条用户消息截断
     /// (未命名/存量旧行 = None,启动回填写平)。

@@ -39,7 +39,7 @@ fn read_providers(data_dir: &Path) -> Result<Vec<Value>, (StatusCode, String)> {
 
 fn write_providers(data_dir: &Path, providers: &[Value]) -> Result<(), String> {
     let path = providers_file(data_dir);
-    // P2(2026-09-07 架构评审):CRLF 收口 config_store::crlf 单一实现。
+    // P2:CRLF 收口 config_store::crlf 单一实现。
     super::json_store::write_json_file(
         &path,
         &json!({ "providers": providers }),

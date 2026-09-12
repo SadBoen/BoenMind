@@ -109,7 +109,7 @@ impl Operation {
 
     /// 终态落定:校验边合法性,发 operation.state.changed 事件的调用方
     /// 以返回的 (from, to, reason_code) 为准。
-    /// P0(2026-09-07 架构评审):表外迁移不再 panic——返回 Err 交调用方
+    /// P0:表外迁移不再 panic——返回 Err 交调用方
     /// 收敛为可观测错误(来源可能是恢复/裁决等边界路径,打崩进程不成比例)。
     pub fn settle(
         &mut self,
