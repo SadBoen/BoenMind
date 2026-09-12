@@ -127,6 +127,14 @@ impl crate::registry::CapabilityProvider for SharePlaceholder {
     fn invoke(&self, _args: Value) -> Result<Value, String> {
         Err("task.share.* 在内核内联执行,不经 Provider 通道".into())
     }
+    /// ADR-0045:内核内联能力也声明插件身份,使命及面身份覆盖完整(不遗漏)。
+    fn plugin_meta(&self) -> Option<bm_contract::plugin::PluginMeta> {
+        Some(bm_contract::plugin::PluginMeta::new(
+            "kernel.share",
+            env!("CARGO_PKG_VERSION"),
+            bm_contract::plugin::PluginKind::Tool,
+        ))
+    }
 }
 
 /// task.share.* 能力装配集(公告栏一对;进 boenmind-server 生产装配)。

@@ -31,9 +31,17 @@ use std::sync::Arc;
 /// (运行期 spawn + manifest.timeout_ms 钳制超时 + 取消令牌 + 进度回流),
 /// 否则在本任务内联同步执行(panic 收容)。选型约束:同步实现不得长时间
 /// 阻塞——会占住单写者循环,耗时能力一律注册为异步。
-/// 插件行为契约(ADR-0041):`invoke` 是能力执行面,`plugin_meta`/`shutdown`
-/// 是插件身份与生命周期面。后两者带默认实现,故既有 provider 零改动即满足契约;
-/// 需要声明身份的扩展(wasm/mcp/外部进程)覆写 `plugin_meta` 即可。
+/// 插件行为契约(ADR-0041/0045):`invoke` 是能力执行面,`plugin_meta` 是身份面。
+///
+/// `plugin_meta` 带默认实现,故既有 provider 零改动即满足契约;需要声明身份的
+/// 扩展(wasm/mcp/内置)覆写它即可,发现面(`CapabilityRegistry::discover`)是
+/// 它的真实消费者。
+///
+/// **无 `shutdown` 钩子**(ADR-0045 收敛):此前定义了它却无任何生产 provider
+/// 实现(唯二出现是 trait 默认与测试替身)——因为资源归**执行器**而非 provider
+/// 占位符所有:wasm 模块由 `SkillScriptManager::unregister_provider` 摘除、MCP
+/// 子进程由 `McpHub::disconnect_server` 清理。留一个永远返回 `Ok(())` 的钩子是
+/// 空转,故移除;真正持有资源的扩展应把释放放在其所属执行器里。
 pub trait CapabilityProvider: Send + Sync {
     fn invoke(&self, args: serde_json::Value) -> Result<serde_json::Value, String>;
 
@@ -41,13 +49,6 @@ pub trait CapabilityProvider: Send + Sync {
     /// ([`bm_contract::plugin::PluginKind::Tool`])对待。
     fn plugin_meta(&self) -> Option<bm_contract::plugin::PluginMeta> {
         None
-    }
-
-    /// 注销生命周期钩子:从 Registry 摘除本 Provider **之前**调用,用于释放
-    /// 外部资源(wasm 实例/子进程/文件句柄)。默认空实现——纯函数型 provider
-    /// 无需实现。返回 `Err` 仅作告警,不阻断注销(绑定已失效,进程回收兜底)。
-    fn shutdown(&self) -> Result<(), String> {
-        Ok(())
     }
 }
 
@@ -151,6 +152,15 @@ pub struct CapabilityDiscovery {
     pub provider_instance_id: String,
     pub status: BindingStatus,
     pub healthy: bool,
+    /// 插件身份(ADR-0041/0045):提供者声明的 `PluginKind` 与 id/version。
+    /// `None` = provider 未声明身份(按工具型对待)。此项使发现面成为插件
+    /// 身份的**真实消费者**——管理面据此渲染徽标,不再由前端按命名猜测。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plugin_kind: Option<bm_contract::plugin::PluginKind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plugin_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plugin_version: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -214,13 +224,7 @@ impl CapabilityRegistry {
     }
 
     /// 注销能力(热拔/重载移除;从逻辑目录、bindings 与缓存中彻底摘除)。
-    /// ADR-0041:摘除前给 Provider 一次 `shutdown` 释放机会(默认空实现)。
     pub fn unregister(&mut self, capability: &str) -> bool {
-        if let Some(handle) = self.cache.get(capability).and_then(|c| c.handle.clone())
-            && let Err(e) = handle.shutdown()
-        {
-            tracing::warn!(capability, error = %e, "provider shutdown 失败(不阻断注销)");
-        }
         let removed_m = self.manifests.remove(capability).is_some();
         self.bindings.remove(capability);
         self.cache.remove(capability);
@@ -229,6 +233,7 @@ impl CapabilityRegistry {
     }
 
     /// 能力所属插件的身份(ADR-0041);Provider 未声明时返回 `None`。
+    /// 发现面(`discover`)是它的真实消费者(ADR-0045)。
     pub fn plugin_meta_of(&self, capability: &str) -> Option<bm_contract::plugin::PluginMeta> {
         let handle = self.cache.get(capability)?.handle.as_ref()?;
         handle.plugin_meta()
@@ -486,6 +491,7 @@ impl CapabilityRegistry {
                     epoch: 0,
                     status: BindingStatus::Unavailable,
                 });
+                let meta = self.plugin_meta_of(name);
                 CapabilityDiscovery {
                     capability: m.capability.clone(),
                     provider: m.provider.clone(),
@@ -504,6 +510,10 @@ impl CapabilityRegistry {
                         .cache
                         .get(name)
                         .is_some_and(|c| c.healthy && c.handle.is_some()),
+                    // ADR-0045:取 provider 声明的插件身份(发现面 = 真实消费者)
+                    plugin_kind: meta.as_ref().map(|p| p.kind),
+                    plugin_id: meta.as_ref().map(|p| p.id.clone()),
+                    plugin_version: meta.map(|p| p.version),
                 }
             })
             .collect();
@@ -535,13 +545,9 @@ mod tests {
     }
 
     #[test]
-    fn provider_lifecycle_and_plugin_meta_are_wired() {
-        // ADR-0041:插件身份可读、注销时生命周期钩子被调用。
-        use std::sync::atomic::{AtomicBool, Ordering};
-
-        struct WasmLike {
-            stopped: Arc<AtomicBool>,
-        }
+    fn plugin_identity_is_consumed_by_discovery() {
+        // ADR-0045:插件身份的**真实消费者 = 发现面**(此前只有测试读它)。
+        struct WasmLike;
         impl CapabilityProvider for WasmLike {
             fn invoke(&self, _args: serde_json::Value) -> Result<serde_json::Value, String> {
                 Err("异步路径能力的同步占位不应被调用".into())
@@ -553,39 +559,41 @@ mod tests {
                     bm_contract::plugin::PluginKind::Tool,
                 ))
             }
-            fn shutdown(&self) -> Result<(), String> {
-                self.stopped.store(true, Ordering::SeqCst);
-                Ok(())
-            }
         }
 
-        let stopped = Arc::new(AtomicBool::new(false));
         let mut reg = CapabilityRegistry::new();
-        reg.register(
-            manifest("demo.tool"),
-            "demo.wasm@1.2.3",
-            Arc::new(WasmLike {
-                stopped: stopped.clone(),
-            }),
-        )
-        .expect("注册");
-
-        let meta = reg.plugin_meta_of("demo.tool").expect("身份可读");
-        assert_eq!(meta.id, "demo.wasm");
-        assert_eq!(meta.kind, bm_contract::plugin::PluginKind::Tool);
-
-        assert!(reg.unregister("demo.tool"), "注销成功");
-        assert!(stopped.load(Ordering::SeqCst), "注销必须触发 shutdown");
-        assert!(
-            reg.plugin_meta_of("demo.tool").is_none(),
-            "注销后身份不复存在"
-        );
-
-        // 未声明身份的 provider:plugin_meta=None,shutdown 走默认空实现不 panic。
+        reg.register(manifest("demo.tool"), "demo.wasm@1.2.3", Arc::new(WasmLike))
+            .expect("注册");
+        // 未声明身份的 provider:plugin_meta=None,不 panic。
         reg.register(manifest("demo.echo"), "demo.echo@0.1.0", Arc::new(Echo))
             .expect("注册");
-        assert!(reg.plugin_meta_of("demo.echo").is_none());
-        assert!(reg.unregister("demo.echo"));
+
+        let discovered = reg.discover();
+        let tool = discovered
+            .iter()
+            .find(|d| d.capability == "demo.tool")
+            .expect("在发现面");
+        assert_eq!(
+            tool.plugin_kind,
+            Some(bm_contract::plugin::PluginKind::Tool),
+            "发现面必须承载插件身份(真实消费者)"
+        );
+        assert_eq!(tool.plugin_id.as_deref(), Some("demo.wasm"));
+        assert_eq!(tool.plugin_version.as_deref(), Some("1.2.3"));
+
+        let echo = discovered
+            .iter()
+            .find(|d| d.capability == "demo.echo")
+            .expect("在发现面");
+        assert!(echo.plugin_kind.is_none(), "未声明身份的 provider 身份为空");
+
+        // 注销后身份随能力一起消失。
+        assert!(reg.unregister("demo.tool"));
+        assert!(reg.plugin_meta_of("demo.tool").is_none());
+        assert!(
+            !reg.discover().iter().any(|d| d.capability == "demo.tool"),
+            "注销后不在发现面"
+        );
     }
 
     #[test]

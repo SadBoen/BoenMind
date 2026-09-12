@@ -18,6 +18,10 @@ export type TablePluginItem = {
   deprecated?: boolean;
   /** ADR-0042:wasm 插件声明条目(卸载按 capability 摘除) */
   wasmRef?: WasmPlugin;
+  /** ADR-0045:provider 声明的插件身份(tool/connector);展示用,不参与分类 */
+  pluginKind?: string | null;
+  pluginId?: string | null;
+  pluginVersion?: string | null;
 };
 
 // 内置能力白话说明(键=能力名;未命中回落 effect 文案)

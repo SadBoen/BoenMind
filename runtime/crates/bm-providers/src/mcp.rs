@@ -1174,9 +1174,19 @@ impl McpHub {
         manifests
             .into_iter()
             .map(|m| {
+                // ADR-0045:MCP 能力也声明插件身份——id 取 manifest.provider
+                // (即 `mcp.<server>`),使发现面/管理面能按真实 kind 呈现,
+                // 与内置 provider 同一读取路径。
+                let meta = bm_contract::plugin::PluginMeta::new(
+                    m.provider.clone(),
+                    m.version.clone(),
+                    bm_contract::plugin::PluginKind::Tool,
+                );
                 (
                     m,
-                    bm_core::broker::provider_fn(|_| Err("mcp 能力仅限异步路径".into())),
+                    bm_core::broker::provider_fn_with_meta(meta, |_| {
+                        Err("mcp 能力仅限异步路径".into())
+                    }),
                 )
             })
             .collect()

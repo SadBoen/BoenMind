@@ -163,6 +163,10 @@ export type Capability = {
   effect?: string;
   idempotent?: boolean;
   approval?: string;
+  /** ADR-0045:provider 声明的插件身份(tool/connector);缺省 = 未声明 */
+  plugin_kind?: string | null;
+  plugin_id?: string | null;
+  plugin_version?: string | null;
 };
 
 /** ADR-0042:通用 wasm 插件声明条目(boenmind-contracts/plugin/wasm-plugin.v0_1)。 */

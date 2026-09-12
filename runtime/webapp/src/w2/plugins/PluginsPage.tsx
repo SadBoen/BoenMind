@@ -201,6 +201,9 @@ export function PluginsPage() {
           },
         ],
         isOnline: true,
+        pluginKind: b.plugin_kind,
+        pluginId: b.plugin_id,
+        pluginVersion: b.plugin_version,
       });
     }
 
@@ -243,6 +246,10 @@ export function PluginsPage() {
         tools: [{ name: w.capability, description: w.description }],
         isOnline: true,
         wasmRef: w,
+        // wasm 插件的 provider 恒声明 Tool 身份(ADR-0041/0045)
+        pluginKind: "tool",
+        pluginId: w.provider ?? w.capability,
+        pluginVersion: w.version,
       });
     }
 

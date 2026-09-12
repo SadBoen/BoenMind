@@ -180,15 +180,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 热重载必须改这个实例的编译缓存,注册才与执行体同源。
     let skill_manager = skills.clone();
     capabilities.extend(skill_entries);
-    // W2 管理面注入面:内置能力摘要(= mcp 注入前的 capabilities)
+    // W2 管理面注入面:内置能力摘要(= mcp 注入前的 capabilities)。
+    // ADR-0045:附上 provider 声明的插件身份(kind/id),使前端按真实身份渲染
+    // 徽标,而非按命名/来源猜测。
     let builtin_caps: Vec<serde_json::Value> = capabilities
         .iter()
-        .filter_map(|(m, _)| serde_json::to_value(m).ok())
-        .map(|v| {
+        .filter_map(|(m, p)| serde_json::to_value(m).ok().map(|v| (v, p)))
+        .map(|(v, p)| {
+            let meta = p.plugin_meta();
             json!({
                 "name": v["capability"], "provider": v["provider"],
                 "effect": v["effect"], "idempotent": v["idempotent"],
                 "approval": v["approval"],
+                "plugin_kind": meta.as_ref().map(|x| x.kind.as_str()),
+                "plugin_id": meta.as_ref().map(|x| x.id.as_str()),
+                "plugin_version": meta.as_ref().map(|x| x.version.as_str()),
             })
         })
         .collect();

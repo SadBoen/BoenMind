@@ -44,6 +44,15 @@ export function PluginTableRow({
             title={item.isOnline ? "可用" : "未联通"}
           />
           <span className="font-mono font-medium text-foreground truncate">{item.name}</span>
+          {/* ADR-0045:provider 声明的插件身份(真实 kind,非前端猜测) */}
+          {item.pluginKind ? (
+            <span
+              className="shrink-0 rounded border border-border/60 bg-muted/40 px-1 font-mono text-[9.5px] text-muted-foreground"
+              title={`插件身份: kind=${item.pluginKind}${item.pluginId ? ` · id=${item.pluginId}` : ""}${item.pluginVersion ? ` · v${item.pluginVersion}` : ""}`}
+            >
+              {item.pluginKind}
+            </span>
+          ) : null}
           {item.deprecated ? (
             <span
               className="shrink-0 rounded border border-[var(--state-warn-border)] bg-[var(--state-warn-bg)] px-1 font-mono text-[9.5px] text-[var(--state-warn-fg)]"

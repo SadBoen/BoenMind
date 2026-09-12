@@ -1,21 +1,19 @@
-//! 插件契约(ADR-0041):「万物皆插件」的可寻址身份。
+//! 插件契约(ADR-0041/0045):「万物皆插件」的可寻址身份。
 //!
 //! 此前系统只有**行为** trait(能力 `invoke`)与 manifest 数据,**没有插件身份**
-//! ——内核无法回答「这是什么类型的扩展、由谁提供、何时起停」。本模块补上契约层
-//! 缺的纯数据部分(kind/id/version);行为面的生命周期 trait 在
+//! ——内核无法回答「这是什么类型的扩展、由谁提供」。本模块补上契约层缺的纯数据
+//! 部分(kind/id/version);行为面的生命周期 trait 在
 //! `bm_core::registry::CapabilityProvider`(与其余端口同处,遵循
 //! 「bm-contract 放数据、bm-core 放行为」的既有分层)。
 //!
-//! 本模块只做**声明**;现有内置能力/provider 全部非破坏兼容:未声明身份的
-//! 提供者按 [`PluginKind::Tool`] 对待(见 `CapabilityProvider::plugin_meta` 默认实现)。
+//! ADR-0045 收敛:`PluginKind` **只保留确有插件实现的族**。此前的
+//! `Store/Surface/Judge/Sandbox` 四个变体在全仓**零构造**——它们实际是端口
+//! (Store 走 `EventStore` 端口)或硬编码 crate(judge/sandbox/surface),
+//! 挂「插件家族」名不副实,属为不存在的未来过度建模。需要时按 ADR 增发。
 
 wire_str_enum!(PluginKind {
     Tool => "tool",
     Connector => "connector",
-    Store => "store",
-    Surface => "surface",
-    Judge => "judge",
-    Sandbox => "sandbox",
 });
 
 /// 插件身份:id 全局唯一(kebab 或点分命名空间),version 语义化,kind 归族。
