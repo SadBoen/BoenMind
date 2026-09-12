@@ -47,9 +47,12 @@ pub fn pre_spawn(
     #[cfg_attr(not(unix), allow(unused_variables))] cmd: &mut tokio::process::Command,
     #[cfg_attr(not(unix), allow(unused_variables))] limits: &SandboxLimits,
 ) -> Result<(), String> {
+    // 平台条件表达式(非 `#[cfg]` 块 + `return`):此前 unix 分支的 `return`
+    // 在 Linux/macOS 上被 clippy 判 `needless_return`(CI 红),而 Windows 因该
+    // 分支被 cfg 剔除不触发——本地绿、三平台矩阵红的经典陷阱。
     #[cfg(unix)]
     {
-        return imp::harden_command(cmd, limits);
+        imp::harden_command(cmd, limits)
     }
     #[cfg(not(unix))]
     {
