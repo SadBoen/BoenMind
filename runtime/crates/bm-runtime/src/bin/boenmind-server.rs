@@ -439,26 +439,6 @@ async fn shutdown_signal(handle: RuntimeHandle, shutdown: Arc<tokio::sync::Notif
     println!("排空完成");
 }
 
-/// 从 `<data>/config/plugins.json` 装载通用 wasm 插件(ADR-0041):与 skills.json
-/// 平级的能力来源,共用同一 wasm 宿主实例。缺失/非法仅告警不阻断启动。
-fn register_wasm_plugins(
-    manager: &bm_providers::skill_wasm::SkillScriptManager,
-    data_dir: &std::path::Path,
-) -> Vec<(
-    bm_contract::capability::CapabilityManifest,
-    Arc<dyn bm_core::registry::CapabilityProvider>,
-)> {
-    let cfg = data_dir.join("config").join("plugins.json");
-    if !cfg.exists() {
-        return Vec::new();
-    }
-    let manifests = manager.load_plugins_file(&cfg);
-    if !manifests.is_empty() {
-        eprintln!("[Plugin] 共注册 {} 个 wasm 插件能力", manifests.len());
-    }
-    bm_providers::skill_wasm::SkillScriptManager::capability_entries(manifests)
-}
-
 /// 脚本装载结果:执行器(None=初始化失败;保留供管理面热重载共用)+ 待注册能力对。
 type SkillScriptLoad = (
     Option<Arc<bm_providers::skill_wasm::SkillScriptManager>>,
@@ -467,57 +447,6 @@ type SkillScriptLoad = (
         Arc<dyn bm_core::registry::CapabilityProvider>,
     )>,
 );
-
-/// 扫描 config/skills.json 中声明 scripts 的技能并注册进管理器 → 合成能力对。
-/// 纯知识包(无 scripts)跳过;单技能失败仅告警不阻断。启动装载与
-/// /admin/skills 热重载共用同一函数(ADR-0033),歧义面收敛为一处。
-fn register_skill_scripts(
-    manager: &bm_providers::skill_wasm::SkillScriptManager,
-    data_dir: &std::path::Path,
-) -> Vec<(
-    bm_contract::capability::CapabilityManifest,
-    Arc<dyn bm_core::registry::CapabilityProvider>,
-)> {
-    let cfg = data_dir.join("config").join("skills.json");
-    let Ok(text) = std::fs::read_to_string(&cfg) else {
-        return Vec::new();
-    };
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
-        eprintln!("[Skill] skills.json 解析失败(已跳过脚本装载)");
-        return Vec::new();
-    };
-    let Some(list) = v["skills"].as_array() else {
-        return Vec::new();
-    };
-    let mut entries: Vec<(
-        bm_contract::capability::CapabilityManifest,
-        Arc<dyn bm_core::registry::CapabilityProvider>,
-    )> = Vec::new();
-    for sk in list {
-        let Some(id) = sk["skill_id"].as_str() else {
-            continue;
-        };
-        if sk.get("scripts").is_none() {
-            continue;
-        }
-        let Ok(def) = serde_json::from_value::<bm_contract::skill::SkillDefinition>(sk.clone())
-        else {
-            eprintln!("[Skill] 技能 {id} 的 scripts 载荷非法(已跳过)");
-            continue;
-        };
-        let root = data_dir.join("skills").join(id);
-        match manager.register_skill(id, &def, &root) {
-            Ok(manifests) => {
-                eprintln!("[Skill] 技能 {id} 已装载 {} 个脚本", manifests.len());
-                entries.extend(
-                    bm_providers::skill_wasm::SkillScriptManager::capability_entries(manifests),
-                );
-            }
-            Err(e) => eprintln!("[Skill] 技能 {id} 装载失败(已跳过): {e}"),
-        }
-    }
-    entries
-}
 
 /// wasm 执行面(ADR-0016 技能脚本 + ADR-0041 通用插件):启动期装载出管理器与
 /// 待注册能力对。技能与通用插件共用同一管理器实例(同一宿主编译表);失败仅
@@ -533,8 +462,9 @@ fn load_skill_scripts(
             return (None, Vec::new());
         }
     };
-    let mut entries = register_skill_scripts(&manager, data_dir);
-    // ADR-0041:通用 wasm 插件(config/plugins.json)——第二个真实调用方。
-    entries.extend(register_wasm_plugins(&manager, data_dir));
+    // ADR-0053:wasm 家族声明装载单入口(技能 + 通用插件);读取/归一化在
+    // bm-core::ports::skill_host 单源,启动装配不再自带文件解析。
+    let entries =
+        bm_core::ports::skill_host::load_wasm_declarations(manager.as_ref(), data_dir);
     (Some(manager), entries)
 }

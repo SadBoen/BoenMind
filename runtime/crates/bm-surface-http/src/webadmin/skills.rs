@@ -34,6 +34,10 @@ fn write_skills(file: &std::path::Path, skills: &[Value]) -> Result<(), String> 
 }
 
 /// 取一条技能定义(读最新盘上 skills.json)。
+///
+/// 注意与 ADR-0053 的边界:此处是**管理面 CRUD**读取,需返回原始 JSON 供前端
+/// 表单回显,故保留 Raw Value 形态;「声明 → 能力」的**装载**解析在
+/// `bm_core::ports::skill_host`(启动与整表重载单入口)。
 fn skill_def_by_id(file: &std::path::Path, id: &str) -> Option<Value> {
     read_skills(file)
         .ok()?
