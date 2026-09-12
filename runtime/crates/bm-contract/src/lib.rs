@@ -16,6 +16,7 @@ pub mod events;
 pub mod exec_log;
 pub mod hash;
 pub mod ids;
+pub mod plugin;
 pub mod registries;
 pub mod schemas;
 pub mod skill;

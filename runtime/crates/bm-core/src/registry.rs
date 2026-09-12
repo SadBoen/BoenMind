@@ -31,8 +31,24 @@ use std::sync::Arc;
 /// (运行期 spawn + manifest.timeout_ms 钳制超时 + 取消令牌 + 进度回流),
 /// 否则在本任务内联同步执行(panic 收容)。选型约束:同步实现不得长时间
 /// 阻塞——会占住单写者循环,耗时能力一律注册为异步。
+/// 插件行为契约(ADR-0041):`invoke` 是能力执行面,`plugin_meta`/`shutdown`
+/// 是插件身份与生命周期面。后两者带默认实现,故既有 provider 零改动即满足契约;
+/// 需要声明身份的扩展(wasm/mcp/外部进程)覆写 `plugin_meta` 即可。
 pub trait CapabilityProvider: Send + Sync {
     fn invoke(&self, args: serde_json::Value) -> Result<serde_json::Value, String>;
+
+    /// 插件身份(kind/id/version)。默认 `None` = 未声明,按工具型
+    /// ([`bm_contract::plugin::PluginKind::Tool`])对待。
+    fn plugin_meta(&self) -> Option<bm_contract::plugin::PluginMeta> {
+        None
+    }
+
+    /// 注销生命周期钩子:从 Registry 摘除本 Provider **之前**调用,用于释放
+    /// 外部资源(wasm 实例/子进程/文件句柄)。默认空实现——纯函数型 provider
+    /// 无需实现。返回 `Err` 仅作告警,不阻断注销(绑定已失效,进程回收兜底)。
+    fn shutdown(&self) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 /// binding 生命周期状态(基线 §13.1/§13.2;状态持久于逻辑目录层)。
@@ -198,12 +214,24 @@ impl CapabilityRegistry {
     }
 
     /// 注销能力(热拔/重载移除;从逻辑目录、bindings 与缓存中彻底摘除)。
+    /// ADR-0041:摘除前给 Provider 一次 `shutdown` 释放机会(默认空实现)。
     pub fn unregister(&mut self, capability: &str) -> bool {
+        if let Some(handle) = self.cache.get(capability).and_then(|c| c.handle.clone())
+            && let Err(e) = handle.shutdown()
+        {
+            tracing::warn!(capability, error = %e, "provider shutdown 失败(不阻断注销)");
+        }
         let removed_m = self.manifests.remove(capability).is_some();
         self.bindings.remove(capability);
         self.cache.remove(capability);
         self.async_exec.remove(capability);
         removed_m
+    }
+
+    /// 能力所属插件的身份(ADR-0041);Provider 未声明时返回 `None`。
+    pub fn plugin_meta_of(&self, capability: &str) -> Option<bm_contract::plugin::PluginMeta> {
+        let handle = self.cache.get(capability)?.handle.as_ref()?;
+        handle.plugin_meta()
     }
 
     /// 热替换(基线 §13.1 的注册面半边):原子切换 instance,epoch+1。
@@ -504,6 +532,60 @@ mod tests {
         fn invoke(&self, args: serde_json::Value) -> Result<serde_json::Value, String> {
             Ok(args)
         }
+    }
+
+    #[test]
+    fn provider_lifecycle_and_plugin_meta_are_wired() {
+        // ADR-0041:插件身份可读、注销时生命周期钩子被调用。
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        struct WasmLike {
+            stopped: Arc<AtomicBool>,
+        }
+        impl CapabilityProvider for WasmLike {
+            fn invoke(&self, _args: serde_json::Value) -> Result<serde_json::Value, String> {
+                Err("异步路径能力的同步占位不应被调用".into())
+            }
+            fn plugin_meta(&self) -> Option<bm_contract::plugin::PluginMeta> {
+                Some(bm_contract::plugin::PluginMeta::new(
+                    "demo.wasm",
+                    "1.2.3",
+                    bm_contract::plugin::PluginKind::Tool,
+                ))
+            }
+            fn shutdown(&self) -> Result<(), String> {
+                self.stopped.store(true, Ordering::SeqCst);
+                Ok(())
+            }
+        }
+
+        let stopped = Arc::new(AtomicBool::new(false));
+        let mut reg = CapabilityRegistry::new();
+        reg.register(
+            manifest("demo.tool"),
+            "demo.wasm@1.2.3",
+            Arc::new(WasmLike {
+                stopped: stopped.clone(),
+            }),
+        )
+        .expect("注册");
+
+        let meta = reg.plugin_meta_of("demo.tool").expect("身份可读");
+        assert_eq!(meta.id, "demo.wasm");
+        assert_eq!(meta.kind, bm_contract::plugin::PluginKind::Tool);
+
+        assert!(reg.unregister("demo.tool"), "注销成功");
+        assert!(stopped.load(Ordering::SeqCst), "注销必须触发 shutdown");
+        assert!(
+            reg.plugin_meta_of("demo.tool").is_none(),
+            "注销后身份不复存在"
+        );
+
+        // 未声明身份的 provider:plugin_meta=None,shutdown 走默认空实现不 panic。
+        reg.register(manifest("demo.echo"), "demo.echo@0.1.0", Arc::new(Echo))
+            .expect("注册");
+        assert!(reg.plugin_meta_of("demo.echo").is_none());
+        assert!(reg.unregister("demo.echo"));
     }
 
     #[test]

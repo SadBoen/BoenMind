@@ -271,6 +271,11 @@ impl SkillScriptManager {
 }
 
 /// 异步执行器包装:capability = `skill.<skill_id>.<script_name>`。
+///
+/// ADR-0041:不再按 `skill.` 前缀守卫——宿主本就按**精确 capability 查编译表**
+/// (`run` 内的 `entries.get`),前缀判断是冗余的字符串派发。去掉后本执行器对
+/// 命名空间不可知:凡注册进其编译表的 wasm 能力皆可执行,是「通用 wasm 插件
+/// 宿主」的第一步;生产路由仍由 `SplitExecutor` 按 capability 分道。
 #[async_trait::async_trait]
 impl AsyncCapabilityExecutor for SkillScriptManager {
     async fn call(
@@ -280,11 +285,6 @@ impl AsyncCapabilityExecutor for SkillScriptManager {
         args: Value,
         _deadline: std::time::Duration,
     ) -> Result<Value, AsyncCallError> {
-        if !capability.starts_with("skill.") {
-            return Err(AsyncCallError::Transport(format!(
-                "skill 执行器不认识能力 {capability}"
-            )));
-        }
         self.run(capability, &args).await
     }
 }
@@ -352,6 +352,38 @@ mod tests {
             .await
             .expect_err("应失败");
         assert!(matches!(err, AsyncCallError::Transport(m) if m.contains("未注册")));
+    }
+
+    // ADR-0041:宿主对命名空间不可知——能力名不必带 `skill.` 前缀,按精确
+    // capability 查编译表即可执行(通用 wasm 插件宿主的第一步)。
+    #[tokio::test]
+    async fn host_is_namespace_agnostic() {
+        let (mgr, _skill_cap) = manager_with_wat(ECHO_WAT);
+        let engine = mgr.engine.clone();
+        let module = Module::new(&engine, ECHO_WAT).expect("wat 编译");
+        let cap = "plugin.demo.echo".to_string();
+        mgr.entries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(
+                cap.clone(),
+                Arc::new(ScriptEntry {
+                    capability: cap.clone(),
+                    wasm_path: PathBuf::from("demo.wat"),
+                    module,
+                    timeout_ms: 5_000,
+                }),
+            );
+        let out = AsyncCapabilityExecutor::call(
+            &mgr,
+            "op-1",
+            &cap,
+            serde_json::json!({}),
+            std::time::Duration::from_secs(5),
+        )
+        .await
+        .expect("非 skill 前缀的已编译能力应可执行");
+        assert_eq!(out["ok"], serde_json::json!(true));
     }
 
     #[tokio::test]
