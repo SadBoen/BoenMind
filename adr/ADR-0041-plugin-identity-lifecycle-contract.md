@@ -29,9 +29,12 @@ superseded_by: []
 
 6. **分道按归属而非名字前缀**。`SplitExecutor` 对 wasm 分支改用 `SkillScriptManager::has_capability(capability)`(查宿主编译表),取代 `capability.starts_with("skill.")`。组合根 `boenmind-server` 启动时额外装载 `<data>/config/plugins.json`(与 `skills.json` 平级),与技能共用同一宿主实例。
 
+7. **通用插件管理面:增删改即热重载**。新增 `webadmin/plugins.rs`:`GET /admin/plugins`(清单)、`POST`(新增/覆盖)、`DELETE /{capability}`(删除)、`POST /plugins/reload`(手工保险)。落盘后**即时热重载**(摘旧 → 重编译 → 注册新),无需重启。宿主新增 `providers()`(枚举已装载 provider)与 `unregister_provider(provider)`(按 provider 精确摘除,取代写死的 `skill.` 前缀拼接),`unregister_skill` 降为其上层。重载语义 = 整表重建(摘除非 `skill.` 的已装载 provider 后按声明重建)——插件数量远小于能力数量,以简单换正确。
+
 ## 后果
 
 - 「万物皆插件」从口号进了一步:扩展有**类型与身份**,Provider 有**释放钩子**。这是把 `skill_wasm` 泛化为通用 wasm 插件宿主的前置契约面。
-- **零破坏**:所有既有 provider/manifest/路由行为不变(496 测试全绿;新增 5 项覆盖身份读取、生命周期调用、wasm 身份声明、通用装载、声明文件装载)。
-- **未做(留待后续 ADR)**:WIT/Component 级通用宿主接口(现为 WASI 命令式:stdin 进 JSON / stdout 出 JSON)、**通用插件的管理面**(扫描/批准/热重载——现只支持启动期从 `plugins.json` 装载)、插件依赖与版本协商。本 ADR 只落**契约、最小生命周期、通用装载面与第二个调用方**。
-- 守护测试:`bm-core::registry::provider_lifecycle_and_plugin_meta_are_wired`(身份可读 + 注销必触发 shutdown + 未声明身份走默认)、`bm-providers::skill_wasm::{host_is_namespace_agnostic, capability_entries_declare_plugin_identity, generic_register_wasm_accepts_any_capability_name, load_plugins_file_registers_generic_wasm_capability}`。
+- **零破坏**:所有既有 provider/manifest/路由行为不变(496 测试全绿;新增 6 项)。
+- **已完成**:契约(身份/生命周期)、通用 wasm 宿主去特化、按归属分道、第二个调用方(启动装载)、**管理面增删改即热重载**。
+- **未做(留待后续 ADR)**:WIT/Component 级通用宿主接口(现为 WASI 命令式:stdin 进 JSON / stdout 出 JSON);插件前端页面;插件依赖与版本协商;`bm-core` 拆胖(持久化 schema 下沉 `bm-persist`)、surface 去具体依赖等架构欠账(见 `.work/ROADMAP.md`)。
+- 守护测试:`bm-core::registry::provider_lifecycle_and_plugin_meta_are_wired`、`bm-providers::skill_wasm::{host_is_namespace_agnostic, capability_entries_declare_plugin_identity, generic_register_wasm_accepts_any_capability_name, load_plugins_file_registers_generic_wasm_capability}`(后者含 `unregister_provider` 摘除断言)。真实端到端:真 wasm 文件 + 真 boenmind-server 启动装载,以及运行中经 `POST /admin/plugins` 热重载(日志 `[Plugin] wasm 插件 … 已装载` + actor 应答「1 个能力即时生效」)。

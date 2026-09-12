@@ -28,6 +28,9 @@ const FUEL_LIMIT: u64 = 2_000_000_000;
 /// 一条已注册脚本:capability 名 → 编译缓存 + 执行参数。
 pub struct ScriptEntry {
     pub capability: String,
+    /// 提供者标识(ADR-0041 热重载):`skill.<id>` 或插件声明的 provider。
+    /// 按它摘除一组能力,取代原先写死的 `skill.` 前缀拼接。
+    pub provider: String,
     pub wasm_path: PathBuf,
     pub module: Module,
     pub timeout_ms: u64,
@@ -60,11 +63,12 @@ impl SkillScriptManager {
         skill_root: &Path,
     ) -> Result<Vec<CapabilityManifest>, String> {
         let scripts = def.scripts.as_ref().ok_or("技能未声明 scripts")?;
+        let provider = format!("skill.{skill_id}");
         for sc in scripts {
             let capability = format!("skill.{}.{}", skill_id, sc.name);
             let wasm_path = skill_root.join(&sc.path);
             let timeout_ms = sc.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
-            self.register_wasm(&capability, &wasm_path, skill_root, timeout_ms)?;
+            self.register_wasm(&provider, &capability, &wasm_path, skill_root, timeout_ms)?;
         }
         self.manifests_for(skill_id, scripts)
     }
@@ -106,7 +110,9 @@ impl SkillScriptManager {
                 continue;
             };
             let timeout_ms = it["timeout_ms"].as_u64().unwrap_or(DEFAULT_TIMEOUT_MS);
-            if let Err(e) = self.register_wasm(capability, &root.join(wasm_rel), root, timeout_ms) {
+            if let Err(e) =
+                self.register_wasm(provider, capability, &root.join(wasm_rel), root, timeout_ms)
+            {
                 eprintln!("[Plugin] {capability} 装载失败(已跳过): {e}");
                 continue;
             }
@@ -142,6 +148,7 @@ impl SkillScriptManager {
     /// (`register_skill`)是它的上层:命名与清单由技能声明驱动。
     pub fn register_wasm(
         &self,
+        provider: &str,
         capability: &str,
         wasm_path: &Path,
         root: &Path,
@@ -166,6 +173,7 @@ impl SkillScriptManager {
                 capability.to_string(),
                 Arc::new(ScriptEntry {
                     capability: capability.to_string(),
+                    provider: provider.to_string(),
                     wasm_path: wasm_canon,
                     module,
                     timeout_ms,
@@ -174,24 +182,42 @@ impl SkillScriptManager {
         Ok(())
     }
 
-    /// 注销一个技能的全部脚本:按 `skill.<id>.` 前缀从编译缓存摘除,返回被
-    /// 摘除的 capability 名(供热重载侧 `capabilities_unregister` 墓碑化)。
-    /// 未装载的 id 返回空表——幂等,可安全重复调用(ADR-0033)。
+    /// 注销一个技能的全部脚本(ADR-0033;幂等,可安全重复调用)。
+    /// `skill_id` 映射到 provider `skill.<id>`。
     pub fn unregister_skill(&self, skill_id: &str) -> Vec<String> {
-        let prefix = format!("skill.{}.", skill_id);
+        self.unregister_provider(&format!("skill.{skill_id}"))
+    }
+
+    /// 按**提供者**摘除其全部能力(ADR-0041 热重载):返回被摘除的 capability 名
+    /// (供热重载侧 `capabilities_unregister` 墓碑化)。按 `ScriptEntry.provider`
+    /// 精确匹配,取代原先写死 `skill.` 前缀的拼接——通用 wasm 插件同样适用。
+    /// 未装载的 provider 返回空表(幂等)。
+    pub fn unregister_provider(&self, provider: &str) -> Vec<String> {
         let mut entries = self
             .entries
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let removed: Vec<String> = entries
-            .keys()
-            .filter(|k| k.starts_with(&prefix))
-            .cloned()
+            .iter()
+            .filter(|(_, e)| e.provider == provider)
+            .map(|(k, _)| k.clone())
             .collect();
         for k in &removed {
             entries.remove(k);
         }
         removed
+    }
+
+    /// 本宿主已装载的全部 provider 标识(去重;ADR-0041 管理面整表重载用)。
+    pub fn providers(&self) -> Vec<String> {
+        let entries = self
+            .entries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut out: Vec<String> = entries.values().map(|e| e.provider.clone()).collect();
+        out.sort();
+        out.dedup();
+        out
     }
 
     /// 本宿主是否编译了某 capability(ADR-0041 去前缀分道)。
@@ -422,6 +448,7 @@ mod tests {
                 cap.clone(),
                 Arc::new(ScriptEntry {
                     capability: cap.clone(),
+                    provider: "skill.demo".to_string(),
                     wasm_path: PathBuf::from("demo.wat"),
                     module,
                     timeout_ms: 5_000,
@@ -466,6 +493,7 @@ mod tests {
                 cap.clone(),
                 Arc::new(ScriptEntry {
                     capability: cap.clone(),
+                    provider: "plugin.demo".to_string(),
                     wasm_path: PathBuf::from("demo.wat"),
                     module,
                     timeout_ms: 5_000,
@@ -653,16 +681,20 @@ mod tests {
         std::fs::write(&wasm, &bytes).expect("写 wasm");
 
         let mgr = SkillScriptManager::new().expect("engine");
-        mgr.register_wasm("plugin.demo.echo", &wasm, dir.path(), 5_000)
+        mgr.register_wasm("plugin.demo", "plugin.demo.echo", &wasm, dir.path(), 5_000)
             .expect("通用注册应接受任意 capability 名");
         assert!(mgr.entries.lock().unwrap().contains_key("plugin.demo.echo"));
+        // ADR-0041 热重载支点:按 provider 精确摘除其全部能力。
+        let removed = mgr.unregister_provider("plugin.demo");
+        assert_eq!(removed, vec!["plugin.demo.echo".to_string()]);
+        assert!(!mgr.has_capability("plugin.demo.echo"), "摘除后不可达");
 
         // 越界路径仍拒(canonicalize 把 root 外的目标判否)
         let outside = tempfile::tempdir().expect("另一目录");
         let other = outside.path().join("x.wasm");
         std::fs::write(&other, wat::parse_str(ECHO_WAT).expect("wat→wasm")).expect("写");
         let err = mgr
-            .register_wasm("plugin.bad", &other, dir.path(), 1_000)
+            .register_wasm("plugin.bad", "plugin.bad", &other, dir.path(), 1_000)
             .expect_err("越界必须拒");
         assert!(err.contains("越出 root"), "{err}");
     }

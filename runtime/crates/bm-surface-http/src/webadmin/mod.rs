@@ -43,6 +43,7 @@ pub(crate) use json_store::{JsonRead, read_json_file, write_json_file};
 mod limits;
 mod logs;
 mod mcp;
+mod plugins;
 mod providers;
 mod roles;
 mod skills;
@@ -211,6 +212,16 @@ pub fn admin_routes(cfg: AdminConfig) -> axum::Router {
         .route("/approvals/{id}/respond", post(approval_respond))
         .route("/skills", get(skills_get).post(skills_set))
         .route("/skills/{id}", delete(skills_delete))
+        // ADR-0041:通用 wasm 插件管理面(config/plugins.json;增删改即热重载)
+        .route(
+            "/plugins",
+            get(plugins::plugins_get).post(plugins::plugins_set),
+        )
+        .route(
+            "/plugins/reload",
+            axum::routing::post(plugins::plugins_reload),
+        )
+        .route("/plugins/{capability}", delete(plugins::plugins_delete))
         .route("/logs", get(logs_tail))
         // issue #14:Turn 内调试日志开关 + 尾读(默认关)
         .route("/debug/turns", get(debug_turns_get).post(debug_turns_set))
