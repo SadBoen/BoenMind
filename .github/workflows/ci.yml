@@ -113,12 +113,18 @@ jobs:
   # P1-40(2026-09-07 架构评审):插件有 native-tls / cfg(target_os="windows")
   # 分支,单 ubuntu 从未验证——矩阵对齐主 rust 三平台。
   # 2026-09-12:两插件 job 原逐字重复,合并为 {plugin × os} 矩阵(腿数不变)。
+  # issue #63(2026-09-13):context-inspector 无 native-tls,唯一平台分支是
+  #   config.rs 的 `cfg(target_os="windows")` APPDATA 路径——macOS 腿对其零
+  #   验证增量,砍掉(省该插件 1/3 时长);web-multisearch 有 native-tls,保留三平台。
   official-plugin:
     strategy:
       fail-fast: false
       matrix:
         plugin: [web-multisearch, context-inspector]
         os: [ubuntu-latest, windows-latest, macos-latest]
+        exclude:
+          - plugin: context-inspector
+            os: macos-latest
     runs-on: ${{ matrix.os }}
     defaults:
       run:

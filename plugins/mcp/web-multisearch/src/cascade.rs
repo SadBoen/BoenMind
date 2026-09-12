@@ -23,7 +23,7 @@ pub struct Item {
 }
 
 /// 一家供应商的可编辑描述(对应设置页下拉选中后展开的那份表单)。
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Provider {
     /// 稳定标识(内置=英文名,如 "serper";自定义=uuid 或随机短串)。
     pub id: String,
@@ -61,249 +61,13 @@ pub struct Provider {
 
 /// 内置提供的 id → 默认模板。endpoint/key 等皆可被配置覆盖;parse 只在
 /// 内置集合里才有意义(自定义必为 "std")。
+/// 内置提供的 id → 默认模板。data 外置为 `providers.builtin.json`(issue #62),
+/// 经 `include_str!` 编译期内嵌(单 exe 交付不受影响);增删模板只改 JSON 不动
+/// 代码。字段语义见 [`Provider`]。`parse` 取值须 ∈ 内置调度键集合
+/// (见 parse 派发处);下方测试锚定。
 pub fn builtin_templates() -> Vec<Provider> {
-    vec![
-        Provider {
-            id: "searxng".into(),
-            name: "SearXNG".into(),
-            builtin: true,
-            endpoint: "".into(),
-            method: "GET".into(),
-            auth: "none".into(),
-            auth_name: "".into(),
-            key: "".into(),
-            query_param: "q".into(),
-            limit_param: "".into(),
-            results_path: "/results".into(),
-            title_field: "title".into(),
-            url_field: "url".into(),
-            desc_field: "content".into(),
-            parse: "searxng".into(),
-            quota: 0,
-        },
-        Provider {
-            id: "ddgs".into(),
-            name: "DuckDuckGo".into(),
-            builtin: true,
-            endpoint: "https://html.duckduckgo.com/html/".into(),
-            method: "POST".into(),
-            auth: "none".into(),
-            auth_name: "".into(),
-            key: "".into(),
-            query_param: "q".into(),
-            limit_param: "".into(),
-            results_path: "/".into(),
-            title_field: "title".into(),
-            url_field: "url".into(),
-            desc_field: "description".into(),
-            parse: "ddg".into(),
-            quota: 0,
-        },
-        Provider {
-            id: "jina".into(),
-            name: "Jina".into(),
-            builtin: true,
-            endpoint: "https://s.jina.ai".into(),
-            method: "GET".into(),
-            auth: "bearer".into(),
-            auth_name: "Authorization".into(),
-            key: "".into(),
-            query_param: "q".into(),
-            limit_param: "".into(),
-            results_path: "/".into(),
-            title_field: "title".into(),
-            url_field: "url".into(),
-            desc_field: "description".into(),
-            parse: "jina".into(),
-            quota: 0,
-        },
-        Provider {
-            id: "marginalia".into(),
-            name: "Marginalia".into(),
-            builtin: true,
-            endpoint: "https://api2.marginalia-search.com/search".into(),
-            method: "GET".into(),
-            auth: "none".into(),
-            auth_name: "".into(),
-            key: "".into(),
-            query_param: "query".into(),
-            limit_param: "count".into(),
-            results_path: "/results".into(),
-            title_field: "title".into(),
-            url_field: "url".into(),
-            desc_field: "description".into(),
-            parse: "marginalia".into(),
-            quota: 0,
-        },
-        Provider {
-            id: "parallel".into(),
-            name: "Parallel".into(),
-            builtin: true,
-            endpoint: "https://api.parallel.ai/v1beta/search".into(),
-            method: "POST".into(),
-            auth: "bearer".into(),
-            auth_name: "Authorization".into(),
-            key: "".into(),
-            query_param: "".into(),
-            limit_param: "".into(),
-            results_path: "/results".into(),
-            title_field: "title".into(),
-            url_field: "url".into(),
-            desc_field: "excerpt".into(),
-            // F5(BACKLOG):search_queries 要求数组,通用 JSON 适配器只能发
-            // 字符串(实测 422)→ 内置特例 parallel_search。
-            parse: "parallel".into(),
-            quota: 0,
-        },
-        Provider {
-            id: "serper".into(),
-            name: "Serper".into(),
-            builtin: true,
-            endpoint: "https://google.serper.dev/search".into(),
-            method: "POST".into(),
-            auth: "header".into(),
-            auth_name: "X-API-KEY".into(),
-            key: "".into(),
-            query_param: "q".into(),
-            limit_param: "num".into(),
-            results_path: "/organic".into(),
-            title_field: "title".into(),
-            url_field: "link".into(),
-            desc_field: "snippet".into(),
-            parse: "std".into(),
-            quota: 0,
-        },
-        Provider {
-            id: "tavily".into(),
-            name: "Tavily".into(),
-            builtin: true,
-            endpoint: "https://api.tavily.com/search".into(),
-            method: "POST".into(),
-            // 2026-09-05 修正:旧默认 "none" 走通用适配器时 Key 永不随请求
-            // 发出,填真 Key 也 401;Tavily 现行 API 支持 Bearer 头。
-            auth: "bearer".into(),
-            auth_name: "Authorization".into(),
-            key: "".into(),
-            query_param: "query".into(),
-            limit_param: "max_results".into(),
-            results_path: "/results".into(),
-            title_field: "title".into(),
-            url_field: "url".into(),
-            desc_field: "content".into(),
-            parse: "tavily".into(),
-            quota: 0,
-        },
-        Provider {
-            id: "exa".into(),
-            name: "Exa".into(),
-            builtin: true,
-            endpoint: "https://api.exa.ai/search".into(),
-            method: "POST".into(),
-            auth: "header".into(),
-            auth_name: "x-api-key".into(),
-            key: "".into(),
-            query_param: "query".into(),
-            limit_param: "numResults".into(),
-            results_path: "/results".into(),
-            title_field: "title".into(),
-            url_field: "url".into(),
-            desc_field: "text".into(),
-            parse: "std".into(),
-            quota: 0,
-        },
-        Provider {
-            id: "brave".into(),
-            name: "Brave".into(),
-            builtin: true,
-            endpoint: "https://api.search.brave.com/res/v1/web/search".into(),
-            method: "GET".into(),
-            auth: "header".into(),
-            auth_name: "X-Subscription-Token".into(),
-            key: "".into(),
-            query_param: "q".into(),
-            limit_param: "count".into(),
-            results_path: "/web/results".into(),
-            title_field: "title".into(),
-            url_field: "url".into(),
-            desc_field: "description".into(),
-            parse: "std".into(),
-            quota: 0,
-        },
-        Provider {
-            id: "langsearch".into(),
-            name: "LangSearch".into(),
-            builtin: true,
-            endpoint: "https://api.langsearch.com/v1/web-search".into(),
-            method: "POST".into(),
-            auth: "bearer".into(),
-            auth_name: "Authorization".into(),
-            key: "".into(),
-            query_param: "query".into(),
-            limit_param: "count".into(),
-            results_path: "/data/webPages/value".into(),
-            title_field: "name".into(),
-            url_field: "url".into(),
-            desc_field: "snippet".into(),
-            parse: "std".into(),
-            quota: 0,
-        },
-        Provider {
-            id: "linkup".into(),
-            name: "Linkup".into(),
-            builtin: true,
-            endpoint: "https://api.linkup.so/v1/search".into(),
-            method: "POST".into(),
-            auth: "bearer".into(),
-            auth_name: "Authorization".into(),
-            key: "".into(),
-            query_param: "q".into(),
-            // 2026-09-05 修正:旧默认 "depth" 恒发数字 depth:3,上游只认
-            // "standard"/"deep" 必 400;清空则不发 limit。
-            limit_param: "".into(),
-            results_path: "/results".into(),
-            title_field: "name".into(),
-            url_field: "url".into(),
-            desc_field: "content".into(),
-            parse: "std".into(),
-            quota: 0,
-        },
-        Provider {
-            id: "you".into(),
-            name: "You.com".into(),
-            builtin: true,
-            endpoint: "https://ydc-index.io/v1/search".into(),
-            method: "GET".into(),
-            auth: "header".into(),
-            auth_name: "x-api-key".into(),
-            key: "".into(),
-            query_param: "query".into(),
-            limit_param: "count".into(),
-            results_path: "/results".into(),
-            title_field: "title".into(),
-            url_field: "url".into(),
-            desc_field: "description".into(),
-            parse: "std".into(),
-            quota: 0,
-        },
-        Provider {
-            id: "websearchapi".into(),
-            name: "WebSearchAPI".into(),
-            builtin: true,
-            endpoint: "https://api.websearchapi.ai/ai-search".into(),
-            method: "POST".into(),
-            auth: "bearer".into(),
-            auth_name: "Authorization".into(),
-            key: "".into(),
-            query_param: "query".into(),
-            limit_param: "maxResults".into(),
-            results_path: "/organic".into(),
-            title_field: "title".into(),
-            url_field: "url".into(),
-            desc_field: "description".into(),
-            parse: "std".into(),
-            quota: 0,
-        },
-    ]
+    serde_json::from_str(include_str!("providers.builtin.json"))
+        .expect("providers.builtin.json 必须是合法 Provider 数组")
 }
 
 /// 读配置里的 `providers` 数组,与内置模板合并成最终可用集。
@@ -634,6 +398,36 @@ mod tests {
     fn builtin_templates_cover_all_thirteen() {
         let ts = builtin_templates();
         assert_eq!(ts.len(), 13, "应恰好 13 内置");
+        // issue #62:模板外置为 providers.builtin.json 后,把每家内置的 id→parse
+        // 映射钉死——JSON 手改致某家 parse 打错(如 "Searxng"/"searxng " 静默落
+        // run_generic)会在此响亮失败。改派发意图须同步改此期望表(显式动作)。
+        let expected: &[(&str, &str)] = &[
+            ("searxng", "searxng"),
+            ("ddgs", "ddg"),
+            ("jina", "jina"),
+            ("marginalia", "marginalia"),
+            ("parallel", "parallel"),
+            ("serper", "std"),
+            ("tavily", "tavily"),
+            ("exa", "std"),
+            ("brave", "std"),
+            ("langsearch", "std"),
+            ("linkup", "std"),
+            ("you", "std"),
+            ("websearchapi", "std"),
+        ];
+        for (id, want_parse) in expected {
+            let got = ts
+                .iter()
+                .find(|t| t.id == *id)
+                .unwrap_or_else(|| panic!("缺内置 {id}"))
+                .parse
+                .clone();
+            assert_eq!(
+                got, *want_parse,
+                "内置 {id} 的 parse 期望 {want_parse:?},实际 {got:?}(JSON 被改动?)"
+            );
+        }
         let ids: Vec<String> = ts.iter().map(|t| t.id.clone()).collect();
         for want in [
             "searxng",
