@@ -268,6 +268,32 @@ pub fn model_invoke_cap() -> (CapabilityManifest, Arc<dyn CapabilityProvider>) {
 mod tests {
     use super::*;
 
+    // ADR-0036 后果声称的守护测试"生产 manifest 全部带声明(防回退到命名约定)"
+    // 此前**不存在**(ADR-0042 核实发现)。此处补齐:生产内置/异步族的每个
+    // manifest 必须显式声明 execution_mode——否则运行时会回退到 provider 名字
+    // 前缀猜测,正是 ADR-0036 要消灭的耦合。
+    #[test]
+    fn production_manifests_all_declare_execution_mode() {
+        let mut all: Vec<(
+            bm_contract::capability::CapabilityManifest,
+            Arc<dyn CapabilityProvider>,
+        )> = Vec::new();
+        all.extend(production_builtin_capability_set());
+        all.push(crate::system_exec::exec_capability_entry());
+        all.push(crate::system_exec::job_output_capability_entry());
+        all.extend(crate::fs_tools::fs_capability_entries());
+        all.extend(crate::context_compress::capability_entries(
+            std::path::PathBuf::from("/tmp/bm-test"),
+        ));
+        for (m, _) in &all {
+            assert!(
+                m.execution_mode.is_some(),
+                "生产 manifest `{}` 未声明 execution_mode——将回退到 provider 名字前缀猜测",
+                m.capability
+            );
+        }
+    }
+
     #[test]
     fn builtin_set_covers_five_risk_classes() {
         let set = builtin_capability_set();

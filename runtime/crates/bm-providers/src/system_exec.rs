@@ -298,7 +298,8 @@ impl AsyncCapabilityExecutor for SplitExecutor {
             self.exec
                 .call(operation_id, capability, args, deadline)
                 .await
-        } else if capability.starts_with("fs.") {
+        } else if fs_tools::FsExecutor::handles(capability) {
+            // ADR-0042:按 fs 执行器**声明的能力集**分道,不再 `starts_with("fs.")`。
             self.fs.call(operation_id, capability, args, deadline).await
         } else if self
             .skills

@@ -31,9 +31,22 @@ pub struct ScriptEntry {
     /// 提供者标识(ADR-0041 热重载):`skill.<id>` 或插件声明的 provider。
     /// 按它摘除一组能力,取代原先写死的 `skill.` 前缀拼接。
     pub provider: String,
+    /// 装载来源(ADR-0042):技能(skills.json)还是通用插件(plugins.json)。
+    /// 显式记录来源,避免用 provider 名字前缀(`skill.`)反推——那正是被
+    /// 反复批评的"前缀猜代替声明"。
+    pub origin: PluginOrigin,
     pub wasm_path: PathBuf,
     pub module: Module,
     pub timeout_ms: u64,
+}
+
+/// wasm 能力的装载来源。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PluginOrigin {
+    /// skills.json 声明的技能脚本。
+    Skill,
+    /// plugins.json(或 `register_wasm` 直接调用)装载的通用 wasm 插件。
+    Generic,
 }
 
 /// 技能脚本管理器:编译缓存 + 注册 + 执行(实现 AsyncCapabilityExecutor)。
@@ -68,7 +81,14 @@ impl SkillScriptManager {
             let capability = format!("skill.{}.{}", skill_id, sc.name);
             let wasm_path = skill_root.join(&sc.path);
             let timeout_ms = sc.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
-            self.register_wasm(&provider, &capability, &wasm_path, skill_root, timeout_ms)?;
+            self.register_wasm_with_origin(
+                &provider,
+                &capability,
+                &wasm_path,
+                skill_root,
+                timeout_ms,
+                PluginOrigin::Skill,
+            )?;
         }
         self.manifests_for(skill_id, scripts)
     }
@@ -146,6 +166,7 @@ impl SkillScriptManager {
     /// 校验 wasm 落在 `root` 内(防越界读取,同 P1-10),编译进缓存后由
     /// [`Self::run`] 按精确 capability 执行——宿主对命名空间不可知。技能装载
     /// (`register_skill`)是它的上层:命名与清单由技能声明驱动。
+    /// 来源记为 [`PluginOrigin::Generic`]。
     pub fn register_wasm(
         &self,
         provider: &str,
@@ -153,6 +174,25 @@ impl SkillScriptManager {
         wasm_path: &Path,
         root: &Path,
         timeout_ms: u64,
+    ) -> Result<(), String> {
+        self.register_wasm_with_origin(
+            provider,
+            capability,
+            wasm_path,
+            root,
+            timeout_ms,
+            PluginOrigin::Generic,
+        )
+    }
+
+    fn register_wasm_with_origin(
+        &self,
+        provider: &str,
+        capability: &str,
+        wasm_path: &Path,
+        root: &Path,
+        timeout_ms: u64,
+        origin: PluginOrigin,
     ) -> Result<(), String> {
         let root_canon = root
             .canonicalize()
@@ -174,6 +214,7 @@ impl SkillScriptManager {
                 Arc::new(ScriptEntry {
                     capability: capability.to_string(),
                     provider: provider.to_string(),
+                    origin,
                     wasm_path: wasm_canon,
                     module,
                     timeout_ms,
@@ -208,16 +249,23 @@ impl SkillScriptManager {
         removed
     }
 
-    /// 本宿主已装载的全部 provider 标识(去重;ADR-0041 管理面整表重载用)。
-    pub fn providers(&self) -> Vec<String> {
-        let entries = self
+    /// 摘除全部**通用插件**来源的能力(ADR-0042:按 `origin` 判断,不按名字前缀),
+    /// 返回被摘除的 capability 名。技能(origin=Skill)不受影响——由 skills.json
+    /// 自己的热重载管理。供 `/admin/plugins` 整表重载使用。
+    pub fn unregister_all_generic(&self) -> Vec<String> {
+        let mut entries = self
             .entries
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut out: Vec<String> = entries.values().map(|e| e.provider.clone()).collect();
-        out.sort();
-        out.dedup();
-        out
+        let removed: Vec<String> = entries
+            .iter()
+            .filter(|(_, e)| e.origin == PluginOrigin::Generic)
+            .map(|(k, _)| k.clone())
+            .collect();
+        for k in &removed {
+            entries.remove(k);
+        }
+        removed
     }
 
     /// 本宿主是否编译了某 capability(ADR-0041 去前缀分道)。
@@ -449,6 +497,7 @@ mod tests {
                 Arc::new(ScriptEntry {
                     capability: cap.clone(),
                     provider: "skill.demo".to_string(),
+                    origin: PluginOrigin::Skill,
                     wasm_path: PathBuf::from("demo.wat"),
                     module,
                     timeout_ms: 5_000,
@@ -494,6 +543,7 @@ mod tests {
                 Arc::new(ScriptEntry {
                     capability: cap.clone(),
                     provider: "plugin.demo".to_string(),
+                    origin: PluginOrigin::Generic,
                     wasm_path: PathBuf::from("demo.wat"),
                     module,
                     timeout_ms: 5_000,

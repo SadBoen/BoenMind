@@ -178,6 +178,12 @@ pub fn workspace_roots(data_dir: &std::path::Path, fallback_root: &std::path::Pa
 }
 
 impl FsExecutor {
+    /// 本执行器是否处理该 capability(ADR-0042):按**声明的能力集**判断,
+    /// 不用 `fs.` 名字前缀——执行体内部本就精确匹配这四个常量。
+    pub fn handles(capability: &str) -> bool {
+        matches!(capability, FS_SEARCH | FS_READ | FS_WRITE | FS_EDIT)
+    }
+
     pub fn new(data_dir: impl Into<PathBuf>, fallback_root: impl Into<PathBuf>) -> Self {
         Self {
             data_dir: data_dir.into(),

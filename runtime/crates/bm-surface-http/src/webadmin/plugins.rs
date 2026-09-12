@@ -45,13 +45,9 @@ async fn reload_plugins(cfg: &AdminConfig) -> String {
     let Some(manager) = cfg.skills.clone() else {
         return "wasm 执行面未启用,插件未装载。".to_string();
     };
-    // 1) 摘除所有非技能的已装载 provider(通用插件)。
-    let mut old = Vec::new();
-    for provider in manager.providers() {
-        if !provider.starts_with("skill.") {
-            old.extend(manager.unregister_provider(&provider));
-        }
-    }
+    // 1) 摘除全部通用插件来源的能力(ADR-0042:按装载来源判断,不按 provider
+    //    名字前缀;技能由 skills.json 自己的热重载管理,不在此面触达)。
+    let old = manager.unregister_all_generic();
     if !old.is_empty()
         && let Err(e) = cfg.handle.capabilities_unregister(old.clone()).await
     {
