@@ -97,7 +97,14 @@ impl<'a> Broker<'a> {
         // 是记忆抽屉:主体对自己的抽屉常量放行,越界升级审批(不静默拒绝,
         // 产出可审批事实,批准即签发带 scope 谓词的 Grant)。未声明 = 本步不
         // 适用,走既有审批/直通流。
-        if let Some(v) = Self::authorization_verdict(ctx, args, manifest, effective) {
+        // 例外:抽屉只能放行本可直通的低风险调用;manifest 显式声明的 high-risk
+        // 恒审批与 approval=required 是步 5 的「双保险,无视声明」,抽屉声明
+        // 不得把二者变成无条件直通(否则「高危+抽屉」组合会被静默放行)。
+        let drawer_gated = manifest.effect == RiskClass::HighRiskCommand
+            || manifest.approval == ApprovalRequirement::Required;
+        if !drawer_gated
+            && let Some(v) = Self::authorization_verdict(ctx, args, manifest, effective)
+        {
             return v;
         }
         // 步 5:审批判定——high-risk 恒审批(双保险,无视声明);

@@ -206,26 +206,46 @@ impl ExecExecutor {
         // 半截截断),再取 64KB 下限(极小字符上限下也保证足够读窗口,不会因
         // 缓冲过小反复唤醒)。落盘/回喂仍按字符上限截断(下方 truncated 判定)。
         let max_bytes = (limits.exec_output_max_chars.saturating_mul(4)).max(64 * 1024);
-        let mut stdout = child.stdout.take();
-        let mut stderr = child.stderr.take();
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
 
-        async fn read_pipe_capped<R: tokio::io::AsyncRead + Unpin>(
+        // 必须持续排空管道至 EOF,仅在内存保留前 cap 字节——不可在 cap 字节处
+        // 停读:子进程写满管道缓冲后永久阻塞,`child.wait()` 永不返回,命令被
+        // 误报为 Timeout(下方 truncated 判定成死代码)。stdout/stderr 还须并发
+        // 排空:顺序读会在对端填满另一路管道时互锁(经典双管道死锁)。
+        async fn drain_capped<R: tokio::io::AsyncRead + Unpin>(
             pipe: Option<R>,
             cap: usize,
         ) -> Vec<u8> {
             use tokio::io::AsyncReadExt;
-            let mut buf = Vec::new();
-            if let Some(p) = pipe {
-                // 至多 cap 字节(超出不读);读错误按 EOF 处理(保留部分结果)
-                let _ = p.take(cap as u64).read_to_end(&mut buf).await;
+            let mut kept = Vec::new();
+            let Some(mut p) = pipe else {
+                return kept;
+            };
+            let mut chunk = [0u8; 8192];
+            loop {
+                match p.read(&mut chunk).await {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        // 只保留前 cap 字节;其余仍读取后丢弃(仅为排空管道)
+                        if kept.len() < cap {
+                            let take = (cap - kept.len()).min(n);
+                            kept.extend_from_slice(&chunk[..take]);
+                        }
+                    }
+                    // 读错误按 EOF 处理(保留部分结果)
+                    Err(_) => break,
+                }
             }
-            buf
+            kept
         }
 
         let read_task = async {
-            let out_bytes = read_pipe_capped(stdout.as_mut(), max_bytes).await;
-            let err_bytes = read_pipe_capped(stderr.as_mut(), max_bytes).await;
-            let status = child.wait().await;
+            let (out_bytes, err_bytes, status) = tokio::join!(
+                drain_capped(stdout, max_bytes),
+                drain_capped(stderr, max_bytes),
+                child.wait(),
+            );
             (status, out_bytes, err_bytes)
         };
 
@@ -577,6 +597,40 @@ mod tests {
             .await
             .expect("执行成功");
         assert_eq!(out["truncated"], json!(true), "1500 字符须被截断:{out}");
+        assert_eq!(
+            out["output"].as_str().unwrap().chars().count(),
+            1000,
+            "截断后应恰为 limits 上限"
+        );
+        drop(dir);
+    }
+
+    // P1-14 回归:输出远超读管保留上限(此处 64KB 下限)时,必须持续排空管道
+    // 而非在 cap 处停读。停读会让子进程写满管道后永久阻塞、命令被误报 Timeout
+    // (修复前本用例返回 Err(Timeout));修复后须 exit_code=0 + truncated=true。
+    #[tokio::test]
+    async fn exec_oversized_output_truncates_not_times_out() {
+        let (exec, dir) = executor();
+        let l = Limits {
+            exec_output_max_chars: 1000,
+            ..Limits::default()
+        };
+        exec.limits.set(l);
+        #[cfg(windows)]
+        let args = json!({"command": "Write-Output ('a' * 200000)"});
+        #[cfg(not(windows))]
+        let args = json!({"command": "printf 'a%.0s' $(seq 1 200000)"});
+        let out = exec
+            .call(
+                "op",
+                EXEC_CAPABILITY,
+                args,
+                std::time::Duration::from_secs(30),
+            )
+            .await
+            .expect("大输出不得误报超时(管道须被排空)");
+        assert_eq!(out["exit_code"], json!(0), "命令应正常退出:{out}");
+        assert_eq!(out["truncated"], json!(true), "超限输出须标记截断:{out}");
         assert_eq!(
             out["output"].as_str().unwrap().chars().count(),
             1000,

@@ -306,6 +306,22 @@ pub fn search(roots: &Roots, args: &Value, limits: &Limits, deadline: std::time:
                     continue;
                 }
                 let file = display_path(entry.path());
+                let file_name = entry.file_name().to_string_lossy();
+                // 与主循环同口径:回退场次同样受 path_pattern 与体积门约束,
+                // 否则 `answer|foo`(fixed=true)会搜进被主循环刻意排除的路径/巨文件。
+                if let Some(ref pf) = path_filter
+                    && !pf.is_match(&file)
+                    && !pf.is_match(&file_name)
+                {
+                    continue;
+                }
+                if entry
+                    .metadata()
+                    .map(|md| md.len() > limits.fs_skip_file_bytes)
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
                 let mut searcher = SearcherBuilder::new()
                     .binary_detection(BinaryDetection::quit(0))
                     .line_number(true)
@@ -954,6 +970,36 @@ mod tests {
         assert!(
             !out_fixed_fallback["matches"].as_array().unwrap().is_empty(),
             "fallback 成功救回包含 | 的模式"
+        );
+    }
+
+    // 修复回归:fixed=true 的 regex fallback 必须与主循环同口径地遵守
+    // path_pattern——否则 `answer|…` 会从被主循环刻意排除的路径返回命中
+    // (本用例修复前会带上 src/skip.rs)。
+    #[test]
+    fn search_fallback_regex_honors_path_pattern() {
+        let dir = tempfile::tempdir().expect("tmp");
+        std::fs::create_dir_all(dir.path().join("src")).expect("dir");
+        std::fs::write(dir.path().join("keep.rs"), "let answer = 1;\n").expect("w");
+        std::fs::write(dir.path().join("src/skip.rs"), "let answer = 2;\n").expect("w");
+        let r = roots_for(dir.path());
+        let out = search(
+            &r,
+            &json!({
+                "query": "answer|zzz_nonexistent_marker",
+                "fixed": true,
+                "path_pattern": "*keep.rs",
+                "mode": "content"
+            }),
+        );
+        assert_eq!(out["ok"], true, "{out}");
+        let matches = out["matches"].as_array().expect("matches array");
+        assert!(!matches.is_empty(), "fallback 应救回 keep.rs:{out}");
+        assert!(
+            matches
+                .iter()
+                .all(|m| m["file"].as_str().unwrap().ends_with("keep.rs")),
+            "fallback 不得搜进 path_pattern 之外的路径:{out}"
         );
     }
 }

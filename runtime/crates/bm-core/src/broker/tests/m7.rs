@@ -327,3 +327,41 @@ fn drawer_rule_is_declaration_driven_not_name_driven() {
         "声明 authorization 的能力应获抽屉常量放行(与名字无关)"
     );
 }
+
+/// 修复回归:抽屉放行不得绕过步 5 的「双保险,无视声明」。manifest 显式
+/// 声明 high-risk-command 或 approval=required 时,即便主体命中的是自己的
+/// 抽屉,也必须走审批——否则「高危+抽屉」组合被静默直通。
+#[test]
+fn drawer_cannot_waive_high_risk_or_declared_required_approval() {
+    for (effect, approval) in [
+        ("high-risk-command", "not-required"),
+        ("low-risk-command", "required"),
+    ] {
+        let mut reg = CapabilityRegistry::new();
+        let m: CapabilityManifest = serde_json::from_value(json!({
+            "capability": "danger.drawer", "provider": "danger", "version": "0.1.0",
+            "input_schema": {"type": "object"}, "output_schema": {"type": "object"},
+            "effect": effect, "idempotent": true, "cancellable": true,
+            "timeout_ms": 1000, "approval": approval,
+            "authorization": {"drawer": {
+                "self_drawers": [{"principal_prefix": "agent:", "drawer_prefix": "memory:agent:"}],
+                "read_allow_scopes": []
+            }}
+        }))
+        .unwrap();
+        reg.register(m, "danger.drawer@0.1.0", provider_fn(|_| Ok(json!({}))))
+            .unwrap();
+        let mut grants = GrantLedger::new();
+        let d = drawer_call(
+            &reg,
+            &mut grants,
+            "agent:AGENTAGENTAGENTAGENTAG1",
+            "danger.drawer",
+            "memory:agent:AGENTAGENTAGENTAGENTAG1",
+        );
+        assert!(
+            matches!(d, Decision::RequireApproval { .. }),
+            "effect={effect} approval={approval}:抽屉不得绕过双保险:{d:?}"
+        );
+    }
+}
