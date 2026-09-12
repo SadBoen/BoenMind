@@ -36,8 +36,9 @@ pub fn compose_role_prompt(data_dir: &Path, role_id: Option<&str>) -> Option<Str
     let base = base?;
     // 挂载技能指令追加(skills.json 整体只读/解析一次,不随技能数放大;
     // 缺失或技能缺失则静默跳过)
-    let skills_db: Option<serde_json::Value> =
-        crate::json_store::read_json_lenient(&data_dir.join("config").join("skills.json"));
+    let skills_db: Option<serde_json::Value> = crate::json_store::read_json_lenient(
+        &crate::ports::skill_host::skills_config_path(data_dir),
+    );
     let skill_text = mounted
         .iter()
         .filter_map(|sid| {

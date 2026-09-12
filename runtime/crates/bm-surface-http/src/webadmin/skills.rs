@@ -7,7 +7,8 @@ use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
 
 fn skills_file(cfg: &AdminConfig) -> std::path::PathBuf {
-    cfg.data_dir.join("config").join("skills.json")
+    // 路径约定单源化(ADR-0053):不再手拼,与装载入口共用同一约定。
+    bm_core::ports::skill_host::skills_config_path(&cfg.data_dir)
 }
 
 /// 读技能库。缺文件 = 空库;JSON 损坏或缺 skills 数组 = 拒绝(2026-09-07

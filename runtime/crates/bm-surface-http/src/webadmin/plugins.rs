@@ -11,7 +11,8 @@ use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
 
 fn plugins_file(cfg: &AdminConfig) -> std::path::PathBuf {
-    cfg.data_dir.join("config").join("plugins.json")
+    // 路径约定单源化(ADR-0053):不再手拼,与装载入口共用同一约定。
+    bm_core::ports::skill_host::plugins_config_path(&cfg.data_dir)
 }
 
 /// 读插件声明(顶层数组)。缺文件 = 空;损坏即拒(与 skills 同口径:不静默
