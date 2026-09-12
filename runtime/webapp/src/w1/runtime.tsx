@@ -309,7 +309,7 @@ export function BoenmindRuntimeProvider({
       onApproval: (req: ApprovalRequest) => approvalHandlerRef.current(req),
       onToolStarted: (t: ToolEvent) =>
         setToolEvents((cur) => [...cur, t]),
-      onToolInvoked: (operationId: string, effect: string) =>
+      onToolInvoked: (operationId: string, _effect: string) =>
         setToolEvents((cur) =>
           cur.map((t) =>
             t.operationId === operationId

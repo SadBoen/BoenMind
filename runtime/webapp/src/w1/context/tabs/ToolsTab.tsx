@@ -1,7 +1,7 @@
 //! TAB 2: 工具背包双栏联动(#22 拆分:自 context.tsx 视图块机械移入)
 //! 左侧工具大白话卡片,右侧 OpenAI Function JSON 定义滚动定位高亮。
 
-import { Code2, Copy, Check, ShieldAlert } from "lucide-react";
+import { Code2, Copy, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { scrollToId, type ParsedPromptRecipe } from "../utils";
