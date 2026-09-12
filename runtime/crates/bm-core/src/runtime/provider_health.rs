@@ -8,11 +8,11 @@ use super::*;
 #[derive(Debug, Clone, Default)]
 pub struct ProviderHealth {
     pub status: &'static str, // "healthy" | "unavailable"
-    /// HTTP:连续失败计数(>=3 开闸);MCP:未用。
+ /// HTTP:连续失败计数(>=3 开闸);MCP:未用。
     pub fail_streak: u32,
-    /// MCP:unavailable 期间的重连探针次数(>=3 封禁)。
+ /// MCP:unavailable 期间的重连探针次数(>=3 封禁)。
     pub reconnect_attempts: u32,
-    /// HTTP:熔断冷却截止(半开放行探测);MCP:未用。
+ /// HTTP:熔断冷却截止(半开放行探测);MCP:未用。
     pub cooldown_until: Option<chrono::DateTime<chrono::Utc>>,
 }
 
@@ -22,7 +22,7 @@ pub struct ProviderHealth {
 /// "mcp.<server>.<tool>" -> Some("mcp.<server>")(健康门主体);非 MCP 族 ->
 /// None。健康门(重连计数/超限熔断/「直至重装」恢复)只对 MCP 族成立:进程内
 /// 族(system.exec/fs.*/wasm)编译进宿主,不存在「重装」恢复通道,误触发熔断
-/// 即锁死直至重启进程。2026-09-12 修复族形状泄漏(ADR-0050 未做清单未豁免项;
+/// 即锁死直至重启进程。
 /// 健康门按 ADR-0037 分工收窄回 MCP 族语义)。
 pub(crate) fn mcp_provider_of(capability: &str) -> Option<String> {
     let parts: Vec<&str> = capability.split('.').collect();
@@ -67,8 +67,8 @@ pub(crate) fn note_provider_failure(w: &mut World, provider: &str, reason: &str)
             Some(now + chrono::Duration::milliseconds(lim.provider_cooldown_ms as i64));
         emit_provider_health(w, provider, "healthy", "unavailable", reason);
     } else if entry.status == "unavailable" {
-        // P1(第四轮评审):半开探测失败必须重开冷却——否则冷却过期后每个
-        // 请求都穿透打到死 provider,熔断器只挡前 30 秒。
+ // P1():半开探测失败必须重开冷却——否则冷却过期后每个
+ // 请求都穿透打到死 provider,熔断器只挡前 30 秒。
         entry.cooldown_until =
             Some(now + chrono::Duration::milliseconds(lim.provider_cooldown_ms as i64));
     }
@@ -92,9 +92,8 @@ pub(crate) fn note_provider_success(w: &mut World, provider: &str, reason: &str)
 mod tests {
     use super::mcp_provider_of;
 
-    // 2026-09-12 族形状泄漏修复:健康门主体只对 MCP 族成立,进程内族
-    // (system.exec/fs.* 等)不得再按能力名落健康记录。
-    #[test]
+ // (system.exec/fs.* 等)不得再按能力名落健康记录。
+ #[test]
     fn mcp_provider_of_scopes_to_mcp_family() {
         assert_eq!(
             mcp_provider_of("mcp.web_multisearch.web_search_lite").as_deref(),
@@ -102,7 +101,7 @@ mod tests {
         );
         assert_eq!(mcp_provider_of("system.exec"), None);
         assert_eq!(mcp_provider_of("fs.search"), None);
-        // 不足三段的 mcp.* 维持旧判定:非健康门主体。
+ // 不足三段的 mcp.* 维持旧判定:非健康门主体。
         assert_eq!(mcp_provider_of("mcp.alone"), None);
     }
 }

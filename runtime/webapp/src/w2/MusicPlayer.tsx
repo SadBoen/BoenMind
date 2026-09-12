@@ -33,7 +33,7 @@ export function MusicPlayer() {
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  // 扫描工作区内的音频文件 (.mp3, .wav, .ogg, .flac, .m4a, .aac)
+ // 扫描工作区内的音频文件 (.mp3, .wav, .ogg, .flac, .m4a, .aac)
   const scanWorkspaceAudio = useCallback(async () => {
     try {
       const res = await api.fs.list("");
@@ -58,12 +58,11 @@ export function MusicPlayer() {
           };
         });
 
-      // 2026-09-05 回看修复:移除虚构示例曲目——曲库必须忠实反映工作区
-      // 实际内容,空就是空(诚实空态由下方列表空态分支呈现)
+ // 实际内容,空就是空(诚实空态由下方列表空态分支呈现)
       setTracks(audioFiles);
       setPlaylist(audioFiles);
     } catch {
-      // 扫描失败保持空列表(不伪造数据)
+ // 扫描失败保持空列表(不伪造数据)
     }
   }, []);
 

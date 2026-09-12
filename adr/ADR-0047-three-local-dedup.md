@@ -1,34 +1,7 @@
----
-status: accepted
-date: 2026-09-12
-summary: 三处局部去重单源——default_data_dir 归 bm-persist、100 年无 TTL 哨兵归 core 常量、webadmin mcp 配置读取改用 json_store 原语
-supersedes: []
-superseded_by: []
----
-
-# ADR-0047: 三处局部去重单源(default_data_dir / 无 TTL 哨兵 / mcp 配置读取)
-
-- 关联: ADR-0042(核实轮方法论)、ADR-0046(反转补完,本为其 P5 局部去重)
-- 背景: 重新评估列出三处**真实但局部**的重复(非假阳性),逐条收口。
-
-## 决策
-
-1. **`default_data_dir` 单源 → `bm-persist`**。此前 `bm-cli/src/lib.rs:135` 与
-   `bm-runtime/src/bin/boenmind-server.rs:21` 逐字重复(`dirs::data_dir()/boenmind` 回退
-   `boenmind-data`)。置于 `bm-persist`(两边都已依赖它,且"数据目录"属其职责);`bm-cli`
-   以 `pub use bm_persist::default_data_dir` 保持其公开 API 不变。未选 `bm-core`——
-   为一个路径函数引入 core 依赖属过度耦合。
-2. **无 TTL/无 deadline 的"100 年"哨兵单源 → `bm-core::runtime` 常量**。
-   `NO_TTL_SENTINEL_SECS` / `NO_TTL_SENTINEL_MS`,取代 `turn/capability.rs:237`(ms)与
-   `turn/spawn.rs:1188`(secs)各写一份的字面量。语义(配置 0 = 不限制,基线 §9.6 不变)不变。
-3. **webadmin MCP 配置读取改用 `json_store` 原语**。`webadmin/mcp.rs` 的
-   `read_server_config` 此前手写 `read_to_string → from_str → NotFound` 样板,与
-   `json_store`(issue #38 收口者,doc 明言覆盖 mcp 域)平行。改走
-   `read_json_file`(NotFound→空对象、损坏→拒绝的域语义经调用方前缀保持)。
-
-## 后果
-
-- 三处各自 grep 单源成立;`default_data_dir`/哨兵字面量/配置样板不再有多份。
-- **零行为变更**:501 测试全绿;`clippy -D warnings` 零警告。
-- `bm-cli` 公开 API 路径不变(re-export);`bm-persist` 增 `dirs` 依赖(workspace 已有)。
-- 三处均为"同一事实多份维护"型重复的消除,不涉设计变更。
+status: accepted date: summary: 三处局部去重单源——default_data_dir 归 bm-persist、100 年无 TTL 哨兵归 core 常量、webadmin mcp 配置读取改用 json_store 原语 supersedes: [] superseded_by: [] 
+# ADR-0047: 三处局部去重单源(default_data_dir / 无 TTL 哨兵 / mcp 配置读取) 
+- 关联: ADR-0042(核实轮方法论)、ADR-0046(反转补完,本为其 P5 局部去重) - 背景: 重新评估列出三处**真实但局部**的重复(非假阳性),逐条收口。 
+## 决策 
+1. **`default_data_dir` 单源 → `bm-persist`**。  `bm-runtime/src/bin/boenmind-server.rs:21` 逐字重复(`dirs::data_dir()/boenmind` 回退  `boenmind-data`)。置于 `bm-persist`(两边都已依赖它,且"数据目录"属其职责);`bm-cli`  以 `pub use bm_persist::default_data_dir` 保持其公开 API 不变。未选 `bm-core`——  为一个路径函数引入 core 依赖属过度耦合。 2. **无 TTL/无 deadline 的"100 年"哨兵单源 → `bm-core::runtime` 常量**。  `NO_TTL_SENTINEL_SECS` / `NO_TTL_SENTINEL_MS`,取代 `turn/capability.rs:237`(ms)与  `turn/spawn.rs:1188`(secs)各写一份的字面量。语义(配置 0 = 不限制,基线 §9.6 不变)不变。 3. **webadmin MCP 配置读取改用 `json_store` 原语**。`webadmin/mcp.rs` 的  `read_server_config`  `json_store`(issue #38 收口者,doc 明言覆盖 mcp 域)平行。改走  `read_json_file`(NotFound→空对象、损坏→拒绝的域语义经调用方前缀保持)。 
+## 后果 
+- 三处各自 grep 单源成立;`default_data_dir`/哨兵字面量/配置样板不再有多份。 - **零行为变更**:501 测试全绿;`clippy -D warnings` 零警告。 - `bm-cli` 公开 API 路径不变(re-export);`bm-persist` 增 `dirs` 依赖(workspace 已有)。 - 三处均为"同一事实多份维护"型重复的消除,不涉设计变更。 

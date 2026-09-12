@@ -6,8 +6,8 @@
 mod t7_event_shape_tests {
     use super::super::*;
 
-    /// T7 硬约束 3:命令语义形状在持久化前拒绝(G1 Bus 不得当 RPC)。
-    #[test]
+ /// T7 硬约束 3:命令语义形状在持久化前拒绝(G1 Bus 不得当 RPC)。
+ #[test]
     fn command_semantic_payloads_are_rejected_before_persist() {
         let ty = EventType::SessionCreated;
         for bad_key in [
@@ -22,7 +22,7 @@ mod t7_event_shape_tests {
                 "{bad_key} 形状必须被拒"
             );
         }
-        // 正常事实载荷照常通过
+ // 正常事实载荷照常通过
         assert!(validate_event_shape(&ty, &serde_json::json!({"session_id": "x"})).is_ok());
     }
 }
@@ -32,10 +32,10 @@ mod r2_tombstone_tests {
     use super::super::*;
     use bm_contract::ids::{IdGen, UlidIdGen};
 
-    // ---- 最小 stub 集(bm-core 不依赖 providers/testkit,自备确定性件)----
+ // ---- 最小 stub 集(bm-core 不依赖 providers/testkit,自备确定性件)----
 
     struct StubConnector;
-    #[async_trait::async_trait]
+ #[async_trait::async_trait]
     impl ModelConnector for StubConnector {
         fn provider(&self) -> &'static str {
             "stub"
@@ -89,7 +89,7 @@ mod r2_tombstone_tests {
 
     pub(super) fn test_world(dir: &std::path::Path) -> World {
         let (tx, _rx) = mpsc::channel::<Cmd>(64);
-        // F-12:内存桩(理由同 memory.rs 测试注释)
+ // F-12:内存桩(理由同 memory.rs 测试注释)
         let store: Arc<dyn EventStore> =
             Arc::new(crate::ports::persist::test_support::MemEventStore::new());
         World {
@@ -149,9 +149,9 @@ mod r2_tombstone_tests {
         }
     }
 
-    /// R2(INV-3):坏形状事件以 StoreWriteRejected tombstone 占住原 seq 槽
-    /// (持久+总线),此后正常事件 seq 连续——存储侧重放无跳号。
-    #[test]
+ /// R2(INV-3):坏形状事件以 StoreWriteRejected tombstone 占住原 seq 槽
+ /// (持久+总线),此后正常事件 seq 连续——存储侧重放无跳号。
+ #[test]
     fn bad_shape_event_tombstone_keeps_store_seqs_contiguous() {
         let dir = tempfile::tempdir().expect("tmp");
         let mut world = test_world(dir.path());
@@ -178,17 +178,17 @@ mod r2_tombstone_tests {
             serde_json::json!({"pid": 1, "version": "test-2", "started_at": "2026-09-06T00:00:00Z"}),
         );
 
-        // 三次发射 seq 连续(坏事件不跳号)
+ // 三次发射 seq 连续(坏事件不跳号)
         assert_eq!(
             good2.event_seq - good1.event_seq,
             2,
             "正常事件 seq 必须连续推进"
         );
-        // 坏事件返回的即 tombstone:类型与占位一致
+ // 坏事件返回的即 tombstone:类型与占位一致
         assert_eq!(bad.event_type, EventType::StoreWriteRejected);
         assert_eq!(bad.event_seq, good1.event_seq + 1);
 
-        // 持久侧重放:seq 无孔洞,且 tombstone 真实落盘
+ // 持久侧重放:seq 无孔洞,且 tombstone 真实落盘
         let store = world.store.as_ref().unwrap();
         let persisted = store.replay_since(0).expect("重放成功");
         let seqs: Vec<u64> = persisted.iter().map(|e| e.event_seq).collect();
@@ -205,20 +205,19 @@ mod r2_tombstone_tests {
         );
     }
 
-    /// 2026-09-08 审计 P0 回归:删会话必须连带清内存 agents 实体——持久侧
-    /// agents 行已随会话删除,内存遗留即幽灵 Agent(常驻增长,且按 agent_id
-    /// 查询会误判其活跃)。
-    #[test]
+ /// agents 行已随会话删除,内存遗留即幽灵 Agent(常驻增长,且按 agent_id
+ /// 查询会误判其活跃)。
+ #[test]
     fn session_delete_also_removes_agent_from_memory() {
         let dir = tempfile::tempdir().expect("tmp");
         let mut world = test_world(dir.path());
-        // 纯内存口径:store/data_dir 置空跳过持久侧效(MemEventStore 桩未覆盖
-        // erase 路径),被测对象=删除的内存台账清理本身
+ // 纯内存口径:store/data_dir 置空跳过持久侧效(MemEventStore 桩未覆盖
+ // erase 路径),被测对象=删除的内存台账清理本身
         world.store = None;
         world.config.data_dir = None;
 
-        // 直接装配 Session+Agent(被测对象是删除清理;handle_session_create
-        // 会持久化 Grant,MemEventStore 桩未覆盖该路径)
+ // 直接装配 Session+Agent(被测对象是删除清理;handle_session_create
+ // 会持久化 Grant,MemEventStore 桩未覆盖该路径)
         let sid = world.config.id_gen.next_id("sess");
         let aid = world.config.id_gen.next_id("agent");
         let mut session = Session {
@@ -268,7 +267,7 @@ mod r2_tombstone_tests {
         );
     }
 
-    // ---- 会话目录(2026-09-08 三端一致批;/admin/sessions 读模型)----
+ // ---- 会话目录()----
 
     fn catalog_session(world: &World, updated_at: Option<String>) -> Session {
         Session {
@@ -283,7 +282,7 @@ mod r2_tombstone_tests {
         }
     }
 
-    #[test]
+ #[test]
     fn session_list_orders_by_recent_activity() {
         let dir = tempfile::tempdir().expect("tmp");
         let mut world = test_world(dir.path());
@@ -293,7 +292,7 @@ mod r2_tombstone_tests {
         let mut early = catalog_session(&world, Some("2026-09-08T09:00:00.000Z".into()));
         early.title = Some("早".into());
         let late = catalog_session(&world, Some("2026-09-08T11:00:00.000Z".into()));
-        // updated_at 缺失(存量旧行):读模型回落 created_at
+ // updated_at 缺失(存量旧行):读模型回落 created_at
         let legacy = catalog_session(&world, None);
         for s in [early, late, legacy] {
             world.sessions.insert(s.id.clone(), s);
@@ -333,7 +332,7 @@ mod m11_share_tests {
         for (m, p) in crate::share::share_capability_entries() {
             w.registry.register(m, "builtin.core", p).expect("注册");
         }
-        // 投影存在性 = Task 存在口径(dispatch_share 查 task_board)
+ // 投影存在性 = Task 存在口径(dispatch_share 查 task_board)
         w.task_board.restore_row(T1, "任务一", "running", 1);
         w.task_board.restore_row(T2, "任务二", "running", 1);
         w
@@ -391,8 +390,8 @@ mod m11_share_tests {
         r
     }
 
-    /// 验收门 1/3/5:A 发布 → B 可见;审计双落盘;增量投影 == 重放重建。
-    #[test]
+ /// 验收门 1/3/5:A 发布 → B 可见;审计双落盘;增量投影 == 重放重建。
+ #[test]
     fn publish_then_cross_member_list_with_audit() {
         let dir = tempfile::tempdir().expect("tmp");
         let mut w = test_world(dir.path());
@@ -426,7 +425,7 @@ mod m11_share_tests {
         assert_eq!(res["result"]["shares"][0]["title"], "wiki 查到 X");
         assert_eq!(res["result"]["shares"][0]["seq"], seq);
 
-        // 审计双落盘:share.published 事实 + capability.invoked 收据
+ // 审计双落盘:share.published 事实 + capability.invoked 收据
         let events = w
             .store
             .as_ref()
@@ -443,15 +442,15 @@ mod m11_share_tests {
                 && e.payload["outcome"] == "succeeded"
                 && e.payload["capability"] == crate::share::SHARE_PUBLISH
         }));
-        // 增量投影 == 重放重建(ADR-0004 条件 1)
+ // 增量投影 == 重放重建(ADR-0004 条件 1)
         assert_eq!(
             crate::share::TaskShareBoard::rebuild(&events),
             w.share_board
         );
     }
 
-    /// 验收门 2:跨 Task 结构性隔离;args 里的 task_id 不可伪造归属。
-    #[test]
+ /// 验收门 2:跨 Task 结构性隔离;args 里的 task_id 不可伪造归属。
+ #[test]
     fn cross_task_isolation_and_args_spoof_ignored() {
         let mut w = share_world();
         let w2 = worker_ctx(T2);
@@ -463,7 +462,7 @@ mod m11_share_tests {
         );
         seed_grant(&mut w, w2.principal.as_str(), crate::share::SHARE_LIST, T2);
 
-        // args 里指定 task_id = T1:归属仍按 principal 落 T2,不落 T1
+ // args 里指定 task_id = T1:归属仍按 principal 落 T2,不落 T1
         let r = call(
             &mut w,
             w2.clone(),
@@ -474,7 +473,7 @@ mod m11_share_tests {
         assert_eq!(w.share_board.list(T1, 0).len(), 0, "T1 不得被越界写入");
         assert_eq!(w.share_board.list(T2, 0).len(), 1);
 
-        // list 同理:只回自己的公告栏
+ // list 同理:只回自己的公告栏
         let r = call(
             &mut w,
             w2,
@@ -486,8 +485,8 @@ mod m11_share_tests {
         assert_eq!(res["result"]["total"], 1);
     }
 
-    /// 验收门 4:非 Task 域主体无公告栏(直通裁决通过、内核执行层拒绝——纵深)。
-    #[test]
+ /// 验收门 4:非 Task 域主体无公告栏(直通裁决通过、内核执行层拒绝——纵深)。
+ #[test]
     fn non_task_principal_is_rejected() {
         let mut w = share_world();
         let r = call(
@@ -504,9 +503,9 @@ mod m11_share_tests {
         }
     }
 
-    /// 权限三层:无 Grant 的 untrusted publish 升级审批(Reversible 生效);
-    /// list 默认拒绝(ADR-0006);不存在的 Task 拒绝。
-    #[test]
+ /// 权限三层:无 Grant 的 untrusted publish 升级审批(Reversible 生效);
+ /// list 默认拒绝(ADR-0006);不存在的 Task 拒绝。
+ #[test]
     fn ungranted_worker_escalates_and_unknown_task_rejected() {
         let mut w = share_world();
         let r = call(
@@ -527,7 +526,7 @@ mod m11_share_tests {
         );
         assert!(r.is_err(), "无 Grant list 应默认拒绝");
 
-        // Task 不存在(投影无此任务)→ 拒绝
+ // Task 不存在(投影无此任务)→ 拒绝
         const T3: &str = "task_01JAAAAAAAAAAAAAAAAAAAAA0E";
         let w3 = worker_ctx(T3);
         seed_grant(

@@ -1,32 +1,9 @@
----
-status: accepted
-date: 2026-09-11
-summary: 注销墓碑化+注册按持久max+1续代+快照先行于落库+删物理删除端口+注册过冻结门禁+scope_label放行冒号分层(2026-09-11)
-supersedes: []
-superseded_by: []
----
-
-# ADR-0032: binding_epoch 代际连续性修复与 manifest 注册期冻结校验
-
-- 状态: Accepted（2026-09-11 架构评审报告风险 5/缺口①的属实项修复落地）
-- 日期: 2026-09-11
-- 关联: ADR-0001（条件 2:binding_epoch 为授权-执行-审计一致性根基）、ADR-0006（权限以合同显式化）、评审报告全文留 git 史（不入库）
-
-## 背景
-
-2026-09-11 外部代码评审坐实一组自相矛盾：`registry.rs` 头注声称「binding_epoch 在每次生命周期事件（注册/热替换/恢复）单调 +1」，而生产路径实际是——热注销物理删除持久行（`DELETE FROM capabilities`）、注册恒写 epoch=1、启动期先落库 epoch=1 再读表恢复（历史值已被覆盖）。结果：每次 MCP 热重载（管理面常规操作）epoch 归零，`(epoch, provider_instance_id)` 无法区分重载前后的插件实例代际，ADR-0001 条件 2 的对账承诺只在测试里成立。同轮另坐实：manifest 注册路径零冻结 schema 校验（`CAPABILITY_MANIFEST_SCHEMA` 仅在 bm-contract 测试内被消费），且既有生产 manifest 的 `scopes` 普遍采用 `domain:*` 冒号形态——冻结 schema 的 `scope_label` pattern 禁冒号，合同与实际出线已漂移（零校验长期掩盖）。
-
-## 决策
-
-1. **注销墓碑化，注册按持久 max+1 续代**。`handle_capabilities_unregister` 不再物理删行，改写 `status="unavailable"` 墓碑；热注册与启动装载注册前先行快照持久行 epoch，新 binding epoch = 持久 max+1（全新能力 = 1）；启动期快照必须先于注册落库。已签发凭证的 `(epoch, instance)` 归属跨重载/重启可对账，且永不回退。
-2. **删除 `delete_capability_binding` 端口方法**。物理删除入口从 `EventStore` 端口、bm-persist StateDb/store 与全部测试桩中连根移除，杜绝「代人删行归零」回潮。
-3. **manifest 注册期过冻结合同门禁**。`CapabilityRegistry::register` 内置 `capability/manifest.v0_1` 校验（None 值可选键先剥除——serde 序列化为 null 与合同「缺省即缺席」表述同义），违例以 `RegistryError::InvalidManifest` 拒注；热注册批量语义不变（逐条记错、全坏才整体失败）。
-4. **合同 Minor 放宽 `scope_label`**：pattern 放行一次冒号分层（`^[a-z][a-z0-9_.-]{0,30}(:[a-z0-9_.-]{1,47})?$`），追认 M4 以来生产实况（`domain:fs`、`domain:mcp.<server>` 等），属只增不破。
-5. **MCP server 名归一**。`normalize_server_name`（连字符→下划线，与工具名同字符集）为 `mcp.<server>` 前缀组合唯一真源，capability/provider/路由前缀/scope 四处同用；非法名与非法工具名同口径（跳过/未连接）。
-
-## 后果
-
-- 守护测试锁死回归面：`bm-testkit/tests/capability_epoch_continuity.rs`（跨热重载/重启 epoch 不回退 + 注册门禁批量语义）、`bm-core/src/registry.rs` 单测（违例 manifest 拒注 + `domain:*` scope 必须过）。
-- registry.rs 头注改为文实一致的代际语义描述。
-- `BindingStatus` 运行时双状态模型（`provider_health` ↔ `BindingStatus`）与 `Draining` 排空语义属同评审的未修残余，登记在 issue 台账，不在本 ADR 裁决范围。
-- 评审其余结构性建议（CallContext 进插件契约、能力实现搬出核心、信任链收紧、Surface 插件化）超出本批次，按评审纪律入 issue 台账（#39/#43 与新建台账）。
+status: accepted date: summary: 注销墓碑化+注册按持久max+1续代+快照先行于落库+删物理删除端口+注册过冻结门禁+scope_label放行冒号分层() supersedes: [] superseded_by: [] 
+# ADR-0032: binding_epoch 代际连续性修复与 manifest 注册期冻结校验 
+- 状态: Accepted（） - 日期: - 关联: ADR-0001（条件 2:binding_epoch 为授权-执行-审计一致性根基）、ADR-0006（权限以合同显式化）、评审报告全文留 git 史（不入库） 
+## 背景 
+）单调 +1」，而生产路径实际是——热注销物理删除持久行（`DELETE FROM capabilities`）、注册恒写 epoch=1、启动期先落库 epoch=1 再读表恢复（历史值已被覆盖）。结果：每次 MCP 热重载（管理面常规操作）epoch 归零，`(epoch, provider_instance_id)` 无法区分重载前后的插件实例代际，ADR-0001 条件 2 的对账承诺只在测试里成立。同轮另坐实：manifest 注册路径零冻结 schema 校验（`CAPABILITY_MANIFEST_SCHEMA` 仅在 bm-contract 测试内被消费），且既有生产 manifest 的 `scopes` 普遍采用 `domain:*` 冒号形态——冻结 schema 的 `scope_label` pattern 禁冒号，合同与实际出线已漂移（零校验长期掩盖）。 
+## 决策 
+1. **注销墓碑化，注册按持久 max+1 续代**。`handle_capabilities_unregister` 不再物理删行，改写 `status="unavailable"` 墓碑；热注册与启动装载注册前先行快照持久行 epoch，新 binding epoch = 持久 max+1（全新能力 = 1）；启动期快照必须先于注册落库。已签发凭证的 `(epoch, instance)` 归属跨重载/重启可对账，且永不回退。 2. **删除 `delete_capability_binding` 端口方法**。物理删除入口从 `EventStore` 端口、bm-persist StateDb/store 与全部测试桩中连根移除，杜绝「代人删行归零」回潮。 3. **manifest 注册期过冻结合同门禁**。`CapabilityRegistry::register` 内置 `capability/manifest.v0_1` 校验（None 值可选键先剥除——serde 序列化为 null 与合同「缺省即缺席」表述同义），违例以 `RegistryError::InvalidManifest` 拒注；热注册批量语义不变（逐条记错、全坏才整体失败）。 4. **合同 Minor 放宽 `scope_label`**：pattern 放行一次冒号分层（`^[a-z][a-z0-9_.-]{0,30}(:[a-z0-9_.-]{1,47})?$`），追认 M4 以来生产实况（`domain:fs`、`domain:mcp.<server>` 等），属只增不破。 5. **MCP server 名归一**。`normalize_server_name`（连字符→下划线，与工具名同字符集）为 `mcp.<server>` 前缀组合唯一真源，capability/provider/路由前缀/scope 四处同用；非法名与非法工具名同口径（跳过/未连接）。 
+## 后果 
+- 守护测试锁死回归面：`bm-testkit/tests/capability_epoch_continuity.rs`（跨热重载/重启 epoch 不回退 + 注册门禁批量语义）、`bm-core/src/registry.rs` 单测（违例 manifest 拒注 + `domain:*` scope 必须过）。 - registry.rs 头注改为文实一致的代际语义描述。 - `BindingStatus` 运行时双状态模型（`provider_health` ↔ `BindingStatus`）与 `Draining` 排空语义属同评审的未修残余，登记在 issue 台账，不在本 ADR 裁决范围。 - 评审其余结构性建议（CallContext 进插件契约、能力实现搬出核心、信任链收紧、Surface 插件化）超出本批次，按评审纪律入 issue 台账（#39/#43 与新建台账）。 

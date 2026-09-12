@@ -1,4 +1,4 @@
-//! 上下文透视/检索与会话历史回放/删除(W5 透视 + W9 检索 + 2026-09-06
+//! 上下文透视/检索与会话历史回放/删除(W5 透视 + W9 检索 +
 //! 会话管理批;数据源 context-log.jsonl)。
 
 use super::{AdminConfig, bad_request, not_found, respond_or_fail};
@@ -14,7 +14,7 @@ use std::path::Path;
 /// (status/usage/耗时);坏行跳过;最多回读 2MB、默认 120 条(新→旧即
 /// 最旧在前,与文件时序一致)。
 pub async fn context_tail(State(cfg): State<AdminConfig>) -> Response {
-    // W10:尾读字节/条数上限走 limits。
+ // W10:尾读字节/条数上限走 limits。
     let lim = cfg.limits.get();
     let steps = read_context_tail(
         &cfg.data_dir.join("context-log.jsonl"),
@@ -27,7 +27,7 @@ pub async fn context_tail(State(cfg): State<AdminConfig>) -> Response {
 /// GET /admin/context/search?q=&limit=:跨会话全文检索(W9 二期)。
 /// 个人单机数据量下行级扫描(context-log.jsonl 任一行含 q 即命中,
 /// 大小写不敏感);数据量上来再换 FTS5 索引(规格 W9 二期备注)。
-/// P1-12(2026-09-07 架构评审):BufReader 流式逐行——不再整文件载入内存
+/// P1-12():BufReader 流式逐行——不再整文件载入内存
 /// (context-log 无轮转机制,长会话可达 GB 级);滑动窗口只留最新 limit 条
 /// 命中,输出序仍为新→旧。
 pub async fn context_search(
@@ -64,8 +64,7 @@ pub async fn context_search(
     Json(json!({ "ok": true, "q": q, "hits": hits, "total": hits.len() })).into_response()
 }
 
-/// GET /admin/sessions?limit=&skip=:会话目录(2026-09-08 三端一致批)。
-/// 此前「有哪些会话」只存浏览器 localStorage(bm_sessions,每设备各记各账,
+/// GET /admin/sessions?limit=&skip=:会话目录()。
 /// 三端列表不一致的根因);目录收归服务端单一权威,前端启动即拉本端点
 /// (管理面不入合同)。按最近活跃倒序,内存视图投影(经核心单写者)。
 /// 分页(issue #15):limit 默认 500 硬顶 1000,skip = 从最新跳过条数
@@ -97,7 +96,7 @@ pub(crate) async fn session_list(
     .into_response()
 }
 
-/// DELETE /admin/sessions/{session_id}:会话删除(2026-09-06 A+B)。
+/// DELETE /admin/sessions/{session_id}:会话删除()。
 /// 经核心单写者执行:墓碑 + operations 原文擦除 + context-log 流式过滤;
 /// events.jsonl 仅元数据不动(A4/审计口径)。不可恢复。
 pub(crate) async fn session_delete(
@@ -145,7 +144,7 @@ pub(crate) async fn session_mode_get(
     }
 }
 
-/// POST /admin/sessions/{session_id}/mode  body: {"mode":"ask"|"plan"|"yolo"}
+/// POST /admin/sessions/{session_id}/mode body: {"mode":"ask"|"plan"|"yolo"}
 /// 会话权限模式变更(ADR-0030):经核心单写者通道更新服务端会话状态,
 /// 落 session.mode.changed 事实事件(物化投影持久,重启装载)。模式在
 /// 裁决点读取——变更不影响已开出的等待中审批单(那些仍走人工)。
@@ -193,7 +192,7 @@ pub(crate) async fn operation_cancel(
 }
 
 /// GET /admin/sessions/{session_id}/messages?limit=&skip=:
-/// 会话历史回放(2026-09-06;同日二改:分页+流式,防长会话一口气载入卡
+/// 会话历史回放(
 /// 界面)。从 context-log.jsonl 过滤 kind ∈ {user_message, assistant_final},
 /// 按文件序(=真实时序)返回第 skip 条之前的最近 limit 条;limit 默认 50
 /// 上限 200;has_more 指示是否还有更早。**分页游标用「从末尾跳过的条数」
@@ -204,8 +203,8 @@ pub async fn session_messages(
     axum::extract::Path(session_id): axum::extract::Path<String>,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Response {
-    // P1-13(2026-09-07 架构评审):分页页大小用独立旋钮,不再借用检索
-    // 上限(context_search_max_limit)——语义解耦,默认同为 200 行为零变化。
+ // P1-13():分页页大小用独立旋钮,不再借用检索
+ // 上限(context_search_max_limit)——语义解耦,默认同为 200 行为零变化。
     let limit: usize = params
         .get("limit")
         .and_then(|v| v.parse().ok())
@@ -215,7 +214,7 @@ pub async fn session_messages(
 
     use std::collections::VecDeque;
     use std::io::BufRead;
-    // 双端队列只留最近 skip+limit 条匹配;文件序 = 落盘序 = 真实时序
+ // 双端队列只留最近 skip+limit 条匹配;文件序 = 落盘序 = 真实时序
     let mut window: VecDeque<Value> = VecDeque::new();
     let mut matched: usize = 0;
     if let Ok(f) = std::fs::File::open(cfg.data_dir.join("context-log.jsonl")) {
@@ -247,7 +246,7 @@ pub async fn session_messages(
             }
         }
     }
-    // 丢弃末尾 skip 条(那些已在前面的页面里),剩下的即本页(最旧在前)
+ // 丢弃末尾 skip 条(那些已在前面的页面里),剩下的即本页(最旧在前)
     let take = window.len().saturating_sub(skip);
     let messages: Vec<Value> = window.into_iter().take(take).collect();
     let has_more = matched > skip + messages.len();
@@ -261,7 +260,7 @@ pub async fn session_messages(
 }
 
 /// context-log 尾部读取+逐行解析(只读诊断面;任何失败静默为空)。
-/// P2(2026-09-07 架构评审):尾读逻辑与 logs.rs 收口为 tail::read_tail。
+/// P2():尾读逻辑与 logs.rs 收口为 tail::read_tail。
 fn read_context_tail(path: &Path, max_bytes: u64, limit: usize) -> Vec<Value> {
     let lines = super::tail::read_tail(path, max_bytes);
     let mut steps: Vec<Value> = lines

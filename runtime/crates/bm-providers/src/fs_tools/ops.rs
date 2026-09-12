@@ -72,7 +72,7 @@ fn glob_to_regex(pat: &str) -> String {
 /// 降级返回部分结果可以接受,生产链路不允许 panic。
 enum NameMatcher {
     Regex(regex::Regex),
-    /// needle 已按需做大小写折叠;匹配时对 hay 同样折叠后子串比较
+ /// needle 已按需做大小写折叠;匹配时对 hay 同样折叠后子串比较
     LiteralFolded(String),
     Literal(String),
 }
@@ -87,7 +87,7 @@ impl NameMatcher {
     }
 }
 
-/// deadline 熔断(2026-09-08 审计修复):capability 层传下的预算此前被忽略,
+/// deadline 熔断():capability 层传下的预算
 /// 超大目录/网络盘会把执行通道占死;现在遍历与逐文件搜索每步检查,到点即
 /// 返回部分结果(timed_out=true)。deadline 由调用方按 Instant::now()+剩余时长 构造。
 pub fn search(roots: &Roots, args: &Value, limits: &Limits, deadline: std::time::Instant) -> Value {
@@ -111,7 +111,7 @@ pub fn search(roots: &Roots, args: &Value, limits: &Limits, deadline: std::time:
         .map(|m| (m as usize).clamp(1, limits.fs_search_max_results))
         .unwrap_or(limits.fs_search_default_results);
 
-    // 路径过滤器 (如果有 path_pattern)
+ // 路径过滤器 (如果有 path_pattern)
     let path_filter = if let Some(pat) = path_pattern {
         let pat_regex = glob_to_regex(pat);
         regex::RegexBuilder::new(&pat_regex)
@@ -122,19 +122,19 @@ pub fn search(roots: &Roots, args: &Value, limits: &Limits, deadline: std::time:
         None
     };
 
-    // 模式一: 仅查找文件路径与名字 (类似 find / glob)
+ // 模式一: 仅查找文件路径与名字 (类似 find / glob)
     if mode == "files" {
         let mut hits: Vec<Value> = Vec::new();
         let mut files_searched: u64 = 0;
         let mut total: u64 = 0;
 
-        // 文件名匹配正则: 如果包含 * 或 ? 则作为通配符，否则作为子串模糊搜索
+ // 文件名匹配正则: 如果包含 * 或 ? 则作为通配符，否则作为子串模糊搜索
         let file_regex = if query.contains('*') || query.contains('?') {
             glob_to_regex(query)
         } else if fixed {
             format!("(?i){}", regex::escape(query))
         } else {
-            // 支持类似于 "README|readme" 这种正则模式
+ // 支持类似于 "README|readme" 这种正则模式
             query.to_string()
         };
 
@@ -144,7 +144,7 @@ pub fn search(roots: &Roots, args: &Value, limits: &Limits, deadline: std::time:
         {
             Ok(r) => NameMatcher::Regex(r),
             Err(_) => {
-                // 语法错误或超编译上限则退让为纯字面子串匹配
+ // 语法错误或超编译上限则退让为纯字面子串匹配
                 if !case_sensitive {
                     NameMatcher::LiteralFolded(query.to_lowercase())
                 } else {
@@ -206,11 +206,11 @@ pub fn search(roots: &Roots, args: &Value, limits: &Limits, deadline: std::time:
         return out;
     }
 
-    // 模式二: 内容搜索 (类似 ripgrep grep-searcher)
-    // 智能容错: 如果用户/模型误传了 fixed=true 但包含明显的正则操作符 '|'，且未找到结果，做自愈尝试
+ // 模式二: 内容搜索 (类似 ripgrep grep-searcher)
+ // 智能容错: 如果用户/模型误传了 fixed=true 但包含明显的正则操作符 '|'，且未找到结果，做自愈尝试
     let (pattern, allow_fallback_regex) = if fixed {
         if query.contains('|') && !query.contains(r"\|") {
-            // 带有未转义的竖线，保留原始 query 备用回退
+ // 带有未转义的竖线，保留原始 query 备用回退
             (regex::escape(query), Some(query.to_string()))
         } else {
             (regex::escape(query), None)
@@ -272,7 +272,7 @@ pub fn search(roots: &Roots, args: &Value, limits: &Limits, deadline: std::time:
                 .build();
             let sink = sinks::UTF8(utf8_line_sink(&mut hits, &mut total, max_results, &file));
             if searcher.search_path(&matcher, entry.path(), sink).is_err() {
-                // 单文件失败(权限/编码)跳过,不中断整场搜索
+ // 单文件失败(权限/编码)跳过,不中断整场搜索
                 continue;
             }
             if total >= max_results as u64 {
@@ -281,8 +281,8 @@ pub fn search(roots: &Roots, args: &Value, limits: &Limits, deadline: std::time:
         }
     }
 
-    // 若 fixed=true + 包含 '|' 导致 0 命中，则以 regex fallback 自动拯救一次
-    // (已超时的场次不再拯救:熔断优先于自愈)
+ // 若 fixed=true + 包含 '|' 导致 0 命中，则以 regex fallback 自动拯救一次
+ // (已超时的场次不再拯救:熔断优先于自愈)
     if total == 0
         && !timed_out
         && let Some(alt_pat) = allow_fallback_regex
@@ -320,7 +320,7 @@ pub fn search(roots: &Roots, args: &Value, limits: &Limits, deadline: std::time:
     }
 
     let truncated = total >= max_results as u64;
-    // 输出字符总量封顶:从尾部丢弃命中直至合规
+ // 输出字符总量封顶:从尾部丢弃命中直至合规
     let mut out = json!({
         "ok": true, "query": query, "total_matches": total,
         "truncated": truncated, "timed_out": timed_out,
@@ -328,7 +328,7 @@ pub fn search(roots: &Roots, args: &Value, limits: &Limits, deadline: std::time:
         "matches": hits,
     });
     if timed_out {
-        // ADR-0029 清除清单④:note 只留事实,括号指导话术不得回归。
+ // ADR-0029 清除清单④:note 只留事实,括号指导话术不得回归。
         out["note"] = json!("搜索因超时熔断提前结束,以上为部分结果");
     }
     while serde_json::to_string(&out)
@@ -413,9 +413,9 @@ pub fn write(roots: &Roots, args: &Value, limits: &Limits) -> Value {
     {
         return tool_err(format!("建父目录失败:{e}"));
     }
-    // 原子写(2026-09 审计收口 BACKLOG「fs.write/edit 原子写+大小上限」):
-    // 与全仓标准 atomic_write 同款语义——临时文件 + fsync + rename,崩溃不
-    // 留半截文件;同时给写入带上限防护(防模型误写超大文件撑爆磁盘)。
+ // 原子写(2026-09 审计收口 BACKLOG「fs.write/edit 原子写+大小上限」):
+ // 与全仓标准 atomic_write 同款语义——临时文件 + fsync + rename,崩溃不
+ // 留半截文件;同时给写入带上限防护(防模型误写超大文件撑爆磁盘)。
     if content.len() as u64 > limits.fs_rw_max_bytes {
         return tool_err(format!(
             "写入内容过大({} bytes > 上限 {} bytes),请分片写入",
@@ -472,7 +472,7 @@ pub fn edit(roots: &Roots, args: &Value, limits: &Limits) -> Value {
         Ok(p) => p,
         Err(e) => return tool_err(e),
     };
-    // 归一两条入口:edits 数组(批量)/ 单处字段(向后兼容)
+ // 归一两条入口:edits 数组(批量)/ 单处字段(向后兼容)
     let intents: Vec<EditIntent> = if let Some(list) = args["edits"].as_array() {
         if list.is_empty() {
             return tool_err("edits 不能为空数组(单处改动请直接传 old_string/new_string)");
@@ -515,7 +515,7 @@ pub fn edit(roots: &Roots, args: &Value, limits: &Limits) -> Value {
         }
     };
 
-    // 定位:全部意图都针对同一原文快照解析区间
+ // 定位:全部意图都针对同一原文快照解析区间
     let mut plan: Vec<LocatedEdit> = Vec::new();
     for (i, intent) in intents.iter().enumerate() {
         let (old_eff, new_eff, ranges) = locate(&content, intent);
@@ -534,7 +534,7 @@ pub fn edit(roots: &Roots, args: &Value, limits: &Limits) -> Value {
         plan.push((old_eff, new_eff, ranges));
     }
 
-    // 区间汇总 + 不相交校验(跨编辑重叠 = 语义冲突,拒执行)
+ // 区间汇总 + 不相交校验(跨编辑重叠 = 语义冲突,拒执行)
     let mut all: Vec<(usize, usize, &str)> = Vec::new();
     for (_, new_eff, ranges) in &plan {
         for (s, e) in ranges {
@@ -548,7 +548,7 @@ pub fn edit(roots: &Roots, args: &Value, limits: &Limits) -> Value {
         }
     }
 
-    // 按区间重建(区间已升序且不相交)
+ // 按区间重建(区间已升序且不相交)
     let mut out = String::with_capacity(content.len());
     let mut cursor = 0usize;
     for (s, e, new_eff) in &all {
@@ -559,7 +559,7 @@ pub fn edit(roots: &Roots, args: &Value, limits: &Limits) -> Value {
     out.push_str(&content[cursor..]);
 
     let replacements = all.len();
-    // 写回与 fs.write 同上限(W10:走 limits;防模型误改超大文件撑爆磁盘)
+ // 写回与 fs.write 同上限(W10:走 limits;防模型误改超大文件撑爆磁盘)
     if out.len() as u64 > limits.fs_rw_max_bytes {
         return tool_err(format!(
             "编辑结果过大({} bytes > 上限 {} bytes),请分片编辑",
@@ -567,8 +567,8 @@ pub fn edit(roots: &Roots, args: &Value, limits: &Limits) -> Value {
             limits.fs_rw_max_bytes
         ));
     }
-    // 原子写(2026-09 审计收口 BACKLOG「fs.write/edit 原子写+大小上限」,
-    // 与 fs.write 同批):编辑结果经 atomic_write 落盘,崩溃不留半截文件。
+ // 原子写(2026-09 审计收口 BACKLOG「fs.write/edit 原子写+大小上限」,
+ // 与 fs.write 同批):编辑结果经 atomic_write 落盘,崩溃不留半截文件。
     match bm_core::ports::persist::atomic_write(&path, out.as_bytes()) {
         Ok(()) => json!({
             "ok": true,
@@ -584,10 +584,10 @@ pub fn edit(roots: &Roots, args: &Value, limits: &Limits) -> Value {
 mod tests {
     use bm_core::limits::Limits as _LimitsReal;
 
-    // W10:包装函数保持旧三参签名(Limits 默认),既有用例零改动;
-    // 需要自定义限额的用例直接调 super::search(..., &limits)。
+ // W10:包装函数保持旧三参签名(Limits 默认),既有用例零改动;
+ // 需要自定义限额的用例直接调 super::search(..., &limits)。
     fn search(roots: &Roots, args: &Value) -> Value {
-        // 包装默认给足 30s 预算(与 fs.search manifest timeout 一致)
+ // 包装默认给足 30s 预算(与 fs.search manifest timeout 一致)
         super::search(
             roots,
             args,
@@ -605,7 +605,7 @@ mod tests {
         super::edit(roots, args, &_LimitsReal::default())
     }
 
-    // ---- ADR-0022:fs_edit 批量 edits 数组 ------------------------------
+ // ---- ADR-0022:fs_edit 批量 edits 数组 ------------------------------
 
     fn write_tmp(dir: &Path, name: &str, content: &str) -> std::path::PathBuf {
         let p = dir.join(name);
@@ -613,7 +613,7 @@ mod tests {
         p
     }
 
-    #[test]
+ #[test]
     fn edit_batch_applies_multiple_disjoint_edits_against_original_snapshot() {
         let dir = tempfile::tempdir().expect("tmp");
         let roots = roots_for(dir.path());
@@ -635,7 +635,7 @@ mod tests {
         assert_eq!(out["replacements"], serde_json::json!(2));
     }
 
-    #[test]
+ #[test]
     fn edit_batch_rejects_overlapping_ranges() {
         let dir = tempfile::tempdir().expect("tmp");
         let roots = roots_for(dir.path());
@@ -654,9 +654,9 @@ mod tests {
         assert!(out["error"].as_str().unwrap().contains("重叠"));
     }
 
-    #[test]
+ #[test]
     fn edit_batch_second_edit_sees_original_not_intermediate() {
-        // Pi 语义:第二条 old_string 匹配的是原文件,不是第一条的结果
+ // Pi 语义:第二条 old_string 匹配的是原文件,不是第一条的结果
         let dir = tempfile::tempdir().expect("tmp");
         let roots = roots_for(dir.path());
         let p = write_tmp(dir.path(), "d.txt", "foo bar\n");
@@ -670,11 +670,11 @@ mod tests {
                 ]
             }),
         );
-        // "foo" 在原文只命中 1 处,且与第一条区间重叠 → 应拒重叠而非错改
+ // "foo" 在原文只命中 1 处,且与第一条区间重叠 → 应拒重叠而非错改
         assert_eq!(out["ok"], false, "{out}");
     }
 
-    #[test]
+ #[test]
     fn edit_single_entry_still_works_backward_compatible() {
         let dir = tempfile::tempdir().expect("tmp");
         let roots = roots_for(dir.path());
@@ -691,7 +691,7 @@ mod tests {
         assert!(std::fs::read_to_string(&p).unwrap().contains("CHANGE me"));
     }
 
-    #[test]
+ #[test]
     fn edit_batch_replace_all_within_single_edit_item() {
         let dir = tempfile::tempdir().expect("tmp");
         let roots = roots_for(dir.path());
@@ -745,14 +745,14 @@ mod tests {
             .unwrap_or_default()
     }
 
-    #[test]
+ #[test]
     fn finds_matches_and_skips_hidden_and_blacklist() {
         let (_d, r) = tree();
         let out = search(&r, &json!({"query": "answer"}));
         assert_eq!(out["ok"], true);
         let keys = hit_keys(&out);
-        // 期望恰两处:a.rs:2(let answer)+ src/b.rs:1(ANSWER,忽略大小写);
-        // .git/hidden.rs 与 node_modules/c.js 必须被黑名单剔除
+ // 期望恰两处:a.rs:2(let answer)+ src/b.rs:1(ANSWER,忽略大小写);
+ // .git/hidden.rs 与 node_modules/c.js 必须被黑名单剔除
         assert_eq!(keys.len(), 2, "跳过 .git 与 node_modules:{keys:?}");
         assert!(
             keys.iter()
@@ -761,7 +761,7 @@ mod tests {
         );
     }
 
-    #[test]
+ #[test]
     fn fixed_mode_survives_regex_metachars() {
         let (_d, r) = tree();
         let bad = search(&r, &json!({"query": "42;", "fixed": true}));
@@ -771,7 +771,7 @@ mod tests {
         assert_eq!(err["ok"], false, "非法正则应给出可读错误");
     }
 
-    #[test]
+ #[test]
     fn max_results_caps_and_marks_truncated() {
         let (_d, r) = tree();
         let out = search(&r, &json!({"query": "answer", "max_results": 1}));
@@ -779,14 +779,14 @@ mod tests {
         assert_eq!(hit_keys(&out).len(), 1);
     }
 
-    #[test]
+ #[test]
     fn empty_query_is_tool_error() {
         let (_d, r) = tree();
         let out = search(&r, &json!({"query": "  "}));
         assert_eq!(out["ok"], false);
     }
 
-    #[test]
+ #[test]
     fn read_returns_line_numbers_and_respects_offset_limit() {
         let dir = tempfile::tempdir().expect("tmp");
         std::fs::write(dir.path().join("f.txt"), "l1\nl2\nl3\nl4\n").expect("write");
@@ -802,7 +802,7 @@ mod tests {
         assert_eq!(paged["truncated"], json!(true), "还有第 4 行未出");
     }
 
-    #[test]
+ #[test]
     fn write_creates_parents_and_reports_bytes() {
         let dir = tempfile::tempdir().expect("tmp");
         let r = roots_for(dir.path());
@@ -815,7 +815,7 @@ mod tests {
         );
     }
 
-    #[test]
+ #[test]
     fn edit_unique_hit_replaces_and_crlf_compatible() {
         let dir = tempfile::tempdir().expect("tmp");
         std::fs::write(dir.path().join("crlf.txt"), "alpha\r\nbeta\r\n").expect("write");
@@ -830,7 +830,7 @@ mod tests {
         assert!(body.contains("ALPHA\r\nBETA"));
     }
 
-    #[test]
+ #[test]
     fn edit_multi_hit_rejected_without_replace_all() {
         let dir = tempfile::tempdir().expect("tmp");
         std::fs::write(dir.path().join("m.txt"), "x\nx\n").expect("write");
@@ -847,7 +847,7 @@ mod tests {
         assert_eq!(out2["replacements"], json!(2));
     }
 
-    #[test]
+ #[test]
     fn escape_outside_roots_rejected_in_ops() {
         let dir = tempfile::tempdir().expect("tmp");
         let r = roots_for(dir.path());
@@ -855,14 +855,13 @@ mod tests {
         assert_eq!(out["ok"], false, "越界读取必须被拒:{out}");
     }
 
-    // 2026-09-08 审计修复:deadline 熔断——预算耗尽立即返回部分结果并标记
-    // timed_out(此前核心层传下的 deadline 被忽略,超大目录可无限占用通道)。
-    #[test]
+ // timed_out(。
+ #[test]
     fn search_deadline_exhausted_returns_partial_with_timed_out() {
         let dir = tempfile::tempdir().expect("tmp");
         std::fs::write(dir.path().join("needle.txt"), "find me\n").expect("write");
         let r = roots_for(dir.path());
-        // 已到点的 deadline:首个条目前即熔断(>= 判定,同一时刻即触发)
+ // 已到点的 deadline:首个条目前即熔断(>= 判定,同一时刻即触发)
         let out = super::search(
             &r,
             &json!({"query": "find", "mode": "files"}),
@@ -872,18 +871,18 @@ mod tests {
         assert_eq!(out["ok"], true, "熔断仍返回 ok(部分结果):{out}");
         assert_eq!(out["timed_out"], true, "{out}");
         assert!(out["note"].is_string(), "熔断须带说明:{out}");
-        // 正常预算:timed_out=false 且功能不受影响(files 模式按文件名匹配)
+ // 正常预算:timed_out=false 且功能不受影响(files 模式按文件名匹配)
         let ok_out = search(&r, &json!({"query": "needle", "mode": "files"}));
         assert_eq!(ok_out["ok"], true, "{ok_out}");
         assert_eq!(ok_out["timed_out"], false, "{ok_out}");
         assert_eq!(ok_out["total_matches"], 1, "{ok_out}");
     }
 
-    #[test]
+ #[test]
     fn search_files_mode_finds_by_name_and_wildcard() {
         let (d, r) = tree();
         std::fs::write(d.path().join("README.md"), "# Hello BoenMind\n").expect("write");
-        // 1. 查找包含 README 的文件（类似 find / glob）
+ // 1. 查找包含 README 的文件（类似 find / glob）
         let out = search(&r, &json!({"query": "README", "mode": "files"}));
         assert_eq!(out["ok"], true);
         assert_eq!(out["mode"], "files");
@@ -891,7 +890,7 @@ mod tests {
         let matches = out["matches"].as_array().expect("matches array");
         assert!(matches[0]["file"].as_str().unwrap().ends_with("README.md"));
 
-        // 2. 通配符模式查找
+ // 2. 通配符模式查找
         let out_glob = search(&r, &json!({"query": "*.rs", "mode": "files"}));
         assert_eq!(out_glob["ok"], true);
         let matches_glob = out_glob["matches"].as_array().expect("matches array");
@@ -902,9 +901,8 @@ mod tests {
         );
     }
 
-    // 2026-09-09 审计修复:非法正则退让字面匹配。退让分支不允许 panic
-    // (超长 query 可达 regex 编译大小上限,旧实现退让构建失败即 unwrap 崩)。
-    #[test]
+ // (超长 query 可达 regex 编译大小上限,旧实现退让构建失败即 unwrap 崩)。
+ #[test]
     fn name_matcher_literal_fallback_semantics() {
         let folded = NameMatcher::LiteralFolded("readme".into());
         assert!(folded.is_match("src/README.md"), "默认大小写不敏感");
@@ -915,21 +913,21 @@ mod tests {
         assert!(!exact.is_match("x/readme.md"), "case_sensitive 下字面精确");
     }
 
-    #[test]
+ #[test]
     fn search_files_mode_bad_regex_returns_ok_without_panic() {
         let (d, r) = tree();
         std::fs::write(d.path().join("README.md"), "x").expect("write");
-        // "((" 非法正则 → 退让字面子串:无文件名含 "((",但结构完整不 panic
+ // "((" 非法正则 → 退让字面子串:无文件名含 "((",但结构完整不 panic
         let out = search(&r, &json!({"query": "((", "mode": "files"}));
         assert_eq!(out["ok"], true, "{out}");
         assert_eq!(out["mode"], "files");
         assert_eq!(out["total_matches"], 0, "{out}");
     }
 
-    #[test]
+ #[test]
     fn search_content_with_path_pattern_and_fallback_regex() {
         let (_d, r) = tree();
-        // 1. 带 path_pattern 限制只查 a.rs(排除 src/b.rs)
+ // 1. 带 path_pattern 限制只查 a.rs(排除 src/b.rs)
         let out = search(
             &r,
             &json!({
@@ -943,7 +941,7 @@ mod tests {
         assert_eq!(matches.len(), 1);
         assert!(matches[0]["file"].as_str().unwrap().ends_with("a.rs"));
 
-        // 2. 误传 fixed=true 但包含 '|' 且原字面搜索无结果时的自动回退拯救
+ // 2. 误传 fixed=true 但包含 '|' 且原字面搜索无结果时的自动回退拯救
         let out_fixed_fallback = search(
             &r,
             &json!({

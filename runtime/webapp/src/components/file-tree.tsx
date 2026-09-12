@@ -1,7 +1,6 @@
 "use client";
-// 原型 = assistant-ui 注册表 elements-file-tree(2026-09-01 选装,MIT)。
+// 原型 = assistant-ui 注册表 elements-file-tree()。
 // W2 适配:保留原型行形态(缩进 depth / mono / 图标 / 悬停),交互自有。
-// 2026-09-07 目录树批次升级为两处共用:懒加载状态抽 useLazyTree +
 // flattenTree 拍平(工作区文件树 / 设置页全盘目录选择器同源),
 // FileTree 增 selected 高亮 / drive 图标 / 行尾徽标 / chevron 独立点击区。
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -51,8 +50,8 @@ export function useLazyTree(opts: {
   );
   const [loadingDir, setLoadingDir] = useState<string | null>(null);
   const childrenRef = useRef(children);
-  // 镜像同步放 effect 中(React Compiler 规则:渲染期不可写 ref;事件处理器
-  // toggle/reveal 读到的 childrenRef 需是最新 children,effect 同步即可)
+ // 镜像同步放 effect 中(React Compiler 规则:渲染期不可写 ref;事件处理器
+ // toggle/reveal 读到的 childrenRef 需是最新 children,effect 同步即可)
   useEffect(() => {
     childrenRef.current = children;
   }, [children]);
@@ -70,7 +69,7 @@ export function useLazyTree(opts: {
     [opts.load],
   );
 
-  // 展开/收起;未加载过则先拉子项
+ // 展开/收起;未加载过则先拉子项
   const toggle = useCallback(
     (path: string) => {
       setExpanded((cur) => {
@@ -84,7 +83,7 @@ export function useLazyTree(opts: {
     [loadDir],
   );
 
-  // 逐级展开定位(跳转/进入深层目录):chain = 从外层到目标自身
+ // 逐级展开定位(跳转/进入深层目录):chain = 从外层到目标自身
   const reveal = useCallback(
     async (chain: string[]) => {
       for (const seg of chain) {
@@ -95,7 +94,7 @@ export function useLazyTree(opts: {
     [loadDir],
   );
 
-  // 全量清缓存重载(手动同步等)
+ // 全量清缓存重载(手动同步等)
   const reset = useCallback(
     (reloadRoot: string) => {
       setChildren({});
@@ -158,7 +157,7 @@ export function FileTree({
   renderBadge?: (node: FileTreeNode) => ReactNode;
   emptyText?: string;
 }) {
-  // 用户裁定:不做独立底色卡片,融入所在面板(透明、无边框)
+ // 用户裁定:不做独立底色卡片,融入所在面板(透明、无边框)
   return (
     <div
       data-slot="file-tree"

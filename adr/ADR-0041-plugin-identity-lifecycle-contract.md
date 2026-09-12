@@ -1,40 +1,13 @@
----
-status: accepted
-date: 2026-09-12
-summary: 补插件身份契约(PluginKind/PluginMeta)+ CapabilityProvider 增 plugin_meta/shutdown 默认方法 + 注销调生命周期 + wasm 宿主去 skill. 前缀守卫(ADR-0040 治理首批架构改动)
-supersedes: []
-superseded_by: []
----
-
-# ADR-0041: 插件身份与生命周期契约落地(去特化第一步)
-
-- 关联: ADR-0005(万物皆插件)、ADR-0016/0033(skill wasm 执行面)、ADR-0036(执行分道以合同声明为真源)、ADR-0040(文档治理)
-- 背景: 系统的扩展面长期只有**行为** trait(`CapabilityProvider::invoke`)与 manifest 数据,**没有插件身份与生命周期**——内核无法回答"这是什么类型的扩展、由谁提供、何时起停",`unregister` 直接摘除句柄、不通知 Provider;wasm 宿主(`skill_wasm.rs`)虽已具备"编译 → 合成 manifest → 走 Broker 平权管线"的通用执行形态,却被 `skill.` 命名与 `SkillScriptDefinition` 绑住。ADR-0005「万物皆插件」的支点在代码里缺一件契约。
-
-## 决策
-
-1. **契约层补插件身份(ID)**。`bm-contract` 新增 `plugin` 模块:`PluginKind`(tool/connector/store/surface/judge/sandbox)与 `PluginMeta{id, version, kind}` 纯数据。遵循既有分层——`bm-contract` 放数据、`bm-core` 放行为。与 `CapabilityManifest` 分工:manifest 描述**单个能力**的调用契约,PluginMeta 描述**提供者**的身份与族属(一个插件可提供多个能力)。
-
-2. **行为层补插件契约(默认实现,非破坏)**。`CapabilityProvider` 增两个带默认实现的方法:`plugin_meta() -> Option<PluginMeta>`(缺省 `None` = 按 `PluginKind::Tool` 对待)与 `shutdown() -> Result<(), String>`(缺省空实现 = 纯函数型 provider 无需实现)。既有 4 处实现零改动即满足契约。
-
-3. **生命周期被真正调用**。`CapabilityRegistry::unregister` 在摘除前先调 `shutdown()`,失败仅告警不阻断(绑定已失效,进程回收兜底);新增 `plugin_meta_of(capability)` 读取能力所属插件身份。
-
-4. **wasm 宿主去特化(第一步)**。删除 `SkillScriptManager as AsyncCapabilityExecutor` 里冗余的 `capability.starts_with("skill.")` 守卫——宿主本就按**精确 capability 查编译表**,前缀判断是冗余的字符串派发。删除后宿主对命名空间不可知:凡注册进其编译表的 wasm 能力皆可执行。生产路由仍由 `SplitExecutor` 按 capability 分道,本步不改路由。
-
-5. **装载面抽出通用 API,真实 provider 声明身份**。
-   - `SkillScriptManager::register_wasm(capability, wasm_path, root, timeout_ms)`:通用装载(任意 capability 名,校验 wasm 落在 `root` 内),`register_skill` 降为它的上层(命名/清单由 `SkillDefinition` 驱动)。
-   - `SkillScriptManager::load_plugins_file(path)`:从**声明文件**装载通用 wasm 插件(每项声明 capability/provider/wasm/effect/timeout 等),是宿主在 `skills.json` 之外的第二个真实调用方。
-   - `bm_core::broker::provider_fn_with_meta`:闭包型 provider 也能声明 `PluginMeta`。
-   - 生产 provider 全部声明身份:`model.invoke`(Connector)、`fs.*`(Tool)、`system.exec`/`job_output`(Tool)、`context.compress`(Tool)、每个 wasm 插件(Tool,id = manifest.provider)。契约由此**被真实消费**,而非仅测试使用。
-
-6. **分道按归属而非名字前缀**。`SplitExecutor` 对 wasm 分支改用 `SkillScriptManager::has_capability(capability)`(查宿主编译表),取代 `capability.starts_with("skill.")`。组合根 `boenmind-server` 启动时额外装载 `<data>/config/plugins.json`(与 `skills.json` 平级),与技能共用同一宿主实例。
-
-7. **通用插件管理面:增删改即热重载**。新增 `webadmin/plugins.rs`:`GET /admin/plugins`(清单)、`POST`(新增/覆盖)、`DELETE /{capability}`(删除)、`POST /plugins/reload`(手工保险)。落盘后**即时热重载**(摘旧 → 重编译 → 注册新),无需重启。宿主新增 `providers()`(枚举已装载 provider)与 `unregister_provider(provider)`(按 provider 精确摘除,取代写死的 `skill.` 前缀拼接),`unregister_skill` 降为其上层。重载语义 = 整表重建(摘除非 `skill.` 的已装载 provider 后按声明重建)——插件数量远小于能力数量,以简单换正确。
-
-## 后果
-
-- 「万物皆插件」从口号进了一步:扩展有**类型与身份**,Provider 有**释放钩子**。这是把 `skill_wasm` 泛化为通用 wasm 插件宿主的前置契约面。
-- **零破坏**:所有既有 provider/manifest/路由行为不变(496 测试全绿;新增 6 项)。
-- **已完成**:契约(身份/生命周期)、通用 wasm 宿主去特化、按归属分道、第二个调用方(启动装载)、**管理面增删改即热重载**。
-- **未做(留待后续 ADR)**:WIT/Component 级通用宿主接口(现为 WASI 命令式:stdin 进 JSON / stdout 出 JSON);插件前端页面;插件依赖与版本协商;`bm-core` 拆胖(持久化 schema 下沉 `bm-persist`)、surface 去具体依赖等架构欠账(见 `.work/ROADMAP.md`)。
-- 守护测试:`bm-core::registry::provider_lifecycle_and_plugin_meta_are_wired`、`bm-providers::skill_wasm::{host_is_namespace_agnostic, capability_entries_declare_plugin_identity, generic_register_wasm_accepts_any_capability_name, load_plugins_file_registers_generic_wasm_capability}`(后者含 `unregister_provider` 摘除断言)。真实端到端:真 wasm 文件 + 真 boenmind-server 启动装载,以及运行中经 `POST /admin/plugins` 热重载(日志 `[Plugin] wasm 插件 … 已装载` + actor 应答「1 个能力即时生效」)。
+status: accepted date: summary: 补插件身份契约(PluginKind/PluginMeta)+ CapabilityProvider 增 plugin_meta/shutdown 默认方法 + 注销调生命周期 + wasm 宿主去 skill. 前缀守卫(ADR-0040 治理首批架构改动) supersedes: [] superseded_by: [] 
+# ADR-0041: 插件身份与生命周期契约落地(去特化第一步) 
+- 关联: ADR-0005(万物皆插件)、ADR-0016/0033(skill wasm 执行面)、ADR-0036(执行分道以合同声明为真源)、ADR-0040(文档治理) - 背景: 系统的扩展面长期只有**行为** trait(`CapabilityProvider::invoke`)与 manifest 数据,**没有插件身份与生命周期**——内核无法回答"这是什么类型的扩展、由谁提供、何时起停",`unregister` 直接摘除句柄、不通知 Provider;wasm 宿主(`skill_wasm.rs`)虽已具备"编译 → 合成 manifest → 走 Broker 平权管线"的通用执行形态,却被 `skill.` 命名与 `SkillScriptDefinition` 绑住。ADR-0005「万物皆插件」的支点在代码里缺一件契约。 
+## 决策 
+1. **契约层补插件身份(ID)**。`bm-contract` 新增 `plugin` 模块:`PluginKind`(tool/connector/store/surface/judge/sandbox)与 `PluginMeta{id, version, kind}` 纯数据。遵循既有分层——`bm-contract` 放数据、`bm-core` 放行为。与 `CapabilityManifest` 分工:manifest 描述**单个能力**的调用契约,PluginMeta 描述**提供者**的身份与族属(一个插件可提供多个能力)。 
+2. **行为层补插件契约(默认实现,非破坏)**。`CapabilityProvider` 增两个带默认实现的方法:`plugin_meta() -> Option<PluginMeta>`(缺省 `None` = 按 `PluginKind::Tool` 对待)与 `shutdown() -> Result<(), String>`(缺省空实现 = 纯函数型 provider 无需实现)。既有 4 处实现零改动即满足契约。 
+3. **生命周期被真正调用**。`CapabilityRegistry::unregister` 在摘除前先调 `shutdown()`,失败仅告警不阻断(绑定已失效,进程回收兜底);新增 `plugin_meta_of(capability)` 读取能力所属插件身份。 
+4. **wasm 宿主去特化(第一步)**。删除 `SkillScriptManager as AsyncCapabilityExecutor` 里冗余的 `capability.starts_with("skill.")` 守卫——宿主本就按**精确 capability 查编译表**,前缀判断是冗余的字符串派发。删除后宿主对命名空间不可知:凡注册进其编译表的 wasm 能力皆可执行。生产路由仍由 `SplitExecutor` 按 capability 分道,本步不改路由。 
+5. **装载面抽出通用 API,真实 provider 声明身份**。  - `SkillScriptManager::register_wasm(capability, wasm_path, root, timeout_ms)`:通用装载(任意 capability 名,校验 wasm 落在 `root` 内),`register_skill` 降为它的上层(命名/清单由 `SkillDefinition` 驱动)。  - `SkillScriptManager::load_plugins_file(path)`:从**声明文件**装载通用 wasm 插件(每项声明 capability/provider/wasm/effect/timeout 等),是宿主在 `skills.json` 之外的第二个真实调用方。  - `bm_core::broker::provider_fn_with_meta`:闭包型 provider 也能声明 `PluginMeta`。  - 生产 provider 全部声明身份:`model.invoke`(Connector)、`fs.*`(Tool)、`system.exec`/`job_output`(Tool)、`context.compress`(Tool)、每个 wasm 插件(Tool,id = manifest.provider)。契约由此**被真实消费**,而非仅测试使用。 
+6. **分道按归属而非名字前缀**。`SplitExecutor` 对 wasm 分支改用 `SkillScriptManager::has_capability(capability)`(查宿主编译表),取代 `capability.starts_with("skill.")`。组合根 `boenmind-server` 启动时额外装载 `<data>/config/plugins.json`(与 `skills.json` 平级),与技能共用同一宿主实例。 
+7. **通用插件管理面:增删改即热重载**。新增 `webadmin/plugins.rs`:`GET /admin/plugins`(清单)、`POST`(新增/覆盖)、`DELETE /{capability}`(删除)、`POST /plugins/reload`(手工保险)。落盘后**即时热重载**(摘旧 → 重编译 → 注册新),无需重启。宿主新增 `providers()`(枚举已装载 provider)与 `unregister_provider(provider)`(按 provider 精确摘除,取代写死的 `skill.` 前缀拼接),`unregister_skill` 降为其上层。重载语义 = 整表重建(摘除非 `skill.` 的已装载 provider 后按声明重建)——插件数量远小于能力数量,以简单换正确。 
+## 后果 
+- 「万物皆插件」从口号进了一步:扩展有**类型与身份**,Provider 有**释放钩子**。这是把 `skill_wasm` 泛化为通用 wasm 插件宿主的前置契约面。 - **零破坏**:所有既有 provider/manifest/路由行为不变(496 测试全绿;新增 6 项)。 - **已完成**:契约(身份/生命周期)、通用 wasm 宿主去特化、按归属分道、第二个调用方(启动装载)、**管理面增删改即热重载**。 - **未做(留待后续 ADR)**:WIT/Component 级通用宿主接口(现为 WASI 命令式:stdin 进 JSON / stdout 出 JSON);插件前端页面;插件依赖与版本协商;`bm-core` 拆胖(持久化 schema 下沉 `bm-persist`)、surface 去具体依赖等架构欠账(见 `.work/ROADMAP.md`)。 - 守护测试:`bm-core::registry::provider_lifecycle_and_plugin_meta_are_wired`、`bm-providers::skill_wasm::{host_is_namespace_agnostic, capability_entries_declare_plugin_identity, generic_register_wasm_accepts_any_capability_name, load_plugins_file_registers_generic_wasm_capability}`(后者含 `unregister_provider` 摘除断言)。真实端到端:真 wasm 文件 + 真 boenmind-server 启动装载,以及运行中经 `POST /admin/plugins` 热重载(日志 `[Plugin] wasm 插件 … 已装载` + actor 应答「1 个能力即时生效」)。 

@@ -2,10 +2,10 @@
 //!
 //! 两层结构(基线 §6.4):
 //! - 持久逻辑目录:manifest + binding 元数据(instance_id/epoch/status),
-//!   重启后由持久层恢复(T3 接 SQLite capabilities 表;`restore_binding`
-//!   是恢复入口,epoch 不回退);
+//! 重启后由持久层恢复(T3 接 SQLite capabilities 表;`restore_binding`
+//! 是恢复入口,epoch 不回退);
 //! - 可丢失运行时缓存:Provider 实例句柄 + 健康位,重启重建(`clear_runtime_cache`
-//!   演示可丢失性:清空后行为不变,重新 attach 即恢复)。
+//! 演示可丢失性:清空后行为不变,重新 attach 即恢复)。
 //!
 //! binding_epoch 只增不回退(ADR-0001 条件 2):register 起步 1;此后每次
 //! 重新注册(热重载/重启装载)由注册方以「持久行 max+1」抬升后再落库——
@@ -24,20 +24,17 @@ use std::sync::Arc;
 /// Provider 执行端口(M4 = 内置 Rust 实现;独立进程形态随 M7,调用方无感,
 /// 基线 §7)。args 已由 Broker 过 manifest input_schema;返回值由 Broker
 /// 过 output_schema(M4.3)。
-///
-/// 分层关系(与 [`crate::ports::AsyncCapabilityExecutor`] 的分工,2026-09-02
+/// 分层关系(与 [`crate::ports::AsyncCapabilityExecutor`] 的分工,
 /// 审计轮注释):两者共用同一条 Broker 决策管线(身份/凭据/预扣/intent 门),
 /// 仅执行步分道——`is_async()` 为真(外部慢路径,如 MCP)走异步执行器
 /// (运行期 spawn + manifest.timeout_ms 钳制超时 + 取消令牌 + 进度回流),
 /// 否则在本任务内联同步执行(panic 收容)。选型约束:同步实现不得长时间
 /// 阻塞——会占住单写者循环,耗时能力一律注册为异步。
 /// 插件行为契约(ADR-0041/0045):`invoke` 是能力执行面,`plugin_meta` 是身份面。
-///
 /// `plugin_meta` 带默认实现,故既有 provider 零改动即满足契约;需要声明身份的
 /// 扩展(wasm/mcp/内置)覆写它即可,发现面(`CapabilityRegistry::discover`)是
 /// 它的真实消费者。
-///
-/// **无 `shutdown` 钩子**(ADR-0045 收敛):此前定义了它却无任何生产 provider
+/// **无 `shutdown` 钩子**(ADR-0045 收敛):
 /// 实现(唯二出现是 trait 默认与测试替身)——因为资源归**执行器**而非 provider
 /// 占位符所有:wasm 模块由 `SkillScriptManager::unregister_provider` 摘除、MCP
 /// 子进程由 `McpHub::disconnect_server` 清理。留一个永远返回 `Ok(())` 的钩子是
@@ -45,8 +42,8 @@ use std::sync::Arc;
 pub trait CapabilityProvider: Send + Sync {
     fn invoke(&self, args: serde_json::Value) -> Result<serde_json::Value, String>;
 
-    /// 插件身份(kind/id/version)。默认 `None` = 未声明,按工具型
-    /// ([`bm_contract::plugin::PluginKind::Tool`])对待。
+ /// 插件身份(kind/id/version)。默认 `None` = 未声明,按工具型
+ /// ([`bm_contract::plugin::PluginKind::Tool`])对待。
     fn plugin_meta(&self) -> Option<bm_contract::plugin::PluginMeta> {
         None
     }
@@ -87,14 +84,14 @@ impl std::fmt::Debug for RuntimeCache {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RegistryError {
-    /// capability 已注册:重复注册走 `switch_binding`,不是重新 register。
+ /// capability 已注册:重复注册走 `switch_binding`,不是重新 register。
     AlreadyRegistered,
     UnknownCapability,
-    /// Provider 无故报告恢复(未处于 Unavailable)。
+ /// Provider 无故报告恢复(未处于 Unavailable)。
     InvalidTransition,
-    /// manifest 未过冻结合同(capability/manifest.v0_1)——pattern/枚举级
-    /// 约束 serde 兜不住,注册期必须拦(2026-09-11 评审:此前注册路径零校验,
-    /// 冻结 schema 只在 bm-contract 测试里被消费)。
+ /// manifest 未过冻结合同(capability/manifest.v0_1)——pattern/枚举级
+ /// 约束 serde 兜不住,注册期必须拦(
+ /// 冻结 schema 只在 bm-contract 测试里被消费)。
     InvalidManifest(String),
 }
 
@@ -152,14 +149,14 @@ pub struct CapabilityDiscovery {
     pub provider_instance_id: String,
     pub status: BindingStatus,
     pub healthy: bool,
-    /// 插件身份(ADR-0041/0045):提供者声明的 `PluginKind` 与 id/version。
-    /// `None` = provider 未声明身份(按工具型对待)。此项使发现面成为插件
-    /// 身份的**真实消费者**——管理面据此渲染徽标,不再由前端按命名猜测。
-    #[serde(skip_serializing_if = "Option::is_none")]
+ /// 插件身份(ADR-0041/0045):提供者声明的 `PluginKind` 与 id/version。
+ /// `None` = provider 未声明身份(按工具型对待)。此项使发现面成为插件
+ /// 身份的**真实消费者**——管理面据此渲染徽标,不再由前端按命名猜测。
+ #[serde(skip_serializing_if = "Option::is_none")]
     pub plugin_kind: Option<bm_contract::plugin::PluginKind>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+ #[serde(skip_serializing_if = "Option::is_none")]
     pub plugin_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+ #[serde(skip_serializing_if = "Option::is_none")]
     pub plugin_version: Option<String>,
 }
 
@@ -168,9 +165,9 @@ pub struct CapabilityRegistry {
     manifests: HashMap<String, CapabilityManifest>,
     bindings: HashMap<String, Binding>,
     cache: HashMap<String, RuntimeCache>,
-    /// M7:异步执行标记。注册本身不自动判定;由装载方按 manifest.provider
-    /// 显式 mark_async("mcp." 前缀或内置 ".async" 后缀,见 runtime/handle.rs)。
-    /// 可丢失缓存——每次启动随注册流程重建。
+ /// M7:异步执行标记。注册本身不自动判定;由装载方按 manifest.provider
+ /// 显式 mark_async("mcp." 前缀或内置 ".async" 后缀,见 runtime/handle.rs)。
+ /// 可丢失缓存——每次启动随注册流程重建。
     async_exec: std::collections::HashSet<String>,
 }
 
@@ -179,9 +176,9 @@ impl CapabilityRegistry {
         Self::default()
     }
 
-    /// 首次注册:manifest 过冻结合同门禁后进逻辑目录,binding 建立并分配
-    /// epoch=1。重注册(热重载/重启装载)的代际抬升由注册方在调用后按
-    /// 「持久行 max+1」走 `restore_binding` 完成——registry 自身不见持久层。
+ /// 首次注册:manifest 过冻结合同门禁后进逻辑目录,binding 建立并分配
+ /// epoch=1。重注册(热重载/重启装载)的代际抬升由注册方在调用后按
+ /// 「持久行 max+1」走 `restore_binding` 完成——registry 自身不见持久层。
     pub fn register(
         &mut self,
         manifest: CapabilityManifest,
@@ -193,8 +190,8 @@ impl CapabilityRegistry {
         if self.manifests.contains_key(&name) {
             return Err(RegistryError::AlreadyRegistered);
         }
-        // ADR-0036:执行分道以合同声明为真源——显式声明即落定,未声明留待
-        // mark_async_for 走 provider 命名约定回退。
+ // ADR-0036:执行分道以合同声明为真源——显式声明即落定,未声明留待
+ // mark_async_for 走 provider 命名约定回退。
         match manifest.execution_mode {
             Some(bm_contract::capability::ExecutionMode::Async) => {
                 self.async_exec.insert(name.clone());
@@ -223,7 +220,7 @@ impl CapabilityRegistry {
         Ok(1)
     }
 
-    /// 注销能力(热拔/重载移除;从逻辑目录、bindings 与缓存中彻底摘除)。
+ /// 注销能力(热拔/重载移除;从逻辑目录、bindings 与缓存中彻底摘除)。
     pub fn unregister(&mut self, capability: &str) -> bool {
         let removed_m = self.manifests.remove(capability).is_some();
         self.bindings.remove(capability);
@@ -232,15 +229,15 @@ impl CapabilityRegistry {
         removed_m
     }
 
-    /// 能力所属插件的身份(ADR-0041);Provider 未声明时返回 `None`。
-    /// 发现面(`discover`)是它的真实消费者(ADR-0045)。
+ /// 能力所属插件的身份(ADR-0041);Provider 未声明时返回 `None`。
+ /// 发现面(`discover`)是它的真实消费者(ADR-0045)。
     pub fn plugin_meta_of(&self, capability: &str) -> Option<bm_contract::plugin::PluginMeta> {
         let handle = self.cache.get(capability)?.handle.as_ref()?;
         handle.plugin_meta()
     }
 
-    /// 热替换(基线 §13.1 的注册面半边):原子切换 instance,epoch+1。
-    /// 在途调用的授权-执行-审计归属由调用凭证中的旧 epoch 保全(Broker 侧)。
+ /// 热替换(基线 §13.1 的注册面半边):原子切换 instance,epoch+1。
+ /// 在途调用的授权-执行-审计归属由调用凭证中的旧 epoch 保全(Broker 侧)。
     pub fn switch_binding(
         &mut self,
         capability: &str,
@@ -260,8 +257,8 @@ impl CapabilityRegistry {
         Ok(binding.epoch)
     }
 
-    /// Provider 崩溃/失联(基线 §13.2):标记 unavailable;epoch 不变
-    /// (binding 未切换,只是当前实例不可用)。
+ /// Provider 崩溃/失联(基线 §13.2):标记 unavailable;epoch 不变
+ /// (binding 未切换,只是当前实例不可用)。
     pub fn mark_unavailable(&mut self, capability: &str) -> Result<(), RegistryError> {
         let binding = self
             .bindings
@@ -278,8 +275,8 @@ impl CapabilityRegistry {
         Ok(())
     }
 
-    /// 实例恢复(基线 §13.2:重启→重新 handshake→恢复 binding):
-    /// 新实例 = 新 binding,epoch+1。
+ /// 实例恢复(基线 §13.2:重启→重新 handshake→恢复 binding):
+ /// 新实例 = 新 binding,epoch+1。
     pub fn mark_recovered(
         &mut self,
         capability: &str,
@@ -302,9 +299,9 @@ impl CapabilityRegistry {
         Ok(binding.epoch)
     }
 
-    /// ADR-0037:进入排空(卸载前置)。`Active`→`Draining`;此后 dispatch 生命
-    /// 周期门拒绝新调用,在途调用继续至落定,完成后再摘除——卸载不再在在途
-    /// 调用中途拔路由。非 `Active` 迁移非法。
+ /// ADR-0037:进入排空(卸载前置)。`Active`→`Draining`;此后 dispatch 生命
+ /// 周期门拒绝新调用,在途调用继续至落定,完成后再摘除——卸载不再在在途
+ /// 调用中途拔路由。非 `Active` 迁移非法。
     pub fn begin_drain(&mut self, capability: &str) -> Result<(), RegistryError> {
         let binding = self
             .bindings
@@ -314,15 +311,15 @@ impl CapabilityRegistry {
             return Err(RegistryError::InvalidTransition);
         }
         binding.status = BindingStatus::Draining;
-        // 排空期句柄保留至摘除,但标记不健康——dispatch 生命周期门已拒新调用。
+ // 排空期句柄保留至摘除,但标记不健康——dispatch 生命周期门已拒新调用。
         if let Some(c) = self.cache.get_mut(capability) {
             c.healthy = false;
         }
         Ok(())
     }
 
-    /// ADR-0037:排空完成。`Draining`→`Unavailable`(binding 行留墓碑,
-    /// epoch 不变——摘除由 `unregister` / 持久层完成,代际不回退)。
+ /// ADR-0037:排空完成。`Draining`→`Unavailable`(binding 行留墓碑,
+ /// epoch 不变——摘除由 `unregister` / 持久层完成,代际不回退)。
     pub fn finish_drain(&mut self, capability: &str) -> Result<(), RegistryError> {
         let binding = self
             .bindings
@@ -335,11 +332,11 @@ impl CapabilityRegistry {
         Ok(())
     }
 
-    /// 重启恢复入口(T3 由 SQLite capabilities 表驱动):以持久值恢复逻辑
-    /// 目录;epoch 取 max(现值, 持久值)——不回退(ADR-0001 条件 2)。
-    /// ADR-0037:状态同样以持久值恢复(不再硬编码 `Active`),使重启后
-    /// `discover()` 的 status 与实际一致(unavailable 墓碑不误回升)。
-    /// 返回生效 epoch。
+ /// 重启恢复入口(T3 由 SQLite capabilities 表驱动):以持久值恢复逻辑
+ /// 目录;epoch 取 max(现值, 持久值)——不回退(ADR-0001 条件 2)。
+ /// ADR-0037:状态同样以持久值恢复(不再硬编码 `Active`),使重启后
+ /// `discover()` 的 status 与实际一致(unavailable 墓碑不误回升)。
+ /// 返回生效 epoch。
     pub fn restore_binding(
         &mut self,
         manifest: CapabilityManifest,
@@ -361,22 +358,22 @@ impl CapabilityRegistry {
                 status,
             },
         );
-        // 运行时缓存不在恢复范围:句柄由注册流程重新 attach(可丢失语义)。
+ // 运行时缓存不在恢复范围:句柄由注册流程重新 attach(可丢失语义)。
         self.cache.remove(&name);
         effective
     }
 
-    /// W4b 对话工具闭环:枚举供对话 Agent 使用的全部能力(含直通与需审批的业务能力)。
-    /// 排除内核私有能力(如 model.invoke)。
-    /// needs_approval 与 Broker 步 5 判定同口径:effect 可审批类
-    /// (reversible/external/high-risk)或 manifest 声明 required → true。
-    /// 第 4 元 = manifest.description(ADR-0022 合同 Minor):面向模型的
-    /// 一句功能描述;fs.*/system.exec 内置能力与 MCP 工具自描述,缺省 None
-    /// 由 turn 侧兜底。此前 MCP 工具描述被整层丢弃,模型只见「只读直通
-    /// 工具」套话,是工具调用别扭的直接根因之一。
-    /// (P1-47,2026-09-07 架构评审:同族死代码 direct_tools 已删——零调用;
-    ///  审批语义的权威判定在 Broker,本方法只是面向模型 tools 表的投影,
-    ///  改判定先改 broker/mod.rs 步 5,此处随之。)
+ /// W4b 对话工具闭环:枚举供对话 Agent 使用的全部能力(含直通与需审批的业务能力)。
+ /// 排除内核私有能力(如 model.invoke)。
+ /// needs_approval 与 Broker 步 5 判定同口径:effect 可审批类
+ /// (reversible/external/high-risk)或 manifest 声明 required → true。
+ /// 第 4 元 = manifest.description(ADR-0022 合同 Minor):面向模型的
+ /// 一句功能描述;fs.*/system.exec 内置能力与 MCP 工具自描述,缺省 None
+ /// 由 turn 侧兜底。
+ /// 工具」套话,是工具调用别扭的直接根因之一。
+ /// (P1-47,
+ /// 审批语义的权威判定在 Broker,本方法只是面向模型 tools 表的投影,
+ /// 改判定先改 broker/mod.rs 步 5,此处随之。)
     pub fn chat_tools(&self) -> Vec<(String, serde_json::Value, bool, Option<String>)> {
         let mut out: Vec<(String, serde_json::Value, bool, Option<String>)> = self
             .manifests
@@ -405,27 +402,25 @@ impl CapabilityRegistry {
         self.bindings.get(capability)
     }
 
-    /// M7:标记该能力走异步执行路径(dispatch 不再同步等 Provider)。
+ /// M7:标记该能力走异步执行路径(dispatch 不再同步等 Provider)。
     pub fn mark_async(&mut self, capability: &str) {
         self.async_exec.insert(capability.to_string());
     }
 
-    /// 异步分道判定的唯一真源(ADR-0033):按 `manifest.provider` 命名约定判定——
-    /// - `mcp.*`   外部 MCP 子进程(启动装载与热装载同判);
-    /// - `*.async` 内置异步执行体(如 `system.exec` 的 `builtin.async`);
-    /// - `skill.*` wasm 脚本执行面(ADR-0016 第二步)。
-    ///
-    /// 此前启动注册只认前两条、热注册只认 `mcp.` 前缀,`skill.*` 从未进异步
-    /// 分道,实际落到同步占位 provider 报错;本谓词收口两处调用点。
+ /// 异步分道判定的唯一真源(ADR-0033):按 `manifest.provider` 命名约定判定——
+ /// - `mcp.*` 外部 MCP 子进程(启动装载与热装载同判);
+ /// - `*.async` 内置异步执行体(如 `system.exec` 的 `builtin.async`);
+ /// - `skill.*` wasm 脚本执行面(ADR-0016 第二步)。
+ /// 分道,实际落到同步占位 provider 报错;本谓词收口两处调用点。
     pub fn provider_is_async(provider: &str) -> bool {
         provider.starts_with("mcp.")
             || provider.ends_with(".async")
             || provider.starts_with("skill.")
     }
 
-    /// 依 [`Self::provider_is_async`] 自动标记异步;返回是否异步。
-    /// ADR-0036:manifest 已显式声明 `execution_mode` 时以声明为准(register
-    /// 已落定),命名约定只作未声明条目的兼容回退。
+ /// 依 [`Self::provider_is_async`] 自动标记异步;返回是否异步。
+ /// ADR-0036:manifest 已显式声明 `execution_mode` 时以声明为准(register
+ /// 已落定),命名约定只作未声明条目的兼容回退。
     pub fn mark_async_for(&mut self, capability: &str, provider: &str) -> bool {
         if let Some(mode) = self
             .manifests
@@ -449,7 +444,7 @@ impl CapabilityRegistry {
         self.cache.get(capability)?.handle.clone()
     }
 
-    /// 重新挂接运行时句柄(缓存重建;不影响 epoch/状态)。
+ /// 重新挂接运行时句柄(缓存重建;不影响 epoch/状态)。
     pub fn attach_handle(
         &mut self,
         capability: &str,
@@ -474,13 +469,13 @@ impl CapabilityRegistry {
                 .is_some_and(|c| c.healthy && c.handle.is_some())
     }
 
-    /// 演示/测试可丢失性:清空运行时缓存,逻辑目录(manifest/binding/epoch)
-    /// 不受影响——清空后行为与缓存命中时一致是架构守护断言 G3 的基础。
+ /// 演示/测试可丢失性:清空运行时缓存,逻辑目录(manifest/binding/epoch)
+ /// 不受影响——清空后行为与缓存命中时一致是架构守护断言 G3 的基础。
     pub fn clear_runtime_cache(&mut self) {
         self.cache.clear();
     }
 
-    /// 机器可读发现面(基线 §6.4):按 capability 名稳定排序。
+ /// 机器可读发现面(基线 §6.4):按 capability 名稳定排序。
     pub fn discover(&self) -> Vec<CapabilityDiscovery> {
         let mut out: Vec<CapabilityDiscovery> = self
             .manifests
@@ -510,7 +505,7 @@ impl CapabilityRegistry {
                         .cache
                         .get(name)
                         .is_some_and(|c| c.healthy && c.handle.is_some()),
-                    // ADR-0045:取 provider 声明的插件身份(发现面 = 真实消费者)
+ // ADR-0045:取 provider 声明的插件身份(发现面 = 真实消费者)
                     plugin_kind: meta.as_ref().map(|p| p.kind),
                     plugin_id: meta.as_ref().map(|p| p.id.clone()),
                     plugin_version: meta.map(|p| p.version),
@@ -544,9 +539,9 @@ mod tests {
         }
     }
 
-    #[test]
+ #[test]
     fn plugin_identity_is_consumed_by_discovery() {
-        // ADR-0045:插件身份的**真实消费者 = 发现面**(此前只有测试读它)。
+ // ADR-0045:插件身份的**真实消费者 = 发现面**(。
         struct WasmLike;
         impl CapabilityProvider for WasmLike {
             fn invoke(&self, _args: serde_json::Value) -> Result<serde_json::Value, String> {
@@ -564,7 +559,7 @@ mod tests {
         let mut reg = CapabilityRegistry::new();
         reg.register(manifest("demo.tool"), "demo.wasm@1.2.3", Arc::new(WasmLike))
             .expect("注册");
-        // 未声明身份的 provider:plugin_meta=None,不 panic。
+ // 未声明身份的 provider:plugin_meta=None,不 panic。
         reg.register(manifest("demo.echo"), "demo.echo@0.1.0", Arc::new(Echo))
             .expect("注册");
 
@@ -587,7 +582,7 @@ mod tests {
             .expect("在发现面");
         assert!(echo.plugin_kind.is_none(), "未声明身份的 provider 身份为空");
 
-        // 注销后身份随能力一起消失。
+ // 注销后身份随能力一起消失。
         assert!(reg.unregister("demo.tool"));
         assert!(reg.plugin_meta_of("demo.tool").is_none());
         assert!(
@@ -596,10 +591,10 @@ mod tests {
         );
     }
 
-    #[test]
+ #[test]
     fn manifest_must_pass_frozen_schema_at_registration() {
         let mut reg = CapabilityRegistry::new();
-        // serde 形状合法但违冻结 pattern(大写能力名段)→ 注册期必须拦
+ // serde 形状合法但违冻结 pattern(大写能力名段)→ 注册期必须拦
         let bad: CapabilityManifest = serde_json::from_value(serde_json::json!({
             "capability": "Bad.Name", "provider": "bad.name", "version": "0.1.0",
             "input_schema": {"type": "object"}, "output_schema": {"type": "object"},
@@ -613,7 +608,7 @@ mod tests {
         ));
         assert!(reg.manifest_of("Bad.Name").is_none(), "拒注后不留痕");
 
-        // 冒号分层 scope(生产实况:domain:fs / domain:mcp.<server>)必须过
+ // 冒号分层 scope(生产实况:domain:fs / domain:mcp.<server>)必须过
         let scoped: CapabilityManifest = serde_json::from_value(serde_json::json!({
             "capability": "system.scoped", "provider": "system.scoped", "version": "0.1.0",
             "input_schema": {"type": "object"}, "output_schema": {"type": "object"},
@@ -626,7 +621,7 @@ mod tests {
             .expect("domain:fs 形态 scope 必须过冻结合同");
     }
 
-    #[test]
+ #[test]
     fn register_assigns_epoch_one_and_discovery_is_complete() {
         let mut reg = CapabilityRegistry::new();
         let epoch = reg
@@ -647,7 +642,7 @@ mod tests {
         assert!(d.healthy);
     }
 
-    #[test]
+ #[test]
     fn duplicate_register_is_rejected_use_switch() {
         let mut reg = CapabilityRegistry::new();
         reg.register(manifest("system.echo"), "system.echo@0.1.0", Arc::new(Echo))
@@ -658,7 +653,7 @@ mod tests {
         );
     }
 
-    #[test]
+ #[test]
     fn switch_binding_increments_epoch_manifest_unchanged() {
         let mut reg = CapabilityRegistry::new();
         reg.register(manifest("system.echo"), "system.echo@0.1.0", Arc::new(Echo))
@@ -674,13 +669,13 @@ mod tests {
         assert!(reg.is_available("system.echo"));
     }
 
-    #[test]
+ #[test]
     fn unavailable_then_recovered_increments_epoch() {
         let mut reg = CapabilityRegistry::new();
         reg.register(manifest("system.echo"), "system.echo@0.1.0", Arc::new(Echo))
             .unwrap();
 
-        // Active 状态下不得报告恢复(仅 Unavailable → recovered 合法)
+ // Active 状态下不得报告恢复(仅 Unavailable → recovered 合法)
         assert_eq!(
             reg.mark_recovered("system.echo", "system.echo@0.1.0-r0", Arc::new(Echo)),
             Err(RegistryError::InvalidTransition)
@@ -689,24 +684,24 @@ mod tests {
         reg.mark_unavailable("system.echo").unwrap();
         assert!(!reg.is_available("system.echo"));
 
-        // unavailable → 重新 handshake → epoch+1
+ // unavailable → 重新 handshake → epoch+1
         let epoch = reg
             .mark_recovered("system.echo", "system.echo@0.1.0-r2", Arc::new(Echo))
             .unwrap();
         assert_eq!(epoch, 2);
         assert!(reg.is_available("system.echo"));
 
-        // 未知 capability
+ // 未知 capability
         assert_eq!(
             reg.mark_unavailable("system.nope"),
             Err(RegistryError::UnknownCapability)
         );
     }
 
-    #[test]
+ #[test]
     fn restore_never_decreases_epoch() {
         let mut reg = CapabilityRegistry::new();
-        // 持久层记录 epoch=7,运行时为空 → 恢复 7
+ // 持久层记录 epoch=7,运行时为空 → 恢复 7
         let e = reg.restore_binding(
             manifest("system.echo"),
             "system.echo@0.1.0",
@@ -714,7 +709,7 @@ mod tests {
             BindingStatus::Active,
         );
         assert_eq!(e, 7);
-        // 运行时已有 epoch=2,持久值 7 → 生效 7(不回退)
+ // 运行时已有 epoch=2,持久值 7 → 生效 7(不回退)
         let e = reg.restore_binding(
             manifest("system.echo"),
             "system.echo@0.1.0",
@@ -722,15 +717,15 @@ mod tests {
             BindingStatus::Active,
         );
         assert_eq!(e, 7);
-        // 之后再热替换 → 8(单调)
+ // 之后再热替换 → 8(单调)
         let e = reg
             .switch_binding("system.echo", "system.echo@0.2.0", Arc::new(Echo))
             .unwrap();
         assert_eq!(e, 8);
     }
 
-    /// ADR-0037:恢复携带持久状态——unavailable 墓碑不误回升为 Active。
-    #[test]
+ /// ADR-0037:恢复携带持久状态——unavailable 墓碑不误回升为 Active。
+ #[test]
     fn restore_preserves_persisted_status() {
         let mut reg = CapabilityRegistry::new();
         reg.restore_binding(
@@ -745,9 +740,9 @@ mod tests {
         );
     }
 
-    /// ADR-0037:排空生命周期 Active→Draining→finish_drain 可达;排空期不可用;
-    /// 迁移非法性(非 Active 不得进 Draining,非 Draining 不得完成)。
-    #[test]
+ /// ADR-0037:排空生命周期 Active→Draining→finish_drain 可达;排空期不可用;
+ /// 迁移非法性(非 Active 不得进 Draining,非 Draining 不得完成)。
+ #[test]
     fn drain_lifecycle_is_reachable_and_guarded() {
         let mut reg = CapabilityRegistry::new();
         reg.register(manifest("system.echo"), "system.echo@0.1.0", Arc::new(Echo))
@@ -760,7 +755,7 @@ mod tests {
             BindingStatus::Draining
         );
         assert!(!reg.is_available("system.echo"), "排空期不再可用");
-        // Draining 不得再次 begin_drain(迁移非法)
+ // Draining 不得再次 begin_drain(迁移非法)
         assert_eq!(
             reg.begin_drain("system.echo"),
             Err(RegistryError::InvalidTransition)
@@ -771,24 +766,24 @@ mod tests {
             reg.binding_of("system.echo").unwrap().status,
             BindingStatus::Unavailable
         );
-        // 非 Draining 不得 finish_drain
+ // 非 Draining 不得 finish_drain
         assert_eq!(
             reg.finish_drain("system.echo"),
             Err(RegistryError::InvalidTransition)
         );
-        // 未知能力
+ // 未知能力
         assert_eq!(
             reg.begin_drain("system.nope"),
             Err(RegistryError::UnknownCapability)
         );
     }
 
-    /// ADR-0036:执行分道以 manifest.execution_mode 声明为唯一真源;
-    /// 未声明才回退 provider 命名约定。声明可覆盖约定(双向)。
-    #[test]
+ /// ADR-0036:执行分道以 manifest.execution_mode 声明为唯一真源;
+ /// 未声明才回退 provider 命名约定。声明可覆盖约定(双向)。
+ #[test]
     fn execution_mode_declaration_is_source_of_truth() {
         let mut reg = CapabilityRegistry::new();
-        // 声明 async 但 provider 名不符约定 -> 仍进异步(声明优先)
+ // 声明 async 但 provider 名不符约定 -> 仍进异步(声明优先)
         let async_declared: CapabilityManifest = serde_json::from_value(serde_json::json!({
             "capability": "custom.slow", "provider": "custom.slow", "version": "0.1.0",
             "input_schema": {"type": "object"}, "output_schema": {"type": "object"},
@@ -803,7 +798,7 @@ mod tests {
             "显式 async 声明必须进异步分道,与 provider 名无关"
         );
 
-        // 声明 sync 但 provider 名符合 async 约定 -> 不进异步(声明优先)
+ // 声明 sync 但 provider 名符合 async 约定 -> 不进异步(声明优先)
         let sync_declared: CapabilityManifest = serde_json::from_value(serde_json::json!({
             "capability": "mcp.srv.fast", "provider": "mcp.srv", "version": "0.1.0",
             "input_schema": {"type": "object"}, "output_schema": {"type": "object"},
@@ -819,7 +814,7 @@ mod tests {
             "显式 sync 声明必须压过 mcp.* 命名约定"
         );
 
-        // 未声明 -> 回退命名约定
+ // 未声明 -> 回退命名约定
         let undeclared: CapabilityManifest = serde_json::from_value(serde_json::json!({
             "capability": "mcp.legacy.tool", "provider": "mcp.legacy", "version": "0.1.0",
             "input_schema": {"type": "object"}, "output_schema": {"type": "object"},
@@ -833,14 +828,14 @@ mod tests {
         assert!(reg.is_async("mcp.legacy.tool"), "未声明回退 mcp.* 约定");
     }
 
-    #[test]
+ #[test]
     fn runtime_cache_is_lossy_but_logical_directory_survives() {
         let mut reg = CapabilityRegistry::new();
         reg.register(manifest("system.echo"), "system.echo@0.1.0", Arc::new(Echo))
             .unwrap();
 
         reg.clear_runtime_cache();
-        // 可丢失性:缓存清空后逻辑目录与 epoch 完整,可用性降为 false
+ // 可丢失性:缓存清空后逻辑目录与 epoch 完整,可用性降为 false
         let b = reg.binding_of("system.echo").unwrap().clone();
         assert_eq!(b.epoch, 1);
         assert_eq!(b.status, BindingStatus::Active);
@@ -853,12 +848,12 @@ mod tests {
         assert_eq!(d.binding_epoch, 1);
         assert!(!d.healthy);
 
-        // 缓存重建(重新 attach)后行为一致,epoch 不变
+ // 缓存重建(重新 attach)后行为一致,epoch 不变
         reg.attach_handle("system.echo", Arc::new(Echo)).unwrap();
         assert!(reg.is_available("system.echo"));
         assert_eq!(reg.binding_of("system.echo").unwrap().epoch, 1);
 
-        // attach 到未知 capability 拒绝
+ // attach 到未知 capability 拒绝
         assert_eq!(
             reg.attach_handle("system.nope", Arc::new(Echo)),
             Err(RegistryError::UnknownCapability)

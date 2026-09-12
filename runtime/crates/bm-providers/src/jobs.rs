@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tokio::io::AsyncReadExt;
 
-/// P0-3(2026-09-07 架构评审,INV-5 对齐):剥离 BOEN_* 内部变量再继承——
+/// P0-3():剥离 BOEN_* 内部变量再继承——
 /// 主密钥/模型令牌等内部命名空间不外泄给子进程;其余用户环境(PATH/HOME/
 /// venv 等)原样保留,因为 exec 是审批闸后的任意命令执行,11 项白名单会
 /// 破坏常规用法且挡不住有完整文件系统访问权的命令,真正的边界=内部密钥面。
@@ -27,7 +27,7 @@ pub(crate) fn strip_internal_env(
 /// 平台 shell 命令构造(system.exec 与后台作业同款;Windows=PowerShell,
 /// 其余=bash;原生命令失败退出码经 $LASTEXITCODE 透传——ADR-0022 后续批)。
 pub(crate) fn platform_shell(command: &str) -> tokio::process::Command {
-    #[cfg(windows)]
+ #[cfg(windows)]
     {
         let mut c = tokio::process::Command::new("powershell");
         c.args([
@@ -42,7 +42,7 @@ pub(crate) fn platform_shell(command: &str) -> tokio::process::Command {
         c.envs(strip_internal_env(std::env::vars()));
         c
     }
-    #[cfg(not(windows))]
+ #[cfg(not(windows))]
     {
         let mut c = tokio::process::Command::new("bash");
         c.arg("-c").arg(command);
@@ -106,7 +106,7 @@ impl JobTable {
         &self.dir
     }
 
-    /// 转轨登记 + 拉起独立执行任务。id 用调用方 operation_id(收据可对齐)。
+ /// 转轨登记 + 拉起独立执行任务。id 用调用方 operation_id(收据可对齐)。
     pub fn spawn(
         self: &Arc<Self>,
         id: &str,
@@ -147,7 +147,7 @@ impl JobTable {
         }
         tokio::spawn(pump_to_file(out, log));
         tokio::spawn(pump_to_file(err, log_err));
-        // (pump 内部已处理 None 流)
+ // (pump 内部已处理 None 流)
         let table = self.clone();
         let watcher_entry = entry.clone();
         tokio::spawn(async move {
@@ -173,8 +173,8 @@ impl JobTable {
         Ok((id.to_string(), log_path))
     }
 
-    /// 轮询收取:wait_ms 内每 200ms 查一次终态(钳 ≤60s);输出取尾部。
-    /// async:经异步能力管线执行(tokio 睡眠),绝不阻塞单写者核心循环。
+ /// 轮询收取:wait_ms 内每 200ms 查一次终态(钳 ≤60s);输出取尾部。
+ /// async:经异步能力管线执行(tokio 睡眠),绝不阻塞单写者核心循环。
     pub async fn output(&self, job_id: &str, wait_ms: u64) -> Value {
         let wait = wait_ms.min(60_000);
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(wait);
@@ -209,7 +209,7 @@ impl JobTable {
         }
     }
 
-    /// 管理面列表(/admin/jobs;新→旧)。
+ /// 管理面列表(/admin/jobs;新→旧)。
     pub fn list(&self) -> Vec<Value> {
         self.jobs
             .lock().unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -247,7 +247,7 @@ impl JobTable {
             return String::new();
         }
         let mut text = String::from_utf8_lossy(&buf).to_string();
-        // 截断起点可能落在多字节字符中间:丢首行残段。
+ // 截断起点可能落在多字节字符中间:丢首行残段。
         if start > 0
             && let Some(pos) = text.find('\n')
         {
@@ -256,7 +256,7 @@ impl JobTable {
         text
     }
 
-    /// LRU 清理:先按个数、再按日志总字节;只驱逐已终态作业(连同其日志)。
+ /// LRU 清理:先按个数、再按日志总字节;只驱逐已终态作业(连同其日志)。
     fn enforce_retention(&self) {
         let l = self.limits.get();
         let mut q = self
@@ -272,7 +272,7 @@ impl JobTable {
             while q.len() > l.job_retention_max
                 || (total > l.job_retention_max_bytes && q.len() > 1)
             {
-                // 从最旧端找第一个已终态的;全在跑则停。
+ // 从最旧端找第一个已终态的;全在跑则停。
                 let Some(pos) = q.iter().position(|e| e.status() != JobStatus::Running) else {
                     break;
                 };
@@ -315,7 +315,7 @@ impl JobBoard for JobTable {
         s
     }
 
-    /// 管理面台账(ADR-0046):复用后端具名 list(新→旧)。
+ /// 管理面台账(ADR-0046):复用后端具名 list(新→旧)。
     fn list(&self) -> Vec<Value> {
         JobTable::list(self)
     }
@@ -331,7 +331,6 @@ async fn pump_to_file(src: Option<impl tokio::io::AsyncRead + Unpin>, mut dst: s
     loop {
         match src.read(&mut buf).await {
             Ok(0) => break,
-            // 2026-09-08 审计修复:管道/写盘失败不再静默——作业日志中断须留观测点
             Err(e) => {
                 tracing::warn!(error = %e, "后台作业日志泵读端失败,输出落盘中止");
                 break;
@@ -353,12 +352,12 @@ mod tests {
     fn table() -> Arc<JobTable> {
         let dir = tempfile::tempdir().expect("临时目录");
         let t = JobTable::new(dir.path(), LimitsCell::with_default());
-        // tempdir 在函数尾释放;测试进程内日志随目录消失无碍断言。
+ // tempdir 在函数尾释放;测试进程内日志随目录消失无碍断言。
         std::mem::forget(dir);
         t
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+ #[tokio::test(flavor = "multi_thread")]
     async fn spawn_runs_to_completion_and_output_reports_terminal() {
         let t = table();
         let (id, log) = t.spawn("job1", "echo bm-job-ok", None).expect("拉起");
@@ -370,21 +369,21 @@ mod tests {
         assert!(v["output_tail"].as_str().unwrap().contains("bm-job-ok"));
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+ #[tokio::test(flavor = "multi_thread")]
     async fn unknown_job_reports_unknown() {
         let t = table();
         let v = t.output("no-such-job", 0).await;
         assert_eq!(v["status"], "unknown");
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+ #[tokio::test(flavor = "multi_thread")]
     async fn summary_empty_when_no_running() {
         let t = table();
         assert_eq!(t.summary(), "");
     }
 
-    // P0-3(2026-09-07 架构评审):BOEN_* 内部命名空间不得随 exec 子进程外泄。
-    #[test]
+ // P0-3():BOEN_* 内部命名空间不得随 exec 子进程外泄。
+ #[test]
     fn strip_internal_env_drops_boen_namespace_only() {
         let vars = [
             ("BOEN_SECRET_MASTER_KEY".to_string(), "x".to_string()),

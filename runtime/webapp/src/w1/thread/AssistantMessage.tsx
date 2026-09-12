@@ -1,6 +1,5 @@
 // 助手消息视图(#22 拆分:自 thread.tsx 机械移入):
 // 解析后的思考链/工具树/终端块/正文渲染 + 重新生成(分支)/复制。
-// 2026-09-10 对齐 ZCode 输出样式:废除"Bot 头+生成中徽章"卡片话术,改为
 // ZCode 回合头口径——运行中灰色"工作中 X 分 X 秒",完成后加粗"已工作 …"
 // (可折叠整回合),流式时内容尾部挂旋转 spinner。蓝本 token 见
 // .zcode/zcode-chat-replica.html(离线复刻留档)。
@@ -25,8 +24,8 @@ export function AssistantMessage() {
   const messageIndex = useAuiState((s) => s.message.index);
   const { regenerateMessage } = useBoenmindApprovals();
   const [copied, setCopied] = useState(false);
-  // 回合计时:起始挂在本消息首次进入运行态的时刻,完成即冻结。
-  // 历史回放的消息没有计时起点,不渲染回合头(无时间可报,不谎报)。
+ // 回合计时:起始挂在本消息首次进入运行态的时刻,完成即冻结。
+ // 历史回放的消息没有计时起点,不渲染回合头(无时间可报,不谎报)。
   const startRef = useRef<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [doneSeconds, setDoneSeconds] = useState<number | null>(null);
@@ -84,9 +83,9 @@ export function AssistantMessage() {
               }
               const blocks = parseAssistantContent(part.text, isRunning);
               return (
-                // P1-29(2026-09-07 架构评审):key 用索引而非文本长度——
-                // 长度作 key 会在流式期间每个 delta 都重挂载整棵子树,
-                // ThinkingBlock 展开态/滚动位置被反复清零
+ // P1-29():key 用索引而非文本长度——
+ // 长度作 key 会在流式期间每个 delta 都重挂载整棵子树,
+ // ThinkingBlock 展开态/滚动位置被反复清零
                 <div className="group/content flex flex-col gap-1.5" key="content">
                   {blocks.map((b, idx) => {
                     if (b.type === "thinking") {

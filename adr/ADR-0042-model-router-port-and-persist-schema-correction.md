@@ -1,72 +1,11 @@
----
-status: accepted
-date: 2026-09-12
-summary: 模型路由关注点上移为 core 端口 ModelRouter,surface 去具体依赖;并更正早先架构报告的两处假阳性(持久化 schema 归属、bm-contract 策略提纯)与前缀派发清零
-supersedes: []
-superseded_by: []
----
-
-# ADR-0042: 模型路由端口上移(去具体依赖)与两处"分层越界"假阳性更正
-
-- 关联: ADR-0005(万物皆插件)、ADR-0036(执行分道)、ADR-0041(插件身份契约)
-- 背景: 一份基于**无 Cargo.toml 的源码快照**的架构评审报告提出若干"分层越界"欠账。对真实仓逐条核实后,发现其中**两处为假阳性**、一处为真问题但需重新定位,另有若干"声称存在实为缺失"的守护测试。本 ADR 记录核实结论与据此的改动,作为"动架构前必须对真仓核实"的方法论锚点。
-
-## 决策
-
-1. **更正假阳性:持久化行结构留在 `bm-core` 是**正确设计,不迁移**。**
-   核实:`WorldRows`/`ApprovalRow`/`GrantRow`/`TaskRow`/`CapabilityRow`/`RecoveryReport`/
-   `StoreError` 是 **`EventStore` 端口契约的组成部分**——trait 方法直接收发它们
-   (`load_rows() -> StoreResult<WorldRows>`、`save_approval(ApprovalRow<'_>)` 等)。
-   把它们搬到 `bm-persist` 会使 core **反向依赖** persist(方向倒置、更糟)。
-   当前形态即端口-适配器(六边形):**端口连同其数据 DTO 在 core,适配器在 persist 实现**。
-   原先"core 背着持久化 schema"的判断错误,予以撤销。
-   (遗留:同文件内的文件工具 `atomic_write`/`filter_lines_atomic` 是**工具**而非端口契约,
-   是否下沉可另行评估,不在本条范围。)
-
-2. **更正真问题定位:越界不在"依赖 bm-providers",而在缺少路由端口。**
-   核实:`bm-surface-http` 直接持 `Arc<bm_providers::routing::RoutingConnector>`
-   (`lib.rs:62,122`、`webadmin/mod.rs:83`),调用 `known_models()`/`contains()`/
-   `replace_table()`——这三个是**路由管理**方法,**不在 `ModelConnector` 端口上**
-   (端口只有 invoke/invoke_stream/provider)。即"模型路由表"这一关注点没有端口表达,
-   故 surface 只能抓具体类型。
-
-3. **在 `bm-core::ports` 新增 `ModelRouter` 端口**:`known_models()` / `contains(model_id)` /
-   `replace_table(HashMap<String, Arc<dyn ModelConnector>>)`。`RoutingConnector` 实现它
-   (固有方法保留,端口实现转调)。surface 的 `model_routes` 字段改为
-   `Option<Arc<dyn bm_core::ports::ModelRouter>>`(3 处),不再引用具体类型。
-
-4. **更正第二处假阳性:"`bm-contract` 含业务策略"大部分不成立,不迁移。**
-   逐条核实(带来源注释与契约文件对照):
-   - `states.rs` 的 `can_transition`/`is_terminal`/`transitions` = **镜像**
-     `state-machines/core-transitions.v0_1.json`,由 `tests/sync.rs::state_machines_match_transitions_json` 守护;
-   - `error_codes.rs` 的 `cli_exit`/`default_retryable` = **镜像**
-     `registry/error-codes.v0_1.json`,由 `sync.rs::error_code_enum_matches_registry` 守护。
-   二者是**契约的 Rust 投影**,留在 `bm-contract` 是正确设计,迁出会破坏"镜像"原则并拆掉同步测试。
-   唯一真属**策略**的是 `capability.rs` 的 `escalated`/`requires_approval_at_untrusted`/
-   `is_approval_bearing`(来源 = 基线 §5.3 与 ADR-0002 条件 3,**无**对应 JSON 字段)。
-   **但决定不迁移**:`ORDER` 是 `RiskClass` 固有次序,三者皆纯函数、无外部状态;Rust 孤儿规则
-   不允许在 `bm-core` 为 `RiskClass` 写 `impl`,迁出须改自由函数而失去方法语法——**为"纯度"付出的
-   代价大于收益,属钻牛角尖**。改为:①在模块注释标注"镜像 vs 策略"边界;②补单测
-   `risk_escalation_and_approval_policy_is_pinned` 守护该策略(此前无契约门、无专门测试)。
-
-5. **前缀派发清零与缺失守护测试补齐**(同轮,提交 e4f51b2):
-   - wasm 来源判断改按显式 `PluginOrigin` 字段(此前用 `starts_with("skill.")`——**由本轮自己引入**);
-   - `fs.` 分道改 `FsExecutor::handles()`(精确匹配四常量);
-   - 补 ADR-0036 声称存在、**实为缺失**的守护测试 `production_manifests_all_declare_execution_mode`;
-   - 校订 ADR-0036 过度声称的 summary("删前缀猜法" → "声明优先 + 前缀仅作未声明条目回退")。
-   生产派发路径此后仅剩 `registry.rs provider_is_async` 一处兼容回退(ADR-0036 明写保留)。
-
-## 后果
-
-- `bm-surface-http` 源码中 `RoutingConnector` 引用归零;路由读/写经端口,实现可替换。
-- **零行为变更**:498 测试全绿(新增 `model_router_port_is_usable_as_dyn`、
-  `risk_escalation_and_approval_policy_is_pinned`、`production_manifests_all_declare_execution_mode`)。
-- **两处假阳性已更正**(本条 1、4):`bm-core` 持持久化行结构、`bm-contract` 持状态机/错误码
-  映射——**均为端口/合同的正确投影,不动**。避免了一次会打断同步测试、并使 core 反向依赖的
-  错误迁移。
-- 生产派发路径此前缀判定仅剩 `registry.rs:416 provider_is_async`(ADR-0036 明写的兼容回退)。
-- surface 对 `bm_providers` 仍有 webadmin 面的依赖(MCP hub、JobTable、SkillScriptManager、
-  OpenAiConnector)——那是**管理面本就该管 provider**,不属越层,不在本条范围。
-- **方法论留档**:早先架构报告基于无 Cargo.toml 的源码快照,存在假阳性(本条 1、4)。
-  任何架构改动前**必须对真实仓核实**(含"声称的守护测试是否真的存在"),不得据快照直接动手;
-  后续"surface 服务层""错误类型统一"等条目同样需先核实用途再定,路线图见 `.work/ROADMAP.md`。
+status: accepted date: summary: 模型路由关注点上移为 core 端口 ModelRouter,surface 去具体依赖;并更正早先架构报告的两处假阳性(持久化 schema 归属、bm-contract 策略提纯)与前缀派发清零 supersedes: [] superseded_by: [] 
+# ADR-0042: 模型路由端口上移(去具体依赖)与两处"分层越界"假阳性更正 
+- 关联: ADR-0005(万物皆插件)、ADR-0036(执行分道)、ADR-0041(插件身份契约) - 背景: 一份基于**无 Cargo.toml 的源码快照**的架构评审报告提出若干"分层越界"欠账。对真实仓逐条核实后,发现其中**两处为假阳性**、一处为真问题但需重新定位,另有若干"声称存在实为缺失"的守护测试。本 ADR 记录核实结论与据此的改动,作为"动架构前必须对真仓核实"的方法论锚点。 
+## 决策 
+1. **更正假阳性:持久化行结构留在 `bm-core` 是**正确设计,不迁移**。**  核实:`WorldRows`/`ApprovalRow`/`GrantRow`/`TaskRow`/`CapabilityRow`/`RecoveryReport`/  `StoreError` 是 **`EventStore` 端口契约的组成部分**——trait 方法直接收发它们  (`load_rows() -> StoreResult<WorldRows>`、`save_approval(ApprovalRow<'_>)` 等)。  把它们搬到 `bm-persist` 会使 core **反向依赖** persist(方向倒置、更糟)。  当前形态即端口-适配器(六边形):**端口连同其数据 DTO 在 core,适配器在 persist 实现**。  原先"core 背着持久化 schema"的判断错误,予以撤销。  (遗留:同文件内的文件工具 `atomic_write`/`filter_lines_atomic` 是**工具**而非端口契约,  是否下沉可另行评估,不在本条范围。) 
+2. **更正真问题定位:越界不在"依赖 bm-providers",而在缺少路由端口。**  核实:`bm-surface-http` 直接持 `Arc<bm_providers::routing::RoutingConnector>`  (`lib.rs:62,122`、`webadmin/mod.rs:83`),调用 `known_models()`/`contains()`/  `replace_table()`——这三个是**路由管理**方法,**不在 `ModelConnector` 端口上**  (端口只有 invoke/invoke_stream/provider)。即"模型路由表"这一关注点没有端口表达,  故 surface 只能抓具体类型。 
+3. **在 `bm-core::ports` 新增 `ModelRouter` 端口**:`known_models()` / `contains(model_id)` /  `replace_table(HashMap<String, Arc<dyn ModelConnector>>)`。`RoutingConnector` 实现它  (固有方法保留,端口实现转调)。surface 的 `model_routes` 字段改为  `Option<Arc<dyn bm_core::ports::ModelRouter>>`(3 处),不再引用具体类型。 
+4. **更正第二处假阳性:"`bm-contract` 含业务策略"大部分不成立,不迁移。**  逐条核实(带来源注释与契约文件对照):  - `states.rs` 的 `can_transition`/`is_terminal`/`transitions` = **镜像**  `state-machines/core-transitions.v0_1.json`,由 `tests/sync.rs::state_machines_match_transitions_json` 守护;  - `error_codes.rs` 的 `cli_exit`/`default_retryable` = **镜像**  `registry/error-codes.v0_1.json`,由 `sync.rs::error_code_enum_matches_registry` 守护。  二者是**契约的 Rust 投影**,留在 `bm-contract` 是正确设计,迁出会破坏"镜像"原则并拆掉同步测试。  唯一真属**策略**的是 `capability.rs` 的 `escalated`/`requires_approval_at_untrusted`/  `is_approval_bearing`(来源 = 基线 §5.3 与 ADR-0002 条件 3,**无**对应 JSON 字段)。  **但决定不迁移**:`ORDER` 是 `RiskClass` 固有次序,三者皆纯函数、无外部状态;Rust 孤儿规则  不允许在 `bm-core` 为 `RiskClass` 写 `impl`,迁出须改自由函数而失去方法语法——**为"纯度"付出的  代价大于收益,属钻牛角尖**。改为:①在模块注释标注"镜像 vs 策略"边界;②补单测  `risk_escalation_and_approval_policy_is_pinned` 守护该策略(。 
+5. **前缀派发清零与缺失守护测试补齐**(同轮,提交 e4f51b2):  - wasm 来源判断改按显式 `PluginOrigin` 字段(  - `fs.` 分道改 `FsExecutor::handles()`(精确匹配四常量);  - 补 ADR-0036 声称存在、**实为缺失**的守护测试 `production_manifests_all_declare_execution_mode`;  - 校订 ADR-0036 过度声称的 summary("删前缀猜法" → "声明优先 + 前缀仅作未声明条目回退")。  生产派发路径此后仅剩 `registry.rs provider_is_async` 一处兼容回退(ADR-0036 明写保留)。 
+## 后果 
+- `bm-surface-http` 源码中 `RoutingConnector` 引用归零;路由读/写经端口,实现可替换。 - **零行为变更**:498 测试全绿(新增 `model_router_port_is_usable_as_dyn`、  `risk_escalation_and_approval_policy_is_pinned`、`production_manifests_all_declare_execution_mode`)。 - **两处假阳性已更正**(本条 1、4):`bm-core` 持持久化行结构、`bm-contract` 持状态机/错误码  映射——**均为端口/合同的正确投影,不动**。避免了一次会打断同步测试、并使 core 反向依赖的  错误迁移。 - 生产派发路径。 - surface 对 `bm_providers` 仍有 webadmin 面的依赖(MCP hub、JobTable、SkillScriptManager、  OpenAiConnector)——那是**管理面本就该管 provider**,不属越层,不在本条范围。 - **方法论留档**:早先架构报告基于无 Cargo.toml 的源码快照,存在假阳性(本条 1、4)。  任何架构改动前**必须对真实仓核实**(含"声称的守护测试是否真的存在"),不得据快照直接动手;  后续"surface 服务层""错误类型统一"等条目同样需先核实用途再定,路线图见 `.work/ROADMAP.md`。 

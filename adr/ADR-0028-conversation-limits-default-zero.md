@@ -1,45 +1,14 @@
----
-status: accepted
-date: 2026-09-08
-summary: 十项限制默认归零(0=不限)+0 语义显式实现+熔断只拦同命令同参 10 次(2026-09-08)
-supersedes: []
-superseded_by: []
----
-
-# ADR-0028: 对话链路限制默认全零(0=不限制)
-
-- 状态: Accepted(用户 2026-09-08 裁决:「同命令+同参数连续 10 次→停」是唯一保留的硬停止规则,其他与对话相关的限制全部设 0=不限制,0 语义由代码适配到位)
-- 日期: 2026-09-08
-- 关联: ADR-0024(limits.json 集中配置面)、ADR-0025(exec 后台转轨);对照系 = ZCode(无单回合轮数上限 + auto-compact)、Hermes(HERMES_MAX_ITERATIONS=500 + 超限自动转后台)、pi_agent_rust(max_tool_iterations=50 + 上下文压缩预留)
-- 背景: 长程独立任务被自设栅栏拦死——2026-09-08 用户实测任务报「命令总运行数量大于 60」,对上仓内机制即 `tool_rounds_max=64` 安全网触顶(2026-09-07 架构评审 P0-1 所加),触顶后回合伪装成功收束、零自动续跑;叠加跨回合历史只回喂 20 轮/24K 字符,长任务「跑不完、续不上」。用户裁定不靠人工栅栏管长任务,回归「熔断只拦失控」的本意。
-
-## 决策
-
-### 1. 十项对话限制默认归零(0=不限制)
-
-`tool_rounds_max`(单回合工具轮数)、`model_call_timeout_secs`(模型单呼超时)、`model_max_attempts`(降级链重试次数)、`stream_hard_cap_ms`(流式硬顶)、`nonstream_wait_ms`(非流式等待)、`tool_wait_ms` / `approval_wait_ms`(回合内工具/审批等待)、`history_max_turns` / `history_max_chars`(历史回喂双上限)、`autorun_default_max_turns`(Task 自动接力轮数)——代码默认全部 0,新装即无人工栅栏;旧默认(64 轮/120s/900s/20 轮 24K 等)仍可经设置页调回。KEY_META 钳制下限同步放行 0,标签标注「0=不限」。
-
-### 2. 0 语义全消费点显式实现
-
-- 工具轮数:`spawn.rs` 既有 `cap > 0` 判断天然支持,不动。
-- 模型单呼超时:合同 `InvokeRequest.deadline` 为必填时间戳,0=不限时以 **100 年远期哨兵**表达(`remaining_until` 折出巨大预算,reqwest 等效无超时)。
-- 降级链重试:0 = 不限(`Option<u32>` None),链内按序循环;不限重试时每次失败加 1s 退避,防对僵死网关热循环打点;显式 `RuntimeConfig.max_attempts` 兼容保留(仍钳 1..=3)。
-- 工具/审批等待:0 = 轮询至出结果/裁决为止,无 deadline。
-- 审批 TTL:合同 `Approval.expires_at` 为必填时间戳,0 = 100 年远期哨兵=永不过期(仍默认拒绝,只是不再定时撤销;基线 §9.6「超时即 denied」语义对非零值不变)。
-- 历史回喂:`push_capped`/`rebuild_session_chats` 双上限 0 = 不裁剪,全量回喂。
-- autorun:0(默认与显式同义)= 轮数无上限;非零仍钳 1..=50。
-- 流式硬顶/非流式等待:`openai_compat.rs` 两处 deadline 改 Option,0 = 不限时。
-
-### 3. 唯一保留的硬停止 = 防空转熔断 10 次
-
-`loop_breaker_consecutive` 默认 5→**10**(同命令同参数连续 10 次即熔断,窗口 20 不变,0=关保留)。变参轮转不再有总轮数安全网拦阻——这是本裁决的明确取舍:防失控烧钱让位于长程任务可达性。
-
-### 4. 基建类限制不动(与对话杀伤无关)
-
-exec 120s/600s+超限自动转后台(ADR-0024/0025 既有)、MCP 超时族、Provider 熔断冷却、输出截断 16K、fs 16MB、watchdog(Task 级 15min 停滞/24h 硬顶,只管 Task 不作用于聊天回合)、日志/审计截断。
-
-## 后果
-
-- 合同零变更(限制为运行配置不入线协议);C4 拓扑不变。
-- 已知取舍:回合内上下文无任何压缩,超长任务终将触及模型网关的上下文物理上限——该报错原文目前在 provider 层被吞,透传修复已登记 BACKLOG;上下文自动压缩为后续插件方向(2026-09-08 用户确认未获开工令,勿擅动)。
-- SETTLED §2-5(64 轮安全网)/§2-12(900s 硬顶)的默认值口径自本 ADR 起过时(机制仍在、默认值变 0,可调回)。
+status: accepted date: summary: 十项限制默认归零(0=不限)+0 语义显式实现+熔断只拦同命令同参 10 次() supersedes: [] superseded_by: [] 
+# ADR-0028: 对话链路限制默认全零(0=不限制) 
+- 状态: Accepted(用户 ) - 日期: - 关联: ADR-0024(limits.json 集中配置面)、ADR-0025(exec 后台转轨);对照系 = ZCode(无单回合轮数上限 + auto-compact)、Hermes(HERMES_MAX_ITERATIONS=500 + 超限自动转后台)、pi_agent_rust(max_tool_iterations=50 + 上下文压缩预留) - 背景: 长程独立任务被自设栅栏拦死——),触顶后回合伪装成功收束、零自动续跑;叠加跨回合历史只回喂 20 轮/24K 字符,长任务「跑不完、续不上」。用户裁定不靠人工栅栏管长任务,回归「熔断只拦失控」的本意。 
+## 决策 
+### 1. 十项对话限制默认归零(0=不限制) 
+`tool_rounds_max`(单回合工具轮数)、`model_call_timeout_secs`(模型单呼超时)、`model_max_attempts`(降级链重试次数)、`stream_hard_cap_ms`(流式硬顶)、`nonstream_wait_ms`(非流式等待)、`tool_wait_ms` / `approval_wait_ms`(回合内工具/审批等待)、`history_max_turns` / `history_max_chars`(历史回喂双上限)、`autorun_default_max_turns`(Task 自动接力轮数)——代码默认全部 0,新装即无人工栅栏;旧默认(64 轮/120s/900s/20 轮 24K 等)仍可经设置页调回。KEY_META 钳制下限同步放行 0,标签标注「0=不限」。 
+### 2. 0 语义全消费点显式实现 
+- 工具轮数:`spawn.rs` 既有 `cap > 0` 判断天然支持,不动。 - 模型单呼超时:合同 `InvokeRequest.deadline` 为必填时间戳,0=不限时以 **100 年远期哨兵**表达(`remaining_until` 折出巨大预算,reqwest 等效无超时)。 - 降级链重试:0 = 不限(`Option<u32>` None),链内按序循环;不限重试时每次失败加 1s 退避,防对僵死网关热循环打点;显式 `RuntimeConfig.max_attempts` 兼容保留(仍钳 1..=3)。 - 工具/审批等待:0 = 轮询至出结果/裁决为止,无 deadline。 - 审批 TTL:合同 `Approval.expires_at` 为必填时间戳,0 = 100 年远期哨兵=永不过期(仍默认拒绝,只是不再定时撤销;基线 §9.6「超时即 denied」语义对非零值不变)。 - 历史回喂:`push_capped`/`rebuild_session_chats` 双上限 0 = 不裁剪,全量回喂。 - autorun:0(默认与显式同义)= 轮数无上限;非零仍钳 1..=50。 - 流式硬顶/非流式等待:`openai_compat.rs` 两处 deadline 改 Option,0 = 不限时。 
+### 3. 唯一保留的硬停止 = 防空转熔断 10 次 
+`loop_breaker_consecutive` 默认 5→**10**(同命令同参数连续 10 次即熔断,窗口 20 不变,0=关保留)。变参轮转不再有总轮数安全网拦阻——这是本裁决的明确取舍:防失控烧钱让位于长程任务可达性。 
+### 4. 基建类限制不动(与对话杀伤无关) 
+exec 120s/600s+超限自动转后台(ADR-0024/0025 既有)、MCP 超时族、Provider 熔断冷却、输出截断 16K、fs 16MB、watchdog(Task 级 15min 停滞/24h 硬顶,只管 Task 不作用于聊天回合)、日志/审计截断。 
+## 后果 
+- 合同零变更(限制为运行配置不入线协议);C4 拓扑不变。 - 已知取舍:回合内上下文无任何压缩,超长任务终将触及模型网关的上下文物理上限——该报错原文目前在 provider 层被吞,透传修复已登记 BACKLOG;上下文自动压缩为后续插件方向()。 - SETTLED §2-5(64 轮安全网)/§2-12(900s 硬顶)的默认值口径自本 ADR 起过时(机制仍在、默认值变 0,可调回)。 

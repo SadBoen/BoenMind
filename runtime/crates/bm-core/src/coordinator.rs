@@ -4,10 +4,10 @@
 //! 用户授权,默认拒绝、Task 结束即失效。三方交集在 Task 创建时**物化**为
 //! task:<id> 作用域的 Grant(M4 预留枚举自此启用):
 //! - Coordinator 自身的协调动词 Grant:parent 链回溯到 Butler 的 bootstrap
-//!   Grant(上界不得超出);
+//! Grant(上界不得超出);
 //! - Worker 的能力 Grant:仅从 Task 授权中 capability.call 条目的资源谓词
-//!   签发,parent 链回溯到 Coordinator 自身的 capability.call Grant,
-//!   delegation_depth 恒 0(不可再转授)。
+//! 签发,parent 链回溯到 Coordinator 自身的 capability.call Grant,
+//! delegation_depth 恒 0(不可再转授)。
 //!
 //! 子树边界(M5 单 Task 演示命名空间):principal 采用固定
 //! agent:coordinator / agent:worker;Task 终态时其 task:<id> Grant 全量
@@ -57,14 +57,13 @@ fn task_grant(
 
 /// 三方交集物化(Task 创建时执行一次):
 /// 返回 (Coordinator 协调动词 Grant 集, Worker 能力 Grant 集)。
-///
 /// - Coordinator Grant:每个授权条目一枚,action = 动词,parent 哈希 =
-///   Butler 同动词 bootstrap Grant(parent 查证返回 None = 上界已撤销,
-///   该条目跳过——撤销后新建 Task 的 Coordinator 拿不到对应协调权);
+/// Butler 同动词 bootstrap Grant(parent 查证返回 None = 上界已撤销,
+/// 该条目跳过——撤销后新建 Task 的 Coordinator 拿不到对应协调权);
 /// - Worker Grant:仅 capability.call 条目按资源谓词逐枚签发,action =
-///   谓词能力名,parent 哈希 = Coordinator 自身 capability.call Grant
-///   的内容 SHA-256(授权链可上溯,逐级不超上界)。
-///   无 capability.call 条目 = Worker 不获任何能力授权(默认拒绝上界)。
+/// 谓词能力名,parent 哈希 = Coordinator 自身 capability.call Grant
+/// 的内容 SHA-256(授权链可上溯,逐级不超上界)。
+/// 无 capability.call 条目 = Worker 不获任何能力授权(默认拒绝上界)。
 pub fn intersection_grants(
     ids: &dyn IdGen,
     task_id: &str,
@@ -120,8 +119,8 @@ pub fn intersection_grants(
             );
             coordinator_grants.push(g);
         }
-        // Worker 能力 Grant(仅 capability.call 谓词;父 = Coordinator 的
-        // capability.call Grant 内容哈希)
+ // Worker 能力 Grant(仅 capability.call 谓词;父 = Coordinator 的
+ // capability.call Grant 内容哈希)
         if entry.verb == "capability.call"
             && let Some(parent_call) = coordinator_grants
                 .iter()
@@ -171,7 +170,7 @@ mod tests {
         Some(bootstrap_grant(&ids, verb, clock.now()))
     }
 
-    #[test]
+ #[test]
     fn intersection_materializes_task_scoped_grants_with_parent_chain() {
         let ids = SeqIdGen::new();
         let clock = MockClock::at_ms(BASE_MS);
@@ -190,22 +189,22 @@ mod tests {
             clock.now(),
             butler_lookup,
         );
-        // Coordinator:3 枚(每条目一枚)task scope Grant
+ // Coordinator:3 枚(每条目一枚)task scope Grant
         assert_eq!(coord.len(), 3);
         assert!(coord.iter().all(|g| g.audience
             == crate::team::coord_principal("task_01JAAAAAAAAAAAAAAAAAAAAAB2")
             && matches!(g.scope, GrantScope::Task(_))
             && g.issued_by == crate::butler::BUTLER_PRINCIPAL
             && g.delegation_depth == 0));
-        // parent 哈希 = Butler bootstrap Grant 内容哈希(链可上溯)
+ // parent 哈希 = Butler bootstrap Grant 内容哈希(链可上溯)
         let spawn = coord.iter().find(|g| g.action == "agent.spawn").unwrap();
         let butler_spawn = butler_lookup("agent.spawn").unwrap();
         assert_eq!(
             spawn.parent_grant_hash,
             sha256_hex(serde_json::to_string(&butler_spawn).unwrap().as_bytes())
         );
-        // Worker:恰 1 枚,action = 谓词能力,parent = Coordinator 的
-        // capability.call Grant 内容哈希
+ // Worker:恰 1 枚,action = 谓词能力,parent = Coordinator 的
+ // capability.call Grant 内容哈希
         assert_eq!(worker.len(), 1);
         assert_eq!(
             worker[0].audience,
@@ -223,7 +222,7 @@ mod tests {
         assert_eq!(worker[0].issued_by, COORDINATOR_PRINCIPAL);
     }
 
-    #[test]
+ #[test]
     fn no_capability_call_entry_means_worker_gets_nothing() {
         let ids = SeqIdGen::new();
         let clock = MockClock::at_ms(BASE_MS);
@@ -243,7 +242,7 @@ mod tests {
         assert!(worker.is_empty(), "无 capability.call 授权 = Worker 零授权");
     }
 
-    #[test]
+ #[test]
     fn revoked_butler_upper_bound_skips_entry() {
         let ids = SeqIdGen::new();
         let clock = MockClock::at_ms(BASE_MS);
@@ -251,7 +250,7 @@ mod tests {
             {"verb": "task.collect", "klass": "safe"},
             {"verb": "agent.spawn", "klass": "mutation"}
         ]));
-        // agent.spawn 的上界已撤销(Butler 查证返回 None)
+ // agent.spawn 的上界已撤销(Butler 查证返回 None)
         let (coord, worker) = intersection_grants(
             &ids,
             "task_x",

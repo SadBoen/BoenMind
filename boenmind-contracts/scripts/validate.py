@@ -38,8 +38,7 @@ for rel, d in docs.items():
         store[d["$id"]] = d
 
 
-# ---------- R1b: schema 自检(P1-42,2026-09-07 架构评审)----------
-# 此前 *.schema.json 仅做「JSON 可解析」——schema 本身写坏(类型拼写错、
+# ---------- R1b: schema 自检(P1-42,)----------
 # required 引用不存在的属性、用到子集校验器不支持的关键字而被静默忽略)
 # 无人知晓。本节对每份 schema 做结构自检。
 SUPPORTED_KEYWORDS = {
@@ -61,14 +60,14 @@ def schema_lint(name, schema, path="$", lax=False):
     for k in schema:
         if k in SUPPORTED_KEYWORDS:
             continue
-        # 注解类关键字:刻意的惰性元数据,不参与校验
+ # 注解类关键字:刻意的惰性元数据,不参与校验
         if k.startswith("x-") or k in ("default", "const_note"):
             continue
         if lax:
             continue
         if path == "$":
-            # 文档级锚点(envelope 的 request/response、wire 的方法名等):
-            # 本库惯用的自描述结构,不视为错误;其值仍做宽松自检
+ # 文档级锚点(envelope 的 request/response、wire 的方法名等):
+ # 本库惯用的自描述结构,不视为错误;其值仍做宽松自检
             continue
         fail("R1b", f"{name}{path}: 子集校验器不支持的关键字 '{k}'(校验时会被静默忽略)")
     t = schema.get("type")
@@ -105,7 +104,7 @@ def schema_lint(name, schema, path="$", lax=False):
         schema_lint(name, sub, f"{path}/oneOf", lax=lax)
     for k, v in (schema.get("definitions") or {}).items():
         schema_lint(name, v, f"{path}/definitions/{k}", lax=lax)
-    # 文档级锚点值做宽松自检(内部同样允许注解/锚点键)
+ # 文档级锚点值做宽松自检(内部同样允许注解/锚点键)
     for k, v in schema.items():
         if k not in SUPPORTED_KEYWORDS and isinstance(v, dict) and path == "$":
             schema_lint(name, v, f"{path}/{k}", lax=True)
@@ -211,8 +210,7 @@ def validate(inst, schema, root, path="$", debug=False):
         if "pattern" in schema and not re.search(schema["pattern"], inst):
             errs.append(f"{path}: 不匹配 pattern {schema['pattern']}")
         if schema.get("format") == "date-time" and inst is not None:
-            # P1-43(2026-09-07 架构评审):按 RFC3339 接受 Z 或 ±HH:MM 偏移
-            # ——此前只认 Z 结尾,合法的 +00:00 被误报
+ # P1-43():按 RFC3339 接受 Z 或 ±HH:MM 偏移
             if not isinstance(inst, str) or not re.fullmatch(
                 r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})", inst
             ):
@@ -267,7 +265,7 @@ total_codes = set()
 for tf in trace_files:
     trace = tf.read_text(encoding="utf-8")
 
-    # R3: 事件类型与错误码必须在注册表内
+ # R3: 事件类型与错误码必须在注册表内
     used_events = set(re.findall(r'"type":\s*"([a-z]+(?:\.[a-z_]+)+)"', trace))
     used_events |= set(re.findall(r"事件\s*\d+[' ]*\s+([a-z]+(?:\.[a-z_]+)+)", trace))
     used_codes = set(re.findall(r'"(?:error_)?code":\s*"([a-z_]+)"', trace))
@@ -279,7 +277,7 @@ for tf in trace_files:
     for c in sorted(used_codes - codes):
         fail("R3", f"{tf.name}: 轨迹错误码不在注册表: {c}")
 
-    # R4: 状态迁移必须是迁移表中的边
+ # R4: 状态迁移必须是迁移表中的边
     for machine, chain in re.findall(r"\b(operation|agent|session|task)\s+([a-z_]+(?:→[a-z_]+)+)", trace):
         states = chain.split("→")
         for a, b in zip(states, states[1:]):
@@ -287,7 +285,7 @@ for tf in trace_files:
             if (a, b) not in edges[machine]:
                 fail("R4", f"{tf.name}: {machine}: {a}→{b} 不是迁移表中的合法边")
 
-    # R2: payload 必须通过对应 schema
+ # R2: payload 必须通过对应 schema
     kinds = {"request": 0, "response": 0, "event": 0, "log": 0, "receipt": 0}
     for bi, raw in enumerate(re.findall(r"```json\n(.*?)```", trace, re.S), 1):
         label = f"{tf.name} 第{bi}个JSON块 {raw.strip()[:48]!r}…"

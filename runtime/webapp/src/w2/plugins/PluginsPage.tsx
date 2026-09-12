@@ -65,9 +65,9 @@ export function PluginsPage() {
   const [scanResult, setScanResult] = useState<McpCandidatesResult | null>(null);
   const [approving, setApproving] = useState<string | null>(null);
   const [configTarget, setConfigTarget] = useState<ConfigTarget | null>(null);
-  // issue #28:子进程 stderr 回看弹窗
+ // issue #28:子进程 stderr 回看弹窗
   const [stderrView, setStderrView] = useState<StderrViewState | null>(null);
-  // ADR-0023:物理删除确认弹窗目标(包含来源与是否废弃，便于精准提示)
+ // ADR-0023:物理删除确认弹窗目标(包含来源与是否废弃，便于精准提示)
   const [purgeTarget, setPurgeTarget] = useState<{
     name: string;
     command?: string;
@@ -77,10 +77,10 @@ export function PluginsPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  // 表格列宽状态(支持记忆与拖动)
+ // 表格列宽状态(支持记忆与拖动)
   const [colWidths, setColWidths] = useState<Record<ColKey, number>>(loadColWidths);
   const colWidthsRef = useRef(colWidths);
-  // 镜像同步放 effect(React Compiler 规则:渲染期不可写 ref;拖拽读取最新列宽)
+ // 镜像同步放 effect(React Compiler 规则:渲染期不可写 ref;拖拽读取最新列宽)
   useEffect(() => {
     colWidthsRef.current = colWidths;
   }, [colWidths]);
@@ -109,7 +109,7 @@ export function PluginsPage() {
         window.removeEventListener("pointerup", onPointerUp);
         document.body.style.cursor = "";
         document.body.style.userSelect = "";
-        // 持久化保存用户调节后的列宽
+ // 持久化保存用户调节后的列宽
         storage.set(
           STORAGE_KEYS.PLUGINS_TABLE_COLS,
           JSON.stringify(colWidthsRef.current),
@@ -141,7 +141,7 @@ export function PluginsPage() {
 
   const refreshStatus = useCallback(async () => {
     try {
-      // /admin/mcp/status 返回形如 { status: [{name, ok, tools, tool_list, error}] }
+ // /admin/mcp/status 返回形如 { status: [{name, ok, tools, tool_list, error}] }
       const s = await api.mcp.status();
       const map: Record<
         string,
@@ -157,7 +157,7 @@ export function PluginsPage() {
       }
       setStatusMap(map);
     } catch {
-      // 忽略探活静默错误
+ // 忽略探活静默错误
     }
   }, []);
 
@@ -170,15 +170,15 @@ export function PluginsPage() {
     return () => clearInterval(timer);
   }, [loadData, refreshStatus]);
 
-  // 统一列表聚合
+ // 统一列表聚合
   const tableItems: TablePluginItem[] = useMemo(() => {
     const list: TablePluginItem[] = [];
-    // ADR-0042:wasm 插件能力也会出现在 /admin/capabilities 的 builtin 启动快照里
-    // (组合根把插件能力并入 capabilities),故内置面须跳过它们,改由下方 wasm 面
-    // 以正确类别 + 卸载按钮呈现——真实浏览器手测发现的重复/错标。
+ // ADR-0042:wasm 插件能力也会出现在 /admin/capabilities 的 builtin 启动快照里
+ // (组合根把插件能力并入 capabilities),故内置面须跳过它们,改由下方 wasm 面
+ // 以正确类别 + 卸载按钮呈现——真实浏览器手测发现的重复/错标。
     const wasmNames = new Set(wasmList.map((w) => w.capability));
 
-    // 1. 系统内置能力(排除 wasm 插件能力,避免重复与错标「禁卸载」)
+ // 1. 系统内置能力(排除 wasm 插件能力,避免重复与错标「禁卸载」)
     for (const b of builtinList) {
       if (wasmNames.has(b.name)) continue;
       const effectText =
@@ -207,13 +207,12 @@ export function PluginsPage() {
       });
     }
 
-    // 2. 外部 MCP 插件 (通过 mcp.json 与真实后端探活驱动,绝无静态硬编码)
+ // 2. 外部 MCP 插件 (通过 mcp.json 与真实后端探活驱动,绝无静态硬编码)
     if (mcpData?.servers) {
       for (const s of mcpData.servers) {
         const st = statusMap[s.name];
         const isOk = st?.ok ?? false;
-        // 2026-09-05 回看修复:移除 tool_N 伪造清单——探活只报数量而未返回
-        // 清单时,不得编造工具名,如实显示数量、清单留空
+ // 清单时,不得编造工具名,如实显示数量、清单留空
         const tools: ToolInfo[] =
           st?.tool_list && st.tool_list.length > 0 ? st.tool_list : [];
         const entry = mcpData.entries?.find((e) => e.server.name === s.name);
@@ -234,7 +233,7 @@ export function PluginsPage() {
       }
     }
 
-    // 3. 通用 wasm 插件(ADR-0042:config/plugins.json;增删改即热重载)
+ // 3. 通用 wasm 插件(ADR-0042:config/plugins.json;增删改即热重载)
     for (const w of wasmList) {
       list.push({
         id: `wasm:${w.capability}`,
@@ -246,7 +245,7 @@ export function PluginsPage() {
         tools: [{ name: w.capability, description: w.description }],
         isOnline: true,
         wasmRef: w,
-        // wasm 插件的 provider 恒声明 Tool 身份(ADR-0041/0045)
+ // wasm 插件的 provider 恒声明 Tool 身份(ADR-0041/0045)
         pluginKind: "tool",
         pluginId: w.provider ?? w.capability,
         pluginVersion: w.version,
@@ -256,7 +255,7 @@ export function PluginsPage() {
     return list;
   }, [builtinList, mcpData, statusMap, wasmList]);
 
-  // 快速筛选与关键字搜索
+ // 快速筛选与关键字搜索
   const filteredItems = useMemo(() => {
     return tableItems.filter((item) => {
       if (typeFilter !== "all" && item.type !== typeFilter) return false;
@@ -268,8 +267,8 @@ export function PluginsPage() {
     });
   }, [tableItems, typeFilter, filter]);
 
-  // 当前筛选面为空(如卸载掉最后一个 wasm 插件而筛选仍停在 wasm)→ 回落显示「全部」,
-  // 避免空表无从解释。用派生值而非 useEffect+setState(后者会触发 lint 级联渲染告警)。
+ // 当前筛选面为空(如卸载掉最后一个 wasm 插件而筛选仍停在 wasm)→ 回落显示「全部」,
+ // 避免空表无从解释。用派生值而非 useEffect+setState(后者会触发 lint 级联渲染告警)。
   const effectiveTypeFilter =
     typeFilter !== "all" && filteredItems.length === 0 && tableItems.length > 0
       ? "all"
@@ -288,8 +287,8 @@ export function PluginsPage() {
         });
 
   const scanPlugins = async () => {
-    // ADR-0035:扫描会以 --self-describe 运行候选目录内的可执行文件。
-    // 首次扫描前显式披露该执行面(利用候选必须被运行才能自报 name)。
+ // ADR-0035:扫描会以 --self-describe 运行候选目录内的可执行文件。
+ // 首次扫描前显式披露该执行面(利用候选必须被运行才能自报 name)。
     if (
       !scanDisclosed &&
       !confirm(
@@ -329,7 +328,7 @@ export function PluginsPage() {
   };
 
   const handleRemove = async (name: string) => {
-    // ADR-0042:wasm 插件卸载 = 移除声明并即时热重载(按 capability 摘除)
+ // ADR-0042:wasm 插件卸载 = 移除声明并即时热重载(按 capability 摘除)
     const wasmItem = tableItems.find((it) => it.type === "wasm" && it.name === name);
     if (wasmItem) {
       if (!confirm(`确定卸载 wasm 插件「${name}」?声明将移除并即时下线(免重启)。`)) return;
@@ -364,7 +363,7 @@ export function PluginsPage() {
     }
   };
 
-  // ADR-0023:卸载并物理删除插件文件(警告弹窗确认后)
+ // ADR-0023:卸载并物理删除插件文件(警告弹窗确认后)
   const handlePurge = async (name: string) => {
     setBusy(true);
     setError(null);
@@ -388,7 +387,7 @@ export function PluginsPage() {
     }
   };
 
-  // 扫描候选批准:ADR-0023 批准即自动上线(后端热重载),前端只刷新
+ // 扫描候选批准:ADR-0023 批准即自动上线(后端热重载),前端只刷新
   const handleApproveCandidate = async (c: McpCandidatesResult["candidates"][number]) => {
     setApproving(c.name);
     setError(null);
@@ -410,7 +409,7 @@ export function PluginsPage() {
     }
   };
 
-  // 行为回调:表格行动作(数据面仍以本页 mcpData 为唯一来源)
+ // 行为回调:表格行动作(数据面仍以本页 mcpData 为唯一来源)
   const findEntry = (name: string) => mcpData?.entries?.find((e) => e.server.name === name);
 
   const handleRowEdit = (item: TablePluginItem) => {

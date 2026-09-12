@@ -1,7 +1,6 @@
 // W2 管理面 REST 客户端(壳子私用;/admin/* 见后端 webadmin.rs 模块注释:
 // 暂不入冻结合同,行为规格 = bm-surface-http tests/webadmin_tests.rs)。
 // 错误形状统一 {error:{message}};探针/连通类结果走 200 + ok 布尔。
-//
 // 类型漂移锚定(issue #18 裁决:先夹具后生成):本文件类型为手写,与
 // 后端实际响应的顶层字段集由 webadmin_tests.rs 的
 // t_admin_response_shape_anchors 夹具锁定——后端改任何顶层字段,CI 先红;
@@ -238,8 +237,8 @@ export type RuntimeEnv = { python: RuntimeToolInfo; node: RuntimeToolInfo };
 // W5:一次模型调用的上下文快照(/admin/context 行;服务端已做凭据脱敏与
 // 单条内容 16K 字符截断)
 export type CtxStep = {
-  // W9:kind 存在 = 轨迹事件行(tool_call/tool_result/assistant_final/
-  // turn_end),data 携带事件载荷;kind 缺失 = W5 模型调用快照行。
+ // W9:kind 存在 = 轨迹事件行(tool_call/tool_result/assistant_final/
+ // turn_end),data 携带事件载荷;kind 缺失 = W5 模型调用快照行。
   kind?: string;
   data?: Record<string, unknown>;
   seq: number;
@@ -272,7 +271,7 @@ export type CtxStep = {
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
   const body = await res.json().catch(() => null);
-  // 门户会话失效(2026-09-06):统一正向跳登录,门户口自身除外
+ // 门户会话失效():统一正向跳登录,门户口自身除外
   if (res.status === 401 && !url.startsWith("/api/portal/")) {
     redirectToLogin();
   }
@@ -358,13 +357,13 @@ export const api = {
         json("POST", { old, new: next }),
       ),
   },
-  // 无鉴权探针(GET /health;门户墙与就绪轮询共用)。不触发 401 跳登录。
+ // 无鉴权探针(GET /health;门户墙与就绪轮询共用)。不触发 401 跳登录。
   health: () => req<{ ok: boolean; version: string; state: string }>("/health"),
-  // W1 对话面模型标签(GET /v1/models):仅取默认模型 id。
+ // W1 对话面模型标签(GET /v1/models):仅取默认模型 id。
   models: () =>
     req<{ object: string; data: { id: string; object: string }[] }>("/v1/models"),
-  // 待裁决审批队列轮询面(W4b;POST /admin/approvals/{id}/respond 与 /rpc 同执行体)。
-  // 裁决权在服务端(ADR-0030),前端只呈现与转发。
+ // 待裁决审批队列轮询面(W4b;POST /admin/approvals/{id}/respond 与 /rpc 同执行体)。
+ // 裁决权在服务端(ADR-0030),前端只呈现与转发。
   approvals: {
     list: () =>
       req<{ approvals: ApprovalEntry[] }>("/admin/approvals"),
@@ -409,7 +408,7 @@ export const api = {
         /** ADR-0023:批准即自动热重载;ok=false 时 skipped 说明原因(如测试态) */
         reload?: { ok: boolean; tools?: number | null; failed?: unknown[]; skipped?: string };
       }>("/admin/mcp/approve", json("POST", { name })),
-    // ADR-0023:卸载并物理删除插件文件(警告栏确认后调用)
+ // ADR-0023:卸载并物理删除插件文件(警告栏确认后调用)
     purge: (name: string) =>
       req<{
         ok: boolean;
@@ -437,7 +436,7 @@ export const api = {
         `/admin/mcp-config/${name}`,
         json("PUT", { values }),
       ),
-    // web_multisearch 扩展:真搜索测试(返回某家真实结果)
+ // web_multisearch 扩展:真搜索测试(返回某家真实结果)
     testSearch: (name: string, providerId: string, query: string, limit?: number) =>
       req<{
         ok: boolean;
@@ -457,7 +456,7 @@ export const api = {
         query,
         limit: limit ?? 5,
       })),
-    // web_multisearch 扩展:读月度用量(画进度条)
+ // web_multisearch 扩展:读月度用量(画进度条)
     getUsage: (name: string) =>
       req<{
         ok: boolean;
@@ -465,7 +464,7 @@ export const api = {
         usage?: { month?: string; providers?: Record<string, number> };
         error?: string;
       }>(`/admin/mcp/usage/${encodeURIComponent(name)}`, { method: "GET" }),
-    // issue #28:子进程 stderr 环形缓冲尾部(跨 respawn 带代标记)
+ // issue #28:子进程 stderr 环形缓冲尾部(跨 respawn 带代标记)
     getStderr: (name: string, lines = 100) =>
       req<{
         ok: boolean;
@@ -503,12 +502,12 @@ export const api = {
   },
   logs: () =>
     req<{ ok: boolean; exec: string[]; events: string[]; context: string[] }>("/admin/logs"),
-  // issue #14:Turn 内调试日志(状态+尾读 / 热开关)
+ // issue #14:Turn 内调试日志(状态+尾读 / 热开关)
   debugTurns: () =>
     req<{ ok: boolean; enabled: boolean; lines: string[] }>("/admin/debug/turns"),
   setDebugTurns: (enabled: boolean) =>
     req<{ ok: boolean; enabled: boolean }>("/admin/debug/turns", json("POST", { enabled })),
-  // W7 关于与在线升级(apply 仅回环;发新版本必须用户明说,此处只消费)
+ // W7 关于与在线升级(apply 仅回环;发新版本必须用户明说,此处只消费)
   about: {
     get: () =>
       req<{ version: string; platform: string; dataDir: string; repo: string }>("/admin/about"),
@@ -529,21 +528,21 @@ export const api = {
         method: "POST",
       }),
   },
-  // W5 上下文透视:模型调用请求快照(context-log.jsonl 尾部,最旧在前)
+ // W5 上下文透视:模型调用请求快照(context-log.jsonl 尾部,最旧在前)
   context: () => req<{ ok: boolean; steps: CtxStep[] }>("/admin/context"),
-  // 会话删除(2026-09-06 A+B):墓碑+对话原文擦除,不可恢复
+ // 会话删除():墓碑+对话原文擦除,不可恢复
   sessionDelete: (sid: string) =>
     req<{ ok: boolean; session_id: string; deleted_at: string; purged_lines: number }>(
       `/admin/sessions/${encodeURIComponent(sid)}`,
       { method: "DELETE" },
     ),
-  // 会话权限模式读取(ADR-0030):服务端权威,前端仅选择器显示面
+ // 会话权限模式读取(ADR-0030):服务端权威,前端仅选择器显示面
   sessionMode: (sid: string) =>
     req<{ ok: boolean; session_id: string; permission_mode: PermissionMode }>(
       `/admin/sessions/${encodeURIComponent(sid)}/mode`,
     ),
-  // 会话权限模式变更(ADR-0030):发指令改服务端会话状态并落事实事件;
-  // 裁决在服务端——关闭网页/换设备不影响在跑任务,审批自动放行可审计
+ // 会话权限模式变更(ADR-0030):发指令改服务端会话状态并落事实事件;
+ // 裁决在服务端——关闭网页/换设备不影响在跑任务,审批自动放行可审计
   sessionModeSet: (sid: string, mode: PermissionMode) =>
     req<{ ok: boolean; session_id: string; permission_mode: PermissionMode }>(
       `/admin/sessions/${encodeURIComponent(sid)}/mode`,
@@ -553,9 +552,9 @@ export const api = {
         body: JSON.stringify({ mode }),
       },
     ),
-  // 会话目录(2026-09-08 三端一致批):服务端权威列表,SessionPanel 唯一
-  // 数据源(此前 bm_sessions 存浏览器本地,三设备各记各账不一致的根因)。
-  // 按最近活跃倒序
+ // 会话目录():服务端权威列表,SessionPanel 唯一
+ // 数据源(。
+ // 按最近活跃倒序
   sessionList: () =>
     req<{
       ok: boolean;
@@ -571,10 +570,10 @@ export const api = {
         updated_at: string | null;
       }[];
     }>("/admin/sessions"),
-  // 会话历史回放(2026-09-06):切会话/刷新后按 sid 拉历史消息(最旧在前)。
-  // 分页(2026-09-06 二改):limit 默认 50 上限 200;skip = 从最新一条往回
-  // 跳过的条数(已加载越多 skip 越大);has_more 指示是否还有更早——
-  // 防长会话一口气载入卡界面。游标不用 seq(历史文件 seq 跨重启重数)
+ // 会话历史回放():切会话/刷新后按 sid 拉历史消息(最旧在前)。
+ // 分页():limit 默认 50 上限 200;skip = 从最新一条往回
+ // 跳过的条数(已加载越多 skip 越大);has_more 指示是否还有更早——
+ // 防长会话一口气载入卡界面。游标不用 seq(历史文件 seq 跨重启重数)
   sessionMessages: (
     sid: string,
     opts?: { limit?: number; skip?: number },
@@ -601,7 +600,7 @@ export const api = {
     }>(
       "/admin/capabilities",
     ),
-  // ADR-0041/0042:通用 wasm 插件(config/plugins.json;增删改即热重载)
+ // ADR-0041/0042:通用 wasm 插件(config/plugins.json;增删改即热重载)
   plugins: {
     list: () => req<{ ok: boolean; plugins: WasmPlugin[] }>("/admin/plugins"),
     set: (p: WasmPlugin) => req<{ ok: boolean; note: string }>("/admin/plugins", json("POST", p)),
@@ -617,7 +616,7 @@ export const api = {
       req<{ path: string; entries: FsEntry[]; root: string }>(
         `/admin/fs/list?path=${encodeURIComponent(path)}`,
       ),
-    // 工作目录选择器:全盘只读目录浏览(空 path = 根视图,Windows 盘符)
+ // 工作目录选择器:全盘只读目录浏览(空 path = 根视图,Windows 盘符)
     browse: (path: string) =>
       req<{
         path: string;
@@ -630,11 +629,11 @@ export const api = {
       req<{ path: string; name: string; size: number; content: string }>(
         `/admin/fs/file?path=${encodeURIComponent(path)}`,
       ),
-    // W7 目录树右键菜单
+ // W7 目录树右键菜单
     rename: (path: string, name: string) =>
       req<{ ok: boolean }>(`/admin/fs/rename`, json("POST", { path, name })),
     downloadUrl: (path: string) => `/admin/fs/download?path=${encodeURIComponent(path)}`,
-    // 2026-09-07 目录树批次:新建目录(选择器全盘)与批量删除(工作区)
+ // )与批量删除(工作区)
     mkdir: (parent: string, name: string) =>
       req<{ ok: boolean; path: string }>(`/admin/fs/mkdir`, json("POST", { parent, name })),
     delete: (paths: string[]) =>
@@ -644,7 +643,7 @@ export const api = {
         results: { path: string | null; ok: boolean; error?: string }[];
       }>(`/admin/fs/delete`, json("POST", { paths })),
   },
-  // W8 常规(ADR-0018):工作区注册表 + 运行环境探针
+ // W8 常规(ADR-0018):工作区注册表 + 运行环境探针
   workspaces: {
     list: () => req<{ workspaces: WorkspaceEntry[] }>("/admin/workspaces"),
     create: (b: { name: string; path: string }) =>

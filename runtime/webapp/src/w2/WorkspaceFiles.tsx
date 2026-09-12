@@ -1,7 +1,7 @@
 // W2 工作区面板:文件 tab = 目录树(懒加载展开)+ 文件预览。
 // 预览视图盖住目录树,左上角返回图标回树(W2 规格 §2 验收关键形态)。
 // 后端 = /admin/fs/list + /admin/fs/file(只读,X-01 路径防护)。
-// 目录树 = 共用 FileTree/useLazyTree(2026-09-07 目录树批次);本次增:
+// 目录树 = 共用 FileTree/useLazyTree();本次增:
 // ctrl/cmd 多选 + 右键删除(批量,确认弹窗)+ 右键/空白处新建文件夹。
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -54,13 +54,12 @@ export function WorkspaceFiles() {
   const [loadingFile, setLoadingFile] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [root, setRoot] = useState("");
-  // W7 反馈:目录树右键菜单(重命名/复制路径/下载/打包下载)
+ // W7 反馈:目录树右键菜单(重命名/复制路径/下载/打包下载)
   const [ctx, setCtx] = useState<CtxMenu>(null);
-  // 空白处右键(仅新建文件夹)
+ // 空白处右键(仅新建文件夹)
   const [areaCtx, setAreaCtx] = useState<{ x: number; y: number } | null>(null);
   const [renaming, setRenaming] = useState<FileTreeNode | null>(null);
   const [renameName, setRenameName] = useState("");
-  // 2026-09-07 目录树批次:多选 + 删除 + 新建文件夹
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [confirmDelete, setConfirmDelete] = useState<string[] | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
@@ -96,7 +95,7 @@ export function WorkspaceFiles() {
     void loadDir("");
   }, [loadDir]);
 
-  // 顶栏「同步」按钮:全量清缓存重载
+ // 顶栏「同步」按钮:全量清缓存重载
   useEffect(() => {
     const refresh = () => {
       setSelected(new Set());
@@ -120,7 +119,7 @@ export function WorkspaceFiles() {
     }
   };
 
-  // ctrl/cmd+点击 = 切换多选(不展开/不打开预览);普通点击清空多选走原语义
+ // ctrl/cmd+点击 = 切换多选(不展开/不打开预览);普通点击清空多选走原语义
   const onNodeClick = (node: FileTreeNode, e: React.MouseEvent) => {
     if (e.ctrlKey || e.metaKey) {
       setSelected((cur) => {
@@ -136,10 +135,10 @@ export function WorkspaceFiles() {
     else void openFile(node.path);
   };
 
-  // ---- W7 右键菜单动作 ----------------------------------------------------
-  // P1-33(2026-09-07 架构评审):统一正斜杠——root 来自后端 display()
-  // (Windows 反斜杠形),与 rel 的正斜杠混拼出混合分隔符路径;归一为 /,
-  // Windows API 与剪贴板均接受
+ // ---- W7 右键菜单动作 ----------------------------------------------------
+ // P1-33():统一正斜杠——root 来自后端 display()
+ // (Windows 反斜杠形),与 rel 的正斜杠混拼出混合分隔符路径;归一为 /,
+ // Windows API 与剪贴板均接受
   const absPath = (rel: string) => {
     if (!root) return rel;
     const norm = (s: string) => s.replace(/\\/g, "/");
@@ -151,7 +150,7 @@ export function WorkspaceFiles() {
       await navigator.clipboard.writeText(text);
       flash(`已复制${label}`);
     } catch {
-      // 剪贴板 API 不可用(权限/环境)时退化为选中文本提示
+ // 剪贴板 API 不可用(权限/环境)时退化为选中文本提示
       setError(`复制失败:浏览器不允许访问剪贴板,请手动复制:${text}`);
     }
   };
@@ -181,7 +180,7 @@ export function WorkspaceFiles() {
     }
   };
 
-  // ---- 2026-09-07 批量删除(确认弹窗 → 逐条结果)---------------------------
+ // ---- )---------------------------
   const askDelete = () => {
     if (!ctx) return;
     const multi = selected.has(ctx.node.path) && selected.size > 1;
@@ -212,7 +211,7 @@ export function WorkspaceFiles() {
     }
   };
 
-  // ---- 2026-09-07 新建文件夹(工作区内;parent 走绝对路径)------------------
+ // ---- )------------------
   const doMkdir = async () => {
     if (mkdirParent === null || !mkdirName.trim()) return;
     try {
@@ -228,7 +227,7 @@ export function WorkspaceFiles() {
     }
   };
 
-  // 右键菜单:右键未选中节点则重置为该节点;已在其选中集则保持多选
+ // 右键菜单:右键未选中节点则重置为该节点;已在其选中集则保持多选
   const openCtx = (node: FileTreeNode, pos: { x: number; y: number }) => {
     if (!selected.has(node.path)) setSelected(new Set([node.path]));
     setCtx({ node, ...pos });
@@ -253,7 +252,7 @@ export function WorkspaceFiles() {
           className="min-h-0 flex-1 overflow-y-auto"
           onContextMenu={(e) => {
             e.preventDefault();
-            // 行上的右键已由行处理器接管;此处只接空白区
+ // 行上的右键已由行处理器接管;此处只接空白区
             if ((e.target as HTMLElement).closest("[data-path]")) return;
             setAreaCtx({ x: e.clientX, y: e.clientY });
           }}

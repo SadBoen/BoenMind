@@ -13,31 +13,31 @@ pub struct StdioMcpTransport {
     args: Vec<String>,
     env: HashMap<String, String>,
     inner: Arc<tokio::sync::Mutex<StdioInner>>,
-    /// #32:进度聚合通道接收端(订阅一次,跨 respawn 代不断线)。
+ /// #32:进度聚合通道接收端(订阅一次,跨 respawn 代不断线)。
     progress_rx: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<McpProgressNote>>>,
-    /// #32:进度聚合通道发送端(每次 spawn_generation 转发汇入)。
+ /// #32:进度聚合通道发送端(每次 spawn_generation 转发汇入)。
     progress_agg_tx: tokio::sync::mpsc::UnboundedSender<McpProgressNote>,
     alive: Arc<std::sync::atomic::AtomicBool>,
-    /// 现行代的终止开关(Drop = 杀子进程;换代 = 换灯)。
+ /// 现行代的终止开关(Drop = 杀子进程;换代 = 换灯)。
     kill: Mutex<Option<ChildKill>>,
-    /// respawn 时间窗(limits 默认 60s 滑动),配合 restart_limit 限流。
+ /// respawn 时间窗(limits 默认 60s 滑动),配合 restart_limit 限流。
     respawn_times: Arc<Mutex<Vec<std::time::Instant>>>,
-    /// R3:此前解析后零消费的死配置;现为 respawn 窗口上限。
+ /// R3:。
     restart_limit: u32,
-    /// W10(ADR-0024):窗口/写超时热读单元(缺省 = 代码默认)。
+ /// W10(ADR-0024):窗口/写超时热读单元(缺省 = 代码默认)。
     limits: bm_core::limits::LimitsCell,
-    /// 子进程 stderr 环形缓冲(issue #28):跨 respawn 共享,按代标记。
+ /// 子进程 stderr 环形缓冲(issue #28):跨 respawn 共享,按代标记。
     stderr: Arc<StderrBuffer>,
-    /// 当前子进程代数(1 起;respawn 递增,stderr 行随代标记)。
+ /// 当前子进程代数(1 起;respawn 递增,stderr 行随代标记)。
     generation: Arc<std::sync::atomic::AtomicU64>,
-    /// ADR-0035 §4:各代子进程 OS 级资源上限(respawn 沿用)。
+ /// ADR-0035 §4:各代子进程 OS 级资源上限(respawn 沿用)。
     sandbox: bm_sandbox::SandboxLimits,
 }
 
 impl Drop for StdioMcpTransport {
     fn drop(&mut self) {
-        // 闭灯 = 看护任务 start_kill:reload/换装/销毁不再留僵尸
-        // (此前只发 shutdown/exit 通知,插件不理会即悬挂)。
+ // 闭灯 = 看护任务 start_kill:reload/换装/销毁不再留僵尸
+ // (。
         if let Some(kill) = self
             .kill
             .lock()
@@ -51,23 +51,23 @@ impl Drop for StdioMcpTransport {
 
 struct StdioInner {
     next_id: u64,
-    /// 与读取泵共享的同一张在途表(request 注册,泵按 id 配对摘除)。
+ /// 与读取泵共享的同一张在途表(request 注册,泵按 id 配对摘除)。
     pending: PendingMap,
     stdin: Option<tokio::process::ChildStdin>,
-    /// 进度令牌 → 在途 rpc id(取消通知定位;响应即摘除)。
+ /// 进度令牌 → 在途 rpc id(取消通知定位;响应即摘除)。
     token_to_id: HashMap<String, u64>,
 }
 
 impl StdioMcpTransport {
-    /// 拉起子进程并启动读取泵。env 值由调用方从 Secret Store 解析后传入
-    /// (明文只进子进程环境,不入日志/事件,INV-5)。
+ /// 拉起子进程并启动读取泵。env 值由调用方从 Secret Store 解析后传入
+ /// (明文只进子进程环境,不入日志/事件,INV-5)。
     pub fn spawn(
         command: &str,
         args: &[String],
         env: &HashMap<String, String>,
         restart_limit: u32,
     ) -> Result<Arc<Self>, String> {
-        // 无显式上限(测试/直接调用):空操作,行为与既有完全一致。
+ // 无显式上限(测试/直接调用):空操作,行为与既有完全一致。
         Self::spawn_with_sandbox(
             command,
             args,
@@ -77,7 +77,7 @@ impl StdioMcpTransport {
         )
     }
 
-    /// ADR-0035 §4:带 OS 级资源上限的 spawn(生产装配走此入口)。
+ /// ADR-0035 §4:带 OS 级资源上限的 spawn(生产装配走此入口)。
     pub fn spawn_with_sandbox(
         command: &str,
         args: &[String],
@@ -88,7 +88,7 @@ impl StdioMcpTransport {
         let alive = Arc::new(std::sync::atomic::AtomicBool::new(true));
         let stderr = Arc::new(StderrBuffer::with_capacity(MCP_STDERR_CAPACITY));
         let generation = Arc::new(std::sync::atomic::AtomicU64::new(0));
-        // #32:聚合通道 = 订阅端唯一数据源,跨代不断线
+ // #32:聚合通道 = 订阅端唯一数据源,跨代不断线
         let (agg_tx, agg_rx) = tokio::sync::mpsc::unbounded_channel();
         let (pending, stdin, kill) = spawn_generation(
             command,
@@ -125,9 +125,9 @@ impl StdioMcpTransport {
         }))
     }
 
-    /// W10:注入共享 limits 单元(重生窗口/写超时随之;supervisor 装配用)。
+ /// W10:注入共享 limits 单元(重生窗口/写超时随之;supervisor 装配用)。
     pub fn with_limits(mut self: Arc<Self>, limits: bm_core::limits::LimitsCell) -> Arc<Self> {
-        // Arc 内不可变字段:借 Cell 共享即可,无需可变——字段本身是 Cell。
+ // Arc 内不可变字段:借 Cell 共享即可,无需可变——字段本身是 Cell。
         let _ = &mut self;
         let s = Arc::into_inner(self).expect("supervisor 装配期独占");
         let mut s = s;
@@ -143,14 +143,14 @@ impl StdioMcpTransport {
         Duration::from_millis(self.limits.get().mcp_stdio_write_timeout_ms)
     }
 
-    /// 子进程 stderr 尾部(旧→新,带代标记;issue #28)。
+ /// 子进程 stderr 尾部(旧→新,带代标记;issue #28)。
     pub fn stderr_tail(&self, lines: usize) -> Vec<StderrLine> {
         self.stderr.tail(lines)
     }
 }
 
 /// 子进程终止开关:持有方丢弃(或显式 drop)= 看护任务 start_kill 子进程。
-/// R3(FULL-REVIEW-2026-09-05 §7):此前看护任务独占 Child,kill_on_drop
+/// R3(FULL-REVIEW-):
 /// 永不触发,reload 只发 shutdown 通知 = 插件不理会就僵尸。
 pub type ChildKill = tokio::sync::oneshot::Sender<()>;
 
@@ -159,9 +159,9 @@ struct SpawnCtx {
     alive: Arc<std::sync::atomic::AtomicBool>,
     stderr_buf: Arc<StderrBuffer>,
     generation: Arc<std::sync::atomic::AtomicU64>,
-    /// #32:各代进度统一汇入同一聚合通道(订阅端跨代不断线)。
+ /// #32:各代进度统一汇入同一聚合通道(订阅端跨代不断线)。
     progress_agg: tokio::sync::mpsc::UnboundedSender<McpProgressNote>,
-    /// ADR-0035 §4:OS 级资源上限(尽力而为;空操作时跳过)。
+ /// ADR-0035 §4:OS 级资源上限(尽力而为;空操作时跳过)。
     sandbox: bm_sandbox::SandboxLimits,
 }
 
@@ -185,8 +185,8 @@ fn spawn_generation(
     } = ctx;
     let no = generation.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     let mut cmd = Command::new(command);
-    // P0(第四轮评审):子进程默认继承父进程全部环境 = 主密钥/令牌外泄
-    // (INV-5)。清空后仅放行运行所需白名单,再加各 server 显式配置的 env。
+ // P0():子进程默认继承父进程全部环境 = 主密钥/令牌外泄
+ // (INV-5)。清空后仅放行运行所需白名单,再加各 server 显式配置的 env。
     cmd.env_clear();
     for (k, v) in child_inherited_env() {
         cmd.env(k, v);
@@ -195,15 +195,15 @@ fn spawn_generation(
         .envs(env)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        // issue #28:stderr 由 inherit 直通改为管道采集入环形缓冲
-        // (此前子进程报错混入 server.log,无按插件回看通道)。
+ // issue #28:stderr 由 inherit 直通改为管道采集入环形缓冲
+ // (。
         .stderr(std::process::Stdio::piped());
-    // 外部审计:kill_on_drop 绑定子进程生命周期——连接器对象被丢弃时
-    // 子进程随之终止,防止服务端异常退出后 Python App 成为孤儿进程。
+ // 外部审计:kill_on_drop 绑定子进程生命周期——连接器对象被丢弃时
+ // 子进程随之终止,防止服务端异常退出后 Python App 成为孤儿进程。
     cmd.kill_on_drop(true);
-    // ADR-0035 §4:Unix 在 exec 前经 pre_exec 施加 rlimit(fork 后仅
-    // async-signal-safe 操作)。失败只告警不阻断(fail-open,与「单插件
-    // 失败不中止装载」一致);Windows 的 Job Object 需 pid,spawn 后施加。
+ // ADR-0035 §4:Unix 在 exec 前经 pre_exec 施加 rlimit(fork 后仅
+ // async-signal-safe 操作)。失败只告警不阻断(fail-open,与「单插件
+ // 失败不中止装载」一致);Windows 的 Job Object 需 pid,spawn 后施加。
     if let Err(e) = bm_sandbox::pre_spawn(&mut cmd, &sandbox) {
         tracing::warn!(command = %command, error = %e, "MCP 子进程 rlimit 施加失败(继续,不加限)");
     }
@@ -211,8 +211,8 @@ fn spawn_generation(
         .spawn()
         .map_err(|e| format!("MCP 子进程启动失败: {e}"))?;
     tracing::info!(pid = ?child.id(), command = %command, generation = no, "MCP 子进程已拉起");
-    // ADR-0035 §4:Windows 对已 spawn 的子进程纳入 Job Object(内存/活动进程
-    // 上限 + KILL_ON_JOB_CLOSE)。守卫随本代子进程看护任务同寿命。
+ // ADR-0035 §4:Windows 对已 spawn 的子进程纳入 Job Object(内存/活动进程
+ // 上限 + KILL_ON_JOB_CLOSE)。守卫随本代子进程看护任务同寿命。
     let sandbox_guard = child.id().map(|pid| {
         let g = bm_sandbox::post_spawn(pid, &sandbox);
         tracing::info!(pid, command = %command, "MCP 子进程资源上限已施加");
@@ -221,15 +221,15 @@ fn spawn_generation(
     let stdin = child.stdin.take().ok_or("MCP 子进程 stdin 不可用")?;
     let stdout = child.stdout.take().ok_or("MCP 子进程 stdout 不可用")?;
     let stderr_pipe = child.stderr.take().ok_or("MCP 子进程 stderr 不可用")?;
-    // W2 修复:Child 必须有人持有并 wait——kill_on_drop(true) 下被丢弃会
-    // 立刻杀死子进程(热装载路径 spawn_generation 返回即 drop,连接器
-    // 尚未建立路由,表现为 stdio-closed)。移入看护任务自然等待。
+ // W2 修复:Child 必须有人持有并 wait——kill_on_drop(true) 下被丢弃会
+ // 立刻杀死子进程(热装载路径 spawn_generation 返回即 drop,连接器
+ // 尚未建立路由,表现为 stdio-closed)。移入看护任务自然等待。
     let command_owned = command.to_string();
     let (kill_tx, kill_rx) = tokio::sync::oneshot::channel::<()>();
     tokio::spawn(async move {
         let mut child = child;
-        // ADR-0035:Job Object 守卫随看护任务同寿命——任务退出(子进程已死
-        // 或被 kill)方 drop 守卫,避免 KILL_ON_JOB_CLOSE 过早杀子进程。
+ // ADR-0035:Job Object 守卫随看护任务同寿命——任务退出(子进程已死
+ // 或被 kill)方 drop 守卫,避免 KILL_ON_JOB_CLOSE 过早杀子进程。
         let _sandbox_guard = sandbox_guard;
         tokio::select! {
             status = child.wait() => {
@@ -247,7 +247,7 @@ fn spawn_generation(
         }
     });
 
-    // stderr 泵:本代子进程 stderr → 环形缓冲(带代标记;起止哨兵行助读)
+ // stderr 泵:本代子进程 stderr → 环形缓冲(带代标记;起止哨兵行助读)
     {
         let buf = stderr_buf.clone();
         tokio::spawn(async move {
@@ -261,8 +261,8 @@ fn spawn_generation(
         });
     }
 
-    // #32:每代独立 channel 经转发任务汇入聚合通道——上一代关闭不影响
-    // 聚合端,重生代进度自动续流(修复单代订阅:重生后进度静默丢失)
+ // #32:每代独立 channel 经转发任务汇入聚合通道——上一代关闭不影响
+ // 聚合端,重生代进度自动续流
     let (progress_tx, mut progress_rx) = tokio::sync::mpsc::unbounded_channel();
     {
         let progress_agg = progress_agg.clone();
@@ -274,7 +274,7 @@ fn spawn_generation(
     }
     let pending: PendingMap = Arc::new(Mutex::new(HashMap::new()));
 
-    // 读取泵:响应按 id 配对;通知解析进度;通道关闭 = 子进程退出
+ // 读取泵:响应按 id 配对;通知解析进度;通道关闭 = 子进程退出
     let pending_reader = pending.clone();
     tokio::spawn(async move {
         let reader = BufReader::new(stdout);
@@ -352,15 +352,14 @@ impl StdioMcpTransport {
                 inner.token_to_id.insert(tok.to_string(), id);
             }
             let stdin = inner.stdin.as_mut().expect("stdin 在活着时存在");
-            // params 其后仍用于 token 映射清理(codec 取所有权),此处克隆。
+ // params 其后仍用于 token 映射清理(codec 取所有权),此处克隆。
             let msg = rpc::request(id, method, params.clone());
             let mut bytes = serde_json::to_string(&msg).map_err(|e| e.to_string())?;
             bytes.push('\n');
             write_frame(stdin, bytes.as_bytes(), self.write_timeout()).await
         })
         .await;
-        // 2026-09-05 回看修复:写失败必须在返回前清账,否则 pending/token
-        // 映射随失败累积泄漏(长跑守护进程内存无界上爬)。
+ // 映射随失败累积泄漏(长跑守护进程内存无界上爬)。
         if let Err(e) = write_result {
             if let Some(id) = registered_id {
                 let mut inner = self.inner.lock().await;
@@ -378,7 +377,7 @@ impl StdioMcpTransport {
             Ok(r) => r,
             Err(_) => Err("stdio-closed".into()),
         };
-        // 收尾清账:pending 常态由读取端按响应清理,此处 remove 幂等兜底
+ // 收尾清账:pending 常态由读取端按响应清理,此处 remove 幂等兜底
         {
             let mut inner = self.inner.lock().await;
             inner
@@ -397,12 +396,12 @@ impl StdioMcpTransport {
         out
     }
 
-    /// 重生一代子进程(M7.4:下次调用重连)。旧代在途请求以
-    /// stdio-closed 收场(内核侧计为一次失败/探针)。
+ /// 重生一代子进程(M7.4:下次调用重连)。旧代在途请求以
+ /// stdio-closed 收场(内核侧计为一次失败/探针)。
     async fn respawn(&self) -> Result<(), String> {
-        // R3(FULL-REVIEW-2026-09-05 §7):respawn 去抖+上限——60s 滑动窗口
-        // 内重生次数达 restart_limit = 故障循环,拒绝再生如实报错(此前
-        // restart_limit 是解析后零消费的死配置)。
+ // R3(FULL-REVIEW-):respawn 去抖+上限——60s 滑动窗口
+ // 内重生次数达 restart_limit = 故障循环,拒绝再生如实报错(
+ // restart_limit 是解析后零消费的死配置)。
         {
             let mut times = self
                 .respawn_times
@@ -412,7 +411,7 @@ impl StdioMcpTransport {
             let window = self.respawn_window();
             times.retain(|t| now.duration_since(*t) < window);
             if times.len() >= self.restart_limit as usize {
-                // P2(2026-09-07 架构评审):窗口秒数随 limits 热值,不再写死 60。
+ // P2():窗口秒数随 limits 热值,不再写死 60。
                 return Err(format!(
                     "MCP 子进程 {} 秒内已重生 {} 次(上限 {}),疑似故障循环已熔断;请检查插件或经管理面重载",
                     window.as_secs(),
@@ -432,7 +431,7 @@ impl StdioMcpTransport {
                 let _ = tx.send(Err("stdio-closed".into()));
             }
         }
-        // 换代前闭灯杀旧代(消灭僵尸窗口),再挂新开关
+ // 换代前闭灯杀旧代(消灭僵尸窗口),再挂新开关
         if let Some(old_kill) = self
             .kill
             .lock()
@@ -459,7 +458,7 @@ impl StdioMcpTransport {
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(kill);
         inner.pending = pending;
         inner.stdin = Some(stdin);
-        // #32:进度经聚合通道自动续流,订阅位无需重生代回填
+ // #32:进度经聚合通道自动续流,订阅位无需重生代回填
         self.alive.store(true, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
@@ -468,9 +467,9 @@ impl StdioMcpTransport {
 #[async_trait]
 impl McpTransport for StdioMcpTransport {
     async fn request(&self, method: &str, params: Value) -> Result<Value, String> {
-        // #32:命中「子进程已死但 alive 未及置否」窗口的请求以 stdio-closed
-        // 收场——此时强制重生一代并重试一次(restart_limit 去抖仍然生效),
-        // 让 M7.4「下次调用重连」语义覆盖死亡窗口内的在途请求。
+ // #32:命中「子进程已死但 alive 未及置否」窗口的请求以 stdio-closed
+ // 收场——此时强制重生一代并重试一次(restart_limit 去抖仍然生效),
+ // 让 M7.4「下次调用重连」语义覆盖死亡窗口内的在途请求。
         match self.request_once(method, params.clone()).await {
             Err(e) if e == "stdio-closed" => {
                 self.alive
@@ -521,7 +520,7 @@ impl McpTransport for StdioMcpTransport {
 /// issue #32:多代 stdio 进度聚合——重生后进度经聚合通道续流到原订阅。
 /// 夹具 DIE_AFTER=3:第 1 代答完 initialize/tools/list/tools/call 后退出;
 /// 第 2 次调用触发 respawn,新代进度必须流入 connect 期取走的同一订阅
-/// (修复前:单代订阅位,重生代进度静默丢失)。真子进程测试沿用
+/// 。真子进程测试沿用
 /// #[ignore] + BOEN_MCP_STDIO_TEST=1 惯例。
 #[cfg(test)]
 mod progress_gen_tests {
@@ -566,7 +565,7 @@ while True:
         sys.exit(0)
 "#;
 
-    /// 轮询 sink 收集面至攒够 want 条(异步到达;上限 5s)。
+ /// 轮询 sink 收集面至攒够 want 条(异步到达;上限 5s)。
     async fn wait_notes(
         collected: &Arc<Mutex<Vec<ProgressNotice>>>,
         want: usize,
@@ -589,8 +588,8 @@ while True:
             .clone()
     }
 
-    #[tokio::test]
-    #[ignore = "stdio 子进程测试:BOEN_MCP_STDIO_TEST=1 启用"]
+ #[tokio::test]
+ #[ignore = "stdio 子进程测试:BOEN_MCP_STDIO_TEST=1 启用"]
     async fn progress_flows_across_respawn_generations() {
         let dir = tempfile::tempdir().expect("tmp");
         let fixture = dir.path().join("progress_mcp.py");
@@ -612,7 +611,7 @@ while True:
         .expect("握手成功");
         assert_eq!(manifests.len(), 1);
 
-        // 进度经 hub 泵(订阅在 connect 期完成)汇入 sink;测试用 sink 收集
+ // 进度经 hub 泵(订阅在 connect 期完成)汇入 sink;测试用 sink 收集
         let collected: Arc<Mutex<Vec<ProgressNotice>>> = Arc::new(Mutex::new(Vec::new()));
         let sink_view = collected.clone();
         hub.set_progress_sink(Box::new(move |n| {
@@ -622,7 +621,7 @@ while True:
                 .push(n);
         }));
 
-        // 第 1 代调用:进度 2 条
+ // 第 1 代调用:进度 2 条
         let r1 = bm_core::ports::AsyncCapabilityExecutor::call(
             hub.as_ref(),
             "op_g1",
@@ -639,7 +638,7 @@ while True:
         assert_eq!(notes1[1].progress, 2);
         assert_eq!(notes1[1].message.as_deref(), Some("done"));
 
-        // DIE_AFTER=3:第 1 代已退出;本调用触发 respawn → 第 2 代
+ // DIE_AFTER=3:第 1 代已退出;本调用触发 respawn → 第 2 代
         let r2 = bm_core::ports::AsyncCapabilityExecutor::call(
             hub.as_ref(),
             "op_g2",
