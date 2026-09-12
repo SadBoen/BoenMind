@@ -49,6 +49,56 @@ pub enum PluginOrigin {
     Generic,
 }
 
+/// 归一化的 wasm 能力声明(ADR-0049)。
+///
+/// 技能(`skills.json` 的 `scripts[]`)与插件(`plugins.json` 条目)是**两种磁盘
+/// 形状**,但**能力语义相同**——此前 manifest 合成在两个 `json!` 块里各写一份
+/// (默认值/字段易漂移)。本结构把两者归一,`synthesize` 单一合成 manifest:
+/// **装载与清单只剩一条代码路径**,两格式各作薄适配器喂入。
+struct WasmDecl {
+    capability: String,
+    provider: String,
+    version: String,
+    input_schema: Value,
+    output_schema: Value,
+    /// 风险级 wire 串(如 `read-only`)。
+    effect: String,
+    idempotent: bool,
+    timeout_ms: u64,
+    /// 审批要求 wire 串(`not-required` / `required`)。
+    approval: String,
+    /// 权限范围标签数组。
+    scopes: Value,
+    description: Option<String>,
+}
+
+impl WasmDecl {
+    /// 合成 `CapabilityManifest`(execution_mode 恒 async;cancellable 恒 true)。
+    fn synthesize(&self) -> Result<CapabilityManifest, String> {
+        let mut v = json!({
+            "capability": self.capability,
+            "provider": self.provider,
+            "version": self.version,
+            "input_schema": self.input_schema,
+            "output_schema": self.output_schema,
+            "effect": self.effect,
+            "idempotent": self.idempotent,
+            "cancellable": true,
+            "timeout_ms": self.timeout_ms,
+            "approval": self.approval,
+            "scopes": self.scopes,
+            "execution_mode": "async",
+        });
+        // 描述仅在给出时出现(与既有 plugin 行为一致;技能不产出该字段)。
+        if let Some(d) = &self.description
+            && let Some(obj) = v.as_object_mut()
+        {
+            obj.insert("description".to_string(), json!(d));
+        }
+        serde_json::from_value(v).map_err(|e| e.to_string())
+    }
+}
+
 /// 技能脚本管理器:编译缓存 + 注册 + 执行(实现 AsyncCapabilityExecutor)。
 pub struct SkillScriptManager {
     engine: Engine,
@@ -148,26 +198,33 @@ impl SkillScriptManager {
                 eprintln!("[Plugin] {capability} 装载失败(已跳过): {e}");
                 continue;
             }
-            let manifest = json!({
-                "capability": capability,
-                "provider": provider,
-                "version": it["version"].as_str().unwrap_or("0.1.0"),
-                "input_schema": it.get("input_schema").cloned().unwrap_or(json!({"type": "object"})),
-                "output_schema": it.get("output_schema").cloned().unwrap_or(json!({"type": "object"})),
-                "effect": it["effect"].as_str().unwrap_or("read-only"),
-                "idempotent": it["idempotent"].as_bool().unwrap_or(false),
-                "cancellable": true,
-                "timeout_ms": timeout_ms,
-                "approval": it["approval"].as_str().unwrap_or("required"),
-                "scopes": it.get("scopes").cloned().unwrap_or(json!([])),
-                "execution_mode": "async",
-            });
-            match serde_json::from_value::<CapabilityManifest>(manifest) {
+            let decl = WasmDecl {
+                capability: capability.to_string(),
+                provider: provider.to_string(),
+                version: it["version"].as_str().unwrap_or("0.1.0").to_string(),
+                input_schema: it
+                    .get("input_schema")
+                    .cloned()
+                    .unwrap_or(json!({"type": "object"})),
+                output_schema: it
+                    .get("output_schema")
+                    .cloned()
+                    .unwrap_or(json!({"type": "object"})),
+                effect: it["effect"].as_str().unwrap_or("read-only").to_string(),
+                idempotent: it["idempotent"].as_bool().unwrap_or(false),
+                timeout_ms,
+                approval: it["approval"].as_str().unwrap_or("required").to_string(),
+                scopes: it.get("scopes").cloned().unwrap_or(json!([])),
+                description: it["description"].as_str().map(str::to_string),
+            };
+            match decl.synthesize() {
                 Ok(m) => {
                     eprintln!("[Plugin] wasm 插件 {capability} 已装载(provider {provider})");
                     out.push(m);
                 }
-                Err(e) => eprintln!("[Plugin] {capability} manifest 非法(已跳过): {e}"),
+                Err(e) => {
+                    eprintln!("[Plugin] {capability} manifest 非法(已跳过): {e}");
+                }
             }
         }
         out
@@ -301,21 +358,28 @@ impl SkillScriptManager {
         scripts
             .iter()
             .map(|sc| {
-                serde_json::from_value(json!({
-                    "capability": format!("skill.{}.{}", skill_id, sc.name),
-                    "provider": format!("skill.{}", skill_id),
-                    "version": "0.1.0",
-                    "input_schema": sc.input_schema,
-                    "output_schema": sc.output_schema,
-                    "effect": sc.effect,
-                    "idempotent": false,
-                    "cancellable": true,
-                    "timeout_ms": sc.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS),
-                    "approval": if sc.effect == "read-only" { "not-required" } else { "required" },
-                    "scopes": [format!("domain:skill.{}", skill_id)],
-                    "execution_mode": "async",
-                }))
-                .map_err(|e| format!("脚本 {} manifest 非法: {}", sc.name, e))
+                // ADR-0049:技能脚本 → 归一化声明(与 plugins.json 共用同一合成函数)。
+                let decl = WasmDecl {
+                    capability: format!("skill.{}.{}", skill_id, sc.name),
+                    provider: format!("skill.{}", skill_id),
+                    version: "0.1.0".to_string(),
+                    input_schema: sc.input_schema.clone(),
+                    output_schema: sc.output_schema.clone(),
+                    effect: sc.effect.clone(),
+                    idempotent: false,
+                    timeout_ms: sc.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS),
+                    // 副作用脚本必须审批;只读直通。
+                    approval: if sc.effect == "read-only" {
+                        "not-required"
+                    } else {
+                        "required"
+                    }
+                    .to_string(),
+                    scopes: json!([format!("domain:skill.{}", skill_id)]),
+                    description: None,
+                };
+                decl.synthesize()
+                    .map_err(|e| format!("脚本 {} manifest 非法: {}", sc.name, e))
             })
             .collect()
     }

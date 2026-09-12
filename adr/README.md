@@ -54,6 +54,7 @@
 | [ADR-0046](ADR-0046-surface-provider-inversion-completed.md) | 补完 surface→providers 依赖反转(端口化管理面) | accepted | 补完 surface→providers 依赖反转——抽 core 端口 SkillHost/JobBoard.list/McpAdmin,AdminConfig 全改端口,bm-providers 降为 dev-dependency,surface 源码零具体类型 |
 | [ADR-0047](ADR-0047-three-local-dedup.md) | 三处局部去重单源(default_data_dir / 无 TTL 哨兵 / mcp 配置读取) | accepted | 三处局部去重单源——default_data_dir 归 bm-persist、100 年无 TTL 哨兵归 core 常量、webadmin mcp 配置读取改用 json_store 原语 |
 | [ADR-0048](ADR-0048-split-mcp-module.md) | 拆分 bm-providers/src/mcp.rs(四职责合一的巨物) | accepted | 拆 bm-providers/src/mcp.rs(2182→1056 行)——按 banner 边界抽出 shape/transport_http/transport_stdio 三模块,公共路径经 pub use 不变 |
+| [ADR-0049](ADR-0049-wasm-declaration-unification.md) | wasm 声明格式合一(单一 manifest 合成路径) | accepted | wasm 声明格式合一——归一化 WasmDecl + 单一 synthesize,skills.json 与 plugins.json 两种磁盘形状共用一条 manifest 合成路径 |
 <!-- ADR-INDEX:END -->
 
 > 编号说明:ADR-0012 于 2026-08-31 随 M10 dsh 前端线归档(见 ADR-0013 编号说明),编号不回收;主干引用配置管理口径时以 config_store 现状与 W2/W4 规格为准。
