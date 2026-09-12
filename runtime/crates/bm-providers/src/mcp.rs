@@ -46,12 +46,8 @@ async fn write_frame<W: tokio::io::AsyncWrite + Unpin>(
 /// 子进程 stderr 环形缓冲容量(行)。跨 respawn 共享,足够排障又不无限膨胀。
 const MCP_STDERR_CAPACITY: usize = 400;
 
-/// 一行子进程 stderr:`gen` = 子进程代数(1 起,respawn 递增)。
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct StderrLine {
-    pub generation: u64,
-    pub text: String,
-}
+// ADR-0046:`StderrLine` 上移 core(`ports::mcp_admin`),此处 re-export 保持公共路径。
+pub use bm_core::ports::mcp_admin::StderrLine;
 
 /// stdio 子进程 stderr 环形缓冲:管道采集替代 `Stdio::inherit()` 直通,
 /// 跨 respawn 保留最近 [`MCP_STDERR_CAPACITY`] 行并按代标记,供管理面回看。
@@ -1223,6 +1219,71 @@ impl McpHub {
             let _ = t.notify("exit", json!({})).await;
         }
         removed_caps
+    }
+}
+
+/// ADR-0046:MCP 管理面端口适配器——surface 经此驱动,不再持具体 `McpHub`。
+///
+/// 用组合而非 `impl McpAdmin for McpHub`:因为 `connect`/`sync_from_config`
+/// 需要 `&Arc<McpHub>`(握手期在 Arc 上建路由),而 trait 方法只给 `&self`。
+/// 适配器持有 `Arc<McpHub>`,由 `McpHub::new()`(已返回 Arc)经 `as_admin()` 得到。
+pub struct McpAdminAdapter(pub Arc<McpHub>);
+
+impl McpHub {
+    /// 取本 hub 的管理面端口视图(ADR-0046)。
+    pub fn as_admin(self: &Arc<Self>) -> Arc<dyn bm_core::ports::mcp_admin::McpAdmin> {
+        Arc::new(McpAdminAdapter(self.clone()))
+    }
+}
+
+#[async_trait]
+impl bm_core::ports::mcp_admin::McpAdmin for McpAdminAdapter {
+    async fn probe_server(&self, server: &str) -> Result<(usize, Vec<Value>), String> {
+        self.0.probe_server(server).await
+    }
+
+    async fn raw_request(
+        &self,
+        server: &str,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, String> {
+        self.0.raw_request(server, method, params).await
+    }
+
+    fn stderr_tail(
+        &self,
+        server: &str,
+        lines: usize,
+    ) -> Result<Vec<bm_core::ports::mcp_admin::StderrLine>, String> {
+        self.0.stderr_tail(server, lines)
+    }
+
+    fn server_capabilities(&self, server: &str) -> Result<Value, String> {
+        self.0.server_capabilities(server)
+    }
+
+    async fn disconnect_server(&self, server: &str) -> Vec<String> {
+        self.0.disconnect_server(server).await
+    }
+
+    async fn sync(
+        &self,
+        cfg_path: &std::path::Path,
+        secrets: Arc<dyn bm_core::ports::SecretStore>,
+        loaded_names: Vec<String>,
+        registrar: &dyn bm_core::ports::mcp_admin::CapabilityRegistrar,
+        limits: &bm_core::limits::LimitsCell,
+    ) -> bm_core::ports::mcp_admin::SyncOutcome {
+        crate::mcp::supervisor::sync_from_config(
+            &self.0,
+            cfg_path,
+            secrets,
+            loaded_names,
+            registrar,
+            limits,
+        )
+        .await
     }
 }
 

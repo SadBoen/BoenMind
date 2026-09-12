@@ -428,28 +428,39 @@ fn run_wasi(
 impl SkillScriptManager {
     /// manifests → 注册对(占位 Provider;真正执行走本管理器异步分道)。
     ///
-    /// ADR-0041:每个 wasm 插件以 `PluginKind::Tool` 声明身份,id 取 manifest
-    /// 的 provider 字段(即 `skill.<skill_id>`),使内核能回答「这是谁提供的扩展」。
+    /// ADR-0046:实现上移为 `bm_core::ports::skill_host::placeholder_entries`
+    /// (surface 构造注册对时无需依赖 bm-providers),此处保留为该函数的中继。
     pub fn capability_entries(
         manifests: Vec<CapabilityManifest>,
     ) -> Vec<(
         CapabilityManifest,
         Arc<dyn bm_core::registry::CapabilityProvider>,
     )> {
-        manifests
-            .into_iter()
-            .map(|m| {
-                let meta = bm_contract::plugin::PluginMeta::new(
-                    m.provider.clone(),
-                    m.version.clone(),
-                    bm_contract::plugin::PluginKind::Tool,
-                );
-                let handle = bm_core::broker::provider_fn_with_meta(meta, |_| {
-                    Err("skill 能力仅限异步路径".into())
-                });
-                (m, handle)
-            })
-            .collect()
+        bm_core::ports::skill_host::placeholder_entries(manifests)
+    }
+}
+
+/// ADR-0046:宿主管理面端口——surface 经此驱动装载/摘除,不再持具体类型。
+impl bm_core::ports::skill_host::SkillHost for SkillScriptManager {
+    fn load_plugins_file(&self, decl_path: &Path) -> Vec<CapabilityManifest> {
+        SkillScriptManager::load_plugins_file(self, decl_path)
+    }
+
+    fn register_skill(
+        &self,
+        skill_id: &str,
+        def: &SkillDefinition,
+        skill_root: &Path,
+    ) -> Result<Vec<CapabilityManifest>, String> {
+        SkillScriptManager::register_skill(self, skill_id, def, skill_root)
+    }
+
+    fn unregister_skill(&self, skill_id: &str) -> Vec<String> {
+        SkillScriptManager::unregister_skill(self, skill_id)
+    }
+
+    fn unregister_all_generic(&self) -> Vec<String> {
+        SkillScriptManager::unregister_all_generic(self)
     }
 }
 

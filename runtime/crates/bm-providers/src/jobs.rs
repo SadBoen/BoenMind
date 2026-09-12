@@ -314,6 +314,11 @@ impl JobBoard for JobTable {
         }
         s
     }
+
+    /// 管理面台账(ADR-0046):复用后端具名 list(新→旧)。
+    fn list(&self) -> Vec<Value> {
+        JobTable::list(self)
+    }
 }
 
 async fn pump_to_file(src: Option<impl tokio::io::AsyncRead + Unpin>, mut dst: std::fs::File) {

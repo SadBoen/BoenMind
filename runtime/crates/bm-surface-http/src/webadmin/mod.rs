@@ -75,8 +75,9 @@ pub struct AdminConfig {
     pub mcp_servers: Arc<std::sync::RwLock<Vec<Value>>>,
     /// 热装载句柄:运行期把新 MCP server 的能力注册进核心(actor 命令)。
     pub handle: bm_core::runtime::RuntimeHandle,
-    /// MCP hub(与启动装载共用同一实例;None = 启动未配 --mcp-config)。
-    pub hub: Option<Arc<bm_providers::mcp::McpHub>>,
+    /// MCP hub 管理面(与启动装载共用同一实例;None = 启动未配 --mcp-config)。
+    /// ADR-0046:经 core 端口 `McpAdmin`,不再持具体 `McpHub`。
+    pub hub: Option<Arc<dyn bm_core::ports::mcp_admin::McpAdmin>>,
     /// MCP env secret: 引用解析用加密库(与启动装载同一实例)。
     pub secrets: Option<Arc<dyn bm_core::ports::SecretStore>>,
     /// W6:对话级模型路由表(providers 写后重建;None = 未装配,如测试态)。
@@ -93,12 +94,13 @@ pub struct AdminConfig {
     pub limits: bm_core::limits::LimitsCell,
     /// W10:来源追踪(env/file 徽标;PUT 后随写更新)。
     pub limits_sources: Arc<std::sync::Mutex<bm_core::limits::LimitsSources>>,
-    /// W10(ADR-0025):后台作业台账(/admin/jobs;None = 未装配,测试态)。
-    pub jobs: Option<Arc<bm_providers::jobs::JobTable>>,
-    /// Skill v0.2 脚本执行面(与启动装载共用同一实例;None = 未装配/初始化失败)。
-    /// 供 /admin/skills 热重载:摘除旧脚本能力并按最新 skills.json 重编译注册
-    /// (ADR-0033)。
-    pub skills: Option<Arc<bm_providers::skill_wasm::SkillScriptManager>>,
+    /// W10(ADR-0025/0046):后台作业台账(/admin/jobs;None = 未装配,测试态)。
+    /// 经 core 端口,不再持具体 `JobTable`。
+    pub jobs: Option<Arc<dyn bm_core::ports::JobBoard>>,
+    /// wasm 执行面(与启动装载共用同一实例;None = 未装配/初始化失败)。
+    /// 供 /admin/skills、/admin/plugins 热重载(ADR-0033/0041)。
+    /// ADR-0046:经 core 端口 `SkillHost`,不再持具体 `SkillScriptManager`。
+    pub skills: Option<Arc<dyn bm_core::ports::skill_host::SkillHost>>,
 }
 
 // W10:预览/下载/删除/浏览上限走 cfg.limits

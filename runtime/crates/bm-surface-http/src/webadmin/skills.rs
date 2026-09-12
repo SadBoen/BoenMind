@@ -76,7 +76,7 @@ async fn reload_skill(cfg: &AdminConfig, skill_id: &str) -> String {
         Ok(m) => m,
         Err(e) => return format!("技能已保存,但脚本编译失败(未装载): {e}"),
     };
-    let entries = bm_providers::skill_wasm::SkillScriptManager::capability_entries(manifests);
+    let entries = bm_core::ports::skill_host::placeholder_entries(manifests);
     match cfg.handle.capabilities_register(entries).await {
         Ok(names) => format!("技能已热重载,{} 个脚本能力即时生效。", names.len()),
         Err(e) => format!("技能脚本已编译,但注册失败: {e}"),

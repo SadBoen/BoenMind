@@ -108,6 +108,12 @@ pub trait AsyncCapabilityExecutor: Send + Sync {
 pub trait JobBoard: Send + Sync {
     /// 在跑/近期完成作业的一句话摘要;空作业返回空串(调用方不注入)。
     fn summary(&self) -> String;
+
+    /// 后台作业台账(新→旧),供管理面 `/admin/jobs` 列出(ADR-0046)。
+    /// 默认空表——测试替身无需实现。
+    fn list(&self) -> Vec<serde_json::Value> {
+        Vec::new()
+    }
 }
 
 // ---- W6/ADR-0042:模型路由端口 ---------------------------------------------
@@ -130,6 +136,20 @@ pub trait ModelRouter: Send + Sync {
 
     /// 原子替换路由表(管理面写后重建)。
     fn replace_table(&self, table: std::collections::HashMap<String, Arc<dyn ModelConnector>>);
+
+    /// 按 (base_url, secret_store) 造一个 OpenAI 兼容连接器(ADR-0046)。
+    ///
+    /// 管理面按 `providers.json` 重建路由表时需要"造连接器"——这是**工厂职责**,
+    /// 原先是 `bm-providers::openai_http::OpenAiConnector::new` 的具体调用,使
+    /// surface 依赖 bm-providers。上移为端口方法后,surface 只给配置,由实现
+    /// (routing 连接器/其宿主)负责构造,具体连接器类型不再外泄。
+    fn build_connector(
+        &self,
+        base_url: &str,
+        secrets: Arc<dyn SecretStore>,
+    ) -> Arc<dyn ModelConnector>;
 }
 
+pub mod mcp_admin;
 pub mod persist;
+pub mod skill_host;

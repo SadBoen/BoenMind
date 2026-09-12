@@ -55,7 +55,7 @@ async fn reload_plugins(cfg: &AdminConfig) -> String {
     }
     // 2) 按最新声明重编译注册。
     let manifests = manager.load_plugins_file(&plugins_file(cfg));
-    let entries = bm_providers::skill_wasm::SkillScriptManager::capability_entries(manifests);
+    let entries = bm_core::ports::skill_host::placeholder_entries(manifests);
     if entries.is_empty() {
         return "插件声明已保存(当前无 wasm 插件或全部非法)。".to_string();
     }

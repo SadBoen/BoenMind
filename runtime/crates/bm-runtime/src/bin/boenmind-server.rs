@@ -342,7 +342,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         builtin_caps: Arc::new(builtin_caps),
         mcp_servers: Arc::new(std::sync::RwLock::new(mcp_loaded)),
         handle: handle.clone(),
-        hub: hub.clone(),
+        // ADR-0046:hub/jobs/skills 经 core 端口注入(surface 不再依赖具体类型)
+        hub: hub.as_ref().map(|h| h.as_admin()),
         secrets: Some(secrets.clone()),
         model_routes: Some(model_routes.clone()),
         shutdown: Some(shutdown.clone()),
@@ -355,8 +356,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .and_then(|p| p.parent().map(|d| d.join("plugins"))),
         limits: limits_cell.clone(),
         limits_sources: Arc::new(std::sync::Mutex::new(limits_sources)),
-        jobs: Some(job_table.clone()),
-        skills: skill_manager,
+        jobs: Some(job_table.clone() as Arc<dyn bm_core::ports::JobBoard>),
+        // ADR-0046:wasm 宿主经 SkillHost 端口注入。
+        skills: skill_manager
+            .clone()
+            .map(|m| m as Arc<dyn bm_core::ports::skill_host::SkillHost>),
     };
     bm_surface_http::webadmin::rebuild_routes(&admin);
 

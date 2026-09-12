@@ -51,6 +51,7 @@
 | [ADR-0043](ADR-0043-wasm-plugin-declaration-contract.md) | 通用 wasm 插件声明合同化(② 的真实内容) | accepted | 通用 wasm 插件声明合同化(plugins.json 的临时形状冻结为 wasm-plugin.v0_1 并纳入装载期 schema 门);②「WIT/Component 接口」核实为暂不需要,其真实内容是合同化 |
 | [ADR-0044](ADR-0044-surface-service-boundary-review.md) | surface「服务层边界」核实与巨型 handler 拆分 | accepted | surface"服务层边界"核实——AppState 持 EventStore 是端口依赖非越层、SSE 直读日志是刻意性能设计;真实债仅 chat_completions 巨型 handler,已抽取会话寻址与派发(462→316 行) |
 | [ADR-0045](ADR-0045-plugin-identity-wiring-and-kind-convergence.md) | 插件身份接线与过度建模收敛(PluginKind 6→2、移除空转 shutdown) | accepted | 接线插件身份——CapabilityDiscovery 承载身份成为真实消费者、MCP/内核能力补声明、PluginKind 收敛为 Tool/Connector、移除空转 shutdown 钩子 |
+| [ADR-0046](ADR-0046-surface-provider-inversion-completed.md) | 补完 surface→providers 依赖反转(端口化管理面) | accepted | 补完 surface→providers 依赖反转——抽 core 端口 SkillHost/JobBoard.list/McpAdmin,AdminConfig 全改端口,bm-providers 降为 dev-dependency,surface 源码零具体类型 |
 <!-- ADR-INDEX:END -->
 
 > 编号说明:ADR-0012 于 2026-08-31 随 M10 dsh 前端线归档(见 ADR-0013 编号说明),编号不回收;主干引用配置管理口径时以 config_store 现状与 W2/W4 规格为准。

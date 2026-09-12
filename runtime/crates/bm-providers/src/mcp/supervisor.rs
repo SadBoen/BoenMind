@@ -4,35 +4,15 @@
 //! (启动=直接收集,热装载=capabilities_register/unregister + 快照写回)。
 
 use crate::mcp::{HttpMcpTransport, McpHub, McpTransport, StdioMcpTransport, load_mcp_setups};
-use bm_contract::capability::CapabilityManifest;
 use bm_core::ports::SecretStore;
 use serde_json::{Value, json};
 use std::path::Path;
 use std::sync::Arc;
 
 /// 同步结果(与 webadmin /admin/mcp/reload 历史响应字段一致)。
-#[derive(Debug, Default)]
-pub struct SyncOutcome {
-    pub registered: Vec<String>,
-    pub updated: Vec<String>,
-    pub uninstalled: Vec<String>,
-    pub failed: Vec<Value>,
-    /// 已装载快照(热装载写回 AdminConfig.mcp_servers 用;启动路径忽略)。
-    pub note_loaded: Vec<Value>,
-}
-
-/// 能力注册/注销回调(启动=收集;热装载=转核心命令)。
-#[async_trait::async_trait]
-pub trait CapabilityRegistrar: Send + Sync {
-    async fn register(
-        &self,
-        entries: Vec<(
-            CapabilityManifest,
-            Arc<dyn bm_core::registry::CapabilityProvider>,
-        )>,
-    ) -> Result<(), String>;
-    async fn unregister(&self, names: Vec<String>) -> Result<(), String>;
-}
+// ADR-0046:同步结果 / 注册回调 / 配置读取上移 core(`ports::mcp_admin`),
+// 此处 re-export 保持既有公共路径不变。
+pub use bm_core::ports::mcp_admin::{CapabilityRegistrar, SyncOutcome, read_mcp_servers};
 
 /// ADR-0035 §4:把 limits 的 MB/秒/进程数折算为 [`bm_sandbox::SandboxLimits`]。
 /// 独立成函数以便单测(避免 spawn 真实子进程)。
@@ -41,22 +21,6 @@ pub fn sandbox_from_limits(l: &bm_core::limits::Limits) -> bm_sandbox::SandboxLi
         memory_bytes: l.mcp_subprocess_memory_mb.saturating_mul(1024 * 1024),
         cpu_seconds: l.mcp_subprocess_cpu_secs,
         active_processes: l.mcp_subprocess_max_procs,
-    }
-}
-
-/// 从配置读 server 清单(文件不存在 = 空清单)。
-/// P1-9(2026-09-07 架构评审):仅 NotFound 视为空清单;其他 IO 错误(权限/
-/// 瞬时故障)上抛——吞成空清单会让热重载把全部 MCP 能力静默卸载,甚至被
-/// mcp_add 整表回写覆盖丢配置。
-pub fn read_mcp_servers(path: &Path) -> Result<Vec<Value>, String> {
-    match std::fs::read_to_string(path) {
-        Ok(text) => {
-            let arr: Vec<Value> =
-                serde_json::from_str(&text).map_err(|e| format!("MCP 配置不是 JSON 数组: {e}"))?;
-            Ok(arr)
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(vec![]),
-        Err(e) => Err(format!("MCP 配置读取失败: {e}")),
     }
 }
 

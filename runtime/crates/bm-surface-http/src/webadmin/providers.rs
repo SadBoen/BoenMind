@@ -267,9 +267,8 @@ pub fn rebuild_routes(cfg: &AdminConfig) {
         ) else {
             continue;
         };
-        let connector: Arc<dyn bm_core::ports::ModelConnector> = Arc::new(
-            bm_providers::openai_http::OpenAiConnector::new(base.to_string(), secrets.clone()),
-        );
+        let connector: Arc<dyn bm_core::ports::ModelConnector> =
+            rc.build_connector(base, secrets.clone());
         let models = p["models"].as_array().cloned().unwrap_or_default();
         for m in models {
             let Some(id) = m.as_str().map(|s| s.to_string()) else {

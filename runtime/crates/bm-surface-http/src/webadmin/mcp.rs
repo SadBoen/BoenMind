@@ -9,7 +9,7 @@ use axum::Json;
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use bm_providers::mcp::supervisor::read_mcp_servers;
+use bm_core::ports::mcp_admin::read_mcp_servers;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -851,7 +851,7 @@ struct CoreRegistrar {
 }
 
 #[async_trait::async_trait]
-impl bm_providers::mcp::supervisor::CapabilityRegistrar for CoreRegistrar {
+impl bm_core::ports::mcp_admin::CapabilityRegistrar for CoreRegistrar {
     async fn register(
         &self,
         entries: Vec<(
@@ -879,8 +879,7 @@ impl bm_providers::mcp::supervisor::CapabilityRegistrar for CoreRegistrar {
 /// (无 mcp_config 或 hub)返回 Err,调用方自行降级。
 async fn run_mcp_sync(
     cfg: &AdminConfig,
-) -> Result<bm_providers::mcp::supervisor::SyncOutcome, (StatusCode, String)> {
-    use bm_providers::mcp::supervisor::sync_from_config;
+) -> Result<bm_core::ports::mcp_admin::SyncOutcome, (StatusCode, String)> {
     let path = cfg.mcp_config.clone().ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
@@ -908,17 +907,18 @@ async fn run_mcp_sync(
                 .collect()
         })
         .unwrap_or_default();
-    let outcome = sync_from_config(
-        &hub,
-        &path,
-        secrets,
-        loaded_names,
-        &CoreRegistrar {
-            handle: cfg.handle.clone(),
-        },
-        &cfg.limits,
-    )
-    .await;
+    // ADR-0046:经端口同步(不再是 free function + 具体 hub)。
+    let outcome = hub
+        .sync(
+            &path,
+            secrets,
+            loaded_names,
+            &CoreRegistrar {
+                handle: cfg.handle.clone(),
+            },
+            &cfg.limits,
+        )
+        .await;
     if let Ok(mut g) = cfg.mcp_servers.write() {
         *g = outcome.note_loaded.clone();
     }
@@ -1058,7 +1058,8 @@ fn build_candidate_entry(
             None => a.clone(),
         })
         .collect();
-    let sha = bm_providers::mcp::sha256_file(&file.display().to_string())?;
+    let bytes = std::fs::read(file).map_err(|e| format!("读取 {} 失败: {e}", file.display()))?;
+    let sha = bm_contract::hash::sha256_hex(&bytes);
     let entry_body = json!({
         "name": name,
         "command": file.display().to_string(),

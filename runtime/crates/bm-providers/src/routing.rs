@@ -114,6 +114,18 @@ impl bm_core::ports::ModelRouter for RoutingConnector {
     fn replace_table(&self, table: HashMap<String, Arc<dyn ModelConnector>>) {
         RoutingConnector::replace_table(self, table)
     }
+
+    /// ADR-0046:工厂上移——管理面只给配置,具体连接器类型不外泄。
+    fn build_connector(
+        &self,
+        base_url: &str,
+        secrets: Arc<dyn bm_core::ports::SecretStore>,
+    ) -> Arc<dyn ModelConnector> {
+        Arc::new(crate::openai_http::OpenAiConnector::new(
+            base_url.to_string(),
+            secrets,
+        ))
+    }
 }
 
 // ---- 测试 ----------------------------------------------------------------
