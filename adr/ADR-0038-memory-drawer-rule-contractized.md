@@ -1,4 +1,11 @@
-status: accepted date: summary: manifest 增 authorization 声明(主体系留+读放宽),Broker 步 4.5 变解释器删硬编码规则;memory 仍不生产可达() supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-09-11
+summary: manifest 增 authorization 声明(主体系留+读放宽),Broker 步 4.5 变解释器删硬编码规则;memory 仍不生产可达(2026-09-11)
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0038: memory 抽屉授权规则合同化 
 - 状态: Accepted（） - 日期: - 关联: ADR-0006（权限以合同显式化，元原则）、ADR-0020（内置能力冻结；条款 3 四判据）、ADR-0031（批次 2 成员身份面，与本条同族）、issue #36 
 ## 背景 

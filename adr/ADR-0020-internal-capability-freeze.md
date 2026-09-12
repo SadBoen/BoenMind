@@ -1,4 +1,11 @@
-status: accepted date: summary: 内置能力严格封闭(仅保留系统内置命令执行 system.exec 作为过渡态例外) supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-09-03
+summary: 内置能力严格封闭(仅保留系统内置命令执行 system.exec 作为过渡态例外)
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0020: 内置能力冻结与执行载荷纪律 
 - 状态: Accepted(用户 ) - 日期: - 关联: ADR-0005(万物皆插件与安全不变量四判据)、ADR-0006(权限以合同显式化)、ADR-0016(Skill v0.2 wasmtime 执行面)、ADR-0017(context-mode)、ADR-0019(system.exec 审批工具)、基线 §4.1/§12.3/§13.5 - 背景: )经逐条实物复核后,用户裁决修复;本 ADR 闭合其中「system.exec 绕过 §13.5/四判据未成文」的程序性欠账,并把 
 ## 决策 

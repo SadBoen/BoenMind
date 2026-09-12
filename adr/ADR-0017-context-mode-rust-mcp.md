@@ -1,4 +1,11 @@
-status: accepted date: summary: 外部 MCP、官方随包但默认不启用、Linux 单 exe、显式批准与 Broker 风险边界 supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-09-03
+summary: 外部 MCP、官方随包但默认不启用、Linux 单 exe、显式批准与 Broker 风险边界
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0017: context-mode Rust MCP 官方插件 
 - 状态: Accepted（用户 ） - 日期: - 关联: ADR-0005（万物皆插件）、ADR-0006（权限以合同显式化）、ADR-0011（MCP Server 接入）、ADR-0016（脚本执行面） 
 ## 背景 

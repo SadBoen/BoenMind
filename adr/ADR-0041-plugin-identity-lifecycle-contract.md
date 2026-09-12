@@ -1,4 +1,11 @@
-status: accepted date: summary: 补插件身份契约(PluginKind/PluginMeta)+ CapabilityProvider 增 plugin_meta/shutdown 默认方法 + 注销调生命周期 + wasm 宿主去 skill. 前缀守卫(ADR-0040 治理首批架构改动) supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-09-12
+summary: 补插件身份契约(PluginKind/PluginMeta)+ CapabilityProvider 增 plugin_meta/shutdown 默认方法 + 注销调生命周期 + wasm 宿主去 skill. 前缀守卫(ADR-0040 治理首批架构改动)
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0041: 插件身份与生命周期契约落地(去特化第一步) 
 - 关联: ADR-0005(万物皆插件)、ADR-0016/0033(skill wasm 执行面)、ADR-0036(执行分道以合同声明为真源)、ADR-0040(文档治理) - 背景: 系统的扩展面长期只有**行为** trait(`CapabilityProvider::invoke`)与 manifest 数据,**没有插件身份与生命周期**——内核无法回答"这是什么类型的扩展、由谁提供、何时起停",`unregister` 直接摘除句柄、不通知 Provider;wasm 宿主(`skill_wasm.rs`)虽已具备"编译 → 合成 manifest → 走 Broker 平权管线"的通用执行形态,却被 `skill.` 命名与 `SkillScriptDefinition` 绑住。ADR-0005「万物皆插件」的支点在代码里缺一件契约。 
 ## 决策 

@@ -1,4 +1,11 @@
-status: superseded date: summary: 基线增补熔入正文不挂引注块;HISTORY/PLAYBOOK/BACKLOG 三附页;milestones/README 导航 supersedes: [] superseded_by: [ADR-0040] 
+---
+status: superseded
+date: 2026-09-01
+summary: 基线增补熔入正文不挂引注块;HISTORY/PLAYBOOK/BACKLOG 三附页;milestones/README 导航
+supersedes: []
+superseded_by: [ADR-0040]
+---
+
 # ADR-0015: 文档体系整理——熔入式修订与三层附页 
 - 状态: Accepted() - 裁决人: 用户(全权委托,见当轮会话;机制细节由 AI 拟定) - 关联: ADR-0008(模型即代码)、AGENTS.md 硬纪律 3、基线头部「维护规则」 
 ## 背景 

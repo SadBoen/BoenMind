@@ -1,4 +1,11 @@
-status: accepted date: summary: 异步能力分派由硬编码 if-else 改为声明式路由表——新 provider 族 = 追加路由,不改内核分派 supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-09-12
+summary: 异步能力分派由硬编码 if-else 改为声明式路由表——新 provider 族 = 追加路由,不改内核分派
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0050: 能力执行面收口(声明式路由表取代内核 if-else) 
 - 关联: ADR-0041(去特化/按归属分道)、ADR-0042(按声明能力集分道而非前缀)、ADR-0036(execution_mode 为分道真源)、ADR-0005/ADR-0023(万物皆插件)、ADR-0020/0021(内置能力冻结清单) - 背景(): 「万物皆插件」在**裁决与注册面**已成立——`Broker::decide` 零 provider 种类分支、`CapabilityRegistry::register` 统一带冻结合同门。但**执行面**是硬编码分派:`SplitExecutor::call` 用一条 if-else 链按 `system.exec` 精确常量 → `FsExecutor::handles` → wasm 宿主编译表 → 回落 MCP 依次判定;`dispatch_capability` 另有 `task.share.` 前缀内联拦截。后果是**新增一个 provider 族必须修改内核分派代码**,而不是以插件身份接入,与基线 §2.3「新增功能优先做成插件,不改内核」及 §7 统一管线存在张力(见 GitHub issue #67)。 
 ## 决策 

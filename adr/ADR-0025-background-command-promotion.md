@@ -1,4 +1,11 @@
-status: accepted date: summary: exec 增 run_in_background+超限自动转轨(Hermes 式);system.job_output 轮询收取(DSH 式);回合 prompt 注入作业摘要;不做主动推注入() supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-09-07
+summary: exec 增 run_in_background+超限自动转轨(Hermes 式);system.job_output 轮询收取(DSH 式);回合 prompt 注入作业摘要;不做主动推注入(2026-09-07)
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0025: 长命令后台转轨(run_in_background 与超限自动转轨) 
 - 状态: Accepted(用户 ) - 日期: - 关联: ADR-0019(system.exec 异步管线)、ADR-0024(limits 配置面,exec_max_ms 为转轨阈值);对标 = Hermes 超前台 600s 自动转后台+完成通知 / DSH `run_in_background` 无超时+job_output 收取 / ZCode run_in_background / pi_agent_rust 后台任务 - 背景: 240 秒能跑完的 clone 在 60s 铁顶下必死;即便上限提到 600s,冷编译/大仓库下载仍会超。四家先例一致:超长任务的出路不是放大前台超时,而是转出前台生命周期。 
 ## 决策 

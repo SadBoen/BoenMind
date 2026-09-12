@@ -1,4 +1,11 @@
-status: accepted date: summary: 信件语义走单写者总线不破INV+成员级工牌(与#31合并)+共享面先行/点名与身份随批次2/远程网格留阶段二() supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-09-09
+summary: 信件语义走单写者总线不破INV+成员级工牌(与#31合并)+共享面先行/点名与身份随批次2/远程网格留阶段二(2026-09-09)
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0031: Agent v0.2 通信面——消息语义架于进程内事件总线,成员级身份 
 - 状态: Accepted（用户 ） - 日期: - 关联: ADR-0002（Butler/Coordinator 受限队长）、ADR-0006（权限以合同显式化）、基线 §11（协作路径）、issue #45（本条为其决策文档）、issue #31（成员级 max_concurrent_tools,随批次 2 落地）、issue #36（抽屉规则合同化,时点随批次 2）、issue #53（hermes-webui 调研） 
 ## 背景 

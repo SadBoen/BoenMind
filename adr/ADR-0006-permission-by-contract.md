@@ -1,4 +1,11 @@
-status: accepted date: summary: 未列入合同的权力视为不存在 supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-08-28
+summary: 未列入合同的权力视为不存在
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0006 权限以合同显式化(元原则) 
 - 状态: accepted - 日期: - 决策类型: 新增架构裁决(元原则) 
 ## 背景 

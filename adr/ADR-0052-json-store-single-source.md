@@ -1,4 +1,11 @@
-status: accepted date: summary: 配置文件 JSON 读写原语单源至 bm-core,严格/宽容两种损坏策略显式命名,消除三份实现与同文件双策略 supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-09-12
+summary: 配置文件 JSON 读写原语单源至 bm-core,严格/宽容两种损坏策略显式命名,消除三份实现与同文件双策略
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0052: 配置文件 JSON 读写原语单源(bm-core::json_store) 
 - 关联: ADR-0047(三处局部去重单源)、ADR-0038(规则合同化/解释器)、ADR-0023(墓碑文件)、ADR-0012(配置文件口径) - 背景(): 「读一个 config JSON」在仓内有**三份实现**,且损坏策略散落:  1. `bm-core` 内多处手写 `read_to_string().ok()? + from_str().ok()?`(`roles.rs` 两处、`workspace.rs`、`limits.rs`、`context_log.rs`);  2. surface 的 `webadmin::json_store`(issue #38 曾收口 providers/skills/roles/mcp 四域,但**仅覆盖 surface**);  3. surface 的 `config_store::{read_file_strict,read_file}`。  后果已经可见:`config/roles.json` 被 webadmin(损坏→拒绝)与 `bm-core::roles`(损坏→静默 None)**两套策略各解析一次**;`webadmin/mcp/lifecycle.rs` 内第三种手写习语(原 `read_tombstones`/`upsert_tombstone`/`remove_tombstone` 三处)。策略本身是正确的(写前严格、只读宽容),但**没有名字**,于是无法复用、只能重抄。 
 ## 决策 

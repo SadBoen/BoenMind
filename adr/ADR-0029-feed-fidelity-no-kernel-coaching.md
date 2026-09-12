@@ -1,4 +1,11 @@
-status: accepted date: summary: 回喂只承载事实+错误原文保真(detail)+去内核指导性教练话术() supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-09-08
+summary: 回喂只承载事实+错误原文保真(detail)+去内核指导性教练话术(2026-09-08)
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0029: 回喂忠实性原则——内核只回事实,话术出内核 
 - 状态: Accepted(用户 ) - 日期: - 关联: ADR-0022(原生工具协议还原,废除负向禁令的同源纪律)、ADR-0028(限制全零);对照系 = Hermes/DSH/pi/Codex/Claude 五家源码取证(报告 `.tools/limits-reform-20260908/INTERFERENCE-COMPARE.md`,不入库溯 git) - 背景: 长任务对照取证发现,五家框架对工具失败/超时一律**附带已捕获输出与真实错误原文**;而 BoenMind 用「工具执行超时」四个字替代全部现场、provider 原始错误在连接器层被剥成枚举码(detail_ref 恒 None)、熔断/触顶时模型的调用凭空蒸发、内核还会代写 assistant 终稿冒充模型入台账。同时内核硬编码了多处指导性话术(工具纪律段、审批「请向用户说明」、工具描述「优先用 X」等)。用户裁定:干预的唯一合法形态是事实;指导类文本若要有,只能经插件通道以可区分方式注入。 
 ## 决策 

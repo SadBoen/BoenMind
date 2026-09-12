@@ -1,4 +1,11 @@
-status: accepted date: summary: provider 命名约定单源判定(mcp./.async/skill.)+unregister_skill+管理面热重载走墓碑续代+共享管理器实例() supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-09-11
+summary: provider 命名约定单源判定(mcp./.async/skill.)+unregister_skill+管理面热重载走墓碑续代+共享管理器实例(2026-09-11)
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0033: 技能脚本生命周期——skill.* 异步分道归位与热重载 
 - 状态: Accepted（） - 日期: - 关联: ADR-0016（wasmtime 脚本执行面与 Broker 七步管线覆盖）、ADR-0001 条件 2（binding_epoch 代际连续）、ADR-0032（注销墓碑化 + 注册期冻结门禁）、ADR-0006（权限以合同显式化） 
 ## 背景 

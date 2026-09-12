@@ -1,4 +1,11 @@
-status: accepted date: summary: 十项限制默认归零(0=不限)+0 语义显式实现+熔断只拦同命令同参 10 次() supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-09-08
+summary: 十项限制默认归零(0=不限)+0 语义显式实现+熔断只拦同命令同参 10 次(2026-09-08)
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0028: 对话链路限制默认全零(0=不限制) 
 - 状态: Accepted(用户 ) - 日期: - 关联: ADR-0024(limits.json 集中配置面)、ADR-0025(exec 后台转轨);对照系 = ZCode(无单回合轮数上限 + auto-compact)、Hermes(HERMES_MAX_ITERATIONS=500 + 超限自动转后台)、pi_agent_rust(max_tool_iterations=50 + 上下文压缩预留) - 背景: 长程独立任务被自设栅栏拦死——),触顶后回合伪装成功收束、零自动续跑;叠加跨回合历史只回喂 20 轮/24K 字符,长任务「跑不完、续不上」。用户裁定不靠人工栅栏管长任务,回归「熔断只拦失控」的本意。 
 ## 决策 

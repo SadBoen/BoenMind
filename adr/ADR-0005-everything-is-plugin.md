@@ -1,4 +1,11 @@
-status: accepted date: summary: 最小机制封闭清单+安全不变量四判据+改合同双重门槛 supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-08-28
+summary: 最小机制封闭清单+安全不变量四判据+改合同双重门槛
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0005 万物皆插件:内核只含合同与最小机制 
 - 状态: accepted-with-conditions - 日期: - 决策类型: 架构裁决(对基线 §17 裁决 R5 的复核结论) 
 ## 背景(原裁决文本) 

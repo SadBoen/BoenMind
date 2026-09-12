@@ -1,4 +1,11 @@
-status: accepted date: summary: wasm 家族声明装载单入口——路径/形状/选择规则收口 bm-core,启动装配与整表重载共用一条装载路径 supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-09-12
+summary: wasm 家族声明装载单入口——路径/形状/选择规则收口 bm-core,启动装配与整表重载共用一条装载路径
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0053: wasm 家族声明装载单入口 
 - 关联: ADR-0049(wasm 声明格式合一/manifest 合成)、ADR-0051(ManifestSpec 全族合成单源)、ADR-0041(通用 wasm 宿主)、ADR-0016(技能脚本执行面)、ADR-0046(端口反转,本为其延伸)、issue #68 - 背景(): ADR-0049 统一了 manifest **合成**,ADR-0051 统一了**缺省集**,但「读哪个文件、什么形状、哪些条目算声明、技能根目录在哪」这套**装载知识**仍分散:bootstrap 侧 `boenmind-server.rs` 有两个自由函数(`register_skill_scripts`/`register_wasm_plugins`)各自 `read_to_string + serde_json::from_str` 解析 `skills.json` 形状;管理面 `webadmin/skills.rs`、`webadmin/plugins.rs` 又各持一份。装载路径计数:代码汇编 + 4 个自由函数 + 2 个管理面读函数 = **6 条**(评估报告口径),同一形状被解析多遍。 
 ## 决策 

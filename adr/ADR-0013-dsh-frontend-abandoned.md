@@ -1,4 +1,11 @@
-status: accepted date: summary: dsh 复刻 Web 前端全量删除(归档分支),换新参考界面重做 supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-08-31
+summary: dsh 复刻 Web 前端全量删除(归档分支),换新参考界面重做
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0013:弃用 dsh 复刻 Web 前端,换新参考界面重做 
 - 状态:已裁决(用户 );新参考界面待用户指定后另行入册 - 裁决人:用户(原话「算了,你把全部的Web前端删除吧,我们抄另一个界面」) - 编号说明:ADR-0012(配置管理 API)随 M10 未提交工作归档于  `archive/m10-dsh-frontend` 分支,主干跳过该号 
 ## 背景 

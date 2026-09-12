@@ -1,4 +1,11 @@
-status: accepted date: summary: 拆 bm-providers/src/mcp.rs(2182→1056 行)——按 banner 边界抽出 shape/transport_http/transport_stdio 三模块,公共路径经 pub use 不变 supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-09-12
+summary: 拆 bm-providers/src/mcp.rs(2182→1056 行)——按 banner 边界抽出 shape/transport_http/transport_stdio 三模块,公共路径经 pub use 不变
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0048: 拆分 bm-providers/src/mcp.rs(四职责合一的巨物) 
 - 关联: ADR-0046(反转补完,本为其 P3)、ADR-0016/0034(MCP 接入与 SDK) - 背景: `bm-providers/src/mcp.rs` 达 **2182 行**,把**传输(stdio/HTTP-SSE)+ 数据形状 + 子进程生命周期 + 完整性校验 + Hub 路由 + 异步执行器**六个关注点合于一文件——是全项目最大文件,也是"东一个补丁西一个补丁"观感的主要来源之一。 
 ## 决策 

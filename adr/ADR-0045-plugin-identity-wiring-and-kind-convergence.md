@@ -1,4 +1,11 @@
-status: accepted date: summary: 接线插件身份——CapabilityDiscovery 承载身份成为真实消费者、MCP/内核能力补声明、PluginKind 收敛为 Tool/Connector、移除空转 shutdown 钩子 supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-09-12
+summary: 接线插件身份——CapabilityDiscovery 承载身份成为真实消费者、MCP/内核能力补声明、PluginKind 收敛为 Tool/Connector、移除空转 shutdown 钩子
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0045: 插件身份接线与过度建模收敛(PluginKind 6→2、移除空转 shutdown) 
 - 关联: ADR-0041(插件身份契约)、ADR-0042(核实轮方法论)、ADR-0036(声明为唯一真源) - 背景: 重新评估发现 ADR-0041 引入的插件身份层是**空转的仪式**——`plugin_meta_of` 只有测试调用;`PluginKind` 6 变体中 `Store/Surface/Judge/Sandbox` **全仓零构造**(4/6 死变体);`shutdown` 无任何生产实现(唯二出现是 trait 默认与测试替身);`CapabilityDiscovery` 不含身份;无 HTTP 暴露;MCP 占位 provider 不声明身份。这是"契约比代码激进"的实例,且是本次改造自身引入的。 
 ## 决策 

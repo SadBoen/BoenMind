@@ -31,7 +31,7 @@
 | [ADR-0023](ADR-0023-bundled-plugin-default-install-and-lifecycle.md) | 官方随包插件默认安装与生命周期管控 | accepted | 启动播种默认安装(修订 0005/0006/0017 对官方件的显式批准要求)/墓碑防复活/批准即上线卸载即下线/purge 物理删除/弃用标记(2026-09-06) |
 | [ADR-0024](ADR-0024-limits-config-surface.md) | 运行时限制集中配置面(limits.json) | accepted | ~40 项硬编码限制收敛单文件+安全钳制+env>文件>代码默认+LimitsCell 热生效;设置页全量可编辑;exec 默认 120s/上限 600s 对齐业界(2026-09-07) |
 | [ADR-0025](ADR-0025-background-command-promotion.md) | 长命令后台转轨(run_in_background 与超限自动转轨) | accepted | exec 增 run_in_background+超限自动转轨(Hermes 式);system.job_output 轮询收取(DSH 式);回合 prompt 注入作业摘要;不做主动推注入(2026-09-07) |
-| [ADR-0026](archive/ADR-0026-doc-discipline-normative-narrative-separation.md) | 文档纪律——规范与叙事分离(评审上下文减负) | superseded→ADR-0040 | 规范文档零编年史/HISTORY 单行制/SETTLED.md 唯一查重清单/评审必读入口收窄(2026-09-08) |
+| [ADR-0026](archive/ADR-0026-doc-discipline-normative-narrative-separation.md) | 文档纪律——规范与叙事分离 | superseded→ADR-0040 | 规范文档零编年史/HISTORY 单行制/SETTLED.md 唯一查重清单/评审必读入口收窄(2026-09-08) |
 | [ADR-0027](archive/ADR-0027-docs-minimalism-delete-after-delivery.md) | 文档极简纪律——仓库只存规范、方向与欠账(过程文档交付即删) | superseded→ADR-0040 | 过程文档(规格/回看/转录/时间线)交付即删;交付全史=git;入库白名单四类(2026-09-08) |
 | [ADR-0028](ADR-0028-conversation-limits-default-zero.md) | 对话链路限制默认全零(0=不限制) | accepted | 十项限制默认归零(0=不限)+0 语义显式实现+熔断只拦同命令同参 10 次(2026-09-08) |
 | [ADR-0029](ADR-0029-feed-fidelity-no-kernel-coaching.md) | 回喂忠实性原则——内核只回事实,话术出内核 | accepted | 回喂只承载事实+错误原文保真(detail)+去内核指导性教练话术(2026-09-08) |
@@ -59,6 +59,7 @@
 | [ADR-0051](ADR-0051-manifest-synthesis-single-source.md) | manifest 合成单源(ManifestSpec 全族收口) | accepted | manifest 合成收口为单一合同路径 ManifestSpec——内置/fs/exec/share/context/mcp/wasm 各族只声明差异,缺省集单源 |
 | [ADR-0052](ADR-0052-json-store-single-source.md) | 配置文件 JSON 读写原语单源(bm-core::json_store) | accepted | 配置文件 JSON 读写原语单源至 bm-core,严格/宽容两种损坏策略显式命名,消除三份实现与同文件双策略 |
 | [ADR-0053](ADR-0053-wasm-declaration-loading-single-entry.md) | wasm 家族声明装载单入口 | accepted | wasm 家族声明装载单入口——路径/形状/选择规则收口 bm-core,启动装配与整表重载共用一条装载路径 |
+| [ADR-0054](ADR-0054-wire-name-and-execution-mode-declaration.md) | 面向模型的工具名入合同与执行分道去前缀 | accepted | manifest 增发 wire_name(Minor)+ 异步分道删除 provider 命名前缀回退——内核不再认识具体能力名 |
 <!-- ADR-INDEX:END -->
 
 > 编号说明:ADR-0012 于 2026-08-31 随 M10 dsh 前端线归档(见 ADR-0013 编号说明),编号不回收;主干引用配置管理口径时以 config_store 现状与 W2/W4 规格为准。

@@ -1,4 +1,11 @@
-status: accepted date: summary: ~40 项硬编码限制收敛单文件+安全钳制+env>文件>代码默认+LimitsCell 热生效;设置页全量可编辑;exec 默认 120s/上限 600s 对齐业界() supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-09-07
+summary: ~40 项硬编码限制收敛单文件+安全钳制+env>文件>代码默认+LimitsCell 热生效;设置页全量可编辑;exec 默认 120s/上限 600s 对齐业界(2026-09-07)
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0024: 运行时限制集中配置面(limits.json) 
 - 状态: Accepted(用户 ) - 日期: - 关联: ADR-0019(system.exec)、ADR-0021(fs.* 内置化)、ADR-0018(配置面先例 workspaces.json);调研依据 = `docs/agent-limits-timeout-comparison-20260907.md`(pi/pi_agent_rust/Hermes/DSH/ZCode 五家横评)与 `docs/runtime-limits-inventory-20260907.md`(本仓 40 项限制盘点;两报告均已随 ) - 背景: VPS 实测 system.exec 60s 铁顶致 GitHub clone 必败,且模型自传 `timeout_ms` 被三层 min() 钳死无效;全仓超时/上限/熔断约 40 项全部硬编码,仅 `BOEN_TURN_TIMEOUT_SECS` 一个环境变量旋钮。五家对照结论:①「按任务大小动态算时间」五家皆无,业界标准 = 配置默认值 + 模型逐次申请 + 上限钳制,长任务走「转后台」逃生通道;②除 TS 版 pi 外全部有配置文件;③命令超时业界收敛值 = 默认 120s / 前台上限 600s / 后台不限时。 
 ## 决策 

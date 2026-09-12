@@ -1,4 +1,11 @@
-status: accepted date: summary: 三权分立维持;Broker 授权数据面快路径合法化,binding_epoch 固化 supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-08-28
+summary: 三权分立维持;Broker 授权数据面快路径合法化,binding_epoch 固化
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0001 Registry/Broker/Bus 三权分立 
 - 状态: accepted-with-conditions - 日期: - 决策类型: 架构裁决(对基线 §17 裁决 R1 的复核结论) 
 ## 背景(原裁决文本) 

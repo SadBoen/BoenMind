@@ -1,4 +1,11 @@
-status: accepted date: summary: BindingStatus=生命周期/代际持久门,provider_health=运行期健康进程内门,不合并+卸载走 Draining 排空+dispatch 查 binding+restore 保真() supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-09-11
+summary: BindingStatus=生命周期/代际持久门,provider_health=运行期健康进程内门,不合并+卸载走 Draining 排空+dispatch 查 binding+restore 保真(2026-09-11)
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0037: Provider 健康与 Binding 状态的分工收口 
 - 状态: Accepted（） - 日期: - 关联: ADR-0001（binding_epoch 为授权-执行-审计一致性根基）、ADR-0032（binding 代际连续性；本项为其显式排除的残余）、issue #59 
 ## 背景 

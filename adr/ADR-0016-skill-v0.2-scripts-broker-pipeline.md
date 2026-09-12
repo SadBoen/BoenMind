@@ -1,4 +1,11 @@
-status: accepted date: summary: wasmtime 运行时沙箱+WASM 为主零 Python+全量纳入 Broker 七步管线 supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-09-02
+summary: wasmtime 运行时沙箱+WASM 为主零 Python+全量纳入 Broker 七步管线
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0016: Skill v0.2 脚本执行架构与 Broker 管线覆盖 
 - 状态: Accepted (用户 ) - 日期: - 关联: ADR-0001(三权分立与 Broker 管线), ADR-0005(万物皆插件与安全不变量), ADR-0006(权限以合同显式化), 基线 §4/§5/§7 
 ## 背景 

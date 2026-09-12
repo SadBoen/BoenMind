@@ -1,4 +1,11 @@
-status: accepted date: summary: Rust(plugins/mcp/sdk)+Python(apps/mcp_sdk.py)最小 SDK 单源化协议循环+未知工具统一 -32602/--self-describe 独立合同化() supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-09-11
+summary: Rust(plugins/mcp/sdk)+Python(apps/mcp_sdk.py)最小 SDK 单源化协议循环+未知工具统一 -32602/--self-describe 独立合同化(2026-09-11)
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0034: 插件协议最小 SDK——双语言收口与未知工具口径统一 
 - 状态: Accepted（） - 日期: - 关联: ADR-0005（万物皆插件）、ADR-0011（首批 App 以 MCP server 接入）、ADR-0017（官方 Rust 插件）、ADR-0022（工具协议与描述治理）、ADR-0023（随包插件发现与生命周期）、ADR-0033（#56 的 OPEN 登记处） 
 ## 背景 

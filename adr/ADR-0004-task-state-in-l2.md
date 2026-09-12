@@ -1,4 +1,11 @@
-status: accepted date: summary: 三层归属;task_epoch fencing;事件日志压实为强制义务 supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-08-28
+summary: 三层归属;task_epoch fencing;事件日志压实为强制义务
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0004 Task 规范状态归 L2,任务板仅为投影 
 - 状态: accepted-with-conditions - 日期: - 决策类型: 架构裁决(对基线 §17 裁决 R4 的复核结论) 
 ## 背景(原裁决文本) 

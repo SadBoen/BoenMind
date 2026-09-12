@@ -1,4 +1,11 @@
-status: accepted date: summary: C4 DSL 为唯一权威;C1-C8 验证成立;S1-S10 proposed supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-08-28
+summary: C4 DSL 为唯一权威;C1-C8 验证成立;S1-S10 proposed
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0008 架构即代码与外部实证验证 
 - 状态: accepted - 日期: - 决策类型: 工具与流程裁决 + 验证结论 - 来源: 架构图结构化重构(基线 §15/§24)与 DeepWiki 对照验证(architecture/deepwiki-validation.md) 
 ## 裁决 

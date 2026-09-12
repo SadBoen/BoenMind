@@ -1,4 +1,11 @@
-status: accepted date: summary: L0 是唯一显式自举豁免体,豁免清单冻结 supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-08-28
+summary: L0 是唯一显式自举豁免体,豁免清单冻结
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0007 L0 自举豁免与升级信任链 
 - 状态: accepted-with-conditions - 日期: - 决策类型: 新增架构裁决 
 ## 背景 

@@ -1,4 +1,11 @@
-status: accepted date: summary: 三处局部去重单源——default_data_dir 归 bm-persist、100 年无 TTL 哨兵归 core 常量、webadmin mcp 配置读取改用 json_store 原语 supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-09-12
+summary: 三处局部去重单源——default_data_dir 归 bm-persist、100 年无 TTL 哨兵归 core 常量、webadmin mcp 配置读取改用 json_store 原语
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0047: 三处局部去重单源(default_data_dir / 无 TTL 哨兵 / mcp 配置读取) 
 - 关联: ADR-0042(核实轮方法论)、ADR-0046(反转补完,本为其 P5 局部去重) - 背景: 重新评估列出三处**真实但局部**的重复(非假阳性),逐条收口。 
 ## 决策 

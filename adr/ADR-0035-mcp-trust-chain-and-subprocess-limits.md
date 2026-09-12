@@ -1,4 +1,11 @@
-status: accepted date: summary: trust 显式消费+payload 合同字段令 sha256 指向真实载荷(解释器条目 fail-closed)+扫描执行面 UI 显式化+子进程 Job Object/rlimit() supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-09-11
+summary: trust 显式消费+payload 合同字段令 sha256 指向真实载荷(解释器条目 fail-closed)+扫描执行面 UI 显式化+子进程 Job Object/rlimit(2026-09-11)
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0035: MCP 插件信任链收口与子进程资源上限 
 - 状态: Accepted（） - 日期: - 关联: ADR-0005（万物皆插件）、ADR-0006（权限以合同显式化）、ADR-0017（官方随包插件信任边界）、ADR-0023（随包插件默认安装与生命周期）、ADR-0034（插件协议 SDK）、issue #59（残余-3 信任链）、issue #55（MCP 子进程无 OS 级沙箱） 
 ## 背景 

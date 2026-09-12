@@ -1,4 +1,11 @@
-status: accepted date: summary: 回退限定工件/指针层;probation 观察窗;完整代际流程仅限 L1 Major supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-08-28
+summary: 回退限定工件/指针层;probation 观察窗;完整代际流程仅限 L1 Major
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0003 L0 独立控制面与 Runtime generation 升级回滚 
 - 状态: accepted-with-conditions - 日期: - 决策类型: 架构裁决(对基线 §17 裁决 R3 的复核结论) 
 ## 背景(原裁决文本) 

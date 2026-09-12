@@ -1,4 +1,11 @@
-status: accepted date: summary: surface"服务层边界"核实——AppState 持 EventStore 是端口依赖非越层、SSE 直读日志是刻意性能设计;真实债仅 chat_completions 巨型 handler,已抽取会话寻址与派发(462→316 行) supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-09-12
+summary: surface"服务层边界"核实——AppState 持 EventStore 是端口依赖非越层、SSE 直读日志是刻意性能设计;真实债仅 chat_completions 巨型 handler,已抽取会话寻址与派发(462→316 行)
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0044: surface「服务层边界」核实与巨型 handler 拆分 
 - 关联: ADR-0042(核实轮方法论)、ADR-0009(部署与 Surface)、基线 §14(Surface 与核心解耦) - 背景: 早先架构报告提出「`bm-surface-http` 兼服务层:直接持 `EventStore`、直读文件做编排,应引入服务层」。按 ADR-0042 的方法先核实,结果**大部为假阳性**,仅一处真实债。 
 ## 核实结论 

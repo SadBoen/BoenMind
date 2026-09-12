@@ -1,4 +1,11 @@
-status: accepted date: summary: manifest.execution_mode 落声明为分道真源(未声明时回退命名约定)+同步无 deadline 为显式非目标+CallContext 入端口记为方向不实施() supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-09-11
+summary: manifest.execution_mode 落声明为分道真源(未声明时回退命名约定)+同步无 deadline 为显式非目标+CallContext 入端口记为方向不实施(2026-09-11;2026-09-12 校订措辞:前缀回退保留而非删除)
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0036: 能力执行分道以合同声明为唯一真源 
 - 状态: Accepted（） - 日期: - 关联: ADR-0016（Skill wasm 沙箱）、ADR-0020（内置能力冻结）、ADR-0031（Agent v0.2 通信面）、ADR-0032（注册期冻结校验）、ADR-0033（skill.* 异步分道归位）、ADR-0034（插件协议 SDK）、issue #39、issue #59 
 ## 背景 

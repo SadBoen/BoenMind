@@ -1,4 +1,11 @@
-status: accepted date: summary: 协调动词按 Task 子树裁剪+safe/mutation 二分+Grant 物化 supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-08-28
+summary: 协调动词按 Task 子树裁剪+safe/mutation 二分+Grant 物化
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0002 Butler 仅持协调权,Coordinator 为受限队长 
 - 状态: accepted-with-conditions - 日期: - 决策类型: 架构裁决(对基线 §17 裁决 R2 的复核结论) 
 ## 背景(原裁决文本) 

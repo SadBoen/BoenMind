@@ -1,4 +1,11 @@
-status: accepted date: summary: assistant-ui 组件库自建壳+OpenAI 兼容插座;W 序列独立编号 supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-09-01
+summary: assistant-ui 组件库自建壳+OpenAI 兼容插座;W 序列独立编号
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0014:W 系列 WebUI 技术路线——assistant-ui 组件库 + OpenAI 兼容插座 
 - 状态:已裁决(用户 ) - 序列:WEBUI 里程碑序列,编号 W1、W2……(M 序列不续用,与 M10 dsh 线  [ADR-0013 弃用] 划清界限) 
 ## 背景 

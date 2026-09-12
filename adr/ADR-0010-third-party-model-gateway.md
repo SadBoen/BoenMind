@@ -1,4 +1,11 @@
-status: accepted date: summary: 接受 NewAPI 型网关为真实模型通道;内容视同对网关可见,不改 input_trust 语义 supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-08-30
+summary: 接受 NewAPI 型网关为真实模型通道;内容视同对网关可见,不改 input_trust 语义
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0010:第三方中转网关作为模型 Provider 
 - 状态:Accepted() - 关联:基线 5.4(模型连接器也是 Provider)、4.6(Secret Store)、8.4(脱敏与信任分级)、  ADR-0007(L0 启动豁免)、M4 规格 §5.8(模型调用豁免,M7 复议)、M7 规格 S1/S2 
 ## 背景 

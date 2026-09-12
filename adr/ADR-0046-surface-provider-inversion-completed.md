@@ -1,4 +1,11 @@
-status: accepted date: summary: 补完 surface→providers 依赖反转——抽 core 端口 SkillHost/JobBoard.list/McpAdmin,AdminConfig 全改端口,bm-providers 降为 dev-dependency,surface 源码零具体类型 supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-09-12
+summary: 补完 surface→providers 依赖反转——抽 core 端口 SkillHost/JobBoard.list/McpAdmin,AdminConfig 全改端口,bm-providers 降为 dev-dependency,surface 源码零具体类型
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0046: 补完 surface→providers 依赖反转(端口化管理面) 
 - 关联: ADR-0042(核实轮方法论;`ModelRouter` 已正确反转,本条补齐其余)、ADR-0014(W 序列管理面)、ADR-0045(身份接线) - 背景: 重新评估发现 `bm-surface-http` **常规依赖** `bm-providers` 具体类型:`AdminConfig` 直接持 `Arc<bm_providers::mcp::McpHub>` / `jobs::JobTable` / `skill_wasm::SkillScriptManager`,管理面直接调 `openai_http::OpenAiConnector::new` / `supervisor::sync_from_config` / `sha256_file`。而**同样位置的 `ModelRouter` 早已正确抽成 core 端口**(ADR-0042)——这是**做了一半的反转**,是全项目唯一的结构性欠账。 
 ## 决策 

@@ -1,4 +1,11 @@
-status: accepted date: summary: config/workspaces.json 项目注册;AgentSpec/SendInput 只增 workspace 字段;回合级 system prompt 注入;探针无 shell supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-09-03
+summary: config/workspaces.json 项目注册;AgentSpec/SendInput 只增 workspace 字段;回合级 system prompt 注入;探针无 shell
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0018: 工作区注册表与会话级工作目录绑定 
 - 状态: Accepted（用户 ） - 日期: - 关联: ADR-0005（万物皆插件）、ADR-0006（权限以合同显式化）、ADR-0012（配置文件>env 口径）、ADR-0014（W 序列技术路线） 
 ## 背景 

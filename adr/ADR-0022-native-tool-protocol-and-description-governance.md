@@ -1,4 +1,11 @@
-status: accepted date: summary: role:tool+tool_call_id/tool_calls 回喂/删防复读禁令/manifest.description 自描述/fs_edit edits 数组() supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-09-06
+summary: role:tool+tool_call_id/tool_calls 回喂/删防复读禁令/manifest.description 自描述/fs_edit edits 数组(2026-09-06)
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0022: 工具调用原生协议还原与工具描述治理 
 - 状态: Accepted(用户 ) - 日期: - 关联: ADR-0021(fs.* 内置化)、ADR-0019(system.exec)、ADR-0006(权限显式化)、ADR-0013(前端线)、W4(对话工具闭环)、W5(context-log) - 证据基线: `docs/agent-tools-payload-comparison-report.md` v2(已随 )—— 对 DSH(本机 npm 包源码逐字提取)、Pi Agent(badlogic/pi-mono GitHub 源码)、Hermes Agent(NousResearch,VPS 实机 v0.20.6 只读核实)三家「发给 LLM 的最原始底层报文」的横评调研 - 背景: 用户实测 BoenMind Agent「工具使用非常别扭」。调研定性出四个底层根因:①工具结果被伪装成 `role:"user"`(openai_http.rs 为兼容第三方网关的权宜);②工具轮回喂时 assistant 消息丢失 tool_calls 结构(模型看不到自己发起过什么调用);③每次工具成功后强贴「该调用已完成…不要再次调用该工具」负向禁令(斩断链式调用);④MCP 工具描述被整层丢弃(模型只见「只读直通工具」套话),且审批 UI 措辞(「弹出审批卡片」)混入工具描述。现代 LLM 对 `role:"tool"` + `tool_call_id` 的因果链有专项训练,以上四点全部逆训练本能而行。 
 ## 决策 

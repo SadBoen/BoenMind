@@ -1,4 +1,11 @@
-status: superseded date: summary: 规范文档零编年史/HISTORY 单行制/SETTLED.md 唯一查重清单/评审必读入口收窄() supersedes: [] superseded_by: [ADR-0040] 
+---
+status: superseded
+date: 2026-09-08
+summary: 规范文档零编年史/HISTORY 单行制/SETTLED.md 唯一查重清单/评审必读入口收窄(2026-09-08)
+supersedes: []
+superseded_by: [ADR-0040]
+---
+
 # ADR-0026: 文档纪律——规范与叙事分离 
 - 状态: Accepted(用户 ) - 日期: - 关联: ADR-0015(文档体系整理,本 ADR 细化其执行纪律);对标 = pi_agent_rust 的 AGENTS.md 写法(全文操作规范、零编年史,历史隔离于 CHANGELOG/UPGRADE_LOG 专用文件) - 背景: )约 19.1 万字符,其中台账三件约 85% 是时间线叙事而非当前规范;AGENTS.md 状态段是 557 字编年史,HISTORY 单行最长 1,625 字节,同一坑在 AGENTS/PLAYBOOK 逐字双份维护。编年史混进规范文档,评审 Agent 反复把已裁决事项当新发现提出,每批复核「修 N 驳 M」,驳回结论又写成新叙事灌回文档——自我强化的评审污染循环,用户定性「这样项目走不动」。 
 ## 决策 

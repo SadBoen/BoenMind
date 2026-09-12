@@ -1,4 +1,11 @@
-status: accepted date: summary: 模式按对话记于服务端(默认ask)+yolo由服务端裁决放行并审计标注auto+前端降级选择器+硬拒绝/熔断不动() supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-09-09
+summary: 模式按对话记于服务端(默认ask)+yolo由服务端裁决放行并审计标注auto+前端降级选择器+硬拒绝/熔断不动(2026-09-09)
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0030: 审批裁决后台化——权限模式为服务端会话状态 
 - 状态: Accepted（用户 ） - 日期: - 关联: ADR-0001（Broker 唯一裁决）、ADR-0006（权限以合同显式化）、ADR-0019（system.exec 审批类）、ADR-0028（熔断硬停）、基线 §15、issue #42（重定义后本条即其决策文档）、issue #25（审批无人在线提醒） 
 ## 背景 

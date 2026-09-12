@@ -1,4 +1,11 @@
-status: accepted date: summary: 整并取代 0015/0026/0027;ADR 状态机与取代双向一致入 CI;可提交面 .md 收归白名单;治理门自带自检防静默摘除() supersedes: [ADR-0015, ADR-0026, ADR-0027] superseded_by: [] 
+---
+status: accepted
+date: 2026-09-12
+summary: 整并取代 0015/0026/0027;ADR 状态机与取代双向一致入 CI;可提交面 .md 收归白名单;治理门自带自检防静默摘除(2026-09-12)
+supersedes: [ADR-0015, ADR-0026, ADR-0027]
+superseded_by: []
+---
+
 # ADR-0040: 文档治理以机器门固化——ADR 状态机 + 追踪白名单 
 - 关联: 整并取代 ADR-0015(文档体系整理)、ADR-0026(规范与叙事分离)、ADR-0027(文档极简纪律);承接三者仍有效的原则,将其执行从"纸面规则"升级为"CI 硬门" - 背景: ),每套都删掉上一套钦定的文件;而 `.github/workflows/ci.yml` 六个 job 无一条检查文档——唯一被机器检查的文档内容仅 AGENTS.md 的一行版本号(A-26 诊断见 `.ai/context.md`)。根因:治理规则全靠自觉,无机器门,故必然被下一套推翻。 
 ## 决策 

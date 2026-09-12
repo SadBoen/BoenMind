@@ -1,4 +1,11 @@
-status: accepted date: summary: wasm 声明格式合一——归一化 WasmDecl + 单一 synthesize,skills.json 与 plugins.json 两种磁盘形状共用一条 manifest 合成路径 supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-09-12
+summary: wasm 声明格式合一——归一化 WasmDecl + 单一 synthesize,skills.json 与 plugins.json 两种磁盘形状共用一条 manifest 合成路径
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0049: wasm 声明格式合一(单一 manifest 合成路径) 
 - 关联: ADR-0041(通用 wasm 宿主与去特化)、ADR-0046(反转补完,本为其 P4)、ADR-0016(Skill 脚本执行面) - 背景: 同一个 wasm 宿主承载**两种磁盘声明形状**:`skills.json`(`{skills:[{scripts:[…]}]}` + `SkillDefinition`)与 `plugins.json`(顶层数组 + `WASM_PLUGIN_SCHEMA`)。两者的**装载**已共用 `register_wasm`,但 **manifest 合成**仍是两个独立 `json!` 块(`manifests_for` 与 `load_plugins_file`),默认值/字段集并行维护——典型"同一语义两处写"。 
 ## 决策 

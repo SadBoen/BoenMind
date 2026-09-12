@@ -1,4 +1,11 @@
-status: accepted date: summary: manifest 合成收口为单一合同路径 ManifestSpec——内置/fs/exec/share/context/mcp/wasm 各族只声明差异,缺省集单源 supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-09-12
+summary: manifest 合成收口为单一合同路径 ManifestSpec——内置/fs/exec/share/context/mcp/wasm 各族只声明差异,缺省集单源
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0051: manifest 合成单源(ManifestSpec 全族收口) 
 - 关联: ADR-0049(wasm 声明格式合一)、ADR-0036(execution_mode 合同真源)、ADR-0024(限制集中配置面)、ADR-0006(权限以合同显式化) - 背景(): capability manifest 是「一份合同管所有 provider」的地基,但**合成**却有 6+ 处独立 `json!` 构造器,各自重抄字段与缺省值:`builtin.rs::manifest`、`system_exec.rs` 两个字面量、`fs_tools/mod.rs::entry`、`share.rs::share_entry`、`context_compress.rs::manifest`、`mcp/shape.rs::tool_manifest`,加 ADR-0049 的 `WasmDecl::synthesize`。缺省值重复已导致真实漂移:`limits.skill_default_timeout_ms` 在 `limits.rs` 定义、设置页可编辑,而 `skill_wasm` 从未读取它(它用自己的 `DEFAULT_TIMEOUT_MS`),即该设置项对技能空转(已随本 ADR 一并修复)。ADR-0049 只统一了 wasm 子集。 
 ## 决策 

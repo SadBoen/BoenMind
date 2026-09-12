@@ -1,4 +1,11 @@
-status: accepted date: summary: 模型路由关注点上移为 core 端口 ModelRouter,surface 去具体依赖;并更正早先架构报告的两处假阳性(持久化 schema 归属、bm-contract 策略提纯)与前缀派发清零 supersedes: [] superseded_by: [] 
+---
+status: accepted
+date: 2026-09-12
+summary: 模型路由关注点上移为 core 端口 ModelRouter,surface 去具体依赖;并更正早先架构报告的两处假阳性(持久化 schema 归属、bm-contract 策略提纯)与前缀派发清零
+supersedes: []
+superseded_by: []
+---
+
 # ADR-0042: 模型路由端口上移(去具体依赖)与两处"分层越界"假阳性更正 
 - 关联: ADR-0005(万物皆插件)、ADR-0036(执行分道)、ADR-0041(插件身份契约) - 背景: 一份基于**无 Cargo.toml 的源码快照**的架构评审报告提出若干"分层越界"欠账。对真实仓逐条核实后,发现其中**两处为假阳性**、一处为真问题但需重新定位,另有若干"声称存在实为缺失"的守护测试。本 ADR 记录核实结论与据此的改动,作为"动架构前必须对真仓核实"的方法论锚点。 
 ## 决策 
