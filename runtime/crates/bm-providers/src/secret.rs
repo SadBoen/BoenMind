@@ -37,10 +37,10 @@ fn ensure_valid_ref(secret_ref: &str) -> Result<(), SecretError> {
     bm_contract::connector::validate_secret_ref(secret_ref).map_err(SecretError::InvalidRef)
 }
 
-/// 密钥库原子写(2026-09-05 回看收归:复用 bm_persist::atomic_write 单点
+/// 密钥库原子写(2026-09-05 回看收归:复用 bm_core::ports::persist::atomic_write 单点
 /// 实现):临时文件 + flush + fsync + rename,断电不留半截密钥库。
 fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> Result<(), SecretError> {
-    bm_persist::atomic_write(path, bytes).map_err(|e| SecretError::Backend(e.to_string()))
+    bm_core::ports::persist::atomic_write(path, bytes).map_err(|e| SecretError::Backend(e.to_string()))
 }
 
 #[derive(Default)]

@@ -7,7 +7,9 @@
 //! Provider 不触达),单写者纪律与 Broker 裁决/审计全覆盖;点名消息与成员级
 //! 身份随批次 2(ADR-0031 决策 2),远程网格留阶段二。
 
-use bm_contract::capability::CapabilityManifest;
+use bm_contract::capability::{
+    CapabilityManifest, ExecutionMode, ManifestSpec, RiskClass,
+};
 use bm_contract::events::{EventEnvelope, EventType};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -93,7 +95,7 @@ pub fn task_id_of_principal(principal: &str) -> Option<String> {
 
 fn share_entry(
     capability: &str,
-    effect: &str,
+    effect: RiskClass,
     idempotent: bool,
     description: &str,
     input_schema: Value,
@@ -101,22 +103,17 @@ fn share_entry(
     CapabilityManifest,
     Arc<dyn crate::registry::CapabilityProvider>,
 ) {
-    let manifest: CapabilityManifest = serde_json::from_value(json!({
-        "capability": capability,
-        "provider": "builtin.core",
-        "version": "0.1.0",
-        "description": description,
-        "input_schema": input_schema,
-        "output_schema": {"type": "object"},
-        "effect": effect,
-        "idempotent": idempotent,
-        "cancellable": false,
-        "timeout_ms": 5_000,
-        "approval": "not-required",
-        "scopes": ["domain:task"],
-        "execution_mode": "sync"
-    }))
-    .expect("task.share manifest 合法");
+    // ADR-0051:走全仓单一 manifest 合成路径(缺省单源)。
+    let manifest = ManifestSpec::new(capability, "builtin.core", effect)
+        .description(description)
+        .input_schema(input_schema)
+        .idempotent(idempotent)
+        .cancellable(false)
+        .timeout_ms(5_000)
+        .scopes(vec!["domain:task".to_string()])
+        .execution_mode(ExecutionMode::Sync)
+        .build()
+        .expect("task.share manifest 合法");
     (manifest, Arc::new(SharePlaceholder))
 }
 
@@ -149,7 +146,7 @@ pub fn share_capability_entries() -> Vec<(
     vec![
         share_entry(
             SHARE_PUBLISH,
-            "low-risk-command",
+            RiskClass::LowRiskCommand,
             false,
             "把一条发现/结论贴到当前 Task 的共享公告栏,同 Task 成员立即可见。只写本任务公告栏,不触外部世界。参数:title(一句话标题,必填)、content(发现正文,必填)。所属 Task 由调用主体自动归属,不可也无法指定。",
             json!({
@@ -163,7 +160,7 @@ pub fn share_capability_entries() -> Vec<(
         ),
         share_entry(
             SHARE_LIST,
-            "read-only",
+            RiskClass::ReadOnly,
             true,
             "读取当前 Task 的共享公告栏(同 Task 成员发布的发现,按发布序返回)。可选 since_seq 只取该事件序之后的条目(增量拉取)。所属 Task 由调用主体自动归属。",
             json!({

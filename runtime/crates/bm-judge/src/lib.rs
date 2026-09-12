@@ -6,13 +6,19 @@
 
 use bm_contract::events::EventType;
 use bm_contract::ids::ulid26_for_counter;
-use bm_persist::EventStore;
+use bm_contract::states::OperationState;
+use bm_core::ports::persist::EventStore;
 use serde_json::{Value, json};
 
 pub const JUDGE_VERSION: &str = "0.1.0";
 
-/// 终态 operation 状态(operation.state.changed 的 to 值)。
-const TERMINAL_OP_STATES: [&str; 4] = ["succeeded", "failed", "cancelled", "timeout"];
+/// 终态 operation 状态判定:以合同状态机为唯一真源(`OperationState::is_terminal`,
+/// 由 `OPERATION_TERMINAL` 支撑、与 core-transitions.v0_1.json 有同步测试)。
+/// 此前此处硬编码 4 态字符串表并漏了 `outcome_unknown`——手工镜像已漂移
+/// (2026-09-12 架构评估修复)。
+fn is_terminal_op_state(wire: &str) -> bool {
+    OperationState::from_wire(wire).is_some_and(|s| s.is_terminal())
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum JudgeError {
@@ -141,7 +147,7 @@ fn check_single_terminal(events: &[bm_contract::events::EventEnvelope]) -> Check
     let mut per_op: HashMap<String, u32> = HashMap::new();
     for e in events {
         if e.event_type.as_str() == "operation.state.changed"
-            && TERMINAL_OP_STATES.contains(&e.payload["to"].as_str().unwrap_or(""))
+            && is_terminal_op_state(e.payload["to"].as_str().unwrap_or(""))
         {
             let op = e.payload["operation_id"].as_str().unwrap_or("").to_string();
             *per_op.entry(op).or_insert(0) += 1;

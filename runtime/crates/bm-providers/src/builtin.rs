@@ -10,7 +10,7 @@
 //! - system.mail.mock_send external-side-effect mock 外部发送(返回收据,留档)
 //! - system.danger.purge   high-risk-command    恒审批(Broker 双保险兜住)
 
-use bm_contract::capability::CapabilityManifest;
+use bm_contract::capability::{CapabilityManifest, ExecutionMode, ManifestSpec, RiskClass};
 use bm_core::broker::{provider_fn, provider_fn_with_meta};
 use bm_core::registry::CapabilityProvider;
 use serde_json::{Value, json};
@@ -25,20 +25,19 @@ pub struct DemoState {
     counters: Mutex<HashMap<String, u64>>,
 }
 
-fn manifest(name: &str, effect: &str, extra: Value) -> CapabilityManifest {
-    let mut base = json!({
-        "capability": name, "provider": name, "version": "0.1.0",
-        "input_schema": {"type": "object"},
-        "output_schema": {"type": "object"},
-        "effect": effect, "idempotent": true, "cancellable": true,
-        "timeout_ms": 1000, "approval": "not-required", "execution_mode": "sync"
-    });
-    if let (Some(base_obj), Some(extra_obj)) = (base.as_object_mut(), extra.as_object()) {
-        for (k, v) in extra_obj {
-            base_obj.insert(k.clone(), v.clone());
-        }
-    }
-    serde_json::from_value(base).expect("内置 manifest 合法")
+/// ADR-0051:内置演示能力走全仓单一 manifest 合成路径。
+/// 缺省 = version 0.1.0 / schema `{}` / idempotent=true / cancellable=true /
+/// timeout 1s / approval not-required / execution sync;`extra` 叠加差异
+/// (scopes、input_schema、timeout_ms、cancellable 等)。
+fn manifest(name: &str, effect: RiskClass, extra: Value) -> CapabilityManifest {
+    ManifestSpec::new(name, name, effect)
+        .idempotent(true)
+        .cancellable(true)
+        .timeout_ms(1000)
+        .execution_mode(ExecutionMode::Sync)
+        .overlay(extra)
+        .build()
+        .expect("内置 manifest 合法")
 }
 
 /// 内置能力装配集(RuntimeConfig.capabilities)。
@@ -50,7 +49,7 @@ pub fn builtin_capability_set() -> Vec<(CapabilityManifest, Arc<dyn CapabilityPr
     out.push((
         manifest(
             "system.echo",
-            "read-only",
+            RiskClass::ReadOnly,
             json!({"scopes": ["system.echo"]}),
         ),
         provider_fn(Ok),
@@ -61,7 +60,7 @@ pub fn builtin_capability_set() -> Vec<(CapabilityManifest, Arc<dyn CapabilityPr
     out.push((
         manifest(
             "system.counter.bump",
-            "low-risk-command",
+            RiskClass::LowRiskCommand,
             json!({"scopes": ["system.counter"]}),
         ),
         provider_fn(move |args| {
@@ -86,7 +85,7 @@ pub fn builtin_capability_set() -> Vec<(CapabilityManifest, Arc<dyn CapabilityPr
     out.push((
         manifest(
             "system.notes.write",
-            "reversible-command",
+            RiskClass::ReversibleCommand,
             json!({
                 "scopes": ["system.notes"],
                 "input_schema": {
@@ -123,7 +122,7 @@ pub fn builtin_capability_set() -> Vec<(CapabilityManifest, Arc<dyn CapabilityPr
     out.push((
         manifest(
             "system.notes.delete",
-            "reversible-command",
+            RiskClass::ReversibleCommand,
             json!({
                 "scopes": ["system.notes"],
                 "input_schema": {
@@ -156,7 +155,7 @@ pub fn builtin_capability_set() -> Vec<(CapabilityManifest, Arc<dyn CapabilityPr
     out.push((
         manifest(
             "system.mail.mock_send",
-            "external-side-effect",
+            RiskClass::ExternalSideEffect,
             json!({
                 "scopes": ["system.mail"],
                 "input_schema": {
@@ -201,7 +200,7 @@ pub fn builtin_capability_set() -> Vec<(CapabilityManifest, Arc<dyn CapabilityPr
     out.push((
         manifest(
             "system.danger.purge",
-            "high-risk-command",
+            RiskClass::HighRiskCommand,
             json!({"scopes": ["system.admin"], "cancellable": false}),
         ),
         provider_fn(move |args| {
@@ -241,7 +240,7 @@ pub fn model_invoke_cap() -> (CapabilityManifest, Arc<dyn CapabilityProvider>) {
     (
         manifest(
             "model.invoke",
-            "read-only",
+            RiskClass::ReadOnly,
             json!({
                 "scopes": ["domain:model"],
                 "idempotent": false,

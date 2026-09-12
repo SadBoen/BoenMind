@@ -56,7 +56,7 @@ impl OpenAiConnector {
     }
 }
 
-// ---- OpenAI 兼容线格式(glm_http 复用同一套,单源防协议漂移)--------------
+// ---- OpenAI 兼容线格式(单源:真实连接器与 mock 共用同一形状,防协议漂移)--------------
 
 #[derive(serde::Serialize)]
 pub(crate) struct WireMessage<'a> {

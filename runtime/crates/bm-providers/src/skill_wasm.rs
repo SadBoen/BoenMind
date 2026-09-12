@@ -20,8 +20,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use wasmtime::{Engine, Module};
 
-/// 默认脚本超时(ADR-0016:10s 看门狗)。
-pub const DEFAULT_TIMEOUT_MS: u64 = 10_000;
 /// fuel 上限(防死循环烧 CPU:约对应数秒纯计算,超时硬顶兜底)。
 const FUEL_LIMIT: u64 = 2_000_000_000;
 
@@ -61,41 +59,34 @@ struct WasmDecl {
     version: String,
     input_schema: Value,
     output_schema: Value,
-    /// 风险级 wire 串(如 `read-only`)。
-    effect: String,
+    effect: bm_contract::capability::RiskClass,
     idempotent: bool,
     timeout_ms: u64,
-    /// 审批要求 wire 串(`not-required` / `required`)。
-    approval: String,
-    /// 权限范围标签数组。
-    scopes: Value,
+    approval: bm_contract::capability::ApprovalRequirement,
+    scopes: Vec<String>,
     description: Option<String>,
 }
 
 impl WasmDecl {
-    /// 合成 `CapabilityManifest`(execution_mode 恒 async;cancellable 恒 true)。
+    /// 合成 `CapabilityManifest`。ADR-0051:与内置/MCP/share 等族共用
+    /// [`bm_contract::capability::ManifestSpec`] 单一合成路径(execution_mode
+    /// 恒 async;cancellable 恒 true);本结构只承载两格式(技能/插件)归一后的差异。
     fn synthesize(&self) -> Result<CapabilityManifest, String> {
-        let mut v = json!({
-            "capability": self.capability,
-            "provider": self.provider,
-            "version": self.version,
-            "input_schema": self.input_schema,
-            "output_schema": self.output_schema,
-            "effect": self.effect,
-            "idempotent": self.idempotent,
-            "cancellable": true,
-            "timeout_ms": self.timeout_ms,
-            "approval": self.approval,
-            "scopes": self.scopes,
-            "execution_mode": "async",
-        });
-        // 描述仅在给出时出现(与既有 plugin 行为一致;技能不产出该字段)。
-        if let Some(d) = &self.description
-            && let Some(obj) = v.as_object_mut()
-        {
-            obj.insert("description".to_string(), json!(d));
+        let mut spec =
+            bm_contract::capability::ManifestSpec::new(&self.capability, &self.provider, self.effect)
+                .version(&self.version)
+                .input_schema(self.input_schema.clone())
+                .output_schema(self.output_schema.clone())
+                .idempotent(self.idempotent)
+                .cancellable(true)
+                .timeout_ms(self.timeout_ms)
+                .approval(self.approval)
+                .scopes(self.scopes.clone())
+                .execution_mode(bm_contract::capability::ExecutionMode::Async);
+        if let Some(d) = &self.description {
+            spec = spec.description(d);
         }
-        serde_json::from_value(v).map_err(|e| e.to_string())
+        spec.build()
     }
 }
 
@@ -103,10 +94,14 @@ impl WasmDecl {
 pub struct SkillScriptManager {
     engine: Engine,
     entries: Mutex<HashMap<String, Arc<ScriptEntry>>>,
+    /// 脚本默认超时(声明未指定 `timeout_ms` 时的回退)。来源 =
+    /// `limits.skill_default_timeout_ms`(ADR-0024 限制集中配置面)——
+    /// 此前用本文件内的 const,使设置页该项空转(2026-09-12 评估修复)。
+    default_timeout_ms: u64,
 }
 
 impl SkillScriptManager {
-    pub fn new() -> Result<Self, String> {
+    pub fn new(limits: bm_core::limits::LimitsCell) -> Result<Self, String> {
         // fuel 计量必须引擎级开启:set_fuel 才可用(死循环 wasm 的硬保险)
         let mut cfg = wasmtime::Config::new();
         cfg.consume_fuel(true);
@@ -114,6 +109,7 @@ impl SkillScriptManager {
         Ok(Self {
             engine,
             entries: Mutex::new(HashMap::new()),
+            default_timeout_ms: limits.get().skill_default_timeout_ms,
         })
     }
 
@@ -130,7 +126,7 @@ impl SkillScriptManager {
         for sc in scripts {
             let capability = format!("skill.{}.{}", skill_id, sc.name);
             let wasm_path = skill_root.join(&sc.path);
-            let timeout_ms = sc.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
+            let timeout_ms = sc.timeout_ms.unwrap_or(self.default_timeout_ms);
             self.register_wasm_with_origin(
                 &provider,
                 &capability,
@@ -191,7 +187,9 @@ impl SkillScriptManager {
                 eprintln!("[Plugin] {capability} 未声明 wasm(已跳过)");
                 continue;
             };
-            let timeout_ms = it["timeout_ms"].as_u64().unwrap_or(DEFAULT_TIMEOUT_MS);
+            let timeout_ms = it["timeout_ms"]
+                .as_u64()
+                .unwrap_or(self.default_timeout_ms);
             if let Err(e) =
                 self.register_wasm(provider, capability, &root.join(wasm_rel), root, timeout_ms)
             {
@@ -210,11 +208,26 @@ impl SkillScriptManager {
                     .get("output_schema")
                     .cloned()
                     .unwrap_or(json!({"type": "object"})),
-                effect: it["effect"].as_str().unwrap_or("read-only").to_string(),
+                // 契约 schema 已保证 effect/approval 为合法枚举;缺省分别取
+                // read-only / required(未知风险从严)。
+                effect: it["effect"]
+                    .as_str()
+                    .and_then(bm_contract::capability::RiskClass::from_wire)
+                    .unwrap_or(bm_contract::capability::RiskClass::ReadOnly),
                 idempotent: it["idempotent"].as_bool().unwrap_or(false),
                 timeout_ms,
-                approval: it["approval"].as_str().unwrap_or("required").to_string(),
-                scopes: it.get("scopes").cloned().unwrap_or(json!([])),
+                approval: it["approval"]
+                    .as_str()
+                    .and_then(bm_contract::capability::ApprovalRequirement::from_wire)
+                    .unwrap_or(bm_contract::capability::ApprovalRequirement::Required),
+                scopes: it["scopes"]
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|s| s.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
                 description: it["description"].as_str().map(str::to_string),
             };
             match decl.synthesize() {
@@ -365,17 +378,17 @@ impl SkillScriptManager {
                     version: "0.1.0".to_string(),
                     input_schema: sc.input_schema.clone(),
                     output_schema: sc.output_schema.clone(),
-                    effect: sc.effect.clone(),
+                    effect: bm_contract::capability::RiskClass::from_wire(&sc.effect)
+                        .unwrap_or(bm_contract::capability::RiskClass::ReadOnly),
                     idempotent: false,
-                    timeout_ms: sc.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS),
+                    timeout_ms: sc.timeout_ms.unwrap_or(self.default_timeout_ms),
                     // 副作用脚本必须审批;只读直通。
                     approval: if sc.effect == "read-only" {
-                        "not-required"
+                        bm_contract::capability::ApprovalRequirement::NotRequired
                     } else {
-                        "required"
-                    }
-                    .to_string(),
-                    scopes: json!([format!("domain:skill.{}", skill_id)]),
+                        bm_contract::capability::ApprovalRequirement::Required
+                    },
+                    scopes: vec![format!("domain:skill.{}", skill_id)],
                     description: None,
                 };
                 decl.synthesize()
@@ -572,7 +585,8 @@ mod tests {
     )"#;
 
     fn manager_with_wat(wat: &str) -> (SkillScriptManager, String) {
-        let mgr = SkillScriptManager::new().expect("engine");
+        let mgr = SkillScriptManager::new(bm_core::limits::LimitsCell::with_default())
+            .expect("engine");
         let engine = mgr.engine.clone();
         let module = Module::new(&engine, wat).expect("wat 编译");
         let cap = "skill.demo.convert".to_string();
@@ -668,7 +682,8 @@ mod tests {
 
     #[test]
     fn manifests_for_maps_effect_and_capability_name() {
-        let mgr = SkillScriptManager::new().expect("engine");
+        let mgr = SkillScriptManager::new(bm_core::limits::LimitsCell::with_default())
+            .expect("engine");
         let def: SkillDefinition = serde_json::from_value(serde_json::json!({
             "skill_id": "skill_units",
             "name": "换算",
@@ -718,7 +733,8 @@ mod tests {
         )
         .expect("写声明");
 
-        let mgr = SkillScriptManager::new().expect("engine");
+        let mgr = SkillScriptManager::new(bm_core::limits::LimitsCell::with_default())
+            .expect("engine");
         let manifests = mgr.load_plugins_file(&decl);
         assert_eq!(manifests.len(), 1, "声明应装载出一个能力");
         assert_eq!(manifests[0].capability, "demo.echo");
@@ -763,7 +779,8 @@ mod tests {
             wat::parse_str(ECHO_WAT).expect("wat→wasm"),
         )
         .expect("写 wasm");
-        let mgr = SkillScriptManager::new().expect("engine");
+        let mgr = SkillScriptManager::new(bm_core::limits::LimitsCell::with_default())
+            .expect("engine");
 
         // 未知字段(additionalProperties:false)→ 拒绝
         let unknown = dir.path().join("unknown.json");
@@ -810,7 +827,8 @@ mod tests {
     // ADR-0041:wasm 插件以 Tool 身份注册,内核可读到「谁提供」。
     #[test]
     fn capability_entries_declare_plugin_identity() {
-        let mgr = SkillScriptManager::new().expect("engine");
+        let mgr = SkillScriptManager::new(bm_core::limits::LimitsCell::with_default())
+            .expect("engine");
         let def: SkillDefinition = serde_json::from_value(serde_json::json!({
             "skill_id": "units",
             "name": "换算",
@@ -841,7 +859,8 @@ mod tests {
         std::fs::write(&secret, b"MZ-not-wasm").expect("写外部文件");
         let skill_root = dir.path().join("skill");
         std::fs::create_dir_all(&skill_root).expect("建技能目录");
-        let mgr = SkillScriptManager::new().expect("engine");
+        let mgr = SkillScriptManager::new(bm_core::limits::LimitsCell::with_default())
+            .expect("engine");
         let def: SkillDefinition = serde_json::from_value(serde_json::json!({
             "skill_id": "escape",
             "name": "越界",
@@ -871,7 +890,8 @@ mod tests {
         let bytes = wat::parse_str(ECHO_WAT).expect("wat→wasm");
         std::fs::write(&wasm, &bytes).expect("写 wasm");
 
-        let mgr = SkillScriptManager::new().expect("engine");
+        let mgr = SkillScriptManager::new(bm_core::limits::LimitsCell::with_default())
+            .expect("engine");
         mgr.register_wasm("plugin.demo", "plugin.demo.echo", &wasm, dir.path(), 5_000)
             .expect("通用注册应接受任意 capability 名");
         assert!(mgr.entries.lock().unwrap().contains_key("plugin.demo.echo"));
@@ -888,5 +908,38 @@ mod tests {
             .register_wasm("plugin.bad", "plugin.bad", &other, dir.path(), 1_000)
             .expect_err("越界必须拒");
         assert!(err.contains("越出 root"), "{err}");
+    }
+
+    // 2026-09-12 架构评估修复:脚本默认超时须接 `limits.skill_default_timeout_ms`
+    // (ADR-0024 限制集中配置面)。此前用本文件内 const,设置页该项对技能空转——
+    // 本测试锁死:非默认 limits 值必须落到合成 manifest。
+    #[test]
+    fn default_timeout_follows_limits_cell() {
+        let limits = bm_core::limits::Limits {
+            skill_default_timeout_ms: 12_345,
+            ..Default::default()
+        };
+        let mgr = SkillScriptManager::new(bm_core::limits::LimitsCell::new(limits))
+            .expect("engine");
+        let def: SkillDefinition = serde_json::from_value(serde_json::json!({
+            "skill_id": "limits_demo",
+            "name": "超时",
+            "instruction": "x",
+            "scripts": [{
+                "name": "s",
+                "path": "s.wasm",
+                "effect": "read-only",
+                "input_schema": {"type": "object"},
+                "output_schema": {"type": "object"}
+            }]
+        }))
+        .expect("合法");
+        let manifests = mgr
+            .manifests_for("limits_demo", def.scripts.as_ref().unwrap())
+            .expect("manifests");
+        assert_eq!(
+            manifests[0].timeout_ms, 12_345,
+            "默认超时须随 limits 生效(声明未给 timeout_ms 时)"
+        );
     }
 }

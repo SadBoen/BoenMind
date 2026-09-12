@@ -558,7 +558,7 @@ Runtime Registry
 
 分表是开放集合：新对象类型（模型、技能、审批、产物等）按同一模式增设分表，不修改内核结构。
 
-> 实现现状（2026-09-12 校准，随 C4 模型同步）：阶段一落地为**单一 Capability Registry**（§6.2 能力七问 + §6.4 Provider Binding + Binding 生命周期门，ADR-0037）——App/Agent/Task-Team 等对象的规范状态由 SQLite 规范状态与事件投影承载（§2.2），未设独立注册分表；「分表是开放集合」保留为增表模式，新对象类型真实出现时按同一模式增设。
+> 实现现状（2026-09-12 校准，随 C4 模型同步）：阶段一落地为**单一 Capability Registry**（§6.2 能力七问 + §6.4 Provider Binding + Binding 生命周期门，ADR-0037）——App/Agent/Task-Team 等对象的规范状态由 SQLite 规范状态与事件投影承载（§2.2），未设独立注册分表；「分表是开放集合」保留为增表模式，新对象类型真实出现时按同一模式增设。manifest 合成走单一合同路径 `ManifestSpec`（ADR-0051，各族只声明差异、缺省集单源）；异步执行分派按声明式路由表 `AsyncRoute`（ADR-0050，新 provider 族 = 追加路由而非改内核 if-else）。
 
 ### 6.1 App Registry
 
@@ -665,6 +665,8 @@ Timer 和自动化规则只是普通调用方：定时能力本身是可替换�
 - Python 服务；
 - WASM 模块；
 - 远程服务。
+
+调用方也不需要知道 Provider 属于哪一族：manifest 合成走单一合同路径（ADR-0051），异步执行分派按装配期声明的路由表裁决（ADR-0050）——新增 provider 族是**追加一条路由与声明**，而不是修改内核分派；内核分派本体不认识任何具体 provider 家族（`system.exec`/`fs.*`/`task.share.*` 等按各自声明的归属谓词而非名字前缀匹配，ADR-0042）。
 
 统一调用形式：
 

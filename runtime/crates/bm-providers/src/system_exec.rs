@@ -14,7 +14,9 @@
 
 use crate::fs_tools;
 use crate::jobs::{self, JobTable};
-use bm_contract::capability::CapabilityManifest;
+use bm_contract::capability::{
+    ApprovalRequirement, CapabilityManifest, ExecutionMode, ManifestSpec, RiskClass,
+};
 use bm_core::limits::LimitsCell;
 use bm_core::ports::{AsyncCallError, AsyncCapabilityExecutor};
 use bm_core::registry::CapabilityProvider;
@@ -32,12 +34,11 @@ pub const JOB_OUTPUT_CAPABILITY: &str = "system.job_output";
 /// capability 层 deadline;逐次生效的默认/上限在执行体内读 limits——
 /// 管理面改值下一条命令即生效,无需重建 registry(ADR-0024 §2)。
 pub fn exec_capability_entry() -> (CapabilityManifest, Arc<dyn CapabilityProvider>) {
-    let manifest: CapabilityManifest = serde_json::from_value(json!({
-        "capability": EXEC_CAPABILITY,
-        "provider": "builtin.async",
-        "version": "0.2.0",
-        "description": "在宿主 shell 执行命令:Windows 以 PowerShell(-NoProfile -NonInteractive)执行,其余以 bash -c 执行;返回 exit_code 与合并后的 stdout/stderr(超限截断)。适合跑构建/测试/进程管理等动态操作。可传 timeout_ms 毫秒(默认约 120 秒,前台最长 10 分钟,管理端「限制与超时」可调)。长任务(下载/clone/冷编译)传 run_in_background=true 立即返回作业号,或 timeout_ms 超前台上限时自动转后台执行;之后用 system.job_output 按作业号收取结果。可传 cwd 指定工作目录(限已登记工作区内,越界拒绝)。调用需用户批准后执行。",
-        "input_schema": {
+    // ADR-0051:走全仓单一 manifest 合成路径(缺省单源)。
+    let manifest = ManifestSpec::new(EXEC_CAPABILITY, "builtin.async", RiskClass::ExternalSideEffect)
+        .version("0.2.0")
+        .description("在宿主 shell 执行命令:Windows 以 PowerShell(-NoProfile -NonInteractive)执行,其余以 bash -c 执行;返回 exit_code 与合并后的 stdout/stderr(超限截断)。适合跑构建/测试/进程管理等动态操作。可传 timeout_ms 毫秒(默认约 120 秒,前台最长 10 分钟,管理端「限制与超时」可调)。长任务(下载/clone/冷编译)传 run_in_background=true 立即返回作业号,或 timeout_ms 超前台上限时自动转后台执行;之后用 system.job_output 按作业号收取结果。可传 cwd 指定工作目录(限已登记工作区内,越界拒绝)。调用需用户批准后执行。")
+        .input_schema(json!({
             "type": "object",
             "properties": {
                 "command": {"type": "string", "description": "要执行的命令行(交由宿主 shell 解释)"},
@@ -46,46 +47,39 @@ pub fn exec_capability_entry() -> (CapabilityManifest, Arc<dyn CapabilityProvide
                 "run_in_background": {"type": "boolean", "description": "true=转后台执行:立即返回 job_id 不等完成,稍后用 system.job_output 收取(适合下载、clone、长构建)"}
             },
             "required": ["command"]
-        },
-        "output_schema": {"type": "object"},
-        "effect": "external-side-effect",
-        "idempotent": false,
-        "cancellable": true,
-        "timeout_ms": 600_000,
-        "approval": "required",
-        "scopes": ["system.exec"],
-        "execution_mode": "async"
-    }))
-    .expect("exec manifest 合法");
+        }))
+        .idempotent(false)
+        .cancellable(true)
+        .timeout_ms(600_000)
+        .approval(ApprovalRequirement::Required)
+        .scopes(vec!["system.exec".to_string()])
+        .execution_mode(ExecutionMode::Async)
+        .build()
+        .expect("exec manifest 合法");
     (manifest, Arc::new(ExecPlaceholder))
 }
 
 /// system.job_output 的 manifest + 占位 provider:后台作业收取面(读语义,
 /// 免审批;同样走异步管线防阻塞单写者循环)。
 pub fn job_output_capability_entry() -> (CapabilityManifest, Arc<dyn CapabilityProvider>) {
-    let manifest: CapabilityManifest = serde_json::from_value(json!({
-        "capability": JOB_OUTPUT_CAPABILITY,
-        "provider": "builtin.async",
-        "version": "0.1.0",
-        "description": "查询后台作业(system.exec 转后台返回的 job_id)的状态与输出尾部。可传 wait_ms 等待其终态(默认 10000,上限 60000);status=running 时可再次调用继续等。全部历史输出见返回的 log_path。",
-        "input_schema": {
+    // ADR-0051:走全仓单一 manifest 合成路径(缺省单源)。
+    let manifest = ManifestSpec::new(JOB_OUTPUT_CAPABILITY, "builtin.async", RiskClass::ReadOnly)
+        .description("查询后台作业(system.exec 转后台返回的 job_id)的状态与输出尾部。可传 wait_ms 等待其终态(默认 10000,上限 60000);status=running 时可再次调用继续等。全部历史输出见返回的 log_path。")
+        .input_schema(json!({
             "type": "object",
             "properties": {
                 "job_id": {"type": "string", "description": "后台作业号(system.exec 转后台回执中的 job_id)"},
                 "wait_ms": {"type": "integer", "description": "最多等待其终态的毫秒数(可选,默认 10000,上限 60000;0=立即返回当前状态)"}
             },
             "required": ["job_id"]
-        },
-        "output_schema": {"type": "object"},
-        "effect": "read-only",
-        "idempotent": true,
-        "cancellable": true,
-        "timeout_ms": 70_000,
-        "approval": "not-required",
-        "scopes": ["system.exec"],
-        "execution_mode": "async"
-    }))
-    .expect("job_output manifest 合法");
+        }))
+        .idempotent(true)
+        .cancellable(true)
+        .timeout_ms(70_000)
+        .scopes(vec!["system.exec".to_string()])
+        .execution_mode(ExecutionMode::Async)
+        .build()
+        .expect("job_output manifest 合法");
     (manifest, Arc::new(ExecPlaceholder))
 }
 
@@ -276,13 +270,54 @@ impl AsyncCapabilityExecutor for ExecExecutor {
 
 /// 组合执行器:system.exec / system.job_output / fs.* / skill.* 走内置执行体,
 /// 其余回落(如 MCP hub)。
+/// 一条异步执行路由:声明「哪些 capability 归我」与承载执行体。
+/// ADR-0050:分派据路由表,而非内核 if-else——新增 provider 族 = 追加一条
+/// 路由(在 [`SplitExecutor::new`] 的装配处),不改分派本体。
+pub struct AsyncRoute {
+    /// 归属谓词:按**声明的能力集/编译表**判断,不用名字前缀猜(ADR-0042)。
+    predicate: Box<dyn Fn(&str) -> bool + Send + Sync>,
+    executor: Arc<dyn AsyncCapabilityExecutor>,
+}
+
+/// 异步能力分派器(基线 §12:同步/异步以 manifest.execution_mode 分道)。
+///
+/// 此前是硬编码 if-else 链(exec→fs→wasm→回落),每加一族要改本文件;
+/// ADR-0050 改为有序路由表:装配期由 [`SplitExecutor::new`] 声明路由,
+/// 运行期只做「首个谓词命中即分派」——内核不再认识任何 provider 家族。
 pub struct SplitExecutor {
-    /// system.exec + system.job_output(持 limits 与后台作业台账)。
-    pub exec: Arc<ExecExecutor>,
-    pub fs: fs_tools::FsExecutor,
-    /// Skill v0.2(ADR-0016 第二步):wasmtime 技能脚本执行面。
-    pub skills: Option<Arc<crate::skill_wasm::SkillScriptManager>>,
-    pub fallback: Arc<dyn AsyncCapabilityExecutor>,
+    routes: Vec<AsyncRoute>,
+    fallback: Arc<dyn AsyncCapabilityExecutor>,
+}
+
+impl SplitExecutor {
+    /// 装配路由表。顺序即优先级(先具体后通用)。
+    pub fn new(
+        exec: Arc<ExecExecutor>,
+        fs: fs_tools::FsExecutor,
+        skills: Option<Arc<crate::skill_wasm::SkillScriptManager>>,
+        fallback: Arc<dyn AsyncCapabilityExecutor>,
+    ) -> Self {
+        let mut routes: Vec<AsyncRoute> = Vec::new();
+        // ① system.exec / system.job_output(内置命令执行与作业收取)。
+        routes.push(AsyncRoute {
+            predicate: Box::new(|c: &str| c == EXEC_CAPABILITY || c == JOB_OUTPUT_CAPABILITY),
+            executor: exec,
+        });
+        // ② fs.* 四件(按执行器声明的能力集分道,ADR-0042)。
+        routes.push(AsyncRoute {
+            predicate: Box::new(fs_tools::FsExecutor::handles),
+            executor: Arc::new(fs),
+        });
+        // ③ wasm(技能脚本 + 通用插件):按宿主编译表归属,非前缀(ADR-0041)。
+        if let Some(manager) = skills {
+            let probe = manager.clone();
+            routes.push(AsyncRoute {
+                predicate: Box::new(move |c: &str| probe.has_capability(c)),
+                executor: manager,
+            });
+        }
+        Self { routes, fallback }
+    }
 }
 
 #[async_trait::async_trait]
@@ -294,29 +329,17 @@ impl AsyncCapabilityExecutor for SplitExecutor {
         args: Value,
         deadline: Duration,
     ) -> Result<Value, AsyncCallError> {
-        if capability == EXEC_CAPABILITY || capability == JOB_OUTPUT_CAPABILITY {
-            self.exec
-                .call(operation_id, capability, args, deadline)
-                .await
-        } else if fs_tools::FsExecutor::handles(capability) {
-            // ADR-0042:按 fs 执行器**声明的能力集**分道,不再 `starts_with("fs.")`。
-            self.fs.call(operation_id, capability, args, deadline).await
-        } else if self
-            .skills
-            .as_ref()
-            .is_some_and(|m| m.has_capability(capability))
-        {
-            // ADR-0041:按**归属**分道而非名字前缀——wasm 宿主编译表里有的
-            // capability(技能脚本或通用 wasm 插件)都归 wasm 执行面。
-            match &self.skills {
-                Some(m) => m.call(operation_id, capability, args, deadline).await,
-                None => Err(AsyncCallError::Transport("wasm 执行面未启用".to_string())),
+        for route in &self.routes {
+            if (route.predicate)(capability) {
+                return route
+                    .executor
+                    .call(operation_id, capability, args, deadline)
+                    .await;
             }
-        } else {
-            self.fallback
-                .call(operation_id, capability, args, deadline)
-                .await
         }
+        self.fallback
+            .call(operation_id, capability, args, deadline)
+            .await
     }
 }
 

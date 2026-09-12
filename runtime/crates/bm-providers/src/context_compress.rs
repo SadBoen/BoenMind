@@ -11,7 +11,7 @@
 //! 删除;非用户域文件)+ not-required 审批 + 幂等。摘要为确定性抽取
 //! (目标/脉络/近 N 轮原文),不嵌套模型调用。
 
-use bm_contract::capability::CapabilityManifest;
+use bm_contract::capability::{CapabilityManifest, ExecutionMode, ManifestSpec, RiskClass};
 use bm_core::registry::CapabilityProvider;
 use serde_json::{Value, json};
 use std::path::PathBuf;
@@ -137,7 +137,7 @@ impl ContextCompressProvider {
             "summary": summary,
         });
         let text = crate::context_compress::pretty(&payload)?;
-        bm_persist::atomic_write(&file, text.as_bytes())
+        bm_core::ports::persist::atomic_write(&file, text.as_bytes())
             .map_err(|e| format!("摘要文件写入失败: {e}"))?;
 
         Ok(json!({
@@ -172,29 +172,25 @@ impl CapabilityProvider for ContextCompressProvider {
 }
 
 fn manifest() -> CapabilityManifest {
-    serde_json::from_value(json!({
-        "capability": CAPABILITY,
-        "provider": "context",
-        "version": "0.1.0",
-        "input_schema": {
+    // ADR-0051:走全仓单一 manifest 合成路径(缺省单源)。
+    ManifestSpec::new(CAPABILITY, "context", RiskClass::ReadOnly)
+        .description(
+            "上下文压缩:抽取会话历史生成人类可读摘要并落盘(不改写原文);此后每回合自动注入摘要前缀,删除摘要文件即回退",
+        )
+        .input_schema(json!({
             "type": "object",
             "properties": {
                 "session_id": {"type": "string"},
                 "keep_recent": {"type": "integer", "minimum": 1, "maximum": 200}
             },
             "required": ["session_id"]
-        },
-        "output_schema": {"type": "object"},
-        "effect": "read-only",
-        "idempotent": true,
-        "cancellable": false,
-        "timeout_ms": 5000,
-        "approval": "not-required",
-        "scopes": [],
-        "execution_mode": "sync",
-        "description": "上下文压缩:抽取会话历史生成人类可读摘要并落盘(不改写原文);此后每回合自动注入摘要前缀,删除摘要文件即回退"
-    }))
-    .expect("context.compress manifest 合法")
+        }))
+        .idempotent(true)
+        .cancellable(false)
+        .timeout_ms(5_000)
+        .execution_mode(ExecutionMode::Sync)
+        .build()
+        .expect("context.compress manifest 合法")
 }
 
 /// 装配入口(server 启动期注册进能力面)。

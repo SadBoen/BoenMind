@@ -6,11 +6,14 @@ repository.workspace = true
 
 [dependencies]
 bm-contract = { workspace = true }
-bm-persist = { workspace = true }
+bm-core = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+# 测试需要一个具体存储来构造集成夹具;库本体只依赖端口 trait(bm-core),
+# 不依赖持久化适配器(分层:adapter 依赖端口所有者,非彼此)。
+bm-persist = { workspace = true }
 tokio = { workspace = true }
 tempfile = { workspace = true }
 

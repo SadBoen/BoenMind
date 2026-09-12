@@ -91,7 +91,9 @@ fn load_skill(data_dir: &std::path::Path) -> (Arc<SkillScriptManager>, SkillEntr
     std::fs::create_dir_all(&root).expect("建技能目录");
     let wasm = wat::parse_str(ECHO_WAT).expect("WAT → wasm");
     std::fs::write(root.join("echo.wasm"), wasm).expect("写 wasm");
-    let manager = Arc::new(SkillScriptManager::new().expect("wasmtime 引擎"));
+    let manager = Arc::new(
+        SkillScriptManager::new(LimitsCell::with_default()).expect("wasmtime 引擎"),
+    );
     let manifests = manager
         .register_skill(SKILL_ID, &skill_def(), &root)
         .expect("注册技能脚本");
@@ -113,12 +115,12 @@ fn split_executor(
         data_dir.to_path_buf(),
     ));
     let fs = FsExecutor::with_limits(data_dir.to_path_buf(), data_dir.to_path_buf(), limits);
-    Arc::new(SplitExecutor {
+    Arc::new(SplitExecutor::new(
         exec,
         fs,
-        skills: Some(manager),
-        fallback: Arc::new(NoFallback),
-    })
+        Some(manager),
+        Arc::new(NoFallback),
+    ))
 }
 
 async fn await_terminal(handle: &bm_core::runtime::RuntimeHandle, op: BmId) -> OperationState {
@@ -256,7 +258,7 @@ async fn skill_script_executes_async_and_hot_reloads() {
 /// 未装载脚本时管理器摘除是幂等空操作(删除纯知识包技能不报错)。
 #[tokio::test]
 async fn unregister_missing_skill_is_noop() {
-    let manager = SkillScriptManager::new().expect("引擎");
+    let manager = SkillScriptManager::new(LimitsCell::with_default()).expect("引擎");
     assert!(manager.unregister_skill("never_loaded").is_empty());
 }
 
@@ -289,7 +291,9 @@ fn load_plugin(data_dir: &std::path::Path) -> (Arc<SkillScriptManager>, SkillEnt
     )
     .expect("写 wasm");
     std::fs::write(cfg.join("plugins.json"), plugin_decl().to_string()).expect("写声明");
-    let manager = Arc::new(SkillScriptManager::new().expect("wasmtime 引擎"));
+    let manager = Arc::new(
+        SkillScriptManager::new(LimitsCell::with_default()).expect("wasmtime 引擎"),
+    );
     let manifests = manager.load_plugins_file(&cfg.join("plugins.json"));
     let entries = SkillScriptManager::capability_entries(manifests);
     (manager, entries)

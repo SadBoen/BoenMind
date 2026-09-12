@@ -169,7 +169,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ));
     // Skill v0.2(ADR-0016 第二步):skills.json 声明 scripts 的技能 →
     // wasmtime 执行面(manifests 进能力面,执行体挂 skill 分道)。
-    let (skills, skill_entries) = load_skill_scripts(&data_dir);
+    let (skills, skill_entries) = load_skill_scripts(&data_dir, &limits_cell);
     // ADR-0033:管理器与 SplitExecutor 共用同一实例并注入管理面——/admin/skills
     // 热重载必须改这个实例的编译缓存,注册才与执行体同源。
     let skill_manager = skills.clone();
@@ -302,12 +302,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Skill v0.2(ADR-0016 第二步):装载 skills.json 中带 scripts 的
             // 技能 → 编译 wasm 合成 manifests 注册进能力面;执行体挂 skill 分道。
             let exec: Arc<dyn bm_core::ports::AsyncCapabilityExecutor> =
-                Arc::new(bm_providers::system_exec::SplitExecutor {
-                    exec: exec_inner,
-                    fs,
-                    skills,
-                    fallback: inner,
-                });
+                Arc::new(bm_providers::system_exec::SplitExecutor::new(
+                    exec_inner, fs, skills, inner,
+                ));
             exec.into()
         },
         model_streaming: {
@@ -525,8 +522,11 @@ fn register_skill_scripts(
 /// wasm 执行面(ADR-0016 技能脚本 + ADR-0041 通用插件):启动期装载出管理器与
 /// 待注册能力对。技能与通用插件共用同一管理器实例(同一宿主编译表);失败仅
 /// 告警不阻断启动。
-fn load_skill_scripts(data_dir: &std::path::Path) -> SkillScriptLoad {
-    let manager = match bm_providers::skill_wasm::SkillScriptManager::new() {
+fn load_skill_scripts(
+    data_dir: &std::path::Path,
+    limits: &bm_core::limits::LimitsCell,
+) -> SkillScriptLoad {
+    let manager = match bm_providers::skill_wasm::SkillScriptManager::new(limits.clone()) {
         Ok(m) => Arc::new(m),
         Err(e) => {
             eprintln!("[Skill] 执行面初始化失败(已跳过): {e}");

@@ -19,7 +19,7 @@
 8. **审批/异步链路刻意语义**：审批/异步工具 400ms 轮询单写者通道（改推送已登记 issue，低优）；直通工具 `inline_sync` 同步收据特判为真实修复（60s 超时根因），调用本体仍走 Broker 审计。两者非性能缺陷。
 9. **执行分道以合同声明为唯一真源**：`manifest.execution_mode`（sync|async）为准，未声明才回退 provider 命名约定（mcp./skill./*.async）；新增执行族只声明不动前缀表（ADR-0036）。流式补发按「已下发文本是否已含正文」判，勿用字符数 `skip`（非流式上游+工具回合曾致终稿整段丢失，2026-09-11）。
 10. **权限模式（ask/plan/yolo）按对话记于服务端**：yolo 由服务端仅对 Broker `RequireApproval` 全体自动放行并审计标注 auto；硬拒绝（UnknownCapability/NoGrant）、熔断与预算硬限不因 yolo 放行；前端只是模式选择器（ADR-0030）。
-11. **内置能力冻结清单**：system.exec（过渡态例外）+ fs.* 四件 + model.invoke 内核私有（ADR-0020/0021），不再全量转 MCP。
+11. **内置能力冻结清单与插件模型边界**：system.exec（过渡态例外）+ fs.* 四件 + model.invoke 内核私有（ADR-0020/0021），不再全量转 MCP。少数进程内族（system.exec/system.job_output、fs.*、task.share.*、wasm）按族分道执行是**务实取舍**（不为 5 个进程内族造统一路由），非缺陷；真缺陷仅「新增 provider 族需改内核 match」，追踪见 issue #67。插件身份 `PluginKind` 仅作发现面展示（ADR-0045 收敛为 Tool/Connector），**不作行为分派依据**——「变体少 / 无行为消费者」不得报为遗漏；真正的模型连接器走独立端口（`RuntimeConfig.connector`）而非插件族，属刻意设计。
 12. **事件信封 JSON 字段名 = `type`**（serde rename），不是 `event_type`。
 13. **单写者纪律**为核心状态机根基；通信面（如公告栏）走单写者总线，不新增旁路（ADR-0031/0032）。
 14. **MCP 插件信任链显式消费**：`trust` 字段被装载器消费（缺省 explicit-config）、`sha256` 校验目标 = `payload`（若声明）否则 `command`——解释器型条目未声明 payload 语义歧义即 fail-closed 拒载；扫描以 `--self-describe` 运行候选文件属「识别即执行」，已在管理 UI 显式披露（ADR-0035）。子进程 OS 级资源上限（Job Object/rlimit）为尽力而为，施加失败 fail-open。
@@ -28,6 +28,7 @@
 ---
 
 **维护规则**：审计/评审前先查此清单，已有条目不得重提；翻案须带新证据并发新 ADR。
-本次（2026-09-11）新增条目 4 尾句、9、14、15（ADR-0035/0036/0037/0038），合并旧「400ms 轮询」与「inline_sync 特判」为条目 8、
+本次（2026-09-12 架构评估）条目 11 熔入「执行分道为务实取舍、PluginKind 仅身份展示」两句（维持 15 条上限，不新增条目）；
+2026-09-11 新增条目 4 尾句、9、14、15（ADR-0035/0036/0037/0038），合并旧「400ms 轮询」与「inline_sync 特判」为条目 8、
 合并旧「context-log」与「回喂忠实性」为条目 6、旧门户墙条目并入条目 5；被淘汰条目的历史结论溯 git 史（ADR-0027）。
 超出 15 条时，淘汰"最久未被审计撞到"的一条，移入对应 ADR 的历史记录（git 可溯）。

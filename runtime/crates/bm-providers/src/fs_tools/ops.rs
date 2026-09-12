@@ -423,7 +423,7 @@ pub fn write(roots: &Roots, args: &Value, limits: &Limits) -> Value {
             limits.fs_rw_max_bytes
         ));
     }
-    match bm_persist::atomic_write(&path, content.as_bytes()) {
+    match bm_core::ports::persist::atomic_write(&path, content.as_bytes()) {
         Ok(()) => json!({
             "ok": true,
             "path": display_path(&path),
@@ -569,7 +569,7 @@ pub fn edit(roots: &Roots, args: &Value, limits: &Limits) -> Value {
     }
     // 原子写(2026-09 审计收口 BACKLOG「fs.write/edit 原子写+大小上限」,
     // 与 fs.write 同批):编辑结果经 atomic_write 落盘,崩溃不留半截文件。
-    match bm_persist::atomic_write(&path, out.as_bytes()) {
+    match bm_core::ports::persist::atomic_write(&path, out.as_bytes()) {
         Ok(()) => json!({
             "ok": true,
             "path": display_path(&path),

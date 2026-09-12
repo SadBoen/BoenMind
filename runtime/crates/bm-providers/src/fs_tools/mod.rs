@@ -14,7 +14,9 @@ mod ops;
 
 pub use guard::{Roots, display_path};
 
-use bm_contract::capability::CapabilityManifest;
+use bm_contract::capability::{
+    ApprovalRequirement, CapabilityManifest, ExecutionMode, ManifestSpec, RiskClass,
+};
 use bm_core::ports::{AsyncCallError, AsyncCapabilityExecutor};
 use bm_core::registry::CapabilityProvider;
 use serde_json::{Value, json};
@@ -32,8 +34,8 @@ pub fn fs_capability_entries() -> Vec<(CapabilityManifest, Arc<dyn CapabilityPro
     vec![
         entry(
             FS_SEARCH,
-            "read-only",
-            "not-required",
+            RiskClass::ReadOnly,
+            ApprovalRequirement::NotRequired,
             true,
             true,
             30_000,
@@ -53,8 +55,8 @@ pub fn fs_capability_entries() -> Vec<(CapabilityManifest, Arc<dyn CapabilityPro
         ),
         entry(
             FS_READ,
-            "read-only",
-            "not-required",
+            RiskClass::ReadOnly,
+            ApprovalRequirement::NotRequired,
             true,
             true,
             10_000,
@@ -71,8 +73,8 @@ pub fn fs_capability_entries() -> Vec<(CapabilityManifest, Arc<dyn CapabilityPro
         ),
         entry(
             FS_WRITE,
-            "external-side-effect",
-            "required",
+            RiskClass::ExternalSideEffect,
+            ApprovalRequirement::Required,
             false,
             false,
             10_000,
@@ -88,8 +90,8 @@ pub fn fs_capability_entries() -> Vec<(CapabilityManifest, Arc<dyn CapabilityPro
         ),
         entry(
             FS_EDIT,
-            "external-side-effect",
-            "required",
+            RiskClass::ExternalSideEffect,
+            ApprovalRequirement::Required,
             false,
             false,
             10_000,
@@ -112,30 +114,26 @@ pub fn fs_capability_entries() -> Vec<(CapabilityManifest, Arc<dyn CapabilityPro
 #[allow(clippy::too_many_arguments)]
 fn entry(
     capability: &str,
-    effect: &str,
-    approval: &str,
+    effect: RiskClass,
+    approval: ApprovalRequirement,
     idempotent: bool,
     cancellable: bool,
     timeout_ms: u64,
     description: &str,
     input_schema: Value,
 ) -> (CapabilityManifest, Arc<dyn CapabilityProvider>) {
-    let manifest: CapabilityManifest = serde_json::from_value(json!({
-        "capability": capability,
-        "provider": "builtin.async",
-        "version": "0.1.0",
-        "description": description,
-        "input_schema": input_schema,
-        "output_schema": {"type": "object"},
-        "effect": effect,
-        "idempotent": idempotent,
-        "cancellable": cancellable,
-        "timeout_ms": timeout_ms,
-        "approval": approval,
-        "scopes": ["domain:fs"],
-        "execution_mode": "async"
-    }))
-    .expect("fs manifest 合法");
+    // ADR-0051:走全仓单一 manifest 合成路径(缺省单源)。
+    let manifest = ManifestSpec::new(capability, "builtin.async", effect)
+        .description(description)
+        .input_schema(input_schema)
+        .idempotent(idempotent)
+        .cancellable(cancellable)
+        .timeout_ms(timeout_ms)
+        .approval(approval)
+        .scopes(vec!["domain:fs".to_string()])
+        .execution_mode(ExecutionMode::Async)
+        .build()
+        .expect("fs manifest 合法");
     (manifest, Arc::new(FsPlaceholder))
 }
 

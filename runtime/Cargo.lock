@@ -352,6 +352,7 @@ name = "bm-judge"
 version = "0.0.17"
 dependencies = [
  "bm-contract",
+ "bm-core",
  "bm-persist",
  "serde_json",
  "tempfile",
@@ -384,7 +385,6 @@ dependencies = [
  "axum",
  "bm-contract",
  "bm-core",
- "bm-persist",
  "bm-sandbox",
  "boenmind-plugin-sdk",
  "getrandom 0.4.3",

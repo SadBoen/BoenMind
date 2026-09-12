@@ -7,7 +7,6 @@ repository.workspace = true
 [dependencies]
 bm-contract = { workspace = true }
 bm-core = { workspace = true }
-bm-persist = { workspace = true }
 async-trait = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -31,9 +30,6 @@ boenmind-plugin-sdk = { path = "../../../plugins/mcp/sdk" }
 bm-sandbox = { path = "../bm-sandbox" }
 wasmtime = { version = "48.0.1", default-features = false, features = ["runtime", "cranelift", "wat"] }
 wasmtime-wasi = "48.0.1"
-
-[features]
-glm = []
 
 [dev-dependencies]
 tokio = { workspace = true }

@@ -1,0 +1,27 @@
+---
+status: accepted
+date: 2026-09-12
+summary: manifest 合成收口为单一合同路径 ManifestSpec——内置/fs/exec/share/context/mcp/wasm 各族只声明差异,缺省集单源
+supersedes: []
+superseded_by: []
+---
+
+# ADR-0051: manifest 合成单源(ManifestSpec 全族收口)
+
+- 关联: ADR-0049(wasm 声明格式合一)、ADR-0036(execution_mode 合同真源)、ADR-0024(限制集中配置面)、ADR-0006(权限以合同显式化)
+- 背景(2026-09-12 架构评估): capability manifest 是「一份合同管所有 provider」的地基,但**合成**却有 6+ 处独立 `json!` 构造器,各自重抄字段与缺省值:`builtin.rs::manifest`、`system_exec.rs` 两个字面量、`fs_tools/mod.rs::entry`、`share.rs::share_entry`、`context_compress.rs::manifest`、`mcp/shape.rs::tool_manifest`,加 ADR-0049 的 `WasmDecl::synthesize`。缺省值重复已导致真实漂移:`limits.skill_default_timeout_ms` 在 `limits.rs` 定义、设置页可编辑,而 `skill_wasm` 从未读取它(它用自己的 `DEFAULT_TIMEOUT_MS`),即该设置项对技能空转(已随本 ADR 一并修复)。ADR-0049 只统一了 wasm 子集。
+
+## 决策
+
+**引入 `bm_contract::capability::ManifestSpec`,作为全仓唯一的 manifest 合成路径。**
+
+1. `ManifestSpec::new(capability, provider, effect)` 提供**单一缺省集**(version `0.1.0`;in/out schema `{"type":"object"}`;idempotent=false;cancellable=true;timeout=10s;approval=not-required;scopes 空;execution_mode 不声明即缺省);链式 setter 只声明**差异**;`overlay(extra)` 承接开放结构叠加(旧 `json!`-merge 语义);`build()` 是唯一失败源(叠加字段与合同冲突)。
+2. **全部 provider 族改为经 `ManifestSpec` 落地**:内置演示能力、`fs.*`、`system.exec`/`system.job_output`、`task.share.*`、`context.compress`、MCP 工具、wasm(技能脚本 + 通用插件,`WasmDecl::synthesize` 内部改调 `ManifestSpec`)。
+3. 该类型置于 `bm-contract` 合同层——manifest 是 L1 合同对象,其缺省语义属合同面,而非某个 adapter 的私有约定。这是**纯数据构造**,无 IO、无状态,与「bm-contract 放数据、bm-core 放行为」的既有分层一致(不引入行为策略)。
+
+## 后果
+
+- **缺省单源**:`grep ManifestSpec::new` 覆盖全部生产 manifest 构造点;字段缺省只在 `ManifestSpec::new` 一处定义,新增 provider 族不再重抄。
+- **真实缺陷随附修复**:`skill_wasm` 默认超时改接 `limits.skill_default_timeout_ms`(构造期从 `LimitsCell` 读取),设置页该项对技能不再空转;新增回归测试 `default_timeout_follows_limits_cell` 锁死。
+- **零行为变更**:各族的版本/超时/scopes/审批等既有取值逐条保持(内置 `manifest` 的效应串改 `RiskClass` 枚举、fs/exec 的字符串改枚举,取值等价);全量测试套件通过。
+- **未做(如实标注)**:①**磁盘声明格式**不合并(`skills.json` / `plugins.json` / `mcp.json` 是面向用户的冻结或半冻结形状,收益不抵破坏风险;合一止于内部合成层,承接 ADR-0049 的边界);②`bm-core` 单测与 `butler.rs` 测试内的 `CapabilityManifest` 字面量属**测试夹具**,不在「生产合成单源」范围内,不强制改。

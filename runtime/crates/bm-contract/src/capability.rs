@@ -177,6 +177,147 @@ impl CapabilityManifest {
     }
 }
 
+/// 能力 manifest 合成规格(ADR-0051):**全部 provider 族单一构造路径**。
+///
+/// 此前内置 / fs / system.exec / share / context / mcp / wasm 各写一份 `json!`
+/// 构造器、各自重抄缺省值,已出现漂移(如 `skill_default_timeout_ms` 被实现
+/// 忽略、settings 页空转)。字段缺省与必填集在此一处定义;各族只声明差异。
+///
+/// 用法:
+/// ```
+/// use bm_contract::capability::{ManifestSpec, RiskClass, ApprovalRequirement, ExecutionMode};
+/// let m = ManifestSpec::new("demo.echo", "demo.wasm", RiskClass::ReadOnly)
+///     .timeout_ms(5_000)
+///     .approval(ApprovalRequirement::NotRequired)
+///     .execution_mode(ExecutionMode::Async)
+///     .scopes(vec!["domain:demo".into()])
+///     .build()
+///     .expect("合法");
+/// assert_eq!(m.capability, "demo.echo");
+/// ```
+#[derive(Debug, Clone)]
+pub struct ManifestSpec {
+    capability: String,
+    provider: String,
+    effect: RiskClass,
+    version: String,
+    idempotent: bool,
+    cancellable: bool,
+    timeout_ms: u64,
+    approval: ApprovalRequirement,
+    input_schema: serde_json::Value,
+    output_schema: serde_json::Value,
+    scopes: Vec<String>,
+    execution_mode: Option<ExecutionMode>,
+    description: Option<String>,
+    /// 开放结构叠加(ADR-0051):额外字段最后合并;未知字段由合同忽略。
+    overlay: Option<serde_json::Value>,
+}
+
+/// 缺省字段集(与 manifest.v0_1 必填十项 + 常用可选一致):
+/// version `0.1.0`、in/out schema `{"type":"object"}`、idempotent=false、
+/// cancellable=true、timeout 10s、approval=not-required、scopes 空。
+impl ManifestSpec {
+    pub fn new(
+        capability: impl Into<String>,
+        provider: impl Into<String>,
+        effect: RiskClass,
+    ) -> Self {
+        Self {
+            capability: capability.into(),
+            provider: provider.into(),
+            effect,
+            version: "0.1.0".into(),
+            idempotent: false,
+            cancellable: true,
+            timeout_ms: 10_000,
+            approval: ApprovalRequirement::NotRequired,
+            input_schema: serde_json::json!({"type": "object"}),
+            output_schema: serde_json::json!({"type": "object"}),
+            scopes: Vec::new(),
+            execution_mode: None,
+            description: None,
+            overlay: None,
+        }
+    }
+
+    pub fn version(mut self, v: impl Into<String>) -> Self {
+        self.version = v.into();
+        self
+    }
+    pub fn idempotent(mut self, v: bool) -> Self {
+        self.idempotent = v;
+        self
+    }
+    pub fn cancellable(mut self, v: bool) -> Self {
+        self.cancellable = v;
+        self
+    }
+    pub fn timeout_ms(mut self, v: u64) -> Self {
+        self.timeout_ms = v;
+        self
+    }
+    pub fn approval(mut self, v: ApprovalRequirement) -> Self {
+        self.approval = v;
+        self
+    }
+    pub fn input_schema(mut self, v: serde_json::Value) -> Self {
+        self.input_schema = v;
+        self
+    }
+    pub fn output_schema(mut self, v: serde_json::Value) -> Self {
+        self.output_schema = v;
+        self
+    }
+    pub fn scopes(mut self, v: Vec<String>) -> Self {
+        self.scopes = v;
+        self
+    }
+    pub fn execution_mode(mut self, v: ExecutionMode) -> Self {
+        self.execution_mode = Some(v);
+        self
+    }
+    pub fn description(mut self, v: impl Into<String>) -> Self {
+        self.description = Some(v.into());
+        self
+    }
+    /// 开放结构叠加:额外字段(undo/verification/… )最后合并进 manifest。
+    pub fn overlay(mut self, v: serde_json::Value) -> Self {
+        self.overlay = Some(v);
+        self
+    }
+
+    /// 合成 manifest。唯一失败源 = 叠加字段与合同冲突(类型不符)。
+    pub fn build(self) -> Result<CapabilityManifest, String> {
+        let mut v = serde_json::json!({
+            "capability": self.capability,
+            "provider": self.provider,
+            "version": self.version,
+            "input_schema": self.input_schema,
+            "output_schema": self.output_schema,
+            "effect": self.effect,
+            "idempotent": self.idempotent,
+            "cancellable": self.cancellable,
+            "timeout_ms": self.timeout_ms,
+            "approval": self.approval,
+            "scopes": self.scopes,
+        });
+        if let Some(mode) = self.execution_mode {
+            v["execution_mode"] = serde_json::json!(mode);
+        }
+        if let Some(d) = &self.description {
+            v["description"] = serde_json::json!(d);
+        }
+        // 叠加最后应用(可覆盖上方任一字段,与旧 json!-merge 语义一致)。
+        if let (Some(obj), Some(extra)) = (v.as_object_mut(), self.overlay.as_ref().and_then(|o| o.as_object())) {
+            for (k, val) in extra {
+                obj.insert(k.clone(), val.clone());
+            }
+        }
+        serde_json::from_value(v).map_err(|e| format!("manifest 合成失败: {e}"))
+    }
+}
+
 /// 授权范围(基线 §9.6;grant 合同 scope pattern)。线上形态 = pattern 字符串,
 /// 解析后承载语义值:Ttl 以毫秒存储(ms/s/m/h 归一),序列化统一 `ttl:<n>ms`。
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

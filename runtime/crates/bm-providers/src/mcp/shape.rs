@@ -1,6 +1,9 @@
 //! MCP 数据形状(自 mcp.rs 机械移出;ADR-0048)。纯数据/纯工具,无传输依赖。
 
 use super::*;
+use bm_contract::capability::{
+    ApprovalRequirement, ExecutionMode, ManifestSpec, RiskClass,
+};
 
 // ---- 数据形状 --------------------------------------------------------------
 
@@ -81,46 +84,41 @@ pub fn tool_manifest(
     // external-side-effect + required 注册,绝不降级为免审批只读。
     let read_only = read_only && !destructive;
     let effect = if destructive {
-        "external-side-effect"
+        RiskClass::ExternalSideEffect
     } else if read_only {
-        "read-only"
+        RiskClass::ReadOnly
     } else {
-        "reversible-command"
+        RiskClass::ReversibleCommand
     };
     let approval = if read_only {
-        "not-required"
+        ApprovalRequirement::NotRequired
     } else {
-        "required"
+        ApprovalRequirement::Required
     };
     let input_schema = if tool.input_schema.is_null() || tool.input_schema == json!({}) {
         json!({"type": "object"})
     } else {
         tool.input_schema.clone()
     };
+    // ADR-0051:走全仓单一 manifest 合成路径(缺省单源)。
+    let mut spec =
+        ManifestSpec::new(format!("mcp.{server_norm}.{tool_norm}"), format!("mcp.{server_norm}"), effect)
+            .input_schema(input_schema)
+            .cancellable(true)
+            .timeout_ms(timeout_ms)
+            .approval(approval)
+            .scopes(vec![format!("domain:mcp.{server_norm}")])
+            .execution_mode(ExecutionMode::Async);
     // ADR-0022:工具自描述进 manifest,对话工具清单不再丢描述。
-    let mut manifest_json = json!({
-        "capability": format!("mcp.{server_norm}.{tool_norm}"),
-        "provider": format!("mcp.{server_norm}"),
-        "version": "0.1.0",
-        "input_schema": input_schema,
-        "output_schema": {"type": "object"},
-        "effect": effect,
-        "idempotent": false,
-        "cancellable": true,
-        "timeout_ms": timeout_ms,
-        "approval": approval,
-        "scopes": [format!("domain:mcp.{server_norm}")],
-        "execution_mode": "async",
-    });
     if let Some(d) = tool
         .description
         .as_deref()
         .map(str::trim)
         .filter(|d| !d.is_empty())
     {
-        manifest_json["description"] = json!(d);
+        spec = spec.description(d);
     }
-    serde_json::from_value(manifest_json).ok()
+    spec.build().ok()
 }
 
 #[cfg(test)]
