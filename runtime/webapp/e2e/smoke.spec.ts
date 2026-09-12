@@ -2,8 +2,17 @@
 // 模型流与 /admin 数据经 page.route mock,确定性断言,不依赖真实模型。
 import { test, expect, type Page } from "@playwright/test";
 
-/** 拦截 /v1 流式对话:返回两段 mock 增量后 DONE。 */
-async function mockChat(page: Page, reply: string) {
+/** 拦截 /v1 流式对话:返回两段 mock 增量后 DONE。
+ *  ADR-0055:工具/审批元数据现走 bm_event 结构化帧(与 OpenAI 兼容帧共流),
+ *  text 只承载模型正文。 */
+async function mockChat(
+  page: Page,
+  reply: string,
+  toolEvents: Array<{ type: string; payload: Record<string, unknown> }> = [],
+) {
+  const frames = toolEvents.map(
+    (e) => `data: ${JSON.stringify({ bm_event: e })}`,
+  );
   await page.route("**/v1/chat/completions", (route) =>
     route.fulfill({
       status: 200,
@@ -14,6 +23,7 @@ async function mockChat(page: Page, reply: string) {
       body: [
         `data: ${JSON.stringify({ choices: [{ delta: { content: reply.slice(0, 3) } }] })}`,
         "",
+        ...frames.flatMap((f) => [f, ""]),
         `data: ${JSON.stringify({ choices: [{ delta: { content: reply.slice(3) } }] })}`,
         "",
         "data: [DONE]",
@@ -209,8 +219,28 @@ test.describe("对话闭环", () => {
   });
 
   test("工具调用结构化折叠渲染与无气泡样式", async ({ page }) => {
-    // 模拟包含工具调用的助手流式回复
-    await mockChat(page, "开始处理：\n[调用 fs_search main.rs]\n[调用 fs_read runtime/src/main.rs]\n完成检索。");
+    // ADR-0055:工具调用走结构化 bm_event 帧(effect 来自后端 manifest 声明),
+    // 模型正文只含普通文本——前端不再解析 [调用 …] 文本标记。
+    await mockChat(page, "开始处理：完成检索。", [
+      {
+        type: "capability.started",
+        payload: {
+          operation_id: "op_1",
+          capability: "fs.search",
+          effect: "read-only",
+          target: "main.rs",
+        },
+      },
+      {
+        type: "capability.started",
+        payload: {
+          operation_id: "op_2",
+          capability: "fs.read",
+          effect: "read-only",
+          target: "runtime/src/main.rs",
+        },
+      },
+    ]);
     await mockAdmin(page);
     await page.goto("/");
     const input = page.getByRole("textbox", { name: "Message BoenMind…" });
@@ -222,8 +252,6 @@ test.describe("对话闭环", () => {
     await expect(page.locator(".msg.user .msg-header")).toContainText("我");
 
     // 验证扁平聚合行(口径对齐 ZCode:「查阅 · 1 搜索, 1 文件」,搜索在前)
-    // 2026-09-07 审计对齐:旧断言锚 data-slot="tool-group"(已删死的 ToolGroupCard),
-    // 当前组件 = ToolTreeGroup,无该标记;按文本与结构断言
     await expect(page.getByText(/查阅 · 1 搜索, 1 文件/)).toBeVisible();
     await expect(page.getByText("完成检索。")).toBeVisible();
 

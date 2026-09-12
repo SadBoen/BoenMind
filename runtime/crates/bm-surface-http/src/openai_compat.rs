@@ -75,6 +75,18 @@ fn chunk(sid: &str, model: &str, delta: serde_json::Value, finish: Option<&str>)
     ))
 }
 
+/// ADR-0055:结构化元数据帧(工具调用/审批),与 OpenAI 兼容帧共流下发。
+/// 走独立 `bm_event` 命名,故标准 OpenAI 客户端忽略它、只在后端留痕;
+/// 前端据 `bm_event` 直读工具卡与审批卡,不再解析模型正文里的文本标记。
+/// 载荷 = 事件字段 + `type`(前端按 type 分派),不含本回合正文。
+fn bm_event_chunk(ty: &str, payload: serde_json::Value) -> Bytes {
+    let obj = serde_json::json!({
+        "type": ty,
+        "payload": payload,
+    });
+    Bytes::from(format!("data: {}\n\n", serde_json::json!({ "bm_event": obj })))
+}
+
 /// POST /v1/chat/completions:对话闭环(流式 SSE / 非流式 JSON)。
 pub async fn chat_completions(
     State(state): State<AppState>,
@@ -305,6 +317,18 @@ pub async fn chat_completions(
                         last_byte = Instant::now();
                         yield Ok(chunk(&sid, &default_model,
                             serde_json::json!({ "content": delta }), None));
+                    }
+                    EventType::CapabilityStarted => {
+                        // ADR-0055:工具调用发起 → 结构化帧(替代内联 `[调用 …]`)。
+                        yield Ok(bm_event_chunk("capability.started", e.payload.clone()));
+                    }
+                    EventType::CapabilityInvoked => {
+                        // 工具收尾(成功/失败/suppressed)→ 结构化帧更新卡片状态。
+                        yield Ok(bm_event_chunk("capability.invoked", e.payload.clone()));
+                    }
+                    EventType::ApprovalRequested => {
+                        // ADR-0055:审批请求 → 结构化帧(替代内联 `[BM_APPROVAL:…]`)。
+                        yield Ok(bm_event_chunk("approval.requested", e.payload.clone()));
                     }
                     EventType::ModelInvocationCompleted => {
  // 连接器分两态:流式连接器已把正文按 delta 下发(标记也
