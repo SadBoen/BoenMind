@@ -1080,26 +1080,6 @@ pub(crate) async fn handle_stop(
                 user,
                 assistant,
             }) => crate::runtime::turn::remember_turn(w, session_id, user, assistant),
- // W4b 排空期审批请求标记:照常透传(与核心循环同一形态)
-            Some(Cmd::ApprovalRequested {
-                approval_id,
-                capability,
-                args,
-                operation_id,
-            }) => {
-                let marker = serde_json::json!({
-                    "bm_approval_request": {
-                        "approval_id": approval_id,
-                        "capability": capability,
-                        "args": args,
-                        "operation_id": operation_id.as_str(),
-                    }
-                });
-                let _ = w.tx.try_send(Cmd::ProviderDelta {
-                    operation_id,
-                    delta: format!("\n[BM_APPROVAL:{}]\n", marker),
-                });
-            }
  // 收据查询只读幂等,排空期照常应答(INV-6 精神)。
             Some(Cmd::GetOperation { params, resp }) => {
                 let _ = resp.send(handle_get_operation(w, params));

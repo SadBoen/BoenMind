@@ -231,14 +231,6 @@ pub(crate) enum Cmd {
         user: String,
         assistant: String,
     },
- /// W4b 对话内审批:回合任务向 UI 通道推送审批请求卡片
- /// (随 ProviderDelta 进 SSE/事件面,前端据此渲染审批卡片)。
-    ApprovalRequested {
-        approval_id: String,
-        capability: String,
-        args: serde_json::Value,
-        operation_id: BmId,
-    },
 }
 
 /// Task 生命周期动作(M5-T1;completed/failed 无 wire 入口——完成判定门禁
@@ -325,6 +317,5 @@ pub(crate) fn reply_unavailable(cmd: Cmd) {
         Cmd::ProviderDelta { .. } => {}
         Cmd::Turn(_) => {}
         Cmd::RememberTurn { .. } => {}
-        Cmd::ApprovalRequested { .. } => {}
     }
 }

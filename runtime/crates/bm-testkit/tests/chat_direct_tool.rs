@@ -210,4 +210,33 @@ async fn direct_tool_round_feeds_inline_result_without_poll_timeout() {
         tool_result_line["data"]["effect"],
         serde_json::json!("read-only")
     );
+
+    // ADR-0055:工具调用发起以结构化事件承载(替代内联 `[调用 …]` 文本标记);
+    // 事件带 session_id(经 /events/{session} 送达前端),effect/target 齐备。
+    let evs = handle.events_all().await;
+    let started_ev = evs
+        .iter()
+        .find(|e| e.event_type == bm_contract::events::EventType::CapabilityStarted)
+        .expect("必须发 capability.started");
+    assert_eq!(
+        started_ev.payload["capability"],
+        serde_json::json!("system.echo")
+    );
+    assert_eq!(started_ev.payload["effect"], serde_json::json!("read-only"));
+    assert!(
+        started_ev.session_id.is_some(),
+        "capability.started 必须带 session_id(/events 过滤送达)"
+    );
+    // 结构化事件已承载 → 模型正文不得再混入 `[调用…]`/`[工具完成…]` 标记
+    let all_deltas: String = evs
+        .iter()
+        .filter(|e| e.event_type == bm_contract::events::EventType::ModelContentDelta)
+        .filter_map(|e| e.payload["delta"].as_str())
+        .collect();
+    for marker in ["[调用", "[工具完成", "[BM_APPROVAL"] {
+        assert!(
+            !all_deltas.contains(marker),
+            "模型正文 delta 不得含内联标记 {marker}: {all_deltas:?}"
+        );
+    }
 }

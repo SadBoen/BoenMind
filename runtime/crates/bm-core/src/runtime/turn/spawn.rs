@@ -690,26 +690,8 @@ async fn dispatch_one_tool_call(
     let args: serde_json::Value =
         serde_json::from_str(&tc.arguments).unwrap_or(serde_json::Value::Null);
 
- // 提取核心目标参数(如 path, file_path, command, query)用于前端清晰呈现
-    let target_summary = args
-        .get("path")
-        .or_else(|| args.get("file_path"))
-        .or_else(|| args.get("command"))
-        .or_else(|| args.get("query"))
-        .or_else(|| args.get("pattern"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-
-    let target_display = if !target_summary.is_empty() {
-        format!(" {}", target_summary)
-    } else {
-        String::new()
-    };
-
-    let _ = env.tx.try_send(Cmd::ProviderDelta {
-        operation_id: env.op_id.clone(),
-        delta: format!("\n[调用 {}{}]\n", tc.name, target_display),
-    });
+    // ADR-0055:工具调用提示不再以 `[调用 …]` 文本标记混入模型正文——
+    // 结构化工具事件(capability.started,内核 emit)经 /events 直送前端。
     let capability = name_to_cap
         .get(&tc.name)
         .cloned()
@@ -800,20 +782,9 @@ async fn dispatch_one_tool_call(
         _ => {}
     }
 
-    if let Some(appr_id) = approval_id.clone() {
- // 审批卡片标记:随 ProviderDelta 上屏,
- // 前端识别 bm_approval_request 渲染卡片
- // (args = 模型本次调用的真实参数,卡片展示用)
-        let _ = env
-            .tx
-            .send(Cmd::ApprovalRequested {
-                approval_id: appr_id.clone(),
-                capability: capability.clone(),
-                args: args.clone(),
-                operation_id: env.op_id.clone(),
-            })
-            .await;
-    }
+    // ADR-0055:审批卡不再走内联 `[BM_APPROVAL:…]` 标记——内核已在裁决点发
+    // 结构化 approval.requested 事件(含 args/risk_class,随 session_id 送达
+    // /events/{session}),前端经结构化通道直读渲染。此处无需再推送。
 
  // 受理/结果:直通能力同步出结果;MCP 异步能力经
  // operations 轮询至终态;需审批能力轮询至审批
@@ -910,11 +881,9 @@ async fn dispatch_one_tool_call(
             "elapsed_ms": elapsed_ms,
         }),
     );
- // 前端轻量反馈:向前端推一条工具执行耗时与成败标记
-    let _ = env.tx.try_send(Cmd::ProviderDelta {
-        operation_id: env.op_id.clone(),
-        delta: format!("\n[工具完成 {} 耗时 {}ms]\n", tc.name, elapsed_ms),
-    });
+ // ADR-0055:移除 `[工具完成 …]` 文本标记——工具耗时/结果已入 context-log 与
+ // 结构化事件面,前端不再从模型正文解析。完整工具生命周期(调用→结果)
+ // 由 capability.started + capability.invoked + context-log 轨迹事件共同承载。
  // ADR-0022:工具结果原生 role=tool + tool_call_id
  // 回喂,对齐模型因果链。不再强贴「不要再次调用」
  // 类负向禁令——链式调用(搜→读→改→测)是模型的

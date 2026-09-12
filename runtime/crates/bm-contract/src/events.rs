@@ -60,6 +60,9 @@ wire_str_enum!(EventType {
     TaskMemberRemoved => "task.member.removed",
     // M7 增发(2026-08-30,Minor:纯追加,M7 规格 §2-S4/S5)
     CapabilityProgress => "capability.progress",
+    // ADR-0055 增发(2026-09-13,Minor:纯追加):能力调用发起(结构化工具事件,
+    // 替代内联文本标记 `[调用 …]`)。
+    CapabilityStarted => "capability.started",
     ProviderHealthChanged => "provider.health.changed",
     // M9 增发(2026-08-30,Minor:纯追加,M9 规格 §二-S2/§三-S3)
     ModelContentDelta => "model.content.delta",
@@ -124,6 +127,7 @@ impl EventType {
                 "effective_risk",
                 "input_trust",
                 "expires_at",
+                "args",
             ],
             EventType::ApprovalResolved => &[
                 "approval_id",
@@ -191,6 +195,13 @@ impl EventType {
                 "progress",
                 "total",
                 "message",
+            ],
+            EventType::CapabilityStarted => &[
+                "operation_id",
+                "capability",
+                "principal",
+                "effect",
+                "target",
             ],
             EventType::ProviderHealthChanged => &["provider", "from", "to", "reason"],
             EventType::ModelContentDelta => &["operation_id", "index", "delta"],

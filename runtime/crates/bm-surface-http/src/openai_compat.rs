@@ -49,11 +49,11 @@ pub async fn models(State(state): State<AppState>) -> Response {
 }
 
 /// completion 载荷正文的补发判定(非流式连接器收尾)。
-/// 同一回合里 `model.content.delta` 既承载连接器的流式正文,也承载内核注入的
-/// `[调用 …]`/`[工具完成 …]` 标记。据此:正文若已随 delta 下发(流式),
-/// 则不再补发(防重复);未出现(非流式连接器只在 completion 带全文),
-/// 则补发全文。早年以「已下发字符数」做 `skip`,标记会撑大计数而把真正文
-/// 整段丢弃——凡非流式上游 + 工具调用的回合终稿消失。
+/// `model.content.delta` 现只承载连接器的流式正文(ADR-0055 起内核不再把
+/// `[调用 …]`/`[工具完成 …]` 标记混入 delta):正文若已随 delta 下发(流式),
+/// 则不再补发(防重复);未出现(非流式连接器只在 completion 带全文),则补发。
+/// 历史上标记会撑大「已下发字符数」而把真正文整段丢弃,故判定改按「已下发
+/// 文本是否已含全文」——标记既已移除,该判定保持稳健即可。
 fn should_backfill_content(sent: &str, content: &str) -> bool {
     !content.is_empty() && !sent.contains(content)
 }

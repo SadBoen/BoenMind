@@ -253,7 +253,7 @@ pub(crate) fn capability_call_inner(
             w.settle_operation(&op_id, OperationState::WaitingApproval, None);
             w.emit(
                 EventType::ApprovalRequested,
-                None,
+                ctx.session_id.clone(),
                 None,
                 Some(op_id.clone()),
                 serde_json::json!({
@@ -265,6 +265,9 @@ pub(crate) fn capability_call_inner(
                     "effective_risk": effective_risk.as_str(),
                     "input_trust": approval.input_trust.as_str(),
                     "expires_at": approval.expires_at,
+                    // ADR-0055:审批卡渲染需原始参数(此前只在内联标记里带),
+                    // 前端经 /events 结构化直读,不再解析正文标记。
+                    "args": params.args,
                 }),
             );
             approval.grant_id = None;
@@ -744,6 +747,17 @@ fn fail_call_receipt(
         _ => CoreError::Semantic(code, message.to_string()),
     }
 }
+
+/// 工具事件展示目标(ADR-0055):从参数提取核心目标(路径/命令/查询/模式),
+/// 供前端渲染工具卡摘要。取材优先级与 turn 侧一致;缺省空串。
+fn args_target(args: &serde_json::Value) -> String {
+    ["path", "file_path", "command", "query", "pattern"]
+        .iter()
+        .find_map(|k| args.get(*k).and_then(|v| v.as_str()))
+        .unwrap_or("")
+        .to_string()
+}
+
 pub(crate) fn dispatch_capability(
     w: &mut World,
     ctx: &CallContext,
@@ -776,6 +790,23 @@ pub(crate) fn dispatch_capability(
             }
         }
     };
+ // ADR-0055:能力调用发起事件(结构化工具事件,替代内联文本标记)。
+ // 在此发射 = 已过 Broker 前四步裁决、即将执行——前端经 /events 直读
+ // 渲染工具卡/分类(不再解析模型正文里的 `[调用 …]`)。session_id 随
+ // CallContext 携带,/events/{session} 据此过滤送达。
+    w.emit(
+        EventType::CapabilityStarted,
+        ctx.session_id.clone(),
+        None,
+        Some(op_id.clone()),
+        serde_json::json!({
+            "operation_id": op_id.as_str(),
+            "capability": capability,
+            "principal": ctx.principal.as_str(),
+            "effect": prepared.manifest.effect.as_str(),
+            "target": args_target(&args),
+        }),
+    );
  // M11/ADR-0031:task.share.* 内核内联执行(Task 公告栏=事件投影,无
  // 外部副作用,不触 Provider 通道);Broker 裁决/审计照常。
     if capability.starts_with(crate::share::CAPABILITY_PREFIX) {
