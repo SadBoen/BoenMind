@@ -42,6 +42,16 @@ use tokio_util::sync::CancellationToken;
 /// 语义 = 零配置时的模型标识占位;真实接入以 model.json/env 为准。
 pub const DEFAULT_MODEL_ID: &str = "zhipu.glm-4-flash";
 
+/// 无 TTL / 无 deadline 的**远期哨兵**:100 年(ADR-0028)。
+///
+/// 合同的时间戳字段(Approval.expires_at、InvokeRequest.deadline)为**必填**,
+/// 故以 100 年远期表达"永不过期 / 不限时";配置为 0 = 不限制(基线 §9.6 语义不变)。
+/// 单源:此前 `turn/capability.rs`(ms)与 `turn/spawn.rs`(secs)各写一份字面量
+/// (ADR-0046 P5 收口)。
+pub const NO_TTL_SENTINEL_SECS: u64 = 100 * 365 * 24 * 3600;
+/// 同上,毫秒表示。
+pub const NO_TTL_SENTINEL_MS: u64 = NO_TTL_SENTINEL_SECS * 1000;
+
 /// 模型 → 凭据引用的默认映射(合同字符集内;实现可注入自己的映射)。
 pub fn default_secret_ref(model_id: &str) -> String {
     format!("secret:model.{model_id}")

@@ -365,6 +365,7 @@ version = "0.0.17"
 dependencies = [
  "bm-contract",
  "bm-core",
+ "dirs",
  "rusqlite",
  "serde",
  "serde_json",

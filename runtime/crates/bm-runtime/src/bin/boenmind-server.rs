@@ -18,12 +18,6 @@ use serde_json::json;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-fn default_data_dir() -> PathBuf {
-    dirs::data_dir()
-        .map(|d| d.join("boenmind"))
-        .unwrap_or_else(|| PathBuf::from("boenmind-data"))
-}
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 可观测性(2026-09-07 双开毒化排障):此前 main 未装 subscriber,持久层
@@ -36,7 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .with_writer(std::io::stderr)
         .init();
-    let mut data_dir = default_data_dir();
+    let mut data_dir = bm_persist::default_data_dir();
     let mut bind = "127.0.0.1:7531".to_string();
     let mut web_dir: Option<PathBuf> = None;
     let mut mcp_config: Option<PathBuf> = None;

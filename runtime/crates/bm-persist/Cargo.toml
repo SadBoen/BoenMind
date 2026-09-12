@@ -7,6 +7,8 @@ repository.workspace = true
 [dependencies]
 bm-core = { path = "../bm-core" }
 bm-contract = { workspace = true }
+# default_data_dir 单源(ADR-0046 P5)
+dirs = { workspace = true }
 rusqlite = { workspace = true }
 sha2 = { workspace = true }
 serde.workspace = true

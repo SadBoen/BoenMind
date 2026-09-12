@@ -19,3 +19,13 @@ pub use sqlite_state::StateDb;
 pub use store::{EventStore, META_LAST_APPLIED, META_SNAPSHOT_SEQ, PersistStore};
 // 落盘小工具所有权在内核端口层(F-12);此处 re-export 保持旧路径。
 pub use bm_core::ports::persist::{atomic_write, filter_lines_atomic};
+
+/// 平台默认数据目录(`<data_dir>/boenmind`,无平台目录时回落到 `boenmind-data`)。
+///
+/// 运行时状态(事件日志/配置/密钥)的缺省根;`boenmind-server` 与 `bm-cli` 共用,
+/// 此前两处逐字重复(ADR-0046 P5 收口)。置于本 crate:两边都已依赖它,且属"数据目录"归属。
+pub fn default_data_dir() -> std::path::PathBuf {
+    dirs::data_dir()
+        .map(|d| d.join("boenmind"))
+        .unwrap_or_else(|| std::path::PathBuf::from("boenmind-data"))
+}

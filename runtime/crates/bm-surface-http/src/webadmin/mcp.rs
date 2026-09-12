@@ -438,11 +438,13 @@ fn valid_config_name(name: &str) -> Result<(), Response> {
 /// 读 config/mcp-<name>.json 配置值:缺文件=空对象;读失败/损坏=500
 /// (损坏前缀文案由调用方给,get/set 各有口径)。
 #[allow(clippy::result_large_err)] // Err 即响应体(冷路径),不值得装箱
+/// 读某 server 的配置文件(缺失 = 空对象;损坏拒绝)。ADR-0046 P5:改用
+/// `json_store` 统一原语(此前手写 read_to_string/from_str/NotFound 样板)。
 fn read_server_config(file: &Path, corrupt_prefix: String) -> Result<Value, Response> {
-    match std::fs::read_to_string(file) {
-        Ok(t) => serde_json::from_str(&t).map_err(|e| internal(format!("{corrupt_prefix}: {e}"))),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(json!({})),
-        Err(e) => Err(internal(format!("读取配置文件失败: {e}"))),
+    match super::json_store::read_json_file(file, "读取配置文件失败", &corrupt_prefix) {
+        Ok(super::json_store::JsonRead::Value(v)) => Ok(v),
+        Ok(super::json_store::JsonRead::Missing) => Ok(json!({})),
+        Err(e) => Err(internal(e)),
     }
 }
 

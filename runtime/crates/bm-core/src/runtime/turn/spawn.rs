@@ -1184,8 +1184,9 @@ pub(crate) fn spawn_turn(
     // ADR-0028:0 = 不限时——合同 InvokeRequest.deadline 为必填时间戳,
     // 以 100 年远期哨兵表达「无 deadline」(remaining_until 折出巨大预算)。
     let timeout_secs = w.config.limits.get().model_call_timeout_secs as i64;
-    let unlimited_deadline = (timeout_secs <= 0)
-        .then(|| format_ts(clock.now() + Duration::seconds(100 * 365 * 24 * 3600)));
+    let unlimited_deadline = (timeout_secs <= 0).then(|| {
+        format_ts(clock.now() + Duration::seconds(crate::runtime::NO_TTL_SENTINEL_SECS as i64))
+    });
     let tx = w.tx.clone();
     let op_id = operation_id.clone();
     let streaming = w.config.model_streaming;

@@ -234,7 +234,7 @@ pub(crate) fn capability_call_inner(
             // 只是不再定时撤销;超时语义见基线 §9.6 不变)。
             let raw_wait = w.config.limits.get().approval_wait_ms;
             let ttl_ms = if raw_wait == 0 {
-                100 * 365 * 24 * 3600 * 1000u64
+                crate::runtime::NO_TTL_SENTINEL_MS
             } else {
                 raw_wait
             };

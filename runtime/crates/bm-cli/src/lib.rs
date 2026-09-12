@@ -132,11 +132,8 @@ impl EnvelopeClient {
 // ---- 离线自检:独立 Judge 评估(M8.7;#57 裁决=CLI 装开关)------------------
 
 /// 缺省数据目录(与 boenmind-server `--data-dir` 缺省同源)。
-pub fn default_data_dir() -> std::path::PathBuf {
-    dirs::data_dir()
-        .map(|d| d.join("boenmind"))
-        .unwrap_or_else(|| std::path::PathBuf::from("boenmind-data"))
-}
+/// 平台默认数据目录(单源在 bm-core;ADR-0046 P5 收口)。
+pub use bm_persist::default_data_dir;
 
 /// 对 `<data-dir>` 的事件日志跑独立评估器(离线只读,不经 server;
 /// 评估器为确定性:同区间恒同报告)。`from_seq`/`to_seq` 缺省 = 全量区间。
