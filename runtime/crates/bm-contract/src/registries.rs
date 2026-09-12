@@ -55,6 +55,9 @@ pub const EVALUATION_REPORT_SCHEMA: &str =
 // W4b 增发(2026-09-02,Minor):Skill 知识包合同(只是数据,加载不改变权限)。
 pub const SKILL_SCHEMA: &str =
     include_str!("../../../../boenmind-contracts/capability/skill.v0_1.schema.json");
+// ADR-0042(2026-09-12,Minor):通用 wasm 插件声明合同(冻结 plugins.json 的临时形状)。
+pub const WASM_PLUGIN_SCHEMA: &str =
+    include_str!("../../../../boenmind-contracts/plugin/wasm-plugin.v0_1.schema.json");
 
 #[derive(Debug, Deserialize)]
 pub struct RegistryCode {

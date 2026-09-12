@@ -96,7 +96,8 @@ impl SkillScriptManager {
     /// 从**声明文件**装载通用 wasm 插件(ADR-0041 去特化;这是宿主在 `skills.json`
     /// 之外的第二个真实调用方)。
     ///
-    /// 声明形状(数组;每项一个 wasm 工具能力):
+    /// 声明形状 = `boenmind-contracts/plugin/wasm-plugin.v0_1.schema.json`(ADR-0042
+    /// 冻结):数组,每项一个 wasm 工具能力。
     /// ```json
     /// [{"capability":"demo.echo","provider":"demo.wasm","version":"0.1.0",
     ///   "wasm":"echo.wasm","effect":"read-only","timeout_ms":10000,
@@ -104,7 +105,7 @@ impl SkillScriptManager {
     ///   "description":"...","scopes":[]}]
     /// ```
     /// wasm 路径相对 `decl_path` 所在目录解析,并钉死在该目录内(防越界)。
-    /// 返回合成 manifests;`capability`/`provider`/`wasm` 缺失或非法者跳过并告警。
+    /// 返回合成 manifests;缺 `capability`/`wasm` 或**违反冻结 schema** 者跳过并告警。
     pub fn load_plugins_file(&self, decl_path: &Path) -> Vec<CapabilityManifest> {
         let Ok(text) = std::fs::read_to_string(decl_path) else {
             return Vec::new();
@@ -113,6 +114,17 @@ impl SkillScriptManager {
             eprintln!("[Plugin] {} 解析失败(已跳过)", decl_path.display());
             return Vec::new();
         };
+        // ADR-0042:装载前过冻结 schema 门(与此前"注册期零校验"的教训同源——
+        // 申报形状须机器可校验,不靠约定)。整文件级校验:形状错即全部不装载。
+        if let Err(e) =
+            bm_contract::schemas::validate(bm_contract::registries::WASM_PLUGIN_SCHEMA, &items)
+        {
+            eprintln!(
+                "[Plugin] {} 违反 wasm 插件合同(拒绝装载): {e}",
+                decl_path.display()
+            );
+            return Vec::new();
+        }
         let Some(list) = items.as_array() else {
             return Vec::new();
         };
@@ -663,6 +675,60 @@ mod tests {
         assert!(
             mgr.load_plugins_file(&bad).is_empty(),
             "越界 wasm 必须被跳过"
+        );
+    }
+
+    // ADR-0042:声明必须过**冻结 schema 门**——非法形状(未知字段/坏能力名)拒绝装载,
+    // 证明这道门不是装饰。此前 plugins.json 形状仅存在于实现、零校验。
+    #[test]
+    fn load_plugins_file_rejects_schema_violations() {
+        let dir = tempfile::tempdir().expect("临时目录");
+        std::fs::write(
+            dir.path().join("echo.wasm"),
+            wat::parse_str(ECHO_WAT).expect("wat→wasm"),
+        )
+        .expect("写 wasm");
+        let mgr = SkillScriptManager::new().expect("engine");
+
+        // 未知字段(additionalProperties:false)→ 拒绝
+        let unknown = dir.path().join("unknown.json");
+        std::fs::write(
+            &unknown,
+            serde_json::json!([{
+                "capability": "demo.echo", "wasm": "echo.wasm",
+                "unexpected_field": true
+            }])
+            .to_string(),
+        )
+        .expect("写");
+        assert!(
+            mgr.load_plugins_file(&unknown).is_empty(),
+            "未知字段必须被合同拒绝"
+        );
+
+        // 非法能力名(缺命名空间段)→ 拒绝
+        let badname = dir.path().join("badname.json");
+        std::fs::write(
+            &badname,
+            serde_json::json!([{ "capability": "NoNamespace", "wasm": "echo.wasm" }]).to_string(),
+        )
+        .expect("写");
+        assert!(
+            mgr.load_plugins_file(&badname).is_empty(),
+            "非法能力名必须被合同拒绝"
+        );
+
+        // 合法声明仍通过(门的正例,防"全拒")→ 装载成功
+        let ok = dir.path().join("ok.json");
+        std::fs::write(
+            &ok,
+            serde_json::json!([{ "capability": "demo.ok", "wasm": "echo.wasm" }]).to_string(),
+        )
+        .expect("写");
+        assert_eq!(
+            mgr.load_plugins_file(&ok).len(),
+            1,
+            "合法声明必须通过合同门"
         );
     }
 

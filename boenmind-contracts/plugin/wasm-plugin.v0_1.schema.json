@@ -1,0 +1,102 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "boenmind:plugin:wasm-plugin:v0.1",
+  "x-frozen": "2026-09-12",
+  "title": "Wasm 插件声明 v0.1",
+  "description": "ADR-0041/0042:通用 wasm 插件(config/plugins.json)的声明合同。一项 = 一个 wasm 工具能力的装载声明;wasm 路径相对本文件所在目录解析并钉死在该目录内(防越界)。本合同冻结此前仅存在于实现的临时形状。数组顶层:文件即声明全集,增删即热重载(ADR-0041)。",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": [
+      "capability",
+      "wasm"
+    ],
+    "additionalProperties": false,
+    "properties": {
+      "capability": {
+        "$ref": "#/definitions/capability_name",
+        "description": "稳定能力名(至少两段命名空间,如 demo.echo)。宿主对命名空间不可知——不要求也不禁止 skill.* 前缀(ADR-0041 去特化)"
+      },
+      "provider": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_.-]{1,63}$",
+        "description": "提供者标识;缺省取 capability。用于按 provider 摘除(ADR-0041)与插件身份 id"
+      },
+      "version": {
+        "type": "string",
+        "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+        "description": "语义化版本;缺省 0.1.0"
+      },
+      "wasm": {
+        "type": "string",
+        "minLength": 1,
+        "description": "wasm 模块路径,相对本声明文件所在目录;装载期 canonicalize 后必须落在该目录内,越界拒载"
+      },
+      "effect": {
+        "$ref": "#/definitions/risk_class",
+        "description": "风险等级;缺省 read-only。untrusted 来源按风险序上提一级(基线 §4.5)"
+      },
+      "approval": {
+        "enum": [
+          "not-required",
+          "required"
+        ],
+        "description": "审批要求;缺省 required(安全默认)。read-only 直通须显式 not-required"
+      },
+      "idempotent": {
+        "type": "boolean",
+        "description": "缺省 false(安全默认)"
+      },
+      "timeout_ms": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 600000,
+        "description": "执行超时看门狗;缺省 10000(ADR-0016 默认 10s)"
+      },
+      "input_schema": {
+        "type": "object",
+        "description": "入参 JSON Schema;缺省 {\"type\":\"object\"}(不约束)"
+      },
+      "output_schema": {
+        "type": "object",
+        "description": "出参 JSON Schema;缺省 {\"type\":\"object\"}(不约束)"
+      },
+      "scopes": {
+        "type": "array",
+        "items": {
+          "$ref": "#/definitions/scope_label"
+        },
+        "maxItems": 16,
+        "description": "权限范围标签;缺省为空"
+      },
+      "description": {
+        "type": "string",
+        "maxLength": 2000,
+        "description": "面向模型的工具描述(ADR-0022 描述治理)"
+      }
+    }
+  },
+  "definitions": {
+    "capability_name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+      "description": "稳定能力名,至少两段命名空间(与 capability/manifest.v0_1 同口径)"
+    },
+    "risk_class": {
+      "type": "string",
+      "enum": [
+        "read-only",
+        "low-risk-command",
+        "reversible-command",
+        "external-side-effect",
+        "high-risk-command"
+      ],
+      "description": "风险等级(基线 §5.3),与 capability/manifest.v0_1 同口径"
+    },
+    "scope_label": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]{0,30}(:[a-z0-9_.-]{1,47})?$",
+      "description": "权限范围标签,与 capability/manifest.v0_1 同口径(允许一次冒号分层)"
+    }
+  }
+}
