@@ -59,7 +59,7 @@ pub struct AppState {
     pub default_model: Arc<String>,
     pub data_dir: Option<std::path::PathBuf>,
     /// W6:对话级模型路由表(body.model 校验用;None = 不校验,测试/mock 态)。
-    pub model_routes: Option<Arc<bm_providers::routing::RoutingConnector>>,
+    pub model_routes: Option<Arc<dyn bm_core::ports::ModelRouter>>,
     /// W1:OpenAI 兼容插座会话寻址表(web 会话 id → agent id)。原为进程级
     /// 静态 OnceLock(评审指出绕过 AppState),2026-09-02 归入共享状态:
     /// 随路由生灭、测试间隔离,语义不变(重启即失效由响应文案承接)。
@@ -119,7 +119,7 @@ pub fn router(
     web_dir: Option<std::path::PathBuf>,
     default_model: Arc<String>,
     admin: Option<webadmin::AdminConfig>,
-    model_routes: Option<Arc<bm_providers::routing::RoutingConnector>>,
+    model_routes: Option<Arc<dyn bm_core::ports::ModelRouter>>,
     public_bind: bool,
 ) -> Router {
     let data_dir = admin.as_ref().map(|a| a.data_dir.clone());

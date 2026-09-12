@@ -80,7 +80,7 @@ pub struct AdminConfig {
     /// MCP env secret: 引用解析用加密库(与启动装载同一实例)。
     pub secrets: Option<Arc<dyn bm_core::ports::SecretStore>>,
     /// W6:对话级模型路由表(providers 写后重建;None = 未装配,如测试态)。
-    pub model_routes: Option<Arc<bm_providers::routing::RoutingConnector>>,
+    pub model_routes: Option<Arc<dyn bm_core::ports::ModelRouter>>,
     /// W7 在线升级:应用层停机信号(apply 后排空本进程);None = 测试态。
     pub shutdown: Option<Arc<tokio::sync::Notify>>,
     /// W7 在线升级:Web 静态目录(--web-dir,升级时覆盖 dist);None = 未挂载。

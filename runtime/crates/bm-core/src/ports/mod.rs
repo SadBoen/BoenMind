@@ -3,6 +3,7 @@
 use async_trait::async_trait;
 use bm_contract::connector::InvokeRequest;
 use bm_contract::connector::InvokeResponse;
+use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 /// 模型连接器端口。实现方自行从 Secret Store 解析 `req.secret_ref`;
@@ -107,6 +108,28 @@ pub trait AsyncCapabilityExecutor: Send + Sync {
 pub trait JobBoard: Send + Sync {
     /// 在跑/近期完成作业的一句话摘要;空作业返回空串(调用方不注入)。
     fn summary(&self) -> String;
+}
+
+// ---- W6/ADR-0042:模型路由端口 ---------------------------------------------
+
+/// 对话级模型路由门面(providers `RoutingConnector` 实现)。
+///
+/// `ModelConnector` 只表达"怎么调一次模型";"有哪些模型可路由、路由表怎么重建"
+/// 是**另一个关注点**,原先是 `bm-providers::routing::RoutingConnector` 的固有
+/// 方法,导致 surface 必须依赖具体类型(lib.rs/webadmin 的 `model_routes` 字段)。
+/// 本端口把该关注点上移到 core,surface 只依赖端口,不依赖 bm-providers。
+///
+/// 读方法(known_models/contains)供 /v1 校验请求模型合法性;
+/// 写方法(replace_table)供管理面按 providers.json 重建路由表。
+pub trait ModelRouter: Send + Sync {
+    /// 路由表内全部模型 id(未命中 = 回落默认连接器)。
+    fn known_models(&self) -> Vec<String>;
+
+    /// 某模型 id 是否在路由表内。
+    fn contains(&self, model_id: &str) -> bool;
+
+    /// 原子替换路由表(管理面写后重建)。
+    fn replace_table(&self, table: std::collections::HashMap<String, Arc<dyn ModelConnector>>);
 }
 
 pub mod persist;

@@ -82,7 +82,6 @@ impl ModelConnector for RoutingConnector {
     fn provider(&self) -> &'static str {
         "openai-routing"
     }
-
     async fn invoke(&self, req: InvokeRequest, cancel: CancellationToken) -> InvokeResponse {
         self.route(&req.model_id).invoke(req, cancel).await
     }
@@ -98,6 +97,22 @@ impl ModelConnector for RoutingConnector {
         self.route(&req.model_id)
             .invoke_stream(req, cancel, on_delta)
             .await
+    }
+}
+
+/// ADR-0042:路由管理关注点实现为 core 端口,使 surface 只依赖 `dyn ModelRouter`
+/// 而非具体类型。固有方法保留(便利直接调用),此处转调。
+impl bm_core::ports::ModelRouter for RoutingConnector {
+    fn known_models(&self) -> Vec<String> {
+        RoutingConnector::known_models(self)
+    }
+
+    fn contains(&self, model_id: &str) -> bool {
+        RoutingConnector::contains(self, model_id)
+    }
+
+    fn replace_table(&self, table: HashMap<String, Arc<dyn ModelConnector>>) {
+        RoutingConnector::replace_table(self, table)
     }
 }
 
@@ -124,6 +139,24 @@ mod tests {
             deadline: "2030-01-01T00:00:00+00:00".to_string(),
             attempt: 1,
         }
+    }
+
+    // ADR-0042:surface 经 `dyn ModelRouter` 使用路由,取代具体类型。
+    #[test]
+    fn model_router_port_is_usable_as_dyn() {
+        let default = Fake::new("default");
+        let router = Arc::new(RoutingConnector::new(default));
+        let port: Arc<dyn bm_core::ports::ModelRouter> = router.clone();
+        assert!(port.known_models().is_empty());
+        assert!(!port.contains("model-a"));
+
+        let mut table: HashMap<String, Arc<dyn ModelConnector>> = HashMap::new();
+        table.insert("model-a".into(), Fake::new("a"));
+        port.replace_table(table);
+
+        assert_eq!(port.known_models(), vec!["model-a".to_string()]);
+        assert!(port.contains("model-a"));
+        assert!(!port.contains("nope"));
     }
 
     /// 记录被调模型的假连接器;invoke_stream 可独立计数。
