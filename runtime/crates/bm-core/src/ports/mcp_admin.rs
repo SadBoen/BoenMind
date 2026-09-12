@@ -83,7 +83,8 @@ pub trait McpAdmin: Send + Sync {
 /// 否则热重载会把全部 MCP 能力静默卸载、甚至被整表回写覆盖丢配置(P1-9)。
 pub fn read_mcp_servers(path: &Path) -> Result<Vec<Value>, String> {
     // #71:读原语单源(bm_core::json_store);策略不变——仅 NotFound 视为空。
-    match crate::json_store::read_json_file(path, "MCP 配置读取失败", "MCP 配置不是 JSON 数组") {
+    match crate::json_store::read_json_file(path, "MCP 配置读取失败", "MCP 配置不是 JSON 数组")
+    {
         Ok(crate::json_store::JsonRead::Value(v)) => {
             serde_json::from_value(v).map_err(|e| format!("MCP 配置不是 JSON 数组: {e}"))
         }

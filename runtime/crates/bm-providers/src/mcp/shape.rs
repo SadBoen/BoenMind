@@ -1,9 +1,7 @@
 //! MCP 数据形状(自 mcp.rs 机械移出;ADR-0048)。纯数据/纯工具,无传输依赖。
 
 use super::*;
-use bm_contract::capability::{
-    ApprovalRequirement, ExecutionMode, ManifestSpec, RiskClass,
-};
+use bm_contract::capability::{ApprovalRequirement, ExecutionMode, ManifestSpec, RiskClass};
 
 // ---- 数据形状 --------------------------------------------------------------
 
@@ -101,14 +99,17 @@ pub fn tool_manifest(
         tool.input_schema.clone()
     };
     // ADR-0051:走全仓单一 manifest 合成路径(缺省单源)。
-    let mut spec =
-        ManifestSpec::new(format!("mcp.{server_norm}.{tool_norm}"), format!("mcp.{server_norm}"), effect)
-            .input_schema(input_schema)
-            .cancellable(true)
-            .timeout_ms(timeout_ms)
-            .approval(approval)
-            .scopes(vec![format!("domain:mcp.{server_norm}")])
-            .execution_mode(ExecutionMode::Async);
+    let mut spec = ManifestSpec::new(
+        format!("mcp.{server_norm}.{tool_norm}"),
+        format!("mcp.{server_norm}"),
+        effect,
+    )
+    .input_schema(input_schema)
+    .cancellable(true)
+    .timeout_ms(timeout_ms)
+    .approval(approval)
+    .scopes(vec![format!("domain:mcp.{server_norm}")])
+    .execution_mode(ExecutionMode::Async);
     // ADR-0022:工具自描述进 manifest,对话工具清单不再丢描述。
     if let Some(d) = tool
         .description

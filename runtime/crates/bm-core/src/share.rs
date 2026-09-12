@@ -7,9 +7,7 @@
 //! Provider 不触达),单写者纪律与 Broker 裁决/审计全覆盖;点名消息与成员级
 //! 身份随批次 2(ADR-0031 决策 2),远程网格留阶段二。
 
-use bm_contract::capability::{
-    CapabilityManifest, ExecutionMode, ManifestSpec, RiskClass,
-};
+use bm_contract::capability::{CapabilityManifest, ExecutionMode, ManifestSpec, RiskClass};
 use bm_contract::events::{EventEnvelope, EventType};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;

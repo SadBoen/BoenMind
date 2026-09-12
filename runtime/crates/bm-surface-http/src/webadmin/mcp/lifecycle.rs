@@ -193,7 +193,10 @@ pub async fn seed_bundled_plugins(
         .filter_map(|s| s["name"].as_str().map(String::from))
         .collect();
     let tombstones = read_tombstones(data_dir);
-    for (p, decl) in super::scan::scan_candidates(bundled_dir).await.unwrap_or_default() {
+    for (p, decl) in super::scan::scan_candidates(bundled_dir)
+        .await
+        .unwrap_or_default()
+    {
         let name = decl["name"].as_str().unwrap_or_default().to_string();
         if seen.iter().any(|r| r == &name) || tombstones.iter().any(|t| t == &name) {
             continue;

@@ -72,17 +72,20 @@ impl WasmDecl {
     /// [`bm_contract::capability::ManifestSpec`] 单一合成路径(execution_mode
     /// 恒 async;cancellable 恒 true);本结构只承载两格式(技能/插件)归一后的差异。
     fn synthesize(&self) -> Result<CapabilityManifest, String> {
-        let mut spec =
-            bm_contract::capability::ManifestSpec::new(&self.capability, &self.provider, self.effect)
-                .version(&self.version)
-                .input_schema(self.input_schema.clone())
-                .output_schema(self.output_schema.clone())
-                .idempotent(self.idempotent)
-                .cancellable(true)
-                .timeout_ms(self.timeout_ms)
-                .approval(self.approval)
-                .scopes(self.scopes.clone())
-                .execution_mode(bm_contract::capability::ExecutionMode::Async);
+        let mut spec = bm_contract::capability::ManifestSpec::new(
+            &self.capability,
+            &self.provider,
+            self.effect,
+        )
+        .version(&self.version)
+        .input_schema(self.input_schema.clone())
+        .output_schema(self.output_schema.clone())
+        .idempotent(self.idempotent)
+        .cancellable(true)
+        .timeout_ms(self.timeout_ms)
+        .approval(self.approval)
+        .scopes(self.scopes.clone())
+        .execution_mode(bm_contract::capability::ExecutionMode::Async);
         if let Some(d) = &self.description {
             spec = spec.description(d);
         }
@@ -187,9 +190,7 @@ impl SkillScriptManager {
                 eprintln!("[Plugin] {capability} 未声明 wasm(已跳过)");
                 continue;
             };
-            let timeout_ms = it["timeout_ms"]
-                .as_u64()
-                .unwrap_or(self.default_timeout_ms);
+            let timeout_ms = it["timeout_ms"].as_u64().unwrap_or(self.default_timeout_ms);
             if let Err(e) =
                 self.register_wasm(provider, capability, &root.join(wasm_rel), root, timeout_ms)
             {
@@ -585,8 +586,8 @@ mod tests {
     )"#;
 
     fn manager_with_wat(wat: &str) -> (SkillScriptManager, String) {
-        let mgr = SkillScriptManager::new(bm_core::limits::LimitsCell::with_default())
-            .expect("engine");
+        let mgr =
+            SkillScriptManager::new(bm_core::limits::LimitsCell::with_default()).expect("engine");
         let engine = mgr.engine.clone();
         let module = Module::new(&engine, wat).expect("wat 编译");
         let cap = "skill.demo.convert".to_string();
@@ -682,8 +683,8 @@ mod tests {
 
     #[test]
     fn manifests_for_maps_effect_and_capability_name() {
-        let mgr = SkillScriptManager::new(bm_core::limits::LimitsCell::with_default())
-            .expect("engine");
+        let mgr =
+            SkillScriptManager::new(bm_core::limits::LimitsCell::with_default()).expect("engine");
         let def: SkillDefinition = serde_json::from_value(serde_json::json!({
             "skill_id": "skill_units",
             "name": "换算",
@@ -733,8 +734,8 @@ mod tests {
         )
         .expect("写声明");
 
-        let mgr = SkillScriptManager::new(bm_core::limits::LimitsCell::with_default())
-            .expect("engine");
+        let mgr =
+            SkillScriptManager::new(bm_core::limits::LimitsCell::with_default()).expect("engine");
         let manifests = mgr.load_plugins_file(&decl);
         assert_eq!(manifests.len(), 1, "声明应装载出一个能力");
         assert_eq!(manifests[0].capability, "demo.echo");
@@ -779,8 +780,8 @@ mod tests {
             wat::parse_str(ECHO_WAT).expect("wat→wasm"),
         )
         .expect("写 wasm");
-        let mgr = SkillScriptManager::new(bm_core::limits::LimitsCell::with_default())
-            .expect("engine");
+        let mgr =
+            SkillScriptManager::new(bm_core::limits::LimitsCell::with_default()).expect("engine");
 
         // 未知字段(additionalProperties:false)→ 拒绝
         let unknown = dir.path().join("unknown.json");
@@ -827,8 +828,8 @@ mod tests {
     // ADR-0041:wasm 插件以 Tool 身份注册,内核可读到「谁提供」。
     #[test]
     fn capability_entries_declare_plugin_identity() {
-        let mgr = SkillScriptManager::new(bm_core::limits::LimitsCell::with_default())
-            .expect("engine");
+        let mgr =
+            SkillScriptManager::new(bm_core::limits::LimitsCell::with_default()).expect("engine");
         let def: SkillDefinition = serde_json::from_value(serde_json::json!({
             "skill_id": "units",
             "name": "换算",
@@ -859,8 +860,8 @@ mod tests {
         std::fs::write(&secret, b"MZ-not-wasm").expect("写外部文件");
         let skill_root = dir.path().join("skill");
         std::fs::create_dir_all(&skill_root).expect("建技能目录");
-        let mgr = SkillScriptManager::new(bm_core::limits::LimitsCell::with_default())
-            .expect("engine");
+        let mgr =
+            SkillScriptManager::new(bm_core::limits::LimitsCell::with_default()).expect("engine");
         let def: SkillDefinition = serde_json::from_value(serde_json::json!({
             "skill_id": "escape",
             "name": "越界",
@@ -890,8 +891,8 @@ mod tests {
         let bytes = wat::parse_str(ECHO_WAT).expect("wat→wasm");
         std::fs::write(&wasm, &bytes).expect("写 wasm");
 
-        let mgr = SkillScriptManager::new(bm_core::limits::LimitsCell::with_default())
-            .expect("engine");
+        let mgr =
+            SkillScriptManager::new(bm_core::limits::LimitsCell::with_default()).expect("engine");
         mgr.register_wasm("plugin.demo", "plugin.demo.echo", &wasm, dir.path(), 5_000)
             .expect("通用注册应接受任意 capability 名");
         assert!(mgr.entries.lock().unwrap().contains_key("plugin.demo.echo"));
@@ -919,8 +920,8 @@ mod tests {
             skill_default_timeout_ms: 12_345,
             ..Default::default()
         };
-        let mgr = SkillScriptManager::new(bm_core::limits::LimitsCell::new(limits))
-            .expect("engine");
+        let mgr =
+            SkillScriptManager::new(bm_core::limits::LimitsCell::new(limits)).expect("engine");
         let def: SkillDefinition = serde_json::from_value(serde_json::json!({
             "skill_id": "limits_demo",
             "name": "超时",

@@ -991,9 +991,7 @@ mod integrity_tests {
         // 条目级声明优先于默认。
         std::fs::write(
             &cfg,
-            format!(
-                r#"[{{"name":"b","transport":"stdio","command":"{cmd}","restart_limit":2}}]"#
-            ),
+            format!(r#"[{{"name":"b","transport":"stdio","command":"{cmd}","restart_limit":2}}]"#),
         )
         .expect("写配置");
         let setups = load_mcp_setups(&cfg, &store, 7).expect("解析");

@@ -91,9 +91,8 @@ fn load_skill(data_dir: &std::path::Path) -> (Arc<SkillScriptManager>, SkillEntr
     std::fs::create_dir_all(&root).expect("建技能目录");
     let wasm = wat::parse_str(ECHO_WAT).expect("WAT → wasm");
     std::fs::write(root.join("echo.wasm"), wasm).expect("写 wasm");
-    let manager = Arc::new(
-        SkillScriptManager::new(LimitsCell::with_default()).expect("wasmtime 引擎"),
-    );
+    let manager =
+        Arc::new(SkillScriptManager::new(LimitsCell::with_default()).expect("wasmtime 引擎"));
     let manifests = manager
         .register_skill(SKILL_ID, &skill_def(), &root)
         .expect("注册技能脚本");
@@ -291,9 +290,8 @@ fn load_plugin(data_dir: &std::path::Path) -> (Arc<SkillScriptManager>, SkillEnt
     )
     .expect("写 wasm");
     std::fs::write(cfg.join("plugins.json"), plugin_decl().to_string()).expect("写声明");
-    let manager = Arc::new(
-        SkillScriptManager::new(LimitsCell::with_default()).expect("wasmtime 引擎"),
-    );
+    let manager =
+        Arc::new(SkillScriptManager::new(LimitsCell::with_default()).expect("wasmtime 引擎"));
     let manifests = manager.load_plugins_file(&cfg.join("plugins.json"));
     let entries = SkillScriptManager::capability_entries(manifests);
     (manager, entries)

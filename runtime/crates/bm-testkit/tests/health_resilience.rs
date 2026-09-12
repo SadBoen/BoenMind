@@ -345,7 +345,8 @@ async fn t107_mcp_install_trust_and_config() {
         json!([{"name": "Bad-Name", "transport": "stdio", "command": "x", "args": []}]).to_string(),
     )
     .expect("写");
-    let skipped = bm_providers::mcp::load_mcp_setups(&bad, &store, 3).expect("坏条目跳过而非整体失败");
+    let skipped =
+        bm_providers::mcp::load_mcp_setups(&bad, &store, 3).expect("坏条目跳过而非整体失败");
     assert!(skipped.is_empty(), "坏条目应被跳过");
 
     // 坏+好混合:只装载好条目

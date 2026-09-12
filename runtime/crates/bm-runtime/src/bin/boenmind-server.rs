@@ -464,7 +464,6 @@ fn load_skill_scripts(
     };
     // ADR-0053:wasm 家族声明装载单入口(技能 + 通用插件);读取/归一化在
     // bm-core::ports::skill_host 单源,启动装配不再自带文件解析。
-    let entries =
-        bm_core::ports::skill_host::load_wasm_declarations(manager.as_ref(), data_dir);
+    let entries = bm_core::ports::skill_host::load_wasm_declarations(manager.as_ref(), data_dir);
     (Some(manager), entries)
 }

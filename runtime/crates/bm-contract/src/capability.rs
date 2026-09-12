@@ -309,7 +309,10 @@ impl ManifestSpec {
             v["description"] = serde_json::json!(d);
         }
         // 叠加最后应用(可覆盖上方任一字段,与旧 json!-merge 语义一致)。
-        if let (Some(obj), Some(extra)) = (v.as_object_mut(), self.overlay.as_ref().and_then(|o| o.as_object())) {
+        if let (Some(obj), Some(extra)) = (
+            v.as_object_mut(),
+            self.overlay.as_ref().and_then(|o| o.as_object()),
+        ) {
             for (k, val) in extra {
                 obj.insert(k.clone(), val.clone());
             }

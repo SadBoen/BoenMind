@@ -104,13 +104,11 @@ pub async fn mcp_list(State(cfg): State<AdminConfig>) -> Response {
                 .map(|srv| {
                     let name = srv["name"].as_str().unwrap_or("");
                     // #71:列表面只读回显,走宽容原语(缺/坏 = 不展示)。
-                    let manifest = manifests_dir
-                        .as_ref()
-                        .and_then(|d| {
-                            bm_core::json_store::read_json_lenient(
-                                &d.join(format!("{name}.manifest.json")),
-                            )
-                        });
+                    let manifest = manifests_dir.as_ref().and_then(|d| {
+                        bm_core::json_store::read_json_lenient(
+                            &d.join(format!("{name}.manifest.json")),
+                        )
+                    });
                     let config = config_dir
                         .as_ref()
                         .and_then(|d| {
