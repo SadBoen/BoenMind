@@ -7,9 +7,51 @@
 
 use std::path::Path;
 
-/// 组装角色 system prompt。`role_id = None` 时用 roles.json 的 active 角色。
-/// 返回 None = 无可用提示词(角色缺文件/提示词与技能皆空)。
-pub fn compose_role_prompt(data_dir: &Path, role_id: Option<&str>) -> Option<String> {
+/// 角色 prompt 的结构化组成(ADR-0056):persona 基底 + 挂载技能指令。
+/// 供诊断面(上下文透视)直读,**避免前端反解析 prompt 文本标记**
+/// (`[附加技能 · name]` 曾是前端正则反解的脆弱耦合)。
+#[derive(Debug, Clone, Default)]
+pub struct RolePreamble {
+    pub persona: String,
+    pub skills: Vec<SkillPreamble>,
+}
+
+/// 单条挂载技能的结构化组成。
+#[derive(Debug, Clone)]
+pub struct SkillPreamble {
+    pub name: String,
+    pub instruction: String,
+}
+
+impl RolePreamble {
+    /// 渲染为最终 system prompt(与原 `compose_role_prompt` 逐字一致)。
+    pub fn render(&self) -> String {
+        if self.skills.is_empty() {
+            return self.persona.clone();
+        }
+        let skill_text = self
+            .skills
+            .iter()
+            .map(|s| format!("[附加技能 · {}]\n{}", s.name, s.instruction))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        format!("{}\n\n{skill_text}", self.persona)
+    }
+
+    /// 诊断面 JSON(前端直读;shape 稳定)。
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "persona": self.persona,
+            "skills": self.skills.iter().map(|s| serde_json::json!({
+                "name": s.name, "instruction": s.instruction,
+            })).collect::<Vec<_>>(),
+        })
+    }
+}
+
+/// 组装角色 prompt 的结构化组成。`role_id = None` 时用 roles.json 的 active 角色。
+/// 返回 None = 无可用提示词(角色缺文件/提示词为空)。
+pub fn compose_preamble(data_dir: &Path, role_id: Option<&str>) -> Option<RolePreamble> {
     // 只读消费面:宽容策略(缺/坏 = 无提示词,不阻塞回合)。
     let v = crate::json_store::read_json_lenient(&data_dir.join("config").join("roles.json"))?;
     let (base, mounted): (Option<String>, Vec<String>) = if let Some(roles) = v["roles"].as_array()
@@ -39,7 +81,7 @@ pub fn compose_role_prompt(data_dir: &Path, role_id: Option<&str>) -> Option<Str
     let skills_db: Option<serde_json::Value> = crate::json_store::read_json_lenient(
         &crate::ports::skill_host::skills_config_path(data_dir),
     );
-    let skill_text = mounted
+    let skills: Vec<SkillPreamble> = mounted
         .iter()
         .filter_map(|sid| {
             skills_db.as_ref()?["skills"]
@@ -48,17 +90,25 @@ pub fn compose_role_prompt(data_dir: &Path, role_id: Option<&str>) -> Option<Str
                 .find(|s| s["skill_id"].as_str() == Some(sid.as_str()))
                 .and_then(|s| {
                     let name = s["name"].as_str().unwrap_or(sid.as_str());
-                    let ins = s["instruction"].as_str()?;
-                    Some(format!("[附加技能 · {name}]\n{ins}"))
+                    let instruction = s["instruction"].as_str()?;
+                    Some(SkillPreamble {
+                        name: name.to_string(),
+                        instruction: instruction.to_string(),
+                    })
                 })
         })
-        .collect::<Vec<_>>()
-        .join("\n\n");
-    if skill_text.is_empty() {
-        Some(base)
-    } else {
-        Some(format!("{base}\n\n{skill_text}"))
-    }
+        .collect();
+    Some(RolePreamble {
+        persona: base,
+        skills,
+    })
+}
+
+/// 组装角色 system prompt(渲染文本;调用方只需字符串时用之)。
+/// `role_id = None` 时用 roles.json 的 active 角色。
+/// 返回 None = 无可用提示词(角色缺文件/提示词与技能皆空)。
+pub fn compose_role_prompt(data_dir: &Path, role_id: Option<&str>) -> Option<String> {
+    compose_preamble(data_dir, role_id).map(|p| p.render())
 }
 
 /// 读角色的对话工具白名单(ADR-0022 后续批)。roles.json 角色对象可选

@@ -88,6 +88,12 @@ async function mockAdmin(page: Page) {
               { role: "system", content: "系统提示词内容", content_truncated: false },
               { role: "user", content: "用户提问", content_truncated: false },
             ],
+            // ADR-0056:system prompt 结构化组成(后端落盘,前端直读不反解析)
+            system_parts: {
+              persona: "系统提示词内容",
+              skills: [{ name: "演示技能", instruction: "技能指令正文" }],
+              workspace: "C:/ws",
+            },
             tools: [{ function: { name: "demo.tool" } }],
             status: "ok",
             error_code: null,
@@ -282,6 +288,9 @@ test.describe("上下文透视页", () => {
     // 验证第二层配方拆解：人设与根本规矩双栏 (左卡片与右原文均存在)
     await expect(page.getByText("🎭 AI 的人设与根本规矩")).toBeVisible();
     await expect(page.getByText("系统提示词内容").first()).toBeVisible();
+    // ADR-0056:技能来自结构化 system_parts(后端落盘),非 prompt 文本反解析
+    await expect(page.getByText("演示技能").first()).toBeVisible();
+    await expect(page.getByText("技能指令正文").first()).toBeVisible();
     // 切换至工具背包双栏 Tab
     await page.getByRole("tab", { name: /^工具背包/ }).click();
     await expect(page.getByText("🛠️ 随身装备的工具箱 (双栏联动透视)")).toBeVisible();

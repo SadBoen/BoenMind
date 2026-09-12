@@ -57,9 +57,13 @@ pub struct ContextRecord {
     pub tokens_cached: Option<u64>,
  /// 流式首包延迟(请求发出→首个增量到达;非流式调用无从测量 = None)。
     pub ttft_ms: Option<u64>,
- /// 组装本次请求时已被台账双上限丢弃的历史轮数(0 = 无遗忘)。
+    /// 组装本次请求时已被台账双上限丢弃的历史轮数(0 = 无遗忘)。
     pub evicted_turns: Option<u64>,
     pub latency_ms: Option<u64>,
+    /// ADR-0056:system prompt 的结构化组成(persona/挂载技能/工作目录),供
+    /// 上下文透视直读——不再由前端正则反解析 prompt 文本标记。缺省 None
+    /// (无 data_dir 的纯内存测试/无角色提示词)。
+    pub system_parts: Option<serde_json::Value>,
     pub ts: String,
 }
 
@@ -203,6 +207,7 @@ impl ContextLog {
             "ttft_ms": rec.ttft_ms,
             "evicted_turns": rec.evicted_turns,
             "latency_ms": rec.latency_ms,
+            "system_parts": rec.system_parts,
         });
  // INV-5 同面:对整条序列化结果做明文扫描,命中即替换(写脱敏后的串)。
  // to_string 对 Value 实际不可失败;万一失败落一条合法 JSON 占位行并
@@ -298,6 +303,7 @@ mod tests {
             ttft_ms: Some(320),
             evicted_turns: Some(0),
             latency_ms: Some(1873),
+            system_parts: None,
             attempt: 1,
             ts: "2026-09-02T00:00:00Z".into(),
         }

@@ -11,6 +11,21 @@ import {
 import { Button } from "@/components/ui/button";
 import { useBoenmindApprovals, type ApprovalRequest } from "../runtime";
 
+/// ADR-0056:从参数对象通用取「最显著」的展示值——按常见目标键优先,取首个
+/// 非空字符串;皆无则取首个非空字符串值。不绑定具体能力名。
+function salientArg(a: Record<string, unknown> | null): string | null {
+  if (!a) return null;
+  const preferred = ["path", "file_path", "command", "query", "pattern", "url", "title"];
+  for (const k of preferred) {
+    const v = a[k];
+    if (typeof v === "string" && v.trim()) return v;
+  }
+  for (const v of Object.values(a)) {
+    if (typeof v === "string" && v.trim()) return v;
+  }
+  return null;
+}
+
 export function ApprovalDrawer() {
   const { pendingApprovals, respondApproval } = useBoenmindApprovals();
   if (pendingApprovals.length === 0) return null;
@@ -55,37 +70,21 @@ function ApprovalDrawerItem({
     }
   };
 
-  // 提炼简明高亮动作摘要
+  // 提炼简明高亮动作摘要(ADR-0056:不再按能力名硬编码 label/arg 键——
+  // 通用取首个显著参数值展示,label 用能力名;新增能力无需改前端)。
   const summary = (() => {
     const a = req.args as Record<string, unknown> | null;
-    if (req.capability === "system.exec" && a?.command) {
-      return {
-        label: "执行命令",
-        detail: typeof a.command === "string" ? a.command : JSON.stringify(a.command),
-      };
-    }
-    if ((req.capability === "fs.write" || req.capability === "fs.edit") && a?.path) {
-      return {
-        label: req.capability === "fs.write" ? "写入文件" : "编辑文件",
-        detail: String(a.path),
-      };
-    }
-    if (req.capability === "fs.read" && a?.path) {
-      return {
-        label: "读取文件",
-        detail: String(a.path),
-      };
-    }
+    const primary = salientArg(a);
     return {
       label: req.capability,
-      detail: a ? JSON.stringify(a) : "请求执行",
+      detail: primary ?? (a ? JSON.stringify(a) : "请求执行"),
     };
   })();
 
-  // 审计修复(2026-09-08):exec 显式 cwd 在折叠态也要可见——审批时用户往往
-  // 只看命令文本, cwd 是同等重要的执行边界信息(后端越界会拒绝)。
+  // 折叠态边界信息:工作目录(cwd)对含命令类调用同等重要(后端越界会拒绝)。
+  // 通用读 args.cwd,不绑定具体能力名。
   const execCwd = (() => {
-    if (req.capability !== "system.exec" || req.args == null) return null;
+    if (req.args == null) return null;
     const v = (req.args as Record<string, unknown>).cwd;
     return typeof v === "string" && v.trim() ? v : null;
   })();

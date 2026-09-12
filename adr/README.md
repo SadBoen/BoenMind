@@ -61,7 +61,7 @@
 | [ADR-0053](ADR-0053-wasm-declaration-loading-single-entry.md) | wasm 家族声明装载单入口 | accepted | wasm 家族声明装载单入口——路径/形状/选择规则收口 bm-core,启动装配与整表重载共用一条装载路径 |
 | [ADR-0054](ADR-0054-wire-name-and-execution-mode-declaration.md) | 面向模型的工具名入合同与执行分道去前缀 | accepted | manifest 增发 wire_name(Minor)+ 异步分道删除 provider 命名前缀回退——内核不再认识具体能力名 |
 | [ADR-0055](ADR-0055-chat-stream-decoupling.md) | 前后端解耦——聊天流纯文本化与结构化元数据通道 | accepted | 前后端解耦——聊天流只承载模型正文,工具/审批元数据走结构化事件(删内联文本标记) |
-| [ADR-0056](ADR-0056-surface-domain-logic-ownership.md) | surface 领域逻辑归属(提案,待拍板) | proposed | surface 领域逻辑归属提案——config_store/rebuild_routes/providers CRUD 是否上移内核端口(仅提案,不动码) |
+| [ADR-0056](ADR-0056-surface-domain-logic-ownership.md) | surface 领域逻辑归属与 system prompt 结构化组成 | accepted | surface 领域逻辑归属裁定——config_store/rebuild_routes 等保留 surface 内(耦合用户面向的磁盘配置形状);system prompt 结构化组成上移(已实施) |
 <!-- ADR-INDEX:END -->
 
 > 编号说明:ADR-0012 于 2026-08-31 随 M10 dsh 前端线归档(见 ADR-0013 编号说明),编号不回收;主干引用配置管理口径时以 config_store 现状与 W2/W4 规格为准。

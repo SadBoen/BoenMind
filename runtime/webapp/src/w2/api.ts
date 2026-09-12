@@ -270,6 +270,12 @@ export type CtxStep = {
   /** 组装本次请求时已被双上限丢弃的历史轮数(0 = 无遗忘) */
   evicted_turns?: number | null;
   latency_ms?: number | null;
+  /** ADR-0056:system prompt 结构化组成(persona/技能/工作目录)——直读,不反解析 */
+  system_parts?: {
+    persona?: string | null;
+    skills?: { name: string; instruction: string }[];
+    workspace?: string | null;
+  } | null;
 };
 
 async function req<T>(url: string, init?: RequestInit): Promise<T> {

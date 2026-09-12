@@ -19,32 +19,39 @@ export function parseStepRecipe(step: CtxStep): ParsedPromptRecipe {
   const sysMsg = messages.find((m) => m.role === "system");
   if (sysMsg && sysMsg.content) {
     rawSystemPrompt = sysMsg.content;
-    let raw = sysMsg.content;
-
-    // 提取工作区注入
-    const wsIdx = raw.indexOf("[工作目录]");
-    if (wsIdx !== -1) {
-      workspaceText = raw.substring(wsIdx).trim();
-      raw = raw.substring(0, wsIdx).trim();
-    }
-
-    // 提取技能包：[附加技能 · 技能名]
-    const skillRegex = /\[附加技能 · ([^\]]+)\]\n([\s\S]*?)(?=\n\n\[附加技能|\n\n$|$)/g;
-    let match: RegExpExecArray | null;
-    const firstSkillIdx = raw.indexOf("[附加技能 · ");
-
-    if (firstSkillIdx !== -1) {
-      personaText = raw.substring(0, firstSkillIdx).trim();
-      let sIdx = 0;
-      while ((match = skillRegex.exec(raw)) !== null) {
-        skills.push({
-          id: `skill_${sIdx++}`,
-          name: match[1].trim(),
-          instruction: match[2].trim(),
-        });
-      }
+    // ADR-0056:优先直读快照的结构化 system_parts(persona/技能/工作目录)——
+    // 后端渲染 prompt 时一并落盘,前端不再正则反解析 [附加技能]/[工作目录] 标记。
+    const parts = step.system_parts;
+    if (parts && (parts.persona != null || (parts.skills?.length ?? 0) > 0 || parts.workspace)) {
+      personaText = (parts.persona ?? "").trim();
+      (parts.skills ?? []).forEach((s, i) => {
+        skills.push({ id: `skill_${i}`, name: s.name, instruction: s.instruction });
+      });
+      workspaceText = parts.workspace ? `[工作目录] ${parts.workspace}` : null;
     } else {
-      personaText = raw.trim();
+      // 回退:旧快照无 system_parts,按 prompt 文本标记解析(逐步淘汰)。
+      let raw = sysMsg.content;
+      const wsIdx = raw.indexOf("[工作目录]");
+      if (wsIdx !== -1) {
+        workspaceText = raw.substring(wsIdx).trim();
+        raw = raw.substring(0, wsIdx).trim();
+      }
+      const skillRegex = /\[附加技能 · ([^\]]+)\]\n([\s\S]*?)(?=\n\n\[附加技能|\n\n$|$)/g;
+      let match: RegExpExecArray | null;
+      const firstSkillIdx = raw.indexOf("[附加技能 · ");
+      if (firstSkillIdx !== -1) {
+        personaText = raw.substring(0, firstSkillIdx).trim();
+        let sIdx = 0;
+        while ((match = skillRegex.exec(raw)) !== null) {
+          skills.push({
+            id: `skill_${sIdx++}`,
+            name: match[1].trim(),
+            instruction: match[2].trim(),
+          });
+        }
+      } else {
+        personaText = raw.trim();
+      }
     }
   }
 

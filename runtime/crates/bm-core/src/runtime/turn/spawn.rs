@@ -425,6 +425,9 @@ struct TurnEnv {
  /// 本轮工具元数据投影:capability → (effect, needs_approval),供工具事件
  /// 标注风险(阶段3 单源化:前端据此分类,不再按工具名猜——ADR-0054 同源)。
     tool_meta: std::collections::HashMap<String, (String, bool)>,
+ /// ADR-0056:system prompt 结构化组成(persona/技能/工作目录),入快照供
+ /// 上下文透视直读(不再由前端反解析 prompt 标记)。
+    system_parts: serde_json::Value,
 }
 
 /// 一次模型调用的请求侧快照(发送前截取;结果侧落盘复用。原装配段局部
@@ -571,6 +574,7 @@ fn record_ctx_snapshot(
         tokens_cached,
         ttft_ms,
         evicted_turns: Some(env.evicted_turns),
+        system_parts: Some(env.system_parts.clone()),
         latency_ms: Some(snap.start.elapsed().as_millis() as u64),
         ts: format_ts(env.clock.now()),
     });
@@ -1170,16 +1174,26 @@ pub(crate) fn spawn_turn(
  // 否则每回合现读 roles.json+skills.json 组装(设置页保存即热生效)。
  // 组装逻辑唯一入口 = bm-core::roles::compose_role_prompt(两条路径同口径)。
     let chat_tools: Vec<crate::registry::ChatTool> = w.registry.chat_tools();
-    let role_prompt: Option<String> = agent
-        .system_prompt
-        .clone()
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
-            w.config
-                .data_dir
-                .as_ref()
-                .and_then(|d| crate::roles::compose_role_prompt(d, None))
-        });
+    // ADR-0056:除渲染文本外同时取结构化组成(persona/挂载技能),供诊断面直读
+    // ——不再由前端正则反解析 prompt 文本标记。
+    let (role_prompt, preamble): (Option<String>, Option<crate::roles::RolePreamble>) =
+        if let Some(sp) = agent.system_prompt.clone().filter(|s| !s.is_empty()) {
+            // 会话级烤入的完整提示词:结构已丢失,整体作为 persona。
+            (
+                Some(sp.clone()),
+                Some(crate::roles::RolePreamble {
+                    persona: sp,
+                    skills: Vec::new(),
+                }),
+            )
+        } else if let Some(d) = w.config.data_dir.as_ref() {
+            match crate::roles::compose_preamble(d, None) {
+                Some(p) => (Some(p.render()), Some(p)),
+                None => (None, None),
+            }
+        } else {
+            (None, None)
+        };
     let request_id = w.operations.get(operation_id).map(|o| o.request_id.clone());
  // W5:会话对话台账快照(历史回喂)+ 上下文快照日志句柄 + 回合序号。
     let session_id: Option<BmId> = w.operations.get(operation_id).map(|o| o.session_id.clone());
@@ -1202,13 +1216,24 @@ pub(crate) fn spawn_turn(
     let evicted_turns: u64 = evicted_turns(accounted, alive);
  // W8(ADR-0018):会话绑定的工作目录回合级注入——追加到 system prompt,
  // 切换工作区下一条消息即生效;注册表缺条目/目录被删时静默降级不注入。
-    let workspace_note: Option<String> = session_id.as_ref().and_then(|sid| {
+    let workspace_path: Option<String> = session_id.as_ref().and_then(|sid| {
         let wid = w.sessions.get(sid)?.workspace_id.clone()?;
         let ws = crate::workspace::resolve(w.config.data_dir.as_ref()?, &wid)?;
-        Some(format!(
-            "[工作目录] 本对话的工作目录:{}(用户提到的相对路径与文件均相对此目录)",
-            ws.path
-        ))
+        Some(ws.path)
+    });
+    let workspace_note: Option<String> = workspace_path.as_ref().map(|p| {
+        format!("[工作目录] 本对话的工作目录:{p}(用户提到的相对路径与文件均相对此目录)")
+    });
+    // ADR-0056:system prompt 结构化组成(persona/技能/工作目录)——入快照供
+    // 上下文透视直读,杜绝前端反解析 prompt 标记。
+    let system_parts: serde_json::Value = serde_json::json!({
+        "persona": preamble.as_ref().map(|p| p.persona.clone()),
+        "skills": preamble.as_ref().map(|p| {
+            p.skills.iter().map(|s| serde_json::json!({
+                "name": s.name, "instruction": s.instruction,
+            })).collect::<Vec<_>>()
+        }).unwrap_or_default(),
+        "workspace": workspace_path,
     });
  // W10(ADR-0025):在跑后台作业摘要回合级注入——模型据此知道该用
  // system.job_output 收哪个 job(不做完成主动推注入,见 ADR-0025 §3)。
@@ -1304,6 +1329,7 @@ pub(crate) fn spawn_turn(
             intent_gate_min,
             user_input: user_input.clone(),
             tool_meta,
+            system_parts: system_parts.clone(),
         };
 
  // (
