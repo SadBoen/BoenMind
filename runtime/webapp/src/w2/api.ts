@@ -165,6 +165,20 @@ export type Capability = {
   approval?: string;
 };
 
+/** ADR-0042:通用 wasm 插件声明条目(boenmind-contracts/plugin/wasm-plugin.v0_1)。 */
+export type WasmPlugin = {
+  capability: string;
+  provider?: string;
+  version?: string;
+  wasm: string;
+  effect?: string;
+  approval?: string;
+  idempotent?: boolean;
+  timeout_ms?: number;
+  description?: string;
+  scopes?: string[];
+};
+
 export type FsEntry = { name: string; kind: "dir" | "file"; size: number | null };
 
 // 任意目录浏览(工作目录选择器专用;只读、仅目录、只报名字)
@@ -583,6 +597,17 @@ export const api = {
     }>(
       "/admin/capabilities",
     ),
+  // ADR-0041/0042:通用 wasm 插件(config/plugins.json;增删改即热重载)
+  plugins: {
+    list: () => req<{ ok: boolean; plugins: WasmPlugin[] }>("/admin/plugins"),
+    set: (p: WasmPlugin) => req<{ ok: boolean; note: string }>("/admin/plugins", json("POST", p)),
+    remove: (capability: string) =>
+      req<{ ok: boolean; note: string }>(
+        `/admin/plugins/${encodeURIComponent(capability)}`,
+        { method: "DELETE" },
+      ),
+    reload: () => req<{ ok: boolean; note: string }>("/admin/plugins/reload", { method: "POST" }),
+  },
   fs: {
     list: (path: string) =>
       req<{ path: string; entries: FsEntry[]; root: string }>(

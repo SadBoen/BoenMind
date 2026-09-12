@@ -2,7 +2,7 @@
 //! 单行 = 名称/描述 + 类别徽标 + 工具标签(气泡防撑破) + 操作按钮组;
 //! 行为经回调上抛,数据获取仍由装配层(PluginsPage)统一驱动。
 
-import { ShieldCheck, Globe, Wrench } from "lucide-react";
+import { ShieldCheck, Globe, Wrench, Boxes } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "radix-ui";
@@ -63,6 +63,10 @@ export function PluginTableRow({
         {item.type === "builtin" ? (
           <Badge variant="outline" className="gap-1 border-blue-500/30 bg-blue-500/10 font-mono text-[10.5px] text-blue-600 dark:text-blue-400">
             <ShieldCheck className="size-3" /> 系统内置
+          </Badge>
+        ) : item.type === "wasm" ? (
+          <Badge variant="outline" className="gap-1 border-violet-500/30 bg-violet-500/10 font-mono text-[10.5px] text-violet-600 dark:text-violet-400">
+            <Boxes className="size-3" /> Wasm 插件
           </Badge>
         ) : (
           <Badge variant="secondary" className="gap-1 font-mono text-[10.5px]">
@@ -167,7 +171,21 @@ export function PluginTableRow({
 
       {/* 操作按钮组 (水平中间对齐) */}
       <td className="px-3.5 py-2.5 text-center align-middle whitespace-nowrap">
-        {item.type === "external" && item.serverRef ? (
+        {item.type === "wasm" ? (
+          <div className="flex items-center justify-center gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={busy}
+              className="h-7 px-2 text-[11.5px] text-destructive hover:bg-destructive/10"
+              title="移除该 wasm 插件声明并即时下线(热重载,无需重启)"
+              data-slot="wasm-remove"
+              onClick={() => onRemove(item.name)}
+            >
+              卸载
+            </Button>
+          </div>
+        ) : item.type === "external" && item.serverRef ? (
           <div className="flex items-center justify-center gap-1">
             <Button
               variant="ghost"

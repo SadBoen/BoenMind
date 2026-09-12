@@ -15,6 +15,7 @@ import {
   api,
   type Capability,
   type McpListResult,
+  type WasmPlugin,
 } from "../api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -48,9 +49,10 @@ import { type ColKey, TABLE_COLUMNS, loadColWidths } from "./columns";
 
 export function PluginsPage() {
   const [filter, setFilter] = useState("");
-  const [typeFilter, setTypeFilter] = useState<"all" | "builtin" | "external">("all");
+  const [typeFilter, setTypeFilter] = useState<"all" | "builtin" | "external" | "wasm">("all");
   const [builtinList, setBuiltinList] = useState<Capability[]>([]);
   const [mcpData, setMcpData] = useState<McpListResult | null>(null);
+  const [wasmList, setWasmList] = useState<WasmPlugin[]>([]);
   const [statusMap, setStatusMap] = useState<
     Record<string, { ok: boolean; tools?: number; tool_list?: ToolInfo[]; error?: string }>
   >({});
@@ -124,12 +126,14 @@ export function PluginsPage() {
 
   const loadData = useCallback(async () => {
     try {
-      const [bRes, mRes] = await Promise.all([
+      const [bRes, mRes, wRes] = await Promise.all([
         api.capabilities().catch(() => ({ builtin: [] })),
         api.mcp.list().catch(() => null),
+        api.plugins.list().catch(() => null),
       ]);
       setBuiltinList(bRes.builtin ?? []);
       setMcpData(mRes);
+      setWasmList(wRes?.plugins ?? []);
     } catch (e) {
       setError(String(e instanceof Error ? e.message : e));
     }
@@ -169,9 +173,14 @@ export function PluginsPage() {
   // 统一列表聚合
   const tableItems: TablePluginItem[] = useMemo(() => {
     const list: TablePluginItem[] = [];
+    // ADR-0042:wasm 插件能力也会出现在 /admin/capabilities 的 builtin 启动快照里
+    // (组合根把插件能力并入 capabilities),故内置面须跳过它们,改由下方 wasm 面
+    // 以正确类别 + 卸载按钮呈现——真实浏览器手测发现的重复/错标。
+    const wasmNames = new Set(wasmList.map((w) => w.capability));
 
-    // 1. 系统内置能力
+    // 1. 系统内置能力(排除 wasm 插件能力,避免重复与错标「禁卸载」)
     for (const b of builtinList) {
+      if (wasmNames.has(b.name)) continue;
       const effectText =
         b.effect === "read-only"
           ? "只读直通"
@@ -222,8 +231,23 @@ export function PluginsPage() {
       }
     }
 
+    // 3. 通用 wasm 插件(ADR-0042:config/plugins.json;增删改即热重载)
+    for (const w of wasmList) {
+      list.push({
+        id: `wasm:${w.capability}`,
+        name: w.capability,
+        type: "wasm",
+        detail:
+          w.description ??
+          `wasm 插件 · ${w.effect ?? "read-only"}${w.version ? ` · v${w.version}` : ""}`,
+        tools: [{ name: w.capability, description: w.description }],
+        isOnline: true,
+        wasmRef: w,
+      });
+    }
+
     return list;
-  }, [builtinList, mcpData, statusMap]);
+  }, [builtinList, mcpData, statusMap, wasmList]);
 
   // 快速筛选与关键字搜索
   const filteredItems = useMemo(() => {
@@ -236,6 +260,25 @@ export function PluginsPage() {
       return true;
     });
   }, [tableItems, typeFilter, filter]);
+
+  // 当前筛选面为空(如卸载掉最后一个 wasm 插件而筛选仍停在 wasm)→ 回落显示「全部」,
+  // 避免空表无从解释。用派生值而非 useEffect+setState(后者会触发 lint 级联渲染告警)。
+  const effectiveTypeFilter =
+    typeFilter !== "all" && filteredItems.length === 0 && tableItems.length > 0
+      ? "all"
+      : typeFilter;
+  const shownItems =
+    effectiveTypeFilter === typeFilter
+      ? filteredItems
+      : tableItems.filter((item) => {
+          if (filter.trim()) {
+            const kw = filter.trim().toLowerCase();
+            return (
+              item.name.toLowerCase().includes(kw) || item.detail.toLowerCase().includes(kw)
+            );
+          }
+          return true;
+        });
 
   const scanPlugins = async () => {
     // ADR-0035:扫描会以 --self-describe 运行候选目录内的可执行文件。
@@ -279,6 +322,23 @@ export function PluginsPage() {
   };
 
   const handleRemove = async (name: string) => {
+    // ADR-0042:wasm 插件卸载 = 移除声明并即时热重载(按 capability 摘除)
+    const wasmItem = tableItems.find((it) => it.type === "wasm" && it.name === name);
+    if (wasmItem) {
+      if (!confirm(`确定卸载 wasm 插件「${name}」?声明将移除并即时下线(免重启)。`)) return;
+      setBusy(true);
+      setError(null);
+      try {
+        const r = await api.plugins.remove(name);
+        setNotice(r.note ?? `「${name}」已卸载`);
+        await loadData();
+      } catch (e) {
+        setError(String(e instanceof Error ? e.message : e));
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     if (
       !confirm(
         `确定卸载 MCP 插件「${name}」？配置将移除并即时下线(本地文件保留)。系统不会在重启或升级时自动静默启用该插件，您随时可在「扫描插件」中重新接入。`,
@@ -449,7 +509,7 @@ export function PluginsPage() {
         <div className="flex items-center gap-1 rounded-lg border bg-muted/30 p-1">
           <Button
             size="sm"
-            variant={typeFilter === "all" ? "default" : "ghost"}
+            variant={effectiveTypeFilter === "all" ? "default" : "ghost"}
             className="h-6.5 px-2.5 text-[11.5px]"
             onClick={() => setTypeFilter("all")}
           >
@@ -457,19 +517,27 @@ export function PluginsPage() {
           </Button>
           <Button
             size="sm"
-            variant={typeFilter === "builtin" ? "default" : "ghost"}
+            variant={effectiveTypeFilter === "builtin" ? "default" : "ghost"}
             className="h-6.5 px-2.5 text-[11.5px]"
             onClick={() => setTypeFilter("builtin")}
           >
-            内置 ({builtinList.length})
+            内置 ({tableItems.filter((it) => it.type === "builtin").length})
           </Button>
           <Button
             size="sm"
-            variant={typeFilter === "external" ? "default" : "ghost"}
+            variant={effectiveTypeFilter === "external" ? "default" : "ghost"}
             className="h-6.5 px-2.5 text-[11.5px]"
             onClick={() => setTypeFilter("external")}
           >
             外部 ({mcpData?.servers?.length ?? 0})
+          </Button>
+          <Button
+            size="sm"
+            variant={effectiveTypeFilter === "wasm" ? "default" : "ghost"}
+            className="h-6.5 px-2.5 text-[11.5px]"
+            onClick={() => setTypeFilter("wasm")}
+          >
+            Wasm ({wasmList.length})
           </Button>
         </div>
       </div>
@@ -516,7 +584,7 @@ export function PluginsPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-border/60">
-            {filteredItems.map((item) => (
+            {shownItems.map((item) => (
               <PluginTableRow
                 key={item.id}
                 item={item}
@@ -530,7 +598,7 @@ export function PluginsPage() {
               />
             ))}
 
-            {filteredItems.length === 0 ? (
+            {shownItems.length === 0 ? (
               <tr>
                 <td colSpan={4} className="py-8 text-center text-muted-foreground text-[12.5px]">
                   没有找到匹配的插件或能力条目。

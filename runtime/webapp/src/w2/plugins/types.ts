@@ -1,5 +1,5 @@
 //! 插件中心共享类型与 Draft 转换(自 PluginsPage.tsx 机械移入)。
-import { type McpServer, type ProviderManifestItem } from "../api";
+import { type McpServer, type ProviderManifestItem, type WasmPlugin } from "../api";
 
 export type ToolInfo = {
   name: string;
@@ -9,13 +9,15 @@ export type ToolInfo = {
 export type TablePluginItem = {
   id: string;
   name: string;
-  type: "builtin" | "external";
+  type: "builtin" | "external" | "wasm";
   detail: string;
   tools: ToolInfo[];
   isOnline?: boolean;
   serverRef?: McpServer;
   /** ADR-0023:官方随包来源但最新官方清单已不含 → 建议删除 */
   deprecated?: boolean;
+  /** ADR-0042:wasm 插件声明条目(卸载按 capability 摘除) */
+  wasmRef?: WasmPlugin;
 };
 
 // 内置能力白话说明(键=能力名;未命中回落 effect 文案)
