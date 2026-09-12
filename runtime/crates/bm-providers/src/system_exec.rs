@@ -168,7 +168,9 @@ impl ExecExecutor {
                 "backgrounded": true,
                 "job_id": job_id,
                 "log_path": log_path.display().to_string(),
-                "note": "已转后台执行(不受前台超时限制)。用 system.job_output(job_id=…) 轮询收取;完成前勿盲目重跑同一命令。",
+                // ADR-0029 清除清单②同源:note 只留事实;收取机制由
+                // system.job_output 工具描述承载,勿在此复读指导句。
+                "note": "已转后台执行(不受前台超时限制)。",
             }));
         }
 

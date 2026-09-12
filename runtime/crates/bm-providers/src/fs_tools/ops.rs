@@ -328,8 +328,8 @@ pub fn search(roots: &Roots, args: &Value, limits: &Limits, deadline: std::time:
         "matches": hits,
     });
     if timed_out {
-        out["note"] =
-            json!("搜索因超时熔断提前结束,以上为部分结果(可缩小范围/加 path_pattern 重试)");
+        // ADR-0029 清除清单④:note 只留事实,括号指导话术不得回归。
+        out["note"] = json!("搜索因超时熔断提前结束,以上为部分结果");
     }
     while serde_json::to_string(&out)
         .map(|s| s.chars().count())

@@ -655,7 +655,7 @@ async fn dispatch_one_tool_call(
     if env.intent_gate_min > 0 && (env.user_input.chars().count() as u32) < env.intent_gate_min {
         st.messages.push(Message {
             role: Role::Tool,
-            content: "本调用未执行:意图门控——本轮触发输入过短,无操作意图,工具已禁用;请直接以文字回应用户或请用户补充需求。".into(),
+            content: "本调用未执行:意图门控——本轮触发输入过短,无操作意图,工具已禁用。".into(),
             tool_call_id: Some(tc.id.clone()),
             tool_calls: None,
         });
