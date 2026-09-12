@@ -47,7 +47,7 @@
 | [ADR-0039](ADR-0039-stage2-candidates-disposition.md) | 阶段二候选产品面处置（壳扩展 / 协作网格 / 权限分级 / Surface 插件化） | accepted | #43 维持 deferred/#45 批次2 待并发夹具/#46 产品级 OPEN/#53 路由后关账/#59-5 远期不立项(2026-09-11) |
 | [ADR-0040](ADR-0040-doc-governance-gate.md) | 文档治理以机器门固化——ADR 状态机 + 追踪白名单 | accepted | 整并取代 0015/0026/0027;ADR 状态机与取代双向一致入 CI;可提交面 .md 收归白名单;治理门自带自检防静默摘除(2026-09-12) |
 | [ADR-0041](ADR-0041-plugin-identity-lifecycle-contract.md) | 插件身份与生命周期契约落地(去特化第一步) | accepted | 补插件身份契约(PluginKind/PluginMeta)+ CapabilityProvider 增 plugin_meta/shutdown 默认方法 + 注销调生命周期 + wasm 宿主去 skill. 前缀守卫(ADR-0040 治理首批架构改动) |
-| [ADR-0042](ADR-0042-model-router-port-and-persist-schema-correction.md) | 模型路由端口上移(去具体依赖)与持久化 schema 归属更正 | accepted | 模型路由关注点上移为 core 端口 ModelRouter,surface 去具体依赖;并更正早先架构报告中"持久化 schema 应在 persist"的假阳性判断 |
+| [ADR-0042](ADR-0042-model-router-port-and-persist-schema-correction.md) | 模型路由端口上移(去具体依赖)与两处"分层越界"假阳性更正 | accepted | 模型路由关注点上移为 core 端口 ModelRouter,surface 去具体依赖;并更正早先架构报告的两处假阳性(持久化 schema 归属、bm-contract 策略提纯)与前缀派发清零 |
 <!-- ADR-INDEX:END -->
 
 > 编号说明:ADR-0012 于 2026-08-31 随 M10 dsh 前端线归档(见 ADR-0013 编号说明),编号不回收;主干引用配置管理口径时以 config_store 现状与 W2/W4 规格为准。

@@ -3,6 +3,15 @@
 //! manifest 是开放结构(additionalProperties: true):未知字段反序列化时
 //! 被忽略、不失真(合同 README 消费方纪律)。风险五级与 safe/mutation
 //! 分级是 Broker 裁决与 M5 协调动词过滤的输入(ADR-0002 条件 2)。
+//!
+//! **镜像 vs 策略**(ADR-0042 核实标注,供后续读者/评审区分):
+//! - `RiskClass` 的**枚举值**(`read-only`…`high-risk-command`)是 manifest
+//!   合同的镜像,由 `tests/sync.rs` 对比 schema 守护;
+//! - `ORDER` / `escalated` / `requires_approval_at_untrusted` / `is_approval_bearing`
+//!   是**策略**(来源 = 基线 §5.3 与 ADR-0002 条件 3,**不是** contract JSON 字段),
+//!   故不在 sync 守护范围,由本模块单测守护其行为。它们留在本层是刻意的:
+//!   `ORDER` 是 `RiskClass` 的固有次序,三者皆为纯函数、无外部状态;迁出须改
+//!   自由函数而失去方法语法(孤儿规则),得不偿失——评审勿再当"契约不纯"重提。
 
 use serde::{Deserialize, Serialize};
 
@@ -458,5 +467,35 @@ mod tests {
         assert!(ser["resource"].get("args_predicates").is_none());
         // delegation_depth 序列化在场(合同必填)
         assert_eq!(ser["delegation_depth"], json!(0));
+    }
+
+    // ADR-0042 核实补测:风险升级/审批策略**不是契约镜像**(无对应 JSON 字段),
+    // 故由本模块单测守护其行为——防止"策略漂移"无门可拦。
+    #[test]
+    fn risk_escalation_and_approval_policy_is_pinned() {
+        // 上提一级(低→高),封顶 high-risk。
+        assert_eq!(RiskClass::ReadOnly.escalated(), RiskClass::LowRiskCommand);
+        assert_eq!(
+            RiskClass::HighRiskCommand.escalated(),
+            RiskClass::HighRiskCommand,
+            "封顶:high-risk 上提仍是自身"
+        );
+        // 审批承载级 = reversible 及以上(基线 §5.3 / ADR-0002 条件 3)。
+        for r in [RiskClass::ReadOnly, RiskClass::LowRiskCommand] {
+            assert!(!r.is_approval_bearing(), "{r:?} 不应审批");
+            assert!(!r.requires_approval_at_untrusted());
+        }
+        for r in [
+            RiskClass::ReversibleCommand,
+            RiskClass::ExternalSideEffect,
+            RiskClass::HighRiskCommand,
+        ] {
+            assert!(r.is_approval_bearing(), "{r:?} 必须审批");
+            assert!(r.requires_approval_at_untrusted());
+        }
+        // ORDER 与枚举值序一致(低→高),escalated 即在其上右移一格。
+        assert_eq!(RiskClass::ORDER.len(), 5);
+        assert_eq!(RiskClass::ORDER[0], RiskClass::ReadOnly);
+        assert_eq!(RiskClass::ORDER[4], RiskClass::HighRiskCommand);
     }
 }
