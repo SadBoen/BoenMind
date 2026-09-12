@@ -66,6 +66,26 @@ pub async fn sync_from_config(
         }
     }
 
+    // 解析一次全量 setup(2026-09-12 N+1 修复:此前在下方 per-server 循环体内
+    // 调 load_mcp_setups,每个 server 都把整个 mcp.json 重读重析+密钥解析
+    // 一遍,启动与热重载各放大 O(n) 倍)。解析失败与逐条失败同形:每个目标
+    // server 一条失败记录;摘除步已先行完成,与既有语义一致。
+    let setups = match load_mcp_setups(
+        mcp_config_path,
+        secrets.as_ref(),
+        limits.get().mcp_restart_limit,
+    ) {
+        Ok(setups) => setups,
+        Err(e) => {
+            for name in &target_names {
+                outcome
+                    .failed
+                    .push(json!({"name": name, "error": format!("配置解析失败: {e}")}));
+            }
+            return outcome;
+        }
+    };
+
     // 2. 重连 target 中的每一个 server(支持新增与修改更新)
     for item in &servers {
         let name = item["name"].as_str().unwrap_or("").to_string();
@@ -97,20 +117,7 @@ pub async fn sync_from_config(
             }
         }
 
-        let setup = match load_mcp_setups(
-            mcp_config_path,
-            secrets.as_ref(),
-            limits.get().mcp_restart_limit,
-        ) {
-            Ok(setups) => setups.into_iter().find(|s| s.name == name),
-            Err(e) => {
-                outcome
-                    .failed
-                    .push(json!({"name": name, "error": format!("配置解析失败: {e}")}));
-                continue;
-            }
-        };
-        let Some(setup) = setup else {
+        let Some(setup) = setups.iter().find(|s| s.name == name) else {
             continue;
         };
 
