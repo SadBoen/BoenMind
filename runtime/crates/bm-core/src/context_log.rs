@@ -24,10 +24,8 @@ pub fn compress_summary_path(data_dir: &std::path::Path, session_id: &str) -> st
 
 /// 回合组装面读取口:摘要存在则返回文本(无文件/解析失败 = None)。
 pub fn load_compress_summary(data_dir: &std::path::Path, session_id: &str) -> Option<String> {
-    let v: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(compress_summary_path(data_dir, session_id)).ok()?,
-    )
-    .ok()?;
+    // #71:只读消费面走宽容原语。
+    let v = crate::json_store::read_json_lenient(&compress_summary_path(data_dir, session_id))?;
     v["summary"].as_str().map(String::from)
 }
 

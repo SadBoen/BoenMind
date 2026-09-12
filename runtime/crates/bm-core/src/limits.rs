@@ -697,9 +697,7 @@ impl LimitsSources {
 pub fn load_limits(path: &std::path::Path) -> (LimitsCell, LimitsSources) {
     let mut sources = LimitsSources::default();
     let mut limits = Limits::default();
-    if let Ok(text) = std::fs::read_to_string(path)
-        && let Ok(raw) = serde_json::from_str::<serde_json::Value>(&text)
-    {
+    if let Some(raw) = crate::json_store::read_json_lenient(path) {
         limits = Limits::from_file_value(&raw);
         sources.file_raw = Some(raw);
     }

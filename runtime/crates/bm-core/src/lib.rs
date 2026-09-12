@@ -15,6 +15,7 @@ pub mod context_log;
 pub mod coordinator;
 pub mod error;
 pub mod exec_log;
+pub mod json_store;
 pub mod limits;
 pub mod observation;
 pub mod ports;

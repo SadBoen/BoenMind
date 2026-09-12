@@ -22,10 +22,7 @@ fn workspaces_file(data_dir: &Path) -> std::path::PathBuf {
 
 /// 读注册表(缺文件/坏文件 = 空表,只读解析场景宽容回退;管理面变更走 Result 防坏文件被覆写)。
 pub fn read_workspaces(data_dir: &Path) -> Vec<WorkspaceEntry> {
-    let Ok(text) = std::fs::read_to_string(workspaces_file(data_dir)) else {
-        return Vec::new();
-    };
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+    let Some(v) = crate::json_store::read_json_lenient(&workspaces_file(data_dir)) else {
         return Vec::new();
     };
     v["workspaces"]

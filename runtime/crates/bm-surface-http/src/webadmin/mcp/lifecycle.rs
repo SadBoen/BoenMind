@@ -13,11 +13,17 @@ pub(super) fn tombstone_path(data_dir: &Path) -> PathBuf {
     data_dir.join("config").join("mcp-removed.json")
 }
 
+/// 墓碑文件读原语(#71 单源):宽容策略——缺/坏 = 空名册。
+/// 用途仅「默认安装是否跳过该名」,损坏回退空表的后果是随包插件重新出现,
+/// 不涉用户内容丢失,故取宽容(与既有行为一致)。
+fn read_tombstone_value(data_dir: &Path) -> Value {
+    bm_core::json_store::read_json_lenient(&tombstone_path(data_dir)).unwrap_or_else(|| json!({}))
+}
+
 pub(super) fn read_tombstones(data_dir: &Path) -> Vec<String> {
-    std::fs::read_to_string(tombstone_path(data_dir))
-        .ok()
-        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
-        .and_then(|v| v["removed"].as_array().cloned())
+    read_tombstone_value(data_dir)["removed"]
+        .as_array()
+        .cloned()
         .unwrap_or_default()
         .iter()
         .filter_map(|e| e["name"].as_str().map(String::from))
@@ -25,22 +31,20 @@ pub(super) fn read_tombstones(data_dir: &Path) -> Vec<String> {
 }
 
 fn write_tombstones(data_dir: &Path, list: Vec<Value>) -> Result<(), String> {
-    let dir = data_dir.join("config");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("config 目录创建失败: {e}"))?;
-    let text = serde_json::to_string_pretty(&json!({
-        "removed": list,
-        "note": "ADR-0023 墓碑:官方随包默认安装跳过本名单;显式批准接入即除名",
-    }))
-    .map_err(|e| format!("序列化失败: {e}"))?;
-    bm_core::ports::persist::atomic_write(&tombstone_path(data_dir), text.as_bytes())
-        .map_err(|e| format!("墓碑写盘失败: {e}"))
+    bm_core::json_store::write_json_file(
+        &tombstone_path(data_dir),
+        &json!({
+            "removed": list,
+            "note": "ADR-0023 墓碑:官方随包默认安装跳过本名单;显式批准接入即除名",
+        }),
+        "墓碑写盘失败",
+    )
 }
 
 pub(super) fn upsert_tombstone(data_dir: &Path, name: &str) -> Result<(), String> {
-    let existing = std::fs::read_to_string(tombstone_path(data_dir))
-        .ok()
-        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
-        .and_then(|v| v["removed"].as_array().cloned())
+    let existing = read_tombstone_value(data_dir)["removed"]
+        .as_array()
+        .cloned()
         .unwrap_or_default();
     let now = crate::unix_now();
     let mut list: Vec<Value> = existing
@@ -54,12 +58,7 @@ pub(super) fn upsert_tombstone(data_dir: &Path, name: &str) -> Result<(), String
 /// 清墓碑(显式批准安装时调用)。2026-09-08 审计修复:失败不再静默——
 /// 墓碑残留会导致该官方插件重启后被再次自动移除,必须让调用方可见。
 pub(super) fn remove_tombstone(data_dir: &Path, name: &str) -> Result<(), String> {
-    let Some(v) = std::fs::read_to_string(tombstone_path(data_dir))
-        .ok()
-        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
-    else {
-        return Ok(());
-    };
+    let v = read_tombstone_value(data_dir);
     let Some(arr) = v["removed"].as_array() else {
         return Ok(());
     };
@@ -78,8 +77,7 @@ pub(super) fn remove_tombstone(data_dir: &Path, name: &str) -> Result<(), String
 /// 弃用标记优雅降级(旧版安装/本地开发)。
 pub(super) fn official_plugin_list(cfg: &AdminConfig) -> Option<Vec<String>> {
     let bundled = cfg.bundled_plugins_dir.as_ref()?;
-    let text = std::fs::read_to_string(bundled.join(".official.json")).ok()?;
-    let v: Value = serde_json::from_str(&text).ok()?;
+    let v = bm_core::json_store::read_json_lenient(&bundled.join(".official.json"))?;
     Some(
         v["plugins"]
             .as_array()?

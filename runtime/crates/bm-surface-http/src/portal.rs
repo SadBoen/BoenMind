@@ -80,9 +80,8 @@ impl PortalAuth {
     }
 
     pub fn load(data_dir: PathBuf) -> Arc<Self> {
-        let cfg = std::fs::read_to_string(data_dir.join("config/portal.json"))
-            .ok()
-            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
+        // #71:只读消费面走宽容原语(缺/坏 = 无门户配置)。
+        let cfg = bm_core::json_store::read_json_lenient(&data_dir.join("config/portal.json"));
         let hash = cfg
             .as_ref()
             .and_then(|v| v["password_hash"].as_str().map(String::from));

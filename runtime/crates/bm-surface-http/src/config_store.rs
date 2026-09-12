@@ -141,15 +141,17 @@ pub fn validate_field(name: &str, value: &Value) -> CoreResult<()> {
     Ok(())
 }
 
-/// 读配置文件(严格版:损坏拒绝覆盖,缺失返回空对象)。
+/// 读配置文件(严格版:损坏拒绝覆盖,缺失返回空对象)。#71:原语单源至 bm-core。
 fn read_file_strict(path: &Path) -> CoreResult<Value> {
-    let raw = match std::fs::read_to_string(path) {
-        Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(json!({})),
-        Err(e) => return Err(validation(format!("读取配置文件失败: {e}"))),
-    };
-    serde_json::from_str(&raw)
-        .map_err(|e| validation(format!("model.json 格式已损坏,拒绝覆盖: {e}")))
+    match bm_core::json_store::read_json_file(
+        path,
+        "读取配置文件失败",
+        "model.json 格式已损坏,拒绝覆盖",
+    ) {
+        Ok(bm_core::json_store::JsonRead::Value(v)) => Ok(v),
+        Ok(bm_core::json_store::JsonRead::Missing) => Ok(json!({})),
+        Err(e) => Err(validation(e)),
+    }
 }
 
 /// 读配置文件(宽容版:用于只读回显与兜底启动)。
@@ -157,10 +159,8 @@ fn read_file(path: &Path) -> Value {
     read_file_strict(path).unwrap_or_else(|_| json!({}))
 }
 
-/// pretty JSON → CRLF 文本(Windows 人可读口径;webadmin 配置写入共用)。
-pub fn crlf(pretty: String) -> String {
-    pretty.replace('\n', "\r\n")
-}
+/// pretty JSON → CRLF 文本(Windows 人可读口径)。#71:实现单源至 bm-core。
+pub use bm_core::json_store::crlf;
 
 fn write_file(path: &Path, value: &Value) -> CoreResult<()> {
     if let Some(dir) = path.parent() {

@@ -37,9 +37,15 @@ mod approvals;
 mod context;
 mod fs;
 mod jobs;
-mod json_store;
-// crate 根的 workspace_admin(W8)也走同一收口原语
-pub(crate) use json_store::{JsonRead, read_json_file, write_json_file};
+// #71:JSON 读写原语单源至 bm-core(config 面唯一实现)。
+// 保留 `json_store` 这一路径别名,使既有 `super::json_store::…` 调用点无需散改
+// (为纯 re-export,无第二份实现;bm-persist re-export atomic_write 同款手法)。
+// crate 根的 workspace_admin(W8)也走同一收口原语。
+pub(crate) mod json_store {
+    pub(crate) use bm_core::json_store::{JsonRead, read_json_file, write_json_file};
+}
+// 根级重导出(crate::webadmin::{…} 的历史调用点,如 workspace_admin)。
+pub(crate) use bm_core::json_store::{JsonRead, read_json_file, write_json_file};
 mod limits;
 mod logs;
 mod mcp;

@@ -57,6 +57,7 @@
 | [ADR-0049](ADR-0049-wasm-declaration-unification.md) | wasm 声明格式合一(单一 manifest 合成路径) | accepted | wasm 声明格式合一——归一化 WasmDecl + 单一 synthesize,skills.json 与 plugins.json 两种磁盘形状共用一条 manifest 合成路径 |
 | [ADR-0050](ADR-0050-capability-dispatch-route-table.md) | 能力执行面收口(声明式路由表取代内核 if-else) | accepted | 异步能力分派由硬编码 if-else 改为声明式路由表——新 provider 族 = 追加路由,不改内核分派 |
 | [ADR-0051](ADR-0051-manifest-synthesis-single-source.md) | manifest 合成单源(ManifestSpec 全族收口) | accepted | manifest 合成收口为单一合同路径 ManifestSpec——内置/fs/exec/share/context/mcp/wasm 各族只声明差异,缺省集单源 |
+| [ADR-0052](ADR-0052-json-store-single-source.md) | 配置文件 JSON 读写原语单源(bm-core::json_store) | accepted | 配置文件 JSON 读写原语单源至 bm-core,严格/宽容两种损坏策略显式命名,消除三份实现与同文件双策略 |
 <!-- ADR-INDEX:END -->
 
 > 编号说明:ADR-0012 于 2026-08-31 随 M10 dsh 前端线归档(见 ADR-0013 编号说明),编号不回收;主干引用配置管理口径时以 config_store 现状与 W2/W4 规格为准。

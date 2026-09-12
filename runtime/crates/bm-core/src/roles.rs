@@ -10,8 +10,8 @@ use std::path::Path;
 /// 组装角色 system prompt。`role_id = None` 时用 roles.json 的 active 角色。
 /// 返回 None = 无可用提示词(角色缺文件/提示词与技能皆空)。
 pub fn compose_role_prompt(data_dir: &Path, role_id: Option<&str>) -> Option<String> {
-    let text = std::fs::read_to_string(data_dir.join("config").join("roles.json")).ok()?;
-    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    // 只读消费面:宽容策略(缺/坏 = 无提示词,不阻塞回合)。
+    let v = crate::json_store::read_json_lenient(&data_dir.join("config").join("roles.json"))?;
     let (base, mounted): (Option<String>, Vec<String>) = if let Some(roles) = v["roles"].as_array()
     {
         let active = v["active_id"].as_str().unwrap_or("assistant");
@@ -37,9 +37,7 @@ pub fn compose_role_prompt(data_dir: &Path, role_id: Option<&str>) -> Option<Str
     // 挂载技能指令追加(skills.json 整体只读/解析一次,不随技能数放大;
     // 缺失或技能缺失则静默跳过)
     let skills_db: Option<serde_json::Value> =
-        std::fs::read_to_string(data_dir.join("config").join("skills.json"))
-            .ok()
-            .and_then(|raw| serde_json::from_str(&raw).ok());
+        crate::json_store::read_json_lenient(&data_dir.join("config").join("skills.json"));
     let skill_text = mounted
         .iter()
         .filter_map(|sid| {
@@ -68,8 +66,7 @@ pub fn compose_role_prompt(data_dir: &Path, role_id: Option<&str>) -> Option<Str
 /// - `None` = 角色未声明白名单(全量挂载,缺省形态);
 /// - `Some(list)` = 仅挂清单内工具;空数组语义等同未声明(防手滑全禁)。
 pub fn allowed_tools_for(data_dir: &Path, role_id: Option<&str>) -> Option<Vec<String>> {
-    let text = std::fs::read_to_string(data_dir.join("config").join("roles.json")).ok()?;
-    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let v = crate::json_store::read_json_lenient(&data_dir.join("config").join("roles.json"))?;
     let roles = v["roles"].as_array()?;
     let active = v["active_id"].as_str().unwrap_or("assistant");
     let role = roles

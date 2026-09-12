@@ -103,18 +103,21 @@ pub async fn mcp_list(State(cfg): State<AdminConfig>) -> Response {
                 .iter()
                 .map(|srv| {
                     let name = srv["name"].as_str().unwrap_or("");
+                    // #71:列表面只读回显,走宽容原语(缺/坏 = 不展示)。
                     let manifest = manifests_dir
                         .as_ref()
                         .and_then(|d| {
-                            std::fs::read_to_string(d.join(format!("{name}.manifest.json"))).ok()
-                        })
-                        .and_then(|t| serde_json::from_str::<Value>(&t).ok());
+                            bm_core::json_store::read_json_lenient(
+                                &d.join(format!("{name}.manifest.json")),
+                            )
+                        });
                     let config = config_dir
                         .as_ref()
                         .and_then(|d| {
-                            std::fs::read_to_string(d.join(format!("mcp-{name}.json"))).ok()
+                            bm_core::json_store::read_json_lenient(
+                                &d.join(format!("mcp-{name}.json")),
+                            )
                         })
-                        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
                         .unwrap_or_else(|| json!({}));
                     // ADR-0023:来源与弃用标记——bundled 来源但不在官方随包
                     // 清单(.official.json)=最新官方版本已不携带,建议删除
