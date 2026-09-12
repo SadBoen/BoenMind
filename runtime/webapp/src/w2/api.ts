@@ -162,6 +162,10 @@ export type Capability = {
   effect?: string;
   idempotent?: boolean;
   approval?: string;
+  /** ADR-0022/ADR-0055:面向模型的一句功能描述(后端 manifest 直供,前端不镜像) */
+  description?: string | null;
+  /** ADR-0054:面向模型的工具名(wire/function.name) */
+  wire_name?: string | null;
   /** ADR-0045:provider 声明的插件身份(tool/connector);缺省 = 未声明 */
   plugin_kind?: string | null;
   plugin_id?: string | null;

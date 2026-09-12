@@ -63,16 +63,8 @@ export function ToolsTab({
                       {t.name}
                     </span>
                   </div>
-                  {t.needsApproval ? (
-                    <span className="flex items-center gap-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10.5px] font-medium text-amber-600 dark:text-amber-400 shrink-0">
-                      <ShieldAlert className="size-3" />
-                      <span>需审批</span>
-                    </span>
-                  ) : (
-                    <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10.5px] font-medium text-emerald-600 dark:text-emerald-400 shrink-0">
-                      直通只读
-                    </span>
-                  )}
+                  {/* ADR-0055:工具表快照不含审批事实,不再由描述文案反推徽标(该
+                      反推曾对生产描述失真);审批事实见对话内审批卡与 /admin 能力面 */}
                 </div>
 
                 <div className="text-[11.5px] text-muted-foreground leading-snug line-clamp-2">

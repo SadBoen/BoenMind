@@ -66,17 +66,16 @@ export function parseStepRecipe(step: CtxStep): ParsedPromptRecipe {
     }
   }
 
-  // 3. 解析工具箱
+  // 3. 解析工具箱(ADR-0055:不再由描述文案反推审批语义——工具表快照不含
+  // 审批事实,如实只展示名称与描述)
   const toolList = (step.tools ?? []).map((t: any) => {
     const fn = t.function ?? {};
     const name = fn.name ?? "未知工具";
     const desc = fn.description ?? "";
-    const needsApproval = desc.includes("需要用户审批");
     const paramStr = JSON.stringify(fn.parameters ?? {});
     return {
       name,
       description: desc,
-      needsApproval,
       paramTokens: estTokens(paramStr),
       rawSchema: fn.parameters,
     };

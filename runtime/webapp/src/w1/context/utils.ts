@@ -41,7 +41,6 @@ export interface ParsedPromptRecipe {
   toolList: Array<{
     name: string;
     description: string;
-    needsApproval: boolean;
     paramTokens: number;
     rawSchema: any;
   }>;

@@ -153,7 +153,18 @@ export function ContextView() {
         const args = (s.data.arguments ?? {}) as Record<string, any>;
         const path = args.path || args.file || (args.command ? String(args.command).split(" ")[1] : null);
         if (path && typeof path === "string" && (path.includes("/") || path.includes("\\") || path.includes("."))) {
-          const action = tool.includes("write") ? "write" : tool.includes("edit") ? "edit" : tool.includes("exec") ? "exec" : "read";
+          // ADR-0055:动作据后端 tool_call 事件的 effect 字段(read-only → read,
+          // 其余变更类 → write/edit/exec),不再按工具名子串猜。
+          const effect = String(s.data.effect ?? "");
+          const isExec = tool === "system.exec";
+          const isWrite = args.content !== undefined;
+          const action = isExec
+            ? "exec"
+            : effect === "read-only"
+              ? "read"
+              : isWrite
+                ? "write"
+                : "edit";
 
           // 代码行数净值统计 (对标 DSH FileCard +N/-M):
           // write=整文行数全部计入新增;edit=old/new 字符串差量统计

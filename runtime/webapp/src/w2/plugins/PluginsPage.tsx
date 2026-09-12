@@ -40,7 +40,6 @@ import {
   type Draft,
   type ToolInfo,
   type TablePluginItem,
-  BUILTIN_DESC,
   emptyDraft,
   toDraft,
   fromDraft,
@@ -181,25 +180,27 @@ export function PluginsPage() {
  // 1. 系统内置能力(排除 wasm 插件能力,避免重复与错标「禁卸载」)
     for (const b of builtinList) {
       if (wasmNames.has(b.name)) continue;
-      const effectText =
-        b.effect === "read-only"
-          ? "只读直通"
-          : b.effect != null && b.effect !== "read-only"
-            ? "需审批"
-            : "系统基础能力";
+      // ADR-0055:描述直接来自后端 manifest(不再前端硬编码 BUILTIN_DESC 镜像);
+      // 缺省按 effect/审批语义兜底。
+      const desc =
+        b.description ??
+        (b.approval === "required"
+          ? "该能力需用户批准后执行"
+          : b.effect === "read-only"
+            ? "只读直通能力"
+            : "系统基础能力");
+      const effectLabel =
+        b.approval === "required"
+          ? "需审批"
+          : b.effect === "read-only"
+            ? "只读直通"
+            : b.effect ?? "系统基础能力";
       list.push({
         id: `builtin:${b.name}`,
         name: b.name,
         type: "builtin",
-        detail:
-          BUILTIN_DESC[b.name] ??
-          `${effectText}${b.idempotent ? " · 幂等" : ""}`,
-        tools: [
-          {
-            name: b.name,
-            description: BUILTIN_DESC[b.name] ?? `${effectText}能力`,
-          },
-        ],
+        detail: `${effectLabel}${b.idempotent ? " · 幂等" : ""}`,
+        tools: [{ name: b.name, description: desc }],
         isOnline: true,
         pluginKind: b.plugin_kind,
         pluginId: b.plugin_id,
@@ -235,6 +236,9 @@ export function PluginsPage() {
 
  // 3. 通用 wasm 插件(ADR-0042:config/plugins.json;增删改即热重载)
     for (const w of wasmList) {
+      // ADR-0055:身份不再前端硬编码——wasm 能力同时出现在 /admin/capabilities
+      // (backend 已声明 plugin_kind/id/version),从此处直读。
+      const identity = builtinList.find((b) => b.name === w.capability);
       list.push({
         id: `wasm:${w.capability}`,
         name: w.capability,
@@ -245,9 +249,8 @@ export function PluginsPage() {
         tools: [{ name: w.capability, description: w.description }],
         isOnline: true,
         wasmRef: w,
- // wasm 插件的 provider 恒声明 Tool 身份(ADR-0041/0045)
-        pluginKind: "tool",
-        pluginId: w.provider ?? w.capability,
+        pluginKind: identity?.plugin_kind ?? null,
+        pluginId: identity?.plugin_id ?? w.provider ?? w.capability,
         pluginVersion: w.version,
       });
     }

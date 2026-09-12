@@ -30,10 +30,27 @@ export type ApprovalRequest = {
   status: "waiting" | "approved" | "denied";
 };
 
+// ADR-0055:工具调用事件(由后端 /v1 流的 bm_event 结构化帧直送,不再解析
+// 模型正文文本标记)。effect 为后端 manifest 声明的风险等级——前端据此分类,
+// 不再按工具名子串猜。
+export type ToolEvent = {
+  operationId: string;
+  capability: string;
+  effect: string;
+  target: string;
+  status: "running" | "done";
+  elapsedMs?: number;
+};
+
+// bm_event 帧的解析结果(与 openai_compat.rs bm_event_chunk 同形)。
+type BmEvent = { type: string; payload: Record<string, unknown> };
+
 // W4b:审批卡片状态与裁决动作,经 context 提供给 thread.tsx
 type ApprovalContextValue = {
   pendingApprovals: ApprovalRequest[];
   respondApproval: (id: string, decision: "approve" | "deny") => Promise<void>;
+  // ADR-0055:本回合工具调用事件(结构化,替代正文标记解析);供助手消息渲染工具卡
+  toolEvents: ToolEvent[];
   // 编辑历史消息并从该处重新生成（分支功能）
   editAndBranchMessage: (messageIndex: number, newText: string) => Promise<void>;
   // 重新生成最后一条回复（分支功能）
@@ -53,6 +70,7 @@ type ApprovalContextValue = {
 const BoenmindRuntimeContext = createContext<ApprovalContextValue>({
   pendingApprovals: [],
   respondApproval: async () => {},
+  toolEvents: [],
   editAndBranchMessage: async () => {},
   regenerateMessage: async () => {},
   history: {
@@ -66,53 +84,40 @@ const BoenmindRuntimeContext = createContext<ApprovalContextValue>({
 });
 export const useBoenmindApprovals = () => useContext(BoenmindRuntimeContext);
 
-// 从 delta 中剥离审批标记;命中则回调 onApproval。
-// W4b+ 加固:标记可能被代理/TCP 分包切开——发现 "[BM_APPROVAL:" 起暂存进
-// 缓冲,直到闭合 "]"+换行才解析剥离;未决期间正文不透传标记碎片,
-// 防止审批卡片丢失且裸 JSON 泄露进聊天气泡。
-function createApprovalMarkerStream(
-  onApproval: (req: ApprovalRequest) => void,
-  pushText: (text: string) => void,
+// ADR-0055:把后端 bm_event 结构化帧(工具调用/审批)分派到对应回调。
+// 后端已不再把 UI 信息塞进模型正文,故前端无需任何文本标记解析/缓冲——
+// 工具分类据 effect 字段,审批据 approval.requested 事件,各自结构清晰。
+export function handleBmEvent(
+  ev: BmEvent,
+  handlers: {
+    onApproval: (req: ApprovalRequest) => void;
+    onToolStarted: (t: ToolEvent) => void;
+    onToolInvoked: (operationId: string, effect: string) => void;
+  },
 ) {
-  let buf = "";
-  const flush = () => {
-    if (buf) {
-      pushText(buf);
-      buf = "";
-    }
-  };
-  const feed = (delta: string) => {
-    let combined = buf + delta;
-    buf = "";
-    for (;;) {
-      const start = combined.indexOf("[BM_APPROVAL:");
-      if (start === -1) break;
-      pushText(combined.slice(0, start));
-      combined = combined.slice(start);
-      const end = combined.indexOf("]\n", 1);
-      if (end === -1) {
-        // 标记未闭合:整段暂存,等下一个 delta 再续
-        buf = combined;
-        return;
-      }
-      const objStart = combined.indexOf("{");
-      const jsonText = combined.slice(objStart === -1 ? 1 : objStart, end);
-      try {
-        const parsed = JSON.parse(jsonText) as {
-          bm_approval_request?: Omit<ApprovalRequest, "status">;
-        };
-        if (parsed.bm_approval_request) {
-          onApproval({ ...parsed.bm_approval_request, status: "waiting" });
-        }
-      } catch {
-        // 完整闭合仍解析失败:按丢弃处理(不放裸 JSON 进正文)
-        console.warn("[BM_APPROVAL] 标记解析失败,已丢弃");
-      }
-      combined = combined.slice(end + 2);
-    }
-    pushText(combined);
-  };
-  return { feed, flush };
+  const p = ev.payload ?? {};
+  if (ev.type === "capability.started") {
+    handlers.onToolStarted({
+      operationId: String(p.operation_id ?? ""),
+      capability: String(p.capability ?? ""),
+      effect: String(p.effect ?? ""),
+      target: String(p.target ?? ""),
+      status: "running",
+    });
+  } else if (ev.type === "capability.invoked") {
+    handlers.onToolInvoked(
+      String(p.operation_id ?? ""),
+      String(p.effect ?? ""),
+    );
+  } else if (ev.type === "approval.requested") {
+    handlers.onApproval({
+      approval_id: String(p.approval_id ?? ""),
+      capability: String(p.capability ?? ""),
+      args: p.args ?? null,
+      operation_id: String(p.operation_id ?? ""),
+      status: "waiting",
+    });
+  }
 }
 
 // 回放消息 → 线程消息形状(2026-09-06;切会话/刷新/加载更早三路共用)
@@ -151,6 +156,8 @@ export function BoenmindRuntimeProvider({
   const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequest[]>(
     [],
   );
+  // ADR-0055:本回合工具调用事件(结构化);每回合清空,随 bm_event 帧累积。
+  const [toolEvents, setToolEvents] = useState<ToolEvent[]>([]);
   // 生成中可随时中止(点「停止」):中断 SSE 并立即解锁输入框;
   // 服务器侧该回合仍会后台完成并落库(W1 口径,不丢)
   const abortRef = useRef<AbortController | null>(null);
@@ -283,6 +290,8 @@ export function BoenmindRuntimeProvider({
       content: [{ type: "text", text: "" }] as TextPart[],
     };
     setMessages((cur) => [...cur, assistant]);
+    // ADR-0055:本回合工具事件清空(每回合独立)
+    setToolEvents([]);
     const pushText = (text: string) => {
       if (!text) return;
       setMessages((cur) => {
@@ -295,12 +304,20 @@ export function BoenmindRuntimeProvider({
         return copy;
       });
     };
-    // W4b+:审批标记流式缓冲(跨 chunk 粘包/分包安全)
-    const markerStream = createApprovalMarkerStream(
-      (req) => approvalHandlerRef.current(req),
-      pushText,
-    );
-    const appendDelta = (delta: string) => markerStream.feed(delta);
+    // ADR-0055:工具/审批元数据经 bm_event 结构化帧直送(不再解析正文标记)
+    const toolHandlers = {
+      onApproval: (req: ApprovalRequest) => approvalHandlerRef.current(req),
+      onToolStarted: (t: ToolEvent) =>
+        setToolEvents((cur) => [...cur, t]),
+      onToolInvoked: (operationId: string, effect: string) =>
+        setToolEvents((cur) =>
+          cur.map((t) =>
+            t.operationId === operationId
+              ? { ...t, status: "done" as const }
+              : t,
+          ),
+        ),
+    };
     approvalHandlerRef.current = (req) => {
       // P1-26:流内到达即登记去重集,轮询通道不再重复入队
       handledApprovalsRef.current.add(req.approval_id);
@@ -420,23 +437,26 @@ export function BoenmindRuntimeProvider({
           const v = JSON.parse(data) as {
             choices?: Array<{ delta?: { content?: string } }>;
             error?: { message?: string; code?: string };
+            bm_event?: BmEvent;
           };
+          // ADR-0055:结构化元数据帧(工具/审批)——与 OpenAI 兼容帧共流,
+          // 由独立 bm_event 键承载,不进正文。
+          if (v.bm_event) {
+            handleBmEvent(v.bm_event, toolHandlers);
+            continue;
+          }
           const d = v.choices?.[0]?.delta?.content;
-          if (typeof d === "string" && d) appendDelta(d);
+          if (typeof d === "string" && d) pushText(d);
           // P1-11 配套(2026-09-07 架构评审):服务器失败/超时/中断不再谎报
           // finish stop+[DONE],改发 OpenAI 兼容错误帧——上屏告知用户
           else if (v.error?.message) {
-            appendDelta(`\n[流式错误: ${v.error.message}]`);
+            pushText(`\n[流式错误: ${v.error.message}]`);
           }
         }
       }
-      // 流正常收尾:冲刷可能残留的未闭合标记缓冲(按原样上屏,不吞正文)
-      markerStream.flush();
     } catch (e) {
-      // 异常收尾:同样先冲刷缓冲再追加错误提示
-      markerStream.flush();
       const aborted = e instanceof DOMException && e.name === "AbortError";
-      appendDelta(
+      pushText(
         aborted
           ? "\n[已停止]"
           : `\n[连接失败: ${e instanceof Error ? e.message : String(e)}]`,
@@ -657,6 +677,7 @@ export function BoenmindRuntimeProvider({
       value={{
         pendingApprovals,
         respondApproval,
+        toolEvents,
         editAndBranchMessage,
         regenerateMessage,
         history: {

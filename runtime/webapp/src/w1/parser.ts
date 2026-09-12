@@ -1,8 +1,11 @@
-// 任务执行过程结构化解析器:将模型输出文本拆解为思考流、工具调用与 Markdown 正文
-// 借鉴 ZCode / DSH 的行为收敛思想，实现流式思考切分与连续同类操作二级聚合
+// 任务执行过程结构化解析器:将助手正文拆解为思考流与 Markdown 正文;
+// 工具调用不再从正文文本解析——ADR-0055 起由后端 bm_event 结构化帧直送,
+// 见 toolBlocksFromEvents。分类据 toolEvent.effect(后端 manifest 风险声明),
+// 不再按工具名子串猜。
+
+import type { ToolEvent } from "./runtime";
 
 export type ToolActionItem = {
-  raw: string;
   name: string;
   target?: string;
   category: "read" | "search" | "edit" | "exec" | "other";
@@ -36,157 +39,39 @@ export type ParsedContentBlock =
   | TerminalBlockItem
   | { type: "generic_tool_group"; items: ToolActionItem[] };
 
-// 工具名称到大类的映射(includes 即覆盖 fs.read/fs.search/fs.write/fs.edit/
-// system.exec 前缀——前缀名含关键词,无需另立 startsWith 分支)
-export function classifyTool(toolName: string): ToolActionItem["category"] {
-  const lower = toolName.toLowerCase();
-  if (lower.includes("read")) {
-    return "read";
+/**
+ * 工具事件 → 展示分组类别。据后端声明的 effect(风险等级)分档,仅在
+ * read-only 内用**精确能力名**区分「搜索」与「读文件」(= fs.search);
+ * system.exec 单独归「终端」。均为展示分类,不再对任意工具名做子串猜测。
+ */
+export function categoryOfToolEvent(t: ToolEvent): ToolActionItem["category"] {
+  if (t.capability === "system.exec") return "exec";
+  if (t.effect === "read-only") {
+    return t.capability === "fs.search" ? "search" : "read";
   }
-  if (lower.includes("search") || lower.includes("grep") || lower.includes("find")) {
-    return "search";
-  }
-  if (lower.includes("write") || lower.includes("edit")) {
-    return "edit";
-  }
-  if (lower.includes("exec") || lower.includes("bash") || lower.includes("terminal") || lower.includes("powershell")) {
-    return "exec";
-  }
-  return "other";
+  if (t.effect === "" && t.capability === "") return "other";
+  // 变更类(reversible/external/high-risk):文件写入/编辑或其他副作用工具
+  return "edit";
+}
+
+/** 工具事件 → 展示项(供分组聚合) */
+export function toolItemOf(t: ToolEvent): ToolActionItem {
+  return {
+    name: t.capability,
+    target: t.target || undefined,
+    category: categoryOfToolEvent(t),
+    status: t.status,
+    elapsedMs: t.elapsedMs,
+  };
 }
 
 /**
- * 解析模型消息正文，拆解思考、工具与普通文本，并进行同类树状聚合
+ * 结构化工具事件 → 聚合块(与正文文本无关;ADR-0055)。
+ * 二级聚合:连续只读(read/search)→ ExploreGroup;连续变更(edit)→ ChangesGroup;
+ * exec 单独成 TerminalBlock;其余 → generic_tool_group。
  */
-export function parseAssistantContent(raw: string, isMessageRunning: boolean = false): ParsedContentBlock[] {
-  if (!raw) return [];
-
-  const rawBlocks: Array<
-    | { type: "text"; text: string }
-    | { type: "thinking"; text: string; isStreaming?: boolean; elapsedSeconds?: number }
-    | { type: "tool_item"; item: ToolActionItem }
-  > = [];
-
-  let cursor = 0;
-  const thinkStartRegex = /<think(?:ing)?>/gi;
-  const thinkEndRegex = /<\/think(?:ing)?>/gi;
-
-  // 1. 扫描与提取思考链块 (<think> ... </think> 或未闭合的流式思考)
-  while (cursor < raw.length) {
-    thinkStartRegex.lastIndex = cursor;
-    const startMatch = thinkStartRegex.exec(raw);
-    if (!startMatch) {
-      // 后面没有思考标签，全部进入普通处理
-      processTextAndTools(raw.slice(cursor), rawBlocks);
-      break;
-    }
-
-    // 思考标签之前有普通文本/工具
-    if (startMatch.index > cursor) {
-      processTextAndTools(raw.slice(cursor, startMatch.index), rawBlocks);
-    }
-
-    // 寻找思考结束标签
-    const thinkContentStart = startMatch.index + startMatch[0].length;
-    thinkEndRegex.lastIndex = thinkContentStart;
-    const endMatch = thinkEndRegex.exec(raw);
-
-    if (endMatch) {
-      const thinkText = raw.slice(thinkContentStart, endMatch.index).trim();
-      if (thinkText) {
-        rawBlocks.push({
-          type: "thinking",
-          text: thinkText,
-          isStreaming: false,
-        });
-      }
-      cursor = endMatch.index + endMatch[0].length;
-    } else {
-      // 未闭合思考标签（流式进行中）
-      const thinkText = raw.slice(thinkContentStart).trim();
-      rawBlocks.push({
-        type: "thinking",
-        text: thinkText,
-        isStreaming: isMessageRunning,
-      });
-      break;
-    }
-  }
-
-  // 2. 二级聚合：合并连续的同类工具行为（ZCode 核心模式）
-  return aggregateToolBlocks(rawBlocks);
-}
-
-// 辅助：从非思考文本中按行提取工具标记与正文
-function processTextAndTools(
-  chunk: string,
-  out: Array<
-    | { type: "text"; text: string }
-    | { type: "thinking"; text: string; isStreaming?: boolean; elapsedSeconds?: number }
-    | { type: "tool_item"; item: ToolActionItem }
-  >,
-) {
-  if (!chunk) return;
-  const lines = chunk.split("\n");
-  let curText = "";
-
-  const flushText = () => {
-    if (curText) {
-      out.push({ type: "text", text: curText });
-      curText = "";
-    }
-  };
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    // 匹配 [调用 tool_name target]
-    const toolMatch = line.match(/^\[调用\s+([a-zA-Z0-9_.:-]+)(?:\s*(.*?))?\]$/);
-    // 匹配 [工具完成 tool_name 耗时 Xms]
-    const doneMatch = line.match(/^\[工具完成\s+([a-zA-Z0-9_.:-]+)(?:\s*耗时\s*(\d+)ms)?\]$/);
-
-    if (toolMatch) {
-      flushText();
-      const name = toolMatch[1];
-      const target = (toolMatch[2] || "").trim();
-      const category = classifyTool(name);
-      out.push({
-        type: "tool_item",
-        item: {
-          raw: line,
-          name,
-          target: target || undefined,
-          category,
-          status: "done",
-        },
-      });
-    } else if (doneMatch) {
-      flushText();
-      const name = doneMatch[1];
-      const ms = doneMatch[2] ? parseInt(doneMatch[2], 10) : undefined;
-      // 回填上一个匹配项的耗时
-      for (let j = out.length - 1; j >= 0; j--) {
-        const item = out[j];
-        if (item.type === "tool_item" && item.item.name === name) {
-          item.item.elapsedMs = ms;
-          break;
-        }
-      }
-    } else {
-      curText += (curText ? "\n" : "") + line;
-    }
-  }
-
-  flushText();
-}
-
-// 二级聚合管道：连续只读行为（read/search）合并为 ExploreGroup，连续编辑（edit）合并为 ChangesGroup
-function aggregateToolBlocks(
-  blocks: Array<
-    | { type: "text"; text: string }
-    | { type: "thinking"; text: string; isStreaming?: boolean; elapsedSeconds?: number }
-    | { type: "tool_item"; item: ToolActionItem }
-  >,
-): ParsedContentBlock[] {
+export function toolBlocksFromEvents(events: ToolEvent[]): ParsedContentBlock[] {
+  const items = events.map(toolItemOf);
   const result: ParsedContentBlock[] = [];
   let pendingExplore: ToolActionItem[] = [];
   let pendingChanges: ToolActionItem[] = [];
@@ -220,39 +105,71 @@ function aggregateToolBlocks(
     }
   };
 
-  for (const block of blocks) {
-    if (block.type === "tool_item") {
-      const cat = block.item.category;
-      if (cat === "read" || cat === "search") {
-        flushChanges();
-        pendingExplore.push(block.item);
-      } else if (cat === "edit") {
-        flushExplore();
-        pendingChanges.push(block.item);
-      } else if (cat === "exec") {
-        flushExplore();
-        flushChanges();
-        result.push({
-          type: "terminal_block",
-          item: block.item,
-        });
-      } else {
-        flushExplore();
-        flushChanges();
-        result.push({
-          type: "generic_tool_group",
-          items: [block.item],
-        });
-      }
+  for (const item of items) {
+    const cat = item.category;
+    if (cat === "read" || cat === "search") {
+      flushChanges();
+      pendingExplore.push(item);
+    } else if (cat === "edit") {
+      flushExplore();
+      pendingChanges.push(item);
+    } else if (cat === "exec") {
+      flushExplore();
+      flushChanges();
+      result.push({ type: "terminal_block", item });
     } else {
       flushExplore();
       flushChanges();
-      result.push(block);
+      result.push({ type: "generic_tool_group", items: [item] });
     }
   }
 
   flushExplore();
   flushChanges();
-
   return result;
+}
+
+/**
+ * 解析助手正文:仅拆解思考链与普通文本(工具已改走结构化事件,不再解析
+ * 正文里的 `[调用 …]`/`[工具完成 …]` 文本标记)。
+ */
+export function parseAssistantContent(
+  raw: string,
+  isMessageRunning: boolean = false,
+): ParsedContentBlock[] {
+  if (!raw) return [];
+
+  const blocks: ParsedContentBlock[] = [];
+  let cursor = 0;
+  const thinkStartRegex = /<think(?:ing)?>/gi;
+  const thinkEndRegex = /<\/think(?:ing)?>/gi;
+
+  while (cursor < raw.length) {
+    thinkStartRegex.lastIndex = cursor;
+    const startMatch = thinkStartRegex.exec(raw);
+    if (!startMatch) {
+      if (cursor < raw.length) blocks.push({ type: "text", text: raw.slice(cursor) });
+      break;
+    }
+    if (startMatch.index > cursor) {
+      blocks.push({ type: "text", text: raw.slice(cursor, startMatch.index) });
+    }
+    const thinkContentStart = startMatch.index + startMatch[0].length;
+    thinkEndRegex.lastIndex = thinkContentStart;
+    const endMatch = thinkEndRegex.exec(raw);
+    if (endMatch) {
+      const thinkText = raw.slice(thinkContentStart, endMatch.index).trim();
+      if (thinkText) {
+        blocks.push({ type: "thinking", text: thinkText, isStreaming: false });
+      }
+      cursor = endMatch.index + endMatch[0].length;
+    } else {
+      const thinkText = raw.slice(thinkContentStart).trim();
+      if (thinkText) {
+        blocks.push({ type: "thinking", text: thinkText, isStreaming: isMessageRunning });
+      }
+      break;
+    }
+  }
+  return blocks;
 }

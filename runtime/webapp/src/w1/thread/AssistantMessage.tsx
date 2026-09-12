@@ -8,7 +8,7 @@ import { RotateCcw, Copy, Check, ChevronDown, ChevronRight, Loader } from "lucid
 import { useEffect, useRef, useState } from "react";
 import { useBoenmindApprovals } from "../runtime";
 import { MarkdownRenderer } from "../MarkdownRenderer";
-import { parseAssistantContent } from "../parser";
+import { parseAssistantContent, toolBlocksFromEvents } from "../parser";
 import { ThinkingBlock } from "../components/ThinkingBlock";
 import { ToolTreeGroup } from "../components/ToolTreeGroup";
 import { TerminalBlock } from "../components/TerminalBlock";
@@ -22,6 +22,11 @@ function formatDuration(totalSeconds: number): string {
 export function AssistantMessage() {
   const isRunning = useAuiState((s) => s.thread.isRunning);
   const messageIndex = useAuiState((s) => s.message.index);
+  // ADR-0055:工具事件属「当前回合」;只在最后一条助手消息上渲染(历史回放
+  // 不含工具事件,与旧行为一致——工具组本就仅实时可见)。
+  const isLast = useAuiState(
+    (s) => s.message.index === s.thread.messages.length - 1,
+  );
   const { regenerateMessage } = useBoenmindApprovals();
   const [copied, setCopied] = useState(false);
  // 回合计时:起始挂在本消息首次进入运行态的时刻,完成即冻结。
@@ -30,6 +35,8 @@ export function AssistantMessage() {
   const [elapsed, setElapsed] = useState(0);
   const [doneSeconds, setDoneSeconds] = useState<number | null>(null);
   const [collapsed, setCollapsed] = useState(false);
+  // ADR-0055:工具调用来自结构化事件(不再解析正文标记)
+  const { toolEvents } = useBoenmindApprovals();
 
   useEffect(() => {
     if (!isRunning) {
@@ -82,6 +89,8 @@ export function AssistantMessage() {
                 return isRunning ? <Loader className="zc-spin" /> : null;
               }
               const blocks = parseAssistantContent(part.text, isRunning);
+              // ADR-0055:本回合工具调用(结构化事件)附于正文之后渲染。
+              const toolBlocks = isLast ? toolBlocksFromEvents(toolEvents) : [];
               return (
  // P1-29():key 用索引而非文本长度——
  // 长度作 key 会在流式期间每个 delta 都重挂载整棵子树,
@@ -107,6 +116,15 @@ export function AssistantMessage() {
                     return (
                       <MarkdownRenderer key={idx} content={b.text} />
                     );
+                  })}
+                  {toolBlocks.map((b, idx) => {
+                    if (b.type === "explore_group" || b.type === "changes_group" || b.type === "generic_tool_group") {
+                      return <ToolTreeGroup key={`t${idx}`} block={b} />;
+                    }
+                    if (b.type === "terminal_block") {
+                      return <TerminalBlock key={`t${idx}`} item={b.item} />;
+                    }
+                    return null;
                   })}
                   {isRunning ? <Loader className="zc-spin" /> : null}
                   <div className="msg-action-bar justify-start pt-1">

@@ -186,6 +186,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "name": v["capability"], "provider": v["provider"],
                 "effect": v["effect"], "idempotent": v["idempotent"],
                 "approval": v["approval"],
+                // ADR-0055:补 description/wire_name——前端插件页直读后端描述,
+                // 不再自带 BUILTIN_DESC 镜像表(改描述即前端失同步)。
+                "description": v["description"], "wire_name": v["wire_name"],
                 "plugin_kind": meta.as_ref().map(|x| x.kind.as_str()),
                 "plugin_id": meta.as_ref().map(|x| x.id.as_str()),
                 "plugin_version": meta.as_ref().map(|x| x.version.as_str()),
