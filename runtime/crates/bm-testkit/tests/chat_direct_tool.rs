@@ -187,4 +187,27 @@ async fn direct_tool_round_feeds_inline_result_without_poll_timeout() {
             .contains("hi"),
         "工具回喂原文必须入账: {tool_result_line}"
     );
+    // 阶段3 规范化:tool_call/tool_result 统一写**能力名**(非 wire 短名),
+    // 并带 effect/needs_approval——前端据此分类,不再按工具名猜。
+    let call_line = raw
+        .lines()
+        .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap())
+        .find(|v| v["kind"] == serde_json::json!("tool_call"))
+        .expect("tool_call 行");
+    assert_eq!(
+        call_line["data"]["tool"],
+        serde_json::json!("system.echo"),
+        "tool_call 必须写能力名(而非 wire 短名 system_echo)"
+    );
+    assert_eq!(call_line["data"]["effect"], serde_json::json!("read-only"));
+    assert_eq!(call_line["data"]["needs_approval"], serde_json::json!(false));
+    assert_eq!(
+        tool_result_line["data"]["tool"],
+        serde_json::json!("system.echo"),
+        "tool_result 能力名与 tool_call 对齐"
+    );
+    assert_eq!(
+        tool_result_line["data"]["effect"],
+        serde_json::json!("read-only")
+    );
 }

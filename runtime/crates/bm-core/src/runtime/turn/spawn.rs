@@ -422,6 +422,9 @@ struct TurnEnv {
     streaming: bool,
     intent_gate_min: u32,
     user_input: String,
+ /// 本轮工具元数据投影:capability → (effect, needs_approval),供工具事件
+ /// 标注风险(阶段3 单源化:前端据此分类,不再按工具名猜——ADR-0054 同源)。
+    tool_meta: std::collections::HashMap<String, (String, bool)>,
 }
 
 /// 一次模型调用的请求侧快照(发送前截取;结果侧落盘复用。原装配段局部
@@ -711,7 +714,14 @@ async fn dispatch_one_tool_call(
         .get(&tc.name)
         .cloned()
         .unwrap_or_else(|| tc.name.clone());
- // W9:工具调用事件(轨迹视图数据源)
+ // W9:工具调用事件(轨迹视图数据源)。阶段3 规范化:统一写**能力名**
+ // (原为 wire 短名,与 tool_result 的能力名错位);补 effect/needs_approval
+ // 供前端直读分类(不再按工具名猜)。
+    let (effect, needs_approval) = env
+        .tool_meta
+        .get(&capability)
+        .cloned()
+        .unwrap_or_default();
     let tool_started = std::time::Instant::now();
     env.ctx_log.record_event(
         env.session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
@@ -720,8 +730,10 @@ async fn dispatch_one_tool_call(
         "tool_call",
         &format_ts(env.clock.now()),
         serde_json::json!({
-            "tool": tc.name,
+            "tool": capability,
             "arguments": args.clone(),
+            "effect": effect,
+            "needs_approval": needs_approval,
         }),
     );
  // #14:调试面——工具调用全参
@@ -881,6 +893,7 @@ async fn dispatch_one_tool_call(
             "tool": capability,
             "result": tool_result,
             "elapsed_ms": elapsed_ms,
+            "effect": effect,
         }),
     );
  // #14:调试面——工具结果全文(与回喂同文)
@@ -1294,6 +1307,16 @@ pub(crate) fn spawn_turn(
             &user_input,
         );
         let (name_to_cap, tools_json) = build_tool_catalog(&chat_tools, allowed_tools.as_deref());
+ // 工具元数据投影(capability → effect/needs_approval):工具事件标注风险用。
+        let tool_meta: std::collections::HashMap<String, (String, bool)> = chat_tools
+            .iter()
+            .map(|t| {
+                (
+                    t.capability.clone(),
+                    (t.effect.as_str().to_string(), t.needs_approval),
+                )
+            })
+            .collect();
 
  // 回合环境句柄束(分段函数公共入参;Arc/小值克隆,句柄语义不变)
         let env = TurnEnv {
@@ -1311,6 +1334,7 @@ pub(crate) fn spawn_turn(
             streaming,
             intent_gate_min,
             user_input: user_input.clone(),
+            tool_meta,
         };
 
  // (
