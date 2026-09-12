@@ -204,8 +204,11 @@ def main():
     music_dir = os.path.abspath(opts.dir)
     os.makedirs(music_dir, exist_ok=True)
 
-    # 首次启动自动扫描根目录
-    scan_directory(music_dir)
+    # issue #64 裁决:不再启动即扫描根目录。核对结论——前端 MusicPlayer 曲库
+    # 走 api.fs.list(不消费本 server 的 tracks_index);本 server 的读工具
+    # (list_tracks/search/playlist_*)所需的索引由 music.scan **显式**建立。
+    # 故启动扫描是纯多余开销(且大目录会拖慢启动),移除;需要曲库时调
+    # music.scan(其内部 scan_directory 会填 tracks_index)。
 
     mcp_sdk.run_stdio(
         server_info={"name": "music-player", "version": "0.1.0"},

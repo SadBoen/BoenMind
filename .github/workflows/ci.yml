@@ -41,7 +41,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - run: python -m py_compile apps/wiki_server.py apps/market_server.py apps/music_server.py apps/mcp_sdk.py
+      - run: python -m py_compile apps/wiki_server.py apps/market_server.py apps/music_server.py apps/mcp_sdk.py scripts/mcp_smoke.py
       # ADR-0034(issue #56):Python 插件协议 SDK 单测(进程内驱动 run_stdio)
       - run: python apps/mcp_sdk_test.py
       - run: python scripts/mcp_smoke.py
