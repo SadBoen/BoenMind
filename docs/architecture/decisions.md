@@ -23,7 +23,7 @@
 12. **事件信封 JSON 字段名 = `type`**（serde rename），不是 `event_type`。
 13. **单写者纪律**为核心状态机根基；通信面（如公告栏）走单写者总线，不新增旁路（ADR-0031/0032）。
 14. **MCP 插件信任链显式消费**：`trust` 字段被装载器消费（缺省 explicit-config）、`sha256` 校验目标 = `payload`（若声明）否则 `command`——解释器型条目未声明 payload 语义歧义即 fail-closed 拒载；扫描以 `--self-describe` 运行候选文件属「识别即执行」，已在管理 UI 显式披露（ADR-0035）。子进程 OS 级资源上限（Job Object/rlimit）为尽力而为，施加失败 fail-open。
-15. **生命周期门与健康门分工，勿合并**：`BindingStatus`（持久，按 capability，注册-切换-下线+代际，含 Draining 排空）与 `World.provider_health`（进程内，按 provider，失败计数-重连-冷却）是两个不同关注点，非同一状态机的两份；dispatch 生命周期门读前者，健康门读后者（ADR-0037）。
+15. **生命周期门与健康门分工，勿合并**：`BindingStatus`（持久，按 capability，注册-切换-下线+代际，含 Draining 排空）与 `World.provider_health`（进程内，按 provider，失败计数-重连-冷却）是两个不同关注点，非同一状态机的两份；dispatch 生命周期门读前者，健康门读后者（ADR-0037）。**在产路径已接线的是：注册/注销、`begin_drain`+`finish_drain` 排空（handlers→settle_draining_caps）、健康门失败计数与重连**。`switch_binding` / `mark_unavailable` / `mark_recovered` 三原语**当前仅测试调用、无生产调用者**，且非缺陷：崩溃 → 健康门（ADR-0037 分工），热重载 → unregister+register 走墓碑续代（ADR-0032），故此三者是「预先铺好的 §13.1/§13.2 独立进程 Provider 生命周期面」（阶段二外置 Provider 时才接线）。评审不得报为「死代码/未实现」；处置（接线或删除）须发 ADR，不静默改（issue #72 跟踪）。
 
 ---
 
