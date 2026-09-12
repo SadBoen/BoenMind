@@ -12,13 +12,13 @@ use std::sync::Arc;
 /// 编程错误」(基线 §4.5 来源链;提升权限的决定永远不在调用方)。
 #[derive(Debug, Clone)]
 pub struct CallContext {
- /// kind:local-id(如 surface:user / agent:note_bot)。
+    /// kind:local-id(如 surface:user / agent:note_bot)。
     pub principal: String,
     pub trust: DataTrust,
     pub idempotency_key: Option<String>,
- /// 发起调用的会话(ADR-0030):回合层模型工具调用携带,供裁决点读取
- /// 会话权限模式;None = 无会话上下文(wire 直调/worker 路径,恒按 ask)。
- /// 仅路由信息,不参与信任归因——提升权限的决定永远不在调用方。
+    /// 发起调用的会话(ADR-0030):回合层模型工具调用携带,供裁决点读取
+    /// 会话权限模式;None = 无会话上下文(wire 直调/worker 路径,恒按 ask)。
+    /// 仅路由信息,不参与信任归因——提升权限的决定永远不在调用方。
     pub session_id: Option<BmId>,
 }
 
@@ -33,8 +33,8 @@ impl std::fmt::Display for TrustViolation {
 }
 
 impl CallContext {
- /// Wire Surface 直调(用户显式操作):唯一合法的 trusted 来源
- /// (PI-01:用户输入本身即 trusted)。CLI/GUI/Web 均经此入口。
+    /// Wire Surface 直调(用户显式操作):唯一合法的 trusted 来源
+    /// (PI-01:用户输入本身即 trusted)。CLI/GUI/Web 均经此入口。
     pub fn surface(principal: &str) -> Self {
         Self {
             principal: principal.to_string(),
@@ -44,7 +44,7 @@ impl CallContext {
         }
     }
 
- /// 内部内容链:trust 由上游内容标注携带;声称 trusted 被构造层拒绝。
+    /// 内部内容链:trust 由上游内容标注携带;声称 trusted 被构造层拒绝。
     pub fn content_chain(principal: &str, trust: DataTrust) -> Result<Self, TrustViolation> {
         match trust {
             DataTrust::Trusted => Err(TrustViolation),
@@ -57,14 +57,14 @@ impl CallContext {
         }
     }
 
- /// 附幂等键(副作用操作必备,基线 §9.5)。
+    /// 附幂等键(副作用操作必备,基线 §9.5)。
     pub fn with_idempotency_key(mut self, key: impl Into<String>) -> Self {
         self.idempotency_key = Some(key.into());
         self
     }
 
- /// 附会话归属(ADR-0030):回合层模型工具调用标注来源会话,裁决点
- /// 据此读取该会话的权限模式。仅路由信息,不改信任。
+    /// 附会话归属(ADR-0030):回合层模型工具调用标注来源会话,裁决点
+    /// 据此读取该会话的权限模式。仅路由信息,不改信任。
     pub fn with_session(mut self, session_id: BmId) -> Self {
         self.session_id = Some(session_id);
         self
@@ -73,15 +73,15 @@ impl CallContext {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DenyReason {
- /// capability 未注册(或 binding 已不存在):默认拒绝,无审批出口。
+    /// capability 未注册(或 binding 已不存在):默认拒绝,无审批出口。
     UnknownCapability,
- /// 无 Grant 且不满足直通:默认拒绝(ADR-0006)。
+    /// 无 Grant 且不满足直通:默认拒绝(ADR-0006)。
     NoGrant,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Decision {
- /// grant_id = None 表示内建直通(trusted × not-required × read-only/low-risk)。
+    /// grant_id = None 表示内建直通(trusted × not-required × read-only/low-risk)。
     Allowed {
         grant_id: Option<String>,
     },
@@ -113,8 +113,8 @@ pub enum CallOutcome {
         credential: CallCredential,
         result: serde_json::Value,
     },
- /// 幂等抑制(ADR-0002 条件 6):等价请求返回原收据,不重复执行;
- /// 上层必须落 outcome=suppressed 审计事件以资证明。
+    /// 幂等抑制(ADR-0002 条件 6):等价请求返回原收据,不重复执行;
+    /// 上层必须落 outcome=suppressed 审计事件以资证明。
     Suppressed {
         original_result: serde_json::Value,
     },
@@ -134,11 +134,11 @@ pub enum CallOutcome {
     ProviderError {
         message: String,
     },
- /// M7 S5:Provider 熔断/重连超限(unavailable 语义,区别于内部错误)。
+    /// M7 S5:Provider 熔断/重连超限(unavailable 语义,区别于内部错误)。
     ProviderUnavailable {
         message: String,
     },
- /// M7 S4:已派发异步执行(收据 running;完成经 Cmd::ProviderCall 落定)。
+    /// M7 S4:已派发异步执行(收据 running;完成经 Cmd::ProviderCall 落定)。
     DispatchedAsync,
 }
 
@@ -148,7 +148,7 @@ pub struct PreparedCall {
     pub manifest: CapabilityManifest,
     pub credential: CallCredential,
     pub grant_id: Option<String>,
- /// manifest.effect == external-side-effect(前门禁触发面)。
+    /// manifest.effect == external-side-effect(前门禁触发面)。
     pub is_side_effect: bool,
     pub(super) handle: Arc<dyn CapabilityProvider>,
 }

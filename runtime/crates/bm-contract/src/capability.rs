@@ -6,12 +6,12 @@
 //!
 //! **镜像 vs 策略**(ADR-0042 核实标注,供后续读者/评审区分):
 //! - `RiskClass` 的**枚举值**(`read-only`…`high-risk-command`)是 manifest
-//! 合同的镜像,由 `tests/sync.rs` 对比 schema 守护;
+//!   合同的镜像,由 `tests/sync.rs` 对比 schema 守护;
 //! - `ORDER` / `escalated` / `requires_approval_at_untrusted` / `is_approval_bearing`
-//! 是**策略**(来源 = 基线 §5.3 与 ADR-0002 条件 3,**不是** contract JSON 字段),
-//! 故不在 sync 守护范围,由本模块单测守护其行为。它们留在本层是刻意的:
-//! `ORDER` 是 `RiskClass` 的固有次序,三者皆为纯函数、无外部状态;迁出须改
-//! 自由函数而失去方法语法(孤儿规则),得不偿失——评审勿再当"契约不纯"重提。
+//!   是**策略**(来源 = 基线 §5.3 与 ADR-0002 条件 3,**不是** contract JSON 字段),
+//!   故不在 sync 守护范围,由本模块单测守护其行为。它们留在本层是刻意的:
+//!   `ORDER` 是 `RiskClass` 的固有次序,三者皆为纯函数、无外部状态;迁出须改
+//!   自由函数而失去方法语法(孤儿规则),得不偿失——评审勿再当"契约不纯"重提。
 
 use serde::{Deserialize, Serialize};
 
@@ -24,7 +24,7 @@ wire_str_enum!(RiskClass {
 });
 
 impl RiskClass {
- /// 风险序全量(低 → 高)。
+    /// 风险序全量(低 → 高)。
     pub const ORDER: [RiskClass; 5] = [
         RiskClass::ReadOnly,
         RiskClass::LowRiskCommand,
@@ -33,13 +33,13 @@ impl RiskClass {
         RiskClass::HighRiskCommand,
     ];
 
- /// untrusted 来源按风险序上提一级(基线 §5.3/§4.5;封顶 high-risk)。
+    /// untrusted 来源按风险序上提一级(基线 §5.3/§4.5;封顶 high-risk)。
     pub fn escalated(self) -> RiskClass {
         let idx = Self::ORDER.iter().position(|r| *r == self).unwrap_or(0);
         Self::ORDER[(idx + 1).min(Self::ORDER.len() - 1)]
     }
 
- /// reversible-command 及以上:untrusted 门控下强制审批(ADR-0002 条件 3)。
+    /// reversible-command 及以上:untrusted 门控下强制审批(ADR-0002 条件 3)。
     pub fn requires_approval_at_untrusted(self) -> bool {
         matches!(
             self,
@@ -49,9 +49,9 @@ impl RiskClass {
         )
     }
 
- /// 审批承载级(reversible 及以上,与上一集合相同):Broker 裁决中,
- /// effective_risk 落在此集合即 RequireApproval——直通仅限
- /// read-only/low-risk(M4 规格 §5.4;trusted 直调 reversible+ 亦审批)。
+    /// 审批承载级(reversible 及以上,与上一集合相同):Broker 裁决中,
+    /// effective_risk 落在此集合即 RequireApproval——直通仅限
+    /// read-only/low-risk(M4 规格 §5.4;trusted 直调 reversible+ 亦审批)。
     pub fn is_approval_bearing(self) -> bool {
         self.requires_approval_at_untrusted()
     }
@@ -112,18 +112,18 @@ pub struct DrawerRule {
 /// ADR-0038:记忆抽屉式授权声明(`authorization.drawer`)。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DrawerAuthorization {
- /// 按序匹配(具体前缀在前);命中即得主体自有抽屉标签。
- #[serde(default)]
+    /// 按序匹配(具体前缀在前);命中即得主体自有抽屉标签。
+    #[serde(default)]
     pub self_drawers: Vec<DrawerRule>,
- /// read-only 能力可额外放行的 scope(读不产生内容污染)。
- #[serde(default)]
+    /// read-only 能力可额外放行的 scope(读不产生内容污染)。
+    #[serde(default)]
     pub read_allow_scopes: Vec<String>,
 }
 
 /// ADR-0038:per-capability 授权规则声明(Broker 只做解释,ADR-0006)。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthorizationRule {
- #[serde(default)]
+    #[serde(default)]
     pub drawer: Option<DrawerAuthorization>,
 }
 
@@ -140,41 +140,41 @@ pub struct CapabilityManifest {
     pub cancellable: bool,
     pub timeout_ms: u64,
     pub approval: ApprovalRequirement,
- #[serde(default)]
+    #[serde(default)]
     pub scopes: Vec<String>,
- #[serde(default)]
+    #[serde(default)]
     pub verification: Option<serde_json::Value>,
- #[serde(default)]
+    #[serde(default)]
     pub undo: Option<serde_json::Value>,
- #[serde(default)]
+    #[serde(default)]
     pub retry: Option<RetryPolicy>,
- #[serde(default)]
+    #[serde(default)]
     pub deprecated_by: Option<String>,
- /// M4 增发:safe/mutation 分级;缺省由 effect 派生(合同 description)。
- #[serde(default)]
+    /// M4 增发:safe/mutation 分级;缺省由 effect 派生(合同 description)。
+    #[serde(default)]
     pub mutation_class: Option<MutationClass>,
- /// ADR-0022 增发(合同 Minor):面向模型的一句功能描述;对话工具清单
- /// 展示用,缺省 = turn 侧兜底,不影响审批语义。
- #[serde(default)]
+    /// ADR-0022 增发(合同 Minor):面向模型的一句功能描述;对话工具清单
+    /// 展示用,缺省 = turn 侧兜底,不影响审批语义。
+    #[serde(default)]
     pub description: Option<String>,
- /// ADR-0054 增发(合同 Minor):面向模型的工具名(wire/function.name)。
- /// 缺省 = 消费方按能力名点转单下划线兜底;声明后被占则回落默认名。
- /// 仅影响工具清单展示与模型亲和,不改能力名与审批语义——与 description
- /// 同类(面向模型的展示属性),故同处一 struct。
- #[serde(default)]
+    /// ADR-0054 增发(合同 Minor):面向模型的工具名(wire/function.name)。
+    /// 缺省 = 消费方按能力名点转单下划线兜底;声明后被占则回落默认名。
+    /// 仅影响工具清单展示与模型亲和,不改能力名与审批语义——与 description
+    /// 同类(面向模型的展示属性),故同处一 struct。
+    #[serde(default)]
     pub wire_name: Option<String>,
- /// ADR-0036 增发(合同 Minor):执行分道声明,唯一真源;缺省 = sync
- /// (ADR-0054 起内核不再回退 provider 命名前缀)。
- #[serde(default)]
+    /// ADR-0036 增发(合同 Minor):执行分道声明,唯一真源;缺省 = sync
+    /// (ADR-0054 起内核不再回退 provider 命名前缀)。
+    #[serde(default)]
     pub execution_mode: Option<ExecutionMode>,
- /// ADR-0038 增发(合同 Minor):授权规则声明(Broker 只解释);缺省 =
- /// 该步不适用,走既有审批/直通流。
- #[serde(default)]
+    /// ADR-0038 增发(合同 Minor):授权规则声明(Broker 只解释);缺省 =
+    /// 该步不适用,走既有审批/直通流。
+    #[serde(default)]
     pub authorization: Option<AuthorizationRule>,
 }
 
 impl CapabilityManifest {
- /// 显式声明优先,否则按 effect 派生:read-only→safe,其余→mutation。
+    /// 显式声明优先,否则按 effect 派生:read-only→safe,其余→mutation。
     pub fn mutation_class_or_derived(&self) -> MutationClass {
         self.mutation_class.unwrap_or(match self.effect {
             RiskClass::ReadOnly => MutationClass::Safe,
@@ -214,7 +214,7 @@ pub struct ManifestSpec {
     execution_mode: Option<ExecutionMode>,
     description: Option<String>,
     wire_name: Option<String>,
- /// 开放结构叠加(ADR-0051):额外字段最后合并;未知字段由合同忽略。
+    /// 开放结构叠加(ADR-0051):额外字段最后合并;未知字段由合同忽略。
     overlay: Option<serde_json::Value>,
 }
 
@@ -286,18 +286,18 @@ impl ManifestSpec {
         self.description = Some(v.into());
         self
     }
- /// ADR-0054:声明面向模型的工具名(wire/function.name);缺省按能力名兜底。
+    /// ADR-0054:声明面向模型的工具名(wire/function.name);缺省按能力名兜底。
     pub fn wire_name(mut self, v: impl Into<String>) -> Self {
         self.wire_name = Some(v.into());
         self
     }
- /// 开放结构叠加:额外字段(undo/verification/… )最后合并进 manifest。
+    /// 开放结构叠加:额外字段(undo/verification/… )最后合并进 manifest。
     pub fn overlay(mut self, v: serde_json::Value) -> Self {
         self.overlay = Some(v);
         self
     }
 
- /// 合成 manifest。唯一失败源 = 叠加字段与合同冲突(类型不符)。
+    /// 合成 manifest。唯一失败源 = 叠加字段与合同冲突(类型不符)。
     pub fn build(self) -> Result<CapabilityManifest, String> {
         let mut v = serde_json::json!({
             "capability": self.capability,
@@ -321,7 +321,7 @@ impl ManifestSpec {
         if let Some(w) = &self.wire_name {
             v["wire_name"] = serde_json::json!(w);
         }
- // 叠加最后应用(可覆盖上方任一字段,与旧 json!-merge 语义一致)。
+        // 叠加最后应用(可覆盖上方任一字段,与旧 json!-merge 语义一致)。
         if let (Some(obj), Some(extra)) = (
             v.as_object_mut(),
             self.overlay.as_ref().and_then(|o| o.as_object()),
@@ -357,7 +357,7 @@ impl GrantScope {
             "count" => val.parse().ok().map(Self::Count),
             "task" => (!val.is_empty()).then(|| Self::Task(val.to_string())),
             "ttl" => {
- // 形态 ttl:<数字><ms|s|m|h>:找首个非数字字符切分数字与单位
+                // 形态 ttl:<数字><ms|s|m|h>:找首个非数字字符切分数字与单位
                 let digits = val.find(|c: char| !c.is_ascii_digit()).unwrap_or(val.len());
                 let (num, unit) = val.split_at(digits);
                 let n: u64 = num.parse().ok()?;
@@ -402,7 +402,7 @@ impl<'de> Deserialize<'de> for GrantScope {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GrantResource {
     pub capability: String,
- #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+    #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
     pub args_predicates: serde_json::Map<String, serde_json::Value>,
 }
 
@@ -441,28 +441,28 @@ wire_str_enum!(ApprovalState {
 pub struct Approval {
     pub approval_id: String,
     pub capability: String,
- /// args 规范化 JSON 的 SHA-256(A4:原文不进普通日志)。
+    /// args 规范化 JSON 的 SHA-256(A4:原文不进普通日志)。
     pub args_digest: String,
- /// Broker 生成的结构化脱敏摘要(审批卡片主体)。
+    /// Broker 生成的结构化脱敏摘要(审批卡片主体)。
     pub args_summary: String,
     pub principal: String,
     pub risk_class: RiskClass,
     pub effective_risk: RiskClass,
     pub input_trust: DataTrust,
     pub state: ApprovalState,
- /// 批准时用户可选择的授权范围(Broker 按 effective_risk 生成)。
+    /// 批准时用户可选择的授权范围(Broker 按 effective_risk 生成)。
     pub scope_choices: Vec<GrantScope>,
     pub requested_at: crate::BmTimestamp,
- /// 等待用户裁决的截止;到期 → expired(等价 denied,无超时默认同意)。
+    /// 等待用户裁决的截止;到期 → expired(等价 denied,无超时默认同意)。
     pub expires_at: crate::BmTimestamp,
- #[serde(default)]
+    #[serde(default)]
     pub resolved_at: Option<crate::BmTimestamp>,
- /// 批准后物化的 Grant 回填;其余状态为 null。
- #[serde(default)]
+    /// 批准后物化的 Grant 回填;其余状态为 null。
+    #[serde(default)]
     pub grant_id: Option<String>,
- /// 裁决来源(ADR-0030,Minor 只增):user=人工裁决;mode_auto=会话 yolo
- /// 模式服务端自动放行;system=系统自裁(审批等待超时撤销)。等待中缺省。
- #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// 裁决来源(ADR-0030,Minor 只增):user=人工裁决;mode_auto=会话 yolo
+    /// 模式服务端自动放行;system=系统自裁(审批等待超时撤销)。等待中缺省。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolved_source: Option<String>,
 }
 
@@ -489,12 +489,12 @@ mod tests {
         .unwrap()
     }
 
- #[test]
+    #[test]
     fn manifest_deserializes_and_derives_mutation_class() {
         let m = sample();
         assert_eq!(m.capability, "system.echo");
         assert_eq!(m.effect, RiskClass::ReadOnly);
- // 未声明 mutation_class → 由 effect 派生 safe
+        // 未声明 mutation_class → 由 effect 派生 safe
         assert_eq!(m.mutation_class_or_derived(), MutationClass::Safe);
 
         let mut m2 = sample();
@@ -502,9 +502,9 @@ mod tests {
         assert_eq!(m2.mutation_class_or_derived(), MutationClass::Mutation);
     }
 
- #[test]
+    #[test]
     fn unknown_manifest_fields_are_ignored_open_structure() {
- // 开放结构:未知字段被忽略(合同 README:消费方必须忽略不认识的字段)
+        // 开放结构:未知字段被忽略(合同 README:消费方必须忽略不认识的字段)
         let v = json!({
             "capability": "system.echo", "provider": "system.echo",
             "version": "0.1.0", "input_schema": {}, "output_schema": {},
@@ -516,9 +516,9 @@ mod tests {
         assert_eq!(m.capability, "system.echo");
     }
 
- #[test]
+    #[test]
     fn risk_escalation_and_untrusted_approval_matrix() {
- // 上提一级:read-only→low-risk;封顶 high-risk 不再上提
+        // 上提一级:read-only→low-risk;封顶 high-risk 不再上提
         assert_eq!(RiskClass::ReadOnly.escalated(), RiskClass::LowRiskCommand);
         assert_eq!(
             RiskClass::LowRiskCommand.escalated(),
@@ -528,7 +528,7 @@ mod tests {
             RiskClass::HighRiskCommand.escalated(),
             RiskClass::HighRiskCommand
         );
- // untrusted 门控:reversible 及以上 100% 升级(ADR-0002 条件 3)
+        // untrusted 门控:reversible 及以上 100% 升级(ADR-0002 条件 3)
         assert!(!RiskClass::ReadOnly.requires_approval_at_untrusted());
         assert!(!RiskClass::LowRiskCommand.requires_approval_at_untrusted());
         assert!(RiskClass::ReversibleCommand.requires_approval_at_untrusted());
@@ -536,7 +536,7 @@ mod tests {
         assert!(RiskClass::HighRiskCommand.requires_approval_at_untrusted());
     }
 
- #[test]
+    #[test]
     fn grant_scope_wire_roundtrip() {
         for (wire, scope) in [
             ("once", GrantScope::Once),
@@ -549,7 +549,7 @@ mod tests {
         ] {
             assert_eq!(GrantScope::from_wire(wire).as_ref(), Some(&scope));
             assert_eq!(scope.to_wire(), {
- // 归一化形态:ttl 统一 ms;其余原样
+                // 归一化形态:ttl 统一 ms;其余原样
                 match &scope {
                     GrantScope::Ttl(ms) => format!("ttl:{ms}ms"),
                     _ => wire.to_string(),
@@ -563,7 +563,7 @@ mod tests {
         }
     }
 
- #[test]
+    #[test]
     fn approval_roundtrip_keeps_state_and_choices() {
         let a: Approval = serde_json::from_value(json!({
             "approval_id": "appr_01JAAAAAAAAAAAAAAAAAAAAA04",
@@ -598,7 +598,7 @@ mod tests {
         assert_eq!(back, a);
     }
 
- #[test]
+    #[test]
     fn grant_serialization_matches_contract_shape() {
         let g: Grant = serde_json::from_value(json!({
             "grant_id": "grant_01JAAAAAAAAAAAAAAAAAAAAA0C",
@@ -616,28 +616,28 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(g.scope, GrantScope::Once);
- // 空 args_predicates 不序列化(schema additionalProperties=false 下合法;
- // 且缺省即全参授权)
+        // 空 args_predicates 不序列化(schema additionalProperties=false 下合法;
+        // 且缺省即全参授权)
         let mut bare = g.clone();
         bare.resource.args_predicates.clear();
         let ser = serde_json::to_value(&bare).unwrap();
         assert!(ser["resource"].get("args_predicates").is_none());
- // delegation_depth 序列化在场(合同必填)
+        // delegation_depth 序列化在场(合同必填)
         assert_eq!(ser["delegation_depth"], json!(0));
     }
 
- // ADR-0042 核实补测:风险升级/审批策略**不是契约镜像**(无对应 JSON 字段),
- // 故由本模块单测守护其行为——防止"策略漂移"无门可拦。
- #[test]
+    // ADR-0042 核实补测:风险升级/审批策略**不是契约镜像**(无对应 JSON 字段),
+    // 故由本模块单测守护其行为——防止"策略漂移"无门可拦。
+    #[test]
     fn risk_escalation_and_approval_policy_is_pinned() {
- // 上提一级(低→高),封顶 high-risk。
+        // 上提一级(低→高),封顶 high-risk。
         assert_eq!(RiskClass::ReadOnly.escalated(), RiskClass::LowRiskCommand);
         assert_eq!(
             RiskClass::HighRiskCommand.escalated(),
             RiskClass::HighRiskCommand,
             "封顶:high-risk 上提仍是自身"
         );
- // 审批承载级 = reversible 及以上(基线 §5.3 / ADR-0002 条件 3)。
+        // 审批承载级 = reversible 及以上(基线 §5.3 / ADR-0002 条件 3)。
         for r in [RiskClass::ReadOnly, RiskClass::LowRiskCommand] {
             assert!(!r.is_approval_bearing(), "{r:?} 不应审批");
             assert!(!r.requires_approval_at_untrusted());
@@ -650,7 +650,7 @@ mod tests {
             assert!(r.is_approval_bearing(), "{r:?} 必须审批");
             assert!(r.requires_approval_at_untrusted());
         }
- // ORDER 与枚举值序一致(低→高),escalated 即在其上右移一格。
+        // ORDER 与枚举值序一致(低→高),escalated 即在其上右移一格。
         assert_eq!(RiskClass::ORDER.len(), 5);
         assert_eq!(RiskClass::ORDER[0], RiskClass::ReadOnly);
         assert_eq!(RiskClass::ORDER[4], RiskClass::HighRiskCommand);

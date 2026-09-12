@@ -45,7 +45,7 @@ pub(crate) fn contains_any(set: &BTreeSet<String>, text: &str) -> bool {
 mod tests {
     use super::*;
 
- #[test]
+    #[test]
     fn register_skips_short_values_and_adds_escaped_form() {
         let mut set = BTreeSet::new();
         register(&mut set, "short");
@@ -58,7 +58,7 @@ mod tests {
         );
     }
 
- #[test]
+    #[test]
     fn redact_replaces_every_hit_and_contains_any_tracks_residual() {
         let mut set = BTreeSet::new();
         register(&mut set, "sk-aaaaaa");

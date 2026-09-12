@@ -18,10 +18,10 @@ use crate::registry::CapabilityProvider;
 
 /// wasm 能力宿主的管理面契约。实现方 = `bm_providers::skill_wasm::SkillScriptManager`。
 pub trait SkillHost: Send + Sync {
- /// 从**声明文件**装载通用 wasm 插件(ADR-0041);返回合成 manifests。
+    /// 从**声明文件**装载通用 wasm 插件(ADR-0041);返回合成 manifests。
     fn load_plugins_file(&self, decl_path: &Path) -> Vec<CapabilityManifest>;
 
- /// 注册一个技能的全部脚本(ADR-0016);返回合成 manifests。
+    /// 注册一个技能的全部脚本(ADR-0016);返回合成 manifests。
     fn register_skill(
         &self,
         skill_id: &str,
@@ -29,10 +29,10 @@ pub trait SkillHost: Send + Sync {
         skill_root: &Path,
     ) -> Result<Vec<CapabilityManifest>, String>;
 
- /// 按技能 id 摘除其全部能力,返回被摘除的 capability 名(ADR-0033)。
+    /// 按技能 id 摘除其全部能力,返回被摘除的 capability 名(ADR-0033)。
     fn unregister_skill(&self, skill_id: &str) -> Vec<String>;
 
- /// 摘除全部**通用插件**来源的能力(ADR-0042:按装载来源,不按名字前缀)。
+    /// 摘除全部**通用插件**来源的能力(ADR-0042:按装载来源,不按名字前缀)。
     fn unregister_all_generic(&self) -> Vec<String>;
 }
 
@@ -90,7 +90,7 @@ pub fn read_skill_definitions(data_dir: &Path) -> Vec<(String, SkillDefinition)>
     list.iter()
         .filter_map(|sk| {
             let id = sk["skill_id"].as_str()?;
- // 纯知识包(无 scripts)不是能力来源,跳过。
+            // 纯知识包(无 scripts)不是能力来源,跳过。
             sk.get("scripts")?;
             let def = serde_json::from_value::<SkillDefinition>(sk.clone()).ok()?;
             Some((id.to_string(), def))
@@ -108,14 +108,16 @@ pub fn load_wasm_declarations(
     data_dir: &Path,
 ) -> Vec<(CapabilityManifest, Arc<dyn CapabilityProvider>)> {
     let mut out: Vec<(CapabilityManifest, Arc<dyn CapabilityProvider>)> = Vec::new();
- // 技能:逐条编译注册(已声明 scripts 者)。
+    // 技能:逐条编译注册(已声明 scripts 者)。
     for (id, def) in read_skill_definitions(data_dir) {
         match host.register_skill(&id, &def, &skill_root(data_dir, &id)) {
             Ok(manifests) => out.extend(placeholder_entries(manifests)),
-            Err(e) => tracing::warn!(target: "plugin", skill = %id, error = %e, "技能装载失败(已跳过)"),
+            Err(e) => {
+                tracing::warn!(target: "plugin", skill = %id, error = %e, "技能装载失败(已跳过)")
+            }
         }
     }
- // 通用插件:声明文件整表装载。
+    // 通用插件:声明文件整表装载。
     out.extend(placeholder_entries(
         host.load_plugins_file(&plugins_config_path(data_dir)),
     ));
@@ -127,15 +129,15 @@ mod loader_tests {
     use super::*;
     use serde_json::json;
 
- /// wasm 家族声明读取单入口(ADR-0053):只挑声明了 scripts 的技能,
- /// 纯知识包跳过;缺文件/损坏返回空表(不阻断启动)。
- #[test]
+    /// wasm 家族声明读取单入口(ADR-0053):只挑声明了 scripts 的技能,
+    /// 纯知识包跳过;缺文件/损坏返回空表(不阻断启动)。
+    #[test]
     fn read_skill_definitions_selects_scripted_only() {
         let dir = tempfile::tempdir().expect("临时目录");
         let cfg = dir.path().join("config");
         std::fs::create_dir_all(&cfg).expect("建 config");
 
- // 缺文件 → 空
+        // 缺文件 → 空
         assert!(read_skill_definitions(dir.path()).is_empty());
 
         std::fs::write(
@@ -156,12 +158,12 @@ mod loader_tests {
         assert_eq!(defs[0].0, "with_scripts");
         assert!(defs[0].1.scripts.is_some());
 
- // 损坏 → 空表(宽容,不阻断内核启动)
+        // 损坏 → 空表(宽容,不阻断内核启动)
         std::fs::write(skills_config_path(dir.path()), b"{not json").expect("写坏文件");
         assert!(read_skill_definitions(dir.path()).is_empty());
     }
 
- #[test]
+    #[test]
     fn config_and_root_paths_are_single_sourced() {
         let d = std::path::Path::new("/data");
         assert!(skills_config_path(d).ends_with("config/skills.json"));

@@ -59,31 +59,31 @@ impl<'a> Broker<'a> {
         }
     }
 
- // ---- 步 1-4:身份 / 权限 / scope 查表(O(1))----------------------------
+    // ---- 步 1-4:身份 / 权限 / scope 查表(O(1))----------------------------
 
- /// 授权决策:查表 + 常量规则,无 IO。
+    /// 授权决策:查表 + 常量规则,无 IO。
     pub fn decide(
         &self,
         ctx: &CallContext,
         capability: &str,
         args: &serde_json::Value,
     ) -> Decision {
- // 步 1-2:身份随 ctx 携带;Registry 回答 capability 是否存在。
+        // 步 1-2:身份随 ctx 携带;Registry 回答 capability 是否存在。
         let Some(manifest) = self.registry.manifest_of(capability) else {
             return Decision::Denied {
                 reason: DenyReason::UnknownCapability,
             };
         };
- // 步 3:信任修正——untrusted 上提一级(基线 §4.5/§5.3)。
+        // 步 3:信任修正——untrusted 上提一级(基线 §4.5/§5.3)。
         let effective = if ctx.trust == DataTrust::Untrusted {
             manifest.effect.escalated()
         } else {
             manifest.effect
         };
- // 步 4(scope/授权):Grant 查表 O(1) + 常量校验 + 资源谓词。
- // Grant 命中优先于审批判定——审批的产物就是 Grant,已授权调用不得
- // 再撞审批弹窗(否则 Grant 失去意义);高危亦然(ADR-0002 裁决 4
- // 的「task:<id> 批量预授权」语义)。
+        // 步 4(scope/授权):Grant 查表 O(1) + 常量校验 + 资源谓词。
+        // Grant 命中优先于审批判定——审批的产物就是 Grant,已授权调用不得
+        // 再撞审批弹窗(否则 Grant 失去意义);高危亦然(ADR-0002 裁决 4
+        // 的「task:<id> 批量预授权」语义)。
         let now = self.clock.now();
         for g in self.grants.active_for(&ctx.principal, capability, now) {
             if resource_matches(&g.resource, args) {
@@ -92,17 +92,17 @@ impl<'a> Broker<'a> {
                 };
             }
         }
- // 步 4.5(ADR-0038):per-capability 授权规则由 manifest 声明,Broker
- // 只做解释——不再硬编码能力名/主体前缀(ADR-0006)。当前唯一消费形态
- // 是记忆抽屉:主体对自己的抽屉常量放行,越界升级审批(不静默拒绝,
- // 产出可审批事实,批准即签发带 scope 谓词的 Grant)。未声明 = 本步不
- // 适用,走既有审批/直通流。
+        // 步 4.5(ADR-0038):per-capability 授权规则由 manifest 声明,Broker
+        // 只做解释——不再硬编码能力名/主体前缀(ADR-0006)。当前唯一消费形态
+        // 是记忆抽屉:主体对自己的抽屉常量放行,越界升级审批(不静默拒绝,
+        // 产出可审批事实,批准即签发带 scope 谓词的 Grant)。未声明 = 本步不
+        // 适用,走既有审批/直通流。
         if let Some(v) = Self::authorization_verdict(ctx, args, manifest, effective) {
             return v;
         }
- // 步 5:审批判定——high-risk 恒审批(双保险,无视声明);
- // manifest 声明 required;effective_risk reversible 及以上(含
- // trusted 直调——直通只豁免 read-only/low-risk,规格 §5.4)。
+        // 步 5:审批判定——high-risk 恒审批(双保险,无视声明);
+        // manifest 声明 required;effective_risk reversible 及以上(含
+        // trusted 直调——直通只豁免 read-only/low-risk,规格 §5.4)。
         if manifest.effect == RiskClass::HighRiskCommand
             || manifest.approval == ApprovalRequirement::Required
             || effective.is_approval_bearing()
@@ -112,9 +112,9 @@ impl<'a> Broker<'a> {
                 effective_risk: effective,
             };
         }
- // 步 6:内建直通(仅 trusted × not-required × read-only/low-risk)。
- // M7.6:App 主体(surface:app:<name>)不享内建直通——跨 provider 访问
- // 一律走显式 Grant(默认拒绝,基线 M7 通过条件第五句)。
+        // 步 6:内建直通(仅 trusted × not-required × read-only/low-risk)。
+        // M7.6:App 主体(surface:app:<name>)不享内建直通——跨 provider 访问
+        // 一律走显式 Grant(默认拒绝,基线 M7 通过条件第五句)。
         if ctx.trust == DataTrust::Trusted
             && !ctx.principal.starts_with("surface:app:")
             && manifest.approval == ApprovalRequirement::NotRequired
@@ -125,19 +125,19 @@ impl<'a> Broker<'a> {
         {
             return Decision::Allowed { grant_id: None };
         }
- // 步 7:默认拒绝(ADR-0006:未列入合同的权力视为不存在)。
+        // 步 7:默认拒绝(ADR-0006:未列入合同的权力视为不存在)。
         Decision::Denied {
             reason: DenyReason::NoGrant,
         }
     }
 
- // ---- 步 5:参数校验(M4.3)---------------------------------------------
+    // ---- 步 5:参数校验(M4.3)---------------------------------------------
 
- /// 步 4.5 的声明式授权裁决(None = 本步不适用,继续既有流)。
- /// ADR-0038:规则本体在 manifest.authorization(合同),此处只是解释器。
- /// 抽屉语义:按 `self_drawers` 依序匹配主体前缀,命中即得「主体自有抽屉
- /// 标签」;`scope` 与之相等 → 常量放行;`read_allow_scopes` 内的 scope 对
- /// read-only 能力额外放行;其余越界 → 升级审批。
+    /// 步 4.5 的声明式授权裁决(None = 本步不适用,继续既有流)。
+    /// ADR-0038:规则本体在 manifest.authorization(合同),此处只是解释器。
+    /// 抽屉语义:按 `self_drawers` 依序匹配主体前缀,命中即得「主体自有抽屉
+    /// 标签」;`scope` 与之相等 → 常量放行;`read_allow_scopes` 内的 scope 对
+    /// read-only 能力额外放行;其余越界 → 升级审批。
     fn authorization_verdict(
         ctx: &CallContext,
         args: &serde_json::Value,
@@ -146,7 +146,7 @@ impl<'a> Broker<'a> {
     ) -> Option<Decision> {
         let drawer = manifest.authorization.as_ref()?.drawer.as_ref()?;
         let scope = args["scope"].as_str()?; // 缺 scope 由 Provider 形态校验拒
- // 主体自有抽屉:取首个命中前缀,其余段拼入 drawer_prefix。
+        // 主体自有抽屉:取首个命中前缀,其余段拼入 drawer_prefix。
         let own = drawer.self_drawers.iter().find_map(|r| {
             ctx.principal
                 .strip_prefix(&r.principal_prefix)
@@ -171,7 +171,7 @@ impl<'a> Broker<'a> {
         bm_contract::schemas::validate(&manifest.input_schema.to_string(), args)
     }
 
- // ---- 步 6:绑定与凭证签发/校验(ADR-0001 条件 2)------------------------
+    // ---- 步 6:绑定与凭证签发/校验(ADR-0001 条件 2)------------------------
 
     pub fn issue_credential(
         &self,
@@ -191,7 +191,7 @@ impl<'a> Broker<'a> {
         })
     }
 
- /// Provider 侧执行前校验:凭证与当前 binding 不匹配即拒绝(重试/拒绝)。
+    /// Provider 侧执行前校验:凭证与当前 binding 不匹配即拒绝(重试/拒绝)。
     pub fn verify_credential(&self, cred: &CallCredential) -> Result<(), (u64, u64)> {
         let binding = self
             .registry
@@ -205,21 +205,21 @@ impl<'a> Broker<'a> {
         Ok(())
     }
 
- // ---- 步 6-7:执行 + 结果校验 -------------------------------------------
+    // ---- 步 6-7:执行 + 结果校验 -------------------------------------------
 
- /// 预备完成:凭证/manifest/Grant 引用/Provider 句柄就绪,可进入执行段。
- /// 副作用类(is_side_effect)在 prepare 与 execute 之间落 intent 事件
- /// ——副作用前门禁(规格 §5.5;ADR-0001 条件 5)。
- #[allow(clippy::result_large_err)] // CallOutcome 即合同错误形态,装箱无益
+    /// 预备完成:凭证/manifest/Grant 引用/Provider 句柄就绪,可进入执行段。
+    /// 副作用类(is_side_effect)在 prepare 与 execute 之间落 intent 事件
+    /// ——副作用前门禁(规格 §5.5;ADR-0001 条件 5)。
+    #[allow(clippy::result_large_err)] // CallOutcome 即合同错误形态,装箱无益
     pub fn prepare(
         &mut self,
         ctx: &CallContext,
         capability: &str,
         args: serde_json::Value,
     ) -> Result<PreparedCall, CallOutcome> {
- // ADR-0037 生命周期门:binding 非 Active(排空/不可用)一律拒绝新调用。
- // 与运行期健康门(World.provider_health,进程内按 provider 记)分工:
- // 此处是「注册-切换-下线」的生命周期真相,持久且带代际。
+        // ADR-0037 生命周期门:binding 非 Active(排空/不可用)一律拒绝新调用。
+        // 与运行期健康门(World.provider_health,进程内按 provider 记)分工:
+        // 此处是「注册-切换-下线」的生命周期真相,持久且带代际。
         if let Some(b) = self.registry.binding_of(capability)
             && b.status != BindingStatus::Active
         {
@@ -242,11 +242,11 @@ impl<'a> Broker<'a> {
                 },
             });
         };
- // 步 5:参数校验(违者 validation_failed,审计由上层映射 capability.denied)。
+        // 步 5:参数校验(违者 validation_failed,审计由上层映射 capability.denied)。
         if let Err(e) = Self::validate_args(manifest, &args) {
             return Err(CallOutcome::InvalidArgs { message: e });
         }
- // Grant 预扣(见模块注释的语义留档)。
+        // Grant 预扣(见模块注释的语义留档)。
         if let Some(gid) = &grant_id
             && self.grants.consume(gid, self.clock.now()).is_err()
         {
@@ -256,7 +256,7 @@ impl<'a> Broker<'a> {
                 },
             });
         }
- // 步 6:凭证签发 + 执行点重验(不匹配即拒绝)。
+        // 步 6:凭证签发 + 执行点重验(不匹配即拒绝)。
         let Ok(credential) = self.issue_credential(capability, &ctx.principal) else {
             return Err(CallOutcome::Rejected {
                 decision: Decision::Denied {
@@ -284,11 +284,11 @@ impl<'a> Broker<'a> {
         })
     }
 
- /// 步 7:执行(返回值过 output_schema 后才算完成)。
+    /// 步 7:执行(返回值过 output_schema 后才算完成)。
     pub fn execute(&self, prepared: &PreparedCall, args: serde_json::Value) -> CallOutcome {
- // 故障半径(T8;ADR-0001 条件 1 证伪③):Provider panic 被 execute
- // 收容为 ProviderError——决策路径与核心循环不被第三方实现击穿;
- // 兜底仍由 L0 重启承担,无特权降级通道。
+        // 故障半径(T8;ADR-0001 条件 1 证伪③):Provider panic 被 execute
+        // 收容为 ProviderError——决策路径与核心循环不被第三方实现击穿;
+        // 兜底仍由 L0 重启承担,无特权降级通道。
         let invoke_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             prepared.handle.invoke(args)
         }));
@@ -321,8 +321,8 @@ impl<'a> Broker<'a> {
         }
     }
 
- /// 统一调用入口(步 1-7 组合;副作用前门禁由调用方在 prepare/execute
- /// 之间落 intent 事件——核心循环单写者)。
+    /// 统一调用入口(步 1-7 组合;副作用前门禁由调用方在 prepare/execute
+    /// 之间落 intent 事件——核心循环单写者)。
     pub fn call(
         &mut self,
         ctx: &CallContext,
@@ -335,9 +335,9 @@ impl<'a> Broker<'a> {
         }
     }
 
- // ---- 数据面 lease(ADR-0001 条件 4)------------------------------------
+    // ---- 数据面 lease(ADR-0001 条件 4)------------------------------------
 
- /// 决策 allow 后签发数据面通道凭证(准入测试①的签发半边)。
+    /// 决策 allow 后签发数据面通道凭证(准入测试①的签发半边)。
     pub fn issue_lease(
         &self,
         capability: &str,
@@ -361,9 +361,9 @@ impl<'a> Broker<'a> {
         })
     }
 
- /// 通道准入:capability 的当前 binding epoch / policy_version / deadline /
- /// byte_budget 常量校验。epoch 切换不改变已授权通道的审计归属(凭证保全),
- /// 但新数据准入按签发时 epoch 校验,旧 epoch 通道须重签(准入测试②)。
+    /// 通道准入:capability 的当前 binding epoch / policy_version / deadline /
+    /// byte_budget 常量校验。epoch 切换不改变已授权通道的审计归属(凭证保全),
+    /// 但新数据准入按签发时 epoch 校验,旧 epoch 通道须重签(准入测试②)。
     pub fn admit_lease(
         &self,
         capability: &str,

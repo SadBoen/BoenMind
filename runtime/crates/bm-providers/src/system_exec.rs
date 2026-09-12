@@ -41,7 +41,7 @@ const EXEC_WIRE_NAME: &str = "bash";
 /// capability 层 deadline;逐次生效的默认/上限在执行体内读 limits——
 /// 管理面改值下一条命令即生效,无需重建 registry(ADR-0024 §2)。
 pub fn exec_capability_entry() -> (CapabilityManifest, Arc<dyn CapabilityProvider>) {
- // ADR-0051:走全仓单一 manifest 合成路径(缺省单源)。
+    // ADR-0051:走全仓单一 manifest 合成路径(缺省单源)。
     let manifest = ManifestSpec::new(EXEC_CAPABILITY, "builtin.async", RiskClass::ExternalSideEffect)
         .version("0.2.0")
         .wire_name(EXEC_WIRE_NAME)
@@ -70,7 +70,7 @@ pub fn exec_capability_entry() -> (CapabilityManifest, Arc<dyn CapabilityProvide
 /// system.job_output 的 manifest + 占位 provider:后台作业收取面(读语义,
 /// 免审批;同样走异步管线防阻塞单写者循环)。
 pub fn job_output_capability_entry() -> (CapabilityManifest, Arc<dyn CapabilityProvider>) {
- // ADR-0051:走全仓单一 manifest 合成路径(缺省单源)。
+    // ADR-0051:走全仓单一 manifest 合成路径(缺省单源)。
     let manifest = ManifestSpec::new(JOB_OUTPUT_CAPABILITY, "builtin.async", RiskClass::ReadOnly)
         .description("查询后台作业(system.exec 转后台返回的 job_id)的状态与输出尾部。可传 wait_ms 等待其终态(默认 10000,上限 60000);status=running 时可再次调用继续等。全部历史输出见返回的 log_path。")
         .input_schema(json!({
@@ -96,7 +96,7 @@ impl CapabilityProvider for ExecPlaceholder {
     fn invoke(&self, _args: Value) -> Result<Value, String> {
         Err("system.exec/job_output 仅限运行时 turn 循环经审批后调用".into())
     }
- /// ADR-0041:声明插件身份(执行体异步在 ExecExecutor,此处为同步占位)。
+    /// ADR-0041:声明插件身份(执行体异步在 ExecExecutor,此处为同步占位)。
     fn plugin_meta(&self) -> Option<bm_contract::plugin::PluginMeta> {
         Some(bm_contract::plugin::PluginMeta::new(
             "kernel.exec",
@@ -110,7 +110,7 @@ impl CapabilityProvider for ExecPlaceholder {
 pub struct ExecExecutor {
     pub limits: LimitsCell,
     pub jobs: Arc<JobTable>,
- /// cwd 白名单数据源()。
+    /// cwd 白名单数据源()。
     pub data_dir: std::path::PathBuf,
     pub fallback_root: std::path::PathBuf,
 }
@@ -147,10 +147,10 @@ impl ExecExecutor {
                 "缺必填参数 command(字符串)".into(),
             ))?
             .to_string();
- // cwd 沙箱():显式 cwd 经 fs.* 同款工作区白名单
- // 解析(组件级前缀比对,防 .. 逃逸/同名前缀混淆),越界拒绝;未传保持
- // 既有语义(继承宿主进程工作目录,由装配方决定)。校验在转轨分支之前,
- // 前台与后台作业一次覆盖。
+        // cwd 沙箱():显式 cwd 经 fs.* 同款工作区白名单
+        // 解析(组件级前缀比对,防 .. 逃逸/同名前缀混淆),越界拒绝;未传保持
+        // 既有语义(继承宿主进程工作目录,由装配方决定)。校验在转轨分支之前,
+        // 前台与后台作业一次覆盖。
         let cwd_raw = args["cwd"].as_str().unwrap_or_default().trim().to_string();
         let cwd = if cwd_raw.is_empty() {
             String::new()
@@ -165,24 +165,24 @@ impl ExecExecutor {
         let requested = args["timeout_ms"].as_u64();
         let wants_background = args["run_in_background"].as_bool().unwrap_or(false);
 
- // ADR-0025:显式后台或 timeout_ms 超前台上限 → 自动转轨(拒绝避免,
- // Hermes 式);立即回执,进程入 jobs 台账独立执行。
+        // ADR-0025:显式后台或 timeout_ms 超前台上限 → 自动转轨(拒绝避免,
+        // Hermes 式);立即回执,进程入 jobs 台账独立执行。
         if wants_background || requested.is_some_and(|m| m > limits.exec_max_ms) {
             let (job_id, log_path) = self
                 .jobs
                 .spawn(operation_id, &command, Some(&cwd))
                 .map_err(AsyncCallError::Transport)?;
             return Ok(json!({
-                "backgrounded": true,
-                "job_id": job_id,
-                "log_path": log_path.display().to_string(),
- // ADR-0029 清除清单②同源:note 只留事实;收取机制由
- // system.job_output 工具描述承载,勿在此复读指导句。
-                "note": "已转后台执行(不受前台超时限制)。",
-            }));
+                           "backgrounded": true,
+                           "job_id": job_id,
+                           "log_path": log_path.display().to_string(),
+            // ADR-0029 清除清单②同源:note 只留事实;收取机制由
+            // system.job_output 工具描述承载,勿在此复读指导句。
+                           "note": "已转后台执行(不受前台超时限制)。",
+                       }));
         }
 
- // 前台:默认/上限走 limits(热生效);deadline=manifest 硬顶。
+        // 前台:默认/上限走 limits(热生效);deadline=manifest 硬顶。
         let millis = requested
             .unwrap_or(limits.exec_default_ms)
             .clamp(1_000, limits.exec_max_ms)
@@ -201,10 +201,10 @@ impl ExecExecutor {
             .spawn()
             .map_err(|e| AsyncCallError::Transport(format!("进程启动失败: {e}")))?;
 
- // P1-14: 流式截断读取,避免巨量输出(GB级)在 wait_with_output 中先打爆内存
- // 读管字节封顶 = 字符上限 ×4(UTF-8 单字符最多 4 字节,防多字节字符被
- // 半截截断),再取 64KB 下限(极小字符上限下也保证足够读窗口,不会因
- // 缓冲过小反复唤醒)。落盘/回喂仍按字符上限截断(下方 truncated 判定)。
+        // P1-14: 流式截断读取,避免巨量输出(GB级)在 wait_with_output 中先打爆内存
+        // 读管字节封顶 = 字符上限 ×4(UTF-8 单字符最多 4 字节,防多字节字符被
+        // 半截截断),再取 64KB 下限(极小字符上限下也保证足够读窗口,不会因
+        // 缓冲过小反复唤醒)。落盘/回喂仍按字符上限截断(下方 truncated 判定)。
         let max_bytes = (limits.exec_output_max_chars.saturating_mul(4)).max(64 * 1024);
         let mut stdout = child.stdout.take();
         let mut stderr = child.stderr.take();
@@ -216,7 +216,7 @@ impl ExecExecutor {
             use tokio::io::AsyncReadExt;
             let mut buf = Vec::new();
             if let Some(p) = pipe {
- // 至多 cap 字节(超出不读);读错误按 EOF 处理(保留部分结果)
+                // 至多 cap 字节(超出不读);读错误按 EOF 处理(保留部分结果)
                 let _ = p.take(cap as u64).read_to_end(&mut buf).await;
             }
             buf
@@ -287,7 +287,7 @@ impl AsyncCapabilityExecutor for ExecExecutor {
 /// ADR-0050:分派据路由表,而非内核 if-else——新增 provider 族 = 追加一条
 /// 路由(在 [`SplitExecutor::new`] 的装配处),不改分派本体。
 pub struct AsyncRoute {
- /// 归属谓词:按**声明的能力集/编译表**判断,不用名字前缀猜(ADR-0042)。
+    /// 归属谓词:按**声明的能力集/编译表**判断,不用名字前缀猜(ADR-0042)。
     predicate: Box<dyn Fn(&str) -> bool + Send + Sync>,
     executor: Arc<dyn AsyncCapabilityExecutor>,
 }
@@ -301,7 +301,7 @@ pub struct SplitExecutor {
 }
 
 impl SplitExecutor {
- /// 装配路由表。顺序即优先级(先具体后通用)。
+    /// 装配路由表。顺序即优先级(先具体后通用)。
     pub fn new(
         exec: Arc<ExecExecutor>,
         fs: fs_tools::FsExecutor,
@@ -309,17 +309,17 @@ impl SplitExecutor {
         fallback: Arc<dyn AsyncCapabilityExecutor>,
     ) -> Self {
         let mut routes: Vec<AsyncRoute> = Vec::new();
- // ① system.exec / system.job_output(内置命令执行与作业收取)。
+        // ① system.exec / system.job_output(内置命令执行与作业收取)。
         routes.push(AsyncRoute {
             predicate: Box::new(|c: &str| c == EXEC_CAPABILITY || c == JOB_OUTPUT_CAPABILITY),
             executor: exec,
         });
- // ② fs.* 四件(按执行器声明的能力集分道,ADR-0042)。
+        // ② fs.* 四件(按执行器声明的能力集分道,ADR-0042)。
         routes.push(AsyncRoute {
             predicate: Box::new(fs_tools::FsExecutor::handles),
             executor: Arc::new(fs),
         });
- // ③ wasm(技能脚本 + 通用插件):按宿主编译表归属,非前缀(ADR-0041)。
+        // ③ wasm(技能脚本 + 通用插件):按宿主编译表归属,非前缀(ADR-0041)。
         if let Some(manager) = skills {
             let probe = manager.clone();
             routes.push(AsyncRoute {
@@ -363,11 +363,11 @@ mod tests {
         let dir = tempfile::tempdir().expect("临时目录");
         let cell = LimitsCell::with_default();
         let jobs = JobTable::new(dir.path(), cell.clone());
- // 注册表空 → 回落根 = 同一临时目录:界内 cwd 须放行,界外须拒绝。
+        // 注册表空 → 回落根 = 同一临时目录:界内 cwd 须放行,界外须拒绝。
         (ExecExecutor::new(cell, jobs, dir.path(), dir.path()), dir)
     }
 
- #[tokio::test]
+    #[tokio::test]
     async fn exec_runs_host_shell_and_captures_output() {
         let (exec, _dir) = executor();
         let out = exec
@@ -383,14 +383,14 @@ mod tests {
         assert_eq!(out["truncated"], json!(false));
     }
 
- // ADR-0022 后续批:平台 shell 换装(Windows=PowerShell/其余=bash)后,
- // 原生命令失败退出码必须穿透 shell 到收据,不被吞成 0。
- #[tokio::test]
+    // ADR-0022 后续批:平台 shell 换装(Windows=PowerShell/其余=bash)后,
+    // 原生命令失败退出码必须穿透 shell 到收据,不被吞成 0。
+    #[tokio::test]
     async fn exec_propagates_native_exit_code() {
         let (exec, _dir) = executor();
- #[cfg(windows)]
+        #[cfg(windows)]
         let command = json!({"command": "cmd /c exit 3"});
- #[cfg(not(windows))]
+        #[cfg(not(windows))]
         let command = json!({"command": "exit 3"});
         let out = exec
             .call(
@@ -404,7 +404,7 @@ mod tests {
         assert_eq!(out["exit_code"], json!(3), "{out}");
     }
 
- #[tokio::test]
+    #[tokio::test]
     async fn exec_rejects_missing_command_and_unknown_capability() {
         let (exec, _dir) = executor();
         let err = exec
@@ -427,13 +427,13 @@ mod tests {
         assert!(err.is_err());
     }
 
- // ADR-0024:前台超时按 limits 生效(默认 120s;传小值即刻生效)。
- #[tokio::test]
+    // ADR-0024:前台超时按 limits 生效(默认 120s;传小值即刻生效)。
+    #[tokio::test]
     async fn exec_times_out_per_requested_timeout() {
         let (exec, _dir) = executor();
- #[cfg(windows)]
+        #[cfg(windows)]
         let args = json!({"command": "Start-Sleep -Seconds 30", "timeout_ms": 1500});
- #[cfg(not(windows))]
+        #[cfg(not(windows))]
         let args = json!({"command": "sleep 30", "timeout_ms": 1500});
         let err = exec
             .call(
@@ -446,13 +446,13 @@ mod tests {
         assert!(matches!(err, Err(AsyncCallError::Timeout)), "{err:?}");
     }
 
- // ADR-0025:显式后台 → 立即回执作业号;job_output 收取到终态。
- #[tokio::test(flavor = "multi_thread")]
+    // ADR-0025:显式后台 → 立即回执作业号;job_output 收取到终态。
+    #[tokio::test(flavor = "multi_thread")]
     async fn background_promotion_returns_receipt_and_output_collects() {
         let (exec, _dir) = executor();
- #[cfg(windows)]
+        #[cfg(windows)]
         let args = json!({"command": "echo bm-bg-done", "run_in_background": true});
- #[cfg(not(windows))]
+        #[cfg(not(windows))]
         let args = json!({"command": "echo bm-bg-done", "run_in_background": true});
         let receipt = exec
             .call(
@@ -478,8 +478,8 @@ mod tests {
         assert!(out["output_tail"].as_str().unwrap().contains("bm-bg-done"));
     }
 
- // ADR-0025:timeout_ms 超前台上限 → 自动转轨(Hermes 式拒绝避免)。
- #[tokio::test(flavor = "multi_thread")]
+    // ADR-0025:timeout_ms 超前台上限 → 自动转轨(Hermes 式拒绝避免)。
+    #[tokio::test(flavor = "multi_thread")]
     async fn over_limit_timeout_auto_promotes_to_background() {
         let (exec, _dir) = executor();
         let args = json!({"command": "echo bm-promoted", "timeout_ms": 999_999});
@@ -495,12 +495,12 @@ mod tests {
         assert_eq!(receipt["backgrounded"], json!(true), "{receipt}");
     }
 
- // 越界目录(哪怕真实存在)拒绝,白名单内(含相对路径)放行;转后台同受此闸。
- #[tokio::test]
+    // 越界目录(哪怕真实存在)拒绝,白名单内(含相对路径)放行;转后台同受此闸。
+    #[tokio::test]
     async fn exec_cwd_whitelist_rejects_outside_and_allows_inside() {
         let (exec, dir) = executor();
         let outside = tempfile::tempdir().expect("外部目录");
- // 越界绝对路径 → 拒绝
+        // 越界绝对路径 → 拒绝
         let err = exec
             .call(
                 "op",
@@ -513,7 +513,7 @@ mod tests {
             matches!(err, Err(AsyncCallError::Transport(ref m)) if m.contains("白名单") || m.contains("注册表")),
             "越界 cwd 必须被拒:{err:?}"
         );
- // 转后台路径同受闸
+        // 转后台路径同受闸
         let err = exec
             .call(
                 "op-bg",
@@ -523,8 +523,8 @@ mod tests {
             )
             .await;
         assert!(err.is_err(), "转后台 cwd 越界同样必须被拒:{err:?}");
- // 白名单内相对路径 → 放行,且实际工作目录即回落根(canonical 形)
- // (guard.rs 的 Roots 会剥 `\\?\` verbatim 前缀,比对前同步剥除)
+        // 白名单内相对路径 → 放行,且实际工作目录即回落根(canonical 形)
+        // (guard.rs 的 Roots 会剥 `\\?\` verbatim 前缀,比对前同步剥除)
         let root = dir.path().canonicalize().expect("canonical");
         let root_s = root
             .display()
@@ -532,9 +532,9 @@ mod tests {
             .to_lowercase()
             .trim_start_matches(r"\\?\")
             .to_string();
- #[cfg(windows)]
+        #[cfg(windows)]
         let cmd_str = "(Get-Location).Path";
- #[cfg(not(windows))]
+        #[cfg(not(windows))]
         let cmd_str = "pwd";
         let out = exec
             .call(
@@ -552,9 +552,9 @@ mod tests {
         );
     }
 
- // ADR-0024:limits 热生效——改 Cell 后下一条命令截断上限随之变化。
- // (钳制下限 1000,故产出 1500 字符再以 1000 截断。)
- #[tokio::test]
+    // ADR-0024:limits 热生效——改 Cell 后下一条命令截断上限随之变化。
+    // (钳制下限 1000,故产出 1500 字符再以 1000 截断。)
+    #[tokio::test]
     async fn limits_hot_reload_changes_truncation() {
         let (exec, dir) = executor();
         let cell = exec.limits.clone();
@@ -563,9 +563,9 @@ mod tests {
             ..Limits::default()
         };
         cell.set(l);
- #[cfg(windows)]
+        #[cfg(windows)]
         let args = json!({"command": "Write-Output ('a' * 1500)"});
- #[cfg(not(windows))]
+        #[cfg(not(windows))]
         let args = json!({"command": "printf 'a%.0s' $(seq 1 1500)"});
         let out = exec
             .call(
@@ -585,7 +585,7 @@ mod tests {
         drop(dir);
     }
 
- #[tokio::test]
+    #[tokio::test]
     async fn job_output_requires_job_id() {
         let (exec, _dir) = executor();
         let err = exec
@@ -599,14 +599,14 @@ mod tests {
         assert!(matches!(err, Err(AsyncCallError::Transport(m)) if m.contains("job_id")));
     }
 
- #[test]
+    #[test]
     fn manifest_is_approval_bearing_and_async_marked() {
         let (m, _) = exec_capability_entry();
         assert_eq!(m.effect.as_str(), "external-side-effect");
         assert!(m.provider.ends_with(".async"));
         assert_eq!(m.capability, EXEC_CAPABILITY);
- // ADR-0025:manifest 硬顶=前台 600s(与核心钳制天花板一致);
- // 默认值走 limits,不随 manifest 改。
+        // ADR-0025:manifest 硬顶=前台 600s(与核心钳制天花板一致);
+        // 默认值走 limits,不随 manifest 改。
         assert_eq!(m.timeout_ms, 600_000);
         let (jo, _) = job_output_capability_entry();
         assert_eq!(jo.capability, JOB_OUTPUT_CAPABILITY);

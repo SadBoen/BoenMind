@@ -7,7 +7,7 @@ use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
 
 fn skills_file(cfg: &AdminConfig) -> std::path::PathBuf {
- // 路径约定单源化(ADR-0053):不再手拼,与装载入口共用同一约定。
+    // 路径约定单源化(ADR-0053):不再手拼,与装载入口共用同一约定。
     bm_core::ports::skill_host::skills_config_path(&cfg.data_dir)
 }
 
@@ -47,23 +47,24 @@ fn skill_def_by_id(file: &std::path::Path, id: &str) -> Option<Value> {
 
 /// 热重载一个技能的脚本能力(ADR-0033):摘旧 → 按最新定义重编译注册。
 /// - 旧能力经 `handle.capabilities_unregister` 墓碑化(status=unavailable,
-/// epoch 不回退,复用 ADR-0032 代际机制);
+///   epoch 不回退,复用 ADR-0032 代际机制);
 /// - 新能力经 `handle.capabilities_register` 注册,异步分道由 provider
-/// 命名约定(`skill.*`)自动归属(ADR-0033)。
+///   命名约定(`skill.*`)自动归属(ADR-0033)。
+///
 /// 未装配脚本执行面(`skills=None`)= 生产未启用 wasm 脚本,跳过(纯知识包)。
 /// 返回面向用户的结果说明(替代。
 async fn reload_skill(cfg: &AdminConfig, skill_id: &str) -> String {
     let Some(manager) = cfg.skills.clone() else {
         return "技能已保存(纯知识包)。".to_string();
     };
- // 1) 摘旧:编译缓存 + 核心注册表(墓碑化)。
+    // 1) 摘旧:编译缓存 + 核心注册表(墓碑化)。
     let old = manager.unregister_skill(skill_id);
     if !old.is_empty()
         && let Err(e) = cfg.handle.capabilities_unregister(old).await
     {
         return format!("技能已保存,但旧脚本能力摘除失败: {e}");
     }
- // 2) 按最新定义重编译(已删除/无 scripts = 到此为止,新面为空)。
+    // 2) 按最新定义重编译(已删除/无 scripts = 到此为止,新面为空)。
     let Some(def_value) = skill_def_by_id(&skills_file(cfg), skill_id) else {
         return "技能脚本能力已即时摘除。".to_string();
     };

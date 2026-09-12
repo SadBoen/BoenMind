@@ -24,7 +24,7 @@ pub fn compress_summary_path(data_dir: &std::path::Path, session_id: &str) -> st
 
 /// 回合组装面读取口:摘要存在则返回文本(无文件/解析失败 = None)。
 pub fn load_compress_summary(data_dir: &std::path::Path, session_id: &str) -> Option<String> {
- // #71:只读消费面走宽容原语。
+    // #71:只读消费面走宽容原语。
     let v = crate::json_store::read_json_lenient(&compress_summary_path(data_dir, session_id))?;
     v["summary"].as_str().map(String::from)
 }
@@ -34,28 +34,28 @@ pub struct ContextRecord {
     pub session_id: String,
     pub agent_id: String,
     pub operation_id: String,
- /// 回合序号(operation.turn_index;同回合多步共享)。
+    /// 回合序号(operation.turn_index;同回合多步共享)。
     pub turn_index: u32,
- /// 本回合内第几次模型调用(1 起;工具轮结果回喂后重调即 +1)。
+    /// 本回合内第几次模型调用(1 起;工具轮结果回喂后重调即 +1)。
     pub step: u32,
- /// 降级链尝试序号(1 起;区分重试间的同序号步骤)。
+    /// 降级链尝试序号(1 起;区分重试间的同序号步骤)。
     pub attempt: u32,
     pub model_id: String,
     pub streaming: bool,
- /// 请求消息序列([{role, content, content_truncated}];快照时点原样)。
+    /// 请求消息序列([{role, content, content_truncated}];快照时点原样)。
     pub messages: Vec<serde_json::Value>,
- /// OpenAI function 工具定义(随请求原样)。
+    /// OpenAI function 工具定义(随请求原样)。
     pub tools: Vec<serde_json::Value>,
- /// ok | error | cancelled
+    /// ok | error | cancelled
     pub status: &'static str,
     pub error_code: Option<String>,
     pub tokens_in: Option<u64>,
     pub tokens_out: Option<u64>,
- /// 推理思考消耗(提供商如实上报;不报 = None,前端显示「未上报」)。
+    /// 推理思考消耗(提供商如实上报;不报 = None,前端显示「未上报」)。
     pub tokens_reasoning: Option<u64>,
- /// 提示词缓存命中(提供商如实上报;不报 = None)。
+    /// 提示词缓存命中(提供商如实上报;不报 = None)。
     pub tokens_cached: Option<u64>,
- /// 流式首包延迟(请求发出→首个增量到达;非流式调用无从测量 = None)。
+    /// 流式首包延迟(请求发出→首个增量到达;非流式调用无从测量 = None)。
     pub ttft_ms: Option<u64>,
     /// 组装本次请求时已被台账双上限丢弃的历史轮数(0 = 无遗忘)。
     pub evicted_turns: Option<u64>,
@@ -74,9 +74,9 @@ pub struct ContextLog {
 
 struct Inner {
     next_seq: u64,
- /// INV-5 扫描面:本进程经手的凭据明文(与 ExecutionLog 同批登记)。
+    /// INV-5 扫描面:本进程经手的凭据明文(与 ExecutionLog 同批登记)。
     scan_values: BTreeSet<String>,
- /// 内存镜像(测试断言用)。
+    /// 内存镜像(测试断言用)。
     entries: Vec<serde_json::Value>,
 }
 
@@ -113,7 +113,7 @@ pub fn snapshot_messages(messages: &[bm_contract::connector::Message]) -> Vec<se
         .iter()
         .map(|m| {
             let (content, truncated) = snap_content(&m.content);
- // ADR-0022:工具因果链进快照(透视面板可见「调用→结果」对齐)
+            // ADR-0022:工具因果链进快照(透视面板可见「调用→结果」对齐)
             let mut o = serde_json::json!({
                 "role": m.role.as_str(),
                 "content": content,
@@ -153,10 +153,10 @@ fn last_log_seq(path: &Path) -> u64 {
 }
 
 impl ContextLog {
- /// `dir = None` 时仅内存记账(纯事件流测试)。
+    /// `dir = None` 时仅内存记账(纯事件流测试)。
     pub fn new(dir: Option<&Path>) -> Self {
- // seq 跨重启续接():否则每次重启从 1 重数,历史回放
- // 分页(before_seq)与透视器选中键都会被重复 seq 打穿
+        // seq 跨重启续接():否则每次重启从 1 重数,历史回放
+        // 分页(before_seq)与透视器选中键都会被重复 seq 打穿
         let path = dir.map(|d| d.join("context-log.jsonl"));
         let next_seq = path
             .as_deref()
@@ -173,14 +173,14 @@ impl ContextLog {
         }
     }
 
- /// 注册凭据明文进扫描面(Secret Store put/get 后调用,与执行日志同批)。
+    /// 注册凭据明文进扫描面(Secret Store put/get 后调用,与执行日志同批)。
     pub fn register_scan_value(&self, value: &str) {
         let mut inner = self.inner.lock().expect("锁未中毒");
         crate::redaction::register(&mut inner.scan_values, value);
     }
 
- /// 记录一次模型调用快照:扫描→脱敏→落盘。失败降级不反压业务回合
- /// (tracing 留痕);返回分配的 seq。
+    /// 记录一次模型调用快照:扫描→脱敏→落盘。失败降级不反压业务回合
+    /// (tracing 留痕);返回分配的 seq。
     pub fn record(&self, rec: ContextRecord) -> u64 {
         let mut inner = self.inner.lock().expect("锁未中毒");
         let seq = inner.next_seq;
@@ -209,9 +209,9 @@ impl ContextLog {
             "latency_ms": rec.latency_ms,
             "system_parts": rec.system_parts,
         });
- // INV-5 同面:对整条序列化结果做明文扫描,命中即替换(写脱敏后的串)。
- // to_string 对 Value 实际不可失败;万一失败落一条合法 JSON 占位行并
- // 留痕——jsonl 空行会让下游逐行解析断掉。
+        // INV-5 同面:对整条序列化结果做明文扫描,命中即替换(写脱敏后的串)。
+        // to_string 对 Value 实际不可失败;万一失败落一条合法 JSON 占位行并
+        // 留痕——jsonl 空行会让下游逐行解析断掉。
         let serialized = serde_json::to_string(&value).unwrap_or_else(|e| {
             tracing::error!("context_log 快照序列化失败(不应发生),落占位行: {e}");
             serde_json::json!({"seq": seq, "serialize_error": e.to_string()}).to_string()
@@ -226,10 +226,10 @@ impl ContextLog {
         seq
     }
 
- /// W9 逐轮事件(tool_call/tool_result/assistant_final/turn_end,原 W9
- /// 规格溯 git 史 ADR-0027):与模型调用快照同一 jsonl
- /// 流,`kind` 字段区分(快照行无 kind,既有读取面不受影响)。脱敏与
- /// 失败降级同 record(落盘失败 tracing 留痕,不阻断回合)。返回分配的 seq。
+    /// W9 逐轮事件(tool_call/tool_result/assistant_final/turn_end,原 W9
+    /// 规格溯 git 史 ADR-0027):与模型调用快照同一 jsonl
+    /// 流,`kind` 字段区分(快照行无 kind,既有读取面不受影响)。脱敏与
+    /// 失败降级同 record(落盘失败 tracing 留痕,不阻断回合)。返回分配的 seq。
     pub fn record_event(
         &self,
         session_id: &str,
@@ -254,7 +254,7 @@ impl ContextLog {
             "kind": kind,
             "data": data,
         });
- // 同 record:序列化失败落合法 JSON 占位行(jsonl 不允许空行)。
+        // 同 record:序列化失败落合法 JSON 占位行(jsonl 不允许空行)。
         let serialized = serde_json::to_string(&value).unwrap_or_else(|e| {
             tracing::error!("context_log 事件行序列化失败(不应发生),落占位行: {e}");
             serde_json::json!({"seq": seq, "kind": "serialize_error", "error": e.to_string()})
@@ -270,7 +270,7 @@ impl ContextLog {
         seq
     }
 
- /// 内存镜像尾部(测试断言用;新→旧次序与文件一致,即最旧在前)。
+    /// 内存镜像尾部(测试断言用;新→旧次序与文件一致,即最旧在前)。
     pub fn tail(&self, n: usize) -> Vec<serde_json::Value> {
         let inner = self.inner.lock().expect("锁未中毒");
         let start = inner.entries.len().saturating_sub(n);
@@ -309,7 +309,7 @@ mod tests {
         }
     }
 
- #[test]
+    #[test]
     fn snapshot_truncates_long_content_with_flag() {
         let long = "x".repeat(SNAPSHOT_CONTENT_CAP_CHARS + 10);
         let msgs = vec![Message {
@@ -335,7 +335,7 @@ mod tests {
         assert_eq!(snap[0]["role"], serde_json::json!("user"));
     }
 
- #[test]
+    #[test]
     fn memory_only_dir_none_and_redaction_hits() {
         let log = ContextLog::new(None);
         log.register_scan_value("sk-very-secret-value");
@@ -358,7 +358,7 @@ mod tests {
         assert_eq!(tail[0]["status"], serde_json::json!("ok"));
     }
 
- #[test]
+    #[test]
     fn writes_appends_to_file() {
         let dir = std::env::temp_dir().join(format!("bm-ctx-log-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -375,7 +375,7 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
- #[test]
+    #[test]
     fn seq_resumes_from_file_tail_across_restarts() {
         let dir = tempfile::tempdir().expect("临时目录");
         let sid = "sess_resume";
@@ -397,9 +397,9 @@ mod tests {
                 "T2",
                 serde_json::json!({"content":"二"}),
             );
- // drop = 模拟进程结束(落盘已完成)
+            // drop = 模拟进程结束(落盘已完成)
         }
- // 新进程(新 ContextLog 实例)继续写:seq 必须接 3,而不是重头 1
+        // 新进程(新 ContextLog 实例)继续写:seq 必须接 3,而不是重头 1
         let log2 = ContextLog::new(Some(dir.path()));
         let seq = log2.record_event(
             sid,

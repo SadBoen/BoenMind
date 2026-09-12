@@ -80,7 +80,7 @@ impl StderrBuffer {
         q.push_back(StderrLine { generation, text });
     }
 
- /// 取最近 n 行(旧→新)。
+    /// 取最近 n 行(旧→新)。
     pub fn tail(&self, n: usize) -> Vec<StderrLine> {
         let q = self
             .lines
@@ -95,25 +95,25 @@ impl StderrBuffer {
 
 #[async_trait]
 pub trait McpTransport: Send + Sync {
- /// JSON-RPC 请求-响应(错误 = 传输层故障描述,已脱敏)。
+    /// JSON-RPC 请求-响应(错误 = 传输层故障描述,已脱敏)。
     async fn request(&self, method: &str, params: Value) -> Result<Value, String>;
- /// JSON-RPC 通知(无响应)。
+    /// JSON-RPC 通知(无响应)。
     async fn notify(&self, method: &str, params: Value) -> Result<(), String>;
- /// 订阅服务端通知流(进度)。每连接取一次(先到先得)。
+    /// 订阅服务端通知流(进度)。每连接取一次(先到先得)。
     fn subscribe_progress(&self) -> tokio::sync::mpsc::UnboundedReceiver<McpProgressNote>;
 
- /// 按进度令牌取消在途请求(MCP notifications/cancelled;尽力终止)。
+    /// 按进度令牌取消在途请求(MCP notifications/cancelled;尽力终止)。
     fn cancel_by_token(&self, _token: &str) {}
 
- /// 子进程 stderr 环形缓冲(issue #28;stdio 专属,远程传输恒 None)。
+    /// 子进程 stderr 环形缓冲(issue #28;stdio 专属,远程传输恒 None)。
     fn stderr_buffer(&self) -> Option<Arc<StderrBuffer>> {
         None
     }
 
- /// #3:握手期记录 initialize 结果(默认忽略;远程传输记录供管理面露出)。
+    /// #3:握手期记录 initialize 结果(默认忽略;远程传输记录供管理面露出)。
     fn remember_init(&self, _v: Value) {}
 
- /// #3:读取记录的 initialize 结果(默认 None)。
+    /// #3:读取记录的 initialize 结果(默认 None)。
     fn init_snapshot(&self) -> Option<Value> {
         None
     }
@@ -151,7 +151,7 @@ struct Route {
 pub struct McpHub {
     routes: Mutex<HashMap<String, Route>>,
     sink: Arc<Mutex<Option<ProgressSink>>>,
- /// 在途调用:operation_id → 传输(取消通知定位)。
+    /// 在途调用:operation_id → 传输(取消通知定位)。
     inflight: Mutex<HashMap<String, Arc<dyn McpTransport>>>,
 }
 
@@ -168,9 +168,9 @@ impl McpHub {
         }
     }
 
- /// 握手 + 发现:initialize → initialized → tools/list → 生成 manifests
- /// 并建立路由。不合规工具名跳过(拒注册,tracing 留痕)。
- /// P1-10: 整体握手包 15s 超时守卫,防止异常插件挂死热重载或服务启动
+    /// 握手 + 发现:initialize → initialized → tools/list → 生成 manifests
+    /// 并建立路由。不合规工具名跳过(拒注册,tracing 留痕)。
+    /// P1-10: 整体握手包 15s 超时守卫,防止异常插件挂死热重载或服务启动
     pub async fn connect(
         self: &Arc<Self>,
         server: &str,
@@ -189,7 +189,7 @@ impl McpHub {
             if version.is_empty() {
                 return Err("initialize 响应缺 protocolVersion".into());
             }
- // #3:协商——响应版本不在已知集则告警不拒(工具调用面版本间兼容)
+            // #3:协商——响应版本不在已知集则告警不拒(工具调用面版本间兼容)
             if !KNOWN_PROTOCOL_VERSIONS.contains(&version.as_str()) {
                 tracing::warn!(target: "plugin", server, version = %version, "MCP server 响应未知协议版本,按兼容继续");
             }
@@ -244,12 +244,14 @@ impl McpHub {
                         );
                         manifests.push(m);
                     }
-                    None => tracing::warn!(target: "plugin", server, tool = %name, "MCP 工具名不合规,拒注册"),
+                    None => {
+                        tracing::warn!(target: "plugin", server, tool = %name, "MCP 工具名不合规,拒注册")
+                    }
                 }
             }
         }
 
- // 进度泵:通知 → sink 回注(Hub 活多久,泵多久;sink 为共享单元)
+        // 进度泵:通知 → sink 回注(Hub 活多久,泵多久;sink 为共享单元)
         let mut rx = transport.subscribe_progress();
         let sink = self.sink.clone();
         tokio::spawn(async move {
@@ -270,9 +272,9 @@ impl McpHub {
         Ok(manifests)
     }
 
- /// 装配 stub Provider 集:执行体即拒(Wire 直调不得绕过异步路径)。
- /// W2 管理面探活:对该 server 的任一路由发 tools/list(轻量、无副作用)。
- /// 返回 Ok((工具数, 工具简要信息列表)) = 联通;Err = 断连/超时摘要。
+    /// 装配 stub Provider 集:执行体即拒(Wire 直调不得绕过异步路径)。
+    /// W2 管理面探活:对该 server 的任一路由发 tools/list(轻量、无副作用)。
+    /// 返回 Ok((工具数, 工具简要信息列表)) = 联通;Err = 断连/超时摘要。
     pub async fn probe_server(&self, server: &str) -> Result<(usize, Vec<Value>), String> {
         let transport = self.transport_for(server)?;
         let listed = transport.request("tools/list", json!({})).await?;
@@ -293,11 +295,11 @@ impl McpHub {
         Ok((tools.len(), tool_summaries))
     }
 
- /// 对指定 server 的任一路由发送任意 JSON-RPC 方法并返回原始结果。
- /// 与 probe_server 同款路由查找(按 `mcp.<server>.` 前缀),但可指定任意
- /// method(如管理面对插件的 `web_search_test` / `web_usage` 扩展)。
- /// 传输层 `McpTransport::request` 本就接受任意 method,这里把「按名称找
- /// 到该 server 的 transport」暴露出来供 webadmin 使用。
+    /// 对指定 server 的任一路由发送任意 JSON-RPC 方法并返回原始结果。
+    /// 与 probe_server 同款路由查找(按 `mcp.<server>.` 前缀),但可指定任意
+    /// method(如管理面对插件的 `web_search_test` / `web_usage` 扩展)。
+    /// 传输层 `McpTransport::request` 本就接受任意 method,这里把「按名称找
+    /// 到该 server 的 transport」暴露出来供 webadmin 使用。
     pub async fn raw_request(
         &self,
         server: &str,
@@ -308,9 +310,9 @@ impl McpHub {
         transport.request(method, params).await
     }
 
- /// 采集指定 server 的子进程 stderr 尾部(issue #28)。
- /// 路由按能力名组织,取该 server 任一路由的 transport;未连接或远程
- /// 传输(无子进程)= Err。工具名全被拒注册的 server 无路由,同样报未连接。
+    /// 采集指定 server 的子进程 stderr 尾部(issue #28)。
+    /// 路由按能力名组织,取该 server 任一路由的 transport;未连接或远程
+    /// 传输(无子进程)= Err。工具名全被拒注册的 server 无路由,同样报未连接。
     pub fn stderr_tail(&self, server: &str, lines: usize) -> Result<Vec<StderrLine>, String> {
         let transport = self.transport_for(server)?;
         let Some(buf) = transport.stderr_buffer() else {
@@ -319,8 +321,8 @@ impl McpHub {
         Ok(buf.tail(lines))
     }
 
- /// #3:读取指定 server 的 initialize 结果(协议版本/capabilities/
- /// serverInfo;握手时记录)。未连接 = Err。
+    /// #3:读取指定 server 的 initialize 结果(协议版本/capabilities/
+    /// serverInfo;握手时记录)。未连接 = Err。
     pub fn server_capabilities(&self, server: &str) -> Result<Value, String> {
         let transport = self.transport_for(server)?;
         transport
@@ -328,7 +330,7 @@ impl McpHub {
             .ok_or_else(|| "该 server 无握手记录(旧版传输或未完成 initialize)".to_string())
     }
 
- /// 按 `mcp.<server>.` 前缀取该 server 任一路由的 transport;未连接 = Err。
+    /// 按 `mcp.<server>.` 前缀取该 server 任一路由的 transport;未连接 = Err。
     fn transport_for(&self, server: &str) -> Result<Arc<dyn McpTransport>, String> {
         let prefix = format!(
             "mcp.{}.",
@@ -351,9 +353,9 @@ impl McpHub {
         manifests
             .into_iter()
             .map(|m| {
- // ADR-0045:MCP 能力也声明插件身份——id 取 manifest.provider
- // (即 `mcp.<server>`),使发现面/管理面能按真实 kind 呈现,
- // 与内置 provider 同一读取路径。
+                // ADR-0045:MCP 能力也声明插件身份——id 取 manifest.provider
+                // (即 `mcp.<server>`),使发现面/管理面能按真实 kind 呈现,
+                // 与内置 provider 同一读取路径。
                 let meta = bm_contract::plugin::PluginMeta::new(
                     m.provider.clone(),
                     m.version.clone(),
@@ -369,8 +371,8 @@ impl McpHub {
             .collect()
     }
 
- /// 热拔/重载摘除指定 server 的全部路由，并向 transport 发送 shutdown 通知。
- /// 返回被摘除的能力列表(用于通知 Registry 和 Persist 摘除)。
+    /// 热拔/重载摘除指定 server 的全部路由，并向 transport 发送 shutdown 通知。
+    /// 返回被摘除的能力列表(用于通知 Registry 和 Persist 摘除)。
     pub async fn disconnect_server(&self, server: &str) -> Vec<String> {
         let Some(server_norm) = normalize_server_name(server) else {
             return Vec::new();
@@ -395,7 +397,7 @@ impl McpHub {
             (caps, trans)
         };
         for t in transports {
- // 尽力发送 shutdown / 退出通知
+            // 尽力发送 shutdown / 退出通知
             let _ = t.notify("shutdown", json!({})).await;
             let _ = t.notify("exit", json!({})).await;
         }
@@ -410,7 +412,7 @@ impl McpHub {
 pub struct McpAdminAdapter(pub Arc<McpHub>);
 
 impl McpHub {
- /// 取本 hub 的管理面端口视图(ADR-0046)。
+    /// 取本 hub 的管理面端口视图(ADR-0046)。
     pub fn as_admin(self: &Arc<Self>) -> Arc<dyn bm_core::ports::mcp_admin::McpAdmin> {
         Arc::new(McpAdminAdapter(self.clone()))
     }
@@ -569,12 +571,12 @@ pub struct McpServerSetup {
     pub env_resolved: HashMap<String, String>,
     pub tool_timeout_ms: u64,
     pub restart_limit: u32,
- /// ADR-0035:合同 trust 字段的解析值。缺省 `explicit-config`(配置显式
- /// 列出即安装批准,M7 既有语义);显式给出非枚举值在合同校验步即被拒。
- /// 消费点=装载日志留痕,使来源可见。
+    /// ADR-0035:合同 trust 字段的解析值。缺省 `explicit-config`(配置显式
+    /// 列出即安装批准,M7 既有语义);显式给出非枚举值在合同校验步即被拒。
+    /// 消费点=装载日志留痕,使来源可见。
     pub trust: String,
- /// ADR-0035:完整性校验目标(可选)。解释器型条目(command=解释器,
- /// args=脚本)须以此声明真实载荷;存在时 sha256 一律哈希 payload。
+    /// ADR-0035:完整性校验目标(可选)。解释器型条目(command=解释器,
+    /// args=脚本)须以此声明真实载荷;存在时 sha256 一律哈希 payload。
     pub payload: Option<String>,
 }
 
@@ -646,20 +648,20 @@ pub fn load_mcp_setups(
         if env_err {
             continue;
         }
- // ADR-0035:trust 显式消费(缺省 explicit-config,即「配置显式列出=
- // 安装批准」;非枚举值已在上面合同校验步被拒)。解析值随条目留痕,
- // 使来源在装载日志可见。
+        // ADR-0035:trust 显式消费(缺省 explicit-config,即「配置显式列出=
+        // 安装批准」;非枚举值已在上面合同校验步被拒)。解析值随条目留痕,
+        // 使来源在装载日志可见。
         let trust = item
             .get("trust")
             .and_then(|v| v.as_str())
             .unwrap_or("explicit-config");
         tracing::info!(target: "plugin", server = %name, trust = %trust, "MCP 装载 trust(来源显式配置)");
 
- // 外部评审
- // 「校验目标」哈希,不符拒载(防安装后被替换)。校验目标 = payload(若
- // 声明)否则 command;解释器型条目(command 非本地文件、args 指向本地
- // 脚本)未声明 payload 时语义歧义,fail-closed 拒载,杜绝「哈希解释器
- // 却宣称校验了插件」的假保证。
+        // 外部评审
+        // 「校验目标」哈希,不符拒载(防安装后被替换)。校验目标 = payload(若
+        // 声明)否则 command;解释器型条目(command 非本地文件、args 指向本地
+        // 脚本)未声明 payload 时语义歧义,fail-closed 拒载,杜绝「哈希解释器
+        // 却宣称校验了插件」的假保证。
         if let Some(expected) = item.get("sha256").and_then(|v| v.as_str()) {
             match resolve_integrity_target(item) {
                 Ok(target) => {
@@ -778,9 +780,9 @@ fn child_inherited_env() -> Vec<(&'static str, String)> {
 mod m9_review_env_tests {
     use super::child_inherited_env;
 
- /// P0()验收:子进程继承面只含白名单——主密钥等父进程
- /// 敏感环境变量一律不下发。
- #[test]
+    /// P0()验收:子进程继承面只含白名单——主密钥等父进程
+    /// 敏感环境变量一律不下发。
+    #[test]
     fn child_env_allowlist_excludes_parent_secrets() {
         const ALLOW: &[&str] = &[
             "PATH",
@@ -815,7 +817,7 @@ mod integrity_tests {
     use crate::secret::MemSecretStore;
     use std::io::Write;
 
- #[test]
+    #[test]
     fn sha256_matches_and_mismatch_is_detected() {
         let dir = tempfile::tempdir().expect("tmp");
         let p = dir.path().join("plugin.exe");
@@ -829,7 +831,7 @@ mod integrity_tests {
         assert!(err.contains("SHA-256 不符"));
     }
 
- #[test]
+    #[test]
     fn load_skips_entry_when_hash_mismatches() {
         let dir = tempfile::tempdir().expect("tmp");
         let exe = dir.path().join("plugin.exe");
@@ -838,7 +840,7 @@ mod integrity_tests {
         let real = sha256_file(&exe.display().to_string()).expect("哈希");
         let wrong = format!("{:0>64}", "ab");
 
- // 篡改条目被跳过,未篡改条目保留
+        // 篡改条目被跳过,未篡改条目保留
         std::fs::write(
             &cfg,
             format!(
@@ -853,7 +855,7 @@ mod integrity_tests {
         let names: Vec<&str> = setups.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(names, vec!["good"], "不符条目必须被跳过:{names:?}");
 
- // 无 sha256 的旧条目照常兼容
+        // 无 sha256 的旧条目照常兼容
         std::fs::write(
             &cfg,
             format!(
@@ -867,7 +869,7 @@ mod integrity_tests {
         assert_eq!(setups[0].name, "legacy");
     }
 
- #[test]
+    #[test]
     fn sha256_file_missing_errors() {
         assert!(
             sha256_file("Z:/no/such/file.exe").is_err()
@@ -876,9 +878,9 @@ mod integrity_tests {
         let _ = std::io::sink().write(&[]);
     }
 
- /// ADR-0035:解释器型条目(command=解释器名)声明 payload 时,哈希目标
- /// = 脚本载荷(而非解释器);篡改脚本被检出。
- #[test]
+    /// ADR-0035:解释器型条目(command=解释器名)声明 payload 时,哈希目标
+    /// = 脚本载荷(而非解释器);篡改脚本被检出。
+    #[test]
     fn interpreter_entry_hashes_payload_not_launcher() {
         let dir = tempfile::tempdir().expect("tmp");
         let script = dir.path().join("server.py");
@@ -902,15 +904,15 @@ mod integrity_tests {
             Some(script.display().to_string().as_str())
         );
 
- // 脚本被替换 -> 哈希不符 -> 拒载(即使解释器本身未变)
+        // 脚本被替换 -> 哈希不符 -> 拒载(即使解释器本身未变)
         std::fs::write(&script, b"print('v2-evil')").expect("改脚本");
         let setups = load_mcp_setups(&cfg, &store, 3).expect("解析");
         assert!(setups.is_empty(), "payload 被替换必须拒载");
     }
 
- /// ADR-0035:解释器型条目(非本地 command + args 指向本地脚本)未声明
- /// payload 时语义歧义 -> fail-closed 拒载,不给「哈希解释器」的假保证。
- #[test]
+    /// ADR-0035:解释器型条目(非本地 command + args 指向本地脚本)未声明
+    /// payload 时语义歧义 -> fail-closed 拒载,不给「哈希解释器」的假保证。
+    #[test]
     fn interpreter_entry_without_payload_fails_closed() {
         let dir = tempfile::tempdir().expect("tmp");
         let script = dir.path().join("server.py");
@@ -931,15 +933,15 @@ mod integrity_tests {
         assert!(setups.is_empty(), "目标歧义必须拒载(fail-closed)");
     }
 
- /// ADR-0035:trust 缺省解析为 explicit-config;非枚举值在合同校验步被拒。
- #[test]
+    /// ADR-0035:trust 缺省解析为 explicit-config;非枚举值在合同校验步被拒。
+    #[test]
     fn trust_defaults_and_invalid_value_rejected() {
         let dir = tempfile::tempdir().expect("tmp");
         let exe = dir.path().join("plugin.exe");
         std::fs::write(&exe, b"bin").expect("写");
         let cfg = dir.path().join("mcp.json");
         let cmd = exe.display().to_string().replace('\\', "\\\\");
- // 缺省 -> explicit-config
+        // 缺省 -> explicit-config
         std::fs::write(
             &cfg,
             format!(r#"[{{"name":"a","transport":"stdio","command":"{cmd}"}}]"#),
@@ -949,7 +951,7 @@ mod integrity_tests {
         let setups = load_mcp_setups(&cfg, &store, 3).expect("解析");
         assert_eq!(setups.len(), 1);
         assert_eq!(setups[0].trust, "explicit-config");
- // 非枚举值 -> 合同校验拒 -> 跳过
+        // 非枚举值 -> 合同校验拒 -> 跳过
         std::fs::write(
             &cfg,
             format!(
@@ -961,9 +963,9 @@ mod integrity_tests {
         assert!(setups.is_empty(), "非枚举 trust 必须被合同校验拒");
     }
 
- /// 传入的默认值**(生产 = `limits.mcp_restart_limit`),而非硬编码 3——
- /// 。条目级声明仍优先。
- #[test]
+    /// 传入的默认值**(生产 = `limits.mcp_restart_limit`),而非硬编码 3——
+    /// 。条目级声明仍优先。
+    #[test]
     fn restart_limit_defaults_from_caller_and_entry_overrides() {
         let dir = tempfile::tempdir().expect("tmp");
         let exe = dir.path().join("plugin.exe");
@@ -972,7 +974,7 @@ mod integrity_tests {
         let cmd = exe.display().to_string().replace('\\', "\\\\");
         let store = MemSecretStore::new();
 
- // 未声明 → 用调用方传入的默认(此处刻意传非 3 值,证明真的读了参数)。
+        // 未声明 → 用调用方传入的默认(此处刻意传非 3 值,证明真的读了参数)。
         std::fs::write(
             &cfg,
             format!(r#"[{{"name":"a","transport":"stdio","command":"{cmd}"}}]"#),
@@ -981,7 +983,7 @@ mod integrity_tests {
         let setups = load_mcp_setups(&cfg, &store, 7).expect("解析");
         assert_eq!(setups[0].restart_limit, 7, "缺省须随调用方默认(limits)");
 
- // 条目级声明优先于默认。
+        // 条目级声明优先于默认。
         std::fs::write(
             &cfg,
             format!(r#"[{{"name":"b","transport":"stdio","command":"{cmd}","restart_limit":2}}]"#),
@@ -999,8 +1001,8 @@ mod stderr_tests {
     use super::*;
     use std::time::Duration;
 
- #[tokio::test]
- #[ignore = "stdio 子进程测试:BOEN_MCP_STDIO_TEST=1 启用"]
+    #[tokio::test]
+    #[ignore = "stdio 子进程测试:BOEN_MCP_STDIO_TEST=1 启用"]
     async fn stderr_piped_into_ring_buffer_with_generation() {
         let code = "import sys, time; sys.stderr.write('boom-diagnostic-line\\n'); sys.stderr.flush(); time.sleep(30)";
         let transport = StdioMcpTransport::spawn(
@@ -1011,7 +1013,7 @@ mod stderr_tests {
         )
         .expect("子进程启动");
 
- // 泵是异步的:轮询至目标行出现(最多 5s)
+        // 泵是异步的:轮询至目标行出现(最多 5s)
         let mut hit = false;
         for _ in 0..50 {
             let tail = transport.stderr_tail(50);
@@ -1026,7 +1028,7 @@ mod stderr_tests {
         }
         assert!(hit, "stderr 行未入缓冲: {:?}", transport.stderr_tail(50));
 
- // 起止哨兵行:第 1 代启动标记在缓冲里
+        // 起止哨兵行:第 1 代启动标记在缓冲里
         assert!(
             transport
                 .stderr_tail(50)
@@ -1036,7 +1038,7 @@ mod stderr_tests {
         );
     }
 
- #[test]
+    #[test]
     fn stderr_ring_capacity_bounded() {
         let buf = StderrBuffer::with_capacity(5);
         for i in 0..20 {
@@ -1061,15 +1063,15 @@ pub use transport_stdio::*;
 /// 永久毒化(。
 #[cfg(test)]
 mod lock_poison_recovery_tests {
- #[test]
+    #[test]
     fn poisoned_lock_recovers_via_into_inner() {
         let m = std::sync::Mutex::new(0u32);
- // 制造毒化:持锁 panic
+        // 制造毒化:持锁 panic
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _g = m.lock().unwrap();
             panic!("故意毒化");
         }));
- // 与 bm-providers 各文件一致的恢复语义:毒化后仍可取锁并修正状态
+        // 与 bm-providers 各文件一致的恢复语义:毒化后仍可取锁并修正状态
         let mut g = m.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         *g += 1;
         assert_eq!(*g, 1);

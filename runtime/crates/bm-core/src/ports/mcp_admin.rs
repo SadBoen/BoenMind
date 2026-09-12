@@ -32,7 +32,7 @@ pub struct SyncOutcome {
     pub updated: Vec<String>,
     pub uninstalled: Vec<String>,
     pub failed: Vec<Value>,
- /// 已装载快照(热装载写回管理面用;启动路径忽略)。
+    /// 已装载快照(热装载写回管理面用;启动路径忽略)。
     pub note_loaded: Vec<Value>,
 }
 
@@ -49,23 +49,23 @@ pub trait CapabilityRegistrar: Send + Sync {
 /// MCP 管理面端口。实现方 = `bm_providers::mcp::McpHub`。
 #[async_trait]
 pub trait McpAdmin: Send + Sync {
- /// 探活:返回 (工具数, 工具定义列表)。
+    /// 探活:返回 (工具数, 工具定义列表)。
     async fn probe_server(&self, server: &str) -> Result<(usize, Vec<Value>), String>;
 
- /// 原语请求(管理面探针用,如 web_search_test / web_usage)。
+    /// 原语请求(管理面探针用,如 web_search_test / web_usage)。
     async fn raw_request(&self, server: &str, method: &str, params: Value)
     -> Result<Value, String>;
 
- /// 子进程 stderr 尾部环形缓冲。
+    /// 子进程 stderr 尾部环形缓冲。
     fn stderr_tail(&self, server: &str, lines: usize) -> Result<Vec<StderrLine>, String>;
 
- /// 该 server 的握手能力快照。
+    /// 该 server 的握手能力快照。
     fn server_capabilities(&self, server: &str) -> Result<Value, String>;
 
- /// 断开并摘除该 server 的全部路由,返回被摘除的能力名。
+    /// 断开并摘除该 server 的全部路由,返回被摘除的能力名。
     async fn disconnect_server(&self, server: &str) -> Vec<String>;
 
- /// 按配置文件同步(装载/更新/卸载)并把能力经 registrar 注册进核心。
+    /// 按配置文件同步(装载/更新/卸载)并把能力经 registrar 注册进核心。
     async fn sync(
         &self,
         cfg_path: &Path,
@@ -81,7 +81,7 @@ pub trait McpAdmin: Send + Sync {
 /// 上移单源):**仅 NotFound 视为空**——其他 IO 错误(权限/瞬时故障)必须上抛,
 /// 否则热重载会把全部 MCP 能力静默卸载、甚至被整表回写覆盖丢配置(P1-9)。
 pub fn read_mcp_servers(path: &Path) -> Result<Vec<Value>, String> {
- // #71:读原语单源(bm_core::json_store);策略不变——仅 NotFound 视为空。
+    // #71:读原语单源(bm_core::json_store);策略不变——仅 NotFound 视为空。
     match crate::json_store::read_json_file(path, "MCP 配置读取失败", "MCP 配置不是 JSON 数组")
     {
         Ok(crate::json_store::JsonRead::Value(v)) => {

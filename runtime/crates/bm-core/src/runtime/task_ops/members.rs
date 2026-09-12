@@ -6,7 +6,7 @@ pub(crate) fn handle_task_spawn_member(
     task_id: BmId,
 ) -> CoreResult<serde_json::Value> {
     w.gate_writes("成员追加")?;
- // 分阶段作用域:读任务与并发计数,门禁通过后即释放借用
+    // 分阶段作用域:读任务与并发计数,门禁通过后即释放借用
     let (coord_aud, worker_aud, authorization) = {
         let Some(task) = w.tasks.get(&task_id) else {
             return Err(CoreError::Semantic(
@@ -25,7 +25,7 @@ pub(crate) fn handle_task_spawn_member(
             .iter()
             .filter(|m| m.role == crate::task::MemberRole::Worker)
             .count() as u64;
- // #30:Task 级并发上限覆盖(Budget 开放键),None = 合同默认 5
+        // #30:Task 级并发上限覆盖(Budget 开放键),None = 合同默认 5
         let worker_cap = crate::team::max_concurrent_workers_of(task.budget.as_ref())
             .unwrap_or(crate::team::MAX_CONCURRENT_WORKERS);
         if alive_workers >= worker_cap {
@@ -101,7 +101,7 @@ pub(crate) fn handle_task_spawn_subtask(
     params: SpawnSubtaskParams,
 ) -> CoreResult<serde_json::Value> {
     w.gate_writes("委派")?;
- // 门禁(分阶段作用域:校验后即释放借用)
+    // 门禁(分阶段作用域:校验后即释放借用)
     let (parent_snapshot, coord_aud, _worker_aud, child_authorization) = {
         let Some(parent) = w.tasks.get(&params.parent_task_id) else {
             return Err(CoreError::Semantic(
@@ -143,7 +143,7 @@ pub(crate) fn handle_task_spawn_subtask(
     };
     let now = w.config.clock.now();
     let parent_id_str = params.parent_task_id.as_str().to_string();
- // 子 Task 创建(wire 之外的内核委派路径;created_by = 父 Coordinator)
+    // 子 Task 创建(wire 之外的内核委派路径;created_by = 父 Coordinator)
     let mut child = crate::task::Task::create(
         &*w.config.id_gen,
         params.title,
@@ -184,7 +184,7 @@ pub(crate) fn handle_task_spawn_subtask(
             "task_epoch": child.task_epoch,
         }),
     );
- // 子任务协调链自举(per-child principal;Grant 链仍回溯 Butler 上界)
+    // 子任务协调链自举(per-child principal;Grant 链仍回溯 Butler 上界)
     let child_id_str = child.id.as_str().to_string();
     let child_coord_aud = crate::team::coord_principal(&child_id_str);
     let child_worker_aud = crate::team::worker_principal(&child_id_str);
@@ -338,7 +338,7 @@ pub(crate) fn handle_worker_call(
     params: WorkerCallParams,
 ) -> CoreResult<serde_json::Value> {
     w.gate_writes("成员调用")?;
- // 分阶段作用域:状态检查完成后即释放 task 借用
+    // 分阶段作用域:状态检查完成后即释放 task 借用
     let state = {
         let Some(task) = w.tasks.get(&params.task_id) else {
             return Err(CoreError::Semantic(
@@ -369,15 +369,15 @@ pub(crate) fn handle_worker_call(
             ));
         }
     }
- // M5-T6:Task 包络「工具调用前」强制点(Broker 路径唯一执行出口:
- // 绕过 Broker 无预算执行出口——G 断言的结构面)
+    // M5-T6:Task 包络「工具调用前」强制点(Broker 路径唯一执行出口:
+    // 绕过 Broker 无预算执行出口——G 断言的结构面)
     let max_tool_calls = w
         .tasks
         .get(&params.task_id)
         .and_then(|t| crate::team::max_tool_calls_of(t.budget.as_ref()));
     let used = *w.task_tool_calls.entry(params.task_id.clone()).or_insert(0);
     if let Some(max) = max_tool_calls {
- // 软限 80%:budget.warning(基线 §9.7;逐次逼近即告警)
+        // 软限 80%:budget.warning(基线 §9.7;逐次逼近即告警)
         if (used + 1) as f64 >= 0.8 * max as f64 && used < max {
             w.emit(
                 EventType::BudgetWarning,
@@ -393,7 +393,7 @@ pub(crate) fn handle_worker_call(
                 }),
             );
         }
- // 硬限:拒绝 + Task blocked(budget_exhausted)等待用户裁定
+        // 硬限:拒绝 + Task blocked(budget_exhausted)等待用户裁定
         if used + 1 > max {
             w.emit(
                 EventType::BudgetExceeded,
@@ -442,9 +442,9 @@ pub(crate) fn handle_worker_call(
             ));
         }
     }
- // Agent 路径信任归因:worker 上下文 = agent-derived/untrusted(内容
- // 来源链随任务传递,不可自报降级);Grant 命中优先,无授权则 100% 升级。
- // M6:per-task principal(跨 Task 结构性隔离)
+    // Agent 路径信任归因:worker 上下文 = agent-derived/untrusted(内容
+    // 来源链随任务传递,不可自报降级);Grant 命中优先,无授权则 100% 升级。
+    // M6:per-task principal(跨 Task 结构性隔离)
     let ctx = CallContext::content_chain(
         crate::team::worker_principal(params.task_id.as_str()).as_str(),
         DataTrust::Untrusted,
@@ -461,11 +461,11 @@ pub(crate) fn handle_worker_call(
             deadline_ms: params.deadline_ms,
         },
     );
- // 「返回后记账」+ 重复检测 + 进度信号(waiting_approval 豁免:等人的
- // 时间不算停滞,进度随审批挂起刷新)
+    // 「返回后记账」+ 重复检测 + 进度信号(waiting_approval 豁免:等人的
+    // 时间不算停滞,进度随审批挂起刷新)
     let outcome_str = match &outcome {
         Ok(_) => "ok",
- // (wire 投影即 ApprovalRequired);等人的时间不算停滞
+        // (wire 投影即 ApprovalRequired);等人的时间不算停滞
         Err(CoreError::ApprovalNeeded { .. }) => "approval",
         Err(_) => "error",
     };
@@ -484,12 +484,12 @@ pub(crate) fn handle_worker_call(
             && let Err(e) =
                 store.save_task_budget(params.task_id.as_str(), "", used_now, 0, &w.now_ts())
         {
- // (事实上的预算绕过),进入拒写态
+            // (事实上的预算绕过),进入拒写态
             tracing::error!(error = %e, task = %params.task_id.as_str(), "Task 预算行落库失败,进入拒写态");
             w.persist_poisoned = true;
         }
- // M6.6:结果流水(来源/状态/关联 Operation;collect 聚合面)
- // (capability_call_inner 交还),。
+        // M6.6:结果流水(来源/状态/关联 Operation;collect 聚合面)
+        // (capability_call_inner 交还),。
         let summary = match &outcome {
             Ok(r) => r["action_summary"].as_str().unwrap_or_default().to_string(),
             Err(_) => String::new(),
@@ -525,7 +525,7 @@ pub(crate) fn handle_butler_revoke(w: &mut World, reason: String) -> CoreResult<
     w.gate_writes("撤销操作")?;
     let mut revoked = 0;
     for (verb, _) in crate::butler::COORDINATION_VERBS {
- // 分阶段作用域:收集后逐个撤销(避免跨字段借用)
+        // 分阶段作用域:收集后逐个撤销(避免跨字段借用)
         let gids: Vec<String> = w
             .grants
             .active_for(crate::butler::BUTLER_PRINCIPAL, verb, w.config.clock.now())

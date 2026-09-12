@@ -4,11 +4,11 @@
 //! 任何 Task Board 与 Surface 视图仅为投影。迁移一律经由 bm_contract::states
 //! 的 task 迁移表,表外迁移是 bug。两道结构门禁在本模块落地:
 //! - **完成判定门禁**:completed/failed 必须 verified(无 Observation 核验
-//! 不得完成,基线 M5 通过条件第 4 条;M5 规格 §5.7)——表内 guard 是
-//! verified_completion/verified_failure,调用方须出示核验结论;
+//!   不得完成,基线 M5 通过条件第 4 条;M5 规格 §5.7)——表内 guard 是
+//!   verified_completion/verified_failure,调用方须出示核验结论;
 //! - **task_epoch 写入门禁**(ADR-0004 条件 3):取得接管权时递增,携带过期
-//! epoch 的编排命令一律 Stale 拒绝(M5-T1 在核心面执行;wire 面不暴露
-//! epoch 参数——与 input_trust 同款收权,M5 规格 §9)。
+//!   epoch 的编排命令一律 Stale 拒绝(M5-T1 在核心面执行;wire 面不暴露
+//!   epoch 参数——与 input_trust 同款收权,M5 规格 §9)。
 
 use bm_contract::BmTimestamp;
 use bm_contract::budget::Budget;
@@ -43,11 +43,11 @@ impl MemberRole {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskError {
- /// 表外迁移(迁移表中无边)。
+    /// 表外迁移(迁移表中无边)。
     IllegalTransition { from: TaskState, to: TaskState },
- /// 完成判定门禁:出示的核验结论不支持目标态(基线 M5 通过条件第 4 条)。
+    /// 完成判定门禁:出示的核验结论不支持目标态(基线 M5 通过条件第 4 条)。
     UnverifiedCompletion,
- /// 过期 epoch 的命令(ADR-0004 条件 3):Stale 拒绝。
+    /// 过期 epoch 的命令(ADR-0004 条件 3):Stale 拒绝。
     StaleEpoch { current: u64, presented: u64 },
 }
 
@@ -60,24 +60,24 @@ pub struct Task {
     pub state: TaskState,
     pub created_by: String,
     pub task_epoch: u64,
- /// 三方交集的 Task 分量(ADR-0002 §11.3):协调动词白名单 + 资源谓词。
+    /// 三方交集的 Task 分量(ADR-0002 §11.3):协调动词白名单 + 资源谓词。
     pub authorization: Vec<TaskAuthorizationEntry>,
- /// Task 预算包络(基线 §9.7;None = 运行时默认包络)。
+    /// Task 预算包络(基线 §9.7;None = 运行时默认包络)。
     pub budget: Option<Budget>,
     pub deadline: Option<BmTimestamp>,
     pub members: Vec<TaskMember>,
- /// 父 Task(M6 启用:委派链以子任务表达;根 Task 恒 None)。
+    /// 父 Task(M6 启用:委派链以子任务表达;根 Task 恒 None)。
     pub parent_task_id: Option<bm_contract::ids::BmId>,
- /// 委派深度:根 = 0,子任务 = 父+1(上限 3,M6.5)。
+    /// 委派深度:根 = 0,子任务 = 父+1(上限 3,M6.5)。
     pub delegation_depth: u64,
     pub created_at: BmTimestamp,
     pub updated_at: BmTimestamp,
 }
 
 impl Task {
- /// 创建(created 态;启动迁移由调用方推进并各自落事件)。
- /// #[allow]:参数与 Task 合同字段一一对应(压缩反损可读性)。
- #[allow(clippy::too_many_arguments)]
+    /// 创建(created 态;启动迁移由调用方推进并各自落事件)。
+    /// #[allow]:参数与 Task 合同字段一一对应(压缩反损可读性)。
+    #[allow(clippy::too_many_arguments)]
     pub fn create(
         ids: &dyn IdGen,
         title: impl Into<String>,
@@ -108,7 +108,7 @@ impl Task {
         }
     }
 
- /// task_epoch 写入门禁(ADR-0004 条件 3):命令须出示当前 epoch。
+    /// task_epoch 写入门禁(ADR-0004 条件 3):命令须出示当前 epoch。
     pub fn require_epoch(&self, presented: u64) -> Result<(), TaskError> {
         if presented == self.task_epoch {
             Ok(())
@@ -120,18 +120,18 @@ impl Task {
         }
     }
 
- /// 取得接管权:epoch 单调递增(跨 Surface 接管/编排重启语义;
- /// 持久化随调用方 save_task,重启不回退)。
+    /// 取得接管权:epoch 单调递增(跨 Surface 接管/编排重启语义;
+    /// 持久化随调用方 save_task,重启不回退)。
     pub fn takeover(&mut self) -> u64 {
         self.task_epoch += 1;
         self.task_epoch
     }
 
- /// 状态迁移(表内边) + 完成判定门禁。返回 (from, to, guard) 供事件
- /// reason_code;失败不改状态。
- /// `verified`:目标为 completed/failed 时必须出示 Observation 核验结论
- /// (true = verified;false/None = unverified,一律拒绝)。guard 文本
- /// verified_completion/verified_failure 的机器检查点即此参数。
+    /// 状态迁移(表内边) + 完成判定门禁。返回 (from, to, guard) 供事件
+    /// reason_code;失败不改状态。
+    /// `verified`:目标为 completed/failed 时必须出示 Observation 核验结论
+    /// (true = verified;false/None = unverified,一律拒绝)。guard 文本
+    /// verified_completion/verified_failure 的机器检查点即此参数。
     pub fn transition(
         &mut self,
         to: TaskState,
@@ -156,8 +156,8 @@ impl Task {
         self.state.is_terminal()
     }
 
- /// 成员加入(调用方发 task.member.added 事件;jointed_seq 由事件 seq 回填)。
- /// )。
+    /// 成员加入(调用方发 task.member.added 事件;jointed_seq 由事件 seq 回填)。
+    /// )。
     pub fn add_member(&mut self, member: TaskMember) {
         self.members.push(member);
         self.updated_at = bm_contract::timestamp::now();
@@ -166,23 +166,23 @@ impl Task {
 
 /// 恢复装载:行 → Task(载荷合同 JSON 优先,行级键列为兜底)。
 pub fn task_from_row(row: &crate::ports::persist::TaskStateRow) -> Result<Task, String> {
- #[derive(serde::Deserialize)]
- #[serde(rename_all = "snake_case")]
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "snake_case")]
     struct Payload {
         task_id: String,
- #[serde(default)]
+        #[serde(default)]
         title: Option<String>,
- #[serde(default)]
+        #[serde(default)]
         goal: Option<String>,
- #[serde(default)]
+        #[serde(default)]
         authorization: Vec<TaskAuthorizationEntry>,
- #[serde(default)]
+        #[serde(default)]
         budget: Option<Budget>,
- #[serde(default)]
+        #[serde(default)]
         deadline: Option<BmTimestamp>,
- #[serde(default)]
+        #[serde(default)]
         parent_task_id: Option<String>,
- #[serde(default)]
+        #[serde(default)]
         created_at: Option<String>,
     }
     let p: Payload =
@@ -220,9 +220,9 @@ pub struct TaskBoardEntry {
     pub title: String,
     pub state: TaskState,
     pub task_epoch: u64,
- /// 成员 agent_id(加入序)。
+    /// 成员 agent_id(加入序)。
     pub members: Vec<String>,
- /// 最后一次命中的 event_seq(投影绑定事件日志的位点依据)。
+    /// 最后一次命中的 event_seq(投影绑定事件日志的位点依据)。
     pub last_seq: u64,
 }
 
@@ -236,7 +236,7 @@ pub struct TaskBoard {
 }
 
 impl TaskBoard {
- /// 折叠单条事件;非 task.* 事件为 no-op。
+    /// 折叠单条事件;非 task.* 事件为 no-op。
     pub fn apply(&mut self, event: &bm_contract::events::EventEnvelope) {
         use bm_contract::events::EventType;
         let p = &event.payload;
@@ -277,8 +277,8 @@ impl TaskBoard {
         self.applied_to_seq = self.applied_to_seq.max(event.event_seq);
     }
 
- /// 全量重建:自事件流折叠(ADR-0004 条件 1:投影重建只绑定事件日志)。
- /// 重建结果与事件顺序的折叠等价,BTreeMap 保证确定性。
+    /// 全量重建:自事件流折叠(ADR-0004 条件 1:投影重建只绑定事件日志)。
+    /// 重建结果与事件顺序的折叠等价,BTreeMap 保证确定性。
     pub fn rebuild(events: &[bm_contract::events::EventEnvelope]) -> Self {
         let mut board = Self::default();
         for e in events {
@@ -287,13 +287,13 @@ impl TaskBoard {
         board
     }
 
- /// 投影位点(已折叠到的 event_seq;可观测丢弃/重建的一致性)。
+    /// 投影位点(已折叠到的 event_seq;可观测丢弃/重建的一致性)。
     pub fn applied_to_seq(&self) -> u64 {
         self.applied_to_seq
     }
 
- /// 自 L2 行补齐条目(仅用于事件前缀已被压实的场景:tasks 表行即同一
- /// 事件流的快照态;已存在的条目不覆盖——重放优先)。
+    /// 自 L2 行补齐条目(仅用于事件前缀已被压实的场景:tasks 表行即同一
+    /// 事件流的快照态;已存在的条目不覆盖——重放优先)。
     pub fn restore_row(&mut self, task_id: &str, title: &str, state: &str, task_epoch: u64) {
         let state = TaskState::from_wire(state).unwrap_or(TaskState::Created);
         self.entries
@@ -308,7 +308,7 @@ impl TaskBoard {
             });
     }
 
- /// 条目只读视图(BTreeMap 键序 = task_id 字典序,确定性枚举)。
+    /// 条目只读视图(BTreeMap 键序 = task_id 字典序,确定性枚举)。
     pub fn entries(&self) -> impl Iterator<Item = &TaskBoardEntry> {
         self.entries.values()
     }
@@ -350,7 +350,7 @@ mod tests {
         )
     }
 
- #[test]
+    #[test]
     fn create_starts_in_created_state_with_epoch_1() {
         let t = new_task();
         assert_eq!(t.state, TaskState::Created);
@@ -360,11 +360,11 @@ mod tests {
         assert_eq!(t.created_at.as_str(), "2026-08-29T10:40:00.000Z");
     }
 
- #[test]
+    #[test]
     fn happy_path_lifecycle_follows_transition_table() {
         let mut t = new_task();
         let clock = MockClock::at_ms(BASE_MS);
- // created→running→paused→running→cancelled(GT-03 场景 B 主链)
+        // created→running→paused→running→cancelled(GT-03 场景 B 主链)
         let (f, to, g) = t.transition(TaskState::Running, None, clock.now()).unwrap();
         assert_eq!(
             (f.as_str(), to.as_str(), g),
@@ -388,7 +388,7 @@ mod tests {
             ("running", "cancelled", "task_cancelled")
         );
         assert!(t.is_terminal());
- // 终态不可迁出
+        // 终态不可迁出
         assert_eq!(
             t.transition(TaskState::Running, None, clock.now()),
             Err(TaskError::IllegalTransition {
@@ -398,37 +398,37 @@ mod tests {
         );
     }
 
- #[test]
+    #[test]
     fn completion_gate_requires_verified_verdict() {
         let mut t = new_task();
         let clock = MockClock::at_ms(BASE_MS);
         t.transition(TaskState::Running, None, clock.now()).unwrap();
 
- // 无核验结论(None)→ 拒绝,状态不变
+        // 无核验结论(None)→ 拒绝,状态不变
         assert_eq!(
             t.transition(TaskState::Completed, None, clock.now()),
             Err(TaskError::UnverifiedCompletion)
         );
         assert_eq!(t.state, TaskState::Running, "拒绝后状态不变");
- // 核验结论 = unverified(false)→ 拒绝(声称完成不算,基线 §20)
+        // 核验结论 = unverified(false)→ 拒绝(声称完成不算,基线 §20)
         assert_eq!(
             t.transition(TaskState::Completed, Some(false), clock.now()),
             Err(TaskError::UnverifiedCompletion)
         );
- // 核验结论 = verified(true)→ 放行(guard = verified_completion)
+        // 核验结论 = verified(true)→ 放行(guard = verified_completion)
         let (_, to, g) = t
             .transition(TaskState::Completed, Some(true), clock.now())
             .unwrap();
         assert_eq!((to.as_str(), g), ("completed", "verified_completion"));
     }
 
- #[test]
+    #[test]
     fn blocked_has_no_direct_exit_to_completed() {
         let mut t = new_task();
         let clock = MockClock::at_ms(BASE_MS);
         t.transition(TaskState::Running, None, clock.now()).unwrap();
         t.transition(TaskState::Blocked, None, clock.now()).unwrap();
- // blocked 直达 completed 无边(硬顶后必须先 user_resolved)
+        // blocked 直达 completed 无边(硬顶后必须先 user_resolved)
         assert_eq!(
             t.transition(TaskState::Completed, Some(true), clock.now()),
             Err(TaskError::IllegalTransition {
@@ -436,7 +436,7 @@ mod tests {
                 to: TaskState::Completed
             })
         );
- // user_resolved 回 running 后才可核验完成
+        // user_resolved 回 running 后才可核验完成
         t.transition(TaskState::Running, None, clock.now()).unwrap();
         assert!(
             t.transition(TaskState::Completed, Some(true), clock.now())
@@ -444,14 +444,14 @@ mod tests {
         );
     }
 
- #[test]
+    #[test]
     fn epoch_gate_rejects_stale_commands_and_takeover_is_monotonic() {
         let mut t = new_task();
         t.require_epoch(1).expect("当前 epoch 命令放行");
- // 接管:epoch 递增
+        // 接管:epoch 递增
         assert_eq!(t.takeover(), 2);
         assert_eq!(t.takeover(), 3, "接管权可连续取得,单调递增");
- // 过期 epoch 命令:Stale 拒绝(ADR-0004 条件 3)
+        // 过期 epoch 命令:Stale 拒绝(ADR-0004 条件 3)
         assert_eq!(
             t.require_epoch(1),
             Err(TaskError::StaleEpoch {
@@ -469,7 +469,7 @@ mod tests {
         t.require_epoch(3).expect("最新 epoch 放行");
     }
 
- #[test]
+    #[test]
     fn task_from_row_roundtrips_payload_and_state() {
         let t = new_task();
         let row = crate::ports::persist::TaskStateRow {

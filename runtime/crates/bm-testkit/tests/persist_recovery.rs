@@ -23,8 +23,8 @@ fn craft_crash_scene(store: &PersistStore, sess: &BmId, agent: &BmId, op: &BmId)
     use bm_contract::events::{EventEnvelope, EventType};
     use serde_json::json;
     let ids = SeqIdGen::new();
- // M7 S1:真实运行时在会话创建时已持久 agent 的 model.invoke Grant;
- // 崩溃场景必须如实包含,否则恢复后回合被 Broker 默认拒绝(ADR-0006)。
+    // M7 S1:真实运行时在会话创建时已持久 agent 的 model.invoke Grant;
+    // 崩溃场景必须如实包含,否则恢复后回合被 Broker 默认拒绝(ADR-0006)。
     let grant = bm_core::butler::model_grant_for(&ids, agent.as_str(), chrono::Utc::now());
     let _ = store.save_grant(bm_persist::sqlite_state::GrantRow {
         id: grant.grant_id.as_str(),
@@ -97,7 +97,7 @@ async fn t20_cross_process_resume_and_continue() {
     let rig1 = rig_on(dir.path(), vec![Step::ok("第一答", 412, 58)]).await;
     let (sess, agent) = rig1.create_session().await.expect("会话创建");
     let receipt = rig1.send(&sess, &agent, "第一问").await.expect("回合发起");
- // 等终态
+    // 等终态
     loop {
         let r = rig1
             .handle
@@ -113,15 +113,15 @@ async fn t20_cross_process_resume_and_continue() {
     }
     let rig1_events = rig1.all_events().await;
     let first_log_len = rig1_events.len();
- // 无会话关联的事件数(runtime.started + M5 起的 12 条 bootstrap Grant 等):
- // resume 补发流只含会话关联事件(合同 events.poll 语义)
+    // 无会话关联的事件数(runtime.started + M5 起的 12 条 bootstrap Grant 等):
+    // resume 补发流只含会话关联事件(合同 events.poll 语义)
     let uncorrelated = rig1_events
         .iter()
         .filter(|e| e.session_id.is_none())
         .count();
     rig1.handle.stop("restart").await;
 
- // 同目录启动第二台 Runtime:恢复 + 跨进程 resume
+    // 同目录启动第二台 Runtime:恢复 + 跨进程 resume
     let rig2 = rig_on(dir.path(), vec![Step::ok("第二答", 100, 50)]).await;
 
     let resumed = rig2
@@ -143,15 +143,15 @@ async fn t20_cross_process_resume_and_continue() {
         resumed.agent_state,
         bm_contract::states::AgentState::Running
     );
- // resume 补发的是【会话过滤】后的事件:无会话关联的事件
- // (runtime.started + bootstrap Grant 等)不入补发流(合同 events.poll 语义)
+    // resume 补发的是【会话过滤】后的事件:无会话关联的事件
+    // (runtime.started + bootstrap Grant 等)不入补发流(合同 events.poll 语义)
     assert_eq!(
         resumed.events.len(),
         first_log_len - uncorrelated,
         "resume 自日志补发全部会话历史"
     );
 
- // 预算账本恢复:turns_used=1 → 新回合 turn_index=2(INV-7 跨重启)
+    // 预算账本恢复:turns_used=1 → 新回合 turn_index=2(INV-7 跨重启)
     let receipt2 = rig2
         .send(&sess, &agent, "第二问")
         .await
@@ -173,14 +173,14 @@ async fn t20_cross_process_resume_and_continue() {
 
     let events = rig2.all_events().await;
     assert_event_stream_wellformed(&events);
- // INV-3 跨重启连续:seq 无断档
+    // INV-3 跨重启连续:seq 无断档
     let recovered = events
         .iter()
         .find(|e| e.event_type == EventType::RuntimeRecovered)
         .expect("存在 runtime.recovered");
     assert_eq!(recovered.payload["interrupted_recovered"], 0);
     assert_eq!(recovered.payload["replayed"], 0, "正常停机无修复窗口");
- // 第二回合 turn_index = 2
+    // 第二回合 turn_index = 2
     let started: Vec<_> = events
         .iter()
         .filter(|e| e.event_type == EventType::AgentTurnStarted)
@@ -206,10 +206,10 @@ async fn t21_interrupted_operation_recovered_with_audit() {
         let store = PersistStore::open(dir.path()).expect("打开");
         craft_crash_scene(&store, &sess, &agent, &op);
         assert_eq!(store.last_log_seq().expect("4 条"), 4);
- // drop = 模拟进程在此刻死亡(operation 永远停在 running)
+        // drop = 模拟进程在此刻死亡(operation 永远停在 running)
     }
 
- // 重启:恢复流程必须把 running 落为 interrupted 并留审计事件
+    // 重启:恢复流程必须把 running 落为 interrupted 并留审计事件
     let rig = rig_on(dir.path(), vec![Step::ok("续答", 10, 5)]).await;
 
     let events = rig.all_events().await;
@@ -249,14 +249,14 @@ async fn t21_interrupted_operation_recovered_with_audit() {
         recovered.payload["last_applied_seq"], 4,
         "修复窗口 = 崩溃前全部 4 条"
     );
- // 验证 bus.resumed 发射
+    // 验证 bus.resumed 发射
     let bus_resumed = events
         .iter()
         .find(|e| e.event_type == EventType::BusResumed)
         .expect("存在 bus.resumed");
     assert_eq!(bus_resumed.payload["component"], "event_bus");
 
- // 恢复后:同一 agent 可接新单(claim 语义,M2.6 前半),收据仍可查询(INV-6)
+    // 恢复后:同一 agent 可接新单(claim 语义,M2.6 前半),收据仍可查询(INV-6)
     let old_receipt = rig
         .handle
         .operations_get(GetOperationParams {
@@ -277,7 +277,7 @@ async fn t21_interrupted_operation_recovered_with_audit() {
 
 #[tokio::test]
 async fn t25_claim_with_input_content_redrives_turn() {
- // 与 t21 同场景,但崩溃前保存了输入原文 → 恢复必须自动 claim 续跑至终态
+    // 与 t21 同场景,但崩溃前保存了输入原文 → 恢复必须自动 claim 续跑至终态
     let dir = tempfile::tempdir().expect("临时目录");
     let ids = SeqIdGen::new();
     let sess: BmId = ids.next_id("sess");
@@ -324,7 +324,7 @@ async fn t25_claim_with_input_content_redrives_turn() {
 
 #[tokio::test]
 async fn t26_outcome_unknown_requires_ruling_not_retry() {
- // INV-10/11:outcome_unknown 只能经核验/裁定结束;普通重试不得触碰
+    // INV-10/11:outcome_unknown 只能经核验/裁定结束;普通重试不得触碰
     let dir = tempfile::tempdir().expect("临时目录");
     let ids = SeqIdGen::new();
     let sess: BmId = ids.next_id("sess");
@@ -408,8 +408,8 @@ async fn t26_outcome_unknown_requires_ruling_not_retry() {
 
 #[tokio::test]
 async fn t27_cancel_marked_before_crash_restores_stopped_not_running() {
- // 恢复必须尊重取消意图(Resuming→Stopped,turn_was_stopping 契约边),
- // 不得复活接单、不得凭输入原文重驱回合烧模型调用。
+    // 恢复必须尊重取消意图(Resuming→Stopped,turn_was_stopping 契约边),
+    // 不得复活接单、不得凭输入原文重驱回合烧模型调用。
     let dir = tempfile::tempdir().expect("临时目录");
     let ids = SeqIdGen::new();
     let sess: BmId = ids.next_id("sess");
@@ -419,15 +419,15 @@ async fn t27_cancel_marked_before_crash_restores_stopped_not_running() {
     {
         let store = PersistStore::open(dir.path()).expect("打开");
         craft_crash_scene(&store, &sess, &agent, &op);
- // 输入原文在场(若无视取消标记,claim 会自动重驱——正是要堵的路径)
+        // 输入原文在场(若无视取消标记,claim 会自动重驱——正是要堵的路径)
         store
             .save_op_input(op.as_str(), "崩溃前用户已取消的问题")
             .expect("保存输入");
- // 用户取消请求已落标记(崩溃发生在回合边界落定前)
+        // 用户取消请求已落标记(崩溃发生在回合边界落定前)
         store
             .mark_op_cancelled(op.as_str(), "2026-09-05T00:00:00Z")
             .expect("写取消标记");
- // drop = 模拟进程在此刻死亡
+        // drop = 模拟进程在此刻死亡
     }
 
     let rig = rig_on(dir.path(), vec![Step::ok("不该被调用", 30, 15)]).await;
@@ -435,7 +435,7 @@ async fn t27_cancel_marked_before_crash_restores_stopped_not_running() {
     let events = rig.all_events().await;
     assert_event_stream_wellformed(&events);
 
- // operation:running→interrupted(崩溃语义)→ cancelled(user_ruling)
+    // operation:running→interrupted(崩溃语义)→ cancelled(user_ruling)
     let to_cancelled = events
         .iter()
         .find(|e| {
@@ -446,7 +446,7 @@ async fn t27_cancel_marked_before_crash_restores_stopped_not_running() {
         .expect("取消标记使 op 落 cancelled");
     assert_eq!(to_cancelled.payload["reason_code"], "user_ruling");
 
- // agent:agent.cancelled 在案,且此后无 agent.resumed(不复活)
+    // agent:agent.cancelled 在案,且此后无 agent.resumed(不复活)
     let cancelled = events
         .iter()
         .find(|e| e.event_type == EventType::AgentCancelled)
@@ -459,14 +459,14 @@ async fn t27_cancel_marked_before_crash_restores_stopped_not_running() {
         "已取消的 agent 不得复活接单"
     );
 
- // 恢复后 agent 为 stopped:同会话发消息被拒(停止不可接单,取消是唯一入口语义)
+    // 恢复后 agent 为 stopped:同会话发消息被拒(停止不可接单,取消是唯一入口语义)
     let err = rig
         .send(&sess, &agent, "取消后不应接单")
         .await
         .expect_err("stopped agent 不得接单");
     assert!(matches!(err, bm_core::CoreError::Semantic(_, _)));
 
- // 旧收据:终态 cancelled
+    // 旧收据:终态 cancelled
     let old_receipt = rig
         .handle
         .operations_get(GetOperationParams {
@@ -481,8 +481,8 @@ async fn t27_cancel_marked_before_crash_restores_stopped_not_running() {
 
 #[tokio::test]
 async fn t28_session_chat_ledger_rebuilt_after_restart() {
- // 重启续聊():重启后同会话再发消息,模型请求必须带上
- // 重建的历史台账。
+    // 重启续聊():重启后同会话再发消息,模型请求必须带上
+    // 重建的历史台账。
     let dir = tempfile::tempdir().expect("临时目录");
     let mut last_receipt = None;
     {
@@ -514,7 +514,7 @@ async fn t28_session_chat_ledger_rebuilt_after_restart() {
     }
     let (sess, agent) = last_receipt.expect("会话信息");
 
- // 重启:同目录,同会话继续
+    // 重启:同目录,同会话继续
     let rig2 = rig_on(dir.path(), vec![Step::ok("回答三", 30, 15)]).await;
     let receipt = rig2
         .send(&sess, &agent, "问题三")
@@ -535,8 +535,8 @@ async fn t28_session_chat_ledger_rebuilt_after_restart() {
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
 
- // 断言:第三轮的模型调用快照(无 kind 的行)里,请求 messages 含
- // 重建出的前两轮历史
+    // 断言:第三轮的模型调用快照(无 kind 的行)里,请求 messages 含
+    // 重建出的前两轮历史
     let text = std::fs::read_to_string(dir.path().join("context-log.jsonl")).expect("读日志");
     let last_snapshot = text
         .lines()
@@ -563,7 +563,7 @@ async fn t28_session_chat_ledger_rebuilt_after_restart() {
 
 #[tokio::test]
 async fn t29_session_delete_tombstone_and_erase() {
- // 会话删除 A+B():墓碑 + 对话原文擦除,一次落地。
+    // 会话删除 A+B():墓碑 + 对话原文擦除,一次落地。
     let dir = tempfile::tempdir().expect("临时目录");
     let rig1 = rig_on(
         dir.path(),
@@ -587,12 +587,12 @@ async fn t29_session_delete_tombstone_and_erase() {
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
     }
- // 前置:context-log 里有该会话的行
+    // 前置:context-log 里有该会话的行
     let log_path = dir.path().join("context-log.jsonl");
     let before = std::fs::read_to_string(&log_path).expect("读日志");
     assert!(before.contains(sess.as_str()) && before.contains("要被删除的问题一"));
 
- // 删除
+    // 删除
     let result = rig1
         .handle
         .session_delete(
@@ -609,10 +609,10 @@ async fn t29_session_delete_tombstone_and_erase() {
         result.purged_lines
     );
 
- // ① context-log 无该会话行
+    // ① context-log 无该会话行
     let after = std::fs::read_to_string(&log_path).expect("读日志");
     assert!(!after.contains(sess.as_str()), "context-log 不得残留会话行");
- // ② 持久侧:墓碑在场;input_content 全空;session 行已删
+    // ② 持久侧:墓碑在场;input_content 全空;session 行已删
     {
         let store = bm_persist::PersistStore::open(dir.path()).expect("重开");
         let tomb = store
@@ -637,7 +637,7 @@ async fn t29_session_delete_tombstone_and_erase() {
             .expect("读会话行");
         assert!(sess_rows.is_empty(), "会话行已删");
     }
- // ③ resume 拒绝(不可继续聊已删会话)
+    // ③ resume 拒绝(不可继续聊已删会话)
     let err = rig1
         .handle
         .session_resume(
@@ -650,11 +650,11 @@ async fn t29_session_delete_tombstone_and_erase() {
         .await
         .expect_err("已删会话 resume 必须失败");
     assert!(matches!(err, bm_core::CoreError::Semantic(_, _)));
- // ④ 再发消息拒绝
+    // ④ 再发消息拒绝
     assert!(rig1.send(&sess, &agent, "还收吗").await.is_err());
     rig1.handle.stop("test_done").await;
 
- // ⑤ 重启后:台账重建跳过墓碑(会话行已删,不会复活),回放端点无残留
+    // ⑤ 重启后:台账重建跳过墓碑(会话行已删,不会复活),回放端点无残留
     let rig2 = rig_on(dir.path(), vec![Step::ok("新答", 10, 5)]).await;
     let log_after_restart = std::fs::read_to_string(&log_path).expect("读日志");
     assert!(!log_after_restart.contains(sess.as_str()));

@@ -17,22 +17,22 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 pub struct OpenAiConnector {
- /// 形如 `https://host/v1`;请求发往 `{base_url}/chat/completions`。
+    /// 形如 `https://host/v1`;请求发往 `{base_url}/chat/completions`。
     base_url: String,
     store: Arc<dyn SecretStore>,
     http: reqwest::Client,
- /// OpenCode Go 网关要求的稳定会话标识(请求头 `x-opencode-session`;
- /// )。语义 =
- /// 每个对话一个稳定 id,供网关做路由优化与 prompt 缓存亲和;本实现给
- /// 连接器实例级稳定 id(env BOEN_OPENCODE_SESSION_ID 可固定,缺省进程
- /// 内随机),网关侧仅缓存亲和损失,无功能影响。
+    /// OpenCode Go 网关要求的稳定会话标识(请求头 `x-opencode-session`;
+    /// )。语义 =
+    /// 每个对话一个稳定 id,供网关做路由优化与 prompt 缓存亲和;本实现给
+    /// 连接器实例级稳定 id(env BOEN_OPENCODE_SESSION_ID 可固定,缺省进程
+    /// 内随机),网关侧仅缓存亲和损失,无功能影响。
     session_tag: String,
 }
 
 impl OpenAiConnector {
     pub fn new(base_url: impl Into<String>, store: Arc<dyn SecretStore>) -> Self {
- // UA 必带:部分网关(opencode zen 等)套 Cloudflare,无 UA 请求
- // 403/1010 拒收;自报客户端身份即放行
+        // UA 必带:部分网关(opencode zen 等)套 Cloudflare,无 UA 请求
+        // 403/1010 拒收;自报客户端身份即放行
         let http = reqwest::Client::builder()
             .user_agent(concat!("boenmind-server/", env!("CARGO_PKG_VERSION")))
             .build()
@@ -61,22 +61,22 @@ impl OpenAiConnector {
 #[derive(serde::Serialize)]
 pub(crate) struct WireMessage<'a> {
     pub(crate) role: &'a str,
- // ADR-0022:assistant 携带 tool_calls 时 content 允许为 null(OpenAI
- // 形态);其余角色恒 Some。
- #[serde(skip_serializing_if = "Option::is_none")]
+    // ADR-0022:assistant 携带 tool_calls 时 content 允许为 null(OpenAI
+    // 形态);其余角色恒 Some。
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) content: Option<&'a str>,
- /// role="tool" 时本结果对应的 tool_call id(因果链对齐)。
- #[serde(skip_serializing_if = "Option::is_none")]
+    /// role="tool" 时本结果对应的 tool_call id(因果链对齐)。
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) tool_call_id: Option<&'a str>,
- /// assistant 消息原样透传模型发起的工具调用。
- #[serde(skip_serializing_if = "Option::is_none")]
+    /// assistant 消息原样透传模型发起的工具调用。
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) tool_calls: Option<Vec<WireToolCallOut<'a>>>,
 }
 
 #[derive(serde::Serialize)]
 pub(crate) struct WireToolCallOut<'a> {
     id: &'a str,
- #[serde(rename = "type")]
+    #[serde(rename = "type")]
     kind: &'a str,
     function: WireToolFnOut<'a>,
 }
@@ -110,7 +110,7 @@ fn to_wire_messages(messages: &[bm_contract::connector::Message]) -> Vec<WireMes
             Role::Assistant => WireMessage {
                 role: "assistant",
                 content: match m.tool_calls.as_ref() {
- // 纯工具调用无文本 → content 置 null(OpenAI 形态)
+                    // 纯工具调用无文本 → content 置 null(OpenAI 形态)
                     Some(_) if m.content.is_empty() => None,
                     _ => Some(&m.content),
                 },
@@ -150,15 +150,15 @@ fn to_wire_messages(messages: &[bm_contract::connector::Message]) -> Vec<WireMes
 pub(crate) struct WireRequest<'a> {
     pub(crate) model: &'a str,
     pub(crate) messages: Vec<WireMessage<'a>>,
- #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) temperature: Option<f64>,
- #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) max_tokens: Option<u32>,
     pub(crate) stream: bool,
- /// W4 对话工具闭环:直通工具(OpenAI function 格式)透传。
- #[serde(skip_serializing_if = "Option::is_none")]
+    /// W4 对话工具闭环:直通工具(OpenAI function 格式)透传。
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) tools: Option<serde_json::Value>,
- #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) tool_choice: Option<&'a str>,
 }
 
@@ -177,13 +177,13 @@ pub(crate) struct WireChoice {
 #[derive(serde::Deserialize)]
 pub(crate) struct WireMsg {
     pub(crate) content: Option<String>,
- #[serde(default)]
+    #[serde(default)]
     tool_calls: Option<Vec<WireToolCall>>,
 }
 
 #[derive(serde::Deserialize)]
 struct WireToolCall {
- #[serde(default)]
+    #[serde(default)]
     id: Option<String>,
     function: Option<WireToolFn>,
 }
@@ -191,7 +191,7 @@ struct WireToolCall {
 #[derive(serde::Deserialize)]
 struct WireToolFn {
     name: Option<String>,
- #[serde(default)]
+    #[serde(default)]
     arguments: Option<String>,
 }
 
@@ -199,11 +199,11 @@ struct WireToolFn {
 pub(crate) struct WireUsage {
     prompt_tokens: Option<u64>,
     completion_tokens: Option<u64>,
- /// OpenAI 兼容细分:提示词缓存命中(各家网关实现不一,缺省不报)。
- #[serde(default)]
+    /// OpenAI 兼容细分:提示词缓存命中(各家网关实现不一,缺省不报)。
+    #[serde(default)]
     prompt_tokens_details: Option<WirePromptTokensDetails>,
- /// 推理思考分账(推理模型;缺省不报)。
- #[serde(default)]
+    /// 推理思考分账(推理模型;缺省不报)。
+    #[serde(default)]
     completion_tokens_details: Option<WireCompletionTokensDetails>,
 }
 
@@ -218,7 +218,7 @@ struct WireCompletionTokensDetails {
 }
 
 impl WireUsage {
- /// 网报 usage → 合同 Usage(细分字段缺省如实为 None,不估算冒充)。
+    /// 网报 usage → 合同 Usage(细分字段缺省如实为 None,不估算冒充)。
     pub(crate) fn into_usage(self) -> Usage {
         Usage {
             tokens_in: self.prompt_tokens.unwrap_or(0),
@@ -236,13 +236,13 @@ impl WireUsage {
 #[derive(serde::Deserialize)]
 struct WireStreamChunk {
     choices: Vec<WireStreamChoice>,
- #[serde(default)]
+    #[serde(default)]
     usage: Option<WireUsage>,
 }
 
 #[derive(serde::Deserialize)]
 struct WireStreamChoice {
- #[serde(default)]
+    #[serde(default)]
     delta: Option<WireStreamDelta>,
     finish_reason: Option<String>,
 }
@@ -250,24 +250,24 @@ struct WireStreamChoice {
 #[derive(serde::Deserialize)]
 struct WireStreamDelta {
     content: Option<String>,
- #[serde(default)]
+    #[serde(default)]
     tool_calls: Option<Vec<WireStreamToolCall>>,
 }
 
 #[derive(serde::Deserialize)]
 struct WireStreamToolCall {
- #[serde(default)]
+    #[serde(default)]
     index: Option<usize>,
- #[serde(default)]
+    #[serde(default)]
     id: Option<String>,
     function: Option<WireStreamToolFn>,
 }
 
 #[derive(serde::Deserialize)]
 struct WireStreamToolFn {
- #[serde(default)]
+    #[serde(default)]
     name: Option<String>,
- #[serde(default)]
+    #[serde(default)]
     arguments: Option<String>,
 }
 
@@ -280,7 +280,7 @@ fn completed_stream(
     model: &str,
     tool_calls: Vec<ToolCallPayload>,
 ) -> InvokeResponse {
- // finish_reason 按合同三值收敛;tool_calls 随 Completed 携带(W4)。
+    // finish_reason 按合同三值收敛;tool_calls 随 Completed 携带(W4)。
     let finish_reason = match finish_raw {
         "length" => FinishReason::Length,
         "tool_calls" => FinishReason::ToolCalls,
@@ -368,8 +368,8 @@ impl From<reqwest::Error> for OpenAiErr {
 pub(crate) fn map_status(status: u16, attempt: u32) -> InvokeResponse {
     match status {
         429 | 500..=599 => failed(ErrorCode::Unavailable, true, attempt),
- // P1():4xx(鉴权/参数错)归非故障类——不再计入 provider
- // 熔断(401 反复失败不该把通道熔断,掩盖配置错误)。
+        // P1():4xx(鉴权/参数错)归非故障类——不再计入 provider
+        // 熔断(401 反复失败不该把通道熔断,掩盖配置错误)。
         401 | 403 => failed(ErrorCode::PermissionDenied, false, attempt),
         400..=499 => failed(ErrorCode::ValidationFailed, false, attempt),
         _ => failed(ErrorCode::Internal, false, attempt),
@@ -395,7 +395,7 @@ fn build_body<'a>(req: &'a InvokeRequest, model: &'a str, stream: bool) -> WireR
 }
 
 impl OpenAiConnector {
- /// POST 链(预算超时防悬挂;会话标签头),两个入口共用。
+    /// POST 链(预算超时防悬挂;会话标签头),两个入口共用。
     fn build_request(
         &self,
         body: &WireRequest<'_>,
@@ -467,8 +467,8 @@ impl ModelConnector for OpenAiConnector {
                     OpenAiErr::Http(e) => e,
                     OpenAiErr::Status { .. } => unreachable!("上方已拦截"),
                 };
- // 解码失败 = 网关响应不兼容(内部问题,不盲重试);
- // 超时/传输故障 = 可重试不可用;HTTP 状态另行映射。
+                // 解码失败 = 网关响应不兼容(内部问题,不盲重试);
+                // 超时/传输故障 = 可重试不可用;HTTP 状态另行映射。
                 if e.is_decode() {
                     return failed(ErrorCode::Internal, false, attempt);
                 }
@@ -483,7 +483,7 @@ impl ModelConnector for OpenAiConnector {
             }
         };
 
- // finish_reason 三值收敛;tool_calls 响应回喂对话循环(W4)。
+        // finish_reason 三值收敛;tool_calls 响应回喂对话循环(W4)。
         let finish = wire
             .choices
             .first()
@@ -530,17 +530,17 @@ impl ModelConnector for OpenAiConnector {
             finish_reason,
             usage: usage.unwrap_or_default(),
             model_id: model,
- // latency 由调用方(turn 循环)按真实钟测量;此处给 0 占位,
- // 与 MockConnector 的「声明值」口径一致(基线 9.7)。
+            // latency 由调用方(turn 循环)按真实钟测量;此处给 0 占位,
+            // 与 MockConnector 的「声明值」口径一致(基线 9.7)。
             latency_ms: 0,
             stream_interrupted: false,
         }
     }
 
- /// 真 SSE 流式(stream=true):逐块回调增量;按字节缓冲整行再解码
- /// (防多字节字符被块边界劈开)。损坏块跳过不致命;[DONE] 或流自然
- /// 结束即聚合返回。中途传输故障:已收内容按 stream_interrupted=true
- /// 返回(可用即用),零内容则按可重试不可用上抛。
+    /// 真 SSE 流式(stream=true):逐块回调增量;按字节缓冲整行再解码
+    /// (防多字节字符被块边界劈开)。损坏块跳过不致命;[DONE] 或流自然
+    /// 结束即聚合返回。中途传输故障:已收内容按 stream_interrupted=true
+    /// 返回(可用即用),零内容则按可重试不可用上抛。
     async fn invoke_stream(
         &self,
         req: InvokeRequest,
@@ -573,44 +573,44 @@ impl ModelConnector for OpenAiConnector {
         let mut content = String::new();
         let mut finish = "stop".to_string();
         let mut usage: Option<WireUsage> = None;
- // W4:流式 tool_calls 分片聚合(按 index 拼 id/name/arguments)。
+        // W4:流式 tool_calls 分片聚合(按 index 拼 id/name/arguments)。
         let mut tc_parts: std::collections::BTreeMap<usize, (String, String, String)> =
             std::collections::BTreeMap::new();
         loop {
             let chunk = tokio::select! {
-                _ = cancel.cancelled() => {
-                    if content.is_empty() && tc_parts.is_empty() {
-                        return failed(ErrorCode::Cancelled, false, attempt);
-                    }
-                    let tcs = tc_parts
-                        .values()
-                        .map(|(id, _n, ar)| ToolCallPayload {
-                            id: id.clone(),
-                            name: String::new(),
-                            arguments: ar.clone(),
-                        })
-                        .collect();
-                    return completed_stream(content, &finish, usage.take(), true, &model, tcs);
-                }
-                c = resp.chunk() => match c {
-                    Ok(c) => c,
-                    Err(e) => {
- // 中途传输故障:已收内容可用即用(如实标记中断)。
-                        if content.is_empty() && tc_parts.is_empty() {
-                            return transport_failed(&e, attempt);
-                        }
-                        let tcs = tc_parts
-                            .values()
-                            .map(|(id, _n, ar)| ToolCallPayload {
-                                id: id.clone(),
-                                name: String::new(),
-                                arguments: ar.clone(),
-                            })
-                            .collect();
-                        return completed_stream(content, &finish, usage.take(), true, &model, tcs);
-                    }
-                },
-            };
+                           _ = cancel.cancelled() => {
+                               if content.is_empty() && tc_parts.is_empty() {
+                                   return failed(ErrorCode::Cancelled, false, attempt);
+                               }
+                               let tcs = tc_parts
+                                   .values()
+                                   .map(|(id, _n, ar)| ToolCallPayload {
+                                       id: id.clone(),
+                                       name: String::new(),
+                                       arguments: ar.clone(),
+                                   })
+                                   .collect();
+                               return completed_stream(content, &finish, usage.take(), true, &model, tcs);
+                           }
+                           c = resp.chunk() => match c {
+                               Ok(c) => c,
+                               Err(e) => {
+            // 中途传输故障:已收内容可用即用(如实标记中断)。
+                                   if content.is_empty() && tc_parts.is_empty() {
+                                       return transport_failed(&e, attempt);
+                                   }
+                                   let tcs = tc_parts
+                                       .values()
+                                       .map(|(id, _n, ar)| ToolCallPayload {
+                                           id: id.clone(),
+                                           name: String::new(),
+                                           arguments: ar.clone(),
+                                       })
+                                       .collect();
+                                   return completed_stream(content, &finish, usage.take(), true, &model, tcs);
+                               }
+                           },
+                       };
             let Some(bytes) = chunk else { break };
             buf.extend_from_slice(&bytes);
             while let Some(pos) = buf.iter().position(|&b| b == b'\n') {
@@ -631,7 +631,7 @@ impl ModelConnector for OpenAiConnector {
                         .collect();
                     return completed_stream(content, &finish, usage.take(), false, &model, tcs);
                 }
- // 损坏块跳过(网关行为差异容错,不致命)。
+                // 损坏块跳过(网关行为差异容错,不致命)。
                 let Ok(chunk_json) = serde_json::from_str::<WireStreamChunk>(data) else {
                     continue;
                 };
@@ -651,10 +651,10 @@ impl ModelConnector for OpenAiConnector {
                         }
                         if let Some(tcs) = &d.tool_calls {
                             for tc in tcs {
- // P1-20():缺 index 时按
- // id 归槽——同块多个缺 index 的 tool_calls 不再
- // 全部挤进 0 号槽互相拼接成畸形调用;id 亦缺
- // 则退回 0(单工具调用的常见网关形态)。
+                                // P1-20():缺 index 时按
+                                // id 归槽——同块多个缺 index 的 tool_calls 不再
+                                // 全部挤进 0 号槽互相拼接成畸形调用;id 亦缺
+                                // 则退回 0(单工具调用的常见网关形态)。
                                 let idx = match tc.index {
                                     Some(i) => i,
                                     None => {
@@ -706,10 +706,10 @@ impl ModelConnector for OpenAiConnector {
 mod stream_decode_tests {
     use super::*;
 
- /// t143:流式线格式——多块解析、finish_reason 收敛、损坏行容错(跳过不致命)。
- #[test]
+    /// t143:流式线格式——多块解析、finish_reason 收敛、损坏行容错(跳过不致命)。
+    #[test]
     fn t143_sse_chunk_decode_and_completed_aggregation() {
- // 数据块:增量 + finish_reason + usage 各自独立到达(OpenAI 线格式)
+        // 数据块:增量 + finish_reason + usage 各自独立到达(OpenAI 线格式)
         let chunk1: WireStreamChunk =
             serde_json::from_str(r#"{"choices":[{"delta":{"content":"你"}}]}"#).expect("块1");
         assert_eq!(
@@ -724,10 +724,10 @@ mod stream_decode_tests {
         .expect("块2");
         assert_eq!(chunk2.usage.as_ref().unwrap().completion_tokens, Some(3));
 
- // 损坏行 → None(调用方跳过,不致命)
+        // 损坏行 → None(调用方跳过,不致命)
         assert!(serde_json::from_str::<WireStreamChunk>("{not json").is_err());
 
- // finish_reason 收敛:length → Length,其余 → Stop
+        // finish_reason 收敛:length → Length,其余 → Stop
         let done = completed_stream(
             "你好".into(),
             "length",
@@ -756,9 +756,9 @@ mod stream_decode_tests {
         }
     }
 
- /// usage 细分字段透传:推理思考与缓存命中如实进合同 Usage;
- /// 网关不报 → None(前端据此显示「未上报」,绝不估算冒充)。
- #[test]
+    /// usage 细分字段透传:推理思考与缓存命中如实进合同 Usage;
+    /// 网关不报 → None(前端据此显示「未上报」,绝不估算冒充)。
+    #[test]
     fn t_usage_details_reasoning_and_cached() {
         let wire: WireUsage = serde_json::from_str(
             r#"{"prompt_tokens":100,"completion_tokens":40,
@@ -771,7 +771,7 @@ mod stream_decode_tests {
         assert_eq!(u.tokens_reasoning, Some(25));
         assert_eq!(u.tokens_cached, Some(60));
 
- // 网关口径欠缺(只有总量)→ 细分如实 None
+        // 网关口径欠缺(只有总量)→ 细分如实 None
         let bare: WireUsage =
             serde_json::from_str(r#"{"prompt_tokens":7,"completion_tokens":3}"#).unwrap();
         let b = bare.into_usage();
@@ -784,9 +784,9 @@ mod stream_decode_tests {
 mod m9_review_status_tests {
     use super::*;
 
- /// P1()验收:401/403 归 PermissionDenied(非故障类),
- /// 不再计入 provider 熔断;429 仍为可重试 Unavailable。
- #[test]
+    /// P1()验收:401/403 归 PermissionDenied(非故障类),
+    /// 不再计入 provider 熔断;429 仍为可重试 Unavailable。
+    #[test]
     fn auth_errors_are_not_provider_faults() {
         for status in [401u16, 403] {
             match map_status(status, 1) {
@@ -814,11 +814,11 @@ mod m9_review_status_tests {
         }
     }
 
- // ---- ADR-0022 协议还原:wire 形态验收 ------------------------------
+    // ---- ADR-0022 协议还原:wire 形态验收 ------------------------------
 
     use bm_contract::connector::{Message, ToolCallPayload};
 
- #[test]
+    #[test]
     fn wire_tool_result_uses_native_role_with_call_id() {
         let msgs = vec![
             Message {
@@ -846,10 +846,10 @@ mod m9_review_status_tests {
         ];
         let wire = to_wire_messages(&msgs);
         let json = serde_json::to_string(&wire).expect("序列化");
- // 原生 tool 角色 + id 对齐
+        // 原生 tool 角色 + id 对齐
         assert!(json.contains("\"role\":\"tool\""), "{json}");
         assert!(json.contains("\"tool_call_id\":\"call_1\""), "{json}");
- // assistant 透传 tool_calls;纯调用无文本 → content 缺省(null)
+        // assistant 透传 tool_calls;纯调用无文本 → content 缺省(null)
         assert!(
             json.contains("\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\""),
             "{json}"
@@ -862,7 +862,7 @@ mod m9_review_status_tests {
         );
     }
 
- #[test]
+    #[test]
     fn wire_legacy_tool_without_id_falls_back_to_user() {
         let msgs = vec![Message {
             role: Role::Tool,
@@ -877,7 +877,7 @@ mod m9_review_status_tests {
         );
     }
 
- #[test]
+    #[test]
     fn wire_assistant_text_with_tool_calls_keeps_content() {
         let msgs = vec![Message {
             role: Role::Assistant,
@@ -899,7 +899,7 @@ mod m9_review_status_tests {
 mod inv13_error_detail_tests {
     use super::sanitize_detail;
 
- #[test]
+    #[test]
     fn inv13_detail_redacts_credential_and_bounded() {
         let secret = "sk-abcdef1234567890XYZ";
         let body = format!(
@@ -914,7 +914,7 @@ mod inv13_error_detail_tests {
         );
     }
 
- #[test]
+    #[test]
     fn inv13_detail_truncated_to_2000_chars() {
         let body = "x".repeat(5000);
         let d = sanitize_detail(&body, "no-secret");

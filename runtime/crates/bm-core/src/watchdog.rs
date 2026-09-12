@@ -25,13 +25,13 @@ pub const REPEAT_THRESHOLD: u32 = 3;
 pub struct TaskWatch {
     pub last_progress_at: DateTime<chrono::Utc>,
     pub last_progress_seq: u64,
- /// 最近一次成员调用签名(capability + args + outcome)的哈希。
+    /// 最近一次成员调用签名(capability + args + outcome)的哈希。
     pub last_sig: Option<u64>,
     pub repeat_count: u32,
- /// 本次停滞episode是否已通告(进度刷新后复位)。
+    /// 本次停滞episode是否已通告(进度刷新后复位)。
     pub stall_notified: bool,
- /// waiting_approval 豁免:成员调用停在审批(等人)时不判停滞/硬顶,
- /// 直到下一次非审批结果复位(基线 §20;ADR-0004 条件 6)。
+    /// waiting_approval 豁免:成员调用停在审批(等人)时不判停滞/硬顶,
+    /// 直到下一次非审批结果复位(基线 §20;ADR-0004 条件 6)。
     pub waiting_approval: bool,
 }
 
@@ -60,7 +60,7 @@ impl Default for WatchdogState {
 }
 
 impl WatchdogState {
- /// W10:装配方注入 limits 生效值(热更新同一实例字段)。
+    /// W10:装配方注入 limits 生效值(热更新同一实例字段)。
     pub fn apply_limits(&mut self, limits: &crate::limits::Limits) {
         self.stall_after_ms = limits.watchdog_stall_after_ms;
         self.hard_limit_ms = limits.watchdog_hard_limit_ms;
@@ -71,14 +71,14 @@ impl WatchdogState {
 /// 扫描判定(事实产出,不做状态变更——变更由运行时执行)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScanDecision {
- /// 停滞超阈值:发 task.stalled + reorchestration 事实事件(每episode一次)。
+    /// 停滞超阈值:发 task.stalled + reorchestration 事实事件(每episode一次)。
     Stall,
- /// 累计超硬顶:Task 转 blocked(stall_hard_limit),不再自动重启。
+    /// 累计超硬顶:Task 转 blocked(stall_hard_limit),不再自动重启。
     HardLimit,
 }
 
 impl WatchdogState {
- /// 进度信号:任何任务相关事实(状态迁移/成员/成功的成员调用)刷新。
+    /// 进度信号:任何任务相关事实(状态迁移/成员/成功的成员调用)刷新。
     pub fn mark_progress(&mut self, task_id: &str, now: DateTime<chrono::Utc>, seq: u64) {
         let w = self
             .watches
@@ -96,7 +96,7 @@ impl WatchdogState {
         w.stall_notified = false;
     }
 
- /// 成员调用签名记账:返回本次的连续重复次数(同 capability+args+outcome)。
+    /// 成员调用签名记账:返回本次的连续重复次数(同 capability+args+outcome)。
     pub fn note_call(
         &mut self,
         task_id: &str,
@@ -128,8 +128,8 @@ impl WatchdogState {
         w.repeat_count
     }
 
- /// 单 Task 扫描判定(仅 Running 态任务由调用方喂入)。
- /// 首次扫描即建档(通告标记需要稳定的状态载体)。
+    /// 单 Task 扫描判定(仅 Running 态任务由调用方喂入)。
+    /// 首次扫描即建档(通告标记需要稳定的状态载体)。
     pub fn decide(
         &mut self,
         task_id: &str,
@@ -139,9 +139,9 @@ impl WatchdogState {
         self.decide_with(task_id, created_at, now, None, None)
     }
 
- /// #30:带 Task 级覆盖的扫描判定——`stall_override_ms`/`hard_override_ms`
- /// 来自 Task 预算开放键(stall_after_ms / stall_hard_limit_ms),None =
- /// 用全局 limits 生效值。
+    /// #30:带 Task 级覆盖的扫描判定——`stall_override_ms`/`hard_override_ms`
+    /// 来自 Task 预算开放键(stall_after_ms / stall_hard_limit_ms),None =
+    /// 用全局 limits 生效值。
     pub fn decide_with(
         &mut self,
         task_id: &str,
@@ -161,7 +161,7 @@ impl WatchdogState {
                 stall_notified: false,
                 waiting_approval: false,
             });
- // waiting_approval 豁免:等的是人,不是机器
+        // waiting_approval 豁免:等的是人,不是机器
         if w.waiting_approval {
             return None;
         }
@@ -177,7 +177,7 @@ impl WatchdogState {
         None
     }
 
- /// 成员调用停在审批:置豁免位(等人不算停滞;下一次非审批结果复位)。
+    /// 成员调用停在审批:置豁免位(等人不算停滞;下一次非审批结果复位)。
     pub fn mark_waiting(&mut self, task_id: &str, now: DateTime<chrono::Utc>, seq: u64) {
         let w = self
             .watches
@@ -196,14 +196,14 @@ impl WatchdogState {
         w.waiting_approval = true;
     }
 
- /// 停滞已通告标记(事实事件发出后)。
+    /// 停滞已通告标记(事实事件发出后)。
     pub fn mark_stall_notified(&mut self, task_id: &str) {
         if let Some(w) = self.watches.get_mut(task_id) {
             w.stall_notified = true;
         }
     }
 
- /// 是否到达扫描时刻。
+    /// 是否到达扫描时刻。
     pub fn due(&self, now: DateTime<chrono::Utc>) -> bool {
         match self.next_scan_at {
             Some(t) => now >= t,
@@ -216,7 +216,7 @@ impl WatchdogState {
         self.next_scan_at = Some(now + Duration::milliseconds(self.tick_ms));
     }
 
- /// 任务移除(终态清场)。
+    /// 任务移除(终态清场)。
     pub fn forget(&mut self, task_id: &str) {
         self.watches.remove(task_id);
     }
@@ -270,41 +270,41 @@ mod tests {
 
     const BASE_MS: u128 = 1_788_000_000_000;
 
- #[test]
+    #[test]
     fn stall_and_hard_limit_decisions_follow_windows() {
         let clock = MockClock::at_ms(BASE_MS);
         let mut wd = WatchdogState::default();
         let t0 = clock.now();
- // 无进度:15 分钟内不判停滞
+        // 无进度:15 分钟内不判停滞
         assert_eq!(
             wd.decide("t1", t0, t0 + chrono::Duration::minutes(14)),
             None
         );
- // 超 15 分钟 → Stall(首次)
+        // 超 15 分钟 → Stall(首次)
         assert_eq!(
             wd.decide("t1", t0, t0 + chrono::Duration::minutes(16)),
             Some(ScanDecision::Stall)
         );
- // 通告后不再重复(直到进度刷新)
+        // 通告后不再重复(直到进度刷新)
         wd.mark_stall_notified("t1");
         assert_eq!(
             wd.decide("t1", t0, t0 + chrono::Duration::minutes(30)),
             None,
             "同episode不重复通告"
         );
- // 超 24 小时 → HardLimit(硬顶:不再自动重启,转 blocked)
+        // 超 24 小时 → HardLimit(硬顶:不再自动重启,转 blocked)
         assert_eq!(
             wd.decide("t1", t0, t0 + chrono::Duration::hours(25)),
             Some(ScanDecision::HardLimit)
         );
     }
 
- #[test]
+    #[test]
     fn task_level_window_overrides_beat_globals() {
         let clock = MockClock::at_ms(BASE_MS);
         let mut wd = WatchdogState::default();
         let t0 = clock.now();
- // Task 级 5 分钟窗口:10 分钟即判停滞(全局 15 分钟未到)
+        // Task 级 5 分钟窗口:10 分钟即判停滞(全局 15 分钟未到)
         assert_eq!(
             wd.decide_with(
                 "t1",
@@ -315,7 +315,7 @@ mod tests {
             ),
             Some(ScanDecision::Stall)
         );
- // Task 级硬顶 30 分钟:40 分钟直接 HardLimit(越过全局 24h)
+        // Task 级硬顶 30 分钟:40 分钟直接 HardLimit(越过全局 24h)
         assert_eq!(
             wd.decide_with(
                 "t2",
@@ -326,14 +326,14 @@ mod tests {
             ),
             Some(ScanDecision::HardLimit)
         );
- // None = 全局:10 分钟不判
+        // None = 全局:10 分钟不判
         assert_eq!(
             wd.decide_with("t3", t0, t0 + chrono::Duration::minutes(10), None, None),
             None
         );
     }
 
- #[test]
+    #[test]
     fn progress_refresh_resets_stall_episode() {
         let clock = MockClock::at_ms(BASE_MS);
         let mut wd = WatchdogState::default();
@@ -342,7 +342,7 @@ mod tests {
         let t1 = t0 + chrono::Duration::minutes(20);
         assert_eq!(wd.decide("t1", t0, t1), Some(ScanDecision::Stall));
         wd.mark_stall_notified("t1");
- // 进度刷新:episode 复位
+        // 进度刷新:episode 复位
         wd.mark_progress("t1", t0 + chrono::Duration::minutes(25), 9);
         assert_eq!(
             wd.decide("t1", t0, t0 + chrono::Duration::minutes(30)),
@@ -351,7 +351,7 @@ mod tests {
         );
     }
 
- #[test]
+    #[test]
     fn repeat_count_accumulates_on_same_signature() {
         let clock = MockClock::at_ms(BASE_MS);
         let mut wd = WatchdogState::default();
@@ -363,7 +363,7 @@ mod tests {
         assert_eq!(wd.note_call("t1", 42, now, 5), 1, "回到旧签名重新计数");
     }
 
- #[test]
+    #[test]
     fn watchdog_payloads_are_fact_shaped() {
         assert!(is_fact_shaped(
             &serde_json::json!({"task_id": "task_x", "trigger": "watchdog"})
@@ -377,7 +377,7 @@ mod tests {
         assert_eq!(WATCHDOG_EVENT_KEYS.len(), 8);
     }
 
- #[test]
+    #[test]
     fn tick_scheduling_is_monotonic() {
         let clock = MockClock::at_ms(BASE_MS);
         let now = clock.now();

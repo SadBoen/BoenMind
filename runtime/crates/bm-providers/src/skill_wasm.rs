@@ -28,12 +28,12 @@ const FUEL_LIMIT: u64 = 2_000_000_000;
 /// 一条已注册脚本:capability 名 → 编译缓存 + 执行参数。
 pub struct ScriptEntry {
     pub capability: String,
- /// 提供者标识(ADR-0041 热重载):`skill.<id>` 或插件声明的 provider。
- /// 按它摘除一组能力,取代原先写死的 `skill.` 前缀拼接。
+    /// 提供者标识(ADR-0041 热重载):`skill.<id>` 或插件声明的 provider。
+    /// 按它摘除一组能力,取代原先写死的 `skill.` 前缀拼接。
     pub provider: String,
- /// 装载来源(ADR-0042):技能(skills.json)还是通用插件(plugins.json)。
- /// 显式记录来源,避免用 provider 名字前缀(`skill.`)反推——那正是被
- /// 反复批评的"前缀猜代替声明"。
+    /// 装载来源(ADR-0042):技能(skills.json)还是通用插件(plugins.json)。
+    /// 显式记录来源,避免用 provider 名字前缀(`skill.`)反推——那正是被
+    /// 反复批评的"前缀猜代替声明"。
     pub origin: PluginOrigin,
     pub wasm_path: PathBuf,
     pub module: Module,
@@ -43,9 +43,9 @@ pub struct ScriptEntry {
 /// wasm 能力的装载来源。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PluginOrigin {
- /// skills.json 声明的技能脚本。
+    /// skills.json 声明的技能脚本。
     Skill,
- /// plugins.json(或 `register_wasm` 直接调用)装载的通用 wasm 插件。
+    /// plugins.json(或 `register_wasm` 直接调用)装载的通用 wasm 插件。
     Generic,
 }
 
@@ -69,9 +69,9 @@ struct WasmDecl {
 }
 
 impl WasmDecl {
- /// 合成 `CapabilityManifest`。ADR-0051:与内置/MCP/share 等族共用
- /// [`bm_contract::capability::ManifestSpec`] 单一合成路径(execution_mode
- /// 恒 async;cancellable 恒 true);本结构只承载两格式(技能/插件)归一后的差异。
+    /// 合成 `CapabilityManifest`。ADR-0051:与内置/MCP/share 等族共用
+    /// [`bm_contract::capability::ManifestSpec`] 单一合成路径(execution_mode
+    /// 恒 async;cancellable 恒 true);本结构只承载两格式(技能/插件)归一后的差异。
     fn synthesize(&self) -> Result<CapabilityManifest, String> {
         let mut spec = bm_contract::capability::ManifestSpec::new(
             &self.capability,
@@ -98,14 +98,14 @@ impl WasmDecl {
 pub struct SkillScriptManager {
     engine: Engine,
     entries: Mutex<HashMap<String, Arc<ScriptEntry>>>,
- /// 脚本默认超时(声明未指定 `timeout_ms` 时的回退)。来源 =
- /// `limits.skill_default_timeout_ms`(ADR-0024 限制集中配置面)——
+    /// 脚本默认超时(声明未指定 `timeout_ms` 时的回退)。来源 =
+    /// `limits.skill_default_timeout_ms`(ADR-0024 限制集中配置面)——
     default_timeout_ms: u64,
 }
 
 impl SkillScriptManager {
     pub fn new(limits: bm_core::limits::LimitsCell) -> Result<Self, String> {
- // fuel 计量必须引擎级开启:set_fuel 才可用(死循环 wasm 的硬保险)
+        // fuel 计量必须引擎级开启:set_fuel 才可用(死循环 wasm 的硬保险)
         let mut cfg = wasmtime::Config::new();
         cfg.consume_fuel(true);
         let engine = Engine::new(&cfg).map_err(|e| format!("wasmtime Engine 失败: {e}"))?;
@@ -116,8 +116,8 @@ impl SkillScriptManager {
         })
     }
 
- /// 注册一个技能的全部脚本:编译 wasm → 缓存 Module → 合成 manifests。
- /// 返回 (manifest, placeholder) 对齐内置能力注册形态(执行体走本管理器)。
+    /// 注册一个技能的全部脚本:编译 wasm → 缓存 Module → 合成 manifests。
+    /// 返回 (manifest, placeholder) 对齐内置能力注册形态(执行体走本管理器)。
     pub fn register_skill(
         &self,
         skill_id: &str,
@@ -142,18 +142,18 @@ impl SkillScriptManager {
         self.manifests_for(skill_id, scripts)
     }
 
- /// 从**声明文件**装载通用 wasm 插件(ADR-0041 去特化;这是宿主在 `skills.json`
- /// 之外的第二个真实调用方)。
- /// 声明形状 = `boenmind-contracts/plugin/wasm-plugin.v0_1.schema.json`(ADR-0042
- /// 冻结):数组,每项一个 wasm 工具能力。
- /// ```json
- /// [{"capability":"demo.echo","provider":"demo.wasm","version":"0.1.0",
- /// "wasm":"echo.wasm","effect":"read-only","timeout_ms":10000,
- /// "input_schema":{"type":"object"},"output_schema":{"type":"object"},
- /// "description":"...","scopes":[]}]
- /// ```
- /// wasm 路径相对 `decl_path` 所在目录解析,并钉死在该目录内(防越界)。
- /// 返回合成 manifests;缺 `capability`/`wasm` 或**违反冻结 schema** 者跳过并告警。
+    /// 从**声明文件**装载通用 wasm 插件(ADR-0041 去特化;这是宿主在 `skills.json`
+    /// 之外的第二个真实调用方)。
+    /// 声明形状 = `boenmind-contracts/plugin/wasm-plugin.v0_1.schema.json`(ADR-0042
+    /// 冻结):数组,每项一个 wasm 工具能力。
+    /// ```json
+    /// [{"capability":"demo.echo","provider":"demo.wasm","version":"0.1.0",
+    /// "wasm":"echo.wasm","effect":"read-only","timeout_ms":10000,
+    /// "input_schema":{"type":"object"},"output_schema":{"type":"object"},
+    /// "description":"...","scopes":[]}]
+    /// ```
+    /// wasm 路径相对 `decl_path` 所在目录解析,并钉死在该目录内(防越界)。
+    /// 返回合成 manifests;缺 `capability`/`wasm` 或**违反冻结 schema** 者跳过并告警。
     pub fn load_plugins_file(&self, decl_path: &Path) -> Vec<CapabilityManifest> {
         let Ok(text) = std::fs::read_to_string(decl_path) else {
             return Vec::new();
@@ -162,8 +162,8 @@ impl SkillScriptManager {
             tracing::warn!(target: "plugin", path = %decl_path.display(), "wasm 插件声明解析失败(已跳过)");
             return Vec::new();
         };
- // ADR-0042:装载前过冻结 schema 门(与
- // 申报形状须机器可校验,不靠约定)。整文件级校验:形状错即全部不装载。
+        // ADR-0042:装载前过冻结 schema 门(与
+        // 申报形状须机器可校验,不靠约定)。整文件级校验:形状错即全部不装载。
         if let Err(e) =
             bm_contract::schemas::validate(bm_contract::registries::WASM_PLUGIN_SCHEMA, &items)
         {
@@ -206,8 +206,8 @@ impl SkillScriptManager {
                     .get("output_schema")
                     .cloned()
                     .unwrap_or(json!({"type": "object"})),
- // 契约 schema 已保证 effect/approval 为合法枚举;缺省分别取
- // read-only / required(未知风险从严)。
+                // 契约 schema 已保证 effect/approval 为合法枚举;缺省分别取
+                // read-only / required(未知风险从严)。
                 effect: it["effect"]
                     .as_str()
                     .and_then(bm_contract::capability::RiskClass::from_wire)
@@ -241,11 +241,11 @@ impl SkillScriptManager {
         out
     }
 
- /// 通用 wasm 能力注册(ADR-0041 去特化):任意 capability 名 + wasm 路径。
- /// 校验 wasm 落在 `root` 内(防越界读取,同 P1-10),编译进缓存后由
- /// [`Self::run`] 按精确 capability 执行——宿主对命名空间不可知。技能装载
- /// (`register_skill`)是它的上层:命名与清单由技能声明驱动。
- /// 来源记为 [`PluginOrigin::Generic`]。
+    /// 通用 wasm 能力注册(ADR-0041 去特化):任意 capability 名 + wasm 路径。
+    /// 校验 wasm 落在 `root` 内(防越界读取,同 P1-10),编译进缓存后由
+    /// [`Self::run`] 按精确 capability 执行——宿主对命名空间不可知。技能装载
+    /// (`register_skill`)是它的上层:命名与清单由技能声明驱动。
+    /// 来源记为 [`PluginOrigin::Generic`]。
     pub fn register_wasm(
         &self,
         provider: &str,
@@ -302,16 +302,16 @@ impl SkillScriptManager {
         Ok(())
     }
 
- /// 注销一个技能的全部脚本(ADR-0033;幂等,可安全重复调用)。
- /// `skill_id` 映射到 provider `skill.<id>`。
+    /// 注销一个技能的全部脚本(ADR-0033;幂等,可安全重复调用)。
+    /// `skill_id` 映射到 provider `skill.<id>`。
     pub fn unregister_skill(&self, skill_id: &str) -> Vec<String> {
         self.unregister_provider(&format!("skill.{skill_id}"))
     }
 
- /// 按**提供者**摘除其全部能力(ADR-0041 热重载):返回被摘除的 capability 名
- /// (供热重载侧 `capabilities_unregister` 墓碑化)。按 `ScriptEntry.provider`
- /// 精确匹配,取代原先写死 `skill.` 前缀的拼接——通用 wasm 插件同样适用。
- /// 未装载的 provider 返回空表(幂等)。
+    /// 按**提供者**摘除其全部能力(ADR-0041 热重载):返回被摘除的 capability 名
+    /// (供热重载侧 `capabilities_unregister` 墓碑化)。按 `ScriptEntry.provider`
+    /// 精确匹配,取代原先写死 `skill.` 前缀的拼接——通用 wasm 插件同样适用。
+    /// 未装载的 provider 返回空表(幂等)。
     pub fn unregister_provider(&self, provider: &str) -> Vec<String> {
         let mut entries = self
             .entries
@@ -328,9 +328,9 @@ impl SkillScriptManager {
         removed
     }
 
- /// 摘除全部**通用插件**来源的能力(ADR-0042:按 `origin` 判断,不按名字前缀),
- /// 返回被摘除的 capability 名。技能(origin=Skill)不受影响——由 skills.json
- /// 自己的热重载管理。供 `/admin/plugins` 整表重载使用。
+    /// 摘除全部**通用插件**来源的能力(ADR-0042:按 `origin` 判断,不按名字前缀),
+    /// 返回被摘除的 capability 名。技能(origin=Skill)不受影响——由 skills.json
+    /// 自己的热重载管理。供 `/admin/plugins` 整表重载使用。
     pub fn unregister_all_generic(&self) -> Vec<String> {
         let mut entries = self
             .entries
@@ -347,9 +347,9 @@ impl SkillScriptManager {
         removed
     }
 
- /// 本宿主是否编译了某 capability(ADR-0041 去前缀分道)。
- /// 路由用它按**归属**分道,而不是按名字前缀猜:凡进过本宿主编译表的
- /// 能力(技能脚本或通用 wasm 插件)都归 wasm 执行面。
+    /// 本宿主是否编译了某 capability(ADR-0041 去前缀分道)。
+    /// 路由用它按**归属**分道,而不是按名字前缀猜:凡进过本宿主编译表的
+    /// 能力(技能脚本或通用 wasm 插件)都归 wasm 执行面。
     pub fn has_capability(&self, capability: &str) -> bool {
         self.entries
             .lock()
@@ -357,8 +357,8 @@ impl SkillScriptManager {
             .contains_key(capability)
     }
 
- /// scripts[] → CapabilityManifest 列表(effect 直映 RiskClass;
- /// approval 语义交由 manifest.effect + Broker 统一裁决)。
+    /// scripts[] → CapabilityManifest 列表(effect 直映 RiskClass;
+    /// approval 语义交由 manifest.effect + Broker 统一裁决)。
     fn manifests_for(
         &self,
         skill_id: &str,
@@ -367,7 +367,7 @@ impl SkillScriptManager {
         scripts
             .iter()
             .map(|sc| {
- // ADR-0049:技能脚本 → 归一化声明(与 plugins.json 共用同一合成函数)。
+                // ADR-0049:技能脚本 → 归一化声明(与 plugins.json 共用同一合成函数)。
                 let decl = WasmDecl {
                     capability: format!("skill.{}.{}", skill_id, sc.name),
                     provider: format!("skill.{}", skill_id),
@@ -378,7 +378,7 @@ impl SkillScriptManager {
                         .unwrap_or(bm_contract::capability::RiskClass::ReadOnly),
                     idempotent: false,
                     timeout_ms: sc.timeout_ms.unwrap_or(self.default_timeout_ms),
- // 副作用脚本必须审批;只读直通。
+                    // 副作用脚本必须审批;只读直通。
                     approval: if sc.effect == "read-only" {
                         bm_contract::capability::ApprovalRequirement::NotRequired
                     } else {
@@ -393,7 +393,7 @@ impl SkillScriptManager {
             .collect()
     }
 
- /// 执行:stdin 进 JSON,stdout 收 JSON(退出码 0 = 成功)。
+    /// 执行:stdin 进 JSON,stdout 收 JSON(退出码 0 = 成功)。
     async fn run(&self, capability: &str, args: &Value) -> Result<Value, AsyncCallError> {
         let entry: Arc<ScriptEntry> = self
             .entries
@@ -406,7 +406,7 @@ impl SkillScriptManager {
             .map_err(|e| AsyncCallError::Transport(format!("入参序列化失败: {e}")))?;
         let engine = self.engine.clone();
 
- // wasmtime 同步执行(CPU 密集)挪出单写者循环;超时由 tokio 硬顶。
+        // wasmtime 同步执行(CPU 密集)挪出单写者循环;超时由 tokio 硬顶。
         let engine_for_task = engine.clone();
         let entry_for_task = entry.clone();
         let task = tokio::task::spawn_blocking(move || {
@@ -453,7 +453,7 @@ fn run_wasi(
         .map_err(|e| AsyncCallError::Transport(format!("wasi linker 失败: {e}")))?;
 
     let instantiation = linker.instantiate(&mut store, module);
- // 编译期已经拿到 module;此处仍可能因实例化失败(imports 不满足)报错
+    // 编译期已经拿到 module;此处仍可能因实例化失败(imports 不满足)报错
     let instance = match instantiation {
         Ok(i) => i,
         Err(e) => return Err(AsyncCallError::Transport(format!("wasm 实例化失败: {e}"))),
@@ -469,8 +469,8 @@ fn run_wasi(
     let _ = timeout_ms; // 超时由外层 tokio timeout + fuel 双限;此处保留语义占位
 
     if let Err(trap) = run_result {
- // WASI proc_exit 以 I32Exit 形式"trap"收场:0 = 正常退出,非 0 = 失败;
- // 其余 trap(含 fuel 耗尽)收容为可读错误,不击穿核心循环。
+        // WASI proc_exit 以 I32Exit 形式"trap"收场:0 = 正常退出,非 0 = 失败;
+        // 其余 trap(含 fuel 耗尽)收容为可读错误,不击穿核心循环。
         if let Some(exit) = trap.downcast_ref::<wasmtime_wasi::I32Exit>() {
             if exit.0 != 0 {
                 return Err(AsyncCallError::Transport(format!(
@@ -499,9 +499,9 @@ fn run_wasi(
 }
 
 impl SkillScriptManager {
- /// manifests → 注册对(占位 Provider;真正执行走本管理器异步分道)。
- /// ADR-0046:实现上移为 `bm_core::ports::skill_host::placeholder_entries`
- /// (surface 构造注册对时无需依赖 bm-providers),此处保留为该函数的中继。
+    /// manifests → 注册对(占位 Provider;真正执行走本管理器异步分道)。
+    /// ADR-0046:实现上移为 `bm_core::ports::skill_host::placeholder_entries`
+    /// (surface 构造注册对时无需依赖 bm-providers),此处保留为该函数的中继。
     pub fn capability_entries(
         manifests: Vec<CapabilityManifest>,
     ) -> Vec<(
@@ -558,8 +558,8 @@ impl AsyncCapabilityExecutor for SkillScriptManager {
 mod tests {
     use super::*;
 
- /// 最小 WASI 命令式模块(WAT):stdin 读 JSON,stdout 写固定 JSON,退出 0。
- /// 依赖 fd_write/fd_read/proc_exit 三个 wasi 调用,验证管道契约与沙箱收容。
+    /// 最小 WASI 命令式模块(WAT):stdin 读 JSON,stdout 写固定 JSON,退出 0。
+    /// 依赖 fd_write/fd_read/proc_exit 三个 wasi 调用,验证管道契约与沙箱收容。
     const ECHO_WAT: &str = r#"(module
         (import "wasi_snapshot_preview1" "fd_write"
             (func $fd_write (param i32 i32 i32 i32) (result i32)))
@@ -601,7 +601,7 @@ mod tests {
         (mgr, cap)
     }
 
- #[tokio::test]
+    #[tokio::test]
     async fn skill_script_runs_and_returns_json() {
         let (mgr, cap) = manager_with_wat(ECHO_WAT);
         let out = mgr
@@ -612,7 +612,7 @@ mod tests {
         assert_eq!(out["src"], serde_json::json!("skill-wasm"));
     }
 
- #[tokio::test]
+    #[tokio::test]
     async fn unknown_capability_is_transport_error() {
         let (mgr, _cap) = manager_with_wat(ECHO_WAT);
         let err = mgr
@@ -622,9 +622,9 @@ mod tests {
         assert!(matches!(err, AsyncCallError::Transport(m) if m.contains("未注册")));
     }
 
- // ADR-0041:宿主对命名空间不可知——能力名不必带 `skill.` 前缀,按精确
- // capability 查编译表即可执行(通用 wasm 插件宿主的第一步)。
- #[tokio::test]
+    // ADR-0041:宿主对命名空间不可知——能力名不必带 `skill.` 前缀,按精确
+    // capability 查编译表即可执行(通用 wasm 插件宿主的第一步)。
+    #[tokio::test]
     async fn host_is_namespace_agnostic() {
         let (mgr, _skill_cap) = manager_with_wat(ECHO_WAT);
         let engine = mgr.engine.clone();
@@ -656,9 +656,9 @@ mod tests {
         assert_eq!(out["ok"], serde_json::json!(true));
     }
 
- #[tokio::test]
+    #[tokio::test]
     async fn fuel_exhaustion_is_contained_not_fatal() {
- // 死循环 wasm:fuel 耗尽 → trap 收容为 Transport 错误(不击穿调用方)
+        // 死循环 wasm:fuel 耗尽 → trap 收容为 Transport 错误(不击穿调用方)
         const SPIN_WAT: &str = r#"(module
             (func $_start (loop br 0))
             (export "_start" (func $_start))
@@ -674,7 +674,7 @@ mod tests {
         ));
     }
 
- #[test]
+    #[test]
     fn manifests_for_maps_effect_and_capability_name() {
         let mgr =
             SkillScriptManager::new(bm_core::limits::LimitsCell::with_default()).expect("engine");
@@ -702,9 +702,9 @@ mod tests {
         );
     }
 
- // ADR-0041 第二个真实调用方:声明文件装载通用 wasm 插件——非 skill.* 能力
- // 经声明文件进入宿主,合成 manifest 且执行体可触达。
- #[tokio::test]
+    // ADR-0041 第二个真实调用方:声明文件装载通用 wasm 插件——非 skill.* 能力
+    // 经声明文件进入宿主,合成 manifest 且执行体可触达。
+    #[tokio::test]
     async fn load_plugins_file_registers_generic_wasm_capability() {
         let dir = tempfile::tempdir().expect("临时目录");
         std::fs::write(
@@ -733,7 +733,7 @@ mod tests {
         assert_eq!(manifests.len(), 1, "声明应装载出一个能力");
         assert_eq!(manifests[0].capability, "demo.echo");
         assert_eq!(manifests[0].provider, "demo.wasm");
- // 声明装载的能力真的进了宿主编译表,且可按精确名执行。
+        // 声明装载的能力真的进了宿主编译表,且可按精确名执行。
         assert!(mgr.has_capability("demo.echo"));
         let out = AsyncCapabilityExecutor::call(
             &mgr,
@@ -746,7 +746,7 @@ mod tests {
         .expect("声明装载的能力应可执行");
         assert_eq!(out["ok"], serde_json::json!(true));
 
- // wasm 路径越出声明目录 → 该条跳过(不装载、不报错击穿)。
+        // wasm 路径越出声明目录 → 该条跳过(不装载、不报错击穿)。
         let bad = dir.path().join("bad.json");
         std::fs::write(
             &bad,
@@ -763,9 +763,9 @@ mod tests {
         );
     }
 
- // ADR-0042:声明必须过**冻结 schema 门**——非法形状(未知字段/坏能力名)拒绝装载,
- // 证明这道门不是装饰。。
- #[test]
+    // ADR-0042:声明必须过**冻结 schema 门**——非法形状(未知字段/坏能力名)拒绝装载,
+    // 证明这道门不是装饰。。
+    #[test]
     fn load_plugins_file_rejects_schema_violations() {
         let dir = tempfile::tempdir().expect("临时目录");
         std::fs::write(
@@ -776,7 +776,7 @@ mod tests {
         let mgr =
             SkillScriptManager::new(bm_core::limits::LimitsCell::with_default()).expect("engine");
 
- // 未知字段(additionalProperties:false)→ 拒绝
+        // 未知字段(additionalProperties:false)→ 拒绝
         let unknown = dir.path().join("unknown.json");
         std::fs::write(
             &unknown,
@@ -792,7 +792,7 @@ mod tests {
             "未知字段必须被合同拒绝"
         );
 
- // 非法能力名(缺命名空间段)→ 拒绝
+        // 非法能力名(缺命名空间段)→ 拒绝
         let badname = dir.path().join("badname.json");
         std::fs::write(
             &badname,
@@ -804,7 +804,7 @@ mod tests {
             "非法能力名必须被合同拒绝"
         );
 
- // 合法声明仍通过(门的正例,防"全拒")→ 装载成功
+        // 合法声明仍通过(门的正例,防"全拒")→ 装载成功
         let ok = dir.path().join("ok.json");
         std::fs::write(
             &ok,
@@ -818,8 +818,8 @@ mod tests {
         );
     }
 
- // ADR-0041:wasm 插件以 Tool 身份注册,内核可读到「谁提供」。
- #[test]
+    // ADR-0041:wasm 插件以 Tool 身份注册,内核可读到「谁提供」。
+    #[test]
     fn capability_entries_declare_plugin_identity() {
         let mgr =
             SkillScriptManager::new(bm_core::limits::LimitsCell::with_default()).expect("engine");
@@ -845,8 +845,8 @@ mod tests {
         assert_eq!(meta.kind, bm_contract::plugin::PluginKind::Tool);
     }
 
- // P1-10():`..` 越出技能根目录的脚本路径必须拒绝。
- #[test]
+    // P1-10():`..` 越出技能根目录的脚本路径必须拒绝。
+    #[test]
     fn script_path_escaping_skill_root_is_rejected() {
         let dir = tempfile::tempdir().expect("临时目录");
         let secret = dir.path().join("secret.bin");
@@ -874,13 +874,13 @@ mod tests {
         assert!(err.contains("越出 root"), "{err}");
     }
 
- // ADR-0041 去特化:通用 register_wasm 支持任意 capability 名(非 skill.*),
- // 注册后按精确名可执行;越界路径同样被拒。
- #[test]
+    // ADR-0041 去特化:通用 register_wasm 支持任意 capability 名(非 skill.*),
+    // 注册后按精确名可执行;越界路径同样被拒。
+    #[test]
     fn generic_register_wasm_accepts_any_capability_name() {
         let dir = tempfile::tempdir().expect("临时目录");
         let wasm = dir.path().join("demo.wasm");
- // 真 wasm 字节:from_binary 只吃二进制,不经文本嗅探。
+        // 真 wasm 字节:from_binary 只吃二进制,不经文本嗅探。
         let bytes = wat::parse_str(ECHO_WAT).expect("wat→wasm");
         std::fs::write(&wasm, &bytes).expect("写 wasm");
 
@@ -889,12 +889,12 @@ mod tests {
         mgr.register_wasm("plugin.demo", "plugin.demo.echo", &wasm, dir.path(), 5_000)
             .expect("通用注册应接受任意 capability 名");
         assert!(mgr.entries.lock().unwrap().contains_key("plugin.demo.echo"));
- // ADR-0041 热重载支点:按 provider 精确摘除其全部能力。
+        // ADR-0041 热重载支点:按 provider 精确摘除其全部能力。
         let removed = mgr.unregister_provider("plugin.demo");
         assert_eq!(removed, vec!["plugin.demo.echo".to_string()]);
         assert!(!mgr.has_capability("plugin.demo.echo"), "摘除后不可达");
 
- // 越界路径仍拒(canonicalize 把 root 外的目标判否)
+        // 越界路径仍拒(canonicalize 把 root 外的目标判否)
         let outside = tempfile::tempdir().expect("另一目录");
         let other = outside.path().join("x.wasm");
         std::fs::write(&other, wat::parse_str(ECHO_WAT).expect("wat→wasm")).expect("写");
@@ -904,9 +904,9 @@ mod tests {
         assert!(err.contains("越出 root"), "{err}");
     }
 
- // (ADR-0024 限制集中配置面)。
- // 本测试锁死:非默认 limits 值必须落到合成 manifest。
- #[test]
+    // (ADR-0024 限制集中配置面)。
+    // 本测试锁死:非默认 limits 值必须落到合成 manifest。
+    #[test]
     fn default_timeout_follows_limits_cell() {
         let limits = bm_core::limits::Limits {
             skill_default_timeout_ms: 12_345,

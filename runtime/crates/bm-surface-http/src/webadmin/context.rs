@@ -14,7 +14,7 @@ use std::path::Path;
 /// (status/usage/耗时);坏行跳过;最多回读 2MB、默认 120 条(新→旧即
 /// 最旧在前,与文件时序一致)。
 pub async fn context_tail(State(cfg): State<AdminConfig>) -> Response {
- // W10:尾读字节/条数上限走 limits。
+    // W10:尾读字节/条数上限走 limits。
     let lim = cfg.limits.get();
     let steps = read_context_tail(
         &cfg.data_dir.join("context-log.jsonl"),
@@ -203,8 +203,8 @@ pub async fn session_messages(
     axum::extract::Path(session_id): axum::extract::Path<String>,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Response {
- // P1-13():分页页大小用独立旋钮,不再借用检索
- // 上限(context_search_max_limit)——语义解耦,默认同为 200 行为零变化。
+    // P1-13():分页页大小用独立旋钮,不再借用检索
+    // 上限(context_search_max_limit)——语义解耦,默认同为 200 行为零变化。
     let limit: usize = params
         .get("limit")
         .and_then(|v| v.parse().ok())
@@ -214,7 +214,7 @@ pub async fn session_messages(
 
     use std::collections::VecDeque;
     use std::io::BufRead;
- // 双端队列只留最近 skip+limit 条匹配;文件序 = 落盘序 = 真实时序
+    // 双端队列只留最近 skip+limit 条匹配;文件序 = 落盘序 = 真实时序
     let mut window: VecDeque<Value> = VecDeque::new();
     let mut matched: usize = 0;
     if let Ok(f) = std::fs::File::open(cfg.data_dir.join("context-log.jsonl")) {
@@ -246,7 +246,7 @@ pub async fn session_messages(
             }
         }
     }
- // 丢弃末尾 skip 条(那些已在前面的页面里),剩下的即本页(最旧在前)
+    // 丢弃末尾 skip 条(那些已在前面的页面里),剩下的即本页(最旧在前)
     let take = window.len().saturating_sub(skip);
     let messages: Vec<Value> = window.into_iter().take(take).collect();
     let has_more = matched > skip + messages.len();

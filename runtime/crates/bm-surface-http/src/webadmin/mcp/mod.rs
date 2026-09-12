@@ -40,8 +40,8 @@ fn mcp_file_or_error(cfg: &AdminConfig) -> Result<PathBuf, Response> {
 // 复核批:。
 
 fn write_mcp_servers(path: &Path, servers: &[Value]) -> Result<(), String> {
- // P2():CRLF 收口 config_store::crlf 单一实现。
- // 注意:mcp.json 顶层即数组(与 providers/skills 的 {域: [...]} 包裹不同)。
+    // P2():CRLF 收口 config_store::crlf 单一实现。
+    // 注意:mcp.json 顶层即数组(与 providers/skills 的 {域: [...]} 包裹不同)。
     super::json_store::write_json_file(path, &Value::Array(servers.to_vec()), "MCP 配置写入失败")
 }
 
@@ -95,15 +95,15 @@ pub async fn mcp_list(State(cfg): State<AdminConfig>) -> Response {
                 .iter()
                 .filter_map(|s| s["name"].as_str().map(|n| n.to_string()))
                 .collect();
- // 自声明式配置:manifests/<name>.manifest.json(配置 schema)+
- // config/mcp-<name>.json(当前配置值),均在 mcp.json 同级目录约定
+            // 自声明式配置:manifests/<name>.manifest.json(配置 schema)+
+            // config/mcp-<name>.json(当前配置值),均在 mcp.json 同级目录约定
             let manifests_dir = path.parent().map(|d| d.join("manifests"));
             let config_dir = path.parent().map(|d| d.join("config"));
             let enriched: Vec<Value> = servers
                 .iter()
                 .map(|srv| {
                     let name = srv["name"].as_str().unwrap_or("");
- // #71:列表面只读回显,走宽容原语(缺/坏 = 不展示)。
+                    // #71:列表面只读回显,走宽容原语(缺/坏 = 不展示)。
                     let manifest = manifests_dir.as_ref().and_then(|d| {
                         bm_core::json_store::read_json_lenient(
                             &d.join(format!("{name}.manifest.json")),
@@ -117,8 +117,8 @@ pub async fn mcp_list(State(cfg): State<AdminConfig>) -> Response {
                             )
                         })
                         .unwrap_or_else(|| json!({}));
- // ADR-0023:来源与弃用标记——bundled 来源但不在官方随包
- // 清单(.official.json)=最新官方版本已不携带,建议删除
+                    // ADR-0023:来源与弃用标记——bundled 来源但不在官方随包
+                    // 清单(.official.json)=最新官方版本已不携带,建议删除
                     let origin = server_origin(&cfg, srv, &path);
                     let deprecated = origin == "bundled"
                         && official_plugin_list(&cfg)
@@ -193,13 +193,13 @@ pub async fn mcp_delete(
     let origin = server_origin(&cfg, &servers[pos], &path);
     servers.remove(pos);
     respond_or_fail!(write_mcp_servers(&path, &servers), internal);
- // ADR-0023:bundled 来源写墓碑——官方随包默认安装(启动播种)永不复活;
- // 数据目录来源不写(用户手动放置=安装意图,重启后扫描仍会作为候选出现)。
+    // ADR-0023:bundled 来源写墓碑——官方随包默认安装(启动播种)永不复活;
+    // 数据目录来源不写(用户手动放置=安装意图,重启后扫描仍会作为候选出现)。
     let mut tombstoned = false;
     if origin == "bundled" {
         tombstoned = upsert_tombstone(&cfg.data_dir, &name).is_ok();
     }
- // 卸载即时下线:全量同步把摘除项 disconnect+unregister(失败不回滚配置)
+    // 卸载即时下线:全量同步把摘除项 disconnect+unregister(失败不回滚配置)
     let (sync_ok, sync_detail) = match run_mcp_sync(&cfg).await {
         Ok(o) => (true, json!({ "uninstalled": o.uninstalled })),
         Err((_, m)) => (false, json!({ "skipped": m })),
@@ -241,7 +241,7 @@ pub async fn mcp_purge(
     let exe = servers[pos]["command"].as_str().map(String::from);
     servers.remove(pos);
     respond_or_fail!(write_mcp_servers(&path, &servers), internal);
- // 停进程 + 注销能力(必须在删 exe 之前,否则 Windows 文件锁挡路)
+    // 停进程 + 注销能力(必须在删 exe 之前,否则 Windows 文件锁挡路)
     let sync_detail = match run_mcp_sync(&cfg).await {
         Ok(o) => json!({ "ok": true, "uninstalled": o.uninstalled }),
         Err((_, m)) => json!({ "ok": false, "skipped": m }),
@@ -346,7 +346,7 @@ pub async fn mcp_search_test(
     let params = json!({ "provider_id": provider_id, "query": query, "limit": limit });
     match hub.raw_request(&name, "web_search_test", params).await {
         Ok(resp) => {
- // 插件返回的是 {content:[...], structuredContent:{...}} 的 JSON-RPC result
+            // 插件返回的是 {content:[...], structuredContent:{...}} 的 JSON-RPC result
             let sc = resp.get("structuredContent").cloned().unwrap_or(resp);
             Json(json!({ "ok": true, "name": name, "result": sc })).into_response()
         }
@@ -413,8 +413,8 @@ pub async fn mcp_status(State(cfg): State<AdminConfig>) -> Response {
         .unwrap_or_default();
     let mut status = Vec::new();
     for name in loaded {
- // issue #3:握手协商结果(协议版本/capabilities)一并露出;无记录
- // (stdio 或未完成握手)时缺省省略,前端如实不显示
+        // issue #3:握手协商结果(协议版本/capabilities)一并露出;无记录
+        // (stdio 或未完成握手)时缺省省略,前端如实不显示
         let caps = hub.server_capabilities(&name).ok();
         match hub.probe_server(&name).await {
             Ok((count, tool_list)) => status.push(json!({
@@ -519,7 +519,7 @@ pub async fn mcp_config_set(
             obj.insert(k.clone(), v.clone());
         }
     }
- // CRLF 统一:与 config_store.write_file 同款(pretty 后按平台换行)
+    // CRLF 统一:与 config_store.write_file 同款(pretty 后按平台换行)
     let text = respond_or_fail!(
         serde_json::to_string_pretty(&current)
             .map(crate::config_store::crlf)
@@ -617,7 +617,7 @@ impl bm_core::ports::mcp_admin::CapabilityRegistrar for CoreRegistrar {
             .map_err(|e| format!("{e}"))
     }
     async fn unregister(&self, names: Vec<String>) -> Result<(), String> {
- // 与既有行为一致:注销经核心命令;错误走 failed 通道
+        // 与既有行为一致:注销经核心命令;错误走 failed 通道
         self.handle
             .capabilities_unregister(names)
             .await
@@ -658,7 +658,7 @@ async fn run_mcp_sync(
                 .collect()
         })
         .unwrap_or_default();
- // ADR-0046:经端口同步(不再是 free function + 具体 hub)。
+    // ADR-0046:经端口同步(不再是 free function + 具体 hub)。
     let outcome = hub
         .sync(
             &path,
@@ -680,6 +680,7 @@ async fn run_mcp_sync(
 /// - 已移除的 server:从 hub 摘除路由、发送 shutdown 通知,从 Registry/Persist 摘除能力
 /// - 修改/保留的 server (如配置变更):先热拔旧 server,再用新配置重新握手连接并更新能力
 /// - 新增的 server:spawn+握手+运行期注册
+///
 /// 装载完成后刷新 AdminConfig.mcp_servers 快照。
 pub async fn mcp_reload(State(cfg): State<AdminConfig>) -> Response {
     match run_mcp_sync(&cfg).await {

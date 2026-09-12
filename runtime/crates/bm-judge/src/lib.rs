@@ -21,9 +21,9 @@ fn is_terminal_op_state(wire: &str) -> bool {
 
 #[derive(Debug, thiserror::Error)]
 pub enum JudgeError {
- #[error("区间非法: from={from} > to={to}")]
+    #[error("区间非法: from={from} > to={to}")]
     BadRange { from: u64, to: u64 },
- #[error("存储故障: {0}")]
+    #[error("存储故障: {0}")]
     Store(String),
 }
 
@@ -41,7 +41,7 @@ pub fn evaluate(store: &dyn EventStore, from_seq: u64, to_seq: u64) -> Result<Va
             to: to_seq,
         });
     }
- // replay_since(s) 返回 seq > s 的事件;闭区间须从 from_seq-1 起取
+    // replay_since(s) 返回 seq > s 的事件;闭区间须从 from_seq-1 起取
     let events: Vec<_> = store
         .replay_since(from_seq - 1)
         .map_err(|e| JudgeError::Store(e.to_string()))?
@@ -61,7 +61,7 @@ pub fn evaluate(store: &dyn EventStore, from_seq: u64, to_seq: u64) -> Result<Va
     let failed = checks.iter().filter(|c| c.verdict == "fail").count() as u64;
     let skipped = checks.iter().filter(|c| c.verdict == "skipped").count() as u64;
 
- // 确定性:generated_at 取区间内最大 occurred_at(不引入墙钟)
+    // 确定性:generated_at 取区间内最大 occurred_at(不引入墙钟)
     let generated_at = events
         .iter()
         .map(|e| e.occurred_at.clone())
@@ -169,7 +169,7 @@ fn check_side_effect_receipts(
     events: &[bm_contract::events::EventEnvelope],
 ) -> Result<Check, JudgeError> {
     use std::collections::HashMap;
- // op → (intent 数, 完成数 ok/error/suppressed)
+    // op → (intent 数, 完成数 ok/error/suppressed)
     let mut intents: HashMap<String, u32> = HashMap::new();
     let mut settled: HashMap<String, bool> = HashMap::new();
     for e in events {
@@ -185,7 +185,7 @@ fn check_side_effect_receipts(
             _ => {}
         }
     }
- // outbox 对账行也算完成证据(崩溃/超时窗口的对账底座)
+    // outbox 对账行也算完成证据(崩溃/超时窗口的对账底座)
     let outbox_published = store
         .list_outbox_by_state("published")
         .map_err(|e| JudgeError::Store(e.to_string()))?;
@@ -210,7 +210,7 @@ fn check_side_effect_receipts(
 }
 
 fn check_latency(events: &[bm_contract::events::EventEnvelope]) -> Check {
- // 默认 120s)——原固定 30s 会把「合法但慢」的回合误判 fail
+    // 默认 120s)——原固定 30s 会把「合法但慢」的回合误判 fail
     let gate_ms: u64 = std::env::var("BOEN_TURN_TIMEOUT_SECS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())

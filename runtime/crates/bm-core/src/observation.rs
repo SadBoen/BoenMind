@@ -5,17 +5,18 @@
 //! 确定性核验——外部系统查询、收据与确定性断言优先于模型自述。verdict:
 //! - verified:证据支持声称 → Task completed(verified_completion);
 //! - unverified:无可核验结果 → Task blocked(outcome_unknown_pending)
-//! 等用户裁定,禁止自动标成功(完成判定门禁,基线 M5 通过条件第 4 条)。
+//!   等用户裁定,禁止自动标成功(完成判定门禁,基线 M5 通过条件第 4 条)。
 //!
 //! 独立 Judge(M8.7 起)接口预留不实现;M5 判定全确定性。
 
 /// expect 语义的确定性判定:
 /// - "exists"(或空串):查询结果非空、无 error 字段;
 /// - 其它:结果 JSON 的字符串形态包含 expect 子串。
+///
 /// 查询执行失败(能力错误/超时)不等于 expect 不满足——返回 None(证据
 /// 不可得 = unverified,而非 failed)。
 pub fn expect_satisfied(result: &serde_json::Value, expect: &str) -> Option<bool> {
- // 收据形态:error 显式非 null 才是错误(null = 无错误)
+    // 收据形态:error 显式非 null 才是错误(null = 无错误)
     let has_error = result.get("error").map(|e| !e.is_null()).unwrap_or(false);
     if has_error || result.get("ok") == Some(&serde_json::json!(false)) {
         return Some(false);
@@ -48,7 +49,7 @@ pub struct ObservationEntry {
     pub agent_id: Option<String>,
     pub operation_id: Option<String>,
     pub claim_summary: String,
- /// (kind, ref)
+    /// (kind, ref)
     pub evidence: Vec<(String, String)>,
     pub verdict: &'static str,
     pub guard_state: &'static str,
@@ -87,7 +88,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
- #[test]
+    #[test]
     fn expect_exists_requires_nonempty_result() {
         assert_eq!(
             expect_satisfied(&json!({"written": true}), "exists"),
@@ -98,14 +99,14 @@ mod tests {
             expect_satisfied(&serde_json::Value::Null, "exists"),
             Some(false)
         );
- // 错误形态 = 不满足(确定性失败,非证据不可得)
+        // 错误形态 = 不满足(确定性失败,非证据不可得)
         assert_eq!(
             expect_satisfied(&json!({"error": {"code": "timeout"}}), "exists"),
             Some(false)
         );
     }
 
- #[test]
+    #[test]
     fn expect_substring_is_containment_check() {
         assert_eq!(
             expect_satisfied(&json!({"content": "归档摘要:关于幂等性"}), "幂等性"),
@@ -117,7 +118,7 @@ mod tests {
         );
     }
 
- #[test]
+    #[test]
     fn claim_digest_is_stable_hex() {
         let a = claim_digest("声称完成");
         let b = claim_digest("声称完成");

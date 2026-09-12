@@ -2,9 +2,9 @@
 //!
 //! 契约(合同库 surface/transport.v0_1):
 //! - `POST /rpc/{method}`:body = RequestEnvelope,响应 = ResponseEnvelope,
-//! 业务语义(含错误)全在信封,HTTP 恒 200(400/401/404/503 仅传输层);
+//!   业务语义(含错误)全在信封,HTTP 恒 200(400/401/404/503 仅传输层);
 //! - `GET /events/{session_id}?since_seq=N`:SSE 增量流,id = event_seq,
-//! 服务端零订阅状态(断线重连 = resume cursor 语义);
+//!   服务端零订阅状态(断线重连 = resume cursor 语义);
 //! - `GET /health`:无鉴权探针;
 //! - 鉴权:除 /health 外一律 Bearer 令牌(合同库 surface/auth.v0_1)。
 
@@ -53,26 +53,26 @@ pub struct AppState {
     pub handle: RuntimeHandle,
     pub token: Arc<String>,
     pub store: Arc<dyn bm_core::ports::persist::EventStore>,
- /// 应用层停机信号(M3.6:/shutdown 触发;服务宿主 await 它以退出)。
+    /// 应用层停机信号(M3.6:/shutdown 触发;服务宿主 await 它以退出)。
     pub shutdown: Arc<tokio::sync::Notify>,
- /// W1(ADR-0014):服务器默认模型(配置/env 驱动),/v1 插座与会话创建用。
+    /// W1(ADR-0014):服务器默认模型(配置/env 驱动),/v1 插座与会话创建用。
     pub default_model: Arc<String>,
     pub data_dir: Option<std::path::PathBuf>,
- /// W6:对话级模型路由表(body.model 校验用;None = 不校验,测试/mock 态)。
+    /// W6:对话级模型路由表(body.model 校验用;None = 不校验,测试/mock 态)。
     pub model_routes: Option<Arc<dyn bm_core::ports::ModelRouter>>,
- /// W1:OpenAI 兼容插座会话寻址表(web 会话 id → agent id)。原为进程级
- /// 静态 OnceLock,
- /// 随路由生灭、测试间隔离,语义不变(重启即失效由响应文案承接)。
- /// P1-14():有界化——容量 1024,超出按插入序逐出
- /// 最旧;被逐出的会话下次请求走 session_resume 回源恢复,无用户可见损失。
+    /// W1:OpenAI 兼容插座会话寻址表(web 会话 id → agent id)。原为进程级
+    /// 静态 OnceLock,
+    /// 随路由生灭、测试间隔离,语义不变(重启即失效由响应文案承接)。
+    /// P1-14():有界化——容量 1024,超出按插入序逐出
+    /// 最旧;被逐出的会话下次请求走 session_resume 回源恢复,无用户可见损失。
     pub v1_sessions: Arc<Mutex<V1SessionMap>>,
- /// 门户登录墙()。
+    /// 门户登录墙()。
     pub portal: Arc<portal::PortalAuth>,
- /// 绑定是否为非回环(公网面):门户未配置时仅放行健康/设置口。
+    /// 绑定是否为非回环(公网面):门户未配置时仅放行健康/设置口。
     pub public_bind: bool,
- /// Web 静态目录(/login 登录页本体取此目录下 login.html)。
+    /// Web 静态目录(/login 登录页本体取此目录下 login.html)。
     pub web_dir: Option<std::path::PathBuf>,
- /// W10(ADR-0024):运行时限制共享单元(/v1 流式硬顶/保活等热读)。
+    /// W10(ADR-0024):运行时限制共享单元(/v1 流式硬顶/保活等热读)。
     pub limits: bm_core::limits::LimitsCell,
 }
 
@@ -92,7 +92,7 @@ impl V1SessionMap {
 
     pub fn insert(&mut self, sid: BmId, agent_id: BmId) {
         if !self.map.contains_key(&sid) && self.map.len() >= Self::CAP {
- // 逐出最旧(跳过已不在表内的陈旧队列项)
+            // 逐出最旧(跳过已不在表内的陈旧队列项)
             while let Some(old) = self.order.pop_front() {
                 if self.map.remove(&old).is_some() {
                     break;
@@ -123,7 +123,7 @@ pub fn router(
     public_bind: bool,
 ) -> Router {
     let data_dir = admin.as_ref().map(|a| a.data_dir.clone());
- // W10:limits 单元随 AdminConfig 流入 /v1 与门户面(测试态无 admin = 默认)。
+    // W10:limits 单元随 AdminConfig 流入 /v1 与门户面(测试态无 admin = 默认)。
     let limits = admin.as_ref().map(|a| a.limits.clone()).unwrap_or_default();
     let portal = portal::PortalAuth::load_with_limits(
         data_dir
@@ -159,8 +159,8 @@ pub fn router(
             auth::require_bearer,
         ))
         .route("/health", get(rpc::health))
- // W1(ADR-0014):OpenAI 兼容插座。鉴权 = auth::require_api_auth
- // (issue #10 断链补立:Bearer 严格/Cookie/本机未设墙放行)。
+        // W1(ADR-0014):OpenAI 兼容插座。鉴权 = auth::require_api_auth
+        // (issue #10 断链补立:Bearer 严格/Cookie/本机未设墙放行)。
         .merge(
             Router::new()
                 .route(
@@ -174,21 +174,21 @@ pub fn router(
                 ))
                 .with_state(state.clone()),
         )
- // 门户登录三口(公开;/login 页面本体见 portal::login_page)
+        // 门户登录三口(公开;/login 页面本体见 portal::login_page)
         .route("/login", get(portal::login_page))
         .route("/api/portal/state", get(portal::portal_state))
         .route("/api/portal/login", post(portal::portal_login))
         .route("/api/portal/bootstrap", post(portal::portal_bootstrap))
         .route("/api/portal/password", post(portal::portal_password))
- // issue #47:OIDC 登录(未配置 oauth 时两路均报未配置)
+        // issue #47:OIDC 登录(未配置 oauth 时两路均报未配置)
         .route("/api/portal/oauth/login", get(portal::portal_oauth_login))
         .route(
             "/api/portal/oauth/callback",
             get(portal::portal_oauth_callback),
         )
         .with_state(state.clone());
- // W2 管理面:同一 require_api_auth 口径(issue #10 补立后不再是
- // 「公开挂载欠账」,外层门户墙继续作为整站第二道收口)
+    // W2 管理面:同一 require_api_auth 口径(issue #10 补立后不再是
+    // 「公开挂载欠账」,外层门户墙继续作为整站第二道收口)
     let app = match admin {
         Some(cfg) => app.nest(
             "/admin",
@@ -199,13 +199,13 @@ pub fn router(
         ),
         None => app,
     };
- // Web Surface 静态托管(公开:界面壳不含数据;数据一律经鉴权 API):
- // 未匹配 API 的路径回落到静态文件
+    // Web Surface 静态托管(公开:界面壳不含数据;数据一律经鉴权 API):
+    // 未匹配 API 的路径回落到静态文件
     let app = match web_dir {
         Some(dir) => app.fallback_service(tower_http::services::ServeDir::new(dir)),
         None => app,
     };
- // 门户登录墙挂最外层(含静态回落与 /admin;豁免清单见 require_portal)
+    // 门户登录墙挂最外层(含静态回落与 /admin;豁免清单见 require_portal)
     app.layer(middleware::from_fn_with_state(
         state,
         portal::require_portal,

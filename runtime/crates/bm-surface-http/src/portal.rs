@@ -2,7 +2,7 @@
 //! 登录后方可访问,堵 /admin 无鉴权公网裸奔(VPS 实测暴露)。
 //!
 //! - 密码存 `<data_dir>/config/portal.json`(`salt$sha256hex`);未配置 = 墙
-//! 未启用(既有测试与本地开发零影响);
+//!   未启用(既有测试与本地开发零影响);
 //! - 首次访问 /login 显示「创建访问密码」(bootstrap,仅未配置时可用一次);
 //! - 会话 = 内存随机 Cookie(HttpOnly,30 天),重启即失效需重登;
 //! - Bearer 访问令牌(auth.v0_1)继续全效,程序化访问不受影响;
@@ -36,15 +36,15 @@ const PBKDF2_ITERS: u32 = 100_000;
 /// 私有部署 IdP 语义最少);client_secret = confidential client 背通道交换。
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct OidcConfig {
- /// 可选:校验 id_token.iss(未配则跳过 iss 校验)。
+    /// 可选:校验 id_token.iss(未配则跳过 iss 校验)。
     pub issuer: Option<String>,
     pub authorization_endpoint: String,
     pub token_endpoint: String,
     pub client_id: String,
     pub client_secret: String,
- #[serde(default = "default_oidc_scopes")]
+    #[serde(default = "default_oidc_scopes")]
     pub scopes: Vec<String>,
- /// 可选:回调地址覆盖(缺省由请求 Host 推导 http://{host}/api/portal/oauth/callback)。
+    /// 可选:回调地址覆盖(缺省由请求 Host 推导 http://{host}/api/portal/oauth/callback)。
     pub redirect_uri: Option<String>,
 }
 
@@ -54,16 +54,16 @@ fn default_oidc_scopes() -> Vec<String> {
 
 pub struct PortalAuth {
     pub data_dir: PathBuf,
- /// W10(ADR-0024):锁定阈值/时长/Cookie 有效期热读单元。
+    /// W10(ADR-0024):锁定阈值/时长/Cookie 有效期热读单元。
     pub limits: bm_core::limits::LimitsCell,
- /// `salt$sha256hex`(legacy)或 `pbkdf2$<iters>$<salt>$<hash>`;None = 未设密码。
+    /// `salt$sha256hex`(legacy)或 `pbkdf2$<iters>$<salt>$<hash>`;None = 未设密码。
     pub password_hash: Mutex<Option<String>>,
     pub sessions: Mutex<HashSet<String>>,
- /// 登录失败限速台账:来源 → (连续失败次数, 锁定到期时刻)。
+    /// 登录失败限速台账:来源 → (连续失败次数, 锁定到期时刻)。
     login_gate: Mutex<HashMap<String, (u32, Option<Instant>)>>,
- /// #47:OIDC 配置(None = 未启用)。
+    /// #47:OIDC 配置(None = 未启用)。
     pub oauth: Option<OidcConfig>,
- /// #47:OAuth 流程防伪状态:state → 创建时刻(TTL 内一次性)。
+    /// #47:OAuth 流程防伪状态:state → 创建时刻(TTL 内一次性)。
     oauth_states: Mutex<HashMap<String, Instant>>,
 }
 
@@ -80,7 +80,7 @@ impl PortalAuth {
     }
 
     pub fn load(data_dir: PathBuf) -> Arc<Self> {
- // #71:只读消费面走宽容原语(缺/坏 = 无门户配置)。
+        // #71:只读消费面走宽容原语(缺/坏 = 无门户配置)。
         let cfg = bm_core::json_store::read_json_lenient(&data_dir.join("config/portal.json"));
         let hash = cfg
             .as_ref()
@@ -100,7 +100,7 @@ impl PortalAuth {
         })
     }
 
- /// #47:OAuth 是否已配置(登录页据此显示 SSO 入口)。
+    /// #47:OAuth 是否已配置(登录页据此显示 SSO 入口)。
     pub fn oauth_configured(&self) -> bool {
         self.oauth.is_some()
     }
@@ -109,7 +109,7 @@ impl PortalAuth {
         self.password_hash.lock().expect("锁未中毒").is_some()
     }
 
- /// 该来源是否处于登录锁定中。
+    /// 该来源是否处于登录锁定中。
     fn login_locked(&self, key: &str) -> bool {
         let max_failures = self.limits.get().login_max_failures;
         self.login_gate
@@ -131,7 +131,7 @@ impl PortalAuth {
         if e.0 >= max_failures {
             e.1 = Some(Instant::now() + lockout);
         }
- // 台账 GC:条目过多时清掉不在锁定期的旧项(防无界增长)
+        // 台账 GC:条目过多时清掉不在锁定期的旧项(防无界增长)
         if gate.len() > 1024 {
             gate.retain(|_, (n, until)| {
                 *n < max_failures || until.is_some_and(|t| Instant::now() < t)
@@ -222,8 +222,8 @@ fn cookie_session(headers: &HeaderMap) -> Option<String> {
     let raw = headers.get(header::COOKIE)?.to_str().ok()?;
     for part in raw.split(';') {
         let p = part.trim();
- // 逐段局部匹配:非本会话名的 cookie(浏览器可能排在前)必须跳过
- // 继续找,绝不能用 ? 让整个函数提前返回()。
+        // 逐段局部匹配:非本会话名的 cookie(浏览器可能排在前)必须跳过
+        // 继续找,绝不能用 ? 让整个函数提前返回()。
         let Some(rest) = p.strip_prefix(SESSION_COOKIE) else {
             continue;
         };
@@ -243,7 +243,7 @@ pub(crate) fn cookie_authed(state: &crate::AppState, headers: &HeaderMap) -> boo
 }
 
 fn authed(state: &crate::AppState, headers: &HeaderMap) -> bool {
- // P2():常数时间比较收口 auth.rs 单一实现。
+    // P2():常数时间比较收口 auth.rs 单一实现。
     let bearer_ok = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
@@ -270,9 +270,9 @@ pub async fn require_portal(
  // 永远到不了 IdP;callback 自带 state 防伪,安全性不降)
         || path == "/api/portal/oauth/login"
         || path == "/api/portal/oauth/callback";
- // 外部评审
- // 健康检查与门户设置口可达(/v1、/admin、静态一律 401/302);回环
- // 绑定(本机开发)维持零影响放行;持 Bearer 令牌者不受影响。
+    // 外部评审
+    // 健康检查与门户设置口可达(/v1、/admin、静态一律 401/302);回环
+    // 绑定(本机开发)维持零影响放行;持 Bearer 令牌者不受影响。
     let open = if state.portal.configured() {
         exempt
     } else {
@@ -335,11 +335,11 @@ fn too_many(msg: &str) -> Response {
 /// GET /api/portal/state:登录页据此显示「创建访问密码」或「登录」。
 pub async fn portal_state(State(state): State<crate::AppState>, headers: HeaderMap) -> Response {
     Json(json!({
-        "configured": state.portal.configured(),
-        "authed": authed(&state, &headers),
- // #47:登录页据此显示 SSO 入口
-        "oauth": state.portal.oauth_configured(),
-    }))
+           "configured": state.portal.configured(),
+           "authed": authed(&state, &headers),
+    // #47:登录页据此显示 SSO 入口
+           "oauth": state.portal.oauth_configured(),
+       }))
     .into_response()
 }
 
@@ -394,7 +394,7 @@ pub async fn portal_login(
         return unauthorized("密码不对");
     }
     state.portal.note_login_success(&gate_key);
- // 透明升级:legacy 单层 SHA-256 登录成功即改存 PBKDF2(防离线爆破)
+    // 透明升级:legacy 单层 SHA-256 登录成功即改存 PBKDF2(防离线爆破)
     if stored.as_ref().is_some_and(|h| !h.starts_with("pbkdf2$")) {
         state.portal.save(&store_password(pw));
     }
@@ -493,7 +493,7 @@ pub async fn portal_oauth_callback(
     let Some(code) = q.get("code").cloned() else {
         return unauthorized("回调缺 code");
     };
- // state 一次性校验:取出即删(TTL 外/不存在 = 拒)
+    // state 一次性校验:取出即删(TTL 外/不存在 = 拒)
     let st_ok = q
         .get("state")
         .and_then(|st| {
@@ -517,7 +517,7 @@ pub async fn portal_oauth_callback(
         .redirect_uri
         .clone()
         .unwrap_or_else(|| format!("http://{host}/api/portal/oauth/callback"));
- // 背通道 code 换 token(form 形态,兼容面最广)
+    // 背通道 code 换 token(form 形态,兼容面最广)
     let token_resp = match reqwest::Client::new()
         .post(&cfg.token_endpoint)
         .form(&[
@@ -544,8 +544,8 @@ pub async fn portal_oauth_callback(
     let Some(id_token) = tv["id_token"].as_str() else {
         return unauthorized("token 响应缺 id_token");
     };
- // JWT payload 校验:iss/aud/exp(TLS 背通道直取,id_token 签名校验按
- // OIDC 规格在此形态下可省;本地生态不引 JWKS 依赖)
+    // JWT payload 校验:iss/aud/exp(TLS 背通道直取,id_token 签名校验按
+    // OIDC 规格在此形态下可省;本地生态不引 JWKS 依赖)
     let parts: Vec<&str> = id_token.split('.').collect();
     let claims = parts
         .get(1)
@@ -610,9 +610,9 @@ mod tests {
         m
     }
 
- #[test]
+    #[test]
     fn cookie_session_skips_non_session_cookies_before_target() {
- // 整个解析,合法会话被静默丢弃。回归锁死:目标 cookie 在任意位置都能取到。
+        // 整个解析,合法会话被静默丢弃。回归锁死:目标 cookie 在任意位置都能取到。
         assert_eq!(
             cookie_session(&cookie_map("theme=dark; boen_session=abc123")),
             Some("abc123".to_string())
@@ -623,21 +623,21 @@ mod tests {
         );
         assert_eq!(cookie_session(&cookie_map("theme=dark; a=b")), None);
         assert_eq!(cookie_session(&HeaderMap::new()), None);
- // 同名前缀 cookie 不得误匹配(boen_session_extra)
+        // 同名前缀 cookie 不得误匹配(boen_session_extra)
         assert_eq!(
             cookie_session(&cookie_map("boen_session_extra=evil; theme=dark")),
             None
         );
- // 值中含 = 只切第一个
+        // 值中含 = 只切第一个
         assert_eq!(
             cookie_session(&cookie_map("boen_session=a=b")),
             Some("a=b".to_string())
         );
     }
 
- #[test]
+    #[test]
     fn pbkdf2_hmac_sha256_known_vectors() {
- // RFC 7914 §11 PBKDF2-HMAC-SHA256 测试向量(P="password", S="salt")
+        // RFC 7914 §11 PBKDF2-HMAC-SHA256 测试向量(P="password", S="salt")
         let v = |iters| {
             let dk = pbkdf2_hmac_sha256(b"password", b"salt", iters);
             hex(&dk)
@@ -652,7 +652,7 @@ mod tests {
         );
     }
 
- #[test]
+    #[test]
     fn verify_password_supports_legacy_and_pbkdf2() {
         let legacy_pw = "hunter22";
         let salt = "deadbeef";
@@ -666,7 +666,7 @@ mod tests {
         assert!(!verify_password(&modern, "wrong"));
     }
 
- #[test]
+    #[test]
     fn login_gate_locks_after_max_failures_and_clears_on_success() {
         let dir = tempfile::tempdir().expect("临时目录");
         let auth = PortalAuth::load(dir.path().to_path_buf());
@@ -676,7 +676,7 @@ mod tests {
             auth.note_login_failure(key);
         }
         assert!(auth.login_locked(key), "达上限即锁定");
- // 其他来源不受影响
+        // 其他来源不受影响
         assert!(!auth.login_locked("5.6.7.8"));
         auth.note_login_success(key);
         assert!(!auth.login_locked(key), "成功登录清零");

@@ -71,52 +71,52 @@ pub enum RecoveryVerdict {
 pub struct RuntimeConfig {
     pub version: String,
     pub data_dir: Option<std::path::PathBuf>,
- /// 持久层(M2 起);None = 纯内存(M1 兼容形态,测试用)。
+    /// 持久层(M2 起);None = 纯内存(M1 兼容形态,测试用)。
     pub store: Option<std::sync::Arc<dyn EventStore>>,
     pub connector: Arc<dyn ModelConnector>,
     pub secret_store: Arc<dyn SecretStore>,
     pub id_gen: Arc<dyn IdGen>,
     pub clock: Arc<dyn Clock>,
- /// 内置能力集(M4):启动时注册进 Capability Registry;
- /// 空集 = 无能力面(等价 M3 形态)。
+    /// 内置能力集(M4):启动时注册进 Capability Registry;
+    /// 空集 = 无能力面(等价 M3 形态)。
     pub capabilities: Vec<(
         bm_contract::capability::CapabilityManifest,
         Arc<dyn CapabilityProvider>,
     )>,
- /// M7 S4:异步能力执行器(MCP 等慢外部 Provider)。manifest.provider
- /// 以 "mcp." 开头的能力注册时标记 async,dispatch 走本执行器。
+    /// M7 S4:异步能力执行器(MCP 等慢外部 Provider)。manifest.provider
+    /// 以 "mcp." 开头的能力注册时标记 async,dispatch 走本执行器。
     pub async_executor: Option<Arc<dyn crate::ports::AsyncCapabilityExecutor>>,
- /// M9-S2:模型真流式开关(默认关——既有测试/黄金轨迹零变化;
- /// 开启时回合模型输出以 model.content.delta 逐块入事件流)。
+    /// M9-S2:模型真流式开关(默认关——既有测试/黄金轨迹零变化;
+    /// 开启时回合模型输出以 model.content.delta 逐块入事件流)。
     pub model_streaming: bool,
- /// W10(ADR-0024):运行时限制配置面。共享快照单元,消费点读时取值
- /// (热生效);env 覆盖由装配方在启动期折算进 Cell。
+    /// W10(ADR-0024):运行时限制配置面。共享快照单元,消费点读时取值
+    /// (热生效);env 覆盖由装配方在启动期折算进 Cell。
     pub limits: LimitsCell,
- /// W10(ADR-0025):后台作业台账门面(providers JobTable 实现);
- /// None = 无作业面(既有测试/纯内存形态零变化)。
+    /// W10(ADR-0025):后台作业台账门面(providers JobTable 实现);
+    /// None = 无作业面(既有测试/纯内存形态零变化)。
     pub job_board: Option<Arc<dyn crate::ports::JobBoard>>,
 }
 
 /// 回合任务向核心循环回报的内部消息。
 enum TurnEvent {
- /// 单次尝试失败(INV-4:每次尝试各产生一条 failed 事件 + 日志)。
+    /// 单次尝试失败(INV-4:每次尝试各产生一条 failed 事件 + 日志)。
     AttemptFailed {
         operation_id: BmId,
         model_id: String,
         attempt: u32,
         error_code: ErrorCode,
     },
- /// 链耗尽(或不可重试错误):回合失败落定。
+    /// 链耗尽(或不可重试错误):回合失败落定。
     ChainExhausted {
         operation_id: BmId,
         error_code: ErrorCode,
- /// ADR-0029:脱敏后的 provider 错误原文(可空)——用户与日志
- /// 终于能看到「回合执行失败」背后的真实死因。
+        /// ADR-0029:脱敏后的 provider 错误原文(可空)——用户与日志
+        /// 终于能看到「回合执行失败」背后的真实死因。
         detail: Option<String>,
     },
- /// 显式取消落定(回合边界)。
+    /// 显式取消落定(回合边界)。
     Cancelled { operation_id: BmId },
- /// 单次尝试成功:回合成功落定。
+    /// 单次尝试成功:回合成功落定。
     Completed {
         operation_id: BmId,
         model_id: String,
@@ -139,91 +139,91 @@ struct World {
     sessions: HashMap<BmId, Session>,
     agents: HashMap<BmId, Agent>,
     operations: HashMap<BmId, Operation>,
- /// 运行中的回合:operation_id → 取消令牌。
+    /// 运行中的回合:operation_id → 取消令牌。
     in_flight: HashMap<BmId, CancellationToken>,
     started_at: DateTime<Utc>,
     started_instant: Instant,
     draining: bool,
     stopped: bool,
- /// 持久层故障拒写态:置位后拒绝一切业务命令;内存视图以持久层为准重建。
+    /// 持久层故障拒写态:置位后拒绝一切业务命令;内存视图以持久层为准重建。
     persist_poisoned: bool,
- // ---- M4:Capability / Broker / Approval ---------------------------------
+    // ---- M4:Capability / Broker / Approval ---------------------------------
     registry: CapabilityRegistry,
     grants: GrantLedger,
- /// 审批对象(approval_id → 对象);持久化随 T3c 接 SQLite。
+    /// 审批对象(approval_id → 对象);持久化随 T3c 接 SQLite。
     approvals: HashMap<BmId, Approval>,
- /// 待裁决的能力调用:approval_id → 载荷(批准后重放执行用)。
+    /// 待裁决的能力调用:approval_id → 载荷(批准后重放执行用)。
     cap_pending: HashMap<BmId, PendingCapabilityCall>,
- /// 幂等收据仓(key_hash → 原收据;external-side-effect 抑制判据,
- /// ADR-0002 条件 6)。T6c 收紧(M5-T1):落表持久,恢复期装载。
+    /// 幂等收据仓(key_hash → 原收据;external-side-effect 抑制判据,
+    /// ADR-0002 条件 6)。T6c 收紧(M5-T1):落表持久,恢复期装载。
     idem_results: HashMap<String, serde_json::Value>,
- /// capability 操作的系统容器 ID(内存合成;M4 能力调用不依赖 Session/Agent,
- /// operations 表不落行,规范状态由 approvals/grants 承载——回看复核项)。
+    /// capability 操作的系统容器 ID(内存合成;M4 能力调用不依赖 Session/Agent,
+    /// operations 表不落行,规范状态由 approvals/grants 承载——回看复核项)。
     system_session: BmId,
     system_agent: BmId,
- /// M5:Task 规范状态(task/task.v0.1;L2 唯一持有,World 内为内存视图)。
+    /// M5:Task 规范状态(task/task.v0.1;L2 唯一持有,World 内为内存视图)。
     tasks: HashMap<BmId, crate::task::Task>,
- /// M5.4:Task Board 投影(可弃可重建;emit 钩子增量维护)。
+    /// M5.4:Task Board 投影(可弃可重建;emit 钩子增量维护)。
     task_board: crate::task::TaskBoard,
- /// M11/ADR-0031:Task 公告栏投影(share.published 事件增量维护;可重建)。
+    /// M11/ADR-0031:Task 公告栏投影(share.published 事件增量维护;可重建)。
     share_board: crate::share::TaskShareBoard,
- /// M5-T6:Task 包络工具调用记账(task_id → 已用次数;持久于
- /// task_budget_ledger 聚合行,agent_id = "")。
+    /// M5-T6:Task 包络工具调用记账(task_id → 已用次数;持久于
+    /// task_budget_ledger 聚合行,agent_id = "")。
     task_tool_calls: HashMap<BmId, u64>,
- /// M5-T7:Watchdog 监护状态(仅监督,不推断编排下一步)。
+    /// M5-T7:Watchdog 监护状态(仅监督,不推断编排下一步)。
     watchdog: crate::watchdog::WatchdogState,
- /// M5-T8:operation → capability(核验证据定位;内存索引,事件可重建)。
+    /// M5-T8:operation → capability(核验证据定位;内存索引,事件可重建)。
     op_capability: HashMap<BmId, String>,
- /// M6:成员结果收集(task_id → 结果流水;来源/状态/关联 Operation)。
+    /// M6:成员结果收集(task_id → 结果流水;来源/状态/关联 Operation)。
     task_results: HashMap<BmId, Vec<serde_json::Value>>,
- /// M7 S4:在途异步能力调用(operation_id → 留档)。
+    /// M7 S4:在途异步能力调用(operation_id → 留档)。
     op_async_meta: HashMap<BmId, AsyncCallMeta>,
- /// M9-S2:在途回合已发 delta 计数(index 单调,0 起;completed 后随审计清理可留)
+    /// M9-S2:在途回合已发 delta 计数(index 单调,0 起;completed 后随审计清理可留)
     model_delta_seq: HashMap<BmId, u64>,
- /// M9-S3:worker 自主环在途状态(task → 状态;终局即移除)
+    /// M9-S3:worker 自主环在途状态(task → 状态;终局即移除)
     autorun: HashMap<BmId, AutorunState>,
- /// M7 S4:异步能力调用结果(operation_id → result;内存,随操作同寿命)。
+    /// M7 S4:异步能力调用结果(operation_id → result;内存,随操作同寿命)。
     op_results: HashMap<BmId, serde_json::Value>,
- /// M7 S5:Provider 健康面(provider → 状态;进程内,不入 core-transitions)。
+    /// M7 S5:Provider 健康面(provider → 状态;进程内,不入 core-transitions)。
     provider_health: HashMap<String, ProviderHealth>,
- /// M8.3:在途异步能力调用的取消令牌(operation_id → token)。
+    /// M8.3:在途异步能力调用的取消令牌(operation_id → token)。
     cap_in_flight: HashMap<BmId, CancellationToken>,
- /// ADR-0037:能力排空台账(capability → 在途 operation 集合)。卸载时
- /// binding 进 Draining、拒绝新调用,待集合清空后 finish_drain 摘除。
+    /// ADR-0037:能力排空台账(capability → 在途 operation 集合)。卸载时
+    /// binding 进 Draining、拒绝新调用,待集合清空后 finish_drain 摘除。
     draining_caps: HashMap<String, std::collections::HashSet<BmId>>,
- /// M7 S1:turn 模型调用 Broker 凭证留档(operation_id 索引;
- /// 授权点在 spawn,审计点在回合模型阶段终态——两段由 call_id 缝合)。
+    /// M7 S1:turn 模型调用 Broker 凭证留档(operation_id 索引;
+    /// 授权点在 spawn,审计点在回合模型阶段终态——两段由 call_id 缝合)。
     model_call_audit: HashMap<BmId, ModelCallAudit>,
- /// W5:会话对话台账(session_id → [user, assistant] 对;内存,随进程
- /// 寿命——会话本就不跨进程,openai_compat 重启即「未知会话」)。回合
- /// spawn 时回喂模型,成功落定时回写。
+    /// W5:会话对话台账(session_id → [user, assistant] 对;内存,随进程
+    /// 寿命——会话本就不跨进程,openai_compat 重启即「未知会话」)。回合
+    /// spawn 时回喂模型,成功落定时回写。
     session_chats: HashMap<BmId, Vec<(String, String)>>,
- /// 会话累计成功回合计数(不裁剪)。台账受双上限裁剪,光靠存活条数
- /// 无法区分「新会话」与「旧轮已被遗忘」——存活数与累计数之差即被
- /// 遗忘轮数,context-inspector 的遗忘健康度以此为真实数据源。
+    /// 会话累计成功回合计数(不裁剪)。台账受双上限裁剪,光靠存活条数
+    /// 无法区分「新会话」与「旧轮已被遗忘」——存活数与累计数之差即被
+    /// 遗忘轮数,context-inspector 的遗忘健康度以此为真实数据源。
     session_turn_totals: HashMap<BmId, u64>,
- /// W5 上下文透视:每次模型调用请求快照(context-log.jsonl;/admin/context)。
+    /// W5 上下文透视:每次模型调用请求快照(context-log.jsonl;/admin/context)。
     ctx_log: Arc<crate::context_log::ContextLog>,
- /// #14 Turn 内调试日志(turn-debug.jsonl;默认关,管理面热开关)。
+    /// #14 Turn 内调试日志(turn-debug.jsonl;默认关,管理面热开关)。
     turn_debug: Arc<crate::turn_debug::TurnDebugLog>,
 }
 
 impl World {
- /// 库内行不变量断言(issue #37 可选小改):fail-fast 语义不变,报错从
- /// 裸 expect 升级为「哪类行 + 哪个 id + 什么错」——恢复失败拒开时的
- /// 第一现场即可定位坏行,无需再开库排查。
+    /// 库内行不变量断言(issue #37 可选小改):fail-fast 语义不变,报错从
+    /// 裸 expect 升级为「哪类行 + 哪个 id + 什么错」——恢复失败拒开时的
+    /// 第一现场即可定位坏行,无需再开库排查。
     fn inv<T, E: std::fmt::Display>(kind: &str, id: &str, r: Result<T, E>) -> T {
         r.unwrap_or_else(|e| panic!("load_world_rows: 库内{kind}行不合法(id={id}): {e}"))
     }
 
- /// 同上,适配 from_wire 返回 Option 的形态。
+    /// 同上,适配 from_wire 返回 Option 的形态。
     fn inv_opt<T>(kind: &str, id: &str, r: Option<T>) -> T {
         r.unwrap_or_else(|| panic!("load_world_rows: 库内{kind}行不合法(id={id})"))
     }
 
- /// 自规范状态行装配内存视图(M2 启动恢复,任务 T3)。
- /// request_id 未持久化(事件流不承载):以 op 的 ULID 段确定性合成 req_ 前缀 ID,
- /// 保证恢复幂等;action_summary/result_reference 为非持久展示字段,恢复后为占位。
+    /// 自规范状态行装配内存视图(M2 启动恢复,任务 T3)。
+    /// request_id 未持久化(事件流不承载):以 op 的 ULID 段确定性合成 req_ 前缀 ID,
+    /// 保证恢复幂等;action_summary/result_reference 为非持久展示字段,恢复后为占位。
     pub fn load_world_rows(
         &mut self,
         rows: crate::ports::persist::WorldRows,
@@ -240,13 +240,13 @@ impl World {
                     agent_id: Self::inv("session→agent", &s.id, BmId::parse(&s.agent_id)),
                     state,
                     created_at: s.created_at,
- // W8+重启续聊():绑定随行持久装载
+                    // W8+重启续聊():绑定随行持久装载
                     workspace_id: s.workspace_id,
- // 会话目录():标题/活跃时间随行装载
- //(旧行为 None,启动期自 context-log 回填写平)
+                    // 会话目录():标题/活跃时间随行装载
+                    //(旧行为 None,启动期自 context-log 回填写平)
                     title: s.title,
                     updated_at: s.updated_at,
- // ADR-0030:权限模式随行装载(迁移前旧行 None → ask)
+                    // ADR-0030:权限模式随行装载(迁移前旧行 None → ask)
                     permission_mode: s
                         .permission_mode
                         .as_deref()
@@ -258,8 +258,8 @@ impl World {
         for a in rows.agents {
             let id = Self::inv("agent", &a.id, BmId::parse(&a.id));
             let state = Self::inv_opt("agent", &a.id, AgentState::from_wire(&a.state));
- // 崩溃时停在非运行中间态的 agent(starting/waiting_model/stopping/resuming)
- // 需要走 interrupted→resuming→running 恢复(ADR-0003 决策要点 8)
+            // 崩溃时停在非运行中间态的 agent(starting/waiting_model/stopping/resuming)
+            // 需要走 interrupted→resuming→running 恢复(ADR-0003 决策要点 8)
             if matches!(
                 state,
                 AgentState::Starting
@@ -287,7 +287,7 @@ impl World {
                     state,
                     budget,
                     system_prompt: None,
- // 与 system_prompt 同语义:会话/角色进程内作用域,恢复为 None
+                    // 与 system_prompt 同语义:会话/角色进程内作用域,恢复为 None
                     allowed_tools: None,
                 },
             );
@@ -334,7 +334,7 @@ impl World {
                 pending_interrupts.push((id, agent_id, "running".into()));
             }
         }
- // M5:Task 规范状态装载(tasks 表;成员事实由 task_members 自事件承载)
+        // M5:Task 规范状态装载(tasks 表;成员事实由 task_members 自事件承载)
         for t in rows.tasks {
             let task = Self::inv(
                 "task",
@@ -345,7 +345,7 @@ impl World {
         }
     }
 
- /// 会话相关事件读取:有持久层走日志(跨进程历史完整),否则走内存总线。
+    /// 会话相关事件读取:有持久层走日志(跨进程历史完整),否则走内存总线。
     fn events_for_session(
         &self,
         session_id: &BmId,
@@ -353,7 +353,7 @@ impl World {
         limit: u32,
     ) -> CoreResult<(Vec<EventEnvelope>, u64, bool)> {
         if let Some(store) = &self.store {
- // R1 收口(FULL-REVIEW-):持久读失败如实上抛——
+            // R1 收口(FULL-REVIEW-):持久读失败如实上抛——
             let evs_all = store.replay_since(since).map_err(|e| {
                 tracing::error!(error = %e, session = %session_id, "事件日志读取失败");
                 CoreError::Semantic(
@@ -377,7 +377,7 @@ impl World {
         }
     }
 
- /// Task 事件流读取(watch 观察面):跨会话按 payload.task_id 过滤。
+    /// Task 事件流读取(watch 观察面):跨会话按 payload.task_id 过滤。
     fn events_for_task(
         &self,
         task_id: &BmId,
@@ -385,7 +385,7 @@ impl World {
         limit: u32,
     ) -> CoreResult<(Vec<EventEnvelope>, u64, bool)> {
         let mut evs: Vec<EventEnvelope> = if let Some(store) = &self.store {
- // R1 收口:持久读失败如实上抛(同 events_for_session)
+            // R1 收口:持久读失败如实上抛(同 events_for_session)
             store.replay_since(since).map_err(|e| {
                 tracing::error!(error = %e, "事件日志读取失败(task 流)");
                 CoreError::Semantic(ErrorCode::Internal, "持久事件日志读取失败".into())
@@ -406,7 +406,7 @@ impl World {
         Ok((evs, last, has_more))
     }
 
- /// 写命令统一门禁:排空中或持久层故障时拒绝业务写命令(`what` 为"拒绝"的宾语)。
+    /// 写命令统一门禁:排空中或持久层故障时拒绝业务写命令(`what` 为"拒绝"的宾语)。
     fn gate_writes(&self, what: &str) -> CoreResult<()> {
         if self.draining || self.persist_poisoned {
             return Err(CoreError::Semantic(
@@ -417,8 +417,8 @@ impl World {
         Ok(())
     }
 
- /// Grant 签发事实事件:各签发路径共用的 GrantCreated 载荷。
- /// `approval_id` None → null;`expires_at` 取 Grant 自身(签发路径均为永不过期 → null)。
+    /// Grant 签发事实事件:各签发路径共用的 GrantCreated 载荷。
+    /// `approval_id` None → null;`expires_at` 取 Grant 自身(签发路径均为永不过期 → null)。
     fn emit_grant_created(
         &mut self,
         g: &bm_contract::capability::Grant,
@@ -444,7 +444,7 @@ impl World {
         )
     }
 
- /// 撤销单条 Grant 三件套:台账 revoke + GrantRevoked 事件 + 持久行。
+    /// 撤销单条 Grant 三件套:台账 revoke + GrantRevoked 事件 + 持久行。
     fn revoke_grant_and_emit(&mut self, gid: &str, reason: &str) -> CoreResult<()> {
         let version = self.grants.revoke(gid).map_err(|_| CoreError::Internal)?;
         self.emit(
@@ -466,7 +466,7 @@ impl World {
         format_ts(self.config.clock.now())
     }
 
- /// 校验工作区是否已登记(W8 ADR-0018:注册表 = config/workspaces.json)
+    /// 校验工作区是否已登记(W8 ADR-0018:注册表 = config/workspaces.json)
     pub(crate) fn validate_workspace(&self, wid: &str) -> CoreResult<()> {
         let ok = self
             .config
@@ -475,7 +475,7 @@ impl World {
             .map(|d| crate::workspace::is_registered(d, wid))
             .unwrap_or(false);
         if !ok {
- // 扩展码结构化(issue #40):前端按 code 分支,不再串匹配文案
+            // 扩展码结构化(issue #40):前端按 code 分支,不再串匹配文案
             return Err(CoreError::Extension {
                 message: format!("工作区「{wid}」未登记或已删除(设置 → 常规 里维护)"),
                 ext_code: "webui.workspace_unavailable",
@@ -485,7 +485,7 @@ impl World {
         Ok(())
     }
 
- /// 唯一的事件发射口:event_seq 分配 + 写穿持久 + 总线追加。
+    /// 唯一的事件发射口:event_seq 分配 + 写穿持久 + 总线追加。
     fn emit(
         &mut self,
         ty: EventType,
@@ -494,15 +494,15 @@ impl World {
         operation_id: Option<BmId>,
         payload: serde_json::Value,
     ) -> EventEnvelope {
- // T7 持久前校验(硬约束 3;ADR-0001 条件 3):事件 = 已发生的事实,
- // 命令语义形状在持久化前拒绝并告警(store.write.rejected)。
+        // T7 持久前校验(硬约束 3;ADR-0001 条件 3):事件 = 已发生的事实,
+        // 命令语义形状在持久化前拒绝并告警(store.write.rejected)。
         let shape_err = validate_event_shape(&ty, &payload);
         let seq = self.bus.next_seq();
         if let Err(reason) = shape_err {
- // R2(FULL-REVIEW-):坏形状事件
- // 只进内存总线不落盘」,存储侧自此永久跳号。改为 tombstone 占位:
- // 原 seq 槽落 StoreWriteRejected(持久+总线),日志保持连续
- // (Judge contiguous 可验);坏事件本体不再进总线(T7:非事实不分发)。
+            // R2(FULL-REVIEW-):坏形状事件
+            // 只进内存总线不落盘」,存储侧自此永久跳号。改为 tombstone 占位:
+            // 原 seq 槽落 StoreWriteRejected(持久+总线),日志保持连续
+            // (Judge contiguous 可验);坏事件本体不再进总线(T7:非事实不分发)。
             let tombstone = EventEnvelope::new(
                 seq,
                 EventType::StoreWriteRejected,
@@ -510,8 +510,8 @@ impl World {
                 None,
                 None,
                 None,
- // 键集须与合同注册表精确一致(key/reason);类型信息已在
- // reason 文案内(「事件 xxx 携带…」),不扩键
+                // 键集须与合同注册表精确一致(key/reason);类型信息已在
+                // reason 文案内(「事件 xxx 携带…」),不扩键
                 serde_json::json!({
                     "key": seq.to_string(),
                     "reason": reason,
@@ -521,7 +521,7 @@ impl World {
                 && !self.persist_poisoned
                 && let Err(e) = store.record(&tombstone)
             {
- // tombstone 自身写失败:与正常事件写失败同口径处理(见下)
+                // tombstone 自身写失败:与正常事件写失败同口径处理(见下)
                 tracing::error!(error = %e, seq = %seq, "拒写 tombstone 落盘失败,Runtime 进入拒写态");
                 self.persist_poisoned = true;
             }
@@ -537,16 +537,16 @@ impl World {
             operation_id,
             payload,
         );
- // 写穿(M2 规格 §5.1):record 内部固定 ①日志+flush → ②物化 → ③位点。
- // 失败即进入拒写态:内存视图与持久层自此分叉,以持久层为准(重启重建)。
- #[allow(clippy::collapsible_if)] // 三重条件展平反而难读
+        // 写穿(M2 规格 §5.1):record 内部固定 ①日志+flush → ②物化 → ③位点。
+        // 失败即进入拒写态:内存视图与持久层自此分叉,以持久层为准(重启重建)。
+        #[allow(clippy::collapsible_if)] // 三重条件展平反而难读
         if let Some(store) = &self.store {
             if !self.persist_poisoned {
                 if let Err(e) = store.record(&event) {
                     tracing::error!(seq = %event.event_seq, error = %e, "持久化失败,Runtime 进入拒写态");
                     self.persist_poisoned = true;
- // 降级 B 态可观测(T7 规格 §5.7):持久写路径故障告警
- // (事件尽力入内存分发;持久恢复 = 重启,M8 部署形态收口)
+                    // 降级 B 态可观测(T7 规格 §5.7):持久写路径故障告警
+                    // (事件尽力入内存分发;持久恢复 = 重启,M8 部署形态收口)
                     self.bus.append(EventEnvelope::new(
                         self.bus.next_seq(),
                         EventType::BusDegraded,
@@ -563,13 +563,13 @@ impl World {
             }
         }
         self.bus.append(event.clone());
- // M5.4:task.* 事件增量入 Task Board 投影(与持久化同一单写者时点,
- // 投影永远可丢弃后自事件日志重建——增量与重建两条路径等价有测试)
+        // M5.4:task.* 事件增量入 Task Board 投影(与持久化同一单写者时点,
+        // 投影永远可丢弃后自事件日志重建——增量与重建两条路径等价有测试)
         self.task_board.apply(&event);
- // M11/ADR-0031:share.published 事件增量入公告栏投影(与 task_board
- // 同一单写者时点;增量与重建两条路径等价有测试)
+        // M11/ADR-0031:share.published 事件增量入公告栏投影(与 task_board
+        // 同一单写者时点;增量与重建两条路径等价有测试)
         self.share_board.apply(&event);
- // M5-T7:任务相关事实事件刷新停滞检测的进度信号
+        // M5-T7:任务相关事实事件刷新停滞检测的进度信号
         if matches!(
             event.event_type,
             EventType::TaskCreated
@@ -584,9 +584,9 @@ impl World {
         event
     }
 
- /// operation 终态落定 + operation.state.changed 事件(reason_code = guard 名)。
- /// P0():表外迁移收敛为可观测错误——记 exec_log 后
- /// 原样返回,不再 panic 打崩进程(状态保持原样,终态由已落定的一方为准)。
+    /// operation 终态落定 + operation.state.changed 事件(reason_code = guard 名)。
+    /// P0():表外迁移收敛为可观测错误——记 exec_log 后
+    /// 原样返回,不再 panic 打崩进程(状态保持原样,终态由已落定的一方为准)。
     fn settle_operation(&mut self, op_id: &BmId, to: OperationState, error: Option<WireError>) {
         let now = self.now_ts();
         let (session_id, agent_id, from, to, reason) = {
@@ -622,9 +622,9 @@ impl World {
             };
             (op.session_id.clone(), op.agent_id.clone(), from, to, reason)
         };
- // 会话目录 updated_at 内存投影():与
- // materialize 对本事件的 sessions.updated_at 物化同源同刻;系统容器
- // 操作无 session 行,get_mut 为 None 自然跳过
+        // 会话目录 updated_at 内存投影():与
+        // materialize 对本事件的 sessions.updated_at 物化同源同刻;系统容器
+        // 操作无 session 行,get_mut 为 None 自然跳过
         if let Some(s) = self.sessions.get_mut(&session_id) {
             s.updated_at = Some(now.clone());
         }
@@ -642,7 +642,7 @@ impl World {
         );
     }
 
- /// 回合失败的统一收口:错误日志 → agent failed → operation failed → agent.failed。
+    /// 回合失败的统一收口:错误日志 → agent failed → operation failed → agent.failed。
     fn fail_turn(&mut self, operation_id: &BmId, code: ErrorCode, message: String) {
         let now = self.now_ts();
         let (session_id, agent_id, request_id, agent_state) = {
@@ -680,8 +680,8 @@ impl World {
                 }
             }
         }
- // 强制点③补充():失败回合占回合配额,失败重试
- // 不得绕过 max_turns 烧钱(网关对失败调用同样可能计费)
+        // 强制点③补充():失败回合占回合配额,失败重试
+        // 不得绕过 max_turns 烧钱(网关对失败调用同样可能计费)
         let turns_exhausted = {
             if let Some(a) = self.agents.get_mut(&agent_id) {
                 a.budget.account_failed_turn()
@@ -708,7 +708,7 @@ impl World {
             );
         }
         let mut err = WireError::new(code, message);
- // 回合已收口,运行时不会再自动重发 → retryable=false(GT-B 信封语义)
+        // 回合已收口,运行时不会再自动重发 → retryable=false(GT-B 信封语义)
         err.retryable = false;
         self.settle_operation(operation_id, OperationState::Failed, Some(err));
         self.emit(
@@ -742,8 +742,8 @@ impl World {
 
 async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
     while let Some(cmd) = rx.recv().await {
- // 停机后进入只读残存态:事件流与收据仍可查询(INV-6/9 精神),
- // 业务命令一律拒绝。
+        // 停机后进入只读残存态:事件流与收据仍可查询(INV-6/9 精神),
+        // 业务命令一律拒绝。
         if world.stopped {
             match cmd {
                 Cmd::EventsAll { resp } => {
@@ -762,11 +762,11 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
                 Cmd::GetOperation { params, resp } => {
                     let _ = resp.send(handle_get_operation(&world, params));
                 }
- // 会话目录只读查询():停机残存态照常应答
+                // 会话目录只读查询():停机残存态照常应答
                 Cmd::SessionList { resp } => {
                     let _ = resp.send(handle_session_list(&world));
                 }
- // Provider 健康只读查询(issue #12):停机残存态照常应答
+                // Provider 健康只读查询(issue #12):停机残存态照常应答
                 Cmd::ProviderHealth { resp } => {
                     let _ = resp.send(handle_provider_health(&world));
                 }
@@ -785,11 +785,11 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
             } => {
                 let _ = resp.send(handle_session_create(&mut world, request_id, params));
             }
- // 会话目录列表()
+            // 会话目录列表()
             Cmd::SessionList { resp } => {
                 let _ = resp.send(handle_session_list(&world));
             }
- // 会话权限模式变更(ADR-0030;POST /admin/sessions/{sid}/mode)
+            // 会话权限模式变更(ADR-0030;POST /admin/sessions/{sid}/mode)
             Cmd::SessionSetMode {
                 request_id: _request_id, // 审计以 session.mode.changed 事件为准
                 session_id,
@@ -798,7 +798,7 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
             } => {
                 let _ = resp.send(handle_session_set_mode(&mut world, session_id, mode));
             }
- // Provider 健康快照(issue #12;GET /admin/providers/health)
+            // Provider 健康快照(issue #12;GET /admin/providers/health)
             Cmd::ProviderHealth { resp } => {
                 let _ = resp.send(handle_provider_health(&world));
             }
@@ -859,7 +859,7 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
                     *e += 1;
                     v
                 };
- // 会话归属随收据回填(events.poll 按会话过滤,X-02 隔离纪律)
+                // 会话归属随收据回填(events.poll 按会话过滤,X-02 隔离纪律)
                 let session_id = world
                     .operations
                     .get(&operation_id)
@@ -1032,15 +1032,15 @@ async fn core_loop(mut world: World, mut rx: mpsc::Receiver<Cmd>) {
                 handle_stop(&mut world, &mut rx, reason, resp).await;
             }
             Cmd::Turn(event) => handle_turn_event(&mut world, event),
- // W5:成功回合的对话台账回写(历史回喂的数据源)
+            // W5:成功回合的对话台账回写(历史回喂的数据源)
             Cmd::RememberTurn {
                 session_id,
                 user,
                 assistant,
             } => crate::runtime::turn::remember_turn(&mut world, session_id, user, assistant),
         }
- // M5-T7:Watchdog 节拍扫描(每条命令处理后检查是否到期;
- // 事实事件产出,不推断编排下一步)
+        // M5-T7:Watchdog 节拍扫描(每条命令处理后检查是否到期;
+        // 事实事件产出,不推断编排下一步)
         world.maybe_watchdog_scan();
     }
 }

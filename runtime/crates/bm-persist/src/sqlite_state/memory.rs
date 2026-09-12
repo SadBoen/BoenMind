@@ -3,7 +3,7 @@ use super::StateDb;
 use crate::error::{SqlResultExt, StoreResult};
 
 impl StateDb {
- /// Observation Log 条目落表(log_seq 自 MAX+1 单调分配),返回 seq。
+    /// Observation Log 条目落表(log_seq 自 MAX+1 单调分配),返回 seq。
     pub fn save_observation(
         &self,
         task_id: &str,
@@ -30,10 +30,10 @@ impl StateDb {
         Ok(next as u64)
     }
 
- /// 记忆写入(墓碑语义见 delete),返回 entry_id(id 由调用方给定)。
- /// P0-4():写入/纠正墓碑/FTS 索引并入单事务——
- /// 吞错改结构化日志(。
- #[allow(clippy::too_many_arguments)]
+    /// 记忆写入(墓碑语义见 delete),返回 entry_id(id 由调用方给定)。
+    /// P0-4():写入/纠正墓碑/FTS 索引并入单事务——
+    /// 吞错改结构化日志(。
+    #[allow(clippy::too_many_arguments)]
     pub fn memory_put(
         &self,
         entry_id: &str,
@@ -64,7 +64,7 @@ impl StateDb {
             ],
         )
         .sql()?;
- // 用户纠正:被纠正条目立即墓碑化(覆盖而非追加,基线 §4.1)
+        // 用户纠正:被纠正条目立即墓碑化(覆盖而非追加,基线 §4.1)
         if let Some(target) = correction_of {
             tx.execute(
                 "UPDATE memories SET tombstoned = 1 WHERE id = ?1",
@@ -72,7 +72,7 @@ impl StateDb {
             )
             .sql()?;
         }
- // FTS5 索引(失败不阻断写入:LIKE 兜底,但必须可观测)
+        // FTS5 索引(失败不阻断写入:LIKE 兜底,但必须可观测)
         if let Some(preview) = content_preview
             && let Err(e) = tx.execute(
                 "INSERT INTO memories_fts(rowid, content)
@@ -86,7 +86,7 @@ impl StateDb {
         Ok(())
     }
 
- /// 记忆检索:scope 内非墓碑条目(FTS5 MATCH 优先,LIKE 兜底)。
+    /// 记忆检索:scope 内非墓碑条目(FTS5 MATCH 优先,LIKE 兜底)。
     pub fn memory_search(&self, scope: &str, query: &str) -> StoreResult<Vec<serde_json::Value>> {
         let rows = self.query_rows(
             "SELECT m.id, m.scope, m.content_preview, m.source_ref, m.payload
@@ -105,7 +105,7 @@ impl StateDb {
         }
     }
 
- /// 记忆删除:墓碑 + 来源级联失效。返回级联数。
+    /// 记忆删除:墓碑 + 来源级联失效。返回级联数。
     pub fn memory_delete(&self, entry_id: &str) -> StoreResult<usize> {
         let conn = self.conn.lock().expect("锁未中毒");
         conn.execute(

@@ -36,7 +36,7 @@ impl PluginMeta {
         }
     }
 
- /// 未声明身份时的缺省:工具型、版本未知。
+    /// 未声明身份时的缺省:工具型、版本未知。
     pub fn tool_unknown(id: impl Into<String>) -> Self {
         Self::new(id, "0.0.0", PluginKind::Tool)
     }

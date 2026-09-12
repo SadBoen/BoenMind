@@ -11,7 +11,7 @@ use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
 
 fn plugins_file(cfg: &AdminConfig) -> std::path::PathBuf {
- // 路径约定单源化(ADR-0053):不再手拼,与装载入口共用同一约定。
+    // 路径约定单源化(ADR-0053):不再手拼,与装载入口共用同一约定。
     bm_core::ports::skill_host::plugins_config_path(&cfg.data_dir)
 }
 
@@ -44,15 +44,15 @@ async fn reload_plugins(cfg: &AdminConfig) -> String {
     let Some(manager) = cfg.skills.clone() else {
         return "wasm 执行面未启用,插件未装载。".to_string();
     };
- // 1) 摘除全部通用插件来源的能力(ADR-0042:按装载来源判断,不按 provider
- // 名字前缀;技能由 skills.json 自己的热重载管理,不在此面触达)。
+    // 1) 摘除全部通用插件来源的能力(ADR-0042:按装载来源判断,不按 provider
+    // 名字前缀;技能由 skills.json 自己的热重载管理,不在此面触达)。
     let old = manager.unregister_all_generic();
     if !old.is_empty()
         && let Err(e) = cfg.handle.capabilities_unregister(old.clone()).await
     {
         return format!("插件已保存,但旧能力摘除失败: {e}");
     }
- // 2) 按最新声明重编译注册。
+    // 2) 按最新声明重编译注册。
     let manifests = manager.load_plugins_file(&plugins_file(cfg));
     let entries = bm_core::ports::skill_host::placeholder_entries(manifests);
     if entries.is_empty() {

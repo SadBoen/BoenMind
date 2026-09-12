@@ -54,7 +54,7 @@ pub(crate) fn handle_session_set_mode(
         .ok_or_else(|| CoreError::validation(format!("未知会话: {}", session_id.as_str())))?;
     let from = session.permission_mode;
     if from == mode {
- // 幂等:同值设置不发事件不落审计噪音,直接确认
+        // 幂等:同值设置不发事件不落审计噪音,直接确认
         return Ok(serde_json::json!({
             "session_id": session_id.as_str(),
             "permission_mode": mode.as_str(),
@@ -93,9 +93,9 @@ pub(crate) fn handle_session_create(
     for m in &spec.model_chain {
         bm_contract::connector::validate_model_id(m).map_err(CoreError::validation)?;
     }
- // W8(ADR-0018):会话绑定工作区必须已登记(注册表 = config/workspaces.json,
- // 管理面写盘、核心只读)。未配置 data_dir(纯内存测试态)时登记表恒空,
- // 显式绑定一律拒绝——绑定必须真实可解析,不做「看起来能选」的假接受。
+    // W8(ADR-0018):会话绑定工作区必须已登记(注册表 = config/workspaces.json,
+    // 管理面写盘、核心只读)。未配置 data_dir(纯内存测试态)时登记表恒空,
+    // 显式绑定一律拒绝——绑定必须真实可解析,不做「看起来能选」的假接受。
     if let Some(wid) = &spec.workspace_id {
         w.validate_workspace(wid)?;
     }
@@ -110,14 +110,14 @@ pub(crate) fn handle_session_create(
         state: SessionState::Created,
         created_at: now.clone(),
         workspace_id: spec.workspace_id.clone(),
- // 会话目录():初值 updated_at = created_at;
- // 标题待首条用户消息回填(内容不在事件面,core 直写)
+        // 会话目录():初值 updated_at = created_at;
+        // 标题待首条用户消息回填(内容不在事件面,core 直写)
         title: None,
         updated_at: Some(now.clone()),
- // ADR-0030 决策 1:新会话默认 ask(变更前确认),服务端权威
+        // ADR-0030 决策 1:新会话默认 ask(变更前确认),服务端权威
         permission_mode: PermissionMode::Ask,
     };
- // created→active(surface_attached):M1 进程内直调即视为已挂接。
+    // created→active(surface_attached):M1 进程内直调即视为已挂接。
     session.transition(SessionState::Active);
     w.sessions.insert(session_id.clone(), session);
 
@@ -135,7 +135,7 @@ pub(crate) fn handle_session_create(
             allowed_tools: spec.allowed_tools.clone(),
         },
     );
- // created→starting→running(agent_start + model_binding_ready):无事件(规格 §8.6)。
+    // created→starting→running(agent_start + model_binding_ready):无事件(规格 §8.6)。
     {
         let agent = w.agents.get_mut(&agent_id).expect("已插入");
         agent.transition(AgentState::Starting);
@@ -153,8 +153,8 @@ pub(crate) fn handle_session_create(
         }),
     );
 
- // 重启续聊配套():创建即绑定的工作目录落持久行
- // (SessionCreated 事件载荷不含绑定,投影由本处直写)。
+    // 重启续聊配套():创建即绑定的工作目录落持久行
+    // (SessionCreated 事件载荷不含绑定,投影由本处直写)。
     if w.sessions[&session_id].workspace_id.is_some()
         && let Some(store) = w.store.clone()
     {
@@ -178,8 +178,8 @@ pub(crate) fn handle_session_create(
         }),
     );
 
- // M7 S1:模型调用权显式授权(Grant 台账;ADR-0006)——创建即授 Forever,
- // 可被 Butler revoke 收回;持久行保证重启后权利不丢。
+    // M7 S1:模型调用权显式授权(Grant 台账;ADR-0006)——创建即授 Forever,
+    // 可被 Butler revoke 收回;持久行保证重启后权利不丢。
     let mg =
         crate::butler::model_grant_for(&*w.config.id_gen, agent_id.as_str(), w.config.clock.now());
     w.grants.record(mg.clone());
@@ -237,7 +237,7 @@ pub(crate) fn handle_session_resume(
 
     Ok(SessionResumeResult {
         agent_id: session.agent_id.clone(),
- // M1 无 detached 路径(M3 Surface 断连引入);保持当前态。
+        // M1 无 detached 路径(M3 Surface 断连引入);保持当前态。
         session_state: SessionState::Active,
         agent_state,
         last_event_seq: w.bus.last_seq(),
@@ -269,8 +269,8 @@ pub(crate) fn handle_session_close(
         let agent = w.agents.get(&session.agent_id).expect("session 必有 agent");
         agent_final_state = agent.state.as_str().to_string();
     }
- // close 只关会话,不取消进行中的回合(INV-6);in_flight 不动。
- // W5:对话台账随会话关闭清退(历史回喂数据源,内存面随会话寿命)。
+    // close 只关会话,不取消进行中的回合(INV-6);in_flight 不动。
+    // W5:对话台账随会话关闭清退(历史回喂数据源,内存面随会话寿命)。
     w.session_chats.remove(&params.session_id);
     w.session_turn_totals.remove(&params.session_id);
     let reason = params.reason.unwrap_or_else(|| "user_request".into());
@@ -307,7 +307,7 @@ pub(crate) fn handle_session_delete(
         return Err(CoreError::validation("session 不存在"));
     };
     let _ = request_id;
- // 会话内未终态 operation 一并清场(其收据随会话消失)
+    // 会话内未终态 operation 一并清场(其收据随会话消失)
     let session_ops: Vec<BmId> = w
         .operations
         .values()
@@ -324,12 +324,12 @@ pub(crate) fn handle_session_delete(
     }
     w.session_chats.remove(&session_id);
     w.session_turn_totals.remove(&session_id);
- // Agent 实体一并清场():SQLite 侧 agents 行已随会话
- // 删除,内存遗留即幽灵 Agent——常驻增长,且按 agent_id 查询会误判其活跃。
+    // Agent 实体一并清场():SQLite 侧 agents 行已随会话
+    // 删除,内存遗留即幽灵 Agent——常驻增长,且按 agent_id 查询会误判其活跃。
     w.agents.remove(&session.agent_id);
 
     let now = w.now_ts();
- // ①墓碑 + ②原文清空(单事务;失败入拒写态,防半删状态)
+    // ①墓碑 + ②原文清空(单事务;失败入拒写态,防半删状态)
     if let Some(store) = w.store.clone()
         && let Err(e) = store.erase_session_contents(session_id.as_str(), &now)
     {
@@ -340,7 +340,7 @@ pub(crate) fn handle_session_delete(
             "会话删除持久侧效失败".into(),
         ));
     }
- // ③context-log 过滤(会话已从内存移除)
+    // ③context-log 过滤(会话已从内存移除)
     let purged = match &w.config.data_dir {
         Some(dir) => {
             crate::ports::persist::filter_lines_atomic(&dir.join("context-log.jsonl"), |line| {
@@ -358,11 +358,11 @@ pub(crate) fn handle_session_delete(
         }
         None => 0,
     };
- // 持久层 sessions/agents 行删除(墓碑已在,事件重放亦不复活;若会话行仍在持久层则 DELETE)
+    // 持久层 sessions/agents 行删除(墓碑已在,事件重放亦不复活;若会话行仍在持久层则 DELETE)
     if let Some(store) = w.store.clone()
         && let Err(e) = store.delete_session_rows(session_id.as_str())
     {
- // 墓碑已在事务1落定,残留行重启不复活;此处失败须留观测点不可静默
+        // 墓碑已在事务1落定,残留行重启不复活;此处失败须留观测点不可静默
         tracing::warn!(error = %e, session = %session_id.as_str(), "会话行删除失败(墓碑在,重启不复活)");
     }
     tracing::info!(session = %session_id.as_str(), purged, "会话已删除(墓碑+原文擦除)");
@@ -377,8 +377,8 @@ pub(crate) fn handle_events_poll(
     params: EventsPollParams,
 ) -> CoreResult<EventsPollResult> {
     let limit = params.limit.unwrap_or(100).clamp(1, 1000);
- // M5 增发:task_id 过滤(watch 观察面;task 事件不携带 session 关联,
- // 过滤在事件信封 payload.task_id 上执行,wire/session 合同语义)
+    // M5 增发:task_id 过滤(watch 观察面;task 事件不携带 session 关联,
+    // 过滤在事件信封 payload.task_id 上执行,wire/session 合同语义)
     if let Some(task_id) = &params.task_id {
         let (events, last_seq, has_more) = w.events_for_task(task_id, params.since_seq, limit)?;
         return Ok(EventsPollResult {
@@ -430,9 +430,9 @@ pub(crate) fn handle_send_input(
         return Err(CoreError::validation("agent 不属于该 session"));
     }
     if agent.state != AgentState::Running {
- // 失败自愈(合同增发 failed→running,resend_after_failure):回合失败
- // ≠agent 死亡,同会话再次发消息即恢复接单;发 agent.resumed 同步投影。
- // 其余状态(取消/停止/进行中)照旧拒绝。
+        // 失败自愈(合同增发 failed→running,resend_after_failure):回合失败
+        // ≠agent 死亡,同会话再次发消息即恢复接单;发 agent.resumed 同步投影。
+        // 其余状态(取消/停止/进行中)照旧拒绝。
         if agent.state == AgentState::Failed {
             if let Some(a) = w.agents.get_mut(&params.agent_id) {
                 a.transition(AgentState::Running);
@@ -452,15 +452,15 @@ pub(crate) fn handle_send_input(
         }
     }
 
- // W8(ADR-0018):本回合工作区覆盖(对话级热切换,model_override 同款)。
- // 校验通过即更新会话绑定;未登记 id 拒绝,不静默沿用旧值。
+    // W8(ADR-0018):本回合工作区覆盖(对话级热切换,model_override 同款)。
+    // 校验通过即更新会话绑定;未登记 id 拒绝,不静默沿用旧值。
     if let Some(wid) = &params.workspace_override {
         w.validate_workspace(wid)?;
         if session.workspace_id.as_deref() != Some(wid.as_str()) {
             if let Some(s) = w.sessions.get_mut(&params.session_id) {
                 s.workspace_id = Some(wid.clone());
             }
- // 重启续聊配套():绑定落持久行,失败入拒写态
+            // 重启续聊配套():绑定落持久行,失败入拒写态
             if let Some(store) = w.store.clone()
                 && let Err(e) =
                     store.save_session_workspace(params.session_id.as_str(), Some(wid.as_str()))
@@ -471,7 +471,7 @@ pub(crate) fn handle_send_input(
         }
     }
 
- // 强制点①(规格 §8.2):预算拒绝不创建 operation。
+    // 强制点①(规格 §8.2):预算拒绝不创建 operation。
     match agent.budget.check(true) {
         crate::budget::Verdict::ExceededTokens | crate::budget::Verdict::ExceededTurns => {
             let msg = match agent.budget.check(false) {
@@ -499,7 +499,7 @@ pub(crate) fn handle_send_input(
     let operation_id = w.config.id_gen.next_id("op");
     let turn_index = agent.budget.turns_used + 1;
 
- // not_started→running(dispatch_accepted):由收据承载,不发事件(规格 §8.1)。
+    // not_started→running(dispatch_accepted):由收据承载,不发事件(规格 §8.1)。
     let operation = Operation {
         id: operation_id.clone(),
         request_id: request_id.clone(),
@@ -528,7 +528,7 @@ pub(crate) fn handle_send_input(
             "turn_index": turn_index,
         }),
     );
- // Execution Log:agent.turn(输入只留摘要,基线 8.4;A4:载荷原文不入日志)
+    // Execution Log:agent.turn(输入只留摘要,基线 8.4;A4:载荷原文不入日志)
     {
         let digest_hex = bm_contract::hash::sha256_hex(params.content.as_bytes());
         w.exec_log.record(crate::exec_log::LogRecord {
@@ -546,9 +546,9 @@ pub(crate) fn handle_send_input(
             ts: now.clone(),
         });
     }
- // 会话历史回放():用户消息逐条入上下文日志(kind=user_message,
- // 与 assistant_final 同流),供 /admin/sessions/{id}/messages 按 seq 重放。
- // A4 口径不变:事件面仍只留摘要;诊断日志面按快照口径 16K 截断。
+    // 会话历史回放():用户消息逐条入上下文日志(kind=user_message,
+    // 与 assistant_final 同流),供 /admin/sessions/{id}/messages 按 seq 重放。
+    // A4 口径不变:事件面仍只留摘要;诊断日志面按快照口径 16K 截断。
     {
         let truncated = crate::runtime::turn::content_trunc_with(
             &params.content,
@@ -567,9 +567,9 @@ pub(crate) fn handle_send_input(
         );
     }
 
- // 会话目录标题回填():首条用户消息即标题(截断),
- // 只在尚无标题时生效(内存守卫 + SQL COALESCE 双重幂等);失败入拒写态
- //(sessions 表 = 规范状态,静默内存-库漂移即破坏投影纪律)。
+    // 会话目录标题回填():首条用户消息即标题(截断),
+    // 只在尚无标题时生效(内存守卫 + SQL COALESCE 双重幂等);失败入拒写态
+    //(sessions 表 = 规范状态,静默内存-库漂移即破坏投影纪律)。
     if session.title.is_none() {
         let title = crate::runtime::turn::session_title_from(&params.content);
         if let Some(s) = w.sessions.get_mut(&params.session_id) {
@@ -583,8 +583,8 @@ pub(crate) fn handle_send_input(
         }
     }
 
- // 输入原文入受保护存储(A4:不进事件/日志),供崩溃后 claim 幂等续跑(M2.6)
- #[allow(clippy::collapsible_if)] // 与写穿主路径同构,保持三段式可读
+    // 输入原文入受保护存储(A4:不进事件/日志),供崩溃后 claim 幂等续跑(M2.6)
+    #[allow(clippy::collapsible_if)] // 与写穿主路径同构,保持三段式可读
     if let Some(store) = &w.store {
         if let Err(e) = store.save_op_input(operation_id.as_str(), &params.content) {
             tracing::error!(error = %e, op = %operation_id, "输入持久化失败,进入拒写态");
@@ -596,10 +596,10 @@ pub(crate) fn handle_send_input(
         }
     }
 
- // running→waiting_model(model_invoke_issued)
+    // running→waiting_model(model_invoke_issued)
     {
         let a = w.agents.get_mut(&agent.id).expect("存在");
- // P1-19():边守卫——表外迁移记日志不 panic。
+        // P1-19():边守卫——表外迁移记日志不 panic。
         if AgentState::can_transition(a.state, AgentState::WaitingModel) {
             a.transition(AgentState::WaitingModel);
         } else {
@@ -618,7 +618,7 @@ pub(crate) fn handle_send_input(
         }),
     );
 
- // 强制点②(pre_invoke_check):M1 中与①同账本,防御性保留(基线 9.7)。
+    // 强制点②(pre_invoke_check):M1 中与①同账本,防御性保留(基线 9.7)。
     if agent.budget.check(false) != crate::budget::Verdict::Allow {
         w.fail_turn(
             &operation_id,
@@ -661,12 +661,12 @@ pub(crate) fn handle_approval_list(
     w: &mut World,
     params: wire::ApprovalListParams,
 ) -> CoreResult<serde_json::Value> {
- // A-11(审计台账):列表前置到期扫描。respond() 的就地过期检查只兜
- // 「有人来裁决」的路径;无人问津的滞留项在此收敛,保证待裁决队列
- // 不出现已过期仍可点项(响应路径本身的过期检查保持不变)。
+    // A-11(审计台账):列表前置到期扫描。respond() 的就地过期检查只兜
+    // 「有人来裁决」的路径;无人问津的滞留项在此收敛,保证待裁决队列
+    // 不出现已过期仍可点项(响应路径本身的过期检查保持不变)。
     expire_due_approvals(w);
- // 缺省 = 待裁决队列(waiting_user):审批工作面只关心未决项;
- // 显式 --state 过滤任意状态(wire/capability 合同 description)。
+    // 缺省 = 待裁决队列(waiting_user):审批工作面只关心未决项;
+    // 显式 --state 过滤任意状态(wire/capability 合同 description)。
     let state_filter = params
         .state_filter
         .as_deref()
@@ -745,8 +745,8 @@ pub(crate) fn handle_approval_respond(
         .as_deref()
         .map(|s| GrantScope::from_wire(s).ok_or_else(|| CoreError::validation("非法 scope")))
         .transpose()?;
- // M5 解读条款 4 兑现:task:<id> scope 自 Task 对象落地起启用;校验面
- // 仅拒绝引用不存在 Task 的情形(M4 期恒拒的过渡语义移除)
+    // M5 解读条款 4 兑现:task:<id> scope 自 Task 对象落地起启用;校验面
+    // 仅拒绝引用不存在 Task 的情形(M4 期恒拒的过渡语义移除)
     if let Some(GrantScope::Task(task_id)) = &scope {
         let exists = BmId::parse(task_id.clone())
             .map(|id| w.tasks.contains_key(&id))
@@ -772,11 +772,11 @@ pub(crate) fn handle_approval_respond(
         .get(&params.approval_id)
         .map(|a| a.capability.clone())
         .ok_or_else(|| CoreError::validation("未知审批对象"))?;
- // ADR-0038:抽屉式授权的 Grant 捕获 scope 谓词——批准只覆盖被批准的
- // 那个 scope(资源谓词命中步 4 的 Grant 查表),而非全抽屉能力。
- // 判据 = manifest 声明了 `authorization.drawer`(能力族由合同表达,不再硬编码
- // 能力名前缀——原 `starts_with("memory.")` 属族感知残留,ADR-0038 已裁
- // 规则本体的真源是 manifest)。
+    // ADR-0038:抽屉式授权的 Grant 捕获 scope 谓词——批准只覆盖被批准的
+    // 那个 scope(资源谓词命中步 4 的 Grant 查表),而非全抽屉能力。
+    // 判据 = manifest 声明了 `authorization.drawer`(能力族由合同表达,不再硬编码
+    // 能力名前缀——原 `starts_with("memory.")` 属族感知残留,ADR-0038 已裁
+    // 规则本体的真源是 manifest)。
     let declares_drawer = w
         .registry
         .manifest_of(&cap_for_resource)
@@ -804,11 +804,11 @@ pub(crate) fn handle_approval_respond(
         let mut mgr = ApprovalManager::new(&mut w.grants, &*w.config.clock, &*w.config.id_gen);
         mgr.respond(approval, decision, scope, resource, CAPABILITY_CALLER)
     };
- // ADR-0030:裁决来源落审计(对象字段 + resolved 事件 source 键)
+    // ADR-0030:裁决来源落审计(对象字段 + resolved 事件 source 键)
     if let Some(a) = w.approvals.get_mut(&params.approval_id) {
         a.resolved_source = Some(source.as_str().to_string());
     }
- // 裁决后同步审批行(非 waiting 态剥离重放载荷)
+    // 裁决后同步审批行(非 waiting 态剥离重放载荷)
     let op_row_id = pending.as_ref().map(|(op_id, ..)| op_id.clone());
     if let (Some(a), Some(op_id)) = (w.approvals.get(&params.approval_id), op_row_id.as_ref()) {
         persist_approval(w, a, op_id, None);
@@ -818,7 +818,7 @@ pub(crate) fn handle_approval_respond(
         Ok(Some(grant)) => {
             let op_key = op.as_ref().map(|(op_id, ..)| op_id.clone());
             w.emit_grant_created(&grant, Some(params.approval_id.as_str()), op_key.clone());
- // approval.resolved 键集:[approval_id, operation_id, outcome, scope, grant_id, source]
+            // approval.resolved 键集:[approval_id, operation_id, outcome, scope, grant_id, source]
             w.emit(
                 EventType::ApprovalResolved,
                 None,
@@ -833,11 +833,11 @@ pub(crate) fn handle_approval_respond(
                     "source": source.as_str(),
                 }),
             );
- // 批准:operation 续行(waiting_approval→running→统一执行助手)
+            // 批准:operation 续行(waiting_approval→running→统一执行助手)
             persist_grant(w, &grant.grant_id);
             if let Some((op_id, capability, args, idem, principal, trust)) = op {
- // P0():重放前的纵深防护——操作已被取消(或其他
- // 路径终态)时拒绝重放,宁可报错也不踩表外迁移。
+                // P0():重放前的纵深防护——操作已被取消(或其他
+                // 路径终态)时拒绝重放,宁可报错也不踩表外迁移。
                 let op_state = w.operations.get(&op_id).map(|o| o.state);
                 if !matches!(op_state, Some(OperationState::WaitingApproval)) {
                     w.cap_pending.remove(&params.approval_id);
@@ -846,7 +846,7 @@ pub(crate) fn handle_approval_respond(
                     ));
                 }
                 w.settle_operation(&op_id, OperationState::Running, None);
- // 重放按原始调用方身份归因(M5 双路径:surface / worker)
+                // 重放按原始调用方身份归因(M5 双路径:surface / worker)
                 let mut ctx = CallContext::content_chain(&principal, trust)
                     .unwrap_or_else(|_| CallContext::surface(CAPABILITY_CALLER));
                 if let Some(k) = idem {
@@ -855,8 +855,8 @@ pub(crate) fn handle_approval_respond(
                 let outcome = dispatch_capability(w, &ctx, &capability, args, &op_id);
                 match outcome {
                     CallOutcome::Completed { result, .. } => {
- // W4b 对话内审批:同步批准执行的成果入 op_results,
- // 供回合任务轮询取回喂模型
+                        // W4b 对话内审批:同步批准执行的成果入 op_results,
+                        // 供回合任务轮询取回喂模型
                         w.op_results.insert(op_id.clone(), result);
                         w.settle_operation(&op_id, OperationState::Succeeded, None);
                         persist_grant(w, &grant.grant_id);
@@ -869,12 +869,12 @@ pub(crate) fn handle_approval_respond(
                         w.cap_pending.remove(&params.approval_id);
                     }
                     CallOutcome::DispatchedAsync => {
- // M7 S4:异步执行中;完成经 Cmd::ProviderCall 落定
- // (收据/Grant 消费态/outbox 均在完成处理器收口)
+                        // M7 S4:异步执行中;完成经 Cmd::ProviderCall 落定
+                        // (收据/Grant 消费态/outbox 均在完成处理器收口)
                         w.cap_pending.remove(&params.approval_id);
                     }
                     CallOutcome::ProviderUnavailable { message } => {
- // M7 S5:重连超限在批准重放中同样快速失败(unavailable)
+                        // M7 S5:重连超限在批准重放中同样快速失败(unavailable)
                         fail_capability_call(
                             w,
                             &op_id,
@@ -934,7 +934,7 @@ pub(crate) fn handle_approval_respond(
                     "source": source.as_str(),
                 }),
             );
- // denied/expired/withdrawn → operation cancelled(基线 §9.6)
+            // denied/expired/withdrawn → operation cancelled(基线 §9.6)
             if let Some((op_id, ..)) = op {
                 w.settle_operation(&op_id, OperationState::Cancelled, None);
                 w.cap_pending.remove(&params.approval_id);
@@ -1000,9 +1000,9 @@ pub(crate) fn handle_cancel(w: &mut World, params: CancelParams) -> CoreResult<C
     if op.is_terminal() {
         return Err(CoreError::validation("operation 已到终态,不可取消"));
     }
- // 取消意图持久化():显式取消若在回合边界落定前
- // 遇到崩溃,恢复端凭标记走 Resuming→Stopped(turn_was_stopping)边,
- // 不把已取消的回合复活重跑。写失败 = 拒写态(与 save_op_input 同纪律)。
+    // 取消意图持久化():显式取消若在回合边界落定前
+    // 遇到崩溃,恢复端凭标记走 Resuming→Stopped(turn_was_stopping)边,
+    // 不把已取消的回合复活重跑。写失败 = 拒写态(与 save_op_input 同纪律)。
     if let Some(store) = &w.store
         && let Err(e) = store.mark_op_cancelled(params.operation_id.as_str(), &w.now_ts())
     {
@@ -1013,7 +1013,7 @@ pub(crate) fn handle_cancel(w: &mut World, params: CancelParams) -> CoreResult<C
             "取消标记持久化失败".into(),
         ));
     }
- // 触发取消令牌;真实落定在 TurnEvent::Cancelled(回合边界)。
+    // 触发取消令牌;真实落定在 TurnEvent::Cancelled(回合边界)。
     if let Some(token) = w.in_flight.get(&params.operation_id) {
         token.cancel();
     }
@@ -1060,7 +1060,7 @@ pub(crate) async fn handle_stop(
         None,
         serde_json::json!({ "reason": reason }),
     );
- // 排空:等在途回合自然落定,但设硬顶超时(默认10s),防坏任务永久挂死停机/升级回路
+    // 排空:等在途回合自然落定,但设硬顶超时(默认10s),防坏任务永久挂死停机/升级回路
     w.draining = true;
     let drain_deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while !w.in_flight.is_empty() {
@@ -1083,13 +1083,13 @@ pub(crate) async fn handle_stop(
 
         match cmd_opt {
             Some(Cmd::Turn(event)) => handle_turn_event(w, event),
- // W5:排空期回落中的台账回写照常应用(与 Turn 同口径)
+            // W5:排空期回落中的台账回写照常应用(与 Turn 同口径)
             Some(Cmd::RememberTurn {
                 session_id,
                 user,
                 assistant,
             }) => crate::runtime::turn::remember_turn(w, session_id, user, assistant),
- // 收据查询只读幂等,排空期照常应答(INV-6 精神)。
+            // 收据查询只读幂等,排空期照常应答(INV-6 精神)。
             Some(Cmd::GetOperation { params, resp }) => {
                 let _ = resp.send(handle_get_operation(w, params));
             }
@@ -1136,8 +1136,8 @@ pub(crate) fn handle_capabilities_register(
     )>,
 ) -> CoreResult<Vec<String>> {
     w.gate_writes("能力注册")?;
- // 持久 epoch 快照先行:逐条查库是 N+1,且落库后的行会污染后续代际基线。
- // 读取失败不得静默继续——会把代际重置回 1(与落库失败同口径置毒拒绝)。
+    // 持久 epoch 快照先行:逐条查库是 N+1,且落库后的行会污染后续代际基线。
+    // 读取失败不得静默继续——会把代际重置回 1(与落库失败同口径置毒拒绝)。
     let persisted_epochs: std::collections::HashMap<String, u64> = match &w.store {
         Some(store) => match store.list_capability_bindings() {
             Ok(rows) => rows
@@ -1169,7 +1169,7 @@ pub(crate) fn handle_capabilities_register(
             .register(manifest.clone(), &instance, provider.clone())
         {
             Ok(_) => {
- // 代际抬升:已有持久行(含注销墓碑)= max+1;全新能力 = 1。
+                // 代际抬升:已有持久行(含注销墓碑)= max+1;全新能力 = 1。
                 let target = persisted_epochs
                     .get(&capability)
                     .map(|e| e.saturating_add(1))
@@ -1180,10 +1180,10 @@ pub(crate) fn handle_capabilities_register(
                     target,
                     crate::registry::BindingStatus::Active,
                 );
- // restore_binding 按「可丢失缓存」语义清空句柄,重新 attach。
+                // restore_binding 按「可丢失缓存」语义清空句柄,重新 attach。
                 let _ = w.registry.attach_handle(&capability, provider);
- // 异步分道判定与启动注册同源:以 manifest.execution_mode 声明为唯一真源
- // (ADR-0036/0054,内核不认识 provider 命名前缀)。
+                // 异步分道判定与启动注册同源:以 manifest.execution_mode 声明为唯一真源
+                // (ADR-0036/0054,内核不认识 provider 命名前缀)。
                 w.registry.mark_async_for(&capability, &provider_id);
                 if let Some(store) = w.store.clone()
                     && let Err(e) =
@@ -1225,8 +1225,8 @@ pub(crate) fn handle_capabilities_unregister(
     w.gate_writes("能力注销")?;
     let mut removed: Vec<String> = Vec::new();
     for cap in capabilities {
- // ADR-0037:有在途异步调用 -> 进排空(拒新调用,待全部落定后摘除),
- // 不在在途调用中途拔路由;无在途 -> 直接摘除(现状)。
+        // ADR-0037:有在途异步调用 -> 进排空(拒新调用,待全部落定后摘除),
+        // 不在在途调用中途拔路由;无在途 -> 直接摘除(现状)。
         let in_flight: std::collections::HashSet<BmId> = w
             .op_async_meta
             .iter()

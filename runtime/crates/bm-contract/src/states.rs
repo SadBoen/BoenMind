@@ -59,20 +59,20 @@ pub struct Transition<S> {
 macro_rules! state_machine {
     ($states_ty:ident, $states_len:expr, $terminal:expr, $transitions:expr) => {
         impl $states_ty {
- /// 状态数(与迁移表 states 数组同步)。
+            /// 状态数(与迁移表 states 数组同步)。
             pub const ALL_LEN: usize = $states_len;
 
- /// 终态集合(迁移表 terminal 列;M1 内终态不可迁出)。
+            /// 终态集合(迁移表 terminal 列;M1 内终态不可迁出)。
             pub fn is_terminal(self) -> bool {
                 $terminal.contains(&self)
             }
 
- /// 合法迁移表(与 core-transitions.v0_1.json 逐条同步)。
+            /// 合法迁移表(与 core-transitions.v0_1.json 逐条同步)。
             pub fn transitions() -> &'static [Transition<Self>] {
                 &$transitions
             }
 
- /// from → to 是否为表中一条边。
+            /// from → to 是否为表中一条边。
             pub fn can_transition(from: Self, to: Self) -> bool {
                 $transitions.iter().any(|t| t.from == from && t.to == to)
             }
@@ -129,7 +129,7 @@ pub const OPERATION_TRANSITIONS: [Transition<OperationState>; 15] = [
         OperationState::Interrupted,
         "runtime_crash_before_terminal",
     ),
- // M4 增发:审批等待三边(基线 §9.6;denied/expired 等价拒绝,无超时默认同意)
+    // M4 增发:审批等待三边(基线 §9.6;denied/expired 等价拒绝,无超时默认同意)
     t(
         OperationState::Running,
         OperationState::WaitingApproval,
@@ -231,8 +231,8 @@ pub const AGENT_TRANSITIONS: [Transition<AgentState>; 23] = [
         "explicit_cancel",
     ),
     t(AgentState::Running, AgentState::Stopping, "explicit_cancel"),
- // M5 增发:paused 四边(用户 task.pause/resume 级联或 Coordinator 显式动词;
- // resume 为编排重启触发者之一,ADR-0004 条件 6)
+    // M5 增发:paused 四边(用户 task.pause/resume 级联或 Coordinator 显式动词;
+    // resume 为编排重启触发者之一,ADR-0004 条件 6)
     t(
         AgentState::Running,
         AgentState::Paused,
@@ -286,7 +286,7 @@ pub const AGENT_TRANSITIONS: [Transition<AgentState>; 23] = [
         AgentState::Stopped,
         "replay_ok AND turn_was_stopping",
     ),
- // )
+    // )
     t(
         AgentState::Failed,
         AgentState::Running,
@@ -342,7 +342,7 @@ state_machine!(TaskState, 7, TASK_TERMINAL, TASK_TRANSITIONS);
 mod tests {
     use super::*;
 
- #[test]
+    #[test]
     fn operation_no_transition_out_of_terminal() {
         for terminal in OPERATION_TERMINAL {
             for state in [

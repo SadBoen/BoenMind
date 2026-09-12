@@ -32,9 +32,9 @@ fn breaker_hit(recent: &[(String, String)], sig: &(String, String), n: usize) ->
     recent.len() >= w && recent[recent.len() - w..].iter().all(|s| s == sig)
 }
 
- /// #19 拆分第二批:工具目录组装(纯逻辑自异步块外置,语句逐字保留,直测)。
- /// 输入 registry.chat_tools() 快照与 agent 工具白名单;输出 wire 名→能力名
- /// 映射与 OpenAI function 格式工具清单。
+/// #19 拆分第二批:工具目录组装(纯逻辑自异步块外置,语句逐字保留,直测)。
+/// 输入 registry.chat_tools() 快照与 agent 工具白名单;输出 wire 名→能力名
+/// 映射与 OpenAI function 格式工具清单。
 fn build_tool_catalog(
     chat_tools: &[crate::registry::ChatTool],
     allowed_tools: Option<&[String]>,
@@ -44,11 +44,11 @@ fn build_tool_catalog(
 ) {
     let mut name_to_cap: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
- // ADR-0022 后续批 / ADR-0054:内置能力出主流短名,模型对
- // read/write/edit/rgrep/powershell/bash 有训练亲和;短名现由各 provider
- // 在 manifest.wire_name 声明(内核不再认识具体能力名)。合同能力名不动,
- // 返回调用经 name_to_cap 映射回内核能力名。声明名与默认长名冲突(理论边界)
- // 则回落默认长名,保唯一性。
+    // ADR-0022 后续批 / ADR-0054:内置能力出主流短名,模型对
+    // read/write/edit/rgrep/powershell/bash 有训练亲和;短名现由各 provider
+    // 在 manifest.wire_name 声明(内核不再认识具体能力名)。合同能力名不动,
+    // 返回调用经 name_to_cap 映射回内核能力名。声明名与默认长名冲突(理论边界)
+    // 则回落默认长名,保唯一性。
     let mut used: std::collections::HashSet<String> = chat_tools
         .iter()
         .map(|t| t.capability.replace('.', "_"))
@@ -60,9 +60,9 @@ fn build_tool_catalog(
             let openai_name = wire_name_of(t.wire_name.as_deref(), cap, &used);
             used.insert(openai_name.clone());
             name_to_cap.insert(openai_name.clone(), cap.clone());
- // ADR-0022 描述治理:描述随 manifest 走(fs.*/system.exec 内置
- // 能力与 MCP 工具均自描述);缺省按审批语义给最小兜底,不再
- // 把「弹出审批卡片」等前端 UI 行为写进模型视野。
+            // ADR-0022 描述治理:描述随 manifest 走(fs.*/system.exec 内置
+            // 能力与 MCP 工具均自描述);缺省按审批语义给最小兜底,不再
+            // 把「弹出审批卡片」等前端 UI 行为写进模型视野。
             let desc = t
                 .description
                 .as_deref()
@@ -86,9 +86,9 @@ fn build_tool_catalog(
         })
         .collect();
 
- // F1(ADR-0022 后续批):工具白名单——Some(非空) 只挂清单内工具。
- // 匹配口径:能力名 fs.read / 单下划线 fs_read / wire 短名 read 三种
- // 写法均认;清单写了不存在的工具 = 忽略该项(白名单语义从宽)。
+    // F1(ADR-0022 后续批):工具白名单——Some(非空) 只挂清单内工具。
+    // 匹配口径:能力名 fs.read / 单下划线 fs_read / wire 短名 read 三种
+    // 写法均认;清单写了不存在的工具 = 忽略该项(白名单语义从宽)。
     if let Some(allowed) = allowed_tools {
         let allow: std::collections::HashSet<&str> = allowed.iter().map(String::as_str).collect();
         tools_json.retain(|t| {
@@ -116,21 +116,21 @@ fn build_tool_catalog(
 /// 批次作用域的 batch_denied(#26 同批拒绝联动)与每 attempt 清零的
 /// tool_rounds 留在装配层/reset 就地处,语义就地可见。
 struct TurnState {
- /// 模型消息序列(system/压缩摘要/历史回合/本轮输入/工具闭环追加)。
+    /// 模型消息序列(system/压缩摘要/历史回合/本轮输入/工具闭环追加)。
     messages: Vec<Message>,
- /// 防空转熔断窗口:最近工具签名 (name, arguments),超窗裁最旧。
+    /// 防空转熔断窗口:最近工具签名 (name, arguments),超窗裁最旧。
     recent_tool_signatures: Vec<(String, String)>,
- /// 当前 attempt 内已发生的工具轮数(每批 tool_calls 记 1 轮)。
+    /// 当前 attempt 内已发生的工具轮数(每批 tool_calls 记 1 轮)。
     tool_rounds: u32,
- /// 防空转熔断命中(同命令同参连续 N 次)→ 本回合不再执行工具。
+    /// 防空转熔断命中(同命令同参连续 N 次)→ 本回合不再执行工具。
     loop_broken: bool,
- /// 总轮数安全网(limits.tool_rounds_max)触发 → 本回合不再执行工具。
+    /// 总轮数安全网(limits.tool_rounds_max)触发 → 本回合不再执行工具。
     round_cap_hit: bool,
 }
 
 impl TurnState {
- /// 起始消息序列:角色 prompt → 压缩摘要(#2)→ 历史回合回喂(W5)→ 本轮
- /// 输入。语句逐字保留自原异步块装配段。
+    /// 起始消息序列:角色 prompt → 压缩摘要(#2)→ 历史回合回喂(W5)→ 本轮
+    /// 输入。语句逐字保留自原异步块装配段。
     fn init(
         role_prompt: Option<&str>,
         compress_summary: Option<String>,
@@ -146,8 +146,8 @@ impl TurnState {
                 tool_calls: None,
             });
         }
- // #2:会话压缩摘要注入——context.compress 的产物文件存在即前置
- // (System 消息;历史原文不改写,删除文件即回退)
+        // #2:会话压缩摘要注入——context.compress 的产物文件存在即前置
+        // (System 消息;历史原文不改写,删除文件即回退)
         if let Some(summary) = compress_summary {
             messages.push(Message {
                 role: Role::System,
@@ -159,9 +159,9 @@ impl TurnState {
                 tool_calls: None,
             });
         }
- // W5():历史回合回喂。
- // 模型对同会话前情失忆(W1 合同口径「历史由 runtime 侧维护」的实现
- // 缺口);台账在回合成功落定时经 Cmd::RememberTurn 回写。
+        // W5():历史回合回喂。
+        // 模型对同会话前情失忆(W1 合同口径「历史由 runtime 侧维护」的实现
+        // 缺口);台账在回合成功落定时经 Cmd::RememberTurn 回写。
         for (u, a) in history {
             messages.push(Message {
                 role: Role::User,
@@ -191,8 +191,8 @@ impl TurnState {
         }
     }
 
- /// 防空转熔断窗口扫描(W10):逐个记录本批工具签名,任一签名使窗口内
- /// 连续同参次数达标即置 loop_broken;breaker_n<2 = 熔断关闭不扫描。
+    /// 防空转熔断窗口扫描(W10):逐个记录本批工具签名,任一签名使窗口内
+    /// 连续同参次数达标即置 loop_broken;breaker_n<2 = 熔断关闭不扫描。
     fn sweep_breaker(
         &mut self,
         tool_calls: &[ToolCallPayload],
@@ -215,8 +215,8 @@ impl TurnState {
         }
     }
 
- /// ADR-0029():熔断/触顶拦截的调用不凭空蒸发——
- /// 逐个回喂事实性结果(未执行+原因),因果链对模型与日志完整。
+    /// ADR-0029():熔断/触顶拦截的调用不凭空蒸发——
+    /// 逐个回喂事实性结果(未执行+原因),因果链对模型与日志完整。
     fn feed_unexecuted(&mut self, tool_calls: &[ToolCallPayload]) {
         if tool_calls.is_empty() {
             return;
@@ -254,13 +254,13 @@ async fn await_tool_settlement(
     mut batch_denied: bool,
 ) -> (String, bool) {
     let deadline = wait_secs.map(|s| std::time::Instant::now() + std::time::Duration::from_secs(s));
- // 延迟初始化:环内每条 break 边都先赋 tool_result,初始占位值已无读点。
+    // 延迟初始化:环内每条 break 边都先赋 tool_result,初始占位值已无读点。
     let tool_result;
     loop {
         if deadline.is_some_and(|dl| std::time::Instant::now() > dl) {
             if let Some(appr_id) = &approval_id {
- // P1-3: 审批等待超时后主动发送 Withdraw 撤销审批单,
- // 防止后续用户迟到点击批准引发无主的真实副作用执行
+                // P1-3: 审批等待超时后主动发送 Withdraw 撤销审批单,
+                // 防止后续用户迟到点击批准引发无主的真实副作用执行
                 if let Ok(appr_bm_id) = BmId::parse(appr_id) {
                     let (wtx, _wrx) = tokio::sync::oneshot::channel();
                     let _ = tx
@@ -271,7 +271,7 @@ async fn await_tool_settlement(
                                 decision: "withdraw".to_string(),
                                 scope: None,
                             },
- // ADR-0030:超时撤销 = 系统自裁,审计与人工裁决区分
+                            // ADR-0030:超时撤销 = 系统自裁,审计与人工裁决区分
                             source: crate::approval::ResolvedSource::System,
                             resp: wtx,
                         })
@@ -289,7 +289,7 @@ async fn await_tool_settlement(
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(400)).await;
- // 审批路径先查操作状态(批准→succeeded / 拒绝→cancelled),再取结果载荷
+        // 审批路径先查操作状态(批准→succeeded / 拒绝→cancelled),再取结果载荷
         if approval_id.is_some() {
             let (stx, srx) = tokio::sync::oneshot::channel();
             let _ = tx
@@ -310,9 +310,9 @@ async fn await_tool_settlement(
                                 resp: rtx2,
                             })
                             .await;
- // 审批类工具回喂如实转述审批
- // 结论(ADR-0022:不再附加
- // 「不要再次调用」类禁令)
+                        // 审批类工具回喂如实转述审批
+                        // 结论(ADR-0022:不再附加
+                        // 「不要再次调用」类禁令)
                         let payload = match rrx2.await {
                             Ok(Ok(Some(v))) => v.to_string(),
                             _ => "{}".into(),
@@ -323,13 +323,13 @@ async fn await_tool_settlement(
                     bm_contract::states::OperationState::Cancelled => {
                         tool_result =
                             format!("用户拒绝了能力 {capability} 的本次审批请求,工具未执行。");
- // #26:用户驳回 → 同批余下联动取消
+                        // #26:用户驳回 → 同批余下联动取消
                         batch_denied = true;
                         break;
                     }
                     bm_contract::states::OperationState::Failed => {
- // ADR-0029:如实回喂,不带「请向
- // 用户说明」类教练话术。
+                        // ADR-0029:如实回喂,不带「请向
+                        // 用户说明」类教练话术。
                         let detail = receipt
                             .error
                             .as_ref()
@@ -342,18 +342,18 @@ async fn await_tool_settlement(
                 }
             }
         } else {
- // ADR-0028 修复:等待时限 0=不限时后,
- // 本循环必须对终态失败/取消即时脱身——
- // 失败操作从不写 op_results,只查
- // GetOpResult 会无限空转挂死回合。
- // 每拍先查状态:内核单写者循环保证
- // settle(Succeeded) 与载荷写入同一
- // 命令处理器内完成,观测到成功后单次
- // GetOpResult 即是结论——有则取结果,
- // 无则如实回报,零宽限零竞态。
- // 回喂纪律(ADR-0022 同源,
- // 用户重申):只如实转述事实,不附加
- // 任何「该怎么办」的教练话术。
+            // ADR-0028 修复:等待时限 0=不限时后,
+            // 本循环必须对终态失败/取消即时脱身——
+            // 失败操作从不写 op_results,只查
+            // GetOpResult 会无限空转挂死回合。
+            // 每拍先查状态:内核单写者循环保证
+            // settle(Succeeded) 与载荷写入同一
+            // 命令处理器内完成,观测到成功后单次
+            // GetOpResult 即是结论——有则取结果,
+            // 无则如实回报,零宽限零竞态。
+            // 回喂纪律(ADR-0022 同源,
+            // 用户重申):只如实转述事实,不附加
+            // 任何「该怎么办」的教练话术。
             let (stx, srx) = tokio::sync::oneshot::channel();
             let _ = tx
                 .send(Cmd::GetOperation {
@@ -422,11 +422,11 @@ struct TurnEnv {
     streaming: bool,
     intent_gate_min: u32,
     user_input: String,
- /// 本轮工具元数据投影:capability → (effect, needs_approval),供工具事件
- /// 标注风险(阶段3 单源化:前端据此分类,不再按工具名猜——ADR-0054 同源)。
+    /// 本轮工具元数据投影:capability → (effect, needs_approval),供工具事件
+    /// 标注风险(阶段3 单源化:前端据此分类,不再按工具名猜——ADR-0054 同源)。
     tool_meta: std::collections::HashMap<String, (String, bool)>,
- /// ADR-0056:system prompt 结构化组成(persona/技能/工作目录),入快照供
- /// 上下文透视直读(不再由前端反解析 prompt 标记)。
+    /// ADR-0056:system prompt 结构化组成(persona/技能/工作目录),入快照供
+    /// 上下文透视直读(不再由前端反解析 prompt 标记)。
     system_parts: serde_json::Value,
 }
 
@@ -461,7 +461,7 @@ async fn invoke_model_once(
     let snap_msgs = crate::context_log::snapshot_messages(&req.messages);
     let snap_model = req.model_id.clone();
     let snap_start = std::time::Instant::now();
- // #14:调试面——请求侧全量(消息序列+工具数;开关关时零成本)
+    // #14:调试面——请求侧全量(消息序列+工具数;开关关时零成本)
     env.turn_debug.record(
         "model_request",
         env.session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
@@ -477,11 +477,11 @@ async fn invoke_model_once(
         }),
     );
 
- // M9-S2:流式开关开启时走 invoke_stream,增量经 ProviderDelta
- // 回核心循环(单写者落 model.content.delta 事件);通道满则丢弃
- // 单个增量(事件面渐进性降级,不影响终态聚合)。
- // 首字延迟(TTFT):首个增量到达时刻 − 请求发出时刻;仅流式
- // 可测,非流式如实为 None(整响应延迟已测 latency)。
+    // M9-S2:流式开关开启时走 invoke_stream,增量经 ProviderDelta
+    // 回核心循环(单写者落 model.content.delta 事件);通道满则丢弃
+    // 单个增量(事件面渐进性降级,不影响终态聚合)。
+    // 首字延迟(TTFT):首个增量到达时刻 − 请求发出时刻;仅流式
+    // 可测,非流式如实为 None(整响应延迟已测 latency)。
     let first_delta_at: std::sync::Arc<std::sync::Mutex<Option<std::time::Instant>>> =
         std::sync::Arc::new(std::sync::Mutex::new(None));
     let resp = if env.streaming {
@@ -592,8 +592,8 @@ async fn run_tool_round(
     snap_step: u32,
 ) {
     st.tool_rounds += 1;
- // P0-1 总轮数安全网(limits 热生效,0=关):
- // 超限不再执行工具,回合就地收束并告知用户。
+    // P0-1 总轮数安全网(limits 热生效,0=关):
+    // 超限不再执行工具,回合就地收束并告知用户。
     let cap = env.limits_cell.get().tool_rounds_max;
     if cap > 0 && st.tool_rounds > cap {
         st.round_cap_hit = true;
@@ -604,8 +604,8 @@ async fn run_tool_round(
             ),
         });
     }
- // W10:防空转熔断阈值/窗口走 limits(0=关闭)。
- // 检测是否连续 N 次调用完全相同工具与参数(N=limits)。
+    // W10:防空转熔断阈值/窗口走 limits(0=关闭)。
+    // 检测是否连续 N 次调用完全相同工具与参数(N=limits)。
     let lim = env.limits_cell.get();
     let breaker_n = lim.loop_breaker_consecutive as usize;
     let breaker_window = lim.loop_breaker_window;
@@ -619,17 +619,17 @@ async fn run_tool_round(
             ),
         });
     } else {
- // ADR-0022:assistant 消息原样携带 tool_calls 回喂,
- // 模型才能把下一轮的工具结果对齐回自己发起的调用
- // (。
+        // ADR-0022:assistant 消息原样携带 tool_calls 回喂,
+        // 模型才能把下一轮的工具结果对齐回自己发起的调用
+        // (。
         st.messages.push(Message {
             role: Role::Assistant,
             tool_call_id: None,
             tool_calls: Some(tool_calls.clone()),
             content: content.to_string(),
         });
- // #26:同批拒绝联动——本批任一调用被用户驳回后,
- // 余下调用不再派发(策略开关走 limits,0=回退独立执行)
+        // #26:同批拒绝联动——本批任一调用被用户驳回后,
+        // 余下调用不再派发(策略开关走 limits,0=回退独立执行)
         let mut batch_denied = false;
         for tc in tool_calls {
             dispatch_one_tool_call(env, st, tc, name_to_cap, snap_step, &mut batch_denied).await;
@@ -649,9 +649,9 @@ async fn dispatch_one_tool_call(
     snap_step: u32,
     batch_denied: &mut bool,
 ) {
- // #1:意图硬门控——触发输入过短的回合禁用一切工具
- // 派发(如实回喂;0=关)。在 #26 联动判定之前,
- // 被门控拦截的调用不产生审批单/不触达提供者
+    // #1:意图硬门控——触发输入过短的回合禁用一切工具
+    // 派发(如实回喂;0=关)。在 #26 联动判定之前,
+    // 被门控拦截的调用不产生审批单/不触达提供者
     if env.intent_gate_min > 0 && (env.user_input.chars().count() as u32) < env.intent_gate_min {
         st.messages.push(Message {
             role: Role::Tool,
@@ -700,14 +700,10 @@ async fn dispatch_one_tool_call(
         .get(&tc.name)
         .cloned()
         .unwrap_or_else(|| tc.name.clone());
- // W9:工具调用事件(轨迹视图数据源)。阶段3 规范化:统一写**能力名**
- // (原为 wire 短名,与 tool_result 的能力名错位);补 effect/needs_approval
- // 供前端直读分类(不再按工具名猜)。
-    let (effect, needs_approval) = env
-        .tool_meta
-        .get(&capability)
-        .cloned()
-        .unwrap_or_default();
+    // W9:工具调用事件(轨迹视图数据源)。阶段3 规范化:统一写**能力名**
+    // (原为 wire 短名,与 tool_result 的能力名错位);补 effect/needs_approval
+    // 供前端直读分类(不再按工具名猜)。
+    let (effect, needs_approval) = env.tool_meta.get(&capability).cloned().unwrap_or_default();
     let tool_started = std::time::Instant::now();
     env.ctx_log.record_event(
         env.session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
@@ -722,7 +718,7 @@ async fn dispatch_one_tool_call(
             "needs_approval": needs_approval,
         }),
     );
- // #14:调试面——工具调用全参
+    // #14:调试面——工具调用全参
     env.turn_debug.record(
         "tool_call",
         env.session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
@@ -744,32 +740,32 @@ async fn dispatch_one_tool_call(
             params: wire::CapabilityCallParams {
                 capability: capability.clone(),
                 args: args.clone(),
- // W4b 修复:幂等键必须含回合操作 id——
- // 模型不同回合的 tool_call id 会重复,
- // 纯 tc.id 会让幂等抑制返回上一回合的
- // 旧收据(模型看到旧结果反复重试)
+                // W4b 修复:幂等键必须含回合操作 id——
+                // 模型不同回合的 tool_call id 会重复,
+                // 纯 tc.id 会让幂等抑制返回上一回合的
+                // 旧收据(模型看到旧结果反复重试)
                 idempotency_key: Some(format!("{}:{}", env.op_id.as_str(), tc.id)),
                 deadline_ms: None,
             },
- // ADR-0030:工具调用标注来源会话,裁决点
- // 据此读取会话权限模式(路由信息,非信任)
+            // ADR-0030:工具调用标注来源会话,裁决点
+            // 据此读取会话权限模式(路由信息,非信任)
             session_id: env.session_id.clone(),
             resp: rtx,
         })
         .await;
- // W4b 对话内审批:需审批能力调用返回
- // ApprovalRequired 错误(审批单已开,operation
- // 停在 waiting_approval)。此时反查审批单,
- // 推送审批卡片标记随 SSE 流上屏,并轮询等待
- // 用户裁决+执行落定(上限 300s=审批 TTL)。
+    // W4b 对话内审批:需审批能力调用返回
+    // ApprovalRequired 错误(审批单已开,operation
+    // 停在 waiting_approval)。此时反查审批单,
+    // 推送审批卡片标记随 SSE 流上屏,并轮询等待
+    // 用户裁决+执行落定(上限 300s=审批 TTL)。
     let call_resp = rrx.await;
     let mut approval_id: Option<String> = None;
     let mut tool_op: Option<bm_contract::ids::BmId> = None;
     match &call_resp {
- // W4b+ 加固:ApprovalRequired 错误自带开单点的
- // approval_id/operation_id(CoreError::ApprovalNeeded),
- // 回合侧零反查——杜绝多会话/并发调用同能力时
- // 「批准 A 执行 B」的错配缺陷
+        // W4b+ 加固:ApprovalRequired 错误自带开单点的
+        // approval_id/operation_id(CoreError::ApprovalNeeded),
+        // 回合侧零反查——杜绝多会话/并发调用同能力时
+        // 「批准 A 执行 B」的错配缺陷
         Ok(Err(CoreError::ApprovalNeeded {
             approval_id: aid,
             operation_id: opid,
@@ -790,12 +786,12 @@ async fn dispatch_one_tool_call(
     // 结构化 approval.requested 事件(含 args/risk_class,随 session_id 送达
     // /events/{session}),前端经结构化通道直读渲染。此处无需再推送。
 
- // 受理/结果:直通能力同步出结果;MCP 异步能力经
- // operations 轮询至终态;需审批能力轮询至审批
- // 裁决+执行终态。
+    // 受理/结果:直通能力同步出结果;MCP 异步能力经
+    // operations 轮询至终态;需审批能力轮询至审批
+    // 裁决+执行终态。
     let mut tool_result = String::from("工具执行无应答");
- // ADR-0029:调用层直接失败(如能力校验拒绝)
- // 如实回喂真实死因,不以占位文案掩盖。
+    // ADR-0029:调用层直接失败(如能力校验拒绝)
+    // 如实回喂真实死因,不以占位文案掩盖。
     if let Ok(Err(e)) = &call_resp {
         tool_result = match e {
             CoreError::Semantic(code, msg) => {
@@ -804,27 +800,27 @@ async fn dispatch_one_tool_call(
             other => format!("工具调用失败: {other}"),
         };
     }
- // W10:等待时限走 limits;ADR-0028:0 = 不限时(None)。
+    // W10:等待时限走 limits;ADR-0028:0 = 不限时(None)。
     let lim_wait = env.limits_cell.get();
     let wait_secs: Option<u64> = if approval_id.is_some() {
         (lim_wait.approval_wait_ms > 0).then(|| (lim_wait.approval_wait_ms / 1000).max(1))
     } else {
         (lim_wait.tool_wait_ms > 0).then(|| (lim_wait.tool_wait_ms / 1000).max(1))
     };
- // 直通修复():同步收据
- // state=succeeded 且 result 内联时立即回喂——
- // 同步结果从不写入 op_results(仅异步回单/审批
- // 重放两路写入),
- // 直通工具必现 60s「工具执行超时」。审批类与
- // MCP 异步(state=running)仍走轮询不变。
+    // 直通修复():同步收据
+    // state=succeeded 且 result 内联时立即回喂——
+    // 同步结果从不写入 op_results(仅异步回单/审批
+    // 重放两路写入),
+    // 直通工具必现 60s「工具执行超时」。审批类与
+    // MCP 异步(state=running)仍走轮询不变。
     let inline_sync = matches!(&call_resp, Ok(Ok(v))
         if v["state"].as_str() == Some("succeeded")
             && !v["result"].is_null());
     if inline_sync {
         if let Ok(Ok(receipt_value)) = call_resp {
- // ADR-0029:幂等抑制如实告知——等价请求
- // 返回的是旧结果,模型必须知道本次没有
- // 真实执行。
+            // ADR-0029:幂等抑制如实告知——等价请求
+            // 返回的是旧结果,模型必须知道本次没有
+            // 真实执行。
             let suppressed = receipt_value["action_summary"]
                 .as_str()
                 .is_some_and(|s| s.contains("幂等抑制"));
@@ -838,10 +834,10 @@ async fn dispatch_one_tool_call(
             };
         }
     } else if let Some(tool_op) = tool_op {
- // #19 拆分第二批:审批/异步工具等待环
- // 外置为独立 async fn(本文件上方)——
- // 轮询 operations 至终态,审批超时撤单
- // (P1-3),用户拒绝联动 batch_denied(#26)。
+        // #19 拆分第二批:审批/异步工具等待环
+        // 外置为独立 async fn(本文件上方)——
+        // 轮询 operations 至终态,审批超时撤单
+        // (P1-3),用户拒绝联动 batch_denied(#26)。
         let (result, denied) = await_tool_settlement(
             &env.tx,
             wait_secs,
@@ -856,7 +852,7 @@ async fn dispatch_one_tool_call(
     } else if let Ok(Ok(receipt_value)) = call_resp {
         tool_result = receipt_value.to_string();
     }
- // W9:工具结果事件(回喂模型的原文+耗时)
+    // W9:工具结果事件(回喂模型的原文+耗时)
     let elapsed_ms = tool_started.elapsed().as_millis() as u64;
     env.ctx_log.record_event(
         env.session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
@@ -871,7 +867,7 @@ async fn dispatch_one_tool_call(
             "effect": effect,
         }),
     );
- // #14:调试面——工具结果全文(与回喂同文)
+    // #14:调试面——工具结果全文(与回喂同文)
     env.turn_debug.record(
         "tool_result",
         env.session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
@@ -885,14 +881,14 @@ async fn dispatch_one_tool_call(
             "elapsed_ms": elapsed_ms,
         }),
     );
- // ADR-0055:移除 `[工具完成 …]` 文本标记——工具耗时/结果已入 context-log 与
- // 结构化事件面,前端不再从模型正文解析。完整工具生命周期(调用→结果)
- // 由 capability.started + capability.invoked + context-log 轨迹事件共同承载。
- // ADR-0022:工具结果原生 role=tool + tool_call_id
- // 回喂,对齐模型因果链。不再强贴「不要再次调用」
- // 类负向禁令——链式调用(搜→读→改→测)是模型的
- // 正常工作方式;失控防线=同参熔断 + limits.
- // tool_rounds_max 总轮数安全网(本文件上方)。
+    // ADR-0055:移除 `[工具完成 …]` 文本标记——工具耗时/结果已入 context-log 与
+    // 结构化事件面,前端不再从模型正文解析。完整工具生命周期(调用→结果)
+    // 由 capability.started + capability.invoked + context-log 轨迹事件共同承载。
+    // ADR-0022:工具结果原生 role=tool + tool_call_id
+    // 回喂,对齐模型因果链。不再强贴「不要再次调用」
+    // 类负向禁令——链式调用(搜→读→改→测)是模型的
+    // 正常工作方式;失控防线=同参熔断 + limits.
+    // tool_rounds_max 总轮数安全网(本文件上方)。
     st.messages.push(Message {
         role: Role::Tool,
         content: tool_result,
@@ -915,16 +911,16 @@ async fn settle_turn_completed(
     mid: String,
     stream_interrupted: bool,
 ) {
- // ADR-0029():熔断/触顶拦截的调用
- // 不再凭空蒸发——逐个回喂事实性结果(未执行+原因),
- // 因果链对模型与日志完整;回合就此收束,不再重调模型。
- // 原内核代写的 assistant 终稿废除:收束原因只在触发点
- // 经 ProviderDelta 上屏(UI-only),不入台账、不冒充
- // 模型发言;content 保持模型原文(可能为空)。
+    // ADR-0029():熔断/触顶拦截的调用
+    // 不再凭空蒸发——逐个回喂事实性结果(未执行+原因),
+    // 因果链对模型与日志完整;回合就此收束,不再重调模型。
+    // 原内核代写的 assistant 终稿废除:收束原因只在触发点
+    // 经 ProviderDelta 上屏(UI-only),不入台账、不冒充
+    // 模型发言;content 保持模型原文(可能为空)。
     st.feed_unexecuted(tool_calls);
- // W9:终稿与回合边界事件(轨迹视图数据源)。
- // ADR-0029:assistant_final 只在模型真有话时记录——
- // 内核不再生产终稿内容,空终稿不落轨迹。
+    // W9:终稿与回合边界事件(轨迹视图数据源)。
+    // ADR-0029:assistant_final 只在模型真有话时记录——
+    // 内核不再生产终稿内容,空终稿不落轨迹。
     if !content.trim().is_empty() {
         env.ctx_log.record_event(
             env.session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
@@ -950,7 +946,7 @@ async fn settle_turn_completed(
             "latency_ms": latency_ms,
         }),
     );
- // #14:调试面——回合终态(成功)
+    // #14:调试面——回合终态(成功)
     env.turn_debug.record(
         "turn_end",
         env.session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
@@ -963,7 +959,7 @@ async fn settle_turn_completed(
             "latency_ms": latency_ms,
         }),
     );
- // W5:对话台账回写(仅终稿成功;工具轮中间态不入账)
+    // W5:对话台账回写(仅终稿成功;工具轮中间态不入账)
     if let Some(sid) = env.session_id.clone() {
         let _ = env
             .tx
@@ -1004,7 +1000,7 @@ async fn settle_turn_failed(
     detail: Option<String>,
     max_attempts: Option<u32>,
 ) -> TurnFailedVerdict {
- // W5:失败/取消同样落快照(诊断「报错」「卡死」场景)
+    // W5:失败/取消同样落快照(诊断「报错」「卡死」场景)
     record_ctx_snapshot(
         env,
         snap,
@@ -1019,7 +1015,7 @@ async fn settle_turn_failed(
         None,
         ttft_ms,
     );
- // #14:调试面——模型调用失败(含脱敏后细节)
+    // #14:调试面——模型调用失败(含脱敏后细节)
     env.turn_debug.record(
         "model_failed",
         env.session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
@@ -1035,7 +1031,7 @@ async fn settle_turn_failed(
         }),
     );
     if error_code == ErrorCode::Cancelled {
- // 显式取消:回合边界落定为 cancelled(INV-12 唯一入口)。
+        // 显式取消:回合边界落定为 cancelled(INV-12 唯一入口)。
         env.ctx_log.record_event(
             env.session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
             env.op_id.as_str(),
@@ -1066,7 +1062,7 @@ async fn settle_turn_failed(
         .await;
     let exhausted = max_attempts.is_some_and(|m| attempt >= m);
     if !retryable || exhausted {
- // W9:回合失败边界事件(轨迹视图失败红标数据源)
+        // W9:回合失败边界事件(轨迹视图失败红标数据源)
         env.ctx_log.record_event(
             env.session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
             env.op_id.as_str(),
@@ -1088,11 +1084,11 @@ async fn settle_turn_failed(
             .await;
         return TurnFailedVerdict::Terminal;
     }
- // ADR-0028:不限重试时加 1s 退避,防对僵死网关热循环打点
+    // ADR-0028:不限重试时加 1s 退避,防对僵死网关热循环打点
     if max_attempts.is_none() {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
- // 降级链下一 attempt(退出工具轮)
+    // 降级链下一 attempt(退出工具轮)
     TurnFailedVerdict::NextAttempt
 }
 
@@ -1103,13 +1099,13 @@ pub(crate) fn spawn_turn(
     content: String,
     model_override: Option<String>,
 ) {
- // W6:回合级模型覆盖(对话热切换)优先——给出则本回合降级链整体
- // 替换为单元素(工具轮/重试同回合同模型);缺省沿用 agent 烤入链。
+    // W6:回合级模型覆盖(对话热切换)优先——给出则本回合降级链整体
+    // 替换为单元素(工具轮/重试同回合同模型);缺省沿用 agent 烤入链。
     let chain: Vec<String> = match model_override {
         Some(m) if !m.trim().is_empty() => vec![m],
         _ => agent.model_chain.clone(),
     };
- // M7 S1:模型调用权裁决(批9 F-05:提取为 audit_model_invoke)
+    // M7 S1:模型调用权裁决(批9 F-05:提取为 audit_model_invoke)
     let Some(model_call_audit) = audit_model_invoke(w, agent, &chain) else {
         w.fail_turn(
             operation_id,
@@ -1121,8 +1117,8 @@ pub(crate) fn spawn_turn(
     w.model_call_audit
         .insert(operation_id.clone(), model_call_audit);
 
- // M7 S5:模型连接器熔断门——冷却期内快速失败(不触连接器);
- // 冷却已过即本次放行(半开探测,成败都由 TurnEvent 回账)。
+    // M7 S5:模型连接器熔断门——冷却期内快速失败(不触连接器);
+    // 冷却已过即本次放行(半开探测,成败都由 TurnEvent 回账)。
     {
         let provider = w.config.connector.provider();
         let now = w.config.clock.now();
@@ -1150,7 +1146,7 @@ pub(crate) fn spawn_turn(
     let clock = w.config.clock.clone();
     let agent_id = agent.id.clone();
     let remaining = agent.budget.remaining_tokens();
- // ADR-0028:model_max_attempts=0 = 不限重试(None,链内按序循环)。
+    // ADR-0028:model_max_attempts=0 = 不限重试(None,链内按序循环)。
     let max_attempts: Option<u32> = {
         let lim = w.config.limits.get().model_max_attempts;
         if lim == 0 {
@@ -1159,9 +1155,9 @@ pub(crate) fn spawn_turn(
             Some((chain.len().min(lim as usize) as u32).clamp(1, 3))
         }
     };
- // W10(ADR-0024):模型调用超时走 limits 热生效(env 覆盖已由装配方折算进 Cell)。
- // ADR-0028:0 = 不限时——合同 InvokeRequest.deadline 为必填时间戳,
- // 以 100 年远期哨兵表达「无 deadline」(remaining_until 折出巨大预算)。
+    // W10(ADR-0024):模型调用超时走 limits 热生效(env 覆盖已由装配方折算进 Cell)。
+    // ADR-0028:0 = 不限时——合同 InvokeRequest.deadline 为必填时间戳,
+    // 以 100 年远期哨兵表达「无 deadline」(remaining_until 折出巨大预算)。
     let timeout_secs = w.config.limits.get().model_call_timeout_secs as i64;
     let unlimited_deadline = (timeout_secs <= 0).then(|| {
         format_ts(clock.now() + Duration::seconds(crate::runtime::NO_TTL_SENTINEL_SECS as i64))
@@ -1169,10 +1165,10 @@ pub(crate) fn spawn_turn(
     let tx = w.tx.clone();
     let op_id = operation_id.clone();
     let streaming = w.config.model_streaming;
- // W4b 对话工具闭环升级:全部 chat 能力(直通+审批类)均暴露给模型;
- // W4b 角色 prompt:会话级指定优先(会话创建时烤入的完整提示词,含技能);
- // 否则每回合现读 roles.json+skills.json 组装(设置页保存即热生效)。
- // 组装逻辑唯一入口 = bm-core::roles::compose_role_prompt(两条路径同口径)。
+    // W4b 对话工具闭环升级:全部 chat 能力(直通+审批类)均暴露给模型;
+    // W4b 角色 prompt:会话级指定优先(会话创建时烤入的完整提示词,含技能);
+    // 否则每回合现读 roles.json+skills.json 组装(设置页保存即热生效)。
+    // 组装逻辑唯一入口 = bm-core::roles::compose_role_prompt(两条路径同口径)。
     let chat_tools: Vec<crate::registry::ChatTool> = w.registry.chat_tools();
     // ADR-0056:除渲染文本外同时取结构化组成(persona/挂载技能),供诊断面直读
     // ——不再由前端正则反解析 prompt 文本标记。
@@ -1195,7 +1191,7 @@ pub(crate) fn spawn_turn(
             (None, None)
         };
     let request_id = w.operations.get(operation_id).map(|o| o.request_id.clone());
- // W5:会话对话台账快照(历史回喂)+ 上下文快照日志句柄 + 回合序号。
+    // W5:会话对话台账快照(历史回喂)+ 上下文快照日志句柄 + 回合序号。
     let session_id: Option<BmId> = w.operations.get(operation_id).map(|o| o.session_id.clone());
     let turn_index = w
         .operations
@@ -1206,24 +1202,24 @@ pub(crate) fn spawn_turn(
         .as_ref()
         .and_then(|sid| w.session_chats.get(sid).cloned())
         .unwrap_or_default();
- // 遗忘轮数 = 会话累计成功回合 − 台账现存活(台账受 20 轮/24K 字符双上限
- // 裁剪)。0 = 历史完整;>0 = 最早若干轮已被丢弃,透视面板如实告警。
+    // 遗忘轮数 = 会话累计成功回合 − 台账现存活(台账受 20 轮/24K 字符双上限
+    // 裁剪)。0 = 历史完整;>0 = 最早若干轮已被丢弃,透视面板如实告警。
     let alive = history.len() as u64;
     let accounted = session_id
         .as_ref()
         .and_then(|sid| w.session_turn_totals.get(sid).copied())
         .unwrap_or(0);
     let evicted_turns: u64 = evicted_turns(accounted, alive);
- // W8(ADR-0018):会话绑定的工作目录回合级注入——追加到 system prompt,
- // 切换工作区下一条消息即生效;注册表缺条目/目录被删时静默降级不注入。
+    // W8(ADR-0018):会话绑定的工作目录回合级注入——追加到 system prompt,
+    // 切换工作区下一条消息即生效;注册表缺条目/目录被删时静默降级不注入。
     let workspace_path: Option<String> = session_id.as_ref().and_then(|sid| {
         let wid = w.sessions.get(sid)?.workspace_id.clone()?;
         let ws = crate::workspace::resolve(w.config.data_dir.as_ref()?, &wid)?;
         Some(ws.path)
     });
-    let workspace_note: Option<String> = workspace_path.as_ref().map(|p| {
-        format!("[工作目录] 本对话的工作目录:{p}(用户提到的相对路径与文件均相对此目录)")
-    });
+    let workspace_note: Option<String> = workspace_path
+        .as_ref()
+        .map(|p| format!("[工作目录] 本对话的工作目录:{p}(用户提到的相对路径与文件均相对此目录)"));
     // ADR-0056:system prompt 结构化组成(persona/技能/工作目录)——入快照供
     // 上下文透视直读,杜绝前端反解析 prompt 标记。
     let system_parts: serde_json::Value = serde_json::json!({
@@ -1235,8 +1231,8 @@ pub(crate) fn spawn_turn(
         }).unwrap_or_default(),
         "workspace": workspace_path,
     });
- // W10(ADR-0025):在跑后台作业摘要回合级注入——模型据此知道该用
- // system.job_output 收哪个 job(不做完成主动推注入,见 ADR-0025 §3)。
+    // W10(ADR-0025):在跑后台作业摘要回合级注入——模型据此知道该用
+    // system.job_output 收哪个 job(不做完成主动推注入,见 ADR-0025 §3)。
     let jobs_note = w
         .config
         .job_board
@@ -1267,27 +1263,27 @@ pub(crate) fn spawn_turn(
         (other, None) => other,
     };
     let ctx_log = w.ctx_log.clone();
- // #14:Turn 内调试日志(默认关;管理面热开关)
+    // #14:Turn 内调试日志(默认关;管理面热开关)
     let turn_debug = w.turn_debug.clone();
- // #2:会话压缩摘要注入(存在即读;无 data_dir 的纯内存测试不触达)
+    // #2:会话压缩摘要注入(存在即读;无 data_dir 的纯内存测试不触达)
     let compress_data_dir = w.config.data_dir.clone();
- // #1:意图硬门控参数(0=关)——触发输入过短的回合禁用一切工具派发
+    // #1:意图硬门控参数(0=关)——触发输入过短的回合禁用一切工具派发
     let intent_gate_min = w.config.limits.get().intent_gate_min_chars;
     let limits_cell = w.config.limits.clone();
 
     let allowed_tools = agent.allowed_tools.clone();
     tokio::spawn(async move {
- // W4:messages 含角色 prompt + 历史回合 + 本轮输入;tools=直通工具
- // (OpenAI function 格式,capability 名的点映射为单下划线);工具结果
- // 经 CapabilityCall 回核心循环执行(Broker 裁决/审计管道原样),轮询
- // operations 至终态取结果回喂模型。
- // 轮数防线上说明:同命令同参死循环由 loop_breaker 熔断(v0.0.10);
- // 默认 64、0=关)——变参/换工具式轮转。
- // #19 拆分第二批:起始消息序列与工具目录组装外置(纯逻辑+直测),
- // 回合级可变状态集中进 TurnState(见本文件上方结构体注释)。
+        // W4:messages 含角色 prompt + 历史回合 + 本轮输入;tools=直通工具
+        // (OpenAI function 格式,capability 名的点映射为单下划线);工具结果
+        // 经 CapabilityCall 回核心循环执行(Broker 裁决/审计管道原样),轮询
+        // operations 至终态取结果回喂模型。
+        // 轮数防线上说明:同命令同参死循环由 loop_breaker 熔断(v0.0.10);
+        // 默认 64、0=关)——变参/换工具式轮转。
+        // #19 拆分第二批:起始消息序列与工具目录组装外置(纯逻辑+直测),
+        // 回合级可变状态集中进 TurnState(见本文件上方结构体注释)。
         let user_input = content.clone();
- // #2:会话压缩摘要注入(context.compress 的产物文件存在即前置;
- // 无 data_dir 的纯内存测试不触达)
+        // #2:会话压缩摘要注入(context.compress 的产物文件存在即前置;
+        // 无 data_dir 的纯内存测试不触达)
         let compress_summary: Option<String> =
             if let (Some(sid), Some(ddir)) = (session_id.as_ref(), compress_data_dir.as_deref()) {
                 crate::context_log::load_compress_summary(ddir, sid.as_str())
@@ -1301,7 +1297,7 @@ pub(crate) fn spawn_turn(
             &user_input,
         );
         let (name_to_cap, tools_json) = build_tool_catalog(&chat_tools, allowed_tools.as_deref());
- // 工具元数据投影(capability → effect/needs_approval):工具事件标注风险用。
+        // 工具元数据投影(capability → effect/needs_approval):工具事件标注风险用。
         let tool_meta: std::collections::HashMap<String, (String, bool)> = chat_tools
             .iter()
             .map(|t| {
@@ -1312,7 +1308,7 @@ pub(crate) fn spawn_turn(
             })
             .collect();
 
- // 回合环境句柄束(分段函数公共入参;Arc/小值克隆,句柄语义不变)
+        // 回合环境句柄束(分段函数公共入参;Arc/小值克隆,句柄语义不变)
         let env = TurnEnv {
             tx: tx.clone(),
             ctx_log: ctx_log.clone(),
@@ -1332,9 +1328,9 @@ pub(crate) fn spawn_turn(
             system_parts: system_parts.clone(),
         };
 
- // (
- // 指导——原「工具纪律」软防线段已删,同类话术如需存在只能经内/外置
- // 插件通道以可区分方式注入,SETTLED §2-10 口径由本条取代。)
+        // (
+        // 指导——原「工具纪律」软防线段已删,同类话术如需存在只能经内/外置
+        // 插件通道以可区分方式注入,SETTLED §2-10 口径由本条取代。)
 
         let mut attempt: u32 = 0;
         loop {
@@ -1343,8 +1339,8 @@ pub(crate) fn spawn_turn(
                 break;
             }
             let model_id = chain[((attempt - 1) as usize) % chain.len()].clone();
- // 工具轮数按 attempt 清零(原装配段局部变量语义,现落在状态体上
- // 显式 reset——降级链切模型后重新计轮)。
+            // 工具轮数按 attempt 清零(原装配段局部变量语义,现落在状态体上
+            // 显式 reset——降级链切模型后重新计轮)。
             st.tool_rounds = 0;
             loop {
                 let req = InvokeRequest {
@@ -1365,9 +1361,9 @@ pub(crate) fn spawn_turn(
                     attempt,
                 };
 
- // 模型调用单次(请求侧快照+调试记录+流式/非流式 invoke+TTFT):
- // latency 口径:connector 返回 0 占位(基线 9.7),由调用方按
- // 真实钟测量——成败两路均落实测耗时。
+                // 模型调用单次(请求侧快照+调试记录+流式/非流式 invoke+TTFT):
+                // latency 口径:connector 返回 0 占位(基线 9.7),由调用方按
+                // 真实钟测量——成败两路均落实测耗时。
                 let snap_step = st.tool_rounds + 1;
                 let (resp, snap, ttft_ms) = invoke_model_once(
                     &env,
@@ -1390,7 +1386,7 @@ pub(crate) fn spawn_turn(
                         latency_ms,
                         stream_interrupted,
                     } => {
- // W5:上下文快照落盘(成功侧;诊断面失败静默)
+                        // W5:上下文快照落盘(成功侧;诊断面失败静默)
                         record_ctx_snapshot(
                             &env,
                             &snap,
@@ -1406,8 +1402,8 @@ pub(crate) fn spawn_turn(
                             )),
                             ttft_ms,
                         );
- // #14:调试面——模型响应原文(比 context-log 厚:含回复
- // 内容、finish_reason 与工具调用全参;开关关时零成本)
+                        // #14:调试面——模型响应原文(比 context-log 厚:含回复
+                        // 内容、finish_reason 与工具调用全参;开关关时零成本)
                         env.turn_debug.record(
                             "model_response",
                             env.session_id.as_ref().map(|s| s.as_str()).unwrap_or(""),
@@ -1427,11 +1423,11 @@ pub(crate) fn spawn_turn(
                                 "latency_ms": snap.start.elapsed().as_millis() as u64,
                             }),
                         );
- // W4 工具轮:模型请求调用直通工具 → 回核心循环执行 →
- // 结果以 Tool 消息回喂 → 重调模型。
+                        // W4 工具轮:模型请求调用直通工具 → 回核心循环执行 →
+                        // 结果以 Tool 消息回喂 → 重调模型。
                         if !tool_calls.is_empty() && !st.loop_broken && !st.round_cap_hit {
- // 工具派发与结果回喂整段(轮数安全网/防空转熔断/
- // 逐个派发/收据回喂)外置为独立 async fn
+                            // 工具派发与结果回喂整段(轮数安全网/防空转熔断/
+                            // 逐个派发/收据回喂)外置为独立 async fn
                             run_tool_round(
                                 &env,
                                 &mut st,
@@ -1441,11 +1437,11 @@ pub(crate) fn spawn_turn(
                                 snap_step,
                             )
                             .await;
- // 结果回喂后重调模型(仍在同一 attempt 的降级链内)
+                            // 结果回喂后重调模型(仍在同一 attempt 的降级链内)
                             continue;
                         }
- // 成功终态收尾(未执行调用回喂/终稿与回合边界事件/
- // 台账回写/Turn Completed)
+                        // 成功终态收尾(未执行调用回喂/终稿与回合边界事件/
+                        // 台账回写/Turn Completed)
                         settle_turn_completed(
                             &env,
                             &mut st,
@@ -1467,8 +1463,8 @@ pub(crate) fn spawn_turn(
                         detail_ref: _,
                         detail,
                     } => {
- // 失败/取消终态收尾(快照+调试落盘 → 取消边界/失败
- // 收束/退避降级);Terminal = 回合已收束
+                        // 失败/取消终态收尾(快照+调试落盘 → 取消边界/失败
+                        // 收束/退避降级);Terminal = 回合已收束
                         match settle_turn_failed(
                             &env,
                             &snap,
@@ -1552,7 +1548,7 @@ mod turn_state_tests {
         }
     }
 
- #[test]
+    #[test]
     fn init_seeds_history_and_user_without_extras() {
         let st = TurnState::init(None, None, &[("问".into(), "答".into())], "你好");
         assert_eq!(st.messages.len(), 3, "历史 user+assistant + 本轮 user");
@@ -1569,7 +1565,7 @@ mod turn_state_tests {
         assert!(st.recent_tool_signatures.is_empty());
     }
 
- #[test]
+    #[test]
     fn init_prepends_role_prompt_and_compress_summary() {
         let st = TurnState::init(Some("系统提示"), Some("前情摘要".into()), &[], "hi");
         assert_eq!(st.messages.len(), 3);
@@ -1582,7 +1578,7 @@ mod turn_state_tests {
         );
     }
 
- #[test]
+    #[test]
     fn sweep_breaker_trips_only_after_n_consecutive_same() {
         let batch = [tc("1", "fs.read", r#"{"path":"a"}"#)];
         let mut st = TurnState::init(None, None, &[], "x");
@@ -1592,7 +1588,7 @@ mod turn_state_tests {
         st.sweep_breaker(&batch, 3, 10);
         assert!(st.loop_broken, "第 n 次同签名命中");
 
- // 穿插不同签名打断连续性
+        // 穿插不同签名打断连续性
         let other = [tc("2", "fs.read", r#"{"path":"b"}"#)];
         let mut st2 = TurnState::init(None, None, &[], "x");
         st2.sweep_breaker(&batch, 3, 10);
@@ -1600,7 +1596,7 @@ mod turn_state_tests {
         st2.sweep_breaker(&batch, 3, 10);
         assert!(!st2.loop_broken, "同签名连续性被打断后不命中");
 
- // breaker_n<2 = 熔断关闭不扫描
+        // breaker_n<2 = 熔断关闭不扫描
         let mut st3 = TurnState::init(None, None, &[], "x");
         for _ in 0..5 {
             st3.sweep_breaker(&batch, 1, 10);
@@ -1609,7 +1605,7 @@ mod turn_state_tests {
         assert!(st3.recent_tool_signatures.is_empty(), "关闭时不记签名");
     }
 
- #[test]
+    #[test]
     fn feed_unexecuted_replies_every_call_with_reason() {
         let batch = [tc("1", "fs.read", "{}"), tc("2", "mcp.x.y", "{}")];
         let mut st = TurnState::init(None, None, &[], "x");
@@ -1619,13 +1615,13 @@ mod turn_state_tests {
         assert!(st.messages[1].content.contains("防空转熔断"));
         assert_eq!(st.messages[1].tool_call_id.as_deref(), Some("1"));
         assert_eq!(st.messages[2].tool_call_id.as_deref(), Some("2"));
- // 空批次零回喂
+        // 空批次零回喂
         let mut st2 = TurnState::init(None, None, &[], "x");
         st2.feed_unexecuted(&[]);
         assert_eq!(st2.messages.len(), 1, "空批次零回喂,只剩起始 user 输入");
     }
 
- #[test]
+    #[test]
     fn tool_catalog_maps_wire_names_and_honors_allowlist() {
         use crate::registry::ChatTool;
         use bm_contract::capability::RiskClass;
@@ -1649,7 +1645,10 @@ mod turn_state_tests {
         ];
         let (name_to_cap, tools_json) = build_tool_catalog(&chat_tools, None);
         assert_eq!(name_to_cap["read"], "fs.read", "声明的 wire 短名生效");
-        assert_eq!(name_to_cap["fs_search"], "fs.search", "未声明回落点转单下划线");
+        assert_eq!(
+            name_to_cap["fs_search"], "fs.search",
+            "未声明回落点转单下划线"
+        );
         assert_eq!(name_to_cap["mcp_srv_tool"], "mcp.srv.tool", "点转单下划线");
         assert_eq!(tools_json.len(), 3);
         assert_eq!(tools_json[0]["function"]["description"], "读文件");
@@ -1658,7 +1657,7 @@ mod turn_state_tests {
             "无 manifest 描述按审批语义兜底"
         );
 
- // 白名单:wire 短名写法命中;清单外工具忽略;映射同步裁剪
+        // 白名单:wire 短名写法命中;清单外工具忽略;映射同步裁剪
         let allow = vec!["read".to_string(), "nonexistent".to_string()];
         let (n2c, tj) = build_tool_catalog(&chat_tools, Some(&allow));
         assert_eq!(tj.len(), 1, "白名单外(mcp.srv.tool)被过滤");
@@ -1666,7 +1665,7 @@ mod turn_state_tests {
         assert_eq!(n2c.len(), 1, "name_to_cap 与保留工具同步");
         assert_eq!(n2c["read"], "fs.read");
 
- // 能力名写法亦认(从宽口径)
+        // 能力名写法亦认(从宽口径)
         let (n2c2, tj2) = build_tool_catalog(&chat_tools, Some(&["fs.read".to_string()]));
         assert_eq!(tj2.len(), 1);
         assert_eq!(n2c2["read"], "fs.read");
@@ -1683,7 +1682,7 @@ mod pure_helpers_tests {
         (a.to_string(), b.to_string())
     }
 
- #[test]
+    #[test]
     fn breaker_hits_only_after_n_consecutive_same() {
         let n = 3;
         let window: Vec<(String, String)> = vec![sig("a", "1"), sig("a", "1")];
@@ -1699,12 +1698,12 @@ mod pure_helpers_tests {
             "窗口不足 n-1 不命中"
         );
         assert!(!breaker_hit(&[], &sig("a", "1"), n), "空窗口不命中");
- // n<2 = 熔断关闭
+        // n<2 = 熔断关闭
         assert!(!breaker_hit(&window, &sig("a", "1"), 1));
         assert!(!breaker_hit(&window, &sig("a", "1"), 0));
     }
 
- #[test]
+    #[test]
     fn wire_names_use_declaration_else_escape_dots() {
         let taken: std::collections::HashSet<String> =
             ["mcp_x_y".to_string()].into_iter().collect();

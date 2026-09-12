@@ -200,7 +200,10 @@ async fn direct_tool_round_feeds_inline_result_without_poll_timeout() {
         "tool_call 必须写能力名(而非 wire 短名 system_echo)"
     );
     assert_eq!(call_line["data"]["effect"], serde_json::json!("read-only"));
-    assert_eq!(call_line["data"]["needs_approval"], serde_json::json!(false));
+    assert_eq!(
+        call_line["data"]["needs_approval"],
+        serde_json::json!(false)
+    );
     assert_eq!(
         tool_result_line["data"]["tool"],
         serde_json::json!("system.echo"),
