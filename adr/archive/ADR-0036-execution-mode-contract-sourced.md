@@ -1,9 +1,9 @@
 ---
-status: accepted
+status: superseded
 date: 2026-09-11
-summary: manifest.execution_mode 落声明为分道真源(未声明时回退命名约定)+同步无 deadline 为显式非目标+CallContext 入端口记为方向不实施(2026-09-11;2026-09-12 校订措辞:前缀回退保留而非删除)
+summary: manifest.execution_mode 落声明为分道真源(未声明时回退命名约定)+同步无 deadline 为显式非目标+CallContext 入端口记为方向不实施(2026-09-11);前缀回退已由 ADR-0054 删除,本 ADR 取代
 supersedes: []
-superseded_by: []
+superseded_by: [ADR-0054]
 ---
 
 # ADR-0036: 能力执行分道以合同声明为唯一真源 
@@ -17,4 +17,4 @@ superseded_by: []
 ## 后果 
 - 分道判定单源：`execution_mode` → `registry.is_async()`；新增执行族只需在 manifest 声明，不必登记前缀表。`SplitExecutor` 仍在异步族内做子路由（它只被异步能力触达），但 async-vs-sync 分类不再依赖字符串。 - 合同 `manifest.v0_1` 增可选枚举字段；消费方必须忽略不认识字段（既有 `additionalProperties: true` 语义），无破坏。 - 守护测试：声明 `execution_mode: async` 的能力必进异步分道、声明 `sync` 必不进（含热注册分支）；生产 manifest 全部带声明（防回退到约定）。 - #39/#59 残余-1 的 CallContext 与同步 deadline 两项以本条为裁决依据结项；实现项为 `execution_mode` 分道单源化。 - `decisions.md` 评估增/替条：执行分道以合同声明为准（与既有第 11 条「执行分道须配单源判定」同源，合并表述）。 
 ## 校订（） 
-- **措辞更正**：本 ADR 原 summary 作「删前缀猜法」，**与实际不符**。实际形态是**声明优先 + 前缀仅作未声明条目的兼容回退**（决策 2 原文即如此）——判定函数 `provider_is_async` 仍在，回退路径未删。原措辞属过度声称，已改。 - **缺失守护测试已补**：后果段声称「生产 manifest 全部带声明」的守护测试，经核实**当时并不存在**。已补 `bm-providers::builtin::production_manifests_all_declare_execution_mode`（断言生产内置/异步族 manifest 全部显式声明 `execution_mode`；）。 - 前缀回退**保留**的理由：第三方/遗留 manifest 可能不声明；贸然删除会让未声明条目误落同步占位 provider 而报错。待外部插件生态成熟且有强制声明门时再评估删除。 
+- **措辞更正**：本 ADR 原 summary 作「删前缀猜法」，**与实际不符**。实际形态是**声明优先 + 前缀仅作未声明条目的兼容回退**（决策 2 原文即如此）——判定函数 `provider_is_async` 仍在，回退路径未删。原措辞属过度声称，已改。 - **缺失守护测试已补**：后果段声称「生产 manifest 全部带声明」的守护测试，经核实**当时并不存在**。已补 `bm-providers::builtin::production_manifests_all_declare_execution_mode`（断言生产内置/异步族 manifest 全部显式声明 `execution_mode`；）。 - **前缀回退已删除(ADR-0054)**:本 ADR 曾保留 `provider_is_async` 前缀回退作未声明条目的兼容路径;ADR-0054 已删除该回退(未声明 = sync),`provider_is_async` 函数随之移除。原「守护测试」引用 `provider_is_async` 已失效,现行守护测试为 `bm-core::registry::execution_mode_declaration_is_source_of_truth`。ADR-0054 时点生产 manifest 已全部显式声明,删除回退无行为回归。 

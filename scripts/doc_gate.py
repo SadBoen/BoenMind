@@ -266,6 +266,59 @@ def check_index_freshness() -> None:
         err(f"ADR 索引过期:{out.stderr.strip() or out.stdout.strip()}(运行 gen_adr_index.py)")
 
 
+def check_doc_anchors() -> None:
+    """检查 I(issue #79):ADR 声明的「守护测试/测试」锚点必须在代码中真实存在。
+
+    背景:specs-first 文化下,文档是唯一真源,一条「已有守护测试 X」若不实,
+    会被后续每个会话当裁决事实继承(2026-09-12 实锤 3 例)。本门只校验**明确
+    声明式锚点**——`module::test_fn`(含 `::` 的 code 内联记号),不碰自然语言
+    里的「已完成」等词(那会误报,如「该调用已完成」是引用被删文案)。
+
+    判据:锚点末段函数名在 runtime/ 或 plugins/ 的 .rs 中出现 `fn <name>` 即通过。
+    """
+    code_roots = [p for p in (ROOT / "runtime", ROOT / "plugins") if p.is_dir()]
+    if not code_roots:
+        print("  [锚点] 未发现 runtime/ 或 plugins/ 代码源,跳过锚点校验")
+        return
+    code = []
+    for cr in code_roots:
+        for p in cr.rglob("*.rs"):
+            if "/target/" in p.as_posix() or "\\target\\" in p.as_posix():
+                continue
+            try:
+                code.append(p.read_text(encoding="utf-8", errors="replace"))
+            except OSError:
+                continue
+    code_blob = "\n".join(code)
+
+    # 模块名集合:文件名 stem + `mod X;` 声明——末段是模块的锚点(`a::b::skill_host`)
+    # 是模块引用而非测试,跳过以免误报(issue #79 告诫:勿粗暴关键词拦截)。
+    mod_names: set[str] = set()
+    for cr in code_roots:
+        for p in cr.rglob("*.rs"):
+            if "\\target\\" in p.as_posix() or "/target/" in p.as_posix():
+                continue
+            mod_names.add(p.stem)
+    for m in re.finditer(r"\bmod\s+([a-z_][a-z0-9_]*)\s*;", code_blob):
+        mod_names.add(m.group(1))
+
+    # 锚点记号:`a::b::test_name`(至少两段 ::);只校验非模块末段。
+    anchor_re = re.compile(r"`([a-z_][a-z0-9_]*(?:::[a-z_][a-z0-9_]*){2,})`")
+    adrs = collect_adrs()
+    total = 0
+    for aid, path in sorted(adrs.items()):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for m in anchor_re.finditer(text):
+            anchor = m.group(1)
+            fn = anchor.split("::")[-1]
+            if fn in mod_names:
+                continue  # 模块引用,非测试锚点
+            total += 1
+            if re.search(r"\bfn\s+" + re.escape(fn) + r"\b", code_blob) is None:
+                err(f"{rel(path)}: 锚点 `{anchor}` 的函数 {fn} 在代码中不存在(过期引用)")
+    print(f"  [锚点] ADR 声明式测试锚点 {total} 个,{sum(1 for x in errors if '锚点' in x)} 个失效")
+
+
 def main() -> int:
     adrs = collect_adrs()
     metas = check_front_matter(adrs)
@@ -274,6 +327,7 @@ def main() -> int:
     check_budget()
     check_index_freshness()
     check_governance_selfcheck(metas)
+    check_doc_anchors()
 
     print(f"doc-gate:ADR {len(adrs)} 个;错误 {len(errors)};提示 {len(warns)}")
     for w in warns:

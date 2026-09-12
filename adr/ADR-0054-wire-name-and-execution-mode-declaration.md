@@ -2,7 +2,7 @@
 status: accepted
 date: 2026-09-13
 summary: manifest 增发 wire_name(Minor)+ 异步分道删除 provider 命名前缀回退——内核不再认识具体能力名
-supersedes: []
+supersedes: [ADR-0036]
 superseded_by: []
 ---
 # ADR-0054: 面向模型的工具名入合同与执行分道去前缀
