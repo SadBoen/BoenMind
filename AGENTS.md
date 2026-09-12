@@ -5,7 +5,7 @@
 BoenMind:个人生态的 AI Runtime / AI OS,当前为**阶段一(跨平台单软件)**。
 合同库冻结 v1.0(字段只增不破)。
 
-**当前版本 = v0.0.17(已发版)**,此后批次落 main 未打 tag。进度只认 git:
+**当前版本 = v0.0.18(已发版)**,此后批次落 main 未打 tag。进度只认 git:
 交付全史 = git tag+提交说明(ADR-0027,不另立时间线文件);
 欠账唯一入口 = **GitHub Issues**(标签 P0/P1/P2/tech-debt/deferred);
 架构铁律唯一查重清单 = `docs/architecture/decisions.md`。
