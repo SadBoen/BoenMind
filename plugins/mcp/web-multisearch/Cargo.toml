@@ -2,7 +2,7 @@
 name = "web-multisearch-rs"
 version = "0.3.0"
 edition = "2021"
-description = "web-multisearch MCP server(Rust 版):聚合搜索,协议手写零 SDK,单 exe 零运行时依赖"
+description = "web-multisearch MCP server(Rust 版):聚合搜索,协议循环经 boenmind-plugin-sdk 单源(#56),单 exe 零运行时依赖"
 
 [[bin]]
 name = "web-multisearch"
