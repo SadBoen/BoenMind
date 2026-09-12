@@ -259,3 +259,100 @@ async fn unregister_missing_skill_is_noop() {
     let manager = SkillScriptManager::new().expect("引擎");
     assert!(manager.unregister_skill("never_loaded").is_empty());
 }
+
+// ---- ADR-0041/0042:通用 wasm 插件(注入面 = 声明,**不是** `skill.*` 命名)--------
+
+const PLUGIN_CAP: &str = "demo.echo";
+
+/// 通用插件声明(非 `skill.*` 命名)——证明 wasm 宿主与分道不靠名字前缀。
+/// 显式 `approval: not-required`(read-only 直通);声明缺省是 required
+/// (安全默认),此处为走通调用面按只读语义声明,与技能脚本口径一致。
+fn plugin_decl() -> Value {
+    json!([{
+        "capability": PLUGIN_CAP,
+        "provider": "demo.wasm",
+        "version": "0.2.0",
+        "wasm": "echo.wasm",
+        "effect": "read-only",
+        "approval": "not-required",
+        "timeout_ms": 5000
+    }])
+}
+
+/// 从声明文件装载通用插件:落 echo.wasm + plugins.json,返回 (manager, 待注册能力对)。
+fn load_plugin(data_dir: &std::path::Path) -> (Arc<SkillScriptManager>, SkillEntries) {
+    let cfg = data_dir.join("config");
+    std::fs::create_dir_all(&cfg).expect("建 config");
+    std::fs::write(
+        cfg.join("echo.wasm"),
+        wat::parse_str(ECHO_WAT).expect("WAT → wasm"),
+    )
+    .expect("写 wasm");
+    std::fs::write(cfg.join("plugins.json"), plugin_decl().to_string()).expect("写声明");
+    let manager = Arc::new(SkillScriptManager::new().expect("wasmtime 引擎"));
+    let manifests = manager.load_plugins_file(&cfg.join("plugins.json"));
+    let entries = SkillScriptManager::capability_entries(manifests);
+    (manager, entries)
+}
+
+/// 通用插件全链:非 `skill.*` 命名 → 声明装载 → 走异步分道真执行 → 按来源摘除。
+/// 锁死 ADR-0041 的"第二个真实调用方"与 ADR-0042 的"按 origin 摘除"。
+#[tokio::test]
+async fn generic_wasm_plugin_executes_and_unregisters_by_origin() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let data = dir.path();
+    let (manager, entries) = load_plugin(data);
+    let exec = split_executor(data, manager.clone());
+
+    let rig = rig(vec![], true, entries, Some(exec)).await;
+    let handle = &rig.handle;
+
+    // ① 非 skill.* 命名的能力也在发现面,且走异步分道真执行(分道按归属,不按前缀)
+    assert!(
+        capability_names(handle)
+            .await
+            .contains(&PLUGIN_CAP.to_string()),
+        "通用插件能力应在发现面(证明宿主对命名空间不可知)"
+    );
+    let out = handle
+        .capability_call(
+            rig.ids.next_id("req"),
+            CapabilityCallParams {
+                capability: PLUGIN_CAP.into(),
+                args: json!({}),
+                idempotency_key: None,
+                deadline_ms: Some(2000),
+            },
+        )
+        .await
+        .expect("通用插件调用受理");
+    let op = BmId::parse(out["operation_id"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        await_terminal(handle, op.clone()).await,
+        OperationState::Succeeded,
+        "通用 wasm 插件应执行成功"
+    );
+    assert_eq!(
+        handle.operation_result(op).await.unwrap().unwrap(),
+        json!({"ok": true, "src": "skill-wasm"}),
+        "wasm stdout JSON 应作为结果回传"
+    );
+
+    // ② 按**来源**摘除(origin=Generic):不依赖 provider 名字前缀
+    let removed = manager.unregister_all_generic();
+    assert_eq!(removed, vec![PLUGIN_CAP.to_string()], "按来源摘除通用插件");
+    handle
+        .capabilities_unregister(removed)
+        .await
+        .expect("核心注销");
+    assert!(
+        !capability_names(handle)
+            .await
+            .contains(&PLUGIN_CAP.to_string()),
+        "摘除后应从发现面消失"
+    );
+    // 摘除技能(origin=Skill)不受影响:通用摘除不越界
+    assert!(!manager.has_capability(PLUGIN_CAP));
+
+    rig.handle.stop("done").await;
+}
