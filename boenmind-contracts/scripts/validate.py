@@ -325,6 +325,36 @@ print(f"R2  payload 校验       : 校验 {sum(total_kinds.values())} 个负载 
       f"event={total_kinds['event']} log={total_kinds['log']} receipt={total_kinds['receipt']}），"
       f"{sum(1 for x in problems if x.startswith('[R2'))} 个失败")
 
+
+# ---------- R5: 不变量 id ↔ 测试套件同名实现(issue #65)----------
+# README 承诺「invariants/ 中每条不变量必须在测试套件中有对应实现(id 同名)」,
+# 此前无机器门、靠约定。此处扫描 invariants/*.md 的 INV-* id 与仓库 Rust 测试
+# 源码中出现的 id 比对:声明了却无任何测试引用 = 缺口。
+_INV_ROOT = ROOT.parent if (ROOT.parent / "runtime").is_dir() else ROOT
+_inv_files = sorted((ROOT / "invariants").glob("*.md"))
+_declared_inv = set()
+for f in _inv_files:
+    _declared_inv |= set(re.findall(r"\bINV-\d+\b", f.read_text(encoding="utf-8")))
+
+# 仓库测试源码(相对合同库上一级的 runtime/ 与 plugins/);合同库独立时跳过该规则
+_test_roots = [p for p in (_INV_ROOT / "runtime" / "crates", _INV_ROOT / "plugins") if p.is_dir()]
+_used_inv = set()
+if _test_roots:
+    for tr in _test_roots:
+        for p in tr.rglob("*.rs"):
+            if "/target/" in p.as_posix():
+                continue
+            try:
+                _used_inv |= set(re.findall(r"\bINV-\d+\b", p.read_text(encoding="utf-8")))
+            except Exception:  # noqa: BLE001
+                continue
+    for inv in sorted(_declared_inv - _used_inv):
+        fail("R5", f"不变量 {inv} 在 invariants/ 声明,但测试套件无引用(id 同名实现缺失)")
+    print(f"R5  不变量↔测试同名   : 声明 {len(_declared_inv)} 条，测试引用 {len(_declared_inv & _used_inv)} 条，"
+          f"{sum(1 for x in problems if x.startswith('[R5'))} 个缺口")
+else:
+    print(f"R5  不变量↔测试同名   : 声明 {len(_declared_inv)} 条(未发现 runtime/ 测试源,跳过比对)")
+
 # ---------- 结果 ----------
 print("-" * 56)
 if problems:
