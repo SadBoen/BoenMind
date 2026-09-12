@@ -491,7 +491,7 @@ pub(crate) fn handle_provider_call(
  // F-02(审计台账):投影写失败必须留痕——静默失败会使重启后
  // 幂等抑制失效(副作用可能重放)
                     if let Err(e) = store.save_idem_receipt(h, &value.to_string(), &w.now_ts()) {
-                        eprintln!("[persist] 幂等收据落表失败 key={h}: {e:?}");
+                        tracing::error!(key = %h, error = ?e, "幂等收据落表失败(重启后幂等抑制可能失效)");
                     }
                     if let Err(e) = store.outbox_upsert(
                         operation_id.as_str(),
@@ -917,6 +917,9 @@ pub(crate) fn dispatch_capability(
         if let Some(gid) = &prepared.grant_id {
             persist_grant(w, gid);
         }
+ // 内核级 deadline 钳制:下限 100ms(低于此值无实际执行意义,且抗误配),
+ // 上限 600s(与 system.exec manifest 前台硬顶一致,ADR-0024;天花板单调
+ // 不因单次调用声明的更大 timeout_ms 而突破)。逐次默认值走 limits 面。
         let deadline_ms = prepared.manifest.timeout_ms.clamp(100, 600_000);
         let cancel = CancellationToken::new();
         w.cap_in_flight.insert(op_id.clone(), cancel.clone());
@@ -989,7 +992,7 @@ pub(crate) fn dispatch_capability(
                 if let Some(store) = &w.store
                     && let Err(e) = store.save_idem_receipt(h, &result.to_string(), &w.now_ts())
                 {
-                    eprintln!("[persist] 幂等收据落表失败 key={h}: {e:?}");
+                    tracing::error!(key = %h, error = ?e, "幂等收据落表失败(重启后幂等抑制可能失效)");
                 }
             }
             emit_capability_invoked(

@@ -21,6 +21,8 @@ use std::sync::{Arc, Mutex};
 use wasmtime::{Engine, Module};
 
 /// fuel 上限(防死循环烧 CPU:约对应数秒纯计算,超时硬顶兜底)。
+/// 2e9 取自 wasmtime 常规量级——足够正常脚本跑完,又在纯计算死循环下数秒内
+/// 耗尽;真正的墙钟兜底是 manifest.timeout_ms 取消令牌,二者互补。
 const FUEL_LIMIT: u64 = 2_000_000_000;
 
 /// 一条已注册脚本:capability 名 → 编译缓存 + 执行参数。
@@ -157,7 +159,7 @@ impl SkillScriptManager {
             return Vec::new();
         };
         let Ok(items) = serde_json::from_str::<Value>(&text) else {
-            eprintln!("[Plugin] {} 解析失败(已跳过)", decl_path.display());
+            tracing::warn!(path = %decl_path.display(), "wasm 插件声明解析失败(已跳过)");
             return Vec::new();
         };
  // ADR-0042:装载前过冻结 schema 门(与
@@ -165,10 +167,8 @@ impl SkillScriptManager {
         if let Err(e) =
             bm_contract::schemas::validate(bm_contract::registries::WASM_PLUGIN_SCHEMA, &items)
         {
-            eprintln!(
-                "[Plugin] {} 违反 wasm 插件合同(拒绝装载): {e}",
-                decl_path.display()
-            );
+            tracing::warn!(path = %decl_path.display(), error = %e,
+                "wasm 插件声明违反合同(拒绝装载)");
             return Vec::new();
         }
         let Some(list) = items.as_array() else {
@@ -184,14 +184,14 @@ impl SkillScriptManager {
             };
             let provider = it["provider"].as_str().unwrap_or(capability);
             let Some(wasm_rel) = it["wasm"].as_str() else {
-                eprintln!("[Plugin] {capability} 未声明 wasm(已跳过)");
+                tracing::warn!(capability = %capability, "wasm 插件未声明 wasm 字段(已跳过)");
                 continue;
             };
             let timeout_ms = it["timeout_ms"].as_u64().unwrap_or(self.default_timeout_ms);
             if let Err(e) =
                 self.register_wasm(provider, capability, &root.join(wasm_rel), root, timeout_ms)
             {
-                eprintln!("[Plugin] {capability} 装载失败(已跳过): {e}");
+                tracing::warn!(capability = %capability, error = %e, "wasm 插件装载失败(已跳过)");
                 continue;
             }
             let decl = WasmDecl {
@@ -230,11 +230,11 @@ impl SkillScriptManager {
             };
             match decl.synthesize() {
                 Ok(m) => {
-                    eprintln!("[Plugin] wasm 插件 {capability} 已装载(provider {provider})");
+                    tracing::info!(capability = %capability, provider = %provider, "wasm 插件已装载");
                     out.push(m);
                 }
                 Err(e) => {
-                    eprintln!("[Plugin] {capability} manifest 非法(已跳过): {e}");
+                    tracing::warn!(capability = %capability, error = %e, "wasm 插件 manifest 非法(已跳过)");
                 }
             }
         }

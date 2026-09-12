@@ -772,10 +772,19 @@ pub(crate) fn handle_approval_respond(
         .get(&params.approval_id)
         .map(|a| a.capability.clone())
         .ok_or_else(|| CoreError::validation("未知审批对象"))?;
- // M9 S1:memory.* 审批签发的 Grant 捕获抽屉谓词——批准只覆盖被批准的
+ // ADR-0038:抽屉式授权的 Grant 捕获 scope 谓词——批准只覆盖被批准的
  // 那个 scope(资源谓词命中步 4 的 Grant 查表),而非全抽屉能力。
+ // 判据 = manifest 声明了 `authorization.drawer`(能力族由合同表达,不再硬编码
+ // 能力名前缀——原 `starts_with("memory.")` 属族感知残留,ADR-0038 已裁
+ // 规则本体的真源是 manifest)。
+    let declares_drawer = w
+        .registry
+        .manifest_of(&cap_for_resource)
+        .and_then(|m| m.authorization.as_ref())
+        .and_then(|a| a.drawer.as_ref())
+        .is_some();
     let mut predicates = serde_json::Map::new();
-    if cap_for_resource.starts_with("memory.")
+    if declares_drawer
         && let Some(s) = pending
             .as_ref()
             .and_then(|(_, _, args, _, _, _)| args.get("scope"))

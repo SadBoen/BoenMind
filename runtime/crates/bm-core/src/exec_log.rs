@@ -105,13 +105,13 @@ impl ExecutionLog {
             match OpenOptions::new().create(true).append(true).open(path) {
                 Ok(mut file) => {
                     if let Err(e) = writeln!(file, "{line}") {
-                        eprintln!("[exec-log] 追加写失败(该条仅存内存镜像): {e}");
+                        tracing::warn!(error = %e, "exec-log 追加写失败(该条仅存内存镜像)");
                     } else if let Err(e) = file.flush() {
-                        eprintln!("[exec-log] flush 失败(该条仅存内存镜像): {e}");
+                        tracing::warn!(error = %e, "exec-log flush 失败(该条仅存内存镜像)");
                     }
                 }
                 Err(e) => {
-                    eprintln!("[exec-log] 日志文件打开失败(该条仅存内存镜像): {e}");
+                    tracing::warn!(error = %e, "exec-log 文件打开失败(该条仅存内存镜像)");
                 }
             }
         }
@@ -160,7 +160,7 @@ impl ExecutionLog {
             };
             // F-01 同口径:重写失败不 panic(原文件保持未修剪态,下轮重试)
             if let Err(e) = std::fs::write(path, payload) {
-                eprintln!("[exec-log] 修剪重写失败(内存镜像已修剪,文件待下轮): {e}");
+                tracing::warn!(error = %e, "exec-log 修剪重写失败(内存镜像已修剪,文件待下轮)");
             }
         }
         removed

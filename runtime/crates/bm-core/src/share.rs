@@ -107,6 +107,9 @@ fn share_entry(
         .input_schema(input_schema)
         .idempotent(idempotent)
         .cancellable(false)
+        // 内核内联执行(事件投影,无外部副作用),5s 是"防呆"而非真实耗时预算:
+        // 公告栏读写全在内存/事件面,正常为毫秒级;超出即视为异常并失败,
+        // 不给卡死留窗口。
         .timeout_ms(5_000)
         .scopes(vec!["domain:task".to_string()])
         .execution_mode(ExecutionMode::Sync)

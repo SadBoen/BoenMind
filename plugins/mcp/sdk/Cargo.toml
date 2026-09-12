@@ -16,3 +16,9 @@ serde_json = "1"
 
 [lints.rust]
 unsafe_code = "forbid"
+
+# issue #75:本 crate 不在 runtime workspace 内(随包第三方言分发,独立构建),
+# 无法继承 workspace.lints;此处显式对齐 workspace 的 clippy 口径,使 SDK 自身
+# 编译面与 workspace 一致(CI plugin-sdk job 已跑 clippy --all-targets -D warnings)。
+[lints.clippy]
+all = { level = "warn", priority = -1 }

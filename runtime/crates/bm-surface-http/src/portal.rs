@@ -146,14 +146,14 @@ impl PortalAuth {
     fn save(&self, hash: &str) {
         let cfg = self.data_dir.join("config");
         if let Err(e) = std::fs::create_dir_all(&cfg) {
-            eprintln!("[portal] 配置目录创建失败: {e}");
+            tracing::error!(error = %e, "portal 配置目录创建失败");
             return;
         }
         let text = serde_json::to_string_pretty(&json!({ "password_hash": hash })).expect("序列化");
         if let Err(e) =
             bm_core::ports::persist::atomic_write(&cfg.join("portal.json"), text.as_bytes())
         {
-            eprintln!("[portal] 密码落盘失败: {e}");
+            tracing::error!(error = %e, "portal 密码落盘失败");
         }
         *self.password_hash.lock().expect("锁未中毒") = Some(hash.to_string());
     }

@@ -24,7 +24,7 @@ fn parse_meta_seq(key: &str, raw: Option<String>) -> Option<u64> {
         Some(v) => match v.parse::<u64>() {
             Ok(n) => Some(n),
             Err(e) => {
-                eprintln!("[persist] 位点 meta {key} 值损坏({v:?}),按缺失兜底: {e}");
+                tracing::warn!(key = %key, value = ?v, error = %e, "位点 meta 值损坏,按缺失兜底");
                 None
             }
         },

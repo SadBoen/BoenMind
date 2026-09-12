@@ -67,6 +67,8 @@ pub fn post_spawn(pid: u32, limits: &SandboxLimits) -> SandboxGuard {
         match imp::harden_child(pid, limits) {
             Ok(g) => SandboxGuard { inner: Some(g) },
             Err(e) => {
+                // 本 crate 不依赖 tracing(最小平台原语,见 ADR-0035);且此为
+                // fail-open 的尽力而为提示,启动早期需终端可见,故保留 eprintln。
                 eprintln!("[sandbox] 子进程 {pid} Job Object 施加失败(继续,不加限): {e}");
                 SandboxGuard { inner: None }
             }

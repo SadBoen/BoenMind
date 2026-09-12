@@ -202,6 +202,9 @@ impl ExecExecutor {
             .map_err(|e| AsyncCallError::Transport(format!("进程启动失败: {e}")))?;
 
  // P1-14: 流式截断读取,避免巨量输出(GB级)在 wait_with_output 中先打爆内存
+ // 读管字节封顶 = 字符上限 ×4(UTF-8 单字符最多 4 字节,防多字节字符被
+ // 半截截断),再取 64KB 下限(极小字符上限下也保证足够读窗口,不会因
+ // 缓冲过小反复唤醒)。落盘/回喂仍按字符上限截断(下方 truncated 判定)。
         let max_bytes = (limits.exec_output_max_chars.saturating_mul(4)).max(64 * 1024);
         let mut stdout = child.stdout.take();
         let mut stderr = child.stderr.take();

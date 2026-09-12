@@ -600,7 +600,7 @@ pub fn load_mcp_setups(
         if let Err(e) =
             bm_contract::schemas::validate(bm_contract::registries::MCP_SERVER_SCHEMA, item)
         {
-            eprintln!("[MCP] 配置项 {name} 合同校验失败 (已跳过): {e}");
+            tracing::warn!(server = %name, error = %e, "MCP 配置项合同校验失败(已跳过)");
             continue;
         }
 
@@ -615,7 +615,7 @@ pub fn load_mcp_setups(
             match bm_core::ports::SecretStore::get(store, tok_ref) {
                 Ok(val) => bearer_token = Some(val),
                 Err(e) => {
-                    eprintln!("[MCP] 配置项 {name} bearer_token 引用 {tok_ref} 解析失败: {e:?}");
+                    tracing::warn!(server = %name, secret_ref = %tok_ref, error = ?e, "MCP bearer_token 解析失败(已跳过)");
                     continue;
                 }
             }
@@ -626,7 +626,7 @@ pub fn load_mcp_setups(
         if let Some(env) = item.get("env").and_then(|v| v.as_object()) {
             for (k, v) in env {
                 let Some(ref_) = v.as_str() else {
-                    eprintln!("[MCP] 配置项 {name} env {k} 值不是字符串 (已跳过该服务)");
+                    tracing::warn!(server = %name, key = %k, "MCP env 值不是字符串(已跳过该服务)");
                     env_err = true;
                     break;
                 };
@@ -635,9 +635,8 @@ pub fn load_mcp_setups(
                         env_resolved.insert(k.clone(), value);
                     }
                     Err(e) => {
-                        eprintln!(
-                            "[MCP] 配置项 {name} env {k} 密钥引用 {ref_} 解析失败 (已跳过该服务): {e:?}"
-                        );
+                        tracing::warn!(server = %name, key = %k, secret_ref = %ref_, error = ?e,
+                            "MCP env 密钥引用解析失败(已跳过该服务)");
                         env_err = true;
                         break;
                     }
@@ -654,7 +653,7 @@ pub fn load_mcp_setups(
             .get("trust")
             .and_then(|v| v.as_str())
             .unwrap_or("explicit-config");
-        eprintln!("[MCP] 配置项 {name} trust={trust}(来源显式配置)");
+        tracing::info!(server = %name, trust = %trust, "MCP 装载 trust(来源显式配置)");
 
  // 外部评审
  // 「校验目标」哈希,不符拒载(防安装后被替换)。校验目标 = payload(若
@@ -665,14 +664,13 @@ pub fn load_mcp_setups(
             match resolve_integrity_target(item) {
                 Ok(target) => {
                     if let Err(e) = verify_integrity(&target, expected) {
-                        eprintln!(
-                            "[MCP] 配置项 {name} 完整性校验不符 (已跳过,疑似被替换;目标 {target}): {e}"
-                        );
+                        tracing::warn!(server = %name, target = %target, error = %e,
+                            "MCP 完整性校验不符(已跳过,疑似被替换)");
                         continue;
                     }
                 }
                 Err(e) => {
-                    eprintln!("[MCP] 配置项 {name} 完整性校验目标不明确 (已跳过): {e}");
+                    tracing::warn!(server = %name, error = %e, "MCP 完整性校验目标不明确(已跳过)");
                     continue;
                 }
             }

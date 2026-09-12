@@ -51,7 +51,7 @@ impl Roots {
             let cand = strip_verbatim(Path::new(r));
             match cand.canonicalize() {
                 Ok(p) if p.is_dir() => roots.push(strip_verbatim(&p)),
-                _ => eprintln!("[fs_tools] 工作区根无效(忽略):{r}"),
+                _ => tracing::warn!(root = %r, "fs_tools 工作区根无效(忽略)"),
             }
         }
         Self { roots }

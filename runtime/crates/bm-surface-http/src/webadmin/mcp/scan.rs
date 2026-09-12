@@ -45,7 +45,7 @@ async fn self_describe(path: &Path) -> Option<Value> {
     let mut child = match spawn_result {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("[mcp-candidates] 候选 spawn 失败 {}: {e}", path.display());
+            tracing::warn!(path = %path.display(), error = %e, "候选文件 spawn 失败");
             return None;
         }
     };

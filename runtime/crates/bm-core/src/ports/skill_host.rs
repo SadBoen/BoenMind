@@ -112,7 +112,7 @@ pub fn load_wasm_declarations(
     for (id, def) in read_skill_definitions(data_dir) {
         match host.register_skill(&id, &def, &skill_root(data_dir, &id)) {
             Ok(manifests) => out.extend(placeholder_entries(manifests)),
-            Err(e) => eprintln!("[Skill] 技能 {id} 装载失败(已跳过): {e}"),
+            Err(e) => tracing::warn!(skill = %id, error = %e, "技能装载失败(已跳过)"),
         }
     }
  // 通用插件:声明文件整表装载。
