@@ -403,6 +403,7 @@ dependencies = [
  "walkdir",
  "wasmtime",
  "wasmtime-wasi",
+ "wat",
 ]
 
 [[package]]

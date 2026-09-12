@@ -21,9 +21,14 @@ superseded_by: []
 
 4. **wasm 宿主去特化(第一步)**。删除 `SkillScriptManager as AsyncCapabilityExecutor` 里冗余的 `capability.starts_with("skill.")` 守卫——宿主本就按**精确 capability 查编译表**,前缀判断是冗余的字符串派发。删除后宿主对命名空间不可知:凡注册进其编译表的 wasm 能力皆可执行。生产路由仍由 `SplitExecutor` 按 capability 分道,本步不改路由。
 
+5. **装载面抽出通用 API,真实 provider 声明身份**。
+   - `SkillScriptManager::register_wasm(capability, wasm_path, root, timeout_ms)`:通用装载(任意 capability 名,校验 wasm 落在 `root` 内),`register_skill` 降为它的上层(命名/清单由 `SkillDefinition` 驱动)。
+   - `bm_core::broker::provider_fn_with_meta`:闭包型 provider 也能声明 `PluginMeta`。
+   - 生产 provider 全部声明身份:`model.invoke`(Connector)、`fs.*`(Tool)、`system.exec`/`job_output`(Tool)、`context.compress`(Tool)、每个 wasm 插件(Tool,id = manifest.provider)。契约由此**被真实消费**,而非仅测试使用。
+
 ## 后果
 
 - 「万物皆插件」从口号进了一步:扩展有**类型与身份**,Provider 有**释放钩子**。这是把 `skill_wasm` 泛化为通用 wasm 插件宿主的前置契约面。
-- **零破坏**:所有既有 provider/manifest/路由行为不变(496 测试全绿;新增 2 项覆盖身份读取与生命周期调用)。
-- **未做(留待后续 ADR)**:WIT/Component 级通用宿主接口、把 `skills.json` 之外的 wasm 插件来源接入 `boenmind-server` 组合根、`SplitExecutor` 去前缀分道、插件依赖与版本协商。本 ADR 只落**契约与最小生命周期**。
-- 守护测试:`bm-core::registry::provider_lifecycle_and_plugin_meta_are_wired`(身份可读 + 注销必触发 shutdown + 未声明身份走默认)、`bm-providers::skill_wasm::host_is_namespace_agnostic`(非 `skill.` 前缀的已编译能力可执行)。
+- **零破坏**:所有既有 provider/manifest/路由行为不变(495 测试全绿;新增 4 项覆盖身份读取、生命周期调用、wasm 身份声明、通用装载)。
+- **未做(留待后续 ADR)**:WIT/Component 级通用宿主接口、把 `skills.json` 之外的 wasm 插件来源接入 `boenmind-server` 组合根(现仅有 `register_wasm` API,尚无第二个调用方)、`SplitExecutor` 去前缀分道、插件依赖与版本协商。本 ADR 只落**契约、最小生命周期与通用装载面**。
+- 守护测试:`bm-core::registry::provider_lifecycle_and_plugin_meta_are_wired`(身份可读 + 注销必触发 shutdown + 未声明身份走默认)、`bm-providers::skill_wasm::{host_is_namespace_agnostic, capability_entries_declare_plugin_identity, generic_register_wasm_accepts_any_capability_name}`。

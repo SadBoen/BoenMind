@@ -38,6 +38,8 @@ glm = []
 [dev-dependencies]
 tokio = { workspace = true }
 tempfile = "3"
+# WAT 文本 → wasm 字节(通用宿主注册测试用真模块,from_binary 只吃二进制)
+wat = { workspace = true }
 # #3 mock 远程 MCP server(本仓 axum workspace 版本)
 axum = { workspace = true }
 

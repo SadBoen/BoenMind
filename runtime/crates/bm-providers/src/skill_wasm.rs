@@ -61,39 +61,51 @@ impl SkillScriptManager {
     ) -> Result<Vec<CapabilityManifest>, String> {
         let scripts = def.scripts.as_ref().ok_or("技能未声明 scripts")?;
         for sc in scripts {
-            let wasm_path = skill_root.join(&sc.path);
-            // P1-10(2026-09-07 架构评审):脚本路径钉死在技能根目录内——
-            // `..`/绝对路径/符号链接越界一律拒绝,不让 skills.json 配置成为
-            // 任意文件读取通道(canonicalize 同时校验文件真实存在)。
-            let root_canon = skill_root
-                .canonicalize()
-                .map_err(|e| format!("技能根目录解析失败({}): {e}", skill_root.display()))?;
-            let wasm_canon = wasm_path
-                .canonicalize()
-                .map_err(|e| format!("脚本 {} 路径解析失败({}): {}", sc.name, sc.path, e))?;
-            if !wasm_canon.starts_with(&root_canon) {
-                return Err(format!("脚本 {} 路径越出技能根目录: {}", sc.name, sc.path));
-            }
-            let bytes = std::fs::read(&wasm_canon)
-                .map_err(|e| format!("脚本 {} 读取失败({}): {}", sc.name, sc.path, e))?;
-            let module = Module::from_binary(&self.engine, &bytes)
-                .map_err(|e| format!("脚本 {} wasm 编译失败: {}", sc.name, e))?;
-            let timeout_ms = sc.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
             let capability = format!("skill.{}.{}", skill_id, sc.name);
-            self.entries
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .insert(
-                    capability.clone(),
-                    Arc::new(ScriptEntry {
-                        capability,
-                        wasm_path: wasm_canon,
-                        module,
-                        timeout_ms,
-                    }),
-                );
+            let wasm_path = skill_root.join(&sc.path);
+            let timeout_ms = sc.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
+            self.register_wasm(&capability, &wasm_path, skill_root, timeout_ms)?;
         }
         self.manifests_for(skill_id, scripts)
+    }
+
+    /// 通用 wasm 能力注册(ADR-0041 去特化):任意 capability 名 + wasm 路径。
+    ///
+    /// 校验 wasm 落在 `root` 内(防越界读取,同 P1-10),编译进缓存后由
+    /// [`Self::run`] 按精确 capability 执行——宿主对命名空间不可知。技能装载
+    /// (`register_skill`)是它的上层:命名与清单由技能声明驱动。
+    pub fn register_wasm(
+        &self,
+        capability: &str,
+        wasm_path: &Path,
+        root: &Path,
+        timeout_ms: u64,
+    ) -> Result<(), String> {
+        let root_canon = root
+            .canonicalize()
+            .map_err(|e| format!("root 解析失败({}): {e}", root.display()))?;
+        let wasm_canon = wasm_path
+            .canonicalize()
+            .map_err(|e| format!("wasm 路径解析失败({}): {e}", wasm_path.display()))?;
+        if !wasm_canon.starts_with(&root_canon) {
+            return Err(format!("wasm 路径越出 root: {}", wasm_path.display()));
+        }
+        let bytes = std::fs::read(&wasm_canon).map_err(|e| format!("wasm 读取失败: {e}"))?;
+        let module =
+            Module::from_binary(&self.engine, &bytes).map_err(|e| format!("wasm 编译失败: {e}"))?;
+        self.entries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(
+                capability.to_string(),
+                Arc::new(ScriptEntry {
+                    capability: capability.to_string(),
+                    wasm_path: wasm_canon,
+                    module,
+                    timeout_ms,
+                }),
+            );
+        Ok(())
     }
 
     /// 注销一个技能的全部脚本:按 `skill.<id>.` 前缀从编译缓存摘除,返回被
@@ -490,6 +502,31 @@ mod tests {
         let err = mgr
             .register_skill("escape", &def, &skill_root)
             .expect_err("越界路径必须被拒绝");
-        assert!(err.contains("越出技能根目录"), "{err}");
+        assert!(err.contains("越出 root"), "{err}");
+    }
+
+    // ADR-0041 去特化:通用 register_wasm 支持任意 capability 名(非 skill.*),
+    // 注册后按精确名可执行;越界路径同样被拒。
+    #[test]
+    fn generic_register_wasm_accepts_any_capability_name() {
+        let dir = tempfile::tempdir().expect("临时目录");
+        let wasm = dir.path().join("demo.wasm");
+        // 真 wasm 字节:from_binary 只吃二进制,不经文本嗅探。
+        let bytes = wat::parse_str(ECHO_WAT).expect("wat→wasm");
+        std::fs::write(&wasm, &bytes).expect("写 wasm");
+
+        let mgr = SkillScriptManager::new().expect("engine");
+        mgr.register_wasm("plugin.demo.echo", &wasm, dir.path(), 5_000)
+            .expect("通用注册应接受任意 capability 名");
+        assert!(mgr.entries.lock().unwrap().contains_key("plugin.demo.echo"));
+
+        // 越界路径仍拒(canonicalize 把 root 外的目标判否)
+        let outside = tempfile::tempdir().expect("另一目录");
+        let other = outside.path().join("x.wasm");
+        std::fs::write(&other, wat::parse_str(ECHO_WAT).expect("wat→wasm")).expect("写");
+        let err = mgr
+            .register_wasm("plugin.bad", &other, dir.path(), 1_000)
+            .expect_err("越界必须拒");
+        assert!(err.contains("越出 root"), "{err}");
     }
 }
