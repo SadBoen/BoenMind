@@ -300,12 +300,16 @@ impl AsyncCapabilityExecutor for SplitExecutor {
                 .await
         } else if capability.starts_with("fs.") {
             self.fs.call(operation_id, capability, args, deadline).await
-        } else if capability.starts_with("skill.") {
+        } else if self
+            .skills
+            .as_ref()
+            .is_some_and(|m| m.has_capability(capability))
+        {
+            // ADR-0041:按**归属**分道而非名字前缀——wasm 宿主编译表里有的
+            // capability(技能脚本或通用 wasm 插件)都归 wasm 执行面。
             match &self.skills {
                 Some(m) => m.call(operation_id, capability, args, deadline).await,
-                None => Err(AsyncCallError::Transport(
-                    "skill 脚本执行面未启用".to_string(),
-                )),
+                None => Err(AsyncCallError::Transport("wasm 执行面未启用".to_string())),
             }
         } else {
             self.fallback

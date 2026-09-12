@@ -438,6 +438,26 @@ async fn shutdown_signal(handle: RuntimeHandle, shutdown: Arc<tokio::sync::Notif
     println!("排空完成");
 }
 
+/// 从 `<data>/config/plugins.json` 装载通用 wasm 插件(ADR-0041):与 skills.json
+/// 平级的能力来源,共用同一 wasm 宿主实例。缺失/非法仅告警不阻断启动。
+fn register_wasm_plugins(
+    manager: &bm_providers::skill_wasm::SkillScriptManager,
+    data_dir: &std::path::Path,
+) -> Vec<(
+    bm_contract::capability::CapabilityManifest,
+    Arc<dyn bm_core::registry::CapabilityProvider>,
+)> {
+    let cfg = data_dir.join("config").join("plugins.json");
+    if !cfg.exists() {
+        return Vec::new();
+    }
+    let manifests = manager.load_plugins_file(&cfg);
+    if !manifests.is_empty() {
+        eprintln!("[Plugin] 共注册 {} 个 wasm 插件能力", manifests.len());
+    }
+    bm_providers::skill_wasm::SkillScriptManager::capability_entries(manifests)
+}
+
 /// 脚本装载结果:执行器(None=初始化失败;保留供管理面热重载共用)+ 待注册能力对。
 type SkillScriptLoad = (
     Option<Arc<bm_providers::skill_wasm::SkillScriptManager>>,
@@ -498,8 +518,9 @@ fn register_skill_scripts(
     entries
 }
 
-/// Skill v0.2(ADR-0016 第二步):启动期装载技能脚本 → 管理器 + 待注册能力对。
-/// 失败仅告警不阻断启动。
+/// wasm 执行面(ADR-0016 技能脚本 + ADR-0041 通用插件):启动期装载出管理器与
+/// 待注册能力对。技能与通用插件共用同一管理器实例(同一宿主编译表);失败仅
+/// 告警不阻断启动。
 fn load_skill_scripts(data_dir: &std::path::Path) -> SkillScriptLoad {
     let manager = match bm_providers::skill_wasm::SkillScriptManager::new() {
         Ok(m) => Arc::new(m),
@@ -508,9 +529,8 @@ fn load_skill_scripts(data_dir: &std::path::Path) -> SkillScriptLoad {
             return (None, Vec::new());
         }
     };
-    let entries = register_skill_scripts(&manager, data_dir);
-    if !entries.is_empty() {
-        eprintln!("[Skill] 共注册 {} 个技能脚本能力", entries.len());
-    }
+    let mut entries = register_skill_scripts(&manager, data_dir);
+    // ADR-0041:通用 wasm 插件(config/plugins.json)——第二个真实调用方。
+    entries.extend(register_wasm_plugins(&manager, data_dir));
     (Some(manager), entries)
 }

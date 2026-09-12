@@ -69,6 +69,72 @@ impl SkillScriptManager {
         self.manifests_for(skill_id, scripts)
     }
 
+    /// 从**声明文件**装载通用 wasm 插件(ADR-0041 去特化;这是宿主在 `skills.json`
+    /// 之外的第二个真实调用方)。
+    ///
+    /// 声明形状(数组;每项一个 wasm 工具能力):
+    /// ```json
+    /// [{"capability":"demo.echo","provider":"demo.wasm","version":"0.1.0",
+    ///   "wasm":"echo.wasm","effect":"read-only","timeout_ms":10000,
+    ///   "input_schema":{"type":"object"},"output_schema":{"type":"object"},
+    ///   "description":"...","scopes":[]}]
+    /// ```
+    /// wasm 路径相对 `decl_path` 所在目录解析,并钉死在该目录内(防越界)。
+    /// 返回合成 manifests;`capability`/`provider`/`wasm` 缺失或非法者跳过并告警。
+    pub fn load_plugins_file(&self, decl_path: &Path) -> Vec<CapabilityManifest> {
+        let Ok(text) = std::fs::read_to_string(decl_path) else {
+            return Vec::new();
+        };
+        let Ok(items) = serde_json::from_str::<Value>(&text) else {
+            eprintln!("[Plugin] {} 解析失败(已跳过)", decl_path.display());
+            return Vec::new();
+        };
+        let Some(list) = items.as_array() else {
+            return Vec::new();
+        };
+        let Some(root) = decl_path.parent() else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for it in list {
+            let Some(capability) = it["capability"].as_str() else {
+                continue;
+            };
+            let provider = it["provider"].as_str().unwrap_or(capability);
+            let Some(wasm_rel) = it["wasm"].as_str() else {
+                eprintln!("[Plugin] {capability} 未声明 wasm(已跳过)");
+                continue;
+            };
+            let timeout_ms = it["timeout_ms"].as_u64().unwrap_or(DEFAULT_TIMEOUT_MS);
+            if let Err(e) = self.register_wasm(capability, &root.join(wasm_rel), root, timeout_ms) {
+                eprintln!("[Plugin] {capability} 装载失败(已跳过): {e}");
+                continue;
+            }
+            let manifest = json!({
+                "capability": capability,
+                "provider": provider,
+                "version": it["version"].as_str().unwrap_or("0.1.0"),
+                "input_schema": it.get("input_schema").cloned().unwrap_or(json!({"type": "object"})),
+                "output_schema": it.get("output_schema").cloned().unwrap_or(json!({"type": "object"})),
+                "effect": it["effect"].as_str().unwrap_or("read-only"),
+                "idempotent": it["idempotent"].as_bool().unwrap_or(false),
+                "cancellable": true,
+                "timeout_ms": timeout_ms,
+                "approval": it["approval"].as_str().unwrap_or("required"),
+                "scopes": it.get("scopes").cloned().unwrap_or(json!([])),
+                "execution_mode": "async",
+            });
+            match serde_json::from_value::<CapabilityManifest>(manifest) {
+                Ok(m) => {
+                    eprintln!("[Plugin] wasm 插件 {capability} 已装载(provider {provider})");
+                    out.push(m);
+                }
+                Err(e) => eprintln!("[Plugin] {capability} manifest 非法(已跳过): {e}"),
+            }
+        }
+        out
+    }
+
     /// 通用 wasm 能力注册(ADR-0041 去特化):任意 capability 名 + wasm 路径。
     ///
     /// 校验 wasm 落在 `root` 内(防越界读取,同 P1-10),编译进缓存后由
@@ -126,6 +192,17 @@ impl SkillScriptManager {
             entries.remove(k);
         }
         removed
+    }
+
+    /// 本宿主是否编译了某 capability(ADR-0041 去前缀分道)。
+    ///
+    /// 路由用它按**归属**分道,而不是按名字前缀猜:凡进过本宿主编译表的
+    /// 能力(技能脚本或通用 wasm 插件)都归 wasm 执行面。
+    pub fn has_capability(&self, capability: &str) -> bool {
+        self.entries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains_key(capability)
     }
 
     /// scripts[] → CapabilityManifest 列表(effect 直映 RiskClass;
@@ -448,6 +525,66 @@ mod tests {
             manifests[0].approval,
             bm_contract::capability::ApprovalRequirement::Required,
             "副作用脚本必须审批"
+        );
+    }
+
+    // ADR-0041 第二个真实调用方:声明文件装载通用 wasm 插件——非 skill.* 能力
+    // 经声明文件进入宿主,合成 manifest 且执行体可触达。
+    #[tokio::test]
+    async fn load_plugins_file_registers_generic_wasm_capability() {
+        let dir = tempfile::tempdir().expect("临时目录");
+        std::fs::write(
+            dir.path().join("echo.wasm"),
+            wat::parse_str(ECHO_WAT).expect("wat→wasm"),
+        )
+        .expect("写 wasm");
+        let decl = dir.path().join("plugins.json");
+        std::fs::write(
+            &decl,
+            serde_json::json!([{
+                "capability": "demo.echo",
+                "provider": "demo.wasm",
+                "version": "0.2.0",
+                "wasm": "echo.wasm",
+                "effect": "read-only",
+                "timeout_ms": 5000
+            }])
+            .to_string(),
+        )
+        .expect("写声明");
+
+        let mgr = SkillScriptManager::new().expect("engine");
+        let manifests = mgr.load_plugins_file(&decl);
+        assert_eq!(manifests.len(), 1, "声明应装载出一个能力");
+        assert_eq!(manifests[0].capability, "demo.echo");
+        assert_eq!(manifests[0].provider, "demo.wasm");
+        // 声明装载的能力真的进了宿主编译表,且可按精确名执行。
+        assert!(mgr.has_capability("demo.echo"));
+        let out = AsyncCapabilityExecutor::call(
+            &mgr,
+            "op-1",
+            "demo.echo",
+            serde_json::json!({}),
+            std::time::Duration::from_secs(5),
+        )
+        .await
+        .expect("声明装载的能力应可执行");
+        assert_eq!(out["ok"], serde_json::json!(true));
+
+        // wasm 路径越出声明目录 → 该条跳过(不装载、不报错击穿)。
+        let bad = dir.path().join("bad.json");
+        std::fs::write(
+            &bad,
+            serde_json::json!([{
+                "capability": "demo.bad", "provider": "demo.bad",
+                "wasm": "../outside.wasm", "effect": "read-only"
+            }])
+            .to_string(),
+        )
+        .expect("写声明");
+        assert!(
+            mgr.load_plugins_file(&bad).is_empty(),
+            "越界 wasm 必须被跳过"
         );
     }
 

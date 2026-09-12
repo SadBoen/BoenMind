@@ -23,12 +23,15 @@ superseded_by: []
 
 5. **装载面抽出通用 API,真实 provider 声明身份**。
    - `SkillScriptManager::register_wasm(capability, wasm_path, root, timeout_ms)`:通用装载(任意 capability 名,校验 wasm 落在 `root` 内),`register_skill` 降为它的上层(命名/清单由 `SkillDefinition` 驱动)。
+   - `SkillScriptManager::load_plugins_file(path)`:从**声明文件**装载通用 wasm 插件(每项声明 capability/provider/wasm/effect/timeout 等),是宿主在 `skills.json` 之外的第二个真实调用方。
    - `bm_core::broker::provider_fn_with_meta`:闭包型 provider 也能声明 `PluginMeta`。
    - 生产 provider 全部声明身份:`model.invoke`(Connector)、`fs.*`(Tool)、`system.exec`/`job_output`(Tool)、`context.compress`(Tool)、每个 wasm 插件(Tool,id = manifest.provider)。契约由此**被真实消费**,而非仅测试使用。
+
+6. **分道按归属而非名字前缀**。`SplitExecutor` 对 wasm 分支改用 `SkillScriptManager::has_capability(capability)`(查宿主编译表),取代 `capability.starts_with("skill.")`。组合根 `boenmind-server` 启动时额外装载 `<data>/config/plugins.json`(与 `skills.json` 平级),与技能共用同一宿主实例。
 
 ## 后果
 
 - 「万物皆插件」从口号进了一步:扩展有**类型与身份**,Provider 有**释放钩子**。这是把 `skill_wasm` 泛化为通用 wasm 插件宿主的前置契约面。
-- **零破坏**:所有既有 provider/manifest/路由行为不变(495 测试全绿;新增 4 项覆盖身份读取、生命周期调用、wasm 身份声明、通用装载)。
-- **未做(留待后续 ADR)**:WIT/Component 级通用宿主接口、把 `skills.json` 之外的 wasm 插件来源接入 `boenmind-server` 组合根(现仅有 `register_wasm` API,尚无第二个调用方)、`SplitExecutor` 去前缀分道、插件依赖与版本协商。本 ADR 只落**契约、最小生命周期与通用装载面**。
-- 守护测试:`bm-core::registry::provider_lifecycle_and_plugin_meta_are_wired`(身份可读 + 注销必触发 shutdown + 未声明身份走默认)、`bm-providers::skill_wasm::{host_is_namespace_agnostic, capability_entries_declare_plugin_identity, generic_register_wasm_accepts_any_capability_name}`。
+- **零破坏**:所有既有 provider/manifest/路由行为不变(496 测试全绿;新增 5 项覆盖身份读取、生命周期调用、wasm 身份声明、通用装载、声明文件装载)。
+- **未做(留待后续 ADR)**:WIT/Component 级通用宿主接口(现为 WASI 命令式:stdin 进 JSON / stdout 出 JSON)、**通用插件的管理面**(扫描/批准/热重载——现只支持启动期从 `plugins.json` 装载)、插件依赖与版本协商。本 ADR 只落**契约、最小生命周期、通用装载面与第二个调用方**。
+- 守护测试:`bm-core::registry::provider_lifecycle_and_plugin_meta_are_wired`(身份可读 + 注销必触发 shutdown + 未声明身份走默认)、`bm-providers::skill_wasm::{host_is_namespace_agnostic, capability_entries_declare_plugin_identity, generic_register_wasm_accepts_any_capability_name, load_plugins_file_registers_generic_wasm_capability}`。
