@@ -97,7 +97,11 @@ pub async fn sync_from_config(
             }
         }
 
-        let setup = match load_mcp_setups(mcp_config_path, secrets.as_ref()) {
+        let setup = match load_mcp_setups(
+            mcp_config_path,
+            secrets.as_ref(),
+            limits.get().mcp_restart_limit,
+        ) {
             Ok(setups) => setups.into_iter().find(|s| s.name == name),
             Err(e) => {
                 outcome

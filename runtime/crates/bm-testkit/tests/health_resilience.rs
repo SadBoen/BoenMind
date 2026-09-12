@@ -333,7 +333,7 @@ async fn t107_mcp_install_trust_and_config() {
     )
     .expect("写配置");
     let store = bm_providers::secret::MemSecretStore::with("secret:notes.token", "resolved-value");
-    let setups = bm_providers::mcp::load_mcp_setups(&cfg_path, &store).expect("装载成功");
+    let setups = bm_providers::mcp::load_mcp_setups(&cfg_path, &store, 3).expect("装载成功");
     assert_eq!(setups.len(), 1);
     assert_eq!(setups[0].env_resolved["NOTES_TOKEN"], "resolved-value");
 
@@ -345,7 +345,7 @@ async fn t107_mcp_install_trust_and_config() {
         json!([{"name": "Bad-Name", "transport": "stdio", "command": "x", "args": []}]).to_string(),
     )
     .expect("写");
-    let skipped = bm_providers::mcp::load_mcp_setups(&bad, &store).expect("坏条目跳过而非整体失败");
+    let skipped = bm_providers::mcp::load_mcp_setups(&bad, &store, 3).expect("坏条目跳过而非整体失败");
     assert!(skipped.is_empty(), "坏条目应被跳过");
 
     // 坏+好混合:只装载好条目
@@ -359,7 +359,7 @@ async fn t107_mcp_install_trust_and_config() {
         .to_string(),
     )
     .expect("写");
-    let mixed_out = bm_providers::mcp::load_mcp_setups(&mixed, &store).expect("混合装载成功");
+    let mixed_out = bm_providers::mcp::load_mcp_setups(&mixed, &store, 3).expect("混合装载成功");
     assert_eq!(mixed_out.len(), 1);
     assert_eq!(mixed_out[0].name, "good");
 
@@ -373,7 +373,7 @@ async fn t107_mcp_install_trust_and_config() {
     )
     .expect("写");
     let leak_out =
-        bm_providers::mcp::load_mcp_setups(&leak, &store).expect("明文条目跳过而非整体失败");
+        bm_providers::mcp::load_mcp_setups(&leak, &store, 3).expect("明文条目跳过而非整体失败");
     assert!(leak_out.is_empty(), "env 明文条目应被跳过");
 
     // 未安装能力:默认拒绝

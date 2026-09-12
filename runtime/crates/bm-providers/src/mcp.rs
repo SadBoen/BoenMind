@@ -582,9 +582,14 @@ pub struct McpServerSetup {
 
 /// 从配置文件装载 MCP server 安装清单(每项过 mcp-server.v0_1 合同校验)。
 /// 文件显式列出 = 用户安装批准;env/bearer_token 一律 secret: 引用(明文拒绝由合同承担)。
+///
+/// `default_restart_limit` = 条目未声明 `restart_limit` 时的回落,由调用方
+/// 从 `limits.mcp_restart_limit` 传入(2026-09-12 修复:此前硬编码 3,使设置页
+/// 该项对 MCP 空转——与 skill 默认超时同类缺陷)。条目级值仍优先。
 pub fn load_mcp_setups(
     path: &std::path::Path,
     store: &dyn bm_core::ports::SecretStore,
+    default_restart_limit: u32,
 ) -> Result<Vec<McpServerSetup>, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("读取 MCP 配置失败: {e}"))?;
     let arr: Vec<Value> =
@@ -697,7 +702,7 @@ pub fn load_mcp_setups(
             restart_limit: item
                 .get("restart_limit")
                 .and_then(|v| v.as_u64())
-                .unwrap_or(3) as u32,
+                .unwrap_or(default_restart_limit as u64) as u32,
             trust: trust.to_string(),
             payload: item
                 .get("payload")
@@ -850,7 +855,7 @@ mod integrity_tests {
         )
         .expect("写配置");
         let store = MemSecretStore::new();
-        let setups = load_mcp_setups(&cfg, &store).expect("解析");
+        let setups = load_mcp_setups(&cfg, &store, 3).expect("解析");
         let names: Vec<&str> = setups.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(names, vec!["good"], "不符条目必须被跳过:{names:?}");
 
@@ -863,7 +868,7 @@ mod integrity_tests {
             ),
         )
         .expect("写配置");
-        let setups = load_mcp_setups(&cfg, &store).expect("解析");
+        let setups = load_mcp_setups(&cfg, &store, 3).expect("解析");
         assert_eq!(setups.len(), 1);
         assert_eq!(setups[0].name, "legacy");
     }
@@ -896,7 +901,7 @@ mod integrity_tests {
         )
         .expect("写配置");
         let store = MemSecretStore::new();
-        let setups = load_mcp_setups(&cfg, &store).expect("解析");
+        let setups = load_mcp_setups(&cfg, &store, 3).expect("解析");
         assert_eq!(setups.len(), 1);
         assert_eq!(
             setups[0].payload.as_deref(),
@@ -905,7 +910,7 @@ mod integrity_tests {
 
         // 脚本被替换 -> 哈希不符 -> 拒载(即使解释器本身未变)
         std::fs::write(&script, b"print('v2-evil')").expect("改脚本");
-        let setups = load_mcp_setups(&cfg, &store).expect("解析");
+        let setups = load_mcp_setups(&cfg, &store, 3).expect("解析");
         assert!(setups.is_empty(), "payload 被替换必须拒载");
     }
 
@@ -928,7 +933,7 @@ mod integrity_tests {
         )
         .expect("写配置");
         let store = MemSecretStore::new();
-        let setups = load_mcp_setups(&cfg, &store).expect("解析");
+        let setups = load_mcp_setups(&cfg, &store, 3).expect("解析");
         assert!(setups.is_empty(), "目标歧义必须拒载(fail-closed)");
     }
 
@@ -947,7 +952,7 @@ mod integrity_tests {
         )
         .expect("写配置");
         let store = MemSecretStore::new();
-        let setups = load_mcp_setups(&cfg, &store).expect("解析");
+        let setups = load_mcp_setups(&cfg, &store, 3).expect("解析");
         assert_eq!(setups.len(), 1);
         assert_eq!(setups[0].trust, "explicit-config");
         // 非枚举值 -> 合同校验拒 -> 跳过
@@ -958,8 +963,41 @@ mod integrity_tests {
             ),
         )
         .expect("写配置");
-        let setups = load_mcp_setups(&cfg, &store).expect("解析");
+        let setups = load_mcp_setups(&cfg, &store, 3).expect("解析");
         assert!(setups.is_empty(), "非枚举 trust 必须被合同校验拒");
+    }
+
+    /// 2026-09-12 架构评估修复:条目未声明 `restart_limit` 时须回落**调用方
+    /// 传入的默认值**(生产 = `limits.mcp_restart_limit`),而非硬编码 3——
+    /// 此前该设置项对 MCP 空转。条目级声明仍优先。
+    #[test]
+    fn restart_limit_defaults_from_caller_and_entry_overrides() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let exe = dir.path().join("plugin.exe");
+        std::fs::write(&exe, b"bin").expect("写");
+        let cfg = dir.path().join("mcp.json");
+        let cmd = exe.display().to_string().replace('\\', "\\\\");
+        let store = MemSecretStore::new();
+
+        // 未声明 → 用调用方传入的默认(此处刻意传非 3 值,证明真的读了参数)。
+        std::fs::write(
+            &cfg,
+            format!(r#"[{{"name":"a","transport":"stdio","command":"{cmd}"}}]"#),
+        )
+        .expect("写配置");
+        let setups = load_mcp_setups(&cfg, &store, 7).expect("解析");
+        assert_eq!(setups[0].restart_limit, 7, "缺省须随调用方默认(limits)");
+
+        // 条目级声明优先于默认。
+        std::fs::write(
+            &cfg,
+            format!(
+                r#"[{{"name":"b","transport":"stdio","command":"{cmd}","restart_limit":2}}]"#
+            ),
+        )
+        .expect("写配置");
+        let setups = load_mcp_setups(&cfg, &store, 7).expect("解析");
+        assert_eq!(setups[0].restart_limit, 2, "条目级 restart_limit 优先");
     }
 }
 
