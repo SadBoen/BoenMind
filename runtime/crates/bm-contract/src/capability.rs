@@ -157,8 +157,14 @@ pub struct CapabilityManifest {
  /// 展示用,缺省 = turn 侧兜底,不影响审批语义。
  #[serde(default)]
     pub description: Option<String>,
- /// ADR-0036 增发(合同 Minor):执行分道声明,唯一真源;缺省 = 回退
- /// provider 命名约定(mcp./skill./*.async)兼容旧 manifest。
+ /// ADR-0054 增发(合同 Minor):面向模型的工具名(wire/function.name)。
+ /// 缺省 = 消费方按能力名点转单下划线兜底;声明后被占则回落默认名。
+ /// 仅影响工具清单展示与模型亲和,不改能力名与审批语义——与 description
+ /// 同类(面向模型的展示属性),故同处一 struct。
+ #[serde(default)]
+    pub wire_name: Option<String>,
+ /// ADR-0036 增发(合同 Minor):执行分道声明,唯一真源;缺省 = sync
+ /// (ADR-0054 起内核不再回退 provider 命名前缀)。
  #[serde(default)]
     pub execution_mode: Option<ExecutionMode>,
  /// ADR-0038 增发(合同 Minor):授权规则声明(Broker 只解释);缺省 =
@@ -207,6 +213,7 @@ pub struct ManifestSpec {
     scopes: Vec<String>,
     execution_mode: Option<ExecutionMode>,
     description: Option<String>,
+    wire_name: Option<String>,
  /// 开放结构叠加(ADR-0051):额外字段最后合并;未知字段由合同忽略。
     overlay: Option<serde_json::Value>,
 }
@@ -234,6 +241,7 @@ impl ManifestSpec {
             scopes: Vec::new(),
             execution_mode: None,
             description: None,
+            wire_name: None,
             overlay: None,
         }
     }
@@ -278,6 +286,11 @@ impl ManifestSpec {
         self.description = Some(v.into());
         self
     }
+ /// ADR-0054:声明面向模型的工具名(wire/function.name);缺省按能力名兜底。
+    pub fn wire_name(mut self, v: impl Into<String>) -> Self {
+        self.wire_name = Some(v.into());
+        self
+    }
  /// 开放结构叠加:额外字段(undo/verification/… )最后合并进 manifest。
     pub fn overlay(mut self, v: serde_json::Value) -> Self {
         self.overlay = Some(v);
@@ -304,6 +317,9 @@ impl ManifestSpec {
         }
         if let Some(d) = &self.description {
             v["description"] = serde_json::json!(d);
+        }
+        if let Some(w) = &self.wire_name {
+            v["wire_name"] = serde_json::json!(w);
         }
  // 叠加最后应用(可覆盖上方任一字段,与旧 json!-merge 语义一致)。
         if let (Some(obj), Some(extra)) = (

@@ -815,7 +815,8 @@ fn capability_manifest_validates() {
         "retry": {"max_attempts": 1, "backoff_ms": 100, "retry_on": []},
         "deprecated_by": null,
         "mutation_class": "safe",
-        "execution_mode": "sync"
+        "execution_mode": "sync",
+        "wire_name": "echo"
     });
     validate(registries::CAPABILITY_MANIFEST_SCHEMA, &m).expect("manifest 合法");
 
@@ -825,6 +826,15 @@ fn capability_manifest_validates() {
     assert!(
         validate(registries::CAPABILITY_MANIFEST_SCHEMA, &bad_mode).is_err(),
         "未知执行模式必须被拒"
+    );
+
+    // ADR-0054:wire_name 为可选 Minor 字符串(wire/function.name 字符集);
+    // 含点号非法(须为 function.name 合法字符集)必拒
+    let mut bad_wire = m.clone();
+    bad_wire["wire_name"] = json!("fs.read");
+    assert!(
+        validate(registries::CAPABILITY_MANIFEST_SCHEMA, &bad_wire).is_err(),
+        "wire_name 含点号必须被拒"
     );
 
     // ADR-0038:authorization(抽屉规则声明)为可选 Minor 结构;形状非法必拒

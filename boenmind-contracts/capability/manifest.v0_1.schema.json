@@ -102,6 +102,7 @@
     "mutation_class": { "enum": ["safe", "mutation"], "description": "M4 增发:safe/mutation 分级(ADR-0002 §11.2 增补);缺省由 effect 派生(read-only→safe,其余→mutation);M5 协调动词子树过滤消费" },
     "execution_mode": { "enum": ["sync", "async"], "description": "ADR-0036 增发(Minor):执行分道声明,唯一真源。async = 慢外部/沙箱执行体(MCP 工具、skill wasm 脚本、system.exec、fs.*),由运行期异步执行器承载;sync = 进程内快能力。缺省 = 未声明,消费方回退既有 provider 命名约定(mcp./skill./*.async)兼容旧 manifest。生产 manifest 应显式声明。" },
     "authorization": { "$ref": "#/definitions/authorization_rule", "description": "ADR-0038 增发(Minor):per-capability 授权规则声明(结构见 #/definitions/authorization_rule);Broker 只做解释,未声明 = 本步不适用。" },
-    "description": { "type": ["string", "null"], "description": "ADR-0022 增发(Minor):面向模型的一句功能描述(对话工具清单展示用);缺省 = 消费方自行兜底,不影响审批语义" }
+    "description": { "type": ["string", "null"], "description": "ADR-0022 增发(Minor):面向模型的一句功能描述(对话工具清单展示用);缺省 = 消费方自行兜底,不影响审批语义" },
+    "wire_name": { "type": ["string", "null"], "pattern": "^[a-zA-Z0-9_-]{1,64}$", "description": "ADR-0054 增发(Minor):面向模型的工具名(wire/function.name)。缺省 = 消费方按能力名点转单下划线兜底。声明后宿主用其替代默认名,被占则回落默认名。仅影响工具清单展示与模型亲和,不改能力名与审批语义。" }
   }
 }

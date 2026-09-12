@@ -135,8 +135,9 @@ impl RuntimeHandle {
                 .registry
                 .register(manifest.clone(), &instance, provider.clone())
                 .expect("内置能力首次注册不得冲突");
-            // W9/M7 异步分道:provider 命名约定唯一真源(registry),启动注册与
-            // 热注册共用——skill.* 归位异步分道(ADR-0033)。
+            // W9/M7 异步分道:以 manifest.execution_mode 声明为唯一真源
+            // (ADR-0036/0054;内核不再认识 provider 命名前缀),启动注册与
+            // 热注册共用。
             world
                 .registry
                 .mark_async_for(&capability, &manifest.provider);

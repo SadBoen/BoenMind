@@ -1193,7 +1193,8 @@ pub(crate) fn handle_capabilities_register(
                 );
  // restore_binding 按「可丢失缓存」语义清空句柄,重新 attach。
                 let _ = w.registry.attach_handle(&capability, provider);
- // 异步分道判定与启动注册同源(ADR-0033):mcp.* / *.async / skill.*。
+ // 异步分道判定与启动注册同源:以 manifest.execution_mode 声明为唯一真源
+ // (ADR-0036/0054,内核不认识 provider 命名前缀)。
                 w.registry.mark_async_for(&capability, &provider_id);
                 if let Some(store) = w.store.clone()
                     && let Err(e) =

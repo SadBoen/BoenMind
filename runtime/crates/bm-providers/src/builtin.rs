@@ -271,6 +271,42 @@ mod tests {
     // 此前**不存在**(ADR-0042 核实发现)。此处补齐:生产内置/异步族的每个
     // manifest 必须显式声明 execution_mode——否则运行时会回退到 provider 名字
     // 前缀猜测,正是 ADR-0036 要消灭的耦合。
+    // ADR-0054 守护:曾走内核短名表的能力(fs.* 四件 + system.exec)必须显式
+    // 声明 wire_name——内核短名表已删,不声明就只剩点转单下划线长名,模型
+    // 亲和性退化(此前是易漏的隐式约定,现成显式契约)。
+    #[test]
+    fn builtin_tools_all_declare_wire_name() {
+        let expect: &[(&str, &str)] = &[
+            ("fs.search", "rgrep"),
+            ("fs.read", "read"),
+            ("fs.write", "write"),
+            ("fs.edit", "edit"),
+            (
+                "system.exec",
+                if cfg!(windows) { "powershell" } else { "bash" },
+            ),
+        ];
+        let set: Vec<_> = crate::fs_tools::fs_capability_entries()
+            .into_iter()
+            .chain([
+                crate::system_exec::exec_capability_entry(),
+                crate::system_exec::job_output_capability_entry(),
+            ])
+            .collect();
+        for (cap, wire) in expect {
+            let m = set
+                .iter()
+                .find(|(m, _)| &m.capability == cap)
+                .map(|(m, _)| m)
+                .unwrap_or_else(|| panic!("缺能力 {cap}"));
+            assert_eq!(
+                m.wire_name.as_deref(),
+                Some(*wire),
+                "`{cap}` 必须声明 wire_name={wire}(ADR-0054:内核不再认识能力名)",
+            );
+        }
+    }
+
     #[test]
     fn production_manifests_all_declare_execution_mode() {
         let mut all: Vec<(

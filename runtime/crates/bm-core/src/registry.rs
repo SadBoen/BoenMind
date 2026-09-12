@@ -17,7 +17,7 @@
 //! 注册面只回答「谁提供什么」;能不能调用是 Broker 的裁决(基线 §7)——
 //! 本模块不持有任何策略。
 
-use bm_contract::capability::{CapabilityManifest, MutationClass};
+use bm_contract::capability::{CapabilityManifest, MutationClass, RiskClass};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -120,6 +120,7 @@ fn validate_frozen_manifest(manifest: &CapabilityManifest) -> Result<(), Registr
             "deprecated_by",
             "mutation_class",
             "description",
+            "wire_name",
             "execution_mode",
             "authorization",
         ] {
@@ -160,13 +161,33 @@ pub struct CapabilityDiscovery {
     pub plugin_version: Option<String>,
 }
 
+/// 对话工具投影(阶段1 单源化):面向模型 tools 表 + 回喂面所需的能力元数据。
+/// 此前是 4 元组 `(name, schema, needs_approval, description)` 散落在 turn
+/// 装配层;`effect` 是 manifest 既有字段,一次投影即供多消费者(tools JSON、
+/// 工具事件风险标注、UI 分类),避免各处重算或按名字猜。`needs_approval` 与
+/// Broker 步 5 同口径(effect 可审批类或 manifest 声明 required)——权威判定
+/// 仍在 Broker,此处只是投影。
+#[derive(Debug, Clone)]
+pub struct ChatTool {
+    pub capability: String,
+    pub input_schema: serde_json::Value,
+    pub needs_approval: bool,
+    /// manifest.description(ADR-0022 合同 Minor):面向模型的一句功能描述;
+    /// 缺省 None 由 turn 侧按审批语义兜底。
+    pub description: Option<String>,
+    /// 风险等级:Broker 裁决输入,亦是工具事件/UI 分类的唯一真源(不再按名猜)。
+    pub effect: RiskClass,
+    /// 面向模型的工具名声明(ADR-0054);None = turn 侧按能力名兜底。
+    pub wire_name: Option<String>,
+}
+
 #[derive(Debug, Default)]
 pub struct CapabilityRegistry {
     manifests: HashMap<String, CapabilityManifest>,
     bindings: HashMap<String, Binding>,
     cache: HashMap<String, RuntimeCache>,
- /// M7:异步执行标记。注册本身不自动判定;由装载方按 manifest.provider
- /// 显式 mark_async("mcp." 前缀或内置 ".async" 后缀,见 runtime/handle.rs)。
+ /// M7:异步执行标记。由 `register` 按 manifest.execution_mode 落定(未声明
+ /// = sync);`mark_async_for` 只回读同一声明(ADR-0054,内核不认识命名约定)。
  /// 可丢失缓存——每次启动随注册流程重建。
     async_exec: std::collections::HashSet<String>,
 }
@@ -190,8 +211,8 @@ impl CapabilityRegistry {
         if self.manifests.contains_key(&name) {
             return Err(RegistryError::AlreadyRegistered);
         }
- // ADR-0036:执行分道以合同声明为真源——显式声明即落定,未声明留待
- // mark_async_for 走 provider 命名约定回退。
+ // ADR-0036/0054:执行分道以合同声明为唯一真源——显式声明即落定,
+ // 未声明 = sync(内核不再认识 provider 命名前缀回退)。
         match manifest.execution_mode {
             Some(bm_contract::capability::ExecutionMode::Async) => {
                 self.async_exec.insert(name.clone());
@@ -365,32 +386,28 @@ impl CapabilityRegistry {
 
  /// W4b 对话工具闭环:枚举供对话 Agent 使用的全部能力(含直通与需审批的业务能力)。
  /// 排除内核私有能力(如 model.invoke)。
- /// needs_approval 与 Broker 步 5 判定同口径:effect 可审批类
- /// (reversible/external/high-risk)或 manifest 声明 required → true。
- /// 第 4 元 = manifest.description(ADR-0022 合同 Minor):面向模型的
- /// 一句功能描述;fs.*/system.exec 内置能力与 MCP 工具自描述,缺省 None
- /// 由 turn 侧兜底。
- /// 工具」套话,是工具调用别扭的直接根因之一。
- /// (P1-47,
- /// 审批语义的权威判定在 Broker,本方法只是面向模型 tools 表的投影,
+ /// 返回 [`ChatTool`] 投影:needs_approval 与 Broker 步 5 判定同口径:effect
+ /// 可审批类(reversible/external/high-risk)或 manifest 声明 required → true;
+ /// effect/description/wire_name 一并带出,供 tools 表、工具事件风险标注与 UI
+ /// 分类共用。
+ /// (P1-47,审批语义的权威判定在 Broker,本方法只是面向模型的投影,
  /// 改判定先改 broker/mod.rs 步 5,此处随之。)
-    pub fn chat_tools(&self) -> Vec<(String, serde_json::Value, bool, Option<String>)> {
-        let mut out: Vec<(String, serde_json::Value, bool, Option<String>)> = self
+    pub fn chat_tools(&self) -> Vec<ChatTool> {
+        let mut out: Vec<ChatTool> = self
             .manifests
             .iter()
             .filter(|(_, m)| m.capability != "model.invoke")
-            .map(|(name, m)| {
-                let require_approval = m.effect.is_approval_bearing()
-                    || m.approval == bm_contract::capability::ApprovalRequirement::Required;
-                (
-                    name.clone(),
-                    m.input_schema.clone(),
-                    require_approval,
-                    m.description.clone(),
-                )
+            .map(|(name, m)| ChatTool {
+                capability: name.clone(),
+                input_schema: m.input_schema.clone(),
+                needs_approval: m.effect.is_approval_bearing()
+                    || m.approval == bm_contract::capability::ApprovalRequirement::Required,
+                description: m.description.clone(),
+                effect: m.effect,
+                wire_name: m.wire_name.clone(),
             })
             .collect();
-        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out.sort_by(|a, b| a.capability.cmp(&b.capability));
         out
     }
 
@@ -402,38 +419,15 @@ impl CapabilityRegistry {
         self.bindings.get(capability)
     }
 
- /// M7:标记该能力走异步执行路径(dispatch 不再同步等 Provider)。
-    pub fn mark_async(&mut self, capability: &str) {
-        self.async_exec.insert(capability.to_string());
-    }
-
- /// 异步分道判定的唯一真源(ADR-0033):按 `manifest.provider` 命名约定判定——
- /// - `mcp.*` 外部 MCP 子进程(启动装载与热装载同判);
- /// - `*.async` 内置异步执行体(如 `system.exec` 的 `builtin.async`);
- /// - `skill.*` wasm 脚本执行面(ADR-0016 第二步)。
- /// 分道,实际落到同步占位 provider 报错;本谓词收口两处调用点。
-    pub fn provider_is_async(provider: &str) -> bool {
-        provider.starts_with("mcp.")
-            || provider.ends_with(".async")
-            || provider.starts_with("skill.")
-    }
-
- /// 依 [`Self::provider_is_async`] 自动标记异步;返回是否异步。
- /// ADR-0036:manifest 已显式声明 `execution_mode` 时以声明为准(register
- /// 已落定),命名约定只作未声明条目的兼容回退。
-    pub fn mark_async_for(&mut self, capability: &str, provider: &str) -> bool {
-        if let Some(mode) = self
-            .manifests
+ /// 异步分道判定的唯一真源 = `manifest.execution_mode` 声明(ADR-0036/0054)。
+ /// 内核不再认识任何 provider 命名前缀(`mcp.`/`skill.`/`.async`)——旧前缀
+ /// 回退已删,与 `register` 同口径:未声明 = sync。
+ /// 返回是否异步(实际落定由 `register` 完成,本方法是装配期的回读/核对)。
+    pub fn mark_async_for(&mut self, capability: &str, _provider: &str) -> bool {
+        self.manifests
             .get(capability)
             .and_then(|m| m.execution_mode)
-        {
-            return matches!(mode, bm_contract::capability::ExecutionMode::Async);
-        }
-        let is_async = Self::provider_is_async(provider);
-        if is_async {
-            self.mark_async(capability);
-        }
-        is_async
+            .is_some_and(|m| matches!(m, bm_contract::capability::ExecutionMode::Async))
     }
 
     pub fn is_async(&self, capability: &str) -> bool {
@@ -778,12 +772,12 @@ mod tests {
         );
     }
 
- /// ADR-0036:执行分道以 manifest.execution_mode 声明为唯一真源;
- /// 未声明才回退 provider 命名约定。声明可覆盖约定(双向)。
+ /// ADR-0036/0054:执行分道以 manifest.execution_mode 声明为唯一真源。
+ /// 内核不再认识 provider 命名前缀——未声明即 sync(与 register 同口径)。
  #[test]
     fn execution_mode_declaration_is_source_of_truth() {
         let mut reg = CapabilityRegistry::new();
- // 声明 async 但 provider 名不符约定 -> 仍进异步(声明优先)
+ // 声明 async → 进异步分道(与 provider 名无关)
         let async_declared: CapabilityManifest = serde_json::from_value(serde_json::json!({
             "capability": "custom.slow", "provider": "custom.slow", "version": "0.1.0",
             "input_schema": {"type": "object"}, "output_schema": {"type": "object"},
@@ -798,7 +792,7 @@ mod tests {
             "显式 async 声明必须进异步分道,与 provider 名无关"
         );
 
- // 声明 sync 但 provider 名符合 async 约定 -> 不进异步(声明优先)
+ // 声明 sync → 不进异步(即便 provider 名像 mcp.* 前缀)
         let sync_declared: CapabilityManifest = serde_json::from_value(serde_json::json!({
             "capability": "mcp.srv.fast", "provider": "mcp.srv", "version": "0.1.0",
             "input_schema": {"type": "object"}, "output_schema": {"type": "object"},
@@ -808,13 +802,13 @@ mod tests {
         .unwrap();
         reg.register(sync_declared, "mcp.srv@0.1.0", Arc::new(Echo))
             .unwrap();
-        reg.mark_async_for("mcp.srv.fast", "mcp.srv");
         assert!(
-            !reg.is_async("mcp.srv.fast"),
+            !reg.mark_async_for("mcp.srv.fast", "mcp.srv"),
             "显式 sync 声明必须压过 mcp.* 命名约定"
         );
+        assert!(!reg.is_async("mcp.srv.fast"));
 
- // 未声明 -> 回退命名约定
+ // 未声明 → sync(前缀回退已删,ADR-0054)
         let undeclared: CapabilityManifest = serde_json::from_value(serde_json::json!({
             "capability": "mcp.legacy.tool", "provider": "mcp.legacy", "version": "0.1.0",
             "input_schema": {"type": "object"}, "output_schema": {"type": "object"},
@@ -824,8 +818,11 @@ mod tests {
         .unwrap();
         reg.register(undeclared, "mcp.legacy@0.1.0", Arc::new(Echo))
             .unwrap();
-        reg.mark_async_for("mcp.legacy.tool", "mcp.legacy");
-        assert!(reg.is_async("mcp.legacy.tool"), "未声明回退 mcp.* 约定");
+        assert!(
+            !reg.mark_async_for("mcp.legacy.tool", "mcp.legacy"),
+            "未声明不再回退 mcp.* 前缀——内核不认识命名约定"
+        );
+        assert!(!reg.is_async("mcp.legacy.tool"));
     }
 
  #[test]

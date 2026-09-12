@@ -9,26 +9,17 @@ use super::*;
 
 /// OpenAI function.name 规范要求 ^[a-zA-Z0-9_-]{1,64}$,不能有点号。
 /// 默认单下划线转义(fs.read -> fs_read; mcp.foo.bar -> mcp_foo_bar);
-/// 内置五件走短名表;短名被占则回落长名,保唯一性。(#19 拆分:纯逻辑出回合体)
-fn wire_name_of(cap: &str, taken: &std::collections::HashSet<String>) -> String {
- #[cfg(windows)]
-    const EXEC_WIRE_NAME: &str = "powershell";
- #[cfg(not(windows))]
-    const EXEC_WIRE_NAME: &str = "bash";
-    const SHORT_WIRE_NAMES: &[(&str, &str)] = &[
-        ("fs.read", "read"),
-        ("fs.write", "write"),
-        ("fs.edit", "edit"),
-        ("fs.search", "rgrep"),
-        ("system.exec", EXEC_WIRE_NAME),
-    ];
-    let default_name = cap.replace('.', "_");
-    SHORT_WIRE_NAMES
-        .iter()
-        .find(|(c, _)| *c == cap)
-        .map(|(_, short)| short.to_string())
-        .filter(|short| !taken.contains(short))
-        .unwrap_or(default_name)
+/// manifest 声明的 wire_name(ADR-0054)优先,被占则回落长名,保唯一性。
+/// (#19 拆分:纯逻辑出回合体)
+fn wire_name_of(
+    declared: Option<&str>,
+    cap: &str,
+    taken: &std::collections::HashSet<String>,
+) -> String {
+    declared
+        .filter(|w| !w.is_empty() && !taken.contains(*w))
+        .map(str::to_string)
+        .unwrap_or_else(|| cap.replace('.', "_"))
 }
 
 /// 防空转熔断判定(#19 拆分:纯函数,单测直测)——窗口内已有连续 n-1 个
@@ -41,11 +32,11 @@ fn breaker_hit(recent: &[(String, String)], sig: &(String, String), n: usize) ->
     recent.len() >= w && recent[recent.len() - w..].iter().all(|s| s == sig)
 }
 
-/// #19 拆分第二批:工具目录组装(纯逻辑自异步块外置,语句逐字保留,直测)。
-/// 输入 registry.chat_tools() 快照与 agent 工具白名单;输出 wire 名→能力名
-/// 映射与 OpenAI function 格式工具清单。
+ /// #19 拆分第二批:工具目录组装(纯逻辑自异步块外置,语句逐字保留,直测)。
+ /// 输入 registry.chat_tools() 快照与 agent 工具白名单;输出 wire 名→能力名
+ /// 映射与 OpenAI function 格式工具清单。
 fn build_tool_catalog(
-    chat_tools: &[(String, serde_json::Value, bool, Option<String>)],
+    chat_tools: &[crate::registry::ChatTool],
     allowed_tools: Option<&[String]>,
 ) -> (
     std::collections::HashMap<String, String>,
@@ -53,30 +44,32 @@ fn build_tool_catalog(
 ) {
     let mut name_to_cap: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
- // ADR-0022 后续批(用户实测反馈):内置能力出主流短名,模型对
- // read/write/edit/rgrep/powershell/bash 有训练亲和;合同能力名不动,
- // 返回调用经 name_to_cap 映射回内核能力名。短名被占(理论边界)则
- // 回落单下划线长名,保唯一性。search 命名用户裁决弃用(易误读为
- // 网络查询)→ rgrep;exec 按平台呈现实际 shell 名(Windows=powershell,
- // 其余=bash),模型见名即知语法。
-    let taken: std::collections::HashSet<String> = chat_tools
+ // ADR-0022 后续批 / ADR-0054:内置能力出主流短名,模型对
+ // read/write/edit/rgrep/powershell/bash 有训练亲和;短名现由各 provider
+ // 在 manifest.wire_name 声明(内核不再认识具体能力名)。合同能力名不动,
+ // 返回调用经 name_to_cap 映射回内核能力名。声明名与默认长名冲突(理论边界)
+ // 则回落默认长名,保唯一性。
+    let mut used: std::collections::HashSet<String> = chat_tools
         .iter()
-        .map(|(cap, ..)| cap.replace('.', "_"))
+        .map(|t| t.capability.replace('.', "_"))
         .collect();
     let mut tools_json: Vec<serde_json::Value> = chat_tools
         .iter()
-        .map(|(cap, schema, needs_approval, manifest_desc)| {
-            let openai_name = wire_name_of(cap, &taken);
+        .map(|t| {
+            let cap = &t.capability;
+            let openai_name = wire_name_of(t.wire_name.as_deref(), cap, &used);
+            used.insert(openai_name.clone());
             name_to_cap.insert(openai_name.clone(), cap.clone());
  // ADR-0022 描述治理:描述随 manifest 走(fs.*/system.exec 内置
  // 能力与 MCP 工具均自描述);缺省按审批语义给最小兜底,不再
  // 把「弹出审批卡片」等前端 UI 行为写进模型视野。
-            let desc = manifest_desc
+            let desc = t
+                .description
                 .as_deref()
                 .filter(|d| !d.trim().is_empty())
                 .map(str::to_string)
                 .unwrap_or_else(|| {
-                    if *needs_approval {
+                    if t.needs_approval {
                         format!("{cap} — 该工具需用户批准后执行")
                     } else {
                         format!("{cap} 工具")
@@ -87,7 +80,7 @@ fn build_tool_catalog(
                 "function": {
                     "name": openai_name,
                     "description": desc,
-                    "parameters": schema,
+                    "parameters": t.input_schema,
                 },
             })
         })
@@ -1194,8 +1187,7 @@ pub(crate) fn spawn_turn(
  // W4b 角色 prompt:会话级指定优先(会话创建时烤入的完整提示词,含技能);
  // 否则每回合现读 roles.json+skills.json 组装(设置页保存即热生效)。
  // 组装逻辑唯一入口 = bm-core::roles::compose_role_prompt(两条路径同口径)。
-    let chat_tools: Vec<(String, serde_json::Value, bool, Option<String>)> =
-        w.registry.chat_tools();
+    let chat_tools: Vec<crate::registry::ChatTool> = w.registry.chat_tools();
     let role_prompt: Option<String> = agent
         .system_prompt
         .clone()
@@ -1616,27 +1608,34 @@ mod turn_state_tests {
 
  #[test]
     fn tool_catalog_maps_wire_names_and_honors_allowlist() {
+        use crate::registry::ChatTool;
+        use bm_contract::capability::RiskClass;
+        let ct = |cap: &str, approval: bool, desc: Option<&str>, wire: Option<&str>| ChatTool {
+            capability: cap.to_string(),
+            input_schema: serde_json::json!({"type": "object"}),
+            needs_approval: approval,
+            description: desc.map(str::to_string),
+            effect: if approval {
+                RiskClass::ExternalSideEffect
+            } else {
+                RiskClass::ReadOnly
+            },
+            wire_name: wire.map(str::to_string),
+        };
+        // ADR-0054:声明的 wire_name 生效;未声明回落点转单下划线
         let chat_tools = vec![
-            (
-                "fs.read".to_string(),
-                serde_json::json!({"type": "object"}),
-                false,
-                Some("读文件".to_string()),
-            ),
-            (
-                "mcp.srv.tool".to_string(),
-                serde_json::json!({}),
-                true,
-                None,
-            ),
+            ct("fs.read", false, Some("读文件"), Some("read")),
+            ct("fs.search", false, Some("搜索"), None),
+            ct("mcp.srv.tool", true, None, None),
         ];
         let (name_to_cap, tools_json) = build_tool_catalog(&chat_tools, None);
-        assert_eq!(name_to_cap["read"], "fs.read", "内置五件出 wire 短名");
+        assert_eq!(name_to_cap["read"], "fs.read", "声明的 wire 短名生效");
+        assert_eq!(name_to_cap["fs_search"], "fs.search", "未声明回落点转单下划线");
         assert_eq!(name_to_cap["mcp_srv_tool"], "mcp.srv.tool", "点转单下划线");
-        assert_eq!(tools_json.len(), 2);
+        assert_eq!(tools_json.len(), 3);
         assert_eq!(tools_json[0]["function"]["description"], "读文件");
         assert_eq!(
-            tools_json[1]["function"]["description"], "mcp.srv.tool — 该工具需用户批准后执行",
+            tools_json[2]["function"]["description"], "mcp.srv.tool — 该工具需用户批准后执行",
             "无 manifest 描述按审批语义兜底"
         );
 
@@ -1687,21 +1686,17 @@ mod pure_helpers_tests {
     }
 
  #[test]
-    fn wire_names_escape_dots_and_prefer_free_short_names() {
+    fn wire_names_use_declaration_else_escape_dots() {
         let taken: std::collections::HashSet<String> =
             ["mcp_x_y".to_string()].into_iter().collect();
-        assert_eq!(wire_name_of("fs.read", &taken), "read", "内置五件走短名");
-        assert_eq!(
-            wire_name_of("system.exec", &taken),
-            if cfg!(windows) { "powershell" } else { "bash" }
-        );
-        assert_eq!(wire_name_of("mcp.x.y", &taken), "mcp_x_y", "点转单下划线");
- // 短名被占 → 回落长名
+        // ADR-0054:manifest 声明的 wire_name 优先
+        assert_eq!(wire_name_of(Some("read"), "fs.read", &taken), "read");
+        assert_eq!(wire_name_of(Some("rgrep"), "fs.search", &taken), "rgrep");
+        // 声明名被占 → 回落点转单下划线
         let taken2: std::collections::HashSet<String> = ["read".to_string()].into_iter().collect();
-        assert_eq!(
-            wire_name_of("fs.read", &taken2),
-            "fs_read",
-            "短名被占回落长名"
-        );
+        assert_eq!(wire_name_of(Some("read"), "fs.read", &taken2), "fs_read");
+        // 未声明 → 点转单下划线;空串声明同样回落
+        assert_eq!(wire_name_of(None, "mcp.x.y", &taken), "mcp_x_y");
+        assert_eq!(wire_name_of(Some(""), "fs.read", &taken), "fs_read");
     }
 }

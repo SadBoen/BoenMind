@@ -27,6 +27,14 @@ use std::time::Duration;
 pub const EXEC_CAPABILITY: &str = "system.exec";
 pub const JOB_OUTPUT_CAPABILITY: &str = "system.job_output";
 
+/// system.exec 面向模型的工具名(ADR-0054):呈现宿主实际 shell 名——
+/// 平台差异属 provider(它本就是平台相关代码),内核不再认识
+/// system.exec→powershell/bash 的映射。
+#[cfg(windows)]
+const EXEC_WIRE_NAME: &str = "powershell";
+#[cfg(not(windows))]
+const EXEC_WIRE_NAME: &str = "bash";
+
 /// system.exec 的 manifest + 注册占位 provider(执行体在 ExecExecutor;
 /// 同步面直调一律拒绝,防绕过 turn 语义——model.invoke 同款口径)。
 /// manifest timeout_ms = 前台硬顶(600s,与核心钳制天花板一致):决定
@@ -36,6 +44,7 @@ pub fn exec_capability_entry() -> (CapabilityManifest, Arc<dyn CapabilityProvide
  // ADR-0051:走全仓单一 manifest 合成路径(缺省单源)。
     let manifest = ManifestSpec::new(EXEC_CAPABILITY, "builtin.async", RiskClass::ExternalSideEffect)
         .version("0.2.0")
+        .wire_name(EXEC_WIRE_NAME)
         .description("在宿主 shell 执行命令:Windows 以 PowerShell(-NoProfile -NonInteractive)执行,其余以 bash -c 执行;返回 exit_code 与合并后的 stdout/stderr(超限截断)。适合跑构建/测试/进程管理等动态操作。可传 timeout_ms 毫秒(默认约 120 秒,前台最长 10 分钟,管理端「限制与超时」可调)。长任务(下载/clone/冷编译)传 run_in_background=true 立即返回作业号,或 timeout_ms 超前台上限时自动转后台执行;之后用 system.job_output 按作业号收取结果。可传 cwd 指定工作目录(限已登记工作区内,越界拒绝)。调用需用户批准后执行。")
         .input_schema(json!({
             "type": "object",

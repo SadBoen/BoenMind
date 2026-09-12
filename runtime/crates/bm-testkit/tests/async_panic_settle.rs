@@ -30,13 +30,14 @@ impl AsyncCapabilityExecutor for PanickyExecutor {
 
 #[tokio::test]
 async fn executor_panic_settles_operation_failed() {
-    // provider 以 .async 结尾 → RuntimeHandle::start 标记为异步能力
+    // ADR-0054:异步分道以 manifest.execution_mode 声明为唯一真源(内核不再
+    // 认识 `.async` 前缀回退),故此处显式声明 async。
     let manifest: CapabilityManifest = serde_json::from_value(json!({
         "capability": "panic.boom", "provider": "test.async", "version": "0.1.0",
         "input_schema": {"type": "object"},
         "output_schema": {"type": "object"},
         "effect": "read-only", "idempotent": true, "cancellable": true,
-        "timeout_ms": 1000, "approval": "not-required"
+        "timeout_ms": 1000, "approval": "not-required", "execution_mode": "async"
     }))
     .unwrap();
 

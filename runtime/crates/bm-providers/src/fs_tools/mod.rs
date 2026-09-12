@@ -7,7 +7,8 @@
 //! search 走 walkdir 全树遍历,不得占死单写者循环。审批分级不变:
 //! fs.search / fs.read = read-only 直通;fs.write / fs.edit = 审批卡。
 //!
-//! 对话工具名:fs.search → fs_search(turn 侧 `.` → `_`)。
+//! 对话工具名(ADR-0054:manifest.wire_name 声明,内核不再认识具体能力名):
+//! fs.search → rgrep,fs.read → read,fs.write → write,fs.edit → edit。
 
 mod guard;
 mod ops;
@@ -34,6 +35,7 @@ pub fn fs_capability_entries() -> Vec<(CapabilityManifest, Arc<dyn CapabilityPro
     vec![
         entry(
             FS_SEARCH,
+            "rgrep",
             RiskClass::ReadOnly,
             ApprovalRequirement::NotRequired,
             true,
@@ -55,6 +57,7 @@ pub fn fs_capability_entries() -> Vec<(CapabilityManifest, Arc<dyn CapabilityPro
         ),
         entry(
             FS_READ,
+            "read",
             RiskClass::ReadOnly,
             ApprovalRequirement::NotRequired,
             true,
@@ -73,6 +76,7 @@ pub fn fs_capability_entries() -> Vec<(CapabilityManifest, Arc<dyn CapabilityPro
         ),
         entry(
             FS_WRITE,
+            "write",
             RiskClass::ExternalSideEffect,
             ApprovalRequirement::Required,
             false,
@@ -90,6 +94,7 @@ pub fn fs_capability_entries() -> Vec<(CapabilityManifest, Arc<dyn CapabilityPro
         ),
         entry(
             FS_EDIT,
+            "edit",
             RiskClass::ExternalSideEffect,
             ApprovalRequirement::Required,
             false,
@@ -114,6 +119,7 @@ pub fn fs_capability_entries() -> Vec<(CapabilityManifest, Arc<dyn CapabilityPro
 #[allow(clippy::too_many_arguments)]
 fn entry(
     capability: &str,
+    wire_name: &str,
     effect: RiskClass,
     approval: ApprovalRequirement,
     idempotent: bool,
@@ -124,6 +130,7 @@ fn entry(
 ) -> (CapabilityManifest, Arc<dyn CapabilityProvider>) {
     // ADR-0051:走全仓单一 manifest 合成路径(缺省单源)。
     let manifest = ManifestSpec::new(capability, "builtin.async", effect)
+        .wire_name(wire_name)
         .description(description)
         .input_schema(input_schema)
         .idempotent(idempotent)
