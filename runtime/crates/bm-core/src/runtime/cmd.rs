@@ -251,135 +251,81 @@ pub(crate) enum TaskAction {
 }
 
 /// 排空期对非回合命令的统一拒绝(保留应答,不悬挂调用方)。
+///
+/// 结构说明(2026-09-12 架构评估,#74):本表与 `core_loop`、`rpc_inner` 合称
+/// 「三张表」——它们是**三种不同操作**(统一拒绝 / 真实派发 / 参数解码)在
+/// 同一 `Cmd` 变体集上的投影,不是同一张表抄三份。新增变体时三处都会**编译
+/// 报错**(无 `_ => {}` 兜底),这是刻意的:穷尽性由编译器强制,不会静默漏臂。
+/// 故本结构保留;仅把占多数的同形臂收敛为一行。
 pub(crate) fn reply_unavailable(cmd: Cmd) {
-    let err = || CoreError::Semantic(ErrorCode::Unavailable, "Runtime 排空中".into());
+    /// 同形臂:应答 `Unavailable`(类型泛化覆盖各变体的不同 Result 载荷)。
+    fn refuse<T>(resp: oneshot::Sender<CoreResult<T>>) {
+        let _ = resp.send(Err(CoreError::Semantic(
+            ErrorCode::Unavailable,
+            "Runtime 排空中".into(),
+        )));
+    }
     match cmd {
-        Cmd::SessionCreate { resp, .. } => {
-            let _ = resp.send(Err(err()));
-        }
-        Cmd::SessionResume { resp, .. } => {
-            let _ = resp.send(Err(err()));
-        }
-        Cmd::SessionClose { resp, .. } => {
-            let _ = resp.send(Err(err()));
-        }
-        Cmd::SessionDelete { resp, .. } => {
-            let _ = resp.send(Err(err()));
-        }
-        Cmd::EventsPoll { resp, .. } => {
-            let _ = resp.send(Err(err()));
-        }
-        Cmd::SendInput { resp, .. } => {
-            let _ = resp.send(Err(err()));
-        }
-        Cmd::Cancel { resp, .. } => {
-            let _ = resp.send(Err(err()));
-        }
-        Cmd::OperationCancel { resp, .. } => {
-            let _ = resp.send(Err(err()));
-        }
-        Cmd::GetOperation { resp, .. } => {
-            let _ = resp.send(Err(err()));
-        }
-        Cmd::RecoverySettle { resp, .. } => {
-            let _ = resp.send(Err(err()));
-        }
+        Cmd::SessionCreate { resp, .. } => refuse(resp),
+        Cmd::SessionResume { resp, .. } => refuse(resp),
+        Cmd::SessionClose { resp, .. } => refuse(resp),
+        Cmd::SessionDelete { resp, .. } => refuse(resp),
+        Cmd::EventsPoll { resp, .. } => refuse(resp),
+        Cmd::SendInput { resp, .. } => refuse(resp),
+        Cmd::Cancel { resp, .. } => refuse(resp),
+        Cmd::OperationCancel { resp, .. } => refuse(resp),
+        Cmd::GetOperation { resp, .. } => refuse(resp),
+        Cmd::RecoverySettle { resp, .. } => refuse(resp),
         // M4:裁决后的审批落地在停机态仍应可答;capability.call 是新业务命令
-        Cmd::CapabilityCall { resp, .. } => {
-            let _ = resp.send(Err(err()));
-        }
-        Cmd::CapabilityList { resp, .. } => {
-            let _ = resp.send(Err(err()));
-        }
-        Cmd::ApprovalList { resp, .. } => {
-            let _ = resp.send(Err(err()));
-        }
-        Cmd::ApprovalRespond { resp, .. } => {
-            let _ = resp.send(Err(err()));
-        }
+        Cmd::CapabilityCall { resp, .. } => refuse(resp),
+        Cmd::CapabilityList { resp, .. } => refuse(resp),
+        Cmd::ApprovalList { resp, .. } => refuse(resp),
+        Cmd::ApprovalRespond { resp, .. } => refuse(resp),
         // ADR-0030:会话权限模式变更是写命令,排空期拒绝
-        Cmd::SessionSetMode { resp, .. } => {
-            let _ = resp.send(Err(err()));
-        }
+        Cmd::SessionSetMode { resp, .. } => refuse(resp),
         // M5:task 命令组(停机态一律拒绝;查询面随 M8 只读残存评估)
-        Cmd::TaskCreate { resp, .. } => {
-            let _ = resp.send(Err(err()));
-        }
-        Cmd::TaskLifecycle { resp, .. } => {
-            let _ = resp.send(Err(err()));
-        }
-        Cmd::TaskList { resp, .. } => {
-            let _ = resp.send(Err(err()));
-        }
-        Cmd::TaskGet { resp, .. } => {
-            let _ = resp.send(Err(err()));
-        }
-        Cmd::ButlerRevoke { resp, .. } => {
-            let _ = resp.send(Err(err()));
-        }
-        Cmd::WorkerCall { resp, .. } => {
-            let _ = resp.send(Err(err()));
-        }
-        Cmd::TaskSpawnMember { resp, .. } => {
-            let _ = resp.send(Err(err()));
-        }
-        Cmd::TaskSpawnSubtask { resp, .. } => {
-            let _ = resp.send(Err(err()));
-        }
-        Cmd::TaskRemoveMember { resp, .. } => {
-            let _ = resp.send(Err(err()));
-        }
-        Cmd::TaskCollect { resp, .. } => {
-            let _ = resp.send(Err(err()));
-        }
-        Cmd::TaskBudgetIncrease { resp, .. } => {
-            let _ = resp.send(Err(err()));
-        }
-        Cmd::WatchdogScan { resp, .. } => {
-            let _ = resp.send(Err(err()));
-        }
-        Cmd::TaskReportCompletion { resp, .. } => {
-            let _ = resp.send(Err(err()));
-        }
+        Cmd::TaskCreate { resp, .. } => refuse(resp),
+        Cmd::TaskLifecycle { resp, .. } => refuse(resp),
+        Cmd::TaskList { resp, .. } => refuse(resp),
+        Cmd::TaskGet { resp, .. } => refuse(resp),
+        Cmd::ButlerRevoke { resp, .. } => refuse(resp),
+        Cmd::WorkerCall { resp, .. } => refuse(resp),
+        Cmd::TaskSpawnMember { resp, .. } => refuse(resp),
+        Cmd::TaskSpawnSubtask { resp, .. } => refuse(resp),
+        Cmd::TaskRemoveMember { resp, .. } => refuse(resp),
+        Cmd::TaskCollect { resp, .. } => refuse(resp),
+        Cmd::TaskBudgetIncrease { resp, .. } => refuse(resp),
+        Cmd::WatchdogScan { resp, .. } => refuse(resp),
+        Cmd::TaskReportCompletion { resp, .. } => refuse(resp),
+        Cmd::TaskAutorun { resp, .. } => refuse(resp),
+        // W2 热装载:停机态拒绝(能力注册只在运行态有意义)
+        Cmd::CapabilitiesRegister { resp, .. } => refuse(resp),
+        Cmd::CapabilitiesUnregister { resp, .. } => refuse(resp),
+        Cmd::CapabilityCancel { resp, .. } => refuse(resp),
+        // ---- 异形臂(行为各异,刻意逐条) ----------------------------------
         Cmd::EventsAll { resp } => {
             let _ = resp.send(Vec::new());
         }
-        Cmd::Stop { resp, .. } => {
-            let _ = resp.send(());
+        // 会话目录只读查询:不可用态应答空列表(不悬挂调用方)
+        Cmd::SessionList { resp } => {
+            let _ = resp.send(Vec::new());
         }
-        Cmd::ProviderCall { .. } => {}
-        Cmd::ProviderProgress { .. } => {}
-        Cmd::ProviderDelta { .. } => {}
-        Cmd::TaskAutorun { resp, .. } => {
-            let _ = resp.send(Err(err()));
-        }
-        // W2 热装载:停机态拒绝(能力注册只在运行态有意义)
-        Cmd::CapabilitiesRegister { resp, .. } => {
-            let _ = resp.send(Err(err()));
-        }
-        Cmd::CapabilitiesUnregister { resp, .. } => {
-            let _ = resp.send(Err(err()));
-        }
-        Cmd::CapabilityCancel { resp, .. } => {
-            let _ = resp.send(Err(err()));
+        // Provider 健康只读查询:不可用态应答空快照(不悬挂调用方)
+        Cmd::ProviderHealth { resp } => {
+            let _ = resp.send(Vec::new());
         }
         Cmd::GetOpResult { resp, .. } => {
             let _ = resp.send(Ok(None));
         }
+        Cmd::Stop { resp, .. } => {
+            let _ = resp.send(());
+        }
+        // 无应答方/自身即回合:静默(进程将终)
+        Cmd::ProviderCall { .. } => {}
+        Cmd::ProviderProgress { .. } => {}
+        Cmd::ProviderDelta { .. } => {}
         Cmd::Turn(_) => {}
-        // W5:台账回写无应答方;排空期与 Turn 同口径静默应用即可(进程将终)
         Cmd::RememberTurn { .. } => {}
-        // W4b:排空期审批请求按排空口径静默
         Cmd::ApprovalRequested { .. } => {}
-        // 会话目录只读查询:不可用态应答空列表(不悬挂调用方;现行主循环
-        // 停机分支已有真数据臂,此处仅为穷尽性兜底)
-        Cmd::SessionList { resp } => {
-            let _ = resp.send(Vec::new());
-        }
-        // Provider 健康只读查询:不可用态应答空快照(不悬挂调用方;主循环
-        // 停机分支已有真数据臂,此处仅为穷尽性兜底)
-        Cmd::ProviderHealth { resp } => {
-            let _ = resp.send(Vec::new());
-        }
     }
 }
