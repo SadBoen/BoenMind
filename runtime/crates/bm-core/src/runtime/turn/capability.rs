@@ -510,8 +510,11 @@ pub(crate) fn handle_provider_call(
                 persist_grant(w, gid);
             }
             w.op_results.insert(operation_id.clone(), value.clone());
-            // M7 S5:成功 -> 恢复 healthy(重连成功/清探针计数)
-            note_provider_success(w, &mcp_provider_of(&meta.capability), "重连握手成功");
+            // M7 S5:成功 -> 恢复 healthy(重连成功/清探针计数)。健康门仅
+            // MCP 族(见 mcp_provider_of):进程内族无健康记录可清。
+            if let Some(provider) = mcp_provider_of(&meta.capability) {
+                note_provider_success(w, &provider, "重连握手成功");
+            }
             emit_capability_invoked_with(
                 w,
                 &meta.call_id,
@@ -527,9 +530,11 @@ pub(crate) fn handle_provider_call(
         }
         Err(e) => {
             // M7 S5:传输故障 -> MCP unavailable 立即;unavailable 期间的调用
-            // 即重连探针(到上限后由 dispatch 门快速失败)
-            if matches!(e, AsyncCallError::Transport(_)) {
-                let provider = mcp_provider_of(&meta.capability);
+            // 即重连探针(到上限后由 dispatch 门快速失败)。健康门仅 MCP 族:
+            // 进程内族无重装恢复通道,不做 MCP 形状熔断。
+            if matches!(e, AsyncCallError::Transport(_))
+                && let Some(provider) = mcp_provider_of(&meta.capability)
+            {
                 let was = w
                     .provider_health
                     .get(&provider)
@@ -836,16 +841,14 @@ pub(crate) fn dispatch_capability(
     // M7 S4:异步 Provider 路径——决策/校验/预扣/intent 门已过,执行交
     // 异步执行器,完成经 Cmd::ProviderCall 回单写者回路落定。
     if w.registry.is_async(capability) {
-        // M7 S5:MCP 重连超限 -> 快速失败(不再触执行器,直至重装)
-        let provider = mcp_provider_of(capability);
-        let blocked = w
-            .provider_health
-            .get(&provider)
-            .map(|h| {
+        // M7 S5:MCP 重连超限 -> 快速失败(不再触执行器,直至重装)。健康门
+        // 仅对 MCP 族生效:mcp_provider_of 返回 None 的进程内族不熔断。
+        let blocked = mcp_provider_of(capability).is_some_and(|provider| {
+            w.provider_health.get(&provider).is_some_and(|h| {
                 h.status == "unavailable"
                     && h.reconnect_attempts >= w.config.limits.get().mcp_reconnect_limit
             })
-            .unwrap_or(false);
+        });
         if blocked {
             emit_capability_invoked(
                 w,

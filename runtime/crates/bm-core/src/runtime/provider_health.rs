@@ -19,13 +19,17 @@ pub struct ProviderHealth {
 // W10(ADR-0024):健康面阈值/冷却走 limits 热生效(默认值见 Limits::default:
 // 3 次/30s/重连 3 次);常量已收编,消费点读 w.config.limits。
 
-/// "mcp.<server>.<tool>" -> "mcp.<server>"(健康面主体;其余原样)。
-pub(crate) fn mcp_provider_of(capability: &str) -> String {
+/// "mcp.<server>.<tool>" -> Some("mcp.<server>")(健康门主体);非 MCP 族 ->
+/// None。健康门(重连计数/超限熔断/「直至重装」恢复)只对 MCP 族成立:进程内
+/// 族(system.exec/fs.*/wasm)编译进宿主,不存在「重装」恢复通道,误触发熔断
+/// 即锁死直至重启进程。2026-09-12 修复族形状泄漏(ADR-0050 未做清单未豁免项;
+/// 健康门按 ADR-0037 分工收窄回 MCP 族语义)。
+pub(crate) fn mcp_provider_of(capability: &str) -> Option<String> {
     let parts: Vec<&str> = capability.split('.').collect();
     if parts.len() >= 3 && parts[0] == "mcp" {
-        format!("mcp.{}", parts[1])
+        Some(format!("mcp.{}", parts[1]))
     } else {
-        capability.to_string()
+        None
     }
 }
 
@@ -81,5 +85,24 @@ pub(crate) fn note_provider_success(w: &mut World, provider: &str, reason: &str)
         entry.status = "healthy";
         entry.cooldown_until = None;
         emit_provider_health(w, provider, "unavailable", "healthy", reason);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mcp_provider_of;
+
+    // 2026-09-12 族形状泄漏修复:健康门主体只对 MCP 族成立,进程内族
+    // (system.exec/fs.* 等)不得再按能力名落健康记录。
+    #[test]
+    fn mcp_provider_of_scopes_to_mcp_family() {
+        assert_eq!(
+            mcp_provider_of("mcp.web_multisearch.web_search_lite").as_deref(),
+            Some("mcp.web_multisearch")
+        );
+        assert_eq!(mcp_provider_of("system.exec"), None);
+        assert_eq!(mcp_provider_of("fs.search"), None);
+        // 不足三段的 mcp.* 维持旧判定:非健康门主体。
+        assert_eq!(mcp_provider_of("mcp.alone"), None);
     }
 }
